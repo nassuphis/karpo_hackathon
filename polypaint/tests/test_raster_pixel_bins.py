@@ -366,6 +366,78 @@ class TestRasterPixelBins(unittest.TestCase):
         statuses = [call.args[2] for call in mock_report.call_args_list]
         self.assertEqual(statuses, ["started", "bin_downloaded", "rasterized", "done"])
 
+    @patch("handler_raster.report_status")
+    @patch("handler_raster.subprocess.run")
+    @patch("handler_raster.s3")
+    def test_v2_param_source_bins_use_zero_offset_for_chunk_local_fused_params(self, mock_s3, mock_run, mock_report):
+        import handler_raster as mod
+
+        def get_object(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/chunk_1.bin":
+                return {"Body": MagicMock(read=lambda: b"\x00" * 80)}
+            if key == "renders/j/params_0001.bin":
+                self.assertEqual(kwargs["Range"], "bytes=0-63")
+                return {"Body": MagicMock(read=lambda: b"\x22" * 64)}
+            if key == "renders/j/solve_scores/param_bins.json":
+                payload = {
+                    "family": "solve_score",
+                    "version": 2,
+                    "metric": "t1_abs",
+                    "clip_quantile": 0.02,
+                    "omega": 1.0,
+                    "omega_enabled": False,
+                    "clip_lo": 0.0,
+                    "clip_hi": 1.0,
+                    "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                    "program": "m0",
+                    "metrics": [
+                        {"slot": 0, "metric": "t1_abs", "source": "pm", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                    ],
+                }
+                return {"Body": MagicMock(read=lambda: json.dumps(payload).encode())}
+            raise AssertionError(f"unexpected get_object key: {key}")
+
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.upload_fileobj.side_effect = lambda fileobj, bucket, key: None
+
+        def fake_run(cmd, capture_output=False, text=False, timeout=None):
+            self.assertIn("--score_metrics=t1_abs", cmd)
+            self.assertIn("--score_sources=pm", cmd)
+            self.assertIn("--score_program=m0", cmd)
+            self.assertIn("--score_params_file=/tmp/score_params.bin", cmd)
+            with open("/tmp/pix_t0000.pix", "wb") as fh:
+                fh.write(b"\x03" * 8)
+            with open("/tmp/pixbin_t0000.pbx", "wb") as fh:
+                fh.write(b"\x04" * 8)
+            return MagicMock(
+                returncode=0,
+                stdout=json.dumps({"roots_plotted": 10, "roots_clipped": 0}),
+                stderr="",
+            )
+
+        mock_run.side_effect = fake_run
+
+        with patch("glob.glob", return_value=[]):
+            result = mod.handler(_event(
+                chunk_idx=1,
+                task_id="raster_1",
+                bin_key="renders/j/chunk_1.bin",
+                solve_metric="t1_abs",
+                solve_score_quantile=0.02,
+                solve_score_bins_key="renders/j/solve_scores/param_bins.json",
+                params_key="renders/j/params_0001.bin",
+                params_step_start=0,
+                params_step_count=4,
+                step_start=10,
+                step_count=4,
+            ), None)
+
+        body = json.loads(result["body"])
+        self.assertEqual(body["pixel_bin_tiles_uploaded"], 1)
+        statuses = [call.args[2] for call in mock_report.call_args_list]
+        self.assertEqual(statuses, ["started", "bin_downloaded", "rasterized", "done"])
+
 
 if __name__ == "__main__":
     unittest.main()

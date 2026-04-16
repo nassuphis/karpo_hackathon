@@ -24,6 +24,7 @@ s3 = boto3.client("s3")
 PALETTE_RENDER = os.path.join(os.path.dirname(__file__), "palette_bins_render")
 RAW2JPEG = os.path.join(os.path.dirname(__file__), "raw2jpeg")
 PRESIGN_EXPIRY = 3600
+S3_USER_METADATA_LIMIT_BYTES = 2048
 
 _TMP_BINS = "/tmp/palette_bins_full.bin"
 _TMP_RAW = "/tmp/palette_image.raw"
@@ -55,6 +56,14 @@ def _parse_boolish(value, default=True):
 
 def _omega_display(enabled, omega):
     return f"w={omega:g}" if enabled else "w=off"
+
+
+def _metadata_size_bytes(meta):
+    total = 0
+    for key, value in (meta or {}).items():
+        total += len(str(key).encode("utf-8"))
+        total += len(str(value).encode("utf-8"))
+    return total
 
 
 def _delete_keys(keys):
@@ -261,18 +270,12 @@ def handler(event, context):
             "clip_lo": str(bins_meta.get("clip_lo", "")),
             "clip_hi": str(bins_meta.get("clip_hi", "")),
         }
-        if isinstance(render_execution, (dict, list)):
-            metadata["render_execution"] = json.dumps(render_execution, separators=(",", ":"))
-        metadata.update(
-            emit_solve_score_metadata(
-                "solve",
-                metric=metric,
-                quantile=q,
-                omega=omega,
-                omega_enabled=omega_enabled,
-                chain=solve_score_chain,
+        metadata_size = _metadata_size_bytes(metadata)
+        if metadata_size > S3_USER_METADATA_LIMIT_BYTES:
+            raise RuntimeError(
+                f"Palette image metadata too large before upload: {metadata_size} bytes > "
+                f"{S3_USER_METADATA_LIMIT_BYTES} limit"
             )
-        )
         with open(_TMP_JPEG, "rb") as fh:
             s3.upload_fileobj(fh, BUCKET, image_key, ExtraArgs={"ContentType": "image/jpeg", "Metadata": metadata})
         with open(_TMP_PREVIEW, "rb") as pf:

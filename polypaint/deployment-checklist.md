@@ -30,6 +30,10 @@ When claiming a feature is ready, explicitly report:
 
 - Any new frontend service key is present in generated `config.json` from [deploy.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/deploy.sh).
 - [api_manifest.json](/Users/nicknassuphis/karpo_hackathon/polypaint/api_manifest.json) is updated.
+- If `index.html`, `deploy.sh`, `handler_storage.py`, or `handler_dispatch.py`
+  changed in a way that affects service keys, storage paths, solver mappings,
+  or dispatch targets, regenerate the tracked manifest in the same change:
+  - `python3 api_manifest.py --write`
 - `python3 api_manifest.py --check` passes.
 - If the feature depends on a new config key, stale loaded config is handled safely.
   - Example: auto-reload config once, or fail with an explicit actionable message.
@@ -40,6 +44,13 @@ When claiming a feature is ready, explicitly report:
 - Old checked-in or cached payload shapes are handled safely where relevant.
 - Old metadata rows / calc payloads / artifact rows are handled safely where relevant.
 - If a new feature depends on new frontend config keys, the stale-client path is tested explicitly.
+- If an artifact metadata contract changes, every read path is updated together.
+  - Example: moving fields from S3 image headers into sidecar JSON or `meta.json`
+    means readers must use the shared merged-metadata loader, not raw
+    `head_object(...).Metadata`.
+  - Tests must cover both:
+    - legacy header-only artifacts
+    - current header + sidecar/overlay artifacts
 
 ## 4. API / Route Wiring
 
@@ -57,6 +68,9 @@ When claiming a feature is ready, explicitly report:
   corresponding `cp ... "$DIR/"` packaging block in
   [deploy.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/deploy.sh) in the
   same change.
+- If code is deduplicated into a new shared helper such as `calc_chunks.py` or
+  `logical_sections.py`, every deployed handler that imports that helper must be
+  repackaged in the same change.
 - Do not assume "tests passed locally" means deploy packaging is correct.
   Importing a new helper like `logical_sections.py`, `param_source.py`, or any
   other repo-local module changes the Lambda zip contract and must be reflected
@@ -97,12 +111,24 @@ bash scripts/predeploy_check.sh
 - Do not wait for `./deploy.sh update` to discover the mismatch.
 - The feature is not ready if `deploy.sh` has stale file lists, even if the
   handler works in direct local tests.
+- For local contract/test commands in this repo, prefer `uv run python` when
+  `uv` is available. The repo venv is the fallback, not the default.
+- In this environment, assume `uv` may need escalation because the shared cache
+  often sits outside the sandbox.
+- Do not waste a first attempt rediscovering the same cache-permission failure.
+- If a needed `uv` command matters to the task, run it with escalation instead
+  of changing the interpreter preference.
 
 ## 6. Resource Budget
 
 - The feature fits Lambda memory.
 - The feature fits Lambda `/tmp`.
 - The feature fits Lambda timeout.
+- The feature fits S3 user-metadata header limits if it writes object metadata.
+  - S3 user metadata is small; bulky fields like `render_execution`,
+    solve-score programs, or derived-artifact state belong in sidecar JSON /
+    `meta.json`, not image headers.
+  - Add a pre-upload size guard when an image/object write depends on metadata.
 - The feature fits API Gateway synchronous payload limits if it is sync.
 - The feature fits Step Functions state-size limits if it uses Step Functions.
 - The feature fits intended concurrency/fan-out without obvious service-pressure bugs.
@@ -183,6 +209,9 @@ Run the relevant syntax/build checks for touched code:
   - `failed`
   - `Internal Server Error`
   - `failed after retries` without context
+- Do not mention obsolete controls or terms in active errors/logs.
+  - Example: if the current UI exposes `chunks`, active errors must not talk
+    about `stripe_count`.
 
 See also:
 
@@ -239,6 +268,7 @@ See also:
 Before saying “ready”, run the relevant subset of:
 
 ```bash
+python3 api_manifest.py --write
 python3 api_manifest.py --check
 bash -n deploy.sh
 ../.venv/bin/python -m pytest tests/test_deploy_packaging.py -q
@@ -258,6 +288,26 @@ Docker gate:
 ...
 bash scripts/test-docker-runtime.sh
 ```
+
+## 19. Post-Deploy Reality Check
+
+After `./deploy.sh update`, do not assume the deployed behavior matches the
+current tree just because AWS accepted the update.
+
+- Run:
+
+```bash
+./deploy.sh show-build
+```
+
+- Treat `show-build` as the source of truth for:
+  - deployed frontend/config vs local source
+  - deployed critical Lambda bundle hash vs local packaged bundle
+  - deployed Step Functions definition vs local rendered definition
+- If the app still shows stale behavior and `show-build` says `MATCH`, debug the
+  runtime path.
+- If the app still shows stale behavior and `show-build` says `MISMATCH`, stop
+  guessing and fix deploy drift first.
 
 The Docker gate is only valid if it exercised freshly rebuilt artifacts.
 

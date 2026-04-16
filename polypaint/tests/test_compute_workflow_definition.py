@@ -35,14 +35,15 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
 
     def test_required_states_exist(self):
         for name in [
-            "PlanPhase", "BuildPlan", "ParsePlan",
+            "PlanPhase", "RouteExecutionMethod", "BuildPlan", "ParsePlan",
+            "DegreeProbePhase", "DegreeProbeTask", "BuildFusedPlan", "ParseFusedPlan", "AttachFusedPost",
             "ParamGenPhase", "ParamGenMap",
             "CoeffgenPhase", "CoeffgenMap",
             "PostCoeffgenPhase", "PostCoeffgen", "ParsePostCoeffgen",
             "LoresParamGenPhase", "LoresParamGenTask",
             "LoresCoeffgenPhase", "LoresCoeffgenTask",
             "LoresSolvePhase", "LoresSolveTask",
-            "SolvePhase", "SolveMap",
+            "RouteHiresExecution", "SolvePhase", "SolveMap", "FusedChunkPhase", "FusedChunkMap",
             "SaveMetadataPhase", "SaveMetadataTask",
             "ReportDone",
         ]:
@@ -54,11 +55,13 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
         self.assertEqual(self.states["ParamGenMap"]["Type"], "Map")
         self.assertEqual(self.states["CoeffgenMap"]["Type"], "Map")
         self.assertEqual(self.states["SolveMap"]["Type"], "Map")
+        self.assertEqual(self.states["FusedChunkMap"]["Type"], "Map")
 
     def test_map_concurrency_matches_current_compute_shape(self):
         self.assertEqual(self.states["ParamGenMap"]["MaxConcurrency"], 50)
         self.assertEqual(self.states["CoeffgenMap"]["MaxConcurrency"], 50)
         self.assertEqual(self.states["SolveMap"]["MaxConcurrency"], 500)
+        self.assertEqual(self.states["FusedChunkMap"]["MaxConcurrency"], 50)
 
     def test_worker_states_have_retry(self):
         for name, state in self.states.items():
@@ -102,6 +105,26 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
         self.assertEqual(selector["n_coeffs.$"], "$.post.n_coeffs")
         self.assertEqual(selector["task_id.$"], "$$.Map.Item.Value.solve_task_id")
         self.assertEqual(selector["s3_key.$"], "$$.Map.Item.Value.bin_key")
+
+    def test_fused_route_and_worker_contract_exist(self):
+        route = self.states["RouteExecutionMethod"]
+        route_json = json.dumps(route)
+        self.assertIn("fused_chunk_pipeline", route_json)
+        self.assertIn("DegreeProbePhase", route_json)
+        self.assertNotIn('"BooleanEquals": true', route_json)
+
+        hires_route = self.states["RouteHiresExecution"]
+        self.assertIn("fused_chunk_pipeline", json.dumps(hires_route))
+        self.assertIn("FusedChunkPhase", json.dumps(hires_route))
+
+        fused_map = self.states["FusedChunkMap"]
+        selector = fused_map["ItemSelector"]
+        self.assertEqual(selector["task_id.$"], "$$.Map.Item.Value.fused_task_id")
+        self.assertEqual(selector["n_coeffs.$"], "$.post.n_coeffs")
+        self.assertEqual(selector["degree.$"], "$.post.degree")
+        self.assertEqual(selector["fused_threads.$"], "$.plan.fused.threads")
+        worker = fused_map["ItemProcessor"]["States"]["FusedChunkWorker"]
+        self.assertIn("placeholder-FusedChunkFunctionArn", json.dumps(worker))
 
     def test_parse_post_coeffgen_drops_large_coeffgen_results(self):
         parse_post = self.states["ParsePostCoeffgen"]

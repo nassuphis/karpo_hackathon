@@ -56,6 +56,119 @@ class TestComputePlan(unittest.TestCase):
         self.assertEqual(first["solve_task_id"], "compute_run_abc_solve_0")
         self.assertEqual(first["bin_key"], "renders/compute_j/chunk_0.bin")
 
+    def test_build_plan_fused_uses_probe_and_safe_chunk_floor(self):
+        import handler_compute_plan as mod
+
+        result = mod.handle_build_plan({
+            "job_id": "compute_j",
+            "run_id": "run_fused",
+            "task_id": "compute_run_aberth_mt_run_fused",
+            "probe": {
+                "probe_stable": True,
+                "degree": 10,
+                "n_coeffs": 11,
+                "probe_signature": mod.build_probe_signature(
+                    function_name="g1",
+                    param_transforms=[],
+                    coeff_transforms=[],
+                    cfpv=[],
+                ),
+            },
+            "params": {
+                "execution_method": "fused_chunk_pipeline",
+                "solver_mode": "aberth_mt",
+                "N": 100,
+                "times": 1,
+                "n_chunks": 4,
+                "auto_hires_chunks": True,
+                "fused_threads": 4,
+                "param_gen_threads": 6,
+                "coeffgen_threads": 5,
+                "lores_param_gen_threads": 2,
+                "lores_coeffgen_threads": 3,
+                "function": "g1",
+                "param_transforms": [],
+                "coeff_transforms": [],
+                "cfpv": [],
+            },
+        })
+        plan = json.loads(result["body"])
+        self.assertEqual(plan["compute"]["execution_method"], "fused_chunk_pipeline")
+        self.assertEqual(plan["compute"]["probe_degree"], 10)
+        self.assertEqual(plan["compute"]["probe_n_coeffs"], 11)
+        self.assertEqual(plan["fused"]["threads"], 4)
+        self.assertGreaterEqual(plan["compute"]["n_chunks"], plan["compute"]["min_safe_chunks"])
+        self.assertEqual(plan["post_seed"]["degree"], 10)
+        self.assertEqual(plan["post_seed"]["n_coeffs"], 11)
+        self.assertIn("fused_task_id", plan["chunk_items"][0])
+
+    def test_build_plan_fused_rejects_unsafe_manual_chunk_count(self):
+        import handler_compute_plan as mod
+
+        with self.assertRaises(RuntimeError):
+            mod.handle_build_plan({
+                "job_id": "compute_j",
+                "run_id": "run_fused",
+                "task_id": "compute_run_aberth_mt_run_fused",
+                "probe": {
+                    "probe_stable": True,
+                    "degree": 70,
+                    "n_coeffs": 71,
+                    "probe_signature": mod.build_probe_signature(
+                        function_name="g1",
+                        param_transforms=[],
+                        coeff_transforms=[],
+                        cfpv=[],
+                    ),
+                },
+                "params": {
+                    "execution_method": "fused_chunk_pipeline",
+                    "solver_mode": "aberth_mt",
+                    "N": 5000,
+                    "times": 2,
+                    "n_chunks": 1,
+                    "auto_hires_chunks": False,
+                    "fused_threads": 8,
+                    "function": "g1",
+                    "param_transforms": [],
+                    "coeff_transforms": [],
+                    "cfpv": [],
+                },
+            })
+
+    def test_build_plan_rejects_fused_for_non_mt_solver(self):
+        import handler_compute_plan as mod
+
+        with self.assertRaises(RuntimeError):
+            mod.handle_build_plan({
+                "job_id": "compute_j",
+                "run_id": "run_fused_cm",
+                "task_id": "compute_run_companion_matrix_run_fused_cm",
+                "probe": {
+                    "probe_stable": True,
+                    "degree": 10,
+                    "n_coeffs": 11,
+                    "probe_signature": mod.build_probe_signature(
+                        function_name="g1",
+                        param_transforms=[],
+                        coeff_transforms=[],
+                        cfpv=[],
+                    ),
+                },
+                "params": {
+                    "execution_method": "fused_chunk_pipeline",
+                    "solver_mode": "companion_matrix",
+                    "N": 100,
+                    "times": 1,
+                    "n_chunks": 4,
+                    "fused_threads": 4,
+                    "function": "g1",
+                    "param_transforms": [],
+                    "coeff_transforms": [],
+                    "cfpv": [],
+                },
+            })
+
     @patch("handler_compute_plan._get_ddb")
     def test_post_coeffgen_returns_compact_payload_without_sweep_items(self, mock_get_ddb):
         import handler_compute_plan as mod
@@ -216,6 +329,254 @@ class TestComputePlan(unittest.TestCase):
         self.assertEqual(body["chunks"][0]["params_key"], "renders/compute_j/params_0000.bin")
         self.assertEqual(body["chunks"][0]["params_step_start"], 0)
         self.assertEqual(body["chunks"][0]["params_step_count"], 10)
+
+    @patch("handler_compute_plan.s3")
+    def test_finalize_metadata_preserves_chunk_local_params_for_multi_chunk_fused(self, mock_s3):
+        import handler_compute_plan as mod
+
+        plan = {
+            "job_id": "compute_j",
+            "run_id": "run_fused",
+            "pipeline": {
+                "function": "g1",
+                "param_transforms": [],
+                "param_transforms_display": [],
+                "coeff_transforms": [],
+                "cfpv": [],
+            },
+            "compute": {
+                "N": 100,
+                "times": 1,
+                "n_chunks": 2,
+                "n_steps": 20,
+                "execution_method": "fused_chunk_pipeline",
+                "param_storage_mode": "chunked",
+                "params_key": "",
+                "param_gen_threads": 5,
+                "coeffgen_threads": 4,
+                "lores_param_gen_threads": 2,
+                "lores_coeffgen_threads": 3,
+                "fused_threads": 6,
+                "auto_hires_chunks": True,
+                "probe_degree": 10,
+                "probe_n_coeffs": 11,
+                "probe_signature": "abc123",
+                "min_safe_chunks": 2,
+                "safe_chunk_limit_reason": "memory",
+            },
+            "solve": {"mode": "aberth_mt"},
+            "chunk_items": [
+                {
+                    "chunk_idx": 0,
+                    "step_start": 0,
+                    "step_count": 10,
+                    "coeffs_key": "renders/compute_j/coeffs_0000.bin",
+                    "params_key": "renders/compute_j/params_0000.bin",
+                    "params_bin_size": 160,
+                    "params_step_start": 0,
+                    "params_step_count": 10,
+                },
+                {
+                    "chunk_idx": 1,
+                    "step_start": 10,
+                    "step_count": 10,
+                    "coeffs_key": "renders/compute_j/coeffs_0001.bin",
+                    "params_key": "renders/compute_j/params_0001.bin",
+                    "params_bin_size": 160,
+                    "params_step_start": 0,
+                    "params_step_count": 10,
+                },
+            ],
+        }
+        post = {
+            "degree": 10,
+            "n_coeffs": 11,
+            "total_coeffs_size": 1760,
+            "lores": {
+                "N": 50,
+                "n_steps": 2500,
+                "bin_key": "renders/compute_j/lores.bin",
+                "coeffs_key": "renders/compute_j/lores_coeffs.bin",
+                "params_key": "renders/compute_j/lores_params.bin",
+                "param_gen_threads": 2,
+                "coeffgen_threads": 3,
+            },
+        }
+        lores_solve = {"s3_key": "renders/compute_j/lores.bin", "bin_size": 1234}
+        solve_results = [
+            {
+                "chunk_idx": 1,
+                "s3_key": "renders/compute_j/chunk_1.bin",
+                "bin_size": 800,
+                "compute_us": 222,
+                "n_t": 10,
+                "avg_iterations": 7.5,
+                "params_step_start": 999,
+                "params_step_count": 999,
+                "coeffs_size": 880,
+                "params_size": 160,
+                "fused_threads": 6,
+            },
+            {
+                "chunk_idx": 0,
+                "s3_key": "renders/compute_j/chunk_0.bin",
+                "bin_size": 800,
+                "compute_us": 111,
+                "n_t": 10,
+                "avg_iterations": 6.5,
+                "params_step_start": 999,
+                "params_step_count": 999,
+                "coeffs_size": 880,
+                "params_size": 160,
+                "fused_threads": 6,
+            },
+        ]
+
+        mod.handle_finalize_metadata({
+            "plan": plan,
+            "post": post,
+            "lores_solve": lores_solve,
+            "solve_results": solve_results,
+        })
+
+        body = json.loads(mock_s3.put_object.call_args.kwargs["Body"])
+        self.assertEqual(body["execution_method"], "fused_chunk_pipeline")
+        self.assertEqual(body["fused_threads"], 6)
+        self.assertEqual([chunk["idx"] for chunk in body["chunks"]], [0, 1])
+        self.assertEqual(body["chunks"][0]["step_start"], 0)
+        self.assertEqual(body["chunks"][1]["step_start"], 10)
+        self.assertEqual(body["chunks"][0]["params_key"], "renders/compute_j/params_0000.bin")
+        self.assertEqual(body["chunks"][1]["params_key"], "renders/compute_j/params_0001.bin")
+        self.assertEqual(body["chunks"][0]["params_step_start"], 0)
+        self.assertEqual(body["chunks"][1]["params_step_start"], 0)
+        self.assertEqual(body["chunks"][0]["params_step_count"], 10)
+        self.assertEqual(body["chunks"][1]["params_step_count"], 10)
+
+    @patch("handler_compute_plan.s3")
+    def test_finalize_metadata_classic_and_fused_share_render_facing_contract(self, mock_s3):
+        import handler_compute_plan as mod
+
+        def _base_plan(execution_method):
+            compute = {
+                "N": 100,
+                "times": 1,
+                "n_chunks": 2,
+                "n_steps": 20,
+                "execution_method": execution_method,
+                "param_storage_mode": "chunked",
+                "params_key": "",
+                "param_gen_threads": 5,
+                "coeffgen_threads": 4,
+                "lores_param_gen_threads": 2,
+                "lores_coeffgen_threads": 3,
+            }
+            if execution_method == "fused_chunk_pipeline":
+                compute.update({
+                    "fused_threads": 6,
+                    "auto_hires_chunks": True,
+                    "probe_degree": 10,
+                    "probe_n_coeffs": 11,
+                    "probe_signature": "abc123",
+                    "min_safe_chunks": 2,
+                    "safe_chunk_limit_reason": "memory",
+                })
+            return {
+                "job_id": "compute_j",
+                "run_id": f"run_{execution_method}",
+                "pipeline": {
+                    "function": "g1",
+                    "param_transforms": [],
+                    "param_transforms_display": [],
+                    "coeff_transforms": [],
+                    "cfpv": [],
+                },
+                "compute": compute,
+                "solve": {"mode": "aberth_mt"},
+                "chunk_items": [
+                    {
+                        "chunk_idx": 0,
+                        "step_start": 0,
+                        "step_count": 10,
+                        "coeffs_key": "renders/compute_j/coeffs_0000.bin",
+                        "params_key": "renders/compute_j/params_0000.bin",
+                        "params_bin_size": 160,
+                        "params_step_start": 0,
+                        "params_step_count": 10,
+                    },
+                    {
+                        "chunk_idx": 1,
+                        "step_start": 10,
+                        "step_count": 10,
+                        "coeffs_key": "renders/compute_j/coeffs_0001.bin",
+                        "params_key": "renders/compute_j/params_0001.bin",
+                        "params_bin_size": 160,
+                        "params_step_start": 0,
+                        "params_step_count": 10,
+                    },
+                ],
+            }
+
+        post = {
+            "degree": 10,
+            "n_coeffs": 11,
+            "total_coeffs_size": 1760,
+            "lores": {
+                "N": 50,
+                "n_steps": 2500,
+                "bin_key": "renders/compute_j/lores.bin",
+                "coeffs_key": "renders/compute_j/lores_coeffs.bin",
+                "params_key": "renders/compute_j/lores_params.bin",
+                "param_gen_threads": 2,
+                "coeffgen_threads": 3,
+            },
+        }
+        lores_solve = {"s3_key": "renders/compute_j/lores.bin", "bin_size": 1234}
+        solve_results = [
+            {"chunk_idx": 0, "s3_key": "renders/compute_j/chunk_0.bin", "bin_size": 800, "compute_us": 111, "n_t": 10, "avg_iterations": 6.5},
+            {"chunk_idx": 1, "s3_key": "renders/compute_j/chunk_1.bin", "bin_size": 800, "compute_us": 222, "n_t": 10, "avg_iterations": 7.5},
+        ]
+
+        rendered = {}
+        for execution_method in ("classic_chunk_pipeline", "fused_chunk_pipeline"):
+            mod.handle_finalize_metadata({
+                "plan": _base_plan(execution_method),
+                "post": post,
+                "lores_solve": lores_solve,
+                "solve_results": solve_results,
+            })
+            rendered[execution_method] = json.loads(mock_s3.put_object.call_args.kwargs["Body"])
+
+        def _render_subset(calc):
+            return {
+                "function": calc["function"],
+                "N": calc["N"],
+                "times": calc["times"],
+                "degree": calc["degree"],
+                "n_coeffs": calc["n_coeffs"],
+                "solver": calc["solver"],
+                "param_storage_mode": calc["param_storage_mode"],
+                "params_key": calc["params_key"],
+                "coeffs_keys": calc["coeffs_keys"],
+                "lores": calc["lores"],
+                "chunks": [
+                    {
+                        "idx": chunk["idx"],
+                        "bin_key": chunk["bin_key"],
+                        "step_start": chunk["step_start"],
+                        "step_count": chunk["step_count"],
+                        "params_key": chunk["params_key"],
+                        "params_bin_size": chunk["params_bin_size"],
+                        "params_step_start": chunk["params_step_start"],
+                        "params_step_count": chunk["params_step_count"],
+                    }
+                    for chunk in calc["chunks"]
+                ],
+            }
+
+        self.assertEqual(
+            _render_subset(rendered["classic_chunk_pipeline"]),
+            _render_subset(rendered["fused_chunk_pipeline"]),
+        )
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ Purpose: remove permissive legacy behavior from active code paths, stop old term
 ## Phase 3: Scrub Stale Terminology From Current UX
 
 - [ ] remove `stripe` naming from active UI labels, status context, and progress text
-- [ ] stop surfacing `stripe_idx` as the preferred identity in current dispatch/status paths
+- [x] stop surfacing `stripe_idx` as the preferred identity in current dispatch/status paths
 - [ ] update active comments/docstrings that still describe chunk-first flows as stripe-based
 - [ ] keep legacy names only where they are true compatibility aliases, and label them as such
 
@@ -36,11 +36,20 @@ Targets already identified:
 
 ## Phase 4: Reduce Drift Between Similar Planners
 
-- [ ] factor shared chunk/calc compatibility helpers out of:
+- [x] factor shared chunk/calc compatibility helpers out of:
   - `handler_render_plan.py`
   - `handler_palette_render_plan.py`
-- [ ] keep one shared contract for chunk items and calc compatibility fields
+- [x] keep one shared contract for chunk items and calc compatibility fields
 - [ ] add tests that compare both planners on shared metadata shaping
+
+## Phase 4B: Keep Artifact Metadata Contracts Explicit
+
+- [x] Color artifact readers use the shared merged-metadata loader instead of
+  assuming all fields live in S3 image headers
+- [x] active palette image writers keep object headers minimal and store bulky
+  state in `meta.json`
+- [ ] audit the remaining derived-artifact paths for raw `head_object(...).Metadata`
+  assumptions and direct large-header uploads
 
 ## Phase 5: Review Remaining Public Compatibility Aliases
 

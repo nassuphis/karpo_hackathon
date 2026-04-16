@@ -121,6 +121,7 @@
       "resize_artifact"
     ],
     "literal_services": [
+      "coeffgen",
       "compute-preview",
       "dispatch",
       "param-debug",

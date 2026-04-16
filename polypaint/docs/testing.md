@@ -11,6 +11,11 @@ PolyPaint uses four test layers. They are meant to catch different failure modes
 2. **Python handler and workflow tests**
    - Catch Lambda contract bugs, storage/reporting mistakes, Step Functions payload drift, and packaging regressions.
    - Examples: `test_pipeline.py`, `test_render_plan.py`, `test_render_workflow_definition.py`, `test_deploy_packaging.py`.
+   - This layer is also where metadata-contract drift must be caught.
+     If an artifact moves fields from S3 object headers into sidecar JSON or
+     `meta.json`, tests in this layer should prove that readers still work for:
+     - legacy header-only artifacts
+     - current header + sidecar/overlay artifacts
 
 3. **Frontend VM tests**
    - Execute `index.html` JavaScript in a Node VM without a browser.
@@ -103,7 +108,7 @@ All tests live in `polypaint/tests/`.
 | `test_poly645_hand.py` | `poly_645` hand-written coeff function matches Python reference and stays off the broken transpiled path | `sweep_test` compiled |
 | `test_poly795_hand.py` | `poly_795` hand-written coeff function matches Python reference, including slice rewrites and both `np.where` branches | `sweep_test` compiled |
 | `test_low_agreement_hand.py` | Batch parity coverage for the repaired low-agreement coeff funcs promoted from transpiled to hand; the current authoritative function list lives in `CASES` inside the test file | `sweep_test` compiled, numpy |
-| `test_deploy_packaging.py` | Lambda zip contents, local sidecar packaging, executable chmod coverage, and deploy-script regressions such as the PDF layer builder entrypoint/tooling contract | Python only |
+| `test_deploy_packaging.py` | Lambda zip contents, local helper/sidecar packaging, executable chmod coverage, and deploy-script regressions such as the PDF layer builder entrypoint/tooling contract | Python only |
 | `test_api_route_contracts.py` | Manifest-backed API contract checks: tracked `api_manifest.json` must match the current tree, frontend service/route usage must match deploy wiring, and dispatch/solver mappings must stay aligned | Python only |
 | `test_pdf_artifact_handler.py` | PDF artifact Lambda: Color source validation, metadata-derived spread composition, PDF upload contract | Python mocks only |
 | `test_frontend_js.sh` | Frontend JS execution: UI logic, TRI palette popup/swatches, dispatch, Render family catalogs, Palette workflow UI, DeepZoom inventory, render perf logging | Node.js (vm module) |
@@ -163,6 +168,7 @@ uv run python -m pytest tests/test_ae_mt.py -q
 uv run python -m pytest tests/test_poly164_hand.py tests/test_coeff_catalog_consistency.py -q
 uv run python -m pytest tests/test_deploy_packaging.py tests/test_pdf_artifact_handler.py -q
 uv run python -m pytest tests/test_api_route_contracts.py tests/test_deploy_packaging.py -q
+python3 api_manifest.py --write
 python3 api_manifest.py --check
 bash scripts/predeploy_check.sh
 uv run python lambda/gen_parity_results.py
@@ -241,6 +247,47 @@ The same rule applies to deploy binaries:
   before the gate
 - do not run the gate first and then rebuild only after it fails on stale output
 
+Shared-helper rule:
+
+- if a deployed handler starts importing a new repo-local helper such as
+  `calc_chunks.py`, `logical_sections.py`, or any other `lambda/*.py` module,
+  `tests/test_deploy_packaging.py` must be run and the corresponding bundle in
+  `deploy.sh` must be updated in the same change
+- do not assume direct local handler tests prove packaging is correct
+
+Python-runner rule:
+
+- for local repo checks, prefer `uv run python` when `uv` is available
+- the repo venv is the fallback:
+  - `./.venv/bin/python`
+  - `../.venv/bin/python`
+- in this environment, assume `uv` may need escalation because the shared cache
+  often sits outside the sandbox
+- do not burn a first attempt rediscovering that failure mode
+- if the `uv` command matters, run it with escalation instead of changing the
+  interpreter preference
+
+Metadata-contract rule:
+
+- if a feature changes where artifact metadata lives, tests must cover both the
+  write path and every affected read path
+
+API-manifest rule:
+
+- if a change touches frontend service calls or route wiring in:
+  - [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html)
+  - [deploy.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/deploy.sh)
+  - [handler_storage.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_storage.py)
+  - [handler_dispatch.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_dispatch.py)
+- then regenerate the tracked manifest in the same change:
+  - `python3 api_manifest.py --write`
+- `python3 api_manifest.py --check` is a gate, not the regeneration step
+- examples:
+  - image headers stay small and bounded
+  - bulky fields move to sidecar JSON / `meta.json`
+  - readers use the merged metadata loader instead of raw
+    `head_object(...).Metadata`
+
 ### Predeploy contract gate
 
 Before `deploy.sh update` touches AWS, run:
@@ -257,6 +304,23 @@ This gate checks:
 - frontend action/contract coverage in `tests/test_frontend_js.sh`
 
 `deploy.sh update` now runs this gate automatically before Lambda layer builds, binary compiles, or AWS updates.
+
+### Post-deploy reality check
+
+When deployed behavior looks stale or contradictory, do not guess from logs
+alone. Verify the deployed state directly:
+
+```bash
+./deploy.sh show-build
+```
+
+Use this after `deploy.sh update` whenever the question is:
+
+- "did the frontend/config really update?"
+- "did the critical Lambda bundle really update?"
+- "did the workflow definition really update?"
+
+`show-build` is the check that separates real runtime bugs from deploy drift.
 
 ### Hand override workflow
 

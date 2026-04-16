@@ -144,7 +144,10 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
             uploads = {}
 
             def upload_fileobj(fileobj, bucket, key, ExtraArgs=None):
-                uploads[key] = fileobj.read()
+                uploads[key] = {
+                    "body": fileobj.read(),
+                    "extra": ExtraArgs or {},
+                }
 
             mock_s3.upload_fileobj.side_effect = upload_fileobj
 
@@ -212,6 +215,12 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
             self.assertIn("renders/j/palettes/pal_1/preview.png", uploads)
             self.assertNotIn("renders/j/palettes/pal_1/score_crowding.bin", uploads)
             self.assertNotIn("renders/j/palettes/pal_1/palette_bins.bin", uploads)
+            image_meta = uploads["renders/j/palettes/pal_1/image.jpeg"]["extra"]["Metadata"]
+            self.assertEqual(image_meta["palette"], "reef")
+            self.assertEqual(image_meta["width"], "4")
+            self.assertNotIn("render_execution", image_meta)
+            self.assertNotIn("solve_score_chain", image_meta)
+            self.assertNotIn("solve_metric", image_meta)
 
             meta_call = mock_s3.put_object.call_args.kwargs
             meta = json.loads(meta_call["Body"])

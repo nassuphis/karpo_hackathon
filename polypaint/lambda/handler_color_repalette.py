@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 import boto3
 from botocore.config import Config
 
+from color_artifact_meta import load_color_artifact_head
 from palette_names import VALID_PALETTE_NAMES
 from shared import BUCKET, parse_body, ok_response, report_status
 
@@ -116,8 +117,9 @@ def handler(event, context):
     try:
         _phase(job_id, task_id, "started", "color_repalette", "RePalette", **progress)
 
-        source_head = s3.head_object(Bucket=BUCKET, Key=source_image_key)
-        source_meta = dict(source_head.get("Metadata", {}) or {})
+        source_head = load_color_artifact_head(s3, BUCKET, job_id, source_artifact_id)
+        source_meta = dict(source_head.get("metadata", {}) or {})
+        source_image_key = str(source_head.get("image_key") or source_image_key)
         if source_meta.get("family") not in ("", "color"):
             raise RuntimeError("Selected source artifact is not a Color artifact")
         if source_meta.get("artifact_id") and source_meta.get("artifact_id") != source_artifact_id:

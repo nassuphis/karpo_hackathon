@@ -180,10 +180,14 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("long_palette_names_generated.py", packaged["handler_render_plan.py"])
         self.assertIn("solve_score_chain.py", packaged["handler_render_plan.py"])
         self.assertIn("param_source.py", packaged["handler_render_plan.py"])
+        self.assertIn("calc_chunks.py", packaged["handler_render_plan.py"])
         self.assertIn("handler_palette_render_plan.py", packaged)
         self.assertIn("color_artifact_meta.py", packaged["handler_palette_render_plan.py"])
         self.assertIn("solve_score_chain.py", packaged["handler_palette_render_plan.py"])
         self.assertIn("param_source.py", packaged["handler_palette_render_plan.py"])
+        self.assertIn("calc_chunks.py", packaged["handler_palette_render_plan.py"])
+        self.assertIn("handler_color_repalette.py", packaged)
+        self.assertIn("color_artifact_meta.py", packaged["handler_color_repalette.py"])
 
         self.assertIn("handler_solve_proximity.py", packaged)
         self.assertIn("solve_proximity_stats", packaged["handler_solve_proximity.py"])
@@ -230,6 +234,8 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("handler_storage.py", packaged)
         self.assertIn("color_artifact_meta.py", packaged["handler_storage.py"])
         self.assertIn("solve_score_chain.py", packaged["handler_storage.py"])
+        self.assertIn("handler_encode.py", packaged)
+        self.assertIn("color_artifact_meta.py", packaged["handler_encode.py"])
         self.assertIn("handler_palette_chunk.py", packaged)
         self.assertIn("solve_palette_chunk", packaged["handler_palette_chunk.py"])
         self.assertIn("solve_palette_chunk_mt", packaged["handler_palette_chunk.py"])
@@ -410,7 +416,19 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('TEST_PYTHON=(uv run python)', DEPLOY_TEXT)
         self.assertIn('TEST_PYTHON=(uv run python)', predeploy_text)
         self.assertIn('$SCRIPT_DIR/.venv/bin/python', DEPLOY_TEXT)
+        self.assertIn('$SCRIPT_DIR/../.venv/bin/python', DEPLOY_TEXT)
         self.assertIn('$ROOT/.venv/bin/python', predeploy_text)
+        self.assertIn('$ROOT/../.venv/bin/python', predeploy_text)
+        self.assertLess(
+            DEPLOY_TEXT.index('TEST_PYTHON=(uv run python)'),
+            DEPLOY_TEXT.index('$SCRIPT_DIR/.venv/bin/python'),
+            "deploy.sh should prefer uv before local fallbacks",
+        )
+        self.assertLess(
+            predeploy_text.index('TEST_PYTHON=(uv run python)'),
+            predeploy_text.index('$ROOT/.venv/bin/python'),
+            "predeploy_check.sh should prefer uv before local fallbacks",
+        )
 
 
 if __name__ == "__main__":

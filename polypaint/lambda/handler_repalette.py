@@ -26,6 +26,7 @@ _TMP_RAW = "/tmp/repalette_image.raw"
 _TMP_JPEG = "/tmp/repalette_image.jpeg"
 _TMP_PREVIEW = "/tmp/repalette_preview.png"
 _DEFAULT_COPY_WORKERS = 16
+S3_USER_METADATA_LIMIT_BYTES = 2048
 
 
 def _utc_now_iso():
@@ -89,6 +90,22 @@ def _copy_worker_count(total_chunks):
         workers = _DEFAULT_COPY_WORKERS
     workers = max(1, workers)
     return min(total_chunks, workers)
+
+
+def _metadata_size_bytes(metadata):
+    total = 0
+    for key, value in (metadata or {}).items():
+        total += len(str(key).encode("utf-8"))
+        total += len(str(value).encode("utf-8"))
+    return total
+
+
+def _palette_image_metadata(full_n, palette):
+    return {
+        "width": str(full_n),
+        "height": str(full_n),
+        "palette": str(palette),
+    }
 
 
 def _load_palette_meta(job_id, source_palette_id):
@@ -319,20 +336,13 @@ def handler(event, context):
             raise RuntimeError(f"Preview generation failed: {prev.stderr.strip()}")
 
         file_size = os.path.getsize(_TMP_JPEG)
-        metadata = {
-            "width": str(full_n),
-            "height": str(full_n),
-            "metric": metric,
-            "palette": new_palette,
-            "solve_score_quantile": str(q),
-            "solve_score_omega": str(omega),
-            "solve_score_omega_enabled": "true" if omega_enabled else "false",
-            "full_n": str(full_n),
-            "times": str(source_meta.get("times", 1)),
-            "using_pass": "0",
-            "clip_lo": str(source_meta.get("clip_lo", "")),
-            "clip_hi": str(source_meta.get("clip_hi", "")),
-        }
+        metadata = _palette_image_metadata(full_n, new_palette)
+        metadata_size = _metadata_size_bytes(metadata)
+        if metadata_size > S3_USER_METADATA_LIMIT_BYTES:
+            raise RuntimeError(
+                f"Palette image metadata too large before upload: {metadata_size} bytes > "
+                f"{S3_USER_METADATA_LIMIT_BYTES} limit"
+            )
         with open(_TMP_JPEG, "rb") as fh:
             s3.upload_fileobj(fh, BUCKET, image_key, ExtraArgs={"ContentType": "image/jpeg", "Metadata": metadata})
         with open(_TMP_PREVIEW, "rb") as pf:

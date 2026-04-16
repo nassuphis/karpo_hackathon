@@ -217,6 +217,58 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
         done_call = mock_report.call_args_list[-1]
         self.assertEqual(done_call.kwargs["result_data"]["threads"], 5)
 
+    @patch("handler_coeffgen.os.remove")
+    @patch("handler_coeffgen.subprocess.run")
+    def test_degree_probe_reports_stable_shape_and_fused_estimate(self, mock_run, mock_remove):
+        import handler_coeffgen as mod
+
+        mock_run.side_effect = [
+            _DummyCompleted(json.dumps({"degree": 7, "n_coeffs": 8, "data_bytes": 256})),
+            _DummyCompleted(json.dumps({"degree": 7, "n_coeffs": 8, "data_bytes": 256})),
+        ]
+
+        result = mod.handle_degree_probe({
+            "function": "g1",
+            "param_transforms": [],
+            "coeff_transforms": [],
+            "cfpv": [],
+            "N": 64,
+            "times": 2,
+            "n_chunks": 4,
+            "solver_mode": "aberth_mt",
+            "fused_threads": 4,
+            "auto_hires_chunks": True,
+        })
+        body = json.loads(result["body"])
+        self.assertTrue(body["probe_stable"])
+        self.assertEqual(body["degree"], 7)
+        self.assertEqual(body["n_coeffs"], 8)
+        self.assertIn("probe_signature", body)
+        self.assertNotIn("param_gen_us", body)
+        self.assertGreater(body["elapsed_us"], 0)
+        self.assertIn("fused_estimate", body)
+        self.assertGreaterEqual(body["fused_estimate"]["actual_chunks"], body["fused_estimate"]["min_safe_chunks"])
+
+    @patch("handler_coeffgen.os.remove")
+    @patch("handler_coeffgen.subprocess.run")
+    def test_degree_probe_marks_unstable_mismatch(self, mock_run, mock_remove):
+        import handler_coeffgen as mod
+
+        mock_run.side_effect = [
+            _DummyCompleted(json.dumps({"degree": 7, "n_coeffs": 8, "data_bytes": 256})),
+            _DummyCompleted(json.dumps({"degree": 9, "n_coeffs": 10, "data_bytes": 320})),
+        ]
+
+        result = mod.handle_degree_probe({
+            "function": "g1",
+            "param_transforms": [],
+            "coeff_transforms": [],
+            "cfpv": [],
+        })
+        body = json.loads(result["body"])
+        self.assertFalse(body["probe_stable"])
+        self.assertEqual(len(body["samples"]), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

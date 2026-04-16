@@ -87,6 +87,8 @@ COMPUTE_ORCHESTRATOR_NAME="polypaint-compute-orchestrator"
 COMPUTE_ORCHESTRATOR_MEMORY=512
 COMPUTE_PLAN_NAME="polypaint-compute-plan"
 COMPUTE_PLAN_MEMORY=512
+COMPUTE_FUSED_CHUNK_NAME="polypaint-compute-fused-chunk"
+COMPUTE_FUSED_CHUNK_MEMORY=10240
 COMPUTE_STATUS_NAME="polypaint-compute-status"
 COMPUTE_STATUS_MEMORY=256
 COMPUTE_STATE_MACHINE_NAME="polypaint-compute-workflow"
@@ -920,21 +922,21 @@ chmod +x "$SWEEP_MT_DIR"/sweep_mt
 cd "$SWEEP_MT_DIR" && zip -r9 /tmp/polypaint-sweep-mt.zip . -q && cd "$SCRIPT_DIR"
 echo "  SweepMT:  $(du -h /tmp/polypaint-sweep-mt.zip | cut -f1)  (sweep_mt)"
 
-# Coeffgen: handler_coeffgen.py + shared.py + sweep_coeffgen (needs LAPACK layer)
+# Coeffgen: handler_coeffgen.py + shared.py + compute_fused.py + sweep_coeffgen (needs LAPACK layer)
 COEFFGEN_DIR=/tmp/polypaint-coeffgen
 rm -rf "$COEFFGEN_DIR"
 mkdir -p "$COEFFGEN_DIR"
-cp lambda/handler_coeffgen.py lambda/shared.py "$COEFFGEN_DIR/"
+cp lambda/handler_coeffgen.py lambda/shared.py lambda/compute_fused.py "$COEFFGEN_DIR/"
 cp lambda/sweep_coeffgen "$COEFFGEN_DIR/"
 chmod +x "$COEFFGEN_DIR"/sweep_coeffgen
 cd "$COEFFGEN_DIR" && zip -r9 /tmp/polypaint-coeffgen.zip . -q && cd "$SCRIPT_DIR"
 echo "  Coeffgen: $(du -h /tmp/polypaint-coeffgen.zip | cut -f1)  (sweep_coeffgen + LAPACK layer)"
 
-# Encode: handler_encode.py + shared.py + raw2jpeg
+# Encode: handler_encode.py + shared.py + color_artifact_meta.py + raw2jpeg
 ENCODE_DIR=/tmp/polypaint-encode
 rm -rf "$ENCODE_DIR"
 mkdir -p "$ENCODE_DIR"
-cp lambda/handler_encode.py lambda/shared.py "$ENCODE_DIR/"
+cp lambda/handler_encode.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$ENCODE_DIR/"
 cp lambda/raw2jpeg "$ENCODE_DIR/"
 chmod +x "$ENCODE_DIR"/raw2jpeg
 cd "$ENCODE_DIR" && zip -r9 /tmp/polypaint-encode.zip . -q && cd "$SCRIPT_DIR"
@@ -1101,11 +1103,12 @@ chmod +x "$REPALETTE_DIR"/palette_bins_render "$REPALETTE_DIR"/raw2jpeg
 cd "$REPALETTE_DIR" && zip -r9 /tmp/polypaint-repalette.zip . -q && cd "$SCRIPT_DIR"
 echo "  RePal:   $(du -h /tmp/polypaint-repalette.zip | cut -f1)  (repalette + libvips layer)"
 
-# Color RePalette: handler_color_repalette.py + shared.py + palette helpers + pixel_bins_render
+# Color RePalette: handler_color_repalette.py + shared.py + color metadata + palette helpers + pixel_bins_render
 COLOR_REPALETTE_DIR=/tmp/polypaint-color-repalette
 rm -rf "$COLOR_REPALETTE_DIR"
 mkdir -p "$COLOR_REPALETTE_DIR"
 cp lambda/handler_color_repalette.py lambda/shared.py \
+   lambda/color_artifact_meta.py lambda/solve_score_chain.py \
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$COLOR_REPALETTE_DIR/"
 cp lambda/pixel_bins_render "$COLOR_REPALETTE_DIR/"
 chmod +x "$COLOR_REPALETTE_DIR"/pixel_bins_render
@@ -1173,11 +1176,12 @@ cp lambda/handler_palette_orchestrator.py lambda/shared.py "$PAL_ORCH_DIR/"
 cd "$PAL_ORCH_DIR" && zip -r9 /tmp/polypaint-palette-orchestrator.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalOrch: $(du -h /tmp/polypaint-palette-orchestrator.zip | cut -f1)  (starter only)"
 
-# Palette Render Plan: handler_palette_render_plan.py + shared.py
+# Palette Render Plan: handler_palette_render_plan.py + shared.py + chunk helpers
 PAL_PLAN_DIR=/tmp/polypaint-palette-render-plan
 rm -rf "$PAL_PLAN_DIR"
 mkdir -p "$PAL_PLAN_DIR"
 cp lambda/handler_palette_render_plan.py lambda/shared.py \
+   lambda/calc_chunks.py \
    lambda/param_source.py \
    lambda/color_artifact_meta.py \
    lambda/solve_score_chain.py \
@@ -1223,12 +1227,13 @@ cp lambda/handler_render_orchestrator.py lambda/shared.py "$ORCH_DIR/"
 cd "$ORCH_DIR" && zip -r9 /tmp/polypaint-render-orchestrator.zip . -q && cd "$SCRIPT_DIR"
 echo "  RndOrch: $(du -h /tmp/polypaint-render-orchestrator.zip | cut -f1)  (starter only)"
 
-# Render Plan: handler_render_plan.py + shared.py + logical section helpers
+# Render Plan: handler_render_plan.py + shared.py + logical section helpers + chunk helpers
 PLAN_DIR=/tmp/polypaint-render-plan
 rm -rf "$PLAN_DIR"
 mkdir -p "$PLAN_DIR"
 cp lambda/handler_render_plan.py lambda/shared.py \
    lambda/logical_sections.py \
+   lambda/calc_chunks.py \
    lambda/param_source.py \
    lambda/solve_score_chain.py \
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PLAN_DIR/"
@@ -1243,21 +1248,31 @@ cp lambda/handler_render_status.py lambda/shared.py "$STATUS_DIR/"
 cd "$STATUS_DIR" && zip -r9 /tmp/polypaint-render-status.zip . -q && cd "$SCRIPT_DIR"
 echo "  RndStat: $(du -h /tmp/polypaint-render-status.zip | cut -f1)  (status updater)"
 
-# Compute Orchestrator (starter): handler_compute_orchestrator.py + shared.py
+# Compute Orchestrator (starter): handler_compute_orchestrator.py + shared.py + compute_fused.py
 COMP_ORCH_DIR=/tmp/polypaint-compute-orchestrator
 rm -rf "$COMP_ORCH_DIR"
 mkdir -p "$COMP_ORCH_DIR"
-cp lambda/handler_compute_orchestrator.py lambda/shared.py "$COMP_ORCH_DIR/"
+cp lambda/handler_compute_orchestrator.py lambda/shared.py lambda/compute_fused.py "$COMP_ORCH_DIR/"
 cd "$COMP_ORCH_DIR" && zip -r9 /tmp/polypaint-compute-orchestrator.zip . -q && cd "$SCRIPT_DIR"
 echo "  CmpOrch: $(du -h /tmp/polypaint-compute-orchestrator.zip | cut -f1)  (starter only)"
 
-# Compute Plan: handler_compute_plan.py + shared.py
+# Compute Plan: handler_compute_plan.py + shared.py + compute_fused.py
 COMP_PLAN_DIR=/tmp/polypaint-compute-plan
 rm -rf "$COMP_PLAN_DIR"
 mkdir -p "$COMP_PLAN_DIR"
-cp lambda/handler_compute_plan.py lambda/shared.py "$COMP_PLAN_DIR/"
+cp lambda/handler_compute_plan.py lambda/shared.py lambda/compute_fused.py "$COMP_PLAN_DIR/"
 cd "$COMP_PLAN_DIR" && zip -r9 /tmp/polypaint-compute-plan.zip . -q && cd "$SCRIPT_DIR"
 echo "  CmpPlan: $(du -h /tmp/polypaint-compute-plan.zip | cut -f1)  (plan + finalize)"
+
+# Compute Fused Chunk: handler_compute_chunk_fused.py + shared.py + native compute binaries
+COMP_FUSED_DIR=/tmp/polypaint-compute-fused-chunk
+rm -rf "$COMP_FUSED_DIR"
+mkdir -p "$COMP_FUSED_DIR"
+cp lambda/handler_compute_chunk_fused.py lambda/shared.py "$COMP_FUSED_DIR/"
+cp lambda/sweep_coeffgen lambda/sweep lambda/sweep_mt lambda/sweep_cm "$COMP_FUSED_DIR/"
+chmod +x "$COMP_FUSED_DIR"/sweep_coeffgen "$COMP_FUSED_DIR"/sweep "$COMP_FUSED_DIR"/sweep_mt "$COMP_FUSED_DIR"/sweep_cm
+cd "$COMP_FUSED_DIR" && zip -r9 /tmp/polypaint-compute-fused-chunk.zip . -q && cd "$SCRIPT_DIR"
+echo "  CmpFuse: $(du -h /tmp/polypaint-compute-fused-chunk.zip | cut -f1)  (fused chunk worker)"
 
 # Compute Status: handler_compute_status.py + shared.py
 COMP_STATUS_DIR=/tmp/polypaint-compute-status
@@ -1610,7 +1625,7 @@ if [ "$ACTION" = "create" ]; then
         "$SWEEP_MT_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
 
     create_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip" \
-        "$COEFFGEN_MEMORY" "$ROLE_ARN" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+        "$COEFFGEN_MEMORY" "$ROLE_ARN" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib,FUSED_WORKER_MEMORY_MB=$COMPUTE_FUSED_CHUNK_MEMORY,FUSED_WORKER_TMP_MB=$BINARY_TMP,FUSED_WORKER_TIMEOUT_SEC=$TIMEOUT" "$BINARY_TMP"
 
     create_lambda "$ENCODE_NAME" "handler_encode.handler" "/tmp/polypaint-encode.zip" \
         "$ENCODE_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
@@ -1744,6 +1759,7 @@ if [ "$ACTION" = "create" ]; then
     RENDER_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_PLAN_NAME}"
     RENDER_STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_STATUS_NAME}"
     COMPUTE_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_PLAN_NAME}"
+    COMPUTE_FUSED_CHUNK_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_FUSED_CHUNK_NAME}"
     COMPUTE_STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_STATUS_NAME}"
     COEFFGEN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COEFFGEN_NAME}"
     RASTER_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RASTER_NAME}"
@@ -1772,6 +1788,7 @@ if [ "$ACTION" = "create" ]; then
     sed -e "s|\${PlanFunctionArn}|${COMPUTE_PLAN_ARN}|g" \
         -e "s|\${StatusFunctionArn}|${COMPUTE_STATUS_ARN}|g" \
         -e "s|\${CoeffgenFunctionArn}|${COEFFGEN_ARN}|g" \
+        -e "s|\${FusedChunkFunctionArn}|${COMPUTE_FUSED_CHUNK_ARN}|g" \
         stepfunctions/compute_workflow.asl.json.template > /tmp/compute_workflow.asl.json
 
     # Create or update state machine
@@ -1844,7 +1861,9 @@ if [ "$ACTION" = "create" ]; then
     create_lambda "$COMPUTE_ORCHESTRATOR_NAME" "handler_compute_orchestrator.handler" "/tmp/polypaint-compute-orchestrator.zip" \
         "$COMPUTE_ORCHESTRATOR_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,COMPUTE_STATE_MACHINE_ARN=$COMPUTE_SM_ARN"
     create_lambda "$COMPUTE_PLAN_NAME" "handler_compute_plan.handler" "/tmp/polypaint-compute-plan.zip" \
-        "$COMPUTE_PLAN_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME"
+        "$COMPUTE_PLAN_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,FUSED_WORKER_MEMORY_MB=$COMPUTE_FUSED_CHUNK_MEMORY,FUSED_WORKER_TMP_MB=$BINARY_TMP,FUSED_WORKER_TIMEOUT_SEC=$TIMEOUT"
+    create_lambda "$COMPUTE_FUSED_CHUNK_NAME" "handler_compute_chunk_fused.handler" "/tmp/polypaint-compute-fused-chunk.zip" \
+        "$COMPUTE_FUSED_CHUNK_MEMORY" "$ROLE_ARN" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
     create_lambda "$COMPUTE_STATUS_NAME" "handler_compute_status.handler" "/tmp/polypaint-compute-status.zip" \
         "$COMPUTE_STATUS_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
 
@@ -1916,6 +1935,7 @@ if [ "$ACTION" = "create" ]; then
     echo "=== DEPLOYED ==="
     echo "  Sweep:    $SWEEP_NAME ($SWEEP_MEMORY MB)"
     echo "  Coeffgen: $COEFFGEN_NAME ($COEFFGEN_MEMORY MB)"
+    echo "  CmpFuse:  $COMPUTE_FUSED_CHUNK_NAME ($COMPUTE_FUSED_CHUNK_MEMORY MB)"
     echo "  Raster:   $RASTER_NAME ($RASTER_MEMORY MB)"
     echo "  Finalize: $FINALIZE_NAME ($FINALIZE_MEMORY MB)"
     echo "  Encode:   $ENCODE_NAME ($ENCODE_MEMORY MB)"
@@ -1935,7 +1955,7 @@ elif [ "$ACTION" = "update" ]; then
         "$SWEEP_MT_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
 
     update_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip" \
-        "$COEFFGEN_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+        "$COEFFGEN_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib,FUSED_WORKER_MEMORY_MB=$COMPUTE_FUSED_CHUNK_MEMORY,FUSED_WORKER_TMP_MB=$BINARY_TMP,FUSED_WORKER_TIMEOUT_SEC=$TIMEOUT" "$BINARY_TMP"
 
     update_lambda "$ENCODE_NAME" "handler_encode.handler" "/tmp/polypaint-encode.zip" \
         "$ENCODE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
@@ -2033,7 +2053,9 @@ elif [ "$ACTION" = "update" ]; then
     update_lambda "$RENDER_STATUS_NAME" "handler_render_status.handler" "/tmp/polypaint-render-status.zip" \
         "$RENDER_STATUS_MEMORY" "" "JOBS_TABLE=$JOBS_TABLE"
     update_lambda "$COMPUTE_PLAN_NAME" "handler_compute_plan.handler" "/tmp/polypaint-compute-plan.zip" \
-        "$COMPUTE_PLAN_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME"
+        "$COMPUTE_PLAN_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,FUSED_WORKER_MEMORY_MB=$COMPUTE_FUSED_CHUNK_MEMORY,FUSED_WORKER_TMP_MB=$BINARY_TMP,FUSED_WORKER_TIMEOUT_SEC=$TIMEOUT"
+    update_lambda "$COMPUTE_FUSED_CHUNK_NAME" "handler_compute_chunk_fused.handler" "/tmp/polypaint-compute-fused-chunk.zip" \
+        "$COMPUTE_FUSED_CHUNK_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
     update_lambda "$COMPUTE_STATUS_NAME" "handler_compute_status.handler" "/tmp/polypaint-compute-status.zip" \
         "$COMPUTE_STATUS_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
 
@@ -2043,6 +2065,7 @@ elif [ "$ACTION" = "update" ]; then
     RENDER_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_PLAN_NAME}"
     RENDER_STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_STATUS_NAME}"
     COMPUTE_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_PLAN_NAME}"
+    COMPUTE_FUSED_CHUNK_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_FUSED_CHUNK_NAME}"
     COMPUTE_STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_STATUS_NAME}"
     COEFFGEN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COEFFGEN_NAME}"
     RASTER_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RASTER_NAME}"
@@ -2082,6 +2105,7 @@ elif [ "$ACTION" = "update" ]; then
     sed -e "s|\${PlanFunctionArn}|${COMPUTE_PLAN_ARN}|g" \
         -e "s|\${StatusFunctionArn}|${COMPUTE_STATUS_ARN}|g" \
         -e "s|\${CoeffgenFunctionArn}|${COEFFGEN_ARN}|g" \
+        -e "s|\${FusedChunkFunctionArn}|${COMPUTE_FUSED_CHUNK_ARN}|g" \
         stepfunctions/compute_workflow.asl.json.template > /tmp/compute_workflow.asl.json
 
     sed -e "s|\${PlanFunctionArn}|${PALETTE_PLAN_ARN}|g" \
@@ -2283,6 +2307,7 @@ elif [ "$ACTION" = "update" ]; then
     echo "=== UPDATED ==="
     echo "  Sweep:    $SWEEP_NAME ($SWEEP_MEMORY MB)"
     echo "  Coeffgen: $COEFFGEN_NAME ($COEFFGEN_MEMORY MB)"
+    echo "  CmpFuse:  $COMPUTE_FUSED_CHUNK_NAME ($COMPUTE_FUSED_CHUNK_MEMORY MB)"
     echo "  Raster:   $RASTER_NAME ($RASTER_MEMORY MB)"
     echo "  Finalize: $FINALIZE_NAME ($FINALIZE_MEMORY MB)"
     echo "  Encode:   $ENCODE_NAME ($ENCODE_MEMORY MB)"

@@ -98,6 +98,64 @@ class TestComputeStarterLambda(unittest.TestCase):
 
     @patch("handler_compute_orchestrator.report_status")
     @patch("handler_compute_orchestrator.sfn_client")
+    def test_starter_forwards_explicit_fused_execution_method(self, mock_sfn, mock_report):
+        mock_sfn.start_execution.return_value = {
+            "executionArn": "arn:aws:states:us-east-1:123:execution:wf:exec2"
+        }
+        import handler_compute_orchestrator as mod
+        mod.STATE_MACHINE_ARN = "arn:aws:states:us-east-1:123:stateMachine:test"
+        mod.handler(_make_event({
+            "job_id": "j",
+            "run_id": "run_f",
+            "params": {"solver_mode": "aberth_mt", "N": 100, "n_chunks": 8, "function": "g1", "execution_method": "fused_chunk_pipeline"},
+        }), None)
+        sfn_input = json.loads(mock_sfn.start_execution.call_args.kwargs["input"])
+        self.assertEqual(sfn_input["params"]["execution_method"], "fused_chunk_pipeline")
+        self.assertNotIn("fused", sfn_input["params"])
+
+    @patch("handler_compute_orchestrator.report_status")
+    @patch("handler_compute_orchestrator.sfn_client")
+    def test_starter_resolves_conflicting_fused_inputs_to_explicit_method(self, mock_sfn, mock_report):
+        mock_sfn.start_execution.return_value = {
+            "executionArn": "arn:aws:states:us-east-1:123:execution:wf:exec3"
+        }
+        import handler_compute_orchestrator as mod
+        mod.STATE_MACHINE_ARN = "arn:aws:states:us-east-1:123:stateMachine:test"
+        mod.handler(_make_event({
+            "job_id": "j",
+            "run_id": "run_c",
+            "params": {
+                "solver_mode": "aberth_mt",
+                "N": 100,
+                "n_chunks": 8,
+                "function": "g1",
+                "fused": True,
+                "execution_method": "classic_chunk_pipeline",
+            },
+        }), None)
+        sfn_input = json.loads(mock_sfn.start_execution.call_args.kwargs["input"])
+        self.assertEqual(sfn_input["params"]["execution_method"], "classic_chunk_pipeline")
+        self.assertNotIn("fused", sfn_input["params"])
+
+    @patch("handler_compute_orchestrator.report_status")
+    @patch("handler_compute_orchestrator.sfn_client")
+    def test_starter_ignores_legacy_fused_flag_without_execution_method(self, mock_sfn, mock_report):
+        mock_sfn.start_execution.return_value = {
+            "executionArn": "arn:aws:states:us-east-1:123:execution:wf:exec4"
+        }
+        import handler_compute_orchestrator as mod
+        mod.STATE_MACHINE_ARN = "arn:aws:states:us-east-1:123:stateMachine:test"
+        mod.handler(_make_event({
+            "job_id": "j",
+            "run_id": "run_legacy_f",
+            "params": {"solver_mode": "aberth_mt", "N": 100, "n_chunks": 8, "function": "g1", "fused": True},
+        }), None)
+        sfn_input = json.loads(mock_sfn.start_execution.call_args.kwargs["input"])
+        self.assertEqual(sfn_input["params"]["execution_method"], "classic_chunk_pipeline")
+        self.assertNotIn("fused", sfn_input["params"])
+
+    @patch("handler_compute_orchestrator.report_status")
+    @patch("handler_compute_orchestrator.sfn_client")
     def test_starter_rejects_invalid_solver_mode(self, mock_sfn, mock_report):
         from handler_compute_orchestrator import handler
         with self.assertRaises(RuntimeError) as ctx:

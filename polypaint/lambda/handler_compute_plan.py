@@ -12,6 +12,13 @@ import os
 
 import boto3
 
+from compute_fused import (
+    build_chunk_items,
+    build_probe_signature,
+    estimate_fused_chunking,
+    execution_method_from_params,
+    validate_fused_threads,
+)
 from shared import BUCKET, JOBS_TABLE, ok_response, parse_body
 
 s3 = boto3.client("s3")
@@ -55,6 +62,9 @@ def handle_build_plan(params):
     run_params = params.get("params", {})
 
     solver_mode = _validate_solver_mode(run_params.get("solver_mode", "aberth"))
+    execution_method = execution_method_from_params(run_params)
+    if execution_method == "fused_chunk_pipeline" and solver_mode != "aberth_mt":
+        raise RuntimeError("fused compute currently supports only solver_mode=aberth_mt")
     n = _validate_positive_int(run_params.get("N"), "N", max_value=MAX_N)
     times = _validate_positive_int(run_params.get("times", 1), "times", max_value=MAX_TIMES)
     requested_chunks = _validate_positive_int(run_params.get("n_chunks", 10), "n_chunks", max_value=MAX_CHUNKS)
@@ -86,29 +96,6 @@ def handle_build_plan(params):
     if total_steps > MAX_TOTAL_STEPS:
         raise RuntimeError(f"Total compute steps too large: {total_steps}")
 
-    actual_chunks = min(requested_chunks, total_steps)
-    chunk_size = int(math.ceil(total_steps / actual_chunks))
-    chunk_items = []
-    for chunk_idx in range(actual_chunks):
-        step_start = chunk_idx * chunk_size
-        step_count = min(chunk_size, total_steps - step_start)
-        if step_count <= 0:
-            break
-        chunk_items.append({
-            "chunk_idx": chunk_idx,
-            "step_start": step_start,
-            "step_count": step_count,
-            "params_key": f"renders/{job_id}/params_{chunk_idx:04d}.bin",
-            "params_bin_size": int(step_count) * 16,
-            "params_step_start": 0,
-            "params_step_count": step_count,
-            "paramgen_task_id": f"compute_{run_id}_param_gen_{chunk_idx}",
-            "coeffs_key": f"renders/{job_id}/coeffs_{chunk_idx:04d}.bin",
-            "coeffgen_task_id": f"compute_{run_id}_coeffgen_{chunk_idx}",
-            "solve_task_id": f"compute_{run_id}_solve_{chunk_idx}",
-            "bin_key": f"renders/{job_id}/chunk_{chunk_idx}.bin",
-        })
-
     coeff_transforms = run_params.get("coeff_transforms")
     if coeff_transforms is None:
         coeff_transforms = []
@@ -127,6 +114,51 @@ def handle_build_plan(params):
     if not isinstance(cfpv, list):
         raise RuntimeError("cfpv must be an array")
 
+    actual_chunks = min(requested_chunks, total_steps)
+    fused_threads = None
+    auto_hires_chunks = bool(run_params.get("auto_hires_chunks"))
+    probe = params.get("probe") or {}
+    post_seed = None
+    fused_estimate = None
+    if execution_method == "fused_chunk_pipeline":
+        fused_threads = validate_fused_threads(run_params.get("fused_threads", 4))
+        probe_degree = _validate_positive_int(probe.get("degree"), "probe.degree", max_value=4096)
+        probe_n_coeffs = _validate_positive_int(probe.get("n_coeffs"), "probe.n_coeffs", max_value=4096)
+        if not bool(probe.get("probe_stable")):
+            raise RuntimeError("fused compute requires a stable degree probe")
+        expected_signature = build_probe_signature(
+            function_name=function_name,
+            param_transforms=param_transforms,
+            coeff_transforms=coeff_transforms,
+            cfpv=cfpv,
+        )
+        got_signature = str(probe.get("probe_signature") or "").strip()
+        if not got_signature or got_signature != expected_signature:
+            raise RuntimeError("fused compute probe signature mismatch")
+        fused_estimate = estimate_fused_chunking(
+            n=n,
+            times=times,
+            requested_chunks=requested_chunks,
+            degree=probe_degree,
+            n_coeffs=probe_n_coeffs,
+            fused_threads=fused_threads,
+            solver_mode=solver_mode,
+            auto_hires_chunks=auto_hires_chunks,
+        )
+        if not auto_hires_chunks and requested_chunks < int(fused_estimate["min_safe_chunks"]):
+            raise RuntimeError(
+                f"fused compute requires at least {int(fused_estimate['min_safe_chunks'])} chunks; "
+                f"requested {requested_chunks}"
+            )
+        actual_chunks = min(int(fused_estimate["actual_chunks"]), total_steps)
+
+    chunk_items = build_chunk_items(
+        job_id=job_id,
+        run_id=run_id,
+        total_steps=total_steps,
+        n_chunks=actual_chunks,
+    )
+
     plan = {
         "job_id": job_id,
         "run_id": run_id,
@@ -144,6 +176,7 @@ def handle_build_plan(params):
             "times": times,
             "n_chunks": len(chunk_items),
             "n_steps": total_steps,
+            "execution_method": execution_method,
             "param_storage_mode": "chunked",
             "params_key": "",
             "param_gen_threads": param_gen_threads,
@@ -169,6 +202,47 @@ def handle_build_plan(params):
         },
         "chunk_items": chunk_items,
     }
+    if execution_method == "fused_chunk_pipeline":
+        lores_n = _compute_lores_n(n, times, int(probe_degree))
+        lores_steps = lores_n * lores_n * times
+        post_seed = {
+            "degree": int(probe_degree),
+            "n_coeffs": int(probe_n_coeffs),
+            "total_coeffs_size": 0,
+            "lores": {
+                "N": lores_n,
+                "n_steps": lores_steps,
+                "params_key": f"renders/{job_id}/lores_params.bin",
+                "coeffs_key": f"renders/{job_id}/lores_coeffs.bin",
+                "bin_key": f"renders/{job_id}/lores.bin",
+                "param_gen_threads": int(lores_param_gen_threads),
+                "coeffgen_threads": int(lores_coeffgen_threads),
+                "param_task_id": f"compute_{run_id}_lores_param_gen",
+                "coeff_task_id": f"compute_{run_id}_lores_coeffgen",
+                "solve_task_id": f"compute_{run_id}_lores_solve",
+            },
+            "execution_method": execution_method,
+            "probe_degree": int(probe_degree),
+            "probe_n_coeffs": int(probe_n_coeffs),
+            "probe_signature": str(probe.get("probe_signature") or ""),
+            "fused_threads": int(fused_threads),
+        }
+        plan["compute"].update({
+            "auto_hires_chunks": bool(auto_hires_chunks),
+            "fused_threads": int(fused_threads),
+            "probe_degree": int(probe_degree),
+            "probe_n_coeffs": int(probe_n_coeffs),
+            "probe_signature": str(probe.get("probe_signature") or ""),
+            "min_safe_chunks": int(fused_estimate["min_safe_chunks"]),
+            "safe_chunk_limit_reason": str(fused_estimate["safe_chunk_limit_reason"]),
+        })
+        plan["fused"] = {
+            "task_prefix": f"compute_{run_id}_fused_",
+            "threads": int(fused_threads),
+            "auto_hires_chunks": bool(auto_hires_chunks),
+            "estimate": fused_estimate,
+        }
+        plan["post_seed"] = post_seed
     return ok_response(plan)
 
 
@@ -200,7 +274,7 @@ def handle_post_coeffgen(params):
 
     n = int(plan["compute"]["N"])
     times = int(plan["compute"]["times"])
-    lores_n = min(n, max(5, int(math.ceil(math.sqrt(TARGET_PREVIEW_ROOTS / max(1, degree * times))))))
+    lores_n = _compute_lores_n(n, times, degree)
     lores_steps = lores_n * lores_n * times
     job_id = plan["job_id"]
     run_id = plan["run_id"]
@@ -309,6 +383,24 @@ def handle_finalize_metadata(params):
             "n_t": int(row.get("n_t", 0) or 0),
             "avg_iterations": float(row.get("avg_iterations", 0) or 0),
         }
+        if "coeffs_size" in row:
+            chunk_entry["coeffs_size"] = int(row.get("coeffs_size", 0) or 0)
+        if "params_size" in row:
+            chunk_entry["params_size"] = int(row.get("params_size", 0) or 0)
+        if "param_gen_us" in row:
+            chunk_entry["param_gen_us"] = int(row.get("param_gen_us", 0) or 0)
+        if "coeffgen_us" in row:
+            chunk_entry["coeffgen_us"] = int(row.get("coeffgen_us", 0) or 0)
+        if "solve_us" in row:
+            chunk_entry["solve_us"] = int(row.get("solve_us", 0) or 0)
+        if "upload_params_us" in row:
+            chunk_entry["upload_params_us"] = int(row.get("upload_params_us", 0) or 0)
+        if "upload_coeffs_us" in row:
+            chunk_entry["upload_coeffs_us"] = int(row.get("upload_coeffs_us", 0) or 0)
+        if "upload_roots_us" in row:
+            chunk_entry["upload_roots_us"] = int(row.get("upload_roots_us", 0) or 0)
+        if "fused_threads" in row:
+            chunk_entry["fused_threads"] = int(row.get("fused_threads", 0) or 0)
         if "step_start" in plan_item:
             chunk_entry["step_start"] = int(plan_item["step_start"])
         if "step_count" in plan_item:
@@ -325,6 +417,10 @@ def handle_finalize_metadata(params):
             chunk_entry["skipped_overflow"] = int(row.get("skipped_overflow", 0) or 0)
         chunks.append(chunk_entry)
 
+    total_coeffs_size = int(post.get("total_coeffs_size", 0) or 0)
+    if total_coeffs_size <= 0:
+        total_coeffs_size = sum(int(row.get("coeffs_size", 0) or 0) for row in solve_results)
+
     calc_meta = {
         "job_id": plan["job_id"],
         "pipeline": {
@@ -339,17 +435,25 @@ def handle_finalize_metadata(params):
         "solver": plan["solve"]["mode"],
         "n_chunks": int(plan["compute"]["n_chunks"]),
         "n_steps": int(plan["compute"]["n_steps"]),
+        "execution_method": str(plan["compute"].get("execution_method") or "classic_chunk_pipeline"),
         "param_storage_mode": str(plan["compute"].get("param_storage_mode") or "global"),
         "params_key": str(plan["compute"].get("params_key") or ""),
         "param_gen_threads": int(plan["compute"].get("param_gen_threads", 1) or 1),
         "coeffgen_threads": int(plan["compute"].get("coeffgen_threads", 1) or 1),
         "lores_param_gen_threads": int(plan["compute"].get("lores_param_gen_threads", 1) or 1),
         "lores_coeffgen_threads": int(plan["compute"].get("lores_coeffgen_threads", 1) or 1),
+        "fused_threads": int(plan["compute"].get("fused_threads", 0) or 0),
+        "auto_hires_chunks": bool(plan["compute"].get("auto_hires_chunks")),
+        "probe_degree": int(plan["compute"].get("probe_degree", 0) or 0),
+        "probe_n_coeffs": int(plan["compute"].get("probe_n_coeffs", 0) or 0),
+        "probe_signature": str(plan["compute"].get("probe_signature") or ""),
+        "min_safe_chunks": int(plan["compute"].get("min_safe_chunks", 0) or 0),
+        "safe_chunk_limit_reason": str(plan["compute"].get("safe_chunk_limit_reason") or ""),
         "times": int(plan["compute"]["times"]),
         "degree": int(post["degree"]),
         "n_coeffs": int(post["n_coeffs"]),
         "coeffs_keys": coeffs_keys,
-        "total_coeffs_size": int(post["total_coeffs_size"]),
+        "total_coeffs_size": int(total_coeffs_size),
         "lores": {
             "bin_key": lores_solve.get("s3_key") or post["lores"]["bin_key"],
             "coeffs_key": post["lores"]["coeffs_key"],
@@ -407,3 +511,7 @@ def _solver_function_name(solver_mode):
     if solver_mode == "aberth_mt":
         return SWEEP_MT_FUNCTION
     return SWEEP_FUNCTION
+
+
+def _compute_lores_n(n, times, degree):
+    return min(n, max(5, int(math.ceil(math.sqrt(TARGET_PREVIEW_ROOTS / max(1, degree * times))))))

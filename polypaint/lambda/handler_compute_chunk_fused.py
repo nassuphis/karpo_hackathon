@@ -1,0 +1,404 @@
+import json
+import os
+import subprocess
+import time
+
+import boto3
+
+from shared import BUCKET, is_enospc, ok_response, parse_body, report_status
+
+s3 = boto3.client("s3")
+SWEEP_COEFFGEN = os.path.join(os.path.dirname(__file__), "sweep_coeffgen")
+SWEEP = os.path.join(os.path.dirname(__file__), "sweep")
+SWEEP_MT = os.path.join(os.path.dirname(__file__), "sweep_mt")
+SWEEP_CM = os.path.join(os.path.dirname(__file__), "sweep_cm")
+STAGE_META_PREFIX = "pp"
+
+
+def handler(event, context):
+    params = parse_body(event)
+    return handle_fused_chunk(params)
+
+
+def _require_int(params, key, *, minimum=None):
+    if key not in params:
+        raise RuntimeError(f"fused compute chunk requires {key}")
+    value = params.get(key)
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"fused compute chunk requires integer {key}, got {value!r}")
+    if minimum is not None and n < minimum:
+        raise RuntimeError(f"fused compute chunk requires {key} >= {minimum}, got {n}")
+    return n
+
+
+def _require_str(params, key):
+    if key not in params:
+        raise RuntimeError(f"fused compute chunk requires {key}")
+    value = str(params.get(key) or "").strip()
+    if not value:
+        raise RuntimeError(f"fused compute chunk requires non-empty {key}")
+    return value
+
+
+def handle_fused_chunk(params):
+    job_id = _require_str(params, "job_id")
+    chunk_idx = _require_int(params, "chunk_idx", minimum=0)
+    step_start = _require_int(params, "step_start", minimum=0)
+    step_count = _require_int(params, "step_count", minimum=1)
+    n = _require_int(params, "N", minimum=1)
+    times = _require_int(params, "times", minimum=1) if "times" in params else 1
+    n_coeffs = _require_int(params, "n_coeffs", minimum=1)
+    degree = _require_int(params, "degree", minimum=1)
+    fused_threads = _require_int(params, "fused_threads", minimum=1) if "fused_threads" in params else 4
+    solver_mode = str(params.get("solver_mode") or "aberth_mt").strip().lower() or "aberth_mt"
+    task_id = str(params.get("task_id") or f"compute_fused_{chunk_idx}")
+    function_name = _require_str(params, "function")
+    param_transforms = params.get("param_transforms") or []
+    coeff_transforms = params.get("coeff_transforms") or []
+    cfpv = params.get("cfpv") or []
+
+    params_key = _require_str(params, "params_key")
+    coeffs_key = _require_str(params, "coeffs_key")
+    bin_key = _require_str(params, "bin_key")
+
+    params_expected = step_count * 16
+    coeffs_expected = step_count * n_coeffs * 8
+    roots_expected = step_count * degree * 8
+
+    params_path = f"/tmp/fused_params_{chunk_idx}.bin"
+    coeffs_path = f"/tmp/fused_coeffs_{chunk_idx}.bin"
+    roots_path = f"/tmp/fused_roots_{chunk_idx}.bin"
+
+    progress = {
+        "phase": "compute_chunk_fused",
+        "chunk_idx": chunk_idx,
+        "step_start": step_start,
+        "step_count": step_count,
+        "fused_threads": fused_threads,
+        "execution_method": "fused_chunk_pipeline",
+        "params_key": params_key,
+        "coeffs_key": coeffs_key,
+        "bin_key": bin_key,
+    }
+
+    try:
+        report_status(job_id, task_id, "started", result_data=progress)
+
+        reused_params = False
+        reused_coeffs = False
+
+        if _s3_size_matches(
+            params_key,
+            params_expected,
+            expected_metadata=_stage_metadata(
+                stage="params",
+                step_start=step_start,
+                step_count=step_count,
+            ),
+        ):
+            _download_file(params_key, params_path)
+            reused_params = True
+            param_meta = {"threads": fused_threads}
+            param_gen_us = 0
+            upload_params_us = 0
+        else:
+            param_meta = _run_param_gen_local(
+                output_path=params_path,
+                n=n,
+                times=times,
+                step_start=step_start,
+                step_count=step_count,
+                param_transforms=param_transforms,
+                fused_threads=fused_threads,
+            )
+            param_gen_us = int(param_meta.get("elapsed_us", 0) or 0)
+            upload_t0 = time.time()
+            _upload_file(
+                params_path,
+                params_key,
+                metadata=_stage_metadata(
+                    stage="params",
+                    step_start=step_start,
+                    step_count=step_count,
+                ),
+            )
+            upload_params_us = int((time.time() - upload_t0) * 1e6)
+
+        params_size = os.path.getsize(params_path)
+        if params_size != params_expected:
+            raise RuntimeError(
+                f"fused param_gen size mismatch for chunk {chunk_idx}: expected {params_expected}, got {params_size}"
+            )
+
+        if _s3_size_matches(
+            coeffs_key,
+            coeffs_expected,
+            expected_metadata=_stage_metadata(
+                stage="coeffs",
+                step_start=step_start,
+                step_count=step_count,
+                n_coeffs=n_coeffs,
+                degree=degree,
+            ),
+        ):
+            _download_file(coeffs_key, coeffs_path)
+            reused_coeffs = True
+            coeff_meta = {
+                "degree": degree,
+                "n_coeffs": n_coeffs,
+                "data_bytes": coeffs_expected,
+                "threads": fused_threads,
+            }
+            coeffgen_us = 0
+            upload_coeffs_us = 0
+        else:
+            coeff_t0 = time.time()
+            coeff_meta = _run_coeffgen_local(
+                output_path=coeffs_path,
+                function_name=function_name,
+                coeff_transforms=coeff_transforms,
+                cfpv=cfpv,
+                params_path=params_path,
+                step_count=step_count,
+                fused_threads=fused_threads,
+            )
+            coeffgen_us = int((time.time() - coeff_t0) * 1e6)
+            upload_t0 = time.time()
+            _upload_file(
+                coeffs_path,
+                coeffs_key,
+                metadata=_stage_metadata(
+                    stage="coeffs",
+                    step_start=step_start,
+                    step_count=step_count,
+                    n_coeffs=n_coeffs,
+                    degree=degree,
+                ),
+            )
+            upload_coeffs_us = int((time.time() - upload_t0) * 1e6)
+
+        coeffs_size = os.path.getsize(coeffs_path)
+        if coeffs_size != coeffs_expected:
+            raise RuntimeError(
+                f"fused coeffgen size mismatch for chunk {chunk_idx}: expected {coeffs_expected}, got {coeffs_size}"
+            )
+
+        try:
+            os.remove(params_path)
+        except OSError:
+            pass
+
+        solve_t0 = time.time()
+        solve_meta = _run_solve_local(
+            output_path=roots_path,
+            coeffs_path=coeffs_path,
+            solver_mode=solver_mode,
+            n_coeffs=n_coeffs,
+            n_steps=step_count,
+            fused_threads=fused_threads,
+        )
+        solve_us = int((time.time() - solve_t0) * 1e6)
+
+        roots_size = os.path.getsize(roots_path)
+        if roots_size != roots_expected:
+            raise RuntimeError(
+                f"fused solve size mismatch for chunk {chunk_idx}: expected {roots_expected}, got {roots_size}"
+            )
+        upload_t0 = time.time()
+        _upload_file(roots_path, bin_key)
+        upload_roots_us = int((time.time() - upload_t0) * 1e6)
+
+        try:
+            os.remove(coeffs_path)
+        except OSError:
+            pass
+        try:
+            os.remove(roots_path)
+        except OSError:
+            pass
+
+        result_data = {
+            "chunk_idx": chunk_idx,
+            "stripe_idx": chunk_idx,
+            "s3_key": bin_key,
+            "bin_size": roots_size,
+            "compute_us": solve_us,
+            "n_t": int(solve_meta["n_t"]),
+            "degree": int(solve_meta["degree"]),
+            "avg_iterations": float(solve_meta.get("avg_iterations", 0) or 0),
+            "params_key": params_key,
+            "params_size": int(params_size),
+            "params_step_start": 0,
+            "params_step_count": int(step_count),
+            "coeffs_key": coeffs_key,
+            "coeffs_size": int(coeffs_size),
+            "param_gen_us": int(param_gen_us),
+            "coeffgen_us": int(coeffgen_us),
+            "solve_us": int(solve_us),
+            "upload_params_us": 0 if reused_params else int(upload_params_us),
+            "upload_coeffs_us": int(upload_coeffs_us),
+            "upload_roots_us": int(upload_roots_us),
+            "param_gen_threads": int(fused_threads),
+            "coeffgen_threads": int(coeff_meta.get("threads", fused_threads) or fused_threads),
+            "fused_threads": int(fused_threads),
+            "execution_method": "fused_chunk_pipeline",
+            "reused_params": int(reused_params),
+            "reused_coeffs": int(reused_coeffs),
+        }
+        if "skipped_overflow" in solve_meta:
+            result_data["skipped_overflow"] = int(solve_meta.get("skipped_overflow", 0) or 0)
+        report_status(job_id, task_id, "done", result_data=result_data)
+        return ok_response(result_data)
+    except Exception as e:
+        report_status(job_id, task_id, "error", str(e), result_data=progress)
+        if is_enospc(e):
+            raise RuntimeError(f"fused compute chunk {chunk_idx} ran out of /tmp: {e}") from e
+        raise
+    finally:
+        for path in (params_path, coeffs_path, roots_path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def _run_param_gen_local(*, output_path, n, times, step_start, step_count, param_transforms, fused_threads):
+    spec = {
+        "mode": "param_gen",
+        "n1": n,
+        "n2": n,
+        "times": times,
+        "param_transforms": list(param_transforms or []),
+        "step_start": step_start,
+        "step_count": step_count,
+        "n_threads": fused_threads,
+    }
+    t0 = time.time()
+    with open(output_path, "wb") as out:
+        proc = subprocess.Popen(
+            [SWEEP_COEFFGEN, "-"],
+            stdin=subprocess.PIPE,
+            stdout=out,
+            stderr=subprocess.PIPE,
+        )
+        proc.stdin.write(json.dumps(spec).encode("utf-8"))
+        proc.stdin.close()
+        stderr_data = proc.stderr.read().decode("utf-8")
+        proc.wait(timeout=840)
+    if proc.returncode != 0:
+        raise RuntimeError(f"fused param_gen failed: {stderr_data.strip()}")
+    meta = json.loads(stderr_data.strip())
+    meta["elapsed_us"] = int((time.time() - t0) * 1e6)
+    return meta
+
+
+def _run_coeffgen_local(*, output_path, function_name, coeff_transforms, cfpv, params_path, step_count, fused_threads):
+    spec = {
+        "mode": "coeffgen_chunked",
+        "function": function_name,
+        "coeff_transforms": list(coeff_transforms or []),
+        "params_file": params_path,
+        "step_start": 0,
+        "step_count": step_count,
+        "n_threads": fused_threads,
+    }
+    if cfpv:
+        spec["cfpv"] = list(cfpv)
+    result = subprocess.run(
+        [SWEEP_COEFFGEN, output_path],
+        input=json.dumps(spec),
+        capture_output=True,
+        text=True,
+        timeout=840,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"fused coeffgen failed: {result.stderr.strip()}")
+    return json.loads(result.stdout)
+
+
+def _run_solve_local(*, output_path, coeffs_path, solver_mode, n_coeffs, n_steps, fused_threads):
+    if solver_mode == "companion_matrix":
+        spec = {
+            "mode": "solve_cm",
+            "coeffs_file": coeffs_path,
+            "n_coeffs": n_coeffs,
+            "n_steps": n_steps,
+        }
+        binary = SWEEP_CM
+    elif solver_mode == "aberth_mt":
+        spec = {
+            "mode": "solve_mt",
+            "coeffs_file": coeffs_path,
+            "n_coeffs": n_coeffs,
+            "n2": n_steps,
+            "i1_start": 0,
+            "i1_end": 1,
+            "match_roots": False,
+            "n_threads": fused_threads,
+        }
+        binary = SWEEP_MT
+    else:
+        spec = {
+            "mode": "solve",
+            "coeffs_file": coeffs_path,
+            "n_coeffs": n_coeffs,
+            "n2": n_steps,
+            "i1_start": 0,
+            "i1_end": 1,
+            "match_roots": False,
+        }
+        binary = SWEEP
+    result = subprocess.run(
+        [binary, output_path],
+        input=json.dumps(spec),
+        capture_output=True,
+        text=True,
+        timeout=840,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"fused solve failed: {result.stderr.strip()}")
+    return json.loads(result.stdout)
+
+
+def _stage_metadata(*, stage, step_start, step_count, n_coeffs=None, degree=None):
+    metadata = {
+        f"{STAGE_META_PREFIX}-stage": str(stage),
+        f"{STAGE_META_PREFIX}-step-start": str(int(step_start)),
+        f"{STAGE_META_PREFIX}-step-count": str(int(step_count)),
+    }
+    if n_coeffs is not None:
+        metadata[f"{STAGE_META_PREFIX}-n-coeffs"] = str(int(n_coeffs))
+    if degree is not None:
+        metadata[f"{STAGE_META_PREFIX}-degree"] = str(int(degree))
+    return metadata
+
+
+def _upload_file(local_path, key, metadata=None):
+    with open(local_path, "rb") as fh:
+        extra_args = {"Metadata": dict(metadata or {})} if metadata else None
+        if extra_args:
+            s3.upload_fileobj(fh, BUCKET, key, ExtraArgs=extra_args)
+        else:
+            s3.upload_fileobj(fh, BUCKET, key)
+
+
+def _download_file(key, local_path):
+    with open(local_path, "wb") as fh:
+        s3.download_fileobj(BUCKET, key, fh)
+
+
+def _s3_size_matches(key, expected_size, expected_metadata=None):
+    try:
+        head = s3.head_object(Bucket=BUCKET, Key=key)
+    except Exception:
+        return False
+    if int(head.get("ContentLength", -1)) != int(expected_size):
+        return False
+    if expected_metadata:
+        got_meta = {str(k).lower(): str(v) for k, v in (head.get("Metadata") or {}).items()}
+        for key_name, expected_value in expected_metadata.items():
+            if got_meta.get(str(key_name).lower()) != str(expected_value):
+                return False
+    return True

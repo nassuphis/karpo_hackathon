@@ -1618,7 +1618,29 @@ button {
         </div>
         <div id="compute-mt-popup-summary" class="autolevel-popup-summary"></div>
         <div style="padding:0 14px 8px 14px">
-            <div class="autolevel-stage-text">Choose local native thread counts for each compute stage. Coeffgen chunk fan-out stays unchanged; these knobs control threading inside each Lambda worker.</div>
+            <div class="autolevel-stage-row" style="align-items:center; margin-bottom:10px">
+                <div class="autolevel-stage-text">Run the classic chunk pipeline or the fused chunk pipeline. Fused keeps the classic artifact contract but runs param gen, coeffgen, and solve in one Lambda per chunk.</div>
+                <div class="autolevel-inline-fields">
+                    <label class="inline-label" style="display:flex; align-items:center; gap:6px">
+                        <input id="compute-mt-fused-enabled" type="checkbox">
+                        <span>Fused</span>
+                    </label>
+                </div>
+            </div>
+            <div class="autolevel-stage-row" style="align-items:center; margin-bottom:10px">
+                <div class="autolevel-stage-text">Fused hires controls.</div>
+                <div class="autolevel-inline-fields">
+                    <label class="inline-label">Fused threads
+                        <input id="compute-mt-fused-threads" type="number" min="1" max="16" step="1" value="4" style="width:5em">
+                    </label>
+                    <label class="inline-label" style="display:flex; align-items:center; gap:6px">
+                        <input id="compute-mt-auto-hires-chunks" type="checkbox">
+                        <span>Auto hires chunks</span>
+                    </label>
+                </div>
+            </div>
+            <div id="compute-mt-sizing-summary" class="autolevel-popup-help" style="margin-bottom:10px">Probe not run yet.</div>
+            <div class="autolevel-stage-text">Choose local native thread counts for each compute stage. Classic uses Param gen/Coeffgen rows below. Fused uses the Fused threads control for full-res hires and still uses the lores rows below.</div>
             <table style="width:100%; border-collapse:collapse; margin-top:10px">
                 <thead>
                     <tr style="border-bottom:1px solid #333">
@@ -1646,7 +1668,7 @@ button {
                 </tbody>
             </table>
         </div>
-        <div class="autolevel-popup-help">This changes local native threading for `param_gen` and `coeffgen_chunked`. The existing compute chunk fan-out stays the same.</div>
+        <div class="autolevel-popup-help">Classic keeps the existing chunk fan-out. Fused adds a degree probe, validates the requested chunk count, runs lores separately, then processes each hires chunk in one Lambda with local param/coeff/solve handoff.</div>
         <div class="autolevel-popup-actions">
             <div></div>
             <div style="display:flex; gap:8px">
@@ -3037,6 +3059,30 @@ function _populateComputeFromDetail(jobId, detail) {
     const chunksVal = calc.n_chunks || calc.n_stripes;
     if (chunksVal != null) document.getElementById('render-stripes').value = String(chunksVal);
     document.getElementById('render-times').value = String(detail.times || calc.times || 1);
+    _computeMtPopupState.fused = calc.execution_method === 'fused_chunk_pipeline';
+    _computeMtPopupState.fusedThreads = _clampRenderMtThreads(calc.fused_threads || _computeMtPopupState.fusedThreads || 4);
+    _computeMtPopupState.autoHiresChunks = !!calc.auto_hires_chunks;
+    _computeMtPopupState.paramGenThreads = _clampRenderMtThreads(calc.param_gen_threads || _computeMtPopupState.paramGenThreads || 4);
+    _computeMtPopupState.coeffgenThreads = _clampRenderMtThreads(calc.coeffgen_threads || _computeMtPopupState.coeffgenThreads || 4);
+    _computeMtPopupState.loresParamGenThreads = _clampRenderMtThreads(calc.lores_param_gen_threads || _computeMtPopupState.loresParamGenThreads || 1);
+    _computeMtPopupState.loresCoeffgenThreads = _clampRenderMtThreads(calc.lores_coeffgen_threads || _computeMtPopupState.loresCoeffgenThreads || 1);
+    if (calc.probe_degree && calc.probe_n_coeffs) {
+        _computeMtPopupState.probe = {
+            degree: Number(calc.probe_degree) || 0,
+            n_coeffs: Number(calc.probe_n_coeffs) || 0,
+            probe_signature: calc.probe_signature || '',
+            fused_estimate: calc.min_safe_chunks ? {
+                min_safe_chunks: Number(calc.min_safe_chunks) || 0,
+                safe_chunk_limit_reason: calc.safe_chunk_limit_reason || '',
+                params_bytes: 0,
+                coeff_bytes: 0,
+                roots_bytes: 0,
+                estimated_peak_bytes: 0,
+                estimated_tmp_peak_bytes: 0,
+            } : null,
+        };
+        _computeMtPopupState.probeError = '';
+    }
 
     const functionName = pipeline.function || calc.function || '';
     if (functionName) {
@@ -3261,7 +3307,7 @@ function _summarizeLambdaBody(body) {
     push('task_prefix', body.task_prefix);
     if (body.chunk_idx != null) push('chunk', body.chunk_idx);
     if (body.tile_idx != null) push('tile', body.tile_idx);
-    if (body.stripe_idx != null) push('stripe', body.stripe_idx);
+    if (body.chunk_idx == null && body.stripe_idx != null) push('chunk', body.stripe_idx);
     push('function', body.function);
     push('metric', body.metric);
     push('solver', body.solver);
@@ -4213,10 +4259,17 @@ let _renderMtPopupState = {
 };
 let _computeMtPopupState = {
     open: false,
+    fused: false,
+    fusedThreads: 4,
+    autoHiresChunks: false,
     paramGenThreads: 4,
     coeffgenThreads: 4,
     loresParamGenThreads: 1,
     loresCoeffgenThreads: 1,
+    probe: null,
+    probeError: '',
+    probeLoading: false,
+    probeSignature: '',
 };
 let _generateFromPalettePopupState = {
     open: false,
@@ -6064,10 +6117,17 @@ function openRenderMtPopup() {
 function _closeComputeMtPopup() {
     _computeMtPopupState = {
         open: false,
+        fused: !!_computeMtPopupState.fused,
+        fusedThreads: _clampRenderMtThreads(_computeMtPopupState.fusedThreads || 4),
+        autoHiresChunks: !!_computeMtPopupState.autoHiresChunks,
         paramGenThreads: _clampRenderMtThreads(_computeMtPopupState.paramGenThreads),
         coeffgenThreads: _clampRenderMtThreads(_computeMtPopupState.coeffgenThreads),
         loresParamGenThreads: _clampRenderMtThreads(_computeMtPopupState.loresParamGenThreads),
         loresCoeffgenThreads: _clampRenderMtThreads(_computeMtPopupState.loresCoeffgenThreads),
+        probe: _computeMtPopupState.probe || null,
+        probeError: _computeMtPopupState.probeError || '',
+        probeLoading: false,
+        probeSignature: _computeMtPopupState.probeSignature || '',
     };
     const overlay = document.getElementById('compute-mt-popup-overlay');
     if (overlay) {
@@ -6079,47 +6139,136 @@ function _closeComputeMtPopup() {
 function _renderComputeMtPopup() {
     const overlay = document.getElementById('compute-mt-popup-overlay');
     const summaryEl = document.getElementById('compute-mt-popup-summary');
+    const sizingEl = document.getElementById('compute-mt-sizing-summary');
+    const fusedEnabledEl = document.getElementById('compute-mt-fused-enabled');
+    const fusedThreadsEl = document.getElementById('compute-mt-fused-threads');
+    const autoChunksEl = document.getElementById('compute-mt-auto-hires-chunks');
     const paramThreadsEl = document.getElementById('compute-mt-param-gen-threads');
     const coeffThreadsEl = document.getElementById('compute-mt-coeffgen-threads');
     const loresThreadsEl = document.getElementById('compute-mt-lores-param-gen-threads');
     const loresCoeffThreadsEl = document.getElementById('compute-mt-lores-coeffgen-threads');
     const runBtn = document.getElementById('compute-mt-popup-run');
-    if (!overlay || !summaryEl || !paramThreadsEl || !coeffThreadsEl || !loresThreadsEl || !loresCoeffThreadsEl) return;
+    if (!overlay || !summaryEl || !sizingEl || !fusedEnabledEl || !fusedThreadsEl || !autoChunksEl || !paramThreadsEl || !coeffThreadsEl || !loresThreadsEl || !loresCoeffThreadsEl) return;
     if (!_computeMtPopupState.open) {
         _closeComputeMtPopup();
         return;
     }
+    const fused = !!_computeMtPopupState.fused;
+    const fusedThreads = _clampRenderMtThreads(_computeMtPopupState.fusedThreads || 4);
     const paramGenThreads = _clampRenderMtThreads(_computeMtPopupState.paramGenThreads);
     const coeffgenThreads = _clampRenderMtThreads(_computeMtPopupState.coeffgenThreads);
     const loresParamGenThreads = _clampRenderMtThreads(_computeMtPopupState.loresParamGenThreads);
     const loresCoeffgenThreads = _clampRenderMtThreads(_computeMtPopupState.loresCoeffgenThreads);
+    _computeMtPopupState.fused = fused;
+    _computeMtPopupState.fusedThreads = fusedThreads;
     _computeMtPopupState.paramGenThreads = paramGenThreads;
     _computeMtPopupState.coeffgenThreads = coeffgenThreads;
     _computeMtPopupState.loresParamGenThreads = loresParamGenThreads;
     _computeMtPopupState.loresCoeffgenThreads = loresCoeffgenThreads;
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
+    fusedEnabledEl.checked = fused;
+    fusedThreadsEl.value = String(fusedThreads);
+    autoChunksEl.checked = !!_computeMtPopupState.autoHiresChunks;
     paramThreadsEl.value = String(paramGenThreads);
     coeffThreadsEl.value = String(coeffgenThreads);
     loresThreadsEl.value = String(loresParamGenThreads);
     loresCoeffThreadsEl.value = String(loresCoeffgenThreads);
+    paramThreadsEl.disabled = fused;
+    coeffThreadsEl.disabled = fused;
     const funcName = document.getElementById('render-function')?.value || '?';
     const n = parseInt(document.getElementById('render-n')?.value, 10) || 0;
     const nChunks = Math.max(1, parseInt(document.getElementById('render-stripes')?.value, 10) || 10);
     const times = Math.max(1, parseInt(document.getElementById('render-times')?.value, 10) || 1);
-    summaryEl.textContent = `Function: ${funcName} • N=${n || '?'} • chunks=${nChunks} • times=${times}`;
-    if (runBtn) runBtn.disabled = !!document.getElementById('btn-calculate-mt')?.disabled;
+    summaryEl.textContent = `Function: ${funcName} • N=${n || '?'} • chunks=${nChunks} • times=${times} • method=${fused ? 'fused' : 'classic'}`;
+    if (_computeMtPopupState.probeLoading) {
+        sizingEl.textContent = 'Probe: loading...';
+    } else if (_computeMtPopupState.probeError) {
+        sizingEl.textContent = `Probe failed: ${_computeMtPopupState.probeError}`;
+    } else if (_computeMtPopupState.probe && _computeMtPopupState.probe.fused_estimate) {
+        const probe = _computeMtPopupState.probe;
+        const est = probe.fused_estimate;
+        sizingEl.textContent =
+            `Probe: degree=${probe.degree}, n_coeffs=${probe.n_coeffs}, min safe chunks=${est.min_safe_chunks}, ` +
+            `params=${(est.params_bytes/1e6).toFixed(1)}MB, coeff=${(est.coeff_bytes/1e6).toFixed(1)}MB, ` +
+            `roots=${(est.roots_bytes/1e6).toFixed(1)}MB, peak=${(est.estimated_peak_bytes/1e6).toFixed(1)}MB, ` +
+            `/tmp=${(est.estimated_tmp_peak_bytes/1e6).toFixed(1)}MB, limit=${est.safe_chunk_limit_reason}`;
+        const chunksInput = document.getElementById('render-stripes');
+        if (chunksInput) chunksInput.min = String(est.min_safe_chunks);
+    } else if (_computeMtPopupState.probe) {
+        sizingEl.textContent = `Probe: degree=${_computeMtPopupState.probe.degree}, n_coeffs=${_computeMtPopupState.probe.n_coeffs}`;
+    } else {
+        sizingEl.textContent = 'Probe not run yet.';
+    }
+    if (runBtn) {
+        runBtn.disabled = !!document.getElementById('btn-calculate-mt')?.disabled || (fused && (_computeMtPopupState.probeLoading || !_computeMtPopupState.probe || !_computeMtPopupState.probe.fused_estimate));
+    }
 }
 
-function openComputeMtPopup() {
+async function _refreshComputeMtProbe() {
+    if (!_computeMtPopupState.open) return;
+    const funcName = document.getElementById('render-function')?.value || '';
+    const n = Math.max(1, parseInt(document.getElementById('render-n')?.value, 10) || 0);
+    const nChunks = Math.max(1, parseInt(document.getElementById('render-stripes')?.value, 10) || 10);
+    const times = Math.max(1, parseInt(document.getElementById('render-times')?.value, 10) || 1);
+    const paramTransforms = _serializeParamTransforms();
+    const coeffTransforms = _serializeCoeffTransforms();
+    const cfpv = _cfpv.length > 0 ? [..._cfpv] : [];
+    const fusedThreads = _clampRenderMtThreads(_computeMtPopupState.fusedThreads || 4);
+    const probeSignature = JSON.stringify([funcName, paramTransforms, coeffTransforms, cfpv, n, times, nChunks, fusedThreads, !!_computeMtPopupState.autoHiresChunks]);
+    if (_computeMtPopupState.probeSignature === probeSignature && (_computeMtPopupState.probe || _computeMtPopupState.probeError)) {
+        _renderComputeMtPopup();
+        return;
+    }
+    _computeMtPopupState.probeSignature = probeSignature;
+    _computeMtPopupState.probeLoading = true;
+    _computeMtPopupState.probeError = '';
+    _renderComputeMtPopup();
+    try {
+        const probe = await lambdaPost('coeffgen', {
+            phase: 'degree_probe',
+            function: funcName,
+            N: n,
+            times,
+            n_chunks: nChunks,
+            solver_mode: 'aberth_mt',
+            fused_threads: fusedThreads,
+            auto_hires_chunks: !!_computeMtPopupState.autoHiresChunks,
+            execution_method: 'fused_chunk_pipeline',
+            param_transforms: paramTransforms,
+            coeff_transforms: coeffTransforms,
+            cfpv,
+        });
+        if (!probe || !probe.probe_stable) {
+            throw new Error('unstable degree probe');
+        }
+        _computeMtPopupState.probe = probe;
+    } catch (e) {
+        _computeMtPopupState.probe = null;
+        _computeMtPopupState.probeError = e.message || String(e);
+    } finally {
+        _computeMtPopupState.probeLoading = false;
+        _renderComputeMtPopup();
+    }
+}
+
+async function openComputeMtPopup() {
     _computeMtPopupState = {
         open: true,
+        fused: !!_computeMtPopupState.fused,
+        fusedThreads: _clampRenderMtThreads(_computeMtPopupState.fusedThreads || 4),
+        autoHiresChunks: !!_computeMtPopupState.autoHiresChunks,
         paramGenThreads: _clampRenderMtThreads(_computeMtPopupState.paramGenThreads || 4),
         coeffgenThreads: _clampRenderMtThreads(_computeMtPopupState.coeffgenThreads || 4),
         loresParamGenThreads: _clampRenderMtThreads(_computeMtPopupState.loresParamGenThreads || 1),
         loresCoeffgenThreads: _clampRenderMtThreads(_computeMtPopupState.loresCoeffgenThreads || 1),
+        probe: _computeMtPopupState.probe || null,
+        probeError: '',
+        probeLoading: false,
+        probeSignature: '',
     };
     _renderComputeMtPopup();
+    _refreshComputeMtProbe();
     const inputEl = document.getElementById('compute-mt-param-gen-threads');
     if (inputEl && typeof inputEl.focus === 'function') inputEl.focus();
 }
@@ -6808,6 +6957,9 @@ function _initComputeMtPopup() {
     const closeBtn = document.getElementById('compute-mt-popup-close');
     const cancelBtn = document.getElementById('compute-mt-popup-cancel');
     const runBtn = document.getElementById('compute-mt-popup-run');
+    const fusedEnabledEl = document.getElementById('compute-mt-fused-enabled');
+    const fusedThreadsEl = document.getElementById('compute-mt-fused-threads');
+    const autoChunksEl = document.getElementById('compute-mt-auto-hires-chunks');
     const paramThreadsEl = document.getElementById('compute-mt-param-gen-threads');
     const coeffThreadsEl = document.getElementById('compute-mt-coeffgen-threads');
     const loresThreadsEl = document.getElementById('compute-mt-lores-param-gen-threads');
@@ -6819,6 +6971,30 @@ function _initComputeMtPopup() {
     }
     if (closeBtn) closeBtn.addEventListener('click', _closeComputeMtPopup);
     if (cancelBtn) cancelBtn.addEventListener('click', _closeComputeMtPopup);
+    if (fusedEnabledEl) {
+        fusedEnabledEl.addEventListener('change', (ev) => {
+            _computeMtPopupState.fused = !!ev.target.checked;
+            _renderComputeMtPopup();
+        });
+    }
+    if (fusedThreadsEl) {
+        fusedThreadsEl.addEventListener('input', (ev) => {
+            _computeMtPopupState.fusedThreads = _clampRenderMtThreads(ev.target.value);
+            _computeMtPopupState.probe = null;
+            _computeMtPopupState.probeError = '';
+            _renderComputeMtPopup();
+            _refreshComputeMtProbe();
+        });
+    }
+    if (autoChunksEl) {
+        autoChunksEl.addEventListener('change', (ev) => {
+            _computeMtPopupState.autoHiresChunks = !!ev.target.checked;
+            _computeMtPopupState.probe = null;
+            _computeMtPopupState.probeError = '';
+            _renderComputeMtPopup();
+            _refreshComputeMtProbe();
+        });
+    }
     if (paramThreadsEl) {
         paramThreadsEl.addEventListener('input', (ev) => {
             _computeMtPopupState.paramGenThreads = _clampRenderMtThreads(ev.target.value);
@@ -6849,16 +7025,33 @@ function _initComputeMtPopup() {
             try {
                 runBtn.disabled = true;
                 runBtn.textContent = 'Executing...';
+                const fused = !!document.getElementById('compute-mt-fused-enabled').checked;
+                const fusedThreads = _clampRenderMtThreads(document.getElementById('compute-mt-fused-threads').value);
+                const autoHiresChunks = !!document.getElementById('compute-mt-auto-hires-chunks').checked;
                 const paramGenThreads = _clampRenderMtThreads(document.getElementById('compute-mt-param-gen-threads').value);
                 const coeffgenThreads = _clampRenderMtThreads(document.getElementById('compute-mt-coeffgen-threads').value);
                 const loresParamGenThreads = _clampRenderMtThreads(document.getElementById('compute-mt-lores-param-gen-threads').value);
                 const loresCoeffgenThreads = _clampRenderMtThreads(document.getElementById('compute-mt-lores-coeffgen-threads').value);
+                if (fused && (!_computeMtPopupState.probe || !_computeMtPopupState.probe.fused_estimate)) {
+                    await _refreshComputeMtProbe();
+                }
+                if (fused && (!_computeMtPopupState.probe || !_computeMtPopupState.probe.fused_estimate)) {
+                    throw new Error(_computeMtPopupState.probeError || 'fused sizing unavailable');
+                }
                 _computeMtPopupState.paramGenThreads = paramGenThreads;
                 _computeMtPopupState.coeffgenThreads = coeffgenThreads;
                 _computeMtPopupState.loresParamGenThreads = loresParamGenThreads;
                 _computeMtPopupState.loresCoeffgenThreads = loresCoeffgenThreads;
+                _computeMtPopupState.fused = fused;
+                _computeMtPopupState.fusedThreads = fusedThreads;
+                _computeMtPopupState.autoHiresChunks = autoHiresChunks;
+                if (fused && autoHiresChunks) {
+                    const safeChunks = Number(_computeMtPopupState.probe?.fused_estimate?.min_safe_chunks) || 1;
+                    const chunksEl = document.getElementById('render-stripes');
+                    if (chunksEl) chunksEl.value = String(safeChunks);
+                }
                 _closeComputeMtPopup();
-                await runCalculateWithSolver('aberth_mt', { paramGenThreads, coeffgenThreads, loresParamGenThreads, loresCoeffgenThreads });
+                await runCalculateWithSolver('aberth_mt', { fused, fusedThreads, autoHiresChunks, paramGenThreads, coeffgenThreads, loresParamGenThreads, loresCoeffgenThreads });
             } finally {
                 runBtn.disabled = false;
                 runBtn.textContent = btnText;
@@ -6874,16 +7067,22 @@ function _initComputeMtPopup() {
         }
         if (ev.key === 'Enter') {
             ev.preventDefault();
+            const fused = !!document.getElementById('compute-mt-fused-enabled').checked;
+            const fusedThreads = _clampRenderMtThreads(document.getElementById('compute-mt-fused-threads').value);
+            const autoHiresChunks = !!document.getElementById('compute-mt-auto-hires-chunks').checked;
             const paramGenThreads = _clampRenderMtThreads(document.getElementById('compute-mt-param-gen-threads').value);
             const coeffgenThreads = _clampRenderMtThreads(document.getElementById('compute-mt-coeffgen-threads').value);
             const loresParamGenThreads = _clampRenderMtThreads(document.getElementById('compute-mt-lores-param-gen-threads').value);
             const loresCoeffgenThreads = _clampRenderMtThreads(document.getElementById('compute-mt-lores-coeffgen-threads').value);
+            _computeMtPopupState.fused = fused;
+            _computeMtPopupState.fusedThreads = fusedThreads;
+            _computeMtPopupState.autoHiresChunks = autoHiresChunks;
             _computeMtPopupState.paramGenThreads = paramGenThreads;
             _computeMtPopupState.coeffgenThreads = coeffgenThreads;
             _computeMtPopupState.loresParamGenThreads = loresParamGenThreads;
             _computeMtPopupState.loresCoeffgenThreads = loresCoeffgenThreads;
             _closeComputeMtPopup();
-            runCalculateWithSolver('aberth_mt', { paramGenThreads, coeffgenThreads, loresParamGenThreads, loresCoeffgenThreads });
+            runCalculateWithSolver('aberth_mt', { fused, fusedThreads, autoHiresChunks, paramGenThreads, coeffgenThreads, loresParamGenThreads, loresCoeffgenThreads });
         }
     });
 }
@@ -12799,7 +12998,7 @@ async function runParamDebug() {
 }
 
 async function runCalculate() { return runCalculateWithSolver('aberth'); }
-async function runCalculateAEMT() { openComputeMtPopup(); }
+async function runCalculateAEMT() { return openComputeMtPopup(); }
 async function runCalculateCM() { return runCalculateWithSolver('companion_matrix'); }
 function _aggregateComputeParamGenPerf(results) {
     const row = Array.isArray(results) && results.length ? results[0] : null;
@@ -12850,7 +13049,39 @@ function _aggregateComputeSolvePerf(results) {
     }, { tasks: 0, compute_us: 0, bin_size: 0, n_t: 0, avg_iterations_weighted: 0, skipped_overflow: 0 });
 }
 
+function _aggregateComputeFusedPerf(results) {
+    const rows = Array.isArray(results) ? results.filter(r => r && (r.solve_us != null || r.param_gen_us != null || r.coeffs_size != null)) : [];
+    if (!rows.length) return null;
+    return rows.reduce((acc, row) => {
+        const nT = Number(row.n_t) || 0;
+        acc.tasks += 1;
+        acc.param_gen_us += Number(row.param_gen_us) || 0;
+        acc.coeffgen_us += Number(row.coeffgen_us) || 0;
+        acc.solve_us += Number(row.solve_us) || 0;
+        acc.compute_us += Number(row.compute_us) || 0;
+        acc.upload_params_us += Number(row.upload_params_us) || 0;
+        acc.upload_coeffs_us += Number(row.upload_coeffs_us) || 0;
+        acc.upload_roots_us += Number(row.upload_roots_us) || 0;
+        acc.params_size += Number(row.params_size) || 0;
+        acc.coeffs_size += Number(row.coeffs_size) || 0;
+        acc.bin_size += Number(row.bin_size) || 0;
+        acc.n_t += nT;
+        acc.avg_iterations_weighted += (Number(row.avg_iterations) || 0) * nT;
+        acc.fused_threads = Math.max(acc.fused_threads, Number(row.fused_threads) || 0);
+        return acc;
+    }, { tasks: 0, param_gen_us: 0, coeffgen_us: 0, solve_us: 0, compute_us: 0, upload_params_us: 0, upload_coeffs_us: 0, upload_roots_us: 0, params_size: 0, coeffs_size: 0, bin_size: 0, n_t: 0, avg_iterations_weighted: 0, fused_threads: 0 });
+}
+
 function _computePhasePerfSummary(phase, results, wallMs) {
+    if (phase === 'degree_probe') {
+        const row = Array.isArray(results) && results.length ? results[0] : null;
+        if (!row) return wallMs != null ? `wall=${_fmtSecondsMs(wallMs)}` : '';
+        let msg = `wall=${_fmtSecondsMs(wallMs)} total=probe ${_fmtSecondsUs(Number(row.elapsed_us) || 0)}`;
+        if (Number(row.coeffgen_us) > 0) msg += ` · coeffgen=${_fmtSecondsUs(Number(row.coeffgen_us) || 0)}`;
+        if (row.degree != null) msg += ` · degree=${Number(row.degree) || 0}`;
+        if (row.n_coeffs != null) msg += ` · n_coeffs=${Number(row.n_coeffs) || 0}`;
+        return msg;
+    }
     if (phase === 'param_gen' || phase === 'lores_param_gen') {
         const perf = _aggregateComputeParamGenPerf(results);
         if (!perf) return wallMs != null ? `wall=${_fmtSecondsMs(wallMs)}` : '';
@@ -12885,6 +13116,17 @@ function _computePhasePerfSummary(phase, results, wallMs) {
         let msg = `wall=${_fmtSecondsMs(wallMs)} total=solve ${_fmtSecondsUs(perf.compute_us)} · bin ${(perf.bin_size/1e6).toFixed(1)}MB`;
         if (perf.n_t > 0) msg += ` · avg_iters=${(perf.avg_iterations_weighted / perf.n_t).toFixed(1)}`;
         if (perf.skipped_overflow > 0) msg += ` · skipped=${perf.skipped_overflow}`;
+        return msg;
+    }
+    if (phase === 'compute_chunk_fused') {
+        const perf = _aggregateComputeFusedPerf(results);
+        if (!perf) return wallMs != null ? `wall=${_fmtSecondsMs(wallMs)}` : '';
+        let msg = `wall=${_fmtSecondsMs(wallMs)} total=param ${_fmtSecondsUs(perf.param_gen_us)} + coeff ${_fmtSecondsUs(perf.coeffgen_us)} + solve ${_fmtSecondsUs(perf.solve_us)}`;
+        msg += ` · up ${_fmtSecondsUs(perf.upload_params_us + perf.upload_coeffs_us + perf.upload_roots_us)}`;
+        msg += ` · params ${(perf.params_size/1e6).toFixed(1)}MB · coeff ${(perf.coeffs_size/1e6).toFixed(1)}MB · bin ${(perf.bin_size/1e6).toFixed(1)}MB`;
+        if (perf.fused_threads > 0) msg += ` · threads=${perf.fused_threads}`;
+        if (perf.tasks > 1) msg += ` · chunks=${perf.tasks}`;
+        if (perf.n_t > 0) msg += ` · avg_iters=${(perf.avg_iterations_weighted / perf.n_t).toFixed(1)}`;
         return msg;
     }
     return wallMs != null ? `wall=${_fmtSecondsMs(wallMs)}` : '';
@@ -12934,6 +13176,11 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
     const hasCoeffgenThreadOverride = solverMode === 'aberth_mt' && computeMtOptions && computeMtOptions.coeffgenThreads != null;
     const hasLoresParamGenThreadOverride = solverMode === 'aberth_mt' && computeMtOptions && computeMtOptions.loresParamGenThreads != null;
     const hasLoresCoeffgenThreadOverride = solverMode === 'aberth_mt' && computeMtOptions && computeMtOptions.loresCoeffgenThreads != null;
+    const fused = solverMode === 'aberth_mt' && !!(computeMtOptions && computeMtOptions.fused);
+    const autoHiresChunks = solverMode === 'aberth_mt' && !!(computeMtOptions && computeMtOptions.autoHiresChunks);
+    const fusedThreads = solverMode === 'aberth_mt' && computeMtOptions && computeMtOptions.fusedThreads != null
+        ? _clampRenderMtThreads(computeMtOptions.fusedThreads)
+        : null;
     const paramGenThreads = hasParamGenThreadOverride ? _clampRenderMtThreads(computeMtOptions.paramGenThreads) : null;
     const coeffgenThreads = hasCoeffgenThreadOverride ? _clampRenderMtThreads(computeMtOptions.coeffgenThreads) : null;
     const loresParamGenThreads = hasLoresParamGenThreadOverride ? _clampRenderMtThreads(computeMtOptions.loresParamGenThreads) : null;
@@ -12956,30 +13203,15 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
 
     const btn = document.getElementById(_solverButtonId(solverMode));
 
-    // Pre-flight check: estimate total coeffgen size
-    // Use MAX_COEFFS (256, from sweep_cli.c) as worst-case — actual degree comes from runtime probe
-    {
-        const nCoeffsEst = 256;
-        const nSteps = n * n * times;
-        const bytesPerChunk = Math.ceil(nSteps / nChunks) * nCoeffsEst * 2 * 4;
-        const maxSafe = 10 * 1024 * 1024 * 1024 * 0.8;
-        if (bytesPerChunk > maxSafe) {
-            const totalBytes = nSteps * nCoeffsEst * 2 * 4;
-            const minChunks = Math.ceil(totalBytes / maxSafe);
-            const sizeMB = (bytesPerChunk / 1e6).toFixed(0);
-            alert(`Coeffgen chunk too large (worst case): ~${sizeMB} MB per chunk.\n\n` +
-                  `Suggested minimum Chunks: ${Math.max(minChunks, 10)}\n` +
-                  `(N=${n}, times=${times})`);
-            return;
-        }
-    }
-
     btn.disabled = true;
     document.getElementById('compute-status').textContent = `Computing ${pipelineStr} N=${n}...`;
     document.getElementById('compute-status').className = 'status';
     const solverTag = _solverTag(solverMode);
     let computeMsg = `Compute-${solverTag}: ${pipelineStr} N=${n}, chunks=${nChunks}`;
     if (times > 1) computeMsg += `, times=${times}`;
+    if (solverMode === 'aberth_mt') computeMsg += `, method=${fused ? 'fused' : 'classic'}`;
+    if (fusedThreads != null) computeMsg += `, fused threads=${fusedThreads}`;
+    if (autoHiresChunks) computeMsg += `, auto chunks=on`;
     if (paramGenThreads != null) computeMsg += `, param threads=${paramGenThreads}`;
     if (coeffgenThreads != null) computeMsg += `, coeffgen threads=${coeffgenThreads}`;
     if (loresParamGenThreads != null) computeMsg += `, lores param threads=${loresParamGenThreads}`;
@@ -13004,6 +13236,11 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
                 cfpv: cfpv || [],
             },
         };
+        if (solverMode === 'aberth_mt') {
+            orchPayload.params.execution_method = fused ? 'fused_chunk_pipeline' : 'classic_chunk_pipeline';
+            orchPayload.params.auto_hires_chunks = !!autoHiresChunks;
+            if (fusedThreads != null) orchPayload.params.fused_threads = fusedThreads;
+        }
         if (paramGenThreads != null) orchPayload.params.param_gen_threads = paramGenThreads;
         if (coeffgenThreads != null) orchPayload.params.coeffgen_threads = coeffgenThreads;
         if (loresParamGenThreads != null) orchPayload.params.lores_param_gen_threads = loresParamGenThreads;
@@ -13139,7 +13376,7 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
                 _setRenderResultsJob(jobId);
 
                 document.getElementById('compute-status').textContent =
-                    `Computed | ${calc.n_chunks || chunks.length || nChunks} chunks | deg ${calc.degree || '?'} | total ${_fmtSecondsMs(totalWallMs || 0)}`;
+                    `Computed | ${calc.n_chunks || chunks.length || nChunks} chunks | deg ${calc.degree || '?'} | ${calc.execution_method === 'fused_chunk_pipeline' ? 'fused' : 'classic'} | total ${_fmtSecondsMs(totalWallMs || 0)}`;
                 document.getElementById('compute-status').className = 'status ok';
 
                 const lines = [];

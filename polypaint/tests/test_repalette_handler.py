@@ -161,6 +161,8 @@ class TestRepaletteHandler(unittest.TestCase):
         self.assertEqual(meta["data_layout"], "chunk_all_pass_v1")
         self.assertEqual(meta["chunk_bins_prefix"], "renders/j/palettes/pal_new/chunks/palette_bins_chunk_")
         self.assertEqual(meta["total_solves"], 6)
+        image_meta = uploads["renders/j/palettes/pal_new/image.jpeg"]["extra"]["Metadata"]
+        self.assertEqual(image_meta, {"width": "2", "height": "2", "palette": "tri_redgold"})
 
         statuses = [call.args[2] for call in mock_report.call_args_list]
         self.assertEqual(statuses, ["started", "copying", "copying", "rendering", "done"])
@@ -210,7 +212,10 @@ class TestRepaletteHandler(unittest.TestCase):
             store[Key] = store[CopySource["Key"]]
 
         def upload_fileobj(fileobj, bucket, key, ExtraArgs=None):
-            uploads[key] = fileobj.read()
+            uploads[key] = {
+                "body": fileobj.read(),
+                "extra": ExtraArgs or {},
+            }
 
         def put_object(Bucket=None, Key=None, Body=None, ContentType=None):
             payload = Body.encode() if isinstance(Body, str) else Body
@@ -257,6 +262,8 @@ class TestRepaletteHandler(unittest.TestCase):
         self.assertIn("renders/j/palettes/pal_new/score_proximity.bin", store)
         self.assertIn("renders/j/palettes/pal_new/image.jpeg", uploads)
         self.assertIn("renders/j/palettes/pal_new/preview.png", uploads)
+        image_meta = uploads["renders/j/palettes/pal_new/image.jpeg"]["extra"]["Metadata"]
+        self.assertEqual(image_meta, {"width": "2", "height": "2", "palette": "reef"})
 
         meta = json.loads(put_objects["renders/j/palettes/pal_new/meta.json"])
         self.assertFalse(meta["render_reusable"])

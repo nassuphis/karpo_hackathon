@@ -4988,7 +4988,7 @@ async function testPipeline(name, call) {
             console.error('FATAL: compute launch should not call coeffgen/sweep directly');
             process.exit(1);
         }
-        if (!status.includes('Computed | 4 chunks | deg 5 | total 5.0s')) {
+        if (!status.includes('Computed | 4 chunks | deg 5 |') || !status.includes('total 5.0s')) {
             console.error('FATAL: compute status should reflect orchestrated completion, got ' + status);
             process.exit(1);
         }
@@ -5094,6 +5094,111 @@ async function testPipeline(name, call) {
             process.exit(1);
         }
         console.log('  12d2a Calculate-AE-MT popup + MT dispatch knobs: OK');
+    }
+
+    // 12d2aa: fused compute dispatch includes execution method and fused controls
+    {
+        vm.runInContext(`
+            var _computeFusedOrchDispatched = null;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'coeffgen' && body.phase === 'degree_probe') {
+                    return {
+                        probe_stable: true,
+                        degree: 7,
+                        n_coeffs: 8,
+                        probe_signature: 'sig-1',
+                        fused_estimate: {
+                            min_safe_chunks: 6,
+                            actual_chunks: 6,
+                            params_bytes: 160,
+                            coeff_bytes: 640,
+                            roots_bytes: 560,
+                            estimated_peak_bytes: 4096,
+                            estimated_tmp_peak_bytes: 2048,
+                            safe_chunk_limit_reason: 'memory'
+                        }
+                    };
+                }
+                if (name === 'dispatch' && body.target === 'compute_orchestrator') {
+                    _computeFusedOrchDispatched = body.jobs[0];
+                    return { fired: 1, errors: [] };
+                }
+                if (name === 'storage' && path === '/check-status') {
+                    return {
+                        errors: 0,
+                        done: 1,
+                        complete: true,
+                        results: [{
+                            phase: 'done',
+                            phase_label: 'Done',
+                            solver_mode: 'aberth_mt',
+                            run_started_at_ms: 1000,
+                            updated_at_ms: 6000
+                        }]
+                    };
+                }
+                if (name === 'storage' && path === '/detail') {
+                    return {
+                        calc: {
+                            N: 64,
+                            degree: 7,
+                            n_chunks: 6,
+                            execution_method: 'fused_chunk_pipeline',
+                            total_coeffs_size: 1600,
+                            lores: { bin_size: 512 },
+                            chunks: [
+                                { bin_size: 80, compute_us: 1000, n_t: 10, avg_iterations: 3.0 }
+                            ]
+                        }
+                    };
+                }
+                return {};
+            };
+        `, ctx);
+        await vm.runInContext(`
+            (async()=>{
+                document.getElementById('render-function').value = 'g1';
+                document.getElementById('render-n').value = '64';
+                document.getElementById('render-stripes').value = '4';
+                document.getElementById('render-times').value = '1';
+                _ptChain = [];
+                _ctChain = [];
+                _cfpv = [];
+                await openComputeMtPopup();
+                _computeMtPopupState.fused = true;
+                _computeMtPopupState.fusedThreads = 6;
+                _computeMtPopupState.autoHiresChunks = true;
+                _computeMtPopupState.probe = {
+                    degree: 7,
+                    n_coeffs: 8,
+                    probe_signature: 'sig-1',
+                    fused_estimate: {
+                        min_safe_chunks: 6,
+                        actual_chunks: 6,
+                        params_bytes: 160,
+                        coeff_bytes: 640,
+                        roots_bytes: 560,
+                        estimated_peak_bytes: 4096,
+                        estimated_tmp_peak_bytes: 2048,
+                        safe_chunk_limit_reason: 'memory'
+                    }
+                };
+                _renderComputeMtPopup();
+                await new Promise(r => setTimeout(r, 0));
+                await runCalculateWithSolver('aberth_mt', { fused: true, fusedThreads: 6, autoHiresChunks: true, paramGenThreads: 7, coeffgenThreads: 5, loresParamGenThreads: 3, loresCoeffgenThreads: 2 });
+            })()
+        `, ctx);
+        const orch = vm.runInContext('_computeFusedOrchDispatched', ctx);
+        if (!orch) { console.error('FATAL: fused AE-MT compute dispatch missing'); process.exit(1); }
+        if (orch.params.execution_method !== 'fused_chunk_pipeline' || Object.prototype.hasOwnProperty.call(orch.params, 'fused')) {
+            console.error('FATAL: fused AE-MT dispatch should select fused execution method, got ' + JSON.stringify(orch.params));
+            process.exit(1);
+        }
+        if (orch.params.fused_threads !== 6 || orch.params.auto_hires_chunks !== true) {
+            console.error('FATAL: fused AE-MT dispatch should forward fused controls, got ' + JSON.stringify(orch.params));
+            process.exit(1);
+        }
+        console.log('  12d2aa fused compute dispatch knobs: OK');
     }
 
     // 12d2b: param-gen phase summary shows threads and in-flight progress

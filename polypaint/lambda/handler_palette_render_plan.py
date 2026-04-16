@@ -11,9 +11,15 @@ import time
 
 import boto3
 
+from calc_chunks import (
+    build_chunk_items,
+    fallback_lores_coeffs_key as calc_fallback_lores_coeffs_key,
+    fallback_lores_params_key as calc_fallback_lores_params_key,
+    fallback_params_global_key,
+)
 from color_artifact_meta import load_color_artifact_head, parse_root_transforms
 from palette_names import VALID_PALETTE_NAMES
-from param_source import chunk_items_have_params, enrich_chunk_item_with_params, fallback_params_key
+from param_source import chunk_items_have_params
 from shared import BUCKET, parse_body, ok_response
 from solve_score_chain import (
     VALID_SOLVE_SCORE_METRICS,
@@ -256,49 +262,6 @@ def _scratch_matches(job_id, chain, metric, quantile, omega, omega_enabled, root
             return False, clip_key, bins_key
     return True, clip_key, bins_key
 
-
-def _build_chunk_items(calc, job_id):
-    chunks = list(calc.get("chunks", calc.get("stripes", [])) or [])
-    if not chunks:
-        raise RuntimeError("calc.json missing chunk metadata")
-    chunks.sort(key=lambda c: c.get("idx", c.get("chunk_idx", c.get("stripe_idx", 0))))
-    degree = int(calc["degree"])
-    n_coeffs = int(calc.get("n_coeffs", degree + 1) or (degree + 1))
-    record_bytes = degree * 2 * 4
-    chunk_items = []
-    step_start = 0
-    for raw in chunks:
-        idx = raw.get("idx", raw.get("chunk_idx", raw.get("stripe_idx")))
-        bin_key = raw.get("bin_key", raw.get("s3_key"))
-        step_count = raw.get("step_count", raw.get("n_t"))
-        if step_count is None:
-            bin_size = raw.get("bin_size")
-            if not bin_size:
-                raise RuntimeError(f"Chunk {idx} missing step_count/n_t/bin_size")
-            step_count = int(bin_size // record_bytes)
-        step_count = int(step_count)
-        if idx is None or not bin_key or step_count <= 0:
-            raise RuntimeError(f"Invalid chunk metadata: idx={idx} bin_key={bin_key!r} step_count={step_count}")
-        coeffs_keys = list(calc.get("coeffs_keys") or [])
-        coeffs_key = ""
-        if 0 <= int(idx) < len(coeffs_keys):
-            coeffs_key = str(coeffs_keys[int(idx)] or "").strip()
-        if not coeffs_key:
-            coeffs_key = f"renders/{job_id}/coeffs_{int(idx):04d}.bin"
-        chunk_items.append({
-            "chunk_idx": int(idx),
-            "bin_key": bin_key,
-            "coeffs_key": coeffs_key,
-            "step_start": step_start,
-            "step_count": step_count,
-            "bin_size": int(raw.get("bin_size")) if raw.get("bin_size") not in ("", None) else int(step_count) * record_bytes,
-            "coeffs_bin_size": int(step_count) * n_coeffs * 2 * 4,
-        })
-        enrich_chunk_item_with_params(chunk_items[-1], raw, calc, job_id)
-        step_start += step_count
-    return chunk_items
-
-
 def _base_extract_plan(
     job_id,
     run_id,
@@ -365,25 +328,15 @@ def _execution_params(raw_params):
 
 
 def _fallback_lores_coeffs_key(job_id, calc):
-    lores = calc.get("lores", {}) or {}
-    key = str(lores.get("coeffs_key") or "").strip()
-    if key:
-        return key
-    job = str(job_id or "").strip()
-    return f"renders/{job}/lores_coeffs.bin" if job else ""
+    return calc_fallback_lores_coeffs_key(job_id, calc)
 
 
 def _fallback_lores_params_key(job_id, calc):
-    lores = calc.get("lores", {}) or {}
-    key = str(lores.get("params_key") or "").strip()
-    if key:
-        return key
-    job = str(job_id or "").strip()
-    return f"renders/{job}/lores_params.bin" if job else ""
+    return calc_fallback_lores_params_key(job_id, calc)
 
 
 def _fallback_params_key(job_id, calc):
-    return fallback_params_key(job_id, calc)
+    return fallback_params_global_key(job_id, calc)
 
 
 def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
@@ -483,7 +436,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
     lores_bin_key = (calc.get("lores") or {}).get("bin_key", "")
     if not degree or not full_n or not lores_bin_key:
         raise RuntimeError(f"calc.json missing degree, N, or lores.bin_key for {job_id}")
-    chunk_items = _build_chunk_items(calc, job_id)
+    chunk_items = build_chunk_items(calc, job_id, require_chunks=True)
     pass0_steps = int(full_n) * int(full_n)
     if sum(int(item["step_count"]) for item in chunk_items) < pass0_steps:
         raise RuntimeError("calc.json chunk metadata is too small for pass-0 palette extraction")
@@ -634,7 +587,7 @@ def handler(event, context):
                 raise RuntimeError("Param-source solve score requires lores.params_key")
 
     pass0_steps = full_n * full_n
-    chunk_items = _build_chunk_items(calc, job_id)
+    chunk_items = build_chunk_items(calc, job_id, require_chunks=True)
     step_start = sum(int(item["step_count"]) for item in chunk_items)
 
     if step_start < pass0_steps:

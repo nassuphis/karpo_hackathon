@@ -13,6 +13,7 @@ import time
 
 import boto3
 
+from compute_fused import execution_method_from_params
 from shared import ok_response, parse_body, report_status
 
 sfn_client = boto3.client("stepfunctions", region_name=os.environ.get("AWS_REGION", "us-east-1"))
@@ -25,12 +26,19 @@ def handler(event, context):
     params = parse_body(event)
     job_id = params["job_id"]
     run_id = params["run_id"]
-    run_params = params.get("params", {})
+    run_params = dict(params.get("params", {}) or {})
     solver_mode = str(run_params.get("solver_mode", "aberth")).strip().lower()
     if solver_mode not in VALID_SOLVERS:
         raise RuntimeError(f"Invalid compute solver_mode: {solver_mode!r}")
     if not STATE_MACHINE_ARN:
         raise RuntimeError("COMPUTE_STATE_MACHINE_ARN is not configured")
+
+    if solver_mode == "aberth_mt":
+        execution_method = execution_method_from_params(run_params)
+    else:
+        execution_method = "classic_chunk_pipeline"
+    run_params.pop("fused", None)
+    run_params["execution_method"] = execution_method
 
     task_id = f"compute_run_{solver_mode}_{run_id}"
     execution_name = f"compute_{solver_mode}_{run_id}"

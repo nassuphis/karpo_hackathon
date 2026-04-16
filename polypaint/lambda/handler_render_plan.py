@@ -2,7 +2,7 @@
 Render plan Lambda — computes the workflow plan for Step Functions.
 
 Loads calc metadata, computes viewport, normalizes params, produces
-compact stripe/tile arrays and output keys. Does NOT dispatch workers
+compact chunk/tile arrays and output keys. Does NOT dispatch workers
 or poll for completion.
 
 Called once per render execution as the BuildPlan step.
@@ -15,6 +15,12 @@ from datetime import datetime, timezone
 
 import boto3
 
+from calc_chunks import (
+    build_chunk_items,
+    fallback_lores_coeffs_key as calc_fallback_lores_coeffs_key,
+    fallback_lores_params_key as calc_fallback_lores_params_key,
+    fallback_params_global_key,
+)
 from logical_sections import (
     DEFAULT_PALETTE_CHUNK_MEMORY_MB,
     DEFAULT_SOLVE_SCORE_MEMORY_MB,
@@ -25,7 +31,7 @@ from logical_sections import (
     validate_section_count,
 )
 from palette_names import VALID_PALETTE_NAMES
-from param_source import chunk_items_have_params, enrich_chunk_item_with_params, fallback_params_key
+from param_source import chunk_items_have_params
 from shared import BUCKET, parse_body, ok_response
 from solve_score_chain import (
     VALID_SOLVE_SCORE_METRICS,
@@ -49,89 +55,16 @@ MAX_PLAN_BYTES = 200 * 1024  # 200 KB — fail fast before hitting 256 KB SFN li
 DEFAULT_BACKGROUND_COLOR = "000000"
 DEFAULT_BACKGROUND_THRESHOLD = 4
 
+def _fallback_params_key(job_id, calc):
+    return fallback_params_global_key(job_id, calc)
+
 
 def _fallback_lores_coeffs_key(job_id, calc):
-    lores = calc.get("lores", {}) or {}
-    key = str(lores.get("coeffs_key") or "").strip()
-    if key:
-        return key
-    job = str(job_id or "").strip()
-    return f"renders/{job}/lores_coeffs.bin" if job else ""
+    return calc_fallback_lores_coeffs_key(job_id, calc)
 
 
 def _fallback_lores_params_key(job_id, calc):
-    lores = calc.get("lores", {}) or {}
-    key = str(lores.get("params_key") or "").strip()
-    if key:
-        return key
-    job = str(job_id or "").strip()
-    return f"renders/{job}/lores_params.bin" if job else ""
-
-
-def _fallback_params_key(job_id, calc):
-    return fallback_params_key(job_id, calc)
-
-
-def _chunk_coeffs_key(calc, job_id, chunk_idx):
-    coeffs_keys = list(calc.get("coeffs_keys") or [])
-    if 0 <= int(chunk_idx) < len(coeffs_keys):
-        key = str(coeffs_keys[int(chunk_idx)] or "").strip()
-        if key:
-            return key
-    return f"renders/{job_id}/coeffs_{int(chunk_idx):04d}.bin"
-
-
-def _build_chunk_items(calc, job_id):
-    chunks = list(calc.get("chunks", calc.get("stripes", [])) or [])
-    if chunks:
-        degree = int(calc.get("degree", 1) or 1)
-        n_coeffs = int(calc.get("n_coeffs", degree + 1) or (degree + 1))
-        record_bytes = degree * 2 * 4
-        chunk_items = []
-        step_start = 0
-        ordered_chunks = sorted(
-            chunks,
-            key=lambda raw: raw.get("idx", raw.get("chunk_idx", raw.get("stripe_idx", 0))),
-        )
-        for raw in ordered_chunks:
-            idx = raw.get("idx", raw.get("chunk_idx", raw.get("stripe_idx")))
-            bin_key = raw.get("bin_key", raw.get("s3_key"))
-            if idx is None or not bin_key:
-                raise RuntimeError(f"Invalid chunk metadata: idx={idx} bin_key={bin_key!r}")
-            item = {
-                "chunk_idx": int(idx),
-                "bin_key": str(bin_key),
-                "coeffs_key": _chunk_coeffs_key(calc, job_id, int(idx)),
-            }
-            bin_size = raw.get("bin_size")
-            step_count = raw.get("step_count", raw.get("n_t"))
-            if step_count in ("", None):
-                if bin_size not in ("", None):
-                    step_count = int(bin_size) // record_bytes
-            if step_count not in ("", None):
-                step_count = int(step_count)
-                if step_count <= 0:
-                    raise RuntimeError(f"Invalid chunk metadata: idx={idx} step_count={step_count}")
-                item["step_start"] = step_start
-                item["step_count"] = step_count
-                item["bin_size"] = int(bin_size) if bin_size not in ("", None) else int(step_count) * record_bytes
-                item["coeffs_bin_size"] = int(step_count) * n_coeffs * 2 * 4
-                enrich_chunk_item_with_params(item, raw, calc, job_id)
-                step_start += step_count
-            elif bin_size not in ("", None):
-                item["bin_size"] = int(bin_size)
-            chunk_items.append(item)
-        return chunk_items
-
-    n_chunks = calc.get("n_chunks", calc.get("n_stripes", 10))
-    return [
-        {
-            "chunk_idx": c,
-            "bin_key": f"renders/{job_id}/chunk_{c}.bin",
-            "coeffs_key": _chunk_coeffs_key(calc, job_id, c),
-        }
-        for c in range(n_chunks)
-    ]
+    return calc_fallback_lores_params_key(job_id, calc)
 
 
 def _raster_chunk_item_for_asl(item):
@@ -412,7 +345,7 @@ def handler(event, context):
     calc_n_coeffs = int(calc.get("n_coeffs", int(degree or 1) + 1) or (int(degree or 1) + 1))
     full_n = int(calc.get("N", calc.get("n1", 0)) or 0)
     times = int(calc.get("times", 1) or 1)
-    chunk_items = _build_chunk_items(calc, job_id)
+    chunk_items = build_chunk_items(calc, job_id)
     n_chunks = len(chunk_items)
     chunk_summary = summarize_chunk_items(chunk_items, degree, calc_n_coeffs)
 

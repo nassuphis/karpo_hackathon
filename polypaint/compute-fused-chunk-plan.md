@@ -25,12 +25,33 @@ Objective
 Reduce compute latency and orchestration overhead without changing the external
 artifact contract.
 
+Hard invariant:
+
+- for new jobs, `fused_chunk_pipeline` must emit the same external compute
+  contract as `classic_chunk_pipeline`
+- render, palette, solve-score, preview, and any other downstream consumer
+  must be able to consume fused outputs without branching on execution method
+- any fused-only information is additive metadata only
+
 This must be introduced as an A/B-comparable rollout:
 
 - the current compute pipeline and the fused pipeline both remain selectable
   from the UI while the fused path is validated
 - the user can run the same compute job through both methods and compare wall
   time, per-phase timings, and output contract
+
+The user-facing control should be simple:
+
+- add a `Fused` checkbox to `Compute -> Calculate-AE-MT`
+- unchecked:
+  - run `classic_chunk_pipeline`
+- checked:
+  - run `fused_chunk_pipeline`
+
+The backend/storage field should still remain explicit:
+
+- `execution_method = classic_chunk_pipeline`
+- `execution_method = fused_chunk_pipeline`
 
 The current full-res pipeline fans out by chunk three separate times, with S3
 handoff between stages. That creates avoidable cost in:
@@ -92,6 +113,10 @@ The important design choices are:
 
 The win comes mainly from removing cross-Lambda S3 handoff, not from doing
 everything in one in-memory buffer.
+
+For v1, the fused path is still a Python-orchestrated Lambda worker that
+reuses the existing native binaries in sequence. This is intentional. The
+storage contract stays stable; only execution shape changes.
 
 
 Current State
@@ -194,6 +219,28 @@ Probe outputs:
   - `params_size`
   - `coeffs_size`
 
+Probe robustness rule:
+
+- the probe must validate shape stability across more than one sample point
+- minimum acceptable check:
+  - run two small probe samples at distinct grid positions
+  - require identical `degree` and `n_coeffs`
+- if probe samples disagree, reject the fused path for that job and surface:
+  - `probe_stable = false`
+  - the conflicting shape values
+
+Probe / planner handshake:
+
+- add a dedicated probe action before fused planning
+- the probe returns:
+  - `probe_degree`
+  - `probe_n_coeffs`
+  - `probe_signature`
+  - `probe_stable`
+- the fused plan request consumes those exact fields
+- the server must revalidate the signature and rerun the probe if the request
+  omitted probe data or supplied stale probe data
+
 The probe result should be cached in compute metadata for the run so the popup
 and orchestrator use the same discovered values.
 
@@ -210,6 +257,13 @@ Flow:
 
 This replaces the current need to run full-res coeffgen before lores sizing,
 while still keeping lores honest to the real polynomial degree.
+
+For v1, lores sizing should reuse the current formula exactly:
+
+- `lores_n = min(N, max(5, ceil(sqrt(TARGET_PREVIEW_ROOTS / max(1, degree * times)))))`
+
+That keeps lores comparable to the current classic pipeline while only moving
+the discovery point earlier.
 
 ## 3. Safe hires chunk sizing
 
@@ -238,11 +292,19 @@ Outputs:
   - roots bytes
 - estimated peak bytes
 - sizing reason / budget breakdown
+- limiting floor:
+  - `memory`
+  - `/tmp`
+  - `timeout`
 
 The planner must reject any requested `n_chunks < min_safe_chunks`.
 
 The safe count calculation must be based on the worst stage inside the fused
 worker, not on an average across stages.
+
+Rule:
+
+- `min_safe_chunks = max(memory_floor_chunks, tmp_floor_chunks, timeout_floor_chunks)`
 
 ## 4. Fused hires chunk worker
 
@@ -332,6 +394,17 @@ Required additional fused fields:
 - `fused_threads`
 - `peak_estimated_bytes`
 - `execution_method`
+
+Recommended persisted metadata fields:
+
+- `execution_method`
+- `fused_threads`
+- `auto_hires_chunks`
+- `probe_degree`
+- `probe_n_coeffs`
+- `probe_signature`
+- `min_safe_chunks`
+- `safe_chunk_limit_reason`
 
 Rule:
 
@@ -436,6 +509,46 @@ need separate sizing constants.
 The first version can use conservative hard-coded solver multipliers. Those can
 be tightened later from measurements.
 
+`/tmp` budget is a first-class constraint, not a footnote.
+
+Peak local disk use should be estimated as:
+
+- `max(params_file + coeffs_file, coeffs_file + roots_file)`
+
+because params are released before solve begins, but coeffs overlap with both
+adjacent stages.
+
+The safe chunk count must satisfy both:
+
+- memory budget
+- `/tmp` budget
+
+and the stricter one wins.
+
+
+Timeout Model
+-------------
+
+The fused worker runs three stages sequentially, so timeout is also a hard
+floor on safe chunk sizing.
+
+The planner must estimate per-chunk fused wall time from:
+
+- param-gen wall time
+- coeffgen wall time
+- solve wall time
+- upload time for params / coeffs / roots
+- fixed Lambda/process overhead
+- safety margin
+
+Rules:
+
+- if estimated fused chunk wall time can exceed the selected Lambda timeout,
+  increase the minimum safe chunk count
+- if the fused method still cannot fit within timeout after reaching practical
+  chunking limits, reject fused for that job and direct the user to classic
+- timeout must be reported as a possible limiting floor in the sizing UI
+
 
 UI Changes
 ----------
@@ -443,20 +556,17 @@ UI Changes
 `Compute -> Calculate-AE-MT` should gain a job-size / sizing section similar in
 spirit to the render-side MT popup.
 
-It should also expose an explicit execution-method selector.
-
-Recommended values:
-
-- `classic_chunk_pipeline`
-- `fused_chunk_pipeline`
+It should expose a user-facing `Fused` checkbox, not a verbose method dropdown.
 
 Meaning:
 
-- `classic_chunk_pipeline`
+- `Fused = off`
+  - run `classic_chunk_pipeline`
   - existing current compute workflow, unchanged
   - `param_gen -> coeffgen -> solve`
   - separate Step Functions phases and Lambdas
-- `fused_chunk_pipeline`
+- `Fused = on`
+  - run `fused_chunk_pipeline`
   - degree probe first
   - one fused hires worker per chunk
 
@@ -473,13 +583,16 @@ It should show:
 - roots bytes per full chunk
 - estimated peak bytes per fused chunk
 - fused worker Lambda memory
+- fused worker `/tmp` budget
+- fused worker timeout
 - solver mode
 - fused worker thread count used in sizing
+- safe chunk limiting floor
 
 Rules:
 
-- the execution method must be visible in the popup, persisted, and restored by
-  results populate
+- the `Fused` checkbox state must be visible in the popup, persisted, and
+  restored by results populate
 - `classic_chunk_pipeline` and `fused_chunk_pipeline` must not share hidden
   sequencing changes
 - the chunk count control must display the safe minimum next to it
@@ -502,6 +615,16 @@ If enabled:
 If manual:
 
 - planner validates `n_chunks >= min_safe_chunks`
+
+Persisted execution config should use explicit field names:
+
+- `execution_method`
+- `fused`
+- `fused_threads`
+- `auto_hires_chunks`
+- `probe_degree`
+- `probe_n_coeffs`
+- `probe_signature`
 
 
 Workflow Changes
@@ -535,6 +658,40 @@ The fused branch is a fresh sequence:
 - lores solve
 - fused hires chunk map
 - finalize metadata
+
+The fused branch must normalize its probe result into the same metadata shape
+the classic branch currently gets from `post_coeffgen`.
+
+Required normalized `post` contract before `finalize_metadata`:
+
+- `degree`
+- `n_coeffs`
+- `total_coeffs_size`
+- `lores`
+  - `N`
+  - `n_steps`
+  - `params_key`
+  - `coeffs_key`
+  - `bin_key`
+  - `param_gen_threads`
+  - `coeffgen_threads`
+  - `param_task_id`
+  - `coeff_task_id`
+  - `solve_task_id`
+
+Allowed additive fields:
+
+- `execution_method`
+- `probe_degree`
+- `probe_n_coeffs`
+- `probe_signature`
+- `fused_threads`
+- sizing / timing diagnostics
+
+The implementation may call this object `post_probe`, `probe_metadata`, or
+similar internally, but before `finalize_metadata` it must be normalized to
+the same nested shape the classic branch currently gets from `post_coeffgen`.
+`finalize_metadata` should not need a separate fused-only schema branch.
 
 The fused branch should expose its own knob:
 
@@ -582,18 +739,18 @@ In a fused worker:
 
 - a retry may rerun the whole chunk
 
-That is acceptable for v1 if:
+That is acceptable only if retries stay chunk-local and artifact reuse is
+cheap.
 
-- retries stay chunk-local
-- chunk sizes are safe
-- stage timings are logged clearly
+Phase-2 requirement:
 
-Possible later improvement:
+- before each stage, check whether the required prior-stage artifact already
+  exists and validates
+- if params already exist and validate, skip local param gen
+- if coeffs already exist and validate, skip local coeffgen
+- if roots exist and validate, the chunk can short-circuit as already complete
 
-- checkpoint reuse inside the fused worker
-- if params or coeffs already exist and validate, skip rebuilding them on retry
-
-That is useful, but not required for the first rollout.
+This is basic checkpoint reuse, not an optional later enhancement.
 
 
 Phased Rollout
@@ -634,6 +791,7 @@ Implement:
   - solve
 - same S3 output contract as today
 - same `calc.json` output fields as today
+- basic checkpoint reuse for params / coeffs / roots on retry
 
 Keep lores separate and first in the fused branch.
 
@@ -651,7 +809,8 @@ Implement:
 - per-stage timing logs
 - per-stage byte counts
 - explicit peak-size estimates in status rows
-- optional checkpoint reuse on retry
+- stricter checkpoint validation / reuse hardening if Phase 2 basic reuse needs
+  more guardrails
 
 ## Phase 4: Native combined chunk pipeline
 
@@ -679,8 +838,34 @@ Must not break:
 - existing lores debug paths
 - old jobs with old `calc.json`
 
-For new jobs, the artifact names and metadata fields should remain compatible
-enough that render/palette code does not need a second parallel contract.
+For new jobs, fused output must be externally identical to classic output for
+all currently supported downstream consumers.
+
+That means:
+
+- same `calc.json` top-level shape
+- same `lores` object shape inside `calc.json`
+- same chunk ordering and indexing
+- same artifact naming:
+  - `params_0000.bin`
+  - `coeffs_0000.bin`
+  - `chunk_0.bin`
+  - `lores_params.bin`
+  - `lores_coeffs.bin`
+  - `lores.bin`
+- same field semantics for everything render/palette/solve-score currently
+  reads
+
+Only additive metadata may differ, for example:
+
+- `execution_method`
+- `fused_threads`
+- probe metadata
+- sizing metadata
+- per-stage timing metadata
+
+Render and other consumers must not branch on `execution_method` to interpret
+new-job fused outputs.
 
 
 Testing Plan
@@ -691,10 +876,13 @@ Testing Plan
 Add tests for:
 
 - degree-probe-first fused plan order
+- probe stability / disagreement rejection
 - safe-min chunk calculation
 - unsafe manual chunk rejection
 - auto chunk selection
 - solver-specific sizing branches
+- `/tmp`-limited safe-min chunk calculation
+- timeout-limited safe-min chunk calculation
 - classic branch remains unchanged
 
 Targets:
@@ -714,6 +902,7 @@ Add tests for:
 - metadata matches current contract
 - stage-local cleanup happens
 - retry of a failed fused chunk is safe
+- retry can reuse already uploaded params / coeffs when valid
 - per-stage thread counts are forwarded and logged
 - `fused_threads` is forwarded consistently to all three fused stages
 
@@ -735,14 +924,18 @@ Checklist
 ---------
 
 - [ ] Add compute execution-method selector to the UI:
+      a `Fused` checkbox mapping to
       `classic_chunk_pipeline` vs `fused_chunk_pipeline`.
-- [ ] Persist and restore the selected execution method.
+- [ ] Persist and restore the `Fused` checkbox state.
 - [ ] Show the selected execution method in compute logs and result metadata.
 - [ ] Add dedicated `degree_probe` step.
+- [ ] Validate probe stability across more than one sample point.
 - [ ] Surface `degree` / `n_coeffs` from the probe in the popup.
 - [ ] Keep the classic workflow unchanged while fused is introduced.
 - [ ] Add fused branch sequencing independent of classic.
 - [ ] Add safe hires chunk count calculation.
+- [ ] Include memory, `/tmp`, and timeout floors in the safe chunk
+      calculation.
 - [ ] Expose safe min chunk count in `Calculate-AE-MT`.
 - [ ] Add `auto hires chunks` mode.
 - [ ] Reject unsafe manual chunk counts.
@@ -753,8 +946,12 @@ Checklist
 - [ ] Keep the classic full-res pipeline available in parallel during rollout.
 - [ ] Reuse current paramgen / coeffgen / solve binaries locally in the fused
       worker.
+- [ ] Add basic checkpoint reuse for params / coeffs / roots in fused-worker
+      retries.
 - [ ] Keep current S3 artifact naming for params / coeffs / roots.
 - [ ] Keep current `calc.json` fields.
+- [ ] Keep fused new-job outputs externally identical to classic outputs for
+      render/palette/solve-score consumption.
 - [ ] Keep the classic solve-result fields identical in the fused worker
       result contract.
 - [ ] Add per-stage timing and byte logging.

@@ -12,10 +12,29 @@ import time
 
 import boto3
 
+from color_artifact_meta import split_color_artifact_metadata, write_color_artifact_meta_overlay
 from shared import BUCKET, PRESIGN_EXPIRY, parse_body, ok_response, imgpipe_env, report_status
 
 s3 = boto3.client("s3")
 RAW2JPEG = os.path.join(os.path.dirname(__file__), "raw2jpeg")
+S3_USER_METADATA_LIMIT_BYTES = 2048
+
+
+def _metadata_size_bytes(meta):
+    total = 0
+    for key, value in (meta or {}).items():
+        total += len(str(key).encode("utf-8"))
+        total += len(str(value).encode("utf-8"))
+    return total
+
+
+def _infer_color_artifact_ref(out_key):
+    parts = str(out_key or "").strip("/").split("/")
+    if len(parts) == 5 and parts[0] == "renders" and parts[2] == "color" and parts[4].startswith("image."):
+        return parts[1], parts[3]
+    if len(parts) == 3 and parts[0] == "renders" and parts[2].startswith("image."):
+        return parts[1], "legacy_color"
+    return None, None
 
 
 def handler(event, context):
@@ -95,16 +114,39 @@ def handler(event, context):
 
         # Upload with dimensions plus caller-supplied artifact metadata
         content_type = "image/jpeg" if ext == "jpeg" else "image/png"
+        raw_meta = dict(params.get("metadata") or {})
         extra_meta = {}
-        for k, v in (params.get("metadata") or {}).items():
+        for k, v in raw_meta.items():
             if v is None:
                 continue
             extra_meta[str(k)] = str(v)
+        image_meta = dict(extra_meta)
+        overlay_meta = {}
+        if str(raw_meta.get("family") or "").strip() == "color":
+            job_id_for_overlay, artifact_id_for_overlay = _infer_color_artifact_ref(out_key)
+            if not job_id_for_overlay or not artifact_id_for_overlay:
+                raise RuntimeError(f"Cannot derive Color artifact path from out_key {out_key!r}")
+            image_meta, overlay_meta = split_color_artifact_metadata(raw_meta)
+        final_metadata = {"width": str(total_w), "height": str(total_h), **image_meta}
+        metadata_size = _metadata_size_bytes(final_metadata)
+        if metadata_size > S3_USER_METADATA_LIMIT_BYTES:
+            raise RuntimeError(
+                f"Image metadata too large before upload: {metadata_size} bytes > "
+                f"{S3_USER_METADATA_LIMIT_BYTES} limit"
+            )
         t_upload = time.time()
         with open(out_path, "rb") as f:
             s3.put_object(Bucket=BUCKET, Key=out_key,
                           Body=f, ContentType=content_type,
-                          Metadata={"width": str(total_w), "height": str(total_h), **extra_meta})
+                          Metadata=final_metadata)
+        if overlay_meta:
+            write_color_artifact_meta_overlay(
+                s3,
+                BUCKET,
+                job_id_for_overlay,
+                artifact_id_for_overlay,
+                overlay_meta,
+            )
         progress["upload_ms"] = int((time.time() - t_upload) * 1000)
         progress["file_size"] = encode_meta["file_size"]
 

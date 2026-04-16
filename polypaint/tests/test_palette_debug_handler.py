@@ -238,11 +238,14 @@ class TestPaletteDebugHandler(unittest.TestCase):
         upload_key = upload_calls[0][0][2]  # positional arg: key
         self.assertEqual(upload_key, "renders/j/image_palette.jpeg")
 
-        # Verify metadata was set
+        # Verify image metadata stays minimal; full palette metadata lives in meta.json/payload.
         extra_args = upload_calls[0][1].get("ExtraArgs", {})
         metadata = extra_args.get("Metadata", {})
-        self.assertEqual(metadata["metric"], "proximity")
         self.assertEqual(metadata["palette"], "inferno")
+        self.assertEqual(metadata["width"], "100")
+        self.assertEqual(metadata["height"], "100")
+        self.assertNotIn("solve_score_quantile", metadata)
+        self.assertNotIn("clip_lo", metadata)
 
     @patch("handler_palette_debug.s3")
     @patch("handler_palette_debug.subprocess")

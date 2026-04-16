@@ -19,6 +19,7 @@ s3 = boto3.client("s3")
 BINARY = os.path.join(os.path.dirname(__file__), "solve_palette_debug")
 RAW2JPEG = os.path.join(os.path.dirname(__file__), "raw2jpeg")
 PRESIGN_EXPIRY = 3600
+S3_USER_METADATA_LIMIT_BYTES = 2048
 
 
 def _utc_now_iso():
@@ -62,6 +63,22 @@ def _palette_variant_id(metric, palette, q, omega, omega_enabled, root_transform
     rt_json = json.dumps(root_transforms or [], separators=(",", ":"))
     rt_hash = hashlib.sha1(rt_json.encode("utf-8")).hexdigest()[:8]
     return f"pal_{int(time.time() * 1000)}_{metric}_{palette}_q{q_label}_w{omega_label}_rt{rt_hash}"
+
+
+def _metadata_size_bytes(metadata):
+    total = 0
+    for key, value in (metadata or {}).items():
+        total += len(str(key).encode("utf-8"))
+        total += len(str(value).encode("utf-8"))
+    return total
+
+
+def _palette_image_metadata(full_n, palette):
+    return {
+        "width": str(full_n),
+        "height": str(full_n),
+        "palette": str(palette),
+    }
 
 
 def handler(event, context):
@@ -172,23 +189,13 @@ def handler(event, context):
             out_key = f"renders/{job_id}/image_palette.jpeg"
 
         file_size = os.path.getsize(tmp_jpeg)
-        s3_metadata = {
-            "width": str(full_n),
-            "height": str(full_n),
-            "metric": metric,
-            "palette": palette,
-            "solve_score_quantile": str(q),
-            "solve_score_omega": str(solve_score_omega),
-            "solve_score_omega_enabled": "true" if solve_score_omega_enabled else "false",
-            "lores_n": str(lores_n),
-            "full_n": str(full_n),
-            "times": str(times),
-            "using_pass": "0",
-            "clip_lo": str(meta.get("clip_lo", "")),
-            "clip_hi": str(meta.get("clip_hi", "")),
-            "clip_fallback": str(meta.get("clip_fallback", False)).lower(),
-            "clip_fallback_reason": str(meta.get("clip_fallback_reason", "none")),
-        }
+        s3_metadata = _palette_image_metadata(full_n, palette)
+        metadata_size = _metadata_size_bytes(s3_metadata)
+        if metadata_size > S3_USER_METADATA_LIMIT_BYTES:
+            raise RuntimeError(
+                f"Palette image metadata too large before upload: {metadata_size} bytes > "
+                f"{S3_USER_METADATA_LIMIT_BYTES} limit"
+            )
         with open(tmp_jpeg, "rb") as fh:
             s3.upload_fileobj(fh, BUCKET, out_key,
                               ExtraArgs={"ContentType": "image/jpeg", "Metadata": s3_metadata})

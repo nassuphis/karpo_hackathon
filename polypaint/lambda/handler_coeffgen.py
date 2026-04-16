@@ -11,6 +11,9 @@ Three modes, routed by 'phase' parameter:
 
   phase=legacy_coeffgen:
     Legacy chunkless coeffgen path for old callers only.
+
+  phase=degree_probe:
+    Tiny coeffgen probe that returns degree/n_coeffs and optional fused sizing.
 """
 import json
 import os
@@ -19,6 +22,12 @@ import time
 
 import boto3
 
+from compute_fused import (
+    PROBE_N,
+    build_probe_signature,
+    estimate_fused_chunking,
+    validate_fused_threads,
+)
 from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
 
 s3 = boto3.client("s3")
@@ -35,8 +44,10 @@ def handler(event, context):
         return handle_coeffgen_chunked(params)
     if phase == "legacy_coeffgen":
         return handle_legacy_coeffgen(params)
+    if phase == "degree_probe":
+        return handle_degree_probe(params)
     raise ValueError(
-        "Unknown coeffgen phase. Expected one of: param_gen, coeffgen_chunked, legacy_coeffgen"
+        "Unknown coeffgen phase. Expected one of: param_gen, coeffgen_chunked, legacy_coeffgen, degree_probe"
     )
 
 
@@ -442,3 +453,120 @@ def handle_legacy_coeffgen(params):
     except Exception as e:
         report_status(job_id, task_id, "error", str(e))
         raise
+
+
+def handle_degree_probe(params):
+    function_name = str(params.get("function", "") or "").strip()
+    if not function_name:
+        raise RuntimeError("function is required")
+    coeff_transforms = params.get("coeff_transforms")
+    if coeff_transforms is None:
+        coeff_transforms = []
+    if not isinstance(coeff_transforms, list):
+        raise RuntimeError("coeff_transforms must be an array")
+    param_transforms = params.get("param_transforms")
+    if param_transforms is None:
+        param_transforms = []
+    if not isinstance(param_transforms, list):
+        raise RuntimeError("param_transforms must be an array")
+    cfpv = params.get("cfpv")
+    if cfpv in (None, ""):
+        cfpv = []
+    if not isinstance(cfpv, list):
+        raise RuntimeError("cfpv must be an array")
+
+    probe_n = int(params.get("probe_n") or PROBE_N)
+    if probe_n < 2:
+        raise RuntimeError(f"probe_n must be >= 2, got {probe_n}")
+    rows = [(0, 1), (probe_n - 1, probe_n)]
+    samples = []
+    total_coeffgen_us = 0
+    t0 = time.time()
+    contract_warnings = []
+    try:
+        for idx, (i1_start, i1_end) in enumerate(rows):
+            bin_path = f"/tmp/degree_probe_{idx}.bin"
+            spec = {
+                "mode": "coeffgen",
+                "param_transforms": param_transforms,
+                "function": function_name,
+                "coeff_transforms": coeff_transforms,
+                "n1": probe_n,
+                "n2": probe_n,
+                "i1_start": i1_start,
+                "i1_end": i1_end,
+                "times": 1,
+            }
+            if cfpv:
+                spec["cfpv"] = cfpv
+            sample_t0 = time.time()
+            result = subprocess.run(
+                [SWEEP, bin_path],
+                input=json.dumps(spec),
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"degree_probe failed: {result.stderr.strip()}")
+            meta = json.loads(result.stdout)
+            elapsed_us = int((time.time() - sample_t0) * 1e6)
+            sample = {
+                "degree": int(meta["degree"]),
+                "n_coeffs": int(meta["n_coeffs"]),
+                "coeffs_size": int(meta["data_bytes"]),
+                "elapsed_us": elapsed_us,
+                "row_start": int(i1_start),
+                "row_end": int(i1_end),
+            }
+            samples.append(sample)
+            total_coeffgen_us += elapsed_us
+            try:
+                os.remove(bin_path)
+            except OSError:
+                pass
+
+        degree = samples[0]["degree"]
+        n_coeffs = samples[0]["n_coeffs"]
+        stable = all(s["degree"] == degree and s["n_coeffs"] == n_coeffs for s in samples[1:])
+        probe_signature = build_probe_signature(
+            function_name=function_name,
+            param_transforms=param_transforms,
+            coeff_transforms=coeff_transforms,
+            cfpv=cfpv,
+        )
+        body = {
+            "probe_n": probe_n,
+            "probe_step_count": probe_n * probe_n,
+            "probe_signature": probe_signature,
+            "probe_stable": bool(stable),
+            "degree": int(degree),
+            "n_coeffs": int(n_coeffs),
+            "coeffgen_us": int(total_coeffgen_us),
+            "samples": samples,
+            "elapsed_us": int((time.time() - t0) * 1e6),
+        }
+        if not stable:
+            return ok_response(attach_contract_warnings(body, contract_warnings))
+
+        if params.get("N") is not None and params.get("n_chunks") is not None:
+            solver_mode = str(params.get("solver_mode") or "aberth_mt").strip().lower() or "aberth_mt"
+            fused_threads = validate_fused_threads(params.get("fused_threads", 4))
+            estimate = estimate_fused_chunking(
+                n=int(params.get("N")),
+                times=int(params.get("times", 1) or 1),
+                requested_chunks=int(params.get("n_chunks")),
+                degree=degree,
+                n_coeffs=n_coeffs,
+                fused_threads=fused_threads,
+                solver_mode=solver_mode,
+                auto_hires_chunks=bool(params.get("auto_hires_chunks")),
+            )
+            body["fused_estimate"] = estimate
+        return ok_response(attach_contract_warnings(body, contract_warnings))
+    finally:
+        for idx in range(len(rows)):
+            try:
+                os.remove(f"/tmp/degree_probe_{idx}.bin")
+            except OSError:
+                pass

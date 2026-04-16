@@ -232,6 +232,10 @@ uv run python -m pytest tests/test_api_route_contracts.py tests/test_deploy_pack
 bash tests/test_frontend_js.sh
 ```
 
+In this environment, treat those `uv` commands as escalation-first.
+The shared `uv` cache often lives outside the sandbox, so do not waste a first
+attempt rediscovering the same permission failure.
+
 Optionally:
 
 ```bash

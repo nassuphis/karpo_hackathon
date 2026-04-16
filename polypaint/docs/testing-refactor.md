@@ -62,6 +62,13 @@ There is also a location split that needs to be acknowledged up front:
 - main test corpus in [tests](/Users/nicknassuphis/karpo_hackathon/polypaint/tests)
 - older or specialized test files in [lambda](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda)
 
+One more environment-specific constraint needs to be treated as real:
+
+- `uv` is still the preferred runner
+- but in this environment the shared `uv` cache often sits outside the sandbox
+- so any real `uv`-backed deploy/test gate should be escalation-first, not
+  "fail once locally and then retry"
+
 That creates several failure modes:
 
 - a test exists, but nobody knows when it is required
@@ -241,6 +248,8 @@ Then:
 
 - `scripts/predeploy_check.sh` should become a thin wrapper around that group
 - `deploy.sh` should call the runner/group, not hand-list test commands forever
+- if that runner uses `uv`, the wrapper should assume escalation is normal in
+  this environment rather than treating sandbox cache failure as signal
 
 ## 6. Clarify Automatic vs Manual vs Live
 

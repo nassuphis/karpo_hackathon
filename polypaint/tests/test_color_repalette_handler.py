@@ -49,9 +49,10 @@ class TestColorRepaletteHandler(unittest.TestCase):
     @patch("handler_color_repalette.report_status")
     @patch("handler_color_repalette.subprocess.run")
     @patch("handler_color_repalette.lambda_client")
+    @patch("handler_color_repalette.load_color_artifact_head")
     @patch("handler_color_repalette.s3")
     def test_color_repalette_reuses_pixel_bins_and_invokes_encode_preview(
-        self, mock_s3, mock_lambda, mock_run, mock_report
+        self, mock_s3, mock_load_head, mock_lambda, mock_run, mock_report
     ):
         import handler_color_repalette as mod
 
@@ -81,7 +82,11 @@ class TestColorRepaletteHandler(unittest.TestCase):
         deleted = []
         invocations = []
 
-        mock_s3.head_object.return_value = {"Metadata": source_meta}
+        mock_load_head.return_value = {
+            "artifact_id": "color_src",
+            "image_key": "renders/j/color/color_src/image.jpeg",
+            "metadata": source_meta,
+        }
 
         def get_object(**kwargs):
             key = kwargs["Key"]

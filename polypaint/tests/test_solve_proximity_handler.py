@@ -1382,6 +1382,114 @@ def test_summary_param_source_forwards_params_cli_args():
         hsp.subprocess.run = orig_run
 
 
+def test_summary_param_source_degenerate_clip_is_widened():
+    import handler_solve_proximity as hsp
+
+    mock_s3 = mock.MagicMock()
+
+    def mock_get(**kwargs):
+        key = kwargs.get("Key", "")
+        if key == "renders/test/lores.bin":
+            return {"Body": _ChunkBody(b"\x00" * 64)}
+        if key == "renders/test/lores_params.bin":
+            return {"Body": _ChunkBody(b"\x00" * 64)}
+        raise AssertionError(f"unexpected get_object key: {key}")
+
+    mock_s3.get_object = mock_get
+    clip_stdout = [
+        json.dumps({"clip_lo": 0.0, "clip_hi": 0.0, "min_score": 0.0, "max_score": 0.0, "n_solves": 4, "threads": 1}),
+        json.dumps({"clip_lo": -2.0, "clip_hi": 3.0, "min_score": -2.0, "max_score": 3.0, "n_solves": 4, "threads": 1}),
+    ]
+    summary_stdout = json.dumps({"n_solves": 4, "degree": 4, "threads": 1})
+
+    calls = []
+
+    def mock_run(cmd, capture_output, text, timeout):
+        calls.append(list(cmd))
+        if "--mode=clip" in cmd:
+            return mock.MagicMock(returncode=0, stdout=clip_stdout.pop(0), stderr="")
+        if "--mode=summary" in cmd:
+            return mock.MagicMock(returncode=0, stdout=summary_stdout, stderr="")
+        raise AssertionError(f"unexpected subprocess command: {cmd}")
+
+    orig_s3, orig_run = hsp.s3, hsp.subprocess.run
+    hsp.s3 = mock_s3
+    hsp.subprocess.run = mock_run
+    try:
+        result = hsp.handle_summary({
+            "degree": 4,
+            "metric": "t2_abs",
+            "solve_score_quantile": 0.001,
+            "solve_score_chain": [["t2_abs", "pm", "0.1"], ["min_angular_separation", "0.1"], ["avg"]],
+            "lores_bin_key": "renders/test/lores.bin",
+            "lores_params_key": "renders/test/lores_params.bin",
+        })
+        body = json.loads(result["body"])
+        summary_cmd = next(cmd for cmd in calls if "--mode=summary" in cmd)
+        clip_los = next(arg for arg in summary_cmd if arg.startswith("--score_clip_los=")).split("=", 1)[1].split(",")
+        clip_his = next(arg for arg in summary_cmd if arg.startswith("--score_clip_his=")).split("=", 1)[1].split(",")
+        assert float(clip_his[0]) > float(clip_los[0])
+        assert body["metrics"][0]["clip_fallback"] == "degenerate_widened"
+        assert f"--score_params_file={hsp._TMP_PARAM_INPUT}" in summary_cmd
+    finally:
+        hsp.s3 = orig_s3
+        hsp.subprocess.run = orig_run
+
+
+def test_hist_program_artifact_degenerate_clip_slot_is_widened():
+    import handler_solve_proximity as hsp
+
+    clip_data = {
+        "family": "solve_score",
+        "version": 2,
+        "metric": "spread",
+        "clip_quantile": 0.001,
+        "omega": 1.0,
+        "omega_enabled": True,
+        "program": "m0;m1;avg",
+        "metrics": [
+            {"slot": 0, "metric": "spread", "source": "slv", "quantile": 0.001, "clip_lo": 0.0, "clip_hi": 1.0},
+            {"slot": 1, "metric": "anisotropy", "source": "slv", "quantile": 0.001, "clip_lo": 5.0, "clip_hi": 5.0},
+        ],
+        "metric_count": 2,
+        "clip_lo": 0.0,
+        "clip_hi": 1.0,
+    }
+    mock_s3 = _make_hist_mock_s3(b"\x00" * 64, clip_data)
+    mock_run = mock.MagicMock(return_value=mock.MagicMock(
+        returncode=0,
+        stdout=json.dumps({"threads": 2, "n_solves": 4, "hist": [1, 1, 1, 1]}),
+        stderr="",
+    ))
+    orig_s3, orig_report, orig_run = hsp.s3, hsp.report_status, hsp.subprocess.run
+    hsp.s3 = mock_s3
+    hsp.report_status = mock.MagicMock()
+    hsp.subprocess.run = mock_run
+    try:
+        result = hsp.handle_hist({
+            "job_id": "test",
+            "task_id": "hist_test",
+            "chunk_idx": 0,
+            "metric": "spread",
+            "bin_key": "renders/test/chunk_0.bin",
+            "degree": 2,
+            "clip_key": "renders/test/solve_scores/clip.json",
+            "hist_bins": 4,
+            "out_key": "renders/test/solve_scores/chunk_0_hist.json",
+            "solve_score_chain": [["spread", "0.1"], ["anisotropy", "0.1"], ["avg"]],
+        })
+        body = json.loads(result["body"])
+        cmd = mock_run.call_args.args[0]
+        clip_los = next(arg for arg in cmd if arg.startswith("--score_clip_los=")).split("=", 1)[1].split(",")
+        clip_his = next(arg for arg in cmd if arg.startswith("--score_clip_his=")).split("=", 1)[1].split(",")
+        assert float(clip_his[1]) > float(clip_los[1])
+        assert body["metric_count"] == 2
+    finally:
+        hsp.s3 = orig_s3
+        hsp.report_status = orig_report
+        hsp.subprocess.run = orig_run
+
+
 def test_summary_mixed_source_falls_back_to_canonical_coeff_key():
     import handler_solve_proximity as hsp
 

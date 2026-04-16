@@ -40,6 +40,9 @@ _TMP_XFORMS = "/tmp/solve_prox_root_xforms.json"
 _TMP_CLIP = "/tmp/solve_prox_clip.json"
 _TMP_HIST = "/tmp/solve_prox_hist.json"
 
+_CLIP_RANGE_MIN_WIDTH = 1e-12
+_CLIP_RANGE_WIDEN_REL = 1e-4
+
 
 def _cleanup_tmp():
     for p in [_TMP_INPUT, _TMP_COEFF_INPUT, _TMP_PARAM_INPUT, _TMP_XFORMS, _TMP_CLIP, _TMP_HIST]:
@@ -109,8 +112,60 @@ def _validate_metric(metric):
         raise RuntimeError(f"Invalid metric: {metric} (valid: {', '.join(sorted(VALID_METRICS))})")
 
 
+def _coerce_finite_float(value, label):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"{label} must be numeric, got {value!r}")
+    if not (number == number and abs(number) != float("inf")):
+        raise RuntimeError(f"{label} must be finite, got {value!r}")
+    return number
+
+
+def _clip_widen_half_width(*values):
+    scale = 1.0
+    for value in values:
+        if value in ("", None):
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if number == number and abs(number) != float("inf"):
+            scale = max(scale, abs(number))
+    return max(scale * _CLIP_RANGE_WIDEN_REL, _CLIP_RANGE_MIN_WIDTH)
+
+
+def _sanitize_metric_clip(metric_row):
+    row = dict(metric_row or {})
+    slot = row.get("slot", "?")
+    metric_name = row.get("metric", "unknown")
+    clip_lo = _coerce_finite_float(row.get("clip_lo"), f"clip_lo for metric slot {slot}")
+    clip_hi = _coerce_finite_float(row.get("clip_hi"), f"clip_hi for metric slot {slot}")
+    width = clip_hi - clip_lo
+    if width < -_CLIP_RANGE_MIN_WIDTH:
+        raise RuntimeError(
+            f"invalid clip range for metric slot {slot} ({metric_name}): lo={clip_lo} hi={clip_hi}"
+        )
+    if width < _CLIP_RANGE_MIN_WIDTH:
+        center = 0.5 * (clip_lo + clip_hi)
+        half_width = _clip_widen_half_width(center, clip_lo, clip_hi, row.get("min_score"), row.get("max_score"))
+        clip_lo = center - half_width
+        clip_hi = center + half_width
+        row["clip_fallback"] = "degenerate_widened"
+        row["clip_center"] = center
+    row["clip_lo"] = clip_lo
+    row["clip_hi"] = clip_hi
+    return row
+
+
 def _clone_metric_clips(metrics):
-    return [dict(item) for item in (metrics or [])]
+    sanitized = []
+    for slot, item in enumerate(metrics or []):
+        row = dict(item or {})
+        row.setdefault("slot", slot)
+        sanitized.append(_sanitize_metric_clip(row))
+    return sanitized
 
 
 def _clip_metric_slot(metric_name, quantile, degree, solve_score_omega, solve_score_omega_enabled, solve_score_threads, root_transforms, input_path):
@@ -135,7 +190,7 @@ def _clip_metric_slot(metric_name, quantile, degree, solve_score_omega, solve_sc
     if result.returncode != 0:
         raise RuntimeError(f"solve_proximity_stats clip failed for {metric_name}: {result.stderr.strip()}")
     data = json.loads(result.stdout)
-    return {
+    return _sanitize_metric_clip({
         "metric": metric_name,
         "quantile": quantile,
         "quantile_pct": quantile * 100.0,
@@ -145,18 +200,18 @@ def _clip_metric_slot(metric_name, quantile, degree, solve_score_omega, solve_sc
         "max_score": data["max_score"],
         "n_solves": data["n_solves"],
         "threads": int(data.get("threads", solve_score_threads)),
-    }
+    })
 
 
 def _legacy_metric_clips(metric, quantile, clip_lo, clip_hi):
-    return [{
+    return [_sanitize_metric_clip({
         "slot": 0,
         "metric": metric,
         "quantile": float(quantile),
         "quantile_pct": float(quantile) * 100.0,
         "clip_lo": float(clip_lo),
         "clip_hi": float(clip_hi),
-    }]
+    })]
 
 
 def _clip_artifact_metrics(clip_data, compiled, fallback_quantile):
@@ -840,6 +895,7 @@ def handle_hist(params):
             solve_score_omega,
             solve_score_omega_enabled,
         )
+        primary_metric_clip = metrics_with_clips[0] if metrics_with_clips else None
         program_args = _build_program_cmd_args(compiled, metrics_with_clips) if clip_data.get("version", 1) >= 2 else []
         program_suffix = _score_program_error_suffix(compiled, metrics_with_clips)
 
@@ -873,8 +929,8 @@ def handle_hist(params):
             else:
                 cmd.extend([
                     f"--metric={metric}",
-                    f"--clip_lo={clip_data['clip_lo']}",
-                    f"--clip_hi={clip_data['clip_hi']}",
+                    f"--clip_lo={primary_metric_clip['clip_lo']}",
+                    f"--clip_hi={primary_metric_clip['clip_hi']}",
                     f"--omega={solve_score_omega}",
                     f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
                 ])
@@ -956,8 +1012,8 @@ def handle_hist(params):
             else:
                 cmd.extend([
                     f"--metric={metric}",
-                    f"--clip_lo={clip_data['clip_lo']}",
-                    f"--clip_hi={clip_data['clip_hi']}",
+                    f"--clip_lo={primary_metric_clip['clip_lo']}",
+                    f"--clip_hi={primary_metric_clip['clip_hi']}",
                     f"--omega={solve_score_omega}",
                     f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
                 ])
@@ -1012,8 +1068,8 @@ def handle_hist(params):
             else:
                 cmd.extend([
                     f"--metric={metric}",
-                    f"--clip_lo={clip_data['clip_lo']}",
-                    f"--clip_hi={clip_data['clip_hi']}",
+                    f"--clip_lo={primary_metric_clip['clip_lo']}",
+                    f"--clip_hi={primary_metric_clip['clip_hi']}",
                     f"--omega={solve_score_omega}",
                     f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
                 ])
@@ -1100,8 +1156,8 @@ def handle_hist(params):
             "omega_enabled": solve_score_omega_enabled,
             "chunk_idx": int(section_idx),
             "hist_bins": hist_bins,
-            "clip_lo": clip_data["clip_lo"],
-            "clip_hi": clip_data["clip_hi"],
+            "clip_lo": primary_metric_clip["clip_lo"],
+            "clip_hi": primary_metric_clip["clip_hi"],
             "n_solves": hist_data["n_solves"],
             "hist": hist_data["hist"],
         }
@@ -1258,8 +1314,8 @@ def handle_merge(params):
             "omega_enabled": solve_score_omega_enabled,
             "hist_bins": hist_bins,
             "final_bins": final_bins,
-            "clip_lo": clip_data["clip_lo"],
-            "clip_hi": clip_data["clip_hi"],
+            "clip_lo": metrics_with_clips[0]["clip_lo"],
+            "clip_hi": metrics_with_clips[0]["clip_hi"],
             "cuts_norm": cuts_norm,
             "n_solves_total": total_solves,
             "root_transforms": clip_data.get("root_transforms", []),
@@ -1432,6 +1488,8 @@ def handle_summary(params):
         summary["clip_quantile"] = compiled["quantile"]
         summary["omega"] = compiled["omega"]
         summary["omega_enabled"] = compiled["omega_enabled"]
+        if not compiled["legacy_compatible"]:
+            summary["metrics"] = metric_clips
 
         return ok_response(summary)
 

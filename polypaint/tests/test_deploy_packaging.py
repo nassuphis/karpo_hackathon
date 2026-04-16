@@ -430,6 +430,19 @@ class TestDeployPackaging(unittest.TestCase):
             "predeploy_check.sh should prefer uv before local fallbacks",
         )
 
+    def test_show_build_render_plan_packager_matches_real_render_plan_bundle(self):
+        match = re.search(
+            r'package_render_plan_zip\(\)\s*\{(?P<body>.*?)\n\}',
+            DEPLOY_TEXT,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(match, "could not find package_render_plan_zip helper")
+        helper_body = match.group("body")
+        self.assertIn("lambda/calc_chunks.py", helper_body)
+        self.assertIn("lambda/logical_sections.py", helper_body)
+        self.assertIn("lambda/param_source.py", helper_body)
+        self.assertIn("lambda/solve_score_chain.py", helper_body)
+
 
 if __name__ == "__main__":
     unittest.main()

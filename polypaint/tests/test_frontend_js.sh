@@ -42,10 +42,16 @@ grep -q 'id="render-mt-palette-chunk-input-mode"' "$HTML" || { echo "FATAL: rend
 grep -q 'id="render-mt-palette-chunk-workers"' "$HTML" || { echo "FATAL: render MT palette chunk workers input missing from index.html"; exit 1; }
 grep -q 'id="render-mt-palette-chunk-retries"' "$HTML" || { echo "FATAL: render MT palette chunk retries input missing from index.html"; exit 1; }
 grep -q 'id="compute-mt-popup-overlay"' "$HTML" || { echo "FATAL: compute MT popup missing from index.html"; exit 1; }
+grep -q 'id="compute-mt-tab-classic"' "$HTML" || { echo "FATAL: compute MT classic tab missing from index.html"; exit 1; }
+grep -q 'id="compute-mt-tab-fused"' "$HTML" || { echo "FATAL: compute MT fused tab missing from index.html"; exit 1; }
+grep -q 'compute-mt-tab-strip' "$HTML" || { echo "FATAL: compute MT popup should use the shared tab-strip styling"; exit 1; }
+grep -q 'id="compute-mt-classic-chunks"' "$HTML" || { echo "FATAL: compute MT classic chunk input missing from index.html"; exit 1; }
+grep -q 'id="compute-mt-fused-chunks"' "$HTML" || { echo "FATAL: compute MT fused chunk input missing from index.html"; exit 1; }
 grep -q 'id="compute-mt-param-gen-threads"' "$HTML" || { echo "FATAL: compute MT param thread input missing from index.html"; exit 1; }
 grep -q 'id="compute-mt-coeffgen-threads"' "$HTML" || { echo "FATAL: compute MT coeffgen thread input missing from index.html"; exit 1; }
 grep -q 'id="compute-mt-lores-param-gen-threads"' "$HTML" || { echo "FATAL: compute MT lores param thread input missing from index.html"; exit 1; }
 grep -q 'id="compute-mt-lores-coeffgen-threads"' "$HTML" || { echo "FATAL: compute MT lores coeffgen thread input missing from index.html"; exit 1; }
+grep -q 'id="compute-mt-fused-solve-threads"' "$HTML" || { echo "FATAL: compute MT fused solve row missing from index.html"; exit 1; }
 grep -q 'id="render-generate-save-associated-palette"' "$HTML" || { echo "FATAL: render generate associated palette checkbox missing from index.html"; exit 1; }
 grep -q 'id="render-mt-save-associated-palette"' "$HTML" || { echo "FATAL: render MT associated palette checkbox missing from index.html"; exit 1; }
 grep -q 'id="generate-from-palette-raster-threads"' "$HTML" || { echo "FATAL: GenerateFromPalette raster threads input missing from index.html"; exit 1; }
@@ -1072,8 +1078,10 @@ async function testPipeline(name, call) {
     await testPipeline('runBilevelPipeline', '(async()=>{ await runBilevelPipeline(); })()');
     await testPipeline('runCoeffBilevelPipeline', '(async()=>{ await runCoeffBilevelPipeline(); })()');
 
-    vm.runInContext(`
+    await vm.runInContext(`(async () => {
         renderColorMode = 'solve_score';
+        _elements['render-results-dir'].value = 'compute_job_loaded';
+        _renderLoadedJobId = 'compute_job_loaded';
         window._lastRenderSummary = { calc: { job_size: {
             chunk_count: 50,
             total_solves: 25000000,
@@ -1092,8 +1100,8 @@ async function testPipeline(name, call) {
         } } };
         renderMatchMode = 'none';
         _activeRenderRun = null;
-        openRenderMtPopup();
-    `, ctx);
+        await openRenderMtPopup();
+    })()`, ctx);
     if (ctx._elements['render-mt-popup-overlay'].style.display !== 'flex') {
         console.error('FATAL: Generate-MT should open popup overlay');
         process.exit(1);
@@ -1166,14 +1174,16 @@ async function testPipeline(name, call) {
     }
     console.log('  Generate-MT popup opens with solve-score + raster thread summary: OK');
     vm.runInContext('_closeRenderMtPopup()', ctx);
-    vm.runInContext(`
+    await vm.runInContext(`(async () => {
         renderColorMode = 'solve_score';
+        _elements['render-results-dir'].value = 'compute_job_loaded';
+        _renderLoadedJobId = 'compute_job_loaded';
         _activeRenderRun = null;
         _renderMtPopupState.saveAssociatedPalette = true;
         _renderMtPopupState.paletteChunkInputMode = 'sectioned';
         _renderMtPopupState.paletteSectionMode = 'logical_sections_auto';
-        openRenderMtPopup();
-    `, ctx);
+        await openRenderMtPopup();
+    })()`, ctx);
     if (ctx._elements['render-mt-palette-chunk-threads'].disabled !== false
         || ctx._elements['render-mt-palette-chunk-input-mode'].disabled !== false
         || ctx._elements['render-mt-palette-chunk-workers'].disabled !== false
@@ -1186,6 +1196,56 @@ async function testPipeline(name, call) {
         process.exit(1);
     }
     console.log('  Generate-MT popup enables palette chunk controls when associated palette is on: OK');
+    vm.runInContext('_closeRenderMtPopup()', ctx);
+
+    {
+        vm.runInContext(`
+            _elements['render-results-dir'].value = 'compute_job_refresh';
+            _renderLoadedJobId = '';
+            window._lastRenderSummary = { calc: {} };
+            _activeRenderRun = null;
+            renderColorMode = 'solve_score';
+        `, ctx);
+        await vm.runInContext(`(async () => {
+            const origLambdaPost = lambdaPost;
+            lambdaPost = async function(name, body, path) {
+                if (name === 'storage' && path === '/render-summary' && body && body.job_id === 'compute_job_refresh') {
+                    return {
+                        calc: { exists: true, job_size: {
+                            chunk_count: 14,
+                            total_solves: 25000000,
+                            chunk_step_metadata_complete: true,
+                            root_row_bytes: 280,
+                            coeff_row_bytes: 560,
+                            param_row_bytes: 16,
+                            representative_root_chunk_size: 952000000,
+                            representative_coeff_chunk_size: 476000000,
+                            representative_param_chunk_size: 200000000,
+                            solve_hist_memory_mb: 4096,
+                            palette_chunk_memory_mb: 1769,
+                            auto_usable_fraction: 0.40,
+                            auto_fixed_overhead_mb: 96,
+                            auto_per_thread_overhead_mb: 8
+                        } },
+                        families: { color: [], bilevel: [], coeffs: [], palette: [], pdf: [] }
+                    };
+                }
+                return await origLambdaPost(name, body, path);
+            };
+            await openRenderMtPopup();
+            lambdaPost = origLambdaPost;
+        })()`, ctx);
+        if (!(ctx._elements['render-mt-job-size'].textContent || '').includes('Job size: chunks=14')
+            || !(ctx._elements['render-mt-hist-section-summary'].textContent || '').includes('min safe sections=')) {
+            console.error('FATAL: Generate-MT popup should refresh render summary before auto section sizing'
+                + ' jobSize=' + JSON.stringify(ctx._elements['render-mt-job-size'].textContent || '')
+                + ' histSummary=' + JSON.stringify(ctx._elements['render-mt-hist-section-summary'].textContent || '')
+                + ' loadedJob=' + JSON.stringify(vm.runInContext('_renderLoadedJobId', ctx))
+                + ' lastSummary=' + JSON.stringify(vm.runInContext('window._lastRenderSummary && window._lastRenderSummary.calc', ctx)));
+            process.exit(1);
+        }
+    }
+    console.log('  Generate-MT popup refreshes render summary before auto section sizing: OK');
     vm.runInContext('_closeRenderMtPopup()', ctx);
 
     // Step 8: Direct _bilevelDispatchAndPoll tests
@@ -5073,6 +5133,19 @@ async function testPipeline(name, call) {
             console.error('FATAL: compute MT popup summary missing current compute settings, got ' + summaryText);
             process.exit(1);
         }
+        if (!String(ctx._elements['compute-mt-tab-classic'].className || '').includes('active') || String(ctx._elements['compute-mt-tab-fused'].className || '').includes('active')) {
+            console.error('FATAL: compute MT popup should style the classic tab as active by default');
+            process.exit(1);
+        }
+        if (!String(ctx._elements['compute-mt-classic-panel'].className || '').includes('active') ||
+            !String(ctx._elements['compute-mt-fused-panel'].className || '').includes('inactive')) {
+            console.error('FATAL: compute MT popup should expose the classic panel and hide the fused panel via tab state');
+            process.exit(1);
+        }
+        if (String(ctx._elements['compute-mt-classic-chunks'].value) !== '4') {
+            console.error('FATAL: compute MT classic tab should mirror the current chunk count, got ' + ctx._elements['compute-mt-classic-chunks'].value);
+            process.exit(1);
+        }
         if (String(ctx._elements['compute-mt-param-gen-threads'].value) !== '4' || String(ctx._elements['compute-mt-coeffgen-threads'].value) !== '4' || String(ctx._elements['compute-mt-lores-param-gen-threads'].value) !== '1' || String(ctx._elements['compute-mt-lores-coeffgen-threads'].value) !== '1') {
             console.error('FATAL: compute MT popup defaults should be param=4 coeffgen=4 lores_param=1 lores_coeffgen=1, got ' + ctx._elements['compute-mt-param-gen-threads'].value + '/' + ctx._elements['compute-mt-coeffgen-threads'].value + '/' + ctx._elements['compute-mt-lores-param-gen-threads'].value + '/' + ctx._elements['compute-mt-lores-coeffgen-threads'].value);
             process.exit(1);
@@ -5167,7 +5240,6 @@ async function testPipeline(name, call) {
                 await openComputeMtPopup();
                 _computeMtPopupState.fused = true;
                 _computeMtPopupState.fusedThreads = 6;
-                _computeMtPopupState.autoHiresChunks = true;
                 _computeMtPopupState.probe = {
                     degree: 7,
                     n_coeffs: 8,
@@ -5185,20 +5257,153 @@ async function testPipeline(name, call) {
                 };
                 _renderComputeMtPopup();
                 await new Promise(r => setTimeout(r, 0));
-                await runCalculateWithSolver('aberth_mt', { fused: true, fusedThreads: 6, autoHiresChunks: true, paramGenThreads: 7, coeffgenThreads: 5, loresParamGenThreads: 3, loresCoeffgenThreads: 2 });
+                await runCalculateWithSolver('aberth_mt', { fused: true, fusedThreads: 6, paramGenThreads: 7, coeffgenThreads: 5, loresParamGenThreads: 3, loresCoeffgenThreads: 2 });
             })()
         `, ctx);
+        const fusedPanelClass = vm.runInContext(`document.getElementById('compute-mt-fused-panel').className`, ctx);
+        const fusedTabClass = vm.runInContext(`document.getElementById('compute-mt-tab-fused').className`, ctx);
+        const solveMirrorValue = vm.runInContext(`document.getElementById('compute-mt-fused-solve-threads').value`, ctx);
+        if (!String(fusedPanelClass).includes('active') || !String(fusedTabClass).includes('active') || String(solveMirrorValue) !== '6') {
+            console.error('FATAL: fused tab should expose the solve row and mirror fused threads, got panel=' + fusedPanelClass + ' tab=' + fusedTabClass + ' solve=' + solveMirrorValue);
+            process.exit(1);
+        }
         const orch = vm.runInContext('_computeFusedOrchDispatched', ctx);
         if (!orch) { console.error('FATAL: fused AE-MT compute dispatch missing'); process.exit(1); }
         if (orch.params.execution_method !== 'fused_chunk_pipeline' || Object.prototype.hasOwnProperty.call(orch.params, 'fused')) {
             console.error('FATAL: fused AE-MT dispatch should select fused execution method, got ' + JSON.stringify(orch.params));
             process.exit(1);
         }
-        if (orch.params.fused_threads !== 6 || orch.params.auto_hires_chunks !== true) {
+        if (orch.params.fused_threads !== 6 || Object.prototype.hasOwnProperty.call(orch.params, 'auto_hires_chunks')) {
             console.error('FATAL: fused AE-MT dispatch should forward fused controls, got ' + JSON.stringify(orch.params));
             process.exit(1);
         }
         console.log('  12d2aa fused compute dispatch knobs: OK');
+    }
+
+    // 12d2ab: fused min-safe button should apply the probed minimum chunk count
+    {
+        vm.runInContext(`
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'coeffgen') {
+                    return {
+                        degree: 9,
+                        n_coeffs: 10,
+                        probe_stable: true,
+                        fused_estimate: {
+                            min_safe_chunks: 14,
+                            actual_chunks: 14,
+                            params_bytes: 100,
+                            coeff_bytes: 200,
+                            roots_bytes: 300,
+                            estimated_peak_bytes: 400,
+                            estimated_tmp_peak_bytes: 500,
+                            safe_chunk_limit_reason: 'memory'
+                        }
+                    };
+                }
+                return {};
+            };
+        `, ctx);
+        await vm.runInContext(`
+            (async()=>{
+                document.getElementById('render-function').value = 'g1';
+                document.getElementById('render-n').value = '128';
+                document.getElementById('render-stripes').value = '4';
+                document.getElementById('render-times').value = '1';
+                _ptChain = [];
+                _ctChain = [];
+                _cfpv = [];
+                await openComputeMtPopup();
+                _computeMtPopupState.fused = true;
+                _computeMtPopupState.fusedThreads = 4;
+                _computeMtPopupState.probe = {
+                    degree: 9,
+                    n_coeffs: 10,
+                    probe_signature: 'sig-apply',
+                    fused_estimate: {
+                        min_safe_chunks: 14,
+                        actual_chunks: 14,
+                        params_bytes: 100,
+                        coeff_bytes: 200,
+                        roots_bytes: 300,
+                        estimated_peak_bytes: 400,
+                        estimated_tmp_peak_bytes: 500,
+                        safe_chunk_limit_reason: 'memory'
+                    }
+                };
+                _renderComputeMtPopup();
+                await _applyComputeMtSafeChunks();
+                await new Promise(r => setTimeout(r, 0));
+            })()
+        `, ctx);
+        const appliedChunks = vm.runInContext(`document.getElementById('compute-mt-fused-chunks').value`, ctx);
+        if (String(appliedChunks) !== '14') {
+            console.error('FATAL: fused min-safe button should apply the probed minimum chunk count, got ' + appliedChunks);
+            process.exit(1);
+        }
+        console.log('  12d2ab fused min-safe chunk button: OK');
+    }
+
+    // 12d2ac: fused degree probe uses the real pipeline fields and no removed auto flag
+    {
+        vm.runInContext(`
+            var _lastDegreeProbeBody = null;
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'coeffgen' && body.phase === 'degree_probe') {
+                    _lastDegreeProbeBody = JSON.parse(JSON.stringify(body));
+                    return {
+                        degree: 35,
+                        n_coeffs: 36,
+                        probe_stable: true,
+                        probe_signature: 'sig-poly1',
+                        fused_estimate: {
+                            min_safe_chunks: 14,
+                            actual_chunks: 14,
+                            params_bytes: 28600000,
+                            coeff_bytes: 514300000,
+                            roots_bytes: 500000000,
+                            estimated_peak_bytes: 7437000000,
+                            estimated_tmp_peak_bytes: 1081400000,
+                            safe_chunk_limit_reason: 'memory'
+                        }
+                    };
+                }
+                return {};
+            };
+        `, ctx);
+        await vm.runInContext(`
+            (async()=>{
+                document.getElementById('render-function').value = 'poly_1';
+                document.getElementById('render-n').value = '100';
+                document.getElementById('render-stripes').value = '10';
+                document.getElementById('render-times').value = '1';
+                _ptChain = [{ name: 'unit_circle', params: [] }];
+                _ctChain = [{ name: 'rev', params: [] }];
+                _cfpv = [];
+                await openComputeMtPopup();
+                _setComputeMtTab(true);
+                await new Promise(r => setTimeout(r, 0));
+            })()
+        `, ctx);
+        const probeBody = vm.runInContext('_lastDegreeProbeBody', ctx);
+        if (!probeBody) {
+            console.error('FATAL: fused popup should request a degree probe for the active pipeline');
+            process.exit(1);
+        }
+        if (probeBody.function !== 'poly_1' || String(probeBody.N) !== '100' || String(probeBody.n_chunks) !== '10') {
+            console.error('FATAL: degree probe should use the real compute pipeline inputs, got ' + JSON.stringify(probeBody));
+            process.exit(1);
+        }
+        if (JSON.stringify(probeBody.param_transforms) !== JSON.stringify([['unit_circle']]) ||
+            JSON.stringify(probeBody.coeff_transforms) !== JSON.stringify(['rev'])) {
+            console.error('FATAL: degree probe should serialize unit_circle + rev exactly, got ' + JSON.stringify(probeBody));
+            process.exit(1);
+        }
+        if (Object.prototype.hasOwnProperty.call(probeBody, 'auto_hires_chunks')) {
+            console.error('FATAL: degree probe request should not carry removed auto_hires_chunks, got ' + JSON.stringify(probeBody));
+            process.exit(1);
+        }
+        console.log('  12d2ac fused degree probe payload uses real pipeline and no auto flag: OK');
     }
 
     // 12d2b: param-gen phase summary shows threads and in-flight progress

@@ -108,7 +108,6 @@
                 "times.$": "$.params.times",
                 "n_chunks.$": "$.params.n_chunks",
                 "fused_threads.$": "$.params.fused_threads",
-                "auto_hires_chunks.$": "$.params.auto_hires_chunks",
                 "execution_method": "fused_chunk_pipeline"
               }
             },

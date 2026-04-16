@@ -278,6 +278,7 @@ package_render_plan_zip() {
     mkdir -p "$PLAN_DIR"
     cp lambda/handler_render_plan.py lambda/shared.py \
        lambda/logical_sections.py \
+       lambda/calc_chunks.py \
        lambda/param_source.py \
        lambda/solve_score_chain.py \
        lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PLAN_DIR/"

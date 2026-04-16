@@ -126,6 +126,12 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
         worker = fused_map["ItemProcessor"]["States"]["FusedChunkWorker"]
         self.assertIn("placeholder-FusedChunkFunctionArn", json.dumps(worker))
 
+    def test_degree_probe_task_does_not_depend_on_removed_auto_chunk_flag(self):
+        degree_probe = self.states["DegreeProbeTask"]["Parameters"]["Payload"]
+        payload_json = json.dumps(degree_probe)
+        self.assertNotIn("auto_hires_chunks", payload_json)
+        self.assertEqual(degree_probe["execution_method"], "fused_chunk_pipeline")
+
     def test_parse_post_coeffgen_drops_large_coeffgen_results(self):
         parse_post = self.states["ParsePostCoeffgen"]
         params = json.dumps(parse_post["Parameters"])

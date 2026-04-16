@@ -15,6 +15,15 @@ from datetime import datetime, timezone
 
 import boto3
 
+from logical_sections import (
+    DEFAULT_PALETTE_CHUNK_MEMORY_MB,
+    DEFAULT_SOLVE_SCORE_MEMORY_MB,
+    build_logical_section_items,
+    compute_safe_sectioning,
+    normalize_section_mode,
+    summarize_chunk_items,
+    validate_section_count,
+)
 from palette_names import VALID_PALETTE_NAMES
 from param_source import chunk_items_have_params, enrich_chunk_item_with_params, fallback_params_key
 from shared import BUCKET, parse_body, ok_response
@@ -335,6 +344,12 @@ def _render_execution_config(rp):
         "palette_chunk_input_mode": str(rp.get("palette_chunk_input_mode", "sectioned") or "sectioned"),
         "palette_chunk_retries": int(rp.get("palette_chunk_retries", 2) or 0),
         "palette_chunk_workers": int(rp.get("palette_chunk_workers", 16) or 16),
+        "solve_score_section_mode": str(rp.get("solve_score_section_mode", "physical_chunks") or "physical_chunks"),
+        "solve_score_section_count": rp.get("solve_score_section_count", ""),
+        "solve_score_section_count_auto": rp.get("solve_score_section_count_auto", ""),
+        "palette_section_mode": str(rp.get("palette_section_mode", "physical_chunks") or "physical_chunks"),
+        "palette_section_count": rp.get("palette_section_count", ""),
+        "palette_section_count_auto": rp.get("palette_section_count_auto", ""),
     }
 
 
@@ -376,10 +391,12 @@ def handler(event, context):
 
     # Extract calc fields
     degree = calc.get("degree", 1)
+    calc_n_coeffs = int(calc.get("n_coeffs", int(degree or 1) + 1) or (int(degree or 1) + 1))
     full_n = int(calc.get("N", calc.get("n1", 0)) or 0)
     times = int(calc.get("times", 1) or 1)
     chunk_items = _build_chunk_items(calc, job_id)
     n_chunks = len(chunk_items)
+    chunk_summary = summarize_chunk_items(chunk_items, degree, calc_n_coeffs)
 
     # Grid computation
     pix = rp["pix"]
@@ -436,6 +453,10 @@ def handler(event, context):
         "palette_chunk_input_mode": "",
         "palette_chunk_retries": "",
         "palette_chunk_workers": "",
+        "solve_score_section_mode": "physical_chunks",
+        "solve_score_section_count": "",
+        "palette_section_mode": "physical_chunks",
+        "palette_section_count": "",
     }
     for key, default in _PARAM_DEFAULTS.items():
         if key not in rp:
@@ -487,6 +508,18 @@ def handler(event, context):
     rp["palette_chunk_input_mode"] = _validate_raster_input_mode(palette_chunk_input_value)
     rp["palette_chunk_retries"] = _validate_retry_count(palette_chunk_retries_value, "palette_chunk_retries")
     rp["palette_chunk_workers"] = _validate_worker_count(palette_chunk_workers_value, "palette_chunk_workers")
+    rp["solve_score_section_mode"] = normalize_section_mode(rp.get("solve_score_section_mode", "physical_chunks"))
+    rp["solve_score_section_count"] = validate_section_count(
+        rp.get("solve_score_section_count", ""),
+        "solve_score_section_count",
+        default="",
+    )
+    rp["palette_section_mode"] = normalize_section_mode(rp.get("palette_section_mode", "physical_chunks"))
+    rp["palette_section_count"] = validate_section_count(
+        rp.get("palette_section_count", ""),
+        "palette_section_count",
+        default="",
+    )
 
     # Normalize solve-score params
     color_mode = rp.get("color_mode", "rainbow")
@@ -667,6 +700,50 @@ def handler(event, context):
         "hist_prefix": solve_score_hist_prefix,
         "bins_key": solve_score_bins_key,
     }
+    solve_score_uses_coeff = bool(solve_score_compiled and solve_score_uses_source(solve_score_compiled, "cf"))
+    solve_score_uses_param = bool(solve_score_compiled and solve_score_uses_source(solve_score_compiled, "pm"))
+    solve_score_section_auto = compute_safe_sectioning(
+        chunk_summary["total_solves"],
+        degree,
+        calc_n_coeffs,
+        solve_score["threads"],
+        "solve_score_hist",
+        include_coeff=solve_score_uses_coeff,
+        include_param=solve_score_uses_param,
+    )
+    rp["solve_score_section_count_auto"] = solve_score_section_auto["computed_section_count"]
+    solve_score["section_mode"] = rp["solve_score_section_mode"] if solve_score_enabled else "physical_chunks"
+    solve_score["section_count"] = rp["solve_score_section_count"]
+    solve_score["section_count_auto"] = solve_score_section_auto["computed_section_count"]
+    solve_score["section_budget_bytes"] = solve_score_section_auto["budget_bytes"]
+    solve_score["section_memory_mb"] = solve_score_section_auto["memory_mb"]
+    solve_score["section_min_safe_count"] = solve_score_section_auto["min_safe_sections"]
+    solve_score["item_count"] = n_chunks
+    solve_score["section_items"] = chunk_items
+    if solve_score_enabled and solve_score["section_mode"] != "physical_chunks":
+        if not chunk_summary["chunk_step_metadata_complete"]:
+            raise RuntimeError("logical solve-score sections require chunk step metadata on every chunk")
+        selected_count = solve_score["section_count"]
+        if solve_score["section_mode"] == "logical_sections_auto":
+            selected_count = solve_score["section_count_auto"]
+        elif selected_count in ("", None):
+            selected_count = solve_score["section_min_safe_count"]
+        if int(selected_count) < int(solve_score["section_min_safe_count"]):
+            raise RuntimeError(
+                f"solve_score_section_count={selected_count} is below the safe minimum "
+                f"{solve_score['section_min_safe_count']}"
+            )
+        solve_score["section_count"] = int(selected_count)
+        solve_score["section_items"] = build_logical_section_items(
+            chunk_items,
+            section_count=solve_score["section_count"],
+            degree=degree,
+            n_coeffs=calc_n_coeffs,
+            include_coeff=solve_score_uses_coeff,
+            include_param=solve_score_uses_param,
+        )
+        solve_score["item_count"] = len(solve_score["section_items"])
+    rp["solve_score_section_count"] = solve_score["section_count"]
     finalize = {
         "workers": rp["finalize_workers"],
     }
@@ -742,7 +819,6 @@ def handler(event, context):
     artifact_id = f"{artifact_family}_{run_id}"
     artifact_prefix = f"renders/{job_id}/{artifact_family}/{artifact_id}/"
     created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    render_execution = _render_execution_config(rp)
 
     associated_palette = {
         "enabled": False,
@@ -762,6 +838,14 @@ def handler(event, context):
         "omega": None,
         "omega_enabled": True,
         "score_chain": "",
+        "section_mode": "physical_chunks",
+        "section_count": "",
+        "section_count_auto": "",
+        "section_budget_bytes": 0,
+        "section_memory_mb": DEFAULT_PALETTE_CHUNK_MEMORY_MB,
+        "section_min_safe_count": 1,
+        "section_items": chunk_items,
+        "item_count": n_chunks,
     }
     if mode == "color" and rp["save_associated_palette"]:
         if color_mode == "saved_palette":
@@ -827,7 +911,49 @@ def handler(event, context):
                 "chunk_input_mode": rp["palette_chunk_input_mode"],
                 "chunk_retries": rp["palette_chunk_retries"],
                 "chunk_workers": rp["palette_chunk_workers"],
+                "section_mode": rp["palette_section_mode"],
+                "section_count": rp["palette_section_count"],
             }
+            assoc_section_auto = compute_safe_sectioning(
+                chunk_summary["total_solves"],
+                degree,
+                calc_n_coeffs,
+                associated_palette["chunk_threads"],
+                "associated_palette",
+                include_coeff=solve_score_uses_coeff,
+                include_param=solve_score_uses_param,
+            )
+            associated_palette["section_count_auto"] = assoc_section_auto["computed_section_count"]
+            associated_palette["section_budget_bytes"] = assoc_section_auto["budget_bytes"]
+            associated_palette["section_memory_mb"] = assoc_section_auto["memory_mb"]
+            associated_palette["section_min_safe_count"] = assoc_section_auto["min_safe_sections"]
+            if associated_palette["section_mode"] != "physical_chunks":
+                if not chunk_summary["chunk_step_metadata_complete"]:
+                    raise RuntimeError("logical associated-palette sections require chunk step metadata on every chunk")
+                selected_count = associated_palette["section_count"]
+                if associated_palette["section_mode"] == "logical_sections_auto":
+                    selected_count = associated_palette["section_count_auto"]
+                elif selected_count in ("", None):
+                    selected_count = associated_palette["section_min_safe_count"]
+                if int(selected_count) < int(associated_palette["section_min_safe_count"]):
+                    raise RuntimeError(
+                        f"palette_section_count={selected_count} is below the safe minimum "
+                        f"{associated_palette['section_min_safe_count']}"
+                    )
+                associated_palette["section_count"] = int(selected_count)
+                associated_palette["section_items"] = build_logical_section_items(
+                    chunk_items,
+                    section_count=associated_palette["section_count"],
+                    degree=degree,
+                    n_coeffs=calc_n_coeffs,
+                    include_coeff=solve_score_uses_coeff,
+                    include_param=solve_score_uses_param,
+                )
+                associated_palette["item_count"] = len(associated_palette["section_items"])
+            rp["palette_section_count_auto"] = associated_palette["section_count_auto"]
+            rp["palette_section_count"] = associated_palette["section_count"]
+
+    render_execution = _render_execution_config(rp)
 
     artifact_meta = {
         "artifact_id": artifact_id,

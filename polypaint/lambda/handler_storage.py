@@ -25,6 +25,14 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from color_artifact_meta import color_artifact_meta_key
+from logical_sections import (
+    AUTO_FIXED_OVERHEAD_MB,
+    AUTO_PER_THREAD_OVERHEAD_MB,
+    AUTO_USABLE_FRACTION,
+    DEFAULT_PALETTE_CHUNK_MEMORY_MB,
+    DEFAULT_SOLVE_SCORE_MEMORY_MB,
+    summarize_chunk_items,
+)
 from shared import BUCKET, JOBS_TABLE, PRESIGN_EXPIRY, parse_body, ok_response, _get_ddb
 
 s3 = boto3.client("s3")
@@ -1413,6 +1421,66 @@ def handle_head_keys(event):
     return ok_response({"exists": exists, "meta": meta})
 
 
+def _calc_chunk_items_for_summary(calc):
+    calc = calc or {}
+    degree = int(calc.get("degree", 1) or 1)
+    n_coeffs = int(calc.get("n_coeffs", degree + 1) or (degree + 1))
+    record_bytes = degree * 2 * 4
+    items = []
+    step_start = 0
+    chunks = list(calc.get("chunks", calc.get("stripes", [])) or [])
+    for raw in sorted(chunks, key=lambda row: row.get("idx", row.get("chunk_idx", row.get("stripe_idx", 0)))):
+        step_count = raw.get("step_count", raw.get("n_t"))
+        bin_size = raw.get("bin_size")
+        if step_count in ("", None) and bin_size not in ("", None) and record_bytes > 0:
+            step_count = int(bin_size) // record_bytes
+        if step_count in ("", None):
+            continue
+        step_count = int(step_count)
+        if step_count < 1:
+            continue
+        items.append({
+            "chunk_idx": int(raw.get("idx", raw.get("chunk_idx", raw.get("stripe_idx", len(items))))),
+            "step_start": step_start,
+            "step_count": step_count,
+            "bin_size": int(bin_size) if bin_size not in ("", None) else step_count * record_bytes,
+            "coeffs_bin_size": int(raw.get("coeffs_size") or 0) or (step_count * n_coeffs * 2 * 4),
+            "params_bin_size": int(raw.get("params_bin_size") or 0) or (step_count * 16),
+        })
+        step_start += step_count
+    return items
+
+
+def _render_summary_calc(calc_data):
+    calc = {
+        "exists": True,
+        "N": calc_data.get("N", calc_data.get("n1")),
+        "n1": calc_data.get("n1", calc_data.get("N")),
+        "degree": calc_data.get("degree"),
+    }
+    chunk_items = _calc_chunk_items_for_summary(calc_data)
+    if chunk_items:
+        degree = int(calc_data.get("degree", 1) or 1)
+        n_coeffs = int(calc_data.get("n_coeffs", degree + 1) or (degree + 1))
+        summary = summarize_chunk_items(chunk_items, degree, n_coeffs)
+        calc.update({
+            "n_chunks": len(chunk_items),
+            "n_coeffs": n_coeffs,
+            "job_size": {
+                **summary,
+                "solve_hist_memory_mb": DEFAULT_SOLVE_SCORE_MEMORY_MB,
+                "palette_chunk_memory_mb": DEFAULT_PALETTE_CHUNK_MEMORY_MB,
+                "auto_usable_fraction": AUTO_USABLE_FRACTION,
+                "auto_fixed_overhead_mb": AUTO_FIXED_OVERHEAD_MB,
+                "auto_per_thread_overhead_mb": AUTO_PER_THREAD_OVERHEAD_MB,
+                "lores_root_bytes": int(((calc_data.get("lores") or {}).get("bin_size") or 0) or 0),
+                "lores_coeff_bytes": int(((calc_data.get("lores") or {}).get("coeffs_size") or 0) or 0),
+                "lores_param_bytes": int(((calc_data.get("lores") or {}).get("params_size") or 0) or 0),
+            },
+        })
+    return calc
+
+
 def handle_render_summary(event):
     """Single-call Render refresh.
     Returns immutable per-family artifact catalogs plus legacy top-level artifacts
@@ -1450,12 +1518,7 @@ def handle_render_summary(event):
     try:
         obj = s3.get_object(Bucket=BUCKET, Key=prefix + "calc.json")
         calc_data = json.loads(obj["Body"].read())
-        calc = {
-            "exists": True,
-            "N": calc_data.get("N", calc_data.get("n1")),
-            "n1": calc_data.get("n1", calc_data.get("N")),
-            "degree": calc_data.get("degree"),
-        }
+        calc = _render_summary_calc(calc_data)
     except Exception:
         pass
 

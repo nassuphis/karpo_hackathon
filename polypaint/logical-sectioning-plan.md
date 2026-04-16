@@ -149,8 +149,10 @@ render-side phases:
 
 - solve-score hist partitioning mode
 - solve-score hist sections
+- solve-score hist auto sizing
 - associated-palette partitioning mode
 - associated-palette sections
+- associated-palette auto sizing
 
 Those values must be persisted in `render_execution` and restored by
 `Populate`, just like the other Generate-MT controls.
@@ -159,9 +161,23 @@ Recommended visible modes:
 
 - `physical_chunks`
 - `logical_sections`
+- `logical_sections_auto`
 
 For rollout safety, the initial default can stay `physical_chunks`, but it must
 be shown explicitly in the popup, logs, and persisted execution settings.
+
+`logical_sections_auto` means:
+
+- the user selects the execution mode
+- the planner computes a safe section count automatically from:
+  - Lambda memory size
+  - required data sources
+  - thread count
+  - total solve count
+  - conservative overhead assumptions
+
+The user should still be able to override it manually with
+`logical_sections`.
 
 
 Scope
@@ -261,6 +277,182 @@ The render worker should not need to know or care whether the section:
 That is the adaptor’s job.
 
 
+Auto-Sizing Model
+-----------------
+
+Yes, section count can be derived automatically.
+
+But the correct function is not just:
+
+- `section_count = total_size / max_section_size`
+
+because the memory budget is not only the raw input bytes.
+
+The planner needs a conservative memory model:
+
+- fixed per-invocation overhead
+- native process overhead
+- per-thread scratch / read buffers
+- required source bytes for the logical section
+- safety margin
+
+For a given phase, the planner should estimate:
+
+- `available_bytes = lambda_memory_bytes * usable_fraction`
+- `thread_overhead_bytes = threads * per_thread_budget`
+- `source_budget_bytes = available_bytes - fixed_overhead_bytes - thread_overhead_bytes`
+
+Then compute the maximum safe solve count per section from the required row
+widths:
+
+- roots row bytes
+- coeff row bytes when `cf` is used
+- param row bytes when `pm` is used
+
+Conceptually:
+
+- `section_row_bytes = roots_row_bytes + coeff_row_bytes? + params_row_bytes?`
+- `max_solves_per_section = floor(source_budget_bytes / section_row_bytes)`
+- `section_count = ceil(total_solves / max_solves_per_section)`
+
+Important detail:
+
+- for UI display, `representative chunk size * chunk count` is a fine hard
+  upper ceiling estimate
+- for actual auto sizing, use solve counts and row widths when available
+- if only chunk-size metadata exists, fall back to the ceiling estimate and add
+  extra margin
+
+This should never target the true limit. It should target a safe budget below
+it.
+
+Recommended planner constants:
+
+- `usable_fraction < 0.5` for current sectioned-native paths
+- explicit per-thread overhead budget
+- explicit fixed native overhead budget
+- minimum section count of `1`
+
+The point of auto mode is not perfect packing. The point is:
+
+- no OOM
+- no sectioned-size hard-limit surprise
+- still allow manual override for deliberate tuning
+
+
+Phase-Specific Auto Sizing
+--------------------------
+
+Auto sizing must be phase-aware.
+
+Associated palette:
+
+- source requirements come from the solve-score program
+  - `slv` only
+  - `slv + cf`
+  - `slv + pm`
+  - `slv + cf + pm`
+- threads come from `palette_chunk_threads`
+- Lambda memory comes from the palette chunk function configuration
+
+Solve-score hist:
+
+- same source-aware sizing
+- threads come from `solve_score_threads`
+- Lambda memory comes from the solve histogram worker configuration
+
+This is why auto sizing belongs in the plan layer, not in the popup alone.
+
+
+Why This Is Better Than Chunk-Count Heuristics
+----------------------------------------------
+
+The user intuition is right:
+
+- total data size is approximately `chunk_size * chunk_count`
+
+and that is a valid hard ceiling for display.
+
+But chunk-count heuristics are not enough for actual safe execution because:
+
+- some jobs have stub/tail chunks
+- mixed-source programs pull more than one row store
+- thread count changes the memory budget
+- different phases may use different Lambda memory sizes
+
+So:
+
+- use chunk sizes for diagnostics
+- use solve-count + row-width math for the actual auto-sizing decision
+
+
+Recommended UI Contract
+-----------------------
+
+For each sectioned heavy phase, expose:
+
+- partitioning mode
+  - `physical_chunks`
+  - `logical_sections`
+  - `logical_sections_auto`
+- section count
+  - editable only in manual logical mode
+- auto-sizing summary
+  - estimated section count
+  - estimated max solves per section
+  - estimated source bytes per section
+  - Lambda memory and safety budget used
+
+If auto mode is selected, the UI should still show the computed result, not
+hide it.
+
+The safety bound must be shown right next to the manual choice.
+
+If the UI exposes `section count`:
+
+- show `min safe sections = N`
+- do not allow the user to pick a value below that minimum
+- clamp or reject invalid lower values immediately in the control
+
+If the UI ever exposes `section size` instead:
+
+- show `max safe solves/section = M`
+- do not allow the user to pick a value above that maximum
+
+This direction matters:
+
+- higher `section_count` means smaller tasks and is safer
+- lower `section_count` means larger tasks and is riskier
+
+So for the current plan, where the primary control is `section count`, the UI
+constraint is:
+
+- `section_count >= min_safe_sections`
+
+not:
+
+- `section_count <= some_max_for_safety`
+
+The user should also be able to select the computed safe/manual value directly,
+for example:
+
+- `Use minimum safe`
+- `Use auto`
+
+without having to retype it.
+
+Example summary lines:
+
+- `Associated palette: auto -> 64 sections (~390625 solves/section, budget 640 MB)`
+- `Solve hist: auto -> 48 sections (~520833 solves/section, budget 768 MB)`
+
+If metadata is insufficient for a reliable estimate:
+
+- show `auto unavailable`
+- explain why
+- require explicit manual mode
+
+
 Why Solve-Aligned Sections
 --------------------------
 
@@ -349,6 +541,8 @@ New plan fields:
 
 - `associated_palette.section_mode`
 - `associated_palette.section_count`
+- `associated_palette.section_count_auto`
+- `associated_palette.section_budget_bytes`
 - `associated_palette.section_items`
 
 `section_items` replaces `chunk_items` for the associated-palette map.
@@ -399,6 +593,8 @@ New plan fields:
 
 - `solve_score.section_mode`
 - `solve_score.section_count`
+- `solve_score.section_count_auto`
+- `solve_score.section_budget_bytes`
 - `solve_score.section_items`
 
 This phase matters because hist can hit the same memory ceiling for large root
@@ -449,8 +645,10 @@ In the current Generate-MT table, add explicit rows for:
 
 - `Solve hist partitioning`
 - `Solve hist sections`
+- `Solve hist auto summary`
 - `Associated palette partitioning`
 - `Associated palette sections`
+- `Associated palette auto summary`
 
 Keep the existing rows for:
 
@@ -481,6 +679,13 @@ Dispatch log lines should include:
 - physical chunk count
 - logical section counts
 - representative section size estimate
+- whether section count was:
+  - manual
+  - or auto-derived
+- the budget basis:
+  - Lambda memory
+  - threads
+  - usable budget
 - whether the current run is:
   - `physical_chunks`
   - or `logical_sections`
@@ -548,8 +753,10 @@ Persist these new Generate-MT controls in `render_execution`:
 
 - `solve_score_section_mode`
 - `solve_score_section_count`
+- `solve_score_section_count_auto`
 - `palette_section_mode`
 - `palette_section_count`
+- `palette_section_count_auto`
 
 `Populate` should restore them exactly, the same way it now restores:
 
@@ -570,12 +777,16 @@ Frontend:
 - popup summary shows the new `Job Size` section
 - representative chunk sizes render correctly
 - section-count controls persist in popup state
+- auto-sizing summaries render correctly
+- manual section-count controls show the safe bound inline
+- manual section-count controls reject unsafe values in the correct direction
 - `Populate` restores them from artifact `render_execution`
 
 Plan-layer:
 
 - render plan builds stable section manifests from `chunk_items`
 - physical-chunk compatibility mode still works
+- auto sizing computes stable section counts from memory budget inputs
 - mixed-source section manifests include only required spans
 
 Workflow:
@@ -592,6 +803,14 @@ Worker:
 - oversized physical chunks no longer force oversized palette tasks when
   section count is increased
 
+Safety:
+
+- auto mode never emits `0` sections
+- auto mode clamps to at least one solve per section
+- auto mode falls back cleanly when required sizing metadata is missing
+- auto mode keeps a conservative budget margin so a config drift does not turn
+  into an OOM
+
 Regression:
 
 - same job, same score program, same associated palette result for:
@@ -606,9 +825,15 @@ Checklist
 - [ ] Surface representative root / coeff / param chunk sizes
 - [ ] Surface sectioned safety warnings in the popup
 - [ ] Add explicit `Solve hist sections` control
+- [ ] Add explicit `Solve hist auto mode`
 - [ ] Add explicit `Associated palette sections` control
+- [ ] Add explicit `Associated palette auto mode`
+- [ ] Show the safe bound inline next to each manual section-count control
+- [ ] Prevent manual section counts below the computed safe minimum
 - [ ] Persist new section-count controls in `render_execution`
 - [ ] Restore them in `Populate`
+- [ ] Add conservative auto-sizing budget model
+- [ ] Make auto sizing phase-aware and source-aware
 - [ ] Add shared logical-section manifest builder
 - [ ] Add shared source-span stitching helper
 - [ ] Change associated-palette render map to iterate section items

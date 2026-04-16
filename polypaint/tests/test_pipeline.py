@@ -2658,6 +2658,53 @@ class TestRenderSummary(unittest.TestCase):
         self.assertEqual(body["calc"]["degree"], 70)
 
     @patch("handler_storage.s3")
+    def test_render_summary_includes_job_size_metadata(self, mock_s3):
+        from handler_storage import handle_render_summary
+        mock_s3.head_object.side_effect = Exception("NoSuchKey")
+        mock_paginator = MagicMock()
+        mock_s3.get_paginator.return_value = mock_paginator
+        mock_paginator.paginate.return_value = [{"CommonPrefixes": []}]
+
+        calc_json = json.dumps({
+            "N": 5000,
+            "n1": 5000,
+            "degree": 70,
+            "n_coeffs": 71,
+            "chunks": [
+                {"idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_count": 3000, "bin_size": 3000 * 70 * 2 * 4},
+                {"idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_count": 2000, "bin_size": 2000 * 70 * 2 * 4},
+            ],
+            "lores": {"bin_size": 1234, "coeffs_size": 5678, "params_size": 90},
+        }).encode()
+
+        def mock_get(**kwargs):
+            key = kwargs["Key"]
+            if "calc.json" in key:
+                return {"Body": MagicMock(read=lambda: calc_json)}
+            raise Exception("NoSuchKey")
+
+        mock_s3.get_object.side_effect = mock_get
+
+        result = handle_render_summary(self._make_event({"job_id": "j"}))
+        body = json.loads(result["body"])
+        job_size = body["calc"]["job_size"]
+
+        self.assertEqual(body["calc"]["n_chunks"], 2)
+        self.assertEqual(body["calc"]["n_coeffs"], 71)
+        self.assertEqual(job_size["chunk_count"], 2)
+        self.assertEqual(job_size["total_solves"], 5000)
+        self.assertEqual(job_size["root_row_bytes"], 70 * 2 * 4)
+        self.assertEqual(job_size["coeff_row_bytes"], 71 * 2 * 4)
+        self.assertEqual(job_size["param_row_bytes"], 16)
+        self.assertEqual(job_size["representative_root_chunk_size"], 3000 * 70 * 2 * 4)
+        self.assertEqual(job_size["total_root_bytes"], 5000 * 70 * 2 * 4)
+        self.assertEqual(job_size["lores_root_bytes"], 1234)
+        self.assertEqual(job_size["lores_coeff_bytes"], 5678)
+        self.assertEqual(job_size["lores_param_bytes"], 90)
+        self.assertGreater(job_size["solve_hist_memory_mb"], 0)
+        self.assertGreater(job_size["palette_chunk_memory_mb"], 0)
+
+    @patch("handler_storage.s3")
     def test_render_summary_uses_deepzoom_latest_pointer_only(self, mock_s3):
         """DeepZoom info comes from renders/{job}/deepzoom_latest.json, no listing."""
         from handler_storage import handle_render_summary

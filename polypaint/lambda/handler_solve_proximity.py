@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import boto3
 from botocore.config import Config
 
+from logical_sections import stitch_spans_to_file
 from solve_score_chain import (
     VALID_SOLVE_SCORE_METRICS,
     compile_solve_score_chain_or_legacy,
@@ -683,6 +684,8 @@ def handle_hist(params):
     chunk_idx = params.get("chunk_idx", params.get("stripe_idx"))
     if chunk_idx is None:
         raise RuntimeError("hist requires chunk_idx")
+    section_idx = params.get("section_idx", chunk_idx)
+    section_count = params.get("section_count")
     metric = contract_param(params, "metric", "proximity", contract_warnings)
     _validate_metric(metric)
     solve_score_quantile = _validate_quantile(contract_param(params, "solve_score_quantile", 0.001, contract_warnings))
@@ -704,6 +707,10 @@ def handle_hist(params):
     step_count = params.get("step_count")
     params_step_start = params.get("params_step_start", step_start)
     params_step_count = params.get("params_step_count", step_count)
+    root_spans = list(params.get("root_spans") or [])
+    coeff_spans = list(params.get("coeff_spans") or [])
+    param_spans = list(params.get("param_spans") or [])
+    logical_section = bool(root_spans)
     degree = params["degree"]
     clip_key = params["clip_key"]
     hist_bins = params.get("hist_bins", 100)
@@ -758,10 +765,13 @@ def handle_hist(params):
         "metric": metric,
         "metric_count": compiled["metric_count"],
         "chunk_idx": chunk_idx,
+        "section_idx": section_idx,
+        "section_count": section_count,
         "omega": solve_score_omega,
         "omega_enabled": solve_score_omega_enabled,
         "threads": solve_score_threads,
         "input_mode": solve_score_hist_input_mode,
+        "logical_section": logical_section,
         "retries": solve_score_hist_retries,
         "source_bucket": BUCKET,
         "source_key": bin_key,
@@ -794,7 +804,48 @@ def handle_hist(params):
         hist_stdout = None
         hist_stderr = None
         hist_rc = 0
-        if solve_score_hist_input_mode == "sectioned":
+        if logical_section:
+            cmd = [
+                BINARY,
+                _TMP_INPUT,
+                "--mode=hist",
+                f"--degree={degree}",
+                f"--hist_bins={hist_bins}",
+                f"--threads={solve_score_threads}",
+            ]
+            progress["source_size"] = stitch_spans_to_file(s3, BUCKET, root_spans, _TMP_INPUT)
+            if program_args:
+                cmd.extend(program_args)
+                if uses_coeff_source:
+                    coeff_size = stitch_spans_to_file(s3, BUCKET, coeff_spans, _TMP_COEFF_INPUT)
+                    progress["source_coeffs_size"] = coeff_size
+                    cmd.extend([
+                        f"--score_coeffs_file={_TMP_COEFF_INPUT}",
+                        f"--score_coeff_degree={n_coeffs}",
+                    ])
+                if uses_param_source:
+                    param_size = stitch_spans_to_file(s3, BUCKET, param_spans, _TMP_PARAM_INPUT)
+                    progress["source_params_size"] = param_size
+                    cmd.append(f"--score_params_file={_TMP_PARAM_INPUT}")
+            else:
+                cmd.extend([
+                    f"--metric={metric}",
+                    f"--clip_lo={clip_data['clip_lo']}",
+                    f"--clip_hi={clip_data['clip_hi']}",
+                    f"--omega={solve_score_omega}",
+                    f"--omega_enabled={1 if solve_score_omega_enabled else 0}",
+                ])
+            if xf_path:
+                cmd.append(f"--root_xforms={xf_path}")
+            progress["dl_ms"] = int((time.time() - t0) * 1000)
+            report_status(job_id, task_id, "bin_downloaded", result_data=progress)
+            t1 = time.time()
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            compute_ms = int((time.time() - t1) * 1000)
+            hist_rc = result.returncode
+            hist_stdout = result.stdout
+            hist_stderr = result.stderr
+        elif solve_score_hist_input_mode == "sectioned":
             input_size = int(params.get("bin_size") or 0)
             if input_size <= 0:
                 head = s3.head_object(Bucket=BUCKET, Key=bin_key)
@@ -880,7 +931,7 @@ def handle_hist(params):
                     "solve_proximity_hist_sectioned failed for "
                     f"s3://{BUCKET}/{bin_key} "
                     f"(clip=s3://{BUCKET}/{clip_key}, job={job_id}, task={task_id}, "
-                    f"chunk={chunk_idx}, input=sectioned, size={input_size}, "
+                    f"chunk={chunk_idx}, section={section_idx}, input=sectioned, size={input_size}, "
                     f"threads={solve_score_threads}, retries={solve_score_hist_retries}, metric={metric}{program_suffix}): {stderr_summary}"
                 )
             hist_data = json.loads(hist_stdout)
@@ -986,12 +1037,12 @@ def handle_hist(params):
             stderr_summary = (hist_stderr or "").strip() or "unknown error"
             raise RuntimeError(
                 "solve_proximity_stats hist failed "
-                f"(job={job_id}, task={task_id}, chunk={chunk_idx}, input={solve_score_hist_input_mode}, "
+                f"(job={job_id}, task={task_id}, chunk={chunk_idx}, section={section_idx}, input={solve_score_hist_input_mode}, "
                 f"metric={metric}, source=s3://{BUCKET}/{bin_key}{program_suffix}): {stderr_summary}"
             )
 
         hist_data = json.loads(hist_stdout)
-        if solve_score_hist_input_mode != "sectioned":
+        if solve_score_hist_input_mode != "sectioned" or logical_section:
             progress["compute_ms"] = compute_ms
         progress["threads"] = int(hist_data.get("threads", solve_score_threads))
         progress["n_solves"] = hist_data["n_solves"]
@@ -1004,7 +1055,7 @@ def handle_hist(params):
             "clip_quantile": solve_score_quantile,
             "omega": solve_score_omega,
             "omega_enabled": solve_score_omega_enabled,
-            "chunk_idx": chunk_idx,
+            "chunk_idx": int(section_idx),
             "hist_bins": hist_bins,
             "clip_lo": clip_data["clip_lo"],
             "clip_hi": clip_data["clip_hi"],

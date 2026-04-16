@@ -143,7 +143,7 @@
                 "mode.$": "$.mode",
                 "phase": "solve_score_hist",
                 "phase_label": "Solve score: hist",
-                "expected.$": "$.plan.calc.n_chunks",
+                "expected.$": "$.plan.solve_score.item_count",
                 "subtask_prefix.$": "States.Format('render_{}_solve_score_hist_', $.run_id)"
               }
             },
@@ -154,13 +154,15 @@
 
           "ColorSolveScoreHistMap": {
             "Type": "Map",
-            "ItemsPath": "$.plan.chunk_items",
+            "ItemsPath": "$.plan.solve_score.section_items",
             "MaxConcurrency": 10,
             "ItemSelector": {
               "phase": "hist",
-              "job_id.$": "$.job_id",
-              "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
-              "metric.$": "$.plan.solve_score.metric",
+                "job_id.$": "$.job_id",
+                "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
+                "section_idx.$": "$$.Map.Item.Value.section_idx",
+                "section_count.$": "$$.Map.Item.Value.section_count",
+                "metric.$": "$.plan.solve_score.metric",
               "solve_score_chain.$": "$.plan.solve_score.chain",
               "solve_score_quantile.$": "$.plan.solve_score.quantile",
               "solve_score_omega.$": "$.plan.solve_score.omega",
@@ -176,6 +178,9 @@
               "params_step_count.$": "$$.Map.Item.Value.params_step_count",
               "step_start.$": "$$.Map.Item.Value.step_start",
               "step_count.$": "$$.Map.Item.Value.step_count",
+              "root_spans.$": "$$.Map.Item.Value.root_spans",
+              "coeff_spans.$": "$$.Map.Item.Value.coeff_spans",
+              "param_spans.$": "$$.Map.Item.Value.param_spans",
               "n_coeffs.$": "$.plan.calc.n_coeffs",
               "degree.$": "$.plan.calc.degree",
               "clip_key.$": "$.plan.solve_score.clip_key",
@@ -239,8 +244,9 @@
                 "solve_score_quantile.$": "$.plan.solve_score.quantile",
                 "solve_score_omega.$": "$.plan.solve_score.omega",
                 "solve_score_omega_enabled.$": "$.plan.solve_score.omega_enabled",
-                "solve_score_threads.$": "$.plan.solve_score.threads",
-                "solve_score_merge_workers.$": "$.plan.solve_score.merge_workers",
+              "solve_score_threads.$": "$.plan.solve_score.threads",
+              "solve_score_merge_workers.$": "$.plan.solve_score.merge_workers",
+                "n_chunks.$": "$.plan.solve_score.item_count",
                 "hist_prefix.$": "$.plan.solve_score.hist_prefix",
                 "clip_key.$": "$.plan.solve_score.clip_key",
                 "out_key.$": "$.plan.solve_score.bins_key",
@@ -274,7 +280,7 @@
                 "mode.$": "$.mode",
                 "phase": "associated_palette_chunk",
                 "phase_label": "Associated palette",
-                "expected.$": "$.plan.calc.n_chunks",
+                "expected.$": "$.plan.associated_palette.item_count",
                 "subtask_prefix.$": "States.Format('render_{}_associated_palette_', $.run_id)"
               }
             },
@@ -285,11 +291,13 @@
 
           "ColorAssociatedPaletteMap": {
             "Type": "Map",
-            "ItemsPath": "$.plan.chunk_items",
+            "ItemsPath": "$.plan.associated_palette.section_items",
             "MaxConcurrencyPath": "$.plan.associated_palette.chunk_workers",
             "ItemSelector": {
               "job_id.$": "$.job_id",
               "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
+              "section_idx.$": "$$.Map.Item.Value.section_idx",
+              "section_count.$": "$$.Map.Item.Value.section_count",
               "bin_key.$": "$$.Map.Item.Value.bin_key",
               "bin_size.$": "$$.Map.Item.Value.bin_size",
               "coeffs_key.$": "$$.Map.Item.Value.coeffs_key",
@@ -299,6 +307,9 @@
               "params_step_count.$": "$$.Map.Item.Value.params_step_count",
               "step_start.$": "$$.Map.Item.Value.step_start",
               "step_count.$": "$$.Map.Item.Value.step_count",
+              "root_spans.$": "$$.Map.Item.Value.root_spans",
+              "coeff_spans.$": "$$.Map.Item.Value.coeff_spans",
+              "param_spans.$": "$$.Map.Item.Value.param_spans",
               "degree.$": "$.plan.calc.degree",
               "n_coeffs.$": "$.plan.calc.n_coeffs",
               "metric.$": "$.plan.associated_palette.metric",

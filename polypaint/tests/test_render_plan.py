@@ -315,6 +315,10 @@ class TestRenderPlan(unittest.TestCase):
             palette_chunk_input_mode="tmpfile",
             palette_chunk_retries=6,
             palette_chunk_workers=22,
+            solve_score_section_mode="logical_sections",
+            solve_score_section_count=4,
+            palette_section_mode="logical_sections",
+            palette_section_count=4,
         ), None)
         plan = json.loads(result["body"])
 
@@ -335,6 +339,10 @@ class TestRenderPlan(unittest.TestCase):
         assert render_execution["palette_chunk_input_mode"] == "tmpfile"
         assert render_execution["palette_chunk_retries"] == 6
         assert render_execution["palette_chunk_workers"] == 22
+        assert render_execution["solve_score_section_mode"] == "logical_sections"
+        assert render_execution["solve_score_section_count"] == 4
+        assert render_execution["palette_section_mode"] == "logical_sections"
+        assert render_execution["palette_section_count"] == 4
 
         metadata_exec = json.loads(plan["outputs"]["metadata"]["render_execution"])
         assert metadata_exec == render_execution
@@ -342,6 +350,130 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["associated_palette"]["chunk_input_mode"] == "tmpfile"
         assert plan["associated_palette"]["chunk_retries"] == 6
         assert plan["associated_palette"]["chunk_workers"] == 22
+        assert plan["solve_score"]["section_mode"] == "logical_sections"
+        assert plan["solve_score"]["section_count"] == 4
+        assert plan["associated_palette"]["section_mode"] == "logical_sections"
+        assert plan["associated_palette"]["section_count"] == 4
+
+    @patch("handler_render_plan._storage_call")
+    def test_manual_solve_score_logical_sections_build_cross_chunk_spans(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5,
+            "n_coeffs": 7,
+            "N": 100,
+            "times": 1,
+            "params_key": "renders/j/params.bin",
+            "chunks": [
+                {"idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_count": 25},
+                {"idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_count": 25},
+                {"idx": 2, "bin_key": "renders/j/chunk_2.bin", "step_count": 25},
+                {"idx": 3, "bin_key": "renders/j/chunk_3.bin", "step_count": 25},
+            ],
+            "lores": {
+                "bin_key": "renders/j/lores.bin",
+                "coeffs_key": "renders/j/lores_coeffs.bin",
+                "params_key": "renders/j/lores_params.bin",
+            },
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_score_chain=[["spread", "cf", "1"], ["t1_abs", "pm", "1"], ["avg"]],
+            solve_score_section_mode="logical_sections",
+            solve_score_section_count=3,
+        ), None)
+        plan = json.loads(result["body"])
+
+        solve_score = plan["solve_score"]
+        self.assertEqual(solve_score["section_mode"], "logical_sections")
+        self.assertEqual(solve_score["section_count"], 3)
+        self.assertEqual(solve_score["item_count"], 3)
+        first = solve_score["section_items"][0]
+        self.assertEqual(first["step_start"], 0)
+        self.assertEqual(first["step_count"], 34)
+        self.assertEqual(first["bin_size"], 34 * 5 * 2 * 4)
+        self.assertEqual(len(first["root_spans"]), 2)
+        self.assertEqual(first["root_spans"][0]["key"], "renders/j/chunk_0.bin")
+        self.assertEqual(first["root_spans"][0]["byte_start"], 0)
+        self.assertEqual(first["root_spans"][0]["byte_length"], 25 * 5 * 2 * 4)
+        self.assertEqual(first["root_spans"][1]["key"], "renders/j/chunk_1.bin")
+        self.assertEqual(first["root_spans"][1]["byte_start"], 0)
+        self.assertEqual(first["root_spans"][1]["byte_length"], 9 * 5 * 2 * 4)
+        self.assertEqual(len(first["coeff_spans"]), 2)
+        self.assertEqual(first["coeff_spans"][0]["byte_length"], 25 * 7 * 2 * 4)
+        self.assertEqual(first["coeff_spans"][1]["byte_length"], 9 * 7 * 2 * 4)
+        self.assertEqual(len(first["param_spans"]), 2)
+        self.assertEqual(first["param_spans"][0]["byte_start"], 0)
+        self.assertEqual(first["param_spans"][0]["byte_length"], 25 * 16)
+        self.assertEqual(first["param_spans"][1]["byte_start"], 25 * 16)
+        self.assertEqual(first["param_spans"][1]["byte_length"], 9 * 16)
+
+    @patch("handler_render_plan._storage_call")
+    def test_auto_solve_score_logical_sections_uses_computed_safe_count(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 70,
+            "n_coeffs": 71,
+            "N": 4_000_000,
+            "times": 1,
+            "params_key": "renders/j/params.bin",
+            "chunks": [
+                {"idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_count": 1_000_000},
+                {"idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_count": 1_000_000},
+                {"idx": 2, "bin_key": "renders/j/chunk_2.bin", "step_count": 1_000_000},
+                {"idx": 3, "bin_key": "renders/j/chunk_3.bin", "step_count": 1_000_000},
+            ],
+            "lores": {
+                "bin_key": "renders/j/lores.bin",
+                "coeffs_key": "renders/j/lores_coeffs.bin",
+                "params_key": "renders/j/lores_params.bin",
+            },
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_score_threads=4,
+            solve_score_chain=[["spread", "cf", "1"], ["t1_abs", "pm", "1"], ["avg"]],
+            solve_score_section_mode="logical_sections_auto",
+        ), None)
+        plan = json.loads(result["body"])
+
+        solve_score = plan["solve_score"]
+        self.assertEqual(solve_score["section_mode"], "logical_sections_auto")
+        self.assertGreater(solve_score["section_count_auto"], 1)
+        self.assertEqual(solve_score["section_count"], solve_score["section_count_auto"])
+        self.assertEqual(solve_score["item_count"], solve_score["section_count"])
+        self.assertEqual(plan["render_execution"]["solve_score_section_count_auto"], solve_score["section_count_auto"])
+
+    @patch("handler_render_plan._storage_call")
+    def test_manual_solve_score_logical_sections_reject_below_safe_minimum(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 70,
+            "n_coeffs": 71,
+            "N": 4_000_000,
+            "times": 1,
+            "params_key": "renders/j/params.bin",
+            "chunks": [
+                {"idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_count": 1_000_000},
+                {"idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_count": 1_000_000},
+                {"idx": 2, "bin_key": "renders/j/chunk_2.bin", "step_count": 1_000_000},
+                {"idx": 3, "bin_key": "renders/j/chunk_3.bin", "step_count": 1_000_000},
+            ],
+            "lores": {
+                "bin_key": "renders/j/lores.bin",
+                "coeffs_key": "renders/j/lores_coeffs.bin",
+                "params_key": "renders/j/lores_params.bin",
+            },
+        })
+        from handler_render_plan import handler
+        with self.assertRaises(RuntimeError) as ctx:
+            handler(_make_event(
+                color_mode="solve_score",
+                solve_score_threads=4,
+                solve_score_chain=[["spread", "cf", "1"], ["t1_abs", "pm", "1"], ["avg"]],
+                solve_score_section_mode="logical_sections",
+                solve_score_section_count=1,
+            ), None)
+        self.assertIn("safe minimum", str(ctx.exception))
 
     @patch("handler_render_plan._storage_call")
     def test_solve_score_chain_input_compiles_to_scalar_contract(self, mock_storage):
@@ -806,6 +938,42 @@ class TestRenderPlan(unittest.TestCase):
             ["omega_cosine", "4"],
         ]
         assert plan["outputs"]["metadata"]["associated_palette_omega_enabled"] == "true"
+
+    @patch("handler_render_plan._storage_call")
+    def test_associated_palette_manual_logical_sections_build_cross_chunk_spans(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5,
+            "n_coeffs": 7,
+            "N": 100,
+            "times": 1,
+            "chunks": [
+                {"idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_count": 25},
+                {"idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_count": 25},
+                {"idx": 2, "bin_key": "renders/j/chunk_2.bin", "step_count": 25},
+                {"idx": 3, "bin_key": "renders/j/chunk_3.bin", "step_count": 25},
+            ],
+            "lores": {"bin_key": "renders/j/lores.bin", "coeffs_key": "renders/j/lores_coeffs.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_score_chain=[["spread", "cf", "1"]],
+            save_associated_palette=True,
+            palette_section_mode="logical_sections",
+            palette_section_count=3,
+        ), None)
+        plan = json.loads(result["body"])
+        assoc = plan["associated_palette"]
+        self.assertEqual(assoc["enabled"], True)
+        self.assertEqual(assoc["section_mode"], "logical_sections")
+        self.assertEqual(assoc["section_count"], 3)
+        self.assertEqual(assoc["item_count"], 3)
+        first = assoc["section_items"][0]
+        self.assertEqual(first["step_count"], 34)
+        self.assertEqual(len(first["root_spans"]), 2)
+        self.assertEqual(len(first["coeff_spans"]), 2)
+        self.assertEqual(first["root_spans"][1]["key"], "renders/j/chunk_1.bin")
+        self.assertEqual(first["coeff_spans"][1]["byte_length"], 9 * 7 * 2 * 4)
 
     @patch("handler_render_plan._storage_call")
     def test_mixed_source_solve_score_associated_palette_preserves_calc_coeff_metadata(self, mock_storage):

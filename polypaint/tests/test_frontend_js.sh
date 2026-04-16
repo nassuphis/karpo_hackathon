@@ -422,6 +422,7 @@ const renderEls = {
     'render-generate-popup-help': {},
     'render-mt-popup-overlay': {},
     'render-mt-popup-summary': {},
+    'render-mt-job-size': {},
     'render-mt-popup-close': {},
     'render-mt-popup-cancel': {},
     'render-mt-popup-run': {},
@@ -429,6 +430,9 @@ const renderEls = {
     'render-mt-solve-score-threads': { value: '4' },
     'render-mt-hist-input-mode': { value: 'tmpfile' },
     'render-mt-hist-retries': { value: '2' },
+    'render-mt-hist-section-mode': { value: 'physical_chunks' },
+    'render-mt-hist-section-count': { value: '1' },
+    'render-mt-hist-section-summary': {},
     'render-mt-raster-input-mode': { value: 'tmpfile' },
     'render-mt-raster-retries': { value: '2' },
     'render-mt-pixel-bin-fragment-mode': { value: 'sparse_chunks' },
@@ -439,6 +443,9 @@ const renderEls = {
     'render-mt-palette-chunk-input-mode': { value: 'sectioned' },
     'render-mt-palette-chunk-workers': { value: '16' },
     'render-mt-palette-chunk-retries': { value: '2' },
+    'render-mt-palette-section-mode': { value: 'physical_chunks' },
+    'render-mt-palette-section-count': { value: '1' },
+    'render-mt-palette-section-summary': {},
     'render-mt-associated-row': {},
     'render-mt-save-associated-palette': { checked: false },
     'generate-from-palette-popup-overlay': {},
@@ -1026,7 +1033,17 @@ async function testPipeline(name, call) {
     {
         const logs = vm.runInContext('_pipelineDispatchLogs', ctx);
         const payloads = vm.runInContext('_renderOrchestratorPayloads', ctx);
-        const mtHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render-MT: dispatching with solve score threads=3, hist input=tmpfile, hist retries=4, merge workers=12, raster input=tmpfile, raster retries=5, raster threads=6, bin fragments=sparse_chunks, finalize workers=18, associated palette=no, palette chunk unused')) : null;
+        const mtHit = Array.isArray(logs) ? logs.find((row) => {
+            const msg = String(row.msg || '');
+            return msg.includes('Render-MT: dispatching with solve score threads=3, hist input=tmpfile, hist retries=4')
+                && msg.includes('hist sections=physical_chunks')
+                && msg.includes('merge workers=12')
+                && msg.includes('raster input=tmpfile, raster retries=5, raster threads=6')
+                && msg.includes('bin fragments=sparse_chunks')
+                && msg.includes('finalize workers=18')
+                && msg.includes('associated palette=no')
+                && msg.includes('palette chunk unused');
+        }) : null;
         const orchHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render: dispatching color orchestrator')) : null;
         const mtPayload = Array.isArray(payloads) ? payloads.find((row) => row && row.params && row.params.raster_engine === 'mt') : null;
         if (!mtHit || mtHit.cls !== 'ok' || !orchHit || orchHit.cls !== 'ok' || !mtPayload ||
@@ -1043,6 +1060,10 @@ async function testPipeline(name, call) {
             mtPayload.params.palette_chunk_input_mode !== 'sectioned' ||
             mtPayload.params.palette_chunk_retries !== 2 ||
             mtPayload.params.palette_chunk_workers !== 16 ||
+            mtPayload.params.solve_score_section_mode !== 'physical_chunks' ||
+            mtPayload.params.solve_score_section_count !== '' ||
+            mtPayload.params.palette_section_mode !== 'physical_chunks' ||
+            mtPayload.params.palette_section_count !== '' ||
             mtPayload.params.save_associated_palette !== false) {
             console.error('FATAL: runRasterPipelineMT should log green MT + orchestrator dispatch and pass thread counts, got logs=' + JSON.stringify(logs) + ' payloads=' + JSON.stringify(payloads));
             process.exit(1);
@@ -1053,6 +1074,22 @@ async function testPipeline(name, call) {
 
     vm.runInContext(`
         renderColorMode = 'solve_score';
+        window._lastRenderSummary = { calc: { job_size: {
+            chunk_count: 50,
+            total_solves: 25000000,
+            chunk_step_metadata_complete: true,
+            root_row_bytes: 280,
+            coeff_row_bytes: 560,
+            param_row_bytes: 16,
+            representative_root_chunk_size: 952000000,
+            representative_coeff_chunk_size: 476000000,
+            representative_param_chunk_size: 200000000,
+            solve_hist_memory_mb: 4096,
+            palette_chunk_memory_mb: 1769,
+            auto_usable_fraction: 0.40,
+            auto_fixed_overhead_mb: 96,
+            auto_per_thread_overhead_mb: 8
+        } } };
         renderMatchMode = 'none';
         _activeRenderRun = null;
         openRenderMtPopup();
@@ -1063,11 +1100,18 @@ async function testPipeline(name, call) {
     }
     if (!(ctx._elements['render-mt-popup-summary'].textContent || '').includes('hist retries=')
         || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('raster retries=')
+        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('hist sections=physical_chunks')
         || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('merge workers=')
         || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('bins=sparse chunks')
         || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('finalize workers=')
         || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('palette chunk unused')) {
         console.error('FATAL: Generate-MT popup should show thread summary');
+        process.exit(1);
+    }
+    if (!(ctx._elements['render-mt-job-size'].textContent || '').includes('Job size: chunks=50')
+        || !(ctx._elements['render-mt-hist-section-summary'].textContent || '').includes('min safe sections=')
+        || !(ctx._elements['render-mt-palette-section-summary'].textContent || '').includes('auto unavailable')) {
+        console.error('FATAL: Generate-MT popup should show job-size + section summaries');
         process.exit(1);
     }
     if (ctx._elements['render-mt-solve-score-threads'].disabled !== false) {
@@ -1080,6 +1124,11 @@ async function testPipeline(name, call) {
     }
     if (ctx._elements['render-mt-hist-retries'].disabled !== true) {
         console.error('FATAL: Generate-MT popup should disable hist retries when hist input is tmpfile');
+        process.exit(1);
+    }
+    if (ctx._elements['render-mt-hist-section-mode'].disabled !== false
+        || ctx._elements['render-mt-hist-section-count'].disabled !== true) {
+        console.error('FATAL: Generate-MT popup should enable hist section mode and keep manual count disabled in physical-chunk mode');
         process.exit(1);
     }
     if (ctx._elements['render-mt-merge-workers'].disabled !== false) {
@@ -1105,7 +1154,9 @@ async function testPipeline(name, call) {
     if (ctx._elements['render-mt-palette-chunk-threads'].disabled !== true
         || ctx._elements['render-mt-palette-chunk-input-mode'].disabled !== true
         || ctx._elements['render-mt-palette-chunk-workers'].disabled !== true
-        || ctx._elements['render-mt-palette-chunk-retries'].disabled !== true) {
+        || ctx._elements['render-mt-palette-chunk-retries'].disabled !== true
+        || ctx._elements['render-mt-palette-section-mode'].disabled !== true
+        || ctx._elements['render-mt-palette-section-count'].disabled !== true) {
         console.error('FATAL: Generate-MT popup should disable palette chunk controls until solve_score + associated palette are both enabled');
         process.exit(1);
     }
@@ -1120,13 +1171,17 @@ async function testPipeline(name, call) {
         _activeRenderRun = null;
         _renderMtPopupState.saveAssociatedPalette = true;
         _renderMtPopupState.paletteChunkInputMode = 'sectioned';
+        _renderMtPopupState.paletteSectionMode = 'logical_sections_auto';
         openRenderMtPopup();
     `, ctx);
     if (ctx._elements['render-mt-palette-chunk-threads'].disabled !== false
         || ctx._elements['render-mt-palette-chunk-input-mode'].disabled !== false
         || ctx._elements['render-mt-palette-chunk-workers'].disabled !== false
         || ctx._elements['render-mt-palette-chunk-retries'].disabled !== false
-        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('palette chunk threads=')) {
+        || ctx._elements['render-mt-palette-section-mode'].disabled !== false
+        || ctx._elements['render-mt-palette-section-count'].disabled !== true
+        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('palette chunk threads=')
+        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('palette sections=logical_sections_auto/')) {
         console.error('FATAL: Generate-MT popup should enable palette chunk controls when solve_score + associated palette are enabled');
         process.exit(1);
     }
@@ -4717,6 +4772,22 @@ async function testPipeline(name, call) {
         let orchDispatched = null;
         vm.runInContext(`
             renderColorMode = 'solve_score';
+            window._lastRenderSummary = { calc: { job_size: {
+                chunk_count: 50,
+                total_solves: 25000000,
+                chunk_step_metadata_complete: true,
+                root_row_bytes: 280,
+                coeff_row_bytes: 560,
+                param_row_bytes: 16,
+                representative_root_chunk_size: 952000000,
+                representative_coeff_chunk_size: 476000000,
+                representative_param_chunk_size: 200000000,
+                solve_hist_memory_mb: 4096,
+                palette_chunk_memory_mb: 1769,
+                auto_usable_fraction: 0.40,
+                auto_fixed_overhead_mb: 96,
+                auto_per_thread_overhead_mb: 8
+            } } };
             var _orchDispatched = null;
             lambdaPost = async function lambdaPost(name, body, path) {
                 if (name === 'dispatch' && body.target === 'render_orchestrator') {
@@ -4764,7 +4835,7 @@ async function testPipeline(name, call) {
             refreshRenderArtifacts = async function() {};
         `, ctx);
         ctx._elements['btn-render-generate-mt'] = ctx._mkEl();
-        await vm.runInContext('(async()=>{ await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, histInputMode: "sectioned", histRetries: 4, rasterInputMode: "sectioned", rasterRetries: 7, pixelBinFragmentMode: "dense_grouped", rasterBinGroupSize: 5, mergeWorkers: 14, finalizeWorkers: 22, paletteChunkThreads: 8, paletteChunkInputMode: "tmpfile", paletteChunkRetries: 9, paletteChunkWorkers: 24, saveAssociatedPalette: true }); })()', ctx);
+        await vm.runInContext('(async()=>{ await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, histInputMode: "sectioned", histRetries: 4, solveScoreSectionMode: "logical_sections", solveScoreSectionCount: 64, rasterInputMode: "sectioned", rasterRetries: 7, pixelBinFragmentMode: "dense_grouped", rasterBinGroupSize: 5, mergeWorkers: 14, finalizeWorkers: 22, paletteChunkThreads: 8, paletteChunkInputMode: "tmpfile", paletteChunkRetries: 9, paletteChunkWorkers: 24, paletteSectionMode: "logical_sections_auto", saveAssociatedPalette: true }); })()', ctx);
         orchDispatched = vm.runInContext('_orchDispatched', ctx);
         if (!orchDispatched) { console.error('FATAL: runRasterPipelineMT did not dispatch orchestrator'); process.exit(1); }
         if (orchDispatched.params.raster_engine !== 'mt') { console.error('FATAL: runRasterPipelineMT should request mt raster engine, got ' + orchDispatched.params.raster_engine); process.exit(1); }
@@ -4772,6 +4843,8 @@ async function testPipeline(name, call) {
         if (orchDispatched.params.solve_score_threads !== 3) { console.error('FATAL: runRasterPipelineMT should pass solve_score_threads=3, got ' + orchDispatched.params.solve_score_threads); process.exit(1); }
         if (orchDispatched.params.solve_score_hist_input_mode !== 'sectioned') { console.error('FATAL: runRasterPipelineMT should pass solve_score_hist_input_mode=sectioned, got ' + orchDispatched.params.solve_score_hist_input_mode); process.exit(1); }
         if (orchDispatched.params.solve_score_hist_retries !== 4) { console.error('FATAL: runRasterPipelineMT should pass solve_score_hist_retries=4, got ' + orchDispatched.params.solve_score_hist_retries); process.exit(1); }
+        if (orchDispatched.params.solve_score_section_mode !== 'logical_sections') { console.error('FATAL: runRasterPipelineMT should pass solve_score_section_mode=logical_sections, got ' + orchDispatched.params.solve_score_section_mode); process.exit(1); }
+        if (orchDispatched.params.solve_score_section_count !== 64) { console.error('FATAL: runRasterPipelineMT should pass solve_score_section_count=64, got ' + orchDispatched.params.solve_score_section_count); process.exit(1); }
         if (orchDispatched.params.solve_score_merge_workers !== 14) { console.error('FATAL: runRasterPipelineMT should pass solve_score_merge_workers=14, got ' + orchDispatched.params.solve_score_merge_workers); process.exit(1); }
         if (orchDispatched.params.finalize_workers !== 22) { console.error('FATAL: runRasterPipelineMT should pass finalize_workers=22, got ' + orchDispatched.params.finalize_workers); process.exit(1); }
         if (orchDispatched.params.raster_input_mode !== 'sectioned') { console.error('FATAL: runRasterPipelineMT should pass raster_input_mode=sectioned, got ' + orchDispatched.params.raster_input_mode); process.exit(1); }
@@ -4782,9 +4855,11 @@ async function testPipeline(name, call) {
         if (orchDispatched.params.palette_chunk_input_mode !== 'tmpfile') { console.error('FATAL: runRasterPipelineMT should pass palette_chunk_input_mode=tmpfile, got ' + orchDispatched.params.palette_chunk_input_mode); process.exit(1); }
         if (orchDispatched.params.palette_chunk_retries !== 9) { console.error('FATAL: runRasterPipelineMT should pass palette_chunk_retries=9, got ' + orchDispatched.params.palette_chunk_retries); process.exit(1); }
         if (orchDispatched.params.palette_chunk_workers !== 24) { console.error('FATAL: runRasterPipelineMT should pass palette_chunk_workers=24, got ' + orchDispatched.params.palette_chunk_workers); process.exit(1); }
+        if (orchDispatched.params.palette_section_mode !== 'logical_sections_auto') { console.error('FATAL: runRasterPipelineMT should pass palette_section_mode=logical_sections_auto, got ' + orchDispatched.params.palette_section_mode); process.exit(1); }
+        if (!(Number(orchDispatched.params.palette_section_count) >= 1)) { console.error('FATAL: runRasterPipelineMT should resolve palette_section_count auto to a positive integer, got ' + orchDispatched.params.palette_section_count); process.exit(1); }
         if (orchDispatched.params.save_associated_palette !== true) { console.error('FATAL: runRasterPipelineMT should pass save_associated_palette=true when selected, got ' + orchDispatched.params.save_associated_palette); process.exit(1); }
         if (orchDispatched.mode !== 'color') { console.error('FATAL: mode should be color, got ' + orchDispatched.mode); process.exit(1); }
-        console.log('  12a2 runRasterPipelineMT dispatches orchestrator: OK (mode=color, raster_engine=mt, solve=3, hist=sectioned, hist_retries=4, merge=14, finalize=22, raster_input=sectioned, raster_retries=7, raster=6, bins=dense_grouped/5, palette_chunk=8/tmpfile/9/24, associated_palette=yes)');
+        console.log('  12a2 runRasterPipelineMT dispatches orchestrator: OK (mode=color, raster_engine=mt, solve=3, hist=sectioned/64, hist_retries=4, merge=14, finalize=22, raster_input=sectioned, raster_retries=7, raster=6, bins=dense_grouped/5, palette_chunk=8/tmpfile/9/24, palette_sections=auto, associated_palette=yes)');
     }
 
     // 12b: runBilevelPipeline dispatches one render_orchestrator job

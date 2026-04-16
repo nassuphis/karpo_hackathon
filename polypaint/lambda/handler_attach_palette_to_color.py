@@ -22,21 +22,12 @@ from shared import (
     contract_param,
     ok_response,
     parse_body,
+    parse_boolish,
     report_status,
 )
 
 
 s3 = boto3.client("s3")
-
-
-def _parse_boolish(value, default=True):
-    if value in (None, ""):
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
 def handler(event, context):
@@ -54,7 +45,7 @@ def handler(event, context):
     metric = str(contract_param(params, "associated_palette_metric", "", contract_warnings) or "").strip()
     quantile = contract_param(params, "associated_palette_quantile", "", contract_warnings)
     omega = contract_param(params, "associated_palette_omega", "", contract_warnings)
-    omega_enabled = _parse_boolish(contract_param(params, "associated_palette_omega_enabled", True, contract_warnings), True)
+    omega_enabled = parse_boolish(contract_param(params, "associated_palette_omega_enabled", True, contract_warnings), True)
     score_chain = contract_param(params, "associated_palette_score_chain", "", contract_warnings)
 
     if mode not in ("generated", "dependency"):

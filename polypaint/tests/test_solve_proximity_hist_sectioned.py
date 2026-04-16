@@ -113,6 +113,52 @@ class _ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 
 class TestSolveProximityHistSectioned(unittest.TestCase):
+    def _score_case_specs(self):
+        from solve_score_chain import compile_solve_score_chain, solve_score_program_cli_payload
+
+        cases = [
+            {
+                "label": "slv",
+                "chain": [["crowding", "slv", "1"]],
+                "clips": {"crowding": (0.0, 1.0)},
+                "uses_coeff": False,
+                "uses_param": False,
+            },
+            {
+                "label": "slv_cf",
+                "chain": [["crowding", "slv", "1"], ["spread", "cf", "3"], ["max"]],
+                "clips": {"crowding": (0.0, 1.0), "spread": (0.0, 2.0)},
+                "uses_coeff": True,
+                "uses_param": False,
+            },
+            {
+                "label": "slv_pm",
+                "chain": [["crowding", "slv", "1"], ["t1_abs", "pm", "2"], ["max"]],
+                "clips": {"crowding": (0.0, 1.0), "t1_abs": (0.0, 2.0)},
+                "uses_coeff": False,
+                "uses_param": True,
+            },
+            {
+                "label": "slv_cf_pm",
+                "chain": [["crowding", "slv", "1"], ["spread", "cf", "3"], ["max"], ["t1_abs", "pm", "2"], ["max"]],
+                "clips": {"crowding": (0.0, 1.0), "spread": (0.0, 2.0), "t1_abs": (0.0, 2.0)},
+                "uses_coeff": True,
+                "uses_param": True,
+            },
+        ]
+        out = []
+        for case in cases:
+            compiled = compile_solve_score_chain(case["chain"])
+            metrics = []
+            for metric in compiled["metrics"]:
+                lo, hi = case["clips"][metric["metric"]]
+                metrics.append({**metric, "clip_lo": lo, "clip_hi": hi})
+            out.append({
+                **case,
+                "payload": solve_score_program_cli_payload({"metrics": metrics, "program_spec": compiled["program_spec"]}),
+            })
+        return out
+
     def test_sectioned_hist_matches_existing_hist(self):
         _ensure_binaries()
         solves = [
@@ -413,31 +459,6 @@ class TestSolveProximityHistSectioned(unittest.TestCase):
                 thread = threading.Thread(target=httpd.serve_forever, daemon=True)
                 thread.start()
                 try:
-                    ref_hist = subprocess.run(
-                        [
-                            str(STATS_BIN),
-                            str(section_roots_path),
-                            "--mode=hist",
-                            f"--degree={degree}",
-                            "--clip_lo=0",
-                            "--clip_hi=1",
-                            "--hist_bins=8",
-                            "--threads=1",
-                            "--score_metrics=t1_abs,spread",
-                            "--score_sources=pm,cf",
-                            "--score_clip_los=0,0",
-                            "--score_clip_his=2,2",
-                            "--score_program=m0;m1;max",
-                            f"--score_coeffs_file={section_coeffs_path}",
-                            f"--score_coeff_degree={n_coeffs}",
-                            f"--score_params_file={section_params_path}",
-                        ],
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                    )
-                    self.assertEqual(ref_hist.returncode, 0, ref_hist.stderr)
-                    ref_data = json.loads(ref_hist.stdout)
                     solve_source_manifest = build_solve_source_manifest(
                         chunk_items,
                         job_id="hist_parity_job",
@@ -459,6 +480,8 @@ class TestSolveProximityHistSectioned(unittest.TestCase):
                         solve_count=section_count,
                         url_by_key=url_by_key,
                     )
+                    input_manifest_path = root / "input_manifest.json"
+                    input_manifest_path.write_text(json.dumps(input_manifest), encoding="utf-8")
                     coeff_manifest = build_native_multispan_manifest(
                         solve_source_manifest,
                         source_family="cf",
@@ -473,41 +496,78 @@ class TestSolveProximityHistSectioned(unittest.TestCase):
                         solve_count=section_count,
                         url_by_key=url_by_key,
                     )
-                    input_manifest_path = root / "input_manifest.json"
-                    coeff_manifest_path = root / "coeff_manifest.json"
-                    param_manifest_path = root / "param_manifest.json"
-                    input_manifest_path.write_text(json.dumps(input_manifest), encoding="utf-8")
-                    coeff_manifest_path.write_text(json.dumps(coeff_manifest), encoding="utf-8")
-                    param_manifest_path.write_text(json.dumps(param_manifest), encoding="utf-8")
 
-                    sectioned = subprocess.run(
-                        [
-                            str(SECTIONED_BIN),
-                            "--input_mode=multispan_sectioned",
-                            f"--input_manifest={input_manifest_path}",
-                            f"--degree={degree}",
-                            "--clip_lo=0",
-                            "--clip_hi=1",
-                            "--hist_bins=8",
-                            "--threads=2",
-                            "--retries=1",
-                            "--score_metrics=t1_abs,spread",
-                            "--score_sources=pm,cf",
-                            "--score_clip_los=0,0",
-                            "--score_clip_his=2,2",
-                            "--score_program=m0;m1;max",
-                            f"--score_coeff_manifest={coeff_manifest_path}",
-                            f"--score_coeff_degree={n_coeffs}",
-                            f"--score_params_manifest={param_manifest_path}",
-                        ],
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                    )
-                    self.assertEqual(sectioned.returncode, 0, sectioned.stderr)
-                    data = json.loads(sectioned.stdout)
-                    self.assertEqual(data["n_solves"], ref_data["n_solves"])
-                    self.assertEqual(data["hist"], ref_data["hist"])
+                    for case in self._score_case_specs():
+                        with self.subTest(case=case["label"]):
+                            payload = case["payload"]
+                            ref_cmd = [
+                                str(STATS_BIN),
+                                str(section_roots_path),
+                                "--mode=hist",
+                                f"--degree={degree}",
+                                "--clip_lo=0",
+                                "--clip_hi=1",
+                                "--hist_bins=8",
+                                "--threads=1",
+                                f"--score_metrics={payload['score_metrics']}",
+                                f"--score_clip_los={payload['score_clip_los']}",
+                                f"--score_clip_his={payload['score_clip_his']}",
+                                f"--score_program={payload['score_program']}",
+                            ]
+                            sectioned_cmd = [
+                                str(SECTIONED_BIN),
+                                "--input_mode=multispan_sectioned",
+                                f"--input_manifest={input_manifest_path}",
+                                f"--degree={degree}",
+                                "--clip_lo=0",
+                                "--clip_hi=1",
+                                "--hist_bins=8",
+                                "--threads=2",
+                                "--retries=1",
+                                f"--score_metrics={payload['score_metrics']}",
+                                f"--score_clip_los={payload['score_clip_los']}",
+                                f"--score_clip_his={payload['score_clip_his']}",
+                                f"--score_program={payload['score_program']}",
+                            ]
+                            if "score_sources" in payload:
+                                ref_cmd.append(f"--score_sources={payload['score_sources']}")
+                                sectioned_cmd.append(f"--score_sources={payload['score_sources']}")
+                            if case["uses_coeff"]:
+                                coeff_manifest_path = root / f"{case['label']}_coeff_manifest.json"
+                                coeff_manifest_path.write_text(json.dumps(coeff_manifest), encoding="utf-8")
+                                ref_cmd.extend([
+                                    f"--score_coeffs_file={section_coeffs_path}",
+                                    f"--score_coeff_degree={n_coeffs}",
+                                ])
+                                sectioned_cmd.extend([
+                                    f"--score_coeff_manifest={coeff_manifest_path}",
+                                    f"--score_coeff_degree={n_coeffs}",
+                                ])
+                            if case["uses_param"]:
+                                param_manifest_path = root / f"{case['label']}_param_manifest.json"
+                                param_manifest_path.write_text(json.dumps(param_manifest), encoding="utf-8")
+                                ref_cmd.append(f"--score_params_file={section_params_path}")
+                                sectioned_cmd.append(f"--score_params_manifest={param_manifest_path}")
+
+                            ref_hist = subprocess.run(
+                                ref_cmd,
+                                capture_output=True,
+                                text=True,
+                                timeout=30,
+                            )
+                            self.assertEqual(ref_hist.returncode, 0, ref_hist.stderr)
+                            ref_data = json.loads(ref_hist.stdout)
+
+                            sectioned = subprocess.run(
+                                sectioned_cmd,
+                                capture_output=True,
+                                text=True,
+                                timeout=30,
+                            )
+                            self.assertEqual(sectioned.returncode, 0, sectioned.stderr)
+                            data = json.loads(sectioned.stdout)
+                            self.assertEqual(data["n_solves"], ref_data["n_solves"])
+                            self.assertEqual(data["hist"], ref_data["hist"])
                 finally:
                     httpd.shutdown()
                     thread.join(timeout=5)

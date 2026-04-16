@@ -53,6 +53,7 @@ class TestPaletteRenderPlan(unittest.TestCase):
         plan = json.loads(result["body"])
 
         self.assertEqual(plan["calc"]["n_chunks"], 3)
+        self.assertEqual(plan["calc"]["n_sections"], 3)
         self.assertEqual(plan["calc"]["pass0_steps"], 16)
         self.assertEqual(
             plan["solve_score"]["chain"],
@@ -81,10 +82,11 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(plan["params"]["palette_chunk_retries"], 2)
         self.assertEqual(plan["params"]["palette_chunk_workers"], 16)
         self.assertEqual(
-            plan["chunk_items"],
+            plan["section_items"],
             [
                 {
-                    "chunk_idx": 0,
+                    "section_idx": 0,
+                    "section_count": 3,
                     "bin_key": "renders/j/chunk_0.bin",
                     "coeffs_key": "renders/j/coeffs_0000.bin",
                     "step_start": 0,
@@ -97,7 +99,8 @@ class TestPaletteRenderPlan(unittest.TestCase):
                     "coeffs_bin_size": 5 * 6 * 2 * 4,
                 },
                 {
-                    "chunk_idx": 1,
+                    "section_idx": 1,
+                    "section_count": 3,
                     "bin_key": "renders/j/chunk_1.bin",
                     "coeffs_key": "renders/j/coeffs_0001.bin",
                     "step_start": 5,
@@ -110,7 +113,8 @@ class TestPaletteRenderPlan(unittest.TestCase):
                     "coeffs_bin_size": 17 * 6 * 2 * 4,
                 },
                 {
-                    "chunk_idx": 2,
+                    "section_idx": 2,
+                    "section_count": 3,
                     "bin_key": "renders/j/chunk_2.bin",
                     "coeffs_key": "renders/j/coeffs_0002.bin",
                     "step_start": 22,
@@ -126,9 +130,12 @@ class TestPaletteRenderPlan(unittest.TestCase):
         )
         self.assertNotIn("palette_items", plan)
         self.assertTrue(plan["palette_id"].startswith("pal_"))
-        self.assertEqual(plan["outputs"]["chunk_scores_prefix"], f"renders/j/palettes/{plan['palette_id']}/chunks/score_chunk_")
-        self.assertEqual(plan["outputs"]["chunk_bins_prefix"], f"renders/j/palettes/{plan['palette_id']}/chunks/palette_bins_chunk_")
-        self.assertEqual(plan["outputs"]["chunk_meta_prefix"], f"renders/j/palettes/{plan['palette_id']}/chunks/meta_chunk_")
+        self.assertEqual(plan["outputs"]["section_scores_prefix"], f"renders/j/palettes/{plan['palette_id']}/chunks/score_section_")
+        self.assertEqual(plan["outputs"]["section_bins_prefix"], f"renders/j/palettes/{plan['palette_id']}/chunks/palette_bins_section_")
+        self.assertEqual(plan["outputs"]["section_meta_prefix"], f"renders/j/palettes/{plan['palette_id']}/chunks/meta_section_")
+        self.assertEqual(plan["outputs"]["chunk_scores_prefix"], plan["outputs"]["section_scores_prefix"])
+        self.assertEqual(plan["outputs"]["chunk_bins_prefix"], plan["outputs"]["section_bins_prefix"])
+        self.assertEqual(plan["outputs"]["chunk_meta_prefix"], plan["outputs"]["section_meta_prefix"])
         self.assertNotIn("score_key", plan["outputs"])
         self.assertNotIn("palette_bins_key", plan["outputs"])
 
@@ -153,9 +160,10 @@ class TestPaletteRenderPlan(unittest.TestCase):
         result = handler(_event(), None)
         plan = json.loads(result["body"])
 
-        self.assertEqual(plan["chunk_items"][0]["step_count"], step_count)
-        self.assertEqual(plan["chunk_items"][0]["bin_size"], record_bytes * step_count)
+        self.assertEqual(plan["section_items"][0]["step_count"], step_count)
+        self.assertEqual(plan["section_items"][0]["bin_size"], record_bytes * step_count)
         self.assertEqual(plan["calc"]["n_chunks"], 1)
+        self.assertEqual(plan["calc"]["n_sections"], 1)
 
     @patch("handler_palette_render_plan.s3")
     def test_extract_plan_accepts_palette_chunk_execution_knobs(self, mock_s3):
@@ -279,9 +287,9 @@ class TestPaletteRenderPlan(unittest.TestCase):
         plan = json.loads(result["body"])
         self.assertEqual(plan["calc"]["lores_params_key"], "renders/j/lores_params.bin")
         self.assertEqual(plan["calc"]["params_key"], "renders/j/params.bin")
-        self.assertEqual(plan["chunk_items"][0]["params_key"], "renders/j/params.bin")
-        self.assertEqual(plan["chunk_items"][0]["params_step_start"], 0)
-        self.assertEqual(plan["chunk_items"][0]["params_step_count"], 16)
+        self.assertEqual(plan["section_items"][0]["params_key"], "renders/j/params.bin")
+        self.assertEqual(plan["section_items"][0]["params_step_start"], 0)
+        self.assertEqual(plan["section_items"][0]["params_step_count"], 16)
         self.assertEqual(plan["solve_score"]["metrics"][0]["source"], "pm")
         self.assertEqual(plan["solve_score"]["metrics"][0]["metric"], "t1_abs")
 
@@ -317,8 +325,8 @@ class TestPaletteRenderPlan(unittest.TestCase):
         plan = json.loads(result["body"])
         self.assertEqual(plan["calc"]["params_key"], "")
         self.assertEqual(plan["calc"]["param_storage_mode"], "chunked")
-        self.assertEqual(plan["chunk_items"][0]["params_key"], "renders/j/params_0000.bin")
-        self.assertEqual(plan["chunk_items"][0]["params_step_start"], 0)
+        self.assertEqual(plan["section_items"][0]["params_key"], "renders/j/params_0000.bin")
+        self.assertEqual(plan["section_items"][0]["params_step_start"], 0)
 
     @patch("handler_palette_render_plan.s3")
     def test_invalid_palette_rejected(self, mock_s3):

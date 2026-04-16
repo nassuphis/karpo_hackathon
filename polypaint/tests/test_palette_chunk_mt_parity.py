@@ -59,6 +59,52 @@ class _ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 
 class TestPaletteChunkMtParity(unittest.TestCase):
+    def _score_case_payloads(self):
+        from solve_score_chain import compile_solve_score_chain, solve_score_program_cli_payload
+
+        cases = [
+            {
+                "label": "slv",
+                "chain": [["crowding", "slv", "1"]],
+                "clips": {"crowding": (0.0, 1.0)},
+                "uses_coeff": False,
+                "uses_param": False,
+            },
+            {
+                "label": "slv_cf",
+                "chain": [["crowding", "slv", "1"], ["spread", "cf", "3"], ["max"]],
+                "clips": {"crowding": (0.0, 1.0), "spread": (0.0, 3.0)},
+                "uses_coeff": True,
+                "uses_param": False,
+            },
+            {
+                "label": "slv_pm",
+                "chain": [["crowding", "slv", "1"], ["t1_abs", "pm", "2"], ["max"]],
+                "clips": {"crowding": (0.0, 1.0), "t1_abs": (0.0, 2.0)},
+                "uses_coeff": False,
+                "uses_param": True,
+            },
+            {
+                "label": "slv_cf_pm",
+                "chain": [["crowding", "slv", "1"], ["spread", "cf", "3"], ["max"], ["t1_abs", "pm", "2"], ["max"]],
+                "clips": {"crowding": (0.0, 1.0), "spread": (0.0, 3.0), "t1_abs": (0.0, 2.0)},
+                "uses_coeff": True,
+                "uses_param": True,
+            },
+        ]
+        payloads = []
+        for case in cases:
+            compiled = compile_solve_score_chain(case["chain"])
+            metrics = []
+            for metric in compiled["metrics"]:
+                lo, hi = case["clips"][metric["metric"]]
+                metrics.append({**metric, "clip_lo": lo, "clip_hi": hi})
+            payloads.append({
+                **case,
+                "payload": solve_score_program_cli_payload({"metrics": metrics, "program_spec": compiled["program_spec"]}),
+            })
+        return payloads
+
     @classmethod
     def setUpClass(cls):
         cls._tmpdir_obj = tempfile.TemporaryDirectory()
@@ -106,7 +152,6 @@ class TestPaletteChunkMtParity(unittest.TestCase):
 
     def test_tmpfile_and_multispan_sectioned_outputs_match_for_mixed_sources(self):
         from logical_sections import build_native_multispan_manifest, build_solve_source_manifest
-        from solve_score_chain import compile_solve_score_chain, solve_score_program_cli_payload
 
         degree = 3
         n_coeffs = 2
@@ -148,19 +193,6 @@ class TestPaletteChunkMtParity(unittest.TestCase):
                     0.01 * idx,
                 ]
             )
-
-        compiled = compile_solve_score_chain(
-            [
-                ["t1_abs", "pm", "2"],
-                ["spread", "cf", "3"],
-                ["max"],
-            ]
-        )
-        metrics = [
-            {**compiled["metrics"][0], "clip_lo": 0.0, "clip_hi": 2.0},
-            {**compiled["metrics"][1], "clip_lo": 0.0, "clip_hi": 3.0},
-        ]
-        payload = solve_score_program_cli_payload({"metrics": metrics, "program_spec": compiled["program_spec"]})
 
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td)
@@ -253,11 +285,7 @@ class TestPaletteChunkMtParity(unittest.TestCase):
                 self.assertEqual(len(param_manifest["spans"]), 3)
 
                 input_manifest_path = root / "input_manifest.json"
-                coeff_manifest_path = root / "coeff_manifest.json"
-                param_manifest_path = root / "param_manifest.json"
                 input_manifest_path.write_text(json.dumps(input_manifest), encoding="utf-8")
-                coeff_manifest_path.write_text(json.dumps(coeff_manifest), encoding="utf-8")
-                param_manifest_path.write_text(json.dumps(param_manifest), encoding="utf-8")
 
                 section_root_bytes = root_bytes[
                     section_start * root_row_bytes : (section_start + section_count) * root_row_bytes
@@ -288,44 +316,68 @@ class TestPaletteChunkMtParity(unittest.TestCase):
                     "--cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9",
                     f"--step_count={section_count}",
                     "--threads=2",
-                    "--score_coeff_degree=2",
-                    f"--score_metrics={payload['score_metrics']}",
-                    f"--score_clip_los={payload['score_clip_los']}",
-                    f"--score_clip_his={payload['score_clip_his']}",
-                    f"--score_program={payload['score_program']}",
-                    f"--score_sources={payload['score_sources']}",
                 ]
+                for case in self._score_case_payloads():
+                    with self.subTest(case=case["label"]):
+                        payload = case["payload"]
+                        tmp_scores = root / f"{case['label']}_tmp_scores.bin"
+                        tmp_bins = root / f"{case['label']}_tmp_bins.bin"
+                        ms_scores = root / f"{case['label']}_ms_scores.bin"
+                        ms_bins = root / f"{case['label']}_ms_bins.bin"
 
-                tmp_cmd = [
-                    str(self._binary),
-                    str(section_roots_path),
-                    *common_args,
-                    f"--scores_out={tmp_scores}",
-                    f"--bins_out={tmp_bins}",
-                    "--input_mode=tmpfile",
-                    f"--score_coeffs_file={section_coeffs_path}",
-                    f"--score_params_file={section_params_path}",
-                ]
-                ms_cmd = [
-                    str(self._binary),
-                    str(section_roots_path),
-                    *common_args,
-                    f"--scores_out={ms_scores}",
-                    f"--bins_out={ms_bins}",
-                    "--input_mode=multispan_sectioned",
-                    f"--input_manifest={input_manifest_path}",
-                    f"--score_coeff_manifest={coeff_manifest_path}",
-                    f"--score_params_manifest={param_manifest_path}",
-                ]
+                        tmp_cmd = [
+                            str(self._binary),
+                            str(section_roots_path),
+                            *common_args,
+                            f"--scores_out={tmp_scores}",
+                            f"--bins_out={tmp_bins}",
+                            "--input_mode=tmpfile",
+                            f"--score_metrics={payload['score_metrics']}",
+                            f"--score_clip_los={payload['score_clip_los']}",
+                            f"--score_clip_his={payload['score_clip_his']}",
+                            f"--score_program={payload['score_program']}",
+                        ]
+                        ms_cmd = [
+                            str(self._binary),
+                            str(section_roots_path),
+                            *common_args,
+                            f"--scores_out={ms_scores}",
+                            f"--bins_out={ms_bins}",
+                            "--input_mode=multispan_sectioned",
+                            f"--input_manifest={input_manifest_path}",
+                            f"--score_metrics={payload['score_metrics']}",
+                            f"--score_clip_los={payload['score_clip_los']}",
+                            f"--score_clip_his={payload['score_clip_his']}",
+                            f"--score_program={payload['score_program']}",
+                        ]
+                        if "score_sources" in payload:
+                            tmp_cmd.append(f"--score_sources={payload['score_sources']}")
+                            ms_cmd.append(f"--score_sources={payload['score_sources']}")
 
-                tmp_result = self._run_binary(tmp_cmd)
-                self.assertEqual(tmp_result.returncode, 0, tmp_result.stderr)
-                ms_result = self._run_binary(ms_cmd)
-                self.assertEqual(ms_result.returncode, 0, ms_result.stderr)
+                        if case["uses_coeff"]:
+                            coeff_manifest_path = root / f"{case['label']}_coeff_manifest.json"
+                            coeff_manifest_path.write_text(json.dumps(coeff_manifest), encoding="utf-8")
+                            tmp_cmd.extend([
+                                f"--score_coeffs_file={section_coeffs_path}",
+                                f"--score_coeff_degree={n_coeffs}",
+                            ])
+                            ms_cmd.extend([
+                                f"--score_coeff_manifest={coeff_manifest_path}",
+                                f"--score_coeff_degree={n_coeffs}",
+                            ])
+                        if case["uses_param"]:
+                            param_manifest_path = root / f"{case['label']}_param_manifest.json"
+                            param_manifest_path.write_text(json.dumps(param_manifest), encoding="utf-8")
+                            tmp_cmd.append(f"--score_params_file={section_params_path}")
+                            ms_cmd.append(f"--score_params_manifest={param_manifest_path}")
 
-                self.assertEqual(tmp_scores.read_bytes(), ms_scores.read_bytes())
-                self.assertEqual(tmp_bins.read_bytes(), ms_bins.read_bytes())
+                        tmp_result = self._run_binary(tmp_cmd)
+                        self.assertEqual(tmp_result.returncode, 0, tmp_result.stderr)
+                        ms_result = self._run_binary(ms_cmd)
+                        self.assertEqual(ms_result.returncode, 0, ms_result.stderr)
+
+                        self.assertEqual(tmp_scores.read_bytes(), ms_scores.read_bytes())
+                        self.assertEqual(tmp_bins.read_bytes(), ms_bins.read_bytes())
             finally:
                 server.shutdown()
                 server.server_close()
-

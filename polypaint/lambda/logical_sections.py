@@ -416,77 +416,24 @@ def build_native_multispan_manifest(solve_source_manifest, *, source_family, sol
     }
 
 
+def build_native_manifest_urls(s3_client, bucket, spans, *, expires_in=900):
+    urls = {}
+    for span in spans or []:
+        key = str(span.get("key") or "").strip()
+        if not key or key in urls:
+            continue
+        urls[key] = s3_client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=int(expires_in),
+        )
+    return urls
+
+
 def write_native_multispan_manifest(path, manifest):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, separators=(",", ":"))
     return path
-
-
-def _chunk_overlap_spans(chunk_items, solve_start, solve_count, *, source_key_name, row_bytes_value, step_start_name="step_start", step_count_name="step_count", source_start_solve_name=None):
-    section_end = int(solve_start) + int(solve_count)
-    spans = []
-    for item in chunk_items:
-        item_step_start = int(item.get(step_start_name) or 0)
-        item_step_count = int(item.get(step_count_name) or 0)
-        item_end = item_step_start + item_step_count
-        overlap_start = max(int(solve_start), item_step_start)
-        overlap_end = min(section_end, item_end)
-        if overlap_end <= overlap_start:
-            continue
-        overlap_count = overlap_end - overlap_start
-        key = str(item.get(source_key_name) or "").strip()
-        if not key:
-            raise RuntimeError(f"Missing {source_key_name} for logical sectioning")
-        source_origin = int(item.get(source_start_solve_name) or 0) if source_start_solve_name else 0
-        source_offset_solves = source_origin + (overlap_start - item_step_start)
-        spans.append({
-            "key": key,
-            "solve_start": overlap_start,
-            "solve_count": overlap_count,
-            "local_solve_start": overlap_start - int(solve_start),
-            "byte_start": source_offset_solves * int(row_bytes_value),
-            "byte_length": overlap_count * int(row_bytes_value),
-        })
-    return spans
-
-
-def build_logical_section_spans(chunk_items, *, solve_start, solve_count, degree, n_coeffs, include_coeff=False, include_param=False):
-    items = _sorted_chunk_items(chunk_items)
-    if not items:
-        return {"root_spans": [], "coeff_spans": [], "param_spans": []}
-    if not all(int(item.get("step_count") or 0) > 0 for item in items):
-        raise RuntimeError("logical sectioning requires step_count on every chunk item")
-    root_spans = _chunk_overlap_spans(
-        items,
-        solve_start,
-        solve_count,
-        source_key_name="bin_key",
-        row_bytes_value=root_row_bytes(degree),
-    )
-    coeff_spans = []
-    param_spans = []
-    if include_coeff:
-        coeff_spans = _chunk_overlap_spans(
-            items,
-            solve_start,
-            solve_count,
-            source_key_name="coeffs_key",
-            row_bytes_value=coeff_row_bytes(n_coeffs),
-        )
-    if include_param:
-        param_spans = _chunk_overlap_spans(
-            items,
-            solve_start,
-            solve_count,
-            source_key_name="params_key",
-            row_bytes_value=param_row_bytes(),
-            source_start_solve_name="params_step_start",
-        )
-    return {
-        "root_spans": root_spans,
-        "coeff_spans": coeff_spans,
-        "param_spans": param_spans,
-    }
 
 
 def build_logical_section_items(chunk_items, *, section_count, degree, n_coeffs, include_coeff=False, include_param=False):

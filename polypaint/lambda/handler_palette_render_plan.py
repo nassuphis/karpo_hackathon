@@ -18,6 +18,7 @@ from calc_chunks import (
     fallback_params_global_key,
 )
 from color_artifact_meta import load_color_artifact_head, parse_root_transforms
+from logical_sections import build_physical_section_items
 from palette_names import VALID_PALETTE_NAMES
 from param_source import chunk_items_have_params
 from shared import BUCKET, parse_body, ok_response
@@ -306,6 +307,9 @@ def _base_extract_plan(
             "preview_key": preview_key,
             "meta_key": f"renders/{job_id}/palettes/{palette_id}/meta.json" if palette_id else "",
             "chunks_prefix": "",
+            "section_scores_prefix": "",
+            "section_bins_prefix": "",
+            "section_meta_prefix": "",
             "chunk_scores_prefix": "",
             "chunk_bins_prefix": "",
             "chunk_meta_prefix": "",
@@ -437,6 +441,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
     if not degree or not full_n or not lores_bin_key:
         raise RuntimeError(f"calc.json missing degree, N, or lores.bin_key for {job_id}")
     chunk_items = build_chunk_items(calc, job_id, require_chunks=True)
+    section_items = build_physical_section_items(chunk_items)
     pass0_steps = int(full_n) * int(full_n)
     if sum(int(item["step_count"]) for item in chunk_items) < pass0_steps:
         raise RuntimeError("calc.json chunk metadata is too small for pass-0 palette extraction")
@@ -494,6 +499,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         "N": full_n,
         "times": times,
         "n_chunks": len(chunk_items),
+        "n_sections": len(section_items),
         "pass0_steps": pass0_steps,
         "lores_bin_key": lores_bin_key,
         "lores_coeffs_key": _fallback_lores_coeffs_key(job_id, calc),
@@ -502,7 +508,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         "param_storage_mode": str(calc.get("param_storage_mode") or ("chunked" if not _fallback_params_key(job_id, calc) else "global")),
         "n_coeffs": int(calc.get("n_coeffs", degree + 1) or (degree + 1)),
     }
-    plan["chunk_items"] = chunk_items
+    plan["section_items"] = section_items
     plan["solve_score"] = {
         "metric": metric,
         "quantile": q,
@@ -519,9 +525,12 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         "preview_key": prefix + "preview.png",
         "meta_key": prefix + "meta.json",
         "chunks_prefix": chunks_prefix,
-        "chunk_scores_prefix": chunks_prefix + "score_chunk_",
-        "chunk_bins_prefix": chunks_prefix + "palette_bins_chunk_",
-        "chunk_meta_prefix": chunks_prefix + "meta_chunk_",
+        "section_scores_prefix": chunks_prefix + "score_section_",
+        "section_bins_prefix": chunks_prefix + "palette_bins_section_",
+        "section_meta_prefix": chunks_prefix + "meta_section_",
+        "chunk_scores_prefix": chunks_prefix + "score_section_",
+        "chunk_bins_prefix": chunks_prefix + "palette_bins_section_",
+        "chunk_meta_prefix": chunks_prefix + "meta_section_",
     }
     return plan
 
@@ -588,6 +597,7 @@ def handler(event, context):
 
     pass0_steps = full_n * full_n
     chunk_items = build_chunk_items(calc, job_id, require_chunks=True)
+    section_items = build_physical_section_items(chunk_items)
     step_start = sum(int(item["step_count"]) for item in chunk_items)
 
     if step_start < pass0_steps:
@@ -607,9 +617,9 @@ def handler(event, context):
         omega_enabled,
     )
     chunks_prefix = prefix + "chunks/"
-    chunk_scores_prefix = chunks_prefix + "score_chunk_"
-    chunk_bins_prefix = chunks_prefix + "palette_bins_chunk_"
-    chunk_meta_prefix = chunks_prefix + "meta_chunk_"
+    section_scores_prefix = chunks_prefix + "score_section_"
+    section_bins_prefix = chunks_prefix + "palette_bins_section_"
+    section_meta_prefix = chunks_prefix + "meta_section_"
 
     plan = {
         "job_id": job_id,
@@ -654,6 +664,7 @@ def handler(event, context):
             "N": full_n,
             "times": times,
             "n_chunks": len(chunk_items),
+            "n_sections": len(section_items),
             "pass0_steps": pass0_steps,
             "lores_bin_key": lores_bin_key,
             "lores_coeffs_key": _fallback_lores_coeffs_key(job_id, calc),
@@ -662,7 +673,7 @@ def handler(event, context):
             "param_storage_mode": str(calc.get("param_storage_mode") or ("chunked" if not _fallback_params_key(job_id, calc) else "global")),
             "n_coeffs": int(calc.get("n_coeffs", degree + 1) or (degree + 1)),
         },
-        "chunk_items": chunk_items,
+        "section_items": section_items,
         "solve_score": {
             "metric": metric,
             "quantile": q,
@@ -681,9 +692,12 @@ def handler(event, context):
             "preview_key": prefix + "preview.png",
             "meta_key": prefix + "meta.json",
             "chunks_prefix": chunks_prefix,
-            "chunk_scores_prefix": chunk_scores_prefix,
-            "chunk_bins_prefix": chunk_bins_prefix,
-            "chunk_meta_prefix": chunk_meta_prefix,
+            "section_scores_prefix": section_scores_prefix,
+            "section_bins_prefix": section_bins_prefix,
+            "section_meta_prefix": section_meta_prefix,
+            "chunk_scores_prefix": section_scores_prefix,
+            "chunk_bins_prefix": section_bins_prefix,
+            "chunk_meta_prefix": section_meta_prefix,
         },
     }
 

@@ -1186,6 +1186,7 @@ cp lambda/handler_palette_render_plan.py lambda/shared.py \
    lambda/param_source.py \
    lambda/color_artifact_meta.py \
    lambda/solve_score_chain.py \
+   lambda/logical_sections.py \
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PAL_PLAN_DIR/"
 cd "$PAL_PLAN_DIR" && zip -r9 /tmp/polypaint-palette-render-plan.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalPlan: $(du -h /tmp/polypaint-palette-render-plan.zip | cut -f1)  (plan builder)"

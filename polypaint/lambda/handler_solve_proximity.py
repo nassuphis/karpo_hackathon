@@ -16,6 +16,7 @@ import boto3
 from botocore.config import Config
 
 from logical_sections import (
+    build_native_manifest_urls,
     build_native_multispan_manifest,
     build_source_spans,
     write_native_multispan_manifest,
@@ -28,7 +29,7 @@ from solve_score_chain import (
     solve_score_uses_source,
     solve_score_uses_non_solve_sources,
 )
-from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
+from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, parse_boolish, report_status
 
 s3 = boto3.client("s3")
 BINARY = os.path.join(os.path.dirname(__file__), "solve_proximity_stats")
@@ -99,35 +100,6 @@ def _download_range(key, path, start, length):
             f"Short ranged download from s3://{BUCKET}/{key}: expected {int(length)} bytes, got {size}"
         )
     return size
-
-
-def _native_manifest_urls(spans):
-    urls = {}
-    for span in spans or []:
-        key = str(span.get("key") or "").strip()
-        if not key or key in urls:
-            continue
-        urls[key] = s3.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": BUCKET, "Key": key},
-            ExpiresIn=900,
-        )
-    return urls
-
-
-def _parse_boolish(value, default=False):
-    if value in (None, ""):
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    text = str(value).strip().lower()
-    if text in ("1", "true", "yes", "on"):
-        return True
-    if text in ("0", "false", "no", "off"):
-        return False
-    return default
 
 
 def _write_xforms(root_transforms):
@@ -783,10 +755,9 @@ def handle_hist(params):
     contract_warnings = []
     job_id = params["job_id"]
     task_id = params["task_id"]
-    chunk_idx = params.get("chunk_idx", params.get("section_idx", params.get("stripe_idx")))
-    if chunk_idx is None:
+    section_idx = params.get("section_idx", params.get("chunk_idx", params.get("stripe_idx")))
+    if section_idx is None:
         raise RuntimeError("hist requires section_idx (or legacy chunk_idx)")
-    section_idx = params.get("section_idx", chunk_idx)
     section_count = params.get("section_count")
     metric = contract_param(params, "metric", "proximity", contract_warnings)
     _validate_metric(metric)
@@ -812,7 +783,7 @@ def handle_hist(params):
     root_spans = list(params.get("root_spans") or [])
     coeff_spans = list(params.get("coeff_spans") or [])
     param_spans = list(params.get("param_spans") or [])
-    logical_section = _parse_boolish(params.get("logical_section"), bool(root_spans))
+    logical_section = parse_boolish(params.get("logical_section"), bool(root_spans))
     solve_source_manifest = dict(params.get("solve_source_manifest") or {})
     degree = params["degree"]
     clip_key = params["clip_key"]
@@ -834,7 +805,7 @@ def handle_hist(params):
     uses_coeff_source = solve_score_uses_source(compiled, "cf")
     uses_param_source = solve_score_uses_source(compiled, "pm")
     if uses_coeff_source:
-        coeffs_key = coeffs_key or f"renders/{job_id}/coeffs_{int(chunk_idx):04d}.bin"
+        coeffs_key = coeffs_key or f"renders/{job_id}/coeffs_{int(section_idx):04d}.bin"
         try:
             n_coeffs = int(n_coeffs)
         except (TypeError, ValueError):
@@ -954,7 +925,7 @@ def handle_hist(params):
                     f"solve_score_hist_input_mode={solve_score_hist_input_mode!r}; "
                     "use solve_score_hist_input_mode=sectioned"
                 )
-            root_urls = _native_manifest_urls(root_spans)
+            root_urls = build_native_manifest_urls(s3, BUCKET, root_spans)
             input_manifest = build_native_multispan_manifest(
                 solve_source_manifest,
                 source_family="slv",
@@ -981,7 +952,7 @@ def handle_hist(params):
                         source_family="cf",
                         solve_start=int(step_start),
                         solve_count=int(step_count),
-                        url_by_key=_native_manifest_urls(coeff_spans),
+                        url_by_key=build_native_manifest_urls(s3, BUCKET, coeff_spans),
                     )
                     coeff_manifest_path = write_native_multispan_manifest(
                         _TMP_COEFF_INPUT_MANIFEST,
@@ -998,7 +969,7 @@ def handle_hist(params):
                         source_family="pm",
                         solve_start=int(step_start),
                         solve_count=int(step_count),
-                        url_by_key=_native_manifest_urls(param_spans),
+                        url_by_key=build_native_manifest_urls(s3, BUCKET, param_spans),
                     )
                     param_manifest_path = write_native_multispan_manifest(
                         _TMP_PARAM_INPUT_MANIFEST,

@@ -13,13 +13,14 @@ import time
 import boto3
 
 from logical_sections import (
+    build_native_manifest_urls,
     build_native_multispan_manifest,
     build_source_spans,
     stitch_spans_to_file,
     write_native_multispan_manifest,
 )
 from solve_score_chain import solve_score_program_cli_payload
-from shared import BUCKET, attach_contract_warnings, contract_param, ok_response, parse_body, report_status
+from shared import BUCKET, attach_contract_warnings, contract_param, ok_response, parse_body, parse_boolish, report_status
 
 s3 = boto3.client("s3")
 ROOTS2PIX_MT = os.path.join(os.path.dirname(__file__), "roots2pix_mt")
@@ -59,16 +60,6 @@ def _validate_threads(value):
     if not (1 <= threads <= 16):
         raise RuntimeError(f"raster_mt_threads must be in [1, 16], got {threads}")
     return threads
-
-
-def _parse_boolish(value, default=True):
-    if value in (None, ""):
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
 def _validate_raster_input_mode(value):
@@ -265,8 +256,8 @@ def _build_cmd(params, bin_path, saved_bins_path=None):
             bins_omega = float(ss_data.get("omega", 1.0))
             if bins_omega != req_omega:
                 raise RuntimeError(f"Bins omega mismatch: expected {req_omega}, got {bins_omega}")
-            req_omega_enabled = _parse_boolish(params.get("solve_score_omega_enabled", True), True)
-            bins_omega_enabled = _parse_boolish(ss_data.get("omega_enabled", True), True)
+            req_omega_enabled = parse_boolish(params.get("solve_score_omega_enabled", True), True)
+            bins_omega_enabled = parse_boolish(ss_data.get("omega_enabled", True), True)
             if bins_omega_enabled != req_omega_enabled:
                 raise RuntimeError(
                     f"Bins omega_enabled mismatch: expected {req_omega_enabled}, got {bins_omega_enabled}"
@@ -338,24 +329,10 @@ def _saved_palette_bins_key_for_section(params, section_idx):
     return str(params.get("saved_palette_bins_key") or "").strip()
 
 
-def _native_manifest_urls(spans):
-    urls = {}
-    for span in spans or []:
-        key = str(span.get("key") or "").strip()
-        if not key or key in urls:
-            continue
-        urls[key] = s3.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": BUCKET, "Key": key},
-            ExpiresIn=900,
-        )
-    return urls
-
-
 def _prepare_section_inputs(section_params, *, bin_path, saved_bins_path, perf):
     bin_key = section_params["bin_key"]
     raster_input_mode = section_params["raster_input_mode"]
-    logical_section = _parse_boolish(section_params.get("logical_section"), False)
+    logical_section = parse_boolish(section_params.get("logical_section"), False)
     solve_source_manifest = dict(section_params.get("solve_source_manifest") or {})
     step_start = int(section_params.get("step_start") or 0)
     step_count = int(section_params.get("step_count") or 0)
@@ -442,7 +419,7 @@ def _prepare_section_inputs(section_params, *, bin_path, saved_bins_path, perf):
             source_family="slv",
             solve_start=step_start,
             solve_count=step_count,
-            url_by_key=_native_manifest_urls(root_spans),
+            url_by_key=build_native_manifest_urls(s3, BUCKET, root_spans),
         )
         section_params["input_manifest_path"] = write_native_multispan_manifest(_TMP_INPUT_MANIFEST, input_manifest)
         effective_input_mode = "multispan_sectioned"
@@ -459,7 +436,7 @@ def _prepare_section_inputs(section_params, *, bin_path, saved_bins_path, perf):
                 source_family="cf",
                 solve_start=step_start,
                 solve_count=step_count,
-                url_by_key=_native_manifest_urls(coeff_spans),
+                url_by_key=build_native_manifest_urls(s3, BUCKET, coeff_spans),
             )
             section_params["score_coeff_manifest_path"] = write_native_multispan_manifest(
                 _TMP_SCORE_COEFFS_MANIFEST,
@@ -477,7 +454,7 @@ def _prepare_section_inputs(section_params, *, bin_path, saved_bins_path, perf):
                 source_family="pm",
                 solve_start=step_start,
                 solve_count=step_count,
-                url_by_key=_native_manifest_urls(param_spans),
+                url_by_key=build_native_manifest_urls(s3, BUCKET, param_spans),
             )
             section_params["score_params_manifest_path"] = write_native_multispan_manifest(
                 _TMP_SCORE_PARAMS_MANIFEST,
@@ -654,8 +631,8 @@ def handler(event, context):
 
     bin_path = "/tmp/stripe.bin"
     saved_bins_path = "/tmp/palette_bins_chunk.bin"
-    emit_pixel_bins = _parse_boolish(params.get("emit_pixel_bins"), False)
-    pixel_bins_drive_rgb = emit_pixel_bins and _parse_boolish(params.get("pixel_bins_drive_rgb"), False)
+    emit_pixel_bins = parse_boolish(params.get("emit_pixel_bins"), False)
+    pixel_bins_drive_rgb = emit_pixel_bins and parse_boolish(params.get("pixel_bins_drive_rgb"), False)
     perf["pixel_bins_drive_rgb"] = pixel_bins_drive_rgb
     perf["rgb_source"] = "pixel_bins" if pixel_bins_drive_rgb else "pix"
 

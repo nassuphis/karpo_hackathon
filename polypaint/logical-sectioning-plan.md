@@ -3,7 +3,7 @@
 Status
 ------
 
-Not implemented.
+Superseded by [native-multispan-reader-plan.md](/Users/nicknassuphis/karpo_hackathon/polypaint/native-multispan-reader-plan.md).
 
 Note:
 

@@ -13,7 +13,20 @@ import struct
 import subprocess
 import sys
 
+import pytest
+
 LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
+
+
+def _docker_available():
+    try:
+        r = subprocess.run(["docker", "info"], capture_output=True, timeout=10)
+    except Exception:
+        return False
+    return r.returncode == 0
+
+
+pytestmark = pytest.mark.skipif(not _docker_available(), reason="Docker unavailable or unhealthy")
 
 
 def _docker_run(cmd_inside):

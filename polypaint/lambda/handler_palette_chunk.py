@@ -12,13 +12,14 @@ import time
 import boto3
 
 from logical_sections import (
+    build_native_manifest_urls,
     build_native_multispan_manifest,
     build_source_spans,
     stitch_spans_to_file,
     write_native_multispan_manifest,
 )
 from solve_score_chain import solve_score_program_cli_payload
-from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
+from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, parse_boolish, report_status
 
 s3 = boto3.client("s3")
 BINARY = os.path.join(os.path.dirname(__file__), "solve_palette_chunk")
@@ -73,16 +74,6 @@ def _download_range(key, path, start, length):
             f"Short ranged download from s3://{BUCKET}/{key}: expected {int(length)} bytes, got {size}"
         )
     return size
-
-
-def _parse_boolish(value, default=True):
-    if value in (None, ""):
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
 def _validate_threads(value, default=1):
@@ -163,20 +154,6 @@ def _solve_score_bins_uses_source(bins_data, source):
     return False
 
 
-def _native_manifest_urls(spans):
-    urls = {}
-    for span in spans or []:
-        key = str(span.get("key") or "").strip()
-        if not key or key in urls:
-            continue
-        urls[key] = s3.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": BUCKET, "Key": key},
-            ExpiresIn=900,
-        )
-    return urls
-
-
 def handler(event, context):
     params = parse_body(event)
     contract_warnings = []
@@ -190,11 +167,10 @@ def handler(event, context):
     metric = params["metric"]
     q = contract_param(params, "solve_score_quantile", 0.001, contract_warnings)
     omega = float(contract_param(params, "solve_score_omega", 1.0, contract_warnings))
-    omega_enabled = _parse_boolish(contract_param(params, "solve_score_omega_enabled", True, contract_warnings), True)
+    omega_enabled = parse_boolish(contract_param(params, "solve_score_omega_enabled", True, contract_warnings), True)
     bins_key = params["solve_score_bins_key"]
     step_start = int(params["step_start"])
     step_count = int(params["step_count"])
-    chunk_idx = params.get("chunk_idx", section_idx)
     section_count = params.get("section_count")
     root_transforms = contract_param(params, "root_transforms", [], contract_warnings)
     threads = _validate_threads(contract_param(params, "palette_chunk_threads", 1, contract_warnings), default=1)
@@ -210,7 +186,7 @@ def handler(event, context):
     root_spans = list(params.get("root_spans") or [])
     coeff_spans = list(params.get("coeff_spans") or [])
     param_spans = list(params.get("param_spans") or [])
-    logical_section = _parse_boolish(params.get("logical_section"), bool(root_spans))
+    logical_section = parse_boolish(params.get("logical_section"), bool(root_spans))
     solve_source_manifest = dict(params.get("solve_source_manifest") or {})
     score_key = params["score_key"]
     palette_bins_key = params["palette_bins_key"]
@@ -254,7 +230,7 @@ def handler(event, context):
             if root_spans and not bin_key:
                 bin_key = str(root_spans[0]["key"])
         if logical_section and input_mode == "sectioned":
-            root_urls = _native_manifest_urls(root_spans)
+            root_urls = build_native_manifest_urls(s3, BUCKET, root_spans)
             input_manifest = build_native_multispan_manifest(
                 solve_source_manifest,
                 source_family="slv",
@@ -380,7 +356,7 @@ def handler(event, context):
                 raise RuntimeError(f"Bins quantile mismatch: expected {q}, got {bins_data.get('clip_quantile')}")
             if float(bins_data.get("omega", 1.0)) != omega:
                 raise RuntimeError(f"Bins omega mismatch: expected {omega}, got {bins_data.get('omega')}")
-            if _parse_boolish(bins_data.get("omega_enabled", True), True) != omega_enabled:
+            if parse_boolish(bins_data.get("omega_enabled", True), True) != omega_enabled:
                 raise RuntimeError(f"Bins omega_enabled mismatch: expected {omega_enabled}, got {bins_data.get('omega_enabled')}")
 
         report_status(job_id, task_id, "bin_downloaded", result_data=progress)
@@ -399,7 +375,7 @@ def handler(event, context):
             cmd.extend(_solve_score_program_args(bins_data))
             if uses_coeff_source:
                 if logical_section and effective_input_mode == "multispan_sectioned":
-                    coeff_urls = _native_manifest_urls(coeff_spans)
+                    coeff_urls = build_native_manifest_urls(s3, BUCKET, coeff_spans)
                     coeff_manifest = build_native_multispan_manifest(
                         solve_source_manifest,
                         source_family="cf",
@@ -449,7 +425,7 @@ def handler(event, context):
                     ])
             if uses_param_source:
                 if logical_section and effective_input_mode == "multispan_sectioned":
-                    param_urls = _native_manifest_urls(param_spans)
+                    param_urls = build_native_manifest_urls(s3, BUCKET, param_spans)
                     param_manifest = build_native_multispan_manifest(
                         solve_source_manifest,
                         source_family="pm",

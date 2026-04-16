@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 
+from shared import parse_boolish
 
 VALID_SOLVE_SCORE_METRICS = {
     "proximity",
@@ -107,21 +108,6 @@ def _scope_fields(scope):
         return _FIELD_MAP[scope]
     except KeyError:
         raise RuntimeError(f"Unknown solve-score metadata scope: {scope!r}")
-
-
-def _parse_boolish(value, default=True):
-    if value in ("", None):
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    text = str(value).strip().lower()
-    if text in ("1", "true", "yes", "on"):
-        return True
-    if text in ("0", "false", "no", "off"):
-        return False
-    raise RuntimeError(f"solve_score_omega_enabled must be boolean-like, got {value!r}")
 
 
 def _validate_metric(value):
@@ -269,7 +255,7 @@ def _metric_item(metric, quantile, source="slv"):
 
 def solve_score_chain_from_scalars(metric, quantile=0.001, omega=1.0, omega_enabled=True):
     chain = [_metric_item(metric, quantile)]
-    if _parse_boolish(omega_enabled, True):
+    if parse_boolish(omega_enabled, True, strict=True, label="solve_score_omega_enabled"):
         chain.append({"name": TRANSFER_CHIP_NAME, "params": [_format_number(_validate_omega(omega))]})
     return chain
 
@@ -575,7 +561,12 @@ def compile_solve_score_chain_or_legacy(
         legacy_quantile = _validate_quantile_fraction(quantile if quantile not in ("", None) else 0.001)
         legacy_omega_input = omega
         legacy_omega_enabled_input = omega_enabled
-    omega_enabled_value = _parse_boolish(legacy_omega_enabled_input, True)
+    omega_enabled_value = parse_boolish(
+        legacy_omega_enabled_input,
+        True,
+        strict=True,
+        label="solve_score_omega_enabled",
+    )
     legacy_omega = 1.0 if legacy_omega_input in ("", None) else _validate_omega(legacy_omega_input)
     if raw_chain not in ("", None, []):
         compiled = compile_solve_score_chain(raw_chain, legacy_quantile=legacy_quantile)

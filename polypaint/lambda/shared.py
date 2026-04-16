@@ -97,6 +97,23 @@ def ok_response(body):
     }
 
 
+def parse_boolish(value, default=True, *, strict=False, label="value"):
+    if value in (None, ""):
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off"):
+        return False
+    if strict:
+        raise RuntimeError(f"{label} must be boolean-like, got {value!r}")
+    return default
+
+
 def encode_png_gray(width, height, gray_buf):
     """Encode a grayscale image buffer as PNG bytes."""
 

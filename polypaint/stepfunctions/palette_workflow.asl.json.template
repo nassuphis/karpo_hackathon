@@ -130,8 +130,8 @@
                 "mode.$": "$.mode",
                 "phase": "solve_score_hist",
                 "phase_label": "Solve score: hist",
-                "expected.$": "$.plan.calc.n_chunks",
-                "subtask_prefix.$": "States.Format('palette_{}_solve_score_hist_', $.run_id)"
+                "expected.$": "$.plan.calc.n_sections",
+                "subtask_prefix.$": "States.Format('palette_{}_solve_score_hist_section_', $.run_id)"
               }
             },
             "ResultPath": null,
@@ -141,12 +141,12 @@
 
           "SolveScoreHistMap": {
             "Type": "Map",
-            "ItemsPath": "$.plan.chunk_items",
+            "ItemsPath": "$.plan.section_items",
             "MaxConcurrency": 10,
             "ItemSelector": {
               "phase": "hist",
               "job_id.$": "$.job_id",
-              "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
+              "section_idx.$": "$$.Map.Item.Value.section_idx",
               "metric.$": "$.plan.solve_score.metric",
               "solve_score_chain.$": "$.plan.solve_score.chain",
               "solve_score_quantile.$": "$.plan.solve_score.quantile",
@@ -168,8 +168,8 @@
               "clip_key.$": "$.plan.solve_score.clip_key",
               "hist_bins": 100,
               "root_transforms.$": "$.plan.params.root_transforms",
-              "out_key.$": "States.Format('{}chunk_{}_hist.json', $.plan.solve_score.hist_prefix, $$.Map.Item.Value.chunk_idx)",
-              "task_id.$": "States.Format('palette_{}_solve_score_hist_{}', $.run_id, $$.Map.Item.Value.chunk_idx)"
+              "out_key.$": "States.Format('{}section_{}_hist.json', $.plan.solve_score.hist_prefix, $$.Map.Item.Value.section_idx)",
+              "task_id.$": "States.Format('palette_{}_solve_score_hist_section_{}', $.run_id, $$.Map.Item.Value.section_idx)"
             },
             "ItemProcessor": {
               "ProcessorConfig": {"Mode": "INLINE"},
@@ -218,7 +218,7 @@
               "Payload": {
                 "phase": "merge",
                 "job_id.$": "$.job_id",
-                "n_chunks.$": "$.plan.calc.n_chunks",
+                "n_chunks.$": "$.plan.calc.n_sections",
                 "metric.$": "$.plan.solve_score.metric",
                 "solve_score_chain.$": "$.plan.solve_score.chain",
                 "solve_score_quantile.$": "$.plan.solve_score.quantile",
@@ -250,8 +250,8 @@
                 "mode.$": "$.mode",
                 "phase": "palette_chunk",
                 "phase_label": "Palette: chunk",
-                "expected.$": "$.plan.calc.n_chunks",
-                "subtask_prefix.$": "States.Format('palette_{}_chunk_', $.run_id)"
+                "expected.$": "$.plan.calc.n_sections",
+                "subtask_prefix.$": "States.Format('palette_{}_section_', $.run_id)"
               }
             },
             "ResultPath": null,
@@ -261,11 +261,11 @@
 
           "PaletteChunkMap": {
             "Type": "Map",
-            "ItemsPath": "$.plan.chunk_items",
+            "ItemsPath": "$.plan.section_items",
             "MaxConcurrencyPath": "$.plan.params.palette_chunk_workers",
             "ItemSelector": {
               "job_id.$": "$.job_id",
-              "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
+              "section_idx.$": "$$.Map.Item.Value.section_idx",
               "bin_key.$": "$$.Map.Item.Value.bin_key",
               "bin_size.$": "$$.Map.Item.Value.bin_size",
               "coeffs_key.$": "$$.Map.Item.Value.coeffs_key",
@@ -288,10 +288,10 @@
               "palette_chunk_retries.$": "$.plan.params.palette_chunk_retries",
               "palette_chunk_workers.$": "$.plan.params.palette_chunk_workers",
               "solve_score_bins_key.$": "$.plan.solve_score.bins_key",
-              "score_key.$": "States.Format('{}{}.bin', $.plan.outputs.chunk_scores_prefix, $$.Map.Item.Value.chunk_idx)",
-              "palette_bins_key.$": "States.Format('{}{}.bin', $.plan.outputs.chunk_bins_prefix, $$.Map.Item.Value.chunk_idx)",
-              "meta_key.$": "States.Format('{}{}.json', $.plan.outputs.chunk_meta_prefix, $$.Map.Item.Value.chunk_idx)",
-              "task_id.$": "States.Format('palette_{}_chunk_{}', $.run_id, $$.Map.Item.Value.chunk_idx)"
+              "score_key.$": "States.Format('{}{}.bin', $.plan.outputs.section_scores_prefix, $$.Map.Item.Value.section_idx)",
+              "palette_bins_key.$": "States.Format('{}{}.bin', $.plan.outputs.section_bins_prefix, $$.Map.Item.Value.section_idx)",
+              "meta_key.$": "States.Format('{}{}.json', $.plan.outputs.section_meta_prefix, $$.Map.Item.Value.section_idx)",
+              "task_id.$": "States.Format('palette_{}_section_{}', $.run_id, $$.Map.Item.Value.section_idx)"
             },
             "ItemProcessor": {
               "ProcessorConfig": {"Mode": "INLINE"},
@@ -355,6 +355,9 @@
                 "preview_key.$": "$.plan.outputs.preview_key",
                 "meta_key.$": "$.plan.outputs.meta_key",
                 "chunks_prefix.$": "$.plan.outputs.chunks_prefix",
+                "section_scores_prefix.$": "$.plan.outputs.section_scores_prefix",
+                "section_bins_prefix.$": "$.plan.outputs.section_bins_prefix",
+                "section_meta_prefix.$": "$.plan.outputs.section_meta_prefix",
                 "solve_score_prefix.$": "$.plan.solve_score.hist_prefix",
                 "solve_score_clip_key.$": "$.plan.solve_score.clip_key",
                 "solve_score_bins_key.$": "$.plan.solve_score.bins_key",

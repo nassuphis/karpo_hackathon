@@ -13,7 +13,7 @@ import time
 import boto3
 
 from solve_score_chain import solve_score_program_cli_payload
-from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
+from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, parse_boolish, report_status
 
 s3 = boto3.client("s3")
 ROOTS2PIX = os.path.join(os.path.dirname(__file__), "roots2pix")
@@ -32,16 +32,6 @@ def _tile_dense_bytes(tile_idx, width, height, tile_size, n_tile_cols):
     tile_w = max(0, min(tile_size, width - col * tile_size))
     tile_h = max(0, min(tile_size, height - row * tile_size))
     return tile_w * tile_h
-
-
-def _parse_boolish(value, default=True):
-    if value in (None, ""):
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
 def _solve_score_program_args(ss_data):
@@ -130,8 +120,8 @@ def handler(event, context):
             with open(rt_path, "w") as rtf:
                 rtf.write(json.dumps(rt_chain))
             cmd.append(f"--root_xforms={rt_path}")
-        emit_pixel_bins = _parse_boolish(params.get("emit_pixel_bins"), False)
-        pixel_bins_drive_rgb = emit_pixel_bins and _parse_boolish(params.get("pixel_bins_drive_rgb"), False)
+        emit_pixel_bins = parse_boolish(params.get("emit_pixel_bins"), False)
+        pixel_bins_drive_rgb = emit_pixel_bins and parse_boolish(params.get("pixel_bins_drive_rgb"), False)
         if emit_pixel_bins:
             cmd.append("--pixel_bin_prefix=/tmp/pixbin")
         if pixel_bins_drive_rgb:
@@ -240,8 +230,8 @@ def handler(event, context):
                 bins_omega = float(ss_data.get("omega", 1.0))
                 if bins_omega != req_omega:
                     raise RuntimeError(f"Bins omega mismatch: expected {req_omega}, got {bins_omega}")
-                req_omega_enabled = _parse_boolish(contract_param(params, "solve_score_omega_enabled", True, contract_warnings), True)
-                bins_omega_enabled = _parse_boolish(ss_data.get("omega_enabled", True), True)
+                req_omega_enabled = parse_boolish(contract_param(params, "solve_score_omega_enabled", True, contract_warnings), True)
+                bins_omega_enabled = parse_boolish(ss_data.get("omega_enabled", True), True)
                 if bins_omega_enabled != req_omega_enabled:
                     raise RuntimeError(f"Bins omega_enabled mismatch: expected {req_omega_enabled}, got {bins_omega_enabled}")
                 ss_metric = ss_data.get("metric", params.get("solve_metric", "proximity"))

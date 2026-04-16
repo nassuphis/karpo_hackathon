@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from typing import Dict
 
+from shared import parse_boolish
 from solve_score_chain import emit_solve_score_metadata
 
 
@@ -180,7 +181,7 @@ def inherit_associated_palette_metadata(source_meta: Dict[str, str]) -> Dict[str
         metric=(source_meta or {}).get("associated_palette_metric", ""),
         quantile=(source_meta or {}).get("associated_palette_quantile", ""),
         omega=(source_meta or {}).get("associated_palette_omega", ""),
-        omega_enabled=_parse_boolish((source_meta or {}).get("associated_palette_omega_enabled", True), True),
+        omega_enabled=parse_boolish((source_meta or {}).get("associated_palette_omega_enabled", True), True),
         score_chain=(source_meta or {}).get("associated_palette_score_chain", ""),
     )
     for key in (
@@ -208,13 +209,3 @@ def _guess_content_type(key: str) -> str:
     if suffix in ("jpg", "jpeg"):
         return "image/jpeg"
     return "application/octet-stream"
-
-
-def _parse_boolish(value, default=True):
-    if value in ("", None):
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return str(value).strip().lower() in ("1", "true", "yes", "on")

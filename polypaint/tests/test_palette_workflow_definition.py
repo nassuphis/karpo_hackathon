@@ -91,6 +91,9 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
         self.assertEqual(clip["lores_params_key.$"], "$.plan.calc.lores_params_key")
 
         hist = self.states["SolveScoreHistMap"]["ItemSelector"]
+        self.assertEqual(self.states["SolveScoreHistMap"]["ItemsPath"], "$.plan.section_items")
+        self.assertEqual(hist["section_idx.$"], "$$.Map.Item.Value.section_idx")
+        self.assertNotIn("chunk_idx.$", hist)
         self.assertEqual(hist["solve_score_quantile.$"], "$.plan.solve_score.quantile")
         self.assertEqual(hist["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(hist["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
@@ -113,6 +116,9 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
 
     def test_palette_chunk_and_finalize_forward_critical_fields(self):
         chunk = self.states["PaletteChunkMap"]["ItemSelector"]
+        self.assertEqual(self.states["PaletteChunkMap"]["ItemsPath"], "$.plan.section_items")
+        self.assertEqual(chunk["section_idx.$"], "$$.Map.Item.Value.section_idx")
+        self.assertNotIn("chunk_idx.$", chunk)
         self.assertEqual(chunk["solve_score_quantile.$"], "$.plan.solve_score.quantile")
         self.assertEqual(chunk["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(chunk["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
@@ -127,6 +133,9 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
         self.assertEqual(chunk["params_step_count.$"], "$$.Map.Item.Value.params_step_count")
         self.assertEqual(chunk["step_start.$"], "$$.Map.Item.Value.step_start")
         self.assertEqual(chunk["step_count.$"], "$$.Map.Item.Value.step_count")
+        self.assertEqual(chunk["score_key.$"], "States.Format('{}{}.bin', $.plan.outputs.section_scores_prefix, $$.Map.Item.Value.section_idx)")
+        self.assertEqual(chunk["palette_bins_key.$"], "States.Format('{}{}.bin', $.plan.outputs.section_bins_prefix, $$.Map.Item.Value.section_idx)")
+        self.assertEqual(chunk["meta_key.$"], "States.Format('{}{}.json', $.plan.outputs.section_meta_prefix, $$.Map.Item.Value.section_idx)")
 
         finalize = self.states["PaletteFinalizeTask"]["Parameters"]["Payload"]
         self.assertEqual(finalize["times.$"], "$.plan.calc.times")
@@ -136,6 +145,9 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
         self.assertEqual(finalize["root_transforms.$"], "$.plan.params.root_transforms")
         self.assertEqual(finalize["cleanup_solve_score_scratch.$"], "$.plan.solve_score.cleanup_scratch")
         self.assertEqual(finalize["source_color_artifact_id.$"], "$.plan.extract.source_artifact_id")
+        self.assertEqual(finalize["section_scores_prefix.$"], "$.plan.outputs.section_scores_prefix")
+        self.assertEqual(finalize["section_bins_prefix.$"], "$.plan.outputs.section_bins_prefix")
+        self.assertEqual(finalize["section_meta_prefix.$"], "$.plan.outputs.section_meta_prefix")
 
     def test_extract_attach_branch_is_wired(self):
         choice = self.states["ExtractActionChoice"]

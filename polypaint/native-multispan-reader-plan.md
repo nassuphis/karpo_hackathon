@@ -3,7 +3,19 @@
 Status
 ------
 
-Not implemented.
+Implemented through Phase 5.
+
+Current state:
+
+- Phase 1: compact section contract + `solve_source_manifest` is implemented
+- Phase 2: associated palette uses native multispan for logical `sectioned`
+  sections
+- Phase 3: full render histogram uses native multispan for logical
+  `sectioned` sections and explicitly rejects logical `tmpfile`
+- Phase 4: render UI and status/log wording are section-first and expose
+  logical solve sizes plus requested/effective input-mode clarity
+- Phase 5: raster uses native multispan for logical `sectioned` sections, with
+  direct tmpfile-vs-multispan parity coverage
 
 This is the target architecture for logical render-time sections.
 
@@ -432,25 +444,25 @@ That preserves:
 The only change is where the bytes come from.
 
 
-Implementation Strategy
------------------------
+Initial Adoption Order
+----------------------
 
 Do not try to make every native binary support every source on day one.
 
-Roll out a shared reader and adopt it phase by phase.
+Roll out a shared reader and adopt it incrementally.
 
-Phase 1 target:
+First adoption target:
 
 - associated palette
   - roots always
   - coeffs/params only when score program requires them
 
-Phase 2 target:
+Next adoption target:
 
 - solve histogram
   - same source-aware pattern
 
-Phase 3 target:
+Later adoption target:
 
 - optional raster adoption if and when logical raster sections become worth it
 
@@ -990,7 +1002,8 @@ Phase 5 required tests, if raster adoption happens:
 
 1. Raster worker mode and parity.
    Files:
-   - [tests/test_raster_pixel_bins.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_raster_pixel_bins.py)
+   - [tests/test_raster_mt.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_raster_mt.py)
+   - [tests/test_raster_mt_parity.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_raster_mt_parity.py)
    Cases:
    - logical raster section + `input_mode=sectioned` invokes
      `multispan_sectioned`

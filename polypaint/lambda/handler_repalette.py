@@ -15,7 +15,7 @@ import time
 import boto3
 
 from palette_names import VALID_PALETTE_NAMES
-from shared import BUCKET, parse_body, ok_response, report_status, imgpipe_env
+from shared import BUCKET, parse_body, ok_response, parse_boolish, report_status, imgpipe_env
 
 s3 = boto3.client("s3")
 PALETTE_RENDER = os.path.join(os.path.dirname(__file__), "palette_bins_render")
@@ -39,16 +39,6 @@ def _cleanup_tmp():
             os.remove(p)
         except OSError:
             pass
-
-
-def _parse_boolish(value, default=True):
-    if value in (None, ""):
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
 def _omega_display(enabled, omega):
@@ -260,7 +250,7 @@ def handler(event, context):
         metric = source_meta.get("metric", "proximity")
         q = float(source_meta.get("solve_score_quantile", 0.001))
         omega = float(source_meta.get("solve_score_omega", 1.0))
-        omega_enabled = _parse_boolish(source_meta.get("solve_score_omega_enabled", True), True)
+        omega_enabled = parse_boolish(source_meta.get("solve_score_omega_enabled", True), True)
         full_n = int(source_meta.get("N", 0) or 0)
         if full_n <= 0:
             raise RuntimeError(f"Palette artifact {source_palette_id} missing valid N")
@@ -272,7 +262,7 @@ def handler(event, context):
         preview_key = new_prefix + "preview.png"
         meta_key = new_prefix + "meta.json"
 
-        reusable = source_meta.get("data_layout") == "chunk_all_pass_v1" and _parse_boolish(source_meta.get("render_reusable"), False)
+        reusable = source_meta.get("data_layout") == "chunk_all_pass_v1" and parse_boolish(source_meta.get("render_reusable"), False)
         if reusable:
             report_status(job_id, task_id, "copying", result_data={**progress, "phase_label": "Copy numeric data"})
             copied = _copy_reusable_chunk_payload(source_meta, new_prefix, job_id=job_id, task_id=task_id, progress=progress)

@@ -78,6 +78,8 @@ class TestMultispanReader(unittest.TestCase):
             raise unittest.SkipTest("no C compiler available")
         harness_c = cls._workdir / "multispan_reader_harness.c"
         cls._harness_bin = cls._workdir / "multispan_reader_harness"
+        threaded_harness_c = cls._workdir / "multispan_reader_thread_harness.c"
+        cls._threaded_harness_bin = cls._workdir / "multispan_reader_thread_harness"
         harness_c.write_text(
             r'''
 #include <curl/curl.h>
@@ -141,6 +143,133 @@ int main(int argc, char **argv) {
 ''',
             encoding="utf-8",
         )
+        threaded_harness_c.write_text(
+            r'''
+#include <curl/curl.h>
+#include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "multispan_reader.h"
+
+typedef struct {
+    const MultiSpanReader *reader;
+    unsigned long long offset;
+    size_t length;
+    unsigned char *buf;
+    long bytes_downloaded;
+    int ok;
+    char err[512];
+} ReadJob;
+
+static void *read_job_main(void *arg) {
+    ReadJob *job = (ReadJob *)arg;
+    job->ok = multispan_reader_read_exact(
+        job->reader,
+        job->offset,
+        job->length,
+        job->buf,
+        &job->bytes_downloaded,
+        job->err,
+        sizeof(job->err)
+    );
+    multispan_reader_thread_cleanup();
+    return NULL;
+}
+
+int main(int argc, char **argv) {
+    MultiSpanReader reader;
+    char err[512] = {0};
+    int jobsCount = 0;
+    ReadJob *jobs = NULL;
+    pthread_t *threads = NULL;
+
+    if (argc < 6 || ((argc - 2) % 2) != 0) {
+        fprintf(stderr, "usage: thread_harness manifest offset length [offset length ...]\n");
+        return 2;
+    }
+    jobsCount = (argc - 2) / 2;
+    if (curl_global_init(CURL_GLOBAL_ALL) != CURLE_OK) {
+        fprintf(stderr, "curl_global_init failed\n");
+        return 3;
+    }
+    if (!multispan_reader_open(&reader, argv[1], 2, err, sizeof(err))) {
+        fprintf(stderr, "%s\n", err);
+        curl_global_cleanup();
+        return 4;
+    }
+
+    jobs = (ReadJob *)calloc((size_t)jobsCount, sizeof(ReadJob));
+    threads = (pthread_t *)calloc((size_t)jobsCount, sizeof(pthread_t));
+    if (!jobs || !threads) {
+        fprintf(stderr, "out of memory\n");
+        multispan_reader_close(&reader);
+        curl_global_cleanup();
+        free(jobs);
+        free(threads);
+        return 5;
+    }
+
+    for (int i = 0; i < jobsCount; i++) {
+        jobs[i].reader = &reader;
+        jobs[i].offset = strtoull(argv[2 + i * 2], NULL, 10);
+        jobs[i].length = (size_t)strtoull(argv[3 + i * 2], NULL, 10);
+        jobs[i].buf = (unsigned char *)malloc(jobs[i].length > 0 ? jobs[i].length : 1);
+        if (!jobs[i].buf) {
+            fprintf(stderr, "out of memory\n");
+            multispan_reader_close(&reader);
+            curl_global_cleanup();
+            for (int j = 0; j <= i; j++) free(jobs[j].buf);
+            free(jobs);
+            free(threads);
+            return 6;
+        }
+        if (pthread_create(&threads[i], NULL, read_job_main, &jobs[i]) != 0) {
+            fprintf(stderr, "pthread_create failed\n");
+            multispan_reader_close(&reader);
+            curl_global_cleanup();
+            for (int j = 0; j <= i; j++) free(jobs[j].buf);
+            free(jobs);
+            free(threads);
+            return 7;
+        }
+    }
+
+    for (int i = 0; i < jobsCount; i++) {
+        pthread_join(threads[i], NULL);
+        if (!jobs[i].ok) {
+            fprintf(stderr, "%s\n", jobs[i].err);
+            multispan_reader_close(&reader);
+            curl_global_cleanup();
+            for (int j = 0; j < jobsCount; j++) free(jobs[j].buf);
+            free(jobs);
+            free(threads);
+            return 8;
+        }
+    }
+
+    for (int i = 0; i < jobsCount; i++) {
+        if (fwrite(jobs[i].buf, 1, jobs[i].length, stdout) != jobs[i].length) {
+            fprintf(stderr, "short stdout write\n");
+            multispan_reader_close(&reader);
+            curl_global_cleanup();
+            for (int j = 0; j < jobsCount; j++) free(jobs[j].buf);
+            free(jobs);
+            free(threads);
+            return 9;
+        }
+    }
+
+    multispan_reader_close(&reader);
+    curl_global_cleanup();
+    for (int i = 0; i < jobsCount; i++) free(jobs[i].buf);
+    free(jobs);
+    free(threads);
+    return 0;
+}
+''',
+            encoding="utf-8",
+        )
         compile_cmd = [
             cc,
             "-O2",
@@ -156,6 +285,21 @@ int main(int argc, char **argv) {
         result = subprocess.run(compile_cmd, capture_output=True, text=True)
         if result.returncode != 0:
             raise AssertionError(f"failed to compile multispan harness: {result.stderr}")
+        threaded_compile_cmd = [
+            cc,
+            "-O2",
+            "-I",
+            str(LAMBDA_DIR),
+            str(threaded_harness_c),
+            str(LAMBDA_DIR / "multispan_reader.c"),
+            "-pthread",
+            "-lcurl",
+            "-o",
+            str(cls._threaded_harness_bin),
+        ]
+        result = subprocess.run(threaded_compile_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise AssertionError(f"failed to compile threaded multispan harness: {result.stderr}")
 
     @classmethod
     def tearDownClass(cls):
@@ -204,6 +348,12 @@ int main(int argc, char **argv) {
 
     def _run_harness(self, manifest_path, *pairs):
         cmd = [str(self._harness_bin), str(manifest_path)]
+        for offset, length in pairs:
+            cmd.extend([str(offset), str(length)])
+        return subprocess.run(cmd, capture_output=True)
+
+    def _run_thread_harness(self, manifest_path, *pairs):
+        cmd = [str(self._threaded_harness_bin), str(manifest_path)]
         for offset, length in pairs:
             cmd.extend([str(offset), str(length)])
         return subprocess.run(cmd, capture_output=True)
@@ -404,6 +554,33 @@ int main(int argc, char **argv) {
                 server.shutdown()
                 server.server_close()
 
+    def test_rejects_missing_source_url_at_open(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            self._write_sources(root, {"a.bin": b"ABCDEFGH"})
+            server, _ = self._serve_dir(root)
+            try:
+                manifest = {
+                    "logical_size": 4,
+                    "row_bytes": 1,
+                    "solve_start": 0,
+                    "solve_count": 4,
+                    "sources": [
+                        {"id": 0, "url": "", "key": "a.bin"},
+                    ],
+                    "spans": [
+                        {"source_id": 0, "logical_byte_start": 0, "byte_start": 2, "byte_length": 4},
+                    ],
+                }
+                manifest_path = root / "missing_url.json"
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+                result = self._run_harness(manifest_path, (0, 4))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("missing url", result.stderr.decode())
+            finally:
+                server.shutdown()
+                server.server_close()
+
     def test_rejects_short_ranged_download(self):
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td)
@@ -437,6 +614,52 @@ int main(int argc, char **argv) {
                 self.assertEqual(result.returncode, 0, result.stderr.decode())
                 self.assertEqual(result.stdout, b"CDEF")
                 self.assertEqual(server.request_counts.get("a.bin"), 2)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_reports_error_when_all_retries_are_exhausted(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            self._write_sources(root, {"a.bin": b"ABCDEFGH"})
+            server, _ = self._serve_dir(root, failures_before_success={"a.bin": 5})
+            try:
+                manifest = self._manifest(server.server_address[1], logical_size=4, spans=[
+                    {"name": "a.bin", "logical_byte_start": 0, "byte_start": 2, "byte_length": 4},
+                ])
+                manifest_path = root / "retry_exhausted.json"
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+                result = self._run_harness(manifest_path, (0, 4))
+                self.assertNotEqual(result.returncode, 0)
+                stderr = result.stderr.decode()
+                self.assertIn("range GET failed for a.bin bytes 2-5", stderr)
+                self.assertIn("after 3 attempts", stderr)
+                self.assertEqual(server.request_counts.get("a.bin"), 3)
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_threaded_reads_from_one_reader_return_expected_bytes(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            data = bytes(range(256)) * 16
+            self._write_sources(root, {"a.bin": data})
+            server, _ = self._serve_dir(root)
+            try:
+                manifest = self._manifest(server.server_address[1], logical_size=len(data), spans=[
+                    {"name": "a.bin", "logical_byte_start": 0, "byte_start": 0, "byte_length": len(data)},
+                ])
+                manifest_path = root / "threaded.json"
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+                result = self._run_thread_harness(
+                    manifest_path,
+                    (0, 1024),
+                    (1024, 1024),
+                    (2048, 1024),
+                    (3072, 1024),
+                )
+                self.assertEqual(result.returncode, 0, result.stderr.decode())
+                self.assertEqual(result.stdout, data[:4096])
             finally:
                 server.shutdown()
                 server.server_close()

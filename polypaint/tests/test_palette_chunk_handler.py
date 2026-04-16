@@ -660,6 +660,32 @@ class TestPaletteChunkHandler(unittest.TestCase):
     @patch("handler_palette_chunk.report_status")
     @patch("handler_palette_chunk.s3")
     @patch("handler_palette_chunk.subprocess.run")
+    def test_v2_logical_section_rejects_malformed_solve_source_manifest(self, mock_run, mock_s3, mock_report):
+        import handler_palette_chunk as mod
+
+        with self.assertRaises(RuntimeError) as ctx:
+            mod.handler(_event(
+                section_idx=3,
+                metric="spread",
+                solve_score_quantile=0.02,
+                logical_section=True,
+                solve_source_manifest={"version": 1, "job_id": "j", "sources": {}},
+                step_start=0,
+                step_count=5,
+                degree=2,
+                n_coeffs=3,
+                palette_chunk_threads=2,
+                palette_chunk_input_mode="sectioned",
+                bin_key="",
+                coeffs_key="",
+                params_key="",
+            ), None)
+        self.assertIn("missing row_bytes for source family slv", str(ctx.exception))
+        mock_run.assert_not_called()
+
+    @patch("handler_palette_chunk.report_status")
+    @patch("handler_palette_chunk.s3")
+    @patch("handler_palette_chunk.subprocess.run")
     def test_v2_param_source_sectioned_bins_pass_params_file_cli_flags(self, mock_run, mock_s3, mock_report):
         import handler_palette_chunk as mod
 

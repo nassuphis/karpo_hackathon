@@ -14,6 +14,7 @@ from shared import (
     BUCKET,
     attach_contract_warnings,
     contract_param,
+    parse_boolish,
     parse_body,
     ok_response,
     report_status,
@@ -42,16 +43,6 @@ def _cleanup_tmp():
 
 def _utc_now_iso():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-
-def _parse_boolish(value, default=True):
-    if value in (None, ""):
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
 def _omega_display(enabled, omega):
@@ -138,7 +129,7 @@ def handler(event, context):
     palette = params["palette"]
     q = contract_param(params, "solve_score_quantile", 0.001, contract_warnings)
     omega = float(contract_param(params, "solve_score_omega", 1.0, contract_warnings))
-    omega_enabled = _parse_boolish(contract_param(params, "solve_score_omega_enabled", True, contract_warnings), True)
+    omega_enabled = parse_boolish(contract_param(params, "solve_score_omega_enabled", True, contract_warnings), True)
     solve_score_chain = contract_param(params, "solve_score_chain", "", contract_warnings)
     render_execution = contract_param(params, "render_execution", None, contract_warnings)
     root_transforms = contract_param(params, "root_transforms", [], contract_warnings)
@@ -149,7 +140,7 @@ def handler(event, context):
     solve_score_prefix = params["solve_score_prefix"]
     solve_score_clip_key = params["solve_score_clip_key"]
     solve_score_bins_key = params["solve_score_bins_key"]
-    cleanup_solve_score_scratch = _parse_boolish(
+    cleanup_solve_score_scratch = parse_boolish(
         contract_param(params, "cleanup_solve_score_scratch", True, contract_warnings),
         True,
     )
@@ -218,7 +209,7 @@ def handler(event, context):
         clip_meta = json.loads(clip_obj["Body"].read())
         if float(bins_meta.get("omega", 1.0)) != omega:
             raise RuntimeError(f"Solve-score bins omega mismatch: expected {omega}, got {bins_meta.get('omega')}")
-        if _parse_boolish(bins_meta.get("omega_enabled", True), True) != omega_enabled:
+        if parse_boolish(bins_meta.get("omega_enabled", True), True) != omega_enabled:
             raise RuntimeError(f"Solve-score bins omega_enabled mismatch: expected {omega_enabled}, got {bins_meta.get('omega_enabled')}")
         assemble_ms = int((time.time() - t0) * 1000)
         assemble_stats = {

@@ -15,7 +15,7 @@ import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
+from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, parse_boolish, report_status
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -25,16 +25,6 @@ PIXEL_BINS_RENDER = os.path.join(os.path.dirname(__file__), "pixel_bins_render")
 DEFAULT_FINALIZE_WORKERS = 16
 MAX_FINALIZE_WORKERS = 64
 FINALIZE_PROGRESS_INTERVAL_SEC = 2.0
-
-
-def _parse_boolish(value, default=False):
-    if value in (None, ""):
-        return default
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
 def _parse_int(value, default):
@@ -386,14 +376,14 @@ def handler(event, context):
             params["n_tile_cols"],
         )
     task_id = params.get("task_id", f"tile_{tile_idx}")
-    emit_pixel_bins_requested = _parse_boolish(params.get("emit_pixel_bins"), False)
+    emit_pixel_bins_requested = parse_boolish(params.get("emit_pixel_bins"), False)
     pixel_bins_out_key = params.get("pixel_bins_out_key")
     if not pixel_bins_out_key:
         pixel_bins_out_prefix = str(params.get("pixel_bins_out_prefix") or "").strip()
         if pixel_bins_out_prefix:
             pixel_bins_out_key = f"{pixel_bins_out_prefix}{int(tile_idx):04d}.bin"
     emit_pixel_bins = emit_pixel_bins_requested and bool(pixel_bins_out_key)
-    pixel_bins_drive_rgb = _parse_boolish(params.get("pixel_bins_drive_rgb"), False)
+    pixel_bins_drive_rgb = parse_boolish(params.get("pixel_bins_drive_rgb"), False)
     if pixel_bins_drive_rgb and not emit_pixel_bins:
         raise RuntimeError("pixel_bins_drive_rgb requires emit_pixel_bins and pixel_bins_out_key")
     pixel_bin_fragment_mode = str(params.get("pixel_bin_fragment_mode") or "sparse_chunks").strip().lower()

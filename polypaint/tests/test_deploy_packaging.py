@@ -207,8 +207,9 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('create_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip"', DEPLOY_TEXT)
         self.assertIn('update_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip"', DEPLOY_TEXT)
         self.assertIn("RASTER_MT_THREADS", DEPLOY_TEXT)
-        self.assertIn('gcc -O3 -pthread -o /src/roots2pix_mt /src/roots2pix_mt.c', DEPLOY_TEXT)
+        self.assertIn('gcc -O3 -pthread -o /src/roots2pix_mt /src/roots2pix_mt.c /src/multispan_reader.c', DEPLOY_TEXT)
         self.assertIn('cp lambda/roots2pix_mt lambda/pixbinassemble "$RASTER_MT_DIR/"', DEPLOY_TEXT)
+        self.assertIn('cp lambda/handler_raster_mt.py lambda/shared.py lambda/solve_score_chain.py lambda/logical_sections.py "$RASTER_MT_DIR/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/roots2pix_mt_lib/* "$RASTER_MT_DIR/lib/"', DEPLOY_TEXT)
         self.assertIn('LD_LIBRARY_PATH=/var/task/lib', DEPLOY_TEXT)
         self.assertIn("aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/solve_proximity_stats lambda/solve_proximity_stats.c -lm", DEPLOY_TEXT)
@@ -225,7 +226,10 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("SWEEP_MT_FUNCTION", DEPLOY_TEXT)
         self.assertIn('ensure_route "POST /sweep-mt" "$SWEEP_MT_INT"', DEPLOY_TEXT)
         self.assertIn('"sweep-mt": "%s/sweep-mt"', DEPLOY_TEXT)
-        self.assertIn('gcc -O3 -pthread -o /src/solve_proximity_hist_sectioned /src/solve_proximity_hist_sectioned.c', DEPLOY_TEXT)
+        self.assertIn(
+            'gcc -O3 -pthread -o /src/solve_proximity_hist_sectioned /src/solve_proximity_hist_sectioned.c /src/multispan_reader.c',
+            DEPLOY_TEXT,
+        )
         self.assertIn('cp lambda/solve_proximity_stats lambda/solve_proximity_hist_sectioned "$SP_DIR/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/solve_proximity_stats lambda/solve_proximity_hist_sectioned "$SP_BENCH_DIR/"', DEPLOY_TEXT)
         self.assertIn('ensure_route "POST /list-favorites" "$STORAGE_INT"', DEPLOY_TEXT)
@@ -239,7 +243,10 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("handler_palette_chunk.py", packaged)
         self.assertIn("solve_palette_chunk", packaged["handler_palette_chunk.py"])
         self.assertIn("solve_palette_chunk_mt", packaged["handler_palette_chunk.py"])
-        self.assertIn('gcc -O3 -pthread -o /src/solve_palette_chunk_mt /src/solve_palette_chunk_mt.c', DEPLOY_TEXT)
+        self.assertIn(
+            'gcc -O3 -pthread -o /src/solve_palette_chunk_mt /src/solve_palette_chunk_mt.c /src/multispan_reader.c',
+            DEPLOY_TEXT,
+        )
         self.assertIn('cp lambda/solve_palette_chunk lambda/solve_palette_chunk_mt "$PAL_CHUNK_DIR/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/solve_palette_chunk_mt_lib/* "$PAL_CHUNK_DIR/lib/"', DEPLOY_TEXT)
         self.assertRegex(joined, r'create_lambda "\$PALETTE_CHUNK_NAME" "handler_palette_chunk\.handler" "/tmp/polypaint-palette-chunk\.zip"\s+"\$PALETTE_CHUNK_MEMORY" "\$ROLE_ARN" "" "BUCKET=\$BUCKET,JOBS_TABLE=\$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib" "\$BINARY_TMP"')

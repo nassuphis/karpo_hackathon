@@ -104,7 +104,7 @@ class TestPaletteChunkHandler(unittest.TestCase):
             result = mod.handler(_event(), None)
             body = json.loads(result["body"])
 
-            self.assertEqual(body["chunk_idx"], 3)
+            self.assertEqual(body["section_idx"], 3)
             self.assertEqual(body["step_start"], 10)
             self.assertEqual(body["step_count"], 4)
             self.assertIn("renders/j/palettes/p1/chunks/score_chunk_3.bin", uploads)
@@ -114,7 +114,7 @@ class TestPaletteChunkHandler(unittest.TestCase):
 
             meta_call = mock_s3.put_object.call_args.kwargs
             meta = json.loads(meta_call["Body"])
-            self.assertEqual(meta["chunk_idx"], 3)
+            self.assertEqual(meta["section_idx"], 3)
             self.assertEqual(meta["step_start"], 10)
             self.assertEqual(meta["step_count"], 4)
             self.assertEqual(meta["metric"], "crowding")
@@ -322,7 +322,7 @@ class TestPaletteChunkHandler(unittest.TestCase):
             ), None)
             body = json.loads(result["body"])
 
-            self.assertEqual(body["chunk_idx"], 3)
+            self.assertEqual(body["section_idx"], 3)
             statuses = [c.args[2] for c in mock_report.call_args_list]
             self.assertEqual(statuses, ["started", "bin_downloaded", "computed", "done"])
 
@@ -413,8 +413,9 @@ class TestPaletteChunkHandler(unittest.TestCase):
     @patch("handler_palette_chunk.report_status")
     @patch("handler_palette_chunk.s3")
     @patch("handler_palette_chunk.subprocess.run")
-    def test_v2_logical_section_rebuilds_spans_from_chunk_manifest(self, mock_run, mock_s3, mock_report):
+    def test_v2_logical_section_rebuilds_spans_from_source_manifest(self, mock_run, mock_s3, mock_report):
         import handler_palette_chunk as mod
+        from logical_sections import build_solve_source_manifest
 
         with tempfile.TemporaryDirectory() as td, \
              patch.object(mod, "_TMP_INPUT", os.path.join(td, "input.bin")), \
@@ -458,6 +459,27 @@ class TestPaletteChunkHandler(unittest.TestCase):
             mock_s3.get_object.side_effect = get_object
             uploads = {}
             mock_s3.upload_fileobj.side_effect = lambda fileobj, bucket, key, ExtraArgs=None: uploads.setdefault(key, fileobj.read())
+            solve_source_manifest = build_solve_source_manifest(
+                [
+                    {
+                        "chunk_idx": 0,
+                        "bin_key": "renders/j/chunk_0.bin",
+                        "coeffs_key": "renders/j/coeffs_0000.bin",
+                        "step_start": 0,
+                        "step_count": 3,
+                    },
+                    {
+                        "chunk_idx": 1,
+                        "bin_key": "renders/j/chunk_1.bin",
+                        "coeffs_key": "renders/j/coeffs_0001.bin",
+                        "step_start": 3,
+                        "step_count": 3,
+                    },
+                ],
+                job_id="j",
+                degree=2,
+                n_coeffs=3,
+            )
 
             def run_side_effect(cmd, capture_output, text, timeout):
                 self.assertEqual(cmd[0], mod.BINARY_MT)
@@ -485,22 +507,7 @@ class TestPaletteChunkHandler(unittest.TestCase):
                 metric="spread",
                 solve_score_quantile=0.02,
                 logical_section=True,
-                chunk_manifest=[
-                    {
-                        "chunk_idx": 0,
-                        "bin_key": "renders/j/chunk_0.bin",
-                        "coeffs_key": "renders/j/coeffs_0000.bin",
-                        "step_start": 0,
-                        "step_count": 3,
-                    },
-                    {
-                        "chunk_idx": 1,
-                        "bin_key": "renders/j/chunk_1.bin",
-                        "coeffs_key": "renders/j/coeffs_0001.bin",
-                        "step_start": 3,
-                        "step_count": 3,
-                    },
-                ],
+                solve_source_manifest=solve_source_manifest,
                 step_start=0,
                 step_count=5,
                 degree=2,
@@ -519,6 +526,136 @@ class TestPaletteChunkHandler(unittest.TestCase):
             self.assertEqual(done_kwargs["result_data"]["source_size"], 80)
             self.assertIn("renders/j/palettes/p1/chunks/score_chunk_3.bin", uploads)
             self.assertIn("renders/j/palettes/p1/chunks/palette_bins_chunk_3.bin", uploads)
+
+    @patch("handler_palette_chunk.report_status")
+    @patch("handler_palette_chunk.s3")
+    @patch("handler_palette_chunk.subprocess.run")
+    def test_v2_logical_section_sectioned_uses_multispan_manifests(self, mock_run, mock_s3, mock_report):
+        import handler_palette_chunk as mod
+        from logical_sections import build_solve_source_manifest
+
+        with tempfile.TemporaryDirectory() as td, \
+             patch.object(mod, "_TMP_INPUT_MANIFEST", os.path.join(td, "input_manifest.json")), \
+             patch.object(mod, "_TMP_SCORE_COEFFS_MANIFEST", os.path.join(td, "coeff_manifest.json")), \
+             patch.object(mod, "_TMP_SCORE_PARAMS_MANIFEST", os.path.join(td, "param_manifest.json")), \
+             patch.object(mod, "_TMP_SCORES", os.path.join(td, "scores.bin")), \
+             patch.object(mod, "_TMP_BINS", os.path.join(td, "bins.bin")):
+
+            bins_meta = {
+                "family": "solve_score",
+                "version": 2,
+                "metric": "spread",
+                "clip_quantile": 0.02,
+                "omega": 1.0,
+                "omega_enabled": False,
+                "clip_lo": 0.0,
+                "clip_hi": 1.0,
+                "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                "program": "m0;m1;m2;avg",
+                "metrics": [
+                    {"slot": 0, "metric": "spread", "source": "slv", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                    {"slot": 1, "metric": "spread", "source": "cf", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                    {"slot": 2, "metric": "t1_abs", "source": "pm", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                ],
+            }
+            solve_source_manifest = build_solve_source_manifest(
+                [
+                    {
+                        "chunk_idx": 0,
+                        "bin_key": "renders/j/chunk_0.bin",
+                        "coeffs_key": "renders/j/coeffs_0000.bin",
+                        "params_key": "renders/j/params_0000.bin",
+                        "step_start": 0,
+                        "step_count": 3,
+                        "params_step_start": 0,
+                        "params_step_count": 3,
+                    },
+                    {
+                        "chunk_idx": 1,
+                        "bin_key": "renders/j/chunk_1.bin",
+                        "coeffs_key": "renders/j/coeffs_0001.bin",
+                        "params_key": "renders/j/params_0001.bin",
+                        "step_start": 3,
+                        "step_count": 3,
+                        "params_step_start": 0,
+                        "params_step_count": 3,
+                    },
+                ],
+                job_id="j",
+                degree=2,
+                n_coeffs=3,
+            )
+
+            def get_object(**kwargs):
+                key = kwargs["Key"]
+                if key == "renders/j/palettes/p1/solve_score/crowding_bins.json":
+                    return {"Body": MagicMock(read=lambda: json.dumps(bins_meta).encode())}
+                raise AssertionError(f"unexpected get_object key: {key}")
+
+            mock_s3.get_object.side_effect = get_object
+            mock_s3.generate_presigned_url.side_effect = lambda op, Params, ExpiresIn: f"https://example.com/{Params['Key']}"
+            mock_s3.upload_fileobj.side_effect = lambda fileobj, bucket, key, ExtraArgs=None: None
+
+            def run_side_effect(cmd, capture_output, text, timeout):
+                self.assertEqual(cmd[0], mod.BINARY_MT)
+                self.assertIn("--input_mode=multispan_sectioned", cmd)
+                input_manifest = next(arg.split("=", 1)[1] for arg in cmd if arg.startswith("--input_manifest="))
+                coeff_manifest = next(arg.split("=", 1)[1] for arg in cmd if arg.startswith("--score_coeff_manifest="))
+                param_manifest = next(arg.split("=", 1)[1] for arg in cmd if arg.startswith("--score_params_manifest="))
+                with open(input_manifest) as fh:
+                    input_meta = json.load(fh)
+                with open(coeff_manifest) as fh:
+                    coeff_meta = json.load(fh)
+                with open(param_manifest) as fh:
+                    param_meta = json.load(fh)
+                self.assertEqual(input_meta["source_family"], "slv")
+                self.assertEqual(coeff_meta["source_family"], "cf")
+                self.assertEqual(param_meta["source_family"], "pm")
+                self.assertEqual(input_meta["logical_size"], 5 * 2 * 2 * 4)
+                self.assertEqual(coeff_meta["logical_size"], 5 * 3 * 2 * 4)
+                self.assertEqual(param_meta["logical_size"], 5 * 16)
+                self.assertEqual(len(input_meta["spans"]), 2)
+                self.assertEqual(len(coeff_meta["spans"]), 2)
+                self.assertEqual(len(param_meta["spans"]), 2)
+                scores = array("f", [1.0, 2.0, 3.0, 4.0, 5.0])
+                with open(mod._TMP_SCORES, "wb") as f:
+                    scores.tofile(f)
+                with open(mod._TMP_BINS, "wb") as f:
+                    f.write(bytes([0, 1, 2, 3, 4]))
+                return MagicMock(
+                    returncode=0,
+                    stdout=json.dumps({
+                        "min_score": 1.0,
+                        "max_score": 5.0,
+                        "threads": 2,
+                        "input_mode": "multispan_sectioned",
+                        "retries": 2,
+                    }),
+                    stderr="",
+                )
+
+            mock_run.side_effect = run_side_effect
+
+            mod.handler(_event(
+                section_idx=3,
+                metric="spread",
+                solve_score_quantile=0.02,
+                logical_section=True,
+                solve_source_manifest=solve_source_manifest,
+                step_start=0,
+                step_count=5,
+                degree=2,
+                n_coeffs=3,
+                palette_chunk_threads=2,
+                palette_chunk_input_mode="sectioned",
+                bin_key="",
+                coeffs_key="",
+                params_key="",
+            ), None)
+
+            done_kwargs = mock_report.call_args_list[-1].kwargs
+            self.assertEqual(done_kwargs["result_data"]["input_mode"], "multispan_sectioned")
+            self.assertEqual(done_kwargs["result_data"]["logical_section"], True)
 
     @patch("handler_palette_chunk.report_status")
     @patch("handler_palette_chunk.s3")

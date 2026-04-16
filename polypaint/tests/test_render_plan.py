@@ -56,8 +56,8 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["viewport"]["scale"] == 1024 / (2 * 2.0)  # pix/(2*extent)
         assert plan["calc"]["degree"] == 5
         assert plan["calc"]["n_chunks"] == 3
-        assert len(plan["chunk_items"]) == 3
-        assert plan["chunk_items"][0] == {
+        assert len(plan["physical_source_items"]) == 3
+        assert plan["physical_source_items"][0] == {
             "chunk_idx": 0,
             "bin_key": "renders/j/chunk_0.bin",
             "coeffs_key": "renders/j/coeffs_0000.bin",
@@ -79,7 +79,7 @@ class TestRenderPlan(unittest.TestCase):
         plan = json.loads(result["body"])
 
         assert plan["calc"]["n_chunks"] == 3
-        assert plan["chunk_items"] == [
+        assert plan["physical_source_items"] == [
             {"chunk_idx": 0, "bin_key": "renders/j/custom/chunk_zero.bin", "coeffs_key": "renders/j/coeffs_0000.bin"},
             {"chunk_idx": 1, "bin_key": "renders/j/custom/chunk_one.bin", "coeffs_key": "renders/j/coeffs_0001.bin"},
             {"chunk_idx": 2, "bin_key": "renders/j/custom/chunk_two.bin", "coeffs_key": "renders/j/coeffs_0002.bin"},
@@ -97,7 +97,7 @@ class TestRenderPlan(unittest.TestCase):
         from handler_render_plan import handler
         result = handler(_make_event(), None)
         plan = json.loads(result["body"])
-        assert plan["chunk_items"] == [
+        assert plan["physical_source_items"] == [
             {
                 "chunk_idx": 0,
                 "bin_key": "renders/j/chunk_0.bin",
@@ -239,11 +239,11 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["raster"]["pixel_bin_fragment_mode"] == "dense_grouped"
         assert plan["raster"]["raster_bin_group_size"] == 7
         assert plan["raster"]["item_count"] == 8
-        assert len(plan["raster_items"]) == 8
-        assert plan["raster_items"][0]["group_idx"] == 0
-        assert plan["raster_items"][0]["chunk_indices"] == [0, 1, 2, 3, 4, 5, 6]
-        assert [item["chunk_idx"] for item in plan["raster_items"][0]["chunks"]] == [0, 1, 2, 3, 4, 5, 6]
-        assert plan["raster_items"][-1]["chunk_indices"] == [49]
+        assert len(plan["raster"]["group_items"]) == 8
+        assert plan["raster"]["group_items"][0]["group_idx"] == 0
+        assert plan["raster"]["group_items"][0]["section_indices"] == [0, 1, 2, 3, 4, 5, 6]
+        assert [item["section_idx"] for item in plan["raster"]["group_items"][0]["sections"]] == [0, 1, 2, 3, 4, 5, 6]
+        assert plan["raster"]["group_items"][-1]["section_indices"] == [49]
         assert plan["raster"]["engine"] == "mt"
         assert plan["raster"]["requested_threads"] == 4
         assert plan["raster"]["requested_input_mode"] == "tmpfile"
@@ -276,7 +276,7 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["raster"]["pixel_bin_fragment_mode"] == "sparse_chunks"
         assert plan["raster"]["raster_bin_group_size"] == ""
         assert plan["raster"]["item_count"] == 3
-        assert plan["raster_items"] == []
+        assert plan["raster"]["group_items"] == []
 
     @patch("handler_render_plan._storage_call")
     def test_render_plan_persists_full_render_execution_config(self, mock_storage):
@@ -355,6 +355,41 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["associated_palette"]["section_count"] == 4
 
     @patch("handler_render_plan._storage_call")
+    def test_raster_logical_sections_build_section_items(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5,
+            "n_chunks": 4,
+            "N": 100,
+            "times": 1,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+            "chunks": [
+                {"idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_count": 25},
+                {"idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_count": 25},
+                {"idx": 2, "bin_key": "renders/j/chunk_2.bin", "step_count": 25},
+                {"idx": 3, "bin_key": "renders/j/chunk_3.bin", "step_count": 25},
+            ],
+        })
+        from handler_render_plan import handler
+
+        result = handler(_make_event(
+            color_mode="solve_score",
+            solve_metric="spread",
+            raster_engine="mt",
+            raster_section_mode="logical_sections",
+            raster_section_count=3,
+        ), None)
+        plan = json.loads(result["body"])
+
+        self.assertEqual(plan["raster"]["section_mode"], "logical_sections")
+        self.assertTrue(plan["raster"]["logical_section"])
+        self.assertEqual(plan["raster"]["section_count"], 3)
+        self.assertEqual(plan["raster"]["section_item_count"], 3)
+        self.assertEqual([item["section_idx"] for item in plan["raster"]["section_items"]], [0, 1, 2])
+        self.assertEqual(sum(int(item["step_count"]) for item in plan["raster"]["section_items"]), 100)
+        self.assertEqual(plan["render_execution"]["raster_section_mode"], "logical_sections")
+        self.assertEqual(plan["render_execution"]["raster_section_count"], 3)
+
+    @patch("handler_render_plan._storage_call")
     def test_manual_solve_score_logical_sections_build_cross_chunk_spans(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail({
             "degree": 5,
@@ -389,7 +424,7 @@ class TestRenderPlan(unittest.TestCase):
         self.assertEqual(solve_score["item_count"], 3)
         self.assertTrue(solve_score["logical_section"])
         first = solve_score["section_items"][0]
-        from logical_sections import build_logical_section_spans
+        from logical_sections import build_logical_section_spans, build_source_spans
 
         self.assertEqual(first["step_start"], 0)
         self.assertEqual(first["step_count"], 34)
@@ -400,8 +435,26 @@ class TestRenderPlan(unittest.TestCase):
         self.assertEqual(first["bin_key"], "")
         self.assertEqual(first["coeffs_key"], "")
         self.assertEqual(first["params_key"], "")
+        manifest = plan["solve_source_manifest"]
+        self.assertEqual(manifest["version"], 1)
+        self.assertEqual(manifest["job_id"], "j")
+        self.assertEqual(manifest["total_solves"], 100)
+        self.assertEqual(manifest["sources"]["slv"]["row_bytes"], 5 * 2 * 4)
+        self.assertEqual(manifest["sources"]["cf"]["row_bytes"], 7 * 2 * 4)
+        self.assertEqual(manifest["sources"]["pm"]["row_bytes"], 16)
+        self.assertEqual(len(manifest["sources"]["slv"]["segments"]), 4)
+        self.assertNotIn("root_spans", manifest)
+        manifest_spans = build_source_spans(
+            manifest,
+            source_family="slv",
+            solve_start=first["step_start"],
+            solve_count=first["step_count"],
+        )
+        self.assertEqual(len(manifest_spans), 2)
+        self.assertEqual(manifest_spans[0]["key"], "renders/j/chunk_0.bin")
+        self.assertEqual(manifest_spans[1]["key"], "renders/j/chunk_1.bin")
         spans = build_logical_section_spans(
-            plan["chunk_items"],
+            plan["physical_source_items"],
             solve_start=first["step_start"],
             solve_count=first["step_count"],
             degree=5,
@@ -977,7 +1030,8 @@ class TestRenderPlan(unittest.TestCase):
         assert assoc["mode"] == "generated"
         assert assoc["palette_id"] == "pal_color_run_t"
         assert assoc["image_key"] == "renders/j/palettes/pal_color_run_t/image.jpeg"
-        assert assoc["chunk_bins_prefix"] == "renders/j/palettes/pal_color_run_t/chunks/palette_bins_chunk_"
+        assert assoc["section_bins_prefix"] == "renders/j/palettes/pal_color_run_t/chunks/palette_bins_section_"
+        assert assoc["chunk_bins_prefix"] == assoc["section_bins_prefix"]
         assert assoc["score_chain"] == [
             {"name": "crowding", "params": ["slv", "1"]},
             {"name": "omega_cosine", "params": ["4"]},
@@ -1036,7 +1090,7 @@ class TestRenderPlan(unittest.TestCase):
         self.assertEqual(first["bin_key"], "")
         self.assertEqual(first["coeffs_key"], "")
         spans = build_logical_section_spans(
-            plan["chunk_items"],
+            plan["physical_source_items"],
             solve_start=first["step_start"],
             solve_count=first["step_count"],
             degree=5,
@@ -1073,10 +1127,10 @@ class TestRenderPlan(unittest.TestCase):
         plan = json.loads(result["body"])
         assert plan["calc"]["n_coeffs"] == 7
         assert plan["calc"]["lores_coeffs_key"] == "renders/j/lores_coeffs.bin"
-        assert plan["chunk_items"][0]["coeffs_key"] == "renders/j/coeffs_0000.bin"
-        assert plan["chunk_items"][1]["coeffs_key"] == "renders/j/coeffs_0001.bin"
-        assert plan["chunk_items"][0]["coeffs_bin_size"] == 6000 * 7 * 2 * 4
-        assert plan["chunk_items"][1]["coeffs_bin_size"] == 4000 * 7 * 2 * 4
+        assert plan["physical_source_items"][0]["coeffs_key"] == "renders/j/coeffs_0000.bin"
+        assert plan["physical_source_items"][1]["coeffs_key"] == "renders/j/coeffs_0001.bin"
+        assert plan["physical_source_items"][0]["coeffs_bin_size"] == 6000 * 7 * 2 * 4
+        assert plan["physical_source_items"][1]["coeffs_bin_size"] == 4000 * 7 * 2 * 4
         assoc = plan["associated_palette"]
         assert assoc["enabled"] is True
         assert assoc["mode"] == "generated"
@@ -1113,16 +1167,16 @@ class TestRenderPlan(unittest.TestCase):
         plan = json.loads(result["body"])
         assert plan["calc"]["lores_params_key"] == "renders/j/lores_params.bin"
         assert plan["calc"]["params_key"] == "renders/j/params.bin"
-        assert plan["chunk_items"][0]["step_start"] == 0
-        assert plan["chunk_items"][0]["step_count"] == 6000
-        assert plan["chunk_items"][0]["params_key"] == "renders/j/params.bin"
-        assert plan["chunk_items"][0]["params_step_start"] == 0
-        assert plan["chunk_items"][0]["params_step_count"] == 6000
-        assert plan["chunk_items"][1]["step_start"] == 6000
-        assert plan["chunk_items"][1]["step_count"] == 4000
-        assert plan["chunk_items"][1]["params_key"] == "renders/j/params.bin"
-        assert plan["chunk_items"][1]["params_step_start"] == 6000
-        assert plan["chunk_items"][1]["params_step_count"] == 4000
+        assert plan["physical_source_items"][0]["step_start"] == 0
+        assert plan["physical_source_items"][0]["step_count"] == 6000
+        assert plan["physical_source_items"][0]["params_key"] == "renders/j/params.bin"
+        assert plan["physical_source_items"][0]["params_step_start"] == 0
+        assert plan["physical_source_items"][0]["params_step_count"] == 6000
+        assert plan["physical_source_items"][1]["step_start"] == 6000
+        assert plan["physical_source_items"][1]["step_count"] == 4000
+        assert plan["physical_source_items"][1]["params_key"] == "renders/j/params.bin"
+        assert plan["physical_source_items"][1]["params_step_start"] == 6000
+        assert plan["physical_source_items"][1]["params_step_count"] == 4000
         assert json.loads(plan["outputs"]["metadata"]["solve_score_chain"]) == [
             ["t1_abs", "pm", "1"],
             ["spread", "1"],
@@ -1173,10 +1227,10 @@ class TestRenderPlan(unittest.TestCase):
         plan = json.loads(result["body"])
         assert plan["calc"]["params_key"] == ""
         assert plan["calc"]["param_storage_mode"] == "chunked"
-        assert plan["chunk_items"][0]["params_key"] == "renders/j/params_0000.bin"
-        assert plan["chunk_items"][0]["params_step_start"] == 0
-        assert plan["chunk_items"][1]["params_key"] == "renders/j/params_0001.bin"
-        assert plan["chunk_items"][1]["params_step_start"] == 0
+        assert plan["physical_source_items"][0]["params_key"] == "renders/j/params_0000.bin"
+        assert plan["physical_source_items"][0]["params_step_start"] == 0
+        assert plan["physical_source_items"][1]["params_key"] == "renders/j/params_0001.bin"
+        assert plan["physical_source_items"][1]["params_step_start"] == 0
 
     @patch("handler_render_plan._storage_call")
     def test_associated_palette_chunk_defaults_follow_mt_raster_settings_when_present(self, mock_storage):

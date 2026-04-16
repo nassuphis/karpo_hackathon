@@ -5,6 +5,14 @@ Status
 
 Not implemented.
 
+Note:
+
+- the original recommendation here was a Python tmpfile stitch adaptor as the
+  first real rollout target
+- that is no longer the desired end state
+- the target architecture for logical render sections is now documented in
+  [native-multispan-reader-plan.md](/Users/nicknassuphis/karpo_hackathon/polypaint/native-multispan-reader-plan.md)
+
 Current state after the recent Generate-MT work:
 
 - the popup now exposes the associated-palette execution knobs

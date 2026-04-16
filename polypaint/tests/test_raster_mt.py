@@ -390,6 +390,133 @@ class TestRasterMT(unittest.TestCase):
         self.assertEqual(done_kwargs["result_data"]["input_mode"], "sectioned")
         self.assertEqual(done_kwargs["result_data"]["download_us"], 1200)
 
+    @patch.dict(os.environ, {"RASTER_MT_THREADS": "2", "AWS_LAMBDA_FUNCTION_MEMORY_SIZE": "10240"}, clear=False)
+    @patch("handler_raster_mt.report_status")
+    @patch("handler_raster_mt.subprocess.run")
+    @patch("handler_raster_mt.s3")
+    def test_logical_sectioned_mode_uses_multispan_manifests(self, mock_s3, mock_run, mock_report):
+        import handler_raster_mt as mod
+        from logical_sections import build_solve_source_manifest
+
+        bins_meta = {
+            "family": "solve_score",
+            "version": 2,
+            "metric": "spread",
+            "clip_quantile": 0.02,
+            "omega": 1.0,
+            "omega_enabled": False,
+            "clip_lo": 0.0,
+            "clip_hi": 1.0,
+            "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+            "program": "m0;m1;avg;m2;avg",
+            "metrics": [
+                {"slot": 0, "metric": "spread", "source": "slv", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                {"slot": 1, "metric": "dist_unit_circle", "source": "cf", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                {"slot": 2, "metric": "t2_abs", "source": "pm", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+            ],
+        }
+
+        def get_object(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/solve_scores/crowding_bins.json":
+                return {"Body": MagicMock(read=lambda: json.dumps(bins_meta).encode())}
+            raise AssertionError(f"unexpected get_object key: {key}")
+
+        def presign(_op, Params=None, ExpiresIn=None):
+            return f"https://example.com/{Params['Key']}?sig=1"
+
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.generate_presigned_url.side_effect = presign
+        mock_s3.upload_fileobj.side_effect = lambda fileobj, bucket, key: None
+
+        solve_source_manifest = build_solve_source_manifest(
+            [
+                {
+                    "chunk_idx": 0,
+                    "bin_key": "renders/j/chunk_0.bin",
+                    "coeffs_key": "renders/j/coeffs_0000.bin",
+                    "step_start": 0,
+                    "step_count": 2,
+                    "params_key": "renders/j/params.bin",
+                    "params_step_start": 0,
+                    "params_step_count": 2,
+                },
+                {
+                    "chunk_idx": 1,
+                    "bin_key": "renders/j/chunk_1.bin",
+                    "coeffs_key": "renders/j/coeffs_0001.bin",
+                    "step_start": 2,
+                    "step_count": 2,
+                    "params_key": "renders/j/params.bin",
+                    "params_step_start": 2,
+                    "params_step_count": 2,
+                },
+            ],
+            job_id="j",
+            degree=5,
+            n_coeffs=7,
+        )
+
+        def fake_run(cmd, capture_output=False, text=False, timeout=None):
+            self.assertIn("--input_mode=multispan_sectioned", cmd)
+            input_manifest_path = next(arg.split("=", 1)[1] for arg in cmd if arg.startswith("--input_manifest="))
+            coeff_manifest_path = next(arg.split("=", 1)[1] for arg in cmd if arg.startswith("--score_coeff_manifest="))
+            param_manifest_path = next(arg.split("=", 1)[1] for arg in cmd if arg.startswith("--score_params_manifest="))
+            with open(input_manifest_path, "r", encoding="utf-8") as fh:
+                input_manifest = json.load(fh)
+            with open(coeff_manifest_path, "r", encoding="utf-8") as fh:
+                coeff_manifest = json.load(fh)
+            with open(param_manifest_path, "r", encoding="utf-8") as fh:
+                param_manifest = json.load(fh)
+            self.assertEqual(input_manifest["logical_size"], 4 * 5 * 2 * 4)
+            self.assertEqual(coeff_manifest["logical_size"], 4 * 7 * 2 * 4)
+            self.assertEqual(param_manifest["logical_size"], 4 * 16)
+            self.assertEqual(len(input_manifest["spans"]), 2)
+            self.assertEqual(len(coeff_manifest["spans"]), 2)
+            self.assertEqual(len(param_manifest["spans"]), 2)
+            with open("/tmp/pix_t0000.pix", "wb") as fh:
+                fh.write(b"M" * 8)
+            with open("/tmp/pixbin_t0000.pbx", "wb") as fh:
+                fh.write(b"m" * 8)
+            return MagicMock(
+                returncode=0,
+                stdout=json.dumps({
+                    "threads": 2,
+                    "roots_plotted": 9,
+                    "roots_clipped": 1,
+                    "input_mode": "multispan_sectioned",
+                    "download_us": 2200,
+                    "native_us": 4100,
+                }),
+                stderr="",
+            )
+
+        mock_run.side_effect = fake_run
+
+        result = mod.handler(_event(
+            section_idx=0,
+            section_count=1,
+            bin_key="",
+            coeffs_key="",
+            params_key="",
+            logical_section=True,
+            solve_source_manifest=solve_source_manifest,
+            step_start=0,
+            step_count=4,
+            bin_size=0,
+            coeffs_bin_size=0,
+            params_step_start=0,
+            params_step_count=4,
+            raster_input_mode="sectioned",
+            n_coeffs=7,
+        ), None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(body["input_mode"], "multispan_sectioned")
+        done_kwargs = mock_report.call_args_list[-1].kwargs
+        self.assertEqual(done_kwargs["result_data"]["requested_input_mode"], "sectioned")
+        self.assertEqual(done_kwargs["result_data"]["input_mode"], "multispan_sectioned")
+
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
     @patch("handler_raster_mt.report_status")
     @patch("handler_raster_mt.subprocess.run")
@@ -669,10 +796,11 @@ class TestRasterMT(unittest.TestCase):
             pixel_bins_drive_rgb=True,
             pixel_bin_fragment_mode="dense_grouped",
             group_idx=0,
-            chunk_indices=[0, 1],
-            chunks=[
+            section_indices=[0, 1],
+            sections=[
                 {
-                    "chunk_idx": 0,
+                    "section_idx": 0,
+                    "section_count": 2,
                     "bin_key": "renders/j/chunk_0.bin",
                     "coeffs_key": "renders/j/coeffs_0000.bin",
                     "coeffs_bin_size": 0,
@@ -681,7 +809,8 @@ class TestRasterMT(unittest.TestCase):
                     "bin_size": 160,
                 },
                 {
-                    "chunk_idx": 1,
+                    "section_idx": 1,
+                    "section_count": 2,
                     "bin_key": "renders/j/chunk_1.bin",
                     "coeffs_key": "renders/j/coeffs_0001.bin",
                     "coeffs_bin_size": 0,
@@ -699,7 +828,7 @@ class TestRasterMT(unittest.TestCase):
         self.assertEqual(mock_run.call_count, 2)
         self.assertEqual(body["pixel_bin_fragment_mode"], "dense_grouped")
         self.assertEqual(body["group_idx"], 0)
-        self.assertEqual(body["chunk_indices"], [0, 1])
+        self.assertEqual(body["section_indices"], [0, 1])
         self.assertEqual(body["pixel_bin_tiles_uploaded"], 1)
         self.assertEqual(body["pixel_bin_bytes_uploaded"], 4)
         self.assertEqual(body["pixel_bin_sparse_files_in"], 2)

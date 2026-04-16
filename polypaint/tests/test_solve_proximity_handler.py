@@ -595,14 +595,14 @@ def test_hist_v2_mixed_source_sectioned_passes_coeff_url_cli_flags():
         hsp.subprocess.run = orig_run
 
 
-def test_hist_v2_logical_section_rebuilds_spans_from_chunk_manifest():
+def test_hist_v2_logical_section_sectioned_uses_multispan_manifests():
     import handler_solve_proximity as hsp
+    from logical_sections import build_solve_source_manifest
 
     mock_s3 = mock.MagicMock()
 
     def mock_get(**kwargs):
         key = kwargs.get("Key", "")
-        rng = kwargs.get("Range")
         if key == "renders/test/solve_scores/clip.json":
             clip_data = {
                 "family": "solve_score",
@@ -620,18 +620,10 @@ def test_hist_v2_logical_section_rebuilds_spans_from_chunk_manifest():
                 ],
             }
             return {"Body": _ChunkBody(json.dumps(clip_data).encode())}
-        expected_ranges = {
-            ("renders/test/chunk_0.bin", "bytes=0-47"): b"\x11" * 48,
-            ("renders/test/chunk_1.bin", "bytes=0-31"): b"\x22" * 32,
-            ("renders/test/coeffs_0000.bin", "bytes=0-71"): b"\x33" * 72,
-            ("renders/test/coeffs_0001.bin", "bytes=0-47"): b"\x44" * 48,
-        }
-        data = expected_ranges.get((key, rng))
-        if data is None:
-            raise AssertionError(f"unexpected get_object key/range: {key} {rng}")
-        return {"Body": _ChunkBody(data)}
+        raise AssertionError(f"unexpected get_object key: {key}")
 
     mock_s3.get_object = mock_get
+    mock_s3.generate_presigned_url.side_effect = lambda op, Params, ExpiresIn=900: f"https://example.com/{Params['Key']}"
     mock_s3.put_object = mock.MagicMock()
     mock_s3.exceptions = type('Exc', (), {'NoSuchKey': type('NoSuchKey', (Exception,), {})})()
 
@@ -653,10 +645,32 @@ def test_hist_v2_logical_section_rebuilds_spans_from_chunk_manifest():
     hsp.subprocess.run = mock_run
     try:
         with tempfile.TemporaryDirectory() as td:
-            tmp_input = os.path.join(td, "input.bin")
-            tmp_coeff = os.path.join(td, "coeff.bin")
-            with mock.patch.object(hsp, "_TMP_INPUT", tmp_input), \
-                 mock.patch.object(hsp, "_TMP_COEFF_INPUT", tmp_coeff):
+            input_manifest = os.path.join(td, "input_manifest.json")
+            coeff_manifest = os.path.join(td, "coeff_manifest.json")
+            solve_source_manifest = build_solve_source_manifest(
+                [
+                    {
+                        "chunk_idx": 0,
+                        "bin_key": "renders/test/chunk_0.bin",
+                        "coeffs_key": "renders/test/coeffs_0000.bin",
+                        "step_start": 0,
+                        "step_count": 3,
+                    },
+                    {
+                        "chunk_idx": 1,
+                        "bin_key": "renders/test/chunk_1.bin",
+                        "coeffs_key": "renders/test/coeffs_0001.bin",
+                        "step_start": 3,
+                        "step_count": 3,
+                    },
+                ],
+                job_id="test",
+                degree=2,
+                n_coeffs=3,
+            )
+            with mock.patch.object(hsp, "_TMP_INPUT_MANIFEST", input_manifest), \
+                 mock.patch.object(hsp, "_TMP_COEFF_INPUT_MANIFEST", coeff_manifest), \
+                 mock.patch.object(hsp, "_cleanup_tmp", mock.MagicMock()):
                 result = hsp.handle_hist({
                     "job_id": "test",
                     "task_id": "hist_test",
@@ -664,22 +678,7 @@ def test_hist_v2_logical_section_rebuilds_spans_from_chunk_manifest():
                     "section_idx": 0,
                     "section_count": 2,
                     "logical_section": True,
-                    "chunk_manifest": [
-                        {
-                            "chunk_idx": 0,
-                            "bin_key": "renders/test/chunk_0.bin",
-                            "coeffs_key": "renders/test/coeffs_0000.bin",
-                            "step_start": 0,
-                            "step_count": 3,
-                        },
-                        {
-                            "chunk_idx": 1,
-                            "bin_key": "renders/test/chunk_1.bin",
-                            "coeffs_key": "renders/test/coeffs_0001.bin",
-                            "step_start": 3,
-                            "step_count": 3,
-                        },
-                    ],
+                    "solve_source_manifest": solve_source_manifest,
                     "metric": "spread",
                     "solve_score_quantile": 0.02,
                     "solve_score_chain": [["spread", "slv", "2"], ["spread", "cf", "2"], ["max"]],
@@ -691,15 +690,127 @@ def test_hist_v2_logical_section_rebuilds_spans_from_chunk_manifest():
                     "hist_bins": 4,
                     "out_key": "renders/test/solve_scores/chunk_0_hist.json",
                     "solve_score_threads": 4,
+                    "solve_score_hist_input_mode": "sectioned",
                 })
-        body = json.loads(result["body"])
-        assert body["logical_section"] is True
-        cmd = mock_run.call_args.args[0]
-        assert cmd[0] == hsp.BINARY
-        assert f"--score_coeffs_file={tmp_coeff}" in cmd
-        done_kwargs = hsp.report_status.call_args_list[-1].kwargs
-        assert done_kwargs["result_data"]["source_size"] == 80
-        assert done_kwargs["result_data"]["source_coeffs_size"] == 120
+            body = json.loads(result["body"])
+            assert body["logical_section"] is True
+            cmd = mock_run.call_args.args[0]
+            assert cmd[0] == hsp.SECTIONED_HIST_BINARY
+            assert "--input_mode=multispan_sectioned" in cmd
+            assert f"--input_manifest={input_manifest}" in cmd
+            assert f"--score_coeff_manifest={coeff_manifest}" in cmd
+            with open(input_manifest, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            assert manifest["logical_size"] == 80
+            assert len(manifest["spans"]) == 2
+            with open(coeff_manifest, "r", encoding="utf-8") as f:
+                coeff_data = json.load(f)
+            assert coeff_data["logical_size"] == 120
+            assert len(coeff_data["spans"]) == 2
+            done_kwargs = hsp.report_status.call_args_list[-1].kwargs
+            assert done_kwargs["result_data"]["source_size"] == 80
+            assert done_kwargs["result_data"]["source_coeffs_size"] == 120
+            assert done_kwargs["result_data"]["input_mode"] == "multispan_sectioned"
+            assert "chunk_idx" not in done_kwargs["result_data"]
+    finally:
+        hsp.s3 = orig_s3
+        hsp.report_status = orig_report
+        hsp.subprocess.run = orig_run
+
+
+def test_hist_v2_logical_section_tmpfile_request_is_rejected():
+    import handler_solve_proximity as hsp
+    from logical_sections import build_solve_source_manifest
+
+    mock_s3 = mock.MagicMock()
+
+    def mock_get(**kwargs):
+        key = kwargs.get("Key", "")
+        if key == "renders/test/solve_scores/clip.json":
+            clip_data = {
+                "family": "solve_score",
+                "version": 2,
+                "metric": "spread",
+                "clip_quantile": 0.02,
+                "omega": 1.0,
+                "omega_enabled": False,
+                "clip_lo": 0.0,
+                "clip_hi": 1.0,
+                "program": "m0",
+                "metrics": [
+                    {"slot": 0, "metric": "spread", "source": "slv", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                ],
+            }
+            return {"Body": _ChunkBody(json.dumps(clip_data).encode())}
+        raise AssertionError(f"unexpected get_object key: {key}")
+
+    mock_s3.get_object = mock_get
+    mock_s3.generate_presigned_url.side_effect = lambda op, Params, ExpiresIn=900: f"https://example.com/{Params['Key']}"
+    mock_s3.put_object = mock.MagicMock()
+    mock_s3.exceptions = type('Exc', (), {'NoSuchKey': type('NoSuchKey', (Exception,), {})})()
+
+    mock_run = mock.MagicMock(return_value=mock.MagicMock(
+        returncode=0,
+        stdout=json.dumps({
+            "threads": 2,
+            "n_solves": 4,
+            "download_ms": 10,
+            "compute_ms": 20,
+            "wall_ms": 30,
+            "hist": [1, 1, 1, 1],
+        }),
+        stderr="",
+    ))
+    orig_s3, orig_report, orig_run = hsp.s3, hsp.report_status, hsp.subprocess.run
+    hsp.s3 = mock_s3
+    hsp.report_status = mock.MagicMock()
+    hsp.subprocess.run = mock_run
+    try:
+        solve_source_manifest = build_solve_source_manifest(
+            [
+                {
+                    "chunk_idx": 0,
+                    "bin_key": "renders/test/chunk_0.bin",
+                    "step_start": 0,
+                    "step_count": 2,
+                },
+                {
+                    "chunk_idx": 1,
+                    "bin_key": "renders/test/chunk_1.bin",
+                    "step_start": 2,
+                    "step_count": 2,
+                },
+            ],
+            job_id="test",
+            degree=2,
+            n_coeffs=0,
+        )
+        try:
+            hsp.handle_hist({
+                "job_id": "test",
+                "task_id": "hist_test",
+                "chunk_idx": 0,
+                "section_idx": 0,
+                "section_count": 2,
+                "logical_section": True,
+                "solve_source_manifest": solve_source_manifest,
+                "metric": "spread",
+                "solve_score_quantile": 0.02,
+                "solve_score_chain": [["spread", "slv", "2"]],
+                "degree": 2,
+                "step_start": 0,
+                "step_count": 4,
+                "clip_key": "renders/test/solve_scores/clip.json",
+                "hist_bins": 4,
+                "out_key": "renders/test/solve_scores/chunk_0_hist.json",
+                "solve_score_threads": 2,
+                "solve_score_hist_input_mode": "tmpfile",
+            })
+            assert False, "logical tmpfile hist should be rejected"
+        except RuntimeError as e:
+            assert "logical solve histogram sections reject solve_score_hist_input_mode='tmpfile'" in str(e)
+            assert "use solve_score_hist_input_mode=sectioned" in str(e)
+        assert mock_run.call_count == 0
     finally:
         hsp.s3 = orig_s3
         hsp.report_status = orig_report
@@ -969,7 +1080,7 @@ def test_merge_does_not_fallback_to_legacy_stripe_artifacts():
         _run_merge(1, clip_data, hist_responses, metric="proximity")
         assert False, "should have raised on missing chunk histogram"
     except RuntimeError as e:
-        assert "Missing histogram: renders/test/solve_scores/chunk_0_hist.json" in str(e), f"wrong error: {e}"
+        assert "Missing histogram: renders/test/solve_scores/section_0_hist.json" in str(e), f"wrong error: {e}"
 
 
 def test_merge_reports_configured_worker_count():

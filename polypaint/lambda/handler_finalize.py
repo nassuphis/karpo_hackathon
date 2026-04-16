@@ -372,9 +372,9 @@ def handler(event, context):
     contract_warnings = []
     job_id = params["job_id"]
     tile_idx = params["tile_idx"]
-    n_chunks = params.get("n_chunks", params.get("n_stripes"))
+    n_chunks = params.get("n_chunks", params.get("source_item_count", params.get("n_stripes")))
     if n_chunks is None:
-        raise RuntimeError("finalize requires n_chunks")
+        raise RuntimeError("finalize requires n_chunks or source_item_count")
     tile_w = params.get("tile_w")
     tile_h = params.get("tile_h")
     if tile_w in (None, "") or tile_h in (None, ""):

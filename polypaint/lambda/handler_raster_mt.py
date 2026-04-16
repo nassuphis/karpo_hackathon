@@ -12,6 +12,12 @@ import time
 
 import boto3
 
+from logical_sections import (
+    build_native_multispan_manifest,
+    build_source_spans,
+    stitch_spans_to_file,
+    write_native_multispan_manifest,
+)
 from solve_score_chain import solve_score_program_cli_payload
 from shared import BUCKET, attach_contract_warnings, contract_param, ok_response, parse_body, report_status
 
@@ -22,6 +28,9 @@ DEFAULT_THREADS = int(os.environ.get("RASTER_MT_THREADS", "4") or "4")
 VALID_RASTER_INPUT_MODES = {"tmpfile", "sectioned"}
 _TMP_SCORE_COEFFS = "/tmp/score_coeffs.bin"
 _TMP_SCORE_PARAMS = "/tmp/score_params.bin"
+_TMP_INPUT_MANIFEST = "/tmp/raster_input_manifest.json"
+_TMP_SCORE_COEFFS_MANIFEST = "/tmp/raster_score_coeffs_manifest.json"
+_TMP_SCORE_PARAMS_MANIFEST = "/tmp/raster_score_params_manifest.json"
 
 
 def _tile_dense_bytes(tile_idx, width, height, tile_size, n_tile_cols):
@@ -109,6 +118,9 @@ def _cleanup_chunk_tmp():
         "/tmp/palette_bins_chunk.bin",
         _TMP_SCORE_COEFFS,
         _TMP_SCORE_PARAMS,
+        _TMP_INPUT_MANIFEST,
+        _TMP_SCORE_COEFFS_MANIFEST,
+        _TMP_SCORE_PARAMS_MANIFEST,
     ):
         for stale in glob.glob(pattern):
             try:
@@ -158,12 +170,18 @@ def _build_cmd(params, bin_path, saved_bins_path=None):
         f"--constant_color={params.get('constant_color', 'ffffff')}",
         f"--rotation={params.get('rotation', 0.0)}",
         f"--threads={params['raster_mt_threads']}",
-        f"--input_mode={params.get('raster_input_mode', 'tmpfile')}",
+        f"--input_mode={params.get('effective_input_mode', params.get('raster_input_mode', 'tmpfile'))}",
     ]
-    if params.get("raster_input_mode") == "sectioned":
+    effective_input_mode = params.get("effective_input_mode", params.get("raster_input_mode", "tmpfile"))
+    if effective_input_mode == "sectioned":
         cmd.extend([
             f"--url={params['sectioned_url']}",
             f"--input_size={params['sectioned_input_size']}",
+            f"--retries={params.get('raster_sectioned_retries', 2)}",
+        ])
+    elif effective_input_mode == "multispan_sectioned":
+        cmd.extend([
+            f"--input_manifest={params['input_manifest_path']}",
             f"--retries={params.get('raster_sectioned_retries', 2)}",
         ])
     if params.get("emit_pixel_bins"):
@@ -197,7 +215,7 @@ def _build_cmd(params, bin_path, saved_bins_path=None):
                     raise RuntimeError(f"mixed-source solve-score render requires numeric n_coeffs, got {n_coeffs!r}")
                 if n_coeffs < 1:
                     raise RuntimeError(f"mixed-source solve-score render requires n_coeffs >= 1, got {n_coeffs}")
-                if params.get("raster_input_mode") == "sectioned":
+                if effective_input_mode == "sectioned":
                     coeffs_url = str(params.get("sectioned_score_coeffs_url") or "").strip()
                     coeff_input_size = int(params.get("sectioned_score_coeffs_input_size") or 0)
                     if not coeffs_url or coeff_input_size <= 0:
@@ -205,6 +223,14 @@ def _build_cmd(params, bin_path, saved_bins_path=None):
                     cmd.extend([
                         f"--score_coeffs_url={coeffs_url}",
                         f"--score_coeff_input_size={coeff_input_size}",
+                        f"--score_coeff_degree={n_coeffs}",
+                    ])
+                elif effective_input_mode == "multispan_sectioned":
+                    coeff_manifest_path = str(params.get("score_coeff_manifest_path") or "").strip()
+                    if not coeff_manifest_path:
+                        raise RuntimeError("mixed-source multispan raster requires score_coeff_manifest_path")
+                    cmd.extend([
+                        f"--score_coeff_manifest={coeff_manifest_path}",
                         f"--score_coeff_degree={n_coeffs}",
                     ])
                 else:
@@ -216,10 +242,16 @@ def _build_cmd(params, bin_path, saved_bins_path=None):
                         f"--score_coeff_degree={n_coeffs}",
                     ])
             if _solve_score_bins_uses_source(ss_data, "pm"):
-                params_path = str(params.get("solve_score_params_path") or "").strip()
-                if not params_path:
-                    raise RuntimeError("param-source raster requires solve_score_params_path")
-                cmd.append(f"--score_params_file={params_path}")
+                if effective_input_mode == "multispan_sectioned":
+                    params_manifest_path = str(params.get("score_params_manifest_path") or "").strip()
+                    if not params_manifest_path:
+                        raise RuntimeError("param-source multispan raster requires score_params_manifest_path")
+                    cmd.append(f"--score_params_manifest={params_manifest_path}")
+                else:
+                    params_path = str(params.get("solve_score_params_path") or "").strip()
+                    if not params_path:
+                        raise RuntimeError("param-source raster requires solve_score_params_path")
+                    cmd.append(f"--score_params_file={params_path}")
         else:
             req_metric = params.get("solve_metric", "proximity")
             if ss_data.get("metric") != req_metric:
@@ -253,9 +285,10 @@ def _build_cmd(params, bin_path, saved_bins_path=None):
     return cmd
 
 
-def _normal_chunk_item(item):
+def _normal_section_item(item):
     return {
-        "chunk_idx": int(item["chunk_idx"]),
+        "section_idx": int(item["section_idx"]),
+        "section_count": int(item["section_count"]),
         "bin_key": str(item["bin_key"]),
         "coeffs_key": str(item.get("coeffs_key") or ""),
         "coeffs_bin_size": int(item.get("coeffs_bin_size") or 0),
@@ -269,14 +302,15 @@ def _normal_chunk_item(item):
     }
 
 
-def _chunk_items_from_params(params, dense_grouped):
+def _section_items_from_params(params, dense_grouped):
     if dense_grouped:
-        chunks = params.get("chunks")
-        if not isinstance(chunks, list) or not chunks:
-            raise RuntimeError("dense_grouped raster requires non-empty chunks list")
-        return [_normal_chunk_item(item) for item in chunks]
-    return [_normal_chunk_item({
-        "chunk_idx": params.get("chunk_idx", params.get("stripe_idx")),
+        sections = params.get("sections")
+        if not isinstance(sections, list) or not sections:
+            raise RuntimeError("dense_grouped raster requires non-empty sections list")
+        return [_normal_section_item(item) for item in sections]
+    return [_normal_section_item({
+        "section_idx": params.get("section_idx", params.get("chunk_idx", params.get("stripe_idx"))),
+        "section_count": params.get("section_count", 1),
         "bin_key": params.get("bin_key"),
         "coeffs_key": params.get("coeffs_key", ""),
         "coeffs_bin_size": params.get("coeffs_bin_size", 0),
@@ -290,43 +324,61 @@ def _chunk_items_from_params(params, dense_grouped):
     })]
 
 
-def _apply_chunk_item(params, item):
+def _apply_section_item(params, item):
     out = dict(params)
     for key, value in item.items():
         out[key] = value
     return out
 
 
-def _saved_palette_bins_key_for_chunk(params, chunk_idx):
+def _saved_palette_bins_key_for_section(params, section_idx):
     prefix = str(params.get("saved_palette_bins_prefix") or "").strip()
     if prefix:
-        return f"{prefix}{int(chunk_idx)}.bin"
+        return f"{prefix}{int(section_idx)}.bin"
     return str(params.get("saved_palette_bins_key") or "").strip()
 
 
-def _prepare_chunk_inputs(chunk_params, *, bin_path, saved_bins_path, perf):
-    bin_key = chunk_params["bin_key"]
-    raster_input_mode = chunk_params["raster_input_mode"]
-    color = chunk_params.get("color", "rainbow")
+def _native_manifest_urls(spans):
+    urls = {}
+    for span in spans or []:
+        key = str(span.get("key") or "").strip()
+        if not key or key in urls:
+            continue
+        urls[key] = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": BUCKET, "Key": key},
+            ExpiresIn=900,
+        )
+    return urls
+
+
+def _prepare_section_inputs(section_params, *, bin_path, saved_bins_path, perf):
+    bin_key = section_params["bin_key"]
+    raster_input_mode = section_params["raster_input_mode"]
+    logical_section = _parse_boolish(section_params.get("logical_section"), False)
+    solve_source_manifest = dict(section_params.get("solve_source_manifest") or {})
+    step_start = int(section_params.get("step_start") or 0)
+    step_count = int(section_params.get("step_count") or 0)
+    color = section_params.get("color", "rainbow")
 
     try:
         os.remove(saved_bins_path)
     except OSError:
         pass
     if color == "saved_palette":
-        saved_palette_bins_key = _saved_palette_bins_key_for_chunk(chunk_params, chunk_params["chunk_idx"])
+        saved_palette_bins_key = _saved_palette_bins_key_for_section(section_params, section_params["section_idx"])
         if not saved_palette_bins_key:
             raise RuntimeError("saved_palette color mode requires saved_palette_bins_key or saved_palette_bins_prefix")
         bins_obj = s3.get_object(Bucket=BUCKET, Key=saved_palette_bins_key)
         with open(saved_bins_path, "wb") as bf:
             bf.write(bins_obj["Body"].read())
-        chunk_params["saved_palette_bins_key"] = saved_palette_bins_key
+        section_params["saved_palette_bins_key"] = saved_palette_bins_key
 
-    ss_data = chunk_params.get("solve_score_bins_data") or {}
+    ss_data = section_params.get("solve_score_bins_data") or {}
     if color in ("solve_score", "solve_proximity") and _solve_score_bins_uses_source(ss_data, "cf"):
-        coeffs_key = str(chunk_params.get("coeffs_key") or "").strip()
-        n_coeffs = chunk_params.get("n_coeffs")
-        if not coeffs_key:
+        coeffs_key = str(section_params.get("coeffs_key") or "").strip()
+        n_coeffs = section_params.get("n_coeffs")
+        if not coeffs_key and not logical_section:
             raise RuntimeError("mixed-source solve-score render requires coeffs_key")
         try:
             n_coeffs = int(n_coeffs)
@@ -334,13 +386,13 @@ def _prepare_chunk_inputs(chunk_params, *, bin_path, saved_bins_path, perf):
             raise RuntimeError(f"mixed-source solve-score render requires numeric n_coeffs, got {n_coeffs!r}")
         if n_coeffs < 1:
             raise RuntimeError(f"mixed-source solve-score render requires n_coeffs >= 1, got {n_coeffs}")
-        chunk_params["n_coeffs"] = n_coeffs
+        section_params["n_coeffs"] = n_coeffs
     if color in ("solve_score", "solve_proximity") and _solve_score_bins_uses_source(ss_data, "pm"):
-        params_key = str(chunk_params.get("params_key") or "").strip()
-        params_step_start = chunk_params.get("params_step_start", chunk_params.get("step_start"))
-        params_step_count = chunk_params.get("params_step_count", chunk_params.get("step_count"))
-        step_count = chunk_params.get("step_count")
-        if not params_key:
+        params_key = str(section_params.get("params_key") or "").strip()
+        params_step_start = section_params.get("params_step_start", section_params.get("step_start"))
+        params_step_count = section_params.get("params_step_count", section_params.get("step_count"))
+        step_count = section_params.get("step_count")
+        if not params_key and not logical_section:
             raise RuntimeError("param-source solve-score render requires params_key")
         try:
             params_step_start = int(params_step_start)
@@ -360,12 +412,79 @@ def _prepare_chunk_inputs(chunk_params, *, bin_path, saved_bins_path, perf):
             raise RuntimeError(
                 f"param-source solve-score render requires params_step_count == step_count, got {params_step_count}/{step_count}"
             )
-        chunk_params["params_step_start"] = params_step_start
-        chunk_params["params_step_count"] = params_step_count
-        chunk_params["step_count"] = step_count
+        section_params["params_step_start"] = params_step_start
+        section_params["params_step_count"] = params_step_count
+        section_params["step_count"] = step_count
 
-    if raster_input_mode == "sectioned":
-        input_size = int(chunk_params.get("bin_size") or 0)
+    effective_input_mode = raster_input_mode
+    if logical_section and not bin_key:
+        root_spans = build_source_spans(
+            solve_source_manifest,
+            source_family="slv",
+            solve_start=step_start,
+            solve_count=step_count,
+        )
+        if root_spans:
+            bin_key = str(root_spans[0]["key"] or "")
+            section_params["bin_key"] = bin_key
+
+    if raster_input_mode == "sectioned" and logical_section:
+        if not solve_source_manifest:
+            raise RuntimeError("logical raster section requires solve_source_manifest")
+        root_spans = build_source_spans(
+            solve_source_manifest,
+            source_family="slv",
+            solve_start=step_start,
+            solve_count=step_count,
+        )
+        input_manifest = build_native_multispan_manifest(
+            solve_source_manifest,
+            source_family="slv",
+            solve_start=step_start,
+            solve_count=step_count,
+            url_by_key=_native_manifest_urls(root_spans),
+        )
+        section_params["input_manifest_path"] = write_native_multispan_manifest(_TMP_INPUT_MANIFEST, input_manifest)
+        effective_input_mode = "multispan_sectioned"
+        section_params["sectioned_input_size"] = int(input_manifest["logical_size"])
+        if _solve_score_bins_uses_source(ss_data, "cf"):
+            coeff_spans = build_source_spans(
+                solve_source_manifest,
+                source_family="cf",
+                solve_start=step_start,
+                solve_count=step_count,
+            )
+            coeff_manifest = build_native_multispan_manifest(
+                solve_source_manifest,
+                source_family="cf",
+                solve_start=step_start,
+                solve_count=step_count,
+                url_by_key=_native_manifest_urls(coeff_spans),
+            )
+            section_params["score_coeff_manifest_path"] = write_native_multispan_manifest(
+                _TMP_SCORE_COEFFS_MANIFEST,
+                coeff_manifest,
+            )
+        if _solve_score_bins_uses_source(ss_data, "pm"):
+            param_spans = build_source_spans(
+                solve_source_manifest,
+                source_family="pm",
+                solve_start=step_start,
+                solve_count=step_count,
+            )
+            param_manifest = build_native_multispan_manifest(
+                solve_source_manifest,
+                source_family="pm",
+                solve_start=step_start,
+                solve_count=step_count,
+                url_by_key=_native_manifest_urls(param_spans),
+            )
+            section_params["score_params_manifest_path"] = write_native_multispan_manifest(
+                _TMP_SCORE_PARAMS_MANIFEST,
+                param_manifest,
+            )
+    elif raster_input_mode == "sectioned":
+        input_size = int(section_params.get("bin_size") or 0)
         if input_size <= 0:
             head = s3.head_object(Bucket=BUCKET, Key=bin_key)
             input_size = int(head.get("ContentLength") or 0)
@@ -377,30 +496,30 @@ def _prepare_chunk_inputs(chunk_params, *, bin_path, saved_bins_path, perf):
                 f"sectioned raster input too large for current Lambda memory: "
                 f"{input_size} bytes > safe limit {size_limit} bytes"
             )
-        chunk_params["sectioned_input_size"] = input_size
-        chunk_params["sectioned_url"] = s3.generate_presigned_url(
+        section_params["sectioned_input_size"] = input_size
+        section_params["sectioned_url"] = s3.generate_presigned_url(
             "get_object",
             Params={"Bucket": BUCKET, "Key": bin_key},
             ExpiresIn=900,
         )
         if _solve_score_bins_uses_source(ss_data, "cf"):
-            coeff_input_size = int(chunk_params.get("coeffs_bin_size") or 0)
-            coeffs_key = str(chunk_params.get("coeffs_key") or "").strip()
+            coeff_input_size = int(section_params.get("coeffs_bin_size") or 0)
+            coeffs_key = str(section_params.get("coeffs_key") or "").strip()
             if coeff_input_size <= 0:
                 head = s3.head_object(Bucket=BUCKET, Key=coeffs_key)
                 coeff_input_size = int(head.get("ContentLength") or 0)
             if coeff_input_size <= 0:
                 raise RuntimeError(f"Failed to determine coeff chunk size for s3://{BUCKET}/{coeffs_key}")
-            chunk_params["sectioned_score_coeffs_input_size"] = coeff_input_size
-            chunk_params["sectioned_score_coeffs_url"] = s3.generate_presigned_url(
+            section_params["sectioned_score_coeffs_input_size"] = coeff_input_size
+            section_params["sectioned_score_coeffs_url"] = s3.generate_presigned_url(
                 "get_object",
                 Params={"Bucket": BUCKET, "Key": coeffs_key},
                 ExpiresIn=900,
             )
         if _solve_score_bins_uses_source(ss_data, "pm"):
-            params_key = str(chunk_params.get("params_key") or "").strip()
-            params_step_start = int(chunk_params["params_step_start"])
-            params_step_count = int(chunk_params["params_step_count"])
+            params_key = str(section_params.get("params_key") or "").strip()
+            params_step_start = int(section_params["params_step_start"])
+            params_step_count = int(section_params["params_step_count"])
             params_obj = s3.get_object(
                 Bucket=BUCKET,
                 Key=params_key,
@@ -408,32 +527,62 @@ def _prepare_chunk_inputs(chunk_params, *, bin_path, saved_bins_path, perf):
             )
             with open(_TMP_SCORE_PARAMS, "wb") as pf:
                 pf.write(params_obj["Body"].read())
-            chunk_params["solve_score_params_path"] = _TMP_SCORE_PARAMS
+            section_params["solve_score_params_path"] = _TMP_SCORE_PARAMS
     else:
         t_dl = time.perf_counter()
-        obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
-        with open(bin_path, "wb") as f:
-            f.write(obj["Body"].read())
-        if _solve_score_bins_uses_source(ss_data, "cf"):
-            coeffs_key = str(chunk_params.get("coeffs_key") or "").strip()
-            coeff_obj = s3.get_object(Bucket=BUCKET, Key=coeffs_key)
-            with open(_TMP_SCORE_COEFFS, "wb") as cf:
-                cf.write(coeff_obj["Body"].read())
-            chunk_params["solve_score_coeffs_path"] = _TMP_SCORE_COEFFS
-        if _solve_score_bins_uses_source(ss_data, "pm"):
-            params_key = str(chunk_params.get("params_key") or "").strip()
-            params_step_start = int(chunk_params["params_step_start"])
-            params_step_count = int(chunk_params["params_step_count"])
-            params_obj = s3.get_object(
-                Bucket=BUCKET,
-                Key=params_key,
-                Range=f"bytes={params_step_start * 16}-{params_step_start * 16 + params_step_count * 16 - 1}",
+        if logical_section:
+            if not solve_source_manifest:
+                raise RuntimeError("logical raster tmpfile mode requires solve_source_manifest")
+            root_spans = build_source_spans(
+                solve_source_manifest,
+                source_family="slv",
+                solve_start=step_start,
+                solve_count=step_count,
             )
-            with open(_TMP_SCORE_PARAMS, "wb") as pf:
-                pf.write(params_obj["Body"].read())
-            chunk_params["solve_score_params_path"] = _TMP_SCORE_PARAMS
+            stitch_spans_to_file(s3, BUCKET, root_spans, bin_path)
+        else:
+            obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
+            with open(bin_path, "wb") as f:
+                f.write(obj["Body"].read())
+        if _solve_score_bins_uses_source(ss_data, "cf"):
+            if logical_section:
+                coeff_spans = build_source_spans(
+                    solve_source_manifest,
+                    source_family="cf",
+                    solve_start=step_start,
+                    solve_count=step_count,
+                )
+                stitch_spans_to_file(s3, BUCKET, coeff_spans, _TMP_SCORE_COEFFS)
+            else:
+                coeffs_key = str(section_params.get("coeffs_key") or "").strip()
+                coeff_obj = s3.get_object(Bucket=BUCKET, Key=coeffs_key)
+                with open(_TMP_SCORE_COEFFS, "wb") as cf:
+                    cf.write(coeff_obj["Body"].read())
+            section_params["solve_score_coeffs_path"] = _TMP_SCORE_COEFFS
+        if _solve_score_bins_uses_source(ss_data, "pm"):
+            if logical_section:
+                param_spans = build_source_spans(
+                    solve_source_manifest,
+                    source_family="pm",
+                    solve_start=step_start,
+                    solve_count=step_count,
+                )
+                stitch_spans_to_file(s3, BUCKET, param_spans, _TMP_SCORE_PARAMS)
+            else:
+                params_key = str(section_params.get("params_key") or "").strip()
+                params_step_start = int(section_params["params_step_start"])
+                params_step_count = int(section_params["params_step_count"])
+                params_obj = s3.get_object(
+                    Bucket=BUCKET,
+                    Key=params_key,
+                    Range=f"bytes={params_step_start * 16}-{params_step_start * 16 + params_step_count * 16 - 1}",
+                )
+                with open(_TMP_SCORE_PARAMS, "wb") as pf:
+                    pf.write(params_obj["Body"].read())
+            section_params["solve_score_params_path"] = _TMP_SCORE_PARAMS
         perf["download_us"] += int((time.perf_counter() - t_dl) * 1e6)
-    return chunk_params
+    section_params["effective_input_mode"] = effective_input_mode
+    return section_params
 
 
 def _feed_file_to_stdin(path, stdin):
@@ -478,14 +627,13 @@ def handler(event, context):
     params = parse_body(event)
     contract_warnings = []
     job_id = params["job_id"]
-    chunk_idx = params.get("chunk_idx", params.get("stripe_idx"))
-    if chunk_idx is None:
-        raise RuntimeError("raster requires chunk_idx")
-    bin_key = params["bin_key"]
+    section_idx = params.get("section_idx", params.get("chunk_idx", params.get("stripe_idx")))
+    if section_idx is None and not isinstance(params.get("sections"), list):
+        raise RuntimeError("raster requires section_idx")
     n_tile_cols = params["n_tile_cols"]
     n_tile_rows = params["n_tile_rows"]
     n_tiles = n_tile_cols * n_tile_rows
-    task_id = params.get("task_id", f"raster_{chunk_idx}")
+    task_id = params.get("task_id", f"raster_{section_idx if section_idx is not None else 'group'}")
     threads = _validate_threads(contract_param(params, "raster_mt_threads", DEFAULT_THREADS, contract_warnings))
     raster_input_mode = _validate_raster_input_mode(contract_param(params, "raster_input_mode", "tmpfile", contract_warnings))
     raster_sectioned_retries = _validate_sectioned_retries(contract_param(params, "raster_sectioned_retries", 2, contract_warnings))
@@ -548,13 +696,13 @@ def handler(event, context):
             params["solve_score_bins_data"] = json.loads(ss_obj["Body"].read())
         pixel_bin_fragment_mode = str(params.get("pixel_bin_fragment_mode") or "sparse_chunks").strip().lower()
         dense_grouped = pixel_bin_fragment_mode == "dense_grouped" and pixel_bins_drive_rgb and emit_pixel_bins
-        chunk_items = _chunk_items_from_params(params, dense_grouped)
-        group_idx = int(params.get("group_idx", chunk_items[0]["chunk_idx"]))
-        chunk_indices = [int(item["chunk_idx"]) for item in chunk_items]
+        section_items = _section_items_from_params(params, dense_grouped)
+        group_idx = int(params.get("group_idx", section_items[0]["section_idx"]))
+        section_indices = [int(item["section_idx"]) for item in section_items]
         perf["pixel_bin_fragment_mode"] = "dense_grouped" if dense_grouped else "sparse_chunks"
         perf["group_idx"] = group_idx
-        perf["chunk_indices"] = chunk_indices
-        perf["chunk_count"] = len(chunk_items)
+        perf["section_indices"] = section_indices
+        perf["section_count"] = len(section_items)
 
         group_bins = {}
         uploaded = 0
@@ -566,29 +714,30 @@ def handler(event, context):
         grouped_sparse_files_in = 0
         upload_us_accum = 0
 
-        for item_idx, item in enumerate(chunk_items):
+        for item_idx, item in enumerate(section_items):
             _cleanup_chunk_tmp()
-            chunk_idx = int(item["chunk_idx"])
-            chunk_params = _apply_chunk_item(params, item)
-            chunk_params = _prepare_chunk_inputs(
-                chunk_params,
+            section_idx = int(item["section_idx"])
+            section_params = _apply_section_item(params, item)
+            section_params = _prepare_section_inputs(
+                section_params,
                 bin_path=bin_path,
                 saved_bins_path=saved_bins_path,
                 perf=perf,
             )
-            report_status(job_id, task_id, f"bin_downloaded_{item_idx+1}/{len(chunk_items)}")
+            report_status(job_id, task_id, f"bin_downloaded_{item_idx+1}/{len(section_items)}")
 
             t_native = time.perf_counter()
-            cmd = _build_cmd(chunk_params, bin_path, saved_bins_path if os.path.exists(saved_bins_path) else None)
+            cmd = _build_cmd(section_params, bin_path, saved_bins_path if os.path.exists(saved_bins_path) else None)
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
             native_wall_us = int((time.perf_counter() - t_native) * 1e6)
             if result.returncode != 0:
-                raise RuntimeError(f"roots2pix_mt failed for chunk {chunk_idx}: {result.stderr.strip()}")
+                raise RuntimeError(f"roots2pix_mt failed for section {section_idx}: {result.stderr.strip()}")
             raster_meta = json.loads(result.stdout)
             perf["threads"] = int(raster_meta.get("threads", threads))
-            perf["input_mode"] = str(raster_meta.get("input_mode", raster_input_mode))
+            perf["requested_input_mode"] = raster_input_mode
+            perf["input_mode"] = str(raster_meta.get("input_mode", section_params.get("effective_input_mode", raster_input_mode)))
             perf["retries"] = int(raster_meta.get("retries", raster_sectioned_retries))
-            if raster_input_mode == "sectioned":
+            if perf["input_mode"] in ("sectioned", "multispan_sectioned"):
                 perf["download_us"] += int(raster_meta.get("download_us", 0))
             perf["native_us"] += int(raster_meta.get("native_us", native_wall_us))
             perf["roots_plotted"] += int(raster_meta.get("roots_plotted", 0))
@@ -602,7 +751,7 @@ def handler(event, context):
                     if pixel_bins_drive_rgb:
                         chunk_skipped_pix_tiles += 1
                     else:
-                        s3_key = f"renders/{job_id}/pix_chunk_{chunk_idx:04d}_t{t:04d}.pix"
+                        s3_key = f"renders/{job_id}/pix_chunk_{section_idx:04d}_t{t:04d}.pix"
                         with open(pix_path, "rb") as fh:
                             s3.upload_fileobj(fh, BUCKET, s3_key)
                         uploaded += 1
@@ -611,16 +760,16 @@ def handler(event, context):
                 if emit_pixel_bins and os.path.exists(pbx_path):
                     pbx_size = os.path.getsize(pbx_path)
                     if pbx_size > 0:
-                        dense_bytes = _tile_dense_bytes(t, chunk_params["width"], chunk_params["height"], chunk_params["tile_size"], n_tile_cols)
+                        dense_bytes = _tile_dense_bytes(t, section_params["width"], section_params["height"], section_params["tile_size"], n_tile_cols)
                         if dense_grouped:
                             info = _ensure_group_bin_proc(
                                 group_bins,
                                 t,
-                                width=chunk_params["width"],
-                                height=chunk_params["height"],
-                                tile_size=chunk_params["tile_size"],
+                                width=section_params["width"],
+                                height=section_params["height"],
+                                tile_size=section_params["tile_size"],
                                 n_tile_cols=n_tile_cols,
-                                pixel_bins_empty=int(chunk_params.get("pixel_bins_empty", 255) or 255),
+                                pixel_bins_empty=int(section_params.get("pixel_bins_empty", 255) or 255),
                             )
                             _feed_file_to_stdin(pbx_path, info["proc"].stdin)
                             info["sparse_bytes"] += pbx_size
@@ -628,7 +777,7 @@ def handler(event, context):
                             grouped_sparse_bytes_in += pbx_size
                             grouped_sparse_files_in += 1
                         else:
-                            pbx_key = f"renders/{job_id}/pixbin_chunk_{chunk_idx:04d}_t{t:04d}.pbx"
+                            pbx_key = f"renders/{job_id}/pixbin_chunk_{section_idx:04d}_t{t:04d}.pbx"
                             with open(pbx_path, "rb") as fh:
                                 s3.upload_fileobj(fh, BUCKET, pbx_key)
                             uploaded_pixel_bins += 1
@@ -642,7 +791,7 @@ def handler(event, context):
             if pixel_bins_drive_rgb:
                 skipped_pix_tiles += max(chunk_skipped_pix_tiles, int(raster_meta.get("tiles_with_data", 0) or 0))
             upload_us_accum += int((time.perf_counter() - t_chunk_up) * 1e6)
-            report_status(job_id, task_id, f"rasterized_{item_idx+1}/{len(chunk_items)}")
+            report_status(job_id, task_id, f"rasterized_{item_idx+1}/{len(section_items)}")
 
         if dense_grouped:
             t_group_up = time.perf_counter()
@@ -680,10 +829,9 @@ def handler(event, context):
         attach_contract_warnings(perf, contract_warnings)
         report_status(job_id, task_id, "done", result_data=perf)
         return ok_response({
-            "chunk_idx": group_idx if dense_grouped else int(chunk_items[0]["chunk_idx"]),
-            "stripe_idx": group_idx if dense_grouped else int(chunk_items[0]["chunk_idx"]),
+            "section_idx": group_idx if dense_grouped else int(section_items[0]["section_idx"]),
             "group_idx": group_idx,
-            "chunk_indices": chunk_indices,
+            "section_indices": section_indices,
             "tiles_uploaded": uploaded,
             "pixel_bin_tiles_uploaded": uploaded_pixel_bins,
             "pixel_bin_bytes_uploaded": uploaded_pixel_bin_bytes,

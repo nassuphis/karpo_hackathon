@@ -626,7 +626,7 @@ docker run --rm --platform linux/arm64 \
     bash -c '
         set -euo pipefail
         dnf install -y gcc libcurl-devel 2>&1 | tail -1
-        gcc -O3 -pthread -o /src/roots2pix_mt /src/roots2pix_mt.c \
+        gcc -O3 -pthread -o /src/roots2pix_mt /src/roots2pix_mt.c /src/multispan_reader.c \
             -lcurl -lm -Wl,-rpath,\$ORIGIN/lib
         rm -rf /src/roots2pix_mt_lib
         mkdir -p /src/roots2pix_mt_lib
@@ -663,7 +663,7 @@ docker run --rm --platform linux/arm64 \
     bash -c '
         set -euo pipefail
         dnf install -y gcc libcurl-devel 2>&1 | tail -1
-        gcc -O3 -pthread -o /src/solve_proximity_hist_sectioned /src/solve_proximity_hist_sectioned.c \
+        gcc -O3 -pthread -o /src/solve_proximity_hist_sectioned /src/solve_proximity_hist_sectioned.c /src/multispan_reader.c \
             -lcurl -lm -Wl,-rpath,\$ORIGIN/lib
         rm -rf /src/solve_proximity_hist_sectioned_lib
         mkdir -p /src/solve_proximity_hist_sectioned_lib
@@ -689,7 +689,7 @@ docker run --rm --platform linux/arm64 \
     bash -c '
         set -euo pipefail
         dnf install -y gcc libcurl-devel 2>&1 | tail -1
-        gcc -O3 -pthread -o /src/solve_palette_chunk_mt /src/solve_palette_chunk_mt.c \
+        gcc -O3 -pthread -o /src/solve_palette_chunk_mt /src/solve_palette_chunk_mt.c /src/multispan_reader.c \
             -lcurl -lm -Wl,-rpath,\$ORIGIN/lib
         rm -rf /src/solve_palette_chunk_mt_lib
         mkdir -p /src/solve_palette_chunk_mt_lib
@@ -982,7 +982,7 @@ echo "  Raster:   $(du -h /tmp/polypaint-raster.zip | cut -f1)  (roots2pix)"
 RASTER_MT_DIR=/tmp/polypaint-raster-mt
 rm -rf "$RASTER_MT_DIR"
 mkdir -p "$RASTER_MT_DIR/lib"
-cp lambda/handler_raster_mt.py lambda/shared.py lambda/solve_score_chain.py "$RASTER_MT_DIR/"
+cp lambda/handler_raster_mt.py lambda/shared.py lambda/solve_score_chain.py lambda/logical_sections.py "$RASTER_MT_DIR/"
 cp lambda/roots2pix_mt lambda/pixbinassemble "$RASTER_MT_DIR/"
 cp lambda/roots2pix_mt_lib/* "$RASTER_MT_DIR/lib/" 2>/dev/null || true
 chmod +x "$RASTER_MT_DIR"/roots2pix_mt "$RASTER_MT_DIR"/pixbinassemble

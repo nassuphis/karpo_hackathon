@@ -23,8 +23,11 @@ from calc_chunks import (
 )
 from logical_sections import (
     DEFAULT_PALETTE_CHUNK_MEMORY_MB,
+    DEFAULT_RASTER_MEMORY_MB,
     DEFAULT_SOLVE_SCORE_MEMORY_MB,
+    build_physical_section_items,
     build_logical_section_items,
+    build_solve_source_manifest,
     compute_safe_sectioning,
     normalize_section_mode,
     summarize_chunk_items,
@@ -67,9 +70,10 @@ def _fallback_lores_params_key(job_id, calc):
     return calc_fallback_lores_params_key(job_id, calc)
 
 
-def _raster_chunk_item_for_asl(item):
+def _raster_section_item_for_asl(item):
     out = {
-        "chunk_idx": int(item["chunk_idx"]),
+        "section_idx": int(item["section_idx"]),
+        "section_count": int(item["section_count"]),
         "bin_key": str(item["bin_key"]),
         "coeffs_key": str(item.get("coeffs_key") or ""),
         "coeffs_bin_size": int(item.get("coeffs_bin_size") or 0),
@@ -84,29 +88,29 @@ def _raster_chunk_item_for_asl(item):
     return out
 
 
-def _build_raster_items(chunk_items, pixel_bin_fragment_mode, raster_bin_group_size):
-    normalized_chunks = [_raster_chunk_item_for_asl(item) for item in chunk_items]
+def _build_raster_group_items(section_items, pixel_bin_fragment_mode, raster_bin_group_size):
+    normalized_sections = [_raster_section_item_for_asl(item) for item in section_items]
     if pixel_bin_fragment_mode != "dense_grouped":
         return [
             {
                 **item,
-                "group_idx": int(item["chunk_idx"]),
-                "chunk_indices": [int(item["chunk_idx"])],
-                "chunks": [item],
+                "group_idx": int(item["section_idx"]),
+                "section_indices": [int(item["section_idx"])],
+                "sections": [item],
             }
-            for item in normalized_chunks
+            for item in normalized_sections
         ]
 
     group_size = int(raster_bin_group_size)
     raster_items = []
-    for group_idx, start in enumerate(range(0, len(normalized_chunks), group_size)):
-        group = normalized_chunks[start:start + group_size]
+    for group_idx, start in enumerate(range(0, len(normalized_sections), group_size)):
+        group = normalized_sections[start:start + group_size]
         first = dict(group[0])
         first.update({
             "group_idx": group_idx,
-            "chunk_idx": int(group[0]["chunk_idx"]),
-            "chunk_indices": [int(item["chunk_idx"]) for item in group],
-            "chunks": group,
+            "section_idx": int(group[0]["section_idx"]),
+            "section_indices": [int(item["section_idx"]) for item in group],
+            "sections": group,
         })
         raster_items.append(first)
     return raster_items
@@ -269,6 +273,9 @@ def _render_execution_config(rp):
         "solve_score_hist_retries": int(rp.get("solve_score_hist_retries", 2) or 0),
         "raster_input_mode": str(rp.get("raster_input_mode", "tmpfile") or "tmpfile"),
         "raster_sectioned_retries": int(rp.get("raster_sectioned_retries", 2) or 0),
+        "raster_section_mode": str(rp.get("raster_section_mode", "physical_chunks") or "physical_chunks"),
+        "raster_section_count": rp.get("raster_section_count", ""),
+        "raster_section_count_auto": rp.get("raster_section_count_auto", ""),
         "pixel_bin_fragment_mode": str(rp.get("pixel_bin_fragment_mode", "sparse_chunks") or "sparse_chunks"),
         "raster_bin_group_size": rp.get("raster_bin_group_size", ""),
         "solve_score_merge_workers": int(rp.get("solve_score_merge_workers", 16) or 16),
@@ -375,6 +382,8 @@ def handler(event, context):
         "raster_mt_threads": 4,
         "raster_input_mode": "tmpfile",
         "raster_sectioned_retries": 2,
+        "raster_section_mode": "physical_chunks",
+        "raster_section_count": "",
         "pixel_bin_fragment_mode": "sparse_chunks",
         "raster_bin_group_size": "",
         "solve_score_threads": "",
@@ -406,6 +415,12 @@ def handler(event, context):
     rp["raster_sectioned_retries"] = _validate_retry_count(
         rp.get("raster_sectioned_retries", 2),
         "raster_sectioned_retries",
+    )
+    rp["raster_section_mode"] = normalize_section_mode(rp.get("raster_section_mode", "physical_chunks"))
+    rp["raster_section_count"] = validate_section_count(
+        rp.get("raster_section_count", ""),
+        "raster_section_count",
+        default="",
     )
     rp["pixel_bin_fragment_mode"] = _validate_pixel_bin_fragment_mode(rp.get("pixel_bin_fragment_mode", "sparse_chunks"))
     rp["raster_bin_group_size"] = _validate_raster_bin_group_size(rp.get("raster_bin_group_size", ""))
@@ -486,6 +501,7 @@ def handler(event, context):
         "omega": 1.0,
         "omega_enabled": True,
         "score_chain": "",
+        "section_bins_prefix": "",
         "chunk_bins_prefix": "",
         "data_layout": "",
     }
@@ -546,7 +562,14 @@ def handler(event, context):
             "omega": solve_score_omega,
             "omega_enabled": solve_score_omega_enabled,
             "score_chain": source_compiled["chain"],
-            "chunk_bins_prefix": source_meta.get("chunk_bins_prefix", f"renders/{job_id}/palettes/{saved_palette_id}/chunks/palette_bins_chunk_"),
+            "section_bins_prefix": source_meta.get(
+                "section_bins_prefix",
+                source_meta.get("chunk_bins_prefix", f"renders/{job_id}/palettes/{saved_palette_id}/chunks/palette_bins_section_"),
+            ),
+            "chunk_bins_prefix": source_meta.get(
+                "section_bins_prefix",
+                source_meta.get("chunk_bins_prefix", f"renders/{job_id}/palettes/{saved_palette_id}/chunks/palette_bins_section_"),
+            ),
             "data_layout": source_meta.get("data_layout", ""),
         }
     elif palette not in VALID_PALETTE_NAMES:
@@ -659,7 +682,7 @@ def handler(event, context):
     solve_score["section_min_safe_count"] = solve_score_section_auto["min_safe_sections"]
     solve_score["logical_section"] = False
     solve_score["item_count"] = n_chunks
-    solve_score["section_items"] = chunk_items
+    solve_score["section_items"] = build_physical_section_items(chunk_items)
     if solve_score_enabled and solve_score["section_mode"] != "physical_chunks":
         if not chunk_summary["chunk_step_metadata_complete"]:
             raise RuntimeError("logical solve-score sections require chunk step metadata on every chunk")
@@ -697,15 +720,27 @@ def handler(event, context):
         "requested_threads": requested_raster_threads,
         "requested_input_mode": rp.get("raster_input_mode", "tmpfile"),
         "requested_sectioned_retries": rp.get("raster_sectioned_retries", 2),
+        "requested_section_mode": rp.get("raster_section_mode", "physical_chunks"),
+        "requested_section_count": rp.get("raster_section_count", ""),
         "requested_pixel_bin_fragment_mode": rp.get("pixel_bin_fragment_mode", "sparse_chunks"),
         "requested_raster_bin_group_size": rp.get("raster_bin_group_size", ""),
         "pixel_bin_fragment_mode": "sparse_chunks",
         "raster_bin_group_size": "",
         "item_count": n_chunks,
+        "section_item_count": n_chunks,
         "threads": 1,
         "engine": "single",
         "input_mode": "tmpfile",
         "sectioned_retries": 0,
+        "section_mode": "physical_chunks",
+        "section_count": "",
+        "section_count_auto": "",
+        "section_budget_bytes": 0,
+        "section_memory_mb": DEFAULT_RASTER_MEMORY_MB,
+        "section_min_safe_count": 1,
+        "logical_section": False,
+        "section_items": build_physical_section_items(chunk_items),
+        "group_items": [],
         "function_name": RASTER_FUNCTION,
         "eligible": False,
         "reason": "mode_not_color" if mode != "color" else "unsupported_color_mode",
@@ -733,6 +768,64 @@ def handler(event, context):
         elif requested_raster_engine == "mt" and raster["reason"]:
             raster["reason"] = f"mt_requested_but_{raster['reason']}"
 
+    raster_uses_coeff = bool(
+        mode == "color"
+        and color_mode == "solve_score"
+        and solve_score_compiled
+        and solve_score_uses_source(solve_score_compiled, "cf")
+    )
+    raster_uses_param = bool(
+        mode == "color"
+        and color_mode == "solve_score"
+        and solve_score_compiled
+        and solve_score_uses_source(solve_score_compiled, "pm")
+    )
+    raster_section_auto = compute_safe_sectioning(
+        chunk_summary["total_solves"],
+        degree,
+        calc_n_coeffs,
+        requested_raster_threads if raster["engine"] == "mt" else 1,
+        "raster",
+        include_coeff=raster_uses_coeff,
+        include_param=raster_uses_param,
+    )
+    raster["section_mode"] = rp["raster_section_mode"] if mode == "color" else "physical_chunks"
+    raster["section_count"] = rp["raster_section_count"]
+    raster["section_count_auto"] = raster_section_auto["computed_section_count"]
+    raster["section_budget_bytes"] = raster_section_auto["budget_bytes"]
+    raster["section_memory_mb"] = raster_section_auto["memory_mb"]
+    raster["section_min_safe_count"] = raster_section_auto["min_safe_sections"]
+    if mode == "color" and raster["section_mode"] != "physical_chunks":
+        if raster["engine"] != "mt":
+            raise RuntimeError("logical raster sections require raster_engine=mt")
+        if color_mode == "saved_palette":
+            raise RuntimeError("saved_palette raster currently requires physical raster sections")
+        if not chunk_summary["chunk_step_metadata_complete"]:
+            raise RuntimeError("logical raster sections require chunk step metadata on every chunk")
+        selected_count = raster["section_count"]
+        if raster["section_mode"] == "logical_sections_auto":
+            selected_count = raster["section_count_auto"]
+        elif selected_count in ("", None):
+            selected_count = raster["section_min_safe_count"]
+        if int(selected_count) < int(raster["section_min_safe_count"]):
+            raise RuntimeError(
+                f"raster_section_count={selected_count} is below the safe minimum "
+                f"{raster['section_min_safe_count']}"
+            )
+        raster["section_count"] = int(selected_count)
+        raster["section_items"] = build_logical_section_items(
+            chunk_items,
+            section_count=raster["section_count"],
+            degree=degree,
+            n_coeffs=calc_n_coeffs,
+            include_coeff=raster_uses_coeff,
+            include_param=raster_uses_param,
+        )
+        raster["logical_section"] = True
+    raster["section_item_count"] = len(raster["section_items"])
+    rp["raster_section_count_auto"] = raster["section_count_auto"]
+    rp["raster_section_count"] = raster["section_count"]
+
     requested_fragment_mode = rp.get("pixel_bin_fragment_mode", "sparse_chunks")
     requested_group_size = rp.get("raster_bin_group_size", "")
     dense_grouping_enabled = (
@@ -748,14 +841,12 @@ def handler(event, context):
         raster["raster_bin_group_size"] = int(requested_group_size)
 
     if raster["pixel_bin_fragment_mode"] == "dense_grouped":
-        raster_items = _build_raster_items(
-            chunk_items,
+        raster["group_items"] = _build_raster_group_items(
+            raster["section_items"],
             raster["pixel_bin_fragment_mode"],
             raster["raster_bin_group_size"] or 1,
         )
-    else:
-        raster_items = []
-    raster["item_count"] = len(raster_items) if raster_items else n_chunks
+    raster["item_count"] = len(raster["group_items"]) if raster["group_items"] else raster["section_item_count"]
     raster["chunk_count"] = n_chunks
 
     # Immutable artifact outputs
@@ -773,6 +864,9 @@ def handler(event, context):
         "preview_key": "",
         "meta_key": "",
         "chunks_prefix": "",
+        "section_scores_prefix": "",
+        "section_bins_prefix": "",
+        "section_meta_prefix": "",
         "chunk_scores_prefix": "",
         "chunk_bins_prefix": "",
         "chunk_meta_prefix": "",
@@ -789,7 +883,7 @@ def handler(event, context):
         "section_memory_mb": DEFAULT_PALETTE_CHUNK_MEMORY_MB,
         "section_min_safe_count": 1,
         "logical_section": False,
-        "section_items": chunk_items,
+        "section_items": build_physical_section_items(chunk_items),
         "item_count": n_chunks,
     }
     if mode == "color" and rp["save_associated_palette"]:
@@ -803,8 +897,11 @@ def handler(event, context):
                 "preview_key": saved_palette_meta.get("preview_key", f"renders/{job_id}/palettes/{saved_palette['palette_id']}/preview.png"),
                 "meta_key": f"renders/{job_id}/palettes/{saved_palette['palette_id']}/meta.json",
                 "chunks_prefix": "",
+                "section_bins_prefix": saved_palette.get("section_bins_prefix", saved_palette.get("chunk_bins_prefix", "")),
+                "section_scores_prefix": "",
+                "section_meta_prefix": "",
                 "chunk_scores_prefix": "",
-                "chunk_bins_prefix": saved_palette["chunk_bins_prefix"],
+                "chunk_bins_prefix": saved_palette.get("section_bins_prefix", saved_palette.get("chunk_bins_prefix", "")),
                 "chunk_meta_prefix": "",
                 "metric": saved_palette["metric"],
                 "palette": saved_palette["palette"],
@@ -841,9 +938,12 @@ def handler(event, context):
                 "preview_key": assoc_prefix + "preview.png",
                 "meta_key": assoc_prefix + "meta.json",
                 "chunks_prefix": assoc_chunks_prefix,
-                "chunk_scores_prefix": assoc_chunks_prefix + "score_chunk_",
-                "chunk_bins_prefix": assoc_chunks_prefix + "palette_bins_chunk_",
-                "chunk_meta_prefix": assoc_chunks_prefix + "meta_chunk_",
+                "section_scores_prefix": assoc_chunks_prefix + "score_section_",
+                "section_bins_prefix": assoc_chunks_prefix + "palette_bins_section_",
+                "section_meta_prefix": assoc_chunks_prefix + "meta_section_",
+                "chunk_scores_prefix": assoc_chunks_prefix + "score_section_",
+                "chunk_bins_prefix": assoc_chunks_prefix + "palette_bins_section_",
+                "chunk_meta_prefix": assoc_chunks_prefix + "meta_section_",
                 "metric": solve_metric,
                 "palette": palette,
                 "quantile": solve_score_quantile,
@@ -900,6 +1000,12 @@ def handler(event, context):
             rp["palette_section_count"] = associated_palette["section_count"]
 
     render_execution = _render_execution_config(rp)
+    solve_source_manifest = build_solve_source_manifest(
+        chunk_items,
+        job_id=job_id,
+        degree=degree,
+        n_coeffs=calc_n_coeffs,
+    )
 
     artifact_meta = {
         "artifact_id": artifact_id,
@@ -1046,8 +1152,8 @@ def handler(event, context):
             "raw_tile_prefix": raw_tile_prefix,
             "pixel_bin_tile_prefix": artifact_prefix + "pixel_bins/tile_" if color_repalette_capable else "",
         },
-        "chunk_items": chunk_items,
-        "raster_items": raster_items,
+        "solve_source_manifest": solve_source_manifest,
+        "physical_source_items": chunk_items,
         "tile_items": tile_items,
         "solve_score": solve_score,
         "finalize": finalize,

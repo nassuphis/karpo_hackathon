@@ -15,6 +15,7 @@
  *     -lcurl -lm -Wl,-rpath,'$ORIGIN/lib'
  */
 
+#include "multispan_reader.h"
 #include <curl/curl.h>
 #include <math.h>
 #include <pthread.h>
@@ -181,7 +182,11 @@ typedef struct {
 typedef struct {
     const char *url;
     const char *scoreCoeffsUrl;
+    const char *inputMode;
     const float *scoreParamRows;
+    const MultiSpanReader *inputReader;
+    const MultiSpanReader *scoreCoeffReader;
+    const MultiSpanReader *scoreParamReader;
     int degree;
     int scoreCoeffDegree;
     int scoreParamDegree;
@@ -191,10 +196,13 @@ typedef struct {
     long scoreCoeffSolveBytes;
     size_t sectionBytes;
     size_t scoreCoeffSectionBytes;
+    size_t scoreParamSectionBytes;
     unsigned long long byteStart;
     unsigned long long byteEnd;
     unsigned long long scoreCoeffByteStart;
     unsigned long long scoreCoeffByteEnd;
+    unsigned long long scoreParamByteStart;
+    unsigned long long scoreParamByteEnd;
     enum SolveMetric metric;
     const SolveScoreProgram *program;
     RootXformEntry *rtChain;
@@ -248,6 +256,137 @@ static size_t write_section_cb(char *ptr, size_t size, size_t nmemb, void *userd
 
 static void *hist_section_worker_main(void *arg_) {
     HistSectionArgs *arg = (HistSectionArgs *)arg_;
+    if (strcmp(arg->inputMode, "multispan_sectioned") == 0) {
+        unsigned char *rootBytes = NULL;
+        unsigned char *coeffBytes = NULL;
+        unsigned char *paramBytes = NULL;
+        long inputBytesDownloaded = 0;
+        long coeffBytesDownloaded = 0;
+        long paramBytesDownloaded = 0;
+        float wkRe[MAXDEG], wkIm[MAXDEG];
+
+        long dlStart = monotonic_ms();
+        rootBytes = malloc(arg->sectionBytes > 0 ? arg->sectionBytes : 1);
+        if (!rootBytes) {
+            snprintf(arg->error, sizeof(arg->error), "Out of memory for section buffer (%zu bytes)", arg->sectionBytes);
+            arg->failed = 1;
+            multispan_reader_thread_cleanup();
+            return NULL;
+        }
+        if (!arg->inputReader) {
+            snprintf(arg->error, sizeof(arg->error), "multispan_sectioned requires inputReader");
+            arg->failed = 1;
+            free(rootBytes);
+            multispan_reader_thread_cleanup();
+            return NULL;
+        }
+        if (!multispan_reader_read_exact(
+                arg->inputReader,
+                arg->byteStart,
+                arg->sectionBytes,
+                rootBytes,
+                &inputBytesDownloaded,
+                arg->error,
+                sizeof(arg->error))) {
+            arg->failed = 1;
+            free(rootBytes);
+            multispan_reader_thread_cleanup();
+            return NULL;
+        }
+
+        if (arg->scoreCoeffReader && arg->scoreCoeffSectionBytes > 0) {
+            coeffBytes = malloc(arg->scoreCoeffSectionBytes > 0 ? arg->scoreCoeffSectionBytes : 1);
+            if (!coeffBytes) {
+                snprintf(arg->error, sizeof(arg->error), "Out of memory for coeff section buffer (%zu bytes)", arg->scoreCoeffSectionBytes);
+                arg->failed = 1;
+                free(rootBytes);
+                multispan_reader_thread_cleanup();
+                return NULL;
+            }
+            if (!multispan_reader_read_exact(
+                    arg->scoreCoeffReader,
+                    arg->scoreCoeffByteStart,
+                    arg->scoreCoeffSectionBytes,
+                    coeffBytes,
+                    &coeffBytesDownloaded,
+                    arg->error,
+                    sizeof(arg->error))) {
+                arg->failed = 1;
+                free(coeffBytes);
+                free(rootBytes);
+                multispan_reader_thread_cleanup();
+                return NULL;
+            }
+        }
+
+        if (arg->scoreParamReader && arg->scoreParamSectionBytes > 0) {
+            paramBytes = malloc(arg->scoreParamSectionBytes > 0 ? arg->scoreParamSectionBytes : 1);
+            if (!paramBytes) {
+                snprintf(arg->error, sizeof(arg->error), "Out of memory for param section buffer (%zu bytes)", arg->scoreParamSectionBytes);
+                arg->failed = 1;
+                free(coeffBytes);
+                free(rootBytes);
+                multispan_reader_thread_cleanup();
+                return NULL;
+            }
+            if (!multispan_reader_read_exact(
+                    arg->scoreParamReader,
+                    arg->scoreParamByteStart,
+                    arg->scoreParamSectionBytes,
+                    paramBytes,
+                    &paramBytesDownloaded,
+                    arg->error,
+                    sizeof(arg->error))) {
+                arg->failed = 1;
+                free(paramBytes);
+                free(coeffBytes);
+                free(rootBytes);
+                multispan_reader_thread_cleanup();
+                return NULL;
+            }
+        }
+
+        arg->downloadMs = monotonic_ms() - dlStart;
+        arg->bytesDownloaded = inputBytesDownloaded + coeffBytesDownloaded + paramBytesDownloaded;
+
+        long computeStart = monotonic_ms();
+        for (long s = 0; s < arg->solveCount; s++) {
+            const float *roots = (const float *)(void *)(rootBytes + (size_t)s * (size_t)arg->solveBytes);
+            const float *coeffRoots = coeffBytes
+                ? (const float *)(void *)(coeffBytes + (size_t)s * (size_t)arg->scoreCoeffSolveBytes)
+                : NULL;
+            const float *paramValues = paramBytes
+                ? (const float *)(void *)(paramBytes + (size_t)s * 4u * sizeof(float))
+                : NULL;
+            double u;
+            if (arg->program) {
+                u = eval_score_or_program_with_sources(
+                    roots, arg->degree, coeffRoots, arg->scoreCoeffDegree, paramValues, arg->scoreParamDegree,
+                    arg->metric, arg->program, arg->rtChain, arg->nRt, wkRe, wkIm
+                );
+            } else {
+                const double range = arg->clipHi - arg->clipLo;
+                double score = eval_score_or_program(
+                    roots, arg->degree, arg->metric, NULL, arg->rtChain, arg->nRt, wkRe, wkIm
+                );
+                u = (score - arg->clipLo) / range;
+                if (u < 0) u = 0;
+                if (u > 1) u = 1;
+                u = apply_solve_score_transfer(u, arg->omegaEnabled, arg->omega);
+            }
+            int h = (int)(u * arg->histBins);
+            if (h >= arg->histBins) h = arg->histBins - 1;
+            arg->hist[h]++;
+        }
+        arg->computeMs = monotonic_ms() - computeStart;
+
+        free(paramBytes);
+        free(coeffBytes);
+        free(rootBytes);
+        multispan_reader_thread_cleanup();
+        return NULL;
+    }
+
     DownloadBuffer dl = {0};
     DownloadBuffer coeffDl = {0};
     CURL *curl = NULL;
@@ -468,13 +607,16 @@ static void *hist_section_worker_main(void *arg_) {
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: solve_proximity_hist_sectioned --url=URL --input_size=BYTES --degree=D "
+        fprintf(stderr, "Usage: solve_proximity_hist_sectioned [--input_mode=sectioned|multispan_sectioned] "
+                "(--url=URL --input_size=BYTES | --input_manifest=file.json) --degree=D "
                 "[--metric=proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re|min_mod|max_mod|min_angular_separation] "
                 "--clip_lo=X --clip_hi=Y [--hist_bins=100] [--omega=1] [--threads=2] [--root_xforms=file.json]\n");
         return 1;
     }
 
+    const char *inputMode = getArgStr(argc, argv, "--input_mode", "sectioned");
     const char *url = getArgStr(argc, argv, "--url", NULL);
+    const char *inputManifest = getArgStr(argc, argv, "--input_manifest", NULL);
     long long inputSize = getArgLongLong(argc, argv, "--input_size", -1);
     int degree = getArgInt(argc, argv, "--degree", 0);
     const char *metricStr = getArgStr(argc, argv, "--metric", "proximity");
@@ -491,16 +633,14 @@ int main(int argc, char **argv) {
     const char *scoreClipHisCsv = getArgStr(argc, argv, "--score_clip_his", NULL);
     const char *scoreProgramSpec = getArgStr(argc, argv, "--score_program", NULL);
     const char *scoreCoeffsUrl = getArgStr(argc, argv, "--score_coeffs_url", NULL);
+    const char *scoreCoeffManifest = getArgStr(argc, argv, "--score_coeff_manifest", NULL);
     const char *scoreParamsFile = getArgStr(argc, argv, "--score_params_file", NULL);
+    const char *scoreParamsManifest = getArgStr(argc, argv, "--score_params_manifest", NULL);
     long long scoreCoeffInputSize = getArgLongLong(argc, argv, "--score_coeff_input_size", -1);
     int scoreCoeffDegree = getArgInt(argc, argv, "--score_coeff_degree", 0);
 
-    if (!url || !*url) {
-        fprintf(stderr, "Missing --url\n");
-        return 1;
-    }
-    if (inputSize <= 0) {
-        fprintf(stderr, "Missing or invalid --input_size: %lld\n", inputSize);
+    if (strcmp(inputMode, "sectioned") != 0 && strcmp(inputMode, "multispan_sectioned") != 0) {
+        fprintf(stderr, "Invalid input_mode: %s\n", inputMode);
         return 1;
     }
     if (degree < 1 || degree > MAXDEG) {
@@ -527,15 +667,25 @@ int main(int argc, char **argv) {
     }
 
     long solveBytes = (long)degree * 2L * (long)sizeof(float);
-    if (inputSize % solveBytes != 0) {
-        fprintf(stderr, "Invalid input_size %lld for degree=%d (solve_bytes=%ld)\n", inputSize, degree, solveBytes);
-        return 1;
-    }
-    long nSolves = (long)(inputSize / solveBytes);
-    if (nSolves <= 0) {
-        fprintf(stderr, "No solves in input_size=%lld for degree=%d\n", inputSize, degree);
-        return 1;
-    }
+    long nSolves = 0;
+    MultiSpanReader inputReader;
+    MultiSpanReader scoreCoeffReader;
+    MultiSpanReader scoreParamReader;
+    int remoteCurlInitialized = 0;
+    memset(&inputReader, 0, sizeof(inputReader));
+    memset(&scoreCoeffReader, 0, sizeof(scoreCoeffReader));
+    memset(&scoreParamReader, 0, sizeof(scoreParamReader));
+
+#define REMOTE_CLEANUP() \
+    do { \
+        multispan_reader_close(&scoreParamReader); \
+        multispan_reader_close(&scoreCoeffReader); \
+        multispan_reader_close(&inputReader); \
+        if (remoteCurlInitialized) { \
+            curl_global_cleanup(); \
+            remoteCurlInitialized = 0; \
+        } \
+    } while (0)
 
     const char *rtPath = getArgStr(argc, argv, "--root_xforms", NULL);
     RootXformEntry rtChain[MAX_RT_CHAIN];
@@ -564,31 +714,114 @@ int main(int argc, char **argv) {
         }
         useScoreProgram = 1;
     }
+
+    if (strcmp(inputMode, "sectioned") == 0) {
+        if (!url || !*url) {
+            fprintf(stderr, "Missing --url\n");
+            return 1;
+        }
+        if (inputSize <= 0) {
+            fprintf(stderr, "Missing or invalid --input_size: %lld\n", inputSize);
+            return 1;
+        }
+        if (inputSize % solveBytes != 0) {
+            fprintf(stderr, "Invalid input_size %lld for degree=%d (solve_bytes=%ld)\n", inputSize, degree, solveBytes);
+            return 1;
+        }
+        nSolves = (long)(inputSize / solveBytes);
+        if (nSolves <= 0) {
+            fprintf(stderr, "No solves in input_size=%lld for degree=%d\n", inputSize, degree);
+            return 1;
+        }
+    } else {
+        char manifestErr[256] = {0};
+        CURLcode curlRc;
+        if (!inputManifest || !*inputManifest) {
+            fprintf(stderr, "multispan_sectioned requires --input_manifest\n");
+            return 1;
+        }
+        curlRc = curl_global_init(CURL_GLOBAL_DEFAULT);
+        if (curlRc != CURLE_OK) {
+            fprintf(stderr, "curl_global_init failed: %s\n", curl_easy_strerror(curlRc));
+            return 1;
+        }
+        remoteCurlInitialized = 1;
+        if (!multispan_reader_open(&inputReader, inputManifest, retries, manifestErr, sizeof(manifestErr))) {
+            fprintf(stderr, "failed to open input manifest: %s\n", manifestErr[0] ? manifestErr : "unknown error");
+            REMOTE_CLEANUP();
+            return 1;
+        }
+        if ((inputReader.logicalSize % (unsigned long long)solveBytes) != 0ULL) {
+            fprintf(stderr, "input manifest logical_size=%llu is not aligned to solve_bytes=%ld\n",
+                    inputReader.logicalSize, solveBytes);
+            REMOTE_CLEANUP();
+            return 1;
+        }
+        nSolves = (long)(inputReader.logicalSize / (unsigned long long)solveBytes);
+        if (nSolves <= 0) {
+            fprintf(stderr, "No solves in input manifest logical_size=%llu for degree=%d\n",
+                    inputReader.logicalSize, degree);
+            REMOTE_CLEANUP();
+            return 1;
+        }
+    }
+
     int scoreProgramUsesCoeffSources = solve_score_program_uses_coeff_sources(useScoreProgram ? &scoreProgram : NULL);
     int scoreProgramUsesParamSources = solve_score_program_uses_param_sources(useScoreProgram ? &scoreProgram : NULL);
     long scoreCoeffSolveBytes = (long)(scoreCoeffDegree * 2) * (long)sizeof(float);
     if (scoreProgramUsesCoeffSources) {
-        if (!scoreCoeffsUrl || !*scoreCoeffsUrl) {
-            fprintf(stderr, "score program with coeff sources requires --score_coeffs_url\n");
-            return 1;
-        }
         if (scoreCoeffDegree < 1 || scoreCoeffDegree > MAXDEG) {
             fprintf(stderr, "Invalid score_coeff_degree: %d (must be 1-%d)\n", scoreCoeffDegree, MAXDEG);
+            REMOTE_CLEANUP();
             return 1;
         }
-        if (scoreCoeffInputSize <= 0) {
-            fprintf(stderr, "score program with coeff sources requires --score_coeff_input_size\n");
-            return 1;
-        }
-        if ((scoreCoeffInputSize % scoreCoeffSolveBytes) != 0) {
-            fprintf(stderr, "Invalid score_coeff_input_size %lld for coeff_degree=%d (solve_bytes=%ld)\n",
-                    scoreCoeffInputSize, scoreCoeffDegree, scoreCoeffSolveBytes);
-            return 1;
-        }
-        long coeffPoints = (long)(scoreCoeffInputSize / scoreCoeffSolveBytes);
-        if (coeffPoints != nSolves) {
-            fprintf(stderr, "score coeff solve count mismatch: got %ld expected %ld\n", coeffPoints, nSolves);
-            return 1;
+        if (strcmp(inputMode, "sectioned") == 0) {
+            if (!scoreCoeffsUrl || !*scoreCoeffsUrl) {
+                fprintf(stderr, "score program with coeff sources requires --score_coeffs_url\n");
+                REMOTE_CLEANUP();
+                return 1;
+            }
+            if (scoreCoeffInputSize <= 0) {
+                fprintf(stderr, "score program with coeff sources requires --score_coeff_input_size\n");
+                REMOTE_CLEANUP();
+                return 1;
+            }
+            if ((scoreCoeffInputSize % scoreCoeffSolveBytes) != 0) {
+                fprintf(stderr, "Invalid score_coeff_input_size %lld for coeff_degree=%d (solve_bytes=%ld)\n",
+                        scoreCoeffInputSize, scoreCoeffDegree, scoreCoeffSolveBytes);
+                REMOTE_CLEANUP();
+                return 1;
+            }
+            long coeffPoints = (long)(scoreCoeffInputSize / scoreCoeffSolveBytes);
+            if (coeffPoints != nSolves) {
+                fprintf(stderr, "score coeff solve count mismatch: got %ld expected %ld\n", coeffPoints, nSolves);
+                REMOTE_CLEANUP();
+                return 1;
+            }
+        } else {
+            char manifestErr[256] = {0};
+            if (!scoreCoeffManifest || !*scoreCoeffManifest) {
+                fprintf(stderr, "multispan_sectioned score program with coeff sources requires --score_coeff_manifest\n");
+                REMOTE_CLEANUP();
+                return 1;
+            }
+            if (!multispan_reader_open(&scoreCoeffReader, scoreCoeffManifest, retries, manifestErr, sizeof(manifestErr))) {
+                fprintf(stderr, "failed to open coeff manifest: %s\n", manifestErr[0] ? manifestErr : "unknown error");
+                REMOTE_CLEANUP();
+                return 1;
+            }
+            if ((scoreCoeffReader.logicalSize % (unsigned long long)scoreCoeffSolveBytes) != 0ULL) {
+                fprintf(stderr, "coeff manifest logical_size=%llu is not aligned to solve_bytes=%ld\n",
+                        scoreCoeffReader.logicalSize, scoreCoeffSolveBytes);
+                REMOTE_CLEANUP();
+                return 1;
+            }
+            long coeffPoints = (long)(scoreCoeffReader.logicalSize / (unsigned long long)scoreCoeffSolveBytes);
+            if (coeffPoints != nSolves) {
+                fprintf(stderr, "multispan coeff solve count mismatch: got %ld expected %ld\n", coeffPoints, nSolves);
+                REMOTE_CLEANUP();
+                return 1;
+            }
         }
     }
     int scoreParamStride = 4;
@@ -596,37 +829,68 @@ int main(int argc, char **argv) {
     long scoreParamSolveBytes = (long)scoreParamStride * (long)sizeof(float);
     float *scoreParamRows = NULL;
     if (scoreProgramUsesParamSources) {
-        if (!scoreParamsFile || !*scoreParamsFile) {
-            fprintf(stderr, "score program with param sources requires --score_params_file\n");
-            return 1;
-        }
-        FILE *fp = fopen(scoreParamsFile, "rb");
-        if (!fp) {
-            fprintf(stderr, "Cannot open %s\n", scoreParamsFile);
-            return 1;
-        }
-        fseek(fp, 0, SEEK_END);
-        long paramFileSize = ftell(fp);
-        fseek(fp, 0, SEEK_SET);
-        long paramPoints = paramFileSize / scoreParamSolveBytes;
-        if (paramPoints != nSolves) {
-            fprintf(stderr, "score params size mismatch: got %ld solves expected %ld\n", paramPoints, nSolves);
+        if (strcmp(inputMode, "multispan_sectioned") == 0) {
+            char manifestErr[256] = {0};
+            if (!scoreParamsManifest || !*scoreParamsManifest) {
+                fprintf(stderr, "multispan_sectioned score program with param sources requires --score_params_manifest\n");
+                REMOTE_CLEANUP();
+                return 1;
+            }
+            if (!multispan_reader_open(&scoreParamReader, scoreParamsManifest, retries, manifestErr, sizeof(manifestErr))) {
+                fprintf(stderr, "failed to open param manifest: %s\n", manifestErr[0] ? manifestErr : "unknown error");
+                REMOTE_CLEANUP();
+                return 1;
+            }
+            if ((scoreParamReader.logicalSize % (unsigned long long)scoreParamSolveBytes) != 0ULL) {
+                fprintf(stderr, "param manifest logical_size=%llu is not aligned to solve_bytes=%ld\n",
+                        scoreParamReader.logicalSize, scoreParamSolveBytes);
+                REMOTE_CLEANUP();
+                return 1;
+            }
+            long paramPoints = (long)(scoreParamReader.logicalSize / (unsigned long long)scoreParamSolveBytes);
+            if (paramPoints != nSolves) {
+                fprintf(stderr, "multispan params size mismatch: got %ld solves expected %ld\n", paramPoints, nSolves);
+                REMOTE_CLEANUP();
+                return 1;
+            }
+        } else {
+            if (!scoreParamsFile || !*scoreParamsFile) {
+                fprintf(stderr, "score program with param sources requires --score_params_file\n");
+                REMOTE_CLEANUP();
+                return 1;
+            }
+            FILE *fp = fopen(scoreParamsFile, "rb");
+            if (!fp) {
+                fprintf(stderr, "Cannot open %s\n", scoreParamsFile);
+                REMOTE_CLEANUP();
+                return 1;
+            }
+            fseek(fp, 0, SEEK_END);
+            long paramFileSize = ftell(fp);
+            fseek(fp, 0, SEEK_SET);
+            long paramPoints = paramFileSize / scoreParamSolveBytes;
+            if (paramPoints != nSolves) {
+                fprintf(stderr, "score params size mismatch: got %ld solves expected %ld\n", paramPoints, nSolves);
+                fclose(fp);
+                REMOTE_CLEANUP();
+                return 1;
+            }
+            scoreParamRows = malloc((size_t)paramFileSize);
+            if (!scoreParamRows) {
+                fprintf(stderr, "Out of memory for score params\n");
+                fclose(fp);
+                REMOTE_CLEANUP();
+                return 1;
+            }
+            if ((long)fread(scoreParamRows, 1, (size_t)paramFileSize, fp) != paramFileSize) {
+                fprintf(stderr, "Short read from %s\n", scoreParamsFile);
+                fclose(fp);
+                free(scoreParamRows);
+                REMOTE_CLEANUP();
+                return 1;
+            }
             fclose(fp);
-            return 1;
         }
-        scoreParamRows = malloc((size_t)paramFileSize);
-        if (!scoreParamRows) {
-            fprintf(stderr, "Out of memory for score params\n");
-            fclose(fp);
-            return 1;
-        }
-        if ((long)fread(scoreParamRows, 1, (size_t)paramFileSize, fp) != paramFileSize) {
-            fprintf(stderr, "Short read from %s\n", scoreParamsFile);
-            fclose(fp);
-            free(scoreParamRows);
-            return 1;
-        }
-        fclose(fp);
     }
 
     int threads = clamp_threads(requestedThreads, nSolves);
@@ -638,10 +902,23 @@ int main(int argc, char **argv) {
         free(args);
         free(workers);
         free(hist);
+        REMOTE_CLEANUP();
         return 1;
     }
 
-    curl_global_init(CURL_GLOBAL_DEFAULT);
+    if (!remoteCurlInitialized) {
+        CURLcode curlRc = curl_global_init(CURL_GLOBAL_DEFAULT);
+        if (curlRc != CURLE_OK) {
+            fprintf(stderr, "curl_global_init failed: %s\n", curl_easy_strerror(curlRc));
+            free(scoreParamRows);
+            free(args);
+            free(workers);
+            free(hist);
+            REMOTE_CLEANUP();
+            return 1;
+        }
+        remoteCurlInitialized = 1;
+    }
 
     long wallStart = monotonic_ms();
     long base = nSolves / threads;
@@ -650,10 +927,14 @@ int main(int argc, char **argv) {
     for (int i = 0; i < threads; i++) {
         long solveCount = base + (i < extra ? 1 : 0);
         args[i].url = url;
+        args[i].inputMode = inputMode;
         args[i].scoreCoeffsUrl = scoreProgramUsesCoeffSources ? scoreCoeffsUrl : NULL;
-        args[i].scoreParamRows = scoreProgramUsesParamSources
+        args[i].scoreParamRows = (scoreProgramUsesParamSources && strcmp(inputMode, "multispan_sectioned") != 0)
             ? (scoreParamRows + (size_t)startSolve * (size_t)scoreParamStride)
             : NULL;
+        args[i].inputReader = strcmp(inputMode, "multispan_sectioned") == 0 ? &inputReader : NULL;
+        args[i].scoreCoeffReader = scoreProgramUsesCoeffSources && strcmp(inputMode, "multispan_sectioned") == 0 ? &scoreCoeffReader : NULL;
+        args[i].scoreParamReader = scoreProgramUsesParamSources && strcmp(inputMode, "multispan_sectioned") == 0 ? &scoreParamReader : NULL;
         args[i].degree = degree;
         args[i].scoreCoeffDegree = scoreProgramUsesCoeffSources ? scoreCoeffDegree : 0;
         args[i].scoreParamDegree = scoreProgramUsesParamSources ? scoreParamDegree : 0;
@@ -663,10 +944,13 @@ int main(int argc, char **argv) {
         args[i].scoreCoeffSolveBytes = scoreCoeffSolveBytes;
         args[i].sectionBytes = (size_t)solveCount * (size_t)solveBytes;
         args[i].scoreCoeffSectionBytes = (size_t)solveCount * (size_t)scoreCoeffSolveBytes;
+        args[i].scoreParamSectionBytes = (size_t)solveCount * (size_t)scoreParamSolveBytes;
         args[i].byteStart = (unsigned long long)startSolve * (unsigned long long)solveBytes;
         args[i].byteEnd = args[i].byteStart + (unsigned long long)args[i].sectionBytes - 1ULL;
         args[i].scoreCoeffByteStart = (unsigned long long)startSolve * (unsigned long long)scoreCoeffSolveBytes;
         args[i].scoreCoeffByteEnd = args[i].scoreCoeffByteStart + (unsigned long long)args[i].scoreCoeffSectionBytes - 1ULL;
+        args[i].scoreParamByteStart = (unsigned long long)startSolve * (unsigned long long)scoreParamSolveBytes;
+        args[i].scoreParamByteEnd = args[i].scoreParamByteStart + (unsigned long long)args[i].scoreParamSectionBytes - 1ULL;
         args[i].metric = metric;
         args[i].program = useScoreProgram ? &scoreProgram : NULL;
         args[i].rtChain = rtChain;
@@ -681,10 +965,11 @@ int main(int argc, char **argv) {
         if (!args[i].hist) {
             fprintf(stderr, "Out of memory for hist bins\n");
             for (int j = 0; j < i; j++) free(args[j].hist);
+            free(scoreParamRows);
             free(args);
             free(workers);
             free(hist);
-            curl_global_cleanup();
+            REMOTE_CLEANUP();
             return 1;
         }
         pthread_create(&workers[i], NULL, hist_section_worker_main, &args[i]);
@@ -712,7 +997,7 @@ int main(int argc, char **argv) {
     }
     long wallMs = monotonic_ms() - wallStart;
 
-    curl_global_cleanup();
+    REMOTE_CLEANUP();
 
     if (failed) {
         fprintf(stderr, "%s\n", errorMsg);

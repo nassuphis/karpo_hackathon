@@ -159,7 +159,6 @@
             "ItemSelector": {
               "phase": "hist",
                 "job_id.$": "$.job_id",
-                "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
                 "section_idx.$": "$$.Map.Item.Value.section_idx",
                 "section_count.$": "$$.Map.Item.Value.section_count",
                 "metric.$": "$.plan.solve_score.metric",
@@ -171,7 +170,7 @@
               "solve_score_hist_input_mode.$": "$.plan.solve_score.hist_input_mode",
               "solve_score_hist_retries.$": "$.plan.solve_score.hist_retries",
               "logical_section.$": "$.plan.solve_score.logical_section",
-              "chunk_manifest.$": "$.plan.chunk_items",
+              "solve_source_manifest.$": "$.plan.solve_source_manifest",
               "bin_key.$": "$$.Map.Item.Value.bin_key",
               "coeffs_key.$": "$$.Map.Item.Value.coeffs_key",
               "coeffs_bin_size.$": "$$.Map.Item.Value.coeffs_bin_size",
@@ -185,8 +184,8 @@
               "clip_key.$": "$.plan.solve_score.clip_key",
               "hist_bins": 100,
               "root_transforms.$": "$.plan.params.root_transforms",
-              "out_key.$": "States.Format('{}chunk_{}_hist.json', $.plan.solve_score.hist_prefix, $$.Map.Item.Value.chunk_idx)",
-              "task_id.$": "States.Format('render_{}_solve_score_hist_{}', $.run_id, $$.Map.Item.Value.chunk_idx)"
+              "out_key.$": "States.Format('{}section_{}_hist.json', $.plan.solve_score.hist_prefix, $$.Map.Item.Value.section_idx)",
+              "task_id.$": "States.Format('render_{}_solve_score_hist_{}', $.run_id, $$.Map.Item.Value.section_idx)"
             },
             "ItemProcessor": {
               "ProcessorConfig": {"Mode": "INLINE"},
@@ -294,7 +293,6 @@
             "MaxConcurrencyPath": "$.plan.associated_palette.chunk_workers",
             "ItemSelector": {
               "job_id.$": "$.job_id",
-              "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
               "section_idx.$": "$$.Map.Item.Value.section_idx",
               "section_count.$": "$$.Map.Item.Value.section_count",
               "bin_key.$": "$$.Map.Item.Value.bin_key",
@@ -319,12 +317,12 @@
               "palette_chunk_retries.$": "$.plan.associated_palette.chunk_retries",
               "palette_chunk_workers.$": "$.plan.associated_palette.chunk_workers",
               "logical_section.$": "$.plan.associated_palette.logical_section",
-              "chunk_manifest.$": "$.plan.chunk_items",
+              "solve_source_manifest.$": "$.plan.solve_source_manifest",
               "solve_score_bins_key.$": "$.plan.solve_score.bins_key",
-              "score_key.$": "States.Format('{}{}.bin', $.plan.associated_palette.chunk_scores_prefix, $$.Map.Item.Value.chunk_idx)",
-              "palette_bins_key.$": "States.Format('{}{}.bin', $.plan.associated_palette.chunk_bins_prefix, $$.Map.Item.Value.chunk_idx)",
-              "meta_key.$": "States.Format('{}{}.json', $.plan.associated_palette.chunk_meta_prefix, $$.Map.Item.Value.chunk_idx)",
-              "task_id.$": "States.Format('render_{}_associated_palette_{}', $.run_id, $$.Map.Item.Value.chunk_idx)"
+              "score_key.$": "States.Format('{}{}.bin', $.plan.associated_palette.section_scores_prefix, $$.Map.Item.Value.section_idx)",
+              "palette_bins_key.$": "States.Format('{}{}.bin', $.plan.associated_palette.section_bins_prefix, $$.Map.Item.Value.section_idx)",
+              "meta_key.$": "States.Format('{}{}.json', $.plan.associated_palette.section_meta_prefix, $$.Map.Item.Value.section_idx)",
+              "task_id.$": "States.Format('render_{}_associated_palette_{}', $.run_id, $$.Map.Item.Value.section_idx)"
             },
             "ItemProcessor": {
               "ProcessorConfig": {"Mode": "INLINE"},
@@ -391,9 +389,9 @@
                 "preview_key.$": "$.plan.associated_palette.preview_key",
                 "meta_key.$": "$.plan.associated_palette.meta_key",
                 "chunks_prefix.$": "$.plan.associated_palette.chunks_prefix",
-                "chunk_scores_prefix.$": "$.plan.associated_palette.chunk_scores_prefix",
-                "chunk_bins_prefix.$": "$.plan.associated_palette.chunk_bins_prefix",
-                "chunk_meta_prefix.$": "$.plan.associated_palette.chunk_meta_prefix",
+                "section_scores_prefix.$": "$.plan.associated_palette.section_scores_prefix",
+                "section_bins_prefix.$": "$.plan.associated_palette.section_bins_prefix",
+                "section_meta_prefix.$": "$.plan.associated_palette.section_meta_prefix",
                 "solve_score_prefix.$": "$.plan.solve_score.hist_prefix",
                 "solve_score_clip_key.$": "$.plan.solve_score.clip_key",
                 "solve_score_bins_key.$": "$.plan.solve_score.bins_key",
@@ -438,12 +436,13 @@
 
           "ColorRasterMapSparse": {
             "Type": "Map",
-            "ItemsPath": "$.plan.chunk_items",
+            "ItemsPath": "$.plan.raster.section_items",
             "MaxConcurrency": 10,
             "ItemSelector": {
               "job_id.$": "$.job_id",
-              "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
-              "task_id.$": "States.Format('render_{}_raster_{}', $.run_id, $$.Map.Item.Value.chunk_idx)",
+              "section_idx.$": "$$.Map.Item.Value.section_idx",
+              "section_count.$": "$$.Map.Item.Value.section_count",
+              "task_id.$": "States.Format('render_{}_raster_{}', $.run_id, $$.Map.Item.Value.section_idx)",
               "bin_key.$": "$$.Map.Item.Value.bin_key",
               "coeffs_key.$": "$$.Map.Item.Value.coeffs_key",
               "coeffs_bin_size.$": "$$.Map.Item.Value.coeffs_bin_size",
@@ -452,6 +451,8 @@
               "params_step_count.$": "$$.Map.Item.Value.params_step_count",
               "step_start.$": "$$.Map.Item.Value.step_start",
               "step_count.$": "$$.Map.Item.Value.step_count",
+              "logical_section.$": "$.plan.raster.logical_section",
+              "solve_source_manifest.$": "$.plan.solve_source_manifest",
               "n_coeffs.$": "$.plan.calc.n_coeffs",
               "width.$": "$.plan.grid.pix",
               "height.$": "$.plan.grid.pix",
@@ -471,8 +472,8 @@
               "emit_pixel_bins.$": "$.plan.outputs.repalette_capable",
               "pixel_bins_drive_rgb.$": "$.plan.outputs.pixel_bins_drive_rgb",
               "solve_score_bins_key.$": "$.plan.solve_score.bins_key",
-              "saved_palette_bins_prefix.$": "$.plan.saved_palette.chunk_bins_prefix",
-              "saved_palette_bins_key.$": "States.Format('{}{}.bin', $.plan.saved_palette.chunk_bins_prefix, $$.Map.Item.Value.chunk_idx)",
+              "saved_palette_bins_prefix.$": "$.plan.saved_palette.section_bins_prefix",
+              "saved_palette_bins_key.$": "States.Format('{}{}.bin', $.plan.saved_palette.section_bins_prefix, $$.Map.Item.Value.section_idx)",
               "solve_metric.$": "$.plan.solve_score.metric",
               "solve_score_chain.$": "$.plan.solve_score.chain",
               "solve_score_quantile.$": "$.plan.solve_score.quantile",
@@ -505,23 +506,16 @@
 
           "ColorRasterMapDense": {
             "Type": "Map",
-            "ItemsPath": "$.plan.raster_items",
+            "ItemsPath": "$.plan.raster.group_items",
             "MaxConcurrency": 10,
             "ItemSelector": {
               "job_id.$": "$.job_id",
               "group_idx.$": "$$.Map.Item.Value.group_idx",
-              "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
               "task_id.$": "States.Format('render_{}_raster_{}', $.run_id, $$.Map.Item.Value.group_idx)",
-              "chunks.$": "$$.Map.Item.Value.chunks",
-              "chunk_indices.$": "$$.Map.Item.Value.chunk_indices",
-              "bin_key.$": "$$.Map.Item.Value.bin_key",
-              "coeffs_key.$": "$$.Map.Item.Value.coeffs_key",
-              "coeffs_bin_size.$": "$$.Map.Item.Value.coeffs_bin_size",
-              "params_key.$": "$$.Map.Item.Value.params_key",
-              "params_step_start.$": "$$.Map.Item.Value.params_step_start",
-              "params_step_count.$": "$$.Map.Item.Value.params_step_count",
-              "step_start.$": "$$.Map.Item.Value.step_start",
-              "step_count.$": "$$.Map.Item.Value.step_count",
+              "sections.$": "$$.Map.Item.Value.sections",
+              "section_indices.$": "$$.Map.Item.Value.section_indices",
+              "logical_section.$": "$.plan.raster.logical_section",
+              "solve_source_manifest.$": "$.plan.solve_source_manifest",
               "n_coeffs.$": "$.plan.calc.n_coeffs",
               "width.$": "$.plan.grid.pix",
               "height.$": "$.plan.grid.pix",
@@ -541,8 +535,7 @@
               "emit_pixel_bins.$": "$.plan.outputs.repalette_capable",
               "pixel_bins_drive_rgb.$": "$.plan.outputs.pixel_bins_drive_rgb",
               "solve_score_bins_key.$": "$.plan.solve_score.bins_key",
-              "saved_palette_bins_prefix.$": "$.plan.saved_palette.chunk_bins_prefix",
-              "saved_palette_bins_key.$": "States.Format('{}{}.bin', $.plan.saved_palette.chunk_bins_prefix, $$.Map.Item.Value.chunk_idx)",
+              "saved_palette_bins_prefix.$": "$.plan.saved_palette.section_bins_prefix",
               "solve_metric.$": "$.plan.solve_score.metric",
               "solve_score_chain.$": "$.plan.solve_score.chain",
               "solve_score_quantile.$": "$.plan.solve_score.quantile",
@@ -604,7 +597,7 @@
               "job_id.$": "$.job_id",
               "tile_idx.$": "$$.Map.Item.Value.tile_idx",
               "task_id.$": "States.Format('render_{}_tile_{}', $.run_id, $$.Map.Item.Value.tile_idx)",
-              "n_chunks.$": "$.plan.calc.n_chunks",
+              "source_item_count.$": "$.plan.raster.section_item_count",
               "width.$": "$.plan.grid.pix",
               "height.$": "$.plan.grid.pix",
               "tile_size.$": "$.plan.grid.tile_size",
@@ -730,7 +723,7 @@
 
           "BilevelRasterMap": {
             "Type": "Map",
-            "ItemsPath": "$.plan.chunk_items",
+            "ItemsPath": "$.plan.physical_source_items",
             "MaxConcurrency": 10,
             "ItemSelector": {
               "phase": "raster", "job_id.$": "$.job_id",
@@ -841,7 +834,7 @@
 
           "CoeffRasterMap": {
             "Type": "Map",
-            "ItemsPath": "$.plan.chunk_items",
+            "ItemsPath": "$.plan.physical_source_items",
             "MaxConcurrency": 10,
             "ItemSelector": {
               "phase": "coeff_raster", "job_id.$": "$.job_id",

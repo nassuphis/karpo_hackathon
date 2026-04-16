@@ -901,7 +901,7 @@ class TestCheckStatus(unittest.TestCase):
                 {"task_id": {"S": "tile_0"}, "task_status": {"S": "done"}},
                 {"task_id": {"S": "tile_1"}, "task_status": {"S": "error"},
                  "error_msg": {"S": "pixassemble failed"},
-                 "result_data": {"S": json.dumps({"phase": "hist", "chunk_idx": 3, "source_key": "renders/j/chunk_3.bin"})}},
+                 "result_data": {"S": json.dumps({"phase": "hist", "section_idx": 3, "source_key": "renders/j/chunk_3.bin"})}},
             ],
         }
         event = {"body": json.dumps({
@@ -914,7 +914,7 @@ class TestCheckStatus(unittest.TestCase):
         self.assertFalse(body["complete"])
         self.assertEqual(body["error_details"][0]["error_msg"], "pixassemble failed")
         self.assertEqual(body["error_details"][0]["result_data"]["phase"], "hist")
-        self.assertEqual(body["error_details"][0]["result_data"]["chunk_idx"], 3)
+        self.assertEqual(body["error_details"][0]["result_data"]["section_idx"], 3)
 
     @patch("handler_storage._get_ddb")
     def test_empty_result(self, mock_get_ddb):

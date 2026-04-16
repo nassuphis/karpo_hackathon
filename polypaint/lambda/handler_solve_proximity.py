@@ -15,7 +15,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import boto3
 from botocore.config import Config
 
-from logical_sections import build_logical_section_spans, stitch_spans_to_file
+from logical_sections import (
+    build_native_multispan_manifest,
+    build_source_spans,
+    write_native_multispan_manifest,
+)
 from solve_score_chain import (
     VALID_SOLVE_SCORE_METRICS,
     compile_solve_score_chain_or_legacy,
@@ -39,13 +43,26 @@ _TMP_PARAM_INPUT = "/tmp/solve_prox_param_input.bin"
 _TMP_XFORMS = "/tmp/solve_prox_root_xforms.json"
 _TMP_CLIP = "/tmp/solve_prox_clip.json"
 _TMP_HIST = "/tmp/solve_prox_hist.json"
+_TMP_INPUT_MANIFEST = "/tmp/solve_prox_input_manifest.json"
+_TMP_COEFF_INPUT_MANIFEST = "/tmp/solve_prox_coeff_manifest.json"
+_TMP_PARAM_INPUT_MANIFEST = "/tmp/solve_prox_param_manifest.json"
 
 _CLIP_RANGE_MIN_WIDTH = 1e-12
 _CLIP_RANGE_WIDEN_REL = 1e-4
 
 
 def _cleanup_tmp():
-    for p in [_TMP_INPUT, _TMP_COEFF_INPUT, _TMP_PARAM_INPUT, _TMP_XFORMS, _TMP_CLIP, _TMP_HIST]:
+    for p in [
+        _TMP_INPUT,
+        _TMP_COEFF_INPUT,
+        _TMP_PARAM_INPUT,
+        _TMP_XFORMS,
+        _TMP_CLIP,
+        _TMP_HIST,
+        _TMP_INPUT_MANIFEST,
+        _TMP_COEFF_INPUT_MANIFEST,
+        _TMP_PARAM_INPUT_MANIFEST,
+    ]:
         try:
             os.remove(p)
         except OSError:
@@ -82,6 +99,20 @@ def _download_range(key, path, start, length):
             f"Short ranged download from s3://{BUCKET}/{key}: expected {int(length)} bytes, got {size}"
         )
     return size
+
+
+def _native_manifest_urls(spans):
+    urls = {}
+    for span in spans or []:
+        key = str(span.get("key") or "").strip()
+        if not key or key in urls:
+            continue
+        urls[key] = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": BUCKET, "Key": key},
+            ExpiresIn=900,
+        )
+    return urls
 
 
 def _parse_boolish(value, default=False):
@@ -532,41 +563,47 @@ def _load_json_body(obj):
     return json.loads(data)
 
 
-def _load_merge_histogram_artifact(client, hist_prefix, chunk_idx, compiled, solve_score_quantile,
+def _load_merge_histogram_artifact(client, hist_prefix, section_idx, compiled, solve_score_quantile,
                                    solve_score_omega, solve_score_omega_enabled, hist_bins):
-    key = f"{hist_prefix}chunk_{chunk_idx}_hist.json"
+    key = f"{hist_prefix}section_{section_idx}_hist.json"
     try:
         obj = client.get_object(Bucket=BUCKET, Key=key)
         data = _load_json_body(obj)
     except client.exceptions.NoSuchKey:
-        raise RuntimeError(f"Missing histogram: {key}")
+        legacy_key = f"{hist_prefix}chunk_{section_idx}_hist.json"
+        try:
+            obj = client.get_object(Bucket=BUCKET, Key=legacy_key)
+            data = _load_json_body(obj)
+            key = legacy_key
+        except client.exceptions.NoSuchKey:
+            raise RuntimeError(f"Missing histogram: {key}")
 
     if data.get("family") == "solve_score" and data.get("version", 1) >= 2:
         if str(data.get("program") or "") != compiled["program_spec"]:
             raise RuntimeError(
-                f"Chunk {chunk_idx} program mismatch: expected {compiled['program_spec']}, got {data.get('program')!r}"
+                f"Section {section_idx} program mismatch: expected {compiled['program_spec']}, got {data.get('program')!r}"
             )
         hist_metrics = _clip_artifact_metrics(data, compiled, solve_score_quantile)
         if len(hist_metrics) != compiled["metric_count"]:
             raise RuntimeError(
-                f"Chunk {chunk_idx} metric slot count mismatch: expected {compiled['metric_count']}, got {len(hist_metrics)}"
+                f"Section {section_idx} metric slot count mismatch: expected {compiled['metric_count']}, got {len(hist_metrics)}"
             )
     else:
         if data.get("family") == "solve_score" and data.get("metric") != compiled["metric"]:
-            raise RuntimeError(f"Chunk {chunk_idx} metric mismatch: expected {compiled['metric']}, got {data.get('metric')}")
+            raise RuntimeError(f"Section {section_idx} metric mismatch: expected {compiled['metric']}, got {data.get('metric')}")
         if data.get("family") == "solve_score" and data.get("clip_quantile") != solve_score_quantile:
-            raise RuntimeError(f"Chunk {chunk_idx} quantile mismatch: expected {solve_score_quantile}, got {data.get('clip_quantile')}")
+            raise RuntimeError(f"Section {section_idx} quantile mismatch: expected {solve_score_quantile}, got {data.get('clip_quantile')}")
         if data.get("family") == "solve_score" and float(data.get("omega", 1.0)) != solve_score_omega:
-            raise RuntimeError(f"Chunk {chunk_idx} omega mismatch: expected {solve_score_omega}, got {data.get('omega')}")
+            raise RuntimeError(f"Section {section_idx} omega mismatch: expected {solve_score_omega}, got {data.get('omega')}")
         if data.get("family") == "solve_score" and _validate_omega_enabled(data.get("omega_enabled", True)) != solve_score_omega_enabled:
-            raise RuntimeError(f"Chunk {chunk_idx} omega_enabled mismatch: expected {solve_score_omega_enabled}, got {data.get('omega_enabled')}")
+            raise RuntimeError(f"Section {section_idx} omega_enabled mismatch: expected {solve_score_omega_enabled}, got {data.get('omega_enabled')}")
 
     chunk_hist = data["hist"]
     if len(chunk_hist) != hist_bins:
-        raise RuntimeError(f"Chunk {chunk_idx} histogram has {len(chunk_hist)} bins, expected {hist_bins}")
+        raise RuntimeError(f"Section {section_idx} histogram has {len(chunk_hist)} bins, expected {hist_bins}")
 
     return {
-        "chunk_idx": chunk_idx,
+        "section_idx": section_idx,
         "hist": chunk_hist,
         "n_solves": data["n_solves"],
         "key": key,
@@ -746,9 +783,9 @@ def handle_hist(params):
     contract_warnings = []
     job_id = params["job_id"]
     task_id = params["task_id"]
-    chunk_idx = params.get("chunk_idx", params.get("stripe_idx"))
+    chunk_idx = params.get("chunk_idx", params.get("section_idx", params.get("stripe_idx")))
     if chunk_idx is None:
-        raise RuntimeError("hist requires chunk_idx")
+        raise RuntimeError("hist requires section_idx (or legacy chunk_idx)")
     section_idx = params.get("section_idx", chunk_idx)
     section_count = params.get("section_count")
     metric = contract_param(params, "metric", "proximity", contract_warnings)
@@ -776,7 +813,7 @@ def handle_hist(params):
     coeff_spans = list(params.get("coeff_spans") or [])
     param_spans = list(params.get("param_spans") or [])
     logical_section = _parse_boolish(params.get("logical_section"), bool(root_spans))
-    chunk_manifest = list(params.get("chunk_manifest") or [])
+    solve_source_manifest = dict(params.get("solve_source_manifest") or {})
     degree = params["degree"]
     clip_key = params["clip_key"]
     hist_bins = params.get("hist_bins", 100)
@@ -816,20 +853,26 @@ def handle_hist(params):
             )
         if step_count < 1:
             raise RuntimeError(f"logical solve score hist requires step_count >= 1, got {step_count}")
-        if not chunk_manifest:
-            raise RuntimeError("logical solve score hist requires chunk_manifest")
-        spans = build_logical_section_spans(
-            chunk_manifest,
+        if not solve_source_manifest:
+            raise RuntimeError("logical solve score hist requires solve_source_manifest")
+        root_spans = build_source_spans(
+            solve_source_manifest,
+            source_family="slv",
             solve_start=step_start,
             solve_count=step_count,
-            degree=degree,
-            n_coeffs=int(n_coeffs or 0),
-            include_coeff=uses_coeff_source,
-            include_param=uses_param_source,
         )
-        root_spans = list(spans["root_spans"])
-        coeff_spans = list(spans["coeff_spans"])
-        param_spans = list(spans["param_spans"])
+        coeff_spans = build_source_spans(
+            solve_source_manifest,
+            source_family="cf",
+            solve_start=step_start,
+            solve_count=step_count,
+        ) if uses_coeff_source else []
+        param_spans = build_source_spans(
+            solve_source_manifest,
+            source_family="pm",
+            solve_start=step_start,
+            solve_count=step_count,
+        ) if uses_param_source else []
         if root_spans and not bin_key:
             bin_key = str(root_spans[0]["key"])
         if coeff_spans and not coeffs_key:
@@ -862,12 +905,12 @@ def handle_hist(params):
         "phase": "hist",
         "metric": metric,
         "metric_count": compiled["metric_count"],
-        "chunk_idx": chunk_idx,
         "section_idx": section_idx,
         "section_count": section_count,
         "omega": solve_score_omega,
         "omega_enabled": solve_score_omega_enabled,
         "threads": solve_score_threads,
+        "requested_input_mode": solve_score_hist_input_mode,
         "input_mode": solve_score_hist_input_mode,
         "logical_section": logical_section,
         "retries": solve_score_hist_retries,
@@ -903,29 +946,66 @@ def handle_hist(params):
         hist_stdout = None
         hist_stderr = None
         hist_rc = 0
+        effective_input_mode = solve_score_hist_input_mode
         if logical_section:
+            if solve_score_hist_input_mode != "sectioned":
+                raise RuntimeError(
+                    "logical solve histogram sections reject "
+                    f"solve_score_hist_input_mode={solve_score_hist_input_mode!r}; "
+                    "use solve_score_hist_input_mode=sectioned"
+                )
+            root_urls = _native_manifest_urls(root_spans)
+            input_manifest = build_native_multispan_manifest(
+                solve_source_manifest,
+                source_family="slv",
+                solve_start=int(step_start),
+                solve_count=int(step_count),
+                url_by_key=root_urls,
+            )
+            input_manifest_path = write_native_multispan_manifest(_TMP_INPUT_MANIFEST, input_manifest)
+            progress["source_size"] = int(input_manifest["logical_size"])
             cmd = [
-                BINARY,
-                _TMP_INPUT,
-                "--mode=hist",
+                SECTIONED_HIST_BINARY,
+                "--input_mode=multispan_sectioned",
+                f"--input_manifest={input_manifest_path}",
                 f"--degree={degree}",
                 f"--hist_bins={hist_bins}",
                 f"--threads={solve_score_threads}",
+                f"--retries={solve_score_hist_retries}",
             ]
-            progress["source_size"] = stitch_spans_to_file(s3, BUCKET, root_spans, _TMP_INPUT)
             if program_args:
                 cmd.extend(program_args)
                 if uses_coeff_source:
-                    coeff_size = stitch_spans_to_file(s3, BUCKET, coeff_spans, _TMP_COEFF_INPUT)
-                    progress["source_coeffs_size"] = coeff_size
+                    coeff_manifest = build_native_multispan_manifest(
+                        solve_source_manifest,
+                        source_family="cf",
+                        solve_start=int(step_start),
+                        solve_count=int(step_count),
+                        url_by_key=_native_manifest_urls(coeff_spans),
+                    )
+                    coeff_manifest_path = write_native_multispan_manifest(
+                        _TMP_COEFF_INPUT_MANIFEST,
+                        coeff_manifest,
+                    )
+                    progress["source_coeffs_size"] = int(coeff_manifest["logical_size"])
                     cmd.extend([
-                        f"--score_coeffs_file={_TMP_COEFF_INPUT}",
+                        f"--score_coeff_manifest={coeff_manifest_path}",
                         f"--score_coeff_degree={n_coeffs}",
                     ])
                 if uses_param_source:
-                    param_size = stitch_spans_to_file(s3, BUCKET, param_spans, _TMP_PARAM_INPUT)
-                    progress["source_params_size"] = param_size
-                    cmd.append(f"--score_params_file={_TMP_PARAM_INPUT}")
+                    param_manifest = build_native_multispan_manifest(
+                        solve_source_manifest,
+                        source_family="pm",
+                        solve_start=int(step_start),
+                        solve_count=int(step_count),
+                        url_by_key=_native_manifest_urls(param_spans),
+                    )
+                    param_manifest_path = write_native_multispan_manifest(
+                        _TMP_PARAM_INPUT_MANIFEST,
+                        param_manifest,
+                    )
+                    progress["source_params_size"] = int(param_manifest["logical_size"])
+                    cmd.append(f"--score_params_manifest={param_manifest_path}")
             else:
                 cmd.extend([
                     f"--metric={metric}",
@@ -936,14 +1016,26 @@ def handle_hist(params):
                 ])
             if xf_path:
                 cmd.append(f"--root_xforms={xf_path}")
-            progress["dl_ms"] = int((time.time() - t0) * 1000)
-            report_status(job_id, task_id, "bin_downloaded", result_data=progress)
-            t1 = time.time()
+            effective_input_mode = "multispan_sectioned"
+            progress["input_mode"] = effective_input_mode
+            pre_native_ms = int((time.time() - t0) * 1000)
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            compute_ms = int((time.time() - t1) * 1000)
             hist_rc = result.returncode
             hist_stdout = result.stdout
             hist_stderr = result.stderr
+            if hist_rc != 0:
+                stderr_summary = (hist_stderr or "").strip() or "unknown error"
+                raise RuntimeError(
+                    "solve_proximity_hist_sectioned failed for logical section "
+                    f"(clip=s3://{BUCKET}/{clip_key}, job={job_id}, task={task_id}, "
+                    f"section={section_idx}, input={effective_input_mode}, size={progress['source_size']}, "
+                    f"threads={solve_score_threads}, retries={solve_score_hist_retries}, metric={metric}{program_suffix}): {stderr_summary}"
+                )
+            hist_data = json.loads(hist_stdout)
+            progress["dl_ms"] = pre_native_ms + int(hist_data.get("download_ms", 0))
+            progress["compute_ms"] = int(hist_data.get("compute_ms", 0))
+            progress["wall_ms"] = int(hist_data.get("wall_ms", 0))
+            report_status(job_id, task_id, "bin_downloaded", result_data=progress)
         elif solve_score_hist_input_mode == "sectioned":
             input_size = int(params.get("bin_size") or 0)
             if input_size <= 0:
@@ -992,6 +1084,7 @@ def handle_hist(params):
             )
             cmd = [
                 SECTIONED_HIST_BINARY,
+                "--input_mode=sectioned",
                 f"--url={presigned_url}",
                 f"--input_size={input_size}",
                 f"--degree={degree}",
@@ -1019,6 +1112,7 @@ def handle_hist(params):
                 ])
             if xf_path:
                 cmd.append(f"--root_xforms={xf_path}")
+            progress["input_mode"] = "sectioned"
             pre_native_ms = int((time.time() - t0) * 1000)
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
             hist_rc = result.returncode
@@ -1080,6 +1174,7 @@ def handle_hist(params):
             if input_size > 0:
                 cmd.append(f"--input_size={input_size}")
             progress["source_size"] = input_size
+            progress["input_mode"] = "stdin"
             pre_stream_ms = int((time.time() - t0) * 1000)
             hist_rc, hist_stdout, hist_stderr, stream_ms, compute_ms = _run_binary_with_streamed_input(cmd, bin_obj, input_size, timeout=120)
             progress["dl_ms"] = pre_stream_ms + stream_ms
@@ -1123,6 +1218,7 @@ def handle_hist(params):
                 cmd.append(f"--root_xforms={xf_path}")
             size = _download(bin_key, _TMP_INPUT)
             progress["source_size"] = size
+            progress["input_mode"] = "tmpfile"
             progress["dl_ms"] = int((time.time() - t0) * 1000)
             report_status(job_id, task_id, "bin_downloaded", result_data=progress)
             t1 = time.time()
@@ -1136,12 +1232,14 @@ def handle_hist(params):
             stderr_summary = (hist_stderr or "").strip() or "unknown error"
             raise RuntimeError(
                 "solve_proximity_stats hist failed "
-                f"(job={job_id}, task={task_id}, chunk={chunk_idx}, section={section_idx}, input={solve_score_hist_input_mode}, "
+                f"(job={job_id}, task={task_id}, chunk={chunk_idx}, section={section_idx}, input={effective_input_mode}, "
                 f"metric={metric}, source=s3://{BUCKET}/{bin_key}{program_suffix}): {stderr_summary}"
             )
 
         hist_data = json.loads(hist_stdout)
-        if solve_score_hist_input_mode != "sectioned" or logical_section:
+        if effective_input_mode in ("sectioned", "multispan_sectioned"):
+            progress["compute_ms"] = int(hist_data.get("compute_ms", progress.get("compute_ms", 0) or 0))
+        else:
             progress["compute_ms"] = compute_ms
         progress["threads"] = int(hist_data.get("threads", solve_score_threads))
         progress["n_solves"] = hist_data["n_solves"]

@@ -1614,6 +1614,15 @@ button {
                 </select>
                 <input id="render-mt-palette-section-count" type="number" min="1" max="4096" step="1" value="1">
                 <div id="render-mt-palette-section-summary" class="autolevel-stage-text" style="font-size:11px"></div>
+
+                <div class="render-mt-matrix-stage">Raster sections</div>
+                <select id="render-mt-raster-section-mode">
+                    <option value="physical_chunks">physical chunks</option>
+                    <option value="logical_sections_auto">auto logical</option>
+                    <option value="logical_sections">manual logical</option>
+                </select>
+                <input id="render-mt-raster-section-count" type="number" min="1" max="4096" step="1" value="1">
+                <div id="render-mt-raster-section-summary" class="autolevel-stage-text" style="font-size:11px"></div>
             </div>
             <div id="render-mt-associated-row" class="autolevel-stage-row" style="align-items:center; margin-top:14px; padding-top:10px; border-top:1px solid #2c2c2c">
                 <div class="autolevel-stage-text">Associated palette artifact for this Color render.</div>
@@ -4324,6 +4333,9 @@ let _renderMtPopupState = {
     solveScoreSectionMode: 'physical_chunks',
     solveScoreSectionCount: '',
     solveScoreSectionCountAuto: '',
+    rasterSectionMode: 'physical_chunks',
+    rasterSectionCount: '',
+    rasterSectionCountAuto: '',
     paletteSectionMode: 'physical_chunks',
     paletteSectionCount: '',
     paletteSectionCountAuto: '',
@@ -5865,8 +5877,9 @@ function _renderMtSectionEstimate(kind, threads) {
         return { available: false, reason: 'chunk step metadata missing' };
     }
     const compiled = _renderMtSolveScoreCompiled();
-    const usesCoeff = !!(compiled && compiled.uses_coeff_source);
-    const usesParam = !!(compiled && compiled.uses_param_source);
+    const mixedScoreSources = renderColorMode === 'solve_score';
+    const usesCoeff = mixedScoreSources && !!(compiled && compiled.uses_coeff_source);
+    const usesParam = mixedScoreSources && !!(compiled && compiled.uses_param_source);
     const rootRowBytes = Number(jobSize.root_row_bytes) || 0;
     const coeffRowBytes = usesCoeff ? (Number(jobSize.coeff_row_bytes) || 0) : 0;
     const paramRowBytes = usesParam ? (Number(jobSize.param_row_bytes) || 0) : 0;
@@ -5876,7 +5889,9 @@ function _renderMtSectionEstimate(kind, threads) {
     }
     const memoryMb = kind === 'palette'
         ? (Number(jobSize.palette_chunk_memory_mb) || 0)
-        : (Number(jobSize.solve_hist_memory_mb) || 0);
+        : (kind === 'raster'
+            ? (Number(jobSize.raster_memory_mb) || 0)
+            : (Number(jobSize.solve_hist_memory_mb) || 0));
     const usableFraction = Number(jobSize.auto_usable_fraction) || 0.40;
     const fixedOverheadMb = Number(jobSize.auto_fixed_overhead_mb) || 96;
     const perThreadOverheadMb = Number(jobSize.auto_per_thread_overhead_mb) || 8;
@@ -5999,6 +6014,9 @@ function _closeRenderMtPopup() {
         solveScoreSectionMode: _normalizeRenderMtSectionMode(_renderMtPopupState.solveScoreSectionMode),
         solveScoreSectionCount: _clampRenderMtSectionCount(_renderMtPopupState.solveScoreSectionCount),
         solveScoreSectionCountAuto: _clampRenderMtSectionCount(_renderMtPopupState.solveScoreSectionCountAuto),
+        rasterSectionMode: _normalizeRenderMtSectionMode(_renderMtPopupState.rasterSectionMode),
+        rasterSectionCount: _clampRenderMtSectionCount(_renderMtPopupState.rasterSectionCount),
+        rasterSectionCountAuto: _clampRenderMtSectionCount(_renderMtPopupState.rasterSectionCountAuto),
         paletteSectionMode: _normalizeRenderMtSectionMode(_renderMtPopupState.paletteSectionMode),
         paletteSectionCount: _clampRenderMtSectionCount(_renderMtPopupState.paletteSectionCount),
         paletteSectionCountAuto: _clampRenderMtSectionCount(_renderMtPopupState.paletteSectionCountAuto),
@@ -6025,6 +6043,9 @@ function _renderRenderMtPopup() {
     const histSectionSummaryEl = document.getElementById('render-mt-hist-section-summary');
     const rasterInputModeEl = document.getElementById('render-mt-raster-input-mode');
     const rasterRetriesEl = document.getElementById('render-mt-raster-retries');
+    const rasterSectionModeEl = document.getElementById('render-mt-raster-section-mode');
+    const rasterSectionCountEl = document.getElementById('render-mt-raster-section-count');
+    const rasterSectionSummaryEl = document.getElementById('render-mt-raster-section-summary');
     const pixelBinFragmentModeEl = document.getElementById('render-mt-pixel-bin-fragment-mode');
     const rasterBinGroupSizeEl = document.getElementById('render-mt-raster-bin-group-size');
     const mergeWorkersEl = document.getElementById('render-mt-merge-workers');
@@ -6039,7 +6060,7 @@ function _renderRenderMtPopup() {
     const assocRowEl = document.getElementById('render-mt-associated-row');
     const assocEl = document.getElementById('render-mt-save-associated-palette');
     const runBtn = document.getElementById('render-mt-popup-run');
-    if (!overlay || !summaryEl || !jobSizeEl || !threadsEl || !solveScoreThreadsEl || !histInputModeEl || !histRetriesEl || !histSectionModeEl || !histSectionCountEl || !histSectionSummaryEl || !rasterInputModeEl || !rasterRetriesEl || !pixelBinFragmentModeEl || !rasterBinGroupSizeEl || !mergeWorkersEl || !finalizeWorkersEl || !paletteChunkThreadsEl || !paletteChunkInputModeEl || !paletteChunkWorkersEl || !paletteChunkRetriesEl || !paletteSectionModeEl || !paletteSectionCountEl || !paletteSectionSummaryEl) return;
+    if (!overlay || !summaryEl || !jobSizeEl || !threadsEl || !solveScoreThreadsEl || !histInputModeEl || !histRetriesEl || !histSectionModeEl || !histSectionCountEl || !histSectionSummaryEl || !rasterInputModeEl || !rasterRetriesEl || !rasterSectionModeEl || !rasterSectionCountEl || !rasterSectionSummaryEl || !pixelBinFragmentModeEl || !rasterBinGroupSizeEl || !mergeWorkersEl || !finalizeWorkersEl || !paletteChunkThreadsEl || !paletteChunkInputModeEl || !paletteChunkWorkersEl || !paletteChunkRetriesEl || !paletteSectionModeEl || !paletteSectionCountEl || !paletteSectionSummaryEl) return;
     if (!_renderMtPopupState.open) {
         _closeRenderMtPopup();
         return;
@@ -6059,21 +6080,31 @@ function _renderRenderMtPopup() {
     const paletteChunkRetries = _clampRenderMtRetries(_renderMtPopupState.paletteChunkRetries);
     const paletteChunkWorkers = _clampRenderMtWorkerCount(_renderMtPopupState.paletteChunkWorkers);
     const solveScoreSectionMode = _normalizeRenderMtSectionMode(_renderMtPopupState.solveScoreSectionMode);
+    const rasterSectionModeInput = _normalizeRenderMtSectionMode(_renderMtPopupState.rasterSectionMode);
     const paletteSectionMode = _normalizeRenderMtSectionMode(_renderMtPopupState.paletteSectionMode);
     const saveAssociatedPalette = !!_renderMtPopupState.saveAssociatedPalette;
     const solveScoreRelevant = renderColorMode === 'solve_score';
+    const rasterSectioningAllowed = renderColorMode !== 'saved_palette';
     const assocAllowed = _associatedPaletteAllowedForColorMode(renderColorMode);
     const assocChunkRelevant = _renderMtAssociatedPaletteChunkRelevant(renderColorMode, saveAssociatedPalette);
     const histEstimate = solveScoreRelevant ? _renderMtSectionEstimate('hist', solveScoreThreads) : { available: false, reason: 'hist unused' };
+    const rasterEstimate = rasterSectioningAllowed ? _renderMtSectionEstimate('raster', threads) : { available: false, reason: 'saved palette currently requires physical chunks' };
     const paletteEstimate = assocChunkRelevant ? _renderMtSectionEstimate('palette', paletteChunkThreads) : { available: false, reason: 'palette chunk unused' };
     let solveScoreSectionCountAuto = histEstimate.available ? histEstimate.minSafeSections : '';
+    let rasterSectionCountAuto = rasterEstimate.available ? rasterEstimate.minSafeSections : '';
     let paletteSectionCountAuto = paletteEstimate.available ? paletteEstimate.minSafeSections : '';
     let solveScoreSectionCount = _clampRenderMtSectionCount(_renderMtPopupState.solveScoreSectionCount);
+    let rasterSectionMode = rasterSectioningAllowed ? rasterSectionModeInput : 'physical_chunks';
+    let rasterSectionCount = _clampRenderMtSectionCount(_renderMtPopupState.rasterSectionCount);
     let paletteSectionCount = _clampRenderMtSectionCount(_renderMtPopupState.paletteSectionCount);
     if (solveScoreSectionMode === 'logical_sections_auto') solveScoreSectionCount = solveScoreSectionCountAuto;
+    if (rasterSectionMode === 'logical_sections_auto') rasterSectionCount = rasterSectionCountAuto;
     if (paletteSectionMode === 'logical_sections_auto') paletteSectionCount = paletteSectionCountAuto;
     if (histEstimate.available && solveScoreSectionCount !== '' && Number(solveScoreSectionCount) < Number(histEstimate.minSafeSections)) {
         solveScoreSectionCount = histEstimate.minSafeSections;
+    }
+    if (rasterEstimate.available && rasterSectionCount !== '' && Number(rasterSectionCount) < Number(rasterEstimate.minSafeSections)) {
+        rasterSectionCount = rasterEstimate.minSafeSections;
     }
     if (paletteEstimate.available && paletteSectionCount !== '' && Number(paletteSectionCount) < Number(paletteEstimate.minSafeSections)) {
         paletteSectionCount = paletteEstimate.minSafeSections;
@@ -6095,6 +6126,9 @@ function _renderRenderMtPopup() {
     _renderMtPopupState.solveScoreSectionMode = solveScoreSectionMode;
     _renderMtPopupState.solveScoreSectionCount = solveScoreSectionCount;
     _renderMtPopupState.solveScoreSectionCountAuto = solveScoreSectionCountAuto;
+    _renderMtPopupState.rasterSectionMode = rasterSectionMode;
+    _renderMtPopupState.rasterSectionCount = rasterSectionCount;
+    _renderMtPopupState.rasterSectionCountAuto = rasterSectionCountAuto;
     _renderMtPopupState.paletteSectionMode = paletteSectionMode;
     _renderMtPopupState.paletteSectionCount = paletteSectionCount;
     _renderMtPopupState.paletteSectionCountAuto = paletteSectionCountAuto;
@@ -6117,6 +6151,8 @@ function _renderRenderMtPopup() {
     paletteChunkRetriesEl.value = String(paletteChunkRetries);
     histSectionModeEl.value = solveScoreSectionMode;
     histSectionCountEl.value = solveScoreSectionCount === '' ? '' : String(solveScoreSectionCount);
+    rasterSectionModeEl.value = rasterSectionMode;
+    rasterSectionCountEl.value = rasterSectionCount === '' ? '' : String(rasterSectionCount);
     paletteSectionModeEl.value = paletteSectionMode;
     paletteSectionCountEl.value = paletteSectionCount === '' ? '' : String(paletteSectionCount);
     solveScoreThreadsEl.disabled = !solveScoreRelevant;
@@ -6126,6 +6162,8 @@ function _renderRenderMtPopup() {
     mergeWorkersEl.disabled = !solveScoreRelevant;
     finalizeWorkersEl.disabled = false;
     rasterRetriesEl.disabled = rasterInputMode !== 'sectioned';
+    rasterSectionModeEl.disabled = !rasterSectioningAllowed;
+    rasterSectionCountEl.disabled = !rasterSectioningAllowed || rasterSectionMode !== 'logical_sections';
     rasterBinGroupSizeEl.disabled = pixelBinFragmentMode !== 'dense_grouped';
     paletteChunkThreadsEl.disabled = !assocChunkRelevant;
     paletteChunkInputModeEl.disabled = !assocChunkRelevant;
@@ -6138,8 +6176,10 @@ function _renderRenderMtPopup() {
         assocEl.disabled = !assocAllowed;
     }
     histSectionCountEl.disabled = !solveScoreRelevant || solveScoreSectionMode !== 'logical_sections';
+    rasterSectionCountEl.disabled = !rasterSectioningAllowed || rasterSectionMode !== 'logical_sections';
     paletteSectionCountEl.disabled = !assocChunkRelevant || paletteSectionMode !== 'logical_sections';
     histSectionCountEl.min = histEstimate.available ? String(histEstimate.minSafeSections) : '1';
+    rasterSectionCountEl.min = rasterEstimate.available ? String(rasterEstimate.minSafeSections) : '1';
     paletteSectionCountEl.min = paletteEstimate.available ? String(paletteEstimate.minSafeSections) : '1';
     const jobSize = _renderMtJobSizeData();
     const chunkCount = jobSize && Number.isFinite(Number(jobSize.chunk_count)) ? Number(jobSize.chunk_count) : null;
@@ -6148,11 +6188,15 @@ function _renderRenderMtPopup() {
     const coeffSizeLabel = jobSize ? (_fmtSize(Number(jobSize.representative_coeff_chunk_size) || 0) || '?') : '?';
     const paramSizeLabel = jobSize ? (_fmtSize(Number(jobSize.representative_param_chunk_size) || 0) || '?') : '?';
     const histBudgetLabel = histEstimate.available ? `${_fmtSize(histEstimate.budgetBytes)} budget @ ${histEstimate.memoryMb}MB` : `auto unavailable (${histEstimate.reason})`;
+    const rasterBudgetLabel = rasterEstimate.available ? `${_fmtSize(rasterEstimate.budgetBytes)} budget @ ${rasterEstimate.memoryMb}MB` : `auto unavailable (${rasterEstimate.reason})`;
     const paletteBudgetLabel = paletteEstimate.available ? `${_fmtSize(paletteEstimate.budgetBytes)} budget @ ${paletteEstimate.memoryMb}MB` : `auto unavailable (${paletteEstimate.reason})`;
-    jobSizeEl.textContent = `Job size: ${chunkLabel} • root≈${rootSizeLabel} • coeff≈${coeffSizeLabel} • params≈${paramSizeLabel}\nHist auto: ${histBudgetLabel}\nPalette auto: ${paletteBudgetLabel}`;
+    jobSizeEl.textContent = `Job size: ${chunkLabel} • root≈${rootSizeLabel} • coeff≈${coeffSizeLabel} • params≈${paramSizeLabel}\nHist auto: ${histBudgetLabel}\nRaster auto: ${rasterBudgetLabel}\nPalette auto: ${paletteBudgetLabel}`;
     histSectionSummaryEl.textContent = histEstimate.available
         ? `min safe sections=${histEstimate.minSafeSections} • max solves/section=${histEstimate.maxSolvesPerSection.toLocaleString()} • est source=${_fmtSize(histEstimate.estimatedSectionBytes)}`
         : `auto unavailable: ${histEstimate.reason}`;
+    rasterSectionSummaryEl.textContent = rasterEstimate.available
+        ? `min safe sections=${rasterEstimate.minSafeSections} • max solves/section=${rasterEstimate.maxSolvesPerSection.toLocaleString()} • est source=${_fmtSize(rasterEstimate.estimatedSectionBytes)}`
+        : `auto unavailable: ${rasterEstimate.reason}`;
     paletteSectionSummaryEl.textContent = paletteEstimate.available
         ? `min safe sections=${paletteEstimate.minSafeSections} • max solves/section=${paletteEstimate.maxSolvesPerSection.toLocaleString()} • est source=${_fmtSize(paletteEstimate.estimatedSectionBytes)}`
         : `auto unavailable: ${paletteEstimate.reason}`;
@@ -6166,12 +6210,15 @@ function _renderRenderMtPopup() {
     const histSectionLabel = solveScoreRelevant
         ? `${solveScoreSectionMode}${solveScoreSectionCount ? ` sections=${solveScoreSectionCount}` : ''}`
         : 'unused';
+    const rasterSectionLabel = rasterSectioningAllowed
+        ? `${rasterSectionMode}${rasterSectionCount ? ` sections=${rasterSectionCount}` : ''}`
+        : 'physical-only';
     const paletteChunkLabel = assocChunkRelevant
         ? `palette chunk threads=${paletteChunkThreads} • palette chunk input=${paletteChunkInputMode} • palette chunk retries=${paletteChunkRetries} • palette chunk workers=${paletteChunkWorkers} • palette sections=${paletteSectionMode}${paletteSectionCount ? `/${paletteSectionCount}` : ''}`
         : 'palette chunk unused';
     summaryEl.textContent = solveScoreRelevant
-        ? `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • hist threads=${solveScoreThreads} • hist input=${histInputMode} • hist retries=${histRetries} • hist sections=${histSectionLabel} • merge workers=${mergeWorkers} • raster input=${rasterInputMode} • raster retries=${rasterRetries} • raster threads=${threads} • bins=${binsLabel} • finalize workers=${finalizeWorkers} • associated palette=${assocLabel} • ${paletteChunkLabel}`
-        : `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • raster input=${rasterInputMode} • raster retries=${rasterRetries} • raster threads=${threads} • bins=${binsLabel} • finalize workers=${finalizeWorkers} • hist unused • merge unused • associated palette=${assocLabel} • ${paletteChunkLabel}`;
+        ? `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • hist threads=${solveScoreThreads} • hist input=${histInputMode} • hist retries=${histRetries} • hist sections=${histSectionLabel} • merge workers=${mergeWorkers} • raster input=${rasterInputMode} • raster retries=${rasterRetries} • raster threads=${threads} • raster sections=${rasterSectionLabel} • bins=${binsLabel} • finalize workers=${finalizeWorkers} • associated palette=${assocLabel} • ${paletteChunkLabel}`
+        : `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • raster input=${rasterInputMode} • raster retries=${rasterRetries} • raster threads=${threads} • raster sections=${rasterSectionLabel} • bins=${binsLabel} • finalize workers=${finalizeWorkers} • hist unused • merge unused • associated palette=${assocLabel} • ${paletteChunkLabel}`;
     if (runBtn) runBtn.disabled = !_renderColorMtEligible() || !!_activeRenderRun;
 }
 
@@ -6205,6 +6252,9 @@ async function openRenderMtPopup() {
         solveScoreSectionMode: _normalizeRenderMtSectionMode(_renderMtPopupState.solveScoreSectionMode || 'physical_chunks'),
         solveScoreSectionCount: _clampRenderMtSectionCount(_renderMtPopupState.solveScoreSectionCount),
         solveScoreSectionCountAuto: _clampRenderMtSectionCount(_renderMtPopupState.solveScoreSectionCountAuto),
+        rasterSectionMode: _normalizeRenderMtSectionMode(_renderMtPopupState.rasterSectionMode || 'physical_chunks'),
+        rasterSectionCount: _clampRenderMtSectionCount(_renderMtPopupState.rasterSectionCount),
+        rasterSectionCountAuto: _clampRenderMtSectionCount(_renderMtPopupState.rasterSectionCountAuto),
         paletteSectionMode: _normalizeRenderMtSectionMode(_renderMtPopupState.paletteSectionMode || 'physical_chunks'),
         paletteSectionCount: _clampRenderMtSectionCount(_renderMtPopupState.paletteSectionCount),
         paletteSectionCountAuto: _clampRenderMtSectionCount(_renderMtPopupState.paletteSectionCountAuto),
@@ -6865,6 +6915,8 @@ function _initRenderMtPopup() {
     const histSectionCountEl = document.getElementById('render-mt-hist-section-count');
     const rasterInputModeEl = document.getElementById('render-mt-raster-input-mode');
     const rasterRetriesEl = document.getElementById('render-mt-raster-retries');
+    const rasterSectionModeEl = document.getElementById('render-mt-raster-section-mode');
+    const rasterSectionCountEl = document.getElementById('render-mt-raster-section-count');
     const pixelBinFragmentModeEl = document.getElementById('render-mt-pixel-bin-fragment-mode');
     const rasterBinGroupSizeEl = document.getElementById('render-mt-raster-bin-group-size');
     const mergeWorkersEl = document.getElementById('render-mt-merge-workers');
@@ -6928,6 +6980,18 @@ function _initRenderMtPopup() {
     if (rasterRetriesEl) {
         rasterRetriesEl.addEventListener('input', (ev) => {
             _renderMtPopupState.rasterRetries = _clampRenderMtRetries(ev.target.value);
+            _renderRenderMtPopup();
+        });
+    }
+    if (rasterSectionModeEl) {
+        rasterSectionModeEl.addEventListener('change', (ev) => {
+            _renderMtPopupState.rasterSectionMode = _normalizeRenderMtSectionMode(ev.target.value);
+            _renderRenderMtPopup();
+        });
+    }
+    if (rasterSectionCountEl) {
+        rasterSectionCountEl.addEventListener('input', (ev) => {
+            _renderMtPopupState.rasterSectionCount = _clampRenderMtSectionCount(ev.target.value);
             _renderRenderMtPopup();
         });
     }
@@ -7011,6 +7075,8 @@ function _initRenderMtPopup() {
                 const solveScoreSectionCount = _clampRenderMtSectionCount(document.getElementById('render-mt-hist-section-count').value);
                 const rasterInputMode = _normalizeRasterInputMode(document.getElementById('render-mt-raster-input-mode').value);
                 const rasterRetries = _clampRenderMtRetries(document.getElementById('render-mt-raster-retries').value);
+                const rasterSectionMode = _normalizeRenderMtSectionMode(document.getElementById('render-mt-raster-section-mode').value);
+                const rasterSectionCount = _clampRenderMtSectionCount(document.getElementById('render-mt-raster-section-count').value);
                 const pixelBinFragmentMode = _normalizePixelBinFragmentMode(document.getElementById('render-mt-pixel-bin-fragment-mode').value);
                 const rasterBinGroupSize = _normalizeRasterBinGroupSize(document.getElementById('render-mt-raster-bin-group-size').value);
                 const mergeWorkers = _clampRenderMtMergeWorkers(document.getElementById('render-mt-merge-workers').value);
@@ -7030,6 +7096,8 @@ function _initRenderMtPopup() {
                 _renderMtPopupState.solveScoreSectionCount = solveScoreSectionCount;
                 _renderMtPopupState.rasterInputMode = rasterInputMode;
                 _renderMtPopupState.rasterRetries = rasterRetries;
+                _renderMtPopupState.rasterSectionMode = rasterSectionMode;
+                _renderMtPopupState.rasterSectionCount = rasterSectionCount;
                 _renderMtPopupState.pixelBinFragmentMode = pixelBinFragmentMode;
                 _renderMtPopupState.rasterBinGroupSize = rasterBinGroupSize;
                 _renderMtPopupState.mergeWorkers = mergeWorkers;
@@ -7042,7 +7110,7 @@ function _initRenderMtPopup() {
                 _renderMtPopupState.paletteSectionCount = paletteSectionCount;
                 _renderMtPopupState.saveAssociatedPalette = saveAssociatedPalette;
                 _closeRenderMtPopup();
-                await runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, histRetries, solveScoreSectionMode, solveScoreSectionCount, rasterInputMode, rasterRetries, pixelBinFragmentMode, rasterBinGroupSize, mergeWorkers, finalizeWorkers, paletteChunkThreads, paletteChunkInputMode, paletteChunkRetries, paletteChunkWorkers, paletteSectionMode, paletteSectionCount, saveAssociatedPalette });
+                await runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, histRetries, solveScoreSectionMode, solveScoreSectionCount, rasterInputMode, rasterRetries, rasterSectionMode, rasterSectionCount, pixelBinFragmentMode, rasterBinGroupSize, mergeWorkers, finalizeWorkers, paletteChunkThreads, paletteChunkInputMode, paletteChunkRetries, paletteChunkWorkers, paletteSectionMode, paletteSectionCount, saveAssociatedPalette });
             } finally {
                 runBtn.disabled = false;
                 runBtn.textContent = btnText;
@@ -7066,6 +7134,8 @@ function _initRenderMtPopup() {
             const solveScoreSectionCount = _clampRenderMtSectionCount(document.getElementById('render-mt-hist-section-count').value);
             const rasterInputMode = _normalizeRasterInputMode(document.getElementById('render-mt-raster-input-mode').value);
             const rasterRetries = _clampRenderMtRetries(document.getElementById('render-mt-raster-retries').value);
+            const rasterSectionMode = _normalizeRenderMtSectionMode(document.getElementById('render-mt-raster-section-mode').value);
+            const rasterSectionCount = _clampRenderMtSectionCount(document.getElementById('render-mt-raster-section-count').value);
             const pixelBinFragmentMode = _normalizePixelBinFragmentMode(document.getElementById('render-mt-pixel-bin-fragment-mode').value);
             const rasterBinGroupSize = _normalizeRasterBinGroupSize(document.getElementById('render-mt-raster-bin-group-size').value);
             const mergeWorkers = _clampRenderMtMergeWorkers(document.getElementById('render-mt-merge-workers').value);
@@ -7085,6 +7155,8 @@ function _initRenderMtPopup() {
             _renderMtPopupState.solveScoreSectionCount = solveScoreSectionCount;
             _renderMtPopupState.rasterInputMode = rasterInputMode;
             _renderMtPopupState.rasterRetries = rasterRetries;
+            _renderMtPopupState.rasterSectionMode = rasterSectionMode;
+            _renderMtPopupState.rasterSectionCount = rasterSectionCount;
             _renderMtPopupState.pixelBinFragmentMode = pixelBinFragmentMode;
             _renderMtPopupState.rasterBinGroupSize = rasterBinGroupSize;
             _renderMtPopupState.mergeWorkers = mergeWorkers;
@@ -7097,7 +7169,7 @@ function _initRenderMtPopup() {
             _renderMtPopupState.paletteSectionCount = paletteSectionCount;
             _renderMtPopupState.saveAssociatedPalette = saveAssociatedPalette;
             _closeRenderMtPopup();
-            runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, histRetries, solveScoreSectionMode, solveScoreSectionCount, rasterInputMode, rasterRetries, pixelBinFragmentMode, rasterBinGroupSize, mergeWorkers, finalizeWorkers, paletteChunkThreads, paletteChunkInputMode, paletteChunkRetries, paletteChunkWorkers, paletteSectionMode, paletteSectionCount, saveAssociatedPalette });
+            runRasterPipelineMT({ rasterThreads, solveScoreThreads, histInputMode, histRetries, solveScoreSectionMode, solveScoreSectionCount, rasterInputMode, rasterRetries, rasterSectionMode, rasterSectionCount, pixelBinFragmentMode, rasterBinGroupSize, mergeWorkers, finalizeWorkers, paletteChunkThreads, paletteChunkInputMode, paletteChunkRetries, paletteChunkWorkers, paletteSectionMode, paletteSectionCount, saveAssociatedPalette });
         }
     });
 }
@@ -10401,6 +10473,16 @@ async function runRasterPipelineMT(threadConfig = null) {
                 ? threadConfig.rasterRetries
                 : _renderMtPopupState.rasterRetries
         );
+        const rasterSectionModeInput = _normalizeRenderMtSectionMode(
+            threadConfig && typeof threadConfig === 'object' && threadConfig.rasterSectionMode != null
+                ? threadConfig.rasterSectionMode
+                : _renderMtPopupState.rasterSectionMode
+        );
+        const rasterSectionCountInput = _clampRenderMtSectionCount(
+            threadConfig && typeof threadConfig === 'object' && threadConfig.rasterSectionCount != null
+                ? threadConfig.rasterSectionCount
+                : _renderMtPopupState.rasterSectionCount
+        );
         const pixelBinFragmentMode = _normalizePixelBinFragmentMode(
             threadConfig && typeof threadConfig === 'object' && threadConfig.pixelBinFragmentMode != null
                 ? threadConfig.pixelBinFragmentMode
@@ -10469,13 +10551,22 @@ async function runRasterPipelineMT(threadConfig = null) {
         const relevantSolveScoreThreads = renderColorMode === 'solve_score' ? solveScoreThreads : 1;
         const relevantMergeWorkers = renderColorMode === 'solve_score' ? mergeWorkers : 1;
         const relevantPaletteChunk = _renderMtAssociatedPaletteChunkRelevant(renderColorMode, saveAssociatedPalette);
+        const rasterSectioningAllowed = renderColorMode !== 'saved_palette';
         const histEstimate = renderColorMode === 'solve_score' ? _renderMtSectionEstimate('hist', relevantSolveScoreThreads) : { available: false };
+        const rasterEstimate = rasterSectioningAllowed ? _renderMtSectionEstimate('raster', rasterThreads) : { available: false };
         const paletteEstimate = relevantPaletteChunk ? _renderMtSectionEstimate('palette', paletteChunkThreads) : { available: false };
         let relevantSolveScoreSectionCount = solveScoreSectionCount;
         if (solveScoreSectionMode === 'logical_sections_auto') {
             relevantSolveScoreSectionCount = histEstimate.available ? histEstimate.minSafeSections : '';
         } else if (renderColorMode === 'solve_score' && histEstimate.available && relevantSolveScoreSectionCount !== '' && Number(relevantSolveScoreSectionCount) < Number(histEstimate.minSafeSections)) {
             relevantSolveScoreSectionCount = histEstimate.minSafeSections;
+        }
+        let relevantRasterSectionMode = rasterSectioningAllowed ? rasterSectionModeInput : 'physical_chunks';
+        let relevantRasterSectionCount = rasterSectionCountInput;
+        if (relevantRasterSectionMode === 'logical_sections_auto') {
+            relevantRasterSectionCount = rasterEstimate.available ? rasterEstimate.minSafeSections : '';
+        } else if (rasterSectioningAllowed && rasterEstimate.available && relevantRasterSectionCount !== '' && Number(relevantRasterSectionCount) < Number(rasterEstimate.minSafeSections)) {
+            relevantRasterSectionCount = rasterEstimate.minSafeSections;
         }
         let relevantPaletteSectionCount = paletteSectionCount;
         if (paletteSectionMode === 'logical_sections_auto') {
@@ -10490,14 +10581,16 @@ async function runRasterPipelineMT(threadConfig = null) {
             ? `, palette chunk threads=${paletteChunkThreads}, palette chunk input=${paletteChunkInputMode}, palette chunk retries=${paletteChunkRetries}, palette chunk workers=${paletteChunkWorkers}, palette sections=${paletteSectionMode}${relevantPaletteSectionCount ? `/${relevantPaletteSectionCount}` : ''}`
             : ', palette chunk unused';
         const mtMsg = renderColorMode === 'solve_score'
-            ? `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, hist input=${histInputMode}, hist retries=${histRetries}, hist sections=${solveScoreSectionMode}${relevantSolveScoreSectionCount ? `/${relevantSolveScoreSectionCount}` : ''}, merge workers=${relevantMergeWorkers}, raster input=${rasterInputMode}, raster retries=${rasterRetries}, raster threads=${rasterThreads}, bin fragments=${binsLabel}, finalize workers=${finalizeWorkers}, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}${paletteChunkLabel}...`
-            : `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, raster input=${rasterInputMode}, raster retries=${rasterRetries}, raster threads=${rasterThreads}, bin fragments=${binsLabel}, finalize workers=${finalizeWorkers}, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}${paletteChunkLabel}...`;
+            ? `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, hist input=${histInputMode}, hist retries=${histRetries}, hist sections=${solveScoreSectionMode}${relevantSolveScoreSectionCount ? `/${relevantSolveScoreSectionCount}` : ''}, merge workers=${relevantMergeWorkers}, raster input=${rasterInputMode}, raster retries=${rasterRetries}, raster threads=${rasterThreads}, raster sections=${relevantRasterSectionMode}${relevantRasterSectionCount ? `/${relevantRasterSectionCount}` : ''}, bin fragments=${binsLabel}, finalize workers=${finalizeWorkers}, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}${paletteChunkLabel}...`
+            : `Render-MT: dispatching with solve score threads=${relevantSolveScoreThreads}, raster input=${rasterInputMode}, raster retries=${rasterRetries}, raster threads=${rasterThreads}, raster sections=${relevantRasterSectionMode}${relevantRasterSectionCount ? `/${relevantRasterSectionCount}` : ''}, bin fragments=${binsLabel}, finalize workers=${finalizeWorkers}, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}${paletteChunkLabel}...`;
         log(mtMsg, 'ok', 'render-log');
         await _launchRenderOrchestrator('color', {
             raster_engine: 'mt',
             raster_mt_threads: rasterThreads,
             raster_input_mode: rasterInputMode,
             raster_sectioned_retries: rasterRetries,
+            raster_section_mode: relevantRasterSectionMode,
+            raster_section_count: relevantRasterSectionCount,
             pixel_bin_fragment_mode: pixelBinFragmentMode,
             raster_bin_group_size: rasterBinGroupSize,
             solve_score_threads: relevantSolveScoreThreads,
@@ -11974,6 +12067,9 @@ function _restoreRenderExecutionState(entry) {
     if (cfg.solve_score_hist_retries != null) _renderMtPopupState.histRetries = _clampRenderMtRetries(cfg.solve_score_hist_retries);
     if (cfg.raster_input_mode != null) _renderMtPopupState.rasterInputMode = _normalizeRasterInputMode(cfg.raster_input_mode);
     if (cfg.raster_sectioned_retries != null) _renderMtPopupState.rasterRetries = _clampRenderMtRetries(cfg.raster_sectioned_retries);
+    if (cfg.raster_section_mode != null) _renderMtPopupState.rasterSectionMode = _normalizeRenderMtSectionMode(cfg.raster_section_mode);
+    if (cfg.raster_section_count != null) _renderMtPopupState.rasterSectionCount = _clampRenderMtSectionCount(cfg.raster_section_count);
+    if (cfg.raster_section_count_auto != null) _renderMtPopupState.rasterSectionCountAuto = _clampRenderMtSectionCount(cfg.raster_section_count_auto);
     if (cfg.pixel_bin_fragment_mode != null) _renderMtPopupState.pixelBinFragmentMode = _normalizePixelBinFragmentMode(cfg.pixel_bin_fragment_mode);
     if (cfg.raster_bin_group_size != null) _renderMtPopupState.rasterBinGroupSize = _normalizeRasterBinGroupSize(cfg.raster_bin_group_size);
     if (cfg.solve_score_merge_workers != null) _renderMtPopupState.mergeWorkers = _clampRenderMtMergeWorkers(cfg.solve_score_merge_workers);

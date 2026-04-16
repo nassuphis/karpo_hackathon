@@ -11,7 +11,12 @@ import time
 
 import boto3
 
-from logical_sections import build_logical_section_spans, stitch_spans_to_file
+from logical_sections import (
+    build_native_multispan_manifest,
+    build_source_spans,
+    stitch_spans_to_file,
+    write_native_multispan_manifest,
+)
 from solve_score_chain import solve_score_program_cli_payload
 from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
 
@@ -26,10 +31,23 @@ _TMP_BINS = "/tmp/palette_chunk_bins.bin"
 _TMP_XFORMS = "/tmp/palette_chunk_xforms.json"
 _TMP_SCORE_COEFFS = "/tmp/palette_chunk_coeffs.bin"
 _TMP_SCORE_PARAMS = "/tmp/palette_chunk_params.bin"
+_TMP_INPUT_MANIFEST = "/tmp/palette_chunk_input_manifest.json"
+_TMP_SCORE_COEFFS_MANIFEST = "/tmp/palette_chunk_coeffs_manifest.json"
+_TMP_SCORE_PARAMS_MANIFEST = "/tmp/palette_chunk_params_manifest.json"
 
 
 def _cleanup():
-    for p in (_TMP_INPUT, _TMP_SCORES, _TMP_BINS, _TMP_XFORMS, _TMP_SCORE_COEFFS, _TMP_SCORE_PARAMS):
+    for p in (
+        _TMP_INPUT,
+        _TMP_SCORES,
+        _TMP_BINS,
+        _TMP_XFORMS,
+        _TMP_SCORE_COEFFS,
+        _TMP_SCORE_PARAMS,
+        _TMP_INPUT_MANIFEST,
+        _TMP_SCORE_COEFFS_MANIFEST,
+        _TMP_SCORE_PARAMS_MANIFEST,
+    ):
         try:
             os.remove(p)
         except OSError:
@@ -145,12 +163,28 @@ def _solve_score_bins_uses_source(bins_data, source):
     return False
 
 
+def _native_manifest_urls(spans):
+    urls = {}
+    for span in spans or []:
+        key = str(span.get("key") or "").strip()
+        if not key or key in urls:
+            continue
+        urls[key] = s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": BUCKET, "Key": key},
+            ExpiresIn=900,
+        )
+    return urls
+
+
 def handler(event, context):
     params = parse_body(event)
     contract_warnings = []
     job_id = params["job_id"]
     task_id = params["task_id"]
-    chunk_idx = params["chunk_idx"]
+    section_idx = params.get("section_idx", params.get("chunk_idx"))
+    if section_idx is None:
+        raise RuntimeError("palette chunk requires section_idx")
     bin_key = params["bin_key"]
     degree = params["degree"]
     metric = params["metric"]
@@ -160,7 +194,7 @@ def handler(event, context):
     bins_key = params["solve_score_bins_key"]
     step_start = int(params["step_start"])
     step_count = int(params["step_count"])
-    section_idx = params.get("section_idx", chunk_idx)
+    chunk_idx = params.get("chunk_idx", section_idx)
     section_count = params.get("section_count")
     root_transforms = contract_param(params, "root_transforms", [], contract_warnings)
     threads = _validate_threads(contract_param(params, "palette_chunk_threads", 1, contract_warnings), default=1)
@@ -177,18 +211,18 @@ def handler(event, context):
     coeff_spans = list(params.get("coeff_spans") or [])
     param_spans = list(params.get("param_spans") or [])
     logical_section = _parse_boolish(params.get("logical_section"), bool(root_spans))
-    chunk_manifest = list(params.get("chunk_manifest") or [])
+    solve_source_manifest = dict(params.get("solve_source_manifest") or {})
     score_key = params["score_key"]
     palette_bins_key = params["palette_bins_key"]
     meta_key = params["meta_key"]
 
     progress = attach_contract_warnings({
         "phase": "palette_chunk",
-        "chunk_idx": chunk_idx,
         "section_idx": section_idx,
         "section_count": section_count,
         "metric": metric,
         "threads": threads,
+        "requested_input_mode": input_mode,
         "input_mode": input_mode,
         "logical_section": logical_section,
         "retries": retries,
@@ -205,22 +239,34 @@ def handler(event, context):
         sectioned_url = None
         source_size = int(params.get("bin_size") or 0)
         effective_input_mode = input_mode
+        input_manifest_path = None
+        coeff_manifest_path = None
+        param_manifest_path = None
         if logical_section and not root_spans:
-            if not chunk_manifest:
-                raise RuntimeError("logical palette chunk requires chunk_manifest")
-            spans = build_logical_section_spans(
-                chunk_manifest,
+            if not solve_source_manifest:
+                raise RuntimeError("logical palette chunk requires solve_source_manifest")
+            root_spans = build_source_spans(
+                solve_source_manifest,
+                source_family="slv",
                 solve_start=step_start,
                 solve_count=step_count,
-                degree=int(degree),
-                n_coeffs=0,
-                include_coeff=False,
-                include_param=False,
             )
-            root_spans = list(spans["root_spans"])
             if root_spans and not bin_key:
                 bin_key = str(root_spans[0]["key"])
-        if logical_section:
+        if logical_section and input_mode == "sectioned":
+            root_urls = _native_manifest_urls(root_spans)
+            input_manifest = build_native_multispan_manifest(
+                solve_source_manifest,
+                source_family="slv",
+                solve_start=int(step_start),
+                solve_count=int(step_count),
+                url_by_key=root_urls,
+            )
+            input_manifest_path = write_native_multispan_manifest(_TMP_INPUT_MANIFEST, input_manifest)
+            source_size = int(input_manifest["logical_size"])
+            effective_input_mode = "multispan_sectioned"
+            progress["dl_ms"] = 0
+        elif logical_section:
             t0 = time.time()
             source_size = stitch_spans_to_file(s3, BUCKET, root_spans, _TMP_INPUT)
             progress["dl_ms"] = int((time.time() - t0) * 1000)
@@ -301,18 +347,26 @@ def handler(event, context):
                         f"param-source palette chunk requires params_step_count == step_count, got {params_step_count}/{step_count}"
                     )
             if logical_section and (uses_coeff_source or uses_param_source) and not (coeff_spans or param_spans):
-                spans = build_logical_section_spans(
-                    chunk_manifest,
+                if not solve_source_manifest:
+                    raise RuntimeError("logical palette chunk requires solve_source_manifest")
+                root_spans = build_source_spans(
+                    solve_source_manifest,
+                    source_family="slv",
                     solve_start=step_start,
                     solve_count=step_count,
-                    degree=int(degree),
-                    n_coeffs=int(n_coeffs or 0),
-                    include_coeff=uses_coeff_source,
-                    include_param=uses_param_source,
                 )
-                root_spans = list(spans["root_spans"])
-                coeff_spans = list(spans["coeff_spans"])
-                param_spans = list(spans["param_spans"])
+                coeff_spans = build_source_spans(
+                    solve_source_manifest,
+                    source_family="cf",
+                    solve_start=step_start,
+                    solve_count=step_count,
+                ) if uses_coeff_source else []
+                param_spans = build_source_spans(
+                    solve_source_manifest,
+                    source_family="pm",
+                    solve_start=step_start,
+                    solve_count=step_count,
+                ) if uses_param_source else []
                 if root_spans and not bin_key:
                     bin_key = str(root_spans[0]["key"])
                 if coeff_spans and not coeffs_key:
@@ -344,7 +398,22 @@ def handler(event, context):
         if is_v2_bins:
             cmd.extend(_solve_score_program_args(bins_data))
             if uses_coeff_source:
-                if logical_section and coeff_spans:
+                if logical_section and effective_input_mode == "multispan_sectioned":
+                    coeff_urls = _native_manifest_urls(coeff_spans)
+                    coeff_manifest = build_native_multispan_manifest(
+                        solve_source_manifest,
+                        source_family="cf",
+                        solve_start=int(step_start),
+                        solve_count=int(step_count),
+                        url_by_key=coeff_urls,
+                    )
+                    coeff_manifest_path = write_native_multispan_manifest(_TMP_SCORE_COEFFS_MANIFEST, coeff_manifest)
+                    progress["source_coeffs_size"] = int(coeff_manifest["logical_size"])
+                    cmd.extend([
+                        f"--score_coeff_manifest={coeff_manifest_path}",
+                        f"--score_coeff_degree={n_coeffs}",
+                    ])
+                elif logical_section and coeff_spans:
                     progress["source_coeffs_size"] = stitch_spans_to_file(s3, BUCKET, coeff_spans, _TMP_SCORE_COEFFS)
                     cmd.extend([
                         f"--score_coeffs_file={_TMP_SCORE_COEFFS}",
@@ -379,8 +448,21 @@ def handler(event, context):
                         f"--score_coeff_degree={n_coeffs}",
                     ])
             if uses_param_source:
-                if logical_section and param_spans:
+                if logical_section and effective_input_mode == "multispan_sectioned":
+                    param_urls = _native_manifest_urls(param_spans)
+                    param_manifest = build_native_multispan_manifest(
+                        solve_source_manifest,
+                        source_family="pm",
+                        solve_start=int(step_start),
+                        solve_count=int(step_count),
+                        url_by_key=param_urls,
+                    )
+                    param_manifest_path = write_native_multispan_manifest(_TMP_SCORE_PARAMS_MANIFEST, param_manifest)
+                    param_size = int(param_manifest["logical_size"])
+                    cmd.append(f"--score_params_manifest={param_manifest_path}")
+                elif logical_section and param_spans:
                     param_size = stitch_spans_to_file(s3, BUCKET, param_spans, _TMP_SCORE_PARAMS)
+                    cmd.append(f"--score_params_file={_TMP_SCORE_PARAMS}")
                 else:
                     param_size = _download_range(
                         params_key,
@@ -388,8 +470,8 @@ def handler(event, context):
                         int(params_step_start) * 4 * 4,
                         int(params_step_count) * 4 * 4,
                     )
+                    cmd.append(f"--score_params_file={_TMP_SCORE_PARAMS}")
                 progress["source_params_size"] = param_size
-                cmd.append(f"--score_params_file={_TMP_SCORE_PARAMS}")
         else:
             cmd.extend([
                 f"--metric={metric}",
@@ -409,6 +491,8 @@ def handler(event, context):
                     f"--url={sectioned_url}",
                     f"--input_size={source_size}",
                 ])
+            elif effective_input_mode == "multispan_sectioned":
+                cmd.append(f"--input_manifest={input_manifest_path}")
         if root_transforms:
             with open(_TMP_XFORMS, "w") as xf:
                 json.dump(root_transforms, xf)
@@ -456,7 +540,7 @@ def handler(event, context):
 
         chunk_meta = {
             "job_id": job_id,
-            "chunk_idx": int(section_idx),
+            "section_idx": int(section_idx),
             "step_start": step_start,
             "step_count": step_count,
             "metric": metric,
@@ -476,7 +560,6 @@ def handler(event, context):
         s3.put_object(Bucket=BUCKET, Key=meta_key, Body=json.dumps(chunk_meta), ContentType="application/json")
 
         result_data = attach_contract_warnings({
-            "chunk_idx": chunk_idx,
             "section_idx": section_idx,
             "section_count": section_count,
             "step_start": step_start,

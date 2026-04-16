@@ -1,3 +1,4 @@
+import json
 import math
 import os
 
@@ -8,6 +9,7 @@ MAX_LOGICAL_SECTIONS = 4096
 
 DEFAULT_SOLVE_SCORE_MEMORY_MB = int(os.environ.get("SOLVE_PROXIMITY_MEMORY_MB", "4096") or 4096)
 DEFAULT_PALETTE_CHUNK_MEMORY_MB = int(os.environ.get("PALETTE_CHUNK_MEMORY_MB", "1769") or 1769)
+DEFAULT_RASTER_MEMORY_MB = int(os.environ.get("RASTER_MT_MEMORY_MB", "4096") or 4096)
 AUTO_USABLE_FRACTION = float(os.environ.get("RENDER_SECTION_AUTO_USABLE_FRACTION", "0.40") or 0.40)
 AUTO_FIXED_OVERHEAD_MB = int(os.environ.get("RENDER_SECTION_AUTO_FIXED_OVERHEAD_MB", "96") or 96)
 AUTO_PER_THREAD_OVERHEAD_MB = int(os.environ.get("RENDER_SECTION_AUTO_PER_THREAD_MB", "8") or 8)
@@ -44,6 +46,13 @@ def coeff_row_bytes(n_coeffs):
 
 def param_row_bytes():
     return 16
+
+
+def _normalize_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(default)
 
 
 def choose_representative_chunk(items, size_key="bin_size"):
@@ -103,6 +112,8 @@ def _phase_memory_mb(phase):
         return DEFAULT_SOLVE_SCORE_MEMORY_MB
     if phase_key in ("palette", "associated_palette", "palette_chunk"):
         return DEFAULT_PALETTE_CHUNK_MEMORY_MB
+    if phase_key in ("raster", "color_raster", "raster_mt"):
+        return DEFAULT_RASTER_MEMORY_MB
     return DEFAULT_SOLVE_SCORE_MEMORY_MB
 
 
@@ -175,6 +186,240 @@ def _sorted_chunk_items(chunk_items):
     items = [dict(item) for item in (chunk_items or [])]
     items.sort(key=lambda item: (int(item.get("step_start") or 0), int(item.get("chunk_idx") or 0)))
     return items
+
+
+def build_physical_section_items(chunk_items):
+    items = _sorted_chunk_items(chunk_items)
+    section_count = len(items)
+    out = []
+    for section_idx, item in enumerate(items):
+        out.append({
+            "section_idx": section_idx,
+            "section_count": section_count,
+            "step_start": _normalize_int(item.get("step_start")),
+            "step_count": _normalize_int(item.get("step_count")),
+            "bin_key": str(item.get("bin_key") or ""),
+            "coeffs_key": str(item.get("coeffs_key") or ""),
+            "params_key": str(item.get("params_key") or ""),
+            "bin_size": _normalize_int(item.get("bin_size")),
+            "coeffs_bin_size": _normalize_int(item.get("coeffs_bin_size")),
+            "params_bin_size": _normalize_int(item.get("params_bin_size")),
+            "params_step_start": _normalize_int(item.get("params_step_start"), _normalize_int(item.get("step_start"))),
+            "params_step_count": _normalize_int(item.get("params_step_count"), _normalize_int(item.get("step_count"))),
+        })
+    return out
+
+
+def _source_segments_from_chunk_items(items, *, family, degree, n_coeffs):
+    if family == "slv":
+        row_bytes = root_row_bytes(degree)
+        key_field = "bin_key"
+        size_field = "bin_size"
+        source_start_field = None
+        solve_count_field = "step_count"
+    elif family == "cf":
+        row_bytes = coeff_row_bytes(n_coeffs)
+        key_field = "coeffs_key"
+        size_field = "coeffs_bin_size"
+        source_start_field = None
+        solve_count_field = "step_count"
+    elif family == "pm":
+        row_bytes = param_row_bytes()
+        key_field = "params_key"
+        size_field = "params_bin_size"
+        source_start_field = "params_step_start"
+        solve_count_field = "params_step_count"
+    else:
+        raise RuntimeError(f"Unknown source family: {family}")
+
+    segments = []
+    for idx, item in enumerate(items):
+        key = str(item.get(key_field) or "").strip()
+        if not key:
+            continue
+        solve_start = item.get("step_start")
+        solve_count = item.get(solve_count_field)
+        if solve_start in ("", None) or solve_count in ("", None):
+            continue
+        solve_start = int(solve_start)
+        solve_count = int(solve_count)
+        if solve_count <= 0:
+            continue
+        source_solve_start = int(item.get(source_start_field) or 0) if source_start_field else 0
+        byte_size = item.get(size_field)
+        if byte_size in ("", None):
+            byte_size = solve_count * row_bytes
+        segments.append({
+            "storage_id": f"{family}_{idx:04d}",
+            "key": key,
+            "solve_start": solve_start,
+            "solve_count": solve_count,
+            "source_solve_start": source_solve_start,
+            "byte_size": int(byte_size),
+        })
+    return {
+        "row_bytes": row_bytes,
+        "segments": segments,
+    }
+
+
+def build_solve_source_manifest(chunk_items, *, job_id, degree, n_coeffs):
+    items = _sorted_chunk_items(chunk_items)
+    slv_row_bytes = root_row_bytes(degree)
+    cf_row_bytes = coeff_row_bytes(n_coeffs)
+    pm_row_bytes = param_row_bytes()
+    slv_segments = []
+    cf_segments = []
+    pm_segments = []
+    for idx, item in enumerate(items):
+        step_start = _normalize_int(item.get("step_start"))
+        step_count = _normalize_int(item.get("step_count"))
+        if step_count <= 0:
+            continue
+
+        bin_key = str(item.get("bin_key") or "").strip()
+        if bin_key:
+            slv_segments.append({
+                "storage_id": f"slv_{idx:04d}",
+                "key": bin_key,
+                "solve_start": step_start,
+                "solve_count": step_count,
+                "source_solve_start": 0,
+                "byte_size": _normalize_int(item.get("bin_size"), step_count * slv_row_bytes),
+            })
+
+        coeffs_key = str(item.get("coeffs_key") or "").strip()
+        if coeffs_key:
+            cf_segments.append({
+                "storage_id": f"cf_{idx:04d}",
+                "key": coeffs_key,
+                "solve_start": step_start,
+                "solve_count": step_count,
+                "source_solve_start": 0,
+                "byte_size": _normalize_int(item.get("coeffs_bin_size"), step_count * cf_row_bytes),
+            })
+
+        params_key = str(item.get("params_key") or "").strip()
+        params_step_count = _normalize_int(item.get("params_step_count"), step_count)
+        if params_key and params_step_count > 0:
+            pm_segments.append({
+                "storage_id": f"pm_{idx:04d}",
+                "key": params_key,
+                "solve_start": step_start,
+                "solve_count": params_step_count,
+                "source_solve_start": _normalize_int(item.get("params_step_start")),
+                "byte_size": _normalize_int(item.get("params_bin_size"), params_step_count * pm_row_bytes),
+            })
+
+    return {
+        "version": 1,
+        "job_id": str(job_id or ""),
+        "total_solves": sum(_normalize_int(item.get("step_count")) for item in items),
+        "degree": _normalize_int(degree),
+        "n_coeffs": _normalize_int(n_coeffs),
+        "sources": {
+            "slv": {
+                "row_bytes": slv_row_bytes,
+                "segments": slv_segments,
+            },
+            "cf": {
+                "row_bytes": cf_row_bytes,
+                "segments": cf_segments,
+            },
+            "pm": {
+                "row_bytes": pm_row_bytes,
+                "segments": pm_segments,
+            },
+        },
+    }
+
+
+def build_source_spans(solve_source_manifest, *, source_family, solve_start, solve_count):
+    manifest = dict(solve_source_manifest or {})
+    sources = dict(manifest.get("sources") or {})
+    source = dict(sources.get(source_family) or {})
+    row_bytes_value = int(source.get("row_bytes") or 0)
+    if row_bytes_value <= 0:
+        return []
+    segments = list(source.get("segments") or [])
+    section_end = int(solve_start) + int(solve_count)
+    out = []
+    for segment in sorted(segments, key=lambda row: (int(row.get("solve_start") or 0), str(row.get("storage_id") or ""))):
+        segment_start = int(segment.get("solve_start") or 0)
+        segment_count = int(segment.get("solve_count") or 0)
+        segment_end = segment_start + segment_count
+        overlap_start = max(int(solve_start), segment_start)
+        overlap_end = min(section_end, segment_end)
+        if overlap_end <= overlap_start:
+            continue
+        overlap_count = overlap_end - overlap_start
+        source_origin = int(segment.get("source_solve_start") or 0)
+        source_offset_solves = source_origin + (overlap_start - segment_start)
+        out.append({
+            "storage_id": str(segment.get("storage_id") or ""),
+            "key": str(segment.get("key") or ""),
+            "solve_start": overlap_start,
+            "solve_count": overlap_count,
+            "local_solve_start": overlap_start - int(solve_start),
+            "byte_start": source_offset_solves * row_bytes_value,
+            "byte_length": overlap_count * row_bytes_value,
+        })
+    return out
+
+
+def build_native_multispan_manifest(solve_source_manifest, *, source_family, solve_start, solve_count, url_by_key):
+    manifest = dict(solve_source_manifest or {})
+    source = dict((manifest.get("sources") or {}).get(source_family) or {})
+    row_bytes_value = int(source.get("row_bytes") or 0)
+    if row_bytes_value <= 0:
+        raise RuntimeError(f"solve_source_manifest missing row_bytes for source family {source_family}")
+    spans = build_source_spans(
+        solve_source_manifest,
+        source_family=source_family,
+        solve_start=solve_start,
+        solve_count=solve_count,
+    )
+    if not spans:
+        raise RuntimeError(
+            f"solve_source_manifest produced no spans for source family {source_family} "
+            f"(solve_start={solve_start}, solve_count={solve_count})"
+        )
+    sources = []
+    source_ids = {}
+    native_spans = []
+    for span in spans:
+        key = str(span["key"])
+        if key not in url_by_key:
+            raise RuntimeError(f"Missing presigned URL for source family {source_family} key {key}")
+        if key not in source_ids:
+            source_id = len(sources)
+            source_ids[key] = source_id
+            sources.append({
+                "id": source_id,
+                "url": str(url_by_key[key]),
+                "key": key,
+            })
+        native_spans.append({
+            "source_id": source_ids[key],
+            "logical_byte_start": int(span["local_solve_start"]) * row_bytes_value,
+            "byte_start": int(span["byte_start"]),
+            "byte_length": int(span["byte_length"]),
+        })
+    return {
+        "source_family": source_family,
+        "logical_size": int(solve_count) * row_bytes_value,
+        "row_bytes": row_bytes_value,
+        "solve_start": int(solve_start),
+        "solve_count": int(solve_count),
+        "sources": sources,
+        "spans": native_spans,
+    }
+
+
+def write_native_multispan_manifest(path, manifest):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, separators=(",", ":"))
+    return path
 
 
 def _chunk_overlap_spans(chunk_items, solve_start, solve_count, *, source_key_name, row_bytes_value, step_start_name="step_start", step_count_name="step_count", source_start_solve_name=None):
@@ -264,7 +509,6 @@ def build_logical_section_items(chunk_items, *, section_count, degree, n_coeffs,
         if solve_count <= 0:
             continue
         section = {
-            "chunk_idx": section_idx,
             "section_idx": section_idx,
             "section_count": section_count,
             "step_start": cursor,

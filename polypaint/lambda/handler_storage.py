@@ -30,6 +30,7 @@ from logical_sections import (
     AUTO_PER_THREAD_OVERHEAD_MB,
     AUTO_USABLE_FRACTION,
     DEFAULT_PALETTE_CHUNK_MEMORY_MB,
+    DEFAULT_RASTER_MEMORY_MB,
     DEFAULT_SOLVE_SCORE_MEMORY_MB,
     summarize_chunk_items,
 )
@@ -517,9 +518,9 @@ def _list_saved_palettes(job_id):
             preview_key = meta.get("preview_key", prefix + "preview.png")
             score_key = meta.get("score_key")
             palette_bins_key = meta.get("palette_bins_key")
-            chunk_scores_prefix = meta.get("chunk_scores_prefix", prefix + "chunks/score_chunk_")
-            chunk_bins_prefix = meta.get("chunk_bins_prefix", prefix + "chunks/palette_bins_chunk_")
-            chunk_meta_prefix = meta.get("chunk_meta_prefix", prefix + "chunks/meta_chunk_")
+            section_scores_prefix = meta.get("section_scores_prefix", meta.get("chunk_scores_prefix", prefix + "chunks/score_section_"))
+            section_bins_prefix = meta.get("section_bins_prefix", meta.get("chunk_bins_prefix", prefix + "chunks/palette_bins_section_"))
+            section_meta_prefix = meta.get("section_meta_prefix", meta.get("chunk_meta_prefix", prefix + "chunks/meta_section_"))
             render_reusable = _parse_bool(meta.get("render_reusable"), False)
             data_layout = meta.get("data_layout", "")
             meta["family"] = "palette"
@@ -530,9 +531,12 @@ def _list_saved_palettes(job_id):
                 meta["score_key"] = score_key
             if palette_bins_key:
                 meta["palette_bins_key"] = palette_bins_key
-            meta["chunk_scores_prefix"] = chunk_scores_prefix
-            meta["chunk_bins_prefix"] = chunk_bins_prefix
-            meta["chunk_meta_prefix"] = chunk_meta_prefix
+            meta["section_scores_prefix"] = section_scores_prefix
+            meta["section_bins_prefix"] = section_bins_prefix
+            meta["section_meta_prefix"] = section_meta_prefix
+            meta["chunk_scores_prefix"] = section_scores_prefix
+            meta["chunk_bins_prefix"] = section_bins_prefix
+            meta["chunk_meta_prefix"] = section_meta_prefix
             meta["render_reusable"] = render_reusable
             meta["data_layout"] = data_layout
             meta["solve_score_omega_enabled"] = _parse_bool(meta.get("solve_score_omega_enabled"), True)
@@ -1470,6 +1474,7 @@ def _render_summary_calc(calc_data):
                 **summary,
                 "solve_hist_memory_mb": DEFAULT_SOLVE_SCORE_MEMORY_MB,
                 "palette_chunk_memory_mb": DEFAULT_PALETTE_CHUNK_MEMORY_MB,
+                "raster_memory_mb": DEFAULT_RASTER_MEMORY_MB,
                 "auto_usable_fraction": AUTO_USABLE_FRACTION,
                 "auto_fixed_overhead_mb": AUTO_FIXED_OVERHEAD_MB,
                 "auto_per_thread_overhead_mb": AUTO_PER_THREAD_OVERHEAD_MB,

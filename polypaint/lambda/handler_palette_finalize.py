@@ -153,9 +153,9 @@ def handler(event, context):
         contract_param(params, "cleanup_solve_score_scratch", True, contract_warnings),
         True,
     )
-    chunk_scores_prefix = params.get("chunk_scores_prefix", chunks_prefix + "score_chunk_")
-    chunk_bins_prefix = params.get("chunk_bins_prefix", chunks_prefix + "palette_bins_chunk_")
-    chunk_meta_prefix = params.get("chunk_meta_prefix", chunks_prefix + "meta_chunk_")
+    section_scores_prefix = params.get("section_scores_prefix", params.get("chunk_scores_prefix", chunks_prefix + "score_section_"))
+    section_bins_prefix = params.get("section_bins_prefix", params.get("chunk_bins_prefix", chunks_prefix + "palette_bins_section_"))
+    section_meta_prefix = params.get("section_meta_prefix", params.get("chunk_meta_prefix", chunks_prefix + "meta_section_"))
     source_color_artifact_id = str(params.get("source_color_artifact_id") or "").strip()
 
     progress = attach_contract_warnings({"phase": "palette_finalize", "palette_id": palette_id}, contract_warnings)
@@ -164,15 +164,15 @@ def handler(event, context):
         report_status(job_id, task_id, "started", result_data=progress)
 
         t0 = time.time()
-        meta_keys = [k for k in _list_keys(chunk_meta_prefix) if k.endswith(".json")]
+        meta_keys = [k for k in _list_keys(section_meta_prefix) if k.endswith(".json")]
         if not meta_keys:
-            raise RuntimeError(f"No chunk metadata found under {chunks_prefix}")
+            raise RuntimeError(f"No palette section metadata found under {chunks_prefix}")
 
         chunk_meta = []
         for key in meta_keys:
             obj = s3.get_object(Bucket=BUCKET, Key=key)
             chunk_meta.append(json.loads(obj["Body"].read()))
-        chunk_meta.sort(key=lambda m: (m.get("step_start", 0), m.get("chunk_idx", 0)))
+        chunk_meta.sort(key=lambda m: (m.get("step_start", 0), m.get("section_idx", m.get("chunk_idx", 0))))
 
         pass0_steps = full_n * full_n
         bins = bytearray(pass0_steps)
@@ -185,7 +185,7 @@ def handler(event, context):
             step_start = int(meta["step_start"])
             step_count = int(meta["step_count"])
             if step_start < 0:
-                raise RuntimeError(f"Chunk {meta.get('chunk_idx')} writes negative solve index at {step_start}")
+                raise RuntimeError(f"Section {meta.get('section_idx', meta.get('chunk_idx'))} writes negative solve index at {step_start}")
             pass0_count = max(0, min(step_count, pass0_steps - step_start))
             if pass0_count <= 0:
                 pass0_chunks_skipped += 1
@@ -195,7 +195,10 @@ def handler(event, context):
             bin_bytes = _read_palette_bin_prefix(bin_key, range_count)
             expected_len = pass0_count if range_count is not None else step_count
             if len(bin_bytes) != expected_len:
-                raise RuntimeError(f"Chunk {meta.get('chunk_idx')} bin length {len(bin_bytes)} != {expected_len}")
+                raise RuntimeError(
+                    f"Section {meta.get('section_idx', meta.get('chunk_idx'))} "
+                    f"bin length {len(bin_bytes)} != {expected_len}"
+                )
             if range_count is None:
                 bin_bytes = bin_bytes[:pass0_count]
 
@@ -307,9 +310,12 @@ def handler(event, context):
             "file_size": file_size,
             "image_key": image_key,
             "preview_key": preview_key,
-            "chunk_scores_prefix": chunk_scores_prefix,
-            "chunk_bins_prefix": chunk_bins_prefix,
-            "chunk_meta_prefix": chunk_meta_prefix,
+            "section_scores_prefix": section_scores_prefix,
+            "section_bins_prefix": section_bins_prefix,
+            "section_meta_prefix": section_meta_prefix,
+            "chunk_scores_prefix": section_scores_prefix,
+            "chunk_bins_prefix": section_bins_prefix,
+            "chunk_meta_prefix": section_meta_prefix,
         }
         if isinstance(render_execution, dict):
             meta_body["render_execution"] = render_execution

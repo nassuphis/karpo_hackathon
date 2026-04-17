@@ -94,7 +94,13 @@ typedef struct {
     int nSolveScoreCuts;
     uint32_t constRGB;
     int emitPixelBins;
+    int emitPaletteBins;
     int skipPixOutput;
+    int solveScoreRawBytes;
+    long long paletteStepStart;
+    int paletteGridN;
+    int paletteNTileCols;
+    int paletteNTileRows;
     const float *roots;
     const float *scoreCoeffRows;
     const float *scoreParamRows;
@@ -126,6 +132,8 @@ typedef struct {
     int *tileW;
     U32Vec *pixVecs;
     U32Vec *pbxVecs;
+    int *paletteTileW;
+    U32Vec *palettePbxVecs;
     unsigned char rbPalR[MAXDEG];
     unsigned char rbPalG[MAXDEG];
     unsigned char rbPalB[MAXDEG];
@@ -363,8 +371,13 @@ static void free_worker_storage(WorkerArgs *args, int nWorkers, int nTiles) {
         if (args[i].pbxVecs) {
             for (int t = 0; t < nTiles; t++) free(args[i].pbxVecs[t].data);
         }
+        if (args[i].palettePbxVecs) {
+            int paletteTiles = args[i].paletteNTileCols * args[i].paletteNTileRows;
+            for (int t = 0; t < paletteTiles; t++) free(args[i].palettePbxVecs[t].data);
+        }
         free(args[i].pixVecs);
         free(args[i].pbxVecs);
+        free(args[i].palettePbxVecs);
     }
 }
 
@@ -549,10 +562,20 @@ static void *worker_main(void *arg_) {
                 u = apply_solve_score_transfer(u, arg->solveScoreOmegaEnabled, arg->solveScoreOmega);
             }
             int bin = 9;
-            for (int c = 0; c < arg->nSolveScoreCuts; c++) {
-                if (u <= arg->solveScoreCuts[c]) { bin = c; break; }
+            if (arg->solveScoreRawBytes) {
+                int rawByte = 1 + (int)llround(u * 254.0);
+                if (rawByte < 1) rawByte = 1;
+                if (rawByte > 255) rawByte = 255;
+                solveBin = (uint8_t)rawByte;
+                bin = (int)(((double)(rawByte - 1) * 10.0) / 255.0);
+                if (bin < 0) bin = 0;
+                if (bin > 9) bin = 9;
+            } else {
+                for (int c = 0; c < arg->nSolveScoreCuts; c++) {
+                    if (u <= arg->solveScoreCuts[c]) { bin = c; break; }
+                }
+                solveBin = (uint8_t)bin;
             }
-            solveBin = (uint8_t)bin;
             solveRGB = ((uint32_t)arg->ssPalR[bin] << 16) |
                        ((uint32_t)arg->ssPalG[bin] << 8) |
                        arg->ssPalB[bin];
@@ -566,6 +589,27 @@ static void *worker_main(void *arg_) {
             solveRGB = ((uint32_t)arg->ssPalR[bin] << 16) |
                        ((uint32_t)arg->ssPalG[bin] << 8) |
                        arg->ssPalB[bin];
+        }
+
+        if (arg->emitPaletteBins && arg->colorMode == COLOR_SOLVE_SCORE) {
+            long long globalStep = arg->paletteStepStart + p;
+            long long pass0Steps = (long long)arg->paletteGridN * (long long)arg->paletteGridN;
+            if (globalStep >= 0 && globalStep < pass0Steps) {
+                int row = (int)(globalStep / (long long)arg->paletteGridN);
+                int j = (int)(globalStep % (long long)arg->paletteGridN);
+                int col = (row & 1) ? (arg->paletteGridN - 1 - j) : j;
+                int paletteTileCol = col / arg->tileSize;
+                int paletteTileRow = row / arg->tileSize;
+                int paletteTileId = paletteTileRow * arg->paletteNTileCols + paletteTileCol;
+                uint32_t paletteLocalX = (uint32_t)(col - paletteTileCol * arg->tileSize);
+                uint32_t paletteLocalY = (uint32_t)(row - paletteTileRow * arg->tileSize);
+                uint32_t palettePixIdx =
+                    paletteLocalY * (uint32_t)arg->paletteTileW[paletteTileId] + paletteLocalX;
+                if (!vec_push2(&arg->palettePbxVecs[paletteTileId], palettePixIdx, (uint32_t)solveBin)) {
+                    worker_fail(arg, "palette pbx vec alloc failed");
+                    goto cleanup;
+                }
+            }
         }
 
         for (int r = 0; r < arg->degree; r++) {
@@ -644,9 +688,12 @@ int main(int argc, char **argv) {
                 "[--match=none] [--palette=<name>] [--constant_color=RRGGBB] "
                 "[--solve_metric=proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re|min_mod|max_mod|min_angular_separation] "
                 "[--solve_score_clip_lo=X --solve_score_clip_hi=Y --solve_score_cuts=c1,...,c9] "
+                "[--solve_score_raw_bytes=0|1] "
                 "[--solve_score_omega=W] [--solve_score_omega_enabled=0|1] "
                 "[--score_coeff_manifest=file.json] [--score_params_manifest=file.json] "
-                "[--solve_bins_file=file.bin] [--pixel_bin_prefix=/tmp/pixbin] [--skip_pix_output=0|1] [--root_xforms=file.json]\n");
+                "[--solve_bins_file=file.bin] [--pixel_bin_prefix=/tmp/pixbin] "
+                "[--palette_bin_prefix=/tmp/palette_pixbin] [--palette_grid_n=N] [--palette_step_start=STEP] "
+                "[--skip_pix_output=0|1] [--root_xforms=file.json]\n");
         return 1;
     }
 
@@ -674,7 +721,11 @@ int main(int argc, char **argv) {
     const char *palName = getArgStr(argc, argv, "--palette", "inferno");
     const char *solveBinsPath = getArgStr(argc, argv, "--solve_bins_file", NULL);
     const char *pixelBinPrefix = getArgStr(argc, argv, "--pixel_bin_prefix", NULL);
+    const char *paletteBinPrefix = getArgStr(argc, argv, "--palette_bin_prefix", NULL);
     int skipPixOutput = getArgInt(argc, argv, "--skip_pix_output", 0);
+    int solveScoreRawBytes = getArgInt(argc, argv, "--solve_score_raw_bytes", 0);
+    int paletteGridN = getArgInt(argc, argv, "--palette_grid_n", 0);
+    long long paletteStepStart = getArgLongLong(argc, argv, "--palette_step_start", 0);
     const char *constColorStr = getArgStr(argc, argv, "--constant_color", "ffffff");
     const char *rtPath = getArgStr(argc, argv, "--root_xforms", NULL);
     enum InputMode inputMode = INPUT_TMPFILE;
@@ -787,7 +838,7 @@ int main(int argc, char **argv) {
         useScoreProgram = 1;
     }
     if (colorMode == COLOR_SOLVE_SCORE) {
-        if (nSolveScoreCuts != 9) {
+        if (!solveScoreRawBytes && nSolveScoreCuts != 9) {
             fprintf(stderr, "solve_score requires exactly 9 cuts (got %d)\n", nSolveScoreCuts);
             return 1;
         }
@@ -1132,15 +1183,32 @@ int main(int argc, char **argv) {
 
     int tileW[MAX_TILES];
     int tileH[MAX_TILES];
+    int paletteTileW[MAX_TILES];
+    int paletteTileH[MAX_TILES];
     size_t tileWordCount[MAX_TILES];
     uint64_t *tileBits[MAX_TILES] = {0};
     unsigned char rbPalR[MAXDEG], rbPalG[MAXDEG], rbPalB[MAXDEG];
     unsigned char ssPalR[10] = {0}, ssPalG[10] = {0}, ssPalB[10] = {0};
     int emitPixelBins = pixelBinPrefix &&
         (colorMode == COLOR_SOLVE_SCORE || colorMode == COLOR_SAVED_PALETTE);
+    int emitPaletteBins = paletteBinPrefix && *paletteBinPrefix;
     if (skipPixOutput && !emitPixelBins) {
         fprintf(stderr, "--skip_pix_output requires --pixel_bin_prefix in solve_score/saved_palette mode\n");
         return 1;
+    }
+    if (emitPaletteBins) {
+        if (colorMode != COLOR_SOLVE_SCORE) {
+            fprintf(stderr, "--palette_bin_prefix currently requires --color=solve_score\n");
+            return 1;
+        }
+        if (!solveScoreRawBytes) {
+            fprintf(stderr, "--palette_bin_prefix requires --solve_score_raw_bytes=1\n");
+            return 1;
+        }
+        if (paletteGridN < 1) {
+            fprintf(stderr, "--palette_grid_n must be >= 1 when --palette_bin_prefix is set\n");
+            return 1;
+        }
     }
     int threads = clamp_threads(requestedThreads, nPoints);
     WorkerArgs *args = NULL;
@@ -1156,6 +1224,8 @@ int main(int argc, char **argv) {
     long totalDownloadUs = 0;
     long totalNativeUs = 0;
     char workerErrorMsg[256] = {0};
+    int paletteNTileCols = 0;
+    int paletteNTileRows = 0;
 
     for (int t = 0; t < nTiles; t++) {
         int tc = t % nTileCols;
@@ -1171,6 +1241,26 @@ int main(int argc, char **argv) {
         if (!tileBits[t]) {
             fprintf(stderr, "Cannot allocate tile bitset %d\n", t);
             goto cleanup;
+        }
+    }
+    if (emitPaletteBins) {
+        int paletteTiles = 0;
+        paletteNTileCols = (paletteGridN + tileSize - 1) / tileSize;
+        paletteNTileRows = (paletteGridN + tileSize - 1) / tileSize;
+        paletteTiles = paletteNTileCols * paletteNTileRows;
+        if (paletteTiles > MAX_TILES) {
+            fprintf(stderr, "palette tile count %d exceeds MAX_TILES=%d\n", paletteTiles, MAX_TILES);
+            goto cleanup;
+        }
+        for (int t = 0; t < paletteTiles; t++) {
+            int tc = t % paletteNTileCols;
+            int tr = t / paletteNTileCols;
+            paletteTileW[t] = (tc < paletteNTileCols - 1) ? tileSize : (paletteGridN - tc * tileSize);
+            paletteTileH[t] = (tr < paletteNTileRows - 1) ? tileSize : (paletteGridN - tr * tileSize);
+            if (paletteTileW[t] <= 0 || paletteTileH[t] <= 0) {
+                fprintf(stderr, "Invalid palette tile %d geometry\n", t);
+                goto cleanup;
+            }
         }
     }
 
@@ -1240,7 +1330,13 @@ int main(int argc, char **argv) {
         args[i].nSolveScoreCuts = nSolveScoreCuts;
         args[i].constRGB = constRGB;
         args[i].emitPixelBins = emitPixelBins;
+        args[i].emitPaletteBins = emitPaletteBins;
         args[i].skipPixOutput = skipPixOutput;
+        args[i].solveScoreRawBytes = solveScoreRawBytes;
+        args[i].paletteStepStart = paletteStepStart;
+        args[i].paletteGridN = paletteGridN;
+        args[i].paletteNTileCols = paletteNTileCols;
+        args[i].paletteNTileRows = paletteNTileRows;
         args[i].roots = roots;
         args[i].scoreCoeffRows = scoreCoeffRows;
         args[i].scoreParamRows = scoreParamRows;
@@ -1277,15 +1373,21 @@ int main(int argc, char **argv) {
         args[i].scoreParamReader = (scoreProgramUsesParamSources && inputMode == INPUT_MULTISPAN_SECTIONED) ? &scoreParamReader : NULL;
         args[i].tileBits = tileBits;
         args[i].tileW = tileW;
+        args[i].paletteTileW = paletteTileW;
         args[i].pixVecs = skipPixOutput ? NULL : calloc((size_t)nTiles, sizeof(U32Vec));
         args[i].pbxVecs = emitPixelBins ? calloc((size_t)nTiles, sizeof(U32Vec)) : NULL;
+        args[i].palettePbxVecs = emitPaletteBins
+            ? calloc((size_t)(paletteNTileCols * paletteNTileRows), sizeof(U32Vec))
+            : NULL;
         memcpy(args[i].rbPalR, rbPalR, sizeof(rbPalR));
         memcpy(args[i].rbPalG, rbPalG, sizeof(rbPalG));
         memcpy(args[i].rbPalB, rbPalB, sizeof(rbPalB));
         memcpy(args[i].ssPalR, ssPalR, sizeof(ssPalR));
         memcpy(args[i].ssPalG, ssPalG, sizeof(ssPalG));
         memcpy(args[i].ssPalB, ssPalB, sizeof(ssPalB));
-        if ((!skipPixOutput && !args[i].pixVecs) || (emitPixelBins && !args[i].pbxVecs)) {
+        if ((!skipPixOutput && !args[i].pixVecs) ||
+            (emitPixelBins && !args[i].pbxVecs) ||
+            (emitPaletteBins && !args[i].palettePbxVecs)) {
             fprintf(stderr, "Out of memory for worker vectors\n");
             goto cleanup;
         }
@@ -1364,6 +1466,26 @@ int main(int argc, char **argv) {
             }
         }
     }
+    if (emitPaletteBins) {
+        int paletteTiles = paletteNTileCols * paletteNTileRows;
+        for (int t = 0; t < paletteTiles; t++) {
+            size_t tilePbxU32 = 0;
+            for (int i = 0; i < threads; i++) tilePbxU32 += args[i].palettePbxVecs[t].len;
+            if (tilePbxU32 <= 0) continue;
+            snprintf(pathBuf, sizeof(pathBuf), "%s_t%04d.pbx", paletteBinPrefix, t);
+            FILE *fb = fopen(pathBuf, "wb");
+            if (!fb) {
+                fprintf(stderr, "Cannot create %s\n", pathBuf);
+                goto cleanup;
+            }
+            for (int i = 0; i < threads; i++) {
+                if (args[i].palettePbxVecs[t].len > 0) {
+                    fwrite(args[i].palettePbxVecs[t].data, sizeof(uint32_t), args[i].palettePbxVecs[t].len, fb);
+                }
+            }
+            fclose(fb);
+        }
+    }
 
     if (rootsDeduped > 0) {
         fprintf(stderr, "dedup: %ld unique, %ld skipped\n", rootsPlotted, rootsDeduped);
@@ -1388,6 +1510,7 @@ int main(int argc, char **argv) {
         printf(",\"constant_color\":\"%s\"", constColorStr);
     }
     printf(",\"skip_pix_output\":%s", skipPixOutput ? "true" : "false");
+    printf(",\"solve_score_raw_bytes\":%s", solveScoreRawBytes ? "true" : "false");
     printf("}\n");
     exitCode = 0;
 

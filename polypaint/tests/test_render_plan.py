@@ -214,9 +214,49 @@ class TestRenderPlan(unittest.TestCase):
         assert plan["outputs"]["metadata"]["pixel_bins_prefix"] == "renders/j/color/color_run_t/pixel_bins/tile_"
         assert plan["outputs"]["metadata"]["pixel_bins_layout"] == "tile_u8_v1"
         assert plan["grid"]["pixel_bin_tile_prefix"] == "renders/j/color/color_run_t/pixel_bins/tile_"
+        assert plan["outputs"]["raw_key"] == ""
+        assert plan["outputs"]["raw_meta_key"] == ""
+        assert plan["outputs"]["fragment_prefix"] == ""
         assert plan["raster"]["requested_engine"] == "single"
         assert plan["raster"]["pixel_bin_fragment_mode"] == "sparse_chunks"
         assert plan["raster"]["raster_bin_group_size"] == ""
+
+    @patch("handler_render_plan._storage_call")
+    def test_fused_solve_score_plan_emits_raw_output_contract(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            color_pipeline="fused",
+            raster_engine="mt",
+            solve_metric="crowding",
+        ), None)
+        plan = json.loads(result["body"])
+
+        assert plan["render_execution"]["color_pipeline"] == "fused"
+        assert plan["raster"]["engine"] == "mt"
+        assert plan["raster"]["emit_raw_score_bins"] is True
+        assert plan["outputs"]["raw_key"] == "renders/j/color/color_run_t/greyscale.raw"
+        assert plan["outputs"]["raw_meta_key"] == "renders/j/color/color_run_t/greyscale.meta.json"
+        assert plan["outputs"]["fragment_prefix"] == "renders/j/color/color_run_t/fragments/section_"
+        assert plan["outputs"]["repalette_capable"] is False
+        assert plan["outputs"]["pixel_bins_drive_rgb"] is False
+
+    @patch("handler_render_plan._storage_call")
+    def test_fused_color_pipeline_rejects_non_solve_score_modes(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5, "n_chunks": 2,
+        })
+        from handler_render_plan import handler
+        with self.assertRaisesRegex(RuntimeError, "fused color pipeline currently supports only color_mode=solve_score"):
+            handler(_make_event(
+                color_mode="rainbow",
+                color_pipeline="fused",
+                raster_engine="mt",
+            ), None)
 
     @patch("handler_render_plan._storage_call")
     def test_render_plan_carries_selected_pixel_bin_fragment_options(self, mock_storage):
@@ -1059,6 +1099,45 @@ class TestRenderPlan(unittest.TestCase):
             ["omega_cosine", "4"],
         ]
         assert plan["outputs"]["metadata"]["associated_palette_omega_enabled"] == "true"
+
+    @patch("handler_render_plan._storage_call")
+    def test_fused_solve_score_plan_generates_inline_associated_palette_contract(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 5,
+            "N": 100,
+            "times": 2,
+            "chunks": [
+                {"idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_count": 6000},
+                {"idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_count": 14000},
+            ],
+            "lores": {"bin_key": "renders/j/lores.bin"},
+        })
+        from handler_render_plan import handler
+        result = handler(_make_event(
+            color_mode="solve_score",
+            color_pipeline="fused",
+            raster_engine="mt",
+            solve_metric="crowding",
+            solve_score_quantile=0.01,
+            solve_score_omega=4,
+            save_associated_palette=True,
+        ), None)
+        plan = json.loads(result["body"])
+        assoc = plan["associated_palette"]
+        assert assoc["enabled"] is True
+        assert assoc["mode"] == "generated"
+        assert assoc["raw_key"] == "renders/j/palettes/pal_color_run_t/greyscale.raw"
+        assert assoc["raw_meta_key"] == "renders/j/palettes/pal_color_run_t/greyscale.meta.json"
+        assert assoc["fragment_prefix"] == "renders/j/palettes/pal_color_run_t/fragments/section_"
+        assert assoc["source_color_artifact_id"] == "color_run_t"
+        assert assoc["chunk_input_mode"] == ""
+        assert assoc["chunk_retries"] == 0
+        assert assoc["chunk_workers"] == 0
+        assert assoc["section_mode"] == "inline_fused"
+        assert assoc["section_items"] == []
+        assert assoc["chunks_prefix"] == ""
+        assert assoc["section_bins_prefix"] == ""
+        assert assoc["chunk_bins_prefix"] == ""
 
     @patch("handler_render_plan._storage_call")
     def test_associated_palette_manual_logical_sections_build_cross_chunk_spans(self, mock_storage):

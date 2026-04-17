@@ -33,6 +33,14 @@ grep -q '<option value="sectioned">sectioned native</option>' "$HTML" || { echo 
 grep -q 'id="render-mt-raster-input-mode"' "$HTML" || { echo "FATAL: render MT raster input selector missing from index.html"; exit 1; }
 grep -q 'id="render-mt-merge-workers"' "$HTML" || { echo "FATAL: render MT merge workers input missing from index.html"; exit 1; }
 grep -q 'id="render-mt-finalize-workers"' "$HTML" || { echo "FATAL: render MT finalize workers input missing from index.html"; exit 1; }
+grep -q 'id="render-mt-tab-classic"' "$HTML" || { echo "FATAL: render MT classic tab missing from index.html"; exit 1; }
+grep -q 'id="render-mt-tab-fused"' "$HTML" || { echo "FATAL: render MT fused tab missing from index.html"; exit 1; }
+grep -q 'id="render-mt-classic-panel"' "$HTML" || { echo "FATAL: render MT classic panel missing from index.html"; exit 1; }
+grep -q 'id="render-mt-fused-panel"' "$HTML" || { echo "FATAL: render MT fused panel missing from index.html"; exit 1; }
+grep -q 'id="render-mt-classic-banner"' "$HTML" || { echo "FATAL: render MT classic banner missing from index.html"; exit 1; }
+grep -q 'id="render-mt-fused-readout"' "$HTML" || { echo "FATAL: render MT fused readout missing from index.html"; exit 1; }
+grep -q 'id="render-mt-fused-clip-threads"' "$HTML" || { echo "FATAL: render MT fused clip thread input missing from index.html"; exit 1; }
+grep -q 'id="render-mt-pipeline-banner"' "$HTML" || { echo "FATAL: render MT pipeline banner missing from index.html"; exit 1; }
 ! grep -q 'Finalize sections' "$HTML" || { echo "FATAL: render MT should not expose Finalize sections"; exit 1; }
 grep -q 'id="render-mt-hist-retries"' "$HTML" || { echo "FATAL: render MT hist retries input missing from index.html"; exit 1; }
 grep -q 'id="render-mt-raster-retries"' "$HTML" || { echo "FATAL: render MT raster retries input missing from index.html"; exit 1; }
@@ -53,12 +61,25 @@ grep -q 'id="compute-mt-coeffgen-threads"' "$HTML" || { echo "FATAL: compute MT 
 grep -q 'id="compute-mt-lores-param-gen-threads"' "$HTML" || { echo "FATAL: compute MT lores param thread input missing from index.html"; exit 1; }
 grep -q 'id="compute-mt-lores-coeffgen-threads"' "$HTML" || { echo "FATAL: compute MT lores coeffgen thread input missing from index.html"; exit 1; }
 grep -q 'id="compute-mt-fused-solve-threads"' "$HTML" || { echo "FATAL: compute MT fused solve row missing from index.html"; exit 1; }
+grep -q 'Hires param-gen threads' "$HTML" || { echo "FATAL: compute MT should label hires param-gen threads explicitly"; exit 1; }
+grep -q 'Hires coeffgen threads' "$HTML" || { echo "FATAL: compute MT should label hires coeffgen threads explicitly"; exit 1; }
+grep -q 'Lores param-gen threads' "$HTML" || { echo "FATAL: compute MT should label lores param-gen threads explicitly"; exit 1; }
+grep -q 'Lores coeffgen threads' "$HTML" || { echo "FATAL: compute MT should label lores coeffgen threads explicitly"; exit 1; }
+grep -q 'Shared hires threads' "$HTML" || { echo "FATAL: fused compute MT should label shared hires threads explicitly"; exit 1; }
+grep -q 'Min safe chunks=?' "$HTML" || { echo "FATAL: fused compute MT should label safe chunk guidance explicitly"; exit 1; }
+grep -q 'id="compute-mt-apply-safe-chunks" type="button" class="btn-inline">Use min safe chunks</button>' "$HTML" || { echo "FATAL: fused compute MT min-safe button should use the shared inline button class"; exit 1; }
+grep -q 'source-aligned' "$HTML" || { echo "FATAL: Render-MT section mode UI should use source-aligned wording"; exit 1; }
+grep -q 'auto split' "$HTML" || { echo "FATAL: Render-MT section mode UI should use auto split wording"; exit 1; }
+grep -q 'manual split' "$HTML" || { echo "FATAL: Render-MT section mode UI should use manual split wording"; exit 1; }
+! grep -q 'solver default' "$HTML" || { echo "FATAL: compute MT should not show dead solver default fields"; exit 1; }
 grep -q 'id="render-generate-save-associated-palette"' "$HTML" || { echo "FATAL: render generate associated palette checkbox missing from index.html"; exit 1; }
 grep -q 'id="render-mt-save-associated-palette"' "$HTML" || { echo "FATAL: render MT associated palette checkbox missing from index.html"; exit 1; }
 grep -q 'class="tri-popup render-mt-popup"' "$HTML" || { echo "FATAL: Generate-MT popup should use the dedicated tall popup layout class"; exit 1; }
 grep -q 'id="render-mt-popup-body"' "$HTML" || { echo "FATAL: Generate-MT popup should have a scrollable popup body"; exit 1; }
 grep -q '\.render-mt-popup-body {' "$HTML" || { echo "FATAL: Generate-MT popup body CSS missing"; exit 1; }
 grep -q '\.render-mt-popup {' "$HTML" || { echo "FATAL: Generate-MT popup sizing CSS missing"; exit 1; }
+grep -q 'id="render-mt-job-size" class="autolevel-popup-summary popup-stable-block large"' "$HTML" || { echo "FATAL: Generate-MT logical size summary should reserve height"; exit 1; }
+grep -q 'id="render-mt-hist-section-summary" class="autolevel-stage-text popup-stable-block medium"' "$HTML" || { echo "FATAL: Generate-MT section summaries should reserve height"; exit 1; }
 grep -q 'id="generate-from-palette-raster-threads"' "$HTML" || { echo "FATAL: GenerateFromPalette raster threads input missing from index.html"; exit 1; }
 grep -q 'id="generate-from-palette-raster-input-mode"' "$HTML" || { echo "FATAL: GenerateFromPalette raster input selector missing from index.html"; exit 1; }
 grep -q 'id="generate-from-palette-raster-retries"' "$HTML" || { echo "FATAL: GenerateFromPalette raster retries input missing from index.html"; exit 1; }
@@ -71,6 +92,18 @@ grep -q 'id="compute-preview-shim"' "$HTML" || { echo "FATAL: compute preview sh
 grep -q 'id="compute-preview-size"' "$HTML" || { echo "FATAL: compute preview size input missing from index.html"; exit 1; }
 grep -q 'id="btn-compute-preview"' "$HTML" || { echo "FATAL: compute preview button missing from index.html"; exit 1; }
 grep -q 'id="compute-preview-box"' "$HTML" || { echo "FATAL: compute preview image box missing from index.html"; exit 1; }
+grep -q '\.compute-preview-matrix {' "$HTML" || { echo "FATAL: compute preview should use a matrix layout"; exit 1; }
+grep -q 'class="compute-preview-note">ephemeral · times=1 · not saved</div>' "$HTML" || { echo "FATAL: compute preview note should live in the matrix layout"; exit 1; }
+grep -q 'id="render-stripes" value="10"' "$HTML" || { echo "FATAL: compute chunk state input missing from index.html"; exit 1; }
+! grep -q '<label>Chunks:</label>' "$HTML" || { echo "FATAL: compute tab should not expose a global Chunks control"; exit 1; }
+grep -q 'id="autolevel-bins" type="hidden"' "$HTML" || { echo "FATAL: autolevel bins should be stored as hidden state"; exit 1; }
+grep -q 'id="autolevel-bins-display" class="readonly-value compact"' "$HTML" || { echo "FATAL: autolevel bins should render as read-only text"; exit 1; }
+grep -q 'id="autolevel-background-readout" type="hidden"' "$HTML" || { echo "FATAL: autolevel background state should be hidden"; exit 1; }
+grep -q 'id="autolevel-background-readout-display" class="readonly-value wide"' "$HTML" || { echo "FATAL: autolevel background should render as read-only text"; exit 1; }
+grep -q 'id="resize-current-size" type="hidden"' "$HTML" || { echo "FATAL: resize current size should be hidden state"; exit 1; }
+grep -q 'id="resize-current-size-display" class="readonly-value wide"' "$HTML" || { echo "FATAL: resize current size should render as read-only text"; exit 1; }
+grep -q 'id="resize-output-format" type="hidden"' "$HTML" || { echo "FATAL: resize output format should be hidden state"; exit 1; }
+grep -q 'id="resize-output-format-display" class="readonly-value compact"' "$HTML" || { echo "FATAL: resize output format should render as read-only text"; exit 1; }
 grep -q 'id="btn-render-resize"' "$HTML" || { echo "FATAL: color Resize button missing from index.html"; exit 1; }
 grep -q 'id="resize-popup-overlay"' "$HTML" || { echo "FATAL: resize popup missing from index.html"; exit 1; }
 grep -q 'id="btn-png-export"' "$HTML" || { echo "FATAL: bilevel PNG export button missing from index.html"; exit 1; }
@@ -78,10 +111,27 @@ grep -q 'id="btn-tiff-compat"' "$HTML" || { echo "FATAL: bilevel TIFF compat but
 for ct_name in cummax exp cos sin tan cosh sinh tanh round pow; do
     grep -q "<option value=\"$ct_name\">$ct_name</option>" "$HTML" || { echo "FATAL: coeff transform option $ct_name missing from index.html"; exit 1; }
 done
-grep -q 'onclick="loadLambdaConfig()" class="btn-secondary" style="margin:0; padding:4px 12px"' "$HTML" || { echo "FATAL: Config Load button should override global button margin"; exit 1; }
-grep -q 'onclick="renderResultsTable()" style="margin:0; padding:3px 8px; font-size:10px"' "$HTML" || { echo "FATAL: Results Filter button should override global button margin"; exit 1; }
-grep -q 'id="btn-solve-histogram" onclick="runSolveScoreHistogramDebug()" style="margin:0 0 0 8px; font-size:10px; padding:1px 8px"' "$HTML" || { echo "FATAL: Solve histogram button should override global button margin"; exit 1; }
-grep -q 'id="btn-palette-create" onclick="runPaletteArtifact()" style="margin:0 0 0 8px; font-size:10px; padding:1px 8px"' "$HTML" || { echo "FATAL: Palette create button should override global button margin"; exit 1; }
+grep -q 'onclick="loadLambdaConfig()" class="btn-secondary btn-inline" style="padding:4px 12px"' "$HTML" || { echo "FATAL: Config Load button should use the shared inline button class"; exit 1; }
+grep -q 'class="btn-secondary btn-inline" onclick="renderResultsTable()" style="padding:3px 8px; font-size:10px"' "$HTML" || { echo "FATAL: Results Filter button should use the shared inline button class"; exit 1; }
+grep -q 'id="btn-solve-histogram" class="btn-inline-offset" onclick="runSolveScoreHistogramDebug()" style="font-size:10px; padding:1px 8px"' "$HTML" || { echo "FATAL: Solve histogram button should use the shared inline-offset class"; exit 1; }
+grep -q 'id="btn-palette-create" class="btn-inline-offset" onclick="runPaletteArtifact()" style="font-size:10px; padding:1px 8px"' "$HTML" || { echo "FATAL: Palette create button should use the shared inline-offset class"; exit 1; }
+grep -q 'class="render-panel-grid"' "$HTML" || { echo "FATAL: Render tab should use the regrouped render-panel-grid layout"; exit 1; }
+grep -q 'Solve Score Program' "$HTML" || { echo "FATAL: Render tab should expose a Solve Score Program box"; exit 1; }
+grep -q 'id="render-solve-score-program-select"' "$HTML" || { echo "FATAL: Render solve-score preset selector missing"; exit 1; }
+grep -q 'id="render-solve-score-program-load"' "$HTML" || { echo "FATAL: Render solve-score preset load button missing"; exit 1; }
+grep -q 'id="render-solve-score-program-load-file"' "$HTML" || { echo "FATAL: Render solve-score JSON load button missing"; exit 1; }
+grep -q 'id="render-solve-score-program-save"' "$HTML" || { echo "FATAL: Render solve-score JSON save button missing"; exit 1; }
+grep -q 'type="text" inputmode="numeric" id="render-pix" value="4096"' "$HTML" || { echo "FATAL: Render pix field should be a plain text input without slider semantics"; exit 1; }
+grep -q '\.render-view-slider {' "$HTML" || { echo "FATAL: render view sliders should use the responsive render-view-slider class"; exit 1; }
+grep -q 'id="render-quantile" class="render-view-slider"' "$HTML" || { echo "FATAL: render quantile slider should use the responsive slider class"; exit 1; }
+grep -q 'id="render-shim" class="render-view-slider"' "$HTML" || { echo "FATAL: render shim slider should use the responsive slider class"; exit 1; }
+grep -q 'id="render-rotation" class="render-view-slider"' "$HTML" || { echo "FATAL: render rotation slider should use the responsive slider class"; exit 1; }
+grep -q 'class="chip-container solve-score-program-display"' "$HTML" || { echo "FATAL: Render solve-score program display should use the fixed-height scrollable layout"; exit 1; }
+grep -q '\.solve-score-program-display {' "$HTML" || { echo "FATAL: solve-score program display CSS missing"; exit 1; }
+grep -q 'overflow-y: auto;' "$HTML" || { echo "FATAL: solve-score program display should scroll vertically"; exit 1; }
+grep -q 'max-height: 156px;' "$HTML" || { echo "FATAL: solve-score program display should keep a constant height"; exit 1; }
+grep -q 'id="palette-solve-score-program-select"' "$HTML" || { echo "FATAL: Palette solve-score preset selector missing"; exit 1; }
+grep -q 'id="palette-solve-score-program-save"' "$HTML" || { echo "FATAL: Palette solve-score JSON save button missing"; exit 1; }
 grep -q 'id="ss-add-btn"' "$HTML" || { echo "FATAL: solve-score add popup button missing"; exit 1; }
 grep -q 'id="palette-ss-add-btn"' "$HTML" || { echo "FATAL: palette solve-score add popup button missing"; exit 1; }
 grep -q 'Score functions' "$HTML" || { echo "FATAL: solve-score picker category labels missing"; exit 1; }
@@ -90,6 +140,18 @@ grep -q 'id="ct-add-btn"' "$HTML" || { echo "FATAL: coeff transform add popup bu
 grep -q 'andy' "$HTML" || { echo "FATAL: coeff transform andy parameter missing"; exit 1; }
 grep -q 'Image + Meta' "$HTML" || { echo "FATAL: Favorites download menu missing Image + Meta"; exit 1; }
 grep -q 'Select Dir…' "$HTML" || { echo "FATAL: Favorites download menu missing Select Dir…"; exit 1; }
+node - "$HTML" <<'NODE'
+const fs = require('fs');
+const html = fs.readFileSync(process.argv[2], 'utf8');
+const loadPreset = html.indexOf('id="render-solve-score-program-load"');
+const addChip = html.indexOf('id="ss-add-btn"');
+const loadJson = html.indexOf('id="render-solve-score-program-load-file"');
+const saveJson = html.indexOf('id="render-solve-score-program-save"');
+if (!(loadPreset >= 0 && addChip >= 0 && loadJson >= 0 && saveJson >= 0 && loadPreset < addChip && addChip < loadJson && loadJson < saveJson)) {
+  console.error('FATAL: Render solve-score toolbar order should be Load preset, + score chip, Load JSON, Save JSON');
+  process.exit(1);
+}
+NODE
 
 echo "=== Frontend JS Execution Test ==="
 
@@ -103,6 +165,7 @@ const fs = require('fs');
 // Minimal DOM stubs
 const _elements = {};
 const _mkEl = () => {
+    const _classes = new Set();
     const el = {
     value: '', textContent: '', style: {}, id: '', dataset: {},
     scrollTop: 0,
@@ -115,7 +178,18 @@ const _mkEl = () => {
     options: [], children: [],
     get innerHTML() { return el._html || ''; },
     set innerHTML(v) { el._html = v; el.children = []; el._innerHTMLSet = true; },
-    classList: { add(){}, remove(){}, toggle(){}, contains(){ return false; } },
+    classList: {
+        add(...names) { names.forEach((name) => _classes.add(String(name))); },
+        remove(...names) { names.forEach((name) => _classes.delete(String(name))); },
+        toggle(name, force) {
+            const key = String(name);
+            if (force === true) { _classes.add(key); return true; }
+            if (force === false) { _classes.delete(key); return false; }
+            if (_classes.has(key)) { _classes.delete(key); return false; }
+            _classes.add(key); return true;
+        },
+        contains(name) { return _classes.has(String(name)); },
+    },
     addEventListener() {}, removeEventListener() {},
     getBoundingClientRect() { return {top:0,left:0,width:100,height:100}; },
     getContext() { return { fillRect(){}, clearRect(){}, drawImage(){}, fillText(){}, set fillStyle(v){}, set font(v){}, set textAlign(v){}, set textBaseline(v){}, imageSmoothingEnabled: false }; },
@@ -201,6 +275,7 @@ const ctx = {
 };
 ctx.addEventListener = function() {};
 ctx.removeEventListener = function() {};
+ctx.prompt = function(_msg, defVal) { return defVal || ''; };
 ctx.window = ctx;
 ctx.globalThis = ctx;
 ctx.self = ctx;
@@ -439,6 +514,7 @@ const renderEls = {
     'render-mt-popup-run': {},
     'render-mt-threads': { value: '4' },
     'render-mt-solve-score-threads': { value: '4' },
+    'render-mt-fused-clip-threads': { value: '4' },
     'render-mt-hist-input-mode': { value: 'tmpfile' },
     'render-mt-hist-retries': { value: '2' },
     'render-mt-hist-section-mode': { value: 'physical_chunks' },
@@ -600,7 +676,7 @@ vm.runInContext(`
         if (name === 'dispatch' && body.target === 'finalize') return { fired: body.jobs.length, errors: [] };
         if (name === 'dispatch' && body.target === 'bilevel_stitch') return { fired: 1, errors: [] };
         if (name === 'dispatch' && body.target === 'bilevel') return { fired: body.jobs.length, errors: [] };
-        if (name === 'dispatch' && body.target === 'deepzoom_export') return { fired: 1, errors: [] };
+        if (name === 'dispatch' && (body.target === 'deepzoom_export' || body.target === 'deepzoom_from_raw')) return { fired: 1, errors: [] };
         if (name === 'storage' && path === '/check-status' && body.task_prefix === 'tile_') {
             _tilePolls++;
             if (_tilePolls === 1) return { errors: 0, done: 0, complete: false, status_counts: {} };
@@ -1040,25 +1116,25 @@ async function testPipeline(name, call) {
     }
     vm.runInContext('_closeRenderGeneratePopup()', ctx);
     vm.runInContext(`renderColorMode = 'solve_score';`, ctx);
-    await testPipeline('runRasterPipelineMT', '(async()=>{ renderColorMode = "solve_score"; await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, histRetries: 4, rasterRetries: 5, mergeWorkers: 12, finalizeWorkers: 18 }); })()');
+    await testPipeline('runRasterPipelineMT', '(async()=>{ renderColorMode = "solve_score"; await runRasterPipelineMT({ colorPipeline: "classic", rasterThreads: 6, solveScoreThreads: 3, histRetries: 4, rasterRetries: 5, mergeWorkers: 12, finalizeWorkers: 18 }); })()');
     {
         const logs = vm.runInContext('_pipelineDispatchLogs', ctx);
         const payloads = vm.runInContext('_renderOrchestratorPayloads', ctx);
         const mtHit = Array.isArray(logs) ? logs.find((row) => {
             const msg = String(row.msg || '');
-            return msg.includes('Render-MT: dispatching with solve score threads=3, hist input=tmpfile, hist retries=4')
-                && msg.includes('hist sections=physical_chunks')
+            return msg.includes('Render-MT (classic): dispatching with solve score threads=3, hist input=tmpfile, hist retries=4')
+                && msg.includes('hist sections=source-aligned')
                 && msg.includes('merge workers=12')
                 && msg.includes('raster input=tmpfile, raster retries=5, raster threads=6')
-                && msg.includes('bin fragments=sparse_chunks')
+                && msg.includes('bin fragments=sparse chunks')
                 && msg.includes('finalize workers=18')
-                && msg.includes('associated palette=no')
-                && msg.includes('palette chunk unused');
+                && msg.includes('associated palette=no');
         }) : null;
         const orchHit = Array.isArray(logs) ? logs.find((row) => String(row.msg || '').includes('Render: dispatching color orchestrator')) : null;
         const mtPayload = Array.isArray(payloads) ? payloads.find((row) => row && row.params && row.params.raster_engine === 'mt') : null;
         if (!mtHit || mtHit.cls !== 'ok' || !orchHit || orchHit.cls !== 'ok' || !mtPayload ||
             mtPayload.params.raster_mt_threads !== 6 || mtPayload.params.solve_score_threads !== 3 ||
+            mtPayload.params.color_pipeline !== 'classic' ||
             mtPayload.params.solve_score_hist_input_mode !== 'tmpfile' ||
             mtPayload.params.solve_score_hist_retries !== 4 ||
             mtPayload.params.solve_score_merge_workers !== 12 ||
@@ -1067,16 +1143,50 @@ async function testPipeline(name, call) {
             mtPayload.params.pixel_bin_fragment_mode !== 'sparse_chunks' ||
             mtPayload.params.raster_bin_group_size !== '' ||
             mtPayload.params.finalize_workers !== 18 ||
-            mtPayload.params.palette_chunk_threads !== 4 ||
-            mtPayload.params.palette_chunk_input_mode !== 'sectioned' ||
-            mtPayload.params.palette_chunk_retries !== 2 ||
-            mtPayload.params.palette_chunk_workers !== 16 ||
             mtPayload.params.solve_score_section_mode !== 'physical_chunks' ||
             mtPayload.params.solve_score_section_count !== '' ||
-            mtPayload.params.palette_section_mode !== 'physical_chunks' ||
-            mtPayload.params.palette_section_count !== '' ||
+            Object.prototype.hasOwnProperty.call(mtPayload.params, 'palette_chunk_threads') ||
+            Object.prototype.hasOwnProperty.call(mtPayload.params, 'palette_chunk_input_mode') ||
+            Object.prototype.hasOwnProperty.call(mtPayload.params, 'palette_chunk_retries') ||
+            Object.prototype.hasOwnProperty.call(mtPayload.params, 'palette_chunk_workers') ||
+            Object.prototype.hasOwnProperty.call(mtPayload.params, 'palette_section_mode') ||
+            Object.prototype.hasOwnProperty.call(mtPayload.params, 'palette_section_count') ||
             mtPayload.params.save_associated_palette !== false) {
             console.error('FATAL: runRasterPipelineMT should log green MT + orchestrator dispatch and pass thread counts, got logs=' + JSON.stringify(logs) + ' payloads=' + JSON.stringify(payloads));
+            process.exit(1);
+        }
+    }
+    await testPipeline('runRasterPipelineMT', '(async()=>{ renderColorMode = "solve_score"; await runRasterPipelineMT({ colorPipeline: "fused", rasterThreads: 6, solveScoreThreads: 3, histRetries: 4, rasterRetries: 5, mergeWorkers: 12, finalizeWorkers: 18, pixelBinFragmentMode: "dense_grouped", rasterBinGroupSize: 7 }); })()');
+    {
+        const logs = vm.runInContext('_pipelineDispatchLogs', ctx);
+        const payloads = vm.runInContext('_renderOrchestratorPayloads', ctx);
+        const fusedHit = Array.isArray(logs) ? logs.find((row) => {
+            const msg = String(row.msg || '');
+            return msg.includes('Render-MT (fused): dispatching with lores clip threads=3')
+                && msg.includes('raster threads=6')
+                && msg.includes('bin fragments=raw score bins')
+                && msg.includes('finalize workers=18')
+                && msg.includes('associated palette=no');
+        }) : null;
+        const fusedPayload = Array.isArray(payloads) ? payloads.find((row) => row && row.params && row.params.color_pipeline === 'fused') : null;
+        if (!fusedHit || fusedHit.cls !== 'ok' || !fusedPayload ||
+            fusedPayload.params.raster_mt_threads !== 6 ||
+            fusedPayload.params.solve_score_threads !== 3 ||
+            Object.prototype.hasOwnProperty.call(fusedPayload.params, 'pixel_bin_fragment_mode') ||
+            Object.prototype.hasOwnProperty.call(fusedPayload.params, 'raster_bin_group_size') ||
+            Object.prototype.hasOwnProperty.call(fusedPayload.params, 'solve_score_hist_input_mode') ||
+            Object.prototype.hasOwnProperty.call(fusedPayload.params, 'solve_score_hist_retries') ||
+            Object.prototype.hasOwnProperty.call(fusedPayload.params, 'solve_score_merge_workers') ||
+            Object.prototype.hasOwnProperty.call(fusedPayload.params, 'solve_score_section_mode') ||
+            Object.prototype.hasOwnProperty.call(fusedPayload.params, 'solve_score_section_count') ||
+            Object.prototype.hasOwnProperty.call(fusedPayload.params, 'palette_chunk_threads') ||
+            Object.prototype.hasOwnProperty.call(fusedPayload.params, 'palette_chunk_input_mode') ||
+            Object.prototype.hasOwnProperty.call(fusedPayload.params, 'palette_chunk_retries') ||
+            Object.prototype.hasOwnProperty.call(fusedPayload.params, 'palette_chunk_workers') ||
+            Object.prototype.hasOwnProperty.call(fusedPayload.params, 'palette_section_mode') ||
+            Object.prototype.hasOwnProperty.call(fusedPayload.params, 'palette_section_count') ||
+            fusedPayload.params.color_pipeline !== 'fused') {
+            console.error('FATAL: fused runRasterPipelineMT should force sparse raw-score bins and dispatch color_pipeline=fused, got logs=' + JSON.stringify(logs) + ' payloads=' + JSON.stringify(payloads));
             process.exit(1);
         }
     }
@@ -1106,19 +1216,39 @@ async function testPipeline(name, call) {
         } } };
         renderMatchMode = 'none';
         _activeRenderRun = null;
+        _renderMtPopupState.colorPipeline = 'classic';
         await openRenderMtPopup();
     })()`, ctx);
     if (ctx._elements['render-mt-popup-overlay'].style.display !== 'flex') {
         console.error('FATAL: Generate-MT should open popup overlay');
         process.exit(1);
     }
+    if (!ctx._elements['render-mt-tab-classic'].classList.contains('active')
+        || ctx._elements['render-mt-tab-fused'].classList.contains('active')) {
+        console.error('FATAL: Generate-MT popup should open on the Classic tab');
+        process.exit(1);
+    }
+    if (!String(ctx._elements['render-mt-classic-panel'].className || '').includes('active')
+        || !String(ctx._elements['render-mt-fused-panel'].className || '').includes('inactive')) {
+        console.error('FATAL: Generate-MT popup should show the classic panel and hide the fused panel');
+        process.exit(1);
+    }
+    if (!(ctx._elements['render-mt-pipeline-banner'].textContent || '').includes('Classic path: existing solve-score prepass plus classic raster -> finalize -> encode.')) {
+        console.error('FATAL: Generate-MT popup should explain the classic pipeline');
+        process.exit(1);
+    }
+    if (!(ctx._elements['render-mt-classic-banner'].textContent || '').includes('Legacy path — retained for rollback only, slated for removal in Phase 5.')
+        || ctx._elements['render-mt-classic-banner'].style.display === 'none') {
+        console.error('FATAL: Generate-MT classic tab should show the legacy rollback banner');
+        process.exit(1);
+    }
     if (!(ctx._elements['render-mt-popup-summary'].textContent || '').includes('hist retries=')
         || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('raster retries=')
-        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('hist sections=physical_chunks')
+        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('hist sections=source-aligned')
         || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('merge workers=')
         || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('bins=sparse chunks')
         || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('finalize workers=')
-        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('palette chunk unused')) {
+        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('Path: classic')) {
         console.error('FATAL: Generate-MT popup should show thread summary');
         process.exit(1);
     }
@@ -1189,6 +1319,66 @@ async function testPipeline(name, call) {
         process.exit(1);
     }
     console.log('  Generate-MT popup opens with solve-score + raster thread summary: OK');
+    await vm.runInContext(`(async () => {
+        _renderMtPopupState.colorPipeline = 'fused';
+        await openRenderMtPopup();
+    })()`, ctx);
+    if (!ctx._elements['render-mt-tab-fused'].classList.contains('active')
+        || ctx._elements['render-mt-tab-classic'].classList.contains('active')) {
+        console.error('FATAL: Generate-MT popup should switch active tabs when fused is selected');
+        process.exit(1);
+    }
+    if (!String(ctx._elements['render-mt-fused-panel'].className || '').includes('active')
+        || !String(ctx._elements['render-mt-classic-panel'].className || '').includes('inactive')) {
+        console.error('FATAL: Generate-MT fused tab should show the fused panel and hide the classic panel');
+        process.exit(1);
+    }
+    if (!(ctx._elements['render-mt-pipeline-banner'].textContent || '').includes('lores clip -> raster -> FinalizeMT raw assembly/colorization')) {
+        console.error('FATAL: Generate-MT popup should explain the fused pipeline');
+        process.exit(1);
+    }
+    if (!(ctx._elements['render-mt-fused-readout'].textContent || '').includes('Lores clip runs first on the lores artifact only.')
+        || !(ctx._elements['render-mt-fused-readout'].textContent || '').includes('Raster emits raw score fragments for the main image.')
+        || !(ctx._elements['render-mt-fused-readout'].textContent || '').includes('lores clip threads=4')) {
+        console.error('FATAL: Generate-MT fused tab should show the clip-first fused readout');
+        process.exit(1);
+    }
+    if (!(ctx._elements['render-mt-popup-summary'].textContent || '').includes('Path: fused')
+        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('bins=raw score bins')
+        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('lores clip threads=4')
+        || (ctx._elements['render-mt-popup-summary'].textContent || '').includes('hist unused')
+        || (ctx._elements['render-mt-popup-summary'].textContent || '').includes('merge unused')
+        || (ctx._elements['render-mt-popup-summary'].textContent || '').includes('palette chunk unused')) {
+        console.error('FATAL: Fused Generate-MT popup should summarize the fused raw-score path');
+        process.exit(1);
+    }
+    if (!(ctx._elements['render-mt-popup-help'].textContent || '').includes('Fused uses a lores-only clip prepass, one raster pass, and FinalizeMT raw assembly/colorization.')) {
+        console.error('FATAL: Fused Generate-MT help should explain the cleaned fused path');
+        process.exit(1);
+    }
+    if (!(ctx._elements['render-mt-job-size'].textContent || '').includes('Clip: lores-only prepass')
+        || (ctx._elements['render-mt-job-size'].textContent || '').includes('Hist auto:')) {
+        console.error('FATAL: Fused Generate-MT job-size block should describe the clip prepass without legacy hist sizing');
+        process.exit(1);
+    }
+    if (ctx._elements['render-mt-fused-clip-threads'].disabled !== false) {
+        console.error('FATAL: Fused Generate-MT popup should expose the lores clip thread control');
+        process.exit(1);
+    }
+    if (ctx._elements['render-mt-hist-input-mode'].disabled !== true
+        || ctx._elements['render-mt-hist-retries'].disabled !== true
+        || ctx._elements['render-mt-hist-section-mode'].disabled !== true
+        || ctx._elements['render-mt-merge-workers'].disabled !== true) {
+        console.error('FATAL: Fused Generate-MT popup should disable classic hist/merge controls');
+        process.exit(1);
+    }
+    if (ctx._elements['render-mt-pixel-bin-fragment-mode'].disabled !== true
+        || ctx._elements['render-mt-raster-bin-group-size'].disabled !== true
+        || ctx._elements['render-mt-pixel-bin-fragment-mode'].value !== 'sparse_chunks') {
+        console.error('FATAL: Fused Generate-MT popup should lock raster bin settings to sparse chunks');
+        process.exit(1);
+    }
+    console.log('  Generate-MT popup switches to fused summary and raw-score settings: OK');
     vm.runInContext('_closeRenderMtPopup()', ctx);
     await vm.runInContext(`(async () => {
         renderColorMode = 'solve_score';
@@ -1200,18 +1390,19 @@ async function testPipeline(name, call) {
         _renderMtPopupState.paletteSectionMode = 'logical_sections_auto';
         await openRenderMtPopup();
     })()`, ctx);
-    if (ctx._elements['render-mt-palette-chunk-threads'].disabled !== false
-        || ctx._elements['render-mt-palette-chunk-input-mode'].disabled !== false
-        || ctx._elements['render-mt-palette-chunk-workers'].disabled !== false
-        || ctx._elements['render-mt-palette-chunk-retries'].disabled !== false
-        || ctx._elements['render-mt-palette-section-mode'].disabled !== false
+    if (ctx._elements['render-mt-palette-chunk-threads'].disabled !== true
+        || ctx._elements['render-mt-palette-chunk-input-mode'].disabled !== true
+        || ctx._elements['render-mt-palette-chunk-workers'].disabled !== true
+        || ctx._elements['render-mt-palette-chunk-retries'].disabled !== true
+        || ctx._elements['render-mt-palette-section-mode'].disabled !== true
         || ctx._elements['render-mt-palette-section-count'].disabled !== true
-        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('palette chunk threads=')
-        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('palette sections=logical_sections_auto/')) {
-        console.error('FATAL: Generate-MT popup should enable palette chunk controls when solve_score + associated palette are enabled');
+        || !(ctx._elements['render-mt-popup-summary'].textContent || '').includes('associated palette=yes • inline output')
+        || !(ctx._elements['render-mt-palette-section-summary'].textContent || '').includes('inline in fused finalize')
+        || !(ctx._elements['render-mt-fused-readout'].textContent || '').includes('associated palette fragments in one pass')) {
+        console.error('FATAL: Fused Generate-MT popup should keep associated palette inline instead of exposing palette chunk controls');
         process.exit(1);
     }
-    console.log('  Generate-MT popup enables palette chunk controls when associated palette is on: OK');
+    console.log('  Generate-MT popup keeps associated palette inline on fused: OK');
     vm.runInContext('_closeRenderMtPopup()', ctx);
 
     {
@@ -1253,10 +1444,10 @@ async function testPipeline(name, call) {
             lambdaPost = origLambdaPost;
         })()`, ctx);
         if (!(ctx._elements['render-mt-job-size'].textContent || '').includes('Logical solve data: solves=25,000,000')
-            || !(ctx._elements['render-mt-hist-section-summary'].textContent || '').includes('min safe sections=')) {
+            || !(ctx._elements['render-mt-raster-section-summary'].textContent || '').includes('min safe sections=')) {
             console.error('FATAL: Generate-MT popup should refresh render summary before auto section sizing'
                 + ' jobSize=' + JSON.stringify(ctx._elements['render-mt-job-size'].textContent || '')
-                + ' histSummary=' + JSON.stringify(ctx._elements['render-mt-hist-section-summary'].textContent || '')
+                + ' rasterSummary=' + JSON.stringify(ctx._elements['render-mt-raster-section-summary'].textContent || '')
                 + ' loadedJob=' + JSON.stringify(vm.runInContext('_renderLoadedJobId', ctx))
                 + ' lastSummary=' + JSON.stringify(vm.runInContext('window._lastRenderSummary && window._lastRenderSummary.calc', ctx)));
             process.exit(1);
@@ -1676,6 +1867,30 @@ async function testPipeline(name, call) {
         if (!selectedRow || !selectedRow._scrollIntoViewCalls) { console.error('FATAL: selected render row should be scrolled into view when needed'); process.exit(1); }
         console.log('  artifact selection preserves scroll + ensures visible row: OK');
 
+        vm.runInContext(`
+            renderArtifactPanel('j', {
+                calc: { exists: true, N: 1000, degree: 5 },
+                families: {
+                    color: [
+                        { artifact_id: 'color_2', created_at: '2026-03-30T10:02:00Z', image_key: 'renders/j/color/color_2/image.jpeg', image_url: 'https://img/color2.jpeg', preview_url: 'https://img/color2.png', viewer_url: 'https://img/color2.png', width: 1000, height: 1000, file_size: 52000, color_mode: 'rainbow', format: 'jpeg' },
+                        { artifact_id: 'color_0', created_at: '2026-03-30T10:00:00Z', image_key: 'renders/j/color/color_0/image.jpeg', image_url: 'https://img/color0.jpeg', preview_url: 'https://img/color0.png', viewer_url: 'https://img/color0.png', width: 1000, height: 1000, file_size: 50000, color_mode: 'rainbow', format: 'jpeg' },
+                        { artifact_id: 'color_1', created_at: '2026-03-30T10:01:00Z', image_key: 'renders/j/color/color_1/image.jpeg', image_url: 'https://img/color1.jpeg', preview_url: 'https://img/color1.png', viewer_url: 'https://img/color1.png', width: 1000, height: 1000, file_size: 51000, color_mode: 'rainbow', format: 'jpeg' }
+                    ],
+                    bilevel: [],
+                    coeffs: [],
+                    palette: [],
+                    pdf: [],
+                },
+            });
+        `, ctx);
+        const renderSelectedArtifactId = vm.runInContext('(_renderSelectedArtifactEntry() || {}).artifact_id', ctx);
+        const renderSelectedIdx = vm.runInContext('_renderSelectedArtifact.color', ctx);
+        if (renderSelectedArtifactId !== 'color_2' || renderSelectedIdx !== 0) {
+            console.error('FATAL: render selection should follow stable artifact id across reorder, got id=' + renderSelectedArtifactId + ' idx=' + renderSelectedIdx);
+            process.exit(1);
+        }
+        console.log('  render selection follows stable key across reorder: OK');
+
         vm.runInContext(`_renderSelectFamily('coeffs')`, ctx);
         const coeffHtml = ctx._elements['render-preview'].innerHTML;
         if (!coeffHtml.includes('No saved artifacts yet.')) { console.error('FATAL: empty family should show empty state'); process.exit(1); }
@@ -1842,6 +2057,28 @@ async function testPipeline(name, call) {
         if (favListCallsAfterRefresh !== 2) { console.error('FATAL: favorites refresh should force /list-favorites reload, got ' + favListCallsAfterRefresh); process.exit(1); }
         console.log('  favorites refresh forces refetch: OK');
 
+        vm.runInContext(`
+            _favoriteSelectedKey = '';
+            _favoriteSelectedIdx = 1;
+            _favoriteArtifacts = [
+                { favorite_job_id: 'job_a', artifact_id: 'color_a', viewer_url: 'https://img/favorite_a.png', width: 1200, height: 900, file_size: 42000 },
+                { favorite_job_id: 'job_missing', artifact_id: 'color_missing', missing: true, missing_reason: 'job missing' }
+            ];
+            renderFavoritesPanel();
+            _favoriteArtifacts = [
+                { favorite_job_id: 'job_missing', artifact_id: 'color_missing', missing: true, missing_reason: 'job missing' },
+                { favorite_job_id: 'job_a', artifact_id: 'color_a', viewer_url: 'https://img/favorite_a.png', width: 1200, height: 900, file_size: 42000 }
+            ];
+            renderFavoritesPanel();
+        `, ctx);
+        const favSelectedKey = vm.runInContext('_favoriteSelectedKey', ctx);
+        const favSelectedIdx = vm.runInContext('_favoriteSelectedIdx', ctx);
+        if (favSelectedKey !== 'job_missing::color_missing' || favSelectedIdx !== 0) {
+            console.error('FATAL: favorites selection should follow stable artifact key across reorder, got key=' + favSelectedKey + ' idx=' + favSelectedIdx);
+            process.exit(1);
+        }
+        console.log('  favorites selection follows stable key across reorder: OK');
+
         ctx._elements['btn-favorites-go-render'] = ctx._elements['btn-favorites-go-render'] || { ...ctx._mkEl(), textContent: 'GoRender', disabled: false };
         try {
             await vm.runInContext(`
@@ -1865,7 +2102,8 @@ async function testPipeline(name, call) {
                     };
                     switchTab = function(name) { _favoriteGoRenderCalls.tabs.push(name); };
                     log = function(msg, cls, target) { _favoriteGoRenderCalls.logs.push({ msg, cls, target }); };
-                    _favoriteSelectedIdx = 0;
+                    _favoriteSelectedIdx = 1;
+                    _favoriteSelectedKey = 'job_a::color_a';
                     await goRenderSelectedFavorite();
                     _ensureResultsSelection = _favoriteGoRenderOrigEnsure;
                     refreshRenderArtifacts = _favoriteGoRenderOrigRefresh;
@@ -1904,7 +2142,8 @@ async function testPipeline(name, call) {
                     };
                     switchTab = function(name) { _favoriteGoRenderCalls.tabs.push(name); };
                     log = function(msg, cls, target) { _favoriteGoRenderCalls.logs.push({ msg, cls, target }); };
-                    _favoriteSelectedIdx = 1;
+                    _favoriteSelectedIdx = 0;
+                    _favoriteSelectedKey = 'job_missing::color_missing';
                     await goRenderSelectedFavorite();
                     _ensureResultsSelection = _favoriteGoRenderOrigEnsure;
                     refreshRenderArtifacts = _favoriteGoRenderOrigRefresh;
@@ -2775,6 +3014,15 @@ async function testPipeline(name, call) {
     }
 
     {
+        const completionText = vm.runInContext(`_paletteRunCompleteLog({ mode: 'palette', run_id: 'run_no_server', started_at_ms: 12345 }, { palette_id: 'pal_no_server' })`, ctx);
+        if (String(completionText).includes('(')) {
+            console.error('FATAL: palette completion log should not invent browser-derived elapsed time, got ' + completionText);
+            process.exit(1);
+        }
+        console.log('  palette completion log omits browser-derived elapsed fallback: OK');
+    }
+
+    {
         const summary = {
             calc: { exists: true, N: 4000, degree: 8 },
             families: {
@@ -3311,8 +3559,9 @@ async function testPipeline(name, call) {
                         solve_score_quantile: 0.02,
                         solve_score_omega: 6,
                         palette: 'magma',
-                        repalette_capable: true,
-                        pixel_bins_prefix: 'renders/j/color/color_src/pixel_bins/tile_',
+                        repalette_capable: false,
+                        raw_key: 'renders/j/color/color_src/greyscale.raw',
+                        raw_meta_key: 'renders/j/color/color_src/greyscale.meta.json',
                     }
                 ],
                 bilevel: [],
@@ -3334,7 +3583,7 @@ async function testPipeline(name, call) {
                 return _colorRepaletteOrigLog(msg, cls, target);
             };
             lambdaPost = async function(name, body, path) {
-                if (name === 'dispatch' && body.target === 'color_repalette') {
+                if (name === 'dispatch' && body.target === 'recolor_from_raw') {
                     _colorRepaletteDispatch = body;
                     return { fired: 1, errors: [] };
                 }
@@ -3362,7 +3611,7 @@ async function testPipeline(name, call) {
         const dispatch = vm.runInContext('_colorRepaletteDispatch', ctx);
         const runMode = vm.runInContext('_activeRenderRun && _activeRenderRun.mode', ctx);
         const startLog = vm.runInContext('_colorRepaletteStartLog', ctx);
-        if (!dispatch || dispatch.target !== 'color_repalette') { console.error('FATAL: Color RePalette should dispatch color_repalette target'); process.exit(1); }
+        if (!dispatch || dispatch.target !== 'recolor_from_raw') { console.error('FATAL: Color RePalette should dispatch recolor_from_raw target'); process.exit(1); }
         if (dispatch.jobs[0].source_artifact_id !== 'color_src') { console.error('FATAL: Color RePalette should send source artifact id, got ' + dispatch.jobs[0].source_artifact_id); process.exit(1); }
         if (dispatch.jobs[0].new_palette !== 'tri_redgold') { console.error('FATAL: Color RePalette should send chosen palette, got ' + dispatch.jobs[0].new_palette); process.exit(1); }
         if (runMode !== 'color_repalette') { console.error('FATAL: Color RePalette should save active run mode, got ' + runMode); process.exit(1); }
@@ -3415,6 +3664,154 @@ async function testPipeline(name, call) {
             refreshRenderArtifacts = _colorRepaletteOrigRefreshRenderArtifacts;
         `, ctx);
         console.log('  Color RePalette completion refreshes color inventory: OK');
+    }
+
+    {
+        const summary = {
+            calc: { exists: true, N: 3000, degree: 7 },
+            families: {
+                color: [
+                    {
+                        artifact_id: 'color_legacy_src',
+                        created_at: '2026-04-02T10:00:00Z',
+                        image_key: 'renders/j/color/color_legacy_src/image.jpeg',
+                        image_url: 'https://img/color_legacy_src.jpeg',
+                        preview_url: 'https://img/color_legacy_src.png',
+                        viewer_url: 'https://img/color_legacy_src.png',
+                        width: 3000,
+                        height: 3000,
+                        pix: 3000,
+                        tile_size: 2048,
+                        format: 'jpeg',
+                        quality: 90,
+                        file_size: 64000,
+                        family: 'color',
+                        color_mode: 'solve_score',
+                        palette: 'magma',
+                        repalette_capable: true,
+                        pixel_bins_prefix: 'renders/j/color/color_legacy_src/pixel_bins/tile_',
+                    }
+                ],
+                bilevel: [],
+                coeffs: [],
+                palette: [],
+            },
+        };
+        vm.runInContext(`
+            _renderActiveFamily = 'color';
+            _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };
+            _clearActiveRun();
+            renderArtifactPanel('j', ${JSON.stringify(summary)});
+        `, ctx);
+        if (!ctx._elements['btn-render-color-repalette'].disabled) {
+            console.error('FATAL: Color RePalette should stay disabled for legacy pixel-bin-only artifacts');
+            process.exit(1);
+        }
+        if ((ctx._elements['btn-render-color-repalette'].title || '') !== 'Recolor requires a greyscale raw sidecar; rerender with the Fused path.') {
+            console.error('FATAL: Color RePalette disabled state should explain the raw-sidecar requirement, got ' + JSON.stringify(ctx._elements['btn-render-color-repalette'].title || ''));
+            process.exit(1);
+        }
+    }
+
+    {
+        const summary = {
+            calc: { exists: true, N: 3000, degree: 7 },
+            families: {
+                color: [
+                    {
+                        artifact_id: 'color_raw_src',
+                        created_at: '2026-04-02T10:00:00Z',
+                        image_key: 'renders/j/color/color_raw_src/image.jpeg',
+                        image_url: 'https://img/color_raw_src.jpeg',
+                        preview_url: 'https://img/color_raw_src.png',
+                        viewer_url: 'https://img/color_raw_src.png',
+                        width: 3000,
+                        height: 3000,
+                        pix: 3000,
+                        tile_size: 2048,
+                        format: 'jpeg',
+                        quality: 90,
+                        file_size: 64000,
+                        family: 'color',
+                        color_mode: 'solve_score',
+                        solve_metric: 'anisotropy',
+                        solve_score_quantile: 0.02,
+                        solve_score_omega: 6,
+                        palette: 'magma',
+                        repalette_capable: false,
+                        raw_key: 'renders/j/color/color_raw_src/greyscale.raw',
+                        raw_meta_key: 'renders/j/color/color_raw_src/greyscale.meta.json',
+                    }
+                ],
+                bilevel: [],
+                coeffs: [],
+                palette: [],
+            },
+        };
+        vm.runInContext(`
+            _renderActiveFamily = 'color';
+            _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1 };
+            _clearActiveRun();
+            renderArtifactPanel('j', ${JSON.stringify(summary)});
+        `, ctx);
+        if (ctx._elements['btn-render-color-repalette'].disabled) {
+            console.error('FATAL: Color RePalette should enable for fused raw-sidecar artifacts');
+            process.exit(1);
+        }
+        vm.runInContext('openColorRepalettePopup()', ctx);
+        const rawPopupSummary = vm.runInContext("document.getElementById('color-repalette-popup-summary').textContent", ctx);
+        if (!String(rawPopupSummary).includes('canonical greyscale raw reused')) {
+            console.error('FATAL: raw-sidecar Color RePalette summary should say canonical greyscale raw reused, got ' + rawPopupSummary);
+            process.exit(1);
+        }
+        vm.runInContext(`
+            _lastDeepZoomArgs = null;
+            _origRunDeepZoomExport = runDeepZoomExport;
+            runDeepZoomExport = async function(jobId, sourceKey, btnEl, options) {
+                _lastDeepZoomArgs = { jobId, sourceKey, options };
+            };
+            deepZoomSelectedRenderArtifact();
+        `, ctx);
+        const dzArgs = vm.runInContext('_lastDeepZoomArgs', ctx);
+        if (!dzArgs
+            || dzArgs.jobId !== 'j'
+            || dzArgs.sourceKey !== 'renders/j/color/color_raw_src/image.jpeg'
+            || !dzArgs.options
+            || dzArgs.options.rawKey !== 'renders/j/color/color_raw_src/greyscale.raw'
+            || dzArgs.options.rawMetaKey !== 'renders/j/color/color_raw_src/greyscale.meta.json') {
+            console.error('FATAL: DeepZoom should forward raw sidecar keys when present, got ' + JSON.stringify(dzArgs));
+            process.exit(1);
+        }
+        vm.runInContext('runDeepZoomExport = _origRunDeepZoomExport;', ctx);
+        console.log('  raw-sidecar artifacts enable Color RePalette and raw-backed DeepZoom dispatch: OK');
+    }
+
+    {
+        vm.runInContext(`
+            _deepZoomRawDispatch = null;
+            _deepZoomOrigLambdaPost = lambdaPost;
+            _deepZoomOrigRefreshRenderArtifacts = refreshRenderArtifacts;
+            refreshRenderArtifacts = async function() { return { ok: true }; };
+            lambdaPost = async function(name, body, path) {
+                if (name === 'storage' && path === '/delete-task') return { ok: true };
+                if (name === 'dispatch') { _deepZoomRawDispatch = body; return { fired: 1, errors: [] }; }
+                if (name === 'storage' && path === '/check-status') {
+                    return { errors: 0, done: 1, complete: true, status_counts: { done: 1 } };
+                }
+                return { ok: true };
+            };
+        `, ctx);
+        await vm.runInContext(`(async()=>{ await runDeepZoomExport('j', 'renders/j/color/color_raw_src/image.jpeg', null, { rawKey: 'renders/j/color/color_raw_src/greyscale.raw', rawMetaKey: 'renders/j/color/color_raw_src/greyscale.meta.json' }); })()`, ctx);
+        const dzDispatch = vm.runInContext('_deepZoomRawDispatch', ctx);
+        if (!dzDispatch || dzDispatch.target !== 'deepzoom_from_raw') {
+            console.error('FATAL: raw-backed DeepZoom should dispatch deepzoom_from_raw, got ' + JSON.stringify(dzDispatch));
+            process.exit(1);
+        }
+        vm.runInContext(`
+            lambdaPost = _deepZoomOrigLambdaPost;
+            refreshRenderArtifacts = _deepZoomOrigRefreshRenderArtifacts;
+        `, ctx);
+        console.log('  raw-backed DeepZoom dispatch target: OK');
     }
 
     {
@@ -3483,7 +3880,7 @@ async function testPipeline(name, call) {
         const overlayDisplay = vm.runInContext("document.getElementById('autolevel-popup-overlay').style.display", ctx);
         const popupSummary = vm.runInContext("document.getElementById('autolevel-popup-summary').textContent", ctx);
         const popupQuality = vm.runInContext("document.getElementById('autolevel-quality').value", ctx);
-        const popupBackground = vm.runInContext("document.getElementById('autolevel-background-readout').value", ctx);
+        const popupBackground = vm.runInContext("document.getElementById('autolevel-background-readout-display').textContent", ctx);
         const popupThreshold = vm.runInContext("document.getElementById('autolevel-background-threshold').value", ctx);
         const popupExclude = vm.runInContext("document.getElementById('autolevel-exclude-background').checked", ctx);
         const popupPooledToggle = vm.runInContext("document.getElementById('autolevel-enable-pooled-rgb').checked", ctx);
@@ -3640,7 +4037,7 @@ async function testPipeline(name, call) {
         vm.runInContext('openResizePopup()', ctx);
         const overlayDisplay = vm.runInContext("document.getElementById('resize-popup-overlay').style.display", ctx);
         const popupSummary = vm.runInContext("document.getElementById('resize-popup-summary').textContent", ctx);
-        const popupCurrent = vm.runInContext("document.getElementById('resize-current-size').value", ctx);
+        const popupCurrent = vm.runInContext("document.getElementById('resize-current-size-display').textContent", ctx);
         const popupTarget = vm.runInContext("document.getElementById('resize-target-size').value", ctx);
         const popupQuality = vm.runInContext("document.getElementById('resize-quality').value", ctx);
         const popupEngine = vm.runInContext("document.getElementById('resize-engine').value", ctx);
@@ -3743,7 +4140,7 @@ async function testPipeline(name, call) {
             renderArtifactPanel('j', ${JSON.stringify(summary)});
             openAutolevelPopup();
         `, ctx);
-        const fallbackBackground = vm.runInContext("document.getElementById('autolevel-background-readout').value", ctx);
+        const fallbackBackground = vm.runInContext("document.getElementById('autolevel-background-readout-display').textContent", ctx);
         const fallbackThreshold = vm.runInContext("document.getElementById('autolevel-background-threshold').value", ctx);
         if (fallbackBackground !== '#000000') { console.error('FATAL: autolevel popup should default background readout to black for old artifacts, got ' + fallbackBackground); process.exit(1); }
         if (fallbackThreshold !== '4') { console.error('FATAL: autolevel popup should default threshold to 4 for old artifacts, got ' + fallbackThreshold); process.exit(1); }
@@ -3972,6 +4369,29 @@ async function testPipeline(name, call) {
         console.log('  select→viewDeepZoom URL: OK (job_b.dzi, job_a.dzi)');
     }
 
+    {
+        vm.runInContext(`
+            window._dzSelectedKey = '';
+            window._dzInventory = [
+                { job_id: 'job_b', export_id: 'exp_b', width: 1000, height: 900, created_at: '2026-03-31T12:00:00Z', tiles_uploaded: 10, dzi_url: 'https://dz/job_b.dzi' },
+                { job_id: 'job_a', export_id: 'exp_a', width: 900, height: 800, created_at: '2026-03-30T10:00:00Z', tiles_uploaded: 9, dzi_url: 'https://dz/job_a.dzi' }
+            ];
+            _dzSelect(1);
+            window._dzInventory = [
+                { job_id: 'job_a', export_id: 'exp_a', width: 900, height: 800, created_at: '2026-03-30T10:00:00Z', tiles_uploaded: 9, dzi_url: 'https://dz/job_a.dzi' },
+                { job_id: 'job_b', export_id: 'exp_b', width: 1000, height: 900, created_at: '2026-03-31T12:00:00Z', tiles_uploaded: 10, dzi_url: 'https://dz/job_b.dzi' }
+            ];
+            _dzRenderInventory();
+        `, ctx);
+        const dzSelectedKey = vm.runInContext('window._dzSelectedKey', ctx);
+        const dzSelectedIdx = vm.runInContext('window._dzSelectedIdx', ctx);
+        if (dzSelectedKey !== 'job_a::exp_a' || dzSelectedIdx !== 0) {
+            console.error('FATAL: deepzoom selection should follow stable export key across reorder, got key=' + dzSelectedKey + ' idx=' + dzSelectedIdx);
+            process.exit(1);
+        }
+        console.log('  deepzoom selection follows stable key across reorder: OK');
+    }
+
     // Test: arrow key events change selection
     {
         // Start at idx=1 (from previous test)
@@ -4133,7 +4553,7 @@ async function testPipeline(name, call) {
                 }
             }];
             _selectedJobId = null;
-            _dzSelect(1);
+            _dzSelect(0);
         `, ctx);
 
         const dzGotoDisabled = ctx._elements['btn-dz-goto-result'].disabled;
@@ -4832,6 +5252,102 @@ async function testPipeline(name, call) {
         console.log('  sawtooth and flip work as unary solve-score ops: OK');
     }
 
+    // 11m2: solve-score preset load applies a repo-backed JSON program
+    {
+        vm.runInContext(`
+            fetch = async function(url) {
+                const s = String(url);
+                if (s.endsWith('solve-score-programs/index.json')) {
+                    return {
+                        ok: true,
+                        json: async () => ({
+                            programs: [
+                                { id: 'preset_pm', name: 'PM preset', path: 'solve-score-programs/preset_pm.json' }
+                            ]
+                        }),
+                    };
+                }
+                if (s.endsWith('solve-score-programs/preset_pm.json')) {
+                    return {
+                        ok: true,
+                        json: async () => ({
+                            version: 1,
+                            name: 'PM preset',
+                            chain: [['t2_abs', 'pm', '0.1']]
+                        }),
+                    };
+                }
+                return { ok: false, status: 404, json: async () => ({}) };
+            };
+            renderColorMode = 'rainbow';
+            _renderScoreChain = [{ name:'proximity', params:['slv','0.1'] }];
+            _renderSolveScoreProgramSelects();
+        `, ctx);
+        await vm.runInContext(`(async()=>{
+            await _ensureSolveScoreProgramCatalogLoaded(true);
+            document.getElementById('render-solve-score-program-select').value = 'preset_pm';
+            await loadSolveScoreProgramPreset('render');
+        })()`, ctx);
+        const presetInfo = vm.runInContext(`(()=>({
+            mode: renderColorMode,
+            display: _resolveSolveScoreState('render', { requireChain: true }).display,
+            status: document.getElementById('render-solve-score-program-status').textContent,
+            selectHtml: document.getElementById('render-solve-score-program-select').innerHTML
+        }))()`, ctx);
+        if (presetInfo.mode !== 'solve_score') {
+            console.error('FATAL: loading a solve-score preset should activate solve_score mode, got ' + presetInfo.mode);
+            process.exit(1);
+        }
+        if (presetInfo.display !== 't2_abs(pm,q=0.1%)') {
+            console.error('FATAL: solve-score preset should replace the chain, got ' + presetInfo.display);
+            process.exit(1);
+        }
+        if (!String(presetInfo.status).includes('Loaded PM preset')) {
+            console.error('FATAL: solve-score preset load should report status, got ' + presetInfo.status);
+            process.exit(1);
+        }
+        if (!String(presetInfo.selectHtml).includes('preset_pm') || !String(presetInfo.selectHtml).includes('PM preset')) {
+            console.error('FATAL: solve-score preset selector should populate from catalog');
+            process.exit(1);
+        }
+        console.log('  solve-score preset load applies repo JSON: OK');
+    }
+
+    // 11m3: solve-score save exports JSON through the shared blob downloader
+    {
+        vm.runInContext(`
+            window._savedSolveProgram = null;
+            prompt = function(_msg, defVal) { return 'my palette preset'; };
+            _downloadBlob = function(_blob, filename) { window._savedSolveProgram = filename; };
+            _paletteScoreChain = [
+                { name:'proximity', params:['slv','0.1'] },
+                { name:'omega_cosine', params:['2','0'] }
+            ];
+            _renderChips('palette-ss');
+            _syncSolveScoreLegacyInputs('palette');
+        `, ctx);
+        const savedPayload = JSON.parse(vm.runInContext('JSON.stringify(saveSolveScoreProgram("palette"))', ctx));
+        const savedFilename = vm.runInContext('window._savedSolveProgram', ctx);
+        const savedStatus = vm.runInContext('document.getElementById("palette-solve-score-program-status").textContent', ctx);
+        if (!savedPayload || savedPayload.name !== 'my palette preset') {
+            console.error('FATAL: solve-score save should export the prompted name, got ' + JSON.stringify(savedPayload));
+            process.exit(1);
+        }
+        if (!Array.isArray(savedPayload.chain) || savedPayload.chain.length !== 2) {
+            console.error('FATAL: solve-score save should export the current chain, got ' + JSON.stringify(savedPayload));
+            process.exit(1);
+        }
+        if (savedFilename !== 'my-palette-preset.json') {
+            console.error('FATAL: solve-score save should download a slugged json filename, got ' + savedFilename);
+            process.exit(1);
+        }
+        if (!String(savedStatus).includes('Saved my-palette-preset.json')) {
+            console.error('FATAL: solve-score save should report saved filename, got ' + savedStatus);
+            process.exit(1);
+        }
+        console.log('  solve-score save exports JSON via blob download: OK');
+    }
+
     // 11n: solve-score editor uses categorized picker and movable chips
     {
         const editorInfo = vm.runInContext(`(()=>{
@@ -4980,10 +5496,11 @@ async function testPipeline(name, call) {
             refreshRenderArtifacts = async function() {};
         `, ctx);
         ctx._elements['btn-render-generate-mt'] = ctx._mkEl();
-        await vm.runInContext('(async()=>{ await runRasterPipelineMT({ rasterThreads: 6, solveScoreThreads: 3, histInputMode: "sectioned", histRetries: 4, solveScoreSectionMode: "logical_sections", solveScoreSectionCount: 64, rasterInputMode: "sectioned", rasterRetries: 7, pixelBinFragmentMode: "dense_grouped", rasterBinGroupSize: 5, mergeWorkers: 14, finalizeWorkers: 22, paletteChunkThreads: 8, paletteChunkInputMode: "tmpfile", paletteChunkRetries: 9, paletteChunkWorkers: 24, paletteSectionMode: "logical_sections_auto", saveAssociatedPalette: true }); })()', ctx);
+        await vm.runInContext('(async()=>{ await runRasterPipelineMT({ colorPipeline: "classic", rasterThreads: 6, solveScoreThreads: 3, histInputMode: "sectioned", histRetries: 4, solveScoreSectionMode: "logical_sections", solveScoreSectionCount: 64, rasterInputMode: "sectioned", rasterRetries: 7, pixelBinFragmentMode: "dense_grouped", rasterBinGroupSize: 5, mergeWorkers: 14, finalizeWorkers: 22, paletteChunkThreads: 8, paletteChunkInputMode: "tmpfile", paletteChunkRetries: 9, paletteChunkWorkers: 24, paletteSectionMode: "logical_sections_auto", saveAssociatedPalette: true }); })()', ctx);
         orchDispatched = vm.runInContext('_orchDispatched', ctx);
         if (!orchDispatched) { console.error('FATAL: runRasterPipelineMT did not dispatch orchestrator'); process.exit(1); }
         if (orchDispatched.params.raster_engine !== 'mt') { console.error('FATAL: runRasterPipelineMT should request mt raster engine, got ' + orchDispatched.params.raster_engine); process.exit(1); }
+        if (orchDispatched.params.color_pipeline !== 'classic') { console.error('FATAL: runRasterPipelineMT should pass color_pipeline=classic, got ' + orchDispatched.params.color_pipeline); process.exit(1); }
         if (orchDispatched.params.raster_mt_threads !== 6) { console.error('FATAL: runRasterPipelineMT should pass raster_mt_threads=6, got ' + orchDispatched.params.raster_mt_threads); process.exit(1); }
         if (orchDispatched.params.solve_score_threads !== 3) { console.error('FATAL: runRasterPipelineMT should pass solve_score_threads=3, got ' + orchDispatched.params.solve_score_threads); process.exit(1); }
         if (orchDispatched.params.solve_score_hist_input_mode !== 'sectioned') { console.error('FATAL: runRasterPipelineMT should pass solve_score_hist_input_mode=sectioned, got ' + orchDispatched.params.solve_score_hist_input_mode); process.exit(1); }
@@ -5047,7 +5564,7 @@ async function testPipeline(name, call) {
         console.log('  12d no direct worker dispatch in launch functions: OK');
     }
 
-    // 12d2: compute dispatches one compute_orchestrator job and does not call coeffgen/sweep directly
+    // 12d2: Calculate-CM opens popup and fused CM dispatches one compute_orchestrator job without direct coeffgen/sweep calls
     {
         vm.runInContext(`
             var _computeOrchDispatched = null;
@@ -5117,15 +5634,38 @@ async function testPipeline(name, call) {
             _ctChain = [];
             _cfpv = [];
         `, ctx);
-        await vm.runInContext('(async()=>{ await runCalculateCM(); })()', ctx);
+        await vm.runInContext(`(async()=>{ await runCalculateCM(); })()`, ctx);
+        const overlayDisplay = ctx._elements['compute-mt-popup-overlay'].style.display || '';
+        const popupTitle = vm.runInContext(`document.getElementById('compute-mt-popup-title').textContent`, ctx);
+        const summaryText = vm.runInContext(`document.getElementById('compute-mt-popup-summary').textContent`, ctx);
+        if (overlayDisplay !== 'flex' || popupTitle !== 'Calculate-CM') {
+            console.error('FATAL: Calculate-CM should open the compute popup with the CM title, got display=' + overlayDisplay + ' title=' + popupTitle);
+            process.exit(1);
+        }
+        if (!summaryText.includes('Solver: CM') || !summaryText.includes('Function: g1') || !summaryText.includes('N=64') || !summaryText.includes('chunks=4') || !summaryText.includes('times=1')) {
+            console.error('FATAL: CM compute popup summary missing current compute settings, got ' + summaryText);
+            process.exit(1);
+        }
+        await vm.runInContext(`
+            _computeMtPopupState.fused = true;
+            _computeMtPopupState.fusedThreads = 6;
+            _renderComputeMtPopup();
+        `, ctx);
+        const fusedSolveRowDisplay = vm.runInContext(`document.getElementById('compute-mt-fused-solve-row').style.display`, ctx);
+        const sharedThreadsLabel = vm.runInContext(`document.getElementById('compute-mt-fused-threads-label').textContent`, ctx);
+        if (fusedSolveRowDisplay !== 'none' || sharedThreadsLabel !== 'Shared hires generation threads') {
+            console.error('FATAL: fused CM popup should hide the solve-thread row and relabel shared threads, got solve=' + fusedSolveRowDisplay + ' label=' + sharedThreadsLabel);
+            process.exit(1);
+        }
+        await vm.runInContext(`(async()=>{ await runCalculateWithSolver('companion_matrix', { nChunks: 4, fused: true, fusedThreads: 6, paramGenThreads: 7, coeffgenThreads: 5, loresParamGenThreads: 3, loresCoeffgenThreads: 2 }); })()`, ctx);
         const orch = vm.runInContext('_computeOrchDispatched', ctx);
         const coeffgenCalls = vm.runInContext('_computeCoeffgenCalls', ctx);
         const solveCalls = vm.runInContext('_computeSolveCalls', ctx);
         const status = ctx._elements['compute-status'].textContent;
         const computeLogTexts = ctx._elements['compute-log'].textContent || '';
-        if (!orch) { console.error('FATAL: runCalculateCM did not dispatch compute orchestrator'); process.exit(1); }
+        if (!orch) { console.error('FATAL: fused CM compute did not dispatch compute orchestrator'); process.exit(1); }
         if (orch.params.solver_mode !== 'companion_matrix') { console.error('FATAL: compute orchestrator should receive companion_matrix, got ' + orch.params.solver_mode); process.exit(1); }
-        if (orch.params.N !== 64 || orch.params.n_chunks !== 4 || orch.params.function !== 'g1') {
+        if (orch.params.N !== 64 || orch.params.n_chunks !== 4 || orch.params.function !== 'g1' || orch.params.execution_method !== 'fused_chunk_pipeline' || orch.params.fused_threads !== 6) {
             console.error('FATAL: compute orchestrator payload missing compute params');
             process.exit(1);
         }
@@ -5141,7 +5681,43 @@ async function testPipeline(name, call) {
             console.error('FATAL: compute log should keep solver tag in final summary');
             process.exit(1);
         }
-        console.log('  12d2 compute dispatches orchestrator only: OK');
+        console.log('  12d2 Calculate-CM popup + fused dispatch: OK');
+    }
+
+    // 12d2a0: Calculate-AE opens popup and fused AE hides the solve-thread mirror
+    {
+        ctx._elements['btn-calculate'] = ctx._elements['btn-calculate'] || ctx._mkEl();
+        ctx._elements['render-function'] = ctx._elements['render-function'] || { ...ctx._mkEl(), value: 'g1' };
+        ctx._elements['render-n'] = ctx._elements['render-n'] || { ...ctx._mkEl(), value: '64' };
+        ctx._elements['render-stripes'] = ctx._elements['render-stripes'] || { ...ctx._mkEl(), value: '4' };
+        ctx._elements['render-times'] = ctx._elements['render-times'] || { ...ctx._mkEl(), value: '1' };
+        await vm.runInContext(`
+            (async()=>{
+                document.getElementById('render-function').value = 'g1';
+                document.getElementById('render-n').value = '64';
+                document.getElementById('render-stripes').value = '4';
+                document.getElementById('render-times').value = '1';
+                _ptChain = [];
+                _ctChain = [];
+                _cfpv = [];
+                await runCalculate();
+                _computeMtPopupState.fused = true;
+                _renderComputeMtPopup();
+            })()
+        `, ctx);
+        const popupTitle = vm.runInContext(`document.getElementById('compute-mt-popup-title').textContent`, ctx);
+        const summaryText = vm.runInContext(`document.getElementById('compute-mt-popup-summary').textContent`, ctx);
+        const fusedSolveRowDisplay = vm.runInContext(`document.getElementById('compute-mt-fused-solve-row').style.display`, ctx);
+        const sharedThreadsLabel = vm.runInContext(`document.getElementById('compute-mt-fused-threads-label').textContent`, ctx);
+        if (popupTitle !== 'Calculate-AE' || !summaryText.includes('Solver: AE')) {
+            console.error('FATAL: Calculate-AE should open the compute popup with AE labeling, got title=' + popupTitle + ' summary=' + summaryText);
+            process.exit(1);
+        }
+        if (fusedSolveRowDisplay !== 'none' || sharedThreadsLabel !== 'Shared hires generation threads') {
+            console.error('FATAL: fused AE popup should hide the solve-thread row and relabel shared threads, got solve=' + fusedSolveRowDisplay + ' label=' + sharedThreadsLabel);
+            process.exit(1);
+        }
+        console.log('  12d2a0 Calculate-AE popup solver-specific fused rows: OK');
     }
 
     // 12d2a: Calculate-AE-MT opens popup and MT dispatch forwards param-gen thread knobs
@@ -5209,12 +5785,13 @@ async function testPipeline(name, call) {
             })()
         `, ctx);
         const overlayDisplay = ctx._elements['compute-mt-popup-overlay'].style.display || '';
-        const summaryText = ctx._elements['compute-mt-popup-summary'].textContent || '';
-        if (overlayDisplay !== 'flex') {
-            console.error('FATAL: Calculate-AE-MT should open compute MT popup, got display=' + overlayDisplay);
+        const popupTitle = vm.runInContext(`document.getElementById('compute-mt-popup-title').textContent`, ctx);
+        const summaryText = vm.runInContext(`document.getElementById('compute-mt-popup-summary').textContent`, ctx);
+        if (overlayDisplay !== 'flex' || popupTitle !== 'Calculate-AE-MT') {
+            console.error('FATAL: Calculate-AE-MT should open compute popup, got display=' + overlayDisplay + ' title=' + popupTitle);
             process.exit(1);
         }
-        if (!summaryText.includes('Function: g1') || !summaryText.includes('N=64') || !summaryText.includes('chunks=4') || !summaryText.includes('times=2')) {
+        if (!summaryText.includes('Solver: AE-MT') || !summaryText.includes('Function: g1') || !summaryText.includes('N=64') || !summaryText.includes('chunks=4') || !summaryText.includes('times=2')) {
             console.error('FATAL: compute MT popup summary missing current compute settings, got ' + summaryText);
             process.exit(1);
         }
@@ -5238,7 +5815,7 @@ async function testPipeline(name, call) {
 
         await vm.runInContext(`
             (async()=>{
-                await runCalculateWithSolver('aberth_mt', { paramGenThreads: 7, coeffgenThreads: 5, loresParamGenThreads: 3, loresCoeffgenThreads: 2 });
+                await runCalculateWithSolver('aberth_mt', { nChunks: 4, paramGenThreads: 7, coeffgenThreads: 5, loresParamGenThreads: 3, loresCoeffgenThreads: 2 });
             })()
         `, ctx);
         const orch = vm.runInContext('_computeMtOrchDispatched', ctx);
@@ -5347,7 +5924,7 @@ async function testPipeline(name, call) {
         `, ctx);
         const fusedPanelClass = vm.runInContext(`document.getElementById('compute-mt-fused-panel').className`, ctx);
         const fusedTabClass = vm.runInContext(`document.getElementById('compute-mt-tab-fused').className`, ctx);
-        const solveMirrorValue = vm.runInContext(`document.getElementById('compute-mt-fused-solve-threads').value`, ctx);
+        const solveMirrorValue = vm.runInContext(`document.getElementById('compute-mt-fused-solve-threads').textContent`, ctx);
         if (!String(fusedPanelClass).includes('active') || !String(fusedTabClass).includes('active') || String(solveMirrorValue) !== '6') {
             console.error('FATAL: fused tab should expose the solve row and mirror fused threads, got panel=' + fusedPanelClass + ' tab=' + fusedTabClass + ' solve=' + solveMirrorValue);
             process.exit(1);
@@ -5650,7 +6227,7 @@ async function testPipeline(name, call) {
             _ctChain = [];
             _cfpv = [];
         `, ctx);
-        await vm.runInContext('(async()=>{ await runCalculateCM(); })()', ctx);
+        await vm.runInContext(`(async()=>{ await runCalculateWithSolver('companion_matrix', { nChunks: 4 }); })()`, ctx);
         const progressTexts = ctx._elements['compute-log'].textContent || '';
         if (!progressTexts.includes('Coeffgen 2/4')) {
             console.error('FATAL: compute log should show coeffgen DDB progress, got:\\n' + progressTexts);
@@ -6578,6 +7155,35 @@ async function testPipeline(name, call) {
         if (selIdx !== 0) { console.error('FATAL: palette inventory should auto-select first row, got ' + selIdx); process.exit(1); }
         if (selId !== 'pal_new') { console.error('FATAL: newest palette should be first, got ' + selId); process.exit(1); }
         console.log('  15a palette inventory load + auto-select: OK');
+
+        vm.runInContext(`
+            _paletteSelectedKey = '';
+            _paletteSelectedIdx = 1;
+            _paletteInventory = [
+                { palette_id: 'pal_new', display_name: 'crowding q=5.0% reef', clip_lo: -0.1, clip_hi: 0.2, root_transforms: [], image_url: 'https://example.com/new.jpeg', preview_url: 'https://example.com/new.png' },
+                { palette_id: 'pal_old', display_name: 'proximity q=0.1% inferno', clip_lo: -1, clip_hi: 1, root_transforms: [], image_url: 'https://example.com/old.jpeg', preview_url: 'https://example.com/old.png' }
+            ];
+            _paletteSelect(1);
+            _paletteInventory = [
+                { palette_id: 'pal_old', display_name: 'proximity q=0.1% inferno', clip_lo: -1, clip_hi: 1, root_transforms: [], image_url: 'https://example.com/old.jpeg', preview_url: 'https://example.com/old.png' },
+                { palette_id: 'pal_new', display_name: 'crowding q=5.0% reef', clip_lo: -0.1, clip_hi: 0.2, root_transforms: [], image_url: 'https://example.com/new.jpeg', preview_url: 'https://example.com/new.png' }
+            ];
+            let html = '<table>';
+            _paletteInventory.forEach((pal) => {
+                const key = _encodeStableRowKey(_paletteStableKey(pal));
+                html += '<tr class="palette-inv-row" data-key="' + key + '"></tr>';
+            });
+            html += '</table>';
+            _elements['palette-inventory'].innerHTML = html;
+            _paletteSelectKey('pal_old');
+        `, ctx);
+        const palSelectedKey = vm.runInContext('_paletteSelectedKey', ctx);
+        const palSelectedIdx = vm.runInContext('_paletteSelectedIdx', ctx);
+        if (palSelectedKey !== 'pal_old' || palSelectedIdx !== 0) {
+            console.error('FATAL: palette selection should follow stable palette id across reorder, got key=' + palSelectedKey + ' idx=' + palSelectedIdx);
+            process.exit(1);
+        }
+        console.log('  15a palette selection follows stable key across reorder: OK');
     }
 
     // 15a2: selected palette actions include download before delete
@@ -6586,6 +7192,7 @@ async function testPipeline(name, call) {
         const delBtn = ctx._elements['btn-palette-delete'];
         if (!dlBtn) { console.error('FATAL: palette tab missing Download button'); process.exit(1); }
         if (!delBtn) { console.error('FATAL: palette tab missing Delete button'); process.exit(1); }
+        vm.runInContext('_paletteSelectedIdx = 1; _paletteSelectedKey = "pal_new";', ctx);
         vm.runInContext(`
             var _palDownloadArgs = null;
             downloadPresignedFile = async function(url, filename, key) {

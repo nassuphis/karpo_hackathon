@@ -111,9 +111,6 @@
                 "degree.$": "$.plan.calc.degree",
                 "metric.$": "$.plan.solve_score.metric",
                 "solve_score_chain.$": "$.plan.solve_score.chain",
-                "solve_score_quantile.$": "$.plan.solve_score.quantile",
-                "solve_score_omega.$": "$.plan.solve_score.omega",
-                "solve_score_omega_enabled.$": "$.plan.solve_score.omega_enabled",
                 "solve_score_threads.$": "$.plan.solve_score.threads",
                 "lores_bin_key.$": "$.plan.calc.lores_bin_key",
                 "lores_coeffs_key.$": "$.plan.calc.lores_coeffs_key",
@@ -126,7 +123,19 @@
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "ColorSolveScoreHistPhase"
+            "Next": "ColorSolveScoreHistNeededChoice"
+          },
+
+          "ColorSolveScoreHistNeededChoice": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                "Variable": "$.plan.render_execution.color_pipeline",
+                "StringEquals": "fused",
+                "Next": "ColorRasterPhase"
+              }
+            ],
+            "Default": "ColorSolveScoreHistPhase"
           },
 
           "ColorSolveScoreHistPhase": {
@@ -163,9 +172,6 @@
                 "section_count.$": "$$.Map.Item.Value.section_count",
                 "metric.$": "$.plan.solve_score.metric",
               "solve_score_chain.$": "$.plan.solve_score.chain",
-              "solve_score_quantile.$": "$.plan.solve_score.quantile",
-              "solve_score_omega.$": "$.plan.solve_score.omega",
-              "solve_score_omega_enabled.$": "$.plan.solve_score.omega_enabled",
               "solve_score_threads.$": "$.plan.solve_score.threads",
               "solve_score_hist_input_mode.$": "$.plan.solve_score.hist_input_mode",
               "solve_score_hist_retries.$": "$.plan.solve_score.hist_retries",
@@ -239,9 +245,6 @@
                 "n_chunks.$": "$.plan.calc.n_chunks",
                 "metric.$": "$.plan.solve_score.metric",
                 "solve_score_chain.$": "$.plan.solve_score.chain",
-                "solve_score_quantile.$": "$.plan.solve_score.quantile",
-                "solve_score_omega.$": "$.plan.solve_score.omega",
-                "solve_score_omega_enabled.$": "$.plan.solve_score.omega_enabled",
               "solve_score_threads.$": "$.plan.solve_score.threads",
               "solve_score_merge_workers.$": "$.plan.solve_score.merge_workers",
                 "n_chunks.$": "$.plan.solve_score.item_count",
@@ -308,9 +311,6 @@
               "n_coeffs.$": "$.plan.calc.n_coeffs",
               "metric.$": "$.plan.associated_palette.metric",
               "solve_score_chain.$": "$.plan.associated_palette.score_chain",
-              "solve_score_quantile.$": "$.plan.associated_palette.quantile",
-              "solve_score_omega.$": "$.plan.associated_palette.omega",
-              "solve_score_omega_enabled.$": "$.plan.associated_palette.omega_enabled",
               "root_transforms.$": "$.plan.params.root_transforms",
               "palette_chunk_threads.$": "$.plan.associated_palette.chunk_threads",
               "palette_chunk_input_mode.$": "$.plan.associated_palette.chunk_input_mode",
@@ -380,9 +380,6 @@
                 "metric.$": "$.plan.associated_palette.metric",
                 "palette.$": "$.plan.associated_palette.palette",
                 "solve_score_chain.$": "$.plan.associated_palette.score_chain",
-                "solve_score_quantile.$": "$.plan.associated_palette.quantile",
-                "solve_score_omega.$": "$.plan.associated_palette.omega",
-                "solve_score_omega_enabled.$": "$.plan.associated_palette.omega_enabled",
                 "render_execution.$": "$.plan.render_execution",
                 "root_transforms.$": "$.plan.params.root_transforms",
                 "image_key.$": "$.plan.associated_palette.image_key",
@@ -423,23 +420,18 @@
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "ColorRasterItemsChoice"
+            "Next": "ColorRasterMap"
           },
 
-          "ColorRasterItemsChoice": {
-            "Type": "Choice",
-            "Choices": [
-              {"Variable": "$.plan.raster.pixel_bin_fragment_mode", "StringEquals": "dense_grouped", "Next": "ColorRasterMapDense"}
-            ],
-            "Default": "ColorRasterMapSparse"
-          },
-
-          "ColorRasterMapSparse": {
+          "ColorRasterMap": {
             "Type": "Map",
-            "ItemsPath": "$.plan.raster.section_items",
+            "ItemsPath": "$.plan.raster.map_items",
             "MaxConcurrency": 10,
             "ItemSelector": {
               "job_id.$": "$.job_id",
+              "group_idx.$": "$$.Map.Item.Value.group_idx",
+              "sections.$": "$$.Map.Item.Value.sections",
+              "section_indices.$": "$$.Map.Item.Value.section_indices",
               "section_idx.$": "$$.Map.Item.Value.section_idx",
               "section_count.$": "$$.Map.Item.Value.section_count",
               "task_id.$": "States.Format('render_{}_raster_{}', $.run_id, $$.Map.Item.Value.section_idx)",
@@ -472,25 +464,29 @@
               "emit_pixel_bins.$": "$.plan.outputs.repalette_capable",
               "pixel_bins_drive_rgb.$": "$.plan.outputs.pixel_bins_drive_rgb",
               "solve_score_bins_key.$": "$.plan.solve_score.bins_key",
+              "solve_score_clip_key.$": "$.plan.solve_score.clip_key",
               "saved_palette_bins_prefix.$": "$.plan.saved_palette.section_bins_prefix",
               "saved_palette_bins_key.$": "States.Format('{}{}.bin', $.plan.saved_palette.section_bins_prefix, $$.Map.Item.Value.section_idx)",
               "solve_metric.$": "$.plan.solve_score.metric",
               "solve_score_chain.$": "$.plan.solve_score.chain",
-              "solve_score_quantile.$": "$.plan.solve_score.quantile",
-              "solve_score_omega.$": "$.plan.solve_score.omega",
-              "solve_score_omega_enabled.$": "$.plan.solve_score.omega_enabled",
               "raster_function_name.$": "$.plan.raster.function_name",
               "raster_mt_threads.$": "$.plan.raster.threads",
               "raster_input_mode.$": "$.plan.raster.input_mode",
               "raster_sectioned_retries.$": "$.plan.raster.sectioned_retries",
+              "emit_raw_score_bins.$": "$.plan.raster.emit_raw_score_bins",
+              "color_pipeline.$": "$.plan.render_execution.color_pipeline",
+              "associated_palette_mode.$": "$.plan.associated_palette.mode",
+              "associated_palette_fragment_prefix.$": "$.plan.associated_palette.fragment_prefix",
+              "associated_palette_grid_n.$": "$.plan.calc.N",
+              "fragment_prefix.$": "$.plan.outputs.fragment_prefix",
               "pixel_bin_fragment_mode.$": "$.plan.raster.pixel_bin_fragment_mode",
               "raster_bin_group_size.$": "$.plan.raster.raster_bin_group_size"
             },
             "ItemProcessor": {
               "ProcessorConfig": {"Mode": "INLINE"},
-              "StartAt": "RasterWorkerSparse",
+              "StartAt": "RasterWorker",
               "States": {
-                "RasterWorkerSparse": {
+                "RasterWorker": {
                   "Type": "Task",
                   "Resource": "arn:aws:states:::lambda:invoke",
                   "Parameters": { "FunctionName.$": "$.raster_function_name", "Payload.$": "$" },
@@ -501,69 +497,88 @@
               }
             },
             "ResultPath": null,
-            "Next": "ColorFinalizePhase"
+            "Next": "ColorOutputPipelineChoice"
           },
 
-          "ColorRasterMapDense": {
-            "Type": "Map",
-            "ItemsPath": "$.plan.raster.group_items",
-            "MaxConcurrency": 10,
-            "ItemSelector": {
-              "job_id.$": "$.job_id",
-              "group_idx.$": "$$.Map.Item.Value.group_idx",
-              "task_id.$": "States.Format('render_{}_raster_{}', $.run_id, $$.Map.Item.Value.group_idx)",
-              "sections.$": "$$.Map.Item.Value.sections",
-              "section_indices.$": "$$.Map.Item.Value.section_indices",
-              "logical_section.$": "$.plan.raster.logical_section",
-              "solve_source_manifest.$": "$.plan.solve_source_manifest",
-              "n_coeffs.$": "$.plan.calc.n_coeffs",
-              "width.$": "$.plan.grid.pix",
-              "height.$": "$.plan.grid.pix",
-              "tile_size.$": "$.plan.grid.tile_size",
-              "n_tile_cols.$": "$.plan.grid.n_tile_cols",
-              "n_tile_rows.$": "$.plan.grid.n_tile_rows",
-              "center_re.$": "$.plan.viewport.center_re",
-              "center_im.$": "$.plan.viewport.center_im",
-              "scale.$": "$.plan.viewport.scale",
-              "rotation.$": "$.plan.params.rotation",
-              "degree.$": "$.plan.calc.degree",
-              "color.$": "$.plan.params.color_mode",
-              "match.$": "$.plan.params.match_mode",
-              "palette.$": "$.plan.params.palette",
-              "constant_color.$": "$.plan.params.constant_color",
-              "root_transforms.$": "$.plan.params.root_transforms",
-              "emit_pixel_bins.$": "$.plan.outputs.repalette_capable",
-              "pixel_bins_drive_rgb.$": "$.plan.outputs.pixel_bins_drive_rgb",
-              "solve_score_bins_key.$": "$.plan.solve_score.bins_key",
-              "saved_palette_bins_prefix.$": "$.plan.saved_palette.section_bins_prefix",
-              "solve_metric.$": "$.plan.solve_score.metric",
-              "solve_score_chain.$": "$.plan.solve_score.chain",
-              "solve_score_quantile.$": "$.plan.solve_score.quantile",
-              "solve_score_omega.$": "$.plan.solve_score.omega",
-              "solve_score_omega_enabled.$": "$.plan.solve_score.omega_enabled",
-              "raster_function_name.$": "$.plan.raster.function_name",
-              "raster_mt_threads.$": "$.plan.raster.threads",
-              "raster_input_mode.$": "$.plan.raster.input_mode",
-              "raster_sectioned_retries.$": "$.plan.raster.sectioned_retries",
-              "pixel_bin_fragment_mode.$": "$.plan.raster.pixel_bin_fragment_mode",
-              "raster_bin_group_size.$": "$.plan.raster.raster_bin_group_size"
-            },
-            "ItemProcessor": {
-              "ProcessorConfig": {"Mode": "INLINE"},
-              "StartAt": "RasterWorkerDense",
-              "States": {
-                "RasterWorkerDense": {
-                  "Type": "Task",
-                  "Resource": "arn:aws:states:::lambda:invoke",
-                  "Parameters": { "FunctionName.$": "$.raster_function_name", "Payload.$": "$" },
-                  "ResultPath": null,
-                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-                  "End": true
-                }
+          "ColorOutputPipelineChoice": {
+            "Type": "Choice",
+            "Choices": [
+              {"Variable": "$.plan.render_execution.color_pipeline", "StringEquals": "fused", "Next": "ColorAssembleEncodePhase"}
+            ],
+            "Default": "ColorFinalizePhase"
+          },
+
+          "ColorAssembleEncodePhase": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${StatusFunctionArn}",
+              "Payload": {
+                "action": "phase",
+                "job_id.$": "$.job_id",
+                "task_id.$": "$.task_id",
+                "run_id.$": "$.run_id",
+                "run_started_at_ms.$": "$.run_started_at_ms",
+                "mode.$": "$.mode",
+                "phase": "finalize_mt",
+                "phase_label": "Assemble + encode",
+                "expected": 1,
+                "subtask_prefix.$": "States.Format('render_{}_finalize_mt', $.run_id)"
               }
             },
             "ResultPath": null,
-            "Next": "ColorFinalizePhase"
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "ColorAssembleEncodeTask"
+          },
+
+          "ColorAssembleEncodeTask": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::lambda:invoke",
+            "Parameters": {
+              "FunctionName": "${FinalizeMTFunctionArn}",
+              "Payload": {
+                "phase": "finalize_mt",
+                "job_id.$": "$.job_id",
+                "run_id.$": "$.run_id",
+                "task_id.$": "States.Format('render_{}_finalize_mt', $.run_id)",
+                "mode.$": "$.mode",
+                "source_item_count.$": "$.plan.raster.item_count",
+                "width.$": "$.plan.grid.pix",
+                "height.$": "$.plan.grid.pix",
+                "tile_size.$": "$.plan.grid.tile_size",
+                "n_tile_cols.$": "$.plan.grid.n_tile_cols",
+                "n_tile_rows.$": "$.plan.grid.n_tile_rows",
+                "format.$": "$.plan.params.fmt",
+                "quality.$": "$.plan.params.quality",
+                "palette.$": "$.plan.params.palette",
+                "background_color.$": "$.plan.outputs.metadata.background_color",
+                "finalize_workers.$": "$.plan.finalize.workers",
+                "render_execution.$": "$.plan.render_execution",
+                "metadata.$": "$.plan.outputs.metadata",
+                "image_key.$": "$.plan.outputs.image_key",
+                "preview_key.$": "$.plan.outputs.preview_key",
+                "meta_key.$": "$.plan.outputs.meta_key",
+                "raw_key.$": "$.plan.outputs.raw_key",
+                "raw_meta_key.$": "$.plan.outputs.raw_meta_key",
+                "plan_params_digest.$": "$.plan.outputs.plan_params_digest",
+                "solve_score_clip_key.$": "$.plan.solve_score.clip_key",
+                "fragment_prefix.$": "$.plan.outputs.fragment_prefix",
+                "fragment_manifest": {
+                  "version": 1,
+                  "pair_encoding": "u32le_u8_v1",
+                  "item_count.$": "$.plan.raster.item_count",
+                  "fragment_prefix.$": "$.plan.outputs.fragment_prefix",
+                  "chain_fingerprint.$": "$.plan.outputs.metadata.solve_score_chain_fingerprint"
+                },
+                "associated_palette.$": "$.plan.associated_palette",
+                "associated_palette_grid_n.$": "$.plan.calc.N",
+                "associated_palette_times.$": "$.plan.calc.times",
+                "associated_palette_degree.$": "$.plan.calc.degree"
+              }
+            },
+            "ResultPath": null,
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Next": "ColorPreviewTask"
           },
 
           "ColorFinalizePhase": {

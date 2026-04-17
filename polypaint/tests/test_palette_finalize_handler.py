@@ -384,7 +384,7 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
     @patch("handler_palette_finalize._list_keys")
     @patch("handler_palette_finalize.s3")
     @patch("handler_palette_finalize.subprocess.run")
-    def test_finalize_warns_when_omega_enabled_missing_and_default_used(
+    def test_finalize_does_not_warn_when_omega_enabled_missing_and_chain_defaults_apply(
         self, mock_run, mock_s3, mock_list_keys, mock_delete_keys, mock_report
     ):
         import handler_palette_finalize as mod
@@ -458,7 +458,7 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
 
             done_kwargs = mock_report.call_args_list[-1].kwargs
             warned = {w["param"] for w in done_kwargs["result_data"]["contract_warnings"]}
-            self.assertIn("solve_score_omega_enabled", warned)
+            self.assertNotIn("solve_score_omega_enabled", warned)
 
     @patch("handler_palette_finalize.report_status")
     @patch("handler_palette_finalize._delete_keys")

@@ -18,7 +18,11 @@ from logical_sections import (
     stitch_spans_to_file,
     write_native_multispan_manifest,
 )
-from solve_score_chain import solve_score_program_cli_payload
+from solve_score_chain import (
+    compile_solve_score_chain_or_legacy,
+    compiled_solve_score_fingerprint,
+    solve_score_program_cli_payload,
+)
 from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, parse_boolish, report_status
 
 s3 = boto3.client("s3")
@@ -165,9 +169,28 @@ def handler(event, context):
     bin_key = params["bin_key"]
     degree = params["degree"]
     metric = params["metric"]
-    q = contract_param(params, "solve_score_quantile", 0.001, contract_warnings)
-    omega = float(contract_param(params, "solve_score_omega", 1.0, contract_warnings))
-    omega_enabled = parse_boolish(contract_param(params, "solve_score_omega_enabled", True, contract_warnings), True)
+    raw_chain = params.get("solve_score_chain", "")
+    has_request_chain = raw_chain not in ("", None, [])
+    if has_request_chain:
+        compiled = compile_solve_score_chain_or_legacy(
+            raw_chain,
+            metric,
+            params.get("solve_score_quantile", 0.001),
+            params.get("solve_score_omega", 1.0),
+            params.get("solve_score_omega_enabled", True),
+            default_metric=metric,
+        )
+        metric = compiled["metric"]
+        q = compiled["quantile"]
+        omega = compiled["omega"]
+        omega_enabled = compiled["omega_enabled"]
+        chain_fingerprint = compiled_solve_score_fingerprint(compiled)
+    else:
+        compiled = None
+        q = float(params.get("solve_score_quantile", 0.001))
+        omega = float(params.get("solve_score_omega", 1.0))
+        omega_enabled = parse_boolish(params.get("solve_score_omega_enabled", True), True)
+        chain_fingerprint = str(params.get("solve_score_chain_fingerprint") or "").strip()
     bins_key = params["solve_score_bins_key"]
     step_start = int(params["step_start"])
     step_count = int(params["step_count"])
@@ -197,6 +220,7 @@ def handler(event, context):
         "section_idx": section_idx,
         "section_count": section_count,
         "metric": metric,
+        "chain_fingerprint": chain_fingerprint,
         "threads": threads,
         "requested_input_mode": input_mode,
         "input_mode": input_mode,
@@ -293,6 +317,36 @@ def handler(event, context):
         if is_v2_bins:
             if not bins_data.get("program") or not isinstance(bins_data.get("metrics"), list) or not bins_data.get("metrics"):
                 raise RuntimeError("v2 solve-score bins artifact is missing program or metrics")
+            if has_request_chain:
+                actual_fingerprint = str(bins_data.get("chain_fingerprint") or "").strip()
+                if not actual_fingerprint:
+                    raise RuntimeError("Bins artifact missing chain_fingerprint")
+                if actual_fingerprint != chain_fingerprint:
+                    raise RuntimeError(
+                        f"Bins fingerprint mismatch: expected {chain_fingerprint}, got {actual_fingerprint}"
+                    )
+                if str(bins_data.get("program") or "") != compiled["program_spec"]:
+                    raise RuntimeError(
+                        f"Bins program mismatch: expected {compiled['program_spec']}, got {bins_data.get('program')!r}"
+                    )
+                if len(bins_data["metrics"]) != compiled["metric_count"]:
+                    raise RuntimeError(
+                        f"Bins metric slot count mismatch: expected {compiled['metric_count']}, got {len(bins_data['metrics'])}"
+                    )
+                for expected, actual in zip(compiled["metrics"], bins_data["metrics"]):
+                    if str(actual.get("metric") or "") != expected["metric"]:
+                        raise RuntimeError(
+                            f"Bins metric slot {expected['slot']} mismatch: expected {expected['metric']}, got {actual.get('metric')!r}"
+                        )
+                    if str(actual.get("source", "slv") or "slv") != expected.get("source", "slv"):
+                        raise RuntimeError(
+                            f"Bins source slot {expected['slot']} mismatch: expected {expected.get('source', 'slv')}, "
+                            f"got {actual.get('source', 'slv')!r}"
+                        )
+                    if float(actual.get("quantile", -1)) != float(expected["quantile"]):
+                        raise RuntimeError(
+                            f"Bins quantile slot {expected['slot']} mismatch: expected {expected['quantile']}, got {actual.get('quantile')!r}"
+                        )
             if uses_coeff_source:
                 try:
                     n_coeffs = int(n_coeffs)
@@ -531,6 +585,10 @@ def handler(event, context):
             "max_score": meta.get("max_score"),
         }
         if is_v2_bins:
+            if chain_fingerprint:
+                chunk_meta["chain_fingerprint"] = chain_fingerprint
+            elif bins_data.get("chain_fingerprint"):
+                chunk_meta["chain_fingerprint"] = bins_data.get("chain_fingerprint")
             chunk_meta["program"] = bins_data.get("program")
             chunk_meta["metrics"] = bins_data.get("metrics")
         s3.put_object(Bucket=BUCKET, Key=meta_key, Body=json.dumps(chunk_meta), ContentType="application/json")

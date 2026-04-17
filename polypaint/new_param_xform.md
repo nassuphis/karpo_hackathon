@@ -92,7 +92,7 @@ Work:
 Files:
 
 - [ops_xfrm.md](/Users/nicknassuphis/karpo_hackathon/polypaint/ops_xfrm.md)
-- [ui_chip_inputs.md](/Users/nicknassuphis/karpo_hackathon/polypaint/ui_chip_inputs.md)
+- [chip_inputs.md](/Users/nicknassuphis/karpo_hackathon/polypaint/ui_docs/chip_inputs.md)
 
 Work:
 

@@ -58,6 +58,22 @@ MAX_PLAN_BYTES = 200 * 1024  # 200 KB — fail fast before hitting 256 KB SFN li
 DEFAULT_BACKGROUND_COLOR = "000000"
 DEFAULT_BACKGROUND_THRESHOLD = 4
 
+
+def _plan_params_digest(*, viewport, pix, tile_size, root_transforms):
+    payload = {
+        "viewport": viewport,
+        "grid": {
+            "pix": int(pix),
+            "tile_size": int(tile_size),
+        },
+        "params": {
+            "root_transforms": root_transforms or [],
+        },
+        "raster_binary_sha256": str(os.environ.get("RASTER_BINARY_SHA256") or ""),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
 def _fallback_params_key(job_id, calc):
     return fallback_params_global_key(job_id, calc)
 
@@ -263,8 +279,16 @@ def _validate_raster_bin_group_size(value):
     return group_size
 
 
+def _validate_color_pipeline(value):
+    pipeline = str(value or "classic").strip().lower()
+    if pipeline not in ("classic", "fused"):
+        raise RuntimeError(f"color_pipeline must be 'classic' or 'fused', got {value!r}")
+    return pipeline
+
+
 def _render_execution_config(rp):
     return {
+        "color_pipeline": str(rp.get("color_pipeline", "classic") or "classic"),
         "raster_engine": str(rp.get("raster_engine", "single") or "single"),
         "save_associated_palette": bool(rp.get("save_associated_palette", False)),
         "solve_score_hist_input_mode": str(rp.get("solve_score_hist_input_mode", "tmpfile") or "tmpfile"),
@@ -378,6 +402,7 @@ def handler(event, context):
         "quality": 90,
         "fmt": "jpeg",
         "color_mode": "rainbow",
+        "color_pipeline": "classic",
         "raster_engine": "single",
         "raster_mt_threads": 4,
         "raster_input_mode": "tmpfile",
@@ -409,6 +434,7 @@ def handler(event, context):
     for key, default in _PARAM_DEFAULTS.items():
         if key not in rp:
             rp[key] = default
+    rp["color_pipeline"] = _validate_color_pipeline(rp.get("color_pipeline", "classic"))
     rp["raster_engine"] = _validate_raster_engine(rp.get("raster_engine", "single"))
     rp["raster_mt_threads"] = _validate_thread_count(rp.get("raster_mt_threads", 4), "raster_mt_threads")
     rp["raster_input_mode"] = _validate_raster_input_mode(rp.get("raster_input_mode", "tmpfile"))
@@ -482,6 +508,14 @@ def handler(event, context):
         rp["color_mode"] = "solve_score"
         if not rp.get("solve_metric"):
             rp["solve_metric"] = "proximity"
+    fused_color_pipeline = mode == "color" and rp["color_pipeline"] == "fused"
+    if fused_color_pipeline:
+        if color_mode != "solve_score":
+            raise RuntimeError("fused color pipeline currently supports only color_mode=solve_score")
+        if rp["raster_engine"] != "mt":
+            raise RuntimeError("fused color pipeline requires raster_engine=mt")
+        if rp["pixel_bin_fragment_mode"] != "sparse_chunks":
+            raise RuntimeError("fused color pipeline currently requires pixel_bin_fragment_mode=sparse_chunks")
 
     solve_metric = rp.get("solve_metric", "proximity")
     solve_score_chain = rp.get("solve_score_chain", "")
@@ -712,7 +746,7 @@ def handler(event, context):
         "workers": rp["finalize_workers"],
     }
 
-    color_repalette_capable = mode == "color" and color_mode in ("solve_score", "saved_palette")
+    color_repalette_capable = mode == "color" and color_mode in ("solve_score", "saved_palette") and not fused_color_pipeline
     requested_raster_engine = rp.get("raster_engine", "single")
     requested_raster_threads = rp.get("raster_mt_threads", 4)
     raster = {
@@ -742,6 +776,7 @@ def handler(event, context):
         "section_items": build_physical_section_items(chunk_items),
         "group_items": [],
         "function_name": RASTER_FUNCTION,
+        "emit_raw_score_bins": False,
         "eligible": False,
         "reason": "mode_not_color" if mode != "color" else "unsupported_color_mode",
     }
@@ -840,14 +875,16 @@ def handler(event, context):
         raster["pixel_bin_fragment_mode"] = "dense_grouped"
         raster["raster_bin_group_size"] = int(requested_group_size)
 
+    raster["map_items"] = _build_raster_group_items(
+        raster["section_items"],
+        raster["pixel_bin_fragment_mode"],
+        raster["raster_bin_group_size"] or 1,
+    )
     if raster["pixel_bin_fragment_mode"] == "dense_grouped":
-        raster["group_items"] = _build_raster_group_items(
-            raster["section_items"],
-            raster["pixel_bin_fragment_mode"],
-            raster["raster_bin_group_size"] or 1,
-        )
-    raster["item_count"] = len(raster["group_items"]) if raster["group_items"] else raster["section_item_count"]
+        raster["group_items"] = list(raster["map_items"])
+    raster["item_count"] = len(raster["map_items"])
     raster["chunk_count"] = n_chunks
+    raster["emit_raw_score_bins"] = bool(fused_color_pipeline)
 
     # Immutable artifact outputs
     artifact_family = "coeffs" if mode == "coeff_bilevel" else mode
@@ -863,6 +900,10 @@ def handler(event, context):
         "image_key": "",
         "preview_key": "",
         "meta_key": "",
+        "raw_key": "",
+        "raw_meta_key": "",
+        "fragment_prefix": "",
+        "source_color_artifact_id": "",
         "chunks_prefix": "",
         "section_scores_prefix": "",
         "section_bins_prefix": "",
@@ -937,13 +978,17 @@ def handler(event, context):
                 "image_key": assoc_prefix + "image.jpeg",
                 "preview_key": assoc_prefix + "preview.png",
                 "meta_key": assoc_prefix + "meta.json",
-                "chunks_prefix": assoc_chunks_prefix,
-                "section_scores_prefix": assoc_chunks_prefix + "score_section_",
-                "section_bins_prefix": assoc_chunks_prefix + "palette_bins_section_",
-                "section_meta_prefix": assoc_chunks_prefix + "meta_section_",
-                "chunk_scores_prefix": assoc_chunks_prefix + "score_section_",
-                "chunk_bins_prefix": assoc_chunks_prefix + "palette_bins_section_",
-                "chunk_meta_prefix": assoc_chunks_prefix + "meta_section_",
+                "raw_key": assoc_prefix + "greyscale.raw" if fused_color_pipeline else "",
+                "raw_meta_key": assoc_prefix + "greyscale.meta.json" if fused_color_pipeline else "",
+                "fragment_prefix": assoc_prefix + "fragments/section_" if fused_color_pipeline else "",
+                "source_color_artifact_id": artifact_id,
+                "chunks_prefix": "" if fused_color_pipeline else assoc_chunks_prefix,
+                "section_scores_prefix": "" if fused_color_pipeline else assoc_chunks_prefix + "score_section_",
+                "section_bins_prefix": "" if fused_color_pipeline else assoc_chunks_prefix + "palette_bins_section_",
+                "section_meta_prefix": "" if fused_color_pipeline else assoc_chunks_prefix + "meta_section_",
+                "chunk_scores_prefix": "" if fused_color_pipeline else assoc_chunks_prefix + "score_section_",
+                "chunk_bins_prefix": "" if fused_color_pipeline else assoc_chunks_prefix + "palette_bins_section_",
+                "chunk_meta_prefix": "" if fused_color_pipeline else assoc_chunks_prefix + "meta_section_",
                 "metric": solve_metric,
                 "palette": palette,
                 "quantile": solve_score_quantile,
@@ -959,45 +1004,61 @@ def handler(event, context):
                 "section_mode": rp["palette_section_mode"],
                 "section_count": rp["palette_section_count"],
             }
-            assoc_section_auto = compute_safe_sectioning(
-                chunk_summary["total_solves"],
-                degree,
-                calc_n_coeffs,
-                associated_palette["chunk_threads"],
-                "associated_palette",
-                include_coeff=solve_score_uses_coeff,
-                include_param=solve_score_uses_param,
-            )
-            associated_palette["section_count_auto"] = assoc_section_auto["computed_section_count"]
-            associated_palette["section_budget_bytes"] = assoc_section_auto["budget_bytes"]
-            associated_palette["section_memory_mb"] = assoc_section_auto["memory_mb"]
-            associated_palette["section_min_safe_count"] = assoc_section_auto["min_safe_sections"]
-            if associated_palette["section_mode"] != "physical_chunks":
-                if not chunk_summary["chunk_step_metadata_complete"]:
-                    raise RuntimeError("logical associated-palette sections require chunk step metadata on every chunk")
-                selected_count = associated_palette["section_count"]
-                if associated_palette["section_mode"] == "logical_sections_auto":
-                    selected_count = associated_palette["section_count_auto"]
-                elif selected_count in ("", None):
-                    selected_count = associated_palette["section_min_safe_count"]
-                if int(selected_count) < int(associated_palette["section_min_safe_count"]):
-                    raise RuntimeError(
-                        f"palette_section_count={selected_count} is below the safe minimum "
-                        f"{associated_palette['section_min_safe_count']}"
-                    )
-                associated_palette["section_count"] = int(selected_count)
-                associated_palette["section_items"] = build_logical_section_items(
-                    chunk_items,
-                    section_count=associated_palette["section_count"],
-                    degree=degree,
-                    n_coeffs=calc_n_coeffs,
+            if fused_color_pipeline:
+                associated_palette["chunk_input_mode"] = ""
+                associated_palette["chunk_retries"] = 0
+                associated_palette["chunk_workers"] = 0
+                associated_palette["section_mode"] = "inline_fused"
+                associated_palette["section_count"] = ""
+                associated_palette["section_count_auto"] = ""
+                associated_palette["section_budget_bytes"] = 0
+                associated_palette["section_memory_mb"] = 0
+                associated_palette["section_min_safe_count"] = 0
+                associated_palette["logical_section"] = False
+                associated_palette["section_items"] = []
+                associated_palette["item_count"] = 0
+                rp["palette_section_count_auto"] = ""
+                rp["palette_section_count"] = ""
+            else:
+                assoc_section_auto = compute_safe_sectioning(
+                    chunk_summary["total_solves"],
+                    degree,
+                    calc_n_coeffs,
+                    associated_palette["chunk_threads"],
+                    "associated_palette",
                     include_coeff=solve_score_uses_coeff,
                     include_param=solve_score_uses_param,
                 )
-                associated_palette["logical_section"] = True
-                associated_palette["item_count"] = len(associated_palette["section_items"])
-            rp["palette_section_count_auto"] = associated_palette["section_count_auto"]
-            rp["palette_section_count"] = associated_palette["section_count"]
+                associated_palette["section_count_auto"] = assoc_section_auto["computed_section_count"]
+                associated_palette["section_budget_bytes"] = assoc_section_auto["budget_bytes"]
+                associated_palette["section_memory_mb"] = assoc_section_auto["memory_mb"]
+                associated_palette["section_min_safe_count"] = assoc_section_auto["min_safe_sections"]
+                if associated_palette["section_mode"] != "physical_chunks":
+                    if not chunk_summary["chunk_step_metadata_complete"]:
+                        raise RuntimeError("logical associated-palette sections require chunk step metadata on every chunk")
+                    selected_count = associated_palette["section_count"]
+                    if associated_palette["section_mode"] == "logical_sections_auto":
+                        selected_count = associated_palette["section_count_auto"]
+                    elif selected_count in ("", None):
+                        selected_count = associated_palette["section_min_safe_count"]
+                    if int(selected_count) < int(associated_palette["section_min_safe_count"]):
+                        raise RuntimeError(
+                            f"palette_section_count={selected_count} is below the safe minimum "
+                            f"{associated_palette['section_min_safe_count']}"
+                        )
+                    associated_palette["section_count"] = int(selected_count)
+                    associated_palette["section_items"] = build_logical_section_items(
+                        chunk_items,
+                        section_count=associated_palette["section_count"],
+                        degree=degree,
+                        n_coeffs=calc_n_coeffs,
+                        include_coeff=solve_score_uses_coeff,
+                        include_param=solve_score_uses_param,
+                    )
+                    associated_palette["logical_section"] = True
+                    associated_palette["item_count"] = len(associated_palette["section_items"])
+                rp["palette_section_count_auto"] = associated_palette["section_count_auto"]
+                rp["palette_section_count"] = associated_palette["section_count"]
 
     render_execution = _render_execution_config(rp)
     solve_source_manifest = build_solve_source_manifest(
@@ -1022,6 +1083,12 @@ def handler(event, context):
         "root_transforms": json.dumps(rp.get("root_transforms", [])),
         "render_execution": json.dumps(render_execution, separators=(",", ":")),
     }
+    plan_params_digest = _plan_params_digest(
+        viewport=viewport,
+        pix=pix,
+        tile_size=tile_size,
+        root_transforms=rp.get("root_transforms", []),
+    )
 
     fmt = rp.get("fmt", "jpeg")
     ext = "png" if fmt == "png" else "jpeg"
@@ -1032,6 +1099,11 @@ def handler(event, context):
         "created_at": created_at,
         "image_key": artifact_prefix + (f"image.{ext}" if mode == "color" else "image.tif"),
         "preview_key": artifact_prefix + "preview.png",
+        "meta_key": artifact_prefix + "meta.json",
+        "raw_key": artifact_prefix + "greyscale.raw" if fused_color_pipeline else "",
+        "raw_meta_key": artifact_prefix + "greyscale.meta.json" if fused_color_pipeline else "",
+        "fragment_prefix": artifact_prefix + "fragments/section_" if fused_color_pipeline else "",
+        "plan_params_digest": plan_params_digest,
         "bilevel_key": artifact_prefix + "image.tif",
         "coeff_bilevel_key": artifact_prefix + "image.tif",
         "metadata": artifact_meta,
@@ -1067,6 +1139,7 @@ def handler(event, context):
                     chain=solve_score_chain,
                 )
             )
+            outputs["metadata"]["score_program"] = solve_score_compiled["program_spec"] if solve_score_compiled else ""
         if associated_palette["enabled"]:
             outputs["metadata"].update({
                 "associated_palette_mode": associated_palette["mode"],

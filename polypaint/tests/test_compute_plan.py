@@ -136,38 +136,41 @@ class TestComputePlan(unittest.TestCase):
                 },
             })
 
-    def test_build_plan_rejects_fused_for_non_mt_solver(self):
+    def test_build_plan_allows_fused_for_companion_matrix(self):
         import handler_compute_plan as mod
 
-        with self.assertRaises(RuntimeError):
-            mod.handle_build_plan({
-                "job_id": "compute_j",
-                "run_id": "run_fused_cm",
-                "task_id": "compute_run_companion_matrix_run_fused_cm",
-                "probe": {
-                    "probe_stable": True,
-                    "degree": 10,
-                    "n_coeffs": 11,
-                    "probe_signature": mod.build_probe_signature(
-                        function_name="g1",
-                        param_transforms=[],
-                        coeff_transforms=[],
-                        cfpv=[],
-                    ),
-                },
-                "params": {
-                    "execution_method": "fused_chunk_pipeline",
-                    "solver_mode": "companion_matrix",
-                    "N": 100,
-                    "times": 1,
-                    "n_chunks": 4,
-                    "fused_threads": 4,
-                    "function": "g1",
-                    "param_transforms": [],
-                    "coeff_transforms": [],
-                    "cfpv": [],
-                },
-            })
+        result = mod.handle_build_plan({
+            "job_id": "compute_j",
+            "run_id": "run_fused_cm",
+            "task_id": "compute_run_companion_matrix_run_fused_cm",
+            "probe": {
+                "probe_stable": True,
+                "degree": 10,
+                "n_coeffs": 11,
+                "probe_signature": mod.build_probe_signature(
+                    function_name="g1",
+                    param_transforms=[],
+                    coeff_transforms=[],
+                    cfpv=[],
+                ),
+            },
+            "params": {
+                "execution_method": "fused_chunk_pipeline",
+                "solver_mode": "companion_matrix",
+                "N": 100,
+                "times": 1,
+                "n_chunks": 4,
+                "fused_threads": 4,
+                "function": "g1",
+                "param_transforms": [],
+                "coeff_transforms": [],
+                "cfpv": [],
+            },
+        })
+        plan = json.loads(result["body"])
+        self.assertEqual(plan["compute"]["execution_method"], "fused_chunk_pipeline")
+        self.assertEqual(plan["solve"]["mode"], "companion_matrix")
+        self.assertEqual(plan["fused"]["threads"], 4)
 
     @patch("handler_compute_plan._get_ddb")
     def test_post_coeffgen_returns_compact_payload_without_sweep_items(self, mock_get_ddb):

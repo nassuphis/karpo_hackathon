@@ -705,6 +705,8 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         pbe = meta.get("pixel_bins_empty", "")
         entry["pixel_bins_empty"] = int(pbe) if pbe not in ("", None) else None
         entry["pixel_bins_layout"] = meta.get("pixel_bins_layout", "")
+        entry["raw_key"] = meta.get("raw_key", "")
+        entry["raw_meta_key"] = meta.get("raw_meta_key", "")
     elif family in ("bilevel", "coeffs"):
         entry["derived_from_artifact_id"] = meta.get("derived_from_artifact_id", "")
         entry["derived_from_image_key"] = meta.get("derived_from_image_key", "")

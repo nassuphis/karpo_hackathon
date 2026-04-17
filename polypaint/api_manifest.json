@@ -8,11 +8,13 @@
       "color_repalette",
       "compute_orchestrator",
       "deepzoom_export",
+      "deepzoom_from_raw",
       "encode",
       "finalize",
       "palette_orchestrator",
       "pdf_artifact",
       "raster",
+      "recolor_from_raw",
       "render_orchestrator",
       "render_preview",
       "repalette",
@@ -111,11 +113,10 @@
   "frontend": {
     "dispatch_targets": [
       "autolevels",
-      "color_repalette",
       "compute_orchestrator",
-      "deepzoom_export",
       "palette_orchestrator",
       "pdf_artifact",
+      "recolor_from_raw",
       "render_orchestrator",
       "repalette",
       "resize_artifact"

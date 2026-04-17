@@ -19,7 +19,11 @@ from logical_sections import (
     stitch_spans_to_file,
     write_native_multispan_manifest,
 )
-from solve_score_chain import solve_score_program_cli_payload
+from solve_score_chain import (
+    compile_solve_score_chain_or_legacy,
+    compiled_solve_score_fingerprint,
+    solve_score_program_cli_payload,
+)
 from shared import BUCKET, attach_contract_warnings, contract_param, ok_response, parse_body, parse_boolish, report_status
 
 s3 = boto3.client("s3")
@@ -104,6 +108,7 @@ def _cleanup_chunk_tmp():
     for pattern in (
         "/tmp/pix_t*.pix",
         "/tmp/pixbin_t*.pbx",
+        "/tmp/palette_pixbin_t*.pbx",
         "/tmp/group_pixbin_t*.u8",
         "/tmp/stripe.bin",
         "/tmp/palette_bins_chunk.bin",
@@ -120,10 +125,10 @@ def _cleanup_chunk_tmp():
                 pass
 
 
-def _solve_score_program_args(ss_data):
+def _solve_score_program_args(score_artifact):
     payload = solve_score_program_cli_payload({
-        "metrics": ss_data.get("metrics") or [],
-        "program_spec": str(ss_data.get("program") or ""),
+        "metrics": score_artifact.get("metrics") or [],
+        "program_spec": str(score_artifact.get("program") or ""),
     })
     args = [
         f"--score_metrics={payload['score_metrics']}",
@@ -136,8 +141,8 @@ def _solve_score_program_args(ss_data):
     return args
 
 
-def _solve_score_bins_uses_source(ss_data, source):
-    for metric in (ss_data.get("metrics") or []):
+def _solve_score_artifact_uses_source(score_artifact, source):
+    for metric in (score_artifact.get("metrics") or []):
         if str(metric.get("source", "slv")).strip().lower() == source:
             return True
     return False
@@ -177,8 +182,14 @@ def _build_cmd(params, bin_path, saved_bins_path=None):
         ])
     if params.get("emit_pixel_bins"):
         cmd.append("--pixel_bin_prefix=/tmp/pixbin")
-    if params.get("pixel_bins_drive_rgb"):
+    if params.get("pixel_bins_drive_rgb") or params.get("emit_raw_score_bins"):
         cmd.append("--skip_pix_output=1")
+    if params.get("emit_raw_score_bins"):
+        cmd.append("--solve_score_raw_bytes=1")
+    if params.get("emit_associated_palette_bins"):
+        cmd.append("--palette_bin_prefix=/tmp/palette_pixbin")
+        cmd.append(f"--palette_grid_n={int(params['associated_palette_grid_n'])}")
+        cmd.append(f"--palette_step_start={int(params['step_start'])}")
 
     if params.get("color") == "saved_palette":
         if not saved_bins_path:
@@ -187,18 +198,56 @@ def _build_cmd(params, bin_path, saved_bins_path=None):
         cmd.append("--color=saved_palette")
         cmd.append(f"--solve_bins_file={saved_bins_path}")
 
-    ss_data = params.get("solve_score_bins_data")
+    score_artifact = params.get("solve_score_bins_data")
     color = params.get("color", "rainbow")
-    if ss_data and color in ("solve_score", "solve_proximity"):
-        if ss_data.get("family") != "solve_score":
-            raise RuntimeError(f"Bins artifact missing or wrong family: {ss_data.get('family')}")
+    if score_artifact and color in ("solve_score", "solve_proximity"):
+        if score_artifact.get("family") != "solve_score":
+            raise RuntimeError(f"solve-score artifact missing or wrong family: {score_artifact.get('family')}")
         cmd = [a for a in cmd if not a.startswith("--color=")]
-        cmd.extend(["--color=solve_score", f"--solve_score_cuts={','.join(str(c) for c in ss_data['cuts_norm'])}"])
-        if int(ss_data.get("version", 1) or 1) >= 2:
-            if not ss_data.get("program") or not isinstance(ss_data.get("metrics"), list) or not ss_data.get("metrics"):
-                raise RuntimeError("v2 solve-score bins artifact is missing program or metrics")
-            cmd.extend(_solve_score_program_args(ss_data))
-            if _solve_score_bins_uses_source(ss_data, "cf"):
+        cmd.append("--color=solve_score")
+        cuts_norm = score_artifact.get("cuts_norm")
+        has_cuts = isinstance(cuts_norm, list) and len(cuts_norm) == 9
+        if has_cuts:
+            cmd.append(f"--solve_score_cuts={','.join(str(c) for c in cuts_norm)}")
+        elif not params.get("emit_raw_score_bins"):
+            raise RuntimeError("solve-score artifact missing cuts_norm for non-raw raster output")
+        compiled = params.get("solve_score_compiled")
+        chain_fingerprint = str(params.get("solve_score_chain_fingerprint") or "").strip()
+        if int(score_artifact.get("version", 1) or 1) >= 2:
+            if not score_artifact.get("program") or not isinstance(score_artifact.get("metrics"), list) or not score_artifact.get("metrics"):
+                raise RuntimeError("v2 solve-score artifact is missing program or metrics")
+            if params.get("solve_score_chain_present") and compiled is not None:
+                actual_fingerprint = str(score_artifact.get("chain_fingerprint") or "").strip()
+                if not actual_fingerprint:
+                    raise RuntimeError("solve-score artifact missing chain_fingerprint")
+                if chain_fingerprint and actual_fingerprint != chain_fingerprint:
+                    raise RuntimeError(
+                        f"solve-score artifact fingerprint mismatch: expected {chain_fingerprint}, got {actual_fingerprint}"
+                    )
+                if str(score_artifact.get("program") or "") != compiled["program_spec"]:
+                    raise RuntimeError(
+                        f"solve-score artifact program mismatch: expected {compiled['program_spec']}, got {score_artifact.get('program')!r}"
+                    )
+                if len(score_artifact["metrics"]) != compiled["metric_count"]:
+                    raise RuntimeError(
+                        f"solve-score artifact metric slot count mismatch: expected {compiled['metric_count']}, got {len(score_artifact['metrics'])}"
+                    )
+                for expected, actual in zip(compiled["metrics"], score_artifact["metrics"]):
+                    if str(actual.get("metric") or "") != expected["metric"]:
+                        raise RuntimeError(
+                            f"solve-score artifact metric slot {expected['slot']} mismatch: expected {expected['metric']}, got {actual.get('metric')!r}"
+                        )
+                    if str(actual.get("source", "slv") or "slv") != expected.get("source", "slv"):
+                        raise RuntimeError(
+                            f"solve-score artifact source slot {expected['slot']} mismatch: expected {expected.get('source', 'slv')}, "
+                            f"got {actual.get('source', 'slv')!r}"
+                        )
+                    if float(actual.get("quantile", -1)) != float(expected["quantile"]):
+                        raise RuntimeError(
+                            f"solve-score artifact quantile slot {expected['slot']} mismatch: expected {expected['quantile']}, got {actual.get('quantile')!r}"
+                        )
+            cmd.extend(_solve_score_program_args(score_artifact))
+            if _solve_score_artifact_uses_source(score_artifact, "cf"):
                 n_coeffs = params.get("n_coeffs")
                 try:
                     n_coeffs = int(n_coeffs)
@@ -232,7 +281,7 @@ def _build_cmd(params, bin_path, saved_bins_path=None):
                         f"--score_coeffs_file={coeffs_path}",
                         f"--score_coeff_degree={n_coeffs}",
                     ])
-            if _solve_score_bins_uses_source(ss_data, "pm"):
+            if _solve_score_artifact_uses_source(score_artifact, "pm"):
                 if effective_input_mode == "multispan_sectioned":
                     params_manifest_path = str(params.get("score_params_manifest_path") or "").strip()
                     if not params_manifest_path:
@@ -245,27 +294,27 @@ def _build_cmd(params, bin_path, saved_bins_path=None):
                     cmd.append(f"--score_params_file={params_path}")
         else:
             req_metric = params.get("solve_metric", "proximity")
-            if ss_data.get("metric") != req_metric:
-                raise RuntimeError(f"Bins metric mismatch: expected {req_metric}, got {ss_data.get('metric')}")
+            if score_artifact.get("metric") != req_metric:
+                raise RuntimeError(f"solve-score artifact metric mismatch: expected {req_metric}, got {score_artifact.get('metric')}")
             req_q = params.get("solve_score_quantile", 0.001)
-            if "clip_quantile" not in ss_data:
-                raise RuntimeError("Bins artifact missing clip_quantile")
-            if ss_data["clip_quantile"] != req_q:
-                raise RuntimeError(f"Bins quantile mismatch: expected {req_q}, got {ss_data['clip_quantile']}")
+            if "clip_quantile" not in score_artifact:
+                raise RuntimeError("solve-score artifact missing clip_quantile")
+            if score_artifact["clip_quantile"] != req_q:
+                raise RuntimeError(f"solve-score artifact quantile mismatch: expected {req_q}, got {score_artifact['clip_quantile']}")
             req_omega = float(params.get("solve_score_omega", 1.0))
-            bins_omega = float(ss_data.get("omega", 1.0))
+            bins_omega = float(score_artifact.get("omega", 1.0))
             if bins_omega != req_omega:
-                raise RuntimeError(f"Bins omega mismatch: expected {req_omega}, got {bins_omega}")
+                raise RuntimeError(f"solve-score artifact omega mismatch: expected {req_omega}, got {bins_omega}")
             req_omega_enabled = parse_boolish(params.get("solve_score_omega_enabled", True), True)
-            bins_omega_enabled = parse_boolish(ss_data.get("omega_enabled", True), True)
+            bins_omega_enabled = parse_boolish(score_artifact.get("omega_enabled", True), True)
             if bins_omega_enabled != req_omega_enabled:
                 raise RuntimeError(
-                    f"Bins omega_enabled mismatch: expected {req_omega_enabled}, got {bins_omega_enabled}"
+                    f"solve-score artifact omega_enabled mismatch: expected {req_omega_enabled}, got {bins_omega_enabled}"
                 )
             cmd.extend([
-                f"--solve_metric={ss_data.get('metric', req_metric)}",
-                f"--solve_score_clip_lo={ss_data['clip_lo']}",
-                f"--solve_score_clip_hi={ss_data['clip_hi']}",
+                f"--solve_metric={score_artifact.get('metric', req_metric)}",
+                f"--solve_score_clip_lo={score_artifact['clip_lo']}",
+                f"--solve_score_clip_hi={score_artifact['clip_hi']}",
                 f"--solve_score_omega={bins_omega}",
                 f"--solve_score_omega_enabled={1 if bins_omega_enabled else 0}",
             ])
@@ -352,7 +401,7 @@ def _prepare_section_inputs(section_params, *, bin_path, saved_bins_path, perf):
         section_params["saved_palette_bins_key"] = saved_palette_bins_key
 
     ss_data = section_params.get("solve_score_bins_data") or {}
-    if color in ("solve_score", "solve_proximity") and _solve_score_bins_uses_source(ss_data, "cf"):
+    if color in ("solve_score", "solve_proximity") and _solve_score_artifact_uses_source(ss_data, "cf"):
         coeffs_key = str(section_params.get("coeffs_key") or "").strip()
         n_coeffs = section_params.get("n_coeffs")
         if not coeffs_key and not logical_section:
@@ -364,7 +413,7 @@ def _prepare_section_inputs(section_params, *, bin_path, saved_bins_path, perf):
         if n_coeffs < 1:
             raise RuntimeError(f"mixed-source solve-score render requires n_coeffs >= 1, got {n_coeffs}")
         section_params["n_coeffs"] = n_coeffs
-    if color in ("solve_score", "solve_proximity") and _solve_score_bins_uses_source(ss_data, "pm"):
+    if color in ("solve_score", "solve_proximity") and _solve_score_artifact_uses_source(ss_data, "pm"):
         params_key = str(section_params.get("params_key") or "").strip()
         params_step_start = section_params.get("params_step_start", section_params.get("step_start"))
         params_step_count = section_params.get("params_step_count", section_params.get("step_count"))
@@ -424,7 +473,7 @@ def _prepare_section_inputs(section_params, *, bin_path, saved_bins_path, perf):
         section_params["input_manifest_path"] = write_native_multispan_manifest(_TMP_INPUT_MANIFEST, input_manifest)
         effective_input_mode = "multispan_sectioned"
         section_params["sectioned_input_size"] = int(input_manifest["logical_size"])
-        if _solve_score_bins_uses_source(ss_data, "cf"):
+        if _solve_score_artifact_uses_source(ss_data, "cf"):
             coeff_spans = build_source_spans(
                 solve_source_manifest,
                 source_family="cf",
@@ -442,7 +491,7 @@ def _prepare_section_inputs(section_params, *, bin_path, saved_bins_path, perf):
                 _TMP_SCORE_COEFFS_MANIFEST,
                 coeff_manifest,
             )
-        if _solve_score_bins_uses_source(ss_data, "pm"):
+        if _solve_score_artifact_uses_source(ss_data, "pm"):
             param_spans = build_source_spans(
                 solve_source_manifest,
                 source_family="pm",
@@ -479,7 +528,7 @@ def _prepare_section_inputs(section_params, *, bin_path, saved_bins_path, perf):
             Params={"Bucket": BUCKET, "Key": bin_key},
             ExpiresIn=900,
         )
-        if _solve_score_bins_uses_source(ss_data, "cf"):
+        if _solve_score_artifact_uses_source(ss_data, "cf"):
             coeff_input_size = int(section_params.get("coeffs_bin_size") or 0)
             coeffs_key = str(section_params.get("coeffs_key") or "").strip()
             if coeff_input_size <= 0:
@@ -493,7 +542,7 @@ def _prepare_section_inputs(section_params, *, bin_path, saved_bins_path, perf):
                 Params={"Bucket": BUCKET, "Key": coeffs_key},
                 ExpiresIn=900,
             )
-        if _solve_score_bins_uses_source(ss_data, "pm"):
+        if _solve_score_artifact_uses_source(ss_data, "pm"):
             params_key = str(section_params.get("params_key") or "").strip()
             params_step_start = int(section_params["params_step_start"])
             params_step_count = int(section_params["params_step_count"])
@@ -521,7 +570,7 @@ def _prepare_section_inputs(section_params, *, bin_path, saved_bins_path, perf):
             obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
             with open(bin_path, "wb") as f:
                 f.write(obj["Body"].read())
-        if _solve_score_bins_uses_source(ss_data, "cf"):
+        if _solve_score_artifact_uses_source(ss_data, "cf"):
             if logical_section:
                 coeff_spans = build_source_spans(
                     solve_source_manifest,
@@ -536,7 +585,7 @@ def _prepare_section_inputs(section_params, *, bin_path, saved_bins_path, perf):
                 with open(_TMP_SCORE_COEFFS, "wb") as cf:
                     cf.write(coeff_obj["Body"].read())
             section_params["solve_score_coeffs_path"] = _TMP_SCORE_COEFFS
-        if _solve_score_bins_uses_source(ss_data, "pm"):
+        if _solve_score_artifact_uses_source(ss_data, "pm"):
             if logical_section:
                 param_spans = build_source_spans(
                     solve_source_manifest,
@@ -632,9 +681,21 @@ def handler(event, context):
     bin_path = "/tmp/stripe.bin"
     saved_bins_path = "/tmp/palette_bins_chunk.bin"
     emit_pixel_bins = parse_boolish(params.get("emit_pixel_bins"), False)
+    emit_raw_score_bins = parse_boolish(params.get("emit_raw_score_bins"), False)
+    if emit_raw_score_bins:
+        emit_pixel_bins = True
+    emit_associated_palette_bins = (
+        emit_raw_score_bins
+        and str(params.get("color_pipeline") or "").strip().lower() == "fused"
+        and str(params.get("associated_palette_mode") or "").strip().lower() == "generated"
+    )
     pixel_bins_drive_rgb = emit_pixel_bins and parse_boolish(params.get("pixel_bins_drive_rgb"), False)
+    if emit_raw_score_bins and params.get("color") not in ("solve_score", "solve_proximity"):
+        raise RuntimeError("emit_raw_score_bins requires color=solve_score")
     perf["pixel_bins_drive_rgb"] = pixel_bins_drive_rgb
-    perf["rgb_source"] = "pixel_bins" if pixel_bins_drive_rgb else "pix"
+    perf["emit_raw_score_bins"] = emit_raw_score_bins
+    perf["emit_associated_palette_bins"] = emit_associated_palette_bins
+    perf["rgb_source"] = "raw_score_bins" if emit_raw_score_bins else ("pixel_bins" if pixel_bins_drive_rgb else "pix")
 
     try:
         report_status(job_id, task_id, "started", result_data=perf)
@@ -644,6 +705,9 @@ def handler(event, context):
         params["raster_mt_threads"] = threads
         params["raster_input_mode"] = raster_input_mode
         params["raster_sectioned_retries"] = raster_sectioned_retries
+        params["emit_pixel_bins"] = emit_pixel_bins
+        params["emit_raw_score_bins"] = emit_raw_score_bins
+        params["emit_associated_palette_bins"] = emit_associated_palette_bins
         params["match"] = contract_param(params, "match", "none", contract_warnings)
         params["palette"] = contract_param(params, "palette", "inferno", contract_warnings)
         params["constant_color"] = contract_param(params, "constant_color", "ffffff", contract_warnings)
@@ -657,20 +721,44 @@ def handler(event, context):
             params["root_xforms_path"] = rt_path
 
         ss_bins_key = params.get("solve_score_bins_key") or params.get("solve_proximity_bins_key")
+        ss_clip_key = params.get("solve_score_clip_key") or params.get("solve_proximity_clip_key")
         color = contract_param(params, "color", "rainbow", contract_warnings)
         if color in ("solve_score", "solve_proximity"):
             params["solve_metric"] = contract_param(params, "solve_metric", "proximity", contract_warnings)
-            params["solve_score_quantile"] = contract_param(params, "solve_score_quantile", 0.001, contract_warnings)
-            params["solve_score_omega"] = contract_param(params, "solve_score_omega", 1.0, contract_warnings)
-            params["solve_score_omega_enabled"] = contract_param(params, "solve_score_omega_enabled", True, contract_warnings)
-        if color in ("solve_score", "solve_proximity") and not ss_bins_key:
-            raise RuntimeError(f"{color} color mode requires solve_score_bins_key")
+            raw_chain = params.get("solve_score_chain", "")
+            params["solve_score_chain_present"] = raw_chain not in ("", None, [])
+            if params["solve_score_chain_present"]:
+                compiled = compile_solve_score_chain_or_legacy(
+                    raw_chain,
+                    params["solve_metric"],
+                    params.get("solve_score_quantile", 0.001),
+                    params.get("solve_score_omega", 1.0),
+                    params.get("solve_score_omega_enabled", True),
+                    default_metric=params["solve_metric"],
+                )
+                params["solve_score_compiled"] = compiled
+                params["solve_metric"] = compiled["metric"]
+                params["solve_score_quantile"] = compiled["quantile"]
+                params["solve_score_omega"] = compiled["omega"]
+                params["solve_score_omega_enabled"] = compiled["omega_enabled"]
+                params["solve_score_chain_fingerprint"] = compiled_solve_score_fingerprint(compiled)
+            else:
+                params["solve_score_quantile"] = contract_param(params, "solve_score_quantile", 0.001, contract_warnings)
+                params["solve_score_omega"] = contract_param(params, "solve_score_omega", 1.0, contract_warnings)
+                params["solve_score_omega_enabled"] = contract_param(params, "solve_score_omega_enabled", True, contract_warnings)
+        needs_direct_score_artifact = color in ("solve_score", "solve_proximity")
+        can_use_clip_artifact = bool(emit_raw_score_bins and ss_clip_key)
+        if needs_direct_score_artifact and not (ss_bins_key or can_use_clip_artifact):
+            raise RuntimeError(f"{color} color mode requires solve_score_bins_key or solve_score_clip_key for raw fused output")
         if color == "saved_palette":
             if not (params.get("saved_palette_bins_key") or params.get("saved_palette_bins_prefix")):
                 raise RuntimeError("saved_palette color mode requires saved_palette_bins_key or saved_palette_bins_prefix")
-        elif ss_bins_key and color in ("solve_score", "solve_proximity"):
-            ss_obj = s3.get_object(Bucket=BUCKET, Key=ss_bins_key)
+        elif color in ("solve_score", "solve_proximity"):
+            score_artifact_key = ss_clip_key if can_use_clip_artifact else ss_bins_key
+            score_artifact_kind = "clip" if can_use_clip_artifact else "bins"
+            ss_obj = s3.get_object(Bucket=BUCKET, Key=score_artifact_key)
             params["solve_score_bins_data"] = json.loads(ss_obj["Body"].read())
+            params["solve_score_artifact_kind"] = score_artifact_kind
         pixel_bin_fragment_mode = str(params.get("pixel_bin_fragment_mode") or "sparse_chunks").strip().lower()
         dense_grouped = pixel_bin_fragment_mode == "dense_grouped" and pixel_bins_drive_rgb and emit_pixel_bins
         section_items = _section_items_from_params(params, dense_grouped)
@@ -686,6 +774,9 @@ def handler(event, context):
         uploaded_pixel_bins = 0
         uploaded_pixel_bin_bytes = 0
         pixel_bin_tile_bytes = []
+        uploaded_palette_pixel_bins = 0
+        uploaded_palette_pixel_bin_bytes = 0
+        palette_pixel_bin_tile_bytes = []
         skipped_pix_tiles = 0
         grouped_sparse_bytes_in = 0
         grouped_sparse_files_in = 0
@@ -725,7 +816,7 @@ def handler(event, context):
             for t in range(n_tiles):
                 pix_path = f"/tmp/pix_t{t:04d}.pix"
                 if os.path.exists(pix_path) and os.path.getsize(pix_path) > 0:
-                    if pixel_bins_drive_rgb:
+                    if pixel_bins_drive_rgb or emit_raw_score_bins:
                         chunk_skipped_pix_tiles += 1
                     else:
                         s3_key = f"renders/{job_id}/pix_chunk_{section_idx:04d}_t{t:04d}.pix"
@@ -754,7 +845,12 @@ def handler(event, context):
                             grouped_sparse_bytes_in += pbx_size
                             grouped_sparse_files_in += 1
                         else:
-                            pbx_key = f"renders/{job_id}/pixbin_chunk_{section_idx:04d}_t{t:04d}.pbx"
+                            pbx_prefix = str(section_params.get("fragment_prefix") or "").strip()
+                            pbx_key = (
+                                f"{pbx_prefix}{section_idx:04d}_t{t:04d}.pbx"
+                                if pbx_prefix
+                                else f"renders/{job_id}/pixbin_chunk_{section_idx:04d}_t{t:04d}.pbx"
+                            )
                             with open(pbx_path, "rb") as fh:
                                 s3.upload_fileobj(fh, BUCKET, pbx_key)
                             uploaded_pixel_bins += 1
@@ -765,7 +861,36 @@ def handler(event, context):
                                 "dense_bytes": dense_bytes,
                             })
                     os.remove(pbx_path)
-            if pixel_bins_drive_rgb:
+                palette_pbx_path = f"/tmp/palette_pixbin_t{t:04d}.pbx"
+                if emit_associated_palette_bins and os.path.exists(palette_pbx_path):
+                    palette_pbx_size = os.path.getsize(palette_pbx_path)
+                    if palette_pbx_size > 0:
+                        palette_grid_n = int(section_params.get("associated_palette_grid_n") or 0)
+                        if palette_grid_n < 1:
+                            raise RuntimeError("emit_associated_palette_bins requires associated_palette_grid_n >= 1")
+                        palette_n_tile_cols = max(1, (palette_grid_n + int(section_params["tile_size"]) - 1) // int(section_params["tile_size"]))
+                        palette_dense_bytes = _tile_dense_bytes(
+                            t,
+                            palette_grid_n,
+                            palette_grid_n,
+                            section_params["tile_size"],
+                            palette_n_tile_cols,
+                        )
+                        palette_prefix = str(section_params.get("associated_palette_fragment_prefix") or "").strip()
+                        if not palette_prefix:
+                            raise RuntimeError("emit_associated_palette_bins requires associated_palette_fragment_prefix")
+                        palette_key = f"{palette_prefix}{section_idx:04d}_t{t:04d}.pbx"
+                        with open(palette_pbx_path, "rb") as fh:
+                            s3.upload_fileobj(fh, BUCKET, palette_key)
+                        uploaded_palette_pixel_bins += 1
+                        uploaded_palette_pixel_bin_bytes += palette_pbx_size
+                        palette_pixel_bin_tile_bytes.append({
+                            "tile_idx": t,
+                            "bytes": palette_pbx_size,
+                            "dense_bytes": palette_dense_bytes,
+                        })
+                    os.remove(palette_pbx_path)
+            if pixel_bins_drive_rgb or emit_raw_score_bins:
                 skipped_pix_tiles += max(chunk_skipped_pix_tiles, int(raster_meta.get("tiles_with_data", 0) or 0))
             upload_us_accum += int((time.perf_counter() - t_chunk_up) * 1e6)
             report_status(job_id, task_id, f"rasterized_{item_idx+1}/{len(section_items)}")
@@ -798,6 +923,10 @@ def handler(event, context):
         perf["pixel_bin_bytes_uploaded"] = uploaded_pixel_bin_bytes
         perf["pixel_bin_tile_bytes"] = pixel_bin_tile_bytes
         perf["pixel_bin_dense_bytes_if_full_tiles"] = sum(item["dense_bytes"] for item in pixel_bin_tile_bytes)
+        perf["palette_pixel_bin_tiles_uploaded"] = uploaded_palette_pixel_bins
+        perf["palette_pixel_bin_bytes_uploaded"] = uploaded_palette_pixel_bin_bytes
+        perf["palette_pixel_bin_tile_bytes"] = palette_pixel_bin_tile_bytes
+        perf["palette_pixel_bin_dense_bytes_if_full_tiles"] = sum(item["dense_bytes"] for item in palette_pixel_bin_tile_bytes)
         perf["pix_tiles_skipped"] = skipped_pix_tiles
         if dense_grouped:
             perf["pixel_bin_sparse_bytes_in"] = grouped_sparse_bytes_in
@@ -814,6 +943,10 @@ def handler(event, context):
             "pixel_bin_bytes_uploaded": uploaded_pixel_bin_bytes,
             "pixel_bin_tile_bytes": pixel_bin_tile_bytes,
             "pixel_bin_dense_bytes_if_full_tiles": perf["pixel_bin_dense_bytes_if_full_tiles"],
+            "palette_pixel_bin_tiles_uploaded": uploaded_palette_pixel_bins,
+            "palette_pixel_bin_bytes_uploaded": uploaded_palette_pixel_bin_bytes,
+            "palette_pixel_bin_tile_bytes": palette_pixel_bin_tile_bytes,
+            "palette_pixel_bin_dense_bytes_if_full_tiles": perf["palette_pixel_bin_dense_bytes_if_full_tiles"],
             "pixel_bin_fragment_mode": perf["pixel_bin_fragment_mode"],
             "pixel_bin_sparse_bytes_in": perf.get("pixel_bin_sparse_bytes_in", 0),
             "pixel_bin_sparse_files_in": perf.get("pixel_bin_sparse_files_in", 0),

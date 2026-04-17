@@ -81,6 +81,7 @@ MAX_PROGRAM_TOKENS = 32
 _FIELD_MAP = {
     "solve": {
         "chain": "solve_score_chain",
+        "fingerprint": "solve_score_chain_fingerprint",
         "metric": "solve_metric",
         "quantile": "solve_score_quantile",
         "omega": "solve_score_omega",
@@ -88,6 +89,7 @@ _FIELD_MAP = {
     },
     "palette_source": {
         "chain": "palette_source_score_chain",
+        "fingerprint": "palette_source_chain_fingerprint",
         "metric": "palette_source_metric",
         "quantile": "palette_source_quantile",
         "omega": "palette_source_omega",
@@ -95,6 +97,7 @@ _FIELD_MAP = {
     },
     "associated_palette": {
         "chain": "associated_palette_score_chain",
+        "fingerprint": "associated_palette_chain_fingerprint",
         "metric": "associated_palette_metric",
         "quantile": "associated_palette_quantile",
         "omega": "associated_palette_omega",
@@ -379,6 +382,35 @@ def solve_score_chain_id(chain, legacy_quantile=None):
     return hashlib.sha1(serialize_solve_score_chain(compiled["chain"]).encode("utf-8")).hexdigest()[:12]
 
 
+def compiled_solve_score_fingerprint(compiled):
+    payload = {
+        "program_spec": str(compiled["program_spec"]),
+        "metrics": [
+            {
+                "slot": int(metric["slot"]),
+                "metric": str(metric["metric"]),
+                "source": str(metric.get("source", "slv")),
+                "quantile": float(metric["quantile"]),
+            }
+            for metric in (compiled.get("metrics") or [])
+        ],
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return f"sha256:{hashlib.sha256(encoded.encode('utf-8')).hexdigest()}"
+
+
+def solve_score_chain_fingerprint(raw_chain, metric=None, quantile=None, omega=None, omega_enabled=None, default_metric=None):
+    compiled = compile_solve_score_chain_or_legacy(
+        raw_chain,
+        metric,
+        quantile,
+        omega,
+        omega_enabled,
+        default_metric=default_metric,
+    )
+    return compiled_solve_score_fingerprint(compiled)
+
+
 def solve_score_program_cli_payload(compiled_or_metrics):
     if isinstance(compiled_or_metrics, dict) and "metrics" in compiled_or_metrics:
         metrics = compiled_or_metrics["metrics"]
@@ -606,6 +638,7 @@ def emit_solve_score_metadata(scope, metric, quantile, omega, omega_enabled, cha
     )
     metadata = {
         fields["chain"]: serialize_solve_score_chain(compiled["chain"]),
+        fields["fingerprint"]: compiled_solve_score_fingerprint(compiled),
         fields["metric"]: compiled["metric"],
         fields["quantile"]: "" if compiled["quantile"] in ("", None) else str(compiled["quantile"]),
         fields["omega"]: str(compiled["omega"]),
@@ -628,6 +661,7 @@ def read_solve_score_metadata(scope, meta, default_metric=None, default_omega_en
     return {
         "chain": compiled["chain"],
         "chain_json": serialize_solve_score_chain(compiled["chain"]),
+        "chain_fingerprint": (meta or {}).get(fields["fingerprint"]) or compiled_solve_score_fingerprint(compiled),
         "metric": compiled["metric"],
         "metrics": compiled["metrics"],
         "quantile": quantile,

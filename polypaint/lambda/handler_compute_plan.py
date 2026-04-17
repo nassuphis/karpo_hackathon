@@ -63,8 +63,6 @@ def handle_build_plan(params):
 
     solver_mode = _validate_solver_mode(run_params.get("solver_mode", "aberth"))
     execution_method = execution_method_from_params(run_params)
-    if execution_method == "fused_chunk_pipeline" and solver_mode != "aberth_mt":
-        raise RuntimeError("fused compute currently supports only solver_mode=aberth_mt")
     n = _validate_positive_int(run_params.get("N"), "N", max_value=MAX_N)
     times = _validate_positive_int(run_params.get("times", 1), "times", max_value=MAX_TIMES)
     requested_chunks = _validate_positive_int(run_params.get("n_chunks", 10), "n_chunks", max_value=MAX_CHUNKS)

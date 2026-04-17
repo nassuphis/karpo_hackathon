@@ -9,7 +9,11 @@ import time
 
 import boto3
 
-from solve_score_chain import emit_solve_score_metadata
+from solve_score_chain import (
+    compile_solve_score_chain_or_legacy,
+    compiled_solve_score_fingerprint,
+    emit_solve_score_metadata,
+)
 from shared import (
     BUCKET,
     attach_contract_warnings,
@@ -127,10 +131,20 @@ def handler(event, context):
     degree = int(params["degree"])
     metric = params["metric"]
     palette = params["palette"]
-    q = contract_param(params, "solve_score_quantile", 0.001, contract_warnings)
-    omega = float(contract_param(params, "solve_score_omega", 1.0, contract_warnings))
-    omega_enabled = parse_boolish(contract_param(params, "solve_score_omega_enabled", True, contract_warnings), True)
     solve_score_chain = contract_param(params, "solve_score_chain", "", contract_warnings)
+    compiled = compile_solve_score_chain_or_legacy(
+        solve_score_chain,
+        metric,
+        params.get("solve_score_quantile", 0.001),
+        params.get("solve_score_omega", 1.0),
+        params.get("solve_score_omega_enabled", True),
+        default_metric=metric,
+    )
+    metric = compiled["metric"]
+    q = compiled["quantile"]
+    omega = compiled["omega"]
+    omega_enabled = compiled["omega_enabled"]
+    chain_fingerprint = compiled_solve_score_fingerprint(compiled)
     render_execution = contract_param(params, "render_execution", None, contract_warnings)
     root_transforms = contract_param(params, "root_transforms", [], contract_warnings)
     image_key = params["image_key"]
@@ -207,10 +221,29 @@ def handler(event, context):
         bins_meta = json.loads(bins_obj["Body"].read())
         clip_obj = s3.get_object(Bucket=BUCKET, Key=solve_score_clip_key)
         clip_meta = json.loads(clip_obj["Body"].read())
-        if float(bins_meta.get("omega", 1.0)) != omega:
-            raise RuntimeError(f"Solve-score bins omega mismatch: expected {omega}, got {bins_meta.get('omega')}")
-        if parse_boolish(bins_meta.get("omega_enabled", True), True) != omega_enabled:
-            raise RuntimeError(f"Solve-score bins omega_enabled mismatch: expected {omega_enabled}, got {bins_meta.get('omega_enabled')}")
+        actual_bins_fingerprint = str(bins_meta.get("chain_fingerprint") or "").strip()
+        if int(bins_meta.get("version", 1) or 1) >= 2:
+            if not actual_bins_fingerprint:
+                raise RuntimeError("Solve-score bins artifact missing chain_fingerprint")
+            if actual_bins_fingerprint != chain_fingerprint:
+                raise RuntimeError(
+                    f"Solve-score bins fingerprint mismatch: expected {chain_fingerprint}, got {actual_bins_fingerprint}"
+                )
+        else:
+            if float(bins_meta.get("omega", 1.0)) != omega:
+                raise RuntimeError(f"Solve-score bins omega mismatch: expected {omega}, got {bins_meta.get('omega')}")
+            if parse_boolish(bins_meta.get("omega_enabled", True), True) != omega_enabled:
+                raise RuntimeError(
+                    f"Solve-score bins omega_enabled mismatch: expected {omega_enabled}, got {bins_meta.get('omega_enabled')}"
+                )
+        actual_clip_fingerprint = str(clip_meta.get("chain_fingerprint") or "").strip()
+        if int(clip_meta.get("version", 1) or 1) >= 2:
+            if not actual_clip_fingerprint:
+                raise RuntimeError("Solve-score clip artifact missing chain_fingerprint")
+            if actual_clip_fingerprint != chain_fingerprint:
+                raise RuntimeError(
+                    f"Solve-score clip fingerprint mismatch: expected {chain_fingerprint}, got {actual_clip_fingerprint}"
+                )
         assemble_ms = int((time.time() - t0) * 1000)
         assemble_stats = {
             "assemble_ms": assemble_ms,

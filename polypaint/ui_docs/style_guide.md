@@ -276,6 +276,9 @@ Use popups for:
 3. `Enter` executes only when that matches the popup’s purpose.
 4. The popup summary should explain what is being tuned.
 5. Help text should state scope and caveats.
+6. Popups must not jump in height when summary or estimate text changes.
+   Reserve space on swap-heavy summary/help blocks with a deliberate
+   `min-height` instead of letting the dialog reflow on every selection change.
 
 Examples already shipped:
 - config popup

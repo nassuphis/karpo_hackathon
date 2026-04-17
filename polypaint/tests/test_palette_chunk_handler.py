@@ -124,10 +124,9 @@ class TestPaletteChunkHandler(unittest.TestCase):
             statuses = [c.args[2] for c in mock_report.call_args_list]
             self.assertEqual(statuses, ["started", "bin_downloaded", "computed", "done"])
             done_kwargs = mock_report.call_args_list[-1].kwargs
-            self.assertEqual(done_kwargs["result_data"]["contract_warning_count"], 2)
-            warned = {w["param"] for w in done_kwargs["result_data"]["contract_warnings"]}
-            self.assertIn("solve_score_omega", warned)
-            self.assertIn("solve_score_omega_enabled", warned)
+            self.assertEqual(done_kwargs["result_data"].get("contract_warning_count", 0), 0)
+            warned = {w["param"] for w in done_kwargs["result_data"].get("contract_warnings", [])}
+            self.assertEqual(warned, set())
             self.assertEqual(done_kwargs["result_data"]["threads"], 1)
             self.assertEqual(done_kwargs["result_data"]["input_mode"], "tmpfile")
             self.assertEqual(done_kwargs["result_data"]["retries"], 2)

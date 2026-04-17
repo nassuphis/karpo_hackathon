@@ -28,6 +28,7 @@ FUNCTIONS = {
     "bilevel": os.environ.get("BILEVEL_FUNCTION", "polypaint-bilevel"),
     "bilevel_stitch": os.environ.get("BILEVEL_STITCH_FUNCTION", "polypaint-bilevel-stitch"),
     "deepzoom_export": os.environ.get("DZ_EXPORT_FUNCTION", "polypaint-deepzoom-export"),
+    "deepzoom_from_raw": os.environ.get("DZ_FROM_RAW_FUNCTION", "polypaint-deepzoom-from-raw"),
     "coeffgen": os.environ.get("COEFFGEN_FUNCTION", "polypaint-coeffgen"),
     "sweep_cm": os.environ.get("SWEEP_CM_FUNCTION", "polypaint-sweep-cm"),
     "render_preview": os.environ.get("RENDER_PREVIEW_FUNCTION", "polypaint-render-preview"),
@@ -39,6 +40,7 @@ FUNCTIONS = {
     "resize_artifact": os.environ.get("RESIZE_ARTIFACT_FUNCTION", "polypaint-resize-artifact"),
     "repalette": os.environ.get("REPALETTE_FUNCTION", "polypaint-repalette"),
     "color_repalette": os.environ.get("COLOR_REPALETTE_FUNCTION", "polypaint-color-repalette"),
+    "recolor_from_raw": os.environ.get("RECOLOR_FROM_RAW_FUNCTION", "polypaint-recolor-from-raw"),
     "pdf_artifact": os.environ.get("PDF_ARTIFACT_FUNCTION", "polypaint-pdf-artifact"),
 }
 REGION = os.environ.get("AWS_REGION", "us-east-1")

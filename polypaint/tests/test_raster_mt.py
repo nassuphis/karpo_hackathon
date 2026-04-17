@@ -232,6 +232,148 @@ class TestRasterMT(unittest.TestCase):
     @patch("handler_raster_mt.report_status")
     @patch("handler_raster_mt.subprocess.run")
     @patch("handler_raster_mt.s3")
+    def test_emit_raw_score_bins_requests_native_raw_bytes_and_skips_pix(self, mock_s3, mock_run, mock_report):
+        import handler_raster_mt as mod
+
+        uploads = {}
+
+        def get_object(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/chunk_0.bin":
+                return {"Body": MagicMock(read=lambda: b"\x00" * 160)}
+            if key == "renders/j/solve_scores/crowding_bins.json":
+                payload = {
+                    "family": "solve_score",
+                    "metric": "crowding",
+                    "clip_quantile": 0.01,
+                    "omega": 4.0,
+                    "omega_enabled": False,
+                    "clip_lo": -1.0,
+                    "clip_hi": 2.0,
+                    "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                }
+                return {"Body": MagicMock(read=lambda: json.dumps(payload).encode())}
+            raise AssertionError(f"unexpected get_object key: {key}")
+
+        def upload_fileobj(fileobj, bucket, key):
+            uploads[key] = fileobj.read()
+
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.upload_fileobj.side_effect = upload_fileobj
+
+        def fake_run(cmd, capture_output=False, text=False, timeout=None):
+            self.assertIn("--pixel_bin_prefix=/tmp/pixbin", cmd)
+            self.assertIn("--skip_pix_output=1", cmd)
+            self.assertIn("--solve_score_raw_bytes=1", cmd)
+            with open("/tmp/pixbin_t0000.pbx", "wb") as fh:
+                fh.write(b"r" * 8)
+            return MagicMock(
+                returncode=0,
+                stdout=json.dumps({
+                    "threads": 2,
+                    "roots_plotted": 24,
+                    "roots_clipped": 3,
+                    "tiles_with_data": 1,
+                    "skip_pix_output": True,
+                    "solve_score_raw_bytes": True,
+                }),
+                stderr="",
+            )
+
+        mock_run.side_effect = fake_run
+
+        result = mod.handler(_event(emit_raw_score_bins=True, emit_pixel_bins=False), None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(body["tiles_uploaded"], 0)
+        self.assertEqual(body["pixel_bin_tiles_uploaded"], 1)
+        self.assertEqual(body["rgb_source"], "raw_score_bins")
+        self.assertEqual(body["pix_tiles_skipped"], 1)
+        self.assertNotIn("renders/j/pix_chunk_0000_t0000.pix", uploads)
+        self.assertEqual(uploads["renders/j/pixbin_chunk_0000_t0000.pbx"], b"r" * 8)
+        done_data = mock_report.call_args_list[-1].kwargs["result_data"]
+        self.assertTrue(done_data["emit_raw_score_bins"])
+        self.assertEqual(done_data["rgb_source"], "raw_score_bins")
+        self.assertEqual(done_data["pix_tiles_skipped"], 1)
+
+    @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
+    @patch("handler_raster_mt.report_status")
+    @patch("handler_raster_mt.subprocess.run")
+    @patch("handler_raster_mt.s3")
+    def test_fused_associated_palette_emits_inline_palette_pixel_bins(self, mock_s3, mock_run, mock_report):
+        import handler_raster_mt as mod
+
+        uploads = {}
+
+        def get_object(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/chunk_0.bin":
+                return {"Body": MagicMock(read=lambda: b"\x00" * 160)}
+            if key == "renders/j/solve_scores/crowding_bins.json":
+                payload = {
+                    "family": "solve_score",
+                    "metric": "crowding",
+                    "clip_quantile": 0.01,
+                    "omega": 4.0,
+                    "omega_enabled": False,
+                    "clip_lo": -1.0,
+                    "clip_hi": 2.0,
+                    "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                }
+                return {"Body": MagicMock(read=lambda: json.dumps(payload).encode())}
+            raise AssertionError(f"unexpected get_object key: {key}")
+
+        def upload_fileobj(fileobj, bucket, key):
+            uploads[key] = fileobj.read()
+
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.upload_fileobj.side_effect = upload_fileobj
+
+        def fake_run(cmd, capture_output=False, text=False, timeout=None):
+            self.assertIn("--solve_score_raw_bytes=1", cmd)
+            self.assertIn("--palette_bin_prefix=/tmp/palette_pixbin", cmd)
+            self.assertIn("--palette_grid_n=100", cmd)
+            self.assertIn("--palette_step_start=0", cmd)
+            with open("/tmp/pixbin_t0000.pbx", "wb") as fh:
+                fh.write(b"m" * 8)
+            with open("/tmp/palette_pixbin_t0000.pbx", "wb") as fh:
+                fh.write(b"p" * 8)
+            return MagicMock(
+                returncode=0,
+                stdout=json.dumps({
+                    "threads": 2,
+                    "roots_plotted": 24,
+                    "roots_clipped": 3,
+                    "skip_pix_output": True,
+                    "solve_score_raw_bytes": True,
+                }),
+                stderr="",
+            )
+
+        mock_run.side_effect = fake_run
+
+        result = mod.handler(_event(
+            emit_raw_score_bins=True,
+            emit_pixel_bins=False,
+            color_pipeline="fused",
+            associated_palette_mode="generated",
+            associated_palette_fragment_prefix="renders/j/palettes/pal_1/fragments/section_",
+            associated_palette_grid_n=100,
+            fragment_prefix="renders/j/color/color_1/fragments/section_",
+            step_start=0,
+            step_count=4,
+        ), None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(body["pixel_bin_tiles_uploaded"], 1)
+        self.assertEqual(body["palette_pixel_bin_tiles_uploaded"], 1)
+        self.assertEqual(uploads["renders/j/color/color_1/fragments/section_0000_t0000.pbx"], b"m" * 8)
+        self.assertEqual(uploads["renders/j/palettes/pal_1/fragments/section_0000_t0000.pbx"], b"p" * 8)
+
+    @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
+    @patch("handler_raster_mt.report_status")
+    @patch("handler_raster_mt.subprocess.run")
+    @patch("handler_raster_mt.s3")
     def test_request_can_override_default_thread_count(self, mock_s3, mock_run, mock_report):
         import handler_raster_mt as mod
 
@@ -582,6 +724,77 @@ class TestRasterMT(unittest.TestCase):
 
         self.assertEqual(body["threads"], 2)
         self.assertEqual(body["engine"], "mt")
+
+    @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
+    @patch("handler_raster_mt.report_status")
+    @patch("handler_raster_mt.subprocess.run")
+    @patch("handler_raster_mt.s3")
+    def test_raw_score_fused_raster_can_use_clip_artifact_without_merged_bins(self, mock_s3, mock_run, mock_report):
+        import handler_raster_mt as mod
+
+        uploads = {}
+
+        def get_object(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/chunk_0.bin":
+                return {"Body": MagicMock(read=lambda: b"\x00" * 160)}
+            if key == "renders/j/solve_scores/crowding_clip.json":
+                payload = {
+                    "family": "solve_score",
+                    "version": 2,
+                    "metric": "spread",
+                    "clip_quantile": 0.02,
+                    "omega": 5.0,
+                    "omega_enabled": True,
+                    "clip_lo": -1.0,
+                    "clip_hi": 2.0,
+                    "program": "m0;m1;weighted_sum:0.7:0.3;omega_cosine:5",
+                    "metrics": [
+                        {"slot": 0, "metric": "spread", "quantile": 0.02, "clip_lo": -1.0, "clip_hi": 2.0},
+                        {"slot": 1, "metric": "shelliness", "quantile": 0.03, "clip_lo": -0.5, "clip_hi": 1.5},
+                    ],
+                }
+                return {"Body": MagicMock(read=lambda: json.dumps(payload).encode())}
+            raise AssertionError(f"unexpected get_object key: {key}")
+
+        def upload_fileobj(fileobj, bucket, key):
+            uploads[key] = fileobj.read()
+
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.upload_fileobj.side_effect = upload_fileobj
+
+        def fake_run(cmd, capture_output=False, text=False, timeout=None):
+            self.assertIn("--solve_score_raw_bytes=1", cmd)
+            self.assertIn("--score_metrics=spread,shelliness", cmd)
+            self.assertIn("--score_clip_los=-1,-0.5", cmd)
+            self.assertIn("--score_clip_his=2,1.5", cmd)
+            self.assertIn("--score_program=m0;m1;weighted_sum:0.7:0.3;omega_cosine:5", cmd)
+            self.assertFalse(any(arg.startswith("--solve_score_cuts=") for arg in cmd))
+            self.assertIn("--skip_pix_output=1", cmd)
+            with open("/tmp/pixbin_t0000.pbx", "wb") as fh:
+                fh.write(b"r" * 8)
+            return MagicMock(
+                returncode=0,
+                stdout=json.dumps({"threads": 2, "roots_plotted": 24, "roots_clipped": 3, "tiles_with_data": 1}),
+                stderr="",
+            )
+
+        mock_run.side_effect = fake_run
+
+        result = mod.handler(_event(
+            solve_metric="spread",
+            solve_score_quantile=0.02,
+            solve_score_bins_key=None,
+            solve_score_clip_key="renders/j/solve_scores/crowding_clip.json",
+            emit_raw_score_bins=True,
+            emit_pixel_bins=False,
+        ), None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(body["threads"], 2)
+        self.assertEqual(body["tiles_uploaded"], 0)
+        self.assertEqual(body["pixel_bin_tiles_uploaded"], 1)
+        self.assertEqual(uploads["renders/j/pixbin_chunk_0000_t0000.pbx"], b"r" * 8)
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2", "AWS_LAMBDA_FUNCTION_MEMORY_SIZE": "10240"}, clear=False)
     @patch("handler_raster_mt.report_status")

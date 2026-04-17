@@ -26,6 +26,7 @@ DISPATCH_NAME="polypaint-dispatch"
 RASTER_NAME="polypaint-raster"
 RASTER_MT_NAME="polypaint-raster-mt"
 FINALIZE_NAME="polypaint-finalize"
+FINALIZE_MT_NAME="polypaint-finalize-mt"
 COEFFGEN_NAME="polypaint-coeffgen"
 PREVIEW_NAME="polypaint-preview"
 COMPUTE_PREVIEW_NAME="polypaint-compute-preview"
@@ -46,6 +47,7 @@ RASTER_MEMORY=1769    # 1 vCPU, roots2pix (no canvas allocation)
 RASTER_MT_MEMORY=4096 # higher CPU tier for native pthread raster
 RASTER_MT_THREADS=4   # default per-Lambda worker count for color raster MT
 FINALIZE_MEMORY=1769  # 1 vCPU, pixassemble (64 MB tile buffer for 4096²)
+FINALIZE_MT_MEMORY=10240  # fused solve-score raw assemble + encode
 COEFFGEN_MEMORY=10240 # 6 vCPUs for coeffgen + threaded param_gen
 PREVIEW_MEMORY=1024   # pure Python, PNG encoding via zlib (512 OOMs on large lores)
 COMPUTE_PREVIEW_MEMORY=4096  # sync coeffgen+solve+PNG preview, needs LAPACK for roots_cm/CM
@@ -56,6 +58,8 @@ PNG_EXPORT_NAME="polypaint-png-export"
 PNG_EXPORT_MEMORY=4096  # libvips PNG encode
 DZ_EXPORT_NAME="polypaint-deepzoom-export"
 DZ_EXPORT_MEMORY=4096  # libvips dzsave + parallel S3 upload
+DZ_FROM_RAW_NAME="polypaint-deepzoom-from-raw"
+DZ_FROM_RAW_MEMORY=4096  # raw-sidecar-only DeepZoom export
 PARAM_DEBUG_NAME="polypaint-param-debug"
 PARAM_DEBUG_MEMORY=1769  # 1 vCPU + libvips for TIFF output
 BILEVEL_STITCH_NAME="polypaint-bilevel-stitch"
@@ -70,6 +74,8 @@ REPALETTE_NAME="polypaint-repalette"
 REPALETTE_MEMORY=4096  # libvips palette recolor on saved palette artifacts
 COLOR_REPALETTE_NAME="polypaint-color-repalette"
 COLOR_REPALETTE_MEMORY=1769  # fast tile recolor from persisted pixel bins
+RECOLOR_FROM_RAW_NAME="polypaint-recolor-from-raw"
+RECOLOR_FROM_RAW_MEMORY=1769  # raw-sidecar-only recolor
 PDF_ARTIFACT_NAME="polypaint-pdf-artifact"
 PDF_ARTIFACT_MEMORY=2048  # single-shot PDF composition from saved Color image
 SOLVE_PROXIMITY_NAME="polypaint-solve-proximity"
@@ -138,6 +144,29 @@ else
 fi
 ACTION="${1:-create}"
 
+frontend_asset_keys() {
+    printf '%s\n' \
+        "index.html" \
+        "coeff_func_catalog_js.js" \
+        "tri_palette_catalog_js.js" \
+        "long_palette_catalog_js.js"
+    if [ -d "$SCRIPT_DIR/solve-score-programs" ]; then
+        (
+            cd "$SCRIPT_DIR"
+            find "solve-score-programs" -type f | sort
+        )
+    fi
+}
+
+frontend_asset_content_type() {
+    case "$1" in
+        *.html) echo "text/html" ;;
+        *.js) echo "application/javascript" ;;
+        *.json) echo "application/json" ;;
+        *) echo "application/octet-stream" ;;
+    esac
+}
+
 print_usage() {
     echo "Usage: $0 [create|update|show-build]"
 }
@@ -191,12 +220,9 @@ build_deploy_metadata() {
     fi
 
     BUILD_FRONTEND_SHA256=$(
-        cat \
-            "$SCRIPT_DIR/index.html" \
-            "$SCRIPT_DIR/coeff_func_catalog_js.js" \
-            "$SCRIPT_DIR/tri_palette_catalog_js.js" \
-            "$SCRIPT_DIR/long_palette_catalog_js.js" \
-        | shasum | cut -d' ' -f1
+        while IFS= read -r asset; do
+            cat "$SCRIPT_DIR/$asset"
+        done < <(frontend_asset_keys) | shasum | cut -d' ' -f1
     )
 
     local BUILD_HASH_SHORT
@@ -214,7 +240,7 @@ verify_frontend_assets() {
     TMP_DIR=$(mktemp -d /tmp/polypaint-frontend-verify.XXXXXX)
     trap 'rm -rf "$TMP_DIR"' RETURN
     echo "Verifying deployed frontend assets..."
-    for asset in index.html coeff_func_catalog_js.js tri_palette_catalog_js.js long_palette_catalog_js.js; do
+    while IFS= read -r asset; do
         local STATUS
         STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${SITE_URL}/${asset}")
         if [ "$STATUS" != "200" ]; then
@@ -222,6 +248,7 @@ verify_frontend_assets() {
             exit 1
         fi
         local LOCAL_HASH REMOTE_HASH
+        mkdir -p "$(dirname "${TMP_DIR}/${asset}")"
         curl -fsS "${SITE_URL}/${asset}" -o "${TMP_DIR}/${asset}"
         LOCAL_HASH=$(shasum "$SCRIPT_DIR/${asset}" | cut -d' ' -f1)
         REMOTE_HASH=$(shasum "${TMP_DIR}/${asset}" | cut -d' ' -f1)
@@ -232,7 +259,7 @@ verify_frontend_assets() {
             exit 1
         fi
         echo "  ${asset}: HTTP ${STATUS} OK"
-    done
+    done < <(frontend_asset_keys)
 }
 
 zip_content_hash() {
@@ -292,6 +319,7 @@ render_render_workflow_definition() {
     local RENDER_STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_STATUS_NAME}"
     local RASTER_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RASTER_NAME}"
     local FINALIZE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${FINALIZE_NAME}"
+    local FINALIZE_MT_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${FINALIZE_MT_NAME}"
     local ENCODE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${ENCODE_NAME}"
     local STORAGE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${STORAGE_NAME}"
     local BILEVEL_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_NAME}"
@@ -305,6 +333,7 @@ render_render_workflow_definition() {
         -e "s|\${StatusFunctionArn}|${RENDER_STATUS_ARN}|g" \
         -e "s|\${RasterFunctionArn}|${RASTER_ARN}|g" \
         -e "s|\${FinalizeFunctionArn}|${FINALIZE_ARN}|g" \
+        -e "s|\${FinalizeMTFunctionArn}|${FINALIZE_MT_ARN}|g" \
         -e "s|\${EncodeFunctionArn}|${ENCODE_ARN}|g" \
         -e "s|\${StorageFunctionArn}|${STORAGE_ARN}|g" \
         -e "s|\${BilevelFunctionArn}|${BILEVEL_ARN}|g" \
@@ -647,6 +676,9 @@ aarch64-linux-musl-gcc -O3 -static -o lambda/pixassemble lambda/pixassemble.c -l
 
 echo "  pixbinassemble (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/pixbinassemble lambda/pixbinassemble.c -lm
+
+echo "  assemble_greyscale (static, ARM64)..."
+aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/assemble_greyscale lambda/assemble_greyscale.c -lm
 
 echo "  bilevel_raster (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/bilevel_raster lambda/bilevel_raster.c -lm
@@ -999,6 +1031,16 @@ chmod +x "$FINALIZE_DIR"/pixassemble "$FINALIZE_DIR"/pixbinassemble "$FINALIZE_D
 cd "$FINALIZE_DIR" && zip -r9 /tmp/polypaint-finalize.zip . -q && cd "$SCRIPT_DIR"
 echo "  Finalize: $(du -h /tmp/polypaint-finalize.zip | cut -f1)  (pixassemble + pixbinassemble + pixel_bins_render)"
 
+# Finalize-MT: fused solve-score assemble + encode from raw score bins
+FINALIZE_MT_DIR=/tmp/polypaint-finalize-mt
+rm -rf "$FINALIZE_MT_DIR"
+mkdir -p "$FINALIZE_MT_DIR"
+cp lambda/handler_finalize_mt.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py lambda/raw_sidecar.py "$FINALIZE_MT_DIR/"
+cp lambda/pixbinassemble lambda/assemble_greyscale lambda/pixel_bins_render lambda/raw2jpeg "$FINALIZE_MT_DIR/"
+chmod +x "$FINALIZE_MT_DIR"/pixbinassemble "$FINALIZE_MT_DIR"/assemble_greyscale "$FINALIZE_MT_DIR"/pixel_bins_render "$FINALIZE_MT_DIR"/raw2jpeg
+cd "$FINALIZE_MT_DIR" && zip -r9 /tmp/polypaint-finalize-mt.zip . -q && cd "$SCRIPT_DIR"
+echo "  FnlzMT:   $(du -h /tmp/polypaint-finalize-mt.zip | cut -f1)  (fused assemble + encode)"
+
 # Preview: handler_preview.py + shared.py (pure Python, PNG via zlib)
 PREVIEW_DIR=/tmp/polypaint-preview
 rm -rf "$PREVIEW_DIR"
@@ -1108,13 +1150,25 @@ echo "  RePal:   $(du -h /tmp/polypaint-repalette.zip | cut -f1)  (repalette + l
 COLOR_REPALETTE_DIR=/tmp/polypaint-color-repalette
 rm -rf "$COLOR_REPALETTE_DIR"
 mkdir -p "$COLOR_REPALETTE_DIR"
-cp lambda/handler_color_repalette.py lambda/shared.py \
+cp lambda/handler_color_repalette.py lambda/shared.py lambda/raw_sidecar.py \
    lambda/color_artifact_meta.py lambda/solve_score_chain.py \
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$COLOR_REPALETTE_DIR/"
 cp lambda/pixel_bins_render "$COLOR_REPALETTE_DIR/"
 chmod +x "$COLOR_REPALETTE_DIR"/pixel_bins_render
 cd "$COLOR_REPALETTE_DIR" && zip -r9 /tmp/polypaint-color-repalette.zip . -q && cd "$SCRIPT_DIR"
 echo "  ClrRePal: $(du -h /tmp/polypaint-color-repalette.zip | cut -f1)  (pixel_bins_render)"
+
+# Recolor-from-raw: strict wrapper over the raw-sidecar recolor path
+RECOLOR_FROM_RAW_DIR=/tmp/polypaint-recolor-from-raw
+rm -rf "$RECOLOR_FROM_RAW_DIR"
+mkdir -p "$RECOLOR_FROM_RAW_DIR"
+cp lambda/handler_recolor_from_raw.py lambda/handler_color_repalette.py lambda/shared.py lambda/raw_sidecar.py \
+   lambda/color_artifact_meta.py lambda/solve_score_chain.py \
+   lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$RECOLOR_FROM_RAW_DIR/"
+cp lambda/pixel_bins_render "$RECOLOR_FROM_RAW_DIR/"
+chmod +x "$RECOLOR_FROM_RAW_DIR"/pixel_bins_render
+cd "$RECOLOR_FROM_RAW_DIR" && zip -r9 /tmp/polypaint-recolor-from-raw.zip . -q && cd "$SCRIPT_DIR"
+echo "  RecolorRaw: $(du -h /tmp/polypaint-recolor-from-raw.zip | cut -f1)  (raw-sidecar recolor)"
 
 # PDF Artifact: handler_pdf_artifact.py + shared.py + color artifact metadata + spread builder
 PDF_ARTIFACT_DIR=/tmp/polypaint-pdf-artifact
@@ -1124,15 +1178,25 @@ cp lambda/handler_pdf_artifact.py lambda/shared.py lambda/color_artifact_meta.py
 cd "$PDF_ARTIFACT_DIR" && zip -r9 /tmp/polypaint-pdf-artifact.zip . -q && cd "$SCRIPT_DIR"
 echo "  PDFArt:  $(du -h /tmp/polypaint-pdf-artifact.zip | cut -f1)  (spread builder + python pdf layer)"
 
-# DeepZoom Export: handler_deepzoom_export.py + shared.py + dz_export (needs libvips layer)
+# DeepZoom Export: handler_deepzoom_export.py + shared.py + dz_export + raw-sidecar colorization helpers (needs libvips layer)
 DZ_EXPORT_DIR=/tmp/polypaint-deepzoom-export
 rm -rf "$DZ_EXPORT_DIR"
 mkdir -p "$DZ_EXPORT_DIR"
-cp lambda/handler_deepzoom_export.py lambda/shared.py lambda/deepzoom_viewer_template.html "$DZ_EXPORT_DIR/"
-cp lambda/dz_export "$DZ_EXPORT_DIR/"
-chmod +x "$DZ_EXPORT_DIR"/dz_export
+cp lambda/handler_deepzoom_export.py lambda/shared.py lambda/raw_sidecar.py lambda/deepzoom_viewer_template.html "$DZ_EXPORT_DIR/"
+cp lambda/dz_export lambda/pixel_bins_render lambda/raw2jpeg "$DZ_EXPORT_DIR/"
+chmod +x "$DZ_EXPORT_DIR"/dz_export "$DZ_EXPORT_DIR"/pixel_bins_render "$DZ_EXPORT_DIR"/raw2jpeg
 cd "$DZ_EXPORT_DIR" && zip -r9 /tmp/polypaint-deepzoom-export.zip . -q && cd "$SCRIPT_DIR"
-echo "  DzExp:   $(du -h /tmp/polypaint-deepzoom-export.zip | cut -f1)  (dz_export + libvips layer)"
+echo "  DzExp:   $(du -h /tmp/polypaint-deepzoom-export.zip | cut -f1)  (dz_export + raw-sidecar colorization + libvips layer)"
+
+# DeepZoom-from-raw: strict wrapper over the raw-sidecar DeepZoom path
+DZ_FROM_RAW_DIR=/tmp/polypaint-deepzoom-from-raw
+rm -rf "$DZ_FROM_RAW_DIR"
+mkdir -p "$DZ_FROM_RAW_DIR"
+cp lambda/handler_deepzoom_from_raw.py lambda/handler_deepzoom_export.py lambda/shared.py lambda/raw_sidecar.py lambda/deepzoom_viewer_template.html "$DZ_FROM_RAW_DIR/"
+cp lambda/dz_export lambda/pixel_bins_render lambda/raw2jpeg "$DZ_FROM_RAW_DIR/"
+chmod +x "$DZ_FROM_RAW_DIR"/dz_export "$DZ_FROM_RAW_DIR"/pixel_bins_render "$DZ_FROM_RAW_DIR"/raw2jpeg
+cd "$DZ_FROM_RAW_DIR" && zip -r9 /tmp/polypaint-deepzoom-from-raw.zip . -q && cd "$SCRIPT_DIR"
+echo "  DzRaw:   $(du -h /tmp/polypaint-deepzoom-from-raw.zip | cut -f1)  (raw-sidecar-only deepzoom)"
 
 # Solve Proximity: handler_solve_proximity.py + shared.py + solve_score_chain.py + logical section helpers + solve_proximity_stats binary
 SP_DIR=/tmp/polypaint-solve-proximity
@@ -1642,7 +1706,7 @@ if [ "$ACTION" = "create" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     create_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
+        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,DZ_FROM_RAW_FUNCTION=$DZ_FROM_RAW_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,RECOLOR_FROM_RAW_FUNCTION=$RECOLOR_FROM_RAW_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -1655,6 +1719,8 @@ if [ "$ACTION" = "create" ]; then
 
     create_lambda "$FINALIZE_NAME" "handler_finalize.handler" "/tmp/polypaint-finalize.zip" \
         "$FINALIZE_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
+    create_lambda "$FINALIZE_MT_NAME" "handler_finalize_mt.handler" "/tmp/polypaint-finalize-mt.zip" \
+        "$FINALIZE_MT_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     create_lambda "$PREVIEW_NAME" "handler_preview.handler" "/tmp/polypaint-preview.zip" \
         "$PREVIEW_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET"
@@ -1679,6 +1745,8 @@ if [ "$ACTION" = "create" ]; then
 
     create_lambda "$DZ_EXPORT_NAME" "handler_deepzoom_export.handler" "/tmp/polypaint-deepzoom-export.zip" \
         "$DZ_EXPORT_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+    create_lambda "$DZ_FROM_RAW_NAME" "handler_deepzoom_from_raw.handler" "/tmp/polypaint-deepzoom-from-raw.zip" \
+        "$DZ_FROM_RAW_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     create_lambda "$RENDER_PREVIEW_NAME" "handler_render_preview.handler" "/tmp/polypaint-render-preview.zip" \
         "$RENDER_PREVIEW_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
@@ -1694,6 +1762,8 @@ if [ "$ACTION" = "create" ]; then
 
     create_lambda "$COLOR_REPALETTE_NAME" "handler_color_repalette.handler" "/tmp/polypaint-color-repalette.zip" \
         "$COLOR_REPALETTE_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,ENCODE_FUNCTION=$ENCODE_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME" "$BINARY_TMP"
+    create_lambda "$RECOLOR_FROM_RAW_NAME" "handler_recolor_from_raw.handler" "/tmp/polypaint-recolor-from-raw.zip" \
+        "$RECOLOR_FROM_RAW_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,ENCODE_FUNCTION=$ENCODE_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME" "$BINARY_TMP"
 
     create_lambda "$PDF_ARTIFACT_NAME" "handler_pdf_artifact.handler" "/tmp/polypaint-pdf-artifact.zip" \
         "$PDF_ARTIFACT_MEMORY" "$ROLE_ARN" "$PDF_PY_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
@@ -1766,6 +1836,7 @@ if [ "$ACTION" = "create" ]; then
     COEFFGEN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COEFFGEN_NAME}"
     RASTER_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RASTER_NAME}"
     FINALIZE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${FINALIZE_NAME}"
+    FINALIZE_MT_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${FINALIZE_MT_NAME}"
     ENCODE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${ENCODE_NAME}"
     STORAGE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${STORAGE_NAME}"
     BILEVEL_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_NAME}"
@@ -1777,6 +1848,7 @@ if [ "$ACTION" = "create" ]; then
         -e "s|\${StatusFunctionArn}|${RENDER_STATUS_ARN}|g" \
         -e "s|\${RasterFunctionArn}|${RASTER_ARN}|g" \
         -e "s|\${FinalizeFunctionArn}|${FINALIZE_ARN}|g" \
+        -e "s|\${FinalizeMTFunctionArn}|${FINALIZE_MT_ARN}|g" \
         -e "s|\${EncodeFunctionArn}|${ENCODE_ARN}|g" \
         -e "s|\${StorageFunctionArn}|${STORAGE_ARN}|g" \
         -e "s|\${BilevelFunctionArn}|${BILEVEL_ARN}|g" \
@@ -1889,7 +1961,7 @@ if [ "$ACTION" = "create" ]; then
 
     # Async invoke config: no retries for most Lambdas (prevents retry storms),
     # but bilevel gets 2 retries / 1hr age to handle concurrency throttle drops.
-    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME" "$ATTACH_PALETTE_NAME"; do
+    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$FINALIZE_MT_NAME" "$BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME" "$ATTACH_PALETTE_NAME"; do
         aws lambda put-function-event-invoke-config \
             --function-name "$fn" \
             --maximum-retry-attempts 0 \
@@ -1923,14 +1995,10 @@ if [ "$ACTION" = "create" ]; then
 
     # Upload frontend assets to S3
     echo "Uploading frontend assets to S3..."
-    aws s3 cp "$SCRIPT_DIR/index.html" "s3://$BUCKET/index.html" \
-        --content-type "text/html" --region "$REGION"
-    aws s3 cp "$SCRIPT_DIR/coeff_func_catalog_js.js" "s3://$BUCKET/coeff_func_catalog_js.js" \
-        --content-type "application/javascript" --region "$REGION"
-    aws s3 cp "$SCRIPT_DIR/tri_palette_catalog_js.js" "s3://$BUCKET/tri_palette_catalog_js.js" \
-        --content-type "application/javascript" --region "$REGION"
-    aws s3 cp "$SCRIPT_DIR/long_palette_catalog_js.js" "s3://$BUCKET/long_palette_catalog_js.js" \
-        --content-type "application/javascript" --region "$REGION"
+    while IFS= read -r asset; do
+        aws s3 cp "$SCRIPT_DIR/$asset" "s3://$BUCKET/$asset" \
+            --content-type "$(frontend_asset_content_type "$asset")" --region "$REGION"
+    done < <(frontend_asset_keys)
     verify_frontend_assets
 
     echo ""
@@ -1940,6 +2008,7 @@ if [ "$ACTION" = "create" ]; then
     echo "  CmpFuse:  $COMPUTE_FUSED_CHUNK_NAME ($COMPUTE_FUSED_CHUNK_MEMORY MB)"
     echo "  Raster:   $RASTER_NAME ($RASTER_MEMORY MB)"
     echo "  Finalize: $FINALIZE_NAME ($FINALIZE_MEMORY MB)"
+    echo "  FnlzMT:   $FINALIZE_MT_NAME ($FINALIZE_MT_MEMORY MB)"
     echo "  Encode:   $ENCODE_NAME ($ENCODE_MEMORY MB)"
     echo "  Viewport: $VIEWPORT_NAME ($VIEWPORT_MEMORY MB)"
     echo "  Storage:  $STORAGE_NAME ($STORAGE_MEMORY MB)"
@@ -1972,7 +2041,7 @@ elif [ "$ACTION" = "update" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     update_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
+        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,RASTER_FUNCTION=$RASTER_NAME,FINALIZE_FUNCTION=$FINALIZE_NAME,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,DZ_FROM_RAW_FUNCTION=$DZ_FROM_RAW_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,RECOLOR_FROM_RAW_FUNCTION=$RECOLOR_FROM_RAW_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -1985,6 +2054,8 @@ elif [ "$ACTION" = "update" ]; then
 
     update_lambda "$FINALIZE_NAME" "handler_finalize.handler" "/tmp/polypaint-finalize.zip" \
         "$FINALIZE_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
+    update_lambda "$FINALIZE_MT_NAME" "handler_finalize_mt.handler" "/tmp/polypaint-finalize-mt.zip" \
+        "$FINALIZE_MT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     update_lambda "$PREVIEW_NAME" "handler_preview.handler" "/tmp/polypaint-preview.zip" \
         "$PREVIEW_MEMORY" "" "BUCKET=$BUCKET"
@@ -2009,6 +2080,8 @@ elif [ "$ACTION" = "update" ]; then
 
     update_lambda "$DZ_EXPORT_NAME" "handler_deepzoom_export.handler" "/tmp/polypaint-deepzoom-export.zip" \
         "$DZ_EXPORT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+    update_lambda "$DZ_FROM_RAW_NAME" "handler_deepzoom_from_raw.handler" "/tmp/polypaint-deepzoom-from-raw.zip" \
+        "$DZ_FROM_RAW_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     update_lambda "$RENDER_PREVIEW_NAME" "handler_render_preview.handler" "/tmp/polypaint-render-preview.zip" \
         "$RENDER_PREVIEW_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
@@ -2024,6 +2097,8 @@ elif [ "$ACTION" = "update" ]; then
 
     update_lambda "$COLOR_REPALETTE_NAME" "handler_color_repalette.handler" "/tmp/polypaint-color-repalette.zip" \
         "$COLOR_REPALETTE_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,ENCODE_FUNCTION=$ENCODE_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME" "$BINARY_TMP"
+    update_lambda "$RECOLOR_FROM_RAW_NAME" "handler_recolor_from_raw.handler" "/tmp/polypaint-recolor-from-raw.zip" \
+        "$RECOLOR_FROM_RAW_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,ENCODE_FUNCTION=$ENCODE_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME" "$BINARY_TMP"
 
     update_lambda "$PDF_ARTIFACT_NAME" "handler_pdf_artifact.handler" "/tmp/polypaint-pdf-artifact.zip" \
         "$PDF_ARTIFACT_MEMORY" "$PDF_PY_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
@@ -2072,6 +2147,7 @@ elif [ "$ACTION" = "update" ]; then
     COEFFGEN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COEFFGEN_NAME}"
     RASTER_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RASTER_NAME}"
     FINALIZE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${FINALIZE_NAME}"
+    FINALIZE_MT_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${FINALIZE_MT_NAME}"
     ENCODE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${ENCODE_NAME}"
     STORAGE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${STORAGE_NAME}"
     BILEVEL_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_NAME}"
@@ -2094,6 +2170,7 @@ elif [ "$ACTION" = "update" ]; then
         -e "s|\${StatusFunctionArn}|${RENDER_STATUS_ARN}|g" \
         -e "s|\${RasterFunctionArn}|${RASTER_ARN}|g" \
         -e "s|\${FinalizeFunctionArn}|${FINALIZE_ARN}|g" \
+        -e "s|\${FinalizeMTFunctionArn}|${FINALIZE_MT_ARN}|g" \
         -e "s|\${EncodeFunctionArn}|${ENCODE_ARN}|g" \
         -e "s|\${StorageFunctionArn}|${STORAGE_ARN}|g" \
         -e "s|\${BilevelFunctionArn}|${BILEVEL_ARN}|g" \
@@ -2220,7 +2297,7 @@ elif [ "$ACTION" = "update" ]; then
 
     # Async invoke config: no retries for most Lambdas (prevents retry storms),
     # but bilevel gets 2 retries / 1hr age to handle concurrency throttle drops.
-    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME" "$ATTACH_PALETTE_NAME"; do
+    for fn in "$RASTER_NAME" "$FINALIZE_NAME" "$FINALIZE_MT_NAME" "$BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME" "$ATTACH_PALETTE_NAME"; do
         aws lambda put-function-event-invoke-config \
             --function-name "$fn" \
             --maximum-retry-attempts 0 \
@@ -2290,19 +2367,12 @@ elif [ "$ACTION" = "update" ]; then
     # Ensure bucket is configured for website hosting
     ensure_bucket_website
 
-    # Upload index.html and JS catalog to S3
-    echo "Uploading index.html to S3..."
-    aws s3 cp "$SCRIPT_DIR/index.html" "s3://$BUCKET/index.html" \
-        --content-type "text/html" --region "$REGION"
-    echo "Uploading coeff_func_catalog_js.js to S3..."
-    aws s3 cp "$SCRIPT_DIR/coeff_func_catalog_js.js" "s3://$BUCKET/coeff_func_catalog_js.js" \
-        --content-type "application/javascript" --region "$REGION"
-    echo "Uploading tri_palette_catalog_js.js to S3..."
-    aws s3 cp "$SCRIPT_DIR/tri_palette_catalog_js.js" "s3://$BUCKET/tri_palette_catalog_js.js" \
-        --content-type "application/javascript" --region "$REGION"
-    echo "Uploading long_palette_catalog_js.js to S3..."
-    aws s3 cp "$SCRIPT_DIR/long_palette_catalog_js.js" "s3://$BUCKET/long_palette_catalog_js.js" \
-        --content-type "application/javascript" --region "$REGION"
+    # Upload frontend assets to S3
+    while IFS= read -r asset; do
+        echo "Uploading ${asset} to S3..."
+        aws s3 cp "$SCRIPT_DIR/$asset" "s3://$BUCKET/$asset" \
+            --content-type "$(frontend_asset_content_type "$asset")" --region "$REGION"
+    done < <(frontend_asset_keys)
     verify_frontend_assets
 
     echo ""
@@ -2312,6 +2382,7 @@ elif [ "$ACTION" = "update" ]; then
     echo "  CmpFuse:  $COMPUTE_FUSED_CHUNK_NAME ($COMPUTE_FUSED_CHUNK_MEMORY MB)"
     echo "  Raster:   $RASTER_NAME ($RASTER_MEMORY MB)"
     echo "  Finalize: $FINALIZE_NAME ($FINALIZE_MEMORY MB)"
+    echo "  FnlzMT:   $FINALIZE_MT_NAME ($FINALIZE_MT_MEMORY MB)"
     echo "  Encode:   $ENCODE_NAME ($ENCODE_MEMORY MB)"
     echo "  Viewport: $VIEWPORT_NAME ($VIEWPORT_MEMORY MB)"
     echo "  Storage:  $STORAGE_NAME ($STORAGE_MEMORY MB)"

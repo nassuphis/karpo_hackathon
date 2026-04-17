@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "name": "t2_abs(pm) q=0.1%",
+  "description": "Single param-source metric.",
+  "chain": [
+    [
+      "t2_abs",
+      "pm",
+      "0.1"
+    ]
+  ]
+}

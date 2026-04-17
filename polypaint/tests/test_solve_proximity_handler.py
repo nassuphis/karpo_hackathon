@@ -71,6 +71,20 @@ def _make_hist_mock_s3(bin_bytes, clip_data):
     return mock_s3
 
 
+def _fingerprint(chain, metric="proximity", quantile=0.001, omega=1.0, omega_enabled=True):
+    from solve_score_chain import compile_solve_score_chain_or_legacy, compiled_solve_score_fingerprint
+
+    compiled = compile_solve_score_chain_or_legacy(
+        chain,
+        metric,
+        quantile,
+        omega,
+        omega_enabled,
+        default_metric=metric,
+    )
+    return compiled_solve_score_fingerprint(compiled)
+
+
 def _run_merge(n_chunks, clip_data, hist_responses, metric="proximity", solve_score_quantile=0.001,
                solve_score_omega=1.0, solve_score_merge_workers=None):
     """Run merge phase with mocked S3."""
@@ -162,9 +176,6 @@ def test_hist_tmpfile_mode_runs_binary_with_tmp_input():
         assert not any(arg.startswith("--input_size=") for arg in cmd)
         done_kwargs = hsp.report_status.call_args_list[-1].kwargs
         warned = {w["param"] for w in done_kwargs["result_data"]["contract_warnings"]}
-        assert "solve_score_quantile" in warned
-        assert "solve_score_omega" in warned
-        assert "solve_score_omega_enabled" in warned
         assert "solve_score_threads" in warned
         assert "solve_score_hist_input_mode" in warned
     finally:
@@ -347,6 +358,7 @@ def test_hist_v2_clip_uses_program_cli_flags():
             "clip_lo": -1.0,
             "clip_hi": 2.0,
             "program": "m0;m1;weighted_sum:0.7:0.3;omega_cosine:5",
+            "chain_fingerprint": _fingerprint([["spread", "2"], ["shelliness", "3"], ["weighted_sum", "0.7", "0.3"], ["omega_cosine", "5"]], metric="spread", quantile=0.02, omega=5.0, omega_enabled=True),
             "metrics": [
                 {"slot": 0, "metric": "spread", "quantile": 0.02, "clip_lo": -1.0, "clip_hi": 2.0},
                 {"slot": 1, "metric": "shelliness", "quantile": 0.03, "clip_lo": -0.5, "clip_hi": 1.5},
@@ -413,6 +425,7 @@ def test_hist_v2_clip_preserves_omega_phase_in_program_cli():
             "clip_lo": -1.0,
             "clip_hi": 2.0,
             "program": "m0;omega_cosine:5:1.25",
+            "chain_fingerprint": _fingerprint([["spread", "2"], ["omega_cosine", "5", "1.25"]], metric="spread", quantile=0.02, omega=5.0, omega_enabled=True),
             "metrics": [
                 {"slot": 0, "metric": "spread", "quantile": 0.02, "clip_lo": -1.0, "clip_hi": 2.0},
             ],
@@ -528,8 +541,9 @@ def test_hist_v2_mixed_source_sectioned_passes_coeff_url_cli_flags():
                 "omega_enabled": False,
                 "clip_lo": 0.0,
                 "clip_hi": 1.0,
-                "program": "m0;m1;max",
-                "metrics": [
+                    "program": "m0;m1;max",
+                    "chain_fingerprint": _fingerprint([["spread", "slv", "2"], ["spread", "cf", "2"], ["max"]], metric="spread", quantile=0.02, omega=1.0, omega_enabled=False),
+                    "metrics": [
                     {"slot": 0, "metric": "spread", "source": "slv", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
                     {"slot": 1, "metric": "spread", "source": "cf", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
                 ],
@@ -613,8 +627,9 @@ def test_hist_v2_logical_section_sectioned_uses_multispan_manifests():
                 "omega_enabled": False,
                 "clip_lo": 0.0,
                 "clip_hi": 1.0,
-                "program": "m0;m1;max",
-                "metrics": [
+                    "program": "m0;m1;max",
+                    "chain_fingerprint": _fingerprint([["spread", "slv", "2"], ["spread", "cf", "2"], ["max"]], metric="spread", quantile=0.02, omega=1.0, omega_enabled=False),
+                    "metrics": [
                     {"slot": 0, "metric": "spread", "source": "slv", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
                     {"slot": 1, "metric": "spread", "source": "cf", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
                 ],
@@ -736,8 +751,9 @@ def test_hist_v2_logical_section_tmpfile_request_is_rejected():
                 "omega_enabled": False,
                 "clip_lo": 0.0,
                 "clip_hi": 1.0,
-                "program": "m0",
-                "metrics": [
+                    "program": "m0",
+                    "chain_fingerprint": _fingerprint([["spread", "slv", "2"]], metric="spread", quantile=0.02, omega=1.0, omega_enabled=False),
+                    "metrics": [
                     {"slot": 0, "metric": "spread", "source": "slv", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
                 ],
             }
@@ -888,8 +904,9 @@ def test_hist_v2_param_source_sectioned_passes_param_file_cli_flags():
                 "omega_enabled": False,
                 "clip_lo": 0.0,
                 "clip_hi": 1.0,
-                "program": "m0;m1;max",
-                "metrics": [
+                    "program": "m0;m1;max",
+                    "chain_fingerprint": _fingerprint([["t1_abs", "pm", "2"], ["spread", "2"], ["max"]], metric="t1_abs", quantile=0.02, omega=1.0, omega_enabled=False),
+                    "metrics": [
                     {"slot": 0, "metric": "t1_abs", "source": "pm", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
                     {"slot": 1, "metric": "spread", "source": "slv", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
                 ],
@@ -1558,6 +1575,7 @@ def test_hist_program_artifact_degenerate_clip_slot_is_widened():
         "omega": 1.0,
         "omega_enabled": True,
         "program": "m0;m1;avg",
+        "chain_fingerprint": _fingerprint([["spread", "0.1"], ["anisotropy", "0.1"], ["avg"]], metric="spread", quantile=0.001, omega=1.0, omega_enabled=True),
         "metrics": [
             {"slot": 0, "metric": "spread", "source": "slv", "quantile": 0.001, "clip_lo": 0.0, "clip_hi": 1.0},
             {"slot": 1, "metric": "anisotropy", "source": "slv", "quantile": 0.001, "clip_lo": 5.0, "clip_hi": 5.0},

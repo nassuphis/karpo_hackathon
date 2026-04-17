@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "name": "Proximity q=0.1%",
+  "description": "Single solve-source proximity metric.",
+  "chain": [
+    [
+      "proximity",
+      "0.1"
+    ]
+  ]
+}

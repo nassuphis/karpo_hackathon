@@ -146,6 +146,13 @@ class TestRasterMtParity(unittest.TestCase):
             arr.tofile(fh)
         return path
 
+    def _read_u32_pairs(self, path):
+        raw = path.read_bytes()
+        self.assertEqual(len(raw) % 8, 0)
+        ints = array("I")
+        ints.frombytes(raw)
+        return list(zip(ints[0::2], ints[1::2]))
+
     def _run_binary(self, args):
         return subprocess.run(args, capture_output=True, text=True)
 
@@ -392,3 +399,102 @@ class TestRasterMtParity(unittest.TestCase):
             finally:
                 server.shutdown()
                 server.server_close()
+
+    def test_associated_palette_emits_every_pass0_step_when_all_roots_clip_out(self):
+        step_count = 4
+        degree = 1
+        roots = []
+        for idx in range(step_count):
+            roots.extend([1000.0 + idx, 1000.0 + idx])
+
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            roots_path = self._write_float_file(root / "roots.bin", roots)
+            out_prefix = root / "pix"
+            palette_prefix = root / "palette_pixbin"
+            cmd = [
+                str(self._binary),
+                str(roots_path),
+                str(out_prefix),
+                "--width=8",
+                "--height=8",
+                "--tile_size=8",
+                "--n_tile_cols=1",
+                "--n_tile_rows=1",
+                "--center_re=0",
+                "--center_im=0",
+                "--scale=1.0",
+                f"--degree={degree}",
+                "--color=solve_score",
+                "--match=none",
+                "--palette=inferno",
+                "--rotation=0",
+                "--threads=1",
+                "--input_mode=tmpfile",
+                "--solve_metric=centroid_re",
+                "--solve_score_clip_lo=0",
+                "--solve_score_clip_hi=2000",
+                "--solve_score_cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9",
+                "--solve_score_raw_bytes=1",
+                f"--palette_bin_prefix={palette_prefix}",
+                "--palette_grid_n=2",
+                "--palette_step_start=0",
+            ]
+
+            result = self._run_binary(cmd)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertFalse((root / "pix_t0000.pix").exists())
+            palette_pairs = self._read_u32_pairs(root / "palette_pixbin_t0000.pbx")
+            self.assertEqual([pix for pix, _ in palette_pairs], [0, 1, 3, 2])
+            self.assertEqual(len(palette_pairs), step_count)
+            self.assertTrue(all(value > 0 for _, value in palette_pairs))
+
+    def test_associated_palette_emits_every_pass0_step_when_main_image_dedups_later_steps(self):
+        step_count = 4
+        degree = 1
+        roots = [0.0, 0.0] * step_count
+
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            roots_path = self._write_float_file(root / "roots.bin", roots)
+            out_prefix = root / "pix"
+            palette_prefix = root / "palette_pixbin"
+            pixbin_prefix = root / "pixbin"
+            cmd = [
+                str(self._binary),
+                str(roots_path),
+                str(out_prefix),
+                "--width=8",
+                "--height=8",
+                "--tile_size=8",
+                "--n_tile_cols=1",
+                "--n_tile_rows=1",
+                "--center_re=0",
+                "--center_im=0",
+                "--scale=1.0",
+                f"--degree={degree}",
+                "--color=solve_score",
+                "--match=none",
+                "--palette=inferno",
+                "--rotation=0",
+                "--threads=1",
+                "--input_mode=tmpfile",
+                "--solve_metric=centroid_re",
+                "--solve_score_clip_lo=-1",
+                "--solve_score_clip_hi=1",
+                "--solve_score_cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9",
+                "--solve_score_raw_bytes=1",
+                f"--pixel_bin_prefix={pixbin_prefix}",
+                f"--palette_bin_prefix={palette_prefix}",
+                "--palette_grid_n=2",
+                "--palette_step_start=0",
+            ]
+
+            result = self._run_binary(cmd)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            main_pairs = self._read_u32_pairs(root / "pixbin_t0000.pbx")
+            palette_pairs = self._read_u32_pairs(root / "palette_pixbin_t0000.pbx")
+            self.assertEqual(len(main_pairs), 1)
+            self.assertEqual([pix for pix, _ in palette_pairs], [0, 1, 3, 2])
+            self.assertEqual(len(palette_pairs), step_count)
+            self.assertTrue(all(value > 0 for _, value in palette_pairs))

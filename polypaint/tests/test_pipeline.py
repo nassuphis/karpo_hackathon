@@ -124,6 +124,26 @@ class TestDispatchHandler(unittest.TestCase):
         self.assertEqual(body["fired"], 1)
 
     @patch("handler_dispatch.lambda_client")
+    def test_dispatch_recolor_from_raw_target(self, mock_client):
+        from handler_dispatch import handler
+        mock_client.invoke.return_value = {"StatusCode": 202}
+        jobs = [{"job_id": "j", "task_id": "recolor_from_raw_1", "artifact_id": "color_new", "source_artifact_id": "color_src", "source_image_key": "renders/j/color/color_src/image.jpeg", "new_palette": "tri_redgold"}]
+        event = self._make_event({"target": "recolor_from_raw", "jobs": jobs})
+        result = handler(event, None)
+        body = json.loads(result["body"])
+        self.assertEqual(body["fired"], 1)
+
+    @patch("handler_dispatch.lambda_client")
+    def test_dispatch_deepzoom_from_raw_target(self, mock_client):
+        from handler_dispatch import handler
+        mock_client.invoke.return_value = {"StatusCode": 202}
+        jobs = [{"job_id": "j", "source_key": "renders/j/color/color_src/image.jpeg", "raw_key": "renders/j/color/color_src/greyscale.raw", "raw_meta_key": "renders/j/color/color_src/greyscale.meta.json"}]
+        event = self._make_event({"target": "deepzoom_from_raw", "jobs": jobs})
+        result = handler(event, None)
+        body = json.loads(result["body"])
+        self.assertEqual(body["fired"], 1)
+
+    @patch("handler_dispatch.lambda_client")
     def test_dispatch_pdf_artifact_target(self, mock_client):
         from handler_dispatch import handler
         mock_client.invoke.return_value = {"StatusCode": 202}

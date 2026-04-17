@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "programs": [
+    {
+      "id": "proximity-q01",
+      "name": "Proximity q=0.1%",
+      "path": "solve-score-programs/proximity-q01.json",
+      "description": "Single solve-source proximity metric."
+    },
+    {
+      "id": "shelliness-q01",
+      "name": "Shelliness q=0.1%",
+      "path": "solve-score-programs/shelliness-q01.json",
+      "description": "Single solve-source shelliness metric."
+    },
+    {
+      "id": "t2-abs-pm-q01",
+      "name": "t2_abs(pm) q=0.1%",
+      "path": "solve-score-programs/t2-abs-pm-q01.json",
+      "description": "Single param-source metric."
+    },
+    {
+      "id": "proximity-plus-t2-avg",
+      "name": "Proximity + t2_abs avg",
+      "path": "solve-score-programs/proximity-plus-t2-avg.json",
+      "description": "Average of solve and param metrics."
+    },
+    {
+      "id": "proximity-plus-circle-dist-avg",
+      "name": "Proximity + unit-circle distance avg",
+      "path": "solve-score-programs/proximity-plus-circle-dist-avg.json",
+      "description": "Average of solve and coeff metrics."
+    }
+  ]
+}

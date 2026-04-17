@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "name": "Proximity + t2_abs avg",
+  "description": "Average of solve and param metrics.",
+  "chain": [
+    [
+      "proximity",
+      "0.1"
+    ],
+    [
+      "t2_abs",
+      "pm",
+      "0.1"
+    ],
+    [
+      "avg"
+    ]
+  ]
+}

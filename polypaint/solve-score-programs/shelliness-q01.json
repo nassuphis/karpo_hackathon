@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "name": "Shelliness q=0.1%",
+  "description": "Single solve-source shelliness metric.",
+  "chain": [
+    [
+      "shelliness",
+      "0.1"
+    ]
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "name": "Proximity + unit-circle distance avg",
+  "description": "Average of solve and coeff metrics.",
+  "chain": [
+    [
+      "proximity",
+      "0.1"
+    ],
+    [
+      "dist_unit_circle",
+      "cf",
+      "0.1"
+    ],
+    [
+      "avg"
+    ]
+  ]
+}

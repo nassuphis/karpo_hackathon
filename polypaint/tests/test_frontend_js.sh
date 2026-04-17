@@ -55,6 +55,10 @@ grep -q 'id="compute-mt-lores-coeffgen-threads"' "$HTML" || { echo "FATAL: compu
 grep -q 'id="compute-mt-fused-solve-threads"' "$HTML" || { echo "FATAL: compute MT fused solve row missing from index.html"; exit 1; }
 grep -q 'id="render-generate-save-associated-palette"' "$HTML" || { echo "FATAL: render generate associated palette checkbox missing from index.html"; exit 1; }
 grep -q 'id="render-mt-save-associated-palette"' "$HTML" || { echo "FATAL: render MT associated palette checkbox missing from index.html"; exit 1; }
+grep -q 'class="tri-popup render-mt-popup"' "$HTML" || { echo "FATAL: Generate-MT popup should use the dedicated tall popup layout class"; exit 1; }
+grep -q 'id="render-mt-popup-body"' "$HTML" || { echo "FATAL: Generate-MT popup should have a scrollable popup body"; exit 1; }
+grep -q '\.render-mt-popup-body {' "$HTML" || { echo "FATAL: Generate-MT popup body CSS missing"; exit 1; }
+grep -q '\.render-mt-popup {' "$HTML" || { echo "FATAL: Generate-MT popup sizing CSS missing"; exit 1; }
 grep -q 'id="generate-from-palette-raster-threads"' "$HTML" || { echo "FATAL: GenerateFromPalette raster threads input missing from index.html"; exit 1; }
 grep -q 'id="generate-from-palette-raster-input-mode"' "$HTML" || { echo "FATAL: GenerateFromPalette raster input selector missing from index.html"; exit 1; }
 grep -q 'id="generate-from-palette-raster-retries"' "$HTML" || { echo "FATAL: GenerateFromPalette raster retries input missing from index.html"; exit 1; }

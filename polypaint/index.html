@@ -248,6 +248,19 @@ button {
     box-shadow: 0 16px 40px rgba(0,0,0,0.4);
     display: flex; flex-direction: column; overflow: hidden;
 }
+.render-mt-popup {
+    width: min(980px, calc(100vw - 24px));
+    max-height: min(92vh, 960px);
+}
+.render-mt-popup-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 14px 14px;
+}
+.render-mt-popup-intro {
+    padding: 0 0 8px;
+}
 .tri-popup-head {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
     padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,0.08);
@@ -1532,14 +1545,16 @@ button {
 </div>
 
 <div id="render-mt-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
-    <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="render-mt-popup-title">
+    <div class="tri-popup render-mt-popup" role="dialog" aria-modal="true" aria-labelledby="render-mt-popup-title">
         <div class="tri-popup-head">
             <div id="render-mt-popup-title" class="tri-popup-title">Generate-MT</div>
             <button id="render-mt-popup-close" type="button" class="tri-popup-close">Close</button>
         </div>
         <div id="render-mt-popup-summary" class="autolevel-popup-summary"></div>
-        <div style="padding:0 14px 8px 14px">
-            <div class="autolevel-stage-text">Choose native thread counts, input modes, workers, and sectioned-read retries for the MT path.</div>
+        <div id="render-mt-popup-body" class="render-mt-popup-body">
+            <div class="render-mt-popup-intro">
+                <div class="autolevel-stage-text">Choose native thread counts, input modes, workers, and sectioned-read retries for the MT path.</div>
+            </div>
             <div id="render-mt-job-size" class="autolevel-popup-summary" style="margin-top:10px; font-size:11px; white-space:pre-wrap"></div>
             <div class="render-mt-matrix">
                 <div></div>
@@ -1633,8 +1648,8 @@ button {
                     </label>
                 </div>
             </div>
+            <div class="autolevel-popup-help">Use this to compare the native multithreaded path against normal Generate. Raster MT supports Solve score, Saved palette, Constant, and Rainbow with match=none. Hist controls and merge workers only matter for Solve score mode. Palette chunk controls only matter for Solve score renders when Save Associated Palette is enabled. Finalize workers apply to all MT color renders. Retries only apply to the native sectioned libcurl readers in Hist, Raster, and Palette chunk; Merge and Finalize already use SDK-managed S3 retries.</div>
         </div>
-        <div class="autolevel-popup-help">Use this to compare the native multithreaded path against normal Generate. Raster MT supports Solve score, Saved palette, Constant, and Rainbow with match=none. Hist controls and merge workers only matter for Solve score mode. Palette chunk controls only matter for Solve score renders when Save Associated Palette is enabled. Finalize workers apply to all MT color renders. Retries only apply to the native sectioned libcurl readers in Hist, Raster, and Palette chunk; Merge and Finalize already use SDK-managed S3 retries.</div>
         <div class="autolevel-popup-actions">
             <div></div>
             <div style="display:flex; gap:8px">

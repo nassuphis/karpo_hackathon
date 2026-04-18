@@ -3803,15 +3803,20 @@ async function testPipeline(name, call) {
         `, ctx);
         await vm.runInContext(`(async()=>{ await runDeepZoomExport('j', 'renders/j/color/color_raw_src/image.jpeg', null, { rawKey: 'renders/j/color/color_raw_src/greyscale.raw', rawMetaKey: 'renders/j/color/color_raw_src/greyscale.meta.json' }); })()`, ctx);
         const dzDispatch = vm.runInContext('_deepZoomRawDispatch', ctx);
-        if (!dzDispatch || dzDispatch.target !== 'deepzoom_from_raw') {
-            console.error('FATAL: raw-backed DeepZoom should dispatch deepzoom_from_raw, got ' + JSON.stringify(dzDispatch));
+        if (!dzDispatch || dzDispatch.target !== 'deepzoom_export') {
+            console.error('FATAL: DeepZoom should dispatch exact-image deepzoom_export when source_key exists, got ' + JSON.stringify(dzDispatch));
+            process.exit(1);
+        }
+        const dzJob = dzDispatch.jobs && dzDispatch.jobs[0];
+        if (!dzJob || dzJob.source_key !== 'renders/j/color/color_raw_src/image.jpeg' || dzJob.raw_key || dzJob.raw_meta_key) {
+            console.error('FATAL: exact-image DeepZoom should dispatch only source_key, got ' + JSON.stringify(dzDispatch));
             process.exit(1);
         }
         vm.runInContext(`
             lambdaPost = _deepZoomOrigLambdaPost;
             refreshRenderArtifacts = _deepZoomOrigRefreshRenderArtifacts;
         `, ctx);
-        console.log('  raw-backed DeepZoom dispatch target: OK');
+        console.log('  exact-image DeepZoom dispatch target: OK');
     }
 
     {

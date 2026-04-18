@@ -1,10 +1,9 @@
 """
 DeepZoom export Lambda — generates OpenSeadragon tile pyramid from an
-existing rendered image or, when available, a fused greyscale raw sidecar.
+existing rendered image.
 
-Downloads the source image or raw sidecar, materializes a DeepZoom source
-image locally, runs dz_export (libvips dzsave), uploads .dzi +
-tile files to S3 under deepzoom/{job_id}/{export_id}/.
+Downloads the exact source image, runs dz_export (libvips dzsave), uploads
+.dzi + tile files to S3 under deepzoom/{job_id}/{export_id}/.
 
 Public access via bucket policy on deepzoom/ prefix (no per-object ACL).
 """
@@ -16,16 +15,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 import boto3
 
-from raw_sidecar import background_color_hex, validate_raw_sidecar
 from shared import BUCKET, parse_body, ok_response, report_status, imgpipe_env
 
 s3 = boto3.client("s3")
 DZ_EXPORT = os.path.join(os.path.dirname(__file__), "dz_export")
 VIEWER_TEMPLATE = os.path.join(os.path.dirname(__file__), "deepzoom_viewer_template.html")
-PIXEL_BINS_RENDER = os.path.join(os.path.dirname(__file__), "pixel_bins_render")
-RAW2JPEG = os.path.join(os.path.dirname(__file__), "raw2jpeg")
-DEFAULT_BACKGROUND_COLOR = "000000"
-DEFAULT_PIXEL_BINS_EMPTY = 255
 
 
 def _render_viewer(job_id, export_id, created_at):
@@ -46,142 +40,27 @@ def _read_body_to_path(obj_body, path):
             fh.write(obj_body.read())
 
 
-def _load_json_key(key):
-    obj = s3.get_object(Bucket=BUCKET, Key=key)
-    body = obj["Body"].read()
-    data = json.loads(body) if body else {}
-    if not isinstance(data, dict):
-        raise RuntimeError(f"Expected JSON object in {key}")
-    return data
-
-
-def _normalize_background_color(value):
-    s = str(value or "").strip().lower()
-    if s.startswith("#"):
-        s = s[1:]
-    if len(s) == 6 and all(ch in "0123456789abcdef" for ch in s):
-        return s
-    return DEFAULT_BACKGROUND_COLOR
-
-
-def _equalized_byte_to_palette_bin(value):
-    if value <= 0:
-        return DEFAULT_PIXEL_BINS_EMPTY
-    bin_idx = int(((int(value) - 1) * 10) / 255)
-    if bin_idx < 0:
-        bin_idx = 0
-    if bin_idx > 9:
-        bin_idx = 9
-    return bin_idx
-
-
-def _write_palette_bins_from_raw(raw_path, bins_path, width, height):
-    width = int(width)
-    height = int(height)
-    expected_size = width * height
-    actual_size = os.path.getsize(raw_path)
-    if actual_size != expected_size:
-        raise RuntimeError(
-            f"greyscale raw size mismatch: got {actual_size} bytes, expected {expected_size}"
-        )
-    with open(raw_path, "rb") as raw_fh, open(bins_path, "wb") as bins_fh:
-        for row_idx in range(height):
-            row = raw_fh.read(width)
-            if len(row) != width:
-                raise RuntimeError(
-                    f"greyscale raw short read on row {row_idx}: got {len(row)} bytes, expected {width}"
-                )
-            mapped = bytearray(width)
-            for idx, value in enumerate(row):
-                mapped[idx] = _equalized_byte_to_palette_bin(value)
-            bins_fh.write(mapped)
-
-
-def _materialize_image_from_raw(raw_key, raw_meta_key, source_key):
-    raw_meta = validate_raw_sidecar(
-        _load_json_key(raw_meta_key),
-        expected_raw_key=raw_key,
-        expected_artifact_family="color",
-    )
-    width = int(raw_meta["width"])
-    height = int(raw_meta["height"])
-    palette = "inferno"
-    if source_key:
-        try:
-            head = s3.head_object(Bucket=BUCKET, Key=source_key)
-            palette = str((head.get("Metadata") or {}).get("palette") or palette)
-        except Exception:
-            palette = "inferno"
-    background_color = background_color_hex(raw_meta.get("background_color"))
-    raw_path = "/tmp/source.greyscale.raw"
-    bins_path = "/tmp/source.deepzoom.bins"
-    rgb_raw_path = "/tmp/source.deepzoom.rgb.raw"
-    image_path = "/tmp/source.deepzoom.png"
-
-    raw_obj = s3.get_object(Bucket=BUCKET, Key=raw_key)
-    _read_body_to_path(raw_obj["Body"], raw_path)
-    _write_palette_bins_from_raw(raw_path, bins_path, width, height)
-
-    render = subprocess.run(
-        [
-            PIXEL_BINS_RENDER,
-            bins_path,
-            rgb_raw_path,
-            f"--tile_w={width}",
-            f"--tile_h={height}",
-            f"--palette={palette}",
-            f"--background_color={background_color}",
-            f"--empty={DEFAULT_PIXEL_BINS_EMPTY}",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-    if render.returncode != 0:
-        raise RuntimeError(f"pixel_bins_render failed: {render.stderr.strip() or 'unknown error'}")
-
-    encode = subprocess.run(
-        [RAW2JPEG, rgb_raw_path, image_path],
-        capture_output=True,
-        text=True,
-        timeout=600,
-        env=imgpipe_env(),
-    )
-    if encode.returncode != 0:
-        raise RuntimeError(f"raw2jpeg failed: {encode.stderr.strip() or 'unknown error'}")
-
-    return image_path, {
-        "width": width,
-        "height": height,
-        "raw_key": raw_key,
-        "raw_meta_key": raw_meta_key,
-        "palette": palette,
-        "background_color": background_color,
-    }
-
-
 def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id="deepzoom_export"):
     job_id = params["job_id"]
-    source_key = params["source_key"]
+    source_key = str(params.get("source_key") or "").strip()
     raw_key = str(params.get("raw_key") or "").strip()
     raw_meta_key = str(params.get("raw_meta_key") or "").strip()
     export_id = params.get("export_id", f"dz_{int(time.time())}")
+    source_path = ""
 
     try:
         report_status(job_id, task_id, "started")
 
         t0 = time.time()
-        source_kind = "image"
-        source_meta = {}
         if require_raw_sidecar and not (raw_key and raw_meta_key):
             raise RuntimeError("DeepZoom-from-raw requires raw_key and raw_meta_key")
-        if raw_key and raw_meta_key:
-            in_path, source_meta = _materialize_image_from_raw(raw_key, raw_meta_key, source_key)
-            source_kind = "raw"
-        else:
-            in_path = "/tmp/source.tif"
-            obj = s3.get_object(Bucket=BUCKET, Key=source_key)
-            _read_body_to_path(obj["Body"], in_path)
+        if not source_key:
+            raise RuntimeError("DeepZoom requires source_key")
+        source_kind = "image"
+        suffix = os.path.splitext(source_key)[1] or ".img"
+        source_path = f"/tmp/deepzoom_source{suffix}"
+        obj = s3.get_object(Bucket=BUCKET, Key=source_key)
+        _read_body_to_path(obj["Body"], source_path)
         dl_ms = int((time.time() - t0) * 1000)
 
         report_status(job_id, task_id, "generating")
@@ -191,7 +70,7 @@ def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id
         os.makedirs("/tmp/dz", exist_ok=True)
         t1 = time.time()
         result = subprocess.run(
-            [DZ_EXPORT, in_path, dz_base],
+            [DZ_EXPORT, source_path, dz_base],
             capture_output=True, text=True, timeout=600,
             env=imgpipe_env()
         )
@@ -200,7 +79,8 @@ def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id
         meta = json.loads(result.stdout)
         gen_ms = int((time.time() - t1) * 1000)
 
-        os.remove(in_path)
+        os.remove(source_path)
+        source_path = ""
 
         report_status(job_id, task_id, "uploading")
 
@@ -270,10 +150,6 @@ def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id
             "height": meta["height"],
             "tiles_uploaded": uploaded,
         }
-        if source_kind == "raw":
-            manifest["raw_key"] = source_meta.get("raw_key", raw_key)
-            manifest["raw_meta_key"] = source_meta.get("raw_meta_key", raw_meta_key)
-            manifest["palette"] = source_meta.get("palette", "")
         manifest_json = json.dumps(manifest)
         s3.put_object(
             Bucket=BUCKET,
@@ -292,15 +168,9 @@ def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id
         # Cleanup /tmp
         import shutil
         shutil.rmtree("/tmp/dz", ignore_errors=True)
-        for path in (
-            "/tmp/source.tif",
-            "/tmp/source.greyscale.raw",
-            "/tmp/source.deepzoom.bins",
-            "/tmp/source.deepzoom.rgb.raw",
-            "/tmp/source.deepzoom.png",
-        ):
+        if source_path:
             try:
-                os.remove(path)
+                os.remove(source_path)
             except OSError:
                 pass
 
@@ -320,15 +190,9 @@ def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id
         report_status(job_id, task_id, "error", str(e))
         import shutil
         shutil.rmtree("/tmp/dz", ignore_errors=True)
-        for path in (
-            "/tmp/source.tif",
-            "/tmp/source.greyscale.raw",
-            "/tmp/source.deepzoom.bins",
-            "/tmp/source.deepzoom.rgb.raw",
-            "/tmp/source.deepzoom.png",
-        ):
+        if source_path:
             try:
-                os.remove(path)
+                os.remove(source_path)
             except OSError:
                 pass
         raise

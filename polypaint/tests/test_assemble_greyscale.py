@@ -1,8 +1,11 @@
+import http.server
 import json
 import pathlib
 import shutil
+import socketserver
 import subprocess
 import tempfile
+import threading
 import unittest
 
 
@@ -48,6 +51,7 @@ class TestAssembleGreyscale(unittest.TestCase):
                 "-O2",
                 "-pthread",
                 str(LAMBDA_DIR / "assemble_greyscale.c"),
+                "-lcurl",
                 "-o",
                 str(cls._binary),
             ],
@@ -87,6 +91,48 @@ class TestAssembleGreyscale(unittest.TestCase):
             output = out_path.read_bytes() if out_path.exists() else b""
             hist = json.loads(hist_path.read_text()) if hist_path.exists() else None
             return result, output, hist
+
+    def _run_with_url_manifest(self, width, height, fragment_payloads, workers=1):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            for idx, payload in enumerate(fragment_payloads):
+                (root / f"frag_{idx}.bin").write_bytes(payload)
+
+            class QuietHandler(http.server.SimpleHTTPRequestHandler):
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, directory=str(root), **kwargs)
+
+                def log_message(self, format, *args):
+                    pass
+
+            with socketserver.TCPServer(("127.0.0.1", 0), QuietHandler) as server:
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    manifest = root / "urls.txt"
+                    urls = [
+                        f"http://127.0.0.1:{server.server_address[1]}/frag_{idx}.bin"
+                        for idx in range(len(fragment_payloads))
+                    ]
+                    manifest.write_text("\n".join(urls) + "\n", encoding="utf-8")
+                    out_path = root / "out.raw"
+                    hist_path = root / "hist.json"
+                    cmd = [
+                        str(self._binary),
+                        f"--width={width}",
+                        f"--height={height}",
+                        f"--output={out_path}",
+                        f"--workers={workers}",
+                        f"--hist-output={hist_path}",
+                        f"--url-manifest={manifest}",
+                    ]
+                    result = subprocess.run(cmd, capture_output=True, text=True)
+                    output = out_path.read_bytes() if out_path.exists() else b""
+                    hist = json.loads(hist_path.read_text()) if hist_path.exists() else None
+                    return result, output, hist
+                finally:
+                    server.shutdown()
+                    thread.join(timeout=5)
 
     def test_single_thread_matches_reference(self):
         frags = [
@@ -135,3 +181,14 @@ class TestAssembleGreyscale(unittest.TestCase):
         result, _, _ = self._run(1, 1, frags, workers=1, missing_path=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("cannot open", result.stderr)
+
+    def test_url_manifest_fetches_fragments_natively(self):
+        frags = [
+            _encode_pairs([(0, 9), (3, 7)]),
+            _encode_pairs([(1, 5), (2, 4)]),
+        ]
+        result, output, hist = self._run_with_url_manifest(2, 2, frags, workers=2)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output, _reference_assemble(2, 2, frags))
+        self.assertEqual(hist["background_pixels"], 0)
+        self.assertEqual(hist["nonzero_pixels"], 4)

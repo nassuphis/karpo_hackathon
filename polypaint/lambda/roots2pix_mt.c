@@ -2,8 +2,9 @@
  * roots2pix_mt: multithreaded color raster for supported Color modes.
  *
  * This is the native MT replacement for the earlier subprocess fan-out path.
- * It keeps the same external .pix / .pbx contracts used by finalize and fast
- * Color RePalette, but computes them in one process with pthread workers.
+ * It keeps the same external .pix contract, and emits either legacy tile-local
+ * .pbx pairs or fused raw-score global u32le_u8_v1 fragments depending on the
+ * requested solve-score output mode.
  *
  * Supported modes:
  *   - solve_score
@@ -54,6 +55,12 @@ typedef struct {
     size_t len;
     size_t cap;
 } U32Vec;
+
+typedef struct {
+    unsigned char *data;
+    size_t len;
+    size_t cap;
+} ByteVec;
 
 typedef struct {
     unsigned char *data;
@@ -132,8 +139,9 @@ typedef struct {
     int *tileW;
     U32Vec *pixVecs;
     U32Vec *pbxVecs;
+    ByteVec *pbxByteVecs;
     int *paletteTileW;
-    U32Vec *palettePbxVecs;
+    ByteVec *palettePbxByteVecs;
     unsigned char rbPalR[MAXDEG];
     unsigned char rbPalG[MAXDEG];
     unsigned char rbPalB[MAXDEG];
@@ -333,6 +341,24 @@ static int vec_push2(U32Vec *vec, uint32_t a, uint32_t b) {
     return 1;
 }
 
+static int bytevec_push_u32le_u8(ByteVec *vec, uint32_t pixIdx, uint8_t score) {
+    if (vec->len + 5 > vec->cap) {
+        size_t newCap = vec->cap ? vec->cap * 2 : 4096;
+        while (newCap < vec->len + 5) newCap *= 2;
+        unsigned char *newData = realloc(vec->data, newCap);
+        if (!newData) return 0;
+        vec->data = newData;
+        vec->cap = newCap;
+    }
+    vec->data[vec->len + 0] = (unsigned char)(pixIdx & 0xFFu);
+    vec->data[vec->len + 1] = (unsigned char)((pixIdx >> 8) & 0xFFu);
+    vec->data[vec->len + 2] = (unsigned char)((pixIdx >> 16) & 0xFFu);
+    vec->data[vec->len + 3] = (unsigned char)((pixIdx >> 24) & 0xFFu);
+    vec->data[vec->len + 4] = score;
+    vec->len += 5;
+    return 1;
+}
+
 static const float *prepare_step(const float *raw, int degree,
                                  RootXformEntry *rtChain, int nRt,
                                  float *stepBuf, float *wkRe, float *wkIm) {
@@ -362,6 +388,12 @@ static void worker_fail(WorkerArgs *arg, const char *msg) {
     arg->error_msg[sizeof(arg->error_msg) - 1] = '\0';
 }
 
+static int write_suffix_path(char *dst, size_t dstSize, const char *prefix, const char *suffix) {
+    if (!dst || dstSize == 0 || !prefix || !suffix) return 0;
+    int written = snprintf(dst, dstSize, "%s%s", prefix, suffix);
+    return written > 0 && (size_t)written < dstSize;
+}
+
 static void free_worker_storage(WorkerArgs *args, int nWorkers, int nTiles) {
     if (!args) return;
     for (int i = 0; i < nWorkers; i++) {
@@ -371,13 +403,17 @@ static void free_worker_storage(WorkerArgs *args, int nWorkers, int nTiles) {
         if (args[i].pbxVecs) {
             for (int t = 0; t < nTiles; t++) free(args[i].pbxVecs[t].data);
         }
-        if (args[i].palettePbxVecs) {
+        if (args[i].pbxByteVecs) {
+            for (int t = 0; t < nTiles; t++) free(args[i].pbxByteVecs[t].data);
+        }
+        if (args[i].palettePbxByteVecs) {
             int paletteTiles = args[i].paletteNTileCols * args[i].paletteNTileRows;
-            for (int t = 0; t < paletteTiles; t++) free(args[i].palettePbxVecs[t].data);
+            for (int t = 0; t < paletteTiles; t++) free(args[i].palettePbxByteVecs[t].data);
         }
         free(args[i].pixVecs);
         free(args[i].pbxVecs);
-        free(args[i].palettePbxVecs);
+        free(args[i].pbxByteVecs);
+        free(args[i].palettePbxByteVecs);
     }
 }
 
@@ -601,11 +637,8 @@ static void *worker_main(void *arg_) {
                 int paletteTileCol = col / arg->tileSize;
                 int paletteTileRow = row / arg->tileSize;
                 int paletteTileId = paletteTileRow * arg->paletteNTileCols + paletteTileCol;
-                uint32_t paletteLocalX = (uint32_t)(col - paletteTileCol * arg->tileSize);
-                uint32_t paletteLocalY = (uint32_t)(row - paletteTileRow * arg->tileSize);
-                uint32_t palettePixIdx =
-                    paletteLocalY * (uint32_t)arg->paletteTileW[paletteTileId] + paletteLocalX;
-                if (!vec_push2(&arg->palettePbxVecs[paletteTileId], palettePixIdx, (uint32_t)solveBin)) {
+                uint32_t palettePixIdx = (uint32_t)row * (uint32_t)arg->paletteGridN + (uint32_t)col;
+                if (!bytevec_push_u32le_u8(&arg->palettePbxByteVecs[paletteTileId], palettePixIdx, solveBin)) {
                     worker_fail(arg, "palette pbx vec alloc failed");
                     goto cleanup;
                 }
@@ -660,9 +693,17 @@ static void *worker_main(void *arg_) {
                 }
             }
             if (arg->emitPixelBins && (arg->colorMode == COLOR_SOLVE_SCORE || arg->colorMode == COLOR_SAVED_PALETTE)) {
-                if (!vec_push2(&arg->pbxVecs[tileId], pixIdx, (uint32_t)solveBin)) {
-                    worker_fail(arg, "pbx vec alloc failed");
-                    goto cleanup;
+                if (arg->solveScoreRawBytes) {
+                    uint32_t globalPixIdx = (uint32_t)py * (uint32_t)arg->W + (uint32_t)px;
+                    if (!bytevec_push_u32le_u8(&arg->pbxByteVecs[tileId], globalPixIdx, solveBin)) {
+                        worker_fail(arg, "pbx byte vec alloc failed");
+                        goto cleanup;
+                    }
+                } else {
+                    if (!vec_push2(&arg->pbxVecs[tileId], pixIdx, (uint32_t)solveBin)) {
+                        worker_fail(arg, "pbx vec alloc failed");
+                        goto cleanup;
+                    }
                 }
             }
             arg->rootsPlotted++;
@@ -1375,9 +1416,10 @@ int main(int argc, char **argv) {
         args[i].tileW = tileW;
         args[i].paletteTileW = paletteTileW;
         args[i].pixVecs = skipPixOutput ? NULL : calloc((size_t)nTiles, sizeof(U32Vec));
-        args[i].pbxVecs = emitPixelBins ? calloc((size_t)nTiles, sizeof(U32Vec)) : NULL;
-        args[i].palettePbxVecs = emitPaletteBins
-            ? calloc((size_t)(paletteNTileCols * paletteNTileRows), sizeof(U32Vec))
+        args[i].pbxVecs = (emitPixelBins && !solveScoreRawBytes) ? calloc((size_t)nTiles, sizeof(U32Vec)) : NULL;
+        args[i].pbxByteVecs = (emitPixelBins && solveScoreRawBytes) ? calloc((size_t)nTiles, sizeof(ByteVec)) : NULL;
+        args[i].palettePbxByteVecs = emitPaletteBins
+            ? calloc((size_t)(paletteNTileCols * paletteNTileRows), sizeof(ByteVec))
             : NULL;
         memcpy(args[i].rbPalR, rbPalR, sizeof(rbPalR));
         memcpy(args[i].rbPalG, rbPalG, sizeof(rbPalG));
@@ -1386,8 +1428,9 @@ int main(int argc, char **argv) {
         memcpy(args[i].ssPalG, ssPalG, sizeof(ssPalG));
         memcpy(args[i].ssPalB, ssPalB, sizeof(ssPalB));
         if ((!skipPixOutput && !args[i].pixVecs) ||
-            (emitPixelBins && !args[i].pbxVecs) ||
-            (emitPaletteBins && !args[i].palettePbxVecs)) {
+            (emitPixelBins && !solveScoreRawBytes && !args[i].pbxVecs) ||
+            (emitPixelBins && solveScoreRawBytes && !args[i].pbxByteVecs) ||
+            (emitPaletteBins && !args[i].palettePbxByteVecs)) {
             fprintf(stderr, "Out of memory for worker vectors\n");
             goto cleanup;
         }
@@ -1427,9 +1470,13 @@ int main(int argc, char **argv) {
     for (int t = 0; t < nTiles; t++) {
         size_t tilePixU32 = 0;
         size_t tilePbxU32 = 0;
+        size_t tilePbxBytes = 0;
         for (int i = 0; i < threads; i++) {
             if (!skipPixOutput) tilePixU32 += args[i].pixVecs[t].len;
-            if (emitPixelBins) tilePbxU32 += args[i].pbxVecs[t].len;
+            if (emitPixelBins) {
+                if (solveScoreRawBytes) tilePbxBytes += args[i].pbxByteVecs[t].len;
+                else tilePbxU32 += args[i].pbxVecs[t].len;
+            }
         }
         if (tilePixU32 > 0) {
             snprintf(pathBuf, sizeof(pathBuf), "%s_t%04d.pix", outPrefix, t);
@@ -1447,7 +1494,12 @@ int main(int argc, char **argv) {
             tilesWithData++;
             totalEntries += (long)(tilePixU32 / 2u);
         }
-        if (emitPixelBins && tilePbxU32 > 0) {
+        if (emitPixelBins && solveScoreRawBytes && tilePbxBytes > 0) {
+            if (skipPixOutput) {
+                tilesWithData++;
+                totalEntries += (long)(tilePbxBytes / 5u);
+            }
+        } else if (emitPixelBins && tilePbxU32 > 0) {
             snprintf(pathBuf, sizeof(pathBuf), "%s_t%04d.pbx", pixelBinPrefix, t);
             FILE *fb = fopen(pathBuf, "wb");
             if (!fb) {
@@ -1466,21 +1518,52 @@ int main(int argc, char **argv) {
             }
         }
     }
-    if (emitPaletteBins) {
-        int paletteTiles = paletteNTileCols * paletteNTileRows;
-        for (int t = 0; t < paletteTiles; t++) {
-            size_t tilePbxU32 = 0;
-            for (int i = 0; i < threads; i++) tilePbxU32 += args[i].palettePbxVecs[t].len;
-            if (tilePbxU32 <= 0) continue;
-            snprintf(pathBuf, sizeof(pathBuf), "%s_t%04d.pbx", paletteBinPrefix, t);
+    if (emitPixelBins && solveScoreRawBytes) {
+        size_t totalPbxBytes = 0;
+        for (int t = 0; t < nTiles; t++) {
+            for (int i = 0; i < threads; i++) totalPbxBytes += args[i].pbxByteVecs[t].len;
+        }
+        if (totalPbxBytes > 0) {
+            if (!write_suffix_path(pathBuf, sizeof(pathBuf), pixelBinPrefix, ".frag")) {
+                fprintf(stderr, "Cannot build fused fragment path from %s\n", pixelBinPrefix);
+                goto cleanup;
+            }
             FILE *fb = fopen(pathBuf, "wb");
             if (!fb) {
                 fprintf(stderr, "Cannot create %s\n", pathBuf);
                 goto cleanup;
             }
-            for (int i = 0; i < threads; i++) {
-                if (args[i].palettePbxVecs[t].len > 0) {
-                    fwrite(args[i].palettePbxVecs[t].data, sizeof(uint32_t), args[i].palettePbxVecs[t].len, fb);
+            for (int t = 0; t < nTiles; t++) {
+                for (int i = 0; i < threads; i++) {
+                    if (args[i].pbxByteVecs[t].len > 0) {
+                        fwrite(args[i].pbxByteVecs[t].data, 1, args[i].pbxByteVecs[t].len, fb);
+                    }
+                }
+            }
+            fclose(fb);
+        }
+    }
+    if (emitPaletteBins) {
+        int paletteTiles = paletteNTileCols * paletteNTileRows;
+        size_t totalPaletteBytes = 0;
+        for (int t = 0; t < paletteTiles; t++) {
+            for (int i = 0; i < threads; i++) totalPaletteBytes += args[i].palettePbxByteVecs[t].len;
+        }
+        if (totalPaletteBytes > 0) {
+            if (!write_suffix_path(pathBuf, sizeof(pathBuf), paletteBinPrefix, ".frag")) {
+                fprintf(stderr, "Cannot build palette fused fragment path from %s\n", paletteBinPrefix);
+                goto cleanup;
+            }
+            FILE *fb = fopen(pathBuf, "wb");
+            if (!fb) {
+                fprintf(stderr, "Cannot create %s\n", pathBuf);
+                goto cleanup;
+            }
+            for (int t = 0; t < paletteTiles; t++) {
+                for (int i = 0; i < threads; i++) {
+                    if (args[i].palettePbxByteVecs[t].len > 0) {
+                        fwrite(args[i].palettePbxByteVecs[t].data, 1, args[i].palettePbxByteVecs[t].len, fb);
+                    }
                 }
             }
             fclose(fb);

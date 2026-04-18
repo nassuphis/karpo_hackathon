@@ -2,23 +2,30 @@
  * assemble_greyscale: assemble sparse u32le_u8_v1 score fragments into
  * a dense greyscale raw image.
  *
- * Input files contain repeated 5-byte pairs:
+ * Input fragments contain repeated 5-byte pairs:
  *   [pixel_idx:uint32 little-endian][score_byte:uint8]
+ *
+ * Fragments may be passed as local file paths or via --url-manifest=<path>,
+ * one presigned URL per line.
  *
  * score_byte == 0 is invalid. pixel_idx must be < width * height.
  * Repeated writes are accepted with "any arrival wins" semantics.
- *
- * Usage:
- *   assemble_greyscale --width=W --height=H --output=raw.bin \
- *     [--hist-output=hist.json] [--workers=N] frag0.frag [frag1.frag ...]
  */
 
+#include <ctype.h>
+#include <curl/curl.h>
 #include <errno.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+typedef struct {
+    uint8_t *data;
+    size_t size;
+    size_t cap;
+} DownloadBuffer;
 
 typedef struct {
     int width;
@@ -33,6 +40,11 @@ typedef struct {
     pthread_mutex_t queue_mu;
     pthread_mutex_t err_mu;
 } AssembleState;
+
+typedef struct {
+    AssembleState *st;
+    CURL *curl;
+} WorkerCtx;
 
 static const char *getArg(int argc, char **argv, const char *key) {
     int klen = (int)strlen(key);
@@ -68,7 +80,75 @@ static int next_job(AssembleState *st) {
     return idx;
 }
 
-static int process_fragment_file(AssembleState *st, const char *path) {
+static int is_url(const char *path) {
+    return path && (
+        strncmp(path, "http://", 7) == 0 ||
+        strncmp(path, "https://", 8) == 0
+    );
+}
+
+static size_t write_download_cb(char *ptr, size_t size, size_t nmemb, void *userdata) {
+    DownloadBuffer *dl = (DownloadBuffer *)userdata;
+    size_t n = size * nmemb;
+    if (n == 0) return 0;
+    if (dl->size + n > dl->cap) {
+        size_t newCap = dl->cap ? dl->cap * 2 : 65536;
+        while (newCap < dl->size + n) newCap *= 2;
+        uint8_t *grown = (uint8_t *)realloc(dl->data, newCap);
+        if (!grown) return 0;
+        dl->data = grown;
+        dl->cap = newCap;
+    }
+    memcpy(dl->data + dl->size, ptr, n);
+    dl->size += n;
+    return n;
+}
+
+static int download_url_bytes(WorkerCtx *ctx, const char *url, uint8_t **outData, size_t *outSize) {
+    char curlErr[CURL_ERROR_SIZE] = {0};
+    long httpStatus = 0;
+    CURLcode rc;
+    DownloadBuffer dl;
+    memset(&dl, 0, sizeof(dl));
+
+    if (!ctx->curl) {
+        ctx->curl = curl_easy_init();
+        if (!ctx->curl) {
+            return 0;
+        }
+    }
+
+    curl_easy_reset(ctx->curl);
+    curl_easy_setopt(ctx->curl, CURLOPT_URL, url);
+    curl_easy_setopt(ctx->curl, CURLOPT_WRITEFUNCTION, write_download_cb);
+    curl_easy_setopt(ctx->curl, CURLOPT_WRITEDATA, &dl);
+    curl_easy_setopt(ctx->curl, CURLOPT_ERRORBUFFER, curlErr);
+    curl_easy_setopt(ctx->curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(ctx->curl, CURLOPT_FAILONERROR, 1L);
+    curl_easy_setopt(ctx->curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(ctx->curl, CURLOPT_ACCEPT_ENCODING, "identity");
+    curl_easy_setopt(ctx->curl, CURLOPT_TCP_KEEPALIVE, 1L);
+
+    rc = curl_easy_perform(ctx->curl);
+    curl_easy_getinfo(ctx->curl, CURLINFO_RESPONSE_CODE, &httpStatus);
+    if (rc != CURLE_OK) {
+        free(dl.data);
+        set_error(
+            ctx->st,
+            "assemble_greyscale: failed to download %s (%lld %lld)",
+            url,
+            (long long)rc,
+            (long long)httpStatus
+        );
+        return 0;
+    }
+
+    *outData = dl.data;
+    *outSize = dl.size;
+    return 1;
+}
+
+static int load_local_bytes(AssembleState *st, const char *path, uint8_t **outData, size_t *outSize) {
     FILE *fh = fopen(path, "rb");
     if (!fh) {
         set_error(st, "assemble_greyscale: cannot open %s (%lld)", path, (long long)errno, 0);
@@ -83,11 +163,6 @@ static int process_fragment_file(AssembleState *st, const char *path) {
     if (size < 0) {
         fclose(fh);
         set_error(st, "assemble_greyscale: cannot stat %s (%lld)", path, (long long)errno, 0);
-        return 0;
-    }
-    if ((size % 5) != 0) {
-        fclose(fh);
-        set_error(st, "assemble_greyscale: fragment %s size %lld is not divisible by 5", path, size, 0);
         return 0;
     }
     if (fseek(fh, 0, SEEK_SET) != 0) {
@@ -111,8 +186,17 @@ static int process_fragment_file(AssembleState *st, const char *path) {
         }
     }
     fclose(fh);
+    *outData = data;
+    *outSize = (size_t)(size > 0 ? size : 0);
+    return 1;
+}
 
-    for (long off = 0; off < size; off += 5) {
+static int process_fragment_bytes(AssembleState *st, const char *path, uint8_t *data, size_t size) {
+    if ((size % 5) != 0) {
+        set_error(st, "assemble_greyscale: fragment %s size %lld is not divisible by 5", path, (long long)size, 0);
+        return 0;
+    }
+    for (size_t off = 0; off < size; off += 5) {
         uint32_t pixel_idx =
             ((uint32_t)data[off]) |
             ((uint32_t)data[off + 1] << 8) |
@@ -120,12 +204,10 @@ static int process_fragment_file(AssembleState *st, const char *path) {
             ((uint32_t)data[off + 3] << 24);
         uint8_t score = data[off + 4];
         if (score == 0) {
-            free(data);
-            set_error(st, "assemble_greyscale: fragment %s has invalid zero score at pair %lld", path, off / 5, 0);
+            set_error(st, "assemble_greyscale: fragment %s has invalid zero score at pair %lld", path, (long long)(off / 5), 0);
             return 0;
         }
         if ((size_t)pixel_idx >= st->npix) {
-            free(data);
             set_error(
                 st,
                 "assemble_greyscale: fragment %s pixel_idx %lld out of bounds for npix=%lld",
@@ -137,19 +219,42 @@ static int process_fragment_file(AssembleState *st, const char *path) {
         }
         st->buf[pixel_idx] = score;
     }
-
-    free(data);
     return 1;
 }
 
+static int process_fragment_source(WorkerCtx *ctx, const char *path) {
+    uint8_t *data = NULL;
+    size_t size = 0;
+    int ok = 0;
+
+    if (is_url(path)) {
+        if (!download_url_bytes(ctx, path, &data, &size)) {
+            return 0;
+        }
+    } else {
+        if (!load_local_bytes(ctx->st, path, &data, &size)) {
+            return 0;
+        }
+    }
+
+    ok = process_fragment_bytes(ctx->st, path, data, size);
+    free(data);
+    return ok;
+}
+
 static void *worker_main(void *arg) {
-    AssembleState *st = (AssembleState *)arg;
+    WorkerCtx *ctx = (WorkerCtx *)arg;
+    AssembleState *st = ctx->st;
     for (;;) {
         int idx = next_job(st);
         if (idx < 0) break;
-        if (!process_fragment_file(st, st->paths[idx])) {
+        if (!process_fragment_source(ctx, st->paths[idx])) {
             break;
         }
+    }
+    if (ctx->curl) {
+        curl_easy_cleanup(ctx->curl);
+        ctx->curl = NULL;
     }
     return NULL;
 }
@@ -177,36 +282,91 @@ static int write_histogram_json(const char *path, int width, int height, const u
     return 1;
 }
 
+static char *trim_line(char *line) {
+    char *start = line;
+    char *end;
+    while (*start && isspace((unsigned char)*start)) start++;
+    end = start + strlen(start);
+    while (end > start && isspace((unsigned char)end[-1])) {
+        end--;
+    }
+    *end = '\0';
+    return start;
+}
+
+static int append_path(char ***paths, int *count, int *cap, const char *value) {
+    if (*count >= *cap) {
+        int nextCap = (*cap > 0) ? (*cap * 2) : 16;
+        char **grown = (char **)realloc(*paths, (size_t)nextCap * sizeof(char *));
+        if (!grown) return 0;
+        *paths = grown;
+        *cap = nextCap;
+    }
+    (*paths)[*count] = strdup(value);
+    if (!(*paths)[*count]) return 0;
+    (*count)++;
+    return 1;
+}
+
+static int load_url_manifest(const char *manifestPath, char ***paths, int *count, int *cap) {
+    FILE *fh = fopen(manifestPath, "r");
+    if (!fh) return 0;
+    char line[8192];
+    while (fgets(line, sizeof(line), fh)) {
+        char *trimmed = trim_line(line);
+        if (!trimmed[0] || trimmed[0] == '#') continue;
+        if (!append_path(paths, count, cap, trimmed)) {
+            fclose(fh);
+            return 0;
+        }
+    }
+    fclose(fh);
+    return 1;
+}
+
 int main(int argc, char **argv) {
     const char *outPath = getArg(argc, argv, "--output");
     const char *histPath = getArg(argc, argv, "--hist-output");
+    const char *urlManifest = getArg(argc, argv, "--url-manifest");
     int width = getArgInt(argc, argv, "--width", 0);
     int height = getArgInt(argc, argv, "--height", 0);
     int workers = getArgInt(argc, argv, "--workers", 1);
     char **paths = NULL;
     int n_paths = 0;
+    int cap_paths = 0;
+    CURLcode curlRc;
 
     if (!outPath || width <= 0 || height <= 0) {
-        fprintf(stderr, "Usage: assemble_greyscale --width=W --height=H --output=raw.bin [--hist-output=hist.json] [--workers=N] frag0 [frag1 ...]\n");
+        fprintf(stderr, "Usage: assemble_greyscale --width=W --height=H --output=raw.bin [--hist-output=hist.json] [--workers=N] [--url-manifest=urls.txt] frag0 [frag1 ...]\n");
         return 2;
     }
     if (workers <= 0) workers = 1;
 
-    paths = (char **)calloc((size_t)argc, sizeof(char *));
-    if (!paths) {
-        fprintf(stderr, "assemble_greyscale: out of memory\n");
-        return 3;
-    }
     for (int i = 1; i < argc; i++) {
         if (strncmp(argv[i], "--", 2) == 0) continue;
-        paths[n_paths++] = argv[i];
+        if (!append_path(&paths, &n_paths, &cap_paths, argv[i])) {
+            fprintf(stderr, "assemble_greyscale: out of memory\n");
+            return 3;
+        }
+    }
+    if (urlManifest && *urlManifest) {
+        if (!load_url_manifest(urlManifest, &paths, &n_paths, &cap_paths)) {
+            fprintf(stderr, "assemble_greyscale: cannot read url manifest %s\n", urlManifest);
+            return 3;
+        }
+    }
+
+    curlRc = curl_global_init(CURL_GLOBAL_DEFAULT);
+    if (curlRc != CURLE_OK) {
+        fprintf(stderr, "assemble_greyscale: curl_global_init failed: %s\n", curl_easy_strerror(curlRc));
+        return 3;
     }
 
     size_t npix = (size_t)width * (size_t)height;
     uint8_t *buf = (uint8_t *)calloc(npix ? npix : 1, 1);
     if (!buf) {
         fprintf(stderr, "assemble_greyscale: cannot allocate %zu bytes\n", npix);
-        free(paths);
+        curl_global_cleanup();
         return 4;
     }
 
@@ -222,19 +382,29 @@ int main(int argc, char **argv) {
     pthread_mutex_init(&st.err_mu, NULL);
 
     pthread_t *threads = (pthread_t *)calloc((size_t)workers, sizeof(pthread_t));
-    if (!threads) {
-        fprintf(stderr, "assemble_greyscale: cannot allocate worker threads\n");
+    WorkerCtx *ctxs = (WorkerCtx *)calloc((size_t)workers, sizeof(WorkerCtx));
+    if (!threads || !ctxs) {
+        fprintf(stderr, "assemble_greyscale: cannot allocate worker state\n");
+        free(ctxs);
+        free(threads);
         free(buf);
+        for (int i = 0; i < n_paths; i++) free(paths[i]);
         free(paths);
+        curl_global_cleanup();
         return 5;
     }
 
     for (int i = 0; i < workers; i++) {
-        if (pthread_create(&threads[i], NULL, worker_main, &st) != 0) {
+        ctxs[i].st = &st;
+        ctxs[i].curl = NULL;
+        if (pthread_create(&threads[i], NULL, worker_main, &ctxs[i]) != 0) {
             fprintf(stderr, "assemble_greyscale: pthread_create failed\n");
+            free(ctxs);
             free(threads);
             free(buf);
+            for (int j = 0; j < n_paths; j++) free(paths[j]);
             free(paths);
+            curl_global_cleanup();
             return 6;
         }
     }
@@ -242,12 +412,15 @@ int main(int argc, char **argv) {
 
     pthread_mutex_destroy(&st.queue_mu);
     pthread_mutex_destroy(&st.err_mu);
+    free(ctxs);
     free(threads);
-    free(paths);
 
     if (st.failed) {
         fprintf(stderr, "%s\n", st.error);
         free(buf);
+        for (int i = 0; i < n_paths; i++) free(paths[i]);
+        free(paths);
+        curl_global_cleanup();
         return 7;
     }
 
@@ -255,22 +428,36 @@ int main(int argc, char **argv) {
     if (!out) {
         fprintf(stderr, "assemble_greyscale: cannot create %s\n", outPath);
         free(buf);
+        for (int i = 0; i < n_paths; i++) free(paths[i]);
+        free(paths);
+        curl_global_cleanup();
         return 8;
     }
     if (npix > 0 && fwrite(buf, 1, npix, out) != npix) {
-        fclose(out);
         fprintf(stderr, "assemble_greyscale: short write to %s\n", outPath);
+        fclose(out);
         free(buf);
+        for (int i = 0; i < n_paths; i++) free(paths[i]);
+        free(paths);
+        curl_global_cleanup();
         return 9;
     }
     fclose(out);
 
-    if (histPath && !write_histogram_json(histPath, width, height, buf, npix)) {
-        fprintf(stderr, "assemble_greyscale: cannot write histogram %s\n", histPath);
-        free(buf);
-        return 10;
+    if (histPath && *histPath) {
+        if (!write_histogram_json(histPath, width, height, buf, npix)) {
+            fprintf(stderr, "assemble_greyscale: cannot write histogram %s\n", histPath);
+            free(buf);
+            for (int i = 0; i < n_paths; i++) free(paths[i]);
+            free(paths);
+            curl_global_cleanup();
+            return 10;
+        }
     }
 
     free(buf);
+    for (int i = 0; i < n_paths; i++) free(paths[i]);
+    free(paths);
+    curl_global_cleanup();
     return 0;
 }

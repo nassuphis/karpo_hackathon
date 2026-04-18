@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "name": "clusteriness-cf-q-0-1-max-mod-q-0-1-avg-min-angu",
+  "chain": [
+    [
+      "clusteriness",
+      "cf",
+      "0.1"
+    ],
+    [
+      "max_mod",
+      "0.1"
+    ],
+    [
+      "avg"
+    ],
+    [
+      "min_angular_separation",
+      "0.1"
+    ],
+    [
+      "mul"
+    ]
+  ],
+  "metric": "clusteriness",
+  "display": "clusteriness(cf,q=0.1%) max_mod(q=0.1%) avg min_angular_separation(q=0.1%) mul",
+  "program_spec": "m0;m1;avg;m2;mul"
+}

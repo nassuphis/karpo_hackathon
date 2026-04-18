@@ -32,6 +32,7 @@ class TestFragmentFormat(unittest.TestCase):
                 "-O2",
                 "-pthread",
                 str(LAMBDA_DIR / "assemble_greyscale.c"),
+                "-lcurl",
                 "-o",
                 str(cls._binary),
             ],

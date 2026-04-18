@@ -677,8 +677,28 @@ aarch64-linux-musl-gcc -O3 -static -o lambda/pixassemble lambda/pixassemble.c -l
 echo "  pixbinassemble (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/pixbinassemble lambda/pixbinassemble.c -lm
 
-echo "  assemble_greyscale (static, ARM64)..."
-aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/assemble_greyscale lambda/assemble_greyscale.c -lm
+echo "  assemble_greyscale (Docker ARM64, dynamic libcurl)..."
+docker run --rm --platform linux/arm64 \
+    -v "$SCRIPT_DIR/lambda:/src" \
+    public.ecr.aws/amazonlinux/amazonlinux:2023 \
+    bash -c '
+        set -euo pipefail
+        dnf install -y gcc libcurl-devel 2>&1 | tail -1
+        gcc -O3 -pthread -o /src/assemble_greyscale /src/assemble_greyscale.c \
+            -lcurl -lm -Wl,-rpath,\$ORIGIN/lib
+        rm -rf /src/assemble_greyscale_lib
+        mkdir -p /src/assemble_greyscale_lib
+        for lib in $(ldd /src/assemble_greyscale | awk "/=> \// {print \$3}"); do
+            base=$(basename "$lib")
+            case "$base" in
+                libc.so.*|libm.so.*|libpthread.so.*|ld-linux-aarch64.so.*|libdl.so.*|librt.so.*)
+                    continue
+                    ;;
+            esac
+            cp -L "$lib" /src/assemble_greyscale_lib/
+        done
+        echo "  assemble_greyscale compiled: $(file /src/assemble_greyscale)"
+    '
 
 echo "  bilevel_raster (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/bilevel_raster lambda/bilevel_raster.c -lm
@@ -763,6 +783,12 @@ docker run --rm --platform linux/arm64 \
             -L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm \
             -Wl,-rpath,/opt/lib
         echo "  raw2jpeg compiled: $(file /src/raw2jpeg)"
+        gcc -O3 -o /src/score_raw_render /src/score_raw_render.c \
+            -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \
+            -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include \
+            -L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm \
+            -Wl,-rpath,/opt/lib
+        echo "  score_raw_render compiled: $(file /src/score_raw_render)"
         gcc -O3 -o /src/bilevel_merge /src/bilevel_merge.c \
             -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \
             -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include \
@@ -1034,10 +1060,11 @@ echo "  Finalize: $(du -h /tmp/polypaint-finalize.zip | cut -f1)  (pixassemble +
 # Finalize-MT: fused solve-score assemble + encode from raw score bins
 FINALIZE_MT_DIR=/tmp/polypaint-finalize-mt
 rm -rf "$FINALIZE_MT_DIR"
-mkdir -p "$FINALIZE_MT_DIR"
-cp lambda/handler_finalize_mt.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py lambda/raw_sidecar.py "$FINALIZE_MT_DIR/"
-cp lambda/pixbinassemble lambda/assemble_greyscale lambda/pixel_bins_render lambda/raw2jpeg "$FINALIZE_MT_DIR/"
-chmod +x "$FINALIZE_MT_DIR"/pixbinassemble "$FINALIZE_MT_DIR"/assemble_greyscale "$FINALIZE_MT_DIR"/pixel_bins_render "$FINALIZE_MT_DIR"/raw2jpeg
+mkdir -p "$FINALIZE_MT_DIR/lib"
+cp lambda/handler_finalize_mt.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py lambda/raw_sidecar.py lambda/raw_score_render.py "$FINALIZE_MT_DIR/"
+cp lambda/assemble_greyscale lambda/score_raw_render "$FINALIZE_MT_DIR/"
+cp lambda/assemble_greyscale_lib/* "$FINALIZE_MT_DIR/lib/" 2>/dev/null || true
+chmod +x "$FINALIZE_MT_DIR"/assemble_greyscale "$FINALIZE_MT_DIR"/score_raw_render
 cd "$FINALIZE_MT_DIR" && zip -r9 /tmp/polypaint-finalize-mt.zip . -q && cd "$SCRIPT_DIR"
 echo "  FnlzMT:   $(du -h /tmp/polypaint-finalize-mt.zip | cut -f1)  (fused assemble + encode)"
 
@@ -1146,29 +1173,29 @@ chmod +x "$REPALETTE_DIR"/palette_bins_render "$REPALETTE_DIR"/raw2jpeg
 cd "$REPALETTE_DIR" && zip -r9 /tmp/polypaint-repalette.zip . -q && cd "$SCRIPT_DIR"
 echo "  RePal:   $(du -h /tmp/polypaint-repalette.zip | cut -f1)  (repalette + libvips layer)"
 
-# Color RePalette: handler_color_repalette.py + shared.py + color metadata + palette helpers + pixel_bins_render
+# Color RePalette: handler_color_repalette.py + shared helpers + legacy pixel_bins_render + direct raw score_raw_render
 COLOR_REPALETTE_DIR=/tmp/polypaint-color-repalette
 rm -rf "$COLOR_REPALETTE_DIR"
 mkdir -p "$COLOR_REPALETTE_DIR"
-cp lambda/handler_color_repalette.py lambda/shared.py lambda/raw_sidecar.py \
-   lambda/color_artifact_meta.py lambda/solve_score_chain.py \
+cp lambda/handler_color_repalette.py lambda/shared.py lambda/raw_sidecar.py lambda/raw_score_render.py \
+   lambda/color_artifact_meta.py lambda/solve_score_chain.py lambda/color_recolor_raw.py \
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$COLOR_REPALETTE_DIR/"
-cp lambda/pixel_bins_render "$COLOR_REPALETTE_DIR/"
-chmod +x "$COLOR_REPALETTE_DIR"/pixel_bins_render
+cp lambda/pixel_bins_render lambda/score_raw_render "$COLOR_REPALETTE_DIR/"
+chmod +x "$COLOR_REPALETTE_DIR"/pixel_bins_render "$COLOR_REPALETTE_DIR"/score_raw_render
 cd "$COLOR_REPALETTE_DIR" && zip -r9 /tmp/polypaint-color-repalette.zip . -q && cd "$SCRIPT_DIR"
-echo "  ClrRePal: $(du -h /tmp/polypaint-color-repalette.zip | cut -f1)  (pixel_bins_render)"
+echo "  ClrRePal: $(du -h /tmp/polypaint-color-repalette.zip | cut -f1)  (pixel_bins_render + score_raw_render)"
 
-# Recolor-from-raw: strict wrapper over the raw-sidecar recolor path
+# Recolor-from-raw: standalone raw-sidecar recolor path
 RECOLOR_FROM_RAW_DIR=/tmp/polypaint-recolor-from-raw
 rm -rf "$RECOLOR_FROM_RAW_DIR"
 mkdir -p "$RECOLOR_FROM_RAW_DIR"
-cp lambda/handler_recolor_from_raw.py lambda/handler_color_repalette.py lambda/shared.py lambda/raw_sidecar.py \
+cp lambda/handler_recolor_from_raw.py lambda/shared.py lambda/raw_sidecar.py lambda/raw_score_render.py lambda/color_recolor_raw.py \
    lambda/color_artifact_meta.py lambda/solve_score_chain.py \
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$RECOLOR_FROM_RAW_DIR/"
-cp lambda/pixel_bins_render "$RECOLOR_FROM_RAW_DIR/"
-chmod +x "$RECOLOR_FROM_RAW_DIR"/pixel_bins_render
+cp lambda/score_raw_render "$RECOLOR_FROM_RAW_DIR/"
+chmod +x "$RECOLOR_FROM_RAW_DIR"/score_raw_render
 cd "$RECOLOR_FROM_RAW_DIR" && zip -r9 /tmp/polypaint-recolor-from-raw.zip . -q && cd "$SCRIPT_DIR"
-echo "  RecolorRaw: $(du -h /tmp/polypaint-recolor-from-raw.zip | cut -f1)  (raw-sidecar recolor)"
+echo "  RecolorRaw: $(du -h /tmp/polypaint-recolor-from-raw.zip | cut -f1)  (standalone score_raw_render)"
 
 # PDF Artifact: handler_pdf_artifact.py + shared.py + color artifact metadata + spread builder
 PDF_ARTIFACT_DIR=/tmp/polypaint-pdf-artifact
@@ -1720,7 +1747,7 @@ if [ "$ACTION" = "create" ]; then
     create_lambda "$FINALIZE_NAME" "handler_finalize.handler" "/tmp/polypaint-finalize.zip" \
         "$FINALIZE_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
     create_lambda "$FINALIZE_MT_NAME" "handler_finalize_mt.handler" "/tmp/polypaint-finalize-mt.zip" \
-        "$FINALIZE_MT_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+        "$FINALIZE_MT_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
 
     create_lambda "$PREVIEW_NAME" "handler_preview.handler" "/tmp/polypaint-preview.zip" \
         "$PREVIEW_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET"
@@ -1761,9 +1788,9 @@ if [ "$ACTION" = "create" ]; then
         "$REPALETTE_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     create_lambda "$COLOR_REPALETTE_NAME" "handler_color_repalette.handler" "/tmp/polypaint-color-repalette.zip" \
-        "$COLOR_REPALETTE_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,ENCODE_FUNCTION=$ENCODE_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME" "$BINARY_TMP"
+        "$COLOR_REPALETTE_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,ENCODE_FUNCTION=$ENCODE_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
     create_lambda "$RECOLOR_FROM_RAW_NAME" "handler_recolor_from_raw.handler" "/tmp/polypaint-recolor-from-raw.zip" \
-        "$RECOLOR_FROM_RAW_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,ENCODE_FUNCTION=$ENCODE_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME" "$BINARY_TMP"
+        "$RECOLOR_FROM_RAW_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     create_lambda "$PDF_ARTIFACT_NAME" "handler_pdf_artifact.handler" "/tmp/polypaint-pdf-artifact.zip" \
         "$PDF_ARTIFACT_MEMORY" "$ROLE_ARN" "$PDF_PY_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
@@ -2055,7 +2082,7 @@ elif [ "$ACTION" = "update" ]; then
     update_lambda "$FINALIZE_NAME" "handler_finalize.handler" "/tmp/polypaint-finalize.zip" \
         "$FINALIZE_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
     update_lambda "$FINALIZE_MT_NAME" "handler_finalize_mt.handler" "/tmp/polypaint-finalize-mt.zip" \
-        "$FINALIZE_MT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+        "$FINALIZE_MT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
 
     update_lambda "$PREVIEW_NAME" "handler_preview.handler" "/tmp/polypaint-preview.zip" \
         "$PREVIEW_MEMORY" "" "BUCKET=$BUCKET"
@@ -2096,9 +2123,9 @@ elif [ "$ACTION" = "update" ]; then
         "$REPALETTE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     update_lambda "$COLOR_REPALETTE_NAME" "handler_color_repalette.handler" "/tmp/polypaint-color-repalette.zip" \
-        "$COLOR_REPALETTE_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,ENCODE_FUNCTION=$ENCODE_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME" "$BINARY_TMP"
+        "$COLOR_REPALETTE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,ENCODE_FUNCTION=$ENCODE_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
     update_lambda "$RECOLOR_FROM_RAW_NAME" "handler_recolor_from_raw.handler" "/tmp/polypaint-recolor-from-raw.zip" \
-        "$RECOLOR_FROM_RAW_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,ENCODE_FUNCTION=$ENCODE_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME" "$BINARY_TMP"
+        "$RECOLOR_FROM_RAW_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     update_lambda "$PDF_ARTIFACT_NAME" "handler_pdf_artifact.handler" "/tmp/polypaint-pdf-artifact.zip" \
         "$PDF_ARTIFACT_MEMORY" "$PDF_PY_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"

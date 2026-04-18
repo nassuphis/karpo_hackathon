@@ -1,6 +1,6 @@
 import json
 import os
-import struct
+import pathlib
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
@@ -16,9 +16,16 @@ TEST_PREVIEW_KEY = f"renders/{TEST_JOB_ID}/color/{TEST_ARTIFACT_ID}/preview.png"
 TEST_META_KEY = f"renders/{TEST_JOB_ID}/color/{TEST_ARTIFACT_ID}/meta.json"
 TEST_RAW_KEY = f"renders/{TEST_JOB_ID}/color/{TEST_ARTIFACT_ID}/greyscale.raw"
 TEST_RAW_META_KEY = f"renders/{TEST_JOB_ID}/color/{TEST_ARTIFACT_ID}/greyscale.meta.json"
-TEST_PBX_KEY = f"renders/{TEST_JOB_ID}/pixbin_chunk_0000_t0000.pbx"
-TEST_CLIP_KEY = f"renders/{TEST_JOB_ID}/solve_scores/clip.json"
 TEST_FRAGMENT_PREFIX = f"renders/{TEST_JOB_ID}/color/{TEST_ARTIFACT_ID}/fragments/section_"
+TEST_FRAGMENT_KEY = f"{TEST_FRAGMENT_PREFIX}0000.frag"
+
+
+def _encode_fragment_pairs(pairs):
+    payload = bytearray()
+    for pixel_idx, score in pairs:
+        payload.extend(int(pixel_idx).to_bytes(4, "little", signed=False))
+        payload.append(int(score) & 0xFF)
+    return bytes(payload)
 
 
 def _event(**overrides):
@@ -45,14 +52,16 @@ def _event(**overrides):
         "raw_key": TEST_RAW_KEY,
         "raw_meta_key": TEST_RAW_META_KEY,
         "plan_params_digest": "sha256:plan123",
-        "solve_score_clip_key": TEST_CLIP_KEY,
-        "fragment_prefix": "",
+        "clip_slots": [{"slot": 0, "metric": "proximity", "source": "slv", "clip_lo": 0.1, "clip_hi": 0.9}],
+        "score_program": "m0",
+        "chain_fingerprint": "fp_test",
+        "fragment_prefix": TEST_FRAGMENT_PREFIX,
         "render_execution": {"color_pipeline": "fused", "raster_engine": "mt"},
         "fragment_manifest": {
             "version": 1,
             "pair_encoding": "u32le_u8_v1",
             "item_count": 1,
-            "fragment_prefix": "",
+            "fragment_prefix": TEST_FRAGMENT_PREFIX,
             "chain_fingerprint": "fp_test",
         },
         "metadata": {
@@ -112,12 +121,14 @@ class TestFinalizeMTHandler(unittest.TestCase):
 
     @patch("handler_finalize_mt.write_color_artifact_meta_overlay")
     @patch("handler_finalize_mt.report_status")
+    @patch("raw_score_render.subprocess.run")
     @patch("handler_finalize_mt.subprocess.run")
     @patch("handler_finalize_mt._finalize_s3_client")
     def test_finalize_mt_assembles_raw_equalizes_and_uploads_outputs(
         self,
         mock_client_factory,
         mock_run,
+        mock_raw_render_run,
         mock_report,
         mock_overlay,
     ):
@@ -125,19 +136,6 @@ class TestFinalizeMTHandler(unittest.TestCase):
 
         uploads = {}
         fake_s3 = MagicMock()
-
-        def get_object(**kwargs):
-            if kwargs["Key"] == TEST_PBX_KEY:
-                return {"Body": _Body(struct.pack("<II", 0, 1))}
-            if kwargs["Key"] == TEST_CLIP_KEY:
-                return {"Body": _Body(json.dumps({
-                    "chain_fingerprint": "fp_test",
-                    "program": "m0",
-                    "metrics": [
-                        {"slot": 0, "metric": "proximity", "source": "slv", "clip_lo": 0.1, "clip_hi": 0.9}
-                    ],
-                }).encode("utf-8"))}
-            raise AssertionError(f"unexpected get_object key: {kwargs['Key']}")
 
         def put_object(**kwargs):
             body = kwargs["Body"]
@@ -148,7 +146,9 @@ class TestFinalizeMTHandler(unittest.TestCase):
                 "metadata": kwargs.get("Metadata"),
             }
 
-        fake_s3.get_object.side_effect = get_object
+        fake_s3.generate_presigned_url.side_effect = (
+            lambda _op, Params, ExpiresIn=900: f"https://example.invalid/{Params['Key']}"
+        )
         fake_s3.put_object.side_effect = put_object
         mock_client_factory.return_value = fake_s3
 
@@ -157,32 +157,26 @@ class TestFinalizeMTHandler(unittest.TestCase):
             if exe == "assemble_greyscale":
                 out_path = next(arg for arg in cmd if arg.startswith("--output=")).split("=", 1)[1]
                 hist_path = next(arg for arg in cmd if arg.startswith("--hist-output=")).split("=", 1)[1]
-                frag_path = cmd[-1]
-                with open(frag_path, "rb") as fh:
-                    self.assertEqual(fh.read(), b"\x00\x00\x00\x00\x01")
+                manifest_path = next(arg for arg in cmd if arg.startswith("--url-manifest=")).split("=", 1)[1]
+                self.assertEqual(pathlib.Path(manifest_path).read_text(encoding="utf-8").strip(), f"https://example.invalid/{TEST_FRAGMENT_KEY}")
                 with open(out_path, "wb") as fh:
                     fh.write(bytes([0, 1, 2, 3]))
                 with open(hist_path, "w", encoding="utf-8") as fh:
                     json.dump({"version": 1, "background_pixels": 1, "nonzero_pixels": 3, "histogram": [1, 1, 1, 1] + [0] * 252}, fh)
                 return MagicMock(returncode=0, stdout="", stderr="")
-            if exe == "pixel_bins_render":
-                bin_path, out_path = cmd[1], cmd[2]
-                with open(bin_path, "rb") as fh:
-                    bins = fh.read()
-                self.assertEqual(len(bins), 4)
-                self.assertEqual(bins[0], 255)
-                with open(out_path, "wb") as fh:
-                    fh.write(struct.pack("<III", 2, 2, 3))
-                    fh.write(b"\x10\x20\x30" * 4)
-                return MagicMock(returncode=0, stdout="", stderr="")
-            if exe == "raw2jpeg":
+            if exe == "score_raw_render":
                 out_path = cmd[2]
+                preview_arg = next(arg for arg in cmd if arg.startswith("--preview="))
+                preview_path = preview_arg.split("=", 1)[1]
                 with open(out_path, "wb") as fh:
                     fh.write(b"JPEGDATA")
-                return MagicMock(returncode=0, stdout=json.dumps({"file_size": 8}), stderr="")
+                with open(preview_path, "wb") as fh:
+                    fh.write(b"PREVIEWPNG")
+                return MagicMock(returncode=0, stdout=json.dumps({"file_size": 8, "preview_file_size": 10}), stderr="")
             raise AssertionError(f"unexpected executable {exe}")
 
         mock_run.side_effect = run_side_effect
+        mock_raw_render_run.side_effect = run_side_effect
 
         result = mod.handler(_event(), None)
         body = json.loads(result["body"])
@@ -193,6 +187,7 @@ class TestFinalizeMTHandler(unittest.TestCase):
         self.assertEqual(body["file_size"], 8)
         self.assertEqual(uploads[TEST_RAW_KEY]["data"], bytes([0, 1, 2, 3]))
         raw_meta = json.loads(uploads[TEST_RAW_META_KEY]["data"].decode("utf-8"))
+        self.assertEqual(raw_meta["version"], 2)
         self.assertEqual(raw_meta["artifact_family"], "color")
         self.assertEqual(raw_meta["artifact_id"], TEST_ARTIFACT_ID)
         self.assertEqual(raw_meta["chain_fingerprint"], "fp_test")
@@ -200,6 +195,7 @@ class TestFinalizeMTHandler(unittest.TestCase):
         self.assertEqual(raw_meta["clip_slots"], [{"slot": 0, "metric": "proximity", "source": "slv", "clip_lo": 0.1, "clip_hi": 0.9}])
         self.assertEqual(raw_meta["background_color"], [0, 0, 0])
         self.assertEqual(raw_meta["plan_params_digest"], "sha256:plan123")
+        self.assertEqual(raw_meta["histogram"], [1, 1, 1, 1] + [0] * 252)
         self.assertEqual(raw_meta["keys"]["raw_key"], TEST_RAW_KEY)
         self.assertEqual(raw_meta["keys"]["image_key"], TEST_IMAGE_KEY)
         self.assertEqual(raw_meta["keys"]["preview_key"], TEST_PREVIEW_KEY)
@@ -207,6 +203,7 @@ class TestFinalizeMTHandler(unittest.TestCase):
         self.assertEqual(uploads[TEST_IMAGE_KEY]["data"], b"JPEGDATA")
         self.assertEqual(uploads[TEST_IMAGE_KEY]["content_type"], "image/jpeg")
         self.assertEqual(uploads[TEST_IMAGE_KEY]["metadata"]["artifact_id"], TEST_ARTIFACT_ID)
+        self.assertEqual(uploads[TEST_PREVIEW_KEY]["data"], b"PREVIEWPNG")
         mock_overlay.assert_called_once()
         overlay_meta = mock_overlay.call_args.args[4]
         self.assertEqual(overlay_meta["raw_key"], TEST_RAW_KEY)
@@ -220,12 +217,14 @@ class TestFinalizeMTHandler(unittest.TestCase):
 
     @patch("handler_finalize_mt.write_color_artifact_meta_overlay")
     @patch("handler_finalize_mt.report_status")
+    @patch("raw_score_render.subprocess.run")
     @patch("handler_finalize_mt.subprocess.run")
     @patch("handler_finalize_mt._finalize_s3_client")
     def test_finalize_mt_writes_inline_associated_palette_outputs(
         self,
         mock_client_factory,
         mock_run,
+        mock_raw_render_run,
         mock_report,
         mock_overlay,
     ):
@@ -240,22 +239,6 @@ class TestFinalizeMTHandler(unittest.TestCase):
         assoc_preview_key = f"renders/{TEST_JOB_ID}/palettes/pal_{TEST_ARTIFACT_ID}/preview.png"
         assoc_meta_key = f"renders/{TEST_JOB_ID}/palettes/pal_{TEST_ARTIFACT_ID}/meta.json"
 
-        def get_object(**kwargs):
-            key = kwargs["Key"]
-            if key == f"{TEST_FRAGMENT_PREFIX}0000_t0000.pbx":
-                return {"Body": _Body(struct.pack("<II", 0, 1))}
-            if key == f"{assoc_fragment_prefix}0000_t0000.pbx":
-                return {"Body": _Body(struct.pack("<II", 0, 1))}
-            if key == TEST_CLIP_KEY:
-                return {"Body": _Body(json.dumps({
-                    "chain_fingerprint": "fp_test",
-                    "program": "m0",
-                    "metrics": [
-                        {"slot": 0, "metric": "proximity", "source": "slv", "clip_lo": 0.1, "clip_hi": 0.9}
-                    ],
-                }).encode("utf-8"))}
-            raise AssertionError(f"unexpected get_object key: {key}")
-
         def put_object(**kwargs):
             body = kwargs["Body"]
             data = body.read() if hasattr(body, "read") else body
@@ -265,7 +248,9 @@ class TestFinalizeMTHandler(unittest.TestCase):
                 "metadata": kwargs.get("Metadata"),
             }
 
-        fake_s3.get_object.side_effect = get_object
+        fake_s3.generate_presigned_url.side_effect = (
+            lambda _op, Params, ExpiresIn=900: f"https://example.invalid/{Params['Key']}"
+        )
         fake_s3.put_object.side_effect = put_object
         mock_client_factory.return_value = fake_s3
 
@@ -274,11 +259,18 @@ class TestFinalizeMTHandler(unittest.TestCase):
             if exe == "assemble_greyscale":
                 out_path = next(arg for arg in cmd if arg.startswith("--output=")).split("=", 1)[1]
                 hist_path = next(arg for arg in cmd if arg.startswith("--hist-output=")).split("=", 1)[1]
-                payloads = []
-                for frag_path in [arg for arg in cmd[1:] if not str(arg).startswith("--")]:
-                    with open(frag_path, "rb") as fh:
-                        payloads.append(fh.read())
-                self.assertEqual(payloads, [b"\x00\x00\x00\x00\x01"])
+                manifest_path = next(arg for arg in cmd if arg.startswith("--url-manifest=")).split("=", 1)[1]
+                manifest_value = pathlib.Path(manifest_path).read_text(encoding="utf-8").strip()
+                if "assoc_palette" in out_path:
+                    self.assertEqual(
+                        manifest_value,
+                        f"https://example.invalid/{assoc_fragment_prefix}0000.frag",
+                    )
+                else:
+                    self.assertEqual(
+                        manifest_value,
+                        f"https://example.invalid/{TEST_FRAGMENT_PREFIX}0000.frag",
+                    )
                 data = bytes([0, 4, 5, 6]) if "assoc_palette" in out_path else bytes([0, 1, 2, 3])
                 with open(out_path, "wb") as fh:
                     fh.write(data)
@@ -288,26 +280,24 @@ class TestFinalizeMTHandler(unittest.TestCase):
                 with open(hist_path, "w", encoding="utf-8") as fh:
                     json.dump({"version": 1, "background_pixels": histogram[0], "nonzero_pixels": len(data) - histogram[0], "histogram": histogram}, fh)
                 return MagicMock(returncode=0, stdout="", stderr="")
-            if exe == "pixel_bins_render":
+            if exe == "score_raw_render":
                 out_path = cmd[2]
-                with open(out_path, "wb") as fh:
-                    fh.write(struct.pack("<III", 2, 2, 3))
-                    fh.write(b"\x10\x20\x30" * 4)
-                return MagicMock(returncode=0, stdout="", stderr="")
-            if exe == "raw2jpeg":
-                out_path = cmd[2]
+                preview_arg = next(arg for arg in cmd if arg.startswith("--preview="))
+                preview_path = preview_arg.split("=", 1)[1]
                 payload = b"PALETTEJPEG" if "assoc_palette" in out_path else b"MAINJPEG"
                 with open(out_path, "wb") as fh:
                     fh.write(payload)
-                return MagicMock(returncode=0, stdout=json.dumps({"file_size": len(payload)}), stderr="")
-            if exe == "vipsthumbnail":
-                out_path = cmd[-1].split("[", 1)[0]
-                with open(out_path, "wb") as fh:
+                with open(preview_path, "wb") as fh:
                     fh.write(b"PREVIEWPNG")
-                return MagicMock(returncode=0, stdout="", stderr="")
+                return MagicMock(
+                    returncode=0,
+                    stdout=json.dumps({"file_size": len(payload), "preview_file_size": 10}),
+                    stderr="",
+                )
             raise AssertionError(f"unexpected executable {exe}")
 
         mock_run.side_effect = run_side_effect
+        mock_raw_render_run.side_effect = run_side_effect
 
         result = mod.handler(_event(
             fragment_prefix=TEST_FRAGMENT_PREFIX,
@@ -343,10 +333,18 @@ class TestFinalizeMTHandler(unittest.TestCase):
         self.assertEqual(assoc_meta["data_layout"], "fused_pass0_raw_v1")
         self.assertEqual(assoc_meta["image_key"], assoc_image_key)
         assoc_sidecar = json.loads(uploads[assoc_raw_meta_key]["data"].decode("utf-8"))
+        self.assertEqual(assoc_sidecar["version"], 2)
         self.assertEqual(assoc_sidecar["artifact_family"], "palette")
         self.assertEqual(assoc_sidecar["artifact_id"], f"pal_{TEST_ARTIFACT_ID}")
         self.assertEqual(assoc_sidecar["keys"]["image_key"], assoc_image_key)
         self.assertEqual(assoc_sidecar["keys"]["preview_key"], assoc_preview_key)
         self.assertEqual(assoc_sidecar["keys"]["meta_key"], assoc_meta_key)
         self.assertEqual(assoc_sidecar["chain_fingerprint"], "fp_test")
+        self.assertEqual(assoc_sidecar["histogram"][4:7], [1, 1, 1])
         mock_overlay.assert_called_once()
+        overlay_meta = mock_overlay.call_args.args[4]
+        self.assertEqual(overlay_meta["associated_palette_mode"], "generated")
+        self.assertEqual(overlay_meta["associated_palette_id"], f"pal_{TEST_ARTIFACT_ID}")
+        self.assertEqual(overlay_meta["associated_palette_image_key"], assoc_image_key)
+        self.assertEqual(overlay_meta["associated_palette_raw_key"], assoc_raw_key)
+        self.assertEqual(overlay_meta["associated_palette_meta_key"], assoc_meta_key)

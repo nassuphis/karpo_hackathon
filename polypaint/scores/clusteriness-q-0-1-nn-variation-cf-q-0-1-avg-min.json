@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "name": "clusteriness-q-0-1-nn-variation-cf-q-0-1-avg-min",
+  "chain": [
+    [
+      "clusteriness",
+      "0.1"
+    ],
+    [
+      "nn_variation",
+      "cf",
+      "0.1"
+    ],
+    [
+      "avg"
+    ],
+    [
+      "min_angular_separation",
+      "0.1"
+    ],
+    [
+      "max"
+    ],
+    [
+      "t1_re",
+      "pm",
+      "0.1"
+    ],
+    [
+      "avg"
+    ],
+    [
+      "nn_variation",
+      "0.1"
+    ],
+    [
+      "avg"
+    ],
+    [
+      "min_angular_separation",
+      "0.1"
+    ],
+    [
+      "avg"
+    ]
+  ],
+  "metric": "clusteriness",
+  "display": "clusteriness(q=0.1%) nn_variation(cf,q=0.1%) avg min_angular_separation(q=0.1%) max t1_re(pm,q=0.1%) avg nn_variation(q=0.1%) avg min_angular_separation(q=0.1%) avg",
+  "program_spec": "m0;m1;avg;m2;max;m3;avg;m4;avg;m5;avg"
+}

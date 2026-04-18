@@ -13509,15 +13509,10 @@ async function runDeepZoomExport(jobId, sourceKey, btnEl, options = null) {
     if (btn) { btn.disabled = true; btn.textContent = 'Creating...'; }
     const rawKey = options && typeof options === 'object' ? String(options.rawKey || '') : '';
     const rawMetaKey = options && typeof options === 'object' ? String(options.rawMetaKey || '') : '';
-    const dispatchTarget = (rawKey && rawMetaKey) ? 'deepzoom_from_raw' : 'deepzoom_export';
+    const useExactSource = !!String(sourceKey || '').trim();
+    const dispatchTarget = useExactSource ? 'deepzoom_export' : ((rawKey && rawMetaKey) ? 'deepzoom_from_raw' : 'deepzoom_export');
     const taskId = dispatchTarget;
-    log(
-        rawKey && rawMetaKey
-            ? `DeepZoom: exporting ${sourceKey} via fused greyscale raw...`
-            : `DeepZoom: exporting ${sourceKey}...`,
-        '',
-        'render-log'
-    );
+    log(`DeepZoom: exporting ${sourceKey}...`, '', 'render-log');
     try {
         // Clear any stale DeepZoom status row before dispatching,
         // so we don't falsely complete against a previous run's "done".
@@ -13526,7 +13521,10 @@ async function runDeepZoomExport(jobId, sourceKey, btnEl, options = null) {
         // Dispatch async — API Gateway has a 30s hard limit, DeepZoom takes 30-120s
         const dispResult = await lambdaPost('dispatch', {
             target: dispatchTarget,
-            jobs: [{
+            jobs: [useExactSource ? {
+                job_id: jobId,
+                source_key: sourceKey,
+            } : {
                 job_id: jobId,
                 source_key: sourceKey,
                 raw_key: rawKey,

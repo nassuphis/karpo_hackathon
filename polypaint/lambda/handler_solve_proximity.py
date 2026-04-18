@@ -703,6 +703,18 @@ def handle_clip(params):
             }
             for row in metric_clips
         ]
+        progress["clip_slots"] = [
+            {
+                "slot": int(row["slot"]),
+                "metric": str(row["metric"]),
+                "source": str(row.get("source", "slv") or "slv"),
+                "clip_lo": float(row["clip_lo"]),
+                "clip_hi": float(row["clip_hi"]),
+            }
+            for row in metric_clips
+        ]
+        progress["score_program"] = compiled["program_spec"]
+        progress["chain_fingerprint"] = compiled_solve_score_fingerprint(compiled)
 
         report_status(job_id, task_id, "computed", result_data=progress)
 

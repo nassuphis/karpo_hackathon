@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "name": "proximity-q-0-1-min-angular-separation-cf-q-0-1-",
+  "chain": [
+    [
+      "proximity",
+      "0.1"
+    ],
+    [
+      "min_angular_separation",
+      "cf",
+      "0.1"
+    ],
+    [
+      "abs_diff"
+    ]
+  ],
+  "metric": "proximity",
+  "display": "proximity(q=0.1%) min_angular_separation(cf,q=0.1%) abs_diff",
+  "program_spec": "m0;m1;abs_diff"
+}

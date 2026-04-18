@@ -4,7 +4,8 @@ import json
 import math
 
 
-RAW_SIDECAR_VERSION = 1
+RAW_SIDECAR_VERSION = 2
+LEGACY_RAW_SIDECAR_VERSION = 1
 RAW_ENCODING = {
     "type": "u8_clipped_score_v1",
     "background_byte": 0,
@@ -89,6 +90,22 @@ def _normalize_background_color(value):
     return rgb
 
 
+def _normalize_histogram(value, *, required=False):
+    if value in ("", None):
+        if required:
+            raise RuntimeError("histogram is required for raw sidecar version 2")
+        return None
+    if not isinstance(value, list) or len(value) != 256:
+        raise RuntimeError(f"histogram must be a 256-element array, got {value!r}")
+    histogram = []
+    for idx, item in enumerate(value):
+        count = _coerce_int(item, f"histogram[{idx}]")
+        if count < 0:
+            raise RuntimeError(f"histogram[{idx}] must be non-negative, got {count}")
+        histogram.append(count)
+    return histogram
+
+
 def background_color_hex(value):
     rgb = _normalize_background_color(value)
     return "".join(f"{channel:02x}" for channel in rgb)
@@ -114,6 +131,7 @@ def build_raw_sidecar(
     preview_key,
     meta_key,
     created_at,
+    histogram,
 ):
     chain_fingerprint = str(chain_fingerprint or "").strip()
     if not chain_fingerprint:
@@ -144,6 +162,7 @@ def build_raw_sidecar(
             "meta_key": str(meta_key),
         },
         "created_at": str(created_at),
+        "histogram": _normalize_histogram(histogram, required=True),
     }
     if not sidecar["plan_params_digest"]:
         raise RuntimeError("plan_params_digest is required for greyscale sidecar")
@@ -154,8 +173,10 @@ def validate_raw_sidecar(sidecar, *, expected_raw_key=None, expected_artifact_fa
     if not isinstance(sidecar, dict):
         raise RuntimeError("raw sidecar must be a JSON object")
     version = _coerce_int(sidecar.get("version"), "raw sidecar version")
-    if version != RAW_SIDECAR_VERSION:
-        raise RuntimeError(f"raw sidecar version must be {RAW_SIDECAR_VERSION}, got {version}")
+    if version not in (LEGACY_RAW_SIDECAR_VERSION, RAW_SIDECAR_VERSION):
+        raise RuntimeError(
+            f"raw sidecar version must be {LEGACY_RAW_SIDECAR_VERSION} or {RAW_SIDECAR_VERSION}, got {version}"
+        )
     encoding = sidecar.get("encoding")
     if not isinstance(encoding, dict):
         raise RuntimeError("raw sidecar encoding must be an object")
@@ -195,4 +216,5 @@ def validate_raw_sidecar(sidecar, *, expected_raw_key=None, expected_artifact_fa
             "meta_key": str(keys.get("meta_key") or "").strip(),
         },
         "created_at": str(sidecar.get("created_at") or "").strip(),
+        "histogram": _normalize_histogram(sidecar.get("histogram"), required=(version >= RAW_SIDECAR_VERSION)),
     }

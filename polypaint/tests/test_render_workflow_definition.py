@@ -272,6 +272,12 @@ class TestWorkflowDefinition(unittest.TestCase):
         self.assertEqual(choice["Choices"][0]["Next"], "ColorRasterPhase")
         self.assertEqual(choice["Default"], "ColorSolveScoreHistPhase")
         self.assertEqual(self.states["ColorSolveScoreClipTask"]["Next"], "ColorSolveScoreHistNeededChoice")
+        clip_task = self.states["ColorSolveScoreClipTask"]
+        self.assertEqual(clip_task["ResultPath"], "$.solve_score_clip")
+        self.assertEqual(
+            clip_task["ResultSelector"]["parsed.$"],
+            "States.StringToJson($.Payload.body)",
+        )
 
     def test_color_output_pipeline_choice_routes_fused_to_finalize_mt(self):
         choice = self.states["ColorOutputPipelineChoice"]
@@ -305,7 +311,9 @@ class TestWorkflowDefinition(unittest.TestCase):
         self.assertEqual(payload["raw_key.$"], "$.plan.outputs.raw_key")
         self.assertEqual(payload["raw_meta_key.$"], "$.plan.outputs.raw_meta_key")
         self.assertEqual(payload["plan_params_digest.$"], "$.plan.outputs.plan_params_digest")
-        self.assertEqual(payload["solve_score_clip_key.$"], "$.plan.solve_score.clip_key")
+        self.assertEqual(payload["clip_slots.$"], "$.solve_score_clip.parsed.clip_slots")
+        self.assertEqual(payload["score_program.$"], "$.solve_score_clip.parsed.score_program")
+        self.assertEqual(payload["chain_fingerprint.$"], "$.solve_score_clip.parsed.chain_fingerprint")
         self.assertEqual(payload["fragment_prefix.$"], "$.plan.outputs.fragment_prefix")
         self.assertEqual(payload["fragment_manifest"]["version"], 1)
         self.assertEqual(payload["fragment_manifest"]["pair_encoding"], "u32le_u8_v1")
@@ -316,7 +324,7 @@ class TestWorkflowDefinition(unittest.TestCase):
         self.assertEqual(payload["associated_palette_grid_n.$"], "$.plan.calc.N")
         self.assertEqual(payload["associated_palette_times.$"], "$.plan.calc.times")
         self.assertEqual(payload["associated_palette_degree.$"], "$.plan.calc.degree")
-        self.assertEqual(task["Next"], "ColorPreviewTask")
+        self.assertEqual(task["Next"], "ReportDoneColor")
 
     def test_chunked_workers_use_chunk_item_bin_keys(self):
         hist_selector = self.states["ColorSolveScoreHistMap"]["ItemSelector"]

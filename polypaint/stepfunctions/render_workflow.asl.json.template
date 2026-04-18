@@ -121,7 +121,10 @@
                 "task_id.$": "States.Format('render_{}_solve_score_clip', $.run_id)"
               }
             },
-            "ResultPath": null,
+            "ResultSelector": {
+              "parsed.$": "States.StringToJson($.Payload.body)"
+            },
+            "ResultPath": "$.solve_score_clip",
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "ColorSolveScoreHistNeededChoice"
           },
@@ -561,7 +564,9 @@
                 "raw_key.$": "$.plan.outputs.raw_key",
                 "raw_meta_key.$": "$.plan.outputs.raw_meta_key",
                 "plan_params_digest.$": "$.plan.outputs.plan_params_digest",
-                "solve_score_clip_key.$": "$.plan.solve_score.clip_key",
+                "clip_slots.$": "$.solve_score_clip.parsed.clip_slots",
+                "score_program.$": "$.solve_score_clip.parsed.score_program",
+                "chain_fingerprint.$": "$.solve_score_clip.parsed.chain_fingerprint",
                 "fragment_prefix.$": "$.plan.outputs.fragment_prefix",
                 "fragment_manifest": {
                   "version": 1,
@@ -578,7 +583,7 @@
             },
             "ResultPath": null,
             "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
-            "Next": "ColorPreviewTask"
+            "Next": "ReportDoneColor"
           },
 
           "ColorFinalizePhase": {

@@ -153,6 +153,14 @@ class TestRasterMtParity(unittest.TestCase):
         ints.frombytes(raw)
         return list(zip(ints[0::2], ints[1::2]))
 
+    def _read_u32le_u8_pairs(self, path):
+        raw = path.read_bytes()
+        self.assertEqual(len(raw) % 5, 0)
+        pairs = []
+        for off in range(0, len(raw), 5):
+            pairs.append((int.from_bytes(raw[off:off + 4], "little"), raw[off + 4]))
+        return pairs
+
     def _run_binary(self, args):
         return subprocess.run(args, capture_output=True, text=True)
 
@@ -444,7 +452,7 @@ class TestRasterMtParity(unittest.TestCase):
             result = self._run_binary(cmd)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse((root / "pix_t0000.pix").exists())
-            palette_pairs = self._read_u32_pairs(root / "palette_pixbin_t0000.pbx")
+            palette_pairs = self._read_u32le_u8_pairs(root / "palette_pixbin.frag")
             self.assertEqual([pix for pix, _ in palette_pairs], [0, 1, 3, 2])
             self.assertEqual(len(palette_pairs), step_count)
             self.assertTrue(all(value > 0 for _, value in palette_pairs))
@@ -492,8 +500,8 @@ class TestRasterMtParity(unittest.TestCase):
 
             result = self._run_binary(cmd)
             self.assertEqual(result.returncode, 0, result.stderr)
-            main_pairs = self._read_u32_pairs(root / "pixbin_t0000.pbx")
-            palette_pairs = self._read_u32_pairs(root / "palette_pixbin_t0000.pbx")
+            main_pairs = self._read_u32le_u8_pairs(root / "pixbin.frag")
+            palette_pairs = self._read_u32le_u8_pairs(root / "palette_pixbin.frag")
             self.assertEqual(len(main_pairs), 1)
             self.assertEqual([pix for pix, _ in palette_pairs], [0, 1, 3, 2])
             self.assertEqual(len(palette_pairs), step_count)

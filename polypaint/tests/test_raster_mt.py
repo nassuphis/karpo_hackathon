@@ -9,6 +9,14 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
 
+def _encode_fragment_pairs(pairs):
+    payload = bytearray()
+    for pixel_idx, score in pairs:
+        payload.extend(int(pixel_idx).to_bytes(4, "little", signed=False))
+        payload.append(int(score) & 0xFF)
+    return bytes(payload)
+
+
 def _event(**overrides):
     payload = {
         "job_id": "j",
@@ -34,6 +42,7 @@ def _event(**overrides):
         "solve_score_omega": 4.0,
         "solve_score_omega_enabled": False,
         "emit_pixel_bins": True,
+        "fragment_prefix": "renders/j/pixbin_chunk_",
     }
     payload.update(overrides)
     return payload
@@ -104,8 +113,13 @@ class TestRasterMT(unittest.TestCase):
         def upload_fileobj(fileobj, bucket, key):
             uploads[key] = fileobj.read()
 
+        def put_object(**kwargs):
+            body = kwargs["Body"]
+            uploads[kwargs["Key"]] = body.read() if hasattr(body, "read") else body
+
         mock_s3.get_object.side_effect = get_object
         mock_s3.upload_fileobj.side_effect = upload_fileobj
+        mock_s3.put_object.side_effect = put_object
 
         def fake_run(cmd, capture_output=False, text=False, timeout=None):
             self.assertTrue(cmd[0].endswith("roots2pix_mt"))
@@ -188,8 +202,13 @@ class TestRasterMT(unittest.TestCase):
         def upload_fileobj(fileobj, bucket, key):
             uploads[key] = fileobj.read()
 
+        def put_object(**kwargs):
+            body = kwargs["Body"]
+            uploads[kwargs["Key"]] = body.read() if hasattr(body, "read") else body
+
         mock_s3.get_object.side_effect = get_object
         mock_s3.upload_fileobj.side_effect = upload_fileobj
+        mock_s3.put_object.side_effect = put_object
 
         def fake_run(cmd, capture_output=False, text=False, timeout=None):
             self.assertIn("--pixel_bin_prefix=/tmp/pixbin", cmd)
@@ -258,15 +277,20 @@ class TestRasterMT(unittest.TestCase):
         def upload_fileobj(fileobj, bucket, key):
             uploads[key] = fileobj.read()
 
+        def put_object(**kwargs):
+            body = kwargs["Body"]
+            uploads[kwargs["Key"]] = body.read() if hasattr(body, "read") else body
+
         mock_s3.get_object.side_effect = get_object
         mock_s3.upload_fileobj.side_effect = upload_fileobj
+        mock_s3.put_object.side_effect = put_object
 
         def fake_run(cmd, capture_output=False, text=False, timeout=None):
             self.assertIn("--pixel_bin_prefix=/tmp/pixbin", cmd)
             self.assertIn("--skip_pix_output=1", cmd)
             self.assertIn("--solve_score_raw_bytes=1", cmd)
-            with open("/tmp/pixbin_t0000.pbx", "wb") as fh:
-                fh.write(b"r" * 8)
+            with open("/tmp/pixbin.frag", "wb") as fh:
+                fh.write(_encode_fragment_pairs([(0, 17)]))
             return MagicMock(
                 returncode=0,
                 stdout=json.dumps({
@@ -287,10 +311,11 @@ class TestRasterMT(unittest.TestCase):
 
         self.assertEqual(body["tiles_uploaded"], 0)
         self.assertEqual(body["pixel_bin_tiles_uploaded"], 1)
+        self.assertEqual(body["pixel_bin_bytes_uploaded"], 5)
         self.assertEqual(body["rgb_source"], "raw_score_bins")
         self.assertEqual(body["pix_tiles_skipped"], 1)
         self.assertNotIn("renders/j/pix_chunk_0000_t0000.pix", uploads)
-        self.assertEqual(uploads["renders/j/pixbin_chunk_0000_t0000.pbx"], b"r" * 8)
+        self.assertEqual(uploads["renders/j/pixbin_chunk_0000.frag"], _encode_fragment_pairs([(0, 17)]))
         done_data = mock_report.call_args_list[-1].kwargs["result_data"]
         self.assertTrue(done_data["emit_raw_score_bins"])
         self.assertEqual(done_data["rgb_source"], "raw_score_bins")
@@ -326,18 +351,23 @@ class TestRasterMT(unittest.TestCase):
         def upload_fileobj(fileobj, bucket, key):
             uploads[key] = fileobj.read()
 
+        def put_object(**kwargs):
+            body = kwargs["Body"]
+            uploads[kwargs["Key"]] = body.read() if hasattr(body, "read") else body
+
         mock_s3.get_object.side_effect = get_object
         mock_s3.upload_fileobj.side_effect = upload_fileobj
+        mock_s3.put_object.side_effect = put_object
 
         def fake_run(cmd, capture_output=False, text=False, timeout=None):
             self.assertIn("--solve_score_raw_bytes=1", cmd)
             self.assertIn("--palette_bin_prefix=/tmp/palette_pixbin", cmd)
             self.assertIn("--palette_grid_n=100", cmd)
             self.assertIn("--palette_step_start=0", cmd)
-            with open("/tmp/pixbin_t0000.pbx", "wb") as fh:
-                fh.write(b"m" * 8)
-            with open("/tmp/palette_pixbin_t0000.pbx", "wb") as fh:
-                fh.write(b"p" * 8)
+            with open("/tmp/pixbin.frag", "wb") as fh:
+                fh.write(_encode_fragment_pairs([(0, 33)]))
+            with open("/tmp/palette_pixbin.frag", "wb") as fh:
+                fh.write(_encode_fragment_pairs([(1, 44)]))
             return MagicMock(
                 returncode=0,
                 stdout=json.dumps({
@@ -367,8 +397,10 @@ class TestRasterMT(unittest.TestCase):
 
         self.assertEqual(body["pixel_bin_tiles_uploaded"], 1)
         self.assertEqual(body["palette_pixel_bin_tiles_uploaded"], 1)
-        self.assertEqual(uploads["renders/j/color/color_1/fragments/section_0000_t0000.pbx"], b"m" * 8)
-        self.assertEqual(uploads["renders/j/palettes/pal_1/fragments/section_0000_t0000.pbx"], b"p" * 8)
+        self.assertEqual(body["pixel_bin_bytes_uploaded"], 5)
+        self.assertEqual(body["palette_pixel_bin_bytes_uploaded"], 5)
+        self.assertEqual(uploads["renders/j/color/color_1/fragments/section_0000.frag"], _encode_fragment_pairs([(0, 33)]))
+        self.assertEqual(uploads["renders/j/palettes/pal_1/fragments/section_0000.frag"], _encode_fragment_pairs([(1, 44)]))
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
     @patch("handler_raster_mt.report_status")
@@ -760,8 +792,13 @@ class TestRasterMT(unittest.TestCase):
         def upload_fileobj(fileobj, bucket, key):
             uploads[key] = fileobj.read()
 
+        def put_object(**kwargs):
+            body = kwargs["Body"]
+            uploads[kwargs["Key"]] = body.read() if hasattr(body, "read") else body
+
         mock_s3.get_object.side_effect = get_object
         mock_s3.upload_fileobj.side_effect = upload_fileobj
+        mock_s3.put_object.side_effect = put_object
 
         def fake_run(cmd, capture_output=False, text=False, timeout=None):
             self.assertIn("--solve_score_raw_bytes=1", cmd)
@@ -771,8 +808,8 @@ class TestRasterMT(unittest.TestCase):
             self.assertIn("--score_program=m0;m1;weighted_sum:0.7:0.3;omega_cosine:5", cmd)
             self.assertFalse(any(arg.startswith("--solve_score_cuts=") for arg in cmd))
             self.assertIn("--skip_pix_output=1", cmd)
-            with open("/tmp/pixbin_t0000.pbx", "wb") as fh:
-                fh.write(b"r" * 8)
+            with open("/tmp/pixbin.frag", "wb") as fh:
+                fh.write(_encode_fragment_pairs([(2, 55)]))
             return MagicMock(
                 returncode=0,
                 stdout=json.dumps({"threads": 2, "roots_plotted": 24, "roots_clipped": 3, "tiles_with_data": 1}),
@@ -794,7 +831,8 @@ class TestRasterMT(unittest.TestCase):
         self.assertEqual(body["threads"], 2)
         self.assertEqual(body["tiles_uploaded"], 0)
         self.assertEqual(body["pixel_bin_tiles_uploaded"], 1)
-        self.assertEqual(uploads["renders/j/pixbin_chunk_0000_t0000.pbx"], b"r" * 8)
+        self.assertEqual(body["pixel_bin_bytes_uploaded"], 5)
+        self.assertEqual(uploads["renders/j/pixbin_chunk_0000.frag"], _encode_fragment_pairs([(2, 55)]))
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2", "AWS_LAMBDA_FUNCTION_MEMORY_SIZE": "10240"}, clear=False)
     @patch("handler_raster_mt.report_status")

@@ -109,6 +109,8 @@ def _cleanup_chunk_tmp():
         "/tmp/pix_t*.pix",
         "/tmp/pixbin_t*.pbx",
         "/tmp/palette_pixbin_t*.pbx",
+        "/tmp/pixbin.frag",
+        "/tmp/palette_pixbin.frag",
         "/tmp/group_pixbin_t*.u8",
         "/tmp/stripe.bin",
         "/tmp/palette_bins_chunk.bin",
@@ -844,6 +846,8 @@ def handler(event, context):
                             info["files"] += 1
                             grouped_sparse_bytes_in += pbx_size
                             grouped_sparse_files_in += 1
+                        elif emit_raw_score_bins:
+                            pass
                         else:
                             pbx_prefix = str(section_params.get("fragment_prefix") or "").strip()
                             pbx_key = (
@@ -879,17 +883,52 @@ def handler(event, context):
                         palette_prefix = str(section_params.get("associated_palette_fragment_prefix") or "").strip()
                         if not palette_prefix:
                             raise RuntimeError("emit_associated_palette_bins requires associated_palette_fragment_prefix")
-                        palette_key = f"{palette_prefix}{section_idx:04d}_t{t:04d}.pbx"
-                        with open(palette_pbx_path, "rb") as fh:
-                            s3.upload_fileobj(fh, BUCKET, palette_key)
-                        uploaded_palette_pixel_bins += 1
-                        uploaded_palette_pixel_bin_bytes += palette_pbx_size
                         palette_pixel_bin_tile_bytes.append({
                             "tile_idx": t,
                             "bytes": palette_pbx_size,
                             "dense_bytes": palette_dense_bytes,
                         })
                     os.remove(palette_pbx_path)
+            if emit_raw_score_bins and not dense_grouped:
+                pbx_prefix = str(section_params.get("fragment_prefix") or "").strip()
+                if not pbx_prefix:
+                    raise RuntimeError("emit_raw_score_bins requires fragment_prefix")
+                fused_fragment_path = "/tmp/pixbin.frag"
+                if os.path.exists(fused_fragment_path):
+                    fused_fragment_size = os.path.getsize(fused_fragment_path)
+                    with open(fused_fragment_path, "rb") as fh:
+                        s3.upload_fileobj(fh, BUCKET, f"{pbx_prefix}{section_idx:04d}.frag")
+                    os.remove(fused_fragment_path)
+                else:
+                    fused_fragment_size = 0
+                    s3.put_object(
+                        Bucket=BUCKET,
+                        Key=f"{pbx_prefix}{section_idx:04d}.frag",
+                        Body=b"",
+                        ContentType="application/octet-stream",
+                    )
+                uploaded_pixel_bins += 1
+                uploaded_pixel_bin_bytes += fused_fragment_size
+            if emit_associated_palette_bins:
+                palette_prefix = str(section_params.get("associated_palette_fragment_prefix") or "").strip()
+                if not palette_prefix:
+                    raise RuntimeError("emit_associated_palette_bins requires associated_palette_fragment_prefix")
+                palette_fragment_path = "/tmp/palette_pixbin.frag"
+                if os.path.exists(palette_fragment_path):
+                    palette_fragment_size = os.path.getsize(palette_fragment_path)
+                    with open(palette_fragment_path, "rb") as fh:
+                        s3.upload_fileobj(fh, BUCKET, f"{palette_prefix}{section_idx:04d}.frag")
+                    os.remove(palette_fragment_path)
+                else:
+                    palette_fragment_size = 0
+                    s3.put_object(
+                        Bucket=BUCKET,
+                        Key=f"{palette_prefix}{section_idx:04d}.frag",
+                        Body=b"",
+                        ContentType="application/octet-stream",
+                    )
+                uploaded_palette_pixel_bins += 1
+                uploaded_palette_pixel_bin_bytes += palette_fragment_size
             if pixel_bins_drive_rgb or emit_raw_score_bins:
                 skipped_pix_tiles += max(chunk_skipped_pix_tiles, int(raster_meta.get("tiles_with_data", 0) or 0))
             upload_us_accum += int((time.perf_counter() - t_chunk_up) * 1e6)

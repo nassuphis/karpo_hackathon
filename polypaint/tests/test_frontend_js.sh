@@ -6720,10 +6720,10 @@ async function testPipeline(name, call) {
 	            console.error('FATAL: finalize summary should include workers/access/assemble mode, got ' + summary);
 	            process.exit(1);
 	        }
-	        if (!summary.includes('tile=4096x4096') || !summary.includes('fragments=40/100') || summary.includes('pix=') || !summary.includes('raw=') || !summary.includes('pbx=')) {
-	            console.error('FATAL: finalize summary should include tile/fragments/byte sizes, got ' + summary);
-	            process.exit(1);
-	        }
+        if (!summary.includes('tile=4096x4096') || !summary.includes('fragments=40/100') || summary.includes('pix=') || !summary.includes('raw=') || !summary.includes('pbx=')) {
+            console.error('FATAL: finalize summary should include tile/fragments/byte sizes, got ' + summary);
+            process.exit(1);
+        }
         const sigA = vm.runInContext(`_renderPhaseProgressSignature('finalize', [{pix_files_piped: 1, pix_bytes: 8}])`, ctx);
         const sigB = vm.runInContext(`_renderPhaseProgressSignature('finalize', [{pix_files_piped: 2, pix_bytes: 16}])`, ctx);
         if (sigA === sigB) {
@@ -6783,6 +6783,113 @@ async function testPipeline(name, call) {
     // 12m2: concurrent phase-completion attempts log once
     {
         ctx._elements['render-log'] = ctx._mkEl();
+        vm.runInContext("_activeRenderRun = {job_id:'j', mode:'color', run_id:'r_perf_rawbins', task_id:'render_run_color_r_perf_rawbins', started_at_ms: Date.now() - 1000, color_pipeline:'fused'}; _renderPhaseTracker = { phase:'raster', phase_label:'Raster', started_at_ms: Date.now() - 2500, prefix:'render_r_perf_rawbins_raster_', expected:1 };", ctx);
+        vm.runInContext(`
+            refreshRenderArtifacts = async function() {};
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'storage' && path === '/check-status' && body.task_prefix === 'render_run_color_r_perf_rawbins') {
+                    return {
+                        errors: 0,
+                        done: 1,
+                        complete: true,
+                        results: [{
+                            phase: 'done',
+                            phase_label: 'Done',
+                            family: 'color',
+                            artifact_id: 'color_perf'
+                        }]
+                    };
+                }
+                if (name === 'storage' && path === '/check-status' && body.task_prefix === 'render_r_perf_rawbins_raster_') {
+                    return {
+                        errors: 0,
+                        done: 1,
+                        complete: false,
+                        results: [
+                            { engine: 'mt', threads: 2, input_mode: 'sectioned', download_us: 1200, native_us: 3400, upload_us: 800, roots_plotted: 50, roots_clipped: 2, tiles_uploaded: 0, pixel_bin_tiles_uploaded: 3, pixel_bin_bytes_uploaded: 6000, pixel_bin_tile_bytes: [{tile_idx:0, bytes:1000, dense_bytes:262144}, {tile_idx:1, bytes:2000, dense_bytes:262144}, {tile_idx:2, bytes:3000, dense_bytes:262144}], rgb_source: 'raw_score_bins', pix_tiles_skipped: 9, chunk_idx: 0 }
+                        ]
+                    };
+                }
+                return {};
+            };
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await _pollActiveRenderRun(); })()', ctx); } catch(e) {}
+        const logText = ctx._elements['render-log'].textContent || '';
+        if (!logText.includes('RGB source: raw_score_bins')) { console.error('FATAL: fused raster perf log should still show raw_score_bins source, got ' + logText); process.exit(1); }
+        if (!logText.includes('fragments=6 KB') || logText.includes('pbx=')) { console.error('FATAL: fused raster phase summary should report fragments instead of pbx, got ' + logText); process.exit(1); }
+        if (!logText.includes('Fragment files uploaded: 3') || !logText.includes('Fragment sparse bytes uploaded: 6 KB') || logText.includes('Pixel-bin files uploaded: 3')) { console.error('FATAL: fused raster detail log should use fragment labels, got ' + logText); process.exit(1); }
+        if (logText.includes('skipped .pix uploads')) { console.error('FATAL: fused raster perf log should suppress stale skipped .pix wording, got ' + logText); process.exit(1); }
+        console.log('  12m1 fused raster perf suppresses stale skipped .pix wording: OK');
+        vm.runInContext('_activeRenderRun = null; _renderPhaseTracker = null;', ctx);
+    }
+
+    // 12m2: fused completion keeps Assemble+encode and suppresses classic finalize/encode zombies
+    {
+        ctx._elements['render-log'] = ctx._mkEl();
+        ctx._elements['render-status'] = ctx._mkEl();
+        vm.runInContext(`
+            _activeRenderRun = {
+                job_id:'j',
+                mode:'color',
+                run_id:'r_fused_done',
+                task_id:'render_run_color_r_fused_done',
+                started_at_ms: 1000,
+                server_started_at_ms: 100000,
+                color_pipeline:'fused'
+            };
+            _renderPhaseTracker = {
+                phase:'finalize_mt',
+                phase_label:'Assemble + encode',
+                started_at_ms: 110000,
+                last_server_update_ms: 111000,
+                prefix:'render_r_fused_done_finalize_mt',
+                expected:1
+            };
+        `, ctx);
+        vm.runInContext(`
+            refreshRenderArtifacts = async function() {};
+            lambdaPost = async function lambdaPost(name, body, path) {
+                if (name === 'storage' && path === '/check-status' && body.task_prefix === 'render_run_color_r_fused_done') {
+                    return {
+                        errors: 0,
+                        done: 1,
+                        complete: true,
+                        results: [{
+                            phase: 'done',
+                            phase_label: 'Done',
+                            family: 'color',
+                            artifact_id: 'color_fused_done',
+                            run_started_at_ms: 100000,
+                            updated_at_ms: 130000
+                        }]
+                    };
+                }
+                if (name === 'storage' && path === '/check-status' && body.task_prefix === 'render_r_fused_done_finalize_mt') {
+                    return {
+                        errors: 0,
+                        done: 1,
+                        latest_done_ms: 120000,
+                        latest_update_ms: 120000,
+                        results: [{}]
+                    };
+                }
+                if (name === 'storage' && path === '/check-status' && body.task_prefix === 'render_r_fused_done_raster_') {
+                    return { errors: 0, done: 0, results: [] };
+                }
+                return {};
+            };
+        `, ctx);
+        try { await vm.runInContext('(async()=>{ await _pollActiveRenderRun(); })()', ctx); } catch(e) {}
+        const logText = ctx._elements['render-log'].textContent || '';
+        if (!logText.includes('Assemble + encode complete · wall=10.0s')) { console.error('FATAL: fused completion should keep Assemble + encode phase completion, got ' + logText); process.exit(1); }
+        if (logText.includes('Finalize complete') || logText.includes('Encode complete')) { console.error('FATAL: fused completion should suppress classic finalize/encode zombie logs, got ' + logText); process.exit(1); }
+        console.log('  12m2 fused completion suppresses classic finalize/encode zombies: OK');
+        vm.runInContext('_activeRenderRun = null; _renderPhaseTracker = null;', ctx);
+    }
+
+    // 12m3: concurrent phase-completion attempts log once
+    {
+        ctx._elements['render-log'] = ctx._mkEl();
         vm.runInContext(`
             _renderLoggedPhaseCompletions = new Set();
             var _phaseCompletionFetches = 0;
@@ -6824,7 +6931,7 @@ async function testPipeline(name, call) {
             console.error('FATAL: concurrent phase completion should fetch/log once, fetches=' + fetches + ', completions=' + completionCount + ', log=' + logText);
             process.exit(1);
         }
-        console.log('  12m2 concurrent phase completion dedupe: OK');
+        console.log('  12m3 concurrent phase completion dedupe: OK');
     }
 
     // 12n: render wall timing uses server timestamps, not browser Date.now()

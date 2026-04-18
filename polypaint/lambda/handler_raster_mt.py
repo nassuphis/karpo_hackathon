@@ -960,8 +960,10 @@ def handler(event, context):
                         ContentType="application/octet-stream",
                     )
                 step_scores_bytes_uploaded += step_scores_size
-            if pixel_bins_drive_rgb or emit_raw_score_bins:
+            if pixel_bins_drive_rgb:
                 skipped_pix_tiles += max(chunk_skipped_pix_tiles, int(raster_meta.get("tiles_with_data", 0) or 0))
+            elif emit_raw_score_bins:
+                skipped_pix_tiles += chunk_skipped_pix_tiles
             upload_us_accum += int((time.perf_counter() - t_chunk_up) * 1e6)
             report_status(job_id, task_id, f"rasterized_{item_idx+1}/{len(section_items)}")
 

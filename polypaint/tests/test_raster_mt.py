@@ -251,7 +251,7 @@ class TestRasterMT(unittest.TestCase):
     @patch("handler_raster_mt.report_status")
     @patch("handler_raster_mt.subprocess.run")
     @patch("handler_raster_mt.s3")
-    def test_emit_raw_score_bins_requests_native_raw_bytes_and_skips_pix(self, mock_s3, mock_run, mock_report):
+    def test_emit_raw_score_bins_requests_native_raw_bytes_and_does_not_report_skipped_pix(self, mock_s3, mock_run, mock_report):
         import handler_raster_mt as mod
 
         uploads = {}
@@ -313,13 +313,13 @@ class TestRasterMT(unittest.TestCase):
         self.assertEqual(body["pixel_bin_tiles_uploaded"], 1)
         self.assertEqual(body["pixel_bin_bytes_uploaded"], 5)
         self.assertEqual(body["rgb_source"], "raw_score_bins")
-        self.assertEqual(body["pix_tiles_skipped"], 1)
+        self.assertEqual(body["pix_tiles_skipped"], 0)
         self.assertNotIn("renders/j/pix_chunk_0000_t0000.pix", uploads)
         self.assertEqual(uploads["renders/j/pixbin_chunk_0000.frag"], _encode_fragment_pairs([(0, 17)]))
         done_data = mock_report.call_args_list[-1].kwargs["result_data"]
         self.assertTrue(done_data["emit_raw_score_bins"])
         self.assertEqual(done_data["rgb_source"], "raw_score_bins")
-        self.assertEqual(done_data["pix_tiles_skipped"], 1)
+        self.assertEqual(done_data["pix_tiles_skipped"], 0)
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
     @patch("handler_raster_mt.report_status")

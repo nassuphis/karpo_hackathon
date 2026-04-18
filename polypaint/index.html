@@ -11730,8 +11730,11 @@ function _aggregateRasterPerf(results) {
                 }
             }
         }
-        acc.pix_tiles_skipped += Number(row.pix_tiles_skipped) || 0;
-        if (!acc.rgb_source && row.rgb_source) acc.rgb_source = String(row.rgb_source);
+        const rowRgbSource = String(row.rgb_source || '').trim();
+        if (rowRgbSource.toLowerCase() !== 'raw_score_bins') {
+            acc.pix_tiles_skipped += Number(row.pix_tiles_skipped) || 0;
+        }
+        if (!acc.rgb_source && rowRgbSource) acc.rgb_source = rowRgbSource;
         if (row.pixel_bins_drive_rgb === true || String(row.pixel_bins_drive_rgb || '').toLowerCase() === 'true') acc.pixel_bins_drive_rgb = true;
         if (!acc.pixel_bin_fragment_mode && row.pixel_bin_fragment_mode) acc.pixel_bin_fragment_mode = String(row.pixel_bin_fragment_mode);
         return acc;
@@ -11962,13 +11965,14 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
     if (phase === 'raster') {
         const perf = _aggregateRasterPerf(results);
         if (!perf) return '';
+        const usesRawScoreFragments = String(perf.rgb_source || '').toLowerCase() === 'raw_score_bins';
         let msg = `wall=${_fmtSecondsMs(wallMs)} total=dl ${_fmtSecondsUs(perf.download_us)} + native ${_fmtSecondsUs(perf.native_us)} + up ${_fmtSecondsUs(perf.upload_us)} · threads=${perf.threads}`;
         const inputLabel = _formatRequestedEffectiveInputMode(perf);
         if (inputLabel) msg += ` · input=${inputLabel}`;
         if (perf.input_mode === 'sectioned' || perf.input_mode === 'multispan_sectioned') msg += ` · retries=${perf.retries}`;
         if (perf.rgb_source) msg += ` · rgb=${perf.rgb_source}`;
-        if (perf.pix_tiles_skipped > 0) msg += ` · skipped_pix=${perf.pix_tiles_skipped}`;
-        if (perf.pixel_bin_bytes_uploaded > 0) msg += ` · pbx=${_fmtSize(perf.pixel_bin_bytes_uploaded)}`;
+        if (perf.pix_tiles_skipped > 0 && !usesRawScoreFragments) msg += ` · skipped_pix=${perf.pix_tiles_skipped}`;
+        if (perf.pixel_bin_bytes_uploaded > 0) msg += ` · ${usesRawScoreFragments ? 'fragments' : 'pbx'}=${_fmtSize(perf.pixel_bin_bytes_uploaded)}`;
         return msg;
     }
     if (phase === 'associated_palette_chunk') {
@@ -11998,6 +12002,7 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
     if (phase === 'finalize') {
         const perf = _aggregateFinalizePerf(results);
         if (!perf) return `wall=${_fmtSecondsMs(wallMs)}`;
+        const usesRawScoreFragments = String(perf.rgb_source || '').toLowerCase() === 'raw_score_bins';
         let msg = `wall=${_fmtSecondsMs(wallMs)} total=read ${_fmtSecondsMs(perf.read_ms)} + assemble ${_fmtSecondsMs(perf.assemble_ms)} + up ${_fmtSecondsMs(perf.upload_ms)}`;
         if (perf.pixel_bins_ms > 0) msg += ` + pbx ${_fmtSecondsMs(perf.pixel_bins_ms)}`;
         if (perf.workers > 0) msg += ` · workers=${perf.workers}`;
@@ -12015,7 +12020,7 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
         const rawBytes = perf.raw_size || perf.raw_expected_size;
         if (rawBytes > 0) msg += ` · raw=${_fmtSize(rawBytes)}`;
         if (perf.pixel_bin_bytes > 0 || perf.pixel_bin_size > 0) {
-            msg += ` · pbx=${_fmtSize(perf.pixel_bin_bytes || perf.pixel_bin_size)}`;
+            msg += ` · ${usesRawScoreFragments ? 'fragments' : 'pbx'}=${_fmtSize(perf.pixel_bin_bytes || perf.pixel_bin_size)}`;
         }
         return msg;
     }
@@ -12105,6 +12110,7 @@ async function _logRenderPhaseCompletion(run, tracker) {
 
 async function _logRenderTerminalPhaseCatchup(run) {
     if (!run || run.mode !== 'color') return;
+    if (String(run.color_pipeline || '').toLowerCase() === 'fused') return;
     const phases = [
         {
             phase: 'finalize',
@@ -12148,6 +12154,8 @@ async function _logRenderRasterPerf(run) {
                 )
             ) || 0)
             : 0;
+        const usesRawScoreFragments = String(perf.rgb_source || '').toLowerCase() === 'raw_score_bins';
+        const artifactLabel = usesRawScoreFragments ? 'Fragment' : 'Pixel-bin';
         const lines = [
             `Raster performance: engine=${perf.engine || 'single'} threads=${perf.threads}${perf.input_mode ? ` input=${perf.input_mode}` : ''} chunks=${perf.chunks} wall=${_fmtSecondsMs(wallMs)}`,
             `  Download time: ${_fmtSecondsUs(perf.download_us)}`,
@@ -12158,7 +12166,7 @@ async function _logRenderRasterPerf(run) {
             `  Tile files uploaded: ${perf.tiles_uploaded}`,
         ];
         if (perf.pixel_bin_tiles_uploaded > 0) {
-            lines.push(`  Pixel-bin files uploaded: ${perf.pixel_bin_tiles_uploaded}`);
+            lines.push(`  ${artifactLabel} files uploaded: ${perf.pixel_bin_tiles_uploaded}`);
         }
         if (perf.pixel_bin_bytes_uploaded > 0) {
             const avgBytes = perf.pixel_bin_tiles_uploaded > 0 ? perf.pixel_bin_bytes_uploaded / perf.pixel_bin_tiles_uploaded : 0;
@@ -12166,16 +12174,16 @@ async function _logRenderRasterPerf(run) {
             const denseGrouped = String(perf.pixel_bin_fragment_mode || '').toLowerCase() === 'dense_grouped';
             if (denseGrouped) {
                 lines.push(
-                    `  Pixel-bin dense group bytes uploaded: ${_fmtSize(perf.pixel_bin_bytes_uploaded)}`
+                    `  ${artifactLabel} dense group bytes uploaded: ${_fmtSize(perf.pixel_bin_bytes_uploaded)}`
                     + ` (avg/file ${_fmtSize(avgBytes)}`
                     + `)`
                 );
                 if (perf.pixel_bin_sparse_bytes_in > 0) {
-                    lines.push(`  Pixel-bin sparse bytes consumed before grouping: ${_fmtSize(perf.pixel_bin_sparse_bytes_in)}${perf.pixel_bin_sparse_files_in > 0 ? ` across ${perf.pixel_bin_sparse_files_in} files` : ''}`);
+                    lines.push(`  ${artifactLabel} sparse bytes consumed before grouping: ${_fmtSize(perf.pixel_bin_sparse_bytes_in)}${perf.pixel_bin_sparse_files_in > 0 ? ` across ${perf.pixel_bin_sparse_files_in} files` : ''}`);
                 }
             } else {
                 lines.push(
-                    `  Pixel-bin sparse bytes uploaded: ${_fmtSize(perf.pixel_bin_bytes_uploaded)}`
+                    `  ${artifactLabel} sparse bytes uploaded: ${_fmtSize(perf.pixel_bin_bytes_uploaded)}`
                     + ` (avg/file ${_fmtSize(avgBytes)}`
                     + (maxFile.bytes ? `, max section ${maxFile.chunk_idx} tile ${maxFile.tile_idx}: ${_fmtSize(maxFile.bytes)}` : '')
                     + `)`
@@ -12183,11 +12191,11 @@ async function _logRenderRasterPerf(run) {
             }
             const tileSummary = _formatPixelBinTileSummary(perf);
             if (tileSummary) {
-                lines.push(`  Pixel-bin ${denseGrouped ? 'sparse input bytes by tile' : 'sparse bytes by tile'}: ${tileSummary}`);
+                lines.push(`  ${artifactLabel} ${denseGrouped ? 'sparse input bytes by tile' : 'sparse bytes by tile'}: ${tileSummary}`);
             }
             const estimates = _estimatePixelBinGrouping(perf);
             if (!denseGrouped && estimates.length) {
-                lines.push(`  Pixel-bin grouping estimates (from current sparse .pbx output):`);
+                lines.push(`  ${artifactLabel} grouping estimates (from current sparse ${usesRawScoreFragments ? '.frag' : '.pbx'} output):`);
                 for (const est of estimates) {
                     const denseRatio = perf.pixel_bin_bytes_uploaded > 0 ? est.dense_bytes / perf.pixel_bin_bytes_uploaded : 0;
                     lines.push(
@@ -12199,7 +12207,8 @@ async function _logRenderRasterPerf(run) {
             }
         }
         if (perf.rgb_source || perf.pix_tiles_skipped > 0) {
-            lines.push(`  RGB source: ${perf.rgb_source || 'pix'}${perf.pix_tiles_skipped > 0 ? `; skipped .pix uploads: ${perf.pix_tiles_skipped}` : ''}`);
+            const showSkippedPixUploads = perf.pix_tiles_skipped > 0 && String(perf.rgb_source || '').toLowerCase() !== 'raw_score_bins';
+            lines.push(`  RGB source: ${perf.rgb_source || 'pix'}${showSkippedPixUploads ? `; skipped .pix uploads: ${perf.pix_tiles_skipped}` : ''}`);
         }
         const msg = lines.join('\n');
         log(msg, '', 'render-log');

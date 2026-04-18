@@ -4,7 +4,8 @@ import json
 import math
 
 
-RAW_SIDECAR_VERSION = 2
+RAW_SIDECAR_VERSION = 3
+HISTOGRAM_RAW_SIDECAR_VERSION = 2
 LEGACY_RAW_SIDECAR_VERSION = 1
 RAW_ENCODING = {
     "type": "u8_clipped_score_v1",
@@ -93,7 +94,7 @@ def _normalize_background_color(value):
 def _normalize_histogram(value, *, required=False):
     if value in ("", None):
         if required:
-            raise RuntimeError("histogram is required for raw sidecar version 2")
+            raise RuntimeError("histogram is required for raw sidecar version 2+")
         return None
     if not isinstance(value, list) or len(value) != 256:
         raise RuntimeError(f"histogram must be a 256-element array, got {value!r}")
@@ -104,6 +105,24 @@ def _normalize_histogram(value, *, required=False):
             raise RuntimeError(f"histogram[{idx}] must be non-negative, got {count}")
         histogram.append(count)
     return histogram
+
+
+def _normalize_step_scores_key(value, *, required=False):
+    key = str(value or "").strip()
+    if required and not key:
+        raise RuntimeError("step_scores_key is required for raw sidecar version 3")
+    return key
+
+
+def _normalize_positive_int(value, label, *, required=False):
+    if value in ("", None):
+        if required:
+            raise RuntimeError(f"{label} is required for raw sidecar version 3")
+        return None
+    number = _coerce_int(value, label)
+    if number <= 0:
+        raise RuntimeError(f"{label} must be > 0, got {number}")
+    return number
 
 
 def background_color_hex(value):
@@ -132,6 +151,9 @@ def build_raw_sidecar(
     meta_key,
     created_at,
     histogram,
+    step_scores_key=None,
+    step_count=None,
+    step_scores_grid_n=None,
 ):
     chain_fingerprint = str(chain_fingerprint or "").strip()
     if not chain_fingerprint:
@@ -139,8 +161,14 @@ def build_raw_sidecar(
     score_program = str(score_program or "").strip()
     if not score_program:
         raise RuntimeError("score_program is required for greyscale sidecar")
+    include_step_scores = (
+        str(step_scores_key or "").strip() != ""
+        or step_count not in ("", None, 0)
+        or step_scores_grid_n not in ("", None, 0)
+    )
+    version = RAW_SIDECAR_VERSION if include_step_scores else HISTOGRAM_RAW_SIDECAR_VERSION
     sidecar = {
-        "version": RAW_SIDECAR_VERSION,
+        "version": version,
         "job_id": str(job_id),
         "run_id": str(run_id),
         "artifact_family": str(artifact_family),
@@ -166,6 +194,14 @@ def build_raw_sidecar(
     }
     if not sidecar["plan_params_digest"]:
         raise RuntimeError("plan_params_digest is required for greyscale sidecar")
+    if include_step_scores:
+        sidecar["step_scores_key"] = _normalize_step_scores_key(step_scores_key, required=True)
+        sidecar["step_count"] = _normalize_positive_int(step_count, "step_count", required=True)
+        sidecar["step_scores_grid_n"] = _normalize_positive_int(
+            step_scores_grid_n,
+            "step_scores_grid_n",
+            required=True,
+        )
     return sidecar
 
 
@@ -173,9 +209,11 @@ def validate_raw_sidecar(sidecar, *, expected_raw_key=None, expected_artifact_fa
     if not isinstance(sidecar, dict):
         raise RuntimeError("raw sidecar must be a JSON object")
     version = _coerce_int(sidecar.get("version"), "raw sidecar version")
-    if version not in (LEGACY_RAW_SIDECAR_VERSION, RAW_SIDECAR_VERSION):
+    if version not in (LEGACY_RAW_SIDECAR_VERSION, HISTOGRAM_RAW_SIDECAR_VERSION, RAW_SIDECAR_VERSION):
         raise RuntimeError(
-            f"raw sidecar version must be {LEGACY_RAW_SIDECAR_VERSION} or {RAW_SIDECAR_VERSION}, got {version}"
+            "raw sidecar version must be "
+            f"{LEGACY_RAW_SIDECAR_VERSION}, {HISTOGRAM_RAW_SIDECAR_VERSION}, or {RAW_SIDECAR_VERSION}, "
+            f"got {version}"
         )
     encoding = sidecar.get("encoding")
     if not isinstance(encoding, dict):
@@ -216,5 +254,22 @@ def validate_raw_sidecar(sidecar, *, expected_raw_key=None, expected_artifact_fa
             "meta_key": str(keys.get("meta_key") or "").strip(),
         },
         "created_at": str(sidecar.get("created_at") or "").strip(),
-        "histogram": _normalize_histogram(sidecar.get("histogram"), required=(version >= RAW_SIDECAR_VERSION)),
+        "histogram": _normalize_histogram(
+            sidecar.get("histogram"),
+            required=(version >= HISTOGRAM_RAW_SIDECAR_VERSION),
+        ),
+        "step_scores_key": _normalize_step_scores_key(
+            sidecar.get("step_scores_key"),
+            required=(version >= RAW_SIDECAR_VERSION),
+        ),
+        "step_count": _normalize_positive_int(
+            sidecar.get("step_count"),
+            "step_count",
+            required=(version >= RAW_SIDECAR_VERSION),
+        ),
+        "step_scores_grid_n": _normalize_positive_int(
+            sidecar.get("step_scores_grid_n"),
+            "step_scores_grid_n",
+            required=(version >= RAW_SIDECAR_VERSION),
+        ),
     }

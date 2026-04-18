@@ -172,12 +172,16 @@ def _source_associated_palette_spec(source_meta, job_id):
     }
 
 
-def _copy_raw_object(source_key, dest_key):
+def _copy_object(source_key, dest_key):
     s3.copy_object(
         Bucket=BUCKET,
         CopySource={"Bucket": BUCKET, "Key": source_key},
         Key=dest_key,
     )
+
+
+def _copy_raw_object(source_key, dest_key):
+    _copy_object(source_key, dest_key)
 
 
 def _apply_associated_palette_metadata(metadata, palette_result):
@@ -443,6 +447,7 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
         new_raw_key = prefix + "greyscale.raw"
         new_raw_meta_key = prefix + "greyscale.meta.json"
         new_meta_key = prefix + "meta.json"
+        new_step_scores_key = prefix + "step_scores.raw"
 
         metadata = dict(source_meta)
         metadata.update({
@@ -468,6 +473,9 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
         metadata.pop("postprocess_kind", None)
         metadata.pop("postprocess_profile", None)
         metadata.pop("autolevels_params", None)
+        metadata.pop("step_scores_key", None)
+        metadata.pop("step_count", None)
+        metadata.pop("step_scores_grid_n", None)
         _clear_associated_palette_metadata(metadata)
         source_palette_spec = _source_associated_palette_spec(source_meta, job_id)
 
@@ -512,6 +520,18 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
         _phase(job_id, task_id, "encoding", "sidecar", "Raw sidecar", **progress)
         _copy_raw_object(source_raw_key, new_raw_key)
         temp_copy_keys.append(new_raw_key)
+        copied_step_scores_key = ""
+        copied_step_count = None
+        copied_step_scores_grid_n = None
+        if raw_sidecar.get("step_scores_key"):
+            _copy_object(raw_sidecar["step_scores_key"], new_step_scores_key)
+            temp_copy_keys.append(new_step_scores_key)
+            copied_step_scores_key = new_step_scores_key
+            copied_step_count = raw_sidecar.get("step_count")
+            copied_step_scores_grid_n = raw_sidecar.get("step_scores_grid_n")
+            metadata["step_scores_key"] = copied_step_scores_key
+            metadata["step_count"] = copied_step_count
+            metadata["step_scores_grid_n"] = copied_step_scores_grid_n
         updated_sidecar = build_raw_sidecar(
             job_id=job_id,
             run_id=task_id,
@@ -532,6 +552,9 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
             meta_key=new_meta_key,
             created_at=created_at,
             histogram=histogram,
+            step_scores_key=copied_step_scores_key or None,
+            step_count=copied_step_count,
+            step_scores_grid_n=copied_step_scores_grid_n,
         )
         s3.put_object(
             Bucket=BUCKET,

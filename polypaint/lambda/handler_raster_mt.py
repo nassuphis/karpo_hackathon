@@ -111,6 +111,7 @@ def _cleanup_chunk_tmp():
         "/tmp/palette_pixbin_t*.pbx",
         "/tmp/pixbin.frag",
         "/tmp/palette_pixbin.frag",
+        "/tmp/step_scores.bin",
         "/tmp/group_pixbin_t*.u8",
         "/tmp/stripe.bin",
         "/tmp/palette_bins_chunk.bin",
@@ -192,6 +193,8 @@ def _build_cmd(params, bin_path, saved_bins_path=None):
         cmd.append("--palette_bin_prefix=/tmp/palette_pixbin")
         cmd.append(f"--palette_grid_n={int(params['associated_palette_grid_n'])}")
         cmd.append(f"--palette_step_start={int(params['step_start'])}")
+    if params.get("emit_step_scores"):
+        cmd.append("--step_scores_output=/tmp/step_scores.bin")
 
     if params.get("color") == "saved_palette":
         if not saved_bins_path:
@@ -691,12 +694,18 @@ def handler(event, context):
         and str(params.get("color_pipeline") or "").strip().lower() == "fused"
         and str(params.get("associated_palette_mode") or "").strip().lower() == "generated"
     )
+    emit_step_scores = (
+        emit_raw_score_bins
+        and str(params.get("color_pipeline") or "").strip().lower() == "fused"
+        and str(params.get("color") or "").strip().lower() == "solve_score"
+    )
     pixel_bins_drive_rgb = emit_pixel_bins and parse_boolish(params.get("pixel_bins_drive_rgb"), False)
     if emit_raw_score_bins and params.get("color") not in ("solve_score", "solve_proximity"):
         raise RuntimeError("emit_raw_score_bins requires color=solve_score")
     perf["pixel_bins_drive_rgb"] = pixel_bins_drive_rgb
     perf["emit_raw_score_bins"] = emit_raw_score_bins
     perf["emit_associated_palette_bins"] = emit_associated_palette_bins
+    perf["emit_step_scores"] = emit_step_scores
     perf["rgb_source"] = "raw_score_bins" if emit_raw_score_bins else ("pixel_bins" if pixel_bins_drive_rgb else "pix")
 
     try:
@@ -710,6 +719,7 @@ def handler(event, context):
         params["emit_pixel_bins"] = emit_pixel_bins
         params["emit_raw_score_bins"] = emit_raw_score_bins
         params["emit_associated_palette_bins"] = emit_associated_palette_bins
+        params["emit_step_scores"] = emit_step_scores
         params["match"] = contract_param(params, "match", "none", contract_warnings)
         params["palette"] = contract_param(params, "palette", "inferno", contract_warnings)
         params["constant_color"] = contract_param(params, "constant_color", "ffffff", contract_warnings)
@@ -779,6 +789,7 @@ def handler(event, context):
         uploaded_palette_pixel_bins = 0
         uploaded_palette_pixel_bin_bytes = 0
         palette_pixel_bin_tile_bytes = []
+        step_scores_bytes_uploaded = 0
         skipped_pix_tiles = 0
         grouped_sparse_bytes_in = 0
         grouped_sparse_files_in = 0
@@ -929,6 +940,26 @@ def handler(event, context):
                     )
                 uploaded_palette_pixel_bins += 1
                 uploaded_palette_pixel_bin_bytes += palette_fragment_size
+            if emit_step_scores:
+                step_scores_prefix = str(section_params.get("fragment_prefix") or "").strip()
+                if not step_scores_prefix:
+                    raise RuntimeError("emit_step_scores requires fragment_prefix")
+                step_scores_path = "/tmp/step_scores.bin"
+                step_scores_key = f"{step_scores_prefix}{section_idx:04d}_step_scores.raw"
+                if os.path.exists(step_scores_path):
+                    step_scores_size = os.path.getsize(step_scores_path)
+                    with open(step_scores_path, "rb") as fh:
+                        s3.upload_fileobj(fh, BUCKET, step_scores_key)
+                    os.remove(step_scores_path)
+                else:
+                    step_scores_size = 0
+                    s3.put_object(
+                        Bucket=BUCKET,
+                        Key=step_scores_key,
+                        Body=b"",
+                        ContentType="application/octet-stream",
+                    )
+                step_scores_bytes_uploaded += step_scores_size
             if pixel_bins_drive_rgb or emit_raw_score_bins:
                 skipped_pix_tiles += max(chunk_skipped_pix_tiles, int(raster_meta.get("tiles_with_data", 0) or 0))
             upload_us_accum += int((time.perf_counter() - t_chunk_up) * 1e6)
@@ -966,6 +997,7 @@ def handler(event, context):
         perf["palette_pixel_bin_bytes_uploaded"] = uploaded_palette_pixel_bin_bytes
         perf["palette_pixel_bin_tile_bytes"] = palette_pixel_bin_tile_bytes
         perf["palette_pixel_bin_dense_bytes_if_full_tiles"] = sum(item["dense_bytes"] for item in palette_pixel_bin_tile_bytes)
+        perf["step_scores_bytes_uploaded"] = step_scores_bytes_uploaded
         perf["pix_tiles_skipped"] = skipped_pix_tiles
         if dense_grouped:
             perf["pixel_bin_sparse_bytes_in"] = grouped_sparse_bytes_in
@@ -986,6 +1018,7 @@ def handler(event, context):
             "palette_pixel_bin_bytes_uploaded": uploaded_palette_pixel_bin_bytes,
             "palette_pixel_bin_tile_bytes": palette_pixel_bin_tile_bytes,
             "palette_pixel_bin_dense_bytes_if_full_tiles": perf["palette_pixel_bin_dense_bytes_if_full_tiles"],
+            "step_scores_bytes_uploaded": step_scores_bytes_uploaded,
             "pixel_bin_fragment_mode": perf["pixel_bin_fragment_mode"],
             "pixel_bin_sparse_bytes_in": perf.get("pixel_bin_sparse_bytes_in", 0),
             "pixel_bin_sparse_files_in": perf.get("pixel_bin_sparse_files_in", 0),

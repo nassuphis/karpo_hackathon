@@ -3146,7 +3146,7 @@ async function testPipeline(name, call) {
             document.getElementById('render-results-dir').value = 'j';
             document.getElementById('palette-results-dir').value = '';
             lambdaPost = async function(name, body, path) {
-                if (name === 'dispatch' && body.target === 'palette_orchestrator') {
+                if (name === 'dispatch' && body.target === 'extract_palette_fused') {
                     _extractPaletteDispatch = body;
                     return { fired: 1, errors: [] };
                 }
@@ -3171,7 +3171,12 @@ async function testPipeline(name, call) {
                         solve_metric: 'spread',
                         solve_score_quantile: 0.02,
                         solve_score_omega: 6,
-                        palette: 'magma'
+                        palette: 'magma',
+                        raw_key: 'renders/j/color/color_extract/greyscale.raw',
+                        raw_meta_key: 'renders/j/color/color_extract/greyscale.meta.json',
+                        step_scores_key: 'renders/j/color/color_extract/step_scores.raw',
+                        step_count: 9000000,
+                        step_scores_grid_n: 3000
                     }],
                     bilevel: [],
                     coeffs: [],
@@ -3209,17 +3214,83 @@ async function testPipeline(name, call) {
         })()`, ctx);
         const dispatch = vm.runInContext('_extractPaletteDispatch', ctx);
         const activeRun = vm.runInContext('_activePaletteRun', ctx);
-        if (!dispatch || dispatch.target !== 'palette_orchestrator') { console.error('FATAL: ExtractPalette should dispatch palette_orchestrator'); process.exit(1); }
+        if (!dispatch || dispatch.target !== 'extract_palette_fused') { console.error('FATAL: fused ExtractPalette should dispatch extract_palette_fused'); process.exit(1); }
         if (dispatch.jobs[0].artifact_id !== 'color_extract') { console.error('FATAL: ExtractPalette should send selected color artifact id, got ' + dispatch.jobs[0].artifact_id); process.exit(1); }
-        if (dispatch.jobs[0].params.solve_score_threads !== 8 || dispatch.jobs[0].params.solve_score_hist_input_mode !== 'sectioned' || dispatch.jobs[0].params.solve_score_hist_retries !== 5 || dispatch.jobs[0].params.solve_score_merge_workers !== 24 || dispatch.jobs[0].params.palette_chunk_threads !== 6 || dispatch.jobs[0].params.palette_chunk_input_mode !== 'sectioned' || dispatch.jobs[0].params.palette_chunk_retries !== 4 || dispatch.jobs[0].params.palette_chunk_workers !== 32) {
-            console.error('FATAL: ExtractPalette should dispatch execution knobs, got ' + JSON.stringify(dispatch.jobs[0].params));
+        if (dispatch.jobs[0].params) {
+            console.error('FATAL: fused ExtractPalette should not send legacy execution knobs, got ' + JSON.stringify(dispatch.jobs[0].params));
             process.exit(1);
         }
         if (!activeRun || activeRun.mode !== 'extract_palette' || activeRun.origin !== 'render_extract_palette' || activeRun.source_artifact_id !== 'color_extract') {
             console.error('FATAL: ExtractPalette should save extract-specific active palette run state, got ' + JSON.stringify(activeRun));
             process.exit(1);
         }
-        console.log('  ExtractPalette popup dispatches palette orchestrator with prepass + chunk execution knobs: OK');
+        console.log('  ExtractPalette popup dispatches fused extractor when step_scores.raw is present: OK');
+    }
+
+    {
+        vm.runInContext(`
+            _extractPaletteDispatch = null;
+            _renderActiveFamily = 'color';
+            _activeRenderRun = null;
+            _activePaletteRun = null;
+            localStorage.removeItem('polypaint_active_palette_run');
+            document.getElementById('render-results-dir').value = 'j';
+            document.getElementById('palette-results-dir').value = '';
+            lambdaPost = async function(name, body, path) {
+                if (name === 'dispatch' && body.target === 'palette_orchestrator') {
+                    _extractPaletteDispatch = body;
+                    return { fired: 1, errors: [] };
+                }
+                return { ok: true };
+            };
+            renderArtifactPanel('j', ${JSON.stringify({
+                calc: { exists: true, N: 3000, degree: 7 },
+                families: {
+                    color: [{
+                        artifact_id: 'color_extract_legacy',
+                        created_at: '2026-04-02T10:00:00Z',
+                        image_key: 'renders/j/color/color_extract_legacy/image.jpeg',
+                        image_url: 'https://img/color_extract_legacy.jpeg',
+                        preview_url: 'https://img/color_extract_legacy.png',
+                        viewer_url: 'https://img/color_extract_legacy.png',
+                        width: 3000,
+                        height: 3000,
+                        format: 'jpeg',
+                        file_size: 64000,
+                        family: 'color',
+                        color_mode: 'solve_score',
+                        solve_metric: 'spread',
+                        solve_score_quantile: 0.02,
+                        solve_score_omega: 6,
+                        palette: 'magma'
+                    }],
+                    bilevel: [],
+                    coeffs: [],
+                    palette: [],
+                    pdf: [],
+                },
+            })});
+        `, ctx);
+        await vm.runInContext('openExtractPalettePopup()', ctx);
+        await vm.runInContext(`(async()=>{
+            await runExtractPaletteArtifact({
+                solveScoreThreads: 8,
+                histInputMode: 'sectioned',
+                histRetries: 5,
+                mergeWorkers: 24,
+                chunkThreads: 6,
+                chunkInputMode: 'sectioned',
+                chunkRetries: 4,
+                chunkWorkers: 32
+            });
+        })()`, ctx);
+        const dispatch = vm.runInContext('_extractPaletteDispatch', ctx);
+        if (!dispatch || dispatch.target !== 'palette_orchestrator') { console.error('FATAL: legacy ExtractPalette should still dispatch palette_orchestrator'); process.exit(1); }
+        if (dispatch.jobs[0].params.solve_score_threads !== 8 || dispatch.jobs[0].params.solve_score_hist_input_mode !== 'sectioned' || dispatch.jobs[0].params.solve_score_hist_retries !== 5 || dispatch.jobs[0].params.solve_score_merge_workers !== 24 || dispatch.jobs[0].params.palette_chunk_threads !== 6 || dispatch.jobs[0].params.palette_chunk_input_mode !== 'sectioned' || dispatch.jobs[0].params.palette_chunk_retries !== 4 || dispatch.jobs[0].params.palette_chunk_workers !== 32) {
+            console.error('FATAL: legacy ExtractPalette should dispatch execution knobs, got ' + JSON.stringify(dispatch.jobs[0].params));
+            process.exit(1);
+        }
+        console.log('  ExtractPalette popup falls back to palette orchestrator when step_scores.raw is missing: OK');
     }
 
     {

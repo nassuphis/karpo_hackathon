@@ -163,6 +163,136 @@ class TestRecolorFromRaw(unittest.TestCase):
     @patch("raw_score_render.subprocess.run")
     @patch("color_recolor_raw.load_color_artifact_head")
     @patch("color_recolor_raw.s3")
+    def test_recolor_from_raw_preserves_step_scores_sidecar_metadata(
+        self, mock_s3, mock_load_head, mock_raw_render_run, mock_histogram, mock_report
+    ):
+        import handler_recolor_from_raw as mod
+
+        source_meta = {
+            "family": "color",
+            "artifact_id": "color_src",
+            "created_at": "2026-04-03T09:00:00Z",
+            "format": "jpeg",
+            "quality": "91",
+            "width": "2",
+            "height": "2",
+            "pix": "2",
+            "color_mode": "solve_score",
+            "palette": "inferno",
+            "raw_key": "renders/j/color/color_src/greyscale.raw",
+            "raw_meta_key": "renders/j/color/color_src/greyscale.meta.json",
+            "step_scores_key": "renders/j/color/color_src/step_scores.raw",
+            "step_count": "4",
+            "step_scores_grid_n": "2",
+            "background_color": "000000",
+        }
+        puts = {}
+        copies = []
+
+        mock_load_head.return_value = {
+            "artifact_id": "color_src",
+            "image_key": "renders/j/color/color_src/image.jpeg",
+            "metadata": source_meta,
+        }
+
+        def get_object(**kwargs):
+            key = kwargs["Key"]
+            if key == "renders/j/color/color_src/greyscale.meta.json":
+                return {"Body": MagicMock(read=lambda: json.dumps({
+                    "version": 3,
+                    "job_id": "j",
+                    "run_id": "run_src",
+                    "artifact_family": "color",
+                    "artifact_id": "color_src",
+                    "width": 2,
+                    "height": 2,
+                    "encoding": {
+                        "type": "u8_clipped_score_v1",
+                        "background_byte": 0,
+                        "foreground_min": 1,
+                        "foreground_max": 255,
+                        "row_major": True,
+                    },
+                    "chain_fingerprint": "fp_src",
+                    "score_chain": [["proximity", "0.1"]],
+                    "score_program": "m0",
+                    "clip_slots": [{"slot": 0, "metric": "proximity", "source": "slv", "clip_lo": 0.1, "clip_hi": 0.9}],
+                    "background_color": [0, 0, 0],
+                    "plan_params_digest": "sha256:plan_src",
+                    "render_execution": {"color_pipeline": "fused", "raster_engine": "mt"},
+                    "keys": {
+                        "raw_key": "renders/j/color/color_src/greyscale.raw",
+                        "image_key": "renders/j/color/color_src/image.jpeg",
+                        "preview_key": "renders/j/color/color_src/preview.png",
+                        "meta_key": "renders/j/color/color_src/meta.json",
+                    },
+                    "created_at": "2026-04-03T09:00:00Z",
+                    "histogram": [1, 1, 1, 1] + [0] * 252,
+                    "step_scores_key": "renders/j/color/color_src/step_scores.raw",
+                    "step_count": 4,
+                    "step_scores_grid_n": 2,
+                }).encode())}
+            if key == "renders/j/color/color_src/greyscale.raw":
+                return {"Body": MagicMock(iter_chunks=lambda chunk_size=None: [bytes([0, 1, 128, 255])])}
+            raise AssertionError(f"unexpected get_object key: {key}")
+
+        def put_object(Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None):
+            puts[Key] = {
+                "body": Body if isinstance(Body, (bytes, bytearray)) else Body.read(),
+                "content_type": ContentType,
+                "metadata": Metadata,
+            }
+
+        def copy_object(Bucket=None, CopySource=None, Key=None):
+            copies.append({"Bucket": Bucket, "CopySource": CopySource, "Key": Key})
+
+        mock_s3.get_object.side_effect = get_object
+        mock_s3.put_object.side_effect = put_object
+        mock_s3.copy_object.side_effect = copy_object
+        mock_histogram.side_effect = AssertionError("histogram scan should be skipped when sidecar carries histogram")
+
+        def fake_run(cmd, capture_output=False, text=False, timeout=None, env=None):
+            out_path = cmd[2]
+            preview_path = next(arg.split("=", 1)[1] for arg in cmd if arg.startswith("--preview="))
+            with open(out_path, "wb") as fh:
+                fh.write(b"jpeg")
+            with open(preview_path, "wb") as fh:
+                fh.write(b"png")
+            return MagicMock(returncode=0, stdout=json.dumps({"file_size": 4, "preview_file_size": 3}), stderr="")
+
+        mock_raw_render_run.side_effect = fake_run
+
+        with tempfile.TemporaryDirectory(), patch("color_recolor_raw.S3_USER_METADATA_LIMIT_BYTES", 4096), patch("color_recolor_raw._utc_now_iso", return_value="2026-04-03T10:00:00Z"):
+            result = mod.handler(_event(), None)
+
+        body = json.loads(result["body"])
+        self.assertEqual(body["artifact_id"], "color_new")
+        self.assertEqual(
+            copies,
+            [
+                {
+                    "Bucket": "polypaint",
+                    "CopySource": {"Bucket": "polypaint", "Key": "renders/j/color/color_src/greyscale.raw"},
+                    "Key": "renders/j/color/color_new/greyscale.raw",
+                },
+                {
+                    "Bucket": "polypaint",
+                    "CopySource": {"Bucket": "polypaint", "Key": "renders/j/color/color_src/step_scores.raw"},
+                    "Key": "renders/j/color/color_new/step_scores.raw",
+                },
+            ],
+        )
+        raw_sidecar = json.loads(puts["renders/j/color/color_new/greyscale.meta.json"]["body"].decode())
+        self.assertEqual(raw_sidecar["version"], 3)
+        self.assertEqual(raw_sidecar["step_scores_key"], "renders/j/color/color_new/step_scores.raw")
+        self.assertEqual(raw_sidecar["step_count"], 4)
+        self.assertEqual(raw_sidecar["step_scores_grid_n"], 2)
+
+    @patch("color_recolor_raw.report_status")
+    @patch("color_recolor_raw.histogram_from_raw_path")
+    @patch("raw_score_render.subprocess.run")
+    @patch("color_recolor_raw.load_color_artifact_head")
+    @patch("color_recolor_raw.s3")
     def test_recolor_from_raw_regenerates_associated_palette_when_source_has_one(
         self, mock_s3, mock_load_head, mock_raw_render_run, mock_histogram, mock_report
     ):

@@ -142,6 +142,8 @@ typedef struct {
     ByteVec *pbxByteVecs;
     int *paletteTileW;
     ByteVec *palettePbxByteVecs;
+    unsigned char *stepScores;
+    long stepScoreCount;
     unsigned char rbPalR[MAXDEG];
     unsigned char rbPalG[MAXDEG];
     unsigned char rbPalB[MAXDEG];
@@ -414,6 +416,7 @@ static void free_worker_storage(WorkerArgs *args, int nWorkers, int nTiles) {
         free(args[i].pbxVecs);
         free(args[i].pbxByteVecs);
         free(args[i].palettePbxByteVecs);
+        free(args[i].stepScores);
     }
 }
 
@@ -644,6 +647,14 @@ static void *worker_main(void *arg_) {
                 }
             }
         }
+        if (arg->stepScores && arg->colorMode == COLOR_SOLVE_SCORE) {
+            long localIdx = p - arg->start;
+            if (localIdx < 0 || localIdx >= arg->stepScoreCount) {
+                worker_fail(arg, "step score local index out of range");
+                goto cleanup;
+            }
+            arg->stepScores[localIdx] = solveBin;
+        }
 
         for (int r = 0; r < arg->degree; r++) {
             double re = step[r * 2];
@@ -734,6 +745,7 @@ int main(int argc, char **argv) {
                 "[--score_coeff_manifest=file.json] [--score_params_manifest=file.json] "
                 "[--solve_bins_file=file.bin] [--pixel_bin_prefix=/tmp/pixbin] "
                 "[--palette_bin_prefix=/tmp/palette_pixbin] [--palette_grid_n=N] [--palette_step_start=STEP] "
+                "[--step_scores_output=/tmp/step_scores.bin] "
                 "[--skip_pix_output=0|1] [--root_xforms=file.json]\n");
         return 1;
     }
@@ -763,6 +775,7 @@ int main(int argc, char **argv) {
     const char *solveBinsPath = getArgStr(argc, argv, "--solve_bins_file", NULL);
     const char *pixelBinPrefix = getArgStr(argc, argv, "--pixel_bin_prefix", NULL);
     const char *paletteBinPrefix = getArgStr(argc, argv, "--palette_bin_prefix", NULL);
+    const char *stepScoresOutputPath = getArgStr(argc, argv, "--step_scores_output", NULL);
     int skipPixOutput = getArgInt(argc, argv, "--skip_pix_output", 0);
     int solveScoreRawBytes = getArgInt(argc, argv, "--solve_score_raw_bytes", 0);
     int paletteGridN = getArgInt(argc, argv, "--palette_grid_n", 0);
@@ -1233,9 +1246,20 @@ int main(int argc, char **argv) {
     int emitPixelBins = pixelBinPrefix &&
         (colorMode == COLOR_SOLVE_SCORE || colorMode == COLOR_SAVED_PALETTE);
     int emitPaletteBins = paletteBinPrefix && *paletteBinPrefix;
+    int emitStepScores = stepScoresOutputPath && *stepScoresOutputPath;
     if (skipPixOutput && !emitPixelBins) {
         fprintf(stderr, "--skip_pix_output requires --pixel_bin_prefix in solve_score/saved_palette mode\n");
         return 1;
+    }
+    if (emitStepScores) {
+        if (colorMode != COLOR_SOLVE_SCORE) {
+            fprintf(stderr, "--step_scores_output currently requires --color=solve_score\n");
+            return 1;
+        }
+        if (!solveScoreRawBytes) {
+            fprintf(stderr, "--step_scores_output requires --solve_score_raw_bytes=1\n");
+            return 1;
+        }
     }
     if (emitPaletteBins) {
         if (colorMode != COLOR_SOLVE_SCORE) {
@@ -1421,6 +1445,8 @@ int main(int argc, char **argv) {
         args[i].palettePbxByteVecs = emitPaletteBins
             ? calloc((size_t)(paletteNTileCols * paletteNTileRows), sizeof(ByteVec))
             : NULL;
+        args[i].stepScores = emitStepScores ? calloc((size_t)(width > 0 ? width : 1), sizeof(unsigned char)) : NULL;
+        args[i].stepScoreCount = width;
         memcpy(args[i].rbPalR, rbPalR, sizeof(rbPalR));
         memcpy(args[i].rbPalG, rbPalG, sizeof(rbPalG));
         memcpy(args[i].rbPalB, rbPalB, sizeof(rbPalB));
@@ -1430,7 +1456,8 @@ int main(int argc, char **argv) {
         if ((!skipPixOutput && !args[i].pixVecs) ||
             (emitPixelBins && !solveScoreRawBytes && !args[i].pbxVecs) ||
             (emitPixelBins && solveScoreRawBytes && !args[i].pbxByteVecs) ||
-            (emitPaletteBins && !args[i].palettePbxByteVecs)) {
+            (emitPaletteBins && !args[i].palettePbxByteVecs) ||
+            (emitStepScores && !args[i].stepScores)) {
             fprintf(stderr, "Out of memory for worker vectors\n");
             goto cleanup;
         }
@@ -1568,6 +1595,19 @@ int main(int argc, char **argv) {
             }
             fclose(fb);
         }
+    }
+    if (emitStepScores) {
+        FILE *fs = fopen(stepScoresOutputPath, "wb");
+        if (!fs) {
+            fprintf(stderr, "Cannot create %s\n", stepScoresOutputPath);
+            goto cleanup;
+        }
+        for (int i = 0; i < threads; i++) {
+            if (args[i].stepScoreCount > 0) {
+                fwrite(args[i].stepScores, 1, (size_t)args[i].stepScoreCount, fs);
+            }
+        }
+        fclose(fs);
     }
 
     if (rootsDeduped > 0) {

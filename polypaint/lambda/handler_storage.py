@@ -579,6 +579,15 @@ def _parse_float(value):
         return None
 
 
+def _parse_int(value):
+    if value in ("", None):
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
 def _parse_bool(value, default=False):
     if value in ("", None):
         return default
@@ -707,6 +716,9 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         entry["pixel_bins_layout"] = meta.get("pixel_bins_layout", "")
         entry["raw_key"] = meta.get("raw_key", "")
         entry["raw_meta_key"] = meta.get("raw_meta_key", "")
+        entry["step_scores_key"] = meta.get("step_scores_key", "")
+        entry["step_count"] = _parse_int(meta.get("step_count"))
+        entry["step_scores_grid_n"] = _parse_int(meta.get("step_scores_grid_n"))
     elif family in ("bilevel", "coeffs"):
         entry["derived_from_artifact_id"] = meta.get("derived_from_artifact_id", "")
         entry["derived_from_image_key"] = meta.get("derived_from_image_key", "")

@@ -364,10 +364,13 @@ class TestRasterMT(unittest.TestCase):
             self.assertIn("--palette_bin_prefix=/tmp/palette_pixbin", cmd)
             self.assertIn("--palette_grid_n=100", cmd)
             self.assertIn("--palette_step_start=0", cmd)
+            self.assertIn("--step_scores_output=/tmp/step_scores.bin", cmd)
             with open("/tmp/pixbin.frag", "wb") as fh:
                 fh.write(_encode_fragment_pairs([(0, 33)]))
             with open("/tmp/palette_pixbin.frag", "wb") as fh:
                 fh.write(_encode_fragment_pairs([(1, 44)]))
+            with open("/tmp/step_scores.bin", "wb") as fh:
+                fh.write(bytes([5, 7, 11, 13]))
             return MagicMock(
                 returncode=0,
                 stdout=json.dumps({
@@ -399,8 +402,10 @@ class TestRasterMT(unittest.TestCase):
         self.assertEqual(body["palette_pixel_bin_tiles_uploaded"], 1)
         self.assertEqual(body["pixel_bin_bytes_uploaded"], 5)
         self.assertEqual(body["palette_pixel_bin_bytes_uploaded"], 5)
+        self.assertEqual(body["step_scores_bytes_uploaded"], 4)
         self.assertEqual(uploads["renders/j/color/color_1/fragments/section_0000.frag"], _encode_fragment_pairs([(0, 33)]))
         self.assertEqual(uploads["renders/j/palettes/pal_1/fragments/section_0000.frag"], _encode_fragment_pairs([(1, 44)]))
+        self.assertEqual(uploads["renders/j/color/color_1/fragments/section_0000_step_scores.raw"], bytes([5, 7, 11, 13]))
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
     @patch("handler_raster_mt.report_status")

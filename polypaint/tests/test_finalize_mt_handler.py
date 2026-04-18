@@ -146,6 +146,12 @@ class TestFinalizeMTHandler(unittest.TestCase):
                 "metadata": kwargs.get("Metadata"),
             }
 
+        def get_object(Bucket=None, Key=None):
+            if Key == f"{TEST_FRAGMENT_PREFIX}0000_step_scores.raw":
+                return {"Body": _Body(bytes([9, 7, 5, 3]))}
+            raise AssertionError(f"unexpected get_object key: {Key}")
+
+        fake_s3.get_object.side_effect = get_object
         fake_s3.generate_presigned_url.side_effect = (
             lambda _op, Params, ExpiresIn=900: f"https://example.invalid/{Params['Key']}"
         )
@@ -220,6 +226,94 @@ class TestFinalizeMTHandler(unittest.TestCase):
     @patch("raw_score_render.subprocess.run")
     @patch("handler_finalize_mt.subprocess.run")
     @patch("handler_finalize_mt._finalize_s3_client")
+    def test_finalize_mt_writes_v3_step_score_sidecar_when_grid_metadata_is_present(
+        self,
+        mock_client_factory,
+        mock_run,
+        mock_raw_render_run,
+        mock_report,
+        mock_overlay,
+    ):
+        import handler_finalize_mt as mod
+
+        uploads = {}
+        fake_s3 = MagicMock()
+        step_scores_key = f"{TEST_FRAGMENT_PREFIX}0000_step_scores.raw"
+
+        def get_object(Bucket=None, Key=None):
+            if Key == step_scores_key:
+                return {"Body": _Body(bytes([9, 7, 5, 3]))}
+            raise AssertionError(f"unexpected get_object key: {Key}")
+
+        def put_object(**kwargs):
+            body = kwargs["Body"]
+            data = body.read() if hasattr(body, "read") else body
+            uploads[kwargs["Key"]] = {
+                "data": data,
+                "content_type": kwargs.get("ContentType"),
+                "metadata": kwargs.get("Metadata"),
+            }
+
+        fake_s3.get_object.side_effect = get_object
+        fake_s3.generate_presigned_url.side_effect = (
+            lambda _op, Params, ExpiresIn=900: f"https://example.invalid/{Params['Key']}"
+        )
+        fake_s3.put_object.side_effect = put_object
+        mock_client_factory.return_value = fake_s3
+
+        def run_side_effect(cmd, capture_output=False, text=False, timeout=None, env=None):
+            exe = os.path.basename(cmd[0])
+            if exe == "assemble_greyscale":
+                out_path = next(arg for arg in cmd if arg.startswith("--output=")).split("=", 1)[1]
+                hist_path = next(arg for arg in cmd if arg.startswith("--hist-output=")).split("=", 1)[1]
+                with open(out_path, "wb") as fh:
+                    fh.write(bytes([0, 1, 2, 3]))
+                with open(hist_path, "w", encoding="utf-8") as fh:
+                    json.dump({"version": 1, "background_pixels": 1, "nonzero_pixels": 3, "histogram": [1, 1, 1, 1] + [0] * 252}, fh)
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if exe == "score_raw_render":
+                out_path = cmd[2]
+                preview_path = next(arg.split("=", 1)[1] for arg in cmd if arg.startswith("--preview="))
+                with open(out_path, "wb") as fh:
+                    fh.write(b"JPEGDATA")
+                with open(preview_path, "wb") as fh:
+                    fh.write(b"PREVIEWPNG")
+                return MagicMock(returncode=0, stdout=json.dumps({"file_size": 8, "preview_file_size": 10}), stderr="")
+            raise AssertionError(f"unexpected executable {exe}")
+
+        mock_run.side_effect = run_side_effect
+        mock_raw_render_run.side_effect = run_side_effect
+
+        result = mod.handler(_event(associated_palette_grid_n=2, associated_palette_times=1), None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(body["step_scores_key"], f"renders/{TEST_JOB_ID}/color/{TEST_ARTIFACT_ID}/step_scores.raw")
+        self.assertEqual(body["step_count"], 4)
+        self.assertEqual(body["step_scores_grid_n"], 2)
+        self.assertEqual(
+            uploads[f"renders/{TEST_JOB_ID}/color/{TEST_ARTIFACT_ID}/step_scores.raw"]["data"],
+            bytes([9, 7, 5, 3]),
+        )
+        raw_meta = json.loads(uploads[TEST_RAW_META_KEY]["data"].decode("utf-8"))
+        self.assertEqual(raw_meta["version"], 3)
+        self.assertEqual(raw_meta["step_scores_key"], f"renders/{TEST_JOB_ID}/color/{TEST_ARTIFACT_ID}/step_scores.raw")
+        self.assertEqual(raw_meta["step_count"], 4)
+        self.assertEqual(raw_meta["step_scores_grid_n"], 2)
+        overlay_meta = mock_overlay.call_args.args[4]
+        self.assertEqual(overlay_meta["step_scores_key"], f"renders/{TEST_JOB_ID}/color/{TEST_ARTIFACT_ID}/step_scores.raw")
+        self.assertEqual(overlay_meta["step_count"], "4")
+        self.assertEqual(overlay_meta["step_scores_grid_n"], "2")
+        statuses = [call.args[2] for call in mock_report.call_args_list]
+        self.assertEqual(
+            statuses,
+            ["started", "assembled_score_tiles", "wrote_greyscale_raw", "wrote_step_scores", "rendered_rgb_tiles", "encoded", "done"],
+        )
+
+    @patch("handler_finalize_mt.write_color_artifact_meta_overlay")
+    @patch("handler_finalize_mt.report_status")
+    @patch("raw_score_render.subprocess.run")
+    @patch("handler_finalize_mt.subprocess.run")
+    @patch("handler_finalize_mt._finalize_s3_client")
     def test_finalize_mt_writes_inline_associated_palette_outputs(
         self,
         mock_client_factory,
@@ -248,6 +342,12 @@ class TestFinalizeMTHandler(unittest.TestCase):
                 "metadata": kwargs.get("Metadata"),
             }
 
+        def get_object(Bucket=None, Key=None):
+            if Key == f"{TEST_FRAGMENT_PREFIX}0000_step_scores.raw":
+                return {"Body": _Body(bytes([9, 7, 5, 3]))}
+            raise AssertionError(f"unexpected get_object key: {Key}")
+
+        fake_s3.get_object.side_effect = get_object
         fake_s3.generate_presigned_url.side_effect = (
             lambda _op, Params, ExpiresIn=900: f"https://example.invalid/{Params['Key']}"
         )

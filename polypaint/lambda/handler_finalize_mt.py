@@ -99,6 +99,13 @@ def _fragment_key(fragment_prefix, section_idx):
     return f"{prefix}{int(section_idx):04d}.frag"
 
 
+def _step_scores_fragment_key(fragment_prefix, section_idx):
+    prefix = str(fragment_prefix or "").strip()
+    if not prefix:
+        raise RuntimeError("FinalizeMT requires fragment_prefix for fused step scores")
+    return f"{prefix}{int(section_idx):04d}_step_scores.raw"
+
+
 def _write_url_manifest(path, urls):
     with open(path, "w", encoding="utf-8") as fh:
         for url in urls:
@@ -145,6 +152,24 @@ def _assemble_greyscale_raw(*, width, height, raw_path, hist_path, workers, frag
         "background_pixels": int(hist.get("background_pixels") or 0),
         "nonzero_pixels": int(hist.get("nonzero_pixels") or 0),
     }
+
+
+def _concat_step_scores(*, finalize_s3, fragment_prefix, source_item_count, out_path):
+    total_bytes = 0
+    with open(out_path, "wb") as out_fh:
+        for section_idx in range(int(source_item_count)):
+            key = _step_scores_fragment_key(fragment_prefix, section_idx)
+            obj = finalize_s3.get_object(Bucket=BUCKET, Key=key)
+            body = obj["Body"]
+            if hasattr(body, "iter_chunks"):
+                for chunk in body.iter_chunks(chunk_size=1024 * 1024):
+                    total_bytes += len(chunk)
+                    out_fh.write(chunk)
+            else:
+                chunk = body.read()
+                total_bytes += len(chunk)
+                out_fh.write(chunk)
+    return total_bytes
 
 
 def _metadata_size_bytes(meta):
@@ -467,6 +492,7 @@ def handler(event, context):
 
     raw_path = "/tmp/greyscale.raw"
     hist_path = "/tmp/greyscale.hist.json"
+    step_scores_path = "/tmp/greyscale.step_scores.raw"
     eq_lut_path = "/tmp/greyscale.eq.bin"
     url_manifest_path = "/tmp/main_fragments.urls"
     ext = "png" if fmt == "png" else "jpeg"
@@ -495,6 +521,36 @@ def handler(event, context):
     progress["nonzero_pixels"] = hist_meta["nonzero_pixels"]
     progress["background_pixels"] = hist_meta["background_pixels"]
     report_status(job_id, task_id, "wrote_greyscale_raw", result_data=progress)
+
+    step_scores_grid_n = associated_palette_grid_n
+    step_scores_pass_count = associated_palette_times
+    step_scores_key = ""
+    step_scores_count = 0
+    if step_scores_grid_n > 0 and step_scores_pass_count > 0:
+        step_scores_count = int(step_scores_grid_n) * int(step_scores_grid_n) * int(step_scores_pass_count)
+        actual_step_scores_count = _concat_step_scores(
+            finalize_s3=finalize_s3,
+            fragment_prefix=fragment_prefix,
+            source_item_count=source_item_count,
+            out_path=step_scores_path,
+        )
+        if actual_step_scores_count != step_scores_count:
+            raise RuntimeError(
+                "FinalizeMT step score byte count mismatch: "
+                f"expected {step_scores_count}, got {actual_step_scores_count}"
+            )
+        step_scores_key = raw_key.rsplit("/", 1)[0] + "/step_scores.raw"
+        with open(step_scores_path, "rb") as scores_fh:
+            finalize_s3.put_object(
+                Bucket=BUCKET,
+                Key=step_scores_key,
+                Body=scores_fh,
+                ContentType="application/octet-stream",
+            )
+        progress["step_scores_key"] = step_scores_key
+        progress["step_scores_count"] = step_scores_count
+        progress["step_scores_grid_n"] = step_scores_grid_n
+        report_status(job_id, task_id, "wrote_step_scores", result_data=progress)
 
     write_equalization_lut(eq_lut_path, hist_meta["histogram"])
     t_render = time.time()
@@ -535,6 +591,9 @@ def handler(event, context):
         meta_key=meta_key,
         created_at=str(metadata.get("created_at") or _utc_now_iso()),
         histogram=hist_meta["histogram"],
+        step_scores_key=step_scores_key,
+        step_count=step_scores_count,
+        step_scores_grid_n=step_scores_grid_n if step_scores_key else None,
     )
 
     t_upload = time.time()
@@ -576,6 +635,9 @@ def handler(event, context):
     final_metadata["render_execution"] = render_execution
     final_metadata["raw_key"] = raw_key
     final_metadata["raw_meta_key"] = raw_meta_key
+    final_metadata["step_scores_key"] = step_scores_key
+    final_metadata["step_count"] = step_scores_count if step_scores_key else ""
+    final_metadata["step_scores_grid_n"] = step_scores_grid_n if step_scores_key else ""
     final_metadata["repalette_capable"] = False
     final_metadata["pixel_bins_prefix"] = ""
     final_metadata["pixel_bins_empty"] = ""
@@ -631,6 +693,9 @@ def handler(event, context):
         "image_key": image_key,
         "raw_key": raw_key,
         "raw_meta_key": raw_meta_key,
+        "step_scores_key": step_scores_key,
+        "step_count": step_scores_count if step_scores_key else 0,
+        "step_scores_grid_n": step_scores_grid_n if step_scores_key else 0,
         "file_size": int(encode_meta["file_size"]),
         "timings": {
             "assemble_ms": progress["assemble_ms"],

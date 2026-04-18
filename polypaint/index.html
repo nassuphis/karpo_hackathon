@@ -6017,6 +6017,7 @@ async function runExtractPaletteArtifact(config = null) {
     const art = _renderSelectedArtifactEntry();
     const jobId = document.getElementById('render-results-dir').value.trim();
     if (!jobId || !_canExtractPaletteArtifact(art)) return;
+    const lineage = _extractPaletteLineageHint(art);
     if (_activeRenderRun || _activePaletteRun || _loadActivePaletteRun()) {
         log('ExtractPalette: another render or palette run is already in progress', 'err', 'render-log');
         return;
@@ -6083,32 +6084,46 @@ async function runExtractPaletteArtifact(config = null) {
         _extractPalettePopupState.chunkInputMode = chunkInputMode;
         _extractPalettePopupState.chunkRetries = chunkRetries;
         _extractPalettePopupState.chunkWorkers = chunkWorkers;
-        const dispatchMsg = `ExtractPalette-MT: dispatching with hist threads=${solveScoreThreads}, hist input=${histInputMode}, hist retries=${histRetries}, merge workers=${mergeWorkers}, chunk threads=${chunkThreads}, chunk input=${chunkInputMode}, chunk retries=${chunkRetries}, chunk workers=${chunkWorkers}...`;
+        const dispatchMsg = lineage.kind === 'solve_score'
+            ? `ExtractPalette-MT: dispatching with hist threads=${solveScoreThreads}, hist input=${histInputMode}, hist retries=${histRetries}, merge workers=${mergeWorkers}, chunk threads=${chunkThreads}, chunk input=${chunkInputMode}, chunk retries=${chunkRetries}, chunk workers=${chunkWorkers}...`
+            : `ExtractPalette-fused: dispatching ${art.artifact_id} with cached palette lineage...`;
         log(dispatchMsg, '', 'render-log');
         log(dispatchMsg, '', 'palette-log');
 
         const runId = _generateRunId();
         const taskId = 'extract_palette_run_' + runId;
-        const dispResult = await lambdaPost('dispatch', {
-            target: 'palette_orchestrator',
-            jobs: [{
-                job_id: jobId,
-                run_id: runId,
-                task_id: taskId,
-                artifact_id: art.artifact_id,
-                params: {
-                    solve_score_threads: solveScoreThreads,
-                    solve_score_hist_input_mode: histInputMode,
-                    solve_score_hist_retries: histRetries,
-                    solve_score_merge_workers: mergeWorkers,
-                    palette_chunk_threads: chunkThreads,
-                    palette_chunk_input_mode: chunkInputMode,
-                    palette_chunk_retries: chunkRetries,
-                    palette_chunk_workers: chunkWorkers,
-                },
-            }],
-            expected_keys: [],
-        });
+        const dispatchBody = lineage.kind === 'solve_score'
+            ? {
+                target: 'palette_orchestrator',
+                jobs: [{
+                    job_id: jobId,
+                    run_id: runId,
+                    task_id: taskId,
+                    artifact_id: art.artifact_id,
+                    params: {
+                        solve_score_threads: solveScoreThreads,
+                        solve_score_hist_input_mode: histInputMode,
+                        solve_score_hist_retries: histRetries,
+                        solve_score_merge_workers: mergeWorkers,
+                        palette_chunk_threads: chunkThreads,
+                        palette_chunk_input_mode: chunkInputMode,
+                        palette_chunk_retries: chunkRetries,
+                        palette_chunk_workers: chunkWorkers,
+                    },
+                }],
+                expected_keys: [],
+            }
+            : {
+                target: 'extract_palette_fused',
+                jobs: [{
+                    job_id: jobId,
+                    run_id: runId,
+                    task_id: taskId,
+                    artifact_id: art.artifact_id,
+                }],
+                expected_keys: [],
+            };
+        const dispResult = await lambdaPost('dispatch', dispatchBody);
         if ((dispResult.fired || 0) !== 1) throw new Error('ExtractPalette dispatch failed');
 
         const paletteJobEl = document.getElementById('palette-results-dir');
@@ -6143,6 +6158,12 @@ async function runExtractPaletteArtifact(config = null) {
 
 function _extractPaletteLineageHint(art) {
     if (!art || !art.artifact_id) return { kind: 'none', label: 'No Color artifact selected.' };
+    if (art.step_scores_key && Number(art.step_count || 0) > 0 && Number(art.step_scores_grid_n || 0) > 0) {
+        return {
+            kind: 'fused',
+            label: `Artifact ${art.artifact_id} carries cached step_scores.raw metadata; extraction will regenerate or refresh the exact associated palette from the fused raw contract.`,
+        };
+    }
     let current = art;
     const seen = new Set();
     while (current && current.artifact_id && !seen.has(current.artifact_id)) {
@@ -6245,7 +6266,7 @@ function _renderExtractPalettePopup() {
     const artLabel = art && art.artifact_id ? art.artifact_id : '(none)';
     summaryEl.textContent = executionRelevant
         ? `Artifact: ${artLabel} • ${lineage.label} • hist threads=${solveScoreThreads} • hist input=${histInputMode} • hist retries=${histRetries} • merge workers=${mergeWorkers} • chunk threads=${chunkThreads} • chunk input=${chunkInputMode} • chunk retries=${chunkRetries} • chunk workers=${chunkWorkers}`
-        : `Artifact: ${artLabel} • ${lineage.label} • solve-score and chunk execution controls are currently ignored for this lineage.`;
+        : `Artifact: ${artLabel} • ${lineage.label} • solve-score and chunk execution controls are ignored for this fused or attach-only lineage.`;
     if (runBtn) runBtn.disabled = !_canExtractPaletteArtifact(art) || !!_activeRenderRun || !!_activePaletteRun || !!_loadActivePaletteRun();
 }
 

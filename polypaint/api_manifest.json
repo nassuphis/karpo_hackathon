@@ -10,6 +10,7 @@
       "deepzoom_export",
       "deepzoom_from_raw",
       "encode",
+      "extract_palette_fused",
       "finalize",
       "palette_orchestrator",
       "pdf_artifact",

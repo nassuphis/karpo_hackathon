@@ -121,6 +121,34 @@ assertNotIncludes("id=\"palette-solve-score-omega-phase\"", 'palette tab should 
 assertNotIncludes("id=\"palette-solve-score-omega-enabled\"", 'palette tab should not ship hidden legacy omega-enabled input');
 assertNotIncludes("id=\"palette-solve-score-quantile-val\"", 'palette tab should not ship hidden legacy quantile display span');
 assertNotIncludes("id=\"palette-solve-score-omega-val\"", 'palette tab should not ship hidden legacy omega display span');
+assertIncludes("id=\"render-solve-score-program-manage\" onclick=\"openSolveScoreProgramModal('render')\"", 'render tab should expose Solve Scores modal launcher');
+assertIncludes("id=\"palette-solve-score-program-manage\" onclick=\"openSolveScoreProgramModal('palette')\"", 'palette tab should expose Solve Scores modal launcher');
+assertIncludes("id=\"solve-score-modal-overlay\"", 'shared solve-score modal markup missing');
+assertIncludes("id=\"solve-score-modal-name\"", 'solve-score modal name input missing');
+assertIncludes("id=\"solve-score-modal-current\"", 'solve-score modal current-program pane missing');
+assertIncludes("id=\"solve-score-modal-selected\"", 'solve-score modal selected-program pane missing');
+assertIncludes("id=\"solve-score-modal-load\"", 'solve-score modal load button missing');
+assertIncludes("id=\"solve-score-modal-save\"", 'solve-score modal save button missing');
+assertIncludes("id=\"solve-score-modal-delete\"", 'solve-score modal delete button missing');
+assertIncludes("id=\"solve-score-modal-download\"", 'solve-score modal download button missing');
+assertIncludes("id=\"solve-score-modal-upload\"", 'solve-score modal upload button missing');
+assertNotIncludes("id=\"render-solve-score-program-select\"", 'render tab should not keep built-in solve-score preset select');
+assertNotIncludes("id=\"palette-solve-score-program-select\"", 'palette tab should not keep built-in solve-score preset select');
+assertNotIncludes("id=\"render-solve-score-program-load\"", 'render tab should not keep load-preset button');
+assertNotIncludes("id=\"palette-solve-score-program-load\"", 'palette tab should not keep load-preset button');
+assertNotIncludes("id=\"render-solve-score-program-load-file\"", 'render tab should not keep load-json button');
+assertNotIncludes("id=\"palette-solve-score-program-load-file\"", 'palette tab should not keep load-json button');
+assertNotIncludes("id=\"render-solve-score-program-save\"", 'render tab should not keep save-json button');
+assertNotIncludes("id=\"palette-solve-score-program-save\"", 'palette tab should not keep save-json button');
+assertNotIncludes("id=\"render-solve-score-program-file\"", 'render tab should not keep per-tab solve-score upload input');
+assertNotIncludes("id=\"palette-solve-score-program-file\"", 'palette tab should not keep per-tab solve-score upload input');
+assertIncludes("lambdaPost('storage', {}, '/list-solve-score-programs')", 'solve-score modal should list saved programs through storage');
+assertIncludes("lambdaPost('storage', { id }, '/fetch-solve-score-program')", 'solve-score modal should fetch saved programs through storage');
+assertIncludes("lambdaPost('storage', { name: payload.name, chain: payload.chain }, '/save-solve-score-program')", 'solve-score modal should save current program through storage');
+assertIncludes("lambdaPost('storage', { id }, '/delete-solve-score-program')", 'solve-score modal should delete saved programs through storage');
+assertNotIncludes("fetch('solve-score-programs/index.json'", 'frontend should not depend on repo-backed solve-score preset catalog');
+assertNotIncludes("function loadSolveScoreProgramPreset(", 'old solve-score preset loader should be removed');
+assertNotIncludes("function saveSolveScoreProgram(", 'old solve-score download helper should be removed');
 
 console.log('Frontend fused render source checks: OK');
 NODE

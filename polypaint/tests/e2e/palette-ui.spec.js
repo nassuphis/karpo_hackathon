@@ -73,9 +73,37 @@ test.describe('Palette UI', () => {
     await page.evaluate((palettes) => {
       window._mockPalettes = palettes.slice();
       window._paletteDispatches = [];
+      window._solveScorePrograms = {
+        'proximity-q-0-1': {
+          version: 1,
+          id: 'proximity-q-0-1',
+          name: 'Proximity q=0.1%',
+          chain: [['proximity', '0.1']],
+          metric: 'proximity',
+          display: 'proximity(slv,0.1)',
+          program_spec: 'm0',
+          statement_count: 1,
+          saved_at: '2026-04-20T12:00:00Z',
+        },
+      };
       document.getElementById('palette-results-dir').value = 'job_palette';
       window.lambdaPost = async function (name, body, path) {
         if (name === 'storage' && path === '/list-palettes') return { palettes: window._mockPalettes.slice() };
+        if (name === 'storage' && path === '/list-solve-score-programs') {
+          return {
+            programs: Object.values(window._solveScorePrograms).map((program) => ({
+              id: program.id,
+              name: program.name,
+              statement_count: program.statement_count,
+              saved_at: program.saved_at,
+            })),
+            count: 1,
+            order: 'saved_at_desc',
+          };
+        }
+        if (name === 'storage' && path === '/fetch-solve-score-program') {
+          return { program: window._solveScorePrograms[body.id] };
+        }
         if (name === 'dispatch') {
           window._paletteDispatches.push(body);
           return { fired: 1, non_202: [] };
@@ -88,8 +116,12 @@ test.describe('Palette UI', () => {
     }, PALETTES);
 
     await page.click('.tab-btn:text("Palette")');
-    await page.selectOption('#palette-solve-score-program-select', 'proximity-q01');
-    await page.click('#palette-solve-score-program-load');
+    await page.click('#palette-solve-score-program-manage');
+    await expect(page.locator('#solve-score-modal-overlay')).toBeVisible();
+    await page.locator('#solve-score-modal-body .tri-popup-row').filter({ hasText: 'Proximity q=0.1%' }).click();
+    await page.click('#solve-score-modal-load');
+    await page.click('#solve-score-modal-cancel');
+    await expect(page.locator('#solve-score-modal-overlay')).not.toBeVisible();
     await page.locator('#palette-circles-palette-tab [data-palette-popup="builtin"]').click();
     await expect(page.locator('#builtin-popup-overlay')).toBeVisible();
     await page.locator('#builtin-popup-filter').fill('viri');

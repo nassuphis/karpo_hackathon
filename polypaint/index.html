@@ -574,6 +574,80 @@ button {
 .solve-score-program-status.error {
     color: #e94560;
 }
+.solve-score-modal-popup {
+    width: min(1120px, calc(100vw - 24px));
+    max-height: min(92vh, 920px);
+}
+.solve-score-modal-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+    gap: 12px;
+    padding: 12px 14px 14px;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+.solve-score-modal-pane,
+.solve-score-modal-right {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.solve-score-modal-pane-title {
+    font-size: 10px;
+    color: #777;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.solve-score-modal-table-wrap {
+    min-height: 260px;
+    overflow: auto;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+}
+.solve-score-modal-name-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.solve-score-modal-name-row input {
+    width: 100%;
+}
+.solve-score-modal-display {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    font-family: monospace;
+    font-size: 11px;
+    color: #ccc;
+    background: rgba(0,0,0,0.18);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 10px 12px;
+    min-height: 10em;
+    max-height: 20em;
+    overflow: auto;
+}
+.solve-score-modal-selected-empty {
+    color: #777;
+}
+.solve-score-modal-actions {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 0 14px 14px;
+    flex-wrap: wrap;
+}
+.solve-score-modal-actions-left,
+.solve-score-modal-actions-right {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+@media (max-width: 900px) {
+    .solve-score-modal-body {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
 @media (max-width: 760px) {
     .render-panel-grid {
         grid-template-columns: minmax(0, 1fr);
@@ -970,12 +1044,9 @@ button {
                 </div>
                 <div class="color-box" style="grid-column:1 / -1">
                     <div class="color-title">Solve Score Program</div>
-                    <div class="solve-score-program-note">Used when Color mode is Solve score. Presets load from the repo-backed JSON catalog or from a local JSON file.</div>
+                    <div class="solve-score-program-note">Used when Color mode is Solve score. Manage shared saved programs in the Solve Scores popup.</div>
                     <div class="solve-score-program-toolbar">
-                        <select id="render-solve-score-program-select" onfocus="void _ensureSolveScoreProgramCatalogLoaded()">
-                            <option value="">Built-in preset…</option>
-                        </select>
-                        <button type="button" class="btn-secondary btn-inline" id="render-solve-score-program-load" onclick="void loadSolveScoreProgramPreset('render')">Load preset</button>
+                        <button type="button" class="btn-secondary btn-inline" id="render-solve-score-program-manage" onclick="openSolveScoreProgramModal('render')">Solve Scores...</button>
                         <div class="score-chip-add-wrap">
                             <button id="ss-add-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleSolveScorePicker('ss',event)">+ score chip</button>
                             <div id="ss-add-popup" class="score-chip-picker" aria-hidden="true"></div>
@@ -983,9 +1054,6 @@ button {
                                 <option value="">+ add...</option>
                             </select>
                         </div>
-                        <button type="button" class="btn-secondary btn-inline" id="render-solve-score-program-load-file" onclick="triggerSolveScoreProgramImport('render')">Load JSON</button>
-                        <button type="button" class="btn-secondary btn-inline" id="render-solve-score-program-save" onclick="saveSolveScoreProgram('render')">Save JSON</button>
-                        <input id="render-solve-score-program-file" type="file" accept="application/json,.json" style="display:none">
                     </div>
                     <div class="color-row">
                         <div id="ss-chips" class="chip-container solve-score-program-display"></div>
@@ -1055,12 +1123,9 @@ button {
             </div>
             <div class="color-box">
                 <div class="color-title">Solve Score Program</div>
-                <div class="solve-score-program-note">Load a repo-backed solve-score program preset or import/export a JSON program for the Palette tab.</div>
+                <div class="solve-score-program-note">Manage shared saved solve-score programs for the Palette tab.</div>
                 <div class="solve-score-program-toolbar">
-                    <select id="palette-solve-score-program-select" onfocus="void _ensureSolveScoreProgramCatalogLoaded()">
-                        <option value="">Built-in preset…</option>
-                    </select>
-                    <button type="button" class="btn-secondary btn-inline" id="palette-solve-score-program-load" onclick="void loadSolveScoreProgramPreset('palette')">Load preset</button>
+                    <button type="button" class="btn-secondary btn-inline" id="palette-solve-score-program-manage" onclick="openSolveScoreProgramModal('palette')">Solve Scores...</button>
                     <div class="score-chip-add-wrap">
                         <button id="palette-ss-add-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleSolveScorePicker('palette-ss',event)">+ score chip</button>
                         <div id="palette-ss-add-popup" class="score-chip-picker" aria-hidden="true"></div>
@@ -1068,9 +1133,6 @@ button {
                             <option value="">+ add...</option>
                         </select>
                     </div>
-                    <button type="button" class="btn-secondary btn-inline" id="palette-solve-score-program-load-file" onclick="triggerSolveScoreProgramImport('palette')">Load JSON</button>
-                    <button type="button" class="btn-secondary btn-inline" id="palette-solve-score-program-save" onclick="saveSolveScoreProgram('palette')">Save JSON</button>
-                    <input id="palette-solve-score-program-file" type="file" accept="application/json,.json" style="display:none">
                 </div>
                 <div class="color-row">
                     <div id="palette-ss-chips" class="chip-container solve-score-program-display"></div>
@@ -1217,6 +1279,60 @@ button {
                 <tbody id="long-popup-body"></tbody>
             </table>
         </div>
+    </div>
+</div>
+<div id="solve-score-modal-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup solve-score-modal-popup" role="dialog" aria-modal="true" aria-labelledby="solve-score-modal-title">
+        <div class="tri-popup-head">
+            <div id="solve-score-modal-title" class="tri-popup-title">Solve Scores</div>
+            <button id="solve-score-modal-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div id="solve-score-modal-summary" class="autolevel-popup-summary"></div>
+        <div class="solve-score-modal-body">
+            <div class="solve-score-modal-pane">
+                <div class="solve-score-modal-pane-title">Saved Programs</div>
+                <div class="solve-score-modal-table-wrap">
+                    <table class="tri-popup-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Statements</th>
+                                <th>Saved</th>
+                            </tr>
+                        </thead>
+                        <tbody id="solve-score-modal-body"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="solve-score-modal-right">
+                <div class="solve-score-modal-name-row">
+                    <div class="solve-score-modal-pane-title">Program Name</div>
+                    <input id="solve-score-modal-name" type="text" maxlength="120" placeholder="solve-score-program">
+                </div>
+                <div>
+                    <div class="solve-score-modal-pane-title">Current Program</div>
+                    <div id="solve-score-modal-current" class="solve-score-modal-display popup-stable-block large"></div>
+                </div>
+                <div>
+                    <div class="solve-score-modal-pane-title">Selected Saved Program</div>
+                    <div id="solve-score-modal-selected" class="solve-score-modal-display popup-stable-block large"></div>
+                </div>
+            </div>
+        </div>
+        <div id="solve-score-modal-status" class="solve-score-program-status" style="padding:0 14px 8px"></div>
+        <div class="solve-score-modal-actions">
+            <div class="solve-score-modal-actions-left">
+                <button id="solve-score-modal-load" type="button" class="btn-primary" style="padding:6px 12px">Load</button>
+                <button id="solve-score-modal-save" type="button" class="btn-primary" style="padding:6px 12px">Save</button>
+                <button id="solve-score-modal-delete" type="button" class="btn-secondary" style="padding:6px 12px">Delete</button>
+            </div>
+            <div class="solve-score-modal-actions-right">
+                <button id="solve-score-modal-download" type="button" class="btn-secondary" style="padding:6px 12px">Download</button>
+                <button id="solve-score-modal-upload" type="button" class="btn-secondary" style="padding:6px 12px">Upload</button>
+                <button id="solve-score-modal-cancel" type="button" class="btn-secondary" style="padding:6px 12px">Exit</button>
+            </div>
+        </div>
+        <input id="solve-score-modal-upload-file" type="file" accept="application/json,.json" style="display:none">
     </div>
 </div>
 <div id="function-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
@@ -4097,11 +4213,29 @@ function _setSolveScoreChainFromLegacy(prefix, metric, quantilePct = 0.1, omega 
     return _syncSolveScoreLegacyInputs(prefix);
 }
 
-let _solveScoreProgramCatalog = null;
-let _solveScoreProgramCatalogPromise = null;
-let _solveScoreProgramCatalogError = '';
+let _solveScoreModalState = {
+    open: false,
+    prefix: 'render',
+    tableState: 'idle',
+    rows: [],
+    selectedId: '',
+    selectedProgram: null,
+    selectedError: '',
+    selectedLoading: false,
+    actionBusy: false,
+    status: '',
+    statusError: false,
+    nameInput: '',
+    lastSelectedName: '',
+};
+let _solveScoreProgramRememberedNames = {
+    render: '',
+    palette: '',
+};
 
 function _solveScoreProgramDefaultName(prefix) {
+    const remembered = String(_solveScoreProgramRememberedNames[prefix] || '').trim();
+    if (remembered) return remembered;
     try {
         const state = _resolveSolveScoreState(prefix, { requireChain: true });
         const basis = String(state.display || state.metric || 'solve-score-program').trim().toLowerCase();
@@ -4118,14 +4252,6 @@ function _solveScoreProgramStatusId(prefix) {
     return `${prefix}-solve-score-program-status`;
 }
 
-function _solveScoreProgramSelectId(prefix) {
-    return `${prefix}-solve-score-program-select`;
-}
-
-function _solveScoreProgramFileId(prefix) {
-    return `${prefix}-solve-score-program-file`;
-}
-
 function _setSolveScoreProgramStatus(prefix, message, isError = false) {
     const el = document.getElementById(_solveScoreProgramStatusId(prefix));
     if (!el) return;
@@ -4133,68 +4259,21 @@ function _setSolveScoreProgramStatus(prefix, message, isError = false) {
     el.className = `solve-score-program-status${isError ? ' error' : ''}`;
 }
 
-function _normalizeSolveScoreProgramRecord(entry) {
-    if (!entry || typeof entry !== 'object') return null;
-    const id = String(entry.id || '').trim();
-    const name = String(entry.name || '').trim();
-    const path = String(entry.path || '').trim();
-    if (!id || !name || !path) return null;
-    return {
-        id,
-        name,
-        path,
-        description: String(entry.description || '').trim(),
-    };
-}
-
-function _renderSolveScoreProgramSelect(prefix) {
-    const selectEl = document.getElementById(_solveScoreProgramSelectId(prefix));
-    if (!selectEl) return;
-    const current = String(selectEl.value || '');
-    const records = Array.isArray(_solveScoreProgramCatalog) ? _solveScoreProgramCatalog : [];
-    const options = ['<option value="">Built-in preset…</option>'];
-    records.forEach((entry) => {
-        const selected = entry.id === current ? ' selected' : '';
-        options.push(`<option value="${_escapeHtml(entry.id)}"${selected}>${_escapeHtml(entry.name)}</option>`);
-    });
-    selectEl.innerHTML = options.join('');
-}
-
-function _renderSolveScoreProgramSelects() {
-    _renderSolveScoreProgramSelect('render');
-    _renderSolveScoreProgramSelect('palette');
-}
-
-async function _ensureSolveScoreProgramCatalogLoaded(force = false) {
-    if (_solveScoreProgramCatalog && !force) return _solveScoreProgramCatalog;
-    if (_solveScoreProgramCatalogPromise && !force) return _solveScoreProgramCatalogPromise;
-    _solveScoreProgramCatalogPromise = (async () => {
-        const resp = await fetch('solve-score-programs/index.json', { cache: 'no-store' });
-        if (!resp.ok) throw new Error(`preset catalog returned HTTP ${resp.status}`);
-        const raw = await resp.json();
-        const rows = Array.isArray(raw) ? raw : (Array.isArray(raw && raw.programs) ? raw.programs : []);
-        const records = rows.map(_normalizeSolveScoreProgramRecord).filter(Boolean);
-        _solveScoreProgramCatalog = records;
-        _solveScoreProgramCatalogError = '';
-        _renderSolveScoreProgramSelects();
-        return records;
-    })().catch((e) => {
-        _solveScoreProgramCatalog = [];
-        _solveScoreProgramCatalogError = e && e.message ? e.message : String(e);
-        _renderSolveScoreProgramSelects();
-        throw e;
-    }).finally(() => {
-        _solveScoreProgramCatalogPromise = null;
-    });
-    return _solveScoreProgramCatalogPromise;
-}
-
 function _parseSolveScoreProgram(raw) {
     if (!raw || typeof raw !== 'object') throw new Error('program JSON must be an object');
     const chain = Array.isArray(raw.chain) ? raw.chain : null;
     if (!chain || !chain.length) throw new Error('program JSON is missing a non-empty chain');
+    const hasVersion = Object.prototype.hasOwnProperty.call(raw, 'version');
+    const parsedVersion = Number(raw.version);
+    if (hasVersion && !Number.isFinite(parsedVersion)) {
+        throw new Error('program JSON version must be numeric when present');
+    }
+    const version = hasVersion ? parsedVersion : 1;
+    if (version !== 1) {
+        throw new Error(`program JSON version ${version} is not supported`);
+    }
     return {
-        version: Number(raw.version) || 1,
+        version,
         name: String(raw.name || '').trim(),
         description: String(raw.description || '').trim(),
         chain: _serializeSolveScoreChain(chain),
@@ -4215,28 +4294,6 @@ function _applySolveScoreProgram(prefix, rawProgram) {
     return compiled;
 }
 
-async function loadSolveScoreProgramPreset(prefix) {
-    try {
-        const selectEl = document.getElementById(_solveScoreProgramSelectId(prefix));
-        if (!selectEl) throw new Error('preset selector missing');
-        const selectedId = String(selectEl.value || '').trim();
-        const records = await _ensureSolveScoreProgramCatalogLoaded();
-        if (!selectedId) {
-            _setSolveScoreProgramStatus(prefix, records.length ? 'Choose a preset to load.' : (_solveScoreProgramCatalogError || 'No built-in presets found.'), !records.length);
-            return null;
-        }
-        const record = records.find((entry) => entry.id === selectedId);
-        if (!record) throw new Error(`unknown preset ${selectedId}`);
-        const resp = await fetch(record.path, { cache: 'no-store' });
-        if (!resp.ok) throw new Error(`preset ${record.name} returned HTTP ${resp.status}`);
-        const raw = await resp.json();
-        return _applySolveScoreProgram(prefix, raw);
-    } catch (e) {
-        _setSolveScoreProgramStatus(prefix, e && e.message ? e.message : String(e), true);
-        throw e;
-    }
-}
-
 function _readTextFile(file) {
     if (!file) return Promise.reject(new Error('file missing'));
     if (typeof file.text === 'function') return file.text();
@@ -4248,48 +4305,385 @@ function _readTextFile(file) {
     });
 }
 
-function triggerSolveScoreProgramImport(prefix) {
-    const inputEl = document.getElementById(_solveScoreProgramFileId(prefix));
-    if (!inputEl) return;
+function _solveScoreProgramFilename(name) {
+    const slug = String(name || '').trim().toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'solve-score-program';
+    return `${slug}.json`;
+}
+
+function _portableSolveScoreProgramPayload(prefix, nameOverride = '') {
+    const state = _resolveSolveScoreState(prefix, { requireChain: true });
+    const name = String(nameOverride || _solveScoreProgramDefaultName(prefix)).trim() || 'solve-score-program';
+    return {
+        version: 1,
+        name,
+        chain: state.chain,
+        metric: state.metric,
+        display: state.display,
+        program_spec: state.program_spec,
+    };
+}
+
+function _currentSolveScoreProgramSummary(prefix) {
+    try {
+        const payload = _portableSolveScoreProgramPayload(prefix, _solveScoreModalState.nameInput || _solveScoreProgramDefaultName(prefix));
+        return {
+            ...payload,
+            statement_count: Array.isArray(payload.chain) ? payload.chain.length : 0,
+        };
+    } catch (e) {
+        return { error: e && e.message ? e.message : String(e) };
+    }
+}
+
+function _formatSolveScoreProgramBlock(program, options = {}) {
+    const selected = !!options.selected;
+    if (!program) return selected ? 'Select a saved program to inspect before loading.' : 'Current live program is unavailable.';
+    if (program.error) return `Error: ${program.error}`;
+    const lines = [];
+    if (selected) {
+        lines.push(`Name: ${program.name || ''}`);
+        lines.push(`Saved: ${program.saved_at || ''}`);
+    }
+    lines.push(`Metric: ${program.metric || ''}`);
+    lines.push(`Statements: ${Number(program.statement_count || 0)}`);
+    lines.push(`Program spec: ${program.program_spec || ''}`);
+    lines.push('Chain:');
+    lines.push(JSON.stringify(program.chain || [], null, 2));
+    return lines.join('\n');
+}
+
+function _setSolveScoreModalStatus(message, isError = false) {
+    _solveScoreModalState.status = String(message || '');
+    _solveScoreModalState.statusError = !!isError;
+}
+
+function _renderSolveScoreProgramModal() {
+    const overlay = document.getElementById('solve-score-modal-overlay');
+    const summaryEl = document.getElementById('solve-score-modal-summary');
+    const bodyEl = document.getElementById('solve-score-modal-body');
+    const nameEl = document.getElementById('solve-score-modal-name');
+    const currentEl = document.getElementById('solve-score-modal-current');
+    const selectedEl = document.getElementById('solve-score-modal-selected');
+    const statusEl = document.getElementById('solve-score-modal-status');
+    const loadBtn = document.getElementById('solve-score-modal-load');
+    const saveBtn = document.getElementById('solve-score-modal-save');
+    const deleteBtn = document.getElementById('solve-score-modal-delete');
+    const downloadBtn = document.getElementById('solve-score-modal-download');
+    const uploadBtn = document.getElementById('solve-score-modal-upload');
+    const currentProgram = _currentSolveScoreProgramSummary(_solveScoreModalState.prefix);
+    const canLoad = _solveScoreModalState.tableState === 'loaded' &&
+        !!_solveScoreModalState.selectedId &&
+        !_solveScoreModalState.selectedLoading &&
+        !_solveScoreModalState.actionBusy;
+    const canDelete = canLoad;
+    const canSave = !_solveScoreModalState.actionBusy &&
+        !!String(_solveScoreModalState.nameInput || '').trim() &&
+        !currentProgram.error;
+    const canDownload = !_solveScoreModalState.actionBusy && !currentProgram.error;
+    const canUpload = !_solveScoreModalState.actionBusy;
+    if (overlay) {
+        overlay.style.display = _solveScoreModalState.open ? 'flex' : 'none';
+        overlay.setAttribute('aria-hidden', _solveScoreModalState.open ? 'false' : 'true');
+    }
+    if (summaryEl) {
+        summaryEl.textContent = _solveScoreModalState.prefix === 'palette'
+            ? 'Global saved solve-score programs on the left; current Palette-tab live chain on the right.'
+            : 'Global saved solve-score programs on the left; current Render-tab live chain on the right.';
+    }
+    if (nameEl && nameEl.value !== _solveScoreModalState.nameInput) nameEl.value = _solveScoreModalState.nameInput;
+    if (currentEl) currentEl.textContent = _formatSolveScoreProgramBlock(currentProgram);
+    if (selectedEl) {
+        if (_solveScoreModalState.selectedLoading) {
+            selectedEl.textContent = 'Loading selected saved program...';
+            selectedEl.classList.remove('solve-score-modal-selected-empty');
+        } else if (_solveScoreModalState.selectedError) {
+            selectedEl.textContent = `Error: ${_solveScoreModalState.selectedError}`;
+            selectedEl.classList.remove('solve-score-modal-selected-empty');
+        } else if (_solveScoreModalState.selectedProgram) {
+            selectedEl.textContent = _formatSolveScoreProgramBlock(_solveScoreModalState.selectedProgram, { selected: true });
+            selectedEl.classList.remove('solve-score-modal-selected-empty');
+        } else {
+            selectedEl.textContent = 'Select a saved program to inspect before loading.';
+            selectedEl.classList.add('solve-score-modal-selected-empty');
+        }
+    }
+    if (statusEl) {
+        statusEl.textContent = _solveScoreModalState.status;
+        statusEl.className = `solve-score-program-status${_solveScoreModalState.statusError ? ' error' : ''}`;
+    }
+    if (nameEl) nameEl.disabled = _solveScoreModalState.actionBusy;
+    if (loadBtn) loadBtn.disabled = !canLoad;
+    if (saveBtn) saveBtn.disabled = !canSave;
+    if (deleteBtn) deleteBtn.disabled = !canDelete;
+    if (downloadBtn) downloadBtn.disabled = !canDownload;
+    if (uploadBtn) uploadBtn.disabled = !canUpload;
+    if (!bodyEl) return;
+    const rows = Array.isArray(_solveScoreModalState.rows) ? _solveScoreModalState.rows : [];
+    if (_solveScoreModalState.tableState === 'loading') {
+        bodyEl.innerHTML = '<tr class="tri-popup-empty"><td colspan="3">Loading saved programs...</td></tr>';
+        return;
+    }
+    if (_solveScoreModalState.tableState === 'error') {
+        bodyEl.innerHTML = `<tr class="tri-popup-empty"><td colspan="3">${_escapeHtml(_solveScoreModalState.status || 'Failed to load saved programs.')}</td></tr>`;
+        return;
+    }
+    if (!rows.length) {
+        bodyEl.innerHTML = '<tr class="tri-popup-empty"><td colspan="3">No saved solve-score programs found.</td></tr>';
+        return;
+    }
+    bodyEl.innerHTML = rows.map((row) => {
+        const active = row.id === _solveScoreModalState.selectedId ? ' active' : '';
+        return `
+            <tr class="tri-popup-row${active}" data-solve-score-program-id="${_escapeHtml(row.id)}">
+                <td><div class="tri-popup-name"><div>${_escapeHtml(row.name)}</div></div></td>
+                <td>${Number(row.statement_count || 0)}</td>
+                <td>${_escapeHtml(row.saved_at || '')}</td>
+            </tr>
+        `;
+    }).join('');
+    Array.from(bodyEl.querySelectorAll('[data-solve-score-program-id]')).forEach((rowEl) => {
+        rowEl.addEventListener('click', () => {
+            const id = rowEl.getAttribute('data-solve-score-program-id') || '';
+            if (id) void _selectSolveScoreProgram(id);
+        });
+    });
+}
+
+async function _fetchSolveScoreProgramById(id) {
+    const resp = await lambdaPost('storage', { id }, '/fetch-solve-score-program');
+    return resp.program;
+}
+
+async function _refreshSolveScoreProgramRows(options = {}) {
+    const preserveSelection = options.preserveSelection !== false;
+    const keepStatus = !!options.keepStatus;
+    const selectedId = preserveSelection ? _solveScoreModalState.selectedId : '';
+    _solveScoreModalState.tableState = 'loading';
+    if (!keepStatus) _setSolveScoreModalStatus('', false);
+    _renderSolveScoreProgramModal();
+    try {
+        const resp = await lambdaPost('storage', {}, '/list-solve-score-programs');
+        const rows = Array.isArray(resp.programs) ? resp.programs : [];
+        _solveScoreModalState.rows = rows;
+        _solveScoreModalState.tableState = 'loaded';
+        if (!rows.length) {
+            _solveScoreModalState.selectedId = '';
+            _solveScoreModalState.selectedProgram = null;
+            _solveScoreModalState.selectedError = '';
+            _solveScoreModalState.selectedLoading = false;
+        } else if (selectedId && rows.some((row) => row.id === selectedId)) {
+            _solveScoreModalState.selectedId = selectedId;
+            if (_solveScoreModalState.selectedProgram && _solveScoreModalState.selectedProgram.id !== selectedId) {
+                _solveScoreModalState.selectedProgram = null;
+            }
+        } else {
+            _solveScoreModalState.selectedId = '';
+            _solveScoreModalState.selectedProgram = null;
+            _solveScoreModalState.selectedError = '';
+            _solveScoreModalState.selectedLoading = false;
+        }
+    } catch (e) {
+        _solveScoreModalState.rows = [];
+        _solveScoreModalState.tableState = 'error';
+        _solveScoreModalState.selectedId = '';
+        _solveScoreModalState.selectedProgram = null;
+        _solveScoreModalState.selectedError = '';
+        _solveScoreModalState.selectedLoading = false;
+        _setSolveScoreModalStatus(e && e.message ? e.message : String(e), true);
+    }
+    _renderSolveScoreProgramModal();
+}
+
+async function _selectSolveScoreProgram(id) {
+    const row = (_solveScoreModalState.rows || []).find((entry) => entry.id === id);
+    if (!row) return;
+    const currentName = String(_solveScoreModalState.nameInput || '').trim();
+    if (!currentName || currentName === _solveScoreModalState.lastSelectedName) {
+        _solveScoreModalState.nameInput = row.name;
+    }
+    _solveScoreModalState.lastSelectedName = row.name;
+    _solveScoreModalState.selectedId = id;
+    if (_solveScoreModalState.selectedProgram && _solveScoreModalState.selectedProgram.id === id) {
+        _solveScoreModalState.selectedError = '';
+        _solveScoreModalState.selectedLoading = false;
+        _renderSolveScoreProgramModal();
+        return;
+    }
+    _solveScoreModalState.selectedProgram = null;
+    _solveScoreModalState.selectedError = '';
+    _solveScoreModalState.selectedLoading = true;
+    _renderSolveScoreProgramModal();
+    try {
+        const program = await _fetchSolveScoreProgramById(id);
+        if (_solveScoreModalState.selectedId !== id) return;
+        _solveScoreModalState.selectedProgram = program;
+        _solveScoreModalState.selectedError = '';
+        _solveScoreModalState.selectedLoading = false;
+    } catch (e) {
+        if (_solveScoreModalState.selectedId !== id) return;
+        _solveScoreModalState.selectedProgram = null;
+        _solveScoreModalState.selectedError = e && e.message ? e.message : String(e);
+        _solveScoreModalState.selectedLoading = false;
+    }
+    _renderSolveScoreProgramModal();
+}
+
+function openSolveScoreProgramModal(prefix) {
+    _solveScoreModalState.open = true;
+    _solveScoreModalState.prefix = prefix === 'palette' ? 'palette' : 'render';
+    _solveScoreModalState.actionBusy = false;
+    _solveScoreModalState.nameInput = _solveScoreProgramDefaultName(_solveScoreModalState.prefix);
+    _solveScoreModalState.lastSelectedName = '';
+    _setSolveScoreModalStatus('', false);
+    _renderSolveScoreProgramModal();
+    void _refreshSolveScoreProgramRows({ preserveSelection: true });
+    const nameEl = document.getElementById('solve-score-modal-name');
+    if (nameEl && typeof nameEl.focus === 'function') nameEl.focus();
+}
+
+function _closeSolveScoreProgramModal() {
+    _solveScoreModalState.open = false;
+    _renderSolveScoreProgramModal();
+}
+
+async function _loadSelectedSolveScoreProgramFromModal() {
+    if (!_solveScoreModalState.selectedId) return;
+    _solveScoreModalState.actionBusy = true;
+    _setSolveScoreModalStatus('', false);
+    _renderSolveScoreProgramModal();
+    try {
+        let program = _solveScoreModalState.selectedProgram;
+        if (!program || program.id !== _solveScoreModalState.selectedId) {
+            program = await _fetchSolveScoreProgramById(_solveScoreModalState.selectedId);
+            _solveScoreModalState.selectedProgram = program;
+        }
+        _applySolveScoreProgram(_solveScoreModalState.prefix, program);
+        if (program && program.name) {
+            _solveScoreProgramRememberedNames[_solveScoreModalState.prefix] = program.name;
+        }
+        _setSolveScoreModalStatus(program.name ? `Loaded ${program.name}` : 'Loaded solve-score program', false);
+    } catch (e) {
+        _setSolveScoreModalStatus(e && e.message ? e.message : String(e), true);
+    } finally {
+        _solveScoreModalState.actionBusy = false;
+        _renderSolveScoreProgramModal();
+    }
+}
+
+async function _saveCurrentSolveScoreProgramFromModal() {
+    const name = String(_solveScoreModalState.nameInput || '').trim();
+    if (!name) return;
+    let payload;
+    try {
+        payload = _portableSolveScoreProgramPayload(_solveScoreModalState.prefix, name);
+    } catch (e) {
+        _setSolveScoreModalStatus(e && e.message ? e.message : String(e), true);
+        _renderSolveScoreProgramModal();
+        return;
+    }
+    _solveScoreModalState.actionBusy = true;
+    _setSolveScoreModalStatus('', false);
+    _renderSolveScoreProgramModal();
+    try {
+        const resp = await lambdaPost('storage', { name: payload.name, chain: payload.chain }, '/save-solve-score-program');
+        const program = resp && resp.program ? resp.program : null;
+        if (!program) throw new Error('save-solve-score-program returned no program');
+        _solveScoreModalState.selectedId = program.id || '';
+        _solveScoreModalState.selectedProgram = program;
+        _solveScoreModalState.selectedError = '';
+        _solveScoreModalState.selectedLoading = false;
+        _solveScoreModalState.nameInput = program.name || payload.name;
+        _solveScoreModalState.lastSelectedName = program.name || payload.name;
+        _solveScoreProgramRememberedNames[_solveScoreModalState.prefix] = _solveScoreModalState.nameInput;
+        const message = resp.overwritten
+            ? `Saved ${program.name} (overwrote existing entry)`
+            : `Saved ${program.name}`;
+        _setSolveScoreModalStatus(message, false);
+        _setSolveScoreProgramStatus(_solveScoreModalState.prefix, message, false);
+        await _refreshSolveScoreProgramRows({ preserveSelection: true, keepStatus: true });
+    } catch (e) {
+        _setSolveScoreModalStatus(e && e.message ? e.message : String(e), true);
+    } finally {
+        _solveScoreModalState.actionBusy = false;
+        _renderSolveScoreProgramModal();
+    }
+}
+
+async function _deleteSelectedSolveScoreProgramFromModal() {
+    const id = String(_solveScoreModalState.selectedId || '').trim();
+    if (!id) return;
+    if (typeof confirm === 'function' && !confirm(`Delete solve-score program "${id}"?`)) return;
+    _solveScoreModalState.actionBusy = true;
+    _setSolveScoreModalStatus('', false);
+    _renderSolveScoreProgramModal();
+    try {
+        await lambdaPost('storage', { id }, '/delete-solve-score-program');
+        _solveScoreModalState.selectedId = '';
+        _solveScoreModalState.selectedProgram = null;
+        _solveScoreModalState.selectedError = '';
+        _solveScoreModalState.selectedLoading = false;
+        const message = `Deleted ${id}`;
+        _setSolveScoreModalStatus(message, false);
+        _setSolveScoreProgramStatus(_solveScoreModalState.prefix, message, false);
+        await _refreshSolveScoreProgramRows({ preserveSelection: false, keepStatus: true });
+    } catch (e) {
+        _setSolveScoreModalStatus(e && e.message ? e.message : String(e), true);
+    } finally {
+        _solveScoreModalState.actionBusy = false;
+        _renderSolveScoreProgramModal();
+    }
+}
+
+function _downloadCurrentSolveScoreProgramFromModal() {
+    try {
+        const payload = _portableSolveScoreProgramPayload(
+            _solveScoreModalState.prefix,
+            String(_solveScoreModalState.nameInput || '').trim() || _solveScoreProgramDefaultName(_solveScoreModalState.prefix)
+        );
+        const filename = _solveScoreProgramFilename(payload.name);
+        const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: 'application/json' });
+        _downloadBlob(blob, filename);
+        const message = `Downloaded ${filename}`;
+        _setSolveScoreModalStatus(message, false);
+        _setSolveScoreProgramStatus(_solveScoreModalState.prefix, message, false);
+    } catch (e) {
+        _setSolveScoreModalStatus(e && e.message ? e.message : String(e), true);
+    }
+    _renderSolveScoreProgramModal();
+}
+
+function _triggerSolveScoreProgramUploadFromModal() {
+    const inputEl = document.getElementById('solve-score-modal-upload-file');
+    if (!inputEl || _solveScoreModalState.actionBusy) return;
     inputEl.value = '';
     inputEl.click();
 }
 
-async function _importSolveScoreProgramFile(prefix, file) {
+async function _importSolveScoreProgramFileFromModal(file) {
+    _solveScoreModalState.actionBusy = true;
+    _setSolveScoreModalStatus('', false);
+    _renderSolveScoreProgramModal();
     try {
         const text = await _readTextFile(file);
         const raw = JSON.parse(text);
-        return _applySolveScoreProgram(prefix, raw);
+        _applySolveScoreProgram(_solveScoreModalState.prefix, raw);
+        const parsed = _parseSolveScoreProgram(raw);
+        if (parsed.name) {
+            _solveScoreModalState.nameInput = parsed.name;
+            _solveScoreModalState.lastSelectedName = parsed.name;
+            _solveScoreProgramRememberedNames[_solveScoreModalState.prefix] = parsed.name;
+        } else if (!String(_solveScoreModalState.nameInput || '').trim()) {
+            _solveScoreModalState.nameInput = _solveScoreProgramDefaultName(_solveScoreModalState.prefix);
+        }
+        const message = parsed.name ? `Loaded ${parsed.name} from JSON` : 'Loaded solve-score program from JSON';
+        _setSolveScoreModalStatus(message, false);
     } catch (e) {
-        _setSolveScoreProgramStatus(prefix, e && e.message ? e.message : String(e), true);
-        throw e;
-    }
-}
-
-function saveSolveScoreProgram(prefix) {
-    try {
-        const state = _resolveSolveScoreState(prefix, { requireChain: true });
-        const defaultName = _solveScoreProgramDefaultName(prefix);
-        const chosenName = typeof prompt === 'function'
-            ? String(prompt('Save solve-score program as', defaultName) || '').trim()
-            : defaultName;
-        if (!chosenName) return null;
-        const payload = {
-            version: 1,
-            name: chosenName,
-            chain: state.chain,
-            metric: state.metric,
-            display: state.display,
-            program_spec: state.program_spec,
-        };
-        const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: 'application/json' });
-        const filename = `${chosenName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'solve-score-program'}.json`;
-        _downloadBlob(blob, filename);
-        _setSolveScoreProgramStatus(prefix, `Saved ${filename}`);
-        return payload;
-    } catch (e) {
-        _setSolveScoreProgramStatus(prefix, e && e.message ? e.message : String(e), true);
-        throw e;
+        _setSolveScoreModalStatus(e && e.message ? e.message : String(e), true);
+    } finally {
+        _solveScoreModalState.actionBusy = false;
+        _renderSolveScoreProgramModal();
     }
 }
 
@@ -8301,17 +8695,46 @@ function _initColorToBilevelPopup() {
     if (runBtn) runBtn.addEventListener('click', runColorToBilevelSelectedArtifact);
 }
 
-function _initSolveScoreProgramControls() {
-    ['render', 'palette'].forEach((prefix) => {
-        const fileEl = document.getElementById(_solveScoreProgramFileId(prefix));
-        if (!fileEl) return;
-        fileEl.addEventListener('change', async (ev) => {
+function _initSolveScoreProgramModal() {
+    const nameEl = document.getElementById('solve-score-modal-name');
+    const loadBtn = document.getElementById('solve-score-modal-load');
+    const saveBtn = document.getElementById('solve-score-modal-save');
+    const deleteBtn = document.getElementById('solve-score-modal-delete');
+    const downloadBtn = document.getElementById('solve-score-modal-download');
+    const uploadBtn = document.getElementById('solve-score-modal-upload');
+    const uploadFileEl = document.getElementById('solve-score-modal-upload-file');
+    _bindPopupShell({
+        overlayId: 'solve-score-modal-overlay',
+        closeId: 'solve-score-modal-close',
+        cancelId: 'solve-score-modal-cancel',
+        isOpen: () => !!_solveScoreModalState.open,
+        onClose: _closeSolveScoreProgramModal,
+        onEnter: () => {
+            if (!_solveScoreModalState.open || _solveScoreModalState.actionBusy) return;
+            if (_solveScoreModalState.selectedId && !_solveScoreModalState.selectedLoading) {
+                void _loadSelectedSolveScoreProgramFromModal();
+            }
+        },
+    });
+    if (nameEl) {
+        nameEl.addEventListener('input', (ev) => {
+            _solveScoreModalState.nameInput = String(ev.target && ev.target.value || '');
+            _solveScoreProgramRememberedNames[_solveScoreModalState.prefix] = _solveScoreModalState.nameInput;
+            _renderSolveScoreProgramModal();
+        });
+    }
+    if (loadBtn) loadBtn.addEventListener('click', () => { void _loadSelectedSolveScoreProgramFromModal(); });
+    if (saveBtn) saveBtn.addEventListener('click', () => { void _saveCurrentSolveScoreProgramFromModal(); });
+    if (deleteBtn) deleteBtn.addEventListener('click', () => { void _deleteSelectedSolveScoreProgramFromModal(); });
+    if (downloadBtn) downloadBtn.addEventListener('click', _downloadCurrentSolveScoreProgramFromModal);
+    if (uploadBtn) uploadBtn.addEventListener('click', _triggerSolveScoreProgramUploadFromModal);
+    if (uploadFileEl) {
+        uploadFileEl.addEventListener('change', async (ev) => {
             const file = ev.target && ev.target.files && ev.target.files[0];
             if (!file) return;
-            await _importSolveScoreProgramFile(prefix, file);
+            await _importSolveScoreProgramFileFromModal(file);
         });
-    });
-    void _ensureSolveScoreProgramCatalogLoaded().catch(() => {});
+    }
 }
 
 function buildPaletteCircles(containerId, mode, getCurrentPalette) {
@@ -8337,7 +8760,7 @@ _initRenderMtPopup();
 _initComputeMtPopup();
 _initExtractPalettePopup();
 _initPdfColorSpreadPopup();
-_initSolveScoreProgramControls();
+_initSolveScoreProgramModal();
 _updateSolveScoreButtons();  // initial disabled state
 _clearPaletteCanvas('No palette selected');
 

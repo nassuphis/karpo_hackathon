@@ -121,6 +121,98 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('text=Color render is fused-only now. Solve score is the only supported mode.')).toBeVisible();
   });
 
+  test('solve-score modal lists and loads saved programs for the render tab', async ({ page }) => {
+    await page.evaluate(() => {
+      window._solveScorePrograms = {
+        'proximity-q-0-1': {
+          version: 1,
+          id: 'proximity-q-0-1',
+          name: 'Proximity q=0.1%',
+          chain: [['proximity', '0.1']],
+          metric: 'proximity',
+          display: 'proximity(slv,0.1)',
+          program_spec: 'm0',
+          statement_count: 1,
+          saved_at: '2026-04-20T12:00:00Z',
+        },
+      };
+      window.lambdaPost = async function(name, body, path) {
+        if (name === 'storage' && path === '/list-solve-score-programs') {
+          return {
+            programs: Object.values(window._solveScorePrograms).map((program) => ({
+              id: program.id,
+              name: program.name,
+              statement_count: program.statement_count,
+              saved_at: program.saved_at,
+            })),
+            count: 1,
+            order: 'saved_at_desc',
+          };
+        }
+        if (name === 'storage' && path === '/fetch-solve-score-program') {
+          return { program: window._solveScorePrograms[body.id] };
+        }
+        throw new Error(`unexpected ${name} ${path || ''}`);
+      };
+    });
+
+    await page.click('.tab-btn:text("Render")');
+    await page.click('#render-solve-score-program-manage');
+    await expect(page.locator('#solve-score-modal-overlay')).toBeVisible();
+    await expect(page.locator('#solve-score-modal-body .tri-popup-row')).toHaveCount(1);
+    await page.locator('#solve-score-modal-body .tri-popup-row').first().click();
+    await expect(page.locator('#solve-score-modal-selected')).toContainText('Proximity q=0.1%');
+    await page.click('#solve-score-modal-load');
+    await expect(page.locator('#render-solve-score-program-status')).toContainText('Loaded Proximity q=0.1%');
+    const chain = await page.evaluate(() => _serializeSolveScoreChain(_renderScoreChain));
+    expect(chain).toEqual([['proximity', '0.1']]);
+  });
+
+  test('failed modal load preserves the current live solve-score chain', async ({ page }) => {
+    await page.evaluate(() => {
+      window._solveScorePrograms = {
+        'broken-program': {
+          version: 1,
+          id: 'broken-program',
+          name: 'Broken Program',
+          chain: [['weighted_sum', '1', '2']],
+          metric: 'proximity',
+          display: 'broken',
+          program_spec: 'broken',
+          statement_count: 1,
+          saved_at: '2026-04-20T12:00:00Z',
+        },
+      };
+      window.lambdaPost = async function(name, body, path) {
+        if (name === 'storage' && path === '/list-solve-score-programs') {
+          return {
+            programs: Object.values(window._solveScorePrograms).map((program) => ({
+              id: program.id,
+              name: program.name,
+              statement_count: program.statement_count,
+              saved_at: program.saved_at,
+            })),
+            count: 1,
+            order: 'saved_at_desc',
+          };
+        }
+        if (name === 'storage' && path === '/fetch-solve-score-program') {
+          return { program: window._solveScorePrograms[body.id] };
+        }
+        throw new Error(`unexpected ${name} ${path || ''}`);
+      };
+    });
+
+    await page.click('.tab-btn:text("Render")');
+    const before = await page.evaluate(() => JSON.stringify(_serializeSolveScoreChain(_renderScoreChain)));
+    await page.click('#render-solve-score-program-manage');
+    await page.locator('#solve-score-modal-body .tri-popup-row').first().click();
+    await page.click('#solve-score-modal-load');
+    await expect(page.locator('#solve-score-modal-status')).toContainText('weighted_sum requires 2 inputs');
+    const after = await page.evaluate(() => JSON.stringify(_serializeSolveScoreChain(_renderScoreChain)));
+    expect(after).toBe(before);
+  });
+
   test('render rows collapse built-ins into popup selectors', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     const rootCircles = page.locator('#palette-circles-root-proximity .pal-circle');

@@ -18,6 +18,7 @@ Routes:
   POST /presign        — generate a presigned URL for an S3 key
 """
 import json
+import re
 import time
 
 import boto3
@@ -35,14 +36,28 @@ from logical_sections import (
     summarize_chunk_items,
 )
 from shared import BUCKET, JOBS_TABLE, PRESIGN_EXPIRY, parse_body, ok_response, _get_ddb
+from solve_score_chain import compile_solve_score_chain_or_legacy, serialize_solve_score_chain
 
 s3 = boto3.client("s3")
 FAVORITES_KEY = "polypaint/favorites/color_artifacts.json"
 FAVORITES_DDB_JOB_ID = "favorites#color"
 FAVORITES_DDB_META_TASK_ID = "__meta__"
 FAVORITES_DDB_TASK_PREFIX = "favorite#"
+SOLVE_SCORE_PROGRAMS_PREFIX = "polypaint/solve-score-programs/"
+SOLVE_SCORE_PROGRAM_VERSION = 1
+SOLVE_SCORE_PROGRAM_META_NAME = "solve_score_name"
+SOLVE_SCORE_PROGRAM_META_STATEMENT_COUNT = "solve_score_statement_count"
+SOLVE_SCORE_PROGRAM_META_SAVED_AT = "solve_score_saved_at"
+MAX_SOLVE_SCORE_PROGRAM_NAME_LEN = 120
+MAX_SOLVE_SCORE_PROGRAM_STATEMENTS = 256
+MAX_SOLVE_SCORE_PROGRAM_CHAIN_BYTES = 16 * 1024
+MAX_SOLVE_SCORE_PROGRAM_TOKEN_LEN = 128
 DEFAULT_RESULTS_LIST_WORKERS = 32
 MAX_RESULTS_LIST_WORKERS = 64
+
+
+class _SolveScoreProgramNotFound(RuntimeError):
+    pass
 
 
 def _validate_results_list_workers(value):
@@ -61,6 +76,161 @@ def _validate_results_list_workers(value):
 
 def _results_list_pool_size(workers):
     return max(16, int(workers) * 2)
+
+
+def _error_response(status_code, message):
+    return {
+        "statusCode": int(status_code),
+        "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
+        "body": json.dumps({"error": str(message)[:1000]}),
+    }
+
+
+def _handle_storage_route(fn, event):
+    try:
+        return fn(event)
+    except _SolveScoreProgramNotFound as exc:
+        return _error_response(404, exc)
+    except (ValueError, KeyError, TypeError, RuntimeError, json.JSONDecodeError) as exc:
+        return _error_response(400, exc)
+
+
+def _utc_now_iso():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _slugify_solve_score_program_id(name):
+    text = str(name or "").strip().lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+    slug = slug[:64].strip("-")
+    return slug or "solve-score-program"
+
+
+def _solve_score_program_key(program_id):
+    return f"{SOLVE_SCORE_PROGRAMS_PREFIX}{program_id}.json"
+
+
+def _validate_solve_score_program_name(name):
+    text = str(name or "").strip()
+    if not text:
+        raise ValueError("solve-score program name is required")
+    if len(text) > MAX_SOLVE_SCORE_PROGRAM_NAME_LEN:
+        raise ValueError(
+            f"solve-score program name must be at most {MAX_SOLVE_SCORE_PROGRAM_NAME_LEN} characters"
+        )
+    if any(ch in "\r\n\t" for ch in text) or not all(ch.isprintable() for ch in text):
+        raise ValueError("solve-score program name must contain printable single-line text")
+    return text
+
+
+def _validate_solve_score_program_chain_value(value, path):
+    if isinstance(value, str):
+        if len(value) > MAX_SOLVE_SCORE_PROGRAM_TOKEN_LEN:
+            raise ValueError(
+                f"{path} string token must be at most {MAX_SOLVE_SCORE_PROGRAM_TOKEN_LEN} characters"
+            )
+        return
+    if isinstance(value, (int, float)):
+        return
+    if isinstance(value, list):
+        for idx, item in enumerate(value):
+            _validate_solve_score_program_chain_value(item, f"{path}[{idx}]")
+        return
+    raise ValueError(f"{path} must contain only arrays, strings, and numbers")
+
+
+def _compile_solve_score_program_payload(name, chain, *, saved_at=None, version=SOLVE_SCORE_PROGRAM_VERSION):
+    validated_name = _validate_solve_score_program_name(name)
+    if not isinstance(chain, list) or not chain:
+        raise ValueError("solve-score program chain must be a non-empty JSON array")
+    if len(chain) > MAX_SOLVE_SCORE_PROGRAM_STATEMENTS:
+        raise ValueError(
+            f"solve-score program chain must contain at most {MAX_SOLVE_SCORE_PROGRAM_STATEMENTS} statements"
+        )
+    _validate_solve_score_program_chain_value(chain, "chain")
+    chain_json = json.dumps(chain, separators=(",", ":"), ensure_ascii=False)
+    if len(chain_json.encode("utf-8")) > MAX_SOLVE_SCORE_PROGRAM_CHAIN_BYTES:
+        raise ValueError(
+            f"solve-score program chain JSON must be at most {MAX_SOLVE_SCORE_PROGRAM_CHAIN_BYTES} bytes"
+        )
+
+    compiled = compile_solve_score_chain_or_legacy(
+        chain,
+        "",
+        default_metric="proximity",
+    )
+    canonical_chain = json.loads(serialize_solve_score_chain(compiled["chain"]))
+    saved_at_text = _utc_now_iso() if saved_at is None else str(saved_at or "").strip()
+    try:
+        version_num = int(version)
+    except (TypeError, ValueError):
+        version_num = SOLVE_SCORE_PROGRAM_VERSION
+    return {
+        "version": version_num,
+        "id": _slugify_solve_score_program_id(validated_name),
+        "name": validated_name,
+        "chain": canonical_chain,
+        "metric": compiled["metric"],
+        "display": compiled["display"],
+        "program_spec": compiled["program_spec"],
+        "statement_count": len(canonical_chain),
+        "saved_at": saved_at_text,
+    }
+
+
+def _read_solve_score_program_object(program_id):
+    key = _solve_score_program_key(program_id)
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=key)
+    except Exception as exc:
+        if _is_missing_s3_error(exc):
+            raise _SolveScoreProgramNotFound(f"solve-score program not found: {program_id}")
+        raise
+    raw = obj["Body"].read()
+    try:
+        payload = json.loads(raw) if raw else {}
+    except Exception as exc:
+        raise RuntimeError(f"saved solve-score program is not valid JSON: {program_id}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"saved solve-score program must be a JSON object: {program_id}")
+    program = _compile_solve_score_program_payload(
+        payload.get("name"),
+        payload.get("chain"),
+        saved_at=payload.get("saved_at", ""),
+        version=payload.get("version", SOLVE_SCORE_PROGRAM_VERSION),
+    )
+    program["id"] = str(program_id)
+    return program
+
+
+def _solve_score_program_put_metadata(program):
+    return {
+        SOLVE_SCORE_PROGRAM_META_NAME: str(program.get("name") or ""),
+        SOLVE_SCORE_PROGRAM_META_STATEMENT_COUNT: str(int(program.get("statement_count") or 0)),
+        SOLVE_SCORE_PROGRAM_META_SAVED_AT: str(program.get("saved_at") or ""),
+    }
+
+
+def _solve_score_program_summary_from_head(program_id):
+    resp = s3.head_object(Bucket=BUCKET, Key=_solve_score_program_key(program_id))
+    meta = resp.get("Metadata") or {}
+    name = str(meta.get(SOLVE_SCORE_PROGRAM_META_NAME) or "").strip()
+    saved_at = str(meta.get(SOLVE_SCORE_PROGRAM_META_SAVED_AT) or "").strip()
+    statement_count_raw = str(meta.get(SOLVE_SCORE_PROGRAM_META_STATEMENT_COUNT) or "").strip()
+    if not name or not saved_at or not statement_count_raw:
+        raise RuntimeError(f"solve-score program summary metadata missing for {program_id}")
+    try:
+        statement_count = int(statement_count_raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"solve-score program summary metadata invalid statement_count for {program_id}"
+        ) from exc
+    return {
+        "id": str(program_id),
+        "name": name,
+        "statement_count": statement_count,
+        "saved_at": saved_at,
+    }
 
 
 def _results_list_s3_client(max_workers):
@@ -248,6 +418,14 @@ def handler(event, context):
     path = event.get("rawPath", event.get("path", "/"))
     if path.endswith("/list"):
         return handle_list(event)
+    elif path.endswith("/list-solve-score-programs"):
+        return _handle_storage_route(handle_list_solve_score_programs, event)
+    elif path.endswith("/fetch-solve-score-program"):
+        return _handle_storage_route(handle_fetch_solve_score_program, event)
+    elif path.endswith("/save-solve-score-program"):
+        return _handle_storage_route(handle_save_solve_score_program, event)
+    elif path.endswith("/delete-solve-score-program"):
+        return _handle_storage_route(handle_delete_solve_score_program, event)
     elif path.endswith("/list-favorites"):
         return handle_list_favorites(event)
     elif path.endswith("/add-favorite"):
@@ -331,6 +509,92 @@ def handle_delete_favorite(event):
     deleted = _delete_favorite_entry(job_id, artifact_id)
     favorites = _read_favorites_from_ddb()
     return ok_response({"deleted": deleted, "favorites": favorites, "count": len(favorites)})
+
+
+def handle_list_solve_score_programs(event):
+    parse_body(event)
+    programs = []
+    errors = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=BUCKET, Prefix=SOLVE_SCORE_PROGRAMS_PREFIX):
+        for obj in page.get("Contents", []):
+            key = obj.get("Key", "")
+            if not key.endswith(".json") or key.endswith("/"):
+                continue
+            program_id = key[len(SOLVE_SCORE_PROGRAMS_PREFIX):-5]
+            if not program_id:
+                continue
+            try:
+                program = _solve_score_program_summary_from_head(program_id)
+            except _SolveScoreProgramNotFound:
+                continue
+            except Exception as exc:
+                try:
+                    program = _read_solve_score_program_object(program_id)
+                except _SolveScoreProgramNotFound:
+                    continue
+                except Exception as read_exc:
+                    err_text = str(read_exc)
+                    print(f"solve-score program list skipped {key}: {err_text}")
+                    errors.append({
+                        "id": program_id,
+                        "error": err_text[:240],
+                    })
+                    continue
+                else:
+                    print(
+                        f"solve-score program list used full read fallback for {key}: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+            programs.append(program)
+    # Tie-break id ascending for identical timestamps.
+    programs = sorted(programs, key=lambda row: row["id"])
+    programs = sorted(programs, key=lambda row: row.get("saved_at") or "", reverse=True)
+    return ok_response({
+        "programs": programs,
+        "count": len(programs),
+        "order": "saved_at_desc",
+        "errors": errors,
+        "error_count": len(errors),
+    })
+
+
+def handle_fetch_solve_score_program(event):
+    params = parse_body(event)
+    program_id = str(params.get("id") or "").strip()
+    if not program_id:
+        raise ValueError("solve-score program fetch requires id")
+    return ok_response({"program": _read_solve_score_program_object(program_id)})
+
+
+def handle_save_solve_score_program(event):
+    params = parse_body(event)
+    program = _compile_solve_score_program_payload(
+        params.get("name"),
+        params.get("chain"),
+    )
+    key = _solve_score_program_key(program["id"])
+    overwritten = _key_exists(key)
+    s3.put_object(
+        Bucket=BUCKET,
+        Key=key,
+        Body=(json.dumps(program, indent=2) + "\n").encode("utf-8"),
+        ContentType="application/json",
+        Metadata=_solve_score_program_put_metadata(program),
+    )
+    return ok_response({"program": program, "overwritten": overwritten})
+
+
+def handle_delete_solve_score_program(event):
+    params = parse_body(event)
+    program_id = str(params.get("id") or "").strip()
+    if not program_id:
+        raise ValueError("solve-score program delete requires id")
+    key = _solve_score_program_key(program_id)
+    if not _key_exists(key):
+        raise _SolveScoreProgramNotFound(f"solve-score program not found: {program_id}")
+    s3.delete_object(Bucket=BUCKET, Key=key)
+    return ok_response({"id": program_id, "deleted": 1})
 
 
 def handle_list(event):

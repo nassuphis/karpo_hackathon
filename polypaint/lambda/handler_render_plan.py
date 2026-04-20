@@ -29,7 +29,7 @@ from logical_sections import (
     validate_section_count,
 )
 from palette_names import VALID_PALETTE_NAMES
-from shared import BUCKET, parse_body, ok_response
+from shared import BUCKET, BILEVEL_SPARSE_PIPELINE, parse_body, ok_response
 from solve_score_chain import (
     compile_solve_score_chain_or_legacy,
     emit_solve_score_metadata,
@@ -776,7 +776,7 @@ def _build_non_color_plan(
         "logical_section": False,
         "item_count": 0,
         "section_items": [],
-        "section_bits_prefix": "",
+        "fragment_prefix": "",
     }
     if mode == "bilevel":
         bilevel.update(
@@ -788,7 +788,7 @@ def _build_non_color_plan(
                 rp=non_color_params,
             )
         )
-        bilevel["section_bits_prefix"] = f"renders/{job_id}/bilevel_section_"
+        bilevel["fragment_prefix"] = f"renders/{job_id}/bilevel_section_"
         non_color_params["raster_section_count_auto"] = bilevel["section_count_auto"]
         non_color_params["raster_section_count"] = bilevel["section_count"]
 
@@ -828,7 +828,7 @@ def _build_non_color_plan(
         artifact_meta.update({
             "format": "tif",
             "mode": "bilevel",
-            "bilevel_pipeline": "logical_sections_v1",
+            "bilevel_pipeline": BILEVEL_SPARSE_PIPELINE,
             "bilevel_section_mode": str(bilevel["section_mode"]),
             "bilevel_section_count": str(bilevel["section_count"]),
         })

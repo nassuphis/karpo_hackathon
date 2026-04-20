@@ -18,6 +18,7 @@ import subprocess
 import sys
 import threading
 import types
+import urllib.parse
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -172,6 +173,14 @@ def read_csv_grid(path):
     return rows
 
 
+def encode_fragment_pairs(pairs):
+    payload = bytearray()
+    for pixel_idx, score in pairs:
+        payload.extend(int(pixel_idx).to_bytes(4, "little", signed=False))
+        payload.append(int(score) & 0xFF)
+    return bytes(payload)
+
+
 class _MemBody:
     def __init__(self, data):
         self._data = bytes(data)
@@ -205,12 +214,23 @@ class _MemS3:
             "Metadata": dict(obj.get("Metadata") or {}),
         }
 
-    def get_object(self, *, Bucket, Key):
+    def get_object(self, *, Bucket, Key, Range=None):
         obj = self.objects.get(Key)
         if obj is None:
             raise RuntimeError("NoSuchKey: %s" % Key)
+        body = obj.get("Body") or b""
+        if Range:
+            if not str(Range).startswith("bytes="):
+                raise RuntimeError("Unsupported Range: %r" % (Range,))
+            raw = str(Range)[len("bytes="):]
+            if "-" not in raw:
+                raise RuntimeError("Unsupported Range: %r" % (Range,))
+            lo, hi = raw.split("-", 1)
+            start = int(lo) if lo else 0
+            end = int(hi) if hi else (len(body) - 1)
+            body = body[start:end + 1]
         return {
-            "Body": _MemBody(obj.get("Body") or b""),
+            "Body": _MemBody(body),
             "ContentType": obj.get("ContentType"),
             "Metadata": dict(obj.get("Metadata") or {}),
         }
@@ -226,6 +246,27 @@ class _MemS3:
             "Metadata": dict(Metadata or {}),
         }
         return {"ETag": '"mem"'}
+
+
+class _MemS3ObjectHandler(http.server.BaseHTTPRequestHandler):
+    objects = {}
+
+    def do_GET(self):
+        key = urllib.parse.unquote(self.path.lstrip("/"))
+        obj = type(self).objects.get(key)
+        if obj is None:
+            self.send_response(404)
+            self.end_headers()
+            return
+        body = obj.get("Body") or b""
+        self.send_response(200)
+        self.send_header("Content-Type", obj.get("ContentType") or "application/octet-stream")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, fmt, *args):
+        return
 
 
 # ── AE/CM Solver Tests ───────────────────────────────────────────────────
@@ -923,10 +964,10 @@ def test_bilevel_section_raster_runtime():
     assert os.path.exists(bin_path), "bilevel_section_raster not found at %s" % bin_path
 
     section_path = "/tmp/bilevel_section_rt.bin"
-    out_bits = "/tmp/bilevel_section_rt.bits"
+    out_frag = "/tmp/bilevel_section_rt.frag"
 
     with open(section_path, "wb") as f:
-        for roots in [[(0.0, 0.0), (1.0, 0.0)], [(0.0, 0.0), (100.0, 100.0)]]:
+        for roots in [[(0.0, 0.0), (1.0, 0.0)], [(0.0, 0.0), (100.0, 100.0)], [(-4.25, 0.0), (0.0, 0.0)]]:
             for re, im in roots:
                 f.write(struct.pack("<ff", re, im))
 
@@ -934,7 +975,7 @@ def test_bilevel_section_raster_runtime():
         [
             bin_path,
             section_path,
-            out_bits,
+            out_frag,
             "--width=8",
             "--height=8",
             "--center_re=0",
@@ -949,19 +990,18 @@ def test_bilevel_section_raster_runtime():
     assert r.returncode == 0, "bilevel_section_raster failed: " + r.stderr[:200]
     meta = json.loads(r.stdout)
     assert meta["roots_plotted"] == 2, "unexpected plotted count %r" % (meta,)
-    assert meta["roots_clipped"] == 1, "unexpected clipped count %r" % (meta,)
-    assert meta["roots_deduped"] == 1, "unexpected dedup count %r" % (meta,)
+    assert meta["roots_clipped"] == 2, "unexpected clipped count %r" % (meta,)
+    assert meta["roots_deduped"] == 2, "unexpected dedup count %r" % (meta,)
 
-    with open(out_bits, "rb") as f:
-        bitset = f.read()
-    assert len(bitset) == 8, "unexpected bitset size %d" % len(bitset)
-    assert bitset == bytes([0, 0, 0, 0, 0x30, 0, 0, 0]), "unexpected bitset bytes %r" % (bitset,)
+    with open(out_frag, "rb") as f:
+        frag = f.read()
+    assert frag == encode_fragment_pairs([(36, 1), (37, 1)]), "unexpected fragment bytes %r" % (frag,)
     print(
         "  bilevel_section_raster: OK (plotted=%d, clipped=%d, dedup=%d)"
         % (meta["roots_plotted"], meta["roots_clipped"], meta["roots_deduped"])
     )
 
-    cleanup(section_path, out_bits)
+    cleanup(section_path, out_frag)
     print("=== bilevel_section_raster runtime PASSED ===")
 
 
@@ -1108,6 +1148,14 @@ def test_color_to_bilevel_handler_runtime():
         exc_mod = types.ModuleType("botocore.exceptions")
         exc_mod.ClientError = RuntimeError
         sys.modules["botocore.exceptions"] = exc_mod
+    if "botocore.config" not in sys.modules:
+        cfg_mod = types.ModuleType("botocore.config")
+        class _Config:
+            def __init__(self, *args, **kwargs):
+                self.args = args
+                self.kwargs = kwargs
+        cfg_mod.Config = _Config
+        sys.modules["botocore.config"] = cfg_mod
 
     if "/src" not in sys.path:
         sys.path.insert(0, "/src")
@@ -1244,6 +1292,182 @@ def test_color_to_bilevel_handler_runtime():
     cleanup(tif_path, png_path, csv_path)
     print("  handler_bilevel from_raw_color: OK (threshold=%d)" % body["threshold"])
     print("=== Color2Bilevel handler runtime PASSED ===")
+
+
+def test_bilevel_handler_sparse_finalize_runtime():
+    print("\n--- BiLevel handler sparse finalize runtime ---")
+
+    env = {
+        **os.environ,
+        "LD_LIBRARY_PATH": "/src/assemble_greyscale_lib:/src/solve_palette_chunk_mt_lib:/opt/lib",
+        "PATH": "/opt/bin:" + os.environ.get("PATH", ""),
+    }
+
+    if "boto3" not in sys.modules:
+        sys.modules["boto3"] = types.SimpleNamespace(client=lambda *_args, **_kwargs: object())
+    if "botocore" not in sys.modules:
+        sys.modules["botocore"] = types.ModuleType("botocore")
+    if "botocore.exceptions" not in sys.modules:
+        exc_mod = types.ModuleType("botocore.exceptions")
+        exc_mod.ClientError = RuntimeError
+        sys.modules["botocore.exceptions"] = exc_mod
+
+    if "/src" not in sys.path:
+        sys.path.insert(0, "/src")
+
+    import handler_bilevel as mod
+    from logical_sections import build_solve_source_manifest
+
+    fake_s3 = _MemS3()
+    status_rows = []
+
+    def fake_report(job_id, task_id, status, error_msg=None, result_data=None):
+        status_rows.append({
+            "job_id": job_id,
+            "task_id": task_id,
+            "status": status,
+            "error_msg": error_msg,
+            "result_data": dict(result_data or {}),
+        })
+
+    roots_key = "renders/job-bilevel/roots.bin"
+    roots_bytes = bytearray()
+    for roots in [[(0.0, 0.0), (1.0, 0.0)], [(0.0, 0.0), (100.0, 100.0)]]:
+        for re, im in roots:
+            roots_bytes.extend(struct.pack("<ff", re, im))
+    fake_s3.seed_object(roots_key, roots_bytes, content_type="application/octet-stream")
+
+    chunk_items = [{
+        "chunk_idx": 0,
+        "step_start": 0,
+        "step_count": 2,
+        "bin_key": roots_key,
+        "bin_size": len(roots_bytes),
+    }]
+    solve_source_manifest = build_solve_source_manifest(
+        chunk_items,
+        job_id="job-bilevel",
+        degree=2,
+        n_coeffs=3,
+        include_coeff=False,
+        include_param=False,
+    )
+
+    old_s3 = mod.s3
+    old_report = mod.report_status
+    old_finalize_s3_client = mod._finalize_s3_client
+    old_env = os.environ.get("LD_LIBRARY_PATH")
+    server = None
+    server_thread = None
+    try:
+        mod.s3 = fake_s3
+        mod.report_status = fake_report
+        os.environ["LD_LIBRARY_PATH"] = env["LD_LIBRARY_PATH"]
+
+        handler_cls = type("_LocalMemS3Handler", (_MemS3ObjectHandler,), {})
+        handler_cls.objects = fake_s3.objects
+        server = socketserver.TCPServer(("127.0.0.1", 0), handler_cls)
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        port = server.server_address[1]
+
+        class _FinalizeS3:
+            def generate_presigned_url(self, op, Params=None, ExpiresIn=None):
+                key = urllib.parse.quote(str((Params or {}).get("Key") or ""), safe="/")
+                return f"http://127.0.0.1:{port}/{key}"
+
+        mod._finalize_s3_client = lambda workers: _FinalizeS3()
+
+        for section_idx, step_start in enumerate((0, 1)):
+            result = mod.handle_section_raster({
+                "job_id": "job-bilevel",
+                "task_id": f"bilevel_section_{section_idx}",
+                "section_idx": section_idx,
+                "section_count": 2,
+                "step_start": step_start,
+                "step_count": 1,
+                "solve_source_manifest": solve_source_manifest,
+                "fragment_prefix": "renders/job-bilevel/bilevel_section_",
+                "width": 8,
+                "height": 8,
+                "center_re": 0,
+                "center_im": 0,
+                "scale": 1,
+                "degree": 2,
+                "rotation": 0,
+                "root_transforms": [],
+            })
+            body = json.loads(result["body"])
+            assert body["fragment_key"] == f"renders/job-bilevel/bilevel_section_{section_idx:04d}.frag"
+
+        result = mod.handle_finalize({
+            "job_id": "job-bilevel",
+            "task_id": "bilevel_finalize",
+            "width": 8,
+            "height": 8,
+            "source_item_count": 2,
+            "fragment_prefix": "renders/job-bilevel/bilevel_section_",
+            "out_key": "renders/job-bilevel/bilevel/art/image.tif",
+            "preview_key": "renders/job-bilevel/bilevel/art/preview.png",
+            "metadata": {
+                "artifact_id": "art",
+                "created_at": "2026-04-20T00:00:00Z",
+                "pix": "8",
+                "render_execution": {"raster_section_mode": "logical_sections_auto"},
+                "bilevel_section_mode": "logical_sections_auto",
+                "bilevel_section_count": "2",
+            },
+        })
+    finally:
+        mod.s3 = old_s3
+        mod.report_status = old_report
+        mod._finalize_s3_client = old_finalize_s3_client
+        if server is not None:
+            server.shutdown()
+            server.server_close()
+        if server_thread is not None:
+            server_thread.join(timeout=1.0)
+        if old_env is None:
+            os.environ.pop("LD_LIBRARY_PATH", None)
+        else:
+            os.environ["LD_LIBRARY_PATH"] = old_env
+
+    body = json.loads(result["body"])
+    assert body["pixels_set"] == 2, "unexpected bilevel finalize result %r" % (body,)
+
+    bilevel_key = "renders/job-bilevel/bilevel/art/image.tif"
+    preview_key = "renders/job-bilevel/bilevel/art/preview.png"
+    assert bilevel_key in fake_s3.objects, "bilevel TIFF not uploaded"
+    assert preview_key in fake_s3.objects, "bilevel preview not uploaded"
+    tif_obj = fake_s3.objects[bilevel_key]
+    assert tif_obj["Metadata"]["bilevel_pipeline"] == "logical_sections_sparse_fragments_v1"
+
+    tif_path = "/tmp/bilevel_handler_sparse_rt.tif"
+    png_path = "/tmp/bilevel_handler_sparse_rt_preview.png"
+    csv_path = "/tmp/bilevel_handler_sparse_rt.csv"
+    with open(tif_path, "wb") as fh:
+        fh.write(tif_obj["Body"])
+    with open(png_path, "wb") as fh:
+        fh.write(fake_s3.objects[preview_key]["Body"])
+
+    r = subprocess.run(
+        ["/opt/bin/vips", "csvsave", tif_path, csv_path],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        env=env,
+    )
+    assert r.returncode == 0, "vips csvsave bilevel TIFF failed: " + r.stderr[:200]
+    grid = read_csv_grid(csv_path)
+    assert len(grid) == 8 and all(len(row) == 8 for row in grid), "unexpected bilevel TIFF shape"
+    assert grid[4][4] > 0, "expected center pixel to be set"
+    assert grid[4][5] > 0, "expected adjacent pixel to be set"
+    assert grid[0][0] == 0, "unexpected corner pixel set"
+    assert read_png_dims(png_path) == (8, 8), "unexpected bilevel preview dims %r" % (read_png_dims(png_path),)
+
+    cleanup(tif_path, png_path, csv_path)
+    print("  handler_bilevel sparse finalize: OK (pixels_set=%d)" % body["pixels_set"])
+    print("=== BiLevel handler sparse finalize runtime PASSED ===")
 
 
 # ── solve_proximity_stats Tests (all metrics) ────────────────────────────
@@ -1455,6 +1679,7 @@ if __name__ == "__main__":
         "/src/bilevel_section_raster",
         "/src/bilevel_merge",
         "/src/raw_to_bilevel",
+        "/src/assemble_greyscale",
     ]:
         magic = open(bin_path, "rb").read(4)
         assert magic == b"\x7fELF", "%s is not an ELF binary" % bin_path
@@ -1474,6 +1699,7 @@ if __name__ == "__main__":
     test_bilevel_merge_assemble_runtime()
     test_raw_to_bilevel_runtime()
     test_color_to_bilevel_handler_runtime()
+    test_bilevel_handler_sparse_finalize_runtime()
     test_solve_proximity_stats()
     test_catalog_degrees()
 

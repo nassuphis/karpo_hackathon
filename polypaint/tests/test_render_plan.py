@@ -283,7 +283,8 @@ class TestRenderPlan(unittest.TestCase):
         self.assertEqual(plan["bilevel"]["section_count"], 3)
         self.assertTrue(plan["bilevel"]["logical_section"])
         self.assertEqual(plan["bilevel"]["item_count"], 3)
-        self.assertEqual(plan["outputs"]["metadata"]["bilevel_pipeline"], "logical_sections_v1")
+        self.assertEqual(plan["outputs"]["metadata"]["bilevel_pipeline"], "logical_sections_sparse_fragments_v1")
+        self.assertEqual(plan["bilevel"]["fragment_prefix"], "renders/j/bilevel_section_")
         self.assertEqual(
             set(plan["bilevel"]["section_items"][0].keys()),
             {"section_idx", "section_count", "step_start", "step_count"},

@@ -1341,7 +1341,7 @@ button {
                         <div class="autolevel-stage-text">Current mode uses the pooled median as the match point.</div>
                         <div class="autolevel-inline-fields">
                             <span class="inline-label">Mode</span>
-                            <select id="autolevel-auto-gamma"><option value="median">median</option></select>
+                            <span>median</span>
                             <span class="inline-label">Target</span>
                             <input id="autolevel-target" type="number" min="0" max="1" step="0.01" value="0.5">
                         </div>
@@ -1680,7 +1680,7 @@ button {
                 </div>
             </div>
         </div>
-        <div class="autolevel-popup-help">This path does not use chunk raster/merge/stitch. It section-reads solves, rasterizes full-frame section bitsets, then ORs them once into the final TIFF.</div>
+        <div class="autolevel-popup-help">This path does not use chunk raster/merge/stitch. It section-reads solves, rasterizes sparse occupancy fragments, then assembles and encodes once into the final TIFF.</div>
         <div class="autolevel-popup-actions">
             <div></div>
             <div style="display:flex; gap:8px">
@@ -1726,16 +1726,6 @@ button {
         </div>
         <div id="render-generate-popup-summary" class="autolevel-popup-summary"></div>
         <div style="padding:0 14px 8px 14px">
-            <div id="render-generate-hist-row" class="autolevel-stage-row" style="align-items:center">
-                <div class="autolevel-stage-text">Choose how each solve-score histogram worker feeds chunk input into the native binary.</div>
-                <div class="autolevel-inline-fields">
-                    <span class="inline-label">Histogram input</span>
-                    <select id="render-generate-hist-input-mode">
-                        <option value="tmpfile">tmp file</option>
-                        <option value="sectioned">sectioned native</option>
-                    </select>
-                </div>
-            </div>
             <div id="render-generate-associated-row" class="autolevel-stage-row" style="align-items:center">
                 <div class="autolevel-stage-text">Keep the palette used for this Color render attached to the resulting image artifact.</div>
                 <div class="autolevel-inline-fields">
@@ -4688,7 +4678,7 @@ let _colorRepalettePopupState = { open: false, sourceArtifactId: '', sourceDispl
 let _bilevelPopupState = { open: false, sectionMode: 'logical_sections_auto', sectionCount: '' };
 let _colorToBilevelPopupState = { open: false, sourceArtifactId: '', threshold: 0 };
 let _resultsRefreshPopupState = { open: false, workers: 32 };
-let _renderGeneratePopupState = { open: false, histInputMode: 'sectioned', saveAssociatedPalette: false };
+let _renderGeneratePopupState = { open: false, saveAssociatedPalette: false };
 let _renderMtPopupState = {
     open: false,
     colorPipeline: 'fused',
@@ -6401,7 +6391,6 @@ function _renderMtSectionSettingLabel(mode, count) {
 function _closeRenderGeneratePopup() {
     _renderGeneratePopupState = {
         open: false,
-        histInputMode: _normalizeSolveScoreHistInputMode(_renderGeneratePopupState.histInputMode),
         saveAssociatedPalette: !!_renderGeneratePopupState.saveAssociatedPalette,
     };
     const overlay = document.getElementById('render-generate-popup-overlay');
@@ -6414,13 +6403,11 @@ function _closeRenderGeneratePopup() {
 function _renderRenderGeneratePopup() {
     const overlay = document.getElementById('render-generate-popup-overlay');
     const summaryEl = document.getElementById('render-generate-popup-summary');
-    const inputModeEl = document.getElementById('render-generate-hist-input-mode');
-    const histRowEl = document.getElementById('render-generate-hist-row');
     const helpEl = document.getElementById('render-generate-popup-help');
     const assocRowEl = document.getElementById('render-generate-associated-row');
     const assocEl = document.getElementById('render-generate-save-associated-palette');
     const runBtn = document.getElementById('render-generate-popup-run');
-    if (!overlay || !summaryEl || !inputModeEl) return;
+    if (!overlay || !summaryEl) return;
     if (!_renderGeneratePopupState.open) {
         _closeRenderGeneratePopup();
         return;
@@ -6430,8 +6417,6 @@ function _renderRenderGeneratePopup() {
     const assocAllowed = _associatedPaletteAllowedForColorMode(mode);
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
-    if (histRowEl) histRowEl.style.display = 'none';
-    if (inputModeEl) inputModeEl.disabled = true;
     if (assocRowEl) assocRowEl.style.display = assocAllowed ? '' : 'none';
     if (assocEl) {
         assocEl.checked = !!_renderGeneratePopupState.saveAssociatedPalette;
@@ -6454,7 +6439,6 @@ function openRenderGeneratePopup() {
     if (_activeRenderRun) return;
     _renderGeneratePopupState = {
         open: true,
-        histInputMode: 'sectioned',
         saveAssociatedPalette: !!_renderGeneratePopupState.saveAssociatedPalette,
     };
     _renderRenderGeneratePopup();
@@ -7075,9 +7059,6 @@ function _initRenderMtPopup() {
         _renderMtPopupState.rasterSectionCount = cfg.rasterSectionCount;
         _renderMtPopupState.finalizeWorkers = cfg.finalizeWorkers;
         _renderMtPopupState.saveAssociatedPalette = !!cfg.saveAssociatedPalette;
-        _renderMtPopupState.rasterInputMode = 'sectioned';
-        _renderMtPopupState.pixelBinFragmentMode = 'sparse_chunks';
-        _renderMtPopupState.rasterBinGroupSize = '';
     };
     const cfgToRun = (cfg) => ({
         colorPipeline: 'fused',
@@ -7314,7 +7295,6 @@ function _initResultsRefreshPopup() {
 
 function _initRenderGeneratePopup() {
     const runBtn = document.getElementById('render-generate-popup-run');
-    const inputModeEl = document.getElementById('render-generate-hist-input-mode');
     const assocEl = document.getElementById('render-generate-save-associated-palette');
     _bindPopupShell({
         overlayId: 'render-generate-popup-overlay',
@@ -7324,15 +7304,11 @@ function _initRenderGeneratePopup() {
         onClose: _closeRenderGeneratePopup,
         onEnter: () => {
             const saveAssociatedPalette = !!document.getElementById('render-generate-save-associated-palette').checked;
-            _renderGeneratePopupState.histInputMode = 'sectioned';
             _renderGeneratePopupState.saveAssociatedPalette = saveAssociatedPalette;
             _closeRenderGeneratePopup();
             runRasterPipeline({ saveAssociatedPalette });
         },
     });
-    if (inputModeEl) {
-        inputModeEl.disabled = true;
-    }
     if (assocEl) {
         assocEl.addEventListener('change', (ev) => {
             _renderGeneratePopupState.saveAssociatedPalette = !!ev.target.checked;
@@ -7346,7 +7322,6 @@ function _initRenderGeneratePopup() {
                 runBtn.disabled = true;
                 runBtn.textContent = 'Executing...';
                 const saveAssociatedPalette = !!document.getElementById('render-generate-save-associated-palette').checked;
-                _renderGeneratePopupState.histInputMode = 'sectioned';
                 _renderGeneratePopupState.saveAssociatedPalette = saveAssociatedPalette;
                 _closeRenderGeneratePopup();
                 await runRasterPipeline({ saveAssociatedPalette });
@@ -7768,7 +7743,7 @@ function _syncAutolevelStageControls() {
     setDisabled(['autolevel-clip-low', 'autolevel-clip-high'], !levelsOn);
     setDisabled(['autolevel-peak-factor'], !peakOn);
     setDisabled(['autolevel-gamma'], !gammaInputOn);
-    setDisabled(['autolevel-auto-gamma', 'autolevel-target'], !autoGammaOn);
+    setDisabled(['autolevel-target'], !autoGammaOn);
     setDisabled(['autolevel-sigmoid-strength', 'autolevel-sigmoid-mid'], !sigmoidOn);
     setDisabled(['autolevel-vibrance'], !vibranceOn);
     setDisabled(['autolevel-pooled-rgb'], !pooledOn);
@@ -7818,7 +7793,6 @@ function _writeAutolevelPopupParams(art, params) {
     setChecked('autolevel-enable-gamma', params.enable_gamma);
     setValue('autolevel-gamma', params.gamma);
     setChecked('autolevel-enable-auto-gamma', params.enable_auto_gamma);
-    setValue('autolevel-auto-gamma', params.auto_gamma || 'median');
     setValue('autolevel-target', params.target);
     setChecked('autolevel-enable-sigmoid', params.enable_sigmoid);
     setValue('autolevel-sigmoid-strength', params.sigmoid_strength);
@@ -7861,7 +7835,7 @@ function _readAutolevelPopupParams() {
         enable_gamma: readChk('autolevel-enable-gamma'),
         gamma: readNum('autolevel-gamma', 1.0),
         enable_auto_gamma: readChk('autolevel-enable-auto-gamma'),
-        auto_gamma: readSel('autolevel-auto-gamma', 'median'),
+        auto_gamma: 'median',
         target: readNum('autolevel-target', 0.5),
         enable_sigmoid: readChk('autolevel-enable-sigmoid'),
         sigmoid_strength: readNum('autolevel-sigmoid-strength', 0.0),
@@ -9413,7 +9387,6 @@ function _renderCommonParams(options = {}) {
         pix: parseInt(document.getElementById('render-pix').value),
         fmt: document.getElementById('render-format').value,
         quality: parseInt(document.getElementById('render-quality').value),
-        gamma: 1.0,
         viewMode: _viewMode,
         quantile: parseFloat(document.getElementById('render-quantile').value) / 100,
         shim: parseFloat(document.getElementById('render-shim').value) / 100,
@@ -10480,7 +10453,10 @@ function _syncBilevelPopupControls() {
     if (!modeEl || !countEl) return;
     const mode = _normalizeRenderMtSectionMode(modeEl.value);
     countEl.disabled = mode !== 'logical_sections';
-    if (mode !== 'logical_sections') countEl.value = '';
+    if (mode !== 'logical_sections') {
+        countEl.value = '';
+        _bilevelPopupState.sectionCount = '';
+    }
 }
 
 function _renderBilevelPopup() {
@@ -10495,20 +10471,25 @@ function _renderBilevelPopup() {
     const pixEl = document.getElementById('render-pix');
     const pix = Number(pixEl && pixEl.value);
     const sectionMode = _normalizeRenderMtSectionMode(_bilevelPopupState.sectionMode || 'logical_sections_auto');
-    const sectionCount = _clampRenderMtSectionCount(_bilevelPopupState.sectionCount);
+    const sectionCount = sectionMode === 'logical_sections'
+        ? _clampRenderMtSectionCount(_bilevelPopupState.sectionCount)
+        : '';
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
     modeEl.value = sectionMode === 'physical_chunks' ? 'logical_sections_auto' : sectionMode;
     countEl.value = sectionCount;
     _syncBilevelPopupControls();
-    summaryEl.textContent = `Output=${Number.isFinite(pix) && pix > 0 ? `${Math.round(pix)}x${Math.round(pix)}` : '?'} • sections=${_renderMtSectionSettingLabel(modeEl.value, sectionCount || '')} • pipeline=logical sections -> single finalize`;
+    summaryEl.textContent = `Output=${Number.isFinite(pix) && pix > 0 ? `${Math.round(pix)}x${Math.round(pix)}` : '?'} • sections=${_renderMtSectionSettingLabel(modeEl.value, sectionCount || '')} • pipeline=logical sections -> sparse fragments -> single finalize`;
 }
 
 function openBilevelPopup() {
+    const sectionMode = _normalizeRenderMtSectionMode(_bilevelPopupState.sectionMode || 'logical_sections_auto');
     _bilevelPopupState = {
         open: true,
-        sectionMode: _normalizeRenderMtSectionMode(_bilevelPopupState.sectionMode || 'logical_sections_auto'),
-        sectionCount: _clampRenderMtSectionCount(_bilevelPopupState.sectionCount),
+        sectionMode,
+        sectionCount: sectionMode === 'logical_sections'
+            ? _clampRenderMtSectionCount(_bilevelPopupState.sectionCount)
+            : '',
     };
     _renderBilevelPopup();
     const modeEl = document.getElementById('bilevel-section-mode');
@@ -10518,23 +10499,27 @@ function openBilevelPopup() {
 async function runBilevelPipeline(config = null) {
     const btn = document.getElementById('btn-render-generate');
     const renderBtn = document.getElementById('btn-render-generate');
+    const popupRunBtn = document.getElementById('bilevel-popup-run');
+    const popupRunOrig = popupRunBtn ? popupRunBtn.textContent : 'Execute';
     if (btn) btn.disabled = true;
     if (renderBtn) renderBtn.disabled = true;
+    if (popupRunBtn) { popupRunBtn.disabled = true; popupRunBtn.textContent = 'Executing...'; }
     try {
         const sectionMode = _normalizeRenderMtSectionMode(
             config && typeof config === 'object' && config.sectionMode != null
                 ? config.sectionMode
                 : _bilevelPopupState.sectionMode
         );
-        const sectionCount = _clampRenderMtSectionCount(
+        const requestedSectionCount = _clampRenderMtSectionCount(
             config && typeof config === 'object' && config.sectionCount != null
                 ? config.sectionCount
                 : _bilevelPopupState.sectionCount
         );
+        const sectionCount = sectionMode === 'logical_sections' ? requestedSectionCount : '';
         _bilevelPopupState.sectionMode = sectionMode;
         _bilevelPopupState.sectionCount = sectionCount;
         log(
-            `BiLevel: dispatching with sections=${_renderMtSectionSettingLabel(sectionMode === 'physical_chunks' ? 'logical_sections_auto' : sectionMode, sectionCount || '')}, single finalize...`,
+            `BiLevel: dispatching with sections=${_renderMtSectionSettingLabel(sectionMode === 'physical_chunks' ? 'logical_sections_auto' : sectionMode, sectionCount || '')}, sparse fragments, single finalize...`,
             '',
             'render-log'
         );
@@ -10550,6 +10535,7 @@ async function runBilevelPipeline(config = null) {
     } finally {
         if (btn) btn.disabled = false;
         if (renderBtn) renderBtn.disabled = false;
+        if (popupRunBtn) { popupRunBtn.disabled = false; popupRunBtn.textContent = popupRunOrig; }
     }
 }
 
@@ -11240,6 +11226,56 @@ function _aggregateColorToBilevelPerf(results) {
     });
 }
 
+function _aggregateBilevelRasterPerf(results) {
+    const rows = Array.isArray(results) ? results.filter(r => r && (
+        r.dl_ms != null || r.raster_ms != null || r.fragment_size != null
+    )) : [];
+    if (!rows.length) return null;
+    return rows.reduce((acc, row) => {
+        acc.tasks += 1;
+        acc.dl_ms += Number(row.dl_ms) || 0;
+        acc.raster_ms += Number(row.raster_ms) || 0;
+        acc.fragment_bytes += Number(row.fragment_size) || 0;
+        return acc;
+    }, {
+        tasks: 0,
+        dl_ms: 0,
+        raster_ms: 0,
+        fragment_bytes: 0,
+    });
+}
+
+function _aggregateBilevelFinalizePerf(results) {
+    const rows = Array.isArray(results) ? results.filter(r => r && (
+        r.prep_ms != null || r.assemble_ms != null || r.render_ms != null ||
+        r.upload_ms != null || r.workers != null || r.raw_size != null ||
+        r.file_size != null || r.pixels_set != null
+    )) : [];
+    if (!rows.length) return null;
+    return rows.reduce((acc, row) => {
+        acc.tasks += 1;
+        acc.prep_ms = Math.max(acc.prep_ms, Number(row.prep_ms) || 0);
+        acc.assemble_ms = Math.max(acc.assemble_ms, Number(row.assemble_ms) || 0);
+        acc.render_ms = Math.max(acc.render_ms, Number(row.render_ms) || 0);
+        acc.upload_ms = Math.max(acc.upload_ms, Number(row.upload_ms) || 0);
+        acc.workers = Math.max(acc.workers, Number(row.workers) || 0);
+        acc.raw_size = Math.max(acc.raw_size, Number(row.raw_size) || 0);
+        acc.file_size = Math.max(acc.file_size, Number(row.file_size) || 0);
+        acc.pixels_set = Math.max(acc.pixels_set, Number(row.pixels_set) || 0);
+        return acc;
+    }, {
+        tasks: 0,
+        prep_ms: 0,
+        assemble_ms: 0,
+        render_ms: 0,
+        upload_ms: 0,
+        workers: 0,
+        raw_size: 0,
+        file_size: 0,
+        pixels_set: 0,
+    });
+}
+
 function _renderPhaseSubtaskInfo(run, rd) {
     if (!run || !rd) return null;
     const phase = rd.phase || '';
@@ -11259,6 +11295,23 @@ function _renderPhaseSubtaskInfo(run, rd) {
 }
 
 function _renderPhasePerfSummary(phase, results, wallMs) {
+    if (phase === 'bilevel_raster') {
+        const perf = _aggregateBilevelRasterPerf(results);
+        if (!perf) return `wall=${_fmtSecondsMs(wallMs)}`;
+        let msg = `wall=${_fmtSecondsMs(wallMs)} total=dl ${_fmtSecondsMs(perf.dl_ms)} + native ${_fmtSecondsMs(perf.raster_ms)}`;
+        if (perf.fragment_bytes > 0) msg += ` · fragments=${_fmtSize(perf.fragment_bytes)}`;
+        return msg;
+    }
+    if (phase === 'bilevel_finalize') {
+        const perf = _aggregateBilevelFinalizePerf(results);
+        if (!perf) return `wall=${_fmtSecondsMs(wallMs)}`;
+        let msg = `wall=${_fmtSecondsMs(wallMs)} total=prep ${_fmtSecondsMs(perf.prep_ms)} + assemble ${_fmtSecondsMs(perf.assemble_ms)} + render ${_fmtSecondsMs(perf.render_ms)} + up ${_fmtSecondsMs(perf.upload_ms)}`;
+        if (perf.workers > 0) msg += ` · workers=${perf.workers}`;
+        if (perf.raw_size > 0) msg += ` · raw=${_fmtSize(perf.raw_size)}`;
+        if (perf.file_size > 0) msg += ` · tif=${_fmtSize(perf.file_size)}`;
+        if (perf.pixels_set > 0) msg += ` · pixels=${perf.pixels_set}`;
+        return msg;
+    }
     if (phase === 'raster') {
         const perf = _aggregateRasterPerf(results);
         if (!perf) return '';
@@ -11358,6 +11411,19 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
 }
 
 function _renderPhaseProgressSignature(phase, results) {
+    if (phase === 'bilevel_finalize') {
+        const perf = _aggregateBilevelFinalizePerf(results);
+        if (!perf) return '';
+        return [
+            perf.prep_ms || 0,
+            perf.assemble_ms || 0,
+            perf.render_ms || 0,
+            perf.upload_ms || 0,
+            perf.raw_size || 0,
+            perf.file_size || 0,
+            perf.pixels_set || 0,
+        ].join(':');
+    }
     if (phase === 'bilevel_from_raw_render') {
         const perf = _aggregateColorToBilevelPerf(results);
         if (!perf) return '';
@@ -12006,7 +12072,7 @@ function _renderArtifactSummary(art) {
             return [threshold, art.derived_from_artifact_id ? `from ${art.derived_from_artifact_id}` : ''].filter(Boolean).join(' · ');
         }
         if (art.legacy) return 'legacy';
-        if (art.bilevel_pipeline) return 'logical sections';
+        if (art.bilevel_pipeline) return 'sparse fragments';
         return art.format || '';
     }
     if (art.family === 'palette') {
@@ -12661,7 +12727,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     } else if (_renderActiveFamily === 'palette') {
         controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Solve score metric, palette, q, and root transforms. RePalette reuses the selected palette artifact’s saved bins and only changes the final palette mapping. Populate copies the selected palette into Color settings and switches to Color. [C id] means this palette is linked back to a Color artifact.</span>';
     } else if (_renderActiveFamily === 'bilevel') {
-        controlsExtra = '<span style="font-size:11px; color:#666">Generate opens the BiLevel popup and runs the fused logical-section path: sectioned solve reads, full-frame section bitsets, then one assemble+encode finalize. Color2Bilevel is the faster derived path from a fused Color artifact and appears on the Color tab.</span>';
+        controlsExtra = '<span style="font-size:11px; color:#666">Generate opens the BiLevel popup and runs the logical-section path: sectioned solve reads, sparse occupancy fragments, then one assemble+encode finalize. Color2Bilevel is the faster derived path from a fused Color artifact and appears on the Color tab.</span>';
     } else if (_renderActiveFamily === 'pdf') {
         controlsExtra = '<span style="font-size:11px; color:#666">ColorSpread creates a single spread PDF from a selected Color artifact. The left page uses metadata-derived text and the right page uses the saved Color image.</span>';
     }

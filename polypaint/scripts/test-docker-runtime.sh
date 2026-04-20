@@ -11,7 +11,7 @@ LIBVIPS_BUILD="$ROOT/lambda/layer-build"
 echo "=== Docker Runtime Regression Test ==="
 
 # Verify binaries exist
-for BIN in "$ROOT/lambda/sweep" "$ROOT/lambda/sweep_mt" "$ROOT/lambda/sweep_cm" "$ROOT/lambda/sweep_coeffgen" "$ROOT/lambda/solve_palette_chunk_mt" "$ROOT/lambda/bilevel_section_raster" "$ROOT/lambda/bilevel_merge" "$ROOT/lambda/raw_to_bilevel"; do
+for BIN in "$ROOT/lambda/sweep" "$ROOT/lambda/sweep_mt" "$ROOT/lambda/sweep_cm" "$ROOT/lambda/sweep_coeffgen" "$ROOT/lambda/solve_palette_chunk_mt" "$ROOT/lambda/bilevel_section_raster" "$ROOT/lambda/bilevel_merge" "$ROOT/lambda/raw_to_bilevel" "$ROOT/lambda/assemble_greyscale"; do
     if [ ! -f "$BIN" ]; then
         echo "FATAL: $BIN not found. Run deploy.sh to compile."
         exit 1
@@ -52,7 +52,7 @@ docker run --rm --platform linux/arm64 \
     cp -a /opt-vips/lib/* /opt/lib/ 2>/dev/null || true
     mkdir -p /opt/bin
     cp -a /opt-vips/bin/* /opt/bin/ 2>/dev/null || true
-    export LD_LIBRARY_PATH=/src/solve_palette_chunk_mt_lib:/opt/lib
+    export LD_LIBRARY_PATH=/src/assemble_greyscale_lib:/src/solve_palette_chunk_mt_lib:/opt/lib
     export PATH="/opt/bin:$PATH"
 
     # Install Python

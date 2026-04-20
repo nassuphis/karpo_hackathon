@@ -1,19 +1,18 @@
 /*
- * bilevel_section_raster: project one logical solve section into a single
- * full-frame packed bitset.
+ * bilevel_section_raster: project one logical solve section into a sparse
+ * occupancy fragment.
  *
  * Reads a .bin section file (f32 root pairs), projects each root to pixel
  * coordinates, clips to the viewport, dedups on the full image grid, and writes
- * one packed row-major bitset file.
+ * one sparse u32le_u8_v1 fragment file where each pair is:
+ *   little-endian uint32 pixel_idx
+ *   uint8 score byte (=1 for bilevel occupancy)
  *
  * Usage:
- *   bilevel_section_raster section.bin out.bits
+ *   bilevel_section_raster section.bin out.frag
  *       --width=W --height=H
  *       --center_re=X --center_im=Y --scale=S --degree=D
  *       [--rotation=R] [--root_xforms=chain.json]
- *
- * Output bits use the same local packing convention as the old tile .bits
- * files: bit i lives at byte (i >> 3), mask (1 << (i & 7)).
  */
 
 #include <math.h>
@@ -51,7 +50,7 @@ static const char *getArgStr(int argc, char **argv, const char *key, const char 
 
 int main(int argc, char **argv) {
     if (argc < 3) {
-        fprintf(stderr, "Usage: bilevel_section_raster section.bin out.bits [options]\n");
+        fprintf(stderr, "Usage: bilevel_section_raster section.bin out.frag [options]\n");
         return 1;
     }
 
@@ -131,6 +130,9 @@ int main(int argc, char **argv) {
         free(roots);
         return 1;
     }
+    uint32_t *pixelHits = NULL;
+    size_t pixelHitCount = 0;
+    size_t pixelHitCap = 0;
 
     float *wkRe = NULL;
     float *wkIm = NULL;
@@ -178,14 +180,23 @@ int main(int argc, char **argv) {
                 continue;
             }
 
-            int px = (int)pxf;
-            int py = (int)pyf;
+            int px = (int)floor(pxf);
+            int py = (int)floor(pyf);
             if (px < 0 || px >= W || py < 0 || py >= H) {
                 rootsClipped++;
                 continue;
             }
 
             size_t bitIdx = (size_t)py * (size_t)W + (size_t)px;
+            if (bitIdx > 0xFFFFFFFFu) {
+                fprintf(stderr, "pixel index %zu exceeds u32 fragment encoding\n", bitIdx);
+                free(wkRe);
+                free(wkIm);
+                free(bitset);
+                free(pixelHits);
+                free(roots);
+                return 1;
+            }
             size_t byteIdx = bitIdx >> 3;
             uint8_t mask = (uint8_t)(1u << (bitIdx & 7u));
             if (bitset[byteIdx] & mask) {
@@ -193,6 +204,22 @@ int main(int argc, char **argv) {
                 continue;
             }
             bitset[byteIdx] |= mask;
+            if (pixelHitCount == pixelHitCap) {
+                size_t nextCap = pixelHitCap ? pixelHitCap * 2u : 1024u;
+                uint32_t *grown = (uint32_t *)realloc(pixelHits, nextCap * sizeof(uint32_t));
+                if (!grown) {
+                    fprintf(stderr, "Cannot grow sparse fragment hit buffer\n");
+                    free(wkRe);
+                    free(wkIm);
+                    free(bitset);
+                    free(pixelHits);
+                    free(roots);
+                    return 1;
+                }
+                pixelHits = grown;
+                pixelHitCap = nextCap;
+            }
+            pixelHits[pixelHitCount++] = (uint32_t)bitIdx;
             rootsPlotted++;
         }
     }
@@ -203,17 +230,28 @@ int main(int argc, char **argv) {
         free(wkRe);
         free(wkIm);
         free(bitset);
+        free(pixelHits);
         free(roots);
         return 1;
     }
-    if (bitsetBytes > 0 && fwrite(bitset, 1, bitsetBytes, fout) != bitsetBytes) {
-        fprintf(stderr, "Short write to %s\n", outPath);
-        fclose(fout);
-        free(wkRe);
-        free(wkIm);
-        free(bitset);
-        free(roots);
-        return 1;
+    for (size_t i = 0; i < pixelHitCount; i++) {
+        uint32_t pixelIdx = pixelHits[i];
+        uint8_t rec[5];
+        rec[0] = (uint8_t)(pixelIdx & 0xFFu);
+        rec[1] = (uint8_t)((pixelIdx >> 8) & 0xFFu);
+        rec[2] = (uint8_t)((pixelIdx >> 16) & 0xFFu);
+        rec[3] = (uint8_t)((pixelIdx >> 24) & 0xFFu);
+        rec[4] = 1u;
+        if (fwrite(rec, 1, sizeof(rec), fout) != sizeof(rec)) {
+            fprintf(stderr, "Short write to %s\n", outPath);
+            fclose(fout);
+            free(wkRe);
+            free(wkIm);
+            free(bitset);
+            free(pixelHits);
+            free(roots);
+            return 1;
+        }
     }
     fclose(fout);
 
@@ -226,12 +264,13 @@ int main(int argc, char **argv) {
         nPoints,
         W,
         H,
-        bitsetBytes
+        pixelHitCount * 5u
     );
 
     free(wkRe);
     free(wkIm);
     free(bitset);
+    free(pixelHits);
     free(roots);
     return 0;
 }

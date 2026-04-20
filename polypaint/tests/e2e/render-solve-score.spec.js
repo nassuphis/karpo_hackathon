@@ -860,17 +860,15 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#render-preview')).toContainText('No saved artifacts yet.');
   });
 
-  test('Generate popup exposes associated palette control and dispatches solve-score settings', async ({ page }) => {
+  test('Generate popup exposes associated palette control and dispatches fused solve-score settings', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await seedRenderPopupState(page, 'solve_score');
 
     await page.click('#btn-render-generate');
     const popup = page.locator('#render-generate-popup-overlay');
     await expect(popup).toBeVisible();
-    await expect(page.locator('#render-generate-hist-row')).toBeVisible();
     await expect(page.locator('#render-generate-save-associated-palette')).toBeVisible();
 
-    await page.selectOption('#render-generate-hist-input-mode', 'sectioned');
     await page.check('#render-generate-save-associated-palette');
     await page.click('#render-generate-popup-run');
 
@@ -880,7 +878,6 @@ test.describe('Solve Score UI', () => {
       mode: 'color',
       paramsPatch: {
         raster_engine: 'single',
-        solve_score_hist_input_mode: 'sectioned',
         save_associated_palette: true,
       },
     });

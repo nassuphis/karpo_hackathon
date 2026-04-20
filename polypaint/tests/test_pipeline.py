@@ -491,7 +491,7 @@ class TestStorageCleanRender(unittest.TestCase):
             mapping = {
                 "renders/j/bilevel_t": [{"Contents": [{"Key": "renders/j/bilevel_t0000.tif"}]}],
                 "renders/j/bits_chunk_": [{"Contents": [{"Key": "renders/j/bits_chunk_0000_t0000.bits"}]}],
-                "renders/j/bilevel_section_": [{"Contents": [{"Key": "renders/j/bilevel_section_0000.bits"}]}],
+                "renders/j/bilevel_section_": [{"Contents": [{"Key": "renders/j/bilevel_section_0000.frag"}]}],
             }
             return mapping.get(Prefix, [{"Contents": []}])
 
@@ -499,7 +499,7 @@ class TestStorageCleanRender(unittest.TestCase):
         mock_s3.delete_objects.return_value = {"Deleted": [
             {"Key": "renders/j/bilevel_t0000.tif"},
             {"Key": "renders/j/bits_chunk_0000_t0000.bits"},
-            {"Key": "renders/j/bilevel_section_0000.bits"},
+            {"Key": "renders/j/bilevel_section_0000.frag"},
         ]}
 
         event = {"body": json.dumps({"job_id": "j", "pipeline": "bilevel"})}
@@ -510,7 +510,7 @@ class TestStorageCleanRender(unittest.TestCase):
         deleted_keys = [o["Key"] for o in mock_s3.delete_objects.call_args[1]["Delete"]["Objects"]]
         self.assertIn("renders/j/bilevel_t0000.tif", deleted_keys)
         self.assertIn("renders/j/bits_chunk_0000_t0000.bits", deleted_keys)
-        self.assertIn("renders/j/bilevel_section_0000.bits", deleted_keys)
+        self.assertIn("renders/j/bilevel_section_0000.frag", deleted_keys)
         self.assertNotIn("renders/j/image_bilevel.tif", deleted_keys)
 
     @patch("handler_storage.s3")
@@ -3056,6 +3056,40 @@ class TestPaletteInventory(unittest.TestCase):
         self.assertEqual(entry["render_execution"]["solve_score_hist_input_mode"], "sectioned")
         self.assertEqual(entry["render_execution"]["palette_chunk_input_mode"], "tmpfile")
         self.assertEqual(entry["render_execution"]["palette_chunk_workers"], 22)
+
+    def test_render_artifact_entry_parses_bilevel_render_execution_and_section_metadata(self):
+        from handler_storage import _render_artifact_entry
+
+        image_info = {
+            "key": "renders/job_a/bilevel/bilevel_1/image.tif",
+            "url": "https://example.com/image.tif",
+            "modified_at": "2026-04-20T10:00:00Z",
+            "width": 2048,
+            "height": 2048,
+            "size": 54321,
+            "type": "image/tiff",
+            "user_meta": {
+                "artifact_id": "bilevel_1",
+                "family": "bilevel",
+                "format": "tif",
+                "mode": "bilevel",
+                "bilevel_pipeline": "logical_sections_sparse_fragments_v1",
+                "bilevel_section_mode": "logical_sections_auto",
+                "bilevel_section_count": "17",
+                "render_execution": json.dumps({
+                    "raster_section_mode": "logical_sections_auto",
+                    "raster_section_count_auto": 17,
+                }),
+            },
+        }
+
+        entry = _render_artifact_entry("bilevel", "bilevel_1", image_info)
+
+        self.assertEqual(entry["bilevel_pipeline"], "logical_sections_sparse_fragments_v1")
+        self.assertEqual(entry["bilevel_section_mode"], "logical_sections_auto")
+        self.assertEqual(entry["bilevel_section_count"], 17)
+        self.assertEqual(entry["render_execution"]["raster_section_mode"], "logical_sections_auto")
+        self.assertEqual(entry["render_execution"]["raster_section_count_auto"], 17)
 
     @patch("handler_storage.s3")
     def test_delete_palette_deletes_prefix(self, mock_s3):

@@ -725,7 +725,10 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         entry["postprocess_kind"] = meta.get("postprocess_kind", "")
         entry["postprocess_profile"] = meta.get("postprocess_profile", "")
         entry["threshold"] = _parse_int(meta.get("threshold"))
+        entry["render_execution"] = _parse_json(meta.get("render_execution"))
         entry["bilevel_pipeline"] = meta.get("bilevel_pipeline", "")
+        entry["bilevel_section_mode"] = meta.get("bilevel_section_mode", "")
+        entry["bilevel_section_count"] = _parse_int(meta.get("bilevel_section_count"))
     elif family == "pdf":
         page_count = meta.get("page_count")
         entry["pdf_kind"] = meta.get("pdf_kind", "")

@@ -241,14 +241,14 @@ class TestWorkflowDefinition(unittest.TestCase):
     def test_bilevel_and_coeff_pipelines_are_intact(self):
         bilevel_raster = self.states["BilevelRasterMap"]["ItemSelector"]
         self.assertEqual(bilevel_raster["solve_source_manifest.$"], "$.plan.solve_source_manifest")
-        self.assertEqual(bilevel_raster["section_bits_prefix.$"], "$.plan.bilevel.section_bits_prefix")
+        self.assertEqual(bilevel_raster["fragment_prefix.$"], "$.plan.bilevel.fragment_prefix")
         self.assertEqual(bilevel_raster["step_start.$"], "$$.Map.Item.Value.step_start")
         self.assertEqual(bilevel_raster["step_count.$"], "$$.Map.Item.Value.step_count")
 
         bilevel_finalize = self.states["BilevelFinalizeTask"]["Parameters"]["Payload"]
         self.assertEqual(bilevel_finalize["phase"], "finalize")
         self.assertEqual(bilevel_finalize["source_item_count.$"], "$.plan.bilevel.item_count")
-        self.assertEqual(bilevel_finalize["section_bits_prefix.$"], "$.plan.bilevel.section_bits_prefix")
+        self.assertEqual(bilevel_finalize["fragment_prefix.$"], "$.plan.bilevel.fragment_prefix")
 
         coeff_raster = self.states["CoeffRasterMap"]["ItemSelector"]
         self.assertEqual(coeff_raster["coeffs_key.$"], "States.ArrayGetItem($.plan.calc.coeffs_keys, $$.Map.Item.Value.chunk_idx)")

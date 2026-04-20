@@ -161,8 +161,8 @@ int main(int argc, char **argv) {
                 rootsClipped++;
                 continue;
             }
-            int px = (int)pxf;
-            int py = (int)pyf;
+            int px = (int)floor(pxf);
+            int py = (int)floor(pyf);
 
             if (px < 0 || px >= W || py < 0 || py >= H) {
                 rootsClipped++;

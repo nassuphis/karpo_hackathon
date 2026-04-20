@@ -15,6 +15,7 @@ BUCKET = os.environ.get("BUCKET", "polypaint")
 JOBS_TABLE = os.environ.get("JOBS_TABLE", "polypaint-jobs")
 PRESIGN_EXPIRY = 3600  # 1 hour
 REF_SIZE = 4096  # reference image dimension for scale computation
+BILEVEL_SPARSE_PIPELINE = "logical_sections_sparse_fragments_v1"
 
 _ddb = None
 

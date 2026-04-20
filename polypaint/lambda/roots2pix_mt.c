@@ -636,8 +636,8 @@ static void *worker_main(void *arg_) {
                 arg->rootsClipped++;
                 continue;
             }
-            int px = (int)pxf;
-            int py = (int)pyf;
+            int px = (int)floor(pxf);
+            int py = (int)floor(pyf);
             if (px < 0 || px >= arg->W || py < 0 || py >= arg->H) {
                 arg->rootsClipped++;
                 continue;

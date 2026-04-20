@@ -69,13 +69,11 @@ test.describe('Palette UI', () => {
     await expect(page.locator('#palette-circles-palette-tab .pal-circle-long')).toBeVisible();
   });
 
-  test('palette create dispatches the current metric, palette, and solve-score controls', async ({ page }) => {
+  test('palette create dispatches the current visible preset and palette selection', async ({ page }) => {
     await page.evaluate((palettes) => {
       window._mockPalettes = palettes.slice();
       window._paletteDispatches = [];
       document.getElementById('palette-results-dir').value = 'job_palette';
-      paletteTabPalette = 'viridis';
-      buildPaletteCircles('palette-circles-palette-tab', 'palette_tab', () => paletteTabPalette);
       window.lambdaPost = async function (name, body, path) {
         if (name === 'storage' && path === '/list-palettes') return { palettes: window._mockPalettes.slice() };
         if (name === 'dispatch') {
@@ -90,22 +88,26 @@ test.describe('Palette UI', () => {
     }, PALETTES);
 
     await page.click('.tab-btn:text("Palette")');
-    await page.selectOption('#palette-solve-score', 'spread');
-    await page.fill('#palette-solve-score-quantile', '1.5');
-    await page.fill('#palette-solve-score-omega', '4');
-    await page.check('#palette-solve-score-omega-enabled');
+    await page.selectOption('#palette-solve-score-program-select', 'proximity-q01');
+    await page.click('#palette-solve-score-program-load');
+    await page.locator('#palette-circles-palette-tab [data-palette-popup="builtin"]').click();
+    await expect(page.locator('#builtin-popup-overlay')).toBeVisible();
+    await page.locator('#builtin-popup-filter').fill('viri');
+    await page.locator('#builtin-popup-body .tri-popup-row').filter({ hasText: 'viridis' }).first().click();
+    await expect(page.locator('#builtin-popup-overlay')).not.toBeVisible();
     await page.click('#btn-palette-create');
 
     const dispatch = await page.evaluate(() => window._paletteDispatches[0]);
     expect(dispatch.target).toBe('palette_orchestrator');
     expect(dispatch.jobs).toHaveLength(1);
     expect(dispatch.jobs[0].params).toMatchObject({
-      metric: 'spread',
+      metric: 'proximity',
       palette: 'viridis',
-      solve_score_quantile: 0.015,
-      solve_score_omega: 4,
-      solve_score_omega_enabled: true,
+      solve_score_quantile: 0.001,
+      solve_score_omega: 1,
+      solve_score_omega_enabled: false,
     });
+    expect(dispatch.jobs[0].params.solve_score_chain).toEqual([['proximity', '0.1']]);
   });
 
   test('download and delete stay wired to the selected palette artifact', async ({ page }) => {

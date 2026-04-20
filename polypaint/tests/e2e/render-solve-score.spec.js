@@ -114,12 +114,11 @@ test.beforeEach(async ({ page }) => {
 
 test.describe('Solve Score UI', () => {
 
-  test('Render tab shows Root proximity and Solve score labels', async ({ page }) => {
+  test('Render tab shows the solve-score palette section and fused-only banner', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    const rootLabel = page.locator('.color-row:has([data-mode="proximity"]) >> text=Root proximity');
-    const solveLabel = page.locator('.color-row:has([data-mode="solve_score"]) >> text=Solve score');
-    await expect(rootLabel).toBeVisible();
-    await expect(solveLabel).toBeVisible();
+    await expect(page.locator('.color-title', { hasText: 'Solve Score Palette' })).toBeVisible();
+    await expect(page.locator('#palette-circles-solve-score')).toBeVisible();
+    await expect(page.locator('text=Color render is fused-only now. Solve score is the only supported mode.')).toBeVisible();
   });
 
   test('render rows collapse built-ins into popup selectors', async ({ page }) => {
@@ -378,13 +377,11 @@ test.describe('Solve Score UI', () => {
     ]);
   });
 
-  test('clicking solve-score palette activates solve_score mode', async ({ page }) => {
+  test('choosing a solve-score palette keeps solve_score mode active', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await chooseBuiltinPalette(page, 'solve_score', 'inferno');
     const mode = await page.evaluate(() => renderColorMode);
     expect(mode).toBe('solve_score');
-    const dot = page.locator('.color-dot[data-mode="solve_score"]');
-    await expect(dot).toHaveClass(/active/);
   });
 
   test('choosing solve-score metric updates renderSolveMetric', async ({ page }) => {
@@ -400,7 +397,6 @@ test.describe('Solve Score UI', () => {
 
   test('render dispatch payload contains selected solve_metric', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    await page.locator('.color-dot[data-mode="solve_score"]').click();
 
     await chooseSolveMetric(page, 'spread');
 
@@ -506,10 +502,9 @@ test.describe('Solve Score UI', () => {
     expect(await chipSource.inputValue()).toBe('slv');
     expect(await chipQ.inputValue()).toBe('0.1');
     expect(await page.locator('#render-solve-score-quantile').inputValue()).toBe('0.1');
-    await expect(page.locator('#render-solve-score-quantile-val')).toHaveText('0.1');
   });
 
-  test('changing solve-score metric q updates the hidden compatibility field and displayed text', async ({ page }) => {
+  test('changing solve-score metric q updates the hidden compatibility field and the visible chip input', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await page.evaluate(() => {
       const input = document.querySelector('#ss-chips input');
@@ -517,12 +512,11 @@ test.describe('Solve Score UI', () => {
       input.dispatchEvent(new Event('change'));
     });
     expect(await page.locator('#render-solve-score-quantile').inputValue()).toBe('3');
-    await expect(page.locator('#render-solve-score-quantile-val')).toHaveText('3');
+    await expect(page.locator('#ss-chips input').first()).toHaveValue('3.0');
   });
 
   test('dispatch payload includes solve_score_quantile', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    await page.locator('.color-dot[data-mode="solve_score"]').click();
     await page.evaluate(() => {
       const input = document.querySelector('#ss-chips input');
       input.value = '2.0';
@@ -614,8 +608,6 @@ test.describe('Solve Score UI', () => {
 
   test('Histogram button calls solve_proximity with summary phase', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    // Activate solve_score mode
-    await page.locator('.color-dot[data-mode="solve_score"]').click();
     // Set quantile and enable buttons
     await page.evaluate(() => {
       document.getElementById('render-solve-score-quantile').value = '3.0';
@@ -813,7 +805,6 @@ test.describe('Solve Score UI', () => {
       _rtChain = [];
       document.getElementById('render-solve-score').value = 'proximity';
       document.getElementById('render-solve-score-quantile').value = '0.1';
-      document.getElementById('render-solve-score-quantile-val').textContent = '0.1';
       _renderActiveFamily = 'palette';
       renderArtifactPanel('test_job', {
         families: {

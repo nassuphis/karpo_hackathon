@@ -144,7 +144,7 @@ test.describe('Results UI', () => {
     await page.click('.tab-btn:text("Results")');
     await expect(page.locator('#results-tbody tr')).toHaveCount(2);
 
-    await page.click('#tab-results button:text("Refresh")');
+    await page.click('#tab-results button:text("Refresh...")');
     await expect(page.locator('#results-refresh-popup-overlay')).toBeVisible();
     await page.fill('#results-refresh-workers', '48');
     await page.click('#results-refresh-popup-run');
@@ -161,7 +161,7 @@ test.describe('Results UI', () => {
     await expect(page.locator('#results-tbody tr').first()).toContainText('job_beta');
   });
 
-  test('populate restores compute settings and render button switches to Render tab', async ({ page }) => {
+  test('populate restores compute settings and Go Render button switches to Render tab', async ({ page }) => {
     await page.evaluate(({ results, details }) => {
       window.lambdaPost = async function (name, body, path) {
         if (name !== 'storage') throw new Error(`unexpected ${name}`);

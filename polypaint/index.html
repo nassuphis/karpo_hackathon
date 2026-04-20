@@ -196,12 +196,6 @@ button {
     color: #66768f; font-size: 10px; font-style: italic;
 }
 
-.color-dot {
-    width: 10px; height: 10px; border-radius: 50%; display: inline-block;
-    border: 1.5px solid #555; cursor: pointer; transition: all 0.12s;
-}
-.color-dot.active { background: #e94560; border-color: #e94560; }
-
 .strat-chip {
     padding: 2px 7px; border-radius: 8px; cursor: pointer; font-size: 9px;
     text-transform: uppercase; letter-spacing: 0.06em; user-select: none;
@@ -813,7 +807,7 @@ button {
                 <!-- Left: scrollable table -->
                 <div style="flex:1; min-width:0; display:flex; flex-direction:column">
                     <div style="margin-bottom:6px; display:flex; align-items:center; gap:8px">
-                        <button class="btn-secondary btn-inline" onclick="openResultsRefreshPopup()" style="padding:4px 12px">Refresh</button>
+                        <button class="btn-secondary btn-inline" onclick="openResultsRefreshPopup()" style="padding:4px 12px">Refresh...</button>
                         <span id="results-count" style="font-size:11px; color:#666"></span>
                     </div>
                     <div style="display:flex; gap:4px; margin-bottom:4px; align-items:center">
@@ -856,12 +850,12 @@ button {
                     </div>
                     <div style="font-size:10px; margin-bottom:4px; display:flex; gap:6px">
                         <div style="flex:1">
-                            <label>Q <span id="res-q-val">0</span>%</label>
+                            <label>Preview Q <span id="res-q-val">0</span>%</label>
                             <input type="range" id="res-quantile" min="0" max="10" step="0.5" value="0"
                                    style="width:100%" oninput="document.getElementById('res-q-val').textContent=this.value">
                         </div>
                         <div style="flex:1">
-                            <label>SHM <span id="res-s-val">5</span>%</label>
+                            <label>Preview SHM <span id="res-s-val">5</span>%</label>
                             <input type="range" id="res-shim" min="0" max="50" step="1" value="5"
                                    style="width:100%" oninput="document.getElementById('res-s-val').textContent=this.value">
                         </div>
@@ -871,8 +865,8 @@ button {
                                 style="margin:0; padding:4px 8px; font-size:11px; width:100%">Populate</button>
                         <button class="btn-primary" id="btn-preview" onclick="previewResult()" disabled
                                 style="margin:0; padding:4px 8px; font-size:11px; width:100%">Preview</button>
-                        <button class="btn-primary" id="btn-render-result" onclick="renderResult()" disabled
-                                style="margin:0; padding:4px 8px; font-size:11px; width:100%; background:#2a6">Render</button>
+                        <button class="btn-primary" id="btn-render-result" onclick="goRenderResult()" disabled
+                                style="margin:0; padding:4px 8px; font-size:11px; width:100%; background:#2a6">Go Render</button>
                         <button class="btn-secondary" id="btn-delete" onclick="deleteResult()" disabled
                                 style="margin:0; padding:4px 8px; font-size:11px; width:100%; background:#6b2030">Delete</button>
                     </div>
@@ -961,19 +955,17 @@ button {
                     </div>
                 </div>
                 <div class="color-box">
-                    <div class="color-title">Color Mode</div>
+                    <div class="color-title">Solve Score Palette</div>
                     <div class="color-row">
-                        <span class="color-dot active" data-mode="solve_score" onclick="setColorMode('solve_score')"></span>
-                        <span style="color:#aaa; cursor:pointer; letter-spacing:0.06em; text-transform:uppercase" onclick="setColorMode('solve_score')">Solve score</span>
-                        <div id="palette-circles-solve-score" style="display:inline-flex; gap:4px; flex-wrap:wrap; margin-left:12px"></div>
+                        <span class="color-row-label" style="min-width:80px">Palette</span>
+                        <div id="palette-circles-solve-score" style="display:inline-flex; gap:4px; flex-wrap:wrap"></div>
                         <input type="hidden" id="render-solve-score" value="proximity">
                         <input type="hidden" id="render-solve-score-omega" value="1">
                         <input type="hidden" id="render-solve-score-omega-phase" value="0">
                         <input type="hidden" id="render-solve-score-omega-enabled" value="true">
-                        <span id="render-solve-score-omega-val" style="display:none">1</span>
                     </div>
                     <div class="color-row" style="margin-bottom:0">
-                        <span class="autolevel-stage-text" style="margin-left:30px">Color render is fused-only now. Solve score is the only supported mode.</span>
+                        <span class="autolevel-stage-text">Color render is fused-only now. Solve score is the only supported mode.</span>
                     </div>
                 </div>
                 <div class="color-box" style="grid-column:1 / -1">
@@ -1003,7 +995,6 @@ button {
                         <span id="ss-stack" style="display:inline-flex; gap:3px; align-items:flex-end; min-height:16px"></span>
                         <span id="ss-stack-label" style="font-size:10px; color:#888; min-width:80px; margin-left:6px"></span>
                         <input type="hidden" id="render-solve-score-quantile" value="0.1">
-                        <span id="render-solve-score-quantile-val" style="display:none">0.1</span>
                         <button id="btn-solve-histogram" class="btn-inline-offset" onclick="runSolveScoreHistogramDebug()" style="font-size:10px; padding:1px 8px">Histogram</button>
                     </div>
                     <div id="render-solve-score-program-status" class="solve-score-program-status"></div>
@@ -1088,18 +1079,11 @@ button {
                     <label style="color:#888; font-size:10px; min-width:70px">Stack:</label>
                     <span id="palette-ss-stack" style="display:inline-flex; gap:3px; align-items:flex-end; min-height:16px"></span>
                     <span id="palette-ss-stack-label" style="font-size:10px; color:#888; min-width:80px; margin-left:6px"></span>
-                    <input type="hidden" id="palette-solve-score-quantile" value="0.1">
-                    <span id="palette-solve-score-quantile-val" style="display:none">0.1</span>
                     <button id="btn-palette-create" class="btn-inline-offset" onclick="runPaletteArtifact()" style="font-size:10px; padding:1px 8px">Palette</button>
                 </div>
                 <div class="color-row" style="margin-bottom:0">
                     <label style="color:#888; font-size:10px; min-width:70px">Palette:</label>
                     <div id="palette-circles-palette-tab" style="display:inline-flex; gap:4px; flex-wrap:wrap"></div>
-                    <input type="hidden" id="palette-solve-score" value="proximity">
-                    <input type="hidden" id="palette-solve-score-omega" value="1">
-                    <input type="hidden" id="palette-solve-score-omega-phase" value="0">
-                    <input type="hidden" id="palette-solve-score-omega-enabled" value="true">
-                    <span id="palette-solve-score-omega-val" style="display:none">1</span>
                 </div>
                 <div id="palette-solve-score-program-status" class="solve-score-program-status"></div>
             </div>
@@ -3048,7 +3032,7 @@ async function deleteResult() {
     }
 }
 
-function renderResult() {
+function goRenderResult() {
     if (!_selectedJobId) return;
     _setRenderResultsJob(_selectedJobId);
     switchTab('render');
@@ -3761,7 +3745,37 @@ function _defaultSolveScoreChain(metric = 'proximity', quantilePct = '0.1', omeg
 function _legacySolveScoreQuantilePct(prefix) {
     const qEl = document.getElementById(`${prefix}-solve-score-quantile`);
     const q = Number(qEl && qEl.value);
-    return Number.isFinite(q) ? q : 0.1;
+    if (Number.isFinite(q)) return q;
+    const fallbackMetric = prefix === 'palette' ? paletteTabMetric : renderSolveMetric;
+    try {
+        const compiled = _compileSolveScoreChain(
+            _chainForWhich(_solveScoreWhichForPrefix(prefix)),
+            fallbackMetric,
+            0.1
+        );
+        return Number(compiled.quantile) * 100;
+    } catch (_) {
+        return 0.1;
+    }
+}
+
+function _solveScoreLegacyFieldsPresent(prefix) {
+    return [
+        `${prefix}-solve-score`,
+        `${prefix}-solve-score-quantile`,
+        `${prefix}-solve-score-omega`,
+        `${prefix}-solve-score-omega-phase`,
+        `${prefix}-solve-score-omega-enabled`,
+    ].some((id) => !!document.getElementById(id));
+}
+
+function _defaultSolveScoreState(prefix) {
+    const fallbackMetric = prefix === 'palette' ? paletteTabMetric : renderSolveMetric;
+    const chain = _serializeSolveScoreChain(
+        _defaultSolveScoreChain(fallbackMetric || 'proximity'),
+        fallbackMetric || 'proximity'
+    );
+    return _compileSolveScoreChain(chain, fallbackMetric || 'proximity', 0.1);
 }
 
 function _normalizeSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuantilePct = '0.1') {
@@ -3975,6 +3989,18 @@ function _setSolveScoreLegacyField(id, value) {
 }
 
 function _legacySolveScoreState(prefix) {
+    if (!_solveScoreLegacyFieldsPresent(prefix)) {
+        const fallbackMetric = prefix === 'palette' ? paletteTabMetric : renderSolveMetric;
+        try {
+            return _compileSolveScoreChain(
+                _chainForWhich(_solveScoreWhichForPrefix(prefix)),
+                fallbackMetric,
+                _legacySolveScoreQuantilePct(prefix)
+            );
+        } catch (_) {
+            return _defaultSolveScoreState(prefix);
+        }
+    }
     const metricEl = document.getElementById(`${prefix}-solve-score`);
     const qEl = document.getElementById(`${prefix}-solve-score-quantile`);
     const omegaEl = document.getElementById(`${prefix}-solve-score-omega`);
@@ -4681,7 +4707,6 @@ let _resultsRefreshPopupState = { open: false, workers: 32 };
 let _renderGeneratePopupState = { open: false, saveAssociatedPalette: false };
 let _renderMtPopupState = {
     open: false,
-    colorPipeline: 'fused',
     rasterThreads: 4,
     rasterWorkers: 10,
     solveScoreThreads: 4,
@@ -4689,7 +4714,6 @@ let _renderMtPopupState = {
     finalizeWorkers: 16,
     rasterSectionMode: 'logical_sections_auto',
     rasterSectionCount: '',
-    rasterSectionCountAuto: '',
     saveAssociatedPalette: false,
 };
 function _defaultComputePopupPrefs(solverMode) {
@@ -5090,10 +5114,6 @@ function _omegaSummaryLabel(enabled, omega) {
 
 function setColorMode(mode) {
     renderColorMode = 'solve_score';
-    document.querySelectorAll('.color-dot').forEach(d => {
-        d.classList.toggle('active', d.dataset.mode === 'solve_score');
-        if (d.nextElementSibling) d.nextElementSibling.style.color = d.dataset.mode === 'solve_score' ? '#aaa' : '#888';
-    });
     _updateSolveScoreButtons();
 }
 
@@ -6450,7 +6470,6 @@ function openRenderGeneratePopup() {
 function _closeRenderMtPopup() {
     _renderMtPopupState = {
         open: false,
-        colorPipeline: 'fused',
         rasterThreads: _clampRenderMtThreads(_renderMtPopupState.rasterThreads),
         rasterWorkers: _clampRenderMtWorkerCount(_renderMtPopupState.rasterWorkers),
         solveScoreThreads: _clampRenderMtThreads(_renderMtPopupState.solveScoreThreads),
@@ -6458,7 +6477,6 @@ function _closeRenderMtPopup() {
         finalizeWorkers: _clampRenderMtFinalizeWorkers(_renderMtPopupState.finalizeWorkers),
         rasterSectionMode: _normalizeRenderMtSectionMode(_renderMtPopupState.rasterSectionMode),
         rasterSectionCount: _clampRenderMtSectionCount(_renderMtPopupState.rasterSectionCount),
-        rasterSectionCountAuto: _clampRenderMtSectionCount(_renderMtPopupState.rasterSectionCountAuto),
         saveAssociatedPalette: !!_renderMtPopupState.saveAssociatedPalette,
         jobSizeLoadError: '',
     };
@@ -6516,9 +6534,7 @@ function _renderRenderMtPopup() {
     _renderMtPopupState.finalizeWorkers = finalizeWorkers;
     _renderMtPopupState.rasterSectionMode = rasterSectionMode;
     _renderMtPopupState.rasterSectionCount = rasterSectionCount;
-    _renderMtPopupState.rasterSectionCountAuto = rasterSectionCountAuto;
     _renderMtPopupState.saveAssociatedPalette = saveAssociatedPalette;
-    _renderMtPopupState.colorPipeline = 'fused';
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
     pipelineBannerEl.textContent = solveScoreRelevant
@@ -6587,7 +6603,6 @@ async function openRenderMtPopup() {
     }
     _renderMtPopupState = {
         open: true,
-        colorPipeline: 'fused',
         rasterThreads: _clampRenderMtThreads(_renderMtPopupState.rasterThreads || 4),
         rasterWorkers: _clampRenderMtWorkerCount(_renderMtPopupState.rasterWorkers || 10),
         solveScoreThreads: _clampRenderMtThreads(_renderMtPopupState.solveScoreThreads || 4),
@@ -6595,7 +6610,6 @@ async function openRenderMtPopup() {
         finalizeWorkers: _clampRenderMtFinalizeWorkers(_renderMtPopupState.finalizeWorkers || 16),
         rasterSectionMode: _normalizeRenderMtSectionMode(_renderMtPopupState.rasterSectionMode || 'logical_sections_auto'),
         rasterSectionCount: _clampRenderMtSectionCount(_renderMtPopupState.rasterSectionCount),
-        rasterSectionCountAuto: _clampRenderMtSectionCount(_renderMtPopupState.rasterSectionCountAuto),
         saveAssociatedPalette: !!_renderMtPopupState.saveAssociatedPalette,
         jobSizeLoadError,
     };
@@ -7039,7 +7053,6 @@ function _initRenderMtPopup() {
     const fusedRasterSectionCountEl = document.getElementById('render-mt-fused-raster-section-count');
     const fusedAssocEl = document.getElementById('render-mt-fused-save-associated-palette');
     const readCfg = () => ({
-        colorPipeline: 'fused',
         rasterThreads: _clampRenderMtThreads(fusedRasterThreadsEl.value),
         rasterWorkers: _clampRenderMtWorkerCount(fusedRasterWorkersEl.value),
         solveScoreThreads: _clampRenderMtThreads(fusedClipThreadsEl.value),
@@ -7050,7 +7063,6 @@ function _initRenderMtPopup() {
         saveAssociatedPalette: !!fusedAssocEl.checked,
     });
     const persistCfg = (cfg) => {
-        _renderMtPopupState.colorPipeline = 'fused';
         _renderMtPopupState.rasterThreads = cfg.rasterThreads;
         _renderMtPopupState.rasterWorkers = cfg.rasterWorkers;
         _renderMtPopupState.solveScoreThreads = cfg.solveScoreThreads;
@@ -7061,7 +7073,6 @@ function _initRenderMtPopup() {
         _renderMtPopupState.saveAssociatedPalette = !!cfg.saveAssociatedPalette;
     };
     const cfgToRun = (cfg) => ({
-        colorPipeline: 'fused',
         rasterThreads: cfg.rasterThreads,
         rasterWorkers: cfg.rasterWorkers,
         solveScoreThreads: cfg.solveScoreThreads,
@@ -9391,7 +9402,6 @@ function _renderCommonParams(options = {}) {
         quantile: parseFloat(document.getElementById('render-quantile').value) / 100,
         shim: parseFloat(document.getElementById('render-shim').value) / 100,
         squareExtent: parseFloat(document.getElementById('render-square-extent').value) || 2.0,
-        constantColor: 'ffffff',
         solveScoreQuantile: solveScore.quantile,
         solveScoreMetric: solveScore.metric,
         solveScoreOmega: solveScore.omega,
@@ -12166,16 +12176,12 @@ function _restoreRenderExecutionState(entry) {
         _renderGeneratePopupState.saveAssociatedPalette = saveAssociatedPalette;
         _renderMtPopupState.saveAssociatedPalette = saveAssociatedPalette;
     }
-    if (cfg.color_pipeline != null) {
-        _renderMtPopupState.colorPipeline = 'fused';
-    }
     if (cfg.raster_mt_threads != null) _renderMtPopupState.rasterThreads = _clampRenderMtThreads(cfg.raster_mt_threads);
     if (cfg.raster_workers != null) _renderMtPopupState.rasterWorkers = _clampRenderMtWorkerCount(cfg.raster_workers);
     if (cfg.solve_score_threads != null) _renderMtPopupState.solveScoreThreads = _clampRenderMtThreads(cfg.solve_score_threads);
     if (cfg.raster_sectioned_retries != null) _renderMtPopupState.rasterRetries = _clampRenderMtRetries(cfg.raster_sectioned_retries);
     if (cfg.raster_section_mode != null) _renderMtPopupState.rasterSectionMode = _normalizeRenderMtSectionMode(cfg.raster_section_mode);
     if (cfg.raster_section_count != null) _renderMtPopupState.rasterSectionCount = _clampRenderMtSectionCount(cfg.raster_section_count);
-    if (cfg.raster_section_count_auto != null) _renderMtPopupState.rasterSectionCountAuto = _clampRenderMtSectionCount(cfg.raster_section_count_auto);
     if (cfg.finalize_workers != null) _renderMtPopupState.finalizeWorkers = _clampRenderMtFinalizeWorkers(cfg.finalize_workers);
 }
 
@@ -13594,11 +13600,13 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
     const fused = !!(computeMtOptions && computeMtOptions.fused);
     const fusedThreads = computeMtOptions && computeMtOptions.fusedThreads != null
         ? _clampRenderMtThreads(computeMtOptions.fusedThreads)
-        : null;
+        : (fused ? 4 : null);
     const paramGenThreads = hasParamGenThreadOverride ? _clampRenderMtThreads(computeMtOptions.paramGenThreads) : null;
     const coeffgenThreads = hasCoeffgenThreadOverride ? _clampRenderMtThreads(computeMtOptions.coeffgenThreads) : null;
     const loresParamGenThreads = hasLoresParamGenThreadOverride ? _clampRenderMtThreads(computeMtOptions.loresParamGenThreads) : null;
     const loresCoeffgenThreads = hasLoresCoeffgenThreadOverride ? _clampRenderMtThreads(computeMtOptions.loresCoeffgenThreads) : null;
+    const effectiveParamGenThreads = fused ? fusedThreads : paramGenThreads;
+    const effectiveCoeffgenThreads = fused ? fusedThreads : coeffgenThreads;
 
     const paramTransforms = _serializeParamTransforms();
     const coeffTransforms = _serializeCoeffTransforms();
@@ -13625,8 +13633,8 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
     if (times > 1) computeMsg += `, times=${times}`;
     if (computeMtOptions) computeMsg += `, method=${fused ? 'fused' : 'classic'}`;
     if (fusedThreads != null) computeMsg += `, fused threads=${fusedThreads}`;
-    if (paramGenThreads != null) computeMsg += `, param threads=${paramGenThreads}`;
-    if (coeffgenThreads != null) computeMsg += `, coeffgen threads=${coeffgenThreads}`;
+    if (!fused && effectiveParamGenThreads != null) computeMsg += `, param threads=${effectiveParamGenThreads}`;
+    if (!fused && effectiveCoeffgenThreads != null) computeMsg += `, coeffgen threads=${effectiveCoeffgenThreads}`;
     if (loresParamGenThreads != null) computeMsg += `, lores param threads=${loresParamGenThreads}`;
     if (loresCoeffgenThreads != null) computeMsg += `, lores coeffgen threads=${loresCoeffgenThreads}`;
     computeMsg += '...';
@@ -13651,10 +13659,10 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
         };
         if (computeMtOptions) {
             orchPayload.params.execution_method = fused ? 'fused_chunk_pipeline' : 'classic_chunk_pipeline';
-            if (fusedThreads != null) orchPayload.params.fused_threads = fusedThreads;
+            if (fused && fusedThreads != null) orchPayload.params.fused_threads = fusedThreads;
         }
-        if (paramGenThreads != null) orchPayload.params.param_gen_threads = paramGenThreads;
-        if (coeffgenThreads != null) orchPayload.params.coeffgen_threads = coeffgenThreads;
+        if (effectiveParamGenThreads != null) orchPayload.params.param_gen_threads = effectiveParamGenThreads;
+        if (effectiveCoeffgenThreads != null) orchPayload.params.coeffgen_threads = effectiveCoeffgenThreads;
         if (loresParamGenThreads != null) orchPayload.params.lores_param_gen_threads = loresParamGenThreads;
         if (loresCoeffgenThreads != null) orchPayload.params.lores_coeffgen_threads = loresCoeffgenThreads;
 

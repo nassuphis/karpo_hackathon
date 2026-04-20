@@ -120,6 +120,8 @@ def handle_build_plan(params):
     fused_estimate = None
     if execution_method == "fused_chunk_pipeline":
         fused_threads = validate_fused_threads(run_params.get("fused_threads", 4))
+        param_gen_threads = int(fused_threads)
+        coeffgen_threads = int(fused_threads)
         probe_degree = _validate_positive_int(probe.get("degree"), "probe.degree", max_value=4096)
         probe_n_coeffs = _validate_positive_int(probe.get("n_coeffs"), "probe.n_coeffs", max_value=4096)
         if not bool(probe.get("probe_stable")):

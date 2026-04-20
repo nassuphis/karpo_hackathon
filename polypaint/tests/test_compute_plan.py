@@ -96,6 +96,8 @@ class TestComputePlan(unittest.TestCase):
         self.assertEqual(plan["compute"]["execution_method"], "fused_chunk_pipeline")
         self.assertEqual(plan["compute"]["probe_degree"], 10)
         self.assertEqual(plan["compute"]["probe_n_coeffs"], 11)
+        self.assertEqual(plan["compute"]["param_gen_threads"], 4)
+        self.assertEqual(plan["compute"]["coeffgen_threads"], 4)
         self.assertEqual(plan["fused"]["threads"], 4)
         self.assertGreaterEqual(plan["compute"]["n_chunks"], plan["compute"]["min_safe_chunks"])
         self.assertEqual(plan["post_seed"]["degree"], 10)
@@ -170,6 +172,8 @@ class TestComputePlan(unittest.TestCase):
         plan = json.loads(result["body"])
         self.assertEqual(plan["compute"]["execution_method"], "fused_chunk_pipeline")
         self.assertEqual(plan["solve"]["mode"], "companion_matrix")
+        self.assertEqual(plan["compute"]["param_gen_threads"], 4)
+        self.assertEqual(plan["compute"]["coeffgen_threads"], 4)
         self.assertEqual(plan["fused"]["threads"], 4)
 
     @patch("handler_compute_plan._get_ddb")

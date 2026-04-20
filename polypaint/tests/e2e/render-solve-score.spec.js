@@ -643,6 +643,168 @@ test.describe('Solve Score UI', () => {
     expect(payload.params.solve_score_quantile).toBeCloseTo(0.02, 3);
   });
 
+  test('explicit viewport dispatch sends exact bounds', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate(() => {
+      window._explicitPayload = null;
+      window.lambdaPost = async function(name, body, path) {
+        if (name === 'dispatch' && body.target === 'render_orchestrator') {
+          window._explicitPayload = body.jobs[0];
+          return { fired: 1, errors: [] };
+        }
+        if (name === 'storage' && path === '/check-status') {
+          return { errors: 0, done: 1, complete: true, results: [{ phase: 'done' }] };
+        }
+        return {};
+      };
+      window.refreshRenderArtifacts = async function() {};
+      document.getElementById('render-results-dir').value = 'test_explicit';
+      document.getElementById('render-pix').value = '512';
+      selectViewMode('explicit');
+      document.getElementById('render-min-re').value = '-3.5';
+      document.getElementById('render-max-re').value = '1.25';
+      document.getElementById('render-min-im').value = '-0.75';
+      document.getElementById('render-max-im').value = '2.0';
+      _updateRenderExplicitViewportAspect();
+      window._rtChain = [];
+    });
+
+    await page.evaluate(async () => {
+      try { await runRasterPipeline(); } catch(e) {}
+    });
+
+    const payload = await page.evaluate(() => window._explicitPayload);
+    expect(payload).not.toBeNull();
+    expect(payload.params.view_mode).toBe('explicit');
+    expect(payload.params.min_re).toBeCloseTo(-3.5, 6);
+    expect(payload.params.max_re).toBeCloseTo(1.25, 6);
+    expect(payload.params.min_im).toBeCloseTo(-0.75, 6);
+    expect(payload.params.max_im).toBeCloseTo(2.0, 6);
+  });
+
+  test('square viewport dispatch does not leak stale explicit bounds', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate(() => {
+      window._squarePayload = null;
+      window.lambdaPost = async function(name, body, path) {
+        if (name === 'dispatch' && body.target === 'render_orchestrator') {
+          window._squarePayload = body.jobs[0];
+          return { fired: 1, errors: [] };
+        }
+        if (name === 'storage' && path === '/check-status') {
+          return { errors: 0, done: 1, complete: true, results: [{ phase: 'done' }] };
+        }
+        return {};
+      };
+      window.refreshRenderArtifacts = async function() {};
+      document.getElementById('render-results-dir').value = 'test_square';
+      document.getElementById('render-pix').value = '512';
+      document.getElementById('render-min-re').value = '-9';
+      document.getElementById('render-max-re').value = '9';
+      document.getElementById('render-min-im').value = '-7';
+      document.getElementById('render-max-im').value = '7';
+      selectViewMode('square');
+      document.getElementById('render-square-extent').value = '2.5';
+      window._rtChain = [];
+    });
+
+    await page.evaluate(async () => {
+      try { await runRasterPipeline(); } catch(e) {}
+    });
+
+    const payload = await page.evaluate(() => window._squarePayload);
+    expect(payload).not.toBeNull();
+    expect(payload.params.view_mode).toBe('square');
+    expect(payload.params.square_extent).toBeCloseTo(2.5, 6);
+    expect(Object.prototype.hasOwnProperty.call(payload.params, 'min_re')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(payload.params, 'max_re')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(payload.params, 'min_im')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(payload.params, 'max_im')).toBe(false);
+  });
+
+  test('invalid explicit viewport blocks dispatch and surfaces error', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate(() => {
+      window._explicitDispatchCalls = 0;
+      window.lambdaPost = async function(name, body, path) {
+        if (name === 'dispatch' && body.target === 'render_orchestrator') {
+          window._explicitDispatchCalls += 1;
+          return { fired: 1, errors: [] };
+        }
+        return {};
+      };
+      document.getElementById('render-results-dir').value = 'test_explicit_invalid';
+      document.getElementById('render-pix').value = '512';
+      selectViewMode('explicit');
+      document.getElementById('render-min-re').value = '5';
+      document.getElementById('render-max-re').value = '1';
+      document.getElementById('render-min-im').value = '-1';
+      document.getElementById('render-max-im').value = '1';
+      _updateRenderExplicitViewportAspect();
+      window._rtChain = [];
+    });
+
+    await page.evaluate(async () => {
+      try { await runRasterPipeline(); } catch(e) {}
+    });
+
+    const dispatchCalls = await page.evaluate(() => window._explicitDispatchCalls);
+    expect(dispatchCalls).toBe(0);
+    await expect(page.locator('#render-status')).toContainText('Explicit viewport requires Max Re > Min Re');
+  });
+
+  test('populate restores explicit viewport bounds from artifact metadata', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate(() => {
+      document.getElementById('render-results-dir').value = 'test_bounds';
+      _renderLoadedJobId = 'test_bounds';
+      _renderActiveFamily = 'color';
+      renderArtifactPanel('test_bounds', {
+        calc: { exists: true, N: 4000, degree: 8 },
+        families: {
+          color: [{
+            artifact_id: 'color_bounds',
+            created_at: '2026-04-20T12:00:00Z',
+            image_key: 'renders/test_bounds/color/color_bounds/image.jpeg',
+            image_url: 'https://example.com/bounds.jpeg',
+            preview_url: 'https://example.com/bounds.png',
+            viewer_url: 'https://example.com/bounds.png',
+            file_size: 50000,
+            width: 512,
+            height: 512,
+            color_mode: 'solve_score',
+            format: 'jpeg',
+            view_mode: 'square',
+            square_extent: 2.0,
+            min_re: -3.5,
+            max_re: 1.25,
+            min_im: -0.75,
+            max_im: 2.0,
+            rotation: 0,
+            palette: 'inferno',
+            solve_metric: 'proximity',
+            solve_score_quantile: 0.001,
+            solve_score_omega: 1,
+            solve_score_omega_enabled: true,
+            solve_score_chain: [['proximity', '0.1']],
+          }],
+          bilevel: [],
+          coeffs: [],
+          palette: [],
+          pdf: [],
+        },
+      });
+      populateSelectedRenderArtifact();
+    });
+
+    expect(await page.locator('#render-min-re').inputValue()).toBe('-3.5');
+    expect(await page.locator('#render-max-re').inputValue()).toBe('1.25');
+    expect(await page.locator('#render-min-im').inputValue()).toBe('-0.75');
+    expect(await page.locator('#render-max-im').inputValue()).toBe('2');
+    const mode = await page.evaluate(() => _viewMode);
+    expect(mode).toBe('explicit');
+  });
+
   test('viewport quantile and solve-score quantile are independent', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     // Set viewport quantile to 2.0, solve-score metric q to 4.0

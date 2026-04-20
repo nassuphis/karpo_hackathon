@@ -66,13 +66,16 @@ typedef struct {
     int nTileCols;
     int nTileRows;
     int nTiles;
+    double minRe;
+    double maxRe;
+    double minIm;
+    double maxIm;
     double centerRe;
     double centerIm;
-    double scale;
+    double xScale;
+    double yScale;
     double cosA;
     double sinA;
-    double halfW;
-    double halfH;
     enum InputMode inputMode;
     enum SolveMetric solveMetric;
     SolveScoreProgram solveScoreProgram;
@@ -628,10 +631,10 @@ static void *worker_main(void *arg_) {
             double im = step[r * 2 + 1];
             double dx = re - arg->centerRe;
             double dy = im - arg->centerIm;
-            double rx = dx * arg->cosA - dy * arg->sinA;
-            double ry = dx * arg->sinA + dy * arg->cosA;
-            double pxf = arg->halfW + rx * arg->scale;
-            double pyf = arg->halfH - ry * arg->scale;
+            double rotRe = arg->centerRe + (dx * arg->cosA - dy * arg->sinA);
+            double rotIm = arg->centerIm + (dx * arg->sinA + dy * arg->cosA);
+            double pxf = (rotRe - arg->minRe) * arg->xScale;
+            double pyf = (arg->maxIm - rotIm) * arg->yScale;
             if (!isfinite(pxf) || !isfinite(pyf)) {
                 arg->rootsClipped++;
                 continue;
@@ -690,7 +693,7 @@ cleanup:
 int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr, "Usage: roots2pix_mt stripe.bin|ignored /tmp/pix "
-                "--width=W --height=H --center_re=X --center_im=Y --scale=S "
+                "--width=W --height=H --min_re=A --max_re=B --min_im=C --max_im=D "
                 "--degree=D --tile_size=T --n_tile_cols=C --n_tile_rows=R "
                 "[--input_mode=tmpfile|sectioned|multispan_sectioned] "
                 "[--url=URL --input_size=BYTES | --input_manifest=file.json] [--retries=N] "
@@ -716,9 +719,13 @@ int main(int argc, char **argv) {
     long long inputSize = getArgLongLong(argc, argv, "--input_size", -1);
     int W = getArgInt(argc, argv, "--width", 4096);
     int H = getArgInt(argc, argv, "--height", 4096);
-    double centerRe = getArgDouble(argc, argv, "--center_re", 0.0);
-    double centerIm = getArgDouble(argc, argv, "--center_im", 0.0);
-    double scale = getArgDouble(argc, argv, "--scale", 100.0);
+    const char *minReArg = getArg(argc, argv, "--min_re");
+    const char *maxReArg = getArg(argc, argv, "--max_re");
+    const char *minImArg = getArg(argc, argv, "--min_im");
+    const char *maxImArg = getArg(argc, argv, "--max_im");
+    const char *centerReArg = getArg(argc, argv, "--center_re");
+    const char *centerImArg = getArg(argc, argv, "--center_im");
+    const char *scaleArg = getArg(argc, argv, "--scale");
     double rotation = getArgDouble(argc, argv, "--rotation", 0.0);
     double cosA = cos(rotation), sinA = sin(rotation);
     int degree = getArgInt(argc, argv, "--degree", 25);
@@ -763,6 +770,48 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Invalid dimensions: %dx%d\n", W, H);
         return 1;
     }
+    double minRe = 0.0, maxRe = 0.0, minIm = 0.0, maxIm = 0.0;
+    if (minReArg || maxReArg || minImArg || maxImArg) {
+        if (centerReArg || centerImArg || scaleArg) {
+            fprintf(stderr, "Do not mix exact viewport bounds with legacy center/scale args\n");
+            return 1;
+        }
+        if (!minReArg || !maxReArg || !minImArg || !maxImArg) {
+            fprintf(stderr, "Exact viewport requires --min_re, --max_re, --min_im, and --max_im together\n");
+            return 1;
+        }
+        minRe = atof(minReArg);
+        maxRe = atof(maxReArg);
+        minIm = atof(minImArg);
+        maxIm = atof(maxImArg);
+        if (!(maxRe > minRe) || !(maxIm > minIm)) {
+            fprintf(stderr, "Invalid exact viewport bounds\n");
+            return 1;
+        }
+    } else if (centerReArg || centerImArg || scaleArg) {
+        if (!centerReArg || !centerImArg || !scaleArg) {
+            fprintf(stderr, "Legacy viewport requires --center_re, --center_im, and --scale together\n");
+            return 1;
+        }
+        double centerRe = atof(centerReArg);
+        double centerIm = atof(centerImArg);
+        double scale = atof(scaleArg);
+        if (!(scale > 0.0)) {
+            fprintf(stderr, "Invalid scale: %f\n", scale);
+            return 1;
+        }
+        minRe = centerRe - ((double)W / 2.0) / scale;
+        maxRe = centerRe + ((double)W / 2.0) / scale;
+        minIm = centerIm - ((double)H / 2.0) / scale;
+        maxIm = centerIm + ((double)H / 2.0) / scale;
+    } else {
+        fprintf(stderr, "Viewport requires exact bounds or legacy center/scale args\n");
+        return 1;
+    }
+    double centerRe = (minRe + maxRe) / 2.0;
+    double centerIm = (minIm + maxIm) / 2.0;
+    double xScale = (double)W / (maxRe - minRe);
+    double yScale = (double)H / (maxIm - minIm);
     if (retries < 0 || retries > 10) {
         fprintf(stderr, "Invalid retries: %d\n", retries);
         return 1;
@@ -1264,13 +1313,16 @@ int main(int argc, char **argv) {
         args[i].nTileCols = nTileCols;
         args[i].nTileRows = nTileRows;
         args[i].nTiles = nTiles;
+        args[i].minRe = minRe;
+        args[i].maxRe = maxRe;
+        args[i].minIm = minIm;
+        args[i].maxIm = maxIm;
         args[i].centerRe = centerRe;
         args[i].centerIm = centerIm;
-        args[i].scale = scale;
+        args[i].xScale = xScale;
+        args[i].yScale = yScale;
         args[i].cosA = cosA;
         args[i].sinA = sinA;
-        args[i].halfW = W / 2.0;
-        args[i].halfH = H / 2.0;
         args[i].inputMode = inputMode;
         args[i].solveMetric = solveMetric;
         args[i].useScoreProgram = useScoreProgram;

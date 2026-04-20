@@ -76,10 +76,13 @@ class TestRenderPlan(unittest.TestCase):
 
         self.assertEqual(plan["mode"], "color")
         self.assertEqual(plan["render_execution"]["color_pipeline"], "fused")
-        self.assertEqual(plan["viewport"]["center_re"], 0)
-        self.assertEqual(plan["viewport"]["center_im"], 0)
-        self.assertEqual(plan["viewport"]["scale"], 1024 / 4.0)
+        self.assertEqual(plan["viewport"]["min_re"], -2.0)
+        self.assertEqual(plan["viewport"]["max_re"], 2.0)
+        self.assertEqual(plan["viewport"]["min_im"], -2.0)
+        self.assertEqual(plan["viewport"]["max_im"], 2.0)
         self.assertEqual(plan["grid"]["pix"], 1024)
+        self.assertEqual(plan["grid"]["width"], 1024)
+        self.assertEqual(plan["grid"]["height"], 1024)
         self.assertEqual(plan["grid"]["tile_size"], 512)
         self.assertEqual(plan["grid"]["n_tiles"], 4)
         self.assertEqual(plan["physical_source_items"], [])
@@ -92,15 +95,50 @@ class TestRenderPlan(unittest.TestCase):
     @patch("handler_render_plan._storage_call")
     def test_color_plan_auto_viewport(self, mock_storage, mock_invoke):
         mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
-        mock_invoke.return_value = {"center_re": 0.5, "center_im": -0.25, "scale_ref": 128}
+        mock_invoke.return_value = {"q_re": [0.0, 2.0], "q_im": [-1.0, 1.0]}
         from handler_render_plan import handler
 
         result = handler(_make_event(view_mode="auto"), None)
         plan = json.loads(result["body"])
 
-        self.assertEqual(plan["viewport"]["center_re"], 0.5)
-        self.assertEqual(plan["viewport"]["center_im"], -0.25)
-        self.assertAlmostEqual(plan["viewport"]["scale"], 128 * 1024 / 4096, places=6)
+        self.assertAlmostEqual(plan["viewport"]["min_re"], -0.05)
+        self.assertAlmostEqual(plan["viewport"]["max_re"], 2.05)
+        self.assertAlmostEqual(plan["viewport"]["min_im"], -1.05)
+        self.assertAlmostEqual(plan["viewport"]["max_im"], 1.05)
+
+    @patch("handler_render_plan._storage_call")
+    def test_color_plan_explicit_viewport(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        from handler_render_plan import handler
+
+        result = handler(
+            _make_event(
+                view_mode="explicit",
+                min_re=-3.5,
+                max_re=1.25,
+                min_im=-0.75,
+                max_im=2.0,
+            ),
+            None,
+        )
+        plan = json.loads(result["body"])
+
+        self.assertEqual(
+            plan["viewport"],
+            {"min_re": -3.5, "max_re": 1.25, "min_im": -0.75, "max_im": 2.0},
+        )
+        self.assertEqual(plan["params"]["min_re"], -3.5)
+        self.assertEqual(plan["params"]["max_re"], 1.25)
+        self.assertEqual(plan["params"]["min_im"], -0.75)
+        self.assertEqual(plan["params"]["max_im"], 2.0)
+
+    @patch("handler_render_plan._storage_call")
+    def test_color_plan_rejects_unknown_view_mode(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        from handler_render_plan import handler
+
+        with self.assertRaisesRegex(RuntimeError, "unsupported view_mode"):
+            handler(_make_event(view_mode="bogus_mode"), None)
 
     @patch("handler_render_plan._storage_call")
     def test_fused_color_plan_emits_raw_output_contract(self, mock_storage):
@@ -252,7 +290,16 @@ class TestRenderPlan(unittest.TestCase):
         self.assertEqual(plan["render_execution"], {})
         self.assertEqual(
             set(plan["params"].keys()),
-            {"pix", "tile_size", "view_mode", "quantile", "shim", "square_extent", "root_transforms", "rotation"},
+            {
+                "pix",
+                "tile_size",
+                "view_mode",
+                "quantile",
+                "shim",
+                "square_extent",
+                "root_transforms",
+                "rotation",
+            },
         )
         self.assertNotIn("solve_score", plan)
         self.assertNotIn("raster", plan)

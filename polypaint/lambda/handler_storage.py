@@ -918,6 +918,14 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         "degree": meta.get("degree"),
         "pix": meta.get("pix"),
         "quality": _parse_float(meta.get("quality")),
+        "view_mode": meta.get("view_mode", ""),
+        "quantile": _parse_float(meta.get("quantile")),
+        "shim": _parse_float(meta.get("shim")),
+        "square_extent": _parse_float(meta.get("square_extent")),
+        "min_re": _parse_float(meta.get("min_re")),
+        "max_re": _parse_float(meta.get("max_re")),
+        "min_im": _parse_float(meta.get("min_im")),
+        "max_im": _parse_float(meta.get("max_im")),
         "legacy": legacy,
     }
 
@@ -926,10 +934,6 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         entry["color_mode"] = meta.get("color_mode", "")
         entry["match_mode"] = meta.get("match_mode", "")
         entry["palette"] = meta.get("palette", "")
-        entry["view_mode"] = meta.get("view_mode", "")
-        entry["quantile"] = _parse_float(meta.get("quantile"))
-        entry["shim"] = _parse_float(meta.get("shim"))
-        entry["square_extent"] = _parse_float(meta.get("square_extent"))
         entry["constant_color"] = meta.get("constant_color", "")
         entry["background_color"] = meta.get("background_color", "")
         entry["background_threshold"] = _parse_float(meta.get("background_threshold"))
@@ -1587,7 +1591,7 @@ def handle_cleanup(event):
 
 
 def handle_detail(event):
-    """Return file_count and viewport for a single job (called on selection)."""
+    """Return file_count and compute-job viewport/metadata for a single job."""
     params = parse_body(event)
     job_id = params["job_id"]
     prefix = f"renders/{job_id}/"
@@ -1603,13 +1607,16 @@ def handle_detail(event):
     except Exception:
         result["file_count"] = 0
 
-    # Read view.json for viewport coordinates
+    # Read compute view.json coordinates.
     try:
         vobj = s3.get_object(Bucket=BUCKET,
                              Key=f"renders/{job_id}/view.json")
         view = json.loads(vobj["Body"].read())
-        result["q_re"] = view.get("q_re")
-        result["q_im"] = view.get("q_im")
+        result["compute_q_re"] = view.get("q_re")
+        result["compute_q_im"] = view.get("q_im")
+        # Compatibility alias for older /detail consumers.
+        result["q_re"] = result["compute_q_re"]
+        result["q_im"] = result["compute_q_im"]
     except Exception:
         pass
 

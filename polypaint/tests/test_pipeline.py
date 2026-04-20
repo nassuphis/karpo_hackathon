@@ -365,7 +365,10 @@ class TestStorageList(unittest.TestCase):
         self.assertEqual(body["times"], 3)
         self.assertEqual(body["param_transforms"], [["rotate", "90"]])
         self.assertIn("pipeline", body)
+        self.assertEqual(body["compute_q_re"], [-1, 1])
+        self.assertEqual(body["compute_q_im"], [-1, 1])
         self.assertEqual(body["q_re"], [-1, 1])
+        self.assertEqual(body["q_im"], [-1, 1])
         # preview_stats loaded from S3
         self.assertIn("preview_stats", body)
         self.assertEqual(body["preview_stats"]["n_roots"], 5000)
@@ -3073,6 +3076,14 @@ class TestPaletteInventory(unittest.TestCase):
                 "family": "bilevel",
                 "format": "tif",
                 "mode": "bilevel",
+                "view_mode": "square",
+                "quantile": "0.01",
+                "shim": "0.05",
+                "square_extent": "2.5",
+                "min_re": "-2.5",
+                "max_re": "2.5",
+                "min_im": "-2.5",
+                "max_im": "2.5",
                 "bilevel_pipeline": "logical_sections_sparse_fragments_v1",
                 "bilevel_section_mode": "logical_sections_auto",
                 "bilevel_section_count": "17",
@@ -3088,8 +3099,52 @@ class TestPaletteInventory(unittest.TestCase):
         self.assertEqual(entry["bilevel_pipeline"], "logical_sections_sparse_fragments_v1")
         self.assertEqual(entry["bilevel_section_mode"], "logical_sections_auto")
         self.assertEqual(entry["bilevel_section_count"], 17)
+        self.assertEqual(entry["view_mode"], "square")
+        self.assertEqual(entry["quantile"], 0.01)
+        self.assertEqual(entry["shim"], 0.05)
+        self.assertEqual(entry["square_extent"], 2.5)
+        self.assertEqual(entry["min_re"], -2.5)
+        self.assertEqual(entry["max_re"], 2.5)
+        self.assertEqual(entry["min_im"], -2.5)
+        self.assertEqual(entry["max_im"], 2.5)
         self.assertEqual(entry["render_execution"]["raster_section_mode"], "logical_sections_auto")
         self.assertEqual(entry["render_execution"]["raster_section_count_auto"], 17)
+
+    def test_render_artifact_entry_parses_coeffs_viewport_metadata(self):
+        from handler_storage import _render_artifact_entry
+
+        image_info = {
+            "key": "renders/job_a/coeffs/coeffs_1/image.tif",
+            "url": "https://example.com/coeffs.tif",
+            "modified_at": "2026-04-20T10:00:00Z",
+            "width": 1024,
+            "height": 1024,
+            "size": 12345,
+            "type": "image/tiff",
+            "user_meta": {
+                "artifact_id": "coeffs_1",
+                "family": "coeffs",
+                "view_mode": "explicit",
+                "quantile": "0.02",
+                "shim": "0.06",
+                "square_extent": "3.0",
+                "min_re": "-3.5",
+                "max_re": "1.25",
+                "min_im": "-0.75",
+                "max_im": "2.0",
+            },
+        }
+
+        entry = _render_artifact_entry("coeffs", "coeffs_1", image_info)
+
+        self.assertEqual(entry["view_mode"], "explicit")
+        self.assertEqual(entry["quantile"], 0.02)
+        self.assertEqual(entry["shim"], 0.06)
+        self.assertEqual(entry["square_extent"], 3.0)
+        self.assertEqual(entry["min_re"], -3.5)
+        self.assertEqual(entry["max_re"], 1.25)
+        self.assertEqual(entry["min_im"], -0.75)
+        self.assertEqual(entry["max_im"], 2.0)
 
     @patch("handler_storage.s3")
     def test_delete_palette_deletes_prefix(self, mock_s3):

@@ -27,6 +27,17 @@ def _encode_fragment_pairs(pairs):
     return bytes(payload)
 
 
+def _bounds_from_center_scale(width, height, center_re, center_im, scale):
+    half_w_world = (float(width) / 2.0) / float(scale)
+    half_h_world = (float(height) / 2.0) / float(scale)
+    return {
+        "min_re": center_re - half_w_world,
+        "max_re": center_re + half_w_world,
+        "min_im": center_im - half_h_world,
+        "max_im": center_im + half_h_world,
+    }
+
+
 class TestBilevelHandler(unittest.TestCase):
     @patch("handler_bilevel.report_status")
     def test_handler_reports_malformed_json_when_job_id_present(self, mock_report):
@@ -104,9 +115,7 @@ class TestBilevelHandler(unittest.TestCase):
                 "solve_source_manifest": {"v": 2},
                 "width": 8,
                 "height": 8,
-                "center_re": 0,
-                "center_im": 0,
-                "scale": 1,
+                **_bounds_from_center_scale(8, 8, 0, 0, 1),
                 "degree": 2,
             })}, None)
 
@@ -136,9 +145,7 @@ class TestBilevelHandler(unittest.TestCase):
                 "fragment_prefix": "renders/job/bilevel_section_",
                 "width": 8,
                 "height": 8,
-                "center_re": 0,
-                "center_im": 0,
-                "scale": 1,
+                **_bounds_from_center_scale(8, 8, 0, 0, 1),
                 "degree": 2,
             })}, None)
 
@@ -167,9 +174,7 @@ class TestBilevelHandler(unittest.TestCase):
                 "fragment_prefix": "renders/job/bilevel_section_",
                 "width": 8,
                 "height": 8,
-                "center_re": 0,
-                "center_im": 0,
-                "scale": 1,
+                **_bounds_from_center_scale(8, 8, 0, 0, 1),
                 "degree": 2,
             })}, None)
 
@@ -417,9 +422,7 @@ class TestBilevelHandler(unittest.TestCase):
                 "fragment_prefix": "renders/job/bilevel_section_",
                 "width": 8,
                 "height": 8,
-                "center_re": 0,
-                "center_im": 0,
-                "scale": 1,
+                **_bounds_from_center_scale(8, 8, 0, 0, 1),
                 "degree": 5,
                 "rotation": 0,
                 "root_transforms": [],

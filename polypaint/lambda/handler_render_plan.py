@@ -29,7 +29,7 @@ from logical_sections import (
     validate_section_count,
 )
 from palette_names import VALID_PALETTE_NAMES
-from shared import BUCKET, BILEVEL_SPARSE_PIPELINE, parse_body, ok_response
+from shared import BUCKET, BILEVEL_SPARSE_PIPELINE, REF_SIZE, parse_body, ok_response
 from solve_score_chain import (
     compile_solve_score_chain_or_legacy,
     emit_solve_score_metadata,
@@ -196,6 +196,33 @@ def _validate_raster_input_mode(value):
     return mode
 
 
+def _coerce_finite_float(value, field_name):
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"{field_name} must be numeric, got {value!r}")
+    if not math.isfinite(num):
+        raise RuntimeError(f"{field_name} must be finite, got {value!r}")
+    return num
+
+
+def _explicit_viewport_from_params(rp):
+    min_re = _coerce_finite_float(rp.get("min_re"), "min_re")
+    max_re = _coerce_finite_float(rp.get("max_re"), "max_re")
+    min_im = _coerce_finite_float(rp.get("min_im"), "min_im")
+    max_im = _coerce_finite_float(rp.get("max_im"), "max_im")
+    if not max_re > min_re:
+        raise RuntimeError(f"explicit viewport requires max_re > min_re, got {min_re!r}/{max_re!r}")
+    if not max_im > min_im:
+        raise RuntimeError(f"explicit viewport requires max_im > min_im, got {min_im!r}/{max_im!r}")
+    return {
+        "min_re": min_re,
+        "max_re": max_re,
+        "min_im": min_im,
+        "max_im": max_im,
+    }
+
+
 def _fused_render_execution_config(rp):
     return {
         "color_pipeline": "fused",
@@ -259,6 +286,15 @@ def _build_fused_color_plan(
         "shim": rp.get("shim", 0.05),
         "square_extent": rp.get("square_extent", 2.0),
     }
+    if fused_params["view_mode"] == "explicit":
+        fused_params.update(
+            {
+                "min_re": rp.get("min_re"),
+                "max_re": rp.get("max_re"),
+                "min_im": rp.get("min_im"),
+                "max_im": rp.get("max_im"),
+            }
+        )
     defaults = {
         "root_transforms": [],
         "rotation": 0,
@@ -396,9 +432,11 @@ def _build_fused_color_plan(
     fused_params["solve_score_omega_enabled"] = solve_score_omega_enabled
 
     pix = fused_params["pix"]
+    width = int(pix)
+    height = int(pix)
     tile_size = fused_params.get("tile_size", 2048)
-    n_tile_cols = math.ceil(pix / tile_size)
-    n_tile_rows = math.ceil(pix / tile_size)
+    n_tile_cols = math.ceil(width / tile_size)
+    n_tile_rows = math.ceil(height / tile_size)
     n_tiles = n_tile_cols * n_tile_rows
 
     raster_section_auto = compute_safe_sectioning(
@@ -553,6 +591,10 @@ def _build_fused_color_plan(
         "quantile": str(fused_params.get("quantile", 0.0)),
         "shim": str(fused_params.get("shim", 0.05)),
         "square_extent": str(fused_params.get("square_extent", 2.0)),
+        "min_re": str(viewport["min_re"]),
+        "max_re": str(viewport["max_re"]),
+        "min_im": str(viewport["min_im"]),
+        "max_im": str(viewport["max_im"]),
         "rotation": str(fused_params.get("rotation", 0.0)),
         "root_transforms": json.dumps(fused_params.get("root_transforms", [])),
         "render_execution": json.dumps(render_execution, separators=(",", ":")),
@@ -648,6 +690,8 @@ def _build_fused_color_plan(
         },
         "grid": {
             "pix": pix,
+            "width": width,
+            "height": height,
             "tile_size": tile_size,
             "n_tile_cols": n_tile_cols,
             "n_tile_rows": n_tile_rows,
@@ -747,6 +791,15 @@ def _build_non_color_plan(
         "root_transforms": rp.get("root_transforms", []),
         "rotation": rp.get("rotation", 0),
     }
+    if non_color_params["view_mode"] == "explicit":
+        non_color_params.update(
+            {
+                "min_re": rp.get("min_re"),
+                "max_re": rp.get("max_re"),
+                "min_im": rp.get("min_im"),
+                "max_im": rp.get("max_im"),
+            }
+        )
     if mode == "bilevel":
         non_color_params["raster_section_mode"] = normalize_section_mode(
             rp.get("raster_section_mode", "logical_sections_auto")
@@ -758,9 +811,11 @@ def _build_non_color_plan(
         )
 
     pix = int(non_color_params["pix"])
+    width = pix
+    height = pix
     tile_size = int(non_color_params["tile_size"])
-    n_tile_cols = math.ceil(pix / tile_size)
-    n_tile_rows = math.ceil(pix / tile_size)
+    n_tile_cols = math.ceil(width / tile_size)
+    n_tile_rows = math.ceil(height / tile_size)
     n_tiles = n_tile_cols * n_tile_rows
     raw_tile_prefix = f"renders/{job_id}/tile_"
     tile_items = [{"tile_idx": t} for t in range(n_tiles)]
@@ -820,6 +875,10 @@ def _build_non_color_plan(
         "quantile": str(non_color_params.get("quantile", 0.0)),
         "shim": str(non_color_params.get("shim", 0.05)),
         "square_extent": str(non_color_params.get("square_extent", 2.0)),
+        "min_re": str(viewport["min_re"]),
+        "max_re": str(viewport["max_re"]),
+        "min_im": str(viewport["min_im"]),
+        "max_im": str(viewport["max_im"]),
         "rotation": str(non_color_params.get("rotation", 0.0)),
         "root_transforms": json.dumps(non_color_params.get("root_transforms", [])),
         "render_execution": json.dumps(render_execution, separators=(",", ":")),
@@ -880,6 +939,8 @@ def _build_non_color_plan(
         },
         "grid": {
             "pix": pix,
+            "width": width,
+            "height": height,
             "tile_size": tile_size,
             "n_tile_cols": n_tile_cols,
             "n_tile_rows": n_tile_rows,
@@ -988,23 +1049,60 @@ def _load_calc(job_id):
 
 def _compute_viewport(job_id, rp):
     """Compute viewport from params."""
-    pix = rp["pix"]
-    if rp.get("view_mode") == "square":
-        ext = rp.get("square_extent", 2.0)
-        return {"center_re": 0, "center_im": 0, "scale": pix / (2 * ext)}
-    else:
-        vp = _invoke_sync(VIEWPORT_FUNCTION, {
-            "job_id": job_id,
-            "quantile": rp.get("quantile", 0.0),
-            "shim": rp.get("shim", 0.05),
-        })
-        ref_size = 4096
-        vp["scale"] = vp.get("scale_ref", vp.get("scale", 256)) * pix / ref_size
+    view_mode = str(rp.get("view_mode") or "auto").strip().lower()
+    if view_mode == "explicit":
+        return _explicit_viewport_from_params(rp)
+    if view_mode == "square":
+        ext = _coerce_finite_float(rp.get("square_extent", 2.0), "square_extent")
+        if ext <= 0.0:
+            raise RuntimeError(f"square_extent must be > 0, got {ext}")
         return {
-            "center_re": vp.get("center_re", 0),
-            "center_im": vp.get("center_im", 0),
-            "scale": vp["scale"],
+            "min_re": -ext,
+            "max_re": ext,
+            "min_im": -ext,
+            "max_im": ext,
         }
+    if view_mode != "auto":
+        raise RuntimeError(f"unsupported view_mode: {view_mode!r}")
+
+    shim = _coerce_finite_float(rp.get("shim", 0.05), "shim")
+    vp = _invoke_sync(VIEWPORT_FUNCTION, {
+        "job_id": job_id,
+        "quantile": rp.get("quantile", 0.0),
+        "shim": shim,
+    })
+    q_re = vp.get("q_re")
+    q_im = vp.get("q_im")
+    if not (isinstance(q_re, (list, tuple)) and len(q_re) == 2):
+        raise RuntimeError("viewport lambda response missing q_re bounds")
+    if not (isinstance(q_im, (list, tuple)) and len(q_im) == 2):
+        raise RuntimeError("viewport lambda response missing q_im bounds")
+    q_min_re = _coerce_finite_float(q_re[0], "q_re[0]")
+    q_max_re = _coerce_finite_float(q_re[1], "q_re[1]")
+    q_min_im = _coerce_finite_float(q_im[0], "q_im[0]")
+    q_max_im = _coerce_finite_float(q_im[1], "q_im[1]")
+    center_re = (q_min_re + q_max_re) / 2.0
+    center_im = (q_min_im + q_max_im) / 2.0
+    range_re = (q_max_re - q_min_re) * (1.0 + shim)
+    range_im = (q_max_im - q_min_im) * (1.0 + shim)
+    if range_re <= 0.0:
+        fallback_scale_ref = _coerce_finite_float(vp.get("scale_ref", vp.get("scale")), "scale_ref")
+        if fallback_scale_ref <= 0.0:
+            raise RuntimeError(f"viewport lambda returned non-positive scale_ref: {fallback_scale_ref!r}")
+        fallback_span = float(REF_SIZE) / fallback_scale_ref
+        range_re = fallback_span
+    if range_im <= 0.0:
+        fallback_scale_ref = _coerce_finite_float(vp.get("scale_ref", vp.get("scale")), "scale_ref")
+        if fallback_scale_ref <= 0.0:
+            raise RuntimeError(f"viewport lambda returned non-positive scale_ref: {fallback_scale_ref!r}")
+        fallback_span = float(REF_SIZE) / fallback_scale_ref
+        range_im = fallback_span
+    return {
+        "min_re": center_re - (range_re / 2.0),
+        "max_re": center_re + (range_re / 2.0),
+        "min_im": center_im - (range_im / 2.0),
+        "max_im": center_im + (range_im / 2.0),
+    }
 
 
 def _invoke_sync(function_name, payload):

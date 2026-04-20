@@ -11,7 +11,7 @@
  * Usage:
  *   bilevel_section_raster section.bin out.frag
  *       --width=W --height=H
- *       --center_re=X --center_im=Y --scale=S --degree=D
+ *       --min_re=A --max_re=B --min_im=C --max_im=D --degree=D
  *       [--rotation=R] [--root_xforms=chain.json]
  */
 
@@ -58,9 +58,13 @@ int main(int argc, char **argv) {
     const char *outPath = argv[2];
     int W = getArgInt(argc, argv, "--width", 0);
     int H = getArgInt(argc, argv, "--height", 0);
-    double centerRe = getArgDouble(argc, argv, "--center_re", 0.0);
-    double centerIm = getArgDouble(argc, argv, "--center_im", 0.0);
-    double scale = getArgDouble(argc, argv, "--scale", 100.0);
+    const char *minReArg = getArg(argc, argv, "--min_re");
+    const char *maxReArg = getArg(argc, argv, "--max_re");
+    const char *minImArg = getArg(argc, argv, "--min_im");
+    const char *maxImArg = getArg(argc, argv, "--max_im");
+    const char *centerReArg = getArg(argc, argv, "--center_re");
+    const char *centerImArg = getArg(argc, argv, "--center_im");
+    const char *scaleArg = getArg(argc, argv, "--scale");
     double rotation = getArgDouble(argc, argv, "--rotation", 0.0);
     double cosA = cos(rotation), sinA = sin(rotation);
     int degree = getArgInt(argc, argv, "--degree", 0);
@@ -70,6 +74,48 @@ int main(int argc, char **argv) {
         fprintf(stderr, "width, height, and degree must be > 0\n");
         return 1;
     }
+    double minRe = 0.0, maxRe = 0.0, minIm = 0.0, maxIm = 0.0;
+    if (minReArg || maxReArg || minImArg || maxImArg) {
+        if (centerReArg || centerImArg || scaleArg) {
+            fprintf(stderr, "Do not mix exact viewport bounds with legacy center/scale args\n");
+            return 1;
+        }
+        if (!minReArg || !maxReArg || !minImArg || !maxImArg) {
+            fprintf(stderr, "Exact viewport requires --min_re, --max_re, --min_im, and --max_im together\n");
+            return 1;
+        }
+        minRe = atof(minReArg);
+        maxRe = atof(maxReArg);
+        minIm = atof(minImArg);
+        maxIm = atof(maxImArg);
+        if (!(maxRe > minRe) || !(maxIm > minIm)) {
+            fprintf(stderr, "Invalid exact viewport bounds\n");
+            return 1;
+        }
+    } else if (centerReArg || centerImArg || scaleArg) {
+        if (!centerReArg || !centerImArg || !scaleArg) {
+            fprintf(stderr, "Legacy viewport requires --center_re, --center_im, and --scale together\n");
+            return 1;
+        }
+        double centerRe = atof(centerReArg);
+        double centerIm = atof(centerImArg);
+        double scale = atof(scaleArg);
+        if (!(scale > 0.0)) {
+            fprintf(stderr, "Invalid scale\n");
+            return 1;
+        }
+        minRe = centerRe - ((double)W / 2.0) / scale;
+        maxRe = centerRe + ((double)W / 2.0) / scale;
+        minIm = centerIm - ((double)H / 2.0) / scale;
+        maxIm = centerIm + ((double)H / 2.0) / scale;
+    } else {
+        fprintf(stderr, "Viewport requires exact bounds or legacy center/scale args\n");
+        return 1;
+    }
+    double centerRe = (minRe + maxRe) / 2.0;
+    double centerIm = (minIm + maxIm) / 2.0;
+    double xScale = (double)W / (maxRe - minRe);
+    double yScale = (double)H / (maxIm - minIm);
 
     RootXformEntry rtChain[MAX_RT_CHAIN];
     int nRt = parse_root_xform_file(rtPath, rtChain, MAX_RT_CHAIN);
@@ -149,8 +195,6 @@ int main(int argc, char **argv) {
         }
     }
 
-    double halfW = W / 2.0;
-    double halfH = H / 2.0;
     long rootsPlotted = 0;
     long rootsClipped = 0;
     long rootsDeduped = 0;
@@ -171,10 +215,10 @@ int main(int argc, char **argv) {
 
             double dx = re - centerRe;
             double dy = im - centerIm;
-            double rx = dx * cosA - dy * sinA;
-            double ry = dx * sinA + dy * cosA;
-            double pxf = halfW + rx * scale;
-            double pyf = halfH - ry * scale;
+            double rotRe = centerRe + (dx * cosA - dy * sinA);
+            double rotIm = centerIm + (dx * sinA + dy * cosA);
+            double pxf = (rotRe - minRe) * xScale;
+            double pyf = (maxIm - rotIm) * yScale;
             if (!isfinite(pxf) || !isfinite(pyf)) {
                 rootsClipped++;
                 continue;

@@ -3,9 +3,9 @@ const { test, expect } = require('@playwright/test');
 
 // Stub API responses for the DeepZoom inventory
 const MOCK_EXPORTS = [
-  { job_id: 'job_old', width: 4096, height: 4096, created_at: '2026-03-20T10:00:00', tiles_uploaded: 100, dzi_url: 'https://dz/job_old.dzi' },
-  { job_id: 'job_mid', width: 8192, height: 8192, created_at: '2026-03-22T12:00:00', tiles_uploaded: 400, dzi_url: 'https://dz/job_mid.dzi', share_url: 'https://dz/job_mid/viewer.html' },
-  { job_id: 'job_new', width: 16384, height: 16384, created_at: '2026-03-25T14:00:00', tiles_uploaded: 1600, dzi_url: 'https://dz/job_new.dzi', share_url: 'https://dz/job_new/viewer.html' },
+  { job_id: 'compute_old', source_key: 'renders/render_old/color/color_old/image.jpeg', width: 4096, height: 4096, created_at: '2026-03-20T10:00:00', tiles_uploaded: 100, dzi_url: 'https://dz/job_old.dzi' },
+  { job_id: 'compute_mid', source_key: 'renders/render_mid/bilevel/bilevel_mid/image.tif', width: 8192, height: 8192, created_at: '2026-03-22T12:00:00', tiles_uploaded: 400, dzi_url: 'https://dz/job_mid.dzi', share_url: 'https://dz/job_mid/viewer.html' },
+  { job_id: 'compute_new', source_key: 'renders/render_new/color/color_new/image.jpeg', width: 16384, height: 16384, created_at: '2026-03-25T14:00:00', tiles_uploaded: 1600, dzi_url: 'https://dz/job_new.dzi', share_url: 'https://dz/job_new/viewer.html' },
 ];
 
 test.beforeEach(async ({ page }) => {
@@ -79,12 +79,12 @@ test.describe('DeepZoom Inventory', () => {
   test('inventory is sorted newest first', async ({ page }) => {
     await page.click('.tab-btn:text("DeepZoom")');
     await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
-    // First row should be job_new (newest)
+    // First row should be compute_new (newest)
     const firstRow = page.locator('.dz-inv-row').first();
-    await expect(firstRow).toContainText('job_new');
-    // Last row should be job_old
+    await expect(firstRow).toContainText('compute_new');
+    // Last row should be compute_old
     const lastRow = page.locator('.dz-inv-row').last();
-    await expect(lastRow).toContainText('job_old');
+    await expect(lastRow).toContainText('compute_old');
   });
 
   test('auto-selects newest entry and shows viewer', async ({ page }) => {
@@ -102,7 +102,7 @@ test.describe('DeepZoom Inventory', () => {
   test('clicking a row selects it and highlights it', async ({ page }) => {
     await page.click('.tab-btn:text("DeepZoom")');
     await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
-    // Click the last row (job_old)
+    // Click the last row (compute_old)
     await page.locator('.dz-inv-row').last().click();
     // Last row should now be highlighted
     const lastBg = await page.locator('.dz-inv-row').last().evaluate(el => el.style.background);
@@ -121,7 +121,7 @@ test.describe('DeepZoom Inventory', () => {
       const orig = window.viewDeepZoom;
       window.viewDeepZoom = function (url) { window._viewedUrls.push(url); orig(url); };
     });
-    // Click middle row (job_mid)
+    // Click middle row (compute_mid)
     await page.locator('.dz-inv-row').nth(1).click();
     const urls = await page.evaluate(() => window._viewedUrls);
     expect(urls[urls.length - 1]).toBe('https://dz/job_mid.dzi');
@@ -187,23 +187,101 @@ test.describe('DeepZoom Inventory', () => {
   test('inventory shows dimensions and tile count', async ({ page }) => {
     await page.click('.tab-btn:text("DeepZoom")');
     await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
-    // First row (job_new) should show 16384×16384
+    // First row (compute_new) should show 16384×16384
     const firstText = await page.locator('.dz-inv-row').first().textContent();
     expect(firstText).toContain('16384×16384');
     expect(firstText).toContain('1600');
   });
 
-  test('inventory header includes Share column', async ({ page }) => {
+  test('inventory header includes Render and Share columns', async ({ page }) => {
     await page.click('.tab-btn:text("DeepZoom")');
     await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
     const headerText = await page.locator('#dz-inv-table tr').first().textContent();
+    expect(headerText).toContain('Render');
     expect(headerText).toContain('Share');
+  });
+
+  test('inventory shows render artifact ids derived from source keys', async ({ page }) => {
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
+    const firstRow = page.locator('.dz-inv-row').first();
+    await expect(firstRow).toContainText('compute_new');
+    await expect(firstRow).toContainText('color_new');
+  });
+
+  test('PopulateResult button is labeled clearly', async ({ page }) => {
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('#btn-dz-populate')).toHaveText('PopulateResult');
+  });
+
+  test('PopulateResult loads result detail and populates Compute', async ({ page }) => {
+    await page.evaluate(() => {
+      window._dzPopulateCall = null;
+      window._getResultDetail = async function (jobId) {
+        return { solver: 'newton', view: { pix: 4096 }, requested_job_id: jobId };
+      };
+      window._populateComputeFromDetail = function (jobId, detail) {
+        window._dzPopulateCall = { jobId, detail };
+      };
+    });
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
+    await page.click('#btn-dz-populate');
+    const call = await page.evaluate(() => window._dzPopulateCall);
+    expect(call).toEqual({
+      jobId: 'compute_new',
+      detail: { solver: 'newton', view: { pix: 4096 }, requested_job_id: 'compute_new' },
+    });
+  });
+
+  test('GotoRender jumps to the source render job and artifact', async ({ page }) => {
+    await page.evaluate(() => {
+      window._dzRenderJumps = [];
+      window.refreshRenderArtifacts = async function (jobId, opts) {
+        window._dzRenderJumps.push({ jobId, opts: opts || null });
+        return { families: { color: [], bilevel: [], coeffs: [], palette: [], pdf: [] }, calc: {} };
+      };
+    });
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
+    await page.click('#btn-dz-goto-render');
+    await expect(page.locator('#render-results-dir')).toHaveValue('render_new');
+    const jumps = await page.evaluate(() => window._dzRenderJumps);
+    expect(jumps).toContainEqual({
+      jobId: 'render_new',
+      opts: { selectFamily: 'color', selectArtifactId: 'color_new' },
+    });
+  });
+
+  test('GotoRender stays disabled for legacy exports without source keys', async ({ page }) => {
+    await page.evaluate(() => {
+      window.lambdaPost = async function (name, body, path) {
+        if (name === 'storage' && path === '/list-deepzoom') {
+          return {
+            exports: [{
+              job_id: 'legacy_compute',
+              export_id: 'dz_legacy',
+              width: 2048,
+              height: 2048,
+              created_at: '2026-03-26T09:00:00',
+              tiles_uploaded: 12,
+              dzi_url: 'https://dz/legacy.dzi',
+            }],
+            count: 1,
+          };
+        }
+        return {};
+      };
+    });
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(1, { timeout: 10000 });
+    await expect(page.locator('#btn-dz-goto-render')).toBeDisabled();
   });
 
   test('rows with share_url render an Open link', async ({ page }) => {
     await page.click('.tab-btn:text("DeepZoom")');
     await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
-    // job_new (first row, newest) has share_url
+    // compute_new (first row, newest) has share_url
     const firstRow = page.locator('.dz-inv-row').first();
     const link = firstRow.locator('a');
     await expect(link).toHaveText('Open');
@@ -218,7 +296,7 @@ test.describe('DeepZoom Inventory', () => {
   test('rows without share_url show question mark', async ({ page }) => {
     await page.click('.tab-btn:text("DeepZoom")');
     await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
-    // job_old (last row) has no share_url
+    // compute_old (last row) has no share_url
     const lastRow = page.locator('.dz-inv-row').last();
     const lastText = await lastRow.textContent();
     expect(lastText).toContain('?');

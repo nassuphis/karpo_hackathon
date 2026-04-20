@@ -987,6 +987,23 @@ button {
                             style="width:6em; font-family:monospace; font-size:12px" onfocus="selectViewMode('square')" oninput="selectViewMode('square')">
                         <span style="color:#555; font-size:10px; margin-left:6px">LL = -ext - j*ext, UR = +ext + j*ext</span>
                     </div>
+                    <div class="view-row" id="view-row-explicit" onclick="selectViewMode('explicit')">
+                        <span class="view-dot"></span>
+                        <span style="color:#aaa; letter-spacing:0.06em; text-transform:uppercase; min-width:50px">Exact</span>
+                        <label style="min-width:52px">Min Re:</label>
+                        <input type="number" id="render-min-re" value="-2.0" step="any"
+                            style="width:7em; font-family:monospace; font-size:12px" onfocus="selectViewMode('explicit')" oninput="_onRenderExplicitViewportInput()">
+                        <label style="min-width:52px">Max Re:</label>
+                        <input type="number" id="render-max-re" value="2.0" step="any"
+                            style="width:7em; font-family:monospace; font-size:12px" onfocus="selectViewMode('explicit')" oninput="_onRenderExplicitViewportInput()">
+                        <label style="min-width:52px">Min Im:</label>
+                        <input type="number" id="render-min-im" value="-2.0" step="any"
+                            style="width:7em; font-family:monospace; font-size:12px" onfocus="selectViewMode('explicit')" oninput="_onRenderExplicitViewportInput()">
+                        <label style="min-width:52px">Max Im:</label>
+                        <input type="number" id="render-max-im" value="2.0" step="any"
+                            style="width:7em; font-family:monospace; font-size:12px" onfocus="selectViewMode('explicit')" oninput="_onRenderExplicitViewportInput()">
+                        <span id="render-explicit-aspect" style="color:#555; font-size:10px; margin-left:6px">World aspect Δre:Δim = 1.0 : 1.0</span>
+                    </div>
                     <div class="color-title" style="margin-top:10px">Rotation</div>
                     <div class="anim-row" style="gap:8px; align-items:center; margin-bottom:0">
                         <label style="min-width:50px">Turns: <span id="render-rotation-val" style="display:inline-block;width:3em;text-align:right">0.00</span></label>
@@ -1186,7 +1203,8 @@ button {
             <div style="margin-top:8px; margin-bottom:4px; display:flex; align-items:center; gap:8px">
                 <button class="btn-secondary btn-inline" id="btn-dz-refresh" onclick="refreshDeepZoomInventory()" style="padding:4px 12px; font-size:12px">Refresh</button>
                 <button class="btn-secondary btn-inline" id="btn-dz-goto-result" onclick="_dzGotoSelectedResult()" style="padding:4px 12px; font-size:12px" disabled>Goto Result</button>
-                <button class="btn-secondary btn-inline" id="btn-dz-populate" onclick="_dzPopulateSelectedResult()" style="padding:4px 12px; font-size:12px" disabled>Populate</button>
+                <button class="btn-secondary btn-inline" id="btn-dz-goto-render" onclick="_dzGotoSelectedRender()" style="padding:4px 12px; font-size:12px" disabled>GotoRender</button>
+                <button class="btn-secondary btn-inline" id="btn-dz-populate" onclick="_dzPopulateSelectedResult()" style="padding:4px 12px; font-size:12px" disabled>PopulateResult</button>
                 <button class="btn-secondary btn-inline" id="btn-dz-delete" onclick="_dzDeleteSelected()" style="padding:4px 12px; font-size:12px" disabled>Delete</button>
                 <span style="font-size:11px; color:#666">Click row to view. Arrow keys to navigate.</span>
             </div>
@@ -2998,9 +3016,9 @@ function _applyDetail(r, detail, previewEl, infoEl, jobId) {
     // Preview stats from server or session cache
     const ps = detail.preview_stats || {};
 
-    // Viewport — prefer session cache > preview_stats > view.json
-    const qRe = (r && r.q_re) || ps.q_re || detail.q_re;
-    const qIm = (r && r.q_im) || ps.q_im || detail.q_im;
+    // Viewport — prefer session cache > preview_stats > compute view.json
+    const qRe = (r && r.q_re) || ps.q_re || detail.compute_q_re;
+    const qIm = (r && r.q_im) || ps.q_im || detail.compute_q_im;
     if (qRe && qIm) {
         document.getElementById('res-ll').textContent = `${qRe[0].toFixed(4)}, ${qIm[0].toFixed(4)}`;
         document.getElementById('res-ur').textContent = `${qRe[1].toFixed(4)}, ${qIm[1].toFixed(4)}`;
@@ -3018,7 +3036,7 @@ function _applyDetail(r, detail, previewEl, infoEl, jobId) {
     // Cache into results entry
     if (r) {
         r.file_count = detail.file_count;
-        if (detail.q_re) { r.q_re = detail.q_re; r.q_im = detail.q_im; }
+        if (detail.compute_q_re) { r.q_re = detail.compute_q_re; r.q_im = detail.compute_q_im; }
     }
 }
 
@@ -9806,7 +9824,76 @@ function selectViewMode(mode) {
     _viewMode = mode;
     document.getElementById('view-row-auto').classList.toggle('active', mode === 'auto');
     document.getElementById('view-row-square').classList.toggle('active', mode === 'square');
+    document.getElementById('view-row-explicit').classList.toggle('active', mode === 'explicit');
+    _updateRenderExplicitViewportAspect();
 }
+
+
+function _readRenderExplicitViewportBounds(options = {}) {
+    const requireValid = !!options.requireValid;
+    const fields = {
+        minRe: document.getElementById('render-min-re')?.value,
+        maxRe: document.getElementById('render-max-re')?.value,
+        minIm: document.getElementById('render-min-im')?.value,
+        maxIm: document.getElementById('render-max-im')?.value,
+    };
+    const parsed = {};
+    for (const [key, raw] of Object.entries(fields)) {
+        const text = String(raw == null ? '' : raw).trim();
+        if (!text) {
+            if (requireValid) throw new Error(`Explicit viewport requires ${key}`);
+            return { minRe: null, maxRe: null, minIm: null, maxIm: null };
+        }
+        const num = Number(text);
+        if (!Number.isFinite(num)) {
+            if (requireValid) throw new Error(`Explicit viewport requires numeric ${key}`);
+            return { minRe: null, maxRe: null, minIm: null, maxIm: null };
+        }
+        parsed[key] = num;
+    }
+    if (!(parsed.maxRe > parsed.minRe)) {
+        throw new Error('Explicit viewport requires Max Re > Min Re');
+    }
+    if (!(parsed.maxIm > parsed.minIm)) {
+        throw new Error('Explicit viewport requires Max Im > Min Im');
+    }
+    return parsed;
+}
+
+function _setRenderExplicitViewportBounds(bounds = {}) {
+    const pairs = [
+        ['render-min-re', bounds.minRe],
+        ['render-max-re', bounds.maxRe],
+        ['render-min-im', bounds.minIm],
+        ['render-max-im', bounds.maxIm],
+    ];
+    for (const [id, value] of pairs) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        if (Number.isFinite(Number(value))) el.value = String(Number(value));
+    }
+    _updateRenderExplicitViewportAspect();
+}
+
+function _updateRenderExplicitViewportAspect() {
+    const el = document.getElementById('render-explicit-aspect');
+    if (!el) return;
+    try {
+        const bounds = _readRenderExplicitViewportBounds({ requireValid: true });
+        const reSpan = bounds.maxRe - bounds.minRe;
+        const imSpan = bounds.maxIm - bounds.minIm;
+        const aspect = reSpan / imSpan;
+        el.textContent = `World aspect Δre:Δim = ${reSpan.toFixed(4)} : ${imSpan.toFixed(4)}${aspect !== 1 ? ' · output stays square, domain stretches on one axis' : ''}`;
+    } catch (_err) {
+        el.textContent = 'World aspect Δre:Δim = invalid explicit bounds';
+    }
+}
+
+function _onRenderExplicitViewportInput() {
+    selectViewMode('explicit');
+    _updateRenderExplicitViewportAspect();
+}
+
 
 
 
@@ -9816,6 +9903,9 @@ function _renderCommonParams(options = {}) {
     const jobId = document.getElementById('render-results-dir').value.trim();
     if (!jobId) throw new Error('No results dir — run Calculate first');
     const solveScore = _resolveSolveScoreState('render', { requireChain: !!options.requireSolveScore });
+    const explicitBounds = _viewMode === 'explicit'
+        ? _readRenderExplicitViewportBounds({ requireValid: true })
+        : { minRe: null, maxRe: null, minIm: null, maxIm: null };
     return {
         jobId,
         pix: parseInt(document.getElementById('render-pix').value),
@@ -9825,6 +9915,10 @@ function _renderCommonParams(options = {}) {
         quantile: parseFloat(document.getElementById('render-quantile').value) / 100,
         shim: parseFloat(document.getElementById('render-shim').value) / 100,
         squareExtent: parseFloat(document.getElementById('render-square-extent').value) || 2.0,
+        minRe: explicitBounds.minRe,
+        maxRe: explicitBounds.maxRe,
+        minIm: explicitBounds.minIm,
+        maxIm: explicitBounds.maxIm,
         solveScoreQuantile: solveScore.quantile,
         solveScoreMetric: solveScore.metric,
         solveScoreOmega: solveScore.omega,
@@ -10683,21 +10777,28 @@ async function _dispatchRenderOrchestrator(mode, orchPayload) {
 
 async function _launchNonColorRenderOrchestrator(mode, paramsPatch = null) {
     const p = _renderCommonParams({ requireSolveScore: false });
+    const params = {
+        pix: p.pix,
+        fmt: p.fmt,
+        quality: p.quality,
+        view_mode: _viewMode,
+        quantile: p.quantile,
+        shim: p.shim,
+        square_extent: p.squareExtent,
+        tile_size: p.tileSize,
+        rotation: p.rotation,
+        root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
+    };
+    if (_viewMode === 'explicit') {
+        params.min_re = p.minRe;
+        params.max_re = p.maxRe;
+        params.min_im = p.minIm;
+        params.max_im = p.maxIm;
+    }
     const orchPayload = {
         job_id: p.jobId,
         mode: mode,
-        params: {
-            pix: p.pix,
-            fmt: p.fmt,
-            quality: p.quality,
-            view_mode: _viewMode,
-            quantile: p.quantile,
-            shim: p.shim,
-            square_extent: p.squareExtent,
-            tile_size: p.tileSize,
-            rotation: p.rotation,
-            root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
-        },
+        params,
     };
     if (paramsPatch && typeof paramsPatch === 'object') Object.assign(orchPayload.params, paramsPatch);
     return _dispatchRenderOrchestrator(mode, orchPayload);
@@ -10705,36 +10806,43 @@ async function _launchNonColorRenderOrchestrator(mode, paramsPatch = null) {
 
 async function _launchFusedRenderOrchestrator(paramsPatch = null) {
     const p = _renderCommonParams({ requireSolveScore: true });
+    const params = {
+        pix: p.pix,
+        fmt: p.fmt,
+        quality: p.quality,
+        view_mode: _viewMode,
+        quantile: p.quantile,
+        shim: p.shim,
+        square_extent: p.squareExtent,
+        tile_size: p.tileSize,
+        rotation: p.rotation,
+        color_mode: 'solve_score',
+        color_pipeline: 'fused',
+        solve_metric: p.solveScoreMetric,
+        solve_score_quantile: p.solveScoreQuantile,
+        solve_score_omega: p.solveScoreOmega,
+        solve_score_omega_enabled: p.solveScoreOmegaEnabled,
+        solve_score_chain: p.solveScoreChain,
+        palette: _activeRenderPalette() || 'inferno',
+        root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
+        raster_engine: 'mt',
+        raster_mt_threads: 4,
+        solve_score_threads: 4,
+        raster_sectioned_retries: 2,
+        raster_section_mode: 'logical_sections_auto',
+        finalize_workers: 16,
+        save_associated_palette: false,
+    };
+    if (_viewMode === 'explicit') {
+        params.min_re = p.minRe;
+        params.max_re = p.maxRe;
+        params.min_im = p.minIm;
+        params.max_im = p.maxIm;
+    }
     const orchPayload = {
         job_id: p.jobId,
         mode: 'color',
-        params: {
-            pix: p.pix,
-            fmt: p.fmt,
-            quality: p.quality,
-            view_mode: _viewMode,
-            quantile: p.quantile,
-            shim: p.shim,
-            square_extent: p.squareExtent,
-            tile_size: p.tileSize,
-            rotation: p.rotation,
-            color_mode: 'solve_score',
-            color_pipeline: 'fused',
-            solve_metric: p.solveScoreMetric,
-            solve_score_quantile: p.solveScoreQuantile,
-            solve_score_omega: p.solveScoreOmega,
-            solve_score_omega_enabled: p.solveScoreOmegaEnabled,
-            solve_score_chain: p.solveScoreChain,
-            palette: _activeRenderPalette() || 'inferno',
-            root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
-            raster_engine: 'mt',
-            raster_mt_threads: 4,
-            solve_score_threads: 4,
-            raster_sectioned_retries: 2,
-            raster_section_mode: 'logical_sections_auto',
-            finalize_workers: 16,
-            save_associated_palette: false,
-        },
+        params,
     };
     if (paramsPatch && typeof paramsPatch === 'object') Object.assign(orchPayload.params, paramsPatch);
     return _dispatchRenderOrchestrator('color', orchPayload);
@@ -12682,7 +12790,20 @@ function populateSelectedRenderArtifact() {
 
     if (_renderActiveFamily !== 'color') return;
 
-    if (art.view_mode === 'square') {
+    if (
+        Number.isFinite(art.min_re) &&
+        Number.isFinite(art.max_re) &&
+        Number.isFinite(art.min_im) &&
+        Number.isFinite(art.max_im)
+    ) {
+        _setRenderExplicitViewportBounds({
+            minRe: art.min_re,
+            maxRe: art.max_re,
+            minIm: art.min_im,
+            maxIm: art.max_im,
+        });
+        selectViewMode('explicit');
+    } else if (art.view_mode === 'square') {
         selectViewMode('square');
         if (Number.isFinite(art.square_extent)) {
             const extentEl = document.getElementById('render-square-extent');
@@ -13444,12 +13565,17 @@ async function refreshDeepZoomInventory() {
 }
 
 function _dzSetButtonsEnabled(enabled) {
-    const gotoBtn = document.getElementById('btn-dz-goto-result');
+    const gotoResultBtn = document.getElementById('btn-dz-goto-result');
+    const gotoRenderBtn = document.getElementById('btn-dz-goto-render');
     const populateBtn = document.getElementById('btn-dz-populate');
     const deleteBtn = document.getElementById('btn-dz-delete');
-    if (gotoBtn) gotoBtn.disabled = !enabled;
-    if (populateBtn) populateBtn.disabled = !enabled;
-    if (deleteBtn) deleteBtn.disabled = !enabled;
+    const inv = window._dzInventory || [];
+    const idx = window._dzSelectedIdx ?? -1;
+    const ex = enabled && idx >= 0 && idx < inv.length ? inv[idx] : null;
+    if (gotoResultBtn) gotoResultBtn.disabled = !ex || !String(ex.job_id || '').trim();
+    if (gotoRenderBtn) gotoRenderBtn.disabled = !_dzRenderSourceRef(ex).jobId;
+    if (populateBtn) populateBtn.disabled = !ex || !String(ex.job_id || '').trim();
+    if (deleteBtn) deleteBtn.disabled = !ex || !String(ex.export_id || '').trim();
 }
 
 function _dzClearViewer() {
@@ -13464,6 +13590,43 @@ function _dzClearViewer() {
 function _dzStableKey(ex) {
     if (!ex) return '';
     return `${String(ex.job_id || '')}::${String(ex.export_id || ex.dzi_key || '')}`;
+}
+
+function _parseRenderSourceRef(sourceKey) {
+    const key = String(sourceKey || '').trim();
+    if (!key) return { jobId: '', family: '', artifactId: '' };
+    const artifactMatch = key.match(/^renders\/([^/]+)\/([^/]+)\/([^/]+)\//);
+    if (artifactMatch) {
+        const dir = artifactMatch[2];
+        const family = dir === 'palettes'
+            ? 'palette'
+            : (dir === 'color' || dir === 'bilevel' || dir === 'coeffs' || dir === 'pdf' ? dir : '');
+        return {
+            jobId: artifactMatch[1],
+            family,
+            artifactId: artifactMatch[3],
+        };
+    }
+    const jobMatch = key.match(/^renders\/([^/]+)\//);
+    return { jobId: jobMatch ? jobMatch[1] : '', family: '', artifactId: '' };
+}
+
+function _dzRenderSourceRef(ex) {
+    const parsed = _parseRenderSourceRef(ex && ex.source_key);
+    const explicitJobId = String((ex && ex.render_job_id) || '').trim();
+    const jobId = explicitJobId || parsed.jobId;
+    const canSelectArtifact = !!(parsed.family && parsed.artifactId && (!explicitJobId || explicitJobId === parsed.jobId));
+    return {
+        jobId,
+        family: canSelectArtifact ? parsed.family : '',
+        artifactId: canSelectArtifact ? parsed.artifactId : '',
+    };
+}
+
+function _dzRenderSourceLabel(ex) {
+    const renderRef = _dzRenderSourceRef(ex);
+    const explicitArtifactId = String((ex && ex.render_artifact_id) || '').trim();
+    return explicitArtifactId || renderRef.artifactId || renderRef.jobId || '?';
 }
 
 function _dzSelectKey(key) {
@@ -13501,15 +13664,17 @@ function _dzRenderInventory(selectIdx = null) {
     }
 
     let html = '<table style="width:100%; border-collapse:collapse" id="dz-inv-table">';
-    html += '<tr style="border-bottom:1px solid #333; position:sticky; top:0; background:#1a1a2e"><th style="text-align:left;padding:4px">Job</th><th>Size</th><th>Created</th><th>Tiles</th><th>Share</th></tr>';
+    html += '<tr style="border-bottom:1px solid #333; position:sticky; top:0; background:#1a1a2e"><th style="text-align:left;padding:4px">Job</th><th style="text-align:left;padding:4px">Render</th><th>Size</th><th>Created</th><th>Tiles</th><th>Share</th></tr>';
     inv.forEach((ex, i) => {
         const shareUrl = _safeHttpUrl(ex.share_url);
+        const renderLabel = _dzRenderSourceLabel(ex);
         const shareCell = shareUrl
             ? `<a href="${_escapeHtml(shareUrl)}" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()" style="color:#4a9eff;text-decoration:none">Open</a>`
             : '<span style="color:#555">?</span>';
         const key = _encodeStableRowKey(_dzStableKey(ex));
         html += `<tr class="dz-inv-row" data-key="${key}" style="border-bottom:1px solid #222; cursor:pointer" onclick="_dzSelectKey(_decodeStableRowKey(this.dataset.key || ''))" tabindex="-1">`;
         html += `<td style="padding:4px; font-family:monospace; font-size:11px">${_escapeHtml(ex.job_id)}</td>`;
+        html += `<td style="padding:4px; font-family:monospace; font-size:11px">${_escapeHtml(renderLabel)}</td>`;
         html += `<td style="padding:4px; text-align:center">${_escapeHtml(`${ex.width}×${ex.height}`)}</td>`;
         html += `<td style="padding:4px; font-size:11px">${_escapeHtml((ex.created_at || '').replace('T', ' ').slice(0, 19))}</td>`;
         html += `<td style="padding:4px; text-align:center">${_escapeHtml(ex.tiles_uploaded || '')}</td>`;
@@ -13542,13 +13707,44 @@ async function _dzGotoSelectedResult() {
     switchTab('results');
 }
 
+async function _dzGotoSelectedRender() {
+    const inv = window._dzInventory || [];
+    const idx = window._dzSelectedIdx ?? -1;
+    if (idx < 0 || idx >= inv.length) return;
+    const ex = inv[idx];
+    const renderRef = _dzRenderSourceRef(ex);
+    if (!renderRef.jobId) return;
+    const btn = document.getElementById('btn-dz-goto-render');
+    const orig = btn ? btn.textContent : 'GotoRender';
+    const statusEl = document.getElementById('deepzoom-status');
+    try {
+        if (btn) { btn.disabled = true; btn.textContent = 'Opening...'; }
+        _setRenderResultsJob(renderRef.jobId);
+        const refreshOptions = renderRef.family && renderRef.artifactId
+            ? { selectFamily: renderRef.family, selectArtifactId: renderRef.artifactId }
+            : {};
+        await refreshRenderArtifacts(renderRef.jobId, refreshOptions);
+        switchTab('render');
+        log(`DeepZoom GoRender: ${renderRef.jobId}`, 'ok', 'deepzoom-log');
+    } catch (e) {
+        log(`DeepZoom GoRender failed: ${e.message}`, 'err', 'deepzoom-log');
+        if (statusEl) {
+            statusEl.textContent = 'GotoRender error: ' + e.message;
+            statusEl.className = 'status error';
+        }
+    } finally {
+        if (btn) btn.textContent = orig;
+        _dzSetButtonsEnabled(true);
+    }
+}
+
 async function _dzPopulateSelectedResult() {
     const inv = window._dzInventory || [];
     const idx = window._dzSelectedIdx ?? -1;
     if (idx < 0 || idx >= inv.length) return;
     const ex = inv[idx];
     const btn = document.getElementById('btn-dz-populate');
-    const orig = btn ? btn.textContent : 'Populate';
+    const orig = btn ? btn.textContent : 'PopulateResult';
     try {
         if (btn) { btn.disabled = true; btn.textContent = '...'; }
         const detail = await _getResultDetail(ex.job_id);
@@ -13562,8 +13758,7 @@ async function _dzPopulateSelectedResult() {
         }
     } finally {
         if (btn) { btn.textContent = orig; }
-        const currentIdx = window._dzSelectedIdx ?? -1;
-        if (btn) btn.disabled = !(currentIdx >= 0 && currentIdx < inv.length);
+        _dzSetButtonsEnabled(true);
     }
 }
 

@@ -12,7 +12,7 @@
  *   coeffs_bilevel_raster coeffs.bin /tmp/bits
  *       --width=W --height=H --tile_size=TS
  *       --n_tile_cols=C --n_tile_rows=R
- *       --center_re=X --center_im=Y --scale=S --n_coeffs=D
+ *       --min_re=A --max_re=B --min_im=C --max_im=D --n_coeffs=D
  *       [--rotation=R]
  *
  * Output: {outPrefix}_t0000.bits ... (only non-empty tiles)
@@ -63,9 +63,13 @@ int main(int argc, char **argv) {
     int tileSize = getArgInt(argc, argv, "--tile_size", 4096);
     int nTileCols = getArgInt(argc, argv, "--n_tile_cols", 1);
     int nTileRows = getArgInt(argc, argv, "--n_tile_rows", 1);
-    double centerRe = getArgDouble(argc, argv, "--center_re", 0.0);
-    double centerIm = getArgDouble(argc, argv, "--center_im", 0.0);
-    double scale = getArgDouble(argc, argv, "--scale", 100.0);
+    const char *minReArg = getArg(argc, argv, "--min_re");
+    const char *maxReArg = getArg(argc, argv, "--max_re");
+    const char *minImArg = getArg(argc, argv, "--min_im");
+    const char *maxImArg = getArg(argc, argv, "--max_im");
+    const char *centerReArg = getArg(argc, argv, "--center_re");
+    const char *centerImArg = getArg(argc, argv, "--center_im");
+    const char *scaleArg = getArg(argc, argv, "--scale");
     double rotation = getArgDouble(argc, argv, "--rotation", 0.0);
     double cosA = cos(rotation), sinA = sin(rotation);
     int nCoeffs = getArgInt(argc, argv, "--n_coeffs", 25);
@@ -75,6 +79,48 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Too many tiles: %d > %d\n", nTiles, MAX_TILES);
         return 1;
     }
+    double minRe = 0.0, maxRe = 0.0, minIm = 0.0, maxIm = 0.0;
+    if (minReArg || maxReArg || minImArg || maxImArg) {
+        if (centerReArg || centerImArg || scaleArg) {
+            fprintf(stderr, "Do not mix exact viewport bounds with legacy center/scale args\n");
+            return 1;
+        }
+        if (!minReArg || !maxReArg || !minImArg || !maxImArg) {
+            fprintf(stderr, "Exact viewport requires --min_re, --max_re, --min_im, and --max_im together\n");
+            return 1;
+        }
+        minRe = atof(minReArg);
+        maxRe = atof(maxReArg);
+        minIm = atof(minImArg);
+        maxIm = atof(maxImArg);
+        if (!(maxRe > minRe) || !(maxIm > minIm)) {
+            fprintf(stderr, "Invalid exact viewport bounds\n");
+            return 1;
+        }
+    } else if (centerReArg || centerImArg || scaleArg) {
+        if (!centerReArg || !centerImArg || !scaleArg) {
+            fprintf(stderr, "Legacy viewport requires --center_re, --center_im, and --scale together\n");
+            return 1;
+        }
+        double centerReLegacy = atof(centerReArg);
+        double centerImLegacy = atof(centerImArg);
+        double scale = atof(scaleArg);
+        if (!(scale > 0.0)) {
+            fprintf(stderr, "Invalid scale\n");
+            return 1;
+        }
+        minRe = centerReLegacy - ((double)W / 2.0) / scale;
+        maxRe = centerReLegacy + ((double)W / 2.0) / scale;
+        minIm = centerImLegacy - ((double)H / 2.0) / scale;
+        maxIm = centerImLegacy + ((double)H / 2.0) / scale;
+    } else {
+        fprintf(stderr, "Viewport requires exact bounds or legacy center/scale args\n");
+        return 1;
+    }
+    double centerRe = (minRe + maxRe) / 2.0;
+    double centerIm = (minIm + maxIm) / 2.0;
+    double xScale = (double)W / (maxRe - minRe);
+    double yScale = (double)H / (maxIm - minIm);
 
     /* Compute per-tile dimensions (edge tiles may be smaller) */
     int tileW[MAX_TILES], tileH[MAX_TILES];
@@ -114,7 +160,6 @@ int main(int argc, char **argv) {
     fclose(fin);
 
     /* Project coefficient values into tile bitsets */
-    double halfW = W / 2.0, halfH = H / 2.0;
     long rootsPlotted = 0, rootsClipped = 0, rootsDeduped = 0;
 
     for (long p = 0; p < nPoints; p++) {
@@ -124,10 +169,10 @@ int main(int argc, char **argv) {
 
             /* Viewport transform with rotation */
             double dx = re - centerRe, dy = im - centerIm;
-            double rx = dx * cosA - dy * sinA;
-            double ry = dx * sinA + dy * cosA;
-            int px = (int)floor(halfW + rx * scale);
-            int py = (int)floor(halfH - ry * scale);
+            double rotRe = centerRe + (dx * cosA - dy * sinA);
+            double rotIm = centerIm + (dx * sinA + dy * cosA);
+            int px = (int)floor((rotRe - minRe) * xScale);
+            int py = (int)floor((maxIm - rotIm) * yScale);
 
             if (px < 0 || px >= W || py < 0 || py >= H) {
                 rootsClipped++;

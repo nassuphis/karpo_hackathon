@@ -16,6 +16,17 @@ def _encode_fragment_pairs(pairs):
     return bytes(payload)
 
 
+def _bounds_from_center_scale(width, height, center_re, center_im, scale):
+    half_w_world = (float(width) / 2.0) / float(scale)
+    half_h_world = (float(height) / 2.0) / float(scale)
+    return {
+        "min_re": center_re - half_w_world,
+        "max_re": center_re + half_w_world,
+        "min_im": center_im - half_h_world,
+        "max_im": center_im + half_h_world,
+    }
+
+
 def _clip_artifact(*, chain, metric, quantile, omega, omega_enabled, clip_lo, clip_hi):
     from solve_score_chain import compile_solve_score_chain_or_legacy, compiled_solve_score_fingerprint
 
@@ -86,9 +97,6 @@ def _fused_event(**overrides):
         "width": 512,
         "height": 512,
         "tile_size": 512,
-        "center_re": 0.0,
-        "center_im": 0.0,
-        "scale": 1.0,
         "degree": 5,
         "n_coeffs": 6,
         "palette": "inferno",
@@ -115,6 +123,7 @@ def _fused_event(**overrides):
         "associated_palette_fragment_prefix": "",
         "associated_palette_grid_n": 0,
     }
+    payload.update(_bounds_from_center_scale(payload["width"], payload["height"], 0.0, 0.0, 1.0))
     payload.update(overrides)
     return payload
 
@@ -265,6 +274,39 @@ class TestRasterMT(unittest.TestCase):
         self.assertEqual(uploads["renders/j/color/color_1/fragments/section_0000_step_scores.raw"], bytes([5, 7, 11, 13]))
         statuses = [call.args[2] for call in mock_report.call_args_list]
         self.assertEqual(statuses, ["started", "bin_downloaded_1/1", "rasterized_1/1", "rasterized", "done"])
+
+    def test_build_cmd_uses_exact_bounds_when_present(self):
+        import handler_raster_mt as mod
+
+        params = _fused_event(
+            min_re=-3.5,
+            max_re=1.25,
+            min_im=-0.75,
+            max_im=2.0,
+        )
+        params.update({
+            "effective_input_mode": "multispan_sectioned",
+            "input_manifest_path": "/tmp/input_manifest.json",
+            "solve_score_bins_data": _clip_artifact(
+                chain=[["crowding", "1"], ["omega_cosine", "4"]],
+                metric="crowding",
+                quantile=0.01,
+                omega=4.0,
+                omega_enabled=True,
+                clip_lo=-1.0,
+                clip_hi=2.0,
+            ),
+        })
+
+        cmd = mod._build_cmd(params)
+        joined = " ".join(cmd)
+        self.assertIn("--min_re=-3.5", joined)
+        self.assertIn("--max_re=1.25", joined)
+        self.assertIn("--min_im=-0.75", joined)
+        self.assertIn("--max_im=2.0", joined)
+        self.assertNotIn("--center_re=", joined)
+        self.assertNotIn("--center_im=", joined)
+        self.assertNotIn("--scale=", joined)
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
     @patch("handler_raster_mt.report_status")

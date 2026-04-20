@@ -58,12 +58,27 @@ def run_sweep(func_name, n):
 
 
 def python_project(roots, degree, width, height, center_re, center_im, scale,
-                   tile_size, n_tile_cols, n_tile_rows, rotation=0.0):
+                   tile_size, n_tile_cols, n_tile_rows, rotation=0.0,
+                   min_re=None, max_re=None, min_im=None, max_im=None):
     """Python reference: project roots to tile bitsets."""
     cos_a = math.cos(rotation)
     sin_a = math.sin(rotation)
-    half_w = width / 2.0
-    half_h = height / 2.0
+    if min_re is None or max_re is None or min_im is None or max_im is None:
+        half_w = width / 2.0
+        half_h = height / 2.0
+        project = lambda re, im: (
+            int(half_w + ((re - center_re) * cos_a - (im - center_im) * sin_a) * scale),
+            int(half_h - ((re - center_re) * sin_a + (im - center_im) * cos_a) * scale),
+        )
+    else:
+        center_re = (min_re + max_re) / 2.0
+        center_im = (min_im + max_im) / 2.0
+        x_scale = width / (max_re - min_re)
+        y_scale = height / (max_im - min_im)
+        project = lambda re, im: (
+            int(math.floor(((center_re + ((re - center_re) * cos_a - (im - center_im) * sin_a)) - min_re) * x_scale)),
+            int(math.floor((max_im - (center_im + ((re - center_re) * sin_a + (im - center_im) * cos_a))) * y_scale)),
+        )
     n_tiles = n_tile_cols * n_tile_rows
 
     # Compute tile dimensions
@@ -89,13 +104,7 @@ def python_project(roots, degree, width, height, center_re, center_im, scale,
         for i in range(degree):
             re = float(roots[p, i, 0])
             im = float(roots[p, i, 1])
-
-            dx = re - center_re
-            dy = im - center_im
-            rx = dx * cos_a - dy * sin_a
-            ry = dx * sin_a + dy * cos_a
-            px = int(half_w + rx * scale)
-            py = int(half_h - ry * scale)
+            px, py = project(re, im)
 
             if px < 0 or px >= width or py < 0 or py >= height:
                 clipped += 1
@@ -265,6 +274,66 @@ def test_empty_tiles():
         if os.path.exists(p):
             os.remove(p)
 
+    print("  PASS")
+
+
+def test_exact_bounds_square_output_mapping():
+    """Test exact bounds projection on a square output with anisotropic world scaling."""
+    print("test_exact_bounds_square_output_mapping: manual roots, exact bounds, square output...")
+    degree = 1
+    roots = np.array([
+        [[-2.0, -1.0]],
+        [[1.0, 0.0]],
+        [[3.0, 1.0]],
+        [[0.0, 2.0]],
+        [[5.0, 5.0]],
+    ], dtype=np.float32)
+    fd, roots_file = tempfile.mkstemp(suffix=".bin")
+    os.close(fd)
+    roots.tofile(roots_file)
+
+    width = height = 100
+    tile_size = 50
+    n_tile_cols = n_tile_rows = 2
+    min_re, max_re = -2.0, 4.0
+    min_im, max_im = -1.0, 2.0
+
+    out_prefix = "/tmp/test_bl_bounds"
+    cmd = [
+        BILEVEL_RASTER, roots_file, out_prefix,
+        f"--width={width}", f"--height={height}",
+        f"--tile_size={tile_size}",
+        f"--n_tile_cols={n_tile_cols}", f"--n_tile_rows={n_tile_rows}",
+        f"--min_re={min_re}", f"--max_re={max_re}",
+        f"--min_im={min_im}", f"--max_im={max_im}",
+        f"--degree={degree}",
+    ]
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, f"bilevel_raster failed: {r.stderr}"
+    c_meta = json.loads(r.stdout)
+
+    py_bitsets, py_plotted, py_clipped, py_deduped = python_project(
+        roots, degree, width, height, 0.0, 0.0, 1.0,
+        tile_size, n_tile_cols, n_tile_rows,
+        min_re=min_re, max_re=max_re, min_im=min_im, max_im=max_im
+    )
+
+    assert c_meta["roots_plotted"] == py_plotted
+    assert c_meta["roots_clipped"] == py_clipped
+    assert c_meta["roots_deduped"] == py_deduped
+
+    n_tiles = n_tile_cols * n_tile_rows
+    for t in range(n_tiles):
+        bits_path = f"{out_prefix}_t{t:04d}.bits"
+        if os.path.exists(bits_path):
+            with open(bits_path, "rb") as f:
+                c_bits = f.read()
+            assert c_bits == bytes(py_bitsets[t]), f"tile {t} bitset mismatch under exact bounds"
+            os.remove(bits_path)
+        else:
+            assert all(b == 0 for b in py_bitsets[t])
+
+    os.remove(roots_file)
     print("  PASS")
 
 

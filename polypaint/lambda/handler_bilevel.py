@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import glob
 import json
+import math
 import os
 import re
 import subprocess
@@ -69,6 +70,10 @@ _BILEVEL_UPLOAD_METADATA_LIMITS = {
     "quantile": 64,
     "shim": 64,
     "square_extent": 64,
+    "min_re": 64,
+    "max_re": 64,
+    "min_im": 64,
+    "max_im": 64,
     "rotation": 64,
     "root_transforms": 512,
     "render_execution": 512,
@@ -86,6 +91,10 @@ _BILEVEL_FORWARD_METADATA_KEYS = (
     "quantile",
     "shim",
     "square_extent",
+    "min_re",
+    "max_re",
+    "min_im",
+    "max_im",
     "rotation",
     "root_transforms",
     "render_execution",
@@ -103,6 +112,39 @@ def _utc_now_iso():
 
 def _phase(job_id, task_id, status, phase, phase_label, **extra):
     report_status(job_id, task_id, status, result_data={"phase": phase, "phase_label": phase_label, **extra})
+
+
+def _coerce_finite_float(value, field_name):
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"{field_name} must be numeric, got {value!r}")
+    if not math.isfinite(num):
+        raise RuntimeError(f"{field_name} must be finite, got {value!r}")
+    return num
+
+
+def _viewport_bounds(params):
+    has_any_bounds = any(params.get(key) not in (None, "") for key in ("min_re", "max_re", "min_im", "max_im"))
+    if has_any_bounds:
+        missing = [key for key in ("min_re", "max_re", "min_im", "max_im") if params.get(key) in (None, "")]
+        if missing:
+            raise RuntimeError(f"exact viewport requires {', '.join(missing)}")
+        min_re = _coerce_finite_float(params.get("min_re"), "min_re")
+        max_re = _coerce_finite_float(params.get("max_re"), "max_re")
+        min_im = _coerce_finite_float(params.get("min_im"), "min_im")
+        max_im = _coerce_finite_float(params.get("max_im"), "max_im")
+        if not max_re > min_re:
+            raise RuntimeError(f"exact viewport requires max_re > min_re, got {min_re!r}/{max_re!r}")
+        if not max_im > min_im:
+            raise RuntimeError(f"exact viewport requires max_im > min_im, got {min_im!r}/{max_im!r}")
+        return {
+            "min_re": min_re,
+            "max_re": max_re,
+            "min_im": min_im,
+            "max_im": max_im,
+        }
+    raise RuntimeError("exact viewport requires min_re, max_re, min_im, and max_im")
 
 
 def _finalize_worker_count():
@@ -437,15 +479,17 @@ def handle_raster(params):
 
         _cleanup_tmp(["/tmp/bits_t*.bits", _TMP_ROOT_XFORMS])
 
+        viewport = _viewport_bounds(params)
         cmd = [
             BILEVEL_RASTER, bin_path, "/tmp/bits",
             f"--width={params['width']}", f"--height={params['height']}",
             f"--tile_size={params['tile_size']}",
             f"--n_tile_cols={params['n_tile_cols']}",
             f"--n_tile_rows={params['n_tile_rows']}",
-            f"--center_re={params['center_re']}",
-            f"--center_im={params['center_im']}",
-            f"--scale={params['scale']}",
+            f"--min_re={viewport['min_re']}",
+            f"--max_re={viewport['max_re']}",
+            f"--min_im={viewport['min_im']}",
+            f"--max_im={viewport['max_im']}",
             f"--degree={params['degree']}",
             f"--rotation={params.get('rotation', 0.0)}",
         ]
@@ -530,15 +574,17 @@ def handle_coeff_raster(params):
         if n_coeffs < 1:
             raise RuntimeError(f"coeff_bilevel requires n_coeffs >= 1, got {n_coeffs}")
 
+        viewport = _viewport_bounds(params)
         cmd = [
             COEFFS_BILEVEL_RASTER, bin_path, "/tmp/coeff_bits",
             f"--width={params['width']}", f"--height={params['height']}",
             f"--tile_size={params['tile_size']}",
             f"--n_tile_cols={params['n_tile_cols']}",
             f"--n_tile_rows={params['n_tile_rows']}",
-            f"--center_re={params['center_re']}",
-            f"--center_im={params['center_im']}",
-            f"--scale={params['scale']}",
+            f"--min_re={viewport['min_re']}",
+            f"--max_re={viewport['max_re']}",
+            f"--min_im={viewport['min_im']}",
+            f"--max_im={viewport['max_im']}",
             f"--n_coeffs={n_coeffs}",
             f"--rotation={params.get('rotation', 0.0)}",
         ]
@@ -732,13 +778,15 @@ def handle_section_raster(params):
         dl_ms = int((time.time() - t0) * 1000)
         _phase(job_id, task_id, "downloaded", "bilevel_raster", "BiLevel raster", dl_ms=dl_ms)
 
+        viewport = _viewport_bounds(params)
         cmd = [
             BILEVEL_SECTION_RASTER, _TMP_ROOTS, _TMP_SECTION_FRAGMENT,
             f"--width={params['width']}",
             f"--height={params['height']}",
-            f"--center_re={params['center_re']}",
-            f"--center_im={params['center_im']}",
-            f"--scale={params['scale']}",
+            f"--min_re={viewport['min_re']}",
+            f"--max_re={viewport['max_re']}",
+            f"--min_im={viewport['min_im']}",
+            f"--max_im={viewport['max_im']}",
             f"--degree={params['degree']}",
             f"--rotation={params.get('rotation', 0.0)}",
         ]

@@ -274,7 +274,7 @@ class TestDispatchBilevelTarget(unittest.TestCase):
         jobs = [{"phase": "raster", "job_id": "j", "stripe_idx": i,
                  "width": 4096, "height": 4096, "tile_size": 4096,
                  "n_tile_cols": 1, "n_tile_rows": 1,
-                 "center_re": 0, "center_im": 0, "scale": 100, "degree": 5}
+                 "min_re": -20.48, "max_re": 20.48, "min_im": -20.48, "max_im": 20.48, "degree": 5}
                 for i in range(3)]
         event = self._make_event({"target": "bilevel", "jobs": jobs})
         result = handler(event, None)

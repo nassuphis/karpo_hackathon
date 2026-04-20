@@ -194,6 +194,12 @@ class TestWorkflowDefinition(unittest.TestCase):
         self.assertEqual(selector["solve_score_quantile.$"], "$.plan.solve_score.quantile")
         self.assertEqual(selector["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(selector["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
+        self.assertEqual(selector["width.$"], "$.plan.grid.width")
+        self.assertEqual(selector["height.$"], "$.plan.grid.height")
+        self.assertEqual(selector["min_re.$"], "$.plan.viewport.min_re")
+        self.assertEqual(selector["max_re.$"], "$.plan.viewport.max_re")
+        self.assertEqual(selector["min_im.$"], "$.plan.viewport.min_im")
+        self.assertEqual(selector["max_im.$"], "$.plan.viewport.max_im")
         self.assertEqual(selector["raster_function_name.$"], "$.plan.raster.function_name")
         self.assertEqual(selector["raster_input_mode.$"], "$.plan.raster.input_mode")
         self.assertEqual(selector["raster_sectioned_retries.$"], "$.plan.raster.sectioned_retries")
@@ -201,6 +207,9 @@ class TestWorkflowDefinition(unittest.TestCase):
         self.assertEqual(selector["associated_palette_fragment_prefix.$"], "$.plan.associated_palette.fragment_prefix")
         self.assertEqual(selector["fragment_prefix.$"], "$.plan.outputs.fragment_prefix")
         for deleted_field in [
+            "center_re.$",
+            "center_im.$",
+            "scale.$",
             "bin_key.$",
             "bin_size.$",
             "coeffs_key.$",
@@ -229,6 +238,8 @@ class TestWorkflowDefinition(unittest.TestCase):
         self.assertEqual(payload["raw_meta_key.$"], "$.plan.outputs.raw_meta_key")
         self.assertEqual(payload["fragment_prefix.$"], "$.plan.outputs.fragment_prefix")
         self.assertEqual(payload["source_item_count.$"], "$.plan.raster.item_count")
+        self.assertEqual(payload["width.$"], "$.plan.grid.width")
+        self.assertEqual(payload["height.$"], "$.plan.grid.height")
         self.assertEqual(payload["clip_slots.$"], "$.solve_score_clip.parsed.clip_slots")
         self.assertEqual(payload["score_program.$"], "$.solve_score_clip.parsed.score_program")
         self.assertEqual(payload["chain_fingerprint.$"], "$.solve_score_clip.parsed.chain_fingerprint")
@@ -244,15 +255,35 @@ class TestWorkflowDefinition(unittest.TestCase):
         self.assertEqual(bilevel_raster["fragment_prefix.$"], "$.plan.bilevel.fragment_prefix")
         self.assertEqual(bilevel_raster["step_start.$"], "$$.Map.Item.Value.step_start")
         self.assertEqual(bilevel_raster["step_count.$"], "$$.Map.Item.Value.step_count")
+        self.assertEqual(bilevel_raster["width.$"], "$.plan.grid.width")
+        self.assertEqual(bilevel_raster["height.$"], "$.plan.grid.height")
+        self.assertEqual(bilevel_raster["min_re.$"], "$.plan.viewport.min_re")
+        self.assertEqual(bilevel_raster["max_re.$"], "$.plan.viewport.max_re")
+        self.assertEqual(bilevel_raster["min_im.$"], "$.plan.viewport.min_im")
+        self.assertEqual(bilevel_raster["max_im.$"], "$.plan.viewport.max_im")
+        self.assertNotIn("center_re.$", bilevel_raster)
+        self.assertNotIn("center_im.$", bilevel_raster)
+        self.assertNotIn("scale.$", bilevel_raster)
 
         bilevel_finalize = self.states["BilevelFinalizeTask"]["Parameters"]["Payload"]
         self.assertEqual(bilevel_finalize["phase"], "finalize")
         self.assertEqual(bilevel_finalize["source_item_count.$"], "$.plan.bilevel.item_count")
         self.assertEqual(bilevel_finalize["fragment_prefix.$"], "$.plan.bilevel.fragment_prefix")
+        self.assertEqual(bilevel_finalize["width.$"], "$.plan.grid.width")
+        self.assertEqual(bilevel_finalize["height.$"], "$.plan.grid.height")
 
         coeff_raster = self.states["CoeffRasterMap"]["ItemSelector"]
         self.assertEqual(coeff_raster["coeffs_key.$"], "States.ArrayGetItem($.plan.calc.coeffs_keys, $$.Map.Item.Value.chunk_idx)")
         self.assertEqual(coeff_raster["n_coeffs.$"], "$.plan.calc.n_coeffs")
+        self.assertEqual(coeff_raster["width.$"], "$.plan.grid.width")
+        self.assertEqual(coeff_raster["height.$"], "$.plan.grid.height")
+        self.assertEqual(coeff_raster["min_re.$"], "$.plan.viewport.min_re")
+        self.assertEqual(coeff_raster["max_re.$"], "$.plan.viewport.max_re")
+        self.assertEqual(coeff_raster["min_im.$"], "$.plan.viewport.min_im")
+        self.assertEqual(coeff_raster["max_im.$"], "$.plan.viewport.max_im")
+        self.assertNotIn("center_re.$", coeff_raster)
+        self.assertNotIn("center_im.$", coeff_raster)
+        self.assertNotIn("scale.$", coeff_raster)
         coeff_stitch = self.states["CoeffStitchTask"]["Parameters"]["Payload"]
         self.assertEqual(coeff_stitch["out_key.$"], "$.plan.outputs.coeff_bilevel_key")
         self.assertEqual(coeff_stitch["preview_key.$"], "$.plan.outputs.preview_key")

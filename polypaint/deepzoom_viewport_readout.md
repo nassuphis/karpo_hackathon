@@ -41,6 +41,13 @@ in [lambda/handler_deepzoom_export.py](/Users/nicknassuphis/karpo_hackathon/poly
 That is enough to identify the source artifact, but not enough to directly report
 world coordinates in the viewer.
 
+Both DeepZoom entry points funnel through the same manifest-writing code:
+
+- [lambda/handler_deepzoom_export.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_deepzoom_export.py) — the main export path.
+- [lambda/handler_deepzoom_from_raw.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_deepzoom_from_raw.py) — a thin wrapper that delegates to `handle_deepzoom_export_request` with `require_raw_sidecar=True`.
+
+So a single metadata-shape change in `handle_deepzoom_export_request` covers both.
+
 ### What the viewer does now
 
 The standalone DeepZoom viewer template in
@@ -107,6 +114,64 @@ view_min_im = max_im - (y1 / H) * (max_im - min_im)
 ```
 
 That is the full feature mathematically.
+
+## OSD Coordinate Space
+
+OpenSeadragon's `viewer.viewport.getBounds()` returns bounds in **normalized
+viewport coordinates** (where the image's long edge is 1.0), not image pixels.
+
+To get image-pixel coordinates for the formulas above, convert first:
+
+```js
+const vpBounds = viewer.viewport.getBounds(true);
+const imgRect = viewer.viewport.viewportToImageRectangle(vpBounds);
+// imgRect.x, imgRect.y, imgRect.width, imgRect.height are in image pixels
+const x0 = imgRect.x;
+const x1 = imgRect.x + imgRect.width;
+const y0 = imgRect.y;
+const y1 = imgRect.y + imgRect.height;
+```
+
+Then apply the linear map to `min_re..max_re` and `min_im..max_im`.
+
+Do not apply the linear map directly to `getBounds()`; its values are not in
+pixels.
+
+## Rotation
+
+Render artifacts may carry a non-zero `rotation` (degrees) applied to roots
+before projection. When `rotation != 0`, the image-to-world map is not axis
+aligned: a visible rectangle in image space corresponds to a rotated rectangle
+in world space, so the four world-space corners are not simply
+`(view_min_re, view_max_im)` etc.
+
+Choose one path for this feature:
+
+### Option R-A: Support rotation correctly
+
+Copy `rotation` into the DeepZoom manifest. In the readout, after computing the
+visible image rectangle, invert the rotation around the render viewport center
+before reporting world coordinates. The readout still shows four numbers, but
+they represent the axis-aligned bounding box of the rotated visible region — or
+two shown corners plus a note that the visible region is tilted.
+
+### Option R-B: Disable the readout when rotation != 0
+
+Simpler. Still include `rotation` in the manifest, but when non-zero the readout
+displays:
+
+```text
+Rotated render (rotation=15°)
+Visible world viewport unavailable with rotation
+```
+
+and the Send-To-Render affordance is hidden.
+
+### Recommendation
+
+Start with Option R-B. It is honest, cheap, and covers the common case (most
+renders are rotation=0). Option R-A can be added later if users ask for it.
+Either way, `rotation` must be added to the manifest so the viewer can tell.
 
 ## Why Square Viewports Feel Trivial
 
@@ -178,6 +243,7 @@ Add these fields to DeepZoom manifest:
 - `viewport_max_im`
 - `source_width`
 - `source_height`
+- `source_rotation` (degrees, for rotation handling; see Rotation section)
 
 This is the simplest runtime contract for the viewer.
 
@@ -233,13 +299,27 @@ This requires the viewer HTML to receive or fetch viewport metadata.
 
 ### Variant 3: “Send To Render”
 
-Once the visible world bounds are known, the viewer can offer:
+A `GotoRender` button already exists in the in-app DeepZoom tab (see
+`_dzGotoSelectedRender` in [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html))
+that switches to the Render tab with the source artifact selected but does
+**not** currently forward viewport bounds.
 
-- `Use This View In Render`
+Variant 3 = extend that existing button to also forward:
 
-That would populate explicit viewport bounds back into the Render tab.
+- `min_re`
+- `max_re`
+- `min_im`
+- `max_im`
 
-This becomes especially valuable once exact viewport is implemented.
+into the Render tab's explicit viewport fields, flipping the view selector to
+`explicit`.
+
+Only enabled when the DeepZoom manifest contains viewport bounds **and** (per
+the Rotation section) the source artifact has `rotation == 0` under Option R-B.
+Under Option R-A, bounds can be forwarded as the axis-aligned bbox of the
+rotated visible region; document what the user will get.
+
+Do not add a second button; extend the existing one.
 
 ## Recommended UI
 
@@ -279,6 +359,15 @@ or:
 
 If exact viewport lands first, copying canonical bounds is preferable.
 
+The change lands in one place:
+
+- [lambda/handler_deepzoom_export.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_deepzoom_export.py) — in the `manifest = {...}` block around `handle_deepzoom_export_request`.
+
+The from-raw variant at [lambda/handler_deepzoom_from_raw.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_deepzoom_from_raw.py)
+delegates into the same function, so the new fields propagate automatically.
+Also include `source_rotation` here so the viewer can honor the rotation
+policy chosen in the Rotation section.
+
 ### 2. In-app DeepZoom tab
 
 In [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html):
@@ -300,6 +389,10 @@ Likely OSD hooks:
 
 and/or a debounced update path.
 
+Convert OSD viewport coords to image pixels with
+`viewer.viewport.viewportToImageRectangle(...)` before applying the linear map
+in the Core Mapping section. See "OSD Coordinate Space" above.
+
 ### 3. Standalone viewer
 
 If standalone support is wanted:
@@ -310,18 +403,20 @@ If standalone support is wanted:
 
 ### 4. Render handoff
 
-Once the readout exists, optionally add:
-
-- `Use Visible View`
-
-which sends:
+Once the readout exists, extend the existing `GotoRender` button
+(`_dzGotoSelectedRender` in [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html))
+to also forward the current visible world bounds:
 
 - `min_re`
 - `max_re`
 - `min_im`
 - `max_im`
 
-to the Render tab explicit viewport controls.
+into the Render tab's explicit viewport controls, flipping the view selector
+to `explicit`. Do not add a second button.
+
+Disabled (or forwards only the source artifact selection) when `source_rotation != 0`
+under Option R-B.
 
 ## Legacy Compatibility
 
@@ -354,6 +449,13 @@ Unit-test the mapping helper with:
 - tall viewport
 - asymmetric viewport
 - top/bottom y inversion
+- OSD viewport-coord → image-pixel conversion (golden values against a fixture `viewportToImageRectangle` return)
+
+### Rotation tests
+
+- `rotation == 0` renders normally, readout shows bounds
+- `rotation != 0`: behavior matches the chosen option (R-A: rotated-bbox bounds; R-B: "unavailable" and Send-To-Render disabled)
+- manifest always includes `source_rotation`
 
 ### Contract tests
 

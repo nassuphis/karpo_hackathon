@@ -263,101 +263,109 @@ def _source_segments_from_chunk_items(items, *, family, degree, n_coeffs):
     }
 
 
-def build_solve_source_manifest(chunk_items, *, job_id, degree, n_coeffs):
-    items = _sorted_chunk_items(chunk_items)
-    slv_row_bytes = root_row_bytes(degree)
-    cf_row_bytes = coeff_row_bytes(n_coeffs)
-    pm_row_bytes = param_row_bytes()
-    slv_segments = []
-    cf_segments = []
-    pm_segments = []
-    for idx, item in enumerate(items):
+def _compact_manifest_source(items, *, family, degree, n_coeffs, include=True):
+    if family == "slv":
+        row_bytes = root_row_bytes(degree)
+        key_field = "bin_key"
+        solve_count_field = "step_count"
+        source_start_field = None
+    elif family == "cf":
+        row_bytes = coeff_row_bytes(n_coeffs)
+        key_field = "coeffs_key"
+        solve_count_field = "step_count"
+        source_start_field = None
+    elif family == "pm":
+        row_bytes = param_row_bytes()
+        key_field = "params_key"
+        solve_count_field = "params_step_count"
+        source_start_field = "params_step_start"
+    else:
+        raise RuntimeError(f"Unknown source family: {family}")
+
+    if not include:
+        return {"r": row_bytes, "k": [], "g": []}
+
+    keys = []
+    key_ids = {}
+    segments = []
+    for item in items:
         step_start = _normalize_int(item.get("step_start"))
-        step_count = _normalize_int(item.get("step_count"))
+        step_count = _normalize_int(item.get(solve_count_field), _normalize_int(item.get("step_count")))
         if step_count <= 0:
             continue
-
-        bin_key = str(item.get("bin_key") or "").strip()
-        if bin_key:
-            slv_segments.append({
-                "storage_id": f"slv_{idx:04d}",
-                "key": bin_key,
-                "solve_start": step_start,
-                "solve_count": step_count,
-                "source_solve_start": 0,
-                "byte_size": _normalize_int(item.get("bin_size"), step_count * slv_row_bytes),
-            })
-
-        coeffs_key = str(item.get("coeffs_key") or "").strip()
-        if coeffs_key:
-            cf_segments.append({
-                "storage_id": f"cf_{idx:04d}",
-                "key": coeffs_key,
-                "solve_start": step_start,
-                "solve_count": step_count,
-                "source_solve_start": 0,
-                "byte_size": _normalize_int(item.get("coeffs_bin_size"), step_count * cf_row_bytes),
-            })
-
-        params_key = str(item.get("params_key") or "").strip()
-        params_step_count = _normalize_int(item.get("params_step_count"), step_count)
-        if params_key and params_step_count > 0:
-            pm_segments.append({
-                "storage_id": f"pm_{idx:04d}",
-                "key": params_key,
-                "solve_start": step_start,
-                "solve_count": params_step_count,
-                "source_solve_start": _normalize_int(item.get("params_step_start")),
-                "byte_size": _normalize_int(item.get("params_bin_size"), params_step_count * pm_row_bytes),
-            })
-
+        key = str(item.get(key_field) or "").strip()
+        if not key:
+            continue
+        key_idx = key_ids.get(key)
+        if key_idx is None:
+            key_idx = len(keys)
+            key_ids[key] = key_idx
+            keys.append(key)
+        source_start = _normalize_int(item.get(source_start_field)) if source_start_field else 0
+        segments.append([key_idx, step_start, step_count, source_start])
     return {
-        "version": 1,
-        "job_id": str(job_id or ""),
-        "total_solves": sum(_normalize_int(item.get("step_count")) for item in items),
-        "degree": _normalize_int(degree),
-        "n_coeffs": _normalize_int(n_coeffs),
-        "sources": {
-            "slv": {
-                "row_bytes": slv_row_bytes,
-                "segments": slv_segments,
-            },
-            "cf": {
-                "row_bytes": cf_row_bytes,
-                "segments": cf_segments,
-            },
-            "pm": {
-                "row_bytes": pm_row_bytes,
-                "segments": pm_segments,
-            },
+        "r": row_bytes,
+        "k": keys,
+        "g": segments,
+    }
+
+
+def build_solve_source_manifest(chunk_items, *, job_id, degree, n_coeffs, include_coeff=True, include_param=True):
+    items = _sorted_chunk_items(chunk_items)
+    return {
+        "v": 2,
+        "j": str(job_id or ""),
+        "t": sum(_normalize_int(item.get("step_count")) for item in items),
+        "d": _normalize_int(degree),
+        "n": _normalize_int(n_coeffs),
+        "s": {
+            "slv": _compact_manifest_source(items, family="slv", degree=degree, n_coeffs=n_coeffs, include=True),
+            "cf": _compact_manifest_source(items, family="cf", degree=degree, n_coeffs=n_coeffs, include=include_coeff),
+            "pm": _compact_manifest_source(items, family="pm", degree=degree, n_coeffs=n_coeffs, include=include_param),
         },
     }
 
 
 def build_source_spans(solve_source_manifest, *, source_family, solve_start, solve_count):
     manifest = dict(solve_source_manifest or {})
-    sources = dict(manifest.get("sources") or {})
+    sources = dict(manifest.get("sources") or manifest.get("s") or {})
     source = dict(sources.get(source_family) or {})
-    row_bytes_value = int(source.get("row_bytes") or 0)
+    row_bytes_value = int(source.get("row_bytes") or source.get("r") or 0)
     if row_bytes_value <= 0:
         return []
-    segments = list(source.get("segments") or [])
+    segments = list(source.get("segments") or source.get("g") or [])
+    segment_keys = list(source.get("keys") or source.get("k") or [])
     section_end = int(solve_start) + int(solve_count)
     out = []
-    for segment in sorted(segments, key=lambda row: (int(row.get("solve_start") or 0), str(row.get("storage_id") or ""))):
-        segment_start = int(segment.get("solve_start") or 0)
-        segment_count = int(segment.get("solve_count") or 0)
+    if segments and isinstance(segments[0], dict):
+        ordered_segments = sorted(
+            segments,
+            key=lambda row: (int(row.get("solve_start") or 0), str(row.get("storage_id") or row.get("key") or "")),
+        )
+    else:
+        ordered_segments = segments
+    for segment in ordered_segments:
+        if isinstance(segment, dict):
+            key = str(segment.get("key") or "")
+            segment_start = int(segment.get("solve_start") or 0)
+            segment_count = int(segment.get("solve_count") or 0)
+            source_origin = int(segment.get("source_solve_start") or 0)
+        else:
+            try:
+                key_idx, segment_start, segment_count, source_origin = segment[:4]
+            except (TypeError, ValueError):
+                raise RuntimeError(f"Invalid compact solve_source_manifest segment for {source_family}: {segment!r}")
+            key = str(segment_keys[int(key_idx)] or "")
         segment_end = segment_start + segment_count
         overlap_start = max(int(solve_start), segment_start)
         overlap_end = min(section_end, segment_end)
         if overlap_end <= overlap_start:
             continue
         overlap_count = overlap_end - overlap_start
-        source_origin = int(segment.get("source_solve_start") or 0)
         source_offset_solves = source_origin + (overlap_start - segment_start)
         out.append({
-            "storage_id": str(segment.get("storage_id") or ""),
-            "key": str(segment.get("key") or ""),
+            "storage_id": str(segment.get("storage_id") or "") if isinstance(segment, dict) else "",
+            "key": key,
             "solve_start": overlap_start,
             "solve_count": overlap_count,
             "local_solve_start": overlap_start - int(solve_start),
@@ -369,8 +377,8 @@ def build_source_spans(solve_source_manifest, *, source_family, solve_start, sol
 
 def build_native_multispan_manifest(solve_source_manifest, *, source_family, solve_start, solve_count, url_by_key):
     manifest = dict(solve_source_manifest or {})
-    source = dict((manifest.get("sources") or {}).get(source_family) or {})
-    row_bytes_value = int(source.get("row_bytes") or 0)
+    source = dict(((manifest.get("sources") or manifest.get("s") or {}).get(source_family) or {}))
+    row_bytes_value = int(source.get("row_bytes") or source.get("r") or 0)
     if row_bytes_value <= 0:
         raise RuntimeError(f"solve_source_manifest missing row_bytes for source family {source_family}")
     spans = build_source_spans(

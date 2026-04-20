@@ -249,10 +249,11 @@ def handle_post_coeffgen(params):
     coeffgen_results = list(params.get("coeffgen_results") or [])
     if not coeffgen_results:
         expected = int(plan.get("compute", {}).get("n_chunks") or len(plan.get("chunk_items", [])))
-        coeffgen_results = _load_coeffgen_results_from_ddb(
+        coeffgen_results = _load_done_results_from_ddb(
             params["job_id"],
             params.get("task_prefix") or plan["coeffgen"]["task_prefix"],
             expected,
+            phase_name="post_coeffgen",
         )
 
     first = coeffgen_results[0]
@@ -297,7 +298,7 @@ def handle_post_coeffgen(params):
     return ok_response(post)
 
 
-def _load_coeffgen_results_from_ddb(job_id, task_prefix, expected):
+def _load_done_results_from_ddb(job_id, task_prefix, expected, *, phase_name):
     ddb = _get_ddb()
     kwargs = {
         "TableName": JOBS_TABLE,
@@ -325,13 +326,13 @@ def _load_coeffgen_results_from_ddb(job_id, task_prefix, expected):
             rd = item.get("result_data", {}).get("S")
             if not rd:
                 raise RuntimeError(
-                    f"post_coeffgen missing result_data for {item['task_id']['S']}"
+                    f"{phase_name} missing result_data for {item['task_id']['S']}"
                 )
             try:
                 done_results.append(json.loads(rd))
             except Exception as exc:
                 raise RuntimeError(
-                    f"post_coeffgen invalid result_data for {item['task_id']['S']}: {exc}"
+                    f"{phase_name} invalid result_data for {item['task_id']['S']}: {exc}"
                 ) from exc
         elif status == "error":
             errors.append({
@@ -342,11 +343,11 @@ def _load_coeffgen_results_from_ddb(job_id, task_prefix, expected):
     if errors:
         sample = ", ".join(f"{e['task_id']}: {e['error_msg']}" for e in errors[:3])
         raise RuntimeError(
-            f"post_coeffgen saw {len(errors)} coeffgen errors for prefix {task_prefix}: {sample}"
+            f"{phase_name} saw {len(errors)} task errors for prefix {task_prefix}: {sample}"
         )
     if len(done_results) != expected:
         raise RuntimeError(
-            f"post_coeffgen expected {expected} coeffgen results for prefix {task_prefix}, found {len(done_results)}"
+            f"{phase_name} expected {expected} results for prefix {task_prefix}, found {len(done_results)}"
         )
     return done_results
 
@@ -357,7 +358,13 @@ def handle_finalize_metadata(params):
     lores_solve = params["lores_solve"]
     solve_results = list(params.get("solve_results") or [])
     if not solve_results:
-        raise RuntimeError("finalize_metadata requires non-empty solve_results")
+        expected = int(plan.get("compute", {}).get("n_chunks") or len(plan.get("chunk_items", [])))
+        solve_results = _load_done_results_from_ddb(
+            params.get("job_id") or plan["job_id"],
+            _finalize_results_task_prefix(plan, params),
+            expected,
+            phase_name="finalize_metadata",
+        )
 
     solve_results.sort(key=lambda row: int(row.get("chunk_idx", row.get("stripe_idx", 0)) or 0))
     coeffs_keys = [item["coeffs_key"] for item in plan["chunk_items"]]
@@ -482,6 +489,21 @@ def handle_finalize_metadata(params):
         "n_chunks": calc_meta["n_chunks"],
         "solver": calc_meta["solver"],
     })
+
+
+def _finalize_results_task_prefix(plan, params):
+    explicit = str(params.get("task_prefix") or "").strip()
+    execution_method = str(plan.get("compute", {}).get("execution_method") or "").strip().lower()
+    if execution_method == "fused_chunk_pipeline":
+        fused_prefix = str(plan.get("fused", {}).get("task_prefix") or "").strip()
+        if fused_prefix:
+            return fused_prefix
+    if explicit:
+        return explicit
+    solve_prefix = str(plan.get("solve", {}).get("task_prefix") or "").strip()
+    if solve_prefix:
+        return solve_prefix
+    raise RuntimeError("finalize_metadata missing task_prefix")
 
 
 def _validate_solver_mode(value):

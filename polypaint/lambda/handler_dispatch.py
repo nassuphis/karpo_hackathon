@@ -20,8 +20,6 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 FUNCTIONS = {
-    "raster": os.environ.get("RASTER_FUNCTION", "polypaint-raster"),
-    "finalize": os.environ.get("FINALIZE_FUNCTION", "polypaint-finalize"),
     "encode": os.environ.get("ENCODE_FUNCTION", "polypaint-encode"),
     "sweep": os.environ.get("SWEEP_FUNCTION", "polypaint-sweep"),
     "sweep_mt": os.environ.get("SWEEP_MT_FUNCTION", "polypaint-sweep-mt"),
@@ -42,6 +40,7 @@ FUNCTIONS = {
     "repalette": os.environ.get("REPALETTE_FUNCTION", "polypaint-repalette"),
     "color_repalette": os.environ.get("COLOR_REPALETTE_FUNCTION", "polypaint-color-repalette"),
     "recolor_from_raw": os.environ.get("RECOLOR_FROM_RAW_FUNCTION", "polypaint-recolor-from-raw"),
+    "color_to_bilevel": os.environ.get("COLOR_TO_BILEVEL_FUNCTION", "polypaint-color-to-bilevel"),
     "pdf_artifact": os.environ.get("PDF_ARTIFACT_FUNCTION", "polypaint-pdf-artifact"),
 }
 REGION = os.environ.get("AWS_REGION", "us-east-1")

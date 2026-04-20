@@ -29,7 +29,7 @@ class TestDispatchHandler(unittest.TestCase):
         from handler_dispatch import handler
         mock_client.invoke.return_value = {"StatusCode": 202}
         jobs = [{"job_id": "j", "stripe_idx": i} for i in range(5)]
-        event = self._make_event({"target": "raster", "jobs": jobs})
+        event = self._make_event({"target": "bilevel", "jobs": jobs})
         result = handler(event, None)
         body = json.loads(result["body"])
         self.assertEqual(body["fired"], 5)
@@ -57,28 +57,18 @@ class TestDispatchHandler(unittest.TestCase):
         from handler_dispatch import handler
         mock_client.invoke.side_effect = Exception("throttled")
         jobs = [{"job_id": "j", "stripe_idx": 0}]
-        event = self._make_event({"target": "raster", "jobs": jobs})
+        event = self._make_event({"target": "bilevel", "jobs": jobs})
         result = handler(event, None)
         body = json.loads(result["body"])
         self.assertEqual(body["fired"], 0)
         self.assertEqual(len(body["errors"]), 1)
 
     @patch("handler_dispatch.lambda_client")
-    def test_dispatch_raster_target(self, mock_client):
+    def test_dispatch_bilevel_target(self, mock_client):
         from handler_dispatch import handler
         mock_client.invoke.return_value = {"StatusCode": 202}
         jobs = [{"job_id": "j", "stripe_idx": 0, "bin_key": "renders/j/stripe_0.bin"}]
-        event = self._make_event({"target": "raster", "jobs": jobs})
-        result = handler(event, None)
-        body = json.loads(result["body"])
-        self.assertEqual(body["fired"], 1)
-
-    @patch("handler_dispatch.lambda_client")
-    def test_dispatch_finalize_target(self, mock_client):
-        from handler_dispatch import handler
-        mock_client.invoke.return_value = {"StatusCode": 202}
-        jobs = [{"job_id": "j", "tile_idx": 0, "n_stripes": 10, "tile_w": 4096, "tile_h": 4096}]
-        event = self._make_event({"target": "finalize", "jobs": jobs})
+        event = self._make_event({"target": "bilevel", "jobs": jobs})
         result = handler(event, None)
         body = json.loads(result["body"])
         self.assertEqual(body["fired"], 1)
@@ -142,6 +132,28 @@ class TestDispatchHandler(unittest.TestCase):
         result = handler(event, None)
         body = json.loads(result["body"])
         self.assertEqual(body["fired"], 1)
+
+    @patch("handler_dispatch.lambda_client")
+    def test_dispatch_color_to_bilevel_target(self, mock_client):
+        from handler_dispatch import handler
+        mock_client.invoke.return_value = {"StatusCode": 202}
+        jobs = [{
+            "phase": "from_raw_color",
+            "job_id": "j",
+            "task_id": "color_to_bilevel_1",
+            "artifact_id": "bil_new",
+            "source_artifact_id": "color_src",
+            "threshold": 23,
+        }]
+        event = self._make_event({"target": "color_to_bilevel", "jobs": jobs})
+        result = handler(event, None)
+        body = json.loads(result["body"])
+        self.assertEqual(body["fired"], 1)
+        invoke_call = mock_client.invoke.call_args
+        self.assertIn("polypaint-color-to-bilevel", invoke_call.kwargs["FunctionName"])
+        payload = json.loads(invoke_call.kwargs["Payload"])
+        job = json.loads(payload["body"])
+        self.assertEqual(job["phase"], "from_raw_color")
 
     @patch("handler_dispatch.lambda_client")
     def test_dispatch_pdf_artifact_target(self, mock_client):
@@ -479,6 +491,7 @@ class TestStorageCleanRender(unittest.TestCase):
             mapping = {
                 "renders/j/bilevel_t": [{"Contents": [{"Key": "renders/j/bilevel_t0000.tif"}]}],
                 "renders/j/bits_chunk_": [{"Contents": [{"Key": "renders/j/bits_chunk_0000_t0000.bits"}]}],
+                "renders/j/bilevel_section_": [{"Contents": [{"Key": "renders/j/bilevel_section_0000.bits"}]}],
             }
             return mapping.get(Prefix, [{"Contents": []}])
 
@@ -486,16 +499,18 @@ class TestStorageCleanRender(unittest.TestCase):
         mock_s3.delete_objects.return_value = {"Deleted": [
             {"Key": "renders/j/bilevel_t0000.tif"},
             {"Key": "renders/j/bits_chunk_0000_t0000.bits"},
+            {"Key": "renders/j/bilevel_section_0000.bits"},
         ]}
 
         event = {"body": json.dumps({"job_id": "j", "pipeline": "bilevel"})}
         result = handle_clean_render(event)
         body = json.loads(result["body"])
-        self.assertEqual(body["deleted"], 2)
+        self.assertEqual(body["deleted"], 3)
 
         deleted_keys = [o["Key"] for o in mock_s3.delete_objects.call_args[1]["Delete"]["Objects"]]
         self.assertIn("renders/j/bilevel_t0000.tif", deleted_keys)
         self.assertIn("renders/j/bits_chunk_0000_t0000.bits", deleted_keys)
+        self.assertIn("renders/j/bilevel_section_0000.bits", deleted_keys)
         self.assertNotIn("renders/j/image_bilevel.tif", deleted_keys)
 
     @patch("handler_storage.s3")

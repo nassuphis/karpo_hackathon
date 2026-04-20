@@ -25,6 +25,9 @@ lambda/coeffs_bilevel_raster
 lambda/roots2pix_mt
 lambda/solve_proximity_hist_sectioned
 lambda/solve_palette_chunk_mt
+lambda/bilevel_section_raster
+lambda/raw_to_bilevel
+lambda/step_scores_to_palette_raw
 # Shared lib directories (copied from Docker builds)
 lambda/roots2pix_mt_lib/
 lambda/solve_proximity_hist_sectioned_lib/

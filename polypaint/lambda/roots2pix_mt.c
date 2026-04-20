@@ -1,20 +1,12 @@
 /*
- * roots2pix_mt: multithreaded color raster for supported Color modes.
+ * roots2pix_mt: multithreaded fused solve-score raster.
  *
- * This is the native MT replacement for the earlier subprocess fan-out path.
- * It keeps the same external .pix contract, and emits either legacy tile-local
- * .pbx pairs or fused raw-score global u32le_u8_v1 fragments depending on the
- * requested solve-score output mode.
+ * This is the native raster for the fused Color path. It emits either legacy
+ * tile-local .pbx pairs or fused raw-score global u32le_u8_v1 fragments
+ * depending on the requested solve-score output mode.
  *
- * Supported modes:
+ * Supported color mode:
  *   - solve_score
- *   - saved_palette
- *   - constant
- *   - rainbow with match=none
- *
- * Unsupported here:
- *   - proximity
- *   - rainbow with greedy / hungarian
  *
  * Build (sectioned mode needs libcurl at runtime):
  *   gcc -O3 -pthread -o roots2pix_mt roots2pix_mt.c -lcurl -lm -Wl,-rpath,'$ORIGIN/lib'
@@ -36,13 +28,6 @@
 
 #define MAXDEG 256
 #define MAX_TILES 4096
-
-enum ColorMode {
-    COLOR_RAINBOW = 0,
-    COLOR_CONSTANT = 1,
-    COLOR_SOLVE_SCORE = 2,
-    COLOR_SAVED_PALETTE = 3,
-};
 
 enum InputMode {
     INPUT_TMPFILE = 0,
@@ -88,7 +73,6 @@ typedef struct {
     double sinA;
     double halfW;
     double halfH;
-    enum ColorMode colorMode;
     enum InputMode inputMode;
     enum SolveMetric solveMetric;
     SolveScoreProgram solveScoreProgram;
@@ -99,7 +83,6 @@ typedef struct {
     int solveScoreOmegaEnabled;
     double solveScoreCuts[9];
     int nSolveScoreCuts;
-    uint32_t constRGB;
     int emitPixelBins;
     int emitPaletteBins;
     int skipPixOutput;
@@ -132,7 +115,6 @@ typedef struct {
     unsigned long long scoreCoeffByteEnd;
     unsigned long long scoreParamByteStart;
     unsigned long long scoreParamByteEnd;
-    const uint8_t *solveBins;
     RootXformEntry *rtChain;
     int nRt;
     uint64_t **tileBits;
@@ -144,9 +126,6 @@ typedef struct {
     ByteVec *palettePbxByteVecs;
     unsigned char *stepScores;
     long stepScoreCount;
-    unsigned char rbPalR[MAXDEG];
-    unsigned char rbPalG[MAXDEG];
-    unsigned char rbPalB[MAXDEG];
     unsigned char ssPalR[10];
     unsigned char ssPalG[10];
     unsigned char ssPalB[10];
@@ -585,52 +564,40 @@ static void *worker_main(void *arg_) {
         uint32_t solveRGB = 0;
         uint8_t solveBin = 255;
 
-        if (arg->colorMode == COLOR_SOLVE_SCORE) {
-            double u;
-            if (arg->useScoreProgram) {
-                u = solve_score_eval_program_with_sources(
-                    step, arg->degree, coeffStep, arg->scoreCoeffDegree, paramStep, arg->scoreParamDegree,
-                    &arg->solveScoreProgram
-                );
-            } else {
-                double score = compute_solve_metric_score(step, arg->degree, arg->solveMetric);
-                double ssRange = arg->solveScoreClipHi - arg->solveScoreClipLo;
-                u = (score - arg->solveScoreClipLo) / ssRange;
-                if (u < 0) u = 0;
-                if (u > 1) u = 1;
-                u = apply_solve_score_transfer(u, arg->solveScoreOmegaEnabled, arg->solveScoreOmega);
-            }
-            int bin = 9;
-            if (arg->solveScoreRawBytes) {
-                int rawByte = 1 + (int)llround(u * 254.0);
-                if (rawByte < 1) rawByte = 1;
-                if (rawByte > 255) rawByte = 255;
-                solveBin = (uint8_t)rawByte;
-                bin = (int)(((double)(rawByte - 1) * 10.0) / 255.0);
-                if (bin < 0) bin = 0;
-                if (bin > 9) bin = 9;
-            } else {
-                for (int c = 0; c < arg->nSolveScoreCuts; c++) {
-                    if (u <= arg->solveScoreCuts[c]) { bin = c; break; }
-                }
-                solveBin = (uint8_t)bin;
-            }
-            solveRGB = ((uint32_t)arg->ssPalR[bin] << 16) |
-                       ((uint32_t)arg->ssPalG[bin] << 8) |
-                       arg->ssPalB[bin];
-        } else if (arg->colorMode == COLOR_SAVED_PALETTE) {
-            uint8_t bin = arg->solveBins[p];
-            if (bin > 9) {
-                worker_fail(arg, "saved_palette bin out of range");
-                goto cleanup;
-            }
-            solveBin = bin;
-            solveRGB = ((uint32_t)arg->ssPalR[bin] << 16) |
-                       ((uint32_t)arg->ssPalG[bin] << 8) |
-                       arg->ssPalB[bin];
+        double u;
+        if (arg->useScoreProgram) {
+            u = solve_score_eval_program_with_sources(
+                step, arg->degree, coeffStep, arg->scoreCoeffDegree, paramStep, arg->scoreParamDegree,
+                &arg->solveScoreProgram
+            );
+        } else {
+            double score = compute_solve_metric_score(step, arg->degree, arg->solveMetric);
+            double ssRange = arg->solveScoreClipHi - arg->solveScoreClipLo;
+            u = (score - arg->solveScoreClipLo) / ssRange;
+            if (u < 0) u = 0;
+            if (u > 1) u = 1;
+            u = apply_solve_score_transfer(u, arg->solveScoreOmegaEnabled, arg->solveScoreOmega);
         }
+        int bin = 9;
+        if (arg->solveScoreRawBytes) {
+            int rawByte = 1 + (int)llround(u * 254.0);
+            if (rawByte < 1) rawByte = 1;
+            if (rawByte > 255) rawByte = 255;
+            solveBin = (uint8_t)rawByte;
+            bin = (int)(((double)(rawByte - 1) * 10.0) / 255.0);
+            if (bin < 0) bin = 0;
+            if (bin > 9) bin = 9;
+        } else {
+            for (int c = 0; c < arg->nSolveScoreCuts; c++) {
+                if (u <= arg->solveScoreCuts[c]) { bin = c; break; }
+            }
+            solveBin = (uint8_t)bin;
+        }
+        solveRGB = ((uint32_t)arg->ssPalR[bin] << 16) |
+                   ((uint32_t)arg->ssPalG[bin] << 8) |
+                   arg->ssPalB[bin];
 
-        if (arg->emitPaletteBins && arg->colorMode == COLOR_SOLVE_SCORE) {
+        if (arg->emitPaletteBins) {
             long long globalStep = arg->paletteStepStart + p;
             long long pass0Steps = (long long)arg->paletteGridN * (long long)arg->paletteGridN;
             if (globalStep >= 0 && globalStep < pass0Steps) {
@@ -647,7 +614,7 @@ static void *worker_main(void *arg_) {
                 }
             }
         }
-        if (arg->stepScores && arg->colorMode == COLOR_SOLVE_SCORE) {
+        if (arg->stepScores) {
             long localIdx = p - arg->start;
             if (localIdx < 0 || localIdx >= arg->stepScoreCount) {
                 worker_fail(arg, "step score local index out of range");
@@ -688,22 +655,13 @@ static void *worker_main(void *arg_) {
                 continue;
             }
 
-            uint32_t rgb = solveRGB;
-            if (arg->colorMode == COLOR_CONSTANT) {
-                rgb = arg->constRGB;
-            } else if (arg->colorMode == COLOR_RAINBOW) {
-                rgb = ((uint32_t)arg->rbPalR[r] << 16) |
-                      ((uint32_t)arg->rbPalG[r] << 8) |
-                       arg->rbPalB[r];
-            }
-
             if (!arg->skipPixOutput) {
-                if (!vec_push2(&arg->pixVecs[tileId], pixIdx, rgb)) {
+                if (!vec_push2(&arg->pixVecs[tileId], pixIdx, solveRGB)) {
                     worker_fail(arg, "pix vec alloc failed");
                     goto cleanup;
                 }
             }
-            if (arg->emitPixelBins && (arg->colorMode == COLOR_SOLVE_SCORE || arg->colorMode == COLOR_SAVED_PALETTE)) {
+            if (arg->emitPixelBins) {
                 if (arg->solveScoreRawBytes) {
                     uint32_t globalPixIdx = (uint32_t)py * (uint32_t)arg->W + (uint32_t)px;
                     if (!bytevec_push_u32le_u8(&arg->pbxByteVecs[tileId], globalPixIdx, solveBin)) {
@@ -736,8 +694,8 @@ int main(int argc, char **argv) {
                 "--degree=D --tile_size=T --n_tile_cols=C --n_tile_rows=R "
                 "[--input_mode=tmpfile|sectioned|multispan_sectioned] "
                 "[--url=URL --input_size=BYTES | --input_manifest=file.json] [--retries=N] "
-                "[--threads=N] [--color=rainbow|solve_score|saved_palette|constant] "
-                "[--match=none] [--palette=<name>] [--constant_color=RRGGBB] "
+                "[--threads=N] [--color=solve_score] "
+                "[--match=none] [--palette=<name>] "
                 "[--solve_metric=proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re|min_mod|max_mod|min_angular_separation] "
                 "[--solve_score_clip_lo=X --solve_score_clip_hi=Y --solve_score_cuts=c1,...,c9] "
                 "[--solve_score_raw_bytes=0|1] "
@@ -769,10 +727,9 @@ int main(int argc, char **argv) {
     int nTileRows = getArgInt(argc, argv, "--n_tile_rows", 1);
     int retries = getArgInt(argc, argv, "--retries", 2);
     int requestedThreads = getArgInt(argc, argv, "--threads", 1);
-    const char *colorStr = getArgStr(argc, argv, "--color", "rainbow");
+    const char *colorStr = getArgStr(argc, argv, "--color", "solve_score");
     const char *matchStr = getArgStr(argc, argv, "--match", "none");
     const char *palName = getArgStr(argc, argv, "--palette", "inferno");
-    const char *solveBinsPath = getArgStr(argc, argv, "--solve_bins_file", NULL);
     const char *pixelBinPrefix = getArgStr(argc, argv, "--pixel_bin_prefix", NULL);
     const char *paletteBinPrefix = getArgStr(argc, argv, "--palette_bin_prefix", NULL);
     const char *stepScoresOutputPath = getArgStr(argc, argv, "--step_scores_output", NULL);
@@ -780,7 +737,6 @@ int main(int argc, char **argv) {
     int solveScoreRawBytes = getArgInt(argc, argv, "--solve_score_raw_bytes", 0);
     int paletteGridN = getArgInt(argc, argv, "--palette_grid_n", 0);
     long long paletteStepStart = getArgLongLong(argc, argv, "--palette_step_start", 0);
-    const char *constColorStr = getArgStr(argc, argv, "--constant_color", "ffffff");
     const char *rtPath = getArgStr(argc, argv, "--root_xforms", NULL);
     enum InputMode inputMode = INPUT_TMPFILE;
     if (strcmp(inputModeStr, "sectioned") == 0) inputMode = INPUT_SECTIONED;
@@ -790,18 +746,13 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    enum ColorMode colorMode = COLOR_RAINBOW;
-    if (strcmp(colorStr, "solve_score") == 0 || strcmp(colorStr, "solve_proximity") == 0) colorMode = COLOR_SOLVE_SCORE;
-    else if (strcmp(colorStr, "saved_palette") == 0) colorMode = COLOR_SAVED_PALETTE;
-    else if (strcmp(colorStr, "constant") == 0) colorMode = COLOR_CONSTANT;
-    else if (strcmp(colorStr, "rainbow") == 0) colorMode = COLOR_RAINBOW;
-    else {
+    if (strcmp(colorStr, "solve_score") != 0 && strcmp(colorStr, "solve_proximity") != 0) {
         fprintf(stderr, "Unsupported color mode for roots2pix_mt: %s\n", colorStr);
         return 1;
     }
 
-    if (strcmp(matchStr, "none") != 0 && colorMode == COLOR_RAINBOW) {
-        fprintf(stderr, "roots2pix_mt only supports --match=none in rainbow mode\n");
+    if (strcmp(matchStr, "none") != 0) {
+        fprintf(stderr, "roots2pix_mt only supports --match=none\n");
         return 1;
     }
     if (degree < 1 || degree > MAXDEG) {
@@ -835,7 +786,7 @@ int main(int argc, char **argv) {
 
     enum SolveMetric solveMetric = SOLVE_METRIC_PROXIMITY;
     const char *solveMetricStr = getArgStr(argc, argv, "--solve_metric", "proximity");
-    if ((colorMode == COLOR_SOLVE_SCORE) && !parse_solve_metric(solveMetricStr, &solveMetric)) {
+    if (!parse_solve_metric(solveMetricStr, &solveMetric)) {
         fprintf(stderr, "ERROR: unknown solve_metric '%s'\n", solveMetricStr);
         return 1;
     }
@@ -891,22 +842,14 @@ int main(int argc, char **argv) {
         solveMetric = solveScoreProgram.metrics[0];
         useScoreProgram = 1;
     }
-    if (colorMode == COLOR_SOLVE_SCORE) {
-        if (!solveScoreRawBytes && nSolveScoreCuts != 9) {
-            fprintf(stderr, "solve_score requires exactly 9 cuts (got %d)\n", nSolveScoreCuts);
-            return 1;
-        }
-        if (!useScoreProgram && solveScoreClipHi - solveScoreClipLo < 1e-12) {
-            fprintf(stderr, "solve_score requires valid clip range\n");
-            return 1;
-        }
+    if (!solveScoreRawBytes && nSolveScoreCuts != 9) {
+        fprintf(stderr, "solve_score requires exactly 9 cuts (got %d)\n", nSolveScoreCuts);
+        return 1;
     }
-
-    unsigned int constHex = 0xffffff;
-    sscanf(constColorStr, "%x", &constHex);
-    uint32_t constRGB = (((constHex >> 16) & 0xffu) << 16) |
-                        (((constHex >> 8) & 0xffu) << 8) |
-                        (constHex & 0xffu);
+    if (!useScoreProgram && solveScoreClipHi - solveScoreClipLo < 1e-12) {
+        fprintf(stderr, "solve_score requires valid clip range\n");
+        return 1;
+    }
 
     int stride = degree * 2;
     long solveBytes = stride * (long)sizeof(float);
@@ -1196,76 +1139,27 @@ int main(int argc, char **argv) {
         }
     }
 
-    uint8_t *solveBins = NULL;
-    if (colorMode == COLOR_SAVED_PALETTE) {
-        if (!solveBinsPath) {
-            fprintf(stderr, "saved_palette requires --solve_bins_file\n");
-            free(roots);
-            return 1;
-        }
-        FILE *fb = fopen(solveBinsPath, "rb");
-        if (!fb) {
-            fprintf(stderr, "Cannot open %s\n", solveBinsPath);
-            free(roots);
-            return 1;
-        }
-        fseek(fb, 0, SEEK_END);
-        long binSize = ftell(fb);
-        fseek(fb, 0, SEEK_SET);
-        if (binSize != nPoints) {
-            fprintf(stderr, "saved_palette bins size mismatch: got %ld expected %ld\n", binSize, nPoints);
-            fclose(fb);
-            free(roots);
-            return 1;
-        }
-        solveBins = malloc((size_t)nPoints);
-        if (!solveBins) {
-            fprintf(stderr, "Cannot allocate solve bins\n");
-            fclose(fb);
-            free(roots);
-            return 1;
-        }
-        if ((long)fread(solveBins, 1, (size_t)nPoints, fb) != nPoints) {
-            fprintf(stderr, "Short read from %s\n", solveBinsPath);
-            fclose(fb);
-            free(solveBins);
-            free(roots);
-            return 1;
-        }
-        fclose(fb);
-    }
-
     int tileW[MAX_TILES];
     int tileH[MAX_TILES];
     int paletteTileW[MAX_TILES];
     int paletteTileH[MAX_TILES];
     size_t tileWordCount[MAX_TILES];
     uint64_t *tileBits[MAX_TILES] = {0};
-    unsigned char rbPalR[MAXDEG], rbPalG[MAXDEG], rbPalB[MAXDEG];
     unsigned char ssPalR[10] = {0}, ssPalG[10] = {0}, ssPalB[10] = {0};
-    int emitPixelBins = pixelBinPrefix &&
-        (colorMode == COLOR_SOLVE_SCORE || colorMode == COLOR_SAVED_PALETTE);
+    int emitPixelBins = pixelBinPrefix && *pixelBinPrefix;
     int emitPaletteBins = paletteBinPrefix && *paletteBinPrefix;
     int emitStepScores = stepScoresOutputPath && *stepScoresOutputPath;
     if (skipPixOutput && !emitPixelBins) {
-        fprintf(stderr, "--skip_pix_output requires --pixel_bin_prefix in solve_score/saved_palette mode\n");
+        fprintf(stderr, "--skip_pix_output requires --pixel_bin_prefix in solve_score mode\n");
         return 1;
     }
     if (emitStepScores) {
-        if (colorMode != COLOR_SOLVE_SCORE) {
-            fprintf(stderr, "--step_scores_output currently requires --color=solve_score\n");
-            return 1;
-        }
         if (!solveScoreRawBytes) {
             fprintf(stderr, "--step_scores_output requires --solve_score_raw_bytes=1\n");
             return 1;
         }
     }
     if (emitPaletteBins) {
-        if (colorMode != COLOR_SOLVE_SCORE) {
-            fprintf(stderr, "--palette_bin_prefix currently requires --color=solve_score\n");
-            return 1;
-        }
         if (!solveScoreRawBytes) {
             fprintf(stderr, "--palette_bin_prefix requires --solve_score_raw_bytes=1\n");
             return 1;
@@ -1329,18 +1223,13 @@ int main(int argc, char **argv) {
         }
     }
 
-    for (int i = 0; i < degree; i++) {
-        rainbowRGB(i, degree, &rbPalR[i], &rbPalG[i], &rbPalB[i]);
+    const PaletteDef *proxPal = findPalette(palName);
+    if (!proxPal) {
+        fprintf(stderr, "Unknown palette: %s\n", palName);
+        goto cleanup;
     }
-    if (colorMode == COLOR_SOLVE_SCORE || colorMode == COLOR_SAVED_PALETTE) {
-        const PaletteDef *proxPal = findPalette(palName);
-        if (!proxPal) {
-            fprintf(stderr, "Unknown palette: %s\n", palName);
-            goto cleanup;
-        }
-        for (int b = 0; b < 10; b++) {
-            paletteRGB(proxPal, (b + 0.5) / 10.0, &ssPalR[b], &ssPalG[b], &ssPalB[b]);
-        }
+    for (int b = 0; b < 10; b++) {
+        paletteRGB(proxPal, (b + 0.5) / 10.0, &ssPalR[b], &ssPalG[b], &ssPalB[b]);
     }
 
     if (inputMode == INPUT_SECTIONED || inputMode == INPUT_MULTISPAN_SECTIONED) {
@@ -1382,7 +1271,6 @@ int main(int argc, char **argv) {
         args[i].sinA = sinA;
         args[i].halfW = W / 2.0;
         args[i].halfH = H / 2.0;
-        args[i].colorMode = colorMode;
         args[i].inputMode = inputMode;
         args[i].solveMetric = solveMetric;
         args[i].useScoreProgram = useScoreProgram;
@@ -1393,7 +1281,6 @@ int main(int argc, char **argv) {
         args[i].solveScoreOmegaEnabled = solveScoreOmegaEnabled;
         memcpy(args[i].solveScoreCuts, solveScoreCuts, sizeof(solveScoreCuts));
         args[i].nSolveScoreCuts = nSolveScoreCuts;
-        args[i].constRGB = constRGB;
         args[i].emitPixelBins = emitPixelBins;
         args[i].emitPaletteBins = emitPaletteBins;
         args[i].skipPixOutput = skipPixOutput;
@@ -1430,7 +1317,6 @@ int main(int argc, char **argv) {
         args[i].scoreParamByteEnd = args[i].scoreParamSectionBytes > 0
             ? args[i].scoreParamByteStart + (unsigned long long)args[i].scoreParamSectionBytes - 1ULL
             : args[i].scoreParamByteStart;
-        args[i].solveBins = solveBins;
         args[i].rtChain = rtChain;
         args[i].nRt = nRt;
         args[i].inputReader = inputMode == INPUT_MULTISPAN_SECTIONED ? &inputReader : NULL;
@@ -1447,9 +1333,6 @@ int main(int argc, char **argv) {
             : NULL;
         args[i].stepScores = emitStepScores ? calloc((size_t)(width > 0 ? width : 1), sizeof(unsigned char)) : NULL;
         args[i].stepScoreCount = width;
-        memcpy(args[i].rbPalR, rbPalR, sizeof(rbPalR));
-        memcpy(args[i].rbPalG, rbPalG, sizeof(rbPalG));
-        memcpy(args[i].rbPalB, rbPalB, sizeof(rbPalB));
         memcpy(args[i].ssPalR, ssPalR, sizeof(ssPalR));
         memcpy(args[i].ssPalG, ssPalG, sizeof(ssPalG));
         memcpy(args[i].ssPalB, ssPalB, sizeof(ssPalB));
@@ -1624,14 +1507,8 @@ int main(int argc, char **argv) {
            (inputMode == INPUT_MULTISPAN_SECTIONED ? "multispan_sectioned" : "tmpfile"),
            retries,
            totalDownloadUs, totalNativeUs);
-    if (colorMode == COLOR_SOLVE_SCORE) {
-        printf(",\"palette\":\"%s\",\"solve_score\":true,\"solve_metric\":\"%s\",\"solve_score_omega\":%.15g,\"solve_score_omega_enabled\":%s",
-               palName, solve_metric_name(solveMetric), solveScoreOmega, solveScoreOmegaEnabled ? "true" : "false");
-    } else if (colorMode == COLOR_SAVED_PALETTE) {
-        printf(",\"palette\":\"%s\",\"saved_palette\":true", palName);
-    } else if (colorMode == COLOR_CONSTANT) {
-        printf(",\"constant_color\":\"%s\"", constColorStr);
-    }
+    printf(",\"palette\":\"%s\",\"solve_score\":true,\"solve_metric\":\"%s\",\"solve_score_omega\":%.15g,\"solve_score_omega_enabled\":%s",
+           palName, solve_metric_name(solveMetric), solveScoreOmega, solveScoreOmegaEnabled ? "true" : "false");
     printf(",\"skip_pix_output\":%s", skipPixOutput ? "true" : "false");
     printf(",\"solve_score_raw_bytes\":%s", solveScoreRawBytes ? "true" : "false");
     printf("}\n");
@@ -1645,7 +1522,6 @@ cleanup:
     for (int t = 0; t < nTiles; t++) free(tileBits[t]);
     free(workers);
     free(args);
-    free(solveBins);
     free(scoreCoeffRows);
     free(scoreParamRows);
     free(roots);

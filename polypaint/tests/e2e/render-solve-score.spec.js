@@ -886,18 +886,6 @@ test.describe('Solve Score UI', () => {
     });
   });
 
-  test('Generate popup hides histogram controls for saved-palette mode', async ({ page }) => {
-    await page.click('.tab-btn:text("Render")');
-    await seedRenderPopupState(page, 'saved_palette');
-
-    await page.click('#btn-render-generate');
-    const popup = page.locator('#render-generate-popup-overlay');
-    await expect(popup).toBeVisible();
-    await expect(page.locator('#render-generate-hist-row')).toBeHidden();
-    await expect(page.locator('#render-generate-save-associated-palette')).toBeVisible();
-    await expect(page.locator('#render-generate-popup-summary')).toContainText('hist unused');
-  });
-
   test('Generate-MT popup exposes retries and associated palette and dispatches MT payload', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await seedRenderPopupState(page, 'solve_score');
@@ -934,48 +922,6 @@ test.describe('Solve Score UI', () => {
         raster_sectioned_retries: 4,
         solve_score_merge_workers: 18,
         finalize_workers: 19,
-        save_associated_palette: true,
-      },
-    });
-  });
-
-  test('GenerateFromPalette popup has raster/finalize controls, no hist row, and dispatches saved-palette MT payload', async ({ page }) => {
-    await page.click('.tab-btn:text("Render")');
-    await seedRenderPopupState(page, 'solve_score');
-
-    const btn = page.locator('#btn-render-generate-from-palette');
-    await expect(btn).toBeEnabled();
-    await btn.click();
-
-    const popup = page.locator('#generate-from-palette-popup-overlay');
-    await expect(popup).toBeVisible();
-    await expect(page.locator('#generate-from-palette-raster-threads')).toBeVisible();
-    await expect(page.locator('#generate-from-palette-raster-input-mode')).toBeVisible();
-    await expect(page.locator('#generate-from-palette-raster-retries')).toBeVisible();
-    await expect(page.locator('#generate-from-palette-finalize-workers')).toBeVisible();
-    await expect(page.locator('#generate-from-palette-save-associated-palette')).toBeVisible();
-    await expect(popup.getByText('Hist', { exact: true })).toHaveCount(0);
-
-    await page.fill('#generate-from-palette-raster-threads', '8');
-    await page.selectOption('#generate-from-palette-raster-input-mode', 'sectioned');
-    await page.fill('#generate-from-palette-raster-retries', '5');
-    await page.fill('#generate-from-palette-finalize-workers', '21');
-    await page.check('#generate-from-palette-save-associated-palette');
-    await page.click('#generate-from-palette-popup-run');
-
-    const launches = await page.evaluate(() => window._renderLaunches);
-    expect(launches).toHaveLength(1);
-    expect(launches[0]).toEqual({
-      mode: 'color',
-      paramsPatch: {
-        color_mode: 'saved_palette',
-        saved_palette_id: 'pal_1',
-        palette: 'reef',
-        raster_engine: 'mt',
-        raster_mt_threads: 8,
-        raster_input_mode: 'sectioned',
-        raster_sectioned_retries: 5,
-        finalize_workers: 21,
         save_associated_palette: true,
       },
     });

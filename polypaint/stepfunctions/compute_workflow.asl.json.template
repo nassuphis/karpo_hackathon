@@ -561,7 +561,7 @@
                 }
               }
             },
-            "ResultPath": "$.solve_results",
+            "ResultPath": null,
             "Next": "SaveMetadataPhase"
           },
 
@@ -618,7 +618,7 @@
                 }
               }
             },
-            "ResultPath": "$.solve_results",
+            "ResultPath": null,
             "Next": "SaveMetadataPhase"
           },
 
@@ -651,10 +651,12 @@
               "FunctionName": "${PlanFunctionArn}",
               "Payload": {
                 "action": "finalize_metadata",
+                "job_id.$": "$.job_id",
                 "plan.$": "$.plan",
                 "post.$": "$.post",
                 "lores_solve.$": "$.lores_solve.body",
-                "solve_results.$": "$.solve_results"
+                "task_prefix.$": "$.plan.solve.task_prefix",
+                "expected.$": "$.plan.compute.n_chunks"
               }
             },
             "ResultSelector": { "body.$": "States.StringToJson($.Payload.body)" },

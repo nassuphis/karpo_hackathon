@@ -1,9 +1,14 @@
 """
-Raster MT Lambda handler — true native multithreaded raster.
+Fused color raster MT Lambda handler.
 
-Downloads one chunk, invokes roots2pix_mt once with --threads=N, uploads the
-standard chunk/tile .pix and .pbx outputs, and reports comparable perf data.
+This handler is the shipped color raster path:
+
+- fused solve-score only
+- logical sections only
+- multispan sectioned reads only
+- raw-score fragment output only
 """
+
 import glob
 import json
 import os
@@ -16,7 +21,6 @@ from logical_sections import (
     build_native_manifest_urls,
     build_native_multispan_manifest,
     build_source_spans,
-    stitch_spans_to_file,
     write_native_multispan_manifest,
 )
 from solve_score_chain import (
@@ -24,36 +28,23 @@ from solve_score_chain import (
     compiled_solve_score_fingerprint,
     solve_score_program_cli_payload,
 )
-from shared import BUCKET, attach_contract_warnings, contract_param, ok_response, parse_body, parse_boolish, report_status
+from shared import (
+    BUCKET,
+    attach_contract_warnings,
+    contract_param,
+    ok_response,
+    parse_body,
+    parse_boolish,
+    report_status,
+)
 
 s3 = boto3.client("s3")
 ROOTS2PIX_MT = os.path.join(os.path.dirname(__file__), "roots2pix_mt")
-PIXBINASSEMBLE = os.path.join(os.path.dirname(__file__), "pixbinassemble")
 DEFAULT_THREADS = int(os.environ.get("RASTER_MT_THREADS", "4") or "4")
-VALID_RASTER_INPUT_MODES = {"tmpfile", "sectioned"}
-_TMP_SCORE_COEFFS = "/tmp/score_coeffs.bin"
-_TMP_SCORE_PARAMS = "/tmp/score_params.bin"
+VALID_RASTER_INPUT_MODES = {"sectioned"}
 _TMP_INPUT_MANIFEST = "/tmp/raster_input_manifest.json"
 _TMP_SCORE_COEFFS_MANIFEST = "/tmp/raster_score_coeffs_manifest.json"
 _TMP_SCORE_PARAMS_MANIFEST = "/tmp/raster_score_params_manifest.json"
-
-
-def _tile_dense_bytes(tile_idx, width, height, tile_size, n_tile_cols):
-    tile_w, tile_h = _tile_shape(tile_idx, width, height, tile_size, n_tile_cols)
-    return tile_w * tile_h
-
-
-def _tile_shape(tile_idx, width, height, tile_size, n_tile_cols):
-    tile_idx = int(tile_idx)
-    tile_size = int(tile_size)
-    width = int(width)
-    height = int(height)
-    n_tile_cols = int(n_tile_cols)
-    col = tile_idx % n_tile_cols
-    row = tile_idx // n_tile_cols
-    tile_w = max(0, min(tile_size, width - col * tile_size))
-    tile_h = max(0, min(tile_size, height - row * tile_size))
-    return tile_w, tile_h
 
 
 def _validate_threads(value):
@@ -67,7 +58,7 @@ def _validate_threads(value):
 
 
 def _validate_raster_input_mode(value):
-    mode = str(value or "tmpfile").strip().lower()
+    mode = str(value or "sectioned").strip().lower()
     if mode not in VALID_RASTER_INPUT_MODES:
         raise RuntimeError(f"raster_input_mode must be one of {', '.join(sorted(VALID_RASTER_INPUT_MODES))}, got {value!r}")
     return mode
@@ -85,41 +76,15 @@ def _validate_sectioned_retries(value):
     return retries
 
 
-def _sectioned_input_size_limit():
-    try:
-        memory_mb = int(os.environ.get("AWS_LAMBDA_FUNCTION_MEMORY_SIZE", "0") or 0)
-    except (TypeError, ValueError):
-        memory_mb = 0
-    if memory_mb <= 0:
-        return 0
-    return (memory_mb * 1024 * 1024) // 2
-
-
 def _cleanup_tmp():
-    _cleanup_chunk_tmp()
-    for stale in glob.glob("/tmp/root_xforms.json"):
-        try:
-            os.remove(stale)
-        except OSError:
-            pass
-
-
-def _cleanup_chunk_tmp():
     for pattern in (
-        "/tmp/pix_t*.pix",
-        "/tmp/pixbin_t*.pbx",
-        "/tmp/palette_pixbin_t*.pbx",
         "/tmp/pixbin.frag",
         "/tmp/palette_pixbin.frag",
         "/tmp/step_scores.bin",
-        "/tmp/group_pixbin_t*.u8",
-        "/tmp/stripe.bin",
-        "/tmp/palette_bins_chunk.bin",
-        _TMP_SCORE_COEFFS,
-        _TMP_SCORE_PARAMS,
         _TMP_INPUT_MANIFEST,
         _TMP_SCORE_COEFFS_MANIFEST,
         _TMP_SCORE_PARAMS_MANIFEST,
+        "/tmp/root_xforms.json",
     ):
         for stale in glob.glob(pattern):
             try:
@@ -151,9 +116,22 @@ def _solve_score_artifact_uses_source(score_artifact, source):
     return False
 
 
-def _build_cmd(params, bin_path, saved_bins_path=None):
+def _build_cmd(params):
+    effective_input_mode = str(params.get("effective_input_mode") or "").strip().lower()
+    if effective_input_mode != "multispan_sectioned":
+        raise RuntimeError(
+            "fused raster requires effective_input_mode='multispan_sectioned', "
+            f"got {effective_input_mode!r}"
+        )
+
+    input_manifest_path = str(params.get("input_manifest_path") or "").strip()
+    if not input_manifest_path:
+        raise RuntimeError("fused raster requires input_manifest_path")
+
     cmd = [
-        ROOTS2PIX_MT, bin_path, "/tmp/pix",
+        ROOTS2PIX_MT,
+        "/tmp/stripe.bin",
+        "/tmp/pix",
         f"--width={params['width']}",
         f"--height={params['height']}",
         f"--tile_size={params['tile_size']}",
@@ -163,166 +141,93 @@ def _build_cmd(params, bin_path, saved_bins_path=None):
         f"--center_im={params['center_im']}",
         f"--scale={params['scale']}",
         f"--degree={params['degree']}",
-        f"--color={params.get('color', 'rainbow')}",
-        f"--match={params.get('match', 'none')}",
+        "--color=solve_score",
+        "--match=none",
         f"--palette={params.get('palette', 'inferno')}",
         f"--constant_color={params.get('constant_color', 'ffffff')}",
         f"--rotation={params.get('rotation', 0.0)}",
         f"--threads={params['raster_mt_threads']}",
-        f"--input_mode={params.get('effective_input_mode', params.get('raster_input_mode', 'tmpfile'))}",
+        "--input_mode=multispan_sectioned",
+        f"--input_manifest={input_manifest_path}",
+        f"--retries={params.get('raster_sectioned_retries', 2)}",
+        "--pixel_bin_prefix=/tmp/pixbin",
+        "--skip_pix_output=1",
+        "--solve_score_raw_bytes=1",
+        "--step_scores_output=/tmp/step_scores.bin",
     ]
-    effective_input_mode = params.get("effective_input_mode", params.get("raster_input_mode", "tmpfile"))
-    if effective_input_mode == "sectioned":
-        cmd.extend([
-            f"--url={params['sectioned_url']}",
-            f"--input_size={params['sectioned_input_size']}",
-            f"--retries={params.get('raster_sectioned_retries', 2)}",
-        ])
-    elif effective_input_mode == "multispan_sectioned":
-        cmd.extend([
-            f"--input_manifest={params['input_manifest_path']}",
-            f"--retries={params.get('raster_sectioned_retries', 2)}",
-        ])
-    if params.get("emit_pixel_bins"):
-        cmd.append("--pixel_bin_prefix=/tmp/pixbin")
-    if params.get("pixel_bins_drive_rgb") or params.get("emit_raw_score_bins"):
-        cmd.append("--skip_pix_output=1")
-    if params.get("emit_raw_score_bins"):
-        cmd.append("--solve_score_raw_bytes=1")
+
     if params.get("emit_associated_palette_bins"):
         cmd.append("--palette_bin_prefix=/tmp/palette_pixbin")
         cmd.append(f"--palette_grid_n={int(params['associated_palette_grid_n'])}")
         cmd.append(f"--palette_step_start={int(params['step_start'])}")
-    if params.get("emit_step_scores"):
-        cmd.append("--step_scores_output=/tmp/step_scores.bin")
 
-    if params.get("color") == "saved_palette":
-        if not saved_bins_path:
-            raise RuntimeError("saved_palette color mode requires saved_palette_bins_key")
-        cmd = [a for a in cmd if not a.startswith("--color=")]
-        cmd.append("--color=saved_palette")
-        cmd.append(f"--solve_bins_file={saved_bins_path}")
+    score_artifact = dict(params.get("solve_score_bins_data") or {})
+    if score_artifact.get("family") != "solve_score":
+        raise RuntimeError(f"solve-score clip artifact missing or wrong family: {score_artifact.get('family')}")
+    if int(score_artifact.get("version", 1) or 1) < 2:
+        raise RuntimeError("fused raster requires v2 solve-score clip metadata")
+    if not score_artifact.get("program") or not isinstance(score_artifact.get("metrics"), list) or not score_artifact.get("metrics"):
+        raise RuntimeError("fused raster requires clip artifact program + metrics")
 
-    score_artifact = params.get("solve_score_bins_data")
-    color = params.get("color", "rainbow")
-    if score_artifact and color in ("solve_score", "solve_proximity"):
-        if score_artifact.get("family") != "solve_score":
-            raise RuntimeError(f"solve-score artifact missing or wrong family: {score_artifact.get('family')}")
-        cmd = [a for a in cmd if not a.startswith("--color=")]
-        cmd.append("--color=solve_score")
-        cuts_norm = score_artifact.get("cuts_norm")
-        has_cuts = isinstance(cuts_norm, list) and len(cuts_norm) == 9
-        if has_cuts:
-            cmd.append(f"--solve_score_cuts={','.join(str(c) for c in cuts_norm)}")
-        elif not params.get("emit_raw_score_bins"):
-            raise RuntimeError("solve-score artifact missing cuts_norm for non-raw raster output")
-        compiled = params.get("solve_score_compiled")
-        chain_fingerprint = str(params.get("solve_score_chain_fingerprint") or "").strip()
-        if int(score_artifact.get("version", 1) or 1) >= 2:
-            if not score_artifact.get("program") or not isinstance(score_artifact.get("metrics"), list) or not score_artifact.get("metrics"):
-                raise RuntimeError("v2 solve-score artifact is missing program or metrics")
-            if params.get("solve_score_chain_present") and compiled is not None:
-                actual_fingerprint = str(score_artifact.get("chain_fingerprint") or "").strip()
-                if not actual_fingerprint:
-                    raise RuntimeError("solve-score artifact missing chain_fingerprint")
-                if chain_fingerprint and actual_fingerprint != chain_fingerprint:
-                    raise RuntimeError(
-                        f"solve-score artifact fingerprint mismatch: expected {chain_fingerprint}, got {actual_fingerprint}"
-                    )
-                if str(score_artifact.get("program") or "") != compiled["program_spec"]:
-                    raise RuntimeError(
-                        f"solve-score artifact program mismatch: expected {compiled['program_spec']}, got {score_artifact.get('program')!r}"
-                    )
-                if len(score_artifact["metrics"]) != compiled["metric_count"]:
-                    raise RuntimeError(
-                        f"solve-score artifact metric slot count mismatch: expected {compiled['metric_count']}, got {len(score_artifact['metrics'])}"
-                    )
-                for expected, actual in zip(compiled["metrics"], score_artifact["metrics"]):
-                    if str(actual.get("metric") or "") != expected["metric"]:
-                        raise RuntimeError(
-                            f"solve-score artifact metric slot {expected['slot']} mismatch: expected {expected['metric']}, got {actual.get('metric')!r}"
-                        )
-                    if str(actual.get("source", "slv") or "slv") != expected.get("source", "slv"):
-                        raise RuntimeError(
-                            f"solve-score artifact source slot {expected['slot']} mismatch: expected {expected.get('source', 'slv')}, "
-                            f"got {actual.get('source', 'slv')!r}"
-                        )
-                    if float(actual.get("quantile", -1)) != float(expected["quantile"]):
-                        raise RuntimeError(
-                            f"solve-score artifact quantile slot {expected['slot']} mismatch: expected {expected['quantile']}, got {actual.get('quantile')!r}"
-                        )
-            cmd.extend(_solve_score_program_args(score_artifact))
-            if _solve_score_artifact_uses_source(score_artifact, "cf"):
-                n_coeffs = params.get("n_coeffs")
-                try:
-                    n_coeffs = int(n_coeffs)
-                except (TypeError, ValueError):
-                    raise RuntimeError(f"mixed-source solve-score render requires numeric n_coeffs, got {n_coeffs!r}")
-                if n_coeffs < 1:
-                    raise RuntimeError(f"mixed-source solve-score render requires n_coeffs >= 1, got {n_coeffs}")
-                if effective_input_mode == "sectioned":
-                    coeffs_url = str(params.get("sectioned_score_coeffs_url") or "").strip()
-                    coeff_input_size = int(params.get("sectioned_score_coeffs_input_size") or 0)
-                    if not coeffs_url or coeff_input_size <= 0:
-                        raise RuntimeError("mixed-source sectioned raster requires coeff presign URL and size")
-                    cmd.extend([
-                        f"--score_coeffs_url={coeffs_url}",
-                        f"--score_coeff_input_size={coeff_input_size}",
-                        f"--score_coeff_degree={n_coeffs}",
-                    ])
-                elif effective_input_mode == "multispan_sectioned":
-                    coeff_manifest_path = str(params.get("score_coeff_manifest_path") or "").strip()
-                    if not coeff_manifest_path:
-                        raise RuntimeError("mixed-source multispan raster requires score_coeff_manifest_path")
-                    cmd.extend([
-                        f"--score_coeff_manifest={coeff_manifest_path}",
-                        f"--score_coeff_degree={n_coeffs}",
-                    ])
-                else:
-                    coeffs_path = str(params.get("solve_score_coeffs_path") or "").strip()
-                    if not coeffs_path:
-                        raise RuntimeError("mixed-source tmpfile raster requires solve_score_coeffs_path")
-                    cmd.extend([
-                        f"--score_coeffs_file={coeffs_path}",
-                        f"--score_coeff_degree={n_coeffs}",
-                    ])
-            if _solve_score_artifact_uses_source(score_artifact, "pm"):
-                if effective_input_mode == "multispan_sectioned":
-                    params_manifest_path = str(params.get("score_params_manifest_path") or "").strip()
-                    if not params_manifest_path:
-                        raise RuntimeError("param-source multispan raster requires score_params_manifest_path")
-                    cmd.append(f"--score_params_manifest={params_manifest_path}")
-                else:
-                    params_path = str(params.get("solve_score_params_path") or "").strip()
-                    if not params_path:
-                        raise RuntimeError("param-source raster requires solve_score_params_path")
-                    cmd.append(f"--score_params_file={params_path}")
-        else:
-            req_metric = params.get("solve_metric", "proximity")
-            if score_artifact.get("metric") != req_metric:
-                raise RuntimeError(f"solve-score artifact metric mismatch: expected {req_metric}, got {score_artifact.get('metric')}")
-            req_q = params.get("solve_score_quantile", 0.001)
-            if "clip_quantile" not in score_artifact:
-                raise RuntimeError("solve-score artifact missing clip_quantile")
-            if score_artifact["clip_quantile"] != req_q:
-                raise RuntimeError(f"solve-score artifact quantile mismatch: expected {req_q}, got {score_artifact['clip_quantile']}")
-            req_omega = float(params.get("solve_score_omega", 1.0))
-            bins_omega = float(score_artifact.get("omega", 1.0))
-            if bins_omega != req_omega:
-                raise RuntimeError(f"solve-score artifact omega mismatch: expected {req_omega}, got {bins_omega}")
-            req_omega_enabled = parse_boolish(params.get("solve_score_omega_enabled", True), True)
-            bins_omega_enabled = parse_boolish(score_artifact.get("omega_enabled", True), True)
-            if bins_omega_enabled != req_omega_enabled:
+    compiled = params.get("solve_score_compiled")
+    chain_fingerprint = str(params.get("solve_score_chain_fingerprint") or "").strip()
+    if params.get("solve_score_chain_present") and compiled is not None:
+        actual_fingerprint = str(score_artifact.get("chain_fingerprint") or "").strip()
+        if not actual_fingerprint:
+            raise RuntimeError("solve-score clip artifact missing chain_fingerprint")
+        if chain_fingerprint and actual_fingerprint != chain_fingerprint:
+            raise RuntimeError(
+                f"solve-score clip artifact fingerprint mismatch: expected {chain_fingerprint}, got {actual_fingerprint}"
+            )
+        if str(score_artifact.get("program") or "") != compiled["program_spec"]:
+            raise RuntimeError(
+                f"solve-score clip artifact program mismatch: expected {compiled['program_spec']}, got {score_artifact.get('program')!r}"
+            )
+        if len(score_artifact["metrics"]) != compiled["metric_count"]:
+            raise RuntimeError(
+                f"solve-score clip artifact metric slot count mismatch: expected {compiled['metric_count']}, "
+                f"got {len(score_artifact['metrics'])}"
+            )
+        for expected, actual in zip(compiled["metrics"], score_artifact["metrics"]):
+            if str(actual.get("metric") or "") != expected["metric"]:
                 raise RuntimeError(
-                    f"solve-score artifact omega_enabled mismatch: expected {req_omega_enabled}, got {bins_omega_enabled}"
+                    f"solve-score clip artifact metric slot {expected['slot']} mismatch: "
+                    f"expected {expected['metric']}, got {actual.get('metric')!r}"
                 )
-            cmd.extend([
-                f"--solve_metric={score_artifact.get('metric', req_metric)}",
-                f"--solve_score_clip_lo={score_artifact['clip_lo']}",
-                f"--solve_score_clip_hi={score_artifact['clip_hi']}",
-                f"--solve_score_omega={bins_omega}",
-                f"--solve_score_omega_enabled={1 if bins_omega_enabled else 0}",
-            ])
+            if str(actual.get("source", "slv") or "slv") != expected.get("source", "slv"):
+                raise RuntimeError(
+                    f"solve-score clip artifact source slot {expected['slot']} mismatch: "
+                    f"expected {expected.get('source', 'slv')}, got {actual.get('source', 'slv')!r}"
+                )
+            if float(actual.get("quantile", -1)) != float(expected["quantile"]):
+                raise RuntimeError(
+                    f"solve-score clip artifact quantile slot {expected['slot']} mismatch: "
+                    f"expected {expected['quantile']}, got {actual.get('quantile')!r}"
+                )
+
+    cmd.extend(_solve_score_program_args(score_artifact))
+
+    if _solve_score_artifact_uses_source(score_artifact, "cf"):
+        n_coeffs = params.get("n_coeffs")
+        try:
+            n_coeffs = int(n_coeffs)
+        except (TypeError, ValueError):
+            raise RuntimeError(f"mixed-source solve-score render requires numeric n_coeffs, got {n_coeffs!r}")
+        if n_coeffs < 1:
+            raise RuntimeError(f"mixed-source solve-score render requires n_coeffs >= 1, got {n_coeffs}")
+        coeff_manifest_path = str(params.get("score_coeff_manifest_path") or "").strip()
+        if not coeff_manifest_path:
+            raise RuntimeError("mixed-source fused raster requires score_coeff_manifest_path")
+        cmd.extend([
+            f"--score_coeff_manifest={coeff_manifest_path}",
+            f"--score_coeff_degree={n_coeffs}",
+        ])
+
+    if _solve_score_artifact_uses_source(score_artifact, "pm"):
+        params_manifest_path = str(params.get("score_params_manifest_path") or "").strip()
+        if not params_manifest_path:
+            raise RuntimeError("param-source fused raster requires score_params_manifest_path")
+        cmd.append(f"--score_params_manifest={params_manifest_path}")
 
     rt_path = params.get("root_xforms_path")
     if rt_path:
@@ -330,349 +235,137 @@ def _build_cmd(params, bin_path, saved_bins_path=None):
     return cmd
 
 
-def _normal_section_item(item):
-    return {
-        "section_idx": int(item["section_idx"]),
-        "section_count": int(item["section_count"]),
-        "bin_key": str(item["bin_key"]),
-        "coeffs_key": str(item.get("coeffs_key") or ""),
-        "coeffs_bin_size": int(item.get("coeffs_bin_size") or 0),
-        "params_key": str(item.get("params_key") or ""),
-        "params_bin_size": int(item.get("params_bin_size") or 0),
-        "params_step_start": int(item.get("params_step_start", item.get("step_start") or 0) or 0),
-        "params_step_count": int(item.get("params_step_count", item.get("step_count") or 0) or 0),
-        "step_start": int(item.get("step_start") or 0),
-        "step_count": int(item.get("step_count") or 0),
-        "bin_size": int(item.get("bin_size") or 0),
-    }
-
-
-def _section_items_from_params(params, dense_grouped):
-    if dense_grouped:
-        sections = params.get("sections")
-        if not isinstance(sections, list) or not sections:
-            raise RuntimeError("dense_grouped raster requires non-empty sections list")
-        return [_normal_section_item(item) for item in sections]
-    return [_normal_section_item({
-        "section_idx": params.get("section_idx", params.get("chunk_idx", params.get("stripe_idx"))),
-        "section_count": params.get("section_count", 1),
-        "bin_key": params.get("bin_key"),
-        "coeffs_key": params.get("coeffs_key", ""),
-        "coeffs_bin_size": params.get("coeffs_bin_size", 0),
-        "params_key": params.get("params_key", ""),
-        "params_bin_size": params.get("params_bin_size", 0),
-        "params_step_start": params.get("params_step_start", params.get("step_start", 0)),
-        "params_step_count": params.get("params_step_count", params.get("step_count", 0)),
-        "step_start": params.get("step_start", 0),
-        "step_count": params.get("step_count", 0),
-        "bin_size": params.get("bin_size", 0),
-    })]
-
-
-def _apply_section_item(params, item):
-    out = dict(params)
-    for key, value in item.items():
-        out[key] = value
-    return out
-
-
-def _saved_palette_bins_key_for_section(params, section_idx):
-    prefix = str(params.get("saved_palette_bins_prefix") or "").strip()
-    if prefix:
-        return f"{prefix}{int(section_idx)}.bin"
-    return str(params.get("saved_palette_bins_key") or "").strip()
-
-
-def _prepare_section_inputs(section_params, *, bin_path, saved_bins_path, perf):
-    bin_key = section_params["bin_key"]
-    raster_input_mode = section_params["raster_input_mode"]
-    logical_section = parse_boolish(section_params.get("logical_section"), False)
+def _prepare_fused_section_inputs(section_params):
     solve_source_manifest = dict(section_params.get("solve_source_manifest") or {})
+    if not solve_source_manifest:
+        raise RuntimeError("fused raster requires solve_source_manifest")
+
+    ss_data = dict(section_params.get("solve_score_bins_data") or {})
     step_start = int(section_params.get("step_start") or 0)
     step_count = int(section_params.get("step_count") or 0)
-    color = section_params.get("color", "rainbow")
+    if step_start < 0 or step_count < 1:
+        raise RuntimeError(f"fused raster requires step_start >= 0 and step_count >= 1, got {step_start}/{step_count}")
 
-    try:
-        os.remove(saved_bins_path)
-    except OSError:
-        pass
-    if color == "saved_palette":
-        saved_palette_bins_key = _saved_palette_bins_key_for_section(section_params, section_params["section_idx"])
-        if not saved_palette_bins_key:
-            raise RuntimeError("saved_palette color mode requires saved_palette_bins_key or saved_palette_bins_prefix")
-        bins_obj = s3.get_object(Bucket=BUCKET, Key=saved_palette_bins_key)
-        with open(saved_bins_path, "wb") as bf:
-            bf.write(bins_obj["Body"].read())
-        section_params["saved_palette_bins_key"] = saved_palette_bins_key
+    root_spans = build_source_spans(
+        solve_source_manifest,
+        source_family="slv",
+        solve_start=step_start,
+        solve_count=step_count,
+    )
+    if not root_spans:
+        raise RuntimeError("fused raster logical section resolved to no solve spans")
 
-    ss_data = section_params.get("solve_score_bins_data") or {}
-    if color in ("solve_score", "solve_proximity") and _solve_score_artifact_uses_source(ss_data, "cf"):
-        coeffs_key = str(section_params.get("coeffs_key") or "").strip()
-        n_coeffs = section_params.get("n_coeffs")
-        if not coeffs_key and not logical_section:
-            raise RuntimeError("mixed-source solve-score render requires coeffs_key")
-        try:
-            n_coeffs = int(n_coeffs)
-        except (TypeError, ValueError):
-            raise RuntimeError(f"mixed-source solve-score render requires numeric n_coeffs, got {n_coeffs!r}")
-        if n_coeffs < 1:
-            raise RuntimeError(f"mixed-source solve-score render requires n_coeffs >= 1, got {n_coeffs}")
-        section_params["n_coeffs"] = n_coeffs
-    if color in ("solve_score", "solve_proximity") and _solve_score_artifact_uses_source(ss_data, "pm"):
-        params_key = str(section_params.get("params_key") or "").strip()
-        params_step_start = section_params.get("params_step_start", section_params.get("step_start"))
-        params_step_count = section_params.get("params_step_count", section_params.get("step_count"))
-        step_count = section_params.get("step_count")
-        if not params_key and not logical_section:
-            raise RuntimeError("param-source solve-score render requires params_key")
-        try:
-            params_step_start = int(params_step_start)
-            params_step_count = int(params_step_count)
-            step_count = int(step_count)
-        except (TypeError, ValueError):
-            raise RuntimeError(
-                "param-source solve-score render requires numeric "
-                f"params_step_start/params_step_count/step_count, got {params_step_start!r}/{params_step_count!r}/{step_count!r}"
-            )
-        if params_step_start < 0 or params_step_count < 1 or step_count < 1:
-            raise RuntimeError(
-                "param-source solve-score render requires params_step_start >= 0 and "
-                f"params_step_count/step_count >= 1, got {params_step_start}/{params_step_count}/{step_count}"
-            )
-        if params_step_count != step_count:
-            raise RuntimeError(
-                f"param-source solve-score render requires params_step_count == step_count, got {params_step_count}/{step_count}"
-            )
-        section_params["params_step_start"] = params_step_start
-        section_params["params_step_count"] = params_step_count
-        section_params["step_count"] = step_count
+    input_manifest = build_native_multispan_manifest(
+        solve_source_manifest,
+        source_family="slv",
+        solve_start=step_start,
+        solve_count=step_count,
+        url_by_key=build_native_manifest_urls(s3, BUCKET, root_spans),
+    )
+    section_params["input_manifest_path"] = write_native_multispan_manifest(_TMP_INPUT_MANIFEST, input_manifest)
+    section_params["effective_input_mode"] = "multispan_sectioned"
+    section_params["sectioned_input_size"] = int(input_manifest["logical_size"])
 
-    effective_input_mode = raster_input_mode
-    if logical_section and not bin_key:
-        root_spans = build_source_spans(
+    if _solve_score_artifact_uses_source(ss_data, "cf"):
+        coeff_spans = build_source_spans(
             solve_source_manifest,
-            source_family="slv",
+            source_family="cf",
             solve_start=step_start,
             solve_count=step_count,
         )
-        if root_spans:
-            bin_key = str(root_spans[0]["key"] or "")
-            section_params["bin_key"] = bin_key
+        coeff_manifest = build_native_multispan_manifest(
+            solve_source_manifest,
+            source_family="cf",
+            solve_start=step_start,
+            solve_count=step_count,
+            url_by_key=build_native_manifest_urls(s3, BUCKET, coeff_spans),
+        )
+        section_params["score_coeff_manifest_path"] = write_native_multispan_manifest(
+            _TMP_SCORE_COEFFS_MANIFEST,
+            coeff_manifest,
+        )
 
-    if raster_input_mode == "sectioned" and logical_section:
-        if not solve_source_manifest:
-            raise RuntimeError("logical raster section requires solve_source_manifest")
-        root_spans = build_source_spans(
+    if _solve_score_artifact_uses_source(ss_data, "pm"):
+        param_spans = build_source_spans(
             solve_source_manifest,
-            source_family="slv",
+            source_family="pm",
             solve_start=step_start,
             solve_count=step_count,
         )
-        input_manifest = build_native_multispan_manifest(
+        param_manifest = build_native_multispan_manifest(
             solve_source_manifest,
-            source_family="slv",
+            source_family="pm",
             solve_start=step_start,
             solve_count=step_count,
-            url_by_key=build_native_manifest_urls(s3, BUCKET, root_spans),
+            url_by_key=build_native_manifest_urls(s3, BUCKET, param_spans),
         )
-        section_params["input_manifest_path"] = write_native_multispan_manifest(_TMP_INPUT_MANIFEST, input_manifest)
-        effective_input_mode = "multispan_sectioned"
-        section_params["sectioned_input_size"] = int(input_manifest["logical_size"])
-        if _solve_score_artifact_uses_source(ss_data, "cf"):
-            coeff_spans = build_source_spans(
-                solve_source_manifest,
-                source_family="cf",
-                solve_start=step_start,
-                solve_count=step_count,
-            )
-            coeff_manifest = build_native_multispan_manifest(
-                solve_source_manifest,
-                source_family="cf",
-                solve_start=step_start,
-                solve_count=step_count,
-                url_by_key=build_native_manifest_urls(s3, BUCKET, coeff_spans),
-            )
-            section_params["score_coeff_manifest_path"] = write_native_multispan_manifest(
-                _TMP_SCORE_COEFFS_MANIFEST,
-                coeff_manifest,
-            )
-        if _solve_score_artifact_uses_source(ss_data, "pm"):
-            param_spans = build_source_spans(
-                solve_source_manifest,
-                source_family="pm",
-                solve_start=step_start,
-                solve_count=step_count,
-            )
-            param_manifest = build_native_multispan_manifest(
-                solve_source_manifest,
-                source_family="pm",
-                solve_start=step_start,
-                solve_count=step_count,
-                url_by_key=build_native_manifest_urls(s3, BUCKET, param_spans),
-            )
-            section_params["score_params_manifest_path"] = write_native_multispan_manifest(
-                _TMP_SCORE_PARAMS_MANIFEST,
-                param_manifest,
-            )
-    elif raster_input_mode == "sectioned":
-        input_size = int(section_params.get("bin_size") or 0)
-        if input_size <= 0:
-            head = s3.head_object(Bucket=BUCKET, Key=bin_key)
-            input_size = int(head.get("ContentLength") or 0)
-        if input_size <= 0:
-            raise RuntimeError(f"Failed to determine size for s3://{BUCKET}/{bin_key}")
-        size_limit = _sectioned_input_size_limit()
-        if size_limit > 0 and input_size > size_limit:
-            raise RuntimeError(
-                f"sectioned raster input too large for current Lambda memory: "
-                f"{input_size} bytes > safe limit {size_limit} bytes"
-            )
-        section_params["sectioned_input_size"] = input_size
-        section_params["sectioned_url"] = s3.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": BUCKET, "Key": bin_key},
-            ExpiresIn=900,
+        section_params["score_params_manifest_path"] = write_native_multispan_manifest(
+            _TMP_SCORE_PARAMS_MANIFEST,
+            param_manifest,
         )
-        if _solve_score_artifact_uses_source(ss_data, "cf"):
-            coeff_input_size = int(section_params.get("coeffs_bin_size") or 0)
-            coeffs_key = str(section_params.get("coeffs_key") or "").strip()
-            if coeff_input_size <= 0:
-                head = s3.head_object(Bucket=BUCKET, Key=coeffs_key)
-                coeff_input_size = int(head.get("ContentLength") or 0)
-            if coeff_input_size <= 0:
-                raise RuntimeError(f"Failed to determine coeff chunk size for s3://{BUCKET}/{coeffs_key}")
-            section_params["sectioned_score_coeffs_input_size"] = coeff_input_size
-            section_params["sectioned_score_coeffs_url"] = s3.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": BUCKET, "Key": coeffs_key},
-                ExpiresIn=900,
-            )
-        if _solve_score_artifact_uses_source(ss_data, "pm"):
-            params_key = str(section_params.get("params_key") or "").strip()
-            params_step_start = int(section_params["params_step_start"])
-            params_step_count = int(section_params["params_step_count"])
-            params_obj = s3.get_object(
-                Bucket=BUCKET,
-                Key=params_key,
-                Range=f"bytes={params_step_start * 16}-{params_step_start * 16 + params_step_count * 16 - 1}",
-            )
-            with open(_TMP_SCORE_PARAMS, "wb") as pf:
-                pf.write(params_obj["Body"].read())
-            section_params["solve_score_params_path"] = _TMP_SCORE_PARAMS
-    else:
-        t_dl = time.perf_counter()
-        if logical_section:
-            if not solve_source_manifest:
-                raise RuntimeError("logical raster tmpfile mode requires solve_source_manifest")
-            root_spans = build_source_spans(
-                solve_source_manifest,
-                source_family="slv",
-                solve_start=step_start,
-                solve_count=step_count,
-            )
-            stitch_spans_to_file(s3, BUCKET, root_spans, bin_path)
-        else:
-            obj = s3.get_object(Bucket=BUCKET, Key=bin_key)
-            with open(bin_path, "wb") as f:
-                f.write(obj["Body"].read())
-        if _solve_score_artifact_uses_source(ss_data, "cf"):
-            if logical_section:
-                coeff_spans = build_source_spans(
-                    solve_source_manifest,
-                    source_family="cf",
-                    solve_start=step_start,
-                    solve_count=step_count,
-                )
-                stitch_spans_to_file(s3, BUCKET, coeff_spans, _TMP_SCORE_COEFFS)
-            else:
-                coeffs_key = str(section_params.get("coeffs_key") or "").strip()
-                coeff_obj = s3.get_object(Bucket=BUCKET, Key=coeffs_key)
-                with open(_TMP_SCORE_COEFFS, "wb") as cf:
-                    cf.write(coeff_obj["Body"].read())
-            section_params["solve_score_coeffs_path"] = _TMP_SCORE_COEFFS
-        if _solve_score_artifact_uses_source(ss_data, "pm"):
-            if logical_section:
-                param_spans = build_source_spans(
-                    solve_source_manifest,
-                    source_family="pm",
-                    solve_start=step_start,
-                    solve_count=step_count,
-                )
-                stitch_spans_to_file(s3, BUCKET, param_spans, _TMP_SCORE_PARAMS)
-            else:
-                params_key = str(section_params.get("params_key") or "").strip()
-                params_step_start = int(section_params["params_step_start"])
-                params_step_count = int(section_params["params_step_count"])
-                params_obj = s3.get_object(
-                    Bucket=BUCKET,
-                    Key=params_key,
-                    Range=f"bytes={params_step_start * 16}-{params_step_start * 16 + params_step_count * 16 - 1}",
-                )
-                with open(_TMP_SCORE_PARAMS, "wb") as pf:
-                    pf.write(params_obj["Body"].read())
-            section_params["solve_score_params_path"] = _TMP_SCORE_PARAMS
-        perf["download_us"] += int((time.perf_counter() - t_dl) * 1e6)
-    section_params["effective_input_mode"] = effective_input_mode
+
     return section_params
 
 
-def _feed_file_to_stdin(path, stdin):
-    with open(path, "rb") as fh:
-        while True:
-            data = fh.read(1024 * 1024)
-            if not data:
-                break
-            stdin.write(data)
-
-
-def _ensure_group_bin_proc(group_bins, tile_idx, *, width, height, tile_size, n_tile_cols, pixel_bins_empty):
-    if tile_idx in group_bins:
-        return group_bins[tile_idx]
-    tile_w, tile_h = _tile_shape(tile_idx, width, height, tile_size, n_tile_cols)
-    out_path = f"/tmp/group_pixbin_t{tile_idx:04d}.u8"
-    proc = subprocess.Popen(
-        [PIXBINASSEMBLE,
-         f"--tile_w={tile_w}",
-         f"--tile_h={tile_h}",
-         f"--empty={pixel_bins_empty}",
-         f"--output={out_path}"],
-        stdin=subprocess.PIPE,
-        stderr=subprocess.PIPE)
-    group_bins[tile_idx] = {"proc": proc, "path": out_path, "tile_w": tile_w, "tile_h": tile_h, "sparse_bytes": 0, "files": 0}
-    return group_bins[tile_idx]
-
-
-def _close_group_bin_procs(group_bins, task_id):
-    for info in group_bins.values():
-        info["proc"].stdin.close()
-    for tile_idx, info in sorted(group_bins.items()):
-        rc = info["proc"].wait(timeout=120)
-        stderr_out = info["proc"].stderr.read().decode("utf-8", errors="replace")
-        if rc != 0:
-            raise RuntimeError(f"pixbinassemble group tile {tile_idx} failed (rc={rc}), stderr: {stderr_out[:500]}")
-        if stderr_out:
-            print(f"[{task_id}] pixbinassemble group tile {tile_idx} stderr: {stderr_out[:500]}")
-
-
-def handler(event, context):
-    params = parse_body(event)
+def _handle_fused_raster_request(params):
     contract_warnings = []
     job_id = params["job_id"]
-    section_idx = params.get("section_idx", params.get("chunk_idx", params.get("stripe_idx")))
-    if section_idx is None and not isinstance(params.get("sections"), list):
-        raise RuntimeError("raster requires section_idx")
-    n_tile_cols = params["n_tile_cols"]
-    n_tile_rows = params["n_tile_rows"]
-    n_tiles = n_tile_cols * n_tile_rows
-    task_id = params.get("task_id", f"raster_{section_idx if section_idx is not None else 'group'}")
+    section_idx = params.get("section_idx")
+    if section_idx is None:
+        raise RuntimeError("fused raster requires section_idx")
+    task_id = params.get("task_id", f"raster_{section_idx}")
+
     threads = _validate_threads(contract_param(params, "raster_mt_threads", DEFAULT_THREADS, contract_warnings))
-    raster_input_mode = _validate_raster_input_mode(contract_param(params, "raster_input_mode", "tmpfile", contract_warnings))
-    raster_sectioned_retries = _validate_sectioned_retries(contract_param(params, "raster_sectioned_retries", 2, contract_warnings))
+
+    if "raster_input_mode" not in params:
+        raise RuntimeError("fused raster requires raster_input_mode in the payload contract")
+    raster_input_mode = _validate_raster_input_mode(params.get("raster_input_mode"))
+
+    raster_sectioned_retries = _validate_sectioned_retries(
+        contract_param(params, "raster_sectioned_retries", 2, contract_warnings)
+    )
+
+    if "logical_section" not in params:
+        raise RuntimeError("fused raster requires logical_section in the payload contract")
+    if not parse_boolish(params.get("logical_section"), False, strict=True, label="logical_section"):
+        raise RuntimeError("fused raster requires logical_section=true")
+
+    if params.get("sections"):
+        raise RuntimeError("fused raster does not support grouped section payloads")
+
+    if raster_input_mode != "sectioned":
+        raise RuntimeError("fused raster requires raster_input_mode=sectioned")
+
+    fragment_prefix = str(params.get("fragment_prefix") or "").strip()
+    if not fragment_prefix:
+        raise RuntimeError("fused raster requires fragment_prefix")
+
+    associated_palette_mode = str(params.get("associated_palette_mode") or "").strip().lower()
+    emit_associated_palette_bins = associated_palette_mode == "generated"
+    associated_palette_fragment_prefix = str(params.get("associated_palette_fragment_prefix") or "").strip()
+    associated_palette_grid_n = int(params.get("associated_palette_grid_n") or 0)
+    if emit_associated_palette_bins:
+        if associated_palette_grid_n < 1:
+            raise RuntimeError("fused raster associated palette requires associated_palette_grid_n >= 1")
+        if not associated_palette_fragment_prefix:
+            raise RuntimeError("fused raster associated palette requires associated_palette_fragment_prefix")
+
+    if "color" not in params:
+        raise RuntimeError("fused raster requires color in the payload contract")
+    color = str(params.get("color") or "").strip().lower()
+    if color != "solve_score":
+        raise RuntimeError("fused raster requires color=solve_score")
+
+    if "match" not in params:
+        raise RuntimeError("fused raster requires match in the payload contract")
+    match = str(params.get("match") or "").strip().lower()
+    if match != "none":
+        raise RuntimeError("fused raster requires match=none")
 
     perf = attach_contract_warnings({
         "engine": "mt",
         "threads": threads,
-        "input_mode": raster_input_mode,
+        "input_mode": "sectioned",
         "retries": raster_sectioned_retries,
         "download_us": 0,
         "native_us": 0,
@@ -681,352 +374,207 @@ def handler(event, context):
         "pixel_bin_tiles_uploaded": 0,
         "roots_plotted": 0,
         "roots_clipped": 0,
+        "emit_raw_score_bins": True,
+        "emit_associated_palette_bins": emit_associated_palette_bins,
+        "emit_step_scores": True,
+        "rgb_source": "raw_score_bins",
+        "pixel_bins_drive_rgb": False,
+        "pixel_bin_fragment_mode": "sparse_chunks",
+        "group_idx": int(section_idx),
+        "section_indices": [int(section_idx)],
+        "section_count": 1,
     }, contract_warnings)
-
-    bin_path = "/tmp/stripe.bin"
-    saved_bins_path = "/tmp/palette_bins_chunk.bin"
-    emit_pixel_bins = parse_boolish(params.get("emit_pixel_bins"), False)
-    emit_raw_score_bins = parse_boolish(params.get("emit_raw_score_bins"), False)
-    if emit_raw_score_bins:
-        emit_pixel_bins = True
-    emit_associated_palette_bins = (
-        emit_raw_score_bins
-        and str(params.get("color_pipeline") or "").strip().lower() == "fused"
-        and str(params.get("associated_palette_mode") or "").strip().lower() == "generated"
-    )
-    emit_step_scores = (
-        emit_raw_score_bins
-        and str(params.get("color_pipeline") or "").strip().lower() == "fused"
-        and str(params.get("color") or "").strip().lower() == "solve_score"
-    )
-    pixel_bins_drive_rgb = emit_pixel_bins and parse_boolish(params.get("pixel_bins_drive_rgb"), False)
-    if emit_raw_score_bins and params.get("color") not in ("solve_score", "solve_proximity"):
-        raise RuntimeError("emit_raw_score_bins requires color=solve_score")
-    perf["pixel_bins_drive_rgb"] = pixel_bins_drive_rgb
-    perf["emit_raw_score_bins"] = emit_raw_score_bins
-    perf["emit_associated_palette_bins"] = emit_associated_palette_bins
-    perf["emit_step_scores"] = emit_step_scores
-    perf["rgb_source"] = "raw_score_bins" if emit_raw_score_bins else ("pixel_bins" if pixel_bins_drive_rgb else "pix")
 
     try:
         report_status(job_id, task_id, "started", result_data=perf)
         _cleanup_tmp()
 
-        params = dict(params)
-        params["raster_mt_threads"] = threads
-        params["raster_input_mode"] = raster_input_mode
-        params["raster_sectioned_retries"] = raster_sectioned_retries
-        params["emit_pixel_bins"] = emit_pixel_bins
-        params["emit_raw_score_bins"] = emit_raw_score_bins
-        params["emit_associated_palette_bins"] = emit_associated_palette_bins
-        params["emit_step_scores"] = emit_step_scores
-        params["match"] = contract_param(params, "match", "none", contract_warnings)
-        params["palette"] = contract_param(params, "palette", "inferno", contract_warnings)
-        params["constant_color"] = contract_param(params, "constant_color", "ffffff", contract_warnings)
-        params["rotation"] = contract_param(params, "rotation", 0.0, contract_warnings)
-        params["root_xforms_path"] = None
-        rt_chain = contract_param(params, "root_transforms", [], contract_warnings)
+        section_params = dict(params)
+        section_params["raster_mt_threads"] = threads
+        section_params["raster_input_mode"] = "sectioned"
+        section_params["raster_sectioned_retries"] = raster_sectioned_retries
+        section_params["logical_section"] = True
+        section_params["color"] = "solve_score"
+        section_params["match"] = "none"
+        section_params["constant_color"] = str(section_params.get("constant_color") or "ffffff")
+        section_params["rotation"] = contract_param(section_params, "rotation", 0.0, contract_warnings)
+        section_params["emit_associated_palette_bins"] = emit_associated_palette_bins
+        section_params["associated_palette_grid_n"] = associated_palette_grid_n
+        section_params["associated_palette_fragment_prefix"] = associated_palette_fragment_prefix
+        section_params["fragment_prefix"] = fragment_prefix
+        section_params["color_pipeline"] = "fused"
+
+        rt_chain = contract_param(section_params, "root_transforms", [], contract_warnings)
+        section_params["root_xforms_path"] = None
         if rt_chain:
             rt_path = "/tmp/root_xforms.json"
             with open(rt_path, "w") as rtf:
                 json.dump(rt_chain, rtf)
-            params["root_xforms_path"] = rt_path
+            section_params["root_xforms_path"] = rt_path
 
-        ss_bins_key = params.get("solve_score_bins_key") or params.get("solve_proximity_bins_key")
-        ss_clip_key = params.get("solve_score_clip_key") or params.get("solve_proximity_clip_key")
-        color = contract_param(params, "color", "rainbow", contract_warnings)
-        if color in ("solve_score", "solve_proximity"):
-            params["solve_metric"] = contract_param(params, "solve_metric", "proximity", contract_warnings)
-            raw_chain = params.get("solve_score_chain", "")
-            params["solve_score_chain_present"] = raw_chain not in ("", None, [])
-            if params["solve_score_chain_present"]:
-                compiled = compile_solve_score_chain_or_legacy(
-                    raw_chain,
-                    params["solve_metric"],
-                    params.get("solve_score_quantile", 0.001),
-                    params.get("solve_score_omega", 1.0),
-                    params.get("solve_score_omega_enabled", True),
-                    default_metric=params["solve_metric"],
-                )
-                params["solve_score_compiled"] = compiled
-                params["solve_metric"] = compiled["metric"]
-                params["solve_score_quantile"] = compiled["quantile"]
-                params["solve_score_omega"] = compiled["omega"]
-                params["solve_score_omega_enabled"] = compiled["omega_enabled"]
-                params["solve_score_chain_fingerprint"] = compiled_solve_score_fingerprint(compiled)
-            else:
-                params["solve_score_quantile"] = contract_param(params, "solve_score_quantile", 0.001, contract_warnings)
-                params["solve_score_omega"] = contract_param(params, "solve_score_omega", 1.0, contract_warnings)
-                params["solve_score_omega_enabled"] = contract_param(params, "solve_score_omega_enabled", True, contract_warnings)
-        needs_direct_score_artifact = color in ("solve_score", "solve_proximity")
-        can_use_clip_artifact = bool(emit_raw_score_bins and ss_clip_key)
-        if needs_direct_score_artifact and not (ss_bins_key or can_use_clip_artifact):
-            raise RuntimeError(f"{color} color mode requires solve_score_bins_key or solve_score_clip_key for raw fused output")
-        if color == "saved_palette":
-            if not (params.get("saved_palette_bins_key") or params.get("saved_palette_bins_prefix")):
-                raise RuntimeError("saved_palette color mode requires saved_palette_bins_key or saved_palette_bins_prefix")
-        elif color in ("solve_score", "solve_proximity"):
-            score_artifact_key = ss_clip_key if can_use_clip_artifact else ss_bins_key
-            score_artifact_kind = "clip" if can_use_clip_artifact else "bins"
-            ss_obj = s3.get_object(Bucket=BUCKET, Key=score_artifact_key)
-            params["solve_score_bins_data"] = json.loads(ss_obj["Body"].read())
-            params["solve_score_artifact_kind"] = score_artifact_kind
-        pixel_bin_fragment_mode = str(params.get("pixel_bin_fragment_mode") or "sparse_chunks").strip().lower()
-        dense_grouped = pixel_bin_fragment_mode == "dense_grouped" and pixel_bins_drive_rgb and emit_pixel_bins
-        section_items = _section_items_from_params(params, dense_grouped)
-        group_idx = int(params.get("group_idx", section_items[0]["section_idx"]))
-        section_indices = [int(item["section_idx"]) for item in section_items]
-        perf["pixel_bin_fragment_mode"] = "dense_grouped" if dense_grouped else "sparse_chunks"
-        perf["group_idx"] = group_idx
-        perf["section_indices"] = section_indices
-        perf["section_count"] = len(section_items)
+        ss_clip_key = str(section_params.get("solve_score_clip_key") or "").strip()
+        if not ss_clip_key:
+            raise RuntimeError("fused raster requires solve_score_clip_key")
+        ss_obj = s3.get_object(Bucket=BUCKET, Key=ss_clip_key)
+        section_params["solve_score_bins_data"] = json.loads(ss_obj["Body"].read())
 
-        group_bins = {}
-        uploaded = 0
-        uploaded_pixel_bins = 0
-        uploaded_pixel_bin_bytes = 0
-        pixel_bin_tile_bytes = []
-        uploaded_palette_pixel_bins = 0
-        uploaded_palette_pixel_bin_bytes = 0
-        palette_pixel_bin_tile_bytes = []
-        step_scores_bytes_uploaded = 0
-        skipped_pix_tiles = 0
-        grouped_sparse_bytes_in = 0
-        grouped_sparse_files_in = 0
-        upload_us_accum = 0
-
-        for item_idx, item in enumerate(section_items):
-            _cleanup_chunk_tmp()
-            section_idx = int(item["section_idx"])
-            section_params = _apply_section_item(params, item)
-            section_params = _prepare_section_inputs(
-                section_params,
-                bin_path=bin_path,
-                saved_bins_path=saved_bins_path,
-                perf=perf,
+        raw_chain = section_params.get("solve_score_chain", "")
+        requested_metric = str(contract_param(section_params, "solve_metric", "proximity", contract_warnings) or "proximity")
+        requested_quantile = float(contract_param(section_params, "solve_score_quantile", 0.001, contract_warnings))
+        requested_omega = float(contract_param(section_params, "solve_score_omega", 1.0, contract_warnings))
+        requested_omega_enabled = parse_boolish(
+            contract_param(section_params, "solve_score_omega_enabled", True, contract_warnings),
+            True,
+            strict=True,
+            label="solve_score_omega_enabled",
+        )
+        section_params["solve_metric"] = requested_metric
+        section_params["solve_score_quantile"] = requested_quantile
+        section_params["solve_score_omega"] = requested_omega
+        section_params["solve_score_omega_enabled"] = requested_omega_enabled
+        section_params["solve_score_chain_present"] = raw_chain not in ("", None, [])
+        if section_params["solve_score_chain_present"]:
+            compiled = compile_solve_score_chain_or_legacy(
+                raw_chain,
+                requested_metric,
+                requested_quantile,
+                requested_omega,
+                requested_omega_enabled,
+                default_metric=requested_metric,
             )
-            report_status(job_id, task_id, f"bin_downloaded_{item_idx+1}/{len(section_items)}")
+            if str(compiled["metric"]) != requested_metric:
+                raise RuntimeError(
+                    "fused raster solve-score plan/chain mismatch: "
+                    f"solve_metric={requested_metric!r}, compiled metric={compiled['metric']!r}"
+                )
+            if float(compiled["quantile"]) != requested_quantile:
+                raise RuntimeError(
+                    "fused raster solve-score plan/chain mismatch: "
+                    f"solve_score_quantile={requested_quantile!r}, compiled quantile={compiled['quantile']!r}"
+                )
+            if float(compiled["omega"]) != requested_omega:
+                raise RuntimeError(
+                    "fused raster solve-score plan/chain mismatch: "
+                    f"solve_score_omega={requested_omega!r}, compiled omega={compiled['omega']!r}"
+                )
+            if bool(compiled["omega_enabled"]) != requested_omega_enabled:
+                raise RuntimeError(
+                    "fused raster solve-score plan/chain mismatch: "
+                    f"solve_score_omega_enabled={requested_omega_enabled!r}, "
+                    f"compiled omega_enabled={compiled['omega_enabled']!r}"
+                )
+            section_params["solve_score_compiled"] = compiled
+            section_params["solve_score_chain_fingerprint"] = compiled_solve_score_fingerprint(compiled)
 
-            t_native = time.perf_counter()
-            cmd = _build_cmd(section_params, bin_path, saved_bins_path if os.path.exists(saved_bins_path) else None)
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-            native_wall_us = int((time.perf_counter() - t_native) * 1e6)
-            if result.returncode != 0:
-                raise RuntimeError(f"roots2pix_mt failed for section {section_idx}: {result.stderr.strip()}")
-            raster_meta = json.loads(result.stdout)
-            perf["threads"] = int(raster_meta.get("threads", threads))
-            perf["requested_input_mode"] = raster_input_mode
-            perf["input_mode"] = str(raster_meta.get("input_mode", section_params.get("effective_input_mode", raster_input_mode)))
-            perf["retries"] = int(raster_meta.get("retries", raster_sectioned_retries))
-            if perf["input_mode"] in ("sectioned", "multispan_sectioned"):
-                perf["download_us"] += int(raster_meta.get("download_us", 0))
-            perf["native_us"] += int(raster_meta.get("native_us", native_wall_us))
-            perf["roots_plotted"] += int(raster_meta.get("roots_plotted", 0))
-            perf["roots_clipped"] += int(raster_meta.get("roots_clipped", 0))
+        section_params = _prepare_fused_section_inputs(section_params)
+        report_status(job_id, task_id, "bin_downloaded_1/1")
 
-            t_chunk_up = time.perf_counter()
-            chunk_skipped_pix_tiles = 0
-            for t in range(n_tiles):
-                pix_path = f"/tmp/pix_t{t:04d}.pix"
-                if os.path.exists(pix_path) and os.path.getsize(pix_path) > 0:
-                    if pixel_bins_drive_rgb or emit_raw_score_bins:
-                        chunk_skipped_pix_tiles += 1
-                    else:
-                        s3_key = f"renders/{job_id}/pix_chunk_{section_idx:04d}_t{t:04d}.pix"
-                        with open(pix_path, "rb") as fh:
-                            s3.upload_fileobj(fh, BUCKET, s3_key)
-                        uploaded += 1
-                    os.remove(pix_path)
-                pbx_path = f"/tmp/pixbin_t{t:04d}.pbx"
-                if emit_pixel_bins and os.path.exists(pbx_path):
-                    pbx_size = os.path.getsize(pbx_path)
-                    if pbx_size > 0:
-                        dense_bytes = _tile_dense_bytes(t, section_params["width"], section_params["height"], section_params["tile_size"], n_tile_cols)
-                        if dense_grouped:
-                            info = _ensure_group_bin_proc(
-                                group_bins,
-                                t,
-                                width=section_params["width"],
-                                height=section_params["height"],
-                                tile_size=section_params["tile_size"],
-                                n_tile_cols=n_tile_cols,
-                                pixel_bins_empty=int(section_params.get("pixel_bins_empty", 255) or 255),
-                            )
-                            _feed_file_to_stdin(pbx_path, info["proc"].stdin)
-                            info["sparse_bytes"] += pbx_size
-                            info["files"] += 1
-                            grouped_sparse_bytes_in += pbx_size
-                            grouped_sparse_files_in += 1
-                        elif emit_raw_score_bins:
-                            pass
-                        else:
-                            pbx_prefix = str(section_params.get("fragment_prefix") or "").strip()
-                            pbx_key = (
-                                f"{pbx_prefix}{section_idx:04d}_t{t:04d}.pbx"
-                                if pbx_prefix
-                                else f"renders/{job_id}/pixbin_chunk_{section_idx:04d}_t{t:04d}.pbx"
-                            )
-                            with open(pbx_path, "rb") as fh:
-                                s3.upload_fileobj(fh, BUCKET, pbx_key)
-                            uploaded_pixel_bins += 1
-                            uploaded_pixel_bin_bytes += pbx_size
-                            pixel_bin_tile_bytes.append({
-                                "tile_idx": t,
-                                "bytes": pbx_size,
-                                "dense_bytes": dense_bytes,
-                            })
-                    os.remove(pbx_path)
-                palette_pbx_path = f"/tmp/palette_pixbin_t{t:04d}.pbx"
-                if emit_associated_palette_bins and os.path.exists(palette_pbx_path):
-                    palette_pbx_size = os.path.getsize(palette_pbx_path)
-                    if palette_pbx_size > 0:
-                        palette_grid_n = int(section_params.get("associated_palette_grid_n") or 0)
-                        if palette_grid_n < 1:
-                            raise RuntimeError("emit_associated_palette_bins requires associated_palette_grid_n >= 1")
-                        palette_n_tile_cols = max(1, (palette_grid_n + int(section_params["tile_size"]) - 1) // int(section_params["tile_size"]))
-                        palette_dense_bytes = _tile_dense_bytes(
-                            t,
-                            palette_grid_n,
-                            palette_grid_n,
-                            section_params["tile_size"],
-                            palette_n_tile_cols,
-                        )
-                        palette_prefix = str(section_params.get("associated_palette_fragment_prefix") or "").strip()
-                        if not palette_prefix:
-                            raise RuntimeError("emit_associated_palette_bins requires associated_palette_fragment_prefix")
-                        palette_pixel_bin_tile_bytes.append({
-                            "tile_idx": t,
-                            "bytes": palette_pbx_size,
-                            "dense_bytes": palette_dense_bytes,
-                        })
-                    os.remove(palette_pbx_path)
-            if emit_raw_score_bins and not dense_grouped:
-                pbx_prefix = str(section_params.get("fragment_prefix") or "").strip()
-                if not pbx_prefix:
-                    raise RuntimeError("emit_raw_score_bins requires fragment_prefix")
-                fused_fragment_path = "/tmp/pixbin.frag"
-                if os.path.exists(fused_fragment_path):
-                    fused_fragment_size = os.path.getsize(fused_fragment_path)
-                    with open(fused_fragment_path, "rb") as fh:
-                        s3.upload_fileobj(fh, BUCKET, f"{pbx_prefix}{section_idx:04d}.frag")
-                    os.remove(fused_fragment_path)
-                else:
-                    fused_fragment_size = 0
-                    s3.put_object(
-                        Bucket=BUCKET,
-                        Key=f"{pbx_prefix}{section_idx:04d}.frag",
-                        Body=b"",
-                        ContentType="application/octet-stream",
+        t_native = time.perf_counter()
+        cmd = _build_cmd(section_params)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        native_wall_us = int((time.perf_counter() - t_native) * 1e6)
+        if result.returncode != 0:
+            raise RuntimeError(f"roots2pix_mt failed for section {section_idx}: {result.stderr.strip()}")
+
+        raster_meta = json.loads(result.stdout)
+        perf["threads"] = int(raster_meta.get("threads", threads))
+        perf["input_mode"] = str(raster_meta.get("input_mode", section_params.get("effective_input_mode", "multispan_sectioned")))
+        perf["retries"] = int(raster_meta.get("retries", raster_sectioned_retries))
+        if perf["input_mode"] in ("sectioned", "multispan_sectioned"):
+            perf["download_us"] += int(raster_meta.get("download_us", 0))
+        perf["native_us"] += int(raster_meta.get("native_us", native_wall_us))
+        perf["roots_plotted"] += int(raster_meta.get("roots_plotted", 0))
+        perf["roots_clipped"] += int(raster_meta.get("roots_clipped", 0))
+
+        t_upload = time.perf_counter()
+
+        fused_fragment_path = "/tmp/pixbin.frag"
+        if os.path.exists(fused_fragment_path):
+            fused_fragment_size = os.path.getsize(fused_fragment_path)
+            with open(fused_fragment_path, "rb") as fh:
+                s3.upload_fileobj(fh, BUCKET, f"{fragment_prefix}{int(section_idx):04d}.frag")
+            os.remove(fused_fragment_path)
+        else:
+            fused_fragment_size = 0
+            s3.put_object(
+                Bucket=BUCKET,
+                Key=f"{fragment_prefix}{int(section_idx):04d}.frag",
+                Body=b"",
+                ContentType="application/octet-stream",
+            )
+
+        palette_fragment_size = 0
+        if emit_associated_palette_bins:
+            palette_fragment_path = "/tmp/palette_pixbin.frag"
+            if os.path.exists(palette_fragment_path):
+                palette_fragment_size = os.path.getsize(palette_fragment_path)
+                with open(palette_fragment_path, "rb") as fh:
+                    s3.upload_fileobj(
+                        fh,
+                        BUCKET,
+                        f"{associated_palette_fragment_prefix}{int(section_idx):04d}.frag",
                     )
-                uploaded_pixel_bins += 1
-                uploaded_pixel_bin_bytes += fused_fragment_size
-            if emit_associated_palette_bins:
-                palette_prefix = str(section_params.get("associated_palette_fragment_prefix") or "").strip()
-                if not palette_prefix:
-                    raise RuntimeError("emit_associated_palette_bins requires associated_palette_fragment_prefix")
-                palette_fragment_path = "/tmp/palette_pixbin.frag"
-                if os.path.exists(palette_fragment_path):
-                    palette_fragment_size = os.path.getsize(palette_fragment_path)
-                    with open(palette_fragment_path, "rb") as fh:
-                        s3.upload_fileobj(fh, BUCKET, f"{palette_prefix}{section_idx:04d}.frag")
-                    os.remove(palette_fragment_path)
-                else:
-                    palette_fragment_size = 0
-                    s3.put_object(
-                        Bucket=BUCKET,
-                        Key=f"{palette_prefix}{section_idx:04d}.frag",
-                        Body=b"",
-                        ContentType="application/octet-stream",
-                    )
-                uploaded_palette_pixel_bins += 1
-                uploaded_palette_pixel_bin_bytes += palette_fragment_size
-            if emit_step_scores:
-                step_scores_prefix = str(section_params.get("fragment_prefix") or "").strip()
-                if not step_scores_prefix:
-                    raise RuntimeError("emit_step_scores requires fragment_prefix")
-                step_scores_path = "/tmp/step_scores.bin"
-                step_scores_key = f"{step_scores_prefix}{section_idx:04d}_step_scores.raw"
-                if os.path.exists(step_scores_path):
-                    step_scores_size = os.path.getsize(step_scores_path)
-                    with open(step_scores_path, "rb") as fh:
-                        s3.upload_fileobj(fh, BUCKET, step_scores_key)
-                    os.remove(step_scores_path)
-                else:
-                    step_scores_size = 0
-                    s3.put_object(
-                        Bucket=BUCKET,
-                        Key=step_scores_key,
-                        Body=b"",
-                        ContentType="application/octet-stream",
-                    )
-                step_scores_bytes_uploaded += step_scores_size
-            if pixel_bins_drive_rgb:
-                skipped_pix_tiles += max(chunk_skipped_pix_tiles, int(raster_meta.get("tiles_with_data", 0) or 0))
-            elif emit_raw_score_bins:
-                skipped_pix_tiles += chunk_skipped_pix_tiles
-            upload_us_accum += int((time.perf_counter() - t_chunk_up) * 1e6)
-            report_status(job_id, task_id, f"rasterized_{item_idx+1}/{len(section_items)}")
+                os.remove(palette_fragment_path)
+            else:
+                s3.put_object(
+                    Bucket=BUCKET,
+                    Key=f"{associated_palette_fragment_prefix}{int(section_idx):04d}.frag",
+                    Body=b"",
+                    ContentType="application/octet-stream",
+                )
 
-        if dense_grouped:
-            t_group_up = time.perf_counter()
-            _close_group_bin_procs(group_bins, task_id)
-            for t, info in sorted(group_bins.items()):
-                out_path = info["path"]
-                dense_size = os.path.getsize(out_path)
-                pbx_key = f"renders/{job_id}/pixbin_group_{group_idx:04d}_t{t:04d}.u8"
-                with open(out_path, "rb") as fh:
-                    s3.upload_fileobj(fh, BUCKET, pbx_key)
-                uploaded_pixel_bins += 1
-                uploaded_pixel_bin_bytes += dense_size
-                pixel_bin_tile_bytes.append({
-                    "tile_idx": t,
-                    "bytes": dense_size,
-                    "dense_bytes": dense_size,
-                    "sparse_bytes_in": int(info["sparse_bytes"]),
-                    "sparse_files_in": int(info["files"]),
-                })
-                os.remove(out_path)
-            upload_us_accum += int((time.perf_counter() - t_group_up) * 1e6)
+        step_scores_size = 0
+        step_scores_path = "/tmp/step_scores.bin"
+        step_scores_key = f"{fragment_prefix}{int(section_idx):04d}_step_scores.raw"
+        if os.path.exists(step_scores_path):
+            step_scores_size = os.path.getsize(step_scores_path)
+            with open(step_scores_path, "rb") as fh:
+                s3.upload_fileobj(fh, BUCKET, step_scores_key)
+            os.remove(step_scores_path)
+        else:
+            s3.put_object(
+                Bucket=BUCKET,
+                Key=step_scores_key,
+                Body=b"",
+                ContentType="application/octet-stream",
+            )
 
+        perf["upload_us"] = int((time.perf_counter() - t_upload) * 1e6)
+        perf["pixel_bin_tiles_uploaded"] = 1
+        perf["pixel_bin_bytes_uploaded"] = fused_fragment_size
+        perf["pixel_bin_tile_bytes"] = []
+        perf["pixel_bin_dense_bytes_if_full_tiles"] = 0
+        perf["palette_pixel_bin_tiles_uploaded"] = 1 if emit_associated_palette_bins else 0
+        perf["palette_pixel_bin_bytes_uploaded"] = palette_fragment_size
+        perf["palette_pixel_bin_tile_bytes"] = []
+        perf["palette_pixel_bin_dense_bytes_if_full_tiles"] = 0
+        perf["step_scores_bytes_uploaded"] = step_scores_size
+        perf["pix_tiles_skipped"] = 0
+
+        report_status(job_id, task_id, "rasterized_1/1")
         report_status(job_id, task_id, "rasterized")
-        perf["upload_us"] = upload_us_accum
-        perf["tiles_uploaded"] = uploaded
-        perf["pixel_bin_tiles_uploaded"] = uploaded_pixel_bins
-        perf["pixel_bin_bytes_uploaded"] = uploaded_pixel_bin_bytes
-        perf["pixel_bin_tile_bytes"] = pixel_bin_tile_bytes
-        perf["pixel_bin_dense_bytes_if_full_tiles"] = sum(item["dense_bytes"] for item in pixel_bin_tile_bytes)
-        perf["palette_pixel_bin_tiles_uploaded"] = uploaded_palette_pixel_bins
-        perf["palette_pixel_bin_bytes_uploaded"] = uploaded_palette_pixel_bin_bytes
-        perf["palette_pixel_bin_tile_bytes"] = palette_pixel_bin_tile_bytes
-        perf["palette_pixel_bin_dense_bytes_if_full_tiles"] = sum(item["dense_bytes"] for item in palette_pixel_bin_tile_bytes)
-        perf["step_scores_bytes_uploaded"] = step_scores_bytes_uploaded
-        perf["pix_tiles_skipped"] = skipped_pix_tiles
-        if dense_grouped:
-            perf["pixel_bin_sparse_bytes_in"] = grouped_sparse_bytes_in
-            perf["pixel_bin_sparse_files_in"] = grouped_sparse_files_in
-
         attach_contract_warnings(perf, contract_warnings)
         report_status(job_id, task_id, "done", result_data=perf)
         return ok_response({
-            "section_idx": group_idx if dense_grouped else int(section_items[0]["section_idx"]),
-            "group_idx": group_idx,
-            "section_indices": section_indices,
-            "tiles_uploaded": uploaded,
-            "pixel_bin_tiles_uploaded": uploaded_pixel_bins,
-            "pixel_bin_bytes_uploaded": uploaded_pixel_bin_bytes,
-            "pixel_bin_tile_bytes": pixel_bin_tile_bytes,
-            "pixel_bin_dense_bytes_if_full_tiles": perf["pixel_bin_dense_bytes_if_full_tiles"],
-            "palette_pixel_bin_tiles_uploaded": uploaded_palette_pixel_bins,
-            "palette_pixel_bin_bytes_uploaded": uploaded_palette_pixel_bin_bytes,
-            "palette_pixel_bin_tile_bytes": palette_pixel_bin_tile_bytes,
-            "palette_pixel_bin_dense_bytes_if_full_tiles": perf["palette_pixel_bin_dense_bytes_if_full_tiles"],
-            "step_scores_bytes_uploaded": step_scores_bytes_uploaded,
-            "pixel_bin_fragment_mode": perf["pixel_bin_fragment_mode"],
-            "pixel_bin_sparse_bytes_in": perf.get("pixel_bin_sparse_bytes_in", 0),
-            "pixel_bin_sparse_files_in": perf.get("pixel_bin_sparse_files_in", 0),
-            "pixel_bins_drive_rgb": pixel_bins_drive_rgb,
-            "rgb_source": perf["rgb_source"],
-            "pix_tiles_skipped": skipped_pix_tiles,
+            "section_idx": int(section_idx),
+            "group_idx": int(section_idx),
+            "section_indices": [int(section_idx)],
+            "tiles_uploaded": 0,
+            "pixel_bin_tiles_uploaded": 1,
+            "pixel_bin_bytes_uploaded": fused_fragment_size,
+            "pixel_bin_tile_bytes": [],
+            "pixel_bin_dense_bytes_if_full_tiles": 0,
+            "palette_pixel_bin_tiles_uploaded": 1 if emit_associated_palette_bins else 0,
+            "palette_pixel_bin_bytes_uploaded": palette_fragment_size,
+            "palette_pixel_bin_tile_bytes": [],
+            "palette_pixel_bin_dense_bytes_if_full_tiles": 0,
+            "step_scores_bytes_uploaded": step_scores_size,
+            "pixel_bin_fragment_mode": "sparse_chunks",
+            "pixel_bin_sparse_bytes_in": 0,
+            "pixel_bin_sparse_files_in": 0,
+            "pixel_bins_drive_rgb": False,
+            "rgb_source": "raw_score_bins",
+            "pix_tiles_skipped": 0,
             "raster_us": perf["native_us"],
             "roots_plotted": perf["roots_plotted"],
             "roots_clipped": perf["roots_clipped"],
@@ -1034,10 +582,16 @@ def handler(event, context):
             "threads": perf["threads"],
             "input_mode": perf["input_mode"],
         })
-
     except Exception as e:
         attach_contract_warnings(perf, contract_warnings)
         report_status(job_id, task_id, "error", str(e), result_data=perf)
         raise
     finally:
         _cleanup_tmp()
+
+
+def handler(event, context):
+    params = parse_body(event)
+    if str(params.get("color_pipeline") or "").strip().lower() != "fused":
+        raise RuntimeError("classic color raster has been removed; handler_raster_mt requires color_pipeline='fused'")
+    return _handle_fused_raster_request(params)

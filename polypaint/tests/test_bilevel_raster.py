@@ -9,8 +9,10 @@ Run: cd polypaint/tests && uv run python test_bilevel_raster.py
 import json
 import math
 import os
+import shutil
 import struct
 import subprocess
+import tempfile
 import numpy as np
 
 LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
@@ -307,6 +309,58 @@ def test_multiple_functions():
                 os.remove(bits_path)
 
         print(f"  {func_name}: plotted={py_plotted}, PASS")
+
+
+def test_moebius_all_zero_params_plots_nothing():
+    """Undefined moebius transform should not leak bogus plotted pixels."""
+    roots = struct.pack(
+        "<8f",
+        0.0, 0.0,
+        1.0, 0.0,
+        -1.0, 0.5,
+        0.25, -0.75,
+    )
+    with tempfile.TemporaryDirectory(prefix="bilevel_moebius_") as td:
+        cc = shutil.which("cc") or shutil.which("clang") or shutil.which("gcc")
+        assert cc, "no C compiler available"
+        binary = os.path.join(td, "bilevel_raster_test")
+        compile_cmd = [
+            cc,
+            "-O2",
+            "-I",
+            LAMBDA_DIR,
+            os.path.join(LAMBDA_DIR, "bilevel_raster.c"),
+            "-lm",
+            "-o",
+            binary,
+        ]
+        compiled = subprocess.run(compile_cmd, capture_output=True, text=True, timeout=30)
+        assert compiled.returncode == 0, f"failed to compile bilevel_raster: {compiled.stderr}"
+
+        roots_file = os.path.join(td, "roots.bin")
+        out_prefix = os.path.join(td, "bits")
+        xforms_path = os.path.join(td, "root_xforms.json")
+        with open(roots_file, "wb") as fh:
+            fh.write(roots)
+        with open(xforms_path, "w") as fh:
+            json.dump([["moebius", "0", "0", "0", "0"]], fh)
+
+        cmd = [
+            binary, roots_file, out_prefix,
+            "--width=16", "--height=16",
+            "--tile_size=16",
+            "--n_tile_cols=1", "--n_tile_rows=1",
+            "--center_re=0", "--center_im=0",
+            "--scale=4.0", "--degree=2",
+            f"--root_xforms={xforms_path}",
+        ]
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        assert r.returncode == 0, f"bilevel_raster failed: {r.stderr}"
+        meta = json.loads(r.stdout)
+        assert meta["roots_plotted"] == 0
+        assert meta["roots_clipped"] == 4
+        assert meta["tiles_written"] == 0
+        assert not os.path.exists(f"{out_prefix}_t0000.bits")
 
 
 if __name__ == "__main__":

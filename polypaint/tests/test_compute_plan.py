@@ -455,6 +455,126 @@ class TestComputePlan(unittest.TestCase):
         self.assertEqual(body["chunks"][0]["params_step_count"], 10)
         self.assertEqual(body["chunks"][1]["params_step_count"], 10)
 
+    @patch("handler_compute_plan._get_ddb")
+    @patch("handler_compute_plan.s3")
+    def test_finalize_metadata_can_load_solve_results_from_ddb(self, mock_s3, mock_get_ddb):
+        import handler_compute_plan as mod
+
+        plan = {
+            "job_id": "compute_j",
+            "run_id": "run_fused",
+            "pipeline": {
+                "function": "g1",
+                "param_transforms": [],
+                "param_transforms_display": [],
+                "coeff_transforms": [],
+                "cfpv": [],
+            },
+            "compute": {
+                "N": 100,
+                "times": 1,
+                "n_chunks": 2,
+                "n_steps": 20,
+                "execution_method": "fused_chunk_pipeline",
+                "param_storage_mode": "chunked",
+                "params_key": "",
+                "param_gen_threads": 5,
+                "coeffgen_threads": 4,
+                "lores_param_gen_threads": 2,
+                "lores_coeffgen_threads": 3,
+                "fused_threads": 6,
+            },
+            "solve": {"mode": "aberth_mt", "task_prefix": "compute_run_fused_solve_"},
+            "fused": {"task_prefix": "compute_run_fused_fused_"},
+            "chunk_items": [
+                {
+                    "chunk_idx": 0,
+                    "step_start": 0,
+                    "step_count": 10,
+                    "coeffs_key": "renders/compute_j/coeffs_0000.bin",
+                    "params_key": "renders/compute_j/params_0000.bin",
+                    "params_bin_size": 160,
+                    "params_step_start": 0,
+                    "params_step_count": 10,
+                },
+                {
+                    "chunk_idx": 1,
+                    "step_start": 10,
+                    "step_count": 10,
+                    "coeffs_key": "renders/compute_j/coeffs_0001.bin",
+                    "params_key": "renders/compute_j/params_0001.bin",
+                    "params_bin_size": 160,
+                    "params_step_start": 0,
+                    "params_step_count": 10,
+                },
+            ],
+        }
+        post = {
+            "degree": 10,
+            "n_coeffs": 11,
+            "total_coeffs_size": 1760,
+            "lores": {
+                "N": 50,
+                "n_steps": 2500,
+                "bin_key": "renders/compute_j/lores.bin",
+                "coeffs_key": "renders/compute_j/lores_coeffs.bin",
+                "params_key": "renders/compute_j/lores_params.bin",
+                "param_gen_threads": 2,
+                "coeffgen_threads": 3,
+            },
+        }
+        lores_solve = {"s3_key": "renders/compute_j/lores.bin", "bin_size": 1234}
+        mock_get_ddb.return_value.query.return_value = {
+            "Items": [
+                {
+                    "task_id": {"S": "compute_run_fused_fused_1"},
+                    "task_status": {"S": "done"},
+                    "result_data": {"S": json.dumps({
+                        "chunk_idx": 1,
+                        "s3_key": "renders/compute_j/chunk_1.bin",
+                        "bin_size": 800,
+                        "compute_us": 222,
+                        "n_t": 10,
+                        "avg_iterations": 7.5,
+                        "coeffs_size": 880,
+                        "params_size": 160,
+                        "fused_threads": 6,
+                    })},
+                },
+                {
+                    "task_id": {"S": "compute_run_fused_fused_0"},
+                    "task_status": {"S": "done"},
+                    "result_data": {"S": json.dumps({
+                        "chunk_idx": 0,
+                        "s3_key": "renders/compute_j/chunk_0.bin",
+                        "bin_size": 800,
+                        "compute_us": 111,
+                        "n_t": 10,
+                        "avg_iterations": 6.5,
+                        "coeffs_size": 880,
+                        "params_size": 160,
+                        "fused_threads": 6,
+                    })},
+                },
+            ]
+        }
+
+        mod.handle_finalize_metadata({
+            "job_id": "compute_j",
+            "plan": plan,
+            "post": post,
+            "lores_solve": lores_solve,
+            "expected": 2,
+        })
+
+        body = json.loads(mock_s3.put_object.call_args.kwargs["Body"])
+        self.assertEqual([chunk["idx"] for chunk in body["chunks"]], [0, 1])
+        self.assertEqual(body["chunks"][0]["bin_key"], "renders/compute_j/chunk_0.bin")
+        self.assertEqual(body["chunks"][1]["bin_key"], "renders/compute_j/chunk_1.bin")
+        self.assertEqual(body["total_bin_size"], 1600)
+        query_kwargs = mock_get_ddb.return_value.query.call_args.kwargs
+        self.assertEqual(query_kwargs["ExpressionAttributeValues"][":pfx"]["S"], "compute_run_fused_fused_")
+
     @patch("handler_compute_plan.s3")
     def test_finalize_metadata_classic_and_fused_share_render_facing_contract(self, mock_s3):
         import handler_compute_plan as mod

@@ -40,7 +40,90 @@ static const char *getArgStr(int argc, char **argv, const char *key, const char 
     return v ? v : def;
 }
 
-/* ---- Merge: OR bitsets → 1-bit PNG ---- */
+/* ---- Shared: bitset -> TIFF + preview ---- */
+
+static int save_bitset_tiff_preview(
+    const uint8_t *bitset,
+    int width,
+    int height,
+    const char *outPath,
+    const char *previewPath,
+    int previewSize,
+    long *fileSizeOut,
+    long *previewSizeOut,
+    long *pixelsSetOut
+) {
+    size_t nPixels = (size_t)width * (size_t)height;
+    size_t bitsetBytes = (nPixels + 7) / 8;
+    long pixelsSet = 0;
+    for (size_t b = 0; b < bitsetBytes; b++) {
+        uint8_t v = bitset[b];
+        while (v) { pixelsSet += v & 1; v >>= 1; }
+    }
+
+    unsigned char *imgBuf = malloc(nPixels > 0 ? nPixels : 1);
+    if (!imgBuf) {
+        fprintf(stderr, "Cannot allocate image buffer\n");
+        return 1;
+    }
+    for (size_t i = 0; i < nPixels; i++) {
+        imgBuf[i] = (bitset[i >> 3] & (1u << (i & 7))) ? 255 : 0;
+    }
+
+    VipsImage *img = vips_image_new_from_memory(imgBuf, nPixels, width, height, 1, VIPS_FORMAT_UCHAR);
+    if (!img) {
+        fprintf(stderr, "vips_image_new_from_memory failed: %s\n", vips_error_buffer());
+        free(imgBuf);
+        return 1;
+    }
+
+    VipsImage *thresh = NULL;
+    if (vips_more_const1(img, &thresh, 0, NULL)) {
+        fprintf(stderr, "vips_more_const1 failed: %s\n", vips_error_buffer());
+        g_object_unref(img);
+        free(imgBuf);
+        return 1;
+    }
+
+    if (vips_tiffsave(thresh, outPath,
+                      "compression", VIPS_FOREIGN_TIFF_COMPRESSION_CCITTFAX4,
+                      "bitdepth", 1, NULL)) {
+        fprintf(stderr, "vips_tiffsave failed: %s\n", vips_error_buffer());
+        g_object_unref(thresh);
+        g_object_unref(img);
+        free(imgBuf);
+        return 1;
+    }
+
+    long previewFsize = 0;
+    if (previewPath) {
+        double scale = (double)previewSize / (width > height ? width : height);
+        if (scale >= 1.0) scale = 1.0;
+        VipsImage *small = NULL;
+        if (vips_resize(thresh, &small, scale, NULL) == 0) {
+            if (vips_pngsave(small, previewPath, "compression", 6, NULL) == 0) {
+                FILE *pf = fopen(previewPath, "rb");
+                if (pf) { fseek(pf, 0, SEEK_END); previewFsize = ftell(pf); fclose(pf); }
+            }
+            g_object_unref(small);
+        }
+    }
+
+    FILE *fout = fopen(outPath, "rb");
+    long fsize = 0;
+    if (fout) { fseek(fout, 0, SEEK_END); fsize = ftell(fout); fclose(fout); }
+
+    g_object_unref(thresh);
+    g_object_unref(img);
+    free(imgBuf);
+
+    if (fileSizeOut) *fileSizeOut = fsize;
+    if (previewSizeOut) *previewSizeOut = previewFsize;
+    if (pixelsSetOut) *pixelsSetOut = pixelsSet;
+    return 0;
+}
+
+/* ---- Merge: OR bitsets -> 1-bit TIFF ---- */
 
 static int do_merge(int argc, char **argv) {
     int tileW = getArgInt(argc, argv, "--tile_w", 4096);
@@ -81,75 +164,126 @@ static int do_merge(int argc, char **argv) {
         nFiles++;
     }
 
-    /* Count set pixels */
+    long fsize = 0;
+    long previewFsize = 0;
     long pixelsSet = 0;
-    for (size_t b = 0; b < bitsetBytes; b++) {
-        uint8_t v = bitset[b];
-        while (v) { pixelsSet += v & 1; v >>= 1; }
-    }
-
-    /* Convert bitset to uchar buffer (0 or 255) */
-    unsigned char *imgBuf = malloc(nPixels);
-    if (!imgBuf) {
-        fprintf(stderr, "Cannot allocate image buffer\n");
+    if (save_bitset_tiff_preview(
+            bitset,
+            tileW,
+            tileH,
+            outPath,
+            previewPath,
+            previewSize,
+            &fsize,
+            &previewFsize,
+            &pixelsSet) != 0) {
         free(bitset);
         return 1;
     }
-    for (size_t i = 0; i < nPixels; i++)
-        imgBuf[i] = (bitset[i >> 3] & (1u << (i & 7))) ? 255 : 0;
     free(bitset);
-
-    /* Create libvips image and write 1-bit PNG */
-    VipsImage *img = vips_image_new_from_memory(imgBuf, nPixels, tileW, tileH, 1, VIPS_FORMAT_UCHAR);
-    if (!img) {
-        fprintf(stderr, "vips_image_new_from_memory failed: %s\n", vips_error_buffer());
-        free(imgBuf);
-        return 1;
-    }
-
-    VipsImage *thresh;
-    if (vips_more_const1(img, &thresh, 0, NULL)) {
-        fprintf(stderr, "vips_more_const1 failed: %s\n", vips_error_buffer());
-        g_object_unref(img);
-        free(imgBuf);
-        return 1;
-    }
-
-    if (vips_tiffsave(thresh, outPath,
-                      "compression", VIPS_FOREIGN_TIFF_COMPRESSION_CCITTFAX4,
-                      "bitdepth", 1, NULL)) {
-        fprintf(stderr, "vips_tiffsave failed: %s\n", vips_error_buffer());
-        g_object_unref(thresh);
-        g_object_unref(img);
-        free(imgBuf);
-        return 1;
-    }
-
-    /* Write preview PNG (downscaled) if requested */
-    long previewFsize = 0;
-    if (previewPath) {
-        double scale = (double)previewSize / (tileW > tileH ? tileW : tileH);
-        if (scale >= 1.0) scale = 1.0;
-        VipsImage *small;
-        if (vips_resize(thresh, &small, scale, NULL) == 0) {
-            if (vips_pngsave(small, previewPath, "compression", 6, NULL) == 0) {
-                FILE *pf = fopen(previewPath, "rb");
-                if (pf) { fseek(pf, 0, SEEK_END); previewFsize = ftell(pf); fclose(pf); }
-            }
-            g_object_unref(small);
-        }
-    }
-
-    g_object_unref(thresh);
-    g_object_unref(img);
-    free(imgBuf);
-
-    FILE *fout = fopen(outPath, "rb");
-    long fsize = 0;
-    if (fout) { fseek(fout, 0, SEEK_END); fsize = ftell(fout); fclose(fout); }
 
     printf("{\"mode\":\"merge\",\"files_merged\":%d,\"pixels_set\":%ld,\"file_size\":%ld,\"preview_size\":%ld}\n",
            nFiles, pixelsSet, fsize, previewFsize);
+    return 0;
+}
+
+/* ---- Assemble: OR full-frame section bitsets -> 1-bit TIFF ---- */
+
+static int do_assemble(int argc, char **argv) {
+    int fullW = getArgInt(argc, argv, "--width", 0);
+    int fullH = getArgInt(argc, argv, "--height", 0);
+    const char *outPath = getArgStr(argc, argv, "--output", "/tmp/final.tif");
+    const char *previewPath = getArgStr(argc, argv, "--preview", NULL);
+    int previewSize = getArgInt(argc, argv, "--preview_size", 1024);
+
+    if (fullW <= 0 || fullH <= 0) {
+        fprintf(stderr, "assemble requires --width and --height\n");
+        return 1;
+    }
+
+    size_t nPixels = (size_t)fullW * (size_t)fullH;
+    size_t bitsetBytes = (nPixels + 7) / 8;
+    uint8_t *bitset = calloc(1, bitsetBytes > 0 ? bitsetBytes : 1);
+    if (!bitset) {
+        fprintf(stderr, "Cannot allocate %zu-byte full-frame bitset\n", bitsetBytes);
+        return 1;
+    }
+
+    int nFiles = 0;
+    for (int i = 2; i < argc; i++) {
+        if (argv[i][0] == '-') continue;
+        FILE *f = fopen(argv[i], "rb");
+        if (!f) {
+            fprintf(stderr, "Cannot open %s\n", argv[i]);
+            free(bitset);
+            return 1;
+        }
+        if (fseek(f, 0, SEEK_END) != 0) {
+            fclose(f);
+            free(bitset);
+            fprintf(stderr, "Cannot seek %s\n", argv[i]);
+            return 1;
+        }
+        long sz = ftell(f);
+        if (sz < 0) {
+            fclose(f);
+            free(bitset);
+            fprintf(stderr, "Cannot stat %s\n", argv[i]);
+            return 1;
+        }
+        if ((size_t)sz != bitsetBytes) {
+            fclose(f);
+            free(bitset);
+            fprintf(stderr, "Unexpected bitset size for %s: got %ld expected %zu\n", argv[i], sz, bitsetBytes);
+            return 1;
+        }
+        if (fseek(f, 0, SEEK_SET) != 0) {
+            fclose(f);
+            free(bitset);
+            fprintf(stderr, "Cannot rewind %s\n", argv[i]);
+            return 1;
+        }
+        uint8_t *buf = malloc(bitsetBytes > 0 ? bitsetBytes : 1);
+        if (!buf) {
+            fclose(f);
+            free(bitset);
+            fprintf(stderr, "Cannot allocate temporary section buffer\n");
+            return 1;
+        }
+        if (bitsetBytes > 0 && fread(buf, 1, bitsetBytes, f) != bitsetBytes) {
+            free(buf);
+            fclose(f);
+            free(bitset);
+            fprintf(stderr, "Short read from %s\n", argv[i]);
+            return 1;
+        }
+        fclose(f);
+        for (size_t b = 0; b < bitsetBytes; b++) bitset[b] |= buf[b];
+        free(buf);
+        nFiles++;
+    }
+
+    long fsize = 0;
+    long previewFsize = 0;
+    long pixelsSet = 0;
+    if (save_bitset_tiff_preview(
+            bitset,
+            fullW,
+            fullH,
+            outPath,
+            previewPath,
+            previewSize,
+            &fsize,
+            &previewFsize,
+            &pixelsSet) != 0) {
+        free(bitset);
+        return 1;
+    }
+    free(bitset);
+
+    printf("{\"mode\":\"assemble\",\"sections\":%d,\"width\":%d,\"height\":%d,"
+           "\"pixels_set\":%ld,\"file_size\":%ld,\"preview_size\":%ld}\n",
+           nFiles, fullW, fullH, pixelsSet, fsize, previewFsize);
     return 0;
 }
 
@@ -357,7 +491,7 @@ int main(int argc, char **argv) {
     }
 
     if (argc < 2) {
-        fprintf(stderr, "Usage: bilevel_merge merge|stitch [options] files...\n");
+        fprintf(stderr, "Usage: bilevel_merge merge|assemble|stitch [options] files...\n");
         vips_shutdown();
         return 1;
     }
@@ -365,10 +499,12 @@ int main(int argc, char **argv) {
     int ret;
     if (strcmp(argv[1], "merge") == 0)
         ret = do_merge(argc, argv);
+    else if (strcmp(argv[1], "assemble") == 0)
+        ret = do_assemble(argc, argv);
     else if (strcmp(argv[1], "stitch") == 0)
         ret = do_stitch(argc, argv);
     else {
-        fprintf(stderr, "Unknown mode: %s (expected merge or stitch)\n", argv[1]);
+        fprintf(stderr, "Unknown mode: %s (expected merge, assemble, or stitch)\n", argv[1]);
         ret = 1;
     }
 

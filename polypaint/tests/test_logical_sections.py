@@ -64,21 +64,23 @@ class TestLogicalSections(unittest.TestCase):
             n_coeffs=3,
         )
 
-        self.assertEqual(manifest["version"], 1)
-        self.assertEqual(manifest["job_id"], "j")
-        self.assertEqual(manifest["total_solves"], 9)
-        self.assertEqual(manifest["sources"]["slv"]["row_bytes"], 16)
-        self.assertEqual(manifest["sources"]["cf"]["row_bytes"], 24)
-        self.assertEqual(manifest["sources"]["pm"]["row_bytes"], 16)
+        self.assertEqual(manifest["v"], 2)
+        self.assertEqual(manifest["j"], "j")
+        self.assertEqual(manifest["t"], 9)
+        self.assertEqual(manifest["s"]["slv"]["r"], 16)
+        self.assertEqual(manifest["s"]["cf"]["r"], 24)
+        self.assertEqual(manifest["s"]["pm"]["r"], 16)
 
-        slv_segments = manifest["sources"]["slv"]["segments"]
-        cf_segments = manifest["sources"]["cf"]["segments"]
-        pm_segments = manifest["sources"]["pm"]["segments"]
+        slv_segments = manifest["s"]["slv"]["g"]
+        cf_source = manifest["s"]["cf"]
+        pm_source = manifest["s"]["pm"]
+        cf_segments = cf_source["g"]
+        pm_segments = pm_source["g"]
 
-        self.assertEqual([row["solve_count"] for row in slv_segments], [3, 2, 4])
-        self.assertEqual([row["key"] for row in cf_segments], ["renders/j/coeffs_0000.bin", "renders/j/coeffs_0002.bin"])
-        self.assertEqual([row["key"] for row in pm_segments], ["renders/j/params_0000.bin", "renders/j/params_0002.bin"])
-        self.assertEqual(pm_segments[1]["source_solve_start"], 10)
+        self.assertEqual([row[2] for row in slv_segments], [3, 2, 4])
+        self.assertEqual([cf_source["k"][row[0]] for row in cf_segments], ["renders/j/coeffs_0000.bin", "renders/j/coeffs_0002.bin"])
+        self.assertEqual([pm_source["k"][row[0]] for row in pm_segments], ["renders/j/params_0000.bin", "renders/j/params_0002.bin"])
+        self.assertEqual(pm_segments[1][3], 10)
 
     def test_build_source_spans_inside_single_segment(self):
         manifest = build_solve_source_manifest(self._chunk_items(), job_id="j", degree=2, n_coeffs=3)

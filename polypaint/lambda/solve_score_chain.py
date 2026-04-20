@@ -33,6 +33,10 @@ VALID_SOLVE_SCORE_METRICS = {
     "centroid_dist",
     "dist_unit_circle",
     "asymmetry_re",
+    "max_re",
+    "min_re",
+    "max_im",
+    "min_im",
     "min_mod",
     "max_mod",
     "min_angular_separation",
@@ -56,8 +60,20 @@ PARAM_SOLVE_SCORE_METRICS = {
     "t2_abs",
     "t2_phase",
 }
+PARAM_CAPABLE_SOLVE_SCORE_METRICS = {
+    "max_re",
+    "min_re",
+    "max_im",
+    "min_im",
+    "min_mod",
+    "max_mod",
+}
 _METRIC_ALLOWED_SOURCES = {
-    **{metric: {"slv", "cf"} for metric in VALID_SOLVE_SCORE_METRICS - PARAM_SOLVE_SCORE_METRICS},
+    **{
+        metric: {"slv", "cf"}
+        for metric in VALID_SOLVE_SCORE_METRICS - PARAM_SOLVE_SCORE_METRICS - PARAM_CAPABLE_SOLVE_SCORE_METRICS
+    },
+    **{metric: {"slv", "cf", "pm"} for metric in PARAM_CAPABLE_SOLVE_SCORE_METRICS},
     **{metric: {"pm"} for metric in PARAM_SOLVE_SCORE_METRICS},
 }
 TRANSFER_CHIP_NAME = "omega_cosine"

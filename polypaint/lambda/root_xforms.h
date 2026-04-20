@@ -2,7 +2,7 @@
  * root_xforms.h — shared root transform engine for render-time geometry transforms.
  *
  * Applied in-flight during rasterization. No data saved back to S3.
- * Used by both roots2pix.c (color) and bilevel_raster.c (bilevel).
+ * Used by both roots2pix_mt.c (fused color) and bilevel_raster.c (bilevel).
  *
  * Usage:
  *   RootXformEntry chain[MAX_RT_CHAIN];
@@ -102,6 +102,12 @@ static int parse_root_xform_file(const char *path, RootXformEntry *entries, int 
 
 /* ---- Transforms ---- */
 
+/* Undefined / pole outputs are encoded as NaN so downstream rasterizers can clip them. */
+static void rt_mark_undefined(float *re, float *im, int idx) {
+    re[idx] = NAN;
+    im[idx] = NAN;
+}
+
 /* rotate_roots(turns): multiply all roots by exp(i * 2*pi*turns).
  * Positive = CW, negative = CCW. 1 = full turn. */
 static void rt_rotate_roots(float *re, float *im, int degree, double turns) {
@@ -142,7 +148,7 @@ static void rt_roots_toline(float *re, float *im, int degree) {
         double dr = 1.0 - zr, di = -zi;
         /* num/den */
         double d2 = dr * dr + di * di;
-        if (d2 < 1e-30) { re[k] = 1e15f; im[k] = 1e15f; continue; }  /* pole at z=1 → ∞ */
+        if (d2 < 1e-30) { rt_mark_undefined(re, im, k); continue; }  /* pole at z=1 */
         double qr = (nr * dr + ni * di) / d2;
         double qi = (ni * dr - nr * di) / d2;
         /* i * (num/den) = -qi + i*qr */
@@ -161,7 +167,7 @@ static void rt_line_to_unit_circle(float *re, float *im, int degree) {
         /* den = w + i */
         double dr = wr, di = wi + 1.0;
         double d2 = dr * dr + di * di;
-        if (d2 < 1e-30) { re[k] = 1e15f; im[k] = 1e15f; continue; }  /* pole at w=-i → ∞ */
+        if (d2 < 1e-30) { rt_mark_undefined(re, im, k); continue; }  /* pole at w=-i */
         re[k] = (float)((nr * dr + ni * di) / d2);
         im[k] = (float)((ni * dr - nr * di) / d2);
     }
@@ -172,7 +178,7 @@ static void rt_invert_roots(float *re, float *im, int degree) {
     for (int k = 0; k < degree; k++) {
         double zr = re[k], zi = im[k];
         double d2 = zr * zr + zi * zi;
-        if (d2 < 1e-30) { re[k] = 1e15f; im[k] = 1e15f; continue; }  /* pole at z=0 → ∞ */
+        if (d2 < 1e-30) { rt_mark_undefined(re, im, k); continue; }  /* pole at z=0 */
         re[k] = (float)(zr / d2);
         im[k] = (float)(-zi / d2);
     }
@@ -206,7 +212,7 @@ static void rt_moebius(float *re, float *im, int degree, double a, double b, dou
         double dr = c * zr + d;
         double di = c * zi;
         double den2 = dr * dr + di * di;
-        if (den2 < 1e-30) { re[k] = 1e15f; im[k] = 1e15f; continue; }  /* pole where c z + d = 0 */
+        if (den2 < 1e-30) { rt_mark_undefined(re, im, k); continue; }  /* pole where c z + d = 0 */
         re[k] = (float)((nr * dr + ni * di) / den2);
         im[k] = (float)((ni * dr - nr * di) / den2);
     }

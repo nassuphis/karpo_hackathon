@@ -930,6 +930,91 @@ class TestParamTransforms(unittest.TestCase):
         self.assertNotEqual(data_none, data_uc,
                             "unit_circle should change the coefficients")
 
+    def test_moebius_param_transform_zero_args_keeps_legacy_behavior(self):
+        """Zero-arg moebius should preserve the old fixed 1/(t+2) map."""
+        out = "/tmp/test_pt_moebius_legacy.bin"
+        _run_sweep({
+            "mode": "param_dump",
+            "param_transforms": [["moebius"]],
+            "n1": 2, "n2": 2,
+            "i1_start": 0, "i1_end": 2,
+        }, out)
+
+        pairs = _read_param_pairs(out)
+        self.assertAlmostEqual(pairs[0][0].real, 0.5, places=6)
+        self.assertAlmostEqual(pairs[0][0].imag, 0.0, places=6)
+        self.assertAlmostEqual(pairs[0][1].real, 0.5, places=6)
+        self.assertAlmostEqual(pairs[0][1].imag, 0.0, places=6)
+        self.assertAlmostEqual(pairs[1][1].real, 0.4, places=6)
+        self.assertAlmostEqual(pairs[2][0].real, 0.4, places=6)
+
+    def test_moebius_param_transform_identity_coefficients_are_noop(self):
+        """Four-arg moebius should honor coefficients and identity should be exact."""
+        out = "/tmp/test_pt_moebius_identity.bin"
+        _run_sweep({
+            "mode": "param_dump",
+            "param_transforms": [["moebius", "1", "0", "0", "1"]],
+            "n1": 2, "n2": 2,
+            "i1_start": 0, "i1_end": 2,
+        }, out)
+
+        pairs = _read_param_pairs(out)
+        expected = [
+            (complex(0.0, 0.0), complex(0.0, 0.0)),
+            (complex(0.0, 0.0), complex(0.5, 0.0)),
+            (complex(0.5, 0.0), complex(0.0, 0.0)),
+            (complex(0.5, 0.0), complex(0.5, 0.0)),
+        ]
+        self.assertEqual(pairs, expected)
+
+    def test_moebius_param_transform_accepts_complex_scientific_literals(self):
+        """Four-arg moebius should parse complex literals in either term order."""
+        out = "/tmp/test_pt_moebius_complex.bin"
+        _run_sweep({
+            "mode": "param_dump",
+            "param_transforms": [["moebius", "1e0-3e0j", "1i+3", "0", "1"]],
+            "n1": 2, "n2": 1,
+            "i1_start": 0, "i1_end": 2,
+        }, out)
+
+        pairs = _read_param_pairs(out)
+        self.assertAlmostEqual(pairs[0][0].real, 3.0, places=6)
+        self.assertAlmostEqual(pairs[0][0].imag, 1.0, places=6)
+        self.assertAlmostEqual(pairs[1][0].real, 3.5, places=6)
+        self.assertAlmostEqual(pairs[1][0].imag, -0.5, places=6)
+
+    def test_add_param_transform_accepts_two_complex_offsets(self):
+        """Two-arg add should offset z1 and z2 independently with complex literals."""
+        out = "/tmp/test_pt_add_complex.bin"
+        _run_sweep({
+            "mode": "param_dump",
+            "param_transforms": [["add", "1-3j", "1i+3"]],
+            "n1": 2, "n2": 1,
+            "i1_start": 0, "i1_end": 2,
+        }, out)
+
+        pairs = _read_param_pairs(out)
+        self.assertAlmostEqual(pairs[0][0].real, 1.0, places=6)
+        self.assertAlmostEqual(pairs[0][0].imag, -3.0, places=6)
+        self.assertAlmostEqual(pairs[0][1].real, 3.0, places=6)
+        self.assertAlmostEqual(pairs[0][1].imag, 1.0, places=6)
+        self.assertAlmostEqual(pairs[1][0].real, 1.5, places=6)
+        self.assertAlmostEqual(pairs[1][0].imag, -3.0, places=6)
+
+    def test_add_param_transform_one_arg_keeps_legacy_behavior(self):
+        """One-arg add should preserve the old add-to-all-components behavior."""
+        out = "/tmp/test_pt_add_legacy.bin"
+        _run_sweep({
+            "mode": "param_dump",
+            "param_transforms": [["add", "1"]],
+            "n1": 1, "n2": 2,
+            "i1_start": 0, "i1_end": 1,
+        }, out)
+
+        pairs = _read_param_pairs(out)
+        self.assertEqual(pairs[0], (complex(1.0, 1.0), complex(1.0, 1.0)))
+        self.assertEqual(pairs[1], (complex(1.0, 1.0), complex(1.5, 1.0)))
+
 
 class TestEdgeCases(unittest.TestCase):
     """Edge case tests for the solver."""

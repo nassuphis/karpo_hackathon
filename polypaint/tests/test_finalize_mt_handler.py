@@ -2,6 +2,8 @@ import json
 import os
 import pathlib
 import sys
+import tempfile
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -107,6 +109,9 @@ class TestFinalizeMTHandler(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "phase='finalize_mt'"):
             mod.handler(_event(phase="finalize"), None)
+
+        with self.assertRaisesRegex(RuntimeError, "color_pipeline='fused'"):
+            mod.handler(_event(render_execution={"color_pipeline": "classic", "raster_engine": "mt"}), None)
 
         with self.assertRaisesRegex(RuntimeError, "raster_engine='mt'"):
             mod.handler(_event(render_execution={"color_pipeline": "fused", "raster_engine": "single"}), None)
@@ -448,3 +453,44 @@ class TestFinalizeMTHandler(unittest.TestCase):
         self.assertEqual(overlay_meta["associated_palette_image_key"], assoc_image_key)
         self.assertEqual(overlay_meta["associated_palette_raw_key"], assoc_raw_key)
         self.assertEqual(overlay_meta["associated_palette_meta_key"], assoc_meta_key)
+
+    @patch("handler_finalize_mt.subprocess.run")
+    def test_assemble_greyscale_raw_emits_periodic_progress_callbacks(self, mock_run):
+        import handler_finalize_mt as mod
+
+        progress_calls = []
+
+        def run_side_effect(cmd, capture_output=False, text=False, timeout=None, env=None):
+            exe = os.path.basename(cmd[0])
+            if exe != "assemble_greyscale":
+                raise AssertionError(f"unexpected executable {exe}")
+            out_path = next(arg for arg in cmd if arg.startswith("--output=")).split("=", 1)[1]
+            hist_path = next(arg for arg in cmd if arg.startswith("--hist-output=")).split("=", 1)[1]
+            with open(out_path, "wb") as fh:
+                fh.write(bytes([0, 1, 2, 3]))
+            with open(hist_path, "w", encoding="utf-8") as fh:
+                json.dump({"version": 1, "background_pixels": 1, "nonzero_pixels": 3, "histogram": [1, 1, 1, 1] + [0] * 252}, fh)
+            time.sleep(0.2)
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        mock_run.side_effect = run_side_effect
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            raw_path = os.path.join(tmpdir, "greyscale.raw")
+            hist_path = os.path.join(tmpdir, "greyscale.hist.json")
+            manifest_path = os.path.join(tmpdir, "fragments.urls")
+            with patch.object(mod, "ASSEMBLE_PROGRESS_INTERVAL_S", 0.01):
+                hist_meta = mod._assemble_greyscale_raw(
+                    width=2,
+                    height=2,
+                    raw_path=raw_path,
+                    hist_path=hist_path,
+                    workers=1,
+                    fragment_urls=["https://example.invalid/test.frag"],
+                    manifest_path=manifest_path,
+                    progress_cb=progress_calls.append,
+                )
+
+        self.assertEqual(hist_meta["nonzero_pixels"], 3)
+        self.assertTrue(progress_calls)
+        self.assertTrue(any(int(v) > 0 for v in progress_calls))

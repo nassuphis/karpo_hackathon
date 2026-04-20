@@ -85,6 +85,20 @@ def _local_dependencies(py_name, seen=None):
 
 
 class TestDeployPackaging(unittest.TestCase):
+    def test_raster_mt_memory_is_maxed_for_large_fused_renders(self):
+        self.assertRegex(
+            DEPLOY_TEXT,
+            r"(?m)^RASTER_MT_MEMORY=10240\s+# max memory/CPU tier for native pthread raster on large fused renders$",
+            "fused raster Lambda memory should stay at 10240 MB for large solve-score renders",
+        )
+
+    def test_color_to_bilevel_memory_is_maxed_for_large_raw_threshold_derivations(self):
+        self.assertRegex(
+            DEPLOY_TEXT,
+            r"(?m)^COLOR_TO_BILEVEL_MEMORY=10240\s+# raw-sidecar thresholding is single-shot and CPU-bound on large images$",
+            "Color2Bilevel Lambda memory should stay at 10240 MB for large raw-threshold derivations",
+        )
+
     def test_encode_memory_is_raised_for_large_repalette_outputs(self):
         self.assertRegex(
             DEPLOY_TEXT,
@@ -102,10 +116,14 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertEqual(len(matches), 2, "expected create and update render-workflow sed blocks")
         for idx, match in enumerate(matches, start=1):
             block = match.group(0)
-            self.assertIn(r'-e "s|\${PaletteChunkFunctionArn}|${PALETTE_CHUNK_ARN}|g"', block,
-                          f"render workflow sed block {idx} missing PaletteChunkFunctionArn substitution")
-            self.assertIn(r'-e "s|\${PaletteFinalizeFunctionArn}|${PALETTE_FINALIZE_ARN}|g"', block,
-                          f"render workflow sed block {idx} missing PaletteFinalizeFunctionArn substitution")
+            self.assertNotIn(r'-e "s|\${RasterFunctionArn}|${RASTER_ARN}|g"', block,
+                             f"render workflow sed block {idx} should not substitute deleted RasterFunctionArn")
+            self.assertNotIn(r'-e "s|\${FinalizeFunctionArn}|${FINALIZE_ARN}|g"', block,
+                             f"render workflow sed block {idx} should not substitute deleted FinalizeFunctionArn")
+            self.assertNotIn(r'-e "s|\${PaletteChunkFunctionArn}|${PALETTE_CHUNK_ARN}|g"', block,
+                             f"render workflow sed block {idx} should not substitute unused PaletteChunkFunctionArn")
+            self.assertNotIn(r'-e "s|\${PaletteFinalizeFunctionArn}|${PALETTE_FINALIZE_ARN}|g"', block,
+                             f"render workflow sed block {idx} should not substitute unused PaletteFinalizeFunctionArn")
 
     def test_palette_workflow_template_substitutes_attach_palette_arn_in_both_deploy_paths(self):
         joined = _joined_shell_lines(DEPLOY_TEXT)
@@ -206,6 +224,16 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("raw2jpeg", packaged["handler_deepzoom_export.py"])
         self.assertIn("handler_deepzoom_from_raw.py", packaged)
         self.assertIn("handler_deepzoom_export.py", packaged["handler_deepzoom_from_raw.py"])
+        self.assertIn("handler_bilevel.py", packaged)
+        self.assertIn("logical_sections.py", packaged["handler_bilevel.py"])
+        self.assertIn("raw_sidecar.py", packaged["handler_bilevel.py"])
+        self.assertIn("color_artifact_meta.py", packaged["handler_bilevel.py"])
+        self.assertIn("solve_score_chain.py", packaged["handler_bilevel.py"])
+        self.assertIn("bilevel_section_raster", packaged["handler_bilevel.py"])
+        self.assertIn("raw_to_bilevel", packaged["handler_bilevel.py"])
+        self.assertIn('create_lambda "$COLOR_TO_BILEVEL_NAME" "handler_bilevel.handler" "/tmp/polypaint-bilevel.zip"', DEPLOY_TEXT)
+        self.assertIn('update_lambda "$COLOR_TO_BILEVEL_NAME" "handler_bilevel.handler" "/tmp/polypaint-bilevel.zip"', DEPLOY_TEXT)
+        self.assertIn("COLOR_TO_BILEVEL_FUNCTION", DEPLOY_TEXT)
         self.assertIn("assemble_greyscale", packaged["handler_finalize_mt.py"])
         self.assertIn("score_raw_render", packaged["handler_finalize_mt.py"])
         self.assertIn("raw_score_render.py", packaged["handler_finalize_mt.py"])
@@ -220,20 +248,21 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('create_lambda "$SOLVE_PROXIMITY_BENCH_NAME" "handler_solve_proximity_bench.handler" "/tmp/polypaint-solve-proximity-bench.zip"', DEPLOY_TEXT)
         self.assertIn('update_lambda "$SOLVE_PROXIMITY_BENCH_NAME" "handler_solve_proximity_bench.handler" "/tmp/polypaint-solve-proximity-bench.zip"', DEPLOY_TEXT)
 
-        self.assertIn("handler_raster.py", packaged)
-        self.assertIn("roots2pix", packaged["handler_raster.py"])
         self.assertIn("handler_raster_mt.py", packaged)
         self.assertIn("roots2pix_mt", packaged["handler_raster_mt.py"])
-        self.assertIn("pixbinassemble", packaged["handler_raster_mt.py"])
+        self.assertNotIn("pixbinassemble", packaged["handler_raster_mt.py"])
         self.assertIn('create_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip"', DEPLOY_TEXT)
         self.assertIn('update_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip"', DEPLOY_TEXT)
         self.assertIn("RASTER_MT_THREADS", DEPLOY_TEXT)
         self.assertIn('gcc -O3 -pthread -o /src/roots2pix_mt /src/roots2pix_mt.c /src/multispan_reader.c', DEPLOY_TEXT)
-        self.assertIn('cp lambda/roots2pix_mt lambda/pixbinassemble "$RASTER_MT_DIR/"', DEPLOY_TEXT)
+        self.assertIn('cp lambda/roots2pix_mt "$RASTER_MT_DIR/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/handler_raster_mt.py lambda/shared.py lambda/solve_score_chain.py lambda/logical_sections.py "$RASTER_MT_DIR/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/roots2pix_mt_lib/* "$RASTER_MT_DIR/lib/"', DEPLOY_TEXT)
         self.assertIn('LD_LIBRARY_PATH=/var/task/lib', DEPLOY_TEXT)
         self.assertIn("aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/solve_proximity_stats lambda/solve_proximity_stats.c -lm", DEPLOY_TEXT)
+        self.assertNotIn("handler_raster.py", packaged)
+        self.assertNotIn('create_lambda "$RASTER_NAME" "handler_raster.handler" "/tmp/polypaint-raster.zip"', DEPLOY_TEXT)
+        self.assertNotIn('update_lambda "$RASTER_NAME" "handler_raster.handler" "/tmp/polypaint-raster.zip"', DEPLOY_TEXT)
 
         self.assertIn("handler_sweep_mt.py", packaged)
         self.assertIn("sweep_mt", packaged["handler_sweep_mt.py"])
@@ -294,14 +323,14 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("palette_bins_render", packaged["handler_repalette.py"])
         self.assertIn("raw2jpeg", packaged["handler_repalette.py"])
 
-        self.assertIn("handler_finalize.py", packaged)
-        self.assertIn("pixbinassemble", packaged["handler_finalize.py"])
-        self.assertIn("pixel_bins_render", packaged["handler_finalize.py"])
         self.assertIn("handler_finalize_mt.py", packaged)
         self.assertIn("color_artifact_meta.py", packaged["handler_finalize_mt.py"])
         self.assertIn("solve_score_chain.py", packaged["handler_finalize_mt.py"])
         self.assertIn("assemble_greyscale", packaged["handler_finalize_mt.py"])
         self.assertIn("score_raw_render", packaged["handler_finalize_mt.py"])
+        self.assertNotIn("handler_finalize.py", packaged)
+        self.assertNotIn('create_lambda "$FINALIZE_NAME" "handler_finalize.handler" "/tmp/polypaint-finalize.zip"', DEPLOY_TEXT)
+        self.assertNotIn('update_lambda "$FINALIZE_NAME" "handler_finalize.handler" "/tmp/polypaint-finalize.zip"', DEPLOY_TEXT)
         self.assertIn('create_lambda "$FINALIZE_MT_NAME" "handler_finalize_mt.handler" "/tmp/polypaint-finalize-mt.zip"', DEPLOY_TEXT)
         self.assertIn('update_lambda "$FINALIZE_MT_NAME" "handler_finalize_mt.handler" "/tmp/polypaint-finalize-mt.zip"', DEPLOY_TEXT)
         self.assertIn('create_lambda "$RECOLOR_FROM_RAW_NAME" "handler_recolor_from_raw.handler" "/tmp/polypaint-recolor-from-raw.zip"', DEPLOY_TEXT)
@@ -312,9 +341,13 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('update_lambda "$DZ_FROM_RAW_NAME" "handler_deepzoom_from_raw.handler" "/tmp/polypaint-deepzoom-from-raw.zip"', DEPLOY_TEXT)
         self.assertIn('gcc -O3 -pthread -o /src/assemble_greyscale /src/assemble_greyscale.c', DEPLOY_TEXT)
         self.assertIn('gcc -O3 -o /src/score_raw_render /src/score_raw_render.c', DEPLOY_TEXT)
+        self.assertIn('aarch64-linux-musl-gcc -O3 -static -o lambda/bilevel_section_raster lambda/bilevel_section_raster.c -lm', DEPLOY_TEXT)
+        self.assertIn('gcc -O3 -o /src/raw_to_bilevel /src/raw_to_bilevel.c', DEPLOY_TEXT)
         self.assertIn('aarch64-linux-musl-gcc -O3 -static -o lambda/step_scores_to_palette_raw lambda/step_scores_to_palette_raw.c', DEPLOY_TEXT)
         self.assertIn('cp lambda/assemble_greyscale lambda/score_raw_render "$FINALIZE_MT_DIR/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/assemble_greyscale_lib/* "$FINALIZE_MT_DIR/lib/"', DEPLOY_TEXT)
+        self.assertIn('cp lambda/handler_bilevel.py lambda/shared.py lambda/logical_sections.py lambda/raw_sidecar.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$BILEVEL_DIR/"', DEPLOY_TEXT)
+        self.assertIn('cp lambda/bilevel_raster lambda/bilevel_section_raster lambda/coeffs_bilevel_raster lambda/bilevel_merge lambda/raw_to_bilevel "$BILEVEL_DIR/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/handler_color_repalette.py lambda/shared.py lambda/raw_sidecar.py lambda/raw_score_render.py \\', DEPLOY_TEXT)
         self.assertIn('lambda/color_artifact_meta.py lambda/solve_score_chain.py lambda/color_recolor_raw.py \\', DEPLOY_TEXT)
         self.assertIn('cp lambda/pixel_bins_render lambda/score_raw_render "$COLOR_REPALETTE_DIR/"', DEPLOY_TEXT)

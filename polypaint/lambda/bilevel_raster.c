@@ -155,8 +155,14 @@ int main(int argc, char **argv) {
             double dx = re - centerRe, dy = im - centerIm;
             double rx = dx * cosA - dy * sinA;
             double ry = dx * sinA + dy * cosA;
-            int px = (int)(halfW + rx * scale);
-            int py = (int)(halfH - ry * scale);
+            double pxf = halfW + rx * scale;
+            double pyf = halfH - ry * scale;
+            if (!isfinite(pxf) || !isfinite(pyf)) {
+                rootsClipped++;
+                continue;
+            }
+            int px = (int)pxf;
+            int py = (int)pyf;
 
             if (px < 0 || px >= W || py < 0 || py >= H) {
                 rootsClipped++;

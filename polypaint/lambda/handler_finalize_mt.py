@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import threading
 import time
 
 import boto3
@@ -26,6 +27,7 @@ s3 = boto3.client("s3")
 ASSEMBLE_GREYSCALE = os.path.join(os.path.dirname(__file__), "assemble_greyscale")
 DEFAULT_FINALIZE_WORKERS = 16
 MAX_FINALIZE_WORKERS = 64
+ASSEMBLE_PROGRESS_INTERVAL_S = 20.0
 S3_USER_METADATA_LIMIT_BYTES = 2048
 FRAGMENT_MANIFEST_VERSION = 1
 FRAGMENT_PAIR_ENCODING = "u32le_u8_v1"
@@ -128,7 +130,7 @@ def _presign_fragment_urls(*, finalize_s3, fragment_prefix, source_item_count):
     return urls
 
 
-def _assemble_greyscale_raw(*, width, height, raw_path, hist_path, workers, fragment_urls, manifest_path):
+def _assemble_greyscale_raw(*, width, height, raw_path, hist_path, workers, fragment_urls, manifest_path, progress_cb=None):
     _write_url_manifest(manifest_path, fragment_urls)
     cmd = [
         ASSEMBLE_GREYSCALE,
@@ -139,7 +141,28 @@ def _assemble_greyscale_raw(*, width, height, raw_path, hist_path, workers, frag
         f"--workers={int(workers)}",
         f"--url-manifest={manifest_path}",
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=imgpipe_env())
+    stop_heartbeat = threading.Event()
+    heartbeat_thread = None
+    if progress_cb is not None and ASSEMBLE_PROGRESS_INTERVAL_S > 0:
+        started_at = time.time()
+
+        def _heartbeat():
+            next_tick = started_at + ASSEMBLE_PROGRESS_INTERVAL_S
+            while not stop_heartbeat.wait(max(0.0, next_tick - time.time())):
+                try:
+                    progress_cb(int((time.time() - started_at) * 1000))
+                except Exception:
+                    pass
+                next_tick += ASSEMBLE_PROGRESS_INTERVAL_S
+
+        heartbeat_thread = threading.Thread(target=_heartbeat, daemon=True)
+        heartbeat_thread.start()
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=imgpipe_env())
+    finally:
+        stop_heartbeat.set()
+        if heartbeat_thread is not None:
+            heartbeat_thread.join(timeout=1.0)
     if proc.returncode != 0:
         raise RuntimeError(f"assemble_greyscale failed: {proc.stderr.strip() or 'unknown error'}")
     with open(hist_path, "r", encoding="utf-8") as fh:
@@ -269,6 +292,12 @@ def _finalize_associated_palette(
     preview_path = "/tmp/assoc_palette_preview.png"
 
     t_assemble = time.time()
+    def _report_assemble_progress(elapsed_ms):
+        heartbeat = dict(progress)
+        heartbeat["assemble_ms"] = int(elapsed_ms)
+        heartbeat["finalize_stage"] = "assemble"
+        report_status(job_id, task_id, "assembling_score_tiles", result_data=heartbeat)
+
     fragment_urls = _presign_fragment_urls(
         finalize_s3=finalize_s3,
         fragment_prefix=fragment_prefix,
@@ -282,6 +311,7 @@ def _finalize_associated_palette(
         workers=workers,
         fragment_urls=fragment_urls,
         manifest_path=url_manifest_path,
+        progress_cb=_report_assemble_progress,
     )
     assemble_ms = int((time.time() - t_assemble) * 1000)
 
@@ -463,6 +493,11 @@ def handler(event, context):
     render_execution = dict(params.get("render_execution") or {})
     metadata = dict(params.get("metadata") or {})
     workers = _validate_finalize_workers(params.get("finalize_workers", DEFAULT_FINALIZE_WORKERS))
+    if str(render_execution.get("color_pipeline") or "") != "fused":
+        raise RuntimeError(
+            "FinalizeMT requires render_execution.color_pipeline='fused', "
+            f"got {render_execution.get('color_pipeline')!r}"
+        )
     if str(render_execution.get("raster_engine") or "") != "mt":
         raise RuntimeError(
             f"FinalizeMT requires render_execution.raster_engine='mt', got {render_execution.get('raster_engine')!r}"

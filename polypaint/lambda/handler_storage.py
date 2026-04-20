@@ -724,6 +724,8 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         entry["derived_from_image_key"] = meta.get("derived_from_image_key", "")
         entry["postprocess_kind"] = meta.get("postprocess_kind", "")
         entry["postprocess_profile"] = meta.get("postprocess_profile", "")
+        entry["threshold"] = _parse_int(meta.get("threshold"))
+        entry["bilevel_pipeline"] = meta.get("bilevel_pipeline", "")
     elif family == "pdf":
         page_count = meta.get("page_count")
         entry["pdf_kind"] = meta.get("pdf_kind", "")
@@ -1147,7 +1149,7 @@ ARTIFACT_FAMILIES = {
         "same_family_stale": [],
     },
     "bilevel": {
-        "intermediate_prefixes": ["bilevel_t", "bits_chunk_"],
+        "intermediate_prefixes": ["bilevel_t", "bits_chunk_", "bilevel_section_"],
         "intermediate_keys": [],
         "preview": [],
         "same_family_stale": [],

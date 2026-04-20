@@ -1,7 +1,7 @@
 /*
  * solve_score.h — shared solve-level metric computations.
  *
- * Used by both solve_proximity_stats.c (prepass) and roots2pix.c (raster).
+ * Used by solve_proximity_stats.c (clip prepass) and roots2pix_mt.c (fused raster).
  * Single implementation of each metric to avoid drift between binaries.
  *
  * Metrics (v1):
@@ -24,7 +24,11 @@
  *   centroid_dist    — distance of centroid from origin
  *   dist_unit_circle — mean distance of roots from the unit circle
  *   asymmetry_re     — left/right imbalance across the imaginary axis
- *   min_mod          — minimum non-zero modulus (0 if all roots are zero)
+ *   max_re           — maximum real component
+ *   min_re           — minimum real component
+ *   max_im           — maximum imaginary component
+ *   min_im           — minimum imaginary component
+ *   min_mod          — minimum non-zero modulus (0 if all values are zero)
  *   max_mod          — maximum modulus
  *   min_angular_separation — smallest wrapped angular gap between non-zero roots
  *
@@ -68,17 +72,21 @@ enum SolveMetric {
     SOLVE_METRIC_CENTROID_DIST = 12,
     SOLVE_METRIC_DIST_UNIT_CIRCLE = 13,
     SOLVE_METRIC_ASYMMETRY_RE = 14,
-    SOLVE_METRIC_MIN_MOD = 15,
-    SOLVE_METRIC_MAX_MOD = 16,
-    SOLVE_METRIC_MIN_ANGULAR_SEPARATION = 17,
-    SOLVE_METRIC_T1_RE = 18,
-    SOLVE_METRIC_T1_IM = 19,
-    SOLVE_METRIC_T1_ABS = 20,
-    SOLVE_METRIC_T1_PHASE = 21,
-    SOLVE_METRIC_T2_RE = 22,
-    SOLVE_METRIC_T2_IM = 23,
-    SOLVE_METRIC_T2_ABS = 24,
-    SOLVE_METRIC_T2_PHASE = 25,
+    SOLVE_METRIC_MAX_RE = 15,
+    SOLVE_METRIC_MIN_RE = 16,
+    SOLVE_METRIC_MAX_IM = 17,
+    SOLVE_METRIC_MIN_IM = 18,
+    SOLVE_METRIC_MIN_MOD = 19,
+    SOLVE_METRIC_MAX_MOD = 20,
+    SOLVE_METRIC_MIN_ANGULAR_SEPARATION = 21,
+    SOLVE_METRIC_T1_RE = 22,
+    SOLVE_METRIC_T1_IM = 23,
+    SOLVE_METRIC_T1_ABS = 24,
+    SOLVE_METRIC_T1_PHASE = 25,
+    SOLVE_METRIC_T2_RE = 26,
+    SOLVE_METRIC_T2_IM = 27,
+    SOLVE_METRIC_T2_ABS = 28,
+    SOLVE_METRIC_T2_PHASE = 29,
 };
 
 /* ── Parser ───────────────────────────────────────────────────────────── */
@@ -100,6 +108,10 @@ static int parse_solve_metric(const char *s, enum SolveMetric *out) {
     if (strcmp(s, "centroid_dist") == 0)        { *out = SOLVE_METRIC_CENTROID_DIST; return 1; }
     if (strcmp(s, "dist_unit_circle") == 0)     { *out = SOLVE_METRIC_DIST_UNIT_CIRCLE; return 1; }
     if (strcmp(s, "asymmetry_re") == 0)         { *out = SOLVE_METRIC_ASYMMETRY_RE; return 1; }
+    if (strcmp(s, "max_re") == 0)               { *out = SOLVE_METRIC_MAX_RE; return 1; }
+    if (strcmp(s, "min_re") == 0)               { *out = SOLVE_METRIC_MIN_RE; return 1; }
+    if (strcmp(s, "max_im") == 0)               { *out = SOLVE_METRIC_MAX_IM; return 1; }
+    if (strcmp(s, "min_im") == 0)               { *out = SOLVE_METRIC_MIN_IM; return 1; }
     if (strcmp(s, "min_mod") == 0)              { *out = SOLVE_METRIC_MIN_MOD; return 1; }
     if (strcmp(s, "max_mod") == 0)              { *out = SOLVE_METRIC_MAX_MOD; return 1; }
     if (strcmp(s, "min_angular_separation") == 0) { *out = SOLVE_METRIC_MIN_ANGULAR_SEPARATION; return 1; }
@@ -133,6 +145,10 @@ static const char *solve_metric_name(enum SolveMetric m) {
         case SOLVE_METRIC_CENTROID_DIST:        return "centroid_dist";
         case SOLVE_METRIC_DIST_UNIT_CIRCLE:     return "dist_unit_circle";
         case SOLVE_METRIC_ASYMMETRY_RE:         return "asymmetry_re";
+        case SOLVE_METRIC_MAX_RE:               return "max_re";
+        case SOLVE_METRIC_MIN_RE:               return "min_re";
+        case SOLVE_METRIC_MAX_IM:               return "max_im";
+        case SOLVE_METRIC_MIN_IM:               return "min_im";
         case SOLVE_METRIC_MIN_MOD:              return "min_mod";
         case SOLVE_METRIC_MAX_MOD:              return "max_mod";
         case SOLVE_METRIC_MIN_ANGULAR_SEPARATION: return "min_angular_separation";
@@ -197,6 +213,10 @@ static int solve_metric_min_roots(enum SolveMetric metric) {
         case SOLVE_METRIC_CENTROID_DIST:
         case SOLVE_METRIC_DIST_UNIT_CIRCLE:
         case SOLVE_METRIC_ASYMMETRY_RE:
+        case SOLVE_METRIC_MAX_RE:
+        case SOLVE_METRIC_MIN_RE:
+        case SOLVE_METRIC_MAX_IM:
+        case SOLVE_METRIC_MIN_IM:
         case SOLVE_METRIC_MIN_MOD:
         case SOLVE_METRIC_MAX_MOD:
             return 1;
@@ -472,6 +492,46 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
         return result;
     }
 
+    if (metric == SOLVE_METRIC_MAX_RE) {
+        double best = roots[0];
+        for (int i = 1; i < degree; i++) {
+            double re = roots[i * 2];
+            if (re > best) best = re;
+        }
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return best;
+    }
+
+    if (metric == SOLVE_METRIC_MIN_RE) {
+        double best = roots[0];
+        for (int i = 1; i < degree; i++) {
+            double re = roots[i * 2];
+            if (re < best) best = re;
+        }
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return best;
+    }
+
+    if (metric == SOLVE_METRIC_MAX_IM) {
+        double best = roots[1];
+        for (int i = 1; i < degree; i++) {
+            double im = roots[i * 2 + 1];
+            if (im > best) best = im;
+        }
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return best;
+    }
+
+    if (metric == SOLVE_METRIC_MIN_IM) {
+        double best = roots[1];
+        for (int i = 1; i < degree; i++) {
+            double im = roots[i * 2 + 1];
+            if (im < best) best = im;
+        }
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return best;
+    }
+
     if (metric == SOLVE_METRIC_MIN_MOD) {
         double min_mod = 0.0;
         int found_nonzero = 0;
@@ -648,7 +708,19 @@ static int solve_metric_supports_source(enum SolveMetric metric, enum SolveScore
     if (solve_metric_is_param_metric(metric)) {
         return source == SOLVE_SCORE_SOURCE_PARAM;
     }
-    return source == SOLVE_SCORE_SOURCE_SOLVE || source == SOLVE_SCORE_SOURCE_COEFF;
+    switch (metric) {
+        case SOLVE_METRIC_MAX_RE:
+        case SOLVE_METRIC_MIN_RE:
+        case SOLVE_METRIC_MAX_IM:
+        case SOLVE_METRIC_MIN_IM:
+        case SOLVE_METRIC_MIN_MOD:
+        case SOLVE_METRIC_MAX_MOD:
+            return source == SOLVE_SCORE_SOURCE_SOLVE ||
+                   source == SOLVE_SCORE_SOURCE_COEFF ||
+                   source == SOLVE_SCORE_SOURCE_PARAM;
+        default:
+            return source == SOLVE_SCORE_SOURCE_SOLVE || source == SOLVE_SCORE_SOURCE_COEFF;
+    }
 }
 
 typedef struct {
@@ -1005,6 +1077,23 @@ static double compute_param_metric_score(const float *params, int paramDegree, e
     double t2_re = (paramDegree >= 2) ? params[2] : 0.0;
     double t2_im = (paramDegree >= 2) ? params[3] : 0.0;
     switch (metric) {
+        case SOLVE_METRIC_MAX_RE: return t1_re > t2_re ? t1_re : t2_re;
+        case SOLVE_METRIC_MIN_RE: return t1_re < t2_re ? t1_re : t2_re;
+        case SOLVE_METRIC_MAX_IM: return t1_im > t2_im ? t1_im : t2_im;
+        case SOLVE_METRIC_MIN_IM: return t1_im < t2_im ? t1_im : t2_im;
+        case SOLVE_METRIC_MIN_MOD: {
+            double t1_mod = hypot(t1_re, t1_im);
+            double t2_mod = hypot(t2_re, t2_im);
+            if (t1_mod == 0.0 && t2_mod == 0.0) return 0.0;
+            if (t1_mod == 0.0) return t2_mod;
+            if (t2_mod == 0.0) return t1_mod;
+            return t1_mod < t2_mod ? t1_mod : t2_mod;
+        }
+        case SOLVE_METRIC_MAX_MOD: {
+            double t1_mod = hypot(t1_re, t1_im);
+            double t2_mod = hypot(t2_re, t2_im);
+            return t1_mod > t2_mod ? t1_mod : t2_mod;
+        }
         case SOLVE_METRIC_T1_RE: return t1_re;
         case SOLVE_METRIC_T1_IM: return t1_im;
         case SOLVE_METRIC_T1_ABS: return hypot(t1_re, t1_im);

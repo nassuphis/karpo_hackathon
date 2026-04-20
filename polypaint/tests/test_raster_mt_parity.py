@@ -598,3 +598,54 @@ class TestRasterMtParity(unittest.TestCase):
             payload = step_scores_path.read_bytes()
             self.assertEqual(len(payload), step_count)
             self.assertTrue(all(value > 0 for value in payload))
+
+    def test_moebius_all_zero_params_plots_nothing(self):
+        step_count = 3
+        degree = 2
+        roots = [
+            0.0, 0.0,
+            1.0, 0.0,
+            -1.0, 0.5,
+            0.25, -0.75,
+            2.0, 1.0,
+            -2.0, -1.0,
+        ]
+
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            roots_path = self._write_float_file(root / "roots.bin", roots)
+            out_prefix = root / "pix"
+            xforms_path = root / "root_xforms.json"
+            xforms_path.write_text(json.dumps([["moebius", "0", "0", "0", "0"]]))
+            cmd = [
+                str(self._binary),
+                str(roots_path),
+                str(out_prefix),
+                "--width=16",
+                "--height=16",
+                "--tile_size=16",
+                "--n_tile_cols=1",
+                "--n_tile_rows=1",
+                "--center_re=0",
+                "--center_im=0",
+                "--scale=4.0",
+                f"--degree={degree}",
+                "--color=solve_score",
+                "--solve_metric=proximity",
+                "--solve_score_clip_lo=0",
+                "--solve_score_clip_hi=1",
+                "--solve_score_omega_enabled=0",
+                "--solve_score_raw_bytes=1",
+                "--match=none",
+                "--rotation=0",
+                "--threads=1",
+                "--input_mode=tmpfile",
+                f"--root_xforms={xforms_path}",
+            ]
+
+            result = self._run_binary(cmd)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            meta = json.loads(result.stdout)
+            self.assertEqual(meta["roots_plotted"], 0)
+            self.assertEqual(meta["roots_clipped"], step_count * degree)
+            self.assertFalse((root / "pix_t0000.pix").exists())

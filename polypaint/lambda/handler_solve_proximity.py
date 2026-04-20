@@ -28,7 +28,6 @@ from solve_score_chain import (
     serialize_solve_score_chain,
     solve_score_program_cli_payload,
     solve_score_uses_source,
-    solve_score_uses_non_solve_sources,
 )
 from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, parse_boolish, report_status
 
@@ -718,10 +717,9 @@ def handle_clip(params):
 
         report_status(job_id, task_id, "computed", result_data=progress)
 
-        artifact_version = 1 if compiled["legacy_compatible"] else 2
         artifact = {
             "family": "solve_score",
-            "version": artifact_version,
+            "version": 2,
             "job_id": job_id,
             "metric": metric,
             "clip_quantile": compiled["quantile"],
@@ -734,23 +732,16 @@ def handle_clip(params):
             "degree": degree,
             "lores_bin_key": lores_bin_key,
             "root_transforms": root_transforms or [],
+            "chain": json.loads(serialize_solve_score_chain(compiled["chain"])),
+            "program": compiled["program_spec"],
+            "metrics": metric_clips,
+            "metric_count": len(metric_clips),
         }
         if uses_coeff_source:
             artifact["lores_coeffs_key"] = lores_coeffs_key
             artifact["n_coeffs"] = n_coeffs
         if uses_param_source:
             artifact["lores_params_key"] = lores_params_key
-        if compiled["legacy_compatible"]:
-            artifact["chain"] = json.loads(serialize_solve_score_chain(compiled["chain"]))
-        else:
-            artifact.update(
-                {
-                    "chain": json.loads(serialize_solve_score_chain(compiled["chain"])),
-                    "program": compiled["program_spec"],
-                    "metrics": metric_clips,
-                    "metric_count": len(metric_clips),
-                }
-            )
 
         s3.put_object(Bucket=BUCKET, Key=out_key,
                       Body=json.dumps(artifact),

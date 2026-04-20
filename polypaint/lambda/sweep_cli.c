@@ -393,27 +393,38 @@ static int ct_parse_complex_literal(const char *raw, double *outRe, double *outI
         buf[n++] = (*p == 'i' || *p == 'I') ? 'j' : *p;
     }
     buf[n] = '\0';
-    if (n <= 0 || buf[n - 1] != 'j') return 0;
-    buf[n - 1] = '\0';
-    int sep = -1;
-    for (int i = 1; buf[i]; i++) {
-        if ((buf[i] == '+' || buf[i] == '-') && buf[i - 1] != 'e' && buf[i - 1] != 'E') sep = i;
+    if (n <= 0) return 0;
+    const char *p = buf;
+    double rr = 0.0, ri = 0.0;
+    int saw = 0;
+    while (*p) {
+        char *end = NULL;
+        double value = strtod(p, &end);
+        if (end != p) {
+            if (*end == 'j') {
+                ri += value;
+                p = end + 1;
+            } else {
+                rr += value;
+                p = end;
+            }
+            saw = 1;
+        } else if (*p == 'j') {
+            ri += 1.0;
+            p++;
+            saw = 1;
+        } else if ((*p == '+' || *p == '-') && p[1] == 'j') {
+            ri += (*p == '-') ? -1.0 : 1.0;
+            p += 2;
+            saw = 1;
+        } else {
+            return 0;
+        }
+        if (!isfinite(rr) || !isfinite(ri)) return 0;
+        if (!*p) break;
+        if (*p != '+' && *p != '-') return 0;
     }
-    char reBuf[128], imBuf[128];
-    if (sep >= 0) {
-        int reLen = sep < (int)sizeof(reBuf) - 1 ? sep : (int)sizeof(reBuf) - 1;
-        memcpy(reBuf, buf, (size_t)reLen);
-        reBuf[reLen] = '\0';
-        snprintf(imBuf, sizeof(imBuf), "%s", buf + sep);
-    } else {
-        snprintf(reBuf, sizeof(reBuf), "0");
-        snprintf(imBuf, sizeof(imBuf), "%s", buf);
-    }
-    if (strcmp(imBuf, "+") == 0) snprintf(imBuf, sizeof(imBuf), "1");
-    if (strcmp(imBuf, "-") == 0) snprintf(imBuf, sizeof(imBuf), "-1");
-    double rr, ri;
-    if (!ct_parse_double_expr(reBuf, &rr)) return 0;
-    if (!ct_parse_double_expr(imBuf, &ri)) return 0;
+    if (!saw) return 0;
     *outRe = rr;
     *outIm = ri;
     return 1;
@@ -1879,6 +1890,8 @@ static CoeffFunc lookupFunction(const char *name) {
 /* ==== Parameter transforms (composable pipeline) ==== */
 
 typedef void (*ParamTransform)(double *z1r, double *z1i, double *z2r, double *z2i);
+static inline void c_mul(double ar, double ai, double br, double bi, double *rr, double *ri);
+static inline void c_div(double ar, double ai, double br, double bi, double *rr, double *ri);
 
 static void pt_none(double *z1r, double *z1i, double *z2r, double *z2i) {
     (void)z1r; (void)z1i; (void)z2r; (void)z2i;
@@ -1945,6 +1958,19 @@ static void pt_mul_div(double *z1r, double *z1i, double *z2r, double *z2i) {
     else { *z2r = 0; *z2i = 0; }
 }
 
+static void pt_apply_moebius(double *zr, double *zi,
+                             double ar, double ai, double br, double bi,
+                             double cr, double ci, double dr, double di) {
+    double numr, numi, denr, deni;
+    c_mul(ar, ai, *zr, *zi, &numr, &numi);
+    numr += br;
+    numi += bi;
+    c_mul(cr, ci, *zr, *zi, &denr, &deni);
+    denr += dr;
+    deni += di;
+    c_div(numr, numi, denr, deni, zr, zi);
+}
+
 static void pt_moebius(double *z1r, double *z1i, double *z2r, double *z2i) {
     double d;
     double ar = *z1r + 2.0, ai = *z1i;
@@ -1955,6 +1981,13 @@ static void pt_moebius(double *z1r, double *z1i, double *z2r, double *z2i) {
     d = ar*ar + ai*ai;
     if (d > 1e-30) { *z2r = ar/d; *z2i = -ai/d; }
     else { *z2r = 0; *z2i = 0; }
+}
+
+static void pt_moebius_abcd(double *z1r, double *z1i, double *z2r, double *z2i,
+                            double ar, double ai, double br, double bi,
+                            double cr, double ci, double dr, double di) {
+    pt_apply_moebius(z1r, z1i, ar, ai, br, bi, cr, ci, dr, di);
+    pt_apply_moebius(z2r, z2i, ar, ai, br, bi, cr, ci, dr, di);
 }
 
 /* inv_t_plus_2(re1, im1, re2, im2):
@@ -3551,6 +3584,7 @@ static void pt_roots6(double *z1r, double *z1i, double *z2r, double *z2i) {
 typedef struct {
     char name[64];
     double args[MAX_PT_ARGS];
+    char rawArgs[MAX_PT_ARGS][64];
     int nArgs;
 } PtEntry;
 
@@ -3587,9 +3621,23 @@ static int parsePtChain(const char *p, PtEntry *entries, int maxCount) {
                 while (*p && *p != '"' && j < 63) tmp[j++] = *p++;
                 tmp[j] = '\0';
                 if (*p == '"') p++;
+                snprintf(entries[count].rawArgs[entries[count].nArgs], sizeof(entries[count].rawArgs[entries[count].nArgs]), "%s", tmp);
                 entries[count].args[entries[count].nArgs++] = atof(tmp);
             } else if (*p == '-' || (*p >= '0' && *p <= '9')) {
                 /* Bare number */
+                int argIdx = entries[count].nArgs;
+                int j = 0;
+                const char *q = p;
+                while (*q && *q != ',' && *q != ']' && j < 63) {
+                    entries[count].rawArgs[argIdx][j++] = *q++;
+                }
+                while (j > 0 && (entries[count].rawArgs[argIdx][j - 1] == ' ' ||
+                                 entries[count].rawArgs[argIdx][j - 1] == '\t' ||
+                                 entries[count].rawArgs[argIdx][j - 1] == '\n' ||
+                                 entries[count].rawArgs[argIdx][j - 1] == '\r')) {
+                    j--;
+                }
+                entries[count].rawArgs[argIdx][j] = '\0';
                 entries[count].args[entries[count].nArgs++] = atof(p);
                 while (*p && *p != ',' && *p != ']') p++;
             } else {
@@ -3670,6 +3718,28 @@ static int parseCtChain(const char *p, CtEntry *entries, int maxCount) {
         count++;
     }
     return count;
+}
+
+static int pt_arg_complex(const PtEntry *e, int idx, double fallbackRe, double fallbackIm,
+                          double *outRe, double *outIm) {
+    if (!outRe || !outIm) return 0;
+    if (!e || idx < 0 || idx >= e->nArgs) {
+        *outRe = fallbackRe;
+        *outIm = fallbackIm;
+        return 1;
+    }
+    const char *raw = e->rawArgs[idx];
+    if (!raw || !*raw) {
+        *outRe = fallbackRe;
+        *outIm = fallbackIm;
+        return 1;
+    }
+    if (ct_parse_complex_literal(raw, outRe, outIm)) return 1;
+    if (ct_parse_double_expr(raw, outRe)) {
+        *outIm = 0.0;
+        return 1;
+    }
+    return 0;
 }
 
 /* Dispatch a single param transform entry */
@@ -3756,8 +3826,20 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
         *z1i += v; *z2i += v;
         return 0;
     }
-    /* add(v): add v to both real and imaginary of both */
+    /* add(v): legacy scalar add-to-all-components.
+     * add(c1, c2): z1 += c1, z2 += c2 with complex literals. */
     if (strcmp(e->name, "add") == 0) {
+        if (e->nArgs >= 2) {
+            double c1r, c1i, c2r, c2i;
+            if (!pt_arg_complex(e, 0, 0.0, 0.0, &c1r, &c1i) ||
+                !pt_arg_complex(e, 1, 0.0, 0.0, &c2r, &c2i)) {
+                fprintf(stderr, "Invalid add param transform offset\n");
+                return 1;
+            }
+            *z1r += c1r; *z1i += c1i;
+            *z2r += c2r; *z2i += c2i;
+            return 0;
+        }
         double v = e->nArgs > 0 ? e->args[0] : 0.0;
         *z1r += v; *z1i += v; *z2r += v; *z2i += v;
         return 0;
@@ -3794,6 +3876,22 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
         double a1 = 2.0 * M_PI * *z2r, a2 = 2.0 * M_PI * *z1r;
         *z1r = r1 * cos(a1); *z1i = r1 * sin(a1);
         *z2r = r2 * cos(a2); *z2i = r2 * sin(a2);
+        return 0;
+    }
+    if (strcmp(e->name, "moebius") == 0) {
+        if (e->nArgs <= 0) {
+            pt_moebius(z1r, z1i, z2r, z2i);
+            return 0;
+        }
+        double ar, ai, br, bi, cr, ci, dr, di;
+        if (!pt_arg_complex(e, 0, 1.0, 0.0, &ar, &ai) ||
+            !pt_arg_complex(e, 1, 0.0, 0.0, &br, &bi) ||
+            !pt_arg_complex(e, 2, 0.0, 0.0, &cr, &ci) ||
+            !pt_arg_complex(e, 3, 1.0, 0.0, &dr, &di)) {
+            fprintf(stderr, "Invalid moebius param transform coefficient\n");
+            return 1;
+        }
+        pt_moebius_abcd(z1r, z1i, z2r, z2i, ar, ai, br, bi, cr, ci, dr, di);
         return 0;
     }
     if (strcmp(e->name, "inv_t_plus_2") == 0) {

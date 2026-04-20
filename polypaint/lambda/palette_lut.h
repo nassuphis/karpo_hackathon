@@ -1,7 +1,7 @@
 /*
  * palette_lut.h — shared palette definitions and interpolation.
  *
- * Used by roots2pix.c (render rasterization) and solve_palette_debug.c (debug image).
+ * Used by roots2pix_mt.c (fused rasterization) and solve_palette_debug.c (debug image).
  * Single source of truth for all palette tables.
  */
 

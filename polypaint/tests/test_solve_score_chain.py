@@ -253,12 +253,60 @@ class TestSolveScoreChain(unittest.TestCase):
         )
         self.assertEqual(payload["score_sources"], "pm,cf")
 
+    def test_compile_chain_accepts_multi_source_extrema_metrics(self):
+        from solve_score_chain import compile_solve_score_chain, solve_score_program_cli_payload
+
+        compiled = compile_solve_score_chain(
+            [
+                ["max_re", "pm", "2"],
+                ["min_im", "cf", "3"],
+                ["max"],
+            ]
+        )
+
+        self.assertEqual(compiled["program_spec"], "m0;m1;max")
+        self.assertEqual(compiled["display"], "max_re(pm,q=2%) min_im(cf,q=3%) max")
+        self.assertEqual(compiled["metrics"][0]["source"], "pm")
+        self.assertEqual(compiled["metrics"][1]["source"], "cf")
+        payload = solve_score_program_cli_payload(
+            {
+                "metrics": [
+                    {**compiled["metrics"][0], "clip_lo": -2.0, "clip_hi": 4.0},
+                    {**compiled["metrics"][1], "clip_lo": -3.0, "clip_hi": 7.0},
+                ],
+                "program_spec": compiled["program_spec"],
+            }
+        )
+        self.assertEqual(payload["score_sources"], "pm,cf")
+
+    def test_compile_chain_accepts_max_mod_param_source(self):
+        from solve_score_chain import compile_solve_score_chain
+
+        compiled = compile_solve_score_chain(
+            [
+                ["max_mod", "pm", "1"],
+                ["spread", "slv", "1"],
+                ["avg"],
+            ]
+        )
+
+        self.assertEqual(compiled["display"], "max_mod(pm,q=1%) spread(q=1%) avg")
+        self.assertEqual(compiled["metrics"][0]["metric"], "max_mod")
+        self.assertEqual(compiled["metrics"][0]["source"], "pm")
+
     def test_compile_chain_rejects_param_metric_with_wrong_source(self):
         from solve_score_chain import compile_solve_score_chain
 
         with self.assertRaises(RuntimeError) as ctx:
             compile_solve_score_chain([["t1_re", "cf", "1"]])
         self.assertIn("only supports source", str(ctx.exception))
+
+    def test_compile_chain_rejects_multi_source_extrema_metric_with_bad_source(self):
+        from solve_score_chain import compile_solve_score_chain
+
+        with self.assertRaises(RuntimeError) as ctx:
+            compile_solve_score_chain([["max_re", "bogus", "1"]])
+        self.assertIn("must be one of", str(ctx.exception))
 
     def test_invalid_chain_rejects_second_metric(self):
         from solve_score_chain import compile_solve_score_chain

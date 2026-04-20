@@ -98,6 +98,10 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
         self.assertEqual(solve_worker["OutputPath"], "$.body")
         self.assertIn("States.StringToJson($.Payload.body)", json.dumps(solve_worker["ResultSelector"]))
 
+        fused_worker = self.states["FusedChunkMap"]["ItemProcessor"]["States"]["FusedChunkWorker"]
+        self.assertEqual(fused_worker["OutputPath"], "$.body")
+        self.assertIn("States.StringToJson($.Payload.body)", json.dumps(fused_worker["ResultSelector"]))
+
     def test_solve_map_derives_items_from_plan_not_post(self):
         solve_map = self.states["SolveMap"]
         self.assertEqual(solve_map["ItemsPath"], "$.plan.chunk_items")
@@ -141,11 +145,23 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
         coeffgen_map = self.states["CoeffgenMap"]
         self.assertIsNone(coeffgen_map.get("ResultPath"))
 
+    def test_hires_maps_discard_worker_outputs(self):
+        self.assertIsNone(self.states["SolveMap"].get("ResultPath"))
+        self.assertIsNone(self.states["FusedChunkMap"].get("ResultPath"))
+
     def test_post_coeffgen_uses_task_prefix_not_coeffgen_results(self):
         post = self.states["PostCoeffgen"]
         params = json.dumps(post["Parameters"])
         self.assertIn('"task_prefix.$": "$.plan.coeffgen.task_prefix"', params)
         self.assertNotIn('"coeffgen_results.$"', params)
+
+    def test_save_metadata_uses_task_prefix_not_solve_results(self):
+        save = self.states["SaveMetadataTask"]
+        params = json.dumps(save["Parameters"])
+        self.assertIn('"job_id.$": "$.job_id"', params)
+        self.assertIn('"task_prefix.$": "$.plan.solve.task_prefix"', params)
+        self.assertIn('"expected.$": "$.plan.compute.n_chunks"', params)
+        self.assertNotIn('"solve_results.$"', params)
 
     def test_post_coeffgen_phase_is_explicit(self):
         post_phase = self.states["PostCoeffgenPhase"]

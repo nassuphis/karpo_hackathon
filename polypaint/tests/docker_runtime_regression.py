@@ -17,6 +17,7 @@ import struct
 import subprocess
 import sys
 import threading
+import types
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -158,6 +159,73 @@ def read_jpeg_dims(path):
                 return width, height
             f.seek(seg_len - 2, os.SEEK_CUR)
     raise AssertionError("JPEG SOF marker not found for %s" % path)
+
+
+def read_csv_grid(path):
+    rows = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            rows.append([float(cell) for cell in line.replace("\t", ",").split(",") if cell])
+    return rows
+
+
+class _MemBody:
+    def __init__(self, data):
+        self._data = bytes(data)
+
+    def read(self):
+        return self._data
+
+    def iter_chunks(self, chunk_size=1024 * 1024):
+        for start in range(0, len(self._data), chunk_size):
+            yield self._data[start:start + chunk_size]
+
+
+class _MemS3:
+    def __init__(self):
+        self.objects = {}
+        self.heads = {}
+
+    def seed_object(self, key, body, *, content_type="application/octet-stream", metadata=None):
+        self.objects[key] = {
+            "Body": bytes(body),
+            "ContentType": content_type,
+            "Metadata": dict(metadata or {}),
+        }
+
+    def head_object(self, *, Bucket, Key):
+        obj = self.objects.get(Key)
+        if obj is None:
+            raise RuntimeError("NoSuchKey: %s" % Key)
+        return {
+            "ContentType": obj.get("ContentType"),
+            "Metadata": dict(obj.get("Metadata") or {}),
+        }
+
+    def get_object(self, *, Bucket, Key):
+        obj = self.objects.get(Key)
+        if obj is None:
+            raise RuntimeError("NoSuchKey: %s" % Key)
+        return {
+            "Body": _MemBody(obj.get("Body") or b""),
+            "ContentType": obj.get("ContentType"),
+            "Metadata": dict(obj.get("Metadata") or {}),
+        }
+
+    def put_object(self, *, Bucket, Key, Body, ContentType=None, Metadata=None, **kwargs):
+        if hasattr(Body, "read"):
+            body = Body.read()
+        else:
+            body = Body
+        self.objects[Key] = {
+            "Body": bytes(body),
+            "ContentType": ContentType or "application/octet-stream",
+            "Metadata": dict(Metadata or {}),
+        }
+        return {"ETag": '"mem"'}
 
 
 # ── AE/CM Solver Tests ───────────────────────────────────────────────────
@@ -848,6 +916,336 @@ def test_resize_runtime():
     print("=== Resize artifact runtime tests PASSED ===")
 
 
+def test_bilevel_section_raster_runtime():
+    print("\n--- bilevel_section_raster runtime ---")
+
+    bin_path = "/src/bilevel_section_raster"
+    assert os.path.exists(bin_path), "bilevel_section_raster not found at %s" % bin_path
+
+    section_path = "/tmp/bilevel_section_rt.bin"
+    out_bits = "/tmp/bilevel_section_rt.bits"
+
+    with open(section_path, "wb") as f:
+        for roots in [[(0.0, 0.0), (1.0, 0.0)], [(0.0, 0.0), (100.0, 100.0)]]:
+            for re, im in roots:
+                f.write(struct.pack("<ff", re, im))
+
+    r = subprocess.run(
+        [
+            bin_path,
+            section_path,
+            out_bits,
+            "--width=8",
+            "--height=8",
+            "--center_re=0",
+            "--center_im=0",
+            "--scale=1",
+            "--degree=2",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert r.returncode == 0, "bilevel_section_raster failed: " + r.stderr[:200]
+    meta = json.loads(r.stdout)
+    assert meta["roots_plotted"] == 2, "unexpected plotted count %r" % (meta,)
+    assert meta["roots_clipped"] == 1, "unexpected clipped count %r" % (meta,)
+    assert meta["roots_deduped"] == 1, "unexpected dedup count %r" % (meta,)
+
+    with open(out_bits, "rb") as f:
+        bitset = f.read()
+    assert len(bitset) == 8, "unexpected bitset size %d" % len(bitset)
+    assert bitset == bytes([0, 0, 0, 0, 0x30, 0, 0, 0]), "unexpected bitset bytes %r" % (bitset,)
+    print(
+        "  bilevel_section_raster: OK (plotted=%d, clipped=%d, dedup=%d)"
+        % (meta["roots_plotted"], meta["roots_clipped"], meta["roots_deduped"])
+    )
+
+    cleanup(section_path, out_bits)
+    print("=== bilevel_section_raster runtime PASSED ===")
+
+
+def test_bilevel_merge_assemble_runtime():
+    print("\n--- bilevel_merge assemble runtime ---")
+
+    bin_path = "/src/bilevel_merge"
+    assert os.path.exists(bin_path), "bilevel_merge not found at %s" % bin_path
+
+    env = {**os.environ, "LD_LIBRARY_PATH": "/opt/lib", "PATH": "/opt/bin:" + os.environ.get("PATH", "")}
+    ldd = subprocess.run(["ldd", bin_path], capture_output=True, text=True, timeout=10, env=env)
+    assert ldd.returncode == 0, "ldd bilevel_merge failed: " + ldd.stderr[:200]
+    assert "not found" not in (ldd.stdout + ldd.stderr), "bilevel_merge has missing shared libs:\n%s" % (ldd.stdout + ldd.stderr)
+
+    bits_a = "/tmp/bilevel_assemble_a.bits"
+    bits_b = "/tmp/bilevel_assemble_b.bits"
+    out_tif = "/tmp/bilevel_assemble.tif"
+    preview_png = "/tmp/bilevel_assemble_preview.png"
+    out_csv = "/tmp/bilevel_assemble.csv"
+
+    with open(bits_a, "wb") as f:
+        f.write(bytes([0x01, 0, 0, 0, 0, 0, 0, 0]))
+    with open(bits_b, "wb") as f:
+        f.write(bytes([0, 0, 0, 0, 0, 0, 0, 0x80]))
+
+    r = subprocess.run(
+        [
+            bin_path,
+            "assemble",
+            "--width=8",
+            "--height=8",
+            "--output=" + out_tif,
+            "--preview=" + preview_png,
+            "--preview_size=16",
+            bits_a,
+            bits_b,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        env=env,
+    )
+    assert r.returncode == 0, "bilevel_merge assemble failed: " + r.stderr[:200]
+    meta = json.loads(r.stdout)
+    assert meta["sections"] == 2, "unexpected assemble section count %r" % (meta,)
+    assert meta["pixels_set"] == 2, "unexpected assemble pixels_set %r" % (meta,)
+    assert os.path.getsize(out_tif) > 0, "assemble TIFF is empty"
+    assert os.path.getsize(preview_png) > 0, "assemble preview PNG is empty"
+    assert read_png_dims(preview_png) == (8, 8), "unexpected assemble preview dims %r" % (read_png_dims(preview_png),)
+
+    r = subprocess.run(
+        ["/opt/bin/vips", "csvsave", out_tif, out_csv],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        env=env,
+    )
+    assert r.returncode == 0, "vips csvsave assemble TIFF failed: " + r.stderr[:200]
+    grid = read_csv_grid(out_csv)
+    assert len(grid) == 8 and all(len(row) == 8 for row in grid), "unexpected assemble CSV shape"
+    assert grid[0][0] > 0, "expected pixel (0,0) to be set"
+    assert grid[7][7] > 0, "expected pixel (7,7) to be set"
+    assert grid[0][7] == 0, "expected pixel (7,0) to stay clear"
+    assert grid[7][0] == 0, "expected pixel (0,7) to stay clear"
+    print("  bilevel_merge assemble: OK (pixels_set=%d)" % meta["pixels_set"])
+
+    cleanup(bits_a, bits_b, out_tif, preview_png, out_csv)
+    print("=== bilevel_merge assemble runtime PASSED ===")
+
+
+def test_raw_to_bilevel_runtime():
+    print("\n--- raw_to_bilevel runtime ---")
+
+    bin_path = "/src/raw_to_bilevel"
+    assert os.path.exists(bin_path), "raw_to_bilevel not found at %s" % bin_path
+
+    env = {**os.environ, "LD_LIBRARY_PATH": "/opt/lib", "PATH": "/opt/bin:" + os.environ.get("PATH", "")}
+    ldd = subprocess.run(["ldd", bin_path], capture_output=True, text=True, timeout=10, env=env)
+    assert ldd.returncode == 0, "ldd raw_to_bilevel failed: " + ldd.stderr[:200]
+    assert "not found" not in (ldd.stdout + ldd.stderr), "raw_to_bilevel has missing shared libs:\n%s" % (ldd.stdout + ldd.stderr)
+
+    raw_path = "/tmp/raw_to_bilevel_rt.raw"
+    out_tif = "/tmp/raw_to_bilevel_rt.tif"
+    preview_png = "/tmp/raw_to_bilevel_rt_preview.png"
+    out_csv = "/tmp/raw_to_bilevel_rt.csv"
+
+    with open(raw_path, "wb") as f:
+        f.write(bytes([0, 1, 128, 255, 10, 127, 129, 200]))
+
+    r = subprocess.run(
+        [
+            bin_path,
+            raw_path,
+            out_tif,
+            "--width=4",
+            "--height=2",
+            "--threshold=127",
+            "--preview=" + preview_png,
+            "--preview_size=16",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        env=env,
+    )
+    assert r.returncode == 0, "raw_to_bilevel failed: " + r.stderr[:200]
+    meta = json.loads(r.stdout)
+    assert meta["threshold"] == 127, "unexpected threshold metadata %r" % (meta,)
+    assert meta["width"] == 4 and meta["height"] == 2, "unexpected image size metadata %r" % (meta,)
+    assert os.path.getsize(out_tif) > 0, "raw_to_bilevel TIFF is empty"
+    assert os.path.getsize(preview_png) > 0, "raw_to_bilevel preview PNG is empty"
+    assert read_png_dims(preview_png) == (4, 2), "unexpected preview dims %r" % (read_png_dims(preview_png),)
+
+    r = subprocess.run(
+        ["/opt/bin/vips", "csvsave", out_tif, out_csv],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        env=env,
+    )
+    assert r.returncode == 0, "vips csvsave raw_to_bilevel TIFF failed: " + r.stderr[:200]
+    grid = read_csv_grid(out_csv)
+    expected = [[0, 0, 1, 1], [0, 0, 1, 1]]
+    assert len(grid) == 2 and all(len(row) == 4 for row in grid), "unexpected raw_to_bilevel CSV shape"
+    for y, row in enumerate(grid):
+        for x, value in enumerate(row):
+            assert (value > 0) == bool(expected[y][x]), "unexpected thresholded pixel (%d,%d)=%.3f" % (x, y, value)
+    print("  raw_to_bilevel: OK (threshold=%d)" % meta["threshold"])
+
+    cleanup(raw_path, out_tif, preview_png, out_csv)
+    print("=== raw_to_bilevel runtime PASSED ===")
+
+
+def test_color_to_bilevel_handler_runtime():
+    print("\n--- Color2Bilevel handler runtime ---")
+
+    env = {**os.environ, "LD_LIBRARY_PATH": "/src/solve_palette_chunk_mt_lib:/opt/lib", "PATH": "/opt/bin:" + os.environ.get("PATH", "")}
+
+    if "boto3" not in sys.modules:
+        sys.modules["boto3"] = types.SimpleNamespace(client=lambda *_args, **_kwargs: object())
+    if "botocore" not in sys.modules:
+        sys.modules["botocore"] = types.ModuleType("botocore")
+    if "botocore.exceptions" not in sys.modules:
+        exc_mod = types.ModuleType("botocore.exceptions")
+        exc_mod.ClientError = RuntimeError
+        sys.modules["botocore.exceptions"] = exc_mod
+
+    if "/src" not in sys.path:
+        sys.path.insert(0, "/src")
+
+    import handler_bilevel as mod
+    from raw_sidecar import build_raw_sidecar
+
+    fake_s3 = _MemS3()
+    status_rows = []
+
+    def fake_report(job_id, task_id, status, error_msg=None, result_data=None):
+        status_rows.append({
+            "job_id": job_id,
+            "task_id": task_id,
+            "status": status,
+            "error_msg": error_msg,
+            "result_data": dict(result_data or {}),
+        })
+
+    raw_key = "renders/job-color2bil/color/src_color/greyscale.raw"
+    raw_meta_key = "renders/job-color2bil/color/src_color/greyscale.meta.json"
+    image_key = "renders/job-color2bil/color/src_color/image.jpeg"
+    raw_bytes = bytes([0, 1, 128, 255, 10, 127, 129, 200])
+    raw_sidecar = build_raw_sidecar(
+        job_id="job-color2bil",
+        run_id="run-color2bil",
+        artifact_family="color",
+        artifact_id="src_color",
+        width=4,
+        height=2,
+        chain_fingerprint="fp_color2bil",
+        score_chain=[],
+        score_program="m0",
+        clip_slots=[{"slot": 0, "metric": "proximity", "source": "slv", "clip_lo": 0.0, "clip_hi": 1.0}],
+        background_color=[0, 0, 0],
+        plan_params_digest="digest_color2bil",
+        render_execution={"color_pipeline": "fused"},
+        raw_key=raw_key,
+        image_key=image_key,
+        preview_key="renders/job-color2bil/color/src_color/preview.png",
+        meta_key=raw_meta_key,
+        created_at="2026-04-20T00:00:00Z",
+        histogram=[0] * 256,
+    )
+    fake_s3.seed_object(
+        image_key,
+        b"\xff\xd8\xff\xd9",
+        content_type="image/jpeg",
+        metadata={
+            "artifact_id": "src_color",
+            "family": "color",
+            "format": "jpeg",
+            "pix": "4",
+            "raw_key": raw_key,
+            "raw_meta_key": raw_meta_key,
+        },
+    )
+    fake_s3.seed_object(raw_key, raw_bytes, content_type="application/octet-stream")
+    fake_s3.seed_object(raw_meta_key, json.dumps(raw_sidecar).encode("utf-8"), content_type="application/json")
+
+    old_s3 = mod.s3
+    old_report = mod.report_status
+    old_interval = mod.RAW_TO_BILEVEL_PROGRESS_INTERVAL_S
+    try:
+        mod.s3 = fake_s3
+        mod.report_status = fake_report
+        mod.RAW_TO_BILEVEL_PROGRESS_INTERVAL_S = 0.001
+
+        result = mod.handler({
+            "body": json.dumps({
+                "phase": "from_raw_color",
+                "job_id": "job-color2bil",
+                "task_id": "color_to_bilevel_runtime",
+                "artifact_id": "bil_1",
+                "source_artifact_id": "src_color",
+                "threshold": 127,
+            })
+        }, None)
+    finally:
+        mod.s3 = old_s3
+        mod.report_status = old_report
+        mod.RAW_TO_BILEVEL_PROGRESS_INTERVAL_S = old_interval
+
+    body = json.loads(result["body"])
+    assert body["artifact_id"] == "bil_1", "unexpected artifact_id %r" % (body,)
+    assert body["threshold"] == 127, "unexpected threshold %r" % (body,)
+
+    bilevel_key = "renders/job-color2bil/bilevel/bil_1/image.tif"
+    preview_key = "renders/job-color2bil/bilevel/bil_1/preview.png"
+    assert bilevel_key in fake_s3.objects, "bilevel TIFF not uploaded"
+    assert preview_key in fake_s3.objects, "preview PNG not uploaded"
+    tif_obj = fake_s3.objects[bilevel_key]
+    preview_obj = fake_s3.objects[preview_key]
+    assert tif_obj["Metadata"]["postprocess_kind"] == "color_to_bilevel", "missing Color2Bilevel metadata"
+    assert tif_obj["Metadata"]["threshold"] == "127", "threshold metadata not preserved"
+    assert tif_obj["Metadata"]["derived_from_artifact_id"] == "src_color", "source artifact metadata missing"
+
+    tif_path = "/tmp/color2bilevel_handler_rt.tif"
+    png_path = "/tmp/color2bilevel_handler_rt_preview.png"
+    csv_path = "/tmp/color2bilevel_handler_rt.csv"
+    with open(tif_path, "wb") as fh:
+        fh.write(tif_obj["Body"])
+    with open(png_path, "wb") as fh:
+        fh.write(preview_obj["Body"])
+
+    r = subprocess.run(
+        ["/opt/bin/vips", "csvsave", tif_path, csv_path],
+        capture_output=True,
+        text=True,
+        timeout=20,
+        env=env,
+    )
+    assert r.returncode == 0, "vips csvsave Color2Bilevel TIFF failed: " + r.stderr[:200]
+    grid = read_csv_grid(csv_path)
+    expected = [[0, 0, 1, 1], [0, 0, 1, 1]]
+    assert len(grid) == 2 and all(len(row) == 4 for row in grid), "unexpected Color2Bilevel TIFF shape"
+    for y, row in enumerate(grid):
+        for x, value in enumerate(row):
+            assert (value > 0) == bool(expected[y][x]), "unexpected Color2Bilevel pixel (%d,%d)=%.3f" % (x, y, value)
+    assert read_png_dims(png_path) == (4, 2), "unexpected Color2Bilevel preview dims %r" % (read_png_dims(png_path),)
+
+    statuses = [row["status"] for row in status_rows]
+    for expected_status in ("started", "source_ready", "raw_downloaded", "rendered", "uploading", "done"):
+        assert expected_status in statuses, "missing status %s in %r" % (expected_status, statuses)
+    phase_labels = [row["result_data"].get("phase_label") for row in status_rows if row["result_data"]]
+    for label in (
+        "Color2Bilevel: source",
+        "Color2Bilevel: raw download",
+        "Color2Bilevel: threshold + encode",
+        "Color2Bilevel: upload",
+    ):
+        assert label in phase_labels, "missing phase label %r in %r" % (label, phase_labels)
+
+    cleanup(tif_path, png_path, csv_path)
+    print("  handler_bilevel from_raw_color: OK (threshold=%d)" % body["threshold"])
+    print("=== Color2Bilevel handler runtime PASSED ===")
+
+
 # ── solve_proximity_stats Tests (all metrics) ────────────────────────────
 
 def _write_sps_bin(path):
@@ -1005,109 +1403,6 @@ def test_solve_proximity_stats():
     print("=== solve_proximity_stats tests PASSED ===")
 
 
-# ── roots2pix solve_score smoke ──────────────────────────────────────────
-
-def test_roots2pix_solve_score():
-    """Smoke test: roots2pix --color=solve_score --solve_metric=proximity."""
-    print("\n--- roots2pix solve_score smoke ---")
-
-    r2p_path = "/src/roots2pix"
-    if not os.path.exists(r2p_path):
-        print("  SKIP: %s not found (not yet compiled)" % r2p_path)
-        return
-
-    # Write tiny 4x4 pixel test: 2 solves, degree 2
-    sps_bin = "/tmp/r2p_ss_test.bin"
-    with open(sps_bin, "wb") as f:
-        for roots in [[(0, 0), (1, 0)], [(0, 0), (0.5, 0)]]:
-            for re, im in roots:
-                f.write(struct.pack("<ff", re, im))
-
-    r = subprocess.run([
-        r2p_path, sps_bin, "/tmp/r2p_ss_pix",
-        "--width=4", "--height=4", "--tile_size=4",
-        "--n_tile_cols=1", "--n_tile_rows=1",
-        "--center_re=0.5", "--center_im=0",
-        "--scale=2", "--degree=2",
-        "--color=solve_score",
-        "--solve_metric=proximity",
-        "--solve_score_clip_lo=0.0",
-        "--solve_score_clip_hi=2.0",
-        "--solve_score_cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9",
-    ], capture_output=True, text=True, timeout=10)
-    assert r.returncode == 0, "roots2pix solve_score failed: " + r.stderr[:200]
-    meta = json.loads(r.stdout)
-    assert meta["roots_plotted"] >= 0
-    print("  roots2pix --color=solve_score: OK (plotted=%d, clipped=%d)" %
-          (meta["roots_plotted"], meta["roots_clipped"]))
-
-    # Smoke for clusteriness (v2 metric)
-    r = subprocess.run([
-        r2p_path, sps_bin, "/tmp/r2p_ss_pix",
-        "--width=4", "--height=4", "--tile_size=4",
-        "--n_tile_cols=1", "--n_tile_rows=1",
-        "--center_re=0.5", "--center_im=0",
-        "--scale=2", "--degree=2",
-        "--color=solve_score",
-        "--solve_metric=clusteriness",
-        "--solve_score_clip_lo=0.0",
-        "--solve_score_clip_hi=2.0",
-        "--solve_score_cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9",
-    ], capture_output=True, text=True, timeout=10)
-    assert r.returncode == 0, "roots2pix solve_score clusteriness failed: " + r.stderr[:200]
-    meta2 = json.loads(r.stdout)
-    print("  roots2pix --solve_metric=clusteriness: OK (plotted=%d)" % meta2["roots_plotted"])
-
-    # Smoke for max_mod (v4 metric)
-    r = subprocess.run([
-        r2p_path, sps_bin, "/tmp/r2p_ss_pix",
-        "--width=4", "--height=4", "--tile_size=4",
-        "--n_tile_cols=1", "--n_tile_rows=1",
-        "--center_re=0.5", "--center_im=0",
-        "--scale=2", "--degree=2",
-        "--color=solve_score",
-        "--solve_metric=max_mod",
-        "--solve_score_clip_lo=0.0",
-        "--solve_score_clip_hi=2.0",
-        "--solve_score_cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9",
-    ], capture_output=True, text=True, timeout=10)
-    assert r.returncode == 0, "roots2pix solve_score max_mod failed: " + r.stderr[:200]
-    meta3 = json.loads(r.stdout)
-    print("  roots2pix --solve_metric=max_mod: OK (plotted=%d)" % meta3["roots_plotted"])
-
-    # Bin-first color path: when pixel bins drive RGB, native raster should avoid .pix output.
-    cleanup("/tmp/r2p_ss_skip_t0000.pix")
-    cleanup("/tmp/r2p_ss_skipbin_t0000.pbx")
-    r = subprocess.run([
-        r2p_path, sps_bin, "/tmp/r2p_ss_skip",
-        "--width=4", "--height=4", "--tile_size=4",
-        "--n_tile_cols=1", "--n_tile_rows=1",
-        "--center_re=0.5", "--center_im=0",
-        "--scale=2", "--degree=2",
-        "--color=solve_score",
-        "--solve_metric=proximity",
-        "--solve_score_clip_lo=0.0",
-        "--solve_score_clip_hi=2.0",
-        "--solve_score_cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9",
-        "--pixel_bin_prefix=/tmp/r2p_ss_skipbin",
-        "--skip_pix_output=1",
-    ], capture_output=True, text=True, timeout=10)
-    assert r.returncode == 0, "roots2pix skip_pix_output failed: " + r.stderr[:200]
-    meta4 = json.loads(r.stdout)
-    assert meta4["skip_pix_output"] is True
-    assert not os.path.exists("/tmp/r2p_ss_skip_t0000.pix"), "skip_pix_output wrote .pix"
-    assert os.path.exists("/tmp/r2p_ss_skipbin_t0000.pbx"), "skip_pix_output did not write .pbx"
-    print("  roots2pix --skip_pix_output: OK")
-
-    # Clean up any .pix files
-    import glob
-    for f in glob.glob("/tmp/r2p_ss_pix*.pix"):
-        cleanup(f)
-    cleanup("/tmp/r2p_ss_skipbin_t0000.pbx")
-    cleanup(sps_bin)
-    print("=== roots2pix solve_score smoke PASSED ===")
-
-
 # ── Catalog Degree Verification ──────────────────────────────────────────
 
 def test_catalog_degrees():
@@ -1147,45 +1442,20 @@ def test_catalog_degrees():
     print("=== Catalog degree verification PASSED ===")
 
 
-def test_pixbinassemble_dense_layers():
-    print("\n--- pixbinassemble dense layers ---")
-
-    bin_path = "/src/pixbinassemble"
-    if not os.path.exists(bin_path):
-        print("  SKIP: %s not found (not yet compiled)" % bin_path)
-        return
-
-    out_path = "/tmp/pixbin_dense_layers.bin"
-    payload = bytes([255, 1, 255, 3]) + bytes([2, 255, 4, 255])
-    r = subprocess.run(
-        [
-            bin_path,
-            "--tile_w=2",
-            "--tile_h=2",
-            "--empty=255",
-            "--output=" + out_path,
-            "--input_format=dense_layers",
-        ],
-        input=payload,
-        capture_output=True,
-        timeout=10,
-    )
-    assert r.returncode == 0, "pixbinassemble dense_layers failed: " + r.stderr.decode("utf-8", "replace")[:200]
-    with open(out_path, "rb") as f:
-        data = f.read()
-    assert data == bytes([2, 1, 4, 3]), "pixbinassemble dense merge mismatch: %r" % (data,)
-    meta = json.loads(r.stdout.decode("utf-8"))
-    assert meta["layers"] == 2
-    assert meta["input_format"] == "dense_layers"
-    cleanup(out_path)
-    print("  dense layers: OK")
-
-
 # ── Main ─────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     print("--- Binary validation ---")
-    for bin_path in ["/src/sweep", "/src/sweep_mt", "/src/sweep_cm", "/src/sweep_coeffgen", "/src/solve_palette_chunk_mt", "/src/pixbinassemble"]:
+    for bin_path in [
+        "/src/sweep",
+        "/src/sweep_mt",
+        "/src/sweep_cm",
+        "/src/sweep_coeffgen",
+        "/src/solve_palette_chunk_mt",
+        "/src/bilevel_section_raster",
+        "/src/bilevel_merge",
+        "/src/raw_to_bilevel",
+    ]:
         magic = open(bin_path, "rb").read(4)
         assert magic == b"\x7fELF", "%s is not an ELF binary" % bin_path
         print("  %s: ELF OK" % bin_path)
@@ -1200,9 +1470,11 @@ if __name__ == "__main__":
     test_palette_chunk_mt_param_sectioned_runtime()
     test_render_preview()
     test_resize_runtime()
+    test_bilevel_section_raster_runtime()
+    test_bilevel_merge_assemble_runtime()
+    test_raw_to_bilevel_runtime()
+    test_color_to_bilevel_handler_runtime()
     test_solve_proximity_stats()
-    test_roots2pix_solve_score()
-    test_pixbinassemble_dense_layers()
     test_catalog_degrees()
 
     print("\n=== All Docker runtime tests PASSED ===")

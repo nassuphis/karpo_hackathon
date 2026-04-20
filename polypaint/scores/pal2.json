@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "name": "pal2",
+  "chain": [
+    [
+      "t2_re",
+      "pm",
+      "0.1"
+    ],
+    [
+      "spread",
+      "cf",
+      "0.1"
+    ],
+    [
+      "avg"
+    ]
+  ],
+  "metric": "t2_re",
+  "display": "t2_re(pm,q=0.1%) spread(cf,q=0.1%) avg",
+  "program_spec": "m0;m1;avg"
+}

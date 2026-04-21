@@ -4,8 +4,8 @@ const { test, expect } = require('@playwright/test');
 // Stub API responses for the DeepZoom inventory
 const MOCK_EXPORTS = [
   { job_id: 'compute_old', source_key: 'renders/render_old/color/color_old/image.jpeg', width: 4096, height: 4096, created_at: '2026-03-20T10:00:00', tiles_uploaded: 100, dzi_url: 'https://dz/job_old.dzi' },
-  { job_id: 'compute_mid', source_key: 'renders/render_mid/bilevel/bilevel_mid/image.tif', width: 8192, height: 8192, created_at: '2026-03-22T12:00:00', tiles_uploaded: 400, dzi_url: 'https://dz/job_mid.dzi', share_url: 'https://dz/job_mid/viewer.html' },
-  { job_id: 'compute_new', source_key: 'renders/render_new/color/color_new/image.jpeg', width: 16384, height: 16384, created_at: '2026-03-25T14:00:00', tiles_uploaded: 1600, dzi_url: 'https://dz/job_new.dzi', share_url: 'https://dz/job_new/viewer.html' },
+  { job_id: 'compute_mid', source_key: 'renders/render_mid/bilevel/bilevel_mid/image.tif', width: 8192, height: 8192, created_at: '2026-03-22T12:00:00', tiles_uploaded: 400, dzi_url: 'https://dz/job_mid.dzi', share_url: 'https://dz/job_mid/viewer.html', viewport_min_re: -2.5, viewport_max_re: 2.5, viewport_min_im: -2.5, viewport_max_im: 2.5, source_rotation: 0.25 },
+  { job_id: 'compute_new', source_key: 'renders/render_new/color/color_new/image.jpeg', width: 16384, height: 16384, created_at: '2026-03-25T14:00:00', tiles_uploaded: 1600, dzi_url: 'https://dz/job_new.dzi', share_url: 'https://dz/job_new/viewer.html', viewport_min_re: -3.5, viewport_max_re: 1.25, viewport_min_im: -0.75, viewport_max_im: 2.0, source_rotation: 0 },
 ];
 
 test.beforeEach(async ({ page }) => {
@@ -48,12 +48,32 @@ test.beforeEach(async ({ page }) => {
   await page.evaluate((mockExports) => {
     // Stub OpenSeadragon
     window.OpenSeadragon = function () {
-      return {
-        addHandler() {}, destroy() {},
+      const handlers = {};
+      const viewer = {
+        addHandler(name, fn) {
+          if (!handlers[name]) handlers[name] = [];
+          handlers[name].push(fn);
+        },
+        destroy() {},
+        __emit(name) {
+          (handlers[name] || []).forEach((fn) => fn());
+        },
         world: { getItemAt() { return null; }, getItemCount() { return 0; } },
-        viewport: { getZoom() { return 1; }, getCenter() { return { x: 0, y: 0 }; } },
+        viewport: {
+          getZoom() { return 1; },
+          getCenter() { return { x: 0, y: 0 }; },
+          getBounds() { return { x: 0, y: 0, width: 1, height: 1 }; },
+          viewportToImageRectangle() {
+            const rect = window._dzStubImageRect || { x: 0, y: 0, width: 16384, height: 16384 };
+            return { ...rect };
+          },
+        },
       };
+      window._lastDzViewer = viewer;
+      setTimeout(() => viewer.__emit('open'), 0);
+      return viewer;
     };
+    window._dzStubImageRect = { x: 0, y: 0, width: 16384, height: 16384 };
     window._osdViewer = null;
 
     // Override lambdaPost to handle storage calls locally
@@ -97,6 +117,42 @@ test.describe('DeepZoom Inventory', () => {
     const firstRow = page.locator('.dz-inv-row').first();
     const bg = await firstRow.evaluate(el => el.style.background);
     expect(bg).toContain('rgb(42, 42, 78)');
+  });
+
+  test('row with viewport metadata shows populated readout', async ({ page }) => {
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
+    await expect(page.locator('#deepzoom-viewport-readout')).toContainText('Visible world viewport');
+    await expect(page.locator('#deepzoom-viewport-readout')).toContainText('min_re=-3.500000');
+    await expect(page.locator('#deepzoom-viewport-readout')).toContainText('max_im=2.000000');
+  });
+
+  test('readout updates when the mocked OSD viewport changes', async ({ page }) => {
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
+    await page.evaluate(() => {
+      window._dzStubImageRect = { x: 4096, y: 4096, width: 4096, height: 4096 };
+      window._osdViewer.__emit('animation');
+    });
+    await expect(page.locator('#deepzoom-viewport-readout')).toContainText('min_re=-2.312500');
+    await expect(page.locator('#deepzoom-viewport-readout')).toContainText('max_re=-1.125000');
+    await expect(page.locator('#deepzoom-viewport-readout')).toContainText('min_im=0.625000');
+    await expect(page.locator('#deepzoom-viewport-readout')).toContainText('max_im=1.312500');
+  });
+
+  test('row without viewport metadata shows unavailable state', async ({ page }) => {
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
+    await page.locator('.dz-inv-row').last().click();
+    await expect(page.locator('#deepzoom-viewport-readout')).toHaveText('Visible world viewport unavailable');
+  });
+
+  test('row with source rotation shows rotation-unavailable state', async ({ page }) => {
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
+    await page.locator('.dz-inv-row').nth(1).click();
+    await expect(page.locator('#deepzoom-viewport-readout')).toContainText('Rotated render');
+    await expect(page.locator('#deepzoom-viewport-readout')).toContainText('unavailable with rotation');
   });
 
   test('clicking a row selects it and highlights it', async ({ page }) => {
@@ -237,6 +293,18 @@ test.describe('DeepZoom Inventory', () => {
   test('GotoRender jumps to the source render job and artifact', async ({ page }) => {
     await page.evaluate(() => {
       window._dzRenderJumps = [];
+      window._dzPopulateCalls = 0;
+      window._dzForwardedViewport = null;
+      window._dzSelectedViewMode = null;
+      window.populateSelectedRenderArtifact = function () {
+        window._dzPopulateCalls += 1;
+      };
+      window._setRenderExplicitViewportBounds = function (bounds) {
+        window._dzForwardedViewport = bounds;
+      };
+      window.selectViewMode = function (mode) {
+        window._dzSelectedViewMode = mode;
+      };
       window.refreshRenderArtifacts = async function (jobId, opts) {
         window._dzRenderJumps.push({ jobId, opts: opts || null });
         return { families: { color: [], bilevel: [], coeffs: [], palette: [], pdf: [] }, calc: {} };
@@ -251,6 +319,38 @@ test.describe('DeepZoom Inventory', () => {
       jobId: 'render_new',
       opts: { selectFamily: 'color', selectArtifactId: 'color_new' },
     });
+    await expect.poll(async () => page.evaluate(() => window._dzPopulateCalls)).toBe(1);
+    await expect.poll(async () => page.evaluate(() => window._dzSelectedViewMode)).toBe('explicit');
+    const forwarded = await page.evaluate(() => window._dzForwardedViewport);
+    expect(forwarded).toEqual({
+      minRe: -3.5,
+      maxRe: 1.25,
+      minIm: -0.75,
+      maxIm: 2,
+    });
+  });
+
+  test('GotoRender does not forward viewport when source rotation is non-zero', async ({ page }) => {
+    await page.evaluate(() => {
+      window._dzForwardedViewport = null;
+      window._dzSelectedViewMode = null;
+      window.populateSelectedRenderArtifact = function () {};
+      window._setRenderExplicitViewportBounds = function (bounds) {
+        window._dzForwardedViewport = bounds;
+      };
+      window.selectViewMode = function (mode) {
+        window._dzSelectedViewMode = mode;
+      };
+      window.refreshRenderArtifacts = async function () {
+        return { families: { color: [], bilevel: [], coeffs: [], palette: [], pdf: [] }, calc: {} };
+      };
+    });
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
+    await page.locator('.dz-inv-row').nth(1).click();
+    await page.click('#btn-dz-goto-render');
+    const forwarded = await page.evaluate(() => window._dzForwardedViewport);
+    expect(forwarded).toBeNull();
   });
 
   test('GotoRender stays disabled for legacy exports without source keys', async ({ page }) => {
@@ -276,6 +376,49 @@ test.describe('DeepZoom Inventory', () => {
     await page.click('.tab-btn:text("DeepZoom")');
     await expect(page.locator('.dz-inv-row')).toHaveCount(1, { timeout: 10000 });
     await expect(page.locator('#btn-dz-goto-render')).toBeDisabled();
+  });
+
+  test('GotoRender opens legacy flat render jobs without populating the wrong artifact', async ({ page }) => {
+    await page.evaluate(() => {
+      window._dzPopulateCalls = 0;
+      window.populateSelectedRenderArtifact = function () {
+        window._dzPopulateCalls += 1;
+      };
+      window.lambdaPost = async function (name, body, path) {
+        if (name === 'storage' && path === '/list-deepzoom') {
+          return {
+            exports: [{
+              job_id: 'legacy_compute',
+              export_id: 'dz_legacy_flat',
+              source_key: 'renders/render_flat/image_bilevel.tif',
+              width: 2048,
+              height: 2048,
+              created_at: '2026-03-26T09:00:00',
+              tiles_uploaded: 12,
+              dzi_url: 'https://dz/legacy-flat.dzi',
+            }],
+            count: 1,
+          };
+        }
+        return {};
+      };
+      window._dzRenderJumps = [];
+      window.refreshRenderArtifacts = async function (jobId, opts) {
+        window._dzRenderJumps.push({ jobId, opts: opts || null });
+        return { families: { color: [], bilevel: [], coeffs: [], palette: [], pdf: [] }, calc: {} };
+      };
+    });
+    await page.click('.tab-btn:text("DeepZoom")');
+    await expect(page.locator('.dz-inv-row')).toHaveCount(1, { timeout: 10000 });
+    await page.click('#btn-dz-goto-render');
+    await expect(page.locator('#render-results-dir')).toHaveValue('render_flat');
+    const jumps = await page.evaluate(() => window._dzRenderJumps);
+    expect(jumps).toContainEqual({
+      jobId: 'render_flat',
+      opts: {},
+    });
+    await expect.poll(async () => page.evaluate(() => window._dzPopulateCalls)).toBe(0);
+    await expect(page.locator('#render-status')).toContainText('without populate');
   });
 
   test('rows with share_url render an Open link', async ({ page }) => {

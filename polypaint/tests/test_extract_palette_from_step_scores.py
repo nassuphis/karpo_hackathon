@@ -55,6 +55,12 @@ class TestExtractPaletteFromStepScores(unittest.TestCase):
             "step_count": "4",
             "step_scores_grid_n": "2",
             "background_color": "000000",
+            "view_mode": "explicit",
+            "min_re": "-3.5",
+            "max_re": "1.25",
+            "min_im": "-0.75",
+            "max_im": "2.0",
+            "rotation": "0.125",
         }
         puts = {}
 
@@ -146,6 +152,13 @@ class TestExtractPaletteFromStepScores(unittest.TestCase):
         palette_sidecar = json.loads(puts["renders/j/palettes/pal_color_src/greyscale.meta.json"]["body"].decode())
         self.assertEqual(palette_sidecar["version"], 2)
         self.assertEqual(palette_sidecar["artifact_family"], "palette")
+        palette_meta = json.loads(puts["renders/j/palettes/pal_color_src/meta.json"]["body"].decode())
+        self.assertEqual(palette_meta["view_mode"], "explicit")
+        self.assertEqual(palette_meta["min_re"], "-3.5")
+        self.assertEqual(palette_meta["max_re"], "1.25")
+        self.assertEqual(palette_meta["min_im"], "-0.75")
+        self.assertEqual(palette_meta["max_im"], "2.0")
+        self.assertEqual(palette_meta["rotation"], "0.125")
         color_overlay = json.loads(puts["renders/j/color/color_src/meta.json"]["body"].decode())
         self.assertEqual(color_overlay["associated_palette_id"], "pal_color_src")
         self.assertEqual(color_overlay["associated_palette_mode"], "generated")

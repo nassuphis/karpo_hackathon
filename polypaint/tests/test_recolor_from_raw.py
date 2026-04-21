@@ -43,6 +43,12 @@ class TestRecolorFromRaw(unittest.TestCase):
             "height": "2",
             "pix": "2",
             "tile_size": "2",
+            "view_mode": "explicit",
+            "min_re": "-3.5",
+            "max_re": "1.25",
+            "min_im": "-0.75",
+            "max_im": "2.0",
+            "rotation": "0.125",
             "color_mode": "solve_score",
             "palette": "inferno",
             "repalette_capable": "false",
@@ -147,6 +153,13 @@ class TestRecolorFromRaw(unittest.TestCase):
         self.assertEqual(raw_sidecar["keys"]["raw_key"], "renders/j/color/color_new/greyscale.raw")
         self.assertEqual(raw_sidecar["keys"]["image_key"], "renders/j/color/color_new/image.jpeg")
         self.assertEqual(raw_sidecar["histogram"], [1, 1, 1, 1] + [0] * 252)
+        color_overlay = json.loads(puts["renders/j/color/color_new/meta.json"]["body"].decode())
+        self.assertEqual(color_overlay["view_mode"], "explicit")
+        self.assertEqual(color_overlay["min_re"], "-3.5")
+        self.assertEqual(color_overlay["max_re"], "1.25")
+        self.assertEqual(color_overlay["min_im"], "-0.75")
+        self.assertEqual(color_overlay["max_im"], "2.0")
+        self.assertEqual(color_overlay["rotation"], "0.125")
         self.assertEqual(
             copies,
             [{

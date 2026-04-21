@@ -649,6 +649,12 @@ class TestBilevelHandler(unittest.TestCase):
                 "raw_key": "renders/job/color/src/greyscale.raw",
                 "raw_meta_key": "renders/job/color/src/greyscale.meta.json",
                 "pix": "64",
+                "view_mode": "explicit",
+                "min_re": "-3.5",
+                "max_re": "1.25",
+                "min_im": "-0.75",
+                "max_im": "2.0",
+                "rotation": "0.125",
             },
         }
         mock_load_json.return_value = {"version": 2}
@@ -695,6 +701,12 @@ class TestBilevelHandler(unittest.TestCase):
         self.assertEqual(uploads[0][0], "renders/job/bilevel/bil_1/image.tif")
         self.assertEqual(uploads[0][2]["postprocess_kind"], "color_to_bilevel")
         self.assertEqual(uploads[0][2]["threshold"], "17")
+        self.assertEqual(uploads[0][2]["view_mode"], "explicit")
+        self.assertEqual(uploads[0][2]["min_re"], "-3.5")
+        self.assertEqual(uploads[0][2]["max_re"], "1.25")
+        self.assertEqual(uploads[0][2]["min_im"], "-0.75")
+        self.assertEqual(uploads[0][2]["max_im"], "2.0")
+        self.assertEqual(uploads[0][2]["rotation"], "0.125")
         self.assertEqual(uploads[1][0], "renders/job/bilevel/bil_1/preview.png")
         statuses = [call.args[2] for call in mock_report.call_args_list]
         self.assertIn("started", statuses)

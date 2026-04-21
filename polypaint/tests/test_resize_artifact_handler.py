@@ -70,6 +70,12 @@ class TestResizeArtifactHandler(unittest.TestCase):
                 "width": "3000",
                 "height": "2000",
                 "pix": "3000",
+                "view_mode": "explicit",
+                "min_re": "-3.5",
+                "max_re": "1.25",
+                "min_im": "-0.75",
+                "max_im": "2.0",
+                "rotation": "0.125",
                 "color_mode": "solve_score",
                 "palette": "tri_redgold",
                 "solve_metric": "spread",
@@ -168,6 +174,12 @@ class TestResizeArtifactHandler(unittest.TestCase):
         self.assertEqual(sidecar["associated_palette_quantile"], "0.01")
         self.assertEqual(sidecar["associated_palette_omega"], "4")
         self.assertEqual(sidecar["associated_palette_omega_enabled"], "false")
+        self.assertEqual(sidecar["view_mode"], "explicit")
+        self.assertEqual(sidecar["min_re"], "-3.5")
+        self.assertEqual(sidecar["max_re"], "1.25")
+        self.assertEqual(sidecar["min_im"], "-0.75")
+        self.assertEqual(sidecar["max_im"], "2.0")
+        self.assertEqual(sidecar["rotation"], "0.125")
         self.assertIn("resize_params", sidecar)
         resize_meta = json.loads(sidecar["resize_params"])
         self.assertEqual(resize_meta["engine"], "thumbnail")

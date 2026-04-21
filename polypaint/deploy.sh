@@ -1190,11 +1190,13 @@ cp lambda/handler_pdf_artifact.py lambda/shared.py lambda/color_artifact_meta.py
 cd "$PDF_ARTIFACT_DIR" && zip -r9 /tmp/polypaint-pdf-artifact.zip . -q && cd "$SCRIPT_DIR"
 echo "  PDFArt:  $(du -h /tmp/polypaint-pdf-artifact.zip | cut -f1)  (spread builder + python pdf layer)"
 
-# DeepZoom Export: handler_deepzoom_export.py + shared.py + dz_export + raw-sidecar colorization helpers (needs libvips layer)
+# DeepZoom Export: handler_deepzoom_export.py + shared.py + source metadata helpers + dz_export + raw-sidecar colorization helpers (needs libvips layer)
 DZ_EXPORT_DIR=/tmp/polypaint-deepzoom-export
 rm -rf "$DZ_EXPORT_DIR"
 mkdir -p "$DZ_EXPORT_DIR"
-cp lambda/handler_deepzoom_export.py lambda/shared.py lambda/raw_sidecar.py lambda/deepzoom_viewer_template.html "$DZ_EXPORT_DIR/"
+cp lambda/handler_deepzoom_export.py lambda/shared.py lambda/raw_sidecar.py \
+   lambda/color_artifact_meta.py lambda/solve_score_chain.py \
+   lambda/deepzoom_viewer_template.html "$DZ_EXPORT_DIR/"
 cp lambda/dz_export lambda/pixel_bins_render lambda/raw2jpeg "$DZ_EXPORT_DIR/"
 chmod +x "$DZ_EXPORT_DIR"/dz_export "$DZ_EXPORT_DIR"/pixel_bins_render "$DZ_EXPORT_DIR"/raw2jpeg
 cd "$DZ_EXPORT_DIR" && zip -r9 /tmp/polypaint-deepzoom-export.zip . -q && cd "$SCRIPT_DIR"
@@ -1204,7 +1206,9 @@ echo "  DzExp:   $(du -h /tmp/polypaint-deepzoom-export.zip | cut -f1)  (dz_expo
 DZ_FROM_RAW_DIR=/tmp/polypaint-deepzoom-from-raw
 rm -rf "$DZ_FROM_RAW_DIR"
 mkdir -p "$DZ_FROM_RAW_DIR"
-cp lambda/handler_deepzoom_from_raw.py lambda/handler_deepzoom_export.py lambda/shared.py lambda/raw_sidecar.py lambda/deepzoom_viewer_template.html "$DZ_FROM_RAW_DIR/"
+cp lambda/handler_deepzoom_from_raw.py lambda/handler_deepzoom_export.py lambda/shared.py lambda/raw_sidecar.py \
+   lambda/color_artifact_meta.py lambda/solve_score_chain.py \
+   lambda/deepzoom_viewer_template.html "$DZ_FROM_RAW_DIR/"
 cp lambda/dz_export lambda/pixel_bins_render lambda/raw2jpeg "$DZ_FROM_RAW_DIR/"
 chmod +x "$DZ_FROM_RAW_DIR"/dz_export "$DZ_FROM_RAW_DIR"/pixel_bins_render "$DZ_FROM_RAW_DIR"/raw2jpeg
 cd "$DZ_FROM_RAW_DIR" && zip -r9 /tmp/polypaint-deepzoom-from-raw.zip . -q && cd "$SCRIPT_DIR"
@@ -1279,11 +1283,11 @@ chmod +x "$PAL_CHUNK_DIR"/solve_palette_chunk "$PAL_CHUNK_DIR"/solve_palette_chu
 cd "$PAL_CHUNK_DIR" && zip -r9 /tmp/polypaint-palette-chunk.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalChnk: $(du -h /tmp/polypaint-palette-chunk.zip | cut -f1)  (chunk scorer)"
 
-# Palette Finalize: handler_palette_finalize.py + shared.py + palette_bins_render + raw2jpeg (needs libvips layer)
+# Palette Finalize: handler_palette_finalize.py + shared.py + source metadata helpers + palette_bins_render + raw2jpeg (needs libvips layer)
 PAL_FINAL_DIR=/tmp/polypaint-palette-finalize
 rm -rf "$PAL_FINAL_DIR"
 mkdir -p "$PAL_FINAL_DIR"
-cp lambda/handler_palette_finalize.py lambda/shared.py lambda/solve_score_chain.py "$PAL_FINAL_DIR/"
+cp lambda/handler_palette_finalize.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$PAL_FINAL_DIR/"
 cp lambda/palette_bins_render lambda/raw2jpeg "$PAL_FINAL_DIR/"
 chmod +x "$PAL_FINAL_DIR"/palette_bins_render "$PAL_FINAL_DIR"/raw2jpeg
 cd "$PAL_FINAL_DIR" && zip -r9 /tmp/polypaint-palette-finalize.zip . -q && cd "$SCRIPT_DIR"

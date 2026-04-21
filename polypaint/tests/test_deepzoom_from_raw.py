@@ -25,10 +25,25 @@ class TestDeepZoomFromRaw(unittest.TestCase):
     @patch("handler_deepzoom_export.report_status")
     @patch("handler_deepzoom_export.s3")
     @patch("handler_deepzoom_export.subprocess")
-    def test_export_from_raw_wrapper_uses_exact_source_image(self, mock_subprocess, mock_s3, mock_report):
+    @patch("handler_deepzoom_export.load_color_artifact_head")
+    def test_export_from_raw_wrapper_uses_exact_source_image(self, mock_load_head, mock_subprocess, mock_s3, mock_report):
         import handler_deepzoom_from_raw as mod
 
         put_calls = []
+
+        mock_load_head.return_value = {
+            "artifact_id": "color_src",
+            "image_key": "renders/test_dz/color/color_src/image.jpeg",
+            "metadata": {
+                "artifact_id": "color_src",
+                "family": "color",
+                "min_re": "-2.5",
+                "max_re": "2.5",
+                "min_im": "-2.5",
+                "max_im": "2.5",
+                "rotation": "0",
+            },
+        }
 
         def get_object(Bucket=None, Key=None):
             if Key == "renders/test_dz/color/color_src/image.jpeg":
@@ -81,6 +96,13 @@ class TestDeepZoomFromRaw(unittest.TestCase):
         self.assertEqual(len(meta_puts), 1)
         manifest = json.loads(meta_puts[0]["Body"])
         self.assertEqual(manifest["source_kind"], "image")
+        self.assertEqual(manifest["source_artifact_id"], "color_src")
+        self.assertEqual(manifest["source_family"], "color")
+        self.assertEqual(manifest["viewport_min_re"], -2.5)
+        self.assertEqual(manifest["viewport_max_re"], 2.5)
+        self.assertEqual(manifest["viewport_min_im"], -2.5)
+        self.assertEqual(manifest["viewport_max_im"], 2.5)
+        self.assertEqual(manifest["source_rotation"], 0.0)
         self.assertNotIn("raw_key", manifest)
         statuses = [call.args[2] for call in mock_report.call_args_list]
         self.assertEqual(statuses, ["started", "generating", "uploading", "done"])

@@ -9,17 +9,21 @@ Public access via bucket policy on deepzoom/ prefix (no per-object ACL).
 """
 import json
 import os
+import re
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 
 import boto3
 
+from color_artifact_meta import load_color_artifact_head
 from shared import BUCKET, parse_body, ok_response, report_status, imgpipe_env
 
 s3 = boto3.client("s3")
 DZ_EXPORT = os.path.join(os.path.dirname(__file__), "dz_export")
 VIEWER_TEMPLATE = os.path.join(os.path.dirname(__file__), "deepzoom_viewer_template.html")
+_SOURCE_ARTIFACT_KEY_RE = re.compile(r"^renders/([^/]+)/(color|bilevel|coeffs|palettes)/([^/]+)/[^/]+$")
+_SOURCE_FAMILY_DIR_MAP = {"color": "color", "bilevel": "bilevel", "coeffs": "coeffs", "palettes": "palette"}
 
 
 def _render_viewer(job_id, export_id, created_at):
@@ -38,6 +42,86 @@ def _read_body_to_path(obj_body, path):
                 fh.write(chunk)
         else:
             fh.write(obj_body.read())
+
+
+def _read_json_key(key):
+    obj = s3.get_object(Bucket=BUCKET, Key=key)
+    body = obj["Body"].read()
+    data = json.loads(body) if body else {}
+    if not isinstance(data, dict):
+        raise RuntimeError(f"Expected JSON object in {key}")
+    return data
+
+
+def _source_ref_from_key(source_key):
+    match = _SOURCE_ARTIFACT_KEY_RE.match(str(source_key or "").strip())
+    if not match:
+        return {
+            "job_id": "",
+            "family_dir": "",
+            "family": "",
+            "artifact_id": "",
+        }
+    family_dir = match.group(2)
+    return {
+        "job_id": match.group(1),
+        "family_dir": family_dir,
+        "family": _SOURCE_FAMILY_DIR_MAP.get(family_dir, ""),
+        "artifact_id": match.group(3),
+    }
+
+
+def _coerce_finite_float(value):
+    if value in ("", None):
+        return None
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not (num == num and num not in (float("inf"), float("-inf"))):
+        return None
+    return num
+
+
+def _load_direct_source_metadata(source_key):
+    ref = _source_ref_from_key(source_key)
+    meta = {}
+    try:
+        if ref["family"] == "color" and ref["job_id"] and ref["artifact_id"]:
+            head = load_color_artifact_head(s3, BUCKET, ref["job_id"], ref["artifact_id"])
+            meta = dict(head.get("metadata", {}) or {})
+        elif ref["family"] == "palette" and ref["job_id"] and ref["artifact_id"]:
+            meta = _read_json_key(f"renders/{ref['job_id']}/palettes/{ref['artifact_id']}/meta.json")
+        elif ref["family"] in ("bilevel", "coeffs"):
+            head = s3.head_object(Bucket=BUCKET, Key=source_key)
+            meta = dict(head.get("Metadata", {}) or {})
+        else:
+            head = s3.head_object(Bucket=BUCKET, Key=source_key)
+            meta = dict(head.get("Metadata", {}) or {})
+    except Exception:
+        meta = {}
+    return ref, meta
+
+
+def _manifest_source_fields(source_key):
+    ref, meta = _load_direct_source_metadata(source_key)
+    manifest = {
+        "source_key": source_key,
+        "source_artifact_id": str(meta.get("artifact_id") or ref["artifact_id"] or ""),
+        "source_family": str(meta.get("family") or ref["family"] or ""),
+        "source_rotation": _coerce_finite_float(meta.get("rotation")),
+    }
+    if manifest["source_rotation"] is None:
+        manifest["source_rotation"] = 0.0
+    viewport = {
+        "viewport_min_re": _coerce_finite_float(meta.get("min_re")),
+        "viewport_max_re": _coerce_finite_float(meta.get("max_re")),
+        "viewport_min_im": _coerce_finite_float(meta.get("min_im")),
+        "viewport_max_im": _coerce_finite_float(meta.get("max_im")),
+    }
+    if all(value is not None for value in viewport.values()):
+        manifest.update(viewport)
+    return manifest
 
 
 def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id="deepzoom_export"):
@@ -124,6 +208,7 @@ def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id
         dzi_url = f"https://{BUCKET}.s3.{region}.amazonaws.com/{s3_prefix}/image.dzi"
         share_url = f"https://{BUCKET}.s3.{region}.amazonaws.com/{s3_prefix}/viewer.html"
         created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        source_manifest = _manifest_source_fields(source_key)
 
         # Upload viewer.html first — meta.json advertises share_url,
         # so the viewer must exist before meta is written.
@@ -140,7 +225,6 @@ def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id
             "job_id": job_id,
             "export_id": export_id,
             "created_at": created_at,
-            "source_key": source_key,
             "source_kind": source_kind,
             "dzi_key": f"{s3_prefix}/image.dzi",
             "dzi_url": dzi_url,
@@ -150,6 +234,7 @@ def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id
             "height": meta["height"],
             "tiles_uploaded": uploaded,
         }
+        manifest.update(source_manifest)
         manifest_json = json.dumps(manifest)
         s3.put_object(
             Bucket=BUCKET,

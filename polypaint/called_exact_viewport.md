@@ -890,6 +890,15 @@ or equivalent numerically stable logic.
 
 Rotation remains a separate transform on roots before projection.
 
+For asymmetric bounds, commit to this order of operations:
+
+- rotate in world coordinates first
+- then project into pixels with independent x/y scale from the exact bounds
+
+That means a rotated circular world-space feature can appear as a tilted ellipse
+on square output when `max_re - min_re != max_im - min_im`. This is intended
+for the exact-bounds model and should not be normalized away by later code.
+
 #### Important rule
 
 Do not internally re-square the viewport.

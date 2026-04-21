@@ -37,6 +37,17 @@ ASSOCIATED_PALETTE_KEYS = (
     "associated_palette_raw_meta_key",
     "associated_palette_meta_key",
 )
+VIEWPORT_METADATA_KEYS = (
+    "view_mode",
+    "quantile",
+    "shim",
+    "square_extent",
+    "min_re",
+    "max_re",
+    "min_im",
+    "max_im",
+    "rotation",
+)
 
 
 def _utc_now_iso():
@@ -98,6 +109,13 @@ def _write_overlay(job_id, artifact_id, metadata):
 def _copy_existing_associated_palette_fields(target_metadata, source_metadata):
     _clear_associated_palette(target_metadata)
     for key in ASSOCIATED_PALETTE_KEYS:
+        value = source_metadata.get(key)
+        if value not in ("", None):
+            target_metadata[key] = value
+
+
+def _copy_viewport_metadata(target_metadata, source_metadata):
+    for key in VIEWPORT_METADATA_KEYS:
         value = source_metadata.get(key)
         if value not in ("", None):
             target_metadata[key] = value
@@ -327,6 +345,7 @@ def _render_palette_from_step_scores(job_id, artifact_id, source_meta, task_id):
             "times": "1",
             "using_pass": "0",
         }
+        _copy_viewport_metadata(image_metadata, source_meta)
         if _metadata_size_bytes(image_metadata) > S3_USER_METADATA_LIMIT_BYTES:
             raise RuntimeError("palette image metadata too large before upload")
         with open(image_path, "rb") as image_fh:
@@ -384,6 +403,7 @@ def _render_palette_from_step_scores(job_id, artifact_id, source_meta, task_id):
             "nonzero_pixels": int(sum(histogram[1:])),
             "background_pixels": int(histogram[0]),
         }
+        _copy_viewport_metadata(meta_body, source_meta)
         s3.put_object(
             Bucket=BUCKET,
             Key=meta_key,

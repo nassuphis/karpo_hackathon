@@ -38,6 +38,12 @@ class TestPngExportHandler(unittest.TestCase):
                 "width": "4096",
                 "height": "4096",
                 "pix": "4096",
+                "view_mode": "explicit",
+                "min_re": "-3.5",
+                "max_re": "1.25",
+                "min_im": "-0.75",
+                "max_im": "2.0",
+                "rotation": "0.125",
                 "root_transforms": '[["rotate_roots","0.25"]]',
             },
         }
@@ -94,6 +100,12 @@ class TestPngExportHandler(unittest.TestCase):
         self.assertEqual(image_meta["format"], "png")
         self.assertEqual(image_meta["width"], "4096")
         self.assertEqual(image_meta["height"], "4096")
+        self.assertEqual(image_meta["view_mode"], "explicit")
+        self.assertEqual(image_meta["min_re"], "-3.5")
+        self.assertEqual(image_meta["max_re"], "1.25")
+        self.assertEqual(image_meta["min_im"], "-0.75")
+        self.assertEqual(image_meta["max_im"], "2.0")
+        self.assertEqual(image_meta["rotation"], "0.125")
 
         preview_extra = uploads[preview_key]["extra"]
         self.assertEqual(preview_extra["ContentType"], "image/png")

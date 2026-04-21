@@ -66,6 +66,12 @@ class TestColorRepaletteHandler(unittest.TestCase):
             "height": "2",
             "pix": "2",
             "tile_size": "2",
+            "view_mode": "explicit",
+            "min_re": "-3.5",
+            "max_re": "1.25",
+            "min_im": "-0.75",
+            "max_im": "2.0",
+            "rotation": "0.125",
             "color_mode": "solve_score",
             "palette": "inferno",
             "solve_metric": "crowding",
@@ -157,6 +163,12 @@ class TestColorRepaletteHandler(unittest.TestCase):
         self.assertEqual(encode_payload["metadata"]["repalette_capable"], "true")
         self.assertEqual(encode_payload["metadata"]["pixel_bins_prefix"], "renders/j/color/color_new/pixel_bins/tile_")
         self.assertEqual(encode_payload["metadata"]["derived_from_artifact_id"], "color_src")
+        self.assertEqual(encode_payload["metadata"]["view_mode"], "explicit")
+        self.assertEqual(encode_payload["metadata"]["min_re"], "-3.5")
+        self.assertEqual(encode_payload["metadata"]["max_re"], "1.25")
+        self.assertEqual(encode_payload["metadata"]["min_im"], "-0.75")
+        self.assertEqual(encode_payload["metadata"]["max_im"], "2.0")
+        self.assertEqual(encode_payload["metadata"]["rotation"], "0.125")
 
         preview_fn, preview_payload = invocations[1]
         self.assertEqual(preview_fn, "polypaint-render-preview")

@@ -9,6 +9,7 @@ import time
 
 import boto3
 
+from color_artifact_meta import load_color_artifact_head
 from solve_score_chain import (
     compile_solve_score_chain_or_legacy,
     compiled_solve_score_fingerprint,
@@ -35,6 +36,17 @@ _TMP_BINS = "/tmp/palette_bins_full.bin"
 _TMP_RAW = "/tmp/palette_image.raw"
 _TMP_JPEG = "/tmp/palette_image.jpeg"
 _TMP_PREVIEW = "/tmp/palette_preview.png"
+VIEWPORT_METADATA_KEYS = (
+    "view_mode",
+    "quantile",
+    "shim",
+    "square_extent",
+    "min_re",
+    "max_re",
+    "min_im",
+    "max_im",
+    "rotation",
+)
 
 
 def _cleanup_tmp():
@@ -59,6 +71,13 @@ def _metadata_size_bytes(meta):
         total += len(str(key).encode("utf-8"))
         total += len(str(value).encode("utf-8"))
     return total
+
+
+def _copy_viewport_metadata(target_metadata, source_metadata):
+    for key in VIEWPORT_METADATA_KEYS:
+        value = (source_metadata or {}).get(key)
+        if value not in ("", None):
+            target_metadata[key] = value
 
 
 def _delete_keys(keys):
@@ -162,6 +181,13 @@ def handler(event, context):
     section_bins_prefix = params.get("section_bins_prefix", params.get("chunk_bins_prefix", chunks_prefix + "palette_bins_section_"))
     section_meta_prefix = params.get("section_meta_prefix", params.get("chunk_meta_prefix", chunks_prefix + "meta_section_"))
     source_color_artifact_id = str(params.get("source_color_artifact_id") or "").strip()
+    source_view_meta = {}
+    if source_color_artifact_id:
+        try:
+            source_head = load_color_artifact_head(s3, BUCKET, job_id, source_color_artifact_id)
+            source_view_meta = dict(source_head.get("metadata", {}) or {})
+        except Exception:
+            source_view_meta = {}
 
     progress = attach_contract_warnings({"phase": "palette_finalize", "palette_id": palette_id}, contract_warnings)
     try:
@@ -297,6 +323,7 @@ def handler(event, context):
             "clip_lo": str(bins_meta.get("clip_lo", "")),
             "clip_hi": str(bins_meta.get("clip_hi", "")),
         }
+        _copy_viewport_metadata(metadata, source_view_meta)
         metadata_size = _metadata_size_bytes(metadata)
         if metadata_size > S3_USER_METADATA_LIMIT_BYTES:
             raise RuntimeError(
@@ -364,6 +391,7 @@ def handler(event, context):
         if source_color_artifact_id:
             meta_body["derived_from_color_artifact_id"] = source_color_artifact_id
             meta_body["derivation_kind"] = "extract_palette"
+        _copy_viewport_metadata(meta_body, source_view_meta)
         s3.put_object(Bucket=BUCKET, Key=meta_key, Body=json.dumps(meta_body), ContentType="application/json")
 
         # Cleanup only when this workflow owns the solve-score scratch.

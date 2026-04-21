@@ -2866,6 +2866,13 @@ class TestRenderSummary(unittest.TestCase):
             "job_id": "j", "export_id": "dz_123",
             "created_at": "2026-03-26T10:00:00Z",
             "source_key": "renders/j/image.jpeg",
+            "source_artifact_id": "color_src",
+            "source_family": "color",
+            "source_rotation": 0.0,
+            "viewport_min_re": -3.5,
+            "viewport_max_re": 1.25,
+            "viewport_min_im": -0.75,
+            "viewport_max_im": 2.0,
             "dzi_key": "deepzoom/j/dz_123/image.dzi",
             "dzi_url": "https://bucket.s3.amazonaws.com/deepzoom/j/dz_123/image.dzi",
             "share_url": "https://bucket.s3.amazonaws.com/deepzoom/j/dz_123/viewer.html",
@@ -2889,6 +2896,13 @@ class TestRenderSummary(unittest.TestCase):
         self.assertEqual(dz["export_id"], "dz_123")
         self.assertEqual(dz["created_at"], "2026-03-26T10:00:00Z")
         self.assertEqual(dz["source_key"], "renders/j/image.jpeg")
+        self.assertEqual(dz["source_artifact_id"], "color_src")
+        self.assertEqual(dz["source_family"], "color")
+        self.assertEqual(dz["source_rotation"], 0.0)
+        self.assertEqual(dz["viewport_min_re"], -3.5)
+        self.assertEqual(dz["viewport_max_re"], 1.25)
+        self.assertEqual(dz["viewport_min_im"], -0.75)
+        self.assertEqual(dz["viewport_max_im"], 2.0)
         self.assertEqual(dz["dzi_url"], "https://bucket.s3.amazonaws.com/deepzoom/j/dz_123/image.dzi")
         self.assertEqual(dz["share_url"], "https://bucket.s3.amazonaws.com/deepzoom/j/dz_123/viewer.html")
         self.assertEqual(dz["width"], 8192)
@@ -3351,9 +3365,24 @@ class TestDeepZoomExportPointerWrite(unittest.TestCase):
     @patch("handler_deepzoom_export.report_status")
     @patch("handler_deepzoom_export.s3")
     @patch("handler_deepzoom_export.subprocess")
-    def test_export_writes_meta_and_pointer(self, mock_subprocess, mock_s3, mock_report):
+    @patch("handler_deepzoom_export.load_color_artifact_head")
+    def test_export_writes_meta_and_pointer(self, mock_load_head, mock_subprocess, mock_s3, mock_report):
         """Running the export handler produces two JSON writes with the correct keys."""
         import handler_deepzoom_export as dze
+
+        mock_load_head.return_value = {
+            "artifact_id": "color_src",
+            "image_key": "renders/test_dz/color/color_src/image.jpeg",
+            "metadata": {
+                "artifact_id": "color_src",
+                "family": "color",
+                "min_re": "-1.5",
+                "max_re": "2.25",
+                "min_im": "-0.5",
+                "max_im": "1.75",
+                "rotation": "0",
+            },
+        }
 
         # Mock S3 download
         mock_s3.get_object.return_value = {
@@ -3409,7 +3438,7 @@ class TestDeepZoomExportPointerWrite(unittest.TestCase):
 
             try:
                 dze.handler({"body": json.dumps({
-                    "job_id": "test_dz", "source_key": "renders/test_dz/image_bilevel.tif",
+                    "job_id": "test_dz", "source_key": "renders/test_dz/color/color_src/image.jpeg",
                     "export_id": "dz_test_123"
                 })}, None)
             except Exception:
@@ -3442,6 +3471,13 @@ class TestDeepZoomExportPointerWrite(unittest.TestCase):
         self.assertIn("share_url", manifest)
         self.assertIn("width", manifest)
         self.assertIn("height", manifest)
+        self.assertEqual(manifest["source_artifact_id"], "color_src")
+        self.assertEqual(manifest["source_family"], "color")
+        self.assertEqual(manifest["viewport_min_re"], -1.5)
+        self.assertEqual(manifest["viewport_max_re"], 2.25)
+        self.assertEqual(manifest["viewport_min_im"], -0.5)
+        self.assertEqual(manifest["viewport_max_im"], 1.75)
+        self.assertEqual(manifest["source_rotation"], 0.0)
 
         # share_url must point to viewer.html, not index.html
         self.assertIn("viewer.html", manifest["share_url"])
@@ -3520,6 +3556,8 @@ class TestDeepZoomExportPointerWrite(unittest.TestCase):
         self.assertIn("dz_viewer_test", body)
         # OSD fetches the real DZI descriptor via relative path
         self.assertIn("tileSources: 'image.dzi'", body)
+        self.assertIn("id=\"viewer-viewport-readout\"", body)
+        self.assertIn("fetch('meta.json')", body)
         self.assertNotIn("{job_id}", body, "Template placeholders must be replaced")
         self.assertNotIn("{export_id}", body, "Template placeholders must be replaced")
 
@@ -3545,6 +3583,7 @@ class TestDeepZoomViewerTemplate(unittest.TestCase):
         self.assertIn("job_abc", html)
         self.assertIn("dz_123", html)
         self.assertIn("2026-03-27T12:00:00Z", html)
+        self.assertIn("viewer-viewport-readout", html)
 
     def test_template_is_standalone(self):
         """Viewer HTML must not reference index.html or app APIs."""
@@ -3554,6 +3593,7 @@ class TestDeepZoomViewerTemplate(unittest.TestCase):
         self.assertNotIn("lambdaPost", html)
         self.assertNotIn("localStorage", html)
         self.assertIn("openseadragon", html.lower())
+        self.assertIn("fetch('meta.json')", html)
 
     def test_template_uses_relative_dzi_tilesources(self):
         """tileSources must be 'image.dzi' — OSD fetches the real descriptor."""

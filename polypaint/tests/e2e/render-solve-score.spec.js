@@ -857,6 +857,169 @@ test.describe('Solve Score UI', () => {
     expect(mode).toBe('explicit');
   });
 
+  test('populate clears color root transforms when the artifact saved none', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate(() => {
+      document.getElementById('render-results-dir').value = 'test_rt_clear';
+      _renderLoadedJobId = 'test_rt_clear';
+      _renderActiveFamily = 'color';
+      _setRenderRootTransforms([['rotate_roots', '0.25']]);
+      renderArtifactPanel('test_rt_clear', {
+        calc: { exists: true, N: 4000, degree: 8 },
+        families: {
+          color: [{
+            artifact_id: 'color_rt_clear',
+            created_at: '2026-04-20T12:00:00Z',
+            image_key: 'renders/test_rt_clear/color/color_rt_clear/image.jpeg',
+            image_url: 'https://example.com/rt-clear.jpeg',
+            preview_url: 'https://example.com/rt-clear.png',
+            viewer_url: 'https://example.com/rt-clear.png',
+            file_size: 50000,
+            width: 512,
+            height: 512,
+            color_mode: 'solve_score',
+            format: 'jpeg',
+            view_mode: 'auto',
+            quantile: 0.01,
+            shim: 0.05,
+            rotation: 0,
+            root_transforms: [],
+            palette: 'inferno',
+            solve_metric: 'proximity',
+            solve_score_quantile: 0.001,
+            solve_score_omega: 1,
+            solve_score_omega_enabled: true,
+            solve_score_chain: [['proximity', '0.1']],
+          }],
+          bilevel: [],
+          coeffs: [],
+          palette: [],
+          pdf: [],
+        },
+      });
+      populateSelectedRenderArtifact();
+    });
+
+    await expect.poll(async () => page.evaluate(() => JSON.stringify(_rtChain))).toBe('[]');
+  });
+
+  test('populate restores bilevel camera, root transforms, and section settings', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate(() => {
+      document.getElementById('render-results-dir').value = 'test_bilevel_populate';
+      _renderLoadedJobId = 'test_bilevel_populate';
+      _renderActiveFamily = 'bilevel';
+      _setRenderRootTransforms([['rotate_roots', '0.25']]);
+      renderArtifactPanel('test_bilevel_populate', {
+        calc: { exists: true, N: 4000, degree: 8 },
+        families: {
+          color: [],
+          bilevel: [{
+            artifact_id: 'bilevel_bounds',
+            created_at: '2026-04-20T12:00:00Z',
+            image_key: 'renders/test_bilevel_populate/bilevel/bilevel_bounds/image.tif',
+            image_url: 'https://example.com/bilevel.tif',
+            preview_url: 'https://example.com/bilevel.png',
+            viewer_url: 'https://example.com/bilevel.png',
+            file_size: 50000,
+            width: 1024,
+            height: 1024,
+            format: 'tif',
+            pix: 1024,
+            quality: 95,
+            view_mode: 'explicit',
+            quantile: 0.02,
+            shim: 0.06,
+            min_re: -3.5,
+            max_re: 1.25,
+            min_im: -0.75,
+            max_im: 2.0,
+            rotation: Math.PI / 2,
+            root_transforms: [['rotate_roots', '0.5']],
+            bilevel_section_mode: 'logical_sections',
+            bilevel_section_count: 9,
+            render_execution: { raster_section_mode: 'logical_sections', raster_section_count: 9 },
+          }],
+          coeffs: [],
+          palette: [],
+          pdf: [],
+        },
+      });
+      populateSelectedRenderArtifact();
+    });
+
+    expect(await page.locator('#render-min-re').inputValue()).toBe('-3.5');
+    expect(await page.locator('#render-max-re').inputValue()).toBe('1.25');
+    expect(await page.locator('#render-min-im').inputValue()).toBe('-0.75');
+    expect(await page.locator('#render-max-im').inputValue()).toBe('2');
+    expect(await page.locator('#render-pix').inputValue()).toBe('1024');
+    const state = await page.evaluate(() => ({
+      viewMode: _viewMode,
+      rtChain: _rtChain,
+      bilevelPopupState: _bilevelPopupState,
+    }));
+    expect(state.viewMode).toBe('explicit');
+    expect(state.rtChain).toEqual([{
+      name: 'rotate_roots',
+      params: ['0.5'],
+    }]);
+    expect(state.bilevelPopupState.sectionMode).toBe('logical_sections');
+    expect(state.bilevelPopupState.sectionCount).toBe(9);
+  });
+
+  test('populate restores coeff camera and clears root transforms when saved empty', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate(() => {
+      document.getElementById('render-results-dir').value = 'test_coeff_populate';
+      _renderLoadedJobId = 'test_coeff_populate';
+      _renderActiveFamily = 'coeffs';
+      _setRenderRootTransforms([['rotate_roots', '0.25']]);
+      renderArtifactPanel('test_coeff_populate', {
+        calc: { exists: true, N: 4000, degree: 8 },
+        families: {
+          color: [],
+          bilevel: [],
+          coeffs: [{
+            artifact_id: 'coeff_bounds',
+            created_at: '2026-04-20T12:00:00Z',
+            image_key: 'renders/test_coeff_populate/coeffs/coeff_bounds/image.tif',
+            image_url: 'https://example.com/coeff.tif',
+            preview_url: 'https://example.com/coeff.png',
+            viewer_url: 'https://example.com/coeff.png',
+            file_size: 50000,
+            width: 768,
+            height: 768,
+            format: 'tif',
+            pix: 768,
+            view_mode: 'explicit',
+            quantile: 0.02,
+            shim: 0.06,
+            min_re: -1.5,
+            max_re: 2.25,
+            min_im: -0.5,
+            max_im: 1.75,
+            rotation: 0,
+            root_transforms: [],
+          }],
+          palette: [],
+          pdf: [],
+        },
+      });
+      populateSelectedRenderArtifact();
+    });
+
+    expect(await page.locator('#render-min-re').inputValue()).toBe('-1.5');
+    expect(await page.locator('#render-max-re').inputValue()).toBe('2.25');
+    expect(await page.locator('#render-min-im').inputValue()).toBe('-0.5');
+    expect(await page.locator('#render-max-im').inputValue()).toBe('1.75');
+    const state = await page.evaluate(() => ({
+      viewMode: _viewMode,
+      rtChain: _rtChain,
+    }));
+    expect(state.viewMode).toBe('explicit');
+    expect(state.rtChain).toEqual([]);
+  });
+
   test('viewport quantile and solve-score quantile are independent', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     // Set viewport quantile to 2.0, solve-score metric q to 4.0

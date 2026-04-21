@@ -97,6 +97,7 @@ This must be enforced by:
 
 - [tests/test_deploy_packaging.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_deploy_packaging.py)
 - [scripts/predeploy_check.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/scripts/predeploy_check.sh)
+- the built-in `Running predeploy contract gate...` step inside [deploy.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/deploy.sh)
 
 Packaging-specific hard rule:
 
@@ -109,6 +110,9 @@ bash scripts/predeploy_check.sh
 ```
 
 - Do not wait for `./deploy.sh update` to discover the mismatch.
+- If the task is being called deploy-ready or you are about to actually deploy,
+  the built-in predeploy gate inside `./deploy.sh update` must pass on that same
+  tree. Treat a failing predeploy gate as a hard stop, not as post-hoc feedback.
 - The feature is not ready if `deploy.sh` has stale file lists, even if the
   handler works in direct local tests.
 - For local contract/test commands in this repo, prefer `uv run python` when

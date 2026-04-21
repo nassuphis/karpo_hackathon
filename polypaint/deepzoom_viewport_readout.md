@@ -11,6 +11,14 @@ That means:
 - know the source render viewport
 - map the current OSD image-space viewport back to render-world coordinates
 
+Scope requirement:
+
+- this must work for every DeepZoom-capable image artifact whose image geometry
+  derives from a render viewport
+- that includes direct color/bilevel/coeff images and derived artifacts such as
+  repalette, recolor, Color2Bilevel, TIFF/PNG bilevel exports, resize outputs,
+  and any future image artifact that preserves the same viewport geometry
+
 ## Short Answer
 
 Yes, this is feasible.
@@ -205,131 +213,159 @@ But the non-square case is not fundamentally harder. It is still just:
 
 The only difference is the spans differ.
 
-## Why This Gets Cleaner With Exact Bounds
+## Why This Is Straightforward Now
 
-With the planned exact viewport contract, render artifacts will store canonical:
+Exact viewport bounds are already canonical render metadata for current shipped
+artifacts:
 
 - `min_re`
 - `max_re`
 - `min_im`
 - `max_im`
 
-That makes the DeepZoom readout feature straightforward.
+That means the DeepZoom feature no longer needs to infer the camera from
+`view_mode`, `square_extent`, `quantile`, or `shim` for the common path.
 
-Without canonical bounds, the viewer must reconstruct viewport state from older
-fields like:
+Legacy artifacts and older DeepZoom exports still exist, but they are now the
+exception rather than the main design target.
 
-- `view_mode`
-- `square_extent`
-- `quantile`
-- `shim`
+## Chosen Contract
 
-which is possible for legacy support, but more annoying.
+Choose one contract and use it everywhere:
 
-## Recommended Metadata Contract
+- in-app DeepZoom tab
+- standalone `viewer.html`
+- `GotoRender` handoff
+- artifact writers for any DeepZoom-capable derived image
 
-To make this feature clean, DeepZoom `meta.json` should include either:
+### Canonical choice: Option A everywhere
 
-### Option A: Copy source viewport directly
+DeepZoom `meta.json` must copy the source render viewport and source identity
+directly. Do not make the viewer or the in-app tab perform a second lookup just
+to compute the viewport readout.
 
-Add these fields to DeepZoom manifest:
+Add these fields to DeepZoom `meta.json`:
 
-- `source_job_id`
+- `source_key`
+  already present; keep it
 - `source_artifact_id`
 - `source_family`
 - `viewport_min_re`
 - `viewport_max_re`
 - `viewport_min_im`
 - `viewport_max_im`
-- `source_width`
-- `source_height`
-- `source_rotation` (degrees, for rotation handling; see Rotation section)
+- `source_rotation`
 
-This is the simplest runtime contract for the viewer.
+Do **not** add duplicate `source_width` / `source_height` fields. The manifest
+already contains:
 
-### Option B: Keep only source reference, fetch source artifact meta
+- `width`
+- `height`
 
-DeepZoom manifest keeps:
+and those are the authoritative image dimensions for the linear map.
 
-- `source_key`
-- `source_job_id`
-- `source_artifact_id`
+`source_family` means the source render artifact family as used by the Render
+tab catalog and `source_key` layout:
 
-Then the viewer or app fetches the source render artifact metadata separately.
+- `color`
+- `bilevel`
+- `coeffs`
+- `palette`
 
-This avoids duplicating viewport metadata, but requires another lookup.
+`pdf` is out of scope; the Render tab does not DeepZoom PDFs.
 
-Recommendation:
+### No second lookup for the readout
 
-- for the in-app DeepZoom tab: Option B is acceptable
-- for the standalone `viewer.html`: Option A is better
+With Option A chosen:
 
-The standalone viewer should not depend on extra app APIs if it can avoid it.
+- the in-app DeepZoom tab uses the selected export row data directly
+- the standalone viewer fetches sibling `meta.json`
+- no `/render-summary` or source-artifact lookup is needed to compute visible
+  world bounds
 
-## Proposed Feature Variants
+The existing source selection behavior in `GotoRender` may still use
+`source_key`, `source_family`, and `source_artifact_id` to select the source
+artifact in the Render tab. That is separate from the viewport readout math.
 
-### Variant 1: In-app readout only
+### Artifact-writer requirement
 
-In the main app’s DeepZoom tab:
+Do not solve derived-artifact support in the viewer.
 
-1. User selects a DeepZoom export.
-2. App already has the export `meta.json`.
-3. App resolves the source artifact metadata.
-4. App listens to OSD viewport changes.
-5. App shows current visible world bounds.
+Instead, require this invariant across the codebase:
 
-Display:
+- every image artifact that can be used as a DeepZoom source and whose image
+  geometry is inherited from a viewport must carry canonical viewport metadata
+  directly in its own image metadata
 
-- `min_re`
-- `max_re`
-- `min_im`
-- `max_im`
-- maybe center and span too
-
-This is the cheapest useful feature.
-
-### Variant 2: Standalone viewer readout
-
-Extend `viewer.html` so it also shows:
-
-- source artifact id
-- current visible world bounds
-
-This requires the viewer HTML to receive or fetch viewport metadata.
-
-### Variant 3: “Send To Render”
-
-A `GotoRender` button already exists in the in-app DeepZoom tab (see
-`_dzGotoSelectedRender` in [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html))
-that switches to the Render tab with the source artifact selected but does
-**not** currently forward viewport bounds.
-
-Variant 3 = extend that existing button to also forward:
+The required carried fields are:
 
 - `min_re`
 - `max_re`
 - `min_im`
 - `max_im`
+- `rotation`
 
-into the Render tab's explicit viewport fields, flipping the view selector to
-`explicit`.
+and, when applicable for Render UI restore/display:
 
-Only enabled when the DeepZoom manifest contains viewport bounds **and** (per
-the Rotation section) the source artifact has `rotation == 0` under Option R-B.
-Under Option R-A, bounds can be forwarded as the axis-aligned bbox of the
-rotated visible region; document what the user will get.
+- `view_mode`
+- `quantile`
+- `shim`
+- `square_extent`
 
-Do not add a second button; extend the existing one.
+These values must be copied unchanged from the source artifact whenever the
+derivation preserves the same world viewport.
 
-## Recommended UI
+This keeps the DeepZoom readout/export logic simple:
 
-For the in-app DeepZoom tab:
+- DeepZoom export reads direct-source metadata only
+- viewer reads DeepZoom manifest only
+- no parent traversal
+- no reconstruction heuristics
 
-- add a small readout block under or above the viewer
-- render it as plain text / monospace technical readout
-- do not use disabled inputs
+## Chosen Rotation Policy
 
-Suggested display:
+Use Option R-B for v1.
+
+If `source_rotation != 0`:
+
+- the readout shows unavailable
+- `GotoRender` still switches to the source artifact
+- but it does **not** forward the current visible bounds into explicit viewport
+
+Displayed text:
+
+```text
+Rotated render (rotation=15°)
+Visible world viewport unavailable with rotation
+```
+
+Do not attempt inverse rotation in v1.
+
+## UI Contract
+
+### In-app DeepZoom tab
+
+Add a plain-text readout block directly under `#deepzoom-viewer` and above the
+DeepZoom action buttons in [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html).
+
+Use this exact id:
+
+- `deepzoom-viewport-readout`
+
+Render it as:
+
+- monospace
+- compact technical text
+- no disabled inputs
+- no fake controls
+
+Suggested default content:
+
+```text
+Visible world viewport unavailable
+```
+
+Suggested populated content:
 
 ```text
 Visible world viewport
@@ -339,140 +375,358 @@ center=(-0.625000, 0.312500)
 span=(0.375000 × 0.375000)
 ```
 
-This matches the UI style guide:
+### Standalone viewer
 
-- technical
-- explicit
-- no false affordance
+Add a small HUD block in [lambda/deepzoom_viewer_template.html](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/deepzoom_viewer_template.html).
+
+Use this exact id:
+
+- `viewer-viewport-readout`
+
+It follows the same formatting and unavailable states as the in-app readout.
+
+## Update Strategy
+
+Do not leave this vague. Use one update path:
+
+- register handlers for:
+  - `open`
+  - `animation`
+  - `animation-finish`
+  - `resize`
+- every handler calls `_scheduleDeepZoomViewportReadout()`
+- `_scheduleDeepZoomViewportReadout()` uses a single `requestAnimationFrame`
+  guard so only one readout recompute runs per frame
+
+Do not recompute directly inside every OSD callback.
+
+This gives:
+
+- smooth updates while panning/zooming
+- no event flood
+- one deterministic code path
+
+## Numeric Formatting
+
+Use adaptive formatting for all reported world coordinates.
+
+Define one helper for both in-app and standalone viewers:
+
+```text
+if value == 0 -> "0"
+if 1e-4 <= abs(value) < 1e6 -> fixed with 6 decimals
+otherwise -> scientific notation with 6 decimals
+```
+
+Examples:
+
+- `0.125000`
+- `-3.500000`
+- `1.234567e-8`
+
+Apply the same helper to:
+
+- `min_re`
+- `max_re`
+- `min_im`
+- `max_im`
+- center
+- span
+
+## Feature Variants
+
+### Variant 1: In-app readout
+
+This is in scope.
+
+Flow:
+
+1. User selects a DeepZoom export.
+2. App reads `viewport_*`, `width`, `height`, and `source_rotation` directly
+   from the selected export row.
+3. App updates `#deepzoom-viewport-readout` from OSD viewport state.
+
+### Variant 2: Standalone viewer readout
+
+This is in scope.
+
+Flow:
+
+1. `viewer.html` fetches sibling `meta.json`.
+2. Viewer reads `viewport_*`, `width`, `height`, and `source_rotation`.
+3. Viewer updates `#viewer-viewport-readout` from OSD viewport state.
+
+### Variant 3: Extend existing `GotoRender`
+
+This is in scope.
+
+Do not add a second button.
+
+Extend existing `_dzGotoSelectedRender` in
+[index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html) so that:
+
+- if the current visible viewport is available and `source_rotation == 0`:
+  - it forwards the **current visible**:
+    - `min_re`
+    - `max_re`
+    - `min_im`
+    - `max_im`
+  - into the Render tab explicit viewport controls
+  - and flips the Render tab view selector to `explicit`
+- otherwise:
+  - it keeps the current behavior
+  - selects the source render artifact only
+  - forwards no viewport
 
 ## Implementation Plan
 
+### 0. Artifact-writer propagation
+
+Before or alongside the DeepZoom readout work, audit every DeepZoom-capable
+derived image writer and make it preserve canonical viewport metadata when the
+derived image keeps the same geometry.
+
+At minimum this audit must cover:
+
+- [lambda/handler_color_repalette.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_color_repalette.py)
+- [lambda/color_recolor_raw.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/color_recolor_raw.py)
+- [lambda/handler_bilevel.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_bilevel.py)
+  Color2Bilevel / from-raw path
+- [lambda/handler_tiff_compat.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_tiff_compat.py)
+- [lambda/handler_png_export.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_png_export.py)
+- [lambda/handler_resize_artifact.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_resize_artifact.py)
+
+Rule:
+
+- if the derived image preserves the same world viewport, copy the canonical
+  viewport metadata unchanged
+- if a derivation genuinely changes world geometry in the future, it must write
+  new correct canonical bounds explicitly
+
+For this feature, missing canonical bounds on a current viewport-preserving
+derived artifact is a writer bug to fix, not an acceptable steady state.
+
 ### 1. DeepZoom metadata
 
-Either:
+Update the `manifest = {...}` block in
+[lambda/handler_deepzoom_export.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_deepzoom_export.py)
+to copy viewport and source metadata from the selected source artifact.
 
-- copy source viewport bounds into DeepZoom `meta.json`
+Read the source artifact metadata via the family-appropriate artifact metadata
+helper or existing render-artifact metadata path already used by the Render
+catalog. Do not parse viewport information out of `source_key`.
 
-or:
-
-- add enough source identifiers to fetch the source artifact metadata reliably
-
-If exact viewport lands first, copying canonical bounds is preferable.
-
-The change lands in one place:
-
-- [lambda/handler_deepzoom_export.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_deepzoom_export.py) — in the `manifest = {...}` block around `handle_deepzoom_export_request`.
-
-The from-raw variant at [lambda/handler_deepzoom_from_raw.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_deepzoom_from_raw.py)
-delegates into the same function, so the new fields propagate automatically.
-Also include `source_rotation` here so the viewer can honor the rotation
-policy chosen in the Rotation section.
+Because [lambda/handler_deepzoom_from_raw.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_deepzoom_from_raw.py)
+delegates into the same function, the metadata shape change covers both export
+paths automatically.
 
 ### 2. In-app DeepZoom tab
 
 In [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html):
 
-- when selecting a DeepZoom row, resolve source render metadata
-- store:
-  - image width/height
-  - world bounds
-- after `OpenSeadragon(...)`, subscribe to viewport updates
-- compute visible world bounds
-- render them into a plain-text readout
-
-Likely OSD hooks:
-
-- `open`
-- `animation`
-- `pan`
-- `zoom`
-
-and/or a debounced update path.
-
-Convert OSD viewport coords to image pixels with
-`viewer.viewport.viewportToImageRectangle(...)` before applying the linear map
-in the Core Mapping section. See "OSD Coordinate Space" above.
+- add `#deepzoom-viewport-readout`
+- store the selected export's viewport metadata in JS state
+- update the readout through the single RAF-throttled path
+- convert OSD viewport coordinates to image pixels with
+  `viewer.viewport.viewportToImageRectangle(...)`
+- then apply the linear map from the Core Mapping section
 
 ### 3. Standalone viewer
 
-If standalone support is wanted:
+In [lambda/deepzoom_viewer_template.html](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/deepzoom_viewer_template.html):
 
-- extend [deepzoom_viewer_template.html](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/deepzoom_viewer_template.html)
-- add a small viewport HUD
-- inject source bounds into template or fetch a sidecar JSON
+- add `#viewer-viewport-readout`
+- fetch sibling `meta.json` via relative path (`fetch('meta.json')`)
+- compute the readout with the same mapping and formatting rules
 
 ### 4. Render handoff
 
-Once the readout exists, extend the existing `GotoRender` button
-(`_dzGotoSelectedRender` in [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html))
-to also forward the current visible world bounds:
+Extend existing `_dzGotoSelectedRender` to reuse the current readout state.
+
+Do not recompute bounds separately for handoff; use the same already-computed
+visible viewport values that drive the readout.
+
+## Legacy and Backfill Policy
+
+### Old DeepZoom exports
+
+Do not backfill old DeepZoom exports.
+
+Do not self-heal by fetching source artifact metadata on demand.
+
+If an older DeepZoom export does not already contain copied viewport metadata:
+
+- show `Visible world viewport unavailable`
+- keep `GotoRender` source-selection behavior only
+
+To gain viewport readout, the operator must create a new DeepZoom export.
+
+### Legacy render artifacts
+
+For this feature, do **not** reconstruct viewport from legacy render metadata.
+
+Do not infer bounds from:
+
+- `square_extent`
+- `quantile`
+- `shim`
+
+If the direct source artifact does not expose canonical:
 
 - `min_re`
 - `max_re`
 - `min_im`
 - `max_im`
 
-into the Render tab's explicit viewport controls, flipping the view selector
-to `explicit`. Do not add a second button.
+then the DeepZoom manifest must omit `viewport_*`, and the viewer/readout must
+show unavailable.
 
-Disabled (or forwards only the source artifact selection) when `source_rotation != 0`
-under Option R-B.
+### Derived artifacts
 
-## Legacy Compatibility
+For v1, do **not** walk the parent chain in the viewer or DeepZoom export.
 
-If the source artifact is legacy and does not store canonical bounds:
+Policy:
 
-- if it is `square`, reconstruct from `square_extent`
-- if it is `auto`, reconstruct from legacy viewport fields only if enough data exists
-- otherwise, show:
-  - `Viewport unavailable for this artifact`
+- viewport-preserving derived image artifacts must already carry canonical
+  viewport fields directly in their own metadata
+- DeepZoom export copies from the direct source artifact only
+- if a direct source artifact is an older pre-fix derived artifact and lacks
+  canonical bounds, fail closed and show unavailable
+- for newly written derived artifacts in supported families, missing canonical
+  bounds is a bug
 
-Do not fake exact world bounds if the source metadata is insufficient.
+This keeps the viewer/export contract honest without blocking support for
+viewport-bearing derived images going forward.
+
+## Non-goals
+
+- supporting rotated (`source_rotation != 0`) viewport readout in v1
+- parent-chain traversal for derived artifacts
+- backfilling old DeepZoom exports
+- adding a second DeepZoom render-handoff button
+- making PDF artifacts DeepZoom-capable
+- storing named/saved DeepZoom view presets
 
 ## Tests
 
-### App / browser tests
+### Backend contract tests
 
-Add tests for:
+Add or update tests in:
 
-- DeepZoom selection loads viewport readout when source bounds are available
-- panning/zooming updates the readout
-- source-less / bounds-less legacy rows show unavailable state
-- `GotoRender` still works
+- [tests/test_deepzoom_export_handler.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_deepzoom_export_handler.py)
+- [tests/test_deepzoom_from_raw.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_deepzoom_from_raw.py)
+- [tests/test_pipeline.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_pipeline.py)
+
+Required cases:
+
+- DeepZoom manifest includes:
+  - `source_key`
+  - `source_artifact_id`
+  - `source_family`
+  - `viewport_min_re`
+  - `viewport_max_re`
+  - `viewport_min_im`
+  - `viewport_max_im`
+  - `source_rotation`
+- copied viewport fields match the source artifact metadata exactly
+- if the source artifact lacks canonical bounds, manifest omits `viewport_*`
+- `deepzoom_latest.json` preserves the same copied viewport fields
+
+### Derived-artifact propagation tests
+
+Add or update tests in:
+
+- [tests/test_color_repalette_handler.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_color_repalette_handler.py)
+- [tests/test_recolor_from_raw.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_recolor_from_raw.py)
+- [tests/test_bilevel_handler.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_bilevel_handler.py)
+- [tests/test_tiff_compat_handler.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_tiff_compat_handler.py)
+- [tests/test_png_export_handler.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_png_export_handler.py)
+- [tests/test_resize_artifact_handler.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_resize_artifact_handler.py)
+
+Required cases:
+
+- derived image metadata preserves:
+  - `min_re`
+  - `max_re`
+  - `min_im`
+  - `max_im`
+  - `rotation`
+- viewport-preserving derivations also preserve:
+  - `view_mode`
+  - `quantile`
+  - `shim`
+  - `square_extent`
+- DeepZoom export from those derived artifacts copies the same canonical
+  viewport fields into `meta.json`
 
 ### Math tests
 
-Unit-test the mapping helper with:
+Add a focused helper/unit test file for viewport mapping, for example:
+
+- [tests/test_deepzoom_viewport_math.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_deepzoom_viewport_math.py)
+
+Required cases:
 
 - square viewport
 - wide viewport
 - tall viewport
 - asymmetric viewport
-- top/bottom y inversion
-- OSD viewport-coord → image-pixel conversion (golden values against a fixture `viewportToImageRectangle` return)
+- y-axis inversion
+- adaptive formatting
+- OSD image-rectangle input to world-bounds output
 
-### Rotation tests
+### Browser tests
 
-- `rotation == 0` renders normally, readout shows bounds
-- `rotation != 0`: behavior matches the chosen option (R-A: rotated-bbox bounds; R-B: "unavailable" and Send-To-Render disabled)
-- manifest always includes `source_rotation`
+Add or extend browser tests in:
 
-### Contract tests
+- [tests/e2e/deepzoom-inventory.spec.js](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/e2e/deepzoom-inventory.spec.js)
 
-If DeepZoom manifest starts copying viewport bounds:
+Required cases:
 
-- assert manifest contains:
-  - source identifiers
-  - viewport bounds
+- selecting a row with copied viewport metadata shows populated readout
+- readout updates as the mocked OSD viewport changes
+- row without `viewport_*` shows unavailable state
+- row with `source_rotation != 0` shows rotation-unavailable state
+- `GotoRender` still switches to the correct source artifact
+- `GotoRender` forwards visible bounds only when readout state is available and
+  `source_rotation == 0`
+
+### Standalone viewer tests
+
+If the standalone viewer HUD is implemented in this cut, add a focused test for:
+
+- fetching sibling `meta.json`
+- rendering populated readout
+- rotation-unavailable state
+
+## Acceptance Criteria
+
+The feature is done when all of the following are true:
+
+1. New DeepZoom exports copy direct-source viewport bounds and source identity
+   into `meta.json`.
+2. Every DeepZoom-capable viewport-preserving derived image artifact writes
+   canonical viewport metadata directly into its own image metadata.
+3. The in-app DeepZoom tab shows a live readout in
+   `#deepzoom-viewport-readout` for exports with copied viewport metadata.
+4. The standalone `viewer.html` shows the same readout in
+   `#viewer-viewport-readout`.
+5. The readout uses the exact linear image-pixel to world-bounds map from this
+   document.
+6. Rotated exports (`source_rotation != 0`) show the documented unavailable
+   state and do not forward bounds through `GotoRender`.
+7. `GotoRender` forwards the current visible viewport into Render explicit mode
+   only when readout state is available.
+8. Old exports or truly legacy artifacts without canonical bounds fail closed
+   with unavailable state.
+9. RePalette, recolor, bilevel, and other viewport-preserving derived images
+   can produce DeepZoom exports with working viewport readout.
+10. All new/updated tests pass.
 
 ## Recommendation
 
-Do this in two steps:
+Implement this as one coherent DeepZoom metadata + viewer + handoff feature.
 
-1. implement exact viewport bounds as canonical render metadata
-2. add DeepZoom viewport readout on top of that
-
-That gives the cleanest contract.
-
-If you want it before exact viewport lands, it is still possible, but the code
-will need more legacy reconstruction logic and the result will be less robust.
+Do not split the contract between in-app and standalone viewers.
+Do not add a source-artifact lookup layer just to compute the readout.
+Do not try to be clever with legacy reconstruction in v1.

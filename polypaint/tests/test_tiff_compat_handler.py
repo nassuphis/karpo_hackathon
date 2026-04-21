@@ -37,6 +37,12 @@ class TestTiffCompatHandler(unittest.TestCase):
                 "format": "tif",
                 "width": "5000",
                 "height": "3000",
+                "view_mode": "explicit",
+                "min_re": "-3.5",
+                "max_re": "1.25",
+                "min_im": "-0.75",
+                "max_im": "2.0",
+                "rotation": "0.125",
             },
         }
         mock_s3.get_object.return_value = {
@@ -93,6 +99,12 @@ class TestTiffCompatHandler(unittest.TestCase):
         self.assertEqual(image_meta["format"], "tif")
         self.assertEqual(image_meta["width"], "5000")
         self.assertEqual(image_meta["height"], "3000")
+        self.assertEqual(image_meta["view_mode"], "explicit")
+        self.assertEqual(image_meta["min_re"], "-3.5")
+        self.assertEqual(image_meta["max_re"], "1.25")
+        self.assertEqual(image_meta["min_im"], "-0.75")
+        self.assertEqual(image_meta["max_im"], "2.0")
+        self.assertEqual(image_meta["rotation"], "0.125")
 
         preview_extra = uploads[preview_key]["extra"]
         self.assertEqual(preview_extra["ContentType"], "image/png")

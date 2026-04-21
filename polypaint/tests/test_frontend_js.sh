@@ -82,7 +82,7 @@ assertSectionNotIncludes(nonColorSection, "solve_score_chain:", 'non-color launc
 assertSectionNotIncludes(nonColorSection, "palette:", 'non-color launcher should not send palette');
 assertSectionNotIncludes(nonColorSection, "save_associated_palette: false", 'non-color launcher should not send color-only associated palette flag');
 assertIncludes("setMatch('none');", 'artifact restore should force match mode back to none');
-assertIncludes("Number.isFinite(art.min_re) &&", 'render artifact populate should prefer canonical bounds');
+assertIncludes("Number.isFinite(entry.min_re) &&", 'render artifact populate should prefer canonical bounds');
 assertIncludes("selectViewMode('explicit');", 'render artifact populate should restore explicit viewport mode from bounds');
 assertNotIncludes("art.color_mode === 'saved_palette'", 'saved_palette compatibility should be removed from color UI');
 assertIncludes("const phasePerfRows = subResults.length ? subResults : [rd];", 'render observer should use top-level phase rows when no subtasks exist');
@@ -147,8 +147,11 @@ assertIncludes("id=\"solve-score-modal-download\"", 'solve-score modal download 
 assertIncludes("id=\"solve-score-modal-upload\"", 'solve-score modal upload button missing');
 assertIncludes("id=\"btn-dz-goto-render\" onclick=\"_dzGotoSelectedRender()\"", 'DeepZoom tab should expose a GotoRender button');
 assertIncludes(">PopulateResult</button>", 'DeepZoom tab Populate button should be labeled PopulateResult');
+assertIncludes("id=\"deepzoom-viewport-readout\"", 'DeepZoom tab should expose a viewport readout block');
 assertIncludes("<th style=\"text-align:left;padding:4px\">Job</th><th style=\"text-align:left;padding:4px\">Render</th>", 'DeepZoom inventory should show a Render column after Job');
 assertIncludes("function _parseRenderSourceRef(sourceKey) {", 'DeepZoom render-source parser missing');
+assertIncludes("function _scheduleDeepZoomViewportReadout() {", 'DeepZoom viewport readout scheduler missing');
+assertIncludes("function _renderDeepZoomViewportReadout() {", 'DeepZoom viewport readout renderer missing');
 assertIncludes("function _dzGotoSelectedRender() {", 'DeepZoom GoRender handler missing');
 assertNotIncludes("id=\"render-solve-score-program-select\"", 'render tab should not keep built-in solve-score preset select');
 assertNotIncludes("id=\"palette-solve-score-program-select\"", 'palette tab should not keep built-in solve-score preset select');

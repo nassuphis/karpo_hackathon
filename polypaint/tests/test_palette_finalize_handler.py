@@ -51,10 +51,24 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
     @patch("handler_palette_finalize._list_keys")
     @patch("handler_palette_finalize.s3")
     @patch("handler_palette_finalize.subprocess.run")
+    @patch("handler_palette_finalize.load_color_artifact_head")
     def test_finalize_assembles_pass0_image_and_preserves_chunk_local_data(
-        self, mock_run, mock_s3, mock_list_keys, mock_delete_keys, mock_report
+        self, mock_load_head, mock_run, mock_s3, mock_list_keys, mock_delete_keys, mock_report
     ):
         import handler_palette_finalize as mod
+
+        mock_load_head.return_value = {
+            "artifact_id": "color_src",
+            "image_key": "renders/j/color/color_src/image.jpeg",
+            "metadata": {
+                "view_mode": "explicit",
+                "min_re": "-3.5",
+                "max_re": "1.25",
+                "min_im": "-0.75",
+                "max_im": "2.0",
+                "rotation": "0.125",
+            },
+        }
 
         with tempfile.TemporaryDirectory() as td, \
              patch.object(mod, "_TMP_BINS", os.path.join(td, "bins_full.bin")), \
@@ -218,6 +232,12 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
             image_meta = uploads["renders/j/palettes/pal_1/image.jpeg"]["extra"]["Metadata"]
             self.assertEqual(image_meta["palette"], "reef")
             self.assertEqual(image_meta["width"], "4")
+            self.assertEqual(image_meta["view_mode"], "explicit")
+            self.assertEqual(image_meta["min_re"], "-3.5")
+            self.assertEqual(image_meta["max_re"], "1.25")
+            self.assertEqual(image_meta["min_im"], "-0.75")
+            self.assertEqual(image_meta["max_im"], "2.0")
+            self.assertEqual(image_meta["rotation"], "0.125")
             self.assertNotIn("render_execution", image_meta)
             self.assertNotIn("solve_score_chain", image_meta)
             self.assertNotIn("solve_metric", image_meta)
@@ -239,6 +259,12 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
             self.assertEqual(meta["chunk_meta_prefix"], meta["section_meta_prefix"])
             self.assertEqual(meta["derived_from_color_artifact_id"], "color_src")
             self.assertEqual(meta["derivation_kind"], "extract_palette")
+            self.assertEqual(meta["view_mode"], "explicit")
+            self.assertEqual(meta["min_re"], "-3.5")
+            self.assertEqual(meta["max_re"], "1.25")
+            self.assertEqual(meta["min_im"], "-0.75")
+            self.assertEqual(meta["max_im"], "2.0")
+            self.assertEqual(meta["rotation"], "0.125")
             self.assertEqual(meta["render_execution"]["raster_engine"], "mt")
             self.assertEqual(meta["render_execution"]["palette_chunk_workers"], 22)
             self.assertNotIn("score_key", meta)

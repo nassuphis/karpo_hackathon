@@ -16,6 +16,7 @@ body{display:flex;flex-direction:column}
 #hdr a{color:#4a9eff;text-decoration:none}
 #hdr a:hover{text-decoration:underline}
 #viewer{flex:1 1 auto;min-height:0;position:relative}
+#viewer-viewport-readout{position:absolute;left:12px;bottom:12px;z-index:20;max-width:min(420px,calc(100% - 24px));padding:8px 10px;border:1px solid #333;border-radius:4px;background:rgba(20,20,36,0.9);color:#bbb;font-family:monospace;font-size:11px;white-space:pre-wrap;pointer-events:none}
 </style>
 </head>
 <body>
@@ -25,10 +26,12 @@ body{display:flex;flex-direction:column}
   <span>{export_id}</span>
   <span class="ts">{created_at}</span>
 </div>
-<div id="viewer"></div>
+<div id="viewer">
+  <div id="viewer-viewport-readout">Visible world viewport unavailable</div>
+</div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/openseadragon.min.js"></script>
 <script>
-OpenSeadragon({
+const viewer = OpenSeadragon({
   element: document.getElementById('viewer'),
   tileSources: 'image.dzi',
   prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/images/',
@@ -36,6 +39,141 @@ OpenSeadragon({
   navigatorPosition: 'BOTTOM_RIGHT',
   maxZoomPixelRatio: 4,
 });
+
+const _viewerViewportState = { rafPending: false, meta: null };
+
+function _requestAnimationFrameCompat(fn) {
+  if (typeof window.requestAnimationFrame === 'function') return window.requestAnimationFrame(fn);
+  return window.setTimeout(fn, 0);
+}
+
+function _formatViewportNumber(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '?';
+  if (num === 0) return '0';
+  const mag = Math.abs(num);
+  return mag >= 1e-4 && mag < 1e6 ? num.toFixed(6) : num.toExponential(6);
+}
+
+function _setViewportReadout(text) {
+  const el = document.getElementById('viewer-viewport-readout');
+  if (el) el.textContent = String(text || 'Visible world viewport unavailable');
+}
+
+function _clampViewportCoord(value, lo, hi) {
+  return Math.max(lo, Math.min(hi, value));
+}
+
+function _computeVisibleBounds(meta) {
+  if (!meta || meta.rotation !== 0) return null;
+  if (!viewer || !viewer.viewport || typeof viewer.viewport.getBounds !== 'function' || typeof viewer.viewport.viewportToImageRectangle !== 'function') return null;
+  const bounds = viewer.viewport.getBounds(true);
+  if (!bounds) return null;
+  const imgRect = viewer.viewport.viewportToImageRectangle(bounds);
+  if (!imgRect) return null;
+  const x0 = _clampViewportCoord(Number(imgRect.x) || 0, 0, meta.width);
+  const x1 = _clampViewportCoord(x0 + (Number(imgRect.width) || 0), 0, meta.width);
+  const y0 = _clampViewportCoord(Number(imgRect.y) || 0, 0, meta.height);
+  const y1 = _clampViewportCoord(y0 + (Number(imgRect.height) || 0), 0, meta.height);
+  const min_re = meta.minRe + (x0 / meta.width) * (meta.maxRe - meta.minRe);
+  const max_re = meta.minRe + (x1 / meta.width) * (meta.maxRe - meta.minRe);
+  const max_im = meta.maxIm - (y0 / meta.height) * (meta.maxIm - meta.minIm);
+  const min_im = meta.maxIm - (y1 / meta.height) * (meta.maxIm - meta.minIm);
+  if (![min_re, max_re, min_im, max_im].every((value) => Number.isFinite(value))) return null;
+  return {
+    min_re,
+    max_re,
+    min_im,
+    max_im,
+    center_re: (min_re + max_re) / 2,
+    center_im: (min_im + max_im) / 2,
+    span_re: max_re - min_re,
+    span_im: max_im - min_im,
+  };
+}
+
+function _renderViewportReadout() {
+  const meta = _viewerViewportState.meta;
+  if (!meta || !meta.hasViewport) {
+    _setViewportReadout('Visible world viewport unavailable');
+    return;
+  }
+  if (meta.rotation !== 0) {
+    _setViewportReadout(
+      `Rotated render (rotation=${_formatViewportNumber(meta.rotation)})\nVisible world viewport unavailable with rotation`
+    );
+    return;
+  }
+  const visible = _computeVisibleBounds(meta);
+  if (!visible) {
+    _setViewportReadout('Visible world viewport unavailable');
+    return;
+  }
+  _setViewportReadout(
+    `Visible world viewport\n`
+    + `min_re=${_formatViewportNumber(visible.min_re)}  max_re=${_formatViewportNumber(visible.max_re)}\n`
+    + `min_im=${_formatViewportNumber(visible.min_im)}  max_im=${_formatViewportNumber(visible.max_im)}\n`
+    + `center=(${_formatViewportNumber(visible.center_re)}, ${_formatViewportNumber(visible.center_im)})\n`
+    + `span=(${_formatViewportNumber(visible.span_re)} x ${_formatViewportNumber(visible.span_im)})`
+  );
+}
+
+function _scheduleViewportReadout() {
+  if (_viewerViewportState.rafPending) return;
+  _viewerViewportState.rafPending = true;
+  _requestAnimationFrameCompat(() => {
+    _viewerViewportState.rafPending = false;
+    _renderViewportReadout();
+  });
+}
+
+async function _loadViewportMeta() {
+  try {
+    const resp = await fetch('meta.json');
+    if (!resp.ok) {
+      _viewerViewportState.meta = null;
+      _scheduleViewportReadout();
+      return;
+    }
+    const meta = await resp.json();
+    const width = Number(meta.width);
+    const height = Number(meta.height);
+    const minRe = Number(meta.viewport_min_re);
+    const maxRe = Number(meta.viewport_max_re);
+    const minIm = Number(meta.viewport_min_im);
+    const maxIm = Number(meta.viewport_max_im);
+    const rotation = Number(meta.source_rotation);
+    _viewerViewportState.meta = {
+      width,
+      height,
+      minRe,
+      maxRe,
+      minIm,
+      maxIm,
+      rotation: Number.isFinite(rotation) ? rotation : 0,
+      hasViewport: (
+        Number.isFinite(width) &&
+        Number.isFinite(height) &&
+        width > 0 &&
+        height > 0 &&
+        Number.isFinite(minRe) &&
+        Number.isFinite(maxRe) &&
+        Number.isFinite(minIm) &&
+        Number.isFinite(maxIm) &&
+        maxRe > minRe &&
+        maxIm > minIm
+      ),
+    };
+  } catch (err) {
+    _viewerViewportState.meta = null;
+  }
+  _scheduleViewportReadout();
+}
+
+['open', 'animation', 'animation-finish', 'resize'].forEach((eventName) => {
+  viewer.addHandler(eventName, _scheduleViewportReadout);
+});
+_loadViewportMeta();
 </script>
 </body>
 </html>

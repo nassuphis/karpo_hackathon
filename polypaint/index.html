@@ -1200,6 +1200,7 @@ button {
         <!-- DeepZoom tab -->
         <div id="tab-deepzoom" class="tab-content">
             <div id="deepzoom-viewer" style="width:100%; height:500px; background:#000; border:1px solid #333; display:none"></div>
+            <div id="deepzoom-viewport-readout" style="margin-top:8px; padding:8px 10px; border:1px solid #333; border-radius:4px; background:#141424; color:#bbb; font-family:monospace; font-size:11px; white-space:pre-wrap">Visible world viewport unavailable</div>
             <div style="margin-top:8px; margin-bottom:4px; display:flex; align-items:center; gap:8px">
                 <button class="btn-secondary btn-inline" id="btn-dz-refresh" onclick="refreshDeepZoomInventory()" style="padding:4px 12px; font-size:12px">Refresh</button>
                 <button class="btn-secondary btn-inline" id="btn-dz-goto-result" onclick="_dzGotoSelectedResult()" style="padding:4px 12px; font-size:12px" disabled>Goto Result</button>
@@ -12748,6 +12749,80 @@ function populateSelectedRenderArtifact() {
         }
     };
 
+    const restoreCommonRenderFields = (entry) => {
+        if (entry.view_mode === 'square') {
+            if (Number.isFinite(entry.square_extent)) {
+                const extentEl = document.getElementById('render-square-extent');
+                if (extentEl) extentEl.value = String(entry.square_extent);
+            } else {
+                warnings.push('square extent');
+            }
+        } else {
+            if (Number.isFinite(entry.quantile)) _setRenderSliderValue('render-quantile', 'render-quantile-val', entry.quantile * 100, 1);
+            else warnings.push('auto quantile');
+            if (Number.isFinite(entry.shim)) _setRenderSliderValue('render-shim', 'render-shim-val', entry.shim * 100, 1);
+            else warnings.push('auto shim');
+        }
+
+        if (
+            Number.isFinite(entry.min_re) &&
+            Number.isFinite(entry.max_re) &&
+            Number.isFinite(entry.min_im) &&
+            Number.isFinite(entry.max_im)
+        ) {
+            _setRenderExplicitViewportBounds({
+                minRe: entry.min_re,
+                maxRe: entry.max_re,
+                minIm: entry.min_im,
+                maxIm: entry.max_im,
+            });
+            selectViewMode('explicit');
+        } else if (entry.view_mode === 'square') {
+            selectViewMode('square');
+        } else {
+            selectViewMode('auto');
+        }
+
+        if (Number.isFinite(entry.rotation)) _setRenderRotationFromRadians(entry.rotation);
+        else warnings.push('rotation');
+
+        restoreRenderOutputFields(entry);
+        _restoreRenderExecutionState(entry);
+
+        if (Array.isArray(entry.root_transforms)) {
+            _setRenderRootTransforms(entry.root_transforms);
+        }
+    };
+
+    const restoreBilevelSectionState = (entry) => {
+        const cfg = entry && entry.render_execution && typeof entry.render_execution === 'object'
+            ? entry.render_execution
+            : null;
+        const sectionMode = _normalizeRenderMtSectionMode(
+            entry.bilevel_section_mode || (cfg && cfg.raster_section_mode) || 'logical_sections_auto'
+        );
+        _bilevelPopupState.sectionMode = sectionMode;
+        _bilevelPopupState.sectionCount = sectionMode === 'logical_sections'
+            ? _clampRenderMtSectionCount(
+                entry.bilevel_section_count != null
+                    ? entry.bilevel_section_count
+                    : (cfg && cfg.raster_section_count)
+            )
+            : '';
+    };
+
+    const finishPopulate = (label) => {
+        const msg = warnings.length
+            ? `Populate complete (missing saved ${warnings.join(', ')})`
+            : `Populate complete: ${label}`;
+        const statusEl = document.getElementById('render-status');
+        if (statusEl) {
+            statusEl.textContent = msg;
+            statusEl.className = warnings.length ? 'status' : 'status ok';
+        }
+        log(msg, warnings.length ? '' : 'ok', 'render-log');
+    };
+
     if (_renderActiveFamily === 'palette') {
         setColorMode('solve_score');
         _restoreRenderExecutionState(art);
@@ -12776,61 +12851,23 @@ function populateSelectedRenderArtifact() {
         }
         restoreRenderOutputFields(art);
         _renderSelectFamily('color');
-        const msg = warnings.length
-            ? `Populate complete (missing saved ${warnings.join(', ')})`
-            : `Populate complete: ${art.artifact_id || art.palette_id || 'selected palette artifact'}`;
-        const statusEl = document.getElementById('render-status');
-        if (statusEl) {
-            statusEl.textContent = msg;
-            statusEl.className = warnings.length ? 'status' : 'status ok';
-        }
-        log(msg, warnings.length ? '' : 'ok', 'render-log');
+        finishPopulate(art.artifact_id || art.palette_id || 'selected palette artifact');
         return;
     }
 
-    if (_renderActiveFamily !== 'color') return;
+    if (_renderActiveFamily !== 'color' && _renderActiveFamily !== 'bilevel' && _renderActiveFamily !== 'coeffs') return;
 
-    if (art.view_mode === 'square') {
-        if (Number.isFinite(art.square_extent)) {
-            const extentEl = document.getElementById('render-square-extent');
-            if (extentEl) extentEl.value = String(art.square_extent);
-        } else {
-            warnings.push('square extent');
-        }
-    } else {
-        if (Number.isFinite(art.quantile)) _setRenderSliderValue('render-quantile', 'render-quantile-val', art.quantile * 100, 1);
-        else warnings.push('auto quantile');
-        if (Number.isFinite(art.shim)) _setRenderSliderValue('render-shim', 'render-shim-val', art.shim * 100, 1);
-        else warnings.push('auto shim');
+    restoreCommonRenderFields(art);
+
+    if (_renderActiveFamily === 'bilevel') {
+        restoreBilevelSectionState(art);
+        finishPopulate(art.artifact_id || 'selected bilevel artifact');
+        return;
     }
 
-    if (
-        Number.isFinite(art.min_re) &&
-        Number.isFinite(art.max_re) &&
-        Number.isFinite(art.min_im) &&
-        Number.isFinite(art.max_im)
-    ) {
-        _setRenderExplicitViewportBounds({
-            minRe: art.min_re,
-            maxRe: art.max_re,
-            minIm: art.min_im,
-            maxIm: art.max_im,
-        });
-        selectViewMode('explicit');
-    } else if (art.view_mode === 'square') {
-        selectViewMode('square');
-    } else {
-        selectViewMode('auto');
-    }
-
-    if (Number.isFinite(art.rotation)) _setRenderRotationFromRadians(art.rotation);
-    else warnings.push('rotation');
-
-    restoreRenderOutputFields(art);
-    _restoreRenderExecutionState(art);
-
-    if (Array.isArray(art.root_transforms) && art.root_transforms.length) {
-        _setRenderRootTransforms(art.root_transforms);
+    if (_renderActiveFamily === 'coeffs') {
+        finishPopulate(art.artifact_id || 'selected coeff artifact');
+        return;
     }
 
     setMatch('none');
@@ -12859,16 +12896,7 @@ function populateSelectedRenderArtifact() {
         warnings.push('solve-score omega');
     }
     if (art.palette) setPaletteForMode('solve_score', art.palette);
-
-    const msg = warnings.length
-        ? `Populate complete (missing saved ${warnings.join(', ')})`
-        : `Populate complete: ${art.artifact_id || 'selected color artifact'}`;
-    const statusEl = document.getElementById('render-status');
-    if (statusEl) {
-        statusEl.textContent = msg;
-        statusEl.className = warnings.length ? 'status' : 'status ok';
-    }
-    log(msg, warnings.length ? '' : 'ok', 'render-log');
+    finishPopulate(art.artifact_id || 'selected color artifact');
 }
 
 function _updateRenderActionButtons() {
@@ -12903,7 +12931,7 @@ function _updateRenderActionButtons() {
     if (genMtBtn) genMtBtn.disabled = !(_renderActiveFamily === 'color' && _renderColorMtEligible()) || !!_activeRenderRun;
     if (delBtn) delBtn.disabled = !(hasSelection && inventoryMatchesJob);
     if (dzBtn) dzBtn.disabled = !(hasSelection && inventoryMatchesJob) || _renderActiveFamily === 'pdf';
-    if (popBtn) popBtn.disabled = !(hasSelection && inventoryMatchesJob && (_renderActiveFamily === 'color' || _renderActiveFamily === 'palette'));
+    if (popBtn) popBtn.disabled = !(hasSelection && inventoryMatchesJob && (_renderActiveFamily === 'color' || _renderActiveFamily === 'palette' || _renderActiveFamily === 'bilevel' || _renderActiveFamily === 'coeffs'));
     if (autoBtn) autoBtn.disabled = !(hasSelection && inventoryMatchesJob && _renderActiveFamily === 'color' && art && art.image_key) || !!_activeRenderRun;
     if (resizeBtn) resizeBtn.disabled = !(hasSelection && inventoryMatchesJob && _renderActiveFamily === 'color' && art && art.image_key) || !!_activeRenderRun;
     if (colorToBilevelBtn) colorToBilevelBtn.disabled = !(_renderActiveFamily === 'color' && hasSelection && inventoryMatchesJob && _hasColorRawSidecar(art)) || !!_activeRenderRun;
@@ -13329,7 +13357,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     if (_renderActiveFamily === 'palette') actionButtons.push('<button class="btn-secondary" id="btn-render-repalette" onclick="openRepalettePopup()" style="padding:4px 12px; font-size:11px" disabled>RePalette</button>');
     if (_renderActiveFamily === 'bilevel') actionButtons.push('<button class="btn-secondary" id="btn-png-export" onclick="runPngExport(document.getElementById(\'render-results-dir\').value.trim(), (_renderSelectedArtifactEntry() || {}).image_key)" style="padding:4px 12px; font-size:11px" disabled>PNG</button>');
     if (_renderActiveFamily === 'bilevel') actionButtons.push('<button class="btn-secondary" id="btn-tiff-compat" onclick="runTiffCompat(document.getElementById(\'render-results-dir\').value.trim(), (_renderSelectedArtifactEntry() || {}).image_key)" style="padding:4px 12px; font-size:11px" disabled>Preview-Compatible TIFF</button>');
-    if (_renderActiveFamily === 'color' || _renderActiveFamily === 'palette') actionButtons.push('<button class="btn-secondary" id="btn-render-populate" onclick="populateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Populate</button>');
+    if (_renderActiveFamily === 'color' || _renderActiveFamily === 'palette' || _renderActiveFamily === 'bilevel' || _renderActiveFamily === 'coeffs') actionButtons.push('<button class="btn-secondary" id="btn-render-populate" onclick="populateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Populate</button>');
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-autolevels" onclick="openAutolevelPopup()" style="padding:4px 12px; font-size:11px" disabled>Autolevels</button>');
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-resize" onclick="openResizePopup()" style="padding:4px 12px; font-size:11px" disabled>Resize</button>');
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-go-result" onclick="goResultFromRender()" style="padding:4px 12px; font-size:11px" disabled>GoResult</button>');
@@ -13496,6 +13524,136 @@ async function runDeepZoomExport(jobId, sourceKey, btnEl, options = null) {
 }
 
 let _osdViewer = null;
+const _dzViewportReadoutState = { rafPending: false, meta: null, visibleBounds: null };
+window._dzViewportReadoutState = _dzViewportReadoutState;
+
+function _requestAnimationFrameCompat(fn) {
+    if (typeof window.requestAnimationFrame === 'function') return window.requestAnimationFrame(fn);
+    return window.setTimeout(fn, 0);
+}
+
+function _dzSelectedExportEntry() {
+    const inv = window._dzInventory || [];
+    const idx = window._dzSelectedIdx ?? -1;
+    return idx >= 0 && idx < inv.length ? inv[idx] : null;
+}
+
+function _formatDeepZoomViewportNumber(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return '?';
+    if (num === 0) return '0';
+    const mag = Math.abs(num);
+    return mag >= 1e-4 && mag < 1e6 ? num.toFixed(6) : num.toExponential(6);
+}
+
+function _setDeepZoomViewportReadout(text) {
+    const el = document.getElementById('deepzoom-viewport-readout');
+    if (el) el.textContent = String(text || 'Visible world viewport unavailable');
+}
+
+function _deepZoomViewportMeta(ex) {
+    if (!ex) return null;
+    const width = Number(ex.width);
+    const height = Number(ex.height);
+    const minRe = Number(ex.viewport_min_re);
+    const maxRe = Number(ex.viewport_max_re);
+    const minIm = Number(ex.viewport_min_im);
+    const maxIm = Number(ex.viewport_max_im);
+    const rotation = Number(ex.source_rotation);
+    return {
+        width,
+        height,
+        minRe,
+        maxRe,
+        minIm,
+        maxIm,
+        rotation: Number.isFinite(rotation) ? rotation : 0,
+        hasViewport: (
+            Number.isFinite(width) &&
+            Number.isFinite(height) &&
+            width > 0 &&
+            height > 0 &&
+            Number.isFinite(minRe) &&
+            Number.isFinite(maxRe) &&
+            Number.isFinite(minIm) &&
+            Number.isFinite(maxIm) &&
+            maxRe > minRe &&
+            maxIm > minIm
+        ),
+    };
+}
+
+function _clampDeepZoomViewportCoord(value, lo, hi) {
+    return Math.max(lo, Math.min(hi, value));
+}
+
+function _computeDeepZoomVisibleBounds(viewer, meta) {
+    if (!viewer || !meta || !meta.hasViewport || meta.rotation !== 0) return null;
+    const vp = viewer.viewport;
+    if (!vp || typeof vp.getBounds !== 'function' || typeof vp.viewportToImageRectangle !== 'function') return null;
+    const bounds = vp.getBounds(true);
+    if (!bounds) return null;
+    const imgRect = vp.viewportToImageRectangle(bounds);
+    if (!imgRect) return null;
+    const x0 = _clampDeepZoomViewportCoord(Number(imgRect.x) || 0, 0, meta.width);
+    const x1 = _clampDeepZoomViewportCoord(x0 + (Number(imgRect.width) || 0), 0, meta.width);
+    const y0 = _clampDeepZoomViewportCoord(Number(imgRect.y) || 0, 0, meta.height);
+    const y1 = _clampDeepZoomViewportCoord(y0 + (Number(imgRect.height) || 0), 0, meta.height);
+    const min_re = meta.minRe + (x0 / meta.width) * (meta.maxRe - meta.minRe);
+    const max_re = meta.minRe + (x1 / meta.width) * (meta.maxRe - meta.minRe);
+    const max_im = meta.maxIm - (y0 / meta.height) * (meta.maxIm - meta.minIm);
+    const min_im = meta.maxIm - (y1 / meta.height) * (meta.maxIm - meta.minIm);
+    if (![min_re, max_re, min_im, max_im].every((value) => Number.isFinite(value))) return null;
+    return {
+        min_re,
+        max_re,
+        min_im,
+        max_im,
+        center_re: (min_re + max_re) / 2,
+        center_im: (min_im + max_im) / 2,
+        span_re: max_re - min_re,
+        span_im: max_im - min_im,
+    };
+}
+
+function _renderDeepZoomViewportReadout() {
+    const ex = _dzSelectedExportEntry();
+    const meta = _deepZoomViewportMeta(ex);
+    _dzViewportReadoutState.meta = meta;
+    _dzViewportReadoutState.visibleBounds = null;
+    if (!meta || !meta.hasViewport) {
+        _setDeepZoomViewportReadout('Visible world viewport unavailable');
+        return;
+    }
+    if (meta.rotation !== 0) {
+        _setDeepZoomViewportReadout(
+            `Rotated render (rotation=${_formatDeepZoomViewportNumber(meta.rotation)})\nVisible world viewport unavailable with rotation`
+        );
+        return;
+    }
+    const visible = _computeDeepZoomVisibleBounds(_osdViewer, meta);
+    if (!visible) {
+        _setDeepZoomViewportReadout('Visible world viewport unavailable');
+        return;
+    }
+    _dzViewportReadoutState.visibleBounds = visible;
+    _setDeepZoomViewportReadout(
+        `Visible world viewport\n`
+        + `min_re=${_formatDeepZoomViewportNumber(visible.min_re)}  max_re=${_formatDeepZoomViewportNumber(visible.max_re)}\n`
+        + `min_im=${_formatDeepZoomViewportNumber(visible.min_im)}  max_im=${_formatDeepZoomViewportNumber(visible.max_im)}\n`
+        + `center=(${_formatDeepZoomViewportNumber(visible.center_re)}, ${_formatDeepZoomViewportNumber(visible.center_im)})\n`
+        + `span=(${_formatDeepZoomViewportNumber(visible.span_re)} x ${_formatDeepZoomViewportNumber(visible.span_im)})`
+    );
+}
+
+function _scheduleDeepZoomViewportReadout() {
+    if (_dzViewportReadoutState.rafPending) return;
+    _dzViewportReadoutState.rafPending = true;
+    _requestAnimationFrameCompat(() => {
+        _dzViewportReadoutState.rafPending = false;
+        _renderDeepZoomViewportReadout();
+    });
+}
 
 async function openDeepZoomViewer(dziUrl) {
     switchTab('deepzoom');
@@ -13588,7 +13746,9 @@ function _dzClearViewer() {
         _osdViewer.destroy();
         _osdViewer = null;
     }
+    window._osdViewer = null;
     if (viewerEl) viewerEl.style.display = 'none';
+    _scheduleDeepZoomViewportReadout();
 }
 
 function _dzStableKey(ex) {
@@ -13646,6 +13806,7 @@ function _dzSelectKey(key) {
     const row = document.querySelector(`.dz-inv-row[data-key="${_encodeStableRowKey(nextKey)}"]`);
     if (row) row.scrollIntoView({ block: 'nearest' });
     _dzSetButtonsEnabled(true);
+    _scheduleDeepZoomViewportReadout();
     const dziUrl = _safeHttpUrl(inv[idx].dzi_url);
     if (!dziUrl) {
         _dzClearViewer();
@@ -13718,6 +13879,7 @@ async function _dzGotoSelectedRender() {
     const ex = inv[idx];
     const renderRef = _dzRenderSourceRef(ex);
     if (!renderRef.jobId) return;
+    const canPopulate = !!(renderRef.family && renderRef.artifactId);
     const btn = document.getElementById('btn-dz-goto-render');
     const orig = btn ? btn.textContent : 'GotoRender';
     const statusEl = document.getElementById('deepzoom-status');
@@ -13729,7 +13891,31 @@ async function _dzGotoSelectedRender() {
             : {};
         await refreshRenderArtifacts(renderRef.jobId, refreshOptions);
         switchTab('render');
-        log(`DeepZoom GoRender: ${renderRef.jobId}`, 'ok', 'deepzoom-log');
+        if (canPopulate) {
+            populateSelectedRenderArtifact();
+            const visible = _dzViewportReadoutState.visibleBounds;
+            if (visible) {
+                _setRenderExplicitViewportBounds({
+                    minRe: visible.min_re,
+                    maxRe: visible.max_re,
+                    minIm: visible.min_im,
+                    maxIm: visible.max_im,
+                });
+                selectViewMode('explicit');
+                log(`DeepZoom GoRender: ${renderRef.jobId} with visible viewport`, 'ok', 'deepzoom-log');
+            } else {
+                log(`DeepZoom GoRender: ${renderRef.jobId}`, 'ok', 'deepzoom-log');
+            }
+        } else {
+            const msg = `Opened render job ${renderRef.jobId} without populate: source artifact unavailable`;
+            const renderStatusEl = document.getElementById('render-status');
+            if (renderStatusEl) {
+                renderStatusEl.textContent = msg;
+                renderStatusEl.className = 'status';
+            }
+            log(msg, '', 'deepzoom-log');
+            log(msg, '', 'render-log');
+        }
     } catch (e) {
         log(`DeepZoom GoRender failed: ${e.message}`, 'err', 'deepzoom-log');
         if (statusEl) {
@@ -13848,6 +14034,13 @@ function viewDeepZoom(dziUrl) {
         navigatorPosition: 'BOTTOM_RIGHT',
         maxZoomPixelRatio: 4,
     });
+    window._osdViewer = _osdViewer;
+    if (_osdViewer && typeof _osdViewer.addHandler === 'function') {
+        ['open', 'animation', 'animation-finish', 'resize'].forEach((eventName) => {
+            _osdViewer.addHandler(eventName, _scheduleDeepZoomViewportReadout);
+        });
+    }
+    _scheduleDeepZoomViewportReadout();
 }
 
 /**

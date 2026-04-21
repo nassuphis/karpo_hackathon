@@ -104,6 +104,18 @@ _BILEVEL_FORWARD_METADATA_KEYS = (
     "bilevel_section_mode",
     "bilevel_section_count",
 )
+_DIRECT_VIEWPORT_METADATA_KEYS = (
+    "view_mode",
+    "quantile",
+    "shim",
+    "square_extent",
+    "min_re",
+    "max_re",
+    "min_im",
+    "max_im",
+    "rotation",
+    "root_transforms",
+)
 
 
 def _utc_now_iso():
@@ -1129,6 +1141,10 @@ def handle_from_raw_color(params):
             "postprocess_profile": "raw_threshold_v1",
             "threshold": str(threshold),
         }
+        for key in _DIRECT_VIEWPORT_METADATA_KEYS:
+            value = source_meta.get(key)
+            if value not in ("", None):
+                out_meta[key] = value
         _report_progress(
             "uploading",
             "bilevel_from_raw_upload",

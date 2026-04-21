@@ -1071,6 +1071,9 @@ def _compute_viewport(job_id, rp):
     if range_re <= 0.0 or range_im <= 0.0:
         positive_span = max(range_re, range_im)
         if positive_span > 0.0:
+            # When one axis collapses to a line, keep auto mode bounded by
+            # inheriting the non-degenerate span instead of exploding to a
+            # full REF_SIZE-derived camera box.
             fallback_span = positive_span
         else:
             fallback_scale_ref = _coerce_finite_float(vp.get("scale_ref", vp.get("scale")), "scale_ref")

@@ -56,6 +56,14 @@ async function seedRenderPopupState(page, colorMode = 'solve_score') {
       window._renderLaunches.push({ mode, paramsPatch: { ...(paramsPatch || {}) } });
       return {};
     };
+    window._launchFusedRenderOrchestrator = async function(paramsPatch) {
+      window._renderLaunches.push({ mode: 'color', paramsPatch: { ...(paramsPatch || {}) } });
+      return {};
+    };
+    window._launchNonColorRenderOrchestrator = async function(mode, paramsPatch) {
+      window._renderLaunches.push({ mode, paramsPatch: { ...(paramsPatch || {}) } });
+      return {};
+    };
     document.getElementById('render-results-dir').value = 'test_job';
     _renderLoadedJobId = 'test_job';
     renderColorMode = colorMode;
@@ -213,23 +221,17 @@ test.describe('Solve Score UI', () => {
     expect(after).toBe(before);
   });
 
-  test('render rows collapse built-ins into popup selectors', async ({ page }) => {
+  test('render solve-score row collapses built-ins into popup selectors', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    const rootCircles = page.locator('#palette-circles-root-proximity .pal-circle');
     const solveCircles = page.locator('#palette-circles-solve-score .pal-circle');
-    const rootCount = await rootCircles.count();
     const solveCount = await solveCircles.count();
-    expect(rootCount).toBe(3);
     expect(solveCount).toBe(3);
   });
 
-  test('render rows show built-in, TRI, and LONG swatches', async ({ page }) => {
+  test('render solve-score row shows built-in, TRI, and LONG swatches', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    await expect(page.locator('#palette-circles-root-proximity [data-palette-popup="builtin"]')).toBeVisible();
     await expect(page.locator('#palette-circles-solve-score [data-palette-popup="builtin"]')).toBeVisible();
-    await expect(page.locator('#palette-circles-root-proximity .pal-circle-tri')).toBeVisible();
     await expect(page.locator('#palette-circles-solve-score .pal-circle-tri')).toBeVisible();
-    await expect(page.locator('#palette-circles-root-proximity .pal-circle-long')).toBeVisible();
     await expect(page.locator('#palette-circles-solve-score .pal-circle-long')).toBeVisible();
   });
 
@@ -285,16 +287,16 @@ test.describe('Solve Score UI', () => {
     await expect(longSwatch).toHaveAttribute('title', /marvel_spiderman_long/);
   });
 
-  test('right-click TRI activates remembered palette without opening popup', async ({ page }) => {
+  test('right-click TRI activates remembered solve-score palette without opening popup', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await page.evaluate(() => {
-      renderRootProximityTriName = 'redgold';
-      renderRootProximityPalette = 'inferno';
-      buildPaletteCircles('palette-circles-root-proximity', 'proximity', () => renderRootProximityPalette);
+      renderSolveScoreTriName = 'redgold';
+      renderSolveScorePalette = 'inferno';
+      buildPaletteCircles('palette-circles-solve-score', 'solve_score', () => renderSolveScorePalette);
     });
-    const tri = page.locator('#palette-circles-root-proximity .pal-circle-tri');
+    const tri = page.locator('#palette-circles-solve-score .pal-circle-tri');
     await tri.click({ button: 'right' });
-    const palette = await page.evaluate(() => renderRootProximityPalette);
+    const palette = await page.evaluate(() => renderSolveScorePalette);
     expect(palette).toBe('tri_redgold');
     await expect(page.locator('#tri-popup-overlay')).not.toBeVisible();
   });
@@ -324,11 +326,9 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#palette-circles-solve-score .pal-circle-long')).toHaveAttribute('title', /marvel_spiderman_long/);
   });
 
-  test('clicking root-proximity palette activates proximity color mode', async ({ page }) => {
+  test('render tab does not expose a separate root-proximity palette row', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    await chooseBuiltinPalette(page, 'proximity', 'viridis');
-    const mode = await page.evaluate(() => renderColorMode);
-    expect(mode).toBe('proximity');
+    await expect(page.locator('#palette-circles-root-proximity')).toHaveCount(0);
   });
 
   test('repalette popup uses PAL/TRI/LONG buttons and nested selectors stay accessible', async ({ page }) => {
@@ -418,6 +418,10 @@ test.describe('Solve Score UI', () => {
       { text: 'centroid_dist', value: 'centroid_dist' },
       { text: 'dist_unit_circle', value: 'dist_unit_circle' },
       { text: 'asymmetry_re', value: 'asymmetry_re' },
+      { text: 'max_re', value: 'max_re' },
+      { text: 'min_re', value: 'min_re' },
+      { text: 'max_im', value: 'max_im' },
+      { text: 'min_im', value: 'min_im' },
       { text: 'min_mod', value: 'min_mod' },
       { text: 'max_mod', value: 'max_mod' },
       { text: 'min_angular_separation', value: 'min_angular_separation' },
@@ -452,6 +456,10 @@ test.describe('Solve Score UI', () => {
       { text: 'centroid_dist', value: 'centroid_dist' },
       { text: 'dist_unit_circle', value: 'dist_unit_circle' },
       { text: 'asymmetry_re', value: 'asymmetry_re' },
+      { text: 'max_re', value: 'max_re' },
+      { text: 'min_re', value: 'min_re' },
+      { text: 'max_im', value: 'max_im' },
+      { text: 'min_im', value: 'min_im' },
       { text: 'min_mod', value: 'min_mod' },
       { text: 'max_mod', value: 'max_mod' },
       { text: 'min_angular_separation', value: 'min_angular_separation' },
@@ -520,36 +528,6 @@ test.describe('Solve Score UI', () => {
     expect(payload.mode).toBe('color');
     expect(payload.params.color_mode).toBe('solve_score');
     expect(payload.params.solve_metric).toBe('spread');
-  });
-
-  test('switching root-proximity palette does not change solve-score palette', async ({ page }) => {
-    await page.click('.tab-btn:text("Render")');
-
-    // Click a solve-score palette first
-    await chooseBuiltinPalette(page, 'solve_score', 'plasma');
-    const solveActive = await page.locator('#palette-circles-solve-score .pal-circle.active').getAttribute('title');
-
-    // Click a root-proximity palette
-    await chooseBuiltinPalette(page, 'proximity', 'viridis');
-
-    // Solve-score active should be unchanged
-    const solveActiveAfter = await page.locator('#palette-circles-solve-score .pal-circle.active').getAttribute('title');
-    expect(solveActiveAfter).toBe(solveActive);
-  });
-
-  test('switching solve-score palette does not change root-proximity palette', async ({ page }) => {
-    await page.click('.tab-btn:text("Render")');
-
-    // Click a root-proximity palette first
-    await chooseBuiltinPalette(page, 'proximity', 'viridis');
-    const rootActive = await page.locator('#palette-circles-root-proximity .pal-circle.active').getAttribute('title');
-
-    // Click a solve-score palette
-    await chooseBuiltinPalette(page, 'solve_score', 'plasma');
-
-    // Root-proximity active should be unchanged
-    const rootActiveAfter = await page.locator('#palette-circles-root-proximity .pal-circle.active').getAttribute('title');
-    expect(rootActiveAfter).toBe(rootActive);
   });
 
   test('clusteriness dispatch sends correct solve_metric', async ({ page }) => {
@@ -759,6 +737,8 @@ test.describe('Solve Score UI', () => {
       document.getElementById('render-results-dir').value = 'test_bounds';
       _renderLoadedJobId = 'test_bounds';
       _renderActiveFamily = 'color';
+      _setSolveScoreProgramStatus('render', 'Loaded pal5');
+      _solveScoreProgramRememberedNames.render = 'pal5';
       renderArtifactPanel('test_bounds', {
         calc: { exists: true, N: 4000, degree: 8 },
         families: {
@@ -802,8 +782,11 @@ test.describe('Solve Score UI', () => {
     expect(await page.locator('#render-min-im').inputValue()).toBe('-0.75');
     expect(await page.locator('#render-max-im').inputValue()).toBe('2');
     expect(await page.locator('#render-square-extent').inputValue()).toBe('3.25');
+    await expect(page.locator('#render-solve-score-program-status')).toContainText('Populated from color_bounds');
     const mode = await page.evaluate(() => _viewMode);
+    const rememberedName = await page.evaluate(() => _solveScoreProgramRememberedNames.render);
     expect(mode).toBe('explicit');
+    expect(rememberedName).toBe('');
   });
 
   test('populate seeds auto controls even when canonical bounds restore explicit mode', async ({ page }) => {
@@ -1192,7 +1175,6 @@ test.describe('Solve Score UI', () => {
     await expect(panel.locator('#btn-render-deepzoom')).toBeVisible();
     await expect(panel.locator('#btn-render-go-palette')).toHaveText('GoPalette: pal_1');
     await expect(panel.locator('img[src="https://example.com/c.png"]')).toBeVisible();
-    await expect(panel.locator('text=[P pal_1]')).toBeVisible();
     await expect(panel.locator('text=id=color_1')).toBeVisible();
   });
 
@@ -1256,7 +1238,7 @@ test.describe('Solve Score UI', () => {
     await page.click('#btn-render-go-palette');
     await expect.poll(async () => page.evaluate(() => _renderActiveFamily)).toBe('palette');
     await expect(page.locator('#btn-render-go-color')).toHaveText('GoColor: color_1');
-    await expect(page.locator('text=[C color_1]')).toBeVisible();
+    await expect(page.locator('text=solve:crowding(q=5%) · palette:reef · color:color_1')).toBeVisible();
 
     await page.click('#btn-render-go-color');
     await expect.poll(async () => page.evaluate(() => _renderActiveFamily)).toBe('color');
@@ -1280,17 +1262,20 @@ test.describe('Solve Score UI', () => {
           color: [{ artifact_id: 'color_1', created_at: '2026-03-30T10:00:00Z', image_key: 'renders/test_job/color/color_1/image.jpeg', image_url: 'https://example.com/c.jpeg', preview_url: 'https://example.com/c.png', viewer_url: 'https://example.com/c.png', file_size: 50000, width: 1000, height: 1000, color_mode: 'rainbow', format: 'jpeg' }],
           bilevel: [],
           coeffs: [],
-          palette: [{ artifact_id: 'pal_1', palette_id: 'pal_1', created_at: '2026-03-30T12:00:00Z', image_key: 'renders/test_job/palettes/pal_1/image.jpeg', image_url: 'https://example.com/p.jpeg', preview_url: 'https://example.com/p.png', viewer_url: 'https://example.com/p.png', file_size: 40000, width: 1000, height: 1000, metric: 'crowding', palette: 'reef', solve_score_quantile: 0.05, root_transforms: [['rotate_roots', '0.125']] }],
+          palette: [{ artifact_id: 'pal_1', palette_id: 'pal_1', created_at: '2026-03-30T12:00:00Z', image_key: 'renders/test_job/palettes/pal_1/image.jpeg', image_url: 'https://example.com/p.jpeg', preview_url: 'https://example.com/p.png', viewer_url: 'https://example.com/p.png', file_size: 40000, width: 1000, height: 1000, metric: 'crowding', palette: 'reef', solve_score_quantile: 0.05, root_transforms: [['rotate_roots', '0.125']], derived_from_color_artifact_id: 'color_1' }],
         },
         calc: { exists: true, N: 1000, degree: 5 },
         artifacts: {},
         deepzoom_latest: { exists: false },
       });
+      _setSolveScoreProgramStatus('render', 'Loaded pal5');
+      _solveScoreProgramRememberedNames.render = 'pal5';
     });
 
     await page.click('#btn-render-populate');
 
     await expect(page.locator('#render-preview img[src="https://example.com/c.png"]')).toBeVisible();
+    await expect(page.locator('#render-solve-score-program-status')).toContainText('Populated from color_1');
     const state = await page.evaluate(() => ({
       family: _renderActiveFamily,
       mode: renderColorMode,
@@ -1298,6 +1283,7 @@ test.describe('Solve Score UI', () => {
       palette: renderSolveScorePalette,
       q: document.getElementById('render-solve-score-quantile').value,
       rt: JSON.stringify(_rtChain),
+      rememberedName: _solveScoreProgramRememberedNames.render,
     }));
     expect(state.family).toBe('color');
     expect(state.mode).toBe('solve_score');
@@ -1305,6 +1291,48 @@ test.describe('Solve Score UI', () => {
     expect(state.palette).toBe('reef');
     expect(state.q).toBe('5');
     expect(state.rt).toContain('rotate_roots');
+    expect(state.rememberedName).toBe('');
+  });
+
+  test('color summary shows solve display, palette name, and source color artifact id', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate(() => {
+      document.getElementById('render-results-dir').value = 'summary_job';
+      _renderLoadedJobId = 'summary_job';
+      _renderActiveFamily = 'color';
+      renderArtifactPanel('summary_job', {
+        families: {
+          color: [{
+            artifact_id: 'color_1',
+            created_at: '2026-03-30T10:00:00Z',
+            image_key: 'renders/summary_job/color/color_1/image.jpeg',
+            image_url: 'https://example.com/c.jpeg',
+            preview_url: 'https://example.com/c.png',
+            viewer_url: 'https://example.com/c.png',
+            file_size: 50000,
+            width: 1000,
+            height: 1000,
+            color_mode: 'solve_score',
+            format: 'jpeg',
+            palette: 'reef',
+            solve_metric: 'crowding',
+            solve_score_quantile: 0.05,
+            solve_score_omega: 4,
+            solve_score_omega_enabled: true,
+            solve_score_chain: [['crowding', '5'], ['omega_cosine', '4']],
+          }],
+          bilevel: [],
+          coeffs: [],
+          palette: [],
+          pdf: [],
+        },
+        calc: { exists: true, N: 1000, degree: 5 },
+        artifacts: {},
+        deepzoom_latest: { exists: false },
+      });
+    });
+
+    await expect(page.locator('text=solve:crowding(q=5%) ω-cos(4) · palette:reef · color:color_1')).toBeVisible();
   });
 
   test('empty family shows no saved artifacts message', async ({ page }) => {
@@ -1337,7 +1365,14 @@ test.describe('Solve Score UI', () => {
     expect(launches[0]).toEqual({
       mode: 'color',
       paramsPatch: {
-        raster_engine: 'single',
+        raster_engine: 'mt',
+        raster_mt_threads: 4,
+        solve_score_threads: 4,
+        raster_workers: 10,
+        raster_section_mode: 'logical_sections_auto',
+        raster_section_count: '',
+        raster_sectioned_retries: 2,
+        finalize_workers: 16,
         save_associated_palette: true,
       },
     });
@@ -1350,19 +1385,17 @@ test.describe('Solve Score UI', () => {
     await page.click('#btn-render-generate-mt');
     const popup = page.locator('#render-mt-popup-overlay');
     await expect(popup).toBeVisible();
-    await expect(page.locator('#render-mt-hist-retries')).toBeVisible();
-    await expect(page.locator('#render-mt-raster-retries')).toBeVisible();
-    await expect(page.locator('#render-mt-save-associated-palette')).toBeVisible();
+    await expect(page.locator('#render-mt-fused-raster-retries')).toBeVisible();
+    await expect(page.locator('#render-mt-fused-save-associated-palette')).toBeVisible();
 
-    await page.fill('#render-mt-solve-score-threads', '6');
-    await page.selectOption('#render-mt-hist-input-mode', 'sectioned');
-    await page.fill('#render-mt-hist-retries', '3');
-    await page.fill('#render-mt-threads', '7');
-    await page.selectOption('#render-mt-raster-input-mode', 'sectioned');
-    await page.fill('#render-mt-raster-retries', '4');
-    await page.fill('#render-mt-merge-workers', '18');
-    await page.fill('#render-mt-finalize-workers', '19');
-    await page.check('#render-mt-save-associated-palette');
+    await page.fill('#render-mt-fused-clip-threads', '6');
+    await page.fill('#render-mt-fused-raster-threads', '7');
+    await page.fill('#render-mt-fused-raster-workers', '18');
+    await page.fill('#render-mt-fused-raster-retries', '4');
+    await page.selectOption('#render-mt-fused-raster-section-mode', 'logical_sections');
+    await page.fill('#render-mt-fused-raster-section-count', '12');
+    await page.fill('#render-mt-fused-finalize-workers', '19');
+    await page.check('#render-mt-fused-save-associated-palette');
     await page.click('#render-mt-popup-run');
 
     const launches = await page.evaluate(() => window._renderLaunches);
@@ -1370,14 +1403,14 @@ test.describe('Solve Score UI', () => {
     expect(launches[0]).toEqual({
       mode: 'color',
       paramsPatch: {
+        color_pipeline: 'fused',
         raster_engine: 'mt',
         raster_mt_threads: 7,
         solve_score_threads: 6,
-        solve_score_hist_input_mode: 'sectioned',
-        solve_score_hist_retries: 3,
-        raster_input_mode: 'sectioned',
+        raster_workers: 18,
         raster_sectioned_retries: 4,
-        solve_score_merge_workers: 18,
+        raster_section_mode: 'logical_sections',
+        raster_section_count: 12,
         finalize_workers: 19,
         save_associated_palette: true,
       },

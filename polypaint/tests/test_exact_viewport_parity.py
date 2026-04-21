@@ -19,8 +19,7 @@ def _compiler():
 
 def _compile_binary(tmpdir, name, source, extra_sources=None, libs=None):
     cc = _compiler()
-    if not cc:
-        pytest.skip("no C compiler available")
+    assert cc, "no C compiler available"
     out = pathlib.Path(tmpdir) / name
     cmd = [cc, "-O2", "-I", str(LAMBDA_DIR), str(LAMBDA_DIR / source)]
     for extra in extra_sources or []:
@@ -57,6 +56,22 @@ def _legacy_square_project(re, im, *, width, height, center_re, center_im, scale
     half_h = height / 2.0
     px = int(half_w + (re - center_re) * scale)
     py = int(half_h - (im - center_im) * scale)
+    return px, py
+
+
+def _bounds_project(re, im, *, width, height, min_re, max_re, min_im, max_im, rotation=0.0):
+    center_re = (float(min_re) + float(max_re)) / 2.0
+    center_im = (float(min_im) + float(max_im)) / 2.0
+    dx = float(re) - center_re
+    dy = float(im) - center_im
+    cos_a = math.cos(float(rotation))
+    sin_a = math.sin(float(rotation))
+    rot_re = center_re + (dx * cos_a - dy * sin_a)
+    rot_im = center_im + (dx * sin_a + dy * cos_a)
+    x_scale = float(width) / (float(max_re) - float(min_re))
+    y_scale = float(height) / (float(max_im) - float(min_im))
+    px = int(math.floor((rot_re - float(min_re)) * x_scale))
+    py = int(math.floor((float(max_im) - rot_im) * y_scale))
     return px, py
 
 
@@ -116,6 +131,56 @@ def _expected_section_fragment(roots, *, width, height, ext):
     return pairs
 
 
+def _expected_roots2pix_fragment_bounds(roots, *, width, height, bounds, clip_lo, clip_hi, rotation=0.0):
+    claimed = set()
+    pairs = []
+    for re, im in roots:
+        px, py = _bounds_project(
+            re,
+            im,
+            width=width,
+            height=height,
+            min_re=bounds["min_re"],
+            max_re=bounds["max_re"],
+            min_im=bounds["min_im"],
+            max_im=bounds["max_im"],
+            rotation=rotation,
+        )
+        if px < 0 or px >= width or py < 0 or py >= height:
+            continue
+        global_idx = py * width + px
+        if global_idx in claimed:
+            continue
+        claimed.add(global_idx)
+        pairs.append((global_idx, _centroid_re_score_byte(re, clip_lo, clip_hi)))
+    return pairs
+
+
+def _expected_section_fragment_bounds(roots, *, width, height, bounds, rotation=0.0):
+    claimed = set()
+    pairs = []
+    for re, im in roots:
+        px, py = _bounds_project(
+            re,
+            im,
+            width=width,
+            height=height,
+            min_re=bounds["min_re"],
+            max_re=bounds["max_re"],
+            min_im=bounds["min_im"],
+            max_im=bounds["max_im"],
+            rotation=rotation,
+        )
+        if px < 0 or px >= width or py < 0 or py >= height:
+            continue
+        global_idx = py * width + px
+        if global_idx in claimed:
+            continue
+        claimed.add(global_idx)
+        pairs.append((global_idx, 1))
+    return pairs
+
+
 def _expected_coeff_bits(coeff_rows, *, width, height, ext):
     scale = _square_scale(width, ext)
     bits = bytearray((width * height + 7) // 8)
@@ -124,6 +189,37 @@ def _expected_coeff_bits(coeff_rows, *, width, height, ext):
     deduped = 0
     for re, im in coeff_rows:
         px, py = _legacy_square_project(re, im, width=width, height=height, center_re=0.0, center_im=0.0, scale=scale)
+        if px < 0 or px >= width or py < 0 or py >= height:
+            clipped += 1
+            continue
+        bit_idx = py * width + px
+        byte_idx = bit_idx >> 3
+        mask = 1 << (bit_idx & 7)
+        if bits[byte_idx] & mask:
+            deduped += 1
+            continue
+        bits[byte_idx] |= mask
+        plotted += 1
+    return bytes(bits), plotted, clipped, deduped
+
+
+def _expected_coeff_bits_bounds(coeff_rows, *, width, height, bounds, rotation=0.0):
+    bits = bytearray((width * height + 7) // 8)
+    plotted = 0
+    clipped = 0
+    deduped = 0
+    for re, im in coeff_rows:
+        px, py = _bounds_project(
+            re,
+            im,
+            width=width,
+            height=height,
+            min_re=bounds["min_re"],
+            max_re=bounds["max_re"],
+            min_im=bounds["min_im"],
+            max_im=bounds["max_im"],
+            rotation=rotation,
+        )
         if px < 0 or px >= width or py < 0 or py >= height:
             clipped += 1
             continue
@@ -282,6 +378,178 @@ def test_coeffs_bilevel_square_ext_2_5_matches_legacy_square_camera_oracle():
         assert result.returncode == 0, result.stderr
         meta = json.loads(result.stdout)
         expected_bits, plotted, clipped, deduped = _expected_coeff_bits(coeff_rows, width=width, height=height, ext=ext)
+        assert meta["roots_plotted"] == plotted
+        assert meta["roots_clipped"] == clipped
+        assert meta["roots_deduped"] == deduped
+        assert (root / "coeff_bits_t0000.bits").read_bytes() == expected_bits
+
+
+def test_roots2pix_mt_asymmetric_bounds_match_independent_bounds_oracle():
+    with tempfile.TemporaryDirectory(prefix="exact_viewport_roots2pix_asym_") as td:
+        root = pathlib.Path(td)
+        binary = _compile_binary(
+            td,
+            "roots2pix_mt_test",
+            "roots2pix_mt.c",
+            extra_sources=["multispan_reader.c"],
+            libs=["-lcurl", "-lm", "-lpthread"],
+        )
+        roots = [
+            (-3.50, -0.50),
+            (-1.00, 1.50),
+            (0.00, 0.00),
+            (0.00, 0.00),
+            (7.50, 1.75),
+            (9.00, 0.00),
+        ]
+        roots_path = _write_float_file(root / "roots.bin", [coord for pair in roots for coord in pair])
+        width = height = 24
+        bounds = {
+            "min_re": -4.0,
+            "max_re": 8.0,
+            "min_im": -1.0,
+            "max_im": 2.0,
+        }
+        clip_lo = -4.0
+        clip_hi = 8.0
+        pixbin_prefix = root / "pixbin"
+        cmd = [
+            str(binary),
+            str(roots_path),
+            str(root / "pix"),
+            f"--width={width}",
+            f"--height={height}",
+            "--tile_size=24",
+            "--n_tile_cols=1",
+            "--n_tile_rows=1",
+            f"--min_re={bounds['min_re']}",
+            f"--max_re={bounds['max_re']}",
+            f"--min_im={bounds['min_im']}",
+            f"--max_im={bounds['max_im']}",
+            "--degree=1",
+            "--color=solve_score",
+            "--match=none",
+            "--palette=inferno",
+            "--rotation=0",
+            "--threads=1",
+            "--input_mode=tmpfile",
+            "--solve_metric=centroid_re",
+            f"--solve_score_clip_lo={clip_lo}",
+            f"--solve_score_clip_hi={clip_hi}",
+            "--solve_score_omega_enabled=0",
+            "--solve_score_raw_bytes=1",
+            "--skip_pix_output=1",
+            f"--pixel_bin_prefix={pixbin_prefix}",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stderr
+        meta = json.loads(result.stdout)
+        expected_pairs = _expected_roots2pix_fragment_bounds(
+            roots,
+            width=width,
+            height=height,
+            bounds=bounds,
+            clip_lo=clip_lo,
+            clip_hi=clip_hi,
+        )
+        assert meta["roots_plotted"] == len(expected_pairs)
+        assert meta["roots_clipped"] == 1
+        assert (root / "pixbin.frag").read_bytes() == _encode_u32le_u8_pairs(expected_pairs)
+
+
+def test_bilevel_section_asymmetric_bounds_match_independent_bounds_oracle():
+    with tempfile.TemporaryDirectory(prefix="exact_viewport_bilevel_section_asym_") as td:
+        root = pathlib.Path(td)
+        binary = _compile_binary(td, "bilevel_section_raster_test", "bilevel_section_raster.c", libs=["-lm"])
+        roots = [
+            (-3.50, -0.50),
+            (-1.00, 1.50),
+            (0.00, 0.00),
+            (0.00, 0.00),
+            (7.50, 1.75),
+            (9.00, 0.00),
+        ]
+        section_path = _write_float_file(root / "section.bin", [coord for pair in roots for coord in pair])
+        width = height = 24
+        bounds = {
+            "min_re": -4.0,
+            "max_re": 8.0,
+            "min_im": -1.0,
+            "max_im": 2.0,
+        }
+        out_frag = root / "section.frag"
+        cmd = [
+            str(binary),
+            str(section_path),
+            str(out_frag),
+            f"--width={width}",
+            f"--height={height}",
+            f"--min_re={bounds['min_re']}",
+            f"--max_re={bounds['max_re']}",
+            f"--min_im={bounds['min_im']}",
+            f"--max_im={bounds['max_im']}",
+            "--degree=1",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stderr
+        meta = json.loads(result.stdout)
+        expected_pairs = _expected_section_fragment_bounds(
+            roots,
+            width=width,
+            height=height,
+            bounds=bounds,
+        )
+        assert meta["roots_plotted"] == len(expected_pairs)
+        assert meta["roots_clipped"] == 1
+        assert meta["roots_deduped"] == 1
+        assert out_frag.read_bytes() == _encode_u32le_u8_pairs(expected_pairs)
+
+
+def test_coeffs_bilevel_asymmetric_bounds_match_independent_bounds_oracle():
+    with tempfile.TemporaryDirectory(prefix="exact_viewport_coeffs_bilevel_asym_") as td:
+        root = pathlib.Path(td)
+        binary = _compile_binary(td, "coeffs_bilevel_raster_test", "coeffs_bilevel_raster.c", libs=["-lm"])
+        coeff_rows = [
+            (-3.50, -0.50),
+            (-1.00, 1.50),
+            (0.00, 0.00),
+            (0.00, 0.00),
+            (7.50, 1.75),
+            (9.00, 0.00),
+        ]
+        coeffs_path = _write_float_file(root / "coeffs.bin", [coord for pair in coeff_rows for coord in pair])
+        width = height = 24
+        bounds = {
+            "min_re": -4.0,
+            "max_re": 8.0,
+            "min_im": -1.0,
+            "max_im": 2.0,
+        }
+        out_prefix = root / "coeff_bits"
+        cmd = [
+            str(binary),
+            str(coeffs_path),
+            str(out_prefix),
+            f"--width={width}",
+            f"--height={height}",
+            "--tile_size=24",
+            "--n_tile_cols=1",
+            "--n_tile_rows=1",
+            f"--min_re={bounds['min_re']}",
+            f"--max_re={bounds['max_re']}",
+            f"--min_im={bounds['min_im']}",
+            f"--max_im={bounds['max_im']}",
+            "--n_coeffs=1",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        assert result.returncode == 0, result.stderr
+        meta = json.loads(result.stdout)
+        expected_bits, plotted, clipped, deduped = _expected_coeff_bits_bounds(
+            coeff_rows,
+            width=width,
+            height=height,
+            bounds=bounds,
+        )
         assert meta["roots_plotted"] == plotted
         assert meta["roots_clipped"] == clipped
         assert meta["roots_deduped"] == deduped

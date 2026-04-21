@@ -8958,7 +8958,6 @@ const _solveScoreMetricNames = [
     'centroid_dist',
     'dist_unit_circle',
     'asymmetry_re',
-    'min_mod',
     'max_re',
     'min_re',
     'max_im',
@@ -12580,15 +12579,77 @@ function _linkedColorIdForPaletteArtifact(art) {
     return String(art.derived_from_color_artifact_id || '').trim();
 }
 
+function _sourceColorArtifactIdForRenderArtifact(art) {
+    if (!art) return '';
+    if (art.family === 'palette') {
+        return _linkedColorIdForPaletteArtifact(art)
+            || String(art.source_color_artifact_id || art.artifact_id || '').trim();
+    }
+    if (art.family === 'color') {
+        return String(art.derived_from_artifact_id || art.artifact_id || '').trim();
+    }
+    return String(art.derived_from_artifact_id || art.source_artifact_id || art.artifact_id || '').trim();
+}
+
+function _renderArtifactSolveDisplay(art) {
+    if (!art) return '';
+    const metric = String(
+        art.solve_metric
+        || art.metric
+        || art.palette_source_metric
+        || art.associated_palette_metric
+        || ''
+    ).trim();
+    const quantile = Number(art.solve_score_quantile);
+    const legacyQuantilePct = Number.isFinite(quantile) ? quantile * 100 : 0.1;
+    const omega = Number(art.solve_score_omega);
+    try {
+        const normalized = _normalizeSolveScoreChain(
+            art.solve_score_chain,
+            metric || 'proximity',
+            legacyQuantilePct
+        );
+        if (normalized.length) {
+            return _compileSolveScoreChain(normalized, metric || 'proximity', legacyQuantilePct).display;
+        }
+        if (metric) {
+            return _compileSolveScoreChain(
+                _defaultSolveScoreChain(
+                    metric,
+                    legacyQuantilePct,
+                    Number.isFinite(omega) ? omega : 1,
+                    art.solve_score_omega_enabled !== false && Number.isFinite(omega)
+                ),
+                metric,
+                legacyQuantilePct
+            ).display;
+        }
+    } catch (_) {
+    }
+    return metric;
+}
+
+function _noteSolveScorePopulate(prefix, art) {
+    const sourceColorId = _sourceColorArtifactIdForRenderArtifact(art) || 'saved artifact';
+    const statusTarget = art && art.family === 'palette' && !_linkedColorIdForPaletteArtifact(art)
+        ? `palette ${String(art.artifact_id || art.palette_id || 'saved artifact').trim()}`
+        : sourceColorId;
+    _solveScoreProgramRememberedNames[prefix] = '';
+    _setSolveScoreProgramStatus(prefix, `Populated from ${statusTarget}`, false);
+}
+
 function _renderArtifactSummary(art) {
     if (!art) return '';
     let base = '';
     if (art.family === 'color') {
         if (art.color_mode === 'solve_score') {
-            const q = art.solve_score_quantile != null ? ` q=${(art.solve_score_quantile * 100).toFixed(1)}%` : '';
-            const omega = art.solve_score_omega != null ? ` ${_omegaSummaryLabel(art.solve_score_omega_enabled !== false, art.solve_score_omega)}` : '';
-            const pal = art.palette ? ` ${art.palette}` : '';
-            base = `solve:${art.solve_metric || ''}${q}${omega}${pal}`.trim();
+            const solveDisplay = _renderArtifactSolveDisplay(art);
+            const sourceColorId = _sourceColorArtifactIdForRenderArtifact(art);
+            base = [
+                solveDisplay ? `solve:${solveDisplay}` : '',
+                art.palette ? `palette:${art.palette}` : '',
+                sourceColorId ? `color:${sourceColorId}` : '',
+            ].filter(Boolean).join(' · ');
         } else if (art.color_mode) {
             base = art.color_mode;
         }
@@ -12601,8 +12662,10 @@ function _renderArtifactSummary(art) {
         if (art.derivation_kind === 'color_repalette') {
             base = [base, 'repalette'].filter(Boolean).join(' · ');
         }
-        const linkedPaletteId = _linkedPaletteIdForColorArtifact(art);
-        return [base, linkedPaletteId ? `[P ${linkedPaletteId}]` : '', art.artifact_id ? `id=${art.artifact_id}` : ''].filter(Boolean).join(' · ');
+        if (art.artifact_id && art.color_mode !== 'solve_score') {
+            return [base, `id=${art.artifact_id}`].filter(Boolean).join(' · ');
+        }
+        return base || art.artifact_id || '';
     }
     if (art.family === 'bilevel') {
         if (art.postprocess_kind === 'png_export') return 'PNG';
@@ -12618,11 +12681,15 @@ function _renderArtifactSummary(art) {
         return art.format || '';
     }
     if (art.family === 'palette') {
-        const q = art.solve_score_quantile != null ? `q=${(art.solve_score_quantile * 100).toFixed(1)}%` : '';
-        const omega = art.solve_score_omega != null ? _omegaSummaryLabel(art.solve_score_omega_enabled !== false, art.solve_score_omega) : '';
+        const solveDisplay = _renderArtifactSolveDisplay(art);
         const derived = art.derivation_kind === 'repalette' ? 'repalette' : '';
-        const linkedColorId = _linkedColorIdForPaletteArtifact(art);
-        return [art.metric, q, omega, art.palette, derived, linkedColorId ? `[C ${linkedColorId}]` : ''].filter(Boolean).join(' ');
+        const sourceColorId = _sourceColorArtifactIdForRenderArtifact(art);
+        return [
+            solveDisplay ? `solve:${solveDisplay}` : '',
+            art.palette ? `palette:${art.palette}` : '',
+            sourceColorId ? `color:${sourceColorId}` : '',
+            derived,
+        ].filter(Boolean).join(' · ');
     }
     if (art.family === 'pdf') {
         const kind = art.pdf_kind === 'color_spread' ? 'ColorSpread' : (art.pdf_kind || 'pdf');
@@ -12850,6 +12917,7 @@ function populateSelectedRenderArtifact() {
             _setRenderRootTransforms(art.root_transforms);
         }
         restoreRenderOutputFields(art);
+        _noteSolveScorePopulate('render', art);
         _renderSelectFamily('color');
         finishPopulate(art.artifact_id || art.palette_id || 'selected palette artifact');
         return;
@@ -12896,6 +12964,7 @@ function populateSelectedRenderArtifact() {
         warnings.push('solve-score omega');
     }
     if (art.palette) setPaletteForMode('solve_score', art.palette);
+    _noteSolveScorePopulate('render', art);
     finishPopulate(art.artifact_id || 'selected color artifact');
 }
 
@@ -13305,9 +13374,9 @@ function renderArtifactPanel(jobId, summary, options = {}) {
 
     let controlsExtra = '';
     if (_renderActiveFamily === 'color') {
-        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses the fused Solve score path only: lores clip, logical-section raster, and FinalizeMT raw assembly/colorization. Generate-MT exposes fused clip/raster/finalize controls only: clip threads, raster threads, raster workers, raster retries, logical sections, finalize workers, and inline associated-palette output. ExtractPalette opens a popup with solve-score prepass controls plus real palette chunk controls: chunk threads, chunk input tmp file vs sectioned native, chunk retries, and chunk workers. [P id] in Color summaries means the artifact has a palette link; [C id] in Palette summaries means the palette knows which Color artifact it came from. RePalette on Color requires a fused greyscale raw sidecar and only remaps the stored greyscale bytes to a new palette. Color2Bilevel thresholds the selected fused greyscale raw sidecar into a new bilevel artifact. Populate restores the selected color artifact settings into the form, including saved render execution settings when present. Autolevels derives a new immutable color artifact from the selected image. Resize derives a new immutable Color artifact using libvips resize/thumbnail operations.</span>';
+        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses the fused Solve score path only: lores clip, logical-section raster, and FinalizeMT raw assembly/colorization. Generate-MT exposes fused clip/raster/finalize controls only: clip threads, raster threads, raster workers, raster retries, logical sections, finalize workers, and inline associated-palette output. ExtractPalette opens a popup with solve-score prepass controls plus real palette chunk controls: chunk threads, chunk input tmp file vs sectioned native, chunk retries, and chunk workers. Color summaries show the solve display, palette name, and source Color artifact id. RePalette on Color requires a fused greyscale raw sidecar and only remaps the stored greyscale bytes to a new palette. Color2Bilevel thresholds the selected fused greyscale raw sidecar into a new bilevel artifact. Populate restores the selected color artifact settings into the form, including saved render execution settings when present. Autolevels derives a new immutable color artifact from the selected image. Resize derives a new immutable Color artifact using libvips resize/thumbnail operations.</span>';
     } else if (_renderActiveFamily === 'palette') {
-        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Solve score metric, palette, q, and root transforms. RePalette reuses the selected palette artifact’s saved bins and only changes the final palette mapping. Populate copies the selected palette into Color settings and switches to Color. [C id] means this palette is linked back to a Color artifact.</span>';
+        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Solve score metric, palette, q, and root transforms. RePalette reuses the selected palette artifact’s saved bins and only changes the final palette mapping. Populate copies the selected palette into Color settings and switches to Color. Palette summaries show the solve display, palette name, and source Color artifact id.</span>';
     } else if (_renderActiveFamily === 'bilevel') {
         controlsExtra = '<span style="font-size:11px; color:#666">Generate opens the BiLevel popup and runs the logical-section path: sectioned solve reads, sparse occupancy fragments, then one assemble+encode finalize. Color2Bilevel is the faster derived path from a fused Color artifact and appears on the Color tab.</span>';
     } else if (_renderActiveFamily === 'pdf') {

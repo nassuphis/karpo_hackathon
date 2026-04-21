@@ -145,6 +145,14 @@ assertIncludes("id=\"solve-score-modal-save\"", 'solve-score modal save button m
 assertIncludes("id=\"solve-score-modal-delete\"", 'solve-score modal delete button missing');
 assertIncludes("id=\"solve-score-modal-download\"", 'solve-score modal download button missing');
 assertIncludes("id=\"solve-score-modal-upload\"", 'solve-score modal upload button missing');
+assertIncludes("function _sourceColorArtifactIdForRenderArtifact(art) {", 'render artifact source-color helper missing');
+assertIncludes("function _renderArtifactSolveDisplay(art) {", 'render artifact solve-display helper missing');
+assertIncludes("_solveScoreProgramRememberedNames[prefix] = '';", 'populate should clear stale solve-score remembered names');
+assertIncludes("_setSolveScoreProgramStatus(prefix, `Populated from ${statusTarget}`, false);", 'populate should overwrite stale solve-score status with the resolved source label');
+assertIncludes("Color summaries show the solve display, palette name, and source Color artifact id.", 'render tab copy should match the new color summary contract');
+assertIncludes("Palette summaries show the solve display, palette name, and source Color artifact id.", 'render tab copy should match the new palette summary contract');
+assertNotIncludes("[P id] in Color summaries means the artifact has a palette link;", 'render tab should not describe removed [P id] summary tokens');
+assertNotIncludes("[C id] means this palette is linked back to a Color artifact.", 'render tab should not describe removed [C id] summary tokens');
 assertIncludes("id=\"btn-dz-goto-render\" onclick=\"_dzGotoSelectedRender()\"", 'DeepZoom tab should expose a GotoRender button');
 assertIncludes(">PopulateResult</button>", 'DeepZoom tab Populate button should be labeled PopulateResult');
 assertIncludes("id=\"deepzoom-viewport-readout\"", 'DeepZoom tab should expose a viewport readout block');
@@ -176,6 +184,152 @@ assertNotIncludes("function loadSolveScoreProgramPreset(", 'old solve-score pres
 assertNotIncludes("function saveSolveScoreProgram(", 'old solve-score download helper should be removed');
 
 console.log('Frontend fused render source checks: OK');
+NODE
+
+node - "$HTML" <<'NODE'
+const fs = require('fs');
+const vm = require('vm');
+
+const htmlPath = process.argv[2];
+const src = fs.readFileSync(htmlPath, 'utf8');
+
+function fail(message) {
+  console.error('FATAL: ' + message);
+  process.exit(1);
+}
+
+function extractFunction(name) {
+  const asyncMarker = `async function ${name}(`;
+  const plainMarker = `function ${name}(`;
+  let start = src.indexOf(asyncMarker);
+  if (start < 0) start = src.indexOf(plainMarker);
+  if (start < 0) fail(`missing function ${name}`);
+  const brace = src.indexOf('{', start);
+  if (brace < 0) fail(`missing opening brace for ${name}`);
+  let depth = 0;
+  for (let i = brace; i < src.length; i += 1) {
+    const ch = src[i];
+    if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return src.slice(start, i + 1);
+    }
+  }
+  fail(`missing closing brace for ${name}`);
+}
+
+function assert(cond, message) {
+  if (!cond) fail(message);
+}
+
+async function main() {
+  const code = [
+    extractFunction('_linkedColorIdForPaletteArtifact'),
+    extractFunction('_sourceColorArtifactIdForRenderArtifact'),
+    extractFunction('_noteSolveScorePopulate'),
+    extractFunction('setColorMode'),
+    extractFunction('_launchRenderOrchestrator'),
+    extractFunction('runRasterPipeline'),
+  ].join('\n\n');
+
+  const renderStatus = { textContent: '', className: '' };
+  const generateBtn = { disabled: false };
+  const ctx = {
+    console,
+    Math,
+    JSON,
+    renderColorMode: 'rainbow',
+    _renderGeneratePopupState: { saveAssociatedPalette: false },
+    _solveScoreProgramRememberedNames: { render: 'pal5', palette: 'keep' },
+    _statusCalls: [],
+    _logs: [],
+    _fusedCalls: [],
+    _nonColorCalls: [],
+    _updateSolveScoreButtonsCalls: 0,
+    _launchFusedRenderOrchestrator: async (paramsPatch) => {
+      ctx._fusedCalls.push(paramsPatch);
+      return {};
+    },
+    _launchNonColorRenderOrchestrator: async (mode, paramsPatch) => {
+      ctx._nonColorCalls.push({ mode, paramsPatch });
+      return {};
+    },
+    document: {
+      getElementById(id) {
+        if (id === 'btn-render-generate') return generateBtn;
+        if (id === 'render-status') return renderStatus;
+        return null;
+      },
+    },
+  };
+  ctx._updateSolveScoreButtons = () => {
+    ctx._updateSolveScoreButtonsCalls += 1;
+  };
+  ctx._setSolveScoreProgramStatus = (prefix, message, isError) => {
+    ctx._statusCalls.push({ prefix, message, isError });
+  };
+  ctx.log = (message, level, target) => {
+    ctx._logs.push({ message, level, target });
+  };
+
+  vm.createContext(ctx);
+  vm.runInContext(code, ctx);
+
+  ctx.setColorMode('proximity');
+  assert(ctx.renderColorMode === 'solve_score', 'setColorMode should force solve_score at runtime');
+  assert(ctx._updateSolveScoreButtonsCalls === 1, 'setColorMode should refresh solve-score buttons');
+
+  await ctx._launchRenderOrchestrator('color', { sentinel: 1 });
+  assert(ctx._fusedCalls.length === 1, 'color launch should route through fused orchestrator');
+  assert(ctx._fusedCalls[0].sentinel === 1, 'color launch should preserve paramsPatch');
+
+  await ctx._launchRenderOrchestrator('bilevel', { sentinel: 2 });
+  assert(ctx._nonColorCalls.length === 1, 'non-color launch should route through non-color orchestrator');
+  assert(ctx._nonColorCalls[0].mode === 'bilevel', 'non-color launch should preserve mode');
+
+  ctx._statusCalls = [];
+  ctx._solveScoreProgramRememberedNames.render = 'pal5';
+  ctx._noteSolveScorePopulate('render', { family: 'color', artifact_id: 'color_run_42' });
+  assert(ctx._solveScoreProgramRememberedNames.render === '', 'populate should clear stale remembered solve-score names');
+  assert(ctx._statusCalls[0].message === 'Populated from color_run_42', 'color populate should report the source color artifact id');
+
+  ctx._statusCalls = [];
+  ctx._solveScoreProgramRememberedNames.render = 'pal7';
+  ctx._noteSolveScorePopulate('render', { family: 'palette', artifact_id: 'pal_7' });
+  assert(ctx._statusCalls[0].message === 'Populated from palette pal_7', 'standalone palette populate should not pretend to come from a color artifact');
+
+  ctx.renderColorMode = 'solve_score';
+  ctx._renderGeneratePopupState.saveAssociatedPalette = true;
+  ctx._fusedCalls = [];
+  ctx._logs = [];
+  generateBtn.disabled = false;
+  renderStatus.textContent = '';
+  renderStatus.className = '';
+  await ctx.runRasterPipeline();
+  assert(ctx._fusedCalls.length === 1, 'runRasterPipeline should dispatch exactly one fused launch');
+  const launch = ctx._fusedCalls[0];
+  assert(launch.raster_engine === 'mt', 'runRasterPipeline should use fused mt raster engine');
+  assert(launch.raster_mt_threads === 4, 'runRasterPipeline should default raster threads to 4');
+  assert(launch.solve_score_threads === 4, 'runRasterPipeline should default clip threads to 4');
+  assert(launch.raster_workers === 10, 'runRasterPipeline should default raster workers to 10');
+  assert(launch.raster_section_mode === 'logical_sections_auto', 'runRasterPipeline should default raster sections to auto');
+  assert(launch.raster_sectioned_retries === 2, 'runRasterPipeline should default fused raster retries to 2');
+  assert(launch.finalize_workers === 16, 'runRasterPipeline should default finalize workers to 16');
+  assert(launch.save_associated_palette === true, 'runRasterPipeline should forward associated palette selection');
+  assert(generateBtn.disabled === false, 'runRasterPipeline should re-enable the Generate button after dispatch');
+
+  ctx.renderColorMode = 'rainbow';
+  ctx._fusedCalls = [];
+  renderStatus.textContent = '';
+  renderStatus.className = '';
+  await ctx.runRasterPipeline();
+  assert(ctx._fusedCalls.length === 0, 'runRasterPipeline should reject unsupported color modes before dispatch');
+  assert(renderStatus.textContent.includes('Solve score only'), 'runRasterPipeline should surface an actionable fused-only error');
+
+  console.log('Frontend fused render runtime checks: OK');
+}
+
+main().catch((err) => fail(err && err.stack ? err.stack : String(err)));
 NODE
 
 echo "=== Frontend fused render source test passed ==="

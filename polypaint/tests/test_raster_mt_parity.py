@@ -58,6 +58,16 @@ class _ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 
 class TestRasterMtParity(unittest.TestCase):
+    def _bounds_args(self, width, height, center_re, center_im, scale):
+        half_w_world = (float(width) / 2.0) / float(scale)
+        half_h_world = (float(height) / 2.0) / float(scale)
+        return [
+            f"--min_re={center_re - half_w_world}",
+            f"--max_re={center_re + half_w_world}",
+            f"--min_im={center_im - half_h_world}",
+            f"--max_im={center_im + half_h_world}",
+        ]
+
     def _score_case_payloads(self):
         from solve_score_chain import compile_solve_score_chain, solve_score_program_cli_payload
 
@@ -324,9 +334,7 @@ class TestRasterMtParity(unittest.TestCase):
                     "--tile_size=64",
                     "--n_tile_cols=1",
                     "--n_tile_rows=1",
-                    "--center_re=0",
-                    "--center_im=0",
-                    "--scale=3.0",
+                    *self._bounds_args(64, 64, 0.0, 0.0, 3.0),
                     f"--degree={degree}",
                     "--color=solve_score",
                     "--match=none",
@@ -429,9 +437,7 @@ class TestRasterMtParity(unittest.TestCase):
                 "--tile_size=8",
                 "--n_tile_cols=1",
                 "--n_tile_rows=1",
-                "--center_re=0",
-                "--center_im=0",
-                "--scale=1.0",
+                *self._bounds_args(8, 8, 0.0, 0.0, 1.0),
                 f"--degree={degree}",
                 "--color=solve_score",
                 "--match=none",
@@ -477,9 +483,7 @@ class TestRasterMtParity(unittest.TestCase):
                 "--tile_size=8",
                 "--n_tile_cols=1",
                 "--n_tile_rows=1",
-                "--center_re=0",
-                "--center_im=0",
-                "--scale=1.0",
+                *self._bounds_args(8, 8, 0.0, 0.0, 1.0),
                 f"--degree={degree}",
                 "--color=solve_score",
                 "--match=none",
@@ -528,9 +532,7 @@ class TestRasterMtParity(unittest.TestCase):
                 "--tile_size=8",
                 "--n_tile_cols=1",
                 "--n_tile_rows=1",
-                "--center_re=0",
-                "--center_im=0",
-                "--scale=1.0",
+                *self._bounds_args(8, 8, 0.0, 0.0, 1.0),
                 f"--degree={degree}",
                 "--color=solve_score",
                 "--match=none",
@@ -572,9 +574,7 @@ class TestRasterMtParity(unittest.TestCase):
                 "--tile_size=8",
                 "--n_tile_cols=1",
                 "--n_tile_rows=1",
-                "--center_re=0",
-                "--center_im=0",
-                "--scale=1.0",
+                *self._bounds_args(8, 8, 0.0, 0.0, 1.0),
                 f"--degree={degree}",
                 "--color=solve_score",
                 "--match=none",
@@ -626,9 +626,7 @@ class TestRasterMtParity(unittest.TestCase):
                 "--tile_size=16",
                 "--n_tile_cols=1",
                 "--n_tile_rows=1",
-                "--center_re=0",
-                "--center_im=0",
-                "--scale=4.0",
+                *self._bounds_args(16, 16, 0.0, 0.0, 4.0),
                 f"--degree={degree}",
                 "--color=solve_score",
                 "--solve_metric=proximity",

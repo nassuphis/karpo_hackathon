@@ -200,8 +200,14 @@ def compute_viewport_from_bin(bin_data, quantile=0.0, shim=0.05):
 
     if range_re > 0 and range_im > 0:
         scale = min(REF_SIZE / range_re, REF_SIZE / range_im)
+    elif range_re > 0:
+        scale = REF_SIZE / range_re
+    elif range_im > 0:
+        scale = REF_SIZE / range_im
     else:
-        scale = 1.0
+        # Keep degenerate single-point previews bounded instead of exploding
+        # to the full 4096-world-unit fallback span.
+        scale = float(REF_SIZE)
 
     return {
         "center_re": center_re,

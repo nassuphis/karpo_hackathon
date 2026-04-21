@@ -753,7 +753,7 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#render-status')).toContainText('Explicit viewport requires Max Re > Min Re');
   });
 
-  test('populate restores explicit viewport bounds from artifact metadata', async ({ page }) => {
+  test('populate restores explicit viewport bounds and preserved square controls from artifact metadata', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await page.evaluate(() => {
       document.getElementById('render-results-dir').value = 'test_bounds';
@@ -775,7 +775,7 @@ test.describe('Solve Score UI', () => {
             color_mode: 'solve_score',
             format: 'jpeg',
             view_mode: 'square',
-            square_extent: 2.0,
+            square_extent: 3.25,
             min_re: -3.5,
             max_re: 1.25,
             min_im: -0.75,
@@ -801,6 +801,58 @@ test.describe('Solve Score UI', () => {
     expect(await page.locator('#render-max-re').inputValue()).toBe('1.25');
     expect(await page.locator('#render-min-im').inputValue()).toBe('-0.75');
     expect(await page.locator('#render-max-im').inputValue()).toBe('2');
+    expect(await page.locator('#render-square-extent').inputValue()).toBe('3.25');
+    const mode = await page.evaluate(() => _viewMode);
+    expect(mode).toBe('explicit');
+  });
+
+  test('populate seeds auto controls even when canonical bounds restore explicit mode', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate(() => {
+      document.getElementById('render-results-dir').value = 'test_auto_bounds';
+      _renderLoadedJobId = 'test_auto_bounds';
+      _renderActiveFamily = 'color';
+      renderArtifactPanel('test_auto_bounds', {
+        calc: { exists: true, N: 4000, degree: 8 },
+        families: {
+          color: [{
+            artifact_id: 'color_auto_bounds',
+            created_at: '2026-04-20T12:00:00Z',
+            image_key: 'renders/test_auto_bounds/color/color_auto_bounds/image.jpeg',
+            image_url: 'https://example.com/auto-bounds.jpeg',
+            preview_url: 'https://example.com/auto-bounds.png',
+            viewer_url: 'https://example.com/auto-bounds.png',
+            file_size: 50000,
+            width: 512,
+            height: 512,
+            color_mode: 'solve_score',
+            format: 'jpeg',
+            view_mode: 'auto',
+            quantile: 0.012,
+            shim: 0.17,
+            min_re: -3.5,
+            max_re: 1.25,
+            min_im: -0.75,
+            max_im: 2.0,
+            rotation: 0,
+            palette: 'inferno',
+            solve_metric: 'proximity',
+            solve_score_quantile: 0.001,
+            solve_score_omega: 1,
+            solve_score_omega_enabled: true,
+            solve_score_chain: [['proximity', '0.1']],
+          }],
+          bilevel: [],
+          coeffs: [],
+          palette: [],
+          pdf: [],
+        },
+      });
+      populateSelectedRenderArtifact();
+    });
+
+    expect(await page.locator('#render-quantile').inputValue()).toBe('1.2');
+    expect(await page.locator('#render-shim').inputValue()).toBe('17');
     const mode = await page.evaluate(() => _viewMode);
     expect(mode).toBe('explicit');
   });

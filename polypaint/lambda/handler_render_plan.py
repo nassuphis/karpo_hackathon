@@ -286,15 +286,6 @@ def _build_fused_color_plan(
         "shim": rp.get("shim", 0.05),
         "square_extent": rp.get("square_extent", 2.0),
     }
-    if fused_params["view_mode"] == "explicit":
-        fused_params.update(
-            {
-                "min_re": rp.get("min_re"),
-                "max_re": rp.get("max_re"),
-                "min_im": rp.get("min_im"),
-                "max_im": rp.get("max_im"),
-            }
-        )
     defaults = {
         "root_transforms": [],
         "rotation": 0,
@@ -791,15 +782,6 @@ def _build_non_color_plan(
         "root_transforms": rp.get("root_transforms", []),
         "rotation": rp.get("rotation", 0),
     }
-    if non_color_params["view_mode"] == "explicit":
-        non_color_params.update(
-            {
-                "min_re": rp.get("min_re"),
-                "max_re": rp.get("max_re"),
-                "min_im": rp.get("min_im"),
-                "max_im": rp.get("max_im"),
-            }
-        )
     if mode == "bilevel":
         non_color_params["raster_section_mode"] = normalize_section_mode(
             rp.get("raster_section_mode", "logical_sections_auto")
@@ -1085,17 +1067,19 @@ def _compute_viewport(job_id, rp):
     center_im = (q_min_im + q_max_im) / 2.0
     range_re = (q_max_re - q_min_re) * (1.0 + shim)
     range_im = (q_max_im - q_min_im) * (1.0 + shim)
+    fallback_span = None
+    if range_re <= 0.0 or range_im <= 0.0:
+        positive_span = max(range_re, range_im)
+        if positive_span > 0.0:
+            fallback_span = positive_span
+        else:
+            fallback_scale_ref = _coerce_finite_float(vp.get("scale_ref", vp.get("scale")), "scale_ref")
+            if fallback_scale_ref <= 0.0:
+                raise RuntimeError(f"viewport lambda returned non-positive scale_ref: {fallback_scale_ref!r}")
+            fallback_span = float(REF_SIZE) / fallback_scale_ref
     if range_re <= 0.0:
-        fallback_scale_ref = _coerce_finite_float(vp.get("scale_ref", vp.get("scale")), "scale_ref")
-        if fallback_scale_ref <= 0.0:
-            raise RuntimeError(f"viewport lambda returned non-positive scale_ref: {fallback_scale_ref!r}")
-        fallback_span = float(REF_SIZE) / fallback_scale_ref
         range_re = fallback_span
     if range_im <= 0.0:
-        fallback_scale_ref = _coerce_finite_float(vp.get("scale_ref", vp.get("scale")), "scale_ref")
-        if fallback_scale_ref <= 0.0:
-            raise RuntimeError(f"viewport lambda returned non-positive scale_ref: {fallback_scale_ref!r}")
-        fallback_span = float(REF_SIZE) / fallback_scale_ref
         range_im = fallback_span
     return {
         "min_re": center_re - (range_re / 2.0),

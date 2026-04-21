@@ -132,6 +132,17 @@ def python_project(roots, degree, width, height, center_re, center_im, scale,
     return bitsets, plotted, clipped, deduped
 
 
+def _bounds_args_from_center_scale(width, height, center_re, center_im, scale):
+    half_w_world = (float(width) / 2.0) / float(scale)
+    half_h_world = (float(height) / 2.0) / float(scale)
+    return [
+        f"--min_re={center_re - half_w_world}",
+        f"--max_re={center_re + half_w_world}",
+        f"--min_im={center_im - half_h_world}",
+        f"--max_im={center_im + half_h_world}",
+    ]
+
+
 def test_basic():
     """Test bilevel_raster against Python reference for poly_1."""
     print("test_basic: poly_1, 50x50 grid, 1000x1000 image, 2x2 tiles...")
@@ -150,8 +161,8 @@ def test_basic():
         f"--width={width}", f"--height={height}",
         f"--tile_size={tile_size}",
         f"--n_tile_cols={n_tile_cols}", f"--n_tile_rows={n_tile_rows}",
-        f"--center_re={center_re}", f"--center_im={center_im}",
-        f"--scale={scale}", f"--degree={degree}",
+        *_bounds_args_from_center_scale(width, height, center_re, center_im, scale),
+        f"--degree={degree}",
     ]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, f"bilevel_raster failed: {r.stderr}"
@@ -206,8 +217,8 @@ def test_rotation():
         f"--width={width}", f"--height={height}",
         f"--tile_size={tile_size}",
         f"--n_tile_cols={n_tile_cols}", f"--n_tile_rows={n_tile_rows}",
-        f"--center_re={center_re}", f"--center_im={center_im}",
-        f"--scale={scale}", f"--degree={degree}",
+        *_bounds_args_from_center_scale(width, height, center_re, center_im, scale),
+        f"--degree={degree}",
         f"--rotation={rotation}",
     ]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -256,8 +267,8 @@ def test_empty_tiles():
         f"--width={width}", f"--height={height}",
         f"--tile_size={tile_size}",
         f"--n_tile_cols={n_tile_cols}", f"--n_tile_rows={n_tile_rows}",
-        f"--center_re={center_re}", f"--center_im={center_im}",
-        f"--scale={scale}", f"--degree={degree}",
+        *_bounds_args_from_center_scale(width, height, center_re, center_im, scale),
+        f"--degree={degree}",
     ]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, f"bilevel_raster failed: {r.stderr}"
@@ -354,8 +365,8 @@ def test_multiple_functions():
             f"--width={width}", f"--height={height}",
             f"--tile_size={tile_size}",
             f"--n_tile_cols={n_tile_cols}", f"--n_tile_rows={n_tile_rows}",
-            "--center_re=0", "--center_im=0",
-            f"--scale={scale}", f"--degree={degree}",
+            *_bounds_args_from_center_scale(width, height, 0.0, 0.0, scale),
+            f"--degree={degree}",
         ]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         assert r.returncode == 0, f"bilevel_raster failed for {func_name}: {r.stderr}"
@@ -419,8 +430,8 @@ def test_moebius_all_zero_params_plots_nothing():
             "--width=16", "--height=16",
             "--tile_size=16",
             "--n_tile_cols=1", "--n_tile_rows=1",
-            "--center_re=0", "--center_im=0",
-            "--scale=4.0", "--degree=2",
+            *_bounds_args_from_center_scale(16, 16, 0.0, 0.0, 4.0),
+            "--degree=2",
             f"--root_xforms={xforms_path}",
         ]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)

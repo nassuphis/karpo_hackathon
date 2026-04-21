@@ -12790,6 +12790,20 @@ function populateSelectedRenderArtifact() {
 
     if (_renderActiveFamily !== 'color') return;
 
+    if (art.view_mode === 'square') {
+        if (Number.isFinite(art.square_extent)) {
+            const extentEl = document.getElementById('render-square-extent');
+            if (extentEl) extentEl.value = String(art.square_extent);
+        } else {
+            warnings.push('square extent');
+        }
+    } else {
+        if (Number.isFinite(art.quantile)) _setRenderSliderValue('render-quantile', 'render-quantile-val', art.quantile * 100, 1);
+        else warnings.push('auto quantile');
+        if (Number.isFinite(art.shim)) _setRenderSliderValue('render-shim', 'render-shim-val', art.shim * 100, 1);
+        else warnings.push('auto shim');
+    }
+
     if (
         Number.isFinite(art.min_re) &&
         Number.isFinite(art.max_re) &&
@@ -12805,18 +12819,8 @@ function populateSelectedRenderArtifact() {
         selectViewMode('explicit');
     } else if (art.view_mode === 'square') {
         selectViewMode('square');
-        if (Number.isFinite(art.square_extent)) {
-            const extentEl = document.getElementById('render-square-extent');
-            if (extentEl) extentEl.value = String(art.square_extent);
-        } else {
-            warnings.push('square extent');
-        }
     } else {
         selectViewMode('auto');
-        if (Number.isFinite(art.quantile)) _setRenderSliderValue('render-quantile', 'render-quantile-val', art.quantile * 100, 1);
-        else warnings.push('auto quantile');
-        if (Number.isFinite(art.shim)) _setRenderSliderValue('render-shim', 'render-shim-val', art.shim * 100, 1);
-        else warnings.push('auto shim');
     }
 
     if (Number.isFinite(art.rotation)) _setRenderRotationFromRadians(art.rotation);

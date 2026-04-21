@@ -13,6 +13,7 @@ import glob
 import json
 import math
 import os
+import re
 import subprocess
 import time
 
@@ -343,85 +344,142 @@ def _prepare_fused_section_inputs(section_params):
     return section_params
 
 
+def _fused_task_id(params):
+    raw_task_id = str(params.get("task_id") or "").strip()
+    if raw_task_id:
+        return raw_task_id
+    section_idx = params.get("section_idx")
+    if section_idx in (None, ""):
+        return "raster"
+    return f"raster_{section_idx}"
+
+
+def _report_handler_entry_error(params, message):
+    params = params or {}
+    job_id = str(params.get("job_id") or "").strip()
+    if not job_id:
+        return
+    task_id = _fused_task_id(params)
+    result_data = {
+        "engine": "mt",
+        "phase": "handler_entry",
+        "phase_label": "Raster dispatch",
+    }
+    color_pipeline = str(params.get("color_pipeline") or "").strip()
+    if color_pipeline:
+        result_data["color_pipeline"] = color_pipeline
+    report_status(job_id, task_id, "error", message, result_data=result_data)
+
+
+def _extract_handler_entry_params(event):
+    params = {}
+    if not isinstance(event, dict):
+        return params
+    body = event.get("body")
+    if isinstance(body, dict):
+        for key in ("job_id", "task_id", "color_pipeline", "section_idx"):
+            value = body.get(key)
+            if value not in ("", None):
+                params[key] = value
+        return params
+    if isinstance(body, str):
+        for key in ("job_id", "task_id", "color_pipeline"):
+            match = re.search(rf'"{re.escape(key)}"\s*:\s*"([^"]*)"', body)
+            if match and match.group(1) not in ("", None):
+                params[key] = match.group(1)
+        section_match = re.search(r'"section_idx"\s*:\s*([-+]?\d+)', body)
+        if section_match:
+            params["section_idx"] = section_match.group(1)
+    for key in ("job_id", "task_id", "color_pipeline", "section_idx"):
+        if key not in params:
+            value = event.get(key)
+            if value not in ("", None):
+                params[key] = value
+    return params
+
+
 def _handle_fused_raster_request(params):
     contract_warnings = []
-    job_id = params["job_id"]
-    section_idx = params.get("section_idx")
-    if section_idx is None:
-        raise RuntimeError("fused raster requires section_idx")
-    task_id = params.get("task_id", f"raster_{section_idx}")
-
-    threads = _validate_threads(contract_param(params, "raster_mt_threads", DEFAULT_THREADS, contract_warnings))
-
-    if "raster_input_mode" not in params:
-        raise RuntimeError("fused raster requires raster_input_mode in the payload contract")
-    raster_input_mode = _validate_raster_input_mode(params.get("raster_input_mode"))
-
-    raster_sectioned_retries = _validate_sectioned_retries(
-        contract_param(params, "raster_sectioned_retries", 2, contract_warnings)
-    )
-
-    if "logical_section" not in params:
-        raise RuntimeError("fused raster requires logical_section in the payload contract")
-    if not parse_boolish(params.get("logical_section"), False, strict=True, label="logical_section"):
-        raise RuntimeError("fused raster requires logical_section=true")
-
-    if params.get("sections"):
-        raise RuntimeError("fused raster does not support grouped section payloads")
-
-    if raster_input_mode != "sectioned":
-        raise RuntimeError("fused raster requires raster_input_mode=sectioned")
-
-    fragment_prefix = str(params.get("fragment_prefix") or "").strip()
-    if not fragment_prefix:
-        raise RuntimeError("fused raster requires fragment_prefix")
-
-    associated_palette_mode = str(params.get("associated_palette_mode") or "").strip().lower()
-    emit_associated_palette_bins = associated_palette_mode == "generated"
-    associated_palette_fragment_prefix = str(params.get("associated_palette_fragment_prefix") or "").strip()
-    associated_palette_grid_n = int(params.get("associated_palette_grid_n") or 0)
-    if emit_associated_palette_bins:
-        if associated_palette_grid_n < 1:
-            raise RuntimeError("fused raster associated palette requires associated_palette_grid_n >= 1")
-        if not associated_palette_fragment_prefix:
-            raise RuntimeError("fused raster associated palette requires associated_palette_fragment_prefix")
-
-    if "color" not in params:
-        raise RuntimeError("fused raster requires color in the payload contract")
-    color = str(params.get("color") or "").strip().lower()
-    if color != "solve_score":
-        raise RuntimeError("fused raster requires color=solve_score")
-
-    if "match" not in params:
-        raise RuntimeError("fused raster requires match in the payload contract")
-    match = str(params.get("match") or "").strip().lower()
-    if match != "none":
-        raise RuntimeError("fused raster requires match=none")
-
-    perf = attach_contract_warnings({
-        "engine": "mt",
-        "threads": threads,
-        "input_mode": "sectioned",
-        "retries": raster_sectioned_retries,
-        "download_us": 0,
-        "native_us": 0,
-        "upload_us": 0,
-        "tiles_uploaded": 0,
-        "pixel_bin_tiles_uploaded": 0,
-        "roots_plotted": 0,
-        "roots_clipped": 0,
-        "emit_raw_score_bins": True,
-        "emit_associated_palette_bins": emit_associated_palette_bins,
-        "emit_step_scores": True,
-        "rgb_source": "raw_score_bins",
-        "pixel_bins_drive_rgb": False,
-        "pixel_bin_fragment_mode": "sparse_chunks",
-        "group_idx": int(section_idx),
-        "section_indices": [int(section_idx)],
-        "section_count": 1,
-    }, contract_warnings)
-
+    job_id = str(params.get("job_id") or "").strip()
+    task_id = _fused_task_id(params)
+    perf = None
     try:
+        if not job_id:
+            raise RuntimeError("fused raster requires job_id")
+        section_idx = params.get("section_idx")
+        if section_idx is None:
+            raise RuntimeError("fused raster requires section_idx")
+
+        threads = _validate_threads(contract_param(params, "raster_mt_threads", DEFAULT_THREADS, contract_warnings))
+
+        if "raster_input_mode" not in params:
+            raise RuntimeError("fused raster requires raster_input_mode in the payload contract")
+        raster_input_mode = _validate_raster_input_mode(params.get("raster_input_mode"))
+
+        raster_sectioned_retries = _validate_sectioned_retries(
+            contract_param(params, "raster_sectioned_retries", 2, contract_warnings)
+        )
+
+        if "logical_section" not in params:
+            raise RuntimeError("fused raster requires logical_section in the payload contract")
+        if not parse_boolish(params.get("logical_section"), False, strict=True, label="logical_section"):
+            raise RuntimeError("fused raster requires logical_section=true")
+
+        if params.get("sections"):
+            raise RuntimeError("fused raster does not support grouped section payloads")
+
+        if raster_input_mode != "sectioned":
+            raise RuntimeError("fused raster requires raster_input_mode=sectioned")
+
+        fragment_prefix = str(params.get("fragment_prefix") or "").strip()
+        if not fragment_prefix:
+            raise RuntimeError("fused raster requires fragment_prefix")
+
+        associated_palette_mode = str(params.get("associated_palette_mode") or "").strip().lower()
+        emit_associated_palette_bins = associated_palette_mode == "generated"
+        associated_palette_fragment_prefix = str(params.get("associated_palette_fragment_prefix") or "").strip()
+        associated_palette_grid_n = int(params.get("associated_palette_grid_n") or 0)
+        if emit_associated_palette_bins:
+            if associated_palette_grid_n < 1:
+                raise RuntimeError("fused raster associated palette requires associated_palette_grid_n >= 1")
+            if not associated_palette_fragment_prefix:
+                raise RuntimeError("fused raster associated palette requires associated_palette_fragment_prefix")
+
+        if "color" not in params:
+            raise RuntimeError("fused raster requires color in the payload contract")
+        color = str(params.get("color") or "").strip().lower()
+        if color != "solve_score":
+            raise RuntimeError("fused raster requires color=solve_score")
+
+        if "match" not in params:
+            raise RuntimeError("fused raster requires match in the payload contract")
+        match = str(params.get("match") or "").strip().lower()
+        if match != "none":
+            raise RuntimeError("fused raster requires match=none")
+
+        perf = attach_contract_warnings({
+            "engine": "mt",
+            "threads": threads,
+            "input_mode": "sectioned",
+            "retries": raster_sectioned_retries,
+            "download_us": 0,
+            "native_us": 0,
+            "upload_us": 0,
+            "tiles_uploaded": 0,
+            "pixel_bin_tiles_uploaded": 0,
+            "roots_plotted": 0,
+            "roots_clipped": 0,
+            "emit_raw_score_bins": True,
+            "emit_associated_palette_bins": emit_associated_palette_bins,
+            "emit_step_scores": True,
+            "rgb_source": "raw_score_bins",
+            "pixel_bins_drive_rgb": False,
+            "pixel_bin_fragment_mode": "sparse_chunks",
+            "group_idx": int(section_idx),
+            "section_indices": [int(section_idx)],
+            "section_count": 1,
+        }, contract_warnings)
+
         report_status(job_id, task_id, "started", result_data=perf)
         _cleanup_tmp()
 
@@ -619,15 +677,25 @@ def _handle_fused_raster_request(params):
             "input_mode": perf["input_mode"],
         })
     except Exception as e:
-        attach_contract_warnings(perf, contract_warnings)
-        report_status(job_id, task_id, "error", str(e), result_data=perf)
+        error_perf = dict(perf or {"engine": "mt", "phase": "raster", "phase_label": "Raster"})
+        attach_contract_warnings(error_perf, contract_warnings)
+        if job_id:
+            report_status(job_id, task_id, "error", str(e), result_data=error_perf)
         raise
     finally:
         _cleanup_tmp()
 
 
 def handler(event, context):
-    params = parse_body(event)
+    try:
+        params = parse_body(event)
+    except Exception as e:
+        params = _extract_handler_entry_params(event)
+        message = f"raster_mt handler could not parse request body: {e}"
+        _report_handler_entry_error(params, message)
+        raise RuntimeError(message) from e
     if str(params.get("color_pipeline") or "").strip().lower() != "fused":
-        raise RuntimeError("classic color raster has been removed; handler_raster_mt requires color_pipeline='fused'")
+        message = "classic color raster has been removed; handler_raster_mt requires color_pipeline='fused'"
+        _report_handler_entry_error(params, message)
+        raise RuntimeError(message)
     return _handle_fused_raster_request(params)

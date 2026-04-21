@@ -91,11 +91,11 @@ int main(int argc, char **argv) {
         return 1;
     }
     double minRe = 0.0, maxRe = 0.0, minIm = 0.0, maxIm = 0.0;
+    if (centerReArg || centerImArg || scaleArg) {
+        fprintf(stderr, "Legacy viewport args are no longer supported; pass --min_re, --max_re, --min_im, and --max_im\n");
+        return 1;
+    }
     if (minReArg || maxReArg || minImArg || maxImArg) {
-        if (centerReArg || centerImArg || scaleArg) {
-            fprintf(stderr, "Do not mix exact viewport bounds with legacy center/scale args\n");
-            return 1;
-        }
         if (!minReArg || !maxReArg || !minImArg || !maxImArg) {
             fprintf(stderr, "Exact viewport requires --min_re, --max_re, --min_im, and --max_im together\n");
             return 1;
@@ -108,24 +108,8 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Invalid exact viewport bounds\n");
             return 1;
         }
-    } else if (centerReArg || centerImArg || scaleArg) {
-        if (!centerReArg || !centerImArg || !scaleArg) {
-            fprintf(stderr, "Legacy viewport requires --center_re, --center_im, and --scale together\n");
-            return 1;
-        }
-        double centerReLegacy = atof(centerReArg);
-        double centerImLegacy = atof(centerImArg);
-        double scale = atof(scaleArg);
-        if (!(scale > 0.0)) {
-            fprintf(stderr, "Invalid scale\n");
-            return 1;
-        }
-        minRe = centerReLegacy - ((double)W / 2.0) / scale;
-        maxRe = centerReLegacy + ((double)W / 2.0) / scale;
-        minIm = centerImLegacy - ((double)H / 2.0) / scale;
-        maxIm = centerImLegacy + ((double)H / 2.0) / scale;
     } else {
-        fprintf(stderr, "Viewport requires exact bounds or legacy center/scale args\n");
+        fprintf(stderr, "Exact viewport requires --min_re, --max_re, --min_im, and --max_im\n");
         return 1;
     }
     double centerRe = (minRe + maxRe) / 2.0;

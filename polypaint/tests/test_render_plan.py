@@ -107,6 +107,21 @@ class TestRenderPlan(unittest.TestCase):
         self.assertAlmostEqual(plan["viewport"]["max_im"], 1.05)
 
     @patch("handler_render_plan._storage_call")
+    @patch("handler_render_plan._invoke_sync")
+    def test_color_plan_auto_viewport_degenerate_axis_uses_other_span(self, mock_invoke, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        mock_invoke.return_value = {"q_re": [1.0, 1.0], "q_im": [-1.0, 1.0], "scale_ref": 1950.4761904761904}
+        from handler_render_plan import handler
+
+        result = handler(_make_event(view_mode="auto"), None)
+        plan = json.loads(result["body"])
+
+        self.assertAlmostEqual(plan["viewport"]["min_re"], -0.05)
+        self.assertAlmostEqual(plan["viewport"]["max_re"], 2.05)
+        self.assertAlmostEqual(plan["viewport"]["min_im"], -1.05)
+        self.assertAlmostEqual(plan["viewport"]["max_im"], 1.05)
+
+    @patch("handler_render_plan._storage_call")
     def test_color_plan_explicit_viewport(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
         from handler_render_plan import handler
@@ -127,10 +142,10 @@ class TestRenderPlan(unittest.TestCase):
             plan["viewport"],
             {"min_re": -3.5, "max_re": 1.25, "min_im": -0.75, "max_im": 2.0},
         )
-        self.assertEqual(plan["params"]["min_re"], -3.5)
-        self.assertEqual(plan["params"]["max_re"], 1.25)
-        self.assertEqual(plan["params"]["min_im"], -0.75)
-        self.assertEqual(plan["params"]["max_im"], 2.0)
+        self.assertNotIn("min_re", plan["params"])
+        self.assertNotIn("max_re", plan["params"])
+        self.assertNotIn("min_im", plan["params"])
+        self.assertNotIn("max_im", plan["params"])
 
     @patch("handler_render_plan._storage_call")
     def test_color_plan_rejects_unknown_view_mode(self, mock_storage):

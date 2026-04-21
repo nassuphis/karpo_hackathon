@@ -138,7 +138,24 @@ class TestRasterMT(unittest.TestCase):
             mod.handler({"body": json.dumps({"job_id": "j", "color_pipeline": "classic"})}, None)
 
         mock_run.assert_not_called()
-        mock_report.assert_not_called()
+        mock_report.assert_called_once()
+        self.assertEqual(mock_report.call_args.args[:3], ("j", "raster", "error"))
+        self.assertIn("color_pipeline='fused'", mock_report.call_args.args[3])
+        self.assertEqual(mock_report.call_args.kwargs["result_data"]["phase"], "handler_entry")
+
+    @patch("handler_raster_mt.report_status")
+    @patch("handler_raster_mt.subprocess.run")
+    def test_handler_reports_malformed_json_at_entry(self, mock_run, mock_report):
+        import handler_raster_mt as mod
+
+        with self.assertRaisesRegex(RuntimeError, "could not parse request body"):
+            mod.handler({"body": '{"job_id":"j","task_id":"raster_7",'}, None)
+
+        mock_run.assert_not_called()
+        mock_report.assert_called_once()
+        self.assertEqual(mock_report.call_args.args[:3], ("j", "raster_7", "error"))
+        self.assertIn("could not parse request body", mock_report.call_args.args[3])
+        self.assertEqual(mock_report.call_args.kwargs["result_data"]["phase"], "handler_entry")
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
     @patch("handler_raster_mt.report_status")
@@ -153,7 +170,9 @@ class TestRasterMT(unittest.TestCase):
             mod.handler(_fused_event(fragment_prefix=""), None)
 
         mock_run.assert_not_called()
-        mock_report.assert_not_called()
+        mock_report.assert_called_once()
+        self.assertEqual(mock_report.call_args.args[:3], ("j", "raster_0", "error"))
+        self.assertIn("fragment_prefix", mock_report.call_args.args[3])
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
     @patch("handler_raster_mt.report_status")
@@ -175,7 +194,9 @@ class TestRasterMT(unittest.TestCase):
             )
 
         mock_run.assert_not_called()
-        mock_report.assert_not_called()
+        mock_report.assert_called_once()
+        self.assertEqual(mock_report.call_args.args[:3], ("j", "raster_0", "error"))
+        self.assertIn("associated_palette_fragment_prefix", mock_report.call_args.args[3])
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
     @patch("handler_raster_mt.report_status")
@@ -196,6 +217,7 @@ class TestRasterMT(unittest.TestCase):
             )
 
         mock_run.assert_not_called()
+        self.assertEqual([call.args[2] for call in mock_report.call_args_list], ["started", "error"])
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
     @patch("handler_raster_mt.report_status")

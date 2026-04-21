@@ -773,6 +773,17 @@ class TestShared(unittest.TestCase):
         result = compute_viewport_from_bin(data)
         self.assertEqual(result["n_roots"], 1)
 
+    def test_compute_viewport_single_axis_uses_nonzero_scale(self):
+        from shared import REF_SIZE, compute_viewport_from_bin
+
+        data = struct.pack("<ffff", 1.0, -1.0, 1.0, 1.0)
+        result = compute_viewport_from_bin(data, shim=0.05)
+
+        self.assertEqual(result["n_roots"], 2)
+        self.assertAlmostEqual(result["center_re"], 1.0)
+        self.assertAlmostEqual(result["center_im"], 0.0)
+        self.assertAlmostEqual(result["scale"], REF_SIZE / 2.1)
+
 
 # ── Test: DynamoDB status tracking ──────────────────────────────────────────
 

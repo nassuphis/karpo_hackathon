@@ -18,6 +18,19 @@ When claiming a feature is ready, explicitly report:
 - which exact commands/tests were run
 - which items were not checked
 
+## 0. Working Discipline
+
+- Before doing substantive work on a feature, read this checklist first.
+- Do not treat this as a deploy-only document. Use it to drive implementation,
+  verification, and the final readiness call.
+- If a command family is already known to need escalation in this environment,
+  request escalation immediately instead of wasting a first sandbox attempt.
+- In this repo, treat `uv` commands as immediate-escalation commands.
+- In this repo, treat Playwright commands as immediate-escalation commands.
+  - Example: `npx playwright test ...`
+- Do not "rediscover" the same sandbox/cache/web-server failure on `uv` or
+  Playwright. Escalate first.
+
 ## 1. Product Wiring
 
 - The feature is reachable from the intended UI surface.
@@ -117,11 +130,10 @@ bash scripts/predeploy_check.sh
   handler works in direct local tests.
 - For local contract/test commands in this repo, prefer `uv run python` when
   `uv` is available. The repo venv is the fallback, not the default.
-- In this environment, assume `uv` may need escalation because the shared cache
-  often sits outside the sandbox.
-- Do not waste a first attempt rediscovering the same cache-permission failure.
-- If a needed `uv` command matters to the task, run it with escalation instead
-  of changing the interpreter preference.
+- In this environment, `uv` should be treated as an immediate-escalation path
+  because the shared cache often sits outside the sandbox.
+- If a needed `uv` command matters to the task, request escalation first rather
+  than probing in the sandbox.
 
 ## 6. Resource Budget
 
@@ -189,6 +201,9 @@ Runtime checks should include shared-library resolution, not just binary presenc
   - the new action is actually invoked
   - the expected request shape is verified
   - any critical stale/config/error behavior is covered
+- Treat Playwright as an immediate-escalation path in this environment.
+- Do not do a sandbox-first attempt for Playwright just to rediscover that the
+  local web server cannot bind.
 
 ## 11. Native / Syntax Checks
 

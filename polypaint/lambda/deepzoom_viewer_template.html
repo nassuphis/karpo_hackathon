@@ -15,7 +15,7 @@ body{display:flex;flex-direction:column}
 #hdr .ts{color:#666}
 #hdr a{color:#4a9eff;text-decoration:none}
 #hdr a:hover{text-decoration:underline}
-#viewer{flex:1 1 auto;min-height:0;position:relative}
+#viewer{flex:0 0 auto;width:min(calc(100vw - 24px), calc(100vh - 56px));max-width:calc(100vw - 24px);aspect-ratio:1/1;position:relative;align-self:center;margin:12px auto}
 #viewer-viewport-readout{position:absolute;left:12px;bottom:12px;z-index:20;max-width:min(420px,calc(100% - 24px));padding:8px 10px;border:1px solid #333;border-radius:4px;background:rgba(20,20,36,0.9);color:#bbb;font-family:monospace;font-size:11px;white-space:pre-wrap;pointer-events:none}
 </style>
 </head>
@@ -37,6 +37,9 @@ const viewer = OpenSeadragon({
   prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/images/',
   showNavigator: true,
   navigatorPosition: 'BOTTOM_RIGHT',
+  navigatorMaintainSizeRatio: false,
+  navigatorWidth: '160px',
+  navigatorHeight: '160px',
   maxZoomPixelRatio: 4,
 });
 
@@ -64,13 +67,18 @@ function _clampViewportCoord(value, lo, hi) {
   return Math.max(lo, Math.min(hi, value));
 }
 
-function _computeVisibleBounds(meta) {
-  if (!meta || meta.rotation !== 0) return null;
-  if (!viewer || !viewer.viewport || typeof viewer.viewport.getBounds !== 'function' || typeof viewer.viewport.viewportToImageRectangle !== 'function') return null;
-  const bounds = viewer.viewport.getBounds(true);
-  if (!bounds) return null;
-  const imgRect = viewer.viewport.viewportToImageRectangle(bounds);
-  if (!imgRect) return null;
+function _rotateViewportPoint(re, im, pivotRe, pivotIm, angle) {
+  const dx = Number(re) - Number(pivotRe);
+  const dy = Number(im) - Number(pivotIm);
+  const cosA = Math.cos(angle);
+  const sinA = Math.sin(angle);
+  return {
+    re: Number(pivotRe) + (dx * cosA - dy * sinA),
+    im: Number(pivotIm) + (dx * sinA + dy * cosA),
+  };
+}
+
+function _cameraRectFromImageRect(meta, imgRect) {
   const x0 = _clampViewportCoord(Number(imgRect.x) || 0, 0, meta.width);
   const x1 = _clampViewportCoord(x0 + (Number(imgRect.width) || 0), 0, meta.width);
   const y0 = _clampViewportCoord(Number(imgRect.y) || 0, 0, meta.height);
@@ -92,16 +100,57 @@ function _computeVisibleBounds(meta) {
   };
 }
 
+function _renderBoundsFromCameraRect(meta, cameraRect) {
+  if (!meta || !cameraRect) return null;
+  const viewportCenterRe = (meta.minRe + meta.maxRe) / 2;
+  const viewportCenterIm = (meta.minIm + meta.maxIm) / 2;
+  let centerRe = cameraRect.center_re;
+  let centerIm = cameraRect.center_im;
+  if (meta.rotation !== 0) {
+    const unrot = _rotateViewportPoint(
+      cameraRect.center_re,
+      cameraRect.center_im,
+      viewportCenterRe,
+      viewportCenterIm,
+      -meta.rotation
+    );
+    centerRe = unrot.re;
+    centerIm = unrot.im;
+  }
+  const min_re = centerRe - (cameraRect.span_re / 2);
+  const max_re = centerRe + (cameraRect.span_re / 2);
+  const min_im = centerIm - (cameraRect.span_im / 2);
+  const max_im = centerIm + (cameraRect.span_im / 2);
+  if (![min_re, max_re, min_im, max_im].every((value) => Number.isFinite(value))) return null;
+  return {
+    min_re,
+    max_re,
+    min_im,
+    max_im,
+    center_re: centerRe,
+    center_im: centerIm,
+    span_re: cameraRect.span_re,
+    span_im: cameraRect.span_im,
+    rotation: meta.rotation,
+  };
+}
+
+function _computeVisibleBounds(meta) {
+  if (!meta) return null;
+  if (!viewer || !viewer.viewport || typeof viewer.viewport.getBounds !== 'function' || typeof viewer.viewport.viewportToImageRectangle !== 'function') return null;
+  const bounds = viewer.viewport.getBounds(true);
+  if (!bounds) return null;
+  const imgRect = viewer.viewport.viewportToImageRectangle(bounds);
+  if (!imgRect) return null;
+  const cameraRect = _cameraRectFromImageRect(meta, imgRect);
+  if (!cameraRect) return null;
+  return _renderBoundsFromCameraRect(meta, cameraRect);
+}
+
 function _renderViewportReadout() {
   const meta = _viewerViewportState.meta;
   if (!meta || !meta.hasViewport) {
     _setViewportReadout('Visible world viewport unavailable');
-    return;
-  }
-  if (meta.rotation !== 0) {
-    _setViewportReadout(
-      `Rotated render (rotation=${_formatViewportNumber(meta.rotation)})\nVisible world viewport unavailable with rotation`
-    );
     return;
   }
   const visible = _computeVisibleBounds(meta);
@@ -109,13 +158,15 @@ function _renderViewportReadout() {
     _setViewportReadout('Visible world viewport unavailable');
     return;
   }
-  _setViewportReadout(
-    `Visible world viewport\n`
+  let text = `Visible world viewport\n`
     + `min_re=${_formatViewportNumber(visible.min_re)}  max_re=${_formatViewportNumber(visible.max_re)}\n`
     + `min_im=${_formatViewportNumber(visible.min_im)}  max_im=${_formatViewportNumber(visible.max_im)}\n`
     + `center=(${_formatViewportNumber(visible.center_re)}, ${_formatViewportNumber(visible.center_im)})\n`
-    + `span=(${_formatViewportNumber(visible.span_re)} x ${_formatViewportNumber(visible.span_im)})`
-  );
+    + `span=(${_formatViewportNumber(visible.span_re)} x ${_formatViewportNumber(visible.span_im)})`;
+  if (meta.rotation !== 0) {
+    text += `\nrotation=${_formatViewportNumber(meta.rotation)} (preserved)`;
+  }
+  _setViewportReadout(text);
 }
 
 function _scheduleViewportReadout() {

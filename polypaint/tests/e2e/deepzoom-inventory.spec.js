@@ -4,7 +4,7 @@ const { test, expect } = require('@playwright/test');
 // Stub API responses for the DeepZoom inventory
 const MOCK_EXPORTS = [
   { job_id: 'compute_old', source_key: 'renders/render_old/color/color_old/image.jpeg', width: 4096, height: 4096, created_at: '2026-03-20T10:00:00', tiles_uploaded: 100, dzi_url: 'https://dz/job_old.dzi' },
-  { job_id: 'compute_mid', source_key: 'renders/render_mid/bilevel/bilevel_mid/image.tif', width: 8192, height: 8192, created_at: '2026-03-22T12:00:00', tiles_uploaded: 400, dzi_url: 'https://dz/job_mid.dzi', share_url: 'https://dz/job_mid/viewer.html', viewport_min_re: -2.5, viewport_max_re: 2.5, viewport_min_im: -2.5, viewport_max_im: 2.5, source_rotation: 0.25 },
+  { job_id: 'compute_mid', source_key: 'renders/render_mid/bilevel/bilevel_mid/image.tif', width: 8192, height: 8192, created_at: '2026-03-22T12:00:00', tiles_uploaded: 400, dzi_url: 'https://dz/job_mid.dzi', share_url: 'https://dz/job_mid/viewer.html', viewport_min_re: -2.5, viewport_max_re: 2.5, viewport_min_im: -2.5, viewport_max_im: 2.5, source_rotation: -1.5707963267948966 },
   { job_id: 'compute_new', source_key: 'renders/render_new/color/color_new/image.jpeg', width: 16384, height: 16384, created_at: '2026-03-25T14:00:00', tiles_uploaded: 1600, dzi_url: 'https://dz/job_new.dzi', share_url: 'https://dz/job_new/viewer.html', viewport_min_re: -3.5, viewport_max_re: 1.25, viewport_min_im: -0.75, viewport_max_im: 2.0, source_rotation: 0 },
 ];
 
@@ -147,12 +147,20 @@ test.describe('DeepZoom Inventory', () => {
     await expect(page.locator('#deepzoom-viewport-readout')).toHaveText('Visible world viewport unavailable');
   });
 
-  test('row with source rotation shows rotation-unavailable state', async ({ page }) => {
+  test('row with source rotation shows a rotation-aware readout', async ({ page }) => {
     await page.click('.tab-btn:text("DeepZoom")');
     await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
     await page.locator('.dz-inv-row').nth(1).click();
-    await expect(page.locator('#deepzoom-viewport-readout')).toContainText('Rotated render');
-    await expect(page.locator('#deepzoom-viewport-readout')).toContainText('unavailable with rotation');
+    await page.evaluate(() => {
+      window._dzStubImageRect = { x: 4096, y: 0, width: 4096, height: 4096 };
+      window._osdViewer.__emit('animation');
+    });
+    await expect(page.locator('#deepzoom-viewport-readout')).toContainText('Visible world viewport');
+    await expect(page.locator('#deepzoom-viewport-readout')).toContainText('min_re=-2.500000');
+    await expect(page.locator('#deepzoom-viewport-readout')).toContainText('max_re=0');
+    await expect(page.locator('#deepzoom-viewport-readout')).toContainText('min_im=0');
+    await expect(page.locator('#deepzoom-viewport-readout')).toContainText('max_im=2.500000');
+    await expect(page.locator('#deepzoom-viewport-readout')).toContainText('rotation=-1.570796');
   });
 
   test('clicking a row selects it and highlights it', async ({ page }) => {
@@ -330,7 +338,7 @@ test.describe('DeepZoom Inventory', () => {
     });
   });
 
-  test('GotoRender does not forward viewport when source rotation is non-zero', async ({ page }) => {
+  test('GotoRender forwards a rotation-aware viewport when source rotation is non-zero', async ({ page }) => {
     await page.evaluate(() => {
       window._dzForwardedViewport = null;
       window._dzSelectedViewMode = null;
@@ -348,9 +356,19 @@ test.describe('DeepZoom Inventory', () => {
     await page.click('.tab-btn:text("DeepZoom")');
     await expect(page.locator('.dz-inv-row')).toHaveCount(3, { timeout: 10000 });
     await page.locator('.dz-inv-row').nth(1).click();
+    await page.evaluate(() => {
+      window._dzStubImageRect = { x: 4096, y: 0, width: 4096, height: 4096 };
+      window._osdViewer.__emit('animation');
+    });
     await page.click('#btn-dz-goto-render');
+    await expect.poll(async () => page.evaluate(() => window._dzSelectedViewMode)).toBe('explicit');
     const forwarded = await page.evaluate(() => window._dzForwardedViewport);
-    expect(forwarded).toBeNull();
+    expect(forwarded).toEqual({
+      minRe: -2.5,
+      maxRe: 0,
+      minIm: 0,
+      maxIm: 2.5,
+    });
   });
 
   test('GotoRender stays disabled for legacy exports without source keys', async ({ page }) => {

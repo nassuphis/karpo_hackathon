@@ -3557,6 +3557,7 @@ class TestDeepZoomExportPointerWrite(unittest.TestCase):
         # OSD fetches the real DZI descriptor via relative path
         self.assertIn("tileSources: 'image.dzi'", body)
         self.assertIn("id=\"viewer-viewport-readout\"", body)
+        self.assertIn("aspect-ratio:1/1", body)
         self.assertIn("fetch('meta.json')", body)
         self.assertNotIn("{job_id}", body, "Template placeholders must be replaced")
         self.assertNotIn("{export_id}", body, "Template placeholders must be replaced")
@@ -3593,6 +3594,7 @@ class TestDeepZoomViewerTemplate(unittest.TestCase):
         self.assertNotIn("lambdaPost", html)
         self.assertNotIn("localStorage", html)
         self.assertIn("openseadragon", html.lower())
+        self.assertIn("aspect-ratio:1/1", html)
         self.assertIn("fetch('meta.json')", html)
 
     def test_template_uses_relative_dzi_tilesources(self):

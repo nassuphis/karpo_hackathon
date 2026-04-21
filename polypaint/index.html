@@ -1199,7 +1199,7 @@ button {
         </div>
         <!-- DeepZoom tab -->
         <div id="tab-deepzoom" class="tab-content">
-            <div id="deepzoom-viewer" style="width:100%; height:500px; background:#000; border:1px solid #333; display:none"></div>
+            <div id="deepzoom-viewer" style="width:min(100%, 70vh); aspect-ratio:1 / 1; margin:0 auto; background:#000; border:1px solid #333; display:none"></div>
             <div id="deepzoom-viewport-readout" style="margin-top:8px; padding:8px 10px; border:1px solid #333; border-radius:4px; background:#141424; color:#bbb; font-family:monospace; font-size:11px; white-space:pre-wrap">Visible world viewport unavailable</div>
             <div style="margin-top:8px; margin-bottom:4px; display:flex; align-items:center; gap:8px">
                 <button class="btn-secondary btn-inline" id="btn-dz-refresh" onclick="refreshDeepZoomInventory()" style="padding:4px 12px; font-size:12px">Refresh</button>
@@ -13587,14 +13587,18 @@ function _clampDeepZoomViewportCoord(value, lo, hi) {
     return Math.max(lo, Math.min(hi, value));
 }
 
-function _computeDeepZoomVisibleBounds(viewer, meta) {
-    if (!viewer || !meta || !meta.hasViewport || meta.rotation !== 0) return null;
-    const vp = viewer.viewport;
-    if (!vp || typeof vp.getBounds !== 'function' || typeof vp.viewportToImageRectangle !== 'function') return null;
-    const bounds = vp.getBounds(true);
-    if (!bounds) return null;
-    const imgRect = vp.viewportToImageRectangle(bounds);
-    if (!imgRect) return null;
+function _rotateDeepZoomPoint(re, im, pivotRe, pivotIm, angle) {
+    const dx = Number(re) - Number(pivotRe);
+    const dy = Number(im) - Number(pivotIm);
+    const cosA = Math.cos(angle);
+    const sinA = Math.sin(angle);
+    return {
+        re: Number(pivotRe) + (dx * cosA - dy * sinA),
+        im: Number(pivotIm) + (dx * sinA + dy * cosA),
+    };
+}
+
+function _deepZoomCameraRectFromImageRect(meta, imgRect) {
     const x0 = _clampDeepZoomViewportCoord(Number(imgRect.x) || 0, 0, meta.width);
     const x1 = _clampDeepZoomViewportCoord(x0 + (Number(imgRect.width) || 0), 0, meta.width);
     const y0 = _clampDeepZoomViewportCoord(Number(imgRect.y) || 0, 0, meta.height);
@@ -13616,6 +13620,54 @@ function _computeDeepZoomVisibleBounds(viewer, meta) {
     };
 }
 
+function _deepZoomRenderBoundsFromCameraRect(meta, cameraRect) {
+    if (!meta || !cameraRect) return null;
+    const viewportCenterRe = (meta.minRe + meta.maxRe) / 2;
+    const viewportCenterIm = (meta.minIm + meta.maxIm) / 2;
+    let centerRe = cameraRect.center_re;
+    let centerIm = cameraRect.center_im;
+    if (meta.rotation !== 0) {
+        const unrot = _rotateDeepZoomPoint(
+            cameraRect.center_re,
+            cameraRect.center_im,
+            viewportCenterRe,
+            viewportCenterIm,
+            -meta.rotation
+        );
+        centerRe = unrot.re;
+        centerIm = unrot.im;
+    }
+    const min_re = centerRe - (cameraRect.span_re / 2);
+    const max_re = centerRe + (cameraRect.span_re / 2);
+    const min_im = centerIm - (cameraRect.span_im / 2);
+    const max_im = centerIm + (cameraRect.span_im / 2);
+    if (![min_re, max_re, min_im, max_im].every((value) => Number.isFinite(value))) return null;
+    return {
+        min_re,
+        max_re,
+        min_im,
+        max_im,
+        center_re: centerRe,
+        center_im: centerIm,
+        span_re: cameraRect.span_re,
+        span_im: cameraRect.span_im,
+        rotation: meta.rotation,
+    };
+}
+
+function _computeDeepZoomVisibleBounds(viewer, meta) {
+    if (!viewer || !meta || !meta.hasViewport) return null;
+    const vp = viewer.viewport;
+    if (!vp || typeof vp.getBounds !== 'function' || typeof vp.viewportToImageRectangle !== 'function') return null;
+    const bounds = vp.getBounds(true);
+    if (!bounds) return null;
+    const imgRect = vp.viewportToImageRectangle(bounds);
+    if (!imgRect) return null;
+    const cameraRect = _deepZoomCameraRectFromImageRect(meta, imgRect);
+    if (!cameraRect) return null;
+    return _deepZoomRenderBoundsFromCameraRect(meta, cameraRect);
+}
+
 function _renderDeepZoomViewportReadout() {
     const ex = _dzSelectedExportEntry();
     const meta = _deepZoomViewportMeta(ex);
@@ -13625,25 +13677,21 @@ function _renderDeepZoomViewportReadout() {
         _setDeepZoomViewportReadout('Visible world viewport unavailable');
         return;
     }
-    if (meta.rotation !== 0) {
-        _setDeepZoomViewportReadout(
-            `Rotated render (rotation=${_formatDeepZoomViewportNumber(meta.rotation)})\nVisible world viewport unavailable with rotation`
-        );
-        return;
-    }
     const visible = _computeDeepZoomVisibleBounds(_osdViewer, meta);
     if (!visible) {
         _setDeepZoomViewportReadout('Visible world viewport unavailable');
         return;
     }
     _dzViewportReadoutState.visibleBounds = visible;
-    _setDeepZoomViewportReadout(
-        `Visible world viewport\n`
+    let text = `Visible world viewport\n`
         + `min_re=${_formatDeepZoomViewportNumber(visible.min_re)}  max_re=${_formatDeepZoomViewportNumber(visible.max_re)}\n`
         + `min_im=${_formatDeepZoomViewportNumber(visible.min_im)}  max_im=${_formatDeepZoomViewportNumber(visible.max_im)}\n`
         + `center=(${_formatDeepZoomViewportNumber(visible.center_re)}, ${_formatDeepZoomViewportNumber(visible.center_im)})\n`
-        + `span=(${_formatDeepZoomViewportNumber(visible.span_re)} x ${_formatDeepZoomViewportNumber(visible.span_im)})`
-    );
+        + `span=(${_formatDeepZoomViewportNumber(visible.span_re)} x ${_formatDeepZoomViewportNumber(visible.span_im)})`;
+    if (meta.rotation !== 0) {
+        text += `\nrotation=${_formatDeepZoomViewportNumber(meta.rotation)} (preserved)`;
+    }
+    _setDeepZoomViewportReadout(text);
 }
 
 function _scheduleDeepZoomViewportReadout() {
@@ -14032,6 +14080,9 @@ function viewDeepZoom(dziUrl) {
         prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/images/',
         showNavigator: true,
         navigatorPosition: 'BOTTOM_RIGHT',
+        navigatorMaintainSizeRatio: false,
+        navigatorWidth: '160px',
+        navigatorHeight: '160px',
         maxZoomPixelRatio: 4,
     });
     window._osdViewer = _osdViewer;

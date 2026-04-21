@@ -147,39 +147,24 @@ pixels.
 
 ## Rotation
 
-Render artifacts may carry a non-zero `rotation` (degrees) applied to roots
+Render artifacts may carry a non-zero `rotation` (radians) applied to roots
 before projection. When `rotation != 0`, the image-to-world map is not axis
 aligned: a visible rectangle in image space corresponds to a rotated rectangle
 in world space, so the four world-space corners are not simply
 `(view_min_re, view_max_im)` etc.
 
-Choose one path for this feature:
-
-### Option R-A: Support rotation correctly
+Support rotation correctly:
 
 Copy `rotation` into the DeepZoom manifest. In the readout, after computing the
-visible image rectangle, invert the rotation around the render viewport center
-before reporting world coordinates. The readout still shows four numbers, but
-they represent the axis-aligned bounding box of the rotated visible region — or
-two shown corners plus a note that the visible region is tilted.
+visible image rectangle, map that rectangle into the rotated camera plane, then
+invert the rotation around the render viewport center to recover a new explicit
+viewport center in render-input coordinates. Keep the visible `span_re` and
+`span_im` unchanged. The resulting `min_re/max_re/min_im/max_im` are exactly
+the explicit viewport bounds that reproduce the current DeepZoom crop when the
+same `rotation` is preserved in Render.
 
-### Option R-B: Disable the readout when rotation != 0
-
-Simpler. Still include `rotation` in the manifest, but when non-zero the readout
-displays:
-
-```text
-Rotated render (rotation=15°)
-Visible world viewport unavailable with rotation
-```
-
-and the Send-To-Render affordance is hidden.
-
-### Recommendation
-
-Start with Option R-B. It is honest, cheap, and covers the common case (most
-renders are rotation=0). Option R-A can be added later if users ask for it.
-Either way, `rotation` must be added to the manifest so the viewer can tell.
+Displayed text should still show four numbers, but now they are the
+rotation-aware render viewport bounds, not a fail-closed placeholder.
 
 ## Why Square Viewports Feel Trivial
 
@@ -324,22 +309,26 @@ This keeps the DeepZoom readout/export logic simple:
 
 ## Chosen Rotation Policy
 
-Use Option R-B for v1.
+Use the rotation-aware inverse mapping in v1.
 
 If `source_rotation != 0`:
 
-- the readout shows unavailable
-- `GotoRender` still switches to the source artifact
-- but it does **not** forward the current visible bounds into explicit viewport
+- the readout still computes visible viewport bounds
+- the reported `min_re/max_re/min_im/max_im` are the explicit viewport values to
+  use in Render while preserving the same `rotation`
+- `GotoRender` forwards those bounds into explicit viewport mode
+- `GotoRender` keeps the populated source artifact rotation unchanged
 
-Displayed text:
+Displayed text example:
 
 ```text
-Rotated render (rotation=15°)
-Visible world viewport unavailable with rotation
+Visible world viewport
+min_re=-2.500000  max_re=0
+min_im=0  max_im=2.500000
+center=(-1.250000, 1.250000)
+span=(2.500000 x 2.500000)
+rotation=-1.570796 (preserved)
 ```
-
-Do not attempt inverse rotation in v1.
 
 ## UI Contract
 
@@ -465,7 +454,7 @@ Do not add a second button.
 Extend existing `_dzGotoSelectedRender` in
 [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html) so that:
 
-- if the current visible viewport is available and `source_rotation == 0`:
+- if the current visible viewport is available:
   - it forwards the **current visible**:
     - `min_re`
     - `max_re`
@@ -473,6 +462,9 @@ Extend existing `_dzGotoSelectedRender` in
     - `max_im`
   - into the Render tab explicit viewport controls
   - and flips the Render tab view selector to `explicit`
+- regardless of rotation:
+  - it still selects the source render artifact first
+  - it preserves the populated source artifact rotation and root transforms
 - otherwise:
   - it keeps the current behavior
   - selects the source render artifact only
@@ -600,7 +592,6 @@ viewport-bearing derived images going forward.
 
 ## Non-goals
 
-- supporting rotated (`source_rotation != 0`) viewport readout in v1
 - parent-chain traversal for derived artifacts
 - backfilling old DeepZoom exports
 - adding a second DeepZoom render-handoff button
@@ -671,6 +662,8 @@ Required cases:
 - wide viewport
 - tall viewport
 - asymmetric viewport
+- rotated viewport crop remaps back into explicit render bounds correctly
+- full-image rotated viewport preserves the original explicit bounds
 - y-axis inversion
 - adaptive formatting
 - OSD image-rectangle input to world-bounds output
@@ -686,10 +679,10 @@ Required cases:
 - selecting a row with copied viewport metadata shows populated readout
 - readout updates as the mocked OSD viewport changes
 - row without `viewport_*` shows unavailable state
-- row with `source_rotation != 0` shows rotation-unavailable state
+- row with `source_rotation != 0` shows a populated rotation-aware readout
 - `GotoRender` still switches to the correct source artifact
-- `GotoRender` forwards visible bounds only when readout state is available and
-  `source_rotation == 0`
+- `GotoRender` forwards visible bounds when readout state is available,
+  including rotated exports
 
 ### Standalone viewer tests
 
@@ -697,7 +690,7 @@ If the standalone viewer HUD is implemented in this cut, add a focused test for:
 
 - fetching sibling `meta.json`
 - rendering populated readout
-- rotation-unavailable state
+- rotation-aware readout state
 
 ## Acceptance Criteria
 
@@ -713,10 +706,10 @@ The feature is done when all of the following are true:
    `#viewer-viewport-readout`.
 5. The readout uses the exact linear image-pixel to world-bounds map from this
    document.
-6. Rotated exports (`source_rotation != 0`) show the documented unavailable
-   state and do not forward bounds through `GotoRender`.
+6. Rotated exports (`source_rotation != 0`) use the documented inverse-rotation
+   mapping and show the corresponding explicit viewport bounds.
 7. `GotoRender` forwards the current visible viewport into Render explicit mode
-   only when readout state is available.
+   whenever readout state is available, including rotated exports.
 8. Old exports or truly legacy artifacts without canonical bounds fail closed
    with unavailable state.
 9. RePalette, recolor, bilevel, and other viewport-preserving derived images

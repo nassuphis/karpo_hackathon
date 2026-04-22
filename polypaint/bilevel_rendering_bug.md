@@ -42,7 +42,7 @@ Relevant code:
 - render cleanup extension list in [lambda/handler_storage.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_storage.py#L271)
 - bilevel raster writes `.bits` in [lambda/handler_bilevel.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_bilevel.py#L92)
 - bilevel merge writes tile TIFFs in [lambda/handler_bilevel.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_bilevel.py#L216)
-- bilevel stitch reads tile TIFFs in [lambda/handler_bilevel_stitch.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_bilevel_stitch.py#L34)
+- coeff bilevel stitch reads tile TIFFs in [lambda/handler_coeff_bilevel_stitch.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_coeff_bilevel_stitch.py#L34)
 
 So the first hypothesis is:
 

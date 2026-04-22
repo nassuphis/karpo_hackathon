@@ -14,6 +14,20 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
+from workflow_contracts import (
+    FINALIZE_MT_ASSOCIATED_PALETTE_REQUIRED_FIELDS,
+    FINALIZE_MT_METADATA_REQUIRED_FIELDS,
+    RENDER_BILEVEL_FINALIZE_TASK_PAYLOAD,
+    RENDER_BILEVEL_RASTER_ITEM_SELECTOR,
+    RENDER_COLOR_CLIP_TASK_PAYLOAD,
+    RENDER_COLOR_RASTER_ITEM_SELECTOR,
+    RENDER_COEFF_MERGE_ITEM_SELECTOR,
+    RENDER_COEFF_RASTER_ITEM_SELECTOR,
+    RENDER_COEFF_STITCH_TASK_PAYLOAD,
+    RENDER_FINALIZE_MT_TASK_PAYLOAD,
+    iter_jsonpath_values,
+)
+
 
 def _mock_storage_detail(calc):
     def side_effect(path, body):
@@ -53,7 +67,6 @@ def _make_event(mode="color", pix=1024, tile_size=512, **extra_params):
         "color_mode": "solve_score",
         "match_mode": "none",
         "palette": "inferno",
-        "constant_color": "ffffff",
     }
     params.update(extra_params)
     return {
@@ -63,6 +76,16 @@ def _make_event(mode="color", pix=1024, tile_size=512, **extra_params):
         "mode": mode,
         "params": params,
     }
+
+
+def _assert_plan_path_exists(testcase, plan, jsonpath):
+    if not jsonpath.startswith("$.plan."):
+        return
+    cur = plan
+    for part in jsonpath[len("$.plan."):].split("."):
+        testcase.assertIsInstance(cur, dict, f"{jsonpath} hit non-dict before {part!r}")
+        testcase.assertIn(part, cur, f"missing planner field for contract path {jsonpath}")
+        cur = cur[part]
 
 
 class TestRenderPlan(unittest.TestCase):
@@ -198,6 +221,74 @@ class TestRenderPlan(unittest.TestCase):
                 "finalize_workers",
             },
         )
+        metadata = plan["outputs"]["metadata"]
+        for field_name in FINALIZE_MT_METADATA_REQUIRED_FIELDS:
+            self.assertIn(field_name, metadata)
+        self.assertEqual(metadata["color_mode"], "solve_score")
+        self.assertTrue(str(metadata["background_color"]).strip())
+        self.assertTrue(str(metadata["solve_score_chain_fingerprint"]).strip())
+        self.assertTrue(str(metadata["score_program"]).strip())
+
+    @patch("handler_render_plan._storage_call")
+    def test_color_plan_emits_fields_required_by_shared_render_contracts(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        from handler_render_plan import handler
+
+        result = handler(_make_event(), None)
+        plan = json.loads(result["body"])
+
+        for contract in (
+            RENDER_COLOR_CLIP_TASK_PAYLOAD,
+            RENDER_COLOR_RASTER_ITEM_SELECTOR,
+            RENDER_FINALIZE_MT_TASK_PAYLOAD,
+        ):
+            for jsonpath in iter_jsonpath_values(contract):
+                _assert_plan_path_exists(self, plan, jsonpath)
+
+    @patch("handler_render_plan._storage_call")
+    def test_bilevel_plan_emits_fields_required_by_shared_render_contracts(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        from handler_render_plan import handler
+
+        result = handler(_make_event(mode="bilevel"), None)
+        plan = json.loads(result["body"])
+
+        for contract in (
+            RENDER_BILEVEL_RASTER_ITEM_SELECTOR,
+            RENDER_BILEVEL_FINALIZE_TASK_PAYLOAD,
+        ):
+            for jsonpath in iter_jsonpath_values(contract):
+                _assert_plan_path_exists(self, plan, jsonpath)
+
+    @patch("handler_render_plan._storage_call")
+    def test_coeff_bilevel_plan_emits_fields_required_by_shared_render_contracts(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail({
+            "degree": 22,
+            "n_coeffs": 23,
+            "coeffs_keys": ["renders/j/coeffs_0000.bin", "renders/j/coeffs_0001.bin"],
+            "chunks": [
+                {"idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_start": 0, "step_count": 10},
+                {"idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_start": 10, "step_count": 10},
+            ],
+        })
+        from handler_render_plan import handler
+
+        result = handler(_make_event(mode="coeff_bilevel"), None)
+        plan = json.loads(result["body"])
+
+        for contract in (
+            RENDER_COEFF_RASTER_ITEM_SELECTOR,
+            RENDER_COEFF_MERGE_ITEM_SELECTOR,
+            RENDER_COEFF_STITCH_TASK_PAYLOAD,
+        ):
+            for jsonpath in iter_jsonpath_values(contract):
+                _assert_plan_path_exists(self, plan, jsonpath)
+
+    def test_shared_contract_jsonpath_extractor_finds_paths_inside_states_expressions(self):
+        self.assertIn(
+            "$.plan.calc.coeffs_keys",
+            set(iter_jsonpath_values(RENDER_COEFF_RASTER_ITEM_SELECTOR)),
+        )
 
     @patch("handler_render_plan._storage_call")
     def test_color_plan_forces_fused_even_if_caller_passes_classic(self, mock_storage):
@@ -237,6 +328,24 @@ class TestRenderPlan(unittest.TestCase):
         self.assertTrue(plan["associated_palette"]["enabled"])
         self.assertEqual(plan["associated_palette"]["mode"], "generated")
         self.assertEqual(plan["associated_palette"]["fragment_prefix"], "renders/j/palettes/pal_color_run_t/fragments/section_")
+        assoc = plan["associated_palette"]
+        for field_name in FINALIZE_MT_ASSOCIATED_PALETTE_REQUIRED_FIELDS:
+            self.assertIn(field_name, assoc)
+        for field_name in (
+            "palette_id",
+            "display_name",
+            "image_key",
+            "preview_key",
+            "meta_key",
+            "raw_key",
+            "raw_meta_key",
+            "fragment_prefix",
+            "source_color_artifact_id",
+            "metric",
+            "palette",
+            "score_chain",
+        ):
+            self.assertTrue(str(assoc[field_name]).strip(), field_name)
 
     @patch("handler_render_plan._storage_call")
     def test_fused_color_plan_drops_disabled_associated_palette_payload(self, mock_storage):

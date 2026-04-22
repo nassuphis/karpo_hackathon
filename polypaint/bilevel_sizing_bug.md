@@ -136,7 +136,7 @@ It should also send:
 
 Then:
 
-- [lambda/handler_bilevel_stitch.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_bilevel_stitch.py)
+- [lambda/handler_coeff_bilevel_stitch.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_coeff_bilevel_stitch.py)
   should pass those through to `bilevel_merge stitch`
 
 And:
@@ -151,7 +151,7 @@ And:
    - `height`
    - `tile_size`
 
-2. Update `handler_bilevel_stitch.py` to pass:
+2. Update `handler_coeff_bilevel_stitch.py` to pass:
    - `--width=...`
    - `--height=...`
    - `--tile_size=...`

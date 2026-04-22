@@ -262,7 +262,7 @@ class TestHeadKeys(unittest.TestCase):
 
 
 class TestDispatchBilevelTarget(unittest.TestCase):
-    """Verify dispatch handler supports bilevel and bilevel_stitch targets."""
+    """Verify dispatch handler supports bilevel and coeff-specific stitch targets."""
 
     def _make_event(self, body):
         return {"body": json.dumps(body)}
@@ -286,13 +286,13 @@ class TestDispatchBilevelTarget(unittest.TestCase):
         self.assertIn("polypaint-bilevel", invoke_call[1]["FunctionName"])
 
     @patch("handler_dispatch.lambda_client")
-    def test_dispatch_bilevel_stitch_target(self, mock_client):
+    def test_dispatch_coeff_bilevel_stitch_target(self, mock_client):
         from handler_dispatch import handler
         mock_client.invoke.return_value = {"StatusCode": 202}
         jobs = [{"job_id": "j", "n_tile_cols": 2, "n_tile_rows": 2,
                  "width": 8192, "height": 8192, "tile_size": 4096,
                  "out_key": "renders/j/image_bilevel.tif"}]
-        event = self._make_event({"target": "bilevel_stitch", "jobs": jobs})
+        event = self._make_event({"target": "coeff_bilevel_stitch", "jobs": jobs})
         result = handler(event, None)
         body = json.loads(result["body"])
         self.assertEqual(body["fired"], 1)

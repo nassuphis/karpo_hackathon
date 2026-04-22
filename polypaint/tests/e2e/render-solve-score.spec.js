@@ -172,6 +172,7 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#solve-score-modal-selected')).toContainText('Proximity q=0.1%');
     await page.click('#solve-score-modal-load');
     await expect(page.locator('#render-solve-score-program-status')).toContainText('Loaded Proximity q=0.1%');
+    await expect(page.locator('#solve-score-modal-name')).toHaveValue('Proximity q=0.1%');
     const chain = await page.evaluate(() => _serializeSolveScoreChain(_renderScoreChain));
     expect(chain).toEqual([['proximity', '0.1']]);
   });
@@ -789,6 +790,134 @@ test.describe('Solve Score UI', () => {
     expect(rememberedName).toBe('');
   });
 
+  test('preview marquee populates exact viewport and clears on right-click, Escape, and row change', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    const viewerUrl = `data:image/svg+xml;utf8,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="black"/></svg>')}`;
+    await page.evaluate((url) => {
+      document.getElementById('render-results-dir').value = 'preview_bounds';
+      _renderLoadedJobId = 'preview_bounds';
+      _renderActiveFamily = 'color';
+      renderArtifactPanel('preview_bounds', {
+        calc: { exists: true, N: 4000, degree: 8 },
+        families: {
+          color: [
+            {
+              artifact_id: 'color_drag_1',
+              created_at: '2026-04-20T12:00:00Z',
+              image_key: 'renders/preview_bounds/color/color_drag_1/image.jpeg',
+              image_url: url,
+              preview_url: url,
+              viewer_url: url,
+              file_size: 50000,
+              width: 200,
+              height: 200,
+              color_mode: 'solve_score',
+              format: 'jpeg',
+              min_re: -2,
+              max_re: 2,
+              min_im: -2,
+              max_im: 2,
+              rotation: 0,
+            },
+            {
+              artifact_id: 'color_drag_2',
+              created_at: '2026-04-20T12:01:00Z',
+              image_key: 'renders/preview_bounds/color/color_drag_2/image.jpeg',
+              image_url: url,
+              preview_url: url,
+              viewer_url: url,
+              file_size: 50000,
+              width: 200,
+              height: 200,
+              color_mode: 'solve_score',
+              format: 'jpeg',
+              min_re: -2,
+              max_re: 2,
+              min_im: -2,
+              max_im: 2,
+              rotation: 0,
+            },
+          ],
+          bilevel: [],
+          coeffs: [],
+          palette: [],
+          pdf: [],
+        },
+      });
+    }, viewerUrl);
+
+    const stage = page.locator('#render-preview-stage');
+    await expect(stage).toBeVisible();
+    const drag = async () => {
+      await page.evaluate(() => {
+        const stageEl = document.getElementById('render-preview-stage');
+        if (!stageEl) throw new Error('render-preview-stage missing');
+        const rect = stageEl.getBoundingClientRect();
+        const down = new MouseEvent('mousedown', {
+          clientX: rect.left + rect.width * 0.1,
+          clientY: rect.top + rect.height * 0.15,
+          button: 0,
+          bubbles: true,
+          cancelable: true,
+        });
+        const move = new MouseEvent('mousemove', {
+          clientX: rect.left + rect.width * 0.6,
+          clientY: rect.top + rect.height * 0.7,
+          bubbles: true,
+          cancelable: true,
+        });
+        const up = new MouseEvent('mouseup', {
+          clientX: rect.left + rect.width * 0.6,
+          clientY: rect.top + rect.height * 0.7,
+          button: 0,
+          bubbles: true,
+          cancelable: true,
+        });
+        stageEl.dispatchEvent(down);
+        document.dispatchEvent(move);
+        document.dispatchEvent(up);
+      });
+    };
+
+    await drag();
+    const firstBounds = await page.evaluate(() => ({
+      minRe: Number(document.getElementById('render-min-re').value),
+      maxRe: Number(document.getElementById('render-max-re').value),
+      minIm: Number(document.getElementById('render-min-im').value),
+      maxIm: Number(document.getElementById('render-max-im').value),
+      mode: _viewMode,
+      status: document.getElementById('render-status').textContent,
+    }));
+    expect(firstBounds.minRe).toBeCloseTo(-1.6, 1);
+    expect(firstBounds.maxRe).toBeCloseTo(0.4, 1);
+    expect(firstBounds.minIm).toBeCloseTo(-0.8, 1);
+    expect(firstBounds.maxIm).toBeCloseTo(1.4, 1);
+    expect(firstBounds.mode).toBe('explicit');
+    expect(firstBounds.status).toContain('Preview subview selected from color_drag_1');
+    await expect(page.locator('#render-preview-marquee')).toBeVisible();
+
+    await page.evaluate(() => {
+      const stageEl = document.getElementById('render-preview-stage');
+      if (!stageEl) throw new Error('render-preview-stage missing');
+      stageEl.dispatchEvent(new MouseEvent('contextmenu', {
+        button: 2,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+    await expect(page.locator('#render-preview-marquee')).toBeHidden();
+
+    await drag();
+    await expect(page.locator('#render-preview-marquee')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#render-preview-marquee')).toBeHidden();
+
+    await drag();
+    await expect(page.locator('#render-preview-marquee')).toBeVisible();
+    await page.click('#render-art-row-color-1');
+    await expect(page.locator('#render-preview-marquee')).toBeHidden();
+  });
+
   test('populate seeds auto controls even when canonical bounds restore explicit mode', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await page.evaluate(() => {
@@ -1168,7 +1297,8 @@ test.describe('Solve Score UI', () => {
     await expect(panel.locator('button[data-render-family="bilevel"]')).toBeVisible();
     await expect(panel.locator('button[data-render-family="coeffs"]')).toBeVisible();
     await expect(panel.locator('button[data-render-family="palette"]')).toBeVisible();
-    await expect(panel.locator('#btn-render-generate')).toBeVisible();
+    await expect(panel.locator('#btn-render-generate')).toHaveCount(0);
+    await expect(panel.locator('#btn-render-generate-mt')).toHaveText('ColorRender-MT');
     await expect(panel.locator('#btn-render-populate')).toBeVisible();
     await expect(panel.locator('#btn-render-download')).toBeVisible();
     await expect(panel.locator('#btn-render-delete')).toBeVisible();
@@ -1348,37 +1478,7 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#render-preview')).toContainText('No saved artifacts yet.');
   });
 
-  test('Generate popup exposes associated palette control and dispatches fused solve-score settings', async ({ page }) => {
-    await page.click('.tab-btn:text("Render")');
-    await seedRenderPopupState(page, 'solve_score');
-
-    await page.click('#btn-render-generate');
-    const popup = page.locator('#render-generate-popup-overlay');
-    await expect(popup).toBeVisible();
-    await expect(page.locator('#render-generate-save-associated-palette')).toBeVisible();
-
-    await page.check('#render-generate-save-associated-palette');
-    await page.click('#render-generate-popup-run');
-
-    const launches = await page.evaluate(() => window._renderLaunches);
-    expect(launches).toHaveLength(1);
-    expect(launches[0]).toEqual({
-      mode: 'color',
-      paramsPatch: {
-        raster_engine: 'mt',
-        raster_mt_threads: 4,
-        solve_score_threads: 4,
-        raster_workers: 10,
-        raster_section_mode: 'logical_sections_auto',
-        raster_section_count: '',
-        raster_sectioned_retries: 2,
-        finalize_workers: 16,
-        save_associated_palette: true,
-      },
-    });
-  });
-
-  test('Generate-MT popup exposes retries and associated palette and dispatches MT payload', async ({ page }) => {
+  test('ColorRender-MT popup exposes retries and associated palette and dispatches MT payload', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await seedRenderPopupState(page, 'solve_score');
 

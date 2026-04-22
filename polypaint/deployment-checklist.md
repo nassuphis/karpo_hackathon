@@ -103,6 +103,12 @@ When claiming a feature is ready, explicitly report:
 - If workflow/config rendering logic is duplicated, the target fix is to extract one shared helper used by both deploy and tests.
 - Parity tests are only a temporary guard while duplication still exists; they are not the desired end state.
 - Artifact-rendering tests should call the same helper/path that deploy uses, not a parallel substitution implementation.
+- If a planner, worker, or handler contract field is added, removed, renamed, or changes meaning, every relevant Step Functions `Parameters` / `ItemSelector` / JSONPath reference must be updated in the same change.
+- Do not assume handler-side runtime validation is sufficient. Check contract drift explicitly across:
+  - planner output
+  - ASL payload threading
+  - worker/handler payload reads
+  - workflow-definition tests
 - Non-recoverable deploy operations must not be hidden behind `|| true` or blanket `2>/dev/null` suppression.
 - Re-runnability should come from specific idempotence handling for expected "already exists" errors, not from swallowing every failure.
 

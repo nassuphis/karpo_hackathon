@@ -302,7 +302,7 @@ Keep or add meaningful statuses in these files:
 - [`lambda/handler_bilevel.py`](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_bilevel.py)
   - keep `started`
   - add one mid-phase status if a mode currently jumps straight to `done`
-- [`lambda/handler_bilevel_stitch.py`](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_bilevel_stitch.py)
+- [`lambda/handler_coeff_bilevel_stitch.py`](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_coeff_bilevel_stitch.py)
   - `started`
   - `stitching`
   - `done`

@@ -173,7 +173,6 @@
               "color.$": "$.plan.params.color_mode",
               "match.$": "$.plan.params.match_mode",
               "palette.$": "$.plan.params.palette",
-              "constant_color.$": "$.plan.params.constant_color",
               "root_transforms.$": "$.plan.params.root_transforms",
               "solve_score_clip_key.$": "$.plan.solve_score.clip_key",
               "solve_metric.$": "$.plan.solve_score.metric",
@@ -453,7 +452,7 @@
             "Type": "Task",
             "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
-              "FunctionName": "${BilevelStitchFunctionArn}",
+              "FunctionName": "${CoeffBilevelStitchFunctionArn}",
               "Payload": { "job_id.$": "$.job_id", "task_id.$": "States.Format('render_{}_coeff_bilevel_stitch', $.run_id)", "n_tile_cols.$": "$.plan.grid.n_tile_cols", "n_tile_rows.$": "$.plan.grid.n_tile_rows", "width.$": "$.plan.grid.pix", "height.$": "$.plan.grid.pix", "tile_size.$": "$.plan.grid.tile_size", "out_key.$": "$.plan.outputs.coeff_bilevel_key", "preview_key.$": "$.plan.outputs.preview_key", "metadata.$": "$.plan.outputs.metadata", "tile_prefix": "coeff" }
             },
             "ResultPath": null,

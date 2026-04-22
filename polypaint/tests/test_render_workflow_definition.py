@@ -7,24 +7,32 @@ not the deleted classic color states.
 
 import json
 import os
-import re
+import sys
 import unittest
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-TEMPLATE_PATH = os.path.join(
-    os.path.dirname(__file__), "..", "stepfunctions", "render_workflow.asl.json.template"
+from workflow_contracts import (
+    LEGACY_VIEWPORT_SELECTOR_FIELDS,
+    RENDER_BILEVEL_FINALIZE_TASK_PAYLOAD,
+    RENDER_BILEVEL_RASTER_ITEM_SELECTOR,
+    RENDER_COEFF_MERGE_ITEM_SELECTOR,
+    RENDER_COEFF_RASTER_ITEM_SELECTOR,
+    RENDER_COEFF_STITCH_TASK_PAYLOAD,
+    RENDER_COLOR_CLIP_TASK_PAYLOAD,
+    RENDER_COLOR_RASTER_ITEM_SELECTOR,
+    RENDER_FINALIZE_MT_FRAGMENT_MANIFEST,
+    RENDER_FINALIZE_MT_TASK_PAYLOAD,
 )
+from workflow_template_render import render_render_workflow_definition_for_tests
 
 
 def _load_asl():
-    with open(TEMPLATE_PATH, encoding="utf-8") as fh:
-        raw = fh.read()
-    rendered = re.sub(
-        r"\$\{(\w+)\}",
-        r"arn:aws:lambda:us-east-1:123456789012:function:placeholder-\1",
-        raw,
+    return render_render_workflow_definition_for_tests(
+        account_id="123456789012",
+        region="us-east-1",
     )
-    return json.loads(rendered)
 
 
 def _walk_state_containers(states, path=""):
@@ -58,6 +66,9 @@ class TestWorkflowDefinition(unittest.TestCase):
         branches = wrapper.get("Branches", [{}])
         self.states = branches[0].get("States", {}) if branches else {}
         self.all_states = {**self.top_states, **self.states}
+
+    def _assert_exact_mapping(self, actual, expected):
+        self.assertEqual(actual, expected)
 
     def _state_at_path(self, path):
         parts = [part for part in path.split("/") if part]
@@ -166,15 +177,7 @@ class TestWorkflowDefinition(unittest.TestCase):
 
     def test_color_clip_payload_threads_coeffs_and_params(self):
         payload = self.states["ColorClipTask"]["Parameters"]["Payload"]
-        self.assertEqual(payload["phase"], "clip")
-        self.assertEqual(payload["metric.$"], "$.plan.solve_score.metric")
-        self.assertEqual(payload["solve_score_chain.$"], "$.plan.solve_score.chain")
-        self.assertEqual(payload["solve_score_threads.$"], "$.plan.solve_score.threads")
-        self.assertEqual(payload["lores_bin_key.$"], "$.plan.calc.lores_bin_key")
-        self.assertEqual(payload["lores_coeffs_key.$"], "$.plan.calc.lores_coeffs_key")
-        self.assertEqual(payload["lores_params_key.$"], "$.plan.calc.lores_params_key")
-        self.assertEqual(payload["n_coeffs.$"], "$.plan.calc.n_coeffs")
-        self.assertEqual(payload["out_key.$"], "$.plan.solve_score.clip_key")
+        self._assert_exact_mapping(payload, RENDER_COLOR_CLIP_TASK_PAYLOAD)
         self.assertEqual(self.states["ColorClipTask"]["ResultPath"], "$.solve_score_clip")
         self.assertEqual(
             self.states["ColorClipTask"]["ResultSelector"]["parsed.$"],
@@ -185,108 +188,39 @@ class TestWorkflowDefinition(unittest.TestCase):
         color_map = self.states["ColorRasterMap"]
         self.assertEqual(color_map["ItemsPath"], "$.plan.raster.map_items")
         selector = color_map["ItemSelector"]
-        self.assertEqual(selector["color_pipeline"], "fused")
-        self.assertEqual(selector["logical_section.$"], "$.plan.raster.logical_section")
-        self.assertEqual(selector["solve_source_manifest.$"], "$.plan.solve_source_manifest")
-        self.assertEqual(selector["n_coeffs.$"], "$.plan.calc.n_coeffs")
-        self.assertEqual(selector["solve_score_clip_key.$"], "$.plan.solve_score.clip_key")
-        self.assertEqual(selector["solve_score_chain.$"], "$.plan.solve_score.chain")
-        self.assertEqual(selector["solve_score_quantile.$"], "$.plan.solve_score.quantile")
-        self.assertEqual(selector["solve_score_omega.$"], "$.plan.solve_score.omega")
-        self.assertEqual(selector["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
-        self.assertEqual(selector["width.$"], "$.plan.grid.width")
-        self.assertEqual(selector["height.$"], "$.plan.grid.height")
-        self.assertEqual(selector["min_re.$"], "$.plan.viewport.min_re")
-        self.assertEqual(selector["max_re.$"], "$.plan.viewport.max_re")
-        self.assertEqual(selector["min_im.$"], "$.plan.viewport.min_im")
-        self.assertEqual(selector["max_im.$"], "$.plan.viewport.max_im")
-        self.assertEqual(selector["raster_function_name.$"], "$.plan.raster.function_name")
-        self.assertEqual(selector["raster_input_mode.$"], "$.plan.raster.input_mode")
-        self.assertEqual(selector["raster_sectioned_retries.$"], "$.plan.raster.sectioned_retries")
-        self.assertEqual(selector["associated_palette_mode.$"], "$.plan.associated_palette.mode")
-        self.assertEqual(selector["associated_palette_fragment_prefix.$"], "$.plan.associated_palette.fragment_prefix")
-        self.assertEqual(selector["fragment_prefix.$"], "$.plan.outputs.fragment_prefix")
-        for deleted_field in [
-            "center_re.$",
-            "center_im.$",
-            "scale.$",
-            "bin_key.$",
-            "bin_size.$",
-            "coeffs_key.$",
-            "coeffs_bin_size.$",
-            "params_key.$",
-            "params_bin_size.$",
-            "params_step_start.$",
-            "params_step_count.$",
-            "group_idx.$",
-            "sections.$",
-            "section_indices.$",
-            "emit_raw_score_bins.$",
-            "pixel_bins_drive_rgb.$",
-        ]:
-            self.assertNotIn(deleted_field, selector)
+        self._assert_exact_mapping(selector, RENDER_COLOR_RASTER_ITEM_SELECTOR)
         worker = color_map["ItemProcessor"]["States"]["ColorRasterWorker"]
         self.assertEqual(color_map["ItemProcessor"]["StartAt"], "ColorRasterWorker")
         self.assertEqual(worker["Parameters"]["FunctionName.$"], "$.raster_function_name")
 
     def test_finalize_mt_payload_is_fused_contract(self):
         payload = self.states["ColorAssembleEncodeTask"]["Parameters"]["Payload"]
-        self.assertEqual(payload["phase"], "finalize_mt")
-        self.assertEqual(payload["render_execution.$"], "$.plan.render_execution")
-        self.assertEqual(payload["metadata.$"], "$.plan.outputs.metadata")
-        self.assertEqual(payload["raw_key.$"], "$.plan.outputs.raw_key")
-        self.assertEqual(payload["raw_meta_key.$"], "$.plan.outputs.raw_meta_key")
-        self.assertEqual(payload["fragment_prefix.$"], "$.plan.outputs.fragment_prefix")
-        self.assertEqual(payload["source_item_count.$"], "$.plan.raster.item_count")
-        self.assertEqual(payload["width.$"], "$.plan.grid.width")
-        self.assertEqual(payload["height.$"], "$.plan.grid.height")
-        self.assertEqual(payload["clip_slots.$"], "$.solve_score_clip.parsed.clip_slots")
-        self.assertEqual(payload["score_program.$"], "$.solve_score_clip.parsed.score_program")
-        self.assertEqual(payload["chain_fingerprint.$"], "$.solve_score_clip.parsed.chain_fingerprint")
+        self._assert_exact_mapping(payload, RENDER_FINALIZE_MT_TASK_PAYLOAD)
         manifest = payload["fragment_manifest"]
-        self.assertEqual(manifest["version"], 1)
-        self.assertEqual(manifest["pair_encoding"], "u32le_u8_v1")
-        self.assertEqual(manifest["item_count.$"], "$.plan.raster.item_count")
-        self.assertEqual(manifest["fragment_prefix.$"], "$.plan.outputs.fragment_prefix")
+        self._assert_exact_mapping(manifest, RENDER_FINALIZE_MT_FRAGMENT_MANIFEST)
 
     def test_bilevel_and_coeff_pipelines_are_intact(self):
         bilevel_raster = self.states["BilevelRasterMap"]["ItemSelector"]
-        self.assertEqual(bilevel_raster["solve_source_manifest.$"], "$.plan.solve_source_manifest")
-        self.assertEqual(bilevel_raster["fragment_prefix.$"], "$.plan.bilevel.fragment_prefix")
-        self.assertEqual(bilevel_raster["step_start.$"], "$$.Map.Item.Value.step_start")
-        self.assertEqual(bilevel_raster["step_count.$"], "$$.Map.Item.Value.step_count")
-        self.assertEqual(bilevel_raster["width.$"], "$.plan.grid.width")
-        self.assertEqual(bilevel_raster["height.$"], "$.plan.grid.height")
-        self.assertEqual(bilevel_raster["min_re.$"], "$.plan.viewport.min_re")
-        self.assertEqual(bilevel_raster["max_re.$"], "$.plan.viewport.max_re")
-        self.assertEqual(bilevel_raster["min_im.$"], "$.plan.viewport.min_im")
-        self.assertEqual(bilevel_raster["max_im.$"], "$.plan.viewport.max_im")
-        self.assertNotIn("center_re.$", bilevel_raster)
-        self.assertNotIn("center_im.$", bilevel_raster)
-        self.assertNotIn("scale.$", bilevel_raster)
+        self._assert_exact_mapping(bilevel_raster, RENDER_BILEVEL_RASTER_ITEM_SELECTOR)
 
         bilevel_finalize = self.states["BilevelFinalizeTask"]["Parameters"]["Payload"]
-        self.assertEqual(bilevel_finalize["phase"], "finalize")
-        self.assertEqual(bilevel_finalize["source_item_count.$"], "$.plan.bilevel.item_count")
-        self.assertEqual(bilevel_finalize["fragment_prefix.$"], "$.plan.bilevel.fragment_prefix")
-        self.assertEqual(bilevel_finalize["width.$"], "$.plan.grid.width")
-        self.assertEqual(bilevel_finalize["height.$"], "$.plan.grid.height")
+        self._assert_exact_mapping(bilevel_finalize, RENDER_BILEVEL_FINALIZE_TASK_PAYLOAD)
 
         coeff_raster = self.states["CoeffRasterMap"]["ItemSelector"]
-        self.assertEqual(coeff_raster["coeffs_key.$"], "States.ArrayGetItem($.plan.calc.coeffs_keys, $$.Map.Item.Value.chunk_idx)")
-        self.assertEqual(coeff_raster["n_coeffs.$"], "$.plan.calc.n_coeffs")
-        self.assertEqual(coeff_raster["width.$"], "$.plan.grid.width")
-        self.assertEqual(coeff_raster["height.$"], "$.plan.grid.height")
-        self.assertEqual(coeff_raster["min_re.$"], "$.plan.viewport.min_re")
-        self.assertEqual(coeff_raster["max_re.$"], "$.plan.viewport.max_re")
-        self.assertEqual(coeff_raster["min_im.$"], "$.plan.viewport.min_im")
-        self.assertEqual(coeff_raster["max_im.$"], "$.plan.viewport.max_im")
-        self.assertNotIn("center_re.$", coeff_raster)
-        self.assertNotIn("center_im.$", coeff_raster)
-        self.assertNotIn("scale.$", coeff_raster)
+        self._assert_exact_mapping(coeff_raster, RENDER_COEFF_RASTER_ITEM_SELECTOR)
+        coeff_merge = self.states["CoeffMergeMap"]["ItemSelector"]
+        self._assert_exact_mapping(coeff_merge, RENDER_COEFF_MERGE_ITEM_SELECTOR)
         coeff_stitch = self.states["CoeffStitchTask"]["Parameters"]["Payload"]
-        self.assertEqual(coeff_stitch["out_key.$"], "$.plan.outputs.coeff_bilevel_key")
-        self.assertEqual(coeff_stitch["preview_key.$"], "$.plan.outputs.preview_key")
+        self._assert_exact_mapping(coeff_stitch, RENDER_COEFF_STITCH_TASK_PAYLOAD)
+
+    def test_render_worker_selectors_reject_legacy_viewport_fields(self):
+        for selector in (
+            self.states["ColorRasterMap"]["ItemSelector"],
+            self.states["BilevelRasterMap"]["ItemSelector"],
+            self.states["CoeffRasterMap"]["ItemSelector"],
+        ):
+            for field_name in LEGACY_VIEWPORT_SELECTOR_FIELDS:
+                self.assertNotIn(field_name, selector)
 
     def test_report_states_use_expected_output_keys(self):
         color_payload = self.states["ReportDoneColor"]["Parameters"]["Payload"]

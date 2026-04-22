@@ -1,16 +1,60 @@
 import array
+import http.server
 import json
 import math
 import pathlib
 import shutil
+import socketserver
 import subprocess
 import tempfile
+import threading
 
 import pytest
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LAMBDA_DIR = ROOT / "lambda"
+
+
+class _RangeRequestHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        rel = self.path.lstrip("/")
+        target = pathlib.Path(self.server.root_dir) / rel
+        if not target.is_file():
+            self.send_error(404)
+            return
+        data = target.read_bytes()
+        range_header = self.headers.get("Range")
+        start = 0
+        end = len(data) - 1
+        status = 200
+        if range_header:
+            if not range_header.startswith("bytes="):
+                self.send_error(400)
+                return
+            start_s, end_s = range_header[len("bytes="):].split("-", 1)
+            start = int(start_s)
+            end = int(end_s) if end_s else len(data) - 1
+            if start < 0 or end < start or end >= len(data):
+                self.send_error(416)
+                return
+            data = data[start:end + 1]
+            status = 206
+        self.send_response(status)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(len(data)))
+        if status == 206:
+            self.send_header("Content-Range", f"bytes {start}-{end}/{target.stat().st_size}")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, fmt, *args):
+        return
+
+
+class _ThreadedTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
 
 
 def _compiler():
@@ -35,6 +79,38 @@ def _write_float_file(path, values):
     arr = array.array("f", values)
     with open(path, "wb") as fh:
         arr.tofile(fh)
+    return path
+
+
+def _serve_dir(root_dir):
+    server = _ThreadedTCPServer(("127.0.0.1", 0), _RangeRequestHandler)
+    server.root_dir = str(root_dir)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    return server, thread
+
+
+def _write_single_span_manifest(path, *, file_name, port, row_bytes, solve_count, source_family="slv"):
+    logical_size = int(row_bytes) * int(solve_count)
+    manifest = {
+        "source_family": source_family,
+        "logical_size": logical_size,
+        "row_bytes": int(row_bytes),
+        "solve_start": 0,
+        "solve_count": int(solve_count),
+        "sources": [{
+            "id": 0,
+            "url": f"http://127.0.0.1:{port}/{file_name}",
+            "key": file_name,
+        }],
+        "spans": [{
+            "source_id": 0,
+            "logical_byte_start": 0,
+            "byte_start": 0,
+            "byte_length": logical_size,
+        }],
+    }
+    path.write_text(json.dumps(manifest), encoding="utf-8")
     return path
 
 
@@ -259,48 +335,62 @@ def test_roots2pix_mt_square_ext_2_5_matches_legacy_square_camera_oracle():
         clip_lo = -2.5
         clip_hi = 2.5
         pixbin_prefix = root / "pixbin"
-        cmd = [
-            str(binary),
-            str(roots_path),
-            str(root / "pix"),
-            f"--width={width}",
-            f"--height={height}",
-            "--tile_size=20",
-            "--n_tile_cols=1",
-            "--n_tile_rows=1",
-            f"--min_re={bounds['min_re']}",
-            f"--max_re={bounds['max_re']}",
-            f"--min_im={bounds['min_im']}",
-            f"--max_im={bounds['max_im']}",
-            "--degree=1",
-            "--color=solve_score",
-            "--match=none",
-            "--palette=inferno",
-            "--rotation=0",
-            "--threads=1",
-            "--input_mode=tmpfile",
-            "--solve_metric=centroid_re",
-            f"--solve_score_clip_lo={clip_lo}",
-            f"--solve_score_clip_hi={clip_hi}",
-            "--solve_score_omega_enabled=0",
-            "--solve_score_raw_bytes=1",
-            "--skip_pix_output=1",
-            f"--pixel_bin_prefix={pixbin_prefix}",
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        assert result.returncode == 0, result.stderr
-        meta = json.loads(result.stdout)
-        expected_pairs = _expected_roots2pix_fragment(
-            roots,
-            width=width,
-            height=height,
-            ext=ext,
-            clip_lo=clip_lo,
-            clip_hi=clip_hi,
-        )
-        assert meta["roots_plotted"] == len(expected_pairs)
-        assert meta["roots_clipped"] == 1
-        assert (root / "pixbin.frag").read_bytes() == _encode_u32le_u8_pairs(expected_pairs)
+        server, thread = _serve_dir(root)
+        try:
+            manifest_path = _write_single_span_manifest(
+                root / "roots_manifest.json",
+                file_name=roots_path.name,
+                port=server.server_address[1],
+                row_bytes=8,
+                solve_count=len(roots),
+            )
+            cmd = [
+                str(binary),
+                str(root / "pix"),
+                f"--width={width}",
+                f"--height={height}",
+                "--tile_size=20",
+                "--n_tile_cols=1",
+                "--n_tile_rows=1",
+                f"--min_re={bounds['min_re']}",
+                f"--max_re={bounds['max_re']}",
+                f"--min_im={bounds['min_im']}",
+                f"--max_im={bounds['max_im']}",
+                "--degree=1",
+                "--color=solve_score",
+                "--match=none",
+                "--palette=inferno",
+                "--rotation=0",
+                "--threads=1",
+                "--input_mode=multispan_sectioned",
+                f"--input_manifest={manifest_path}",
+                "--solve_metric=centroid_re",
+                f"--solve_score_clip_lo={clip_lo}",
+                f"--solve_score_clip_hi={clip_hi}",
+                "--solve_score_omega_enabled=0",
+                "--solve_score_raw_bytes=1",
+                "--skip_pix_output=1",
+                f"--pixel_bin_prefix={pixbin_prefix}",
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, result.stderr
+            meta = json.loads(result.stdout)
+            expected_pairs = _expected_roots2pix_fragment(
+                roots,
+                width=width,
+                height=height,
+                ext=ext,
+                clip_lo=clip_lo,
+                clip_hi=clip_hi,
+            )
+            assert meta["roots_plotted"] == len(expected_pairs)
+            assert meta["roots_clipped"] == 1
+            assert meta["input_mode"] == "multispan_sectioned"
+            assert (root / "pixbin.frag").read_bytes() == _encode_u32le_u8_pairs(expected_pairs)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
 
 def test_bilevel_section_square_ext_2_5_matches_legacy_square_camera_oracle():
@@ -413,48 +503,62 @@ def test_roots2pix_mt_asymmetric_bounds_match_independent_bounds_oracle():
         clip_lo = -4.0
         clip_hi = 8.0
         pixbin_prefix = root / "pixbin"
-        cmd = [
-            str(binary),
-            str(roots_path),
-            str(root / "pix"),
-            f"--width={width}",
-            f"--height={height}",
-            "--tile_size=24",
-            "--n_tile_cols=1",
-            "--n_tile_rows=1",
-            f"--min_re={bounds['min_re']}",
-            f"--max_re={bounds['max_re']}",
-            f"--min_im={bounds['min_im']}",
-            f"--max_im={bounds['max_im']}",
-            "--degree=1",
-            "--color=solve_score",
-            "--match=none",
-            "--palette=inferno",
-            "--rotation=0",
-            "--threads=1",
-            "--input_mode=tmpfile",
-            "--solve_metric=centroid_re",
-            f"--solve_score_clip_lo={clip_lo}",
-            f"--solve_score_clip_hi={clip_hi}",
-            "--solve_score_omega_enabled=0",
-            "--solve_score_raw_bytes=1",
-            "--skip_pix_output=1",
-            f"--pixel_bin_prefix={pixbin_prefix}",
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        assert result.returncode == 0, result.stderr
-        meta = json.loads(result.stdout)
-        expected_pairs = _expected_roots2pix_fragment_bounds(
-            roots,
-            width=width,
-            height=height,
-            bounds=bounds,
-            clip_lo=clip_lo,
-            clip_hi=clip_hi,
-        )
-        assert meta["roots_plotted"] == len(expected_pairs)
-        assert meta["roots_clipped"] == 1
-        assert (root / "pixbin.frag").read_bytes() == _encode_u32le_u8_pairs(expected_pairs)
+        server, thread = _serve_dir(root)
+        try:
+            manifest_path = _write_single_span_manifest(
+                root / "roots_manifest.json",
+                file_name=roots_path.name,
+                port=server.server_address[1],
+                row_bytes=8,
+                solve_count=len(roots),
+            )
+            cmd = [
+                str(binary),
+                str(root / "pix"),
+                f"--width={width}",
+                f"--height={height}",
+                "--tile_size=24",
+                "--n_tile_cols=1",
+                "--n_tile_rows=1",
+                f"--min_re={bounds['min_re']}",
+                f"--max_re={bounds['max_re']}",
+                f"--min_im={bounds['min_im']}",
+                f"--max_im={bounds['max_im']}",
+                "--degree=1",
+                "--color=solve_score",
+                "--match=none",
+                "--palette=inferno",
+                "--rotation=0",
+                "--threads=1",
+                "--input_mode=multispan_sectioned",
+                f"--input_manifest={manifest_path}",
+                "--solve_metric=centroid_re",
+                f"--solve_score_clip_lo={clip_lo}",
+                f"--solve_score_clip_hi={clip_hi}",
+                "--solve_score_omega_enabled=0",
+                "--solve_score_raw_bytes=1",
+                "--skip_pix_output=1",
+                f"--pixel_bin_prefix={pixbin_prefix}",
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            assert result.returncode == 0, result.stderr
+            meta = json.loads(result.stdout)
+            expected_pairs = _expected_roots2pix_fragment_bounds(
+                roots,
+                width=width,
+                height=height,
+                bounds=bounds,
+                clip_lo=clip_lo,
+                clip_hi=clip_hi,
+            )
+            assert meta["roots_plotted"] == len(expected_pairs)
+            assert meta["roots_clipped"] == 1
+            assert meta["input_mode"] == "multispan_sectioned"
+            assert (root / "pixbin.frag").read_bytes() == _encode_u32le_u8_pairs(expected_pairs)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
 
 def test_bilevel_section_asymmetric_bounds_match_independent_bounds_oracle():
@@ -571,40 +675,52 @@ def test_active_binaries_reject_legacy_square_camera_args():
 
         roots_path = _write_float_file(root / "roots.bin", [0.0, 0.0])
         coeffs_path = _write_float_file(root / "coeffs.bin", [0.0, 0.0])
-
-        roots_result = subprocess.run(
-            [
-                str(roots_binary),
-                str(roots_path),
-                str(root / "pix"),
-                "--width=8",
-                "--height=8",
-                "--tile_size=8",
-                "--n_tile_cols=1",
-                "--n_tile_rows=1",
-                "--center_re=0",
-                "--center_im=0",
-                "--scale=1",
-                "--degree=1",
-                "--color=solve_score",
-                "--match=none",
-                "--palette=inferno",
-                "--threads=1",
-                "--input_mode=tmpfile",
-                "--solve_metric=centroid_re",
-                "--solve_score_clip_lo=-1",
-                "--solve_score_clip_hi=1",
-                "--solve_score_omega_enabled=0",
-                "--solve_score_raw_bytes=1",
-                "--skip_pix_output=1",
-                f"--pixel_bin_prefix={root / 'pixbin'}",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        assert roots_result.returncode != 0
-        assert "no longer supported" in roots_result.stderr
+        server, thread = _serve_dir(root)
+        try:
+            manifest_path = _write_single_span_manifest(
+                root / "roots_manifest.json",
+                file_name=roots_path.name,
+                port=server.server_address[1],
+                row_bytes=8,
+                solve_count=1,
+            )
+            roots_result = subprocess.run(
+                [
+                    str(roots_binary),
+                    str(root / "pix"),
+                    "--width=8",
+                    "--height=8",
+                    "--tile_size=8",
+                    "--n_tile_cols=1",
+                    "--n_tile_rows=1",
+                    "--center_re=0",
+                    "--center_im=0",
+                    "--scale=1",
+                    "--degree=1",
+                    "--color=solve_score",
+                    "--match=none",
+                    "--palette=inferno",
+                    "--threads=1",
+                    "--input_mode=multispan_sectioned",
+                    f"--input_manifest={manifest_path}",
+                    "--solve_metric=centroid_re",
+                    "--solve_score_clip_lo=-1",
+                    "--solve_score_clip_hi=1",
+                    "--solve_score_omega_enabled=0",
+                    "--solve_score_raw_bytes=1",
+                    "--skip_pix_output=1",
+                    f"--pixel_bin_prefix={root / 'pixbin'}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert roots_result.returncode != 0
+            assert "no longer supported" in roots_result.stderr
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
         section_result = subprocess.run(
             [
@@ -646,3 +762,50 @@ def test_active_binaries_reject_legacy_square_camera_args():
         )
         assert coeff_result.returncode != 0
         assert "no longer supported" in coeff_result.stderr
+
+
+def test_roots2pix_mt_rejects_legacy_input_modes():
+    with tempfile.TemporaryDirectory(prefix="exact_viewport_roots2pix_input_modes_") as td:
+        root = pathlib.Path(td)
+        binary = _compile_binary(
+            td,
+            "roots2pix_mt_test",
+            "roots2pix_mt.c",
+            extra_sources=["multispan_reader.c"],
+            libs=["-lcurl", "-lm", "-lpthread"],
+        )
+        roots_path = _write_float_file(root / "roots.bin", [0.0, 0.0])
+        common_args = [
+            str(binary),
+            str(root / "pix"),
+            "--width=8",
+            "--height=8",
+            "--tile_size=8",
+            "--n_tile_cols=1",
+            "--n_tile_rows=1",
+            "--min_re=-1",
+            "--max_re=1",
+            "--min_im=-1",
+            "--max_im=1",
+            "--degree=1",
+            "--color=solve_score",
+            "--match=none",
+            "--palette=inferno",
+            "--threads=1",
+            "--solve_metric=centroid_re",
+            "--solve_score_clip_lo=-1",
+            "--solve_score_clip_hi=1",
+            "--solve_score_omega_enabled=0",
+            "--solve_score_raw_bytes=1",
+            "--skip_pix_output=1",
+            f"--pixel_bin_prefix={root / 'pixbin'}",
+        ]
+        for legacy_mode in ("tmpfile", "sectioned"):
+            result = subprocess.run(
+                [*common_args, f"--input_mode={legacy_mode}"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            assert result.returncode != 0
+            assert "only supports --input_mode=multispan_sectioned" in result.stderr

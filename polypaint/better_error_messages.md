@@ -415,7 +415,7 @@ Implementation site:
 Current source:
 
 - [lambda/handler_bilevel.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_bilevel.py)
-- [lambda/handler_bilevel_stitch.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_bilevel_stitch.py)
+- [lambda/handler_coeff_bilevel_stitch.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_coeff_bilevel_stitch.py)
 
 ### 5.7.1 BiLevel raster
 
@@ -472,7 +472,7 @@ Desired messages:
 Implementation sites:
 
 - [lambda/handler_bilevel.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_bilevel.py)
-- [lambda/handler_bilevel_stitch.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_bilevel_stitch.py)
+- [lambda/handler_coeff_bilevel_stitch.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_coeff_bilevel_stitch.py)
 
 ## 5.8 Palette workflow failures
 
@@ -762,7 +762,7 @@ Add or extend tests for:
   - [lambda/handler_finalize.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_finalize.py)
   - [lambda/handler_encode.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_encode.py)
   - [lambda/handler_bilevel.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_bilevel.py)
-  - [lambda/handler_bilevel_stitch.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_bilevel_stitch.py)
+  - [lambda/handler_coeff_bilevel_stitch.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_coeff_bilevel_stitch.py)
   - [lambda/handler_deepzoom_export.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_deepzoom_export.py)
 
 Each test should assert the exact message text or an exact stable substring.
@@ -798,7 +798,7 @@ Recommended implementation order:
    - `handler_solve_proximity.py`
    - `handler_raster.py`
    - `handler_bilevel.py`
-   - `handler_bilevel_stitch.py`
+   - `handler_coeff_bilevel_stitch.py`
    - `handler_palette_chunk.py`
    - `handler_deepzoom_export.py`
 3. binary stderr formatting

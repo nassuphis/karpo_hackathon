@@ -11,7 +11,7 @@ The goal is still the same:
 The current codebase already uses concurrency in several places:
 
 - [lambda/handler_dispatch.py](./lambda/handler_dispatch.py) uses a `ThreadPoolExecutor` for async invoke fanout
-- libvips-backed binaries benefit from vCPU scaling in `encode`, `bilevel_stitch`, `deepzoom_export`, `render_preview`, `autolevels`, and TIFF/PNG export
+- libvips-backed binaries benefit from vCPU scaling in `encode`, `coeff_bilevel_stitch`, `deepzoom_export`, `render_preview`, `autolevels`, and TIFF/PNG export
 - [lambda/handler_repalette.py](./lambda/handler_repalette.py) already parallelizes S3 copy work
 
 But the main AE solve path is still single-threaded:

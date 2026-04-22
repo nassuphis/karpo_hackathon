@@ -643,6 +643,34 @@ button {
     gap: 8px;
     flex-wrap: wrap;
 }
+.render-preview-stage {
+    position: relative;
+    display: inline-block;
+    line-height: 0;
+    cursor: crosshair;
+    user-select: none;
+    -webkit-user-select: none;
+}
+.render-preview-stage.inactive {
+    cursor: default;
+}
+.render-preview-image {
+    max-width: 100%;
+    max-height: 100%;
+    background: #000;
+    display: block;
+    margin: 0 auto;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+.render-preview-marquee {
+    position: absolute;
+    display: none;
+    border: 1px dotted #fff;
+    background: rgba(255,255,255,0.06);
+    box-sizing: border-box;
+    pointer-events: none;
+}
 @media (max-width: 900px) {
     .solve-score-modal-body {
         grid-template-columns: minmax(0, 1fr);
@@ -1837,39 +1865,10 @@ button {
     </div>
 </div>
 
-<div id="render-generate-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
-    <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="render-generate-popup-title">
-        <div class="tri-popup-head">
-            <div id="render-generate-popup-title" class="tri-popup-title">Generate</div>
-            <button id="render-generate-popup-close" type="button" class="tri-popup-close">Close</button>
-        </div>
-        <div id="render-generate-popup-summary" class="autolevel-popup-summary"></div>
-        <div style="padding:0 14px 8px 14px">
-            <div id="render-generate-associated-row" class="autolevel-stage-row" style="align-items:center">
-                <div class="autolevel-stage-text">Keep the palette used for this Color render attached to the resulting image artifact.</div>
-                <div class="autolevel-inline-fields">
-                    <label class="inline-label" style="display:flex; align-items:center; gap:6px">
-                        <input id="render-generate-save-associated-palette" type="checkbox">
-                        <span>Save Associated Palette</span>
-                    </label>
-                </div>
-            </div>
-        </div>
-        <div id="render-generate-popup-help" class="autolevel-popup-help">Only used for Solve score renders. It lets you compare the existing temp-file path against the native sectioned range-download path inside the histogram worker.</div>
-        <div class="autolevel-popup-actions">
-            <div></div>
-            <div style="display:flex; gap:8px">
-                <button id="render-generate-popup-cancel" type="button" class="btn-secondary" style="padding:6px 12px">Exit</button>
-                <button id="render-generate-popup-run" type="button" class="btn-primary" style="padding:6px 12px">Execute</button>
-            </div>
-        </div>
-    </div>
-</div>
-
 <div id="render-mt-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
     <div class="tri-popup render-mt-popup" role="dialog" aria-modal="true" aria-labelledby="render-mt-popup-title">
         <div class="tri-popup-head">
-            <div id="render-mt-popup-title" class="tri-popup-title">Generate-MT</div>
+            <div id="render-mt-popup-title" class="tri-popup-title">ColorRender-MT</div>
             <button id="render-mt-popup-close" type="button" class="tri-popup-close">Close</button>
         </div>
         <div id="render-mt-popup-summary" class="autolevel-popup-summary"></div>
@@ -3082,6 +3081,13 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown') next = idx < inv.length - 1 ? idx + 1 : idx;
     else next = idx > 0 ? idx - 1 : 0;
     _renderSelectArtifact(_renderActiveFamily, next);
+});
+
+document.addEventListener('keydown', (e) => {
+    if (!document.getElementById('tab-render').classList.contains('active')) return;
+    if (e.key !== 'Escape') return;
+    if (!_renderPreviewSelectionState.rect || !_renderPreviewSelectionState.artifactKey) return;
+    _clearRenderPreviewSelection();
 });
 
 async function previewResult() {
@@ -4580,6 +4586,8 @@ async function _loadSelectedSolveScoreProgramFromModal() {
         }
         _applySolveScoreProgram(_solveScoreModalState.prefix, program);
         if (program && program.name) {
+            _solveScoreModalState.nameInput = program.name;
+            _solveScoreModalState.lastSelectedName = program.name;
             _solveScoreProgramRememberedNames[_solveScoreModalState.prefix] = program.name;
         }
         _setSolveScoreModalStatus(program.name ? `Loaded ${program.name}` : 'Loaded solve-score program', false);
@@ -5098,6 +5106,17 @@ let _renderArtifacts = { color: [], bilevel: [], coeffs: [], palette: [], pdf: [
 let _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1, pdf: -1 };
 let _renderSelectedArtifactKey = { color: '', bilevel: '', coeffs: '', palette: '', pdf: '' };
 let _renderCatalogScrollTop = { color: 0, bilevel: 0, coeffs: 0, palette: 0, pdf: 0 };
+let _renderPreviewSelectionState = {
+    artifactKey: '',
+    rect: null,
+};
+let _renderPreviewDragState = {
+    cleanup: null,
+    dragging: false,
+    artifactKey: '',
+    start: null,
+    rect: null,
+};
 let _renderLoadedJobId = '';
 let _renderNeedsRefresh = false;
 let _favoriteRefs = [];
@@ -5117,7 +5136,6 @@ let _colorRepalettePopupState = { open: false, sourceArtifactId: '', sourceDispl
 let _bilevelPopupState = { open: false, sectionMode: 'logical_sections_auto', sectionCount: '' };
 let _colorToBilevelPopupState = { open: false, sourceArtifactId: '', threshold: 0 };
 let _resultsRefreshPopupState = { open: false, workers: 32 };
-let _renderGeneratePopupState = { open: false, saveAssociatedPalette: false };
 let _renderMtPopupState = {
     open: false,
     rasterThreads: 4,
@@ -6821,65 +6839,6 @@ function _renderMtSectionSettingLabel(mode, count) {
     return count ? `${base}/${count}` : base;
 }
 
-function _closeRenderGeneratePopup() {
-    _renderGeneratePopupState = {
-        open: false,
-        saveAssociatedPalette: !!_renderGeneratePopupState.saveAssociatedPalette,
-    };
-    const overlay = document.getElementById('render-generate-popup-overlay');
-    if (overlay) {
-        overlay.style.display = 'none';
-        overlay.setAttribute('aria-hidden', 'true');
-    }
-}
-
-function _renderRenderGeneratePopup() {
-    const overlay = document.getElementById('render-generate-popup-overlay');
-    const summaryEl = document.getElementById('render-generate-popup-summary');
-    const helpEl = document.getElementById('render-generate-popup-help');
-    const assocRowEl = document.getElementById('render-generate-associated-row');
-    const assocEl = document.getElementById('render-generate-save-associated-palette');
-    const runBtn = document.getElementById('render-generate-popup-run');
-    if (!overlay || !summaryEl) return;
-    if (!_renderGeneratePopupState.open) {
-        _closeRenderGeneratePopup();
-        return;
-    }
-    const mode = renderColorMode;
-    const solveScoreRelevant = mode === 'solve_score';
-    const assocAllowed = _associatedPaletteAllowedForColorMode(mode);
-    overlay.style.display = 'flex';
-    overlay.setAttribute('aria-hidden', 'false');
-    if (assocRowEl) assocRowEl.style.display = assocAllowed ? '' : 'none';
-    if (assocEl) {
-        assocEl.checked = !!_renderGeneratePopupState.saveAssociatedPalette;
-        assocEl.disabled = !assocAllowed;
-    }
-    const modeLabel = mode.replace(/_/g, ' ').replace(/\b\w/g, ch => ch.toUpperCase());
-    const assocLabel = assocAllowed ? (assocEl && assocEl.checked ? 'yes' : 'no') : 'n/a';
-    summaryEl.textContent = solveScoreRelevant
-        ? `Mode: ${modeLabel} • output ${document.getElementById('render-pix').value || '?'} px • fused logical sections • associated palette=${assocLabel}`
-        : `Mode: ${modeLabel} • color render now supports Solve score only`;
-    if (helpEl) {
-        helpEl.textContent = solveScoreRelevant
-            ? 'Color Generate now uses the fused path only: lores clip, logical-section raster, FinalizeMT raw assembly/colorization.'
-            : 'Color render supports Solve score only. Switch the Color mode back to Solve score.';
-    }
-    if (runBtn) runBtn.disabled = !!_activeRenderRun || !solveScoreRelevant;
-}
-
-function openRenderGeneratePopup() {
-    if (_activeRenderRun) return;
-    _renderGeneratePopupState = {
-        open: true,
-        saveAssociatedPalette: !!_renderGeneratePopupState.saveAssociatedPalette,
-    };
-    _renderRenderGeneratePopup();
-    const assocEl = document.getElementById('render-generate-save-associated-palette');
-    const focusEl = assocEl;
-    if (focusEl && typeof focusEl.focus === 'function') focusEl.focus();
-}
-
 function _closeRenderMtPopup() {
     _renderMtPopupState = {
         open: false,
@@ -7709,46 +7668,6 @@ function _initResultsRefreshPopup() {
                 _resultsRefreshPopupState.workers = workers;
                 _closeResultsRefreshPopup();
                 await loadResults({ listWorkers: workers });
-            } finally {
-                runBtn.disabled = false;
-                runBtn.textContent = btnText;
-            }
-        });
-    }
-}
-
-function _initRenderGeneratePopup() {
-    const runBtn = document.getElementById('render-generate-popup-run');
-    const assocEl = document.getElementById('render-generate-save-associated-palette');
-    _bindPopupShell({
-        overlayId: 'render-generate-popup-overlay',
-        closeId: 'render-generate-popup-close',
-        cancelId: 'render-generate-popup-cancel',
-        isOpen: () => !!_renderGeneratePopupState.open,
-        onClose: _closeRenderGeneratePopup,
-        onEnter: () => {
-            const saveAssociatedPalette = !!document.getElementById('render-generate-save-associated-palette').checked;
-            _renderGeneratePopupState.saveAssociatedPalette = saveAssociatedPalette;
-            _closeRenderGeneratePopup();
-            runRasterPipeline({ saveAssociatedPalette });
-        },
-    });
-    if (assocEl) {
-        assocEl.addEventListener('change', (ev) => {
-            _renderGeneratePopupState.saveAssociatedPalette = !!ev.target.checked;
-            _renderRenderGeneratePopup();
-        });
-    }
-    if (runBtn) {
-        runBtn.addEventListener('click', async () => {
-            const btnText = runBtn.textContent;
-            try {
-                runBtn.disabled = true;
-                runBtn.textContent = 'Executing...';
-                const saveAssociatedPalette = !!document.getElementById('render-generate-save-associated-palette').checked;
-                _renderGeneratePopupState.saveAssociatedPalette = saveAssociatedPalette;
-                _closeRenderGeneratePopup();
-                await runRasterPipeline({ saveAssociatedPalette });
             } finally {
                 runBtn.disabled = false;
                 runBtn.textContent = btnText;
@@ -8774,7 +8693,6 @@ _initColorRepalettePopup();
 _initBilevelPopup();
 _initColorToBilevelPopup();
 _initResultsRefreshPopup();
-_initRenderGeneratePopup();
 _initRenderMtPopup();
 _initComputeMtPopup();
 _initExtractPalettePopup();
@@ -10856,7 +10774,8 @@ async function _launchRenderOrchestrator(mode, paramsPatch = null) {
 }
 
 async function runRasterPipeline(config = null) {
-    const btn = document.getElementById('btn-render-generate');
+    const btn = document.getElementById('btn-render-generate')
+        || document.getElementById('btn-render-generate-mt');
     if (btn) btn.disabled = true;
     try {
         if (renderColorMode !== 'solve_score') {
@@ -10865,7 +10784,7 @@ async function runRasterPipeline(config = null) {
         const saveAssociatedPalette = !!(
             config && typeof config === 'object' && config.saveAssociatedPalette != null
                 ? config.saveAssociatedPalette
-                : _renderGeneratePopupState.saveAssociatedPalette
+                : _renderMtPopupState.saveAssociatedPalette
         );
         log(`Render (fused): dispatching with lores clip threads=4, raster threads=4, raster workers=10, raster sections=auto, finalize workers=16, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}${saveAssociatedPalette ? ', inline output' : ''}...`, 'ok', 'render-log');
         await _launchFusedRenderOrchestrator({
@@ -10893,7 +10812,7 @@ async function runFusedRasterPipelineMT(threadConfig = null) {
     if (btn) btn.disabled = true;
     try {
         if (renderColorMode !== 'solve_score') {
-            throw new Error('Fused Generate-MT supports Solve score renders only');
+            throw new Error('ColorRender-MT supports Solve score renders only');
         }
         const rasterThreads = _clampRenderMtThreads(
             threadConfig && typeof threadConfig === 'object' && threadConfig.rasterThreads != null
@@ -10944,7 +10863,7 @@ async function runFusedRasterPipelineMT(threadConfig = null) {
         }
 
         log(
-            `Render-MT (fused): dispatching with lores clip threads=${clipThreads}, raster input=sectioned, raster retries=${rasterRetries}, raster threads=${rasterThreads}, raster workers=${rasterWorkers}, raster sections=${_renderMtSectionSettingLabel(rasterSectionMode, rasterSectionCount)}, bin fragments=raw score bins, finalize workers=${finalizeWorkers}, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}${saveAssociatedPalette ? ', inline output' : ''}...`,
+            `ColorRender-MT (fused): dispatching with lores clip threads=${clipThreads}, raster input=sectioned, raster retries=${rasterRetries}, raster threads=${rasterThreads}, raster workers=${rasterWorkers}, raster sections=${_renderMtSectionSettingLabel(rasterSectionMode, rasterSectionCount)}, bin fragments=raw score bins, finalize workers=${finalizeWorkers}, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}${saveAssociatedPalette ? ', inline output' : ''}...`,
             'ok',
             'render-log'
         );
@@ -10963,9 +10882,9 @@ async function runFusedRasterPipelineMT(threadConfig = null) {
         };
         await _launchFusedRenderOrchestrator(launchParams);
     } catch (e) {
-        document.getElementById('render-status').textContent = 'Render-MT error: ' + e.message;
+        document.getElementById('render-status').textContent = 'ColorRender-MT error: ' + e.message;
         document.getElementById('render-status').className = 'status error';
-        log('Render-MT failed: ' + e.message, 'err', 'render-log');
+        log('ColorRender-MT failed: ' + e.message, 'err', 'render-log');
     } finally {
         if (btn) btn.disabled = false;
     }
@@ -12501,6 +12420,7 @@ async function refreshRenderInventory() {
 async function refreshRenderArtifacts(jobIdOverride, options = {}) {
     const jobId = jobIdOverride || document.getElementById('render-results-dir').value.trim();
     if (!jobId) return;
+    if (_renderLoadedJobId && _renderLoadedJobId !== jobId) _clearRenderPreviewSelection();
     _captureRenderCatalogScroll(_renderActiveFamily);
     const statusEl = document.getElementById('render-status');
     const prevStatus = statusEl.textContent;
@@ -12567,6 +12487,212 @@ function _renderSelectedArtifactEntry() {
     const idx = _renderSelectedArtifact[_renderActiveFamily];
     if (idx == null || idx < 0 || idx >= inv.length) return null;
     return inv[idx];
+}
+
+function _renderPreviewViewportMeta(art) {
+    if (!art || art.family !== 'color') return null;
+    const width = Number(art.width);
+    const height = Number(art.height);
+    const minRe = Number(art.min_re);
+    const maxRe = Number(art.max_re);
+    const minIm = Number(art.min_im);
+    const maxIm = Number(art.max_im);
+    const rotation = Number(art.rotation);
+    return {
+        width,
+        height,
+        minRe,
+        maxRe,
+        minIm,
+        maxIm,
+        rotation: Number.isFinite(rotation) ? rotation : 0,
+        hasViewport: (
+            Number.isFinite(width) &&
+            Number.isFinite(height) &&
+            width > 0 &&
+            height > 0 &&
+            Number.isFinite(minRe) &&
+            Number.isFinite(maxRe) &&
+            Number.isFinite(minIm) &&
+            Number.isFinite(maxIm) &&
+            maxRe > minRe &&
+            maxIm > minIm
+        ),
+    };
+}
+
+function _teardownRenderPreviewDrag() {
+    const cleanup = _renderPreviewDragState.cleanup;
+    _renderPreviewDragState.cleanup = null;
+    _renderPreviewDragState.dragging = false;
+    _renderPreviewDragState.artifactKey = '';
+    _renderPreviewDragState.start = null;
+    _renderPreviewDragState.rect = null;
+    if (typeof cleanup === 'function') cleanup();
+}
+
+function _clearRenderPreviewSelection() {
+    _renderPreviewSelectionState.artifactKey = '';
+    _renderPreviewSelectionState.rect = null;
+    _renderPreviewDragState.dragging = false;
+    _renderPreviewDragState.artifactKey = '';
+    _renderPreviewDragState.start = null;
+    _renderPreviewDragState.rect = null;
+    _syncRenderPreviewMarquee();
+}
+
+function _renderPreviewPointerFractions(stage, event) {
+    if (!stage || !event) return null;
+    const rect = stage.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0)) return null;
+    return {
+        x: _clampDeepZoomViewportCoord((Number(event.clientX) - rect.left) / rect.width, 0, 1),
+        y: _clampDeepZoomViewportCoord((Number(event.clientY) - rect.top) / rect.height, 0, 1),
+    };
+}
+
+function _normalizeRenderPreviewRect(start, end) {
+    if (!start || !end) return null;
+    const left = Math.min(start.x, end.x);
+    const right = Math.max(start.x, end.x);
+    const top = Math.min(start.y, end.y);
+    const bottom = Math.max(start.y, end.y);
+    return {
+        x: left,
+        y: top,
+        w: Math.max(0, right - left),
+        h: Math.max(0, bottom - top),
+    };
+}
+
+function _syncRenderPreviewMarquee() {
+    const marquee = document.getElementById('render-preview-marquee');
+    if (!marquee) return;
+    const artKey = _renderArtifactStableKey(_renderSelectedArtifactEntry());
+    const rect = _renderPreviewDragState.dragging && _renderPreviewDragState.artifactKey === artKey
+        ? _renderPreviewDragState.rect
+        : (_renderPreviewSelectionState.artifactKey === artKey ? _renderPreviewSelectionState.rect : null);
+    if (!rect || !(rect.w > 0) || !(rect.h > 0)) {
+        marquee.style.display = 'none';
+        return;
+    }
+    marquee.style.display = 'block';
+    marquee.style.left = `${rect.x * 100}%`;
+    marquee.style.top = `${rect.y * 100}%`;
+    marquee.style.width = `${rect.w * 100}%`;
+    marquee.style.height = `${rect.h * 100}%`;
+}
+
+function _applyRenderPreviewSelectionBounds(meta, rect) {
+    if (!meta || !rect) return;
+    const imgRect = {
+        x: rect.x * meta.width,
+        y: rect.y * meta.height,
+        width: rect.w * meta.width,
+        height: rect.h * meta.height,
+    };
+    const cameraRect = _deepZoomCameraRectFromImageRect(meta, imgRect);
+    const bounds = _deepZoomRenderBoundsFromCameraRect(meta, cameraRect);
+    if (!bounds) return;
+    _setRenderExplicitViewportBounds({
+        minRe: bounds.min_re,
+        maxRe: bounds.max_re,
+        minIm: bounds.min_im,
+        maxIm: bounds.max_im,
+    });
+    selectViewMode('explicit');
+    const statusEl = document.getElementById('render-status');
+    const art = _renderSelectedArtifactEntry();
+    if (statusEl && !_activeRenderRun) {
+        statusEl.textContent = art && art.artifact_id
+            ? `Preview subview selected from ${art.artifact_id}`
+            : 'Preview subview selected';
+        statusEl.className = 'status ok';
+    }
+}
+
+function _initRenderPreviewMarquee(art) {
+    _teardownRenderPreviewDrag();
+    const stage = document.getElementById('render-preview-stage');
+    const img = document.getElementById('render-preview-image');
+    const marquee = document.getElementById('render-preview-marquee');
+    if (!stage || !img || !marquee) return;
+    const meta = _renderPreviewViewportMeta(art);
+    const artKey = _renderArtifactStableKey(art);
+    const interactive = !!(meta && meta.hasViewport);
+    stage.classList.toggle('inactive', !interactive);
+    _syncRenderPreviewMarquee();
+    if (!interactive) return;
+
+    const onMouseDown = (event) => {
+        if (event.button !== 0) return;
+        const start = _renderPreviewPointerFractions(stage, event);
+        if (!start) return;
+        event.preventDefault();
+        _renderPreviewDragState.dragging = true;
+        _renderPreviewDragState.artifactKey = artKey;
+        _renderPreviewDragState.start = start;
+        _renderPreviewDragState.rect = { x: start.x, y: start.y, w: 0, h: 0 };
+        _syncRenderPreviewMarquee();
+    };
+
+    const onMouseMove = (event) => {
+        if (!_renderPreviewDragState.dragging || _renderPreviewDragState.artifactKey !== artKey) return;
+        const current = _renderPreviewPointerFractions(stage, event);
+        if (!current) return;
+        _renderPreviewDragState.rect = _normalizeRenderPreviewRect(_renderPreviewDragState.start, current);
+        _syncRenderPreviewMarquee();
+    };
+
+    const onMouseUp = (event) => {
+        if (!_renderPreviewDragState.dragging || _renderPreviewDragState.artifactKey !== artKey) return;
+        const end = _renderPreviewPointerFractions(stage, event) || _renderPreviewDragState.start;
+        const rect = _normalizeRenderPreviewRect(_renderPreviewDragState.start, end);
+        _renderPreviewDragState.dragging = false;
+        _renderPreviewDragState.artifactKey = '';
+        _renderPreviewDragState.start = null;
+        _renderPreviewDragState.rect = null;
+        if (rect && rect.w > 0 && rect.h > 0) {
+            _renderPreviewSelectionState.artifactKey = artKey;
+            _renderPreviewSelectionState.rect = rect;
+            _applyRenderPreviewSelectionBounds(meta, rect);
+        }
+        _syncRenderPreviewMarquee();
+    };
+
+    const onContextMenu = (event) => {
+        event.preventDefault();
+        if (_renderPreviewDragState.dragging) return;
+        _clearRenderPreviewSelection();
+    };
+
+    const onDragStart = (event) => {
+        event.preventDefault();
+    };
+
+    const onBlur = () => {
+        if (!_renderPreviewDragState.dragging) return;
+        _renderPreviewDragState.dragging = false;
+        _renderPreviewDragState.artifactKey = '';
+        _renderPreviewDragState.start = null;
+        _renderPreviewDragState.rect = null;
+        _syncRenderPreviewMarquee();
+    };
+
+    stage.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    stage.addEventListener('contextmenu', onContextMenu);
+    img.addEventListener('dragstart', onDragStart);
+    window.addEventListener('blur', onBlur);
+    _renderPreviewDragState.cleanup = () => {
+        stage.removeEventListener('mousedown', onMouseDown);
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        stage.removeEventListener('contextmenu', onContextMenu);
+        img.removeEventListener('dragstart', onDragStart);
+        window.removeEventListener('blur', onBlur);
+    };
 }
 
 function _linkedPaletteIdForColorArtifact(art) {
@@ -12772,7 +12898,6 @@ function _restoreRenderExecutionState(entry) {
     if (!cfg) return;
     if (cfg.save_associated_palette != null) {
         const saveAssociatedPalette = !!cfg.save_associated_palette;
-        _renderGeneratePopupState.saveAssociatedPalette = saveAssociatedPalette;
         _renderMtPopupState.saveAssociatedPalette = saveAssociatedPalette;
     }
     if (cfg.raster_mt_threads != null) _renderMtPopupState.rasterThreads = _clampRenderMtThreads(cfg.raster_mt_threads);
@@ -13063,6 +13188,7 @@ function _restoreRenderCatalogScroll(options = {}) {
 
 function _renderSelectFamily(family) {
     _captureRenderCatalogScroll(_renderActiveFamily);
+    if (family !== _renderActiveFamily) _clearRenderPreviewSelection();
     _renderActiveFamily = family;
     const activeJobId = document.getElementById('render-results-dir').value.trim();
     const inv = _renderArtifacts[family] || [];
@@ -13088,6 +13214,7 @@ function _renderSelectArtifactByKey(family, key) {
     const nextKey = String(key || '');
     const idx = inv.findIndex((art) => _renderArtifactStableKey(art) === nextKey);
     if (idx < 0) return;
+    if (family !== _renderActiveFamily || nextKey !== _renderSelectedArtifactKey[family]) _clearRenderPreviewSelection();
     _captureRenderCatalogScroll(family);
     _renderSelectedArtifact[family] = idx;
     _renderSelectedArtifactKey[family] = nextKey;
@@ -13310,7 +13437,7 @@ async function generateSelectedRenderArtifact() {
         return;
     }
     if (_renderActiveFamily === 'color' && renderColorMode === 'solve_score') {
-        openRenderGeneratePopup();
+        await runRasterPipeline();
         return;
     }
     await runRasterPipeline();
@@ -13328,6 +13455,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     const calc = summary.calc || {};
     const panelViewportPx = 360;
     window._lastRenderSummary = summary;
+    _teardownRenderPreviewDrag();
 
     const withFamily = (family, inv) => (Array.isArray(inv) ? inv : []).map((art) => ({
         ...(art || {}),
@@ -13374,7 +13502,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
 
     let controlsExtra = '';
     if (_renderActiveFamily === 'color') {
-        controlsExtra = '<span style="font-size:11px; color:#666">Generate uses the fused Solve score path only: lores clip, logical-section raster, and FinalizeMT raw assembly/colorization. Generate-MT exposes fused clip/raster/finalize controls only: clip threads, raster threads, raster workers, raster retries, logical sections, finalize workers, and inline associated-palette output. ExtractPalette opens a popup with solve-score prepass controls plus real palette chunk controls: chunk threads, chunk input tmp file vs sectioned native, chunk retries, and chunk workers. Color summaries show the solve display, palette name, and source Color artifact id. RePalette on Color requires a fused greyscale raw sidecar and only remaps the stored greyscale bytes to a new palette. Color2Bilevel thresholds the selected fused greyscale raw sidecar into a new bilevel artifact. Populate restores the selected color artifact settings into the form, including saved render execution settings when present. Autolevels derives a new immutable color artifact from the selected image. Resize derives a new immutable Color artifact using libvips resize/thumbnail operations.</span>';
+        controlsExtra = '<span style="font-size:11px; color:#666">ColorRender-MT exposes fused clip/raster/finalize controls only: clip threads, raster threads, raster workers, raster retries, logical sections, finalize workers, and inline associated-palette output. Drag a rectangle on the selected Color preview to populate Exact view bounds for the next ColorRender-MT run; Escape or right-click clears it. ExtractPalette opens a popup with solve-score prepass controls plus real palette chunk controls: chunk threads, chunk input tmp file vs sectioned native, chunk retries, and chunk workers. Color summaries show the solve display, palette name, and source Color artifact id. RePalette on Color requires a fused greyscale raw sidecar and only remaps the stored greyscale bytes to a new palette. Color2Bilevel thresholds the selected fused greyscale raw sidecar into a new bilevel artifact. Populate restores the selected color artifact settings into the form, including saved render execution settings when present. Autolevels derives a new immutable color artifact from the selected image. Resize derives a new immutable Color artifact using libvips resize/thumbnail operations.</span>';
     } else if (_renderActiveFamily === 'palette') {
         controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Solve score metric, palette, q, and root transforms. RePalette reuses the selected palette artifact’s saved bins and only changes the final palette mapping. Populate copies the selected palette into Color settings and switches to Color. Palette summaries show the solve display, palette name, and source Color artifact id.</span>';
     } else if (_renderActiveFamily === 'bilevel') {
@@ -13409,17 +13537,17 @@ function renderArtifactPanel(jobId, summary, options = {}) {
             const pdfSrc = `${activeArt.viewer_url}#toolbar=0&navpanes=0&view=FitH`;
             viewerHtml = `<iframe src="${pdfSrc}" style="width:100%; height:100%; border:0; background:#000"></iframe>`;
         } else {
-            viewerHtml = `<img src="${activeArt.viewer_url}" style="max-width:100%; max-height:100%; background:#000; display:block; margin:0 auto">`;
+            viewerHtml = `<div id="render-preview-stage" class="render-preview-stage inactive"><img id="render-preview-image" class="render-preview-image" src="${activeArt.viewer_url}" draggable="false"><div id="render-preview-marquee" class="render-preview-marquee" aria-hidden="true"></div></div>`;
         }
     }
 
     const actionButtons = [];
     if (_renderActiveFamily === 'pdf') {
         actionButtons.push('<button class="btn-primary" id="btn-render-pdf-colorspread" onclick="openPdfColorSpreadPopup()" style="padding:4px 12px; font-size:11px">ColorSpread</button>');
-    } else {
+    } else if (_renderActiveFamily !== 'color') {
         actionButtons.push('<button class="btn-primary" id="btn-render-generate" onclick="generateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px">Generate</button>');
     }
-    if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-generate-mt" onclick="generateSelectedRenderArtifactMT()" style="padding:4px 12px; font-size:11px">Generate-MT</button>');
+    if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-primary" id="btn-render-generate-mt" onclick="generateSelectedRenderArtifactMT()" style="padding:4px 12px; font-size:11px">ColorRender-MT</button>');
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-extract-palette" onclick="openExtractPalettePopup()" style="padding:4px 12px; font-size:11px" disabled>ExtractPalette</button>');
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-color-repalette" onclick="openColorRepalettePopup()" style="padding:4px 12px; font-size:11px" disabled>RePalette</button>');
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-color-to-bilevel" onclick="openColorToBilevelPopup()" style="padding:4px 12px; font-size:11px" disabled>Color2Bilevel</button>');
@@ -13463,6 +13591,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
         </div>
     `;
 
+    _initRenderPreviewMarquee(activeArt);
     _updateSolveScoreButtons();
     _updateRenderActionButtons();
     if (options.preserveScroll) {

@@ -325,7 +325,7 @@ That responsibility moved to `/render-summary`.
 Asynchronous fan-out: invokes target Lambdas in parallel using a 50-thread pool. Fire-and-forget (`InvocationType=Event`).
 
 **Input:**
-- `target` — "sweep", "raster", "finalize", "encode", "bilevel", or "bilevel_stitch"
+- `target` — "sweep", "raster", "finalize", "encode", "bilevel", or "coeff_bilevel_stitch"
 - `jobs` — array of job specs to invoke
 
 **Output:** `fired`, `total`, `errors`, `non_202`
@@ -364,11 +364,11 @@ See [bilevel.md](bilevel.md) for architecture details.
 
 ---
 
-## polypaint-bilevel-stitch
+## polypaint-coeff-bilevel-stitch
 
-**Handler:** `handler_bilevel_stitch.py`
+**Handler:** `handler_coeff_bilevel_stitch.py`
 **Binary:** `bilevel_merge` (stitch mode)
-**Route:** dispatched async via dispatch Lambda (target: "bilevel_stitch")
+**Route:** dispatched async via dispatch Lambda (target: "coeff_bilevel_stitch")
 **Memory:** 6144 MB (~4 vCPUs for libvips multithreading), 10 GB /tmp
 
 Separate Lambda from bilevel raster/merge for independent memory sizing. libvips is multithreaded and uses the extra vCPUs.
@@ -728,7 +728,7 @@ Single script handles everything: JS syntax check, binary compilation (static + 
 | polypaint-raster | 0 | 300s | Errors should fail fast, not retry |
 | polypaint-finalize | 0 | 300s | Same — OOM or bad input won't fix on retry |
 | polypaint-bilevel | **2** | **3600s** | Concurrency throttle drops need retry |
-| polypaint-bilevel-stitch | 0 | 300s | Single invocation, not fan-out |
+| polypaint-coeff-bilevel-stitch | 0 | 300s | Single invocation, not fan-out |
 
 The bilevel Lambda is the only one with retries enabled because it's the only one dispatched at fan-out scale (up to 500 concurrent). The others are either single invocations or have different failure modes where retry would be harmful.
 

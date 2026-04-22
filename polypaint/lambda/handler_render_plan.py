@@ -289,7 +289,6 @@ def _build_fused_color_plan(
     defaults = {
         "root_transforms": [],
         "rotation": 0,
-        "constant_color": "ffffff",
         "palette": "inferno",
         "match_mode": "none",
         "quality": 90,
@@ -594,7 +593,6 @@ def _build_fused_color_plan(
         "color_mode": "solve_score",
         "match_mode": "none",
         "palette": palette,
-        "constant_color": str(fused_params.get("constant_color", "ffffff")),
         "background_color": DEFAULT_BACKGROUND_COLOR,
         "background_threshold": str(DEFAULT_BACKGROUND_THRESHOLD),
         "repalette_capable": "false",

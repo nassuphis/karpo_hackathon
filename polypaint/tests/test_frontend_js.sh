@@ -12,12 +12,12 @@ fi
 grep -q 'Color render is fused-only now. Solve score is the only supported mode.' "$HTML" || { echo "FATAL: fused-only color banner missing"; exit 1; }
 grep -q 'id="render-mt-fused-raster-workers"' "$HTML" || { echo "FATAL: fused raster workers input missing"; exit 1; }
 grep -q 'id="render-mt-fused-save-associated-palette"' "$HTML" || { echo "FATAL: fused associated palette checkbox missing"; exit 1; }
-grep -q 'No temp files, no physical chunks, no separate histogram or palette-chunk stages.' "$HTML" || { echo "FATAL: fused Generate-MT intro missing"; exit 1; }
+grep -q 'No temp files, no physical chunks, no separate histogram or palette-chunk stages.' "$HTML" || { echo "FATAL: ColorRender-MT intro missing"; exit 1; }
 ! grep -q 'id="render-mt-tab-classic"' "$HTML" || { echo "FATAL: classic render MT tab should be removed"; exit 1; }
 ! grep -q 'id="render-mt-classic-panel"' "$HTML" || { echo "FATAL: classic render MT panel should be removed"; exit 1; }
 ! grep -q 'id="render-mt-raster-input-mode"' "$HTML" || { echo "FATAL: classic raster input selector should be removed"; exit 1; }
 ! grep -q 'id="render-mt-hist-retries"' "$HTML" || { echo "FATAL: classic hist retries control should be removed"; exit 1; }
-! grep -q 'id="render-generate-hist-input-mode"' "$HTML" || { echo "FATAL: fused Generate popup should not show histogram-input control"; exit 1; }
+! grep -q 'id="render-generate-popup-overlay"' "$HTML" || { echo "FATAL: legacy color Generate popup should be removed"; exit 1; }
 ! grep -q 'id="btn-render-generate-from-palette"' "$HTML" || { echo "FATAL: GenerateFromPalette action should be removed"; exit 1; }
 ! grep -q 'id="generate-from-palette-popup-overlay"' "$HTML" || { echo "FATAL: GenerateFromPalette popup should be removed"; exit 1; }
 ! grep -q 'id="autolevel-auto-gamma"' "$HTML" || { echo "FATAL: autolevel auto-gamma should not expose a fake mode selector"; exit 1; }
@@ -70,6 +70,9 @@ assertNotIncludes("function _initGenerateFromPalettePopup", 'GenerateFromPalette
 assertNotIncludes("function _renderGenerateFromPalettePopup", 'GenerateFromPalette popup renderer should be removed');
 assertNotIncludes("function openGenerateFromPalettePopup", 'GenerateFromPalette opener should be removed');
 assertIncludes("if (mode === 'color') {\n        return _launchFusedRenderOrchestrator(paramsPatch);\n    }\n    return _launchNonColorRenderOrchestrator(mode, paramsPatch);", '_launchRenderOrchestrator should route color to fused only');
+assertNotIncludes("function openRenderGeneratePopup()", 'legacy color Generate popup opener should be removed');
+assertNotIncludes("function _initRenderGeneratePopup()", 'legacy color Generate popup init should be removed');
+assertNotIncludes("let _renderGeneratePopupState =", 'legacy color Generate popup state should be removed');
 assertIncludes("await _launchFusedRenderOrchestrator({", 'runRasterPipeline should dispatch through fused launcher');
 assertIncludes("raster_workers: 10,", 'runRasterPipeline should default fused raster workers to 10');
 assertIncludes("raster_section_mode: 'logical_sections_auto',", 'runRasterPipeline should default fused logical sections');
@@ -145,6 +148,14 @@ assertIncludes("id=\"solve-score-modal-save\"", 'solve-score modal save button m
 assertIncludes("id=\"solve-score-modal-delete\"", 'solve-score modal delete button missing');
 assertIncludes("id=\"solve-score-modal-download\"", 'solve-score modal download button missing');
 assertIncludes("id=\"solve-score-modal-upload\"", 'solve-score modal upload button missing');
+assertIncludes("_solveScoreModalState.nameInput = program.name;", 'modal load should sync the loaded program name into the editable name field');
+assertIncludes("id=\"render-preview-stage\"", 'render preview should expose a marquee stage wrapper');
+assertIncludes("id=\"render-preview-marquee\"", 'render preview should expose a marquee overlay');
+assertIncludes("function _renderPreviewViewportMeta(art) {", 'render preview viewport-meta helper missing');
+assertIncludes("function _initRenderPreviewMarquee(art) {", 'render preview marquee initializer missing');
+assertIncludes("Preview subview selected from", 'render preview marquee should write an actionable status message');
+assertIncludes(">ColorRender-MT</button>", 'color render primary action should be labeled ColorRender-MT');
+assertIncludes("ColorRender-MT exposes fused clip/raster/finalize controls only", 'render tab copy should describe the ColorRender-MT action');
 assertIncludes("function _sourceColorArtifactIdForRenderArtifact(art) {", 'render artifact source-color helper missing');
 assertIncludes("function _renderArtifactSolveDisplay(art) {", 'render artifact solve-display helper missing');
 assertIncludes("_solveScoreProgramRememberedNames[prefix] = '';", 'populate should clear stale solve-score remembered names');
@@ -239,7 +250,7 @@ async function main() {
     Math,
     JSON,
     renderColorMode: 'rainbow',
-    _renderGeneratePopupState: { saveAssociatedPalette: false },
+    _renderMtPopupState: { saveAssociatedPalette: false },
     _solveScoreProgramRememberedNames: { render: 'pal5', palette: 'keep' },
     _statusCalls: [],
     _logs: [],
@@ -257,6 +268,7 @@ async function main() {
     document: {
       getElementById(id) {
         if (id === 'btn-render-generate') return generateBtn;
+        if (id === 'btn-render-generate-mt') return generateBtn;
         if (id === 'render-status') return renderStatus;
         return null;
       },
@@ -299,7 +311,7 @@ async function main() {
   assert(ctx._statusCalls[0].message === 'Populated from palette pal_7', 'standalone palette populate should not pretend to come from a color artifact');
 
   ctx.renderColorMode = 'solve_score';
-  ctx._renderGeneratePopupState.saveAssociatedPalette = true;
+  ctx._renderMtPopupState.saveAssociatedPalette = true;
   ctx._fusedCalls = [];
   ctx._logs = [];
   generateBtn.disabled = false;

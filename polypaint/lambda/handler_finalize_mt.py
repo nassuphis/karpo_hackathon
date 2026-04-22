@@ -263,6 +263,7 @@ def _finalize_associated_palette(
     *,
     finalize_s3,
     job_id,
+    task_id,
     run_id,
     workers,
     source_item_count,
@@ -276,6 +277,7 @@ def _finalize_associated_palette(
     clip_slots,
     chain_fingerprint,
     score_program,
+    parent_progress,
 ):
     grid_n = int(associated_palette_grid_n or 0)
     if grid_n <= 0:
@@ -293,7 +295,7 @@ def _finalize_associated_palette(
 
     t_assemble = time.time()
     def _report_assemble_progress(elapsed_ms):
-        heartbeat = dict(progress)
+        heartbeat = dict(parent_progress or {})
         heartbeat["assemble_ms"] = int(elapsed_ms)
         heartbeat["finalize_stage"] = "assemble"
         report_status(job_id, task_id, "assembling_score_tiles", result_data=heartbeat)
@@ -651,6 +653,7 @@ def handler(event, context):
         associated_palette_result = _finalize_associated_palette(
             finalize_s3=finalize_s3,
             job_id=job_id,
+            task_id=task_id,
             run_id=run_id,
             workers=workers,
             source_item_count=source_item_count,
@@ -664,6 +667,7 @@ def handler(event, context):
             clip_slots=clip_info["clip_slots"],
             chain_fingerprint=clip_info["chain_fingerprint"],
             score_program=clip_info["score_program"],
+            parent_progress=progress,
         )
 
     final_metadata = dict(metadata)

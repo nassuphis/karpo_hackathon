@@ -123,7 +123,7 @@ Two Lambda functions:
 - Async retry: **2 attempts, 3600s max event age** (not 0 — see below)
 - Two binaries: `bilevel_raster` (static) + `bilevel_merge` (dynamic/libvips)
 
-**polypaint-bilevel-stitch** — stitch phase:
+**polypaint-coeff-bilevel-stitch** — coeff stitch phase:
 - 6144 MB memory (~4 vCPUs), 10 GB `/tmp`, libvips layer
 - Async retry: 0 (single invocation, not fan-out)
 - Binary: `bilevel_merge` (stitch mode)
@@ -139,7 +139,7 @@ The stitch phase is a separate Lambda because libvips is multithreaded and benef
 3. **Merge**: wave-dispatch `nTiles` bilevel Lambdas (`phase: "merge"`, MAX_INFLIGHT=200)
 4. Poll `bilevel_merge_*` tasks with same stall/re-dispatch logic
 5. **Stitch**: dispatch 1 bilevel-stitch Lambda
-6. Poll `bilevel_stitch` task until complete
+6. Poll `coeff_bilevel_stitch` task until complete
 7. Refresh the Render family catalog via `/render-summary` and display the selected artifact in the family viewer
 
 See [lambdas.md — Dispatch Resilience](lambdas.md#dispatch-resilience) for why wave dispatch and re-dispatch were added.

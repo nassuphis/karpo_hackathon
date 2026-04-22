@@ -114,7 +114,6 @@ def _fused_event(**overrides):
         "color_pipeline": "fused",
         "color": "solve_score",
         "match": "none",
-        "constant_color": "ffffff",
         "raster_mt_threads": 2,
         "raster_input_mode": "sectioned",
         "raster_sectioned_retries": 2,

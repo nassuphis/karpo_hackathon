@@ -58,8 +58,8 @@ DZ_FROM_RAW_NAME="polypaint-deepzoom-from-raw"
 DZ_FROM_RAW_MEMORY=4096  # raw-sidecar-only DeepZoom export
 PARAM_DEBUG_NAME="polypaint-param-debug"
 PARAM_DEBUG_MEMORY=1769  # 1 vCPU + libvips for TIFF output
-BILEVEL_STITCH_NAME="polypaint-bilevel-stitch"
-BILEVEL_STITCH_MEMORY=6144  # ~4 vCPUs, libvips multithreaded stitch
+COEFF_BILEVEL_STITCH_NAME="polypaint-coeff-bilevel-stitch"
+COEFF_BILEVEL_STITCH_MEMORY=6144  # ~4 vCPUs, libvips multithreaded coeff stitch
 RENDER_PREVIEW_NAME="polypaint-render-preview"
 RENDER_PREVIEW_MEMORY=4096  # libvips vipsthumbnail on large images
 AUTOLEVELS_NAME="polypaint-autolevels"
@@ -319,20 +319,20 @@ render_render_workflow_definition() {
     local ENCODE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${ENCODE_NAME}"
     local STORAGE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${STORAGE_NAME}"
     local BILEVEL_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_NAME}"
-    local BILEVEL_STITCH_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_STITCH_NAME}"
+    local COEFF_BILEVEL_STITCH_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COEFF_BILEVEL_STITCH_NAME}"
     local SOLVE_PROXIMITY_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${SOLVE_PROXIMITY_NAME}"
     local PREVIEW_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_PREVIEW_NAME}"
-
-    sed -e "s|\${PlanFunctionArn}|${RENDER_PLAN_ARN}|g" \
-        -e "s|\${StatusFunctionArn}|${RENDER_STATUS_ARN}|g" \
-        -e "s|\${FinalizeMTFunctionArn}|${FINALIZE_MT_ARN}|g" \
-        -e "s|\${EncodeFunctionArn}|${ENCODE_ARN}|g" \
-        -e "s|\${StorageFunctionArn}|${STORAGE_ARN}|g" \
-        -e "s|\${BilevelFunctionArn}|${BILEVEL_ARN}|g" \
-        -e "s|\${BilevelStitchFunctionArn}|${BILEVEL_STITCH_ARN}|g" \
-        -e "s|\${SolveProximityFunctionArn}|${SOLVE_PROXIMITY_ARN}|g" \
-        -e "s|\${PreviewFunctionArn}|${PREVIEW_ARN}|g" \
-        stepfunctions/render_workflow.asl.json.template > "$OUT_PATH"
+    "${TEST_PYTHON[@]}" "$SCRIPT_DIR/workflow_template_render.py" render-workflow \
+        --out "$OUT_PATH" \
+        --plan-function-arn "$RENDER_PLAN_ARN" \
+        --status-function-arn "$RENDER_STATUS_ARN" \
+        --finalize-mt-function-arn "$FINALIZE_MT_ARN" \
+        --encode-function-arn "$ENCODE_ARN" \
+        --storage-function-arn "$STORAGE_ARN" \
+        --bilevel-function-arn "$BILEVEL_ARN" \
+        --coeff-bilevel-stitch-function-arn "$COEFF_BILEVEL_STITCH_ARN" \
+        --solve-proximity-function-arn "$SOLVE_PROXIMITY_ARN" \
+        --preview-function-arn "$PREVIEW_ARN"
 }
 
 show_build() {
@@ -1070,15 +1070,15 @@ chmod +x "$BILEVEL_DIR"/bilevel_raster "$BILEVEL_DIR"/bilevel_section_raster "$B
 cd "$BILEVEL_DIR" && zip -r9 /tmp/polypaint-bilevel.zip . -q && cd "$SCRIPT_DIR"
 echo "  Bilevel:  $(du -h /tmp/polypaint-bilevel.zip | cut -f1)  (bilevel sparse fragments + finalize)"
 
-# Bilevel Stitch: handler_bilevel_stitch.py + shared.py + bilevel_merge (needs libvips layer)
-BILEVEL_STITCH_DIR=/tmp/polypaint-bilevel-stitch
-rm -rf "$BILEVEL_STITCH_DIR"
-mkdir -p "$BILEVEL_STITCH_DIR"
-cp lambda/handler_bilevel_stitch.py lambda/shared.py "$BILEVEL_STITCH_DIR/"
-cp lambda/bilevel_merge "$BILEVEL_STITCH_DIR/"
-chmod +x "$BILEVEL_STITCH_DIR"/bilevel_merge
-cd "$BILEVEL_STITCH_DIR" && zip -r9 /tmp/polypaint-bilevel-stitch.zip . -q && cd "$SCRIPT_DIR"
-echo "  BiStitch: $(du -h /tmp/polypaint-bilevel-stitch.zip | cut -f1)  (bilevel stitch + libvips layer)"
+# Coeff Bilevel Stitch: handler_coeff_bilevel_stitch.py + shared.py + bilevel_merge (needs libvips layer)
+COEFF_BILEVEL_STITCH_DIR=/tmp/polypaint-coeff-bilevel-stitch
+rm -rf "$COEFF_BILEVEL_STITCH_DIR"
+mkdir -p "$COEFF_BILEVEL_STITCH_DIR"
+cp lambda/handler_coeff_bilevel_stitch.py lambda/shared.py "$COEFF_BILEVEL_STITCH_DIR/"
+cp lambda/bilevel_merge "$COEFF_BILEVEL_STITCH_DIR/"
+chmod +x "$COEFF_BILEVEL_STITCH_DIR"/bilevel_merge
+cd "$COEFF_BILEVEL_STITCH_DIR" && zip -r9 /tmp/polypaint-coeff-bilevel-stitch.zip . -q && cd "$SCRIPT_DIR"
+echo "  CoeffSt: $(du -h /tmp/polypaint-coeff-bilevel-stitch.zip | cut -f1)  (coeff bilevel stitch + libvips layer)"
 
 # Param Debug: handler_param_debug.py + shared.py + bilevel_merge (needs libvips layer)
 PARAM_DEBUG_DIR=/tmp/polypaint-param-debug
@@ -1489,7 +1489,7 @@ setup_api_gateway() {
     }
 
     # Grant API Gateway permission to invoke each Lambda
-    for FNAME in "$SWEEP_NAME" "$SWEEP_MT_NAME" "$COEFFGEN_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$PREVIEW_NAME" "$COMPUTE_PREVIEW_NAME" "$BILEVEL_NAME" "$BILEVEL_STITCH_NAME" "$PARAM_DEBUG_NAME" "$TIFF_COMPAT_NAME" "$PNG_EXPORT_NAME" "$DZ_EXPORT_NAME" "$SWEEP_CM_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_DEBUG_NAME" "$REPALETTE_NAME"; do
+    for FNAME in "$SWEEP_NAME" "$SWEEP_MT_NAME" "$COEFFGEN_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$PREVIEW_NAME" "$COMPUTE_PREVIEW_NAME" "$BILEVEL_NAME" "$COEFF_BILEVEL_STITCH_NAME" "$PARAM_DEBUG_NAME" "$TIFF_COMPAT_NAME" "$PNG_EXPORT_NAME" "$DZ_EXPORT_NAME" "$SWEEP_CM_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_DEBUG_NAME" "$REPALETTE_NAME"; do
         aws lambda add-permission --function-name "$FNAME" \
             --statement-id "apigateway-invoke" \
             --action lambda:InvokeFunction \
@@ -1720,7 +1720,7 @@ if [ "$ACTION" = "create" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     create_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,COLOR_TO_BILEVEL_FUNCTION=$COLOR_TO_BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,DZ_FROM_RAW_FUNCTION=$DZ_FROM_RAW_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,RECOLOR_FROM_RAW_FUNCTION=$RECOLOR_FROM_RAW_NAME,EXTRACT_PALETTE_FUSED_FUNCTION=$EXTRACT_PALETTE_FUSED_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
+        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,COLOR_TO_BILEVEL_FUNCTION=$COLOR_TO_BILEVEL_NAME,COEFF_BILEVEL_STITCH_FUNCTION=$COEFF_BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,DZ_FROM_RAW_FUNCTION=$DZ_FROM_RAW_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,RECOLOR_FROM_RAW_FUNCTION=$RECOLOR_FROM_RAW_NAME,EXTRACT_PALETTE_FUSED_FUNCTION=$EXTRACT_PALETTE_FUSED_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -1742,8 +1742,8 @@ if [ "$ACTION" = "create" ]; then
     create_lambda "$COLOR_TO_BILEVEL_NAME" "handler_bilevel.handler" "/tmp/polypaint-bilevel.zip" \
         "$COLOR_TO_BILEVEL_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
 
-    create_lambda "$BILEVEL_STITCH_NAME" "handler_bilevel_stitch.handler" "/tmp/polypaint-bilevel-stitch.zip" \
-        "$BILEVEL_STITCH_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+    create_lambda "$COEFF_BILEVEL_STITCH_NAME" "handler_coeff_bilevel_stitch.handler" "/tmp/polypaint-coeff-bilevel-stitch.zip" \
+        "$COEFF_BILEVEL_STITCH_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     create_lambda "$PARAM_DEBUG_NAME" "handler_param_debug.handler" "/tmp/polypaint-param-debug.zip" \
         "$PARAM_DEBUG_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib"
@@ -1851,20 +1851,11 @@ if [ "$ACTION" = "create" ]; then
     ENCODE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${ENCODE_NAME}"
     STORAGE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${STORAGE_NAME}"
     BILEVEL_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_NAME}"
-    BILEVEL_STITCH_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_STITCH_NAME}"
+    COEFF_BILEVEL_STITCH_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COEFF_BILEVEL_STITCH_NAME}"
     SOLVE_PROXIMITY_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${SOLVE_PROXIMITY_NAME}"
     PREVIEW_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_PREVIEW_NAME}"
 
-    sed -e "s|\${PlanFunctionArn}|${RENDER_PLAN_ARN}|g" \
-        -e "s|\${StatusFunctionArn}|${RENDER_STATUS_ARN}|g" \
-        -e "s|\${FinalizeMTFunctionArn}|${FINALIZE_MT_ARN}|g" \
-        -e "s|\${EncodeFunctionArn}|${ENCODE_ARN}|g" \
-        -e "s|\${StorageFunctionArn}|${STORAGE_ARN}|g" \
-        -e "s|\${BilevelFunctionArn}|${BILEVEL_ARN}|g" \
-        -e "s|\${BilevelStitchFunctionArn}|${BILEVEL_STITCH_ARN}|g" \
-        -e "s|\${SolveProximityFunctionArn}|${SOLVE_PROXIMITY_ARN}|g" \
-        -e "s|\${PreviewFunctionArn}|${PREVIEW_ARN}|g" \
-        stepfunctions/render_workflow.asl.json.template > /tmp/render_workflow.asl.json
+    render_render_workflow_definition /tmp/render_workflow.asl.json "$ACCT"
 
     sed -e "s|\${PlanFunctionArn}|${COMPUTE_PLAN_ARN}|g" \
         -e "s|\${StatusFunctionArn}|${COMPUTE_STATUS_ARN}|g" \
@@ -1968,7 +1959,7 @@ if [ "$ACTION" = "create" ]; then
 
     # Async invoke config: no retries for most Lambdas (prevents retry storms),
     # but bilevel gets 2 retries / 1hr age to handle concurrency throttle drops.
-    for fn in "$FINALIZE_MT_NAME" "$BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME" "$ATTACH_PALETTE_NAME"; do
+    for fn in "$FINALIZE_MT_NAME" "$COEFF_BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME" "$ATTACH_PALETTE_NAME"; do
         aws lambda put-function-event-invoke-config \
             --function-name "$fn" \
             --maximum-retry-attempts 0 \
@@ -2022,7 +2013,7 @@ if [ "$ACTION" = "create" ]; then
     echo "  SolvPrxB: $SOLVE_PROXIMITY_BENCH_NAME ($SOLVE_PROXIMITY_BENCH_MEMORY MB)"
     echo "  Bilevel:  $BILEVEL_NAME ($BILEVEL_MEMORY MB)"
     echo "  C2B:      $COLOR_TO_BILEVEL_NAME ($COLOR_TO_BILEVEL_MEMORY MB)"
-    echo "  BiStitch: $BILEVEL_STITCH_NAME ($BILEVEL_STITCH_MEMORY MB)"
+    echo "  CoeffSt: $COEFF_BILEVEL_STITCH_NAME ($COEFF_BILEVEL_STITCH_MEMORY MB)"
 
 elif [ "$ACTION" = "update" ]; then
     update_lambda "$SWEEP_NAME" "handler_sweep.handler" "/tmp/polypaint-sweep.zip" \
@@ -2047,7 +2038,7 @@ elif [ "$ACTION" = "update" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     update_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,COLOR_TO_BILEVEL_FUNCTION=$COLOR_TO_BILEVEL_NAME,BILEVEL_STITCH_FUNCTION=$BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,DZ_FROM_RAW_FUNCTION=$DZ_FROM_RAW_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,RECOLOR_FROM_RAW_FUNCTION=$RECOLOR_FROM_RAW_NAME,EXTRACT_PALETTE_FUSED_FUNCTION=$EXTRACT_PALETTE_FUSED_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
+        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,COLOR_TO_BILEVEL_FUNCTION=$COLOR_TO_BILEVEL_NAME,COEFF_BILEVEL_STITCH_FUNCTION=$COEFF_BILEVEL_STITCH_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,DZ_FROM_RAW_FUNCTION=$DZ_FROM_RAW_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,RECOLOR_FROM_RAW_FUNCTION=$RECOLOR_FROM_RAW_NAME,EXTRACT_PALETTE_FUSED_FUNCTION=$EXTRACT_PALETTE_FUSED_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -2069,8 +2060,8 @@ elif [ "$ACTION" = "update" ]; then
     update_lambda "$COLOR_TO_BILEVEL_NAME" "handler_bilevel.handler" "/tmp/polypaint-bilevel.zip" \
         "$COLOR_TO_BILEVEL_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
 
-    update_lambda "$BILEVEL_STITCH_NAME" "handler_bilevel_stitch.handler" "/tmp/polypaint-bilevel-stitch.zip" \
-        "$BILEVEL_STITCH_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+    update_lambda "$COEFF_BILEVEL_STITCH_NAME" "handler_coeff_bilevel_stitch.handler" "/tmp/polypaint-coeff-bilevel-stitch.zip" \
+        "$COEFF_BILEVEL_STITCH_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     update_lambda "$PARAM_DEBUG_NAME" "handler_param_debug.handler" "/tmp/polypaint-param-debug.zip" \
         "$PARAM_DEBUG_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib"
@@ -2154,7 +2145,7 @@ elif [ "$ACTION" = "update" ]; then
     ENCODE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${ENCODE_NAME}"
     STORAGE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${STORAGE_NAME}"
     BILEVEL_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_NAME}"
-    BILEVEL_STITCH_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_STITCH_NAME}"
+    COEFF_BILEVEL_STITCH_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COEFF_BILEVEL_STITCH_NAME}"
     SOLVE_PROXIMITY_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${SOLVE_PROXIMITY_NAME}"
     RENDER_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${RENDER_STATE_MACHINE_NAME}"
     COMPUTE_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${COMPUTE_STATE_MACHINE_NAME}"
@@ -2169,16 +2160,7 @@ elif [ "$ACTION" = "update" ]; then
 
     PREVIEW_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_PREVIEW_NAME}"
 
-    sed -e "s|\${PlanFunctionArn}|${RENDER_PLAN_ARN}|g" \
-        -e "s|\${StatusFunctionArn}|${RENDER_STATUS_ARN}|g" \
-        -e "s|\${FinalizeMTFunctionArn}|${FINALIZE_MT_ARN}|g" \
-        -e "s|\${EncodeFunctionArn}|${ENCODE_ARN}|g" \
-        -e "s|\${StorageFunctionArn}|${STORAGE_ARN}|g" \
-        -e "s|\${BilevelFunctionArn}|${BILEVEL_ARN}|g" \
-        -e "s|\${BilevelStitchFunctionArn}|${BILEVEL_STITCH_ARN}|g" \
-        -e "s|\${SolveProximityFunctionArn}|${SOLVE_PROXIMITY_ARN}|g" \
-        -e "s|\${PreviewFunctionArn}|${PREVIEW_ARN}|g" \
-        stepfunctions/render_workflow.asl.json.template > /tmp/render_workflow.asl.json
+    render_render_workflow_definition /tmp/render_workflow.asl.json "$ACCT"
 
     sed -e "s|\${PlanFunctionArn}|${COMPUTE_PLAN_ARN}|g" \
         -e "s|\${StatusFunctionArn}|${COMPUTE_STATUS_ARN}|g" \
@@ -2296,7 +2278,7 @@ elif [ "$ACTION" = "update" ]; then
 
     # Async invoke config: no retries for most Lambdas (prevents retry storms),
     # but bilevel gets 2 retries / 1hr age to handle concurrency throttle drops.
-    for fn in "$FINALIZE_MT_NAME" "$BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME" "$ATTACH_PALETTE_NAME"; do
+    for fn in "$FINALIZE_MT_NAME" "$COEFF_BILEVEL_STITCH_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME" "$ATTACH_PALETTE_NAME"; do
         aws lambda put-function-event-invoke-config \
             --function-name "$fn" \
             --maximum-retry-attempts 0 \

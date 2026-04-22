@@ -115,7 +115,8 @@ test.describe('Render Refresh', () => {
     await expect(panel.locator('button[data-render-family="bilevel"]')).toBeVisible();
     await expect(panel.locator('button[data-render-family="coeffs"]')).toBeVisible();
     await expect(panel.locator('button[data-render-family="palette"]')).toBeVisible();
-    await expect(panel.locator('#btn-render-generate')).toBeVisible();
+    await expect(panel.locator('#btn-render-generate')).toHaveCount(0);
+    await expect(panel.locator('#btn-render-generate-mt')).toHaveText('ColorRender-MT');
     await expect(panel.locator('#btn-render-download')).toBeVisible();
     await expect(panel.locator('#btn-render-delete')).toBeVisible();
     await expect(panel.locator('#btn-render-deepzoom')).toBeVisible();

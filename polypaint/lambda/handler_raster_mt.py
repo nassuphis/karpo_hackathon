@@ -166,7 +166,6 @@ def _build_cmd(params):
     viewport = _viewport_bounds(params)
     cmd = [
         ROOTS2PIX_MT,
-        "/tmp/stripe.bin",
         "/tmp/pix",
         f"--width={params['width']}",
         f"--height={params['height']}",
@@ -181,7 +180,6 @@ def _build_cmd(params):
         "--color=solve_score",
         "--match=none",
         f"--palette={params.get('palette', 'inferno')}",
-        f"--constant_color={params.get('constant_color', 'ffffff')}",
         f"--rotation={params.get('rotation', 0.0)}",
         f"--threads={params['raster_mt_threads']}",
         "--input_mode=multispan_sectioned",
@@ -490,7 +488,6 @@ def _handle_fused_raster_request(params):
         section_params["logical_section"] = True
         section_params["color"] = "solve_score"
         section_params["match"] = "none"
-        section_params["constant_color"] = str(section_params.get("constant_color") or "ffffff")
         section_params["rotation"] = contract_param(section_params, "rotation", 0.0, contract_warnings)
         section_params["emit_associated_palette_bins"] = emit_associated_palette_bins
         section_params["associated_palette_grid_n"] = associated_palette_grid_n

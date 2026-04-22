@@ -12,6 +12,7 @@ LOCAL_MODULES = {p.stem for p in LAMBDA_DIR.glob("*.py")}
 HANDLER_STORAGE_TEXT = (LAMBDA_DIR / "handler_storage.py").read_text()
 API_MANIFEST_PATH = ROOT / "api_manifest.json"
 PREDEPLOY_SCRIPT_PATH = ROOT / "scripts" / "predeploy_check.sh"
+WORKFLOW_RENDERER_PATH = ROOT / "workflow_template_render.py"
 
 
 def _joined_shell_lines(text):
@@ -106,24 +107,33 @@ class TestDeployPackaging(unittest.TestCase):
             "encode Lambda memory should stay at 10240 MB for large Color RePalette outputs",
         )
 
-    def test_render_workflow_template_substitutes_palette_function_arns_in_both_deploy_paths(self):
+    def test_render_workflow_definition_uses_shared_renderer_in_deploy_and_tests(self):
+        self.assertTrue(WORKFLOW_RENDERER_PATH.exists(), "workflow_template_render.py should exist")
+        renderer_text = WORKFLOW_RENDERER_PATH.read_text()
+        self.assertIn("def render_render_workflow_definition(", renderer_text)
+        self.assertIn("def render_render_workflow_definition_for_tests(", renderer_text)
+        self.assertIn("RENDER_COLOR_RASTER_ITEM_SELECTOR", renderer_text)
+        self.assertIn("RENDER_FINALIZE_MT_TASK_PAYLOAD", renderer_text)
+
+        helper_match = re.search(
+            r'render_render_workflow_definition\(\)\s*\{(?P<body>.*?)\n\}',
+            DEPLOY_TEXT,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(helper_match, "deploy.sh should define render_render_workflow_definition()")
+        helper_body = helper_match.group("body")
+        self.assertIn('"$SCRIPT_DIR/workflow_template_render.py" render-workflow', helper_body)
+        self.assertIn('--plan-function-arn "$RENDER_PLAN_ARN"', helper_body)
+        self.assertIn('--coeff-bilevel-stitch-function-arn "$COEFF_BILEVEL_STITCH_ARN"', helper_body)
+        self.assertIn('--preview-function-arn "$PREVIEW_ARN"', helper_body)
+
         joined = _joined_shell_lines(DEPLOY_TEXT)
-        matches = list(re.finditer(
-            r'sed -e "s\|\\\$\{PlanFunctionArn\}\|\$\{RENDER_PLAN_ARN\}\|g".*?'
-            r'stepfunctions/render_workflow\.asl\.json\.template > /tmp/render_workflow\.asl\.json',
-            joined,
-        ))
-        self.assertEqual(len(matches), 2, "expected create and update render-workflow sed blocks")
-        for idx, match in enumerate(matches, start=1):
-            block = match.group(0)
-            self.assertNotIn(r'-e "s|\${RasterFunctionArn}|${RASTER_ARN}|g"', block,
-                             f"render workflow sed block {idx} should not substitute deleted RasterFunctionArn")
-            self.assertNotIn(r'-e "s|\${FinalizeFunctionArn}|${FINALIZE_ARN}|g"', block,
-                             f"render workflow sed block {idx} should not substitute deleted FinalizeFunctionArn")
-            self.assertNotIn(r'-e "s|\${PaletteChunkFunctionArn}|${PALETTE_CHUNK_ARN}|g"', block,
-                             f"render workflow sed block {idx} should not substitute unused PaletteChunkFunctionArn")
-            self.assertNotIn(r'-e "s|\${PaletteFinalizeFunctionArn}|${PALETTE_FINALIZE_ARN}|g"', block,
-                             f"render workflow sed block {idx} should not substitute unused PaletteFinalizeFunctionArn")
+        self.assertEqual(
+            joined.count('render_render_workflow_definition /tmp/render_workflow.asl.json "$ACCT"'),
+            2,
+            "expected create and update paths to both use render_render_workflow_definition",
+        )
+        self.assertNotIn('stepfunctions/render_workflow.asl.json.template > /tmp/render_workflow.asl.json', joined)
 
     def test_palette_workflow_template_substitutes_attach_palette_arn_in_both_deploy_paths(self):
         joined = _joined_shell_lines(DEPLOY_TEXT)
@@ -364,7 +374,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('"$RECOLOR_FROM_RAW_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', DEPLOY_TEXT)
         self.assertIn('"$EXTRACT_PALETTE_FUSED_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', DEPLOY_TEXT)
         self.assertIn("EXTRACT_PALETTE_FUSED_FUNCTION", DEPLOY_TEXT)
-        self.assertIn(r'-e "s|\${FinalizeMTFunctionArn}|${FINALIZE_MT_ARN}|g"', DEPLOY_TEXT)
+        self.assertIn('--finalize-mt-function-arn "$FINALIZE_MT_ARN"', DEPLOY_TEXT)
         self.assertIn("handler_palette_finalize.py", packaged)
         self.assertIn("solve_score_chain.py", packaged["handler_palette_finalize.py"])
 
@@ -513,6 +523,13 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("api_manifest.py --check", predeploy_text)
         self.assertIn("tests/test_api_route_contracts.py", predeploy_text)
         self.assertIn("tests/test_deploy_packaging.py", predeploy_text)
+        self.assertIn("tests/test_render_workflow_definition.py", predeploy_text)
+        self.assertIn("tests/test_render_plan.py", predeploy_text)
+        self.assertIn("tests/test_finalize_mt_handler.py", predeploy_text)
+        self.assertIn("tests/test_raster_mt.py", predeploy_text)
+        self.assertIn("tests/test_bilevel_handler.py", predeploy_text)
+        self.assertIn("tests/test_coeff_bilevel_stitch_handler.py", predeploy_text)
+        self.assertIn("tests/test_solve_proximity_handler.py", predeploy_text)
         self.assertIn("tests/test_frontend_js.sh", predeploy_text)
 
     def test_python_runner_prefers_uv_with_local_fallbacks(self):

@@ -871,7 +871,7 @@ FinalizeMT or its surrounding flow):
   with libvips layer. No assemble binary needed.
 - `DeepzoomFromRawFunctionArn` — new Lambda. Packaged with libvips layer
   including `dzsave` dependencies.
-- Existing `BilevelFunctionArn`, `BilevelStitchFunctionArn`,
+- Existing `BilevelFunctionArn`, `CoeffBilevelStitchFunctionArn`,
   `FinalizeFunctionArn` — removed after migration completes.
 
 **Ownership of the mode dispatch.** Absorb into FinalizeMT as a Python

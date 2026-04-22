@@ -828,6 +828,103 @@ def test_palette_chunk_mt_param_sectioned_runtime():
     print("=== solve_palette_chunk_mt param-source sectioned runtime PASSED ===")
 
 
+def test_roots2pix_mt_multispan_runtime():
+    print("\n--- roots2pix_mt multispan runtime ---")
+
+    bin_path = "/src/roots2pix_mt"
+    assert os.path.exists(bin_path), "%s not found" % bin_path
+    assert open(bin_path, "rb").read(4) == b"\x7fELF", "roots2pix_mt is not ELF"
+
+    r = subprocess.run(["ldd", bin_path], capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, "ldd failed for roots2pix_mt: " + r.stderr[:200]
+    assert "not found" not in r.stdout, "roots2pix_mt shared libs unresolved: " + r.stdout
+    print("  ldd: OK")
+
+    roots_path = "/tmp/roots2pix_mt_roots.bin"
+    manifest_path = "/tmp/roots2pix_mt_manifest.json"
+    pixbin_prefix = "/tmp/roots2pix_mt_pixbin"
+    cleanup(roots_path, manifest_path, pixbin_prefix + ".frag")
+
+    roots_bytes = bytearray()
+    for re_val, im_val in [(0.0, 0.0), (1.0, 0.0), (100.0, 100.0)]:
+        roots_bytes.extend(struct.pack("<ff", re_val, im_val))
+    with open(roots_path, "wb") as f:
+        f.write(roots_bytes)
+
+    _RangeHandler.file_bytes = bytes(roots_bytes)
+    with socketserver.TCPServer(("127.0.0.1", 0), _RangeHandler) as httpd:
+        port = httpd.server_address[1]
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "source_family": "slv",
+                    "logical_size": len(roots_bytes),
+                    "row_bytes": 8,
+                    "solve_start": 0,
+                    "solve_count": 3,
+                    "sources": [{
+                        "id": 0,
+                        "url": "http://127.0.0.1:%d/input.bin" % port,
+                        "key": "input.bin",
+                    }],
+                    "spans": [{
+                        "source_id": 0,
+                        "logical_byte_start": 0,
+                        "byte_start": 0,
+                        "byte_length": len(roots_bytes),
+                    }],
+                }, f)
+
+            r = subprocess.run([
+                bin_path,
+                "/tmp/roots2pix_mt_pix",
+                "--width=8",
+                "--height=8",
+                "--tile_size=8",
+                "--n_tile_cols=1",
+                "--n_tile_rows=1",
+                "--min_re=-2",
+                "--max_re=2",
+                "--min_im=-2",
+                "--max_im=2",
+                "--degree=1",
+                "--color=solve_score",
+                "--match=none",
+                "--palette=inferno",
+                "--rotation=0",
+                "--threads=2",
+                "--input_mode=multispan_sectioned",
+                "--input_manifest=" + manifest_path,
+                "--retries=2",
+                "--solve_metric=centroid_re",
+                "--solve_score_clip_lo=-1",
+                "--solve_score_clip_hi=1",
+                "--solve_score_omega_enabled=0",
+                "--solve_score_raw_bytes=1",
+                "--skip_pix_output=1",
+                "--pixel_bin_prefix=" + pixbin_prefix,
+            ], capture_output=True, text=True, timeout=10)
+            assert r.returncode == 0, "roots2pix_mt failed: " + r.stderr[:200]
+            meta = json.loads(r.stdout)
+            assert meta["threads"] == 2, "roots2pix_mt did not report thread count"
+            assert meta["input_mode"] == "multispan_sectioned", "roots2pix_mt did not report input_mode"
+            assert meta["roots_plotted"] == 2, "roots2pix_mt plotted unexpected solve count"
+            assert meta["roots_clipped"] == 1, "roots2pix_mt clipped unexpected solve count"
+
+            expected = encode_fragment_pairs([(36, 128), (38, 255)])
+            with open(pixbin_prefix + ".frag", "rb") as f:
+                assert f.read() == expected, "roots2pix_mt fragment payload mismatch"
+            print("  roots2pix_mt: OK (threads=%d, roots_plotted=%d)" % (meta["threads"], meta["roots_plotted"]))
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+
+    cleanup(roots_path, manifest_path, pixbin_prefix + ".frag")
+    print("=== roots2pix_mt multispan runtime PASSED ===")
+
+
 # ── Render Preview (vipsthumbnail) Tests ─────────────────────────────────
 
 def test_render_preview():
@@ -1677,6 +1774,7 @@ if __name__ == "__main__":
         "/src/sweep_mt",
         "/src/sweep_cm",
         "/src/sweep_coeffgen",
+        "/src/roots2pix_mt",
         "/src/solve_palette_chunk_mt",
         "/src/bilevel_section_raster",
         "/src/bilevel_merge",
@@ -1695,6 +1793,7 @@ if __name__ == "__main__":
     test_compute_preview_runtime_combo()
     test_palette_chunk_mt_runtime()
     test_palette_chunk_mt_param_sectioned_runtime()
+    test_roots2pix_mt_multispan_runtime()
     test_render_preview()
     test_resize_runtime()
     test_bilevel_section_raster_runtime()

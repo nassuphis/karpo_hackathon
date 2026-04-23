@@ -24,7 +24,6 @@ FUNCTIONS = {
     "sweep": os.environ.get("SWEEP_FUNCTION", "polypaint-sweep"),
     "sweep_mt": os.environ.get("SWEEP_MT_FUNCTION", "polypaint-sweep-mt"),
     "bilevel": os.environ.get("BILEVEL_FUNCTION", "polypaint-bilevel"),
-    "coeff_bilevel_stitch": os.environ.get("COEFF_BILEVEL_STITCH_FUNCTION", "polypaint-coeff-bilevel-stitch"),
     "deepzoom_export": os.environ.get("DZ_EXPORT_FUNCTION", "polypaint-deepzoom-export"),
     "deepzoom_from_raw": os.environ.get("DZ_FROM_RAW_FUNCTION", "polypaint-deepzoom-from-raw"),
     "coeffgen": os.environ.get("COEFFGEN_FUNCTION", "polypaint-coeffgen"),

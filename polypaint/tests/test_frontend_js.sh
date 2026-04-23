@@ -165,6 +165,8 @@ assertNotIncludes("id=\"resize-vscale\"", 'resize popup should not expose a vsca
 assertIncludes("Both engines produce a square pix x pix artifact", 'resize popup should document square pix output');
 assertIncludes(">ColorRender-MT</button>", 'color render primary action should be labeled ColorRender-MT');
 assertIncludes("ColorRender-MT exposes fused clip/raster/finalize controls only", 'render tab copy should describe the ColorRender-MT action');
+assertNotIncludes("id=\"sparse-tile-size\"", 'render tab should not expose a tile-size control');
+assertNotIncludes("tile_size: p.tileSize", 'render launch should not send tile_size');
 assertIncludes("function _sourceColorArtifactIdForRenderArtifact(art) {", 'render artifact source-color helper missing');
 assertIncludes("function _renderArtifactSolveDisplay(art) {", 'render artifact solve-display helper missing');
 assertIncludes("_solveScoreProgramRememberedNames[prefix] = '';", 'populate should clear stale solve-score remembered names');

@@ -31,8 +31,13 @@ When claiming a feature is ready, explicitly report:
 - In this repo, treat `bash scripts/predeploy_check.sh` as an
   immediate-escalation command because it invokes `uv` and hits the same shared
   cache sandbox boundary.
+- In this repo, treat `bash scripts/test-docker-runtime.sh` as an
+  immediate-escalation command because it needs Docker socket access outside the
+  sandbox. Do not run it sandboxed first just to rediscover the Docker socket
+  permission denial.
 - Do not "rediscover" the same sandbox/cache/web-server failure on `uv` or
-  Playwright or `scripts/predeploy_check.sh`. Escalate first.
+  Playwright or `scripts/predeploy_check.sh` or `scripts/test-docker-runtime.sh`.
+  Escalate first.
 - If a field, flag, mode, or contract branch is removed, remove it end-to-end
   in the same change.
   - Check upstream emitters, planner output, ASL threading, handler reads,

@@ -50,13 +50,11 @@ DEFAULT_BACKGROUND_COLOR = "000000"
 DEFAULT_BACKGROUND_THRESHOLD = 4
 
 
-def _plan_params_digest(*, viewport, pix, tile_size, root_transforms):
+def _plan_params_digest(*, viewport, pix, root_transforms=None):
+    grid = {"pix": int(pix)}
     payload = {
         "viewport": viewport,
-        "grid": {
-            "pix": int(pix),
-            "tile_size": int(tile_size),
-        },
+        "grid": grid,
         "params": {
             "root_transforms": root_transforms or [],
         },
@@ -256,6 +254,9 @@ def _reject_fused_unsupported_params(raw_params):
         "solve_score_quantile": "fused color takes only solve_score_chain; quantiles live on metric chips",
         "solve_score_omega": "fused color takes only solve_score_chain; transfer ops live in the chain",
         "solve_score_omega_enabled": "fused color takes only solve_score_chain; transfer ops live in the chain",
+        "tile_size": "fused color writes sparse global fragments and no longer has a tile grid",
+        "n_tile_cols": "fused color writes sparse global fragments and no longer has a tile grid",
+        "n_tile_rows": "fused color writes sparse global fragments and no longer has a tile grid",
     }
     for key, reason in unsupported.items():
         value = raw_params.get(key)
@@ -296,7 +297,6 @@ def _build_fused_color_plan(
 
     fused_params = {
         "pix": rp["pix"],
-        "tile_size": rp.get("tile_size", 2048),
         "view_mode": rp.get("view_mode", "auto"),
         "quantile": rp.get("quantile", 0.0),
         "shim": rp.get("shim", 0.05),
@@ -413,10 +413,6 @@ def _build_fused_color_plan(
     fused_params["solve_score_chain"] = solve_score_chain
 
     pix = fused_params["pix"]
-    tile_size = fused_params.get("tile_size", 2048)
-    n_tile_cols = math.ceil(int(pix) / tile_size)
-    n_tile_rows = math.ceil(int(pix) / tile_size)
-    n_tiles = n_tile_cols * n_tile_rows
 
     raster_section_auto = compute_safe_sectioning(
         chunk_summary["total_solves"],
@@ -561,7 +557,6 @@ def _build_fused_color_plan(
         "created_at": created_at,
         "degree": str(degree),
         "pix": str(pix),
-        "tile_size": str(tile_size),
         "view_mode": str(fused_params.get("view_mode", "auto")),
         "quantile": str(fused_params.get("quantile", 0.0)),
         "shim": str(fused_params.get("shim", 0.05)),
@@ -625,7 +620,6 @@ def _build_fused_color_plan(
     plan_params_digest = _plan_params_digest(
         viewport=viewport,
         pix=pix,
-        tile_size=tile_size,
         root_transforms=fused_params.get("root_transforms", []),
     )
     ext = "png" if fused_params.get("fmt", "jpeg") == "png" else "jpeg"
@@ -665,14 +659,9 @@ def _build_fused_color_plan(
         },
         "grid": {
             "pix": pix,
-            "tile_size": tile_size,
-            "n_tile_cols": n_tile_cols,
-            "n_tile_rows": n_tile_rows,
-            "n_tiles": n_tiles,
         },
         "solve_source_manifest": solve_source_manifest,
         "physical_source_items": [],
-        "tile_items": [],
         "solve_score": solve_score,
         "finalize": finalize,
         "raster": raster,
@@ -683,14 +672,19 @@ def _build_fused_color_plan(
     return plan
 
 
-def _bilevel_section_plan(chunk_items, *, chunk_summary, degree, calc_n_coeffs, rp):
+def _sparse_section_plan(chunk_items, *, chunk_summary, degree, calc_n_coeffs, rp, source_family):
+    if source_family not in ("slv", "cf"):
+        raise RuntimeError(f"unsupported sparse section source family: {source_family!r}")
+    include_coeff = source_family == "cf"
+    if include_coeff and not all(str(item.get("coeffs_key") or "").strip() for item in (chunk_items or [])):
+        raise RuntimeError("coeff bilevel logical sections require coeffs_key on every chunk")
     section_auto = compute_safe_sectioning(
         chunk_summary["total_solves"],
-        degree,
+        0 if include_coeff else degree,
         calc_n_coeffs,
         1,
         "raster",
-        include_coeff=False,
+        include_coeff=include_coeff,
         include_param=False,
     )
     requested_mode = normalize_section_mode(rp.get("raster_section_mode", "logical_sections_auto"))
@@ -702,7 +696,8 @@ def _bilevel_section_plan(chunk_items, *, chunk_summary, degree, calc_n_coeffs, 
         default="",
     )
     if not chunk_summary["chunk_step_metadata_complete"]:
-        raise RuntimeError("bilevel logical sections require chunk step metadata on every chunk")
+        label = "coeff bilevel" if include_coeff else "bilevel"
+        raise RuntimeError(f"{label} logical sections require chunk step metadata on every chunk")
 
     selected_count = requested_count
     if requested_mode == "logical_sections_auto":
@@ -717,9 +712,9 @@ def _bilevel_section_plan(chunk_items, *, chunk_summary, degree, calc_n_coeffs, 
     section_items = build_logical_section_items(
         chunk_items,
         section_count=int(selected_count),
-        degree=degree,
+        degree=0 if include_coeff else degree,
         n_coeffs=calc_n_coeffs,
-        include_coeff=False,
+        include_coeff=include_coeff,
         include_param=False,
     )
     return {
@@ -733,6 +728,28 @@ def _bilevel_section_plan(chunk_items, *, chunk_summary, degree, calc_n_coeffs, 
         "item_count": len(section_items),
         "section_items": _compact_section_ranges(section_items),
     }
+
+
+def _bilevel_section_plan(chunk_items, *, chunk_summary, degree, calc_n_coeffs, rp):
+    return _sparse_section_plan(
+        chunk_items,
+        chunk_summary=chunk_summary,
+        degree=degree,
+        calc_n_coeffs=calc_n_coeffs,
+        rp=rp,
+        source_family="slv",
+    )
+
+
+def _coeff_bilevel_section_plan(chunk_items, *, chunk_summary, degree, calc_n_coeffs, rp):
+    return _sparse_section_plan(
+        chunk_items,
+        chunk_summary=chunk_summary,
+        degree=degree,
+        calc_n_coeffs=calc_n_coeffs,
+        rp=rp,
+        source_family="cf",
+    )
 
 
 def _build_non_color_plan(
@@ -756,7 +773,6 @@ def _build_non_color_plan(
 
     non_color_params = {
         "pix": rp["pix"],
-        "tile_size": rp.get("tile_size", 4096),
         "view_mode": rp.get("view_mode", "auto"),
         "quantile": rp.get("quantile", 0.0),
         "shim": rp.get("shim", 0.05),
@@ -764,26 +780,32 @@ def _build_non_color_plan(
         "root_transforms": rp.get("root_transforms", []),
         "rotation": rp.get("rotation", 0),
     }
-    if mode == "bilevel":
-        non_color_params["raster_section_mode"] = normalize_section_mode(
-            rp.get("raster_section_mode", "logical_sections_auto")
-        )
-        non_color_params["raster_section_count"] = validate_section_count(
-            rp.get("raster_section_count", ""),
-            "raster_section_count",
-            default="",
-        )
+    non_color_params["raster_section_mode"] = normalize_section_mode(
+        rp.get("raster_section_mode", "logical_sections_auto")
+    )
+    non_color_params["raster_section_count"] = validate_section_count(
+        rp.get("raster_section_count", ""),
+        "raster_section_count",
+        default="",
+    )
 
     pix = int(non_color_params["pix"])
-    tile_size = int(non_color_params["tile_size"])
-    n_tile_cols = math.ceil(pix / tile_size)
-    n_tile_rows = math.ceil(pix / tile_size)
-    n_tiles = n_tile_cols * n_tile_rows
-    raw_tile_prefix = f"renders/{job_id}/tile_"
-    tile_items = [{"tile_idx": t} for t in range(n_tiles)]
 
     bilevel = {
         "enabled": mode == "bilevel",
+        "section_mode": "",
+        "section_count": "",
+        "section_count_auto": "",
+        "section_budget_bytes": 0,
+        "section_memory_mb": 0,
+        "section_min_safe_count": 0,
+        "logical_section": False,
+        "item_count": 0,
+        "section_items": [],
+        "fragment_prefix": "",
+    }
+    coeff_bilevel = {
+        "enabled": mode == "coeff_bilevel",
         "section_mode": "",
         "section_count": "",
         "section_count_auto": "",
@@ -808,17 +830,28 @@ def _build_non_color_plan(
         bilevel["fragment_prefix"] = f"renders/{job_id}/bilevel_section_"
         non_color_params["raster_section_count_auto"] = bilevel["section_count_auto"]
         non_color_params["raster_section_count"] = bilevel["section_count"]
-
-    solve_source_manifest = (
-        build_solve_source_manifest(
-            chunk_items,
-            job_id=job_id,
-            degree=degree,
-            n_coeffs=calc_n_coeffs,
-            include_coeff=False,
-            include_param=False,
+    elif mode == "coeff_bilevel":
+        coeff_bilevel.update(
+            _coeff_bilevel_section_plan(
+                chunk_items,
+                chunk_summary=chunk_summary,
+                degree=degree,
+                calc_n_coeffs=calc_n_coeffs,
+                rp=non_color_params,
+            )
         )
-        if mode == "bilevel" else {}
+        coeff_bilevel["fragment_prefix"] = f"renders/{job_id}/coeff_bilevel_section_"
+        non_color_params["raster_section_count_auto"] = coeff_bilevel["section_count_auto"]
+        non_color_params["raster_section_count"] = coeff_bilevel["section_count"]
+
+    solve_source_manifest = build_solve_source_manifest(
+        chunk_items,
+        job_id=job_id,
+        degree=degree,
+        n_coeffs=calc_n_coeffs,
+        include_solve=mode == "bilevel",
+        include_coeff=mode == "coeff_bilevel",
+        include_param=False,
     )
 
     artifact_family = "coeffs" if mode == "coeff_bilevel" else mode
@@ -832,7 +865,6 @@ def _build_non_color_plan(
         "created_at": created_at,
         "degree": str(degree),
         "pix": str(pix),
-        "tile_size": str(tile_size),
         "view_mode": str(non_color_params.get("view_mode", "auto")),
         "quantile": str(non_color_params.get("quantile", 0.0)),
         "shim": str(non_color_params.get("shim", 0.05)),
@@ -857,12 +889,14 @@ def _build_non_color_plan(
         artifact_meta.update({
             "format": "tif",
             "mode": "coeffs",
+            "bilevel_pipeline": BILEVEL_SPARSE_PIPELINE,
+            "bilevel_section_mode": str(coeff_bilevel["section_mode"]),
+            "bilevel_section_count": str(coeff_bilevel["section_count"]),
         })
 
     plan_params_digest = _plan_params_digest(
         viewport=viewport,
         pix=pix,
-        tile_size=tile_size,
         root_transforms=non_color_params.get("root_transforms", []),
     )
     outputs = {
@@ -896,21 +930,15 @@ def _build_non_color_plan(
             "N": full_n,
             "times": times,
             "n_chunks": len(chunk_items),
-            "coeffs_keys": calc.get("coeffs_keys", []) if mode == "coeff_bilevel" else [],
             "n_coeffs": calc_n_coeffs,
         },
         "grid": {
             "pix": pix,
-            "tile_size": tile_size,
-            "n_tile_cols": n_tile_cols,
-            "n_tile_rows": n_tile_rows,
-            "n_tiles": n_tiles,
-            "raw_tile_prefix": raw_tile_prefix,
         },
         "solve_source_manifest": solve_source_manifest,
-        "physical_source_items": chunk_items if mode == "coeff_bilevel" else [],
-        "tile_items": tile_items if mode == "coeff_bilevel" else [],
+        "physical_source_items": [],
         "bilevel": bilevel,
+        "coeff_bilevel": coeff_bilevel,
         "render_execution": render_execution,
         "outputs": outputs,
     }
@@ -918,15 +946,17 @@ def _build_non_color_plan(
 
 
 def _plan_size_error_message(plan, plan_size):
-    grid = dict(plan.get("grid") or {})
     raster = dict(plan.get("raster") or {})
+    bilevel = dict(plan.get("bilevel") or {})
+    coeff_bilevel = dict(plan.get("coeff_bilevel") or {})
     calc = dict(plan.get("calc") or {})
     return (
         f"Plan too large: {plan_size} bytes > {MAX_PLAN_BYTES} limit. "
         f"Counts: chunks={int(calc.get('n_chunks') or 0)}, "
         f"raster_items={int(raster.get('item_count') or 0)}, "
-        f"tiles={int(grid.get('n_tiles') or 0)}. "
-        f"Controls: reduce pix, increase tile_size, or lower logical section counts."
+        f"bilevel_sections={int(bilevel.get('item_count') or 0)}, "
+        f"coeff_sections={int(coeff_bilevel.get('item_count') or 0)}. "
+        f"Controls: reduce pix or lower logical section counts."
     )
 
 

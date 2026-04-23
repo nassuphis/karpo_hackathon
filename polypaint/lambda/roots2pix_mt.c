@@ -25,8 +25,6 @@
 #include "solve_score.h"
 
 #define MAXDEG 256
-#define MAX_TILES 4096
-
 typedef struct {
     unsigned char *data;
     size_t len;
@@ -41,10 +39,6 @@ typedef struct {
     int stride;
     int W;
     int H;
-    int tileSize;
-    int nTileCols;
-    int nTileRows;
-    int nTiles;
     double minRe;
     double maxRe;
     double minIm;
@@ -59,8 +53,6 @@ typedef struct {
     int emitPaletteBins;
     long long paletteStepStart;
     int paletteGridN;
-    int paletteNTileCols;
-    int paletteNTileRows;
     int scoreCoeffDegree;
     int scoreCoeffStride;
     int scoreParamDegree;
@@ -79,11 +71,9 @@ typedef struct {
     unsigned long long scoreParamByteStart;
     RootXformEntry *rtChain;
     int nRt;
-    uint64_t **tileBits;
-    int *tileW;
-    ByteVec *pbxByteVecs;
-    int *paletteTileW;
-    ByteVec *palettePbxByteVecs;
+    uint64_t *pixelBits;
+    ByteVec pbxByteVec;
+    ByteVec palettePbxByteVec;
     unsigned char *stepScores;
     long stepScoreCount;
     long rootsPlotted;
@@ -173,10 +163,10 @@ static const float *prepare_step(const float *raw, int degree,
     return stepBuf;
 }
 
-static int claim_pixel(uint64_t *tileWords, uint32_t pix_idx) {
+static int claim_pixel(uint64_t *pixelWords, uint32_t pix_idx) {
     size_t wordIdx = (size_t)(pix_idx >> 6);
     uint64_t bit = 1ULL << (pix_idx & 63);
-    uint64_t old = __atomic_fetch_or(&tileWords[wordIdx], bit, __ATOMIC_RELAXED);
+    uint64_t old = __atomic_fetch_or(&pixelWords[wordIdx], bit, __ATOMIC_RELAXED);
     return (old & bit) == 0;
 }
 
@@ -192,18 +182,11 @@ static int write_suffix_path(char *dst, size_t dstSize, const char *prefix, cons
     return written > 0 && (size_t)written < dstSize;
 }
 
-static void free_worker_storage(WorkerArgs *args, int nWorkers, int nTiles) {
+static void free_worker_storage(WorkerArgs *args, int nWorkers) {
     if (!args) return;
     for (int i = 0; i < nWorkers; i++) {
-        if (args[i].pbxByteVecs) {
-            for (int t = 0; t < nTiles; t++) free(args[i].pbxByteVecs[t].data);
-        }
-        if (args[i].palettePbxByteVecs) {
-            int paletteTiles = args[i].paletteNTileCols * args[i].paletteNTileRows;
-            for (int t = 0; t < paletteTiles; t++) free(args[i].palettePbxByteVecs[t].data);
-        }
-        free(args[i].pbxByteVecs);
-        free(args[i].palettePbxByteVecs);
+        free(args[i].pbxByteVec.data);
+        free(args[i].palettePbxByteVec.data);
         free(args[i].stepScores);
     }
 }
@@ -339,12 +322,9 @@ static void *worker_main(void *arg_) {
                 int row = (int)(globalStep / (long long)arg->paletteGridN);
                 int j = (int)(globalStep % (long long)arg->paletteGridN);
                 int col = (row & 1) ? (arg->paletteGridN - 1 - j) : j;
-                int paletteTileCol = col / arg->tileSize;
-                int paletteTileRow = row / arg->tileSize;
-                int paletteTileId = paletteTileRow * arg->paletteNTileCols + paletteTileCol;
                 uint32_t palettePixIdx = (uint32_t)row * (uint32_t)arg->paletteGridN + (uint32_t)col;
-                if (!bytevec_push_u32le_u8(&arg->palettePbxByteVecs[paletteTileId], palettePixIdx, solveBin)) {
-                    worker_fail(arg, "palette pbx vec alloc failed");
+                if (!bytevec_push_u32le_u8(&arg->palettePbxByteVec, palettePixIdx, solveBin)) {
+                    worker_fail(arg, "palette fragment vec alloc failed");
                     goto cleanup;
                 }
             }
@@ -378,24 +358,15 @@ static void *worker_main(void *arg_) {
                 continue;
             }
 
-            int tileCol = px / arg->tileSize;
-            int tileRow = py / arg->tileSize;
-            int tileId = tileRow * arg->nTileCols + tileCol;
-            uint32_t localX = (uint32_t)(px - tileCol * arg->tileSize);
-            uint32_t localY = (uint32_t)(py - tileRow * arg->tileSize);
-            uint32_t pixIdx = localY * (uint32_t)arg->tileW[tileId] + localX;
-
-            if (!claim_pixel(arg->tileBits[tileId], pixIdx)) {
+            uint32_t globalPixIdx = (uint32_t)py * (uint32_t)arg->W + (uint32_t)px;
+            if (!claim_pixel(arg->pixelBits, globalPixIdx)) {
                 arg->rootsDeduped++;
                 continue;
             }
 
-            {
-                uint32_t globalPixIdx = (uint32_t)py * (uint32_t)arg->W + (uint32_t)px;
-                if (!bytevec_push_u32le_u8(&arg->pbxByteVecs[tileId], globalPixIdx, solveBin)) {
-                    worker_fail(arg, "pbx byte vec alloc failed");
-                    goto cleanup;
-                }
+            if (!bytevec_push_u32le_u8(&arg->pbxByteVec, globalPixIdx, solveBin)) {
+                worker_fail(arg, "fragment vec alloc failed");
+                goto cleanup;
             }
             arg->rootsPlotted++;
         }
@@ -413,7 +384,7 @@ int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "Usage: roots2pix_mt /tmp/pix "
                 "--pix=N --min_re=A --max_re=B --min_im=C --max_im=D "
-                "--degree=D --tile_size=T --n_tile_cols=C --n_tile_rows=R "
+                "--degree=D "
                 "--input_manifest=file.json [--retries=N] "
                 "[--threads=N] "
                 "--score_metrics=csv --score_clip_los=csv --score_clip_his=csv --score_program=spec "
@@ -448,9 +419,9 @@ int main(int argc, char **argv) {
     double rotation = getArgDouble(argc, argv, "--rotation", 0.0);
     double cosA = cos(rotation), sinA = sin(rotation);
     int degree = getArgInt(argc, argv, "--degree", 25);
-    int tileSize = getArgInt(argc, argv, "--tile_size", 4096);
-    int nTileCols = getArgInt(argc, argv, "--n_tile_cols", 1);
-    int nTileRows = getArgInt(argc, argv, "--n_tile_rows", 1);
+    const char *tileSizeArg = getArg(argc, argv, "--tile_size");
+    const char *nTileColsArg = getArg(argc, argv, "--n_tile_cols");
+    const char *nTileRowsArg = getArg(argc, argv, "--n_tile_rows");
     int retries = getArgInt(argc, argv, "--retries", 2);
     int requestedThreads = getArgInt(argc, argv, "--threads", 1);
     const char *pixelBinPrefix = getArgStr(argc, argv, "--pixel_bin_prefix", NULL);
@@ -477,6 +448,10 @@ int main(int argc, char **argv) {
     }
     if (widthArg || heightArg) {
         fprintf(stderr, "roots2pix_mt no longer accepts --width or --height; pass --pix for square output\n");
+        return 1;
+    }
+    if (tileSizeArg || nTileColsArg || nTileRowsArg) {
+        fprintf(stderr, "roots2pix_mt no longer accepts tile args; it writes sparse global fragments\n");
         return 1;
     }
     if (pix < 1) {
@@ -513,12 +488,6 @@ int main(int argc, char **argv) {
     double yScale = (double)H / (maxIm - minIm);
     if (retries < 0 || retries > 10) {
         fprintf(stderr, "Invalid retries: %d\n", retries);
-        return 1;
-    }
-
-    int nTiles = nTileCols * nTileRows;
-    if (nTiles < 1 || nTiles > MAX_TILES) {
-        fprintf(stderr, "Invalid tile grid: %dx%d\n", nTileCols, nTileRows);
         return 1;
     }
 
@@ -701,12 +670,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    int tileW[MAX_TILES];
-    int tileH[MAX_TILES];
-    int paletteTileW[MAX_TILES];
-    int paletteTileH[MAX_TILES];
-    size_t tileWordCount[MAX_TILES];
-    uint64_t *tileBits[MAX_TILES] = {0};
+    uint64_t *pixelBits = NULL;
     int emitPixelBins = pixelBinPrefix && *pixelBinPrefix;
     int emitPaletteBins = paletteBinPrefix && *paletteBinPrefix;
     int emitStepScores = stepScoresOutputPath && *stepScoresOutputPath;
@@ -734,44 +698,16 @@ int main(int argc, char **argv) {
     long totalDownloadUs = 0;
     long totalNativeUs = 0;
     char workerErrorMsg[256] = {0};
-    int paletteNTileCols = 0;
-    int paletteNTileRows = 0;
-
-    for (int t = 0; t < nTiles; t++) {
-        int tc = t % nTileCols;
-        int tr = t / nTileCols;
-        tileW[t] = (tc < nTileCols - 1) ? tileSize : (W - tc * tileSize);
-        tileH[t] = (tr < nTileRows - 1) ? tileSize : (H - tr * tileSize);
-        if (tileW[t] <= 0 || tileH[t] <= 0) {
-            fprintf(stderr, "Invalid tile %d geometry\n", t);
-            goto cleanup;
-        }
-        tileWordCount[t] = (((size_t)tileW[t] * (size_t)tileH[t]) + 63u) / 64u;
-        tileBits[t] = calloc(tileWordCount[t], sizeof(uint64_t));
-        if (!tileBits[t]) {
-            fprintf(stderr, "Cannot allocate tile bitset %d\n", t);
-            goto cleanup;
-        }
+    uint64_t totalPixels = (uint64_t)(uint32_t)W * (uint64_t)(uint32_t)H;
+    if (totalPixels == 0 || totalPixels > UINT32_MAX) {
+        fprintf(stderr, "pix is too large for u32 pixel indexes: %d\n", pix);
+        goto cleanup;
     }
-    if (emitPaletteBins) {
-        int paletteTiles = 0;
-        paletteNTileCols = (paletteGridN + tileSize - 1) / tileSize;
-        paletteNTileRows = (paletteGridN + tileSize - 1) / tileSize;
-        paletteTiles = paletteNTileCols * paletteNTileRows;
-        if (paletteTiles > MAX_TILES) {
-            fprintf(stderr, "palette tile count %d exceeds MAX_TILES=%d\n", paletteTiles, MAX_TILES);
-            goto cleanup;
-        }
-        for (int t = 0; t < paletteTiles; t++) {
-            int tc = t % paletteNTileCols;
-            int tr = t / paletteNTileCols;
-            paletteTileW[t] = (tc < paletteNTileCols - 1) ? tileSize : (paletteGridN - tc * tileSize);
-            paletteTileH[t] = (tr < paletteNTileRows - 1) ? tileSize : (paletteGridN - tr * tileSize);
-            if (paletteTileW[t] <= 0 || paletteTileH[t] <= 0) {
-                fprintf(stderr, "Invalid palette tile %d geometry\n", t);
-                goto cleanup;
-            }
-        }
+    size_t pixelWordCount = (size_t)((totalPixels + 63u) / 64u);
+    pixelBits = calloc(pixelWordCount, sizeof(uint64_t));
+    if (!pixelBits) {
+        fprintf(stderr, "Cannot allocate pixel bitset\n");
+        goto cleanup;
     }
 
     {
@@ -802,10 +738,6 @@ int main(int argc, char **argv) {
         args[i].stride = stride;
         args[i].W = W;
         args[i].H = H;
-        args[i].tileSize = tileSize;
-        args[i].nTileCols = nTileCols;
-        args[i].nTileRows = nTileRows;
-        args[i].nTiles = nTiles;
         args[i].minRe = minRe;
         args[i].maxRe = maxRe;
         args[i].minIm = minIm;
@@ -820,8 +752,6 @@ int main(int argc, char **argv) {
         args[i].emitPaletteBins = emitPaletteBins;
         args[i].paletteStepStart = paletteStepStart;
         args[i].paletteGridN = paletteGridN;
-        args[i].paletteNTileCols = paletteNTileCols;
-        args[i].paletteNTileRows = paletteNTileRows;
         args[i].scoreCoeffDegree = scoreProgramUsesCoeffSources ? scoreCoeffDegree : 0;
         args[i].scoreCoeffStride = scoreCoeffStride;
         args[i].scoreParamDegree = scoreProgramUsesParamSources ? scoreParamDegree : 0;
@@ -841,18 +771,10 @@ int main(int argc, char **argv) {
         args[i].inputReader = &inputReader;
         args[i].scoreCoeffReader = scoreProgramUsesCoeffSources ? &scoreCoeffReader : NULL;
         args[i].scoreParamReader = scoreProgramUsesParamSources ? &scoreParamReader : NULL;
-        args[i].tileBits = tileBits;
-        args[i].tileW = tileW;
-        args[i].paletteTileW = paletteTileW;
-        args[i].pbxByteVecs = calloc((size_t)nTiles, sizeof(ByteVec));
-        args[i].palettePbxByteVecs = emitPaletteBins
-            ? calloc((size_t)(paletteNTileCols * paletteNTileRows), sizeof(ByteVec))
-            : NULL;
+        args[i].pixelBits = pixelBits;
         args[i].stepScores = emitStepScores ? calloc((size_t)(width > 0 ? width : 1), sizeof(unsigned char)) : NULL;
         args[i].stepScoreCount = width;
-        if ((!args[i].pbxByteVecs) ||
-            (emitPaletteBins && !args[i].palettePbxByteVecs) ||
-            (emitStepScores && !args[i].stepScores)) {
+        if (emitStepScores && !args[i].stepScores) {
             fprintf(stderr, "Out of memory for worker vectors\n");
             goto cleanup;
         }
@@ -888,22 +810,14 @@ int main(int argc, char **argv) {
 
     char pathBuf[512];
     long totalEntries = 0;
-    int tilesWithData = 0;
-    for (int t = 0; t < nTiles; t++) {
-        size_t tilePbxBytes = 0;
-        for (int i = 0; i < threads; i++) {
-            tilePbxBytes += args[i].pbxByteVecs[t].len;
-        }
-        if (tilePbxBytes > 0) {
-            tilesWithData++;
-            totalEntries += (long)(tilePbxBytes / 5u);
-        }
+    int fragmentsWithData = 0;
+    size_t totalPbxBytes = 0;
+    for (int i = 0; i < threads; i++) {
+        totalPbxBytes += args[i].pbxByteVec.len;
     }
+    if (totalPbxBytes > 0) fragmentsWithData = 1;
+    totalEntries = (long)(totalPbxBytes / 5u);
     if (emitPixelBins) {
-        size_t totalPbxBytes = 0;
-        for (int t = 0; t < nTiles; t++) {
-            for (int i = 0; i < threads; i++) totalPbxBytes += args[i].pbxByteVecs[t].len;
-        }
         if (totalPbxBytes > 0) {
             if (!write_suffix_path(pathBuf, sizeof(pathBuf), pixelBinPrefix, ".frag")) {
                 fprintf(stderr, "Cannot build fused fragment path from %s\n", pixelBinPrefix);
@@ -914,21 +828,18 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "Cannot create %s\n", pathBuf);
                 goto cleanup;
             }
-            for (int t = 0; t < nTiles; t++) {
-                for (int i = 0; i < threads; i++) {
-                    if (args[i].pbxByteVecs[t].len > 0) {
-                        fwrite(args[i].pbxByteVecs[t].data, 1, args[i].pbxByteVecs[t].len, fb);
-                    }
+            for (int i = 0; i < threads; i++) {
+                if (args[i].pbxByteVec.len > 0) {
+                    fwrite(args[i].pbxByteVec.data, 1, args[i].pbxByteVec.len, fb);
                 }
             }
             fclose(fb);
         }
     }
     if (emitPaletteBins) {
-        int paletteTiles = paletteNTileCols * paletteNTileRows;
         size_t totalPaletteBytes = 0;
-        for (int t = 0; t < paletteTiles; t++) {
-            for (int i = 0; i < threads; i++) totalPaletteBytes += args[i].palettePbxByteVecs[t].len;
+        for (int i = 0; i < threads; i++) {
+            totalPaletteBytes += args[i].palettePbxByteVec.len;
         }
         if (totalPaletteBytes > 0) {
             if (!write_suffix_path(pathBuf, sizeof(pathBuf), paletteBinPrefix, ".frag")) {
@@ -940,11 +851,9 @@ int main(int argc, char **argv) {
                 fprintf(stderr, "Cannot create %s\n", pathBuf);
                 goto cleanup;
             }
-            for (int t = 0; t < paletteTiles; t++) {
-                for (int i = 0; i < threads; i++) {
-                    if (args[i].palettePbxByteVecs[t].len > 0) {
-                        fwrite(args[i].palettePbxByteVecs[t].data, 1, args[i].palettePbxByteVecs[t].len, fb);
-                    }
+            for (int i = 0; i < threads; i++) {
+                if (args[i].palettePbxByteVec.len > 0) {
+                    fwrite(args[i].palettePbxByteVec.data, 1, args[i].palettePbxByteVec.len, fb);
                 }
             }
             fclose(fb);
@@ -970,10 +879,10 @@ int main(int argc, char **argv) {
 
     printf("{\"roots_plotted\":%ld,\"roots_clipped\":%ld,\"n_points\":%ld,"
            "\"degree\":%d,\"threads\":%d,"
-           "\"n_tiles\":%d,\"tiles_with_data\":%d,\"total_entries\":%ld,"
+           "\"fragments_with_data\":%d,\"total_entries\":%ld,"
            "\"input_mode\":\"multispan_sectioned\",\"retries\":%d,\"download_us\":%ld,\"native_us\":%ld",
            rootsPlotted, rootsClipped, nPoints, degree, threads,
-           nTiles, tilesWithData, totalEntries, retries, totalDownloadUs, totalNativeUs);
+           fragmentsWithData, totalEntries, retries, totalDownloadUs, totalNativeUs);
     printf(",\"solve_score\":true");
     printf("}\n");
     exitCode = 0;
@@ -982,8 +891,8 @@ cleanup:
     if (workers && !workersJoined) {
         for (int i = 0; i < workersStarted; i++) pthread_join(workers[i], NULL);
     }
-    free_worker_storage(args, workersPrepared, nTiles);
-    for (int t = 0; t < nTiles; t++) free(tileBits[t]);
+    free_worker_storage(args, workersPrepared);
+    free(pixelBits);
     free(workers);
     free(args);
     multispan_reader_close(&scoreParamReader);

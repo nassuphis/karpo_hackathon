@@ -124,8 +124,8 @@ class TestDeployPackaging(unittest.TestCase):
         helper_body = helper_match.group("body")
         self.assertIn('"$SCRIPT_DIR/workflow_template_render.py" render-workflow', helper_body)
         self.assertIn('--plan-function-arn "$RENDER_PLAN_ARN"', helper_body)
-        self.assertIn('--coeff-bilevel-stitch-function-arn "$COEFF_BILEVEL_STITCH_ARN"', helper_body)
-        self.assertIn('--preview-function-arn "$PREVIEW_ARN"', helper_body)
+        self.assertNotIn("coeff-bilevel-stitch", helper_body)
+        self.assertNotIn("preview-function-arn", helper_body)
 
         joined = _joined_shell_lines(DEPLOY_TEXT)
         self.assertEqual(
@@ -240,6 +240,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("color_artifact_meta.py", packaged["handler_bilevel.py"])
         self.assertIn("solve_score_chain.py", packaged["handler_bilevel.py"])
         self.assertIn("bilevel_section_raster", packaged["handler_bilevel.py"])
+        self.assertIn("coeffs_bilevel_raster", packaged["handler_bilevel.py"])
         self.assertIn("raw_to_bilevel", packaged["handler_bilevel.py"])
         self.assertIn("assemble_greyscale", packaged["handler_bilevel.py"])
         self.assertIn('create_lambda "$COLOR_TO_BILEVEL_NAME" "handler_bilevel.handler" "/tmp/polypaint-bilevel.zip"', DEPLOY_TEXT)
@@ -353,6 +354,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('gcc -O3 -pthread -o /src/assemble_greyscale /src/assemble_greyscale.c', DEPLOY_TEXT)
         self.assertIn('gcc -O3 -o /src/score_raw_render /src/score_raw_render.c', DEPLOY_TEXT)
         self.assertIn('aarch64-linux-musl-gcc -O3 -static -o lambda/bilevel_section_raster lambda/bilevel_section_raster.c -lm', DEPLOY_TEXT)
+        self.assertIn('aarch64-linux-musl-gcc -O3 -static -o lambda/coeffs_bilevel_raster lambda/coeffs_bilevel_raster.c -lm', DEPLOY_TEXT)
         self.assertIn('gcc -O3 -o /src/raw_to_bilevel /src/raw_to_bilevel.c', DEPLOY_TEXT)
         self.assertIn('aarch64-linux-musl-gcc -O3 -static -o lambda/step_scores_to_palette_raw lambda/step_scores_to_palette_raw.c', DEPLOY_TEXT)
         self.assertIn('cp lambda/assemble_greyscale lambda/score_raw_render "$FINALIZE_MT_DIR/"', DEPLOY_TEXT)
@@ -528,8 +530,8 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("tests/test_finalize_mt_handler.py", predeploy_text)
         self.assertIn("tests/test_raster_mt.py", predeploy_text)
         self.assertIn("tests/test_bilevel_handler.py", predeploy_text)
-        self.assertIn("tests/test_coeff_bilevel_stitch_handler.py", predeploy_text)
         self.assertIn("tests/test_solve_proximity_handler.py", predeploy_text)
+        self.assertNotIn("test_coeff_bilevel_stitch_handler", predeploy_text)
         self.assertIn("tests/test_frontend_js.sh", predeploy_text)
 
     def test_python_runner_prefers_uv_with_local_fallbacks(self):

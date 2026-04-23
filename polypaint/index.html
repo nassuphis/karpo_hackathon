@@ -1064,14 +1064,6 @@ button {
                         <label>Quality:</label>
                         <input type="number" id="render-quality" value="90" min="1" max="100" step="5">
                     </div>
-                    <div class="color-row" style="margin-bottom:0">
-                        <span class="color-row-label" style="min-width:80px">Tile size</span>
-                        <select id="sparse-tile-size" style="font-size:12px; background:#1a1a2e; color:#ccc; border:1px solid #333; padding:2px 4px; width:140px">
-                            <option value="2048">2048</option>
-                            <option value="4096" selected>4096</option>
-                            <option value="8192">8192</option>
-                        </select>
-                    </div>
                 </div>
                 <div class="color-box">
                     <div class="color-title">Solve Score Palette</div>
@@ -9831,7 +9823,6 @@ function _renderCommonParams(options = {}) {
         solveScoreUsesCoeffSource: !!solveScore.uses_coeff_source,
         solveScoreUsesParamSource: !!solveScore.uses_param_source,
         solveScoreUsesNonSolveSource: !!solveScore.uses_non_solve_source,
-        tileSize: parseInt(document.getElementById('sparse-tile-size').value),
         rotation: (() => {
             const turns = parseFloat(document.getElementById('render-rotation').value) || 0;
             const dir = document.getElementById('render-rotation-dir').value;
@@ -10684,7 +10675,6 @@ async function _launchNonColorRenderOrchestrator(mode, paramsPatch = null) {
         quantile: p.quantile,
         shim: p.shim,
         square_extent: p.squareExtent,
-        tile_size: p.tileSize,
         rotation: p.rotation,
         root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
     };
@@ -10713,7 +10703,6 @@ async function _launchFusedRenderOrchestrator(paramsPatch = null) {
         quantile: p.quantile,
         shim: p.shim,
         square_extent: p.squareExtent,
-        tile_size: p.tileSize,
         rotation: p.rotation,
         color_mode: 'solve_score',
         solve_score_chain: p.solveScoreChain,
@@ -11367,59 +11356,12 @@ function _aggregateRasterPerf(results) {
         acc.upload_us += Number(row.upload_us) || 0;
         acc.roots_plotted += Number(row.roots_plotted) || 0;
         acc.roots_clipped += Number(row.roots_clipped) || 0;
-        acc.tiles_uploaded += Number(row.tiles_uploaded) || 0;
-        acc.pixel_bin_tiles_uploaded += Number(row.pixel_bin_tiles_uploaded) || 0;
-        const rowPixelBinBytes = Number(row.pixel_bin_bytes_uploaded) || 0;
-        acc.pixel_bin_bytes_uploaded += rowPixelBinBytes;
+        acc.fragment_files_uploaded += Number(row.fragment_files_uploaded) || 0;
+        acc.fragment_bytes_uploaded += Number(row.fragment_bytes_uploaded) || 0;
+        acc.associated_palette_fragment_files_uploaded += Number(row.associated_palette_fragment_files_uploaded) || 0;
+        acc.associated_palette_fragment_bytes_uploaded += Number(row.associated_palette_fragment_bytes_uploaded) || 0;
         if (!acc.pixel_bin_fragment_mode && row.pixel_bin_fragment_mode) acc.pixel_bin_fragment_mode = String(row.pixel_bin_fragment_mode);
-        const rowSparseBytesIn = Number(row.pixel_bin_sparse_bytes_in) || 0;
-        acc.pixel_bin_sparse_bytes_in += rowSparseBytesIn;
-        acc.pixel_bin_sparse_files_in += Number(row.pixel_bin_sparse_files_in) || 0;
-        acc.pixel_bin_dense_bytes_if_full_tiles += Number(row.pixel_bin_dense_bytes_if_full_tiles) || 0;
-        const tileBytes = _normalizePixelBinTileBytes(row.pixel_bin_tile_bytes);
-        if (tileBytes.length) {
-            if (rowPixelBinBytes <= 0) {
-                acc.pixel_bin_bytes_uploaded += tileBytes.reduce((sum, item) => sum + (Number(item.bytes) || 0), 0);
-            }
-            const chunkIdxRaw = row.chunk_idx != null ? row.chunk_idx : row.stripe_idx;
-            const chunkIdx = Number.isFinite(Number(chunkIdxRaw)) ? Number(chunkIdxRaw) : acc.chunks - 1;
-            acc.pixel_bin_chunks.push({ chunk_idx: chunkIdx, tiles: tileBytes });
-            const denseGroupedRow = String(row.pixel_bin_fragment_mode || '').toLowerCase() === 'dense_grouped';
-            for (const item of tileBytes) {
-                const tileIdx = Number(item.tile_idx);
-                const sparseBytes = denseGroupedRow ? (Number(item.sparse_bytes_in) || 0) : (Number(item.bytes) || 0);
-                const denseBytes = denseGroupedRow ? (Number(item.bytes) || Number(item.dense_bytes) || 0) : (Number(item.dense_bytes) || 0);
-                if (denseGroupedRow && sparseBytes > 0 && rowSparseBytesIn <= 0) {
-                    acc.pixel_bin_sparse_bytes_in += sparseBytes;
-                }
-                if (!acc.pixel_bin_tiles[tileIdx]) {
-                    acc.pixel_bin_tiles[tileIdx] = {
-                        tile_idx: tileIdx,
-                        files: 0,
-                        sparse_bytes: 0,
-                        dense_bytes: denseBytes,
-                        max_sparse_bytes: 0,
-                        max_chunk_idx: chunkIdx,
-                    };
-                }
-                const tile = acc.pixel_bin_tiles[tileIdx];
-                tile.files += 1;
-                tile.sparse_bytes += sparseBytes;
-                if (denseBytes > 0) tile.dense_bytes = denseBytes;
-                if (sparseBytes > tile.max_sparse_bytes) {
-                    tile.max_sparse_bytes = sparseBytes;
-                    tile.max_chunk_idx = chunkIdx;
-                }
-                if (sparseBytes > acc.pixel_bin_max_file_bytes) {
-                    acc.pixel_bin_max_file_bytes = sparseBytes;
-                    acc.pixel_bin_max_file = { chunk_idx: chunkIdx, tile_idx: tileIdx, bytes: sparseBytes };
-                }
-            }
-        }
         const rowRgbSource = String(row.rgb_source || '').trim();
-        if (rowRgbSource.toLowerCase() !== 'raw_score_bins') {
-            acc.pix_tiles_skipped += Number(row.pix_tiles_skipped) || 0;
-        }
         if (!acc.rgb_source && rowRgbSource) acc.rgb_source = rowRgbSource;
         if (row.pixel_bins_drive_rgb === true || String(row.pixel_bins_drive_rgb || '').toLowerCase() === 'true') acc.pixel_bins_drive_rgb = true;
         if (!acc.pixel_bin_fragment_mode && row.pixel_bin_fragment_mode) acc.pixel_bin_fragment_mode = String(row.pixel_bin_fragment_mode);
@@ -11436,100 +11378,14 @@ function _aggregateRasterPerf(results) {
         upload_us: 0,
         roots_plotted: 0,
         roots_clipped: 0,
-        tiles_uploaded: 0,
-        pixel_bin_tiles_uploaded: 0,
-        pixel_bin_bytes_uploaded: 0,
-        pixel_bin_dense_bytes_if_full_tiles: 0,
+        fragment_files_uploaded: 0,
+        fragment_bytes_uploaded: 0,
+        associated_palette_fragment_files_uploaded: 0,
+        associated_palette_fragment_bytes_uploaded: 0,
         pixel_bin_fragment_mode: '',
-        pixel_bin_sparse_bytes_in: 0,
-        pixel_bin_sparse_files_in: 0,
-        pixel_bin_chunks: [],
-        pixel_bin_tiles: {},
-        pixel_bin_max_file_bytes: 0,
-        pixel_bin_max_file: null,
-        pix_tiles_skipped: 0,
         rgb_source: '',
         pixel_bins_drive_rgb: false,
     });
-}
-
-function _normalizePixelBinTileBytes(value) {
-    if (!Array.isArray(value)) return [];
-    const out = [];
-    for (const item of value) {
-        if (Array.isArray(item)) {
-            if (item.length >= 2) {
-                out.push({
-                    tile_idx: Number(item[0]),
-                    bytes: Number(item[1]) || 0,
-                    dense_bytes: Number(item[2]) || 0,
-                    sparse_bytes_in: Number(item[3]) || 0,
-                });
-            }
-        } else if (item && typeof item === 'object') {
-            out.push({
-                tile_idx: Number(item.tile_idx),
-                bytes: Number(item.bytes) || 0,
-                dense_bytes: Number(item.dense_bytes) || 0,
-                sparse_bytes_in: Number(item.sparse_bytes_in) || 0,
-            });
-        }
-    }
-    return out.filter(item => Number.isFinite(item.tile_idx) && item.tile_idx >= 0 && item.bytes > 0);
-}
-
-function _estimatePixelBinGrouping(perf, groupSizes = [5, 10, 25]) {
-    if (!perf || !Array.isArray(perf.pixel_bin_chunks) || !perf.pixel_bin_chunks.length) return [];
-    const chunks = perf.pixel_bin_chunks
-        .slice()
-        .sort((a, b) => (Number(a.chunk_idx) || 0) - (Number(b.chunk_idx) || 0));
-    const estimates = [];
-    for (const groupSize of groupSizes) {
-        const size = Math.max(1, Number(groupSize) || 1);
-        let groupedSparseFiles = 0;
-        let groupedSparseBytes = 0;
-        let groupedDenseFiles = 0;
-        let groupedDenseBytes = 0;
-        for (let start = 0; start < chunks.length; start += size) {
-            const tileMap = new Map();
-            for (const chunk of chunks.slice(start, start + size)) {
-                for (const tile of chunk.tiles || []) {
-                    const tileIdx = Number(tile.tile_idx);
-                    if (!Number.isFinite(tileIdx)) continue;
-                    const current = tileMap.get(tileIdx) || { sparse_bytes: 0, dense_bytes: 0 };
-                    current.sparse_bytes += Number(tile.bytes) || 0;
-                    current.dense_bytes = Math.max(current.dense_bytes, Number(tile.dense_bytes) || 0);
-                    tileMap.set(tileIdx, current);
-                }
-            }
-            groupedSparseFiles += tileMap.size;
-            groupedDenseFiles += tileMap.size;
-            for (const tile of tileMap.values()) {
-                groupedSparseBytes += tile.sparse_bytes;
-                groupedDenseBytes += tile.dense_bytes;
-            }
-        }
-        estimates.push({
-            group_size: size,
-            group_count: Math.ceil(chunks.length / size),
-            sparse_files: groupedSparseFiles,
-            sparse_bytes: groupedSparseBytes,
-            dense_files: groupedDenseFiles,
-            dense_bytes: groupedDenseBytes,
-        });
-    }
-    return estimates;
-}
-
-function _formatPixelBinTileSummary(perf, maxTiles = 12) {
-    const tiles = Object.values((perf && perf.pixel_bin_tiles) || {})
-        .sort((a, b) => Number(a.tile_idx) - Number(b.tile_idx));
-    if (!tiles.length) return '';
-    const parts = tiles.slice(0, maxTiles).map(tile => {
-        return `t${String(tile.tile_idx).padStart(2, '0')}=${_fmtSize(tile.sparse_bytes)}/${tile.files}`;
-    });
-    if (tiles.length > maxTiles) parts.push(`+${tiles.length - maxTiles} more`);
-    return parts.join(' ');
 }
 
 function _aggregateSolveScorePhasePerf(results) {
@@ -11572,8 +11428,6 @@ function _aggregateFinalizePerf(results) {
         if (row.pixel_bins_drive_rgb === true || String(row.pixel_bins_drive_rgb || '').toLowerCase() === 'true') acc.pixel_bins_drive_rgb = true;
         if (!acc.access_mode && row.access_mode) acc.access_mode = String(row.access_mode);
         if (!acc.assemble_mode && row.assemble_mode) acc.assemble_mode = String(row.assemble_mode);
-        if (row.tile_w != null && row.tile_h != null) acc.tile_shape = `${row.tile_w}x${row.tile_h}`;
-        acc.tile_pixels += Number(row.tile_pixels) || 0;
         acc.raw_expected_size += Number(row.raw_expected_size) || 0;
         acc.raw_size += Number(row.raw_size) || 0;
         acc.n_chunks += Number(row.n_chunks) || 0;
@@ -11599,8 +11453,6 @@ function _aggregateFinalizePerf(results) {
         pixel_bin_fragment_mode: '',
         access_mode: '',
         assemble_mode: '',
-        tile_shape: '',
-        tile_pixels: 0,
         raw_expected_size: 0,
         raw_size: 0,
         n_chunks: 0,
@@ -11754,8 +11606,7 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
         if (inputLabel) msg += ` · input=${inputLabel}`;
         if (perf.input_mode === 'sectioned' || perf.input_mode === 'multispan_sectioned') msg += ` · retries=${perf.retries}`;
         if (perf.rgb_source) msg += ` · rgb=${perf.rgb_source}`;
-        if (perf.pix_tiles_skipped > 0 && !usesRawScoreFragments) msg += ` · skipped_pix=${perf.pix_tiles_skipped}`;
-        if (perf.pixel_bin_bytes_uploaded > 0) msg += ` · ${usesRawScoreFragments ? 'fragments' : 'pbx'}=${_fmtSize(perf.pixel_bin_bytes_uploaded)}`;
+        if (perf.fragment_bytes_uploaded > 0) msg += ` · ${usesRawScoreFragments ? 'fragments' : 'pbx'}=${_fmtSize(perf.fragment_bytes_uploaded)}`;
         return msg;
     }
     if (phase === 'associated_palette_chunk') {
@@ -11793,7 +11644,6 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
         if (perf.pixel_bin_fragment_mode) msg += ` · bins=${perf.pixel_bin_fragment_mode}`;
         if (perf.access_mode) msg += ` · access=${perf.access_mode}`;
         if (perf.assemble_mode) msg += ` · assemble=${perf.assemble_mode}`;
-        if (perf.tile_shape) msg += ` · tile=${perf.tile_shape}`;
         const fragmentCount = perf.pixel_bins_drive_rgb
             ? (perf.pixel_bin_files || perf.pixel_bin_files_seen)
             : (perf.pix_files || perf.pix_files_seen);
@@ -11960,52 +11810,25 @@ async function _logRenderRasterPerf(run) {
             `  Upload time: ${_fmtSecondsUs(perf.upload_us)}`,
             `  Emitted root hits: ${perf.roots_plotted}`,
             `  Clipped roots: ${perf.roots_clipped}`,
-            `  Tile files uploaded: ${perf.tiles_uploaded}`,
         ];
-        if (perf.pixel_bin_tiles_uploaded > 0) {
-            lines.push(`  ${artifactLabel} files uploaded: ${perf.pixel_bin_tiles_uploaded}`);
+        if (perf.fragment_files_uploaded > 0) {
+            lines.push(`  ${artifactLabel} files uploaded: ${perf.fragment_files_uploaded}`);
         }
-        if (perf.pixel_bin_bytes_uploaded > 0) {
-            const avgBytes = perf.pixel_bin_tiles_uploaded > 0 ? perf.pixel_bin_bytes_uploaded / perf.pixel_bin_tiles_uploaded : 0;
-            const maxFile = perf.pixel_bin_max_file || {};
-            const denseGrouped = String(perf.pixel_bin_fragment_mode || '').toLowerCase() === 'dense_grouped';
-            if (denseGrouped) {
-                lines.push(
-                    `  ${artifactLabel} dense group bytes uploaded: ${_fmtSize(perf.pixel_bin_bytes_uploaded)}`
-                    + ` (avg/file ${_fmtSize(avgBytes)}`
-                    + `)`
-                );
-                if (perf.pixel_bin_sparse_bytes_in > 0) {
-                    lines.push(`  ${artifactLabel} sparse bytes consumed before grouping: ${_fmtSize(perf.pixel_bin_sparse_bytes_in)}${perf.pixel_bin_sparse_files_in > 0 ? ` across ${perf.pixel_bin_sparse_files_in} files` : ''}`);
-                }
-            } else {
-                lines.push(
-                    `  ${artifactLabel} sparse bytes uploaded: ${_fmtSize(perf.pixel_bin_bytes_uploaded)}`
-                    + ` (avg/file ${_fmtSize(avgBytes)}`
-                    + (maxFile.bytes ? `, max section ${maxFile.chunk_idx} tile ${maxFile.tile_idx}: ${_fmtSize(maxFile.bytes)}` : '')
-                    + `)`
-                );
-            }
-            const tileSummary = _formatPixelBinTileSummary(perf);
-            if (tileSummary) {
-                lines.push(`  ${artifactLabel} ${denseGrouped ? 'sparse input bytes by tile' : 'sparse bytes by tile'}: ${tileSummary}`);
-            }
-            const estimates = _estimatePixelBinGrouping(perf);
-            if (!denseGrouped && estimates.length) {
-                lines.push(`  ${artifactLabel} grouping estimates (from current sparse ${usesRawScoreFragments ? '.frag' : '.pbx'} output):`);
-                for (const est of estimates) {
-                    const denseRatio = perf.pixel_bin_bytes_uploaded > 0 ? est.dense_bytes / perf.pixel_bin_bytes_uploaded : 0;
-                    lines.push(
-                        `    group=${est.group_size}: sparse ${est.sparse_files} files / ${_fmtSize(est.sparse_bytes)}`
-                        + `; dense ${est.dense_files} files / ${_fmtSize(est.dense_bytes)}`
-                        + (denseRatio > 0 ? ` (${denseRatio.toFixed(2)}x current sparse bytes)` : '')
-                    );
-                }
-            }
+        if (perf.fragment_bytes_uploaded > 0) {
+            const avgBytes = perf.fragment_files_uploaded > 0 ? perf.fragment_bytes_uploaded / perf.fragment_files_uploaded : 0;
+            lines.push(
+                `  ${artifactLabel} sparse bytes uploaded: ${_fmtSize(perf.fragment_bytes_uploaded)}`
+                + ` (avg/file ${_fmtSize(avgBytes)})`
+            );
         }
-        if (perf.rgb_source || perf.pix_tiles_skipped > 0) {
-            const showSkippedPixUploads = perf.pix_tiles_skipped > 0 && String(perf.rgb_source || '').toLowerCase() !== 'raw_score_bins';
-            lines.push(`  RGB source: ${perf.rgb_source || 'pix'}${showSkippedPixUploads ? `; skipped .pix uploads: ${perf.pix_tiles_skipped}` : ''}`);
+        if (perf.associated_palette_fragment_files_uploaded > 0) {
+            lines.push(`  Associated palette fragments uploaded: ${perf.associated_palette_fragment_files_uploaded}`);
+        }
+        if (perf.associated_palette_fragment_bytes_uploaded > 0) {
+            lines.push(`  Associated palette fragment bytes uploaded: ${_fmtSize(perf.associated_palette_fragment_bytes_uploaded)}`);
+        }
+        if (perf.rgb_source) {
+            lines.push(`  RGB source: ${perf.rgb_source || 'pix'}`);
         }
         const msg = lines.join('\n');
         log(msg, '', 'render-log');

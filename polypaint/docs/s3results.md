@@ -51,8 +51,8 @@ Current `calc.json` is chunk-oriented and commonly contains:
 
 ### Color render
 
-- `renders/{job_id}/pix_chunk_{chunk:04d}_t{tile:04d}.pix`
-- `renders/{job_id}/tile_{tile:04d}.raw`
+- `renders/{job_id}/color/{artifact_id}/fragments/section_{section:04d}.frag`
+- `renders/{job_id}/color/{artifact_id}/greyscale.raw`
 - `renders/{job_id}/solve_scores/...`
 - `renders/{job_id}/solve_proximity/...`
 

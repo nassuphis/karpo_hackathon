@@ -310,7 +310,7 @@ def _compact_manifest_source(items, *, family, degree, n_coeffs, include=True):
     }
 
 
-def build_solve_source_manifest(chunk_items, *, job_id, degree, n_coeffs, include_coeff=True, include_param=True):
+def build_solve_source_manifest(chunk_items, *, job_id, degree, n_coeffs, include_solve=True, include_coeff=True, include_param=True):
     items = _sorted_chunk_items(chunk_items)
     return {
         "v": 2,
@@ -319,7 +319,7 @@ def build_solve_source_manifest(chunk_items, *, job_id, degree, n_coeffs, includ
         "d": _normalize_int(degree),
         "n": _normalize_int(n_coeffs),
         "s": {
-            "slv": _compact_manifest_source(items, family="slv", degree=degree, n_coeffs=n_coeffs, include=True),
+            "slv": _compact_manifest_source(items, family="slv", degree=degree, n_coeffs=n_coeffs, include=include_solve),
             "cf": _compact_manifest_source(items, family="cf", degree=degree, n_coeffs=n_coeffs, include=include_coeff),
             "pm": _compact_manifest_source(items, family="pm", degree=degree, n_coeffs=n_coeffs, include=include_param),
         },

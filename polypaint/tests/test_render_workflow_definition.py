@@ -17,9 +17,8 @@ from workflow_contracts import (
     LEGACY_VIEWPORT_SELECTOR_FIELDS,
     RENDER_BILEVEL_FINALIZE_TASK_PAYLOAD,
     RENDER_BILEVEL_RASTER_ITEM_SELECTOR,
-    RENDER_COEFF_MERGE_ITEM_SELECTOR,
+    RENDER_COEFF_FINALIZE_TASK_PAYLOAD,
     RENDER_COEFF_RASTER_ITEM_SELECTOR,
-    RENDER_COEFF_STITCH_TASK_PAYLOAD,
     RENDER_COLOR_CLIP_TASK_PAYLOAD,
     RENDER_COLOR_RASTER_ITEM_SELECTOR,
     RENDER_FINALIZE_MT_FRAGMENT_MANIFEST,
@@ -127,11 +126,8 @@ class TestWorkflowDefinition(unittest.TestCase):
             "ReportDoneBilevel",
             "CoeffRasterPhase",
             "CoeffRasterMap",
-            "CoeffMergePhase",
-            "CoeffMergeMap",
-            "CoeffStitchPhase",
-            "CoeffStitchTask",
-            "CoeffPreviewTask",
+            "CoeffFinalizePhase",
+            "CoeffFinalizeTask",
             "ReportDoneCoeffBilevel",
         ]:
             self.assertIn(name, self.states, f"missing state {name}")
@@ -173,7 +169,6 @@ class TestWorkflowDefinition(unittest.TestCase):
         self.assertEqual(self.states["ColorRasterMap"]["MaxConcurrencyPath"], "$.plan.raster.workers")
         self.assertEqual(self.states["BilevelRasterMap"]["MaxConcurrency"], 10)
         self.assertEqual(self.states["CoeffRasterMap"]["MaxConcurrency"], 10)
-        self.assertEqual(self.states["CoeffMergeMap"]["MaxConcurrency"], 32)
 
     def test_color_clip_payload_threads_coeffs_and_params(self):
         payload = self.states["ColorClipTask"]["Parameters"]["Payload"]
@@ -208,10 +203,8 @@ class TestWorkflowDefinition(unittest.TestCase):
 
         coeff_raster = self.states["CoeffRasterMap"]["ItemSelector"]
         self._assert_exact_mapping(coeff_raster, RENDER_COEFF_RASTER_ITEM_SELECTOR)
-        coeff_merge = self.states["CoeffMergeMap"]["ItemSelector"]
-        self._assert_exact_mapping(coeff_merge, RENDER_COEFF_MERGE_ITEM_SELECTOR)
-        coeff_stitch = self.states["CoeffStitchTask"]["Parameters"]["Payload"]
-        self._assert_exact_mapping(coeff_stitch, RENDER_COEFF_STITCH_TASK_PAYLOAD)
+        coeff_finalize = self.states["CoeffFinalizeTask"]["Parameters"]["Payload"]
+        self._assert_exact_mapping(coeff_finalize, RENDER_COEFF_FINALIZE_TASK_PAYLOAD)
 
     def test_render_worker_selectors_reject_legacy_viewport_fields(self):
         for selector in (
@@ -232,12 +225,12 @@ class TestWorkflowDefinition(unittest.TestCase):
         coeff_payload = self.states["ReportDoneCoeffBilevel"]["Parameters"]["Payload"]
         self.assertEqual(coeff_payload["image_key.$"], "$.plan.outputs.coeff_bilevel_key")
 
-    def test_preview_tasks_target_preview_lambda(self):
+    def test_coeff_bilevel_no_longer_uses_preview_or_stitch_lambdas(self):
         asl_str = json.dumps(self.asl)
-        self.assertIn("placeholder-PreviewFunctionArn", asl_str)
-        preview = self.states["CoeffPreviewTask"]
-        self.assertEqual(preview["Type"], "Task")
-        self.assertEqual(preview["Parameters"]["FunctionName"], "arn:aws:lambda:us-east-1:123456789012:function:placeholder-PreviewFunctionArn")
+        self.assertNotIn("CoeffPreviewTask", self.states)
+        self.assertNotIn("CoeffStitchTask", self.states)
+        self.assertNotIn("CoeffMergeMap", self.states)
+        self.assertNotIn("placeholder-CoeffBilevelStitchFunctionArn", asl_str)
 
     def test_run_started_at_ms_is_forwarded(self):
         for state_name in [
@@ -248,8 +241,7 @@ class TestWorkflowDefinition(unittest.TestCase):
             "BilevelRasterPhase",
             "BilevelFinalizePhase",
             "CoeffRasterPhase",
-            "CoeffMergePhase",
-            "CoeffStitchPhase",
+            "CoeffFinalizePhase",
             "ReportDoneColor",
             "ReportDoneBilevel",
             "ReportDoneCoeffBilevel",

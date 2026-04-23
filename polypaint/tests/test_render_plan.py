@@ -21,9 +21,8 @@ from workflow_contracts import (
     RENDER_BILEVEL_RASTER_ITEM_SELECTOR,
     RENDER_COLOR_CLIP_TASK_PAYLOAD,
     RENDER_COLOR_RASTER_ITEM_SELECTOR,
-    RENDER_COEFF_MERGE_ITEM_SELECTOR,
+    RENDER_COEFF_FINALIZE_TASK_PAYLOAD,
     RENDER_COEFF_RASTER_ITEM_SELECTOR,
-    RENDER_COEFF_STITCH_TASK_PAYLOAD,
     RENDER_FINALIZE_MT_TASK_PAYLOAD,
     iter_jsonpath_values,
 )
@@ -55,10 +54,9 @@ def _base_color_calc(**overrides):
     return calc
 
 
-def _make_event(mode="color", pix=1024, tile_size=512, **extra_params):
+def _make_event(mode="color", pix=1024, **extra_params):
     params = {
         "pix": pix,
-        "tile_size": tile_size,
         "view_mode": "square",
         "square_extent": 2.0,
         "fmt": "jpeg",
@@ -106,10 +104,12 @@ class TestRenderPlan(unittest.TestCase):
         self.assertEqual(plan["grid"]["pix"], 1024)
         self.assertNotIn("width", plan["grid"])
         self.assertNotIn("height", plan["grid"])
-        self.assertEqual(plan["grid"]["tile_size"], 512)
-        self.assertEqual(plan["grid"]["n_tiles"], 4)
+        self.assertNotIn("tile_size", plan["grid"])
+        self.assertNotIn("n_tile_cols", plan["grid"])
+        self.assertNotIn("n_tile_rows", plan["grid"])
+        self.assertNotIn("n_tiles", plan["grid"])
         self.assertEqual(plan["physical_source_items"], [])
-        self.assertEqual(plan["tile_items"], [])
+        self.assertNotIn("tile_items", plan)
         self.assertEqual(plan["calc"]["degree"], 5)
         self.assertEqual(plan["calc"]["n_coeffs"], 6)
         self.assertEqual(plan["calc"]["n_chunks"], 4)
@@ -128,6 +128,14 @@ class TestRenderPlan(unittest.TestCase):
         self.assertAlmostEqual(plan["viewport"]["max_re"], 2.05)
         self.assertAlmostEqual(plan["viewport"]["min_im"], -1.05)
         self.assertAlmostEqual(plan["viewport"]["max_im"], 1.05)
+
+    @patch("handler_render_plan._storage_call")
+    def test_color_plan_rejects_removed_tile_size_param(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        from handler_render_plan import handler
+
+        with self.assertRaisesRegex(RuntimeError, "tile_size is not supported"):
+            handler(_make_event(tile_size=512), None)
 
     @patch("handler_render_plan._storage_call")
     @patch("handler_render_plan._invoke_sync")
@@ -284,15 +292,14 @@ class TestRenderPlan(unittest.TestCase):
 
         for contract in (
             RENDER_COEFF_RASTER_ITEM_SELECTOR,
-            RENDER_COEFF_MERGE_ITEM_SELECTOR,
-            RENDER_COEFF_STITCH_TASK_PAYLOAD,
+            RENDER_COEFF_FINALIZE_TASK_PAYLOAD,
         ):
             for jsonpath in iter_jsonpath_values(contract):
                 _assert_plan_path_exists(self, plan, jsonpath)
 
     def test_shared_contract_jsonpath_extractor_finds_paths_inside_states_expressions(self):
         self.assertIn(
-            "$.plan.calc.coeffs_keys",
+            "$.plan.coeff_bilevel.fragment_prefix",
             set(iter_jsonpath_values(RENDER_COEFF_RASTER_ITEM_SELECTOR)),
         )
 
@@ -404,20 +411,24 @@ class TestRenderPlan(unittest.TestCase):
         result = handler(_make_event(mode="coeff_bilevel"), None)
         plan = json.loads(result["body"])
         self.assertEqual(plan["calc"]["n_coeffs"], 23)
-        self.assertEqual(plan["physical_source_items"][0]["chunk_idx"], 0)
-        self.assertEqual(plan["grid"]["raw_tile_prefix"], "renders/j/tile_")
+        self.assertEqual(plan["physical_source_items"], [])
+        self.assertNotIn("tile_items", plan)
+        self.assertTrue(plan["coeff_bilevel"]["enabled"])
+        self.assertEqual(plan["coeff_bilevel"]["fragment_prefix"], "renders/j/coeff_bilevel_section_")
         self.assertEqual(plan["render_execution"], {})
         self.assertEqual(
             set(plan["params"].keys()),
             {
                 "pix",
-                "tile_size",
                 "view_mode",
                 "quantile",
                 "shim",
                 "square_extent",
                 "root_transforms",
                 "rotation",
+                "raster_section_mode",
+                "raster_section_count",
+                "raster_section_count_auto",
             },
         )
         self.assertNotIn("solve_score", plan)
@@ -460,7 +471,6 @@ class TestRenderPlan(unittest.TestCase):
             set(plan["params"].keys()),
             {
                 "pix",
-                "tile_size",
                 "view_mode",
                 "quantile",
                 "shim",
@@ -602,7 +612,6 @@ class TestRenderPlan(unittest.TestCase):
 
         result = mod.handler(_make_event(
             pix=4096,
-            tile_size=512,
             raster_mt_threads=4,
             raster_workers=10,
             solve_score_chain=[["proximity", "slv", "0.1"], ["min_angular_separation", "cf", "0.1"], ["t2_abs", "pm", "0.1"], ["avg"], ["avg"]],
@@ -642,7 +651,6 @@ class TestRenderPlan(unittest.TestCase):
             with self.assertRaises(RuntimeError) as ctx:
                 mod.handler(_make_event(
                     pix=4096,
-                    tile_size=512,
                     save_associated_palette=True,
                     solve_score_chain=[["max_re", "cf", "0.1"], ["t1_abs", "pm", "0.1"], ["avg"]],
                 ), None)
@@ -650,10 +658,11 @@ class TestRenderPlan(unittest.TestCase):
         msg = str(ctx.exception)
         self.assertIn("Counts: chunks=", msg)
         self.assertIn("raster_items=", msg)
-        self.assertIn("tiles=", msg)
+        self.assertIn("bilevel_sections=", msg)
+        self.assertIn("coeff_sections=", msg)
         self.assertNotIn("solve_score_items=", msg)
         self.assertNotIn("palette_items=", msg)
-        self.assertIn("tile_size", msg)
+        self.assertNotIn("tile_size", msg)
         self.assertNotIn("stripe_count", msg)
 
 

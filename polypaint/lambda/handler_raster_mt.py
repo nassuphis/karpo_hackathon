@@ -168,9 +168,6 @@ def _build_cmd(params):
         ROOTS2PIX_MT,
         "/tmp/pix",
         f"--pix={params['pix']}",
-        f"--tile_size={params['tile_size']}",
-        f"--n_tile_cols={params['n_tile_cols']}",
-        f"--n_tile_rows={params['n_tile_rows']}",
         f"--min_re={viewport['min_re']}",
         f"--max_re={viewport['max_re']}",
         f"--min_im={viewport['min_im']}",
@@ -444,6 +441,9 @@ def _handle_fused_raster_request(params):
             "solve_score_quantile",
             "solve_score_omega",
             "solve_score_omega_enabled",
+            "tile_size",
+            "n_tile_cols",
+            "n_tile_rows",
         ):
             value = params.get(key)
             if value not in ("", None):
@@ -469,8 +469,7 @@ def _handle_fused_raster_request(params):
             "download_us": 0,
             "native_us": 0,
             "upload_us": 0,
-            "tiles_uploaded": 0,
-            "pixel_bin_tiles_uploaded": 0,
+            "fragment_files_uploaded": 0,
             "roots_plotted": 0,
             "roots_clipped": 0,
             "emit_raw_score_bins": True,
@@ -594,16 +593,11 @@ def _handle_fused_raster_request(params):
             )
 
         perf["upload_us"] = int((time.perf_counter() - t_upload) * 1e6)
-        perf["pixel_bin_tiles_uploaded"] = 1
-        perf["pixel_bin_bytes_uploaded"] = fused_fragment_size
-        perf["pixel_bin_tile_bytes"] = []
-        perf["pixel_bin_dense_bytes_if_full_tiles"] = 0
-        perf["palette_pixel_bin_tiles_uploaded"] = 1 if emit_associated_palette_bins else 0
-        perf["palette_pixel_bin_bytes_uploaded"] = palette_fragment_size
-        perf["palette_pixel_bin_tile_bytes"] = []
-        perf["palette_pixel_bin_dense_bytes_if_full_tiles"] = 0
+        perf["fragment_files_uploaded"] = 1
+        perf["fragment_bytes_uploaded"] = fused_fragment_size
+        perf["associated_palette_fragment_files_uploaded"] = 1 if emit_associated_palette_bins else 0
+        perf["associated_palette_fragment_bytes_uploaded"] = palette_fragment_size
         perf["step_scores_bytes_uploaded"] = step_scores_size
-        perf["pix_tiles_skipped"] = 0
 
         report_status(job_id, task_id, "rasterized_1/1")
         report_status(job_id, task_id, "rasterized")
@@ -613,22 +607,14 @@ def _handle_fused_raster_request(params):
             "section_idx": int(section_idx),
             "group_idx": int(section_idx),
             "section_indices": [int(section_idx)],
-            "tiles_uploaded": 0,
-            "pixel_bin_tiles_uploaded": 1,
-            "pixel_bin_bytes_uploaded": fused_fragment_size,
-            "pixel_bin_tile_bytes": [],
-            "pixel_bin_dense_bytes_if_full_tiles": 0,
-            "palette_pixel_bin_tiles_uploaded": 1 if emit_associated_palette_bins else 0,
-            "palette_pixel_bin_bytes_uploaded": palette_fragment_size,
-            "palette_pixel_bin_tile_bytes": [],
-            "palette_pixel_bin_dense_bytes_if_full_tiles": 0,
+            "fragment_files_uploaded": 1,
+            "fragment_bytes_uploaded": fused_fragment_size,
+            "associated_palette_fragment_files_uploaded": 1 if emit_associated_palette_bins else 0,
+            "associated_palette_fragment_bytes_uploaded": palette_fragment_size,
             "step_scores_bytes_uploaded": step_scores_size,
             "pixel_bin_fragment_mode": "sparse_chunks",
-            "pixel_bin_sparse_bytes_in": 0,
-            "pixel_bin_sparse_files_in": 0,
             "pixel_bins_drive_rgb": False,
             "rgb_source": "raw_score_bins",
-            "pix_tiles_skipped": 0,
             "raster_us": perf["native_us"],
             "roots_plotted": perf["roots_plotted"],
             "roots_clipped": perf["roots_clipped"],

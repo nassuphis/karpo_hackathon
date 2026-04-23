@@ -3,11 +3,11 @@ Bilevel Lambda handler.
 
 Legacy phases:
   phase=raster: one chunk -> per-tile bitset files (.bits)
-  phase=coeff_raster: one coeff chunk -> per-tile bitset files (.bits)
   phase=merge: per-tile bitsets -> tile TIFF
 
 Fused phases:
   phase=section_raster: one logical section -> one sparse occupancy fragment
+  phase=coeff_raster: one logical coeff section -> one sparse occupancy fragment
   phase=finalize: assemble sparse occupancy fragments -> final TIFF + preview
   phase=from_raw_color: threshold a fused Color greyscale raw sidecar -> bilevel
 """
@@ -58,6 +58,7 @@ RAW_TO_BILEVEL_PROGRESS_INTERVAL_S = float(os.environ.get("RAW_TO_BILEVEL_PROGRE
 MAX_BILEVEL_S3_METADATA_BYTES = 1800
 _BILEVEL_UPLOAD_METADATA_LIMITS = {
     "artifact_id": 128,
+    "family": 32,
     "created_at": 64,
     "format": 16,
     "mode": 32,
@@ -83,6 +84,7 @@ _BILEVEL_UPLOAD_METADATA_LIMITS = {
 }
 _BILEVEL_FORWARD_METADATA_KEYS = (
     "artifact_id",
+    "family",
     "created_at",
     "degree",
     "pix",
@@ -265,15 +267,18 @@ def _set_bilevel_upload_metadata_value(target, key, value):
 
 def _build_bilevel_upload_metadata(*, metadata, width, height, source_item_count):
     upload_meta = {}
+    metadata = dict(metadata or {})
     for key in _BILEVEL_FORWARD_METADATA_KEYS:
         if key in metadata:
             _set_bilevel_upload_metadata_value(upload_meta, key, metadata.get(key))
+    family = str(metadata.get("family") or "bilevel").strip() or "bilevel"
+    mode = str(metadata.get("mode") or ("coeffs" if family == "coeffs" else "bilevel")).strip() or "bilevel"
     for key, value in {
         "artifact_id": metadata.get("artifact_id") or "",
-        "family": None,
+        "family": family,
         "created_at": metadata.get("created_at") or _utc_now_iso(),
         "format": "tif",
-        "mode": "bilevel",
+        "mode": mode,
         "width": width,
         "height": height,
         "pix": metadata.get("pix") or width,
@@ -281,9 +286,6 @@ def _build_bilevel_upload_metadata(*, metadata, width, height, source_item_count
         "bilevel_section_mode": metadata.get("bilevel_section_mode") or "",
         "bilevel_section_count": metadata.get("bilevel_section_count") or source_item_count,
     }.items():
-        if key == "family":
-            upload_meta["family"] = "bilevel"
-            continue
         _set_bilevel_upload_metadata_value(upload_meta, key, value)
     total_metadata_bytes = sum(len(k.encode("utf-8")) + len(v.encode("utf-8")) for k, v in upload_meta.items())
     if total_metadata_bytes > MAX_BILEVEL_S3_METADATA_BYTES:
@@ -568,28 +570,60 @@ def handle_raster(params):
 
 
 def handle_coeff_raster(params):
-    """One coeff chunk -> per-tile bitset files. One Lambda per chunk."""
+    """One logical coefficient section -> one sparse occupancy fragment."""
     try:
         job_id = str(params.get("job_id") or "").strip()
         if not job_id:
             raise RuntimeError("coeff bilevel raster requires job_id")
-        chunk_idx = params.get("chunk_idx", params.get("stripe_idx"))
-        if chunk_idx is None:
-            raise RuntimeError("coeff bilevel raster requires chunk_idx")
-        task_id = params.get("task_id", f"coeff_bilevel_raster_{chunk_idx}")
+        section_idx_raw = params.get("section_idx")
+        if section_idx_raw in (None, ""):
+            raise RuntimeError("coeff bilevel raster requires section_idx")
+        try:
+            section_idx = int(section_idx_raw)
+        except (TypeError, ValueError) as e:
+            raise RuntimeError(f"coeff bilevel raster requires integer section_idx, got {section_idx_raw!r}") from e
+        if section_idx < 0:
+            raise RuntimeError(f"coeff bilevel raster requires section_idx >= 0, got {section_idx}")
+        task_id = str(params.get("task_id") or f"coeff_bilevel_section_{section_idx}").strip() or f"coeff_bilevel_section_{section_idx}"
+        solve_source_manifest = dict(params.get("solve_source_manifest") or {})
+        step_start_raw = params.get("step_start")
+        if step_start_raw in (None, ""):
+            raise RuntimeError("coeff bilevel raster requires step_start")
+        try:
+            step_start = int(step_start_raw)
+        except (TypeError, ValueError) as e:
+            raise RuntimeError(f"coeff bilevel raster requires integer step_start, got {step_start_raw!r}") from e
+        if step_start < 0:
+            raise RuntimeError(f"coeff bilevel raster requires step_start >= 0, got {step_start}")
+        try:
+            step_count = int(params.get("step_count", 0) or 0)
+        except (TypeError, ValueError) as e:
+            raise RuntimeError(f"coeff bilevel raster requires integer step_count, got {params.get('step_count')!r}") from e
+        fragment_prefix = str(params.get("fragment_prefix") or "").strip()
+        if not solve_source_manifest:
+            raise RuntimeError("coeff bilevel raster requires solve_source_manifest")
+        if step_count <= 0:
+            raise RuntimeError("coeff bilevel raster requires step_count > 0")
+        if not fragment_prefix:
+            raise RuntimeError("coeff bilevel raster requires fragment_prefix")
         report_status(job_id, task_id, "started")
 
-        bin_key = params.get("coeffs_key", f"renders/{job_id}/coeffs_{int(chunk_idx):04d}.bin")
-        bin_path = _TMP_COEFFS
-        t0 = time.time()
-        try:
-            _download_to_path(bin_key, bin_path)
-        except Exception as e:
-            raise RuntimeError(f"Failed to download coeffs chunk s3://{BUCKET}/{bin_key}: {e}") from e
-        dl_ms = int((time.time() - t0) * 1000)
-        report_status(job_id, task_id, "bin_downloaded")
+        coeff_spans = build_source_spans(
+            solve_source_manifest,
+            source_family="cf",
+            solve_start=step_start,
+            solve_count=step_count,
+        )
+        if not coeff_spans:
+            raise RuntimeError(
+                f"coeff bilevel raster produced no coeff spans for solve_start={step_start}, step_count={step_count}"
+            )
 
-        _cleanup_tmp(["/tmp/coeff_bits_t*.bits"])
+        _cleanup_tmp([_TMP_COEFFS, _TMP_SECTION_FRAGMENT])
+        t0 = time.time()
+        stitch_spans_to_file(s3, BUCKET, coeff_spans, _TMP_COEFFS)
+        dl_ms = int((time.time() - t0) * 1000)
+        report_status(job_id, task_id, "coeffs_downloaded")
 
         try:
             n_coeffs = int(params["n_coeffs"])
@@ -601,11 +635,8 @@ def handle_coeff_raster(params):
         viewport = _viewport_bounds(params)
         pix = _pix_param(params, "coeff bilevel raster")
         cmd = [
-            COEFFS_BILEVEL_RASTER, bin_path, "/tmp/coeff_bits",
+            COEFFS_BILEVEL_RASTER, _TMP_COEFFS, _TMP_SECTION_FRAGMENT,
             f"--pix={pix}",
-            f"--tile_size={params['tile_size']}",
-            f"--n_tile_cols={params['n_tile_cols']}",
-            f"--n_tile_rows={params['n_tile_rows']}",
             f"--min_re={viewport['min_re']}",
             f"--max_re={viewport['max_re']}",
             f"--min_im={viewport['min_im']}",
@@ -620,32 +651,26 @@ def handle_coeff_raster(params):
         meta = json.loads(result.stdout)
         raster_ms = int((time.time() - t1) * 1000)
 
-        try:
-            os.remove(bin_path)
-        except OSError:
-            pass
-
-        n_tiles = params["n_tile_cols"] * params["n_tile_rows"]
-        uploaded = 0
-        for t in range(n_tiles):
-            bits_path = f"/tmp/coeff_bits_t{t:04d}.bits"
-            if os.path.exists(bits_path) and os.path.getsize(bits_path) > 0:
-                s3_key = f"renders/{job_id}/coeff_bits_chunk_{int(chunk_idx):04d}_t{t:04d}.bits"
-                with open(bits_path, "rb") as fh:
-                    s3.upload_fileobj(fh, BUCKET, s3_key)
-                uploaded += 1
-            if os.path.exists(bits_path):
-                os.remove(bits_path)
+        fragment_key = f"{fragment_prefix}{section_idx:04d}.frag"
+        with open(_TMP_SECTION_FRAGMENT, "rb") as fh:
+            s3.put_object(
+                Bucket=BUCKET,
+                Key=fragment_key,
+                Body=fh,
+                ContentType="application/octet-stream",
+            )
 
         report_status(job_id, task_id, "done")
         return ok_response({
-            "chunk_idx": chunk_idx,
-            "stripe_idx": chunk_idx,
-            "tiles_with_hits": uploaded,
-            "roots_plotted": meta["roots_plotted"],
-            "roots_clipped": meta["roots_clipped"],
+            "section_idx": section_idx,
+            "coeffs_plotted": int(meta.get("coeffs_plotted", 0) or 0),
+            "coeffs_clipped": int(meta.get("coeffs_clipped", 0) or 0),
+            "coeffs_deduped": int(meta.get("coeffs_deduped", 0) or 0),
+            "pixels_set": int(meta.get("pixels_set", 0) or 0),
+            "fragment_size": int(meta.get("file_size", 0) or 0),
             "dl_ms": dl_ms,
             "raster_ms": raster_ms,
+            "fragment_key": fragment_key,
         })
     except Exception as e:
         _report_phase_error(
@@ -653,9 +678,9 @@ def handle_coeff_raster(params):
             str(e),
             phase="coeff_bilevel_raster",
             phase_label="Coeffs raster",
-            extra_keys=("chunk_idx", "stripe_idx", "n_coeffs"),
+            extra_keys=("section_idx", "step_start", "step_count", "fragment_prefix", "n_coeffs"),
         )
-        _cleanup_tmp([_TMP_COEFFS, "/tmp/coeff_bits_t*.bits"])
+        _cleanup_tmp([_TMP_COEFFS, _TMP_SECTION_FRAGMENT])
         raise
 
 
@@ -884,11 +909,14 @@ def handle_finalize(params):
         out_key = str(params.get("out_key") or "").strip()
         preview_key = str(params.get("preview_key") or "").strip()
         metadata = dict(params.get("metadata") or {})
+        family = str(metadata.get("family") or "bilevel").strip() or "bilevel"
+        finalize_phase = "coeff_bilevel_finalize" if family == "coeffs" else "bilevel_finalize"
+        finalize_label = "Coeff assemble + encode" if family == "coeffs" else "Assemble + encode"
         if source_item_count <= 0:
             raise RuntimeError("bilevel finalize requires source_item_count > 0")
         if not fragment_prefix or not out_key or not preview_key:
             raise RuntimeError("bilevel finalize requires fragment_prefix, out_key, and preview_key")
-        _phase(job_id, task_id, "started", "bilevel_finalize", "Assemble + encode")
+        _phase(job_id, task_id, "started", finalize_phase, finalize_label)
         assemble_workers = _finalize_worker_count()
         finalize_s3 = _finalize_s3_client(assemble_workers)
         t_prep = time.time()
@@ -902,8 +930,8 @@ def handle_finalize(params):
             job_id,
             task_id,
             "fragments_ready",
-            "bilevel_finalize",
-            "Assemble + encode",
+            finalize_phase,
+            finalize_label,
             prep_ms=prep_ms,
             workers=assemble_workers,
         )
@@ -920,8 +948,8 @@ def handle_finalize(params):
                 job_id,
                 task_id,
                 "assembling",
-                "bilevel_finalize",
-                "Assemble + encode",
+                finalize_phase,
+                finalize_label,
                 prep_ms=prep_ms,
                 assemble_ms=assemble_ms,
                 workers=assemble_workers,
@@ -969,8 +997,8 @@ def handle_finalize(params):
             job_id,
             task_id,
             "done",
-            "bilevel_finalize",
-            "Assemble + encode",
+            finalize_phase,
+            finalize_label,
             prep_ms=prep_ms,
             assemble_ms=assemble_ms,
             render_ms=render_ms,
@@ -993,11 +1021,13 @@ def handle_finalize(params):
             "raw_size": raw_size,
         })
     except Exception as e:
+        err_metadata = dict((params or {}).get("metadata") or {}) if isinstance(params, dict) else {}
+        err_family = str(err_metadata.get("family") or "").strip()
         _report_phase_error(
             params,
             str(e),
-            phase="bilevel_finalize",
-            phase_label="Assemble + encode",
+            phase="coeff_bilevel_finalize" if err_family == "coeffs" else "bilevel_finalize",
+            phase_label="Coeff assemble + encode" if err_family == "coeffs" else "Assemble + encode",
             extra_keys=("pix", "source_item_count", "fragment_prefix", "out_key", "preview_key"),
         )
         raise

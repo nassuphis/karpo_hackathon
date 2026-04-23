@@ -266,9 +266,10 @@ def _expected_section_fragment_bounds(roots, *, width, height, bounds, rotation=
     return pairs
 
 
-def _expected_coeff_bits(coeff_rows, *, width, height, ext):
+def _expected_coeff_fragment(coeff_rows, *, width, height, ext):
     scale = _square_scale(width, ext)
-    bits = bytearray((width * height + 7) // 8)
+    claimed = set()
+    pairs = []
     plotted = 0
     clipped = 0
     deduped = 0
@@ -278,18 +279,18 @@ def _expected_coeff_bits(coeff_rows, *, width, height, ext):
             clipped += 1
             continue
         bit_idx = py * width + px
-        byte_idx = bit_idx >> 3
-        mask = 1 << (bit_idx & 7)
-        if bits[byte_idx] & mask:
+        if bit_idx in claimed:
             deduped += 1
             continue
-        bits[byte_idx] |= mask
+        claimed.add(bit_idx)
+        pairs.append((bit_idx, 1))
         plotted += 1
-    return bytes(bits), plotted, clipped, deduped
+    return pairs, plotted, clipped, deduped
 
 
-def _expected_coeff_bits_bounds(coeff_rows, *, width, height, bounds, rotation=0.0):
-    bits = bytearray((width * height + 7) // 8)
+def _expected_coeff_fragment_bounds(coeff_rows, *, width, height, bounds, rotation=0.0):
+    claimed = set()
+    pairs = []
     plotted = 0
     clipped = 0
     deduped = 0
@@ -309,14 +310,13 @@ def _expected_coeff_bits_bounds(coeff_rows, *, width, height, bounds, rotation=0
             clipped += 1
             continue
         bit_idx = py * width + px
-        byte_idx = bit_idx >> 3
-        mask = 1 << (bit_idx & 7)
-        if bits[byte_idx] & mask:
+        if bit_idx in claimed:
             deduped += 1
             continue
-        bits[byte_idx] |= mask
+        claimed.add(bit_idx)
+        pairs.append((bit_idx, 1))
         plotted += 1
-    return bytes(bits), plotted, clipped, deduped
+    return pairs, plotted, clipped, deduped
 
 
 def test_roots2pix_mt_square_ext_2_5_matches_legacy_square_camera_oracle():
@@ -357,9 +357,6 @@ def test_roots2pix_mt_square_ext_2_5_matches_legacy_square_camera_oracle():
                 str(binary),
                 str(root / "pix"),
                 f"--pix={width}",
-                "--tile_size=20",
-                "--n_tile_cols=1",
-                "--n_tile_rows=1",
                 f"--min_re={bounds['min_re']}",
                 f"--max_re={bounds['max_re']}",
                 f"--min_im={bounds['min_im']}",
@@ -446,15 +443,12 @@ def test_coeffs_bilevel_square_ext_2_5_matches_legacy_square_camera_oracle():
         width = height = 20
         ext = 2.5
         bounds = _square_bounds(ext)
-        out_prefix = root / "coeff_bits"
+        out_frag = root / "coeff.frag"
         cmd = [
             str(binary),
             str(coeffs_path),
-            str(out_prefix),
+            str(out_frag),
             f"--pix={width}",
-            "--tile_size=20",
-            "--n_tile_cols=1",
-            "--n_tile_rows=1",
             f"--min_re={bounds['min_re']}",
             f"--max_re={bounds['max_re']}",
             f"--min_im={bounds['min_im']}",
@@ -464,11 +458,11 @@ def test_coeffs_bilevel_square_ext_2_5_matches_legacy_square_camera_oracle():
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         assert result.returncode == 0, result.stderr
         meta = json.loads(result.stdout)
-        expected_bits, plotted, clipped, deduped = _expected_coeff_bits(coeff_rows, width=width, height=height, ext=ext)
-        assert meta["roots_plotted"] == plotted
-        assert meta["roots_clipped"] == clipped
-        assert meta["roots_deduped"] == deduped
-        assert (root / "coeff_bits_t0000.bits").read_bytes() == expected_bits
+        expected_pairs, plotted, clipped, deduped = _expected_coeff_fragment(coeff_rows, width=width, height=height, ext=ext)
+        assert meta["coeffs_plotted"] == plotted
+        assert meta["coeffs_clipped"] == clipped
+        assert meta["coeffs_deduped"] == deduped
+        assert out_frag.read_bytes() == _encode_u32le_u8_pairs(expected_pairs)
 
 
 def test_roots2pix_mt_asymmetric_bounds_match_independent_bounds_oracle():
@@ -513,9 +507,6 @@ def test_roots2pix_mt_asymmetric_bounds_match_independent_bounds_oracle():
                 str(binary),
                 str(root / "pix"),
                 f"--pix={width}",
-                "--tile_size=24",
-                "--n_tile_cols=1",
-                "--n_tile_rows=1",
                 f"--min_re={bounds['min_re']}",
                 f"--max_re={bounds['max_re']}",
                 f"--min_im={bounds['min_im']}",
@@ -615,15 +606,12 @@ def test_coeffs_bilevel_asymmetric_bounds_match_independent_bounds_oracle():
             "min_im": -1.0,
             "max_im": 2.0,
         }
-        out_prefix = root / "coeff_bits"
+        out_frag = root / "coeff.frag"
         cmd = [
             str(binary),
             str(coeffs_path),
-            str(out_prefix),
+            str(out_frag),
             f"--pix={width}",
-            "--tile_size=24",
-            "--n_tile_cols=1",
-            "--n_tile_rows=1",
             f"--min_re={bounds['min_re']}",
             f"--max_re={bounds['max_re']}",
             f"--min_im={bounds['min_im']}",
@@ -633,16 +621,16 @@ def test_coeffs_bilevel_asymmetric_bounds_match_independent_bounds_oracle():
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         assert result.returncode == 0, result.stderr
         meta = json.loads(result.stdout)
-        expected_bits, plotted, clipped, deduped = _expected_coeff_bits_bounds(
+        expected_pairs, plotted, clipped, deduped = _expected_coeff_fragment_bounds(
             coeff_rows,
             width=width,
             height=height,
             bounds=bounds,
         )
-        assert meta["roots_plotted"] == plotted
-        assert meta["roots_clipped"] == clipped
-        assert meta["roots_deduped"] == deduped
-        assert (root / "coeff_bits_t0000.bits").read_bytes() == expected_bits
+        assert meta["coeffs_plotted"] == plotted
+        assert meta["coeffs_clipped"] == clipped
+        assert meta["coeffs_deduped"] == deduped
+        assert out_frag.read_bytes() == _encode_u32le_u8_pairs(expected_pairs)
 
 
 def test_active_binaries_reject_legacy_square_camera_args():
@@ -674,9 +662,6 @@ def test_active_binaries_reject_legacy_square_camera_args():
                     str(roots_binary),
                     str(root / "pix"),
                     "--pix=8",
-                    "--tile_size=8",
-                    "--n_tile_cols=1",
-                    "--n_tile_rows=1",
                     "--center_re=0",
                     "--center_im=0",
                     "--scale=1",
@@ -719,11 +704,8 @@ def test_active_binaries_reject_legacy_square_camera_args():
             [
                 str(coeff_binary),
                 str(coeffs_path),
-                str(root / "coeff_bits"),
+                str(root / "coeff.frag"),
                 "--pix=8",
-                "--tile_size=8",
-                "--n_tile_cols=1",
-                "--n_tile_rows=1",
                 "--center_re=0",
                 "--center_im=0",
                 "--scale=1",
@@ -735,6 +717,28 @@ def test_active_binaries_reject_legacy_square_camera_args():
         )
         assert coeff_result.returncode != 0
         assert "no longer supported" in coeff_result.stderr
+
+        coeff_tile_result = subprocess.run(
+            [
+                str(coeff_binary),
+                str(coeffs_path),
+                str(root / "coeff.frag"),
+                "--pix=8",
+                "--tile_size=8",
+                "--n_tile_cols=1",
+                "--n_tile_rows=1",
+                "--min_re=-1",
+                "--max_re=1",
+                "--min_im=-1",
+                "--max_im=1",
+                "--n_coeffs=1",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert coeff_tile_result.returncode != 0
+        assert "no longer accepts tile args" in coeff_tile_result.stderr
 
 
 def test_roots2pix_mt_rejects_legacy_input_modes():
@@ -752,9 +756,6 @@ def test_roots2pix_mt_rejects_legacy_input_modes():
             str(binary),
             str(root / "pix"),
             "--pix=8",
-            "--tile_size=8",
-            "--n_tile_cols=1",
-            "--n_tile_rows=1",
             "--min_re=-1",
             "--max_re=1",
             "--min_im=-1",
@@ -799,9 +800,6 @@ def test_roots2pix_mt_rejects_legacy_output_mode_args():
                 str(binary),
                 str(root / "pix"),
                 "--pix=8",
-                "--tile_size=8",
-                "--n_tile_cols=1",
-                "--n_tile_rows=1",
                 "--min_re=-1",
                 "--max_re=1",
                 "--min_im=-1",
@@ -840,6 +838,18 @@ def test_roots2pix_mt_rejects_legacy_output_mode_args():
                 {
                     "args": ["--palette=inferno"],
                     "expect": "no longer accepts --color, --match, or --palette",
+                },
+                {
+                    "args": ["--tile_size=8"],
+                    "expect": "no longer accepts tile args",
+                },
+                {
+                    "args": ["--n_tile_cols=1"],
+                    "expect": "no longer accepts tile args",
+                },
+                {
+                    "args": ["--n_tile_rows=1"],
+                    "expect": "no longer accepts tile args",
                 },
                 {
                     "args": ["--solve_metric=centroid_re"],

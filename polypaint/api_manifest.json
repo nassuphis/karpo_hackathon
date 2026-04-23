@@ -3,7 +3,6 @@
     "dispatch_targets": [
       "autolevels",
       "bilevel",
-      "coeff_bilevel_stitch",
       "coeffgen",
       "color_repalette",
       "color_to_bilevel",

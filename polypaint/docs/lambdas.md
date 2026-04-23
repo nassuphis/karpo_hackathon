@@ -110,31 +110,29 @@ Computes viewport bounds (center, scale) from lores root data.
 **Route:** POST /raster (dispatched async)
 **Memory:** 1769 MB (1 vCPU)
 
-Converts one chunk of root data into tile-bucketed sparse pixel files.
+Converts one logical section of root data into one sparse global raw-score
+fragment.
 
 **Input:**
-- `job_id`, `chunk_idx`, `bin_key` — root data location
-- `width`, `height` — full canvas size
-- `tile_size`, `n_tile_cols`, `n_tile_rows` — tile grid
-- `center_re`, `center_im`, `scale` — viewport
+- `job_id`, `section_idx`, `solve_source_manifest` — root data location
+- `pix` — square output size
+- `min_re`, `max_re`, `min_im`, `max_im` — exact viewport bounds
 - `degree` — polynomial degree
-- `color` — "rainbow", "proximity", "solve_score", or "constant"
-- `match` — root matching: "none", "greedy", or "hungarian"
-- `palette` — for proximity mode: "inferno", "viridis", etc.
-- `constant_color` — hex RGB for constant mode
+- `solve_score_chain`, `solve_score_clip_key` — score program and clip artifact
+- `fragment_prefix` — output prefix for `section_{idx}.frag`
 
 **Process:**
-1. Downloads `.bin` from S3
-2. Runs `roots2pix` which transforms each root (re, im) → pixel (px, py):
+1. Reads the requested logical section through the source manifest
+2. Runs `roots2pix_mt` which transforms each root (re, im) → pixel (px, py):
    ```
-   px = halfW + (re - center_re) * scale
-   py = halfH - (im - center_im) * scale
+   px = floor((re - min_re) * pix / (max_re - min_re))
+   py = floor((max_im - im) * pix / (max_im - min_im))
    ```
-3. Buckets pixels into tiles, deduplicates with per-tile bitset
-4. Writes `.pix` files: 8-byte entries `[uint32 local_pixel_idx, uint32 rgb]`
-5. Uploads non-empty `.pix` files to S3
+3. Deduplicates with one full-image shared bitset
+4. Writes one sparse fragment: 5-byte entries `[uint32 global_pixel_idx, uint8 score]`
+5. Uploads `fragments/section_{idx}.frag`
 
-**Output:** `tiles_uploaded`, `roots_plotted`, `roots_clipped`, `raster_us`
+**Output:** `fragment_files_uploaded`, `fragment_bytes_uploaded`, `roots_plotted`, `roots_clipped`, `raster_us`
 
 ### Color Modes
 
@@ -325,7 +323,7 @@ That responsibility moved to `/render-summary`.
 Asynchronous fan-out: invokes target Lambdas in parallel using a 50-thread pool. Fire-and-forget (`InvocationType=Event`).
 
 **Input:**
-- `target` — "sweep", "raster", "finalize", "encode", "bilevel", or "coeff_bilevel_stitch"
+- `target` — one of the targets published in `api_manifest.json` / `handler_dispatch.FUNCTIONS`
 - `jobs` — array of job specs to invoke
 
 **Output:** `fired`, `total`, `errors`, `non_202`
@@ -339,52 +337,28 @@ If Lambda returns a status code other than 202 (e.g. 429 throttle), it is still 
 ## polypaint-bilevel
 
 **Handler:** `handler_bilevel.py`
-**Binary:** `bilevel_raster` (static) + `bilevel_merge` (dynamic/libvips)
+**Binary:** `bilevel_section_raster`, `coeffs_bilevel_raster`, `assemble_greyscale`, `raw_to_bilevel`
 **Route:** POST /bilevel (dispatched async via dispatch Lambda)
 **Memory:** 1769 MB + libvips layer, 10 GB /tmp
 **Async retry:** 2 attempts, 3600s max event age
 
-Single Lambda function handling two phases, routed by `phase` parameter:
+Single Lambda function handling sparse-fragment bilevel phases, routed by `phase` parameter:
 
-### phase=raster
+### phase=section_raster
 
-One Lambda per chunk. Downloads chunk `.bin`, runs `bilevel_raster` to project roots to per-tile packed bitsets, uploads non-empty `.bits` files to S3.
-
-Cleans stale `/tmp/*.bits` files before each run (warm container reuse fix — previous invocation's leftover files would be uploaded as current chunk's data).
+One Lambda per logical root section. Downloads the root byte spans, runs `bilevel_section_raster`, and uploads one sparse fragment containing `[u32le global_pixel_idx][u8 score=1]` records.
 
 ### phase=coeff_raster
 
-Same as raster but for coefficient bilevel rendering. Uses `coeffs_bilevel_raster` binary. Different task prefix (`coeff_bilevel_raster_`) and S3 naming (`coeff_bits_s*_t*.bits`).
+One Lambda per logical coefficient section. Downloads coefficient byte spans, runs `coeffs_bilevel_raster`, and uploads the same sparse global-index fragment format.
 
-### phase=merge
+### phase=finalize
 
-One Lambda per tile. Downloads all chunk `.bits` files for one tile, runs `bilevel_merge merge` to OR bitsets into a single tile TIFF (1-bit CCITT G4). Supports configurable `bits_prefix` and `tile_prefix` for coeff vs root naming.
+Presigns sparse fragments, runs `assemble_greyscale` into a dense raw occupancy image, then runs `raw_to_bilevel` to write the TIFF and preview.
 
-See [bilevel.md](bilevel.md) for architecture details.
+### phase=from_raw_color
 
----
-
-## polypaint-coeff-bilevel-stitch
-
-**Handler:** `handler_coeff_bilevel_stitch.py`
-**Binary:** `bilevel_merge` (stitch mode)
-**Route:** dispatched async via dispatch Lambda (target: "coeff_bilevel_stitch")
-**Memory:** 6144 MB (~4 vCPUs for libvips multithreading), 10 GB /tmp
-
-Separate Lambda from bilevel raster/merge for independent memory sizing. libvips is multithreaded and uses the extra vCPUs.
-
-**Process:**
-1. Downloads all tile TIFFs from S3
-2. Runs `bilevel_merge stitch` with `--width`, `--height`, `--tile_size` for exact output dimensions
-3. Produces tiled BigTIFF (or strip-based for small images) with CCITT G4
-4. Generates 1024px preview PNG via libvips resize
-5. Uploads final TIFF + preview PNG to S3
-
-**Output:** `out_key`, `preview_key`, `file_size`, `dl_ms`, `stitch_ms`
-
-### Why separate from polypaint-bilevel
-
-The stitch phase needs more memory than raster/merge because libvips opens all tile TIFFs concurrently and uses multiple threads for encoding. Raster/merge are embarrassingly parallel (one Lambda per chunk/tile) and only need 1 vCPU. Making stitch a separate Lambda avoids over-provisioning the 500+ raster/merge invocations at 6144 MB each.
+Thresholds a fused Color raw sidecar into a bilevel TIFF.
 
 ---
 
@@ -547,19 +521,13 @@ If any are missing, it re-dispatches only those jobs (max 2 re-dispatch rounds).
 ### Idempotency
 
 Re-dispatch can cause a task to run twice if the original was merely delayed (not dropped). This is safe because:
-- Raster: writes the same `.bits` files to the same S3 keys (deterministic)
-- Merge: ORs the same bitsets, overwrites the same tile TIFF
+- Section raster: writes the same sparse `.frag` file to the same S3 key (deterministic)
+- Finalize: rewrites the same final artifact keys
 - DynamoDB: `report_status` is a `put_item` (upsert), not conditional
 
 ### Call sites
 
-The `_bilevelDispatchAndPoll` helper replaced all 4 dispatch+poll blocks:
-1. Root bilevel raster (`bilevel_raster_` prefix)
-2. Root bilevel merge (`bilevel_merge_` prefix)
-3. Coeff bilevel raster (`coeff_bilevel_raster_` prefix)
-4. Coeff bilevel merge (`coeff_bilevel_merge_` prefix)
-
-Stitch is a single Lambda (not fan-out), so it doesn't need wave dispatch.
+Render bilevel and coeff-bilevel fan-out are Step Functions Map states now. The old browser-side `_bilevelDispatchAndPoll` path is not the active render path.
 
 ### Tests
 
@@ -728,7 +696,6 @@ Single script handles everything: JS syntax check, binary compilation (static + 
 | polypaint-raster | 0 | 300s | Errors should fail fast, not retry |
 | polypaint-finalize | 0 | 300s | Same — OOM or bad input won't fix on retry |
 | polypaint-bilevel | **2** | **3600s** | Concurrency throttle drops need retry |
-| polypaint-coeff-bilevel-stitch | 0 | 300s | Single invocation, not fan-out |
 
 The bilevel Lambda is the only one with retries enabled because it's the only one dispatched at fan-out scale (up to 500 concurrent). The others are either single invocations or have different failure modes where retry would be harmful.
 

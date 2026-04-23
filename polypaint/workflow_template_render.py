@@ -23,9 +23,8 @@ if str(LAMBDA_DIR) not in sys.path:
 from workflow_contracts import (
     RENDER_BILEVEL_FINALIZE_TASK_PAYLOAD,
     RENDER_BILEVEL_RASTER_ITEM_SELECTOR,
-    RENDER_COEFF_MERGE_ITEM_SELECTOR,
+    RENDER_COEFF_FINALIZE_TASK_PAYLOAD,
     RENDER_COEFF_RASTER_ITEM_SELECTOR,
-    RENDER_COEFF_STITCH_TASK_PAYLOAD,
     RENDER_COLOR_CLIP_TASK_PAYLOAD,
     RENDER_COLOR_RASTER_ITEM_SELECTOR,
     RENDER_FINALIZE_MT_TASK_PAYLOAD,
@@ -76,8 +75,7 @@ def _apply_render_workflow_contracts(asl: dict) -> dict:
     states["BilevelRasterMap"]["ItemSelector"] = deepcopy(RENDER_BILEVEL_RASTER_ITEM_SELECTOR)
     states["BilevelFinalizeTask"]["Parameters"]["Payload"] = deepcopy(RENDER_BILEVEL_FINALIZE_TASK_PAYLOAD)
     states["CoeffRasterMap"]["ItemSelector"] = deepcopy(RENDER_COEFF_RASTER_ITEM_SELECTOR)
-    states["CoeffMergeMap"]["ItemSelector"] = deepcopy(RENDER_COEFF_MERGE_ITEM_SELECTOR)
-    states["CoeffStitchTask"]["Parameters"]["Payload"] = deepcopy(RENDER_COEFF_STITCH_TASK_PAYLOAD)
+    states["CoeffFinalizeTask"]["Parameters"]["Payload"] = deepcopy(RENDER_COEFF_FINALIZE_TASK_PAYLOAD)
     return asl
 
 
@@ -89,9 +87,7 @@ def render_render_workflow_definition(
     encode_function_arn: str,
     storage_function_arn: str,
     bilevel_function_arn: str,
-    coeff_bilevel_stitch_function_arn: str,
     solve_proximity_function_arn: str,
-    preview_function_arn: str,
 ) -> dict:
     asl = _render_json_template(
         RENDER_TEMPLATE_PATH,
@@ -102,9 +98,7 @@ def render_render_workflow_definition(
             "EncodeFunctionArn": encode_function_arn,
             "StorageFunctionArn": storage_function_arn,
             "BilevelFunctionArn": bilevel_function_arn,
-            "CoeffBilevelStitchFunctionArn": coeff_bilevel_stitch_function_arn,
             "SolveProximityFunctionArn": solve_proximity_function_arn,
-            "PreviewFunctionArn": preview_function_arn,
         },
     )
     return _apply_render_workflow_contracts(asl)
@@ -122,9 +116,7 @@ def render_render_workflow_definition_for_tests(
         encode_function_arn=_render_test_arn(account_id=account_id, region=region, placeholder="EncodeFunctionArn"),
         storage_function_arn=_render_test_arn(account_id=account_id, region=region, placeholder="StorageFunctionArn"),
         bilevel_function_arn=_render_test_arn(account_id=account_id, region=region, placeholder="BilevelFunctionArn"),
-        coeff_bilevel_stitch_function_arn=_render_test_arn(account_id=account_id, region=region, placeholder="CoeffBilevelStitchFunctionArn"),
         solve_proximity_function_arn=_render_test_arn(account_id=account_id, region=region, placeholder="SolveProximityFunctionArn"),
-        preview_function_arn=_render_test_arn(account_id=account_id, region=region, placeholder="PreviewFunctionArn"),
     )
 
 
@@ -144,9 +136,7 @@ def _parse_args() -> argparse.Namespace:
     render.add_argument("--encode-function-arn", required=True)
     render.add_argument("--storage-function-arn", required=True)
     render.add_argument("--bilevel-function-arn", required=True)
-    render.add_argument("--coeff-bilevel-stitch-function-arn", required=True)
     render.add_argument("--solve-proximity-function-arn", required=True)
-    render.add_argument("--preview-function-arn", required=True)
 
     return parser.parse_args()
 
@@ -161,9 +151,7 @@ def main() -> int:
             encode_function_arn=args.encode_function_arn,
             storage_function_arn=args.storage_function_arn,
             bilevel_function_arn=args.bilevel_function_arn,
-            coeff_bilevel_stitch_function_arn=args.coeff_bilevel_stitch_function_arn,
             solve_proximity_function_arn=args.solve_proximity_function_arn,
-            preview_function_arn=args.preview_function_arn,
         )
         _write_json(Path(args.out), payload)
         return 0

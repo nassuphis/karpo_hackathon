@@ -645,14 +645,15 @@ class TestStorageCleanRender(unittest.TestCase):
         mock_s3.delete_objects.assert_not_called()
 
     @patch("handler_storage.s3")
-    def test_coeff_cleanup_deletes_stale_coeff_bits_and_tiles(self, mock_s3):
-        """Coeff bilevel cleanup must purge old coeff bitsets before a new render."""
+    def test_coeff_cleanup_deletes_sparse_fragments_and_stale_tile_artifacts(self, mock_s3):
+        """Coeff bilevel cleanup must purge current sparse fragments and old tile leftovers."""
         from handler_storage import handle_clean_render
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
 
         def paginate(Bucket, Prefix):
             mapping = {
+                "renders/j/coeff_bilevel_section_": [{"Contents": [{"Key": "renders/j/coeff_bilevel_section_0000.frag"}]}],
                 "renders/j/coeff_t": [{"Contents": [{"Key": "renders/j/coeff_t0000.tif"}]}],
                 "renders/j/coeff_bits_chunk_": [{"Contents": [{"Key": "renders/j/coeff_bits_chunk_0000_t0000.bits"}]}],
             }
@@ -660,6 +661,7 @@ class TestStorageCleanRender(unittest.TestCase):
 
         mock_paginator.paginate.side_effect = paginate
         mock_s3.delete_objects.return_value = {"Deleted": [
+            {"Key": "renders/j/coeff_bilevel_section_0000.frag"},
             {"Key": "renders/j/coeff_t0000.tif"},
             {"Key": "renders/j/coeff_bits_chunk_0000_t0000.bits"},
         ]}
@@ -667,9 +669,10 @@ class TestStorageCleanRender(unittest.TestCase):
         event = {"body": json.dumps({"job_id": "j", "pipeline": "coeff_bilevel"})}
         result = handle_clean_render(event)
         body = json.loads(result["body"])
-        self.assertEqual(body["deleted"], 2)
+        self.assertEqual(body["deleted"], 3)
 
         deleted_keys = [o["Key"] for o in mock_s3.delete_objects.call_args[1]["Delete"]["Objects"]]
+        self.assertIn("renders/j/coeff_bilevel_section_0000.frag", deleted_keys)
         self.assertIn("renders/j/coeff_t0000.tif", deleted_keys)
         self.assertIn("renders/j/coeff_bits_chunk_0000_t0000.bits", deleted_keys)
         self.assertNotIn("renders/j/image_coeffs_bilevel.tif", deleted_keys)

@@ -1,6 +1,6 @@
 # Bilevel Render Lambda
 
-Dedicated Lambda for rendering polynomial root images as 1-bit black/white TIFFs. Chunk-first architecture: each chunk is processed once, each root is projected once.
+Dedicated Lambda for rendering root or coefficient occupancy as 1-bit black/white TIFFs. The active render path is sparse-section first: each logical section emits global pixel-hit fragments, then one finalize Lambda assembles and encodes the image.
 
 ## Output format
 
@@ -10,28 +10,24 @@ PNG uses zlib internally (even through libvips), which has size limits and is ve
 
 ## Architecture
 
-Three-phase chunk-first pipeline:
+Two-phase sparse pipeline:
 
 ```
-Phase 1 — Raster (one Lambda per chunk):
-  Download chunk .bin → project roots → write per-tile .bits files to S3
+Phase 1 — Section raster (one Lambda per logical section):
+  Download root/coeff byte spans → project points → write sparse .frag to S3
 
-Phase 2 — Merge (one Lambda per tile):
-  Download chunk .bits files for tile → OR bitsets → write 1-bit tile TIFF
-
-Phase 3 — Stitch (single Lambda):
-  Download tile TIFFs → vips_arrayjoin → write final 1-bit TIFF
+Phase 2 — Finalize (single Lambda):
+  Presign .frag files → assemble_greyscale raw → raw_to_bilevel TIFF + preview
 ```
 
-### Why chunk-first
+### Why sparse sections
 
-The alternative (tile-first: one Lambda per tile, each downloads all chunks) was implemented first and rejected. Problems:
+The old tiled path produced per-tile bitsets, merged them, then stitched tile TIFFs. The active path avoids that extra topology:
 
-1. **Duplicated work**: every chunk downloaded N_tiles times, every root projected N_tiles times
-2. **Duplicated IO**: with 10 chunks and 169 tiles, that's 1690 S3 downloads instead of 10
-3. **Slow**: each tile Lambda spent most of its time downloading stripes
-
-Chunk-first processes each chunk once, projects each root once, then fans out per-tile bitsets (tiny: 2 MB each) for the merge phase. The merge phase is trivial (bitwise OR).
+1. Each source row is downloaded once by its logical section.
+2. Each root/coefficient is projected once.
+3. Fragments use global pixel indexes, so no edge-tile geometry or tile stitch is needed.
+4. Final assembly is shared with color sparse fragments.
 
 ### Why not PNG
 
@@ -40,75 +36,60 @@ The stitch phase on a 50K×50K image timed out at 600s using `vips_pngsave` with
 ## Data flow
 
 ```
-chunk_0.bin ──→ bits_chunk_0000_t0000.bits  bits_chunk_0000_t0001.bits  ...
-chunk_1.bin ──→ bits_chunk_0001_t0000.bits  bits_chunk_0001_t0001.bits  ...
+root/coeff spans for section 0 ──→ bilevel_section_0000.frag
+root/coeff spans for section 1 ──→ bilevel_section_0001.frag
   ...
 
-For each tile:
-  bits_chunk_0000_tN.bits + bits_chunk_0001_tN.bits + ... ──OR──→ bilevel_tN.tif
-
-bilevel_t0000.tif + bilevel_t0001.tif + ... ──stitch──→ image_bilevel.tif
+section_*.frag ──assemble_greyscale──→ greyscale.raw ──raw_to_bilevel──→ image.tif + preview.png
 ```
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `bilevel_raster.c` | Static binary: one chunk → per-tile .bits files. No libvips. |
-| `bilevel_merge.c` | Dynamic binary (libvips): merge .bits → tile TIFF, or stitch tile TIFFs → final TIFF. |
-| `handler_bilevel.py` | Lambda handler: routes phase=raster/merge/stitch to appropriate binary. |
+| `bilevel_section_raster.c` | Static binary: one logical root section → sparse occupancy fragment. |
+| `coeffs_bilevel_raster.c` | Static binary: one logical coefficient section → sparse occupancy fragment. |
+| `assemble_greyscale.c` | Assembles sparse `[u32le pixel_idx][u8 score]` fragments into dense raw. |
+| `raw_to_bilevel.c` | Encodes dense raw occupancy into TIFF + preview. |
+| `handler_bilevel.py` | Lambda handler: routes section raster, coeff raster, finalize, and Color2Bilevel phases. |
 
 ## C binary interfaces
 
-### bilevel_raster
+### bilevel_section_raster
 
 ```
-bilevel_raster stripe.bin /tmp/bits
-    --width=W --height=H --tile_size=TS
-    --n_tile_cols=C --n_tile_rows=R
-    --center_re=X --center_im=Y --scale=S --degree=D
+bilevel_section_raster section.bin out.frag
+    --pix=N
+    --min_re=A --max_re=B --min_im=C --max_im=D
+    --degree=D
     [--rotation=R]
 ```
 
-Output: `{prefix}_t0000.bits`, `{prefix}_t0001.bits`, ... (only non-empty tiles)
-Each `.bits` file: raw packed bitset, `ceil(tile_w * tile_h / 8)` bytes. No header.
+Output fragment records: `[u32le global_pixel_idx][u8 score=1]`.
 
-Build: `aarch64-linux-musl-gcc -O3 -static -o bilevel_raster bilevel_raster.c -lm`
+### coeffs_bilevel_raster
 
-### bilevel_merge
-
-Merge mode (OR bitsets → tile TIFF):
 ```
-bilevel_merge merge --tile_w=TW --tile_h=TH --output=tile.tif
-    bits1.bits bits2.bits ...
-```
-
-Stitch mode (join tile TIFFs → final TIFF):
-```
-bilevel_merge stitch --n_cols=C --n_rows=R --output=final.tif
-    tile0.tif tile1.tif ...
+coeffs_bilevel_raster coeffs.bin out.frag
+    --pix=N
+    --min_re=A --max_re=B --min_im=C --max_im=D
+    --n_coeffs=C
+    [--rotation=R]
 ```
 
-Both modes output TIFF with CCITT G4, bitdepth=1 via `vips_tiffsave`.
-
-Build: Docker ARM64 with libvips (same as raw2jpeg).
+Output fragment records: `[u32le global_pixel_idx][u8 score=1]`.
 
 ## Memory budget
 
-### Raster Lambda (per chunk)
-- One chunk .bin in memory: 20–200 MB
-- Per-tile bitsets: `nTiles × ceil(tileW × tileH / 8)` — 169 × 2 MB = 338 MB for 50K
-- **Total: ~500 MB** — fits in 1769 MB
+### Section raster Lambda
+- One logical root/coeff section in `/tmp`
+- One full-image claim bitset: `ceil(pix * pix / 8)` bytes
+- Sparse hit vector: `4 bytes * unique_hit_count`
 
-### Merge Lambda (per tile)
-- N stripe .bits files: N × 2 MB — 20 MB for 10 stripes
-- Image buffer for TIFF conversion: 16 MB (4096×4096 × 1 byte)
-- **Total: ~40 MB**
-
-### Stitch Lambda (single)
-- libvips opens tile TIFFs lazily (demand-driven, not all in memory)
-- Working set: a few rows of tiles at a time
-- Output streams to disk
+### Finalize Lambda
+- Dense raw output: `pix * pix` bytes
+- Fragment download buffers are bounded by worker count
+- TIFF encode uses libvips via `raw_to_bilevel`
 
 ## Deploy
 
@@ -116,63 +97,32 @@ Build: Docker ARM64 with libvips (same as raw2jpeg).
 ./deploy.sh create   # or update
 ```
 
-Two Lambda functions:
+One Lambda function:
 
-**polypaint-bilevel** — raster + merge phases:
+**polypaint-bilevel** — sparse raster + finalize phases:
 - 1769 MB memory (1 vCPU), 10 GB `/tmp`, libvips layer
 - Async retry: **2 attempts, 3600s max event age** (not 0 — see below)
-- Two binaries: `bilevel_raster` (static) + `bilevel_merge` (dynamic/libvips)
-
-**polypaint-coeff-bilevel-stitch** — coeff stitch phase:
-- 6144 MB memory (~4 vCPUs), 10 GB `/tmp`, libvips layer
-- Async retry: 0 (single invocation, not fan-out)
-- Binary: `bilevel_merge` (stitch mode)
-
-The stitch phase is a separate Lambda because libvips is multithreaded and benefits from extra vCPUs. The raster/merge Lambdas run at 500+ concurrency and don't need 6 GB each.
+- Binaries: `bilevel_section_raster`, `coeffs_bilevel_raster`, `assemble_greyscale`, `raw_to_bilevel`
 
 ## Frontend pipeline
 
-`runBilevelPipeline()` dispatches three phases sequentially, using `_bilevelDispatchAndPoll()` for the fan-out phases:
+Render is Step Functions driven:
 
-1. **Raster**: wave-dispatch `nChunks` bilevel Lambdas (`phase: "raster"`, MAX_INFLIGHT=200)
-2. Poll `bilevel_raster_*` tasks; after 45s stall, query `return_ids`, re-dispatch missing (max 2 rounds)
-3. **Merge**: wave-dispatch `nTiles` bilevel Lambdas (`phase: "merge"`, MAX_INFLIGHT=200)
-4. Poll `bilevel_merge_*` tasks with same stall/re-dispatch logic
-5. **Stitch**: dispatch 1 bilevel-stitch Lambda
-6. Poll `coeff_bilevel_stitch` task until complete
-7. Refresh the Render family catalog via `/render-summary` and display the selected artifact in the family viewer
-
-See [lambdas.md — Dispatch Resilience](lambdas.md#dispatch-resilience) for why wave dispatch and re-dispatch were added.
-
-## Scaling
-
-| Image size | Raster bitsets (total) | Merge input/tile | Old RGB pipeline |
-|-----------|----------------------|-----------------|-----------------|
-| 4096×4096 | 2 MB | 20 MB (10 chunks) | 48 MB/tile |
-| 50K×50K | ~338 MB | 20 MB/tile | ~7 GB stitched raw |
-| 100K×100K | ~1.2 GB | 20 MB/tile | ~28 GB (impossible) |
+1. `BilevelRasterMap` or `CoeffRasterMap` fans out logical section raster tasks.
+2. `BilevelFinalizeTask` or `CoeffFinalizeTask` assembles sparse fragments and encodes TIFF + preview.
+3. `/render-summary` refreshes the Render family catalog.
 
 ## Known limits
 
-- **MAX_TILES=4096**: the raster binary supports up to a 64×64 tile grid. At 4096px tiles that's 262K×262K max. At 2048px tiles it's 131K×131K. Sufficient for the 100K target.
-- **Whole-chunk malloc**: the raster binary loads the full chunk .bin into memory. This is the correct tradeoff for chunk-first (one chunk per Lambda), but memory is bounded by solver chunk sizing.
-- **No merge/stitch local tests**: `bilevel_merge` requires libvips from the Lambda Docker build. Only `bilevel_raster` is tested locally.
+- **Full-image claim bitset**: section raster needs `ceil(pix * pix / 8)` bytes for dedupe.
+- **Sparse fragment density**: fragments cost 5 bytes per unique occupied pixel. Very dense coefficient renders can create large fragments.
+- **Finalize raw size**: final assembly writes `pix * pix` raw bytes before TIFF encoding.
 
 ## Tests
 
-`polypaint/tests/test_bilevel_raster.py` — verifies the C binary against a Python reference implementation:
-
-- **test_basic**: poly_1, 50×50 grid, 1000×1000 image, 2×2 tiles. Bitsets match byte-for-byte. Plotted/clipped/deduped counts match.
-- **test_rotation**: quarter turn (0.25 turns), bitsets match.
-- **test_empty_tiles**: offset viewport so all roots clip. Verifies no .bits files written.
-- **test_multiple_functions**: poly_1, poly_4, poly_49 all produce byte-identical bitsets to Python.
-
-Run: `cd polypaint/tests && uv run python test_bilevel_raster.py`
-
-Requires `bilevel_raster_local` (natively compiled) in `polypaint/lambda/`:
-```bash
-cd polypaint/lambda && cc -O3 -o bilevel_raster_local bilevel_raster.c -lm
-```
+- `tests/test_bilevel_handler.py` covers handler section raster and finalize contracts.
+- `tests/test_exact_viewport_parity.py` covers native projection math for root and coeff sparse rasterizers.
+- `tests/docker_runtime_regression.py` covers deployed ARM64 binaries inside the Lambda-like Docker runtime.
 
 ## Design history
 
@@ -210,13 +160,4 @@ These are triggered by buttons in the artifact panel, not part of the render pip
 
 **Symptom:** bilevel render produced corrupted output — tiles contained data from a previous render.
 
-**Root cause:** Lambda reuses containers. The `/tmp` directory persists between invocations. The raster phase writes `.bits` files to `/tmp/bits_t0000.bits`, etc. If a warm container runs a different stripe than last time, the old `.bits` files are still there. The upload loop iterates over all expected tile indices and uploads whatever `.bits` file exists at that path — including stale ones from the previous invocation.
-
-**Fix:** `handler_bilevel.py` now globs and removes all stale `.bits` files before each raster run:
-```python
-import glob
-for stale in glob.glob("/tmp/bits_t*.bits"):
-    os.remove(stale)
-```
-
-Same pattern for coeff raster (`/tmp/coeff_bits_t*.bits`).
+This stale `/tmp/*.bits` class is removed from the active sparse section path because each worker writes exactly one deterministic fragment path.

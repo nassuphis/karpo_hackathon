@@ -1420,7 +1420,7 @@ ARTIFACT_FAMILIES = {
         "same_family_stale": [],
     },
     "coeff_bilevel": {
-        "intermediate_prefixes": ["coeff_t", "coeff_bits_chunk_"],
+        "intermediate_prefixes": ["coeff_bilevel_section_", "coeff_t", "coeff_bits_chunk_"],
         "intermediate_keys": [],
         "preview": [],
         "same_family_stale": [],

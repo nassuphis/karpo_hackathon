@@ -24,7 +24,6 @@ echo "Running predeploy contract gate..."
     tests/test_finalize_mt_handler.py \
     tests/test_raster_mt.py \
     tests/test_bilevel_handler.py \
-    tests/test_coeff_bilevel_stitch_handler.py \
     tests/test_solve_proximity_handler.py \
     -q
 bash tests/test_frontend_js.sh

@@ -234,7 +234,7 @@ class TestBilevelHandler(unittest.TestCase):
     def test_handler_coeff_raster_reports_malformed_payload(self, mock_report):
         import handler_bilevel as mod
 
-        with self.assertRaisesRegex(RuntimeError, "requires chunk_idx"):
+        with self.assertRaisesRegex(RuntimeError, "requires section_idx"):
             mod.handler({"body": json.dumps({
                 "phase": "coeff_raster",
                 "job_id": "job",
@@ -245,7 +245,7 @@ class TestBilevelHandler(unittest.TestCase):
         self.assertEqual(mock_report.call_args.args[0], "job")
         self.assertEqual(mock_report.call_args.args[1], "coeff_bilevel_raster_bad")
         self.assertEqual(mock_report.call_args.args[2], "error")
-        self.assertIn("requires chunk_idx", mock_report.call_args.args[3])
+        self.assertIn("requires section_idx", mock_report.call_args.args[3])
         rd = mock_report.call_args.kwargs.get("result_data") or {}
         self.assertEqual(rd.get("phase"), "coeff_bilevel_raster")
         self.assertEqual(rd.get("phase_label"), "Coeffs raster")
@@ -428,6 +428,76 @@ class TestBilevelHandler(unittest.TestCase):
         self.assertEqual(uploaded["renders/job/bilevel_section_0000.frag"], _encode_fragment_pairs([(3, 1)]))
 
     @patch("handler_bilevel.report_status")
+    @patch("handler_bilevel.subprocess.run")
+    @patch("handler_bilevel.stitch_spans_to_file")
+    @patch("handler_bilevel.build_source_spans")
+    @patch("handler_bilevel.s3")
+    def test_coeff_raster_uploads_sparse_section_fragment(
+        self,
+        mock_s3,
+        mock_build_spans,
+        mock_stitch,
+        mock_run,
+        mock_report,
+    ):
+        import handler_bilevel as mod
+
+        uploaded = {}
+        mock_build_spans.return_value = [{"key": "renders/job/coeffs.bin", "offset": 0, "length": 48}]
+
+        def stitch_side_effect(s3_client, bucket, spans, path):
+            with open(path, "wb") as fh:
+                fh.write(b"coeffs")
+
+        def run_side_effect(cmd, capture_output=False, text=False, timeout=None):
+            self.assertFalse(any(str(arg).startswith("--tile_size=") for arg in cmd))
+            self.assertFalse(any(str(arg).startswith("--n_tile_cols=") for arg in cmd))
+            with open("/tmp/section.frag", "wb") as fh:
+                fh.write(_encode_fragment_pairs([(4, 1)]))
+            return MagicMock(
+                returncode=0,
+                stdout=json.dumps({
+                    "coeffs_plotted": 3,
+                    "coeffs_clipped": 1,
+                    "coeffs_deduped": 2,
+                    "pixels_set": 1,
+                    "file_size": 5,
+                }),
+                stderr="",
+            )
+
+        def put_object(**kwargs):
+            body = kwargs["Body"]
+            uploaded[kwargs["Key"]] = body.read() if hasattr(body, "read") else body
+
+        mock_stitch.side_effect = stitch_side_effect
+        mock_run.side_effect = run_side_effect
+        mock_s3.put_object.side_effect = put_object
+
+        with tempfile.TemporaryDirectory():
+            result = mod.handle_coeff_raster({
+                "job_id": "job",
+                "task_id": "coeff_bilevel_section_0",
+                "section_idx": 0,
+                "section_count": 2,
+                "step_start": 0,
+                "step_count": 10,
+                "solve_source_manifest": {"v": 2, "s": {"cf": {"r": 48, "k": ["renders/job/coeffs.bin"], "g": [[0, 0, 10, 0]]}}},
+                "fragment_prefix": "renders/job/coeff_bilevel_section_",
+                "pix": 8,
+                **_bounds_from_center_scale(8, 8, 0, 0, 1),
+                "degree": 5,
+                "n_coeffs": 6,
+                "rotation": 0,
+            })
+
+        body = json.loads(result["body"])
+        self.assertEqual(body["fragment_key"], "renders/job/coeff_bilevel_section_0000.frag")
+        self.assertEqual(body["coeffs_plotted"], 3)
+        self.assertIn("renders/job/coeff_bilevel_section_0000.frag", uploaded)
+        self.assertEqual(uploaded["renders/job/coeff_bilevel_section_0000.frag"], _encode_fragment_pairs([(4, 1)]))
+
+    @patch("handler_bilevel.report_status")
     @patch("handler_bilevel._upload_file")
     @patch("handler_bilevel._finalize_s3_client")
     @patch("handler_bilevel.subprocess.run")
@@ -558,6 +628,79 @@ class TestBilevelHandler(unittest.TestCase):
                     "preview_key": "renders/job/bilevel/art/preview.png",
                     "metadata": {"artifact_id": "art", "pix": "8"},
                 })
+
+    @patch("handler_bilevel.report_status")
+    @patch("handler_bilevel._upload_file")
+    @patch("handler_bilevel._finalize_s3_client")
+    @patch("handler_bilevel.subprocess.run")
+    def test_finalize_preserves_coeff_family_metadata(
+        self,
+        mock_run,
+        mock_finalize_s3_client,
+        mock_upload,
+        mock_report,
+    ):
+        import handler_bilevel as mod
+
+        class _FakeFinalizeS3:
+            def generate_presigned_url(self, op, Params=None, ExpiresIn=None):
+                return f"http://example.invalid/{Params['Key']}"
+
+        mock_finalize_s3_client.return_value = _FakeFinalizeS3()
+        uploaded = []
+
+        def run_side_effect(cmd, capture_output=False, text=False, timeout=None, env=None):
+            exe = os.path.basename(cmd[0])
+            if exe == "assemble_greyscale":
+                with open("/tmp/final_bilevel.raw", "wb") as fh:
+                    fh.write(b"\x01" * 64)
+                with open("/tmp/final_bilevel.hist.json", "w", encoding="utf-8") as fh:
+                    json.dump({"histogram": [0, 64] + [0] * 254, "background_pixels": 0, "nonzero_pixels": 64}, fh)
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if exe == "raw_to_bilevel":
+                with open("/tmp/final.tif", "wb") as fh:
+                    fh.write(b"II*\x00final")
+                with open("/tmp/final_preview.png", "wb") as fh:
+                    fh.write(b"\x89PNG")
+                return MagicMock(returncode=0, stdout=json.dumps({"file_size": 9}), stderr="")
+            raise AssertionError(f"unexpected executable {exe}")
+
+        def upload_side_effect(path, key, *, content_type, metadata=None):
+            uploaded.append((path, key, content_type, dict(metadata or {})))
+
+        mock_run.side_effect = run_side_effect
+        mock_upload.side_effect = upload_side_effect
+
+        with tempfile.TemporaryDirectory():
+            mod.handle_finalize({
+                "job_id": "job",
+                "task_id": "coeff_bilevel_finalize",
+                "pix": 8,
+                "source_item_count": 1,
+                "fragment_prefix": "renders/job/coeff_bilevel_section_",
+                "out_key": "renders/job/coeffs/art/image.tif",
+                "preview_key": "renders/job/coeffs/art/preview.png",
+                "metadata": {
+                    "artifact_id": "coeffs_1",
+                    "family": "coeffs",
+                    "mode": "coeffs",
+                    "pix": "8",
+                    "bilevel_pipeline": mod.BILEVEL_SPARSE_PIPELINE,
+                    "bilevel_section_mode": "logical_sections_auto",
+                    "bilevel_section_count": "1",
+                },
+            })
+
+        self.assertEqual(uploaded[0][1], "renders/job/coeffs/art/image.tif")
+        self.assertEqual(uploaded[0][3]["family"], "coeffs")
+        self.assertEqual(uploaded[0][3]["mode"], "coeffs")
+        self.assertEqual(uploaded[0][3]["bilevel_pipeline"], mod.BILEVEL_SPARSE_PIPELINE)
+        done_rows = [
+            call.kwargs.get("result_data") or {}
+            for call in mock_report.call_args_list
+            if len(call.args) >= 3 and call.args[2] == "done"
+        ]
+        self.assertEqual(done_rows[-1].get("phase"), "coeff_bilevel_finalize")
 
     @patch("handler_bilevel.report_status")
     @patch("handler_bilevel._upload_file")

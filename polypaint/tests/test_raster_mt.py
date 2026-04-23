@@ -92,10 +92,7 @@ def _fused_event(**overrides):
         "task_id": "raster_0",
         "section_idx": 0,
         "section_count": 1,
-        "n_tile_cols": 1,
-        "n_tile_rows": 1,
         "pix": 512,
-        "tile_size": 512,
         "degree": 5,
         "n_coeffs": 6,
         "rotation": 0.0,
@@ -187,6 +184,7 @@ class TestRasterMT(unittest.TestCase):
             mod.handler(
                 _fused_event(
                     solve_metric="crowding",
+                    tile_size=512,
                 ),
                 None,
             )
@@ -250,6 +248,9 @@ class TestRasterMT(unittest.TestCase):
             self.assertIn("--pixel_bin_prefix=/tmp/pixbin", cmd)
             self.assertIn("--step_scores_output=/tmp/step_scores.bin", cmd)
             self.assertNotIn("--palette_bin_prefix=/tmp/palette_pixbin", cmd)
+            self.assertFalse(any(arg.startswith("--tile_size=") for arg in cmd))
+            self.assertFalse(any(arg.startswith("--n_tile_cols=") for arg in cmd))
+            self.assertFalse(any(arg.startswith("--n_tile_rows=") for arg in cmd))
             self.assertNotIn("--score_coeff_manifest=", " ".join(cmd))
             self.assertNotIn("--score_params_manifest=", " ".join(cmd))
             self.assertNotIn("--color=solve_score", cmd)
@@ -280,9 +281,8 @@ class TestRasterMT(unittest.TestCase):
         self.assertEqual(body["engine"], "mt")
         self.assertEqual(body["threads"], 2)
         self.assertEqual(body["input_mode"], "multispan_sectioned")
-        self.assertEqual(body["tiles_uploaded"], 0)
-        self.assertEqual(body["pixel_bin_tiles_uploaded"], 1)
-        self.assertEqual(body["pixel_bin_bytes_uploaded"], 5)
+        self.assertEqual(body["fragment_files_uploaded"], 1)
+        self.assertEqual(body["fragment_bytes_uploaded"], 5)
         self.assertEqual(body["step_scores_bytes_uploaded"], 4)
         self.assertEqual(uploads["renders/j/color/color_1/fragments/section_0000.frag"], _encode_fragment_pairs([(2, 55)]))
         self.assertEqual(uploads["renders/j/color/color_1/fragments/section_0000_step_scores.raw"], bytes([5, 7, 11, 13]))
@@ -389,8 +389,8 @@ class TestRasterMT(unittest.TestCase):
         )
         body = json.loads(result["body"])
 
-        self.assertEqual(body["palette_pixel_bin_tiles_uploaded"], 1)
-        self.assertEqual(body["palette_pixel_bin_bytes_uploaded"], 5)
+        self.assertEqual(body["associated_palette_fragment_files_uploaded"], 1)
+        self.assertEqual(body["associated_palette_fragment_bytes_uploaded"], 5)
         self.assertEqual(uploads["renders/j/palettes/pal_1/fragments/section_0000.frag"], _encode_fragment_pairs([(1, 44)]))
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
@@ -485,7 +485,7 @@ class TestRasterMT(unittest.TestCase):
         body = json.loads(result["body"])
 
         self.assertEqual(body["input_mode"], "multispan_sectioned")
-        self.assertEqual(body["pixel_bin_tiles_uploaded"], 1)
+        self.assertEqual(body["fragment_files_uploaded"], 1)
         self.assertEqual(body["step_scores_bytes_uploaded"], 4)
         self.assertEqual(uploads["renders/j/color/color_1/fragments/section_0000.frag"], _encode_fragment_pairs([(3, 88)]))
 

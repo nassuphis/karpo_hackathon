@@ -881,9 +881,6 @@ def test_roots2pix_mt_multispan_runtime():
                 bin_path,
                 "/tmp/roots2pix_mt_pix",
                 "--pix=8",
-                "--tile_size=8",
-                "--n_tile_cols=1",
-                "--n_tile_rows=1",
                 "--min_re=-2",
                 "--max_re=2",
                 "--min_im=-2",
@@ -1080,6 +1077,54 @@ def test_bilevel_section_raster_runtime():
 
     cleanup(section_path, out_frag)
     print("=== bilevel_section_raster runtime PASSED ===")
+
+
+def test_coeffs_bilevel_raster_runtime():
+    print("\n--- coeffs_bilevel_raster runtime ---")
+
+    bin_path = "/src/coeffs_bilevel_raster"
+    assert os.path.exists(bin_path), "coeffs_bilevel_raster not found at %s" % bin_path
+
+    coeffs_path = "/tmp/coeffs_bilevel_rt.bin"
+    out_frag = "/tmp/coeffs_bilevel_rt.frag"
+
+    with open(coeffs_path, "wb") as f:
+        for coeffs in [[(0.0, 0.0), (1.0, 0.0)], [(0.0, 0.0), (100.0, 100.0)], [(-4.25, 0.0), (0.0, 0.0)]]:
+            for re, im in coeffs:
+                f.write(struct.pack("<ff", re, im))
+
+    r = subprocess.run(
+        [
+            bin_path,
+            coeffs_path,
+            out_frag,
+            "--pix=8",
+            "--min_re=-4",
+            "--max_re=4",
+            "--min_im=-4",
+            "--max_im=4",
+            "--n_coeffs=2",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert r.returncode == 0, "coeffs_bilevel_raster failed: " + r.stderr[:200]
+    meta = json.loads(r.stdout)
+    assert meta["coeffs_plotted"] == 2, "unexpected plotted count %r" % (meta,)
+    assert meta["coeffs_clipped"] == 2, "unexpected clipped count %r" % (meta,)
+    assert meta["coeffs_deduped"] == 2, "unexpected dedup count %r" % (meta,)
+
+    with open(out_frag, "rb") as f:
+        frag = f.read()
+    assert frag == encode_fragment_pairs([(36, 1), (37, 1)]), "unexpected fragment bytes %r" % (frag,)
+    print(
+        "  coeffs_bilevel_raster: OK (plotted=%d, clipped=%d, dedup=%d)"
+        % (meta["coeffs_plotted"], meta["coeffs_clipped"], meta["coeffs_deduped"])
+    )
+
+    cleanup(coeffs_path, out_frag)
+    print("=== coeffs_bilevel_raster runtime PASSED ===")
 
 
 def test_bilevel_merge_assemble_runtime():
@@ -1757,6 +1802,7 @@ if __name__ == "__main__":
         "/src/roots2pix_mt",
         "/src/solve_palette_chunk_mt",
         "/src/bilevel_section_raster",
+        "/src/coeffs_bilevel_raster",
         "/src/bilevel_merge",
         "/src/raw_to_bilevel",
         "/src/assemble_greyscale",
@@ -1777,6 +1823,7 @@ if __name__ == "__main__":
     test_render_preview()
     test_resize_runtime()
     test_bilevel_section_raster_runtime()
+    test_coeffs_bilevel_raster_runtime()
     test_bilevel_merge_assemble_runtime()
     test_raw_to_bilevel_runtime()
     test_color_to_bilevel_handler_runtime()

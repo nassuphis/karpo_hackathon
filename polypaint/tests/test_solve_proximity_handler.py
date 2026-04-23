@@ -585,6 +585,138 @@ def test_clip_default_chain_still_writes_v2_program_metadata():
         hsp.subprocess.run = orig_run
 
 
+def test_clip_lagged_program_preserves_spec_without_native_program_args():
+    import handler_solve_proximity as hsp
+
+    mock_s3 = mock.MagicMock()
+
+    def mock_get(**kwargs):
+        key = kwargs.get("Key", "")
+        if key == "renders/test/lores.bin":
+            return {"Body": _ChunkBody(b"\x00" * 64)}
+        raise AssertionError(f"unexpected get_object key: {key}")
+
+    clip_stdout = [
+        json.dumps({"clip_lo": -1.0, "clip_hi": 2.0, "min_score": -1.0, "max_score": 2.0, "n_solves": 4, "threads": 1}),
+    ]
+    commands = []
+
+    def mock_run(cmd, capture_output, text, timeout):
+        commands.append(list(cmd))
+        return mock.MagicMock(returncode=0, stdout=clip_stdout.pop(0), stderr="")
+
+    orig_s3, orig_report, orig_run = hsp.s3, hsp.report_status, hsp.subprocess.run
+    hsp.s3 = mock_s3
+    hsp.report_status = mock.MagicMock()
+    hsp.subprocess.run = mock_run
+    mock_s3.get_object = mock_get
+    mock_s3.put_object = mock.MagicMock()
+    try:
+        result = hsp.handle_clip({
+            "job_id": "test",
+            "task_id": "clip_lagged_chain_test",
+            "metric": "proximity",
+            "solve_score_quantile": 0.001,
+            "solve_score_chain": [["proximity", "slv", "0.1"], ["proximity", "slv-1", "0.1"], ["abs_diff"]],
+            "degree": 4,
+            "lores_bin_key": "renders/test/lores.bin",
+            "out_key": "renders/test/solve_scores/clip.json",
+        })
+        body = json.loads(result["body"])
+        written = json.loads(mock_s3.put_object.call_args.kwargs["Body"])
+        assert body["metric_count"] == 1
+        assert written["program"] == "m0-0;m0-1;abs_diff"
+        assert written["metric_count"] == 1
+        assert len(commands) == 1
+        assert "--metric=proximity" in commands[0]
+        assert not any(arg.startswith("--score_program=") for arg in commands[0])
+        assert not any(arg.startswith("--score_metrics=") for arg in commands[0])
+    finally:
+        hsp.s3 = orig_s3
+        hsp.report_status = orig_report
+        hsp.subprocess.run = orig_run
+
+
+def test_hist_rejects_lagged_program_without_logical_section_before_native_execution():
+    import handler_solve_proximity as hsp
+
+    orig_run = hsp.subprocess.run
+    hsp.subprocess.run = mock.MagicMock()
+    try:
+        try:
+            hsp.handle_hist({
+                "job_id": "test",
+                "task_id": "hist_lagged_chain_test",
+                "chunk_idx": 0,
+                "metric": "proximity",
+                "solve_score_quantile": 0.001,
+                "solve_score_chain": [["proximity", "slv", "0.1"], ["proximity", "slv-1", "0.1"], ["abs_diff"]],
+                "bin_key": "renders/test/chunk_0.bin",
+                "degree": 4,
+                "clip_key": "renders/test/solve_scores/clip.json",
+                "hist_bins": 4,
+                "out_key": "renders/test/solve_scores/chunk_0_hist.json",
+            })
+            assert False, "should have rejected lagged hist"
+        except RuntimeError as exc:
+            assert "lagged solve-score hist requires logical_section=true" in str(exc)
+        assert not hsp.subprocess.run.called
+    finally:
+        hsp.subprocess.run = orig_run
+
+
+def test_summary_allows_lagged_program_and_forwards_program_args():
+    import handler_solve_proximity as hsp
+
+    mock_s3 = mock.MagicMock()
+
+    def mock_get(**kwargs):
+        key = kwargs.get("Key", "")
+        if key == "renders/test/lores.bin":
+            return {"Body": _ChunkBody(b"\x00" * 64)}
+        raise AssertionError(f"unexpected get_object key: {key}")
+
+    mock_s3.get_object = mock_get
+    clip_stdout = [
+        json.dumps({"clip_lo": 0.0, "clip_hi": 1.0, "min_score": 0.0, "max_score": 1.0, "n_solves": 4, "threads": 1}),
+    ]
+    summary_stdout = json.dumps({"n_solves": 4, "degree": 4, "threads": 1})
+
+    calls = []
+
+    def mock_run(cmd, capture_output, text, timeout):
+        calls.append(list(cmd))
+        if "--mode=clip" in cmd:
+            return mock.MagicMock(returncode=0, stdout=clip_stdout.pop(0), stderr="")
+        if "--mode=summary" in cmd:
+            return mock.MagicMock(returncode=0, stdout=summary_stdout, stderr="")
+        raise AssertionError(f"unexpected subprocess command: {cmd}")
+
+    orig_s3, orig_run = hsp.s3, hsp.subprocess.run
+    hsp.s3 = mock_s3
+    hsp.subprocess.run = mock_run
+    try:
+        result = hsp.handle_summary({
+            "job_id": "test",
+            "degree": 4,
+            "metric": "proximity",
+            "solve_score_quantile": 0.001,
+            "solve_score_chain": [["proximity", "slv", "0.1"], ["proximity", "slv-1", "0.9"], ["abs_diff"]],
+            "lores_bin_key": "renders/test/lores.bin",
+        })
+        body = json.loads(result["body"])
+        summary_cmd = next(cmd for cmd in calls if "--mode=summary" in cmd)
+        assert "--score_program=m0-0;m0-1;abs_diff" in summary_cmd
+        assert "--score_metrics=proximity" in summary_cmd
+        assert not any(arg.startswith("--score_sources=") for arg in summary_cmd)
+        assert body["program"] == "m0-0;m0-1;abs_diff"
+        assert body["score_metrics"] == ["proximity"]
+        assert body["score_sources"] == ["slv"]
+    finally:
+        hsp.s3 = orig_s3
+        hsp.subprocess.run = orig_run
+
+
 def test_clip_v2_mixed_source_slv_cf_pm_starts_when_lores_context_is_present():
     import handler_solve_proximity as hsp
 
@@ -1009,6 +1141,107 @@ def test_hist_v2_logical_section_sectioned_uses_multispan_manifests():
             assert done_kwargs["result_data"]["source_coeffs_size"] == 120
             assert done_kwargs["result_data"]["input_mode"] == "multispan_sectioned"
             assert "chunk_idx" not in done_kwargs["result_data"]
+    finally:
+        hsp.s3 = orig_s3
+        hsp.report_status = orig_report
+        hsp.subprocess.run = orig_run
+
+
+def test_hist_v2_lagged_logical_section_threads_prelude_to_native():
+    import handler_solve_proximity as hsp
+    from logical_sections import build_solve_source_manifest
+
+    chain = [["proximity", "slv", "2"], ["proximity", "slv-1", "2"], ["abs_diff"]]
+    mock_s3 = mock.MagicMock()
+
+    def mock_get(**kwargs):
+        key = kwargs.get("Key", "")
+        if key == "renders/test/solve_scores/clip.json":
+            clip_data = {
+                "family": "solve_score",
+                "version": 2,
+                "metric": "proximity",
+                "clip_quantile": 0.02,
+                "omega": 1.0,
+                "omega_enabled": True,
+                "clip_lo": 0.0,
+                "clip_hi": 1.0,
+                "program": "m0-0;m0-1;abs_diff",
+                "chain_fingerprint": _fingerprint(chain, metric="proximity", quantile=0.02),
+                "metrics": [
+                    {"slot": 0, "metric": "proximity", "source": "slv", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                ],
+            }
+            return {"Body": _ChunkBody(json.dumps(clip_data).encode())}
+        raise AssertionError(f"unexpected get_object key: {key}")
+
+    mock_s3.get_object = mock_get
+    mock_s3.generate_presigned_url.side_effect = lambda op, Params, ExpiresIn=900: f"https://example.com/{Params['Key']}"
+    mock_s3.put_object = mock.MagicMock()
+    mock_s3.exceptions = type('Exc', (), {'NoSuchKey': type('NoSuchKey', (Exception,), {})})()
+    mock_run = mock.MagicMock(return_value=mock.MagicMock(
+        returncode=0,
+        stdout=json.dumps({
+            "threads": 2,
+            "n_solves": 2,
+            "download_ms": 10,
+            "compute_ms": 20,
+            "wall_ms": 30,
+            "hist": [1, 1, 0, 0],
+        }),
+        stderr="",
+    ))
+    orig_s3, orig_report, orig_run = hsp.s3, hsp.report_status, hsp.subprocess.run
+    hsp.s3 = mock_s3
+    hsp.report_status = mock.MagicMock()
+    hsp.subprocess.run = mock_run
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            input_manifest = os.path.join(td, "input_manifest.json")
+            solve_source_manifest = build_solve_source_manifest(
+                [
+                    {"chunk_idx": 0, "bin_key": "renders/test/chunk_0.bin", "step_start": 0, "step_count": 3},
+                    {"chunk_idx": 1, "bin_key": "renders/test/chunk_1.bin", "step_start": 3, "step_count": 3},
+                ],
+                job_id="test",
+                degree=2,
+                n_coeffs=3,
+            )
+            with mock.patch.object(hsp, "_TMP_INPUT_MANIFEST", input_manifest), \
+                 mock.patch.object(hsp, "_cleanup_tmp", mock.MagicMock()):
+                result = hsp.handle_hist({
+                    "job_id": "test",
+                    "task_id": "hist_lag_test",
+                    "section_idx": 1,
+                    "section_count": 2,
+                    "logical_section": True,
+                    "solve_source_manifest": solve_source_manifest,
+                    "metric": "proximity",
+                    "solve_score_quantile": 0.02,
+                    "solve_score_chain": chain,
+                    "degree": 2,
+                    "step_start": 3,
+                    "step_count": 2,
+                    "prelude_rows": 1,
+                    "score_coeff_prelude_rows": 0,
+                    "score_param_prelude_rows": 0,
+                    "clip_key": "renders/test/solve_scores/clip.json",
+                    "hist_bins": 4,
+                    "out_key": "renders/test/solve_scores/section_1_hist.json",
+                    "solve_score_threads": 2,
+                    "solve_score_hist_input_mode": "sectioned",
+                })
+            body = json.loads(result["body"])
+            assert body["logical_section"] is True
+            assert body["prelude_rows"] == 1
+            cmd = mock_run.call_args.args[0]
+            assert "--input_mode=multispan_sectioned" in cmd
+            assert "--prelude_rows=1" in cmd
+            assert "--score_program=m0-0;m0-1;abs_diff" in cmd
+            with open(input_manifest, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            assert manifest["logical_size"] == 3 * 2 * 2 * 4
+            assert len(manifest["spans"]) == 2
     finally:
         hsp.s3 = orig_s3
         hsp.report_status = orig_report

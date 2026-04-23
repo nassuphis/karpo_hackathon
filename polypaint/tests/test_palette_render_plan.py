@@ -140,6 +140,35 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertNotIn("palette_bins_key", plan["outputs"])
 
     @patch("handler_palette_render_plan.s3")
+    def test_plan_supports_lagged_solve_score_programs(self, mock_s3):
+        from handler_palette_render_plan import handler
+
+        calc = {
+            "degree": 5,
+            "N": 4,
+            "times": 2,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+            "chunks": [{"idx": 0, "bin_key": "renders/j/chunk_0.bin", "n_t": 16}],
+        }
+        mock_s3.get_object.return_value = {"Body": MagicMock(read=lambda: json.dumps(calc).encode())}
+
+        result = handler(_event(params={
+                "metric": "proximity",
+                "palette": "reef",
+                "solve_score_chain": [["proximity", "slv", "1"], ["proximity", "slv-1", "1"], ["abs_diff"]],
+            }), None)
+        plan = json.loads(result["body"])
+        self.assertTrue(plan["logical_section"])
+        self.assertEqual(plan["params"]["solve_score_hist_input_mode"], "sectioned")
+        self.assertEqual(plan["params"]["palette_chunk_input_mode"], "sectioned")
+        self.assertEqual(plan["solve_score"]["program"], "m0-0;m0-1;abs_diff")
+        self.assertTrue(plan["solve_score"]["uses_lag"])
+        self.assertEqual(plan["solve_score"]["prelude_rows"], 1)
+        self.assertEqual(plan["solve_score"]["score_coeff_prelude_rows"], 0)
+        self.assertEqual(plan["solve_score"]["score_param_prelude_rows"], 0)
+        self.assertIn("s", plan["solve_source_manifest"])
+
+    @patch("handler_palette_render_plan.s3")
     def test_plan_derives_step_count_from_bin_size(self, mock_s3):
         from handler_palette_render_plan import handler
 

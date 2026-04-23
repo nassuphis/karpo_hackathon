@@ -828,6 +828,138 @@ def test_palette_chunk_mt_param_sectioned_runtime():
     print("=== solve_palette_chunk_mt param-source sectioned runtime PASSED ===")
 
 
+def _write_lagged_centroid_fixture(path):
+    rows = [
+        [(0.0, 0.0), (0.0, 0.0)],
+        [(5.0, 0.0), (5.0, 0.0)],
+        [(10.0, 0.0), (10.0, 0.0)],
+    ]
+    with open(path, "wb") as f:
+        for roots in rows:
+            for re_val, im_val in roots:
+                f.write(struct.pack("<ff", re_val, im_val))
+
+
+def _write_single_source_manifest(path, logical_size, row_bytes, port):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({
+            "source_family": "slv",
+            "logical_size": logical_size,
+            "row_bytes": row_bytes,
+            "solve_start": 0,
+            "solve_count": logical_size // row_bytes,
+            "sources": [{
+                "id": 0,
+                "url": "http://127.0.0.1:%d/input.bin" % port,
+                "key": "input.bin",
+            }],
+            "spans": [{
+                "source_id": 0,
+                "logical_byte_start": 0,
+                "byte_start": 0,
+                "byte_length": logical_size,
+            }],
+        }, f)
+
+
+def test_solve_proximity_hist_sectioned_lagged_runtime():
+    print("\n--- solve_proximity_hist_sectioned lagged runtime ---")
+
+    bin_path = "/src/solve_proximity_hist_sectioned"
+    assert os.path.exists(bin_path), "%s not found" % bin_path
+    assert open(bin_path, "rb").read(4) == b"\x7fELF", "solve_proximity_hist_sectioned is not ELF"
+
+    r = subprocess.run(["ldd", bin_path], capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, "ldd failed for solve_proximity_hist_sectioned: " + r.stderr[:200]
+    assert "not found" not in r.stdout, "solve_proximity_hist_sectioned shared libs unresolved: " + r.stdout
+
+    roots_path = "/tmp/solve_hist_lag_roots.bin"
+    manifest_path = "/tmp/solve_hist_lag_manifest.json"
+    cleanup(roots_path, manifest_path)
+    _write_lagged_centroid_fixture(roots_path)
+    roots_bytes = open(roots_path, "rb").read()
+    _RangeHandler.file_bytes = roots_bytes
+    with socketserver.TCPServer(("127.0.0.1", 0), _RangeHandler) as httpd:
+        port = httpd.server_address[1]
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            _write_single_source_manifest(manifest_path, len(roots_bytes), 16, port)
+            r = subprocess.run([
+                bin_path,
+                "--input_mode=multispan_sectioned",
+                "--input_manifest=" + manifest_path,
+                "--degree=2",
+                "--hist_bins=10",
+                "--threads=2",
+                "--step_count=2",
+                "--prelude_rows=1",
+                "--score_metrics=centroid_re",
+                "--score_clip_los=0",
+                "--score_clip_his=10",
+                "--score_program=m0-0;m0-1;abs_diff",
+            ], capture_output=True, text=True, timeout=10)
+            assert r.returncode == 0, "solve_proximity_hist_sectioned lagged failed: " + r.stderr[:200]
+            meta = json.loads(r.stdout)
+            assert meta["n_solves"] == 2, "lagged hist counted prelude as scored row"
+            assert meta["hist"][5] == 2, "lagged hist did not use previous-row centroid diff: %r" % meta["hist"]
+            print("  solve_proximity_hist_sectioned lagged: OK")
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+    cleanup(roots_path, manifest_path)
+    print("=== solve_proximity_hist_sectioned lagged runtime PASSED ===")
+
+
+def test_palette_chunk_mt_lagged_multispan_runtime():
+    print("\n--- solve_palette_chunk_mt lagged multispan runtime ---")
+
+    bin_path = "/src/solve_palette_chunk_mt"
+    roots_path = "/tmp/palette_chunk_mt_lag_roots.bin"
+    manifest_path = "/tmp/palette_chunk_mt_lag_manifest.json"
+    scores_path = "/tmp/palette_chunk_mt_lag_scores.bin"
+    bins_path = "/tmp/palette_chunk_mt_lag_bins.bin"
+    cleanup(roots_path, manifest_path, scores_path, bins_path)
+    _write_lagged_centroid_fixture(roots_path)
+    roots_bytes = open(roots_path, "rb").read()
+    _RangeHandler.file_bytes = roots_bytes
+    with socketserver.TCPServer(("127.0.0.1", 0), _RangeHandler) as httpd:
+        port = httpd.server_address[1]
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            _write_single_source_manifest(manifest_path, len(roots_bytes), 16, port)
+            r = subprocess.run([
+                bin_path, "/tmp/palette_chunk_mt_lag_unused.bin",
+                "--degree=2",
+                "--cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9",
+                "--step_count=2",
+                "--threads=2",
+                "--input_mode=multispan_sectioned",
+                "--input_manifest=" + manifest_path,
+                "--prelude_rows=1",
+                "--score_metrics=centroid_re",
+                "--score_clip_los=0",
+                "--score_clip_his=10",
+                "--score_program=m0-0;m0-1;abs_diff",
+                "--scores_out=" + scores_path,
+                "--bins_out=" + bins_path,
+            ], capture_output=True, text=True, timeout=10)
+            assert r.returncode == 0, "solve_palette_chunk_mt lagged failed: " + r.stderr[:200]
+            meta = json.loads(r.stdout)
+            assert meta["n_samples"] == 2, "lagged palette chunk counted prelude as scored row"
+            scores = read_f32_array(scores_path)
+            bins = list(open(bins_path, "rb").read())
+            assert all(abs(s - 0.5) < 1e-6 for s in scores), "lagged palette scores wrong: %r" % scores
+            assert bins == [4, 4], "lagged palette bins wrong: %r" % bins
+            print("  solve_palette_chunk_mt lagged: OK")
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+    cleanup(roots_path, manifest_path, scores_path, bins_path)
+    print("=== solve_palette_chunk_mt lagged multispan runtime PASSED ===")
+
+
 def test_roots2pix_mt_multispan_runtime():
     print("\n--- roots2pix_mt multispan runtime ---")
 
@@ -1785,6 +1917,27 @@ def test_solve_proximity_stats():
         assert summary["n_solves"] == 3
         print(f"  score program {program}: OK")
 
+    r = subprocess.run(
+        [
+            sps_path,
+            sps_bin,
+            "--mode=summary",
+            "--degree=2",
+            "--score_metrics=proximity",
+            "--score_clip_los=" + str(clip["clip_lo"]),
+            "--score_clip_his=" + str(clip["clip_hi"]),
+            "--score_program=m0-0;m0-1;abs_diff",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert r.returncode == 0, "lagged summary failed: " + r.stderr[:200]
+    summary = json.loads(r.stdout)
+    assert summary["n_solves"] == 3
+    assert summary["min_score"] == 0.0
+    print("  score program m0-0;m0-1;abs_diff: OK")
+
     # 4. Clusteriness clip (v2 metric)
     r = subprocess.run([sps_path, sps_bin, "--mode=clip", "--degree=2", "--metric=clusteriness"],
                        capture_output=True, text=True, timeout=10)
@@ -1884,6 +2037,7 @@ if __name__ == "__main__":
         "/src/sweep_coeffgen",
         "/src/roots2pix_mt",
         "/src/solve_palette_chunk_mt",
+        "/src/solve_proximity_hist_sectioned",
         "/src/bilevel_section_raster",
         "/src/coeffs_bilevel_raster",
         "/src/bilevel_merge",
@@ -1902,6 +2056,8 @@ if __name__ == "__main__":
     test_compute_preview_runtime_combo()
     test_palette_chunk_mt_runtime()
     test_palette_chunk_mt_param_sectioned_runtime()
+    test_solve_proximity_hist_sectioned_lagged_runtime()
+    test_palette_chunk_mt_lagged_multispan_runtime()
     test_roots2pix_mt_multispan_runtime()
     test_roots2pix_mt_lagged_score_runtime()
     test_render_preview()

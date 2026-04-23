@@ -139,8 +139,17 @@ typedef struct {
     int scoreCoeffStride;
     int scoreParamDegree;
     int scoreParamStride;
+    int solvePreludeRows;
+    int scoreCoeffPreludeRows;
+    int scoreParamPreludeRows;
+    int usesSolveLag;
+    int usesCoeffLag;
+    int usesParamLag;
     long solveStart;
     long solveCount;
+    long sourceReadStart;
+    long scoreCoeffReadStart;
+    long scoreParamReadStart;
     long solveBytes;
     long scoreCoeffSolveBytes;
     size_t sectionBytes;
@@ -199,6 +208,22 @@ static double score_xformed(const float *roots, int degree, enum SolveMetric met
         xformed[k * 2 + 1] = wkIm[k];
     }
     return compute_solve_metric_score(xformed, degree, metric);
+}
+
+static const float *prepare_step(const float *raw, int degree,
+                                 RootXformEntry *rtChain, int nRt,
+                                 float *stepBuf, float *wkRe, float *wkIm) {
+    if (nRt <= 0) return raw;
+    for (int i = 0; i < degree; i++) {
+        wkRe[i] = raw[i * 2];
+        wkIm[i] = raw[i * 2 + 1];
+    }
+    apply_root_xforms(rtChain, nRt, wkRe, wkIm, degree);
+    for (int i = 0; i < degree; i++) {
+        stepBuf[i * 2] = wkRe[i];
+        stepBuf[i * 2 + 1] = wkIm[i];
+    }
+    return stepBuf;
 }
 
 static double score_program_xformed(const float *roots, int degree, const SolveScoreProgram *program,
@@ -288,15 +313,96 @@ static void compute_scores_for_roots(const float *roots, const float *coeffRoots
                                      long solveCount, long solveStart,
                                      ChunkWorkerArgs *arg) {
     float wkRe[MAXDEG], wkIm[MAXDEG];
+    float prevWkRe[MAXDEG], prevWkIm[MAXDEG];
+    float stepBuf[MAXDEG * 2];
+    float prevStepBuf[MAXDEG * 2];
+    float currentMetricBuffer[SOLVE_SCORE_MAX_METRIC_SLOTS];
+    float recentMetricBuffer[SOLVE_SCORE_MAX_METRIC_SLOTS];
     int stride = arg->degree * 2;
     int coeffStride = arg->scoreCoeffStride;
+    long sourceRows = arg->solveBytes > 0 ? (long)(arg->sectionBytes / (size_t)arg->solveBytes) : 0;
+    long coeffRows = arg->scoreCoeffSolveBytes > 0 ? (long)(arg->scoreCoeffSectionBytes / (size_t)arg->scoreCoeffSolveBytes) : 0;
+    long paramRows = arg->scoreParamStride > 0
+        ? (long)(arg->scoreParamSectionBytes / ((size_t)arg->scoreParamStride * sizeof(float)))
+        : 0;
+    int usesLag = arg->useProgram && solve_score_program_uses_lag(&arg->program);
+    int recentInitialized = 0;
     long computeStart = monotonic_ms();
     for (long s = 0; s < solveCount; s++) {
-        const float *solveRoots = roots + s * stride;
-        const float *solveCoeffRoots = coeffRoots ? (coeffRoots + s * coeffStride) : NULL;
-        const float *solveParamValues = paramValues ? (paramValues + s * arg->scoreParamStride) : NULL;
+        long outIdx = solveStart + s;
+        long sourceLocalIdx = usesLag ? (arg->solvePreludeRows + outIdx - arg->sourceReadStart) : s;
+        if (sourceLocalIdx < 0 || sourceLocalIdx >= sourceRows) {
+            snprintf(arg->error, sizeof(arg->error), "source local index out of range");
+            arg->failed = 1;
+            break;
+        }
+        const float *solveRoots = roots + sourceLocalIdx * stride;
+        const float *solveCoeffRoots = NULL;
+        const float *solveParamValues = NULL;
+        if (coeffRoots) {
+            long coeffLocalIdx = usesLag ? (arg->scoreCoeffPreludeRows + outIdx - arg->scoreCoeffReadStart) : s;
+            if (coeffLocalIdx < 0 || coeffLocalIdx >= coeffRows) {
+                snprintf(arg->error, sizeof(arg->error), "coeff local index out of range");
+                arg->failed = 1;
+                break;
+            }
+            solveCoeffRoots = coeffRoots + coeffLocalIdx * coeffStride;
+        }
+        if (paramValues) {
+            long paramLocalIdx = usesLag ? (arg->scoreParamPreludeRows + outIdx - arg->scoreParamReadStart) : s;
+            if (paramLocalIdx < 0 || paramLocalIdx >= paramRows) {
+                snprintf(arg->error, sizeof(arg->error), "param local index out of range");
+                arg->failed = 1;
+                break;
+            }
+            solveParamValues = paramValues + paramLocalIdx * arg->scoreParamStride;
+        }
         double score;
-        if (arg->useProgram) {
+        if (usesLag) {
+            const float *step = prepare_step(solveRoots, arg->degree, arg->rtChain, arg->nRt, stepBuf, wkRe, wkIm);
+            if (!solve_score_eval_metric_slots(
+                    step, arg->degree, solveCoeffRoots, arg->scoreCoeffDegree,
+                    solveParamValues, arg->scoreParamDegree, &arg->program,
+                    currentMetricBuffer)) {
+                snprintf(arg->error, sizeof(arg->error), "solve-score metric evaluation failed");
+                arg->failed = 1;
+                break;
+            }
+            if (!recentInitialized) {
+                memcpy(recentMetricBuffer, currentMetricBuffer, sizeof(float) * (size_t)arg->program.metricCount);
+                const float *prevStep = step;
+                const float *prevCoeffRoots = solveCoeffRoots;
+                const float *prevParamValues = solveParamValues;
+                long prevSourceLocalIdx = sourceLocalIdx - 1;
+                long prevCoeffLocalIdx = arg->scoreCoeffPreludeRows + outIdx - arg->scoreCoeffReadStart - 1;
+                long prevParamLocalIdx = arg->scoreParamPreludeRows + outIdx - arg->scoreParamReadStart - 1;
+                if (arg->usesSolveLag && prevSourceLocalIdx >= 0) {
+                    const float *prevRaw = roots + prevSourceLocalIdx * stride;
+                    prevStep = prepare_step(prevRaw, arg->degree, arg->rtChain, arg->nRt, prevStepBuf, prevWkRe, prevWkIm);
+                }
+                if (arg->usesCoeffLag && coeffRoots && prevCoeffLocalIdx >= 0 && prevCoeffLocalIdx < coeffRows) {
+                    prevCoeffRoots = coeffRoots + prevCoeffLocalIdx * coeffStride;
+                }
+                if (arg->usesParamLag && paramValues && prevParamLocalIdx >= 0 && prevParamLocalIdx < paramRows) {
+                    prevParamValues = paramValues + prevParamLocalIdx * arg->scoreParamStride;
+                }
+                if (!solve_score_eval_lagged_metric_slots(
+                        prevStep, arg->degree, prevCoeffRoots, arg->scoreCoeffDegree,
+                        prevParamValues, arg->scoreParamDegree, &arg->program,
+                        recentMetricBuffer)) {
+                    snprintf(arg->error, sizeof(arg->error), "solve-score lag metric evaluation failed");
+                    arg->failed = 1;
+                    break;
+                }
+                recentInitialized = 1;
+            }
+            score = solve_score_eval_program_from_buffers(currentMetricBuffer, recentMetricBuffer, &arg->program);
+            if (!isfinite(score)) {
+                snprintf(arg->error, sizeof(arg->error), "solve-score program evaluation failed");
+                arg->failed = 1;
+                break;
+            }
+        } else if (arg->useProgram) {
             if (solve_score_program_uses_coeff_sources(&arg->program) || solve_score_program_uses_param_sources(&arg->program)) {
                 score = (arg->nRt > 0)
                     ? score_program_xformed_with_sources(
@@ -317,11 +423,13 @@ static void compute_scores_for_roots(const float *roots, const float *coeffRoots
                 ? score_xformed(solveRoots, arg->degree, arg->metric, arg->rtChain, arg->nRt, wkRe, wkIm)
                 : compute_solve_metric_score(solveRoots, arg->degree, arg->metric);
         }
-        long outIdx = solveStart + s;
         arg->scoresOut[outIdx] = (float)score;
         arg->binsOut[outIdx] = arg->useProgram
             ? u_to_bin(score, arg->cuts)
             : score_to_bin(score, arg->clipLo, arg->clipHi, arg->omega, arg->omegaEnabled, arg->cuts);
+        if (usesLag) {
+            memcpy(recentMetricBuffer, currentMetricBuffer, sizeof(float) * (size_t)arg->program.metricCount);
+        }
     }
     arg->computeMs = monotonic_ms() - computeStart;
 }
@@ -676,6 +784,9 @@ int main(int argc, char **argv) {
     double omega = getArgDouble(argc, argv, "--omega", 1.0);
     int omegaEnabled = getArgInt(argc, argv, "--omega_enabled", 1);
     int stepCount = getArgInt(argc, argv, "--step_count", -1);
+    int solvePreludeRows = getArgInt(argc, argv, "--prelude_rows", 0);
+    int scoreCoeffPreludeRows = getArgInt(argc, argv, "--score_coeff_prelude_rows", 0);
+    int scoreParamPreludeRows = getArgInt(argc, argv, "--score_param_prelude_rows", 0);
     int threads = getArgInt(argc, argv, "--threads", 1);
     int retries = getArgInt(argc, argv, "--retries", 2);
     const char *cutsStr = getArgStr(argc, argv, "--cuts", NULL);
@@ -709,6 +820,12 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Invalid retries: %d\n", retries);
         return 1;
     }
+    if (solvePreludeRows < 0 || solvePreludeRows > 1 ||
+        scoreCoeffPreludeRows < 0 || scoreCoeffPreludeRows > 1 ||
+        scoreParamPreludeRows < 0 || scoreParamPreludeRows > 1) {
+        fprintf(stderr, "prelude row counts must be 0 or 1 in v1\n");
+        return 1;
+    }
 
     enum SolveMetric metric;
     if (!parse_solve_metric(metricStr, &metric)) {
@@ -727,10 +844,6 @@ int main(int argc, char **argv) {
                 scoreMetricsCsv, scoreSourcesCsv, scoreClipLosCsv, scoreClipHisCsv, scoreProgramSpec,
                 &scoreProgram, scoreErr, sizeof(scoreErr))) {
             fprintf(stderr, "Invalid score program: %s\n", scoreErr[0] ? scoreErr : "unknown error");
-            return 1;
-        }
-        if (solve_score_program_uses_lag(&scoreProgram)) {
-            fprintf(stderr, "Lagged solve-score refs are supported only by fused color raster in v1\n");
             return 1;
         }
         metric = scoreProgram.metrics[0];
@@ -849,12 +962,59 @@ int main(int argc, char **argv) {
 
     int scoreProgramUsesCoeffSources = solve_score_program_uses_coeff_sources(useScoreProgram ? &scoreProgram : NULL);
     int scoreProgramUsesParamSources = solve_score_program_uses_param_sources(useScoreProgram ? &scoreProgram : NULL);
+    int scoreProgramUsesLag = useScoreProgram ? solve_score_program_uses_lag(&scoreProgram) : 0;
+    int scoreProgramUsesSolveLag = useScoreProgram ? solve_score_program_uses_lag_source(&scoreProgram, SOLVE_SCORE_SOURCE_SOLVE) : 0;
+    int scoreProgramUsesCoeffLag = useScoreProgram ? solve_score_program_uses_lag_source(&scoreProgram, SOLVE_SCORE_SOURCE_COEFF) : 0;
+    int scoreProgramUsesParamLag = useScoreProgram ? solve_score_program_uses_lag_source(&scoreProgram, SOLVE_SCORE_SOURCE_PARAM) : 0;
+    if (scoreProgramUsesLag && strcmp(inputMode, "multispan_sectioned") != 0) {
+        fprintf(stderr, "lagged solve-score programs require input_mode=multispan_sectioned\n");
+        free(buf);
+        REMOTE_CLEANUP();
+        return 1;
+    }
+    if (!scoreProgramUsesLag && (solvePreludeRows || scoreCoeffPreludeRows || scoreParamPreludeRows)) {
+        fprintf(stderr, "prelude rows require a lagged solve-score program\n");
+        free(buf);
+        REMOTE_CLEANUP();
+        return 1;
+    }
+    if (scoreProgramUsesSolveLag != (solvePreludeRows > 0) && !(scoreProgramUsesSolveLag && solvePreludeRows == 0)) {
+        fprintf(stderr, "solve prelude rows must match solve-source lag requirements\n");
+        free(buf);
+        REMOTE_CLEANUP();
+        return 1;
+    }
+    if (scoreProgramUsesLag && (long)totalSolves != (long)stepCount + solvePreludeRows) {
+        fprintf(stderr, "input solve count mismatch: got %ld rows expected %d scored + %d prelude\n",
+                totalSolves, stepCount, solvePreludeRows);
+        free(buf);
+        REMOTE_CLEANUP();
+        return 1;
+    }
+    if (!scoreProgramUsesCoeffSources && scoreCoeffPreludeRows) {
+        fprintf(stderr, "coeff prelude rows require coeff-source metrics\n");
+        free(buf);
+        REMOTE_CLEANUP();
+        return 1;
+    }
+    if (!scoreProgramUsesParamSources && scoreParamPreludeRows) {
+        fprintf(stderr, "param prelude rows require param-source metrics\n");
+        free(buf);
+        REMOTE_CLEANUP();
+        return 1;
+    }
     float *scoreCoeffRows = NULL;
     int scoreCoeffStride = scoreCoeffDegree * 2;
     long scoreCoeffSolveBytes = (long)scoreCoeffStride * (long)sizeof(float);
     if (scoreProgramUsesCoeffSources) {
         if (scoreCoeffDegree < 1 || scoreCoeffDegree > MAXDEG) {
             fprintf(stderr, "Invalid score_coeff_degree: %d (must be 1-%d)\n", scoreCoeffDegree, MAXDEG);
+            free(buf);
+            REMOTE_CLEANUP();
+            return 1;
+        }
+        if (scoreProgramUsesCoeffLag != (scoreCoeffPreludeRows > 0) && !(scoreProgramUsesCoeffLag && scoreCoeffPreludeRows == 0)) {
+            fprintf(stderr, "coeff prelude rows must match coeff-source lag requirements\n");
             free(buf);
             REMOTE_CLEANUP();
             return 1;
@@ -908,8 +1068,9 @@ int main(int argc, char **argv) {
                 return 1;
             }
             long coeffPoints = (long)(scoreCoeffReader.logicalSize / (unsigned long long)scoreCoeffSolveBytes);
-            if (coeffPoints != stepCount) {
-                fprintf(stderr, "multispan coeff solve count mismatch: got %ld expected %d\n", coeffPoints, stepCount);
+            if (coeffPoints != (long)stepCount + scoreCoeffPreludeRows) {
+                fprintf(stderr, "multispan coeff solve count mismatch: got %ld expected %d scored + %d prelude\n",
+                        coeffPoints, stepCount, scoreCoeffPreludeRows);
                 free(buf);
                 REMOTE_CLEANUP();
                 return 1;
@@ -963,6 +1124,13 @@ int main(int argc, char **argv) {
     int scoreParamDegree = 2;
     if (scoreProgramUsesParamSources) {
         long paramSolveBytes = (long)scoreParamStride * (long)sizeof(float);
+        if (scoreProgramUsesParamLag != (scoreParamPreludeRows > 0) && !(scoreProgramUsesParamLag && scoreParamPreludeRows == 0)) {
+            fprintf(stderr, "param prelude rows must match param-source lag requirements\n");
+            free(scoreCoeffRows);
+            free(buf);
+            REMOTE_CLEANUP();
+            return 1;
+        }
         if (strcmp(inputMode, "multispan_sectioned") == 0) {
             char manifestErr[256] = {0};
             if (!scoreParamsManifest || !*scoreParamsManifest) {
@@ -988,8 +1156,9 @@ int main(int argc, char **argv) {
                 return 1;
             }
             long paramPoints = (long)(scoreParamReader.logicalSize / (unsigned long long)paramSolveBytes);
-            if (paramPoints != stepCount) {
-                fprintf(stderr, "multispan params size mismatch: got %ld solves expected %d\n", paramPoints, stepCount);
+            if (paramPoints != (long)stepCount + scoreParamPreludeRows) {
+                fprintf(stderr, "multispan params size mismatch: got %ld solves expected %d scored + %d prelude\n",
+                        paramPoints, stepCount, scoreParamPreludeRows);
                 free(scoreCoeffRows);
                 free(buf);
                 REMOTE_CLEANUP();
@@ -1113,19 +1282,44 @@ int main(int argc, char **argv) {
         arg->scoreCoeffStride = scoreCoeffStride;
         arg->scoreParamDegree = scoreProgramUsesParamSources ? scoreParamDegree : 0;
         arg->scoreParamStride = scoreParamStride;
+        arg->solvePreludeRows = solvePreludeRows;
+        arg->scoreCoeffPreludeRows = scoreCoeffPreludeRows;
+        arg->scoreParamPreludeRows = scoreParamPreludeRows;
+        arg->usesSolveLag = scoreProgramUsesSolveLag;
+        arg->usesCoeffLag = scoreProgramUsesCoeffLag;
+        arg->usesParamLag = scoreProgramUsesParamLag;
         arg->solveStart = solveStart;
         arg->solveCount = solveCount;
         arg->solveBytes = solveBytes;
         arg->scoreCoeffSolveBytes = scoreCoeffSolveBytes;
-        arg->sectionBytes = (size_t)((unsigned long long)solveCount * (unsigned long long)solveBytes);
-        arg->scoreCoeffSectionBytes = (size_t)((unsigned long long)solveCount * (unsigned long long)scoreCoeffSolveBytes);
-        arg->scoreParamSectionBytes = (size_t)((unsigned long long)solveCount * (unsigned long long)scoreParamStride * (unsigned long long)sizeof(float));
-        arg->byteStart = (unsigned long long)solveStart * (unsigned long long)solveBytes;
+        long sourceCurrentStart = solvePreludeRows + solveStart;
+        long sourceReadStart = sourceCurrentStart;
+        if (scoreProgramUsesSolveLag && sourceCurrentStart > 0) sourceReadStart -= 1;
+        long sourceReadEnd = solvePreludeRows + solveStart + solveCount;
+        arg->sourceReadStart = sourceReadStart;
+        arg->sectionBytes = (size_t)((unsigned long long)(sourceReadEnd - sourceReadStart) * (unsigned long long)solveBytes);
+        arg->byteStart = (unsigned long long)sourceReadStart * (unsigned long long)solveBytes;
         arg->byteEnd = arg->byteStart + (unsigned long long)arg->sectionBytes - 1ULL;
-        arg->scoreCoeffByteStart = (unsigned long long)solveStart * (unsigned long long)scoreCoeffSolveBytes;
-        arg->scoreCoeffByteEnd = arg->scoreCoeffByteStart + (unsigned long long)arg->scoreCoeffSectionBytes - 1ULL;
-        arg->scoreParamByteStart = (unsigned long long)solveStart * (unsigned long long)scoreParamStride * (unsigned long long)sizeof(float);
-        arg->scoreParamByteEnd = arg->scoreParamByteStart + (unsigned long long)arg->scoreParamSectionBytes - 1ULL;
+        if (scoreProgramUsesCoeffSources) {
+            long coeffCurrentStart = scoreCoeffPreludeRows + solveStart;
+            long coeffReadStart = coeffCurrentStart;
+            if (scoreProgramUsesCoeffLag && coeffCurrentStart > 0) coeffReadStart -= 1;
+            long coeffReadEnd = scoreCoeffPreludeRows + solveStart + solveCount;
+            arg->scoreCoeffReadStart = coeffReadStart;
+            arg->scoreCoeffSectionBytes = (size_t)((unsigned long long)(coeffReadEnd - coeffReadStart) * (unsigned long long)scoreCoeffSolveBytes);
+            arg->scoreCoeffByteStart = (unsigned long long)coeffReadStart * (unsigned long long)scoreCoeffSolveBytes;
+            arg->scoreCoeffByteEnd = arg->scoreCoeffByteStart + (unsigned long long)arg->scoreCoeffSectionBytes - 1ULL;
+        }
+        if (scoreProgramUsesParamSources) {
+            long paramCurrentStart = scoreParamPreludeRows + solveStart;
+            long paramReadStart = paramCurrentStart;
+            if (scoreProgramUsesParamLag && paramCurrentStart > 0) paramReadStart -= 1;
+            long paramReadEnd = scoreParamPreludeRows + solveStart + solveCount;
+            arg->scoreParamReadStart = paramReadStart;
+            arg->scoreParamSectionBytes = (size_t)((unsigned long long)(paramReadEnd - paramReadStart) * (unsigned long long)scoreParamStride * (unsigned long long)sizeof(float));
+            arg->scoreParamByteStart = (unsigned long long)paramReadStart * (unsigned long long)scoreParamStride * (unsigned long long)sizeof(float);
+            arg->scoreParamByteEnd = arg->scoreParamByteStart + (unsigned long long)arg->scoreParamSectionBytes - 1ULL;
+        }
         arg->metric = metric;
         arg->program = scoreProgram;
         arg->useProgram = useScoreProgram;

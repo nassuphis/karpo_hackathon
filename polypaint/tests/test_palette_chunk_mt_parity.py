@@ -381,3 +381,75 @@ class TestPaletteChunkMtParity(unittest.TestCase):
             finally:
                 server.shutdown()
                 server.server_close()
+
+    def test_multispan_sectioned_lagged_program_uses_prelude_row(self):
+        from logical_sections import build_native_multispan_manifest, build_solve_source_manifest
+
+        degree = 2
+        row_bytes = degree * 2 * 4
+        cuts = "0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9"
+        rows = [
+            [0.0, 0.0, 0.0, 0.0],
+            [5.0, 0.0, 5.0, 0.0],
+            [10.0, 0.0, 10.0, 0.0],
+        ]
+
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            (root / "roots_0.bin").write_bytes(array("f", rows[0]).tobytes())
+            (root / "roots_1.bin").write_bytes(array("f", rows[1] + rows[2]).tobytes())
+            chunk_items = [
+                {"chunk_idx": 0, "bin_key": "roots_0.bin", "step_start": 0, "step_count": 1, "bin_size": row_bytes},
+                {"chunk_idx": 1, "bin_key": "roots_1.bin", "step_start": 1, "step_count": 2, "bin_size": row_bytes * 2},
+            ]
+            solve_source_manifest = build_solve_source_manifest(
+                chunk_items,
+                job_id="lag_job",
+                degree=degree,
+                n_coeffs=degree,
+            )
+            server, _ = self._serve_dir(root)
+            try:
+                url_by_key = {
+                    "roots_0.bin": f"http://127.0.0.1:{server.server_address[1]}/roots_0.bin",
+                    "roots_1.bin": f"http://127.0.0.1:{server.server_address[1]}/roots_1.bin",
+                }
+                input_manifest = build_native_multispan_manifest(
+                    solve_source_manifest,
+                    source_family="slv",
+                    solve_start=0,
+                    solve_count=3,
+                    url_by_key=url_by_key,
+                )
+                manifest_path = root / "input_manifest.json"
+                manifest_path.write_text(json.dumps(input_manifest), encoding="utf-8")
+                scores_path = root / "scores.bin"
+                bins_path = root / "bins.bin"
+
+                result = self._run_binary([
+                    str(self._binary),
+                    str(root / "unused.bin"),
+                    "--degree=2",
+                    f"--cuts={cuts}",
+                    "--step_count=2",
+                    f"--scores_out={scores_path}",
+                    f"--bins_out={bins_path}",
+                    "--threads=2",
+                    "--input_mode=multispan_sectioned",
+                    f"--input_manifest={manifest_path}",
+                    "--prelude_rows=1",
+                    "--score_metrics=centroid_re",
+                    "--score_clip_los=0",
+                    "--score_clip_his=10",
+                    "--score_program=m0-0;m0-1;abs_diff",
+                ])
+                self.assertEqual(result.returncode, 0, result.stderr)
+                scores = array("f")
+                with open(scores_path, "rb") as f:
+                    scores.fromfile(f, 2)
+                self.assertAlmostEqual(scores[0], 0.5, places=5)
+                self.assertAlmostEqual(scores[1], 0.5, places=5)
+                self.assertEqual(list(bins_path.read_bytes()), [4, 4])
+            finally:
+                server.shutdown()
+                server.server_close()

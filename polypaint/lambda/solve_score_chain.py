@@ -376,19 +376,49 @@ def _build_program_spec(program_tokens):
     return ";".join(parts)
 
 
+def _canonical_metric_ref_token(token):
+    match = re.fullmatch(r"m([0-9]+)(?:-([0-9]+))?", token)
+    if not match:
+        if re.fullmatch(r"[mM](?:[0-9]|-).*", token):
+            raise RuntimeError(f"Malformed solve-score metric reference token: {token!r}")
+        return None
+
+    slot_text = match.group(1)
+    lag_text = match.group(2)
+    if slot_text != str(int(slot_text)):
+        raise RuntimeError(f"Malformed solve-score metric slot in token: {token!r}")
+    if lag_text is None:
+        lag = 0
+    elif lag_text in ("0", "1"):
+        lag = int(lag_text)
+    else:
+        raise RuntimeError(f"solve-score lag depth in token {token!r} must be 0 or 1")
+    return f"m{int(slot_text)}-{lag}"
+
+
 def canonicalize_solve_score_program_spec(program_spec):
     parts = []
     for raw in str(program_spec or "").split(";"):
         token = raw.strip()
         if not token:
             continue
-        match = re.fullmatch(r"m([0-9]+)(?:-([0-9]+))?", token)
-        if match:
-            lag = match.group(2)
-            parts.append(f"m{int(match.group(1))}-{int(lag) if lag is not None else 0}")
-        else:
+        metric_ref = _canonical_metric_ref_token(token)
+        if metric_ref is None:
             parts.append(token)
+        else:
+            parts.append(metric_ref)
     return ";".join(parts)
+
+
+def solve_score_program_spec_uses_lag(program_spec):
+    for raw in str(program_spec or "").split(";"):
+        token = raw.strip()
+        if not token:
+            continue
+        metric_ref = _canonical_metric_ref_token(token)
+        if metric_ref and metric_ref.endswith("-1"):
+            return True
+    return False
 
 
 def _metrics_csv(metrics, field):
@@ -817,5 +847,9 @@ def read_solve_score_metadata(scope, meta, default_metric=None, default_omega_en
         "omega_phase": compiled["omega_phase"],
         "omega_enabled": compiled["omega_enabled"],
         "program_spec": compiled["program_spec"],
+        "uses_lag": compiled["uses_lag"],
+        "lagged_metric_slots": list(compiled.get("lagged_metric_slots") or []),
+        "lagged_sources": list(compiled.get("lagged_sources") or []),
+        "prelude_by_source": dict(compiled.get("prelude_by_source") or {}),
         "display": compiled["display"],
     }

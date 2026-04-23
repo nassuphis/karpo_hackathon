@@ -39,7 +39,42 @@ def _event(**overrides):
     return payload
 
 
+def _fingerprint(chain, metric="proximity", quantile=0.001, omega=1.0, omega_enabled=True):
+    from solve_score_chain import compile_solve_score_chain_or_legacy, compiled_solve_score_fingerprint
+    compiled = compile_solve_score_chain_or_legacy(
+        chain,
+        metric,
+        quantile,
+        omega,
+        omega_enabled,
+        default_metric=metric,
+    )
+    return compiled_solve_score_fingerprint(compiled)
+
+
 class TestPaletteChunkHandler(unittest.TestCase):
+
+    def test_v2_bins_allow_lagged_score_programs(self):
+        import handler_palette_chunk as mod
+
+        bins_meta = {
+            "family": "solve_score",
+            "version": 2,
+            "program": "m0-0;m0-1;abs_diff",
+            "metrics": [
+                {
+                    "slot": 0,
+                    "source": "slv",
+                    "metric": "proximity",
+                    "clip_lo": 0.0,
+                    "clip_hi": 1.0,
+                }
+            ],
+        }
+
+        args = mod._solve_score_program_args(bins_meta)
+        self.assertIn("--score_program=m0-0;m0-1;abs_diff", args)
+        self.assertIn("--score_metrics=proximity", args)
 
     @patch("handler_palette_chunk.report_status")
     @patch("handler_palette_chunk.s3")
@@ -655,6 +690,102 @@ class TestPaletteChunkHandler(unittest.TestCase):
             done_kwargs = mock_report.call_args_list[-1].kwargs
             self.assertEqual(done_kwargs["result_data"]["input_mode"], "multispan_sectioned")
             self.assertEqual(done_kwargs["result_data"]["logical_section"], True)
+
+    @patch("handler_palette_chunk.report_status")
+    @patch("handler_palette_chunk.s3")
+    @patch("handler_palette_chunk.subprocess.run")
+    def test_lagged_v2_logical_section_threads_prelude_to_native(self, mock_run, mock_s3, mock_report):
+        import handler_palette_chunk as mod
+        from logical_sections import build_solve_source_manifest
+
+        chain = [["proximity", "slv", "2"], ["proximity", "slv-1", "2"], ["abs_diff"]]
+        with tempfile.TemporaryDirectory() as td, \
+             patch.object(mod, "_TMP_INPUT_MANIFEST", os.path.join(td, "input_manifest.json")), \
+             patch.object(mod, "_TMP_SCORES", os.path.join(td, "scores.bin")), \
+             patch.object(mod, "_TMP_BINS", os.path.join(td, "bins.bin")):
+
+            bins_meta = {
+                "family": "solve_score",
+                "version": 2,
+                "metric": "proximity",
+                "clip_quantile": 0.02,
+                "omega": 1.0,
+                "omega_enabled": True,
+                "clip_lo": 0.0,
+                "clip_hi": 1.0,
+                "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+                "program": "m0-0;m0-1;abs_diff",
+                "chain_fingerprint": _fingerprint(chain, metric="proximity", quantile=0.02),
+                "metrics": [
+                    {"slot": 0, "metric": "proximity", "source": "slv", "quantile": 0.02, "clip_lo": 0.0, "clip_hi": 1.0},
+                ],
+            }
+            solve_source_manifest = build_solve_source_manifest(
+                [
+                    {"chunk_idx": 0, "bin_key": "renders/j/chunk_0.bin", "step_start": 0, "step_count": 3},
+                    {"chunk_idx": 1, "bin_key": "renders/j/chunk_1.bin", "step_start": 3, "step_count": 3},
+                ],
+                job_id="j",
+                degree=2,
+                n_coeffs=3,
+            )
+
+            mock_s3.get_object.side_effect = lambda **kwargs: {
+                "Body": MagicMock(read=lambda: json.dumps(bins_meta).encode())
+            }
+            mock_s3.generate_presigned_url.side_effect = lambda op, Params, ExpiresIn: f"https://example.com/{Params['Key']}"
+            mock_s3.upload_fileobj.side_effect = lambda fileobj, bucket, key, ExtraArgs=None: None
+
+            def run_side_effect(cmd, capture_output, text, timeout):
+                self.assertEqual(cmd[0], mod.BINARY_MT)
+                self.assertIn("--input_mode=multispan_sectioned", cmd)
+                self.assertIn("--prelude_rows=1", cmd)
+                self.assertIn("--score_coeff_prelude_rows=0", cmd)
+                self.assertIn("--score_param_prelude_rows=0", cmd)
+                self.assertIn("--score_program=m0-0;m0-1;abs_diff", cmd)
+                input_manifest = next(arg.split("=", 1)[1] for arg in cmd if arg.startswith("--input_manifest="))
+                with open(input_manifest) as fh:
+                    input_meta = json.load(fh)
+                self.assertEqual(input_meta["source_family"], "slv")
+                self.assertEqual(input_meta["logical_size"], 3 * 2 * 2 * 4)
+                self.assertEqual(len(input_meta["spans"]), 2)
+                scores = array("f", [0.0, 0.5])
+                with open(mod._TMP_SCORES, "wb") as f:
+                    scores.tofile(f)
+                with open(mod._TMP_BINS, "wb") as f:
+                    f.write(bytes([0, 5]))
+                return MagicMock(
+                    returncode=0,
+                    stdout=json.dumps({
+                        "min_score": 0.0,
+                        "max_score": 0.5,
+                        "threads": 2,
+                        "input_mode": "multispan_sectioned",
+                        "retries": 2,
+                    }),
+                    stderr="",
+                )
+
+            mock_run.side_effect = run_side_effect
+            mod.handler(_event(
+                section_idx=1,
+                metric="proximity",
+                solve_score_quantile=0.02,
+                solve_score_chain=chain,
+                logical_section=True,
+                solve_source_manifest=solve_source_manifest,
+                prelude_rows=1,
+                step_start=3,
+                step_count=2,
+                degree=2,
+                palette_chunk_threads=2,
+                palette_chunk_input_mode="sectioned",
+                bin_key="",
+            ), None)
+
+            done_kwargs = mock_report.call_args_list[-1].kwargs
+            self.assertEqual(done_kwargs["result_data"]["input_mode"], "multispan_sectioned")
+            self.assertEqual(done_kwargs["result_data"]["prelude_rows"], 1)
 
     @patch("handler_palette_chunk.report_status")
     @patch("handler_palette_chunk.s3")

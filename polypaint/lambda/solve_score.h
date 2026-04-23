@@ -1247,7 +1247,11 @@ static double solve_score_eval_program_from_buffers(const float *currentMetricBu
                 if (token->lagDepth == 0) {
                     stack[sp++] = currentMetricBuffer[token->metricSlot];
                 } else if (token->lagDepth == 1) {
-                    if (!recentMetricBuffer) return NAN;
+                    if (!recentMetricBuffer) {
+                        fprintf(stderr, "solve-score program references m%d-1 but recentMetricBuffer is NULL\n",
+                                token->metricSlot);
+                        return NAN;
+                    }
                     stack[sp++] = recentMetricBuffer[token->metricSlot];
                 } else {
                     return NAN;

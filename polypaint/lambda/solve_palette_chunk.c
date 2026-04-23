@@ -130,7 +130,7 @@ int main(int argc, char **argv) {
             return 1;
         }
         if (solve_score_program_uses_lag(&scoreProgram)) {
-            fprintf(stderr, "Lagged solve-score refs are supported only by fused color raster in v1\n");
+            fprintf(stderr, "Lagged solve-score refs require solve_palette_chunk_mt with multispan_sectioned input in v1\n");
             return 1;
         }
         metric = scoreProgram.metrics[0];

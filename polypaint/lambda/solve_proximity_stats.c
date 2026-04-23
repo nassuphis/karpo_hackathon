@@ -210,6 +210,22 @@ static double score_xformed(const float *roots, int degree, enum SolveMetric met
     return compute_solve_metric_score(xformed, degree, metric);
 }
 
+static const float *prepare_step(const float *raw, int degree,
+                                 RootXformEntry *rtChain, int nRt,
+                                 float *stepBuf, float *wkRe, float *wkIm) {
+    if (nRt <= 0) return raw;
+    for (int i = 0; i < degree; i++) {
+        wkRe[i] = raw[i * 2];
+        wkIm[i] = raw[i * 2 + 1];
+    }
+    apply_root_xforms(rtChain, nRt, wkRe, wkIm, degree);
+    for (int i = 0; i < degree; i++) {
+        stepBuf[i * 2] = wkRe[i];
+        stepBuf[i * 2 + 1] = wkIm[i];
+    }
+    return stepBuf;
+}
+
 static double score_program_xformed(const float *roots, int degree, const SolveScoreProgram *program,
                                     RootXformEntry *rtChain, int nRt,
                                     float *wkRe, float *wkIm) {
@@ -509,6 +525,144 @@ static void compute_scores_parallel(
     free(workers);
 }
 
+static int compute_scores_lagged_summary(
+    const float *buf,
+    const float *coeffBuf,
+    const float *paramBuf,
+    long nSolves,
+    int stride,
+    int coeffStride,
+    int paramStride,
+    int degree,
+    int coeffDegree,
+    int paramDegree,
+    enum SolveMetric metric,
+    const SolveScoreProgram *program,
+    RootXformEntry *rtChain,
+    int nRt,
+    double *scores,
+    int minFiniteRootsRequired,
+    long *finiteRootCount,
+    long *fullyFiniteSolveCount,
+    long *partialFiniteSolveCount,
+    long *zeroFiniteSolveCount,
+    long *usableSolveCount,
+    long *exactZeroRootCount,
+    long *rowsWithAnyExactZeroRootCount,
+    long *rowsAllExactZeroRootsCount,
+    int *minFiniteRootsPerSolve,
+    int *maxFiniteRootsPerSolve,
+    int *threadsUsed
+) {
+    if (!program || !scores || !solve_score_program_uses_lag(program)) return 0;
+
+    const int usesSolveLag = solve_score_program_uses_lag_source(program, SOLVE_SCORE_SOURCE_SOLVE);
+    const int usesCoeffLag = solve_score_program_uses_lag_source(program, SOLVE_SCORE_SOURCE_COEFF);
+    const int usesParamLag = solve_score_program_uses_lag_source(program, SOLVE_SCORE_SOURCE_PARAM);
+
+    long finiteRootsTotal = 0;
+    long fullyFiniteTotal = 0;
+    long partialFiniteTotal = 0;
+    long zeroFiniteTotal = 0;
+    long usableTotal = 0;
+    long exactZeroRootTotal = 0;
+    long rowsWithAnyExactZeroRootTotal = 0;
+    long rowsAllExactZeroRootsTotal = 0;
+    int minFinite = degree;
+    int maxFinite = 0;
+
+    int recentInitialized = 0;
+    float currentMetricBuffer[SOLVE_SCORE_MAX_METRIC_SLOTS];
+    float recentMetricBuffer[SOLVE_SCORE_MAX_METRIC_SLOTS];
+    float wkRe[MAXDEG], wkIm[MAXDEG];
+    float prevWkRe[MAXDEG], prevWkIm[MAXDEG];
+    float stepBuf[MAXDEG * 2];
+    float prevStepBuf[MAXDEG * 2];
+
+    for (long s = 0; s < nSolves; s++) {
+        const float *roots = buf + s * stride;
+        const float *coeffRoots = (coeffBuf && coeffDegree > 0)
+            ? (coeffBuf + s * coeffStride)
+            : NULL;
+        const float *paramValues = (paramBuf && paramDegree > 0)
+            ? (paramBuf + s * paramStride)
+            : NULL;
+
+        int finiteRoots = count_finite_roots_in_solve(roots, degree);
+        int zeroRoots = count_exact_zero_roots_in_solve(roots, degree);
+        finiteRootsTotal += finiteRoots;
+        if (finiteRoots == degree) fullyFiniteTotal++;
+        else if (finiteRoots == 0) zeroFiniteTotal++;
+        else partialFiniteTotal++;
+        if (finiteRoots >= minFiniteRootsRequired) usableTotal++;
+        exactZeroRootTotal += zeroRoots;
+        if (zeroRoots > 0) rowsWithAnyExactZeroRootTotal++;
+        if (zeroRoots == degree) rowsAllExactZeroRootsTotal++;
+        if (finiteRoots < minFinite) minFinite = finiteRoots;
+        if (finiteRoots > maxFinite) maxFinite = finiteRoots;
+
+        const float *step = prepare_step(roots, degree, rtChain, nRt, stepBuf, wkRe, wkIm);
+        if (!solve_score_eval_metric_slots(
+                step, degree,
+                coeffRoots, coeffDegree,
+                paramValues, paramDegree,
+                program,
+                currentMetricBuffer)) {
+            fprintf(stderr, "solve-score metric evaluation failed in summary row %ld\n", s);
+            return 0;
+        }
+
+        if (!recentInitialized) {
+            memcpy(recentMetricBuffer, currentMetricBuffer, sizeof(float) * (size_t)program->metricCount);
+            const float *prevStep = step;
+            const float *prevCoeffRoots = coeffRoots;
+            const float *prevParamValues = paramValues;
+            if (s > 0) {
+                if (usesSolveLag) {
+                    const float *prevRoots = buf + (s - 1) * stride;
+                    prevStep = prepare_step(prevRoots, degree, rtChain, nRt, prevStepBuf, prevWkRe, prevWkIm);
+                }
+                if (usesCoeffLag && coeffBuf && coeffDegree > 0) {
+                    prevCoeffRoots = coeffBuf + (s - 1) * coeffStride;
+                }
+                if (usesParamLag && paramBuf && paramDegree > 0) {
+                    prevParamValues = paramBuf + (s - 1) * paramStride;
+                }
+            }
+            if (!solve_score_eval_lagged_metric_slots(
+                    prevStep, degree,
+                    prevCoeffRoots, coeffDegree,
+                    prevParamValues, paramDegree,
+                    program,
+                    recentMetricBuffer)) {
+                fprintf(stderr, "solve-score lag metric evaluation failed in summary row %ld\n", s);
+                return 0;
+            }
+            recentInitialized = 1;
+        }
+
+        scores[s] = solve_score_eval_program_from_buffers(currentMetricBuffer, recentMetricBuffer, program);
+        if (!isfinite(scores[s])) {
+            fprintf(stderr, "solve-score program evaluation failed in summary row %ld\n", s);
+            return 0;
+        }
+        memcpy(recentMetricBuffer, currentMetricBuffer, sizeof(float) * (size_t)program->metricCount);
+    }
+
+    if (finiteRootCount) *finiteRootCount = finiteRootsTotal;
+    if (fullyFiniteSolveCount) *fullyFiniteSolveCount = fullyFiniteTotal;
+    if (partialFiniteSolveCount) *partialFiniteSolveCount = partialFiniteTotal;
+    if (zeroFiniteSolveCount) *zeroFiniteSolveCount = zeroFiniteTotal;
+    if (usableSolveCount) *usableSolveCount = usableTotal;
+    if (exactZeroRootCount) *exactZeroRootCount = exactZeroRootTotal;
+    if (rowsWithAnyExactZeroRootCount) *rowsWithAnyExactZeroRootCount = rowsWithAnyExactZeroRootTotal;
+    if (rowsAllExactZeroRootsCount) *rowsAllExactZeroRootsCount = rowsAllExactZeroRootsTotal;
+    if (minFiniteRootsPerSolve) *minFiniteRootsPerSolve = minFinite;
+    if (maxFiniteRootsPerSolve) *maxFiniteRootsPerSolve = maxFinite;
+    if (threadsUsed) *threadsUsed = 1;
+    return 1;
+}
+
 typedef struct {
     const float *buf;
     const float *coeffBuf;
@@ -713,6 +867,7 @@ int main(int argc, char **argv) {
     int useScoreProgram = 0;
     int programUsesCoeffSource = 0;
     int programUsesParamSource = 0;
+    int programUsesLag = 0;
     if (scoreMetricsCsv || scoreClipLosCsv || scoreClipHisCsv || scoreProgramSpec) {
         char scoreErr[256] = {0};
         if (!scoreMetricsCsv || !scoreClipLosCsv || !scoreClipHisCsv || !scoreProgramSpec) {
@@ -727,8 +882,9 @@ int main(int argc, char **argv) {
             free(buf);
             return 1;
         }
-        if (solve_score_program_uses_lag(&scoreProgram)) {
-            fprintf(stderr, "Lagged solve-score refs are supported only by fused color raster in v1\n");
+        programUsesLag = solve_score_program_uses_lag(&scoreProgram);
+        if (programUsesLag && strcmp(mode, "summary") != 0) {
+            fprintf(stderr, "Lagged solve-score refs are supported only by --mode=summary in solve_proximity_stats; use the sectioned histogram or raster path in v1\n");
             free(buf);
             return 1;
         }
@@ -935,17 +1091,36 @@ int main(int argc, char **argv) {
         int maxFiniteRootsPerSolve = 0;
 
         int threadsUsed = 1;
-        compute_scores_parallel(
-            buf, coeffBuf, paramBuf,
-            nSolves, stride, coeffStride, paramStride, degree, coeffDegree, paramDegree,
-            metric, useScoreProgram ? &scoreProgram : NULL, rtChain, nRt, scores,
-            requestedThreads, 1, minFiniteRootsRequired,
-            &finiteRootCount, &fullyFiniteSolveCount, &partialFiniteSolveCount,
-            &zeroFiniteSolveCount, &usableSolveCount,
-            &exactZeroRootCount, &rowsWithAnyExactZeroRootCount, &rowsAllExactZeroRootsCount,
-            &minFiniteRootsPerSolve, &maxFiniteRootsPerSolve,
-            &threadsUsed
-        );
+        if (programUsesLag) {
+            if (!compute_scores_lagged_summary(
+                    buf, coeffBuf, paramBuf,
+                    nSolves, stride, coeffStride, paramStride, degree, coeffDegree, paramDegree,
+                    metric, &scoreProgram, rtChain, nRt, scores,
+                    minFiniteRootsRequired,
+                    &finiteRootCount, &fullyFiniteSolveCount, &partialFiniteSolveCount,
+                    &zeroFiniteSolveCount, &usableSolveCount,
+                    &exactZeroRootCount, &rowsWithAnyExactZeroRootCount, &rowsAllExactZeroRootsCount,
+                    &minFiniteRootsPerSolve, &maxFiniteRootsPerSolve,
+                    &threadsUsed)) {
+                free(scores);
+                free(paramBuf);
+                free(coeffBuf);
+                free(buf);
+                return 1;
+            }
+        } else {
+            compute_scores_parallel(
+                buf, coeffBuf, paramBuf,
+                nSolves, stride, coeffStride, paramStride, degree, coeffDegree, paramDegree,
+                metric, useScoreProgram ? &scoreProgram : NULL, rtChain, nRt, scores,
+                requestedThreads, 1, minFiniteRootsRequired,
+                &finiteRootCount, &fullyFiniteSolveCount, &partialFiniteSolveCount,
+                &zeroFiniteSolveCount, &usableSolveCount,
+                &exactZeroRootCount, &rowsWithAnyExactZeroRootCount, &rowsAllExactZeroRootsCount,
+                &minFiniteRootsPerSolve, &maxFiniteRootsPerSolve,
+                &threadsUsed
+            );
+        }
         qsort(scores, nSolves, sizeof(double), cmp_double);
 
         /* Extremes */

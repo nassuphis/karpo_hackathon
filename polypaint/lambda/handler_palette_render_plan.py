@@ -18,7 +18,7 @@ from calc_chunks import (
     fallback_params_global_key,
 )
 from color_artifact_meta import load_color_artifact_head, parse_root_transforms
-from logical_sections import build_physical_section_items
+from logical_sections import build_physical_section_items, build_solve_source_manifest
 from palette_names import VALID_PALETTE_NAMES
 from param_source import chunk_items_have_params
 from shared import BUCKET, parse_body, ok_response
@@ -29,6 +29,7 @@ from solve_score_chain import (
     format_solve_score_chain_display,
     read_solve_score_metadata,
     solve_score_chain_from_scalars,
+    solve_score_lag_prelude_by_source,
     solve_score_uses_source,
     solve_score_uses_non_solve_sources,
     solve_score_chain_id,
@@ -423,6 +424,11 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
 
     source_score = read_solve_score_metadata("solve", source, default_metric="proximity")
     metric = source_score["metric"]
+    prelude_by_source = solve_score_lag_prelude_by_source(source_score)
+    uses_lag = bool(source_score.get("uses_lag"))
+    if uses_lag:
+        execution["solve_score_hist_input_mode"] = "sectioned"
+        execution["palette_chunk_input_mode"] = "sectioned"
     palette = str(source.get("palette") or "").strip()
     if palette not in VALID_PALETTE_NAMES:
         raise RuntimeError(f"Solve-score Color artifact {source['artifact_id']} has invalid palette {palette!r}")
@@ -494,6 +500,15 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
                 raise RuntimeError("Param-source solve score requires lores.params_key")
             if not chunk_items_have_params(chunk_items):
                 raise RuntimeError("Param-source solve score requires full-res params metadata on every chunk")
+    n_coeffs = int(calc.get("n_coeffs", degree + 1) or (degree + 1))
+    solve_source_manifest = build_solve_source_manifest(
+        chunk_items,
+        job_id=job_id,
+        degree=degree,
+        n_coeffs=n_coeffs,
+    )
+    plan["logical_section"] = uses_lag
+    plan["solve_source_manifest"] = solve_source_manifest if uses_lag else {}
     plan["calc"] = {
         "degree": degree,
         "N": full_n,
@@ -506,7 +521,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         "lores_params_key": _fallback_lores_params_key(job_id, calc),
         "params_key": _fallback_params_key(job_id, calc),
         "param_storage_mode": str(calc.get("param_storage_mode") or ("chunked" if not _fallback_params_key(job_id, calc) else "global")),
-        "n_coeffs": int(calc.get("n_coeffs", degree + 1) or (degree + 1)),
+        "n_coeffs": n_coeffs,
     }
     plan["section_items"] = section_items
     plan["solve_score"] = {
@@ -515,6 +530,13 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         "omega": omega,
         "omega_enabled": omega_enabled,
         "chain": source_score["chain"],
+        "metrics": source_score["metrics"],
+        "program": source_score["program_spec"],
+        "uses_lag": uses_lag,
+        "prelude_by_source": prelude_by_source,
+        "prelude_rows": int(prelude_by_source.get("slv", 0)),
+        "score_coeff_prelude_rows": int(prelude_by_source.get("cf", 0)),
+        "score_param_prelude_rows": int(prelude_by_source.get("pm", 0)),
         "cleanup_scratch": not scratch_ok,
         "clip_key": clip_key if scratch_ok else prefix + f"solve_score/{metric}_clip.json",
         "hist_prefix": solve_prefix,
@@ -561,6 +583,12 @@ def handler(event, context):
         pp.get("solve_score_omega_enabled", True),
         default_metric="proximity",
     )
+    prelude_by_source = solve_score_lag_prelude_by_source(compiled_score)
+    uses_lag = bool(compiled_score.get("uses_lag"))
+    if uses_lag:
+        # Lag can cross physical chunk boundaries, so use manifest-backed reads.
+        execution["solve_score_hist_input_mode"] = "sectioned"
+        execution["palette_chunk_input_mode"] = "sectioned"
     metric = compiled_score["metric"]
     palette = pp.get("palette", "inferno")
     root_transforms = pp.get("root_transforms", [])
@@ -620,6 +648,13 @@ def handler(event, context):
     section_scores_prefix = chunks_prefix + "score_section_"
     section_bins_prefix = chunks_prefix + "palette_bins_section_"
     section_meta_prefix = chunks_prefix + "meta_section_"
+    n_coeffs = int(calc.get("n_coeffs", degree + 1) or (degree + 1))
+    solve_source_manifest = build_solve_source_manifest(
+        chunk_items,
+        job_id=job_id,
+        degree=degree,
+        n_coeffs=n_coeffs,
+    )
 
     plan = {
         "job_id": job_id,
@@ -659,6 +694,8 @@ def handler(event, context):
             "score_chain": "",
         },
         "prefix": prefix,
+        "logical_section": uses_lag,
+        "solve_source_manifest": solve_source_manifest if uses_lag else {},
         "calc": {
             "degree": degree,
             "N": full_n,
@@ -671,7 +708,7 @@ def handler(event, context):
             "lores_params_key": _fallback_lores_params_key(job_id, calc),
             "params_key": _fallback_params_key(job_id, calc),
             "param_storage_mode": str(calc.get("param_storage_mode") or ("chunked" if not _fallback_params_key(job_id, calc) else "global")),
-            "n_coeffs": int(calc.get("n_coeffs", degree + 1) or (degree + 1)),
+            "n_coeffs": n_coeffs,
         },
         "section_items": section_items,
         "solve_score": {
@@ -682,6 +719,11 @@ def handler(event, context):
             "chain": compiled_score["chain"],
             "metrics": compiled_score["metrics"],
             "program": compiled_score["program_spec"],
+            "uses_lag": uses_lag,
+            "prelude_by_source": prelude_by_source,
+            "prelude_rows": int(prelude_by_source.get("slv", 0)),
+            "score_coeff_prelude_rows": int(prelude_by_source.get("cf", 0)),
+            "score_param_prelude_rows": int(prelude_by_source.get("pm", 0)),
             "cleanup_scratch": True,
             "clip_key": clip_key,
             "hist_prefix": solve_prefix,

@@ -22,6 +22,8 @@ from solve_score_chain import (
     canonicalize_solve_score_program_spec,
     compile_solve_score_chain_or_legacy,
     compiled_solve_score_fingerprint,
+    solve_score_lag_prelude_by_source,
+    solve_score_program_spec_uses_lag,
     solve_score_program_cli_payload,
 )
 from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, parse_boolish, report_status
@@ -137,9 +139,10 @@ def _sectioned_input_size_limit():
 
 
 def _solve_score_program_args(bins_data):
+    program_spec = canonicalize_solve_score_program_spec(bins_data.get("program") or "")
     payload = solve_score_program_cli_payload({
         "metrics": bins_data.get("metrics") or [],
-        "program_spec": canonicalize_solve_score_program_spec(bins_data.get("program") or ""),
+        "program_spec": program_spec,
     })
     args = [
         f"--score_metrics={payload['score_metrics']}",
@@ -212,6 +215,32 @@ def handler(event, context):
     param_spans = list(params.get("param_spans") or [])
     logical_section = parse_boolish(params.get("logical_section"), bool(root_spans))
     solve_source_manifest = dict(params.get("solve_source_manifest") or {})
+    uses_lag = bool(compiled and compiled.get("uses_lag"))
+    prelude_by_source = solve_score_lag_prelude_by_source(compiled) if compiled else {"slv": 0, "cf": 0, "pm": 0}
+    requested_solve_prelude = int(params.get("prelude_rows") or 0)
+    requested_coeff_prelude = int(params.get("score_coeff_prelude_rows") or 0)
+    requested_param_prelude = int(params.get("score_param_prelude_rows") or 0)
+    if uses_lag:
+        if not logical_section:
+            raise RuntimeError("lagged palette chunk requires logical_section=true")
+        if input_mode != "sectioned":
+            raise RuntimeError("lagged palette chunk requires palette_chunk_input_mode=sectioned")
+        expected = (
+            int(prelude_by_source.get("slv", 0)),
+            int(prelude_by_source.get("cf", 0)),
+            int(prelude_by_source.get("pm", 0)),
+        )
+        got = (requested_solve_prelude, requested_coeff_prelude, requested_param_prelude)
+        if got != expected:
+            raise RuntimeError(
+                "lagged palette chunk prelude contract mismatch: "
+                f"expected slv/cf/pm={expected}, got {got}"
+            )
+    elif requested_solve_prelude or requested_coeff_prelude or requested_param_prelude:
+        raise RuntimeError("prelude rows require a lagged solve-score program")
+    actual_solve_prelude = 1 if requested_solve_prelude and step_start > 0 else 0
+    actual_coeff_prelude = 1 if requested_coeff_prelude and step_start > 0 else 0
+    actual_param_prelude = 1 if requested_param_prelude and step_start > 0 else 0
     score_key = params["score_key"]
     palette_bins_key = params["palette_bins_key"]
     meta_key = params["meta_key"]
@@ -232,6 +261,9 @@ def handler(event, context):
         "compute_ms": 0,
         "upload_ms": 0,
         "step_count": step_count,
+        "prelude_rows": actual_solve_prelude,
+        "score_coeff_prelude_rows": actual_coeff_prelude,
+        "score_param_prelude_rows": actual_param_prelude,
     }, contract_warnings)
     try:
         _cleanup()
@@ -249,8 +281,8 @@ def handler(event, context):
             root_spans = build_source_spans(
                 solve_source_manifest,
                 source_family="slv",
-                solve_start=step_start,
-                solve_count=step_count,
+                solve_start=step_start - actual_solve_prelude,
+                solve_count=step_count + actual_solve_prelude,
             )
             if root_spans and not bin_key:
                 bin_key = str(root_spans[0]["key"])
@@ -259,8 +291,8 @@ def handler(event, context):
             input_manifest = build_native_multispan_manifest(
                 solve_source_manifest,
                 source_family="slv",
-                solve_start=int(step_start),
-                solve_count=int(step_count),
+                solve_start=int(step_start) - actual_solve_prelude,
+                solve_count=int(step_count) + actual_solve_prelude,
                 url_by_key=root_urls,
             )
             input_manifest_path = write_native_multispan_manifest(_TMP_INPUT_MANIFEST, input_manifest)
@@ -318,6 +350,11 @@ def handler(event, context):
         if is_v2_bins:
             if not bins_data.get("program") or not isinstance(bins_data.get("metrics"), list) or not bins_data.get("metrics"):
                 raise RuntimeError("v2 solve-score bins artifact is missing program or metrics")
+            bins_program_uses_lag = solve_score_program_spec_uses_lag(bins_data.get("program") or "")
+            if bins_program_uses_lag and not compiled:
+                raise RuntimeError("lagged palette chunk requires solve_score_chain in the request payload")
+            if bins_program_uses_lag and not uses_lag:
+                raise RuntimeError("lagged palette chunk bins do not match request chain")
             if has_request_chain:
                 actual_fingerprint = str(bins_data.get("chain_fingerprint") or "").strip()
                 if not actual_fingerprint:
@@ -383,20 +420,20 @@ def handler(event, context):
                 root_spans = build_source_spans(
                     solve_source_manifest,
                     source_family="slv",
-                    solve_start=step_start,
-                    solve_count=step_count,
+                    solve_start=step_start - actual_solve_prelude,
+                    solve_count=step_count + actual_solve_prelude,
                 )
                 coeff_spans = build_source_spans(
                     solve_source_manifest,
                     source_family="cf",
-                    solve_start=step_start,
-                    solve_count=step_count,
+                    solve_start=step_start - actual_coeff_prelude,
+                    solve_count=step_count + actual_coeff_prelude,
                 ) if uses_coeff_source else []
                 param_spans = build_source_spans(
                     solve_source_manifest,
                     source_family="pm",
-                    solve_start=step_start,
-                    solve_count=step_count,
+                    solve_start=step_start - actual_param_prelude,
+                    solve_count=step_count + actual_param_prelude,
                 ) if uses_param_source else []
                 if root_spans and not bin_key:
                     bin_key = str(root_spans[0]["key"])
@@ -416,7 +453,9 @@ def handler(event, context):
 
         report_status(job_id, task_id, "bin_downloaded", result_data=progress)
 
-        use_legacy_binary = threads == 1 and effective_input_mode == "tmpfile"
+        if uses_lag and effective_input_mode != "multispan_sectioned":
+            raise RuntimeError("lagged palette chunk requires multispan_sectioned native input")
+        use_legacy_binary = (not uses_lag) and threads == 1 and effective_input_mode == "tmpfile"
         cmd = [
             BINARY if use_legacy_binary else BINARY_MT,
             _TMP_INPUT,
@@ -434,8 +473,8 @@ def handler(event, context):
                     coeff_manifest = build_native_multispan_manifest(
                         solve_source_manifest,
                         source_family="cf",
-                        solve_start=int(step_start),
-                        solve_count=int(step_count),
+                        solve_start=int(step_start) - actual_coeff_prelude,
+                        solve_count=int(step_count) + actual_coeff_prelude,
                         url_by_key=coeff_urls,
                     )
                     coeff_manifest_path = write_native_multispan_manifest(_TMP_SCORE_COEFFS_MANIFEST, coeff_manifest)
@@ -484,8 +523,8 @@ def handler(event, context):
                     param_manifest = build_native_multispan_manifest(
                         solve_source_manifest,
                         source_family="pm",
-                        solve_start=int(step_start),
-                        solve_count=int(step_count),
+                        solve_start=int(step_start) - actual_param_prelude,
+                        solve_count=int(step_count) + actual_param_prelude,
                         url_by_key=param_urls,
                     )
                     param_manifest_path = write_native_multispan_manifest(_TMP_SCORE_PARAMS_MANIFEST, param_manifest)
@@ -524,6 +563,12 @@ def handler(event, context):
                 ])
             elif effective_input_mode == "multispan_sectioned":
                 cmd.append(f"--input_manifest={input_manifest_path}")
+            if uses_lag:
+                cmd.extend([
+                    f"--prelude_rows={actual_solve_prelude}",
+                    f"--score_coeff_prelude_rows={actual_coeff_prelude}",
+                    f"--score_param_prelude_rows={actual_param_prelude}",
+                ])
         if root_transforms:
             with open(_TMP_XFORMS, "w") as xf:
                 json.dump(root_transforms, xf)
@@ -611,6 +656,9 @@ def handler(event, context):
             "workers": workers,
             "source_size": source_size,
             "logical_section": logical_section,
+            "prelude_rows": actual_solve_prelude,
+            "score_coeff_prelude_rows": actual_coeff_prelude,
+            "score_param_prelude_rows": actual_param_prelude,
         }, contract_warnings)
         report_status(job_id, task_id, "done", result_data=result_data)
         return ok_response(result_data)

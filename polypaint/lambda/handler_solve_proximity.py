@@ -27,6 +27,7 @@ from solve_score_chain import (
     compiled_solve_score_fingerprint,
     compile_solve_score_chain_or_legacy,
     serialize_solve_score_chain,
+    solve_score_lag_prelude_by_source,
     solve_score_program_cli_payload,
     solve_score_uses_source,
 )
@@ -239,6 +240,11 @@ def _compile_request_chain(params, metric, *, default_metric="proximity"):
         params.get("solve_score_omega_enabled", True),
         default_metric=default_metric,
     )
+
+
+def _reject_lagged_unsupported_phase(compiled, phase):
+    if compiled.get("uses_lag"):
+        raise RuntimeError(f"lagged solve-score refs are not supported by {phase} in v1")
 
 
 def _validate_artifact_chain_fingerprint(data, compiled, label):
@@ -803,6 +809,27 @@ def handle_hist(params):
     solve_score_omega_enabled = compiled["omega_enabled"]
     uses_coeff_source = solve_score_uses_source(compiled, "cf")
     uses_param_source = solve_score_uses_source(compiled, "pm")
+    uses_lag = bool(compiled.get("uses_lag"))
+    prelude_by_source = solve_score_lag_prelude_by_source(compiled)
+    requested_solve_prelude = int(params.get("prelude_rows") or 0)
+    requested_coeff_prelude = int(params.get("score_coeff_prelude_rows") or 0)
+    requested_param_prelude = int(params.get("score_param_prelude_rows") or 0)
+    if uses_lag:
+        if not logical_section:
+            raise RuntimeError("lagged solve-score hist requires logical_section=true")
+        expected = (
+            int(prelude_by_source.get("slv", 0)),
+            int(prelude_by_source.get("cf", 0)),
+            int(prelude_by_source.get("pm", 0)),
+        )
+        got = (requested_solve_prelude, requested_coeff_prelude, requested_param_prelude)
+        if got != expected:
+            raise RuntimeError(
+                "lagged solve-score hist prelude contract mismatch: "
+                f"expected slv/cf/pm={expected}, got {got}"
+            )
+    elif requested_solve_prelude or requested_coeff_prelude or requested_param_prelude:
+        raise RuntimeError("prelude rows require a lagged solve-score program")
     if uses_coeff_source:
         coeffs_key = coeffs_key or f"renders/{job_id}/coeffs_{int(section_idx):04d}.bin"
         try:
@@ -811,7 +838,10 @@ def handle_hist(params):
             raise RuntimeError(f"mixed-source solve score hist requires numeric n_coeffs, got {n_coeffs!r}")
         if n_coeffs < 1:
             raise RuntimeError(f"mixed-source solve score hist requires n_coeffs >= 1, got {n_coeffs}")
-    if logical_section and not root_spans:
+    actual_solve_prelude = 0
+    actual_coeff_prelude = 0
+    actual_param_prelude = 0
+    if logical_section:
         try:
             step_start = int(step_start)
             step_count = int(step_count)
@@ -825,23 +855,27 @@ def handle_hist(params):
             raise RuntimeError(f"logical solve score hist requires step_count >= 1, got {step_count}")
         if not solve_source_manifest:
             raise RuntimeError("logical solve score hist requires solve_source_manifest")
+        actual_solve_prelude = 1 if requested_solve_prelude and step_start > 0 else 0
+        actual_coeff_prelude = 1 if requested_coeff_prelude and step_start > 0 else 0
+        actual_param_prelude = 1 if requested_param_prelude and step_start > 0 else 0
+    if logical_section and not root_spans:
         root_spans = build_source_spans(
             solve_source_manifest,
             source_family="slv",
-            solve_start=step_start,
-            solve_count=step_count,
+            solve_start=step_start - actual_solve_prelude,
+            solve_count=step_count + actual_solve_prelude,
         )
         coeff_spans = build_source_spans(
             solve_source_manifest,
             source_family="cf",
-            solve_start=step_start,
-            solve_count=step_count,
+            solve_start=step_start - actual_coeff_prelude,
+            solve_count=step_count + actual_coeff_prelude,
         ) if uses_coeff_source else []
         param_spans = build_source_spans(
             solve_source_manifest,
             source_family="pm",
-            solve_start=step_start,
-            solve_count=step_count,
+            solve_start=step_start - actual_param_prelude,
+            solve_count=step_count + actual_param_prelude,
         ) if uses_param_source else []
         if root_spans and not bin_key:
             bin_key = str(root_spans[0]["key"])
@@ -890,6 +924,9 @@ def handle_hist(params):
         "source_params_key": params_key,
         "source_params_step_start": params_step_start if uses_param_source else "",
         "source_params_step_count": params_step_count if uses_param_source else "",
+        "prelude_rows": actual_solve_prelude,
+        "score_coeff_prelude_rows": actual_coeff_prelude,
+        "score_param_prelude_rows": actual_param_prelude,
         "clip_key": clip_key,
     }, contract_warnings)
     progress.update(_solve_score_error_fields(compiled))
@@ -922,8 +959,8 @@ def handle_hist(params):
             input_manifest = build_native_multispan_manifest(
                 solve_source_manifest,
                 source_family="slv",
-                solve_start=int(step_start),
-                solve_count=int(step_count),
+                solve_start=int(step_start) - actual_solve_prelude,
+                solve_count=int(step_count) + actual_solve_prelude,
                 url_by_key=root_urls,
             )
             input_manifest_path = write_native_multispan_manifest(_TMP_INPUT_MANIFEST, input_manifest)
@@ -936,6 +973,10 @@ def handle_hist(params):
                 f"--hist_bins={hist_bins}",
                 f"--threads={solve_score_threads}",
                 f"--retries={solve_score_hist_retries}",
+                f"--step_count={int(step_count)}",
+                f"--prelude_rows={actual_solve_prelude}",
+                f"--score_coeff_prelude_rows={actual_coeff_prelude}",
+                f"--score_param_prelude_rows={actual_param_prelude}",
             ]
             if program_args:
                 cmd.extend(program_args)
@@ -943,8 +984,8 @@ def handle_hist(params):
                     coeff_manifest = build_native_multispan_manifest(
                         solve_source_manifest,
                         source_family="cf",
-                        solve_start=int(step_start),
-                        solve_count=int(step_count),
+                        solve_start=int(step_start) - actual_coeff_prelude,
+                        solve_count=int(step_count) + actual_coeff_prelude,
                         url_by_key=build_native_manifest_urls(s3, BUCKET, coeff_spans),
                     )
                     coeff_manifest_path = write_native_multispan_manifest(
@@ -960,8 +1001,8 @@ def handle_hist(params):
                     param_manifest = build_native_multispan_manifest(
                         solve_source_manifest,
                         source_family="pm",
-                        solve_start=int(step_start),
-                        solve_count=int(step_count),
+                        solve_start=int(step_start) - actual_param_prelude,
+                        solve_count=int(step_count) + actual_param_prelude,
                         url_by_key=build_native_manifest_urls(s3, BUCKET, param_spans),
                     )
                     param_manifest_path = write_native_multispan_manifest(

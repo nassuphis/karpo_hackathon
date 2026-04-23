@@ -330,6 +330,20 @@ class TestSolveScoreChain(unittest.TestCase):
         self.assertAlmostEqual(compiled["metrics"][0]["quantile"], 0.009)
         self.assertEqual(compiled["program_spec"], "m0-1")
 
+    def test_canonical_program_rejects_malformed_lag_tokens(self):
+        from solve_score_chain import canonicalize_solve_score_program_spec
+
+        for token in ("m0-2", "m0--1", "m0-01", "M0-1", "m0 -1", "m-1"):
+            with self.subTest(token=token):
+                with self.assertRaises(RuntimeError):
+                    canonicalize_solve_score_program_spec(token)
+
+    def test_canonical_program_detects_lag_refs(self):
+        from solve_score_chain import solve_score_program_spec_uses_lag
+
+        self.assertTrue(solve_score_program_spec_uses_lag("m0;m0-1;abs_diff"))
+        self.assertFalse(solve_score_program_spec_uses_lag("m0;m1-0;avg"))
+
     def test_compile_chain_rejects_ambiguous_free_form_lagged_ref(self):
         from solve_score_chain import compile_solve_score_chain
 

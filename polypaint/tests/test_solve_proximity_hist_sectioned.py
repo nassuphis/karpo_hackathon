@@ -159,6 +159,63 @@ class TestSolveProximityHistSectioned(unittest.TestCase):
             })
         return out
 
+    def test_stats_binary_rejects_malformed_lag_program_tokens(self):
+        _ensure_binaries()
+        with tempfile.TemporaryDirectory(prefix="solve_stats_bad_lag_") as tmpdir:
+            bin_path = pathlib.Path(tmpdir) / "input.bin"
+            _write_bin(bin_path, [[(0.0, 0.0), (1.0, 0.0)]], 2)
+            for token in ("m0-2", "m0--1", "m0-01", "M0-1", "m0 -1", "m-1"):
+                with self.subTest(token=token):
+                    result = subprocess.run(
+                        [
+                            str(STATS_BIN),
+                            str(bin_path),
+                            "--mode=hist",
+                            "--degree=2",
+                            "--clip_lo=0",
+                            "--clip_hi=1",
+                            "--hist_bins=4",
+                            "--score_metrics=proximity",
+                            "--score_clip_los=0",
+                            "--score_clip_his=1",
+                            f"--score_program={token}",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    self.assertNotEqual(result.returncode, 0, token)
+                    self.assertIn("Invalid score program", result.stderr)
+
+    def test_stats_binary_rejects_lagged_score_sources_csv(self):
+        _ensure_binaries()
+        with tempfile.TemporaryDirectory(prefix="solve_stats_bad_source_lag_") as tmpdir:
+            bin_path = pathlib.Path(tmpdir) / "input.bin"
+            _write_bin(bin_path, [[(0.0, 0.0), (1.0, 0.0)]], 2)
+            for source in ("slv-1", "cf-1", "pm-1"):
+                with self.subTest(source=source):
+                    result = subprocess.run(
+                        [
+                            str(STATS_BIN),
+                            str(bin_path),
+                            "--mode=hist",
+                            "--degree=2",
+                            "--clip_lo=0",
+                            "--clip_hi=1",
+                            "--hist_bins=4",
+                            "--score_metrics=proximity",
+                            f"--score_sources={source}",
+                            "--score_clip_los=0",
+                            "--score_clip_his=1",
+                            "--score_program=m0",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    self.assertNotEqual(result.returncode, 0, source)
+                    self.assertIn("Invalid score program", result.stderr)
+
     def test_sectioned_hist_matches_existing_hist(self):
         _ensure_binaries()
         solves = [
@@ -568,6 +625,79 @@ class TestSolveProximityHistSectioned(unittest.TestCase):
                             data = json.loads(sectioned.stdout)
                             self.assertEqual(data["n_solves"], ref_data["n_solves"])
                             self.assertEqual(data["hist"], ref_data["hist"])
+                finally:
+                    httpd.shutdown()
+                    thread.join(timeout=5)
+
+    def test_multispan_sectioned_lagged_program_uses_prelude_row(self):
+        from logical_sections import build_native_multispan_manifest, build_solve_source_manifest
+
+        _ensure_binaries()
+        degree = 2
+        row_bytes = degree * 2 * 4
+        rows = [
+            [(0.0, 0.0), (0.0, 0.0)],
+            [(5.0, 0.0), (5.0, 0.0)],
+            [(10.0, 0.0), (10.0, 0.0)],
+        ]
+
+        with tempfile.TemporaryDirectory(prefix="solve_hist_lag_") as tmpdir:
+            root = pathlib.Path(tmpdir)
+            _write_bin(root / "roots_0.bin", [rows[0]], degree)
+            _write_bin(root / "roots_1.bin", [rows[1], rows[2]], degree)
+            chunk_items = [
+                {"chunk_idx": 0, "bin_key": "roots_0.bin", "step_start": 0, "step_count": 1, "bin_size": row_bytes},
+                {"chunk_idx": 1, "bin_key": "roots_1.bin", "step_start": 1, "step_count": 2, "bin_size": row_bytes * 2},
+            ]
+            solve_source_manifest = build_solve_source_manifest(
+                chunk_items,
+                job_id="lag_job",
+                degree=degree,
+                n_coeffs=degree,
+            )
+            with _ThreadedTCPServer(("127.0.0.1", 0), _RangeHandler) as httpd:
+                port = httpd.server_address[1]
+                httpd.root_dir = str(root)
+                thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    url_by_key = {
+                        "roots_0.bin": f"http://127.0.0.1:{port}/roots_0.bin",
+                        "roots_1.bin": f"http://127.0.0.1:{port}/roots_1.bin",
+                    }
+                    input_manifest = build_native_multispan_manifest(
+                        solve_source_manifest,
+                        source_family="slv",
+                        solve_start=0,
+                        solve_count=3,
+                        url_by_key=url_by_key,
+                    )
+                    manifest_path = root / "input_manifest.json"
+                    manifest_path.write_text(json.dumps(input_manifest), encoding="utf-8")
+                    result = subprocess.run(
+                        [
+                            str(SECTIONED_BIN),
+                            "--input_mode=multispan_sectioned",
+                            f"--input_manifest={manifest_path}",
+                            "--degree=2",
+                            "--hist_bins=10",
+                            "--threads=2",
+                            "--step_count=2",
+                            "--prelude_rows=1",
+                            "--score_metrics=centroid_re",
+                            "--score_clip_los=0",
+                            "--score_clip_his=10",
+                            "--score_program=m0-0;m0-1;abs_diff",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    data = json.loads(result.stdout)
+                    self.assertEqual(data["n_solves"], 2)
+                    self.assertEqual(data["hist"][5], 2)
+                    self.assertEqual(sum(data["hist"]), 2)
                 finally:
                     httpd.shutdown()
                     thread.join(timeout=5)

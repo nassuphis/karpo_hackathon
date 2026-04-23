@@ -991,6 +991,63 @@ def test_summary_mixed_source_program_uses_coeff_vectors():
     os.remove(coeff_path)
 
 
+def test_summary_lagged_program_uses_previous_row_buffer():
+    solve_path = "/tmp/sp_test_summary_lagged_solves.bin"
+    params_path = os.path.join(LAMBDA_DIR, "_test_param_input.bin")
+    solve_rows = [
+        [(0.0, 0.0), (1.0, 0.0)],
+        [(0.0, 0.0), (1.0, 0.0)],
+        [(0.0, 0.0), (1.0, 0.0)],
+    ]
+    param_rows = [
+        (0.10, 0.0, 0.0, 0.0),
+        (0.35, 0.0, 0.0, 0.0),
+        (0.90, 0.0, 0.0, 0.0),
+    ]
+    write_bin(solve_path, solve_rows, 2)
+    with open(params_path, "wb") as f:
+        for row in param_rows:
+            f.write(struct.pack("<ffff", *row))
+    try:
+        host_bin = os.path.join(LAMBDA_DIR, "_test_input.bin")
+        shutil.copy(solve_path, host_bin)
+        try:
+            args = (
+                "/src/solve_proximity_stats /src/_test_input.bin --mode=summary "
+                "--degree=2 --metric=t1_re "
+                "--score_metrics=t1_re "
+                "--score_sources=pm "
+                "--score_clip_los=0 "
+                "--score_clip_his=1 "
+                f"--score_program={shlex.quote('m0-0;m0-1;abs_diff')} "
+                "--score_params_file=/src/_test_param_input.bin"
+            )
+            r = _docker_run(args)
+            assert r.returncode == 0, r.stderr
+            result = json.loads(r.stdout)
+            assert result["raw_hist_space"] == "program_output"
+            assert result["n_solves"] == 3
+            assert abs(result["min_score"] - 0.0) < 1e-9
+            assert abs(result["q50"] - 0.25) < 1e-6
+            assert abs(result["max_score"] - 0.55) < 1e-6
+            assert sum(result["raw_bin_counts"]) == 3
+            assert sum(result["final_bin_counts"]) == 3
+        finally:
+            try:
+                os.remove(host_bin)
+            except OSError:
+                pass
+    finally:
+        try:
+            os.remove(solve_path)
+        except OSError:
+            pass
+        try:
+            os.remove(params_path)
+        except OSError:
+            pass
+
+
 def test_hist_param_program_does_not_require_legacy_clip_range():
     solve_path = "/tmp/sp_test_hist_param_program.bin"
     params_path = os.path.join(LAMBDA_DIR, "_test_param_input.bin")
@@ -1387,6 +1444,7 @@ if __name__ == "__main__":
         ("summary threads passthrough", test_summary_reports_requested_threads),
         ("summary exact zero root diagnostics", test_summary_reports_exact_zero_root_diagnostics),
         ("summary mixed-source coeff vectors", test_summary_mixed_source_program_uses_coeff_vectors),
+        ("summary lagged program uses previous row buffer", test_summary_lagged_program_uses_previous_row_buffer),
         ("summary centroid_re smoke", test_summary_centroid_re_smoke),
         ("summary dist_unit_circle smoke", test_summary_dist_unit_circle_smoke),
         ("summary min_angular_separation smoke", test_summary_min_angular_separation_smoke),

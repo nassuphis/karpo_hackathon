@@ -38,8 +38,7 @@ def _event(**overrides):
         "task_id": "render_finalize_mt_0",
         "mode": "color",
         "source_item_count": 1,
-        "width": 2,
-        "height": 2,
+        "pix": 2,
         "tile_size": 2,
         "n_tile_cols": 1,
         "n_tile_rows": 1,
@@ -58,7 +57,7 @@ def _event(**overrides):
         "score_program": "m0",
         "chain_fingerprint": "fp_test",
         "fragment_prefix": TEST_FRAGMENT_PREFIX,
-        "render_execution": {"color_pipeline": "fused", "raster_engine": "mt"},
+        "render_execution": {"raster_engine": "mt"},
         "fragment_manifest": {
             "version": 1,
             "pair_encoding": "u32le_u8_v1",
@@ -110,11 +109,8 @@ class TestFinalizeMTHandler(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "phase='finalize_mt'"):
             mod.handler(_event(phase="finalize"), None)
 
-        with self.assertRaisesRegex(RuntimeError, "color_pipeline='fused'"):
-            mod.handler(_event(render_execution={"color_pipeline": "classic", "raster_engine": "mt"}), None)
-
         with self.assertRaisesRegex(RuntimeError, "raster_engine='mt'"):
-            mod.handler(_event(render_execution={"color_pipeline": "fused", "raster_engine": "single"}), None)
+            mod.handler(_event(render_execution={"raster_engine": "single"}), None)
 
         bad_manifest = dict(_event()["fragment_manifest"], version=2)
         with self.assertRaisesRegex(RuntimeError, "fragment_manifest.version"):
@@ -481,8 +477,7 @@ class TestFinalizeMTHandler(unittest.TestCase):
             manifest_path = os.path.join(tmpdir, "fragments.urls")
             with patch.object(mod, "ASSEMBLE_PROGRESS_INTERVAL_S", 0.01):
                 hist_meta = mod._assemble_greyscale_raw(
-                    width=2,
-                    height=2,
+                    pix=2,
                     raw_path=raw_path,
                     hist_path=hist_path,
                     workers=1,

@@ -13,6 +13,7 @@ import boto3
 
 from color_artifact_meta import load_color_artifact_head
 from shared import BUCKET, parse_body, ok_response, parse_boolish, report_status
+from solve_score_chain import read_solve_score_metadata
 from spread_pdf import build_color_spread_pdf
 
 s3 = boto3.client("s3")
@@ -45,39 +46,22 @@ def _omega_display(enabled, omega):
 def _source_display_name(meta, fallback_id):
     mode = str(meta.get("color_mode", "") or "")
     if mode == "solve_score":
-        metric = str(meta.get("solve_metric", "") or "")
-        q = str(meta.get("solve_score_quantile", "") or "")
-        omega = str(meta.get("solve_score_omega", "") or "")
-        omega_enabled = parse_boolish(meta.get("solve_score_omega_enabled", True), True)
+        try:
+            score = read_solve_score_metadata("solve", meta, default_metric="proximity")
+        except Exception:
+            score = None
         palette = str(meta.get("palette", "") or "")
-        parts = [f"solve:{metric}" if metric else "solve"]
-        if q:
-            try:
-                parts.append(f"q={float(q) * 100:.1f}%")
-            except Exception:
-                parts.append(f"q={q}")
-        if omega:
-            parts.append(_omega_display(omega_enabled, omega))
+        parts = [f"solve:{score['display']}" if score and score.get("display") else "solve"]
         if palette:
             parts.append(palette)
         return " ".join(parts).strip()
     if mode == "saved_palette":
-        metric = str(meta.get("palette_source_metric") or meta.get("solve_metric") or "")
-        q = meta.get("palette_source_quantile") or meta.get("solve_score_quantile") or ""
-        omega = meta.get("palette_source_omega") or meta.get("solve_score_omega") or ""
-        omega_enabled = parse_boolish(
-            meta.get("palette_source_omega_enabled", meta.get("solve_score_omega_enabled", True)),
-            True,
-        )
+        try:
+            score = read_solve_score_metadata("palette_source", meta, default_metric="proximity")
+        except Exception:
+            score = None
         palette = str(meta.get("palette", "") or "")
-        parts = [f"saved:{metric}" if metric else "saved"]
-        if q:
-            try:
-                parts.append(f"q={float(q) * 100:.1f}%")
-            except Exception:
-                parts.append(f"q={q}")
-        if omega:
-            parts.append(_omega_display(omega_enabled, omega))
+        parts = [f"saved:{score['display']}" if score and score.get("display") else "saved"]
         if palette:
             parts.append(palette)
         return " ".join(parts).strip()
@@ -144,22 +128,17 @@ def _body_from(job_id, calc, src_meta, created_at):
     palette = src_meta.get("palette")
     if palette:
         lines.append(f"Palette {palette}.")
-    metric = src_meta.get("solve_metric") or src_meta.get("palette_source_metric")
-    if metric:
-        lines.append(f"Metric {metric}.")
-    q = src_meta.get("solve_score_quantile") or src_meta.get("palette_source_quantile")
-    if q not in ("", None):
-        try:
-            lines.append(f"q {float(q) * 100:.1f} percent.")
-        except Exception:
-            lines.append(f"q {q}.")
-    omega = src_meta.get("solve_score_omega") or src_meta.get("palette_source_omega")
-    omega_enabled = parse_boolish(
-        src_meta.get("solve_score_omega_enabled", src_meta.get("palette_source_omega_enabled", True)),
-        True,
-    )
-    if omega not in ("", None):
-        lines.append(f"Omega {_omega_display(omega_enabled, omega).replace('w=', '')}.")
+    try:
+        if color_mode == "solve_score":
+            score = read_solve_score_metadata("solve", src_meta, default_metric="proximity")
+        elif color_mode == "saved_palette":
+            score = read_solve_score_metadata("palette_source", src_meta, default_metric="proximity")
+        else:
+            score = None
+    except Exception:
+        score = None
+    if score and score.get("display"):
+        lines.append(f"Score {score['display']}.")
     lines.append(f"Transforms {_transforms_summary(src_meta.get('root_transforms'))}.")
     lines.append(f"Created {created_at}.")
     return " ".join(str(x).strip() for x in lines if str(x).strip())
@@ -233,22 +212,17 @@ def _build_spread_meta(job_id, calc, src_meta, source_artifact_id):
     color_mode = str(src_meta.get("color_mode", "") or "").strip()
     palette = str(src_meta.get("palette", "") or "")
     if color_mode == "solve_score":
-        metric = str(src_meta.get("solve_metric", "") or "")
-        q = src_meta.get("solve_score_quantile", "")
-        omega = src_meta.get("solve_score_omega", "")
-        omega_enabled = parse_boolish(src_meta.get("solve_score_omega_enabled", True), True)
-        cm_parts = [f"solve score: {metric}"]
-        if q not in ("", None):
-            try:
-                cm_parts.append(f"q={float(q)*100:.1f}%")
-            except Exception:
-                pass
-        if omega not in ("", None):
-            cm_parts.append(_omega_display(omega_enabled, omega))
-        color_line = " ".join(cm_parts)
+        try:
+            score = read_solve_score_metadata("solve", src_meta, default_metric="proximity")
+            color_line = f"solve score: {score['display']}"
+        except Exception:
+            color_line = "solve score"
     elif color_mode == "saved_palette":
-        metric = str(src_meta.get("palette_source_metric") or src_meta.get("solve_metric") or "")
-        color_line = f"saved palette: {metric}"
+        try:
+            score = read_solve_score_metadata("palette_source", src_meta, default_metric="proximity")
+            color_line = f"saved palette: {score['display']}"
+        except Exception:
+            color_line = "saved palette"
     elif color_mode == "proximity":
         color_line = "root proximity"
     elif color_mode == "constant":
@@ -352,6 +326,10 @@ def handler(event, context):
         title = _title_from(calc, src_meta)
         filename = os.path.splitext(os.path.basename(source_image_key))[0]
         source_display_name = _source_display_name(src_meta, source_artifact_id)
+        try:
+            source_score = read_solve_score_metadata("solve", src_meta, default_metric="proximity")
+        except Exception:
+            source_score = None
 
         # Build structured metadata for the text page
         spread_meta = _build_spread_meta(job_id, calc, src_meta, source_artifact_id)
@@ -371,10 +349,10 @@ def handler(event, context):
             "source_display_name": source_display_name,
             "source_color_mode": src_meta.get("color_mode", ""),
             "source_palette": src_meta.get("palette", ""),
-            "source_solve_metric": src_meta.get("solve_metric", ""),
-            "source_solve_score_quantile": src_meta.get("solve_score_quantile", ""),
-            "source_solve_score_omega": src_meta.get("solve_score_omega", ""),
-            "source_solve_score_omega_enabled": "true" if parse_boolish(src_meta.get("solve_score_omega_enabled", True), True) else "false",
+            "source_solve_metric": source_score["metric"] if source_score else "",
+            "source_solve_score_quantile": _stringify_meta(source_score["quantile"] if source_score else ""),
+            "source_solve_score_omega": _stringify_meta(source_score["omega"] if source_score else ""),
+            "source_solve_score_omega_enabled": "true" if (source_score["omega_enabled"] if source_score else True) else "false",
             "source_root_transforms": _stringify_meta(src_meta.get("root_transforms", "")),
             "source_associated_palette_mode": associated_palette_mode,
             "source_associated_palette_id": associated_palette_id,

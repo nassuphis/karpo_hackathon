@@ -68,6 +68,14 @@ class TestRasterMtParity(unittest.TestCase):
             f"--max_im={center_im + half_h_world}",
         ]
 
+    def _single_metric_program_args(self, metric, clip_lo, clip_hi):
+        return [
+            f"--score_metrics={metric}",
+            f"--score_clip_los={clip_lo}",
+            f"--score_clip_his={clip_hi}",
+            "--score_program=m0",
+        ]
+
     def _score_case_payloads(self):
         from solve_score_chain import compile_solve_score_chain, solve_score_program_cli_payload
 
@@ -347,19 +355,14 @@ class TestRasterMtParity(unittest.TestCase):
                 section_params_path.write_bytes(section_param_bytes)
 
                 common_args = [
-                    "--width=64",
-                    "--height=64",
+                    "--pix=64",
                     "--tile_size=64",
                     "--n_tile_cols=1",
                     "--n_tile_rows=1",
                     *self._bounds_args(64, 64, 0.0, 0.0, 3.0),
                     f"--degree={degree}",
-                    "--color=solve_score",
-                    "--match=none",
-                    "--palette=inferno",
                     "--rotation=0",
                     "--threads=1",
-                    "--solve_score_cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9",
                 ]
                 single_input_manifest_path = self._write_single_span_manifest(
                     root / "single_input_manifest.json",
@@ -397,7 +400,6 @@ class TestRasterMtParity(unittest.TestCase):
                             str(self._binary),
                             str(single_prefix),
                             *common_args,
-                            "--input_mode=multispan_sectioned",
                             f"--input_manifest={single_input_manifest_path}",
                             f"--score_metrics={payload['score_metrics']}",
                             f"--score_clip_los={payload['score_clip_los']}",
@@ -410,7 +412,6 @@ class TestRasterMtParity(unittest.TestCase):
                             str(self._binary),
                             str(ms_prefix),
                             *common_args,
-                            "--input_mode=multispan_sectioned",
                             f"--input_manifest={input_manifest_path}",
                             f"--score_metrics={payload['score_metrics']}",
                             f"--score_clip_los={payload['score_clip_los']}",
@@ -445,15 +446,11 @@ class TestRasterMtParity(unittest.TestCase):
                         ms_result = self._run_binary(ms_cmd)
                         self.assertEqual(ms_result.returncode, 0, ms_result.stderr)
 
-                        single_pix = (root / f"{case['label']}_single_pix_t0000.pix").read_bytes()
-                        ms_pix = (root / f"{case['label']}_ms_pix_t0000.pix").read_bytes()
-                        single_pbx = (root / f"{case['label']}_single_pixbin_t0000.pbx").read_bytes()
-                        ms_pbx = (root / f"{case['label']}_ms_pixbin_t0000.pbx").read_bytes()
+                        single_frag = (root / f"{case['label']}_single_pixbin.frag").read_bytes()
+                        ms_frag = (root / f"{case['label']}_ms_pixbin.frag").read_bytes()
 
-                        self.assertEqual(single_pix, ms_pix)
-                        self.assertEqual(single_pbx, ms_pbx)
-                        self.assertTrue(any(byte != 0 for byte in single_pix))
-                        self.assertGreater(len(single_pbx), 0)
+                        self.assertEqual(single_frag, ms_frag)
+                        self.assertGreater(len(single_frag), 0)
             finally:
                 server.shutdown()
                 server.server_close()
@@ -469,6 +466,7 @@ class TestRasterMtParity(unittest.TestCase):
             root = pathlib.Path(td)
             roots_path = self._write_float_file(root / "roots.bin", roots)
             out_prefix = root / "pix"
+            pixbin_prefix = root / "pixbin"
             palette_prefix = root / "palette_pixbin"
             server, thread = self._serve_dir(root)
             try:
@@ -482,25 +480,17 @@ class TestRasterMtParity(unittest.TestCase):
                 cmd = [
                     str(self._binary),
                     str(out_prefix),
-                    "--width=8",
-                    "--height=8",
+                    "--pix=8",
                     "--tile_size=8",
                     "--n_tile_cols=1",
                     "--n_tile_rows=1",
                     *self._bounds_args(8, 8, 0.0, 0.0, 1.0),
                     f"--degree={degree}",
-                    "--color=solve_score",
-                    "--match=none",
-                    "--palette=inferno",
                     "--rotation=0",
                     "--threads=1",
-                    "--input_mode=multispan_sectioned",
                     f"--input_manifest={manifest_path}",
-                    "--solve_metric=centroid_re",
-                    "--solve_score_clip_lo=0",
-                    "--solve_score_clip_hi=2000",
-                    "--solve_score_cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9",
-                    "--solve_score_raw_bytes=1",
+                    *self._single_metric_program_args("centroid_re", 0, 2000),
+                    f"--pixel_bin_prefix={pixbin_prefix}",
                     f"--palette_bin_prefix={palette_prefix}",
                     "--palette_grid_n=2",
                     "--palette_step_start=0",
@@ -509,7 +499,6 @@ class TestRasterMtParity(unittest.TestCase):
 
                 result = self._run_binary(cmd)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertFalse((root / "pix_t0000.pix").exists())
                 palette_pairs = self._read_u32le_u8_pairs(root / "palette_pixbin.frag")
                 self.assertEqual([pix for pix, _ in palette_pairs], [0, 1, 3, 2])
                 self.assertEqual(len(palette_pairs), step_count)
@@ -542,25 +531,16 @@ class TestRasterMtParity(unittest.TestCase):
                 cmd = [
                     str(self._binary),
                     str(out_prefix),
-                    "--width=8",
-                    "--height=8",
+                    "--pix=8",
                     "--tile_size=8",
                     "--n_tile_cols=1",
                     "--n_tile_rows=1",
                     *self._bounds_args(8, 8, 0.0, 0.0, 1.0),
                     f"--degree={degree}",
-                    "--color=solve_score",
-                    "--match=none",
-                    "--palette=inferno",
                     "--rotation=0",
                     "--threads=1",
-                    "--input_mode=multispan_sectioned",
                     f"--input_manifest={manifest_path}",
-                    "--solve_metric=centroid_re",
-                    "--solve_score_clip_lo=-1",
-                    "--solve_score_clip_hi=1",
-                    "--solve_score_cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9",
-                    "--solve_score_raw_bytes=1",
+                    *self._single_metric_program_args("centroid_re", -1, 1),
                     f"--pixel_bin_prefix={pixbin_prefix}",
                     f"--palette_bin_prefix={palette_prefix}",
                     "--palette_grid_n=2",
@@ -593,6 +573,7 @@ class TestRasterMtParity(unittest.TestCase):
             roots_path = self._write_float_file(root / "roots.bin", roots)
             out_prefix = root / "pix"
             step_scores_path = root / "step_scores.raw"
+            pixbin_prefix = root / "pixbin"
             server, thread = self._serve_dir(root)
             try:
                 manifest_path = self._write_single_span_manifest(
@@ -605,25 +586,17 @@ class TestRasterMtParity(unittest.TestCase):
                 cmd = [
                     str(self._binary),
                     str(out_prefix),
-                    "--width=8",
-                    "--height=8",
+                    "--pix=8",
                     "--tile_size=8",
                     "--n_tile_cols=1",
                     "--n_tile_rows=1",
                     *self._bounds_args(8, 8, 0.0, 0.0, 1.0),
                     f"--degree={degree}",
-                    "--color=solve_score",
-                    "--match=none",
-                    "--palette=inferno",
                     "--rotation=0",
                     "--threads=1",
-                    "--input_mode=multispan_sectioned",
                     f"--input_manifest={manifest_path}",
-                    "--solve_metric=centroid_re",
-                    "--solve_score_clip_lo=0",
-                    "--solve_score_clip_hi=2000",
-                    "--solve_score_cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9",
-                    "--solve_score_raw_bytes=1",
+                    *self._single_metric_program_args("centroid_re", 0, 2000),
+                    f"--pixel_bin_prefix={pixbin_prefix}",
                     f"--step_scores_output={step_scores_path}",
                     "--retries=1",
                 ]
@@ -661,25 +634,16 @@ class TestRasterMtParity(unittest.TestCase):
                 cmd = [
                     str(self._binary),
                     str(out_prefix),
-                    "--width=8",
-                    "--height=8",
+                    "--pix=8",
                     "--tile_size=8",
                     "--n_tile_cols=1",
                     "--n_tile_rows=1",
                     *self._bounds_args(8, 8, 0.0, 0.0, 1.0),
                     f"--degree={degree}",
-                    "--color=solve_score",
-                    "--match=none",
-                    "--palette=inferno",
                     "--rotation=0",
                     "--threads=1",
-                    "--input_mode=multispan_sectioned",
                     f"--input_manifest={manifest_path}",
-                    "--solve_metric=centroid_re",
-                    "--solve_score_clip_lo=-1",
-                    "--solve_score_clip_hi=1",
-                    "--solve_score_cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9",
-                    "--solve_score_raw_bytes=1",
+                    *self._single_metric_program_args("centroid_re", -1, 1),
                     f"--pixel_bin_prefix={pixbin_prefix}",
                     f"--step_scores_output={step_scores_path}",
                     "--retries=1",
@@ -713,6 +677,7 @@ class TestRasterMtParity(unittest.TestCase):
             root = pathlib.Path(td)
             roots_path = self._write_float_file(root / "roots.bin", roots)
             out_prefix = root / "pix"
+            pixbin_prefix = root / "pixbin"
             xforms_path = root / "root_xforms.json"
             xforms_path.write_text(json.dumps([["moebius", "0", "0", "0", "0"]]))
             server, thread = self._serve_dir(root)
@@ -727,24 +692,17 @@ class TestRasterMtParity(unittest.TestCase):
                 cmd = [
                     str(self._binary),
                     str(out_prefix),
-                    "--width=16",
-                    "--height=16",
+                    "--pix=16",
                     "--tile_size=16",
                     "--n_tile_cols=1",
                     "--n_tile_rows=1",
                     *self._bounds_args(16, 16, 0.0, 0.0, 4.0),
                     f"--degree={degree}",
-                    "--color=solve_score",
-                    "--solve_metric=proximity",
-                    "--solve_score_clip_lo=0",
-                    "--solve_score_clip_hi=1",
-                    "--solve_score_omega_enabled=0",
-                    "--solve_score_raw_bytes=1",
-                    "--match=none",
                     "--rotation=0",
                     "--threads=1",
-                    "--input_mode=multispan_sectioned",
                     f"--input_manifest={manifest_path}",
+                    *self._single_metric_program_args("proximity", 0, 1),
+                    f"--pixel_bin_prefix={pixbin_prefix}",
                     "--retries=1",
                     f"--root_xforms={xforms_path}",
                 ]
@@ -754,7 +712,6 @@ class TestRasterMtParity(unittest.TestCase):
                 meta = json.loads(result.stdout)
                 self.assertEqual(meta["roots_plotted"], 0)
                 self.assertEqual(meta["roots_clipped"], step_count * degree)
-                self.assertFalse((root / "pix_t0000.pix").exists())
             finally:
                 server.shutdown()
                 server.server_close()

@@ -14,7 +14,7 @@ from color_artifact_meta import (
 from palette_names import VALID_PALETTE_NAMES
 from raw_score_render import histogram_from_raw_path, render_score_raw, write_equalization_lut
 from raw_sidecar import background_color_hex, build_raw_sidecar, validate_raw_sidecar
-from solve_score_chain import format_solve_score_chain_display
+from solve_score_chain import format_solve_score_chain_display, read_solve_score_metadata
 from shared import BUCKET, ok_response, report_status
 
 
@@ -153,17 +153,27 @@ def _source_associated_palette_spec(source_meta, job_id):
     if not palette_id and not (raw_key and raw_meta_key):
         return None
     prefix = f"renders/{job_id}/palettes/{palette_id}/" if palette_id else ""
+    score_meta = {
+        "solve_score_chain": source_meta.get("associated_palette_score_chain", source_meta.get("solve_score_chain", "")),
+        "solve_metric": source_meta.get("associated_palette_metric", source_meta.get("solve_metric", "")),
+        "solve_score_quantile": source_meta.get("associated_palette_quantile", source_meta.get("solve_score_quantile", "")),
+        "solve_score_omega": source_meta.get("associated_palette_omega", source_meta.get("solve_score_omega", "")),
+        "solve_score_omega_enabled": source_meta.get(
+            "associated_palette_omega_enabled",
+            source_meta.get("solve_score_omega_enabled", ""),
+        ),
+    }
+    score = read_solve_score_metadata("solve", score_meta, default_metric="proximity")
     return {
         "mode": mode,
         "palette_id": palette_id,
         "display_name": str(source_meta.get("associated_palette_display_name") or palette_id),
         "palette": str(source_meta.get("associated_palette_palette") or source_meta.get("palette") or "").strip(),
-        "metric": str(source_meta.get("associated_palette_metric") or source_meta.get("solve_metric") or "").strip(),
-        "score_chain": source_meta.get("associated_palette_score_chain", source_meta.get("solve_score_chain", "")),
-        # TODO: drop legacy scalar solve_score_* fallbacks when classic-path retirement removes them repo-wide.
-        "quantile": source_meta.get("associated_palette_quantile", source_meta.get("solve_score_quantile", "")),
-        "omega": source_meta.get("associated_palette_omega", source_meta.get("solve_score_omega", "")),
-        "omega_enabled": source_meta.get("associated_palette_omega_enabled", source_meta.get("solve_score_omega_enabled", "")),
+        "metric": str(score["metric"] or "").strip(),
+        "score_chain": score["chain_json"],
+        "quantile": score["quantile"],
+        "omega": score["omega"],
+        "omega_enabled": score["omega_enabled"],
         "raw_key": str(raw_key or (prefix + "greyscale.raw")).strip(),
         "raw_meta_key": str(raw_meta_key or (prefix + "greyscale.meta.json")).strip(),
         "image_key": str(source_meta.get("associated_palette_image_key") or (prefix + "image.jpeg")).strip(),
@@ -221,6 +231,8 @@ def _recolor_associated_palette(
     )
     width = int(palette_sidecar["width"])
     height = int(palette_sidecar["height"])
+    if width != height:
+        raise RuntimeError(f"Associated palette raw sidecar must be square, got {width}x{height}")
     palette_meta = _load_optional_json_key(palette_spec["meta_key"])
 
     palette_raw_path = "/tmp/color_repalette_palette_source_greyscale.raw"
@@ -236,8 +248,7 @@ def _recolor_associated_palette(
         raw_path=palette_raw_path,
         out_path=image_path,
         preview_path=preview_path,
-        width=width,
-        height=height,
+        pix=width,
         eq_lut_path=eq_lut_path,
         palette=new_palette,
         background_color=background_color,
@@ -259,6 +270,7 @@ def _recolor_associated_palette(
             Body=out_fh,
             ContentType="image/jpeg",
             Metadata={
+                "pix": str(width),
                 "width": str(width),
                 "height": str(height),
                 "palette": str(new_palette),
@@ -422,6 +434,8 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
         quality = _parse_int(source_meta.get("quality"), 90)
         if width <= 0 or height <= 0:
             raise RuntimeError("Selected Color artifact is missing valid width/height metadata")
+        if width != height:
+            raise RuntimeError(f"Recolor-from-raw requires square source artifact, got {width}x{height}")
 
         background_color = _normalize_background_color(source_meta.get("background_color"))
         raw_sidecar = validate_raw_sidecar(
@@ -435,6 +449,8 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
             raise RuntimeError(
                 f"greyscale raw dimensions mismatch: sidecar={raw_width}x{raw_height}, artifact={width}x{height}"
             )
+        if raw_width != raw_height:
+            raise RuntimeError(f"greyscale raw sidecar must be square, got {raw_width}x{raw_height}")
         background_color = background_color_hex(raw_sidecar.get("background_color", background_color))
 
         created_at = _utc_now_iso()
@@ -493,8 +509,7 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
             raw_path=source_raw_path,
             out_path=encode_out_path,
             preview_path=preview_out_path,
-            width=width,
-            height=height,
+            pix=width,
             eq_lut_path=eq_lut_path,
             palette=new_palette,
             background_color=background_color,
@@ -566,7 +581,7 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
 
         _phase(job_id, task_id, "encoding", "upload", "Upload image", **progress)
         image_meta, overlay_meta = split_color_artifact_metadata(metadata)
-        final_headers = {"width": str(width), "height": str(height), **image_meta}
+        final_headers = {"pix": str(width), "width": str(width), "height": str(height), **image_meta}
         metadata_size = _metadata_size_bytes(final_headers)
         if metadata_size > S3_USER_METADATA_LIMIT_BYTES:
             raise RuntimeError(

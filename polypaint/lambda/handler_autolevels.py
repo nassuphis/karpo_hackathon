@@ -52,6 +52,16 @@ def _parse_background_threshold(value):
     return threshold
 
 
+def _parse_positive_int(value, label):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"{label} must be an integer, got {value!r}")
+    if parsed <= 0:
+        raise RuntimeError(f"{label} must be > 0, got {parsed}")
+    return parsed
+
+
 def _sanitize_params(params):
     provided = dict(params or {})
     defaults = {
@@ -199,6 +209,10 @@ def handler(event, context):
             if autolevel_params.get("background_threshold") is not None
             else src_meta.get("background_threshold")
         )
+        src_width = _parse_positive_int(src_meta.get("width", src_meta.get("pix")), "source width")
+        src_height = _parse_positive_int(src_meta.get("height", src_meta.get("pix")), "source height")
+        if src_width != src_height:
+            raise RuntimeError(f"Autolevels requires square source artifact, got {src_width}x{src_height}")
 
         cmd = [
             AUTOLEVELS,
@@ -233,6 +247,10 @@ def handler(event, context):
             stderr = (result.stderr or "").strip()
             raise RuntimeError(f"autolevels_render failed: {stderr or 'unknown error'}")
         meta = json.loads(result.stdout)
+        out_width = _parse_positive_int(meta.get("width", src_width), "autolevel output width")
+        out_height = _parse_positive_int(meta.get("height", src_height), "autolevel output height")
+        if out_width != out_height:
+            raise RuntimeError(f"Autolevels output must be square, got {out_width}x{out_height}")
 
         _phase(job_id, task_id, "preview", "preview", "Preview", artifact_id=artifact_id, family="color")
         env = imgpipe_env()
@@ -266,10 +284,9 @@ def handler(event, context):
             "derivation_kind": "",
         })
         img_meta.update(inherit_associated_palette_metadata(src_meta))
-        if "width" not in img_meta and meta.get("width") is not None:
-            img_meta["width"] = str(meta["width"])
-        if "height" not in img_meta and meta.get("height") is not None:
-            img_meta["height"] = str(meta["height"])
+        img_meta["pix"] = str(out_width)
+        img_meta["width"] = str(out_width)
+        img_meta["height"] = str(out_height)
         image_meta, overlay_meta = split_color_artifact_metadata(img_meta)
 
         content_type = "image/png" if out_ext == "png" else "image/jpeg"
@@ -280,6 +297,8 @@ def handler(event, context):
             )
         write_color_artifact_meta_overlay(s3, BUCKET, job_id, artifact_id, overlay_meta)
         preview_meta = {}
+        if "pix" in image_meta:
+            preview_meta["pix"] = image_meta["pix"]
         if "width" in image_meta:
             preview_meta["width"] = image_meta["width"]
         if "height" in image_meta:

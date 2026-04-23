@@ -202,6 +202,9 @@ def build_raw_sidecar(
             "step_scores_grid_n",
             required=True,
         )
+    if sidecar["width"] != sidecar["height"]:
+        raise RuntimeError(f"raw sidecar requires square dimensions, got {sidecar['width']}x{sidecar['height']}")
+    sidecar["pix"] = sidecar["width"]
     return sidecar
 
 
@@ -231,14 +234,19 @@ def validate_raw_sidecar(sidecar, *, expected_raw_key=None, expected_artifact_fa
     raw_key = str(keys.get("raw_key") or "").strip()
     if expected_raw_key and raw_key != expected_raw_key:
         raise RuntimeError(f"raw sidecar keys.raw_key mismatch: expected {expected_raw_key!r}, got {raw_key!r}")
+    width = _coerce_int(sidecar.get("width", sidecar.get("pix")), "raw sidecar width")
+    height = _coerce_int(sidecar.get("height", sidecar.get("pix")), "raw sidecar height")
+    if width != height:
+        raise RuntimeError(f"raw sidecar requires square dimensions, got {width}x{height}")
     return {
         "version": version,
         "job_id": str(sidecar.get("job_id") or ""),
         "run_id": str(sidecar.get("run_id") or ""),
         "artifact_family": family,
         "artifact_id": str(sidecar.get("artifact_id") or ""),
-        "width": _coerce_int(sidecar.get("width"), "raw sidecar width"),
-        "height": _coerce_int(sidecar.get("height"), "raw sidecar height"),
+        "pix": width,
+        "width": width,
+        "height": height,
         "encoding": dict(encoding),
         "chain_fingerprint": str(sidecar.get("chain_fingerprint") or "").strip(),
         "score_chain": _parse_chain(sidecar.get("score_chain")),

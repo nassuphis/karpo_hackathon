@@ -67,6 +67,7 @@ def _make_event(mode="color", pix=1024, tile_size=512, **extra_params):
         "color_mode": "solve_score",
         "match_mode": "none",
         "palette": "inferno",
+        "solve_score_chain": [["proximity", "0.1"]],
     }
     params.update(extra_params)
     return {
@@ -98,14 +99,13 @@ class TestRenderPlan(unittest.TestCase):
         plan = json.loads(result["body"])
 
         self.assertEqual(plan["mode"], "color")
-        self.assertEqual(plan["render_execution"]["color_pipeline"], "fused")
         self.assertEqual(plan["viewport"]["min_re"], -2.0)
         self.assertEqual(plan["viewport"]["max_re"], 2.0)
         self.assertEqual(plan["viewport"]["min_im"], -2.0)
         self.assertEqual(plan["viewport"]["max_im"], 2.0)
         self.assertEqual(plan["grid"]["pix"], 1024)
-        self.assertEqual(plan["grid"]["width"], 1024)
-        self.assertEqual(plan["grid"]["height"], 1024)
+        self.assertNotIn("width", plan["grid"])
+        self.assertNotIn("height", plan["grid"])
         self.assertEqual(plan["grid"]["tile_size"], 512)
         self.assertEqual(plan["grid"]["n_tiles"], 4)
         self.assertEqual(plan["physical_source_items"], [])
@@ -179,6 +179,15 @@ class TestRenderPlan(unittest.TestCase):
             handler(_make_event(view_mode="bogus_mode"), None)
 
     @patch("handler_render_plan._storage_call")
+    def test_color_plan_rejects_width_height_contract_aliases(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        from handler_render_plan import handler
+
+        with self.assertRaisesRegex(RuntimeError, "no longer accepts width/height"):
+            handler(_make_event(width=1024, height=1024), None)
+        mock_storage.assert_not_called()
+
+    @patch("handler_render_plan._storage_call")
     def test_fused_color_plan_emits_raw_output_contract(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
         from handler_render_plan import handler
@@ -186,7 +195,6 @@ class TestRenderPlan(unittest.TestCase):
         result = handler(_make_event(raster_workers=24, save_associated_palette=False), None)
         plan = json.loads(result["body"])
 
-        self.assertEqual(plan["params"]["color_pipeline"], "fused")
         self.assertEqual(plan["params"]["raster_input_mode"], "sectioned")
         self.assertEqual(plan["params"]["raster_section_mode"], "logical_sections_auto")
         self.assertEqual(plan["raster"]["engine"], "mt")
@@ -201,13 +209,11 @@ class TestRenderPlan(unittest.TestCase):
         self.assertFalse(plan["outputs"]["repalette_capable"])
         self.assertFalse(plan["outputs"]["pixel_bins_drive_rgb"])
         self.assertEqual(plan["render_execution"]["raster_workers"], 24)
-        self.assertEqual(plan["solve_score"]["metric"], "proximity")
         self.assertEqual(plan["solve_score"]["threads"], 4)
-        self.assertEqual(set(plan["solve_score"].keys()), {"enabled", "threads", "metric", "quantile", "omega", "omega_enabled", "chain", "clip_key"})
+        self.assertEqual(set(plan["solve_score"].keys()), {"enabled", "threads", "chain", "clip_key"})
         self.assertEqual(
             set(plan["render_execution"].keys()),
             {
-                "color_pipeline",
                 "raster_engine",
                 "save_associated_palette",
                 "raster_mt_threads",
@@ -289,17 +295,6 @@ class TestRenderPlan(unittest.TestCase):
             "$.plan.calc.coeffs_keys",
             set(iter_jsonpath_values(RENDER_COEFF_RASTER_ITEM_SELECTOR)),
         )
-
-    @patch("handler_render_plan._storage_call")
-    def test_color_plan_forces_fused_even_if_caller_passes_classic(self, mock_storage):
-        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
-        from handler_render_plan import handler
-
-        result = handler(_make_event(color_pipeline="classic"), None)
-        plan = json.loads(result["body"])
-
-        self.assertEqual(plan["params"]["color_pipeline"], "fused")
-        self.assertEqual(plan["render_execution"]["color_pipeline"], "fused")
 
     @patch("handler_render_plan._storage_call")
     def test_fused_color_plan_supports_mixed_source_solve_score_chains(self, mock_storage):
@@ -492,7 +487,6 @@ class TestRenderPlan(unittest.TestCase):
             solve_score_hist_input_mode="sectioned",
             palette_chunk_workers=32,
             save_associated_palette=True,
-            color_pipeline="classic",
         ), None)
         plan = json.loads(result["body"])
 
@@ -545,6 +539,14 @@ class TestRenderPlan(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "supports only color_mode=solve_score"):
             handler(_make_event(color_mode="rainbow"), None)
+
+    @patch("handler_render_plan._storage_call")
+    def test_fused_color_plan_rejects_removed_scalar_solve_score_params(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        from handler_render_plan import handler
+
+        with self.assertRaisesRegex(RuntimeError, "solve_metric is not supported for fused color"):
+            handler(_make_event(solve_metric="proximity"), None)
 
     @patch("handler_render_plan._storage_call")
     def test_fused_color_plan_rejects_tmpfile_raster_input(self, mock_storage):

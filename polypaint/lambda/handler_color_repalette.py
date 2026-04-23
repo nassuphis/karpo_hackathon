@@ -146,6 +146,9 @@ def handle_color_repalette_request(params):
         quality = _parse_int(source_meta.get("quality"), 90)
         if width <= 0 or height <= 0:
             raise RuntimeError("Selected Color artifact is missing valid width/height metadata")
+        if width != height:
+            raise RuntimeError(f"Color RePalette requires square source artifact, got {width}x{height}")
+        pix = width
         if tile_size <= 0:
             raise RuntimeError("Selected Color artifact is missing valid tile_size metadata")
 
@@ -267,8 +270,7 @@ def handle_color_repalette_request(params):
                 "format": ext,
                 "quality": quality,
                 "metadata": metadata,
-                "width": width,
-                "height": height,
+                "pix": pix,
                 "tile_grid": {
                     "n_cols": n_cols,
                     "n_rows": n_rows,

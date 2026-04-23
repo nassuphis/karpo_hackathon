@@ -21,6 +21,7 @@ from color_artifact_meta import split_color_artifact_metadata, write_color_artif
 from raw_score_render import render_score_raw, write_equalization_lut
 from raw_sidecar import background_color_hex, build_raw_sidecar
 from shared import BUCKET, imgpipe_env, ok_response, parse_body, report_status
+from solve_score_chain import read_solve_score_metadata
 
 
 s3 = boto3.client("s3")
@@ -130,12 +131,11 @@ def _presign_fragment_urls(*, finalize_s3, fragment_prefix, source_item_count):
     return urls
 
 
-def _assemble_greyscale_raw(*, width, height, raw_path, hist_path, workers, fragment_urls, manifest_path, progress_cb=None):
+def _assemble_greyscale_raw(*, pix, raw_path, hist_path, workers, fragment_urls, manifest_path, progress_cb=None):
     _write_url_manifest(manifest_path, fragment_urls)
     cmd = [
         ASSEMBLE_GREYSCALE,
-        f"--width={int(width)}",
-        f"--height={int(height)}",
+        f"--pix={int(pix)}",
         f"--output={raw_path}",
         f"--hist-output={hist_path}",
         f"--workers={int(workers)}",
@@ -306,8 +306,7 @@ def _finalize_associated_palette(
         source_item_count=source_item_count,
     )
     hist_meta = _assemble_greyscale_raw(
-        width=grid_n,
-        height=grid_n,
+        pix=grid_n,
         raw_path=raw_path,
         hist_path=hist_path,
         workers=workers,
@@ -323,8 +322,7 @@ def _finalize_associated_palette(
         raw_path=raw_path,
         out_path=encode_out_path,
         preview_path=preview_path,
-        width=grid_n,
-        height=grid_n,
+        pix=grid_n,
         eq_lut_path=eq_lut_path,
         palette=str(associated_palette.get("palette") or metadata.get("palette") or "inferno"),
         background_color=background_color_hex(metadata.get("background_color", [0, 0, 0])),
@@ -339,6 +337,18 @@ def _finalize_associated_palette(
     meta_key = str(associated_palette["meta_key"])
     palette_id = str(associated_palette.get("palette_id") or "")
     created_at = _utc_now_iso()
+    source_score = read_solve_score_metadata("solve", metadata, default_metric="proximity")
+    associated_score = read_solve_score_metadata(
+        "solve",
+        {
+            "solve_score_chain": associated_palette.get("score_chain", metadata.get("solve_score_chain", "")),
+            "solve_metric": associated_palette.get("metric", source_score["metric"]),
+            "solve_score_quantile": associated_palette.get("quantile", source_score["quantile"]),
+            "solve_score_omega": associated_palette.get("omega", source_score["omega"]),
+            "solve_score_omega_enabled": associated_palette.get("omega_enabled", source_score["omega_enabled"]),
+        },
+        default_metric=source_score["metric"],
+    )
 
     sidecar = build_raw_sidecar(
         job_id=job_id,
@@ -377,6 +387,7 @@ def _finalize_associated_palette(
     )
 
     image_metadata = {
+        "pix": str(grid_n),
         "width": str(grid_n),
         "height": str(grid_n),
         "palette": str(associated_palette.get("palette") or metadata.get("palette") or ""),
@@ -426,8 +437,8 @@ def _finalize_associated_palette(
         "preview_key": preview_key,
         "raw_key": raw_key,
         "raw_meta_key": raw_meta_key,
-        "metric": str(associated_palette.get("metric") or metadata.get("solve_metric") or ""),
-        "solve_score_chain": associated_palette.get("score_chain", metadata.get("solve_score_chain", "")),
+        "metric": associated_score["metric"],
+        "solve_score_chain": associated_score["chain_json"],
         "chain_fingerprint": chain_fingerprint,
         "derived_from_color_artifact_id": str(associated_palette.get("source_color_artifact_id") or ""),
         "derivation_kind": "extract_palette",
@@ -448,8 +459,8 @@ def _finalize_associated_palette(
         "palette_id": palette_id,
         "display_name": str(associated_palette.get("display_name") or palette_id),
         "palette": str(associated_palette.get("palette") or metadata.get("palette") or ""),
-        "metric": str(associated_palette.get("metric") or metadata.get("solve_metric") or ""),
-        "score_chain": associated_palette.get("score_chain", metadata.get("solve_score_chain", "")),
+        "metric": associated_score["metric"],
+        "score_chain": associated_score["chain_json"],
         "image_key": image_key,
         "preview_key": preview_key,
         "raw_key": raw_key,
@@ -471,8 +482,11 @@ def handler(event, context):
     run_id = str(params.get("run_id") or "")
     task_id = params.get("task_id", "finalize_mt")
     mode = str(params.get("mode") or "").strip()
-    width = int(params["width"])
-    height = int(params["height"])
+    if params.get("width") not in ("", None) or params.get("height") not in ("", None):
+        raise RuntimeError("FinalizeMT no longer accepts width/height; pass pix for square output")
+    pix = int(params["pix"])
+    width = pix
+    height = pix
     source_item_count = int(params.get("source_item_count", params.get("raster_item_count", 0)) or 0)
     if source_item_count <= 0:
         raise RuntimeError("FinalizeMT requires source_item_count > 0")
@@ -495,11 +509,6 @@ def handler(event, context):
     render_execution = dict(params.get("render_execution") or {})
     metadata = dict(params.get("metadata") or {})
     workers = _validate_finalize_workers(params.get("finalize_workers", DEFAULT_FINALIZE_WORKERS))
-    if str(render_execution.get("color_pipeline") or "") != "fused":
-        raise RuntimeError(
-            "FinalizeMT requires render_execution.color_pipeline='fused', "
-            f"got {render_execution.get('color_pipeline')!r}"
-        )
     if str(render_execution.get("raster_engine") or "") != "mt":
         raise RuntimeError(
             f"FinalizeMT requires render_execution.raster_engine='mt', got {render_execution.get('raster_engine')!r}"
@@ -521,6 +530,7 @@ def handler(event, context):
     progress = {
         "phase": "finalize_mt",
         "source_item_count": source_item_count,
+        "pix": pix,
         "width": width,
         "height": height,
         "workers": workers,
@@ -543,8 +553,7 @@ def handler(event, context):
         source_item_count=source_item_count,
     )
     hist_meta = _assemble_greyscale_raw(
-        width=width,
-        height=height,
+        pix=width,
         raw_path=raw_path,
         hist_path=hist_path,
         workers=workers,
@@ -595,8 +604,7 @@ def handler(event, context):
         raw_path=raw_path,
         out_path=encode_out_path,
         preview_path=preview_out_path,
-        width=width,
-        height=height,
+        pix=pix,
         eq_lut_path=eq_lut_path,
         palette=palette,
         background_color=background_color,
@@ -694,7 +702,7 @@ def handler(event, context):
         final_metadata["associated_palette_raw_meta_key"] = associated_palette_result["raw_meta_key"]
         final_metadata["associated_palette_meta_key"] = associated_palette_result["meta_key"]
     image_meta, overlay_meta = split_color_artifact_metadata(final_metadata)
-    final_headers = {"width": str(width), "height": str(height), **image_meta}
+    final_headers = {"pix": str(pix), "width": str(width), "height": str(height), **image_meta}
     metadata_size = _metadata_size_bytes(final_headers)
     if metadata_size > S3_USER_METADATA_LIMIT_BYTES:
         raise RuntimeError(

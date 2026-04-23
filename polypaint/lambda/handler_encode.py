@@ -56,12 +56,19 @@ def handler(event, context):
 
         # 2D tile grid stitching — load one row of tiles at a time
         tile_grid = params["tile_grid"]
-        n_cols = tile_grid["n_cols"]
-        n_rows = tile_grid["n_rows"]
+        n_cols = int(tile_grid["n_cols"])
+        n_rows = int(tile_grid["n_rows"])
+        if n_cols <= 0 or n_rows <= 0:
+            raise RuntimeError("tile_grid requires positive n_cols and n_rows")
         tile_keys = tile_grid.get("tile_keys") or []
         tile_prefix = str(tile_grid.get("tile_prefix") or "").strip()
-        total_w = params["width"]
-        total_h = params["height"]
+        if params.get("width") not in ("", None) or params.get("height") not in ("", None):
+            raise RuntimeError("Encode no longer accepts width/height; pass pix for square output")
+        pix = int(params["pix"])
+        if pix <= 0:
+            raise RuntimeError("Encode requires pix > 0")
+        total_w = pix
+        total_h = pix
 
         if job_id:
             report_status(job_id, task_id, "stitching", result_data=progress)
@@ -69,6 +76,7 @@ def handler(event, context):
         t_stitch = time.time()
         with open(in_path, "wb") as f:
             f.write(struct.pack("<III", total_w, total_h, 3))
+            rows_written = 0
             for tr in range(n_rows):
                 # Load one row of tiles
                 row_tiles = []
@@ -82,16 +90,30 @@ def handler(event, context):
                         raise RuntimeError("tile_grid requires tile_keys or tile_prefix")
                     data = s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
                     tw, th, tb = struct.unpack("<III", data[:12])
-                    row_tiles.append((tw, th, data[12:]))
+                    row_tiles.append((tw, th, tb, data[12:]))
 
                 # Write interleaved pixel rows for this tile row
                 th = row_tiles[0][1]
+                row_width = sum(int(tile[0]) for tile in row_tiles)
+                if row_width != total_w:
+                    raise RuntimeError(
+                        f"tile row {tr} width mismatch: got {row_width}, expected {total_w}"
+                    )
+                if any(int(tile[1]) != th for tile in row_tiles):
+                    raise RuntimeError(f"tile row {tr} has inconsistent tile heights")
+                if any(int(tile[2]) != 3 for tile in row_tiles):
+                    raise RuntimeError(f"tile row {tr} has non-RGB tile")
                 for py in range(th):
-                    for (tw, _, pixels_data) in row_tiles:
+                    for (tw, _, _, pixels_data) in row_tiles:
                         start = py * tw * 3
                         end = start + tw * 3
                         f.write(pixels_data[start:end])
+                rows_written += int(th)
                 del row_tiles
+            if rows_written != total_h:
+                raise RuntimeError(
+                    f"tile grid height mismatch: got {rows_written}, expected {total_h}"
+                )
         progress["stitch_ms"] = int((time.time() - t_stitch) * 1000)
 
         if job_id:
@@ -127,7 +149,7 @@ def handler(event, context):
             if not job_id_for_overlay or not artifact_id_for_overlay:
                 raise RuntimeError(f"Cannot derive Color artifact path from out_key {out_key!r}")
             image_meta, overlay_meta = split_color_artifact_metadata(raw_meta)
-        final_metadata = {"width": str(total_w), "height": str(total_h), **image_meta}
+        final_metadata = {"pix": str(pix), "width": str(total_w), "height": str(total_h), **image_meta}
         metadata_size = _metadata_size_bytes(final_metadata)
         if metadata_size > S3_USER_METADATA_LIMIT_BYTES:
             raise RuntimeError(

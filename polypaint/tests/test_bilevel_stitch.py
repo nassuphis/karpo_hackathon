@@ -172,7 +172,7 @@ def test_stitch_2x2():
 
     out_path = "/tmp/test_stitch_2x2.tif"
     cmd = [BILEVEL_MERGE, "stitch", "--n_cols=2", "--n_rows=2",
-           f"--width={tw*2}", f"--height={th*2}", f"--tile_size={tw}",
+           f"--pix={tw*2}", f"--tile_size={tw}",
            f"--output={out_path}",
            "/tmp/test_tile_0.tif", "/tmp/test_tile_1.tif",
            "/tmp/test_tile_2.tif", "/tmp/test_tile_3.tif"]
@@ -207,36 +207,30 @@ def test_stitch_2x2():
     print("  PASS")
 
 
-def test_stitch_3x2():
-    """Test stitch with non-square grid: 3 cols x 2 rows, verify tile placement."""
-    print("test_stitch_3x2: 6 tiles (4x4 each) into 12x8, checking placement...")
+def test_stitch_3x3_square_grid():
+    """Test stitch with 3 cols x 3 rows, verify square tile placement."""
+    print("test_stitch_3x3_square_grid: 9 tiles (4x4 each) into 12x12, checking placement...")
     tw, th = 4, 4
 
     # Each tile gets a unique single pixel at a distinct position
-    # Tile 0 (row0,col0): pixel (0,0)
-    # Tile 1 (row0,col1): pixel (1,1)
-    # Tile 2 (row0,col2): pixel (2,2)
-    # Tile 3 (row1,col0): pixel (3,3)
-    # Tile 4 (row1,col1): pixel (0,3)
-    # Tile 5 (row1,col2): pixel (3,0)
-    tile_pixels = [(0,0), (1,1), (2,2), (3,3), (0,3), (3,0)]
+    tile_pixels = [(0,0), (1,1), (2,2), (3,3), (0,3), (3,0), (1,3), (3,1), (2,0)]
     for t, (px, py) in enumerate(tile_pixels):
         create_tile_tiff(f"/tmp/test_tile32_{t}.tif", tw, th,
                          lambda x, y, px=px, py=py: x == px and y == py)
 
-    paths = [f"/tmp/test_tile32_{t}.tif" for t in range(6)]
-    out_path = "/tmp/test_stitch_3x2.tif"
-    cmd = [BILEVEL_MERGE, "stitch", "--n_cols=3", "--n_rows=2",
-           f"--width={tw*3}", f"--height={th*2}", f"--tile_size={tw}",
+    paths = [f"/tmp/test_tile32_{t}.tif" for t in range(9)]
+    out_path = "/tmp/test_stitch_3x3.tif"
+    cmd = [BILEVEL_MERGE, "stitch", "--n_cols=3", "--n_rows=3",
+           f"--pix={tw*3}", f"--tile_size={tw}",
            f"--output={out_path}"] + paths
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, f"stitch failed: {r.stderr}"
 
     ow, oh, arr = read_tiff_pixels(out_path)
-    assert ow == 12 and oh == 8, f"dimensions wrong: {ow}x{oh} vs 12x8"
+    assert ow == 12 and oh == 12, f"dimensions wrong: {ow}x{oh} vs 12x12"
 
     # Verify each tile's pixel lands in the correct global position
-    # Grid layout: 3 cols x 2 rows, each tile 4x4
+    # Grid layout: 3 cols x 3 rows, each tile 4x4
     # Tile t at (row, col) → global offset (col*4, row*4)
     expected_globals = set()
     for t, (px, py) in enumerate(tile_pixels):
@@ -252,7 +246,7 @@ def test_stitch_3x2():
     assert total_white == len(expected_globals), \
         f"expected {len(expected_globals)} white pixels, got {total_white} — extra content present"
 
-    for t in range(6):
+    for t in range(9):
         os.remove(f"/tmp/test_tile32_{t}.tif")
     os.remove(out_path)
     print("  PASS")
@@ -261,10 +255,11 @@ def test_stitch_3x2():
 def test_stitch_missing_tile():
     """Test stitch fails cleanly on missing tile."""
     print("test_stitch_missing_tile: expect failure...")
-    cmd = [BILEVEL_MERGE, "stitch", "--n_cols=2", "--n_rows=1",
-           "--width=16", "--height=8", "--tile_size=8",
+    cmd = [BILEVEL_MERGE, "stitch", "--n_cols=2", "--n_rows=2",
+           "--pix=16", "--tile_size=8",
            "--output=/tmp/test_missing.tif",
-           "/tmp/nonexistent_0.tif", "/tmp/nonexistent_1.tif"]
+           "/tmp/nonexistent_0.tif", "/tmp/nonexistent_1.tif",
+           "/tmp/nonexistent_2.tif", "/tmp/nonexistent_3.tif"]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     assert r.returncode != 0, "stitch should fail on missing tiles"
     # BigTIFF file may be created before tile load fails; clean up
@@ -294,7 +289,7 @@ def test_stitch_edge_tiles():
     paths = [f"/tmp/test_edge_{t}.tif" for t in range(9)]
     out_path = "/tmp/test_edge_stitch.tif"
     cmd = [BILEVEL_MERGE, "stitch", "--n_cols=3", "--n_rows=3",
-           f"--width={fullW}", f"--height={fullH}", f"--tile_size={tileSz}",
+           f"--pix={fullW}", f"--tile_size={tileSz}",
            f"--output={out_path}"] + paths
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, f"stitch failed: {r.stderr}"
@@ -320,28 +315,28 @@ def test_stitch_edge_tiles():
     print("  PASS")
 
 
-def test_stitch_nonsquare_remainder():
-    """Test stitch with different width/height remainders: 40x24, tileSize=16."""
-    print("test_stitch_nonsquare_remainder: 40x24, tileSize=16, 3x2 grid...")
+def test_stitch_square_remainder():
+    """Test stitch with square remainder tiles: 40x40, tileSize=16."""
+    print("test_stitch_square_remainder: 40x40, tileSize=16, 3x3 grid...")
     tileSz = 16
-    fullW, fullH = 40, 24
+    fullW, fullH = 40, 40
     nCols = 3  # widths: 16, 16, 8
-    nRows = 2  # heights: 16, 8
+    nRows = 3  # heights: 16, 16, 8
 
-    markers = [(2,2), (3,3), (1,1), (0,0), (4,4), (2,0)]
-    for t in range(6):
+    markers = [(2,2), (3,3), (1,1), (0,0), (4,4), (2,0), (1,6), (7,1), (0,0)]
+    for t in range(9):
         tc, tr = t % nCols, t // nCols
         tw = 8 if tc == 2 else 16
-        th = 8 if tr == 1 else 16
+        th = 8 if tr == 2 else 16
         mx = min(markers[t][0], tw - 1)
         my = min(markers[t][1], th - 1)
         create_tile_tiff(f"/tmp/test_nsq_{t}.tif", tw, th,
                          lambda x, y, px=mx, py=my: x == px and y == py)
 
-    paths = [f"/tmp/test_nsq_{t}.tif" for t in range(6)]
+    paths = [f"/tmp/test_nsq_{t}.tif" for t in range(9)]
     out_path = "/tmp/test_nsq_stitch.tif"
     cmd = [BILEVEL_MERGE, "stitch", f"--n_cols={nCols}", f"--n_rows={nRows}",
-           f"--width={fullW}", f"--height={fullH}", f"--tile_size={tileSz}",
+           f"--pix={fullW}", f"--tile_size={tileSz}",
            f"--output={out_path}"] + paths
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, f"stitch failed: {r.stderr}"
@@ -351,10 +346,10 @@ def test_stitch_nonsquare_remainder():
 
     # Verify markers and total count
     expected = set()
-    for t in range(6):
+    for t in range(9):
         tc, tr = t % nCols, t // nCols
         tw = 8 if tc == 2 else 16
-        th = 8 if tr == 1 else 16
+        th = 8 if tr == 2 else 16
         mx = min(markers[t][0], tw - 1)
         my = min(markers[t][1], th - 1)
         gx = tc * tileSz + mx
@@ -366,7 +361,7 @@ def test_stitch_nonsquare_remainder():
     assert total_white == len(expected), \
         f"expected {len(expected)} white pixels, got {total_white}"
 
-    for t in range(6):
+    for t in range(9):
         os.remove(f"/tmp/test_nsq_{t}.tif")
     os.remove(out_path)
     print(f"  output exactly {fullW}x{fullH}, {len(expected)} markers correct, no extras")
@@ -377,8 +372,8 @@ if __name__ == "__main__":
     test_merge_basic()
     test_merge_empty()
     test_stitch_2x2()
-    test_stitch_3x2()
+    test_stitch_3x3_square_grid()
     test_stitch_missing_tile()
     test_stitch_edge_tiles()
-    test_stitch_nonsquare_remainder()
+    test_stitch_square_remainder()
     print("\nAll bilevel_merge tests passed.")

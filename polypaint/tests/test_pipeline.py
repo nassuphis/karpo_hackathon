@@ -1970,7 +1970,7 @@ class TestRenderSummary(unittest.TestCase):
         self.assertEqual(art["viewer_url"], "https://signed")
 
     @patch("handler_storage.s3")
-    def test_render_summary_parses_solve_score_omega(self, mock_s3):
+    def test_render_summary_exposes_chain_only_color_solve_score_metadata(self, mock_s3):
         from handler_storage import handle_render_summary
 
         mock_paginator = MagicMock()
@@ -2000,10 +2000,11 @@ class TestRenderSummary(unittest.TestCase):
         result = handle_render_summary(self._make_event({"job_id": "j"}))
         body = json.loads(result["body"])
         cj = body["families"]["color"][0]
-        self.assertEqual(cj["solve_metric"], "anisotropy")
         self.assertEqual(cj["solve_score_chain"], ["anisotropy", ["omega_cosine", "6"]])
-        self.assertAlmostEqual(cj["solve_score_quantile"], 0.02)
-        self.assertAlmostEqual(cj["solve_score_omega"], 6.0)
+        self.assertNotIn("solve_metric", cj)
+        self.assertNotIn("solve_score_quantile", cj)
+        self.assertNotIn("solve_score_omega", cj)
+        self.assertNotIn("solve_score_omega_enabled", cj)
 
     @patch("handler_storage.s3")
     def test_render_summary_exposes_associated_palette_metadata(self, mock_s3):
@@ -2228,8 +2229,9 @@ class TestRenderSummary(unittest.TestCase):
                     "ContentLength": 987,
                     "ContentType": "image/jpeg",
                     "Metadata": {
+                        "pix": "2048",
                         "width": "2048",
-                        "height": "1365",
+                        "height": "2048",
                         "artifact_id": "resize_sidecar",
                         "created_at": "2026-04-10T10:00:00Z",
                         "family": "color",
@@ -2576,7 +2578,7 @@ class TestRenderSummary(unittest.TestCase):
                     "pix": "3000",
                     "quality": "77",
                     "width": "3000",
-                    "height": "2000",
+                    "height": "3000",
                 },
             },
             "renders/j/color/color_base/preview.png": {"ContentLength": 100, "ContentType": "image/png", "Metadata": {}},
@@ -2594,7 +2596,7 @@ class TestRenderSummary(unittest.TestCase):
                     "pix": "2048",
                     "quality": "83",
                     "width": "2048",
-                    "height": "1365",
+                    "height": "2048",
                     "derived_from_artifact_id": "color_base",
                     "postprocess_kind": "resize",
                     "postprocess_profile": "libvips_resize_v1",

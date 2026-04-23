@@ -4,7 +4,7 @@
  *
  * Usage:
  *   raw_to_bilevel input.raw out.tif
- *       --width=W --height=H --threshold=T
+ *       --pix=N --threshold=T
  *       [--preview=preview.png] [--preview_size=1024]
  *
  * Pixels with value > threshold are foreground; the rest are background.
@@ -37,24 +37,32 @@ int main(int argc, char **argv) {
     }
 
     if (argc < 3) {
-        fprintf(stderr, "Usage: raw_to_bilevel input.raw out.tif --width=W --height=H --threshold=T [--preview=preview.png] [--preview_size=1024]\n");
+        fprintf(stderr, "Usage: raw_to_bilevel input.raw out.tif --pix=N --threshold=T [--preview=preview.png] [--preview_size=1024]\n");
         vips_shutdown();
         return 1;
     }
 
     const char *inPath = argv[1];
     const char *outPath = argv[2];
-    int width = getArgInt(argc, argv, "--width", 0);
-    int height = getArgInt(argc, argv, "--height", 0);
+    const char *widthArg = getArg(argc, argv, "--width");
+    const char *heightArg = getArg(argc, argv, "--height");
+    int pix = getArgInt(argc, argv, "--pix", 0);
     int threshold = getArgInt(argc, argv, "--threshold", 0);
     const char *previewPath = getArg(argc, argv, "--preview");
     int previewSize = getArgInt(argc, argv, "--preview_size", 1024);
 
-    if (width <= 0 || height <= 0) {
-        fprintf(stderr, "width and height must be > 0\n");
+    if (widthArg || heightArg) {
+        fprintf(stderr, "raw_to_bilevel no longer accepts --width or --height; pass --pix for square output\n");
         vips_shutdown();
         return 1;
     }
+    if (pix <= 0) {
+        fprintf(stderr, "pix must be > 0\n");
+        vips_shutdown();
+        return 1;
+    }
+    int width = pix;
+    int height = pix;
     if (threshold < 0 || threshold > 255) {
         fprintf(stderr, "threshold must be in [0,255]\n");
         vips_shutdown();

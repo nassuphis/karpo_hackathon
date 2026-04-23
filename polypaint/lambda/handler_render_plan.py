@@ -31,7 +31,7 @@ from logical_sections import (
 from palette_names import VALID_PALETTE_NAMES
 from shared import BUCKET, BILEVEL_SPARSE_PIPELINE, REF_SIZE, parse_body, ok_response
 from solve_score_chain import (
-    compile_solve_score_chain_or_legacy,
+    compile_solve_score_chain,
     emit_solve_score_metadata,
     format_solve_score_chain_display,
     serialize_solve_score_chain,
@@ -225,7 +225,6 @@ def _explicit_viewport_from_params(rp):
 
 def _fused_render_execution_config(rp):
     return {
-        "color_pipeline": "fused",
         "raster_engine": "mt",
         "save_associated_palette": bool(rp.get("save_associated_palette", False)),
         "raster_mt_threads": int(rp.get("raster_mt_threads", 4) or 4),
@@ -253,11 +252,28 @@ def _reject_fused_unsupported_params(raw_params):
         "palette_chunk_workers": "fused color emits the associated palette inline during finalize",
         "palette_section_mode": "fused color emits the associated palette inline during finalize",
         "palette_section_count": "fused color emits the associated palette inline during finalize",
+        "solve_metric": "fused color takes only solve_score_chain; metric is derived from the chain",
+        "solve_score_quantile": "fused color takes only solve_score_chain; quantiles live on metric chips",
+        "solve_score_omega": "fused color takes only solve_score_chain; transfer ops live in the chain",
+        "solve_score_omega_enabled": "fused color takes only solve_score_chain; transfer ops live in the chain",
     }
     for key, reason in unsupported.items():
         value = raw_params.get(key)
         if value not in (None, "", False):
             raise RuntimeError(f"{key} is not supported for fused color: {reason}")
+
+
+def _require_pix_only_grid_params(rp):
+    if rp.get("width") not in (None, "") or rp.get("height") not in (None, ""):
+        raise RuntimeError("render plan no longer accepts width/height; pass pix for square output")
+    try:
+        pix = int(rp.get("pix"))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("render plan requires integer pix") from exc
+    if pix <= 0:
+        raise RuntimeError(f"render plan requires pix > 0, got {pix}")
+    rp["pix"] = pix
+    return pix
 
 
 def _build_fused_color_plan(
@@ -294,7 +310,6 @@ def _build_fused_color_plan(
         "quality": 90,
         "fmt": "jpeg",
         "color_mode": "solve_score",
-        "color_pipeline": "fused",
         "raster_engine": "mt",
         "raster_mt_threads": 4,
         "raster_workers": 10,
@@ -304,17 +319,12 @@ def _build_fused_color_plan(
         "raster_section_count": "",
         "solve_score_threads": "",
         "finalize_workers": 16,
-        "solve_metric": "proximity",
         "solve_score_chain": "",
-        "solve_score_quantile": 0.001,
-        "solve_score_omega": 1.0,
-        "solve_score_omega_enabled": True,
         "save_associated_palette": False,
     }
     for key, default in defaults.items():
         fused_params[key] = rp.get(key, default)
 
-    fused_params["color_pipeline"] = "fused"
     fused_params["color_mode"] = str(fused_params.get("color_mode") or "solve_score").strip().lower()
     if fused_params["color_mode"] != "solve_score":
         raise RuntimeError("fused color supports only color_mode=solve_score")
@@ -389,44 +399,23 @@ def _build_fused_color_plan(
             "and step_scores.raw are well-defined"
         )
 
-    solve_metric = str(fused_params.get("solve_metric") or "proximity").strip()
     solve_score_chain = fused_params.get("solve_score_chain", "")
-    solve_score_quantile = fused_params.get("solve_score_quantile", 0.001)
-    solve_score_omega = fused_params.get("solve_score_omega", 1.0)
-    solve_score_omega_enabled = fused_params.get("solve_score_omega_enabled", True)
-    try:
-        solve_score_quantile = float(solve_score_quantile)
-    except (TypeError, ValueError):
-        raise RuntimeError(f"solve_score_quantile must be numeric, got {solve_score_quantile!r}")
-    if not (0.001 <= solve_score_quantile <= 0.05):
-        raise RuntimeError(f"solve_score_quantile must be in [0.001, 0.05], got {solve_score_quantile}")
-    solve_score_compiled = compile_solve_score_chain_or_legacy(
-        solve_score_chain,
-        solve_metric,
-        solve_score_quantile,
-        solve_score_omega,
-        solve_score_omega_enabled,
-        default_metric="proximity",
-    )
+    if solve_score_chain in ("", None, []):
+        raise RuntimeError("fused color requires solve_score_chain")
+    solve_score_compiled = compile_solve_score_chain(solve_score_chain)
+    solve_score_chain = solve_score_compiled["chain"]
     solve_metric = solve_score_compiled["metric"]
     solve_score_quantile = solve_score_compiled["quantile"]
     solve_score_omega = solve_score_compiled["omega"]
     solve_score_omega_enabled = solve_score_compiled["omega_enabled"]
-    solve_score_chain = solve_score_compiled["chain"]
     solve_score_uses_coeff = bool(solve_score_uses_source(solve_score_compiled, "cf"))
     solve_score_uses_param = bool(solve_score_uses_source(solve_score_compiled, "pm"))
-    fused_params["solve_metric"] = solve_metric
     fused_params["solve_score_chain"] = solve_score_chain
-    fused_params["solve_score_quantile"] = solve_score_quantile
-    fused_params["solve_score_omega"] = solve_score_omega
-    fused_params["solve_score_omega_enabled"] = solve_score_omega_enabled
 
     pix = fused_params["pix"]
-    width = int(pix)
-    height = int(pix)
     tile_size = fused_params.get("tile_size", 2048)
-    n_tile_cols = math.ceil(width / tile_size)
-    n_tile_rows = math.ceil(height / tile_size)
+    n_tile_cols = math.ceil(int(pix) / tile_size)
+    n_tile_rows = math.ceil(int(pix) / tile_size)
     n_tiles = n_tile_cols * n_tile_rows
 
     raster_section_auto = compute_safe_sectioning(
@@ -469,10 +458,6 @@ def _build_fused_color_plan(
     solve_score = {
         "enabled": True,
         "threads": fused_params["solve_score_threads"],
-        "metric": solve_metric,
-        "quantile": solve_score_quantile,
-        "omega": solve_score_omega,
-        "omega_enabled": solve_score_omega_enabled,
         "chain": solve_score_chain,
         "clip_key": solve_score_clip_key,
     }
@@ -613,6 +598,7 @@ def _build_fused_color_plan(
             omega=solve_score_omega,
             omega_enabled=solve_score_omega_enabled,
             chain=solve_score_chain,
+            include_legacy_scalars=False,
         )
     )
     artifact_meta["score_program"] = solve_score_compiled["program_spec"]
@@ -679,8 +665,6 @@ def _build_fused_color_plan(
         },
         "grid": {
             "pix": pix,
-            "width": width,
-            "height": height,
             "tile_size": tile_size,
             "n_tile_cols": n_tile_cols,
             "n_tile_rows": n_tile_rows,
@@ -791,11 +775,9 @@ def _build_non_color_plan(
         )
 
     pix = int(non_color_params["pix"])
-    width = pix
-    height = pix
     tile_size = int(non_color_params["tile_size"])
-    n_tile_cols = math.ceil(width / tile_size)
-    n_tile_rows = math.ceil(height / tile_size)
+    n_tile_cols = math.ceil(pix / tile_size)
+    n_tile_rows = math.ceil(pix / tile_size)
     n_tiles = n_tile_cols * n_tile_rows
     raw_tile_prefix = f"renders/{job_id}/tile_"
     tile_items = [{"tile_idx": t} for t in range(n_tiles)]
@@ -919,8 +901,6 @@ def _build_non_color_plan(
         },
         "grid": {
             "pix": pix,
-            "width": width,
-            "height": height,
             "tile_size": tile_size,
             "n_tile_cols": n_tile_cols,
             "n_tile_rows": n_tile_rows,
@@ -957,6 +937,7 @@ def handler(event, context):
     task_id = params["task_id"]
     mode = params["mode"]
     rp = dict(params.get("params", {}) or {})
+    _require_pix_only_grid_params(rp)
 
     # Clean previous render intermediates
     pipeline = "color" if mode == "color" else mode
@@ -978,7 +959,6 @@ def handler(event, context):
     chunk_summary = summarize_chunk_items(chunk_items, degree, calc_n_coeffs)
 
     if mode == "color":
-        rp["color_pipeline"] = "fused"
         plan = _build_fused_color_plan(
             job_id=job_id,
             run_id=run_id,

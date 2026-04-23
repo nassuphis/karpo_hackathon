@@ -190,16 +190,23 @@ static int do_merge(int argc, char **argv) {
 /* ---- Assemble: OR full-frame section bitsets -> 1-bit TIFF ---- */
 
 static int do_assemble(int argc, char **argv) {
-    int fullW = getArgInt(argc, argv, "--width", 0);
-    int fullH = getArgInt(argc, argv, "--height", 0);
+    const char *widthArg = getArg(argc, argv, "--width");
+    const char *heightArg = getArg(argc, argv, "--height");
+    int pix = getArgInt(argc, argv, "--pix", 0);
     const char *outPath = getArgStr(argc, argv, "--output", "/tmp/final.tif");
     const char *previewPath = getArgStr(argc, argv, "--preview", NULL);
     int previewSize = getArgInt(argc, argv, "--preview_size", 1024);
 
-    if (fullW <= 0 || fullH <= 0) {
-        fprintf(stderr, "assemble requires --width and --height\n");
+    if (widthArg || heightArg) {
+        fprintf(stderr, "assemble no longer accepts --width or --height; pass --pix for square output\n");
         return 1;
     }
+    if (pix <= 0) {
+        fprintf(stderr, "assemble requires --pix\n");
+        return 1;
+    }
+    int fullW = pix;
+    int fullH = pix;
 
     size_t nPixels = (size_t)fullW * (size_t)fullH;
     size_t bitsetBytes = (nPixels + 7) / 8;
@@ -294,16 +301,24 @@ static int do_assemble(int argc, char **argv) {
 static int do_stitch(int argc, char **argv) {
     int nCols = getArgInt(argc, argv, "--n_cols", 1);
     int nRows = getArgInt(argc, argv, "--n_rows", 1);
-    int fullW = getArgInt(argc, argv, "--width", 0);
-    int fullH = getArgInt(argc, argv, "--height", 0);
+    const char *widthArg = getArg(argc, argv, "--width");
+    const char *heightArg = getArg(argc, argv, "--height");
+    int pix = getArgInt(argc, argv, "--pix", 0);
     int tileSz = getArgInt(argc, argv, "--tile_size", 4096);
     const char *outPath = getArgStr(argc, argv, "--output", "/tmp/final.tif");
     const char *previewPath = getArgStr(argc, argv, "--preview", NULL);
     int previewSize = getArgInt(argc, argv, "--preview_size", 1024);
 
-    /* Fallback: if width/height not given, assume nCols*tileSz */
-    if (fullW <= 0) fullW = nCols * tileSz;
-    if (fullH <= 0) fullH = nRows * tileSz;
+    if (widthArg || heightArg) {
+        fprintf(stderr, "stitch no longer accepts --width or --height; pass --pix for square output\n");
+        return 1;
+    }
+    if (pix <= 0) {
+        fprintf(stderr, "stitch requires --pix\n");
+        return 1;
+    }
+    int fullW = pix;
+    int fullH = pix;
 
     /* TIFF requires tile dimensions to be multiples of 16.
      * For small test tiles, use strip-based output instead. */

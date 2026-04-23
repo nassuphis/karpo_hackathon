@@ -117,8 +117,12 @@ def handler(event, context):
                 raise RuntimeError(f"Preview generation failed: {prev_result.stderr.strip()}")
 
         created_at = _utc_now_iso()
-        width = meta.get("width")
-        height = meta.get("height")
+        width = int(meta.get("width") or source_meta.get("pix") or source_meta.get("width") or 0)
+        height = int(meta.get("height") or source_meta.get("pix") or source_meta.get("height") or 0)
+        if width <= 0 or height <= 0:
+            raise RuntimeError("TIFF compatibility export could not determine output pix")
+        if width != height:
+            raise RuntimeError(f"TIFF compatibility export requires square output, got {width}x{height}")
         img_meta = dict(source_meta)
         img_meta.update({
             "artifact_id": artifact_id or source_meta.get("artifact_id", ""),
@@ -129,8 +133,9 @@ def handler(event, context):
             "derived_from_image_key": source_key if artifact_id else source_meta.get("derived_from_image_key", ""),
             "postprocess_kind": "tiff_compat" if artifact_id else source_meta.get("postprocess_kind", ""),
             "postprocess_profile": "bilevel_tiff_compat_v1" if artifact_id else source_meta.get("postprocess_profile", ""),
-            "width": str(width) if width not in ("", None) else source_meta.get("width", ""),
-            "height": str(height) if height not in ("", None) else source_meta.get("height", ""),
+            "pix": str(width),
+            "width": str(width),
+            "height": str(height),
         })
         normalized_meta = {str(k): _stringify_meta(v) for k, v in img_meta.items() if v not in ("", None)}
 
@@ -152,8 +157,9 @@ def handler(event, context):
                     ExtraArgs={
                         "ContentType": "image/png",
                         "Metadata": {
-                            "width": str(width or ""),
-                            "height": str(height or ""),
+                            "pix": str(width),
+                            "width": str(width),
+                            "height": str(height),
                         },
                     },
                 )

@@ -1584,11 +1584,11 @@ button {
             <div class="autolevel-stage">
                 <div class="autolevel-stage-head">
                     <div class="autolevel-stage-toggle"><span>1. Target</span></div>
-                    <div class="autolevel-stage-note">Use one scalar target size. Thumbnail treats it as a square box or crop target; resize scales the longest edge to this value.</div>
+                    <div class="autolevel-stage-note">Use one scalar pix target. Resize outputs square artifacts only.</div>
                 </div>
                 <div class="autolevel-stage-body">
                     <div class="autolevel-stage-row">
-                        <div class="autolevel-stage-text">Current artifact size and requested target.</div>
+                        <div class="autolevel-stage-text">Current square pix size and requested square pix target.</div>
                         <div class="autolevel-inline-fields">
                             <span class="inline-label">Current</span>
                             <input id="resize-current-size" type="hidden" value="">
@@ -1602,7 +1602,7 @@ button {
             <div class="autolevel-stage">
                 <div class="autolevel-stage-head">
                     <div class="autolevel-stage-toggle"><span>2. Engine</span></div>
-                    <div class="autolevel-stage-note">`thumbnail` exposes the richer libvips resize surface; `resize` exposes low-level kernel/gap controls.</div>
+                    <div class="autolevel-stage-note">Both engines produce a square pix x pix artifact; no width, height, crop, or vscale controls are exposed.</div>
                 </div>
                 <div class="autolevel-stage-body">
                     <div class="autolevel-stage-row">
@@ -1620,7 +1620,7 @@ button {
             <div class="autolevel-stage">
                 <div class="autolevel-stage-head">
                     <div class="autolevel-stage-toggle"><span>3. Thumbnail Options</span></div>
-                    <div class="autolevel-stage-note">These map to libvips `thumbnail_image`: fit policy, crop strategy, linear-light reduction, profiles, ICC intent, and error handling.</div>
+                    <div class="autolevel-stage-note">These map to libvips `thumbnail_image`: fit policy, linear-light reduction, profiles, ICC intent, and error handling. Cropping is not exposed.</div>
                 </div>
                 <div id="resize-stage-thumbnail" class="autolevel-stage-body">
                     <div class="autolevel-stage-row">
@@ -1632,16 +1632,6 @@ button {
                                 <option value="down">down</option>
                                 <option value="up">up</option>
                                 <option value="force">force</option>
-                            </select>
-                            <span class="inline-label">Crop</span>
-                            <select id="resize-crop">
-                                <option value="none">none</option>
-                                <option value="centre">centre</option>
-                                <option value="entropy">entropy</option>
-                                <option value="attention">attention</option>
-                                <option value="low">low</option>
-                                <option value="high">high</option>
-                                <option value="all">all</option>
                             </select>
                             <label class="autolevel-inline-check"><input id="resize-linear" type="checkbox"> Linear light</label>
                             <label class="autolevel-inline-check"><input id="resize-no-rotate" type="checkbox"> No rotate</label>
@@ -1680,7 +1670,7 @@ button {
             <div class="autolevel-stage">
                 <div class="autolevel-stage-head">
                     <div class="autolevel-stage-toggle"><span>4. Resize Options</span></div>
-                    <div class="autolevel-stage-note">These map to libvips `resize`: resampling kernel, reducing gap, and vertical scale multiplier.</div>
+                    <div class="autolevel-stage-note">These map to libvips `resize`: resampling kernel and reducing gap. Vertical scale is fixed at 1.</div>
                 </div>
                 <div id="resize-stage-resize" class="autolevel-stage-body">
                     <div class="autolevel-stage-row">
@@ -1697,8 +1687,6 @@ button {
                             </select>
                             <span class="inline-label">Gap</span>
                             <input id="resize-gap" type="number" min="0" max="100" step="0.01" value="2">
-                            <span class="inline-label">V scale</span>
-                            <input id="resize-vscale" type="number" min="0.01" max="100" step="0.01" value="1">
                         </div>
                     </div>
                 </div>
@@ -8323,7 +8311,6 @@ function _resizeBaseParamsForArtifact(art) {
         engine: 'thumbnail',
         target_size: Math.round(currentSize),
         size_mode: 'both',
-        crop: 'none',
         linear: false,
         no_rotate: false,
         input_profile: '',
@@ -8332,7 +8319,6 @@ function _resizeBaseParamsForArtifact(art) {
         fail_on: 'none',
         kernel: 'lanczos3',
         gap: 2,
-        vscale: 1,
         format: fmt,
         quality: Number.isFinite(quality) && quality > 0 ? Math.round(quality) : 90,
         jpeg_subsample_mode: 'on',
@@ -8377,8 +8363,8 @@ function _syncResizePopupControls() {
         const el = document.getElementById(id);
         if (el) el.disabled = !!disabled;
     });
-    const thumbnailIds = ['resize-size-mode', 'resize-crop', 'resize-linear', 'resize-no-rotate', 'resize-input-profile', 'resize-output-profile', 'resize-intent', 'resize-fail-on'];
-    const resizeIds = ['resize-kernel', 'resize-gap', 'resize-vscale'];
+    const thumbnailIds = ['resize-size-mode', 'resize-linear', 'resize-no-rotate', 'resize-input-profile', 'resize-output-profile', 'resize-intent', 'resize-fail-on'];
+    const resizeIds = ['resize-kernel', 'resize-gap'];
     const jpegIds = ['resize-quality', 'resize-jpeg-subsample', 'resize-jpeg-optimize', 'resize-jpeg-interlace'];
     const pngIds = ['resize-png-compression', 'resize-png-q', 'resize-png-dither', 'resize-png-bitdepth', 'resize-png-effort', 'resize-png-interlace', 'resize-png-palette'];
     setDisabled(thumbnailIds, engine !== 'thumbnail');
@@ -8424,7 +8410,6 @@ function _writeResizePopupParams(art, params) {
     setValue('resize-target-size', params.target_size);
     setValue('resize-engine', params.engine || 'thumbnail');
     setValue('resize-size-mode', params.size_mode || 'both');
-    setValue('resize-crop', params.crop || 'none');
     setChecked('resize-linear', !!params.linear);
     setChecked('resize-no-rotate', !!params.no_rotate);
     setValue('resize-input-profile', params.input_profile || '');
@@ -8433,7 +8418,6 @@ function _writeResizePopupParams(art, params) {
     setValue('resize-fail-on', params.fail_on || 'none');
     setValue('resize-kernel', params.kernel || 'lanczos3');
     setValue('resize-gap', params.gap == null ? 2 : params.gap);
-    setValue('resize-vscale', params.vscale == null ? 1 : params.vscale);
     setValue('resize-output-format', fmt);
     setValue('resize-quality', params.quality == null ? 90 : params.quality);
     setValue('resize-jpeg-subsample', params.jpeg_subsample_mode || 'on');
@@ -8467,7 +8451,6 @@ function _readResizePopupParams() {
         engine: readSel('resize-engine', 'thumbnail'),
         target_size: Math.max(1, Math.round(readNum('resize-target-size', 1024))),
         size_mode: readSel('resize-size-mode', 'both'),
-        crop: readSel('resize-crop', 'none'),
         linear: readChk('resize-linear'),
         no_rotate: readChk('resize-no-rotate'),
         input_profile: readSel('resize-input-profile', '').trim(),
@@ -8476,7 +8459,6 @@ function _readResizePopupParams() {
         fail_on: readSel('resize-fail-on', 'none'),
         kernel: readSel('resize-kernel', 'lanczos3'),
         gap: readNum('resize-gap', 2),
-        vscale: readNum('resize-vscale', 1),
         format: readSel('resize-output-format', 'jpeg'),
         quality: Math.round(readNum('resize-quality', 90)),
         jpeg_subsample_mode: readSel('resize-jpeg-subsample', 'on'),
@@ -10683,7 +10665,6 @@ async function _dispatchRenderOrchestrator(mode, orchPayload) {
         started_at_ms: Date.now(),
         raster_engine: orchPayload.params.raster_engine || 'single',
         raster_mt_threads: orchPayload.params.raster_mt_threads || 1,
-        color_pipeline: mode === 'color' ? 'fused' : '',
     };
     _saveActiveRun(record);
 
@@ -10735,11 +10716,6 @@ async function _launchFusedRenderOrchestrator(paramsPatch = null) {
         tile_size: p.tileSize,
         rotation: p.rotation,
         color_mode: 'solve_score',
-        color_pipeline: 'fused',
-        solve_metric: p.solveScoreMetric,
-        solve_score_quantile: p.solveScoreQuantile,
-        solve_score_omega: p.solveScoreOmega,
-        solve_score_omega_enabled: p.solveScoreOmegaEnabled,
         solve_score_chain: p.solveScoreChain,
         palette: _activeRenderPalette() || 'inferno',
         root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
@@ -10869,7 +10845,6 @@ async function runFusedRasterPipelineMT(threadConfig = null) {
         );
 
         const launchParams = {
-            color_pipeline: 'fused',
             raster_engine: 'mt',
             raster_mt_threads: rasterThreads,
             raster_workers: rasterWorkers,
@@ -11322,10 +11297,8 @@ function _fmtResizeDebugLine(rd) {
     if (dbg.engine) parts.push(`engine=${dbg.engine}`);
     if (dbg.target_size != null) parts.push(`target=${dbg.target_size}`);
     if (dbg.size_mode) parts.push(`size=${dbg.size_mode}`);
-    if (dbg.crop) parts.push(`crop=${dbg.crop}`);
     if (dbg.kernel) parts.push(`kernel=${dbg.kernel}`);
     if (dbg.gap != null && dbg.gap !== '') parts.push(`gap=${dbg.gap}`);
-    if (dbg.vscale != null && dbg.vscale !== '') parts.push(`vscale=${dbg.vscale}`);
     if (dbg.linear != null) parts.push(`linear=${dbg.linear ? 'on' : 'off'}`);
     if (dbg.source_dims) parts.push(`src=${dbg.source_dims}`);
     if (dbg.out_dims) parts.push(`out=${dbg.out_dims}`);
@@ -11956,28 +11929,6 @@ async function _logRenderPhaseCompletion(run, tracker) {
 
 async function _logRenderTerminalPhaseCatchup(run) {
     if (!run || run.mode !== 'color') return;
-    if (String(run.color_pipeline || '').toLowerCase() === 'fused') return;
-    const phases = [
-        {
-            phase: 'finalize',
-            phase_label: 'Finalize',
-            prefix: `render_${run.run_id}_tile_`,
-            expected: 1000000,
-            started_at_ms: null,
-            last_server_update_ms: null,
-        },
-        {
-            phase: 'encode',
-            phase_label: 'Encode',
-            prefix: `render_${run.run_id}_encode`,
-            expected: 1,
-            started_at_ms: null,
-            last_server_update_ms: null,
-        },
-    ];
-    for (const tracker of phases) {
-        await _logRenderPhaseCompletion(run, tracker);
-    }
 }
 
 async function _logRenderRasterPerf(run) {
@@ -12717,42 +12668,28 @@ function _sourceColorArtifactIdForRenderArtifact(art) {
     return String(art.derived_from_artifact_id || art.source_artifact_id || art.artifact_id || '').trim();
 }
 
+function _artifactSolveScoreChain(art) {
+    if (!art) return [];
+    const candidates = [
+        art.solve_score_chain,
+        art.palette_source_score_chain,
+        art.associated_palette_score_chain,
+    ];
+    for (const chain of candidates) {
+        if (Array.isArray(chain) && chain.length) return chain;
+    }
+    return [];
+}
+
 function _renderArtifactSolveDisplay(art) {
     if (!art) return '';
-    const metric = String(
-        art.solve_metric
-        || art.metric
-        || art.palette_source_metric
-        || art.associated_palette_metric
-        || ''
-    ).trim();
-    const quantile = Number(art.solve_score_quantile);
-    const legacyQuantilePct = Number.isFinite(quantile) ? quantile * 100 : 0.1;
-    const omega = Number(art.solve_score_omega);
+    const chain = _artifactSolveScoreChain(art);
+    if (!chain.length) return '';
     try {
-        const normalized = _normalizeSolveScoreChain(
-            art.solve_score_chain,
-            metric || 'proximity',
-            legacyQuantilePct
-        );
-        if (normalized.length) {
-            return _compileSolveScoreChain(normalized, metric || 'proximity', legacyQuantilePct).display;
-        }
-        if (metric) {
-            return _compileSolveScoreChain(
-                _defaultSolveScoreChain(
-                    metric,
-                    legacyQuantilePct,
-                    Number.isFinite(omega) ? omega : 1,
-                    art.solve_score_omega_enabled !== false && Number.isFinite(omega)
-                ),
-                metric,
-                legacyQuantilePct
-            ).display;
-        }
+        return _compileSolveScoreChain(chain, 'proximity', 0.1).display;
     } catch (_) {
+        return '';
     }
-    return metric;
 }
 
 function _noteSolveScorePopulate(prefix, art) {
@@ -12870,25 +12807,13 @@ function _setRenderRootTransforms(transforms) {
     _renderChips('rt');
 }
 
-function _setSolveScoreChainFromArtifact(prefix, chain, metric, quantile, omega, omegaEnabled) {
-    const normalized = _normalizeSolveScoreChain(
-        chain,
-        metric || 'proximity',
-        Number.isFinite(Number(quantile)) ? Number(quantile) * 100 : _legacySolveScoreQuantilePct(prefix)
-    );
-    if (normalized.length) {
-        const target = _chainForWhich(_solveScoreWhichForPrefix(prefix));
-        target.splice(0, target.length, ...normalized);
-        _renderChips(_solveScoreWhichForPrefix(prefix));
-        return;
-    }
-    _setSolveScoreChainFromLegacy(
-        prefix,
-        metric || 'proximity',
-        Number.isFinite(Number(quantile)) ? Number(quantile) * 100 : _legacySolveScoreQuantilePct(prefix),
-        Number.isFinite(Number(omega)) ? Number(omega) : 1,
-        omegaEnabled !== false
-    );
+function _setSolveScoreChainFromArtifact(prefix, chain) {
+    const normalized = _normalizeSolveScoreChain(chain, 'proximity', 0.1);
+    if (!normalized.length) return false;
+    const target = _chainForWhich(_solveScoreWhichForPrefix(prefix));
+    target.splice(0, target.length, ...normalized);
+    _renderChips(_solveScoreWhichForPrefix(prefix));
+    return true;
 }
 
 function _restoreRenderExecutionState(entry) {
@@ -13018,23 +12943,8 @@ function populateSelectedRenderArtifact() {
     if (_renderActiveFamily === 'palette') {
         setColorMode('solve_score');
         _restoreRenderExecutionState(art);
-        if ((Array.isArray(art.solve_score_chain) && art.solve_score_chain.length) || art.metric) {
-            _setSolveScoreChainFromArtifact(
-                'render',
-                art.solve_score_chain,
-                art.metric,
-                art.solve_score_quantile,
-                art.solve_score_omega,
-                art.solve_score_omega_enabled
-            );
-        } else {
-            warnings.push('solve-score metric');
-        }
-        if (!Number.isFinite(art.solve_score_quantile)) {
-            warnings.push('solve-score q');
-        }
-        if (!Number.isFinite(art.solve_score_omega) && !(Array.isArray(art.solve_score_chain) && art.solve_score_chain.length)) {
-            warnings.push('solve-score omega');
+        if (!_setSolveScoreChainFromArtifact('render', _artifactSolveScoreChain(art))) {
+            warnings.push('solve-score chain');
         }
         if (art.palette) setPaletteForMode('solve_score', art.palette);
         else warnings.push('palette');
@@ -13067,26 +12977,8 @@ function populateSelectedRenderArtifact() {
     if (art.match_mode && art.match_mode !== 'none') warnings.push(`unsupported match ${art.match_mode}`);
 
     setColorMode('solve_score');
-    if ((Array.isArray(art.solve_score_chain) && art.solve_score_chain.length) || art.solve_metric) {
-        _setSolveScoreChainFromArtifact(
-            'render',
-            art.solve_score_chain,
-            art.solve_metric,
-            art.solve_score_quantile,
-            art.solve_score_omega,
-            art.solve_score_omega_enabled
-        );
-    } else {
-        warnings.push(`unsupported legacy color mode ${art.color_mode || 'unknown'}`);
-    }
-    if (!Number.isFinite(art.solve_score_quantile)) {
-        warnings.push('solve-score q');
-    }
-    if (
-        !Number.isFinite(art.solve_score_omega) &&
-        !(Array.isArray(art.solve_score_chain) && art.solve_score_chain.length)
-    ) {
-        warnings.push('solve-score omega');
+    if (!_setSolveScoreChainFromArtifact('render', _artifactSolveScoreChain(art))) {
+        warnings.push('solve-score chain');
     }
     if (art.palette) setPaletteForMode('solve_score', art.palette);
     _noteSolveScorePopulate('render', art);

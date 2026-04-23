@@ -168,6 +168,18 @@ def _finalize_worker_count():
     return workers
 
 
+def _pix_param(params, label):
+    if params.get("width") not in ("", None) or params.get("height") not in ("", None):
+        raise RuntimeError(f"{label} no longer accepts width/height; pass pix for square output")
+    try:
+        pix = int(params.get("pix"))
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"{label} requires integer pix") from exc
+    if pix <= 0:
+        raise RuntimeError(f"{label} requires pix > 0")
+    return pix
+
+
 def _tile_shape(tile_idx, width, height, tile_size, n_tile_cols):
     tile_idx = int(tile_idx)
     width = int(width)
@@ -316,12 +328,11 @@ def _presign_fragment_urls(*, finalize_s3, fragment_prefix, source_item_count):
     return urls
 
 
-def _assemble_sparse_bilevel_raw(*, width, height, raw_path, hist_path, workers, fragment_urls, manifest_path, progress_cb=None):
+def _assemble_sparse_bilevel_raw(*, pix, raw_path, hist_path, workers, fragment_urls, manifest_path, progress_cb=None):
     _write_url_manifest(manifest_path, fragment_urls)
     cmd = [
         ASSEMBLE_GREYSCALE,
-        f"--width={int(width)}",
-        f"--height={int(height)}",
+        f"--pix={int(pix)}",
         f"--output={raw_path}",
         f"--hist-output={hist_path}",
         f"--workers={int(workers)}",
@@ -492,9 +503,10 @@ def handle_raster(params):
         _cleanup_tmp(["/tmp/bits_t*.bits", _TMP_ROOT_XFORMS])
 
         viewport = _viewport_bounds(params)
+        pix = _pix_param(params, "bilevel raster")
         cmd = [
             BILEVEL_RASTER, bin_path, "/tmp/bits",
-            f"--width={params['width']}", f"--height={params['height']}",
+            f"--pix={pix}",
             f"--tile_size={params['tile_size']}",
             f"--n_tile_cols={params['n_tile_cols']}",
             f"--n_tile_rows={params['n_tile_rows']}",
@@ -587,9 +599,10 @@ def handle_coeff_raster(params):
             raise RuntimeError(f"coeff_bilevel requires n_coeffs >= 1, got {n_coeffs}")
 
         viewport = _viewport_bounds(params)
+        pix = _pix_param(params, "coeff bilevel raster")
         cmd = [
             COEFFS_BILEVEL_RASTER, bin_path, "/tmp/coeff_bits",
-            f"--width={params['width']}", f"--height={params['height']}",
+            f"--pix={pix}",
             f"--tile_size={params['tile_size']}",
             f"--n_tile_cols={params['n_tile_cols']}",
             f"--n_tile_rows={params['n_tile_rows']}",
@@ -666,10 +679,11 @@ def handle_merge(params):
         tile_w = params.get("tile_w")
         tile_h = params.get("tile_h")
         if tile_w in (None, "") or tile_h in (None, ""):
+            pix = _pix_param(params, "bilevel merge")
             tile_w, tile_h = _tile_shape(
                 tile_idx,
-                params["width"],
-                params["height"],
+                pix,
+                pix,
                 params["tile_size"],
                 params["n_tile_cols"],
             )
@@ -791,10 +805,10 @@ def handle_section_raster(params):
         _phase(job_id, task_id, "downloaded", "bilevel_raster", "BiLevel raster", dl_ms=dl_ms)
 
         viewport = _viewport_bounds(params)
+        pix = _pix_param(params, "bilevel section raster")
         cmd = [
             BILEVEL_SECTION_RASTER, _TMP_ROOTS, _TMP_SECTION_FRAGMENT,
-            f"--width={params['width']}",
-            f"--height={params['height']}",
+            f"--pix={pix}",
             f"--min_re={viewport['min_re']}",
             f"--max_re={viewport['max_re']}",
             f"--min_im={viewport['min_im']}",
@@ -862,15 +876,14 @@ def handle_finalize(params):
         if not job_id:
             raise RuntimeError("bilevel finalize requires job_id")
         task_id = str(params.get("task_id") or "bilevel_finalize").strip() or "bilevel_finalize"
-        width = int(params.get("width", 0) or 0)
-        height = int(params.get("height", 0) or 0)
+        pix = _pix_param(params, "bilevel finalize")
+        width = pix
+        height = pix
         source_item_count = int(params.get("source_item_count", 0) or 0)
         fragment_prefix = str(params.get("fragment_prefix") or "").strip()
         out_key = str(params.get("out_key") or "").strip()
         preview_key = str(params.get("preview_key") or "").strip()
         metadata = dict(params.get("metadata") or {})
-        if width <= 0 or height <= 0:
-            raise RuntimeError("bilevel finalize requires width and height > 0")
         if source_item_count <= 0:
             raise RuntimeError("bilevel finalize requires source_item_count > 0")
         if not fragment_prefix or not out_key or not preview_key:
@@ -897,8 +910,7 @@ def handle_finalize(params):
 
         t_assemble = time.time()
         hist_meta = _assemble_sparse_bilevel_raw(
-            width=width,
-            height=height,
+            pix=pix,
             raw_path=_TMP_FINAL_RAW,
             hist_path=_TMP_FINAL_HIST,
             workers=assemble_workers,
@@ -926,8 +938,7 @@ def handle_finalize(params):
                 RAW_TO_BILEVEL,
                 _TMP_FINAL_RAW,
                 _TMP_FINAL_TIF,
-                f"--width={width}",
-                f"--height={height}",
+                f"--pix={pix}",
                 "--threshold=0",
                 f"--preview={_TMP_FINAL_PREVIEW}",
                 "--preview_size=1024",
@@ -987,7 +998,7 @@ def handle_finalize(params):
             str(e),
             phase="bilevel_finalize",
             phase_label="Assemble + encode",
-            extra_keys=("width", "height", "source_item_count", "fragment_prefix", "out_key", "preview_key"),
+            extra_keys=("pix", "source_item_count", "fragment_prefix", "out_key", "preview_key"),
         )
         raise
     finally:
@@ -1049,6 +1060,9 @@ def handle_from_raw_color(params):
         )
         width = int(raw_sidecar["width"])
         height = int(raw_sidecar["height"])
+        if width != height:
+            raise RuntimeError(f"Color2Bilevel requires square raw sidecar, got {width}x{height}")
+        pix = width
         _report_progress(
             "source_ready",
             "bilevel_from_raw_prepare",
@@ -1074,8 +1088,7 @@ def handle_from_raw_color(params):
 
         cmd = [
             RAW_TO_BILEVEL, _TMP_SOURCE_RAW, _TMP_FINAL_TIF,
-            f"--width={width}",
-            f"--height={height}",
+            f"--pix={pix}",
             f"--threshold={threshold}",
             f"--preview={_TMP_FINAL_PREVIEW}",
             "--preview_size=1024",

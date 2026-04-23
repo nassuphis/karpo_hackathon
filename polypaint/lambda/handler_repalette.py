@@ -92,6 +92,7 @@ def _metadata_size_bytes(metadata):
 
 def _palette_image_metadata(full_n, palette):
     return {
+        "pix": str(full_n),
         "width": str(full_n),
         "height": str(full_n),
         "palette": str(palette),

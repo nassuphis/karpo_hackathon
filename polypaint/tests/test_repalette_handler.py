@@ -162,7 +162,7 @@ class TestRepaletteHandler(unittest.TestCase):
         self.assertEqual(meta["chunk_bins_prefix"], "renders/j/palettes/pal_new/chunks/palette_bins_chunk_")
         self.assertEqual(meta["total_solves"], 6)
         image_meta = uploads["renders/j/palettes/pal_new/image.jpeg"]["extra"]["Metadata"]
-        self.assertEqual(image_meta, {"width": "2", "height": "2", "palette": "tri_redgold"})
+        self.assertEqual(image_meta, {"pix": "2", "width": "2", "height": "2", "palette": "tri_redgold"})
 
         statuses = [call.args[2] for call in mock_report.call_args_list]
         self.assertEqual(statuses, ["started", "copying", "copying", "rendering", "done"])
@@ -263,7 +263,7 @@ class TestRepaletteHandler(unittest.TestCase):
         self.assertIn("renders/j/palettes/pal_new/image.jpeg", uploads)
         self.assertIn("renders/j/palettes/pal_new/preview.png", uploads)
         image_meta = uploads["renders/j/palettes/pal_new/image.jpeg"]["extra"]["Metadata"]
-        self.assertEqual(image_meta, {"width": "2", "height": "2", "palette": "reef"})
+        self.assertEqual(image_meta, {"pix": "2", "width": "2", "height": "2", "palette": "reef"})
 
         meta = json.loads(put_objects["renders/j/palettes/pal_new/meta.json"])
         self.assertFalse(meta["render_reusable"])

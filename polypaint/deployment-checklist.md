@@ -28,8 +28,17 @@ When claiming a feature is ready, explicitly report:
 - In this repo, treat `uv` commands as immediate-escalation commands.
 - In this repo, treat Playwright commands as immediate-escalation commands.
   - Example: `npx playwright test ...`
+- In this repo, treat `bash scripts/predeploy_check.sh` as an
+  immediate-escalation command because it invokes `uv` and hits the same shared
+  cache sandbox boundary.
 - Do not "rediscover" the same sandbox/cache/web-server failure on `uv` or
-  Playwright. Escalate first.
+  Playwright or `scripts/predeploy_check.sh`. Escalate first.
+- If a field, flag, mode, or contract branch is removed, remove it end-to-end
+  in the same change.
+  - Check upstream emitters, planner output, ASL threading, handler reads,
+    native CLI/help text, metadata writers, and tests.
+  - Do not leave dead compatibility fields or tautological selectors in active
+    paths after the feature that needed them is gone.
 
 ## 1. Product Wiring
 

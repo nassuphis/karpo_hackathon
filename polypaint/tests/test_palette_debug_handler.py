@@ -242,6 +242,7 @@ class TestPaletteDebugHandler(unittest.TestCase):
         extra_args = upload_calls[0][1].get("ExtraArgs", {})
         metadata = extra_args.get("Metadata", {})
         self.assertEqual(metadata["palette"], "inferno")
+        self.assertEqual(metadata["pix"], "100")
         self.assertEqual(metadata["width"], "100")
         self.assertEqual(metadata["height"], "100")
         self.assertNotIn("solve_score_quantile", metadata)

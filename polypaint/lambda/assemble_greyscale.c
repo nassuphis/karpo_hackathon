@@ -8,7 +8,7 @@
  * Fragments may be passed as local file paths or via --url-manifest=<path>,
  * one presigned URL per line.
  *
- * score_byte == 0 is invalid. pixel_idx must be < width * height.
+ * score_byte == 0 is invalid. pixel_idx must be < pix * pix.
  * Repeated writes are accepted with "any arrival wins" semantics.
  */
 
@@ -328,18 +328,25 @@ int main(int argc, char **argv) {
     const char *outPath = getArg(argc, argv, "--output");
     const char *histPath = getArg(argc, argv, "--hist-output");
     const char *urlManifest = getArg(argc, argv, "--url-manifest");
-    int width = getArgInt(argc, argv, "--width", 0);
-    int height = getArgInt(argc, argv, "--height", 0);
+    const char *widthArg = getArg(argc, argv, "--width");
+    const char *heightArg = getArg(argc, argv, "--height");
+    int pix = getArgInt(argc, argv, "--pix", 0);
     int workers = getArgInt(argc, argv, "--workers", 1);
     char **paths = NULL;
     int n_paths = 0;
     int cap_paths = 0;
     CURLcode curlRc;
 
-    if (!outPath || width <= 0 || height <= 0) {
-        fprintf(stderr, "Usage: assemble_greyscale --width=W --height=H --output=raw.bin [--hist-output=hist.json] [--workers=N] [--url-manifest=urls.txt] frag0 [frag1 ...]\n");
+    if (widthArg || heightArg) {
+        fprintf(stderr, "assemble_greyscale no longer accepts --width or --height; pass --pix for square output\n");
         return 2;
     }
+    if (!outPath || pix <= 0) {
+        fprintf(stderr, "Usage: assemble_greyscale --pix=N --output=raw.bin [--hist-output=hist.json] [--workers=N] [--url-manifest=urls.txt] frag0 [frag1 ...]\n");
+        return 2;
+    }
+    int width = pix;
+    int height = pix;
     if (workers <= 0) workers = 1;
 
     for (int i = 1; i < argc; i++) {

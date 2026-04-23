@@ -24,7 +24,7 @@ class TestRawSidecar(unittest.TestCase):
             clip_slots=[{"slot": 0, "metric": "crowding", "source": "slv", "clip_lo": 0.1, "clip_hi": 0.9}],
             background_color="000000",
             plan_params_digest="sha256:plan",
-            render_execution={"color_pipeline": "fused", "raster_engine": "mt"},
+            render_execution={"raster_engine": "mt"},
             raw_key="renders/j/color/color_1/greyscale.raw",
             image_key="renders/j/color/color_1/image.jpeg",
             preview_key="renders/j/color/color_1/preview.png",
@@ -36,12 +36,14 @@ class TestRawSidecar(unittest.TestCase):
             step_scores_grid_n=3,
         )
         self.assertEqual(sidecar["version"], 3)
+        self.assertEqual(sidecar["pix"], 4)
         validated = validate_raw_sidecar(
             sidecar,
             expected_raw_key="renders/j/color/color_1/greyscale.raw",
             expected_artifact_family="color",
         )
         self.assertEqual(validated["version"], 3)
+        self.assertEqual(validated["pix"], 4)
         self.assertEqual(validated["step_scores_key"], "renders/j/color/color_1/step_scores.raw")
         self.assertEqual(validated["step_count"], 9)
         self.assertEqual(validated["step_scores_grid_n"], 3)
@@ -60,7 +62,7 @@ class TestRawSidecar(unittest.TestCase):
             clip_slots=[{"slot": 0, "metric": "crowding", "source": "slv", "clip_lo": 0.1, "clip_hi": 0.9}],
             background_color="000000",
             plan_params_digest="sha256:plan",
-            render_execution={"color_pipeline": "fused", "raster_engine": "mt"},
+            render_execution={"raster_engine": "mt"},
             raw_key="renders/j/color/color_1/greyscale.raw",
             image_key="renders/j/color/color_1/image.jpeg",
             preview_key="renders/j/color/color_1/preview.png",

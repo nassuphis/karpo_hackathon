@@ -21,8 +21,8 @@ def _encode_pairs(pairs):
     return bytes(payload)
 
 
-def _reference_assemble(width, height, fragment_payloads):
-    npix = width * height
+def _reference_assemble(pix, fragment_payloads):
+    npix = pix * pix
     buf = bytearray(npix)
     for payload in fragment_payloads:
         if len(payload) % 5 != 0:
@@ -65,7 +65,7 @@ class TestAssembleGreyscale(unittest.TestCase):
     def tearDownClass(cls):
         cls._tmpdir_obj.cleanup()
 
-    def _run(self, width, height, fragment_payloads, workers=1, include_hist=False, missing_path=False):
+    def _run(self, pix, fragment_payloads, workers=1, include_hist=False, missing_path=False):
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td)
             out_path = root / "out.raw"
@@ -79,8 +79,7 @@ class TestAssembleGreyscale(unittest.TestCase):
                 frag_paths.append(root / "missing.frag")
             cmd = [
                 str(self._binary),
-                f"--width={width}",
-                f"--height={height}",
+                f"--pix={pix}",
                 f"--output={out_path}",
                 f"--workers={workers}",
             ]
@@ -92,7 +91,7 @@ class TestAssembleGreyscale(unittest.TestCase):
             hist = json.loads(hist_path.read_text()) if hist_path.exists() else None
             return result, output, hist
 
-    def _run_with_url_manifest(self, width, height, fragment_payloads, workers=1):
+    def _run_with_url_manifest(self, pix, fragment_payloads, workers=1):
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td)
             for idx, payload in enumerate(fragment_payloads):
@@ -119,8 +118,7 @@ class TestAssembleGreyscale(unittest.TestCase):
                     hist_path = root / "hist.json"
                     cmd = [
                         str(self._binary),
-                        f"--width={width}",
-                        f"--height={height}",
+                        f"--pix={pix}",
                         f"--output={out_path}",
                         f"--workers={workers}",
                         f"--hist-output={hist_path}",
@@ -139,23 +137,23 @@ class TestAssembleGreyscale(unittest.TestCase):
             _encode_pairs([(0, 4), (3, 9)]),
             _encode_pairs([(1, 5), (2, 7)]),
         ]
-        result, output, _ = self._run(2, 2, frags, workers=1)
+        result, output, _ = self._run(2, frags, workers=1)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(output, _reference_assemble(2, 2, frags))
+        self.assertEqual(output, _reference_assemble(2, frags))
 
     def test_multi_thread_matches_reference_for_non_overlapping_fragments(self):
         frags = [
             _encode_pairs([(0, 11), (5, 12)]),
             _encode_pairs([(1, 21), (4, 22)]),
-            _encode_pairs([(2, 31), (3, 32)]),
+            _encode_pairs([(2, 31), (8, 32)]),
         ]
-        result, output, _ = self._run(3, 2, frags, workers=3)
+        result, output, _ = self._run(3, frags, workers=3)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(output, _reference_assemble(3, 2, frags))
+        self.assertEqual(output, _reference_assemble(3, frags))
 
     def test_histogram_side_output_matches_reference(self):
         frags = [_encode_pairs([(0, 1), (1, 1), (3, 9)])]
-        result, output, hist = self._run(2, 2, frags, workers=2, include_hist=True)
+        result, output, hist = self._run(2, frags, workers=2, include_hist=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(output, bytes([1, 1, 0, 9]))
         self.assertEqual(hist["width"], 2)
@@ -171,14 +169,14 @@ class TestAssembleGreyscale(unittest.TestCase):
             _encode_pairs([(0, 3), (1, 4)]),
             _encode_pairs([(0, 7)]),
         ]
-        result, output, _ = self._run(2, 1, frags, workers=2)
+        result, output, _ = self._run(2, frags, workers=2)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(output[0], (3, 7))
         self.assertEqual(output[1], 4)
 
     def test_missing_fragment_path_is_clear_error(self):
         frags = [_encode_pairs([(0, 5)])]
-        result, _, _ = self._run(1, 1, frags, workers=1, missing_path=True)
+        result, _, _ = self._run(1, frags, workers=1, missing_path=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("cannot open", result.stderr)
 
@@ -187,8 +185,8 @@ class TestAssembleGreyscale(unittest.TestCase):
             _encode_pairs([(0, 9), (3, 7)]),
             _encode_pairs([(1, 5), (2, 4)]),
         ]
-        result, output, hist = self._run_with_url_manifest(2, 2, frags, workers=2)
+        result, output, hist = self._run_with_url_manifest(2, frags, workers=2)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(output, _reference_assemble(2, 2, frags))
+        self.assertEqual(output, _reference_assemble(2, frags))
         self.assertEqual(hist["background_pixels"], 0)
         self.assertEqual(hist["nonzero_pixels"], 4)

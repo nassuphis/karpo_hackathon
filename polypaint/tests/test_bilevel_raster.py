@@ -158,7 +158,7 @@ def test_basic():
     out_prefix = "/tmp/test_bl_bits"
     cmd = [
         BILEVEL_RASTER, roots_file, out_prefix,
-        f"--width={width}", f"--height={height}",
+        f"--pix={width}",
         f"--tile_size={tile_size}",
         f"--n_tile_cols={n_tile_cols}", f"--n_tile_rows={n_tile_rows}",
         *_bounds_args_from_center_scale(width, height, center_re, center_im, scale),
@@ -214,7 +214,7 @@ def test_rotation():
     out_prefix = "/tmp/test_bl_rot"
     cmd = [
         BILEVEL_RASTER, roots_file, out_prefix,
-        f"--width={width}", f"--height={height}",
+        f"--pix={width}",
         f"--tile_size={tile_size}",
         f"--n_tile_cols={n_tile_cols}", f"--n_tile_rows={n_tile_rows}",
         *_bounds_args_from_center_scale(width, height, center_re, center_im, scale),
@@ -264,7 +264,7 @@ def test_empty_tiles():
     out_prefix = "/tmp/test_bl_empty"
     cmd = [
         BILEVEL_RASTER, roots_file, out_prefix,
-        f"--width={width}", f"--height={height}",
+        f"--pix={width}",
         f"--tile_size={tile_size}",
         f"--n_tile_cols={n_tile_cols}", f"--n_tile_rows={n_tile_rows}",
         *_bounds_args_from_center_scale(width, height, center_re, center_im, scale),
@@ -312,7 +312,7 @@ def test_exact_bounds_square_output_mapping():
     out_prefix = "/tmp/test_bl_bounds"
     cmd = [
         BILEVEL_RASTER, roots_file, out_prefix,
-        f"--width={width}", f"--height={height}",
+        f"--pix={width}",
         f"--tile_size={tile_size}",
         f"--n_tile_cols={n_tile_cols}", f"--n_tile_rows={n_tile_rows}",
         f"--min_re={min_re}", f"--max_re={max_re}",
@@ -362,7 +362,7 @@ def test_multiple_functions():
         out_prefix = f"/tmp/test_bl_{func_name}"
         cmd = [
             BILEVEL_RASTER, roots_file, out_prefix,
-            f"--width={width}", f"--height={height}",
+            f"--pix={width}",
             f"--tile_size={tile_size}",
             f"--n_tile_cols={n_tile_cols}", f"--n_tile_rows={n_tile_rows}",
             *_bounds_args_from_center_scale(width, height, 0.0, 0.0, scale),
@@ -427,7 +427,7 @@ def test_moebius_all_zero_params_plots_nothing():
 
         cmd = [
             binary, roots_file, out_prefix,
-            "--width=16", "--height=16",
+            "--pix=16",
             "--tile_size=16",
             "--n_tile_cols=1", "--n_tile_rows=1",
             *_bounds_args_from_center_scale(16, 16, 0.0, 0.0, 4.0),

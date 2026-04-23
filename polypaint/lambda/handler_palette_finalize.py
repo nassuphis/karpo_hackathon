@@ -314,6 +314,7 @@ def handler(event, context):
 
         file_size = os.path.getsize(_TMP_JPEG)
         metadata = {
+            "pix": str(full_n),
             "width": str(full_n),
             "height": str(full_n),
             "palette": palette,

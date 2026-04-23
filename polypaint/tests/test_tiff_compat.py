@@ -50,7 +50,7 @@ def make_tiled_tiff(path, fullW, fullH, tileSz, nCols, nRows, tile_pixels):
         make_tile_tiff(tp, tw, th, tile_pixels.get(t, []))
         tile_paths.append(tp)
     cmd = [BILEVEL_MERGE, "stitch", f"--n_cols={nCols}", f"--n_rows={nRows}",
-           f"--width={fullW}", f"--height={fullH}", f"--tile_size={tileSz}",
+           f"--pix={fullW}", f"--tile_size={tileSz}",
            f"--output={path}"] + tile_paths
     r = subprocess.run(cmd, capture_output=True, text=True)
     for p in tile_paths:
@@ -120,18 +120,18 @@ def test_edge_tiles():
     print("  PASS")
 
 
-def test_nonsquare():
-    """Convert a non-square tiled TIFF (40x24)."""
-    print("test_nonsquare: 40x24...")
-    pixels = {0: [(2, 2)], 5: [(1, 1)]}
-    make_tiled_tiff("/tmp/compat_nsq_src.tif", 40, 24, 16, 3, 2, pixels)
+def test_square_remainder():
+    """Convert a square tiled TIFF with remainder edge tiles."""
+    print("test_square_remainder: 40x40...")
+    pixels = {0: [(2, 2)], 8: [(1, 1)]}
+    make_tiled_tiff("/tmp/compat_nsq_src.tif", 40, 40, 16, 3, 3, pixels)
 
     r = subprocess.run([TIFF_COMPAT, "/tmp/compat_nsq_src.tif", "/tmp/compat_nsq_out.tif"],
                        capture_output=True, text=True, timeout=30)
     assert r.returncode == 0
 
     cw, ch, _ = read_tiff("/tmp/compat_nsq_out.tif")
-    assert cw == 40 and ch == 24, f"dimensions wrong: {cw}x{ch}"
+    assert cw == 40 and ch == 40, f"dimensions wrong: {cw}x{ch}"
 
     os.remove("/tmp/compat_nsq_src.tif")
     os.remove("/tmp/compat_nsq_out.tif")
@@ -150,6 +150,6 @@ def test_error_on_missing_input():
 if __name__ == "__main__":
     test_basic_conversion()
     test_edge_tiles()
-    test_nonsquare()
+    test_square_remainder()
     test_error_on_missing_input()
     print("\nAll tiff_compat tests passed.")

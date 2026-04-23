@@ -24,8 +24,8 @@ class TestEncodeHandler(unittest.TestCase):
     def test_encode_accepts_tile_prefix(self, mock_s3, mock_run, mock_report):
         import handler_encode as mod
 
-        tile0 = struct.pack("<III", 2, 1, 3) + b"\x01\x02\x03" * 2
-        tile1 = struct.pack("<III", 1, 1, 3) + b"\x04\x05\x06"
+        tile0 = struct.pack("<III", 1, 2, 3) + b"\x01\x02\x03" * 2
+        tile1 = struct.pack("<III", 1, 2, 3) + b"\x04\x05\x06" * 2
         uploaded = {}
 
         def get_object(**kwargs):
@@ -59,8 +59,7 @@ class TestEncodeHandler(unittest.TestCase):
             "task_id": "encode_t",
             "out_key": "renders/j/image.png",
             "format": "png",
-            "width": 3,
-            "height": 1,
+            "pix": 2,
             "tile_grid": {
                 "n_cols": 2,
                 "n_rows": 1,
@@ -75,8 +74,9 @@ class TestEncodeHandler(unittest.TestCase):
         self.assertEqual(uploaded["body"], b"PNG")
         self.assertEqual(uploaded["content_type"], "image/png")
         self.assertEqual(uploaded["metadata"]["mode"], "color")
-        self.assertEqual(uploaded["metadata"]["width"], "3")
-        self.assertEqual(uploaded["metadata"]["height"], "1")
+        self.assertEqual(uploaded["metadata"]["pix"], "2")
+        self.assertEqual(uploaded["metadata"]["width"], "2")
+        self.assertEqual(uploaded["metadata"]["height"], "2")
         self.assertEqual(mock_report.call_args_list[-1].args[2], "done")
 
     @patch("handler_encode.write_color_artifact_meta_overlay")
@@ -115,8 +115,7 @@ class TestEncodeHandler(unittest.TestCase):
             "task_id": "encode_color_t",
             "out_key": "renders/j/color/color_a/image.jpeg",
             "format": "jpeg",
-            "width": 1,
-            "height": 1,
+            "pix": 1,
             "tile_grid": {
                 "n_cols": 1,
                 "n_rows": 1,

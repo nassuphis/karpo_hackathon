@@ -119,11 +119,13 @@ def handler(event, context):
 
         preview_size = os.path.getsize(out_path)
 
-        # Copy width/height metadata from source if available
+        # Copy square size metadata from source if available.
         img_meta = {}
         try:
             src_head = s3.head_object(Bucket=BUCKET, Key=source_key)
             src_meta = src_head.get("Metadata", {})
+            if "pix" in src_meta:
+                img_meta["pix"] = src_meta["pix"]
             if "width" in src_meta:
                 img_meta["width"] = src_meta["width"]
             if "height" in src_meta:

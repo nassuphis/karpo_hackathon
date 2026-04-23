@@ -41,7 +41,7 @@ def make_tiled_tiff(path, fullW, fullH, tileSz, nCols, nRows, tile_pixels):
         os.remove(bits_path)
         tile_paths.append(tp)
     cmd = [BILEVEL_MERGE, "stitch", f"--n_cols={nCols}", f"--n_rows={nRows}",
-           f"--width={fullW}", f"--height={fullH}", f"--tile_size={tileSz}",
+           f"--pix={fullW}", f"--tile_size={tileSz}",
            f"--output={path}"] + tile_paths
     subprocess.run(cmd, capture_output=True)
     for p in tile_paths:

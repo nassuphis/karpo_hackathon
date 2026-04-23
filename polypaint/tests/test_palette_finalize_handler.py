@@ -231,6 +231,7 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
             self.assertNotIn("renders/j/palettes/pal_1/palette_bins.bin", uploads)
             image_meta = uploads["renders/j/palettes/pal_1/image.jpeg"]["extra"]["Metadata"]
             self.assertEqual(image_meta["palette"], "reef")
+            self.assertEqual(image_meta["pix"], "4")
             self.assertEqual(image_meta["width"], "4")
             self.assertEqual(image_meta["view_mode"], "explicit")
             self.assertEqual(image_meta["min_re"], "-3.5")

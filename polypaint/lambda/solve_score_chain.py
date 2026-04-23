@@ -7,8 +7,9 @@ Canonical model:
 - binary combine chips operate on normalized score maps in postfix/RPN order
 - omega_cosine is a unary postfix op and may appear anywhere the stack depth is >= 1
 
-The backend still carries legacy scalar fields for compatibility, but the chain
-is now the canonical source of truth.
+The chain is the canonical source of truth. Legacy scalar fields still exist in
+some read paths for old artifacts, but new live contracts should not depend on
+them.
 """
 from __future__ import annotations
 
@@ -642,7 +643,7 @@ def compile_solve_score_chain_or_legacy(
     return compiled
 
 
-def emit_solve_score_metadata(scope, metric, quantile, omega, omega_enabled, chain=None):
+def emit_solve_score_metadata(scope, metric, quantile, omega, omega_enabled, chain=None, include_legacy_scalars=True):
     fields = _scope_fields(scope)
     compiled = compile_solve_score_chain_or_legacy(
         chain,
@@ -655,11 +656,14 @@ def emit_solve_score_metadata(scope, metric, quantile, omega, omega_enabled, cha
     metadata = {
         fields["chain"]: serialize_solve_score_chain(compiled["chain"]),
         fields["fingerprint"]: compiled_solve_score_fingerprint(compiled),
-        fields["metric"]: compiled["metric"],
         fields["quantile"]: "" if compiled["quantile"] in ("", None) else str(compiled["quantile"]),
-        fields["omega"]: str(compiled["omega"]),
-        fields["omega_enabled"]: "true" if compiled["omega_enabled"] else "false",
     }
+    if include_legacy_scalars:
+        metadata.update({
+            fields["metric"]: compiled["metric"],
+            fields["omega"]: str(compiled["omega"]),
+            fields["omega_enabled"]: "true" if compiled["omega_enabled"] else "false",
+        })
     return metadata
 
 

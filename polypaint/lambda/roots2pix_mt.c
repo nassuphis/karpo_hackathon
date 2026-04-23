@@ -1,9 +1,8 @@
 /*
  * roots2pix_mt: multithreaded fused solve-score raster.
  *
- * This is the native raster for the fused Color path. It emits either legacy
- * tile-local .pbx pairs or fused raw-score global u32le_u8_v1 fragments
- * depending on the requested solve-score output mode.
+ * This is the native raster for the fused Color path. It emits fused
+ * raw-score global u32le_u8_v1 fragments only.
  *
  * Supported color mode:
  *   - solve_score
@@ -21,19 +20,12 @@
 #include <string.h>
 #include <time.h>
 
-#include "palette_lut.h"
 #include "multispan_reader.h"
 #include "root_xforms.h"
 #include "solve_score.h"
 
 #define MAXDEG 256
 #define MAX_TILES 4096
-
-typedef struct {
-    uint32_t *data;
-    size_t len;
-    size_t cap;
-} U32Vec;
 
 typedef struct {
     unsigned char *data;
@@ -63,19 +55,8 @@ typedef struct {
     double yScale;
     double cosA;
     double sinA;
-    enum SolveMetric solveMetric;
     SolveScoreProgram solveScoreProgram;
-    int useScoreProgram;
-    double solveScoreClipLo;
-    double solveScoreClipHi;
-    double solveScoreOmega;
-    int solveScoreOmegaEnabled;
-    double solveScoreCuts[9];
-    int nSolveScoreCuts;
-    int emitPixelBins;
     int emitPaletteBins;
-    int skipPixOutput;
-    int solveScoreRawBytes;
     long long paletteStepStart;
     int paletteGridN;
     int paletteNTileCols;
@@ -100,16 +81,11 @@ typedef struct {
     int nRt;
     uint64_t **tileBits;
     int *tileW;
-    U32Vec *pixVecs;
-    U32Vec *pbxVecs;
     ByteVec *pbxByteVecs;
     int *paletteTileW;
     ByteVec *palettePbxByteVecs;
     unsigned char *stepScores;
     long stepScoreCount;
-    unsigned char ssPalR[10];
-    unsigned char ssPalG[10];
-    unsigned char ssPalB[10];
     long rootsPlotted;
     long rootsClipped;
     long rootsDeduped;
@@ -161,20 +137,6 @@ static long long monotonic_us(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (long long)ts.tv_sec * 1000000LL + (long long)(ts.tv_nsec / 1000LL);
-}
-
-static int vec_push2(U32Vec *vec, uint32_t a, uint32_t b) {
-    if (vec->len + 2 > vec->cap) {
-        size_t newCap = vec->cap ? vec->cap * 2 : 2048;
-        while (newCap < vec->len + 2) newCap *= 2;
-        uint32_t *newData = realloc(vec->data, newCap * sizeof(uint32_t));
-        if (!newData) return 0;
-        vec->data = newData;
-        vec->cap = newCap;
-    }
-    vec->data[vec->len++] = a;
-    vec->data[vec->len++] = b;
-    return 1;
 }
 
 static int bytevec_push_u32le_u8(ByteVec *vec, uint32_t pixIdx, uint8_t score) {
@@ -233,12 +195,6 @@ static int write_suffix_path(char *dst, size_t dstSize, const char *prefix, cons
 static void free_worker_storage(WorkerArgs *args, int nWorkers, int nTiles) {
     if (!args) return;
     for (int i = 0; i < nWorkers; i++) {
-        if (args[i].pixVecs) {
-            for (int t = 0; t < nTiles; t++) free(args[i].pixVecs[t].data);
-        }
-        if (args[i].pbxVecs) {
-            for (int t = 0; t < nTiles; t++) free(args[i].pbxVecs[t].data);
-        }
         if (args[i].pbxByteVecs) {
             for (int t = 0; t < nTiles; t++) free(args[i].pbxByteVecs[t].data);
         }
@@ -246,8 +202,6 @@ static void free_worker_storage(WorkerArgs *args, int nWorkers, int nTiles) {
             int paletteTiles = args[i].paletteNTileCols * args[i].paletteNTileRows;
             for (int t = 0; t < paletteTiles; t++) free(args[i].palettePbxByteVecs[t].data);
         }
-        free(args[i].pixVecs);
-        free(args[i].pbxVecs);
         free(args[i].pbxByteVecs);
         free(args[i].palettePbxByteVecs);
         free(args[i].stepScores);
@@ -365,41 +319,18 @@ static void *worker_main(void *arg_) {
             paramStep = sectionParamRows ? (sectionParamRows + localIdx * arg->scoreParamStride) : NULL;
         }
 
-        uint32_t solveRGB = 0;
         uint8_t solveBin = 255;
 
-        double u;
-        if (arg->useScoreProgram) {
-            u = solve_score_eval_program_with_sources(
-                step, arg->degree, coeffStep, arg->scoreCoeffDegree, paramStep, arg->scoreParamDegree,
-                &arg->solveScoreProgram
-            );
-        } else {
-            double score = compute_solve_metric_score(step, arg->degree, arg->solveMetric);
-            double ssRange = arg->solveScoreClipHi - arg->solveScoreClipLo;
-            u = (score - arg->solveScoreClipLo) / ssRange;
-            if (u < 0) u = 0;
-            if (u > 1) u = 1;
-            u = apply_solve_score_transfer(u, arg->solveScoreOmegaEnabled, arg->solveScoreOmega);
-        }
-        int bin = 9;
-        if (arg->solveScoreRawBytes) {
+        double u = solve_score_eval_program_with_sources(
+            step, arg->degree, coeffStep, arg->scoreCoeffDegree, paramStep, arg->scoreParamDegree,
+            &arg->solveScoreProgram
+        );
+        {
             int rawByte = 1 + (int)llround(u * 254.0);
             if (rawByte < 1) rawByte = 1;
             if (rawByte > 255) rawByte = 255;
             solveBin = (uint8_t)rawByte;
-            bin = (int)(((double)(rawByte - 1) * 10.0) / 255.0);
-            if (bin < 0) bin = 0;
-            if (bin > 9) bin = 9;
-        } else {
-            for (int c = 0; c < arg->nSolveScoreCuts; c++) {
-                if (u <= arg->solveScoreCuts[c]) { bin = c; break; }
-            }
-            solveBin = (uint8_t)bin;
         }
-        solveRGB = ((uint32_t)arg->ssPalR[bin] << 16) |
-                   ((uint32_t)arg->ssPalG[bin] << 8) |
-                   arg->ssPalB[bin];
 
         if (arg->emitPaletteBins) {
             long long globalStep = arg->paletteStepStart + p;
@@ -459,24 +390,11 @@ static void *worker_main(void *arg_) {
                 continue;
             }
 
-            if (!arg->skipPixOutput) {
-                if (!vec_push2(&arg->pixVecs[tileId], pixIdx, solveRGB)) {
-                    worker_fail(arg, "pix vec alloc failed");
+            {
+                uint32_t globalPixIdx = (uint32_t)py * (uint32_t)arg->W + (uint32_t)px;
+                if (!bytevec_push_u32le_u8(&arg->pbxByteVecs[tileId], globalPixIdx, solveBin)) {
+                    worker_fail(arg, "pbx byte vec alloc failed");
                     goto cleanup;
-                }
-            }
-            if (arg->emitPixelBins) {
-                if (arg->solveScoreRawBytes) {
-                    uint32_t globalPixIdx = (uint32_t)py * (uint32_t)arg->W + (uint32_t)px;
-                    if (!bytevec_push_u32le_u8(&arg->pbxByteVecs[tileId], globalPixIdx, solveBin)) {
-                        worker_fail(arg, "pbx byte vec alloc failed");
-                        goto cleanup;
-                    }
-                } else {
-                    if (!vec_push2(&arg->pbxVecs[tileId], pixIdx, (uint32_t)solveBin)) {
-                        worker_fail(arg, "pbx vec alloc failed");
-                        goto cleanup;
-                    }
                 }
             }
             arg->rootsPlotted++;
@@ -494,31 +412,32 @@ cleanup:
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "Usage: roots2pix_mt /tmp/pix "
-                "--width=W --height=H --min_re=A --max_re=B --min_im=C --max_im=D "
+                "--pix=N --min_re=A --max_re=B --min_im=C --max_im=D "
                 "--degree=D --tile_size=T --n_tile_cols=C --n_tile_rows=R "
-                "[--input_mode=multispan_sectioned] "
-                "[--input_manifest=file.json] [--retries=N] "
-                "[--threads=N] [--color=solve_score] "
-                "[--match=none] [--palette=<name>] "
-                "[--solve_metric=proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re|min_mod|max_mod|min_angular_separation] "
-                "[--solve_score_clip_lo=X --solve_score_clip_hi=Y --solve_score_cuts=c1,...,c9] "
-                "[--solve_score_raw_bytes=0|1] "
-                "[--solve_score_omega=W] [--solve_score_omega_enabled=0|1] "
+                "--input_manifest=file.json [--retries=N] "
+                "[--threads=N] "
+                "--score_metrics=csv --score_clip_los=csv --score_clip_his=csv --score_program=spec "
+                "[--score_sources=csv] "
                 "[--score_coeff_manifest=file.json] [--score_params_manifest=file.json] "
                 "[--pixel_bin_prefix=/tmp/pixbin] "
                 "[--palette_bin_prefix=/tmp/palette_pixbin] [--palette_grid_n=N] [--palette_step_start=STEP] "
                 "[--step_scores_output=/tmp/step_scores.bin] "
-                "[--skip_pix_output=0|1] [--root_xforms=file.json]\n");
+                "[--root_xforms=file.json]\n");
         return 1;
     }
 
     const char *outPrefix = argv[1];
-    const char *inputModeStr = getArgStr(argc, argv, "--input_mode", "multispan_sectioned");
+    (void)outPrefix;
     const char *urlArg = getArg(argc, argv, "--url");
     const char *inputSizeArg = getArg(argc, argv, "--input_size");
+    const char *inputModeArg = getArg(argc, argv, "--input_mode");
+    const char *colorArg = getArg(argc, argv, "--color");
+    const char *matchArg = getArg(argc, argv, "--match");
+    const char *paletteArg = getArg(argc, argv, "--palette");
     const char *inputManifest = getArgStr(argc, argv, "--input_manifest", NULL);
-    int W = getArgInt(argc, argv, "--width", 4096);
-    int H = getArgInt(argc, argv, "--height", 4096);
+    const char *widthArg = getArg(argc, argv, "--width");
+    const char *heightArg = getArg(argc, argv, "--height");
+    int pix = getArgInt(argc, argv, "--pix", 0);
     const char *minReArg = getArg(argc, argv, "--min_re");
     const char *maxReArg = getArg(argc, argv, "--max_re");
     const char *minImArg = getArg(argc, argv, "--min_im");
@@ -534,43 +453,38 @@ int main(int argc, char **argv) {
     int nTileRows = getArgInt(argc, argv, "--n_tile_rows", 1);
     int retries = getArgInt(argc, argv, "--retries", 2);
     int requestedThreads = getArgInt(argc, argv, "--threads", 1);
-    const char *colorStr = getArgStr(argc, argv, "--color", "solve_score");
-    const char *matchStr = getArgStr(argc, argv, "--match", "none");
-    const char *palName = getArgStr(argc, argv, "--palette", "inferno");
     const char *pixelBinPrefix = getArgStr(argc, argv, "--pixel_bin_prefix", NULL);
     const char *paletteBinPrefix = getArgStr(argc, argv, "--palette_bin_prefix", NULL);
     const char *stepScoresOutputPath = getArgStr(argc, argv, "--step_scores_output", NULL);
-    int skipPixOutput = getArgInt(argc, argv, "--skip_pix_output", 0);
-    int solveScoreRawBytes = getArgInt(argc, argv, "--solve_score_raw_bytes", 0);
     int paletteGridN = getArgInt(argc, argv, "--palette_grid_n", 0);
     long long paletteStepStart = getArgLongLong(argc, argv, "--palette_step_start", 0);
     const char *rtPath = getArgStr(argc, argv, "--root_xforms", NULL);
-    if (strcmp(inputModeStr, "multispan_sectioned") != 0) {
-        fprintf(stderr, "roots2pix_mt only supports --input_mode=multispan_sectioned (got %s)\n", inputModeStr);
+    if (inputModeArg) {
+        fprintf(stderr, "roots2pix_mt no longer accepts --input_mode; multispan_sectioned is implicit\n");
         return 1;
     }
     if (urlArg || inputSizeArg) {
         fprintf(stderr, "roots2pix_mt no longer supports direct sectioned input; pass --input_manifest\n");
         return 1;
     }
-
-    if (strcmp(colorStr, "solve_score") != 0 && strcmp(colorStr, "solve_proximity") != 0) {
-        fprintf(stderr, "Unsupported color mode for roots2pix_mt: %s\n", colorStr);
-        return 1;
-    }
-
-    if (strcmp(matchStr, "none") != 0) {
-        fprintf(stderr, "roots2pix_mt only supports --match=none\n");
+    if (colorArg || matchArg || paletteArg) {
+        fprintf(stderr, "roots2pix_mt no longer accepts --color, --match, or --palette; it emits raw-score fragments only\n");
         return 1;
     }
     if (degree < 1 || degree > MAXDEG) {
         fprintf(stderr, "Invalid degree: %d\n", degree);
         return 1;
     }
-    if (W < 1 || H < 1) {
-        fprintf(stderr, "Invalid dimensions: %dx%d\n", W, H);
+    if (widthArg || heightArg) {
+        fprintf(stderr, "roots2pix_mt no longer accepts --width or --height; pass --pix for square output\n");
         return 1;
     }
+    if (pix < 1) {
+        fprintf(stderr, "Invalid pix: %d\n", pix);
+        return 1;
+    }
+    int W = pix;
+    int H = pix;
     double minRe = 0.0, maxRe = 0.0, minIm = 0.0, maxIm = 0.0;
     if (centerReArg || centerImArg || scaleArg) {
         fprintf(stderr, "Legacy viewport args are no longer supported; pass --min_re, --max_re, --min_im, and --max_im\n");
@@ -618,12 +532,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    enum SolveMetric solveMetric = SOLVE_METRIC_PROXIMITY;
-    const char *solveMetricStr = getArgStr(argc, argv, "--solve_metric", "proximity");
-    if (!parse_solve_metric(solveMetricStr, &solveMetric)) {
-        fprintf(stderr, "ERROR: unknown solve_metric '%s'\n", solveMetricStr);
-        return 1;
-    }
+    const char *solveMetricArg = getArg(argc, argv, "--solve_metric");
     const char *scoreMetricsCsv = getArgStr(argc, argv, "--score_metrics", NULL);
     const char *scoreSourcesCsv = getArgStr(argc, argv, "--score_sources", NULL);
     const char *scoreClipLosCsv = getArgStr(argc, argv, "--score_clip_los", NULL);
@@ -640,35 +549,32 @@ int main(int argc, char **argv) {
         fprintf(stderr, "roots2pix_mt no longer supports direct coeff/param inputs; pass manifest-backed sources\n");
         return 1;
     }
-
-    double solveScoreClipLo = getArgDouble(argc, argv, "--solve_score_clip_lo",
-                               getArgDouble(argc, argv, "--solve_prox_clip_lo", 0));
-    double solveScoreClipHi = getArgDouble(argc, argv, "--solve_score_clip_hi",
-                               getArgDouble(argc, argv, "--solve_prox_clip_hi", 0));
-    double solveScoreOmega = getArgDouble(argc, argv, "--solve_score_omega", 1.0);
-    int solveScoreOmegaEnabled = getArgInt(argc, argv, "--solve_score_omega_enabled", 1);
-    SolveScoreProgram solveScoreProgram;
-    int useScoreProgram = 0;
-    double solveScoreCuts[9] = {0};
-    int nSolveScoreCuts = 0;
-    {
-        const char *cutsStr = getArgStr(argc, argv, "--solve_score_cuts",
-                               getArgStr(argc, argv, "--solve_prox_cuts", NULL));
-        if (cutsStr) {
-            char tmp[256];
-            strncpy(tmp, cutsStr, sizeof(tmp) - 1);
-            tmp[sizeof(tmp) - 1] = '\0';
-            char *tok = strtok(tmp, ",");
-            while (tok && nSolveScoreCuts < 9) {
-                solveScoreCuts[nSolveScoreCuts++] = atof(tok);
-                tok = strtok(NULL, ",");
-            }
-        }
+    if (
+        solveMetricArg ||
+        getArg(argc, argv, "--solve_score_clip_lo") ||
+        getArg(argc, argv, "--solve_score_clip_hi") ||
+        getArg(argc, argv, "--solve_score_omega") ||
+        getArg(argc, argv, "--solve_score_omega_enabled")
+    ) {
+        fprintf(stderr, "roots2pix_mt no longer accepts legacy single-metric solve-score args; pass score program args instead\n");
+        return 1;
     }
-    if (scoreMetricsCsv || scoreClipLosCsv || scoreClipHisCsv || scoreProgramSpec) {
+    SolveScoreProgram solveScoreProgram;
+    if (
+        getArg(argc, argv, "--solve_score_cuts") ||
+        getArg(argc, argv, "--solve_prox_cuts") ||
+        getArg(argc, argv, "--solve_score_raw_bytes") ||
+        getArg(argc, argv, "--skip_pix_output") ||
+        getArg(argc, argv, "--solve_prox_clip_lo") ||
+        getArg(argc, argv, "--solve_prox_clip_hi")
+    ) {
+        fprintf(stderr, "Legacy raster output args are no longer supported; roots2pix_mt emits fused raw-score fragments only\n");
+        return 1;
+    }
+    {
         char scoreErr[256] = {0};
         if (!scoreMetricsCsv || !scoreClipLosCsv || !scoreClipHisCsv || !scoreProgramSpec) {
-            fprintf(stderr, "solve_score program requires --score_metrics, --score_clip_los, --score_clip_his, and --score_program together\n");
+            fprintf(stderr, "roots2pix_mt requires --score_metrics, --score_clip_los, --score_clip_his, and --score_program\n");
             return 1;
         }
         if (!parse_solve_score_program_args_ex(
@@ -677,15 +583,15 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Invalid solve_score program: %s\n", scoreErr[0] ? scoreErr : "unknown error");
             return 1;
         }
-        solveMetric = solveScoreProgram.metrics[0];
-        useScoreProgram = 1;
+        if (solveScoreProgram.metricCount < 1 || solveScoreProgram.tokenCount < 1) {
+            fprintf(stderr, "Invalid solve_score program: missing metric slots or program tokens\n");
+            return 1;
+        }
     }
-    if (!solveScoreRawBytes && nSolveScoreCuts != 9) {
-        fprintf(stderr, "solve_score requires exactly 9 cuts (got %d)\n", nSolveScoreCuts);
-        return 1;
-    }
-    if (!useScoreProgram && solveScoreClipHi - solveScoreClipLo < 1e-12) {
-        fprintf(stderr, "solve_score requires valid clip range\n");
+
+    if (scoreMetricsCsv || scoreClipLosCsv || scoreClipHisCsv || scoreProgramSpec) {
+        /* required-and-validated above */
+    } else {
         return 1;
     }
 
@@ -801,25 +707,14 @@ int main(int argc, char **argv) {
     int paletteTileH[MAX_TILES];
     size_t tileWordCount[MAX_TILES];
     uint64_t *tileBits[MAX_TILES] = {0};
-    unsigned char ssPalR[10] = {0}, ssPalG[10] = {0}, ssPalB[10] = {0};
     int emitPixelBins = pixelBinPrefix && *pixelBinPrefix;
     int emitPaletteBins = paletteBinPrefix && *paletteBinPrefix;
     int emitStepScores = stepScoresOutputPath && *stepScoresOutputPath;
-    if (skipPixOutput && !emitPixelBins) {
-        fprintf(stderr, "--skip_pix_output requires --pixel_bin_prefix in solve_score mode\n");
+    if (!emitPixelBins) {
+        fprintf(stderr, "roots2pix_mt requires --pixel_bin_prefix for fused fragment output\n");
         return 1;
     }
-    if (emitStepScores) {
-        if (!solveScoreRawBytes) {
-            fprintf(stderr, "--step_scores_output requires --solve_score_raw_bytes=1\n");
-            return 1;
-        }
-    }
     if (emitPaletteBins) {
-        if (!solveScoreRawBytes) {
-            fprintf(stderr, "--palette_bin_prefix requires --solve_score_raw_bytes=1\n");
-            return 1;
-        }
         if (paletteGridN < 1) {
             fprintf(stderr, "--palette_grid_n must be >= 1 when --palette_bin_prefix is set\n");
             return 1;
@@ -879,15 +774,6 @@ int main(int argc, char **argv) {
         }
     }
 
-    const PaletteDef *proxPal = findPalette(palName);
-    if (!proxPal) {
-        fprintf(stderr, "Unknown palette: %s\n", palName);
-        goto cleanup;
-    }
-    for (int b = 0; b < 10; b++) {
-        paletteRGB(proxPal, (b + 0.5) / 10.0, &ssPalR[b], &ssPalG[b], &ssPalB[b]);
-    }
-
     {
         CURLcode curlRc = curl_global_init(CURL_GLOBAL_DEFAULT);
         if (curlRc != CURLE_OK) {
@@ -930,19 +816,8 @@ int main(int argc, char **argv) {
         args[i].yScale = yScale;
         args[i].cosA = cosA;
         args[i].sinA = sinA;
-        args[i].solveMetric = solveMetric;
-        args[i].useScoreProgram = useScoreProgram;
         args[i].solveScoreProgram = solveScoreProgram;
-        args[i].solveScoreClipLo = solveScoreClipLo;
-        args[i].solveScoreClipHi = solveScoreClipHi;
-        args[i].solveScoreOmega = solveScoreOmega;
-        args[i].solveScoreOmegaEnabled = solveScoreOmegaEnabled;
-        memcpy(args[i].solveScoreCuts, solveScoreCuts, sizeof(solveScoreCuts));
-        args[i].nSolveScoreCuts = nSolveScoreCuts;
-        args[i].emitPixelBins = emitPixelBins;
         args[i].emitPaletteBins = emitPaletteBins;
-        args[i].skipPixOutput = skipPixOutput;
-        args[i].solveScoreRawBytes = solveScoreRawBytes;
         args[i].paletteStepStart = paletteStepStart;
         args[i].paletteGridN = paletteGridN;
         args[i].paletteNTileCols = paletteNTileCols;
@@ -969,20 +844,13 @@ int main(int argc, char **argv) {
         args[i].tileBits = tileBits;
         args[i].tileW = tileW;
         args[i].paletteTileW = paletteTileW;
-        args[i].pixVecs = skipPixOutput ? NULL : calloc((size_t)nTiles, sizeof(U32Vec));
-        args[i].pbxVecs = (emitPixelBins && !solveScoreRawBytes) ? calloc((size_t)nTiles, sizeof(U32Vec)) : NULL;
-        args[i].pbxByteVecs = (emitPixelBins && solveScoreRawBytes) ? calloc((size_t)nTiles, sizeof(ByteVec)) : NULL;
+        args[i].pbxByteVecs = calloc((size_t)nTiles, sizeof(ByteVec));
         args[i].palettePbxByteVecs = emitPaletteBins
             ? calloc((size_t)(paletteNTileCols * paletteNTileRows), sizeof(ByteVec))
             : NULL;
         args[i].stepScores = emitStepScores ? calloc((size_t)(width > 0 ? width : 1), sizeof(unsigned char)) : NULL;
         args[i].stepScoreCount = width;
-        memcpy(args[i].ssPalR, ssPalR, sizeof(ssPalR));
-        memcpy(args[i].ssPalG, ssPalG, sizeof(ssPalG));
-        memcpy(args[i].ssPalB, ssPalB, sizeof(ssPalB));
-        if ((!skipPixOutput && !args[i].pixVecs) ||
-            (emitPixelBins && !solveScoreRawBytes && !args[i].pbxVecs) ||
-            (emitPixelBins && solveScoreRawBytes && !args[i].pbxByteVecs) ||
+        if ((!args[i].pbxByteVecs) ||
             (emitPaletteBins && !args[i].palettePbxByteVecs) ||
             (emitStepScores && !args[i].stepScores)) {
             fprintf(stderr, "Out of memory for worker vectors\n");
@@ -1022,57 +890,16 @@ int main(int argc, char **argv) {
     long totalEntries = 0;
     int tilesWithData = 0;
     for (int t = 0; t < nTiles; t++) {
-        size_t tilePixU32 = 0;
-        size_t tilePbxU32 = 0;
         size_t tilePbxBytes = 0;
         for (int i = 0; i < threads; i++) {
-            if (!skipPixOutput) tilePixU32 += args[i].pixVecs[t].len;
-            if (emitPixelBins) {
-                if (solveScoreRawBytes) tilePbxBytes += args[i].pbxByteVecs[t].len;
-                else tilePbxU32 += args[i].pbxVecs[t].len;
-            }
+            tilePbxBytes += args[i].pbxByteVecs[t].len;
         }
-        if (tilePixU32 > 0) {
-            snprintf(pathBuf, sizeof(pathBuf), "%s_t%04d.pix", outPrefix, t);
-            FILE *fout = fopen(pathBuf, "wb");
-            if (!fout) {
-                fprintf(stderr, "Cannot create %s\n", pathBuf);
-                goto cleanup;
-            }
-            for (int i = 0; i < threads; i++) {
-                if (args[i].pixVecs[t].len > 0) {
-                    fwrite(args[i].pixVecs[t].data, sizeof(uint32_t), args[i].pixVecs[t].len, fout);
-                }
-            }
-            fclose(fout);
+        if (tilePbxBytes > 0) {
             tilesWithData++;
-            totalEntries += (long)(tilePixU32 / 2u);
-        }
-        if (emitPixelBins && solveScoreRawBytes && tilePbxBytes > 0) {
-            if (skipPixOutput) {
-                tilesWithData++;
-                totalEntries += (long)(tilePbxBytes / 5u);
-            }
-        } else if (emitPixelBins && tilePbxU32 > 0) {
-            snprintf(pathBuf, sizeof(pathBuf), "%s_t%04d.pbx", pixelBinPrefix, t);
-            FILE *fb = fopen(pathBuf, "wb");
-            if (!fb) {
-                fprintf(stderr, "Cannot create %s\n", pathBuf);
-                goto cleanup;
-            }
-            for (int i = 0; i < threads; i++) {
-                if (args[i].pbxVecs[t].len > 0) {
-                    fwrite(args[i].pbxVecs[t].data, sizeof(uint32_t), args[i].pbxVecs[t].len, fb);
-                }
-            }
-            fclose(fb);
-            if (skipPixOutput) {
-                tilesWithData++;
-                totalEntries += (long)(tilePbxU32 / 2u);
-            }
+            totalEntries += (long)(tilePbxBytes / 5u);
         }
     }
-    if (emitPixelBins && solveScoreRawBytes) {
+    if (emitPixelBins) {
         size_t totalPbxBytes = 0;
         for (int t = 0; t < nTiles; t++) {
             for (int i = 0; i < threads; i++) totalPbxBytes += args[i].pbxByteVecs[t].len;
@@ -1142,15 +969,12 @@ int main(int argc, char **argv) {
     }
 
     printf("{\"roots_plotted\":%ld,\"roots_clipped\":%ld,\"n_points\":%ld,"
-           "\"degree\":%d,\"threads\":%d,\"color\":\"%s\",\"match\":\"%s\","
+           "\"degree\":%d,\"threads\":%d,"
            "\"n_tiles\":%d,\"tiles_with_data\":%d,\"total_entries\":%ld,"
            "\"input_mode\":\"multispan_sectioned\",\"retries\":%d,\"download_us\":%ld,\"native_us\":%ld",
-           rootsPlotted, rootsClipped, nPoints, degree, threads, colorStr, matchStr,
+           rootsPlotted, rootsClipped, nPoints, degree, threads,
            nTiles, tilesWithData, totalEntries, retries, totalDownloadUs, totalNativeUs);
-    printf(",\"palette\":\"%s\",\"solve_score\":true,\"solve_metric\":\"%s\",\"solve_score_omega\":%.15g,\"solve_score_omega_enabled\":%s",
-           palName, solve_metric_name(solveMetric), solveScoreOmega, solveScoreOmegaEnabled ? "true" : "false");
-    printf(",\"skip_pix_output\":%s", skipPixOutput ? "true" : "false");
-    printf(",\"solve_score_raw_bytes\":%s", solveScoreRawBytes ? "true" : "false");
+    printf(",\"solve_score\":true");
     printf("}\n");
     exitCode = 0;
 

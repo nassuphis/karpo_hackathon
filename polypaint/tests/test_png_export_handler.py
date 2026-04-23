@@ -98,6 +98,7 @@ class TestPngExportHandler(unittest.TestCase):
         self.assertEqual(image_meta["postprocess_kind"], "png_export")
         self.assertEqual(image_meta["postprocess_profile"], "bilevel_png_export_v1")
         self.assertEqual(image_meta["format"], "png")
+        self.assertEqual(image_meta["pix"], "4096")
         self.assertEqual(image_meta["width"], "4096")
         self.assertEqual(image_meta["height"], "4096")
         self.assertEqual(image_meta["view_mode"], "explicit")
@@ -109,6 +110,7 @@ class TestPngExportHandler(unittest.TestCase):
 
         preview_extra = uploads[preview_key]["extra"]
         self.assertEqual(preview_extra["ContentType"], "image/png")
+        self.assertEqual(preview_extra["Metadata"]["pix"], "4096")
         self.assertEqual(preview_extra["Metadata"]["width"], "4096")
         self.assertEqual(preview_extra["Metadata"]["height"], "4096")
 

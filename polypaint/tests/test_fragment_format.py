@@ -46,7 +46,7 @@ class TestFragmentFormat(unittest.TestCase):
     def tearDownClass(cls):
         cls._tmpdir_obj.cleanup()
 
-    def _run(self, width, height, fragment_payloads):
+    def _run(self, pix, fragment_payloads):
         with tempfile.TemporaryDirectory() as td:
             root = pathlib.Path(td)
             out_path = root / "out.raw"
@@ -57,8 +57,7 @@ class TestFragmentFormat(unittest.TestCase):
                 frag_paths.append(path)
             cmd = [
                 str(self._binary),
-                f"--width={width}",
-                f"--height={height}",
+                f"--pix={pix}",
                 f"--output={out_path}",
                 *[str(path) for path in frag_paths],
             ]
@@ -67,26 +66,26 @@ class TestFragmentFormat(unittest.TestCase):
             return result, output
 
     def test_valid_pair_round_trip(self):
-        result, output = self._run(2, 2, [_encode_pairs([(0, 1), (3, 9)])])
+        result, output = self._run(2, [_encode_pairs([(0, 1), (3, 9)])])
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(output, bytes([1, 0, 0, 9]))
 
     def test_invalid_length_is_rejected(self):
-        result, _ = self._run(2, 2, [b"\x00"])
+        result, _ = self._run(2, [b"\x00"])
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("not divisible by 5", result.stderr)
 
     def test_zero_score_is_rejected(self):
-        result, _ = self._run(2, 2, [_encode_pairs([(1, 0)])])
+        result, _ = self._run(2, [_encode_pairs([(1, 0)])])
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("invalid zero score", result.stderr)
 
     def test_out_of_bounds_pixel_idx_is_rejected(self):
-        result, _ = self._run(2, 2, [_encode_pairs([(4, 7)])])
+        result, _ = self._run(2, [_encode_pairs([(4, 7)])])
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("out of bounds", result.stderr)
 
     def test_empty_fragment_is_accepted(self):
-        result, output = self._run(2, 2, [b""])
+        result, output = self._run(2, [b""])
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(output, bytes([0, 0, 0, 0]))

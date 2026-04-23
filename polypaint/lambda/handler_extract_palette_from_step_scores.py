@@ -15,7 +15,7 @@ from color_artifact_meta import (
 from raw_score_render import histogram_from_raw_path, render_score_raw, write_equalization_lut
 from raw_sidecar import background_color_hex, build_raw_sidecar, validate_raw_sidecar
 from shared import BUCKET, imgpipe_env, ok_response, parse_body, report_status
-from solve_score_chain import format_solve_score_chain_display
+from solve_score_chain import format_solve_score_chain_display, read_solve_score_metadata
 
 
 s3 = boto3.client("s3")
@@ -295,8 +295,7 @@ def _render_palette_from_step_scores(job_id, artifact_id, source_meta, task_id):
             raw_path=raw_path,
             out_path=image_path,
             preview_path=preview_path,
-            width=grid_n,
-            height=grid_n,
+            pix=grid_n,
             eq_lut_path=eq_lut_path,
             palette=str(source_meta.get("palette") or "inferno"),
             background_color=background_color_hex(raw_sidecar.get("background_color", [0, 0, 0])),
@@ -338,6 +337,7 @@ def _render_palette_from_step_scores(job_id, artifact_id, source_meta, task_id):
             ContentType="application/json",
         )
         image_metadata = {
+            "pix": str(grid_n),
             "width": str(grid_n),
             "height": str(grid_n),
             "palette": str(source_meta.get("palette") or ""),
@@ -364,11 +364,12 @@ def _render_palette_from_step_scores(job_id, artifact_id, source_meta, task_id):
                 ContentType="image/png",
             )
 
-        quantile = source_meta.get("solve_score_quantile", "")
-        omega = source_meta.get("solve_score_omega", "")
-        omega_enabled = source_meta.get("solve_score_omega_enabled", "")
+        source_score = read_solve_score_metadata("solve", source_meta, default_metric="proximity")
+        quantile = source_score["quantile"]
+        omega = source_score["omega"]
+        omega_enabled = source_score["omega_enabled"]
         score_chain = raw_sidecar["score_chain"]
-        metric = str(source_meta.get("solve_metric") or "").strip()
+        metric = str(source_score["metric"] or "").strip()
         display_name = _associated_palette_display_name(score_chain, metric, quantile, source_meta.get("palette"))
         meta_body = {
             "job_id": job_id,

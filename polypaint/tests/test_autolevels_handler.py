@@ -121,7 +121,7 @@ class TestAutolevelsHandler(unittest.TestCase):
                 return MagicMock(
                     returncode=0,
                     stdout=json.dumps({
-                        "width": 1200, "height": 900, "bands": 3, "file_size": 15,
+                        "width": 1200, "height": 1200, "bands": 3, "file_size": 15,
                         "black_bin": 12, "white_bin": 220, "black": 0.047, "white": 0.863,
                         "gamma": 1.1, "final_stretch": True, "final_lo_bin": 4, "final_hi_bin": 250,
                         "r_min_bin": 16, "r_max_bin": 210, "g_min_bin": 18, "g_max_bin": 220,
@@ -190,8 +190,9 @@ class TestAutolevelsHandler(unittest.TestCase):
 
         preview_extra = uploads[preview_key]["extra"]
         self.assertEqual(preview_extra["ContentType"], "image/png")
+        self.assertEqual(preview_extra["Metadata"]["pix"], "1200")
         self.assertEqual(preview_extra["Metadata"]["width"], "1200")
-        self.assertEqual(preview_extra["Metadata"]["height"], "900")
+        self.assertEqual(preview_extra["Metadata"]["height"], "1200")
 
         statuses = [call.args[2] for call in mock_report.call_args_list]
         self.assertIn("started", statuses)
@@ -210,7 +211,7 @@ class TestAutolevelsHandler(unittest.TestCase):
         mock_s3.get_object.return_value = {
             "Body": MagicMock(iter_chunks=lambda chunk_size=None: [b"src-image-bytes"])
         }
-        mock_s3.head_object.return_value = {"Metadata": {}}
+        mock_s3.head_object.return_value = {"Metadata": {"pix": "1200"}}
 
         uploads = {}
         puts = {}
@@ -237,7 +238,7 @@ class TestAutolevelsHandler(unittest.TestCase):
                     fh.write(b"\xff\xd8\xffderived-jpeg")
                 return MagicMock(
                     returncode=0,
-                    stdout=json.dumps({"width": 1200, "height": 900, "bands": 3, "file_size": 15}),
+                    stdout=json.dumps({"width": 1200, "height": 1200, "bands": 3, "file_size": 15}),
                     stderr="",
                 )
             if cmd[0] == "/opt/bin/vipsthumbnail":
@@ -271,7 +272,9 @@ class TestAutolevelsHandler(unittest.TestCase):
         mock_s3.get_object.return_value = {
             "Body": MagicMock(iter_chunks=lambda chunk_size=None: [b"src-image-bytes"])
         }
-        mock_s3.head_object.return_value = {"Metadata": {"background_color": "000000", "background_threshold": "4"}}
+        mock_s3.head_object.return_value = {
+            "Metadata": {"pix": "1200", "background_color": "000000", "background_threshold": "4"}
+        }
         mock_s3.upload_fileobj.side_effect = lambda *args, **kwargs: None
 
         def fake_run(cmd, capture_output=False, text=False, timeout=None, env=None):
@@ -281,7 +284,7 @@ class TestAutolevelsHandler(unittest.TestCase):
                     fh.write(b"\xff\xd8\xffderived-jpeg")
                 return MagicMock(
                     returncode=0,
-                    stdout=json.dumps({"width": 1200, "height": 900, "bands": 3, "file_size": 15}),
+                    stdout=json.dumps({"width": 1200, "height": 1200, "bands": 3, "file_size": 15}),
                     stderr="",
                 )
             if cmd[0] == "/opt/bin/vipsthumbnail":
@@ -308,7 +311,7 @@ class TestAutolevelsHandler(unittest.TestCase):
         mock_s3.get_object.return_value = {
             "Body": MagicMock(iter_chunks=lambda chunk_size=None: [b"src-image-bytes"])
         }
-        mock_s3.head_object.return_value = {"Metadata": {}}
+        mock_s3.head_object.return_value = {"Metadata": {"pix": "1200"}}
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="bad levels")
 
         with self.assertRaises(RuntimeError) as ctx:

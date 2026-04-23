@@ -26,7 +26,7 @@ from logical_sections import (
     write_native_multispan_manifest,
 )
 from solve_score_chain import (
-    compile_solve_score_chain_or_legacy,
+    compile_solve_score_chain,
     compiled_solve_score_fingerprint,
     solve_score_program_cli_payload,
 )
@@ -167,8 +167,7 @@ def _build_cmd(params):
     cmd = [
         ROOTS2PIX_MT,
         "/tmp/pix",
-        f"--width={params['width']}",
-        f"--height={params['height']}",
+        f"--pix={params['pix']}",
         f"--tile_size={params['tile_size']}",
         f"--n_tile_cols={params['n_tile_cols']}",
         f"--n_tile_rows={params['n_tile_rows']}",
@@ -177,17 +176,11 @@ def _build_cmd(params):
         f"--min_im={viewport['min_im']}",
         f"--max_im={viewport['max_im']}",
         f"--degree={params['degree']}",
-        "--color=solve_score",
-        "--match=none",
-        f"--palette={params.get('palette', 'inferno')}",
         f"--rotation={params.get('rotation', 0.0)}",
         f"--threads={params['raster_mt_threads']}",
-        "--input_mode=multispan_sectioned",
         f"--input_manifest={input_manifest_path}",
         f"--retries={params.get('raster_sectioned_retries', 2)}",
         "--pixel_bin_prefix=/tmp/pixbin",
-        "--skip_pix_output=1",
-        "--solve_score_raw_bytes=1",
         "--step_scores_output=/tmp/step_scores.bin",
     ]
 
@@ -363,9 +356,6 @@ def _report_handler_entry_error(params, message):
         "phase": "handler_entry",
         "phase_label": "Raster dispatch",
     }
-    color_pipeline = str(params.get("color_pipeline") or "").strip()
-    if color_pipeline:
-        result_data["color_pipeline"] = color_pipeline
     report_status(job_id, task_id, "error", message, result_data=result_data)
 
 
@@ -375,20 +365,20 @@ def _extract_handler_entry_params(event):
         return params
     body = event.get("body")
     if isinstance(body, dict):
-        for key in ("job_id", "task_id", "color_pipeline", "section_idx"):
+        for key in ("job_id", "task_id", "section_idx"):
             value = body.get(key)
             if value not in ("", None):
                 params[key] = value
         return params
     if isinstance(body, str):
-        for key in ("job_id", "task_id", "color_pipeline"):
+        for key in ("job_id", "task_id"):
             match = re.search(rf'"{re.escape(key)}"\s*:\s*"([^"]*)"', body)
             if match and match.group(1) not in ("", None):
                 params[key] = match.group(1)
         section_match = re.search(r'"section_idx"\s*:\s*([-+]?\d+)', body)
         if section_match:
             params["section_idx"] = section_match.group(1)
-    for key in ("job_id", "task_id", "color_pipeline", "section_idx"):
+    for key in ("job_id", "task_id", "section_idx"):
         if key not in params:
             value = event.get(key)
             if value not in ("", None):
@@ -443,17 +433,33 @@ def _handle_fused_raster_request(params):
             if not associated_palette_fragment_prefix:
                 raise RuntimeError("fused raster associated palette requires associated_palette_fragment_prefix")
 
-        if "color" not in params:
-            raise RuntimeError("fused raster requires color in the payload contract")
-        color = str(params.get("color") or "").strip().lower()
-        if color != "solve_score":
-            raise RuntimeError("fused raster requires color=solve_score")
-
-        if "match" not in params:
-            raise RuntimeError("fused raster requires match in the payload contract")
-        match = str(params.get("match") or "").strip().lower()
-        if match != "none":
-            raise RuntimeError("fused raster requires match=none")
+        removed_contract_fields = []
+        for key in (
+            "width",
+            "height",
+            "color",
+            "match",
+            "palette",
+            "solve_metric",
+            "solve_score_quantile",
+            "solve_score_omega",
+            "solve_score_omega_enabled",
+        ):
+            value = params.get(key)
+            if value not in ("", None):
+                removed_contract_fields.append(key)
+        if removed_contract_fields:
+            fields = ", ".join(removed_contract_fields)
+            raise RuntimeError(
+                f"fused raster no longer accepts removed contract field(s): {fields}; "
+                "pass pix and solve_score_chain only"
+            )
+        try:
+            params["pix"] = int(params.get("pix"))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("fused raster requires integer pix") from exc
+        if params["pix"] <= 0:
+            raise RuntimeError(f"fused raster requires pix > 0, got {params['pix']}")
 
         perf = attach_contract_warnings({
             "engine": "mt",
@@ -486,14 +492,11 @@ def _handle_fused_raster_request(params):
         section_params["raster_input_mode"] = "sectioned"
         section_params["raster_sectioned_retries"] = raster_sectioned_retries
         section_params["logical_section"] = True
-        section_params["color"] = "solve_score"
-        section_params["match"] = "none"
         section_params["rotation"] = contract_param(section_params, "rotation", 0.0, contract_warnings)
         section_params["emit_associated_palette_bins"] = emit_associated_palette_bins
         section_params["associated_palette_grid_n"] = associated_palette_grid_n
         section_params["associated_palette_fragment_prefix"] = associated_palette_fragment_prefix
         section_params["fragment_prefix"] = fragment_prefix
-        section_params["color_pipeline"] = "fused"
 
         rt_chain = contract_param(section_params, "root_transforms", [], contract_warnings)
         section_params["root_xforms_path"] = None
@@ -510,52 +513,12 @@ def _handle_fused_raster_request(params):
         section_params["solve_score_bins_data"] = json.loads(ss_obj["Body"].read())
 
         raw_chain = section_params.get("solve_score_chain", "")
-        requested_metric = str(contract_param(section_params, "solve_metric", "proximity", contract_warnings) or "proximity")
-        requested_quantile = float(contract_param(section_params, "solve_score_quantile", 0.001, contract_warnings))
-        requested_omega = float(contract_param(section_params, "solve_score_omega", 1.0, contract_warnings))
-        requested_omega_enabled = parse_boolish(
-            contract_param(section_params, "solve_score_omega_enabled", True, contract_warnings),
-            True,
-            strict=True,
-            label="solve_score_omega_enabled",
-        )
-        section_params["solve_metric"] = requested_metric
-        section_params["solve_score_quantile"] = requested_quantile
-        section_params["solve_score_omega"] = requested_omega
-        section_params["solve_score_omega_enabled"] = requested_omega_enabled
         section_params["solve_score_chain_present"] = raw_chain not in ("", None, [])
-        if section_params["solve_score_chain_present"]:
-            compiled = compile_solve_score_chain_or_legacy(
-                raw_chain,
-                requested_metric,
-                requested_quantile,
-                requested_omega,
-                requested_omega_enabled,
-                default_metric=requested_metric,
-            )
-            if str(compiled["metric"]) != requested_metric:
-                raise RuntimeError(
-                    "fused raster solve-score plan/chain mismatch: "
-                    f"solve_metric={requested_metric!r}, compiled metric={compiled['metric']!r}"
-                )
-            if float(compiled["quantile"]) != requested_quantile:
-                raise RuntimeError(
-                    "fused raster solve-score plan/chain mismatch: "
-                    f"solve_score_quantile={requested_quantile!r}, compiled quantile={compiled['quantile']!r}"
-                )
-            if float(compiled["omega"]) != requested_omega:
-                raise RuntimeError(
-                    "fused raster solve-score plan/chain mismatch: "
-                    f"solve_score_omega={requested_omega!r}, compiled omega={compiled['omega']!r}"
-                )
-            if bool(compiled["omega_enabled"]) != requested_omega_enabled:
-                raise RuntimeError(
-                    "fused raster solve-score plan/chain mismatch: "
-                    f"solve_score_omega_enabled={requested_omega_enabled!r}, "
-                    f"compiled omega_enabled={compiled['omega_enabled']!r}"
-                )
-            section_params["solve_score_compiled"] = compiled
-            section_params["solve_score_chain_fingerprint"] = compiled_solve_score_fingerprint(compiled)
+        if not section_params["solve_score_chain_present"]:
+            raise RuntimeError("fused raster requires solve_score_chain")
+        compiled = compile_solve_score_chain(raw_chain)
+        section_params["solve_score_compiled"] = compiled
+        section_params["solve_score_chain_fingerprint"] = compiled_solve_score_fingerprint(compiled)
 
         section_params = _prepare_fused_section_inputs(section_params)
         report_status(job_id, task_id, "bin_downloaded_1/1")
@@ -691,8 +654,4 @@ def handler(event, context):
         message = f"raster_mt handler could not parse request body: {e}"
         _report_handler_entry_error(params, message)
         raise RuntimeError(message) from e
-    if str(params.get("color_pipeline") or "").strip().lower() != "fused":
-        message = "classic color raster has been removed; handler_raster_mt requires color_pipeline='fused'"
-        _report_handler_entry_error(params, message)
-        raise RuntimeError(message)
     return _handle_fused_raster_request(params)

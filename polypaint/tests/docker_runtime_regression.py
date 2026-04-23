@@ -880,8 +880,7 @@ def test_roots2pix_mt_multispan_runtime():
             r = subprocess.run([
                 bin_path,
                 "/tmp/roots2pix_mt_pix",
-                "--width=8",
-                "--height=8",
+                "--pix=8",
                 "--tile_size=8",
                 "--n_tile_cols=1",
                 "--n_tile_rows=1",
@@ -890,20 +889,14 @@ def test_roots2pix_mt_multispan_runtime():
                 "--min_im=-2",
                 "--max_im=2",
                 "--degree=1",
-                "--color=solve_score",
-                "--match=none",
-                "--palette=inferno",
                 "--rotation=0",
                 "--threads=2",
-                "--input_mode=multispan_sectioned",
                 "--input_manifest=" + manifest_path,
                 "--retries=2",
-                "--solve_metric=centroid_re",
-                "--solve_score_clip_lo=-1",
-                "--solve_score_clip_hi=1",
-                "--solve_score_omega_enabled=0",
-                "--solve_score_raw_bytes=1",
-                "--skip_pix_output=1",
+                "--score_metrics=centroid_re",
+                "--score_clip_los=-1",
+                "--score_clip_his=1",
+                "--score_program=m0",
                 "--pixel_bin_prefix=" + pixbin_prefix,
             ], capture_output=True, text=True, timeout=10)
             assert r.returncode == 0, "roots2pix_mt failed: " + r.stderr[:200]
@@ -1001,11 +994,10 @@ def test_resize_runtime():
     test_jpeg = "/tmp/resize_rt.jpeg"
     thumb_png = "/tmp/resize_rt_thumb.png"
     resize_png = "/tmp/resize_rt_resized.png"
-    resize_v_png = "/tmp/resize_rt_resized_v.png"
 
     with open(test_raw, "wb") as f:
-        f.write(struct.pack("<III", 64, 32, 3))
-        for y in range(32):
+        f.write(struct.pack("<III", 64, 64, 3))
+        for y in range(64):
             for x in range(64):
                 f.write(bytes([(x * 4) % 256, (y * 8) % 256, ((x + y) * 3) % 256]))
 
@@ -1014,12 +1006,12 @@ def test_resize_runtime():
     assert r.returncode == 0, "raw2jpeg failed: " + r.stderr[:200]
     assert os.path.getsize(test_jpeg) > 0, "runtime resize test JPEG is empty"
     jpeg_dims = read_jpeg_dims(test_jpeg)
-    assert jpeg_dims == (64, 32), "unexpected source JPEG dims %r" % (jpeg_dims,)
+    assert jpeg_dims == (64, 64), "unexpected source JPEG dims %r" % (jpeg_dims,)
     print("  source JPEG: %dx%d" % jpeg_dims)
 
     r = subprocess.run([
         vips_path, "thumbnail", test_jpeg, thumb_png, "16",
-        "--height", "16", "--size", "down", "--linear", "--crop", "attention",
+        "--height", "16", "--size", "down", "--linear",
         "--intent", "perceptual", "--fail-on", "none"
     ], capture_output=True, text=True, timeout=20, env=env)
     assert r.returncode == 0, "vips thumbnail failed: " + r.stderr[:200]
@@ -1035,22 +1027,10 @@ def test_resize_runtime():
     ], capture_output=True, text=True, timeout=20, env=env)
     assert r.returncode == 0, "vips resize failed: " + r.stderr[:200]
     resize_dims = read_png_dims(resize_png)
-    assert resize_dims == (32, 16), "unexpected resized dims %r" % (resize_dims,)
+    assert resize_dims == (32, 32), "unexpected resized dims %r" % (resize_dims,)
     print("  vips resize: OK (%dx%d)" % resize_dims)
 
-    r = subprocess.run([
-        vips_path, "resize", test_jpeg, resize_v_png,
-        str(32.0 / 64.0),
-        "--kernel", "mitchell",
-        "--gap", "2",
-        "--vscale", "1"
-    ], capture_output=True, text=True, timeout=20, env=env)
-    assert r.returncode == 0, "vips resize --vscale failed: " + r.stderr[:200]
-    resize_v_dims = read_png_dims(resize_v_png)
-    assert resize_v_dims == (32, 32), "unexpected resized --vscale dims %r" % (resize_v_dims,)
-    print("  vips resize + vscale=1: OK (%dx%d)" % resize_v_dims)
-
-    cleanup(test_raw, test_jpeg, thumb_png, resize_png, resize_v_png)
+    cleanup(test_raw, test_jpeg, thumb_png, resize_png)
     print("=== Resize artifact runtime tests PASSED ===")
 
 
@@ -1073,8 +1053,7 @@ def test_bilevel_section_raster_runtime():
             bin_path,
             section_path,
             out_frag,
-            "--width=8",
-            "--height=8",
+            "--pix=8",
             "--min_re=-4",
             "--max_re=4",
             "--min_im=-4",
@@ -1129,8 +1108,7 @@ def test_bilevel_merge_assemble_runtime():
         [
             bin_path,
             "assemble",
-            "--width=8",
-            "--height=8",
+            "--pix=8",
             "--output=" + out_tif,
             "--preview=" + preview_png,
             "--preview_size=16",
@@ -1187,15 +1165,14 @@ def test_raw_to_bilevel_runtime():
     out_csv = "/tmp/raw_to_bilevel_rt.csv"
 
     with open(raw_path, "wb") as f:
-        f.write(bytes([0, 1, 128, 255, 10, 127, 129, 200]))
+        f.write(bytes([0, 1, 128, 255, 10, 127, 129, 200, 0, 0, 255, 1, 128, 129, 127, 126]))
 
     r = subprocess.run(
         [
             bin_path,
             raw_path,
             out_tif,
-            "--width=4",
-            "--height=2",
+            "--pix=4",
             "--threshold=127",
             "--preview=" + preview_png,
             "--preview_size=16",
@@ -1208,10 +1185,10 @@ def test_raw_to_bilevel_runtime():
     assert r.returncode == 0, "raw_to_bilevel failed: " + r.stderr[:200]
     meta = json.loads(r.stdout)
     assert meta["threshold"] == 127, "unexpected threshold metadata %r" % (meta,)
-    assert meta["width"] == 4 and meta["height"] == 2, "unexpected image size metadata %r" % (meta,)
+    assert meta["width"] == 4 and meta["height"] == 4, "unexpected image size metadata %r" % (meta,)
     assert os.path.getsize(out_tif) > 0, "raw_to_bilevel TIFF is empty"
     assert os.path.getsize(preview_png) > 0, "raw_to_bilevel preview PNG is empty"
-    assert read_png_dims(preview_png) == (4, 2), "unexpected preview dims %r" % (read_png_dims(preview_png),)
+    assert read_png_dims(preview_png) == (4, 4), "unexpected preview dims %r" % (read_png_dims(preview_png),)
 
     r = subprocess.run(
         ["/opt/bin/vips", "csvsave", out_tif, out_csv],
@@ -1222,8 +1199,8 @@ def test_raw_to_bilevel_runtime():
     )
     assert r.returncode == 0, "vips csvsave raw_to_bilevel TIFF failed: " + r.stderr[:200]
     grid = read_csv_grid(out_csv)
-    expected = [[0, 0, 1, 1], [0, 0, 1, 1]]
-    assert len(grid) == 2 and all(len(row) == 4 for row in grid), "unexpected raw_to_bilevel CSV shape"
+    expected = [[0, 0, 1, 1], [0, 0, 1, 1], [0, 0, 1, 0], [1, 1, 0, 0]]
+    assert len(grid) == 4 and all(len(row) == 4 for row in grid), "unexpected raw_to_bilevel CSV shape"
     for y, row in enumerate(grid):
         for x, value in enumerate(row):
             assert (value > 0) == bool(expected[y][x]), "unexpected thresholded pixel (%d,%d)=%.3f" % (x, y, value)
@@ -1276,21 +1253,21 @@ def test_color_to_bilevel_handler_runtime():
     raw_key = "renders/job-color2bil/color/src_color/greyscale.raw"
     raw_meta_key = "renders/job-color2bil/color/src_color/greyscale.meta.json"
     image_key = "renders/job-color2bil/color/src_color/image.jpeg"
-    raw_bytes = bytes([0, 1, 128, 255, 10, 127, 129, 200])
+    raw_bytes = bytes([0, 1, 128, 255, 10, 127, 129, 200, 0, 0, 255, 1, 128, 129, 127, 126])
     raw_sidecar = build_raw_sidecar(
         job_id="job-color2bil",
         run_id="run-color2bil",
         artifact_family="color",
         artifact_id="src_color",
         width=4,
-        height=2,
+        height=4,
         chain_fingerprint="fp_color2bil",
         score_chain=[],
         score_program="m0",
         clip_slots=[{"slot": 0, "metric": "proximity", "source": "slv", "clip_lo": 0.0, "clip_hi": 1.0}],
         background_color=[0, 0, 0],
         plan_params_digest="digest_color2bil",
-        render_execution={"color_pipeline": "fused"},
+        render_execution={},
         raw_key=raw_key,
         image_key=image_key,
         preview_key="renders/job-color2bil/color/src_color/preview.png",
@@ -1368,12 +1345,17 @@ def test_color_to_bilevel_handler_runtime():
     )
     assert r.returncode == 0, "vips csvsave Color2Bilevel TIFF failed: " + r.stderr[:200]
     grid = read_csv_grid(csv_path)
-    expected = [[0, 0, 1, 1], [0, 0, 1, 1]]
-    assert len(grid) == 2 and all(len(row) == 4 for row in grid), "unexpected Color2Bilevel TIFF shape"
+    expected = [
+        [0, 0, 1, 1],
+        [0, 0, 1, 1],
+        [0, 0, 1, 0],
+        [1, 1, 0, 0],
+    ]
+    assert len(grid) == 4 and all(len(row) == 4 for row in grid), "unexpected Color2Bilevel TIFF shape"
     for y, row in enumerate(grid):
         for x, value in enumerate(row):
             assert (value > 0) == bool(expected[y][x]), "unexpected Color2Bilevel pixel (%d,%d)=%.3f" % (x, y, value)
-    assert read_png_dims(png_path) == (4, 2), "unexpected Color2Bilevel preview dims %r" % (read_png_dims(png_path),)
+    assert read_png_dims(png_path) == (4, 4), "unexpected Color2Bilevel preview dims %r" % (read_png_dims(png_path),)
 
     statuses = [row["status"] for row in status_rows]
     for expected_status in ("started", "source_ready", "raw_downloaded", "rendered", "uploading", "done"):
@@ -1486,8 +1468,7 @@ def test_bilevel_handler_sparse_finalize_runtime():
                 "step_count": 1,
                 "solve_source_manifest": solve_source_manifest,
                 "fragment_prefix": "renders/job-bilevel/bilevel_section_",
-                "width": 8,
-                "height": 8,
+                "pix": 8,
                 "min_re": -4,
                 "max_re": 4,
                 "min_im": -4,
@@ -1502,8 +1483,7 @@ def test_bilevel_handler_sparse_finalize_runtime():
         result = mod.handle_finalize({
             "job_id": "job-bilevel",
             "task_id": "bilevel_finalize",
-            "width": 8,
-            "height": 8,
+            "pix": 8,
             "source_item_count": 2,
             "fragment_prefix": "renders/job-bilevel/bilevel_section_",
             "out_key": "renders/job-bilevel/bilevel/art/image.tif",

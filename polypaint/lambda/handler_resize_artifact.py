@@ -3,8 +3,8 @@ Resize Artifact Lambda — derive a new immutable Color artifact from an existin
 saved Color image using libvips resize functionality.
 
 Supports two libvips-backed engines:
-- thumbnail: richer high-level controls (fit/crop/linear light/profiles)
-- resize: low-level kernel/gap/vscale controls
+- thumbnail: high-level scalar-pix resize with no cropping
+- resize: low-level kernel/gap controls with vertical scale fixed at 1
 """
 import json
 import os
@@ -34,7 +34,6 @@ DEFAULT_PNG_EFFORT = 7
 
 _VALID_ENGINES = {"thumbnail", "resize"}
 _VALID_SIZE_MODES = {"both", "up", "down", "force"}
-_VALID_CROP = {"none", "centre", "entropy", "attention", "low", "high", "all"}
 _VALID_INTENT = {"perceptual", "relative", "saturation", "absolute"}
 _VALID_FAIL_ON = {"none", "truncated", "error", "warning"}
 _VALID_KERNEL = {"nearest", "linear", "cubic", "mitchell", "lanczos2", "lanczos3"}
@@ -104,9 +103,8 @@ def _sanitize_resize_params(params, source_meta, source_image_key=""):
 
     out = {
         "engine": "thumbnail",
-        "target_size": _parse_int(_head_value(source_meta, "width", _head_value(source_meta, "pix", 0)), 0, minimum=1, maximum=200000),
+        "target_size": _parse_int(_head_value(source_meta, "pix", _head_value(source_meta, "width", 0)), 0, minimum=1, maximum=200000),
         "size_mode": "both",
-        "crop": "none",
         "linear": False,
         "no_rotate": False,
         "input_profile": "",
@@ -115,7 +113,6 @@ def _sanitize_resize_params(params, source_meta, source_image_key=""):
         "fail_on": "none",
         "kernel": "lanczos3",
         "gap": None,
-        "vscale": 1.0,
         "format": source_fmt,
         "quality": quality_default,
         "jpeg_subsample_mode": subsample_default,
@@ -129,8 +126,12 @@ def _sanitize_resize_params(params, source_meta, source_image_key=""):
         "png_bitdepth": DEFAULT_PNG_BITDEPTH,
         "png_effort": DEFAULT_PNG_EFFORT,
     }
-    if params:
-        out.update(dict(params))
+    supplied = dict(params or {})
+    if "crop" in supplied:
+        raise RuntimeError("resize no longer accepts crop; outputs are full-image square thumbnails")
+    if "vscale" in supplied:
+        raise RuntimeError("resize no longer accepts vscale; outputs use square pix only")
+    out.update(supplied)
 
     out["engine"] = _clean_string(out.get("engine"), "thumbnail").lower()
     if out["engine"] not in _VALID_ENGINES:
@@ -140,10 +141,6 @@ def _sanitize_resize_params(params, source_meta, source_image_key=""):
     out["size_mode"] = _clean_string(out.get("size_mode"), "both").lower()
     if out["size_mode"] not in _VALID_SIZE_MODES:
         raise RuntimeError(f"size_mode must be one of {sorted(_VALID_SIZE_MODES)}, got {out['size_mode']!r}")
-
-    out["crop"] = _clean_string(out.get("crop"), "none").lower()
-    if out["crop"] not in _VALID_CROP:
-        raise RuntimeError(f"crop must be one of {sorted(_VALID_CROP)}, got {out['crop']!r}")
 
     out["linear"] = _parse_bool(out.get("linear"), False)
     out["no_rotate"] = _parse_bool(out.get("no_rotate"), False)
@@ -167,8 +164,6 @@ def _sanitize_resize_params(params, source_meta, source_image_key=""):
         out["gap"] = None
     else:
         out["gap"] = _parse_float(gap_raw, 2.0, minimum=0.0, maximum=100.0)
-    out["vscale"] = _parse_float(out.get("vscale"), 1.0, minimum=0.01, maximum=100.0)
-
     out["format"] = _clean_string(out.get("format"), source_fmt).lower()
     if out["format"] == "jpg":
         out["format"] = "jpeg"
@@ -235,8 +230,6 @@ def _command_for_resize(in_path, out_spec, width, height, params):
     ]
     if params["gap"] is not None:
         cmd.extend(["--gap", str(params["gap"])])
-    if abs(float(params["vscale"]) - 1.0) > 1e-12:
-        cmd.extend(["--vscale", str(params["vscale"])])
     return cmd
 
 
@@ -255,8 +248,6 @@ def _command_for_thumbnail(in_path, out_spec, params):
     ]
     if params["no_rotate"]:
         cmd.append("--no-rotate")
-    if params["crop"] != "none":
-        cmd.extend(["--crop", params["crop"]])
     if params["linear"]:
         cmd.append("--linear")
     if params["input_profile"]:
@@ -366,7 +357,9 @@ def handler(event, context):
         width = _parse_int(source_meta.get("width"), _parse_int(source_meta.get("pix"), 0))
         height = _parse_int(source_meta.get("height"), _parse_int(source_meta.get("pix"), 0))
         if width <= 0 or height <= 0:
-            raise RuntimeError("Selected Color artifact is missing valid width/height metadata")
+            raise RuntimeError("Selected Color artifact is missing valid pix metadata")
+        if width != height:
+            raise RuntimeError(f"Resize requires square source artifact, got {width}x{height}")
 
         created_at = _utc_now_iso()
         prefix = f"renders/{job_id}/color/{artifact_id}/"
@@ -401,6 +394,8 @@ def handler(event, context):
             raise RuntimeError(f"libvips resize failed: {stderr or 'unknown error'}")
 
         out_width, out_height = _probe_dims(out_path)
+        if out_width != out_height:
+            raise RuntimeError(f"Resize output must be square, got {out_width}x{out_height}")
         file_size = os.path.getsize(out_path)
 
         _phase(job_id, task_id, "preview", "preview", "Preview", **progress)
@@ -429,6 +424,7 @@ def handler(event, context):
             "pixel_bins_empty": "",
             "pixel_bins_layout": "",
             "derivation_kind": "",
+            "pix": str(out_width),
             "width": str(out_width),
             "height": str(out_height),
         })
@@ -447,7 +443,7 @@ def handler(event, context):
         with open(preview_path, "rb") as pfh:
             s3.upload_fileobj(
                 pfh, BUCKET, preview_key,
-                ExtraArgs={"ContentType": "image/png", "Metadata": {"width": str(out_width), "height": str(out_height)}},
+                ExtraArgs={"ContentType": "image/png", "Metadata": {"pix": str(out_width), "width": str(out_width), "height": str(out_height)}},
             )
 
         _phase(
@@ -465,9 +461,7 @@ def handler(event, context):
                 "size_mode": resize_params["size_mode"] if resize_params["engine"] == "thumbnail" else "",
                 "kernel": resize_params["kernel"] if resize_params["engine"] == "resize" else "",
                 "gap": resize_params["gap"] if resize_params["engine"] == "resize" else None,
-                "vscale": resize_params["vscale"] if resize_params["engine"] == "resize" else None,
                 "linear": resize_params["linear"] if resize_params["engine"] == "thumbnail" else None,
-                "crop": resize_params["crop"] if resize_params["engine"] == "thumbnail" else "",
                 "source_dims": f"{width}x{height}",
                 "out_dims": f"{out_width}x{out_height}",
                 "file_size": file_size,

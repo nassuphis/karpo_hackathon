@@ -179,15 +179,19 @@ def handler(event, context):
         # Run bilevel_merge stitch (timeout 870s — 30s headroom before Lambda's 900s limit)
         out_path = "/tmp/final.tif"
         preview_path = "/tmp/final_preview.png"
-        full_w = params.get("width", n_tile_cols * params.get("tile_size", 4096))
-        full_h = params.get("height", n_tile_rows * params.get("tile_size", 4096))
+        if params.get("width") not in ("", None) or params.get("height") not in ("", None):
+            raise RuntimeError("coeff bilevel stitch no longer accepts width/height; pass pix for square output")
+        pix = int(params.get("pix") or 0)
+        if pix <= 0:
+            raise RuntimeError("coeff bilevel stitch requires pix > 0")
+        full_w = pix
+        full_h = pix
         tile_sz = params.get("tile_size", 4096)
         cmd = [
             BILEVEL_MERGE, "stitch",
             f"--n_cols={n_tile_cols}",
             f"--n_rows={n_tile_rows}",
-            f"--width={full_w}",
-            f"--height={full_h}",
+            f"--pix={pix}",
             f"--tile_size={tile_sz}",
             f"--output={out_path}",
             f"--preview={preview_path}",

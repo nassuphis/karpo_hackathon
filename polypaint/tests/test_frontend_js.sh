@@ -78,12 +78,18 @@ assertIncludes("raster_workers: 10,", 'runRasterPipeline should default fused ra
 assertIncludes("raster_section_mode: 'logical_sections_auto',", 'runRasterPipeline should default fused logical sections');
 assertIncludes("async function runRasterPipelineMT(threadConfig = null) {\n    return runFusedRasterPipelineMT(threadConfig);\n}", 'runRasterPipelineMT should be fused-only wrapper');
 const nonColorSection = src.split("async function _launchNonColorRenderOrchestrator(mode, paramsPatch = null) {")[1]?.split("async function _launchFusedRenderOrchestrator")[0] || '';
+const fusedSection = src.split("async function _launchFusedRenderOrchestrator(paramsPatch = null) {")[1]?.split("async function runRasterPipeline(config = null)")[0] || '';
 assertSectionNotIncludes(nonColorSection, "color_mode: 'solve_score'", 'non-color launcher should not send color mode');
 assertSectionNotIncludes(nonColorSection, "color_pipeline: 'fused'", 'non-color launcher should not send color pipeline');
 assertSectionNotIncludes(nonColorSection, "solve_metric:", 'non-color launcher should not send solve-score metric');
 assertSectionNotIncludes(nonColorSection, "solve_score_chain:", 'non-color launcher should not send solve-score chain');
 assertSectionNotIncludes(nonColorSection, "palette:", 'non-color launcher should not send palette');
 assertSectionNotIncludes(nonColorSection, "save_associated_palette: false", 'non-color launcher should not send color-only associated palette flag');
+assertSectionNotIncludes(fusedSection, "solve_metric:", 'fused color launcher should not send legacy solve-score metric');
+assertSectionNotIncludes(fusedSection, "solve_score_quantile:", 'fused color launcher should not send legacy solve-score quantile');
+assertSectionNotIncludes(fusedSection, "solve_score_omega:", 'fused color launcher should not send legacy solve-score omega');
+assertSectionNotIncludes(fusedSection, "solve_score_omega_enabled:", 'fused color launcher should not send legacy solve-score omega_enabled');
+assertNotIncludes("color_pipeline: 'fused'", 'frontend should not emit a color_pipeline field anywhere');
 assertIncludes("setMatch('none');", 'artifact restore should force match mode back to none');
 assertIncludes("Number.isFinite(entry.min_re) &&", 'render artifact populate should prefer canonical bounds');
 assertIncludes("selectViewMode('explicit');", 'render artifact populate should restore explicit viewport mode from bounds');
@@ -154,6 +160,9 @@ assertIncludes("id=\"render-preview-marquee\"", 'render preview should expose a 
 assertIncludes("function _renderPreviewViewportMeta(art) {", 'render preview viewport-meta helper missing');
 assertIncludes("function _initRenderPreviewMarquee(art) {", 'render preview marquee initializer missing');
 assertIncludes("Preview subview selected from", 'render preview marquee should write an actionable status message');
+assertNotIncludes("id=\"resize-crop\"", 'resize popup should not expose a crop control');
+assertNotIncludes("id=\"resize-vscale\"", 'resize popup should not expose a vscale control');
+assertIncludes("Both engines produce a square pix x pix artifact", 'resize popup should document square pix output');
 assertIncludes(">ColorRender-MT</button>", 'color render primary action should be labeled ColorRender-MT');
 assertIncludes("ColorRender-MT exposes fused clip/raster/finalize controls only", 'render tab copy should describe the ColorRender-MT action');
 assertIncludes("function _sourceColorArtifactIdForRenderArtifact(art) {", 'render artifact source-color helper missing');

@@ -133,8 +133,10 @@ class TestColorRepaletteHandler(unittest.TestCase):
             payload = json.loads(json.loads(Payload)["body"])
             invocations.append((FunctionName, payload))
             if FunctionName == "polypaint-encode":
-                for key in ("out_key", "format", "quality", "metadata", "width", "height", "tile_grid"):
+                for key in ("out_key", "format", "quality", "metadata", "pix", "tile_grid"):
                     self.assertIn(key, payload)
+                self.assertNotIn("width", payload)
+                self.assertNotIn("height", payload)
                 return _lambda_ok({"out_key": "renders/j/color/color_new/image.jpeg", "file_size": 1234})
             if FunctionName == "polypaint-render-preview":
                 for key in ("job_id", "source_key", "preview_key", "task_id"):
@@ -159,6 +161,7 @@ class TestColorRepaletteHandler(unittest.TestCase):
 
         encode_fn, encode_payload = invocations[0]
         self.assertEqual(encode_fn, "polypaint-encode")
+        self.assertEqual(encode_payload["pix"], 2)
         self.assertEqual(encode_payload["metadata"]["palette"], "tri_redgold")
         self.assertEqual(encode_payload["metadata"]["repalette_capable"], "true")
         self.assertEqual(encode_payload["metadata"]["pixel_bins_prefix"], "renders/j/color/color_new/pixel_bins/tile_")
@@ -245,7 +248,7 @@ class TestColorRepaletteHandler(unittest.TestCase):
                     "clip_slots": [{"slot": 0, "metric": "crowding", "source": "slv", "clip_lo": 0.1, "clip_hi": 0.9}],
                     "background_color": [0, 0, 0],
                     "plan_params_digest": "sha256:plan_src",
-                    "render_execution": {"color_pipeline": "fused", "raster_engine": "mt"},
+                    "render_execution": {"raster_engine": "mt"},
                     "keys": {
                         "raw_key": "renders/j/color/color_src/greyscale.raw",
                         "image_key": "renders/j/color/color_src/image.jpeg",

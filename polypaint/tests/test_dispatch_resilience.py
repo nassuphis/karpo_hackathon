@@ -272,7 +272,7 @@ class TestDispatchBilevelTarget(unittest.TestCase):
         from handler_dispatch import handler
         mock_client.invoke.return_value = {"StatusCode": 202}
         jobs = [{"phase": "raster", "job_id": "j", "stripe_idx": i,
-                 "width": 4096, "height": 4096, "tile_size": 4096,
+                 "pix": 4096, "tile_size": 4096,
                  "n_tile_cols": 1, "n_tile_rows": 1,
                  "min_re": -20.48, "max_re": 20.48, "min_im": -20.48, "max_im": 20.48, "degree": 5}
                 for i in range(3)]
@@ -290,7 +290,7 @@ class TestDispatchBilevelTarget(unittest.TestCase):
         from handler_dispatch import handler
         mock_client.invoke.return_value = {"StatusCode": 202}
         jobs = [{"job_id": "j", "n_tile_cols": 2, "n_tile_rows": 2,
-                 "width": 8192, "height": 8192, "tile_size": 4096,
+                 "pix": 8192, "tile_size": 4096,
                  "out_key": "renders/j/image_bilevel.tif"}]
         event = self._make_event({"target": "coeff_bilevel_stitch", "jobs": jobs})
         result = handler(event, None)

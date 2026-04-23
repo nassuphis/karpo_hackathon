@@ -90,7 +90,7 @@ class TestRecolorFromRaw(unittest.TestCase):
                     "clip_slots": [{"slot": 0, "metric": "proximity", "source": "slv", "clip_lo": 0.1, "clip_hi": 0.9}],
                     "background_color": [0, 0, 0],
                     "plan_params_digest": "sha256:plan_src",
-                    "render_execution": {"color_pipeline": "fused", "raster_engine": "mt"},
+                    "render_execution": {"raster_engine": "mt"},
                     "keys": {
                         "raw_key": "renders/j/color/color_src/greyscale.raw",
                         "image_key": "renders/j/color/color_src/image.jpeg",
@@ -232,7 +232,7 @@ class TestRecolorFromRaw(unittest.TestCase):
                     "clip_slots": [{"slot": 0, "metric": "proximity", "source": "slv", "clip_lo": 0.1, "clip_hi": 0.9}],
                     "background_color": [0, 0, 0],
                     "plan_params_digest": "sha256:plan_src",
-                    "render_execution": {"color_pipeline": "fused", "raster_engine": "mt"},
+                    "render_execution": {"raster_engine": "mt"},
                     "keys": {
                         "raw_key": "renders/j/color/color_src/greyscale.raw",
                         "image_key": "renders/j/color/color_src/image.jpeg",
@@ -375,7 +375,7 @@ class TestRecolorFromRaw(unittest.TestCase):
                     "clip_slots": [{"slot": 0, "metric": "crowding", "source": "slv", "clip_lo": 0.1, "clip_hi": 0.9}],
                     "background_color": [0, 0, 0],
                     "plan_params_digest": "sha256:plan_src",
-                    "render_execution": {"color_pipeline": "fused", "raster_engine": "mt"},
+                    "render_execution": {"raster_engine": "mt"},
                     "keys": {
                         "raw_key": "renders/j/color/color_src/greyscale.raw",
                         "image_key": "renders/j/color/color_src/image.jpeg",
@@ -407,7 +407,7 @@ class TestRecolorFromRaw(unittest.TestCase):
                     "clip_slots": [{"slot": 0, "metric": "crowding", "source": "slv", "clip_lo": 0.1, "clip_hi": 0.9}],
                     "background_color": [0, 0, 0],
                     "plan_params_digest": "sha256:plan_src",
-                    "render_execution": {"color_pipeline": "fused", "raster_engine": "mt"},
+                    "render_execution": {"raster_engine": "mt"},
                     "keys": {
                         "raw_key": "renders/j/palettes/pal_color_src/greyscale.raw",
                         "image_key": "renders/j/palettes/pal_color_src/image.jpeg",
@@ -559,7 +559,7 @@ class TestRecolorFromRaw(unittest.TestCase):
                     "clip_slots": [{"slot": 0, "metric": "proximity", "source": "slv", "clip_lo": 0.1, "clip_hi": 0.9}],
                     "background_color": [0, 0, 0],
                     "plan_params_digest": "sha256:plan_src",
-                    "render_execution": {"color_pipeline": "fused", "raster_engine": "mt"},
+                    "render_execution": {"raster_engine": "mt"},
                     "keys": {
                         "raw_key": "renders/j/color/color_src/greyscale.raw",
                         "image_key": "renders/j/color/color_src/image.jpeg",

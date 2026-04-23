@@ -20,7 +20,6 @@ def _event(**overrides):
             "engine": "thumbnail",
             "target_size": 2048,
             "size_mode": "down",
-            "crop": "attention",
             "linear": True,
             "intent": "relative",
             "fail_on": "warning",
@@ -68,7 +67,7 @@ class TestResizeArtifactHandler(unittest.TestCase):
                 "format": "jpeg",
                 "quality": "77",
                 "width": "3000",
-                "height": "2000",
+                "height": "3000",
                 "pix": "3000",
                 "view_mode": "explicit",
                 "min_re": "-3.5",
@@ -121,13 +120,13 @@ class TestResizeArtifactHandler(unittest.TestCase):
                 self.assertEqual(cmd[1], "thumbnail")
                 self.assertIn("--height", cmd)
                 self.assertIn("--size", cmd)
-                self.assertIn("--crop", cmd)
+                self.assertNotIn("--crop", cmd)
                 self.assertIn("--linear", cmd)
                 self.assertIn("--intent", cmd)
                 self.assertIn("--fail-on", cmd)
                 out_path = cmd[3].split("[", 1)[0]
                 with open(out_path, "wb") as fh:
-                    fh.write(self._fake_jpeg_bytes(2048, 1365))
+                    fh.write(self._fake_jpeg_bytes(2048, 2048))
                 return MagicMock(returncode=0, stdout="", stderr="")
             if exe == "vipsthumbnail":
                 out_path = cmd[5].split("[", 1)[0]
@@ -184,12 +183,14 @@ class TestResizeArtifactHandler(unittest.TestCase):
         resize_meta = json.loads(sidecar["resize_params"])
         self.assertEqual(resize_meta["engine"], "thumbnail")
         self.assertEqual(resize_meta["target_size"], 2048)
-        self.assertEqual(resize_meta["crop"], "attention")
+        self.assertNotIn("crop", resize_meta)
+        self.assertNotIn("vscale", resize_meta)
 
         preview_extra = uploads[preview_key]["extra"]
         self.assertEqual(preview_extra["ContentType"], "image/png")
+        self.assertEqual(preview_extra["Metadata"]["pix"], "2048")
         self.assertEqual(preview_extra["Metadata"]["width"], "2048")
-        self.assertEqual(preview_extra["Metadata"]["height"], "1365")
+        self.assertEqual(preview_extra["Metadata"]["height"], "2048")
 
         statuses = [call.args[2] for call in mock_report.call_args_list]
         self.assertIn("started", statuses)
@@ -199,8 +200,9 @@ class TestResizeArtifactHandler(unittest.TestCase):
         self.assertEqual(dbg["engine"], "thumbnail")
         self.assertEqual(dbg["target_size"], 2048)
         self.assertEqual(dbg["size_mode"], "down")
-        self.assertEqual(dbg["crop"], "attention")
-        self.assertEqual(dbg["out_dims"], "2048x1365")
+        self.assertNotIn("crop", dbg)
+        self.assertNotIn("vscale", dbg)
+        self.assertEqual(dbg["out_dims"], "2048x2048")
 
     @patch("handler_resize_artifact.report_status")
     @patch("handler_resize_artifact.subprocess.run")
@@ -219,7 +221,7 @@ class TestResizeArtifactHandler(unittest.TestCase):
                     "family": "color",
                     "created_at": "2026-04-10T09:00:00Z",
                     "width": "4000",
-                    "height": "1000",
+                    "height": "4000",
                     "pix": "4000",
                 },
             }
@@ -256,11 +258,10 @@ class TestResizeArtifactHandler(unittest.TestCase):
                 self.assertIn("mitchell", cmd)
                 self.assertIn("--gap", cmd)
                 self.assertIn("3.5", cmd)
-                self.assertIn("--vscale", cmd)
-                self.assertIn("0.5", cmd)
+                self.assertNotIn("--vscale", cmd)
                 out_path = cmd[3].split("[", 1)[0]
                 with open(out_path, "wb") as fh:
-                    fh.write(self._fake_png_bytes(1000, 125))
+                    fh.write(self._fake_png_bytes(1000, 1000))
                 return MagicMock(returncode=0, stdout="", stderr="")
             if exe == "vipsthumbnail":
                 out_path = cmd[5].split("[", 1)[0]
@@ -278,7 +279,6 @@ class TestResizeArtifactHandler(unittest.TestCase):
                 "target_size": 1000,
                 "kernel": "mitchell",
                 "gap": 3.5,
-                "vscale": 0.5,
                 "format": "png",
                 "png_compression": 9,
                 "png_Q": 95,
@@ -300,7 +300,16 @@ class TestResizeArtifactHandler(unittest.TestCase):
         self.assertEqual(resize_meta["engine"], "resize")
         self.assertEqual(resize_meta["kernel"], "mitchell")
         self.assertEqual(resize_meta["gap"], 3.5)
-        self.assertEqual(resize_meta["vscale"], 0.5)
+        self.assertNotIn("vscale", resize_meta)
+
+    def test_sanitize_rejects_removed_crop_and_vscale_params(self):
+        from handler_resize_artifact import _sanitize_resize_params
+
+        source_meta = {"width": "1024", "height": "1024", "pix": "1024", "format": "png"}
+        with self.assertRaisesRegex(RuntimeError, "no longer accepts crop"):
+            _sanitize_resize_params({"crop": "none"}, source_meta)
+        with self.assertRaisesRegex(RuntimeError, "no longer accepts vscale"):
+            _sanitize_resize_params({"vscale": 1}, source_meta)
 
 
 if __name__ == "__main__":

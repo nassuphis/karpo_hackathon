@@ -161,6 +161,10 @@ def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id
         if result.returncode != 0:
             raise RuntimeError(f"dz_export failed: {result.stderr.strip()}")
         meta = json.loads(result.stdout)
+        width = int(meta["width"])
+        height = int(meta["height"])
+        if width != height:
+            raise RuntimeError(f"DeepZoom export requires square source image, got {width}x{height}")
         gen_ms = int((time.time() - t1) * 1000)
 
         os.remove(source_path)
@@ -230,8 +234,9 @@ def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id
             "dzi_url": dzi_url,
             "share_url": share_url,
             "tile_prefix": f"{s3_prefix}/image_files",
-            "width": meta["width"],
-            "height": meta["height"],
+            "pix": width,
+            "width": width,
+            "height": height,
             "tiles_uploaded": uploaded,
         }
         manifest.update(source_manifest)

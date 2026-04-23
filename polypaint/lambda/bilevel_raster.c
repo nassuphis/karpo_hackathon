@@ -10,7 +10,7 @@
  *
  * Usage:
  *   bilevel_raster stripe.bin /tmp/bits
- *       --width=W --height=H --tile_size=TS
+ *       --pix=N --tile_size=TS
  *       --n_tile_cols=C --n_tile_rows=R
  *       --min_re=A --max_re=B --min_im=C --max_im=D --degree=D
  *       [--rotation=R]
@@ -64,8 +64,9 @@ int main(int argc, char **argv) {
     const char *binPath = argv[1];
     const char *outPrefix = argv[2];
 
-    int W = getArgInt(argc, argv, "--width", 4096);
-    int H = getArgInt(argc, argv, "--height", 4096);
+    const char *widthArg = getArg(argc, argv, "--width");
+    const char *heightArg = getArg(argc, argv, "--height");
+    int pix = getArgInt(argc, argv, "--pix", 0);
     int tileSize = getArgInt(argc, argv, "--tile_size", 4096);
     int nTileCols = getArgInt(argc, argv, "--n_tile_cols", 1);
     int nTileRows = getArgInt(argc, argv, "--n_tile_rows", 1);
@@ -80,6 +81,17 @@ int main(int argc, char **argv) {
     double cosA = cos(rotation), sinA = sin(rotation);
     int degree = getArgInt(argc, argv, "--degree", 25);
     const char *rtPath = getArgStr(argc, argv, "--root_xforms", NULL);
+
+    if (widthArg || heightArg) {
+        fprintf(stderr, "bilevel_raster no longer accepts --width or --height; pass --pix for square output\n");
+        return 1;
+    }
+    if (pix <= 0) {
+        fprintf(stderr, "pix must be > 0\n");
+        return 1;
+    }
+    int W = pix;
+    int H = pix;
 
     /* Parse root transform chain */
     RootXformEntry rtChain[MAX_RT_CHAIN];

@@ -34,9 +34,7 @@ const RENDER_POPUP_SUMMARY = {
         height: 1000,
         metric: 'crowding',
         palette: 'reef',
-        solve_score_quantile: 0.05,
-        solve_score_omega: 4,
-        solve_score_omega_enabled: true,
+        solve_score_chain: [['crowding', '5'], ['omega_cosine', '4']],
         render_reusable: true,
         data_layout: 'chunk_all_pass_v1',
         chunk_bins_prefix: 'renders/test_job/palettes/pal_1/chunks/palette_bins_chunk_',
@@ -359,8 +357,7 @@ test.describe('Solve Score UI', () => {
             file_size: 90000,
             metric: 'crowding',
             palette: 'reef',
-            solve_score_quantile: 0.05,
-            solve_score_omega: 4,
+            solve_score_chain: [['crowding', '5'], ['omega_cosine', '4']],
             render_reusable: true,
             data_layout: 'chunk_all_pass_v1',
             chunk_bins_prefix: 'renders/j/palettes/pal_src/chunks/palette_bins_chunk_',
@@ -496,7 +493,7 @@ test.describe('Solve Score UI', () => {
     expect(metric2).toBe('area');
   });
 
-  test('render dispatch payload contains selected solve_metric', async ({ page }) => {
+  test('render dispatch payload contains chain-only solve-score params', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
 
     await chooseSolveMetric(page, 'spread');
@@ -528,10 +525,11 @@ test.describe('Solve Score UI', () => {
     expect(payload).not.toBeNull();
     expect(payload.mode).toBe('color');
     expect(payload.params.color_mode).toBe('solve_score');
-    expect(payload.params.solve_metric).toBe('spread');
+    expect(payload.params.solve_score_chain).toEqual([['spread', '0.1']]);
+    expect(Object.prototype.hasOwnProperty.call(payload.params, 'solve_metric')).toBe(false);
   });
 
-  test('clusteriness dispatch sends correct solve_metric', async ({ page }) => {
+  test('clusteriness dispatch sends chain-only solve-score params', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await chooseSolveMetric(page, 'clusteriness');
 
@@ -561,7 +559,8 @@ test.describe('Solve Score UI', () => {
     const payload = await page.evaluate(() => window._orchPayload);
     expect(payload).not.toBeNull();
     expect(payload.params.color_mode).toBe('solve_score');
-    expect(payload.params.solve_metric).toBe('clusteriness');
+    expect(payload.params.solve_score_chain).toEqual([['clusteriness', '0.1']]);
+    expect(Object.prototype.hasOwnProperty.call(payload.params, 'solve_metric')).toBe(false);
   });
 
   test('solve-score metric chip shows source+q controls and syncs the hidden compatibility field', async ({ page }) => {
@@ -586,7 +585,7 @@ test.describe('Solve Score UI', () => {
     await expect(page.locator('#ss-chips input').first()).toHaveValue('3.0');
   });
 
-  test('dispatch payload includes solve_score_quantile', async ({ page }) => {
+  test('dispatch payload updates the solve-score chain quantile', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await page.evaluate(() => {
       const input = document.querySelector('#ss-chips input');
@@ -619,7 +618,8 @@ test.describe('Solve Score UI', () => {
 
     const payload = await page.evaluate(() => window._qPayload);
     expect(payload).not.toBeNull();
-    expect(payload.params.solve_score_quantile).toBeCloseTo(0.02, 3);
+    expect(payload.params.solve_score_chain).toEqual([['proximity', '2']]);
+    expect(Object.prototype.hasOwnProperty.call(payload.params, 'solve_score_quantile')).toBe(false);
   });
 
   test('explicit viewport dispatch sends exact bounds', async ({ page }) => {
@@ -763,10 +763,6 @@ test.describe('Solve Score UI', () => {
             max_im: 2.0,
             rotation: 0,
             palette: 'inferno',
-            solve_metric: 'proximity',
-            solve_score_quantile: 0.001,
-            solve_score_omega: 1,
-            solve_score_omega_enabled: true,
             solve_score_chain: [['proximity', '0.1']],
           }],
           bilevel: [],
@@ -948,10 +944,6 @@ test.describe('Solve Score UI', () => {
             max_im: 2.0,
             rotation: 0,
             palette: 'inferno',
-            solve_metric: 'proximity',
-            solve_score_quantile: 0.001,
-            solve_score_omega: 1,
-            solve_score_omega_enabled: true,
             solve_score_chain: [['proximity', '0.1']],
           }],
           bilevel: [],
@@ -997,10 +989,6 @@ test.describe('Solve Score UI', () => {
             rotation: 0,
             root_transforms: [],
             palette: 'inferno',
-            solve_metric: 'proximity',
-            solve_score_quantile: 0.001,
-            solve_score_omega: 1,
-            solve_score_omega_enabled: true,
             solve_score_chain: [['proximity', '0.1']],
           }],
           bilevel: [],
@@ -1147,7 +1135,7 @@ test.describe('Solve Score UI', () => {
     expect(sq).toBe('4');
   });
 
-  test('real_axis_proximity dispatch sends correct solve_metric', async ({ page }) => {
+  test('real_axis_proximity dispatch sends chain-only solve-score params', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await chooseSolveMetric(page, 'real_axis_proximity');
 
@@ -1177,7 +1165,8 @@ test.describe('Solve Score UI', () => {
     const payload = await page.evaluate(() => window._orchPayload);
     expect(payload).not.toBeNull();
     expect(payload.params.color_mode).toBe('solve_score');
-    expect(payload.params.solve_metric).toBe('real_axis_proximity');
+    expect(payload.params.solve_score_chain).toEqual([['real_axis_proximity', '0.1']]);
+    expect(Object.prototype.hasOwnProperty.call(payload.params, 'solve_metric')).toBe(false);
   });
 
   test('Histogram button is visible beside Score clip q', async ({ page }) => {
@@ -1284,7 +1273,7 @@ test.describe('Solve Score UI', () => {
           color: [{ artifact_id: 'color_1', created_at: '2026-03-30T10:00:00Z', image_key: 'renders/test_job/color/color_1/image.jpeg', image_url: 'https://example.com/c.jpeg', preview_url: 'https://example.com/c.png', viewer_url: 'https://example.com/c.png', file_size: 50000, width: 1000, height: 1000, color_mode: 'rainbow', format: 'jpeg', associated_palette_id: 'pal_1' }],
           bilevel: [{ artifact_id: 'bilevel_1', created_at: '2026-03-30T11:00:00Z', image_key: 'renders/test_job/bilevel/bilevel_1/image.tif', image_url: 'https://example.com/b.tif', preview_url: 'https://example.com/b.png', viewer_url: 'https://example.com/b.png', file_size: 60000, width: 1000, height: 1000, format: 'tif' }],
           coeffs: [{ artifact_id: 'coeffs_1', created_at: '2026-03-30T11:30:00Z', image_key: 'renders/test_job/coeffs/coeffs_1/image.tif', image_url: 'https://example.com/co.tif', preview_url: 'https://example.com/co.png', viewer_url: 'https://example.com/co.png', file_size: 70000, width: 1000, height: 1000, format: 'tif' }],
-          palette: [{ artifact_id: 'pal_1', palette_id: 'pal_1', created_at: '2026-03-30T12:00:00Z', image_key: 'renders/test_job/palettes/pal_1/image.jpeg', image_url: 'https://example.com/p.jpeg', preview_url: 'https://example.com/p.png', viewer_url: 'https://example.com/p.png', file_size: 40000, width: 1000, height: 1000, metric: 'crowding', palette: 'reef', solve_score_quantile: 0.05, derived_from_color_artifact_id: 'color_1' }],
+          palette: [{ artifact_id: 'pal_1', palette_id: 'pal_1', created_at: '2026-03-30T12:00:00Z', image_key: 'renders/test_job/palettes/pal_1/image.jpeg', image_url: 'https://example.com/p.jpeg', preview_url: 'https://example.com/p.png', viewer_url: 'https://example.com/p.png', file_size: 40000, width: 1000, height: 1000, metric: 'crowding', palette: 'reef', solve_score_chain: [['crowding', '5']], derived_from_color_artifact_id: 'color_1' }],
         },
         calc: { exists: true, N: 1000, degree: 5 },
         artifacts: {},
@@ -1334,7 +1323,7 @@ test.describe('Solve Score UI', () => {
           color: [{ artifact_id: 'color_1', created_at: '2026-03-30T10:00:00Z', image_key: 'renders/test_job/color/color_1/image.jpeg', image_url: 'https://example.com/c.jpeg', preview_url: 'https://example.com/c.png', viewer_url: 'https://example.com/c.png', file_size: 50000, width: 1000, height: 1000, color_mode: 'rainbow', format: 'jpeg' }],
           bilevel: [],
           coeffs: [],
-          palette: [{ artifact_id: 'pal_1', palette_id: 'pal_1', created_at: '2026-03-30T12:00:00Z', image_key: 'renders/test_job/palettes/pal_1/image.jpeg', image_url: 'https://example.com/p.jpeg', preview_url: 'https://example.com/p.png', viewer_url: 'https://example.com/p.png', file_size: 40000, width: 1000, height: 1000, metric: 'crowding', palette: 'reef', solve_score_quantile: 0.05 }],
+          palette: [{ artifact_id: 'pal_1', palette_id: 'pal_1', created_at: '2026-03-30T12:00:00Z', image_key: 'renders/test_job/palettes/pal_1/image.jpeg', image_url: 'https://example.com/p.jpeg', preview_url: 'https://example.com/p.png', viewer_url: 'https://example.com/p.png', file_size: 40000, width: 1000, height: 1000, metric: 'crowding', palette: 'reef', solve_score_chain: [['crowding', '5']] }],
         },
         calc: { exists: true, N: 1000, degree: 5 },
         artifacts: {},
@@ -1357,7 +1346,7 @@ test.describe('Solve Score UI', () => {
           color: [{ artifact_id: 'color_1', created_at: '2026-03-30T10:00:00Z', image_key: 'renders/test_job/color/color_1/image.jpeg', image_url: 'https://example.com/c.jpeg', preview_url: 'https://example.com/c.png', viewer_url: 'https://example.com/c.png', file_size: 50000, width: 1000, height: 1000, color_mode: 'rainbow', format: 'jpeg', associated_palette_id: 'pal_1' }],
           bilevel: [],
           coeffs: [],
-          palette: [{ artifact_id: 'pal_1', palette_id: 'pal_1', created_at: '2026-03-30T12:00:00Z', image_key: 'renders/test_job/palettes/pal_1/image.jpeg', image_url: 'https://example.com/p.jpeg', preview_url: 'https://example.com/p.png', viewer_url: 'https://example.com/p.png', file_size: 40000, width: 1000, height: 1000, metric: 'crowding', palette: 'reef', solve_score_quantile: 0.05, derived_from_color_artifact_id: 'color_1' }],
+          palette: [{ artifact_id: 'pal_1', palette_id: 'pal_1', created_at: '2026-03-30T12:00:00Z', image_key: 'renders/test_job/palettes/pal_1/image.jpeg', image_url: 'https://example.com/p.jpeg', preview_url: 'https://example.com/p.png', viewer_url: 'https://example.com/p.png', file_size: 40000, width: 1000, height: 1000, metric: 'crowding', palette: 'reef', solve_score_chain: [['crowding', '5']], derived_from_color_artifact_id: 'color_1' }],
         },
         calc: { exists: true, N: 1000, degree: 5 },
         artifacts: {},
@@ -1392,7 +1381,7 @@ test.describe('Solve Score UI', () => {
           color: [{ artifact_id: 'color_1', created_at: '2026-03-30T10:00:00Z', image_key: 'renders/test_job/color/color_1/image.jpeg', image_url: 'https://example.com/c.jpeg', preview_url: 'https://example.com/c.png', viewer_url: 'https://example.com/c.png', file_size: 50000, width: 1000, height: 1000, color_mode: 'rainbow', format: 'jpeg' }],
           bilevel: [],
           coeffs: [],
-          palette: [{ artifact_id: 'pal_1', palette_id: 'pal_1', created_at: '2026-03-30T12:00:00Z', image_key: 'renders/test_job/palettes/pal_1/image.jpeg', image_url: 'https://example.com/p.jpeg', preview_url: 'https://example.com/p.png', viewer_url: 'https://example.com/p.png', file_size: 40000, width: 1000, height: 1000, metric: 'crowding', palette: 'reef', solve_score_quantile: 0.05, root_transforms: [['rotate_roots', '0.125']], derived_from_color_artifact_id: 'color_1' }],
+          palette: [{ artifact_id: 'pal_1', palette_id: 'pal_1', created_at: '2026-03-30T12:00:00Z', image_key: 'renders/test_job/palettes/pal_1/image.jpeg', image_url: 'https://example.com/p.jpeg', preview_url: 'https://example.com/p.png', viewer_url: 'https://example.com/p.png', file_size: 40000, width: 1000, height: 1000, metric: 'crowding', palette: 'reef', solve_score_chain: [['crowding', '5']], root_transforms: [['rotate_roots', '0.125']], derived_from_color_artifact_id: 'color_1' }],
         },
         calc: { exists: true, N: 1000, degree: 5 },
         artifacts: {},
@@ -1445,10 +1434,6 @@ test.describe('Solve Score UI', () => {
             color_mode: 'solve_score',
             format: 'jpeg',
             palette: 'reef',
-            solve_metric: 'crowding',
-            solve_score_quantile: 0.05,
-            solve_score_omega: 4,
-            solve_score_omega_enabled: true,
             solve_score_chain: [['crowding', '5'], ['omega_cosine', '4']],
           }],
           bilevel: [],
@@ -1503,7 +1488,6 @@ test.describe('Solve Score UI', () => {
     expect(launches[0]).toEqual({
       mode: 'color',
       paramsPatch: {
-        color_pipeline: 'fused',
         raster_engine: 'mt',
         raster_mt_threads: 7,
         solve_score_threads: 6,
@@ -1535,14 +1519,12 @@ test.describe('Solve Score UI', () => {
       renderArtifactPanel('test_job', summary);
     }, {
       ...RENDER_POPUP_SUMMARY,
-      families: {
-        ...RENDER_POPUP_SUMMARY.families,
-        color: [{
-          ...RENDER_POPUP_SUMMARY.families.color[0],
-          color_mode: 'solve_score',
-          solve_metric: 'spread',
-          solve_score_quantile: 0.02,
-          solve_score_omega: 6,
+        families: {
+          ...RENDER_POPUP_SUMMARY.families,
+          color: [{
+            ...RENDER_POPUP_SUMMARY.families.color[0],
+            color_mode: 'solve_score',
+          solve_score_chain: [['spread', '2'], ['omega_cosine', '6']],
           palette: 'magma',
         }],
       },

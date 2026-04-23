@@ -3,7 +3,7 @@
  * color image using a 256-entry equalization LUT and a 256x3 palette LUT.
  *
  * Usage:
- *   score_raw_render input.raw out.jpeg --width=W --height=H --eq_lut=eq.bin \
+ *   score_raw_render input.raw out.jpeg --pix=N --eq_lut=eq.bin \
  *     --palette=<name> --background_color=RRGGBB [--quality=90]
  *     [--preview=preview.png] [--preview_max=512]
  *
@@ -149,7 +149,7 @@ int main(int argc, char **argv) {
     vips_leak_set(0);
 
     if (argc < 3) {
-        fprintf(stderr, "Usage: score_raw_render input.raw out.jpeg --width=W --height=H --eq_lut=eq.bin --palette=<name> --background_color=RRGGBB [--quality=90] [--preview=preview.png] [--preview_max=512]\n");
+        fprintf(stderr, "Usage: score_raw_render input.raw out.jpeg --pix=N --eq_lut=eq.bin --palette=<name> --background_color=RRGGBB [--quality=90] [--preview=preview.png] [--preview_max=512]\n");
         vips_shutdown();
         return 2;
     }
@@ -160,16 +160,24 @@ int main(int argc, char **argv) {
     const char *paletteName = getArg(argc, argv, "--palette");
     const char *backgroundColor = getArg(argc, argv, "--background_color");
     const char *previewPath = getArg(argc, argv, "--preview");
-    int width = getArgInt(argc, argv, "--width", 0);
-    int height = getArgInt(argc, argv, "--height", 0);
+    const char *widthArg = getArg(argc, argv, "--width");
+    const char *heightArg = getArg(argc, argv, "--height");
+    int pix = getArgInt(argc, argv, "--pix", 0);
     int quality = getArgInt(argc, argv, "--quality", 90);
     int previewMax = getArgInt(argc, argv, "--preview_max", 512);
 
-    if (!eqLutPath || !paletteName || !backgroundColor || width <= 0 || height <= 0) {
-        fprintf(stderr, "Missing required args: --width, --height, --eq_lut, --palette, --background_color\n");
+    if (widthArg || heightArg) {
+        fprintf(stderr, "score_raw_render no longer accepts --width or --height; pass --pix for square output\n");
         vips_shutdown();
         return 2;
     }
+    if (!eqLutPath || !paletteName || !backgroundColor || pix <= 0) {
+        fprintf(stderr, "Missing required args: --pix, --eq_lut, --palette, --background_color\n");
+        vips_shutdown();
+        return 2;
+    }
+    int width = pix;
+    int height = pix;
 
     VipsImage *raw = NULL;
     VipsImage *eqLut = NULL;

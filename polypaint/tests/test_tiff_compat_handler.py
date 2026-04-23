@@ -35,8 +35,9 @@ class TestTiffCompatHandler(unittest.TestCase):
                 "family": "bilevel",
                 "created_at": "2026-04-10T10:00:00Z",
                 "format": "tif",
+                "pix": "5000",
                 "width": "5000",
-                "height": "3000",
+                "height": "5000",
                 "view_mode": "explicit",
                 "min_re": "-3.5",
                 "max_re": "1.25",
@@ -64,7 +65,7 @@ class TestTiffCompatHandler(unittest.TestCase):
                     fh.write(b"II*\x00compat")
                 return MagicMock(returncode=0, stdout=json.dumps({
                     "width": 5000,
-                    "height": 3000,
+                    "height": 5000,
                     "file_size": 888,
                     "bigtiff": False,
                 }), stderr="")
@@ -97,8 +98,9 @@ class TestTiffCompatHandler(unittest.TestCase):
         self.assertEqual(image_meta["postprocess_kind"], "tiff_compat")
         self.assertEqual(image_meta["postprocess_profile"], "bilevel_tiff_compat_v1")
         self.assertEqual(image_meta["format"], "tif")
+        self.assertEqual(image_meta["pix"], "5000")
         self.assertEqual(image_meta["width"], "5000")
-        self.assertEqual(image_meta["height"], "3000")
+        self.assertEqual(image_meta["height"], "5000")
         self.assertEqual(image_meta["view_mode"], "explicit")
         self.assertEqual(image_meta["min_re"], "-3.5")
         self.assertEqual(image_meta["max_re"], "1.25")
@@ -108,8 +110,9 @@ class TestTiffCompatHandler(unittest.TestCase):
 
         preview_extra = uploads[preview_key]["extra"]
         self.assertEqual(preview_extra["ContentType"], "image/png")
+        self.assertEqual(preview_extra["Metadata"]["pix"], "5000")
         self.assertEqual(preview_extra["Metadata"]["width"], "5000")
-        self.assertEqual(preview_extra["Metadata"]["height"], "3000")
+        self.assertEqual(preview_extra["Metadata"]["height"], "5000")
 
         statuses = [call.args[2] for call in mock_report.call_args_list]
         self.assertIn("started", statuses)

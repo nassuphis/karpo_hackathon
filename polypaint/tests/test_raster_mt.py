@@ -94,26 +94,17 @@ def _fused_event(**overrides):
         "section_count": 1,
         "n_tile_cols": 1,
         "n_tile_rows": 1,
-        "width": 512,
-        "height": 512,
+        "pix": 512,
         "tile_size": 512,
         "degree": 5,
         "n_coeffs": 6,
-        "palette": "inferno",
         "rotation": 0.0,
-        "solve_metric": "crowding",
-        "solve_score_quantile": 0.01,
-        "solve_score_omega": 4.0,
-        "solve_score_omega_enabled": True,
         "solve_score_chain": [["crowding", "1"], ["omega_cosine", "4"]],
         "solve_score_clip_key": "renders/j/solve_scores/crowding_clip.json",
         "solve_source_manifest": solve_source_manifest,
         "logical_section": True,
         "step_start": 0,
         "step_count": 4,
-        "color_pipeline": "fused",
-        "color": "solve_score",
-        "match": "none",
         "raster_mt_threads": 2,
         "raster_input_mode": "sectioned",
         "raster_sectioned_retries": 2,
@@ -122,26 +113,12 @@ def _fused_event(**overrides):
         "associated_palette_fragment_prefix": "",
         "associated_palette_grid_n": 0,
     }
-    payload.update(_bounds_from_center_scale(payload["width"], payload["height"], 0.0, 0.0, 1.0))
+    payload.update(_bounds_from_center_scale(payload["pix"], payload["pix"], 0.0, 0.0, 1.0))
     payload.update(overrides)
     return payload
 
 
 class TestRasterMT(unittest.TestCase):
-    @patch("handler_raster_mt.report_status")
-    @patch("handler_raster_mt.subprocess.run")
-    def test_handler_rejects_non_fused_payloads(self, mock_run, mock_report):
-        import handler_raster_mt as mod
-
-        with self.assertRaisesRegex(RuntimeError, "classic color raster has been removed"):
-            mod.handler({"body": json.dumps({"job_id": "j", "color_pipeline": "classic"})}, None)
-
-        mock_run.assert_not_called()
-        mock_report.assert_called_once()
-        self.assertEqual(mock_report.call_args.args[:3], ("j", "raster", "error"))
-        self.assertIn("color_pipeline='fused'", mock_report.call_args.args[3])
-        self.assertEqual(mock_report.call_args.kwargs["result_data"]["phase"], "handler_entry")
-
     @patch("handler_raster_mt.report_status")
     @patch("handler_raster_mt.subprocess.run")
     def test_handler_reports_malformed_json_at_entry(self, mock_run, mock_report):
@@ -201,22 +178,36 @@ class TestRasterMT(unittest.TestCase):
     @patch("handler_raster_mt.report_status")
     @patch("handler_raster_mt.subprocess.run")
     @patch("handler_raster_mt.s3")
-    def test_fused_chain_metric_mismatch_fails_before_subprocess(self, mock_s3, mock_run, mock_report):
+    def test_fused_removed_scalar_fields_fail_before_subprocess(self, mock_s3, mock_run, mock_report):
         import handler_raster_mt as mod
 
         mock_s3.get_object.return_value = {"Body": MagicMock(read=lambda: b"{}")}
 
-        with self.assertRaisesRegex(RuntimeError, "solve-score plan/chain mismatch"):
+        with self.assertRaisesRegex(RuntimeError, "no longer accepts removed contract field"):
             mod.handler(
                 _fused_event(
                     solve_metric="crowding",
-                    solve_score_chain=[["spread", "2"]],
                 ),
                 None,
             )
 
         mock_run.assert_not_called()
-        self.assertEqual([call.args[2] for call in mock_report.call_args_list], ["started", "error"])
+        self.assertEqual([call.args[2] for call in mock_report.call_args_list], ["error"])
+
+    @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
+    @patch("handler_raster_mt.report_status")
+    @patch("handler_raster_mt.subprocess.run")
+    @patch("handler_raster_mt.s3")
+    def test_fused_rejects_width_height_contract_aliases(self, mock_s3, mock_run, mock_report):
+        import handler_raster_mt as mod
+
+        mock_s3.get_object.return_value = {"Body": MagicMock(read=lambda: b"{}")}
+
+        with self.assertRaisesRegex(RuntimeError, "width, height"):
+            mod.handler(_fused_event(width=512, height=512), None)
+
+        mock_run.assert_not_called()
+        self.assertEqual([call.args[2] for call in mock_report.call_args_list], ["error"])
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
     @patch("handler_raster_mt.report_status")
@@ -255,13 +246,15 @@ class TestRasterMT(unittest.TestCase):
         mock_s3.put_object.side_effect = put_object
 
         def fake_run(cmd, capture_output=False, text=False, timeout=None):
-            self.assertIn("--input_mode=multispan_sectioned", cmd)
             self.assertTrue(any(arg.startswith("--input_manifest=") for arg in cmd))
-            self.assertIn("--solve_score_raw_bytes=1", cmd)
+            self.assertIn("--pixel_bin_prefix=/tmp/pixbin", cmd)
             self.assertIn("--step_scores_output=/tmp/step_scores.bin", cmd)
             self.assertNotIn("--palette_bin_prefix=/tmp/palette_pixbin", cmd)
             self.assertNotIn("--score_coeff_manifest=", " ".join(cmd))
             self.assertNotIn("--score_params_manifest=", " ".join(cmd))
+            self.assertNotIn("--color=solve_score", cmd)
+            self.assertNotIn("--match=none", cmd)
+            self.assertFalse(any(arg.startswith("--palette=") for arg in cmd))
             with open("/tmp/pixbin.frag", "wb") as fh:
                 fh.write(_encode_fragment_pairs([(2, 55)]))
             with open("/tmp/step_scores.bin", "wb") as fh:
@@ -325,6 +318,9 @@ class TestRasterMT(unittest.TestCase):
         self.assertIn("--max_re=1.25", joined)
         self.assertIn("--min_im=-0.75", joined)
         self.assertIn("--max_im=2.0", joined)
+        self.assertIn("--pix=512", joined)
+        self.assertNotIn("--width=", joined)
+        self.assertNotIn("--height=", joined)
         self.assertNotIn("--center_re=", joined)
         self.assertNotIn("--center_im=", joined)
         self.assertNotIn("--scale=", joined)
@@ -479,10 +475,6 @@ class TestRasterMT(unittest.TestCase):
 
         result = mod.handler(
             _fused_event(
-                solve_metric="spread",
-                solve_score_quantile=0.02,
-                solve_score_omega=1.0,
-                solve_score_omega_enabled=False,
                 solve_score_chain=[["spread", "slv", "2"], ["spread", "cf", "2"], ["avg"], ["t1_abs", "pm", "2"], ["avg"]],
                 solve_source_manifest=solve_source_manifest,
                 n_coeffs=6,

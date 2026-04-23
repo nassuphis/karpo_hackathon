@@ -123,6 +123,15 @@ def _square_bounds(ext):
     }
 
 
+def _single_metric_program_args(metric, clip_lo, clip_hi):
+    return [
+        f"--score_metrics={metric}",
+        f"--score_clip_los={clip_lo}",
+        f"--score_clip_his={clip_hi}",
+        "--score_program=m0",
+    ]
+
+
 def _square_scale(width, ext):
     return float(width) / (2.0 * float(ext))
 
@@ -347,8 +356,7 @@ def test_roots2pix_mt_square_ext_2_5_matches_legacy_square_camera_oracle():
             cmd = [
                 str(binary),
                 str(root / "pix"),
-                f"--width={width}",
-                f"--height={height}",
+                f"--pix={width}",
                 "--tile_size=20",
                 "--n_tile_cols=1",
                 "--n_tile_rows=1",
@@ -357,19 +365,10 @@ def test_roots2pix_mt_square_ext_2_5_matches_legacy_square_camera_oracle():
                 f"--min_im={bounds['min_im']}",
                 f"--max_im={bounds['max_im']}",
                 "--degree=1",
-                "--color=solve_score",
-                "--match=none",
-                "--palette=inferno",
                 "--rotation=0",
                 "--threads=1",
-                "--input_mode=multispan_sectioned",
                 f"--input_manifest={manifest_path}",
-                "--solve_metric=centroid_re",
-                f"--solve_score_clip_lo={clip_lo}",
-                f"--solve_score_clip_hi={clip_hi}",
-                "--solve_score_omega_enabled=0",
-                "--solve_score_raw_bytes=1",
-                "--skip_pix_output=1",
+                *_single_metric_program_args("centroid_re", clip_lo, clip_hi),
                 f"--pixel_bin_prefix={pixbin_prefix}",
             ]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -414,8 +413,7 @@ def test_bilevel_section_square_ext_2_5_matches_legacy_square_camera_oracle():
             str(binary),
             str(section_path),
             str(out_frag),
-            f"--width={width}",
-            f"--height={height}",
+            f"--pix={width}",
             f"--min_re={bounds['min_re']}",
             f"--max_re={bounds['max_re']}",
             f"--min_im={bounds['min_im']}",
@@ -453,8 +451,7 @@ def test_coeffs_bilevel_square_ext_2_5_matches_legacy_square_camera_oracle():
             str(binary),
             str(coeffs_path),
             str(out_prefix),
-            f"--width={width}",
-            f"--height={height}",
+            f"--pix={width}",
             "--tile_size=20",
             "--n_tile_cols=1",
             "--n_tile_rows=1",
@@ -515,8 +512,7 @@ def test_roots2pix_mt_asymmetric_bounds_match_independent_bounds_oracle():
             cmd = [
                 str(binary),
                 str(root / "pix"),
-                f"--width={width}",
-                f"--height={height}",
+                f"--pix={width}",
                 "--tile_size=24",
                 "--n_tile_cols=1",
                 "--n_tile_rows=1",
@@ -525,19 +521,10 @@ def test_roots2pix_mt_asymmetric_bounds_match_independent_bounds_oracle():
                 f"--min_im={bounds['min_im']}",
                 f"--max_im={bounds['max_im']}",
                 "--degree=1",
-                "--color=solve_score",
-                "--match=none",
-                "--palette=inferno",
                 "--rotation=0",
                 "--threads=1",
-                "--input_mode=multispan_sectioned",
                 f"--input_manifest={manifest_path}",
-                "--solve_metric=centroid_re",
-                f"--solve_score_clip_lo={clip_lo}",
-                f"--solve_score_clip_hi={clip_hi}",
-                "--solve_score_omega_enabled=0",
-                "--solve_score_raw_bytes=1",
-                "--skip_pix_output=1",
+                *_single_metric_program_args("centroid_re", clip_lo, clip_hi),
                 f"--pixel_bin_prefix={pixbin_prefix}",
             ]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -586,8 +573,7 @@ def test_bilevel_section_asymmetric_bounds_match_independent_bounds_oracle():
             str(binary),
             str(section_path),
             str(out_frag),
-            f"--width={width}",
-            f"--height={height}",
+            f"--pix={width}",
             f"--min_re={bounds['min_re']}",
             f"--max_re={bounds['max_re']}",
             f"--min_im={bounds['min_im']}",
@@ -634,8 +620,7 @@ def test_coeffs_bilevel_asymmetric_bounds_match_independent_bounds_oracle():
             str(binary),
             str(coeffs_path),
             str(out_prefix),
-            f"--width={width}",
-            f"--height={height}",
+            f"--pix={width}",
             "--tile_size=24",
             "--n_tile_cols=1",
             "--n_tile_rows=1",
@@ -688,8 +673,7 @@ def test_active_binaries_reject_legacy_square_camera_args():
                 [
                     str(roots_binary),
                     str(root / "pix"),
-                    "--width=8",
-                    "--height=8",
+                    "--pix=8",
                     "--tile_size=8",
                     "--n_tile_cols=1",
                     "--n_tile_rows=1",
@@ -697,18 +681,9 @@ def test_active_binaries_reject_legacy_square_camera_args():
                     "--center_im=0",
                     "--scale=1",
                     "--degree=1",
-                    "--color=solve_score",
-                    "--match=none",
-                    "--palette=inferno",
                     "--threads=1",
-                    "--input_mode=multispan_sectioned",
                     f"--input_manifest={manifest_path}",
-                    "--solve_metric=centroid_re",
-                    "--solve_score_clip_lo=-1",
-                    "--solve_score_clip_hi=1",
-                    "--solve_score_omega_enabled=0",
-                    "--solve_score_raw_bytes=1",
-                    "--skip_pix_output=1",
+                    *_single_metric_program_args("centroid_re", -1, 1),
                     f"--pixel_bin_prefix={root / 'pixbin'}",
                 ],
                 capture_output=True,
@@ -727,8 +702,7 @@ def test_active_binaries_reject_legacy_square_camera_args():
                 str(section_binary),
                 str(roots_path),
                 str(root / "section.frag"),
-                "--width=8",
-                "--height=8",
+                "--pix=8",
                 "--center_re=0",
                 "--center_im=0",
                 "--scale=1",
@@ -746,8 +720,7 @@ def test_active_binaries_reject_legacy_square_camera_args():
                 str(coeff_binary),
                 str(coeffs_path),
                 str(root / "coeff_bits"),
-                "--width=8",
-                "--height=8",
+                "--pix=8",
                 "--tile_size=8",
                 "--n_tile_cols=1",
                 "--n_tile_rows=1",
@@ -778,8 +751,7 @@ def test_roots2pix_mt_rejects_legacy_input_modes():
         common_args = [
             str(binary),
             str(root / "pix"),
-            "--width=8",
-            "--height=8",
+            "--pix=8",
             "--tile_size=8",
             "--n_tile_cols=1",
             "--n_tile_rows=1",
@@ -788,16 +760,8 @@ def test_roots2pix_mt_rejects_legacy_input_modes():
             "--min_im=-1",
             "--max_im=1",
             "--degree=1",
-            "--color=solve_score",
-            "--match=none",
-            "--palette=inferno",
             "--threads=1",
-            "--solve_metric=centroid_re",
-            "--solve_score_clip_lo=-1",
-            "--solve_score_clip_hi=1",
-            "--solve_score_omega_enabled=0",
-            "--solve_score_raw_bytes=1",
-            "--skip_pix_output=1",
+            *_single_metric_program_args("centroid_re", -1, 1),
             f"--pixel_bin_prefix={root / 'pixbin'}",
         ]
         for legacy_mode in ("tmpfile", "sectioned"):
@@ -808,4 +772,102 @@ def test_roots2pix_mt_rejects_legacy_input_modes():
                 timeout=30,
             )
             assert result.returncode != 0
-            assert "only supports --input_mode=multispan_sectioned" in result.stderr
+            assert "no longer accepts --input_mode" in result.stderr
+
+
+def test_roots2pix_mt_rejects_legacy_output_mode_args():
+    with tempfile.TemporaryDirectory(prefix="exact_viewport_roots2pix_legacy_output_") as td:
+        root = pathlib.Path(td)
+        binary = _compile_binary(
+            td,
+            "roots2pix_mt_test",
+            "roots2pix_mt.c",
+            extra_sources=["multispan_reader.c"],
+            libs=["-lcurl", "-lm", "-lpthread"],
+        )
+        roots_path = _write_float_file(root / "roots.bin", [0.0, 0.0])
+        server, thread = _serve_dir(root)
+        try:
+            manifest_path = _write_single_span_manifest(
+                root / "roots_manifest.json",
+                file_name=roots_path.name,
+                port=server.server_address[1],
+                row_bytes=8,
+                solve_count=1,
+            )
+            common_args = [
+                str(binary),
+                str(root / "pix"),
+                "--pix=8",
+                "--tile_size=8",
+                "--n_tile_cols=1",
+                "--n_tile_rows=1",
+                "--min_re=-1",
+                "--max_re=1",
+                "--min_im=-1",
+                "--max_im=1",
+                "--degree=1",
+                "--threads=1",
+                f"--input_manifest={manifest_path}",
+                *_single_metric_program_args("centroid_re", -1, 1),
+                f"--pixel_bin_prefix={root / 'pixbin'}",
+            ]
+            legacy_arg_sets = (
+                {
+                    "args": ["--solve_score_raw_bytes=1"],
+                    "expect": "Legacy raster output args are no longer supported",
+                },
+                {
+                    "args": ["--skip_pix_output=1"],
+                    "expect": "Legacy raster output args are no longer supported",
+                },
+                {
+                    "args": ["--solve_score_cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9"],
+                    "expect": "Legacy raster output args are no longer supported",
+                },
+                {
+                    "args": ["--solve_prox_clip_lo=-1"],
+                    "expect": "Legacy raster output args are no longer supported",
+                },
+                {
+                    "args": ["--color=solve_score"],
+                    "expect": "no longer accepts --color, --match, or --palette",
+                },
+                {
+                    "args": ["--match=none"],
+                    "expect": "no longer accepts --color, --match, or --palette",
+                },
+                {
+                    "args": ["--palette=inferno"],
+                    "expect": "no longer accepts --color, --match, or --palette",
+                },
+                {
+                    "args": ["--solve_metric=centroid_re"],
+                    "expect": "no longer accepts legacy single-metric solve-score args",
+                },
+                {
+                    "args": ["--solve_score_clip_lo=-1"],
+                    "expect": "no longer accepts legacy single-metric solve-score args",
+                },
+                {
+                    "args": ["--solve_score_clip_hi=1"],
+                    "expect": "no longer accepts legacy single-metric solve-score args",
+                },
+                {
+                    "args": ["--solve_score_omega_enabled=0"],
+                    "expect": "no longer accepts legacy single-metric solve-score args",
+                },
+            )
+            for case in legacy_arg_sets:
+                result = subprocess.run(
+                    [*common_args, *case["args"]],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                assert result.returncode != 0
+                assert case["expect"] in result.stderr
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)

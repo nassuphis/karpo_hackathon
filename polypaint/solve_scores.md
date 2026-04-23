@@ -549,57 +549,27 @@ Required changes:
 
 Do not leave the usage string mentioning only solve proximity.
 
-## 8.5 [lambda/roots2pix.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/roots2pix.c)
+## 8.5 [lambda/roots2pix_mt.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/roots2pix_mt.c)
 
-Current solve-proximity branch is around lines 535-585.
+The active fused color raster accepts a compiled solve-score program contract:
 
-Required changes:
+1. `--score_metrics=...`
+2. `--score_clip_los=...`
+3. `--score_clip_his=...`
+4. `--score_program=...`
+5. optional source manifests for coefficient or parameter-backed metric slots
 
-1. Add new color mode name:
-   - `solve_score`
-2. Keep one-release alias:
-   - `solve_proximity` -> same internal solve-score branch with `metric=proximity`
-3. Add CLI arg:
-   - `--solve_metric=<name>`
-4. Replace `--solve_prox_*` args with generic names:
-   - `--solve_score_clip_lo`
-   - `--solve_score_clip_hi`
-   - `--solve_score_cuts`
-5. For one release, accept the old arg names as aliases too.
-6. The solve-score branch must compute the chosen metric using shared helpers from `solve_score.h`.
-7. The palette mapping stays the same:
-   - 10 bins
-   - one palette sample per bin midpoint
-8. Output JSON must include:
-   - `"solve_score": true`
-   - `"solve_metric": "<name>"`
-   - `"palette": "..."`
+The metric summary is derived from the compiled program, not from a separate
+single-metric CLI flag.
 
-Do not keep the branch hardcoded to proximity while only changing labels.
+## 8.6 [lambda/handler_raster_mt.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_raster_mt.py)
 
-## 8.6 [lambda/handler_raster.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_raster.py)
+Required behavior:
 
-Current solve-proximity arg hookup is around lines 73-83.
-
-Required changes:
-
-1. If `color == "solve_score"`:
-   - require `solve_score_bins_key`
-2. For one release only:
-   - if `color == "solve_proximity"`, accept `solve_proximity_bins_key` and coerce to `solve_score` + `metric=proximity`
-3. Download bins JSON and validate:
-   - `family == "solve_score"`
-   - `metric` present
-   - `cuts_norm.length == 9`
-4. If request payload includes `solve_metric`, verify it matches bins JSON `metric`
-5. Pass to `roots2pix`:
-   - `--color=solve_score`
-   - `--solve_metric=<metric>`
-   - `--solve_score_clip_lo=...`
-   - `--solve_score_clip_hi=...`
-   - `--solve_score_cuts=...`
-
-Fail fast on mismatch. Do not silently trust stale bins for a different metric.
+1. Require `solve_score_chain`.
+2. Load and validate the v2 solve-score clip artifact.
+3. Compile the chain and pass the compiled program contract to `roots2pix_mt`.
+4. Fail fast if the clip artifact program, metrics, or source manifests are missing.
 
 ## 8.7 [lambda/handler_storage.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_storage.py)
 
@@ -779,10 +749,10 @@ Add:
 1. `solve_proximity_stats --metric=proximity` smoke
 2. `solve_proximity_stats --metric=crowding` smoke
 3. `solve_proximity_stats --metric=spread` smoke
-4. one `roots2pix --color=solve_score --solve_metric=proximity ...` smoke
+4. one `roots2pix_mt` solve-score-program smoke
 
-The `roots2pix` smoke can be tiny.
-It only needs to prove the generic solve-score branch is wired and the binary accepts the new args.
+The `roots2pix_mt` smoke can be tiny. It only needs to prove the compiled
+program contract is wired and the binary accepts the current args.
 
 ## 10. Manual Validation Checklist
 

@@ -1,11 +1,7 @@
 """
 Bilevel Lambda handler.
 
-Legacy phases:
-  phase=raster: one chunk -> per-tile bitset files (.bits)
-  phase=merge: per-tile bitsets -> tile TIFF
-
-Fused phases:
+Active phases:
   phase=section_raster: one logical section -> one sparse occupancy fragment
   phase=coeff_raster: one logical coeff section -> one sparse occupancy fragment
   phase=finalize: assemble sparse occupancy fragments -> final TIFF + preview
@@ -25,7 +21,6 @@ from datetime import datetime, timezone
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import ClientError
 
 from color_artifact_meta import load_color_artifact_head
 from logical_sections import build_source_spans, stitch_spans_to_file
@@ -33,10 +28,8 @@ from raw_sidecar import validate_raw_sidecar
 from shared import BILEVEL_SPARSE_PIPELINE, BUCKET, imgpipe_env, ok_response, parse_body, report_status
 
 s3 = boto3.client("s3")
-BILEVEL_RASTER = os.path.join(os.path.dirname(__file__), "bilevel_raster")
 BILEVEL_SECTION_RASTER = os.path.join(os.path.dirname(__file__), "bilevel_section_raster")
 COEFFS_BILEVEL_RASTER = os.path.join(os.path.dirname(__file__), "coeffs_bilevel_raster")
-BILEVEL_MERGE = os.path.join(os.path.dirname(__file__), "bilevel_merge")
 ASSEMBLE_GREYSCALE = os.path.join(os.path.dirname(__file__), "assemble_greyscale")
 RAW_TO_BILEVEL = os.path.join(os.path.dirname(__file__), "raw_to_bilevel")
 
@@ -66,7 +59,6 @@ _BILEVEL_UPLOAD_METADATA_LIMITS = {
     "height": 16,
     "degree": 32,
     "pix": 32,
-    "tile_size": 32,
     "view_mode": 32,
     "quantile": 64,
     "shim": 64,
@@ -88,7 +80,6 @@ _BILEVEL_FORWARD_METADATA_KEYS = (
     "created_at",
     "degree",
     "pix",
-    "tile_size",
     "view_mode",
     "quantile",
     "shim",
@@ -180,19 +171,6 @@ def _pix_param(params, label):
     if pix <= 0:
         raise RuntimeError(f"{label} requires pix > 0")
     return pix
-
-
-def _tile_shape(tile_idx, width, height, tile_size, n_tile_cols):
-    tile_idx = int(tile_idx)
-    width = int(width)
-    height = int(height)
-    tile_size = int(tile_size)
-    n_tile_cols = int(n_tile_cols)
-    row = tile_idx // n_tile_cols
-    col = tile_idx % n_tile_cols
-    tile_w = max(0, min(tile_size, width - col * tile_size))
-    tile_h = max(0, min(tile_size, height - row * tile_size))
-    return tile_w, tile_h
 
 
 def _cleanup_tmp(patterns):
@@ -457,12 +435,8 @@ def handler(event, context):
         )
         raise ValueError(message)
 
-    if phase == "raster":
-        return handle_raster(params)
     if phase == "coeff_raster":
         return handle_coeff_raster(params)
-    if phase == "merge":
-        return handle_merge(params)
     if phase == "section_raster":
         return handle_section_raster(params)
     if phase == "finalize":
@@ -478,95 +452,6 @@ def handler(event, context):
         phase_raw=phase,
     )
     raise ValueError(message)
-
-
-def handle_raster(params):
-    """One chunk -> per-tile bitset files. One Lambda per chunk."""
-    try:
-        job_id = str(params.get("job_id") or "").strip()
-        if not job_id:
-            raise RuntimeError("bilevel raster requires job_id")
-        chunk_idx = params.get("chunk_idx", params.get("stripe_idx"))
-        if chunk_idx is None:
-            raise RuntimeError("bilevel raster requires chunk_idx")
-        task_id = params.get("task_id", f"bilevel_raster_{chunk_idx}")
-        report_status(job_id, task_id, "started")
-
-        bin_key = f"renders/{job_id}/chunk_{chunk_idx}.bin"
-        bin_path = _TMP_ROOTS
-        t0 = time.time()
-        try:
-            _download_to_path(bin_key, bin_path)
-        except Exception as e:
-            raise RuntimeError(f"Failed to download root chunk s3://{BUCKET}/{bin_key}: {e}") from e
-        dl_ms = int((time.time() - t0) * 1000)
-        report_status(job_id, task_id, "bin_downloaded")
-
-        _cleanup_tmp(["/tmp/bits_t*.bits", _TMP_ROOT_XFORMS])
-
-        viewport = _viewport_bounds(params)
-        pix = _pix_param(params, "bilevel raster")
-        cmd = [
-            BILEVEL_RASTER, bin_path, "/tmp/bits",
-            f"--pix={pix}",
-            f"--tile_size={params['tile_size']}",
-            f"--n_tile_cols={params['n_tile_cols']}",
-            f"--n_tile_rows={params['n_tile_rows']}",
-            f"--min_re={viewport['min_re']}",
-            f"--max_re={viewport['max_re']}",
-            f"--min_im={viewport['min_im']}",
-            f"--max_im={viewport['max_im']}",
-            f"--degree={params['degree']}",
-            f"--rotation={params.get('rotation', 0.0)}",
-        ]
-        rt_path = _write_root_xforms(_TMP_ROOT_XFORMS, params.get("root_transforms", []))
-        if rt_path:
-            cmd.append(f"--root_xforms={rt_path}")
-
-        t1 = time.time()
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        if result.returncode != 0:
-            raise RuntimeError(f"bilevel_raster failed: {result.stderr.strip()}")
-        meta = json.loads(result.stdout)
-        raster_ms = int((time.time() - t1) * 1000)
-
-        try:
-            os.remove(bin_path)
-        except OSError:
-            pass
-
-        n_tiles = params["n_tile_cols"] * params["n_tile_rows"]
-        uploaded = 0
-        for t in range(n_tiles):
-            bits_path = f"/tmp/bits_t{t:04d}.bits"
-            if os.path.exists(bits_path) and os.path.getsize(bits_path) > 0:
-                s3_key = f"renders/{job_id}/bits_chunk_{int(chunk_idx):04d}_t{t:04d}.bits"
-                with open(bits_path, "rb") as fh:
-                    s3.upload_fileobj(fh, BUCKET, s3_key)
-                uploaded += 1
-            if os.path.exists(bits_path):
-                os.remove(bits_path)
-
-        report_status(job_id, task_id, "done")
-        return ok_response({
-            "chunk_idx": chunk_idx,
-            "stripe_idx": chunk_idx,
-            "tiles_with_hits": uploaded,
-            "roots_plotted": meta["roots_plotted"],
-            "roots_clipped": meta["roots_clipped"],
-            "dl_ms": dl_ms,
-            "raster_ms": raster_ms,
-        })
-    except Exception as e:
-        _report_phase_error(
-            params,
-            str(e),
-            phase="bilevel_raster",
-            phase_label="BiLevel raster",
-            extra_keys=("chunk_idx", "stripe_idx"),
-        )
-        _cleanup_tmp([_TMP_ROOTS, _TMP_ROOT_XFORMS, "/tmp/bits_t*.bits"])
-        raise
 
 
 def handle_coeff_raster(params):
@@ -682,105 +567,6 @@ def handle_coeff_raster(params):
         )
         _cleanup_tmp([_TMP_COEFFS, _TMP_SECTION_FRAGMENT])
         raise
-
-
-def handle_merge(params):
-    """OR per-chunk bitsets for one tile -> tile TIFF. One Lambda per tile."""
-    bits_paths = []
-    out_path = "/tmp/tile.tif"
-    try:
-        job_id = str(params.get("job_id") or "").strip()
-        if not job_id:
-            raise RuntimeError("bilevel merge requires job_id")
-        tile_idx = params.get("tile_idx")
-        if tile_idx in (None, ""):
-            raise RuntimeError("bilevel merge requires tile_idx")
-        try:
-            tile_idx = int(tile_idx)
-        except (TypeError, ValueError) as e:
-            raise RuntimeError(f"bilevel merge requires integer tile_idx, got {tile_idx!r}") from e
-        if tile_idx < 0:
-            raise RuntimeError(f"bilevel merge requires tile_idx >= 0, got {tile_idx}")
-        tile_w = params.get("tile_w")
-        tile_h = params.get("tile_h")
-        if tile_w in (None, "") or tile_h in (None, ""):
-            pix = _pix_param(params, "bilevel merge")
-            tile_w, tile_h = _tile_shape(
-                tile_idx,
-                pix,
-                pix,
-                params["tile_size"],
-                params["n_tile_cols"],
-            )
-        n_chunks = params.get("n_chunks", params.get("n_stripes"))
-        if n_chunks is None:
-            raise RuntimeError("bilevel merge requires n_chunks")
-        bits_prefix = params.get("bits_prefix", "bits")
-        tile_prefix = params.get("tile_prefix", "bilevel")
-        task_prefix = params.get("task_prefix", "bilevel_merge")
-        task_id = str(params.get("task_id") or f"{task_prefix}_{tile_idx}").strip() or f"{task_prefix}_{tile_idx}"
-        report_status(job_id, task_id, "started")
-
-        for c in range(n_chunks):
-            bits_key = f"renders/{job_id}/{bits_prefix}_chunk_{c:04d}_t{int(tile_idx):04d}.bits"
-            local_path = f"/tmp/bits_chunk_{c}.bits"
-            try:
-                obj = s3.get_object(Bucket=BUCKET, Key=bits_key)
-                with open(local_path, "wb") as f:
-                    f.write(obj["Body"].read())
-                bits_paths.append(local_path)
-            except ClientError as e:
-                if e.response["Error"]["Code"] == "NoSuchKey":
-                    continue
-                raise
-        report_status(job_id, task_id, "bits_downloaded")
-
-        cmd = [
-            BILEVEL_MERGE, "merge",
-            f"--tile_w={tile_w}", f"--tile_h={tile_h}",
-            f"--output={out_path}",
-        ] + bits_paths
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=imgpipe_env())
-        if result.returncode != 0:
-            raise RuntimeError(f"bilevel_merge failed: {result.stderr.strip()}")
-        meta = json.loads(result.stdout)
-
-        for path in bits_paths:
-            try:
-                os.remove(path)
-            except OSError:
-                pass
-
-        tile_key = f"renders/{job_id}/{tile_prefix}_t{int(tile_idx):04d}.tif"
-        with open(out_path, "rb") as fh:
-            s3.upload_fileobj(fh, BUCKET, tile_key)
-        os.remove(out_path)
-
-        report_status(job_id, task_id, "done")
-        return ok_response({
-            "tile_idx": tile_idx,
-            "pixels_set": meta.get("pixels_set", 0),
-            "file_size": meta.get("file_size", 0),
-        })
-    except Exception as e:
-        _report_phase_error(
-            params,
-            str(e),
-            phase="bilevel_merge",
-            phase_label="BiLevel merge",
-            extra_keys=("tile_idx", "n_chunks", "n_stripes"),
-        )
-        raise
-    finally:
-        for path in bits_paths:
-            try:
-                os.remove(path)
-            except OSError:
-                pass
-        try:
-            os.remove(out_path)
-        except OSError:
-            pass
 
 
 def handle_section_raster(params):

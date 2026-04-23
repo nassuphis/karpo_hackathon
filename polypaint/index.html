@@ -1775,7 +1775,7 @@ button {
         <div style="margin:10px 0 12px 0">
             <div id="palette-circles-color-repalette" style="display:flex; flex-wrap:wrap; gap:8px"></div>
         </div>
-        <div class="autolevel-popup-help">Reuses the selected Color artifact’s canonical greyscale raw when present, otherwise its saved winner-per-pixel bins, and only changes the palette-to-RGB mapping.</div>
+        <div class="autolevel-popup-help">Reuses the selected Color artifact’s canonical greyscale raw when present, otherwise its saved winner-per-raw-score fragments, and only changes the palette-to-RGB mapping.</div>
         <div class="autolevel-popup-actions">
             <div></div>
             <div style="display:flex; gap:8px">
@@ -3659,7 +3659,6 @@ function _summarizeLambdaBody(body) {
     push('task_prefix', body.task_prefix);
     if (body.section_idx != null) push('section', body.section_idx);
     else if (body.chunk_idx != null) push('chunk', body.chunk_idx);
-    if (body.tile_idx != null) push('tile', body.tile_idx);
     if (body.section_idx == null && body.chunk_idx == null && body.stripe_idx != null) push('section', body.stripe_idx);
     push('function', body.function);
     push('metric', body.metric);
@@ -3765,7 +3764,8 @@ function _displaySolveScoreEntry(item) {
     const params = Array.isArray(item.params) ? item.params : [];
     if (_solveScoreMetricSet.has(item.name)) {
         const hasExplicitSource = params.length >= 2;
-        const source = _normalizeSolveScoreMetricSource(hasExplicitSource ? params[0] : 'slv', 'slv');
+        const sourceInfo = _splitSolveScoreMetricSourceLag(hasExplicitSource ? params[0] : 'slv', 'slv');
+        const source = sourceInfo.wire;
         const q = hasExplicitSource ? (params[1] || '?') : (params[0] || '?');
         return source === 'slv'
             ? `${item.name}(q=${q}%)`
@@ -3809,6 +3809,23 @@ function _solveScoreQuantilePctText(value, fallback = '0.1') {
 function _normalizeSolveScoreMetricSource(value, fallback = 'slv') {
     const source = String(value == null ? '' : value).trim().toLowerCase();
     return (source === 'slv' || source === 'cf' || source === 'pm') ? source : fallback;
+}
+
+function _splitSolveScoreMetricSourceLag(value, fallback = 'slv') {
+    const raw = String(value == null ? '' : value).trim().toLowerCase();
+    if (raw === 'slv' || raw === 'cf' || raw === 'pm') return { source: raw, lag: 0, wire: raw };
+    if (raw.endsWith('-1')) {
+        const base = raw.slice(0, -2);
+        if (base === 'slv' || base === 'cf' || base === 'pm') return { source: base, lag: 1, wire: `${base}-1` };
+    }
+    if (fallback === '') return { source: '', lag: 0, wire: '' };
+    const fb = _normalizeSolveScoreMetricSource(fallback, 'slv');
+    return { source: fb, lag: 0, wire: fb };
+}
+
+function _solveScoreMetricSourceChoices(name) {
+    const base = _solveScoreMetricAllowedSources(name);
+    return base.concat(base.map(source => `${source}-1`));
 }
 
 function _solveScoreMetricsUseSource(metrics, wantedSource) {
@@ -3921,17 +3938,18 @@ function _normalizeSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQu
             if (params.length === 0) {
                 params = [defaultSource, _solveScoreQuantilePctText(legacyQuantilePct)];
             } else if (params.length === 1) {
-                const maybeSource = _normalizeSolveScoreMetricSource(params[0], '');
+                const sourceInfo = _splitSolveScoreMetricSourceLag(params[0], '');
+                const maybeSource = sourceInfo.source;
                 const allowedSources = _solveScoreMetricAllowedSources(name);
                 params = maybeSource
-                    ? [allowedSources.includes(maybeSource) ? maybeSource : defaultSource, _solveScoreQuantilePctText(legacyQuantilePct)]
+                    ? [allowedSources.includes(maybeSource) ? sourceInfo.wire : defaultSource, _solveScoreQuantilePctText(legacyQuantilePct)]
                     : [defaultSource, _solveScoreQuantilePctText(params[0], legacyQuantilePct)];
             } else {
                 params = [
                     (() => {
-                        const source = _normalizeSolveScoreMetricSource(params[0], defaultSource);
+                        const sourceInfo = _splitSolveScoreMetricSourceLag(params[0], defaultSource);
                         const allowedSources = _solveScoreMetricAllowedSources(name);
-                        return allowedSources.includes(source) ? source : defaultSource;
+                        return allowedSources.includes(sourceInfo.source) ? sourceInfo.wire : defaultSource;
                     })(),
                     _solveScoreQuantilePctText(params[1], legacyQuantilePct),
                 ];
@@ -3945,7 +3963,7 @@ function _normalizeSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQu
 function _serializeSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuantilePct = '0.1') {
     return _normalizeSolveScoreChain(chain, fallbackMetric, legacyQuantilePct).map((item) => {
         if (_solveScoreMetricSet.has(item.name)) {
-            const source = _normalizeSolveScoreMetricSource(item.params[0], 'slv');
+            const source = _splitSolveScoreMetricSourceLag(item.params[0], 'slv').wire;
             const q = item.params[1];
             return source === 'slv' ? [item.name, q] : [item.name, source, q];
         }
@@ -3956,7 +3974,7 @@ function _serializeSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQu
 function _buildSolveScoreProgramSpec(program) {
     return (Array.isArray(program) ? program : []).map((token) => {
         if (!token || !token.kind) return '';
-        if (token.kind === 'metric') return `m${token.slot}`;
+        if (token.kind === 'metric') return `m${token.slot}-${Number(token.lag) || 0}`;
         if (token.kind === 'omega_cosine') {
             return Math.abs(Number(token.phase) || 0) < 1e-12
                 ? `omega_cosine:${String(token.omega)}`
@@ -3994,7 +4012,24 @@ function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuan
     if (!normalized.length) {
         throw new Error('Solve score chain must contain at least one metric chip');
     }
+    const currentSlotCandidates = new Map();
+    normalized.forEach((item) => {
+        if (!_solveScoreMetricSet.has(item.name) || item.params.length !== 2) return;
+        const sourceInfo = _splitSolveScoreMetricSourceLag(item.params[0], '');
+        if ((Number(sourceInfo.lag) || 0) !== 0) return;
+        const source = sourceInfo.source;
+        const allowedSources = _solveScoreMetricAllowedSources(item.name);
+        if (!source || !allowedSources.includes(source)) return;
+        const qPct = Number(item.params[1]);
+        if (!Number.isFinite(qPct)) return;
+        const familyKey = `${item.name}\u0000${source}`;
+        const slotKey = `${item.name}\u0000${source}\u0000${qPct / 100}`;
+        if (!currentSlotCandidates.has(familyKey)) currentSlotCandidates.set(familyKey, []);
+        const candidates = currentSlotCandidates.get(familyKey);
+        if (!candidates.includes(slotKey)) candidates.push(slotKey);
+    });
     const metrics = [];
+    const baseSlotMap = new Map();
     let stackDepth = 0;
     let omega = 1;
     let omegaPhase = 0;
@@ -4003,7 +4038,9 @@ function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuan
     normalized.forEach((item) => {
         if (_solveScoreMetricSet.has(item.name)) {
             if (item.params.length !== 2) throw new Error(`${item.name} requires source and q parameters`);
-            const source = _normalizeSolveScoreMetricSource(item.params[0], '');
+            const sourceInfo = _splitSolveScoreMetricSourceLag(item.params[0], '');
+            const source = sourceInfo.source;
+            const lag = Number(sourceInfo.lag) || 0;
             const allowedSources = _solveScoreMetricAllowedSources(item.name);
             if (!source || !allowedSources.includes(source)) {
                 throw new Error(`${item.name} source must be one of ${allowedSources.join(', ')}`);
@@ -4012,8 +4049,37 @@ function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuan
             if (!Number.isFinite(qPct) || qPct < 0.1 || qPct > 5.0) {
                 throw new Error(`${item.name} q must be in [0.1, 5.0]%`);
             }
-            metrics.push({ slot: metrics.length, source, metric: item.name, quantile_pct: qPct, quantile: qPct / 100 });
-            program.push({ kind: 'metric', slot: metrics.length - 1 });
+            let slot = -1;
+            let slotKey = '';
+            if (lag === 0) {
+                slotKey = `${item.name}\u0000${source}\u0000${qPct / 100}`;
+            } else if (lag === 1) {
+                const candidates = currentSlotCandidates.get(`${item.name}\u0000${source}`) || [];
+                if (candidates.length === 1) {
+                    slotKey = candidates[0];
+                } else if (candidates.length === 0) {
+                    slotKey = `${item.name}\u0000${source}\u0000${qPct / 100}`;
+                } else {
+                    throw new Error(`Lagged ${item.name}(${source}-1) is ambiguous; choose an explicit base slot`);
+                }
+            } else {
+                throw new Error('Solve-score lag depth other than 0 or 1 is unsupported');
+            }
+            if (baseSlotMap.has(slotKey)) {
+                slot = baseSlotMap.get(slotKey);
+            } else {
+                const [slotMetric, slotSource, slotQuantile] = slotKey.split('\u0000');
+                slot = metrics.length;
+                metrics.push({
+                    slot,
+                    source: slotSource,
+                    metric: slotMetric,
+                    quantile_pct: Number(slotQuantile) * 100,
+                    quantile: Number(slotQuantile),
+                });
+                baseSlotMap.set(slotKey, slot);
+            }
+            program.push({ kind: 'metric', slot, lag });
             stackDepth += 1;
             return;
         }
@@ -4075,6 +4141,11 @@ function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuan
     const metric = metrics[0].metric;
     const quantile = metrics[0].quantile;
     const programSpec = _buildSolveScoreProgramSpec(program);
+    const usesLag = program.some(token => token && token.kind === 'metric' && (Number(token.lag) || 0) > 0);
+    const laggedSources = Array.from(new Set(program
+        .filter(token => token && token.kind === 'metric' && (Number(token.lag) || 0) > 0)
+        .map(token => metrics[token.slot] && metrics[token.slot].source)
+        .filter(Boolean))).sort();
     const usesCoeffSource = _solveScoreMetricsUseSource(metrics, 'cf');
     const usesParamSource = _solveScoreMetricsUseSource(metrics, 'pm');
     return {
@@ -4084,6 +4155,13 @@ function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuan
         uses_coeff_source: usesCoeffSource,
         uses_param_source: usesParamSource,
         uses_non_solve_source: usesCoeffSource || usesParamSource,
+        uses_lag: usesLag,
+        max_lag: usesLag ? 1 : 0,
+        prelude_by_source: {
+            slv: laggedSources.includes('slv') ? 1 : 0,
+            cf: laggedSources.includes('cf') ? 1 : 0,
+            pm: laggedSources.includes('pm') ? 1 : 0,
+        },
         omega,
         omega_phase: omegaPhase,
         omega_enabled: omegaEnabled,
@@ -4092,9 +4170,11 @@ function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuan
         program_spec: programSpec,
         display: normalized.map(item => _displaySolveScoreEntry(item)).join(' '),
         legacy_compatible:
+            !usesLag &&
             !(usesCoeffSource || usesParamSource) &&
             (program.length === 1 && program[0].kind === 'metric') ||
             (
+                !usesLag &&
                 !(usesCoeffSource || usesParamSource) &&
                 program.length === 2 &&
                 program[0].kind === 'metric' &&
@@ -8908,7 +8988,7 @@ const _ssCatalog = (() => {
         catalog[name] = {
             label: name,
             chip_kind: 'metric',
-            params: [{ ph: 'src', def: _solveScoreParamMetricSet.has(name) ? 'pm' : 'slv', choices: _solveScoreMetricAllowedSources(name) }, { ph: 'q%', def: '0.1' }],
+            params: [{ ph: 'src', def: _solveScoreParamMetricSet.has(name) ? 'pm' : 'slv', choices: _solveScoreMetricSourceChoices(name) }, { ph: 'q%', def: '0.1' }],
             tooltip: _solveScoreParamMetricSet.has(name) ? `${name}(pm,q=0.1%)` : `${name}(slv,q=0.1%)`,
         };
     });
@@ -9551,12 +9631,24 @@ function _solveScoreChipShell(which, i, bodyHtml, tooltipAttr = '') {
     return `<span class="chip score-chip"${tooltipAttr}>${moves}${bodyHtml}<span class="chip-x" onclick="event.stopPropagation();removeChip('${which}',${i})">x</span></span>`;
 }
 
+function _solveScoreInheritedLagQuantile(which, chipIdx, item) {
+    const sourceInfo = _splitSolveScoreMetricSourceLag(item && item.params ? item.params[0] : '', '');
+    if (sourceInfo.lag !== 1) return null;
+    const candidates = _chainForWhich(which)
+        .slice(0, chipIdx)
+        .filter(row => row && row.name === item.name && _splitSolveScoreMetricSourceLag(row.params && row.params[0], '').source === sourceInfo.source && _splitSolveScoreMetricSourceLag(row.params && row.params[0], '').lag === 0);
+    return candidates.length === 1 && candidates[0].params && candidates[0].params.length > 1 ? candidates[0].params[1] : null;
+}
+
 function _renderRtChipHtml(item, i, which, catalog) {
     const spec = catalog[item.name] || {};
     const pDefs = spec.params || [];
     if ((which === 'ss' || which === 'palette-ss') && _solveScoreMetricSet.has(item.name)) {
         const source = _chipInputHtml(which, i, 0, item.params[0] || 'slv', pDefs[0]);
-        const q = _chipInputHtml(which, i, 1, item.params[1] || item.params[0] || '', pDefs[1]);
+        const inheritedQ = _solveScoreInheritedLagQuantile(which, i, item);
+        const q = inheritedQ == null
+            ? _chipInputHtml(which, i, 1, item.params[1] || item.params[0] || '', pDefs[1])
+            : `<input class="chip-input" type="text" value="${_escapeHtml(inheritedQ)}" disabled title="Inherited from the base metric slot">`;
         return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>${_escapeHtml(item.name)}(</span><span>${source}</span><span class="chip-op">,</span><span>q=</span><span>${q}</span><span>%)</span></span>`);
     }
     if ((which === 'ss' || which === 'palette-ss') && item.name === 'omega_cosine') {
@@ -11360,11 +11452,8 @@ function _aggregateRasterPerf(results) {
         acc.fragment_bytes_uploaded += Number(row.fragment_bytes_uploaded) || 0;
         acc.associated_palette_fragment_files_uploaded += Number(row.associated_palette_fragment_files_uploaded) || 0;
         acc.associated_palette_fragment_bytes_uploaded += Number(row.associated_palette_fragment_bytes_uploaded) || 0;
-        if (!acc.pixel_bin_fragment_mode && row.pixel_bin_fragment_mode) acc.pixel_bin_fragment_mode = String(row.pixel_bin_fragment_mode);
         const rowRgbSource = String(row.rgb_source || '').trim();
         if (!acc.rgb_source && rowRgbSource) acc.rgb_source = rowRgbSource;
-        if (row.pixel_bins_drive_rgb === true || String(row.pixel_bins_drive_rgb || '').toLowerCase() === 'true') acc.pixel_bins_drive_rgb = true;
-        if (!acc.pixel_bin_fragment_mode && row.pixel_bin_fragment_mode) acc.pixel_bin_fragment_mode = String(row.pixel_bin_fragment_mode);
         return acc;
     }, {
         engine: '',
@@ -11382,9 +11471,7 @@ function _aggregateRasterPerf(results) {
         fragment_bytes_uploaded: 0,
         associated_palette_fragment_files_uploaded: 0,
         associated_palette_fragment_bytes_uploaded: 0,
-        pixel_bin_fragment_mode: '',
         rgb_source: '',
-        pixel_bins_drive_rgb: false,
     });
 }
 
@@ -11425,7 +11512,6 @@ function _aggregateFinalizePerf(results) {
         acc.upload_ms += Number(row.upload_ms) || 0;
         acc.workers = Math.max(acc.workers, Number(row.workers) || 0);
         if (!acc.rgb_source && row.rgb_source) acc.rgb_source = String(row.rgb_source);
-        if (row.pixel_bins_drive_rgb === true || String(row.pixel_bins_drive_rgb || '').toLowerCase() === 'true') acc.pixel_bins_drive_rgb = true;
         if (!acc.access_mode && row.access_mode) acc.access_mode = String(row.access_mode);
         if (!acc.assemble_mode && row.assemble_mode) acc.assemble_mode = String(row.assemble_mode);
         acc.raw_expected_size += Number(row.raw_expected_size) || 0;
@@ -11435,12 +11521,6 @@ function _aggregateFinalizePerf(results) {
         acc.pix_files_seen += Number(row.pix_files_seen) || 0;
         acc.pix_files_missing += Number(row.pix_files_missing != null ? row.pix_files_missing : row.missing_pix_files) || 0;
         acc.pix_bytes += Number(row.pix_bytes) || 0;
-        acc.pixel_bins_ms += Number(row.pixel_bins_ms) || 0;
-        acc.pixel_bin_files += Number(row.pixel_bin_files != null ? row.pixel_bin_files : row.pixel_bin_files_piped) || 0;
-        acc.pixel_bin_files_seen += Number(row.pixel_bin_files_seen) || 0;
-        acc.pixel_bin_files_missing += Number(row.pixel_bin_files_missing) || 0;
-        acc.pixel_bin_bytes += Number(row.pixel_bin_bytes) || 0;
-        acc.pixel_bin_size += Number(row.pixel_bin_size) || 0;
         return acc;
     }, {
         tasks: 0,
@@ -11449,8 +11529,6 @@ function _aggregateFinalizePerf(results) {
         upload_ms: 0,
         workers: 0,
         rgb_source: '',
-        pixel_bins_drive_rgb: false,
-        pixel_bin_fragment_mode: '',
         access_mode: '',
         assemble_mode: '',
         raw_expected_size: 0,
@@ -11460,25 +11538,7 @@ function _aggregateFinalizePerf(results) {
         pix_files_seen: 0,
         pix_files_missing: 0,
         pix_bytes: 0,
-        pixel_bins_ms: 0,
-        pixel_bin_files: 0,
-        pixel_bin_files_seen: 0,
-        pixel_bin_files_missing: 0,
-        pixel_bin_bytes: 0,
-        pixel_bin_size: 0,
     });
-}
-
-function _aggregateEncodePerf(results) {
-    const rows = Array.isArray(results) ? results.filter(r => r && (r.stitch_ms != null || r.encode_ms != null || r.upload_ms != null)) : [];
-    if (!rows.length) return null;
-    return rows.reduce((acc, row) => {
-        acc.tasks += 1;
-        acc.stitch_ms += Number(row.stitch_ms) || 0;
-        acc.encode_ms += Number(row.encode_ms) || 0;
-        acc.upload_ms += Number(row.upload_ms) || 0;
-        return acc;
-    }, { tasks: 0, stitch_ms: 0, encode_ms: 0, upload_ms: 0 });
 }
 
 function _aggregateColorToBilevelPerf(results) {
@@ -11573,9 +11633,6 @@ function _renderPhaseSubtaskInfo(run, rd) {
     if (phase === 'solve_score_merge') {
         return { prefix: `render_${run.run_id}_solve_score_merge`, expected: 1, phase };
     }
-    if (phase === 'encode') {
-        return { prefix: `render_${run.run_id}_encode`, expected: 1, phase };
-    }
     return null;
 }
 
@@ -11600,13 +11657,12 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
     if (phase === 'raster') {
         const perf = _aggregateRasterPerf(results);
         if (!perf) return '';
-        const usesRawScoreFragments = String(perf.rgb_source || '').toLowerCase() === 'raw_score_bins';
         let msg = `wall=${_fmtSecondsMs(wallMs)} total=dl ${_fmtSecondsUs(perf.download_us)} + native ${_fmtSecondsUs(perf.native_us)} + up ${_fmtSecondsUs(perf.upload_us)} · threads=${perf.threads}`;
         const inputLabel = _formatRequestedEffectiveInputMode(perf);
         if (inputLabel) msg += ` · input=${inputLabel}`;
         if (perf.input_mode === 'sectioned' || perf.input_mode === 'multispan_sectioned') msg += ` · retries=${perf.retries}`;
         if (perf.rgb_source) msg += ` · rgb=${perf.rgb_source}`;
-        if (perf.fragment_bytes_uploaded > 0) msg += ` · ${usesRawScoreFragments ? 'fragments' : 'pbx'}=${_fmtSize(perf.fragment_bytes_uploaded)}`;
+        if (perf.fragment_bytes_uploaded > 0) msg += ` · fragments=${_fmtSize(perf.fragment_bytes_uploaded)}`;
         return msg;
     }
     if (phase === 'associated_palette_chunk') {
@@ -11636,31 +11692,18 @@ function _renderPhasePerfSummary(phase, results, wallMs) {
     if (phase === 'finalize' || phase === 'finalize_mt') {
         const perf = _aggregateFinalizePerf(results);
         if (!perf) return `wall=${_fmtSecondsMs(wallMs)}`;
-        const usesRawScoreFragments = String(perf.rgb_source || '').toLowerCase() === 'raw_score_bins';
         let msg = `wall=${_fmtSecondsMs(wallMs)} total=read ${_fmtSecondsMs(perf.read_ms)} + assemble ${_fmtSecondsMs(perf.assemble_ms)} + up ${_fmtSecondsMs(perf.upload_ms)}`;
-        if (perf.pixel_bins_ms > 0) msg += ` + pbx ${_fmtSecondsMs(perf.pixel_bins_ms)}`;
         if (perf.workers > 0) msg += ` · workers=${perf.workers}`;
         if (perf.rgb_source) msg += ` · rgb=${perf.rgb_source}`;
-        if (perf.pixel_bin_fragment_mode) msg += ` · bins=${perf.pixel_bin_fragment_mode}`;
         if (perf.access_mode) msg += ` · access=${perf.access_mode}`;
         if (perf.assemble_mode) msg += ` · assemble=${perf.assemble_mode}`;
-        const fragmentCount = perf.pixel_bins_drive_rgb
-            ? (perf.pixel_bin_files || perf.pixel_bin_files_seen)
-            : (perf.pix_files || perf.pix_files_seen);
+        const fragmentCount = perf.pix_files || perf.pix_files_seen;
         if (perf.n_chunks > 0) msg += ` · fragments=${fragmentCount}/${perf.n_chunks}`;
         if (perf.pix_files_missing > 0) msg += ` missing=${perf.pix_files_missing}`;
         if (perf.pix_bytes > 0) msg += ` · pix=${_fmtSize(perf.pix_bytes)}`;
         const rawBytes = perf.raw_size || perf.raw_expected_size;
         if (rawBytes > 0) msg += ` · raw=${_fmtSize(rawBytes)}`;
-        if (perf.pixel_bin_bytes > 0 || perf.pixel_bin_size > 0) {
-            msg += ` · ${usesRawScoreFragments ? 'fragments' : 'pbx'}=${_fmtSize(perf.pixel_bin_bytes || perf.pixel_bin_size)}`;
-        }
         return msg;
-    }
-    if (phase === 'encode') {
-        const perf = _aggregateEncodePerf(results);
-        if (!perf) return `wall=${_fmtSecondsMs(wallMs)}`;
-        return `wall=${_fmtSecondsMs(wallMs)} total=stitch ${_fmtSecondsMs(perf.stitch_ms)} + encode ${_fmtSecondsMs(perf.encode_ms)} + up ${_fmtSecondsMs(perf.upload_ms)}`;
     }
     if (
         phase === 'bilevel_from_raw_prepare' ||
@@ -11718,8 +11761,6 @@ function _renderPhaseProgressSignature(phase, results) {
     return [
         perf.pix_files || perf.pix_files_seen || 0,
         perf.pix_bytes || 0,
-        perf.pixel_bin_files || perf.pixel_bin_files_seen || 0,
-        perf.pixel_bin_bytes || 0,
         perf.raw_size || 0,
         perf.assemble_ms || 0,
         perf.upload_ms || 0,
@@ -11801,8 +11842,7 @@ async function _logRenderRasterPerf(run) {
                 )
             ) || 0)
             : 0;
-        const usesRawScoreFragments = String(perf.rgb_source || '').toLowerCase() === 'raw_score_bins';
-        const artifactLabel = usesRawScoreFragments ? 'Fragment' : 'Pixel-bin';
+        const artifactLabel = 'Fragment';
         const lines = [
             `Raster performance: engine=${perf.engine || 'single'} threads=${perf.threads}${perf.input_mode ? ` input=${perf.input_mode}` : ''} chunks=${perf.chunks} wall=${_fmtSecondsMs(wallMs)}`,
             `  Download time: ${_fmtSecondsUs(perf.download_us)}`,

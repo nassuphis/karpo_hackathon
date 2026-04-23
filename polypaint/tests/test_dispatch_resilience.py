@@ -2,7 +2,7 @@
 Tests for the dispatch resilience fixes:
   1. check-status return_ids — DynamoDB returns found task IDs on request
   2. head-keys endpoint — batch HEAD existence check for S3 keys
-  3. dispatch bilevel target — fires async bilevel Lambdas
+  3. dispatch targets — fires async worker Lambdas
 
 Run: cd polypaint && python -m pytest tests/test_dispatch_resilience.py -v
 """
@@ -258,40 +258,46 @@ class TestHeadKeys(unittest.TestCase):
         mock_head.assert_called_once_with(keys, presign=False)
 
 
-# ── Test: dispatch bilevel target ─────────────────────────────────────────
+# ── Test: dispatch targets ────────────────────────────────────────────────
 
 
-class TestDispatchBilevelTarget(unittest.TestCase):
-    """Verify dispatch handler supports the bilevel target."""
+class TestDispatchTargets(unittest.TestCase):
+    """Verify dispatch handler supports active async worker targets."""
 
     def _make_event(self, body):
         return {"body": json.dumps(body)}
 
     @patch("handler_dispatch.lambda_client")
-    def test_dispatch_bilevel_target(self, mock_client):
+    def test_dispatch_color_to_bilevel_target(self, mock_client):
         from handler_dispatch import handler
         mock_client.invoke.return_value = {"StatusCode": 202}
-        jobs = [{"phase": "raster", "job_id": "j", "stripe_idx": i,
-                 "pix": 4096, "tile_size": 4096,
-                 "n_tile_cols": 1, "n_tile_rows": 1,
-                 "min_re": -20.48, "max_re": 20.48, "min_im": -20.48, "max_im": 20.48, "degree": 5}
-                for i in range(3)]
-        event = self._make_event({"target": "bilevel", "jobs": jobs})
+        jobs = [
+            {
+                "phase": "from_raw_color",
+                "job_id": "j",
+                "task_id": f"color_to_bilevel_{i}",
+                "artifact_id": f"bil_{i}",
+                "source_artifact_id": "color_src",
+                "source_image_key": "renders/j/color/color_src/image.jpeg",
+                "threshold": 128,
+            }
+            for i in range(3)
+        ]
+        event = self._make_event({"target": "color_to_bilevel", "jobs": jobs})
         result = handler(event, None)
         body = json.loads(result["body"])
         self.assertEqual(body["fired"], 3)
         self.assertEqual(body["total"], 3)
-        # Verify the function name used for invocation
         invoke_call = mock_client.invoke.call_args
-        self.assertIn("polypaint-bilevel", invoke_call[1]["FunctionName"])
+        self.assertIn("polypaint-color-to-bilevel", invoke_call[1]["FunctionName"])
 
     @patch("handler_dispatch.lambda_client")
     def test_dispatch_non_202_tracked(self, mock_client):
         """Non-202 responses are counted as fired but logged in non_202."""
         from handler_dispatch import handler
         mock_client.invoke.return_value = {"StatusCode": 429}
-        jobs = [{"phase": "raster", "job_id": "j", "stripe_idx": 0}]
-        event = self._make_event({"target": "bilevel", "jobs": jobs})
+        jobs = [{"phase": "clip", "job_id": "j", "task_id": "clip_0"}]
+        event = self._make_event({"target": "solve_proximity", "jobs": jobs})
         result = handler(event, None)
         body = json.loads(result["body"])
         self.assertEqual(body["fired"], 1)
@@ -303,8 +309,8 @@ class TestDispatchBilevelTarget(unittest.TestCase):
         """Dispatch 200 jobs — exercises ThreadPoolExecutor parallelism."""
         from handler_dispatch import handler
         mock_client.invoke.return_value = {"StatusCode": 202}
-        jobs = [{"phase": "raster", "job_id": "j", "stripe_idx": i} for i in range(200)]
-        event = self._make_event({"target": "bilevel", "jobs": jobs})
+        jobs = [{"phase": "clip", "job_id": "j", "task_id": f"clip_{i}"} for i in range(200)]
+        event = self._make_event({"target": "solve_proximity", "jobs": jobs})
         result = handler(event, None)
         body = json.loads(result["body"])
         self.assertEqual(body["fired"], 200)
@@ -412,9 +418,9 @@ class TestMissingTaskDetection(unittest.TestCase):
         self.assertEqual(missing, [3, 17, 42, 199, 301, 498])
 
     def test_different_prefix(self):
-        """Works with merge task prefix too."""
-        found = [f"bilevel_merge_{i}" for i in [0, 2, 3]]
-        missing = self._compute_missing(found, "bilevel_merge_", 4)
+        """Works with a different task prefix too."""
+        found = [f"render_section_{i}" for i in [0, 2, 3]]
+        missing = self._compute_missing(found, "render_section_", 4)
         self.assertEqual(missing, [1])
 
     def test_coeff_prefix(self):

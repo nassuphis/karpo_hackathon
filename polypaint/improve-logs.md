@@ -294,7 +294,6 @@ Keep or add meaningful statuses in these files:
   - repeated `reading_*`
   - `assembled`
   - `done`
-- [`lambda/handler_encode.py`](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_encode.py)
   - `started`
   - `stitching`
   - `encoding`
@@ -315,7 +314,7 @@ Do not add tight loop status writes like:
 
 - once per pixel
 - once per root
-- once per tile upload
+- once per artifact upload
 
 The goal is:
 

@@ -7,7 +7,6 @@
 #   polypaint-sweep-mt     — multithreaded AE root solver (sweep_mt binary)
 #   polypaint-coeffgen     — composable coefficient generation (sweep_coeffgen binary, coeffgen mode)
 #   polypaint-raster-mt    — multithreaded color raster via parallel roots2pix workers
-#   polypaint-encode       — raw→JPEG/PNG encoding (raw2jpeg binary, needs libvips)
 #   polypaint-viewport     — compute viewport from lores.bin (pure Python)
 #   polypaint-storage      — S3 list/delete/metadata (pure Python)
 #   polypaint-dispatch     — async Lambda invocation dispatcher (pure Python)
@@ -17,7 +16,6 @@ export AWS_PAGER=""
 
 SWEEP_NAME="polypaint-sweep"
 SWEEP_MT_NAME="polypaint-sweep-mt"
-ENCODE_NAME="polypaint-encode"
 VIEWPORT_NAME="polypaint-viewport"
 STORAGE_NAME="polypaint-storage"
 DISPATCH_NAME="polypaint-dispatch"
@@ -35,8 +33,6 @@ RUNTIME="python3.12"
 ARCH="arm64"
 SWEEP_MEMORY=10240    # 6 vCPUs for single-thread AE solve with large chunks
 SWEEP_MT_MEMORY=10240 # 6 vCPUs for multithreaded AE solve
-ENCODE_MEMORY=10240   # max memory/CPU tier for very large JPEG/PNG encodes
-ENCODE_EPHEMERAL=3072 # 3GB /tmp for preview generation from large images
 VIEWPORT_MEMORY=512   # pure Python
 STORAGE_MEMORY=512    # pure Python
 DISPATCH_MEMORY=1769  # 1 vCPU — 50 threads doing SSL need real CPU
@@ -67,7 +63,7 @@ RESIZE_ARTIFACT_MEMORY=6144  # libvips resize/thumbnail post-process on saved co
 REPALETTE_NAME="polypaint-repalette"
 REPALETTE_MEMORY=4096  # libvips palette recolor on saved palette artifacts
 COLOR_REPALETTE_NAME="polypaint-color-repalette"
-COLOR_REPALETTE_MEMORY=1769  # fast tile recolor from persisted pixel bins
+COLOR_REPALETTE_MEMORY=1769  # raw-sidecar Color repalette
 RECOLOR_FROM_RAW_NAME="polypaint-recolor-from-raw"
 RECOLOR_FROM_RAW_MEMORY=1769  # raw-sidecar-only recolor
 EXTRACT_PALETTE_FUSED_NAME="polypaint-extract-palette-fused"
@@ -314,7 +310,6 @@ render_render_workflow_definition() {
     local RENDER_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_PLAN_NAME}"
     local RENDER_STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_STATUS_NAME}"
     local FINALIZE_MT_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${FINALIZE_MT_NAME}"
-    local ENCODE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${ENCODE_NAME}"
     local STORAGE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${STORAGE_NAME}"
     local BILEVEL_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_NAME}"
     local SOLVE_PROXIMITY_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${SOLVE_PROXIMITY_NAME}"
@@ -323,7 +318,6 @@ render_render_workflow_definition() {
         --plan-function-arn "$RENDER_PLAN_ARN" \
         --status-function-arn "$RENDER_STATUS_ARN" \
         --finalize-mt-function-arn "$FINALIZE_MT_ARN" \
-        --encode-function-arn "$ENCODE_ARN" \
         --storage-function-arn "$STORAGE_ARN" \
         --bilevel-function-arn "$BILEVEL_ARN" \
         --solve-proximity-function-arn "$SOLVE_PROXIMITY_ARN"
@@ -675,9 +669,6 @@ docker run --rm --platform linux/arm64 \
         echo "  assemble_greyscale compiled: $(file /src/assemble_greyscale)"
     '
 
-echo "  bilevel_raster (static, ARM64)..."
-aarch64-linux-musl-gcc -O3 -static -o lambda/bilevel_raster lambda/bilevel_raster.c -lm
-
 echo "  coeffs_bilevel_raster (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/coeffs_bilevel_raster lambda/coeffs_bilevel_raster.c -lm
 
@@ -736,9 +727,6 @@ docker run --rm --platform linux/arm64 \
     '
 echo "  palette_bins_render (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/palette_bins_render lambda/palette_bins_render.c -lm
-
-echo "  pixel_bins_render (static, ARM64)..."
-aarch64-linux-musl-gcc -O3 -static -o lambda/pixel_bins_render lambda/pixel_bins_render.c -lm
 
 echo "  step_scores_to_palette_raw (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/step_scores_to_palette_raw lambda/step_scores_to_palette_raw.c
@@ -978,16 +966,6 @@ chmod +x "$COEFFGEN_DIR"/sweep_coeffgen
 cd "$COEFFGEN_DIR" && zip -r9 /tmp/polypaint-coeffgen.zip . -q && cd "$SCRIPT_DIR"
 echo "  Coeffgen: $(du -h /tmp/polypaint-coeffgen.zip | cut -f1)  (sweep_coeffgen + LAPACK layer)"
 
-# Encode: handler_encode.py + shared.py + color_artifact_meta.py + raw2jpeg
-ENCODE_DIR=/tmp/polypaint-encode
-rm -rf "$ENCODE_DIR"
-mkdir -p "$ENCODE_DIR"
-cp lambda/handler_encode.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$ENCODE_DIR/"
-cp lambda/raw2jpeg "$ENCODE_DIR/"
-chmod +x "$ENCODE_DIR"/raw2jpeg
-cd "$ENCODE_DIR" && zip -r9 /tmp/polypaint-encode.zip . -q && cd "$SCRIPT_DIR"
-echo "  Encode:   $(du -h /tmp/polypaint-encode.zip | cut -f1)  (raw2jpeg + libvips layer)"
-
 # Viewport: handler_viewport.py + shared.py (pure Python)
 VIEWPORT_DIR=/tmp/polypaint-viewport
 rm -rf "$VIEWPORT_DIR"
@@ -1058,9 +1036,9 @@ BILEVEL_DIR=/tmp/polypaint-bilevel
 rm -rf "$BILEVEL_DIR"
 mkdir -p "$BILEVEL_DIR/lib"
 cp lambda/handler_bilevel.py lambda/shared.py lambda/logical_sections.py lambda/raw_sidecar.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$BILEVEL_DIR/"
-cp lambda/bilevel_raster lambda/bilevel_section_raster lambda/coeffs_bilevel_raster lambda/bilevel_merge lambda/raw_to_bilevel lambda/assemble_greyscale "$BILEVEL_DIR/"
+cp lambda/bilevel_section_raster lambda/coeffs_bilevel_raster lambda/raw_to_bilevel lambda/assemble_greyscale "$BILEVEL_DIR/"
 cp lambda/assemble_greyscale_lib/* "$BILEVEL_DIR/lib/"
-chmod +x "$BILEVEL_DIR"/bilevel_raster "$BILEVEL_DIR"/bilevel_section_raster "$BILEVEL_DIR"/coeffs_bilevel_raster "$BILEVEL_DIR"/bilevel_merge "$BILEVEL_DIR"/raw_to_bilevel "$BILEVEL_DIR"/assemble_greyscale
+chmod +x "$BILEVEL_DIR"/bilevel_section_raster "$BILEVEL_DIR"/coeffs_bilevel_raster "$BILEVEL_DIR"/raw_to_bilevel "$BILEVEL_DIR"/assemble_greyscale
 cd "$BILEVEL_DIR" && zip -r9 /tmp/polypaint-bilevel.zip . -q && cd "$SCRIPT_DIR"
 echo "  Bilevel:  $(du -h /tmp/polypaint-bilevel.zip | cut -f1)  (bilevel sparse fragments + finalize)"
 
@@ -1131,17 +1109,17 @@ chmod +x "$REPALETTE_DIR"/palette_bins_render "$REPALETTE_DIR"/raw2jpeg
 cd "$REPALETTE_DIR" && zip -r9 /tmp/polypaint-repalette.zip . -q && cd "$SCRIPT_DIR"
 echo "  RePal:   $(du -h /tmp/polypaint-repalette.zip | cut -f1)  (repalette + libvips layer)"
 
-# Color RePalette: handler_color_repalette.py + shared helpers + legacy pixel_bins_render + direct raw score_raw_render
+# Color RePalette: handler_color_repalette.py + shared raw-sidecar recolor helpers
 COLOR_REPALETTE_DIR=/tmp/polypaint-color-repalette
 rm -rf "$COLOR_REPALETTE_DIR"
 mkdir -p "$COLOR_REPALETTE_DIR"
 cp lambda/handler_color_repalette.py lambda/shared.py lambda/raw_sidecar.py lambda/raw_score_render.py \
    lambda/color_artifact_meta.py lambda/solve_score_chain.py lambda/color_recolor_raw.py \
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$COLOR_REPALETTE_DIR/"
-cp lambda/pixel_bins_render lambda/score_raw_render "$COLOR_REPALETTE_DIR/"
-chmod +x "$COLOR_REPALETTE_DIR"/pixel_bins_render "$COLOR_REPALETTE_DIR"/score_raw_render
+cp lambda/score_raw_render "$COLOR_REPALETTE_DIR/"
+chmod +x "$COLOR_REPALETTE_DIR"/score_raw_render
 cd "$COLOR_REPALETTE_DIR" && zip -r9 /tmp/polypaint-color-repalette.zip . -q && cd "$SCRIPT_DIR"
-echo "  ClrRePal: $(du -h /tmp/polypaint-color-repalette.zip | cut -f1)  (pixel_bins_render + score_raw_render)"
+echo "  ClrRePal: $(du -h /tmp/polypaint-color-repalette.zip | cut -f1)  (raw-sidecar score_raw_render)"
 
 # Recolor-from-raw: standalone raw-sidecar recolor path
 RECOLOR_FROM_RAW_DIR=/tmp/polypaint-recolor-from-raw
@@ -1174,17 +1152,17 @@ cp lambda/handler_pdf_artifact.py lambda/shared.py lambda/color_artifact_meta.py
 cd "$PDF_ARTIFACT_DIR" && zip -r9 /tmp/polypaint-pdf-artifact.zip . -q && cd "$SCRIPT_DIR"
 echo "  PDFArt:  $(du -h /tmp/polypaint-pdf-artifact.zip | cut -f1)  (spread builder + python pdf layer)"
 
-# DeepZoom Export: handler_deepzoom_export.py + shared.py + source metadata helpers + dz_export + raw-sidecar colorization helpers (needs libvips layer)
+# DeepZoom Export: handler_deepzoom_export.py + shared.py + source metadata helpers + dz_export (needs libvips layer)
 DZ_EXPORT_DIR=/tmp/polypaint-deepzoom-export
 rm -rf "$DZ_EXPORT_DIR"
 mkdir -p "$DZ_EXPORT_DIR"
 cp lambda/handler_deepzoom_export.py lambda/shared.py lambda/raw_sidecar.py \
    lambda/color_artifact_meta.py lambda/solve_score_chain.py \
    lambda/deepzoom_viewer_template.html "$DZ_EXPORT_DIR/"
-cp lambda/dz_export lambda/pixel_bins_render lambda/raw2jpeg "$DZ_EXPORT_DIR/"
-chmod +x "$DZ_EXPORT_DIR"/dz_export "$DZ_EXPORT_DIR"/pixel_bins_render "$DZ_EXPORT_DIR"/raw2jpeg
+cp lambda/dz_export "$DZ_EXPORT_DIR/"
+chmod +x "$DZ_EXPORT_DIR"/dz_export
 cd "$DZ_EXPORT_DIR" && zip -r9 /tmp/polypaint-deepzoom-export.zip . -q && cd "$SCRIPT_DIR"
-echo "  DzExp:   $(du -h /tmp/polypaint-deepzoom-export.zip | cut -f1)  (dz_export + raw-sidecar colorization + libvips layer)"
+echo "  DzExp:   $(du -h /tmp/polypaint-deepzoom-export.zip | cut -f1)  (dz_export + libvips layer)"
 
 # DeepZoom-from-raw: strict wrapper over the raw-sidecar DeepZoom path
 DZ_FROM_RAW_DIR=/tmp/polypaint-deepzoom-from-raw
@@ -1193,8 +1171,8 @@ mkdir -p "$DZ_FROM_RAW_DIR"
 cp lambda/handler_deepzoom_from_raw.py lambda/handler_deepzoom_export.py lambda/shared.py lambda/raw_sidecar.py \
    lambda/color_artifact_meta.py lambda/solve_score_chain.py \
    lambda/deepzoom_viewer_template.html "$DZ_FROM_RAW_DIR/"
-cp lambda/dz_export lambda/pixel_bins_render lambda/raw2jpeg "$DZ_FROM_RAW_DIR/"
-chmod +x "$DZ_FROM_RAW_DIR"/dz_export "$DZ_FROM_RAW_DIR"/pixel_bins_render "$DZ_FROM_RAW_DIR"/raw2jpeg
+cp lambda/dz_export "$DZ_FROM_RAW_DIR/"
+chmod +x "$DZ_FROM_RAW_DIR"/dz_export
 cd "$DZ_FROM_RAW_DIR" && zip -r9 /tmp/polypaint-deepzoom-from-raw.zip . -q && cd "$SCRIPT_DIR"
 echo "  DzRaw:   $(du -h /tmp/polypaint-deepzoom-from-raw.zip | cut -f1)  (raw-sidecar-only deepzoom)"
 
@@ -1473,7 +1451,7 @@ setup_api_gateway() {
     }
 
     # Grant API Gateway permission to invoke each Lambda
-    for FNAME in "$SWEEP_NAME" "$SWEEP_MT_NAME" "$COEFFGEN_NAME" "$ENCODE_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$PREVIEW_NAME" "$COMPUTE_PREVIEW_NAME" "$BILEVEL_NAME" "$PARAM_DEBUG_NAME" "$TIFF_COMPAT_NAME" "$PNG_EXPORT_NAME" "$DZ_EXPORT_NAME" "$SWEEP_CM_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_DEBUG_NAME" "$REPALETTE_NAME"; do
+    for FNAME in "$SWEEP_NAME" "$SWEEP_MT_NAME" "$COEFFGEN_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$PREVIEW_NAME" "$COMPUTE_PREVIEW_NAME" "$BILEVEL_NAME" "$PARAM_DEBUG_NAME" "$TIFF_COMPAT_NAME" "$PNG_EXPORT_NAME" "$DZ_EXPORT_NAME" "$SWEEP_CM_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_DEBUG_NAME" "$REPALETTE_NAME"; do
         aws lambda add-permission --function-name "$FNAME" \
             --statement-id "apigateway-invoke" \
             --action lambda:InvokeFunction \
@@ -1484,11 +1462,10 @@ setup_api_gateway() {
 
     # Create integrations
     echo "  Creating integrations..."
-    local SWEEP_INT SWEEP_MT_INT COEFFGEN_INT ENCODE_INT VIEWPORT_INT STORAGE_INT DISPATCH_INT
+    local SWEEP_INT SWEEP_MT_INT COEFFGEN_INT VIEWPORT_INT STORAGE_INT DISPATCH_INT
     SWEEP_INT=$(create_integration "$SWEEP_NAME")
     SWEEP_MT_INT=$(create_integration "$SWEEP_MT_NAME")
     COEFFGEN_INT=$(create_integration "$COEFFGEN_NAME")
-    ENCODE_INT=$(create_integration "$ENCODE_NAME")
     VIEWPORT_INT=$(create_integration "$VIEWPORT_NAME")
     STORAGE_INT=$(create_integration "$STORAGE_NAME")
     DISPATCH_INT=$(create_integration "$DISPATCH_NAME")
@@ -1526,7 +1503,6 @@ setup_api_gateway() {
     PALETTE_DEBUG_INT=$(create_integration "$PALETTE_DEBUG_NAME")
     ensure_route "POST /palette-debug" "$PALETTE_DEBUG_INT"
 
-    ensure_route "POST /encode-upload" "$ENCODE_INT"
     ensure_route "POST /viewport" "$VIEWPORT_INT"
     ensure_route "POST /list" "$STORAGE_INT"
     ensure_route "POST /list-solve-score-programs" "$STORAGE_INT"
@@ -1567,7 +1543,6 @@ setup_api_gateway() {
   "sweep": "%s/sweep",
   "sweep-mt": "%s/sweep-mt",
   "coeffgen": "%s/coeffgen",
-  "encode": "%s/encode-upload",
   "viewport": "%s/viewport",
   "preview": "%s/preview",
   "compute-preview": "%s/compute-preview",
@@ -1587,7 +1562,7 @@ setup_api_gateway() {
     "git_dirty": %s,
     "frontend_sha256": "%s"
   }
-}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$BUILD_ID" "$BUILD_DEPLOYED_AT_UTC" "$BUILD_GIT_REV" "$BUILD_GIT_DIRTY" "$BUILD_FRONTEND_SHA256" \
+}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$BUILD_ID" "$BUILD_DEPLOYED_AT_UTC" "$BUILD_GIT_REV" "$BUILD_GIT_DIRTY" "$BUILD_FRONTEND_SHA256" \
     | aws s3 cp - "s3://$BUCKET/config.json" \
         --content-type "application/json" --region "$REGION"
     echo "  config.json uploaded"
@@ -1691,9 +1666,6 @@ if [ "$ACTION" = "create" ]; then
     create_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip" \
         "$COEFFGEN_MEMORY" "$ROLE_ARN" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib,FUSED_WORKER_MEMORY_MB=$COMPUTE_FUSED_CHUNK_MEMORY,FUSED_WORKER_TMP_MB=$BINARY_TMP,FUSED_WORKER_TIMEOUT_SEC=$TIMEOUT" "$BINARY_TMP"
 
-    create_lambda "$ENCODE_NAME" "handler_encode.handler" "/tmp/polypaint-encode.zip" \
-        "$ENCODE_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
     create_lambda "$VIEWPORT_NAME" "handler_viewport.handler" "/tmp/polypaint-viewport.zip" \
         "$VIEWPORT_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET"
 
@@ -1704,7 +1676,7 @@ if [ "$ACTION" = "create" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     create_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,COLOR_TO_BILEVEL_FUNCTION=$COLOR_TO_BILEVEL_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,DZ_FROM_RAW_FUNCTION=$DZ_FROM_RAW_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,RECOLOR_FROM_RAW_FUNCTION=$RECOLOR_FROM_RAW_NAME,EXTRACT_PALETTE_FUSED_FUNCTION=$EXTRACT_PALETTE_FUSED_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
+        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,COLOR_TO_BILEVEL_FUNCTION=$COLOR_TO_BILEVEL_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,DZ_FROM_RAW_FUNCTION=$DZ_FROM_RAW_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,RECOLOR_FROM_RAW_FUNCTION=$RECOLOR_FROM_RAW_NAME,EXTRACT_PALETTE_FUSED_FUNCTION=$EXTRACT_PALETTE_FUSED_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -1753,7 +1725,7 @@ if [ "$ACTION" = "create" ]; then
         "$REPALETTE_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     create_lambda "$COLOR_REPALETTE_NAME" "handler_color_repalette.handler" "/tmp/polypaint-color-repalette.zip" \
-        "$COLOR_REPALETTE_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,ENCODE_FUNCTION=$ENCODE_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+        "$COLOR_REPALETTE_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
     create_lambda "$RECOLOR_FROM_RAW_NAME" "handler_recolor_from_raw.handler" "/tmp/polypaint-recolor-from-raw.zip" \
         "$RECOLOR_FROM_RAW_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
     create_lambda "$EXTRACT_PALETTE_FUSED_NAME" "handler_extract_palette_from_step_scores.handler" "/tmp/polypaint-extract-palette-fused.zip" \
@@ -1829,7 +1801,6 @@ if [ "$ACTION" = "create" ]; then
     COMPUTE_STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_STATUS_NAME}"
     COEFFGEN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COEFFGEN_NAME}"
     FINALIZE_MT_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${FINALIZE_MT_NAME}"
-    ENCODE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${ENCODE_NAME}"
     STORAGE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${STORAGE_NAME}"
     BILEVEL_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_NAME}"
     SOLVE_PROXIMITY_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${SOLVE_PROXIMITY_NAME}"
@@ -1983,7 +1954,6 @@ if [ "$ACTION" = "create" ]; then
     echo "  Coeffgen: $COEFFGEN_NAME ($COEFFGEN_MEMORY MB)"
     echo "  CmpFuse:  $COMPUTE_FUSED_CHUNK_NAME ($COMPUTE_FUSED_CHUNK_MEMORY MB)"
     echo "  FnlzMT:   $FINALIZE_MT_NAME ($FINALIZE_MT_MEMORY MB)"
-    echo "  Encode:   $ENCODE_NAME ($ENCODE_MEMORY MB)"
     echo "  Viewport: $VIEWPORT_NAME ($VIEWPORT_MEMORY MB)"
     echo "  Storage:  $STORAGE_NAME ($STORAGE_MEMORY MB)"
     echo "  Dispatch: $DISPATCH_NAME ($DISPATCH_MEMORY MB)"
@@ -2001,9 +1971,6 @@ elif [ "$ACTION" = "update" ]; then
     update_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip" \
         "$COEFFGEN_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib,FUSED_WORKER_MEMORY_MB=$COMPUTE_FUSED_CHUNK_MEMORY,FUSED_WORKER_TMP_MB=$BINARY_TMP,FUSED_WORKER_TIMEOUT_SEC=$TIMEOUT" "$BINARY_TMP"
 
-    update_lambda "$ENCODE_NAME" "handler_encode.handler" "/tmp/polypaint-encode.zip" \
-        "$ENCODE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
     update_lambda "$VIEWPORT_NAME" "handler_viewport.handler" "/tmp/polypaint-viewport.zip" \
         "$VIEWPORT_MEMORY" "" "BUCKET=$BUCKET"
 
@@ -2014,7 +1981,7 @@ elif [ "$ACTION" = "update" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     update_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,ENCODE_FUNCTION=$ENCODE_NAME,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,BILEVEL_FUNCTION=$BILEVEL_NAME,COLOR_TO_BILEVEL_FUNCTION=$COLOR_TO_BILEVEL_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,DZ_FROM_RAW_FUNCTION=$DZ_FROM_RAW_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,RECOLOR_FROM_RAW_FUNCTION=$RECOLOR_FROM_RAW_NAME,EXTRACT_PALETTE_FUSED_FUNCTION=$EXTRACT_PALETTE_FUSED_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
+        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,COLOR_TO_BILEVEL_FUNCTION=$COLOR_TO_BILEVEL_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,DZ_FROM_RAW_FUNCTION=$DZ_FROM_RAW_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,RECOLOR_FROM_RAW_FUNCTION=$RECOLOR_FROM_RAW_NAME,EXTRACT_PALETTE_FUSED_FUNCTION=$EXTRACT_PALETTE_FUSED_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -2063,7 +2030,7 @@ elif [ "$ACTION" = "update" ]; then
         "$REPALETTE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     update_lambda "$COLOR_REPALETTE_NAME" "handler_color_repalette.handler" "/tmp/polypaint-color-repalette.zip" \
-        "$COLOR_REPALETTE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,ENCODE_FUNCTION=$ENCODE_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+        "$COLOR_REPALETTE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
     update_lambda "$RECOLOR_FROM_RAW_NAME" "handler_recolor_from_raw.handler" "/tmp/polypaint-recolor-from-raw.zip" \
         "$RECOLOR_FROM_RAW_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
     update_lambda "$EXTRACT_PALETTE_FUSED_NAME" "handler_extract_palette_from_step_scores.handler" "/tmp/polypaint-extract-palette-fused.zip" \
@@ -2115,7 +2082,6 @@ elif [ "$ACTION" = "update" ]; then
     COMPUTE_STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_STATUS_NAME}"
     COEFFGEN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COEFFGEN_NAME}"
     FINALIZE_MT_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${FINALIZE_MT_NAME}"
-    ENCODE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${ENCODE_NAME}"
     STORAGE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${STORAGE_NAME}"
     BILEVEL_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_NAME}"
     SOLVE_PROXIMITY_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${SOLVE_PROXIMITY_NAME}"
@@ -2332,7 +2298,6 @@ elif [ "$ACTION" = "update" ]; then
     echo "  Coeffgen: $COEFFGEN_NAME ($COEFFGEN_MEMORY MB)"
     echo "  CmpFuse:  $COMPUTE_FUSED_CHUNK_NAME ($COMPUTE_FUSED_CHUNK_MEMORY MB)"
     echo "  FnlzMT:   $FINALIZE_MT_NAME ($FINALIZE_MT_MEMORY MB)"
-    echo "  Encode:   $ENCODE_NAME ($ENCODE_MEMORY MB)"
     echo "  Viewport: $VIEWPORT_NAME ($VIEWPORT_MEMORY MB)"
     echo "  Storage:  $STORAGE_NAME ($STORAGE_MEMORY MB)"
     echo "  Dispatch: $DISPATCH_NAME ($DISPATCH_MEMORY MB)"

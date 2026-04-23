@@ -134,27 +134,22 @@ fragment.
 
 **Output:** `fragment_files_uploaded`, `fragment_bytes_uploaded`, `roots_plotted`, `roots_clipped`, `raster_us`
 
-### Color Modes
+### Color Raster Contract
 
-| Mode | Algorithm |
-|------|-----------|
-| rainbow | Fixed HSL gradient per root index |
-| proximity | Root-level nearest-neighbor distance → palette interpolation (chunk-local, 2-pass inside `roots2pix`) |
-| solve_score | Solve-level metric → equal-density binned (global histogram, 3-phase prepass). 10 metrics available |
-| constant | Single hex color for all roots |
+The active Color render path is solve-score-program based. The frontend sends a
+solve-score chain, the planner compiles it, and `roots2pix_mt` receives the
+compiled program contract:
 
-### Solve Score Pipeline
-
-When `color=solve_score`, a 3-phase prepass runs before raster. The metric is selected via `--solve_metric` (default: proximity).
-
-1. **clip** — read lores roots, compute per-solve metric scores, emit quantile clip bounds
-2. **hist** — per-chunk 100-bin histogram of scores within clip range
-3. **merge** — sum histograms, derive 10 equal-density bin cut points
+- `--score_metrics=...`
+- `--score_clip_los=...`
+- `--score_clip_his=...`
+- `--score_program=...`
+- optional source manifests for coefficient or parameter-backed metric slots
 
 Lambda: `polypaint-solve-proximity` (handler: `handler_solve_proximity.py`)
-Binary: `solve_proximity_stats` (clip + hist modes, `--metric=` flag)
+Binary: `solve_proximity_stats` (clip + hist modes)
 Shared header: `solve_score.h` (metric implementations used by both binaries)
-Artifacts: `solve_scores/{metric}_clip.json`, `solve_scores/{metric}/chunk_*_hist.json`, `solve_scores/{metric}_bins.json`
+Artifacts: solve-score clip JSON plus sparse raw-score section fragments
 
 **Metrics:**
 
@@ -180,58 +175,6 @@ Legacy `color=solve_proximity` is accepted and coerced to `solve_score` with `me
 | none | O(1) | No tracking, roots in solver order |
 | greedy | O(n^2) | Nearest-neighbor matching |
 | hungarian | O(n^3) | Optimal bipartite matching, auto-downgrades to greedy if degree > 40 |
-
----
-
-## polypaint-finalize
-
-**Handler:** `handler_finalize.py`
-**Binary:** `pixassemble`
-**Route:** POST /finalize (dispatched async)
-**Memory:** 1769 MB (1 vCPU)
-
-Assembles all chunk `.pix` files for one tile into a single `.raw` tile image.
-
-**Input:**
-- `job_id`, `tile_idx` — which tile
-- `n_chunks` — number of raster chunks
-- `tile_w`, `tile_h` — tile dimensions
-
-**Process:**
-1. For each chunk, downloads `pix_chunk_{chunk:04d}_t{tile:04d}.pix` from S3
-2. Pipes all `.pix` data to `pixassemble` via stdin
-3. `pixassemble` reads 8-byte entries, builds RGB buffer (last-wins overwrite)
-4. Writes `.raw` file: 12-byte header (W, H, bands=3) + RGB pixel data
-5. Uploads to S3
-
-**Output:** `raw_key`, `raw_size`, `pix_files`
-
----
-
-## polypaint-encode
-
-**Handler:** `handler_encode.py`
-**Binary:** `raw2jpeg` (linked against libvips)
-**Route:** POST /encode-upload (dispatched async)
-**Memory:** 1769 MB + libvips layer
-
-Stitches tile grid into final image and encodes JPEG or PNG.
-
-**Input:**
-- `out_key` — S3 output path
-- `width`, `height` — full canvas
-- `tile_grid` — `{n_cols, n_rows, tile_keys: [S3 keys]}`
-- `format` — "jpeg" or "png"
-- `quality` — JPEG quality (1-100, default 90)
-- `bilevel` — optional 1-bit B&W mode
-
-**Process:**
-1. Downloads tiles row-by-row (memory-efficient)
-2. Stitches into full `.raw` with 12-byte header
-3. Runs `raw2jpeg` with libvips for JPEG/PNG encoding
-4. Uploads encoded image, returns presigned URL
-
-**Output:** `out_key`, `file_size`, `image_url`
 
 ---
 
@@ -435,8 +378,8 @@ Renders transformed parameter pairs as bilevel TIFF for visual debugging of para
 **Process:**
 1. Runs `sweep` in `param_dump` mode — outputs raw float32 transformed parameter pairs
 2. Python rasters parameter points to a packed bitset (in-process, no C binary needed)
-3. Runs `bilevel_merge merge` to convert bitset → TIFF with CCITT G4
-4. Generates preview PNG via `bilevel_merge` with `--preview` flag
+3. Runs `bilevel_merge assemble` to convert the bitset → TIFF with CCITT G4
+4. Generates preview PNG in the same `bilevel_merge assemble` invocation with `--preview`
 5. Uploads TIFF + preview to `debug/{job_id}/`
 
 Uses the same transform code path as the real coeffgen pipeline — no Python reimplementation of transforms.

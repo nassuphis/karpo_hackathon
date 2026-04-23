@@ -1,9 +1,9 @@
 """
 Render plan Lambda — computes the workflow plan for Step Functions.
 
-Loads calc metadata, computes viewport, normalizes params, produces
-compact chunk/tile arrays and output keys. Does NOT dispatch workers
-or poll for completion.
+Loads calc metadata, computes viewport, normalizes params, produces compact
+logical section arrays and output keys. Does NOT dispatch workers or poll for
+completion.
 
 Called once per render execution as the BuildPlan step.
 """
@@ -35,6 +35,7 @@ from solve_score_chain import (
     emit_solve_score_metadata,
     format_solve_score_chain_display,
     serialize_solve_score_chain,
+    solve_score_lag_prelude_by_source,
     solve_score_uses_source,
 )
 
@@ -242,7 +243,6 @@ def _reject_fused_unsupported_params(raw_params):
         "solve_score_merge_workers": "fused color has no solve-score merge stage",
         "solve_score_section_mode": "fused color has no separate solve-score section stage",
         "solve_score_section_count": "fused color has no separate solve-score section stage",
-        "pixel_bin_fragment_mode": "fused color writes raw-score fragments only",
         "raster_bin_group_size": "fused color does not support grouped fragment output",
         "palette_chunk_threads": "fused color emits the associated palette inline during finalize",
         "palette_chunk_input_mode": "fused color emits the associated palette inline during finalize",
@@ -254,9 +254,6 @@ def _reject_fused_unsupported_params(raw_params):
         "solve_score_quantile": "fused color takes only solve_score_chain; quantiles live on metric chips",
         "solve_score_omega": "fused color takes only solve_score_chain; transfer ops live in the chain",
         "solve_score_omega_enabled": "fused color takes only solve_score_chain; transfer ops live in the chain",
-        "tile_size": "fused color writes sparse global fragments and no longer has a tile grid",
-        "n_tile_cols": "fused color writes sparse global fragments and no longer has a tile grid",
-        "n_tile_rows": "fused color writes sparse global fragments and no longer has a tile grid",
     }
     for key, reason in unsupported.items():
         value = raw_params.get(key)
@@ -410,6 +407,7 @@ def _build_fused_color_plan(
     solve_score_omega_enabled = solve_score_compiled["omega_enabled"]
     solve_score_uses_coeff = bool(solve_score_uses_source(solve_score_compiled, "cf"))
     solve_score_uses_param = bool(solve_score_uses_source(solve_score_compiled, "pm"))
+    solve_score_prelude = solve_score_lag_prelude_by_source(solve_score_compiled)
     fused_params["solve_score_chain"] = solve_score_chain
 
     pix = fused_params["pix"]
@@ -456,6 +454,9 @@ def _build_fused_color_plan(
         "threads": fused_params["solve_score_threads"],
         "chain": solve_score_chain,
         "clip_key": solve_score_clip_key,
+        "uses_lag": bool(solve_score_compiled.get("uses_lag")),
+        "max_lag": int(solve_score_compiled.get("max_lag") or 0),
+        "prelude_by_source": solve_score_prelude,
     }
 
     finalize = {
@@ -472,6 +473,9 @@ def _build_fused_color_plan(
         "requested_section_count": fused_params["raster_section_count"],
         "item_count": len(raster_map_items),
         "section_item_count": len(raster_section_items),
+        "prelude_rows": int(solve_score_prelude["slv"]),
+        "score_coeff_prelude_rows": int(solve_score_prelude["cf"]),
+        "score_param_prelude_rows": int(solve_score_prelude["pm"]),
         "threads": fused_params["raster_mt_threads"],
         "workers": fused_params["raster_workers"],
         "engine": "mt",
@@ -576,11 +580,7 @@ def _build_fused_color_plan(
         "background_color": DEFAULT_BACKGROUND_COLOR,
         "background_threshold": str(DEFAULT_BACKGROUND_THRESHOLD),
         "repalette_capable": "false",
-        "pixel_bins_drive_rgb": "false",
         "rgb_source": "raw_score_bins",
-        "pixel_bins_prefix": "",
-        "pixel_bins_empty": "",
-        "pixel_bins_layout": "",
         "raw_key": artifact_prefix + "greyscale.raw",
         "raw_meta_key": artifact_prefix + "greyscale.meta.json",
         "fragment_prefix": artifact_prefix + "fragments/section_",
@@ -637,7 +637,6 @@ def _build_fused_color_plan(
         "plan_params_digest": plan_params_digest,
         "metadata": artifact_meta,
         "repalette_capable": False,
-        "pixel_bins_drive_rgb": False,
     }
 
     plan = {
@@ -915,7 +914,6 @@ def _build_non_color_plan(
         "coeff_bilevel_key": artifact_prefix + "image.tif",
         "metadata": artifact_meta,
         "repalette_capable": False,
-        "pixel_bins_drive_rgb": False,
     }
 
     plan = {

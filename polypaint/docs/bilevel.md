@@ -22,11 +22,11 @@ Phase 2 — Finalize (single Lambda):
 
 ### Why sparse sections
 
-The old tiled path produced per-tile bitsets, merged them, then stitched tile TIFFs. The active path avoids that extra topology:
+The active path uses logical source sections and global pixel indexes:
 
 1. Each source row is downloaded once by its logical section.
 2. Each root/coefficient is projected once.
-3. Fragments use global pixel indexes, so no edge-tile geometry or tile stitch is needed.
+3. Fragments use global pixel indexes, so no image-region assembly topology is needed.
 4. Final assembly is shared with color sparse fragments.
 
 ### Why not PNG
@@ -126,15 +126,11 @@ Render is Step Functions driven:
 
 ## Design history
 
-### v1: Tile-first (rejected)
+### v1: Region-first (rejected)
 
-The first implementation dispatched one Lambda per tile. Each tile Lambda downloaded ALL stripe .bin files, projected all roots, and wrote a 1-bit PNG. Problems:
-
-1. **`/tmp` exhaustion**: downloading all stripes filled 10 GB `/tmp`. Fixed by processing one stripe at a time with `--bitset` accumulation, but this was a workaround for the wrong architecture.
-2. **Duplicated IO**: 10 stripes × 169 tiles = 1690 S3 downloads instead of 10.
-3. **Duplicated compute**: every root projected 169 times instead of once.
-4. **Encode contract break**: tile PNGs were fed into the old raw-tile encoder which expected a 12-byte binary header.
-5. **`dl_ms` undefined**: handler returned an undefined variable on success, causing NameError after reporting "done".
+The first implementation split the target image into output regions and
+reprocessed root data repeatedly. That architecture duplicated IO and compute,
+made `/tmp` pressure worse, and created a brittle stitching/encoding boundary.
 
 ### v2: Stripe-first with PNG (stitch timeout)
 
@@ -150,7 +146,7 @@ After the bilevel TIFF is produced, the artifact panel offers on-demand conversi
 
 | Export | Lambda | Purpose |
 |--------|--------|---------|
-| Preview-Compatible TIFF | polypaint-tiff-compat | macOS Preview can't open tiled TIFFs. Converts to strip-based layout. |
+| Preview-Compatible TIFF | polypaint-tiff-compat | Converts TIFF layout for macOS Preview compatibility. |
 | PNG | polypaint-png-export | 1-bit PNG via libvips. Smaller than TIFF for web use. |
 | DeepZoom | polypaint-deepzoom-export | OpenSeadragon tile pyramid for zoomable web viewing. |
 
@@ -158,6 +154,6 @@ These are triggered by buttons in the artifact panel, not part of the render pip
 
 ## Warm container /tmp bug
 
-**Symptom:** bilevel render produced corrupted output — tiles contained data from a previous render.
+**Symptom:** bilevel render produced corrupted output from stale warm-container intermediate files.
 
 This stale `/tmp/*.bits` class is removed from the active sparse section path because each worker writes exactly one deterministic fragment path.

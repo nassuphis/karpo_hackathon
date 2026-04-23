@@ -2,8 +2,8 @@
 Param debug Lambda — renders transformed parameter pairs as bilevel TIFF.
 
 Uses param_gen C binary (same transform pipeline as sweep_cli.c) to generate
-transformed parameter points, then rasters them to bilevel TIFF via
-bilevel_merge. No Python reimplementation of transforms.
+transformed parameter points, then rasters them to bilevel TIFF via the native
+full-frame bitset assembler. No Python reimplementation of transforms.
 
 Results go to debug/{job_id}/ to avoid interfering with renders/.
 """
@@ -80,12 +80,14 @@ def raster_points_from_bin(bin_path, n_floats_per_point, point_indices, pix):
 
 
 def write_tiff(bitset_bytes, w, h, out_path):
-    """Write bitset to 1-bit TIFF via bilevel_merge."""
+    """Write a square full-frame bitset to a 1-bit TIFF."""
+    if int(w) != int(h):
+        raise RuntimeError(f"param debug requires square output, got {w}x{h}")
     bits_path = out_path + ".bits"
     with open(bits_path, "wb") as f:
         f.write(bitset_bytes)
     preview_path = out_path.replace('.tif', '_preview.png')
-    cmd = [BILEVEL_MERGE, "merge", f"--tile_w={w}", f"--tile_h={h}",
+    cmd = [BILEVEL_MERGE, "assemble", f"--pix={int(w)}",
            f"--output={out_path}",
            f"--preview={preview_path}", "--preview_size=512",
            bits_path]

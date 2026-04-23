@@ -26,8 +26,10 @@ from logical_sections import (
     write_native_multispan_manifest,
 )
 from solve_score_chain import (
+    canonicalize_solve_score_program_spec,
     compile_solve_score_chain,
     compiled_solve_score_fingerprint,
+    solve_score_lag_prelude_by_source,
     solve_score_program_cli_payload,
 )
 from shared import (
@@ -113,8 +115,8 @@ def _viewport_bounds(params):
 
 def _cleanup_tmp():
     for pattern in (
-        "/tmp/pixbin.frag",
-        "/tmp/palette_pixbin.frag",
+        "/tmp/fused_fragment.frag",
+        "/tmp/palette_fragment.frag",
         "/tmp/step_scores.bin",
         _TMP_INPUT_MANIFEST,
         _TMP_SCORE_COEFFS_MANIFEST,
@@ -176,13 +178,17 @@ def _build_cmd(params):
         f"--rotation={params.get('rotation', 0.0)}",
         f"--threads={params['raster_mt_threads']}",
         f"--input_manifest={input_manifest_path}",
+        f"--step_count={int(params['step_count'])}",
+        f"--prelude_rows={int(params.get('prelude_rows') or 0)}",
+        f"--score_coeff_prelude_rows={int(params.get('score_coeff_prelude_rows') or 0)}",
+        f"--score_param_prelude_rows={int(params.get('score_param_prelude_rows') or 0)}",
         f"--retries={params.get('raster_sectioned_retries', 2)}",
-        "--pixel_bin_prefix=/tmp/pixbin",
+        "--fragment_prefix=/tmp/fused_fragment",
         "--step_scores_output=/tmp/step_scores.bin",
     ]
 
     if params.get("emit_associated_palette_bins"):
-        cmd.append("--palette_bin_prefix=/tmp/palette_pixbin")
+        cmd.append("--associated_palette_fragment_prefix=/tmp/palette_fragment")
         cmd.append(f"--palette_grid_n={int(params['associated_palette_grid_n'])}")
         cmd.append(f"--palette_step_start={int(params['step_start'])}")
 
@@ -191,11 +197,13 @@ def _build_cmd(params):
         raise RuntimeError(f"solve-score clip artifact missing or wrong family: {score_artifact.get('family')}")
     if int(score_artifact.get("version", 1) or 1) < 2:
         raise RuntimeError("fused raster requires v2 solve-score clip metadata")
+    compiled = params.get("solve_score_compiled")
+    chain_fingerprint = str(params.get("solve_score_chain_fingerprint") or "").strip()
+    if not score_artifact.get("program") and params.get("solve_score_chain_present") and compiled is not None:
+        score_artifact["program"] = compiled["program_spec"]
     if not score_artifact.get("program") or not isinstance(score_artifact.get("metrics"), list) or not score_artifact.get("metrics"):
         raise RuntimeError("fused raster requires clip artifact program + metrics")
 
-    compiled = params.get("solve_score_compiled")
-    chain_fingerprint = str(params.get("solve_score_chain_fingerprint") or "").strip()
     if params.get("solve_score_chain_present") and compiled is not None:
         actual_fingerprint = str(score_artifact.get("chain_fingerprint") or "").strip()
         if not actual_fingerprint:
@@ -204,7 +212,7 @@ def _build_cmd(params):
             raise RuntimeError(
                 f"solve-score clip artifact fingerprint mismatch: expected {chain_fingerprint}, got {actual_fingerprint}"
             )
-        if str(score_artifact.get("program") or "") != compiled["program_spec"]:
+        if canonicalize_solve_score_program_spec(score_artifact.get("program") or "") != compiled["program_spec"]:
             raise RuntimeError(
                 f"solve-score clip artifact program mismatch: expected {compiled['program_spec']}, got {score_artifact.get('program')!r}"
             )
@@ -270,12 +278,18 @@ def _prepare_fused_section_inputs(section_params):
     step_count = int(section_params.get("step_count") or 0)
     if step_start < 0 or step_count < 1:
         raise RuntimeError(f"fused raster requires step_start >= 0 and step_count >= 1, got {step_start}/{step_count}")
+    slv_prelude = 1 if int(section_params.get("prelude_rows") or 0) > 0 and step_start > 0 else 0
+    coeff_prelude = 1 if int(section_params.get("score_coeff_prelude_rows") or 0) > 0 and step_start > 0 else 0
+    param_prelude = 1 if int(section_params.get("score_param_prelude_rows") or 0) > 0 and step_start > 0 else 0
+    section_params["prelude_rows"] = slv_prelude
+    section_params["score_coeff_prelude_rows"] = coeff_prelude
+    section_params["score_param_prelude_rows"] = param_prelude
 
     root_spans = build_source_spans(
         solve_source_manifest,
         source_family="slv",
-        solve_start=step_start,
-        solve_count=step_count,
+        solve_start=step_start - slv_prelude,
+        solve_count=step_count + slv_prelude,
     )
     if not root_spans:
         raise RuntimeError("fused raster logical section resolved to no solve spans")
@@ -283,8 +297,8 @@ def _prepare_fused_section_inputs(section_params):
     input_manifest = build_native_multispan_manifest(
         solve_source_manifest,
         source_family="slv",
-        solve_start=step_start,
-        solve_count=step_count,
+        solve_start=step_start - slv_prelude,
+        solve_count=step_count + slv_prelude,
         url_by_key=build_native_manifest_urls(s3, BUCKET, root_spans),
     )
     section_params["input_manifest_path"] = write_native_multispan_manifest(_TMP_INPUT_MANIFEST, input_manifest)
@@ -295,14 +309,14 @@ def _prepare_fused_section_inputs(section_params):
         coeff_spans = build_source_spans(
             solve_source_manifest,
             source_family="cf",
-            solve_start=step_start,
-            solve_count=step_count,
+            solve_start=step_start - coeff_prelude,
+            solve_count=step_count + coeff_prelude,
         )
         coeff_manifest = build_native_multispan_manifest(
             solve_source_manifest,
             source_family="cf",
-            solve_start=step_start,
-            solve_count=step_count,
+            solve_start=step_start - coeff_prelude,
+            solve_count=step_count + coeff_prelude,
             url_by_key=build_native_manifest_urls(s3, BUCKET, coeff_spans),
         )
         section_params["score_coeff_manifest_path"] = write_native_multispan_manifest(
@@ -314,14 +328,14 @@ def _prepare_fused_section_inputs(section_params):
         param_spans = build_source_spans(
             solve_source_manifest,
             source_family="pm",
-            solve_start=step_start,
-            solve_count=step_count,
+            solve_start=step_start - param_prelude,
+            solve_count=step_count + param_prelude,
         )
         param_manifest = build_native_multispan_manifest(
             solve_source_manifest,
             source_family="pm",
-            solve_start=step_start,
-            solve_count=step_count,
+            solve_start=step_start - param_prelude,
+            solve_count=step_count + param_prelude,
             url_by_key=build_native_manifest_urls(s3, BUCKET, param_spans),
         )
         section_params["score_params_manifest_path"] = write_native_multispan_manifest(
@@ -441,9 +455,6 @@ def _handle_fused_raster_request(params):
             "solve_score_quantile",
             "solve_score_omega",
             "solve_score_omega_enabled",
-            "tile_size",
-            "n_tile_cols",
-            "n_tile_rows",
         ):
             value = params.get(key)
             if value not in ("", None):
@@ -476,8 +487,6 @@ def _handle_fused_raster_request(params):
             "emit_associated_palette_bins": emit_associated_palette_bins,
             "emit_step_scores": True,
             "rgb_source": "raw_score_bins",
-            "pixel_bins_drive_rgb": False,
-            "pixel_bin_fragment_mode": "sparse_chunks",
             "group_idx": int(section_idx),
             "section_indices": [int(section_idx)],
             "section_count": 1,
@@ -518,6 +527,19 @@ def _handle_fused_raster_request(params):
         compiled = compile_solve_score_chain(raw_chain)
         section_params["solve_score_compiled"] = compiled
         section_params["solve_score_chain_fingerprint"] = compiled_solve_score_fingerprint(compiled)
+        prelude_by_source = solve_score_lag_prelude_by_source(compiled)
+        for field, source in (
+            ("prelude_rows", "slv"),
+            ("score_coeff_prelude_rows", "cf"),
+            ("score_param_prelude_rows", "pm"),
+        ):
+            if compiled.get("uses_lag") and field not in section_params:
+                raise RuntimeError(f"fused raster lagged solve-score payload missing {field}")
+            actual = int(section_params.get(field, prelude_by_source[source]) or 0)
+            expected = int(prelude_by_source[source])
+            if actual != expected:
+                raise RuntimeError(f"fused raster {field} mismatch: expected {expected}, got {actual}")
+            section_params[field] = expected
 
         section_params = _prepare_fused_section_inputs(section_params)
         report_status(job_id, task_id, "bin_downloaded_1/1")
@@ -541,7 +563,7 @@ def _handle_fused_raster_request(params):
 
         t_upload = time.perf_counter()
 
-        fused_fragment_path = "/tmp/pixbin.frag"
+        fused_fragment_path = "/tmp/fused_fragment.frag"
         if os.path.exists(fused_fragment_path):
             fused_fragment_size = os.path.getsize(fused_fragment_path)
             with open(fused_fragment_path, "rb") as fh:
@@ -558,7 +580,7 @@ def _handle_fused_raster_request(params):
 
         palette_fragment_size = 0
         if emit_associated_palette_bins:
-            palette_fragment_path = "/tmp/palette_pixbin.frag"
+            palette_fragment_path = "/tmp/palette_fragment.frag"
             if os.path.exists(palette_fragment_path):
                 palette_fragment_size = os.path.getsize(palette_fragment_path)
                 with open(palette_fragment_path, "rb") as fh:
@@ -612,8 +634,6 @@ def _handle_fused_raster_request(params):
             "associated_palette_fragment_files_uploaded": 1 if emit_associated_palette_bins else 0,
             "associated_palette_fragment_bytes_uploaded": palette_fragment_size,
             "step_scores_bytes_uploaded": step_scores_size,
-            "pixel_bin_fragment_mode": "sparse_chunks",
-            "pixel_bins_drive_rgb": False,
             "rgb_source": "raw_score_bins",
             "raster_us": perf["native_us"],
             "roots_plotted": perf["roots_plotted"],

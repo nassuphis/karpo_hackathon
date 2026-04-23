@@ -57,6 +57,12 @@ typedef struct {
     int scoreCoeffStride;
     int scoreParamDegree;
     int scoreParamStride;
+    int solvePreludeRows;
+    int scoreCoeffPreludeRows;
+    int scoreParamPreludeRows;
+    int usesSolveLag;
+    int usesCoeffLag;
+    int usesParamLag;
     MultiSpanReader *inputReader;
     MultiSpanReader *scoreCoeffReader;
     MultiSpanReader *scoreParamReader;
@@ -69,11 +75,14 @@ typedef struct {
     unsigned long long byteStart;
     unsigned long long scoreCoeffByteStart;
     unsigned long long scoreParamByteStart;
+    long sourceReadStart;
+    long scoreCoeffReadStart;
+    long scoreParamReadStart;
     RootXformEntry *rtChain;
     int nRt;
     uint64_t *pixelBits;
-    ByteVec pbxByteVec;
-    ByteVec palettePbxByteVec;
+    ByteVec fragmentByteVec;
+    ByteVec paletteFragmentByteVec;
     unsigned char *stepScores;
     long stepScoreCount;
     long rootsPlotted;
@@ -114,6 +123,29 @@ static long long getArgLongLong(int argc, char **argv, const char *key, long lon
 static const char *getArgStr(int argc, char **argv, const char *key, const char *def) {
     const char *v = getArg(argc, argv, key);
     return v ? v : def;
+}
+
+static int option_matches(const char *arg, const char *key) {
+    int klen = (int)strlen(key);
+    return strncmp(arg, key, klen) == 0 && arg[klen] == '=';
+}
+
+static int reject_unknown_options(int argc, char **argv, int firstFlagIndex, const char **allowed, int nAllowed) {
+    for (int i = firstFlagIndex; i < argc; i++) {
+        if (argv[i][0] != '-') continue;
+        int known = 0;
+        for (int j = 0; j < nAllowed; j++) {
+            if (option_matches(argv[i], allowed[j])) {
+                known = 1;
+                break;
+            }
+        }
+        if (!known) {
+            fprintf(stderr, "Unknown roots2pix_mt option: %s\n", argv[i]);
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static int clamp_threads(int requested, long n_items) {
@@ -185,8 +217,8 @@ static int write_suffix_path(char *dst, size_t dstSize, const char *prefix, cons
 static void free_worker_storage(WorkerArgs *args, int nWorkers) {
     if (!args) return;
     for (int i = 0; i < nWorkers; i++) {
-        free(args[i].pbxByteVec.data);
-        free(args[i].palettePbxByteVec.data);
+        free(args[i].fragmentByteVec.data);
+        free(args[i].paletteFragmentByteVec.data);
         free(args[i].stepScores);
     }
 }
@@ -194,8 +226,13 @@ static void free_worker_storage(WorkerArgs *args, int nWorkers) {
 static void *worker_main(void *arg_) {
     WorkerArgs *arg = (WorkerArgs *)arg_;
     float stepBuf[MAXDEG * 2];
+    float prevStepBuf[MAXDEG * 2];
     float wkRe[MAXDEG];
     float wkIm[MAXDEG];
+    float prevWkRe[MAXDEG];
+    float prevWkIm[MAXDEG];
+    float currentMetricBuffer[SOLVE_SCORE_MAX_METRIC_SLOTS];
+    float recentMetricBuffer[SOLVE_SCORE_MAX_METRIC_SLOTS];
     unsigned char *sectionBuf = NULL;
     unsigned char *coeffSectionBuf = NULL;
     unsigned char *paramSectionBuf = NULL;
@@ -203,6 +240,11 @@ static void *worker_main(void *arg_) {
     const float *sectionCoeffRoots = NULL;
     const float *sectionParamRows = NULL;
     long localSolves = arg->end - arg->start;
+    long sourceRows = 0;
+    long coeffRows = 0;
+    long paramRows = 0;
+    int usesLag = solve_score_program_uses_lag(&arg->solveScoreProgram);
+    int recentInitialized = 0;
     long long nativeStartUs = 0;
     int nativeStarted = 0;
 
@@ -282,32 +324,85 @@ static void *worker_main(void *arg_) {
             sectionRoots = (const float *)(const void *)sectionBuf;
         }
     }
+    sourceRows = arg->solveBytes > 0 ? (long)(arg->sectionBytes / (size_t)arg->solveBytes) : 0;
+    coeffRows = arg->scoreCoeffSolveBytes > 0 ? (long)(arg->scoreCoeffSectionBytes / (size_t)arg->scoreCoeffSolveBytes) : 0;
+    paramRows = arg->scoreParamSolveBytes > 0 ? (long)(arg->scoreParamSectionBytes / (size_t)arg->scoreParamSolveBytes) : 0;
 
     nativeStartUs = monotonic_us();
     nativeStarted = 1;
     for (long p = arg->start; p < arg->end; p++) {
         long localIdx = p - arg->start;
-        if (localIdx < 0 || localIdx >= localSolves) {
+        long sourceLocalIdx = arg->solvePreludeRows + p - arg->sourceReadStart;
+        if (localIdx < 0 || localIdx >= localSolves || sourceLocalIdx < 0 || sourceLocalIdx >= sourceRows) {
             worker_fail(arg, "section local index out of range");
             goto cleanup;
         }
-        const float *rawStep = sectionRoots + localIdx * arg->stride;
+        const float *rawStep = sectionRoots + sourceLocalIdx * arg->stride;
         const float *step = prepare_step(rawStep, arg->degree, arg->rtChain, arg->nRt, stepBuf, wkRe, wkIm);
         const float *coeffStep = NULL;
         const float *paramStep = NULL;
         if (arg->scoreCoeffDegree > 0) {
-            coeffStep = sectionCoeffRoots ? (sectionCoeffRoots + localIdx * arg->scoreCoeffStride) : NULL;
+            long coeffLocalIdx = arg->scoreCoeffPreludeRows + p - arg->scoreCoeffReadStart;
+            if (coeffLocalIdx < 0 || coeffLocalIdx >= coeffRows) {
+                worker_fail(arg, "coeff section local index out of range");
+                goto cleanup;
+            }
+            coeffStep = sectionCoeffRoots ? (sectionCoeffRoots + coeffLocalIdx * arg->scoreCoeffStride) : NULL;
         }
         if (arg->scoreParamDegree > 0) {
-            paramStep = sectionParamRows ? (sectionParamRows + localIdx * arg->scoreParamStride) : NULL;
+            long paramLocalIdx = arg->scoreParamPreludeRows + p - arg->scoreParamReadStart;
+            if (paramLocalIdx < 0 || paramLocalIdx >= paramRows) {
+                worker_fail(arg, "param section local index out of range");
+                goto cleanup;
+            }
+            paramStep = sectionParamRows ? (sectionParamRows + paramLocalIdx * arg->scoreParamStride) : NULL;
         }
 
         uint8_t solveBin = 255;
 
-        double u = solve_score_eval_program_with_sources(
-            step, arg->degree, coeffStep, arg->scoreCoeffDegree, paramStep, arg->scoreParamDegree,
+        if (!solve_score_eval_metric_slots(
+                step, arg->degree, coeffStep, arg->scoreCoeffDegree, paramStep, arg->scoreParamDegree,
+                &arg->solveScoreProgram, currentMetricBuffer)) {
+            worker_fail(arg, "solve-score metric evaluation failed");
+            goto cleanup;
+        }
+        if (usesLag && !recentInitialized) {
+            memcpy(recentMetricBuffer, currentMetricBuffer, sizeof(float) * (size_t)arg->solveScoreProgram.metricCount);
+            const float *prevStep = step;
+            const float *prevCoeffStep = coeffStep;
+            const float *prevParamStep = paramStep;
+            long prevSourceLocalIdx = sourceLocalIdx - 1;
+            long prevCoeffLocalIdx = arg->scoreCoeffPreludeRows + p - arg->scoreCoeffReadStart - 1;
+            long prevParamLocalIdx = arg->scoreParamPreludeRows + p - arg->scoreParamReadStart - 1;
+            if (arg->usesSolveLag && prevSourceLocalIdx >= 0) {
+                const float *prevRawStep = sectionRoots + prevSourceLocalIdx * arg->stride;
+                prevStep = prepare_step(prevRawStep, arg->degree, arg->rtChain, arg->nRt, prevStepBuf, prevWkRe, prevWkIm);
+            }
+            if (arg->usesCoeffLag && sectionCoeffRoots && prevCoeffLocalIdx >= 0 && prevCoeffLocalIdx < coeffRows) {
+                prevCoeffStep = sectionCoeffRoots + prevCoeffLocalIdx * arg->scoreCoeffStride;
+            }
+            if (arg->usesParamLag && sectionParamRows && prevParamLocalIdx >= 0 && prevParamLocalIdx < paramRows) {
+                prevParamStep = sectionParamRows + prevParamLocalIdx * arg->scoreParamStride;
+            }
+            if (!solve_score_eval_lagged_metric_slots(
+                    prevStep, arg->degree,
+                    prevCoeffStep, arg->scoreCoeffDegree,
+                    prevParamStep, arg->scoreParamDegree,
+                    &arg->solveScoreProgram, recentMetricBuffer)) {
+                worker_fail(arg, "solve-score lag metric evaluation failed");
+                goto cleanup;
+            }
+            recentInitialized = 1;
+        }
+        double u = solve_score_eval_program_from_buffers(
+            currentMetricBuffer,
+            usesLag ? recentMetricBuffer : NULL,
             &arg->solveScoreProgram
         );
+        if (!isfinite(u)) {
+            worker_fail(arg, "solve-score program evaluation failed");
+            goto cleanup;
+        }
         {
             int rawByte = 1 + (int)llround(u * 254.0);
             if (rawByte < 1) rawByte = 1;
@@ -323,7 +418,7 @@ static void *worker_main(void *arg_) {
                 int j = (int)(globalStep % (long long)arg->paletteGridN);
                 int col = (row & 1) ? (arg->paletteGridN - 1 - j) : j;
                 uint32_t palettePixIdx = (uint32_t)row * (uint32_t)arg->paletteGridN + (uint32_t)col;
-                if (!bytevec_push_u32le_u8(&arg->palettePbxByteVec, palettePixIdx, solveBin)) {
+                if (!bytevec_push_u32le_u8(&arg->paletteFragmentByteVec, palettePixIdx, solveBin)) {
                     worker_fail(arg, "palette fragment vec alloc failed");
                     goto cleanup;
                 }
@@ -364,11 +459,14 @@ static void *worker_main(void *arg_) {
                 continue;
             }
 
-            if (!bytevec_push_u32le_u8(&arg->pbxByteVec, globalPixIdx, solveBin)) {
+            if (!bytevec_push_u32le_u8(&arg->fragmentByteVec, globalPixIdx, solveBin)) {
                 worker_fail(arg, "fragment vec alloc failed");
                 goto cleanup;
             }
             arg->rootsPlotted++;
+        }
+        if (usesLag) {
+            memcpy(recentMetricBuffer, currentMetricBuffer, sizeof(float) * (size_t)arg->solveScoreProgram.metricCount);
         }
     }
 cleanup:
@@ -386,85 +484,78 @@ int main(int argc, char **argv) {
                 "--pix=N --min_re=A --max_re=B --min_im=C --max_im=D "
                 "--degree=D "
                 "--input_manifest=file.json [--retries=N] "
+                "--step_count=N [--prelude_rows=0|1] [--score_coeff_prelude_rows=0|1] [--score_param_prelude_rows=0|1] "
                 "[--threads=N] "
                 "--score_metrics=csv --score_clip_los=csv --score_clip_his=csv --score_program=spec "
                 "[--score_sources=csv] "
                 "[--score_coeff_manifest=file.json] [--score_params_manifest=file.json] "
-                "[--pixel_bin_prefix=/tmp/pixbin] "
-                "[--palette_bin_prefix=/tmp/palette_pixbin] [--palette_grid_n=N] [--palette_step_start=STEP] "
+                "--fragment_prefix=/tmp/fused_fragment "
+                "[--associated_palette_fragment_prefix=/tmp/palette_fragment] [--palette_grid_n=N] [--palette_step_start=STEP] "
                 "[--step_scores_output=/tmp/step_scores.bin] "
                 "[--root_xforms=file.json]\n");
+        return 1;
+    }
+    const char *allowedOptions[] = {
+        "--input_manifest", "--pix",
+        "--min_re", "--max_re", "--min_im", "--max_im",
+        "--rotation", "--degree", "--retries", "--threads", "--step_count",
+        "--prelude_rows", "--score_coeff_prelude_rows", "--score_param_prelude_rows",
+        "--fragment_prefix", "--associated_palette_fragment_prefix", "--step_scores_output",
+        "--palette_grid_n", "--palette_step_start", "--root_xforms",
+        "--score_metrics", "--score_sources",
+        "--score_clip_los", "--score_clip_his", "--score_program",
+        "--score_coeff_manifest",
+        "--score_params_manifest",
+        "--score_coeff_degree",
+    };
+    if (reject_unknown_options(argc, argv, 2, allowedOptions, (int)(sizeof(allowedOptions) / sizeof(allowedOptions[0])))) {
         return 1;
     }
 
     const char *outPrefix = argv[1];
     (void)outPrefix;
-    const char *urlArg = getArg(argc, argv, "--url");
-    const char *inputSizeArg = getArg(argc, argv, "--input_size");
-    const char *inputModeArg = getArg(argc, argv, "--input_mode");
-    const char *colorArg = getArg(argc, argv, "--color");
-    const char *matchArg = getArg(argc, argv, "--match");
-    const char *paletteArg = getArg(argc, argv, "--palette");
     const char *inputManifest = getArgStr(argc, argv, "--input_manifest", NULL);
-    const char *widthArg = getArg(argc, argv, "--width");
-    const char *heightArg = getArg(argc, argv, "--height");
     int pix = getArgInt(argc, argv, "--pix", 0);
     const char *minReArg = getArg(argc, argv, "--min_re");
     const char *maxReArg = getArg(argc, argv, "--max_re");
     const char *minImArg = getArg(argc, argv, "--min_im");
     const char *maxImArg = getArg(argc, argv, "--max_im");
-    const char *centerReArg = getArg(argc, argv, "--center_re");
-    const char *centerImArg = getArg(argc, argv, "--center_im");
-    const char *scaleArg = getArg(argc, argv, "--scale");
     double rotation = getArgDouble(argc, argv, "--rotation", 0.0);
     double cosA = cos(rotation), sinA = sin(rotation);
     int degree = getArgInt(argc, argv, "--degree", 25);
-    const char *tileSizeArg = getArg(argc, argv, "--tile_size");
-    const char *nTileColsArg = getArg(argc, argv, "--n_tile_cols");
-    const char *nTileRowsArg = getArg(argc, argv, "--n_tile_rows");
     int retries = getArgInt(argc, argv, "--retries", 2);
     int requestedThreads = getArgInt(argc, argv, "--threads", 1);
-    const char *pixelBinPrefix = getArgStr(argc, argv, "--pixel_bin_prefix", NULL);
-    const char *paletteBinPrefix = getArgStr(argc, argv, "--palette_bin_prefix", NULL);
+    long requestedStepCount = getArgLongLong(argc, argv, "--step_count", 0);
+    int solvePreludeRows = getArgInt(argc, argv, "--prelude_rows", 0);
+    int scoreCoeffPreludeRows = getArgInt(argc, argv, "--score_coeff_prelude_rows", 0);
+    int scoreParamPreludeRows = getArgInt(argc, argv, "--score_param_prelude_rows", 0);
+    const char *fragmentPrefix = getArgStr(argc, argv, "--fragment_prefix", NULL);
+    const char *paletteFragmentPrefix = getArgStr(argc, argv, "--associated_palette_fragment_prefix", NULL);
     const char *stepScoresOutputPath = getArgStr(argc, argv, "--step_scores_output", NULL);
     int paletteGridN = getArgInt(argc, argv, "--palette_grid_n", 0);
     long long paletteStepStart = getArgLongLong(argc, argv, "--palette_step_start", 0);
     const char *rtPath = getArgStr(argc, argv, "--root_xforms", NULL);
-    if (inputModeArg) {
-        fprintf(stderr, "roots2pix_mt no longer accepts --input_mode; multispan_sectioned is implicit\n");
-        return 1;
-    }
-    if (urlArg || inputSizeArg) {
-        fprintf(stderr, "roots2pix_mt no longer supports direct sectioned input; pass --input_manifest\n");
-        return 1;
-    }
-    if (colorArg || matchArg || paletteArg) {
-        fprintf(stderr, "roots2pix_mt no longer accepts --color, --match, or --palette; it emits raw-score fragments only\n");
-        return 1;
-    }
     if (degree < 1 || degree > MAXDEG) {
         fprintf(stderr, "Invalid degree: %d\n", degree);
-        return 1;
-    }
-    if (widthArg || heightArg) {
-        fprintf(stderr, "roots2pix_mt no longer accepts --width or --height; pass --pix for square output\n");
-        return 1;
-    }
-    if (tileSizeArg || nTileColsArg || nTileRowsArg) {
-        fprintf(stderr, "roots2pix_mt no longer accepts tile args; it writes sparse global fragments\n");
         return 1;
     }
     if (pix < 1) {
         fprintf(stderr, "Invalid pix: %d\n", pix);
         return 1;
     }
+    if (requestedStepCount < 1) {
+        fprintf(stderr, "roots2pix_mt requires --step_count >= 1\n");
+        return 1;
+    }
+    if (solvePreludeRows < 0 || solvePreludeRows > 1 ||
+        scoreCoeffPreludeRows < 0 || scoreCoeffPreludeRows > 1 ||
+        scoreParamPreludeRows < 0 || scoreParamPreludeRows > 1) {
+        fprintf(stderr, "prelude row counts must be 0 or 1 in v1\n");
+        return 1;
+    }
     int W = pix;
     int H = pix;
     double minRe = 0.0, maxRe = 0.0, minIm = 0.0, maxIm = 0.0;
-    if (centerReArg || centerImArg || scaleArg) {
-        fprintf(stderr, "Legacy viewport args are no longer supported; pass --min_re, --max_re, --min_im, and --max_im\n");
-        return 1;
-    }
     if (minReArg || maxReArg || minImArg || maxImArg) {
         if (!minReArg || !maxReArg || !minImArg || !maxImArg) {
             fprintf(stderr, "Exact viewport requires --min_re, --max_re, --min_im, and --max_im together\n");
@@ -501,45 +592,15 @@ int main(int argc, char **argv) {
         }
     }
 
-    const char *solveMetricArg = getArg(argc, argv, "--solve_metric");
     const char *scoreMetricsCsv = getArgStr(argc, argv, "--score_metrics", NULL);
     const char *scoreSourcesCsv = getArgStr(argc, argv, "--score_sources", NULL);
     const char *scoreClipLosCsv = getArgStr(argc, argv, "--score_clip_los", NULL);
     const char *scoreClipHisCsv = getArgStr(argc, argv, "--score_clip_his", NULL);
     const char *scoreProgramSpec = getArgStr(argc, argv, "--score_program", NULL);
-    const char *scoreCoeffsFileArg = getArg(argc, argv, "--score_coeffs_file");
-    const char *scoreCoeffsUrlArg = getArg(argc, argv, "--score_coeffs_url");
     const char *scoreCoeffManifest = getArgStr(argc, argv, "--score_coeff_manifest", NULL);
-    const char *scoreParamsFileArg = getArg(argc, argv, "--score_params_file");
     const char *scoreParamsManifest = getArgStr(argc, argv, "--score_params_manifest", NULL);
-    const char *scoreCoeffInputSizeArg = getArg(argc, argv, "--score_coeff_input_size");
     int scoreCoeffDegree = getArgInt(argc, argv, "--score_coeff_degree", 0);
-    if (scoreCoeffsFileArg || scoreCoeffsUrlArg || scoreCoeffInputSizeArg || scoreParamsFileArg) {
-        fprintf(stderr, "roots2pix_mt no longer supports direct coeff/param inputs; pass manifest-backed sources\n");
-        return 1;
-    }
-    if (
-        solveMetricArg ||
-        getArg(argc, argv, "--solve_score_clip_lo") ||
-        getArg(argc, argv, "--solve_score_clip_hi") ||
-        getArg(argc, argv, "--solve_score_omega") ||
-        getArg(argc, argv, "--solve_score_omega_enabled")
-    ) {
-        fprintf(stderr, "roots2pix_mt no longer accepts legacy single-metric solve-score args; pass score program args instead\n");
-        return 1;
-    }
     SolveScoreProgram solveScoreProgram;
-    if (
-        getArg(argc, argv, "--solve_score_cuts") ||
-        getArg(argc, argv, "--solve_prox_cuts") ||
-        getArg(argc, argv, "--solve_score_raw_bytes") ||
-        getArg(argc, argv, "--skip_pix_output") ||
-        getArg(argc, argv, "--solve_prox_clip_lo") ||
-        getArg(argc, argv, "--solve_prox_clip_hi")
-    ) {
-        fprintf(stderr, "Legacy raster output args are no longer supported; roots2pix_mt emits fused raw-score fragments only\n");
-        return 1;
-    }
     {
         char scoreErr[256] = {0};
         if (!scoreMetricsCsv || !scoreClipLosCsv || !scoreClipHisCsv || !scoreProgramSpec) {
@@ -573,6 +634,10 @@ int main(int argc, char **argv) {
     char manifestErr[256] = {0};
     int scoreProgramUsesCoeffSources = 0;
     int scoreProgramUsesParamSources = 0;
+    int scoreProgramUsesLag = 0;
+    int scoreProgramUsesSolveLag = 0;
+    int scoreProgramUsesCoeffLag = 0;
+    int scoreProgramUsesParamLag = 0;
     int scoreCoeffStride = scoreCoeffDegree * 2;
     long scoreCoeffSolveBytes = scoreCoeffStride * (long)sizeof(float);
 
@@ -590,12 +655,13 @@ int main(int argc, char **argv) {
         multispan_reader_close(&inputReader);
         return 1;
     }
-    nPoints = (long)(inputReader.logicalSize / (unsigned long long)solveBytes);
-    if (nPoints <= 0) {
+    long inputRows = (long)(inputReader.logicalSize / (unsigned long long)solveBytes);
+    if (inputRows <= 0) {
         fprintf(stderr, "Empty multispan input\n");
         multispan_reader_close(&inputReader);
         return 1;
     }
+    nPoints = requestedStepCount;
 
     for (int i = 0; i < solveScoreProgram.metricCount; i++) {
         if (solveScoreProgram.metricSources[i] == SOLVE_SCORE_SOURCE_COEFF) {
@@ -604,6 +670,36 @@ int main(int argc, char **argv) {
         if (solveScoreProgram.metricSources[i] == SOLVE_SCORE_SOURCE_PARAM) {
             scoreProgramUsesParamSources = 1;
         }
+    }
+    scoreProgramUsesLag = solve_score_program_uses_lag(&solveScoreProgram);
+    scoreProgramUsesSolveLag = solve_score_program_uses_lag_source(&solveScoreProgram, SOLVE_SCORE_SOURCE_SOLVE);
+    scoreProgramUsesCoeffLag = solve_score_program_uses_lag_source(&solveScoreProgram, SOLVE_SCORE_SOURCE_COEFF);
+    scoreProgramUsesParamLag = solve_score_program_uses_lag_source(&solveScoreProgram, SOLVE_SCORE_SOURCE_PARAM);
+    if (!scoreProgramUsesLag && (solvePreludeRows || scoreCoeffPreludeRows || scoreParamPreludeRows)) {
+        fprintf(stderr, "prelude rows require a lagged solve-score program\n");
+        multispan_reader_close(&inputReader);
+        return 1;
+    }
+    if (!scoreProgramUsesCoeffSources && scoreCoeffPreludeRows) {
+        fprintf(stderr, "coeff prelude rows require coeff-source metrics\n");
+        multispan_reader_close(&inputReader);
+        return 1;
+    }
+    if (!scoreProgramUsesParamSources && scoreParamPreludeRows) {
+        fprintf(stderr, "param prelude rows require param-source metrics\n");
+        multispan_reader_close(&inputReader);
+        return 1;
+    }
+    if (scoreProgramUsesSolveLag != (solvePreludeRows > 0) && !(scoreProgramUsesSolveLag && solvePreludeRows == 0)) {
+        fprintf(stderr, "solve prelude rows must match solve-source lag requirements\n");
+        multispan_reader_close(&inputReader);
+        return 1;
+    }
+    if (inputRows != nPoints + solvePreludeRows) {
+        fprintf(stderr, "input manifest solve count mismatch: got %ld rows expected %ld scored + %d prelude\n",
+                inputRows, nPoints, solvePreludeRows);
+        multispan_reader_close(&inputReader);
+        return 1;
     }
     if (scoreProgramUsesCoeffSources) {
         if (scoreCoeffDegree < 1 || scoreCoeffDegree > MAXDEG) {
@@ -629,8 +725,15 @@ int main(int argc, char **argv) {
             return 1;
         }
         long coeffPoints = (long)(scoreCoeffReader.logicalSize / (unsigned long long)scoreCoeffSolveBytes);
-        if (coeffPoints != nPoints) {
-            fprintf(stderr, "multispan score coeff solve count mismatch: got %ld expected %ld\n", coeffPoints, nPoints);
+        if (scoreProgramUsesCoeffLag != (scoreCoeffPreludeRows > 0) && !(scoreProgramUsesCoeffLag && scoreCoeffPreludeRows == 0)) {
+            fprintf(stderr, "coeff prelude rows must match coeff-source lag requirements\n");
+            multispan_reader_close(&scoreCoeffReader);
+            multispan_reader_close(&inputReader);
+            return 1;
+        }
+        if (coeffPoints != nPoints + scoreCoeffPreludeRows) {
+            fprintf(stderr, "multispan score coeff solve count mismatch: got %ld expected %ld scored + %d prelude\n",
+                    coeffPoints, nPoints, scoreCoeffPreludeRows);
             multispan_reader_close(&scoreCoeffReader);
             multispan_reader_close(&inputReader);
             return 1;
@@ -661,8 +764,16 @@ int main(int argc, char **argv) {
             return 1;
         }
         long paramPoints = (long)(scoreParamReader.logicalSize / (unsigned long long)paramSolveBytes);
-        if (paramPoints != nPoints) {
-            fprintf(stderr, "multispan score params size mismatch: got %ld solves expected %ld\n", paramPoints, nPoints);
+        if (scoreProgramUsesParamLag != (scoreParamPreludeRows > 0) && !(scoreProgramUsesParamLag && scoreParamPreludeRows == 0)) {
+            fprintf(stderr, "param prelude rows must match param-source lag requirements\n");
+            multispan_reader_close(&scoreParamReader);
+            multispan_reader_close(&scoreCoeffReader);
+            multispan_reader_close(&inputReader);
+            return 1;
+        }
+        if (paramPoints != nPoints + scoreParamPreludeRows) {
+            fprintf(stderr, "multispan score params size mismatch: got %ld solves expected %ld scored + %d prelude\n",
+                    paramPoints, nPoints, scoreParamPreludeRows);
             multispan_reader_close(&scoreParamReader);
             multispan_reader_close(&scoreCoeffReader);
             multispan_reader_close(&inputReader);
@@ -671,16 +782,16 @@ int main(int argc, char **argv) {
     }
 
     uint64_t *pixelBits = NULL;
-    int emitPixelBins = pixelBinPrefix && *pixelBinPrefix;
-    int emitPaletteBins = paletteBinPrefix && *paletteBinPrefix;
+    int emitFragments = fragmentPrefix && *fragmentPrefix;
+    int emitPaletteBins = paletteFragmentPrefix && *paletteFragmentPrefix;
     int emitStepScores = stepScoresOutputPath && *stepScoresOutputPath;
-    if (!emitPixelBins) {
-        fprintf(stderr, "roots2pix_mt requires --pixel_bin_prefix for fused fragment output\n");
+    if (!emitFragments) {
+        fprintf(stderr, "roots2pix_mt requires --fragment_prefix for fused fragment output\n");
         return 1;
     }
     if (emitPaletteBins) {
         if (paletteGridN < 1) {
-            fprintf(stderr, "--palette_grid_n must be >= 1 when --palette_bin_prefix is set\n");
+            fprintf(stderr, "--palette_grid_n must be >= 1 when --associated_palette_fragment_prefix is set\n");
             return 1;
         }
     }
@@ -760,12 +871,37 @@ int main(int argc, char **argv) {
         args[i].solveBytes = solveBytes;
         args[i].scoreCoeffSolveBytes = scoreCoeffSolveBytes;
         args[i].scoreParamSolveBytes = (long)scoreParamStride * (long)sizeof(float);
-        args[i].sectionBytes = (size_t)width * (size_t)solveBytes;
-        args[i].scoreCoeffSectionBytes = (size_t)width * (size_t)scoreCoeffSolveBytes;
-        args[i].scoreParamSectionBytes = (size_t)width * (size_t)args[i].scoreParamSolveBytes;
-        args[i].byteStart = (unsigned long long)start * (unsigned long long)solveBytes;
-        args[i].scoreCoeffByteStart = (unsigned long long)start * (unsigned long long)scoreCoeffSolveBytes;
-        args[i].scoreParamByteStart = (unsigned long long)start * (unsigned long long)args[i].scoreParamSolveBytes;
+        args[i].solvePreludeRows = solvePreludeRows;
+        args[i].scoreCoeffPreludeRows = scoreCoeffPreludeRows;
+        args[i].scoreParamPreludeRows = scoreParamPreludeRows;
+        args[i].usesSolveLag = scoreProgramUsesSolveLag;
+        args[i].usesCoeffLag = scoreProgramUsesCoeffLag;
+        args[i].usesParamLag = scoreProgramUsesParamLag;
+        long sourceCurrentStart = solvePreludeRows + start;
+        long sourceReadStart = sourceCurrentStart;
+        if (scoreProgramUsesSolveLag && sourceCurrentStart > 0) sourceReadStart -= 1;
+        long sourceReadEnd = solvePreludeRows + start + width;
+        args[i].sourceReadStart = sourceReadStart;
+        args[i].sectionBytes = (size_t)(sourceReadEnd - sourceReadStart) * (size_t)solveBytes;
+        args[i].byteStart = (unsigned long long)sourceReadStart * (unsigned long long)solveBytes;
+        if (scoreProgramUsesCoeffSources) {
+            long coeffCurrentStart = scoreCoeffPreludeRows + start;
+            long coeffReadStart = coeffCurrentStart;
+            if (scoreProgramUsesCoeffLag && coeffCurrentStart > 0) coeffReadStart -= 1;
+            long coeffReadEnd = scoreCoeffPreludeRows + start + width;
+            args[i].scoreCoeffReadStart = coeffReadStart;
+            args[i].scoreCoeffSectionBytes = (size_t)(coeffReadEnd - coeffReadStart) * (size_t)scoreCoeffSolveBytes;
+            args[i].scoreCoeffByteStart = (unsigned long long)coeffReadStart * (unsigned long long)scoreCoeffSolveBytes;
+        }
+        if (scoreProgramUsesParamSources) {
+            long paramCurrentStart = scoreParamPreludeRows + start;
+            long paramReadStart = paramCurrentStart;
+            if (scoreProgramUsesParamLag && paramCurrentStart > 0) paramReadStart -= 1;
+            long paramReadEnd = scoreParamPreludeRows + start + width;
+            args[i].scoreParamReadStart = paramReadStart;
+            args[i].scoreParamSectionBytes = (size_t)(paramReadEnd - paramReadStart) * (size_t)args[i].scoreParamSolveBytes;
+            args[i].scoreParamByteStart = (unsigned long long)paramReadStart * (unsigned long long)args[i].scoreParamSolveBytes;
+        }
         args[i].rtChain = rtChain;
         args[i].nRt = nRt;
         args[i].inputReader = &inputReader;
@@ -811,16 +947,16 @@ int main(int argc, char **argv) {
     char pathBuf[512];
     long totalEntries = 0;
     int fragmentsWithData = 0;
-    size_t totalPbxBytes = 0;
+    size_t totalFragmentBytes = 0;
     for (int i = 0; i < threads; i++) {
-        totalPbxBytes += args[i].pbxByteVec.len;
+        totalFragmentBytes += args[i].fragmentByteVec.len;
     }
-    if (totalPbxBytes > 0) fragmentsWithData = 1;
-    totalEntries = (long)(totalPbxBytes / 5u);
-    if (emitPixelBins) {
-        if (totalPbxBytes > 0) {
-            if (!write_suffix_path(pathBuf, sizeof(pathBuf), pixelBinPrefix, ".frag")) {
-                fprintf(stderr, "Cannot build fused fragment path from %s\n", pixelBinPrefix);
+    if (totalFragmentBytes > 0) fragmentsWithData = 1;
+    totalEntries = (long)(totalFragmentBytes / 5u);
+    if (emitFragments) {
+        if (totalFragmentBytes > 0) {
+            if (!write_suffix_path(pathBuf, sizeof(pathBuf), fragmentPrefix, ".frag")) {
+                fprintf(stderr, "Cannot build fused fragment path from %s\n", fragmentPrefix);
                 goto cleanup;
             }
             FILE *fb = fopen(pathBuf, "wb");
@@ -829,8 +965,8 @@ int main(int argc, char **argv) {
                 goto cleanup;
             }
             for (int i = 0; i < threads; i++) {
-                if (args[i].pbxByteVec.len > 0) {
-                    fwrite(args[i].pbxByteVec.data, 1, args[i].pbxByteVec.len, fb);
+                if (args[i].fragmentByteVec.len > 0) {
+                    fwrite(args[i].fragmentByteVec.data, 1, args[i].fragmentByteVec.len, fb);
                 }
             }
             fclose(fb);
@@ -839,11 +975,11 @@ int main(int argc, char **argv) {
     if (emitPaletteBins) {
         size_t totalPaletteBytes = 0;
         for (int i = 0; i < threads; i++) {
-            totalPaletteBytes += args[i].palettePbxByteVec.len;
+            totalPaletteBytes += args[i].paletteFragmentByteVec.len;
         }
         if (totalPaletteBytes > 0) {
-            if (!write_suffix_path(pathBuf, sizeof(pathBuf), paletteBinPrefix, ".frag")) {
-                fprintf(stderr, "Cannot build palette fused fragment path from %s\n", paletteBinPrefix);
+            if (!write_suffix_path(pathBuf, sizeof(pathBuf), paletteFragmentPrefix, ".frag")) {
+                fprintf(stderr, "Cannot build palette fused fragment path from %s\n", paletteFragmentPrefix);
                 goto cleanup;
             }
             FILE *fb = fopen(pathBuf, "wb");
@@ -852,8 +988,8 @@ int main(int argc, char **argv) {
                 goto cleanup;
             }
             for (int i = 0; i < threads; i++) {
-                if (args[i].palettePbxByteVec.len > 0) {
-                    fwrite(args[i].palettePbxByteVec.data, 1, args[i].palettePbxByteVec.len, fb);
+                if (args[i].paletteFragmentByteVec.len > 0) {
+                    fwrite(args[i].paletteFragmentByteVec.data, 1, args[i].paletteFragmentByteVec.len, fb);
                 }
             }
             fclose(fb);

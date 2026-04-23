@@ -343,7 +343,7 @@ def test_roots2pix_mt_square_ext_2_5_matches_legacy_square_camera_oracle():
         bounds = _square_bounds(ext)
         clip_lo = -2.5
         clip_hi = 2.5
-        pixbin_prefix = root / "pixbin"
+        fragment_prefix = root / "fragment"
         server, thread = _serve_dir(root)
         try:
             manifest_path = _write_single_span_manifest(
@@ -366,7 +366,7 @@ def test_roots2pix_mt_square_ext_2_5_matches_legacy_square_camera_oracle():
                 "--threads=1",
                 f"--input_manifest={manifest_path}",
                 *_single_metric_program_args("centroid_re", clip_lo, clip_hi),
-                f"--pixel_bin_prefix={pixbin_prefix}",
+                f"--fragment_prefix={fragment_prefix}",
             ]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             assert result.returncode == 0, result.stderr
@@ -382,7 +382,7 @@ def test_roots2pix_mt_square_ext_2_5_matches_legacy_square_camera_oracle():
             assert meta["roots_plotted"] == len(expected_pairs)
             assert meta["roots_clipped"] == 1
             assert meta["input_mode"] == "multispan_sectioned"
-            assert (root / "pixbin.frag").read_bytes() == _encode_u32le_u8_pairs(expected_pairs)
+            assert (root / "fragment.frag").read_bytes() == _encode_u32le_u8_pairs(expected_pairs)
         finally:
             server.shutdown()
             server.server_close()
@@ -493,7 +493,7 @@ def test_roots2pix_mt_asymmetric_bounds_match_independent_bounds_oracle():
         }
         clip_lo = -4.0
         clip_hi = 8.0
-        pixbin_prefix = root / "pixbin"
+        fragment_prefix = root / "fragment"
         server, thread = _serve_dir(root)
         try:
             manifest_path = _write_single_span_manifest(
@@ -516,7 +516,7 @@ def test_roots2pix_mt_asymmetric_bounds_match_independent_bounds_oracle():
                 "--threads=1",
                 f"--input_manifest={manifest_path}",
                 *_single_metric_program_args("centroid_re", clip_lo, clip_hi),
-                f"--pixel_bin_prefix={pixbin_prefix}",
+                f"--fragment_prefix={fragment_prefix}",
             ]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
             assert result.returncode == 0, result.stderr
@@ -532,7 +532,7 @@ def test_roots2pix_mt_asymmetric_bounds_match_independent_bounds_oracle():
             assert meta["roots_plotted"] == len(expected_pairs)
             assert meta["roots_clipped"] == 1
             assert meta["input_mode"] == "multispan_sectioned"
-            assert (root / "pixbin.frag").read_bytes() == _encode_u32le_u8_pairs(expected_pairs)
+            assert (root / "fragment.frag").read_bytes() == _encode_u32le_u8_pairs(expected_pairs)
         finally:
             server.shutdown()
             server.server_close()
@@ -662,21 +662,19 @@ def test_active_binaries_reject_legacy_square_camera_args():
                     str(roots_binary),
                     str(root / "pix"),
                     "--pix=8",
-                    "--center_re=0",
-                    "--center_im=0",
-                    "--scale=1",
                     "--degree=1",
                     "--threads=1",
                     f"--input_manifest={manifest_path}",
                     *_single_metric_program_args("centroid_re", -1, 1),
-                    f"--pixel_bin_prefix={root / 'pixbin'}",
+                    f"--fragment_prefix={root / 'fragment'}",
+                    "--removed_option=1",
                 ],
                 capture_output=True,
                 text=True,
                 timeout=30,
             )
             assert roots_result.returncode != 0
-            assert "no longer supported" in roots_result.stderr
+            assert "Unknown roots2pix_mt option" in roots_result.stderr
         finally:
             server.shutdown()
             server.server_close()
@@ -688,17 +686,15 @@ def test_active_binaries_reject_legacy_square_camera_args():
                 str(roots_path),
                 str(root / "section.frag"),
                 "--pix=8",
-                "--center_re=0",
-                "--center_im=0",
-                "--scale=1",
                 "--degree=1",
+                "--removed_option=1",
             ],
             capture_output=True,
             text=True,
             timeout=30,
         )
         assert section_result.returncode != 0
-        assert "no longer supported" in section_result.stderr
+        assert "Unknown bilevel_section_raster option" in section_result.stderr
 
         coeff_result = subprocess.run(
             [
@@ -706,78 +702,19 @@ def test_active_binaries_reject_legacy_square_camera_args():
                 str(coeffs_path),
                 str(root / "coeff.frag"),
                 "--pix=8",
-                "--center_re=0",
-                "--center_im=0",
-                "--scale=1",
                 "--n_coeffs=1",
+                "--removed_option=1",
             ],
             capture_output=True,
             text=True,
             timeout=30,
         )
         assert coeff_result.returncode != 0
-        assert "no longer supported" in coeff_result.stderr
-
-        coeff_tile_result = subprocess.run(
-            [
-                str(coeff_binary),
-                str(coeffs_path),
-                str(root / "coeff.frag"),
-                "--pix=8",
-                "--tile_size=8",
-                "--n_tile_cols=1",
-                "--n_tile_rows=1",
-                "--min_re=-1",
-                "--max_re=1",
-                "--min_im=-1",
-                "--max_im=1",
-                "--n_coeffs=1",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        assert coeff_tile_result.returncode != 0
-        assert "no longer accepts tile args" in coeff_tile_result.stderr
+        assert "Unknown coeffs_bilevel_raster option" in coeff_result.stderr
 
 
-def test_roots2pix_mt_rejects_legacy_input_modes():
-    with tempfile.TemporaryDirectory(prefix="exact_viewport_roots2pix_input_modes_") as td:
-        root = pathlib.Path(td)
-        binary = _compile_binary(
-            td,
-            "roots2pix_mt_test",
-            "roots2pix_mt.c",
-            extra_sources=["multispan_reader.c"],
-            libs=["-lcurl", "-lm", "-lpthread"],
-        )
-        roots_path = _write_float_file(root / "roots.bin", [0.0, 0.0])
-        common_args = [
-            str(binary),
-            str(root / "pix"),
-            "--pix=8",
-            "--min_re=-1",
-            "--max_re=1",
-            "--min_im=-1",
-            "--max_im=1",
-            "--degree=1",
-            "--threads=1",
-            *_single_metric_program_args("centroid_re", -1, 1),
-            f"--pixel_bin_prefix={root / 'pixbin'}",
-        ]
-        for legacy_mode in ("tmpfile", "sectioned"):
-            result = subprocess.run(
-                [*common_args, f"--input_mode={legacy_mode}"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            assert result.returncode != 0
-            assert "no longer accepts --input_mode" in result.stderr
-
-
-def test_roots2pix_mt_rejects_legacy_output_mode_args():
-    with tempfile.TemporaryDirectory(prefix="exact_viewport_roots2pix_legacy_output_") as td:
+def test_roots2pix_mt_rejects_unknown_options():
+    with tempfile.TemporaryDirectory(prefix="exact_viewport_roots2pix_unknown_option_") as td:
         root = pathlib.Path(td)
         binary = _compile_binary(
             td,
@@ -796,87 +733,28 @@ def test_roots2pix_mt_rejects_legacy_output_mode_args():
                 row_bytes=8,
                 solve_count=1,
             )
-            common_args = [
-                str(binary),
-                str(root / "pix"),
-                "--pix=8",
-                "--min_re=-1",
-                "--max_re=1",
-                "--min_im=-1",
-                "--max_im=1",
-                "--degree=1",
-                "--threads=1",
-                f"--input_manifest={manifest_path}",
-                *_single_metric_program_args("centroid_re", -1, 1),
-                f"--pixel_bin_prefix={root / 'pixbin'}",
-            ]
-            legacy_arg_sets = (
-                {
-                    "args": ["--solve_score_raw_bytes=1"],
-                    "expect": "Legacy raster output args are no longer supported",
-                },
-                {
-                    "args": ["--skip_pix_output=1"],
-                    "expect": "Legacy raster output args are no longer supported",
-                },
-                {
-                    "args": ["--solve_score_cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9"],
-                    "expect": "Legacy raster output args are no longer supported",
-                },
-                {
-                    "args": ["--solve_prox_clip_lo=-1"],
-                    "expect": "Legacy raster output args are no longer supported",
-                },
-                {
-                    "args": ["--color=solve_score"],
-                    "expect": "no longer accepts --color, --match, or --palette",
-                },
-                {
-                    "args": ["--match=none"],
-                    "expect": "no longer accepts --color, --match, or --palette",
-                },
-                {
-                    "args": ["--palette=inferno"],
-                    "expect": "no longer accepts --color, --match, or --palette",
-                },
-                {
-                    "args": ["--tile_size=8"],
-                    "expect": "no longer accepts tile args",
-                },
-                {
-                    "args": ["--n_tile_cols=1"],
-                    "expect": "no longer accepts tile args",
-                },
-                {
-                    "args": ["--n_tile_rows=1"],
-                    "expect": "no longer accepts tile args",
-                },
-                {
-                    "args": ["--solve_metric=centroid_re"],
-                    "expect": "no longer accepts legacy single-metric solve-score args",
-                },
-                {
-                    "args": ["--solve_score_clip_lo=-1"],
-                    "expect": "no longer accepts legacy single-metric solve-score args",
-                },
-                {
-                    "args": ["--solve_score_clip_hi=1"],
-                    "expect": "no longer accepts legacy single-metric solve-score args",
-                },
-                {
-                    "args": ["--solve_score_omega_enabled=0"],
-                    "expect": "no longer accepts legacy single-metric solve-score args",
-                },
+            result = subprocess.run(
+                [
+                    str(binary),
+                    str(root / "pix"),
+                    "--pix=8",
+                    "--min_re=-1",
+                    "--max_re=1",
+                    "--min_im=-1",
+                    "--max_im=1",
+                    "--degree=1",
+                    "--threads=1",
+                    f"--input_manifest={manifest_path}",
+                    *_single_metric_program_args("centroid_re", -1, 1),
+                    f"--fragment_prefix={root / 'fragment'}",
+                    "--removed_option=1",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
-            for case in legacy_arg_sets:
-                result = subprocess.run(
-                    [*common_args, *case["args"]],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-                assert result.returncode != 0
-                assert case["expect"] in result.stderr
+            assert result.returncode != 0
+            assert "Unknown roots2pix_mt option: --removed_option=1" in result.stderr
         finally:
             server.shutdown()
             server.server_close()

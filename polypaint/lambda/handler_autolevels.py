@@ -278,9 +278,6 @@ def handler(event, context):
             "background_color": background_color,
             "background_threshold": str(background_threshold),
             "repalette_capable": "false",
-            "pixel_bins_prefix": "",
-            "pixel_bins_empty": "",
-            "pixel_bins_layout": "",
             "derivation_kind": "",
         })
         img_meta.update(inherit_associated_palette_metadata(src_meta))

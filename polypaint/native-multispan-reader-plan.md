@@ -98,7 +98,7 @@ That is the reader’s job.
 Also:
 
 - finalize is not part of this refactor
-- finalize consumes tile/fragments, not solve-aligned row stores
+- finalize consumes sparse fragments, not solve-aligned row stores
 - the native multi-span reader is only for solve-aligned consumers
 
 
@@ -173,7 +173,7 @@ that storage layout is hidden behind the manifest boundary.
 And in the UI:
 
 - hist, palette, and later raster are section-counted solve-aligned phases
-- finalize remains a worker/tile stage, not a section-sized solve-aligned phase
+- finalize remains an assembly stage, not a section-sized solve-aligned phase
 
 
 Non-Goals
@@ -869,7 +869,6 @@ Test files to update or add:
 - [tests/test_solve_proximity_handler.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_solve_proximity_handler.py)
 - [tests/test_solve_proximity_hist_sectioned.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_solve_proximity_hist_sectioned.py)
 - [tests/test_raster_mt_parity.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_raster_mt_parity.py)
-- [tests/test_raster_pixel_bins.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_raster_pixel_bins.py)
 - [tests/test_frontend_js.sh](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_frontend_js.sh)
 - new native reader test target
   - recommended:

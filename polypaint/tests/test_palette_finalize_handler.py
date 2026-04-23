@@ -201,7 +201,6 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
                     "solve_score_hist_retries": 4,
                     "raster_input_mode": "sectioned",
                     "raster_sectioned_retries": 5,
-                    "pixel_bin_fragment_mode": "dense_grouped",
                     "raster_bin_group_size": 2,
                     "solve_score_merge_workers": 12,
                     "finalize_workers": 18,

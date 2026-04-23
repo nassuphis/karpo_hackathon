@@ -20,10 +20,8 @@ logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
 FUNCTIONS = {
-    "encode": os.environ.get("ENCODE_FUNCTION", "polypaint-encode"),
     "sweep": os.environ.get("SWEEP_FUNCTION", "polypaint-sweep"),
     "sweep_mt": os.environ.get("SWEEP_MT_FUNCTION", "polypaint-sweep-mt"),
-    "bilevel": os.environ.get("BILEVEL_FUNCTION", "polypaint-bilevel"),
     "deepzoom_export": os.environ.get("DZ_EXPORT_FUNCTION", "polypaint-deepzoom-export"),
     "deepzoom_from_raw": os.environ.get("DZ_FROM_RAW_FUNCTION", "polypaint-deepzoom-from-raw"),
     "coeffgen": os.environ.get("COEFFGEN_FUNCTION", "polypaint-coeffgen"),
@@ -60,8 +58,8 @@ def _invoke_one(function_name, job):
     if status != 202:
         job_id = job.get("job_id", "?")
         task_hint = job.get(
-            "tile_idx",
-            job.get("chunk_idx", job.get("section_idx", job.get("stripe_idx", job.get("task_id", "?")))),
+            "chunk_idx",
+            job.get("section_idx", job.get("stripe_idx", job.get("task_id", "?"))),
         )
         logger.warning(f"invoke {function_name} returned {status} for job_id={job_id} task={task_hint}")
     return status

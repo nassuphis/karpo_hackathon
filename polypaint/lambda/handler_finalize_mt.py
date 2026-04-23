@@ -686,9 +686,6 @@ def handler(event, context):
     final_metadata["step_count"] = step_scores_count if step_scores_key else ""
     final_metadata["step_scores_grid_n"] = step_scores_grid_n if step_scores_key else ""
     final_metadata["repalette_capable"] = False
-    final_metadata["pixel_bins_prefix"] = ""
-    final_metadata["pixel_bins_empty"] = ""
-    final_metadata["pixel_bins_layout"] = ""
     if associated_palette_result:
         final_metadata["associated_palette_mode"] = "generated"
         final_metadata["associated_palette_id"] = associated_palette_result["palette_id"]

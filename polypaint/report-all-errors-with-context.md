@@ -16,7 +16,7 @@ That loses the facts needed to debug the run:
 
 - what object failed
 - which job/task/phase failed
-- which chunk/tile/range failed
+- which chunk/section/range failed
 - which mode/input/thread/worker settings were active
 - whether the failure came from S3, subprocess launch, native code, HTTP, DDB,
   or frontend request handling
@@ -101,7 +101,6 @@ Every async worker error should be representable as:
 - `clip_key`
 - `out_key`
 - `chunk_idx`
-- `tile_idx`
 - `section_idx`
 - `byte_range`
 - `threads`
@@ -171,7 +170,7 @@ Required handler context when applicable:
 - `job_id`, `task_id`, `phase`
 - input object key(s)
 - output key(s)
-- chunk/tile index
+- chunk/section index
 - mode/metric/input mode
 - thread/worker counts
 - sizes
@@ -262,7 +261,7 @@ With context:
 - `task_id`
 - `phase`
 - source keys
-- chunk/tile index
+- chunk/section index
 - mode
 - thread/worker counts
 

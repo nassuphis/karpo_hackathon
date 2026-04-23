@@ -389,9 +389,9 @@ class TestRasterMtParity(unittest.TestCase):
                     with self.subTest(case=case["label"]):
                         payload = case["payload"]
                         single_prefix = root / f"{case['label']}_single_pix"
-                        single_pbx_prefix = root / f"{case['label']}_single_pixbin"
+                        single_fragment_prefix = root / f"{case['label']}_single_fragment"
                         ms_prefix = root / f"{case['label']}_ms_pix"
-                        ms_pbx_prefix = root / f"{case['label']}_ms_pixbin"
+                        ms_fragment_prefix = root / f"{case['label']}_ms_fragment"
 
                         single_cmd = [
                             str(self._binary),
@@ -402,7 +402,7 @@ class TestRasterMtParity(unittest.TestCase):
                             f"--score_clip_los={payload['score_clip_los']}",
                             f"--score_clip_his={payload['score_clip_his']}",
                             f"--score_program={payload['score_program']}",
-                            f"--pixel_bin_prefix={single_pbx_prefix}",
+                            f"--fragment_prefix={single_fragment_prefix}",
                             "--retries=1",
                         ]
                         ms_cmd = [
@@ -414,7 +414,7 @@ class TestRasterMtParity(unittest.TestCase):
                             f"--score_clip_los={payload['score_clip_los']}",
                             f"--score_clip_his={payload['score_clip_his']}",
                             f"--score_program={payload['score_program']}",
-                            f"--pixel_bin_prefix={ms_pbx_prefix}",
+                            f"--fragment_prefix={ms_fragment_prefix}",
                             "--retries=1",
                         ]
                         if "score_sources" in payload:
@@ -443,8 +443,8 @@ class TestRasterMtParity(unittest.TestCase):
                         ms_result = self._run_binary(ms_cmd)
                         self.assertEqual(ms_result.returncode, 0, ms_result.stderr)
 
-                        single_frag = (root / f"{case['label']}_single_pixbin.frag").read_bytes()
-                        ms_frag = (root / f"{case['label']}_ms_pixbin.frag").read_bytes()
+                        single_frag = (root / f"{case['label']}_single_fragment.frag").read_bytes()
+                        ms_frag = (root / f"{case['label']}_ms_fragment.frag").read_bytes()
 
                         self.assertEqual(single_frag, ms_frag)
                         self.assertGreater(len(single_frag), 0)
@@ -463,8 +463,8 @@ class TestRasterMtParity(unittest.TestCase):
             root = pathlib.Path(td)
             roots_path = self._write_float_file(root / "roots.bin", roots)
             out_prefix = root / "pix"
-            pixbin_prefix = root / "pixbin"
-            palette_prefix = root / "palette_pixbin"
+            fragment_prefix = root / "fragment"
+            palette_prefix = root / "palette_fragment"
             server, thread = self._serve_dir(root)
             try:
                 manifest_path = self._write_single_span_manifest(
@@ -484,8 +484,8 @@ class TestRasterMtParity(unittest.TestCase):
                     "--threads=1",
                     f"--input_manifest={manifest_path}",
                     *self._single_metric_program_args("centroid_re", 0, 2000),
-                    f"--pixel_bin_prefix={pixbin_prefix}",
-                    f"--palette_bin_prefix={palette_prefix}",
+                    f"--fragment_prefix={fragment_prefix}",
+                    f"--associated_palette_fragment_prefix={palette_prefix}",
                     "--palette_grid_n=2",
                     "--palette_step_start=0",
                     "--retries=1",
@@ -493,7 +493,7 @@ class TestRasterMtParity(unittest.TestCase):
 
                 result = self._run_binary(cmd)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                palette_pairs = self._read_u32le_u8_pairs(root / "palette_pixbin.frag")
+                palette_pairs = self._read_u32le_u8_pairs(root / "palette_fragment.frag")
                 self.assertEqual([pix for pix, _ in palette_pairs], [0, 1, 3, 2])
                 self.assertEqual(len(palette_pairs), step_count)
                 self.assertTrue(all(value > 0 for _, value in palette_pairs))
@@ -511,8 +511,8 @@ class TestRasterMtParity(unittest.TestCase):
             root = pathlib.Path(td)
             roots_path = self._write_float_file(root / "roots.bin", roots)
             out_prefix = root / "pix"
-            palette_prefix = root / "palette_pixbin"
-            pixbin_prefix = root / "pixbin"
+            palette_prefix = root / "palette_fragment"
+            fragment_prefix = root / "fragment"
             server, thread = self._serve_dir(root)
             try:
                 manifest_path = self._write_single_span_manifest(
@@ -532,8 +532,8 @@ class TestRasterMtParity(unittest.TestCase):
                     "--threads=1",
                     f"--input_manifest={manifest_path}",
                     *self._single_metric_program_args("centroid_re", -1, 1),
-                    f"--pixel_bin_prefix={pixbin_prefix}",
-                    f"--palette_bin_prefix={palette_prefix}",
+                    f"--fragment_prefix={fragment_prefix}",
+                    f"--associated_palette_fragment_prefix={palette_prefix}",
                     "--palette_grid_n=2",
                     "--palette_step_start=0",
                     "--retries=1",
@@ -541,8 +541,8 @@ class TestRasterMtParity(unittest.TestCase):
 
                 result = self._run_binary(cmd)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                main_pairs = self._read_u32le_u8_pairs(root / "pixbin.frag")
-                palette_pairs = self._read_u32le_u8_pairs(root / "palette_pixbin.frag")
+                main_pairs = self._read_u32le_u8_pairs(root / "fragment.frag")
+                palette_pairs = self._read_u32le_u8_pairs(root / "palette_fragment.frag")
                 self.assertEqual(len(main_pairs), 1)
                 self.assertEqual([pix for pix, _ in palette_pairs], [0, 1, 3, 2])
                 self.assertEqual(len(palette_pairs), step_count)
@@ -564,7 +564,7 @@ class TestRasterMtParity(unittest.TestCase):
             roots_path = self._write_float_file(root / "roots.bin", roots)
             out_prefix = root / "pix"
             step_scores_path = root / "step_scores.raw"
-            pixbin_prefix = root / "pixbin"
+            fragment_prefix = root / "fragment"
             server, thread = self._serve_dir(root)
             try:
                 manifest_path = self._write_single_span_manifest(
@@ -584,7 +584,7 @@ class TestRasterMtParity(unittest.TestCase):
                     "--threads=1",
                     f"--input_manifest={manifest_path}",
                     *self._single_metric_program_args("centroid_re", 0, 2000),
-                    f"--pixel_bin_prefix={pixbin_prefix}",
+                    f"--fragment_prefix={fragment_prefix}",
                     f"--step_scores_output={step_scores_path}",
                     "--retries=1",
                 ]
@@ -609,7 +609,7 @@ class TestRasterMtParity(unittest.TestCase):
             roots_path = self._write_float_file(root / "roots.bin", roots)
             out_prefix = root / "pix"
             step_scores_path = root / "step_scores.raw"
-            pixbin_prefix = root / "pixbin"
+            fragment_prefix = root / "fragment"
             server, thread = self._serve_dir(root)
             try:
                 manifest_path = self._write_single_span_manifest(
@@ -629,14 +629,14 @@ class TestRasterMtParity(unittest.TestCase):
                     "--threads=1",
                     f"--input_manifest={manifest_path}",
                     *self._single_metric_program_args("centroid_re", -1, 1),
-                    f"--pixel_bin_prefix={pixbin_prefix}",
+                    f"--fragment_prefix={fragment_prefix}",
                     f"--step_scores_output={step_scores_path}",
                     "--retries=1",
                 ]
 
                 result = self._run_binary(cmd)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                main_pairs = self._read_u32le_u8_pairs(root / "pixbin.frag")
+                main_pairs = self._read_u32le_u8_pairs(root / "fragment.frag")
                 self.assertEqual(len(main_pairs), 1)
                 payload = step_scores_path.read_bytes()
                 self.assertEqual(len(payload), step_count)
@@ -662,7 +662,7 @@ class TestRasterMtParity(unittest.TestCase):
             root = pathlib.Path(td)
             roots_path = self._write_float_file(root / "roots.bin", roots)
             out_prefix = root / "pix"
-            pixbin_prefix = root / "pixbin"
+            fragment_prefix = root / "fragment"
             xforms_path = root / "root_xforms.json"
             xforms_path.write_text(json.dumps([["moebius", "0", "0", "0", "0"]]))
             server, thread = self._serve_dir(root)
@@ -684,7 +684,7 @@ class TestRasterMtParity(unittest.TestCase):
                     "--threads=1",
                     f"--input_manifest={manifest_path}",
                     *self._single_metric_program_args("proximity", 0, 1),
-                    f"--pixel_bin_prefix={pixbin_prefix}",
+                    f"--fragment_prefix={fragment_prefix}",
                     "--retries=1",
                     f"--root_xforms={xforms_path}",
                 ]

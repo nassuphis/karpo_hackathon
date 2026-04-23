@@ -798,7 +798,7 @@ def test_palette_chunk_mt_param_sectioned_runtime():
                 "--score_sources=pm,pm",
                 "--score_clip_los=0,0",
                 "--score_clip_his=1,1",
-                "--score_program=m0;m1;mul",
+                "--score_program=m0-0;m1-0;mul",
                 "--score_params_file=%s" % params_path,
                 "--scores_out=" + scores_path,
                 "--bins_out=" + bins_path,
@@ -842,8 +842,8 @@ def test_roots2pix_mt_multispan_runtime():
 
     roots_path = "/tmp/roots2pix_mt_roots.bin"
     manifest_path = "/tmp/roots2pix_mt_manifest.json"
-    pixbin_prefix = "/tmp/roots2pix_mt_pixbin"
-    cleanup(roots_path, manifest_path, pixbin_prefix + ".frag")
+    fragment_prefix = "/tmp/roots2pix_mt_fragment"
+    cleanup(roots_path, manifest_path, fragment_prefix + ".frag")
 
     roots_bytes = bytearray()
     for re_val, im_val in [(0.0, 0.0), (1.0, 0.0), (100.0, 100.0)]:
@@ -888,13 +888,14 @@ def test_roots2pix_mt_multispan_runtime():
                 "--degree=1",
                 "--rotation=0",
                 "--threads=2",
+                "--step_count=3",
                 "--input_manifest=" + manifest_path,
                 "--retries=2",
                 "--score_metrics=centroid_re",
                 "--score_clip_los=-1",
                 "--score_clip_his=1",
-                "--score_program=m0",
-                "--pixel_bin_prefix=" + pixbin_prefix,
+                "--score_program=m0-0",
+                "--fragment_prefix=" + fragment_prefix,
             ], capture_output=True, text=True, timeout=10)
             assert r.returncode == 0, "roots2pix_mt failed: " + r.stderr[:200]
             meta = json.loads(r.stdout)
@@ -904,15 +905,97 @@ def test_roots2pix_mt_multispan_runtime():
             assert meta["roots_clipped"] == 1, "roots2pix_mt clipped unexpected solve count"
 
             expected = encode_fragment_pairs([(36, 128), (38, 255)])
-            with open(pixbin_prefix + ".frag", "rb") as f:
+            with open(fragment_prefix + ".frag", "rb") as f:
                 assert f.read() == expected, "roots2pix_mt fragment payload mismatch"
             print("  roots2pix_mt: OK (threads=%d, roots_plotted=%d)" % (meta["threads"], meta["roots_plotted"]))
         finally:
             httpd.shutdown()
             thread.join(timeout=5)
 
-    cleanup(roots_path, manifest_path, pixbin_prefix + ".frag")
+    cleanup(roots_path, manifest_path, fragment_prefix + ".frag")
     print("=== roots2pix_mt multispan runtime PASSED ===")
+
+
+def test_roots2pix_mt_lagged_score_runtime():
+    print("\n--- roots2pix_mt lagged solve-score runtime ---")
+
+    bin_path = "/src/roots2pix_mt"
+    roots_path = "/tmp/roots2pix_mt_lag_roots.bin"
+    manifest_path = "/tmp/roots2pix_mt_lag_manifest.json"
+    fragment_prefix = "/tmp/roots2pix_mt_lag_fragment"
+    step_scores_path = "/tmp/roots2pix_mt_lag_step_scores.bin"
+    cleanup(roots_path, manifest_path, fragment_prefix + ".frag", step_scores_path)
+
+    # First row is the section prelude. The three scored rows should compare
+    # against [prelude, previous scored row, previous scored row].
+    roots_bytes = bytearray()
+    for re_val, im_val in [(0.0, 0.0), (1.0, 0.0), (-1.0, 0.5), (1.0, 0.5)]:
+        roots_bytes.extend(struct.pack("<ff", re_val, im_val))
+    with open(roots_path, "wb") as f:
+        f.write(roots_bytes)
+
+    _RangeHandler.file_bytes = bytes(roots_bytes)
+    with socketserver.TCPServer(("127.0.0.1", 0), _RangeHandler) as httpd:
+        port = httpd.server_address[1]
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "source_family": "slv",
+                    "logical_size": len(roots_bytes),
+                    "row_bytes": 8,
+                    "solve_start": 0,
+                    "solve_count": 4,
+                    "sources": [{
+                        "id": 0,
+                        "url": "http://127.0.0.1:%d/input.bin" % port,
+                        "key": "input.bin",
+                    }],
+                    "spans": [{
+                        "source_id": 0,
+                        "logical_byte_start": 0,
+                        "byte_start": 0,
+                        "byte_length": len(roots_bytes),
+                    }],
+                }, f)
+
+            r = subprocess.run([
+                bin_path,
+                "/tmp/roots2pix_mt_lag_pix",
+                "--pix=8",
+                "--min_re=-2",
+                "--max_re=2",
+                "--min_im=-2",
+                "--max_im=2",
+                "--degree=1",
+                "--rotation=0",
+                "--threads=2",
+                "--step_count=3",
+                "--prelude_rows=1",
+                "--input_manifest=" + manifest_path,
+                "--retries=2",
+                "--score_metrics=centroid_re",
+                "--score_clip_los=-1",
+                "--score_clip_his=1",
+                "--score_program=m0-0;m0-1;abs_diff",
+                "--fragment_prefix=" + fragment_prefix,
+                "--step_scores_output=" + step_scores_path,
+            ], capture_output=True, text=True, timeout=10)
+            assert r.returncode == 0, "roots2pix_mt lagged run failed: " + r.stderr[:200]
+            meta = json.loads(r.stdout)
+            assert meta["threads"] == 2, "lagged roots2pix_mt did not report thread count"
+            assert meta["roots_plotted"] == 3, "lagged roots2pix_mt plotted unexpected solve count"
+
+            with open(step_scores_path, "rb") as f:
+                assert list(f.read()) == [128, 255, 255], "lagged step scores did not use prelude/previous rows"
+            print("  roots2pix_mt lagged score: OK")
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+
+    cleanup(roots_path, manifest_path, fragment_prefix + ".frag", step_scores_path)
+    print("=== roots2pix_mt lagged solve-score runtime PASSED ===")
 
 
 # ── Render Preview (vipsthumbnail) Tests ─────────────────────────────────
@@ -1308,7 +1391,7 @@ def test_color_to_bilevel_handler_runtime():
         height=4,
         chain_fingerprint="fp_color2bil",
         score_chain=[],
-        score_program="m0",
+        score_program="m0-0",
         clip_slots=[{"slot": 0, "metric": "proximity", "source": "slv", "clip_lo": 0.0, "clip_hi": 1.0}],
         background_color=[0, 0, 0],
         plan_params_digest="digest_color2bil",
@@ -1660,7 +1743,7 @@ def test_solve_proximity_stats():
     print("  spread clip: OK (lo=%.2f, hi=%.2f)" % (spread["clip_lo"], spread["clip_hi"]))
 
     # 3b. Score program ops, including m* binary ops and unary post-process ops, must parse and run.
-    for program in ["m0;m1;mul", "m0;m1;max"]:
+    for program in ["m0-0;m1-0;mul", "m0-0;m1-0;max"]:
         r = subprocess.run(
             [
                 sps_path,
@@ -1681,7 +1764,7 @@ def test_solve_proximity_stats():
         assert summary["n_solves"] == 3
         print(f"  score program {program}: OK")
 
-    for program in ["m0;flip", "m0;sawtooth:10", "m0;omega_cosine:3:1.57079632679"]:
+    for program in ["m0-0;flip", "m0-0;sawtooth:10", "m0-0;omega_cosine:3:1.57079632679"]:
         r = subprocess.run(
             [
                 sps_path,
@@ -1820,6 +1903,7 @@ if __name__ == "__main__":
     test_palette_chunk_mt_runtime()
     test_palette_chunk_mt_param_sectioned_runtime()
     test_roots2pix_mt_multispan_runtime()
+    test_roots2pix_mt_lagged_score_runtime()
     test_render_preview()
     test_resize_runtime()
     test_bilevel_section_raster_runtime()

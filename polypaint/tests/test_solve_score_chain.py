@@ -24,7 +24,7 @@ class TestSolveScoreChain(unittest.TestCase):
         self.assertEqual(compiled["omega"], 4.0)
         self.assertEqual(compiled["omega_phase"], 0.0)
         self.assertTrue(compiled["omega_enabled"])
-        self.assertEqual(compiled["program_spec"], "m0;omega_cosine:4")
+        self.assertEqual(compiled["program_spec"], "m0-0;omega_cosine:4")
         self.assertEqual(compiled["metrics"][0]["source"], "slv")
 
     def test_compile_chain_accepts_rpn_metric_combination_and_transfer(self):
@@ -41,7 +41,7 @@ class TestSolveScoreChain(unittest.TestCase):
 
         self.assertEqual(compiled["metric_count"], 2)
         self.assertFalse(compiled["legacy_compatible"])
-        self.assertEqual(compiled["program_spec"], "m0;m1;weighted_sum:0.7:0.3;omega_cosine:5")
+        self.assertEqual(compiled["program_spec"], "m0-0;m1-0;weighted_sum:0.7:0.3;omega_cosine:5")
         self.assertEqual(compiled["display"], "spread(q=2%) shelliness(q=3%) weighted_sum(0.7,0.3) ω-cos(5)")
         hydrated = {
             "metrics": [
@@ -54,7 +54,7 @@ class TestSolveScoreChain(unittest.TestCase):
         self.assertEqual(payload["score_metrics"], "spread,shelliness")
         self.assertEqual(payload["score_clip_los"], "-1,-0.5")
         self.assertEqual(payload["score_clip_his"], "2,1.5")
-        self.assertEqual(payload["score_program"], "m0;m1;weighted_sum:0.7:0.3;omega_cosine:5")
+        self.assertEqual(payload["score_program"], "m0-0;m1-0;weighted_sum:0.7:0.3;omega_cosine:5")
         self.assertNotIn("score_sources", payload)
 
     def test_compile_chain_accepts_internal_transfer_before_combine(self):
@@ -70,7 +70,7 @@ class TestSolveScoreChain(unittest.TestCase):
         )
 
         self.assertEqual(compiled["metric_count"], 2)
-        self.assertEqual(compiled["program_spec"], "m0;omega_cosine:3;m1;avg")
+        self.assertEqual(compiled["program_spec"], "m0-0;omega_cosine:3;m1-0;avg")
         self.assertEqual(compiled["display"], "proximity(q=1%) ω-cos(3) clusteriness(q=2%) avg")
         self.assertFalse(compiled["legacy_compatible"])
         self.assertTrue(compiled["omega_enabled"])
@@ -87,7 +87,7 @@ class TestSolveScoreChain(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(compiled["program_spec"], "m0;omega_cosine:3:1.5708")
+        self.assertEqual(compiled["program_spec"], "m0-0;omega_cosine:3:1.5708")
         self.assertEqual(compiled["display"], "proximity(q=1%) ω-cos(3,1.57079632679)")
         self.assertEqual(compiled["omega"], 3.0)
         self.assertAlmostEqual(compiled["omega_phase"], 1.57079632679)
@@ -104,7 +104,7 @@ class TestSolveScoreChain(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(compiled["program_spec"], "m0;sawtooth:10;flip")
+        self.assertEqual(compiled["program_spec"], "m0-0;sawtooth:10;flip")
         self.assertEqual(compiled["display"], "proximity(q=1%) sawtooth(10) flip")
         self.assertFalse(compiled["legacy_compatible"])
         self.assertFalse(compiled["omega_enabled"])
@@ -120,7 +120,7 @@ class TestSolveScoreChain(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(compiled["program_spec"], "m0;omega_cosine:3;omega_cosine:5")
+        self.assertEqual(compiled["program_spec"], "m0-0;omega_cosine:3;omega_cosine:5")
         self.assertFalse(compiled["legacy_compatible"])
 
     def test_compile_chain_or_legacy_preserves_disabled_legacy_omega(self):
@@ -208,7 +208,7 @@ class TestSolveScoreChain(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(compiled["program_spec"], "m0;m1;avg")
+        self.assertEqual(compiled["program_spec"], "m0-0;m1-0;avg")
         self.assertEqual(compiled["display"], "spread(q=2%) spread(cf,q=3%) avg")
         self.assertFalse(compiled["legacy_compatible"])
         self.assertEqual(compiled["metrics"][0]["source"], "slv")
@@ -237,7 +237,7 @@ class TestSolveScoreChain(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(compiled["program_spec"], "m0;m1;max")
+        self.assertEqual(compiled["program_spec"], "m0-0;m1-0;max")
         self.assertEqual(compiled["display"], "t1_abs(pm,q=2%) spread(cf,q=3%) max")
         self.assertEqual(compiled["metrics"][0]["source"], "pm")
         self.assertEqual(compiled["metrics"][0]["metric"], "t1_abs")
@@ -264,7 +264,7 @@ class TestSolveScoreChain(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(compiled["program_spec"], "m0;m1;max")
+        self.assertEqual(compiled["program_spec"], "m0-0;m1-0;max")
         self.assertEqual(compiled["display"], "max_re(pm,q=2%) min_im(cf,q=3%) max")
         self.assertEqual(compiled["metrics"][0]["source"], "pm")
         self.assertEqual(compiled["metrics"][1]["source"], "cf")
@@ -293,6 +293,52 @@ class TestSolveScoreChain(unittest.TestCase):
         self.assertEqual(compiled["display"], "max_mod(pm,q=1%) spread(q=1%) avg")
         self.assertEqual(compiled["metrics"][0]["metric"], "max_mod")
         self.assertEqual(compiled["metrics"][0]["source"], "pm")
+
+    def test_compile_chain_lowers_lagged_ref_to_base_slot(self):
+        from solve_score_chain import compile_solve_score_chain
+
+        compiled = compile_solve_score_chain(
+            [["proximity", "cf", "0.4"], ["proximity", "cf-1", "0.5"], ["abs_diff"]]
+        )
+
+        self.assertEqual(compiled["metric_count"], 1)
+        self.assertEqual(compiled["metrics"][0]["source"], "cf")
+        self.assertEqual(compiled["metrics"][0]["quantile"], 0.004)
+        self.assertEqual(compiled["program_spec"], "m0-0;m0-1;abs_diff")
+        self.assertTrue(compiled["uses_lag"])
+        self.assertEqual(compiled["prelude_by_source"], {"slv": 0, "cf": 1, "pm": 0})
+
+    def test_compile_chain_lowers_lagged_ref_to_later_base_slot(self):
+        from solve_score_chain import compile_solve_score_chain
+
+        compiled = compile_solve_score_chain(
+            [["proximity", "cf-1", "0.9"], ["proximity", "cf", "0.4"], ["abs_diff"]]
+        )
+
+        self.assertEqual(compiled["metric_count"], 1)
+        self.assertEqual(compiled["metrics"][0]["source"], "cf")
+        self.assertEqual(compiled["metrics"][0]["quantile"], 0.004)
+        self.assertEqual(compiled["program_spec"], "m0-1;m0-0;abs_diff")
+
+    def test_compile_chain_lagged_only_seeds_base_slot(self):
+        from solve_score_chain import compile_solve_score_chain
+
+        compiled = compile_solve_score_chain([["proximity", "cf-1", "0.9"]])
+
+        self.assertEqual(compiled["metric_count"], 1)
+        self.assertEqual(compiled["metrics"][0]["source"], "cf")
+        self.assertAlmostEqual(compiled["metrics"][0]["quantile"], 0.009)
+        self.assertEqual(compiled["program_spec"], "m0-1")
+
+    def test_compile_chain_rejects_ambiguous_free_form_lagged_ref(self):
+        from solve_score_chain import compile_solve_score_chain
+
+        with self.assertRaises(RuntimeError) as ctx:
+            compile_solve_score_chain(
+                [["proximity", "cf", "0.4"], ["proximity", "cf", "0.5"], ["proximity", "cf-1", "0.7"], ["avg"], ["avg"]]
+            )
+
+        self.assertIn("ambiguous", str(ctx.exception))
 
     def test_compile_chain_rejects_param_metric_with_wrong_source(self):
         from solve_score_chain import compile_solve_score_chain

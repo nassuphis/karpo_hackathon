@@ -184,7 +184,6 @@ class TestRasterMT(unittest.TestCase):
             mod.handler(
                 _fused_event(
                     solve_metric="crowding",
-                    tile_size=512,
                 ),
                 None,
             )
@@ -245,18 +244,12 @@ class TestRasterMT(unittest.TestCase):
 
         def fake_run(cmd, capture_output=False, text=False, timeout=None):
             self.assertTrue(any(arg.startswith("--input_manifest=") for arg in cmd))
-            self.assertIn("--pixel_bin_prefix=/tmp/pixbin", cmd)
+            self.assertIn("--fragment_prefix=/tmp/fused_fragment", cmd)
             self.assertIn("--step_scores_output=/tmp/step_scores.bin", cmd)
-            self.assertNotIn("--palette_bin_prefix=/tmp/palette_pixbin", cmd)
-            self.assertFalse(any(arg.startswith("--tile_size=") for arg in cmd))
-            self.assertFalse(any(arg.startswith("--n_tile_cols=") for arg in cmd))
-            self.assertFalse(any(arg.startswith("--n_tile_rows=") for arg in cmd))
+            self.assertNotIn("--associated_palette_fragment_prefix=/tmp/palette_fragment", cmd)
             self.assertNotIn("--score_coeff_manifest=", " ".join(cmd))
             self.assertNotIn("--score_params_manifest=", " ".join(cmd))
-            self.assertNotIn("--color=solve_score", cmd)
-            self.assertNotIn("--match=none", cmd)
-            self.assertFalse(any(arg.startswith("--palette=") for arg in cmd))
-            with open("/tmp/pixbin.frag", "wb") as fh:
+            with open("/tmp/fused_fragment.frag", "wb") as fh:
                 fh.write(_encode_fragment_pairs([(2, 55)]))
             with open("/tmp/step_scores.bin", "wb") as fh:
                 fh.write(bytes([5, 7, 11, 13]))
@@ -319,11 +312,6 @@ class TestRasterMT(unittest.TestCase):
         self.assertIn("--min_im=-0.75", joined)
         self.assertIn("--max_im=2.0", joined)
         self.assertIn("--pix=512", joined)
-        self.assertNotIn("--width=", joined)
-        self.assertNotIn("--height=", joined)
-        self.assertNotIn("--center_re=", joined)
-        self.assertNotIn("--center_im=", joined)
-        self.assertNotIn("--scale=", joined)
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
     @patch("handler_raster_mt.report_status")
@@ -362,12 +350,12 @@ class TestRasterMT(unittest.TestCase):
         mock_s3.put_object.side_effect = put_object
 
         def fake_run(cmd, capture_output=False, text=False, timeout=None):
-            self.assertIn("--palette_bin_prefix=/tmp/palette_pixbin", cmd)
+            self.assertIn("--associated_palette_fragment_prefix=/tmp/palette_fragment", cmd)
             self.assertIn("--palette_grid_n=100", cmd)
             self.assertIn("--palette_step_start=0", cmd)
-            with open("/tmp/pixbin.frag", "wb") as fh:
+            with open("/tmp/fused_fragment.frag", "wb") as fh:
                 fh.write(_encode_fragment_pairs([(0, 33)]))
-            with open("/tmp/palette_pixbin.frag", "wb") as fh:
+            with open("/tmp/palette_fragment.frag", "wb") as fh:
                 fh.write(_encode_fragment_pairs([(1, 44)]))
             with open("/tmp/step_scores.bin", "wb") as fh:
                 fh.write(bytes([5, 7, 11, 13]))
@@ -457,11 +445,11 @@ class TestRasterMT(unittest.TestCase):
 
         def fake_run(cmd, capture_output=False, text=False, timeout=None):
             self.assertIn("--score_sources=slv,cf,pm", cmd)
-            self.assertIn("--score_program=m0;m1;avg;m2;avg", cmd)
+            self.assertIn("--score_program=m0-0;m1-0;avg;m2-0;avg", cmd)
             self.assertTrue(any(arg.startswith("--score_coeff_manifest=") for arg in cmd))
             self.assertIn("--score_coeff_degree=6", cmd)
             self.assertTrue(any(arg.startswith("--score_params_manifest=") for arg in cmd))
-            with open("/tmp/pixbin.frag", "wb") as fh:
+            with open("/tmp/fused_fragment.frag", "wb") as fh:
                 fh.write(_encode_fragment_pairs([(3, 88)]))
             with open("/tmp/step_scores.bin", "wb") as fh:
                 fh.write(bytes([9, 7, 5, 3]))

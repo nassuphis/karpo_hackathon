@@ -19,6 +19,7 @@ from logical_sections import (
     write_native_multispan_manifest,
 )
 from solve_score_chain import (
+    canonicalize_solve_score_program_spec,
     compile_solve_score_chain_or_legacy,
     compiled_solve_score_fingerprint,
     solve_score_program_cli_payload,
@@ -138,7 +139,7 @@ def _sectioned_input_size_limit():
 def _solve_score_program_args(bins_data):
     payload = solve_score_program_cli_payload({
         "metrics": bins_data.get("metrics") or [],
-        "program_spec": str(bins_data.get("program") or ""),
+        "program_spec": canonicalize_solve_score_program_spec(bins_data.get("program") or ""),
     })
     args = [
         f"--score_metrics={payload['score_metrics']}",
@@ -325,7 +326,7 @@ def handler(event, context):
                     raise RuntimeError(
                         f"Bins fingerprint mismatch: expected {chain_fingerprint}, got {actual_fingerprint}"
                     )
-                if str(bins_data.get("program") or "") != compiled["program_spec"]:
+                if canonicalize_solve_score_program_spec(bins_data.get("program") or "") != compiled["program_spec"]:
                     raise RuntimeError(
                         f"Bins program mismatch: expected {compiled['program_spec']}, got {bins_data.get('program')!r}"
                     )

@@ -979,7 +979,6 @@ Targets:
 
 - [tests/test_solve_proximity_handler.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_solve_proximity_handler.py)
 - [tests/test_solve_proximity_stats.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_solve_proximity_stats.py)
-- [tests/test_raster_pixel_bins.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_raster_pixel_bins.py)
 - [tests/test_raster_mt.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_raster_mt.py)
 - [tests/test_palette_chunk_handler.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/test_palette_chunk_handler.py)
 - [tests/docker_runtime_regression.py](/Users/nicknassuphis/karpo_hackathon/polypaint/tests/docker_runtime_regression.py)
@@ -990,10 +989,10 @@ If the native binary changes:
 
 - `bash scripts/test-docker-runtime.sh` is mandatory
 
-Current rule: if `lambda/sweep_cli.c`, `lambda/roots2pix*.c`,
-`lambda/pixbinassemble.c`, or any other deployed native source changes, rebuild
-the corresponding deploy binary before running the Docker/runtime gate. Do not
-wait for the test to fail because the packaged binary is stale.
+Current rule: if `lambda/sweep_cli.c`, `lambda/roots2pix*.c`, or any other
+deployed native source changes, rebuild the corresponding deploy binary before
+running the Docker/runtime gate. Do not wait for the test to fail because the
+packaged binary is stale.
 
 ## Rollback / Safety
 

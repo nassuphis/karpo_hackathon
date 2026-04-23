@@ -95,7 +95,7 @@ Do **not** use Step Functions for this feature.
 
 Reason:
 
-- this is one-image post-processing, not tiled fanout
+- this is one-image post-processing, not render fanout
 - it already fits the existing immutable artifact model
 - existing DDB task polling is enough
 - lower implementation cost, fewer moving parts
@@ -231,7 +231,6 @@ The inherited metadata set should include at least:
 - `pix`
 - `format`
 - `quality`
-- `tile_size`
 - `view_mode`
 - `quantile`
 - `shim`

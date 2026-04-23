@@ -48,33 +48,55 @@ static const char *getArgStr(int argc, char **argv, const char *key, const char 
     return v ? v : def;
 }
 
+static int option_matches(const char *arg, const char *key) {
+    int klen = (int)strlen(key);
+    return strncmp(arg, key, klen) == 0 && arg[klen] == '=';
+}
+
+static int reject_unknown_options(int argc, char **argv, int firstFlagIndex, const char **allowed, int nAllowed) {
+    for (int i = firstFlagIndex; i < argc; i++) {
+        if (argv[i][0] != '-') continue;
+        int known = 0;
+        for (int j = 0; j < nAllowed; j++) {
+            if (option_matches(argv[i], allowed[j])) {
+                known = 1;
+                break;
+            }
+        }
+        if (!known) {
+            fprintf(stderr, "Unknown bilevel_section_raster option: %s\n", argv[i]);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr, "Usage: bilevel_section_raster section.bin out.frag [options]\n");
         return 1;
     }
 
+    const char *allowedOptions[] = {
+        "--pix", "--min_re", "--max_re", "--min_im", "--max_im",
+        "--degree", "--rotation", "--root_xforms",
+    };
+    if (reject_unknown_options(argc, argv, 3, allowedOptions, (int)(sizeof(allowedOptions) / sizeof(allowedOptions[0])))) {
+        return 1;
+    }
+
     const char *binPath = argv[1];
     const char *outPath = argv[2];
-    const char *widthArg = getArg(argc, argv, "--width");
-    const char *heightArg = getArg(argc, argv, "--height");
     int pix = getArgInt(argc, argv, "--pix", 0);
     const char *minReArg = getArg(argc, argv, "--min_re");
     const char *maxReArg = getArg(argc, argv, "--max_re");
     const char *minImArg = getArg(argc, argv, "--min_im");
     const char *maxImArg = getArg(argc, argv, "--max_im");
-    const char *centerReArg = getArg(argc, argv, "--center_re");
-    const char *centerImArg = getArg(argc, argv, "--center_im");
-    const char *scaleArg = getArg(argc, argv, "--scale");
     double rotation = getArgDouble(argc, argv, "--rotation", 0.0);
     double cosA = cos(rotation), sinA = sin(rotation);
     int degree = getArgInt(argc, argv, "--degree", 0);
     const char *rtPath = getArgStr(argc, argv, "--root_xforms", NULL);
 
-    if (widthArg || heightArg) {
-        fprintf(stderr, "bilevel_section_raster no longer accepts --width or --height; pass --pix for square output\n");
-        return 1;
-    }
     if (pix <= 0 || degree <= 0) {
         fprintf(stderr, "pix and degree must be > 0\n");
         return 1;
@@ -82,10 +104,6 @@ int main(int argc, char **argv) {
     int W = pix;
     int H = pix;
     double minRe = 0.0, maxRe = 0.0, minIm = 0.0, maxIm = 0.0;
-    if (centerReArg || centerImArg || scaleArg) {
-        fprintf(stderr, "Legacy viewport args are no longer supported; pass --min_re, --max_re, --min_im, and --max_im\n");
-        return 1;
-    }
     if (minReArg || maxReArg || minImArg || maxImArg) {
         if (!minReArg || !maxReArg || !minImArg || !maxImArg) {
             fprintf(stderr, "Exact viewport requires --min_re, --max_re, --min_im, and --max_im together\n");

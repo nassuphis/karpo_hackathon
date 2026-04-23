@@ -316,12 +316,12 @@ Recommended v1 rendering path:
 
 - reuse the pure-Python preview raster logic from [handler_preview.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_preview.py)
 - do **not** invoke render/finalize/encode
-- do **not** invoke bilevel tile workflows
+- do **not** invoke bilevel render workflows
 
 Why:
 
 - preview image is tiny
-- no need for tile fan-out
+- no need for render fan-out
 - no need for TIFF
 - existing preview raster is already the right shape:
   - compute viewport from roots

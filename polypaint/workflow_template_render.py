@@ -84,7 +84,6 @@ def render_render_workflow_definition(
     plan_function_arn: str,
     status_function_arn: str,
     finalize_mt_function_arn: str,
-    encode_function_arn: str,
     storage_function_arn: str,
     bilevel_function_arn: str,
     solve_proximity_function_arn: str,
@@ -95,7 +94,6 @@ def render_render_workflow_definition(
             "PlanFunctionArn": plan_function_arn,
             "StatusFunctionArn": status_function_arn,
             "FinalizeMTFunctionArn": finalize_mt_function_arn,
-            "EncodeFunctionArn": encode_function_arn,
             "StorageFunctionArn": storage_function_arn,
             "BilevelFunctionArn": bilevel_function_arn,
             "SolveProximityFunctionArn": solve_proximity_function_arn,
@@ -113,7 +111,6 @@ def render_render_workflow_definition_for_tests(
         plan_function_arn=_render_test_arn(account_id=account_id, region=region, placeholder="PlanFunctionArn"),
         status_function_arn=_render_test_arn(account_id=account_id, region=region, placeholder="StatusFunctionArn"),
         finalize_mt_function_arn=_render_test_arn(account_id=account_id, region=region, placeholder="FinalizeMTFunctionArn"),
-        encode_function_arn=_render_test_arn(account_id=account_id, region=region, placeholder="EncodeFunctionArn"),
         storage_function_arn=_render_test_arn(account_id=account_id, region=region, placeholder="StorageFunctionArn"),
         bilevel_function_arn=_render_test_arn(account_id=account_id, region=region, placeholder="BilevelFunctionArn"),
         solve_proximity_function_arn=_render_test_arn(account_id=account_id, region=region, placeholder="SolveProximityFunctionArn"),
@@ -133,7 +130,6 @@ def _parse_args() -> argparse.Namespace:
     render.add_argument("--plan-function-arn", required=True)
     render.add_argument("--status-function-arn", required=True)
     render.add_argument("--finalize-mt-function-arn", required=True)
-    render.add_argument("--encode-function-arn", required=True)
     render.add_argument("--storage-function-arn", required=True)
     render.add_argument("--bilevel-function-arn", required=True)
     render.add_argument("--solve-proximity-function-arn", required=True)
@@ -148,7 +144,6 @@ def main() -> int:
             plan_function_arn=args.plan_function_arn,
             status_function_arn=args.status_function_arn,
             finalize_mt_function_arn=args.finalize_mt_function_arn,
-            encode_function_arn=args.encode_function_arn,
             storage_function_arn=args.storage_function_arn,
             bilevel_function_arn=args.bilevel_function_arn,
             solve_proximity_function_arn=args.solve_proximity_function_arn,

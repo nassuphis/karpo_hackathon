@@ -726,6 +726,7 @@ static int solve_metric_supports_source(enum SolveMetric metric, enum SolveScore
 typedef struct {
     enum SolveScoreProgramOp op;
     int metricSlot;
+    int lagDepth;
     double a;
     double b;
 } SolveScoreProgramToken;
@@ -854,6 +855,45 @@ static int parse_solve_score_double_csv(const char *s, double *out, int maxValue
     return n;
 }
 
+static int parse_solve_score_metric_token(const char *tok, int metricCount, int *slotOut, int *lagOut,
+                                          char *err, size_t errCap) {
+    if (!tok || tok[0] != 'm' || tok[1] == '\0') {
+        snprintf(err, errCap, "invalid metric slot token '%s'", tok ? tok : "");
+        return 0;
+    }
+    const char *cursor = tok + 1;
+    if (*cursor < '0' || *cursor > '9') {
+        snprintf(err, errCap, "invalid metric slot token '%s'", tok);
+        return 0;
+    }
+    char *end = NULL;
+    long slot = strtol(cursor, &end, 10);
+    if (slot < 0 || slot >= metricCount) {
+        snprintf(err, errCap, "invalid metric slot token '%s'", tok);
+        return 0;
+    }
+    int lag = 0;
+    if (*end == '\0') {
+        lag = 0; /* legacy current-token form */
+    } else if (*end == '-') {
+        const char *lagText = end + 1;
+        if (strcmp(lagText, "0") == 0) {
+            lag = 0;
+        } else if (strcmp(lagText, "1") == 0) {
+            lag = 1;
+        } else {
+            snprintf(err, errCap, "unsupported metric lag token '%s'", tok);
+            return 0;
+        }
+    } else {
+        snprintf(err, errCap, "invalid metric slot token '%s'", tok);
+        return 0;
+    }
+    *slotOut = (int)slot;
+    *lagOut = lag;
+    return 1;
+}
+
 static int parse_solve_score_program_spec(const char *spec, int metricCount,
                                           SolveScoreProgramToken *tokens, int maxTokens,
                                           char *err, size_t errCap) {
@@ -967,15 +1007,15 @@ static int parse_solve_score_program_spec(const char *spec, int metricCount,
         } else if (strcmp(tok, "flip") == 0) {
             token.op = SOLVE_SCORE_OP_FLIP;
         } else if (tok[0] == 'm' && tok[1] != '\0') {
-            char *end = NULL;
-            long slot = strtol(tok + 1, &end, 10);
-            if (!end || *end != '\0' || slot < 0 || slot >= metricCount) {
-                snprintf(err, errCap, "invalid metric slot token '%s'", tok);
+            int slot = 0;
+            int lag = 0;
+            if (!parse_solve_score_metric_token(tok, metricCount, &slot, &lag, err, errCap)) {
                 free(copy);
                 return 0;
             }
             token.op = SOLVE_SCORE_OP_PUSH_METRIC;
-            token.metricSlot = (int)slot;
+            token.metricSlot = slot;
+            token.lagDepth = lag;
             stackDepth += 1;
         } else {
             snprintf(err, errCap, "invalid score program token '%s'", tok);
@@ -1106,30 +1146,96 @@ static double compute_param_metric_score(const float *params, int paramDegree, e
     }
 }
 
-static double solve_score_eval_program_with_sources(const float *roots, int degree,
-                                                    const float *coeffRoots, int coeffDegree,
-                                                    const float *paramValues, int paramDegree,
-                                                    const SolveScoreProgram *program) {
-    double metricVals[SOLVE_SCORE_MAX_METRIC_SLOTS];
-    for (int i = 0; i < program->metricCount; i++) {
-        double score = 0.0;
-        if (program->metricSources[i] == SOLVE_SCORE_SOURCE_PARAM) {
-            score = compute_param_metric_score(paramValues, paramDegree, program->metrics[i]);
-        } else {
-            const float *metricRoots = roots;
-            int metricDegree = degree;
-            if (program->metricSources[i] == SOLVE_SCORE_SOURCE_COEFF) {
-                metricRoots = coeffRoots;
-                metricDegree = coeffDegree;
-            }
-            score = (!metricRoots || metricDegree <= 0)
-                ? 0.0
-                : compute_solve_metric_score(metricRoots, metricDegree, program->metrics[i]);
-        }
-        double range = program->clipHi[i] - program->clipLo[i];
-        double u = (score - program->clipLo[i]) / range;
-        metricVals[i] = solve_score_clamp_unit(u);
+static int solve_score_program_uses_lag(const SolveScoreProgram *program) {
+    if (!program) return 0;
+    for (int i = 0; i < program->tokenCount; i++) {
+        if (program->tokens[i].op == SOLVE_SCORE_OP_PUSH_METRIC && program->tokens[i].lagDepth > 0) return 1;
     }
+    return 0;
+}
+
+static int solve_score_program_uses_lag_source(const SolveScoreProgram *program, enum SolveScoreMetricSource source) {
+    if (!program) return 0;
+    for (int i = 0; i < program->tokenCount; i++) {
+        const SolveScoreProgramToken *token = &program->tokens[i];
+        if (token->op != SOLVE_SCORE_OP_PUSH_METRIC || token->lagDepth <= 0) continue;
+        if (token->metricSlot >= 0 && token->metricSlot < program->metricCount &&
+            program->metricSources[token->metricSlot] == source) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int solve_score_metric_slot_uses_lag(const SolveScoreProgram *program, int slot) {
+    if (!program || slot < 0 || slot >= program->metricCount) return 0;
+    for (int i = 0; i < program->tokenCount; i++) {
+        const SolveScoreProgramToken *token = &program->tokens[i];
+        if (token->op == SOLVE_SCORE_OP_PUSH_METRIC && token->metricSlot == slot && token->lagDepth > 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static float solve_score_eval_metric_slot_normalized(const float *roots, int degree,
+                                                     const float *coeffRoots, int coeffDegree,
+                                                     const float *paramValues, int paramDegree,
+                                                     const SolveScoreProgram *program,
+                                                     int slot) {
+    double score = 0.0;
+    if (!program || slot < 0 || slot >= program->metricCount) return 0.0f;
+    if (program->metricSources[slot] == SOLVE_SCORE_SOURCE_PARAM) {
+        score = compute_param_metric_score(paramValues, paramDegree, program->metrics[slot]);
+    } else {
+        const float *metricRoots = roots;
+        int metricDegree = degree;
+        if (program->metricSources[slot] == SOLVE_SCORE_SOURCE_COEFF) {
+            metricRoots = coeffRoots;
+            metricDegree = coeffDegree;
+        }
+        score = (!metricRoots || metricDegree <= 0)
+            ? 0.0
+            : compute_solve_metric_score(metricRoots, metricDegree, program->metrics[slot]);
+    }
+    double range = program->clipHi[slot] - program->clipLo[slot];
+    double u = (score - program->clipLo[slot]) / range;
+    return (float)solve_score_clamp_unit(u);
+}
+
+static int solve_score_eval_metric_slots(const float *roots, int degree,
+                                         const float *coeffRoots, int coeffDegree,
+                                         const float *paramValues, int paramDegree,
+                                         const SolveScoreProgram *program,
+                                         float *outMetricBuffer) {
+    if (!program || !outMetricBuffer) return 0;
+    for (int i = 0; i < program->metricCount; i++) {
+        outMetricBuffer[i] = solve_score_eval_metric_slot_normalized(
+            roots, degree, coeffRoots, coeffDegree, paramValues, paramDegree, program, i
+        );
+    }
+    return 1;
+}
+
+static int solve_score_eval_lagged_metric_slots(const float *roots, int degree,
+                                                const float *coeffRoots, int coeffDegree,
+                                                const float *paramValues, int paramDegree,
+                                                const SolveScoreProgram *program,
+                                                float *outMetricBuffer) {
+    if (!program || !outMetricBuffer) return 0;
+    for (int i = 0; i < program->metricCount; i++) {
+        if (!solve_score_metric_slot_uses_lag(program, i)) continue;
+        outMetricBuffer[i] = solve_score_eval_metric_slot_normalized(
+            roots, degree, coeffRoots, coeffDegree, paramValues, paramDegree, program, i
+        );
+    }
+    return 1;
+}
+
+static double solve_score_eval_program_from_buffers(const float *currentMetricBuffer,
+                                                    const float *recentMetricBuffer,
+                                                    const SolveScoreProgram *program) {
+    if (!program || !currentMetricBuffer) return NAN;
 
     double stack[SOLVE_SCORE_MAX_PROGRAM_TOKENS];
     int sp = 0;
@@ -1137,7 +1243,15 @@ static double solve_score_eval_program_with_sources(const float *roots, int degr
         const SolveScoreProgramToken *token = &program->tokens[i];
         switch (token->op) {
             case SOLVE_SCORE_OP_PUSH_METRIC:
-                stack[sp++] = metricVals[token->metricSlot];
+                if (token->metricSlot < 0 || token->metricSlot >= program->metricCount) return NAN;
+                if (token->lagDepth == 0) {
+                    stack[sp++] = currentMetricBuffer[token->metricSlot];
+                } else if (token->lagDepth == 1) {
+                    if (!recentMetricBuffer) return NAN;
+                    stack[sp++] = recentMetricBuffer[token->metricSlot];
+                } else {
+                    return NAN;
+                }
                 break;
             case SOLVE_SCORE_OP_AVG: {
                 double b = stack[--sp];
@@ -1198,6 +1312,18 @@ static double solve_score_eval_program_with_sources(const float *roots, int degr
     }
     if (sp != 1) return 0.0;
     return solve_score_clamp_unit(stack[0]);
+}
+
+static double solve_score_eval_program_with_sources(const float *roots, int degree,
+                                                    const float *coeffRoots, int coeffDegree,
+                                                    const float *paramValues, int paramDegree,
+                                                    const SolveScoreProgram *program) {
+    float metricVals[SOLVE_SCORE_MAX_METRIC_SLOTS];
+    if (solve_score_program_uses_lag(program)) return NAN;
+    if (!solve_score_eval_metric_slots(roots, degree, coeffRoots, coeffDegree, paramValues, paramDegree, program, metricVals)) {
+        return NAN;
+    }
+    return solve_score_eval_program_from_buffers(metricVals, NULL, program);
 }
 
 static double solve_score_eval_program(const float *roots, int degree, const SolveScoreProgram *program) {

@@ -1,343 +1,467 @@
 # Lagged Scores Plan
 
-Status: revised feature plan. One architectural choice remains open: whether
-the final image is produced by a second full evaluator pass, or by composing
-from cached raw slot scores after native stats merge.
+Status: rewritten feature plan. This version replaces the previous
+"lagged source as a separate metric distribution" model with a buffer-based
+lag model.
 
-This revision assumes the real target use case is composed programs such as:
+The core idea is:
 
 ```text
-abs_diff(proximity(slv), proximity(slv-1))
+metrics:
+  m0 = proximity(slv, q=0.4)
+
+program:
+  m0-0;m0-1;abs_diff
 ```
 
-Because that output depends on full-resolution adjacency, the production fused
-solve-score render path stops using lores-based clip calibration.
+`m0-0` reads the current value of metric slot `m0`.
+`m0-1` reads the previous-row value of the same metric slot.
+
+Lag is encoded in the program token, not in the metric definition.
 
 ## Goal
 
-Let a solve-score program reference the previous solve's data as a new source,
-so the chain DSL can compare the current solve to the immediately previous solve
-in serpentine index order.
+Let solve-score programs compare a metric value at the current solve row with
+the same metric value from the immediately previous solve row.
 
-New source tags:
+Primary motivating program:
 
-- `slv-1` — previous solve's roots
-- `cf-1` — previous solve's coefficients
-- `pm-1` — previous solve's params
+```text
+m0-0;m0-1;abs_diff
+```
 
-Lag magnitude is fixed at 1 for v1. No arbitrary lag-N.
+where:
 
-### Primary motivating programs
+```text
+m0 = proximity(slv, q=0.4)
+```
 
-- `abs_diff(proximity(slv), proximity(slv-1))`
-- `avg(proximity(slv), proximity(slv-1))`
-- `weighted_sum(0.8, spread(slv), 0.2, spread(slv-1))`
-
-These are the programs the implementation must optimize for. The feature is not
-being added merely to render an isolated `proximity(slv-1)` slot.
-
-### Semantic definition (pinned)
-
-`proximity(q=0.5, slv-1)` means: evaluate the same single-solve proximity metric
-against the previous solve's roots. The lag source is an index shift, not a new
-pairwise metric. At pixel `i`, the metric sees solve `i - 1`'s data.
-
-The same applies to `cf-1` and `pm-1`: they mean "use the previous solve's
-coeffs/params as the metric input for this slot."
-
-In serpentine order, that makes most lag-1 references physically local within a
-row. Row flips and pass boundaries remain index-based rather than spatially
-adjacent. That discontinuity is accepted for v1.
-
-### Grammar (pinned)
-
-Accepted lag tokens are exactly the three lowercase literals matched by
-`^(slv|cf|pm)-1$`:
-
-- `slv-1`
-- `cf-1`
-- `pm-1`
-
-Rejected with a clear error:
-
-- whitespace variants: `slv -1`, ` slv-1`
-- case variants: `SLV-1`, `Slv-1`
-- other lag values: `slv-2`, `slv-01`, `slv-10`
-- malformed suffixes: `slv-`, `slv1`, `slv-1x`
-
-The same grammar applies to:
-
-- the Python chain compiler
-- the JS chain compiler
-- the C `--score_sources=` CSV parser
-- stored solve-score program JSON
-- clip-artifact `metrics[].source`
+This represents the difference between current proximity and previous-row
+proximity using the same metric slot, the same source family, and the same
+clip/quantile.
 
 ## Pinned Decisions
 
-1. Production fused solve-score render no longer uses lores clip calibration.
-2. There is no planner-side aliasing or dedupe between `slv` and `slv-1`.
-3. Production fused solve-score render uses full-resolution statistics computed
-   from the actual render solve stream. Lores is not used for clip
-   calibration.
-4. Normalization semantics stay as they are today: each metric slot is clipped
-   and normalized first, then the RPN stack machine combines those normalized
-   slot values.
-5. Lag remains fused-color-only in v1. Other solve-score consumers reject lag
-   early and loudly.
-6. V1 does not add output-level normalization. Correlated lag-pair programs such
-   as `abs_diff(proximity(slv), proximity(slv-1))` therefore render as mostly
-   dark edge-detect-style images by design under the existing
-   slot-normalize-then-compose semantics.
-7. `step_scores.raw` is written only by the stage that produces the final image.
-   The stats pass never writes reusable step-score output.
-8. Digest parsing, digest merge, and quantile extraction stay in C. Python only
-   orchestrates section artifact download, binary invocation, and final upload.
-9. V1 keeps t-digest-style summaries rather than switching to a top-K extreme
-    sample scheme. Top-K remains an explicit alternative, not the chosen format.
-10. Two production architectures remain under consideration:
-    Option A reruns the full evaluator after stats merge; Option B writes raw
-    slot-score cache fragments in pass 1 and performs a cheap compose-from-cache
-    pass after stats merge.
-
-## Why Lores Is Out
-
-Lores is not merely "a bit approximate" for the target feature. It is the wrong
-object.
-
-For an isolated slot like `proximity(slv-1)`, one can argue about whether the
-lagged marginal distribution looks similar to the non-lagged one. That argument
-is irrelevant once the operator writes the program they actually want:
-
-```text
-abs_diff(proximity(slv), proximity(slv-1))
-```
-
-That output depends on the joint distribution of adjacent solves. At lores
-density, adjacent solves are much farther apart in parameter space than they are
-in the final render. The difference image is therefore calibrated against the
-wrong adjacency scale.
-
-So the production fused solve-score render path gives up on lores completely:
-
-- no `lores.bin`
-- no `lores_coeffs.bin`
-- no `lores_params.bin`
-- no `solve_proximity_stats --mode=clip` in the render workflow
-- no render-plan dependence on lores scratch to support mixed-source chains
-
-This decision applies to the production fused solve-score render path. Unrelated
-preview tooling is a separate feature and out of scope here.
-
-## Current State
-
-### Existing production path
-
-Today fused solve-score render has two stages:
-
-1. A lores clip prepass driven by [handler_solve_proximity.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_solve_proximity.py)
-2. A full-resolution raster driven by [handler_raster_mt.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_raster_mt.py) and [roots2pix_mt.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/roots2pix_mt.c)
-
-That split is what this plan replaces.
-
-### Source tags live in `--score_sources`, not in `program_spec`
-
-Lag tags belong in:
-
-- [solve_score.h](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solve_score.h) CSV parsing
-- [solve_score_chain.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solve_score_chain.py) compilation
-- JS chain parsing in [index.html](/Users/nicknassuphis/karpo_hackathon/polypaint/index.html)
-
-`program_spec` stays as the RPN opcode string.
-
-### Shared evaluator hazard
-
-The score-program evaluator in [solve_score.h](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solve_score.h) is shared by:
-
-- fused raster
-- palette chunk binaries
-- any other direct program-eval caller
-
-If a lag slot silently falls back to current data when no prev pointer is
-supplied, non-fused consumers will produce wrong output without noticing. The
-evaluator must therefore hard-fail when a lagged source is referenced but the
-caller did not supply the corresponding prev pointer.
-
-### Full-res raster topology still matters
-
-Inside [roots2pix_mt.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/roots2pix_mt.c), each native thread downloads its own section byte range through the multispan manifest. Threads do not share a section buffer. Lag therefore has to be supplied by:
-
-- a logical-section prelude row in the manifest
-- a per-thread one-row overlap inside the already-grown logical section
-
-### Root transforms still apply before scoring
-
-`slv-1` must refer to the previous solve after the same `prepare_step(...)`
-transform pipeline as the current solve. The previous roots are not fed raw into
-the evaluator.
-
-## New Production Pipeline
-
-The fused solve-score render path gains a shared full-resolution stats core,
-then branches into one of two candidate final-image architectures.
-
-### Stage 1: full-resolution score-stats map
-
-Each logical raster section is processed once in `score_stats` mode.
-
-The section worker:
-
-- reads the full-resolution solve stream for that section
-- applies the same root transforms as the real raster path
-- evaluates every metric slot against the correct current or lagged source
-- excludes warmup/prelude rows from the stats
-- emits a compact per-slot quantile sketch artifact for that section
-- optionally, under Option B, emits a raw slot-score cache fragment for that
-  section
-
-This pass computes no final pixels.
-This pass also does not write `step_scores.raw`.
-
-### Stage 2: score-stats merge
-
-A single merge task reads every section stats artifact, invokes a native merge
-path, and writes the standard solve-score clip artifact used by the render path.
-
-The clip artifact remains slot-indexed. Slots are not deduped merely because
-they happen to share the same metric name with different source tags.
-
-### Option A: reraster after stats merge
-
-This is the simpler implementation.
-
-#### Stage 3A: final raster map
-
-The existing full-resolution raster pass runs again, this time with the merged
-clip ranges from stage 2.
-
-Each slot is clipped and normalized using full-resolution statistics gathered
-from the actual solve stream of the render. Then the existing RPN program runs.
-
-#### Stage 4A: finalize
-
-Finalize remains unchanged. It consumes the sectioned raw output and associated
-step-scores exactly as today.
-
-### Option B: cache raw slot scores, then compose from cache
-
-This is the more efficient implementation.
-
-#### Stage 3B: compose-from-cache map
-
-Instead of re-reading roots and re-running the evaluator, each section reads the
-raw slot-score cache fragment written in stage 1.
-
-That section worker:
-
-- reads cached raw slot scores for each solve and slot
-- applies `clip_lo` / `clip_hi` per slot using the merged clip artifact
-- runs the existing RPN stack machine
-- writes the final grayscale output and final `step_scores.raw` fragment
-
-No solve stream, no root transforms, and no lag resolution are repeated in this
-stage.
-
-#### Stage 4B: finalize
-
-Finalize remains unchanged. It consumes the sectioned raw output and associated
-step-scores exactly as today.
-
-### `step_scores.raw` lifecycle (pinned across both options)
-
-`step_scores.raw` remains a final-image-stage product.
-
-Reason:
-
-- downstream consumers such as repalette / recolor / extract-palette expect the
-  final rendered score field, not pre-normalization slot data
-- stage 1 exists to gather full-resolution slot statistics, and under Option B
-  may also emit raw slot-score cache fragments
-- the stage that actually produces the final image writes the same reusable
-  `step_scores.raw` family that downstream
-  tooling already knows how to consume
-
-## Stats Contract
-
-### Slot-level normalization remains the semantic contract
-
-This plan does not change the meaning of solve-score programs.
-
-Current semantics are:
-
-1. compute a raw score per metric slot
-2. clip and normalize each slot independently
-3. run the RPN stack machine on those normalized slot values
-
-Because that contract stays in place, the new stats pass only needs exact or
-near-exact full-resolution slot distributions. It does not need a sketch of the
-final composed program output.
-
-If a future feature adds `normalize(expr, q)` or output-level normalization,
-that is a separate design and not part of this plan.
-
-### Consequence for correlated lag pairs (pinned)
-
-The target expression
-
-```text
-abs_diff(proximity(slv), proximity(slv-1))
-```
-
-still renders as a mostly-dark image under this contract.
-
-Why:
-
-- both slots are individually normalized correctly from full-resolution stats
-- adjacent solves at full render density are highly correlated
-- the composed value `|clip(p_i) - clip(p_{i-1})|` is therefore near zero for
-  most pixels and spikes mainly at discontinuities
-
-This is not a calibration bug. It is the expected result of preserving the
-existing slot-normalize-then-compose semantics.
-
-V1 explicitly accepts this outcome. Operators who want a brighter visualization
-of that signal can use downstream post-processing such as autolevels. A future
-feature may add output-level normalization, but this plan does not.
-
-### Section stats artifact format (pinned)
-
-Each section writes one JSON artifact under a dedicated stats prefix:
+1. Lagged metric references do not create independent metric slots.
+2. Metric definitions are base slots only: metric name, base source family, and
+   quantile.
+3. Lag is encoded only in program metric references: `mN-0` for current and
+   `mN-1` for previous.
+4. `--score_sources=` remains base-source only. It accepts `slv`, `cf`, and
+   `pm`. It does not accept `slv-1`, `cf-1`, or `pm-1`.
+5. The canonical program string uses `mN-L` tokens, where `L` is the lag depth.
+   V1 accepts only `0` and `1`.
+6. Current unlagged references may be parsed from legacy `mN`, but canonical
+   serialization writes `mN-0`.
+7. Lagged refs share the exact same clip range as the base metric slot. They do
+   not get separate quantiles.
+8. Production fused solve-score render keeps the current lores clip calibration
+   path. Lagged refs share the base metric slot's lores-derived clip range.
+9. V1 adds no new stats pass. The production path remains lores clip
+   calibration followed by final raster.
+10. V1 remains fused-color-only. Non-fused solve-score consumers reject lagged
+    programs early and clearly.
+11. `step_scores.raw` is written only by the final image raster stage.
+12. Higher lags are deliberately not implemented in v1, but the model extends
+    naturally to a ring buffer.
+
+## Semantic Model
+
+### Base Metric Slots
+
+The compiled chain contains a list of base metric slots:
 
 ```json
 {
-  "family": "solve_score_stats",
-  "version": 1,
-  "chain_fingerprint": "sha256:...",
-  "section_idx": 7,
-  "solve_start": 65536,
-  "solve_count": 16384,
   "metrics": [
     {
       "slot": 0,
       "metric": "proximity",
       "source": "slv",
-      "quantile": 0.001,
-      "count": 16384,
-      "min_score": 0.0021,
-      "max_score": 1.934,
-      "digest_format": "tdigest-f64le-v1",
-      "digest_b64": "AAAB..."
-    },
+      "quantile": 0.004
+    }
+  ],
+  "program_spec": "m0-0;m0-1;abs_diff"
+}
+```
+
+Valid base sources are:
+
+- `slv`
+- `cf`
+- `pm`
+
+Invalid in the metric list:
+
+- `slv-1`
+- `cf-1`
+- `pm-1`
+
+Those lag suffixes belong in program references only.
+
+### Program Metric References
+
+Program metric references have this canonical form:
+
+```text
+m<slot>-<lag>
+```
+
+Examples:
+
+```text
+m0-0
+m0-1
+m12-0
+m12-1
+```
+
+Meaning:
+
+- `m0-0` = current value of metric slot 0
+- `m0-1` = previous-row value of metric slot 0
+- `m12-0` = current value of metric slot 12
+- `m12-1` = previous-row value of metric slot 12
+
+Rejected in v1:
+
+- `m0-2`
+- `m0--1`
+- `m0-01`
+- `m0-lag`
+- `m-1`
+- `m0 -1`
+- `M0-1`
+
+Legacy `m0` is accepted as `m0-0` when reading older artifacts or tests, but
+new writers emit `m0-0`.
+
+### Quantile Ownership
+
+The quantile belongs to the base metric slot.
+
+For example:
+
+```text
+m0 = proximity(cf, q=0.4)
+program = m0-0;m0-1;abs_diff
+```
+
+Both `m0-0` and `m0-1` use the same clip range derived from
+`proximity(cf, q=0.4)`.
+
+If a user-facing editor still accepts a syntax such as:
+
+```text
+proximity(cf-1, q=0.9)
+```
+
+that lag suffix must be lowered to a program reference such as `m0-1`. The
+`q=0.9` value is not a separate lag quantile. It is ignored when an existing
+base slot already defines the metric's quantile.
+
+To avoid fake UI:
+
+- the chip editor should not present an independent editable quantile for a
+  lagged reference
+- if a lagged-only reference creates a new base slot, its displayed `q` may seed
+  that base slot
+- once the base slot exists, lagged references show inherited quantile state
+
+If lowering from a legacy/free-form shape is ambiguous, the compiler should
+reject clearly rather than guessing.
+
+### Lowering Algorithm
+
+Both the Python and JavaScript compilers must implement the same lowering rules.
+The chip editor should normally avoid the ambiguous cases by representing lag as
+a reference to an existing metric slot, not as a separate metric declaration.
+
+Canonical lowering:
+
+```text
+base_slots = []
+
+for each metric-like user expression in display order:
+    metric, source, lag, quantile = parse(expression)
+
+    if lag == 0:
+        slot = find_or_create_exact_base_slot(metric, source, quantile)
+        emit_ref(slot, 0)
+        continue
+
+    if lag != 1:
+        reject("lag depth other than 0 or 1 is unsupported")
+
+    base_source = source_without_lag(source)
+    candidates = base_slots with same metric and base_source
+
+    if len(candidates) == 1:
+        slot = candidates[0]
+        # The lagged expression's quantile is ignored. The base slot owns q.
+    elif len(candidates) == 0:
+        slot = create_base_slot(metric, base_source, quantile)
+    else:
+        reject("lagged metric reference is ambiguous; choose an explicit slot")
+
+    emit_ref(slot, 1)
+```
+
+Pinned examples:
+
+- `proximity(cf, q=0.4); proximity(cf-1, q=0.4); abs_diff` lowers to one base
+  slot with `q=0.4` and program `m0-0;m0-1;abs_diff`.
+- `proximity(cf, q=0.4); proximity(cf-1, q=0.5); abs_diff` also lowers to one
+  base slot with `q=0.4`; the lagged `q=0.5` is ignored because the base slot is
+  unambiguous.
+- `proximity(cf-1, q=0.9)` with no current sibling creates one base
+  `proximity(cf, q=0.9)` slot and emits `m0-1`.
+- `proximity(cf, q=0.4); proximity(cf, q=0.5); proximity(cf-1, q=0.7)` rejects,
+  because two base slots could own the lagged reference.
+
+### Visual Semantics Of `abs_diff`
+
+`m0-0;m0-1;abs_diff` compares normalized values from adjacent rows of the same
+base metric. For smooth parameter-space changes, those adjacent values are often
+highly correlated, so the difference concentrates near `0` with spikes at
+discontinuities.
+
+That means the motivating lag-difference program can look like a mostly dark
+edge-detect image by design. V1 does not add output-level re-normalization.
+Operators who want to brighten that output should use the existing autolevels or
+post-processing path.
+
+## Final Raster Runtime Algorithm
+
+In final raster mode, each `roots2pix_mt` native worker allocates two metric
+buffers:
+
+```c
+float current_metric_buffer[M];
+float recent_metric_buffer[M];
+```
+
+`M` is the number of base metric slots in the compiled program.
+
+### Worker Initialization
+
+If the program contains no `mN-1` references, no lag setup is needed.
+
+If the program contains at least one lagged reference:
+
+1. The worker obtains one previous solve row before its first scored row.
+2. It evaluates the base metric slots needed by lagged program refs on that
+   previous row.
+3. It stores those values into `recent_metric_buffer`.
+
+For global solve row `0`, no previous row exists. The sentinel rule is applied
+after row 0 current metrics are evaluated and before the row 0 program is
+evaluated:
+
+```text
+recent_metric_buffer = current_metric_buffer for row 0
+```
+
+That makes `mN-1` equal `mN-0` at the global first row.
+
+### Per-Row Loop
+
+For each scored solve row `i`:
+
+1. Decode current row data.
+2. Apply the same root-transform pipeline used by current fused raster.
+3. Evaluate every base metric slot into `current_metric_buffer`.
+4. Evaluate the program:
+   - `mN-0` reads `current_metric_buffer[N]`
+   - `mN-1` reads `recent_metric_buffer[N]`
+5. Convert the program result to the final 1..255 solve byte.
+6. Store the solve byte for `step_scores.raw`.
+7. Project roots, claim pixels, and emit sparse fragments exactly as today.
+8. Copy `current_metric_buffer` to `recent_metric_buffer`.
+9. Advance to row `i + 1`.
+
+The lag cost is therefore:
+
+- one extra prelude row per worker boundary when lag is used
+- one `M`-float buffer copy per solve row
+- no second metric evaluation for lagged refs inside the same row
+
+### Normalized vs Raw Buffer Values
+
+In the final raster pass, the metric buffers hold normalized metric values after
+per-slot clip ranges have been applied.
+
+That preserves current solve-score semantics:
+
+1. compute raw base metric value
+2. apply that slot's clip range
+3. clamp to `[0, 1]`
+4. compose using the RPN program
+
+The lores clip pass evaluates raw base metric values and computes clip ranges.
+It does not need to evaluate lagged program refs because v1 does not add
+independent lag quantiles or output-level normalization.
+
+## Production Pipeline
+
+Production fused solve-score render keeps the existing two-stage shape.
+
+### Stage 1: Lores Clip Calibration
+
+The existing solve-score clip stage remains in place.
+
+It computes clip ranges from lores artifacts exactly as today:
+
+- `lores.bin` for `slv` metrics
+- `lores_coeffs.bin` for `cf` metrics
+- `lores_params.bin` for `pm` metrics
+
+Lagged refs do not create separate clip work.
+
+The clip stage sees only the base metric slots:
+
+```text
+metrics:
+  m0 = proximity(slv, q=0.4)
+program:
+  m0-0;m0-1;abs_diff
+```
+
+The clip stage computes one clip range for `m0`. Both `m0-0` and `m0-1` use
+that same range in final raster.
+
+This stage:
+
+- does not evaluate `mN-1`
+- does not need lag buffers
+- does not need prelude rows
+- does not compute full-resolution stats
+
+### Stage 2: Final Raster Map
+
+The existing full-resolution raster map runs with the lores-derived clip
+artifact.
+
+This is where:
+
+- `current_metric_buffer` and `recent_metric_buffer` are normalized values
+- `mN-0` / `mN-1` program refs are evaluated
+- sparse image fragments are written
+- `step_scores.raw` fragments are written
+- associated palette fragments are written when enabled
+
+Finalize remains unchanged.
+
+## Performance Compared To Current Production Render
+
+### Current No-Lag Path
+
+Current production fused solve-score render has two expensive phases:
+
+1. Lores clip calibration.
+2. Full-resolution raster.
+
+The lores clip phase reads low-resolution solve artifacts and computes clip
+ranges from that approximation. It is much cheaper than a full render pass, but
+its distribution is not the same object as the final full-resolution solve
+stream.
+
+The full-resolution raster phase then:
+
+- reads each logical solve section
+- applies root transforms
+- evaluates solve-score metrics
+- clips and composes the program
+- projects roots to pixels
+- claims pixels
+- writes sparse image fragments and `step_scores.raw`
+
+### New Lag-Capable Path
+
+The lag-capable path keeps the same two expensive phases:
+
+1. Lores clip calibration.
+2. Full-resolution raster.
+
+The clip phase remains essentially the same cost as today. It computes one clip
+range per base metric slot. Lagged refs do not add clip work because they reuse
+the base metric slot's range.
+
+The final raster phase adds only the buffer-based lag machinery.
+
+The expected cost shape is:
+
+```text
+current total ≈ lores_clip + full_raster
+new total     ≈ lores_clip + full_raster_with_metric_buffers
+```
+
+`full_raster_with_metric_buffers` is only slightly more expensive than current
+full raster when lag is used.
+
+Expected feature penalty: close to zero for practical render workloads.
+
+Reason: lag does not add a new clip pass, does not add a new full-resolution
+stats pass, and does not re-evaluate metrics for lagged refs. It only changes
+where program refs read their already-computed normalized metric values.
+
+### Incremental Cost Of Lag
+
+The cost of actually using lag in final raster is small.
+
+For lag-free programs, final raster evaluates base metric slots into
+`current_metric_buffer` and reads only `mN-0` refs.
+
+For lagged programs, final raster additionally:
+
+- reads one prelude solve row at worker/section boundaries
+- keeps `recent_metric_buffer[M]`
+- copies `current_metric_buffer` into `recent_metric_buffer` once per solve row
+- reads `mN-1` refs from the recent buffer during program evaluation
+
+It does not re-evaluate the metric for the lagged ref. It also does not ask the
+clip stage for another quantile.
+
+The lag overhead is therefore O(M) memory and O(M) copy per solve row, where
+`M` is the number of base metric slots. In practice this is tiny compared with
+root decoding, root transforms, metric evaluation, pixel projection, and pixel
+claiming.
+
+### Cost Summary
+
+Compared with the current no-lag production renderer:
+
+- Final raster with lag is only slightly more expensive than final raster
+  without lag.
+- The expected lag-feature performance penalty is close to zero in normal use.
+- Memory overhead in final raster is two `M`-float buffers per native worker.
+- The number of metric slots stays base-only, so `m0-0;m0-1;abs_diff` still has
+  one metric slot, not two.
+- Lores clip calibration stays in place and should have roughly the same cost as
+  today for the same base metric list.
+
+This design intentionally keeps the current lores-derived quantile contract and
+makes lag cheap by reading previous normalized metric values from a buffer.
+
+## Clip Artifact Contract
+
+The existing solve-score clip artifact remains the clip contract. It has one
+entry per base metric slot:
+
+```json
+{
+  "family": "solve_score",
+  "version": 2,
+  "chain_fingerprint": "sha256:...",
+  "program": "m0-0;m0-1;abs_diff",
+  "metrics": [
     {
-      "slot": 1,
+      "slot": 0,
       "metric": "proximity",
-      "source": "slv-1",
-      "quantile": 0.001,
-      "count": 16384,
-      "min_score": 0.0017,
-      "max_score": 1.887,
-      "digest_format": "tdigest-f64le-v1",
-      "digest_b64": "AAAB..."
+      "source": "slv",
+      "quantile": 0.004,
+      "clip_lo": 0.0021,
+      "clip_hi": 1.934
     }
   ]
 }
@@ -345,562 +469,510 @@ Each section writes one JSON artifact under a dedicated stats prefix:
 
 Pinned properties:
 
-- summaries are per slot, not deduped by metric name
-- summaries cover scored solves only; warmup/prelude rows are excluded
-- `chain_fingerprint` is copied through so stale summaries cannot merge into a
-  different program
-- `source` is preserved exactly, including lag suffix
+- no `source` value contains a lag suffix
+- there is no separate metric entry for `m0-1`
+- clip ranges are per base slot, not deduped by metric name alone
+- clip ranges are derived from lores artifacts, as today
+- `chain_fingerprint` includes the lagged program refs, so `m0-0` and
+  `m0-0;m0-1;abs_diff` cannot share stale clip artifacts by accident
 
-`tdigest` is chosen because the merge is associative enough for a multi-section
-workflow and keeps artifacts small. The on-wire representation is a base64
-encoding of a binary float64 digest payload, not raw JSON float centroids. This
-avoids throwing away precision for very tight distributions while keeping the
-artifact portable. A section summary should stay comfortably small even with
-many slots.
+Backward compatibility:
 
-Merge of this format happens only in native code. Python never reconstructs or
-re-compresses the digest.
+- New v2 clip artifacts should always include the canonical `program` field.
+- Readers must tolerate older v2 clip artifacts that lack `program` when the
+  fingerprint and metric entries still match.
+- Missing `program` on an old artifact must not be treated as permission to
+  ignore a fingerprint mismatch.
 
-### Raw slot cache artifact format (Option B only)
+## Source And Final-Raster Prelude Contract
 
-If Option B is chosen, stage 1 also writes one raw slot-score fragment per
-section.
+### Source Families
 
-Pinned shape:
+The base metric source family determines which input stream a metric uses:
 
-- binary float32
-- solve-major
-- fixed slot count per solve
-- scored solves only; warmup/prelude rows excluded
+- `slv` reads roots from the solve stream
+- `cf` reads coefficient roots from the coefficient source manifest
+- `pm` reads parameter rows from the parameter source manifest
 
-Conceptually:
+Lag does not alter the source family. It only changes whether the program reads
+the current or previous metric-buffer value.
 
-```text
-slot_scores_f32[solve_idx][slot_idx]
-```
+### Prelude Rows
 
-This artifact is not a user-facing contract. It is an internal render scratch
-format used only to avoid a second full evaluator pass.
+A one-row prelude is required only by the final raster stage when a program
+contains lagged references.
 
-## Two-Level Lag Availability
+The lores clip stage does not evaluate `mN-1` refs, so it does not need prelude
+rows.
 
-Lagged slots need valid previous-solve data in both passes:
-
-- the full-resolution score-stats pass
-- the final full-resolution raster pass
-
-The same overlap model is used in both.
-
-### Logical-section level
-
-When a source family uses lag and `solve_start > 0`, the corresponding manifest
-gets one extra leading logical row prepended. The prelude row is the upstream
-solve at `solve_start - 1`.
-
-The global-first section clamps prelude to zero because no upstream solve exists.
-
-### Native-thread level
-
-Each native thread reads one row earlier than its first scored solve within that
-logical section. No cross-thread reads are introduced.
-
-### Per-thread formula
-
-Let:
-
-- `S` = section global `solve_start`
-- `P` = section `prelude_rows` for that source family, either 0 or 1
-- `thread_start` = global first scored solve handled by this native thread
-- `thread_width` = number of scored solves handled by this thread
-- `row_bytes` = source-family stride in bytes for one solve row
-
-Then:
+The planner derives per-family prelude requirements from lagged program refs:
 
 ```text
-prev_logical_offset = (thread_start - 1 - S + P) * row_bytes
+program ref mN-1
+  -> metric slot N
+  -> metric source family
+  -> that family needs one prelude row
 ```
-
-Cases:
-
-| Section | Thread | Behavior |
-|---|---|---|
-| first section, first thread | global solve 0 | sentinel: `prev = current` |
-| first section, later threads | same logical section | previous row already in thread range |
-| later section, any thread | non-first section | previous row comes from manifest prelude or earlier row in section |
-
-The invariant is simple: at evaluator call time, every lagged slot sees a valid
-prev pointer. It is either:
-
-- the true previous solve
-- or, only for global solve 0, the sentinel `prev = current`
-
-### Pass and row-flip boundaries
-
-Lag is index-based, not spatial-boundary-aware. At serpentine row flips and pass
-boundaries, the previous solve may be physically distant. That remains accepted
-behavior for v1.
-
-## Cost And UX Impact
-
-### Option A cost
-
-Option A is not free. Stage 1 repeats most of the expensive work of stage 3A:
-
-- manifest reads
-- per-solve decode
-- root transforms
-- solve-score evaluation
-
-It skips pixel writes, palette matching, and final raw assembly, so the total
-wall time is expected to be roughly 1.8x the current production fused
-solve-score render path rather than a full 2x.
-
-That slowdown is an explicit tradeoff for correct full-resolution slot
-statistics.
-
-### Option B cost
-
-Option B still has two stages after planning, but only one expensive evaluator
-pass.
-
-Expected cost shape:
-
-- one full solve/evaluator pass in stage 1
-- one cheap native merge
-- one cheaper compose-from-cache pass that reads raw slot scores, applies clip,
-  and runs the stack machine
-
-This should be materially cheaper than Option A because it avoids repeating:
-
-- solve-stream reads
-- root transforms
-- lag prev resolution
-- metric evaluation
-
-It does, however, introduce a new internal raw slot-score scratch artifact and
-the code to compose from it.
-
-### Preview consequence for both options
-
-Operators will feel this cost immediately. Production fused solve-score render
-gets slower the moment this lands.
-
-This plan does not solve preview latency. Interactive preview needs a separate
-follow-up track if the product wants fast experimentation after lores is removed
-from the production path.
-
-### Alternative not chosen for v1
-
-An alternative architecture would evaluate the solve stream only once, writing
-to scratch while simultaneously maintaining quantile sketches, then normalize in
-a cheap second read. That would cut the cost to roughly one evaluator pass plus
-a lightweight normalization pass.
-
-That is effectively what Option B does, except with explicit raw slot-score
-cache fragments rather than trying to normalize a fully composed final image in
-place. The unresolved choice is whether that extra scratch artifact is worth the
-complexity relative to Option A's simpler rerastering design.
-
-Another alternative is per-slot top-K / bottom-K extreme samples instead of
-t-digest summaries. That would simplify merge and make the artifact plain JSON,
-but it hard-codes the summary toward extreme-edge quantiles and gives up the
-more general quantile behavior the current solve-score contract already implies.
-V1 keeps the digest approach.
-
-## Contract Changes
-
-### Chain DSL
-
-Source grammar extends with:
-
-- `slv-1`
-- `cf-1`
-- `pm-1`
 
 Examples:
 
 ```text
-proximity(q=0.1%, slv-1)
-avg(proximity(q=0.1%, slv), proximity(q=0.1%, slv-1))
-abs_diff(spread(q=0.5%, cf), spread(q=0.5%, cf-1))
+m0 = proximity(slv, q=0.4)
+program = m0-0;m0-1;abs_diff
 ```
 
-### Source CSV
+Requires one `slv` prelude row.
 
-`--score_sources=<csv>` accepts the six-source vocabulary:
+```text
+m0 = spread(cf, q=0.4)
+program = m0-1
+```
 
-- `slv`
-- `slv-1`
-- `cf`
-- `cf-1`
-- `pm`
-- `pm-1`
+Requires one `cf` prelude row.
 
-`program_spec` stays unchanged.
+```text
+m0 = proximity(slv, q=0.4)
+m1 = max_re(pm, q=0.4)
+program = m0-0;m1-1;avg
+```
 
-### Evaluator signature
+Requires one `pm` prelude row. It does not require an `slv` prelude row because
+`m0` is only read as current.
 
-[solve_score.h](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/solve_score.h)
-gains prev-pointer inputs:
+### Logical Section Boundary
+
+If a logical section starts at global row `S > 0` and any required source family
+needs lag, the section manifest includes row `S - 1` as a prelude row for that
+family.
+
+The prelude row is available to the worker but is not counted as a scored row.
+
+### Native Thread Boundary
+
+Threads do not share section buffers. Therefore every native thread that starts
+at scored row `T` needs access to row `T - 1` for lag initialization.
+
+Implementation rule:
+
+- if `T == 0`, initialize lag with the row-0 sentinel
+- otherwise, the thread's input read begins at `T - 1`
+- the thread's scoring loop still begins at `T`
+- prelude row bytes are excluded from final raster fragments and step scores
+
+Boundary table:
+
+| Section | Thread | Required initialization |
+| --- | --- | --- |
+| first section (`S == 0`) | first thread (`T == 0`) | evaluate row 0 once and copy current to recent |
+| first section (`S == 0`) | later thread (`T > 0`) | read in-section row `T - 1` as prelude |
+| later section (`S > 0`) | any thread | read global row `S + T - 1`; for `T == 0`, this is the section prelude row |
+
+This applies independently to `slv`, `cf`, and `pm` streams when their metric
+slots are read lagged.
+
+## Chain Compiler Contract
+
+### Python Compiler
+
+`solve_score_chain.py` changes:
+
+- metric sources remain `slv`, `cf`, `pm`
+- lag suffixes are represented on program refs, not metric sources
+- compiled `metrics[]` contains base slots only
+- compiled `program_spec` emits `mN-0` and `mN-1`
+- fingerprints include the full canonical `program_spec`
+- helpers expose:
+  - whether the program uses lag
+  - max lag depth
+  - lagged metric slots
+  - per-family prelude requirements
+
+### JS Compiler
+
+The frontend compiler mirrors the Python compiler:
+
+- accepts user-facing lag references
+- lowers them to base metric slots plus `mN-1` refs
+- serializes canonical program refs
+- round-trips saved solve-score programs without losing lag refs
+
+The UI must not expose a fake independent quantile for a lagged ref. A lagged
+chip should show that its quantile is inherited from the base slot.
+
+### C Parser
+
+`solve_score.h` changes:
+
+- `parse_solve_score_source_csv` continues to accept only `slv`, `cf`, `pm`
+- `parse_solve_score_program_spec` accepts `mN`, `mN-0`, and `mN-1`
+- canonical tests expect writers to emit `mN-0` for current refs
+- `SolveScoreProgramToken` stores both:
+  - metric slot
+  - lag depth
+
+V1 rejects any lag depth other than `0` or `1`.
+
+## Evaluator Contract
+
+The evaluator should be split so program composition can run from buffers.
+
+Recommended shape:
 
 ```c
-static double solve_score_eval_program_with_sources(
+int solve_score_eval_metric_slots(
     const float *roots, int degree,
     const float *coeffRoots, int coeffDegree,
     const float *paramValues, int paramDegree,
-    const float *prevRoots, int prevDegree,
-    const float *prevCoeffRoots, int prevCoeffDegree,
-    const float *prevParamValues, int prevParamDegree,
-    const SolveScoreProgram *program);
+    const SolveScoreProgram *program,
+    const double *clipLo,
+    const double *clipHi,
+    float *outMetricBuffer,
+    char *err, size_t errCap);
+
+int solve_score_eval_program_from_buffers(
+    const float *currentMetricBuffer,
+    const float *recentMetricBuffer,
+    const SolveScoreProgram *program,
+    double *out,
+    char *err, size_t errCap);
 ```
 
-Lagged slots route to the corresponding prev pointers.
+Capacity and value contracts:
 
-### Hard-fail behavior (pinned)
+- `outMetricBuffer` must have space for `program->metricCount` floats.
+- `currentMetricBuffer` and `recentMetricBuffer` contain normalized `[0, 1]`
+  metric values after per-slot clip application.
+- `solve_score_eval_program_from_buffers` must treat both buffers as read-only.
 
-If a lagged source is referenced and the relevant prev pointer is `NULL`, the
-evaluator writes a clear stderr message and aborts. No silent fallback to the
-current source is allowed.
+The current convenience wrapper can remain for lag-free direct callers, but a
+lagged program must fail if no recent buffer is supplied.
 
-This is the safety rail that protects palette chunk binaries and any other
-non-fused callers.
+No silent fallback is allowed. These are errors:
 
-### Native argv
+- program contains `mN-1` but caller passes no recent buffer
+- `mN-1` references a slot outside the metric list
+- source CSV contains `slv-1`, `cf-1`, or `pm-1`
+- program contains `mN-2` in v1
 
-The raster binary gains:
+## Planner And Workflow Contract
 
-- `--score_stats_output=<path>` — emit section stats artifact and do not render pixels
-- `--prelude_rows=<N>`
-- `--score_coeff_prelude_rows=<N>`
-- `--score_param_prelude_rows=<N>`
+### Plan Fields
 
-`N` is 0 or 1 in v1.
+`plan.solve_score` includes:
 
-There is no render-workflow `solve_proximity_stats --mode=clip` contract anymore.
-
-The stats merge is handled by extending `solve_proximity_stats` with a native
-merge mode rather than implementing digest merge in Python:
-
-- `solve_proximity_stats --mode=stats_merge --sections_manifest=<path> --out=<path>`
-
-That mode:
-
-- parses section stats artifacts
-- merges per-slot digests
-- extracts the requested quantiles
-- emits the standard clip artifact JSON
-
-### Manifest logical layout
-
-[logical_sections.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/logical_sections.py)
-gains per-family `prelude_rows`. When nonzero:
-
-- `logical_size` grows by one row
-- downstream spans shift right by one row
-- a prepended span covers the upstream row
-
-The multispan reader itself does not change.
-
-### Plan
-
-`plan.solve_score` gains:
-
-- `stats_prefix`
+- `chain`
 - `clip_key`
+- `uses_lag`
+- `max_lag`
 
-`plan.raster` keeps or gains:
+`plan.raster` includes per-family prelude flags/counts:
 
 - `prelude_rows`
 - `score_coeff_prelude_rows`
 - `score_param_prelude_rows`
 
-Planner behavior changes:
+All values are integers. V1 values are `0` or `1`.
 
-- fused solve-score render no longer depends on lores scratch for clipping
-- mixed-source fused solve-score render no longer requires `lores.coeffs_key`
-  or `lores.params_key`
-- lag usage is derived directly from the compiled chain
+### ASL States
 
-### ASL
+The render workflow keeps the existing color solve-score clip task:
 
-The render workflow replaces the lores clip task with:
+- existing `ColorClipPhase`
+- existing `ColorClipTask`
+- existing `ColorRasterPhase`
+- existing `ColorRasterMap`
+- existing finalize states
 
-- `ColorSolveScoreStatsMap`
-- `ColorSolveScoreStatsMergeTask`
+The ASL must be generated/checked against `lambda/workflow_contracts.py`. The
+payload contract maps must be added before implementation, not reconstructed by
+memory.
 
-`ColorRasterMap` remains the final pixel-producing pass.
+Color clip payload remains lores-based and must thread:
 
-The lag chain itself still threads through `$.plan.solve_score.chain`. The new
-states additionally thread the per-family prelude fields and stats prefix.
+- `job_id`
+- `degree`
+- `solve_score_chain`
+- `solve_score_threads`
+- `lores_bin_key`
+- `lores_coeffs_key`
+- `lores_params_key`
+- `n_coeffs`
+- `root_transforms`
+- `out_key`
 
-### Frontend
+Final raster payload must thread:
 
-Required:
+- `solve_score_clip_key`
+- `fragment_prefix`
+- `prelude_rows`
+- `score_coeff_prelude_rows`
+- `score_param_prelude_rows`
+- associated palette fragment fields
 
-- JS chain compiler accepts lag tokens
-- JS serializer round-trips lag tokens
-- populate and solve-score modal Load restore lagged programs correctly
+Finalize continues to consume:
 
-Required cleanup:
+- sparse fragments
+- `step_scores.raw`
+- clip slots from the lores-derived clip artifact
 
-- render-dispatch controls that exist only for the old lores clip stage are
-  removed from the production render UI and request payload
+## File-Level Plan
 
-Optional:
+### `lambda/solve_score_chain.py`
 
-- chip picker grows explicit lag entries
+- lower lagged refs into `mN-1` program refs
+- keep `metrics[]` base-only
+- reject ambiguous legacy lowering
+- include lag refs in fingerprints
+- expose prelude helper functions
 
-## Implementation Plan By File
+### `index.html`
 
-### 1. `lambda/solve_score_chain.py`
+- mirror compiler lowering
+- show lagged refs in the chip editor without fake independent quantile state
+- saved solve-score modal round-trips lagged programs
+- Populate restores lagged programs
+- render summaries display lag refs clearly
 
-- extend allowed sources with `slv-1`, `cf-1`, `pm-1`
-- preserve lag suffix in compiled `metrics[i].source`
-- add helpers such as `any_lag_source(compiled)` and per-family lag usage
-- keep `program_spec` unchanged
-- ensure fingerprints differ when only the source tag differs
+### `lambda/solve_score.h`
 
-### 2. `lambda/solve_score.h`
+- parse `mN-0` / `mN-1`
+- store lag depth on push-metric tokens
+- add buffer-based program evaluation
+- keep source CSV base-only
+- reject lag misuse loudly
 
-- add `*_LAG1` source enum variants
-- extend CSV parsing
-- extend `solve_metric_supports_source`
-- extend evaluator signature with prev pointers
-- abort on lagged-source access with NULL prev pointer
+### `lambda/logical_sections.py`
 
-### 3. `lambda/logical_sections.py`
+- support per-family prelude rows
+- prepend one logical row when needed
+- keep scored row counts unchanged
+- expose enough metadata for ASL payloads and tests
 
-- add per-family `prelude_rows`
-- prepend one logical warmup row when needed
-- clamp to zero for the global-first section
+### `lambda/roots2pix_mt.c`
 
-### 4. `lambda/roots2pix_mt.c`
+- allocate `current_metric_buffer` and `recent_metric_buffer`
+- seed recent buffer from prelude row or row-0 sentinel
+- evaluate base metrics once per scored row
+- evaluate program from current/recent buffers
+- continue writing sparse fragments and `step_scores.raw` in raster mode
 
-- add `--score_stats_output`
-- in stats mode, emit per-slot t-digest summaries instead of pixels
-- under Option B, also emit raw slot-score cache fragments
-- in raster mode, keep current output behavior
-- implement lag prev routing in both modes
-- compute transformed previous step via the same `prepare_step(...)` pipeline
-- validate prelude flags when lagged sources are present
+### `lambda/handler_raster_mt.py`
 
-### 5. `lambda/handler_raster_mt.py`
+- prepare final raster manifests with the required prelude rows
+- keep final raster upload behavior unchanged except for prelude fields
 
-- add a `score_stats` phase alongside the current render phase
-- build the same manifests as the render pass, including preludes
-- invoke `roots2pix_mt` in stats mode
-- upload section stats artifacts under `plan.solve_score.stats_prefix`
-- under Option B, upload raw slot-score cache fragments too
+### `lambda/solve_proximity_stats.c`
 
-### 6. `lambda/solve_proximity_stats.c` and `lambda/handler_solve_proximity.py`
+- keep the existing lores clip-calibration role
+- compute clip ranges for base metric slots only
+- preserve canonical lagged `program_spec` in the clip artifact
+- do not create lagged metric entries
 
-- remove render-workflow dependence on `solve_proximity_stats --mode=clip`
-- keep histogram / debug functionality separate
-- add `solve_proximity_stats --mode=stats_merge`
-- in that native mode, parse section stats artifacts, merge per-slot digests,
-  extract quantiles, and emit the standard clip artifact JSON
-- keep [handler_solve_proximity.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/handler_solve_proximity.py)
-  as thin orchestration only: download section artifacts, invoke the binary,
-  read JSON output, upload clip artifact
+### `lambda/handler_solve_proximity.py`
 
-If the Python file name remains unchanged, add a file-head comment stating that
-its render-workflow role is now orchestration around native full-resolution
-stats merge rather than lores clip computation.
+- keep the existing render-workflow clip phase
+- invoke lores clip calibration as today
+- upload the standard clip artifact
+- keep unrelated histogram/debug behavior clearly separate
 
-### 7. `lambda/handler_render_plan.py`
+### `lambda/handler_render_plan.py`
 
-- stop requiring lores scratch for fused solve-score clipping
-- derive per-family prelude flags from the compiled chain
-- emit `stats_prefix`
-- keep `clip_key` as the downstream clip artifact contract
+- compute lag/prelude requirements from the compiled chain
+- keep `clip_key` as the final raster clip contract
+- reject lagged programs outside fused color render
 
-### 8. `lambda/workflow_contracts.py` and `stepfunctions/render_workflow.asl.json.template`
+### `lambda/workflow_contracts.py`
 
-- replace `ColorSolveScoreClipTask` with stats-map + stats-merge
-- thread `stats_prefix`, `clip_key`, and prelude fields
-- branch after stats merge:
-  - Option A: final raster map
-  - Option B: compose-from-cache map
-- ensure whichever final-image stage is chosen still receives the standard clip
-  artifact
+- keep the color clip payload contract lores-based
+- update final raster payload contract with prelude fields
 
-### 8A. `lambda/compose_from_slot_scores.c` or `roots2pix_mt.c` compose mode (Option B only)
+### `stepfunctions/render_workflow.asl.json.template`
 
-- read raw slot-score cache fragments
-- apply slot clip ranges
-- run the existing RPN stack machine
-- emit final grayscale fragments and final `step_scores.raw`
+- keep `ColorClipTask`
+- thread all fields defined in `workflow_contracts.py`
+- keep final raster/finalize paths deterministic
 
-### 9. `index.html`
+### Non-Fused Consumers
 
-- accept lag tokens in `_compileSolveScoreChain`
-- preserve them in `_serializeSolveScoreChain`
-- show them in render summaries
-- remove obsolete lores-clip render controls from the render dispatch path
+Reject lag early in:
 
-### 10. `lambda/handler_palette_render_plan.py` and `lambda/handler_palette_chunk.py`
+- palette render planner
+- palette chunk handler
+- direct C CLI paths that cannot supply recent buffers
 
-- reject lagged sources early with a clear fused-only error
+The error should say lagged solve-score refs are supported only by fused color
+render in v1.
 
-This rejection belongs in the planner as well as the chunk worker path. The
-operator should be told immediately, not after work has already been planned.
+### Atomic Deploy Boundary
 
-### 11. `lambda/handler_storage.py`
+These files form one contract boundary and must ship together:
 
-No behavioral change required beyond the compiler update. Save/load of
-solve-score programs should round-trip lag tokens automatically.
+- `lambda/solve_score.h`
+- `lambda/roots2pix_mt.c`
+- `lambda/handler_raster_mt.py`
+- `lambda/handler_render_plan.py`
+- `lambda/solve_score_chain.py`
+- `lambda/solve_proximity_stats.c`
+- `lambda/workflow_contracts.py`
+- `stepfunctions/render_workflow.asl.json.template`
+- `index.html`
 
-## Implementation Order
-
-1. Compiler and evaluator contract: `solve_score_chain.py` + `solve_score.h`
-2. Full-resolution section overlap: `logical_sections.py` + `roots2pix_mt.c`
-3. Stats pass in `handler_raster_mt.py`
-4. Native stats merge in `solve_proximity_stats.c`, orchestrated by
-   `handler_solve_proximity.py`
-5. Choose final-image architecture:
-   - Option A: reraster with the merged clip artifact
-   - Option B: compose from raw slot-score cache fragments
-6. Planner + ASL rewrite
-7. Frontend parser/serializer + render UI cleanup
-8. Early rejection in non-fused paths
-9. Tests
-
-The critical atomic boundary is the shared evaluator signature. All C callers
-must update together. In practice the atomic deploy unit also includes the
-Python handlers and ASL states that start emitting lagged `--score_sources`
-payloads to the updated binaries. Old handlers plus new binaries, or new
-handlers plus old binaries, are both invalid deploy states.
+Do not stage parser/compiler support separately from the ASL and handler payload
+changes. A lagged program must not reach a raster Lambda that cannot provide
+recent buffers and prelude rows.
 
 ## Tests
 
-### Compiler and parser
+### Compiler Tests
 
-- Python compiler accepts `slv-1`, `cf-1`, `pm-1`
-- JS compiler accepts and round-trips them
-- C CSV parser accepts the six-token vocabulary
-- malformed lag tokens are rejected everywhere
+- Python compiler lowers current refs to `mN-0`
+- Python compiler lowers lag refs to `mN-1`
+- JS compiler matches Python canonical output
+- legacy `mN` parses as `mN-0`
+- `mN-2` rejects
+- `slv-1` / `cf-1` / `pm-1` never appear in compiled `metrics[].source`
+- fingerprints differ between `m0-0` and `m0-0;m0-1;abs_diff`
+- lagged refs share the base slot quantile
+- ambiguous legacy quantile/source lowering rejects clearly
+- `proximity(cf, q=0.4)` plus `proximity(cf-1, q=0.5)` lowers to one base slot
+  with `q=0.4`
+- lagged-only `proximity(cf-1, q=0.9)` creates one base `proximity(cf, q=0.9)`
+  slot
+- two current base slots with the same metric/source but different quantiles make
+  a free-form lagged ref ambiguous
 
-### Evaluator safety
+### C Parser And Evaluator Tests
 
-- direct CLI of a non-fused caller with `--score_sources=slv-1` aborts with the
-  expected stderr
-- lag-free programs still behave exactly as before
+- source CSV accepts only `slv`, `cf`, `pm`
+- source CSV rejects `slv-1`, `cf-1`, `pm-1`
+- program parser accepts `m0`, `m0-0`, `m0-1`
+- program parser canonical behavior treats `m0` as current
+- program parser rejects malformed lag tokens
+- buffer evaluator reads current buffer for `mN-0`
+- buffer evaluator reads recent buffer for `mN-1`
+- buffer evaluator does not mutate current or recent buffers
+- lagged program without recent buffer fails clearly
+- lag-free programs remain byte-identical
 
-### Section overlap
+### Runtime Boundary Tests
 
-- manifest prelude grows logical size and shifts offsets correctly
-- first section clamps prelude to zero
-- native-thread byte ranges include the needed warmup row
+- global row 0 uses `recent = current`
+- worker starting at row `T > 0` reads row `T - 1`
+- logical section starting at `S > 0` includes required prelude rows
+- prelude rows are excluded from fragments
+- prelude rows are excluded from `step_scores.raw`
+- per-family prelude is requested only for lagged metric slots that use that
+  family
 
-### Score-stats pass
+### Clip Tests
 
-- stats mode emits one summary per section
-- warmup rows are excluded from the summary counts
-- lagged stats match a Python reference on a tiny synthetic input
-- transformed-prev behavior matches a Python reference when rotation and root
-  transforms are enabled
-- under Option B, raw slot-score cache fragments have the expected binary shape
-  and exclude warmup rows
+- lores clip emits one clip entry per base metric slot
+- lores clip emits no separate lagged metric entries
+- lores clip preserves canonical lagged `program_spec`
+- lores clip does not request final-raster prelude rows
+- clip artifact validation rejects stale chain fingerprints
+- clip artifact validation rejects slot/source/quantile drift
+- new lagged clip artifacts include `program`
+- old lag-free v2 clip artifacts without `program` remain readable when the
+  fingerprint and metric entries match
 
-### Stats merge
+### End-To-End Synthetic Tests
 
-- native `stats_merge` yields per-slot clip ranges within a tight epsilon of an
-  exact Python quantile calculation on a small test corpus
-- slots are merged by slot index and source tag, not deduped by metric name
-- stale `chain_fingerprint` summaries are rejected
-- Python orchestration never parses the digest payload itself
+- `m0-1` at row `i > 0` equals `m0-0` at row `i - 1`
+- row 0 sentinel makes `abs_diff(m0-0, m0-1) == 0`
+- `m0-0;m0-1;abs_diff` matches a small Python reference
+- correlated adjacent-row values produce a low-valued `abs_diff` output unless
+  post-processed
+- root transforms are applied before metric evaluation for both current and
+  prelude rows
+- associated palette output remains aligned with final solve bytes
+- `step_scores.raw` from final raster remains usable by repalette/recolor paths
 
-### End-to-end raster semantics
+### Workflow Contract Tests
 
-- `proximity(slv-1)` at solve `i > 0` matches `proximity(slv)` at solve `i - 1`
-- solve 0 obeys sentinel `prev = current`
-- `avg(proximity(slv), proximity(slv-1))` matches the mean of two control runs
-- `abs_diff(proximity(slv), proximity(slv-1))` produces the expected output on a
-  synthetic solve stream with known adjacent differences
+- ASL keeps `ColorClipPhase` and `ColorClipTask`
+- ASL color clip payload remains lores-based
+- ASL color clip payload equals `workflow_contracts.py`
+- ASL final raster payload includes prelude fields
+- render plan emits prelude counts derived from lagged program refs
+- render plan still provides lores keys needed by clip calibration
 
-### Option A specific
+### UI Tests
 
-- final reraster pass produces the same result as a direct single-pass control
-  run when fed the same merged clip artifact
-
-### Option B specific
-
-- compose-from-cache produces pixel-identical output to Option A on the same
-  synthetic corpus
-- compose-from-cache does not re-read roots or re-run metric evaluation
-
-### Planner and workflow
-
-- fused solve-score render plan no longer requires lores clip scratch
-- mixed-source fused render no longer requires lores coeff/param scratch for
-  clipping
-- ASL contains stats-map + stats-merge and no longer routes production render
-  through the old lores clip task
-
-### Storage and UI round-trip
-
-- save/load of lagged solve-score programs is byte-identical
+- chip editor can create a lagged ref
+- lagged ref displays inherited quantile, not an independent fake quantile
+- solve-score modal save/load round-trips lagged programs
 - Populate restores lagged programs
-- solve-score modal Load restores lagged programs
-- render request payload no longer includes obsolete lores-clip controls
+- render summary displays lagged program refs
+- render request payload does not add fake lag quantile controls
 
-### `step_scores.raw`
+### Rejection Tests
 
-- stage 1 never writes `step_scores.raw`
-- the final-image stage writes the reusable final `step_scores.raw`
-- repalette / recolor / extract-palette continue to read stage-3 output exactly
-  as they do today
-
-### Rejection elsewhere
-
-- palette render plan rejects lagged programs early
+- palette planner rejects lagged programs early
 - palette chunk handler rejects lagged programs defensively
+- direct C CLI misuse rejects lagged program without recent buffer
 
-## Non-goals
+### Deployment / Packaging Tests
 
-- arbitrary lag-N
-- changing solve-score semantics from slot-normalize-then-compose to
-  output-normalize
-- palette, bilevel, coeff-bilevel, or other non-fused lag support
-- row-boundary or pass-boundary sentinel behavior beyond global solve 0
-- redesigning unrelated preview tools in the same change
-- inventing new pairwise metrics; the feature only adds lagged sources
+- changed C binaries are packaged with handlers that invoke them
+- changed Python helper dependencies are packaged with handlers that import them
+- predeploy contract gate includes ASL/workflow contract checks
+- Docker runtime regression covers the new parser/evaluator behavior
+
+## Future Higher Lags
+
+Higher lags are not part of v1, but the design is intentionally compatible.
+
+The extension is:
+
+```text
+m0-0  current
+m0-1  previous row
+m0-2  two rows back
+...
+```
+
+Runtime changes for lag `N`:
+
+- replace the two buffers with a ring buffer of `N + 1` metric buffers
+- fetch `N` prelude rows at worker/section boundaries
+- parse and validate `mK-N`
+- keep clip calibration unchanged because all lag depths still share the base metric slot
+  quantile
+
+This is straightforward, but v1 stays at lag 1 to keep boundary handling and
+tests tight.
+
+## Non-Goals
+
+- arbitrary lag depth in v1
+- output-level normalization
+- pairwise current-vs-previous root metrics
+- separate quantiles for lagged refs
+- raw slot-score cache / compose-from-cache architecture
+- replacing production lores clip calibration
+- palette, bilevel, coeff-bilevel, or non-fused lag support
+- preview latency redesign
 
 ## Acceptance Criteria
 
-1. `slv-1`, `cf-1`, and `pm-1` are accepted everywhere they should be, and all
-   malformed lag tokens are rejected clearly.
-2. There is no planner-side or merge-side aliasing between `slv` and `slv-1`.
-3. Production fused solve-score render no longer invokes the old lores clip
-   prepass.
-4. Fused solve-score render no longer requires lores coeff/param scratch to
-   support mixed-source chains.
-5. Full-resolution section stats are computed from the actual render solve
-   stream.
-6. Section stats preserve slot index, source tag, quantile, and chain
-   fingerprint.
-7. Lag-free programs remain byte-identical in output.
-8. Lagged slots use the true previous solve, except for global solve 0 which
-   uses the sentinel `prev = current`.
-9. Previous-solve data is transformed through the same root-transform pipeline
-   as current-solve data before scoring.
-10. `abs_diff(proximity(slv), proximity(slv-1))` renders correctly on a known
-    synthetic case and is not normalized from lores-derived ranges.
-11. The doc and tests explicitly treat that `abs_diff` output as a mostly-dark
-    correlated signal under v1 semantics, not as a richly spread output image.
-12. `step_scores.raw` is written only by the final-image stage and downstream
-    reuse paths continue to work unchanged.
-13. Non-fused solve-score callers reject lagged programs early, and direct CLI
-    misuse still aborts defensively in the evaluator.
-14. Obsolete lores-clip render controls are removed from the production render
-    path so the UI does not advertise dead tuning knobs.
-15. Digest parsing, merge, and quantile extraction happen in native code; Python
-    orchestration does not implement t-digest logic.
-16. If Option A is chosen, the reraster path is explicitly accepted as the
-    simpler but slower architecture.
-17. If Option B is chosen, compose-from-cache is explicitly accepted as the
-    more complex but more efficient architecture, and it produces output
-    identical to Option A on the test corpus.
-18. Saved solve-score programs, Populate, and modal Load all round-trip lagged
-    chains without drift.
-19. All updated and new tests pass.
+1. Compiled metric lists contain only base source families.
+2. Lag appears only in program refs such as `m0-1`.
+3. Canonical writers emit `mN-0` for current metric refs.
+4. Lagged refs share the base metric slot's quantile and clip range.
+5. `--score_sources=` rejects lag suffixes.
+6. `roots2pix_mt` uses current/recent metric buffers for final raster.
+7. Global row 0 uses the current-row sentinel for lagged refs.
+8. Final raster worker and section starts read the needed prelude rows.
+9. Final-raster prelude rows do not affect image fragments or
+   `step_scores.raw`; the lores clip stage does not request them.
+10. Lores clip calibration emits only base metric slots.
+11. Production fused render keeps the existing lores clip calibration path.
+12. No new full-resolution stats or native stats-merge stage is introduced.
+13. Non-fused consumers reject lagged programs early.
+14. Saved programs, Populate, and solve-score modal Load all round-trip lagged
+    refs without drift.
+15. All workflow contract changes are reflected in `workflow_contracts.py` and
+    the ASL template.
+16. All new and existing tests pass, including the predeploy contract gate and
+    Docker runtime regression.

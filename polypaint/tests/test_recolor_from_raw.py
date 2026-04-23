@@ -28,7 +28,7 @@ class TestRecolorFromRaw(unittest.TestCase):
     @patch("raw_score_render.subprocess.run")
     @patch("color_recolor_raw.load_color_artifact_head")
     @patch("color_recolor_raw.s3")
-    def test_recolor_from_raw_reuses_sidecar_and_never_falls_back_to_pixel_bins(
+    def test_recolor_from_raw_reuses_sidecar_and_never_falls_back_to_fragments(
         self, mock_s3, mock_load_head, mock_raw_render_run, mock_histogram, mock_report
     ):
         import handler_recolor_from_raw as mod
@@ -42,7 +42,6 @@ class TestRecolorFromRaw(unittest.TestCase):
             "width": "2",
             "height": "2",
             "pix": "2",
-            "tile_size": "2",
             "view_mode": "explicit",
             "min_re": "-3.5",
             "max_re": "1.25",
@@ -142,7 +141,6 @@ class TestRecolorFromRaw(unittest.TestCase):
         self.assertEqual(body["artifact_id"], "color_new")
         self.assertEqual(body["raw_key"], "renders/j/color/color_new/greyscale.raw")
         self.assertEqual(body["raw_meta_key"], "renders/j/color/color_new/greyscale.meta.json")
-        self.assertNotIn("renders/j/color/color_new/pixel_bins/tile_0000.bin", puts)
         self.assertEqual(puts["renders/j/color/color_new/image.jpeg"]["body"], b"jpeg")
         self.assertEqual(puts["renders/j/color/color_new/preview.png"]["body"], b"png")
         raw_sidecar = json.loads(puts["renders/j/color/color_new/greyscale.meta.json"]["body"].decode())
@@ -320,7 +318,6 @@ class TestRecolorFromRaw(unittest.TestCase):
             "width": "2",
             "height": "2",
             "pix": "2",
-            "tile_size": "2",
             "color_mode": "solve_score",
             "palette": "inferno",
             "repalette_capable": "false",
@@ -518,7 +515,6 @@ class TestRecolorFromRaw(unittest.TestCase):
             "width": "2",
             "height": "2",
             "pix": "2",
-            "tile_size": "2",
             "color_mode": "solve_score",
             "palette": "inferno",
             "repalette_capable": "false",
@@ -635,7 +631,6 @@ class TestRecolorFromRaw(unittest.TestCase):
                 "color_mode": "solve_score",
                 "palette": "inferno",
                 "repalette_capable": "true",
-                "pixel_bins_prefix": "renders/j/color/color_src/pixel_bins/tile_",
             },
         }
 

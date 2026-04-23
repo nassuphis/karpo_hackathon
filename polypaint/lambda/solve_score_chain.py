@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 
 from shared import parse_boolish
 
@@ -51,6 +52,7 @@ VALID_SOLVE_SCORE_METRICS = {
     "t2_phase",
 }
 VALID_SOLVE_SCORE_SOURCES = {"slv", "cf", "pm"}
+VALID_SOLVE_SCORE_LAG_DEPTHS = {0, 1}
 PARAM_SOLVE_SCORE_METRICS = {
     "t1_re",
     "t1_im",
@@ -159,6 +161,27 @@ def _validate_metric_source(value):
     if source not in VALID_SOLVE_SCORE_SOURCES:
         raise RuntimeError(f"solve-score metric source must be one of cf, pm, slv, got {value!r}")
     return source
+
+
+def _split_metric_source_lag(value):
+    source = str(value or "").strip().lower()
+    if source in VALID_SOLVE_SCORE_SOURCES:
+        return source, 0
+    if source.endswith("-1"):
+        base = source[:-2]
+        if base in VALID_SOLVE_SCORE_SOURCES:
+            return base, 1
+    if "-" in source:
+        raise RuntimeError("solve-score lag suffix must be exactly -1 in v1")
+    raise RuntimeError(f"solve-score metric source must be one of cf, pm, slv, got {value!r}")
+
+
+def _format_metric_source_lag(source, lag_depth):
+    base = _validate_metric_source(source)
+    lag = int(lag_depth or 0)
+    if lag not in VALID_SOLVE_SCORE_LAG_DEPTHS:
+        raise RuntimeError(f"solve-score lag depth {lag} is unsupported")
+    return base if lag == 0 else f"{base}-{lag}"
 
 
 def _validate_omega(value):
@@ -288,7 +311,7 @@ def _metric_items_with_fallback(chain, legacy_quantile):
     items = []
     for item in chain:
         if item["name"] not in VALID_SOLVE_SCORE_METRICS:
-            items.append((item, None, None))
+            items.append((item, None, 0, None))
             continue
         params = list(item.get("params") or [])
         if not params:
@@ -300,25 +323,33 @@ def _metric_items_with_fallback(chain, legacy_quantile):
             params = ["slv", _format_quantile_percent(fallback * 100.0)]
         elif len(params) == 1:
             try:
-                source = _validate_metric_source(params[0])
+                source, lag_depth = _split_metric_source_lag(params[0])
             except RuntimeError:
                 source = "slv"
+                lag_depth = 0
                 q_pct = _validate_quantile_percent(params[0])
                 normalized = {"name": item["name"], "params": [source, _format_quantile_percent(q_pct)]}
-                items.append((normalized, source, q_pct / 100.0))
+                items.append((normalized, source, lag_depth, q_pct / 100.0))
                 continue
             if fallback is None or total_metric_chips != 1:
                 raise RuntimeError(
-                    f"Metric chip {item['name']} with source {source} requires q in percent, e.g. "
-                    f"{item['name']}({source},0.1)"
+                    f"Metric chip {item['name']} with source {_format_metric_source_lag(source, lag_depth)} "
+                    f"requires q in percent, e.g. {item['name']}({_format_metric_source_lag(source, lag_depth)},0.1)"
                 )
-            params = [_validate_metric_source_for_metric(item["name"], source), _format_quantile_percent(fallback * 100.0)]
+            params = [
+                _format_metric_source_lag(_validate_metric_source_for_metric(item["name"], source), lag_depth),
+                _format_quantile_percent(fallback * 100.0),
+            ]
         elif len(params) != 2:
             raise RuntimeError(f"Metric chip {item['name']} requires source and q parameters")
-        source = _validate_metric_source_for_metric(item["name"], params[0])
+        source, lag_depth = _split_metric_source_lag(params[0])
+        source = _validate_metric_source_for_metric(item["name"], source)
         q_pct = _validate_quantile_percent(params[1])
-        normalized = {"name": item["name"], "params": [source, _format_quantile_percent(q_pct)]}
-        items.append((normalized, source, q_pct / 100.0))
+        normalized = {
+            "name": item["name"],
+            "params": [_format_metric_source_lag(source, lag_depth), _format_quantile_percent(q_pct)],
+        }
+        items.append((normalized, source, lag_depth, q_pct / 100.0))
     return items
 
 
@@ -327,7 +358,7 @@ def _build_program_spec(program_tokens):
     for token in program_tokens:
         kind = token["kind"]
         if kind == "metric":
-            parts.append(f"m{int(token['slot'])}")
+            parts.append(f"m{int(token['slot'])}-{int(token.get('lag', 0) or 0)}")
         elif kind == "weighted_sum":
             parts.append(f"weighted_sum:{_format_number(token['a'])}:{_format_number(token['b'])}")
         elif kind == TRANSFER_CHIP_NAME:
@@ -342,6 +373,21 @@ def _build_program_spec(program_tokens):
             parts.append(f"sawtooth:{_format_number(token['mult'])}")
         else:
             parts.append(kind)
+    return ";".join(parts)
+
+
+def canonicalize_solve_score_program_spec(program_spec):
+    parts = []
+    for raw in str(program_spec or "").split(";"):
+        token = raw.strip()
+        if not token:
+            continue
+        match = re.fullmatch(r"m([0-9]+)(?:-([0-9]+))?", token)
+        if match:
+            lag = match.group(2)
+            parts.append(f"m{int(match.group(1))}-{int(lag) if lag is not None else 0}")
+        else:
+            parts.append(token)
     return ";".join(parts)
 
 
@@ -367,9 +413,14 @@ def _token_display(item):
     if name in VALID_SOLVE_SCORE_METRICS:
         source = params[0] if len(params) > 0 else "slv"
         q = params[1] if len(params) > 1 else (params[0] if params else "?")
-        if source == "slv":
+        try:
+            base_source, lag_depth = _split_metric_source_lag(source)
+            display_source = _format_metric_source_lag(base_source, lag_depth)
+        except RuntimeError:
+            display_source = str(source or "slv")
+        if display_source == "slv":
             return f"{name}(q={q}%)"
-        return f"{name}({source},q={q}%)"
+        return f"{name}({display_source},q={q}%)"
     if name == TRANSFER_CHIP_NAME:
         omega = params[0] if len(params) > 0 else "?"
         phase = params[1] if len(params) > 1 else "0"
@@ -460,41 +511,90 @@ def solve_score_uses_non_solve_sources(compiled_or_metrics):
     return any(_validate_metric_source(metric.get("source", "slv")) != "slv" for metric in metrics)
 
 
+def solve_score_uses_lag(compiled):
+    return bool(isinstance(compiled, dict) and compiled.get("uses_lag"))
+
+
+def solve_score_lag_prelude_by_source(compiled):
+    if not isinstance(compiled, dict):
+        return {"slv": 0, "cf": 0, "pm": 0}
+    prelude = dict(compiled.get("prelude_by_source") or {})
+    return {
+        "slv": 1 if int(prelude.get("slv") or 0) > 0 else 0,
+        "cf": 1 if int(prelude.get("cf") or 0) > 0 else 0,
+        "pm": 1 if int(prelude.get("pm") or 0) > 0 else 0,
+    }
+
+
 def compile_solve_score_chain(raw_chain, legacy_quantile=None):
     raw_items = normalize_solve_score_chain(raw_chain)
     if not raw_items:
         raise RuntimeError("solve_score_chain must contain at least one metric chip")
 
     normalized_with_metrics = _metric_items_with_fallback(raw_items, legacy_quantile)
-    chain = [item for item, _, _ in normalized_with_metrics]
+    chain = [item for item, _, _, _ in normalized_with_metrics]
+    current_slot_candidates = {}
+    for item, metric_source, metric_lag, metric_quantile in normalized_with_metrics:
+        if item["name"] not in VALID_SOLVE_SCORE_METRICS or int(metric_lag or 0) != 0:
+            continue
+        metric_name = _validate_metric(item["name"])
+        source_name = _validate_metric_source_for_metric(metric_name, metric_source)
+        q = _validate_quantile_fraction(metric_quantile)
+        family_key = (metric_name, source_name)
+        slot_key = (metric_name, source_name, q)
+        candidates = current_slot_candidates.setdefault(family_key, [])
+        if slot_key not in candidates:
+            candidates.append(slot_key)
     metrics = []
+    base_slot_keys = {}
     program_tokens = []
     stack_depth = 0
     omega = 1.0
     omega_phase = 0.0
     omega_enabled = False
 
-    for item, metric_source, metric_quantile in normalized_with_metrics:
+    for item, metric_source, metric_lag, metric_quantile in normalized_with_metrics:
         name = item["name"]
         params = item.get("params") or []
         if name in VALID_SOLVE_SCORE_METRICS:
-            slot = len(metrics)
-            if slot >= MAX_METRIC_SLOTS:
-                raise RuntimeError(f"solve_score_chain supports at most {MAX_METRIC_SLOTS} metric chips")
             metric_name = _validate_metric(name)
+            source_name = _validate_metric_source_for_metric(metric_name, metric_source)
+            lag_depth = int(metric_lag or 0)
+            if lag_depth not in VALID_SOLVE_SCORE_LAG_DEPTHS:
+                raise RuntimeError(f"solve-score lag depth {lag_depth} is unsupported")
             q = _validate_quantile_fraction(metric_quantile)
-            metrics.append(
-                {
-                    "slot": slot,
-                    "source": metric_source,
-                    "metric": metric_name,
-                    "quantile": q,
-                    "quantile_pct": q * 100.0,
-                    "clip_lo": None,
-                    "clip_hi": None,
-                }
-            )
-            program_tokens.append({"kind": "metric", "slot": slot, "metric": metric_name})
+            if lag_depth == 0:
+                slot_key = (metric_name, source_name, q)
+            else:
+                candidates = current_slot_candidates.get((metric_name, source_name), [])
+                if len(candidates) == 1:
+                    slot_key = candidates[0]
+                elif len(candidates) == 0:
+                    slot_key = (metric_name, source_name, q)
+                else:
+                    raise RuntimeError(
+                        f"lagged metric reference {metric_name}({_format_metric_source_lag(source_name, lag_depth)}) "
+                        "is ambiguous because multiple base slots exist for that metric/source"
+                    )
+            slot = base_slot_keys.get(slot_key)
+            if slot is None:
+                slot = len(metrics)
+                if slot >= MAX_METRIC_SLOTS:
+                    raise RuntimeError(f"solve_score_chain supports at most {MAX_METRIC_SLOTS} metric chips")
+                slot_metric, slot_source, slot_q = slot_key
+                metrics.append(
+                    {
+                        "slot": slot,
+                        "source": slot_source,
+                        "metric": slot_metric,
+                        "quantile": slot_q,
+                        "quantile_pct": slot_q * 100.0,
+                        "clip_lo": None,
+                        "clip_hi": None,
+                    }
+                )
+                base_slot_keys[slot_key] = slot
+            program_tokens.append({"kind": "metric", "slot": slot, "metric": metric_name, "lag": lag_depth})
             stack_depth += 1
             continue
 
@@ -563,12 +663,35 @@ def compile_solve_score_chain(raw_chain, legacy_quantile=None):
     primary_quantile = metrics[0]["quantile"]
     display = " ".join(_token_display(item) for item in chain)
     program_spec = _build_program_spec(program_tokens)
+    uses_lag = any(
+        token.get("kind") == "metric" and int(token.get("lag", 0) or 0) > 0
+        for token in program_tokens
+    )
+    lagged_metric_slots = sorted({
+        int(token["slot"])
+        for token in program_tokens
+        if token.get("kind") == "metric" and int(token.get("lag", 0) or 0) > 0
+    })
+    lagged_sources = sorted({
+        metrics[int(token["slot"])].get("source", "slv")
+        for token in program_tokens
+        if token.get("kind") == "metric" and int(token.get("lag", 0) or 0) > 0
+    })
+    prelude_by_source = {
+        "slv": 1 if "slv" in lagged_sources else 0,
+        "cf": 1 if "cf" in lagged_sources else 0,
+        "pm": 1 if "pm" in lagged_sources else 0,
+    }
     all_solve_sources = all(metric.get("source", "slv") == "slv" for metric in metrics)
     legacy_compatible = all_solve_sources and (
         (
+            not uses_lag
+            and
             len(program_tokens) == 1
             and program_tokens[0]["kind"] == "metric"
         ) or (
+            not uses_lag
+            and
             len(program_tokens) == 2
             and program_tokens[0]["kind"] == "metric"
             and program_tokens[1]["kind"] == TRANSFER_CHIP_NAME
@@ -587,6 +710,11 @@ def compile_solve_score_chain(raw_chain, legacy_quantile=None):
         "program_tokens": program_tokens,
         "program_spec": program_spec,
         "program_id": hashlib.sha1(program_spec.encode("utf-8")).hexdigest()[:12],
+        "uses_lag": uses_lag,
+        "max_lag": 1 if uses_lag else 0,
+        "lagged_metric_slots": lagged_metric_slots,
+        "lagged_sources": lagged_sources,
+        "prelude_by_source": prelude_by_source,
         "legacy_compatible": legacy_compatible,
         "display": display,
     }

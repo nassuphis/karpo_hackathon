@@ -29,7 +29,7 @@ class TestDispatchHandler(unittest.TestCase):
         from handler_dispatch import handler
         mock_client.invoke.return_value = {"StatusCode": 202}
         jobs = [{"job_id": "j", "stripe_idx": i} for i in range(5)]
-        event = self._make_event({"target": "bilevel", "jobs": jobs})
+        event = self._make_event({"target": "solve_proximity", "jobs": jobs})
         result = handler(event, None)
         body = json.loads(result["body"])
         self.assertEqual(body["fired"], 5)
@@ -57,28 +57,28 @@ class TestDispatchHandler(unittest.TestCase):
         from handler_dispatch import handler
         mock_client.invoke.side_effect = Exception("throttled")
         jobs = [{"job_id": "j", "stripe_idx": 0}]
-        event = self._make_event({"target": "bilevel", "jobs": jobs})
+        event = self._make_event({"target": "solve_proximity", "jobs": jobs})
         result = handler(event, None)
         body = json.loads(result["body"])
         self.assertEqual(body["fired"], 0)
         self.assertEqual(len(body["errors"]), 1)
 
     @patch("handler_dispatch.lambda_client")
-    def test_dispatch_bilevel_target(self, mock_client):
+    def test_dispatch_color_to_bilevel_target(self, mock_client):
         from handler_dispatch import handler
         mock_client.invoke.return_value = {"StatusCode": 202}
-        jobs = [{"job_id": "j", "stripe_idx": 0, "bin_key": "renders/j/stripe_0.bin"}]
-        event = self._make_event({"target": "bilevel", "jobs": jobs})
+        jobs = [{"phase": "from_raw_color", "job_id": "j", "task_id": "ctb_0"}]
+        event = self._make_event({"target": "color_to_bilevel", "jobs": jobs})
         result = handler(event, None)
         body = json.loads(result["body"])
         self.assertEqual(body["fired"], 1)
 
     @patch("handler_dispatch.lambda_client")
-    def test_dispatch_encode_target(self, mock_client):
+    def test_dispatch_solve_proximity_target(self, mock_client):
         from handler_dispatch import handler
         mock_client.invoke.return_value = {"StatusCode": 202}
-        jobs = [{"out_key": "renders/j/image.jpeg", "tile_grid": {}}]
-        event = self._make_event({"target": "encode", "jobs": jobs})
+        jobs = [{"phase": "clip", "job_id": "j", "task_id": "clip_0"}]
+        event = self._make_event({"target": "solve_proximity", "jobs": jobs})
         result = handler(event, None)
         body = json.loads(result["body"])
         self.assertEqual(body["fired"], 1)
@@ -645,8 +645,8 @@ class TestStorageCleanRender(unittest.TestCase):
         mock_s3.delete_objects.assert_not_called()
 
     @patch("handler_storage.s3")
-    def test_coeff_cleanup_deletes_sparse_fragments_and_stale_tile_artifacts(self, mock_s3):
-        """Coeff bilevel cleanup must purge current sparse fragments and old tile leftovers."""
+    def test_coeff_cleanup_deletes_sparse_fragments_and_stale_region_artifacts(self, mock_s3):
+        """Coeff bilevel cleanup must purge current sparse fragments and obsolete region leftovers."""
         from handler_storage import handle_clean_render
         mock_paginator = MagicMock()
         mock_s3.get_paginator.return_value = mock_paginator
@@ -2379,9 +2379,6 @@ class TestRenderSummary(unittest.TestCase):
                         "solve_score_omega": "4",
                         "palette": "tri_redgold",
                         "repalette_capable": "true",
-                        "pixel_bins_prefix": "renders/j/color/color_repal/pixel_bins/tile_",
-                        "pixel_bins_empty": "255",
-                        "pixel_bins_layout": "tile_u8_v1",
                         "derived_from_artifact_id": "color_src",
                         "derivation_kind": "color_repalette",
                     },
@@ -2398,9 +2395,6 @@ class TestRenderSummary(unittest.TestCase):
         body = json.loads(result["body"])
         cj = body["families"]["color"][0]
         self.assertTrue(cj["repalette_capable"])
-        self.assertEqual(cj["pixel_bins_prefix"], "renders/j/color/color_repal/pixel_bins/tile_")
-        self.assertEqual(cj["pixel_bins_empty"], 255)
-        self.assertEqual(cj["pixel_bins_layout"], "tile_u8_v1")
         self.assertEqual(cj["derived_from_artifact_id"], "color_src")
         self.assertEqual(cj["derivation_kind"], "color_repalette")
 

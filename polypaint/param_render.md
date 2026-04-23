@@ -117,7 +117,7 @@ For debugging, keep this moderate:
 
 That is enough to inspect transform behavior when zoomed locally, while keeping the Lambda simple and fast.
 
-If you later want very large param debug renders, you can promote it into a tiled pipeline, but that should not be the first implementation.
+If you later want very large param debug renders, you can promote it into a sectioned pipeline, but that should not be the first implementation.
 
 ## Data Model
 

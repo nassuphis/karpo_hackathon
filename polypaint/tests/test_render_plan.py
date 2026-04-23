@@ -104,12 +104,7 @@ class TestRenderPlan(unittest.TestCase):
         self.assertEqual(plan["grid"]["pix"], 1024)
         self.assertNotIn("width", plan["grid"])
         self.assertNotIn("height", plan["grid"])
-        self.assertNotIn("tile_size", plan["grid"])
-        self.assertNotIn("n_tile_cols", plan["grid"])
-        self.assertNotIn("n_tile_rows", plan["grid"])
-        self.assertNotIn("n_tiles", plan["grid"])
         self.assertEqual(plan["physical_source_items"], [])
-        self.assertNotIn("tile_items", plan)
         self.assertEqual(plan["calc"]["degree"], 5)
         self.assertEqual(plan["calc"]["n_coeffs"], 6)
         self.assertEqual(plan["calc"]["n_chunks"], 4)
@@ -128,14 +123,6 @@ class TestRenderPlan(unittest.TestCase):
         self.assertAlmostEqual(plan["viewport"]["max_re"], 2.05)
         self.assertAlmostEqual(plan["viewport"]["min_im"], -1.05)
         self.assertAlmostEqual(plan["viewport"]["max_im"], 1.05)
-
-    @patch("handler_render_plan._storage_call")
-    def test_color_plan_rejects_removed_tile_size_param(self, mock_storage):
-        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
-        from handler_render_plan import handler
-
-        with self.assertRaisesRegex(RuntimeError, "tile_size is not supported"):
-            handler(_make_event(tile_size=512), None)
 
     @patch("handler_render_plan._storage_call")
     @patch("handler_render_plan._invoke_sync")
@@ -215,10 +202,20 @@ class TestRenderPlan(unittest.TestCase):
         self.assertEqual(plan["outputs"]["fragment_prefix"], "renders/j/color/color_run_t/fragments/section_")
         self.assertEqual(plan["outputs"]["metadata"]["rgb_source"], "raw_score_bins")
         self.assertFalse(plan["outputs"]["repalette_capable"])
-        self.assertFalse(plan["outputs"]["pixel_bins_drive_rgb"])
         self.assertEqual(plan["render_execution"]["raster_workers"], 24)
         self.assertEqual(plan["solve_score"]["threads"], 4)
-        self.assertEqual(set(plan["solve_score"].keys()), {"enabled", "threads", "chain", "clip_key"})
+        self.assertEqual(
+            set(plan["solve_score"].keys()),
+            {
+                "enabled",
+                "threads",
+                "chain",
+                "clip_key",
+                "uses_lag",
+                "max_lag",
+                "prelude_by_source",
+            },
+        )
         self.assertEqual(
             set(plan["render_execution"].keys()),
             {
@@ -412,7 +409,6 @@ class TestRenderPlan(unittest.TestCase):
         plan = json.loads(result["body"])
         self.assertEqual(plan["calc"]["n_coeffs"], 23)
         self.assertEqual(plan["physical_source_items"], [])
-        self.assertNotIn("tile_items", plan)
         self.assertTrue(plan["coeff_bilevel"]["enabled"])
         self.assertEqual(plan["coeff_bilevel"]["fragment_prefix"], "renders/j/coeff_bilevel_section_")
         self.assertEqual(plan["render_execution"], {})
@@ -662,7 +658,6 @@ class TestRenderPlan(unittest.TestCase):
         self.assertIn("coeff_sections=", msg)
         self.assertNotIn("solve_score_items=", msg)
         self.assertNotIn("palette_items=", msg)
-        self.assertNotIn("tile_size", msg)
         self.assertNotIn("stripe_count", msg)
 
 

@@ -165,8 +165,6 @@ assertNotIncludes("id=\"resize-vscale\"", 'resize popup should not expose a vsca
 assertIncludes("Both engines produce a square pix x pix artifact", 'resize popup should document square pix output');
 assertIncludes(">ColorRender-MT</button>", 'color render primary action should be labeled ColorRender-MT');
 assertIncludes("ColorRender-MT exposes fused clip/raster/finalize controls only", 'render tab copy should describe the ColorRender-MT action');
-assertNotIncludes("id=\"sparse-tile-size\"", 'render tab should not expose a tile-size control');
-assertNotIncludes("tile_size: p.tileSize", 'render launch should not send tile_size');
 assertIncludes("function _sourceColorArtifactIdForRenderArtifact(art) {", 'render artifact source-color helper missing');
 assertIncludes("function _renderArtifactSolveDisplay(art) {", 'render artifact solve-display helper missing');
 assertIncludes("_solveScoreProgramRememberedNames[prefix] = '';", 'populate should clear stale solve-score remembered names');
@@ -240,12 +238,39 @@ function extractFunction(name) {
   fail(`missing closing brace for ${name}`);
 }
 
+function extractBetween(startMarker, endMarker, label) {
+  const start = src.indexOf(startMarker);
+  if (start < 0) fail(`missing start marker for ${label}`);
+  const end = src.indexOf(endMarker, start);
+  if (end < 0) fail(`missing end marker for ${label}`);
+  return src.slice(start, end + endMarker.length);
+}
+
 function assert(cond, message) {
   if (!cond) fail(message);
 }
 
 async function main() {
+  const solveScoreCatalogBlock = extractBetween(
+    "const _solveScoreMetricNames = [",
+    "const _ssCatalog = (() => {\n    const catalog = {};\n    _solveScoreMetricNames.forEach(name => {\n        catalog[name] = {\n            label: name,\n            chip_kind: 'metric',\n            params: [{ ph: 'src', def: _solveScoreParamMetricSet.has(name) ? 'pm' : 'slv', choices: _solveScoreMetricSourceChoices(name) }, { ph: 'q%', def: '0.1' }],\n            tooltip: _solveScoreParamMetricSet.has(name) ? `${name}(pm,q=0.1%)` : `${name}(slv,q=0.1%)`,\n        };\n    });\n    Object.entries(_solveScoreCombineSpecs).forEach(([name, spec]) => {\n        catalog[name] = {\n            label: name,\n            chip_kind: 'combine',\n            params: spec.params || [],\n            tooltip: `stack ${spec.arity} -> 1`,\n        };\n    });\n    Object.entries(_solveScoreUnarySpecs).forEach(([name, spec]) => {\n        catalog[name] = {\n            label: name,\n            chip_kind: 'unary',\n            params: spec.params || [],\n            tooltip: spec.tooltip || `stack ${spec.arity} -> ${spec.arity}`,\n        };\n    });\n    return catalog;\n})();",
+    'solve-score catalog block'
+  );
   const code = [
+    extractFunction('_displayTransformEntry'),
+    extractFunction('_displaySolveScoreEntry'),
+    extractFunction('_solveScoreQuantilePctText'),
+    extractFunction('_normalizeSolveScoreMetricSource'),
+    extractFunction('_splitSolveScoreMetricSourceLag'),
+    extractFunction('_solveScoreMetricSourceChoices'),
+    extractFunction('_solveScoreMetricsUseSource'),
+    extractFunction('_solveScoreMetricsUseNonSolveSource'),
+    extractFunction('_solveScoreMetricAllowedSources'),
+    extractFunction('_normalizeSolveScoreChain'),
+    extractFunction('_serializeSolveScoreChain'),
+    extractFunction('_buildSolveScoreProgramSpec'),
+    extractFunction('_compileSolveScoreChain'),
+    solveScoreCatalogBlock,
     extractFunction('_linkedColorIdForPaletteArtifact'),
     extractFunction('_sourceColorArtifactIdForRenderArtifact'),
     extractFunction('_noteSolveScorePopulate'),
@@ -297,6 +322,47 @@ async function main() {
 
   vm.createContext(ctx);
   vm.runInContext(code, ctx);
+
+  const lagged = ctx._compileSolveScoreChain([
+    ['spread', 'slv', '0.4'],
+    ['spread', 'slv-1', '0.9'],
+    ['abs_diff'],
+  ], 'spread', '0.1');
+  assert(lagged.program_spec === 'm0-0;m0-1;abs_diff', 'lagged UI compiler should lower current/previous refs to one base slot');
+  assert(lagged.metrics.length === 1, 'lagged UI compiler should reuse the existing base metric slot');
+  assert(Math.abs(lagged.metrics[0].quantile - 0.004) < 1e-12, 'lagged UI compiler should inherit the current slot quantile');
+  assert(lagged.prelude_by_source.slv === 1 && lagged.max_lag === 1, 'lagged UI compiler should require one solve prelude row');
+
+  const laggedOnly = ctx._compileSolveScoreChain([
+    ['proximity', 'cf-1', '0.7'],
+  ], 'proximity', '0.1');
+  assert(laggedOnly.program_spec === 'm0-1', 'lagged-only UI compiler should emit a previous-ref token');
+  assert(laggedOnly.metrics[0].source === 'cf', 'lagged-only UI compiler should preserve the source family');
+  assert(Math.abs(laggedOnly.metrics[0].quantile - 0.007) < 1e-12, 'lagged-only UI compiler should seed the base slot quantile');
+  assert(laggedOnly.prelude_by_source.cf === 1, 'lagged-only UI compiler should require a coeff prelude row');
+
+  const laggedBeforeCurrent = ctx._compileSolveScoreChain([
+    ['spread', 'slv-1', '0.9'],
+    ['spread', 'slv', '0.4'],
+    ['abs_diff'],
+  ], 'spread', '0.1');
+  assert(laggedBeforeCurrent.program_spec === 'm0-1;m0-0;abs_diff', 'lagged UI compiler should bind previous refs to later unambiguous current slots');
+  assert(laggedBeforeCurrent.metrics.length === 1, 'lagged-before-current UI compiler should still use one base metric slot');
+  assert(Math.abs(laggedBeforeCurrent.metrics[0].quantile - 0.004) < 1e-12, 'lagged-before-current UI compiler should inherit later current slot quantile');
+
+  let ambiguousRejected = false;
+  try {
+    ctx._compileSolveScoreChain([
+      ['spread', 'slv', '0.4'],
+      ['spread', 'slv', '0.5'],
+      ['spread', 'slv-1', '0.4'],
+      ['avg'],
+      ['avg'],
+    ], 'spread', '0.1');
+  } catch (err) {
+    ambiguousRejected = String(err && err.message || err).includes('ambiguous');
+  }
+  assert(ambiguousRejected, 'lagged UI compiler should reject ambiguous previous refs');
 
   ctx.setColorMode('proximity');
   assert(ctx.renderColorMode === 'solve_score', 'setColorMode should force solve_score at runtime');

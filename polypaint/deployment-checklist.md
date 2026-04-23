@@ -241,7 +241,7 @@ Run the relevant syntax/build checks for touched code:
 - Errors must include enough context to debug:
   - phase
   - function / mode
-  - job / task / chunk / tile where relevant
+  - job / task / chunk / section / range where relevant
   - object key / path where relevant
   - size / estimate where relevant
 - No bare strings like:

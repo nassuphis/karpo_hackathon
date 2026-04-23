@@ -100,13 +100,6 @@ class TestDeployPackaging(unittest.TestCase):
             "Color2Bilevel Lambda memory should stay at 10240 MB for large raw-threshold derivations",
         )
 
-    def test_encode_memory_is_raised_for_large_repalette_outputs(self):
-        self.assertRegex(
-            DEPLOY_TEXT,
-            r"(?m)^ENCODE_MEMORY=10240\s+# max memory/CPU tier for very large JPEG/PNG encodes$",
-            "encode Lambda memory should stay at 10240 MB for large Color RePalette outputs",
-        )
-
     def test_render_workflow_definition_uses_shared_renderer_in_deploy_and_tests(self):
         self.assertTrue(WORKFLOW_RENDERER_PATH.exists(), "workflow_template_render.py should exist")
         renderer_text = WORKFLOW_RENDERER_PATH.read_text()
@@ -230,8 +223,8 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("score_raw_render", packaged["handler_extract_palette_from_step_scores.py"])
         self.assertIn("step_scores_to_palette_raw", packaged["handler_extract_palette_from_step_scores.py"])
         self.assertIn("handler_deepzoom_export.py", packaged)
-        self.assertIn("pixel_bins_render", packaged["handler_deepzoom_export.py"])
-        self.assertIn("raw2jpeg", packaged["handler_deepzoom_export.py"])
+        self.assertIn("dz_export", packaged["handler_deepzoom_export.py"])
+        self.assertNotIn("raw2jpeg", packaged["handler_deepzoom_export.py"])
         self.assertIn("handler_deepzoom_from_raw.py", packaged)
         self.assertIn("handler_deepzoom_export.py", packaged["handler_deepzoom_from_raw.py"])
         self.assertIn("handler_bilevel.py", packaged)
@@ -262,7 +255,6 @@ class TestDeployPackaging(unittest.TestCase):
 
         self.assertIn("handler_raster_mt.py", packaged)
         self.assertIn("roots2pix_mt", packaged["handler_raster_mt.py"])
-        self.assertNotIn("pixbinassemble", packaged["handler_raster_mt.py"])
         self.assertIn('create_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip"', DEPLOY_TEXT)
         self.assertIn('update_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip"', DEPLOY_TEXT)
         self.assertIn("RASTER_MT_THREADS", DEPLOY_TEXT)
@@ -300,8 +292,6 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("handler_storage.py", packaged)
         self.assertIn("color_artifact_meta.py", packaged["handler_storage.py"])
         self.assertIn("solve_score_chain.py", packaged["handler_storage.py"])
-        self.assertIn("handler_encode.py", packaged)
-        self.assertIn("color_artifact_meta.py", packaged["handler_encode.py"])
         self.assertIn("handler_palette_chunk.py", packaged)
         self.assertIn("solve_palette_chunk", packaged["handler_palette_chunk.py"])
         self.assertIn("solve_palette_chunk_mt", packaged["handler_palette_chunk.py"])
@@ -360,19 +350,19 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('cp lambda/assemble_greyscale lambda/score_raw_render "$FINALIZE_MT_DIR/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/assemble_greyscale_lib/* "$FINALIZE_MT_DIR/lib/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/handler_bilevel.py lambda/shared.py lambda/logical_sections.py lambda/raw_sidecar.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$BILEVEL_DIR/"', DEPLOY_TEXT)
-        self.assertIn('cp lambda/bilevel_raster lambda/bilevel_section_raster lambda/coeffs_bilevel_raster lambda/bilevel_merge lambda/raw_to_bilevel lambda/assemble_greyscale "$BILEVEL_DIR/"', DEPLOY_TEXT)
+        self.assertIn('cp lambda/bilevel_section_raster lambda/coeffs_bilevel_raster lambda/raw_to_bilevel lambda/assemble_greyscale "$BILEVEL_DIR/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/assemble_greyscale_lib/* "$BILEVEL_DIR/lib/"', DEPLOY_TEXT)
         self.assertNotIn('cp lambda/assemble_greyscale_lib/* "$FINALIZE_MT_DIR/lib/" 2>/dev/null || true', DEPLOY_TEXT)
         self.assertNotIn('cp lambda/assemble_greyscale_lib/* "$BILEVEL_DIR/lib/" 2>/dev/null || true', DEPLOY_TEXT)
         self.assertIn('cp lambda/handler_color_repalette.py lambda/shared.py lambda/raw_sidecar.py lambda/raw_score_render.py \\', DEPLOY_TEXT)
         self.assertIn('lambda/color_artifact_meta.py lambda/solve_score_chain.py lambda/color_recolor_raw.py \\', DEPLOY_TEXT)
-        self.assertIn('cp lambda/pixel_bins_render lambda/score_raw_render "$COLOR_REPALETTE_DIR/"', DEPLOY_TEXT)
+        self.assertIn('cp lambda/score_raw_render "$COLOR_REPALETTE_DIR/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/handler_recolor_from_raw.py lambda/shared.py lambda/raw_sidecar.py lambda/raw_score_render.py lambda/color_recolor_raw.py \\', DEPLOY_TEXT)
         self.assertIn('cp lambda/score_raw_render "$RECOLOR_FROM_RAW_DIR/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/handler_extract_palette_from_step_scores.py lambda/shared.py lambda/raw_sidecar.py lambda/raw_score_render.py \\', DEPLOY_TEXT)
         self.assertIn('lambda/color_artifact_meta.py lambda/solve_score_chain.py "$EXTRACT_PALETTE_FUSED_DIR/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/score_raw_render lambda/step_scores_to_palette_raw "$EXTRACT_PALETTE_FUSED_DIR/"', DEPLOY_TEXT)
-        self.assertIn('"$COLOR_REPALETTE_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,ENCODE_FUNCTION=$ENCODE_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', DEPLOY_TEXT)
+        self.assertIn('"$COLOR_REPALETTE_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', DEPLOY_TEXT)
         self.assertIn('"$RECOLOR_FROM_RAW_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', DEPLOY_TEXT)
         self.assertIn('"$EXTRACT_PALETTE_FUSED_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', DEPLOY_TEXT)
         self.assertIn("EXTRACT_PALETTE_FUSED_FUNCTION", DEPLOY_TEXT)
@@ -402,7 +392,6 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("palette_names.py", packaged["handler_color_repalette.py"])
         self.assertIn("tri_palette_names_generated.py", packaged["handler_color_repalette.py"])
         self.assertIn("long_palette_names_generated.py", packaged["handler_color_repalette.py"])
-        self.assertIn("pixel_bins_render", packaged["handler_color_repalette.py"])
         self.assertIn("score_raw_render", packaged["handler_color_repalette.py"])
 
         self.assertIn("handler_attach_palette_to_color.py", packaged)

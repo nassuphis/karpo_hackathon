@@ -26,26 +26,12 @@ def make_bitset(w, h, pixels):
     return bytes(bs)
 
 
-def make_tiled_tiff(path, fullW, fullH, tileSz, nCols, nRows, tile_pixels):
-    tile_paths = []
-    for t in range(nCols * nRows):
-        tc, tr = t % nCols, t // nCols
-        tw = tileSz if tc < nCols - 1 or fullW % tileSz == 0 else fullW - tc * tileSz
-        th = tileSz if tr < nRows - 1 or fullH % tileSz == 0 else fullH - tr * tileSz
-        tp = f"/tmp/pngexp_tile_{t}.tif"
-        bits_path = tp + ".bits"
-        with open(bits_path, "wb") as f:
-            f.write(make_bitset(tw, th, tile_pixels.get(t, [])))
-        subprocess.run([BILEVEL_MERGE, "merge", f"--tile_w={tw}", f"--tile_h={th}",
-                        f"--output={tp}", bits_path], capture_output=True)
-        os.remove(bits_path)
-        tile_paths.append(tp)
-    cmd = [BILEVEL_MERGE, "stitch", f"--n_cols={nCols}", f"--n_rows={nRows}",
-           f"--pix={fullW}", f"--tile_size={tileSz}",
-           f"--output={path}"] + tile_paths
-    subprocess.run(cmd, capture_output=True)
-    for p in tile_paths:
-        os.remove(p)
+def make_bilevel_tiff(path, pix, pixels):
+    bits_path = path + ".bits"
+    with open(bits_path, "wb") as f:
+        f.write(make_bitset(pix, pix, pixels))
+    subprocess.run([BILEVEL_MERGE, "assemble", f"--pix={pix}", f"--output={path}", bits_path], capture_output=True)
+    os.remove(bits_path)
 
 
 def read_png(path):
@@ -61,8 +47,8 @@ def read_png(path):
 def test_basic():
     """Convert a bilevel TIFF to PNG, verify dimensions and content."""
     print("test_basic...")
-    pixels = {0: [(1, 1)], 1: [(3, 2)], 2: [(0, 0)], 3: [(2, 3)]}
-    make_tiled_tiff("/tmp/pngexp_src.tif", 32, 32, 16, 2, 2, pixels)
+    pixels = [(1, 1), (19, 2), (0, 16), (18, 19)]
+    make_bilevel_tiff("/tmp/pngexp_src.tif", 32, pixels)
 
     r = subprocess.run([PNG_EXPORT, "/tmp/pngexp_src.tif", "/tmp/pngexp_out.png"],
                        capture_output=True, text=True, timeout=30)
@@ -72,10 +58,10 @@ def test_basic():
     assert pw == 32 and ph == 32, f"dimensions wrong: {pw}x{ph}"
 
     # Verify markers
-    assert parr[1, 1] > 0, "tile 0 marker missing"
-    assert parr[2, 16 + 3] > 0, "tile 1 marker missing"
-    assert parr[16, 0] > 0, "tile 2 marker missing"
-    assert parr[16 + 3, 16 + 2] > 0, "tile 3 marker missing"
+    assert parr[1, 1] > 0, "marker 0 missing"
+    assert parr[2, 19] > 0, "marker 1 missing"
+    assert parr[16, 0] > 0, "marker 2 missing"
+    assert parr[19, 18] > 0, "marker 3 missing"
 
     # Verify total pixel count
     total = int(np.sum(parr > 0))
@@ -91,11 +77,11 @@ def test_basic():
     print("  PASS")
 
 
-def test_edge_tiles():
-    """Convert a non-multiple-sized TIFF to PNG."""
-    print("test_edge_tiles: 40x40, tileSize=16...")
-    pixels = {0: [(2, 2)], 8: [(1, 1)]}
-    make_tiled_tiff("/tmp/pngexp_edge_src.tif", 40, 40, 16, 3, 3, pixels)
+def test_non_power_of_two_size():
+    """Convert a non-power-of-two TIFF to PNG."""
+    print("test_non_power_of_two_size: 40x40...")
+    pixels = [(2, 2), (33, 33)]
+    make_bilevel_tiff("/tmp/pngexp_edge_src.tif", 40, pixels)
 
     r = subprocess.run([PNG_EXPORT, "/tmp/pngexp_edge_src.tif", "/tmp/pngexp_edge_out.png"],
                        capture_output=True, text=True, timeout=30)
@@ -112,8 +98,7 @@ def test_edge_tiles():
 def test_is_bilevel():
     """Verify output PNG is 1-bit."""
     print("test_is_bilevel...")
-    pixels = {0: [(1, 1)]}
-    make_tiled_tiff("/tmp/pngexp_bl_src.tif", 32, 32, 16, 2, 2, pixels)
+    make_bilevel_tiff("/tmp/pngexp_bl_src.tif", 32, [(1, 1)])
 
     subprocess.run([PNG_EXPORT, "/tmp/pngexp_bl_src.tif", "/tmp/pngexp_bl_out.png"],
                    capture_output=True, text=True, timeout=30)
@@ -138,7 +123,7 @@ def test_missing_input():
 
 if __name__ == "__main__":
     test_basic()
-    test_edge_tiles()
+    test_non_power_of_two_size()
     test_is_bilevel()
     test_missing_input()
     print("\nAll png_export tests passed.")

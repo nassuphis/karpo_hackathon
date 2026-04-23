@@ -176,7 +176,7 @@ With `Visible only`:
 - but if the solve has zero visible roots, it must emit nothing
 - no pixel-bin entry should be written for that solve
 
-This keeps the dense tile semantics unchanged:
+This keeps the dense image semantics unchanged:
 
 - visible palette bins: `0..9`
 - background / no plotted root: `255`

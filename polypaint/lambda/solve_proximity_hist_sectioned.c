@@ -712,6 +712,10 @@ int main(int argc, char **argv) {
             fprintf(stderr, "Invalid score program: %s\n", scoreErr[0] ? scoreErr : "unknown error");
             return 1;
         }
+        if (solve_score_program_uses_lag(&scoreProgram)) {
+            fprintf(stderr, "Lagged solve-score refs are supported only by fused color raster in v1\n");
+            return 1;
+        }
         useScoreProgram = 1;
     }
 

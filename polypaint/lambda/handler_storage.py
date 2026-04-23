@@ -972,10 +972,6 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         entry["autolevels_params"] = _parse_json(meta.get("autolevels_params"))
         entry["resize_params"] = _parse_json(meta.get("resize_params"))
         entry["repalette_capable"] = repalette_capable
-        entry["pixel_bins_prefix"] = meta.get("pixel_bins_prefix", "")
-        pbe = meta.get("pixel_bins_empty", "")
-        entry["pixel_bins_empty"] = int(pbe) if pbe not in ("", None) else None
-        entry["pixel_bins_layout"] = meta.get("pixel_bins_layout", "")
         entry["raw_key"] = meta.get("raw_key", "")
         entry["raw_meta_key"] = meta.get("raw_meta_key", "")
         entry["step_scores_key"] = meta.get("step_scores_key", "")
@@ -1408,7 +1404,7 @@ def handle_check_status(event):
 # Canonical ownership mapping: each family owns its own intermediates, previews, and stale siblings
 ARTIFACT_FAMILIES = {
     "color": {
-        "intermediate_prefixes": ["pix_", "pixbin_chunk_", "pixbin_group_", "raw_", "tile_", "solve_proximity/", "solve_scores/"],
+        "intermediate_prefixes": ["pix_", "raw_", "solve_proximity/", "solve_scores/"],
         "intermediate_keys": ["solve_proximity_clip.json", "solve_proximity_bins.json"],
         "preview": [],
         "same_family_stale": [],

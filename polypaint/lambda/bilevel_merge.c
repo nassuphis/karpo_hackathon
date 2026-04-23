@@ -1,13 +1,9 @@
 /*
- * bilevel_merge: merge per-stripe tile bitsets or stitch tile PNGs.
+ * bilevel_merge: OR full-frame 1-bit section bitsets and write a bilevel TIFF.
  *
- * Mode "merge": OR multiple .bits files → 1-bit tile PNG
- *   bilevel_merge merge --tile_w=TW --tile_h=TH --output=tile.png
- *       bits1.bits bits2.bits ...
- *
- * Mode "stitch": join tile PNGs into final image PNG
- *   bilevel_merge stitch --n_cols=C --n_rows=R --output=final.png
- *       tile0.png tile1.png ...
+ * Usage:
+ *   bilevel_merge assemble --pix=N --output=final.tif [--preview=preview.png]
+ *       section0.bits section1.bits ...
  *
  * Build (dynamic, needs libvips):
  *   gcc -O3 -o bilevel_merge bilevel_merge.c \
@@ -16,31 +12,55 @@
  *     -Wl,-rpath,/opt/lib
  */
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdint.h>
 #include <vips/vips.h>
 
-/* ---- Arg parsing ---- */
-
 static const char *getArg(int argc, char **argv, const char *key) {
-    int klen = strlen(key);
-    for (int i = 1; i < argc; i++)
-        if (strncmp(argv[i], key, klen) == 0 && argv[i][klen] == '=')
+    int klen = (int)strlen(key);
+    for (int i = 1; i < argc; i++) {
+        if (strncmp(argv[i], key, klen) == 0 && argv[i][klen] == '=') {
             return argv[i] + klen + 1;
+        }
+    }
     return NULL;
 }
+
 static int getArgInt(int argc, char **argv, const char *key, int def) {
     const char *v = getArg(argc, argv, key);
     return v ? atoi(v) : def;
 }
+
 static const char *getArgStr(int argc, char **argv, const char *key, const char *def) {
     const char *v = getArg(argc, argv, key);
     return v ? v : def;
 }
 
-/* ---- Shared: bitset -> TIFF + preview ---- */
+static int option_matches(const char *arg, const char *key) {
+    int klen = (int)strlen(key);
+    return strncmp(arg, key, klen) == 0 && arg[klen] == '=';
+}
+
+static int reject_unknown_options(int argc, char **argv) {
+    const char *allowed[] = {"--width", "--height", "--pix", "--output", "--preview", "--preview_size"};
+    for (int i = 2; i < argc; i++) {
+        if (argv[i][0] != '-') continue;
+        int known = 0;
+        for (int j = 0; j < (int)(sizeof(allowed) / sizeof(allowed[0])); j++) {
+            if (option_matches(argv[i], allowed[j])) {
+                known = 1;
+                break;
+            }
+        }
+        if (!known) {
+            fprintf(stderr, "Unknown bilevel_merge option: %s\n", argv[i]);
+            return 1;
+        }
+    }
+    return 0;
+}
 
 static int save_bitset_tiff_preview(
     const uint8_t *bitset,
@@ -58,7 +78,10 @@ static int save_bitset_tiff_preview(
     long pixelsSet = 0;
     for (size_t b = 0; b < bitsetBytes; b++) {
         uint8_t v = bitset[b];
-        while (v) { pixelsSet += v & 1; v >>= 1; }
+        while (v) {
+            pixelsSet += v & 1;
+            v >>= 1;
+        }
     }
 
     unsigned char *imgBuf = malloc(nPixels > 0 ? nPixels : 1);
@@ -103,7 +126,11 @@ static int save_bitset_tiff_preview(
         if (vips_resize(thresh, &small, scale, NULL) == 0) {
             if (vips_pngsave(small, previewPath, "compression", 6, NULL) == 0) {
                 FILE *pf = fopen(previewPath, "rb");
-                if (pf) { fseek(pf, 0, SEEK_END); previewFsize = ftell(pf); fclose(pf); }
+                if (pf) {
+                    fseek(pf, 0, SEEK_END);
+                    previewFsize = ftell(pf);
+                    fclose(pf);
+                }
             }
             g_object_unref(small);
         }
@@ -111,7 +138,11 @@ static int save_bitset_tiff_preview(
 
     FILE *fout = fopen(outPath, "rb");
     long fsize = 0;
-    if (fout) { fseek(fout, 0, SEEK_END); fsize = ftell(fout); fclose(fout); }
+    if (fout) {
+        fseek(fout, 0, SEEK_END);
+        fsize = ftell(fout);
+        fclose(fout);
+    }
 
     g_object_unref(thresh);
     g_object_unref(img);
@@ -122,72 +153,6 @@ static int save_bitset_tiff_preview(
     if (pixelsSetOut) *pixelsSetOut = pixelsSet;
     return 0;
 }
-
-/* ---- Merge: OR bitsets -> 1-bit TIFF ---- */
-
-static int do_merge(int argc, char **argv) {
-    int tileW = getArgInt(argc, argv, "--tile_w", 4096);
-    int tileH = getArgInt(argc, argv, "--tile_h", 4096);
-    const char *outPath = getArgStr(argc, argv, "--output", "/tmp/tile.tif");
-    const char *previewPath = getArgStr(argc, argv, "--preview", NULL);
-    int previewSize = getArgInt(argc, argv, "--preview_size", 512);
-
-    size_t nPixels = (size_t)tileW * tileH;
-    size_t bitsetBytes = (nPixels + 7) / 8;
-    uint8_t *bitset = calloc(1, bitsetBytes);
-    if (!bitset) {
-        fprintf(stderr, "Cannot allocate bitset (%zu bytes)\n", bitsetBytes);
-        return 1;
-    }
-
-    /* Collect .bits file paths (non --flag, non mode args) */
-    int nFiles = 0;
-    for (int i = 2; i < argc; i++) {
-        if (argv[i][0] == '-') continue;
-        FILE *f = fopen(argv[i], "rb");
-        if (!f) continue;
-        fseek(f, 0, SEEK_END);
-        long sz = ftell(f);
-        fseek(f, 0, SEEK_SET);
-        if (sz > 0) {
-            uint8_t *buf = malloc(sz);
-            if (buf) {
-                fread(buf, 1, sz, f);
-                /* OR into accumulated bitset */
-                size_t limit = sz < (long)bitsetBytes ? sz : bitsetBytes;
-                for (size_t b = 0; b < limit; b++)
-                    bitset[b] |= buf[b];
-                free(buf);
-            }
-        }
-        fclose(f);
-        nFiles++;
-    }
-
-    long fsize = 0;
-    long previewFsize = 0;
-    long pixelsSet = 0;
-    if (save_bitset_tiff_preview(
-            bitset,
-            tileW,
-            tileH,
-            outPath,
-            previewPath,
-            previewSize,
-            &fsize,
-            &previewFsize,
-            &pixelsSet) != 0) {
-        free(bitset);
-        return 1;
-    }
-    free(bitset);
-
-    printf("{\"mode\":\"merge\",\"files_merged\":%d,\"pixels_set\":%ld,\"file_size\":%ld,\"preview_size\":%ld}\n",
-           nFiles, pixelsSet, fsize, previewFsize);
-    return 0;
-}
-
-/* ---- Assemble: OR full-frame section bitsets -> 1-bit TIFF ---- */
 
 static int do_assemble(int argc, char **argv) {
     const char *widthArg = getArg(argc, argv, "--width");
@@ -205,10 +170,8 @@ static int do_assemble(int argc, char **argv) {
         fprintf(stderr, "assemble requires --pix\n");
         return 1;
     }
-    int fullW = pix;
-    int fullH = pix;
 
-    size_t nPixels = (size_t)fullW * (size_t)fullH;
+    size_t nPixels = (size_t)pix * (size_t)pix;
     size_t bitsetBytes = (nPixels + 7) / 8;
     uint8_t *bitset = calloc(1, bitsetBytes > 0 ? bitsetBytes : 1);
     if (!bitset) {
@@ -273,231 +236,25 @@ static int do_assemble(int argc, char **argv) {
     long fsize = 0;
     long previewFsize = 0;
     long pixelsSet = 0;
-    if (save_bitset_tiff_preview(
-            bitset,
-            fullW,
-            fullH,
-            outPath,
-            previewPath,
-            previewSize,
-            &fsize,
-            &previewFsize,
-            &pixelsSet) != 0) {
-        free(bitset);
-        return 1;
-    }
+    int rc = save_bitset_tiff_preview(
+        bitset,
+        pix,
+        pix,
+        outPath,
+        previewPath,
+        previewSize,
+        &fsize,
+        &previewFsize,
+        &pixelsSet
+    );
     free(bitset);
+    if (rc != 0) return rc;
 
     printf("{\"mode\":\"assemble\",\"sections\":%d,\"width\":%d,\"height\":%d,"
            "\"pixels_set\":%ld,\"file_size\":%ld,\"preview_size\":%ld}\n",
-           nFiles, fullW, fullH, pixelsSet, fsize, previewFsize);
+           nFiles, pix, pix, pixelsSet, fsize, previewFsize);
     return 0;
 }
-
-/* ---- Stitch: exact-size tiled BigTIFF via libtiff ---- */
-
-#include <tiffio.h>
-
-static int do_stitch(int argc, char **argv) {
-    int nCols = getArgInt(argc, argv, "--n_cols", 1);
-    int nRows = getArgInt(argc, argv, "--n_rows", 1);
-    const char *widthArg = getArg(argc, argv, "--width");
-    const char *heightArg = getArg(argc, argv, "--height");
-    int pix = getArgInt(argc, argv, "--pix", 0);
-    int tileSz = getArgInt(argc, argv, "--tile_size", 4096);
-    const char *outPath = getArgStr(argc, argv, "--output", "/tmp/final.tif");
-    const char *previewPath = getArgStr(argc, argv, "--preview", NULL);
-    int previewSize = getArgInt(argc, argv, "--preview_size", 1024);
-
-    if (widthArg || heightArg) {
-        fprintf(stderr, "stitch no longer accepts --width or --height; pass --pix for square output\n");
-        return 1;
-    }
-    if (pix <= 0) {
-        fprintf(stderr, "stitch requires --pix\n");
-        return 1;
-    }
-    int fullW = pix;
-    int fullH = pix;
-
-    /* TIFF requires tile dimensions to be multiples of 16.
-     * For small test tiles, use strip-based output instead. */
-    int useTiled = (tileSz >= 16 && (tileSz % 16) == 0);
-
-    int nTiles = nCols * nRows;
-
-    /* Collect tile TIFF paths */
-    const char *paths[4096];
-    int nPaths = 0;
-    for (int i = 2; i < argc && nPaths < nTiles; i++) {
-        if (argv[i][0] == '-') continue;
-        paths[nPaths++] = argv[i];
-    }
-    if (nPaths != nTiles) {
-        fprintf(stderr, "Expected %d tile paths, got %d\n", nTiles, nPaths);
-        return 1;
-    }
-
-    /* Create exact-size tiled BigTIFF with libtiff */
-    TIFF *tif = TIFFOpen(outPath, "w8");
-    if (!tif) {
-        fprintf(stderr, "Cannot create BigTIFF %s\n", outPath);
-        return 1;
-    }
-
-    TIFFSetField(tif, TIFFTAG_IMAGEWIDTH, (uint32_t)fullW);
-    TIFFSetField(tif, TIFFTAG_IMAGELENGTH, (uint32_t)fullH);
-    TIFFSetField(tif, TIFFTAG_BITSPERSAMPLE, 1);
-    TIFFSetField(tif, TIFFTAG_SAMPLESPERPIXEL, 1);
-    TIFFSetField(tif, TIFFTAG_COMPRESSION, COMPRESSION_CCITTFAX4);
-    TIFFSetField(tif, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_MINISBLACK);
-    TIFFSetField(tif, TIFFTAG_FILLORDER, FILLORDER_MSB2LSB);
-    TIFFSetField(tif, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
-    if (useTiled) {
-        TIFFSetField(tif, TIFFTAG_TILEWIDTH, (uint32_t)tileSz);
-        TIFFSetField(tif, TIFFTAG_TILELENGTH, (uint32_t)tileSz);
-    } else {
-        TIFFSetField(tif, TIFFTAG_ROWSPERSTRIP, (uint32_t)fullH);
-    }
-
-    /* Packed 1-bit tile buffer (full tileSz × tileSz, zero-padded for edge tiles) */
-    int tileRowBytes = (tileSz + 7) / 8;
-    size_t tileBufSize = (size_t)tileSz * tileRowBytes;
-    uint8_t *tileBuf = calloc(1, tileBufSize);
-    if (!tileBuf) {
-        fprintf(stderr, "Cannot allocate tile buffer\n");
-        TIFFClose(tif);
-        return 1;
-    }
-
-    long totalPixels = 0;
-    int writeError = 0;
-
-    if (useTiled) {
-        /* Tiled BigTIFF: process one tile at a time (load → pack → write → free) */
-        for (int t = 0; t < nTiles && !writeError; t++) {
-            int tCol = t % nCols, tRow = t / nCols;
-            int tw = tileSz, th = tileSz;
-            if (tCol == nCols - 1 && fullW % tileSz != 0) tw = fullW - tCol * tileSz;
-            if (tRow == nRows - 1 && fullH % tileSz != 0) th = fullH - tRow * tileSz;
-
-            /* Load one tile TIFF */
-            VipsImage *tileImg = vips_image_new_from_file(paths[t], NULL);
-            if (!tileImg) {
-                fprintf(stderr, "Cannot load tile %d (%s): %s\n", t, paths[t], vips_error_buffer());
-                writeError = 1; break;
-            }
-            size_t sz;
-            unsigned char *px = (unsigned char *)vips_image_write_to_memory(tileImg, &sz);
-            int imgW = tileImg->Xsize, imgH = tileImg->Ysize;
-            g_object_unref(tileImg);
-            if (!px) { writeError = 1; break; }
-
-            /* Pack into 1-bit tile buffer */
-            memset(tileBuf, 0, tileBufSize);
-            int copyW = imgW < tw ? imgW : tw;
-            int copyH = imgH < th ? imgH : th;
-            for (int y = 0; y < copyH; y++)
-                for (int x = 0; x < copyW; x++)
-                    if (px[y * imgW + x]) {
-                        tileBuf[y * tileRowBytes + x / 8] |= (1 << (7 - (x % 8)));
-                        totalPixels++;
-                    }
-            g_free(px);
-
-            /* Write tile */
-            ttile_t ti = TIFFComputeTile(tif, tCol * tileSz, tRow * tileSz, 0, 0);
-            if (TIFFWriteEncodedTile(tif, ti, tileBuf, tileBufSize) < 0) {
-                fprintf(stderr, "TIFFWriteEncodedTile failed for tile %d\n", t);
-                writeError = 1;
-            }
-        }
-    } else {
-        /* Strip-based fallback for small tiles (<16): load all tiles, write scanlines */
-        unsigned char **tilePixels = calloc(nTiles, sizeof(unsigned char *));
-        int *tileTw = malloc(nTiles * sizeof(int));
-        int *tileTh = malloc(nTiles * sizeof(int));
-        for (int t = 0; t < nTiles; t++) {
-            int tCol = t % nCols, tRow = t / nCols;
-            tileTw[t] = (tCol == nCols - 1 && fullW % tileSz != 0) ? fullW - tCol * tileSz : tileSz;
-            tileTh[t] = (tRow == nRows - 1 && fullH % tileSz != 0) ? fullH - tRow * tileSz : tileSz;
-            VipsImage *tileImg = vips_image_new_from_file(paths[t], NULL);
-            if (!tileImg) { writeError = 1; break; }
-            size_t sz;
-            tilePixels[t] = (unsigned char *)vips_image_write_to_memory(tileImg, &sz);
-            if (tileImg->Xsize < tileTw[t]) tileTw[t] = tileImg->Xsize;
-            if (tileImg->Ysize < tileTh[t]) tileTh[t] = tileImg->Ysize;
-            g_object_unref(tileImg);
-        }
-        if (!writeError) {
-            int fullRowBytes = (fullW + 7) / 8;
-            uint8_t *rowBuf = calloc(1, fullRowBytes);
-            for (int y = 0; y < fullH; y++) {
-                memset(rowBuf, 0, fullRowBytes);
-                int tRow = y / tileSz;
-                int ly = y - tRow * tileSz;
-                for (int tCol = 0; tCol < nCols; tCol++) {
-                    int t = tRow * nCols + tCol;
-                    if (ly >= tileTh[t] || !tilePixels[t]) continue;
-                    int ox = tCol * tileSz;
-                    for (int x = 0; x < tileTw[t]; x++)
-                        if (tilePixels[t][ly * tileTw[t] + x]) {
-                            int gx = ox + x;
-                            rowBuf[gx / 8] |= (1 << (7 - (gx % 8)));
-                            totalPixels++;
-                        }
-                }
-                if (TIFFWriteScanline(tif, rowBuf, y, 0) < 0) {
-                    fprintf(stderr, "TIFFWriteScanline failed at row %d\n", y);
-                    writeError = 1; break;
-                }
-            }
-            free(rowBuf);
-        }
-        for (int t = 0; t < nTiles; t++)
-            if (tilePixels[t]) g_free(tilePixels[t]);
-        free(tilePixels); free(tileTw); free(tileTh);
-    }
-
-    free(tileBuf);
-    TIFFClose(tif);
-
-    if (writeError) {
-        fprintf(stderr, "Stitch failed with write errors\n");
-        return 1;
-    }
-
-    /* Generate preview PNG from the finished TIFF using libvips */
-    long previewFsize = 0;
-    if (previewPath) {
-        VipsImage *finalImg = vips_image_new_from_file(outPath, NULL);
-        if (finalImg) {
-            int maxDim = finalImg->Xsize > finalImg->Ysize ? finalImg->Xsize : finalImg->Ysize;
-            double scale = (double)previewSize / maxDim;
-            if (scale >= 1.0) scale = 1.0;
-            VipsImage *small;
-            if (vips_resize(finalImg, &small, scale, NULL) == 0) {
-                if (vips_pngsave(small, previewPath, "compression", 6, NULL) == 0) {
-                    FILE *pf = fopen(previewPath, "rb");
-                    if (pf) { fseek(pf, 0, SEEK_END); previewFsize = ftell(pf); fclose(pf); }
-                }
-                g_object_unref(small);
-            }
-            g_object_unref(finalImg);
-        }
-    }
-
-    FILE *fout = fopen(outPath, "rb");
-    long fsize = 0;
-    if (fout) { fseek(fout, 0, SEEK_END); fsize = ftell(fout); fclose(fout); }
-
-    printf("{\"mode\":\"stitch\",\"tiles\":%d,\"width\":%d,\"height\":%d,"
-           "\"pixels_set\":%ld,\"file_size\":%ld,\"preview_size\":%ld}\n",
-           nTiles, fullW, fullH, totalPixels, fsize, previewFsize);
-    return 0;
-}
-
-/* ---- Main ---- */
 
 int main(int argc, char **argv) {
     if (VIPS_INIT(argv[0])) {
@@ -506,23 +263,21 @@ int main(int argc, char **argv) {
     }
 
     if (argc < 2) {
-        fprintf(stderr, "Usage: bilevel_merge merge|assemble|stitch [options] files...\n");
+        fprintf(stderr, "Usage: bilevel_merge assemble [options] files...\n");
+        vips_shutdown();
+        return 1;
+    }
+    if (strcmp(argv[1], "assemble") != 0) {
+        fprintf(stderr, "Unknown mode: %s (expected assemble)\n", argv[1]);
+        vips_shutdown();
+        return 1;
+    }
+    if (reject_unknown_options(argc, argv)) {
         vips_shutdown();
         return 1;
     }
 
-    int ret;
-    if (strcmp(argv[1], "merge") == 0)
-        ret = do_merge(argc, argv);
-    else if (strcmp(argv[1], "assemble") == 0)
-        ret = do_assemble(argc, argv);
-    else if (strcmp(argv[1], "stitch") == 0)
-        ret = do_stitch(argc, argv);
-    else {
-        fprintf(stderr, "Unknown mode: %s (expected merge, assemble, or stitch)\n", argv[1]);
-        ret = 1;
-    }
-
+    int ret = do_assemble(argc, argv);
     vips_shutdown();
     return ret;
 }

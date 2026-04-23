@@ -58,13 +58,11 @@ Current `calc.json` is chunk-oriented and commonly contains:
 
 ### BiLevel render
 
-- `renders/{job_id}/bits_chunk_{chunk:04d}_t{tile:04d}.bits`
-- `renders/{job_id}/bilevel_t...`
+- `renders/{job_id}/bilevel_section_{section:04d}.frag`
 
 ### Coeffs bilevel render
 
-- `renders/{job_id}/coeff_bits_chunk_{chunk:04d}_t{tile:04d}.bits`
-- `renders/{job_id}/coeff_t...`
+- `renders/{job_id}/coeff_bilevel_section_{section:04d}.frag`
 
 These are workflow intermediates, not user-facing artifacts.
 

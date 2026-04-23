@@ -89,7 +89,6 @@ class TestResizeArtifactHandler(unittest.TestCase):
                 "associated_palette_omega": "4",
                 "associated_palette_omega_enabled": "false",
                 "repalette_capable": "true",
-                "pixel_bins_prefix": "renders/job1/color/color_src/pixel_bins/tile_",
             },
         }
         mock_s3.get_object.return_value = {
@@ -156,7 +155,6 @@ class TestResizeArtifactHandler(unittest.TestCase):
         self.assertEqual(image_meta["format"], "jpeg")
         self.assertEqual(image_meta["quality"], "83")
         self.assertNotIn("repalette_capable", image_meta)
-        self.assertNotIn("pixel_bins_prefix", image_meta)
         self.assertNotIn("associated_palette_mode", image_meta)
         self.assertNotIn("resize_params", image_meta)
 

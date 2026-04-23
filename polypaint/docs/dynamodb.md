@@ -6,7 +6,7 @@ DynamoDB coordinates async Lambda workflows. Each Lambda writes its progress; th
 
 - **Table**: `polypaint-jobs` (on-demand billing, auto-scales)
 - **Partition key**: `job_id` (String) — e.g., `compute_mmvtc0zf`
-- **Sort key**: `task_id` (String) — e.g., `raster_0`, `tile_3`, `encode`
+- **Sort key**: `task_id` (String) — e.g., `raster_0`, `finalize`, `preview`
 - **TTL**: `ttl` attribute, set to `now + 86400` (24h auto-cleanup)
 
 ## Attributes Per Item
@@ -27,8 +27,7 @@ DynamoDB coordinates async Lambda workflows. Each Lambda writes its progress; th
 | Coefficient gen | `coeffgen_{stripe}` | nStripes (e.g., 50) |
 | Root solving | `sweep_{stripe}` | nStripes |
 | Rasterization | `raster_{stripe}` | nStripes |
-| Tile assembly | `tile_{tile}` | nTiles (e.g., 16) |
-| Image encoding | `encode` | 1 |
+| Final image assembly | `finalize` / `render_{run}_finalize` | 1 |
 
 The sweep Lambda writes status to DynamoDB, and stores `result_data` (sweep metadata) in completed items.
 

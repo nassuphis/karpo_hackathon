@@ -23,6 +23,7 @@ from logical_sections import (
 )
 from solve_score_chain import (
     VALID_SOLVE_SCORE_METRICS,
+    canonicalize_solve_score_program_spec,
     compiled_solve_score_fingerprint,
     compile_solve_score_chain_or_legacy,
     serialize_solve_score_chain,
@@ -255,7 +256,9 @@ def _validate_clip_artifact(clip_data, compiled):
     if clip_data.get("version", 1) >= 2:
         _validate_artifact_chain_fingerprint(clip_data, compiled, "Clip")
         clip_program = str(clip_data.get("program") or "")
-        if clip_program != compiled["program_spec"]:
+        if not clip_program and compiled.get("uses_lag"):
+            raise RuntimeError("Clip artifact missing program for lagged solve-score chain")
+        if clip_program and canonicalize_solve_score_program_spec(clip_program) != compiled["program_spec"]:
             raise RuntimeError(f"Clip program mismatch: expected {compiled['program_spec']}, got {clip_program!r}")
         clip_metrics = _clip_artifact_metrics(clip_data, compiled, compiled["quantile"])
         if len(clip_metrics) != compiled["metric_count"]:
@@ -566,7 +569,7 @@ def _load_merge_histogram_artifact(client, hist_prefix, section_idx, compiled, h
 
     if data.get("family") == "solve_score" and data.get("version", 1) >= 2:
         _validate_artifact_chain_fingerprint(data, compiled, f"Section {section_idx}")
-        if str(data.get("program") or "") != compiled["program_spec"]:
+        if canonicalize_solve_score_program_spec(data.get("program") or "") != compiled["program_spec"]:
             raise RuntimeError(
                 f"Section {section_idx} program mismatch: expected {compiled['program_spec']}, got {data.get('program')!r}"
             )

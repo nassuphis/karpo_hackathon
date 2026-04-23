@@ -708,11 +708,6 @@ Keep square output:
 - `width = pix`
 - `height = pix`
 
-Then compute:
-
-- `n_tile_cols = ceil(width / tile_size)`
-- `n_tile_rows = ceil(height / tile_size)`
-
 This avoids the separate aspect-driven output-size refactor.
 
 #### Plan payload
@@ -722,9 +717,6 @@ This avoids the separate aspect-driven output-size refactor.
 - `width`
 - `height`
 - `pix`
-- `tile_size`
-- `n_tile_cols`
-- `n_tile_rows`
 
 Downstream runtime may still have `width == height == pix`, but it must stop
 assuming the world-space viewport is representable by one isotropic scale.
@@ -828,8 +820,6 @@ Retain:
 
 - `width`
 - `height`
-- `tile_size`
-- tile grid
 - rotation
 
 #### Validation

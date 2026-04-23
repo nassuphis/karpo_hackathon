@@ -406,13 +406,13 @@ def test_hist_v2_clip_uses_program_cli_flags():
         assert any(arg == "--score_metrics=spread,shelliness" for arg in cmd)
         assert any(arg == "--score_clip_los=-1,-0.5" for arg in cmd)
         assert any(arg == "--score_clip_his=2,1.5" for arg in cmd)
-        assert any(arg == "--score_program=m0;m1;weighted_sum:0.7:0.3;omega_cosine:5" for arg in cmd)
+        assert any(arg == "--score_program=m0-0;m1-0;weighted_sum:0.7:0.3;omega_cosine:5" for arg in cmd)
         assert not any(arg.startswith("--metric=") for arg in cmd)
         assert not any(arg.startswith("--clip_lo=") for arg in cmd)
         assert not any(arg.startswith("--clip_hi=") for arg in cmd)
         written = json.loads(hsp.s3.put_object.call_args.kwargs["Body"])
         assert written["version"] == 2
-        assert written["program"] == "m0;m1;weighted_sum:0.7:0.3;omega_cosine:5"
+        assert written["program"] == "m0-0;m1-0;weighted_sum:0.7:0.3;omega_cosine:5"
         assert written["metric_count"] == 2
     finally:
         hsp.s3 = orig_s3
@@ -469,9 +469,9 @@ def test_hist_v2_clip_preserves_omega_phase_in_program_cli():
         body = json.loads(result["body"])
         assert body["metric"] == "spread"
         cmd = mock_run.call_args.args[0]
-        assert any(arg == "--score_program=m0;omega_cosine:5:1.25" for arg in cmd)
+        assert any(arg == "--score_program=m0-0;omega_cosine:5:1.25" for arg in cmd)
         written = json.loads(hsp.s3.put_object.call_args.kwargs["Body"])
-        assert written["program"] == "m0;omega_cosine:5:1.25"
+        assert written["program"] == "m0-0;omega_cosine:5:1.25"
     finally:
         hsp.s3 = orig_s3
         hsp.report_status = orig_report
@@ -522,7 +522,7 @@ def test_clip_v2_mixed_source_writes_source_metadata_and_coeff_context():
         assert body["metric_count"] == 2
         written = json.loads(mock_s3.put_object.call_args.kwargs["Body"])
         assert written["version"] == 2
-        assert written["program"] == "m0;m1;avg"
+        assert written["program"] == "m0-0;m1-0;avg"
         assert written["lores_coeffs_key"] == "renders/test/lores_coeffs.bin"
         assert written["n_coeffs"] == 5
         assert [m["source"] for m in written["metrics"]] == ["slv", "cf"]
@@ -690,7 +690,7 @@ def test_compute_mo5bb237_clusteriness_cf_score_preset_clip_starts():
         body = json.loads(result["body"])
         assert body["metric_count"] == 3
         written = json.loads(mock_s3.put_object.call_args.kwargs["Body"])
-        assert written["program"] == "m0;m1;avg;m2;mul"
+        assert written["program"] == "m0-0;m1-0;avg;m2-0;mul"
         assert written["n_coeffs"] == 23
         assert written["lores_coeffs_key"] == "renders/compute_mo5bb237/lores_coeffs.bin"
         assert [m["source"] for m in written["metrics"]] == ["cf", "slv", "slv"]
@@ -744,7 +744,7 @@ def test_compute_mo5bb237_proximity_min_angular_cf_preset_clip_starts():
         body = json.loads(result["body"])
         assert body["metric_count"] == 2
         written = json.loads(mock_s3.put_object.call_args.kwargs["Body"])
-        assert written["program"] == "m0;m1;abs_diff"
+        assert written["program"] == "m0-0;m1-0;abs_diff"
         assert written["n_coeffs"] == 23
         assert written["lores_coeffs_key"] == "renders/compute_mo5bb237/lores_coeffs.bin"
         assert [m["source"] for m in written["metrics"]] == ["slv", "cf"]
@@ -797,7 +797,7 @@ def test_compute_mo5bb237_t2_abs_pm_preset_clip_starts():
         body = json.loads(result["body"])
         assert body["metric_count"] == 1
         written = json.loads(mock_s3.put_object.call_args.kwargs["Body"])
-        assert written["program"] == "m0"
+        assert written["program"] == "m0-0"
         assert written["lores_params_key"] == "renders/compute_mo5bb237/lores_params.bin"
         assert [m["source"] for m in written["metrics"]] == ["pm"]
     finally:
@@ -881,7 +881,7 @@ def test_hist_v2_mixed_source_sectioned_passes_coeff_url_cli_flags():
         assert body["input_mode"] == "sectioned"
         cmd = mock_run.call_args.args[0]
         assert "--score_sources=slv,cf" in cmd
-        assert "--score_program=m0;m1;max" in cmd
+        assert "--score_program=m0-0;m1-0;max" in cmd
         assert "--score_coeffs_url=https://example.com/coeffs.bin" in cmd
         assert "--score_coeff_input_size=80" in cmd
         assert "--score_coeff_degree=5" in cmd
@@ -1158,7 +1158,7 @@ def test_clip_v2_param_source_downloads_lores_params_and_persists_metadata():
         assert body["metric_count"] == 2
         written = json.loads(mock_s3.put_object.call_args.kwargs["Body"])
         assert written["version"] == 2
-        assert written["program"] == "m0;m1;avg"
+        assert written["program"] == "m0-0;m1-0;avg"
         assert written["lores_params_key"] == "renders/test/lores_params.bin"
         assert [m["source"] for m in written["metrics"]] == ["pm", "slv"]
         done_kwargs = hsp.report_status.call_args_list[-1].kwargs
@@ -1246,7 +1246,7 @@ def test_hist_v2_param_source_sectioned_passes_param_file_cli_flags():
         assert body["input_mode"] == "sectioned"
         cmd = mock_run.call_args.args[0]
         assert "--score_sources=pm,slv" in cmd
-        assert "--score_program=m0;m1;max" in cmd
+        assert "--score_program=m0-0;m1-0;max" in cmd
         assert f"--score_params_file={hsp._TMP_PARAM_INPUT}" in cmd
     finally:
         hsp.s3 = orig_s3
@@ -1656,7 +1656,7 @@ def test_summary_handler_returns_structured_500_with_program_details():
         assert body["phase"] == "summary"
         assert body["metric"] == "centroid_im"
         assert body["metric_count"] == 2
-        assert body["program"] == "m0;m1;mul"
+        assert body["program"] == "m0-0;m1-0;mul"
         assert body["score_metrics"] == ["centroid_im", "anisotropy"]
         assert body["score_sources"] == ["slv", "slv"]
         assert "mul" in body["solve_score_display"]

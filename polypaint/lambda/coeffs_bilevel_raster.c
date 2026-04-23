@@ -46,23 +46,46 @@ static double getArgDouble(int argc, char **argv, const char *key, double def) {
     return v ? atof(v) : def;
 }
 
+static int option_matches(const char *arg, const char *key) {
+    int klen = (int)strlen(key);
+    return strncmp(arg, key, klen) == 0 && arg[klen] == '=';
+}
+
+static int reject_unknown_options(int argc, char **argv, int firstFlagIndex, const char **allowed, int nAllowed) {
+    for (int i = firstFlagIndex; i < argc; i++) {
+        if (argv[i][0] != '-') continue;
+        int known = 0;
+        for (int j = 0; j < nAllowed; j++) {
+            if (option_matches(argv[i], allowed[j])) {
+                known = 1;
+                break;
+            }
+        }
+        if (!known) {
+            fprintf(stderr, "Unknown coeffs_bilevel_raster option: %s\n", argv[i]);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr, "Usage: coeffs_bilevel_raster coeffs.bin out.frag [options]\n");
+        return 1;
+    }
+    const char *allowedOptions[] = {
+        "--pix",
+        "--min_re", "--max_re", "--min_im", "--max_im",
+        "--n_coeffs", "--rotation",
+    };
+    if (reject_unknown_options(argc, argv, 3, allowedOptions, (int)(sizeof(allowedOptions) / sizeof(allowedOptions[0])))) {
         return 1;
     }
 
     const char *binPath = argv[1];
     const char *outPath = argv[2];
 
-    const char *widthArg = getArg(argc, argv, "--width");
-    const char *heightArg = getArg(argc, argv, "--height");
-    const char *tileSizeArg = getArg(argc, argv, "--tile_size");
-    const char *nTileColsArg = getArg(argc, argv, "--n_tile_cols");
-    const char *nTileRowsArg = getArg(argc, argv, "--n_tile_rows");
-    const char *centerReArg = getArg(argc, argv, "--center_re");
-    const char *centerImArg = getArg(argc, argv, "--center_im");
-    const char *scaleArg = getArg(argc, argv, "--scale");
     const char *minReArg = getArg(argc, argv, "--min_re");
     const char *maxReArg = getArg(argc, argv, "--max_re");
     const char *minImArg = getArg(argc, argv, "--min_im");
@@ -72,18 +95,6 @@ int main(int argc, char **argv) {
     int nCoeffs = getArgInt(argc, argv, "--n_coeffs", 0);
     double rotation = getArgDouble(argc, argv, "--rotation", 0.0);
 
-    if (widthArg || heightArg) {
-        fprintf(stderr, "coeffs_bilevel_raster no longer accepts --width or --height; pass --pix for square output\n");
-        return 1;
-    }
-    if (tileSizeArg || nTileColsArg || nTileRowsArg) {
-        fprintf(stderr, "coeffs_bilevel_raster no longer accepts tile args; it writes sparse global fragments\n");
-        return 1;
-    }
-    if (centerReArg || centerImArg || scaleArg) {
-        fprintf(stderr, "Legacy viewport args are no longer supported; pass --min_re, --max_re, --min_im, and --max_im\n");
-        return 1;
-    }
     if (pix <= 0 || nCoeffs <= 0) {
         fprintf(stderr, "pix and n_coeffs must be > 0\n");
         return 1;

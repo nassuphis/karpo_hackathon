@@ -29,7 +29,7 @@ not:
 - a saved-data mutation step
 - a new persisted intermediate
 
-They are applied **in flight** while tiles are being created.
+They are applied **in flight** during rasterization.
 
 ## Goal
 
@@ -60,7 +60,7 @@ That means the canonical solved root files remain unchanged:
 
 - `chunk_XXXX.bin` stays canonical
 
-The transform layer only changes what gets projected into tiles during a particular render request.
+The transform layer only changes what gets projected during a particular render request.
 
 ## What This Feature Is Not
 
@@ -181,7 +181,7 @@ Specifically:
 The only saved render outputs should remain the normal render artifacts:
 
 - color `.pix` / `.raw` / final image outputs
-- bilevel `.bits` / tile TIFF / final TIFF outputs
+- bilevel sparse fragments / final TIFF outputs
 
 The root transforms are applied on the fly, during rasterization, and then discarded.
 
@@ -192,10 +192,10 @@ The correct model is:
 1. read one solved root vector from the canonical stripe file
 2. copy roots into a working buffer
 3. apply the root transform chain to the working buffer
-4. rasterize the transformed roots into the current tile output
+4. rasterize the transformed roots into the current output
 5. move on to the next sample
 
-This happens entirely inside the raster step while tiles are being created.
+This happens entirely inside the raster step.
 
 That is the right place because:
 
@@ -383,9 +383,9 @@ For root-based bilevel render, root transforms should happen:
 2. copy into working buffer
 3. apply root transforms
 4. project transformed roots
-5. set tile bits
+5. set output occupancy
 
-That belongs in [bilevel_raster.c](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/bilevel_raster.c).
+That belongs in the active bilevel section raster path.
 
 ## Frontend Work
 
@@ -527,7 +527,7 @@ Extend raster tests with cases where the same canonical root input is rendered:
 
 and verify changed pixel output.
 
-This is the most important integration proof, because root transforms are supposed to be applied in flight during tile creation.
+This is the most important integration proof, because root transforms are supposed to be applied in flight during rasterization.
 
 ### 3. Frontend / handler tests
 
@@ -535,7 +535,7 @@ Extend mocked tests to verify:
 
 - `root_transforms` is sent only by render payloads
 - `handler_raster.py` passes it through
-- `handler_bilevel.py` passes it through only in `phase=raster`
+- `handler_bilevel.py` passes it through only in active raster phases
 - coeff render and param debug do not include it
 
 ## Rollout Plan
@@ -575,7 +575,7 @@ The right model is:
 
 - Compute produces canonical roots and saves them once
 - Render chooses an optional root transform pipeline
-- Raster applies that pipeline in memory while creating tiles
+- Raster applies that pipeline in memory while projecting pixels
 - No transformed roots are saved back to S3
 
 That is the clean separation for this feature, and it keeps experimentation fast without contaminating compute artifacts.

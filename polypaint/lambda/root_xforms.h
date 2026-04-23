@@ -2,7 +2,7 @@
  * root_xforms.h — shared root transform engine for render-time geometry transforms.
  *
  * Applied in-flight during rasterization. No data saved back to S3.
- * Used by both roots2pix_mt.c (fused color) and bilevel_raster.c (bilevel).
+ * Used by roots2pix_mt.c and bilevel_section_raster.c.
  *
  * Usage:
  *   RootXformEntry chain[MAX_RT_CHAIN];

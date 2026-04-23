@@ -6,7 +6,7 @@ PolyPaint uses four test layers. They are meant to catch different failure modes
 
 1. **Native/binary regression tests**
    - Catch math drift, file-format breakage, and runtime behavior in C binaries.
-   - Examples: `test_sweep_smoke.py`, `test_param_dump.py`, `test_bilevel_raster.py`, `test_companion_matrix.py`.
+   - Examples: `test_sweep_smoke.py`, `test_param_dump.py`, `test_exact_viewport_parity.py`, `test_companion_matrix.py`.
 
 2. **Python handler and workflow tests**
    - Catch Lambda contract bugs, storage/reporting mistakes, Step Functions payload drift, and packaging regressions.
@@ -74,8 +74,6 @@ All tests live in `polypaint/tests/`.
 | `test_poly164_hand.py` | Dedicated parity regression for the `poly_164` hand override | `sweep_test` compiled, numpy |
 | `test_pipeline.py` | Lambda handlers: dispatch, storage, coeffgen, sweep (solve-only), preview | Python mocks only |
 | `test_chunking.py` | Chunked pipeline: param_gen, coeffgen_chunked, chunk planner, chunks>N | `sweep_test` compiled |
-| `test_bilevel_raster.py` | bilevel_raster: byte-exact bitset comparison vs Python | `bilevel_raster_local` + `sweep_test` |
-| `test_bilevel_stitch.py` | bilevel_merge: merge (OR bitsets → TIFF) and stitch (join tiles) | `bilevel_merge_local` (needs libvips) |
 | `test_dither.py` | sdith, ddith, ndith: bounds, scaling, isotropy, statistics | `sweep_test` compiled |
 | `test_param_dump.py` | param_dump mode: identity, unit_circle, rtheta, swap, chains | `sweep_test` compiled |
 | `test_visual_1_100.py` | Visual comparison poly_1-100 (C vs Python pixel overlap) | `sweep_test` compiled, numpy |
@@ -86,7 +84,7 @@ All tests live in `polypaint/tests/`.
 | `test_visual_601_700.py` | Visual comparison poly_601-700 | `sweep_test` compiled, numpy |
 | `test_visual_701_800.py` | Visual comparison poly_701-800 | `sweep_test` compiled, numpy |
 | `test_visual_801_821.py` | Visual comparison poly_801-821 | `sweep_test` compiled, numpy |
-| `test_tiff_compat.py` | tiff_compat: tiled→strip TIFF conversion | `tiff_compat_local` (needs libvips+libtiff) |
+| `test_tiff_compat.py` | tiff_compat: bilevel TIFF compatibility conversion | `tiff_compat_local` (needs libvips+libtiff) |
 | `test_png_export.py` | png_export: TIFF→1-bit PNG conversion | `png_export_local` (needs libvips) |
 | `test_dispatch_resilience.py` | Dispatch resilience: return_ids, head-keys, wave dispatch, missing-task detection | Python mocks only |
 | `test_tri_palette_generation.py` | TRI palette generator + generated catalog consistency | Python only |
@@ -96,7 +94,7 @@ All tests live in `polypaint/tests/`.
 | `test_palette_debug_handler.py` | Palette debug Lambda handler: validation, S3 upload, stale preview deletion | Python mocks only |
 | `test_render_workflow_definition.py` | Step Functions ASL template: required states, Map concurrency, retry policies | JSON parsing only |
 | `test_render_orchestrator.py` | Render orchestrator starter Lambda: validation, DDB write, SFN StartExecution | Python mocks only |
-| `test_render_plan.py` | Render plan Lambda: viewport, tile/chunk computation, output keys, size limit | Python mocks only |
+| `test_render_plan.py` | Render plan Lambda: viewport, logical-section computation, output keys, size limit | Python mocks only |
 | `test_raster_mt.py` | MT raster Lambda: solve-range splitting, worker output merge, saved-palette bin slicing, perf/result_data contract | Python mocks only |
 | `test_render_status.py` | Render status Lambda: phase reporting, error extraction, updated_at_ms | Python mocks only |
 | `test_palette_workflow_definition.py` | Palette workflow ASL template: required states, structure | JSON parsing only |
@@ -146,7 +144,6 @@ This does **not** mean every cosmetic detail is browser-tested. It means:
 ```bash
 cd polypaint/lambda
 cc -O3 -o sweep_test sweep_cli.c -lm
-cc -O3 -o bilevel_raster_local bilevel_raster.c -lm
 cc -O3 -o bilevel_merge_local bilevel_merge.c $(pkg-config --cflags --libs vips) -lm
 ```
 
@@ -154,7 +151,7 @@ cc -O3 -o bilevel_merge_local bilevel_merge.c $(pkg-config --cflags --libs vips)
 
 ```bash
 cd polypaint
-uv run python -m pytest tests/test_sweep_smoke.py tests/test_ae_mt.py tests/test_poly_accuracy.py tests/test_pipeline.py tests/test_bilevel_raster.py tests/test_bilevel_stitch.py tests/test_dither.py tests/test_param_dump.py -v
+uv run python -m pytest tests/test_sweep_smoke.py tests/test_ae_mt.py tests/test_poly_accuracy.py tests/test_pipeline.py tests/test_exact_viewport_parity.py tests/test_dither.py tests/test_param_dump.py -v
 ```
 
 ### Individual test files
@@ -162,8 +159,6 @@ uv run python -m pytest tests/test_sweep_smoke.py tests/test_ae_mt.py tests/test
 ```bash
 uv run python tests/test_dither.py
 uv run python tests/test_param_dump.py
-uv run python tests/test_bilevel_raster.py
-uv run python tests/test_bilevel_stitch.py
 uv run python -m pytest tests/test_ae_mt.py -q
 uv run python -m pytest tests/test_poly164_hand.py tests/test_coeff_catalog_consistency.py -q
 uv run python -m pytest tests/test_deploy_packaging.py tests/test_pdf_artifact_handler.py -q
@@ -526,8 +521,7 @@ Deploy-time contract coverage:
   - `solve_proximity_stats`
   - `roots2pix`
   - `autolevels_render`
-  - `pixbinassemble`
-  - `pixel_bins_render`
+  - `fragmentassemble`
   - PDF artifact packaging and the PDF layer build-script contract
   - storage handler routes must be published by `deploy.sh`
 
@@ -538,25 +532,6 @@ Frontend/API contract coverage:
 - every `lambdaPost('storage', ..., '/...')` path used in `index.html` must exist in `handler_storage.py`
 - every frontend storage path must also be published by `deploy.sh`
 - every frontend service name used by `lambdaPost(...)` must exist in the generated `config.json` template
-
-### test_bilevel_raster.py
-
-Verifies bilevel_raster C binary against Python reference:
-
-- **test_basic** — poly_1, 50×50 grid, 2×2 tiles, bitsets match byte-for-byte
-- **test_rotation** — quarter turn, bitsets match
-- **test_empty_tiles** — offset viewport, no .bits output
-- **test_multiple_functions** — poly_1, poly_4, poly_49
-
-### test_bilevel_stitch.py
-
-Tests bilevel_merge binary (needs libvips):
-
-- **test_merge_basic** — OR two bitsets → correct pixels in TIFF
-- **test_merge_empty** — no input → all-black tile
-- **test_stitch_2x2** — 4 tiles with distinct patterns, quadrant placement
-- **test_stitch_3x2** — non-square grid, correct dimensions
-- **test_stitch_missing_tile** — fails cleanly on missing input
 
 ### test_dither.py
 
@@ -599,12 +574,11 @@ Before running `deploy.sh update`:
    ```bash
    cd lambda
    cc -O3 -o sweep_test sweep_cli.c -lm
-   cc -O3 -o bilevel_raster_local bilevel_raster.c -lm
    cc -O3 -o bilevel_merge_local bilevel_merge.c $(pkg-config --cflags --libs vips) -lm
    ```
 2. **Run full fast suite:**
    ```bash
-   uv run python -m pytest tests/test_sweep_smoke.py tests/test_poly_accuracy.py tests/test_pipeline.py tests/test_bilevel_raster.py tests/test_bilevel_stitch.py tests/test_dither.py tests/test_param_dump.py -v
+   uv run python -m pytest tests/test_sweep_smoke.py tests/test_poly_accuracy.py tests/test_pipeline.py tests/test_exact_viewport_parity.py tests/test_dither.py tests/test_param_dump.py -v
    ```
 3. **If you changed coeff-function wiring or hand overrides, run the catalog consistency slice:**
    ```bash
@@ -750,8 +724,8 @@ Tests the native autolevel renderer (libvips):
 | sweep_cli.c | test_sweep_smoke + test_poly_accuracy + test_param_dump + test_dither |
 | Param transforms | test_param_dump + test_dither |
 | Coefficient functions / transpiler | test_poly_accuracy + visual comparisons |
-| bilevel_raster.c | test_bilevel_raster |
-| bilevel_merge.c | test_bilevel_stitch |
+| bilevel_section_raster.c / coeffs_bilevel_raster.c | test_exact_viewport_parity + test_bilevel_handler |
+| bilevel_merge.c | tests/docker_runtime_regression.py assemble check |
 | Lambda handlers (Python) | test_pipeline + test_dispatch_resilience + test_chunking |
 | Chunking / param_gen / coeffgen_chunked | test_chunking |
 | TRI palette generator / catalogs | test_tri_palette_generation |
@@ -763,7 +737,7 @@ Tests the native autolevel renderer (libvips):
 | New tab/button/popup in UI | `test_frontend_js.sh` + at least one Playwright spec that clicks it |
 | solve_palette_debug.c | test_solve_palette_debug (Docker ARM64) |
 | autolevels_render.c / handler_autolevels.py | test_autolevels_handler + test_autolevels_render_native + test_frontend_js.sh |
-| handler_raster.py / handler_raster_mt.py | test_raster_pixel_bins + test_raster_saved_palette + test_raster_mt + test_frontend_js.sh |
+| handler_raster.py / handler_raster_mt.py | test_raster_mt + test_raster_saved_palette + test_raster_mt + test_frontend_js.sh |
 | Palette handlers | test_palette_debug_handler + test_palette_chunk_handler + test_palette_finalize_handler |
 | Step Functions ASL | test_render_workflow_definition + test_palette_workflow_definition |
 | Render orchestrator/plan/status | test_render_orchestrator + test_render_plan + test_render_status |

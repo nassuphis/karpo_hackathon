@@ -64,7 +64,6 @@ Run after every stale-cleanup batch:
 ```bash
 ./.venv/bin/python -m pytest \
   tests/test_pipeline.py \
-  tests/test_finalize_pixel_bins.py \
   tests/test_solve_proximity_handler.py \
   tests/test_bilevel_handler.py -q
 

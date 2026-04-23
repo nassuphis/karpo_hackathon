@@ -721,7 +721,7 @@ After AE-MT, the next CPU-bound candidates worth evaluating are:
    - good candidate for block-parallel score computation
 4. `roots2pix`
    - only worth it if solve-score/palette reuse is still leaving raster CPU-bound
-   - more complicated because of tile bucketing and duplicate-pixel resolution
+   - more complicated because of spatial bucketing and duplicate-pixel resolution
 5. `pixassemble`
    - likely lower value
    - current workload is more memory/write-order sensitive than compute-heavy

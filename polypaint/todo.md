@@ -3,9 +3,9 @@
 ## Color RePalette
 
 - Replace the current blocking `color_repalette -> synchronous encode -> synchronous preview` path with a real async tracked workflow.
-- Reason: large Color RePalette runs can finish tile generation and then fail in the caller while waiting on `polypaint-encode`, even when encode itself is just slow rather than broken.
+- Reason: large Color RePalette runs used to finish recolor generation and then fail in the caller while waiting on `polypaint-encode`, even when encode itself was just slow rather than broken.
 - Target shape:
-  - phase 1: render recolored tile raws
+  - phase 1: render recolored raw output
   - phase 2: encode as its own tracked async step
   - phase 3: preview / cleanup
   - browser keeps polling normal task status instead of waiting on one blocking Lambda

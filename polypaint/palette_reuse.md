@@ -448,7 +448,7 @@ It still does:
 - root transforms
 - rotation
 - viewport projection
-- tile bucketing
+- spatial bucketing
 - match mode
 - color encoding
 

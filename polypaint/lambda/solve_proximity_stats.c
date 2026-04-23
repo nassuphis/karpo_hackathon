@@ -727,6 +727,11 @@ int main(int argc, char **argv) {
             free(buf);
             return 1;
         }
+        if (solve_score_program_uses_lag(&scoreProgram)) {
+            fprintf(stderr, "Lagged solve-score refs are supported only by fused color raster in v1\n");
+            free(buf);
+            return 1;
+        }
         useScoreProgram = 1;
         programUsesCoeffSource = solve_score_program_uses_coeff_sources(&scoreProgram);
         programUsesParamSource = solve_score_program_uses_param_sources(&scoreProgram);

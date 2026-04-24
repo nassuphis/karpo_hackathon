@@ -56,6 +56,8 @@ PARAM_DEBUG_NAME="polypaint-param-debug"
 PARAM_DEBUG_MEMORY=1769  # 1 vCPU + libvips for TIFF output
 RENDER_PREVIEW_NAME="polypaint-render-preview"
 RENDER_PREVIEW_MEMORY=4096  # libvips vipsthumbnail on large images
+RENDER_LORES_PREVIEW_NAME="polypaint-render-lores-preview"
+RENDER_LORES_PREVIEW_MEMORY=4096  # sync lores fused raster + score_raw_render preview
 AUTOLEVELS_NAME="polypaint-autolevels"
 AUTOLEVELS_MEMORY=10240  # libvips autolevel post-process on saved color renders
 RESIZE_ARTIFACT_NAME="polypaint-resize-artifact"
@@ -1080,6 +1082,18 @@ cp lambda/handler_render_preview.py lambda/shared.py "$RENDER_PREVIEW_DIR/"
 cd "$RENDER_PREVIEW_DIR" && zip -r9 /tmp/polypaint-render-preview.zip . -q && cd "$SCRIPT_DIR"
 echo "  RndPrev: $(du -h /tmp/polypaint-render-preview.zip | cut -f1)  (vipsthumbnail via libvips layer)"
 
+# Render Lores Preview: ephemeral lores fused raster + palette encode (needs libcurl + libvips layers)
+RENDER_LORES_PREVIEW_DIR=/tmp/polypaint-render-lores-preview
+rm -rf "$RENDER_LORES_PREVIEW_DIR"
+mkdir -p "$RENDER_LORES_PREVIEW_DIR/lib"
+cp lambda/handler_render_lores_preview.py lambda/shared.py \
+   lambda/logical_sections.py lambda/solve_score_chain.py lambda/raw_score_render.py "$RENDER_LORES_PREVIEW_DIR/"
+cp lambda/roots2pix_mt lambda/solve_proximity_stats lambda/score_raw_render "$RENDER_LORES_PREVIEW_DIR/"
+cp lambda/roots2pix_mt_lib/* "$RENDER_LORES_PREVIEW_DIR/lib/"
+chmod +x "$RENDER_LORES_PREVIEW_DIR"/roots2pix_mt "$RENDER_LORES_PREVIEW_DIR"/solve_proximity_stats "$RENDER_LORES_PREVIEW_DIR"/score_raw_render
+cd "$RENDER_LORES_PREVIEW_DIR" && zip -r9 /tmp/polypaint-render-lores-preview.zip . -q && cd "$SCRIPT_DIR"
+echo "  LoresPv: $(du -h /tmp/polypaint-render-lores-preview.zip | cut -f1)  (ephemeral lores render preview)"
+
 # Autolevels: handler_autolevels.py + shared.py + color_artifact_meta.py + autolevels_render (needs libvips layer)
 AUTOLEVELS_DIR=/tmp/polypaint-autolevels
 rm -rf "$AUTOLEVELS_DIR"
@@ -1451,7 +1465,7 @@ setup_api_gateway() {
     }
 
     # Grant API Gateway permission to invoke each Lambda
-    for FNAME in "$SWEEP_NAME" "$SWEEP_MT_NAME" "$COEFFGEN_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$PREVIEW_NAME" "$COMPUTE_PREVIEW_NAME" "$BILEVEL_NAME" "$PARAM_DEBUG_NAME" "$TIFF_COMPAT_NAME" "$PNG_EXPORT_NAME" "$DZ_EXPORT_NAME" "$SWEEP_CM_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_DEBUG_NAME" "$REPALETTE_NAME"; do
+    for FNAME in "$SWEEP_NAME" "$SWEEP_MT_NAME" "$COEFFGEN_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$PREVIEW_NAME" "$COMPUTE_PREVIEW_NAME" "$RENDER_LORES_PREVIEW_NAME" "$BILEVEL_NAME" "$PARAM_DEBUG_NAME" "$TIFF_COMPAT_NAME" "$PNG_EXPORT_NAME" "$DZ_EXPORT_NAME" "$SWEEP_CM_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_DEBUG_NAME" "$REPALETTE_NAME"; do
         aws lambda add-permission --function-name "$FNAME" \
             --statement-id "apigateway-invoke" \
             --action lambda:InvokeFunction \
@@ -1476,13 +1490,15 @@ setup_api_gateway() {
     ensure_route "POST /sweep-mt" "$SWEEP_MT_INT"
     ensure_route "POST /coeffgen" "$COEFFGEN_INT"
 
-    local PREVIEW_INT COMPUTE_PREVIEW_INT
+    local PREVIEW_INT COMPUTE_PREVIEW_INT RENDER_LORES_PREVIEW_INT
     PREVIEW_INT=$(create_integration "$PREVIEW_NAME")
     COMPUTE_PREVIEW_INT=$(create_integration "$COMPUTE_PREVIEW_NAME")
+    RENDER_LORES_PREVIEW_INT=$(create_integration "$RENDER_LORES_PREVIEW_NAME")
     local PARAM_DEBUG_INT
     PARAM_DEBUG_INT=$(create_integration "$PARAM_DEBUG_NAME")
     ensure_route "POST /preview" "$PREVIEW_INT"
     ensure_route "POST /compute-preview" "$COMPUTE_PREVIEW_INT"
+    ensure_route "POST /render-lores-preview" "$RENDER_LORES_PREVIEW_INT"
     ensure_route "POST /param-debug" "$PARAM_DEBUG_INT"
     local TIFF_COMPAT_INT
     TIFF_COMPAT_INT=$(create_integration "$TIFF_COMPAT_NAME")
@@ -1546,6 +1562,7 @@ setup_api_gateway() {
   "viewport": "%s/viewport",
   "preview": "%s/preview",
   "compute-preview": "%s/compute-preview",
+  "render-lores-preview": "%s/render-lores-preview",
   "storage": "%s",
   "dispatch": "%s/dispatch-render",
   "param-debug": "%s/param-debug",
@@ -1562,7 +1579,7 @@ setup_api_gateway() {
     "git_dirty": %s,
     "frontend_sha256": "%s"
   }
-}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$BUILD_ID" "$BUILD_DEPLOYED_AT_UTC" "$BUILD_GIT_REV" "$BUILD_GIT_DIRTY" "$BUILD_FRONTEND_SHA256" \
+}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$BUILD_ID" "$BUILD_DEPLOYED_AT_UTC" "$BUILD_GIT_REV" "$BUILD_GIT_DIRTY" "$BUILD_FRONTEND_SHA256" \
     | aws s3 cp - "s3://$BUCKET/config.json" \
         --content-type "application/json" --region "$REGION"
     echo "  config.json uploaded"
@@ -1714,6 +1731,9 @@ if [ "$ACTION" = "create" ]; then
 
     create_lambda "$RENDER_PREVIEW_NAME" "handler_render_preview.handler" "/tmp/polypaint-render-preview.zip" \
         "$RENDER_PREVIEW_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    create_lambda "$RENDER_LORES_PREVIEW_NAME" "handler_render_lores_preview.handler" "/tmp/polypaint-render-lores-preview.zip" \
+        "$RENDER_LORES_PREVIEW_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
 
     create_lambda "$AUTOLEVELS_NAME" "handler_autolevels.handler" "/tmp/polypaint-autolevels.zip" \
         "$AUTOLEVELS_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
@@ -2019,6 +2039,9 @@ elif [ "$ACTION" = "update" ]; then
 
     update_lambda "$RENDER_PREVIEW_NAME" "handler_render_preview.handler" "/tmp/polypaint-render-preview.zip" \
         "$RENDER_PREVIEW_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    update_lambda "$RENDER_LORES_PREVIEW_NAME" "handler_render_lores_preview.handler" "/tmp/polypaint-render-lores-preview.zip" \
+        "$RENDER_LORES_PREVIEW_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
 
     update_lambda "$AUTOLEVELS_NAME" "handler_autolevels.handler" "/tmp/polypaint-autolevels.zip" \
         "$AUTOLEVELS_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"

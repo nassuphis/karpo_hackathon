@@ -81,6 +81,7 @@
       "/png-export",
       "/presign",
       "/preview",
+      "/render-lores-preview",
       "/render-summary",
       "/save-metadata",
       "/save-solve-score-program",
@@ -100,6 +101,7 @@
       "param-debug": "/param-debug",
       "png-export": "/png-export",
       "preview": "/preview",
+      "render-lores-preview": "/render-lores-preview",
       "solve_proximity": "/solve-proximity",
       "storage": "",
       "sweep": "/sweep",
@@ -128,6 +130,7 @@
       "param-debug",
       "png-export",
       "preview",
+      "render-lores-preview",
       "solve_proximity",
       "storage",
       "tiff-compat"

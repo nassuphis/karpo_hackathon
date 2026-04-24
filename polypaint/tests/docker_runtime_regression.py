@@ -11,6 +11,7 @@ Invoked by scripts/test-docker-runtime.sh — not run directly.
 import json
 import math
 import os
+import base64
 import http.server
 import socketserver
 import struct
@@ -197,6 +198,8 @@ class _MemS3:
     def __init__(self):
         self.objects = {}
         self.heads = {}
+        self.base_url = ""
+        self.puts = []
 
     def seed_object(self, key, body, *, content_type="application/octet-stream", metadata=None):
         self.objects[key] = {
@@ -240,12 +243,18 @@ class _MemS3:
             body = Body.read()
         else:
             body = Body
+        self.puts.append(Key)
         self.objects[Key] = {
             "Body": bytes(body),
             "ContentType": ContentType or "application/octet-stream",
             "Metadata": dict(Metadata or {}),
         }
         return {"ETag": '"mem"'}
+
+    def generate_presigned_url(self, ClientMethod, Params, ExpiresIn=900):
+        assert ClientMethod == "get_object", "unexpected presign method %r" % (ClientMethod,)
+        assert self.base_url, "base_url must be set before presigning"
+        return self.base_url.rstrip("/") + "/" + urllib.parse.quote(str(Params["Key"]))
 
 
 class _MemS3ObjectHandler(http.server.BaseHTTPRequestHandler):
@@ -259,11 +268,31 @@ class _MemS3ObjectHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
         body = obj.get("Body") or b""
-        self.send_response(200)
+        start = 0
+        end = len(body) - 1
+        range_hdr = self.headers.get("Range")
+        if range_hdr and range_hdr.startswith("bytes="):
+            raw = range_hdr[len("bytes="):]
+            if "-" not in raw:
+                self.send_response(416)
+                self.end_headers()
+                return
+            lo, hi = raw.split("-", 1)
+            start = int(lo) if lo else 0
+            end = int(hi) if hi else len(body) - 1
+            if start < 0 or end < start or end >= len(body):
+                self.send_response(416)
+                self.end_headers()
+                return
+            self.send_response(206)
+            self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, len(body)))
+        else:
+            self.send_response(200)
+        chunk = body[start:end + 1]
         self.send_header("Content-Type", obj.get("ContentType") or "application/octet-stream")
-        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Length", str(len(chunk)))
         self.end_headers()
-        self.wfile.write(body)
+        self.wfile.write(chunk)
 
     def log_message(self, fmt, *args):
         return
@@ -1206,6 +1235,87 @@ def test_roots2pix_mt_score_output_normalization_runtime():
 
     cleanup(roots_path, manifest_path, fragment_prefix + ".frag", step_scores_path)
     print("=== roots2pix_mt score output normalization runtime PASSED ===")
+
+
+def test_render_lores_preview_handler_runtime():
+    print("\n--- render-lores-preview handler runtime ---")
+
+    for bin_path in ("/src/solve_proximity_stats", "/src/roots2pix_mt", "/src/score_raw_render"):
+        assert os.path.exists(bin_path), "%s not found" % bin_path
+        assert open(bin_path, "rb").read(4) == b"\x7fELF", "%s is not ELF" % bin_path
+        r = subprocess.run(["ldd", bin_path], capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            assert "not found" not in (r.stdout + r.stderr), "%s has missing shared libs:\n%s" % (bin_path, r.stdout + r.stderr)
+    print("  ldd/binary presence: OK")
+
+    if "boto3" not in sys.modules:
+        sys.modules["boto3"] = types.SimpleNamespace(client=lambda *_args, **_kwargs: object())
+    if "/src" not in sys.path:
+        sys.path.insert(0, "/src")
+
+    import handler_render_lores_preview as mod
+
+    fake_s3 = _MemS3()
+    roots_key = "renders/job-preview/lores.bin"
+    roots_bytes = bytearray()
+    for idx in range(32):
+        re_val = -0.8 + (1.6 * idx / 31.0)
+        roots_bytes.extend(struct.pack("<ff", re_val, 0.0))
+    fake_s3.seed_object(roots_key, bytes(roots_bytes), content_type="application/octet-stream")
+
+    _MemS3ObjectHandler.objects = fake_s3.objects
+    with socketserver.TCPServer(("127.0.0.1", 0), _MemS3ObjectHandler) as httpd:
+        port = httpd.server_address[1]
+        fake_s3.base_url = "http://127.0.0.1:%d" % port
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        old_s3 = mod.s3
+        try:
+            mod.s3 = fake_s3
+            result = mod.handler({
+                "body": json.dumps({
+                    "job_id": "job-preview",
+                    "degree": 1,
+                    "preview_pix": 64,
+                    "quality": 90,
+                    "palette": "inferno",
+                    "view_mode": "explicit",
+                    "min_re": -1.0,
+                    "max_re": 1.0,
+                    "min_im": -1.0,
+                    "max_im": 1.0,
+                    "rotation": 0.0,
+                    "solve_score_chain": [["centroid_re", "slv", "0.1"]],
+                    "solve_score_normalize": True,
+                    "lores_bin_key": roots_key,
+                    "root_transforms": [],
+                    "raster_mt_threads": 1,
+                    "solve_score_threads": 1,
+                    "raster_sectioned_retries": 1,
+                })
+            }, None)
+        finally:
+            mod.s3 = old_s3
+            httpd.shutdown()
+            thread.join(timeout=5)
+
+    assert result["statusCode"] == 200, "render-lores-preview handler failed: %r" % result
+    body = json.loads(result["body"])
+    assert body["content_type"] == "image/png", "unexpected content type %r" % body.get("content_type")
+    png = base64.b64decode(body["image_base64"])
+    png_path = "/tmp/render_lores_preview_runtime.png"
+    with open(png_path, "wb") as f:
+        f.write(png)
+    assert read_png_dims(png_path) == (64, 64), "unexpected render-lores-preview PNG dimensions"
+    assert body["preview_pix"] == 64, "unexpected preview_pix %r" % body.get("preview_pix")
+    assert body["raster"]["input_mode"] == "multispan_sectioned", "roots2pix path was not sectioned"
+    assert body["raster"]["roots_plotted"] > 0, "preview plotted no roots"
+    assert body["solve_score"]["score_output_normalize"] is True, "score normalization was not active"
+    assert body["solve_score"]["score_output_clip_source"] == "lores_q05_q95", "unexpected clip source"
+    assert fake_s3.puts == [], "ephemeral preview wrote durable S3 objects: %r" % fake_s3.puts
+    cleanup(png_path)
+    print("  handler_render_lores_preview: OK (%d PNG bytes)" % len(png))
+    print("=== render-lores-preview handler runtime PASSED ===")
 
 
 # ── Render Preview (vipsthumbnail) Tests ─────────────────────────────────
@@ -2162,6 +2272,7 @@ if __name__ == "__main__":
         "/src/roots2pix_mt",
         "/src/solve_palette_chunk_mt",
         "/src/solve_proximity_hist_sectioned",
+        "/src/score_raw_render",
         "/src/bilevel_section_raster",
         "/src/coeffs_bilevel_raster",
         "/src/bilevel_merge",
@@ -2185,6 +2296,7 @@ if __name__ == "__main__":
     test_roots2pix_mt_multispan_runtime()
     test_roots2pix_mt_lagged_score_runtime()
     test_roots2pix_mt_score_output_normalization_runtime()
+    test_render_lores_preview_handler_runtime()
     test_render_preview()
     test_resize_runtime()
     test_bilevel_section_raster_runtime()

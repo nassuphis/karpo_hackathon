@@ -1064,6 +1064,15 @@ button {
                         <label>Quality:</label>
                         <input type="number" id="render-quality" value="90" min="1" max="100" step="5">
                     </div>
+                    <div class="anim-row" style="margin-top:8px">
+                        <label>Preview pix:</label>
+                        <input type="text" inputmode="numeric" id="render-preview-pix" value="256" style="width:6em">
+                        <button class="btn-secondary btn-inline" id="btn-render-lores-preview" onclick="runRenderLoresPreview()">Preview</button>
+                        <span id="render-lores-preview-status" style="color:#777; font-size:11px">No render preview yet</span>
+                    </div>
+                    <div id="render-lores-preview-box" style="width:256px; height:256px; max-width:100%; margin-top:8px; border:1px solid #0f3460; border-radius:4px; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden">
+                        <canvas id="render-lores-preview-canvas" width="256" height="256" style="width:100%; height:100%; image-rendering:pixelated; display:block"></canvas>
+                    </div>
                 </div>
                 <div class="color-box">
                     <div class="color-title">Solve Score Palette</div>
@@ -11090,6 +11099,123 @@ async function runCoeffBilevelPipeline() {
 
 // ── Solve Histogram Debug ────────────────────────────────────────────────
 
+async function runRenderLoresPreview() {
+    const btn = document.getElementById('btn-render-lores-preview');
+    const statusEl = document.getElementById('render-lores-preview-status');
+    const renderStatusEl = document.getElementById('render-status');
+    const canvas = document.getElementById('render-lores-preview-canvas');
+    try {
+        if (renderColorMode !== 'solve_score') throw new Error('select Solve score mode first');
+        const p = _renderCommonParams({ requireSolveScore: true });
+        let previewPix = parseInt(document.getElementById('render-preview-pix')?.value || '256', 10);
+        if (!Number.isFinite(previewPix)) previewPix = 256;
+        previewPix = Math.max(16, Math.min(1024, previewPix));
+        const pixInput = document.getElementById('render-preview-pix');
+        if (pixInput) pixInput.value = String(previewPix);
+
+        if (btn) { btn.disabled = true; btn.textContent = 'Preview...'; }
+        if (statusEl) statusEl.textContent = 'Rendering lores preview...';
+        if (renderStatusEl) {
+            renderStatusEl.textContent = 'Rendering lores preview...';
+            renderStatusEl.className = 'status';
+        }
+
+        const detail = await lambdaPost('storage', { job_id: p.jobId }, '/detail');
+        const calc = detail.calc || {};
+        const degree = Number(calc.degree);
+        const loresKey = calc.lores && calc.lores.bin_key;
+        const loresCoeffsKey = (calc.lores && calc.lores.coeffs_key) || _fallbackLoresCoeffsKey(p.jobId, loresKey);
+        const loresParamsKey = (calc.lores && calc.lores.params_key) || _fallbackLoresParamsKey(p.jobId, loresKey);
+        const rawNCoeffs = Number(calc.n_coeffs);
+        const nCoeffs = Number.isFinite(rawNCoeffs) && rawNCoeffs >= 1 ? rawNCoeffs : degree + 1;
+        if (!Number.isFinite(degree) || degree < 1 || !loresKey) {
+            throw new Error('calc.json missing degree or lores.bin_key');
+        }
+        if (p.solveScoreUsesCoeffSource) {
+            if (!loresCoeffsKey) throw new Error('calc.json missing lores.coeffs_key for coeff-source render preview');
+            if (!Number.isFinite(nCoeffs) || nCoeffs < 1) throw new Error('calc.json missing n_coeffs for coeff-source render preview');
+        }
+        if (p.solveScoreUsesParamSource && !loresParamsKey) {
+            throw new Error('calc.json missing lores.params_key for param-source render preview');
+        }
+
+        const payload = {
+            job_id: p.jobId,
+            degree: degree,
+            n_coeffs: nCoeffs,
+            preview_pix: previewPix,
+            quality: p.quality,
+            palette: _activeRenderPalette() || 'inferno',
+            background_color: '000000',
+            view_mode: _viewMode,
+            quantile: p.quantile,
+            shim: p.shim,
+            square_extent: p.squareExtent,
+            rotation: p.rotation,
+            metric: p.solveScoreMetric,
+            solve_score_quantile: p.solveScoreQuantile,
+            solve_score_omega: p.solveScoreOmega,
+            solve_score_omega_enabled: p.solveScoreOmegaEnabled,
+            solve_score_chain: p.solveScoreChain,
+            solve_score_normalize: !!p.solveScoreNormalize,
+            lores_bin_key: loresKey,
+            lores_coeffs_key: p.solveScoreUsesCoeffSource ? loresCoeffsKey : undefined,
+            lores_params_key: p.solveScoreUsesParamSource ? loresParamsKey : undefined,
+            root_transforms: p.rootTransforms || [],
+            raster_mt_threads: 4,
+            solve_score_threads: 4,
+            raster_sectioned_retries: 2,
+        };
+        if (_viewMode === 'explicit') {
+            payload.min_re = p.minRe;
+            payload.max_re = p.maxRe;
+            payload.min_im = p.minIm;
+            payload.max_im = p.maxIm;
+        }
+
+        log(`Render preview: colorizing lores artifacts at ${previewPix}px...`, '', 'render-log');
+        const result = await lambdaPost('render-lores-preview', payload);
+        if (!result || !result.image_base64) throw new Error('preview response missing image_base64');
+
+        await new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => {
+                canvas.width = img.naturalWidth || previewPix;
+                canvas.height = img.naturalHeight || previewPix;
+                const ctx = canvas.getContext('2d');
+                ctx.imageSmoothingEnabled = false;
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0);
+                resolve();
+            };
+            img.onerror = () => reject(new Error('preview PNG decode failed'));
+            img.src = `data:${result.content_type || 'image/png'};base64,${result.image_base64}`;
+        });
+
+        const raster = result.raster || {};
+        const timings = result.timings_ms || {};
+        const roots = Number(raster.roots_plotted || 0);
+        const totalMs = Number(timings.total || 0);
+        const msg = `${previewPix}px · roots=${roots.toLocaleString()} · nonzero=${Number(result.nonzero_pixels || 0).toLocaleString()} · ${(totalMs / 1000).toFixed(2)}s`;
+        if (statusEl) statusEl.textContent = msg;
+        if (renderStatusEl) {
+            renderStatusEl.textContent = 'Render preview ready';
+            renderStatusEl.className = 'status success';
+        }
+        log(`Render preview: ${msg}`, 'ok', 'render-log');
+    } catch (e) {
+        const msg = e && e.message ? e.message : String(e);
+        if (statusEl) statusEl.textContent = 'Error: ' + msg;
+        if (renderStatusEl) {
+            renderStatusEl.textContent = 'Render preview error: ' + msg;
+            renderStatusEl.className = 'status error';
+        }
+        log('Render preview failed: ' + msg, 'err', 'render-log');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Preview'; }
+    }
+}
+
 async function runSolveScoreHistogramDebug() {
     const btn = document.getElementById('btn-solve-histogram');
     const statusEl = document.getElementById('render-status');
@@ -11112,7 +11238,8 @@ async function runSolveScoreHistogramDebug() {
         const loresKey = calc.lores && calc.lores.bin_key;
         const loresCoeffsKey = (calc.lores && calc.lores.coeffs_key) || _fallbackLoresCoeffsKey(jobId, loresKey);
         const loresParamsKey = (calc.lores && calc.lores.params_key) || _fallbackLoresParamsKey(jobId, loresKey);
-        const nCoeffs = Number(calc.n_coeffs);
+        const rawNCoeffs = Number(calc.n_coeffs);
+        const nCoeffs = Number.isFinite(rawNCoeffs) && rawNCoeffs >= 1 ? rawNCoeffs : Number(degree) + 1;
         if (!degree || !loresKey) {
             throw new Error('calc.json missing degree or lores.bin_key');
         }
@@ -11130,7 +11257,7 @@ async function runSolveScoreHistogramDebug() {
             phase: 'summary',
             job_id: jobId,
             degree: degree,
-            n_coeffs: Number.isFinite(nCoeffs) ? nCoeffs : undefined,
+            n_coeffs: nCoeffs,
             metric: p.solveScoreMetric,
             solve_score_quantile: p.solveScoreQuantile,
             solve_score_omega: p.solveScoreOmega,

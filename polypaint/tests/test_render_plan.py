@@ -214,8 +214,10 @@ class TestRenderPlan(unittest.TestCase):
                 "uses_lag",
                 "max_lag",
                 "prelude_by_source",
+                "normalize",
             },
         )
+        self.assertFalse(plan["solve_score"]["normalize"])
         self.assertEqual(
             set(plan["render_execution"].keys()),
             {
@@ -233,6 +235,7 @@ class TestRenderPlan(unittest.TestCase):
             },
         )
         metadata = plan["outputs"]["metadata"]
+        self.assertEqual(metadata["solve_score_normalize"], "false")
         for field_name in FINALIZE_MT_METADATA_REQUIRED_FIELDS:
             self.assertIn(field_name, metadata)
         self.assertEqual(metadata["color_mode"], "solve_score")

@@ -1100,6 +1100,9 @@ button {
                         <span id="ss-stack" style="display:inline-flex; gap:3px; align-items:flex-end; min-height:16px"></span>
                         <span id="ss-stack-label" style="font-size:10px; color:#888; min-width:80px; margin-left:6px"></span>
                         <input type="hidden" id="render-solve-score-quantile" value="0.1">
+                        <label style="font-size:10px; color:#888; display:inline-flex; align-items:center; gap:3px; margin-left:6px" title="Normalize the final composed score program output using the lores q05/q95 estimate before packing to raw score bytes">
+                            <input type="checkbox" id="render-score-normalization" style="margin:0"> Score normalization
+                        </label>
                         <button id="btn-solve-histogram" class="btn-inline-offset" onclick="runSolveScoreHistogramDebug()" style="font-size:10px; padding:1px 8px">Histogram</button>
                     </div>
                     <div id="render-solve-score-program-status" class="solve-score-program-status"></div>
@@ -3804,6 +3807,16 @@ function _solveScoreQuantilePctText(value, fallback = '0.1') {
     const q = Number(value);
     if (!Number.isFinite(q)) return String(fallback);
     return q.toFixed(1).replace(/\.0$/, '');
+}
+
+function _boolish(value, fallback = false) {
+    if (value == null || value === '') return !!fallback;
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value !== 0;
+    const text = String(value).trim().toLowerCase();
+    if (['1', 'true', 'yes', 'on'].includes(text)) return true;
+    if (['0', 'false', 'no', 'off'].includes(text)) return false;
+    return !!fallback;
 }
 
 function _normalizeSolveScoreMetricSource(value, fallback = 'slv') {
@@ -9915,6 +9928,7 @@ function _renderCommonParams(options = {}) {
         solveScoreUsesCoeffSource: !!solveScore.uses_coeff_source,
         solveScoreUsesParamSource: !!solveScore.uses_param_source,
         solveScoreUsesNonSolveSource: !!solveScore.uses_non_solve_source,
+        solveScoreNormalize: !!document.getElementById('render-score-normalization')?.checked,
         rotation: (() => {
             const turns = parseFloat(document.getElementById('render-rotation').value) || 0;
             const dir = document.getElementById('render-rotation-dir').value;
@@ -10798,6 +10812,7 @@ async function _launchFusedRenderOrchestrator(paramsPatch = null) {
         rotation: p.rotation,
         color_mode: 'solve_score',
         solve_score_chain: p.solveScoreChain,
+        solve_score_normalize: !!p.solveScoreNormalize,
         palette: _activeRenderPalette() || 'inferno',
         root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
         raster_engine: 'mt',
@@ -11120,6 +11135,7 @@ async function runSolveScoreHistogramDebug() {
             solve_score_omega: p.solveScoreOmega,
             solve_score_omega_enabled: p.solveScoreOmegaEnabled,
             solve_score_chain: p.solveScoreChain,
+            solve_score_normalize: !!p.solveScoreNormalize,
             lores_bin_key: loresKey,
             lores_coeffs_key: p.solveScoreUsesCoeffSource ? loresCoeffsKey : undefined,
             lores_params_key: p.solveScoreUsesParamSource ? loresParamsKey : undefined,
@@ -11170,6 +11186,9 @@ async function runSolveScoreHistogramDebug() {
         lines.push(`  min=${fmt(s.min_score)}  p05=${fmt(s.q05)}  p10=${fmt(s.q10)}  p25=${fmt(s.q25)}  p50=${fmt(s.q50)}  p75=${fmt(s.q75)}  p90=${fmt(s.q90)}  p95=${fmt(s.q95)}  max=${fmt(s.max_score)}`);
         lines.push(`  mean=${fmt(s.mean_score)}  std=${fmt(s.stddev_score)}`);
         lines.push(`  clip[q..1-q]: lo=${fmt(s.clip_lo)}  hi=${fmt(s.clip_hi)}  width=${fmt(s.clip_range)} / full=${fmt(s.full_range)}`);
+        if (s.score_output_normalize) {
+            lines.push(`  score normalization: lo=${fmt(s.score_output_clip_lo)}  hi=${fmt(s.score_output_clip_hi)}  source=${s.score_output_clip_source || 'lores_q05_q95'}`);
+        }
         lines.push(`  occupancy: below=${s.clip_below_count} (${pct(s.clip_below_frac)})  in=${s.clip_inrange_count} (${pct(s.clip_inrange_frac)})  above=${s.clip_above_count} (${pct(s.clip_above_frac)})`);
         lines.push(`  fallback: ${s.clip_fallback ? s.clip_fallback_reason : 'none'}`);
         if (s.fully_finite_solve_count !== undefined) {
@@ -11193,6 +11212,7 @@ async function runSolveScoreHistogramDebug() {
             const rawBarW = 24;
             let rawLabel = 'raw metric space';
             if (s.raw_hist_space === 'program_output') rawLabel = 'program output before final bins';
+            if (s.raw_hist_space === 'score_output_normalized') rawLabel = 'score-output normalized program output';
             lines.push(`  raw score bins (${rawHistBins}, ${rawLabel}${s.raw_hist_expanded ? ', range expanded' : ''}):`);
             for (let b = 0; b < rawHistBins; b++) {
                 const lo = rawHistLo + (rawHistRange * b) / rawHistBins;
@@ -12791,6 +12811,13 @@ function populateSelectedRenderArtifact() {
             : '';
     };
 
+    const restoreSolveScoreNormalize = (entry) => {
+        const el = document.getElementById('render-score-normalization');
+        if (!el || !entry) return;
+        if (entry.solve_score_normalize != null) el.checked = _boolish(entry.solve_score_normalize, false);
+        else if (entry.score_output_normalize != null) el.checked = _boolish(entry.score_output_normalize, false);
+    };
+
     const finishPopulate = (label) => {
         const msg = warnings.length
             ? `Populate complete (missing saved ${warnings.join(', ')})`
@@ -12809,6 +12836,7 @@ function populateSelectedRenderArtifact() {
         if (!_setSolveScoreChainFromArtifact('render', _artifactSolveScoreChain(art))) {
             warnings.push('solve-score chain');
         }
+        restoreSolveScoreNormalize(art);
         if (art.palette) setPaletteForMode('solve_score', art.palette);
         else warnings.push('palette');
         if (Array.isArray(art.root_transforms)) {
@@ -12843,6 +12871,7 @@ function populateSelectedRenderArtifact() {
     if (!_setSolveScoreChainFromArtifact('render', _artifactSolveScoreChain(art))) {
         warnings.push('solve-score chain');
     }
+    restoreSolveScoreNormalize(art);
     if (art.palette) setPaletteForMode('solve_score', art.palette);
     _noteSolveScorePopulate('render', art);
     finishPopulate(art.artifact_id || 'selected color artifact');

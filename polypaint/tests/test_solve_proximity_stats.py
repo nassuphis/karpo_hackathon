@@ -870,6 +870,7 @@ def test_summary_all_fields():
                   "exact_zero_root_frac", "rows_with_any_exact_zero_root_frac", "rows_all_exact_zero_roots_frac",
                   "mean_finite_roots_per_solve", "min_finite_roots_per_solve", "max_finite_roots_per_solve",
                   "raw_hist_bins", "raw_hist_lo", "raw_hist_hi", "raw_hist_range", "raw_hist_space", "raw_hist_expanded",
+                  "raw_hist_score_output_normalize", "raw_hist_score_output_clip_lo", "raw_hist_score_output_clip_hi",
                   "raw_bin_counts", "raw_bin_fracs",
                   "intermediate_hist_bins", "final_bins",
                   "cuts_norm", "cuts_score", "final_bin_counts", "final_bin_fracs",
@@ -878,6 +879,7 @@ def test_summary_all_fields():
         assert field in result, f"missing field: {field}"
     assert result["raw_hist_bins"] == 32
     assert result["raw_hist_space"] == "metric_raw"
+    assert result["raw_hist_score_output_normalize"] is False
     assert len(result["raw_bin_counts"]) == 32
     assert len(result["raw_bin_fracs"]) == 32
     assert sum(result["raw_bin_counts"]) == result["n_solves"], \
@@ -989,6 +991,38 @@ def test_summary_mixed_source_program_uses_coeff_vectors():
     assert 0.65 <= result["max_score"] <= 0.75, result["max_score"]
     os.remove(solve_path)
     os.remove(coeff_path)
+
+
+def test_summary_score_output_normalization_rebins_raw_histogram():
+    path = "/tmp/sp_test_summary_score_output_norm_hist.bin"
+    solves = [[(0.2 + 0.002 * i, 0.0)] for i in range(101)]
+    write_bin(path, solves, 1)
+    try:
+        result, err = run_summary(
+            path,
+            1,
+            metric="centroid_re",
+            score_metrics="centroid_re",
+            score_clip_los="0",
+            score_clip_his="1",
+            score_program="m0",
+            score_output_normalize="1",
+        )
+        assert result is not None, f"normalized summary failed: {err}"
+        assert result["raw_hist_space"] == "score_output_normalized"
+        assert result["raw_hist_score_output_normalize"] is True
+        assert abs(result["raw_hist_lo"] - 0.0) < 1e-9
+        assert abs(result["raw_hist_hi"] - 1.0) < 1e-9
+        assert abs(result["raw_hist_score_output_clip_lo"] - result["q05"]) < 1e-9
+        assert abs(result["raw_hist_score_output_clip_hi"] - result["q95"]) < 1e-9
+        assert sum(result["raw_bin_counts"]) == result["n_solves"]
+        assert result["raw_bin_counts"][0] > 1
+        assert result["raw_bin_counts"][-1] > 1
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
 
 
 def test_summary_lagged_program_uses_previous_row_buffer():

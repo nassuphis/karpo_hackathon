@@ -9,6 +9,7 @@ and writes color artifact metadata directly.
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import threading
@@ -20,7 +21,7 @@ from botocore.config import Config
 from color_artifact_meta import split_color_artifact_metadata, write_color_artifact_meta_overlay
 from raw_score_render import render_score_raw, write_equalization_lut
 from raw_sidecar import background_color_hex, build_raw_sidecar
-from shared import BUCKET, imgpipe_env, ok_response, parse_body, report_status
+from shared import BUCKET, imgpipe_env, ok_response, parse_body, parse_boolish, report_status
 from solve_score_chain import read_solve_score_metadata
 
 
@@ -44,6 +45,16 @@ def _validate_finalize_workers(value):
     if not (1 <= workers <= MAX_FINALIZE_WORKERS):
         raise RuntimeError(f"finalize_workers must be in [1, {MAX_FINALIZE_WORKERS}], got {workers}")
     return workers
+
+
+def _coerce_finite_float(value, field_name):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"{field_name} must be numeric, got {value!r}")
+    if not math.isfinite(number):
+        raise RuntimeError(f"{field_name} must be finite, got {value!r}")
+    return number
 
 
 def _validate_fragment_manifest(manifest, *, source_item_count, fragment_prefix, expected_chain_fingerprint):
@@ -252,10 +263,25 @@ def _clip_info_from_payload(params, metadata):
         raise RuntimeError(
             f"FinalizeMT score_program mismatch: expected {metadata_program!r}, got {payload_program!r}"
         )
+    score_output_normalize = parse_boolish(
+        params.get("score_output_normalize", False),
+        False,
+        strict=True,
+        label="score_output_normalize",
+    )
     return {
         "chain_fingerprint": actual_fingerprint,
         "score_program": payload_program,
         "clip_slots": _normalize_clip_slots(params.get("clip_slots")),
+        "score_output_normalize": score_output_normalize,
+        "score_output_clip_lo": _coerce_finite_float(
+            params.get("score_output_clip_lo", 0.0),
+            "score_output_clip_lo",
+        ),
+        "score_output_clip_hi": _coerce_finite_float(
+            params.get("score_output_clip_hi", 1.0),
+            "score_output_clip_hi",
+        ),
     }
 
 
@@ -277,6 +303,9 @@ def _finalize_associated_palette(
     clip_slots,
     chain_fingerprint,
     score_program,
+    score_output_normalize,
+    score_output_clip_lo,
+    score_output_clip_hi,
     parent_progress,
 ):
     grid_n = int(associated_palette_grid_n or 0)
@@ -361,6 +390,9 @@ def _finalize_associated_palette(
         score_chain=associated_palette.get("score_chain", metadata.get("solve_score_chain", "")),
         score_program=score_program,
         clip_slots=clip_slots,
+        score_output_normalize=score_output_normalize,
+        score_output_clip_lo=score_output_clip_lo,
+        score_output_clip_hi=score_output_clip_hi,
         background_color=metadata.get("background_color", [0, 0, 0]),
         plan_params_digest=plan_params_digest,
         render_execution=render_execution,
@@ -627,6 +659,9 @@ def handler(event, context):
         score_chain=metadata.get("solve_score_chain", ""),
         score_program=clip_info["score_program"],
         clip_slots=clip_info["clip_slots"],
+        score_output_normalize=clip_info["score_output_normalize"],
+        score_output_clip_lo=clip_info["score_output_clip_lo"],
+        score_output_clip_hi=clip_info["score_output_clip_hi"],
         background_color=background_color,
         plan_params_digest=plan_params_digest,
         render_execution=render_execution,
@@ -675,6 +710,9 @@ def handler(event, context):
             clip_slots=clip_info["clip_slots"],
             chain_fingerprint=clip_info["chain_fingerprint"],
             score_program=clip_info["score_program"],
+            score_output_normalize=clip_info["score_output_normalize"],
+            score_output_clip_lo=clip_info["score_output_clip_lo"],
+            score_output_clip_hi=clip_info["score_output_clip_hi"],
             parent_progress=progress,
         )
 
@@ -685,6 +723,9 @@ def handler(event, context):
     final_metadata["step_scores_key"] = step_scores_key
     final_metadata["step_count"] = step_scores_count if step_scores_key else ""
     final_metadata["step_scores_grid_n"] = step_scores_grid_n if step_scores_key else ""
+    final_metadata["score_output_normalize"] = "true" if clip_info["score_output_normalize"] else "false"
+    final_metadata["score_output_clip_lo"] = str(clip_info["score_output_clip_lo"])
+    final_metadata["score_output_clip_hi"] = str(clip_info["score_output_clip_hi"])
     final_metadata["repalette_capable"] = False
     if associated_palette_result:
         final_metadata["associated_palette_mode"] = "generated"

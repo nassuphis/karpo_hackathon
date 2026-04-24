@@ -50,6 +50,9 @@ typedef struct {
     double cosA;
     double sinA;
     SolveScoreProgram solveScoreProgram;
+    int scoreOutputNormalize;
+    double scoreOutputClipLo;
+    double scoreOutputClipHi;
     int emitPaletteBins;
     long long paletteStepStart;
     int paletteGridN;
@@ -403,6 +406,12 @@ static void *worker_main(void *arg_) {
             worker_fail(arg, "solve-score program evaluation failed");
             goto cleanup;
         }
+        if (arg->scoreOutputNormalize) {
+            double range = arg->scoreOutputClipHi - arg->scoreOutputClipLo;
+            if (isfinite(range) && range > 1e-12) {
+                u = solve_score_clamp_unit((u - arg->scoreOutputClipLo) / range);
+            }
+        }
         {
             int rawByte = 1 + (int)llround(u * 254.0);
             if (rawByte < 1) rawByte = 1;
@@ -488,6 +497,7 @@ int main(int argc, char **argv) {
                 "[--threads=N] "
                 "--score_metrics=csv --score_clip_los=csv --score_clip_his=csv --score_program=spec "
                 "[--score_sources=csv] "
+                "[--score_output_normalize=0|1 --score_output_clip_lo=X --score_output_clip_hi=Y] "
                 "[--score_coeff_manifest=file.json] [--score_params_manifest=file.json] "
                 "--fragment_prefix=/tmp/fused_fragment "
                 "[--associated_palette_fragment_prefix=/tmp/palette_fragment] [--palette_grid_n=N] [--palette_step_start=STEP] "
@@ -504,6 +514,7 @@ int main(int argc, char **argv) {
         "--palette_grid_n", "--palette_step_start", "--root_xforms",
         "--score_metrics", "--score_sources",
         "--score_clip_los", "--score_clip_his", "--score_program",
+        "--score_output_normalize", "--score_output_clip_lo", "--score_output_clip_hi",
         "--score_coeff_manifest",
         "--score_params_manifest",
         "--score_coeff_degree",
@@ -600,6 +611,18 @@ int main(int argc, char **argv) {
     const char *scoreCoeffManifest = getArgStr(argc, argv, "--score_coeff_manifest", NULL);
     const char *scoreParamsManifest = getArgStr(argc, argv, "--score_params_manifest", NULL);
     int scoreCoeffDegree = getArgInt(argc, argv, "--score_coeff_degree", 0);
+    int scoreOutputNormalize = getArgInt(argc, argv, "--score_output_normalize", 0);
+    double scoreOutputClipLo = getArgDouble(argc, argv, "--score_output_clip_lo", 0.0);
+    double scoreOutputClipHi = getArgDouble(argc, argv, "--score_output_clip_hi", 1.0);
+    if (scoreOutputNormalize && (!isfinite(scoreOutputClipLo) || !isfinite(scoreOutputClipHi))) {
+        fprintf(stderr, "score output clip bounds must be finite when normalization is enabled\n");
+        return 1;
+    }
+    if (scoreOutputNormalize && scoreOutputClipHi - scoreOutputClipLo <= 1e-12) {
+        fprintf(stderr, "solve_score_output_normalize: degenerate range [%g,%g], using identity\n",
+                scoreOutputClipLo, scoreOutputClipHi);
+        scoreOutputNormalize = 0;
+    }
     SolveScoreProgram solveScoreProgram;
     {
         char scoreErr[256] = {0};
@@ -860,6 +883,9 @@ int main(int argc, char **argv) {
         args[i].cosA = cosA;
         args[i].sinA = sinA;
         args[i].solveScoreProgram = solveScoreProgram;
+        args[i].scoreOutputNormalize = scoreOutputNormalize;
+        args[i].scoreOutputClipLo = scoreOutputClipLo;
+        args[i].scoreOutputClipHi = scoreOutputClipHi;
         args[i].emitPaletteBins = emitPaletteBins;
         args[i].paletteStepStart = paletteStepStart;
         args[i].paletteGridN = paletteGridN;

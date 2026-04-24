@@ -52,6 +52,9 @@ def _event(**overrides):
         "plan_params_digest": "sha256:plan123",
         "clip_slots": [{"slot": 0, "metric": "proximity", "source": "slv", "clip_lo": 0.1, "clip_hi": 0.9}],
         "score_program": "m0",
+        "score_output_normalize": False,
+        "score_output_clip_lo": 0.0,
+        "score_output_clip_hi": 1.0,
         "chain_fingerprint": "fp_test",
         "fragment_prefix": TEST_FRAGMENT_PREFIX,
         "render_execution": {"raster_engine": "mt"},
@@ -197,6 +200,9 @@ class TestFinalizeMTHandler(unittest.TestCase):
         self.assertEqual(raw_meta["chain_fingerprint"], "fp_test")
         self.assertEqual(raw_meta["score_program"], "m0")
         self.assertEqual(raw_meta["clip_slots"], [{"slot": 0, "metric": "proximity", "source": "slv", "clip_lo": 0.1, "clip_hi": 0.9}])
+        self.assertEqual(raw_meta["score_output_normalize"], False)
+        self.assertEqual(raw_meta["score_output_clip_lo"], 0.0)
+        self.assertEqual(raw_meta["score_output_clip_hi"], 1.0)
         self.assertEqual(raw_meta["background_color"], [0, 0, 0])
         self.assertEqual(raw_meta["plan_params_digest"], "sha256:plan123")
         self.assertEqual(raw_meta["histogram"], [1, 1, 1, 1] + [0] * 252)
@@ -212,6 +218,7 @@ class TestFinalizeMTHandler(unittest.TestCase):
         overlay_meta = mock_overlay.call_args.args[4]
         self.assertEqual(overlay_meta["raw_key"], TEST_RAW_KEY)
         self.assertEqual(overlay_meta["raw_meta_key"], TEST_RAW_META_KEY)
+        self.assertEqual(overlay_meta["score_output_normalize"], "false")
         self.assertEqual(overlay_meta["repalette_capable"], "false")
         statuses = [call.args[2] for call in mock_report.call_args_list]
         self.assertEqual(
@@ -438,6 +445,9 @@ class TestFinalizeMTHandler(unittest.TestCase):
         self.assertEqual(assoc_sidecar["keys"]["preview_key"], assoc_preview_key)
         self.assertEqual(assoc_sidecar["keys"]["meta_key"], assoc_meta_key)
         self.assertEqual(assoc_sidecar["chain_fingerprint"], "fp_test")
+        self.assertEqual(assoc_sidecar["score_output_normalize"], False)
+        self.assertEqual(assoc_sidecar["score_output_clip_lo"], 0.0)
+        self.assertEqual(assoc_sidecar["score_output_clip_hi"], 1.0)
         self.assertEqual(assoc_sidecar["histogram"][4:7], [1, 1, 1])
         mock_overlay.assert_called_once()
         overlay_meta = mock_overlay.call_args.args[4]

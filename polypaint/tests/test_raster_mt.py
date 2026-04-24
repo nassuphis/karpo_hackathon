@@ -27,7 +27,19 @@ def _bounds_from_center_scale(width, height, center_re, center_im, scale):
     }
 
 
-def _clip_artifact(*, chain, metric, quantile, omega, omega_enabled, clip_lo, clip_hi):
+def _clip_artifact(
+    *,
+    chain,
+    metric,
+    quantile,
+    omega,
+    omega_enabled,
+    clip_lo,
+    clip_hi,
+    score_output_normalize=False,
+    score_output_clip_lo=0.0,
+    score_output_clip_hi=1.0,
+):
     from solve_score_chain import compile_solve_score_chain_or_legacy, compiled_solve_score_fingerprint
 
     compiled = compile_solve_score_chain_or_legacy(
@@ -60,6 +72,9 @@ def _clip_artifact(*, chain, metric, quantile, omega, omega_enabled, clip_lo, cl
             for item in (compiled.get("metrics") or [])
         ],
         "chain_fingerprint": compiled_solve_score_fingerprint(compiled),
+        "score_output_normalize": bool(score_output_normalize),
+        "score_output_clip_lo": float(score_output_clip_lo),
+        "score_output_clip_hi": float(score_output_clip_hi),
     }
 
 
@@ -312,6 +327,33 @@ class TestRasterMT(unittest.TestCase):
         self.assertIn("--min_im=-0.75", joined)
         self.assertIn("--max_im=2.0", joined)
         self.assertIn("--pix=512", joined)
+
+    def test_build_cmd_forwards_score_output_normalization_bounds(self):
+        import handler_raster_mt as mod
+
+        params = _fused_event()
+        params.update({
+            "effective_input_mode": "multispan_sectioned",
+            "input_manifest_path": "/tmp/input_manifest.json",
+            "solve_score_bins_data": _clip_artifact(
+                chain=[["crowding", "1"], ["omega_cosine", "4"]],
+                metric="crowding",
+                quantile=0.01,
+                omega=4.0,
+                omega_enabled=True,
+                clip_lo=-1.0,
+                clip_hi=2.0,
+                score_output_normalize=True,
+                score_output_clip_lo=0.02,
+                score_output_clip_hi=0.08,
+            ),
+        })
+
+        cmd = mod._build_cmd(params)
+
+        self.assertIn("--score_output_normalize=1", cmd)
+        self.assertIn("--score_output_clip_lo=0.02", cmd)
+        self.assertIn("--score_output_clip_hi=0.08", cmd)
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
     @patch("handler_raster_mt.report_status")

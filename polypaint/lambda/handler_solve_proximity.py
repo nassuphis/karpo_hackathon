@@ -208,6 +208,70 @@ def _clip_metric_slot(metric_name, quantile, degree, solve_score_omega, solve_sc
     })
 
 
+def _sanitize_score_output_clip(lo, hi, source="lores_q05_q95"):
+    clip_lo = _coerce_finite_float(lo, "score_output_clip_lo")
+    clip_hi = _coerce_finite_float(hi, "score_output_clip_hi")
+    if clip_hi - clip_lo <= _CLIP_RANGE_MIN_WIDTH:
+        return {
+            "score_output_clip_lo": 0.0,
+            "score_output_clip_hi": 1.0,
+            "score_output_clip_source": "degenerate_identity",
+        }
+    return {
+        "score_output_clip_lo": clip_lo,
+        "score_output_clip_hi": clip_hi,
+        "score_output_clip_source": source,
+    }
+
+
+def _score_output_clip_from_summary(data):
+    has_quantiles = data.get("q05") is not None and data.get("q95") is not None
+    return _sanitize_score_output_clip(
+        data.get("q05") if has_quantiles else data.get("min_score"),
+        data.get("q95") if has_quantiles else data.get("max_score"),
+        source="lores_q05_q95" if has_quantiles else "lores_minmax",
+    )
+
+
+def _clip_program_output_range(
+    compiled,
+    metrics_with_clips,
+    degree,
+    n_coeffs,
+    solve_score_threads,
+    root_transforms,
+    uses_coeff_source,
+    uses_param_source,
+):
+    cmd = [
+        BINARY,
+        _TMP_INPUT,
+        "--mode=summary",
+        f"--degree={degree}",
+        f"--threads={solve_score_threads}",
+        *_build_program_cmd_args(compiled, metrics_with_clips),
+    ]
+    if uses_coeff_source:
+        cmd.extend([
+            f"--score_coeffs_file={_TMP_COEFF_INPUT}",
+            f"--score_coeff_degree={n_coeffs}",
+        ])
+    if uses_param_source:
+        cmd.append(f"--score_params_file={_TMP_PARAM_INPUT}")
+    xf_path = _write_xforms(root_transforms)
+    if xf_path:
+        cmd.append(f"--root_xforms={xf_path}")
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    if result.returncode != 0:
+        raise RuntimeError(f"solve_proximity_stats score output summary failed: {result.stderr.strip()}")
+    data = json.loads(result.stdout)
+    output_clip = _score_output_clip_from_summary(data)
+    output_clip["score_output_n_solves"] = int(data.get("n_solves") or 0)
+    output_clip["score_output_summary_threads"] = int(data.get("threads", solve_score_threads))
+    return output_clip
+
+
 def _legacy_metric_clips(metric, quantile, clip_lo, clip_hi):
     return [_sanitize_metric_clip({
         "slot": 0,
@@ -621,6 +685,12 @@ def handle_clip(params):
     root_transforms = contract_param(params, "root_transforms", [], contract_warnings)
     out_key = params["out_key"]
     compiled = _compile_request_chain(params, metric, default_metric="proximity")
+    solve_score_normalize = parse_boolish(
+        contract_param(params, "solve_score_normalize", False, contract_warnings),
+        False,
+        strict=True,
+        label="solve_score_normalize",
+    )
     metric = compiled["metric"]
     solve_score_omega = compiled["omega"]
     solve_score_omega_enabled = compiled["omega_enabled"]
@@ -651,6 +721,7 @@ def handle_clip(params):
             "omega": solve_score_omega,
             "omega_enabled": solve_score_omega_enabled,
             "threads": solve_score_threads,
+            "score_output_normalize": solve_score_normalize,
         },
         contract_warnings,
     )
@@ -696,6 +767,27 @@ def handle_clip(params):
             slot_clip["source"] = source
             metric_clips.append(slot_clip)
             clip_threads = max(clip_threads, int(slot_clip.get("threads", solve_score_threads)))
+        score_output_clip = {
+            "score_output_normalize": solve_score_normalize,
+            "score_output_clip_lo": 0.0,
+            "score_output_clip_hi": 1.0,
+            "score_output_clip_source": "identity",
+            "score_output_n_solves": metric_clips[0]["n_solves"] if metric_clips else 0,
+            "score_output_summary_threads": solve_score_threads,
+        }
+        if solve_score_normalize:
+            score_output_clip.update(
+                _clip_program_output_range(
+                    compiled,
+                    metric_clips,
+                    degree,
+                    n_coeffs,
+                    solve_score_threads,
+                    root_transforms,
+                    uses_coeff_source,
+                    uses_param_source,
+                )
+            )
         compute_ms = int((time.time() - t1) * 1000)
         progress["compute_ms"] = compute_ms
         progress["threads"] = clip_threads
@@ -723,6 +815,7 @@ def handle_clip(params):
         ]
         progress["score_program"] = compiled["program_spec"]
         progress["chain_fingerprint"] = compiled_solve_score_fingerprint(compiled)
+        progress.update(score_output_clip)
 
         report_status(job_id, task_id, "computed", result_data=progress)
 
@@ -745,6 +838,7 @@ def handle_clip(params):
             "program": compiled["program_spec"],
             "metrics": metric_clips,
             "metric_count": len(metric_clips),
+            **score_output_clip,
         }
         if uses_coeff_source:
             artifact["lores_coeffs_key"] = lores_coeffs_key
@@ -1444,6 +1538,12 @@ def handle_summary(params):
     lores_params_key = params.get("lores_params_key", "")
     n_coeffs = params.get("n_coeffs")
     root_transforms = params.get("root_transforms")
+    solve_score_normalize = parse_boolish(
+        params.get("solve_score_normalize", False),
+        False,
+        strict=True,
+        label="solve_score_normalize",
+    )
     compiled = _compile_request_chain(params, metric, default_metric="proximity")
     uses_coeff_source = solve_score_uses_source(compiled, "cf")
     uses_param_source = solve_score_uses_source(compiled, "pm")
@@ -1529,6 +1629,8 @@ def handle_summary(params):
         xf_path = _write_xforms(root_transforms)
         if xf_path:
             cmd.append(f"--root_xforms={xf_path}")
+        if solve_score_normalize:
+            cmd.append("--score_output_normalize=1")
 
         t1 = time.time()
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -1565,6 +1667,15 @@ def handle_summary(params):
         summary["clip_quantile"] = compiled["quantile"]
         summary["omega"] = compiled["omega"]
         summary["omega_enabled"] = compiled["omega_enabled"]
+        summary["score_output_normalize"] = solve_score_normalize
+        if solve_score_normalize:
+            summary.update(_score_output_clip_from_summary(summary))
+        else:
+            summary.update({
+                "score_output_clip_lo": 0.0,
+                "score_output_clip_hi": 1.0,
+                "score_output_clip_source": "identity",
+            })
         if not compiled["legacy_compatible"]:
             summary["metrics"] = metric_clips
 

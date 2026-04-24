@@ -585,6 +585,120 @@ def test_clip_default_chain_still_writes_v2_program_metadata():
         hsp.subprocess.run = orig_run
 
 
+def test_clip_score_normalization_estimates_program_output_quantile_range():
+    import handler_solve_proximity as hsp
+
+    mock_s3 = mock.MagicMock()
+
+    def mock_get(**kwargs):
+        key = kwargs.get("Key", "")
+        if key == "renders/test/lores.bin":
+            return {"Body": _ChunkBody(b"\x00" * 64)}
+        raise AssertionError(f"unexpected get_object key: {key}")
+
+    stdout_queue = [
+        json.dumps({"clip_lo": -1.0, "clip_hi": 2.0, "min_score": -1.0, "max_score": 2.0, "n_solves": 4, "threads": 1}),
+        json.dumps({
+            "min_score": 0.0,
+            "q05": 0.02,
+            "q95": 0.08,
+            "max_score": 1.0,
+            "n_solves": 4,
+            "threads": 1,
+        }),
+    ]
+    commands = []
+
+    def mock_run(cmd, capture_output, text, timeout):
+        commands.append(list(cmd))
+        return mock.MagicMock(returncode=0, stdout=stdout_queue.pop(0), stderr="")
+
+    orig_s3, orig_report, orig_run = hsp.s3, hsp.report_status, hsp.subprocess.run
+    hsp.s3 = mock_s3
+    hsp.report_status = mock.MagicMock()
+    hsp.subprocess.run = mock_run
+    mock_s3.get_object = mock_get
+    mock_s3.put_object = mock.MagicMock()
+    try:
+        result = hsp.handle_clip({
+            "job_id": "test",
+            "task_id": "clip_normalize_test",
+            "metric": "proximity",
+            "solve_score_quantile": 0.001,
+            "solve_score_chain": [["proximity", "slv", "0.1"], ["proximity", "slv-1", "0.1"], ["abs_diff"]],
+            "solve_score_normalize": True,
+            "degree": 4,
+            "lores_bin_key": "renders/test/lores.bin",
+            "out_key": "renders/test/solve_scores/clip.json",
+        })
+        body = json.loads(result["body"])
+        written = json.loads(mock_s3.put_object.call_args.kwargs["Body"])
+        assert body["score_output_normalize"] is True
+        assert body["score_output_clip_lo"] == 0.02
+        assert body["score_output_clip_hi"] == 0.08
+        assert written["score_output_normalize"] is True
+        assert written["score_output_clip_lo"] == 0.02
+        assert written["score_output_clip_hi"] == 0.08
+        assert written["score_output_clip_source"] == "lores_q05_q95"
+        assert len(commands) == 2
+        summary_cmd = next(cmd for cmd in commands if "--mode=summary" in cmd)
+        assert "--score_program=m0-0;m0-1;abs_diff" in summary_cmd
+        assert "--score_metrics=proximity" in summary_cmd
+    finally:
+        hsp.s3 = orig_s3
+        hsp.report_status = orig_report
+        hsp.subprocess.run = orig_run
+
+
+def test_summary_score_normalization_reports_quantile_range():
+    import handler_solve_proximity as hsp
+
+    mock_s3 = mock.MagicMock()
+
+    def mock_get(**kwargs):
+        key = kwargs.get("Key", "")
+        if key == "renders/test/lores.bin":
+            return {"Body": _ChunkBody(b"\x00" * 64)}
+        raise AssertionError(f"unexpected get_object key: {key}")
+
+    summary_stdout = json.dumps({
+        "min_score": 0.0,
+        "q05": 0.02,
+        "q95": 0.08,
+        "max_score": 1.0,
+        "n_solves": 4,
+        "degree": 4,
+        "threads": 1,
+    })
+
+    def mock_run(cmd, capture_output, text, timeout):
+        assert "--mode=summary" in cmd
+        assert "--score_output_normalize=1" in cmd
+        return mock.MagicMock(returncode=0, stdout=summary_stdout, stderr="")
+
+    orig_s3, orig_run = hsp.s3, hsp.subprocess.run
+    hsp.s3 = mock_s3
+    hsp.subprocess.run = mock_run
+    mock_s3.get_object = mock_get
+    try:
+        result = hsp.handle_summary({
+            "job_id": "test",
+            "degree": 4,
+            "metric": "proximity",
+            "solve_score_quantile": 0.001,
+            "solve_score_normalize": True,
+            "lores_bin_key": "renders/test/lores.bin",
+        })
+        body = json.loads(result["body"])
+        assert body["score_output_normalize"] is True
+        assert body["score_output_clip_lo"] == 0.02
+        assert body["score_output_clip_hi"] == 0.08
+        assert body["score_output_clip_source"] == "lores_q05_q95"
+    finally:
+        hsp.s3 = orig_s3
+        hsp.subprocess.run = orig_run
+
+
 def test_clip_lagged_program_preserves_spec_without_native_program_args():
     import handler_solve_proximity as hsp
 

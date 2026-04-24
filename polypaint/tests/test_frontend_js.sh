@@ -144,6 +144,11 @@ assertNotIncludes("id=\"palette-solve-score-omega-enabled\"", 'palette tab shoul
 assertNotIncludes("id=\"palette-solve-score-quantile-val\"", 'palette tab should not ship hidden legacy quantile display span');
 assertNotIncludes("id=\"palette-solve-score-omega-val\"", 'palette tab should not ship hidden legacy omega display span');
 assertIncludes("id=\"render-solve-score-program-manage\" onclick=\"openSolveScoreProgramModal('render')\"", 'render tab should expose Solve Scores modal launcher');
+assertIncludes("id=\"render-score-normalization\"", 'render tab should expose score normalization checkbox');
+assertIncludes("solveScoreNormalize: !!document.getElementById('render-score-normalization')?.checked,", '_renderCommonParams should read score normalization checkbox');
+assertIncludes("solve_score_normalize: !!p.solveScoreNormalize,", 'fused render payload should forward score normalization flag');
+assertIncludes("score normalization: lo=${fmt(s.score_output_clip_lo)}  hi=${fmt(s.score_output_clip_hi)}", 'histogram output should report score normalization range');
+assertIncludes("if (s.raw_hist_space === 'score_output_normalized') rawLabel = 'score-output normalized program output';", 'histogram raw bins should label score-output normalized space');
 assertIncludes("id=\"palette-solve-score-program-manage\" onclick=\"openSolveScoreProgramModal('palette')\"", 'palette tab should expose Solve Scores modal launcher');
 assertIncludes("id=\"solve-score-modal-overlay\"", 'shared solve-score modal markup missing');
 assertIncludes("id=\"solve-score-modal-name\"", 'solve-score modal name input missing');

@@ -205,6 +205,45 @@ class TestRasterMtParity(unittest.TestCase):
     def _run_binary(self, args):
         return subprocess.run(args, capture_output=True, text=True)
 
+    def _run_centroid_re_score_bytes(self, root, roots, *, label, extra_args=None):
+        degree = 1
+        step_count = len(roots) // 2
+        roots_path = self._write_float_file(root / f"{label}_roots.bin", roots)
+        step_scores_path = root / f"{label}_step_scores.raw"
+        fragment_prefix = root / f"{label}_fragment"
+        server, thread = self._serve_dir(root)
+        try:
+            manifest_path = self._write_single_span_manifest(
+                root / f"{label}_roots_manifest.json",
+                file_name=roots_path.name,
+                port=server.server_address[1],
+                row_bytes=degree * 2 * 4,
+                solve_count=step_count,
+            )
+            cmd = [
+                str(self._binary),
+                str(root / f"{label}_pix"),
+                "--pix=8",
+                *self._bounds_args(8, 8, 0.0, 0.0, 1.0),
+                f"--degree={degree}",
+                "--rotation=0",
+                "--threads=1",
+                f"--input_manifest={manifest_path}",
+                f"--step_count={step_count}",
+                *self._single_metric_program_args("centroid_re", 0, 1),
+                f"--fragment_prefix={fragment_prefix}",
+                f"--step_scores_output={step_scores_path}",
+                "--retries=1",
+                *(extra_args or []),
+            ]
+            result = self._run_binary(cmd)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result, step_scores_path.read_bytes()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
     def test_multispan_sectioned_raster_matches_single_span_manifest_for_logical_section_mixed_sources(self):
         from logical_sections import build_native_multispan_manifest, build_solve_source_manifest
 
@@ -360,6 +399,7 @@ class TestRasterMtParity(unittest.TestCase):
                     f"--degree={degree}",
                     "--rotation=0",
                     "--threads=1",
+                    f"--step_count={section_count}",
                 ]
                 single_input_manifest_path = self._write_single_span_manifest(
                     root / "single_input_manifest.json",
@@ -483,6 +523,7 @@ class TestRasterMtParity(unittest.TestCase):
                     "--rotation=0",
                     "--threads=1",
                     f"--input_manifest={manifest_path}",
+                    f"--step_count={step_count}",
                     *self._single_metric_program_args("centroid_re", 0, 2000),
                     f"--fragment_prefix={fragment_prefix}",
                     f"--associated_palette_fragment_prefix={palette_prefix}",
@@ -531,6 +572,7 @@ class TestRasterMtParity(unittest.TestCase):
                     "--rotation=0",
                     "--threads=1",
                     f"--input_manifest={manifest_path}",
+                    f"--step_count={step_count}",
                     *self._single_metric_program_args("centroid_re", -1, 1),
                     f"--fragment_prefix={fragment_prefix}",
                     f"--associated_palette_fragment_prefix={palette_prefix}",
@@ -583,6 +625,7 @@ class TestRasterMtParity(unittest.TestCase):
                     "--rotation=0",
                     "--threads=1",
                     f"--input_manifest={manifest_path}",
+                    f"--step_count={step_count}",
                     *self._single_metric_program_args("centroid_re", 0, 2000),
                     f"--fragment_prefix={fragment_prefix}",
                     f"--step_scores_output={step_scores_path}",
@@ -628,6 +671,7 @@ class TestRasterMtParity(unittest.TestCase):
                     "--rotation=0",
                     "--threads=1",
                     f"--input_manifest={manifest_path}",
+                    f"--step_count={step_count}",
                     *self._single_metric_program_args("centroid_re", -1, 1),
                     f"--fragment_prefix={fragment_prefix}",
                     f"--step_scores_output={step_scores_path}",
@@ -645,6 +689,100 @@ class TestRasterMtParity(unittest.TestCase):
                 server.shutdown()
                 server.server_close()
                 thread.join(timeout=5)
+
+    def test_score_output_normalization_expands_step_score_bytes(self):
+        step_count = 2
+        degree = 1
+        roots = [0.2, 0.0, 0.4, 0.0]
+
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            roots_path = self._write_float_file(root / "roots.bin", roots)
+            out_prefix = root / "pix"
+            step_scores_path = root / "step_scores.raw"
+            fragment_prefix = root / "fragment"
+            server, thread = self._serve_dir(root)
+            try:
+                manifest_path = self._write_single_span_manifest(
+                    root / "roots_manifest.json",
+                    file_name=roots_path.name,
+                    port=server.server_address[1],
+                    row_bytes=degree * 2 * 4,
+                    solve_count=step_count,
+                )
+                cmd = [
+                    str(self._binary),
+                    str(out_prefix),
+                    "--pix=8",
+                    *self._bounds_args(8, 8, 0.0, 0.0, 1.0),
+                    f"--degree={degree}",
+                    "--rotation=0",
+                    "--threads=1",
+                    f"--input_manifest={manifest_path}",
+                    f"--step_count={step_count}",
+                    *self._single_metric_program_args("centroid_re", 0, 1),
+                    "--score_output_normalize=1",
+                    "--score_output_clip_lo=0.2",
+                    "--score_output_clip_hi=0.4",
+                    f"--fragment_prefix={fragment_prefix}",
+                    f"--step_scores_output={step_scores_path}",
+                    "--retries=1",
+                ]
+
+                result = self._run_binary(cmd)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(step_scores_path.read_bytes(), bytes([1, 255]))
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+
+    def test_score_output_normalization_disabled_matches_default_bytes(self):
+        roots = [0.2, 0.0, 0.4, 0.0]
+
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            _, default_bytes = self._run_centroid_re_score_bytes(
+                root,
+                roots,
+                label="default",
+            )
+            _, disabled_bytes = self._run_centroid_re_score_bytes(
+                root,
+                roots,
+                label="disabled",
+                extra_args=[
+                    "--score_output_normalize=0",
+                    "--score_output_clip_lo=0.2",
+                    "--score_output_clip_hi=0.4",
+                ],
+            )
+
+        self.assertEqual(disabled_bytes, default_bytes)
+
+    def test_score_output_normalization_degenerate_range_warns_and_uses_identity(self):
+        roots = [0.2, 0.0, 0.4, 0.0]
+
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            _, default_bytes = self._run_centroid_re_score_bytes(
+                root,
+                roots,
+                label="default_degenerate",
+            )
+            result, degenerate_bytes = self._run_centroid_re_score_bytes(
+                root,
+                roots,
+                label="degenerate",
+                extra_args=[
+                    "--score_output_normalize=1",
+                    "--score_output_clip_lo=0.4",
+                    "--score_output_clip_hi=0.4",
+                ],
+            )
+
+        self.assertEqual(degenerate_bytes, default_bytes)
+        self.assertIn("solve_score_output_normalize: degenerate range [0.4,0.4], using identity", result.stderr)
 
     def test_moebius_all_zero_params_plots_nothing(self):
         step_count = 3
@@ -683,6 +821,7 @@ class TestRasterMtParity(unittest.TestCase):
                     "--rotation=0",
                     "--threads=1",
                     f"--input_manifest={manifest_path}",
+                    f"--step_count={step_count}",
                     *self._single_metric_program_args("proximity", 0, 1),
                     f"--fragment_prefix={fragment_prefix}",
                     "--retries=1",

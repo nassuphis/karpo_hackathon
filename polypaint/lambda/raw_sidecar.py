@@ -33,6 +33,21 @@ def _coerce_finite_float(value, label):
     return number
 
 
+def _normalize_boolish(value, label, *, default=False):
+    if value in ("", None):
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off"):
+        return False
+    raise RuntimeError(f"{label} must be boolean-like, got {value!r}")
+
+
 def _parse_chain(value):
     if value in ("", None):
         return []
@@ -142,6 +157,9 @@ def build_raw_sidecar(
     score_chain,
     score_program,
     clip_slots,
+    score_output_normalize=False,
+    score_output_clip_lo=0.0,
+    score_output_clip_hi=1.0,
     background_color,
     plan_params_digest,
     render_execution,
@@ -180,6 +198,13 @@ def build_raw_sidecar(
         "score_chain": _parse_chain(score_chain),
         "score_program": score_program,
         "clip_slots": _normalize_clip_slots(clip_slots),
+        "score_output_normalize": _normalize_boolish(
+            score_output_normalize,
+            "score_output_normalize",
+            default=False,
+        ),
+        "score_output_clip_lo": _coerce_finite_float(score_output_clip_lo, "score_output_clip_lo"),
+        "score_output_clip_hi": _coerce_finite_float(score_output_clip_hi, "score_output_clip_hi"),
         "background_color": _normalize_background_color(background_color),
         "plan_params_digest": str(plan_params_digest or "").strip(),
         "render_execution": dict(render_execution or {}),
@@ -252,6 +277,19 @@ def validate_raw_sidecar(sidecar, *, expected_raw_key=None, expected_artifact_fa
         "score_chain": _parse_chain(sidecar.get("score_chain")),
         "score_program": str(sidecar.get("score_program") or "").strip(),
         "clip_slots": _normalize_clip_slots(sidecar.get("clip_slots")),
+        "score_output_normalize": _normalize_boolish(
+            sidecar.get("score_output_normalize", False),
+            "score_output_normalize",
+            default=False,
+        ),
+        "score_output_clip_lo": _coerce_finite_float(
+            sidecar.get("score_output_clip_lo", 0.0),
+            "score_output_clip_lo",
+        ),
+        "score_output_clip_hi": _coerce_finite_float(
+            sidecar.get("score_output_clip_hi", 1.0),
+            "score_output_clip_hi",
+        ),
         "background_color": _normalize_background_color(sidecar.get("background_color")),
         "plan_params_digest": str(sidecar.get("plan_params_digest") or "").strip(),
         "render_execution": dict(sidecar.get("render_execution") or {}),

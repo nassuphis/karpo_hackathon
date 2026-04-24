@@ -11,6 +11,7 @@
  *   --mode=clip      Compute score array, sort, emit clip bounds (quantiles).
  *   --mode=hist      Compute per-solve scores, emit 100-bin histogram using given clip bounds.
  *   --mode=summary   Compute full debug summary: quantiles, stats, clip, occupancy, actual 10 solve-score color bins.
+ *                    With --score_output_normalize=1, raw_bin_counts are over the q05/q95-normalized output.
  *
  * Usage:
  *   solve_proximity_stats input.bin --mode=clip --degree=D [--metric=proximity] [--quantile_lo=0.001] [--quantile_hi=0.999] [--root_xforms=file.json]
@@ -825,6 +826,7 @@ int main(int argc, char **argv) {
     const char *scoreCoeffsFile = getArgStr(argc, argv, "--score_coeffs_file", NULL);
     const char *scoreParamsFile = getArgStr(argc, argv, "--score_params_file", NULL);
     int scoreCoeffDegree = getArgInt(argc, argv, "--score_coeff_degree", 0);
+    int scoreOutputNormalize = getArgInt(argc, argv, "--score_output_normalize", 0);
 
     if (degree < 1 || degree > MAXDEG) {
         fprintf(stderr, "Invalid degree: %d (must be 1-%d)\n", degree, MAXDEG);
@@ -1150,8 +1152,11 @@ int main(int argc, char **argv) {
 
         /* ---- Raw score histogram over score space before clip/transfer/final bins ---- */
         int rawHistBins = 32;
-        double rawHistLo = useScoreProgram ? 0.0 : minScore;
-        double rawHistHi = useScoreProgram ? 1.0 : maxScore;
+        double scoreOutputClipLo = q05;
+        double scoreOutputClipHi = q95;
+        int rawHistScoreOutputNormalize = scoreOutputNormalize && scoreOutputClipHi - scoreOutputClipLo > 1e-12;
+        double rawHistLo = rawHistScoreOutputNormalize ? 0.0 : (useScoreProgram ? 0.0 : minScore);
+        double rawHistHi = rawHistScoreOutputNormalize ? 1.0 : (useScoreProgram ? 1.0 : maxScore);
         int rawHistExpanded = 0;
         if (rawHistHi - rawHistLo < 1e-12) {
             rawHistLo -= 0.5;
@@ -1169,7 +1174,9 @@ int main(int argc, char **argv) {
             return 1;
         }
         for (long s = 0; s < nSolves; s++) {
-            double raw = useScoreProgram ? solve_score_clamp_unit(scores[s]) : scores[s];
+            double raw = rawHistScoreOutputNormalize
+                ? solve_score_clamp_unit((scores[s] - scoreOutputClipLo) / (scoreOutputClipHi - scoreOutputClipLo))
+                : (useScoreProgram ? solve_score_clamp_unit(scores[s]) : scores[s]);
             double u = (raw - rawHistLo) / rawHistRange;
             if (u < 0) u = 0;
             if (u > 1) u = 1;
@@ -1341,8 +1348,11 @@ int main(int argc, char **argv) {
         printf("\"raw_hist_bins\":%d,\"raw_hist_lo\":%.15g,\"raw_hist_hi\":%.15g,\"raw_hist_range\":%.15g,",
                rawHistBins, rawHistLo, rawHistHi, rawHistRange);
         printf("\"raw_hist_space\":\"%s\",\"raw_hist_expanded\":%s,",
-               useScoreProgram ? "program_output" : "metric_raw",
+               rawHistScoreOutputNormalize ? "score_output_normalized" : (useScoreProgram ? "program_output" : "metric_raw"),
                rawHistExpanded ? "true" : "false");
+        printf("\"raw_hist_score_output_normalize\":%s,", rawHistScoreOutputNormalize ? "true" : "false");
+        printf("\"raw_hist_score_output_clip_lo\":%.15g,\"raw_hist_score_output_clip_hi\":%.15g,",
+               scoreOutputClipLo, scoreOutputClipHi);
         printf("\"raw_bin_counts\":[");
         for (int k = 0; k < rawHistBins; k++) { if (k) printf(","); printf("%ld", rawHist[k]); }
         printf("],\"raw_bin_fracs\":[");

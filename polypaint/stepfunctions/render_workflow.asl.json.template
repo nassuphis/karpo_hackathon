@@ -102,6 +102,7 @@
               "job_id.$": "$.job_id",
               "degree.$": "$.plan.calc.degree",
               "solve_score_chain.$": "$.plan.solve_score.chain",
+              "solve_score_normalize.$": "$.plan.solve_score.normalize",
               "solve_score_threads.$": "$.plan.solve_score.threads",
               "lores_bin_key.$": "$.plan.calc.lores_bin_key",
                 "lores_coeffs_key.$": "$.plan.calc.lores_coeffs_key",
@@ -248,6 +249,9 @@
                 "plan_params_digest.$": "$.plan.outputs.plan_params_digest",
                 "clip_slots.$": "$.solve_score_clip.parsed.clip_slots",
                 "score_program.$": "$.solve_score_clip.parsed.score_program",
+                "score_output_normalize.$": "$.solve_score_clip.parsed.score_output_normalize",
+                "score_output_clip_lo.$": "$.solve_score_clip.parsed.score_output_clip_lo",
+                "score_output_clip_hi.$": "$.solve_score_clip.parsed.score_output_clip_hi",
                 "chain_fingerprint.$": "$.solve_score_clip.parsed.chain_fingerprint",
                 "fragment_prefix.$": "$.plan.outputs.fragment_prefix",
                 "fragment_manifest": {

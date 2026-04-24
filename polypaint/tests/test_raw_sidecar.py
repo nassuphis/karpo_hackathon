@@ -22,6 +22,9 @@ class TestRawSidecar(unittest.TestCase):
             score_chain=[["crowding", "0.1"]],
             score_program="m0",
             clip_slots=[{"slot": 0, "metric": "crowding", "source": "slv", "clip_lo": 0.1, "clip_hi": 0.9}],
+            score_output_normalize=True,
+            score_output_clip_lo=0.02,
+            score_output_clip_hi=0.08,
             background_color="000000",
             plan_params_digest="sha256:plan",
             render_execution={"raster_engine": "mt"},
@@ -37,6 +40,9 @@ class TestRawSidecar(unittest.TestCase):
         )
         self.assertEqual(sidecar["version"], 3)
         self.assertEqual(sidecar["pix"], 4)
+        self.assertEqual(sidecar["score_output_normalize"], True)
+        self.assertEqual(sidecar["score_output_clip_lo"], 0.02)
+        self.assertEqual(sidecar["score_output_clip_hi"], 0.08)
         validated = validate_raw_sidecar(
             sidecar,
             expected_raw_key="renders/j/color/color_1/greyscale.raw",
@@ -47,6 +53,9 @@ class TestRawSidecar(unittest.TestCase):
         self.assertEqual(validated["step_scores_key"], "renders/j/color/color_1/step_scores.raw")
         self.assertEqual(validated["step_count"], 9)
         self.assertEqual(validated["step_scores_grid_n"], 3)
+        self.assertEqual(validated["score_output_normalize"], True)
+        self.assertEqual(validated["score_output_clip_lo"], 0.02)
+        self.assertEqual(validated["score_output_clip_hi"], 0.08)
 
     def test_validate_v3_requires_step_score_fields(self):
         sidecar = build_raw_sidecar(

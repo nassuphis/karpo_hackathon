@@ -1130,6 +1130,84 @@ def test_roots2pix_mt_lagged_score_runtime():
     print("=== roots2pix_mt lagged solve-score runtime PASSED ===")
 
 
+def test_roots2pix_mt_score_output_normalization_runtime():
+    print("\n--- roots2pix_mt score output normalization runtime ---")
+
+    bin_path = "/src/roots2pix_mt"
+    roots_path = "/tmp/roots2pix_mt_norm_roots.bin"
+    manifest_path = "/tmp/roots2pix_mt_norm_manifest.json"
+    fragment_prefix = "/tmp/roots2pix_mt_norm_fragment"
+    step_scores_path = "/tmp/roots2pix_mt_norm_step_scores.bin"
+    cleanup(roots_path, manifest_path, fragment_prefix + ".frag", step_scores_path)
+
+    roots_bytes = bytearray()
+    for re_val, im_val in [(0.2, 0.0), (0.4, 0.0)]:
+        roots_bytes.extend(struct.pack("<ff", re_val, im_val))
+    with open(roots_path, "wb") as f:
+        f.write(roots_bytes)
+
+    _RangeHandler.file_bytes = bytes(roots_bytes)
+    with socketserver.TCPServer(("127.0.0.1", 0), _RangeHandler) as httpd:
+        port = httpd.server_address[1]
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                json.dump({
+                    "source_family": "slv",
+                    "logical_size": len(roots_bytes),
+                    "row_bytes": 8,
+                    "solve_start": 0,
+                    "solve_count": 2,
+                    "sources": [{
+                        "id": 0,
+                        "url": "http://127.0.0.1:%d/input.bin" % port,
+                        "key": "input.bin",
+                    }],
+                    "spans": [{
+                        "source_id": 0,
+                        "logical_byte_start": 0,
+                        "byte_start": 0,
+                        "byte_length": len(roots_bytes),
+                    }],
+                }, f)
+
+            r = subprocess.run([
+                bin_path,
+                "/tmp/roots2pix_mt_norm_pix",
+                "--pix=8",
+                "--min_re=-1",
+                "--max_re=1",
+                "--min_im=-1",
+                "--max_im=1",
+                "--degree=1",
+                "--rotation=0",
+                "--threads=1",
+                "--step_count=2",
+                "--input_manifest=" + manifest_path,
+                "--retries=2",
+                "--score_metrics=centroid_re",
+                "--score_clip_los=0",
+                "--score_clip_his=1",
+                "--score_program=m0-0",
+                "--score_output_normalize=1",
+                "--score_output_clip_lo=0.2",
+                "--score_output_clip_hi=0.4",
+                "--fragment_prefix=" + fragment_prefix,
+                "--step_scores_output=" + step_scores_path,
+            ], capture_output=True, text=True, timeout=10)
+            assert r.returncode == 0, "roots2pix_mt score normalization failed: " + r.stderr[:200]
+            with open(step_scores_path, "rb") as f:
+                assert list(f.read()) == [1, 255], "score output normalization did not expand bytes"
+            print("  roots2pix_mt score output normalization: OK")
+        finally:
+            httpd.shutdown()
+            thread.join(timeout=5)
+
+    cleanup(roots_path, manifest_path, fragment_prefix + ".frag", step_scores_path)
+    print("=== roots2pix_mt score output normalization runtime PASSED ===")
+
+
 # ── Render Preview (vipsthumbnail) Tests ─────────────────────────────────
 
 def test_render_preview():
@@ -1938,6 +2016,28 @@ def test_solve_proximity_stats():
     assert summary["min_score"] == 0.0
     print("  score program m0-0;m0-1;abs_diff: OK")
 
+    r = subprocess.run(
+        [
+            sps_path,
+            sps_bin,
+            "--mode=summary",
+            "--degree=2",
+            "--score_metrics=proximity",
+            "--score_clip_los=" + str(clip["clip_lo"]),
+            "--score_clip_his=" + str(clip["clip_hi"]),
+            "--score_program=m0-0",
+            "--score_output_normalize=1",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert r.returncode == 0, "score-output normalized summary failed: " + r.stderr[:200]
+    summary = json.loads(r.stdout)
+    assert summary["raw_hist_space"] == "score_output_normalized"
+    assert summary["raw_hist_score_output_normalize"] is True
+    print("  score-output normalized raw histogram: OK")
+
     # 4. Clusteriness clip (v2 metric)
     r = subprocess.run([sps_path, sps_bin, "--mode=clip", "--degree=2", "--metric=clusteriness"],
                        capture_output=True, text=True, timeout=10)
@@ -2060,6 +2160,7 @@ if __name__ == "__main__":
     test_palette_chunk_mt_lagged_multispan_runtime()
     test_roots2pix_mt_multispan_runtime()
     test_roots2pix_mt_lagged_score_runtime()
+    test_roots2pix_mt_score_output_normalization_runtime()
     test_render_preview()
     test_resize_runtime()
     test_bilevel_section_raster_runtime()

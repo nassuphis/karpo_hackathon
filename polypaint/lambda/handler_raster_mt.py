@@ -146,6 +146,22 @@ def _solve_score_program_args(score_artifact):
     return args
 
 
+def _solve_score_output_args(score_artifact):
+    enabled = parse_boolish(
+        score_artifact.get("score_output_normalize", False),
+        False,
+        strict=True,
+        label="score_output_normalize",
+    )
+    clip_lo = _coerce_finite_float(score_artifact.get("score_output_clip_lo", 0.0), "score_output_clip_lo")
+    clip_hi = _coerce_finite_float(score_artifact.get("score_output_clip_hi", 1.0), "score_output_clip_hi")
+    return [
+        f"--score_output_normalize={1 if enabled else 0}",
+        f"--score_output_clip_lo={clip_lo}",
+        f"--score_output_clip_hi={clip_hi}",
+    ]
+
+
 def _solve_score_artifact_uses_source(score_artifact, source):
     for metric in (score_artifact.get("metrics") or []):
         if str(metric.get("source", "slv")).strip().lower() == source:
@@ -239,6 +255,7 @@ def _build_cmd(params):
                 )
 
     cmd.extend(_solve_score_program_args(score_artifact))
+    cmd.extend(_solve_score_output_args(score_artifact))
 
     if _solve_score_artifact_uses_source(score_artifact, "cf"):
         n_coeffs = params.get("n_coeffs")

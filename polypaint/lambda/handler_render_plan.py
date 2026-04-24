@@ -51,13 +51,14 @@ DEFAULT_BACKGROUND_COLOR = "000000"
 DEFAULT_BACKGROUND_THRESHOLD = 4
 
 
-def _plan_params_digest(*, viewport, pix, root_transforms=None):
+def _plan_params_digest(*, viewport, pix, root_transforms=None, solve_score_normalize=False):
     grid = {"pix": int(pix)}
     payload = {
         "viewport": viewport,
         "grid": grid,
         "params": {
             "root_transforms": root_transforms or [],
+            "solve_score_normalize": bool(solve_score_normalize),
         },
         "raster_binary_sha256": str(os.environ.get("RASTER_BINARY_SHA256") or ""),
     }
@@ -107,17 +108,18 @@ def _associated_palette_display_name(chain, metric, quantile, palette):
     return " ".join(part for part in parts if part)
 
 
-def _solve_score_scratch_key(job_id, compiled, root_transforms):
+def _solve_score_scratch_key(job_id, compiled, root_transforms, score_normalize=False):
     rt_json = json.dumps(root_transforms or [], separators=(",", ":"))
     rt_hash = hashlib.sha1(rt_json.encode("utf-8")).hexdigest()[:8]
+    norm_suffix = "_sn1" if score_normalize else ""
     if compiled:
         metric_slug = str(compiled["metric"] or "score").replace(" ", "_")
         if compiled["legacy_compatible"]:
-            prefix = f"renders/{job_id}/solve_scores/{metric_slug}_rt{rt_hash}/"
+            prefix = f"renders/{job_id}/solve_scores/{metric_slug}{norm_suffix}_rt{rt_hash}/"
         else:
             encoded_chain = serialize_solve_score_chain(compiled["chain"])
             chain_id = hashlib.sha1(encoded_chain.encode("utf-8")).hexdigest()[:12]
-            prefix = f"renders/{job_id}/solve_scores/{metric_slug}_{chain_id}_rt{rt_hash}/"
+            prefix = f"renders/{job_id}/solve_scores/{metric_slug}_{chain_id}{norm_suffix}_rt{rt_hash}/"
     else:
         prefix = f"renders/{job_id}/solve_scores/inactive_rt{rt_hash}/"
     return prefix + "clip.json"
@@ -317,6 +319,7 @@ def _build_fused_color_plan(
         "solve_score_threads": "",
         "finalize_workers": 16,
         "solve_score_chain": "",
+        "solve_score_normalize": False,
         "save_associated_palette": False,
     }
     for key, default in defaults.items():
@@ -408,6 +411,12 @@ def _build_fused_color_plan(
     solve_score_uses_coeff = bool(solve_score_uses_source(solve_score_compiled, "cf"))
     solve_score_uses_param = bool(solve_score_uses_source(solve_score_compiled, "pm"))
     solve_score_prelude = solve_score_lag_prelude_by_source(solve_score_compiled)
+    solve_score_normalize = _validate_boolish(
+        fused_params.get("solve_score_normalize", False),
+        "solve_score_normalize",
+        False,
+    )
+    fused_params["solve_score_normalize"] = solve_score_normalize
     fused_params["solve_score_chain"] = solve_score_chain
 
     pix = fused_params["pix"]
@@ -448,6 +457,7 @@ def _build_fused_color_plan(
         job_id,
         solve_score_compiled,
         fused_params.get("root_transforms", []),
+        score_normalize=solve_score_normalize,
     )
     solve_score = {
         "enabled": True,
@@ -457,6 +467,7 @@ def _build_fused_color_plan(
         "uses_lag": bool(solve_score_compiled.get("uses_lag")),
         "max_lag": int(solve_score_compiled.get("max_lag") or 0),
         "prelude_by_source": solve_score_prelude,
+        "normalize": solve_score_normalize,
     }
 
     finalize = {
@@ -575,6 +586,7 @@ def _build_fused_color_plan(
         "format": "jpeg" if fused_params.get("fmt", "jpeg") != "png" else "png",
         "quality": str(fused_params.get("quality", 90)),
         "color_mode": "solve_score",
+        "solve_score_normalize": "true" if solve_score_normalize else "false",
         "match_mode": "none",
         "palette": palette,
         "background_color": DEFAULT_BACKGROUND_COLOR,
@@ -621,6 +633,7 @@ def _build_fused_color_plan(
         viewport=viewport,
         pix=pix,
         root_transforms=fused_params.get("root_transforms", []),
+        solve_score_normalize=solve_score_normalize,
     )
     ext = "png" if fused_params.get("fmt", "jpeg") == "png" else "jpeg"
     outputs = {

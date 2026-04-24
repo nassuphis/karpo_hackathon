@@ -189,8 +189,8 @@ def _validate_omega(value):
         omega = float(value)
     except (TypeError, ValueError):
         raise RuntimeError(f"solve_score_omega must be numeric, got {value!r}")
-    if not (1.0 <= omega <= 10.0):
-        raise RuntimeError(f"solve_score_omega must be in [1, 10], got {omega}")
+    if not (omega == omega and abs(omega) != float("inf")):
+        raise RuntimeError(f"solve_score_omega must be finite, got {value!r}")
     return omega
 
 

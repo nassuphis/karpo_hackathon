@@ -238,8 +238,6 @@ static double apply_solve_score_omega(double u, double omega, double phase) {
     if (u < 0.0) u = 0.0;
     if (u > 1.0) u = 1.0;
     if (!isfinite(omega)) omega = 1.0;
-    if (omega < 1.0) omega = 1.0;
-    if (omega > 10.0) omega = 10.0;
     if (!isfinite(phase)) phase = 0.0;
     return 0.5 * (cos(omega * 2.0 * M_PI * u + phase) + 1.0);
 }
@@ -973,23 +971,20 @@ static int parse_solve_score_program_spec(const char *spec, int metricCount,
                 *mid = '\0';
                 omega = strtod(params, &endOmega);
                 phase = strtod(mid + 1, &endPhase);
-                if (!endOmega || *endOmega != '\0' || !endPhase || *endPhase != '\0' || !isfinite(omega) || !isfinite(phase)) {
+                if (!endOmega || endOmega == params || *endOmega != '\0' ||
+                    !endPhase || endPhase == mid + 1 || *endPhase != '\0' ||
+                    !isfinite(omega) || !isfinite(phase)) {
                     snprintf(err, errCap, "omega_cosine requires numeric omega and phase parameters");
                     free(copy);
                     return 0;
                 }
             } else {
                 omega = strtod(params, &endOmega);
-                if (!endOmega || *endOmega != '\0' || !isfinite(omega)) {
+                if (!endOmega || endOmega == params || *endOmega != '\0' || !isfinite(omega)) {
                     snprintf(err, errCap, "omega_cosine requires a numeric omega parameter");
                     free(copy);
                     return 0;
                 }
-            }
-            if (omega < 1.0 || omega > 10.0) {
-                snprintf(err, errCap, "omega_cosine omega must be in [1, 10]");
-                free(copy);
-                return 0;
             }
             token.op = SOLVE_SCORE_OP_OMEGA_COSINE;
             token.a = omega;

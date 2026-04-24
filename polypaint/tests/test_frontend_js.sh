@@ -149,6 +149,8 @@ assertIncludes("solveScoreNormalize: !!document.getElementById('render-score-nor
 assertIncludes("solve_score_normalize: !!p.solveScoreNormalize,", 'fused render payload should forward score normalization flag');
 assertIncludes("score normalization: lo=${fmt(s.score_output_clip_lo)}  hi=${fmt(s.score_output_clip_hi)}", 'histogram output should report score normalization range');
 assertIncludes("if (s.raw_hist_space === 'score_output_normalized') rawLabel = 'score-output normalized program output';", 'histogram raw bins should label score-output normalized space');
+assertIncludes("omega_cosine requires one finite numeric omega", 'omega_cosine frontend validation should not cap frequency at 10');
+assertNotIncludes("omega_cosine requires one numeric omega in [1, 10]", 'omega_cosine frontend validation should not retain old [1,10] range');
 assertIncludes("id=\"palette-solve-score-program-manage\" onclick=\"openSolveScoreProgramModal('palette')\"", 'palette tab should expose Solve Scores modal launcher');
 assertIncludes("id=\"solve-score-modal-overlay\"", 'shared solve-score modal markup missing');
 assertIncludes("id=\"solve-score-modal-name\"", 'solve-score modal name input missing');

@@ -699,6 +699,73 @@ def test_summary_score_normalization_reports_quantile_range():
         hsp.subprocess.run = orig_run
 
 
+def test_summary_score_normalization_uses_program_output_for_omega_chip():
+    import handler_solve_proximity as hsp
+
+    mock_s3 = mock.MagicMock()
+
+    def mock_get(**kwargs):
+        key = kwargs.get("Key", "")
+        if key == "renders/test/lores.bin":
+            return {"Body": _ChunkBody(b"\x00" * 64)}
+        raise AssertionError(f"unexpected get_object key: {key}")
+
+    mock_s3.get_object = mock_get
+    clip_stdout = json.dumps({
+        "clip_lo": -10.0,
+        "clip_hi": 10.0,
+        "min_score": -10.0,
+        "max_score": 10.0,
+        "n_solves": 4,
+        "threads": 1,
+    })
+    summary_stdout = json.dumps({
+        "min_score": 0.0,
+        "q05": 0.20,
+        "q95": 0.80,
+        "max_score": 1.0,
+        "n_solves": 4,
+        "degree": 4,
+        "threads": 1,
+    })
+    calls = []
+
+    def mock_run(cmd, capture_output, text, timeout):
+        calls.append(list(cmd))
+        if "--mode=clip" in cmd:
+            return mock.MagicMock(returncode=0, stdout=clip_stdout, stderr="")
+        if "--mode=summary" in cmd:
+            return mock.MagicMock(returncode=0, stdout=summary_stdout, stderr="")
+        raise AssertionError(f"unexpected subprocess command: {cmd}")
+
+    orig_s3, orig_run = hsp.s3, hsp.subprocess.run
+    hsp.s3 = mock_s3
+    hsp.subprocess.run = mock_run
+    try:
+        result = hsp.handle_summary({
+            "job_id": "test",
+            "degree": 4,
+            "metric": "proximity",
+            "solve_score_quantile": 0.001,
+            "solve_score_chain": [["proximity", "slv", "0.1"], ["omega_cosine", "25"]],
+            "solve_score_normalize": True,
+            "lores_bin_key": "renders/test/lores.bin",
+        })
+        body = json.loads(result["body"])
+        summary_cmd = next(cmd for cmd in calls if "--mode=summary" in cmd)
+        assert any(arg.startswith("--score_program=m0-0;omega_cosine:25") for arg in summary_cmd)
+        assert "--score_clip_los=-10" in summary_cmd
+        assert "--score_clip_his=10" in summary_cmd
+        assert body["score_output_normalize"] is True
+        assert body["score_output_clip_lo"] == 0.20
+        assert body["score_output_clip_hi"] == 0.80
+        assert body["metrics"][0]["clip_lo"] == -10.0
+        assert body["metrics"][0]["clip_hi"] == 10.0
+    finally:
+        hsp.s3 = orig_s3
+        hsp.subprocess.run = orig_run
+
+
 def test_clip_lagged_program_preserves_spec_without_native_program_args():
     import handler_solve_proximity as hsp
 

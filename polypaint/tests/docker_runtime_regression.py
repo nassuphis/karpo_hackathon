@@ -1974,7 +1974,7 @@ def test_solve_proximity_stats():
         assert summary["n_solves"] == 3
         print(f"  score program {program}: OK")
 
-    for program in ["m0-0;flip", "m0-0;sawtooth:10", "m0-0;omega_cosine:3:1.57079632679"]:
+    for program in ["m0-0;flip", "m0-0;sawtooth:10", "m0-0;omega_cosine:3:1.57079632679", "m0-0;omega_cosine:25:0.25"]:
         r = subprocess.run(
             [
                 sps_path,
@@ -1994,6 +1994,30 @@ def test_solve_proximity_stats():
         summary = json.loads(r.stdout)
         assert summary["n_solves"] == 3
         print(f"  score program {program}: OK")
+
+    def _score_program_summary(program):
+        r = subprocess.run(
+            [
+                sps_path,
+                sps_bin,
+                "--mode=summary",
+                "--degree=2",
+                "--score_metrics=proximity",
+                "--score_clip_los=" + str(clip["clip_lo"]),
+                "--score_clip_his=" + str(clip["clip_hi"]),
+                "--score_program=" + program,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert r.returncode == 0, f"{program} summary failed: " + r.stderr[:200]
+        return json.loads(r.stdout)
+
+    omega10 = _score_program_summary("m0-0;omega_cosine:10:0.25")
+    omega25 = _score_program_summary("m0-0;omega_cosine:25:0.25")
+    assert abs(omega10["mean_score"] - omega25["mean_score"]) > 1e-6, "omega_cosine frequency appears clamped at 10"
+    print("  score program omega_cosine uncapped frequency: OK")
 
     r = subprocess.run(
         [

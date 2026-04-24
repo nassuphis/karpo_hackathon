@@ -4101,10 +4101,11 @@ function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuan
             if (item.params.length !== 1 && item.params.length !== 2) {
                 throw new Error('omega_cosine requires one omega parameter and an optional phase parameter');
             }
-            const rawOmega = Number(item.params[0]);
+            const omegaText = String(item.params[0] ?? '').trim();
+            const rawOmega = Number(omegaText);
             const rawPhase = item.params.length > 1 ? Number(item.params[1]) : 0;
-            if (!Number.isFinite(rawOmega) || rawOmega < 1 || rawOmega > 10) {
-                throw new Error('omega_cosine requires one numeric omega in [1, 10]');
+            if (!omegaText || !Number.isFinite(rawOmega)) {
+                throw new Error('omega_cosine requires one finite numeric omega');
             }
             if (!Number.isFinite(rawPhase)) {
                 throw new Error('omega_cosine requires one numeric phase');
@@ -11158,9 +11159,6 @@ async function runSolveScoreHistogramDebug() {
 
         // Build the full log block as a <pre> for fixed-width alignment
         const lines = [];
-        const omegaUsed = Number.isFinite(Number(s.omega)) ? Number(s.omega) : p.solveScoreOmega;
-        const phaseUsed = Number.isFinite(Number(s.omega_phase)) ? Number(s.omega_phase) : p.solveScoreOmegaPhase;
-        const omegaEnabled = s.omega_enabled !== undefined ? !!s.omega_enabled : p.solveScoreOmegaEnabled;
         const summaryProgram = String(s.program || p.solveScoreProgramSpec || 'm0');
         const summaryMetrics = Array.isArray(s.score_metrics) && Array.isArray(s.score_quantiles)
             ? (() => {
@@ -11178,11 +11176,6 @@ async function runSolveScoreHistogramDebug() {
         if (summaryMetrics) lines.push(`  metrics: ${summaryMetrics}`);
         if (s.solve_score_display) lines.push(`  chain: ${s.solve_score_display}`);
         lines.push(`  lores-only debug; raw score bins are pre-clip, final color bins mirror the actual 10 solve-score bins`);
-        if (omegaEnabled) {
-            lines.push(`  transfer: cosine omega=${omegaUsed.toFixed(0)} phase=${Number(phaseUsed).toFixed(3)} (non-monotone; score-space bin ranges are only approximate)`);
-        } else {
-            lines.push(`  transfer: identity (omega off)`);
-        }
         lines.push(`  min=${fmt(s.min_score)}  p05=${fmt(s.q05)}  p10=${fmt(s.q10)}  p25=${fmt(s.q25)}  p50=${fmt(s.q50)}  p75=${fmt(s.q75)}  p90=${fmt(s.q90)}  p95=${fmt(s.q95)}  max=${fmt(s.max_score)}`);
         lines.push(`  mean=${fmt(s.mean_score)}  std=${fmt(s.stddev_score)}`);
         lines.push(`  clip[q..1-q]: lo=${fmt(s.clip_lo)}  hi=${fmt(s.clip_hi)}  width=${fmt(s.clip_range)} / full=${fmt(s.full_range)}`);

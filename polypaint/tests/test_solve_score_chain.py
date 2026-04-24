@@ -93,6 +93,21 @@ class TestSolveScoreChain(unittest.TestCase):
         self.assertAlmostEqual(compiled["omega_phase"], 1.57079632679)
         self.assertFalse(compiled["legacy_compatible"])
 
+    def test_compile_chain_accepts_uncapped_transfer_frequency(self):
+        from solve_score_chain import compile_solve_score_chain
+
+        compiled = compile_solve_score_chain(
+            [
+                ["proximity", "1"],
+                ["omega_cosine", "25", "0.25"],
+            ]
+        )
+
+        self.assertEqual(compiled["program_spec"], "m0-0;omega_cosine:25:0.25")
+        self.assertEqual(compiled["display"], "proximity(q=1%) ω-cos(25,0.25)")
+        self.assertEqual(compiled["omega"], 25.0)
+        self.assertAlmostEqual(compiled["omega_phase"], 0.25)
+
     def test_compile_chain_accepts_sawtooth_and_flip_unary_ops(self):
         from solve_score_chain import compile_solve_score_chain
 

@@ -306,6 +306,18 @@ def _compile_request_chain(params, metric, *, default_metric="proximity"):
     )
 
 
+def _summary_can_use_metric_legacy(compiled, raw_chain):
+    if raw_chain in ("", None, []):
+        return bool(compiled.get("legacy_compatible"))
+    tokens = compiled.get("program_tokens") or []
+    return (
+        bool(compiled.get("legacy_compatible"))
+        and len(tokens) == 1
+        and tokens[0].get("kind") == "metric"
+        and int(tokens[0].get("lag", 0) or 0) == 0
+    )
+
+
 def _reject_lagged_unsupported_phase(compiled, phase):
     if compiled.get("uses_lag"):
         raise RuntimeError(f"lagged solve-score refs are not supported by {phase} in v1")
@@ -498,8 +510,8 @@ def _validate_omega(value):
         omega = float(value)
     except (TypeError, ValueError):
         raise RuntimeError(f"solve_score_omega must be numeric, got {value!r}")
-    if not (1.0 <= omega <= 10.0):
-        raise RuntimeError(f"solve_score_omega must be in [1, 10], got {omega}")
+    if not (omega == omega and abs(omega) != float("inf")):
+        raise RuntimeError(f"solve_score_omega must be finite, got {value!r}")
     return omega
 
 
@@ -1579,7 +1591,8 @@ def handle_summary(params):
             param_size = _download(lores_params_key, _TMP_PARAM_INPUT)
         dl_ms = int((time.time() - t0) * 1000)
 
-        if compiled["legacy_compatible"]:
+        metric_clips = []
+        if _summary_can_use_metric_legacy(compiled, params.get("solve_score_chain")):
             quantile_lo = compiled["quantile"]
             quantile_hi = 1.0 - compiled["quantile"]
             cmd = [
@@ -1595,7 +1608,6 @@ def handle_summary(params):
                 f"--threads={solve_score_threads}",
             ]
         else:
-            metric_clips = []
             for slot, metric_row in enumerate(compiled["metrics"]):
                 source = metric_row.get("source", "slv")
                 slot_clip = _clip_metric_slot(
@@ -1676,7 +1688,21 @@ def handle_summary(params):
                 "score_output_clip_hi": 1.0,
                 "score_output_clip_source": "identity",
             })
-        if not compiled["legacy_compatible"]:
+        if (
+            compiled["legacy_compatible"]
+            and not metric_clips
+            and summary.get("clip_lo") is not None
+            and summary.get("clip_hi") is not None
+        ):
+            metric_clips = _legacy_metric_clips(
+                compiled["metric"],
+                compiled["quantile"],
+                summary.get("clip_lo"),
+                summary.get("clip_hi"),
+            )
+            for row in metric_clips:
+                row["source"] = compiled["metrics"][0].get("source", "slv")
+        if metric_clips:
             summary["metrics"] = metric_clips
 
         return ok_response(summary)

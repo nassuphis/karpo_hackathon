@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import struct
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
@@ -193,6 +194,204 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         raster_cmd = mock_run.call_args_list[-1][0][0]
         self.assertIn("--score_coeff_degree=3", raster_cmd)
         self.assertTrue(any(arg.startswith("--score_coeff_manifest=") for arg in raster_cmd))
+
+    @patch("handler_render_lores_preview.render_score_raw")
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
+    def test_logical_lores_preview_materializes_hires_subset_to_local_manifest(self, mock_s3, mock_run, mock_render):
+        from handler_render_lores_preview import TMP_FRAGMENT, handler
+
+        roots_key = "renders/j/chunk_0.bin"
+        roots_bytes = bytearray()
+        for idx in range(25):
+            roots_bytes.extend(struct.pack("<ff", float(idx), 0.0))
+        calc = {
+            "N": 5,
+            "times": 1,
+            "degree": 1,
+            "n_coeffs": 2,
+            "lores": {"N": 5, "n_steps": 25},
+            "chunks": [{
+                "idx": 0,
+                "bin_key": roots_key,
+                "step_count": 25,
+                "bin_size": len(roots_bytes),
+            }],
+        }
+
+        def get_object(**kwargs):
+            key = kwargs.get("Key")
+            if key == "renders/j/calc.json":
+                return {"Body": _ChunkBody(json.dumps(calc).encode("utf-8"))}
+            if key == roots_key:
+                body = bytes(roots_bytes)
+                range_hdr = kwargs.get("Range")
+                if range_hdr:
+                    raw = range_hdr[len("bytes="):]
+                    lo, hi = raw.split("-", 1)
+                    body = body[int(lo):int(hi) + 1]
+                return {"Body": _ChunkBody(body)}
+            raise AssertionError(f"unexpected key: {key}")
+
+        mock_s3.get_object.side_effect = get_object
+        seen_local_manifest = {}
+
+        def subprocess_fake(cmd, **kwargs):
+            if "--mode=clip" in cmd:
+                return MagicMock(returncode=0, stdout=json.dumps({
+                    "clip_lo": 0.0,
+                    "clip_hi": 1.0,
+                    "min_score": 0.0,
+                    "max_score": 1.0,
+                    "n_solves": 25,
+                    "threads": 1,
+                }), stderr="")
+            if "--mode=summary" in cmd:
+                return MagicMock(returncode=0, stdout=json.dumps({
+                    "degree": 1,
+                    "n_solves": 25,
+                    "clip_lo": 0.0,
+                    "clip_hi": 1.0,
+                    "min_score": 0.0,
+                    "q05": 0.1,
+                    "q95": 0.9,
+                    "max_score": 1.0,
+                    "threads": 1,
+                }), stderr="")
+            manifest_arg = next(arg for arg in cmd if arg.startswith("--input_manifest="))
+            with open(manifest_arg.split("=", 1)[1], "r", encoding="utf-8") as fh:
+                manifest = json.load(fh)
+            seen_local_manifest["url"] = manifest["sources"][0]["url"]
+            seen_local_manifest["logical_size"] = manifest["logical_size"]
+            with open(TMP_FRAGMENT, "wb") as fh:
+                fh.write((0).to_bytes(4, "little") + bytes([64]))
+            return MagicMock(returncode=0, stdout=json.dumps({"roots_plotted": 1, "roots_clipped": 0}), stderr="")
+
+        def render_fake(**kwargs):
+            with open(kwargs["out_path"], "wb") as fh:
+                fh.write(PNG_1X1)
+            return {"file_size": len(PNG_1X1), "preview_file_size": 0}
+
+        mock_run.side_effect = subprocess_fake
+        mock_render.side_effect = render_fake
+
+        resp = handler(_event(
+            degree=1,
+            n_coeffs=2,
+            logical_lores=True,
+            logical_lores_size=5,
+            lores_bin_key="",
+            solve_score_chain=[["centroid_re", "slv", "0.1"]],
+        ), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        body = json.loads(resp["body"])
+        self.assertEqual(body["source"]["mode"], "logical")
+        self.assertEqual(body["source"]["full_N"], 5)
+        self.assertEqual(body["source"]["view_N"], 5)
+        self.assertEqual(body["n_solves"], 25)
+        self.assertTrue(seen_local_manifest["url"].startswith("file://"))
+        self.assertEqual(seen_local_manifest["logical_size"], 25 * 1 * 2 * 4)
+        self.assertTrue(any("Logical lores materialize:" in line for line in body["logs"]))
+        self.assertFalse(mock_s3.generate_presigned_url.called)
+        self.assertFalse(mock_s3.put_object.called)
+
+    @patch("handler_render_lores_preview.render_score_raw")
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
+    def test_recompute_preview_generates_tmp_params_coeffs_roots(self, mock_s3, mock_run, mock_render):
+        from handler_render_lores_preview import TMP_COEFFS, TMP_FRAGMENT, TMP_PARAMS, TMP_ROOTS, handler
+
+        calc = {
+            "N": 5,
+            "times": 1,
+            "degree": 1,
+            "n_coeffs": 2,
+            "solver": "aberth_mt",
+            "lores": {"N": 5, "n_steps": 25},
+            "pipeline": {
+                "function": "g1",
+                "param_transforms": [],
+                "coeff_transforms": [],
+                "cfpv": [],
+            },
+        }
+
+        def get_object(**kwargs):
+            key = kwargs.get("Key")
+            if key == "renders/j/calc.json":
+                return {"Body": _ChunkBody(json.dumps(calc).encode("utf-8"))}
+            raise AssertionError(f"unexpected key: {key}")
+
+        mock_s3.get_object.side_effect = get_object
+        phases = []
+
+        def subprocess_fake(cmd, **kwargs):
+            stdin = json.loads(kwargs.get("input") or "{}")
+            if stdin.get("mode") == "param_gen":
+                phases.append("param_gen")
+                with open(TMP_PARAMS, "wb") as fh:
+                    fh.write(b"\x00" * (25 * 16))
+                return MagicMock(returncode=0, stdout=json.dumps({"mode": "param_gen", "data_bytes": 25 * 16, "threads": 4}), stderr="")
+            if stdin.get("mode") == "coeffgen_chunked":
+                phases.append("coeffgen")
+                with open(TMP_COEFFS, "wb") as fh:
+                    fh.write(b"\x00" * (25 * 2 * 2 * 4))
+                return MagicMock(returncode=0, stdout=json.dumps({"mode": "coeffgen_chunked", "degree": 1, "n_coeffs": 2, "data_bytes": 25 * 2 * 2 * 4, "threads": 4}), stderr="")
+            if stdin.get("mode") == "solve_mt":
+                phases.append("solve")
+                with open(TMP_ROOTS, "wb") as fh:
+                    fh.write(b"\x00" * (25 * 1 * 2 * 4))
+                return MagicMock(returncode=0, stdout=json.dumps({"mode": "solve_mt", "avg_iterations": 3.0, "n_threads": 4}), stderr="")
+            if "--mode=clip" in cmd:
+                return MagicMock(returncode=0, stdout=json.dumps({
+                    "clip_lo": 0.0,
+                    "clip_hi": 1.0,
+                    "min_score": 0.0,
+                    "max_score": 1.0,
+                    "n_solves": 25,
+                    "threads": 1,
+                }), stderr="")
+            if "--mode=summary" in cmd:
+                return MagicMock(returncode=0, stdout=json.dumps({
+                    "degree": 1,
+                    "n_solves": 25,
+                    "clip_lo": 0.0,
+                    "clip_hi": 1.0,
+                    "min_score": 0.0,
+                    "q05": 0.1,
+                    "q95": 0.9,
+                    "max_score": 1.0,
+                    "threads": 1,
+                }), stderr="")
+            with open(TMP_FRAGMENT, "wb") as fh:
+                fh.write((0).to_bytes(4, "little") + bytes([64]))
+            return MagicMock(returncode=0, stdout=json.dumps({"roots_plotted": 1, "roots_clipped": 0}), stderr="")
+
+        def render_fake(**kwargs):
+            with open(kwargs["out_path"], "wb") as fh:
+                fh.write(PNG_1X1)
+            return {"file_size": len(PNG_1X1), "preview_file_size": 0}
+
+        mock_run.side_effect = subprocess_fake
+        mock_render.side_effect = render_fake
+
+        resp = handler(_event(
+            degree=1,
+            n_coeffs=2,
+            preview_source_mode="recompute",
+            preview_source_size=5,
+            lores_bin_key="",
+            solve_score_chain=[["centroid_re", "slv", "0.1"]],
+        ), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        body = json.loads(resp["body"])
+        self.assertEqual(body["source"]["mode"], "recompute")
+        self.assertEqual(body["source"]["view_N"], 5)
+        self.assertEqual(body["n_solves"], 25)
+        self.assertEqual(phases, ["param_gen", "coeffgen", "solve"])
+        self.assertTrue(any("Recompute preview materialize:" in line for line in body["logs"]))
+        self.assertFalse(mock_s3.generate_presigned_url.called)
+        self.assertFalse(mock_s3.put_object.called)
 
     def test_malformed_body_returns_contextual_json(self):
         from handler_render_lores_preview import handler

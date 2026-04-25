@@ -1237,10 +1237,78 @@ def test_roots2pix_mt_score_output_normalization_runtime():
     print("=== roots2pix_mt score output normalization runtime PASSED ===")
 
 
+def test_roots2pix_mt_local_file_manifest_runtime():
+    print("\n--- roots2pix_mt local file manifest runtime ---")
+
+    bin_path = "/src/roots2pix_mt"
+    roots_path = "/tmp/roots2pix_mt_local_roots.bin"
+    manifest_path = "/tmp/roots2pix_mt_local_manifest.json"
+    fragment_prefix = "/tmp/roots2pix_mt_local_fragment"
+    step_scores_path = "/tmp/roots2pix_mt_local_scores.bin"
+    roots_bytes = struct.pack("<ffff", -0.5, 0.0, 0.5, 0.0)
+
+    try:
+        with open(roots_path, "wb") as f:
+            f.write(roots_bytes)
+        with open(manifest_path, "w") as f:
+            json.dump({
+                "source_family": "slv",
+                "logical_size": len(roots_bytes),
+                "row_bytes": 8,
+                "solve_start": 0,
+                "solve_count": 2,
+                "sources": [{"id": 0, "url": "file://" + roots_path, "key": roots_path}],
+                "spans": [{
+                    "source_id": 0,
+                    "logical_byte_start": 0,
+                    "byte_start": 0,
+                    "byte_length": len(roots_bytes),
+                }],
+            }, f)
+
+        r = subprocess.run([
+            bin_path,
+            "/tmp/roots2pix_mt_local_pix",
+            "--pix=8",
+            "--min_re=-1",
+            "--max_re=1",
+            "--min_im=-1",
+            "--max_im=1",
+            "--degree=1",
+            "--rotation=0",
+            "--threads=1",
+            "--step_count=2",
+            "--input_manifest=" + manifest_path,
+            "--retries=0",
+            "--score_metrics=centroid_re",
+            "--score_clip_los=-1",
+            "--score_clip_his=1",
+            "--score_program=m0-0",
+            "--fragment_prefix=" + fragment_prefix,
+            "--step_scores_output=" + step_scores_path,
+        ], capture_output=True, text=True, timeout=10)
+        assert r.returncode == 0, "roots2pix_mt local file manifest failed: " + r.stderr[:200]
+        meta = json.loads(r.stdout or "{}")
+        assert meta.get("input_mode") == "multispan_sectioned", "unexpected roots2pix input_mode"
+        with open(step_scores_path, "rb") as f:
+            assert len(f.read()) == 2, "local file manifest did not emit step scores"
+        print("  roots2pix_mt file:// multispan source: OK")
+    finally:
+        cleanup(roots_path, manifest_path, fragment_prefix + ".frag", step_scores_path)
+    print("=== roots2pix_mt local file manifest runtime PASSED ===")
+
+
 def test_render_lores_preview_handler_runtime():
     print("\n--- render-lores-preview handler runtime ---")
 
-    for bin_path in ("/src/solve_proximity_stats", "/src/roots2pix_mt", "/src/score_raw_render"):
+    for bin_path in (
+        "/src/solve_proximity_stats",
+        "/src/roots2pix_mt",
+        "/src/score_raw_render",
+        "/src/sweep_coeffgen",
+        "/src/sweep_mt",
+        "/src/sweep_cm",
+    ):
         assert os.path.exists(bin_path), "%s not found" % bin_path
         assert open(bin_path, "rb").read(4) == b"\x7fELF", "%s is not ELF" % bin_path
         r = subprocess.run(["ldd", bin_path], capture_output=True, text=True, timeout=10)
@@ -1315,6 +1383,60 @@ def test_render_lores_preview_handler_runtime():
     assert fake_s3.puts == [], "ephemeral preview wrote durable S3 objects: %r" % fake_s3.puts
     cleanup(png_path)
     print("  handler_render_lores_preview: OK (%d PNG bytes)" % len(png))
+
+    fake_s3 = _MemS3()
+    fake_s3.seed_object("renders/job-preview-recompute/calc.json", json.dumps({
+        "N": 5,
+        "times": 1,
+        "degree": 24,
+        "n_coeffs": 25,
+        "solver": "aberth_mt",
+        "lores": {"N": 5, "n_steps": 25},
+        "pipeline": {
+            "function": "g1",
+            "param_transforms": [],
+            "coeff_transforms": [],
+            "cfpv": [],
+        },
+    }).encode("utf-8"), content_type="application/json")
+    old_s3 = mod.s3
+    try:
+        mod.s3 = fake_s3
+        result = mod.handler({
+            "body": json.dumps({
+                "job_id": "job-preview-recompute",
+                "degree": 24,
+                "n_coeffs": 25,
+                "preview_pix": 32,
+                "quality": 90,
+                "palette": "inferno",
+                "view_mode": "explicit",
+                "min_re": -2.0,
+                "max_re": 2.0,
+                "min_im": -2.0,
+                "max_im": 2.0,
+                "rotation": 0.0,
+                "solve_score_chain": [["centroid_re", "slv", "0.1"]],
+                "solve_score_normalize": False,
+                "preview_source_mode": "recompute",
+                "preview_source_size": 5,
+                "lores_bin_key": "",
+                "root_transforms": [],
+                "raster_mt_threads": 1,
+                "solve_score_threads": 1,
+                "raster_sectioned_retries": 1,
+            })
+        }, None)
+    finally:
+        mod.s3 = old_s3
+
+    assert result["statusCode"] == 200, "render-lores-preview recompute failed: %r" % result
+    body = json.loads(result["body"])
+    assert body["source"]["mode"] == "recompute", "unexpected recompute source mode"
+    assert body["source"]["view_N"] == 5, "unexpected recompute view_N"
+    assert any("Recompute preview materialize:" in line for line in body.get("logs", [])), "missing recompute timing log"
+    assert fake_s3.puts == [], "recompute preview wrote durable S3 objects: %r" % fake_s3.puts
+    print("  handler_render_lores_preview recompute: OK")
     print("=== render-lores-preview handler runtime PASSED ===")
 
 
@@ -2296,6 +2418,7 @@ if __name__ == "__main__":
     test_roots2pix_mt_multispan_runtime()
     test_roots2pix_mt_lagged_score_runtime()
     test_roots2pix_mt_score_output_normalization_runtime()
+    test_roots2pix_mt_local_file_manifest_runtime()
     test_render_lores_preview_handler_runtime()
     test_render_preview()
     test_resize_runtime()

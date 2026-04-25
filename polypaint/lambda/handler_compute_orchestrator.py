@@ -33,10 +33,7 @@ def handler(event, context):
     if not STATE_MACHINE_ARN:
         raise RuntimeError("COMPUTE_STATE_MACHINE_ARN is not configured")
 
-    if solver_mode == "aberth_mt":
-        execution_method = execution_method_from_params(run_params)
-    else:
-        execution_method = "classic_chunk_pipeline"
+    execution_method = execution_method_from_params(run_params)
     run_params.pop("fused", None)
     run_params["execution_method"] = execution_method
 

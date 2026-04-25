@@ -14,6 +14,7 @@ set -euo pipefail
 export AWS_PAGER=""
 
 SWEEP_MT_NAME="polypaint-sweep-mt"
+REMOVED_SWEEP_NAME="polypaint-sweep"
 VIEWPORT_NAME="polypaint-viewport"
 STORAGE_NAME="polypaint-storage"
 DISPATCH_NAME="polypaint-dispatch"
@@ -1074,10 +1075,13 @@ RENDER_LORES_PREVIEW_DIR=/tmp/polypaint-render-lores-preview
 rm -rf "$RENDER_LORES_PREVIEW_DIR"
 mkdir -p "$RENDER_LORES_PREVIEW_DIR/lib"
 cp lambda/handler_render_lores_preview.py lambda/shared.py \
-   lambda/logical_sections.py lambda/solve_score_chain.py lambda/raw_score_render.py "$RENDER_LORES_PREVIEW_DIR/"
-cp lambda/roots2pix_mt lambda/solve_proximity_stats lambda/score_raw_render "$RENDER_LORES_PREVIEW_DIR/"
+   lambda/logical_sections.py lambda/logical_lores.py lambda/calc_chunks.py lambda/param_source.py \
+   lambda/solve_score_chain.py lambda/raw_score_render.py "$RENDER_LORES_PREVIEW_DIR/"
+cp lambda/roots2pix_mt lambda/solve_proximity_stats lambda/score_raw_render \
+   lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$RENDER_LORES_PREVIEW_DIR/"
 cp lambda/roots2pix_mt_lib/* "$RENDER_LORES_PREVIEW_DIR/lib/"
-chmod +x "$RENDER_LORES_PREVIEW_DIR"/roots2pix_mt "$RENDER_LORES_PREVIEW_DIR"/solve_proximity_stats "$RENDER_LORES_PREVIEW_DIR"/score_raw_render
+chmod +x "$RENDER_LORES_PREVIEW_DIR"/roots2pix_mt "$RENDER_LORES_PREVIEW_DIR"/solve_proximity_stats "$RENDER_LORES_PREVIEW_DIR"/score_raw_render \
+    "$RENDER_LORES_PREVIEW_DIR"/sweep_coeffgen "$RENDER_LORES_PREVIEW_DIR"/sweep_mt "$RENDER_LORES_PREVIEW_DIR"/sweep_cm
 cd "$RENDER_LORES_PREVIEW_DIR" && zip -r9 /tmp/polypaint-render-lores-preview.zip . -q && cd "$SCRIPT_DIR"
 echo "  LoresPv: $(du -h /tmp/polypaint-render-lores-preview.zip | cut -f1)  (ephemeral lores render preview)"
 
@@ -1393,6 +1397,17 @@ update_lambda() {
         --query 'MemorySize' --output text
 }
 
+# Helper: delete a Lambda that has been removed from active deployment.
+delete_lambda_if_exists() {
+    local NAME="$1"
+    if aws lambda get-function --function-name "$NAME" --region "$REGION" >/dev/null 2>&1; then
+        echo "Deleting removed Lambda $NAME..."
+        if ! aws lambda delete-function --function-name "$NAME" --region "$REGION" >/dev/null 2>&1; then
+            echo "  Warning: failed to delete removed Lambda $NAME; continuing"
+        fi
+    fi
+}
+
 # Helper: ensure API Gateway HTTP API exists with routes to each Lambda
 setup_api_gateway() {
     local ACCT
@@ -1458,9 +1473,32 @@ setup_api_gateway() {
         EXISTING=$(aws apigatewayv2 get-routes --api-id "$API_ID" --region "$REGION" \
             --query "Items[?RouteKey=='${ROUTE_KEY}'].RouteId | [0]" --output text 2>/dev/null)
         if [ -n "$EXISTING" ] && [ "$EXISTING" != "None" ]; then
-            aws apigatewayv2 delete-route --api-id "$API_ID" --route-id "$EXISTING" \
-                --region "$REGION" >/dev/null
+            if ! aws apigatewayv2 delete-route --api-id "$API_ID" --route-id "$EXISTING" \
+                --region "$REGION" >/dev/null 2>&1; then
+                echo "  Warning: failed to delete removed route $ROUTE_KEY (route id $EXISTING); continuing"
+            fi
         fi
+    }
+
+    # Delete integrations for Lambdas that are no longer routed.
+    delete_integration_for_lambda_if_exists() {
+        local FNAME="$1"
+        local TARGET_URI="arn:aws:lambda:$REGION:$ACCT:function:$FNAME"
+        local EXISTING_IDS
+        EXISTING_IDS=$(aws apigatewayv2 get-integrations --api-id "$API_ID" --region "$REGION" \
+            --query "Items[?IntegrationUri=='${TARGET_URI}'].IntegrationId" --output text 2>/dev/null)
+        if [ -z "$EXISTING_IDS" ] || [ "$EXISTING_IDS" = "None" ]; then
+            return
+        fi
+        local INT_ID
+        for INT_ID in $EXISTING_IDS; do
+            if [ -n "$INT_ID" ] && [ "$INT_ID" != "None" ]; then
+                if ! aws apigatewayv2 delete-integration --api-id "$API_ID" --integration-id "$INT_ID" \
+                    --region "$REGION" >/dev/null 2>&1; then
+                    echo "  Warning: failed to delete removed integration $INT_ID for $FNAME; continuing"
+                fi
+            fi
+        done
     }
 
     # Grant API Gateway permission to invoke each Lambda
@@ -1485,6 +1523,7 @@ setup_api_gateway() {
     # Create routes
     echo "  Setting up routes..."
     delete_route_if_exists "POST /sweep"
+    delete_integration_for_lambda_if_exists "$REMOVED_SWEEP_NAME"
     ensure_route "POST /sweep-mt" "$SWEEP_MT_INT"
     ensure_route "POST /coeffgen" "$COEFFGEN_INT"
 
@@ -1670,6 +1709,8 @@ if [ "$ACTION" = "create" ]; then
     echo "Waiting for role to propagate..."
     sleep 10
 
+    delete_lambda_if_exists "$REMOVED_SWEEP_NAME"
+
     # --- Create all Lambdas ---
     create_lambda "$SWEEP_MT_NAME" "handler_sweep_mt.handler" "/tmp/polypaint-sweep-mt.zip" \
         "$SWEEP_MT_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
@@ -1727,7 +1768,7 @@ if [ "$ACTION" = "create" ]; then
         "$RENDER_PREVIEW_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     create_lambda "$RENDER_LORES_PREVIEW_NAME" "handler_render_lores_preview.handler" "/tmp/polypaint-render-lores-preview.zip" \
-        "$RENDER_LORES_PREVIEW_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
+        "$RENDER_LORES_PREVIEW_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER $LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
 
     create_lambda "$AUTOLEVELS_NAME" "handler_autolevels.handler" "/tmp/polypaint-autolevels.zip" \
         "$AUTOLEVELS_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
@@ -1975,6 +2016,8 @@ if [ "$ACTION" = "create" ]; then
     echo "  Bilevel:  $BILEVEL_NAME ($BILEVEL_MEMORY MB)"
     echo "  C2B:      $COLOR_TO_BILEVEL_NAME ($COLOR_TO_BILEVEL_MEMORY MB)"
 elif [ "$ACTION" = "update" ]; then
+    delete_lambda_if_exists "$REMOVED_SWEEP_NAME"
+
     update_lambda "$SWEEP_MT_NAME" "handler_sweep_mt.handler" "/tmp/polypaint-sweep-mt.zip" \
         "$SWEEP_MT_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
 
@@ -2031,7 +2074,7 @@ elif [ "$ACTION" = "update" ]; then
         "$RENDER_PREVIEW_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
     update_lambda "$RENDER_LORES_PREVIEW_NAME" "handler_render_lores_preview.handler" "/tmp/polypaint-render-lores-preview.zip" \
-        "$RENDER_LORES_PREVIEW_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
+        "$RENDER_LORES_PREVIEW_MEMORY" "$LIBVIPS_LAYER $LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
 
     update_lambda "$AUTOLEVELS_NAME" "handler_autolevels.handler" "/tmp/polypaint-autolevels.zip" \
         "$AUTOLEVELS_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"

@@ -1,8 +1,9 @@
 """
 Ephemeral lores render preview.
 
-This colorizes existing lores solve artifacts with the current render parameters.
-It does not generate solves, persist images, save palettes, or write metadata.
+This colorizes one of three preview sources with the current render parameters:
+saved lores artifacts, a logical hires subset, or recomputed temporary artifacts.
+It does not persist images, save palettes, or write metadata.
 """
 import base64
 import glob
@@ -14,6 +15,12 @@ import time
 
 import boto3
 
+from logical_lores import (
+    calc_square_grid,
+    estimate_logical_lores_bytes,
+    logical_lores_default_n,
+    materialize_logical_lores,
+)
 from logical_sections import (
     build_native_manifest_urls,
     build_native_multispan_manifest,
@@ -39,6 +46,9 @@ s3 = boto3.client("s3")
 
 ROOTS2PIX_MT = os.path.join(os.path.dirname(__file__), "roots2pix_mt")
 SOLVE_PROXIMITY_STATS = os.path.join(os.path.dirname(__file__), "solve_proximity_stats")
+SWEEP_COEFFGEN = os.path.join(os.path.dirname(__file__), "sweep_coeffgen")
+SWEEP_MT = os.path.join(os.path.dirname(__file__), "sweep_mt")
+SWEEP_CM = os.path.join(os.path.dirname(__file__), "sweep_cm")
 TMP_ROOTS = "/tmp/render_lores_preview_roots.bin"
 TMP_COEFFS = "/tmp/render_lores_preview_coeffs.bin"
 TMP_PARAMS = "/tmp/render_lores_preview_params.bin"
@@ -53,6 +63,7 @@ TMP_EQ_LUT = "/tmp/render_lores_preview_eq.bin"
 TMP_IMAGE = "/tmp/render_lores_preview.png"
 
 MAX_PREVIEW_PIX = int(os.environ.get("RENDER_LORES_PREVIEW_MAX_PIX", "1024"))
+MAX_LOGICAL_LORES_N = int(os.environ.get("RENDER_LOGICAL_LORES_MAX_N", "256"))
 DEFAULT_PREVIEW_PIX = 256
 
 
@@ -128,6 +139,90 @@ def _download_to_file(key, path):
         for chunk in obj["Body"].iter_chunks(chunk_size=1024 * 1024):
             fh.write(chunk)
     return os.path.getsize(path)
+
+
+def _load_calc(job_id):
+    key = f"renders/{job_id}/calc.json"
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=key)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to download s3://{BUCKET}/{key}: {exc}") from exc
+    body = obj["Body"]
+    if hasattr(body, "read"):
+        raw = body.read()
+    elif hasattr(body, "iter_chunks"):
+        raw = b"".join(body.iter_chunks(chunk_size=1024 * 1024))
+    else:
+        raise RuntimeError(f"Failed to parse s3://{BUCKET}/{key}: body is not readable")
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"Failed to parse s3://{BUCKET}/{key}: {exc}") from exc
+
+
+def _run_json_binary(binary, out_path, spec, *, phase, timeout_s=300):
+    t0 = time.time()
+    result = subprocess.run(
+        [binary, out_path],
+        input=json.dumps(spec),
+        capture_output=True,
+        text=True,
+        timeout=timeout_s,
+    )
+    elapsed_ms = int((time.time() - t0) * 1000)
+    if result.returncode != 0:
+        raise RuntimeError(f"{phase} failed: {result.stderr.strip() or 'unknown error'}")
+    try:
+        meta = json.loads(result.stdout or "{}")
+    except Exception as exc:
+        raise RuntimeError(f"{phase} returned invalid JSON: {(result.stdout or '')[:200]!r}") from exc
+    meta["elapsed_ms"] = elapsed_ms
+    return meta
+
+
+def _preview_source_mode(params):
+    raw = str(params.get("preview_source_mode") or "").strip().lower()
+    if not raw:
+        if parse_boolish(params.get("logical_lores", False), False, strict=True, label="logical_lores"):
+            raw = "logical"
+        else:
+            raw = "lores"
+    if raw in ("physical", "saved_lores", "use_lores"):
+        raw = "lores"
+    if raw not in ("lores", "logical", "recompute"):
+        raise RuntimeError(f"preview_source_mode must be lores, logical, or recompute, got {raw!r}")
+    return raw
+
+
+def _calc_pipeline(calc):
+    pipeline = (calc or {}).get("pipeline") or {}
+    function_name = str(pipeline.get("function") or (calc or {}).get("function") or "").strip()
+    if not function_name:
+        raise RuntimeError("calc.json missing pipeline.function for recompute preview")
+    param_transforms = pipeline.get("param_transforms")
+    if not isinstance(param_transforms, list):
+        param_transforms = pipeline.get("param_transforms_display")
+    if not isinstance(param_transforms, list):
+        param_transforms = []
+    coeff_transforms = pipeline.get("coeff_transforms")
+    if not isinstance(coeff_transforms, list):
+        coeff_transforms = []
+    cfpv = pipeline.get("cfpv")
+    if not isinstance(cfpv, list):
+        cfpv = []
+    return {
+        "function": function_name,
+        "param_transforms": param_transforms,
+        "coeff_transforms": coeff_transforms,
+        "cfpv": cfpv,
+    }
+
+
+def _calc_solver_mode(calc):
+    raw = str((calc or {}).get("solver") or "aberth_mt").strip().lower()
+    if raw in ("companion_matrix", "cm", "solve_cm"):
+        return "companion_matrix"
+    return "aberth_mt"
 
 
 def _read_file_bytes(path):
@@ -439,6 +534,171 @@ def _uses_source(metrics, source):
     return any(str(row.get("source", "slv") or "slv").strip().lower() == source for row in metrics or [])
 
 
+def _file_url(path):
+    return "file://" + os.path.abspath(path)
+
+
+def _write_local_manifest(path, *, family, source_path, row_bytes, step_count):
+    logical_size = int(row_bytes) * int(step_count)
+    actual_size = os.path.getsize(source_path)
+    if actual_size < logical_size:
+        raise RuntimeError(
+            f"local {family} manifest source too small: {actual_size} bytes, need {logical_size}"
+        )
+    native = {
+        "source_family": family,
+        "logical_size": logical_size,
+        "row_bytes": int(row_bytes),
+        "solve_start": 0,
+        "solve_count": int(step_count),
+        "sources": [{
+            "id": 0,
+            "url": _file_url(source_path),
+            "key": source_path,
+        }],
+        "spans": [{
+            "source_id": 0,
+            "logical_byte_start": 0,
+            "byte_start": 0,
+            "byte_length": logical_size,
+        }],
+    }
+    write_native_multispan_manifest(path, native)
+    return path
+
+
+def _write_local_manifests(*, degree, n_coeffs, step_count, include_coeff, include_param):
+    out = {
+        "slv": _write_local_manifest(
+            TMP_INPUT_MANIFEST,
+            family="slv",
+            source_path=TMP_ROOTS,
+            row_bytes=root_row_bytes(degree),
+            step_count=step_count,
+        )
+    }
+    if include_coeff:
+        out["cf"] = _write_local_manifest(
+            TMP_COEFFS_MANIFEST,
+            family="cf",
+            source_path=TMP_COEFFS,
+            row_bytes=coeff_row_bytes(n_coeffs),
+            step_count=step_count,
+        )
+    if include_param:
+        out["pm"] = _write_local_manifest(
+            TMP_PARAMS_MANIFEST,
+            family="pm",
+            source_path=TMP_PARAMS,
+            row_bytes=param_row_bytes(),
+            step_count=step_count,
+        )
+    return out
+
+
+def _materialize_recomputed_preview(*, params, calc, job_id, degree, n_coeffs, view_n):
+    t0 = time.time()
+    full_n, times = calc_square_grid(calc)
+    view_n = int(view_n)
+    if view_n < 1:
+        raise RuntimeError(f"preview_source_size must be >= 1, got {view_n}")
+    if view_n > full_n:
+        raise RuntimeError(f"preview_source_size={view_n} exceeds source N={full_n}")
+    n_steps = int(view_n) * int(view_n) * int(times)
+    threads = _coerce_int(params.get("recompute_threads", params.get("solve_score_threads", 4)), "recompute_threads", default=4, min_value=1, max_value=16)
+    pipeline = _calc_pipeline(calc)
+    solver_mode = _calc_solver_mode(calc)
+
+    t_param = time.time()
+    param_spec = {
+        "mode": "param_gen",
+        "n1": int(view_n),
+        "n2": int(view_n),
+        "gridN": int(full_n),
+        "times": int(times),
+        "param_transforms": pipeline["param_transforms"],
+        "n_threads": int(threads),
+    }
+    param_meta = _run_json_binary(SWEEP_COEFFGEN, TMP_PARAMS, param_spec, phase="recompute param_gen", timeout_s=300)
+    param_ms = int((time.time() - t_param) * 1000)
+    param_size = os.path.getsize(TMP_PARAMS)
+    expected_param_size = n_steps * param_row_bytes()
+    if param_size != expected_param_size:
+        raise RuntimeError(f"recompute param size mismatch: got {param_size}, expected {expected_param_size}")
+
+    t_coeff = time.time()
+    coeff_spec = {
+        "mode": "coeffgen_chunked",
+        "function": pipeline["function"],
+        "params_file": TMP_PARAMS,
+        "step_start": 0,
+        "step_count": int(n_steps),
+        "coeff_transforms": pipeline["coeff_transforms"],
+        "n_threads": int(threads),
+    }
+    if pipeline["cfpv"]:
+        coeff_spec["cfpv"] = pipeline["cfpv"]
+    coeff_meta = _run_json_binary(SWEEP_COEFFGEN, TMP_COEFFS, coeff_spec, phase="recompute coeffgen", timeout_s=300)
+    coeff_ms = int((time.time() - t_coeff) * 1000)
+    actual_n_coeffs = int(coeff_meta.get("n_coeffs") or 0)
+    actual_degree = int(coeff_meta.get("degree") or 0)
+    if actual_degree != int(degree):
+        raise RuntimeError(f"recompute degree mismatch: got {actual_degree}, expected {degree}")
+    if actual_n_coeffs != int(n_coeffs):
+        raise RuntimeError(f"recompute n_coeffs mismatch: got {actual_n_coeffs}, expected {n_coeffs}")
+    coeff_size = os.path.getsize(TMP_COEFFS)
+    expected_coeff_size = n_steps * coeff_row_bytes(n_coeffs)
+    if coeff_size != expected_coeff_size:
+        raise RuntimeError(f"recompute coeff size mismatch: got {coeff_size}, expected {expected_coeff_size}")
+
+    t_solve = time.time()
+    if solver_mode == "companion_matrix":
+        solve_binary = SWEEP_CM
+        solve_spec = {
+            "mode": "solve_cm",
+            "coeffs_file": TMP_COEFFS,
+            "n_coeffs": int(n_coeffs),
+            "n_steps": int(n_steps),
+        }
+    else:
+        solve_binary = SWEEP_MT
+        solve_spec = {
+            "mode": "solve_mt",
+            "coeffs_file": TMP_COEFFS,
+            "n_coeffs": int(n_coeffs),
+            "n2": int(n_steps),
+            "i1_start": 0,
+            "i1_end": 1,
+            "match_roots": False,
+            "n_threads": int(threads),
+        }
+    solve_meta = _run_json_binary(solve_binary, TMP_ROOTS, solve_spec, phase="recompute solve", timeout_s=300)
+    solve_ms = int((time.time() - t_solve) * 1000)
+    root_size = os.path.getsize(TMP_ROOTS)
+    expected_root_size = n_steps * root_row_bytes(degree)
+    if root_size != expected_root_size:
+        raise RuntimeError(f"recompute root size mismatch: got {root_size}, expected {expected_root_size}")
+
+    return {
+        "mode": "recompute",
+        "full_N": int(full_n),
+        "view_N": int(view_n),
+        "times": int(times),
+        "n_solves": int(n_steps),
+        "solver_mode": solver_mode,
+        "function": pipeline["function"],
+        "threads": int(threads),
+        "output_bytes": int(param_size + coeff_size + root_size),
+        "families": {
+            "pm": {"output_bytes": int(param_size), "elapsed_ms": param_ms, "meta": param_meta},
+            "cf": {"output_bytes": int(coeff_size), "elapsed_ms": coeff_ms, "meta": coeff_meta},
+            "slv": {"output_bytes": int(root_size), "elapsed_ms": solve_ms, "meta": solve_meta},
+        },
+        "elapsed_ms": int((time.time() - t0) * 1000),
+        "job_id": str(job_id or ""),
+    }
+
+
 def _write_xforms(root_transforms):
     if not root_transforms:
         return ""
@@ -602,8 +862,9 @@ def handler(event, context):
             min_value=16,
             max_value=MAX_PREVIEW_PIX,
         )
+        source_mode = _preview_source_mode(params)
         lores_bin_key = str(params.get("lores_bin_key") or "").strip()
-        if not lores_bin_key:
+        if not lores_bin_key and source_mode == "lores":
             raise RuntimeError("lores_bin_key is required")
 
         lores_coeffs_key = str(params.get("lores_coeffs_key") or _fallback_lores_coeffs_key(job_id, lores_bin_key)).strip()
@@ -613,34 +874,98 @@ def handler(event, context):
         include_coeff = solve_score_uses_source(compiled, "cf")
         include_param = solve_score_uses_source(compiled, "pm")
 
-        root_size = _download_to_file(lores_bin_key, TMP_ROOTS)
-        rb = root_row_bytes(degree)
-        if root_size % rb != 0:
-            raise RuntimeError(f"lores root size {root_size} is not divisible by root row size {rb}")
-        step_count = root_size // rb
-        if step_count < 1:
-            raise RuntimeError("lores root artifact has no solve rows")
-
+        source_meta = {"mode": "physical"}
+        materialize_ms = 0
         coeff_size = 0
-        if include_coeff:
-            if n_coeffs < 1:
-                raise RuntimeError("coeff-source preview requires n_coeffs >= 1")
-            if not lores_coeffs_key:
-                raise RuntimeError("coeff-source preview requires lores_coeffs_key")
-            coeff_size = _download_to_file(lores_coeffs_key, TMP_COEFFS)
-            needed = step_count * coeff_row_bytes(n_coeffs)
-            if coeff_size < needed:
-                raise RuntimeError(f"lores coeffs artifact too small: got {coeff_size}, need at least {needed}")
-
         param_size = 0
-        if include_param:
-            if not lores_params_key:
-                raise RuntimeError("param-source preview requires lores_params_key")
-            param_size = _download_to_file(lores_params_key, TMP_PARAMS)
-            needed = step_count * param_row_bytes()
-            if param_size < needed:
-                raise RuntimeError(f"lores params artifact too small: got {param_size}, need at least {needed}")
+        if source_mode in ("logical", "recompute"):
+            calc = _load_calc(job_id)
+            calc_degree = int(calc.get("degree") or degree)
+            calc_n_coeffs = int(calc.get("n_coeffs") or n_coeffs)
+            if calc_degree != degree:
+                raise RuntimeError(f"request degree={degree} does not match calc.json degree={calc_degree}")
+            if include_coeff and calc_n_coeffs != n_coeffs:
+                raise RuntimeError(f"request n_coeffs={n_coeffs} does not match calc.json n_coeffs={calc_n_coeffs}")
+            default_logical_n = logical_lores_default_n(calc)
+            logical_n = _coerce_int(
+                params.get("preview_source_size", params.get("logical_lores_size", default_logical_n)),
+                "preview_source_size",
+                default=default_logical_n,
+                min_value=5,
+                max_value=MAX_LOGICAL_LORES_N,
+            )
+        if source_mode == "logical":
+            estimate = estimate_logical_lores_bytes(
+                calc=calc,
+                degree=degree,
+                n_coeffs=n_coeffs,
+                view_n=logical_n,
+                include_coeff=include_coeff,
+                include_param=include_param,
+            )
+            t_materialize = time.time()
+            source_meta = materialize_logical_lores(
+                s3_client=s3,
+                bucket=BUCKET,
+                calc=calc,
+                job_id=job_id,
+                degree=degree,
+                n_coeffs=n_coeffs,
+                view_n=logical_n,
+                out_paths={"slv": TMP_ROOTS, "cf": TMP_COEFFS, "pm": TMP_PARAMS},
+                include_coeff=include_coeff,
+                include_param=include_param,
+            )
+            materialize_ms = int((time.time() - t_materialize) * 1000)
+            source_meta["estimated_source_bytes"] = int(estimate["estimated_source_bytes"])
+            source_meta["estimated_output_bytes"] = int(estimate["estimated_output_bytes"])
+            root_size = int(source_meta["families"]["slv"]["output_bytes"])
+            coeff_size = int(source_meta["families"].get("cf", {}).get("output_bytes") or 0)
+            param_size = int(source_meta["families"].get("pm", {}).get("output_bytes") or 0)
+            step_count = int(source_meta["n_solves"])
+        elif source_mode == "recompute":
+            t_materialize = time.time()
+            source_meta = _materialize_recomputed_preview(
+                params=params,
+                calc=calc,
+                job_id=job_id,
+                degree=degree,
+                n_coeffs=n_coeffs,
+                view_n=logical_n,
+            )
+            materialize_ms = int((time.time() - t_materialize) * 1000)
+            root_size = int(source_meta["families"]["slv"]["output_bytes"])
+            coeff_size = int(source_meta["families"]["cf"]["output_bytes"])
+            param_size = int(source_meta["families"]["pm"]["output_bytes"])
+            step_count = int(source_meta["n_solves"])
+        else:
+            root_size = _download_to_file(lores_bin_key, TMP_ROOTS)
+            rb = root_row_bytes(degree)
+            if root_size % rb != 0:
+                raise RuntimeError(f"lores root size {root_size} is not divisible by root row size {rb}")
+            step_count = root_size // rb
+            if step_count < 1:
+                raise RuntimeError("lores root artifact has no solve rows")
 
+            if include_coeff:
+                if n_coeffs < 1:
+                    raise RuntimeError("coeff-source preview requires n_coeffs >= 1")
+                if not lores_coeffs_key:
+                    raise RuntimeError("coeff-source preview requires lores_coeffs_key")
+                coeff_size = _download_to_file(lores_coeffs_key, TMP_COEFFS)
+                needed = step_count * coeff_row_bytes(n_coeffs)
+                if coeff_size < needed:
+                    raise RuntimeError(f"lores coeffs artifact too small: got {coeff_size}, need at least {needed}")
+
+            if include_param:
+                if not lores_params_key:
+                    raise RuntimeError("param-source preview requires lores_params_key")
+                param_size = _download_to_file(lores_params_key, TMP_PARAMS)
+                needed = step_count * param_row_bytes()
+                if param_size < needed:
+                    raise RuntimeError(f"lores params artifact too small: got {param_size}, need at least {needed}")
+
+        t_summary = time.time()
         summary = _preview_score_summary(
             params,
             degree=degree,
@@ -649,25 +974,39 @@ def handler(event, context):
             include_coeff=include_coeff,
             include_param=include_param,
         )
+        summary_ms = int((time.time() - t_summary) * 1000)
         metrics = _metric_rows_from_summary(summary)
         include_coeff = _uses_source(metrics, "cf")
         include_param = _uses_source(metrics, "pm")
 
+        t_viewport = time.time()
         viewport = _compute_preview_viewport(params, TMP_ROOTS)
-        manifests = _write_manifests(
-            job_id=job_id,
-            degree=degree,
-            n_coeffs=n_coeffs,
-            step_count=step_count,
-            lores_bin_key=lores_bin_key,
-            root_size=root_size,
-            lores_coeffs_key=lores_coeffs_key,
-            coeff_size=coeff_size,
-            lores_params_key=lores_params_key,
-            param_size=param_size,
-            include_coeff=include_coeff,
-            include_param=include_param,
-        )
+        viewport_ms = int((time.time() - t_viewport) * 1000)
+        t_manifest = time.time()
+        if source_mode in ("logical", "recompute"):
+            manifests = _write_local_manifests(
+                degree=degree,
+                n_coeffs=n_coeffs,
+                step_count=step_count,
+                include_coeff=include_coeff,
+                include_param=include_param,
+            )
+        else:
+            manifests = _write_manifests(
+                job_id=job_id,
+                degree=degree,
+                n_coeffs=n_coeffs,
+                step_count=step_count,
+                lores_bin_key=lores_bin_key,
+                root_size=root_size,
+                lores_coeffs_key=lores_coeffs_key,
+                coeff_size=coeff_size,
+                lores_params_key=lores_params_key,
+                param_size=param_size,
+                include_coeff=include_coeff,
+                include_param=include_param,
+            )
+        manifest_ms = int((time.time() - t_manifest) * 1000)
 
         t_raster = time.time()
         raster_meta = _run_roots2pix(
@@ -700,6 +1039,65 @@ def handler(event, context):
         with open(TMP_IMAGE, "rb") as fh:
             image_b64 = base64.b64encode(fh.read()).decode("ascii")
 
+        total_ms = int((time.time() - t_start) * 1000)
+        logs = []
+        if source_mode == "logical":
+            fam = source_meta.get("families") or {}
+            families_label = ",".join(sorted(fam.keys()))
+            logs.append(
+                "Logical lores: "
+                f"source full_N={source_meta.get('full_N')} view_N={source_meta.get('view_N')} "
+                f"times={source_meta.get('times')} solves={source_meta.get('n_solves')} "
+                f"families={families_label}"
+            )
+            logs.append(
+                "Logical lores materialize: "
+                f"read={int(source_meta.get('bytes_read') or 0) / (1024 * 1024):.1f}MB "
+                f"compact={int(source_meta.get('output_bytes') or 0) / (1024 * 1024):.1f}MB "
+                f"ranges={source_meta.get('range_gets')} wall={materialize_ms / 1000.0:.2f}s"
+            )
+            for family in ("slv", "cf", "pm"):
+                if family not in fam:
+                    continue
+                row = fam[family]
+                logs.append(
+                    f"Logical lores {family}: "
+                    f"rows={row.get('source_rows')} "
+                    f"read={int(row.get('bytes_read') or 0) / (1024 * 1024):.1f}MB "
+                    f"compact={int(row.get('output_bytes') or 0) / (1024 * 1024):.1f}MB "
+                    f"ranges={row.get('range_gets')} wall={int(row.get('elapsed_ms') or 0) / 1000.0:.2f}s"
+                )
+        elif source_mode == "recompute":
+            fam = source_meta.get("families") or {}
+            logs.append(
+                "Recompute preview: "
+                f"source full_N={source_meta.get('full_N')} view_N={source_meta.get('view_N')} "
+                f"times={source_meta.get('times')} solves={source_meta.get('n_solves')} "
+                f"solver={source_meta.get('solver_mode')} function={source_meta.get('function')}"
+            )
+            logs.append(
+                "Recompute preview materialize: "
+                f"tmp={int(source_meta.get('output_bytes') or 0) / (1024 * 1024):.1f}MB "
+                f"threads={source_meta.get('threads')} wall={materialize_ms / 1000.0:.2f}s"
+            )
+            for family, label in (("pm", "param_gen"), ("cf", "coeffgen"), ("slv", "solve")):
+                if family not in fam:
+                    continue
+                row = fam[family]
+                logs.append(
+                    f"Recompute {label}: "
+                    f"size={int(row.get('output_bytes') or 0) / (1024 * 1024):.1f}MB "
+                    f"wall={int(row.get('elapsed_ms') or 0) / 1000.0:.2f}s"
+                )
+        else:
+            logs.append(f"Physical lores: solves={int(step_count)} roots={int(root_size) / (1024 * 1024):.1f}MB")
+        logs.append(
+            "Render preview timings: "
+            f"summary={summary_ms / 1000.0:.2f}s viewport={viewport_ms / 1000.0:.2f}s "
+            f"manifest={manifest_ms / 1000.0:.2f}s raster={raster_ms / 1000.0:.2f}s "
+            f"total={total_ms / 1000.0:.2f}s"
+        )
+
         return ok_response({
             "image_base64": image_b64,
             "content_type": "image/png",
@@ -707,11 +1105,13 @@ def handler(event, context):
             "degree": degree,
             "n_coeffs": n_coeffs,
             "n_solves": int(step_count),
+            "source": source_meta,
             "fragment_entries": int(fragment_entries),
             "nonzero_pixels": int(nonzero_pixels),
             "viewport": viewport,
             "raster": raster_meta,
             "render": render_meta,
+            "logs": logs,
             "solve_score": {
                 "program": summary.get("program"),
                 "display": summary.get("solve_score_display"),
@@ -721,8 +1121,12 @@ def handler(event, context):
                 "score_output_clip_source": summary.get("score_output_clip_source"),
             },
             "timings_ms": {
+                "materialize": materialize_ms,
+                "summary": summary_ms,
+                "viewport": viewport_ms,
+                "manifest": manifest_ms,
                 "raster": raster_ms,
-                "total": int((time.time() - t_start) * 1000),
+                "total": total_ms,
             },
         })
     except Exception as exc:

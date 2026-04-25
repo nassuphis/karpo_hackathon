@@ -47,7 +47,7 @@ function assertSectionNotIncludes(section, snippet, message) {
 }
 
 assertIncludes("function setColorMode(mode) {\n    renderColorMode = 'solve_score';\n    _updateSolveScoreButtons();", 'setColorMode should hard-lock solve_score without a fake mode toggle');
-assertIncludes("<div class=\"color-title\">Solve Score Palette</div>", 'render tab should expose a static solve-score palette section instead of a fake mode selector');
+assertIncludes("<div class=\"color-title\" style=\"margin-top:10px\">Solve Score Palette</div>", 'render tab should merge solve-score palette into the visual View/Rotation region');
 assertNotIncludes("class=\"color-dot active\" data-mode=\"solve_score\"", 'render tab should not expose a fake solve-score mode toggle');
 assertIncludes("id=\"view-row-explicit\"", 'render tab should expose explicit viewport row');
 assertIncludes("id=\"render-min-re\"", 'render tab should expose explicit min_re input');
@@ -134,6 +134,13 @@ assertNotIncludes("if (fusedThreads != null) orchPayload.params.fused_threads = 
 assertNotIncludes("id=\"btn-calculate\" onclick=\"runCalculate()\"", 'single-thread AE calculate button should be removed');
 assertNotIncludes("<option value=\"aberth\">AE</option>", 'compute preview should not offer removed single-thread AE solver');
 assertNotIncludes("async function runCalculate() {", 'single-thread AE calculate handler should be removed');
+assertNotIncludes("id=\"compute-mt-tab-classic\"", 'AE-MT compute popup should not expose a classic tab');
+assertNotIncludes("id=\"compute-mt-tab-fused\"", 'AE-MT compute popup should not expose a redundant fused tab');
+assertNotIncludes("id=\"compute-mt-classic-panel\"", 'AE-MT compute popup should not expose classic controls');
+assertNotIncludes("id=\"compute-mt-classic-chunks\"", 'AE-MT compute popup should not expose classic chunk input');
+assertNotIncludes("id=\"compute-mt-param-gen-threads\"", 'AE-MT compute popup should not expose classic param-gen thread input');
+assertNotIncludes("id=\"compute-mt-coeffgen-threads\"", 'AE-MT compute popup should not expose classic coeffgen thread input');
+assertIncludes("runCalculateWithSolver(solverMode, { nChunks, fused: true, fusedThreads, loresParamGenThreads, loresCoeffgenThreads });", 'AE-MT compute popup should launch fused explicitly');
 assertIncludes("function _normalizeComputeSolverMode(solver) {", 'compute should normalize legacy solver metadata to supported solvers');
 assertIncludes("function _computeLoresPhaseTrackers(runId, solverMode) {", 'compute log should define deterministic lores phase trackers');
 assertIncludes("phase: 'lores_param_gen',", 'compute log should track lores param-gen completion');
@@ -160,7 +167,17 @@ assertIncludes("score normalization: lo=${fmt(s.score_output_clip_lo)}  hi=${fmt
 assertIncludes("if (s.raw_hist_space === 'score_output_normalized') rawLabel = 'score-output normalized program output';", 'histogram raw bins should label score-output normalized space');
 assertIncludes("id=\"render-preview-pix\" value=\"256\"", 'render output should expose default 256px lores preview size input');
 assertIncludes("id=\"btn-render-lores-preview\" onclick=\"runRenderLoresPreview()\"", 'render output should expose lores preview button');
+assertIncludes("id=\"render-preview-source-mode\"", 'render output should expose preview source mode dropdown');
+assertIncludes("<option value=\"lores\">use lores</option>", 'render preview source dropdown should support saved lores');
+assertIncludes("<option value=\"logical\">logical</option>", 'render preview source dropdown should support logical lores');
+assertIncludes("<option value=\"recompute\">recompute</option>", 'render preview source dropdown should support recompute');
+assertIncludes("id=\"render-preview-source-size\" placeholder=\"lores_N\"", 'render output should expose preview source size input');
+assertIncludes("if (sizeEl) sizeEl.disabled = mode === 'lores';", 'render preview source size should be disabled for saved lores');
 assertIncludes("preview_pix: previewPix,", 'render lores preview payload should forward preview_pix');
+assertIncludes("preview_source_mode: previewSourceMode,", 'render lores preview payload should forward preview source mode');
+assertIncludes("preview_source_size: previewSourceSize,", 'render lores preview payload should forward preview source size');
+assertIncludes("previewSourceSize = Math.max(5, Math.min(256, previewSourceSize));", 'render lores preview should clamp preview source size');
+assertIncludes("for (const line of (Array.isArray(result.logs) ? result.logs : []))", 'render lores preview should print backend logical lores logs');
 assertIncludes("const nCoeffs = Number.isFinite(rawNCoeffs) && rawNCoeffs >= 1 ? rawNCoeffs : degree + 1;", 'render lores preview should default missing n_coeffs to degree+1');
 assertIncludes("lores_bin_key: loresKey,", 'render lores preview payload should use the existing lores roots artifact');
 assertIncludes("const result = await lambdaPost('render-lores-preview', payload);", 'render lores preview should call the direct preview endpoint');

@@ -692,19 +692,6 @@ button {
 .tab-content { display: none; }
 .tab-content.active { display: block; }
 
-.compute-mt-tab-strip {
-    margin: 6px 0 12px;
-    border-bottom: 1px solid #0f3460;
-}
-.compute-mt-tab-strip .tab-bar {
-    margin-bottom: -1px;
-}
-.compute-mt-tab-btn {
-    margin: 0;
-}
-.compute-mt-tab-btn.active {
-    border-bottom-color: #16213e;
-}
 .compute-mt-tab-panels {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -712,10 +699,6 @@ button {
 .compute-mt-tab-panel {
     grid-area: 1 / 1;
     min-width: 0;
-}
-.compute-mt-tab-panel.inactive {
-    visibility: hidden;
-    pointer-events: none;
 }
 .compute-preview-matrix {
     display: grid;
@@ -1048,6 +1031,18 @@ button {
                             <option value="cw">CW</option>
                         </select>
                     </div>
+                    <div class="color-title" style="margin-top:10px">Solve Score Palette</div>
+                    <div class="color-row">
+                        <span class="color-row-label" style="min-width:80px">Palette</span>
+                        <div id="palette-circles-solve-score" style="display:inline-flex; gap:4px; flex-wrap:wrap"></div>
+                        <input type="hidden" id="render-solve-score" value="proximity">
+                        <input type="hidden" id="render-solve-score-omega" value="1">
+                        <input type="hidden" id="render-solve-score-omega-phase" value="0">
+                        <input type="hidden" id="render-solve-score-omega-enabled" value="true">
+                    </div>
+                    <div class="color-row" style="margin-bottom:0">
+                        <span class="autolevel-stage-text">Color render is fused-only now. Solve score is the only supported mode.</span>
+                    </div>
                 </div>
                 <div class="color-box">
                     <div class="color-title">Output</div>
@@ -1068,22 +1063,19 @@ button {
                         <button class="btn-secondary btn-inline" id="btn-render-lores-preview" onclick="runRenderLoresPreview()">Preview</button>
                         <span id="render-lores-preview-status" style="color:#777; font-size:11px">No render preview yet</span>
                     </div>
+                    <div class="anim-row" style="margin-top:6px">
+                        <label>Preview source:</label>
+                        <select id="render-preview-source-mode" onchange="_syncRenderPreviewSourceMode()" style="width:9em; font-size:11px">
+                            <option value="lores">use lores</option>
+                            <option value="logical">logical</option>
+                            <option value="recompute">recompute</option>
+                        </select>
+                        <label>Size:</label>
+                        <input type="text" inputmode="numeric" id="render-preview-source-size" placeholder="lores_N" style="width:5em">
+                        <span id="render-preview-source-note" style="color:#666; font-size:11px">size ignored for lores</span>
+                    </div>
                     <div id="render-lores-preview-box" style="width:256px; height:256px; max-width:100%; margin-top:8px; border:1px solid #0f3460; border-radius:4px; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden">
                         <canvas id="render-lores-preview-canvas" width="256" height="256" style="width:100%; height:100%; image-rendering:pixelated; display:block"></canvas>
-                    </div>
-                </div>
-                <div class="color-box">
-                    <div class="color-title">Solve Score Palette</div>
-                    <div class="color-row">
-                        <span class="color-row-label" style="min-width:80px">Palette</span>
-                        <div id="palette-circles-solve-score" style="display:inline-flex; gap:4px; flex-wrap:wrap"></div>
-                        <input type="hidden" id="render-solve-score" value="proximity">
-                        <input type="hidden" id="render-solve-score-omega" value="1">
-                        <input type="hidden" id="render-solve-score-omega-phase" value="0">
-                        <input type="hidden" id="render-solve-score-omega-enabled" value="true">
-                    </div>
-                    <div class="color-row" style="margin-bottom:0">
-                        <span class="autolevel-stage-text">Color render is fused-only now. Solve score is the only supported mode.</span>
                     </div>
                 </div>
                 <div class="color-box" style="grid-column:1 / -1">
@@ -1932,50 +1924,10 @@ button {
         </div>
         <div id="compute-mt-popup-summary" class="autolevel-popup-summary"></div>
         <div style="padding:0 14px 8px 14px">
-            <div id="compute-mt-popup-description" class="autolevel-stage-text" style="margin-bottom:10px">Classic keeps the existing chunk fan-out. Fused keeps the classic artifact contract but runs param gen, coeffgen, and solve in one Lambda per chunk.</div>
-            <div class="compute-mt-tab-strip">
-                <div class="tab-bar">
-                    <button id="compute-mt-tab-classic" type="button" class="tab-btn compute-mt-tab-btn active">Classic</button>
-                    <button id="compute-mt-tab-fused" type="button" class="tab-btn compute-mt-tab-btn">Fused</button>
-                </div>
-            </div>
+            <div id="compute-mt-popup-description" class="autolevel-stage-text" style="margin-bottom:10px">Fused keeps the compute artifact contract but runs param gen, coeffgen, and solve in one Lambda per chunk.</div>
             <div class="compute-mt-tab-panels">
-                <div id="compute-mt-classic-panel" class="compute-mt-tab-panel">
-                    <div class="autolevel-stage-text" style="margin-bottom:8px">Classic chunk pipeline controls.</div>
-                    <table style="width:100%; border-collapse:collapse; margin-top:10px">
-                        <thead>
-                            <tr style="border-bottom:1px solid #333">
-                                <th style="text-align:left; padding:6px 8px">Setting</th>
-                                <th style="text-align:left; padding:6px 8px">Value</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr style="border-bottom:1px solid #222">
-                                <td style="padding:8px">Hires chunks</td>
-                                <td style="padding:8px"><input id="compute-mt-classic-chunks" type="number" min="1" step="1" value="10"></td>
-                            </tr>
-                            <tr style="border-bottom:1px solid #222">
-                                <td style="padding:8px">Hires param-gen threads</td>
-                                <td style="padding:8px"><input id="compute-mt-param-gen-threads" type="number" min="1" max="16" step="1" value="4"></td>
-                            </tr>
-                            <tr style="border-bottom:1px solid #222">
-                                <td style="padding:8px">Hires coeffgen threads</td>
-                                <td style="padding:8px"><input id="compute-mt-coeffgen-threads" type="number" min="1" max="16" step="1" value="4"></td>
-                            </tr>
-                            <tr style="border-bottom:1px solid #222">
-                                <td style="padding:8px">Lores param-gen threads</td>
-                                <td style="padding:8px"><input id="compute-mt-lores-param-gen-threads" type="number" min="1" max="16" step="1" value="1"></td>
-                            </tr>
-                            <tr>
-                                <td style="padding:8px">Lores coeffgen threads</td>
-                                <td style="padding:8px"><input id="compute-mt-lores-coeffgen-threads" type="number" min="1" max="16" step="1" value="1"></td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-
-                <div id="compute-mt-fused-panel" class="compute-mt-tab-panel inactive" aria-hidden="true">
-                    <div class="autolevel-stage-text" style="margin-bottom:8px">Fused chunk pipeline controls.</div>
+                <div id="compute-mt-fused-panel" class="compute-mt-tab-panel">
+                    <div class="autolevel-stage-text" style="margin-bottom:8px">Fused compute controls.</div>
                     <table style="width:100%; border-collapse:collapse; margin-top:10px">
                         <thead>
                             <tr style="border-bottom:1px solid #333">
@@ -2024,7 +1976,7 @@ button {
                 </div>
             </div>
         </div>
-        <div id="compute-mt-popup-footer-help" class="autolevel-popup-help">Classic keeps the existing chunk fan-out. Fused adds a degree probe, validates the requested chunk count, runs lores separately, then processes each hires chunk in one Lambda with local param/coeff/solve handoff.</div>
+        <div id="compute-mt-popup-footer-help" class="autolevel-popup-help">Fused adds a degree probe, validates the requested chunk count, runs lores separately, then processes each hires chunk in one Lambda with local param/coeff/solve handoff.</div>
         <div class="autolevel-popup-actions">
             <div></div>
             <div style="display:flex; gap:8px">
@@ -3415,10 +3367,8 @@ function _populateComputeFromDetail(jobId, detail) {
     if (chunksVal != null) document.getElementById('render-stripes').value = String(chunksVal);
     document.getElementById('render-times').value = String(detail.times || calc.times || 1);
     if (chunksVal != null) solverPrefs.nChunks = Math.max(1, parseInt(chunksVal, 10) || solverPrefs.nChunks || 10);
-    solverPrefs.fused = calc.execution_method === 'fused_chunk_pipeline';
+    solverPrefs.fused = true;
     solverPrefs.fusedThreads = _clampRenderMtThreads(calc.fused_threads || solverPrefs.fusedThreads || 4);
-    solverPrefs.paramGenThreads = _clampRenderMtThreads(calc.param_gen_threads || solverPrefs.paramGenThreads || 4);
-    solverPrefs.coeffgenThreads = _clampRenderMtThreads(calc.coeffgen_threads || solverPrefs.coeffgenThreads || 4);
     solverPrefs.loresParamGenThreads = _clampRenderMtThreads(calc.lores_param_gen_threads || solverPrefs.loresParamGenThreads || 1);
     solverPrefs.loresCoeffgenThreads = _clampRenderMtThreads(calc.lores_coeffgen_threads || solverPrefs.loresCoeffgenThreads || 1);
     if (calc.probe_degree && calc.probe_n_coeffs) {
@@ -5228,11 +5178,9 @@ let _renderMtPopupState = {
 function _defaultComputePopupPrefs(solverMode) {
     return {
         solverMode: solverMode || 'aberth_mt',
-        fused: false,
+        fused: true,
         nChunks: 10,
         fusedThreads: 4,
-        paramGenThreads: 4,
-        coeffgenThreads: 4,
         loresParamGenThreads: 1,
         loresCoeffgenThreads: 1,
         probe: null,
@@ -7071,11 +7019,9 @@ function _closeComputeMtPopup() {
     const solverMode = _computeMtPopupState.solverMode || 'aberth_mt';
     _computePopupPrefsBySolver[solverMode] = {
         solverMode,
-        fused: !!_computeMtPopupState.fused,
+        fused: true,
         nChunks: Math.max(1, parseInt(_computeMtPopupState.nChunks, 10) || 10),
         fusedThreads: _clampRenderMtThreads(_computeMtPopupState.fusedThreads || 4),
-        paramGenThreads: _clampRenderMtThreads(_computeMtPopupState.paramGenThreads),
-        coeffgenThreads: _clampRenderMtThreads(_computeMtPopupState.coeffgenThreads),
         loresParamGenThreads: _clampRenderMtThreads(_computeMtPopupState.loresParamGenThreads),
         loresCoeffgenThreads: _clampRenderMtThreads(_computeMtPopupState.loresCoeffgenThreads),
         probe: _computeMtPopupState.probe || null,
@@ -7091,26 +7037,15 @@ function _closeComputeMtPopup() {
     }
 }
 
-function _setComputeMtTab(fused, opts) {
-    const refreshProbe = !opts || opts.refreshProbe !== false;
-    _computeMtPopupState.fused = !!fused;
-    _renderComputeMtPopup();
-    if (_computeMtPopupState.fused && refreshProbe) void _refreshComputeMtProbe();
-}
-
 function _renderComputeMtPopup() {
     const overlay = document.getElementById('compute-mt-popup-overlay');
     const titleEl = document.getElementById('compute-mt-popup-title');
     const summaryEl = document.getElementById('compute-mt-popup-summary');
     const descEl = document.getElementById('compute-mt-popup-description');
     const footerHelpEl = document.getElementById('compute-mt-popup-footer-help');
-    const classicTabEl = document.getElementById('compute-mt-tab-classic');
-    const fusedTabEl = document.getElementById('compute-mt-tab-fused');
-    const classicPanelEl = document.getElementById('compute-mt-classic-panel');
     const fusedPanelEl = document.getElementById('compute-mt-fused-panel');
     const fusedThreadsLabelEl = document.getElementById('compute-mt-fused-threads-label');
     const fusedSolveRowEl = document.getElementById('compute-mt-fused-solve-row');
-    const classicChunksEl = document.getElementById('compute-mt-classic-chunks');
     const fusedChunksEl = document.getElementById('compute-mt-fused-chunks');
     const fusedMinChunksEl = document.getElementById('compute-mt-fused-min-chunks');
     const sizingEl = document.getElementById('compute-mt-sizing-summary');
@@ -7119,70 +7054,50 @@ function _renderComputeMtPopup() {
     const fusedCoeffMirrorEl = document.getElementById('compute-mt-fused-coeffgen-mirror');
     const fusedSolveMirrorEl = document.getElementById('compute-mt-fused-solve-threads');
     const applySafeChunksBtn = document.getElementById('compute-mt-apply-safe-chunks');
-    const paramThreadsEl = document.getElementById('compute-mt-param-gen-threads');
-    const coeffThreadsEl = document.getElementById('compute-mt-coeffgen-threads');
-    const loresThreadsEl = document.getElementById('compute-mt-lores-param-gen-threads');
-    const loresCoeffThreadsEl = document.getElementById('compute-mt-lores-coeffgen-threads');
     const loresThreadsFusedEl = document.getElementById('compute-mt-lores-param-gen-threads-fused');
     const loresCoeffThreadsFusedEl = document.getElementById('compute-mt-lores-coeffgen-threads-fused');
     const runBtn = document.getElementById('compute-mt-popup-run');
-    if (!overlay || !titleEl || !summaryEl || !classicTabEl || !fusedTabEl || !classicPanelEl || !fusedPanelEl || !classicChunksEl || !fusedChunksEl || !fusedMinChunksEl || !sizingEl || !fusedThreadsEl || !fusedParamMirrorEl || !fusedCoeffMirrorEl || !fusedSolveMirrorEl || !applySafeChunksBtn || !paramThreadsEl || !coeffThreadsEl || !loresThreadsEl || !loresCoeffThreadsEl || !loresThreadsFusedEl || !loresCoeffThreadsFusedEl) return;
+    if (!overlay || !titleEl || !summaryEl || !fusedPanelEl || !fusedChunksEl || !fusedMinChunksEl || !sizingEl || !fusedThreadsEl || !fusedParamMirrorEl || !fusedCoeffMirrorEl || !fusedSolveMirrorEl || !applySafeChunksBtn || !loresThreadsFusedEl || !loresCoeffThreadsFusedEl) return;
     if (!_computeMtPopupState.open) {
         _closeComputeMtPopup();
         return;
     }
     const solverMode = _computeMtPopupState.solverMode || 'aberth_mt';
-    const fused = !!_computeMtPopupState.fused;
     const nChunks = Math.max(1, parseInt(_computeMtPopupState.nChunks, 10) || 10);
     const fusedThreads = _clampRenderMtThreads(_computeMtPopupState.fusedThreads || 4);
-    const paramGenThreads = _clampRenderMtThreads(_computeMtPopupState.paramGenThreads);
-    const coeffgenThreads = _clampRenderMtThreads(_computeMtPopupState.coeffgenThreads);
     const loresParamGenThreads = _clampRenderMtThreads(_computeMtPopupState.loresParamGenThreads);
     const loresCoeffgenThreads = _clampRenderMtThreads(_computeMtPopupState.loresCoeffgenThreads);
-    _computeMtPopupState.fused = fused;
+    _computeMtPopupState.fused = true;
     _computeMtPopupState.nChunks = nChunks;
     _computeMtPopupState.fusedThreads = fusedThreads;
-    _computeMtPopupState.paramGenThreads = paramGenThreads;
-    _computeMtPopupState.coeffgenThreads = coeffgenThreads;
     _computeMtPopupState.loresParamGenThreads = loresParamGenThreads;
     _computeMtPopupState.loresCoeffgenThreads = loresCoeffgenThreads;
     titleEl.textContent = _solverRunLabel(solverMode);
     if (descEl) {
-        descEl.textContent = 'Classic keeps the existing chunk fan-out. Fused keeps the classic artifact contract but runs param gen, coeffgen, and solve in one Lambda per chunk.';
+        descEl.textContent = 'Fused keeps the compute artifact contract but runs param gen, coeffgen, and solve in one Lambda per chunk.';
     }
     if (footerHelpEl) {
         footerHelpEl.textContent = _solverHasThreadedFusedSolve(solverMode)
-            ? 'Classic keeps the existing chunk fan-out. Fused adds a degree probe, validates the requested chunk count, runs lores separately, then processes each hires chunk in one Lambda with local param/coeff/solve handoff.'
-            : 'Classic keeps the existing chunk fan-out. Fused adds a degree probe, validates the requested chunk count, runs lores separately, then processes each hires chunk in one Lambda with local param/coeff/solve handoff. Shared hires generation threads affect param-gen and coeffgen; solve stays on the selected solver path.';
+            ? 'Fused adds a degree probe, validates the requested chunk count, runs lores separately, then processes each hires chunk in one Lambda with local param/coeff/solve handoff.'
+            : 'Fused adds a degree probe, validates the requested chunk count, runs lores separately, then processes each hires chunk in one Lambda with local param/coeff/solve handoff. Shared hires generation threads affect param-gen and coeffgen; solve stays on the selected solver path.';
     }
     if (fusedThreadsLabelEl) fusedThreadsLabelEl.textContent = _computePopupSharedThreadsLabel(solverMode);
     if (fusedSolveRowEl) fusedSolveRowEl.style.display = _solverHasThreadedFusedSolve(solverMode) ? '' : 'none';
     overlay.style.display = 'flex';
     overlay.setAttribute('aria-hidden', 'false');
-    classicTabEl.className = fused ? 'tab-btn compute-mt-tab-btn' : 'tab-btn compute-mt-tab-btn active';
-    fusedTabEl.className = fused ? 'tab-btn compute-mt-tab-btn active' : 'tab-btn compute-mt-tab-btn';
-    classicTabEl.setAttribute('aria-pressed', fused ? 'false' : 'true');
-    fusedTabEl.setAttribute('aria-pressed', fused ? 'true' : 'false');
-    classicPanelEl.className = fused ? 'compute-mt-tab-panel inactive' : 'compute-mt-tab-panel active';
-    fusedPanelEl.className = fused ? 'compute-mt-tab-panel active' : 'compute-mt-tab-panel inactive';
-    classicPanelEl.setAttribute('aria-hidden', fused ? 'true' : 'false');
-    fusedPanelEl.setAttribute('aria-hidden', fused ? 'false' : 'true');
-    classicChunksEl.value = String(nChunks);
+    fusedPanelEl.className = 'compute-mt-tab-panel';
+    fusedPanelEl.setAttribute('aria-hidden', 'false');
     fusedChunksEl.value = String(nChunks);
     fusedThreadsEl.value = String(fusedThreads);
     fusedParamMirrorEl.textContent = String(fusedThreads);
     fusedCoeffMirrorEl.textContent = String(fusedThreads);
     fusedSolveMirrorEl.textContent = String(fusedThreads);
-    paramThreadsEl.value = String(paramGenThreads);
-    coeffThreadsEl.value = String(coeffgenThreads);
-    loresThreadsEl.value = String(loresParamGenThreads);
-    loresCoeffThreadsEl.value = String(loresCoeffgenThreads);
     loresThreadsFusedEl.value = String(loresParamGenThreads);
     loresCoeffThreadsFusedEl.value = String(loresCoeffgenThreads);
     const funcName = document.getElementById('render-function')?.value || '?';
     const n = parseInt(document.getElementById('render-n')?.value, 10) || 0;
     const times = Math.max(1, parseInt(document.getElementById('render-times')?.value, 10) || 1);
-    summaryEl.textContent = `Solver: ${_solverTag(solverMode)} • Function: ${funcName} • N=${n || '?'} • chunks=${nChunks} • times=${times} • method=${fused ? 'fused' : 'classic'}`;
+    summaryEl.textContent = `Solver: ${_solverTag(solverMode)} • Function: ${funcName} • N=${n || '?'} • chunks=${nChunks} • times=${times} • method=fused`;
     const safeChunks = Number(_computeMtPopupState.probe?.fused_estimate?.min_safe_chunks) || 0;
     if (_computeMtPopupState.probeLoading) {
         sizingEl.textContent = 'Probe: loading...';
@@ -7209,12 +7124,12 @@ function _renderComputeMtPopup() {
     }
     applySafeChunksBtn.disabled = !(safeChunks > 0);
     if (runBtn) {
-        runBtn.disabled = !!document.getElementById(_solverButtonId(solverMode))?.disabled || (fused && (_computeMtPopupState.probeLoading || !_computeMtPopupState.probe || !_computeMtPopupState.probe.fused_estimate));
+        runBtn.disabled = !!document.getElementById(_solverButtonId(solverMode))?.disabled || _computeMtPopupState.probeLoading || !_computeMtPopupState.probe || !_computeMtPopupState.probe.fused_estimate;
     }
 }
 
 async function _refreshComputeMtProbe() {
-    if (!_computeMtPopupState.open || !_computeMtPopupState.fused) return;
+    if (!_computeMtPopupState.open) return;
     const funcName = document.getElementById('render-function')?.value || '';
     const n = Math.max(1, parseInt(document.getElementById('render-n')?.value, 10) || 0);
     const nChunks = Math.max(1, parseInt(_computeMtPopupState.nChunks, 10) || 10);
@@ -7279,11 +7194,9 @@ async function openComputeSolverPopup(solverMode) {
     _computeMtPopupState = {
         open: true,
         solverMode,
-        fused: !!prefs.fused,
+        fused: true,
         nChunks: sharedChunkState || Math.max(1, parseInt(prefs.nChunks, 10) || 10),
         fusedThreads: _clampRenderMtThreads(prefs.fusedThreads || 4),
-        paramGenThreads: _clampRenderMtThreads(prefs.paramGenThreads || 4),
-        coeffgenThreads: _clampRenderMtThreads(prefs.coeffgenThreads || 4),
         loresParamGenThreads: _clampRenderMtThreads(prefs.loresParamGenThreads || 1),
         loresCoeffgenThreads: _clampRenderMtThreads(prefs.loresCoeffgenThreads || 1),
         probe: prefs.probe || null,
@@ -7292,8 +7205,8 @@ async function openComputeSolverPopup(solverMode) {
         probeSignature: '',
     };
     _renderComputeMtPopup();
-    if (_computeMtPopupState.fused) void _refreshComputeMtProbe();
-    const inputEl = document.getElementById(_computeMtPopupState.fused ? 'compute-mt-fused-threads' : 'compute-mt-classic-chunks');
+    void _refreshComputeMtProbe();
+    const inputEl = document.getElementById('compute-mt-fused-threads');
     if (inputEl && typeof inputEl.focus === 'function') inputEl.focus();
 }
 
@@ -7572,53 +7485,42 @@ function _initRenderMtPopup() {
 
 function _initComputeMtPopup() {
     const runBtn = document.getElementById('compute-mt-popup-run');
-    const classicTabEl = document.getElementById('compute-mt-tab-classic');
-    const fusedTabEl = document.getElementById('compute-mt-tab-fused');
-    const classicChunksEl = document.getElementById('compute-mt-classic-chunks');
     const fusedChunksEl = document.getElementById('compute-mt-fused-chunks');
     const fusedThreadsEl = document.getElementById('compute-mt-fused-threads');
     const applySafeChunksBtn = document.getElementById('compute-mt-apply-safe-chunks');
-    const paramThreadsEl = document.getElementById('compute-mt-param-gen-threads');
-    const coeffThreadsEl = document.getElementById('compute-mt-coeffgen-threads');
-    const loresThreadsEl = document.getElementById('compute-mt-lores-param-gen-threads');
-    const loresCoeffThreadsEl = document.getElementById('compute-mt-lores-coeffgen-threads');
     const loresThreadsFusedEl = document.getElementById('compute-mt-lores-param-gen-threads-fused');
     const loresCoeffThreadsFusedEl = document.getElementById('compute-mt-lores-coeffgen-threads-fused');
+    const runComputeMtPopup = async () => {
+        const solverMode = _computeMtPopupState.solverMode || 'aberth_mt';
+        const nChunks = Math.max(1, parseInt(_computeMtPopupState.nChunks, 10) || 10);
+        const fusedThreads = _clampRenderMtThreads(_computeMtPopupState.fusedThreads);
+        const loresParamGenThreads = _clampRenderMtThreads(_computeMtPopupState.loresParamGenThreads);
+        const loresCoeffgenThreads = _clampRenderMtThreads(_computeMtPopupState.loresCoeffgenThreads);
+        if (!_computeMtPopupState.probe || !_computeMtPopupState.probe.fused_estimate) {
+            await _refreshComputeMtProbe();
+        }
+        if (!_computeMtPopupState.probe || !_computeMtPopupState.probe.fused_estimate) {
+            _renderComputeMtPopup();
+            return false;
+        }
+        _computeMtPopupState.fused = true;
+        _computeMtPopupState.nChunks = nChunks;
+        _computeMtPopupState.fusedThreads = fusedThreads;
+        _computeMtPopupState.loresParamGenThreads = loresParamGenThreads;
+        _computeMtPopupState.loresCoeffgenThreads = loresCoeffgenThreads;
+        document.getElementById('render-stripes').value = String(nChunks);
+        _closeComputeMtPopup();
+        await runCalculateWithSolver(solverMode, { nChunks, fused: true, fusedThreads, loresParamGenThreads, loresCoeffgenThreads });
+        return true;
+    };
     _bindPopupShell({
         overlayId: 'compute-mt-popup-overlay',
         closeId: 'compute-mt-popup-close',
         cancelId: 'compute-mt-popup-cancel',
         isOpen: () => !!_computeMtPopupState.open,
         onClose: _closeComputeMtPopup,
-        onEnter: () => {
-            const solverMode = _computeMtPopupState.solverMode || 'aberth_mt';
-            const fused = !!_computeMtPopupState.fused;
-            const nChunks = Math.max(1, parseInt(_computeMtPopupState.nChunks, 10) || 10);
-            const fusedThreads = _clampRenderMtThreads(_computeMtPopupState.fusedThreads);
-            const paramGenThreads = _clampRenderMtThreads(_computeMtPopupState.paramGenThreads);
-            const coeffgenThreads = _clampRenderMtThreads(_computeMtPopupState.coeffgenThreads);
-            const loresParamGenThreads = _clampRenderMtThreads(_computeMtPopupState.loresParamGenThreads);
-            const loresCoeffgenThreads = _clampRenderMtThreads(_computeMtPopupState.loresCoeffgenThreads);
-            _computeMtPopupState.fused = fused;
-            _computeMtPopupState.nChunks = nChunks;
-            _computeMtPopupState.fusedThreads = fusedThreads;
-            _computeMtPopupState.paramGenThreads = paramGenThreads;
-            _computeMtPopupState.coeffgenThreads = coeffgenThreads;
-            _computeMtPopupState.loresParamGenThreads = loresParamGenThreads;
-            _computeMtPopupState.loresCoeffgenThreads = loresCoeffgenThreads;
-            document.getElementById('render-stripes').value = String(nChunks);
-            _closeComputeMtPopup();
-            runCalculateWithSolver(solverMode, { nChunks, fused, fusedThreads, paramGenThreads, coeffgenThreads, loresParamGenThreads, loresCoeffgenThreads });
-        },
+        onEnter: () => { void runComputeMtPopup(); },
     });
-    if (classicTabEl) classicTabEl.addEventListener('click', () => { _setComputeMtTab(false, { refreshProbe: false }); });
-    if (fusedTabEl) fusedTabEl.addEventListener('click', () => { _setComputeMtTab(true); });
-    if (classicChunksEl) {
-        classicChunksEl.addEventListener('input', (ev) => {
-            _computeMtPopupState.nChunks = Math.max(1, parseInt(ev.target.value, 10) || _computeMtPopupState.nChunks || 10);
-            _renderComputeMtPopup();
-        });
-    }
     if (fusedChunksEl) {
         fusedChunksEl.addEventListener('input', (ev) => {
             _computeMtPopupState.nChunks = Math.max(1, parseInt(ev.target.value, 10) || _computeMtPopupState.nChunks || 10);
@@ -7640,30 +7542,6 @@ function _initComputeMtPopup() {
     if (applySafeChunksBtn) {
         applySafeChunksBtn.addEventListener('click', () => { void _applyComputeMtSafeChunks(); });
     }
-    if (paramThreadsEl) {
-        paramThreadsEl.addEventListener('input', (ev) => {
-            _computeMtPopupState.paramGenThreads = _clampRenderMtThreads(ev.target.value);
-            _renderComputeMtPopup();
-        });
-    }
-    if (coeffThreadsEl) {
-        coeffThreadsEl.addEventListener('input', (ev) => {
-            _computeMtPopupState.coeffgenThreads = _clampRenderMtThreads(ev.target.value);
-            _renderComputeMtPopup();
-        });
-    }
-    if (loresThreadsEl) {
-        loresThreadsEl.addEventListener('input', (ev) => {
-            _computeMtPopupState.loresParamGenThreads = _clampRenderMtThreads(ev.target.value);
-            _renderComputeMtPopup();
-        });
-    }
-    if (loresCoeffThreadsEl) {
-        loresCoeffThreadsEl.addEventListener('input', (ev) => {
-            _computeMtPopupState.loresCoeffgenThreads = _clampRenderMtThreads(ev.target.value);
-            _renderComputeMtPopup();
-        });
-    }
     if (loresThreadsFusedEl) {
         loresThreadsFusedEl.addEventListener('input', (ev) => {
             _computeMtPopupState.loresParamGenThreads = _clampRenderMtThreads(ev.target.value);
@@ -7679,35 +7557,18 @@ function _initComputeMtPopup() {
     if (runBtn) {
         runBtn.addEventListener('click', async () => {
             const btnText = runBtn.textContent;
+            let launched = false;
             try {
                 runBtn.disabled = true;
                 runBtn.textContent = 'Executing...';
-                const solverMode = _computeMtPopupState.solverMode || 'aberth_mt';
-                const fused = !!_computeMtPopupState.fused;
-                const nChunks = Math.max(1, parseInt(_computeMtPopupState.nChunks, 10) || 10);
-                const fusedThreads = _clampRenderMtThreads(_computeMtPopupState.fusedThreads);
-                const paramGenThreads = _clampRenderMtThreads(_computeMtPopupState.paramGenThreads);
-                const coeffgenThreads = _clampRenderMtThreads(_computeMtPopupState.coeffgenThreads);
-                const loresParamGenThreads = _clampRenderMtThreads(_computeMtPopupState.loresParamGenThreads);
-                const loresCoeffgenThreads = _clampRenderMtThreads(_computeMtPopupState.loresCoeffgenThreads);
-                if (fused && (!_computeMtPopupState.probe || !_computeMtPopupState.probe.fused_estimate)) {
-                    await _refreshComputeMtProbe();
-                }
-                if (fused && (!_computeMtPopupState.probe || !_computeMtPopupState.probe.fused_estimate)) {
-                    throw new Error(_computeMtPopupState.probeError || 'fused sizing unavailable');
-                }
-                _computeMtPopupState.paramGenThreads = paramGenThreads;
-                _computeMtPopupState.coeffgenThreads = coeffgenThreads;
-                _computeMtPopupState.loresParamGenThreads = loresParamGenThreads;
-                _computeMtPopupState.loresCoeffgenThreads = loresCoeffgenThreads;
-                _computeMtPopupState.fused = fused;
-                _computeMtPopupState.fusedThreads = fusedThreads;
-                document.getElementById('render-stripes').value = String(nChunks);
-                _closeComputeMtPopup();
-                await runCalculateWithSolver(solverMode, { nChunks, fused, fusedThreads, paramGenThreads, coeffgenThreads, loresParamGenThreads, loresCoeffgenThreads });
+                launched = await runComputeMtPopup();
             } finally {
-                runBtn.disabled = false;
                 runBtn.textContent = btnText;
+                if (launched || !_computeMtPopupState.open) {
+                    runBtn.disabled = false;
+                } else {
+                    _renderComputeMtPopup();
+                }
             }
         });
     }
@@ -11093,6 +10954,23 @@ async function runCoeffBilevelPipeline() {
 
 // ── Solve Histogram Debug ────────────────────────────────────────────────
 
+function _renderPreviewSourceMode() {
+    const mode = String(document.getElementById('render-preview-source-mode')?.value || 'lores').trim().toLowerCase();
+    return mode === 'logical' || mode === 'recompute' ? mode : 'lores';
+}
+
+function _syncRenderPreviewSourceMode() {
+    const mode = _renderPreviewSourceMode();
+    const sizeEl = document.getElementById('render-preview-source-size');
+    const noteEl = document.getElementById('render-preview-source-note');
+    if (sizeEl) sizeEl.disabled = mode === 'lores';
+    if (noteEl) {
+        noteEl.textContent = mode === 'lores'
+            ? 'size ignored for lores'
+            : 'defaults to solve lores_N; max 256';
+    }
+}
+
 async function runRenderLoresPreview() {
     const btn = document.getElementById('btn-render-lores-preview');
     const statusEl = document.getElementById('render-lores-preview-status');
@@ -11122,14 +11000,40 @@ async function runRenderLoresPreview() {
         const loresParamsKey = (calc.lores && calc.lores.params_key) || _fallbackLoresParamsKey(p.jobId, loresKey);
         const rawNCoeffs = Number(calc.n_coeffs);
         const nCoeffs = Number.isFinite(rawNCoeffs) && rawNCoeffs >= 1 ? rawNCoeffs : degree + 1;
-        if (!Number.isFinite(degree) || degree < 1 || !loresKey) {
+        const previewSourceMode = _renderPreviewSourceMode();
+        const calcTimes = Math.max(1, Number(calc.times) || 1);
+        const calcLoresNRaw = Number(calc.lores && calc.lores.N);
+        const calcLoresSteps = Number(calc.lores && calc.lores.n_steps);
+        const calcLoresN = Number.isFinite(calcLoresNRaw) && calcLoresNRaw > 0
+            ? Math.round(calcLoresNRaw)
+            : (Number.isFinite(calcLoresSteps) && calcLoresSteps > 0 ? Math.max(5, Math.round(Math.sqrt(calcLoresSteps / calcTimes))) : 60);
+        const sourceSizeInput = document.getElementById('render-preview-source-size');
+        const previousDefault = parseInt(sourceSizeInput?.dataset.defaultLoresN || '', 10);
+        const previousDefaultJob = sourceSizeInput?.dataset.defaultForJob || '';
+        const sourceSizeText = String(sourceSizeInput?.value || '').trim();
+        let previewSourceSize = parseInt(sourceSizeText, 10);
+        const shouldDefaultSourceSize = !Number.isFinite(previewSourceSize)
+            || !sourceSizeText
+            || (previousDefaultJob && previousDefaultJob !== p.jobId && Number.isFinite(previousDefault) && previewSourceSize === previousDefault);
+        if (shouldDefaultSourceSize) previewSourceSize = calcLoresN;
+        previewSourceSize = Math.max(5, Math.min(256, previewSourceSize));
+        if (sourceSizeInput) {
+            sourceSizeInput.value = String(previewSourceSize);
+            sourceSizeInput.dataset.defaultForJob = p.jobId;
+            sourceSizeInput.dataset.defaultLoresN = String(calcLoresN);
+        }
+        const sourceNote = document.getElementById('render-preview-source-note');
+        if (sourceNote) sourceNote.textContent = previewSourceMode === 'lores' ? `using saved lores_N=${calcLoresN}` : `solve lores_N=${calcLoresN}; max 256`;
+        _syncRenderPreviewSourceMode();
+
+        if (!Number.isFinite(degree) || degree < 1 || (!loresKey && previewSourceMode === 'lores')) {
             throw new Error('calc.json missing degree or lores.bin_key');
         }
-        if (p.solveScoreUsesCoeffSource) {
+        if (previewSourceMode === 'lores' && p.solveScoreUsesCoeffSource) {
             if (!loresCoeffsKey) throw new Error('calc.json missing lores.coeffs_key for coeff-source render preview');
             if (!Number.isFinite(nCoeffs) || nCoeffs < 1) throw new Error('calc.json missing n_coeffs for coeff-source render preview');
         }
-        if (p.solveScoreUsesParamSource && !loresParamsKey) {
+        if (previewSourceMode === 'lores' && p.solveScoreUsesParamSource && !loresParamsKey) {
             throw new Error('calc.json missing lores.params_key for param-source render preview');
         }
 
@@ -11152,6 +11056,8 @@ async function runRenderLoresPreview() {
             solve_score_omega_enabled: p.solveScoreOmegaEnabled,
             solve_score_chain: p.solveScoreChain,
             solve_score_normalize: !!p.solveScoreNormalize,
+            preview_source_mode: previewSourceMode,
+            preview_source_size: previewSourceSize,
             lores_bin_key: loresKey,
             lores_coeffs_key: p.solveScoreUsesCoeffSource ? loresCoeffsKey : undefined,
             lores_params_key: p.solveScoreUsesParamSource ? loresParamsKey : undefined,
@@ -11167,7 +11073,10 @@ async function runRenderLoresPreview() {
             payload.max_im = p.maxIm;
         }
 
-        log(`Render preview: colorizing lores artifacts at ${previewPix}px...`, '', 'render-log');
+        const sourceStartLabel = previewSourceMode === 'lores'
+            ? 'saved lores artifacts'
+            : `${previewSourceMode} ${previewSourceSize}x${previewSourceSize}`;
+        log(`Render preview: colorizing ${sourceStartLabel} at ${previewPix}px...`, '', 'render-log');
         const result = await lambdaPost('render-lores-preview', payload);
         if (!result || !result.image_base64) throw new Error('preview response missing image_base64');
 
@@ -11188,9 +11097,14 @@ async function runRenderLoresPreview() {
 
         const raster = result.raster || {};
         const timings = result.timings_ms || {};
+        const source = result.source || {};
+        for (const line of (Array.isArray(result.logs) ? result.logs : [])) {
+            log(line, '', 'render-log');
+        }
         const roots = Number(raster.roots_plotted || 0);
         const totalMs = Number(timings.total || 0);
-        const msg = `${previewPix}px · roots=${roots.toLocaleString()} · nonzero=${Number(result.nonzero_pixels || 0).toLocaleString()} · ${(totalMs / 1000).toFixed(2)}s`;
+        const sourceLabel = source.mode === 'logical' || source.mode === 'recompute' ? `${source.mode} ${source.view_N || previewSourceSize}` : 'lores';
+        const msg = `${previewPix}px · ${sourceLabel} · roots=${roots.toLocaleString()} · nonzero=${Number(result.nonzero_pixels || 0).toLocaleString()} · ${(totalMs / 1000).toFixed(2)}s`;
         if (statusEl) statusEl.textContent = msg;
         if (renderStatusEl) {
             renderStatusEl.textContent = 'Render preview ready';
@@ -12318,6 +12232,7 @@ window.addEventListener('focus', function() {
 (function() {
     _syncSolveScoreOmegaUi('render');
     _syncSolveScoreOmegaUi('palette');
+    _syncRenderPreviewSourceMode();
     _updateResultsFilterUi();
     const renderJobInput = document.getElementById('render-results-dir');
     if (renderJobInput && !renderJobInput._polypaintBound) {

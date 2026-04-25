@@ -2,10 +2,12 @@
 
 #include <curl/curl.h>
 #include <ctype.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <string.h>
+#include <sys/types.h>
 #include <time.h>
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
@@ -412,6 +414,72 @@ static int msr_retryable_range_failure(CURLcode rc, long httpStatus) {
            rc == CURLE_GOT_NOTHING;
 }
 
+static int msr_starts_with(const char *text, const char *prefix) {
+    size_t n = strlen(prefix);
+    return text && strncmp(text, prefix, n) == 0;
+}
+
+static int msr_read_exact_file_range(const char *url,
+                                     const char *key,
+                                     unsigned long long byteStart,
+                                     unsigned long long byteLength,
+                                     unsigned char *dst,
+                                     char *errBuf,
+                                     size_t errBufLen) {
+    const char *path = url;
+    FILE *f = NULL;
+    size_t remaining = 0;
+    unsigned char *cursor = dst;
+    if (!url || !dst) {
+        msr_set_error(errBuf, errBufLen, "file range read requires url and dst");
+        return 0;
+    }
+    if (msr_starts_with(url, "file://")) {
+        path = url + 7;
+    }
+    if (!path || !*path) {
+        msr_set_errorf(errBuf, errBufLen, "empty file path for %s", key ? key : "local source");
+        return 0;
+    }
+    if ((unsigned long long)((size_t)byteLength) != byteLength) {
+        msr_set_errorf(errBuf, errBufLen, "file range too large for %s: %llu bytes",
+                       key ? key : path, byteLength);
+        return 0;
+    }
+    f = fopen(path, "rb");
+    if (!f) {
+        msr_set_errorf(errBuf, errBufLen, "cannot open local source %s: %s",
+                       key ? key : path, strerror(errno));
+        return 0;
+    }
+    if (fseeko(f, (off_t)byteStart, SEEK_SET) != 0) {
+        msr_set_errorf(errBuf, errBufLen, "cannot seek local source %s to byte %llu: %s",
+                       key ? key : path, byteStart, strerror(errno));
+        fclose(f);
+        return 0;
+    }
+    remaining = (size_t)byteLength;
+    while (remaining > 0) {
+        size_t n = fread(cursor, 1, remaining, f);
+        if (n == 0) {
+            if (ferror(f)) {
+                msr_set_errorf(errBuf, errBufLen, "failed reading local source %s: %s",
+                               key ? key : path, strerror(errno));
+            } else {
+                msr_set_errorf(errBuf, errBufLen,
+                               "short local read for %s at byte %llu: missing %zu bytes",
+                               key ? key : path, byteStart, remaining);
+            }
+            fclose(f);
+            return 0;
+        }
+        cursor += n;
+        remaining -= n;
+    }
+    fclose(f);
+    return 1;
+}
+
 static CURL *msr_thread_curl_handle(char *errBuf, size_t errBufLen) {
     if (!msr_tls_curl) {
         msr_tls_curl = curl_easy_init();
@@ -808,16 +876,29 @@ int multispan_reader_read_exact(const MultiSpanReader *reader,
         unsigned long long partLen = overlapEnd - overlapStart;
         unsigned long long physicalStart = span->byteStart + (overlapStart - spanStart);
         const MultiSpanSource *source = &reader->sources[span->sourceId];
-        if (!msr_download_exact_range(
-                source->url,
-                source->key,
-                physicalStart,
-                partLen,
-                reader->retries,
-                dst + (size_t)(overlapStart - logicalOffset),
-                errBuf,
-                errBufLen)) {
-            return 0;
+        if (msr_starts_with(source->url, "file://")) {
+            if (!msr_read_exact_file_range(
+                    source->url,
+                    source->key,
+                    physicalStart,
+                    partLen,
+                    dst + (size_t)(overlapStart - logicalOffset),
+                    errBuf,
+                    errBufLen)) {
+                return 0;
+            }
+        } else {
+            if (!msr_download_exact_range(
+                    source->url,
+                    source->key,
+                    physicalStart,
+                    partLen,
+                    reader->retries,
+                    dst + (size_t)(overlapStart - logicalOffset),
+                    errBuf,
+                    errBufLen)) {
+                return 0;
+            }
         }
         totalDownloaded += (long)partLen;
         cursor = overlapEnd;

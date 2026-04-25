@@ -115,6 +115,29 @@ class TestComputeStarterLambda(unittest.TestCase):
 
     @patch("handler_compute_orchestrator.report_status")
     @patch("handler_compute_orchestrator.sfn_client")
+    def test_starter_forwards_fused_execution_method_for_companion_matrix(self, mock_sfn, mock_report):
+        mock_sfn.start_execution.return_value = {
+            "executionArn": "arn:aws:states:us-east-1:123:execution:wf:exec_cm"
+        }
+        import handler_compute_orchestrator as mod
+        mod.STATE_MACHINE_ARN = "arn:aws:states:us-east-1:123:stateMachine:test"
+        mod.handler(_make_event({
+            "job_id": "j",
+            "run_id": "run_cm_f",
+            "params": {
+                "solver_mode": "companion_matrix",
+                "N": 100,
+                "n_chunks": 8,
+                "function": "g1",
+                "execution_method": "fused_chunk_pipeline",
+            },
+        }), None)
+        sfn_input = json.loads(mock_sfn.start_execution.call_args.kwargs["input"])
+        self.assertEqual(sfn_input["params"]["solver_mode"], "companion_matrix")
+        self.assertEqual(sfn_input["params"]["execution_method"], "fused_chunk_pipeline")
+
+    @patch("handler_compute_orchestrator.report_status")
+    @patch("handler_compute_orchestrator.sfn_client")
     def test_starter_resolves_conflicting_fused_inputs_to_explicit_method(self, mock_sfn, mock_report):
         mock_sfn.start_execution.return_value = {
             "executionArn": "arn:aws:states:us-east-1:123:execution:wf:exec3"

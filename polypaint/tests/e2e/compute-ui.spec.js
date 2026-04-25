@@ -103,6 +103,23 @@ test.describe('Compute UI', () => {
     await page.click('.tab-btn:text("Compute")');
     await page.evaluate(() => {
       window._computeMtCalls = [];
+      window.lambdaPost = async function (name, body) {
+        if (name !== 'coeffgen' || body.phase !== 'degree_probe') throw new Error(`unexpected ${name}`);
+        return {
+          probe_stable: true,
+          degree: 10,
+          n_coeffs: 11,
+          fused_estimate: {
+            min_safe_chunks: 1,
+            params_bytes: 1000,
+            coeff_bytes: 2000,
+            roots_bytes: 3000,
+            estimated_peak_bytes: 4000,
+            estimated_tmp_peak_bytes: 5000,
+            safe_chunk_limit_reason: 'test',
+          },
+        };
+      };
       window.runCalculateWithSolver = async function (solverMode, computeMtOptions) {
         window._computeMtCalls.push({ solverMode, computeMtOptions });
       };
@@ -111,10 +128,12 @@ test.describe('Compute UI', () => {
     await page.click('#btn-calculate-mt');
     await expect(page.locator('#compute-mt-popup-overlay')).toBeVisible();
     await expect(page.locator('#compute-mt-popup-summary')).toContainText('Function:');
-    await page.fill('#compute-mt-param-gen-threads', '7');
-    await page.fill('#compute-mt-coeffgen-threads', '5');
-    await page.fill('#compute-mt-lores-param-gen-threads', '3');
-    await page.fill('#compute-mt-lores-coeffgen-threads', '2');
+    await expect(page.locator('#compute-mt-tab-classic')).toHaveCount(0);
+    await expect(page.locator('#compute-mt-classic-panel')).toHaveCount(0);
+    await page.fill('#compute-mt-fused-threads', '7');
+    await page.fill('#compute-mt-lores-param-gen-threads-fused', '3');
+    await page.fill('#compute-mt-lores-coeffgen-threads-fused', '2');
+    await expect(page.locator('#compute-mt-popup-run')).toBeEnabled();
     await page.click('#compute-mt-popup-run');
 
     await expect(page.locator('#compute-mt-popup-overlay')).toBeHidden();
@@ -122,10 +141,55 @@ test.describe('Compute UI', () => {
     expect(call).toMatchObject({
       solverMode: 'aberth_mt',
       computeMtOptions: {
-        paramGenThreads: 7,
-        coeffgenThreads: 5,
+        fused: true,
+        fusedThreads: 7,
         loresParamGenThreads: 3,
         loresCoeffgenThreads: 2,
+      },
+    });
+  });
+
+  test('Calculate-CM uses the same fused popup contract', async ({ page }) => {
+    await page.click('.tab-btn:text("Compute")');
+    await page.evaluate(() => {
+      window._computeMtCalls = [];
+      window.lambdaPost = async function (name, body) {
+        if (name !== 'coeffgen' || body.phase !== 'degree_probe') throw new Error(`unexpected ${name}`);
+        return {
+          probe_stable: true,
+          degree: 10,
+          n_coeffs: 11,
+          fused_estimate: {
+            min_safe_chunks: 1,
+            params_bytes: 1000,
+            coeff_bytes: 2000,
+            roots_bytes: 3000,
+            estimated_peak_bytes: 4000,
+            estimated_tmp_peak_bytes: 5000,
+            safe_chunk_limit_reason: 'test',
+          },
+        };
+      };
+      window.runCalculateWithSolver = async function (solverMode, computeMtOptions) {
+        window._computeMtCalls.push({ solverMode, computeMtOptions });
+      };
+    });
+
+    await page.click('#btn-calculate-cm');
+    await expect(page.locator('#compute-mt-popup-overlay')).toBeVisible();
+    await expect(page.locator('#compute-mt-popup-summary')).toContainText('Solver: CM');
+    await expect(page.locator('#compute-mt-tab-classic')).toHaveCount(0);
+    await expect(page.locator('#compute-mt-fused-solve-row')).toBeHidden();
+    await page.fill('#compute-mt-fused-threads', '6');
+    await page.click('#compute-mt-popup-run');
+
+    await expect(page.locator('#compute-mt-popup-overlay')).toBeHidden();
+    const call = await page.evaluate(() => window._computeMtCalls[0]);
+    expect(call).toMatchObject({
+      solverMode: 'companion_matrix',
+      computeMtOptions: {
+        fused: true,
+        fusedThreads: 6,
       },
     });
   });

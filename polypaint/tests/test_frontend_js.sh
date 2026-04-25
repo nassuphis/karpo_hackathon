@@ -165,6 +165,13 @@ assertIncludes("solveScoreNormalize: !!document.getElementById('render-score-nor
 assertIncludes("solve_score_normalize: !!p.solveScoreNormalize,", 'fused render payload should forward score normalization flag');
 assertIncludes("score normalization: lo=${fmt(s.score_output_clip_lo)}  hi=${fmt(s.score_output_clip_hi)}", 'histogram output should report score normalization range');
 assertIncludes("if (s.raw_hist_space === 'score_output_normalized') rawLabel = 'score-output normalized program output';", 'histogram raw bins should label score-output normalized space');
+assertIncludes("'mean_log_mod',", 'solve-score catalog should expose mean_log_mod');
+assertIncludes("'angular_entropy_16',", 'solve-score catalog should expose angular_entropy_16');
+assertIncludes("'sector_max_share_16',", 'solve-score catalog should expose sector_max_share_16');
+assertIncludes("'angular_order_4',", 'solve-score catalog should expose angular_order_4');
+assertIncludes("const _solveScoreGenericMetricChipName = 'metric';", 'solve-score editor should define generic metric chip');
+assertIncludes("catalog[_solveScoreGenericMetricChipName] = {", 'solve-score catalog should expose generic metric chip');
+assertIncludes("return [item.name, ...(item.params || [])];", 'generic metric chip should serialize without desugaring in saved programs');
 assertIncludes("id=\"render-preview-pix\" value=\"256\"", 'render output should expose default 256px lores preview size input');
 assertIncludes("id=\"btn-render-lores-preview\" onclick=\"runRenderLoresPreview()\"", 'render output should expose lores preview button');
 assertIncludes("id=\"render-preview-source-mode\"", 'render output should expose preview source mode dropdown');
@@ -293,7 +300,7 @@ function assert(cond, message) {
 async function main() {
   const solveScoreCatalogBlock = extractBetween(
     "const _solveScoreMetricNames = [",
-    "const _ssCatalog = (() => {\n    const catalog = {};\n    _solveScoreMetricNames.forEach(name => {\n        catalog[name] = {\n            label: name,\n            chip_kind: 'metric',\n            params: [{ ph: 'src', def: _solveScoreParamMetricSet.has(name) ? 'pm' : 'slv', choices: _solveScoreMetricSourceChoices(name) }, { ph: 'q%', def: '0.1' }],\n            tooltip: _solveScoreParamMetricSet.has(name) ? `${name}(pm,q=0.1%)` : `${name}(slv,q=0.1%)`,\n        };\n    });\n    Object.entries(_solveScoreCombineSpecs).forEach(([name, spec]) => {\n        catalog[name] = {\n            label: name,\n            chip_kind: 'combine',\n            params: spec.params || [],\n            tooltip: `stack ${spec.arity} -> 1`,\n        };\n    });\n    Object.entries(_solveScoreUnarySpecs).forEach(([name, spec]) => {\n        catalog[name] = {\n            label: name,\n            chip_kind: 'unary',\n            params: spec.params || [],\n            tooltip: spec.tooltip || `stack ${spec.arity} -> ${spec.arity}`,\n        };\n    });\n    return catalog;\n})();",
+    "const _ctAndyParam = { ph: 'andy', def: '0' };",
     'solve-score catalog block'
   );
   const code = [
@@ -306,6 +313,9 @@ async function main() {
     extractFunction('_solveScoreMetricsUseSource'),
     extractFunction('_solveScoreMetricsUseNonSolveSource'),
     extractFunction('_solveScoreMetricAllowedSources'),
+    extractFunction('_solveScoreMetricCanUseGenericChip'),
+    extractFunction('_formatSolveScoreSourceLag'),
+    extractFunction('_solveScoreItemMetricDetails'),
     extractFunction('_normalizeSolveScoreChain'),
     extractFunction('_serializeSolveScoreChain'),
     extractFunction('_buildSolveScoreProgramSpec'),
@@ -380,6 +390,33 @@ async function main() {
   assert(laggedOnly.metrics[0].source === 'cf', 'lagged-only UI compiler should preserve the source family');
   assert(Math.abs(laggedOnly.metrics[0].quantile - 0.007) < 1e-12, 'lagged-only UI compiler should seed the base slot quantile');
   assert(laggedOnly.prelude_by_source.cf === 1, 'lagged-only UI compiler should require a coeff prelude row');
+
+  const genericMetric = ctx._compileSolveScoreChain([
+    ['metric', 'angular_entropy_16', 'cf', '0.5'],
+    ['metric', 'angular_entropy_16', 'cf-1', '0.5'],
+    ['abs_diff'],
+  ], 'proximity', '0.1');
+  assert(genericMetric.program_spec === 'm0-0;m0-1;abs_diff', 'generic metric chip should compile to normal metric refs');
+  assert(genericMetric.metrics.length === 1, 'generic metric chip should reuse current/lagged base slot');
+  assert(genericMetric.metrics[0].metric === 'angular_entropy_16', 'generic metric chip should compile selected metric name');
+  assert(genericMetric.metrics[0].source === 'cf', 'generic metric chip should compile selected source');
+  assert(JSON.stringify(genericMetric.chain) === JSON.stringify([['metric', 'angular_entropy_16', 'cf', '0.5'], ['metric', 'angular_entropy_16', 'cf-1', '0.5'], ['abs_diff']]), 'generic metric chip should remain generic in serialized editor chain');
+
+  let genericPmRejected = false;
+  try {
+    ctx._compileSolveScoreChain([['metric', 'angular_entropy_16', 'pm', '0.5']], 'proximity', '0.1');
+  } catch (err) {
+    genericPmRejected = String(err && err.message || err).includes('source must be one of slv, cf');
+  }
+  assert(genericPmRejected, 'generic metric chip should reject pm source instead of silently coercing to slv');
+
+  let genericParamMetricRejected = false;
+  try {
+    ctx._compileSolveScoreChain([['metric', 't1_abs', 'slv', '0.5']], 'proximity', '0.1');
+  } catch (err) {
+    genericParamMetricRejected = String(err && err.message || err).includes('slv/cf-capable metric');
+  }
+  assert(genericParamMetricRejected, 'generic metric chip should reject pm-only metrics');
 
   const laggedBeforeCurrent = ctx._compileSolveScoreChain([
     ['spread', 'slv-1', '0.9'],

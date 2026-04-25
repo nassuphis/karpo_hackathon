@@ -1833,7 +1833,10 @@ def test_merge_reports_configured_worker_count():
 
 def test_merge_preserves_requested_metric():
     """Merge output contains the requested metric name."""
-    for metric in ["proximity", "crowding", "spread", "anisotropy", "area", "min_mod", "min_angular_separation"]:
+    for metric in [
+        "proximity", "crowding", "spread", "anisotropy", "area",
+        "min_mod", "min_angular_separation", "mean_log_mod", "angular_entropy_16",
+    ]:
         clip_data, hist_responses = _uniform_hist_data(
             "renders/test/solve_scores/", 1, metric=metric)
         body, artifact = _run_merge(1, clip_data, hist_responses, metric=metric)

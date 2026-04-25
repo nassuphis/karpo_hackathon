@@ -35,6 +35,13 @@
  * Metrics (v4, parameter-row metrics; source=pm only):
  *   t1_re, t1_im, t1_abs, t1_phase
  *   t2_re, t2_im, t2_abs, t2_phase
+ *
+ * Metrics (v5):
+ *   mean_log_mod, sd_log_mod
+ *   inside_unit_fraction, unit_annulus_fraction_01
+ *   imag_axis_proximity, diagonal_proximity
+ *   angular_entropy_16, sector_max_share_16
+ *   angular_order_2, angular_order_3, angular_order_4
  */
 
 #ifndef SOLVE_SCORE_H
@@ -53,6 +60,14 @@
 #define SOLVE_SCORE_EPS2 1e-300
 #define SOLVE_SCORE_EPS  1e-150
 #define SOLVE_SCORE_FILTER_MAXDEG 1024
+#define SOLVE_SCORE_METRIC_LIST_TEXT \
+    "proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|" \
+    "nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|" \
+    "dist_unit_circle|asymmetry_re|max_re|min_re|max_im|min_im|min_mod|max_mod|" \
+    "min_angular_separation|t1_re|t1_im|t1_abs|t1_phase|t2_re|t2_im|t2_abs|t2_phase|" \
+    "mean_log_mod|sd_log_mod|inside_unit_fraction|unit_annulus_fraction_01|" \
+    "imag_axis_proximity|diagonal_proximity|angular_entropy_16|sector_max_share_16|" \
+    "angular_order_2|angular_order_3|angular_order_4"
 
 /* ── Enum ─────────────────────────────────────────────────────────────── */
 
@@ -87,6 +102,17 @@ enum SolveMetric {
     SOLVE_METRIC_T2_IM = 27,
     SOLVE_METRIC_T2_ABS = 28,
     SOLVE_METRIC_T2_PHASE = 29,
+    SOLVE_METRIC_MEAN_LOG_MOD = 30,
+    SOLVE_METRIC_SD_LOG_MOD = 31,
+    SOLVE_METRIC_INSIDE_UNIT_FRACTION = 32,
+    SOLVE_METRIC_UNIT_ANNULUS_FRACTION_01 = 33,
+    SOLVE_METRIC_IMAG_AXIS_PROXIMITY = 34,
+    SOLVE_METRIC_DIAGONAL_PROXIMITY = 35,
+    SOLVE_METRIC_ANGULAR_ENTROPY_16 = 36,
+    SOLVE_METRIC_SECTOR_MAX_SHARE_16 = 37,
+    SOLVE_METRIC_ANGULAR_ORDER_2 = 38,
+    SOLVE_METRIC_ANGULAR_ORDER_3 = 39,
+    SOLVE_METRIC_ANGULAR_ORDER_4 = 40,
 };
 
 /* ── Parser ───────────────────────────────────────────────────────────── */
@@ -123,6 +149,17 @@ static int parse_solve_metric(const char *s, enum SolveMetric *out) {
     if (strcmp(s, "t2_im") == 0)                { *out = SOLVE_METRIC_T2_IM; return 1; }
     if (strcmp(s, "t2_abs") == 0)               { *out = SOLVE_METRIC_T2_ABS; return 1; }
     if (strcmp(s, "t2_phase") == 0)             { *out = SOLVE_METRIC_T2_PHASE; return 1; }
+    if (strcmp(s, "mean_log_mod") == 0)         { *out = SOLVE_METRIC_MEAN_LOG_MOD; return 1; }
+    if (strcmp(s, "sd_log_mod") == 0)           { *out = SOLVE_METRIC_SD_LOG_MOD; return 1; }
+    if (strcmp(s, "inside_unit_fraction") == 0) { *out = SOLVE_METRIC_INSIDE_UNIT_FRACTION; return 1; }
+    if (strcmp(s, "unit_annulus_fraction_01") == 0) { *out = SOLVE_METRIC_UNIT_ANNULUS_FRACTION_01; return 1; }
+    if (strcmp(s, "imag_axis_proximity") == 0)  { *out = SOLVE_METRIC_IMAG_AXIS_PROXIMITY; return 1; }
+    if (strcmp(s, "diagonal_proximity") == 0)   { *out = SOLVE_METRIC_DIAGONAL_PROXIMITY; return 1; }
+    if (strcmp(s, "angular_entropy_16") == 0)   { *out = SOLVE_METRIC_ANGULAR_ENTROPY_16; return 1; }
+    if (strcmp(s, "sector_max_share_16") == 0)  { *out = SOLVE_METRIC_SECTOR_MAX_SHARE_16; return 1; }
+    if (strcmp(s, "angular_order_2") == 0)      { *out = SOLVE_METRIC_ANGULAR_ORDER_2; return 1; }
+    if (strcmp(s, "angular_order_3") == 0)      { *out = SOLVE_METRIC_ANGULAR_ORDER_3; return 1; }
+    if (strcmp(s, "angular_order_4") == 0)      { *out = SOLVE_METRIC_ANGULAR_ORDER_4; return 1; }
     return 0;
 }
 
@@ -160,6 +197,17 @@ static const char *solve_metric_name(enum SolveMetric m) {
         case SOLVE_METRIC_T2_IM:                return "t2_im";
         case SOLVE_METRIC_T2_ABS:               return "t2_abs";
         case SOLVE_METRIC_T2_PHASE:             return "t2_phase";
+        case SOLVE_METRIC_MEAN_LOG_MOD:         return "mean_log_mod";
+        case SOLVE_METRIC_SD_LOG_MOD:           return "sd_log_mod";
+        case SOLVE_METRIC_INSIDE_UNIT_FRACTION: return "inside_unit_fraction";
+        case SOLVE_METRIC_UNIT_ANNULUS_FRACTION_01: return "unit_annulus_fraction_01";
+        case SOLVE_METRIC_IMAG_AXIS_PROXIMITY:  return "imag_axis_proximity";
+        case SOLVE_METRIC_DIAGONAL_PROXIMITY:   return "diagonal_proximity";
+        case SOLVE_METRIC_ANGULAR_ENTROPY_16:   return "angular_entropy_16";
+        case SOLVE_METRIC_SECTOR_MAX_SHARE_16:  return "sector_max_share_16";
+        case SOLVE_METRIC_ANGULAR_ORDER_2:      return "angular_order_2";
+        case SOLVE_METRIC_ANGULAR_ORDER_3:      return "angular_order_3";
+        case SOLVE_METRIC_ANGULAR_ORDER_4:      return "angular_order_4";
     }
     return "unknown";
 }
@@ -219,10 +267,21 @@ static int solve_metric_min_roots(enum SolveMetric metric) {
         case SOLVE_METRIC_MIN_IM:
         case SOLVE_METRIC_MIN_MOD:
         case SOLVE_METRIC_MAX_MOD:
+        case SOLVE_METRIC_MEAN_LOG_MOD:
+        case SOLVE_METRIC_INSIDE_UNIT_FRACTION:
+        case SOLVE_METRIC_UNIT_ANNULUS_FRACTION_01:
+        case SOLVE_METRIC_IMAG_AXIS_PROXIMITY:
+        case SOLVE_METRIC_DIAGONAL_PROXIMITY:
+        case SOLVE_METRIC_SECTOR_MAX_SHARE_16:
             return 1;
         case SOLVE_METRIC_AREA:
             return 3;
         case SOLVE_METRIC_MIN_ANGULAR_SEPARATION:
+        case SOLVE_METRIC_SD_LOG_MOD:
+        case SOLVE_METRIC_ANGULAR_ENTROPY_16:
+        case SOLVE_METRIC_ANGULAR_ORDER_2:
+        case SOLVE_METRIC_ANGULAR_ORDER_3:
+        case SOLVE_METRIC_ANGULAR_ORDER_4:
             return 2;
         default:
             return 2;
@@ -320,6 +379,41 @@ static void compute_nearest_neighbor_scores(const float *roots, int degree, doub
         }
         s1_out[i] = -0.5 * log10(d2_min > SOLVE_SCORE_EPS2 ? d2_min : SOLVE_SCORE_EPS2);
     }
+}
+
+static void fill_angle_histogram_16(const float *roots, int degree, int counts[16], int *angleCountOut) {
+    int angleCount = 0;
+    const double scale = 16.0 / (2.0 * M_PI);
+    for (int b = 0; b < 16; b++) counts[b] = 0;
+    for (int i = 0; i < degree; i++) {
+        double re = roots[i * 2];
+        double im = roots[i * 2 + 1];
+        if (re == 0.0 && im == 0.0) continue;
+        double th = wrapped_angle_0_2pi(re, im);
+        int bin = (int)(th * scale);
+        if (bin < 0) bin = 0;
+        if (bin > 15) bin = 15;
+        counts[bin]++;
+        angleCount++;
+    }
+    if (angleCountOut) *angleCountOut = angleCount;
+}
+
+static double compute_angular_order(const float *roots, int degree, int order) {
+    double c = 0.0;
+    double s = 0.0;
+    int angleCount = 0;
+    for (int i = 0; i < degree; i++) {
+        double re = roots[i * 2];
+        double im = roots[i * 2 + 1];
+        if (re == 0.0 && im == 0.0) continue;
+        double th = wrapped_angle_0_2pi(re, im);
+        c += cos((double)order * th);
+        s += sin((double)order * th);
+        angleCount++;
+    }
+    if (angleCount < 2) return 0.0;
+    return hypot(c, s) / (double)angleCount;
 }
 
 /* ── Main metric function ─────────────────────────────────────────────── */
@@ -443,6 +537,140 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
         double im_med = median_inplace(buf, degree);
         double result = -log10(im_med + SOLVE_SCORE_EPS);
         if (buf != abs_im) free(buf);
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return result;
+    }
+
+    /* ── Unit-circle radial metrics ── */
+    if (metric == SOLVE_METRIC_MEAN_LOG_MOD) {
+        double sum = 0.0;
+        for (int i = 0; i < degree; i++) {
+            double re = roots[i * 2];
+            double im = roots[i * 2 + 1];
+            sum += log(hypot(re, im) + SOLVE_SCORE_EPS);
+        }
+        double result = sum / degree;
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return result;
+    }
+
+    if (metric == SOLVE_METRIC_SD_LOG_MOD) {
+        if (degree < 2) return 0.0;
+        double mean = 0.0;
+        for (int i = 0; i < degree; i++) {
+            mean += log(hypot(roots[i * 2], roots[i * 2 + 1]) + SOLVE_SCORE_EPS);
+        }
+        mean /= degree;
+        double ss = 0.0;
+        for (int i = 0; i < degree; i++) {
+            double lm = log(hypot(roots[i * 2], roots[i * 2 + 1]) + SOLVE_SCORE_EPS);
+            double d = lm - mean;
+            ss += d * d;
+        }
+        double result = sqrt(ss / degree);
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return result;
+    }
+
+    if (metric == SOLVE_METRIC_INSIDE_UNIT_FRACTION) {
+        int inside = 0;
+        for (int i = 0; i < degree; i++) {
+            double re = roots[i * 2];
+            double im = roots[i * 2 + 1];
+            if (hypot(re, im) < 1.0) inside++;
+        }
+        double result = (double)inside / (double)degree;
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return result;
+    }
+
+    if (metric == SOLVE_METRIC_UNIT_ANNULUS_FRACTION_01) {
+        int in_band = 0;
+        for (int i = 0; i < degree; i++) {
+            double re = roots[i * 2];
+            double im = roots[i * 2 + 1];
+            if (fabs(hypot(re, im) - 1.0) < 0.1) in_band++;
+        }
+        double result = (double)in_band / (double)degree;
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return result;
+    }
+
+    /* ── Axis / diagonal proximity metrics ── */
+    if (metric == SOLVE_METRIC_IMAG_AXIS_PROXIMITY) {
+        double abs_re[1024];
+        double *buf = degree <= 1024 ? abs_re : (double *)malloc(degree * sizeof(double));
+        if (!buf) {
+            if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+            return 0.0;
+        }
+        for (int i = 0; i < degree; i++)
+            buf[i] = fabs(roots[i * 2]);
+        double re_med = median_inplace(buf, degree);
+        double result = -log10(re_med + SOLVE_SCORE_EPS);
+        if (buf != abs_re) free(buf);
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return result;
+    }
+
+    if (metric == SOLVE_METRIC_DIAGONAL_PROXIMITY) {
+        double diag_dist[1024];
+        double *buf = degree <= 1024 ? diag_dist : (double *)malloc(degree * sizeof(double));
+        if (!buf) {
+            if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+            return 0.0;
+        }
+        for (int i = 0; i < degree; i++) {
+            double re = fabs(roots[i * 2]);
+            double im = fabs(roots[i * 2 + 1]);
+            buf[i] = fabs(re - im);
+        }
+        double med = median_inplace(buf, degree);
+        double result = -log10(med + SOLVE_SCORE_EPS);
+        if (buf != diag_dist) free(buf);
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return result;
+    }
+
+    /* ── Angular distribution metrics ── */
+    if (metric == SOLVE_METRIC_ANGULAR_ENTROPY_16 || metric == SOLVE_METRIC_SECTOR_MAX_SHARE_16) {
+        int counts[16];
+        int angleCount = 0;
+        fill_angle_histogram_16(roots, degree, counts, &angleCount);
+        if (angleCount <= 0) {
+            if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+            return 0.0;
+        }
+        if (metric == SOLVE_METRIC_SECTOR_MAX_SHARE_16) {
+            int maxCount = counts[0];
+            for (int b = 1; b < 16; b++) {
+                if (counts[b] > maxCount) maxCount = counts[b];
+            }
+            double result = (double)maxCount / (double)angleCount;
+            if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+            return result;
+        }
+        if (angleCount < 2) {
+            if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+            return 0.0;
+        }
+        double entropy = 0.0;
+        for (int b = 0; b < 16; b++) {
+            if (counts[b] <= 0) continue;
+            double p = (double)counts[b] / (double)angleCount;
+            entropy -= p * log(p);
+        }
+        double result = entropy / log(16.0);
+        if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+        return result;
+    }
+
+    if (metric == SOLVE_METRIC_ANGULAR_ORDER_2 ||
+        metric == SOLVE_METRIC_ANGULAR_ORDER_3 ||
+        metric == SOLVE_METRIC_ANGULAR_ORDER_4) {
+        int order = metric == SOLVE_METRIC_ANGULAR_ORDER_2 ? 2 :
+                    (metric == SOLVE_METRIC_ANGULAR_ORDER_3 ? 3 : 4);
+        double result = compute_angular_order(roots, degree, order);
         if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
         return result;
     }

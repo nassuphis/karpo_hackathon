@@ -712,8 +712,9 @@ int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "Usage: solve_proximity_hist_sectioned [--input_mode=sectioned|multispan_sectioned] "
                 "(--url=URL --input_size=BYTES | --input_manifest=file.json) --degree=D "
-                "[--metric=proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re|min_mod|max_mod|min_angular_separation] "
-                "--clip_lo=X --clip_hi=Y [--hist_bins=100] [--omega=1] [--threads=2] [--root_xforms=file.json]\n");
+                "[--metric=%s] --clip_lo=X --clip_hi=Y "
+                "[--hist_bins=100] [--omega=1] [--threads=2] [--root_xforms=file.json]\n",
+                SOLVE_SCORE_METRIC_LIST_TEXT);
         return 1;
     }
 
@@ -775,7 +776,7 @@ int main(int argc, char **argv) {
 
     enum SolveMetric metric;
     if (!parse_solve_metric(metricStr, &metric)) {
-        fprintf(stderr, "Invalid metric: %s (use proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re|min_mod|max_mod|min_angular_separation)\n", metricStr);
+        fprintf(stderr, "Invalid metric: %s (use %s)\n", metricStr, SOLVE_SCORE_METRIC_LIST_TEXT);
         return 1;
     }
 

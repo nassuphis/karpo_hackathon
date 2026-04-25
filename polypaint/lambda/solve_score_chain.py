@@ -42,6 +42,17 @@ VALID_SOLVE_SCORE_METRICS = {
     "min_mod",
     "max_mod",
     "min_angular_separation",
+    "mean_log_mod",
+    "sd_log_mod",
+    "inside_unit_fraction",
+    "unit_annulus_fraction_01",
+    "imag_axis_proximity",
+    "diagonal_proximity",
+    "angular_entropy_16",
+    "sector_max_share_16",
+    "angular_order_2",
+    "angular_order_3",
+    "angular_order_4",
     "t1_re",
     "t1_im",
     "t1_abs",
@@ -51,6 +62,8 @@ VALID_SOLVE_SCORE_METRICS = {
     "t2_abs",
     "t2_phase",
 }
+GENERIC_METRIC_CHIP_NAME = "metric"
+GENERIC_METRIC_SOURCES = {"slv", "cf"}
 VALID_SOLVE_SCORE_SOURCES = {"slv", "cf", "pm"}
 VALID_SOLVE_SCORE_LAG_DEPTHS = {0, 1}
 PARAM_SOLVE_SCORE_METRICS = {
@@ -142,6 +155,11 @@ def _validate_metric(value):
 def _metric_allowed_sources(metric):
     metric_name = _validate_metric(metric)
     return _METRIC_ALLOWED_SOURCES[metric_name]
+
+
+def _metric_allowed_for_generic_chip(metric):
+    allowed = _metric_allowed_sources(metric)
+    return GENERIC_METRIC_SOURCES.issubset(allowed)
 
 
 def _validate_metric_source_for_metric(metric, source):
@@ -279,6 +297,8 @@ def serialize_solve_score_chain(chain):
     def _serialize_item(item):
         name = item["name"]
         params = list(item.get("params") or [])
+        if name == GENERIC_METRIC_CHIP_NAME:
+            return [name, *params]
         if name in VALID_SOLVE_SCORE_METRICS and len(params) == 2 and params[0] == "slv":
             params = [params[1]]
         return [name, *params] if params else name
@@ -303,15 +323,51 @@ def solve_score_chain_from_scalars(metric, quantile=0.001, omega=1.0, omega_enab
     return chain
 
 
+def _normalize_generic_metric_chip(item):
+    params = list(item.get("params") or [])
+    if len(params) != 3:
+        raise RuntimeError("Generic metric chip requires metric, source, and q parameters")
+    metric_name = _validate_metric(params[0])
+    if not _metric_allowed_for_generic_chip(metric_name):
+        raise RuntimeError(
+            f"Generic metric chip requires a metric that supports both slv and cf sources, got {metric_name!r}"
+        )
+    source, lag_depth = _split_metric_source_lag(params[1])
+    if source not in GENERIC_METRIC_SOURCES:
+        raise RuntimeError("Generic metric chip source must be one of slv, cf, slv-1, cf-1")
+    source = _validate_metric_source_for_metric(metric_name, source)
+    q_pct = _validate_quantile_percent(params[2])
+    normalized = {
+        "name": GENERIC_METRIC_CHIP_NAME,
+        "params": [
+            metric_name,
+            _format_metric_source_lag(source, lag_depth),
+            _format_quantile_percent(q_pct),
+        ],
+    }
+    expanded = {
+        "name": metric_name,
+        "params": [_format_metric_source_lag(source, lag_depth), _format_quantile_percent(q_pct)],
+    }
+    return normalized, expanded, metric_name, source, lag_depth, q_pct / 100.0
+
+
 def _metric_items_with_fallback(chain, legacy_quantile):
     fallback = None if legacy_quantile in ("", None) else _validate_quantile_fraction(legacy_quantile)
-    total_metric_chips = sum(1 for item in chain if item["name"] in VALID_SOLVE_SCORE_METRICS)
+    total_metric_chips = sum(
+        1
+        for item in chain
+        if item["name"] in VALID_SOLVE_SCORE_METRICS or item["name"] == GENERIC_METRIC_CHIP_NAME
+    )
     if fallback is None and total_metric_chips == 1:
         fallback = 0.001
     items = []
     for item in chain:
+        if item["name"] == GENERIC_METRIC_CHIP_NAME:
+            items.append(_normalize_generic_metric_chip(item))
+            continue
         if item["name"] not in VALID_SOLVE_SCORE_METRICS:
-            items.append((item, None, 0, None))
+            items.append((item, item, None, None, 0, None))
             continue
         params = list(item.get("params") or [])
         if not params:
@@ -329,7 +385,7 @@ def _metric_items_with_fallback(chain, legacy_quantile):
                 lag_depth = 0
                 q_pct = _validate_quantile_percent(params[0])
                 normalized = {"name": item["name"], "params": [source, _format_quantile_percent(q_pct)]}
-                items.append((normalized, source, lag_depth, q_pct / 100.0))
+                items.append((normalized, normalized, item["name"], source, lag_depth, q_pct / 100.0))
                 continue
             if fallback is None or total_metric_chips != 1:
                 raise RuntimeError(
@@ -349,7 +405,7 @@ def _metric_items_with_fallback(chain, legacy_quantile):
             "name": item["name"],
             "params": [_format_metric_source_lag(source, lag_depth), _format_quantile_percent(q_pct)],
         }
-        items.append((normalized, source, lag_depth, q_pct / 100.0))
+        items.append((normalized, normalized, item["name"], source, lag_depth, q_pct / 100.0))
     return items
 
 
@@ -440,6 +496,16 @@ def _metrics_csv(metrics, field):
 def _token_display(item):
     name = item["name"]
     params = item.get("params") or []
+    if name == GENERIC_METRIC_CHIP_NAME:
+        metric_name = params[0] if len(params) > 0 else "?"
+        source = params[1] if len(params) > 1 else "slv"
+        q = params[2] if len(params) > 2 else "?"
+        try:
+            base_source, lag_depth = _split_metric_source_lag(source)
+            display_source = _format_metric_source_lag(base_source, lag_depth)
+        except RuntimeError:
+            display_source = str(source or "slv")
+        return f"metric({metric_name},{display_source},q={q}%)"
     if name in VALID_SOLVE_SCORE_METRICS:
         source = params[0] if len(params) > 0 else "slv"
         q = params[1] if len(params) > 1 else (params[0] if params else "?")
@@ -477,7 +543,8 @@ def format_solve_score_chain_display(chain, legacy_quantile=None):
 
 def solve_score_chain_id(chain, legacy_quantile=None):
     compiled = compile_solve_score_chain(chain, legacy_quantile=legacy_quantile)
-    return hashlib.sha1(serialize_solve_score_chain(compiled["chain"]).encode("utf-8")).hexdigest()[:12]
+    semantic_chain = compiled.get("expanded_chain") or compiled["chain"]
+    return hashlib.sha1(serialize_solve_score_chain(semantic_chain).encode("utf-8")).hexdigest()[:12]
 
 
 def compiled_solve_score_fingerprint(compiled):
@@ -562,12 +629,13 @@ def compile_solve_score_chain(raw_chain, legacy_quantile=None):
         raise RuntimeError("solve_score_chain must contain at least one metric chip")
 
     normalized_with_metrics = _metric_items_with_fallback(raw_items, legacy_quantile)
-    chain = [item for item, _, _, _ in normalized_with_metrics]
+    chain = [item for item, _, _, _, _, _ in normalized_with_metrics]
+    expanded_chain = [expanded for _, expanded, _, _, _, _ in normalized_with_metrics]
     current_slot_candidates = {}
-    for item, metric_source, metric_lag, metric_quantile in normalized_with_metrics:
-        if item["name"] not in VALID_SOLVE_SCORE_METRICS or int(metric_lag or 0) != 0:
+    for item, _expanded, item_metric_name, metric_source, metric_lag, metric_quantile in normalized_with_metrics:
+        if not item_metric_name or int(metric_lag or 0) != 0:
             continue
-        metric_name = _validate_metric(item["name"])
+        metric_name = _validate_metric(item_metric_name)
         source_name = _validate_metric_source_for_metric(metric_name, metric_source)
         q = _validate_quantile_fraction(metric_quantile)
         family_key = (metric_name, source_name)
@@ -583,11 +651,11 @@ def compile_solve_score_chain(raw_chain, legacy_quantile=None):
     omega_phase = 0.0
     omega_enabled = False
 
-    for item, metric_source, metric_lag, metric_quantile in normalized_with_metrics:
+    for item, _expanded, item_metric_name, metric_source, metric_lag, metric_quantile in normalized_with_metrics:
         name = item["name"]
         params = item.get("params") or []
-        if name in VALID_SOLVE_SCORE_METRICS:
-            metric_name = _validate_metric(name)
+        if item_metric_name:
+            metric_name = _validate_metric(item_metric_name)
             source_name = _validate_metric_source_for_metric(metric_name, metric_source)
             lag_depth = int(metric_lag or 0)
             if lag_depth not in VALID_SOLVE_SCORE_LAG_DEPTHS:
@@ -730,6 +798,7 @@ def compile_solve_score_chain(raw_chain, legacy_quantile=None):
     )
     return {
         "chain": chain,
+        "expanded_chain": expanded_chain,
         "metrics": metrics,
         "metric_count": len(metrics),
         "metric": primary_metric,

@@ -106,6 +106,75 @@ class TestSolveScoreProgramStorage(unittest.TestCase):
         self.assertEqual(refetch_resp["statusCode"], 404)
 
     @patch("handler_storage.s3")
+    def test_generic_metric_chip_round_trips_as_saved_program(self, mock_s3):
+        import handler_storage
+        from solve_score_chain import compile_solve_score_chain, solve_score_chain_id
+
+        fake_s3 = _FakeS3()
+        mock_s3.get_paginator.side_effect = fake_s3.get_paginator
+        mock_s3.get_object.side_effect = fake_s3.get_object
+        mock_s3.put_object.side_effect = fake_s3.put_object
+        mock_s3.head_object.side_effect = fake_s3.head_object
+
+        generic_chain = [["metric", "angular_entropy_16", "cf", "0.5"], ["metric", "angular_entropy_16", "cf-1", "0.5"], ["abs_diff"]]
+        canonical_generic_chain = [["metric", "angular_entropy_16", "cf", "0.5"], ["metric", "angular_entropy_16", "cf-1", "0.5"], "abs_diff"]
+        concrete_chain = [["angular_entropy_16", "cf", "0.5"], ["angular_entropy_16", "cf-1", "0.5"], ["abs_diff"]]
+        compiled = compile_solve_score_chain(generic_chain)
+        self.assertEqual(compiled["program_spec"], "m0-0;m0-1;abs_diff")
+        self.assertEqual(compiled["metrics"][0]["metric"], "angular_entropy_16")
+        self.assertEqual(compiled["metrics"][0]["source"], "cf")
+        self.assertEqual(solve_score_chain_id(generic_chain), solve_score_chain_id(concrete_chain))
+
+        save_resp = handler_storage.handler(
+            self._event(
+                "/save-solve-score-program",
+                {"name": "Generic Metric Program", "chain": generic_chain},
+            ),
+            None,
+        )
+        self.assertEqual(save_resp["statusCode"], 200)
+        save_body = json.loads(save_resp["body"])
+        self.assertEqual(save_body["program"]["chain"], canonical_generic_chain)
+        self.assertEqual(save_body["program"]["metric"], "angular_entropy_16")
+        self.assertEqual(save_body["program"]["program_spec"], "m0-0;m0-1;abs_diff")
+
+        stored = json.loads(fake_s3.objects["polypaint/solve-score-programs/generic-metric-program.json"].decode("utf-8"))
+        self.assertEqual(stored["chain"], canonical_generic_chain)
+
+        fetch_resp = handler_storage.handler(
+            self._event("/fetch-solve-score-program", {"id": "generic-metric-program"}),
+            None,
+        )
+        fetch_body = json.loads(fetch_resp["body"])
+        self.assertEqual(fetch_body["program"]["chain"], canonical_generic_chain)
+
+    @patch("handler_storage.s3")
+    def test_generic_metric_chip_rejects_pm_source_and_pm_only_metric(self, mock_s3):
+        import handler_storage
+
+        fake_s3 = _FakeS3()
+        mock_s3.get_paginator.side_effect = fake_s3.get_paginator
+        mock_s3.get_object.side_effect = fake_s3.get_object
+        mock_s3.put_object.side_effect = fake_s3.put_object
+        mock_s3.head_object.side_effect = fake_s3.head_object
+
+        for chain, expected in [
+            ([["metric", "angular_entropy_16", "pm", "0.5"]], "source must be one of slv, cf"),
+            ([["metric", "t1_abs", "slv", "0.5"]], "supports both slv and cf"),
+        ]:
+            resp = handler_storage.handler(
+                self._event(
+                    "/save-solve-score-program",
+                    {"name": "Bad Generic Metric", "chain": chain},
+                ),
+                None,
+            )
+            self.assertEqual(resp["statusCode"], 400)
+            body = json.loads(resp["body"])
+            self.assertIn(expected, body["error"])
+        self.assertEqual(fake_s3.objects, {})
+
+    @patch("handler_storage.s3")
     def test_client_supplied_id_and_derived_fields_are_ignored(self, mock_s3):
         import handler_storage
 

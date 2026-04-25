@@ -2129,6 +2129,14 @@ def _write_sps_bin(path):
                 f.write(struct.pack("<ff", re, im))
 
 
+def _write_roots_bin(path, solves, degree):
+    with open(path, "wb") as f:
+        for roots in solves:
+            padded = list(roots) + [(0.0, 0.0)] * (degree - len(roots))
+            for re, im in padded[:degree]:
+                f.write(struct.pack("<ff", float(re), float(im)))
+
+
 def test_solve_proximity_stats():
     print("\n--- solve_proximity_stats (multi-metric) ---")
 
@@ -2329,6 +2337,75 @@ def test_solve_proximity_stats():
     assert min_ang["n_solves"] == 3
     print("  min_angular_separation clip: OK (lo=%.2f, hi=%.2f)" % (min_ang["clip_lo"], min_ang["clip_hi"]))
 
+    # 5c. New v5 geometric/angular metrics
+    v5_bin = "/tmp/sps_v5_metrics.bin"
+    v5_solves = [
+        [(1, 0), (0, 1), (-1, 0), (0, -1)],          # unit cardinal
+        [(0.5, 0), (0, 0.5), (-0.5, 0), (0, -0.5)],  # inner cardinal
+        [(1, 1), (-1, 1), (-1, -1), (1, -1)],        # diagonals
+        [(1, 0), (1, 0), (1, 0), (1, 0)],            # single sector
+        [(0, 1), (0, 2), (0, -1), (0, -2)],          # imaginary axis
+        [(0.5, 0), (2, 0), (0, 0.5), (0, 2)],        # mixed radial
+        [(1, 0), (math.cos(2.0 * math.pi / 3.0), math.sin(2.0 * math.pi / 3.0)), (math.cos(4.0 * math.pi / 3.0), math.sin(4.0 * math.pi / 3.0)), (0, 0)], # non-4-fold
+    ]
+    _write_roots_bin(v5_bin, v5_solves, 4)
+
+    def _clip_v5(metric):
+        rr = subprocess.run([sps_path, v5_bin, "--mode=clip", "--degree=4", "--metric=" + metric],
+                            capture_output=True, text=True, timeout=10)
+        assert rr.returncode == 0, "%s clip failed: %s" % (metric, rr.stderr[:200])
+        data = json.loads(rr.stdout)
+        assert data["metric"] == metric
+        assert data["n_solves"] == len(v5_solves)
+        assert math.isfinite(data["min_score"]) and math.isfinite(data["max_score"])
+        return data
+
+    v5_expect_spread = [
+        "mean_log_mod",
+        "sd_log_mod",
+        "inside_unit_fraction",
+        "unit_annulus_fraction_01",
+        "imag_axis_proximity",
+        "diagonal_proximity",
+        "angular_entropy_16",
+        "sector_max_share_16",
+        "angular_order_2",
+        "angular_order_4",
+    ]
+    for metric in v5_expect_spread:
+        data = _clip_v5(metric)
+        assert data["max_score"] > data["min_score"], "%s should vary on v5 fixture" % metric
+        print("  %s clip: OK (lo=%.3f, hi=%.3f)" % (metric, data["clip_lo"], data["clip_hi"]))
+
+    v5_log_bin = "/tmp/sps_v5_log_mod_natural.bin"
+    _write_roots_bin(v5_log_bin, [
+        [(math.e, 0), (1.0 / math.e, 0)],
+        [(math.e * math.e, 0), (math.e * math.e, 0)],
+    ], 2)
+    rr = subprocess.run([sps_path, v5_log_bin, "--mode=clip", "--degree=2", "--metric=mean_log_mod"],
+                        capture_output=True, text=True, timeout=10)
+    assert rr.returncode == 0, "mean_log_mod natural-log clip failed: " + rr.stderr[:200]
+    mean_log = json.loads(rr.stdout)
+    assert abs(mean_log["min_score"] - 0.0) < 1e-5 and abs(mean_log["max_score"] - 2.0) < 1e-5
+    rr = subprocess.run([sps_path, v5_log_bin, "--mode=clip", "--degree=2", "--metric=sd_log_mod"],
+                        capture_output=True, text=True, timeout=10)
+    assert rr.returncode == 0, "sd_log_mod natural-log clip failed: " + rr.stderr[:200]
+    sd_log = json.loads(rr.stdout)
+    assert abs(sd_log["min_score"] - 0.0) < 1e-5 and abs(sd_log["max_score"] - 1.0) < 1e-5
+    print("  log_mod natural-log semantics: OK")
+
+    v5_order3_bin = "/tmp/sps_v5_order3.bin"
+    tri = [(1, 0), (math.cos(2.0 * math.pi / 3.0), math.sin(2.0 * math.pi / 3.0)), (math.cos(4.0 * math.pi / 3.0), math.sin(4.0 * math.pi / 3.0))]
+    line = [(1, 0), (-1, 0), (0, 1)]
+    _write_roots_bin(v5_order3_bin, [tri, line], 3)
+    rr = subprocess.run([sps_path, v5_order3_bin, "--mode=clip", "--degree=3", "--metric=angular_order_3"],
+                        capture_output=True, text=True, timeout=10)
+    assert rr.returncode == 0, "angular_order_3 clip failed: " + rr.stderr[:200]
+    order3 = json.loads(rr.stdout)
+    assert order3["metric"] == "angular_order_3"
+    assert order3["max_score"] > order3["min_score"]
+    print("  angular_order_3 clip: OK (lo=%.3f, hi=%.3f)" % (order3["clip_lo"], order3["clip_hi"]))
+
     # 6. Non-default quantile clip (q=0.05)
     _write_sps_bin(sps_bin)
     r = subprocess.run([sps_path, sps_bin, "--mode=clip", "--degree=2", "--metric=proximity",
@@ -2339,7 +2416,7 @@ def test_solve_proximity_stats():
     assert q05["n_solves"] == 3
     print("  proximity clip q=5%%: OK (lo=%.2f, hi=%.2f)" % (q05["clip_lo"], q05["clip_hi"]))
 
-    cleanup(sps_bin)
+    cleanup(sps_bin, v5_bin, v5_log_bin, v5_order3_bin)
     print("=== solve_proximity_stats tests PASSED ===")
 
 

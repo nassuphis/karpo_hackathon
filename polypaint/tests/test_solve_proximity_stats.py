@@ -764,6 +764,81 @@ def test_min_angular_separation_ranking():
         os.remove(p)
 
 
+def test_v5_geometric_angular_metric_batch():
+    """New radial/axis/angular metrics parse, run, and vary on obvious fixtures."""
+    path = "/tmp/sp_test_v5_metrics.bin"
+    solves = [
+        [(1, 0), (0, 1), (-1, 0), (0, -1)],
+        [(0.5, 0), (0, 0.5), (-0.5, 0), (0, -0.5)],
+        [(1, 1), (-1, 1), (-1, -1), (1, -1)],
+        [(1, 0), (1, 0), (1, 0), (1, 0)],
+        [(0, 1), (0, 2), (0, -1), (0, -2)],
+        [(0.5, 0), (2, 0), (0, 0.5), (0, 2)],
+        [(1, 0), (math.cos(2.0 * math.pi / 3.0), math.sin(2.0 * math.pi / 3.0)), (math.cos(4.0 * math.pi / 3.0), math.sin(4.0 * math.pi / 3.0)), (0, 0)],
+    ]
+    write_bin(path, solves, 4)
+    try:
+        for metric in [
+            "mean_log_mod",
+            "sd_log_mod",
+            "inside_unit_fraction",
+            "unit_annulus_fraction_01",
+            "imag_axis_proximity",
+            "diagonal_proximity",
+            "angular_entropy_16",
+            "sector_max_share_16",
+            "angular_order_2",
+            "angular_order_4",
+        ]:
+            result, err = run_clip(path, 4, metric=metric)
+            assert result is not None, f"{metric} failed: {err}"
+            assert result["metric"] == metric
+            assert result["n_solves"] == len(solves)
+            assert result["max_score"] > result["min_score"], f"{metric} should vary on v5 fixtures"
+    finally:
+        os.remove(path)
+
+
+def test_v5_log_mod_uses_natural_log():
+    """mean_log_mod/sd_log_mod follow metric_proposal.md's natural-log definition."""
+    path = "/tmp/sp_test_v5_log_mod_natural.bin"
+    write_bin(path, [
+        [(math.e, 0), (1.0 / math.e, 0)],
+        [(math.e * math.e, 0), (math.e * math.e, 0)],
+    ], 2)
+    try:
+        mean_result, err = run_clip(path, 2, metric="mean_log_mod")
+        assert mean_result is not None, f"mean_log_mod failed: {err}"
+        assert abs(mean_result["min_score"] - 0.0) < 1e-5
+        assert abs(mean_result["max_score"] - 2.0) < 1e-5
+
+        sd_result, err = run_clip(path, 2, metric="sd_log_mod")
+        assert sd_result is not None, f"sd_log_mod failed: {err}"
+        assert abs(sd_result["min_score"] - 0.0) < 1e-5
+        assert abs(sd_result["max_score"] - 1.0) < 1e-5
+    finally:
+        os.remove(path)
+
+
+def test_v5_angular_order_3_batch():
+    """angular_order_3 detects a threefold arrangement."""
+    path = "/tmp/sp_test_v5_order3.bin"
+    tri = [
+        (1, 0),
+        (math.cos(2.0 * math.pi / 3.0), math.sin(2.0 * math.pi / 3.0)),
+        (math.cos(4.0 * math.pi / 3.0), math.sin(4.0 * math.pi / 3.0)),
+    ]
+    line = [(1, 0), (-1, 0), (0, 1)]
+    write_bin(path, [tri, line], 3)
+    try:
+        result, err = run_clip(path, 3, metric="angular_order_3")
+        assert result is not None, f"angular_order_3 failed: {err}"
+        assert result["metric"] == "angular_order_3"
+        assert result["max_score"] > result["min_score"]
+    finally:
+        os.remove(path)
+
+
 # ================================================================
 # 11. Hist for clusteriness
 # ================================================================
@@ -1469,6 +1544,9 @@ if __name__ == "__main__":
         ("min_mod all zero", test_min_mod_all_zero_returns_zero),
         ("max_mod ranking", test_max_mod_ranking),
         ("min_angular_separation ranking", test_min_angular_separation_ranking),
+        ("v5 geometric/angular metric batch", test_v5_geometric_angular_metric_batch),
+        ("v5 log_mod natural log", test_v5_log_mod_uses_natural_log),
+        ("v5 angular_order_3 batch", test_v5_angular_order_3_batch),
         # Non-proximity hist
         ("hist clusteriness metric", test_hist_clusteriness),
         ("hist centroid_dist metric", test_hist_centroid_dist),

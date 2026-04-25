@@ -5,7 +5,10 @@
  * Metrics: proximity, crowding, spread, anisotropy, area,
  *          clusteriness, shelliness, outlierness, nn_variation, real_axis_proximity,
  *          centroid_re, centroid_im, centroid_dist, dist_unit_circle, asymmetry_re,
- *          min_mod, max_mod, min_angular_separation.
+ *          min_mod, max_mod, min_angular_separation,
+ *          mean_log_mod, sd_log_mod, inside_unit_fraction, unit_annulus_fraction_01,
+ *          imag_axis_proximity, diagonal_proximity, angular_entropy_16,
+ *          sector_max_share_16, angular_order_2, angular_order_3, angular_order_4.
  *
  * Three modes:
  *   --mode=clip      Compute score array, sort, emit clip bounds (quantiles).
@@ -806,7 +809,7 @@ static void compute_hist_parallel(
 int main(int argc, char **argv) {
     if (argc < 3) {
         fprintf(stderr, "Usage: solve_proximity_stats input.bin| - --mode=clip|hist|summary --degree=D "
-                "[--metric=proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re|min_mod|max_mod|min_angular_separation] [options]\n");
+                "[--metric=%s] [options]\n", SOLVE_SCORE_METRIC_LIST_TEXT);
         return 1;
     }
 
@@ -835,7 +838,7 @@ int main(int argc, char **argv) {
 
     enum SolveMetric metric;
     if (!parse_solve_metric(metricStr, &metric)) {
-        fprintf(stderr, "Invalid metric: %s (use proximity|crowding|spread|anisotropy|area|clusteriness|shelliness|outlierness|nn_variation|real_axis_proximity|centroid_re|centroid_im|centroid_dist|dist_unit_circle|asymmetry_re|min_mod|max_mod|min_angular_separation)\n", metricStr);
+        fprintf(stderr, "Invalid metric: %s (use %s)\n", metricStr, SOLVE_SCORE_METRIC_LIST_TEXT);
         return 1;
     }
 

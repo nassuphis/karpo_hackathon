@@ -62,7 +62,8 @@ VALID_SOLVE_SCORE_METRICS = {
     "t2_abs",
     "t2_phase",
 }
-GENERIC_METRIC_CHIP_NAME = "metric"
+GENERIC_METRIC_PUBLIC_NAME = "metric"
+GENERIC_METRIC_CHIP_NAME = "__metric"
 GENERIC_METRIC_SOURCES = {"slv", "cf"}
 VALID_SOLVE_SCORE_SOURCES = {"slv", "cf", "pm"}
 VALID_SOLVE_SCORE_LAG_DEPTHS = {0, 1}
@@ -160,6 +161,10 @@ def _metric_allowed_sources(metric):
 def _metric_allowed_for_generic_chip(metric):
     allowed = _metric_allowed_sources(metric)
     return GENERIC_METRIC_SOURCES.issubset(allowed)
+
+
+def _is_generic_metric_chip_name(name):
+    return name in {GENERIC_METRIC_CHIP_NAME, GENERIC_METRIC_PUBLIC_NAME}
 
 
 def _validate_metric_source_for_metric(metric, source):
@@ -297,8 +302,8 @@ def serialize_solve_score_chain(chain):
     def _serialize_item(item):
         name = item["name"]
         params = list(item.get("params") or [])
-        if name == GENERIC_METRIC_CHIP_NAME:
-            return [name, *params]
+        if _is_generic_metric_chip_name(name):
+            return [GENERIC_METRIC_PUBLIC_NAME, *params]
         if name in VALID_SOLVE_SCORE_METRICS and len(params) == 2 and params[0] == "slv":
             params = [params[1]]
         return [name, *params] if params else name
@@ -357,13 +362,13 @@ def _metric_items_with_fallback(chain, legacy_quantile):
     total_metric_chips = sum(
         1
         for item in chain
-        if item["name"] in VALID_SOLVE_SCORE_METRICS or item["name"] == GENERIC_METRIC_CHIP_NAME
+        if item["name"] in VALID_SOLVE_SCORE_METRICS or _is_generic_metric_chip_name(item["name"])
     )
     if fallback is None and total_metric_chips == 1:
         fallback = 0.001
     items = []
     for item in chain:
-        if item["name"] == GENERIC_METRIC_CHIP_NAME:
+        if _is_generic_metric_chip_name(item["name"]):
             items.append(_normalize_generic_metric_chip(item))
             continue
         if item["name"] not in VALID_SOLVE_SCORE_METRICS:
@@ -496,7 +501,7 @@ def _metrics_csv(metrics, field):
 def _token_display(item):
     name = item["name"]
     params = item.get("params") or []
-    if name == GENERIC_METRIC_CHIP_NAME:
+    if _is_generic_metric_chip_name(name):
         metric_name = params[0] if len(params) > 0 else "?"
         source = params[1] if len(params) > 1 else "slv"
         q = params[2] if len(params) > 2 else "?"

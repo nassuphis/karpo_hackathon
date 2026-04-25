@@ -401,7 +401,7 @@ test.describe('Solve Score UI', () => {
     });
     expect(state).toEqual([
       { text: '+ add...', value: '' },
-      { text: 'metric', value: 'metric' },
+      { text: 'metric', value: '__metric' },
       { text: 'proximity', value: 'proximity' },
       { text: 'crowding', value: 'crowding' },
       { text: 'spread', value: 'spread' },
@@ -451,7 +451,7 @@ test.describe('Solve Score UI', () => {
     );
     expect(afterMetric).toEqual([
       { text: '+ add...', value: '' },
-      { text: 'metric', value: 'metric' },
+      { text: 'metric', value: '__metric' },
       { text: 'proximity', value: 'proximity' },
       { text: 'crowding', value: 'crowding' },
       { text: 'spread', value: 'spread' },

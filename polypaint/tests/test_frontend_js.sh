@@ -169,9 +169,10 @@ assertIncludes("'mean_log_mod',", 'solve-score catalog should expose mean_log_mo
 assertIncludes("'angular_entropy_16',", 'solve-score catalog should expose angular_entropy_16');
 assertIncludes("'sector_max_share_16',", 'solve-score catalog should expose sector_max_share_16');
 assertIncludes("'angular_order_4',", 'solve-score catalog should expose angular_order_4');
-assertIncludes("const _solveScoreGenericMetricChipName = 'metric';", 'solve-score editor should define generic metric chip');
+assertIncludes("const _solveScoreGenericMetricPublicName = 'metric';", 'solve-score editor should preserve public generic metric chip name');
+assertIncludes("const _solveScoreGenericMetricChipName = '__metric';", 'solve-score editor should keep generic metric as an internal macro chip');
 assertIncludes("catalog[_solveScoreGenericMetricChipName] = {", 'solve-score catalog should expose generic metric chip');
-assertIncludes("return [item.name, ...(item.params || [])];", 'generic metric chip should serialize without desugaring in saved programs');
+assertIncludes("return [_solveScoreGenericMetricPublicName, ...(item.params || [])];", 'generic metric chip should serialize publicly without desugaring in saved programs');
 assertIncludes("id=\"render-preview-pix\" value=\"256\"", 'render output should expose default 256px lores preview size input');
 assertIncludes("id=\"btn-render-lores-preview\" onclick=\"runRenderLoresPreview()\"", 'render output should expose lores preview button');
 assertIncludes("id=\"render-preview-source-mode\"", 'render output should expose preview source mode dropdown');
@@ -305,6 +306,7 @@ async function main() {
   );
   const code = [
     extractFunction('_displayTransformEntry'),
+    extractFunction('_isSolveScoreGenericMetricChipName'),
     extractFunction('_displaySolveScoreEntry'),
     extractFunction('_solveScoreQuantilePctText'),
     extractFunction('_normalizeSolveScoreMetricSource'),
@@ -396,11 +398,20 @@ async function main() {
     ['metric', 'angular_entropy_16', 'cf-1', '0.5'],
     ['abs_diff'],
   ], 'proximity', '0.1');
+  const genericNormalized = ctx._normalizeSolveScoreChain([
+    ['metric', 'angular_entropy_16', 'cf', '0.5'],
+  ], 'proximity', '0.1');
   assert(genericMetric.program_spec === 'm0-0;m0-1;abs_diff', 'generic metric chip should compile to normal metric refs');
   assert(genericMetric.metrics.length === 1, 'generic metric chip should reuse current/lagged base slot');
   assert(genericMetric.metrics[0].metric === 'angular_entropy_16', 'generic metric chip should compile selected metric name');
   assert(genericMetric.metrics[0].source === 'cf', 'generic metric chip should compile selected source');
+  assert(genericNormalized[0].name === '__metric', 'public generic metric chip should normalize to internal macro name');
   assert(JSON.stringify(genericMetric.chain) === JSON.stringify([['metric', 'angular_entropy_16', 'cf', '0.5'], ['metric', 'angular_entropy_16', 'cf-1', '0.5'], ['abs_diff']]), 'generic metric chip should remain generic in serialized editor chain');
+
+  const genericMetricInternal = ctx._compileSolveScoreChain([
+    ['__metric', 'angular_entropy_16', 'cf', '0.5'],
+  ], 'proximity', '0.1');
+  assert(JSON.stringify(genericMetricInternal.chain) === JSON.stringify([['metric', 'angular_entropy_16', 'cf', '0.5']]), 'internal generic metric chip should serialize using the public saved-program name');
 
   let genericPmRejected = false;
   try {

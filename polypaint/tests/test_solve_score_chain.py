@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import unittest
@@ -334,6 +335,71 @@ class TestSolveScoreChain(unittest.TestCase):
         self.assertEqual(compiled["metrics"][0]["source"], "cf")
         self.assertEqual(compiled["metrics"][0]["quantile"], 0.004)
         self.assertEqual(compiled["program_spec"], "m0-1;m0-0;abs_diff")
+
+    def test_generic_metric_chip_is_internal_macro_with_public_serialization(self):
+        from solve_score_chain import compile_solve_score_chain, serialize_solve_score_chain, solve_score_chain_id
+
+        generic_chain = [
+            ["metric", "angular_entropy_16", "cf", "0.5"],
+            ["metric", "angular_entropy_16", "cf-1", "0.5"],
+            ["abs_diff"],
+        ]
+        generic_serialized_chain = [
+            ["metric", "angular_entropy_16", "cf", "0.5"],
+            ["metric", "angular_entropy_16", "cf-1", "0.5"],
+            "abs_diff",
+        ]
+        concrete_chain = [
+            ["angular_entropy_16", "cf", "0.5"],
+            ["angular_entropy_16", "cf-1", "0.5"],
+            ["abs_diff"],
+        ]
+
+        compiled = compile_solve_score_chain(generic_chain)
+
+        self.assertEqual(
+            compiled["chain"],
+            [
+                {"name": "__metric", "params": ["angular_entropy_16", "cf", "0.5"]},
+                {"name": "__metric", "params": ["angular_entropy_16", "cf-1", "0.5"]},
+                {"name": "abs_diff", "params": []},
+            ],
+        )
+        self.assertEqual(
+            compiled["expanded_chain"],
+            [
+                {"name": "angular_entropy_16", "params": ["cf", "0.5"]},
+                {"name": "angular_entropy_16", "params": ["cf-1", "0.5"]},
+                {"name": "abs_diff", "params": []},
+            ],
+        )
+        self.assertEqual(compiled["program_spec"], "m0-0;m0-1;abs_diff")
+        self.assertEqual(compiled["display"], "metric(angular_entropy_16,cf,q=0.5%) metric(angular_entropy_16,cf-1,q=0.5%) abs_diff")
+        self.assertEqual(compiled["metrics"][0]["metric"], "angular_entropy_16")
+        self.assertEqual(compiled["metrics"][0]["source"], "cf")
+        self.assertEqual(json.loads(serialize_solve_score_chain(compiled["chain"])), generic_serialized_chain)
+        self.assertEqual(solve_score_chain_id(generic_chain), solve_score_chain_id(concrete_chain))
+
+        internal_wire_chain = [
+            ["__metric", "angular_entropy_16", "cf", "0.5"],
+        ]
+        self.assertEqual(
+            json.loads(serialize_solve_score_chain(internal_wire_chain)),
+            [["metric", "angular_entropy_16", "cf", "0.5"]],
+        )
+
+    def test_generic_metric_chip_rejects_non_generic_sources_and_metrics(self):
+        from solve_score_chain import compile_solve_score_chain
+
+        cases = [
+            ([["metric", "angular_entropy_16", "pm", "0.5"]], "source must be one of slv, cf"),
+            ([["__metric", "t1_abs", "slv", "0.5"]], "supports both slv and cf"),
+        ]
+        for chain, expected in cases:
+            with self.subTest(chain=chain):
+                with self.assertRaises(RuntimeError) as ctx:
+                    compile_solve_score_chain(chain)
+                self.assertIn(expected, str(ctx.exception))
 
     def test_compile_chain_lagged_only_seeds_base_slot(self):
         from solve_score_chain import compile_solve_score_chain

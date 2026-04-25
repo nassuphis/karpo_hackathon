@@ -27,7 +27,7 @@ class TestComputeStarterLambda(unittest.TestCase):
     @patch("handler_compute_orchestrator.sfn_client")
     def test_starter_calls_start_execution_once(self, mock_sfn, mock_report):
         mock_sfn.start_execution.return_value = {
-            "executionArn": "arn:aws:states:us-east-1:123:execution:polypaint-compute-workflow:compute_aberth_run_abc"
+            "executionArn": "arn:aws:states:us-east-1:123:execution:polypaint-compute-workflow:compute_aberth_mt_run_abc"
         }
         import handler_compute_orchestrator as mod
         mod.STATE_MACHINE_ARN = "arn:aws:states:us-east-1:123:stateMachine:test"
@@ -35,17 +35,17 @@ class TestComputeStarterLambda(unittest.TestCase):
         event = _make_event({
             "job_id": "j",
             "run_id": "run_abc",
-            "params": {"solver_mode": "aberth", "N": 100, "n_chunks": 10, "function": "g1", "param_gen_threads": 6, "coeffgen_threads": 5, "lores_param_gen_threads": 2, "lores_coeffgen_threads": 3},
+            "params": {"solver_mode": "aberth_mt", "N": 100, "n_chunks": 10, "function": "g1", "param_gen_threads": 6, "coeffgen_threads": 5, "lores_param_gen_threads": 2, "lores_coeffgen_threads": 3},
         })
         result = handler(event, None)
         body = json.loads(result["body"])
 
         self.assertEqual(mock_sfn.start_execution.call_count, 1)
         call_kwargs = mock_sfn.start_execution.call_args[1]
-        self.assertEqual(call_kwargs["name"], "compute_aberth_run_abc")
+        self.assertEqual(call_kwargs["name"], "compute_aberth_mt_run_abc")
         sfn_input = json.loads(call_kwargs["input"])
         self.assertEqual(sfn_input["job_id"], "j")
-        self.assertEqual(sfn_input["params"]["solver_mode"], "aberth")
+        self.assertEqual(sfn_input["params"]["solver_mode"], "aberth_mt")
         self.assertEqual(sfn_input["params"]["param_gen_threads"], 6)
         self.assertEqual(sfn_input["params"]["coeffgen_threads"], 5)
         self.assertEqual(sfn_input["params"]["lores_param_gen_threads"], 2)
@@ -165,6 +165,19 @@ class TestComputeStarterLambda(unittest.TestCase):
                 "params": {"solver_mode": "bogus", "N": 100, "n_chunks": 8, "function": "g1"},
             }), None)
         self.assertIn("solver_mode", str(ctx.exception))
+        mock_sfn.start_execution.assert_not_called()
+
+    @patch("handler_compute_orchestrator.report_status")
+    @patch("handler_compute_orchestrator.sfn_client")
+    def test_starter_rejects_removed_ae_solver_mode(self, mock_sfn, mock_report):
+        from handler_compute_orchestrator import handler
+        with self.assertRaises(RuntimeError) as ctx:
+            handler(_make_event({
+                "job_id": "j",
+                "run_id": "run_ae",
+                "params": {"solver_mode": "aberth", "N": 100, "n_chunks": 8, "function": "g1"},
+            }), None)
+        self.assertIn("aberth", str(ctx.exception))
         mock_sfn.start_execution.assert_not_called()
 
     def test_dispatch_handler_uses_compute_starter(self):

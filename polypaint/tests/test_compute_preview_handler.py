@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
 def _event(**overrides):
     payload = {
-        "solver_mode": "aberth",
+        "solver_mode": "aberth_mt",
         "N_preview": 32,
         "preview_size": 1000,
         "function": "g1",
@@ -120,7 +120,7 @@ class TestComputePreviewHandler(unittest.TestCase):
 
         self.assertEqual(result["statusCode"], 500)
         self.assertIn("coeffgen failed: bad transform", body["message"])
-        self.assertIn("solver=AE", body["message"])
+        self.assertIn("solver=AE-MT", body["message"])
         self.assertIn("N_preview=32", body["message"])
         self.assertIn("function=g1", body["message"])
         self.assertIn("coeff=roots_cm(lo)", body["message"])
@@ -166,6 +166,15 @@ class TestComputePreviewHandler(unittest.TestCase):
         body = json.loads(result["body"])
         self.assertEqual(result["statusCode"], 500)
         self.assertIn("preview size must be between 64 and", body["message"])
+
+    def test_compute_preview_rejects_removed_ae_solver(self):
+        import handler_compute_preview as mod
+
+        result = mod.handler({"body": json.dumps(_event(solver_mode="aberth"))}, None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(result["statusCode"], 400)
+        self.assertIn("unsupported preview solver_mode: aberth", body["message"])
 
 
 if __name__ == "__main__":

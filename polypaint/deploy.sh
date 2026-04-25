@@ -3,7 +3,6 @@
 # Usage: ./deploy.sh [create|update|show-build]
 #
 # Core Lambdas:
-#   polypaint-sweep        — single-thread AE root solver (sweep binary)
 #   polypaint-sweep-mt     — multithreaded AE root solver (sweep_mt binary)
 #   polypaint-coeffgen     — composable coefficient generation (sweep_coeffgen binary, coeffgen mode)
 #   polypaint-raster-mt    — multithreaded color raster via parallel roots2pix workers
@@ -14,7 +13,6 @@
 set -euo pipefail
 export AWS_PAGER=""
 
-SWEEP_NAME="polypaint-sweep"
 SWEEP_MT_NAME="polypaint-sweep-mt"
 VIEWPORT_NAME="polypaint-viewport"
 STORAGE_NAME="polypaint-storage"
@@ -31,7 +29,6 @@ REGION="us-east-1"
 API_NAME="polypaint-api"
 RUNTIME="python3.12"
 ARCH="arm64"
-SWEEP_MEMORY=10240    # 6 vCPUs for single-thread AE solve with large chunks
 SWEEP_MT_MEMORY=10240 # 6 vCPUs for multithreaded AE solve
 VIEWPORT_MEMORY=512   # pure Python
 STORAGE_MEMORY=512    # pure Python
@@ -938,16 +935,6 @@ bash "$SCRIPT_DIR/scripts/test-docker-runtime.sh" || { echo "FATAL: Docker runti
 # --- Package Lambdas ---
 echo "Packaging Lambdas..."
 
-# Sweep: handler_sweep.py + shared.py + sweep
-SWEEP_DIR=/tmp/polypaint-sweep
-rm -rf "$SWEEP_DIR"
-mkdir -p "$SWEEP_DIR"
-cp lambda/handler_sweep.py lambda/shared.py "$SWEEP_DIR/"
-cp lambda/sweep "$SWEEP_DIR/"
-chmod +x "$SWEEP_DIR"/sweep
-cd "$SWEEP_DIR" && zip -r9 /tmp/polypaint-sweep.zip . -q && cd "$SCRIPT_DIR"
-echo "  Sweep:    $(du -h /tmp/polypaint-sweep.zip | cut -f1)  (sweep)"
-
 # Sweep-MT: handler_sweep_mt.py + shared.py + sweep_mt
 SWEEP_MT_DIR=/tmp/polypaint-sweep-mt
 rm -rf "$SWEEP_MT_DIR"
@@ -1028,8 +1015,8 @@ COMPUTE_PREVIEW_DIR=/tmp/polypaint-compute-preview
 rm -rf "$COMPUTE_PREVIEW_DIR"
 mkdir -p "$COMPUTE_PREVIEW_DIR"
 cp lambda/handler_compute_preview.py lambda/shared.py "$COMPUTE_PREVIEW_DIR/"
-cp lambda/sweep_coeffgen lambda/sweep lambda/sweep_mt lambda/sweep_cm "$COMPUTE_PREVIEW_DIR/"
-chmod +x "$COMPUTE_PREVIEW_DIR"/sweep_coeffgen "$COMPUTE_PREVIEW_DIR"/sweep "$COMPUTE_PREVIEW_DIR"/sweep_mt "$COMPUTE_PREVIEW_DIR"/sweep_cm
+cp lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$COMPUTE_PREVIEW_DIR/"
+chmod +x "$COMPUTE_PREVIEW_DIR"/sweep_coeffgen "$COMPUTE_PREVIEW_DIR"/sweep_mt "$COMPUTE_PREVIEW_DIR"/sweep_cm
 cd "$COMPUTE_PREVIEW_DIR" && zip -r9 /tmp/polypaint-compute-preview.zip . -q && cd "$SCRIPT_DIR"
 echo "  CPreview: $(du -h /tmp/polypaint-compute-preview.zip | cut -f1)  (sync coeffgen+solve preview)"
 
@@ -1327,8 +1314,8 @@ COMP_FUSED_DIR=/tmp/polypaint-compute-fused-chunk
 rm -rf "$COMP_FUSED_DIR"
 mkdir -p "$COMP_FUSED_DIR"
 cp lambda/handler_compute_chunk_fused.py lambda/shared.py "$COMP_FUSED_DIR/"
-cp lambda/sweep_coeffgen lambda/sweep lambda/sweep_mt lambda/sweep_cm "$COMP_FUSED_DIR/"
-chmod +x "$COMP_FUSED_DIR"/sweep_coeffgen "$COMP_FUSED_DIR"/sweep "$COMP_FUSED_DIR"/sweep_mt "$COMP_FUSED_DIR"/sweep_cm
+cp lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$COMP_FUSED_DIR/"
+chmod +x "$COMP_FUSED_DIR"/sweep_coeffgen "$COMP_FUSED_DIR"/sweep_mt "$COMP_FUSED_DIR"/sweep_cm
 cd "$COMP_FUSED_DIR" && zip -r9 /tmp/polypaint-compute-fused-chunk.zip . -q && cd "$SCRIPT_DIR"
 echo "  CmpFuse: $(du -h /tmp/polypaint-compute-fused-chunk.zip | cut -f1)  (fused chunk worker)"
 
@@ -1464,8 +1451,20 @@ setup_api_gateway() {
         fi
     }
 
+    # Delete a removed route if it exists on an already-deployed API.
+    delete_route_if_exists() {
+        local ROUTE_KEY="$1"
+        local EXISTING
+        EXISTING=$(aws apigatewayv2 get-routes --api-id "$API_ID" --region "$REGION" \
+            --query "Items[?RouteKey=='${ROUTE_KEY}'].RouteId | [0]" --output text 2>/dev/null)
+        if [ -n "$EXISTING" ] && [ "$EXISTING" != "None" ]; then
+            aws apigatewayv2 delete-route --api-id "$API_ID" --route-id "$EXISTING" \
+                --region "$REGION" >/dev/null
+        fi
+    }
+
     # Grant API Gateway permission to invoke each Lambda
-    for FNAME in "$SWEEP_NAME" "$SWEEP_MT_NAME" "$COEFFGEN_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$PREVIEW_NAME" "$COMPUTE_PREVIEW_NAME" "$RENDER_LORES_PREVIEW_NAME" "$BILEVEL_NAME" "$PARAM_DEBUG_NAME" "$TIFF_COMPAT_NAME" "$PNG_EXPORT_NAME" "$DZ_EXPORT_NAME" "$SWEEP_CM_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_DEBUG_NAME" "$REPALETTE_NAME"; do
+    for FNAME in "$SWEEP_MT_NAME" "$COEFFGEN_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$PREVIEW_NAME" "$COMPUTE_PREVIEW_NAME" "$RENDER_LORES_PREVIEW_NAME" "$BILEVEL_NAME" "$PARAM_DEBUG_NAME" "$TIFF_COMPAT_NAME" "$PNG_EXPORT_NAME" "$DZ_EXPORT_NAME" "$SWEEP_CM_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_DEBUG_NAME" "$REPALETTE_NAME"; do
         aws lambda add-permission --function-name "$FNAME" \
             --statement-id "apigateway-invoke" \
             --action lambda:InvokeFunction \
@@ -1476,8 +1475,7 @@ setup_api_gateway() {
 
     # Create integrations
     echo "  Creating integrations..."
-    local SWEEP_INT SWEEP_MT_INT COEFFGEN_INT VIEWPORT_INT STORAGE_INT DISPATCH_INT
-    SWEEP_INT=$(create_integration "$SWEEP_NAME")
+    local SWEEP_MT_INT COEFFGEN_INT VIEWPORT_INT STORAGE_INT DISPATCH_INT
     SWEEP_MT_INT=$(create_integration "$SWEEP_MT_NAME")
     COEFFGEN_INT=$(create_integration "$COEFFGEN_NAME")
     VIEWPORT_INT=$(create_integration "$VIEWPORT_NAME")
@@ -1486,7 +1484,7 @@ setup_api_gateway() {
 
     # Create routes
     echo "  Setting up routes..."
-    ensure_route "POST /sweep" "$SWEEP_INT"
+    delete_route_if_exists "POST /sweep"
     ensure_route "POST /sweep-mt" "$SWEEP_MT_INT"
     ensure_route "POST /coeffgen" "$COEFFGEN_INT"
 
@@ -1556,7 +1554,6 @@ setup_api_gateway() {
     build_deploy_metadata
 
     printf '{
-  "sweep": "%s/sweep",
   "sweep-mt": "%s/sweep-mt",
   "coeffgen": "%s/coeffgen",
   "viewport": "%s/viewport",
@@ -1579,7 +1576,7 @@ setup_api_gateway() {
     "git_dirty": %s,
     "frontend_sha256": "%s"
   }
-}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$BUILD_ID" "$BUILD_DEPLOYED_AT_UTC" "$BUILD_GIT_REV" "$BUILD_GIT_DIRTY" "$BUILD_FRONTEND_SHA256" \
+}' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$BUILD_ID" "$BUILD_DEPLOYED_AT_UTC" "$BUILD_GIT_REV" "$BUILD_GIT_DIRTY" "$BUILD_FRONTEND_SHA256" \
     | aws s3 cp - "s3://$BUCKET/config.json" \
         --content-type "application/json" --region "$REGION"
     echo "  config.json uploaded"
@@ -1674,9 +1671,6 @@ if [ "$ACTION" = "create" ]; then
     sleep 10
 
     # --- Create all Lambdas ---
-    create_lambda "$SWEEP_NAME" "handler_sweep.handler" "/tmp/polypaint-sweep.zip" \
-        "$SWEEP_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
-
     create_lambda "$SWEEP_MT_NAME" "handler_sweep_mt.handler" "/tmp/polypaint-sweep-mt.zip" \
         "$SWEEP_MT_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
 
@@ -1693,7 +1687,7 @@ if [ "$ACTION" = "create" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     create_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,COLOR_TO_BILEVEL_FUNCTION=$COLOR_TO_BILEVEL_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,DZ_FROM_RAW_FUNCTION=$DZ_FROM_RAW_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,RECOLOR_FROM_RAW_FUNCTION=$RECOLOR_FROM_RAW_NAME,EXTRACT_PALETTE_FUSED_FUNCTION=$EXTRACT_PALETTE_FUSED_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
+        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,COLOR_TO_BILEVEL_FUNCTION=$COLOR_TO_BILEVEL_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,DZ_FROM_RAW_FUNCTION=$DZ_FROM_RAW_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,RECOLOR_FROM_RAW_FUNCTION=$RECOLOR_FROM_RAW_NAME,EXTRACT_PALETTE_FUSED_FUNCTION=$EXTRACT_PALETTE_FUSED_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -1902,7 +1896,7 @@ if [ "$ACTION" = "create" ]; then
     create_lambda "$COMPUTE_ORCHESTRATOR_NAME" "handler_compute_orchestrator.handler" "/tmp/polypaint-compute-orchestrator.zip" \
         "$COMPUTE_ORCHESTRATOR_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,COMPUTE_STATE_MACHINE_ARN=$COMPUTE_SM_ARN"
     create_lambda "$COMPUTE_PLAN_NAME" "handler_compute_plan.handler" "/tmp/polypaint-compute-plan.zip" \
-        "$COMPUTE_PLAN_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,FUSED_WORKER_MEMORY_MB=$COMPUTE_FUSED_CHUNK_MEMORY,FUSED_WORKER_TMP_MB=$BINARY_TMP,FUSED_WORKER_TIMEOUT_SEC=$TIMEOUT"
+        "$COMPUTE_PLAN_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,FUSED_WORKER_MEMORY_MB=$COMPUTE_FUSED_CHUNK_MEMORY,FUSED_WORKER_TMP_MB=$BINARY_TMP,FUSED_WORKER_TIMEOUT_SEC=$TIMEOUT"
     create_lambda "$COMPUTE_FUSED_CHUNK_NAME" "handler_compute_chunk_fused.handler" "/tmp/polypaint-compute-fused-chunk.zip" \
         "$COMPUTE_FUSED_CHUNK_MEMORY" "$ROLE_ARN" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
     create_lambda "$COMPUTE_STATUS_NAME" "handler_compute_status.handler" "/tmp/polypaint-compute-status.zip" \
@@ -1970,7 +1964,6 @@ if [ "$ACTION" = "create" ]; then
 
     echo ""
     echo "=== DEPLOYED ==="
-    echo "  Sweep:    $SWEEP_NAME ($SWEEP_MEMORY MB)"
     echo "  Coeffgen: $COEFFGEN_NAME ($COEFFGEN_MEMORY MB)"
     echo "  CmpFuse:  $COMPUTE_FUSED_CHUNK_NAME ($COMPUTE_FUSED_CHUNK_MEMORY MB)"
     echo "  FnlzMT:   $FINALIZE_MT_NAME ($FINALIZE_MT_MEMORY MB)"
@@ -1982,9 +1975,6 @@ if [ "$ACTION" = "create" ]; then
     echo "  Bilevel:  $BILEVEL_NAME ($BILEVEL_MEMORY MB)"
     echo "  C2B:      $COLOR_TO_BILEVEL_NAME ($COLOR_TO_BILEVEL_MEMORY MB)"
 elif [ "$ACTION" = "update" ]; then
-    update_lambda "$SWEEP_NAME" "handler_sweep.handler" "/tmp/polypaint-sweep.zip" \
-        "$SWEEP_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
-
     update_lambda "$SWEEP_MT_NAME" "handler_sweep_mt.handler" "/tmp/polypaint-sweep-mt.zip" \
         "$SWEEP_MT_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
 
@@ -2001,7 +1991,7 @@ elif [ "$ACTION" = "update" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     update_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,COLOR_TO_BILEVEL_FUNCTION=$COLOR_TO_BILEVEL_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,DZ_FROM_RAW_FUNCTION=$DZ_FROM_RAW_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,RECOLOR_FROM_RAW_FUNCTION=$RECOLOR_FROM_RAW_NAME,EXTRACT_PALETTE_FUSED_FUNCTION=$EXTRACT_PALETTE_FUSED_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
+        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,COLOR_TO_BILEVEL_FUNCTION=$COLOR_TO_BILEVEL_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,DZ_FROM_RAW_FUNCTION=$DZ_FROM_RAW_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,RECOLOR_FROM_RAW_FUNCTION=$RECOLOR_FROM_RAW_NAME,EXTRACT_PALETTE_FUSED_FUNCTION=$EXTRACT_PALETTE_FUSED_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -2089,7 +2079,7 @@ elif [ "$ACTION" = "update" ]; then
     update_lambda "$RENDER_STATUS_NAME" "handler_render_status.handler" "/tmp/polypaint-render-status.zip" \
         "$RENDER_STATUS_MEMORY" "" "JOBS_TABLE=$JOBS_TABLE"
     update_lambda "$COMPUTE_PLAN_NAME" "handler_compute_plan.handler" "/tmp/polypaint-compute-plan.zip" \
-        "$COMPUTE_PLAN_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,SWEEP_FUNCTION=$SWEEP_NAME,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,FUSED_WORKER_MEMORY_MB=$COMPUTE_FUSED_CHUNK_MEMORY,FUSED_WORKER_TMP_MB=$BINARY_TMP,FUSED_WORKER_TIMEOUT_SEC=$TIMEOUT"
+        "$COMPUTE_PLAN_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,FUSED_WORKER_MEMORY_MB=$COMPUTE_FUSED_CHUNK_MEMORY,FUSED_WORKER_TMP_MB=$BINARY_TMP,FUSED_WORKER_TIMEOUT_SEC=$TIMEOUT"
     update_lambda "$COMPUTE_FUSED_CHUNK_NAME" "handler_compute_chunk_fused.handler" "/tmp/polypaint-compute-fused-chunk.zip" \
         "$COMPUTE_FUSED_CHUNK_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
     update_lambda "$COMPUTE_STATUS_NAME" "handler_compute_status.handler" "/tmp/polypaint-compute-status.zip" \
@@ -2317,7 +2307,6 @@ elif [ "$ACTION" = "update" ]; then
 
     echo ""
     echo "=== UPDATED ==="
-    echo "  Sweep:    $SWEEP_NAME ($SWEEP_MEMORY MB)"
     echo "  Coeffgen: $COEFFGEN_NAME ($COEFFGEN_MEMORY MB)"
     echo "  CmpFuse:  $COMPUTE_FUSED_CHUNK_NAME ($COMPUTE_FUSED_CHUNK_MEMORY MB)"
     echo "  FnlzMT:   $FINALIZE_MT_NAME ($FINALIZE_MT_MEMORY MB)"

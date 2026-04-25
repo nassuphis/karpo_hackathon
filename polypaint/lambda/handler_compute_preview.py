@@ -22,7 +22,6 @@ from shared import (
 
 
 SWEEP_COEFFGEN = os.path.join(os.path.dirname(__file__), "sweep_coeffgen")
-SWEEP_AE = os.path.join(os.path.dirname(__file__), "sweep")
 SWEEP_MT = os.path.join(os.path.dirname(__file__), "sweep_mt")
 SWEEP_CM = os.path.join(os.path.dirname(__file__), "sweep_cm")
 TMP_COEFFS = "/tmp/preview_coeffs.bin"
@@ -43,7 +42,7 @@ def _json_response(status_code, body):
 
 
 def _solver_tag(solver_mode):
-    return "CM" if solver_mode == "companion_matrix" else "AE-MT" if solver_mode == "aberth_mt" else "AE"
+    return "CM" if solver_mode == "companion_matrix" else "AE-MT"
 
 
 def _format_chain(chain):
@@ -240,8 +239,8 @@ def handler(event, context):
 
         n_preview = _ensure_preview_n(params.get("N_preview"))
         preview_size = _ensure_preview_size(params.get("preview_size", 1000))
-        solver_mode = str(params.get("solver_mode") or "aberth").strip() or "aberth"
-        if solver_mode not in {"aberth", "aberth_mt", "companion_matrix"}:
+        solver_mode = str(params.get("solver_mode") or "aberth_mt").strip() or "aberth_mt"
+        if solver_mode not in {"aberth_mt", "companion_matrix"}:
             return _json_response(400, {"message": f"unsupported preview solver_mode: {solver_mode}"})
         quantile = _validate_quantile(params.get("quantile", 0.0))
         shim = _validate_shim(params.get("shim", 0.05))
@@ -303,17 +302,6 @@ def handler(event, context):
             solve_binary = SWEEP_MT
             solve_spec = {
                 "mode": "solve_mt",
-                "coeffs_file": TMP_COEFFS,
-                "n_coeffs": n_coeffs,
-                "n2": n_steps,
-                "i1_start": 0,
-                "i1_end": 1,
-                "match_roots": False,
-            }
-        else:
-            solve_binary = SWEEP_AE
-            solve_spec = {
-                "mode": "solve",
                 "coeffs_file": TMP_COEFFS,
                 "n_coeffs": n_coeffs,
                 "n2": n_steps,

@@ -19,7 +19,7 @@ from shared import ok_response, parse_body, report_status
 sfn_client = boto3.client("stepfunctions", region_name=os.environ.get("AWS_REGION", "us-east-1"))
 
 STATE_MACHINE_ARN = os.environ.get("COMPUTE_STATE_MACHINE_ARN", "")
-VALID_SOLVERS = {"aberth", "aberth_mt", "companion_matrix"}
+VALID_SOLVERS = {"aberth_mt", "companion_matrix"}
 
 
 def handler(event, context):
@@ -27,7 +27,7 @@ def handler(event, context):
     job_id = params["job_id"]
     run_id = params["run_id"]
     run_params = dict(params.get("params", {}) or {})
-    solver_mode = str(run_params.get("solver_mode", "aberth")).strip().lower()
+    solver_mode = str(run_params.get("solver_mode", "aberth_mt")).strip().lower()
     if solver_mode not in VALID_SOLVERS:
         raise RuntimeError(f"Invalid compute solver_mode: {solver_mode!r}")
     if not STATE_MACHINE_ARN:

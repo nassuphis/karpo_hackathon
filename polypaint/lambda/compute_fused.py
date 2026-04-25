@@ -190,7 +190,7 @@ def _solver_scratch_step_bytes(solver_mode, degree):
         return base * 18
     if solver_mode == "aberth_mt":
         return base * 10
-    return base * 8
+    raise RuntimeError(f"unsupported fused solver_mode: {solver_mode!r}")
 
 
 def _param_gen_us_per_step():
@@ -207,7 +207,7 @@ def _solve_us_per_step(*, solver_mode, degree, fused_threads):
         return 90.0 * (degree / 35.0)
     if solver_mode == "aberth_mt":
         return (28.0 * (degree / 35.0)) / max(1.0, min(float(fused_threads), 8.0) ** 0.55)
-    return 42.0 * (degree / 35.0)
+    raise RuntimeError(f"unsupported fused solver_mode: {solver_mode!r}")
 
 
 def _read_positive_int_env(name, default):

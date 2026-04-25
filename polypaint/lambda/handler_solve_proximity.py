@@ -306,18 +306,6 @@ def _compile_request_chain(params, metric, *, default_metric="proximity"):
     )
 
 
-def _summary_can_use_metric_legacy(compiled, raw_chain):
-    if raw_chain in ("", None, []):
-        return bool(compiled.get("legacy_compatible"))
-    tokens = compiled.get("program_tokens") or []
-    return (
-        bool(compiled.get("legacy_compatible"))
-        and len(tokens) == 1
-        and tokens[0].get("kind") == "metric"
-        and int(tokens[0].get("lag", 0) or 0) == 0
-    )
-
-
 def _reject_lagged_unsupported_phase(compiled, phase):
     if compiled.get("uses_lag"):
         raise RuntimeError(f"lagged solve-score refs are not supported by {phase} in v1")
@@ -418,8 +406,6 @@ def _solve_score_error_fields(compiled):
 
 
 def _score_program_error_suffix(compiled, metrics_with_clips=None):
-    if compiled.get("legacy_compatible"):
-        return ""
     metric_names = [row["metric"] for row in (metrics_with_clips or compiled.get("metrics") or [])]
     metric_sources = [row.get("source", "slv") for row in (metrics_with_clips or compiled.get("metrics") or [])]
     parts = [
@@ -1592,52 +1578,36 @@ def handle_summary(params):
         dl_ms = int((time.time() - t0) * 1000)
 
         metric_clips = []
-        if _summary_can_use_metric_legacy(compiled, params.get("solve_score_chain")):
-            quantile_lo = compiled["quantile"]
-            quantile_hi = 1.0 - compiled["quantile"]
-            cmd = [
-                BINARY,
-                _TMP_INPUT,
-                "--mode=summary",
-                f"--degree={degree}",
-                f"--metric={compiled['metric']}",
-                f"--quantile_lo={quantile_lo}",
-                f"--quantile_hi={quantile_hi}",
-                f"--omega={compiled['omega']}",
-                f"--omega_enabled={1 if compiled['omega_enabled'] else 0}",
-                f"--threads={solve_score_threads}",
-            ]
-        else:
-            for slot, metric_row in enumerate(compiled["metrics"]):
-                source = metric_row.get("source", "slv")
-                slot_clip = _clip_metric_slot(
-                    metric_row["metric"],
-                    metric_row["quantile"],
-                    degree if source == "slv" else (n_coeffs if source == "cf" else 2),
-                    compiled["omega"],
-                    compiled["omega_enabled"],
-                    solve_score_threads,
-                    root_transforms if source == "slv" else None,
-                    _TMP_INPUT if source == "slv" else (_TMP_COEFF_INPUT if source == "cf" else _TMP_PARAM_INPUT),
-                )
-                slot_clip["slot"] = slot
-                slot_clip["source"] = source
-                metric_clips.append(slot_clip)
-            cmd = [
-                BINARY,
-                _TMP_INPUT,
-                "--mode=summary",
-                f"--degree={degree}",
-                f"--threads={solve_score_threads}",
-                *_build_program_cmd_args(compiled, metric_clips),
-            ]
-            if uses_coeff_source:
-                cmd.extend([
-                    f"--score_coeffs_file={_TMP_COEFF_INPUT}",
-                    f"--score_coeff_degree={n_coeffs}",
-                ])
-            if uses_param_source:
-                cmd.append(f"--score_params_file={_TMP_PARAM_INPUT}")
+        for slot, metric_row in enumerate(compiled["metrics"]):
+            source = metric_row.get("source", "slv")
+            slot_clip = _clip_metric_slot(
+                metric_row["metric"],
+                metric_row["quantile"],
+                degree if source == "slv" else (n_coeffs if source == "cf" else 2),
+                compiled["omega"],
+                compiled["omega_enabled"],
+                solve_score_threads,
+                root_transforms if source == "slv" else None,
+                _TMP_INPUT if source == "slv" else (_TMP_COEFF_INPUT if source == "cf" else _TMP_PARAM_INPUT),
+            )
+            slot_clip["slot"] = slot
+            slot_clip["source"] = source
+            metric_clips.append(slot_clip)
+        cmd = [
+            BINARY,
+            _TMP_INPUT,
+            "--mode=summary",
+            f"--degree={degree}",
+            f"--threads={solve_score_threads}",
+            *_build_program_cmd_args(compiled, metric_clips),
+        ]
+        if uses_coeff_source:
+            cmd.extend([
+                f"--score_coeffs_file={_TMP_COEFF_INPUT}",
+                f"--score_coeff_degree={n_coeffs}",
+            ])
+        if uses_param_source:
+            cmd.append(f"--score_params_file={_TMP_PARAM_INPUT}")
         xf_path = _write_xforms(root_transforms)
         if xf_path:
             cmd.append(f"--root_xforms={xf_path}")
@@ -1688,22 +1658,7 @@ def handle_summary(params):
                 "score_output_clip_hi": 1.0,
                 "score_output_clip_source": "identity",
             })
-        if (
-            compiled["legacy_compatible"]
-            and not metric_clips
-            and summary.get("clip_lo") is not None
-            and summary.get("clip_hi") is not None
-        ):
-            metric_clips = _legacy_metric_clips(
-                compiled["metric"],
-                compiled["quantile"],
-                summary.get("clip_lo"),
-                summary.get("clip_hi"),
-            )
-            for row in metric_clips:
-                row["source"] = compiled["metrics"][0].get("source", "slv")
-        if metric_clips:
-            summary["metrics"] = metric_clips
+        summary["metrics"] = metric_clips
 
         return ok_response(summary)
 

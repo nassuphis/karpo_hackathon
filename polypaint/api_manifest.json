@@ -17,7 +17,6 @@
       "repalette",
       "resize_artifact",
       "solve_proximity",
-      "sweep",
       "sweep_cm",
       "sweep_mt"
     ],
@@ -86,7 +85,6 @@
       "/save-metadata",
       "/save-solve-score-program",
       "/solve-proximity",
-      "/sweep",
       "/sweep-cm",
       "/sweep-mt",
       "/tiff-compat",
@@ -104,7 +102,6 @@
       "render-lores-preview": "/render-lores-preview",
       "solve_proximity": "/solve-proximity",
       "storage": "",
-      "sweep": "/sweep",
       "sweep-cm": "/sweep-cm",
       "sweep-mt": "/sweep-mt",
       "tiff-compat": "/tiff-compat",
@@ -136,12 +133,10 @@
       "tiff-compat"
     ],
     "solver_dispatch_targets": {
-      "aberth": "sweep",
       "aberth_mt": "sweep_mt",
       "companion_matrix": "sweep_cm"
     },
     "solver_lores_endpoints": {
-      "aberth": "sweep",
       "aberth_mt": "sweep-mt",
       "companion_matrix": "sweep-cm"
     },

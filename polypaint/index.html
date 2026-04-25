@@ -869,7 +869,6 @@ button {
 
                     <input type="number" id="compute-preview-n" value="256" min="8" max="1024" step="8" style="width:6em" onchange="_markComputePreviewStale()">
                     <select id="compute-preview-solver" style="width:7em; font-size:12px" onchange="_markComputePreviewStale()">
-                        <option value="aberth">AE</option>
                         <option value="aberth_mt">AE-MT</option>
                         <option value="companion_matrix">CM</option>
                     </select>
@@ -886,7 +885,6 @@ button {
                 </div>
             </div>
             <div style="margin-top:8px; display:flex; gap:6px; align-items:center">
-                <button class="btn-primary" id="btn-calculate" onclick="runCalculate()" style="background:#2a6">Calculate-AE</button>
                 <button class="btn-primary" id="btn-calculate-mt" onclick="runCalculateAEMT()" style="background:#287">Calculate-AE-MT</button>
                 <button class="btn-primary" id="btn-calculate-cm" onclick="runCalculateCM()" style="background:#64a">Calculate-CM</button>
                 <button class="btn-primary" id="btn-param-debug" onclick="runParamDebug()" style="background:#446">Param</button>
@@ -3194,40 +3192,37 @@ function _solverShortLabel(solver) {
         : solver || '-';
 }
 
+function _normalizeComputeSolverMode(solver) {
+    return solver === 'companion_matrix' ? 'companion_matrix' : 'aberth_mt';
+}
+
 function _solverRunLabel(solver) {
     return solver === 'companion_matrix' ? 'Calculate-CM'
-        : solver === 'aberth_mt' ? 'Calculate-AE-MT'
-        : 'Calculate-AE';
+        : 'Calculate-AE-MT';
 }
 
 function _solverButtonId(solver) {
     return solver === 'companion_matrix' ? 'btn-calculate-cm'
-        : solver === 'aberth_mt' ? 'btn-calculate-mt'
-        : 'btn-calculate';
+        : 'btn-calculate-mt';
 }
 
 function _solverTag(solver) {
     return solver === 'companion_matrix' ? 'CM'
-        : solver === 'aberth_mt' ? 'AE-MT'
-        : 'AE';
+        : 'AE-MT';
 }
 
 function _solverLoresEndpoint(solver) {
     return solver === 'companion_matrix' ? 'sweep-cm'
-        : solver === 'aberth_mt' ? 'sweep-mt'
-        : 'sweep';
+        : 'sweep-mt';
 }
 
 function _solverDispatchTarget(solver) {
     return solver === 'companion_matrix' ? 'sweep_cm'
-        : solver === 'aberth_mt' ? 'sweep_mt'
-        : 'sweep';
+        : 'sweep_mt';
 }
 
 function _computePopupPrefsForSolver(solverMode) {
-    const key = solverMode === 'companion_matrix' ? 'companion_matrix'
-        : solverMode === 'aberth_mt' ? 'aberth_mt'
-        : 'aberth';
+    const key = _normalizeComputeSolverMode(solverMode);
     if (!_computePopupPrefsBySolver[key]) {
         _computePopupPrefsBySolver[key] = _defaultComputePopupPrefs(key);
     }
@@ -3268,7 +3263,7 @@ function _computePreviewSignatureNow() {
     return JSON.stringify({
         n_preview: parseInt(document.getElementById('compute-preview-n')?.value) || 256,
         preview_size: parseInt(document.getElementById('compute-preview-size')?.value) || 1000,
-        solver_mode: document.getElementById('compute-preview-solver')?.value || 'aberth',
+        solver_mode: document.getElementById('compute-preview-solver')?.value || 'aberth_mt',
         quantile: (parseFloat(document.getElementById('compute-preview-quantile')?.value) || 0) / 100,
         shim: (parseFloat(document.getElementById('compute-preview-shim')?.value) || 5) / 100,
         function: document.getElementById('render-function')?.value || '',
@@ -3322,7 +3317,7 @@ function _applyComputePreviewResult(result) {
     const box = _computePreviewBox();
     const statusEl = _computePreviewStatusEl();
     const infoLines = [
-        `solver: ${_solverTag(result.solver_mode || 'aberth')}`,
+        `solver: ${_solverTag(result.solver_mode || 'aberth_mt')}`,
         `image: ${result.image_width}×${result.image_height}`,
         `view: q=${((Number(result.quantile) || 0) * 100).toFixed(1)}% · shim=${((Number(result.shim) || 0) * 100).toFixed(1)}%`,
         `degree: ${result.degree}`,
@@ -3357,7 +3352,7 @@ async function runComputePreview() {
     const funcName = document.getElementById('render-function').value;
     let nPreview = Math.max(8, parseInt(document.getElementById('compute-preview-n').value) || 256);
     const previewSize = Math.max(64, parseInt(document.getElementById('compute-preview-size').value) || 1000);
-    const solverMode = document.getElementById('compute-preview-solver').value || 'aberth';
+    const solverMode = document.getElementById('compute-preview-solver').value || 'aberth_mt';
     const quantile = Math.max(0, parseFloat(document.getElementById('compute-preview-quantile').value) || 0) / 100;
     const shim = Math.max(0, parseFloat(document.getElementById('compute-preview-shim').value) || 5) / 100;
     const paramTransforms = _serializeParamTransforms();
@@ -3411,7 +3406,7 @@ async function runComputePreview() {
 function _populateComputeFromDetail(jobId, detail) {
     const calc = detail.calc || {};
     const pipeline = detail.pipeline || calc.pipeline || {};
-    const solverMode = calc.solver || detail.solver || 'aberth';
+    const solverMode = _normalizeComputeSolverMode(calc.solver || detail.solver || 'aberth_mt');
     const solverPrefs = { ..._computePopupPrefsForSolver(solverMode) };
 
     const nVal = calc.N || calc.n1;
@@ -5248,7 +5243,6 @@ function _defaultComputePopupPrefs(solverMode) {
 }
 
 let _computePopupPrefsBySolver = {
-    aberth: _defaultComputePopupPrefs('aberth'),
     aberth_mt: _defaultComputePopupPrefs('aberth_mt'),
     companion_matrix: _defaultComputePopupPrefs('companion_matrix'),
 };
@@ -14384,7 +14378,6 @@ async function runParamDebug() {
     }
 }
 
-async function runCalculate() { return openComputeSolverPopup('aberth'); }
 async function runCalculateAEMT() { return openComputeSolverPopup('aberth_mt'); }
 async function runCalculateCM() { return openComputeSolverPopup('companion_matrix'); }
 function _aggregateComputeParamGenPerf(results) {
@@ -14459,11 +14452,15 @@ function _aggregateComputeFusedPerf(results) {
     }, { tasks: 0, param_gen_us: 0, coeffgen_us: 0, solve_us: 0, compute_us: 0, upload_params_us: 0, upload_coeffs_us: 0, upload_roots_us: 0, params_size: 0, coeffs_size: 0, bin_size: 0, n_t: 0, avg_iterations_weighted: 0, fused_threads: 0 });
 }
 
+function _computeWallPerfPrefix(wallMs) {
+    return wallMs != null ? `wall=${_fmtSecondsMs(wallMs)} ` : '';
+}
+
 function _computePhasePerfSummary(phase, results, wallMs) {
     if (phase === 'degree_probe') {
         const row = Array.isArray(results) && results.length ? results[0] : null;
         if (!row) return wallMs != null ? `wall=${_fmtSecondsMs(wallMs)}` : '';
-        let msg = `wall=${_fmtSecondsMs(wallMs)} total=probe ${_fmtSecondsUs(Number(row.elapsed_us) || 0)}`;
+        let msg = `${_computeWallPerfPrefix(wallMs)}total=probe ${_fmtSecondsUs(Number(row.elapsed_us) || 0)}`;
         if (Number(row.coeffgen_us) > 0) msg += ` · coeffgen=${_fmtSecondsUs(Number(row.coeffgen_us) || 0)}`;
         if (row.degree != null) msg += ` · degree=${Number(row.degree) || 0}`;
         if (row.n_coeffs != null) msg += ` · n_coeffs=${Number(row.n_coeffs) || 0}`;
@@ -14472,7 +14469,7 @@ function _computePhasePerfSummary(phase, results, wallMs) {
     if (phase === 'param_gen' || phase === 'lores_param_gen') {
         const perf = _aggregateComputeParamGenPerf(results);
         if (!perf) return wallMs != null ? `wall=${_fmtSecondsMs(wallMs)}` : '';
-        let msg = `wall=${_fmtSecondsMs(wallMs)} total=gen ${_fmtSecondsUs(perf.elapsed_us)}`;
+        let msg = `${_computeWallPerfPrefix(wallMs)}total=gen ${_fmtSecondsUs(perf.elapsed_us)}`;
         if (perf.threads > 0) msg += ` · threads=${perf.threads}`;
         const stepsDone = Math.max(0, perf.uploaded_steps_est || 0);
         const bytesDone = Math.max(0, perf.uploaded_bytes || 0);
@@ -14491,7 +14488,7 @@ function _computePhasePerfSummary(phase, results, wallMs) {
     if (phase === 'coeffgen' || phase === 'lores_coeffgen') {
         const perf = _aggregateComputeCoeffgenPerf(results);
         if (!perf) return wallMs != null ? `wall=${_fmtSecondsMs(wallMs)}` : '';
-        let msg = `wall=${_fmtSecondsMs(wallMs)} total=gen ${_fmtSecondsUs(perf.elapsed_us)} · size ${(perf.coeffs_size/1e6).toFixed(1)}MB`;
+        let msg = `${_computeWallPerfPrefix(wallMs)}total=gen ${_fmtSecondsUs(perf.elapsed_us)} · size ${(perf.coeffs_size/1e6).toFixed(1)}MB`;
         if (perf.threads > 0) msg += ` · threads=${perf.threads}`;
         if (perf.degree > 0) msg += ` · degree=${perf.degree}`;
         if (perf.tasks > 1) msg += ` · chunks=${perf.tasks}`;
@@ -14500,7 +14497,7 @@ function _computePhasePerfSummary(phase, results, wallMs) {
     if (phase === 'solve' || phase === 'lores_solve') {
         const perf = _aggregateComputeSolvePerf(results);
         if (!perf) return wallMs != null ? `wall=${_fmtSecondsMs(wallMs)}` : '';
-        let msg = `wall=${_fmtSecondsMs(wallMs)} total=solve ${_fmtSecondsUs(perf.compute_us)} · bin ${(perf.bin_size/1e6).toFixed(1)}MB`;
+        let msg = `${_computeWallPerfPrefix(wallMs)}total=solve ${_fmtSecondsUs(perf.compute_us)} · bin ${(perf.bin_size/1e6).toFixed(1)}MB`;
         if (perf.n_t > 0) msg += ` · avg_iters=${(perf.avg_iterations_weighted / perf.n_t).toFixed(1)}`;
         if (perf.skipped_overflow > 0) msg += ` · skipped=${perf.skipped_overflow}`;
         return msg;
@@ -14508,7 +14505,7 @@ function _computePhasePerfSummary(phase, results, wallMs) {
     if (phase === 'compute_chunk_fused') {
         const perf = _aggregateComputeFusedPerf(results);
         if (!perf) return wallMs != null ? `wall=${_fmtSecondsMs(wallMs)}` : '';
-        let msg = `wall=${_fmtSecondsMs(wallMs)} total=param ${_fmtSecondsUs(perf.param_gen_us)} + coeff ${_fmtSecondsUs(perf.coeffgen_us)} + solve ${_fmtSecondsUs(perf.solve_us)}`;
+        let msg = `${_computeWallPerfPrefix(wallMs)}total=param ${_fmtSecondsUs(perf.param_gen_us)} + coeff ${_fmtSecondsUs(perf.coeffgen_us)} + solve ${_fmtSecondsUs(perf.solve_us)}`;
         msg += ` · up ${_fmtSecondsUs(perf.upload_params_us + perf.upload_coeffs_us + perf.upload_roots_us)}`;
         msg += ` · params ${(perf.params_size/1e6).toFixed(1)}MB · coeff ${(perf.coeffs_size/1e6).toFixed(1)}MB · bin ${(perf.bin_size/1e6).toFixed(1)}MB`;
         if (perf.fused_threads > 0) msg += ` · threads=${perf.fused_threads}`;
@@ -14527,8 +14524,10 @@ function _computePhaseLogLabel(phaseLabel, phase, solverMode) {
     return base;
 }
 
-async function _logComputePhaseCompletion(jobId, tracker) {
+async function _logComputePhaseCompletion(jobId, tracker, loggedCompletions = null) {
     if (!jobId || !tracker || !tracker.prefix) return;
+    const key = `${tracker.phase || ''}|${tracker.prefix || ''}|complete`;
+    if (loggedCompletions && loggedCompletions.has(key)) return;
     try {
         const subcheck = await lambdaPost('storage', {
             job_id: jobId,
@@ -14547,9 +14546,71 @@ async function _logComputePhaseCompletion(jobId, tracker) {
         if (perfText) {
             const label = _computePhaseLogLabel(tracker.phase_label, tracker.phase, tracker.solver_mode);
             log(`${label} complete · ${perfText}`, 'ok');
+            if (loggedCompletions) loggedCompletions.add(key);
         }
     } catch (e) {
         // best effort only
+    }
+}
+
+function _computeLoresPhaseTrackers(runId, solverMode) {
+    return [
+        {
+            phase: 'lores_param_gen',
+            phase_label: 'Lores param gen',
+            solver_mode: solverMode,
+            prefix: `compute_${runId}_lores_param_gen`,
+            expected: 1,
+        },
+        {
+            phase: 'lores_coeffgen',
+            phase_label: 'Lores coeffgen',
+            solver_mode: solverMode,
+            prefix: `compute_${runId}_lores_coeffgen`,
+            expected: 1,
+        },
+        {
+            phase: 'lores_solve',
+            phase_label: 'Lores solve',
+            solver_mode: solverMode,
+            prefix: `compute_${runId}_lores_solve`,
+            expected: 1,
+        },
+    ];
+}
+
+function _computeShouldPollKnownLores(phase) {
+    return [
+        'lores_param_gen',
+        'lores_coeffgen',
+        'lores_solve',
+        'compute_chunk_fused',
+        'solve',
+        'save_metadata',
+        'done',
+    ].includes(String(phase || ''));
+}
+
+async function _logComputeKnownLoresCompletions(jobId, trackers, loggedCompletions) {
+    if (!jobId || !Array.isArray(trackers) || !trackers.length) return;
+    for (const tracker of trackers) {
+        const key = `${tracker.phase || ''}|${tracker.prefix || ''}|complete`;
+        if (loggedCompletions && loggedCompletions.has(key)) continue;
+        try {
+            const subcheck = await lambdaPost('storage', {
+                job_id: jobId,
+                task_prefix: tracker.prefix,
+                expected: tracker.expected || 1,
+            }, '/check-status');
+            _logContractWarnings(subcheck.results || [], 'compute-log');
+            if (!subcheck.complete) continue;
+            const perfText = _computePhasePerfSummary(tracker.phase, subcheck.results || [], null);
+            const label = _computePhaseLogLabel(tracker.phase_label, tracker.phase, tracker.solver_mode);
+            log(`${label} complete${perfText ? ' · ' + perfText : ''}`, 'ok');
+            if (loggedCompletions) loggedCompletions.add(key);
+        } catch (e) {
+            // best effort only
+        }
     }
 }
 
@@ -14647,6 +14708,9 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
         log(`  compute orchestrator dispatched: ${runId}`, 'ok');
 
         let phaseTracker = null;
+        const loggedPhaseCompletions = new Set();
+        const loresPhaseTrackers = _computeLoresPhaseTrackers(runId, solverMode);
+        let pollKnownLores = false;
         while (true) {
             await new Promise(r => setTimeout(r, 3000));
             const check = await lambdaPost('storage', {
@@ -14668,9 +14732,10 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
             const phase = rd.phase || '';
             const phaseLabel = rd.phase_label || phase || 'Working';
             const phaseStartMs = _coerceTimestampMs(rd.started_at_ms) || _coerceTimestampMs(rd.updated_at_ms);
+            pollKnownLores = pollKnownLores || _computeShouldPollKnownLores(phase);
 
             if (phaseTracker && phaseTracker.phase !== phase) {
-                await _logComputePhaseCompletion(jobId, phaseTracker);
+                await _logComputePhaseCompletion(jobId, phaseTracker, loggedPhaseCompletions);
                 phaseTracker = null;
             }
 
@@ -14737,6 +14802,9 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
                 if (perfText) logMsg += ` · ${perfText}`;
                 log(logMsg, '', 'compute-log');
             }
+            if (pollKnownLores) {
+                await _logComputeKnownLoresCompletions(jobId, loresPhaseTrackers, loggedPhaseCompletions);
+            }
 
             document.getElementById('compute-status').textContent = expected > 0
                 ? `${phaseLabel} ${done}/${expected}...`
@@ -14744,7 +14812,8 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
             document.getElementById('compute-status').className = 'status';
 
             if (check.complete || rd.phase === 'done') {
-                if (phaseTracker) await _logComputePhaseCompletion(jobId, phaseTracker);
+                if (phaseTracker) await _logComputePhaseCompletion(jobId, phaseTracker, loggedPhaseCompletions);
+                await _logComputeKnownLoresCompletions(jobId, loresPhaseTrackers, loggedPhaseCompletions);
                 const detail = await lambdaPost('storage', { job_id: jobId }, '/detail');
                 const calc = detail.calc || {};
                 const chunks = Array.isArray(calc.chunks) ? calc.chunks : [];

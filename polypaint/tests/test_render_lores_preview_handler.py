@@ -57,6 +57,15 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         mock_s3.generate_presigned_url.return_value = "https://example.test/lores.bin"
 
         def subprocess_fake(cmd, **kwargs):
+            if "--mode=clip" in cmd:
+                return MagicMock(returncode=0, stdout=json.dumps({
+                    "clip_lo": 0.0,
+                    "clip_hi": 1.0,
+                    "min_score": 0.0,
+                    "max_score": 1.0,
+                    "n_solves": 3,
+                    "threads": 1,
+                }), stderr="")
             if "--mode=summary" in cmd:
                 return MagicMock(returncode=0, stdout=json.dumps({
                     "degree": 2,
@@ -95,9 +104,12 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         self.assertFalse(mock_s3.upload_file.called)
         self.assertFalse(mock_s3.upload_fileobj.called)
 
-        summary_cmd = mock_run.call_args_list[0][0][0]
+        summary_cmd = next(call[0][0] for call in mock_run.call_args_list if "--mode=summary" in call[0][0])
         raster_cmd = mock_run.call_args_list[-1][0][0]
         self.assertIn("--score_output_normalize=1", summary_cmd)
+        self.assertIn("--score_program=m0-0", summary_cmd)
+        self.assertIn("--score_metrics=proximity", summary_cmd)
+        self.assertFalse(any(arg.startswith("--metric=") for arg in summary_cmd))
         self.assertIn("--score_output_normalize=1", raster_cmd)
         self.assertIn("--score_output_clip_lo=0.1", raster_cmd)
         self.assertIn("--score_output_clip_hi=0.9", raster_cmd)

@@ -126,7 +126,7 @@ def _extract_literal_dispatch_targets(calls: list[dict]) -> list[str]:
     return sorted(targets)
 
 
-def _extract_solver_mapping(index_text: str, fn_name: str, default_key: str = "aberth") -> dict[str, str]:
+def _extract_solver_mapping(index_text: str, fn_name: str, default_key: str = "aberth_mt") -> dict[str, str]:
     pattern = rf"function {re.escape(fn_name)}\(solver\)\s*\{{\s*return\s+([^;]+);"
     match = re.search(pattern, index_text, re.DOTALL)
     if not match:

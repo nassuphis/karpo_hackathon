@@ -24,7 +24,6 @@ from shared import BUCKET, JOBS_TABLE, ok_response, parse_body
 s3 = boto3.client("s3")
 _ddb = None
 
-SWEEP_FUNCTION = os.environ.get("SWEEP_FUNCTION", "polypaint-sweep")
 SWEEP_MT_FUNCTION = os.environ.get("SWEEP_MT_FUNCTION", "polypaint-sweep-mt")
 SWEEP_CM_FUNCTION = os.environ.get("SWEEP_CM_FUNCTION", "polypaint-sweep-cm")
 
@@ -61,7 +60,7 @@ def handle_build_plan(params):
     task_id = params["task_id"]
     run_params = params.get("params", {})
 
-    solver_mode = _validate_solver_mode(run_params.get("solver_mode", "aberth"))
+    solver_mode = _validate_solver_mode(run_params.get("solver_mode", "aberth_mt"))
     execution_method = execution_method_from_params(run_params)
     n = _validate_positive_int(run_params.get("N"), "N", max_value=MAX_N)
     times = _validate_positive_int(run_params.get("times", 1), "times", max_value=MAX_TIMES)
@@ -509,9 +508,9 @@ def _finalize_results_task_prefix(plan, params):
 
 
 def _validate_solver_mode(value):
-    solver_mode = str(value or "aberth").strip().lower()
-    if solver_mode not in ("aberth", "aberth_mt", "companion_matrix"):
-        raise RuntimeError(f"solver_mode must be one of aberth, aberth_mt, companion_matrix; got {value!r}")
+    solver_mode = str(value or "aberth_mt").strip().lower()
+    if solver_mode not in ("aberth_mt", "companion_matrix"):
+        raise RuntimeError(f"solver_mode must be one of aberth_mt, companion_matrix; got {value!r}")
     return solver_mode
 
 
@@ -530,9 +529,7 @@ def _validate_positive_int(value, field_name, max_value=None):
 def _solver_function_name(solver_mode):
     if solver_mode == "companion_matrix":
         return SWEEP_CM_FUNCTION
-    if solver_mode == "aberth_mt":
-        return SWEEP_MT_FUNCTION
-    return SWEEP_FUNCTION
+    return SWEEP_MT_FUNCTION
 
 
 def _compute_lores_n(n, times, degree):

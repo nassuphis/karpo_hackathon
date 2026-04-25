@@ -12,7 +12,7 @@ The pipeline is composable and has three stages:
 
 ### Frontend → Lambda → C Binary
 
-1. **Frontend** (`index.html`, `runCalculate()`) builds job specs and fans out across Lambda:
+1. **Frontend** (`index.html`, `runCalculateAEMT()` / `runCalculateCM()`) builds job specs and starts the compute workflow:
    - Splits the grid into `nStripes` horizontal bands (rows)
    - Each stripe: `{i1_start, i1_end, n1, n2, function, param_transforms, coeff_transforms, times}`
    - Up to 50 concurrent Lambda invocations via `asyncPool`

@@ -18,9 +18,9 @@ class TestComputePlan(unittest.TestCase):
         result = mod.handle_build_plan({
             "job_id": "compute_j",
             "run_id": "run_abc",
-            "task_id": "compute_run_aberth_run_abc",
+            "task_id": "compute_run_aberth_mt_run_abc",
             "params": {
-                "solver_mode": "aberth",
+                "solver_mode": "aberth_mt",
                 "N": 100,
                 "times": 1,
                 "n_chunks": 4,
@@ -288,7 +288,7 @@ class TestComputePlan(unittest.TestCase):
                 "cfpv": [],
             },
             "compute": {"N": 100, "times": 1, "n_chunks": 1, "n_steps": 10000, "param_storage_mode": "chunked", "params_key": "", "param_gen_threads": 5, "coeffgen_threads": 4, "lores_param_gen_threads": 2, "lores_coeffgen_threads": 3},
-            "solve": {"mode": "aberth"},
+            "solve": {"mode": "aberth_mt"},
             "chunk_items": [{
                 "chunk_idx": 0,
                 "coeffs_key": "renders/compute_j/coeffs_0000.bin",

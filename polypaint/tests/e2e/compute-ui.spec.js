@@ -31,7 +31,6 @@ test.describe('Compute UI', () => {
     await expect(page.locator('#compute-preview-size')).toBeVisible();
     await expect(page.locator('#btn-compute-preview')).toBeVisible();
     await expect(page.locator('#compute-preview-box')).toBeVisible();
-    await expect(page.locator('#btn-calculate')).toBeVisible();
     await expect(page.locator('#btn-calculate-mt')).toBeVisible();
     await expect(page.locator('#btn-calculate-cm')).toBeVisible();
   });

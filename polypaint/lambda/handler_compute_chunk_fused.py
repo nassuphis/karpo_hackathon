@@ -9,7 +9,6 @@ from shared import BUCKET, is_enospc, ok_response, parse_body, report_status
 
 s3 = boto3.client("s3")
 SWEEP_COEFFGEN = os.path.join(os.path.dirname(__file__), "sweep_coeffgen")
-SWEEP = os.path.join(os.path.dirname(__file__), "sweep")
 SWEEP_MT = os.path.join(os.path.dirname(__file__), "sweep_mt")
 SWEEP_CM = os.path.join(os.path.dirname(__file__), "sweep_cm")
 STAGE_META_PREFIX = "pp"
@@ -53,6 +52,8 @@ def handle_fused_chunk(params):
     degree = _require_int(params, "degree", minimum=1)
     fused_threads = _require_int(params, "fused_threads", minimum=1) if "fused_threads" in params else 4
     solver_mode = str(params.get("solver_mode") or "aberth_mt").strip().lower() or "aberth_mt"
+    if solver_mode not in {"aberth_mt", "companion_matrix"}:
+        raise RuntimeError(f"fused compute solver_mode must be one of aberth_mt, companion_matrix; got {solver_mode!r}")
     task_id = str(params.get("task_id") or f"compute_fused_{chunk_idx}")
     function_name = _require_str(params, "function")
     param_transforms = params.get("param_transforms") or []
@@ -339,17 +340,6 @@ def _run_solve_local(*, output_path, coeffs_path, solver_mode, n_coeffs, n_steps
             "n_threads": fused_threads,
         }
         binary = SWEEP_MT
-    else:
-        spec = {
-            "mode": "solve",
-            "coeffs_file": coeffs_path,
-            "n_coeffs": n_coeffs,
-            "n2": n_steps,
-            "i1_start": 0,
-            "i1_end": 1,
-            "match_roots": False,
-        }
-        binary = SWEEP
     result = subprocess.run(
         [binary, output_path],
         input=json.dumps(spec),

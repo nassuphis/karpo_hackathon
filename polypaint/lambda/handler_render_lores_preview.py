@@ -226,18 +226,6 @@ def _compile_request_chain(params):
     )
 
 
-def _summary_can_use_metric_legacy(compiled, raw_chain):
-    if raw_chain in ("", None, []):
-        return bool(compiled.get("legacy_compatible"))
-    tokens = compiled.get("program_tokens") or []
-    return (
-        bool(compiled.get("legacy_compatible"))
-        and len(tokens) == 1
-        and tokens[0].get("kind") == "metric"
-        and int(tokens[0].get("lag", 0) or 0) == 0
-    )
-
-
 def _clip_widen_half_width(center, lo, hi, min_score=None, max_score=None):
     full = 0.0
     try:
@@ -267,18 +255,6 @@ def _sanitize_metric_clip(metric_row):
     row["clip_lo"] = clip_lo
     row["clip_hi"] = clip_hi
     return row
-
-
-def _legacy_metric_clips(metric, quantile, clip_lo, clip_hi):
-    return [_sanitize_metric_clip({
-        "slot": 0,
-        "metric": metric,
-        "source": "slv",
-        "quantile": float(quantile),
-        "quantile_pct": float(quantile) * 100.0,
-        "clip_lo": float(clip_lo),
-        "clip_hi": float(clip_hi),
-    })]
 
 
 def _clip_metric_slot(metric_row, *, degree, n_coeffs, compiled, threads, root_transforms):
@@ -379,48 +355,32 @@ def _preview_score_summary(params, *, degree, n_coeffs, compiled, include_coeff,
         label="solve_score_normalize",
     )
     metric_clips = []
-    if _summary_can_use_metric_legacy(compiled, params.get("solve_score_chain")):
-        quantile_lo = compiled["quantile"]
-        quantile_hi = 1.0 - compiled["quantile"]
-        cmd = [
-            SOLVE_PROXIMITY_STATS,
-            TMP_ROOTS,
-            "--mode=summary",
-            f"--degree={int(degree)}",
-            f"--metric={compiled['metric']}",
-            f"--quantile_lo={quantile_lo}",
-            f"--quantile_hi={quantile_hi}",
-            f"--omega={compiled['omega']}",
-            f"--omega_enabled={1 if compiled['omega_enabled'] else 0}",
-            f"--threads={threads}",
-        ]
-    else:
-        for slot, metric_row in enumerate(compiled["metrics"]):
-            slot_clip = _clip_metric_slot(
-                metric_row,
-                degree=degree,
-                n_coeffs=n_coeffs,
-                compiled=compiled,
-                threads=threads,
-                root_transforms=root_transforms,
-            )
-            slot_clip["slot"] = slot
-            metric_clips.append(slot_clip)
-        cmd = [
-            SOLVE_PROXIMITY_STATS,
-            TMP_ROOTS,
-            "--mode=summary",
-            f"--degree={int(degree)}",
-            f"--threads={threads}",
-            *_build_program_cmd_args(compiled, metric_clips),
-        ]
-        if include_coeff:
-            cmd.extend([
-                f"--score_coeffs_file={TMP_COEFFS}",
-                f"--score_coeff_degree={int(n_coeffs)}",
-            ])
-        if include_param:
-            cmd.append(f"--score_params_file={TMP_PARAMS}")
+    for slot, metric_row in enumerate(compiled["metrics"]):
+        slot_clip = _clip_metric_slot(
+            metric_row,
+            degree=degree,
+            n_coeffs=n_coeffs,
+            compiled=compiled,
+            threads=threads,
+            root_transforms=root_transforms,
+        )
+        slot_clip["slot"] = slot
+        metric_clips.append(slot_clip)
+    cmd = [
+        SOLVE_PROXIMITY_STATS,
+        TMP_ROOTS,
+        "--mode=summary",
+        f"--degree={int(degree)}",
+        f"--threads={threads}",
+        *_build_program_cmd_args(compiled, metric_clips),
+    ]
+    if include_coeff:
+        cmd.extend([
+            f"--score_coeffs_file={TMP_COEFFS}",
+            f"--score_coeff_degree={int(n_coeffs)}",
+        ])
+    if include_param:
+        cmd.append(f"--score_params_file={TMP_PARAMS}")
     if root_transforms:
         cmd.append(f"--root_xforms={_write_xforms(root_transforms)}")
     if solve_score_normalize:
@@ -452,19 +412,7 @@ def _preview_score_summary(params, *, degree, n_coeffs, compiled, include_coeff,
             "score_output_clip_hi": 1.0,
             "score_output_clip_source": "identity",
         })
-    if (
-        not metric_clips
-        and summary.get("clip_lo") is not None
-        and summary.get("clip_hi") is not None
-    ):
-        metric_clips = _legacy_metric_clips(
-            compiled["metric"],
-            compiled["quantile"],
-            summary.get("clip_lo"),
-            summary.get("clip_hi"),
-        )
-    if metric_clips:
-        summary["metrics"] = metric_clips
+    summary["metrics"] = metric_clips
     return summary
 
 

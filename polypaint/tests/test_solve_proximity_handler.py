@@ -671,10 +671,23 @@ def test_summary_score_normalization_reports_quantile_range():
         "threads": 1,
     })
 
+    calls = []
+
     def mock_run(cmd, capture_output, text, timeout):
-        assert "--mode=summary" in cmd
-        assert "--score_output_normalize=1" in cmd
-        return mock.MagicMock(returncode=0, stdout=summary_stdout, stderr="")
+        calls.append(list(cmd))
+        if "--mode=clip" in cmd:
+            return mock.MagicMock(returncode=0, stdout=json.dumps({
+                "clip_lo": 0.0,
+                "clip_hi": 1.0,
+                "min_score": 0.0,
+                "max_score": 1.0,
+                "n_solves": 4,
+                "threads": 1,
+            }), stderr="")
+        if "--mode=summary" in cmd:
+            assert "--score_output_normalize=1" in cmd
+            return mock.MagicMock(returncode=0, stdout=summary_stdout, stderr="")
+        raise AssertionError(f"unexpected subprocess command: {cmd}")
 
     orig_s3, orig_run = hsp.s3, hsp.subprocess.run
     hsp.s3 = mock_s3
@@ -694,6 +707,10 @@ def test_summary_score_normalization_reports_quantile_range():
         assert body["score_output_clip_lo"] == 0.02
         assert body["score_output_clip_hi"] == 0.08
         assert body["score_output_clip_source"] == "lores_q05_q95"
+        summary_cmd = next(cmd for cmd in calls if "--mode=summary" in cmd)
+        assert "--score_program=m0-0;omega_cosine:1" in summary_cmd
+        assert "--score_metrics=proximity" in summary_cmd
+        assert not any(arg.startswith("--metric=") for arg in summary_cmd)
     finally:
         hsp.s3 = orig_s3
         hsp.subprocess.run = orig_run

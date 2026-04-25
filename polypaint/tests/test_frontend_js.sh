@@ -131,6 +131,15 @@ assertIncludes("const effectiveParamGenThreads = fused ? fusedThreads : paramGen
 assertIncludes("const effectiveCoeffgenThreads = fused ? fusedThreads : coeffgenThreads;", 'fused compute should normalize hidden coeffgen threads to shared hires threads');
 assertIncludes("if (fused && fusedThreads != null) orchPayload.params.fused_threads = fusedThreads;", 'compute launch should only forward fused_threads for fused runs');
 assertNotIncludes("if (fusedThreads != null) orchPayload.params.fused_threads = fusedThreads;", 'classic compute should not leak fused_threads');
+assertNotIncludes("id=\"btn-calculate\" onclick=\"runCalculate()\"", 'single-thread AE calculate button should be removed');
+assertNotIncludes("<option value=\"aberth\">AE</option>", 'compute preview should not offer removed single-thread AE solver');
+assertNotIncludes("async function runCalculate() {", 'single-thread AE calculate handler should be removed');
+assertIncludes("function _normalizeComputeSolverMode(solver) {", 'compute should normalize legacy solver metadata to supported solvers');
+assertIncludes("function _computeLoresPhaseTrackers(runId, solverMode) {", 'compute log should define deterministic lores phase trackers');
+assertIncludes("phase: 'lores_param_gen',", 'compute log should track lores param-gen completion');
+assertIncludes("phase: 'lores_coeffgen',", 'compute log should track lores coeffgen completion');
+assertIncludes("phase: 'lores_solve',", 'compute log should track lores solve completion');
+assertIncludes("await _logComputeKnownLoresCompletions(jobId, loresPhaseTrackers, loggedPhaseCompletions);", 'compute polling should log known lores completions even if top-level phases are missed');
 assertIncludes(">Refresh...</button>", 'results tab refresh button should disclose that it opens the tuning popup');
 assertIncludes("Preview Q <span id=\"res-q-val\">0</span>%", 'results preview quantile slider should be labeled as preview-only');
 assertIncludes("Preview SHM <span id=\"res-s-val\">5</span>%", 'results preview shim slider should be labeled as preview-only');

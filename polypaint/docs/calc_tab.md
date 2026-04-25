@@ -27,8 +27,9 @@ Dropdown `#ct-add` with 8 options: `rev`, `conj`, `normalize`, `deriv`, `scale10
 - **Medium N=500** — default quality
 - **Hi-res N=1K** — high density
 
-### Calculate Button
-Green button, calls `runCalculate()`. Disabled during computation.
+### Calculate Buttons
+The active compute entry points are `Calculate-AE-MT` and `Calculate-CM`.
+The old single-thread AE calculate path has been removed from the UI.
 
 ## Computation Pipeline
 
@@ -116,7 +117,7 @@ Example: `compute_mmvtc0zf`
 
 ## Error Handling
 
-- Entire `runCalculate()` wrapped in try/catch/finally
+- Calculate handlers are wrapped in try/catch/finally
 - Lambda calls retry up to 5 times with exponential backoff (for 503, 429, network errors)
 - Other HTTP errors fail immediately
 - On error: status turns red, error logged

@@ -16,6 +16,20 @@ RAW_ENCODING = {
 }
 
 
+def raw_encoding_for_channels(channels):
+    channels = _coerce_int(channels, "channels")
+    if channels == 1:
+        return dict(RAW_ENCODING)
+    if channels < 1:
+        raise RuntimeError(f"channels must be >= 1, got {channels}")
+    return {
+        "type": "u8_packed_channels_v1",
+        "channels": channels,
+        "background_byte": 0,
+        "row_major": True,
+    }
+
+
 def _coerce_int(value, label):
     try:
         return int(value)
@@ -172,6 +186,10 @@ def build_raw_sidecar(
     step_scores_key=None,
     step_count=None,
     step_scores_grid_n=None,
+    channels=1,
+    raw_layout=None,
+    interpretation=None,
+    output_channels=None,
 ):
     chain_fingerprint = str(chain_fingerprint or "").strip()
     if not chain_fingerprint:
@@ -193,7 +211,10 @@ def build_raw_sidecar(
         "artifact_id": str(artifact_id),
         "width": _coerce_int(width, "width"),
         "height": _coerce_int(height, "height"),
-        "encoding": dict(RAW_ENCODING),
+        "channels": _coerce_int(channels, "channels"),
+        "raw_layout": str(raw_layout or ("u8_scalar_row_major" if int(channels or 1) == 1 else "u8_packed_channels_row_major")),
+        "interpretation": str(interpretation or ("scalar_palette" if int(channels or 1) == 1 else "direct_rgb")),
+        "encoding": raw_encoding_for_channels(channels),
         "chain_fingerprint": chain_fingerprint,
         "score_chain": _parse_chain(score_chain),
         "score_program": score_program,
@@ -217,6 +238,8 @@ def build_raw_sidecar(
         "created_at": str(created_at),
         "histogram": _normalize_histogram(histogram, required=True),
     }
+    if output_channels is not None:
+        sidecar["output_channels"] = list(output_channels or [])
     if not sidecar["plan_params_digest"]:
         raise RuntimeError("plan_params_digest is required for greyscale sidecar")
     if include_step_scores:
@@ -227,6 +250,8 @@ def build_raw_sidecar(
             "step_scores_grid_n",
             required=True,
         )
+    if sidecar["channels"] < 1:
+        raise RuntimeError(f"raw sidecar channels must be >= 1, got {sidecar['channels']}")
     if sidecar["width"] != sidecar["height"]:
         raise RuntimeError(f"raw sidecar requires square dimensions, got {sidecar['width']}x{sidecar['height']}")
     sidecar["pix"] = sidecar["width"]
@@ -246,7 +271,8 @@ def validate_raw_sidecar(sidecar, *, expected_raw_key=None, expected_artifact_fa
     encoding = sidecar.get("encoding")
     if not isinstance(encoding, dict):
         raise RuntimeError("raw sidecar encoding must be an object")
-    if encoding != RAW_ENCODING:
+    channels_value = _coerce_int(sidecar.get("channels", 1), "raw sidecar channels")
+    if encoding != raw_encoding_for_channels(channels_value):
         raise RuntimeError(f"unsupported raw sidecar encoding: {encoding!r}")
     family = str(sidecar.get("artifact_family") or "").strip()
     if expected_artifact_family and family != expected_artifact_family:
@@ -272,6 +298,9 @@ def validate_raw_sidecar(sidecar, *, expected_raw_key=None, expected_artifact_fa
         "pix": width,
         "width": width,
         "height": height,
+        "channels": channels_value,
+        "raw_layout": str(sidecar.get("raw_layout") or ("u8_scalar_row_major" if channels_value == 1 else "u8_packed_channels_row_major")),
+        "interpretation": str(sidecar.get("interpretation") or ("scalar_palette" if channels_value == 1 else "direct_rgb")),
         "encoding": dict(encoding),
         "chain_fingerprint": str(sidecar.get("chain_fingerprint") or "").strip(),
         "score_chain": _parse_chain(sidecar.get("score_chain")),
@@ -304,6 +333,7 @@ def validate_raw_sidecar(sidecar, *, expected_raw_key=None, expected_artifact_fa
             sidecar.get("histogram"),
             required=(version >= HISTOGRAM_RAW_SIDECAR_VERSION),
         ),
+        "output_channels": list(sidecar.get("output_channels") or []),
         "step_scores_key": _normalize_step_scores_key(
             sidecar.get("step_scores_key"),
             required=(version >= RAW_SIDECAR_VERSION),

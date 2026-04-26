@@ -337,7 +337,12 @@ class TestSolveScoreChain(unittest.TestCase):
         self.assertEqual(compiled["program_spec"], "m0-1;m0-0;abs_diff")
 
     def test_generic_metric_chip_is_internal_macro_with_public_serialization(self):
-        from solve_score_chain import compile_solve_score_chain, serialize_solve_score_chain, solve_score_chain_id
+        from solve_score_chain import (
+            compile_solve_score_chain,
+            public_solve_score_chain,
+            serialize_solve_score_chain,
+            solve_score_chain_id,
+        )
 
         generic_chain = [
             ["metric", "angular_entropy_16", "cf", "0.5"],
@@ -377,6 +382,7 @@ class TestSolveScoreChain(unittest.TestCase):
         self.assertEqual(compiled["display"], "metric(angular_entropy_16,cf,q=0.5%) metric(angular_entropy_16,cf-1,q=0.5%) abs_diff")
         self.assertEqual(compiled["metrics"][0]["metric"], "angular_entropy_16")
         self.assertEqual(compiled["metrics"][0]["source"], "cf")
+        self.assertEqual(public_solve_score_chain(compiled["chain"]), generic_serialized_chain)
         self.assertEqual(json.loads(serialize_solve_score_chain(compiled["chain"])), generic_serialized_chain)
         self.assertEqual(solve_score_chain_id(generic_chain), solve_score_chain_id(concrete_chain))
 
@@ -387,6 +393,23 @@ class TestSolveScoreChain(unittest.TestCase):
             json.loads(serialize_solve_score_chain(internal_wire_chain)),
             [["metric", "angular_entropy_16", "cf", "0.5"]],
         )
+
+    def test_read_metadata_keeps_internal_chain_and_exposes_public_chain(self):
+        from solve_score_chain import emit_solve_score_metadata, read_solve_score_metadata
+
+        metadata = emit_solve_score_metadata(
+            "solve",
+            metric="angular_entropy_16",
+            quantile=0.005,
+            omega=1,
+            omega_enabled=False,
+            chain=[["metric", "angular_entropy_16", "cf", "0.5"]],
+        )
+        score = read_solve_score_metadata("solve", metadata, default_metric="proximity")
+
+        self.assertEqual(score["chain"], [{"name": "__metric", "params": ["angular_entropy_16", "cf", "0.5"]}])
+        self.assertEqual(score["chain_public"], [["metric", "angular_entropy_16", "cf", "0.5"]])
+        self.assertEqual(json.loads(score["chain_json"]), [["metric", "angular_entropy_16", "cf", "0.5"]])
 
     def test_generic_metric_chip_rejects_non_generic_sources_and_metrics(self):
         from solve_score_chain import compile_solve_score_chain
@@ -400,6 +423,38 @@ class TestSolveScoreChain(unittest.TestCase):
                 with self.assertRaises(RuntimeError) as ctx:
                     compile_solve_score_chain(chain)
                 self.assertIn(expected, str(ctx.exception))
+
+    def test_compile_explicit_emit_outputs_raw_vector_contract(self):
+        from solve_score_chain import compile_solve_score_chain
+
+        compiled = compile_solve_score_chain([
+            ["proximity", "slv", "0.5"],
+            ["emit_norm"],
+            ["spread", "cf", "0.5"],
+            ["emit"],
+        ])
+
+        self.assertEqual(compiled["program_spec"], "m0-0;emit_norm;m1-0;emit")
+        self.assertTrue(compiled["has_explicit_outputs"])
+        self.assertFalse(compiled["legacy_compatible"])
+        self.assertEqual(compiled["output_channel_count"], 2)
+        self.assertEqual(
+            compiled["output_channels"],
+            [
+                {"name": "channel_0", "emit": "emit_norm", "channel": 0, "range_normalized": True},
+                {"name": "channel_1", "emit": "emit", "channel": 1, "range_normalized": False},
+            ],
+        )
+
+    def test_compile_explicit_emit_requires_empty_final_stack(self):
+        from solve_score_chain import compile_solve_score_chain
+
+        with self.assertRaisesRegex(RuntimeError, "stack depth 0"):
+            compile_solve_score_chain([
+                ["proximity", "slv", "0.5"],
+                ["spread", "slv", "0.5"],
+                ["emit"],
+            ])
 
     def test_compile_chain_lagged_only_seeds_base_slot(self):
         from solve_score_chain import compile_solve_score_chain

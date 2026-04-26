@@ -1,14 +1,14 @@
 /*
- * assemble_greyscale: assemble sparse u32le_u8_v1 score fragments into
- * a dense greyscale raw image.
+ * assemble_greyscale: assemble sparse score fragments into a dense raw image.
  *
- * Input fragments contain repeated 5-byte pairs:
- *   [pixel_idx:uint32 little-endian][score_byte:uint8]
+ * Input fragments contain repeated records:
+ *   [pixel_idx:uint32 little-endian][channel_byte:uint8]...
  *
  * Fragments may be passed as local file paths or via --url-manifest=<path>,
  * one presigned URL per line.
  *
- * score_byte == 0 is invalid. pixel_idx must be < pix * pix.
+ * For legacy scalar mode, score_byte == 0 is invalid unless --allow-zero=1.
+ * pixel_idx must be < pix * pix.
  * Repeated writes are accepted with "any arrival wins" semantics.
  */
 
@@ -30,6 +30,9 @@ typedef struct {
 typedef struct {
     int width;
     int height;
+    int channels;
+    int allow_zero;
+    size_t record_size;
     size_t npix;
     uint8_t *buf;
     char **paths;
@@ -192,19 +195,28 @@ static int load_local_bytes(AssembleState *st, const char *path, uint8_t **outDa
 }
 
 static int process_fragment_bytes(AssembleState *st, const char *path, uint8_t *data, size_t size) {
-    if ((size % 5) != 0) {
-        set_error(st, "assemble_greyscale: fragment %s size %lld is not divisible by 5", path, (long long)size, 0);
+    if (st->record_size < 5) {
+        set_error(st, "assemble_greyscale: invalid record size for %s (%lld)", path, (long long)st->record_size, 0);
         return 0;
     }
-    for (size_t off = 0; off < size; off += 5) {
+    if ((size % st->record_size) != 0) {
+        set_error(
+            st,
+            "assemble_greyscale: fragment %s size %lld is not divisible by record size %lld",
+            path,
+            (long long)size,
+            (long long)st->record_size
+        );
+        return 0;
+    }
+    for (size_t off = 0; off < size; off += st->record_size) {
         uint32_t pixel_idx =
             ((uint32_t)data[off]) |
             ((uint32_t)data[off + 1] << 8) |
             ((uint32_t)data[off + 2] << 16) |
             ((uint32_t)data[off + 3] << 24);
-        uint8_t score = data[off + 4];
-        if (score == 0) {
-            set_error(st, "assemble_greyscale: fragment %s has invalid zero score at pair %lld", path, (long long)(off / 5), 0);
+        if (!st->allow_zero && st->channels == 1 && data[off + 4] == 0) {
+            set_error(st, "assemble_greyscale: fragment %s has invalid zero score at pair %lld", path, (long long)(off / st->record_size), 0);
             return 0;
         }
         if ((size_t)pixel_idx >= st->npix) {
@@ -217,7 +229,7 @@ static int process_fragment_bytes(AssembleState *st, const char *path, uint8_t *
             );
             return 0;
         }
-        st->buf[pixel_idx] = score;
+        memcpy(st->buf + ((size_t)pixel_idx * (size_t)st->channels), data + off + 4, (size_t)st->channels);
     }
     return 1;
 }
@@ -259,19 +271,32 @@ static void *worker_main(void *arg) {
     return NULL;
 }
 
-static int write_histogram_json(const char *path, int width, int height, const uint8_t *buf, size_t npix) {
+static int write_histogram_json(const char *path, int width, int height, int channels, const uint8_t *buf, size_t npix) {
     unsigned long long hist[256];
     memset(hist, 0, sizeof(hist));
-    for (size_t i = 0; i < npix; i++) hist[buf[i]] += 1ULL;
+    unsigned long long background = 0;
+    for (size_t i = 0; i < npix; i++) {
+        const uint8_t *px = buf + i * (size_t)channels;
+        hist[px[0]] += 1ULL;
+        int any = 0;
+        for (int ch = 0; ch < channels; ch++) {
+            if (px[ch] != 0) {
+                any = 1;
+                break;
+            }
+        }
+        if (!any) background++;
+    }
     FILE *fh = fopen(path, "wb");
     if (!fh) return 0;
     fprintf(
         fh,
-        "{\"version\":1,\"width\":%d,\"height\":%d,\"background_pixels\":%llu,\"nonzero_pixels\":%llu,\"histogram\":[",
+        "{\"version\":1,\"width\":%d,\"height\":%d,\"channels\":%d,\"histogram_channel\":0,\"background_pixels\":%llu,\"nonzero_pixels\":%llu,\"histogram\":[",
         width,
         height,
-        hist[0],
-        (unsigned long long)(npix - (size_t)hist[0])
+        channels,
+        background,
+        (unsigned long long)(npix - (size_t)background)
     );
     for (int i = 0; i < 256; i++) {
         if (i) fputc(',', fh);
@@ -331,6 +356,8 @@ int main(int argc, char **argv) {
     const char *widthArg = getArg(argc, argv, "--width");
     const char *heightArg = getArg(argc, argv, "--height");
     int pix = getArgInt(argc, argv, "--pix", 0);
+    int channels = getArgInt(argc, argv, "--channels", 1);
+    int allow_zero = getArgInt(argc, argv, "--allow-zero", 0);
     int workers = getArgInt(argc, argv, "--workers", 1);
     char **paths = NULL;
     int n_paths = 0;
@@ -342,7 +369,11 @@ int main(int argc, char **argv) {
         return 2;
     }
     if (!outPath || pix <= 0) {
-        fprintf(stderr, "Usage: assemble_greyscale --pix=N --output=raw.bin [--hist-output=hist.json] [--workers=N] [--url-manifest=urls.txt] frag0 [frag1 ...]\n");
+        fprintf(stderr, "Usage: assemble_greyscale --pix=N --output=raw.bin [--channels=N] [--allow-zero=0|1] [--hist-output=hist.json] [--workers=N] [--url-manifest=urls.txt] frag0 [frag1 ...]\n");
+        return 2;
+    }
+    if (channels < 1 || channels > 8) {
+        fprintf(stderr, "assemble_greyscale: --channels must be in [1,8], got %d\n", channels);
         return 2;
     }
     int width = pix;
@@ -370,9 +401,10 @@ int main(int argc, char **argv) {
     }
 
     size_t npix = (size_t)width * (size_t)height;
-    uint8_t *buf = (uint8_t *)calloc(npix ? npix : 1, 1);
+    size_t raw_size = npix * (size_t)channels;
+    uint8_t *buf = (uint8_t *)calloc(raw_size ? raw_size : 1, 1);
     if (!buf) {
-        fprintf(stderr, "assemble_greyscale: cannot allocate %zu bytes\n", npix);
+        fprintf(stderr, "assemble_greyscale: cannot allocate %zu bytes\n", raw_size);
         curl_global_cleanup();
         return 4;
     }
@@ -381,6 +413,9 @@ int main(int argc, char **argv) {
     memset(&st, 0, sizeof(st));
     st.width = width;
     st.height = height;
+    st.channels = channels;
+    st.allow_zero = allow_zero ? 1 : 0;
+    st.record_size = 4u + (size_t)channels;
     st.npix = npix;
     st.buf = buf;
     st.paths = paths;
@@ -440,7 +475,7 @@ int main(int argc, char **argv) {
         curl_global_cleanup();
         return 8;
     }
-    if (npix > 0 && fwrite(buf, 1, npix, out) != npix) {
+    if (raw_size > 0 && fwrite(buf, 1, raw_size, out) != raw_size) {
         fprintf(stderr, "assemble_greyscale: short write to %s\n", outPath);
         fclose(out);
         free(buf);
@@ -452,7 +487,7 @@ int main(int argc, char **argv) {
     fclose(out);
 
     if (histPath && *histPath) {
-        if (!write_histogram_json(histPath, width, height, buf, npix)) {
+        if (!write_histogram_json(histPath, width, height, channels, buf, npix)) {
             fprintf(stderr, "assemble_greyscale: cannot write histogram %s\n", histPath);
             free(buf);
             for (int i = 0; i < n_paths; i++) free(paths[i]);

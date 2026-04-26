@@ -34,6 +34,7 @@ from solve_score_chain import (
     compile_solve_score_chain,
     emit_solve_score_metadata,
     format_solve_score_chain_display,
+    public_solve_score_chain,
     serialize_solve_score_chain,
     solve_score_lag_prelude_by_source,
     solve_score_uses_source,
@@ -403,7 +404,8 @@ def _build_fused_color_plan(
     if solve_score_chain in ("", None, []):
         raise RuntimeError("fused color requires solve_score_chain")
     solve_score_compiled = compile_solve_score_chain(solve_score_chain)
-    solve_score_chain = solve_score_compiled["chain"]
+    solve_score_chain_internal = solve_score_compiled["chain"]
+    solve_score_chain_public = public_solve_score_chain(solve_score_chain_internal)
     solve_metric = solve_score_compiled["metric"]
     solve_score_quantile = solve_score_compiled["quantile"]
     solve_score_omega = solve_score_compiled["omega"]
@@ -411,13 +413,22 @@ def _build_fused_color_plan(
     solve_score_uses_coeff = bool(solve_score_uses_source(solve_score_compiled, "cf"))
     solve_score_uses_param = bool(solve_score_uses_source(solve_score_compiled, "pm"))
     solve_score_prelude = solve_score_lag_prelude_by_source(solve_score_compiled)
+    solve_score_output_channel_count = int(solve_score_compiled.get("output_channel_count") or 1)
+    solve_score_output_interpretation = str(solve_score_compiled.get("output_interpretation") or "scalar_palette")
+    if solve_score_output_channel_count not in (1, 3):
+        raise RuntimeError(
+            f"Color render v1 supports one scalar output or three RGB outputs; "
+            f"got {solve_score_output_channel_count} solve-score outputs"
+        )
     solve_score_normalize = _validate_boolish(
         fused_params.get("solve_score_normalize", False),
         "solve_score_normalize",
         False,
     )
+    if solve_score_compiled.get("has_explicit_outputs") and solve_score_normalize:
+        raise RuntimeError("score normalization checkbox is legacy-only; explicit emit/emit_norm programs own normalization")
     fused_params["solve_score_normalize"] = solve_score_normalize
-    fused_params["solve_score_chain"] = solve_score_chain
+    fused_params["solve_score_chain"] = solve_score_chain_public
 
     pix = fused_params["pix"]
 
@@ -462,7 +473,7 @@ def _build_fused_color_plan(
     solve_score = {
         "enabled": True,
         "threads": fused_params["solve_score_threads"],
-        "chain": solve_score_chain,
+        "chain": solve_score_chain_public,
         "clip_key": solve_score_clip_key,
         "uses_lag": bool(solve_score_compiled.get("uses_lag")),
         "max_lag": int(solve_score_compiled.get("max_lag") or 0),
@@ -529,6 +540,8 @@ def _build_fused_color_plan(
         "score_chain": "",
     }
     if fused_params["save_associated_palette"]:
+        if solve_score_output_channel_count != 1:
+            raise RuntimeError("associated palette generation requires a single solve-score output channel")
         assoc_palette_id = f"pal_{artifact_id}"
         assoc_prefix = f"renders/{job_id}/palettes/{assoc_palette_id}/"
         associated_palette = {
@@ -536,7 +549,7 @@ def _build_fused_color_plan(
             "mode": "generated",
             "palette_id": assoc_palette_id,
             "display_name": _associated_palette_display_name(
-                solve_score_chain,
+                solve_score_chain_internal,
                 solve_metric,
                 solve_score_quantile,
                 palette,
@@ -553,7 +566,7 @@ def _build_fused_color_plan(
             "quantile": solve_score_quantile,
             "omega": solve_score_omega,
             "omega_enabled": solve_score_omega_enabled,
-            "score_chain": solve_score_chain,
+            "score_chain": solve_score_chain_public,
         }
 
     render_execution = _fused_render_execution_config(fused_params)
@@ -587,6 +600,10 @@ def _build_fused_color_plan(
         "quality": str(fused_params.get("quality", 90)),
         "color_mode": "solve_score",
         "solve_score_normalize": "true" if solve_score_normalize else "false",
+        "score_output_channel_count": str(solve_score_output_channel_count),
+        "score_output_interpretation": solve_score_output_interpretation,
+        "raw_channels": str(solve_score_output_channel_count),
+        "raw_layout": "u8_scalar_row_major" if solve_score_output_channel_count == 1 else "u8_packed_channels_row_major",
         "match_mode": "none",
         "palette": palette,
         "background_color": DEFAULT_BACKGROUND_COLOR,
@@ -604,11 +621,15 @@ def _build_fused_color_plan(
             quantile=solve_score_quantile,
             omega=solve_score_omega,
             omega_enabled=solve_score_omega_enabled,
-            chain=solve_score_chain,
+            chain=solve_score_chain_internal,
             include_legacy_scalars=False,
         )
     )
     artifact_meta["score_program"] = solve_score_compiled["program_spec"]
+    artifact_meta["score_output_channels"] = json.dumps(
+        solve_score_compiled.get("output_channels") or [],
+        separators=(",", ":"),
+    )
     if associated_palette["enabled"]:
         artifact_meta.update({
             "associated_palette_mode": associated_palette["mode"],

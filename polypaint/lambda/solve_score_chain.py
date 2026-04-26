@@ -62,6 +62,7 @@ VALID_SOLVE_SCORE_METRICS = {
     "t2_abs",
     "t2_phase",
 }
+# Public persisted/wire name; changing this requires migrating saved S3 programs.
 GENERIC_METRIC_PUBLIC_NAME = "metric"
 GENERIC_METRIC_CHIP_NAME = "__metric"
 GENERIC_METRIC_SOURCES = {"slv", "cf"}
@@ -108,8 +109,13 @@ COMBINE_CHIPS = {
     "abs_diff": {"arity": 2, "params": 0},
     "geometric_mean": {"arity": 2, "params": 0},
 }
+OUTPUT_CHIPS = {
+    "emit": {"params": 0, "range_normalized": False},
+    "emit_norm": {"params": 0, "range_normalized": True},
+}
 MAX_METRIC_SLOTS = 16
 MAX_PROGRAM_TOKENS = 32
+MAX_OUTPUT_CHANNELS = 8
 
 _FIELD_MAP = {
     "solve": {
@@ -312,6 +318,10 @@ def serialize_solve_score_chain(chain):
         [_serialize_item(item) for item in normalize_solve_score_chain(chain)],
         separators=(",", ":"),
     )
+
+
+def public_solve_score_chain(chain):
+    return json.loads(serialize_solve_score_chain(chain))
 
 
 def _metric_item(metric, quantile, source="slv"):
@@ -538,6 +548,8 @@ def _token_display(item):
         a = params[0] if len(params) > 0 else "?"
         b = params[1] if len(params) > 1 else "?"
         return f"weighted_sum({a},{b})"
+    if name in OUTPUT_CHIPS:
+        return name
     return f"{name}({','.join(params)})" if params else name
 
 
@@ -655,6 +667,7 @@ def compile_solve_score_chain(raw_chain, legacy_quantile=None):
     omega = 1.0
     omega_phase = 0.0
     omega_enabled = False
+    output_channels = []
 
     for item, _expanded, item_metric_name, metric_source, metric_lag, metric_quantile in normalized_with_metrics:
         name = item["name"]
@@ -734,6 +747,26 @@ def compile_solve_score_chain(raw_chain, legacy_quantile=None):
             program_tokens.append({"kind": "flip"})
             continue
 
+        if name in OUTPUT_CHIPS:
+            if stack_depth < 1:
+                raise RuntimeError(f"{name} at chip {len(program_tokens)} requires stack depth at least 1")
+            if len(params) != 0:
+                raise RuntimeError(f"{name} takes no parameters")
+            if len(output_channels) >= MAX_OUTPUT_CHANNELS:
+                raise RuntimeError(f"solve_score_chain supports at most {MAX_OUTPUT_CHANNELS} output channels")
+            channel = len(output_channels)
+            program_tokens.append({"kind": name, "channel": channel})
+            output_channels.append(
+                {
+                    "name": f"channel_{channel}",
+                    "emit": name,
+                    "channel": channel,
+                    "range_normalized": bool(OUTPUT_CHIPS[name]["range_normalized"]),
+                }
+            )
+            stack_depth -= 1
+            continue
+
         spec = COMBINE_CHIPS.get(name)
         if not spec:
             raise RuntimeError(f"Invalid solve-score chip: {name!r}")
@@ -757,8 +790,21 @@ def compile_solve_score_chain(raw_chain, legacy_quantile=None):
 
     if not metrics:
         raise RuntimeError("solve_score_chain must contain at least one metric chip")
-    if stack_depth != 1:
-        raise RuntimeError(f"solve_score_chain must end with stack depth 1, got {stack_depth}")
+    has_explicit_outputs = bool(output_channels)
+    if has_explicit_outputs:
+        if stack_depth != 0:
+            raise RuntimeError(f"explicit-output solve_score_chain must end with stack depth 0, got {stack_depth}")
+    else:
+        if stack_depth != 1:
+            raise RuntimeError(f"solve_score_chain must end with stack depth 1, got {stack_depth}")
+        output_channels = [
+            {
+                "name": "score",
+                "emit": "implicit",
+                "channel": 0,
+                "range_normalized": False,
+            }
+        ]
     if len(program_tokens) > MAX_PROGRAM_TOKENS:
         raise RuntimeError(f"solve_score_chain supports at most {MAX_PROGRAM_TOKENS} program tokens")
 
@@ -786,7 +832,7 @@ def compile_solve_score_chain(raw_chain, legacy_quantile=None):
         "pm": 1 if "pm" in lagged_sources else 0,
     }
     all_solve_sources = all(metric.get("source", "slv") == "slv" for metric in metrics)
-    legacy_compatible = all_solve_sources and (
+    legacy_compatible = (not has_explicit_outputs) and all_solve_sources and (
         (
             not uses_lag
             and
@@ -814,6 +860,10 @@ def compile_solve_score_chain(raw_chain, legacy_quantile=None):
         "program_tokens": program_tokens,
         "program_spec": program_spec,
         "program_id": hashlib.sha1(program_spec.encode("utf-8")).hexdigest()[:12],
+        "has_explicit_outputs": has_explicit_outputs,
+        "output_channel_count": len(output_channels),
+        "output_channels": output_channels,
+        "output_interpretation": "direct_rgb" if has_explicit_outputs and len(output_channels) == 3 else "scalar_palette",
         "uses_lag": uses_lag,
         "max_lag": 1 if uses_lag else 0,
         "lagged_metric_slots": lagged_metric_slots,
@@ -910,9 +960,11 @@ def read_solve_score_metadata(scope, meta, default_metric=None, default_omega_en
         default_metric=default_metric,
     )
     quantile = compiled["quantile"]
+    chain_json = serialize_solve_score_chain(compiled["chain"])
     return {
         "chain": compiled["chain"],
-        "chain_json": serialize_solve_score_chain(compiled["chain"]),
+        "chain_public": json.loads(chain_json),
+        "chain_json": chain_json,
         "chain_fingerprint": (meta or {}).get(fields["fingerprint"]) or compiled_solve_score_fingerprint(compiled),
         "metric": compiled["metric"],
         "metrics": compiled["metrics"],
@@ -921,6 +973,10 @@ def read_solve_score_metadata(scope, meta, default_metric=None, default_omega_en
         "omega_phase": compiled["omega_phase"],
         "omega_enabled": compiled["omega_enabled"],
         "program_spec": compiled["program_spec"],
+        "has_explicit_outputs": compiled.get("has_explicit_outputs", False),
+        "output_channel_count": compiled.get("output_channel_count", 1),
+        "output_channels": list(compiled.get("output_channels") or []),
+        "output_interpretation": compiled.get("output_interpretation", "scalar_palette"),
         "uses_lag": compiled["uses_lag"],
         "lagged_metric_slots": list(compiled.get("lagged_metric_slots") or []),
         "lagged_sources": list(compiled.get("lagged_sources") or []),

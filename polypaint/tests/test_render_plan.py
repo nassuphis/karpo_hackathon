@@ -350,6 +350,67 @@ class TestRenderPlan(unittest.TestCase):
             self.assertTrue(str(assoc[field_name]).strip(), field_name)
 
     @patch("handler_render_plan._storage_call")
+    def test_fused_color_plan_publicizes_generic_metric_chain(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc(
+            lores={
+                "bin_key": "renders/j/lores.bin",
+                "coeffs_key": "renders/j/lores_coeffs.bin",
+            },
+        ))
+        from handler_render_plan import handler
+
+        result = handler(_make_event(
+            solve_score_chain=[["metric", "angular_entropy_16", "cf", "0.5"]],
+            save_associated_palette=True,
+        ), None)
+        plan = json.loads(result["body"])
+
+        expected_chain = [["metric", "angular_entropy_16", "cf", "0.5"]]
+        self.assertEqual(plan["params"]["solve_score_chain"], expected_chain)
+        self.assertEqual(plan["solve_score"]["chain"], expected_chain)
+        self.assertEqual(plan["associated_palette"]["score_chain"], expected_chain)
+        self.assertNotIn("__metric", result["body"])
+
+    @patch("handler_render_plan._storage_call")
+    def test_fused_color_plan_accepts_explicit_rgb_outputs(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        from handler_render_plan import handler
+
+        result = handler(_make_event(
+            save_associated_palette=False,
+            solve_score_chain=[
+                ["proximity", "0.1"],
+                ["emit_norm"],
+                ["spread", "0.1"],
+                ["emit_norm"],
+                ["angular_entropy_16", "0.1"],
+                ["emit_norm"],
+            ],
+        ), None)
+        plan = json.loads(result["body"])
+
+        metadata = plan["outputs"]["metadata"]
+        self.assertEqual(metadata["raw_channels"], "3")
+        self.assertEqual(metadata["score_output_channel_count"], "3")
+        self.assertEqual(metadata["score_output_interpretation"], "direct_rgb")
+        self.assertFalse(plan["associated_palette"]["enabled"])
+
+    @patch("handler_render_plan._storage_call")
+    def test_fused_color_plan_rejects_two_channel_outputs_for_v1(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        from handler_render_plan import handler
+
+        with self.assertRaisesRegex(RuntimeError, "one scalar output or three RGB outputs"):
+            handler(_make_event(
+                solve_score_chain=[
+                    ["proximity", "0.1"],
+                    ["emit_norm"],
+                    ["spread", "0.1"],
+                    ["emit_norm"],
+                ],
+            ), None)
+
+    @patch("handler_render_plan._storage_call")
     def test_fused_color_plan_drops_disabled_associated_palette_payload(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
         from handler_render_plan import handler

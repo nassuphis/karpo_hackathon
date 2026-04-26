@@ -233,12 +233,97 @@ def _score_output_clip_from_summary(data):
     )
 
 
+def _score_output_channels_from_summary(compiled, data, *, legacy_normalize=False):
+    has_explicit = bool((compiled or {}).get("has_explicit_outputs"))
+    compiled_channels = list((compiled or {}).get("output_channels") or []) if has_explicit else []
+    summary_channels = data.get("score_output_channels")
+    by_channel = {
+        int(row.get("channel", idx)): row
+        for idx, row in enumerate(summary_channels or [])
+        if isinstance(row, dict)
+    }
+    if not compiled_channels:
+        compiled_channels = [{
+            "name": "score",
+            "emit": "emit_norm" if legacy_normalize else "emit",
+            "channel": 0,
+            "range_normalized": bool(legacy_normalize),
+        }]
+    channels = []
+    for idx, row in enumerate(compiled_channels):
+        channel = int(row.get("channel", idx))
+        summary = by_channel.get(channel) or (data if not has_explicit else {})
+        emit = str(row.get("emit") or summary.get("emit") or "emit").strip()
+        range_normalized = bool(
+            row.get("range_normalized")
+            or emit == "emit_norm"
+            or summary.get("range_normalized")
+        )
+        out = {
+            "channel": channel,
+            "name": str(summary.get("display_name") or summary.get("name") or row.get("name") or f"channel_{channel}"),
+            "emit": "emit_norm" if range_normalized else "emit",
+            "range_normalized": range_normalized,
+            "min_score": summary.get("min_score"),
+            "max_score": summary.get("max_score"),
+            "q05": summary.get("q05"),
+            "q95": summary.get("q95"),
+        }
+        if range_normalized:
+            clip = _sanitize_score_output_clip(
+                summary.get("q05", summary.get("min_score", 0.0)),
+                summary.get("q95", summary.get("max_score", 1.0)),
+                source="lores_q05_q95" if summary.get("q05") is not None and summary.get("q95") is not None else "lores_minmax",
+            )
+            out["clip_lo"] = clip["score_output_clip_lo"]
+            out["clip_hi"] = clip["score_output_clip_hi"]
+            out["clip_source"] = clip["score_output_clip_source"]
+        else:
+            out["clip_lo"] = 0.0
+            out["clip_hi"] = 1.0
+            out["clip_source"] = "identity"
+        channels.append(out)
+    return channels
+
+
+def _score_output_contract(compiled, data, *, legacy_normalize=False):
+    channels = _score_output_channels_from_summary(compiled, data, legacy_normalize=legacy_normalize)
+    has_explicit = bool((compiled or {}).get("has_explicit_outputs"))
+    channel_count = len(channels)
+    fragment_encoding = (
+        "u32le_u8_v1"
+        if channel_count == 1 and not has_explicit
+        else "u32le_pixel_idx_plus_u8_channels_v1"
+    )
+    primary = channels[0] if channels else {
+        "clip_lo": 0.0,
+        "clip_hi": 1.0,
+        "clip_source": "identity",
+    }
+    return {
+        "score_output_normalize": bool(legacy_normalize),
+        "score_output_clip_lo": float(primary.get("clip_lo", 0.0)),
+        "score_output_clip_hi": float(primary.get("clip_hi", 1.0)),
+        "score_output_clip_source": str(primary.get("clip_source", "identity")),
+        "score_output_n_solves": int(data.get("n_solves") or 0),
+        "score_output_summary_threads": int(data.get("threads", 0) or 0),
+        "score_output_channel_count": channel_count,
+        "score_output_has_explicit_outputs": has_explicit,
+        "score_output_interpretation": str((compiled or {}).get("output_interpretation") or "scalar_palette"),
+        "score_output_channels": channels,
+        "fragment_pair_encoding": fragment_encoding,
+        "fragment_encoding": fragment_encoding,
+        "fragment_record_size_bytes": 4 + channel_count,
+    }
+
+
 def _clip_program_output_range(
     compiled,
     metrics_with_clips,
     degree,
     n_coeffs,
     solve_score_threads,
+    solve_score_normalize,
     root_transforms,
     uses_coeff_source,
     uses_param_source,
@@ -266,8 +351,11 @@ def _clip_program_output_range(
     if result.returncode != 0:
         raise RuntimeError(f"solve_proximity_stats score output summary failed: {result.stderr.strip()}")
     data = json.loads(result.stdout)
-    output_clip = _score_output_clip_from_summary(data)
-    output_clip["score_output_n_solves"] = int(data.get("n_solves") or 0)
+    output_clip = _score_output_contract(
+        compiled,
+        data,
+        legacy_normalize=bool(solve_score_normalize),
+    )
     output_clip["score_output_summary_threads"] = int(data.get("threads", solve_score_threads))
     return output_clip
 
@@ -765,15 +853,15 @@ def handle_clip(params):
             slot_clip["source"] = source
             metric_clips.append(slot_clip)
             clip_threads = max(clip_threads, int(slot_clip.get("threads", solve_score_threads)))
-        score_output_clip = {
-            "score_output_normalize": solve_score_normalize,
-            "score_output_clip_lo": 0.0,
-            "score_output_clip_hi": 1.0,
-            "score_output_clip_source": "identity",
-            "score_output_n_solves": metric_clips[0]["n_solves"] if metric_clips else 0,
-            "score_output_summary_threads": solve_score_threads,
-        }
-        if solve_score_normalize:
+        score_output_clip = _score_output_contract(
+            compiled,
+            {
+                "n_solves": metric_clips[0]["n_solves"] if metric_clips else 0,
+                "threads": solve_score_threads,
+            },
+            legacy_normalize=solve_score_normalize,
+        )
+        if solve_score_normalize or compiled.get("has_explicit_outputs"):
             score_output_clip.update(
                 _clip_program_output_range(
                     compiled,
@@ -781,6 +869,7 @@ def handle_clip(params):
                     degree,
                     n_coeffs,
                     solve_score_threads,
+                    solve_score_normalize,
                     root_transforms,
                     uses_coeff_source,
                     uses_param_source,
@@ -1649,15 +1738,7 @@ def handle_summary(params):
         summary["clip_quantile"] = compiled["quantile"]
         summary["omega"] = compiled["omega"]
         summary["omega_enabled"] = compiled["omega_enabled"]
-        summary["score_output_normalize"] = solve_score_normalize
-        if solve_score_normalize:
-            summary.update(_score_output_clip_from_summary(summary))
-        else:
-            summary.update({
-                "score_output_clip_lo": 0.0,
-                "score_output_clip_hi": 1.0,
-                "score_output_clip_source": "identity",
-            })
+        summary.update(_score_output_contract(compiled, summary, legacy_normalize=solve_score_normalize))
         summary["metrics"] = metric_clips
 
         return ok_response(summary)

@@ -31,7 +31,7 @@ from logical_sections import (
     root_row_bytes,
     write_native_multispan_manifest,
 )
-from raw_score_render import histogram_from_raw_path, render_score_raw, write_equalization_lut
+from raw_score_render import histogram_from_raw_path_channel0, render_score_raw, write_equalization_lut
 from shared import BUCKET, REF_SIZE, compute_viewport_from_bin, ok_response, parse_body, parse_boolish
 from solve_score_chain import (
     compiled_solve_score_fingerprint,
@@ -422,6 +422,49 @@ def _score_output_clip_from_summary(data):
     }
 
 
+def _score_output_channels_from_summary(compiled, summary, solve_score_normalize):
+    compiled_channels = list(compiled.get("output_channels") or []) if compiled.get("has_explicit_outputs") else []
+    summary_channels = {
+        int(row.get("channel", idx)): row
+        for idx, row in enumerate(summary.get("score_output_channels") or [])
+        if isinstance(row, dict)
+    }
+    if not compiled_channels:
+        compiled_channels = [{
+            "name": "score",
+            "emit": "emit_norm" if solve_score_normalize else "emit",
+            "channel": 0,
+            "range_normalized": bool(solve_score_normalize),
+        }]
+    out = []
+    for idx, row in enumerate(compiled_channels):
+        channel = int(row.get("channel", idx))
+        src = summary_channels.get(channel) or (summary if not compiled.get("has_explicit_outputs") else {})
+        range_normalized = bool(row.get("range_normalized") or src.get("range_normalized") or row.get("emit") == "emit_norm")
+        item = {
+            "channel": channel,
+            "name": str(src.get("display_name") or src.get("name") or row.get("name") or f"channel_{channel}"),
+            "emit": "emit_norm" if range_normalized else "emit",
+            "range_normalized": range_normalized,
+        }
+        if range_normalized:
+            clip = _score_output_clip_from_summary({
+                "q05": src.get("q05"),
+                "q95": src.get("q95"),
+                "min_score": src.get("min_score", 0.0),
+                "max_score": src.get("max_score", 1.0),
+            })
+            item["clip_lo"] = clip["score_output_clip_lo"]
+            item["clip_hi"] = clip["score_output_clip_hi"]
+            item["clip_source"] = clip["score_output_clip_source"]
+        else:
+            item["clip_lo"] = 0.0
+            item["clip_hi"] = 1.0
+            item["clip_source"] = "identity"
+        out.append(item)
+    return out
+
+
 def _build_program_cmd_args(compiled, metrics_with_clips):
     hydrated = []
     for slot, metric in enumerate(metrics_with_clips):
@@ -498,15 +541,18 @@ def _preview_score_summary(params, *, degree, n_coeffs, compiled, include_coeff,
     summary["clip_quantile"] = compiled["quantile"]
     summary["omega"] = compiled["omega"]
     summary["omega_enabled"] = compiled["omega_enabled"]
-    summary["score_output_normalize"] = solve_score_normalize
-    if solve_score_normalize:
-        summary.update(_score_output_clip_from_summary(summary))
-    else:
-        summary.update({
-            "score_output_clip_lo": 0.0,
-            "score_output_clip_hi": 1.0,
-            "score_output_clip_source": "identity",
-        })
+    output_channels = _score_output_channels_from_summary(compiled, summary, solve_score_normalize)
+    primary = output_channels[0] if output_channels else {"clip_lo": 0.0, "clip_hi": 1.0, "clip_source": "identity"}
+    summary.update({
+        "score_output_normalize": solve_score_normalize,
+        "score_output_clip_lo": primary.get("clip_lo", 0.0),
+        "score_output_clip_hi": primary.get("clip_hi", 1.0),
+        "score_output_clip_source": primary.get("clip_source", "identity"),
+        "score_output_channel_count": len(output_channels),
+        "score_output_has_explicit_outputs": bool(compiled.get("has_explicit_outputs")),
+        "score_output_interpretation": str(compiled.get("output_interpretation") or "scalar_palette"),
+        "score_output_channels": output_channels,
+    })
     summary["metrics"] = metric_clips
     return summary
 
@@ -764,21 +810,24 @@ def _write_manifests(
     return out
 
 
-def _assemble_fragment_to_raw(fragment_path, raw_path, pix):
+def _assemble_fragment_to_raw(fragment_path, raw_path, pix, channels=1):
     total_pixels = int(pix) * int(pix)
-    raw = bytearray(total_pixels)
+    channels = int(channels or 1)
+    record_size = 4 + channels
+    raw = bytearray(total_pixels * channels)
     entries = 0
     if os.path.exists(fragment_path):
         with open(fragment_path, "rb") as fh:
             while True:
-                rec = fh.read(5)
+                rec = fh.read(record_size)
                 if not rec:
                     break
-                if len(rec) != 5:
+                if len(rec) != record_size:
                     raise RuntimeError(f"truncated fragment record in {fragment_path}")
                 idx = int.from_bytes(rec[:4], "little", signed=False)
                 if idx < total_pixels:
-                    raw[idx] = rec[4]
+                    start = idx * channels
+                    raw[start:start + channels] = rec[4:4 + channels]
                     entries += 1
     with open(raw_path, "wb") as fh:
         fh.write(raw)
@@ -819,6 +868,16 @@ def _run_roots2pix(*, params, summary, viewport, manifests, pix, degree, n_coeff
         f"--score_output_clip_lo={_coerce_finite_float(summary.get('score_output_clip_lo', 0.0), 'score_output_clip_lo', default=0.0)}",
         f"--score_output_clip_hi={_coerce_finite_float(summary.get('score_output_clip_hi', 1.0), 'score_output_clip_hi', default=1.0)}",
     ]
+    output_channels = list(summary.get("score_output_channels") or [])
+    if output_channels:
+        cmd.append("--score_output_clip_los=" + ",".join(
+            str(_coerce_finite_float(row.get("clip_lo", 0.0), "score_output_channel.clip_lo", default=0.0))
+            for row in output_channels
+        ))
+        cmd.append("--score_output_clip_his=" + ",".join(
+            str(_coerce_finite_float(row.get("clip_hi", 1.0), "score_output_channel.clip_hi", default=1.0))
+            for row in output_channels
+        ))
     if payload.get("score_sources"):
         cmd.append(f"--score_sources={payload['score_sources']}")
     if include_coeff:
@@ -1023,8 +1082,13 @@ def handler(event, context):
         )
         raster_ms = int((time.time() - t_raster) * 1000)
 
-        fragment_entries = _assemble_fragment_to_raw(TMP_FRAGMENT, TMP_RAW, pix)
-        histogram = histogram_from_raw_path(TMP_RAW, expected_size=pix * pix)
+        output_channels = int(summary.get("score_output_channel_count") or 1)
+        if output_channels not in (1, 3):
+            raise RuntimeError(
+                f"render-lores-preview v1 supports one scalar output or three RGB outputs; got {output_channels}"
+            )
+        fragment_entries = _assemble_fragment_to_raw(TMP_FRAGMENT, TMP_RAW, pix, channels=output_channels)
+        histogram = histogram_from_raw_path_channel0(TMP_RAW, channels=output_channels, expected_size=pix * pix * output_channels)
         nonzero_pixels = write_equalization_lut(TMP_EQ_LUT, histogram)
         render_meta = render_score_raw(
             raw_path=TMP_RAW,
@@ -1035,6 +1099,7 @@ def handler(event, context):
             palette=str(params.get("palette") or "inferno"),
             background_color=str(params.get("background_color") or "000000"),
             quality=_coerce_int(params.get("quality", 90), "quality", default=90, min_value=1, max_value=100),
+            channels=output_channels,
         )
         with open(TMP_IMAGE, "rb") as fh:
             image_b64 = base64.b64encode(fh.read()).decode("ascii")

@@ -413,6 +413,18 @@ async function main() {
   ], 'proximity', '0.1');
   assert(JSON.stringify(genericMetricInternal.chain) === JSON.stringify([['metric', 'angular_entropy_16', 'cf', '0.5']]), 'internal generic metric chip should serialize using the public saved-program name');
 
+  const explicitEmit = ctx._compileSolveScoreChain([
+    ['proximity', 'slv', '0.5'],
+    ['emit_norm'],
+    ['spread', 'cf', '0.5'],
+    ['emit'],
+  ], 'proximity', '0.1');
+  assert(explicitEmit.program_spec === 'm0-0;emit_norm;m1-0;emit', 'explicit output chips should compile into program_spec');
+  assert(explicitEmit.has_explicit_outputs === true, 'explicit output chips should mark the compiled chain');
+  assert(explicitEmit.output_channel_count === 2, 'explicit output chips should produce two output channels');
+  assert(explicitEmit.output_channels[0].range_normalized === true, 'emit_norm should request per-channel range normalization');
+  assert(explicitEmit.output_channels[1].range_normalized === false, 'emit should skip per-channel range normalization');
+
   let genericPmRejected = false;
   try {
     ctx._compileSolveScoreChain([['metric', 'angular_entropy_16', 'pm', '0.5']], 'proximity', '0.1');

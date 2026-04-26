@@ -29,6 +29,31 @@ def histogram_from_raw_path(raw_path, *, expected_size=None):
     return histogram
 
 
+def histogram_from_raw_path_channel0(raw_path, *, channels=1, expected_size=None):
+    channels = int(channels or 1)
+    if channels == 1:
+        return histogram_from_raw_path(raw_path, expected_size=expected_size)
+    if channels < 1:
+        raise RuntimeError(f"channels must be >= 1, got {channels}")
+    histogram = [0] * 256
+    total = 0
+    with open(raw_path, "rb") as fh:
+        while True:
+            chunk = fh.read(RAW_HISTOGRAM_CHUNK_BYTES)
+            if not chunk:
+                break
+            base = total
+            total += len(chunk)
+            for idx, value in enumerate(chunk):
+                if ((base + idx) % channels) == 0:
+                    histogram[value] += 1
+    if expected_size is not None and total != int(expected_size):
+        raise RuntimeError(
+            f"raw size mismatch: got {total} bytes, expected {int(expected_size)}"
+        )
+    return histogram
+
+
 def build_equalization_lut(histogram):
     total = sum(int(v) for v in histogram[1:])
     lut = [0] * 256
@@ -63,12 +88,14 @@ def render_score_raw(
     palette,
     background_color,
     quality,
+    channels=1,
 ):
     cmd = [
         SCORE_RAW_RENDER,
         raw_path,
         out_path,
         f"--pix={int(pix)}",
+        f"--channels={int(channels or 1)}",
         f"--eq_lut={eq_lut_path}",
         f"--palette={str(palette or 'inferno')}",
         f"--background_color={str(background_color or '000000')}",

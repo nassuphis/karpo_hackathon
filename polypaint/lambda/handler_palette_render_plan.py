@@ -27,6 +27,7 @@ from solve_score_chain import (
     compile_solve_score_chain_or_legacy,
     emit_solve_score_metadata,
     format_solve_score_chain_display,
+    public_solve_score_chain,
     read_solve_score_metadata,
     solve_score_chain_from_scalars,
     solve_score_lag_prelude_by_source,
@@ -301,7 +302,7 @@ def _base_extract_plan(
             "quantile": q,
             "omega": omega,
             "omega_enabled": omega_enabled,
-            "score_chain": score_chain,
+            "score_chain": public_solve_score_chain(score_chain) if score_chain not in ("", None, []) else score_chain,
         },
         "outputs": {
             "image_key": image_key,
@@ -364,7 +365,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
             q=assoc_selected["quantile"],
             omega=assoc_selected["omega"],
             omega_enabled=assoc_selected["omega_enabled"],
-            score_chain=assoc_selected["chain"],
+            score_chain=assoc_selected["chain_public"],
         )
         plan["params"].update(execution)
         plan["extract"] = {"action": "done", "reason": "already_associated", "source_artifact_id": selected["artifact_id"]}
@@ -387,7 +388,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
             q=assoc_source["quantile"],
             omega=assoc_source["omega"],
             omega_enabled=assoc_source["omega_enabled"],
-            score_chain=assoc_source["chain"],
+            score_chain=assoc_source["chain_public"],
         )
         plan["params"].update(execution)
         plan["extract"] = {"action": "attach", "reason": "inherit_existing_association", "source_artifact_id": source["artifact_id"]}
@@ -415,7 +416,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
             q=source_score["quantile"],
             omega=source_score["omega"],
             omega_enabled=source_score["omega_enabled"],
-            score_chain=source_score["chain"],
+            score_chain=source_score["chain_public"],
         )
         plan["params"].update(execution)
         plan["extract"] = {"action": "attach", "reason": "saved_palette_dependency", "source_artifact_id": source["artifact_id"]}
@@ -423,6 +424,8 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         return plan
 
     source_score = read_solve_score_metadata("solve", source, default_metric="proximity")
+    if source_score.get("has_explicit_outputs") or int(source.get("score_output_channel_count") or source.get("raw_channels") or 1) != 1:
+        raise RuntimeError("ExtractPalette requires a scalar Color artifact; multi-output/direct-RGB artifacts are not palette-extractable in v1")
     metric = source_score["metric"]
     prelude_by_source = solve_score_lag_prelude_by_source(source_score)
     uses_lag = bool(source_score.get("uses_lag"))
@@ -452,13 +455,15 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
     if sum(int(item["step_count"]) for item in chunk_items) < pass0_steps:
         raise RuntimeError("calc.json chunk metadata is too small for pass-0 palette extraction")
 
-    scratch_ok, clip_key, bins_key = _scratch_matches(job_id, source_score["chain"], metric, q, omega, omega_enabled, root_transforms)
-    palette_id = _palette_variant_id(source_score["chain"], metric, q, omega, omega_enabled, palette, root_transforms)
+    source_score_chain_internal = source_score["chain"]
+    source_score_chain_public = source_score["chain_public"]
+    scratch_ok, clip_key, bins_key = _scratch_matches(job_id, source_score_chain_internal, metric, q, omega, omega_enabled, root_transforms)
+    palette_id = _palette_variant_id(source_score_chain_internal, metric, q, omega, omega_enabled, palette, root_transforms)
     prefix = f"renders/{job_id}/palettes/{palette_id}/"
     solve_prefix = prefix + "solve_score/"
     chunks_prefix = prefix + "chunks/"
     display_name = source.get("associated_palette_display_name") or _palette_display_name(
-        source_score["chain"], metric, q, omega, omega_enabled, palette
+        source_score_chain_internal, metric, q, omega, omega_enabled, palette
     )
 
     plan = _base_extract_plan(
@@ -472,13 +477,13 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         q=q,
         omega=omega,
         omega_enabled=omega_enabled,
-        score_chain=source_score["chain"],
+        score_chain=source_score_chain_public,
     )
     plan["mode"] = "extract_palette"
     plan["params"] = {
         "metric": metric,
         "palette": palette,
-        "solve_score_chain": source_score["chain"],
+        "solve_score_chain": source_score_chain_public,
         "solve_score_quantile": q,
         "solve_score_omega": omega,
         "solve_score_omega_enabled": omega_enabled,
@@ -529,7 +534,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         "quantile": q,
         "omega": omega,
         "omega_enabled": omega_enabled,
-        "chain": source_score["chain"],
+        "chain": source_score_chain_public,
         "metrics": source_score["metrics"],
         "program": source_score["program_spec"],
         "uses_lag": uses_lag,
@@ -583,6 +588,8 @@ def handler(event, context):
         pp.get("solve_score_omega_enabled", True),
         default_metric="proximity",
     )
+    if compiled_score.get("has_explicit_outputs"):
+        raise RuntimeError("Palette extraction/generation requires a scalar solve-score program; explicit emit/emit_norm outputs are color-render only in v1")
     prelude_by_source = solve_score_lag_prelude_by_source(compiled_score)
     uses_lag = bool(compiled_score.get("uses_lag"))
     if uses_lag:
@@ -599,6 +606,7 @@ def handler(event, context):
     q = compiled_score["quantile"]
     omega = compiled_score["omega"]
     omega_enabled = compiled_score["omega_enabled"]
+    compiled_score_chain_public = public_solve_score_chain(compiled_score["chain"])
 
     calc = _load_calc(job_id)
     degree = calc.get("degree")
@@ -664,7 +672,7 @@ def handler(event, context):
         "params": {
             "metric": metric,
             "palette": palette,
-            "solve_score_chain": compiled_score["chain"],
+            "solve_score_chain": compiled_score_chain_public,
             "solve_score_quantile": q,
             "solve_score_omega": omega,
             "solve_score_omega_enabled": omega_enabled,
@@ -716,7 +724,7 @@ def handler(event, context):
             "quantile": q,
             "omega": omega,
             "omega_enabled": omega_enabled,
-            "chain": compiled_score["chain"],
+            "chain": compiled_score_chain_public,
             "metrics": compiled_score["metrics"],
             "program": compiled_score["program_spec"],
             "uses_lag": uses_lag,

@@ -355,6 +355,37 @@ class TestRasterMT(unittest.TestCase):
         self.assertIn("--score_output_clip_lo=0.02", cmd)
         self.assertIn("--score_output_clip_hi=0.08", cmd)
 
+    def test_build_cmd_forwards_explicit_output_channel_clips(self):
+        import handler_raster_mt as mod
+
+        params = _fused_event()
+        params.update({
+            "effective_input_mode": "multispan_sectioned",
+            "input_manifest_path": "/tmp/input_manifest.json",
+            "solve_score_bins_data": {
+                "family": "solve_score",
+                "version": 2,
+                "program": "m0-0;emit_norm;m1-0;emit_norm;m2-0;emit",
+                "metrics": [
+                    {"slot": 0, "metric": "proximity", "source": "slv", "quantile": 0.001, "clip_lo": 0.0, "clip_hi": 1.0},
+                    {"slot": 1, "metric": "spread", "source": "slv", "quantile": 0.001, "clip_lo": 0.0, "clip_hi": 1.0},
+                    {"slot": 2, "metric": "angular_entropy_16", "source": "slv", "quantile": 0.001, "clip_lo": 0.0, "clip_hi": 1.0},
+                ],
+                "score_output_channel_count": 3,
+                "score_output_channels": [
+                    {"channel": 0, "clip_lo": 0.1, "clip_hi": 0.9},
+                    {"channel": 1, "clip_lo": 0.2, "clip_hi": 0.8},
+                    {"channel": 2, "clip_lo": 0.0, "clip_hi": 1.0},
+                ],
+            },
+        })
+
+        cmd = mod._build_cmd(params)
+
+        self.assertIn("--score_output_clip_los=0.1,0.2,0.0", cmd)
+        self.assertIn("--score_output_clip_his=0.9,0.8,1.0", cmd)
+        self.assertNotIn("--step_scores_output=/tmp/step_scores.bin", cmd)
+
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
     @patch("handler_raster_mt.report_status")
     @patch("handler_raster_mt.subprocess.run")

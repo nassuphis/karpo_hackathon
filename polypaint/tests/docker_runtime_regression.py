@@ -1237,6 +1237,132 @@ def test_roots2pix_mt_score_output_normalization_runtime():
     print("=== roots2pix_mt score output normalization runtime PASSED ===")
 
 
+def test_roots2pix_mt_explicit_rgb_outputs_runtime():
+    print("\n--- roots2pix_mt explicit RGB output runtime ---")
+
+    bin_path = "/src/roots2pix_mt"
+    roots_path = "/tmp/roots2pix_mt_rgb_roots.bin"
+    manifest_path = "/tmp/roots2pix_mt_rgb_manifest.json"
+    fragment_prefix = "/tmp/roots2pix_mt_rgb_fragment"
+    raw_path = "/tmp/roots2pix_mt_rgb.raw"
+    hist_path = "/tmp/roots2pix_mt_rgb_hist.json"
+    png_path = "/tmp/roots2pix_mt_rgb.png"
+    preview_path = "/tmp/roots2pix_mt_rgb_preview.png"
+    cleanup(
+        roots_path,
+        manifest_path,
+        fragment_prefix + ".frag",
+        raw_path,
+        hist_path,
+        png_path,
+        preview_path,
+    )
+
+    roots_bytes = bytearray()
+    for re_val, im_val in [(0.0, 0.0), (0.5, 0.0)]:
+        roots_bytes.extend(struct.pack("<ff", re_val, im_val))
+    with open(roots_path, "wb") as f:
+        f.write(roots_bytes)
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump({
+            "source_family": "slv",
+            "logical_size": len(roots_bytes),
+            "row_bytes": 8,
+            "solve_start": 0,
+            "solve_count": 2,
+            "sources": [{"id": 0, "url": "file://" + roots_path, "key": roots_path}],
+            "spans": [{
+                "source_id": 0,
+                "logical_byte_start": 0,
+                "byte_start": 0,
+                "byte_length": len(roots_bytes),
+            }],
+        }, f)
+
+    try:
+        r = subprocess.run([
+            bin_path,
+            "/tmp/roots2pix_mt_rgb_pix",
+            "--pix=8",
+            "--min_re=-1",
+            "--max_re=1",
+            "--min_im=-1",
+            "--max_im=1",
+            "--degree=1",
+            "--rotation=0",
+            "--threads=1",
+            "--step_count=2",
+            "--input_manifest=" + manifest_path,
+            "--retries=0",
+            "--score_metrics=centroid_re",
+            "--score_clip_los=-1",
+            "--score_clip_his=1",
+            "--score_program=m0-0;emit_norm;m0-0;flip;emit_norm;m0-0;sawtooth:2;emit",
+            "--score_output_clip_los=0.5,0.25,0",
+            "--score_output_clip_his=0.75,0.5,1",
+            "--fragment_prefix=" + fragment_prefix,
+        ], capture_output=True, text=True, timeout=10)
+        assert r.returncode == 0, "roots2pix_mt explicit RGB failed: " + r.stderr[:200]
+        meta = json.loads(r.stdout or "{}")
+        assert meta.get("fragment_channels") == 3, "roots2pix_mt did not report 3 fragment channels"
+        assert meta.get("fragment_record_size_bytes") == 7, "roots2pix_mt did not report 7-byte RGB records"
+        assert meta.get("roots_plotted") == 2, "explicit RGB roots2pix plotted unexpected root count"
+
+        expected = bytearray()
+        expected.extend((36).to_bytes(4, "little"))
+        expected.extend([0, 255, 0])
+        expected.extend((38).to_bytes(4, "little"))
+        expected.extend([255, 0, 128])
+        with open(fragment_prefix + ".frag", "rb") as f:
+            assert f.read() == bytes(expected), "explicit RGB fragment payload mismatch"
+
+        r = subprocess.run([
+            "/src/assemble_greyscale",
+            "--pix=8",
+            "--channels=3",
+            "--allow-zero=1",
+            "--output=" + raw_path,
+            "--hist-output=" + hist_path,
+            "--workers=1",
+            fragment_prefix + ".frag",
+        ], capture_output=True, text=True, timeout=10)
+        assert r.returncode == 0, "assemble_greyscale RGB failed: " + r.stderr[:200]
+        with open(raw_path, "rb") as f:
+            raw = f.read()
+        assert len(raw) == 8 * 8 * 3, "assembled RGB raw size mismatch"
+        assert raw[36 * 3:36 * 3 + 3] == b"\x00\xff\x00", "assembled RGB pixel 36 mismatch"
+        assert raw[38 * 3:38 * 3 + 3] == b"\xff\x00\x80", "assembled RGB pixel 38 mismatch"
+        hist = json.load(open(hist_path, "r", encoding="utf-8"))
+        assert hist["channels"] == 3, "RGB histogram did not report channel count"
+        assert hist["nonzero_pixels"] == 2, "RGB histogram nonzero count mismatch"
+
+        r = subprocess.run([
+            "/src/score_raw_render",
+            raw_path,
+            png_path,
+            "--pix=8",
+            "--channels=3",
+            "--quality=90",
+            "--preview=" + preview_path,
+            "--preview_max=512",
+        ], capture_output=True, text=True, timeout=20)
+        assert r.returncode == 0, "score_raw_render RGB failed: " + r.stderr[:200]
+        assert read_png_dims(png_path) == (8, 8), "direct RGB PNG dims mismatch"
+        assert read_png_dims(preview_path) == (8, 8), "direct RGB preview dims mismatch"
+        print("  roots2pix_mt explicit RGB outputs: OK")
+    finally:
+        cleanup(
+            roots_path,
+            manifest_path,
+            fragment_prefix + ".frag",
+            raw_path,
+            hist_path,
+            png_path,
+            preview_path,
+        )
+    print("=== roots2pix_mt explicit RGB output runtime PASSED ===")
+
+
 def test_roots2pix_mt_local_file_manifest_runtime():
     print("\n--- roots2pix_mt local file manifest runtime ---")
 
@@ -2302,6 +2428,31 @@ def test_solve_proximity_stats():
     assert summary["raw_hist_score_output_normalize"] is True
     print("  score-output normalized raw histogram: OK")
 
+    r = subprocess.run(
+        [
+            sps_path,
+            sps_bin,
+            "--mode=summary",
+            "--degree=2",
+            "--score_metrics=proximity",
+            "--score_clip_los=" + str(clip["clip_lo"]),
+            "--score_clip_his=" + str(clip["clip_hi"]),
+            "--score_program=m0-0;emit_norm;m0-0;flip;emit",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert r.returncode == 0, "explicit-output summary failed: " + r.stderr[:200]
+    summary = json.loads(r.stdout)
+    assert summary["score_output_channel_count"] == 2, "explicit-output summary channel count mismatch"
+    assert summary["score_output_has_explicit_outputs"] is True, "explicit-output summary did not mark explicit outputs"
+    channels = summary["score_output_channels"]
+    assert len(channels) == 2, "explicit-output summary missing channel rows"
+    assert channels[0]["range_normalized"] is True, "emit_norm channel not marked normalized"
+    assert channels[1]["range_normalized"] is False, "emit channel incorrectly marked normalized"
+    print("  explicit-output summary channels: OK")
+
     # 4. Clusteriness clip (v2 metric)
     r = subprocess.run([sps_path, sps_bin, "--mode=clip", "--degree=2", "--metric=clusteriness"],
                        capture_output=True, text=True, timeout=10)
@@ -2495,6 +2646,7 @@ if __name__ == "__main__":
     test_roots2pix_mt_multispan_runtime()
     test_roots2pix_mt_lagged_score_runtime()
     test_roots2pix_mt_score_output_normalization_runtime()
+    test_roots2pix_mt_explicit_rgb_outputs_runtime()
     test_roots2pix_mt_local_file_manifest_runtime()
     test_render_lores_preview_handler_runtime()
     test_render_preview()

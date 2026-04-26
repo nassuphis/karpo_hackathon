@@ -909,6 +909,7 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
 
 #define SOLVE_SCORE_MAX_METRIC_SLOTS 16
 #define SOLVE_SCORE_MAX_PROGRAM_TOKENS 32
+#define SOLVE_SCORE_MAX_OUTPUT_CHANNELS 8
 
 enum SolveScoreProgramOp {
     SOLVE_SCORE_OP_PUSH_METRIC = 1,
@@ -922,6 +923,8 @@ enum SolveScoreProgramOp {
     SOLVE_SCORE_OP_OMEGA_COSINE = 9,
     SOLVE_SCORE_OP_SAWTOOTH = 10,
     SOLVE_SCORE_OP_FLIP = 11,
+    SOLVE_SCORE_OP_EMIT = 12,
+    SOLVE_SCORE_OP_EMIT_NORM = 13,
 };
 
 enum SolveScoreMetricSource {
@@ -965,6 +968,9 @@ typedef struct {
     double clipHi[SOLVE_SCORE_MAX_METRIC_SLOTS];
     int tokenCount;
     SolveScoreProgramToken tokens[SOLVE_SCORE_MAX_PROGRAM_TOKENS];
+    int outputCount;
+    int hasExplicitOutputs;
+    enum SolveScoreProgramOp outputOps[SOLVE_SCORE_MAX_OUTPUT_CHANNELS];
 } SolveScoreProgram;
 
 static double solve_score_clamp_unit(double v) {
@@ -1122,6 +1128,8 @@ static int parse_solve_score_metric_token(const char *tok, int metricCount, int 
 
 static int parse_solve_score_program_spec(const char *spec, int metricCount,
                                           SolveScoreProgramToken *tokens, int maxTokens,
+                                          int *outputCountOut, int *hasExplicitOutputsOut,
+                                          enum SolveScoreProgramOp *outputOps, int maxOutputs,
                                           char *err, size_t errCap) {
     if (!spec || !*spec) {
         snprintf(err, errCap, "missing score program");
@@ -1134,6 +1142,8 @@ static int parse_solve_score_program_spec(const char *spec, int metricCount,
     }
     int n = 0;
     int stackDepth = 0;
+    int outputCount = 0;
+    int hasExplicitOutputs = 0;
     char *save = NULL;
     for (char *tok = strtok_r(copy, ";", &save); tok; tok = strtok_r(NULL, ";", &save)) {
         if (n >= maxTokens) {
@@ -1143,25 +1153,35 @@ static int parse_solve_score_program_spec(const char *spec, int metricCount,
         }
         SolveScoreProgramToken token;
         memset(&token, 0, sizeof(token));
+        int requiredDepth = 0;
+        int isOutputToken = 0;
+        int beforeDepth = stackDepth;
         if (strcmp(tok, "avg") == 0) {
+            requiredDepth = 2;
             token.op = SOLVE_SCORE_OP_AVG;
             stackDepth -= 1;
         } else if (strcmp(tok, "min") == 0) {
+            requiredDepth = 2;
             token.op = SOLVE_SCORE_OP_MIN;
             stackDepth -= 1;
         } else if (strcmp(tok, "max") == 0) {
+            requiredDepth = 2;
             token.op = SOLVE_SCORE_OP_MAX;
             stackDepth -= 1;
         } else if (strcmp(tok, "mul") == 0) {
+            requiredDepth = 2;
             token.op = SOLVE_SCORE_OP_MUL;
             stackDepth -= 1;
         } else if (strcmp(tok, "abs_diff") == 0) {
+            requiredDepth = 2;
             token.op = SOLVE_SCORE_OP_ABS_DIFF;
             stackDepth -= 1;
         } else if (strcmp(tok, "geometric_mean") == 0) {
+            requiredDepth = 2;
             token.op = SOLVE_SCORE_OP_GEOMETRIC_MEAN;
             stackDepth -= 1;
         } else if (strncmp(tok, "weighted_sum:", 13) == 0) {
+            requiredDepth = 2;
             char *params = tok + 13;
             char *mid = strchr(params, ':');
             if (!mid) {
@@ -1189,6 +1209,7 @@ static int parse_solve_score_program_spec(const char *spec, int metricCount,
             token.b = b;
             stackDepth -= 1;
         } else if (strncmp(tok, "omega_cosine:", 13) == 0) {
+            requiredDepth = 1;
             char *params = tok + 13;
             char *mid = strchr(params, ':');
             char *endOmega = NULL;
@@ -1218,6 +1239,7 @@ static int parse_solve_score_program_spec(const char *spec, int metricCount,
             token.a = omega;
             token.b = phase;
         } else if (strncmp(tok, "sawtooth:", 9) == 0) {
+            requiredDepth = 1;
             char *end = NULL;
             double mult = strtod(tok + 9, &end);
             if (!end || *end != '\0' || !isfinite(mult)) {
@@ -1228,7 +1250,20 @@ static int parse_solve_score_program_spec(const char *spec, int metricCount,
             token.op = SOLVE_SCORE_OP_SAWTOOTH;
             token.a = mult;
         } else if (strcmp(tok, "flip") == 0) {
+            requiredDepth = 1;
             token.op = SOLVE_SCORE_OP_FLIP;
+        } else if (strcmp(tok, "emit") == 0 || strcmp(tok, "emit_norm") == 0) {
+            requiredDepth = 1;
+            isOutputToken = 1;
+            token.op = (strcmp(tok, "emit_norm") == 0) ? SOLVE_SCORE_OP_EMIT_NORM : SOLVE_SCORE_OP_EMIT;
+            stackDepth -= 1;
+            if (outputCount >= maxOutputs) {
+                snprintf(err, errCap, "too many output channels (max %d)", maxOutputs);
+                free(copy);
+                return 0;
+            }
+            outputOps[outputCount++] = token.op;
+            hasExplicitOutputs = 1;
         } else if (tok[0] == 'm' && tok[1] != '\0') {
             int slot = 0;
             int lag = 0;
@@ -1245,7 +1280,7 @@ static int parse_solve_score_program_spec(const char *spec, int metricCount,
             free(copy);
             return 0;
         }
-        if (token.op != SOLVE_SCORE_OP_PUSH_METRIC && stackDepth < 1) {
+        if (requiredDepth > 0 && beforeDepth < requiredDepth) {
             snprintf(err, errCap, "invalid stack underflow at token '%s'", tok);
             free(copy);
             return 0;
@@ -1257,10 +1292,25 @@ static int parse_solve_score_program_spec(const char *spec, int metricCount,
         snprintf(err, errCap, "missing score program tokens");
         return 0;
     }
-    if (stackDepth != 1) {
-        snprintf(err, errCap, "score program must end with stack depth 1");
-        return 0;
+    if (hasExplicitOutputs) {
+        if (outputCount <= 0) {
+            snprintf(err, errCap, "explicit-output score program must emit at least one channel");
+            return 0;
+        }
+        if (stackDepth != 0) {
+            snprintf(err, errCap, "explicit-output score program must end with stack depth 0");
+            return 0;
+        }
+    } else {
+        if (stackDepth != 1) {
+            snprintf(err, errCap, "score program must end with stack depth 1");
+            return 0;
+        }
+        outputCount = 1;
+        outputOps[0] = SOLVE_SCORE_OP_EMIT;
     }
+    if (outputCountOut) *outputCountOut = outputCount;
+    if (hasExplicitOutputsOut) *hasExplicitOutputsOut = hasExplicitOutputs;
     return n;
 }
 
@@ -1299,7 +1349,10 @@ static int parse_solve_score_program_args_ex(const char *metricsCsv, const char 
         }
     }
     int tokenCount = parse_solve_score_program_spec(
-        programSpec, metricCount, out->tokens, SOLVE_SCORE_MAX_PROGRAM_TOKENS, err, errCap
+        programSpec, metricCount, out->tokens, SOLVE_SCORE_MAX_PROGRAM_TOKENS,
+        &out->outputCount, &out->hasExplicitOutputs,
+        out->outputOps, SOLVE_SCORE_MAX_OUTPUT_CHANNELS,
+        err, errCap
     );
     if (tokenCount <= 0) return 0;
     out->metricCount = metricCount;
@@ -1324,6 +1377,9 @@ static void solve_score_program_from_legacy(enum SolveMetric metric, double clip
     out->clipLo[0] = clipLo;
     out->clipHi[0] = clipHi;
     out->tokenCount = omegaEnabled ? 2 : 1;
+    out->outputCount = 1;
+    out->hasExplicitOutputs = 0;
+    out->outputOps[0] = SOLVE_SCORE_OP_EMIT;
     out->tokens[0].op = SOLVE_SCORE_OP_PUSH_METRIC;
     out->tokens[0].metricSlot = 0;
     if (omegaEnabled) {
@@ -1455,90 +1511,150 @@ static int solve_score_eval_lagged_metric_slots(const float *roots, int degree,
     return 1;
 }
 
-static double solve_score_eval_program_from_buffers(const float *currentMetricBuffer,
-                                                    const float *recentMetricBuffer,
-                                                    const SolveScoreProgram *program) {
-    if (!program || !currentMetricBuffer) return NAN;
+static int solve_score_program_has_explicit_outputs(const SolveScoreProgram *program) {
+    return program && program->hasExplicitOutputs && program->outputCount > 0;
+}
+
+static int solve_score_program_output_count(const SolveScoreProgram *program) {
+    if (!program) return 0;
+    return program->outputCount > 0 ? program->outputCount : 1;
+}
+
+static int solve_score_program_output_is_normalized(const SolveScoreProgram *program, int channel) {
+    if (!program || channel < 0 || channel >= solve_score_program_output_count(program)) return 0;
+    return program->outputOps[channel] == SOLVE_SCORE_OP_EMIT_NORM;
+}
+
+static int solve_score_eval_program_outputs_from_buffers(const float *currentMetricBuffer,
+                                                         const float *recentMetricBuffer,
+                                                         const SolveScoreProgram *program,
+                                                         double *outValues,
+                                                         int maxOutputs,
+                                                         int *outCount) {
+    if (!program || !currentMetricBuffer || !outValues || maxOutputs <= 0) return 0;
 
     double stack[SOLVE_SCORE_MAX_PROGRAM_TOKENS];
     int sp = 0;
+    int outN = 0;
     for (int i = 0; i < program->tokenCount; i++) {
         const SolveScoreProgramToken *token = &program->tokens[i];
         switch (token->op) {
             case SOLVE_SCORE_OP_PUSH_METRIC:
-                if (token->metricSlot < 0 || token->metricSlot >= program->metricCount) return NAN;
+                if (token->metricSlot < 0 || token->metricSlot >= program->metricCount) return 0;
+                if (sp >= SOLVE_SCORE_MAX_PROGRAM_TOKENS) return 0;
                 if (token->lagDepth == 0) {
                     stack[sp++] = currentMetricBuffer[token->metricSlot];
                 } else if (token->lagDepth == 1) {
                     if (!recentMetricBuffer) {
                         fprintf(stderr, "solve-score program references m%d-1 but recentMetricBuffer is NULL\n",
                                 token->metricSlot);
-                        return NAN;
+                        return 0;
                     }
                     stack[sp++] = recentMetricBuffer[token->metricSlot];
                 } else {
-                    return NAN;
+                    return 0;
                 }
                 break;
             case SOLVE_SCORE_OP_AVG: {
+                if (sp < 2) return 0;
                 double b = stack[--sp];
                 double a = stack[sp - 1];
                 stack[sp - 1] = solve_score_clamp_unit(0.5 * (a + b));
                 break;
             }
             case SOLVE_SCORE_OP_MIN: {
+                if (sp < 2) return 0;
                 double b = stack[--sp];
                 double a = stack[sp - 1];
                 stack[sp - 1] = a < b ? a : b;
                 break;
             }
             case SOLVE_SCORE_OP_MAX: {
+                if (sp < 2) return 0;
                 double b = stack[--sp];
                 double a = stack[sp - 1];
                 stack[sp - 1] = a > b ? a : b;
                 break;
             }
             case SOLVE_SCORE_OP_MUL: {
+                if (sp < 2) return 0;
                 double b = stack[--sp];
                 double a = stack[sp - 1];
                 stack[sp - 1] = solve_score_clamp_unit(a * b);
                 break;
             }
             case SOLVE_SCORE_OP_WEIGHTED_SUM: {
+                if (sp < 2) return 0;
                 double b = stack[--sp];
                 double a = stack[sp - 1];
                 stack[sp - 1] = solve_score_clamp_unit(token->a * a + token->b * b);
                 break;
             }
             case SOLVE_SCORE_OP_ABS_DIFF: {
+                if (sp < 2) return 0;
                 double b = stack[--sp];
                 double a = stack[sp - 1];
                 stack[sp - 1] = solve_score_clamp_unit(fabs(a - b));
                 break;
             }
             case SOLVE_SCORE_OP_GEOMETRIC_MEAN: {
+                if (sp < 2) return 0;
                 double b = stack[--sp];
                 double a = stack[sp - 1];
                 stack[sp - 1] = solve_score_clamp_unit(sqrt(solve_score_clamp_unit(a) * solve_score_clamp_unit(b)));
                 break;
             }
             case SOLVE_SCORE_OP_OMEGA_COSINE:
+                if (sp < 1) return 0;
                 stack[sp - 1] = apply_solve_score_omega(stack[sp - 1], token->a, token->b);
                 break;
             case SOLVE_SCORE_OP_SAWTOOTH: {
+                if (sp < 1) return 0;
                 double x = stack[sp - 1] * token->a;
                 stack[sp - 1] = solve_score_clamp_unit(x - floor(x));
                 break;
             }
             case SOLVE_SCORE_OP_FLIP:
+                if (sp < 1) return 0;
                 stack[sp - 1] = solve_score_clamp_unit(1.0 - stack[sp - 1]);
                 break;
+            case SOLVE_SCORE_OP_EMIT:
+            case SOLVE_SCORE_OP_EMIT_NORM:
+                if (sp < 1) return 0;
+                if (outN >= maxOutputs) return 0;
+                outValues[outN++] = stack[--sp];
+                break;
             default:
-                return 0.0;
+                return 0;
         }
     }
-    if (sp != 1) return 0.0;
-    return solve_score_clamp_unit(stack[0]);
+    if (program->hasExplicitOutputs) {
+        if (sp != 0 || outN != program->outputCount) return 0;
+    } else {
+        if (sp != 1 || outN != 0) return 0;
+        outValues[outN++] = stack[0];
+    }
+    if (outCount) *outCount = outN;
+    return 1;
+}
+
+static double solve_score_eval_program_from_buffers(const float *currentMetricBuffer,
+                                                    const float *recentMetricBuffer,
+                                                    const SolveScoreProgram *program) {
+    double outputs[SOLVE_SCORE_MAX_OUTPUT_CHANNELS];
+    int outputCount = 0;
+    if (!solve_score_eval_program_outputs_from_buffers(
+            currentMetricBuffer,
+            recentMetricBuffer,
+            program,
+            outputs,
+            SOLVE_SCORE_MAX_OUTPUT_CHANNELS,
+            &outputCount
+        )) {
+        return NAN;
+    }
+    if (outputCount < 1) return NAN;
+    return solve_score_clamp_unit(outputs[0]);
 }
 
 static double solve_score_eval_program_with_sources(const float *roots, int degree,

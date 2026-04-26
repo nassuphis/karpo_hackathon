@@ -159,6 +159,33 @@ def _solve_score_output_args(score_artifact):
         f"--score_output_normalize={1 if enabled else 0}",
         f"--score_output_clip_lo={clip_lo}",
         f"--score_output_clip_hi={clip_hi}",
+    ] + _solve_score_output_channel_args(score_artifact)
+
+
+def _solve_score_output_channel_args(score_artifact):
+    channels = list(score_artifact.get("score_output_channels") or [])
+    if not channels:
+        return []
+    try:
+        channel_count = int(score_artifact.get("score_output_channel_count") or len(channels))
+    except (TypeError, ValueError):
+        raise RuntimeError(
+            f"score_output_channel_count must be integer, got {score_artifact.get('score_output_channel_count')!r}"
+        )
+    if channel_count != len(channels):
+        raise RuntimeError(
+            f"score output channel count mismatch: count={channel_count}, channels={len(channels)}"
+        )
+    los = []
+    his = []
+    for idx, row in enumerate(channels):
+        if not isinstance(row, dict):
+            raise RuntimeError(f"score_output_channels[{idx}] must be an object")
+        los.append(str(_coerce_finite_float(row.get("clip_lo", 0.0), f"score_output_channels[{idx}].clip_lo")))
+        his.append(str(_coerce_finite_float(row.get("clip_hi", 1.0), f"score_output_channels[{idx}].clip_hi")))
+    return [
+        f"--score_output_clip_los={','.join(los)}",
+        f"--score_output_clip_his={','.join(his)}",
     ]
 
 
@@ -200,7 +227,6 @@ def _build_cmd(params):
         f"--score_param_prelude_rows={int(params.get('score_param_prelude_rows') or 0)}",
         f"--retries={params.get('raster_sectioned_retries', 2)}",
         "--fragment_prefix=/tmp/fused_fragment",
-        "--step_scores_output=/tmp/step_scores.bin",
     ]
 
     if params.get("emit_associated_palette_bins"):
@@ -219,6 +245,13 @@ def _build_cmd(params):
         score_artifact["program"] = compiled["program_spec"]
     if not score_artifact.get("program") or not isinstance(score_artifact.get("metrics"), list) or not score_artifact.get("metrics"):
         raise RuntimeError("fused raster requires clip artifact program + metrics")
+    output_channel_count = int(score_artifact.get("score_output_channel_count") or 1)
+    if output_channel_count < 1:
+        raise RuntimeError(f"score_output_channel_count must be >= 1, got {output_channel_count}")
+    if params.get("emit_associated_palette_bins") and output_channel_count != 1:
+        raise RuntimeError("associated palette extraction requires a single solve-score output channel")
+    if output_channel_count == 1:
+        cmd.append("--step_scores_output=/tmp/step_scores.bin")
 
     if params.get("solve_score_chain_present") and compiled is not None:
         actual_fingerprint = str(score_artifact.get("chain_fingerprint") or "").strip()
@@ -536,6 +569,8 @@ def _handle_fused_raster_request(params):
             raise RuntimeError("fused raster requires solve_score_clip_key")
         ss_obj = s3.get_object(Bucket=BUCKET, Key=ss_clip_key)
         section_params["solve_score_bins_data"] = json.loads(ss_obj["Body"].read())
+        emit_step_scores = int(section_params["solve_score_bins_data"].get("score_output_channel_count") or 1) == 1
+        perf["emit_step_scores"] = emit_step_scores
 
         raw_chain = section_params.get("solve_score_chain", "")
         section_params["solve_score_chain_present"] = raw_chain not in ("", None, [])
@@ -616,20 +651,21 @@ def _handle_fused_raster_request(params):
                 )
 
         step_scores_size = 0
-        step_scores_path = "/tmp/step_scores.bin"
         step_scores_key = f"{fragment_prefix}{int(section_idx):04d}_step_scores.raw"
-        if os.path.exists(step_scores_path):
-            step_scores_size = os.path.getsize(step_scores_path)
-            with open(step_scores_path, "rb") as fh:
-                s3.upload_fileobj(fh, BUCKET, step_scores_key)
-            os.remove(step_scores_path)
-        else:
-            s3.put_object(
-                Bucket=BUCKET,
-                Key=step_scores_key,
-                Body=b"",
-                ContentType="application/octet-stream",
-            )
+        if emit_step_scores:
+            step_scores_path = "/tmp/step_scores.bin"
+            if os.path.exists(step_scores_path):
+                step_scores_size = os.path.getsize(step_scores_path)
+                with open(step_scores_path, "rb") as fh:
+                    s3.upload_fileobj(fh, BUCKET, step_scores_key)
+                os.remove(step_scores_path)
+            else:
+                s3.put_object(
+                    Bucket=BUCKET,
+                    Key=step_scores_key,
+                    Body=b"",
+                    ContentType="application/octet-stream",
+                )
 
         perf["upload_us"] = int((time.perf_counter() - t_upload) * 1e6)
         perf["fragment_files_uploaded"] = 1

@@ -667,6 +667,162 @@ static int compute_scores_lagged_summary(
     return 1;
 }
 
+static int compute_program_outputs_summary(
+    const float *buf,
+    const float *coeffBuf,
+    const float *paramBuf,
+    long nSolves,
+    int stride,
+    int coeffStride,
+    int paramStride,
+    int degree,
+    int coeffDegree,
+    int paramDegree,
+    const SolveScoreProgram *program,
+    RootXformEntry *rtChain,
+    int nRt,
+    double *scoresByChannel,
+    int outputCount,
+    int minFiniteRootsRequired,
+    long *finiteRootCount,
+    long *fullyFiniteSolveCount,
+    long *partialFiniteSolveCount,
+    long *zeroFiniteSolveCount,
+    long *usableSolveCount,
+    long *exactZeroRootCount,
+    long *rowsWithAnyExactZeroRootCount,
+    long *rowsAllExactZeroRootsCount,
+    int *minFiniteRootsPerSolve,
+    int *maxFiniteRootsPerSolve,
+    int *threadsUsed
+) {
+    if (!program || !scoresByChannel || outputCount < 1 || outputCount > SOLVE_SCORE_MAX_OUTPUT_CHANNELS) return 0;
+
+    const int usesLag = solve_score_program_uses_lag(program);
+    const int usesSolveLag = solve_score_program_uses_lag_source(program, SOLVE_SCORE_SOURCE_SOLVE);
+    const int usesCoeffLag = solve_score_program_uses_lag_source(program, SOLVE_SCORE_SOURCE_COEFF);
+    const int usesParamLag = solve_score_program_uses_lag_source(program, SOLVE_SCORE_SOURCE_PARAM);
+
+    long finiteRootsTotal = 0;
+    long fullyFiniteTotal = 0;
+    long partialFiniteTotal = 0;
+    long zeroFiniteTotal = 0;
+    long usableTotal = 0;
+    long exactZeroRootTotal = 0;
+    long rowsWithAnyExactZeroRootTotal = 0;
+    long rowsAllExactZeroRootsTotal = 0;
+    int minFinite = degree;
+    int maxFinite = 0;
+
+    int recentInitialized = 0;
+    float currentMetricBuffer[SOLVE_SCORE_MAX_METRIC_SLOTS];
+    float recentMetricBuffer[SOLVE_SCORE_MAX_METRIC_SLOTS];
+    double outputs[SOLVE_SCORE_MAX_OUTPUT_CHANNELS];
+    float wkRe[MAXDEG], wkIm[MAXDEG];
+    float prevWkRe[MAXDEG], prevWkIm[MAXDEG];
+    float stepBuf[MAXDEG * 2];
+    float prevStepBuf[MAXDEG * 2];
+
+    for (long s = 0; s < nSolves; s++) {
+        const float *roots = buf + s * stride;
+        const float *coeffRoots = (coeffBuf && coeffDegree > 0)
+            ? (coeffBuf + s * coeffStride)
+            : NULL;
+        const float *paramValues = (paramBuf && paramDegree > 0)
+            ? (paramBuf + s * paramStride)
+            : NULL;
+
+        int finiteRoots = count_finite_roots_in_solve(roots, degree);
+        int zeroRoots = count_exact_zero_roots_in_solve(roots, degree);
+        finiteRootsTotal += finiteRoots;
+        if (finiteRoots == degree) fullyFiniteTotal++;
+        else if (finiteRoots == 0) zeroFiniteTotal++;
+        else partialFiniteTotal++;
+        if (finiteRoots >= minFiniteRootsRequired) usableTotal++;
+        exactZeroRootTotal += zeroRoots;
+        if (zeroRoots > 0) rowsWithAnyExactZeroRootTotal++;
+        if (zeroRoots == degree) rowsAllExactZeroRootsTotal++;
+        if (finiteRoots < minFinite) minFinite = finiteRoots;
+        if (finiteRoots > maxFinite) maxFinite = finiteRoots;
+
+        const float *step = prepare_step(roots, degree, rtChain, nRt, stepBuf, wkRe, wkIm);
+        if (!solve_score_eval_metric_slots(
+                step, degree,
+                coeffRoots, coeffDegree,
+                paramValues, paramDegree,
+                program,
+                currentMetricBuffer)) {
+            fprintf(stderr, "solve-score metric evaluation failed in summary row %ld\n", s);
+            return 0;
+        }
+
+        const float *recentForEval = NULL;
+        if (usesLag) {
+            if (!recentInitialized) {
+                memcpy(recentMetricBuffer, currentMetricBuffer, sizeof(float) * (size_t)program->metricCount);
+                const float *prevStep = step;
+                const float *prevCoeffRoots = coeffRoots;
+                const float *prevParamValues = paramValues;
+                if (s > 0) {
+                    if (usesSolveLag) {
+                        const float *prevRoots = buf + (s - 1) * stride;
+                        prevStep = prepare_step(prevRoots, degree, rtChain, nRt, prevStepBuf, prevWkRe, prevWkIm);
+                    }
+                    if (usesCoeffLag && coeffBuf && coeffDegree > 0) {
+                        prevCoeffRoots = coeffBuf + (s - 1) * coeffStride;
+                    }
+                    if (usesParamLag && paramBuf && paramDegree > 0) {
+                        prevParamValues = paramBuf + (s - 1) * paramStride;
+                    }
+                }
+                if (!solve_score_eval_lagged_metric_slots(
+                        prevStep, degree,
+                        prevCoeffRoots, coeffDegree,
+                        prevParamValues, paramDegree,
+                        program,
+                        recentMetricBuffer)) {
+                    fprintf(stderr, "solve-score lag metric evaluation failed in summary row %ld\n", s);
+                    return 0;
+                }
+                recentInitialized = 1;
+            }
+            recentForEval = recentMetricBuffer;
+        }
+
+        int gotOutputs = 0;
+        if (!solve_score_eval_program_outputs_from_buffers(
+                currentMetricBuffer,
+                recentForEval,
+                program,
+                outputs,
+                SOLVE_SCORE_MAX_OUTPUT_CHANNELS,
+                &gotOutputs) ||
+            gotOutputs != outputCount) {
+            fprintf(stderr, "solve-score program output evaluation failed in summary row %ld\n", s);
+            return 0;
+        }
+        for (int ch = 0; ch < outputCount; ch++) {
+            scoresByChannel[(long)ch * nSolves + s] = outputs[ch];
+        }
+        if (usesLag) {
+            memcpy(recentMetricBuffer, currentMetricBuffer, sizeof(float) * (size_t)program->metricCount);
+        }
+    }
+
+    if (finiteRootCount) *finiteRootCount = finiteRootsTotal;
+    if (fullyFiniteSolveCount) *fullyFiniteSolveCount = fullyFiniteTotal;
+    if (partialFiniteSolveCount) *partialFiniteSolveCount = partialFiniteTotal;
+    if (zeroFiniteSolveCount) *zeroFiniteSolveCount = zeroFiniteTotal;
+    if (usableSolveCount) *usableSolveCount = usableTotal;
+    if (exactZeroRootCount) *exactZeroRootCount = exactZeroRootTotal;
+    if (rowsWithAnyExactZeroRootCount) *rowsWithAnyExactZeroRootCount = rowsWithAnyExactZeroRootTotal;
+    if (rowsAllExactZeroRootsCount) *rowsAllExactZeroRootsCount = rowsAllExactZeroRootsTotal;
+    if (minFiniteRootsPerSolve) *minFiniteRootsPerSolve = minFinite;
+    if (maxFiniteRootsPerSolve) *maxFiniteRootsPerSolve = maxFinite;
+    if (threadsUsed) *threadsUsed = 1;
+    return 1;
+}
+
 typedef struct {
     const float *buf;
     const float *coeffBuf;
@@ -1072,8 +1228,17 @@ int main(int argc, char **argv) {
         /* ---- SUMMARY MODE ---- */
         double quantileLo = getArgDouble(argc, argv, "--quantile_lo", 0.001);
         double quantileHi = getArgDouble(argc, argv, "--quantile_hi", 0.999);
+        int explicitOutputs = useScoreProgram && solve_score_program_has_explicit_outputs(&scoreProgram);
+        int outputCount = useScoreProgram ? solve_score_program_output_count(&scoreProgram) : 1;
+        if (outputCount < 1 || outputCount > SOLVE_SCORE_MAX_OUTPUT_CHANNELS) {
+            fprintf(stderr, "invalid solve-score output channel count: %d\n", outputCount);
+            free(paramBuf);
+            free(coeffBuf);
+            free(buf);
+            return 1;
+        }
 
-        double *scores = malloc(nSolves * sizeof(double));
+        double *scores = malloc((size_t)nSolves * (size_t)outputCount * sizeof(double));
         if (!scores) {
             fprintf(stderr, "Out of memory for scores\n");
             free(paramBuf);
@@ -1096,7 +1261,24 @@ int main(int argc, char **argv) {
         int maxFiniteRootsPerSolve = 0;
 
         int threadsUsed = 1;
-        if (programUsesLag) {
+        if (explicitOutputs) {
+            if (!compute_program_outputs_summary(
+                    buf, coeffBuf, paramBuf,
+                    nSolves, stride, coeffStride, paramStride, degree, coeffDegree, paramDegree,
+                    &scoreProgram, rtChain, nRt, scores, outputCount,
+                    minFiniteRootsRequired,
+                    &finiteRootCount, &fullyFiniteSolveCount, &partialFiniteSolveCount,
+                    &zeroFiniteSolveCount, &usableSolveCount,
+                    &exactZeroRootCount, &rowsWithAnyExactZeroRootCount, &rowsAllExactZeroRootsCount,
+                    &minFiniteRootsPerSolve, &maxFiniteRootsPerSolve,
+                    &threadsUsed)) {
+                free(scores);
+                free(paramBuf);
+                free(coeffBuf);
+                free(buf);
+                return 1;
+            }
+        } else if (programUsesLag) {
             if (!compute_scores_lagged_summary(
                     buf, coeffBuf, paramBuf,
                     nSolves, stride, coeffStride, paramStride, degree, coeffDegree, paramDegree,
@@ -1126,7 +1308,9 @@ int main(int argc, char **argv) {
                 &threadsUsed
             );
         }
-        qsort(scores, nSolves, sizeof(double), cmp_double);
+        for (int ch = 0; ch < outputCount; ch++) {
+            qsort(scores + (long)ch * nSolves, nSolves, sizeof(double), cmp_double);
+        }
 
         /* Extremes */
         double minScore = scores[0];
@@ -1313,6 +1497,46 @@ int main(int argc, char **argv) {
         printf("\"mean_score\":%.15g,\"stddev_score\":%.15g,", meanScore, stddevScore);
         printf("\"q05\":%.15g,\"q10\":%.15g,\"q25\":%.15g,\"q50\":%.15g,", q05, q10, q25, q50);
         printf("\"q75\":%.15g,\"q90\":%.15g,\"q95\":%.15g,", q75, q90, q95);
+        printf("\"score_output_channel_count\":%d,", outputCount);
+        printf("\"score_output_has_explicit_outputs\":%s,", explicitOutputs ? "true" : "false");
+        printf("\"score_output_channels\":[");
+        for (int ch = 0; ch < outputCount; ch++) {
+            double *channelScores = scores + (long)ch * nSolves;
+            double chMin = channelScores[0];
+            double chMax = channelScores[nSolves - 1];
+            double chQ05 = channelScores[QI(0.05)];
+            double chQ10 = channelScores[QI(0.10)];
+            double chQ25 = channelScores[QI(0.25)];
+            double chQ50 = channelScores[QI(0.50)];
+            double chQ75 = channelScores[QI(0.75)];
+            double chQ90 = channelScores[QI(0.90)];
+            double chQ95 = channelScores[QI(0.95)];
+            int chNorm = explicitOutputs
+                ? solve_score_program_output_is_normalized(&scoreProgram, ch)
+                : scoreOutputNormalize;
+            if (ch) printf(",");
+            const char *channelName = explicitOutputs && outputCount == 3
+                ? (ch == 0 ? "r" : (ch == 1 ? "g" : "b"))
+                : NULL;
+            if (channelName) {
+                printf("{\"channel\":%d,\"name\":\"%s\",\"emit\":\"%s\",",
+                       ch, channelName, chNorm ? "emit_norm" : "emit");
+            } else {
+                printf("{\"channel\":%d,\"name\":\"channel_%d\",\"emit\":\"%s\",",
+                       ch, ch, chNorm ? "emit_norm" : "emit");
+            }
+            if (explicitOutputs && outputCount == 3) {
+                printf("\"display_name\":\"%s\",", ch == 0 ? "r" : (ch == 1 ? "g" : "b"));
+            }
+            printf("\"range_normalized\":%s,", chNorm ? "true" : "false");
+            printf("\"min_score\":%.15g,\"max_score\":%.15g,", chMin, chMax);
+            printf("\"q05\":%.15g,\"q10\":%.15g,\"q25\":%.15g,\"q50\":%.15g,",
+                   chQ05, chQ10, chQ25, chQ50);
+            printf("\"q75\":%.15g,\"q90\":%.15g,\"q95\":%.15g,",
+                   chQ75, chQ90, chQ95);
+            printf("\"clip_lo\":%.15g,\"clip_hi\":%.15g}", chNorm ? chQ05 : 0.0, chNorm ? chQ95 : 1.0);
+        }
+        printf("],");
         printf("\"omega\":%.15g,\"omega_enabled\":%s,\"clip_quantile\":%.15g,\"clip_lo\":%.15g,\"clip_hi\":%.15g,",
                omega, omegaEnabled ? "true" : "false", quantileLo, clipLo, clipHi);
         printf("\"full_range\":%.15g,\"clip_range\":%.15g,", fullRange, clipRange);

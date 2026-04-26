@@ -33,6 +33,7 @@ ASSEMBLE_PROGRESS_INTERVAL_S = 20.0
 S3_USER_METADATA_LIMIT_BYTES = 2048
 FRAGMENT_MANIFEST_VERSION = 1
 FRAGMENT_PAIR_ENCODING = "u32le_u8_v1"
+FRAGMENT_MULTI_ENCODING = "u32le_pixel_idx_plus_u8_channels_v1"
 
 
 def _validate_finalize_workers(value):
@@ -68,11 +69,25 @@ def _validate_fragment_manifest(manifest, *, source_item_count, fragment_prefix,
         raise RuntimeError(
             f"fragment_manifest.version must be {FRAGMENT_MANIFEST_VERSION}, got {version}"
         )
-    pair_encoding = str(manifest.get("pair_encoding") or "").strip()
-    if pair_encoding != FRAGMENT_PAIR_ENCODING:
+    pair_encoding = str(manifest.get("pair_encoding") or manifest.get("fragment_encoding") or "").strip()
+    if pair_encoding not in (FRAGMENT_PAIR_ENCODING, FRAGMENT_MULTI_ENCODING):
         raise RuntimeError(
-            f"fragment_manifest.pair_encoding must be {FRAGMENT_PAIR_ENCODING!r}, got {pair_encoding!r}"
+            f"fragment_manifest.pair_encoding must be {FRAGMENT_PAIR_ENCODING!r} or {FRAGMENT_MULTI_ENCODING!r}, got {pair_encoding!r}"
         )
+    try:
+        channels = int(manifest.get("channels", 1) or 1)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"fragment_manifest.channels must be an integer, got {manifest.get('channels')!r}")
+    if channels < 1 or channels > 8:
+        raise RuntimeError(f"fragment_manifest.channels must be in [1,8], got {channels}")
+    record_size_bytes = int(manifest.get("record_size_bytes") or (4 + channels))
+    expected_record_size = 5 if pair_encoding == FRAGMENT_PAIR_ENCODING else 4 + channels
+    if record_size_bytes != expected_record_size:
+        raise RuntimeError(
+            f"fragment_manifest.record_size_bytes mismatch: expected {expected_record_size}, got {record_size_bytes}"
+        )
+    if pair_encoding == FRAGMENT_PAIR_ENCODING and channels != 1:
+        raise RuntimeError("u32le_u8_v1 fragments must declare channels=1")
     try:
         manifest_item_count = int(manifest.get("item_count") or 0)
     except (TypeError, ValueError):
@@ -95,6 +110,8 @@ def _validate_fragment_manifest(manifest, *, source_item_count, fragment_prefix,
     return {
         "version": version,
         "pair_encoding": pair_encoding,
+        "channels": channels,
+        "record_size_bytes": record_size_bytes,
         "item_count": manifest_item_count,
         "fragment_prefix": manifest_prefix,
         "chain_fingerprint": manifest_fingerprint,
@@ -142,13 +159,15 @@ def _presign_fragment_urls(*, finalize_s3, fragment_prefix, source_item_count):
     return urls
 
 
-def _assemble_greyscale_raw(*, pix, raw_path, hist_path, workers, fragment_urls, manifest_path, progress_cb=None):
+def _assemble_greyscale_raw(*, pix, raw_path, hist_path, workers, fragment_urls, manifest_path, channels=1, allow_zero=False, progress_cb=None):
     _write_url_manifest(manifest_path, fragment_urls)
     cmd = [
         ASSEMBLE_GREYSCALE,
         f"--pix={int(pix)}",
         f"--output={raw_path}",
         f"--hist-output={hist_path}",
+        f"--channels={int(channels or 1)}",
+        f"--allow-zero={1 if allow_zero else 0}",
         f"--workers={int(workers)}",
         f"--url-manifest={manifest_path}",
     ]
@@ -282,6 +301,15 @@ def _clip_info_from_payload(params, metadata):
             params.get("score_output_clip_hi", 1.0),
             "score_output_clip_hi",
         ),
+        "score_output_channel_count": int(params.get("score_output_channel_count") or 1),
+        "score_output_has_explicit_outputs": parse_boolish(
+            params.get("score_output_has_explicit_outputs", False),
+            False,
+            strict=True,
+            label="score_output_has_explicit_outputs",
+        ),
+        "score_output_interpretation": str(params.get("score_output_interpretation") or "scalar_palette").strip(),
+        "score_output_channels": list(params.get("score_output_channels") or []),
     }
 
 
@@ -548,7 +576,7 @@ def handler(event, context):
     expected_chain_fingerprint = str(
         metadata.get("solve_score_chain_fingerprint") or metadata.get("chain_fingerprint") or ""
     ).strip()
-    _validate_fragment_manifest(
+    fragment_info = _validate_fragment_manifest(
         fragment_manifest,
         source_item_count=source_item_count,
         fragment_prefix=fragment_prefix,
@@ -559,12 +587,21 @@ def handler(event, context):
 
     finalize_s3 = _finalize_s3_client(workers)
     clip_info = _clip_info_from_payload(params, metadata)
+    channels = int(fragment_info.get("channels") or clip_info.get("score_output_channel_count") or 1)
+    if channels != int(clip_info.get("score_output_channel_count") or channels):
+        raise RuntimeError(
+            "FinalizeMT fragment channel count mismatch: "
+            f"manifest={channels}, clip={clip_info.get('score_output_channel_count')}"
+        )
+    if channels not in (1, 3):
+        raise RuntimeError(f"FinalizeMT v1 supports channels=1 or channels=3, got {channels}")
     progress = {
         "phase": "finalize_mt",
         "source_item_count": source_item_count,
         "pix": pix,
         "width": width,
         "height": height,
+        "channels": channels,
         "workers": workers,
     }
     report_status(job_id, task_id, "started", result_data=progress)
@@ -591,6 +628,8 @@ def handler(event, context):
         workers=workers,
         fragment_urls=fragment_urls,
         manifest_path=url_manifest_path,
+        channels=channels,
+        allow_zero=channels > 1 or bool(clip_info.get("score_output_has_explicit_outputs")),
     )
     progress["assemble_ms"] = int((time.time() - t_assemble) * 1000)
     report_status(job_id, task_id, "assembled_score_tiles", result_data=progress)
@@ -604,7 +643,7 @@ def handler(event, context):
     step_scores_pass_count = associated_palette_times
     step_scores_key = ""
     step_scores_count = 0
-    if step_scores_grid_n > 0 and step_scores_pass_count > 0:
+    if channels == 1 and step_scores_grid_n > 0 and step_scores_pass_count > 0:
         step_scores_count = int(step_scores_grid_n) * int(step_scores_grid_n) * int(step_scores_pass_count)
         actual_step_scores_count = _concat_step_scores(
             finalize_s3=finalize_s3,
@@ -641,6 +680,7 @@ def handler(event, context):
         palette=palette,
         background_color=background_color,
         quality=quality,
+        channels=channels,
     )
     progress["render_ms"] = int((time.time() - t_render) * 1000)
     progress["encode_ms"] = 0
@@ -674,6 +714,10 @@ def handler(event, context):
         step_scores_key=step_scores_key,
         step_count=step_scores_count,
         step_scores_grid_n=step_scores_grid_n if step_scores_key else None,
+        channels=channels,
+        raw_layout="u8_scalar_row_major" if channels == 1 else "u8_packed_channels_row_major",
+        interpretation=clip_info["score_output_interpretation"],
+        output_channels=clip_info["score_output_channels"],
     )
 
     t_upload = time.time()
@@ -726,7 +770,13 @@ def handler(event, context):
     final_metadata["score_output_normalize"] = "true" if clip_info["score_output_normalize"] else "false"
     final_metadata["score_output_clip_lo"] = str(clip_info["score_output_clip_lo"])
     final_metadata["score_output_clip_hi"] = str(clip_info["score_output_clip_hi"])
+    final_metadata["score_output_channel_count"] = str(channels)
+    final_metadata["score_output_interpretation"] = clip_info["score_output_interpretation"]
+    final_metadata["raw_channels"] = str(channels)
+    final_metadata["raw_layout"] = "u8_scalar_row_major" if channels == 1 else "u8_packed_channels_row_major"
     final_metadata["repalette_capable"] = False
+    if channels == 3:
+        final_metadata["rgb_source"] = "direct_rgb_raw"
     if associated_palette_result:
         final_metadata["associated_palette_mode"] = "generated"
         final_metadata["associated_palette_id"] = associated_palette_result["palette_id"]
@@ -778,6 +828,7 @@ def handler(event, context):
         "image_key": image_key,
         "raw_key": raw_key,
         "raw_meta_key": raw_meta_key,
+        "channels": channels,
         "step_scores_key": step_scores_key,
         "step_count": step_scores_count if step_scores_key else 0,
         "step_scores_grid_n": step_scores_grid_n if step_scores_key else 0,

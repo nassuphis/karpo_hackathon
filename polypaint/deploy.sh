@@ -1431,15 +1431,32 @@ setup_api_gateway() {
         echo "  Using existing API Gateway: $API_ID"
     fi
 
+    is_api_gateway_id() {
+        local VALUE="${1:-}"
+        [ -n "$VALUE" ] && [ "$VALUE" != "None" ] && [ "$VALUE" != "null" ]
+    }
+
+    first_api_gateway_id() {
+        local ITEM
+        for ITEM in $1; do
+            if is_api_gateway_id "$ITEM"; then
+                echo "$ITEM"
+                return 0
+            fi
+        done
+        return 1
+    }
+
     # Find or create integration for a Lambda and return its ID
     create_integration() {
         local FNAME="$1"
         local TARGET_URI="arn:aws:lambda:$REGION:$ACCT:function:$FNAME"
         # Check if an integration already exists for this Lambda
-        local EXISTING
-        EXISTING=$(aws apigatewayv2 get-integrations --api-id "$API_ID" --region "$REGION" \
-            --query "Items[?IntegrationUri=='${TARGET_URI}'].IntegrationId | [0]" --output text 2>/dev/null)
-        if [ -n "$EXISTING" ] && [ "$EXISTING" != "None" ]; then
+        local EXISTING_RAW EXISTING
+        EXISTING_RAW=$(aws apigatewayv2 get-integrations --api-id "$API_ID" --region "$REGION" \
+            --query "Items[?IntegrationUri=='${TARGET_URI}'].IntegrationId" --output text 2>/dev/null)
+        EXISTING=$(first_api_gateway_id "$EXISTING_RAW" || true)
+        if is_api_gateway_id "$EXISTING"; then
             echo "$EXISTING"
             return
         fi
@@ -1453,10 +1470,11 @@ setup_api_gateway() {
     # Create or update a route
     ensure_route() {
         local ROUTE_KEY="$1" INT_ID="$2"
-        local EXISTING
-        EXISTING=$(aws apigatewayv2 get-routes --api-id "$API_ID" --region "$REGION" \
+        local EXISTING_RAW EXISTING
+        EXISTING_RAW=$(aws apigatewayv2 get-routes --api-id "$API_ID" --region "$REGION" \
             --query "Items[?RouteKey=='${ROUTE_KEY}'].RouteId" --output text 2>/dev/null)
-        if [ -n "$EXISTING" ] && [ "$EXISTING" != "None" ]; then
+        EXISTING=$(first_api_gateway_id "$EXISTING_RAW" || true)
+        if is_api_gateway_id "$EXISTING"; then
             aws apigatewayv2 update-route --api-id "$API_ID" --route-id "$EXISTING" \
                 --target "integrations/$INT_ID" --region "$REGION" >/dev/null 2>&1
         else
@@ -1469,15 +1487,17 @@ setup_api_gateway() {
     # Delete a removed route if it exists on an already-deployed API.
     delete_route_if_exists() {
         local ROUTE_KEY="$1"
-        local EXISTING
-        EXISTING=$(aws apigatewayv2 get-routes --api-id "$API_ID" --region "$REGION" \
-            --query "Items[?RouteKey=='${ROUTE_KEY}'].RouteId | [0]" --output text 2>/dev/null)
-        if [ -n "$EXISTING" ] && [ "$EXISTING" != "None" ]; then
-            if ! aws apigatewayv2 delete-route --api-id "$API_ID" --route-id "$EXISTING" \
-                --region "$REGION" >/dev/null 2>&1; then
-                echo "  Warning: failed to delete removed route $ROUTE_KEY (route id $EXISTING); continuing"
+        local EXISTING_IDS ROUTE_ID
+        EXISTING_IDS=$(aws apigatewayv2 get-routes --api-id "$API_ID" --region "$REGION" \
+            --query "Items[?RouteKey=='${ROUTE_KEY}'].RouteId" --output text 2>/dev/null)
+        for ROUTE_ID in $EXISTING_IDS; do
+            if is_api_gateway_id "$ROUTE_ID"; then
+                if ! aws apigatewayv2 delete-route --api-id "$API_ID" --route-id "$ROUTE_ID" \
+                    --region "$REGION" >/dev/null 2>&1; then
+                    echo "  Warning: failed to delete removed route $ROUTE_KEY (route id $ROUTE_ID); continuing"
+                fi
             fi
-        fi
+        done
     }
 
     # Delete integrations for Lambdas that are no longer routed.
@@ -1487,12 +1507,9 @@ setup_api_gateway() {
         local EXISTING_IDS
         EXISTING_IDS=$(aws apigatewayv2 get-integrations --api-id "$API_ID" --region "$REGION" \
             --query "Items[?IntegrationUri=='${TARGET_URI}'].IntegrationId" --output text 2>/dev/null)
-        if [ -z "$EXISTING_IDS" ] || [ "$EXISTING_IDS" = "None" ]; then
-            return
-        fi
         local INT_ID
         for INT_ID in $EXISTING_IDS; do
-            if [ -n "$INT_ID" ] && [ "$INT_ID" != "None" ]; then
+            if is_api_gateway_id "$INT_ID"; then
                 if ! aws apigatewayv2 delete-integration --api-id "$API_ID" --integration-id "$INT_ID" \
                     --region "$REGION" >/dev/null 2>&1; then
                     echo "  Warning: failed to delete removed integration $INT_ID for $FNAME; continuing"

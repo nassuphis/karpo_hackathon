@@ -3750,6 +3750,9 @@ function _displaySolveScoreEntry(item) {
     if (item.name === 'weighted_sum') {
         return `weighted_sum(${params[0] || '?'},${params[1] || '?'})`;
     }
+    if (_solveScoreOutputSpecs && _solveScoreOutputSpecs[item.name]) {
+        return item.name;
+    }
     return _displayTransformEntry(item);
 }
 
@@ -4030,6 +4033,10 @@ function _solveScoreDraftState(chain, fallbackMetric = 'proximity', legacyQuanti
         if (_solveScoreUnarySpecs[item.name]) {
             return;
         }
+        if (_solveScoreOutputSpecs[item.name]) {
+            stackDepth = stackDepth >= 1 ? stackDepth - 1 : 0;
+            return;
+        }
         const spec = _solveScoreCombineSpecs[item.name];
         if (!spec) return;
         if (stackDepth >= spec.arity) stackDepth -= spec.arity - 1;
@@ -4065,6 +4072,7 @@ function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuan
     let omegaPhase = 0;
     let omegaEnabled = false;
     const program = [];
+    const outputChannels = [];
     normalized.forEach((item) => {
         const metricDetails = _solveScoreItemMetricDetails(item, legacyQuantilePct);
         if (metricDetails) {
@@ -4149,6 +4157,21 @@ function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuan
             program.push({ kind: 'flip' });
             return;
         }
+        if (_solveScoreOutputSpecs[item.name]) {
+            if (stackDepth < 1) throw new Error(`${item.name} requires one score value on the stack`);
+            if ((item.params || []).length !== 0) throw new Error(`${item.name} takes no parameters`);
+            if (outputChannels.length >= 8) throw new Error('Solve score supports at most 8 output channels');
+            const channel = outputChannels.length;
+            program.push({ kind: item.name, channel });
+            outputChannels.push({
+                name: `channel_${channel}`,
+                emit: item.name,
+                channel,
+                range_normalized: item.name === 'emit_norm',
+            });
+            stackDepth -= 1;
+            return;
+        }
         const spec = _solveScoreCombineSpecs[item.name];
         if (!spec) throw new Error(`Invalid solve-score chip: ${item.name}`);
         if (stackDepth < spec.arity) throw new Error(`${item.name} requires ${spec.arity} inputs`);
@@ -4168,7 +4191,14 @@ function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuan
         stackDepth -= spec.arity - 1;
     });
     if (!metrics.length) throw new Error('Solve score chain must contain at least one metric chip');
-    if (stackDepth !== 1) throw new Error(`Solve score chain must end with stack depth 1, got ${stackDepth}`);
+    const hasExplicitOutputs = outputChannels.length > 0;
+    if (hasExplicitOutputs) {
+        if (stackDepth !== 0) throw new Error(`Explicit-output solve score chain must end with stack depth 0, got ${stackDepth}`);
+    } else if (stackDepth !== 1) {
+        throw new Error(`Solve score chain must end with stack depth 1, got ${stackDepth}`);
+    } else {
+        outputChannels.push({ name: 'score', emit: 'implicit', channel: 0, range_normalized: false });
+    }
     const metric = metrics[0].metric;
     const quantile = metrics[0].quantile;
     const programSpec = _buildSolveScoreProgramSpec(program);
@@ -4197,16 +4227,22 @@ function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuan
         omega_phase: omegaPhase,
         omega_enabled: omegaEnabled,
         stack_depth: stackDepth,
+        has_explicit_outputs: hasExplicitOutputs,
+        output_channel_count: outputChannels.length,
+        output_channels: outputChannels,
+        output_interpretation: hasExplicitOutputs && outputChannels.length === 3 ? 'direct_rgb' : 'scalar_palette',
         chain: _serializeSolveScoreChain(normalized, fallbackMetric, legacyQuantilePct),
         program_spec: programSpec,
         display: normalized.map(item => _displaySolveScoreEntry(item)).join(' '),
         legacy_compatible:
             !usesLag &&
             !(usesCoeffSource || usesParamSource) &&
+            !hasExplicitOutputs &&
             (program.length === 1 && program[0].kind === 'metric') ||
             (
                 !usesLag &&
                 !(usesCoeffSource || usesParamSource) &&
+                !hasExplicitOutputs &&
                 program.length === 2 &&
                 program[0].kind === 'metric' &&
                 program[1].kind === 'omega_cosine' &&
@@ -4818,6 +4854,7 @@ function _solveScoreAllowedAdditions(which) {
         if (draft.stackDepth >= spec.arity) allowed.push(name);
     });
     if (draft.stackDepth >= 1) allowed.push(...Object.keys(_solveScoreUnarySpecs));
+    if (draft.stackDepth >= 1 && which === 'ss') allowed.push(...Object.keys(_solveScoreOutputSpecs));
     return allowed;
 }
 
@@ -4826,6 +4863,7 @@ function _solveScoreCategoryForName(name) {
     if (kind === 'metric') return 'metric';
     if (kind === 'unary') return 'unary';
     if (kind === 'combine') return 'combine';
+    if (kind === 'output') return 'output';
     return 'other';
 }
 
@@ -4851,6 +4889,13 @@ function _solveScoreCategoryMeta(kind) {
             empty: 'need two scores on the stack',
         };
     }
+    if (kind === 'output') {
+        return {
+            title: 'Output',
+            help: 'pop a score into the raw output buffer',
+            empty: 'add a score first',
+        };
+    }
     return { title: 'Other', help: '', empty: 'none available' };
 }
 
@@ -4863,18 +4908,19 @@ function _solveScoreChipHint(name) {
         return `${sources.join('/')} -> score`;
     }
     if (_solveScoreUnarySpecs[name]) return 'score -> score';
+    if (_solveScoreOutputSpecs[name]) return 'score -> output';
     const spec = _solveScoreCombineSpecs[name];
     if (spec) return `${spec.arity} scores -> score`;
     return '';
 }
 
 function _solveScorePickerGroups(which) {
-    const byKind = { metric: [], unary: [], combine: [] };
+    const byKind = { metric: [], unary: [], combine: [], output: [] };
     _solveScoreAllowedAdditions(which).forEach(name => {
         const kind = _solveScoreCategoryForName(name);
         if (byKind[kind]) byKind[kind].push(name);
     });
-    return ['metric', 'unary', 'combine'].map(kind => ({
+    return ['metric', 'unary', 'combine', 'output'].map(kind => ({
         kind,
         ..._solveScoreCategoryMeta(kind),
         items: byKind[kind],
@@ -8935,6 +8981,10 @@ const _solveScoreUnarySpecs = {
     sawtooth: { arity: 1, params: [{ ph: 'mult', def: '10' }], tooltip: 'unary stack op: frac(score*mult)' },
     flip: { arity: 1, params: [], tooltip: 'unary stack op: 1-score' },
 };
+const _solveScoreOutputSpecs = {
+    emit: { arity: 1, params: [], tooltip: 'pop one score and emit it as a raw output byte without range estimation' },
+    emit_norm: { arity: 1, params: [], tooltip: 'pop one score and emit it using lores q05/q95 range normalization' },
+};
 const _solveScoreCombineSpecs = {
     avg: { arity: 2, params: [] },
     min: { arity: 2, params: [] },
@@ -8978,6 +9028,14 @@ const _ssCatalog = (() => {
             chip_kind: 'unary',
             params: spec.params || [],
             tooltip: spec.tooltip || `stack ${spec.arity} -> ${spec.arity}`,
+        };
+    });
+    Object.entries(_solveScoreOutputSpecs).forEach(([name, spec]) => {
+        catalog[name] = {
+            label: name,
+            chip_kind: 'output',
+            params: spec.params || [],
+            tooltip: spec.tooltip || 'stack 1 -> output',
         };
     });
     return catalog;
@@ -9652,6 +9710,10 @@ function _renderRtChipHtml(item, i, which, catalog) {
     if ((which === 'ss' || which === 'palette-ss') && item.name === 'flip') {
         const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
         return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>flip</span></span>`, tooltip);
+    }
+    if ((which === 'ss' || which === 'palette-ss') && _solveScoreOutputSpecs[item.name]) {
+        const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
+        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>${_escapeHtml(item.name)}</span></span>`, tooltip);
     }
     if ((which === 'ss' || which === 'palette-ss') && _solveScoreCombineSpecs[item.name]) {
         const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';

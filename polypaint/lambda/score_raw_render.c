@@ -7,7 +7,7 @@
  *     --palette=<name> --background_color=RRGGBB [--quality=90]
  *     [--preview=preview.png] [--preview_max=512]
  *
- * Input raw format: row-major uchar bytes, one byte per pixel, no header.
+ * Input raw format: row-major uchar bytes, one or three bytes per pixel, no header.
  * eq.bin must contain exactly 256 bytes. Entry 0 is used for background.
  *
  * Build (dynamic, needs libvips from Lambda layer):
@@ -39,6 +39,14 @@ static const char *getArg(int argc, char **argv, const char *key) {
 static int getArgInt(int argc, char **argv, const char *key, int def) {
     const char *v = getArg(argc, argv, key);
     return v ? atoi(v) : def;
+}
+
+static int copy_rgb_raw_to_image(const char *inPath, VipsImage **out, int width, int height) {
+    if (vips_rawload(inPath, out, width, height, 3, NULL)) {
+        fprintf(stderr, "vips_rawload RGB failed: %s\n", vips_error_buffer());
+        return 0;
+    }
+    return 1;
 }
 
 static int parse_hex_rgb(const char *value, unsigned char *r, unsigned char *g, unsigned char *b) {
@@ -163,6 +171,7 @@ int main(int argc, char **argv) {
     const char *widthArg = getArg(argc, argv, "--width");
     const char *heightArg = getArg(argc, argv, "--height");
     int pix = getArgInt(argc, argv, "--pix", 0);
+    int channels = getArgInt(argc, argv, "--channels", 1);
     int quality = getArgInt(argc, argv, "--quality", 90);
     int previewMax = getArgInt(argc, argv, "--preview_max", 512);
 
@@ -171,8 +180,13 @@ int main(int argc, char **argv) {
         vips_shutdown();
         return 2;
     }
-    if (!eqLutPath || !paletteName || !backgroundColor || pix <= 0) {
-        fprintf(stderr, "Missing required args: --pix, --eq_lut, --palette, --background_color\n");
+    if (pix <= 0 || (channels != 1 && channels != 3)) {
+        fprintf(stderr, "Missing/invalid required args: --pix and --channels must be valid (channels 1 or 3)\n");
+        vips_shutdown();
+        return 2;
+    }
+    if (channels == 1 && (!eqLutPath || !paletteName || !backgroundColor)) {
+        fprintf(stderr, "Missing required scalar args: --eq_lut, --palette, --background_color\n");
         vips_shutdown();
         return 2;
     }
@@ -187,23 +201,27 @@ int main(int argc, char **argv) {
     VipsImage *preview = NULL;
     int exitCode = 1;
 
-    eqLut = load_eq_lut_image(eqLutPath);
-    if (!eqLut) goto cleanup;
+    if (channels == 3) {
+        if (!copy_rgb_raw_to_image(inPath, &rgb, width, height)) goto cleanup;
+    } else {
+        eqLut = load_eq_lut_image(eqLutPath);
+        if (!eqLut) goto cleanup;
 
-    paletteLut = build_palette_lut_image(paletteName, backgroundColor);
-    if (!paletteLut) goto cleanup;
+        paletteLut = build_palette_lut_image(paletteName, backgroundColor);
+        if (!paletteLut) goto cleanup;
 
-    if (vips_rawload(inPath, &raw, width, height, 1, NULL)) {
-        fprintf(stderr, "vips_rawload failed: %s\n", vips_error_buffer());
-        goto cleanup;
-    }
-    if (vips_maplut(raw, &equalized, eqLut, NULL)) {
-        fprintf(stderr, "vips_maplut(equalization) failed: %s\n", vips_error_buffer());
-        goto cleanup;
-    }
-    if (vips_maplut(equalized, &rgb, paletteLut, NULL)) {
-        fprintf(stderr, "vips_maplut(palette) failed: %s\n", vips_error_buffer());
-        goto cleanup;
+        if (vips_rawload(inPath, &raw, width, height, 1, NULL)) {
+            fprintf(stderr, "vips_rawload failed: %s\n", vips_error_buffer());
+            goto cleanup;
+        }
+        if (vips_maplut(raw, &equalized, eqLut, NULL)) {
+            fprintf(stderr, "vips_maplut(equalization) failed: %s\n", vips_error_buffer());
+            goto cleanup;
+        }
+        if (vips_maplut(equalized, &rgb, paletteLut, NULL)) {
+            fprintf(stderr, "vips_maplut(palette) failed: %s\n", vips_error_buffer());
+            goto cleanup;
+        }
     }
     if (!save_image(rgb, outPath, quality)) goto cleanup;
 

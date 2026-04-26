@@ -58,8 +58,8 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(
             plan["solve_score"]["chain"],
             [
-                {"name": "crowding", "params": ["slv", "1"]},
-                {"name": "omega_cosine", "params": ["3"]},
+                ["crowding", "1"],
+                ["omega_cosine", "3"],
             ],
         )
         self.assertEqual(plan["solve_score"]["omega"], 3.0)
@@ -67,8 +67,8 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(
             plan["params"]["solve_score_chain"],
             [
-                {"name": "crowding", "params": ["slv", "1"]},
-                {"name": "omega_cosine", "params": ["3"]},
+                ["crowding", "1"],
+                ["omega_cosine", "3"],
             ],
         )
         self.assertEqual(plan["params"]["solve_score_omega"], 3.0)
@@ -253,15 +253,15 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(
             plan["solve_score"]["chain"],
             [
-                {"name": "spread", "params": ["slv", "1"]},
-                {"name": "omega_cosine", "params": ["5"]},
+                ["spread", "1"],
+                ["omega_cosine", "5"],
             ],
         )
         self.assertEqual(
             plan["params"]["solve_score_chain"],
             [
-                {"name": "spread", "params": ["slv", "1"]},
-                {"name": "omega_cosine", "params": ["5"]},
+                ["spread", "1"],
+                ["omega_cosine", "5"],
             ],
         )
 
@@ -291,6 +291,85 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(plan["calc"]["n_coeffs"], 7)
         self.assertEqual(plan["solve_score"]["metrics"][0]["source"], "slv")
         self.assertEqual(plan["solve_score"]["metrics"][1]["source"], "cf")
+
+    @patch("handler_palette_render_plan.s3")
+    def test_palette_generation_rejects_explicit_output_chain(self, mock_s3):
+        from handler_palette_render_plan import handler
+
+        with self.assertRaisesRegex(RuntimeError, "explicit emit/emit_norm outputs are color-render only"):
+            handler(_event(params={
+                "metric": "proximity",
+                "palette": "reef",
+                "solve_score_chain": [
+                    ["proximity", "0.1"],
+                    ["emit_norm"],
+                    ["spread", "0.1"],
+                    ["emit_norm"],
+                    ["angular_entropy_16", "0.1"],
+                    ["emit_norm"],
+                ],
+            }), None)
+
+        mock_s3.get_object.assert_not_called()
+
+    @patch("handler_palette_render_plan.s3")
+    def test_extract_plan_rejects_direct_rgb_color_artifact(self, mock_s3):
+        from handler_palette_render_plan import handler
+
+        def head_object(**kwargs):
+            if kwargs["Key"] != "renders/j/color/color_rgb/image.jpeg":
+                raise AssertionError(f"unexpected head_object key: {kwargs['Key']}")
+            return {
+                "Metadata": {
+                    "artifact_id": "color_rgb",
+                    "family": "color",
+                    "color_mode": "solve_score",
+                    "raw_channels": "3",
+                    "score_output_channel_count": "3",
+                    "score_output_interpretation": "direct_rgb",
+                    "solve_metric": "proximity",
+                    "solve_score_chain": '[["proximity","0.1"],["emit_norm"],["spread","0.1"],["emit_norm"],["angular_entropy_16","0.1"],["emit_norm"]]',
+                    "solve_score_quantile": "0.01",
+                    "solve_score_omega": "1",
+                    "solve_score_omega_enabled": "true",
+                    "palette": "reef",
+                    "root_transforms": "[]",
+                }
+            }
+
+        mock_s3.head_object.side_effect = head_object
+        mock_s3.get_object.return_value = {"Body": MagicMock(read=lambda: b"{}")}
+
+        with self.assertRaisesRegex(RuntimeError, "multi-output/direct-RGB artifacts are not palette-extractable"):
+            handler(_event(artifact_id="color_rgb"), None)
+
+    @patch("handler_palette_render_plan.s3")
+    def test_palette_plan_publicizes_generic_metric_chain(self, mock_s3):
+        from handler_palette_render_plan import handler
+
+        calc = {
+            "degree": 5,
+            "N": 4,
+            "times": 1,
+            "n_coeffs": 7,
+            "lores": {"bin_key": "renders/j/lores.bin", "coeffs_key": "renders/j/lores_coeffs.bin"},
+            "chunks": [{"idx": 0, "bin_key": "renders/j/chunk_0.bin", "n_t": 16}],
+        }
+        mock_s3.get_object.return_value = {"Body": MagicMock(read=lambda: json.dumps(calc).encode())}
+
+        result = handler(_event(params={
+            "metric": "angular_entropy_16",
+            "palette": "reef",
+            "solve_score_chain": [["metric", "angular_entropy_16", "cf", "0.5"]],
+            "solve_score_quantile": 0.005,
+            "root_transforms": [],
+        }), None)
+        plan = json.loads(result["body"])
+
+        expected_chain = [["metric", "angular_entropy_16", "cf", "0.5"]]
+        self.assertEqual(plan["params"]["solve_score_chain"], expected_chain)
+        self.assertEqual(plan["solve_score"]["chain"], expected_chain)
+        self.assertNotIn("__metric", result["body"])
 
     @patch("handler_palette_render_plan.s3")
     def test_palette_plan_accepts_param_source_chain(self, mock_s3):
@@ -522,7 +601,7 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(plan["attach"]["mode"], "dependency")
         self.assertEqual(plan["palette_id"], "pal_src")
         self.assertEqual(plan["attach"]["palette"], "magma")
-        self.assertEqual(plan["attach"]["score_chain"], [{"name": "crowding", "params": ["slv", "1"]}])
+        self.assertEqual(plan["attach"]["score_chain"], [["crowding", "1"]])
         self.assertFalse(plan["attach"]["omega_enabled"])
 
     @patch("handler_palette_render_plan.s3")
@@ -649,7 +728,7 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(plan["attach"]["palette_id"], "pal_src")
         self.assertEqual(plan["attach"]["image_key"], "renders/j/palettes/pal_src/image.jpeg")
         self.assertEqual(plan["attach"]["preview_key"], "renders/j/palettes/pal_src/preview.png")
-        self.assertEqual(plan["attach"]["score_chain"], [{"name": "spread", "params": ["slv", "1"]}])
+        self.assertEqual(plan["attach"]["score_chain"], [["spread", "1"]])
         self.assertFalse(plan["attach"]["omega_enabled"])
 
     @patch("handler_palette_render_plan.s3")
@@ -697,8 +776,8 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(
             plan["solve_score"]["chain"],
             [
-                {"name": "clusteriness", "params": ["slv", "1"]},
-                {"name": "omega_cosine", "params": ["3"]},
+                ["clusteriness", "1"],
+                ["omega_cosine", "3"],
             ],
         )
         self.assertIn("/palettes/", plan["solve_score"]["clip_key"])

@@ -334,9 +334,13 @@ def _finalize_associated_palette(
     clip_slots,
     chain_fingerprint,
     score_program,
+    channels,
+    interpretation,
+    output_channels,
     score_output_normalize,
     score_output_clip_lo,
     score_output_clip_hi,
+    allow_zero,
     parent_progress,
 ):
     grid_n = int(associated_palette_grid_n or 0)
@@ -373,6 +377,8 @@ def _finalize_associated_palette(
         fragment_urls=fragment_urls,
         manifest_path=url_manifest_path,
         progress_cb=_report_assemble_progress,
+        channels=channels,
+        allow_zero=allow_zero,
     )
     assemble_ms = int((time.time() - t_assemble) * 1000)
 
@@ -387,6 +393,9 @@ def _finalize_associated_palette(
         palette=str(associated_palette.get("palette") or metadata.get("palette") or "inferno"),
         background_color=background_color_hex(metadata.get("background_color", [0, 0, 0])),
         quality=90,
+        channels=channels,
+        interpretation=interpretation,
+        zero_background=not allow_zero,
     )
     render_ms = int((time.time() - t_render) * 1000)
 
@@ -433,6 +442,10 @@ def _finalize_associated_palette(
         meta_key=meta_key,
         created_at=created_at,
         histogram=hist_meta["histogram"],
+        channels=channels,
+        raw_layout="u8_scalar_row_major" if channels == 1 else "u8_packed_channels_row_major",
+        interpretation=interpretation,
+        output_channels=output_channels,
     )
 
     with open(raw_path, "rb") as raw_fh:
@@ -454,6 +467,7 @@ def _finalize_associated_palette(
         "width": str(grid_n),
         "height": str(grid_n),
         "palette": str(associated_palette.get("palette") or metadata.get("palette") or ""),
+        "color_interpretation": interpretation,
         "full_n": str(grid_n),
         "times": str(int(associated_palette_times or 1)),
         "using_pass": "0",
@@ -494,6 +508,10 @@ def _finalize_associated_palette(
         "total_solves": grid_n * grid_n,
         "pass_count": int(associated_palette_times or 1),
         "data_layout": "fused_pass0_raw_v1",
+        "raw_channels": int(channels),
+        "raw_layout": "u8_scalar_row_major" if channels == 1 else "u8_packed_channels_row_major",
+        "color_interpretation": interpretation,
+        "score_output_interpretation": interpretation,
         "render_reusable": False,
         "file_size": int(encode_meta["file_size"]),
         "image_key": image_key,
@@ -520,6 +538,7 @@ def _finalize_associated_palette(
     )
     return {
         "palette_id": palette_id,
+        "mode": "generated",
         "display_name": str(associated_palette.get("display_name") or palette_id),
         "palette": str(associated_palette.get("palette") or metadata.get("palette") or ""),
         "metric": associated_score["metric"],
@@ -529,6 +548,7 @@ def _finalize_associated_palette(
         "raw_key": raw_key,
         "raw_meta_key": raw_meta_key,
         "meta_key": meta_key,
+        "color_interpretation": interpretation,
         "file_size": int(encode_meta["file_size"]),
         "assemble_ms": assemble_ms,
         "render_ms": render_ms,
@@ -657,18 +677,19 @@ def handler(event, context):
     step_scores_pass_count = associated_palette_times
     step_scores_key = ""
     step_scores_count = 0
-    if channels == 1 and step_scores_grid_n > 0 and step_scores_pass_count > 0:
+    if step_scores_grid_n > 0 and step_scores_pass_count > 0:
         step_scores_count = int(step_scores_grid_n) * int(step_scores_grid_n) * int(step_scores_pass_count)
-        actual_step_scores_count = _concat_step_scores(
+        expected_step_score_bytes = step_scores_count * int(channels)
+        actual_step_score_bytes = _concat_step_scores(
             finalize_s3=finalize_s3,
             fragment_prefix=fragment_prefix,
             source_item_count=source_item_count,
             out_path=step_scores_path,
         )
-        if actual_step_scores_count != step_scores_count:
+        if actual_step_score_bytes != expected_step_score_bytes:
             raise RuntimeError(
                 "FinalizeMT step score byte count mismatch: "
-                f"expected {step_scores_count}, got {actual_step_scores_count}"
+                f"expected {expected_step_score_bytes}, got {actual_step_score_bytes}"
             )
         step_scores_key = raw_key.rsplit("/", 1)[0] + "/step_scores.raw"
         with open(step_scores_path, "rb") as scores_fh:
@@ -680,6 +701,7 @@ def handler(event, context):
             )
         progress["step_scores_key"] = step_scores_key
         progress["step_scores_count"] = step_scores_count
+        progress["step_scores_bytes"] = expected_step_score_bytes
         progress["step_scores_grid_n"] = step_scores_grid_n
         report_status(job_id, task_id, "wrote_step_scores", result_data=progress)
 
@@ -751,7 +773,8 @@ def handler(event, context):
     )
 
     associated_palette_result = None
-    if str(associated_palette.get("mode") or "") == "generated":
+    associated_palette_mode = str(associated_palette.get("mode") or "")
+    if associated_palette_mode == "generated":
         associated_palette_result = _finalize_associated_palette(
             finalize_s3=finalize_s3,
             job_id=job_id,
@@ -769,11 +792,17 @@ def handler(event, context):
             clip_slots=clip_info["clip_slots"],
             chain_fingerprint=clip_info["chain_fingerprint"],
             score_program=clip_info["score_program"],
+            channels=channels,
+            interpretation=clip_info["score_output_interpretation"],
+            output_channels=clip_info["score_output_channels"],
             score_output_normalize=clip_info["score_output_normalize"],
             score_output_clip_lo=clip_info["score_output_clip_lo"],
             score_output_clip_hi=clip_info["score_output_clip_hi"],
+            allow_zero=channels > 1 or bool(clip_info.get("score_output_has_explicit_outputs")),
             parent_progress=progress,
         )
+    elif associated_palette_mode not in ("", "none"):
+        raise RuntimeError(f"FinalizeMT does not support associated_palette.mode={associated_palette_mode!r}")
 
     final_metadata = dict(metadata)
     final_metadata["render_execution"] = render_execution
@@ -792,16 +821,17 @@ def handler(event, context):
         final_metadata["render_warnings"] = json.dumps(render_warnings, separators=(",", ":"))
     final_metadata["raw_channels"] = str(channels)
     final_metadata["raw_layout"] = "u8_scalar_row_major" if channels == 1 else "u8_packed_channels_row_major"
-    final_metadata["repalette_capable"] = False
+    final_metadata["repalette_capable"] = True
     if channels == 3:
         final_metadata["rgb_source"] = f"{clip_info['score_output_interpretation']}_raw"
     if associated_palette_result:
-        final_metadata["associated_palette_mode"] = "generated"
+        final_metadata["associated_palette_mode"] = str(associated_palette_result.get("mode") or associated_palette_mode)
         final_metadata["associated_palette_id"] = associated_palette_result["palette_id"]
         final_metadata["associated_palette_display_name"] = associated_palette_result["display_name"]
         final_metadata["associated_palette_image_key"] = associated_palette_result["image_key"]
         final_metadata["associated_palette_preview_key"] = associated_palette_result["preview_key"]
         final_metadata["associated_palette_palette"] = associated_palette_result["palette"]
+        final_metadata["associated_palette_color_interpretation"] = associated_palette_result.get("color_interpretation", "")
         final_metadata["associated_palette_metric"] = associated_palette_result["metric"]
         final_metadata["associated_palette_score_chain"] = associated_palette_result["score_chain"]
         final_metadata["associated_palette_raw_key"] = associated_palette_result["raw_key"]

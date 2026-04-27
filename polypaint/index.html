@@ -137,7 +137,7 @@ button {
     border-color: rgba(233,69,96,0.55);
     background: rgba(233,69,96,0.08);
 }
-.color-mode-row label {
+.color-mode-row label:not(.color-mode-choice) {
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -146,7 +146,7 @@ button {
     font-size: 11px;
     line-height: 13px;
 }
-.color-mode-choice {
+.color-mode-row .color-mode-choice {
     display: grid;
     grid-template-columns: 14px minmax(0, 1fr);
     align-items: center;
@@ -154,7 +154,7 @@ button {
     cursor: pointer;
     min-height: 16px;
 }
-.color-mode-choice input[type="radio"] {
+.color-mode-row .color-mode-choice input[type="radio"] {
     margin: 0;
     width: 13px;
     height: 13px;
@@ -1331,6 +1331,7 @@ button {
                     <div id="render-lores-preview-tabs" class="render-lores-preview-tabs">
                         <div class="render-lores-preview-tabbar">
                             <button type="button" id="render-lores-preview-tab-plot" class="render-lores-preview-tab active" onclick="_selectRenderLoresPreviewTab('plot')">Plot</button>
+                            <button type="button" id="render-lores-preview-tab-palette" class="render-lores-preview-tab" style="display:none" onclick="_selectRenderLoresPreviewTab('palette')">Palette</button>
                             <button type="button" id="render-lores-preview-tab-e1" class="render-lores-preview-tab" style="display:none" onclick="_selectRenderLoresPreviewTab('e1')">E1</button>
                             <button type="button" id="render-lores-preview-tab-e2" class="render-lores-preview-tab" style="display:none" onclick="_selectRenderLoresPreviewTab('e2')">E2</button>
                             <button type="button" id="render-lores-preview-tab-e3" class="render-lores-preview-tab" style="display:none" onclick="_selectRenderLoresPreviewTab('e3')">E3</button>
@@ -1341,6 +1342,11 @@ button {
                                     <canvas id="render-lores-preview-canvas" width="256" height="256" style="width:100%; height:100%; image-rendering:pixelated; display:block"></canvas>
                                     <div id="render-lores-preview-marquee" class="render-preview-marquee" aria-hidden="true"></div>
                                 </div>
+                            </div>
+                        </div>
+                        <div id="render-lores-preview-pane-palette" class="render-lores-preview-pane">
+                            <div class="render-lores-preview-histbox">
+                                <canvas id="render-lores-preview-palette-canvas" width="256" height="256" style="image-rendering:pixelated"></canvas>
                             </div>
                         </div>
                         <div id="render-lores-preview-pane-e1" class="render-lores-preview-pane"><div class="render-lores-preview-histbox"><canvas id="render-lores-preview-hist-e1" width="256" height="256"></canvas></div></div>
@@ -2048,7 +2054,8 @@ button {
         <div style="margin:10px 0 12px 0">
             <div id="palette-circles-color-repalette" style="display:flex; flex-wrap:wrap; gap:8px"></div>
         </div>
-        <div class="autolevel-popup-help">Reuses the selected Color artifact’s canonical greyscale raw when present, otherwise its saved winner-per-raw-score fragments, and only changes the palette-to-RGB mapping.</div>
+        <div id="color-repalette-interpretation-row" class="autolevel-popup-summary" style="display:none; margin-bottom:10px"></div>
+        <div class="autolevel-popup-help">Reuses the selected Color artifact’s raw bytes and only changes the palette-to-RGB mapping. Scalar LUT artifacts reuse one byte per pixel; RGB LUT and HSV LUT artifacts reuse three bytes per pixel.</div>
         <div class="autolevel-popup-actions">
             <div></div>
             <div style="display:flex; gap:8px">
@@ -2166,7 +2173,7 @@ button {
                 <div id="render-mt-fused-raster-section-summary" class="autolevel-stage-text popup-stable-block medium" style="font-size:11px"></div>
             </div>
             <div id="render-mt-fused-associated-row" class="autolevel-stage-row" style="align-items:center; margin-top:14px; padding-top:10px; border-top:1px solid #2c2c2c">
-                <div class="autolevel-stage-text">Associated palette artifact for this fused Color render.</div>
+                <div class="autolevel-stage-text">Associated palette artifact for this fused Color render. Saves a dense pass-0 parameter-grid palette, using scalar or packed channel bytes from the same solve-score program.</div>
                 <div class="autolevel-inline-fields">
                     <label class="inline-label" style="display:flex; align-items:center; gap:6px">
                         <input id="render-mt-fused-save-associated-palette" type="checkbox">
@@ -5660,6 +5667,7 @@ let _renderLoresPreviewDragState = {
 };
 let _renderLoresPreviewActiveTab = 'plot';
 let _renderLoresPreviewEmissionHistograms = [];
+let _renderLoresPreviewHasPalette = false;
 let _renderLoadedJobId = '';
 let _renderNeedsRefresh = false;
 let _favoriteRefs = [];
@@ -5675,7 +5683,7 @@ let _longPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
 let _autolevelPopupState = { open: false, sourceArtifactId: '', sourceImageKey: '' };
 let _resizePopupState = { open: false, sourceArtifactId: '', sourceImageKey: '' };
 let _repalettePopupState = { open: false, sourcePaletteId: '', sourceDisplayName: '' };
-let _colorRepalettePopupState = { open: false, sourceArtifactId: '', sourceDisplayName: '' };
+let _colorRepalettePopupState = { open: false, sourceArtifactId: '', sourceDisplayName: '', interpretation: '' };
 let _bilevelPopupState = { open: false, sectionMode: 'logical_sections_auto', sectionCount: '' };
 let _colorToBilevelPopupState = { open: false, sourceArtifactId: '', threshold: 0 };
 let _solveScoreSelectedIndex = { ss: -1, 'palette-ss': -1 };
@@ -6738,12 +6746,54 @@ function _hasColorRawSidecar(art) {
 function _canColorRepaletteArtifact(art) {
     if (!art || art.family !== 'color') return false;
     if (art.postprocess_kind) return false;
-    if (art.color_mode !== 'solve_score') return false;
+    if (art.color_mode !== 'solve_score' && art.color_mode !== 'saved_palette') return false;
+    if (![1, 3].includes(_artifactOutputChannelCount(art))) return false;
     return !!_hasColorRawSidecar(art);
+}
+
+function _defaultColorRepaletteInterpretation(art) {
+    const mode = _artifactColorInterpretation(art);
+    return (mode === 'hsv' || mode === 'hsv_lut') ? 'hsv_lut' : 'rgb_lut';
+}
+
+function _selectedColorRepaletteInterpretation(art) {
+    const channels = _artifactOutputChannelCount(art);
+    if (channels !== 3) return '';
+    const el = document.getElementById('color-repalette-interpretation');
+    const selected = _normalizeColorInterpretation(el ? el.value : _colorRepalettePopupState.interpretation);
+    return selected === 'hsv_lut' ? 'hsv_lut' : 'rgb_lut';
 }
 
 function _findColorArtifactById(artifactId) {
     return (_renderArtifacts.color || []).find(art => art && art.artifact_id === artifactId) || null;
+}
+
+function _artifactOutputChannelCount(art) {
+    if (!art) return 1;
+    const raw = art.raw_channels ?? art.score_output_channel_count ?? art.output_channel_count;
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+    return _artifactColorInterpretation(art) === 'scalar_lut' ? 1 : 3;
+}
+
+function _isScalarExtractPaletteSource(art) {
+    return !!(
+        art &&
+        art.color_mode === 'solve_score' &&
+        _artifactOutputChannelCount(art) === 1 &&
+        _artifactColorInterpretation(art) === 'scalar_lut'
+    );
+}
+
+function _hasFusedStepScorePaletteSource(art) {
+    if (!art || art.color_mode !== 'solve_score') return false;
+    const channels = _artifactOutputChannelCount(art);
+    return !!(
+        (channels === 1 || channels === 3) &&
+        art.step_scores_key &&
+        art.raw_key &&
+        art.raw_meta_key
+    );
 }
 
 function _canExtractPaletteArtifact(art) {
@@ -6753,7 +6803,10 @@ function _canExtractPaletteArtifact(art) {
     while (current && current.artifact_id && !seen.has(current.artifact_id)) {
         seen.add(current.artifact_id);
         if (current.associated_palette_id) return true;
-        if (current.color_mode === 'solve_score') return true;
+        if (current.color_mode === 'saved_palette' && current.palette_source_id) return true;
+        if (current.color_mode === 'solve_score') {
+            return _hasFusedStepScorePaletteSource(current) || _isScalarExtractPaletteSource(current);
+        }
         const parentId = String(current.derived_from_artifact_id || '').trim();
         if (!parentId) break;
         current = _findColorArtifactById(parentId);
@@ -6862,7 +6915,7 @@ function _closeColorRepalettePopup() {
     _closeBuiltinPalettePopup();
     _closeTriPalettePopup();
     _closeLongPalettePopup();
-    _colorRepalettePopupState = { open: false, sourceArtifactId: '', sourceDisplayName: '' };
+    _colorRepalettePopupState = { open: false, sourceArtifactId: '', sourceDisplayName: '', interpretation: '' };
     const overlay = document.getElementById('color-repalette-popup-overlay');
     if (overlay) {
         overlay.style.display = 'none';
@@ -6873,6 +6926,7 @@ function _closeColorRepalettePopup() {
 function _renderColorRepalettePopup() {
     const overlay = document.getElementById('color-repalette-popup-overlay');
     const summaryEl = document.getElementById('color-repalette-popup-summary');
+    const interpretationEl = document.getElementById('color-repalette-interpretation-row');
     const runBtn = document.getElementById('color-repalette-popup-run');
     const art = _renderSelectedArtifactEntry();
     if (!overlay || !summaryEl || !_colorRepalettePopupState.open || !art || !_canColorRepaletteArtifact(art)) {
@@ -6884,7 +6938,32 @@ function _renderColorRepalettePopup() {
     _renderPaletteRow('color_repalette');
     const sourceName = art.artifact_id || 'selected color artifact';
     const outputPalette = _currentPaletteForMode('color_repalette') || art.palette || '?';
-    const modeLabel = 'canonical greyscale raw reused';
+    const channels = _artifactOutputChannelCount(art);
+    const sourceMode = _artifactColorInterpretation(art);
+    let modeLabel = channels === 3 ? `${channels}-byte ${_colorInterpretationLabel(sourceMode)} raw reused` : 'scalar raw reused';
+    if (channels === 3) {
+        const selected = _selectedColorRepaletteInterpretation(art);
+        if (interpretationEl) {
+            interpretationEl.style.display = 'block';
+            interpretationEl.innerHTML = `
+                <div style="display:grid; grid-template-columns:120px minmax(0,1fr); gap:10px; align-items:center">
+                    <label for="color-repalette-interpretation" style="margin:0; color:#888; text-align:right">Output LUT</label>
+                    <select id="color-repalette-interpretation" style="max-width:220px">
+                        <option value="rgb_lut"${selected === 'rgb_lut' ? ' selected' : ''}>RGB LUT</option>
+                        <option value="hsv_lut"${selected === 'hsv_lut' ? ' selected' : ''}>HSV LUT</option>
+                    </select>
+                </div>`;
+            const selectEl = document.getElementById('color-repalette-interpretation');
+            if (selectEl) selectEl.addEventListener('change', () => {
+                _colorRepalettePopupState.interpretation = _selectedColorRepaletteInterpretation(art);
+                _renderColorRepalettePopup();
+            });
+        }
+        modeLabel += ` → ${_colorInterpretationLabel(selected)}`;
+    } else if (interpretationEl) {
+        interpretationEl.style.display = 'none';
+        interpretationEl.innerHTML = '';
+    }
     summaryEl.textContent = `Source: ${sourceName} • current palette=${art.palette || '?'} • ${modeLabel} • output colorvector=${outputPalette}`;
     if (runBtn) runBtn.disabled = !_currentPaletteForMode('color_repalette');
 }
@@ -6900,6 +6979,7 @@ function openColorRepalettePopup() {
         open: true,
         sourceArtifactId: art.artifact_id || '',
         sourceDisplayName: art.artifact_id || '',
+        interpretation: _artifactOutputChannelCount(art) === 3 ? _defaultColorRepaletteInterpretation(art) : '',
     };
     _renderColorRepalettePopup();
 }
@@ -6916,9 +6996,12 @@ async function runColorRepaletteSelectedArtifact() {
         const taskId = 'color_repalette_' + runId;
         const artifactId = 'color_repalette_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
         const paletteName = _currentPaletteForMode('color_repalette') || art.palette || 'inferno';
-        log(`Color RePalette: dispatching ${art.artifact_id} -> ${paletteName}...`, 'ok', 'render-log');
+        const channels = _artifactOutputChannelCount(art);
+        const newInterpretation = _selectedColorRepaletteInterpretation(art);
+        const modeLabel = channels === 3 ? ` ${_colorInterpretationLabel(newInterpretation)}` : '';
+        log(`Color RePalette: dispatching ${art.artifact_id} -> ${paletteName}${modeLabel}...`, 'ok', 'render-log');
         const dispResult = await lambdaPost('dispatch', {
-            target: 'recolor_from_raw',
+            target: 'color_repalette',
             jobs: [{
                 job_id: jobId,
                 task_id: taskId,
@@ -6926,6 +7009,7 @@ async function runColorRepaletteSelectedArtifact() {
                 source_artifact_id: art.artifact_id,
                 source_image_key: art.image_key,
                 new_palette: paletteName,
+                ...(channels === 3 ? { new_interpretation: newInterpretation } : {}),
             }],
             expected_keys: [],
         });
@@ -7051,15 +7135,30 @@ async function runColorToBilevelSelectedArtifact() {
 async function runExtractPaletteArtifact(config = null) {
     const art = _renderSelectedArtifactEntry();
     const jobId = document.getElementById('render-results-dir').value.trim();
-    if (!jobId || !_canExtractPaletteArtifact(art)) return;
+    const btn = document.getElementById('btn-render-extract-palette');
+    const statusEl = document.getElementById('render-status');
+    const paletteStatusEl = document.getElementById('palette-status');
+    if (!jobId) return;
+    if (!_canExtractPaletteArtifact(art)) {
+        const lineage = _extractPaletteLineageHint(art);
+        const msg = `ExtractPalette unavailable: ${lineage.label}`;
+        if (statusEl) {
+            statusEl.textContent = msg;
+            statusEl.className = 'status error';
+        }
+        if (paletteStatusEl) {
+            paletteStatusEl.textContent = msg;
+            paletteStatusEl.className = 'status error';
+        }
+        log(msg, 'err', 'render-log');
+        log(msg, 'err', 'palette-log');
+        return;
+    }
     const lineage = _extractPaletteLineageHint(art);
     if (_activeRenderRun || _activePaletteRun || _loadActivePaletteRun()) {
         log('ExtractPalette: another render or palette run is already in progress', 'err', 'render-log');
         return;
     }
-    const btn = document.getElementById('btn-render-extract-palette');
-    const statusEl = document.getElementById('render-status');
-    const paletteStatusEl = document.getElementById('palette-status');
     const orig = btn ? btn.textContent : 'ExtractPalette';
     try {
         if (btn) { btn.disabled = true; btn.textContent = 'Extracting...'; }
@@ -7193,12 +7292,6 @@ async function runExtractPaletteArtifact(config = null) {
 
 function _extractPaletteLineageHint(art) {
     if (!art || !art.artifact_id) return { kind: 'none', label: 'No Color artifact selected.' };
-    if (art.step_scores_key && Number(art.step_count || 0) > 0 && Number(art.step_scores_grid_n || 0) > 0) {
-        return {
-            kind: 'fused',
-            label: `Artifact ${art.artifact_id} carries cached step_scores.raw metadata; extraction will regenerate or refresh the exact associated palette from the fused raw contract.`,
-        };
-    }
     let current = art;
     const seen = new Set();
     while (current && current.artifact_id && !seen.has(current.artifact_id)) {
@@ -7208,10 +7301,27 @@ function _extractPaletteLineageHint(art) {
                 ? { kind: 'done', label: `Artifact ${art.artifact_id} already has an associated palette; extraction should be a no-op.` }
                 : { kind: 'attach', label: `Artifact ${art.artifact_id} inherits an associated palette from ${current.artifact_id}; extraction should attach that palette without regeneration.` };
         }
-        if (current.color_mode === 'solve_score') {
+        if (current.color_mode === 'saved_palette' && current.palette_source_id) {
             return current === art
-                ? { kind: 'solve_score', label: `Artifact ${art.artifact_id} is a solve-score render; extraction will reuse exact solve-score lineage and may rerun solve-score prepass if scratch is missing.` }
-                : { kind: 'solve_score', label: `Artifact ${art.artifact_id} resolves to solve-score ancestor ${current.artifact_id}; extraction will use that exact lineage and may rerun solve-score prepass if scratch is missing.` };
+                ? { kind: 'attach', label: `Artifact ${art.artifact_id} uses a saved palette; extraction should attach that dependency as its associated palette.` }
+                : { kind: 'attach', label: `Artifact ${art.artifact_id} resolves to saved-palette ancestor ${current.artifact_id}; extraction should attach that dependency as its associated palette.` };
+        }
+        if (current.color_mode === 'solve_score') {
+            if (_hasFusedStepScorePaletteSource(current)) {
+                const count = _artifactOutputChannelCount(current);
+                const mode = _colorInterpretationLabel(_artifactColorInterpretation(current));
+                return current === art
+                    ? { kind: 'fused', label: `Artifact ${art.artifact_id} carries ${count}-channel step_scores.raw metadata (${mode}); extraction will regenerate or refresh the associated palette from the fused raw contract.` }
+                    : { kind: 'fused', label: `Artifact ${art.artifact_id} resolves to solve-score ancestor ${current.artifact_id} with ${count}-channel step_scores.raw metadata (${mode}); extraction will regenerate or refresh the associated palette from that fused raw contract.` };
+            }
+            if (!_isScalarExtractPaletteSource(current)) {
+                const count = _artifactOutputChannelCount(current);
+                const mode = _colorInterpretationLabel(_artifactColorInterpretation(current));
+                return { kind: 'unsupported', label: `Artifact ${art.artifact_id} resolves to ${current.artifact_id}, which uses ${count} ${count === 1 ? 'output' : 'outputs'} (${mode}). ExtractPalette needs solve-order step_scores.raw or an existing associated palette artifact.` };
+            }
+            return current === art
+                ? { kind: 'solve_score', label: `Artifact ${art.artifact_id} is a scalar solve-score render; extraction will reuse exact solve-score lineage and may rerun solve-score prepass if scratch is missing.` }
+                : { kind: 'solve_score', label: `Artifact ${art.artifact_id} resolves to scalar solve-score ancestor ${current.artifact_id}; extraction will use that exact lineage and may rerun solve-score prepass if scratch is missing.` };
         }
         const parentId = String(current.derived_from_artifact_id || '').trim();
         if (!parentId) break;
@@ -7258,6 +7368,7 @@ function _renderExtractPalettePopup() {
     }
     const art = _renderSelectedArtifactEntry();
     const lineage = _extractPaletteLineageHint(art);
+    const runnable = _canExtractPaletteArtifact(art);
     const executionRelevant = lineage.kind === 'solve_score';
     const solveScoreThreads = _clampRenderMtThreads(_extractPalettePopupState.solveScoreThreads);
     const histInputMode = _normalizeSolveScoreHistInputMode(_extractPalettePopupState.histInputMode);
@@ -7294,15 +7405,20 @@ function _renderExtractPalettePopup() {
     chunkRetriesEl.disabled = !executionRelevant || chunkInputMode !== 'sectioned';
     chunkWorkersEl.disabled = !executionRelevant;
     const artLabel = art && art.artifact_id ? art.artifact_id : '(none)';
-    summaryEl.textContent = executionRelevant
+    summaryEl.textContent = !runnable
+        ? `Artifact: ${artLabel} • ${lineage.label}`
+        : executionRelevant
         ? `Artifact: ${artLabel} • ${lineage.label} • hist threads=${solveScoreThreads} • hist input=${histInputMode} • hist retries=${histRetries} • merge workers=${mergeWorkers} • chunk threads=${chunkThreads} • chunk input=${chunkInputMode} • chunk retries=${chunkRetries} • chunk workers=${chunkWorkers}`
         : `Artifact: ${artLabel} • ${lineage.label} • solve-score and chunk execution controls are ignored for this fused or attach-only lineage.`;
-    if (runBtn) runBtn.disabled = !_canExtractPaletteArtifact(art) || !!_activeRenderRun || !!_activePaletteRun || !!_loadActivePaletteRun();
+    if (runBtn) {
+        runBtn.disabled = !runnable || !!_activeRenderRun || !!_activePaletteRun || !!_loadActivePaletteRun();
+        runBtn.title = runnable ? '' : lineage.label;
+    }
 }
 
 function openExtractPalettePopup() {
     const art = _renderSelectedArtifactEntry();
-    if (_activeRenderRun || _activePaletteRun || _loadActivePaletteRun() || !_canExtractPaletteArtifact(art)) return;
+    if (_activeRenderRun || _activePaletteRun || _loadActivePaletteRun() || !art || !art.artifact_id) return;
     _extractPalettePopupState = {
         open: true,
         solveScoreThreads: _clampRenderMtThreads(_extractPalettePopupState.solveScoreThreads || 4),
@@ -7315,8 +7431,20 @@ function openExtractPalettePopup() {
         chunkWorkers: _clampRenderMtWorkerCount(_extractPalettePopupState.chunkWorkers || 16),
     };
     _renderExtractPalettePopup();
+    if (!_canExtractPaletteArtifact(art)) {
+        const lineage = _extractPaletteLineageHint(art);
+        const msg = `ExtractPalette unavailable: ${lineage.label}`;
+        const statusEl = document.getElementById('render-status');
+        if (statusEl) {
+            statusEl.textContent = msg;
+            statusEl.className = 'status error';
+        }
+        log(msg, 'err', 'render-log');
+    }
     const threadsEl = document.getElementById('extract-palette-solve-score-threads');
-    if (threadsEl && typeof threadsEl.focus === 'function') threadsEl.focus();
+    const runBtn = document.getElementById('extract-palette-popup-run');
+    if (_canExtractPaletteArtifact(art) && threadsEl && typeof threadsEl.focus === 'function') threadsEl.focus();
+    else if (runBtn && typeof runBtn.focus === 'function') runBtn.focus();
 }
 
 function _clampRenderMtThreads(value) {
@@ -7563,13 +7691,13 @@ function _renderRenderMtPopup() {
     overlay.setAttribute('aria-hidden', 'false');
     pipelineBannerEl.textContent = solveScoreRelevant
         ? (saveAssociatedPalette
-            ? 'Fused path: logical-section lores clip -> one raster pass -> FinalizeMT raw assembly/colorization with inline associated palette output.'
+            ? 'Fused path: logical-section lores clip -> raster -> FinalizeMT colorization plus associated palette artifact.'
             : 'Fused path: logical-section lores clip -> one raster pass -> FinalizeMT raw assembly/colorization.')
         : 'Fused path currently supports Solve score renders only.';
     fusedReadoutEl.textContent = !solveScoreRelevant
         ? 'Fused is only available for Solve score renders.'
         : saveAssociatedPalette
-        ? `Lores clip runs first on the lores artifact only.\nRaster reads logical solve sections via native multispan sectioned input and emits both the main image fragments and the associated palette fragments in one pass.\nlores clip threads=${solveScoreThreads} • raster threads=${threads} • raster workers=${rasterWorkers} • raster retries=${rasterRetries} • finalize workers=${finalizeWorkers}`
+        ? `Lores clip runs first on the lores artifact only.\nAssociated palette saves a dense pass-0 parameter-grid artifact: scalar bytes for Scalar LUT, packed 3-channel bytes for RGB/HSV/RGB LUT/HSV LUT.\nlores clip threads=${solveScoreThreads} • raster threads=${threads} • raster workers=${rasterWorkers} • raster retries=${rasterRetries} • finalize workers=${finalizeWorkers}`
         : `Lores clip runs first on the lores artifact only.\nRaster reads logical solve sections via native multispan sectioned input and emits raw score fragments for the main image.\nlores clip threads=${solveScoreThreads} • raster threads=${threads} • raster workers=${rasterWorkers} • raster retries=${rasterRetries} • finalize workers=${finalizeWorkers}`;
     fusedClipThreadsEl.value = String(solveScoreThreads);
     fusedRasterThreadsEl.value = String(threads);
@@ -7597,18 +7725,18 @@ function _renderRenderMtPopup() {
     const coeffSizeLabel = jobSize ? (_fmtSize(Number(jobSize.total_coeff_bytes) || 0) || '?') : '?';
     const paramSizeLabel = jobSize ? (_fmtSize(Number(jobSize.total_param_bytes) || 0) || '?') : '?';
     const rasterBudgetLabel = rasterEstimate.available ? `${_fmtSize(rasterEstimate.budgetBytes)} budget @ ${rasterEstimate.memoryMb}MB` : `auto unavailable (${rasterEstimate.reason})`;
-    jobSizeEl.textContent = `Logical solve data: solves=${totalSolvesLabel} • roots=${rootSizeLabel} • coeff=${coeffSizeLabel} • params=${paramSizeLabel}\nClip: lores-only prepass\nRaster auto: ${rasterBudgetLabel}\nRaster workers: ${rasterWorkers}\nAssociated palette: ${saveAssociatedPalette ? 'inline in fused finalize' : 'off'}`;
+    jobSizeEl.textContent = `Logical solve data: solves=${totalSolvesLabel} • roots=${rootSizeLabel} • coeff=${coeffSizeLabel} • params=${paramSizeLabel}\nClip: lores-only prepass\nRaster auto: ${rasterBudgetLabel}\nRaster workers: ${rasterWorkers}\nAssociated palette: ${saveAssociatedPalette ? 'save artifact' : 'off'}`;
     fusedRasterSectionSummaryEl.textContent = rasterEstimate.available
         ? `sources=${_renderMtSectionSourceLabel(rasterEstimate)} • min safe sections=${rasterEstimate.minSafeSections} • max solves/section=${rasterEstimate.maxSolvesPerSection.toLocaleString()} • est section=${_fmtSize(rasterEstimate.estimatedSectionBytes)}`
         : `auto unavailable: ${rasterEstimate.reason}`;
     const assocLabel = assocAllowed ? (saveAssociatedPalette ? 'yes' : 'no') : 'n/a';
     const rasterSectionLabel = _renderMtSectionSettingLabel(rasterSectionMode, rasterSectionCount);
     summaryEl.textContent = solveScoreRelevant
-        ? `Path: fused • Mode: Solve score • output ${document.getElementById('render-pix').value || '?'} px • lores clip threads=${solveScoreThreads} • raster input=sectioned • raster retries=${rasterRetries} • raster threads=${threads} • raster workers=${rasterWorkers} • raster sections=${rasterSectionLabel} • bins=raw score bins • finalize workers=${finalizeWorkers} • associated palette=${assocLabel}${saveAssociatedPalette ? ' • inline output' : ''}`
+        ? `Path: fused • Mode: Solve score • output ${document.getElementById('render-pix').value || '?'} px • lores clip threads=${solveScoreThreads} • raster input=sectioned • raster retries=${rasterRetries} • raster threads=${threads} • raster workers=${rasterWorkers} • raster sections=${rasterSectionLabel} • bins=raw score bins • finalize workers=${finalizeWorkers} • associated palette=${assocLabel}${saveAssociatedPalette ? ' • artifact output' : ''}`
         : 'Path: fused • Color render supports Solve score only';
     if (helpEl) {
         helpEl.textContent = saveAssociatedPalette
-            ? 'Fused is the only color render path. It always uses sectioned native input and logical sections, then emits the associated palette inline from the same raster pass.'
+            ? 'Fused is the only color render path. Associated palette saves a dense pass-0 parameter-grid artifact, not a copy of the final rendered image.'
             : 'Fused is the only color render path. It always uses sectioned native input and logical sections, then runs FinalizeMT raw assembly/colorization.';
     }
     if (runBtn) runBtn.disabled = !_renderColorMtEligible() || !!_activeRenderRun || !solveScoreRelevant;
@@ -11448,7 +11576,7 @@ async function runRasterPipeline(config = null) {
                 ? config.saveAssociatedPalette
                 : _renderMtPopupState.saveAssociatedPalette
         );
-        log(`Render (fused): dispatching with lores clip threads=4, raster threads=4, raster workers=10, raster sections=auto, finalize workers=16, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}${saveAssociatedPalette ? ', inline output' : ''}...`, 'ok', 'render-log');
+        log(`Render (fused): dispatching with lores clip threads=4, raster threads=4, raster workers=10, raster sections=auto, finalize workers=16, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}${saveAssociatedPalette ? ', artifact output' : ''}...`, 'ok', 'render-log');
         await _launchFusedRenderOrchestrator({
             raster_engine: 'mt',
             raster_mt_threads: 4,
@@ -11525,7 +11653,7 @@ async function runFusedRasterPipelineMT(threadConfig = null) {
         }
 
         log(
-            `ColorRender-MT (fused): dispatching with lores clip threads=${clipThreads}, raster input=sectioned, raster retries=${rasterRetries}, raster threads=${rasterThreads}, raster workers=${rasterWorkers}, raster sections=${_renderMtSectionSettingLabel(rasterSectionMode, rasterSectionCount)}, bin fragments=raw score bins, finalize workers=${finalizeWorkers}, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}${saveAssociatedPalette ? ', inline output' : ''}...`,
+            `ColorRender-MT (fused): dispatching with lores clip threads=${clipThreads}, raster input=sectioned, raster retries=${rasterRetries}, raster threads=${rasterThreads}, raster workers=${rasterWorkers}, raster sections=${_renderMtSectionSettingLabel(rasterSectionMode, rasterSectionCount)}, bin fragments=raw score bins, finalize workers=${finalizeWorkers}, associated palette=${saveAssociatedPalette ? 'yes' : 'no'}${saveAssociatedPalette ? ', artifact output' : ''}...`,
             'ok',
             'render-log'
         );
@@ -11748,12 +11876,58 @@ function _drawRenderLoresPreviewHistogram(index) {
     ctx.fillText(`samples=${Number(row.total || 0).toLocaleString()} nonzero=${Number(row.nonzero_count || 0).toLocaleString()}`, 12, h - 12);
 }
 
+function _clearRenderLoresPreviewPaletteCanvas(message = 'No palette preview') {
+    const canvas = document.getElementById('render-lores-preview-palette-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width || 256;
+    const h = canvas.height || 256;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#05070c';
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#778599';
+    ctx.font = '12px monospace';
+    ctx.fillText(message, 14, 24);
+}
+
+async function _setRenderLoresPreviewPaletteImage(result) {
+    const btn = document.getElementById('render-lores-preview-tab-palette');
+    const canvas = document.getElementById('render-lores-preview-palette-canvas');
+    const imageB64 = result && result.palette_image_base64 ? String(result.palette_image_base64) : '';
+    _renderLoresPreviewHasPalette = !!imageB64;
+    if (btn) {
+        btn.style.display = imageB64 ? '' : 'none';
+        btn.title = imageB64 ? 'Dense preview-source palette in serpentine parameter-grid order' : '';
+    }
+    if (!canvas || !imageB64) {
+        _clearRenderLoresPreviewPaletteCanvas();
+        if (_renderLoresPreviewActiveTab === 'palette') _renderLoresPreviewActiveTab = 'plot';
+        return;
+    }
+    await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            canvas.width = img.naturalWidth || Number(result.palette_pix) || 256;
+            canvas.height = img.naturalHeight || Number(result.palette_pix) || canvas.width;
+            const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = false;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0);
+            resolve();
+        };
+        img.onerror = () => reject(new Error('preview palette PNG decode failed'));
+        img.src = `data:${result.palette_content_type || 'image/png'};base64,${imageB64}`;
+    });
+}
+
 function _selectRenderLoresPreviewTab(tab) {
     const requested = String(tab || 'plot');
     const idx = _renderLoresPreviewTabIndex(requested);
-    const next = idx >= 0 && !_renderLoresPreviewEmissionHistograms[idx] ? 'plot' : requested;
+    const next = requested === 'palette' && !_renderLoresPreviewHasPalette
+        ? 'plot'
+        : (idx >= 0 && !_renderLoresPreviewEmissionHistograms[idx] ? 'plot' : requested);
     _renderLoresPreviewActiveTab = next;
-    ['plot', 'e1', 'e2', 'e3'].forEach((name) => {
+    ['plot', 'palette', 'e1', 'e2', 'e3'].forEach((name) => {
         const btn = document.getElementById(`render-lores-preview-tab-${name}`);
         const pane = document.getElementById(`render-lores-preview-pane-${name}`);
         if (btn) btn.classList.toggle('active', name === next);
@@ -11779,6 +11953,15 @@ function _setRenderLoresPreviewEmissionHistograms(rows) {
     if (_renderLoresPreviewTabIndex(_renderLoresPreviewActiveTab) >= _renderLoresPreviewEmissionHistograms.length) {
         _renderLoresPreviewActiveTab = 'plot';
     }
+    _selectRenderLoresPreviewTab(_renderLoresPreviewActiveTab);
+}
+
+function _resetRenderLoresPreviewPalette() {
+    _renderLoresPreviewHasPalette = false;
+    const btn = document.getElementById('render-lores-preview-tab-palette');
+    if (btn) btn.style.display = 'none';
+    _clearRenderLoresPreviewPaletteCanvas();
+    if (_renderLoresPreviewActiveTab === 'palette') _renderLoresPreviewActiveTab = 'plot';
     _selectRenderLoresPreviewTab(_renderLoresPreviewActiveTab);
 }
 
@@ -12006,6 +12189,7 @@ async function runRenderLoresPreview() {
         }
         _initRenderLoresPreviewMarquee(null);
         _setRenderLoresPreviewEmissionHistograms([]);
+        _resetRenderLoresPreviewPalette();
 
         const detail = await lambdaPost('storage', { job_id: p.jobId }, '/detail');
         const calc = detail.calc || {};
@@ -12074,6 +12258,7 @@ async function runRenderLoresPreview() {
             color_interpretation: p.colorInterpretation,
             preview_source_mode: previewSourceMode,
             preview_source_size: previewSourceSize,
+            lores_N: calcLoresN,
             lores_bin_key: loresKey,
             lores_coeffs_key: p.solveScoreUsesCoeffSource ? loresCoeffsKey : undefined,
             lores_params_key: p.solveScoreUsesParamSource ? loresParamsKey : undefined,
@@ -12096,6 +12281,7 @@ async function runRenderLoresPreview() {
         const result = await lambdaPost('render-lores-preview', payload);
         if (!result || !result.image_base64) throw new Error('preview response missing image_base64');
         _setRenderLoresPreviewEmissionHistograms(result.emission_histograms || result.solve_score?.emission_histograms || []);
+        await _setRenderLoresPreviewPaletteImage(result);
 
         await new Promise((resolve, reject) => {
             const img = new Image();
@@ -12132,6 +12318,7 @@ async function runRenderLoresPreview() {
     } catch (e) {
         _initRenderLoresPreviewMarquee(null);
         _setRenderLoresPreviewEmissionHistograms([]);
+        _resetRenderLoresPreviewPalette();
         const msg = e && e.message ? e.message : String(e);
         if (statusEl) statusEl.textContent = 'Error: ' + msg;
         if (renderStatusEl) {
@@ -13704,8 +13891,11 @@ function _renderArtifactSummary(art) {
         const solveDisplay = _renderArtifactSolveDisplay(art);
         const derived = art.derivation_kind === 'repalette' ? 'repalette' : '';
         const sourceColorId = _sourceColorArtifactIdForRenderArtifact(art);
+        const rawColorInterpretation = art.color_interpretation || art.score_output_interpretation || '';
+        const colorInterpretation = rawColorInterpretation ? _normalizeColorInterpretation(rawColorInterpretation) : '';
         return [
             solveDisplay ? `solve:${solveDisplay}` : '',
+            colorInterpretation ? `mode:${_colorInterpretationLabel(colorInterpretation)}` : '',
             art.palette ? `palette:${art.palette}` : '',
             sourceColorId ? `color:${sourceColorId}` : '',
             derived,
@@ -13997,10 +14187,16 @@ function _updateRenderActionButtons() {
     if (colorRepalBtn) colorRepalBtn.disabled = !(_renderActiveFamily === 'color' && hasSelection && inventoryMatchesJob && _canColorRepaletteArtifact(art)) || !!_activeRenderRun;
     if (colorRepalBtn) {
         colorRepalBtn.title = (_renderActiveFamily === 'color' && hasSelection && inventoryMatchesJob && art && !_canColorRepaletteArtifact(art))
-            ? 'Recolor requires a greyscale raw sidecar; rerender with the Fused path.'
+            ? 'RePalette requires a fused raw sidecar; rerender with the Fused path.'
             : '';
     }
-    if (extractPalBtn) extractPalBtn.disabled = !(_renderActiveFamily === 'color' && hasSelection && inventoryMatchesJob && _canExtractPaletteArtifact(art)) || !!_activeRenderRun || !!_activePaletteRun;
+    if (extractPalBtn) {
+        const canOpenExtractPalette = _renderActiveFamily === 'color' && hasSelection && inventoryMatchesJob;
+        extractPalBtn.disabled = !canOpenExtractPalette || !!_activeRenderRun || !!_activePaletteRun;
+        extractPalBtn.title = canOpenExtractPalette && !_canExtractPaletteArtifact(art)
+            ? _extractPaletteLineageHint(art).label
+            : '';
+    }
     if (pdfBtn) pdfBtn.disabled = !(_renderActiveFamily === 'pdf' && colorSources.length > 0) || !!_activeRenderRun;
     if (tiffCompatBtn) tiffCompatBtn.disabled = !canConvertBilevel || !!_activeRenderRun;
     if (pngExportBtn) pngExportBtn.disabled = !canConvertBilevel || !!_activeRenderRun;
@@ -14361,7 +14557,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
 
     let controlsExtra = '';
     if (_renderActiveFamily === 'color') {
-        controlsExtra = '<span style="font-size:11px; color:#666">ColorRender-MT exposes fused clip/raster/finalize controls only: clip threads, raster threads, raster workers, raster retries, logical sections, finalize workers, and inline associated-palette output. Drag a rectangle on the selected Color preview to populate Exact view bounds for the next ColorRender-MT run; Escape or right-click clears it. ExtractPalette opens a popup with solve-score prepass controls plus real palette chunk controls: chunk threads, chunk input tmp file vs sectioned native, chunk retries, and chunk workers. Color summaries show the solve display, palette name, and source Color artifact id. RePalette on Color requires a fused greyscale raw sidecar and only remaps the stored greyscale bytes to a new palette. Color2Bilevel thresholds the selected fused greyscale raw sidecar into a new bilevel artifact. Populate restores the selected color artifact settings into the form, including saved render execution settings when present. Autolevels derives a new immutable color artifact from the selected image. Resize derives a new immutable Color artifact using libvips resize/thumbnail operations.</span>';
+        controlsExtra = '<span style="font-size:11px; color:#666">ColorRender-MT exposes fused clip/raster/finalize controls only: clip threads, raster threads, raster workers, raster retries, logical sections, finalize workers, and optional associated-palette artifacts. Drag a rectangle on the selected Color preview to populate Exact view bounds for the next ColorRender-MT run; Escape or right-click clears it. ExtractPalette opens a popup with solve-score prepass controls plus real palette chunk controls: chunk threads, chunk input tmp file vs sectioned native, chunk retries, and chunk workers. Color summaries show the solve display, palette name, and source Color artifact id. RePalette on Color requires a fused raw sidecar and remaps scalar, RGB LUT, or HSV LUT bytes to a new palette. Color2Bilevel thresholds the selected fused greyscale raw sidecar into a new bilevel artifact. Populate restores the selected color artifact settings into the form, including saved render execution settings when present. Autolevels derives a new immutable color artifact from the selected image. Resize derives a new immutable Color artifact using libvips resize/thumbnail operations.</span>';
     } else if (_renderActiveFamily === 'palette') {
         controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Solve score metric, palette, q, and root transforms. RePalette reuses the selected palette artifact’s saved bins and only changes the final palette mapping. Populate copies the selected palette into Color settings and switches to Color. Palette summaries show the solve display, palette name, and source Color artifact id.</span>';
     } else if (_renderActiveFamily === 'bilevel') {

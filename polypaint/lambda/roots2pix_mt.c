@@ -92,6 +92,7 @@ typedef struct {
     ByteVec paletteFragmentByteVec;
     unsigned char *stepScores;
     long stepScoreCount;
+    int stepScoreChannels;
     long rootsPlotted;
     long rootsClipped;
     long rootsDeduped;
@@ -188,10 +189,6 @@ static int bytevec_push_u32le_channels(ByteVec *vec, uint32_t pixIdx, const uint
     }
     vec->len += recordSize;
     return 1;
-}
-
-static int bytevec_push_u32le_u8(ByteVec *vec, uint32_t pixIdx, uint8_t score) {
-    return bytevec_push_u32le_channels(vec, pixIdx, &score, 1);
 }
 
 static const float *prepare_step(const float *raw, int degree,
@@ -463,7 +460,11 @@ static void *worker_main(void *arg_) {
                 int j = (int)(globalStep % (long long)arg->paletteGridN);
                 int col = (row & 1) ? (arg->paletteGridN - 1 - j) : j;
                 uint32_t palettePixIdx = (uint32_t)row * (uint32_t)arg->paletteGridN + (uint32_t)col;
-                if (!bytevec_push_u32le_u8(&arg->paletteFragmentByteVec, palettePixIdx, solveBin)) {
+                if (!bytevec_push_u32le_channels(
+                        &arg->paletteFragmentByteVec,
+                        palettePixIdx,
+                        outputBytes,
+                        arg->outputChannelCount)) {
                     worker_fail(arg, "palette fragment vec alloc failed");
                     goto cleanup;
                 }
@@ -475,7 +476,10 @@ static void *worker_main(void *arg_) {
                 worker_fail(arg, "step score local index out of range");
                 goto cleanup;
             }
-            arg->stepScores[localIdx] = solveBin;
+            size_t base = (size_t)localIdx * (size_t)arg->stepScoreChannels;
+            for (int ch = 0; ch < arg->stepScoreChannels; ch++) {
+                arg->stepScores[base + (size_t)ch] = outputBytes[ch];
+            }
         }
 
         for (int r = 0; r < arg->degree; r++) {
@@ -907,8 +911,8 @@ int main(int argc, char **argv) {
             return 1;
         }
     }
-    if (solveScoreProgram.outputCount != 1 && (emitPaletteBins || emitStepScores)) {
-        fprintf(stderr, "associated palette bins and step_scores_output require exactly one solve-score output channel\n");
+    if (emitStepScores && solveScoreProgram.outputCount != 1 && solveScoreProgram.outputCount != 3) {
+        fprintf(stderr, "step_scores_output requires one or three solve-score output channels\n");
         return 1;
     }
     int threads = clamp_threads(requestedThreads, nPoints);
@@ -1032,7 +1036,10 @@ int main(int argc, char **argv) {
         args[i].scoreCoeffReader = scoreProgramUsesCoeffSources ? &scoreCoeffReader : NULL;
         args[i].scoreParamReader = scoreProgramUsesParamSources ? &scoreParamReader : NULL;
         args[i].pixelBits = pixelBits;
-        args[i].stepScores = emitStepScores ? calloc((size_t)(width > 0 ? width : 1), sizeof(unsigned char)) : NULL;
+        args[i].stepScoreChannels = solveScoreProgram.outputCount;
+        args[i].stepScores = emitStepScores
+            ? calloc((size_t)(width > 0 ? width : 1) * (size_t)args[i].stepScoreChannels, sizeof(unsigned char))
+            : NULL;
         args[i].stepScoreCount = width;
         if (emitStepScores && !args[i].stepScores) {
             fprintf(stderr, "Out of memory for worker vectors\n");
@@ -1128,7 +1135,12 @@ int main(int argc, char **argv) {
         }
         for (int i = 0; i < threads; i++) {
             if (args[i].stepScoreCount > 0) {
-                fwrite(args[i].stepScores, 1, (size_t)args[i].stepScoreCount, fs);
+                fwrite(
+                    args[i].stepScores,
+                    1,
+                    (size_t)args[i].stepScoreCount * (size_t)args[i].stepScoreChannels,
+                    fs
+                );
             }
         }
         fclose(fs);
@@ -1148,6 +1160,9 @@ int main(int argc, char **argv) {
            solveScoreProgram.outputCount, fragmentRecordSize,
            retries, totalDownloadUs, totalNativeUs);
     printf(",\"solve_score\":true");
+    if (emitStepScores) {
+        printf(",\"step_score_channels\":%d", solveScoreProgram.outputCount);
+    }
     printf("}\n");
     exitCode = 0;
 

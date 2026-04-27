@@ -202,6 +202,18 @@ class TestRasterMtParity(unittest.TestCase):
             pairs.append((int.from_bytes(raw[off:off + 4], "little"), raw[off + 4]))
         return pairs
 
+    def _read_u32le_channel_records(self, path, channels):
+        raw = path.read_bytes()
+        record_size = 4 + int(channels)
+        self.assertEqual(len(raw) % record_size, 0)
+        records = []
+        for off in range(0, len(raw), record_size):
+            records.append((
+                int.from_bytes(raw[off:off + 4], "little"),
+                tuple(raw[off + 4:off + record_size]),
+            ))
+        return records
+
     def _run_binary(self, args):
         return subprocess.run(args, capture_output=True, text=True)
 
@@ -594,6 +606,60 @@ class TestRasterMtParity(unittest.TestCase):
                 server.server_close()
                 thread.join(timeout=5)
 
+    def test_associated_palette_emits_packed_three_channel_pass0_records(self):
+        step_count = 4
+        degree = 1
+        roots = [0.0, 0.0, 0.33, 0.0, 0.66, 0.0, 1.0, 0.0]
+
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            roots_path = self._write_float_file(root / "roots.bin", roots)
+            out_prefix = root / "pix"
+            fragment_prefix = root / "fragment"
+            palette_prefix = root / "palette_fragment"
+            server, thread = self._serve_dir(root)
+            try:
+                manifest_path = self._write_single_span_manifest(
+                    root / "roots_manifest.json",
+                    file_name=roots_path.name,
+                    port=server.server_address[1],
+                    row_bytes=degree * 2 * 4,
+                    solve_count=step_count,
+                )
+                cmd = [
+                    str(self._binary),
+                    str(out_prefix),
+                    "--pix=8",
+                    *self._bounds_args(8, 8, 0.0, 0.0, 1.0),
+                    f"--degree={degree}",
+                    "--rotation=0",
+                    "--threads=1",
+                    f"--input_manifest={manifest_path}",
+                    f"--step_count={step_count}",
+                    "--score_metrics=centroid_re",
+                    "--score_clip_los=0",
+                    "--score_clip_his=1",
+                    "--score_program=m0-0;emit;m0-0;emit;m0-0;emit",
+                    f"--fragment_prefix={fragment_prefix}",
+                    f"--associated_palette_fragment_prefix={palette_prefix}",
+                    "--palette_grid_n=2",
+                    "--palette_step_start=0",
+                    "--retries=1",
+                ]
+
+                result = self._run_binary(cmd)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                palette_records = self._read_u32le_channel_records(root / "palette_fragment.frag", 3)
+                self.assertEqual([pix for pix, _ in palette_records], [0, 1, 3, 2])
+                self.assertEqual(len(palette_records), step_count)
+                self.assertTrue(all(len(channels) == 3 for _, channels in palette_records))
+                self.assertEqual(palette_records[0][1], (0, 0, 0))
+                self.assertTrue(all(channels[0] == channels[1] == channels[2] for _, channels in palette_records))
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+
     def test_step_scores_capture_is_not_suppressed_by_root_clipping(self):
         step_count = 4
         degree = 1
@@ -732,6 +798,55 @@ class TestRasterMtParity(unittest.TestCase):
                 result = self._run_binary(cmd)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(step_scores_path.read_bytes(), bytes([1, 255]))
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=5)
+
+    def test_three_channel_step_scores_capture_solve_order_bytes(self):
+        step_count = 2
+        degree = 1
+        roots = [0.0, 0.0, 0.5, 0.0]
+
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            roots_path = self._write_float_file(root / "roots.bin", roots)
+            out_prefix = root / "pix"
+            step_scores_path = root / "step_scores.raw"
+            fragment_prefix = root / "fragment"
+            server, thread = self._serve_dir(root)
+            try:
+                manifest_path = self._write_single_span_manifest(
+                    root / "roots_manifest.json",
+                    file_name=roots_path.name,
+                    port=server.server_address[1],
+                    row_bytes=degree * 2 * 4,
+                    solve_count=step_count,
+                )
+                cmd = [
+                    str(self._binary),
+                    str(out_prefix),
+                    "--pix=8",
+                    *self._bounds_args(8, 8, 0.0, 0.0, 1.0),
+                    f"--degree={degree}",
+                    "--rotation=0",
+                    "--threads=1",
+                    f"--input_manifest={manifest_path}",
+                    f"--step_count={step_count}",
+                    "--score_metrics=centroid_re",
+                    "--score_clip_los=-1",
+                    "--score_clip_his=1",
+                    "--score_program=m0-0;emit_none;flush;m0-0;emit_norm;m0-0;flip;emit_norm;m0-0;sawtooth:2;emit",
+                    "--score_output_clip_los=0.5,0.25,0",
+                    "--score_output_clip_his=0.75,0.5,1",
+                    f"--fragment_prefix={fragment_prefix}",
+                    f"--step_scores_output={step_scores_path}",
+                    "--retries=1",
+                ]
+
+                result = self._run_binary(cmd)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(step_scores_path.read_bytes(), bytes([0, 255, 0, 255, 0, 128]))
             finally:
                 server.shutdown()
                 server.server_close()

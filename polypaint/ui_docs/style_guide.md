@@ -296,6 +296,10 @@ Current Render Color pattern:
   - grid columns: fixed selector column + flexible text column
   - `align-items: center`
   - zero label margin
+- `.color-mode-row .color-mode-choice`
+  - use this more-specific selector when overriding row label defaults, so a
+    generic `.color-mode-row label` rule cannot silently turn the choice back
+    into inline-flex alignment
 - `.color-mode-choice input[type="radio"]`
   - zero input margin
   - explicit width/height

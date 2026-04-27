@@ -1592,6 +1592,40 @@ test.describe('Solve Score UI', () => {
     expect(activeRun.source_artifact_id).toBe('color_1');
   });
 
+  test('ExtractPalette popup explains unsupported HSV LUT artifacts instead of silently doing nothing', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate((summary) => {
+      document.getElementById('render-results-dir').value = 'test_job';
+      _renderLoadedJobId = 'test_job';
+      _activeRenderRun = null;
+      _activePaletteRun = null;
+      renderArtifactPanel('test_job', summary);
+    }, {
+      ...RENDER_POPUP_SUMMARY,
+      families: {
+        ...RENDER_POPUP_SUMMARY.families,
+        color: [{
+          ...RENDER_POPUP_SUMMARY.families.color[0],
+          color_mode: 'solve_score',
+          color_interpretation: 'hsv_lut',
+          score_output_channel_count: 3,
+          raw_channels: 3,
+          solve_score_chain: [['spread', '2'], ['emit', 'norm'], ['crowding', '1'], ['emit', 'norm'], ['proximity', '1'], ['emit', 'norm']],
+          palette: 'magma',
+        }],
+      },
+    });
+
+    const btn = page.locator('#btn-render-extract-palette');
+    await expect(btn).toBeEnabled();
+    await btn.click();
+    await expect(page.locator('#extract-palette-popup-overlay')).toBeVisible();
+    await expect(page.locator('#extract-palette-popup-summary')).toContainText('HSV LUT');
+    await expect(page.locator('#extract-palette-popup-summary')).toContainText('existing associated palette artifact');
+    await expect(page.locator('#extract-palette-popup-run')).toBeDisabled();
+    await expect(page.locator('#render-status')).toContainText('ExtractPalette unavailable');
+  });
+
   test('ExtractPalette completion uses named elapsed log and Autolevels completion is named', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await page.evaluate((summary) => {

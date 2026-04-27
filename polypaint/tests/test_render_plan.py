@@ -201,7 +201,7 @@ class TestRenderPlan(unittest.TestCase):
         self.assertEqual(plan["outputs"]["raw_meta_key"], "renders/j/color/color_run_t/greyscale.meta.json")
         self.assertEqual(plan["outputs"]["fragment_prefix"], "renders/j/color/color_run_t/fragments/section_")
         self.assertEqual(plan["outputs"]["metadata"]["rgb_source"], "raw_score_bins")
-        self.assertFalse(plan["outputs"]["repalette_capable"])
+        self.assertTrue(plan["outputs"]["repalette_capable"])
         self.assertEqual(plan["render_execution"]["raster_workers"], 24)
         self.assertEqual(plan["solve_score"]["threads"], 4)
         self.assertEqual(
@@ -377,7 +377,7 @@ class TestRenderPlan(unittest.TestCase):
         from handler_render_plan import handler
 
         result = handler(_make_event(
-            save_associated_palette=False,
+            save_associated_palette=True,
             color_interpretation="rgb",
             solve_score_chain=[
                 ["proximity", "0.1"],
@@ -394,7 +394,14 @@ class TestRenderPlan(unittest.TestCase):
         self.assertEqual(metadata["raw_channels"], "3")
         self.assertEqual(metadata["score_output_channel_count"], "3")
         self.assertEqual(metadata["score_output_interpretation"], "rgb")
-        self.assertFalse(plan["associated_palette"]["enabled"])
+        self.assertTrue(plan["associated_palette"]["enabled"])
+        self.assertEqual(plan["associated_palette"]["mode"], "generated")
+        self.assertEqual(plan["associated_palette"]["palette"], "")
+        self.assertEqual(plan["associated_palette"]["fragment_prefix"], "renders/j/palettes/pal_color_run_t/fragments/section_")
+        self.assertEqual(plan["associated_palette"]["raw_key"], "renders/j/palettes/pal_color_run_t/greyscale.raw")
+        self.assertEqual(plan["associated_palette"]["color_interpretation"], "rgb")
+        self.assertEqual(metadata["associated_palette_mode"], "generated")
+        self.assertEqual(metadata["associated_palette_color_interpretation"], "rgb")
 
     @patch("handler_render_plan._storage_call")
     def test_fused_color_plan_accepts_palette_component_lut_outputs(self, mock_storage):
@@ -402,7 +409,7 @@ class TestRenderPlan(unittest.TestCase):
         from handler_render_plan import handler
 
         result = handler(_make_event(
-            save_associated_palette=False,
+            save_associated_palette=True,
             color_interpretation="hsv_lut",
             solve_score_chain=[
                 ["proximity", "0.1"],
@@ -419,6 +426,12 @@ class TestRenderPlan(unittest.TestCase):
         self.assertEqual(metadata["raw_channels"], "3")
         self.assertEqual(metadata["score_output_interpretation"], "hsv_lut")
         self.assertEqual(plan["params"]["color_interpretation"], "hsv_lut")
+        self.assertTrue(plan["associated_palette"]["enabled"])
+        self.assertEqual(plan["associated_palette"]["mode"], "generated")
+        self.assertEqual(plan["associated_palette"]["palette"], "inferno")
+        self.assertEqual(plan["associated_palette"]["fragment_prefix"], "renders/j/palettes/pal_color_run_t/fragments/section_")
+        self.assertEqual(plan["associated_palette"]["raw_key"], "renders/j/palettes/pal_color_run_t/greyscale.raw")
+        self.assertEqual(plan["associated_palette"]["color_interpretation"], "hsv_lut")
         channels = json.loads(metadata["score_output_channels"])
         self.assertEqual([row["name"] for row in channels], ["h_lookup", "s_lookup", "v_lookup"])
 

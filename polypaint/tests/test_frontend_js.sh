@@ -49,8 +49,9 @@ function assertSectionNotIncludes(section, snippet, message) {
 assertIncludes("function setColorMode(mode) {\n    renderColorMode = 'solve_score';\n    _updateSolveScoreButtons();", 'setColorMode should hard-lock solve_score without a fake mode toggle');
 assertIncludes("<div class=\"color-title\" style=\"margin-top:10px\">Color</div>", 'render tab should merge color controls into the visual View/Rotation region');
 assertIncludes("class=\"color-mode-choice\"><input type=\"radio\" name=\"render-color-interpretation\" value=\"scalar_lut\"", 'Scalar LUT selector should use aligned color-mode-choice markup');
-assertIncludes(".color-mode-choice {\n    display: grid;", 'color mode choices should use fixed selector/text grid alignment');
-assertIncludes(".color-mode-choice input[type=\"radio\"] {\n    margin: 0;", 'color mode radio inputs should override browser/default label spacing');
+assertIncludes(".color-mode-row label:not(.color-mode-choice)", 'render color generic label CSS must not override color-mode-choice grid alignment');
+assertIncludes(".color-mode-row .color-mode-choice {\n    display: grid;", 'color mode choices should use fixed selector/text grid alignment with enough specificity');
+assertIncludes(".color-mode-row .color-mode-choice input[type=\"radio\"] {\n    margin: 0;", 'color mode radio inputs should override browser/default label spacing');
 assertIncludes(".color-mode-name {\n    display: block;\n    line-height: 13px;", 'color mode names should use explicit line-height to avoid low text alignment');
 assertNotIncludes("<label><input type=\"radio\" name=\"render-color-interpretation\"", 'render color radios must not use bare label/input markup');
 assertNotIncludes("class=\"color-dot active\" data-mode=\"solve_score\"", 'render tab should not expose a fake solve-score mode toggle');
@@ -64,6 +65,11 @@ assertIncludes(".render-preview-stage {\n    position: relative;\n    display: f
 assertIncludes("object-fit: contain;", 'render artifact preview image should contain rather than crop');
 assertIncludes("function _renderPreviewImageRect(stage, img) {", 'render preview selection should compute the displayed image rect');
 assertIncludes("const imageRect = _renderPreviewImageRect(stage, img);", 'render preview marquee should align to displayed image rect');
+assertIncludes("target: 'color_repalette'", 'Color RePalette UI should dispatch through the Color RePalette target');
+assertIncludes("new_interpretation: newInterpretation", 'Color RePalette UI should forward the selected 3-channel interpretation');
+assertIncludes("id=\"color-repalette-interpretation-row\"", 'Color RePalette popup should expose the interpretation row');
+assertIncludes("id=\"color-repalette-interpretation\"", 'Color RePalette popup should expose the 3-channel interpretation selector');
+assertIncludes("function _selectedColorRepaletteInterpretation(art) {", 'Color RePalette UI should centralize selected interpretation parsing');
 const renderCommonSection = src.split("function _renderCommonParams(options = {}) {")[1]?.split("function _renderColorMtEligible()")[0] || '';
 assertSectionNotIncludes(renderCommonSection, "gamma:", '_renderCommonParams should not send dead gamma');
 assertSectionNotIncludes(renderCommonSection, "constantColor:", '_renderCommonParams should not carry dead constant-color state');
@@ -202,6 +208,8 @@ assertIncludes("id=\"btn-render-lores-preview\" onclick=\"runRenderLoresPreview(
 assertIncludes("id=\"render-lores-preview-stage\"", 'render output preview should expose a marquee stage wrapper');
 assertIncludes("id=\"render-lores-preview-marquee\"", 'render output preview should expose a marquee overlay');
 assertIncludes("id=\"render-lores-preview-tab-plot\"", 'render output preview should expose plot tab');
+assertIncludes("id=\"render-lores-preview-tab-palette\"", 'render output preview should expose palette tab');
+assertIncludes("id=\"render-lores-preview-palette-canvas\"", 'render output preview should expose palette canvas');
 assertIncludes("id=\"render-lores-preview-tab-e1\"", 'render output preview should expose E1 histogram tab');
 assertIncludes("id=\"render-lores-preview-hist-e1\"", 'render output preview should expose E1 histogram canvas');
 assertIncludes("id=\"render-preview-source-mode\"", 'render output should expose preview source mode dropdown');
@@ -213,6 +221,7 @@ assertIncludes("if (sizeEl) sizeEl.disabled = mode === 'lores';", 'render previe
 assertIncludes("preview_pix: previewPix,", 'render lores preview payload should forward preview_pix');
 assertIncludes("preview_source_mode: previewSourceMode,", 'render lores preview payload should forward preview source mode');
 assertIncludes("preview_source_size: previewSourceSize,", 'render lores preview payload should forward preview source size');
+assertIncludes("lores_N: calcLoresN,", 'render lores preview payload should forward lores_N for physical palette grid');
 assertIncludes("previewSourceSize = Math.max(5, Math.min(256, previewSourceSize));", 'render lores preview should clamp preview source size');
 assertIncludes("for (const line of (Array.isArray(result.logs) ? result.logs : []))", 'render lores preview should print backend logical lores logs');
 assertIncludes("const nCoeffs = Number.isFinite(rawNCoeffs) && rawNCoeffs >= 1 ? rawNCoeffs : degree + 1;", 'render lores preview should default missing n_coeffs to degree+1');
@@ -224,6 +233,7 @@ assertIncludes("function _applyRenderLoresPreviewSelectionBounds(meta, rect) {",
 assertIncludes("_initRenderLoresPreviewMarquee(_renderLoresPreviewMetaFromResult(result, p.rotation));", 'render lores preview should arm marquee after drawing the preview');
 assertIncludes("_clearRenderLoresPreviewSelection();", 'Escape should clear output preview marquee selection');
 assertIncludes("_setRenderLoresPreviewEmissionHistograms(result.emission_histograms || result.solve_score?.emission_histograms || []);", 'render lores preview should load per-emission histograms');
+assertIncludes("await _setRenderLoresPreviewPaletteImage(result);", 'render lores preview should draw returned palette image');
 assertIncludes("choices: ['raw', 'norm', 'none']", 'emit chip mode dropdown should expose none mode');
 assertIncludes("flush: { arity: 0, params: [], tooltip: 'clear the entire score stack' }", 'solve-score editor should expose flush chip');
 assertIncludes("omega_cosine requires one finite numeric omega", 'omega_cosine frontend validation should not cap frequency at 10');
@@ -366,6 +376,15 @@ async function main() {
     extractFunction('_normalizeColorInterpretation'),
     extractFunction('_colorInterpretationLabel'),
     extractFunction('_artifactColorInterpretation'),
+    extractFunction('_hasColorRawSidecar'),
+    extractFunction('_canColorRepaletteArtifact'),
+    extractFunction('_defaultColorRepaletteInterpretation'),
+    extractFunction('_artifactOutputChannelCount'),
+    extractFunction('_isScalarExtractPaletteSource'),
+    extractFunction('_hasFusedStepScorePaletteSource'),
+    extractFunction('_findColorArtifactById'),
+    extractFunction('_canExtractPaletteArtifact'),
+    extractFunction('_extractPaletteLineageHint'),
     extractFunction('_solveScoreColorCompatibility'),
     extractFunction('_launchRenderOrchestrator'),
     extractFunction('runRasterPipeline'),
@@ -378,6 +397,7 @@ async function main() {
     Math,
     JSON,
     renderColorMode: 'rainbow',
+    _renderArtifacts: { color: [] },
     _renderMtPopupState: { saveAssociatedPalette: false },
     _solveScoreProgramRememberedNames: { render: 'pal5', palette: 'keep' },
     _statusCalls: [],
@@ -504,6 +524,38 @@ async function main() {
   assert(ctx._artifactColorInterpretation({ color_interpretation: 'direct_rgb' }) === 'rgb', 'artifact color interpretation should normalize color_interpretation aliases');
   assert(ctx._artifactColorInterpretation({ score_output_interpretation: 'hsv-lut' }) === 'hsv_lut', 'artifact color interpretation should fall back to score_output_interpretation');
   assert(ctx._colorInterpretationLabel('rgb_lut') === 'RGB LUT', 'artifact summary labels should use user-facing color mode names');
+  const scalarFusedColor = { family: 'color', artifact_id: 'scalar_fused', color_mode: 'solve_score', color_interpretation: 'scalar_lut', raw_channels: 1, raw_key: 'raw', raw_meta_key: 'raw.meta', step_scores_key: 'steps' };
+  const scalarLegacyColor = { family: 'color', artifact_id: 'scalar_legacy', color_mode: 'solve_score' };
+  const rgbColor = { family: 'color', artifact_id: 'rgb_color', color_mode: 'solve_score', color_interpretation: 'rgb', raw_channels: 3 };
+  const rgbFusedColor = { family: 'color', artifact_id: 'rgb_fused', color_mode: 'solve_score', color_interpretation: 'rgb_lut', raw_channels: 3, raw_key: 'raw3', raw_meta_key: 'raw3.meta', step_scores_key: 'steps3' };
+  const twoChannelColor = { family: 'color', artifact_id: 'two_channel', color_mode: 'solve_score', color_interpretation: 'rgb_lut', raw_channels: 2, raw_key: 'raw2', raw_meta_key: 'raw2.meta' };
+  const hsvFusedColor = { family: 'color', artifact_id: 'hsv_fused', color_mode: 'solve_score', color_interpretation: 'hsv', raw_channels: 3, raw_key: 'rawh', raw_meta_key: 'rawh.meta' };
+  const rgbAssociatedColor = { family: 'color', artifact_id: 'rgb_assoc', color_mode: 'solve_score', color_interpretation: 'rgb', raw_channels: 3, associated_palette_id: 'pal_rgb' };
+  const savedPaletteColor = { artifact_id: 'saved_pal', color_mode: 'saved_palette', palette_source_id: 'pal_1' };
+  const savedPaletteRawColor = { family: 'color', artifact_id: 'saved_pal_raw', color_mode: 'saved_palette', palette_source_id: 'pal_1', raw_channels: 1, raw_key: 'saved.raw', raw_meta_key: 'saved.meta' };
+  const childScalarColor = { artifact_id: 'child_scalar', color_mode: 'postprocess', derived_from_artifact_id: 'scalar_fused' };
+  const childRgbColor = { artifact_id: 'child_rgb', color_mode: 'postprocess', derived_from_artifact_id: 'rgb_color' };
+  const childRgbFusedColor = { artifact_id: 'child_rgb_fused', color_mode: 'postprocess', derived_from_artifact_id: 'rgb_fused' };
+  ctx._renderArtifacts.color = [scalarFusedColor, scalarLegacyColor, rgbColor, rgbFusedColor, rgbAssociatedColor, savedPaletteColor, childScalarColor, childRgbColor, childRgbFusedColor];
+  assert(ctx._canColorRepaletteArtifact(scalarFusedColor), 'Color RePalette should accept scalar raw sidecars');
+  assert(ctx._canColorRepaletteArtifact(rgbFusedColor), 'Color RePalette should accept three-channel raw sidecars');
+  assert(ctx._canColorRepaletteArtifact(savedPaletteRawColor), 'Color RePalette should accept saved-palette raw sidecars');
+  assert(!ctx._canColorRepaletteArtifact(twoChannelColor), 'Color RePalette should reject unsupported channel counts before dispatch');
+  assert(ctx._defaultColorRepaletteInterpretation(rgbFusedColor) === 'rgb_lut', 'Color RePalette should default RGB sources to RGB LUT');
+  assert(ctx._defaultColorRepaletteInterpretation(hsvFusedColor) === 'hsv_lut', 'Color RePalette should default HSV sources to HSV LUT');
+  assert(ctx._canExtractPaletteArtifact(scalarFusedColor), 'ExtractPalette should be enabled for scalar fused step-score artifacts');
+  assert(ctx._canExtractPaletteArtifact(rgbFusedColor), 'ExtractPalette should be enabled for three-channel fused step-score artifacts');
+  assert(ctx._canExtractPaletteArtifact(scalarLegacyColor), 'ExtractPalette should keep the legacy scalar solve-score path enabled');
+  assert(ctx._canExtractPaletteArtifact(rgbAssociatedColor), 'ExtractPalette should be enabled for existing associated RGB palette artifacts');
+  assert(ctx._canExtractPaletteArtifact(savedPaletteColor), 'ExtractPalette should be enabled for saved-palette dependencies');
+  assert(ctx._canExtractPaletteArtifact(childScalarColor), 'ExtractPalette should follow scalar extractable color lineage');
+  assert(ctx._canExtractPaletteArtifact(childRgbFusedColor), 'ExtractPalette should follow three-channel extractable color lineage');
+  assert(!ctx._canExtractPaletteArtifact(rgbColor), 'ExtractPalette should be disabled for RGB artifacts without an associated palette artifact');
+  assert(!ctx._canExtractPaletteArtifact(childRgbColor), 'ExtractPalette should be disabled for descendants of unsupported RGB artifacts');
+  assert(ctx._extractPaletteLineageHint(rgbColor).kind === 'unsupported', 'ExtractPalette lineage hint should explain unsupported multi-output artifacts');
+  assert(ctx._extractPaletteLineageHint(scalarFusedColor).kind === 'fused', 'ExtractPalette lineage hint should prefer fused scalar step-score extraction');
+  assert(ctx._extractPaletteLineageHint(rgbFusedColor).kind === 'fused', 'ExtractPalette lineage hint should prefer fused three-channel step-score extraction');
+  assert(ctx._extractPaletteLineageHint(scalarLegacyColor).kind === 'solve_score', 'ExtractPalette lineage hint should retain legacy scalar dispatch');
 
   let genericPmRejected = false;
   try {

@@ -48,11 +48,19 @@ class _ChunkBody:
 
 
 class TestRenderLoresPreviewHandler(unittest.TestCase):
+    def test_preview_palette_grid_requires_complete_pass_grid(self):
+        from handler_render_lores_preview import _preview_palette_grid_n
+
+        self.assertEqual(_preview_palette_grid_n({"view_N": 4}, 16), 4)
+        self.assertEqual(_preview_palette_grid_n({"view_N": 4}, 32), 4)
+        self.assertEqual(_preview_palette_grid_n({"view_N": 4}, 18), 0)
+        self.assertEqual(_preview_palette_grid_n({}, 9), 3)
+
     @patch("handler_render_lores_preview.render_score_raw")
     @patch("handler_render_lores_preview.subprocess.run")
     @patch("handler_render_lores_preview.s3")
     def test_returns_inline_png_without_s3_writes(self, mock_s3, mock_run, mock_render):
-        from handler_render_lores_preview import TMP_FRAGMENT, handler
+        from handler_render_lores_preview import TMP_FRAGMENT, TMP_PALETTE_FRAGMENT, handler
 
         mock_s3.get_object.return_value = {"Body": _ChunkBody(b"\x00" * (3 * 2 * 2 * 4))}
         mock_s3.generate_presigned_url.return_value = "https://example.test/lores.bin"
@@ -82,6 +90,8 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
             with open(TMP_FRAGMENT, "wb") as fh:
                 fh.write((0).to_bytes(4, "little") + bytes([10]))
                 fh.write((5).to_bytes(4, "little") + bytes([220]))
+            with open(TMP_PALETTE_FRAGMENT, "wb") as fh:
+                fh.write((0).to_bytes(4, "little") + bytes([10]))
             return MagicMock(returncode=0, stdout=json.dumps({"roots_plotted": 2, "roots_clipped": 0}), stderr="")
 
         def render_fake(**kwargs):
@@ -92,11 +102,14 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         mock_run.side_effect = subprocess_fake
         mock_render.side_effect = render_fake
 
-        resp = handler(_event(), None)
+        resp = handler(_event(lores_N=1), None)
         self.assertEqual(resp["statusCode"], 200, resp["body"])
         body = json.loads(resp["body"])
         self.assertEqual(body["content_type"], "image/png")
         self.assertEqual(base64.b64decode(body["image_base64"]), PNG_1X1)
+        self.assertEqual(base64.b64decode(body["palette_image_base64"]), PNG_1X1)
+        self.assertEqual(body["palette_pix"], 1)
+        self.assertEqual(body["palette_fragment_entries"], 1)
         self.assertEqual(body["preview_pix"], 16)
         self.assertEqual(body["fragment_entries"], 2)
         self.assertEqual(body["nonzero_pixels"], 2)
@@ -119,6 +132,62 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         self.assertIn("--score_output_clip_lo=0.1", raster_cmd)
         self.assertIn("--score_output_clip_hi=0.9", raster_cmd)
         self.assertIn("--fragment_prefix=/tmp/render_lores_preview_fragment", raster_cmd)
+        self.assertIn("--associated_palette_fragment_prefix=/tmp/render_lores_preview_palette_fragment", raster_cmd)
+        self.assertIn("--palette_grid_n=1", raster_cmd)
+        self.assertIn("--palette_step_start=0", raster_cmd)
+        palette_render_call = mock_render.call_args_list[1].kwargs
+        self.assertFalse(palette_render_call["zero_background"])
+
+    @patch("handler_render_lores_preview.render_score_raw")
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
+    def test_rejects_incomplete_preview_palette_fragment(self, mock_s3, mock_run, mock_render):
+        from handler_render_lores_preview import TMP_FRAGMENT, TMP_PALETTE_FRAGMENT, handler
+
+        mock_s3.get_object.return_value = {"Body": _ChunkBody(b"\x00" * (4 * 2 * 2 * 4))}
+        mock_s3.generate_presigned_url.return_value = "https://example.test/lores.bin"
+
+        def subprocess_fake(cmd, **kwargs):
+            if "--mode=clip" in cmd:
+                return MagicMock(returncode=0, stdout=json.dumps({
+                    "clip_lo": 0.0,
+                    "clip_hi": 1.0,
+                    "min_score": 0.0,
+                    "max_score": 1.0,
+                    "n_solves": 4,
+                    "threads": 1,
+                }), stderr="")
+            if "--mode=summary" in cmd:
+                return MagicMock(returncode=0, stdout=json.dumps({
+                    "degree": 2,
+                    "n_solves": 4,
+                    "clip_lo": 0.0,
+                    "clip_hi": 1.0,
+                    "min_score": 0.0,
+                    "q05": 0.1,
+                    "q95": 0.9,
+                    "max_score": 1.0,
+                    "threads": 1,
+                }), stderr="")
+            with open(TMP_FRAGMENT, "wb") as fh:
+                fh.write((0).to_bytes(4, "little") + bytes([10]))
+            with open(TMP_PALETTE_FRAGMENT, "wb") as fh:
+                fh.write((0).to_bytes(4, "little") + bytes([10]))
+            return MagicMock(returncode=0, stdout=json.dumps({"roots_plotted": 1, "roots_clipped": 0}), stderr="")
+
+        def render_fake(**kwargs):
+            with open(kwargs["out_path"], "wb") as fh:
+                fh.write(PNG_1X1)
+            return {"file_size": len(PNG_1X1), "preview_file_size": 0}
+
+        mock_run.side_effect = subprocess_fake
+        mock_render.side_effect = render_fake
+
+        resp = handler(_event(lores_N=2), None)
+        self.assertEqual(resp["statusCode"], 500)
+        body = json.loads(resp["body"])
+        self.assertIn("preview palette fragment entry count mismatch", body["detail"])
+        self.assertEqual(body["phase"], "render-lores-preview")
 
     @patch("handler_render_lores_preview.s3")
     def test_rejects_invalid_preview_pix(self, mock_s3):
@@ -135,7 +204,7 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
     @patch("handler_render_lores_preview.subprocess.run")
     @patch("handler_render_lores_preview.s3")
     def test_coeff_source_defaults_missing_n_coeffs_to_degree_plus_one(self, mock_s3, mock_run, mock_render):
-        from handler_render_lores_preview import TMP_FRAGMENT, handler
+        from handler_render_lores_preview import TMP_FRAGMENT, TMP_PALETTE_FRAGMENT, handler
 
         root_bytes = b"\x00" * (3 * 2 * 2 * 4)
         coeff_bytes = b"\x00" * (3 * 3 * 2 * 4)
@@ -203,7 +272,7 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
     @patch("handler_render_lores_preview.subprocess.run")
     @patch("handler_render_lores_preview.s3")
     def test_logical_lores_preview_materializes_hires_subset_to_local_manifest(self, mock_s3, mock_run, mock_render):
-        from handler_render_lores_preview import TMP_FRAGMENT, handler
+        from handler_render_lores_preview import TMP_FRAGMENT, TMP_PALETTE_FRAGMENT, handler
 
         roots_key = "renders/j/chunk_0.bin"
         roots_bytes = bytearray()
@@ -269,6 +338,9 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
             seen_local_manifest["logical_size"] = manifest["logical_size"]
             with open(TMP_FRAGMENT, "wb") as fh:
                 fh.write((0).to_bytes(4, "little") + bytes([64]))
+            with open(TMP_PALETTE_FRAGMENT, "wb") as fh:
+                for idx in range(25):
+                    fh.write(idx.to_bytes(4, "little") + bytes([idx + 1]))
             return MagicMock(returncode=0, stdout=json.dumps({"roots_plotted": 1, "roots_clipped": 0}), stderr="")
 
         def render_fake(**kwargs):
@@ -303,7 +375,7 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
     @patch("handler_render_lores_preview.subprocess.run")
     @patch("handler_render_lores_preview.s3")
     def test_recompute_preview_generates_tmp_params_coeffs_roots(self, mock_s3, mock_run, mock_render):
-        from handler_render_lores_preview import TMP_COEFFS, TMP_FRAGMENT, TMP_PARAMS, TMP_ROOTS, handler
+        from handler_render_lores_preview import TMP_COEFFS, TMP_FRAGMENT, TMP_PALETTE_FRAGMENT, TMP_PARAMS, TMP_ROOTS, handler
 
         calc = {
             "N": 5,
@@ -369,6 +441,9 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
                 }), stderr="")
             with open(TMP_FRAGMENT, "wb") as fh:
                 fh.write((0).to_bytes(4, "little") + bytes([64]))
+            with open(TMP_PALETTE_FRAGMENT, "wb") as fh:
+                for idx in range(25):
+                    fh.write(idx.to_bytes(4, "little") + bytes([idx + 1]))
             return MagicMock(returncode=0, stdout=json.dumps({"roots_plotted": 1, "roots_clipped": 0}), stderr="")
 
         def render_fake(**kwargs):

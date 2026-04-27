@@ -82,13 +82,27 @@ class TestAutolevelsHandler(unittest.TestCase):
                 "associated_palette_image_key": "renders/job1/palettes/pal_src/image.jpeg",
                 "associated_palette_preview_key": "renders/job1/palettes/pal_src/preview.png",
                 "associated_palette_palette": "tri_redgold",
+                "associated_palette_color_interpretation": "rgb_lut",
                 "associated_palette_metric": "anisotropy",
                 "associated_palette_quantile": "0.02",
                 "associated_palette_omega": "6",
                 "associated_palette_omega_enabled": "false",
+                "associated_palette_raw_key": "renders/job1/palettes/pal_src/greyscale.raw",
+                "associated_palette_raw_meta_key": "renders/job1/palettes/pal_src/greyscale.meta.json",
+                "associated_palette_meta_key": "renders/job1/palettes/pal_src/meta.json",
                 "match_mode": "greedy",
                 "background_color": "101214",
                 "background_threshold": "7",
+                "color_interpretation": "rgb_lut",
+                "score_output_interpretation": "rgb_lut",
+                "score_output_channel_count": "3",
+                "raw_channels": "3",
+                "raw_layout": "u8_packed_channels_row_major",
+                "raw_key": "renders/job1/color/color_src/greyscale.raw",
+                "raw_meta_key": "renders/job1/color/color_src/greyscale.meta.json",
+                "step_scores_key": "renders/job1/color/color_src/step_scores.raw",
+                "step_count": "9000000",
+                "step_scores_grid_n": "3000",
             }
         }
 
@@ -177,11 +191,28 @@ class TestAutolevelsHandler(unittest.TestCase):
         self.assertEqual(sidecar["associated_palette_preview_key"], "renders/job1/palettes/pal_src/preview.png")
         self.assertEqual(sidecar["associated_palette_metric"], "anisotropy")
         self.assertEqual(sidecar["associated_palette_palette"], "tri_redgold")
+        self.assertEqual(sidecar["associated_palette_color_interpretation"], "rgb_lut")
+        self.assertEqual(sidecar["associated_palette_raw_key"], "renders/job1/palettes/pal_src/greyscale.raw")
+        self.assertEqual(sidecar["associated_palette_raw_meta_key"], "renders/job1/palettes/pal_src/greyscale.meta.json")
+        self.assertEqual(sidecar["associated_palette_meta_key"], "renders/job1/palettes/pal_src/meta.json")
         self.assertEqual(sidecar["associated_palette_quantile"], "0.02")
         self.assertEqual(sidecar["associated_palette_omega"], "6")
         self.assertEqual(sidecar["associated_palette_omega_enabled"], "false")
         self.assertEqual(sidecar["background_color"], "101214")
         self.assertEqual(sidecar["background_threshold"], "11")
+        self.assertEqual(sidecar["color_interpretation"], "rgb_lut")
+        self.assertEqual(sidecar["score_output_interpretation"], "rgb_lut")
+        self.assertEqual(sidecar["score_output_channel_count"], "3")
+        for raw_key in (
+            "raw_key",
+            "raw_meta_key",
+            "raw_channels",
+            "raw_layout",
+            "step_scores_key",
+            "step_count",
+            "step_scores_grid_n",
+        ):
+            self.assertNotIn(raw_key, sidecar)
         self.assertIn("autolevels_params", sidecar)
         self.assertIn("--background-color=101214", render_cmd)
         self.assertIn("--background-threshold=11", render_cmd)

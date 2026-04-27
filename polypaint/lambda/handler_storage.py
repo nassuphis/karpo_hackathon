@@ -990,6 +990,9 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         entry["associated_palette_image_key"] = meta.get("associated_palette_image_key", "")
         entry["associated_palette_preview_key"] = meta.get("associated_palette_preview_key", "")
         entry["associated_palette_palette"] = meta.get("associated_palette_palette", "")
+        entry["associated_palette_color_interpretation"] = _parse_color_interpretation(
+            meta.get("associated_palette_color_interpretation")
+        )
         entry["associated_palette_metric"] = meta.get("associated_palette_metric", "")
         entry["associated_palette_score_chain"] = _parse_json(meta.get("associated_palette_score_chain"))
         assoc_q = meta.get("associated_palette_quantile", "")

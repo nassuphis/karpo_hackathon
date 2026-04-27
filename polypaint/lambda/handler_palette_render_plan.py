@@ -198,6 +198,37 @@ def _load_palette_meta(job_id, palette_id):
     return meta
 
 
+def _missing_s3_key(exc):
+    code = str(getattr(exc, "response", {}).get("Error", {}).get("Code", "")).strip()
+    return code in {"404", "NoSuchKey", "NotFound", "NotFoundException"}
+
+
+def _associated_palette_ref(job_id, metadata):
+    palette_id = str((metadata or {}).get("associated_palette_id") or "").strip()
+    if not palette_id:
+        return None
+    return {
+        "palette_id": palette_id,
+        "image_key": str(
+            (metadata or {}).get("associated_palette_image_key")
+            or f"renders/{job_id}/palettes/{palette_id}/image.jpeg"
+        ),
+    }
+
+
+def _associated_palette_exists(job_id, metadata):
+    ref = _associated_palette_ref(job_id, metadata)
+    if not ref or not ref["image_key"]:
+        return False
+    try:
+        s3.head_object(Bucket=BUCKET, Key=ref["image_key"])
+        return True
+    except Exception as exc:
+        if _missing_s3_key(exc):
+            return False
+        raise
+
+
 def _artifact_meta_quantile(meta, field_name):
     raw = meta.get(field_name, "")
     if raw in ("", None):
@@ -216,7 +247,7 @@ def _resolve_color_lineage(job_id, artifact_id):
     current = selected
     seen = {artifact_id}
     while True:
-        if current.get("associated_palette_mode") and current.get("associated_palette_id"):
+        if _associated_palette_exists(job_id, current):
             return selected, current, "associated"
         if current.get("color_mode") == "saved_palette" and current.get("palette_source_id"):
             return selected, current, "saved_palette"
@@ -349,7 +380,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
     execution = _execution_params(raw_params)
     selected, source, source_kind = _resolve_color_lineage(job_id, artifact_id)
 
-    if selected.get("associated_palette_mode") and selected.get("associated_palette_id"):
+    if _associated_palette_exists(job_id, selected):
         assoc_selected = read_solve_score_metadata("associated_palette", selected, default_metric="proximity")
         palette_id = str(selected.get("associated_palette_id"))
         image_key = str(selected.get("associated_palette_image_key") or f"renders/{job_id}/palettes/{palette_id}/image.jpeg")

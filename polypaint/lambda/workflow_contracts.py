@@ -199,6 +199,7 @@ FINALIZE_MT_ASSOCIATED_PALETTE_REQUIRED_FIELDS = (
     "source_color_artifact_id",
     "metric",
     "palette",
+    "color_interpretation",
     "quantile",
     "omega",
     "omega_enabled",

@@ -384,7 +384,7 @@ class TestRasterMT(unittest.TestCase):
 
         self.assertIn("--score_output_clip_los=0.1,0.2,0.0", cmd)
         self.assertIn("--score_output_clip_his=0.9,0.8,1.0", cmd)
-        self.assertNotIn("--step_scores_output=/tmp/step_scores.bin", cmd)
+        self.assertIn("--step_scores_output=/tmp/step_scores.bin", cmd)
 
     @patch.dict(os.environ, {"RASTER_MT_THREADS": "2"}, clear=False)
     @patch("handler_raster_mt.report_status")

@@ -35,11 +35,18 @@ The meaning of those `N` bytes is declared later by artifact metadata and displa
   contributes `V`, then the resulting HSV is converted to RGB.
 - Future interpretations can reuse the same raw bytes without changing raster.
 
-For LUT-backed interpretations, byte value `0` is reserved for background. The
-palette ramp is addressed by byte values `1..255`, mapped as
-`t = (byte - 1) / 254`, matching the existing scalar LUT path. In packed
-three-channel raw, an absent pixel is encoded as `(0, 0, 0)` and must render as
-`background_color`, not as the left edge of the selected palette.
+For final color images, all-zero output is reserved for background. In packed
+three-channel final-render raw, an absent pixel is encoded as `(0, 0, 0)` and
+must render as `background_color`, not as black RGB or the left edge of the
+selected palette. For final images using LUT-backed interpretations, byte value
+`0` is also reserved per component; the palette ramp is addressed by byte values
+`1..255`, mapped as `t = (byte - 1) / 254`, matching the existing scalar LUT
+path.
+
+Generated associated-palette artifacts are different: they are dense pass-0
+parameter-grid views, not sparse complex-plane render images. There are no
+absent parameter cells in that view, so zero bytes are valid lookup coordinates.
+For associated-palette rendering, `0..255` maps to `t = byte / 255`.
 
 This keeps the rasterizer generic. It evaluates score programs, normalizes requested outputs, and writes bytes. It does not need to know about RGB, HSV, palette mixing, or other image semantics.
 
@@ -331,7 +338,9 @@ with metadata:
 }
 ```
 
-The UI may expose a convenience Direct RGB chip/preset that creates those three `emit_norm` outputs and selects `RGB` in the Color section.
+Direct RGB should be created as a normal saved solve-score program with three
+emitted channels. There is no dedicated built-in Direct RGB preset in v1; saved
+programs cover that workflow without adding another hard-coded editor path.
 
 Recommended canonical saved/editor form uses the unified editor chip, not the
 native `emit_norm` token:
@@ -368,7 +377,8 @@ Reason:
   `R G B` into emit order.
 - Adding a native color-specific `rgb` operation would undermine the generic `N`-channel raster contract.
 
-V1 should ship only the explicit canonical form and the UI preset that generates it. A future trailing `rgb` token can be added after one of these exists:
+V1 should ship only the explicit canonical form. A future trailing `rgb` token
+can be added after one of these exists:
 
 - Stack-reorder ops.
 - A generic multi-output chip such as `emit3_norm`.
@@ -470,6 +480,16 @@ palette lookup coordinates. If all three bytes are zero, output
 `background_color`. A zero byte in a non-background pixel uses the matching
 background component for that channel.
 
+For generated associated-palette artifacts, the same bytes are rendered as a
+dense parameter-grid field and zero is not reserved:
+
+```text
+c0 = palette_rgb(x0 / 255)
+c1 = palette_rgb(x1 / 255)
+c2 = palette_rgb(x2 / 255)
+output_rgb = (c0.r, c1.g, c2.b)
+```
+
 ### `hsv_lut`
 
 `hsv_lut` is the same component-lookup idea, but interpolation happens in HSV
@@ -489,6 +509,9 @@ c2 = palette_hsv((x2 - 1) / 254)
 output_hsv = (c0.h, c1.s, c2.v)
 output_rgb = hsv_to_rgb(output_hsv)
 ```
+
+For generated associated-palette artifacts, use `x / 255` for each component
+lookup so zero maps to the palette's left edge instead of background.
 
 The three emitted values are not direct H/S/V components. They are independent
 palette lookup coordinates. If all three bytes are zero, output
@@ -706,22 +729,30 @@ out.g = raw.g
 out.b = raw.b
 ```
 
-Future RGB channel-LUT repalette:
+For final sparse render images, `(0, 0, 0)` is still background. Generated
+associated-palette images disable this reserved-zero rule so zero can be shown
+as black in a dense parameter-grid view.
+
+RGB LUT mode:
 
 ```text
-out.r = lut_r[raw.r]
-out.g = lut_g[raw.g]
-out.b = lut_b[raw.b]
+out.r = palette_rgb(raw.channel_0).r
+out.g = palette_rgb(raw.channel_1).g
+out.b = palette_rgb(raw.channel_2).b
 ```
 
-When `channel_lut` ships, channel LUTs should be one-channel LUTs:
+HSV LUT mode:
 
 ```text
-uint8 -> uint8
+out_h = palette_hsv(raw.channel_0).h
+out_s = palette_hsv(raw.channel_1).s
+out_v = palette_hsv(raw.channel_2).v
+out.rgb = hsv_to_rgb(out_h, out_s, out_v)
 ```
 
-The UI can present those as three palettes or curves, but the contract should
-be channel-to-channel remapping.
+For final sparse render images, LUT modes reserve zero for background and map
+`1..255` to the palette ramp. For generated associated-palette images, LUT modes
+use dense `0..255` lookup coordinates.
 
 Do not treat RGB repalette as three full RGB palettes unless a combine rule is explicitly added:
 
@@ -734,11 +765,27 @@ out = combine(c_r, c_g, c_b)
 
 The combine rule could be average, additive clamp, screen, weighted sum, or something else. Defer that to v2.
 
+Associated palette artifacts:
+
+- `Scalar LUT` keeps the existing associated-palette behavior: raster emits a
+  one-byte scalar fragment stream, finalize assembles a reusable greyscale raw,
+  and the palette artifact can be shown in the Palette tab.
+- `RGB`, `HSV`, `RGB LUT`, and `HSV LUT` use the same associated-palette shape:
+  raster emits dense pass-0 fragments over the original `N x N` serpentine
+  parameter grid, finalize assembles packed `N x N x 3` raw, and the Palette tab
+  displays that parameter-grid color field. This is not a copy of the final
+  complex-plane render image.
+- 3-channel associated palette artifacts use `associated_palette_mode =
+  "generated"` with `raw_key`, `raw_meta_key`, and `fragment_prefix` populated.
+  They are viewable, but not scalar-RePalette-compatible.
+
 Autolevels:
 
-- Existing scalar autolevels operates on one channel.
-- For `channels != 1`, reject with a clear error until channel-aware autolevels is designed.
-- Future autolevels can operate per channel or on luminance, but the policy must be explicit.
+- Autolevels operates on the rendered image artifact, not on solve-order raw
+  score bytes. It must accept 3-channel color images and apply the existing
+  image-level policy.
+- It must not inherit or reuse scalar raw-sidecar rejection. If it writes a
+  derived artifact, strip stale raw-sidecar/step-score metadata from the child.
 
 ## Export Paths
 
@@ -747,8 +794,8 @@ All export paths must branch on raw channel metadata.
 Required behavior for enabled interpretations:
 
 - `channels == 1`, `interpretation == "scalar_lut"`: existing palette-to-RGB export path.
-- `channels == 3`, `interpretation == "rgb"`: treat packed raw as RGB and skip palette lookup.
-- `channels == 3`, `interpretation == "hsv"`: convert packed HSV bytes to RGB.
+- `channels == 3`, `interpretation == "rgb"`: treat packed raw as RGB and skip palette lookup; all-zero triples render as background in final images.
+- `channels == 3`, `interpretation == "hsv"`: convert packed HSV bytes to RGB; all-zero triples render as background in final images.
 - `channels == 3`, `interpretation == "rgb_lut"`: sample the selected RGB palette three times with reserved-zero semantics and assemble `(sample0.r, sample1.g, sample2.b)`.
 - `channels == 3`, `interpretation == "hsv_lut"`: sample the selected palette in HSV space three times with reserved-zero semantics and assemble `(sample0.h, sample1.s, sample2.v)`, then convert to RGB.
 - Any other channel count or interpretation is rejected with a clear error until implemented.
@@ -767,9 +814,15 @@ Required clear-error behavior:
 - Recolor-from-raw scalar palette path: reject `channels != 1` unless the
   request explicitly uses a channel-aware LUT mode.
 - Color2Bilevel/from-raw bilevel: reject `channels != 1`.
-- ExtractPalette-from-step-scores: reject `channels != 1` before checking
-  `step_scores_key`.
-- Autolevels: reject direct RGB/channel raw until a channel-aware policy exists.
+- ExtractPalette: if the selected artifact or one of its ancestors already has
+  an associated palette artifact, attach/no-op that association. Otherwise, if
+  the source has fused `step_scores.raw`, regenerate the parameter-grid palette
+  from those solve-order bytes for both `channels == 1` and `channels == 3`.
+  Multi-output color artifacts without either `step_scores.raw` or an existing
+  associated palette artifact remain non-extractable because the final rendered
+  image does not preserve the parameter-grid order.
+- Autolevels: image-level operation; do not reject solely because the source raw
+  sidecar has `channels == 3`.
 
 Suggested error text:
 
@@ -1180,18 +1233,23 @@ Ship:
 - HSV byte-to-RGB conversion for preview/render/export using the simple v1 byte
   interpretation.
 - RGB LUT and HSV LUT palette-component lookup modes for three-output programs.
+- Associated palette saving for all supported interpretations: dense pass-0
+  parameter-grid artifacts for `Scalar LUT`, `RGB`, `HSV`, `RGB LUT`, and
+  `HSV LUT`.
 - Per-channel summary ranges from one native stats invocation.
 - Generic packed sparse fragments: `pixel_idx + N bytes`.
 - Generic packed raw artifacts: `width * height * N`.
 - Direct RGB preview/render/export for `N=3`.
-- Clear rejection in palette extraction/generation where unsupported.
-- Clear rejection in scalar-only recolor, bilevel, ExtractPalette-from-raw, and
-  autolevel paths.
+- `step_scores.raw` preservation and ExtractPalette regeneration for
+  `channels == 1` and `channels == 3`.
+- Clear rejection in palette extraction/generation only where neither an
+  associated palette nor fused step-score bytes exist.
+- Clear rejection in scalar-only recolor and bilevel paths.
+- Image-level autolevels for rendered RGB/HSV/LUT artifacts, with stale raw
+  lineage stripped from derived children.
 
 Do not ship:
 
-- Channel-LUT repalette over packed RGB raw unless the UI and metadata for that
-  interpretation are implemented in the same change.
 - `palette_mix`
 - `palette_modulate`
 - channel equalization
@@ -1265,9 +1323,9 @@ Stage 5: Product UI
 - Add `const`, `dup`, `add`, `mult`, `subtract`, `ratio`, `ema`, `sin`,
   `cos`, `log`, `exp`, `pow`, and `clamp` chips.
 - Add selected-line insertion with `+ before` / `+ after`.
-- Add Color section with mutually-exclusive `Scalar LUT`, `RGB`,
-  and `HSV` choices.
-- Add direct RGB sugar/preset.
+- Add Color section with mutually-exclusive `Scalar LUT`, `RGB`, `HSV`,
+  `RGB LUT`, and `HSV LUT` choices.
+- Do not add a hard-coded Direct RGB preset; use saved solve-score programs.
 - Remove or disable score normalization for explicit-output programs.
 - Hide scalar palette selection for RGB/HSV.
 - Add optional RGB channel-LUT repalette controls later.
@@ -1432,8 +1490,14 @@ remaining implementation needed to match this document.
 - Keep `roots2pix_mt` image-agnostic. It should not know `rgb` or `hsv`.
 - Keep per-channel clip arrays:
   `--score_output_clip_los` and `--score_output_clip_his`.
-- Keep `--step_scores_output` and associated-palette fragment output restricted
-  to one output channel.
+- `--step_scores_output` writes solve-order output bytes, not image pixels. It
+  must support the same shipped output channel counts as color render (`1` and
+  `3`). For `channels == 3`, write exactly three bytes per solve in emission
+  order. This file is not deduped and is the source of truth for later
+  ExtractPalette regeneration when no associated palette was saved.
+- Allow associated-palette fragment output for supported one- and three-channel
+  interpretations so the generated palette artifact matches the selected color
+  mode over the dense pass-0 parameter grid.
 - Ensure runtime JSON reports `fragment_channels` and
   `fragment_record_size_bytes` for finalize validation.
 
@@ -1468,7 +1532,10 @@ remaining implementation needed to match this document.
 - Write `channels`, `raw_layout`, `interpretation`, `output_channels`,
   selected Color mode, and per-channel ranges into both sidecar JSON and color
   artifact metadata.
-- Continue writing `step_scores.raw` only for scalar `channels=1`.
+- Continue writing `step_scores.raw` for supported one- and three-channel
+  outputs whenever the render workflow provides `step_scores_grid_n` and
+  `step_count`. `step_count` remains a count of solve rows; the byte count is
+  `step_count * channels`.
 
 `lambda/raw_sidecar.py`
 
@@ -1500,6 +1567,9 @@ remaining implementation needed to match this document.
   palette-component lookup coordinates.
 - For `channels=3`, `hsv_lut`, use the three packed bytes as independent HSV
   palette-component lookup coordinates.
+- Add `--zero_background=0|1`: final color images use `1`, while generated
+  associated-palette images use `0` so zero bytes are valid dense-grid lookup
+  coordinates.
 - Reject mismatched `channels` and `interpretation` early.
 
 ### Preview Path
@@ -1545,13 +1615,21 @@ remaining implementation needed to match this document.
 
 `lambda/handler_extract_palette_from_step_scores.py`
 
-- Reject `channels != 1` before checking `step_scores_key`, so direct RGB/HSV
-  artifacts get a clear scalar-only error.
+- Accept fused `step_scores.raw` for `channels == 1` and `channels == 3`.
+- Convert solve-order bytes into dense parameter-grid raw with
+  `step_scores_to_palette_raw --channels=N`.
+- Render the generated palette artifact using the source interpretation
+  (`scalar_lut`, `rgb`, `hsv`, `rgb_lut`, or `hsv_lut`). For 3-channel
+  generated palettes, zero is a valid coordinate, so render with background
+  reservation disabled.
+- Reject only when neither a valid associated palette nor fused step-score
+  metadata exists.
 
 `lambda/handler_autolevels.py`
 
-- Add raw-sidecar channel validation if absent on the selected path.
-- Reject direct RGB/HSV raw until a channel-aware autolevel policy is designed.
+- Keep autolevels image-based. It may process 3-channel rendered images.
+- Do not copy inherited raw sidecar or `step_scores.raw` metadata into the
+  derived autolevel artifact unless a fresh raw sidecar is written.
 
 ### Export Paths
 
@@ -1727,11 +1805,14 @@ remaining implementation needed to match this document.
 
 - Add scalar-only rejection tests for RGB/HSV sidecars.
 
-Tests for scalar-only consumers:
+Tests for downstream consumers:
 
 - Add or extend handler tests for `handler_bilevel.py`,
-  `handler_extract_palette_from_step_scores.py`, and `handler_autolevels.py`
-  to reject `channels != 1` with the shared clear error.
+  `handler_extract_palette_from_step_scores.py`, and `handler_autolevels.py`.
+  Bilevel remains scalar-only. ExtractPalette accepts `channels == 1` and
+  `channels == 3` when fused `step_scores.raw` exists. Autolevels remains
+  image-based and must not reject rendered RGB/HSV/LUT images because of raw
+  channel metadata.
 
 `tests/test_render_workflow_definition.py`
 

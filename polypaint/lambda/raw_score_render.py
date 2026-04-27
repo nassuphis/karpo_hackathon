@@ -91,6 +91,7 @@ def render_score_raw(
     quality,
     channels=1,
     interpretation=None,
+    zero_background=True,
 ):
     channel_count = int(channels or 1)
     mode = normalize_color_interpretation(
@@ -103,11 +104,13 @@ def render_score_raw(
         f"--pix={int(pix)}",
         f"--channels={channel_count}",
         f"--interpretation={mode}",
-        f"--eq_lut={eq_lut_path}",
         f"--palette={str(palette or 'inferno')}",
         f"--background_color={str(background_color or '000000')}",
         f"--quality={int(quality)}",
+        f"--zero_background={1 if zero_background else 0}",
     ]
+    if eq_lut_path:
+        cmd.append(f"--eq_lut={eq_lut_path}")
     if preview_path:
         cmd.extend([f"--preview={preview_path}", "--preview_max=512"])
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=imgpipe_env())

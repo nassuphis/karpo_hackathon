@@ -1257,24 +1257,32 @@ def test_roots2pix_mt_explicit_rgb_outputs_runtime():
     roots_path = "/tmp/roots2pix_mt_rgb_roots.bin"
     manifest_path = "/tmp/roots2pix_mt_rgb_manifest.json"
     fragment_prefix = "/tmp/roots2pix_mt_rgb_fragment"
+    step_scores_path = "/tmp/roots2pix_mt_rgb_step_scores.raw"
     raw_path = "/tmp/roots2pix_mt_rgb.raw"
+    palette_raw_path = "/tmp/roots2pix_mt_rgb_palette.raw"
     hist_path = "/tmp/roots2pix_mt_rgb_hist.json"
     png_path = "/tmp/roots2pix_mt_rgb.png"
     preview_path = "/tmp/roots2pix_mt_rgb_preview.png"
     hsv_png_path = "/tmp/roots2pix_mt_hsv.png"
     rgb_lut_png_path = "/tmp/roots2pix_mt_rgb_lut.png"
+    rgb_lut_palette_png_path = "/tmp/roots2pix_mt_rgb_lut_palette.png"
     hsv_lut_png_path = "/tmp/roots2pix_mt_hsv_lut.png"
+    hsv_lut_palette_png_path = "/tmp/roots2pix_mt_hsv_lut_palette.png"
     cleanup(
         roots_path,
         manifest_path,
         fragment_prefix + ".frag",
+        step_scores_path,
         raw_path,
+        palette_raw_path,
         hist_path,
         png_path,
         preview_path,
         hsv_png_path,
         rgb_lut_png_path,
+        rgb_lut_palette_png_path,
         hsv_lut_png_path,
+        hsv_lut_palette_png_path,
     )
 
     roots_bytes = bytearray()
@@ -1320,11 +1328,13 @@ def test_roots2pix_mt_explicit_rgb_outputs_runtime():
             "--score_output_clip_los=0.5,0.25,0",
             "--score_output_clip_his=0.75,0.5,1",
             "--fragment_prefix=" + fragment_prefix,
+            "--step_scores_output=" + step_scores_path,
         ], capture_output=True, text=True, timeout=10)
         assert r.returncode == 0, "roots2pix_mt explicit RGB failed: " + r.stderr[:200]
         meta = json.loads(r.stdout or "{}")
         assert meta.get("fragment_channels") == 3, "roots2pix_mt did not report 3 fragment channels"
         assert meta.get("fragment_record_size_bytes") == 7, "roots2pix_mt did not report 7-byte RGB records"
+        assert meta.get("step_score_channels") == 3, "roots2pix_mt did not report 3 step-score channels"
         assert meta.get("roots_plotted") == 2, "explicit RGB roots2pix plotted unexpected root count"
 
         expected = bytearray()
@@ -1334,6 +1344,22 @@ def test_roots2pix_mt_explicit_rgb_outputs_runtime():
         expected.extend([255, 0, 128])
         with open(fragment_prefix + ".frag", "rb") as f:
             assert f.read() == bytes(expected), "explicit RGB fragment payload mismatch"
+        with open(step_scores_path, "rb") as f:
+            assert f.read() == bytes([0, 255, 0, 255, 0, 128]), "explicit RGB step_scores payload mismatch"
+
+        with open(step_scores_path, "wb") as f:
+            f.write(bytes([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]))
+        r = subprocess.run([
+            "/src/step_scores_to_palette_raw",
+            "--input=" + step_scores_path,
+            "--output=" + palette_raw_path,
+            "--grid-n=2",
+            "--step-count=4",
+            "--channels=3",
+        ], capture_output=True, text=True, timeout=10)
+        assert r.returncode == 0, "step_scores_to_palette_raw RGB failed: " + r.stderr[:200]
+        with open(palette_raw_path, "rb") as f:
+            assert f.read() == bytes([1, 2, 3, 4, 5, 6, 10, 11, 12, 7, 8, 9]), "RGB palette raw serpentine payload mismatch"
 
         r = subprocess.run([
             "/src/assemble_greyscale",
@@ -1362,6 +1388,7 @@ def test_roots2pix_mt_explicit_rgb_outputs_runtime():
             "--pix=8",
             "--channels=3",
             "--interpretation=rgb",
+            "--background_color=123456",
             "--quality=90",
             "--preview=" + preview_path,
             "--preview_max=512",
@@ -1369,6 +1396,9 @@ def test_roots2pix_mt_explicit_rgb_outputs_runtime():
         assert r.returncode == 0, "score_raw_render RGB failed: " + r.stderr[:200]
         assert read_png_dims(png_path) == (8, 8), "direct RGB PNG dims mismatch"
         assert read_png_dims(preview_path) == (8, 8), "direct RGB preview dims mismatch"
+        assert read_rgb_pixel_with_vips(png_path, 0, 0) == (18, 52, 86), (
+            "direct RGB reserved-zero background did not render background_color"
+        )
         r = subprocess.run([
             "/src/score_raw_render",
             raw_path,
@@ -1376,10 +1406,14 @@ def test_roots2pix_mt_explicit_rgb_outputs_runtime():
             "--pix=8",
             "--channels=3",
             "--interpretation=hsv",
+            "--background_color=123456",
             "--quality=90",
         ], capture_output=True, text=True, timeout=20)
         assert r.returncode == 0, "score_raw_render HSV failed: " + r.stderr[:200]
         assert read_png_dims(hsv_png_path) == (8, 8), "HSV PNG dims mismatch"
+        assert read_rgb_pixel_with_vips(hsv_png_path, 0, 0) == (18, 52, 86), (
+            "HSV reserved-zero background did not render background_color"
+        )
         r = subprocess.run([
             "/src/score_raw_render",
             raw_path,
@@ -1399,6 +1433,22 @@ def test_roots2pix_mt_explicit_rgb_outputs_runtime():
         r = subprocess.run([
             "/src/score_raw_render",
             raw_path,
+            rgb_lut_palette_png_path,
+            "--pix=8",
+            "--channels=3",
+            "--interpretation=rgb_lut",
+            "--palette=turbo",
+            "--background_color=123456",
+            "--zero_background=0",
+            "--quality=90",
+        ], capture_output=True, text=True, timeout=20)
+        assert r.returncode == 0, "score_raw_render RGB LUT palette-mode failed: " + r.stderr[:200]
+        assert read_rgb_pixel_with_vips(rgb_lut_palette_png_path, 0, 0) == (48, 18, 59), (
+            "RGB LUT palette-mode zero should sample the palette left edge"
+        )
+        r = subprocess.run([
+            "/src/score_raw_render",
+            raw_path,
             hsv_lut_png_path,
             "--pix=8",
             "--channels=3",
@@ -1412,6 +1462,22 @@ def test_roots2pix_mt_explicit_rgb_outputs_runtime():
         assert read_rgb_pixel_with_vips(hsv_lut_png_path, 0, 0) == (18, 52, 86), (
             "HSV LUT reserved-zero background did not render background_color"
         )
+        r = subprocess.run([
+            "/src/score_raw_render",
+            raw_path,
+            hsv_lut_palette_png_path,
+            "--pix=8",
+            "--channels=3",
+            "--interpretation=hsv_lut",
+            "--palette=turbo",
+            "--background_color=123456",
+            "--zero_background=0",
+            "--quality=90",
+        ], capture_output=True, text=True, timeout=20)
+        assert r.returncode == 0, "score_raw_render HSV LUT palette-mode failed: " + r.stderr[:200]
+        assert read_rgb_pixel_with_vips(hsv_lut_palette_png_path, 0, 0) == (48, 18, 59), (
+            "HSV LUT palette-mode zero should sample the palette left edge"
+        )
         print("  roots2pix_mt explicit RGB outputs: OK")
     finally:
         cleanup(
@@ -1424,7 +1490,9 @@ def test_roots2pix_mt_explicit_rgb_outputs_runtime():
             preview_path,
             hsv_png_path,
             rgb_lut_png_path,
+            rgb_lut_palette_png_path,
             hsv_lut_png_path,
+            hsv_lut_palette_png_path,
         )
     print("=== roots2pix_mt explicit RGB output runtime PASSED ===")
 
@@ -1548,6 +1616,7 @@ def test_render_lores_preview_handler_runtime():
                     "solve_score_chain": [["centroid_re", "slv", "0.1"]],
                     "solve_score_normalize": True,
                     "lores_bin_key": roots_key,
+                    "lores_N": 4,
                     "root_transforms": [],
                     "raster_mt_threads": 1,
                     "solve_score_threads": 1,
@@ -1563,17 +1632,24 @@ def test_render_lores_preview_handler_runtime():
     body = json.loads(result["body"])
     assert body["content_type"] == "image/png", "unexpected content type %r" % body.get("content_type")
     png = base64.b64decode(body["image_base64"])
+    palette_png = base64.b64decode(body["palette_image_base64"])
     png_path = "/tmp/render_lores_preview_runtime.png"
+    palette_png_path = "/tmp/render_lores_preview_palette_runtime.png"
     with open(png_path, "wb") as f:
         f.write(png)
+    with open(palette_png_path, "wb") as f:
+        f.write(palette_png)
     assert read_png_dims(png_path) == (64, 64), "unexpected render-lores-preview PNG dimensions"
+    assert read_png_dims(palette_png_path) == (4, 4), "unexpected render-lores-preview palette PNG dimensions"
+    assert body["palette_pix"] == 4, "unexpected preview palette pix %r" % body.get("palette_pix")
+    assert body["palette_fragment_entries"] == 16, "unexpected preview palette entry count"
     assert body["preview_pix"] == 64, "unexpected preview_pix %r" % body.get("preview_pix")
     assert body["raster"]["input_mode"] == "multispan_sectioned", "roots2pix path was not sectioned"
     assert body["raster"]["roots_plotted"] > 0, "preview plotted no roots"
     assert body["solve_score"]["score_output_normalize"] is True, "score normalization was not active"
     assert body["solve_score"]["score_output_clip_source"] == "lores_q05_q95", "unexpected clip source"
     assert fake_s3.puts == [], "ephemeral preview wrote durable S3 objects: %r" % fake_s3.puts
-    cleanup(png_path)
+    cleanup(png_path, palette_png_path)
     print("  handler_render_lores_preview: OK (%d PNG bytes)" % len(png))
 
     fake_s3 = _MemS3()

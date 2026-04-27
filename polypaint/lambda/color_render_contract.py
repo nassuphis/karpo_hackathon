@@ -17,6 +17,7 @@ INTERPRETATION_ALIASES = {
 }
 
 VALID_COLOR_INTERPRETATIONS = {"scalar_lut", "rgb", "hsv", "rgb_lut", "hsv_lut"}
+CHANNEL_LUT_INTERPRETATIONS = {"rgb_lut", "hsv_lut"}
 
 
 def normalize_color_interpretation(value, *, default="scalar_lut"):
@@ -97,3 +98,30 @@ def require_scalar_raw(sidecar_or_validated, *, feature):
     if channels != 1:
         raise RuntimeError(f"{feature} requires a scalar (channels=1) raw artifact; got channels={channels}")
     return sidecar_or_validated
+
+
+def repalette_target_for_source(*, source_channels, requested_interpretation=None):
+    channels = int(source_channels or 1)
+    requested = "" if requested_interpretation in ("", None) else requested_interpretation
+    if channels == 1:
+        mode = normalize_color_interpretation(requested or "scalar_lut")
+        if mode != "scalar_lut":
+            raise RuntimeError(
+                "Color RePalette on a scalar (channels=1) artifact requires "
+                f"interpretation=scalar_lut, got {requested_interpretation!r}"
+            )
+        return "scalar_lut"
+    if channels == 3:
+        if not requested:
+            raise RuntimeError(
+                "Color RePalette on a 3-channel artifact requires "
+                "new_interpretation=rgb_lut or new_interpretation=hsv_lut"
+            )
+        mode = normalize_color_interpretation(requested)
+        if mode not in CHANNEL_LUT_INTERPRETATIONS:
+            raise RuntimeError(
+                "Color RePalette on a 3-channel artifact requires "
+                f"interpretation=rgb_lut or hsv_lut, got {requested_interpretation!r}"
+            )
+        return mode
+    raise RuntimeError(f"Color RePalette does not support channels={channels}")

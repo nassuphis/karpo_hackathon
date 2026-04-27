@@ -7,12 +7,13 @@ import time
 
 import boto3
 
+from color_render_contract import normalize_color_interpretation
 from color_artifact_meta import (
     load_color_artifact_head,
     split_color_artifact_metadata,
     write_color_artifact_meta_overlay,
 )
-from raw_score_render import histogram_from_raw_path, render_score_raw, write_equalization_lut
+from raw_score_render import histogram_from_raw_path, histogram_from_raw_path_channel0, render_score_raw, write_equalization_lut
 from raw_sidecar import background_color_hex, build_raw_sidecar, validate_raw_sidecar
 from shared import BUCKET, imgpipe_env, ok_response, parse_body, report_status
 from solve_score_chain import format_solve_score_chain_display, read_solve_score_metadata
@@ -28,6 +29,7 @@ ASSOCIATED_PALETTE_KEYS = (
     "associated_palette_image_key",
     "associated_palette_preview_key",
     "associated_palette_palette",
+    "associated_palette_color_interpretation",
     "associated_palette_metric",
     "associated_palette_score_chain",
     "associated_palette_quantile",
@@ -70,6 +72,108 @@ def _load_color_artifact(job_id, artifact_id):
     return meta
 
 
+def _artifact_color_interpretation(metadata):
+    raw = str(
+        metadata.get("color_interpretation")
+        or metadata.get("score_output_interpretation")
+        or metadata.get("raw_interpretation")
+        or metadata.get("interpretation")
+        or ""
+    ).strip()
+    if not raw:
+        return "scalar_lut"
+    try:
+        return normalize_color_interpretation(raw)
+    except RuntimeError:
+        return raw.lower()
+
+
+def _artifact_output_channel_count(metadata):
+    for key in ("raw_channels", "score_output_channel_count", "output_channel_count"):
+        raw = metadata.get(key)
+        if raw in ("", None):
+            continue
+        try:
+            count = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if count > 0:
+            return count
+    return 3 if _artifact_color_interpretation(metadata) != "scalar_lut" else 1
+
+
+def _is_scalar_extract_source(metadata):
+    return _artifact_output_channel_count(metadata) == 1 and _artifact_color_interpretation(metadata) == "scalar_lut"
+
+
+def _missing_s3_key(exc):
+    code = str(getattr(exc, "response", {}).get("Error", {}).get("Code", "")).strip()
+    return code in {"404", "NoSuchKey", "NotFound", "NotFoundException"}
+
+
+def _associated_palette_ref(job_id, metadata):
+    palette_id = str((metadata or {}).get("associated_palette_id") or "").strip()
+    if not palette_id:
+        return None
+    return {
+        "palette_id": palette_id,
+        "image_key": str(
+            (metadata or {}).get("associated_palette_image_key")
+            or f"renders/{job_id}/palettes/{palette_id}/image.jpeg"
+        ),
+    }
+
+
+def _associated_palette_exists(job_id, metadata):
+    ref = _associated_palette_ref(job_id, metadata)
+    if not ref or not ref["image_key"]:
+        return False
+    try:
+        s3.head_object(Bucket=BUCKET, Key=ref["image_key"])
+        return True
+    except Exception as exc:
+        if _missing_s3_key(exc):
+            return False
+        raise
+
+
+def _has_fused_step_score_source(metadata):
+    return bool(metadata.get("step_scores_key") and metadata.get("raw_key") and metadata.get("raw_meta_key"))
+
+
+def _is_supported_step_score_extract_source(metadata):
+    count = _artifact_output_channel_count(metadata)
+    return count in (1, 3) and _has_fused_step_score_source(metadata)
+
+
+def _palette_raw_allows_zero(raw_sidecar, channels):
+    if int(channels or 1) > 1:
+        return True
+    program = str((raw_sidecar or {}).get("score_program") or "")
+    return any(token in {"emit", "emit_norm"} for token in program.split(";"))
+
+
+def _multi_output_extract_error(artifact_id, source):
+    source_id = str(source.get("artifact_id") or artifact_id)
+    count = _artifact_output_channel_count(source)
+    interpretation = _artifact_color_interpretation(source)
+    assoc = _associated_palette_ref("", source)
+    if assoc:
+        return (
+            f"ExtractPalette found associated_palette_id={assoc['palette_id']} on artifact {source_id}, "
+            f"but the associated palette image is missing. It cannot reconstruct a {interpretation} "
+            "parameter-grid palette from the final rendered image; rerun ColorRender-MT with "
+            "Save associated palette enabled."
+        )
+    mode = f"{count} output channels"
+    if interpretation != "scalar_lut":
+        mode += f" ({interpretation})"
+    return (
+        "ExtractPalette requires solve-order step_scores.raw or an existing associated palette artifact; "
+        f"artifact {artifact_id} resolves to {source_id}, which uses {mode}"
+    )
+
+
 def _clear_associated_palette(metadata):
     for key in ASSOCIATED_PALETTE_KEYS:
         metadata.pop(key, None)
@@ -82,6 +186,7 @@ def _apply_associated_palette(metadata, palette_result, *, mode):
     metadata["associated_palette_image_key"] = palette_result["image_key"]
     metadata["associated_palette_preview_key"] = palette_result["preview_key"]
     metadata["associated_palette_palette"] = palette_result["palette"]
+    metadata["associated_palette_color_interpretation"] = palette_result.get("color_interpretation", "")
     metadata["associated_palette_metric"] = palette_result["metric"]
     metadata["associated_palette_score_chain"] = palette_result["score_chain"]
     metadata["associated_palette_quantile"] = palette_result["quantile"]
@@ -143,18 +248,19 @@ def _download_key_to_path(key, path):
 
 def _resolve_extract_request(job_id, artifact_id):
     selected = _load_color_artifact(job_id, artifact_id)
-    if selected.get("step_scores_key") and selected.get("raw_key") and selected.get("raw_meta_key"):
-        return {"kind": "fused", "selected": selected, "source": selected}
-
     current = selected
     seen = {artifact_id}
     while True:
-        if current.get("associated_palette_id"):
+        if current.get("associated_palette_id") and _associated_palette_exists(job_id, current):
             kind = "done" if current["artifact_id"] == artifact_id else "attach_generated"
             return {"kind": kind, "selected": selected, "source": current}
         if current.get("color_mode") == "saved_palette" and current.get("palette_source_id"):
             return {"kind": "attach_dependency", "selected": selected, "source": current}
         if current.get("color_mode") == "solve_score":
+            if _is_supported_step_score_extract_source(current):
+                return {"kind": "fused", "selected": selected, "source": current}
+            if not _is_scalar_extract_source(current):
+                return {"kind": "multi_output_unsupported", "selected": selected, "source": current}
             return {"kind": "legacy", "selected": selected, "source": current}
         parent_id = str(current.get("derived_from_artifact_id") or "").strip()
         if not parent_id or parent_id in seen:
@@ -168,8 +274,10 @@ def _attach_generated_palette(job_id, artifact_id, selected_meta, source_meta):
     if source_meta.get("artifact_id") == artifact_id:
         return {
             "palette_id": str(source_meta.get("associated_palette_id") or ""),
+            "mode": str(source_meta.get("associated_palette_mode") or "generated"),
             "display_name": str(source_meta.get("associated_palette_display_name") or source_meta.get("associated_palette_id") or ""),
             "palette": str(source_meta.get("associated_palette_palette") or ""),
+            "color_interpretation": str(source_meta.get("associated_palette_color_interpretation") or ""),
             "metric": str(source_meta.get("associated_palette_metric") or ""),
             "score_chain": source_meta.get("associated_palette_score_chain", ""),
             "quantile": source_meta.get("associated_palette_quantile", ""),
@@ -187,8 +295,10 @@ def _attach_generated_palette(job_id, artifact_id, selected_meta, source_meta):
     _write_overlay(job_id, artifact_id, metadata)
     return {
         "palette_id": str(metadata.get("associated_palette_id") or ""),
+        "mode": str(metadata.get("associated_palette_mode") or "generated"),
         "display_name": str(metadata.get("associated_palette_display_name") or metadata.get("associated_palette_id") or ""),
         "palette": str(metadata.get("associated_palette_palette") or ""),
+        "color_interpretation": str(metadata.get("associated_palette_color_interpretation") or ""),
         "metric": str(metadata.get("associated_palette_metric") or ""),
         "score_chain": metadata.get("associated_palette_score_chain", ""),
         "quantile": metadata.get("associated_palette_quantile", ""),
@@ -210,12 +320,14 @@ def _attach_saved_palette_dependency(job_id, artifact_id, selected_meta, source_
     prefix = f"renders/{job_id}/palettes/{palette_id}/"
     palette_result = {
         "palette_id": palette_id,
+        "mode": "dependency",
         "display_name": str(
             source_meta.get("palette_source_display_name")
             or palette_meta.get("display_name")
             or palette_id
         ),
         "palette": str(source_meta.get("palette_source_palette") or palette_meta.get("palette") or ""),
+        "color_interpretation": str(palette_meta.get("color_interpretation") or palette_meta.get("score_output_interpretation") or ""),
         "metric": str(source_meta.get("palette_source_metric") or palette_meta.get("metric") or ""),
         "score_chain": source_meta.get("palette_source_score_chain", palette_meta.get("solve_score_chain", "")),
         "quantile": source_meta.get("palette_source_quantile", ""),
@@ -243,9 +355,21 @@ def _render_palette_from_step_scores(job_id, artifact_id, source_meta, task_id):
         _load_json_key(source_raw_meta_key),
         expected_raw_key=source_raw_key,
         expected_artifact_family="color",
-        require_scalar=True,
-        feature="ExtractPalette-from-step-scores",
     )
+    channels = int(raw_sidecar.get("channels") or 1)
+    if channels not in (1, 3):
+        raise RuntimeError(
+            f"ExtractPalette-from-step-scores requires one or three output channels; got channels={channels}"
+        )
+    interpretation = normalize_color_interpretation(raw_sidecar.get("interpretation") or "scalar_lut")
+    if channels == 1 and interpretation != "scalar_lut":
+        raise RuntimeError(
+            f"ExtractPalette-from-step-scores requires scalar_lut interpretation for one-channel raw; got {interpretation}"
+        )
+    if channels == 3 and interpretation not in {"rgb", "hsv", "rgb_lut", "hsv_lut"}:
+        raise RuntimeError(
+            f"ExtractPalette-from-step-scores does not support {channels}-channel interpretation {interpretation!r}"
+        )
     step_scores_key = str(raw_sidecar.get("step_scores_key") or source_meta.get("step_scores_key") or "").strip()
     step_count = int(raw_sidecar.get("step_count") or source_meta.get("step_count") or 0)
     grid_n = int(raw_sidecar.get("step_scores_grid_n") or source_meta.get("step_scores_grid_n") or 0)
@@ -270,10 +394,12 @@ def _render_palette_from_step_scores(job_id, artifact_id, source_meta, task_id):
     temp_paths = [raw_path, step_scores_path, eq_lut_path, image_path, preview_path]
     try:
         _download_key_to_path(step_scores_key, step_scores_path)
-        actual_step_count = os.path.getsize(step_scores_path)
-        if actual_step_count < step_count:
+        expected_step_score_bytes = step_count * channels
+        actual_step_score_bytes = os.path.getsize(step_scores_path)
+        if actual_step_score_bytes < expected_step_score_bytes:
             raise RuntimeError(
-                f"step_scores.raw shorter than sidecar step_count: expected {step_count}, got {actual_step_count}"
+                "step_scores.raw shorter than sidecar step_count*channels: "
+                f"expected {expected_step_score_bytes}, got {actual_step_score_bytes}"
             )
 
         proc = subprocess.run(
@@ -283,6 +409,7 @@ def _render_palette_from_step_scores(job_id, artifact_id, source_meta, task_id):
                 f"--output={raw_path}",
                 f"--grid-n={grid_n}",
                 f"--step-count={step_count}",
+                f"--channels={channels}",
             ],
             capture_output=True,
             text=True,
@@ -291,7 +418,12 @@ def _render_palette_from_step_scores(job_id, artifact_id, source_meta, task_id):
         if proc.returncode != 0:
             raise RuntimeError(f"step_scores_to_palette_raw failed: {proc.stderr.strip() or 'unknown error'}")
 
-        histogram = histogram_from_raw_path(raw_path, expected_size=grid_n * grid_n)
+        expected_raw_size = grid_n * grid_n * channels
+        histogram = (
+            histogram_from_raw_path(raw_path, expected_size=expected_raw_size)
+            if channels == 1
+            else histogram_from_raw_path_channel0(raw_path, channels=channels, expected_size=expected_raw_size)
+        )
         write_equalization_lut(eq_lut_path, histogram)
         encode_meta = render_score_raw(
             raw_path=raw_path,
@@ -302,6 +434,9 @@ def _render_palette_from_step_scores(job_id, artifact_id, source_meta, task_id):
             palette=str(source_meta.get("palette") or "inferno"),
             background_color=background_color_hex(raw_sidecar.get("background_color", [0, 0, 0])),
             quality=90,
+            channels=channels,
+            interpretation=interpretation,
+            zero_background=not _palette_raw_allows_zero(raw_sidecar, channels),
         )
 
         sidecar = build_raw_sidecar(
@@ -327,6 +462,10 @@ def _render_palette_from_step_scores(job_id, artifact_id, source_meta, task_id):
             meta_key=meta_key,
             created_at=created_at,
             histogram=histogram,
+            channels=channels,
+            raw_layout=raw_sidecar.get("raw_layout"),
+            interpretation=interpretation,
+            output_channels=raw_sidecar.get("output_channels"),
         )
         with open(raw_path, "rb") as raw_fh:
             s3.put_object(
@@ -397,6 +536,10 @@ def _render_palette_from_step_scores(job_id, artifact_id, source_meta, task_id):
             "preview_key": preview_key,
             "raw_key": raw_key,
             "raw_meta_key": raw_meta_key,
+            "raw_channels": channels,
+            "raw_layout": raw_sidecar.get("raw_layout", "u8_scalar_row_major" if channels == 1 else "u8_packed_channels_row_major"),
+            "color_interpretation": interpretation,
+            "score_output_interpretation": interpretation,
             "metric": metric,
             "solve_score_chain": score_chain,
             "chain_fingerprint": raw_sidecar["chain_fingerprint"],
@@ -430,6 +573,7 @@ def _render_palette_from_step_scores(job_id, artifact_id, source_meta, task_id):
             "raw_key": raw_key,
             "raw_meta_key": raw_meta_key,
             "meta_key": meta_key,
+            "color_interpretation": interpretation,
             "file_size": int(encode_meta["file_size"]),
         }
     finally:
@@ -494,6 +638,8 @@ def handler(event, context):
             raise RuntimeError(
                 f"Color artifact {artifact_id} does not expose fused step_scores.raw metadata; use the legacy palette extractor"
             )
+        if kind == "multi_output_unsupported":
+            raise RuntimeError(_multi_output_extract_error(artifact_id, source))
         raise RuntimeError(f"Color artifact {artifact_id} does not expose extractable palette lineage")
     except Exception as exc:
         report_status(job_id, task_id, "error", str(exc), result_data=progress)

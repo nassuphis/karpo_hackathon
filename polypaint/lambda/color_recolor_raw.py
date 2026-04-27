@@ -11,8 +11,14 @@ from color_artifact_meta import (
     split_color_artifact_metadata,
     write_color_artifact_meta_overlay,
 )
+from color_render_contract import apply_channel_names, repalette_target_for_source
 from palette_names import VALID_PALETTE_NAMES
-from raw_score_render import histogram_from_raw_path, render_score_raw, write_equalization_lut
+from raw_score_render import (
+    histogram_from_raw_path,
+    histogram_from_raw_path_channel0,
+    render_score_raw,
+    write_equalization_lut,
+)
 from raw_sidecar import background_color_hex, build_raw_sidecar, validate_raw_sidecar
 from solve_score_chain import format_solve_score_chain_display, read_solve_score_metadata
 from shared import BUCKET, ok_response, report_status
@@ -28,6 +34,7 @@ ASSOCIATED_PALETTE_METADATA_KEYS = (
     "associated_palette_image_key",
     "associated_palette_preview_key",
     "associated_palette_palette",
+    "associated_palette_color_interpretation",
     "associated_palette_metric",
     "associated_palette_score_chain",
     "associated_palette_quantile",
@@ -123,6 +130,27 @@ def _parse_score_chain(value):
     return []
 
 
+def _raw_layout_for_channels(channels):
+    return "u8_scalar_row_major" if int(channels or 1) == 1 else "u8_packed_channels_row_major"
+
+
+def _sidecar_allows_zero(sidecar):
+    channels = int((sidecar or {}).get("channels", 1) or 1)
+    if channels > 1:
+        return True
+    score_program = str((sidecar or {}).get("score_program") or "")
+    tokens = [tok.strip().split(":", 1)[0] for tok in score_program.split(";") if tok.strip()]
+    return any(tok in ("emit", "emit_norm") for tok in tokens)
+
+
+def _output_channels_for_sidecar(sidecar, interpretation):
+    channels = int((sidecar or {}).get("channels", 1) or 1)
+    rows = list((sidecar or {}).get("output_channels") or [])
+    if not rows:
+        rows = [{"channel": idx, "name": f"channel_{idx}"} for idx in range(channels)]
+    return apply_channel_names(rows, interpretation)
+
+
 def _associated_palette_display_name(chain, metric, quantile, palette):
     label = format_solve_score_chain_display(chain, legacy_quantile=quantile)
     parts = [label] if label else [str(metric or "").strip()]
@@ -136,13 +164,20 @@ def _clear_associated_palette_metadata(metadata):
         metadata.pop(key, None)
 
 
-def _histogram_for_sidecar(sidecar, raw_path, *, expected_size):
+def _histogram_for_sidecar(sidecar, raw_path, *, expected_pixels, expected_raw_size=None, channels=1):
     histogram = sidecar.get("histogram")
     if isinstance(histogram, list) and len(histogram) == 256:
         normalized = [int(v) for v in histogram]
-        if sum(normalized) == int(expected_size):
+        if sum(normalized) == int(expected_pixels):
             return normalized
-    return histogram_from_raw_path(raw_path, expected_size=expected_size)
+    channel_count = int(channels or 1)
+    if channel_count == 1:
+        return histogram_from_raw_path(raw_path, expected_size=expected_raw_size or expected_pixels)
+    return histogram_from_raw_path_channel0(
+        raw_path,
+        channels=channel_count,
+        expected_size=expected_raw_size or (int(expected_pixels) * channel_count),
+    )
 
 
 def _source_associated_palette_spec(source_meta, job_id):
@@ -169,6 +204,7 @@ def _source_associated_palette_spec(source_meta, job_id):
         "palette_id": palette_id,
         "display_name": str(source_meta.get("associated_palette_display_name") or palette_id),
         "palette": str(source_meta.get("associated_palette_palette") or source_meta.get("palette") or "").strip(),
+        "color_interpretation": str(source_meta.get("associated_palette_color_interpretation") or "").strip(),
         "metric": str(score["metric"] or "").strip(),
         "score_chain": score["chain_json"],
         "quantile": score["quantile"],
@@ -201,6 +237,7 @@ def _apply_associated_palette_metadata(metadata, palette_result):
     metadata["associated_palette_image_key"] = palette_result["image_key"]
     metadata["associated_palette_preview_key"] = palette_result["preview_key"]
     metadata["associated_palette_palette"] = palette_result["palette"]
+    metadata["associated_palette_color_interpretation"] = palette_result.get("color_interpretation", "")
     metadata["associated_palette_metric"] = palette_result["metric"]
     metadata["associated_palette_score_chain"] = palette_result["score_chain"]
     metadata["associated_palette_quantile"] = palette_result["quantile"]
@@ -223,6 +260,7 @@ def _recolor_associated_palette(
     created_at,
     temp_paths,
     temp_copy_keys,
+    new_interpretation=None,
 ):
     palette_sidecar = validate_raw_sidecar(
         _load_json_key(palette_spec["raw_meta_key"]),
@@ -231,6 +269,11 @@ def _recolor_associated_palette(
     )
     width = int(palette_sidecar["width"])
     height = int(palette_sidecar["height"])
+    channels = int(palette_sidecar.get("channels", 1) or 1)
+    target_interpretation = repalette_target_for_source(
+        source_channels=channels,
+        requested_interpretation=new_interpretation if channels == 3 else "scalar_lut",
+    )
     if width != height:
         raise RuntimeError(f"Associated palette raw sidecar must be square, got {width}x{height}")
     palette_meta = _load_optional_json_key(palette_spec["meta_key"])
@@ -242,17 +285,27 @@ def _recolor_associated_palette(
     temp_paths.extend([palette_raw_path, eq_lut_path, image_path, preview_path])
 
     _download_key_to_path(palette_spec["raw_key"], palette_raw_path)
-    histogram = _histogram_for_sidecar(palette_sidecar, palette_raw_path, expected_size=width * height)
-    write_equalization_lut(eq_lut_path, histogram)
+    histogram = _histogram_for_sidecar(
+        palette_sidecar,
+        palette_raw_path,
+        expected_pixels=width * height,
+        expected_raw_size=width * height * channels,
+        channels=channels,
+    )
+    if channels == 1:
+        write_equalization_lut(eq_lut_path, histogram)
     encode_meta = render_score_raw(
         raw_path=palette_raw_path,
         out_path=image_path,
         preview_path=preview_path,
         pix=width,
-        eq_lut_path=eq_lut_path,
+        eq_lut_path=eq_lut_path if channels == 1 else None,
         palette=new_palette,
         background_color=background_color,
         quality=90,
+        channels=channels,
+        interpretation=target_interpretation,
+        zero_background=not _sidecar_allows_zero(palette_sidecar),
     )
 
     palette_id = f"pal_{artifact_id}"
@@ -274,6 +327,9 @@ def _recolor_associated_palette(
                 "width": str(width),
                 "height": str(height),
                 "palette": str(new_palette),
+                "color_interpretation": target_interpretation,
+                "score_output_interpretation": target_interpretation,
+                "raw_channels": str(channels),
                 "full_n": str(width),
                 "times": str(int(_parse_int(palette_meta.get("times"), 1))),
                 "using_pass": str(int(_parse_int(palette_meta.get("using_pass"), 0))),
@@ -314,6 +370,10 @@ def _recolor_associated_palette(
         meta_key=new_meta_key,
         created_at=created_at,
         histogram=histogram,
+        channels=channels,
+        raw_layout=_raw_layout_for_channels(channels),
+        interpretation=target_interpretation,
+        output_channels=_output_channels_for_sidecar(palette_sidecar, target_interpretation),
     )
     s3.put_object(
         Bucket=BUCKET,
@@ -344,6 +404,10 @@ def _recolor_associated_palette(
         "total_solves": int(_parse_int(palette_meta.get("total_solves"), width * height)),
         "pass_count": int(_parse_int(palette_meta.get("pass_count"), _parse_int(palette_meta.get("times"), 1))),
         "data_layout": str(palette_meta.get("data_layout") or "fused_pass0_raw_v1"),
+        "raw_channels": int(channels),
+        "raw_layout": _raw_layout_for_channels(channels),
+        "color_interpretation": target_interpretation,
+        "score_output_interpretation": target_interpretation,
         "render_reusable": False,
         "file_size": int(encode_meta["file_size"]),
         "image_key": new_image_key,
@@ -374,6 +438,7 @@ def _recolor_associated_palette(
         "palette_id": palette_id,
         "display_name": display_name or palette_id,
         "palette": str(new_palette),
+        "color_interpretation": target_interpretation,
         "metric": str(palette_spec["metric"] or ""),
         "score_chain": palette_spec["score_chain"],
         "quantile": palette_spec["quantile"],
@@ -445,17 +510,20 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
             _load_json_key(source_raw_meta_key),
             expected_raw_key=source_raw_key,
             expected_artifact_family="color",
-            require_scalar=True,
-            feature="Recolor-from-raw",
+        )
+        source_channels = int(raw_sidecar.get("channels", 1) or 1)
+        target_interpretation = repalette_target_for_source(
+            source_channels=source_channels,
+            requested_interpretation=params.get("new_interpretation"),
         )
         raw_width = _parse_int(raw_sidecar.get("width"), width)
         raw_height = _parse_int(raw_sidecar.get("height"), height)
         if raw_width != width or raw_height != height:
             raise RuntimeError(
-                f"greyscale raw dimensions mismatch: sidecar={raw_width}x{raw_height}, artifact={width}x{height}"
+                f"raw dimensions mismatch: sidecar={raw_width}x{raw_height}, artifact={width}x{height}"
             )
         if raw_width != raw_height:
-            raise RuntimeError(f"greyscale raw sidecar must be square, got {raw_width}x{raw_height}")
+            raise RuntimeError(f"raw sidecar must be square, got {raw_width}x{raw_height}")
         background_color = background_color_hex(raw_sidecar.get("background_color", background_color))
 
         created_at = _utc_now_iso()
@@ -470,6 +538,7 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
         new_meta_key = prefix + "meta.json"
         new_step_scores_key = prefix + "step_scores.raw"
 
+        output_channels = _output_channels_for_sidecar(raw_sidecar, target_interpretation)
         metadata = dict(source_meta)
         metadata.update({
             "artifact_id": artifact_id,
@@ -482,14 +551,21 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
             "background_color": background_color,
             "format": ext,
             "quality": str(quality),
-            "repalette_capable": "false",
-            "rgb_source": "raw",
+            "repalette_capable": "true",
+            "raw_channels": str(source_channels),
+            "raw_layout": _raw_layout_for_channels(source_channels),
+            "score_output_channel_count": str(source_channels),
+            "score_output_channels": json.dumps(output_channels, separators=(",", ":")),
+            "score_output_interpretation": target_interpretation,
+            "color_interpretation": target_interpretation,
+            "rgb_source": "raw" if source_channels == 1 else f"{target_interpretation}_raw",
             "raw_key": new_raw_key,
             "raw_meta_key": new_raw_meta_key,
         })
         metadata.pop("postprocess_kind", None)
         metadata.pop("postprocess_profile", None)
         metadata.pop("autolevels_params", None)
+        # Raw sidecar is authoritative; drop stale header values before reattaching copied step scores.
         metadata.pop("step_scores_key", None)
         metadata.pop("step_count", None)
         metadata.pop("step_scores_grid_n", None)
@@ -504,17 +580,28 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
         _download_key_to_path(source_raw_key, source_raw_path)
 
         _phase(job_id, task_id, "rendering", "render_raw", "RePalette raw", **progress)
-        histogram = _histogram_for_sidecar(raw_sidecar, source_raw_path, expected_size=width * height)
-        write_equalization_lut(eq_lut_path, histogram)
+        expected_raw_size = width * height * source_channels
+        histogram = _histogram_for_sidecar(
+            raw_sidecar,
+            source_raw_path,
+            expected_pixels=width * height,
+            expected_raw_size=expected_raw_size,
+            channels=source_channels,
+        )
+        if source_channels == 1:
+            write_equalization_lut(eq_lut_path, histogram)
         encode_result = render_score_raw(
             raw_path=source_raw_path,
             out_path=encode_out_path,
             preview_path=preview_out_path,
             pix=width,
-            eq_lut_path=eq_lut_path,
+            eq_lut_path=eq_lut_path if source_channels == 1 else None,
             palette=new_palette,
             background_color=background_color,
             quality=quality,
+            channels=source_channels,
+            interpretation=target_interpretation,
+            zero_background=True,
         )
 
         associated_palette_result = None
@@ -530,6 +617,7 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
                 created_at=created_at,
                 temp_paths=temp_paths,
                 temp_copy_keys=temp_copy_keys,
+                new_interpretation=target_interpretation,
             )
             _apply_associated_palette_metadata(metadata, associated_palette_result)
 
@@ -574,6 +662,10 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
             step_scores_key=copied_step_scores_key or None,
             step_count=copied_step_count,
             step_scores_grid_n=copied_step_scores_grid_n,
+            channels=source_channels,
+            raw_layout=_raw_layout_for_channels(source_channels),
+            interpretation=target_interpretation,
+            output_channels=output_channels,
         )
         s3.put_object(
             Bucket=BUCKET,
@@ -630,6 +722,8 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
             "preview_key": preview_key,
             "raw_key": new_raw_key,
             "raw_meta_key": new_raw_meta_key,
+            "score_output_interpretation": target_interpretation,
+            "raw_channels": source_channels,
             "file_size": encode_result.get("file_size"),
             "derivation_kind": "color_repalette",
             **({"associated_palette": associated_palette_result} if associated_palette_result else {}),

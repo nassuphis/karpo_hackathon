@@ -38,6 +38,16 @@ _VALID_INTENT = {"perceptual", "relative", "saturation", "absolute"}
 _VALID_FAIL_ON = {"none", "truncated", "error", "warning"}
 _VALID_KERNEL = {"nearest", "linear", "cubic", "mitchell", "lanczos2", "lanczos3"}
 _VALID_SUBSAMPLE = {"auto", "on", "off"}
+RAW_SIDECAR_METADATA_KEYS = (
+    "raw_key",
+    "raw_meta_key",
+    "raw_channels",
+    "raw_layout",
+    "raw_encoding",
+    "step_scores_key",
+    "step_count",
+    "step_scores_grid_n",
+)
 
 
 def _utc_now_iso():
@@ -309,6 +319,13 @@ def _probe_dims(path):
     raise RuntimeError("resized artifact format probe only supports JPEG and PNG outputs")
 
 
+def _drop_raw_sidecar_metadata(meta):
+    # Resize transforms the rendered image. Parent raw sidecars describe the
+    # source pixels, not the resized child pixels.
+    for key in RAW_SIDECAR_METADATA_KEYS:
+        meta.pop(key, None)
+
+
 def handler(event, context):
     params = parse_body(event)
     job_id = params["job_id"]
@@ -426,6 +443,7 @@ def handler(event, context):
             "height": str(out_height),
         })
         img_meta.update(inherit_associated_palette_metadata(source_meta))
+        _drop_raw_sidecar_metadata(img_meta)
         if out_ext != "jpeg":
             img_meta.pop("jpeg_subsample_mode", None)
         image_meta, overlay_meta = split_color_artifact_metadata(img_meta)

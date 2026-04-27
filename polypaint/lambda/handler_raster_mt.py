@@ -248,9 +248,7 @@ def _build_cmd(params):
     output_channel_count = int(score_artifact.get("score_output_channel_count") or 1)
     if output_channel_count < 1:
         raise RuntimeError(f"score_output_channel_count must be >= 1, got {output_channel_count}")
-    if params.get("emit_associated_palette_bins") and output_channel_count != 1:
-        raise RuntimeError("associated palette extraction requires a single solve-score output channel")
-    if output_channel_count == 1:
+    if output_channel_count in (1, 3):
         cmd.append("--step_scores_output=/tmp/step_scores.bin")
 
     if params.get("solve_score_chain_present") and compiled is not None:
@@ -569,8 +567,10 @@ def _handle_fused_raster_request(params):
             raise RuntimeError("fused raster requires solve_score_clip_key")
         ss_obj = s3.get_object(Bucket=BUCKET, Key=ss_clip_key)
         section_params["solve_score_bins_data"] = json.loads(ss_obj["Body"].read())
-        emit_step_scores = int(section_params["solve_score_bins_data"].get("score_output_channel_count") or 1) == 1
+        step_score_channels = int(section_params["solve_score_bins_data"].get("score_output_channel_count") or 1)
+        emit_step_scores = step_score_channels in (1, 3)
         perf["emit_step_scores"] = emit_step_scores
+        perf["step_score_channels"] = step_score_channels if emit_step_scores else 0
 
         raw_chain = section_params.get("solve_score_chain", "")
         section_params["solve_score_chain_present"] = raw_chain not in ("", None, [])
@@ -673,6 +673,7 @@ def _handle_fused_raster_request(params):
         perf["associated_palette_fragment_files_uploaded"] = 1 if emit_associated_palette_bins else 0
         perf["associated_palette_fragment_bytes_uploaded"] = palette_fragment_size
         perf["step_scores_bytes_uploaded"] = step_scores_size
+        perf["step_score_channels"] = step_score_channels if emit_step_scores else 0
 
         report_status(job_id, task_id, "rasterized_1/1")
         report_status(job_id, task_id, "rasterized")
@@ -687,6 +688,7 @@ def _handle_fused_raster_request(params):
             "associated_palette_fragment_files_uploaded": 1 if emit_associated_palette_bins else 0,
             "associated_palette_fragment_bytes_uploaded": palette_fragment_size,
             "step_scores_bytes_uploaded": step_scores_size,
+            "step_score_channels": step_score_channels if emit_step_scores else 0,
             "rgb_source": "raw_score_bins",
             "raster_us": perf["native_us"],
             "roots_plotted": perf["roots_plotted"],

@@ -711,6 +711,7 @@ class TestPaletteRenderPlan(unittest.TestCase):
                         "associated_palette_omega_enabled": "false",
                     }
                 },
+                "renders/j/palettes/pal_src/image.jpeg": {"Metadata": {}},
             }
             if kwargs["Key"] not in mapping:
                 raise AssertionError(f"unexpected head_object key: {kwargs['Key']}")

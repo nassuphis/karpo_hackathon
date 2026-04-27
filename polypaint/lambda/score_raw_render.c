@@ -42,16 +42,50 @@ static int getArgInt(int argc, char **argv, const char *key, int def) {
     return v ? atoi(v) : def;
 }
 
-static int copy_rgb_raw_to_image(const char *inPath, VipsImage **out, int width, int height) {
+static int load_exact_file(const char *path, unsigned char *buf, size_t expected);
+static int parse_hex_rgb(const char *value, unsigned char *r, unsigned char *g, unsigned char *b);
+
+static int copy_rgb_raw_to_image(const char *inPath, VipsImage **out, int width, int height,
+                                 const char *backgroundColor, int zeroBackground) {
+    if (zeroBackground) {
+        size_t expected = (size_t)width * (size_t)height * 3u;
+        unsigned char *rgb = (unsigned char *)malloc(expected);
+        unsigned char bgR = 0, bgG = 0, bgB = 0;
+        if (!rgb) {
+            fprintf(stderr, "out of memory loading RGB raw\n");
+            return 0;
+        }
+        if (!parse_hex_rgb(backgroundColor ? backgroundColor : "000000", &bgR, &bgG, &bgB)) {
+            fprintf(stderr, "Invalid background color: %s\n", backgroundColor ? backgroundColor : "");
+            free(rgb);
+            return 0;
+        }
+        if (!load_exact_file(inPath, rgb, expected)) {
+            fprintf(stderr, "Failed to load RGB raw bytes from %s\n", inPath);
+            free(rgb);
+            return 0;
+        }
+        for (size_t i = 0; i < expected; i += 3) {
+            if (rgb[i + 0] == 0 && rgb[i + 1] == 0 && rgb[i + 2] == 0) {
+                rgb[i + 0] = bgR;
+                rgb[i + 1] = bgG;
+                rgb[i + 2] = bgB;
+            }
+        }
+        *out = vips_image_new_from_memory_copy(rgb, expected, width, height, 3, VIPS_FORMAT_UCHAR);
+        free(rgb);
+        if (!*out) {
+            fprintf(stderr, "vips_image_new_from_memory_copy(RGB raw) failed: %s\n", vips_error_buffer());
+            return 0;
+        }
+        return 1;
+    }
     if (vips_rawload(inPath, out, width, height, 3, NULL)) {
         fprintf(stderr, "vips_rawload RGB failed: %s\n", vips_error_buffer());
         return 0;
     }
     return 1;
 }
-
-static int load_exact_file(const char *path, unsigned char *buf, size_t expected);
-static int parse_hex_rgb(const char *value, unsigned char *r, unsigned char *g, unsigned char *b);
 
 static const char *normalize_interpretation(const char *value, int channels) {
     const char *v = value && *value ? value : (channels == 1 ? "scalar_lut" : "rgb");
@@ -154,12 +188,20 @@ static void paletteHSV(const PaletteDef *pal, double t,
     *vOut = v0 * (1.0 - f) + v1 * f;
 }
 
-static int convert_hsv_raw_to_image(const char *inPath, VipsImage **out, int width, int height) {
+static int convert_hsv_raw_to_image(const char *inPath, VipsImage **out, int width, int height,
+                                    const char *backgroundColor, int zeroBackground) {
     size_t expected = (size_t)width * (size_t)height * 3u;
     unsigned char *hsv = (unsigned char *)malloc(expected);
     unsigned char *rgb = (unsigned char *)malloc(expected);
+    unsigned char bgR = 0, bgG = 0, bgB = 0;
     if (!hsv || !rgb) {
         fprintf(stderr, "out of memory converting HSV raw\n");
+        free(hsv);
+        free(rgb);
+        return 0;
+    }
+    if (zeroBackground && !parse_hex_rgb(backgroundColor ? backgroundColor : "000000", &bgR, &bgG, &bgB)) {
+        fprintf(stderr, "Invalid background color: %s\n", backgroundColor ? backgroundColor : "");
         free(hsv);
         free(rgb);
         return 0;
@@ -171,6 +213,12 @@ static int convert_hsv_raw_to_image(const char *inPath, VipsImage **out, int wid
         return 0;
     }
     for (size_t i = 0; i < expected; i += 3) {
+        if (zeroBackground && hsv[i + 0] == 0 && hsv[i + 1] == 0 && hsv[i + 2] == 0) {
+            rgb[i + 0] = bgR;
+            rgb[i + 1] = bgG;
+            rgb[i + 2] = bgB;
+            continue;
+        }
         hsv_byte_to_rgb(hsv[i + 0], hsv[i + 1], hsv[i + 2], &rgb[i + 0], &rgb[i + 1], &rgb[i + 2]);
     }
     *out = vips_image_new_from_memory_copy(rgb, expected, width, height, 3, VIPS_FORMAT_UCHAR);
@@ -184,7 +232,8 @@ static int convert_hsv_raw_to_image(const char *inPath, VipsImage **out, int wid
 }
 
 static int convert_palette_component_lut_raw_to_image(const char *inPath, VipsImage **out, int width, int height,
-                                                      const char *paletteName, const char *backgroundColor, int hsvSpace) {
+                                                      const char *paletteName, const char *backgroundColor,
+                                                      int hsvSpace, int zeroBackground) {
     size_t expected = (size_t)width * (size_t)height * 3u;
     unsigned char *coords = (unsigned char *)malloc(expected);
     unsigned char *rgb = (unsigned char *)malloc(expected);
@@ -213,14 +262,17 @@ static int convert_palette_component_lut_raw_to_image(const char *inPath, VipsIm
     double hLut[256], sLut[256], vLut[256];
     double bgH = 0.0, bgS = 0.0, bgV = 0.0;
     rgb_to_hsv_unit(bgR, bgG, bgB, &bgH, &bgS, &bgV);
-    rLut[0] = bgR;
-    gLut[0] = bgG;
-    bLut[0] = bgB;
-    hLut[0] = bgH;
-    sLut[0] = bgS;
-    vLut[0] = bgV;
-    for (int i = 1; i < 256; i++) {
-        double t = (double)(i - 1) / 254.0;
+    for (int i = 0; i < 256; i++) {
+        if (zeroBackground && i == 0) {
+            rLut[i] = bgR;
+            gLut[i] = bgG;
+            bLut[i] = bgB;
+            hLut[i] = bgH;
+            sLut[i] = bgS;
+            vLut[i] = bgV;
+            continue;
+        }
+        double t = zeroBackground ? (double)(i - 1) / 254.0 : (double)i / 255.0;
         if (hsvSpace) {
             paletteHSV(pal, t, &hLut[i], &sLut[i], &vLut[i]);
         } else {
@@ -232,7 +284,7 @@ static int convert_palette_component_lut_raw_to_image(const char *inPath, VipsIm
         unsigned char c0 = coords[i + 0];
         unsigned char c1 = coords[i + 1];
         unsigned char c2 = coords[i + 2];
-        if (c0 == 0 && c1 == 0 && c2 == 0) {
+        if (zeroBackground && c0 == 0 && c1 == 0 && c2 == 0) {
             rgb[i + 0] = bgR;
             rgb[i + 1] = bgG;
             rgb[i + 2] = bgB;
@@ -364,7 +416,7 @@ int main(int argc, char **argv) {
     vips_leak_set(0);
 
     if (argc < 3) {
-        fprintf(stderr, "Usage: score_raw_render input.raw out.jpeg --pix=N --eq_lut=eq.bin --palette=<name> --background_color=RRGGBB [--channels=1|3] [--interpretation=scalar_lut|rgb|hsv|rgb_lut|hsv_lut] [--quality=90] [--preview=preview.png] [--preview_max=512]\n");
+        fprintf(stderr, "Usage: score_raw_render input.raw out.jpeg --pix=N --eq_lut=eq.bin --palette=<name> --background_color=RRGGBB [--channels=1|3] [--interpretation=scalar_lut|rgb|hsv|rgb_lut|hsv_lut] [--zero_background=0|1] [--quality=90] [--preview=preview.png] [--preview_max=512]\n");
         vips_shutdown();
         return 2;
     }
@@ -380,6 +432,7 @@ int main(int argc, char **argv) {
     const char *heightArg = getArg(argc, argv, "--height");
     int pix = getArgInt(argc, argv, "--pix", 0);
     int channels = getArgInt(argc, argv, "--channels", 1);
+    int zeroBackground = getArgInt(argc, argv, "--zero_background", 1) ? 1 : 0;
     int quality = getArgInt(argc, argv, "--quality", 90);
     int previewMax = getArgInt(argc, argv, "--preview_max", 512);
     const char *interpretation = normalize_interpretation(interpretationArg, channels);
@@ -433,13 +486,13 @@ int main(int argc, char **argv) {
 
     if (channels == 3) {
         if (strcmp(interpretation, "hsv") == 0) {
-            if (!convert_hsv_raw_to_image(inPath, &rgb, width, height)) goto cleanup;
+            if (!convert_hsv_raw_to_image(inPath, &rgb, width, height, backgroundColor, zeroBackground)) goto cleanup;
         } else if (strcmp(interpretation, "rgb_lut") == 0) {
-            if (!convert_palette_component_lut_raw_to_image(inPath, &rgb, width, height, paletteName, backgroundColor, 0)) goto cleanup;
+            if (!convert_palette_component_lut_raw_to_image(inPath, &rgb, width, height, paletteName, backgroundColor, 0, zeroBackground)) goto cleanup;
         } else if (strcmp(interpretation, "hsv_lut") == 0) {
-            if (!convert_palette_component_lut_raw_to_image(inPath, &rgb, width, height, paletteName, backgroundColor, 1)) goto cleanup;
+            if (!convert_palette_component_lut_raw_to_image(inPath, &rgb, width, height, paletteName, backgroundColor, 1, zeroBackground)) goto cleanup;
         } else {
-            if (!copy_rgb_raw_to_image(inPath, &rgb, width, height)) goto cleanup;
+            if (!copy_rgb_raw_to_image(inPath, &rgb, width, height, backgroundColor, zeroBackground)) goto cleanup;
         }
     } else {
         eqLut = load_eq_lut_image(eqLutPath);

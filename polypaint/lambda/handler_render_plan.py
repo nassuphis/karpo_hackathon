@@ -111,6 +111,21 @@ def _associated_palette_display_name(chain, metric, quantile, palette):
     return " ".join(part for part in parts if part)
 
 
+def _color_interpretation_uses_palette(color_interpretation):
+    return str(color_interpretation or "scalar_lut") in ("scalar_lut", "rgb_lut", "hsv_lut")
+
+
+def _associated_palette_mode_for_output(color_interpretation, output_channel_count):
+    mode = str(color_interpretation or "scalar_lut")
+    count = int(output_channel_count or 1)
+    if (mode == "scalar_lut" and count == 1) or (mode in ("rgb", "hsv", "rgb_lut", "hsv_lut") and count == 3):
+        return "generated"
+    raise RuntimeError(
+        "associated palette saving requires Scalar LUT with one output channel "
+        "or RGB/HSV/RGB LUT/HSV LUT with three output channels"
+    )
+
+
 def _solve_score_scratch_key(job_id, compiled, root_transforms, score_normalize=False):
     rt_json = json.dumps(root_transforms or [], separators=(",", ":"))
     rt_hash = hashlib.sha1(rt_json.encode("utf-8")).hexdigest()[:8]
@@ -526,6 +541,7 @@ def _build_fused_color_plan(
     artifact_id = f"color_{run_id}"
     artifact_prefix = f"renders/{job_id}/color/{artifact_id}/"
     created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    ext = "png" if fused_params.get("fmt", "jpeg") == "png" else "jpeg"
     associated_palette = {
         "enabled": False,
         "mode": "none",
@@ -544,21 +560,26 @@ def _build_fused_color_plan(
         "omega": None,
         "omega_enabled": True,
         "score_chain": "",
+        "color_interpretation": "",
     }
     if fused_params["save_associated_palette"]:
-        if solve_score_output_interpretation != "scalar_lut" or solve_score_output_channel_count != 1:
-            raise RuntimeError("associated palette generation requires Scalar LUT with one solve-score output channel")
+        assoc_mode = _associated_palette_mode_for_output(
+            solve_score_output_interpretation,
+            solve_score_output_channel_count,
+        )
         assoc_palette_id = f"pal_{artifact_id}"
         assoc_prefix = f"renders/{job_id}/palettes/{assoc_palette_id}/"
+        assoc_uses_palette = _color_interpretation_uses_palette(solve_score_output_interpretation)
+        assoc_palette_name = palette if assoc_uses_palette else ""
         associated_palette = {
             "enabled": True,
-            "mode": "generated",
+            "mode": assoc_mode,
             "palette_id": assoc_palette_id,
             "display_name": _associated_palette_display_name(
                 solve_score_chain_internal,
                 solve_metric,
                 solve_score_quantile,
-                palette,
+                assoc_palette_name or solve_score_output_interpretation.upper(),
             ),
             "image_key": assoc_prefix + "image.jpeg",
             "preview_key": assoc_prefix + "preview.png",
@@ -568,11 +589,12 @@ def _build_fused_color_plan(
             "fragment_prefix": assoc_prefix + "fragments/section_",
             "source_color_artifact_id": artifact_id,
             "metric": solve_metric,
-            "palette": palette,
+            "palette": assoc_palette_name,
             "quantile": solve_score_quantile,
             "omega": solve_score_omega,
             "omega_enabled": solve_score_omega_enabled,
             "score_chain": solve_score_chain_public,
+            "color_interpretation": solve_score_output_interpretation,
         }
 
     render_execution = _fused_render_execution_config(fused_params)
@@ -616,7 +638,7 @@ def _build_fused_color_plan(
         "palette": palette,
         "background_color": DEFAULT_BACKGROUND_COLOR,
         "background_threshold": str(DEFAULT_BACKGROUND_THRESHOLD),
-        "repalette_capable": "false",
+        "repalette_capable": "true",
         "rgb_source": (
             "raw_score_bins"
             if solve_score_output_channel_count == 1
@@ -650,6 +672,7 @@ def _build_fused_color_plan(
             "associated_palette_image_key": associated_palette["image_key"],
             "associated_palette_preview_key": associated_palette["preview_key"],
             "associated_palette_palette": str(associated_palette["palette"]),
+            "associated_palette_color_interpretation": str(associated_palette["color_interpretation"]),
         })
         artifact_meta.update(
             emit_solve_score_metadata(
@@ -669,7 +692,6 @@ def _build_fused_color_plan(
         solve_score_normalize=solve_score_normalize,
         color_interpretation=solve_score_output_interpretation,
     )
-    ext = "png" if fused_params.get("fmt", "jpeg") == "png" else "jpeg"
     outputs = {
         "family": "color",
         "artifact_id": artifact_id,
@@ -683,7 +705,7 @@ def _build_fused_color_plan(
         "fragment_prefix": artifact_prefix + "fragments/section_",
         "plan_params_digest": plan_params_digest,
         "metadata": artifact_meta,
-        "repalette_capable": False,
+        "repalette_capable": True,
         "warnings": render_warnings,
     }
 

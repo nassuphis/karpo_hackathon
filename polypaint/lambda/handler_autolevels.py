@@ -25,6 +25,16 @@ s3 = boto3.client("s3")
 AUTOLEVELS = os.path.join(os.path.dirname(__file__), "autolevels_render")
 DEFAULT_BACKGROUND_COLOR = "000000"
 DEFAULT_BACKGROUND_THRESHOLD = 4
+RAW_SIDECAR_METADATA_KEYS = (
+    "raw_key",
+    "raw_meta_key",
+    "raw_channels",
+    "raw_layout",
+    "raw_encoding",
+    "step_scores_key",
+    "step_count",
+    "step_scores_grid_n",
+)
 
 
 def _utc_now_iso():
@@ -164,6 +174,13 @@ def _autolevel_debug_result(meta, background_color, background_threshold, exclud
     }
 
 
+def _drop_raw_sidecar_metadata(meta):
+    # Autolevels transforms the rendered image. Parent raw sidecars no longer
+    # describe the child pixels and must not be advertised on the derived child.
+    for key in RAW_SIDECAR_METADATA_KEYS:
+        meta.pop(key, None)
+
+
 def handler(event, context):
     params = parse_body(event)
     job_id = params["job_id"]
@@ -202,11 +219,6 @@ def handler(event, context):
             src_meta = dict(load_color_artifact_head(s3, BUCKET, job_id, source_artifact_id).get("metadata", {}) or {})
         except Exception:
             src_meta = dict(src_head.get("Metadata", {}) or {})
-        source_channels = int(src_meta.get("raw_channels") or src_meta.get("score_output_channel_count") or 1)
-        if source_channels != 1:
-            raise RuntimeError(
-                f"Autolevels requires a scalar (channels=1) raw artifact; got channels={source_channels}"
-            )
 
         background_color = _normalize_background_color(src_meta.get("background_color"))
         background_threshold = _parse_background_threshold(
@@ -286,6 +298,7 @@ def handler(event, context):
             "derivation_kind": "",
         })
         img_meta.update(inherit_associated_palette_metadata(src_meta))
+        _drop_raw_sidecar_metadata(img_meta)
         img_meta["pix"] = str(out_width)
         img_meta["width"] = str(out_width)
         img_meta["height"] = str(out_height)

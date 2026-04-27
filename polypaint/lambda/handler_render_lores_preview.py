@@ -59,9 +59,14 @@ TMP_PARAMS_MANIFEST = "/tmp/render_lores_preview_params_manifest.json"
 TMP_XFORMS = "/tmp/render_lores_preview_xforms.json"
 TMP_FRAGMENT_PREFIX = "/tmp/render_lores_preview_fragment"
 TMP_FRAGMENT = TMP_FRAGMENT_PREFIX + ".frag"
+TMP_PALETTE_FRAGMENT_PREFIX = "/tmp/render_lores_preview_palette_fragment"
+TMP_PALETTE_FRAGMENT = TMP_PALETTE_FRAGMENT_PREFIX + ".frag"
 TMP_RAW = "/tmp/render_lores_preview.raw"
+TMP_PALETTE_RAW = "/tmp/render_lores_preview_palette.raw"
 TMP_EQ_LUT = "/tmp/render_lores_preview_eq.bin"
+TMP_PALETTE_EQ_LUT = "/tmp/render_lores_preview_palette_eq.bin"
 TMP_IMAGE = "/tmp/render_lores_preview.png"
+TMP_PALETTE_IMAGE = "/tmp/render_lores_preview_palette.png"
 
 MAX_PREVIEW_PIX = int(os.environ.get("RENDER_LORES_PREVIEW_MAX_PIX", "1024"))
 MAX_LOGICAL_LORES_N = int(os.environ.get("RENDER_LOGICAL_LORES_MAX_N", "256"))
@@ -86,10 +91,15 @@ def _cleanup_tmp():
         TMP_PARAMS_MANIFEST,
         TMP_XFORMS,
         TMP_FRAGMENT,
+        TMP_PALETTE_FRAGMENT,
         TMP_RAW,
+        TMP_PALETTE_RAW,
         TMP_EQ_LUT,
+        TMP_PALETTE_EQ_LUT,
         TMP_IMAGE,
+        TMP_PALETTE_IMAGE,
         TMP_FRAGMENT_PREFIX + "*",
+        TMP_PALETTE_FRAGMENT_PREFIX + "*",
     ):
         for path in glob.glob(pattern):
             try:
@@ -860,7 +870,25 @@ def _emission_histograms_from_channels(channel_histograms, output_channels):
     return rows
 
 
-def _run_roots2pix(*, params, summary, viewport, manifests, pix, degree, n_coeffs, step_count, include_coeff, include_param):
+def _preview_palette_grid_n(source_meta, step_count):
+    try:
+        step_count = int(step_count)
+    except (TypeError, ValueError):
+        return 0
+    raw = source_meta.get("view_N") or source_meta.get("lores_N") or source_meta.get("N")
+    try:
+        grid_n = int(raw)
+    except (TypeError, ValueError):
+        grid_n = 0
+    if grid_n > 0 and grid_n * grid_n > 0 and step_count % (grid_n * grid_n) == 0:
+        return grid_n
+    inferred = int(round(math.sqrt(step_count)))
+    if inferred > 0 and inferred * inferred == step_count:
+        return inferred
+    return 0
+
+
+def _run_roots2pix(*, params, summary, viewport, manifests, pix, degree, n_coeffs, step_count, include_coeff, include_param, palette_grid_n=0):
     metrics = _metric_rows_from_summary(summary)
     payload = solve_score_program_cli_payload({
         "metrics": metrics,
@@ -894,6 +922,12 @@ def _run_roots2pix(*, params, summary, viewport, manifests, pix, degree, n_coeff
         f"--score_output_clip_lo={_coerce_finite_float(summary.get('score_output_clip_lo', 0.0), 'score_output_clip_lo', default=0.0)}",
         f"--score_output_clip_hi={_coerce_finite_float(summary.get('score_output_clip_hi', 1.0), 'score_output_clip_hi', default=1.0)}",
     ]
+    if int(palette_grid_n or 0) > 0:
+        cmd.extend([
+            f"--associated_palette_fragment_prefix={TMP_PALETTE_FRAGMENT_PREFIX}",
+            f"--palette_grid_n={int(palette_grid_n)}",
+            "--palette_step_start=0",
+        ])
     output_channels = list(summary.get("score_output_channels") or [])
     if output_channels:
         cmd.append("--score_output_clip_los=" + ",".join(
@@ -1032,6 +1066,14 @@ def handler(event, context):
             param_size = int(source_meta["families"]["pm"]["output_bytes"])
             step_count = int(source_meta["n_solves"])
         else:
+            requested_lores_n = _coerce_int(
+                params.get("lores_N", params.get("lores_n", 0)),
+                "lores_N",
+                default=0,
+                min_value=0,
+            )
+            if requested_lores_n > 0:
+                source_meta["view_N"] = int(requested_lores_n)
             root_size = _download_to_file(lores_bin_key, TMP_ROOTS)
             rb = root_row_bytes(degree)
             if root_size % rb != 0:
@@ -1108,6 +1150,7 @@ def handler(event, context):
                 include_param=include_param,
             )
         manifest_ms = int((time.time() - t_manifest) * 1000)
+        palette_grid_n = _preview_palette_grid_n(source_meta, step_count)
 
         t_raster = time.time()
         raster_meta = _run_roots2pix(
@@ -1121,6 +1164,7 @@ def handler(event, context):
             step_count=step_count,
             include_coeff=include_coeff,
             include_param=include_param,
+            palette_grid_n=palette_grid_n,
         )
         raster_ms = int((time.time() - t_raster) * 1000)
 
@@ -1151,6 +1195,44 @@ def handler(event, context):
         )
         with open(TMP_IMAGE, "rb") as fh:
             image_b64 = base64.b64encode(fh.read()).decode("ascii")
+
+        palette_image_b64 = ""
+        palette_render_meta = {}
+        palette_entries = 0
+        if palette_grid_n > 0:
+            palette_entries, _palette_channel_histograms = _assemble_fragment_to_raw(
+                TMP_PALETTE_FRAGMENT,
+                TMP_PALETTE_RAW,
+                palette_grid_n,
+                channels=output_channels,
+            )
+            expected_palette_entries = int(palette_grid_n) * int(palette_grid_n)
+            if int(palette_entries) != expected_palette_entries:
+                raise RuntimeError(
+                    "preview palette fragment entry count mismatch: "
+                    f"expected {expected_palette_entries}, got {int(palette_entries)}"
+                )
+            palette_histogram = histogram_from_raw_path_channel0(
+                TMP_PALETTE_RAW,
+                channels=output_channels,
+                expected_size=palette_grid_n * palette_grid_n * output_channels,
+            )
+            write_equalization_lut(TMP_PALETTE_EQ_LUT, palette_histogram)
+            palette_render_meta = render_score_raw(
+                raw_path=TMP_PALETTE_RAW,
+                out_path=TMP_PALETTE_IMAGE,
+                preview_path="",
+                pix=palette_grid_n,
+                eq_lut_path=TMP_PALETTE_EQ_LUT,
+                palette=str(params.get("palette") or "inferno"),
+                background_color=str(params.get("background_color") or "000000"),
+                quality=_coerce_int(params.get("quality", 90), "quality", default=90, min_value=1, max_value=100),
+                channels=output_channels,
+                interpretation=summary["score_output_interpretation"],
+                zero_background=False,
+            )
+            with open(TMP_PALETTE_IMAGE, "rb") as fh:
+                palette_image_b64 = base64.b64encode(fh.read()).decode("ascii")
 
         total_ms = int((time.time() - t_start) * 1000)
         logs = []
@@ -1210,6 +1292,12 @@ def handler(event, context):
             f"channels={output_channels} interpretation={summary.get('score_output_interpretation')} "
             f"emit={emit_modes or 'emit'}"
         )
+        if palette_grid_n > 0:
+            logs.append(
+                "Render preview palette: "
+                f"grid={palette_grid_n}x{palette_grid_n} entries={int(palette_entries)} "
+                f"zero=data"
+            )
         for warning in preview_warnings:
             logs.append(f"Render preview warning: {warning}")
         logs.append(
@@ -1221,8 +1309,11 @@ def handler(event, context):
 
         return ok_response({
             "image_base64": image_b64,
+            "palette_image_base64": palette_image_b64,
             "content_type": "image/png",
+            "palette_content_type": "image/png",
             "preview_pix": pix,
+            "palette_pix": int(palette_grid_n),
             "degree": degree,
             "n_coeffs": n_coeffs,
             "n_solves": int(step_count),
@@ -1232,6 +1323,8 @@ def handler(event, context):
             "viewport": viewport,
             "raster": raster_meta,
             "render": render_meta,
+            "palette_render": palette_render_meta,
+            "palette_fragment_entries": int(palette_entries),
             "emission_histograms": emission_histograms,
             "logs": logs,
             "solve_score": {

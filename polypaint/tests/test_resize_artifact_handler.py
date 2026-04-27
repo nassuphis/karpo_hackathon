@@ -84,10 +84,21 @@ class TestResizeArtifactHandler(unittest.TestCase):
                 "associated_palette_image_key": "renders/job1/palettes/pal_resize_src/image.jpeg",
                 "associated_palette_preview_key": "renders/job1/palettes/pal_resize_src/preview.png",
                 "associated_palette_palette": "inferno",
+                "associated_palette_color_interpretation": "rgb_lut",
                 "associated_palette_metric": "spread",
                 "associated_palette_quantile": "0.01",
                 "associated_palette_omega": "4",
                 "associated_palette_omega_enabled": "false",
+                "associated_palette_raw_key": "renders/job1/palettes/pal_resize_src/greyscale.raw",
+                "associated_palette_raw_meta_key": "renders/job1/palettes/pal_resize_src/greyscale.meta.json",
+                "associated_palette_meta_key": "renders/job1/palettes/pal_resize_src/meta.json",
+                "raw_key": "renders/job1/color/color_src/greyscale.raw",
+                "raw_meta_key": "renders/job1/color/color_src/greyscale.meta.json",
+                "raw_channels": "3",
+                "raw_layout": "u8_packed_channels_row_major",
+                "step_scores_key": "renders/job1/color/color_src/step_scores.raw",
+                "step_count": "9000000",
+                "step_scores_grid_n": "3000",
                 "repalette_capable": "true",
             },
         }
@@ -168,6 +179,10 @@ class TestResizeArtifactHandler(unittest.TestCase):
         self.assertEqual(sidecar["associated_palette_preview_key"], "renders/job1/palettes/pal_resize_src/preview.png")
         self.assertEqual(sidecar["associated_palette_metric"], "spread")
         self.assertEqual(sidecar["associated_palette_palette"], "inferno")
+        self.assertEqual(sidecar["associated_palette_color_interpretation"], "rgb_lut")
+        self.assertEqual(sidecar["associated_palette_raw_key"], "renders/job1/palettes/pal_resize_src/greyscale.raw")
+        self.assertEqual(sidecar["associated_palette_raw_meta_key"], "renders/job1/palettes/pal_resize_src/greyscale.meta.json")
+        self.assertEqual(sidecar["associated_palette_meta_key"], "renders/job1/palettes/pal_resize_src/meta.json")
         self.assertEqual(sidecar["associated_palette_quantile"], "0.01")
         self.assertEqual(sidecar["associated_palette_omega"], "4")
         self.assertEqual(sidecar["associated_palette_omega_enabled"], "false")
@@ -183,6 +198,16 @@ class TestResizeArtifactHandler(unittest.TestCase):
         self.assertEqual(resize_meta["target_size"], 2048)
         self.assertNotIn("crop", resize_meta)
         self.assertNotIn("vscale", resize_meta)
+        for raw_key in (
+            "raw_key",
+            "raw_meta_key",
+            "raw_channels",
+            "raw_layout",
+            "step_scores_key",
+            "step_count",
+            "step_scores_grid_n",
+        ):
+            self.assertNotIn(raw_key, sidecar)
 
         preview_extra = uploads[preview_key]["extra"]
         self.assertEqual(preview_extra["ContentType"], "image/png")

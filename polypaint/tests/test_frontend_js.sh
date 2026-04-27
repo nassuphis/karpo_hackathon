@@ -47,7 +47,12 @@ function assertSectionNotIncludes(section, snippet, message) {
 }
 
 assertIncludes("function setColorMode(mode) {\n    renderColorMode = 'solve_score';\n    _updateSolveScoreButtons();", 'setColorMode should hard-lock solve_score without a fake mode toggle');
-assertIncludes("<div class=\"color-title\" style=\"margin-top:10px\">Solve Score Palette</div>", 'render tab should merge solve-score palette into the visual View/Rotation region');
+assertIncludes("<div class=\"color-title\" style=\"margin-top:10px\">Color</div>", 'render tab should merge color controls into the visual View/Rotation region');
+assertIncludes("class=\"color-mode-choice\"><input type=\"radio\" name=\"render-color-interpretation\" value=\"scalar_lut\"", 'Scalar LUT selector should use aligned color-mode-choice markup');
+assertIncludes(".color-mode-choice {\n    display: grid;", 'color mode choices should use fixed selector/text grid alignment');
+assertIncludes(".color-mode-choice input[type=\"radio\"] {\n    margin: 0;", 'color mode radio inputs should override browser/default label spacing');
+assertIncludes(".color-mode-name {\n    display: block;\n    line-height: 13px;", 'color mode names should use explicit line-height to avoid low text alignment');
+assertNotIncludes("<label><input type=\"radio\" name=\"render-color-interpretation\"", 'render color radios must not use bare label/input markup');
 assertNotIncludes("class=\"color-dot active\" data-mode=\"solve_score\"", 'render tab should not expose a fake solve-score mode toggle');
 assertIncludes("id=\"view-row-explicit\"", 'render tab should expose explicit viewport row');
 assertIncludes("id=\"render-min-re\"", 'render tab should expose explicit min_re input');
@@ -55,6 +60,10 @@ assertIncludes("id=\"render-max-re\"", 'render tab should expose explicit max_re
 assertIncludes("id=\"render-min-im\"", 'render tab should expose explicit min_im input');
 assertIncludes("id=\"render-max-im\"", 'render tab should expose explicit max_im input');
 assertIncludes("World aspect Δre:Δim", 'render explicit viewport should show world-aspect helper text');
+assertIncludes(".render-preview-stage {\n    position: relative;\n    display: flex;", 'render artifact preview stage should be a constrained flex viewer, not natural-size crop');
+assertIncludes("object-fit: contain;", 'render artifact preview image should contain rather than crop');
+assertIncludes("function _renderPreviewImageRect(stage, img) {", 'render preview selection should compute the displayed image rect');
+assertIncludes("const imageRect = _renderPreviewImageRect(stage, img);", 'render preview marquee should align to displayed image rect');
 const renderCommonSection = src.split("function _renderCommonParams(options = {}) {")[1]?.split("function _renderColorMtEligible()")[0] || '';
 assertSectionNotIncludes(renderCommonSection, "gamma:", '_renderCommonParams should not send dead gamma');
 assertSectionNotIncludes(renderCommonSection, "constantColor:", '_renderCommonParams should not carry dead constant-color state');
@@ -163,6 +172,21 @@ assertIncludes("id=\"render-solve-score-program-manage\" onclick=\"openSolveScor
 assertIncludes("id=\"render-score-normalization\"", 'render tab should expose score normalization checkbox');
 assertIncludes("solveScoreNormalize: !!document.getElementById('render-score-normalization')?.checked,", '_renderCommonParams should read score normalization checkbox');
 assertIncludes("solve_score_normalize: !!p.solveScoreNormalize,", 'fused render payload should forward score normalization flag');
+assertIncludes("name=\"render-color-interpretation\" value=\"scalar_lut\"", 'render tab should expose Scalar LUT color interpretation');
+assertIncludes("name=\"render-color-interpretation\" value=\"rgb\"", 'render tab should expose RGB color interpretation');
+assertIncludes("name=\"render-color-interpretation\" value=\"hsv\"", 'render tab should expose HSV color interpretation');
+assertIncludes("name=\"render-color-interpretation\" value=\"rgb_lut\"", 'render tab should expose RGB LUT color interpretation');
+assertIncludes("name=\"render-color-interpretation\" value=\"hsv_lut\"", 'render tab should expose HSV LUT color interpretation');
+assertIncludes("id=\"render-color-lut-palette-row\"", 'render tab should expose shared LUT palette row');
+assertIncludes("three emitted bytes sample R/G/B from the selected palette", 'RGB LUT row should explain palette-component lookup');
+assertIncludes("three emitted bytes sample H/S/V from the selected palette in HSV space", 'HSV LUT row should explain HSV palette-component lookup');
+assertIncludes("color_interpretation: p.colorInterpretation,", 'render payload should forward selected color interpretation');
+assertIncludes("function _artifactColorInterpretation(art) {", 'render populate should define artifact color interpretation resolver');
+assertIncludes("_setRenderColorInterpretation(_artifactColorInterpretation(art));", 'render populate should restore selected artifact color interpretation');
+assertIncludes("mode:${_colorInterpretationLabel(colorInterpretation)}", 'render artifact summaries should disclose color interpretation');
+assertIncludes("id=\"ss-insert-before-btn\"", 'solve-score editor should expose insert-before button');
+assertIncludes("id=\"ss-insert-after-btn\"", 'solve-score editor should expose insert-after button');
+assertNotIncludes("id=\"ss-direct-rgb-preset\"", 'solve-score editor should not expose Direct RGB preset; saved programs cover this');
 assertIncludes("score normalization: lo=${fmt(s.score_output_clip_lo)}  hi=${fmt(s.score_output_clip_hi)}", 'histogram output should report score normalization range');
 assertIncludes("if (s.raw_hist_space === 'score_output_normalized') rawLabel = 'score-output normalized program output';", 'histogram raw bins should label score-output normalized space');
 assertIncludes("'mean_log_mod',", 'solve-score catalog should expose mean_log_mod');
@@ -175,6 +199,11 @@ assertIncludes("catalog[_solveScoreGenericMetricChipName] = {", 'solve-score cat
 assertIncludes("return [_solveScoreGenericMetricPublicName, ...(item.params || [])];", 'generic metric chip should serialize publicly without desugaring in saved programs');
 assertIncludes("id=\"render-preview-pix\" value=\"256\"", 'render output should expose default 256px lores preview size input');
 assertIncludes("id=\"btn-render-lores-preview\" onclick=\"runRenderLoresPreview()\"", 'render output should expose lores preview button');
+assertIncludes("id=\"render-lores-preview-stage\"", 'render output preview should expose a marquee stage wrapper');
+assertIncludes("id=\"render-lores-preview-marquee\"", 'render output preview should expose a marquee overlay');
+assertIncludes("id=\"render-lores-preview-tab-plot\"", 'render output preview should expose plot tab');
+assertIncludes("id=\"render-lores-preview-tab-e1\"", 'render output preview should expose E1 histogram tab');
+assertIncludes("id=\"render-lores-preview-hist-e1\"", 'render output preview should expose E1 histogram canvas');
 assertIncludes("id=\"render-preview-source-mode\"", 'render output should expose preview source mode dropdown');
 assertIncludes("<option value=\"lores\">use lores</option>", 'render preview source dropdown should support saved lores');
 assertIncludes("<option value=\"logical\">logical</option>", 'render preview source dropdown should support logical lores');
@@ -190,6 +219,13 @@ assertIncludes("const nCoeffs = Number.isFinite(rawNCoeffs) && rawNCoeffs >= 1 ?
 assertIncludes("lores_bin_key: loresKey,", 'render lores preview payload should use the existing lores roots artifact');
 assertIncludes("const result = await lambdaPost('render-lores-preview', payload);", 'render lores preview should call the direct preview endpoint');
 assertIncludes("const ctx = canvas.getContext('2d');", 'render lores preview should draw the returned image onto the canvas');
+assertIncludes("function _initRenderLoresPreviewMarquee(meta) {", 'render output preview marquee initializer missing');
+assertIncludes("function _applyRenderLoresPreviewSelectionBounds(meta, rect) {", 'render output preview selection should populate exact viewport bounds');
+assertIncludes("_initRenderLoresPreviewMarquee(_renderLoresPreviewMetaFromResult(result, p.rotation));", 'render lores preview should arm marquee after drawing the preview');
+assertIncludes("_clearRenderLoresPreviewSelection();", 'Escape should clear output preview marquee selection');
+assertIncludes("_setRenderLoresPreviewEmissionHistograms(result.emission_histograms || result.solve_score?.emission_histograms || []);", 'render lores preview should load per-emission histograms');
+assertIncludes("choices: ['raw', 'norm', 'none']", 'emit chip mode dropdown should expose none mode');
+assertIncludes("flush: { arity: 0, params: [], tooltip: 'clear the entire score stack' }", 'solve-score editor should expose flush chip');
 assertIncludes("omega_cosine requires one finite numeric omega", 'omega_cosine frontend validation should not cap frequency at 10');
 assertNotIncludes("omega_cosine requires one numeric omega in [1, 10]", 'omega_cosine frontend validation should not retain old [1,10] range');
 assertIncludes("id=\"palette-solve-score-program-manage\" onclick=\"openSolveScoreProgramModal('palette')\"", 'palette tab should expose Solve Scores modal launcher');
@@ -245,7 +281,7 @@ assertNotIncludes("id=\"render-solve-score-program-file\"", 'render tab should n
 assertNotIncludes("id=\"palette-solve-score-program-file\"", 'palette tab should not keep per-tab solve-score upload input');
 assertIncludes("lambdaPost('storage', {}, '/list-solve-score-programs')", 'solve-score modal should list saved programs through storage');
 assertIncludes("lambdaPost('storage', { id }, '/fetch-solve-score-program')", 'solve-score modal should fetch saved programs through storage');
-assertIncludes("lambdaPost('storage', { name: payload.name, chain: payload.chain }, '/save-solve-score-program')", 'solve-score modal should save current program through storage');
+assertIncludes("recommended_interpretation: payload.recommended_interpretation || undefined,", 'solve-score modal should save recommended color interpretation through storage');
 assertIncludes("lambdaPost('storage', { id }, '/delete-solve-score-program')", 'solve-score modal should delete saved programs through storage');
 assertNotIncludes("fetch('solve-score-programs/index.json'", 'frontend should not depend on repo-backed solve-score preset catalog');
 assertNotIncludes("function loadSolveScoreProgramPreset(", 'old solve-score preset loader should be removed');
@@ -327,6 +363,10 @@ async function main() {
     extractFunction('_sourceColorArtifactIdForRenderArtifact'),
     extractFunction('_noteSolveScorePopulate'),
     extractFunction('setColorMode'),
+    extractFunction('_normalizeColorInterpretation'),
+    extractFunction('_colorInterpretationLabel'),
+    extractFunction('_artifactColorInterpretation'),
+    extractFunction('_solveScoreColorCompatibility'),
     extractFunction('_launchRenderOrchestrator'),
     extractFunction('runRasterPipeline'),
   ].join('\n\n');
@@ -415,15 +455,55 @@ async function main() {
 
   const explicitEmit = ctx._compileSolveScoreChain([
     ['proximity', 'slv', '0.5'],
-    ['emit_norm'],
+    ['emit', 'norm'],
     ['spread', 'cf', '0.5'],
-    ['emit'],
+    ['emit', 'raw'],
   ], 'proximity', '0.1');
   assert(explicitEmit.program_spec === 'm0-0;emit_norm;m1-0;emit', 'explicit output chips should compile into program_spec');
   assert(explicitEmit.has_explicit_outputs === true, 'explicit output chips should mark the compiled chain');
   assert(explicitEmit.output_channel_count === 2, 'explicit output chips should produce two output channels');
   assert(explicitEmit.output_channels[0].range_normalized === true, 'emit_norm should request per-channel range normalization');
   assert(explicitEmit.output_channels[1].range_normalized === false, 'emit should skip per-channel range normalization');
+
+  const emitNone = ctx._compileSolveScoreChain([
+    ['proximity', 'slv', '0.5'],
+    ['emit', 'none'],
+    ['flush'],
+    ['spread', 'slv', '0.5'],
+    ['emit', 'norm'],
+  ], 'proximity', '0.1');
+  assert(emitNone.program_spec === 'm0-0;emit_none;flush;m1-0;emit_norm', 'emit none and flush should compile into native score program');
+  assert(emitNone.has_explicit_outputs === true, 'emit none should keep explicit-output validation active');
+  assert(emitNone.output_channel_count === 1, 'emit none should not allocate an output channel');
+  assert(emitNone.output_channels[0].emit === 'emit_norm', 'later emissions should retain correct channel metadata');
+
+  const mathEmit = ctx._compileSolveScoreChain([
+    ['proximity', 'slv', '0.5'],
+    ['const', '1e-3'],
+    ['add'],
+    ['dup'],
+    ['ema', '0.99'],
+    ['sin'],
+    ['pow', '2'],
+    ['clamp'],
+  ], 'proximity', '0.1');
+  assert(mathEmit.program_spec === 'm0-0;const:0.001;add;dup;ema:0.99;sin;pow:2;clamp', 'new stack/math chips should compile into program_spec');
+
+  const rgbLutProgram = ctx._compileSolveScoreChain([
+    ['proximity', 'slv', '0.5'],
+    ['emit', 'norm'],
+    ['spread', 'slv', '0.5'],
+    ['emit', 'norm'],
+    ['angular_entropy_16', 'slv', '0.5'],
+    ['emit', 'norm'],
+  ], 'proximity', '0.1');
+  assert(ctx._normalizeColorInterpretation('rgb-lut') === 'rgb_lut', 'RGB LUT alias should normalize');
+  assert(ctx._normalizeColorInterpretation('hsv-lut') === 'hsv_lut', 'HSV LUT alias should normalize');
+  assert(ctx._solveScoreColorCompatibility(rgbLutProgram, 'rgb_lut') === '', 'RGB LUT should accept three emitted outputs');
+  assert(ctx._solveScoreColorCompatibility(rgbLutProgram, 'hsv_lut') === '', 'HSV LUT should accept three emitted outputs');
+  assert(ctx._artifactColorInterpretation({ color_interpretation: 'direct_rgb' }) === 'rgb', 'artifact color interpretation should normalize color_interpretation aliases');
+  assert(ctx._artifactColorInterpretation({ score_output_interpretation: 'hsv-lut' }) === 'hsv_lut', 'artifact color interpretation should fall back to score_output_interpretation');
+  assert(ctx._colorInterpretationLabel('rgb_lut') === 'RGB LUT', 'artifact summary labels should use user-facing color mode names');
 
   let genericPmRejected = false;
   try {

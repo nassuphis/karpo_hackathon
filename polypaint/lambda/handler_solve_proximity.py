@@ -309,7 +309,7 @@ def _score_output_contract(compiled, data, *, legacy_normalize=False):
         "score_output_summary_threads": int(data.get("threads", 0) or 0),
         "score_output_channel_count": channel_count,
         "score_output_has_explicit_outputs": has_explicit,
-        "score_output_interpretation": str((compiled or {}).get("output_interpretation") or "scalar_palette"),
+        # Interpretation is owned by render-plan/color consumers, not summary.
         "score_output_channels": channels,
         "fragment_pair_encoding": fragment_encoding,
         "fragment_encoding": fragment_encoding,

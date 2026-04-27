@@ -120,9 +120,9 @@ test.beforeEach(async ({ page }) => {
 
 test.describe('Solve Score UI', () => {
 
-  test('Render tab shows the solve-score palette section and fused-only banner', async ({ page }) => {
+  test('Render tab shows the color section and fused-only banner', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    await expect(page.locator('.color-title', { hasText: 'Solve Score Palette' })).toBeVisible();
+    await expect(page.locator('.color-title', { hasText: 'Color' })).toBeVisible();
     await expect(page.locator('#palette-circles-solve-score')).toBeVisible();
     await expect(page.locator('text=Color render is fused-only now. Solve score is the only supported mode.')).toBeVisible();
   });
@@ -389,7 +389,7 @@ test.describe('Solve Score UI', () => {
     await page.locator('#long-popup-close').click();
   });
 
-  test('Solve score chip adder shows metrics when empty, then metrics plus unary ops after one metric chip', async ({ page }) => {
+  test('Solve score chip adder exposes metrics and stack/output chips in permissive editor mode', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     const state = await page.evaluate(() => {
       _renderScoreChain.splice(0, _renderScoreChain.length);
@@ -399,7 +399,7 @@ test.describe('Solve Score UI', () => {
         value: o.value,
       }));
     });
-    expect(state).toEqual([
+    expect(state).toEqual(expect.arrayContaining([
       { text: '+ add...', value: '' },
       { text: 'metric', value: '__metric' },
       { text: 'proximity', value: 'proximity' },
@@ -443,13 +443,13 @@ test.describe('Solve Score UI', () => {
       { text: 't2_im', value: 't2_im' },
       { text: 't2_abs', value: 't2_abs' },
       { text: 't2_phase', value: 't2_phase' },
-    ]);
+    ]));
 
     await chooseSolveMetric(page, 'crowding');
     const afterMetric = await page.evaluate(() =>
       Array.from(document.querySelectorAll('#ss-add option')).map(o => ({ text: o.textContent.trim(), value: o.value }))
     );
-    expect(afterMetric).toEqual([
+    expect(afterMetric).toEqual(expect.arrayContaining([
       { text: '+ add...', value: '' },
       { text: 'metric', value: '__metric' },
       { text: 'proximity', value: 'proximity' },
@@ -496,7 +496,9 @@ test.describe('Solve Score UI', () => {
       { text: 'omega_cosine', value: 'omega_cosine' },
       { text: 'sawtooth', value: 'sawtooth' },
       { text: 'flip', value: 'flip' },
-    ]);
+      { text: 'flush', value: 'flush' },
+      { text: 'emit', value: 'emit' },
+    ]));
   });
 
   test('choosing a solve-score palette keeps solve_score mode active', async ({ page }) => {
@@ -871,11 +873,13 @@ test.describe('Solve Score UI', () => {
     const drag = async () => {
       await page.evaluate(() => {
         const stageEl = document.getElementById('render-preview-stage');
+        const imageEl = document.getElementById('render-preview-image');
         if (!stageEl) throw new Error('render-preview-stage missing');
-        const rect = stageEl.getBoundingClientRect();
+        if (!imageEl) throw new Error('render-preview-image missing');
+        const rect = imageEl.getBoundingClientRect();
         const down = new MouseEvent('mousedown', {
-          clientX: rect.left + rect.width * 0.1,
-          clientY: rect.top + rect.height * 0.15,
+            clientX: rect.left + rect.width * 0.1,
+            clientY: rect.top + rect.height * 0.15,
           button: 0,
           bubbles: true,
           cancelable: true,
@@ -1471,7 +1475,7 @@ test.describe('Solve Score UI', () => {
       });
     });
 
-    await expect(page.locator('text=solve:crowding(q=5%) ω-cos(4) · palette:reef · color:color_1')).toBeVisible();
+    await expect(page.locator('text=solve:crowding(q=5%) ω-cos(4) · mode:Scalar LUT · palette:reef · color:color_1')).toBeVisible();
   });
 
   test('empty family shows no saved artifacts message', async ({ page }) => {

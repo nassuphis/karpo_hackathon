@@ -99,19 +99,36 @@ UNARY_CHIPS = {
     TRANSFER_CHIP_NAME: {"arity": 1, "params": 2},
     "sawtooth": {"arity": 1, "params": 1},
     "flip": {"arity": 1, "params": 0},
+    "clamp": {"arity": 1, "params": 0},
+    "sin": {"arity": 1, "params": 0},
+    "cos": {"arity": 1, "params": 0},
+    "log": {"arity": 1, "params": 0},
+    "exp": {"arity": 1, "params": 0},
+    "pow": {"arity": 1, "params": 1},
 }
 COMBINE_CHIPS = {
     "avg": {"arity": 2, "params": 0},
     "min": {"arity": 2, "params": 0},
     "max": {"arity": 2, "params": 0},
     "mul": {"arity": 2, "params": 0},
+    "add": {"arity": 2, "params": 0},
+    "mult": {"arity": 2, "params": 0},
+    "subtract": {"arity": 2, "params": 0},
+    "ratio": {"arity": 2, "params": 0},
+    "ema": {"arity": 2, "params": 1},
     "weighted_sum": {"arity": 2, "params": 2},
     "abs_diff": {"arity": 2, "params": 0},
     "geometric_mean": {"arity": 2, "params": 0},
 }
 OUTPUT_CHIPS = {
-    "emit": {"params": 0, "range_normalized": False},
-    "emit_norm": {"params": 0, "range_normalized": True},
+    "emit": {"params": (0, 1)},
+    "emit_norm": {"params": (0,), "legacy_alias": ("emit", "norm")},
+    "emit_none": {"params": (0,), "legacy_alias": ("emit", "none")},
+}
+STACK_CHIPS = {
+    "const": {"arity": 0, "params": 1, "delta": 1},
+    "dup": {"arity": 1, "params": 0, "delta": 1},
+    "flush": {"arity": 0, "params": 0, "delta": None},
 }
 MAX_METRIC_SLOTS = 16
 MAX_PROGRAM_TOKENS = 32
@@ -233,6 +250,49 @@ def _validate_omega_phase(value):
     return phase
 
 
+def _validate_finite_number(value, label):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"{label} must be numeric, got {value!r}")
+    if not (number == number and abs(number) != float("inf")):
+        raise RuntimeError(f"{label} must be finite, got {value!r}")
+    return number
+
+
+def _validate_emit_mode(params, *, legacy_name="emit"):
+    values = list(params or [])
+    if legacy_name == "emit_norm":
+        if values:
+            raise RuntimeError("emit_norm takes no parameters")
+        return "norm"
+    if legacy_name == "emit_none":
+        if values:
+            raise RuntimeError("emit_none takes no parameters")
+        return "none"
+    if len(values) == 0:
+        return "raw"
+    if len(values) != 1:
+        raise RuntimeError("emit requires zero parameters or one mode parameter: raw, norm, or none")
+    mode = str(values[0] or "").strip().lower()
+    if mode in ("raw", "emit"):
+        return "raw"
+    if mode in ("norm", "normalize", "normalized", "emit_norm"):
+        return "norm"
+    if mode in ("none", "skip", "off", "emit_none", "emit-none"):
+        return "none"
+    raise RuntimeError(f"emit mode must be raw, norm, or none, got {values[0]!r}")
+
+
+def _emit_token_for_mode(mode):
+    normalized = str(mode).strip().lower()
+    if normalized == "norm":
+        return "emit_norm"
+    if normalized == "none":
+        return "emit_none"
+    return "emit"
+
+
 def _validate_quantile_fraction(value):
     try:
         quantile = float(value)
@@ -310,6 +370,12 @@ def serialize_solve_score_chain(chain):
         params = list(item.get("params") or [])
         if _is_generic_metric_chip_name(name):
             return [GENERIC_METRIC_PUBLIC_NAME, *params]
+        if name == "emit_norm":
+            return ["emit", "norm"]
+        if name == "emit_none":
+            return ["emit", "none"]
+        if name == "emit":
+            return ["emit", _validate_emit_mode(params)]
         if name in VALID_SOLVE_SCORE_METRICS and len(params) == 2 and params[0] == "slv":
             params = [params[1]]
         return [name, *params] if params else name
@@ -430,8 +496,14 @@ def _build_program_spec(program_tokens):
         kind = token["kind"]
         if kind == "metric":
             parts.append(f"m{int(token['slot'])}-{int(token.get('lag', 0) or 0)}")
+        elif kind == "const":
+            parts.append(f"const:{_format_number(token['value'])}")
         elif kind == "weighted_sum":
             parts.append(f"weighted_sum:{_format_number(token['a'])}:{_format_number(token['b'])}")
+        elif kind == "ema":
+            parts.append(f"ema:{_format_number(token['alpha'])}")
+        elif kind == "pow":
+            parts.append(f"pow:{_format_number(token['exponent'])}")
         elif kind == TRANSFER_CHIP_NAME:
             phase = float(token.get("phase", 0.0))
             if abs(phase) < 1e-12:
@@ -442,6 +514,8 @@ def _build_program_spec(program_tokens):
                 )
         elif kind == "sawtooth":
             parts.append(f"sawtooth:{_format_number(token['mult'])}")
+        elif kind == "emit":
+            parts.append(_emit_token_for_mode(token.get("mode", "raw")))
         else:
             parts.append(kind)
     return ";".join(parts)
@@ -549,7 +623,11 @@ def _token_display(item):
         b = params[1] if len(params) > 1 else "?"
         return f"weighted_sum({a},{b})"
     if name in OUTPUT_CHIPS:
-        return name
+        if name == "emit_norm":
+            return "emit(norm)"
+        if name == "emit_none":
+            return "emit(none)"
+        return f"emit({_validate_emit_mode(params)})"
     return f"{name}({','.join(params)})" if params else name
 
 
@@ -668,6 +746,7 @@ def compile_solve_score_chain(raw_chain, legacy_quantile=None):
     omega_phase = 0.0
     omega_enabled = False
     output_channels = []
+    has_explicit_output_token = False
 
     for item, _expanded, item_metric_name, metric_source, metric_lag, metric_quantile in normalized_with_metrics:
         name = item["name"]
@@ -714,6 +793,28 @@ def compile_solve_score_chain(raw_chain, legacy_quantile=None):
             stack_depth += 1
             continue
 
+        if name == "const":
+            if len(params) != 1:
+                raise RuntimeError("const requires exactly one finite numeric parameter")
+            value = _validate_finite_number(params[0], "const")
+            program_tokens.append({"kind": "const", "value": value})
+            stack_depth += 1
+            continue
+        if name == "dup":
+            if stack_depth < 1:
+                raise RuntimeError("dup requires one score value on the stack")
+            if len(params) != 0:
+                raise RuntimeError("dup takes no parameters")
+            program_tokens.append({"kind": "dup"})
+            stack_depth += 1
+            continue
+        if name == "flush":
+            if len(params) != 0:
+                raise RuntimeError("flush takes no parameters")
+            program_tokens.append({"kind": "flush"})
+            stack_depth = 0
+            continue
+
         if name == TRANSFER_CHIP_NAME:
             if stack_depth < 1:
                 raise RuntimeError(f"{TRANSFER_CHIP_NAME} requires one score value on the stack")
@@ -746,24 +847,49 @@ def compile_solve_score_chain(raw_chain, legacy_quantile=None):
                 raise RuntimeError("flip takes no parameters")
             program_tokens.append({"kind": "flip"})
             continue
+        if name == "clamp":
+            if stack_depth < 1:
+                raise RuntimeError("clamp requires one score value on the stack")
+            if len(params) != 0:
+                raise RuntimeError("clamp takes no parameters")
+            program_tokens.append({"kind": "clamp"})
+            continue
+        if name in ("sin", "cos", "log", "exp"):
+            if stack_depth < 1:
+                raise RuntimeError(f"{name} requires one score value on the stack")
+            if len(params) != 0:
+                raise RuntimeError(f"{name} takes no parameters")
+            program_tokens.append({"kind": name})
+            continue
+        if name == "pow":
+            if stack_depth < 1:
+                raise RuntimeError("pow requires one score value on the stack")
+            if len(params) != 1:
+                raise RuntimeError("pow requires exactly one exponent parameter")
+            exponent = _validate_finite_number(params[0], "pow exponent")
+            program_tokens.append({"kind": "pow", "exponent": exponent})
+            continue
 
         if name in OUTPUT_CHIPS:
             if stack_depth < 1:
                 raise RuntimeError(f"{name} at chip {len(program_tokens)} requires stack depth at least 1")
-            if len(params) != 0:
-                raise RuntimeError(f"{name} takes no parameters")
-            if len(output_channels) >= MAX_OUTPUT_CHANNELS:
-                raise RuntimeError(f"solve_score_chain supports at most {MAX_OUTPUT_CHANNELS} output channels")
+            mode = _validate_emit_mode(params, legacy_name=name)
+            has_explicit_output_token = True
             channel = len(output_channels)
-            program_tokens.append({"kind": name, "channel": channel})
-            output_channels.append(
-                {
-                    "name": f"channel_{channel}",
-                    "emit": name,
-                    "channel": channel,
-                    "range_normalized": bool(OUTPUT_CHIPS[name]["range_normalized"]),
-                }
-            )
+            native_emit = _emit_token_for_mode(mode)
+            program_tokens.append({"kind": "emit", "mode": mode, "channel": channel if mode != "none" else None})
+            if mode != "none":
+                if len(output_channels) >= MAX_OUTPUT_CHANNELS:
+                    raise RuntimeError(f"solve_score_chain supports at most {MAX_OUTPUT_CHANNELS} output channels")
+                output_channels.append(
+                    {
+                        "name": f"channel_{channel}",
+                        "emit": native_emit,
+                        "mode": mode,
+                        "channel": channel,
+                        "range_normalized": mode == "norm",
+                    }
+                )
             stack_depth -= 1
             continue
 
@@ -785,13 +911,20 @@ def compile_solve_score_chain(raw_chain, legacy_quantile=None):
                 raise RuntimeError(f"{name} requires at least one non-zero weight")
             token["a"] = a
             token["b"] = b
+        elif name == "ema":
+            alpha = _validate_finite_number(params[0], "ema alpha")
+            if not (0.0 <= alpha <= 1.0):
+                raise RuntimeError(f"ema alpha must be in [0, 1], got {alpha}")
+            token["alpha"] = alpha
         program_tokens.append(token)
         stack_depth -= spec["arity"] - 1
 
     if not metrics:
         raise RuntimeError("solve_score_chain must contain at least one metric chip")
-    has_explicit_outputs = bool(output_channels)
+    has_explicit_outputs = has_explicit_output_token
     if has_explicit_outputs:
+        if not output_channels:
+            raise RuntimeError("explicit-output solve_score_chain must emit at least one channel")
         if stack_depth != 0:
             raise RuntimeError(f"explicit-output solve_score_chain must end with stack depth 0, got {stack_depth}")
     else:
@@ -863,7 +996,7 @@ def compile_solve_score_chain(raw_chain, legacy_quantile=None):
         "has_explicit_outputs": has_explicit_outputs,
         "output_channel_count": len(output_channels),
         "output_channels": output_channels,
-        "output_interpretation": "direct_rgb" if has_explicit_outputs and len(output_channels) == 3 else "scalar_palette",
+        "output_interpretation": "scalar_palette" if not has_explicit_outputs else "",
         "uses_lag": uses_lag,
         "max_lag": 1 if uses_lag else 0,
         "lagged_metric_slots": lagged_metric_slots,

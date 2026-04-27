@@ -429,9 +429,9 @@ class TestSolveScoreChain(unittest.TestCase):
 
         compiled = compile_solve_score_chain([
             ["proximity", "slv", "0.5"],
-            ["emit_norm"],
+            ["emit", "norm"],
             ["spread", "cf", "0.5"],
-            ["emit"],
+            ["emit", "raw"],
         ])
 
         self.assertEqual(compiled["program_spec"], "m0-0;emit_norm;m1-0;emit")
@@ -441,10 +441,60 @@ class TestSolveScoreChain(unittest.TestCase):
         self.assertEqual(
             compiled["output_channels"],
             [
-                {"name": "channel_0", "emit": "emit_norm", "channel": 0, "range_normalized": True},
-                {"name": "channel_1", "emit": "emit", "channel": 1, "range_normalized": False},
+                {"name": "channel_0", "emit": "emit_norm", "mode": "norm", "channel": 0, "range_normalized": True},
+                {"name": "channel_1", "emit": "emit", "mode": "raw", "channel": 1, "range_normalized": False},
             ],
         )
+
+    def test_compile_legacy_emit_alias_serializes_unified(self):
+        from solve_score_chain import compile_solve_score_chain, serialize_solve_score_chain
+
+        compiled = compile_solve_score_chain([
+            ["proximity", "slv", "0.5"],
+            ["emit_norm"],
+        ])
+
+        self.assertEqual(compiled["program_spec"], "m0-0;emit_norm")
+        self.assertEqual(serialize_solve_score_chain(compiled["chain"]), '[["proximity","0.5"],["emit","norm"]]')
+
+    def test_compile_emit_none_and_flush_for_debug_branches(self):
+        from solve_score_chain import compile_solve_score_chain, serialize_solve_score_chain
+
+        compiled = compile_solve_score_chain([
+            ["proximity", "slv", "0.5"],
+            ["emit", "none"],
+            ["flush"],
+            ["spread", "slv", "0.5"],
+            ["emit", "norm"],
+        ])
+
+        self.assertEqual(compiled["program_spec"], "m0-0;emit_none;flush;m1-0;emit_norm")
+        self.assertTrue(compiled["has_explicit_outputs"])
+        self.assertEqual(compiled["output_channel_count"], 1)
+        self.assertEqual(compiled["output_channels"][0]["emit"], "emit_norm")
+        self.assertEqual(serialize_solve_score_chain(compiled["chain"]), '[["proximity","0.5"],["emit","none"],"flush",["spread","0.5"],["emit","norm"]]')
+
+        with self.assertRaisesRegex(RuntimeError, "must emit at least one channel"):
+            compile_solve_score_chain([
+                ["proximity", "slv", "0.5"],
+                ["emit", "none"],
+            ])
+
+    def test_compile_stack_math_chips(self):
+        from solve_score_chain import compile_solve_score_chain
+
+        compiled = compile_solve_score_chain([
+            ["proximity", "slv", "0.5"],
+            ["const", "1e-3"],
+            ["add"],
+            ["dup"],
+            ["ema", "0.99"],
+            ["sin"],
+            ["pow", "2"],
+            ["clamp"],
+        ])
+
+        self.assertEqual(compiled["program_spec"], "m0-0;const:0.001;add;dup;ema:0.99;sin;pow:2;clamp")
 
     def test_compile_explicit_emit_requires_empty_final_stack(self):
         from solve_score_chain import compile_solve_score_chain

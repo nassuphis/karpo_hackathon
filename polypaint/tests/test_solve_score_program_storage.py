@@ -67,7 +67,11 @@ class TestSolveScoreProgramStorage(unittest.TestCase):
         save_resp = handler_storage.handler(
             self._event(
                 "/save-solve-score-program",
-                {"name": "Proximity q=0.1%", "chain": [["proximity", "0.1"]]},
+                {
+                    "name": "Proximity q=0.1%",
+                    "chain": [["proximity", "0.1"]],
+                    "recommended_interpretation": "direct_rgb",
+                },
             ),
             None,
         )
@@ -76,6 +80,7 @@ class TestSolveScoreProgramStorage(unittest.TestCase):
         program_id = save_body["program"]["id"]
         self.assertFalse(save_body["overwritten"])
         self.assertEqual(save_body["program"]["chain"], [["proximity", "0.1"]])
+        self.assertEqual(save_body["program"]["recommended_interpretation"], "rgb")
 
         list_resp = handler_storage.handler(self._event("/list-solve-score-programs", {}), None)
         list_body = json.loads(list_resp["body"])
@@ -91,6 +96,7 @@ class TestSolveScoreProgramStorage(unittest.TestCase):
         fetch_body = json.loads(fetch_resp["body"])
         self.assertEqual(fetch_body["program"]["id"], program_id)
         self.assertEqual(fetch_body["program"]["metric"], "proximity")
+        self.assertEqual(fetch_body["program"]["recommended_interpretation"], "rgb")
 
         delete_resp = handler_storage.handler(
             self._event("/delete-solve-score-program", {"id": program_id}),

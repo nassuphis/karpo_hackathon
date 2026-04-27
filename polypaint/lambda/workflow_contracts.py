@@ -97,7 +97,7 @@ RENDER_FINALIZE_MT_TASK_PAYLOAD = {
     "score_output_clip_hi.$": "$.solve_score_clip.parsed.score_output_clip_hi",
     "score_output_channel_count.$": "$.solve_score_clip.parsed.score_output_channel_count",
     "score_output_has_explicit_outputs.$": "$.solve_score_clip.parsed.score_output_has_explicit_outputs",
-    "score_output_interpretation.$": "$.solve_score_clip.parsed.score_output_interpretation",
+    "score_output_interpretation.$": "$.plan.outputs.metadata.score_output_interpretation",
     "score_output_channels.$": "$.solve_score_clip.parsed.score_output_channels",
     "chain_fingerprint.$": "$.solve_score_clip.parsed.chain_fingerprint",
     "fragment_prefix.$": "$.plan.outputs.fragment_prefix",

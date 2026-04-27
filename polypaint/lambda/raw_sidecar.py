@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import math
 
+from color_render_contract import normalize_color_interpretation, require_scalar_raw
+
 
 RAW_SIDECAR_VERSION = 3
 HISTOGRAM_RAW_SIDECAR_VERSION = 2
@@ -213,7 +215,9 @@ def build_raw_sidecar(
         "height": _coerce_int(height, "height"),
         "channels": _coerce_int(channels, "channels"),
         "raw_layout": str(raw_layout or ("u8_scalar_row_major" if int(channels or 1) == 1 else "u8_packed_channels_row_major")),
-        "interpretation": str(interpretation or ("scalar_palette" if int(channels or 1) == 1 else "direct_rgb")),
+        "interpretation": normalize_color_interpretation(
+            interpretation or ("scalar_lut" if int(channels or 1) == 1 else "rgb")
+        ),
         "encoding": raw_encoding_for_channels(channels),
         "chain_fingerprint": chain_fingerprint,
         "score_chain": _parse_chain(score_chain),
@@ -258,7 +262,7 @@ def build_raw_sidecar(
     return sidecar
 
 
-def validate_raw_sidecar(sidecar, *, expected_raw_key=None, expected_artifact_family=None):
+def validate_raw_sidecar(sidecar, *, expected_raw_key=None, expected_artifact_family=None, require_scalar=False, feature="this operation"):
     if not isinstance(sidecar, dict):
         raise RuntimeError("raw sidecar must be a JSON object")
     version = _coerce_int(sidecar.get("version"), "raw sidecar version")
@@ -289,7 +293,7 @@ def validate_raw_sidecar(sidecar, *, expected_raw_key=None, expected_artifact_fa
     height = _coerce_int(sidecar.get("height", sidecar.get("pix")), "raw sidecar height")
     if width != height:
         raise RuntimeError(f"raw sidecar requires square dimensions, got {width}x{height}")
-    return {
+    validated = {
         "version": version,
         "job_id": str(sidecar.get("job_id") or ""),
         "run_id": str(sidecar.get("run_id") or ""),
@@ -300,7 +304,9 @@ def validate_raw_sidecar(sidecar, *, expected_raw_key=None, expected_artifact_fa
         "height": height,
         "channels": channels_value,
         "raw_layout": str(sidecar.get("raw_layout") or ("u8_scalar_row_major" if channels_value == 1 else "u8_packed_channels_row_major")),
-        "interpretation": str(sidecar.get("interpretation") or ("scalar_palette" if channels_value == 1 else "direct_rgb")),
+        "interpretation": normalize_color_interpretation(
+            sidecar.get("interpretation") or ("scalar_lut" if channels_value == 1 else "rgb")
+        ),
         "encoding": dict(encoding),
         "chain_fingerprint": str(sidecar.get("chain_fingerprint") or "").strip(),
         "score_chain": _parse_chain(sidecar.get("score_chain")),
@@ -349,3 +355,6 @@ def validate_raw_sidecar(sidecar, *, expected_raw_key=None, expected_artifact_fa
             required=(version >= RAW_SIDECAR_VERSION),
         ),
     }
+    if require_scalar:
+        require_scalar_raw(validated, feature=feature)
+    return validated

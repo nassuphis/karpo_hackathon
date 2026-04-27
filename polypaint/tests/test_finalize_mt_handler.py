@@ -273,6 +273,7 @@ class TestFinalizeMTHandler(unittest.TestCase):
                 return MagicMock(returncode=0, stdout="", stderr="")
             if exe == "score_raw_render":
                 self.assertIn("--channels=3", cmd)
+                self.assertIn("--interpretation=rgb", cmd)
                 out_path = cmd[2]
                 preview_path = next(arg.split("=", 1)[1] for arg in cmd if arg.startswith("--preview="))
                 with open(out_path, "wb") as fh:
@@ -314,12 +315,104 @@ class TestFinalizeMTHandler(unittest.TestCase):
         raw_meta = json.loads(uploads[TEST_RAW_META_KEY]["data"].decode("utf-8"))
         self.assertEqual(raw_meta["channels"], 3)
         self.assertEqual(raw_meta["raw_layout"], "u8_packed_channels_row_major")
-        self.assertEqual(raw_meta["interpretation"], "direct_rgb")
+        self.assertEqual(raw_meta["interpretation"], "rgb")
         self.assertEqual(raw_meta["encoding"]["type"], "u8_packed_channels_v1")
         self.assertEqual(len(raw_meta["output_channels"]), 3)
         overlay_meta = mock_overlay.call_args.args[4]
         self.assertEqual(overlay_meta["raw_channels"], "3")
-        self.assertEqual(overlay_meta["rgb_source"], "direct_rgb_raw")
+        self.assertEqual(overlay_meta["rgb_source"], "rgb_raw")
+
+    @patch("handler_finalize_mt.write_color_artifact_meta_overlay")
+    @patch("handler_finalize_mt.report_status")
+    @patch("raw_score_render.subprocess.run")
+    @patch("handler_finalize_mt.subprocess.run")
+    @patch("handler_finalize_mt._finalize_s3_client")
+    def test_finalize_mt_accepts_hsv_lut_raw_outputs(
+        self,
+        mock_client_factory,
+        mock_run,
+        mock_raw_render_run,
+        mock_report,
+        mock_overlay,
+    ):
+        import handler_finalize_mt as mod
+
+        uploads = {}
+        fake_s3 = MagicMock()
+
+        def put_object(**kwargs):
+            body = kwargs["Body"]
+            data = body.read() if hasattr(body, "read") else body
+            uploads[kwargs["Key"]] = {
+                "data": data,
+                "content_type": kwargs.get("ContentType"),
+                "metadata": kwargs.get("Metadata"),
+            }
+
+        fake_s3.generate_presigned_url.side_effect = (
+            lambda _op, Params, ExpiresIn=900: f"https://example.invalid/{Params['Key']}"
+        )
+        fake_s3.put_object.side_effect = put_object
+        mock_client_factory.return_value = fake_s3
+
+        def run_side_effect(cmd, capture_output=False, text=False, timeout=None, env=None):
+            exe = os.path.basename(cmd[0])
+            if exe == "assemble_greyscale":
+                self.assertIn("--channels=3", cmd)
+                out_path = next(arg for arg in cmd if arg.startswith("--output=")).split("=", 1)[1]
+                hist_path = next(arg for arg in cmd if arg.startswith("--hist-output=")).split("=", 1)[1]
+                with open(out_path, "wb") as fh:
+                    fh.write(bytes([12, 34, 56, 78, 90, 123, 0, 0, 0, 0, 0, 0]))
+                with open(hist_path, "w", encoding="utf-8") as fh:
+                    json.dump({"version": 1, "channels": 3, "background_pixels": 2, "nonzero_pixels": 2, "histogram": [2] + [0] * 255}, fh)
+                return MagicMock(returncode=0, stdout="", stderr="")
+            if exe == "score_raw_render":
+                self.assertIn("--channels=3", cmd)
+                self.assertIn("--interpretation=hsv_lut", cmd)
+                self.assertIn("--palette=inferno", cmd)
+                out_path = cmd[2]
+                preview_path = next(arg.split("=", 1)[1] for arg in cmd if arg.startswith("--preview="))
+                with open(out_path, "wb") as fh:
+                    fh.write(b"HSV_LUT_JPEG")
+                with open(preview_path, "wb") as fh:
+                    fh.write(b"HSV_LUT_PREVIEW")
+                return MagicMock(returncode=0, stdout=json.dumps({"file_size": 12, "preview_file_size": 15}), stderr="")
+            raise AssertionError(f"unexpected executable {exe}")
+
+        mock_run.side_effect = run_side_effect
+        mock_raw_render_run.side_effect = run_side_effect
+
+        event = _event(
+            score_program="m0-0;emit_norm;m1-0;emit_norm;m2-0;emit_norm",
+            metadata=dict(_event()["metadata"], score_program="m0-0;emit_norm;m1-0;emit_norm;m2-0;emit_norm"),
+            score_output_channel_count=3,
+            score_output_has_explicit_outputs=True,
+            score_output_interpretation="hsv_lut",
+            score_output_channels=[
+                {"channel": 0, "name": "channel_0", "emit": "emit_norm", "range_normalized": True},
+                {"channel": 1, "name": "channel_1", "emit": "emit_norm", "range_normalized": True},
+                {"channel": 2, "name": "channel_2", "emit": "emit_norm", "range_normalized": True},
+            ],
+            fragment_manifest={
+                "version": 1,
+                "pair_encoding": "u32le_pixel_idx_plus_u8_channels_v1",
+                "channels": 3,
+                "record_size_bytes": 7,
+                "item_count": 1,
+                "fragment_prefix": TEST_FRAGMENT_PREFIX,
+                "chain_fingerprint": "fp_test",
+            },
+        )
+        result = mod.handler(event, None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(body["channels"], 3)
+        raw_meta = json.loads(uploads[TEST_RAW_META_KEY]["data"].decode("utf-8"))
+        self.assertEqual(raw_meta["interpretation"], "hsv_lut")
+        self.assertEqual([row["name"] for row in raw_meta["output_channels"]], ["h_lookup", "s_lookup", "v_lookup"])
+        overlay_meta = mock_overlay.call_args.args[4]
+        self.assertEqual(overlay_meta["score_output_interpretation"], "hsv_lut")
+        self.assertEqual(overlay_meta["rgb_source"], "hsv_lut_raw")
 
     @patch("handler_finalize_mt.write_color_artifact_meta_overlay")
     @patch("handler_finalize_mt.report_status")

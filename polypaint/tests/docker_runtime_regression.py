@@ -174,6 +174,19 @@ def read_csv_grid(path):
     return rows
 
 
+def read_rgb_pixel_with_vips(image_path, x, y):
+    r = subprocess.run(
+        ["/opt/bin/vips", "getpoint", image_path, str(int(x)), str(int(y))],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert r.returncode == 0, "vips getpoint RGB image failed: " + r.stderr[:200]
+    values = [float(part) for part in r.stdout.replace(",", " ").split() if part]
+    assert len(values) >= 3, "vips getpoint did not return RGB bands: %r" % r.stdout
+    return tuple(int(round(values[idx])) for idx in range(3))
+
+
 def encode_fragment_pairs(pairs):
     payload = bytearray()
     for pixel_idx, score in pairs:
@@ -1248,6 +1261,9 @@ def test_roots2pix_mt_explicit_rgb_outputs_runtime():
     hist_path = "/tmp/roots2pix_mt_rgb_hist.json"
     png_path = "/tmp/roots2pix_mt_rgb.png"
     preview_path = "/tmp/roots2pix_mt_rgb_preview.png"
+    hsv_png_path = "/tmp/roots2pix_mt_hsv.png"
+    rgb_lut_png_path = "/tmp/roots2pix_mt_rgb_lut.png"
+    hsv_lut_png_path = "/tmp/roots2pix_mt_hsv_lut.png"
     cleanup(
         roots_path,
         manifest_path,
@@ -1256,6 +1272,9 @@ def test_roots2pix_mt_explicit_rgb_outputs_runtime():
         hist_path,
         png_path,
         preview_path,
+        hsv_png_path,
+        rgb_lut_png_path,
+        hsv_lut_png_path,
     )
 
     roots_bytes = bytearray()
@@ -1297,7 +1316,7 @@ def test_roots2pix_mt_explicit_rgb_outputs_runtime():
             "--score_metrics=centroid_re",
             "--score_clip_los=-1",
             "--score_clip_his=1",
-            "--score_program=m0-0;emit_norm;m0-0;flip;emit_norm;m0-0;sawtooth:2;emit",
+            "--score_program=m0-0;emit_none;flush;m0-0;emit_norm;m0-0;flip;emit_norm;m0-0;sawtooth:2;emit",
             "--score_output_clip_los=0.5,0.25,0",
             "--score_output_clip_his=0.75,0.5,1",
             "--fragment_prefix=" + fragment_prefix,
@@ -1342,6 +1361,7 @@ def test_roots2pix_mt_explicit_rgb_outputs_runtime():
             png_path,
             "--pix=8",
             "--channels=3",
+            "--interpretation=rgb",
             "--quality=90",
             "--preview=" + preview_path,
             "--preview_max=512",
@@ -1349,6 +1369,49 @@ def test_roots2pix_mt_explicit_rgb_outputs_runtime():
         assert r.returncode == 0, "score_raw_render RGB failed: " + r.stderr[:200]
         assert read_png_dims(png_path) == (8, 8), "direct RGB PNG dims mismatch"
         assert read_png_dims(preview_path) == (8, 8), "direct RGB preview dims mismatch"
+        r = subprocess.run([
+            "/src/score_raw_render",
+            raw_path,
+            hsv_png_path,
+            "--pix=8",
+            "--channels=3",
+            "--interpretation=hsv",
+            "--quality=90",
+        ], capture_output=True, text=True, timeout=20)
+        assert r.returncode == 0, "score_raw_render HSV failed: " + r.stderr[:200]
+        assert read_png_dims(hsv_png_path) == (8, 8), "HSV PNG dims mismatch"
+        r = subprocess.run([
+            "/src/score_raw_render",
+            raw_path,
+            rgb_lut_png_path,
+            "--pix=8",
+            "--channels=3",
+            "--interpretation=rgb_lut",
+            "--palette=turbo",
+            "--background_color=123456",
+            "--quality=90",
+        ], capture_output=True, text=True, timeout=20)
+        assert r.returncode == 0, "score_raw_render RGB LUT failed: " + r.stderr[:200]
+        assert read_png_dims(rgb_lut_png_path) == (8, 8), "RGB LUT PNG dims mismatch"
+        assert read_rgb_pixel_with_vips(rgb_lut_png_path, 0, 0) == (18, 52, 86), (
+            "RGB LUT reserved-zero background did not render background_color"
+        )
+        r = subprocess.run([
+            "/src/score_raw_render",
+            raw_path,
+            hsv_lut_png_path,
+            "--pix=8",
+            "--channels=3",
+            "--interpretation=hsv_lut",
+            "--palette=turbo",
+            "--background_color=123456",
+            "--quality=90",
+        ], capture_output=True, text=True, timeout=20)
+        assert r.returncode == 0, "score_raw_render HSV LUT failed: " + r.stderr[:200]
+        assert read_png_dims(hsv_lut_png_path) == (8, 8), "HSV LUT PNG dims mismatch"
+        assert read_rgb_pixel_with_vips(hsv_lut_png_path, 0, 0) == (18, 52, 86), (
+            "HSV LUT reserved-zero background did not render background_color"
+        )
         print("  roots2pix_mt explicit RGB outputs: OK")
     finally:
         cleanup(
@@ -1359,6 +1422,9 @@ def test_roots2pix_mt_explicit_rgb_outputs_runtime():
             hist_path,
             png_path,
             preview_path,
+            hsv_png_path,
+            rgb_lut_png_path,
+            hsv_lut_png_path,
         )
     print("=== roots2pix_mt explicit RGB output runtime PASSED ===")
 
@@ -2452,6 +2518,48 @@ def test_solve_proximity_stats():
     assert channels[0]["range_normalized"] is True, "emit_norm channel not marked normalized"
     assert channels[1]["range_normalized"] is False, "emit channel incorrectly marked normalized"
     print("  explicit-output summary channels: OK")
+
+    r = subprocess.run(
+        [
+            sps_path,
+            sps_bin,
+            "--mode=summary",
+            "--degree=2",
+            "--score_metrics=proximity,spread",
+            "--score_clip_los=" + str(clip["clip_lo"]) + "," + str(clip["clip_lo"]),
+            "--score_clip_his=" + str(clip["clip_hi"]) + "," + str(clip["clip_hi"]),
+            "--score_program=m0-0;emit_none;flush;m1-0;emit_norm",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert r.returncode == 0, "emit_none/flush summary failed: " + r.stderr[:200]
+    summary = json.loads(r.stdout)
+    assert summary["score_output_channel_count"] == 1, "emit_none allocated an output channel"
+    assert summary["score_output_has_explicit_outputs"] is True, "emit_none did not keep explicit output mode"
+    assert summary["score_output_channels"][0]["range_normalized"] is True, "post-flush emit_norm metadata wrong"
+    print("  emit_none + flush score program: OK")
+
+    r = subprocess.run(
+        [
+            sps_path,
+            sps_bin,
+            "--mode=summary",
+            "--degree=2",
+            "--score_metrics=proximity",
+            "--score_clip_los=" + str(clip["clip_lo"]),
+            "--score_clip_his=" + str(clip["clip_hi"]),
+            "--score_program=m0-0;const:0.001;add;dup;ema:0.99;sin;pow:2;clamp",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert r.returncode == 0, "stack/math score program summary failed: " + r.stderr[:200]
+    summary = json.loads(r.stdout)
+    assert summary["n_solves"] == 3, "stack/math score program solve count mismatch"
+    print("  score program stack/math chips: OK")
 
     # 4. Clusteriness clip (v2 metric)
     r = subprocess.run([sps_path, sps_bin, "--mode=clip", "--degree=2", "--metric=clusteriness"],

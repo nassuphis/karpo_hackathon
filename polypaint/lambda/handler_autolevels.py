@@ -202,6 +202,11 @@ def handler(event, context):
             src_meta = dict(load_color_artifact_head(s3, BUCKET, job_id, source_artifact_id).get("metadata", {}) or {})
         except Exception:
             src_meta = dict(src_head.get("Metadata", {}) or {})
+        source_channels = int(src_meta.get("raw_channels") or src_meta.get("score_output_channel_count") or 1)
+        if source_channels != 1:
+            raise RuntimeError(
+                f"Autolevels requires a scalar (channels=1) raw artifact; got channels={source_channels}"
+            )
 
         background_color = _normalize_background_color(src_meta.get("background_color"))
         background_threshold = _parse_background_threshold(

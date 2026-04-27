@@ -224,6 +224,98 @@ For popup tuning controls:
 - use the existing `.autolevel-inline-fields` look
 - use explicit labels like `Workers`, `Threads`, `Input`
 
+## Render View Rows
+
+The Render `View` controls are compact mode rows, but they are not plain inline
+text. Do not lay them out as one wrapping flex strip.
+
+Rules:
+
+- Use the shared row shape: selector dot column, mode-name column, and a control
+  grid column.
+- `Auto` uses a two-row label/slider grid so `Quantile` and `Shim` share the
+  same label and slider axes.
+- `Exact` uses a two-row numeric grid so `Min Re` / `Min Im` and `Max Re` /
+  `Max Im` line up vertically.
+- Labels inside these rows must use zero margin and explicit line-height; do not
+  rely on global `label` baseline behavior.
+- If the row needs to collapse on narrow screens, collapse the grid deliberately
+  instead of letting flex wrapping decide the order.
+
+## Render Artifact Previews
+
+The Render artifact viewer is a bounded preview pane. It must show the whole
+artifact preview, not crop the natural-size `preview.png`.
+
+Rules:
+
+- The preview stage must be constrained to the viewer with explicit width and
+  height.
+- The image must use `object-fit: contain`, `max-width: 100%`, and
+  `max-height: 100%`.
+- Drag-selection math must use the displayed image rectangle, not the outer
+  padded viewer rectangle, so letterboxed space does not distort viewport
+  selection.
+
+## Render Output Preview
+
+The Render `Output` preview is ephemeral, but it is still a viewport-selection
+surface.
+
+Rules:
+
+- Wrap the canvas in a positioned preview stage and draw the marquee overlay in
+  that stage.
+- Use the preview response `viewport` plus the current rotation to compute
+  selected exact bounds.
+- Selection must update the `Exact` view inputs and switch View mode to `Exact`.
+- Pointer math must use the displayed canvas rectangle, not the outer preview
+  box.
+- Right-click or `Escape` should clear the marquee without changing the current
+  exact bounds.
+
+## Checkbox And Radio Rows
+
+Global `label` CSS currently uses block layout and a bottom margin. That is not
+safe inside compact radio/checkbox rows.
+
+Rules:
+
+- Any inline checkbox or radio row must override inherited label spacing with
+  `margin: 0`.
+- The input and its text must be vertically centered by the row class, not by
+  browser baseline behavior.
+- Use an explicit input column when several radio/checkbox rows are stacked, so
+  the controls share one vertical axis.
+- Text next to the selector must use a fixed line-height that matches the input
+  height closely enough to avoid the label sitting low.
+
+Current Render Color pattern:
+
+- `.color-mode-choice`
+  - grid columns: fixed selector column + flexible text column
+  - `align-items: center`
+  - zero label margin
+- `.color-mode-choice input[type="radio"]`
+  - zero input margin
+  - explicit width/height
+  - centered in the selector column
+- `.color-mode-name`
+  - explicit line-height
+- `.color-mode-palette-row`
+  - shared palette controls for modes that actually consume a palette
+  - hidden for direct RGB/HSV modes where palette selection is ignored
+  - never duplicate palette swatches inside multiple radio rows
+
+Do not add bare markup like:
+
+```html
+<label><input type="radio"> RGB</label>
+```
+
+inside matrix, panel, or compact grouped controls. That reintroduces browser
+baseline alignment and inherited label-margin bugs.
+
 ## False Affordance
 
 Do not use disabled inputs to display non-editable information.

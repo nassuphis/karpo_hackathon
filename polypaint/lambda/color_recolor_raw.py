@@ -445,6 +445,8 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
             _load_json_key(source_raw_meta_key),
             expected_raw_key=source_raw_key,
             expected_artifact_family="color",
+            require_scalar=True,
+            feature="Recolor-from-raw",
         )
         raw_width = _parse_int(raw_sidecar.get("width"), width)
         raw_height = _parse_int(raw_sidecar.get("height"), height)

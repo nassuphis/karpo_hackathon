@@ -100,6 +100,10 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         self.assertEqual(body["preview_pix"], 16)
         self.assertEqual(body["fragment_entries"], 2)
         self.assertEqual(body["nonzero_pixels"], 2)
+        self.assertEqual(body["emission_histograms"][0]["label"], "E1")
+        self.assertEqual(body["emission_histograms"][0]["histogram"][10], 1)
+        self.assertEqual(body["emission_histograms"][0]["histogram"][220], 1)
+        self.assertEqual(body["emission_histograms"][0]["total"], 2)
 
         self.assertFalse(mock_s3.put_object.called)
         self.assertFalse(mock_s3.upload_file.called)

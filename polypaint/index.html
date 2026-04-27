@@ -114,6 +114,78 @@ button {
 .score-chip {
     gap: 2px;
 }
+.score-chip.selected {
+    outline: 1px solid #e9c46a;
+    box-shadow: 0 0 0 2px rgba(233,196,106,0.18);
+}
+.color-mode-panel {
+    display: grid;
+    gap: 7px;
+    margin-top: 6px;
+}
+.color-mode-row {
+    display: grid;
+    grid-template-columns: minmax(118px, 140px) minmax(0, 1fr);
+    gap: 10px;
+    align-items: center;
+    padding: 7px 8px;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    background: rgba(255,255,255,0.025);
+}
+.color-mode-row.active {
+    border-color: rgba(233,69,96,0.55);
+    background: rgba(233,69,96,0.08);
+}
+.color-mode-row label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    color: #d8e1f1;
+    font-size: 11px;
+    line-height: 13px;
+}
+.color-mode-choice {
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr);
+    align-items: center;
+    column-gap: 7px;
+    cursor: pointer;
+    min-height: 16px;
+}
+.color-mode-choice input[type="radio"] {
+    margin: 0;
+    width: 13px;
+    height: 13px;
+    justify-self: center;
+    align-self: center;
+}
+.color-mode-name {
+    display: block;
+    line-height: 13px;
+}
+.color-mode-detail {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex-wrap: wrap;
+    min-height: 24px;
+}
+.color-mode-palette-row {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    padding: 3px 8px 0 8px;
+}
+.color-mode-palette-label {
+    color: #778599;
+    font-size: 10px;
+    line-height: 13px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+}
 .score-chip .chip-actions {
     display: inline-flex; align-items: center; gap: 1px;
     margin-right: 3px;
@@ -503,18 +575,87 @@ button {
     display: flex; gap: 8px; align-items: center; margin-bottom: 10px; font-size: 10px;
 }
 .view-row {
-    display: flex; gap: 8px; align-items: center; margin-bottom: 4px; font-size: 10px; cursor: pointer; flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: 14px 58px minmax(0, 1fr);
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 6px;
+    font-size: 10px;
+    cursor: pointer;
 }
 .view-row .view-dot {
-    width: 10px; height: 10px; border-radius: 50%; border: 2px solid #555; background: transparent; flex-shrink: 0;
+    width: 10px; height: 10px; border-radius: 50%; border: 2px solid #555; background: transparent; justify-self: center;
 }
 .view-row.active .view-dot { background: #e94560; border-color: #e94560; }
 .view-row:not(.active) { opacity: 0.5; }
 .view-row:not(.active) input, .view-row:not(.active) label { pointer-events: none; }
+.view-mode-label {
+    color: #aaa;
+    letter-spacing: 0.06em;
+    line-height: 1.2;
+    text-transform: uppercase;
+}
+.view-controls {
+    min-width: 0;
+}
+.view-auto-controls {
+    display: grid;
+    grid-template-columns: 94px minmax(120px, 1fr);
+    gap: 6px 8px;
+    align-items: center;
+}
+.view-exact-controls {
+    display: grid;
+    grid-template-columns: 52px minmax(72px, 1fr) 52px minmax(72px, 1fr);
+    gap: 6px 8px;
+    align-items: center;
+}
+.view-square-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    align-items: center;
+}
+.view-field-label {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 3px;
+    min-width: 0;
+    margin: 0;
+    color: #888;
+    font-size: 10px;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+.view-field-label.left {
+    justify-content: flex-start;
+}
+.view-field-value {
+    display: inline-block;
+    width: 2.5em;
+    text-align: right;
+    color: #bbb;
+    font-family: monospace;
+}
+.view-number-input {
+    width: 100% !important;
+    min-width: 0;
+    padding: 5px 7px;
+    font-family: monospace;
+    font-size: 12px;
+}
+.view-helper {
+    grid-column: 1 / -1;
+    color: #555;
+    font-size: 10px;
+    line-height: 1.25;
+}
 .render-view-slider {
     flex: 1 1 140px;
     min-width: 120px;
     width: auto !important;
+    padding: 0;
 }
 .color-row-label { color: #666; min-width: 45px; text-transform: uppercase; letter-spacing: 0.06em; }
 .render-panel-grid {
@@ -645,7 +786,13 @@ button {
 }
 .render-preview-stage {
     position: relative;
-    display: inline-block;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
     line-height: 0;
     cursor: crosshair;
     user-select: none;
@@ -657,11 +804,80 @@ button {
 .render-preview-image {
     max-width: 100%;
     max-height: 100%;
+    width: auto;
+    height: auto;
+    object-fit: contain;
     background: #000;
     display: block;
     margin: 0 auto;
     user-select: none;
     -webkit-user-drag: none;
+}
+.render-lores-preview-stage {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    line-height: 0;
+    cursor: crosshair;
+    user-select: none;
+    -webkit-user-select: none;
+}
+.render-lores-preview-stage.inactive {
+    cursor: default;
+}
+.render-lores-preview-stage canvas {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    user-select: none;
+    -webkit-user-drag: none;
+}
+.render-lores-preview-tabs {
+    width: 256px;
+    max-width: 100%;
+    margin-top: 8px;
+}
+.render-lores-preview-tabbar {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+    margin-bottom: 5px;
+}
+.render-lores-preview-tab {
+    margin: 0;
+    font-size: 10px;
+    padding: 2px 8px;
+    border: 1px solid rgba(255,255,255,0.1);
+    background: rgba(255,255,255,0.035);
+    color: #9aa7bb;
+}
+.render-lores-preview-tab.active {
+    border-color: rgba(233,69,96,0.6);
+    background: rgba(233,69,96,0.12);
+    color: #e8eef8;
+}
+.render-lores-preview-pane {
+    display: none;
+}
+.render-lores-preview-pane.active {
+    display: block;
+}
+.render-lores-preview-histbox {
+    width: 256px;
+    height: 256px;
+    max-width: 100%;
+    border: 1px solid #0f3460;
+    border-radius: 4px;
+    background: #05070c;
+    overflow: hidden;
+}
+.render-lores-preview-histbox canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
 }
 .render-preview-marquee {
     position: absolute;
@@ -679,6 +895,16 @@ button {
 @media (max-width: 760px) {
     .render-panel-grid {
         grid-template-columns: minmax(0, 1fr);
+    }
+    .view-row {
+        grid-template-columns: 14px 54px minmax(0, 1fr);
+    }
+    .view-auto-controls,
+    .view-exact-controls {
+        grid-template-columns: 62px minmax(84px, 1fr);
+    }
+    .view-field-label {
+        justify-content: flex-start;
     }
 }
 
@@ -980,38 +1206,44 @@ button {
                     <div class="color-title">View</div>
                     <div class="view-row active" id="view-row-auto" onclick="selectViewMode('auto')">
                         <span class="view-dot"></span>
-                        <span style="color:#aaa; letter-spacing:0.06em; text-transform:uppercase; min-width:50px">Auto</span>
-                        <label style="display:inline-block;min-width:100px">Quantile: <span id="render-quantile-val" style="display:inline-block;width:2.5em;text-align:right">0.0</span>%</label>
-                        <input type="range" id="render-quantile" class="render-view-slider" min="0" max="3" step="0.1" value="0"
-                            oninput="document.getElementById('render-quantile-val').textContent=parseFloat(this.value).toFixed(1);selectViewMode('auto')">
-                        <label style="display:inline-block;min-width:65px;margin-left:8px">Shim: <span id="render-shim-val" style="display:inline-block;width:2.5em;text-align:right">5.0</span>%</label>
-                        <input type="range" id="render-shim" class="render-view-slider" min="0" max="50" step="0.5" value="5.0"
-                            oninput="document.getElementById('render-shim-val').textContent=parseFloat(this.value).toFixed(1);selectViewMode('auto')">
+                        <span class="view-mode-label">Auto</span>
+                        <div class="view-controls view-auto-controls">
+                            <label class="view-field-label" for="render-quantile">Quantile <span id="render-quantile-val" class="view-field-value">0.0</span>%</label>
+                            <input type="range" id="render-quantile" class="render-view-slider" min="0" max="3" step="0.1" value="0"
+                                oninput="document.getElementById('render-quantile-val').textContent=parseFloat(this.value).toFixed(1);selectViewMode('auto')">
+                            <label class="view-field-label" for="render-shim">Shim <span id="render-shim-val" class="view-field-value">5.0</span>%</label>
+                            <input type="range" id="render-shim" class="render-view-slider" min="0" max="50" step="0.5" value="5.0"
+                                oninput="document.getElementById('render-shim-val').textContent=parseFloat(this.value).toFixed(1);selectViewMode('auto')">
+                        </div>
                     </div>
                     <div class="view-row" id="view-row-square" onclick="selectViewMode('square')">
                         <span class="view-dot"></span>
-                        <span style="color:#aaa; letter-spacing:0.06em; text-transform:uppercase; min-width:50px">Square</span>
-                        <label style="min-width:50px">Extent:</label>
-                        <input type="number" id="render-square-extent" value="2.0" min="0.01" max="1000" step="0.1"
-                            style="width:6em; font-family:monospace; font-size:12px" onfocus="selectViewMode('square')" oninput="selectViewMode('square')">
-                        <span style="color:#555; font-size:10px; margin-left:6px">LL = -ext - j*ext, UR = +ext + j*ext</span>
+                        <span class="view-mode-label">Square</span>
+                        <div class="view-controls view-square-controls">
+                            <label class="view-field-label left" for="render-square-extent">Extent</label>
+                            <input type="number" id="render-square-extent" class="view-number-input" value="2.0" min="0.01" max="1000" step="0.1"
+                                style="max-width:6em" onfocus="selectViewMode('square')" oninput="selectViewMode('square')">
+                            <span style="color:#555; font-size:10px">LL = -ext - j*ext, UR = +ext + j*ext</span>
+                        </div>
                     </div>
                     <div class="view-row" id="view-row-explicit" onclick="selectViewMode('explicit')">
                         <span class="view-dot"></span>
-                        <span style="color:#aaa; letter-spacing:0.06em; text-transform:uppercase; min-width:50px">Exact</span>
-                        <label style="min-width:52px">Min Re:</label>
-                        <input type="number" id="render-min-re" value="-2.0" step="any"
-                            style="width:7em; font-family:monospace; font-size:12px" onfocus="selectViewMode('explicit')" oninput="_onRenderExplicitViewportInput()">
-                        <label style="min-width:52px">Max Re:</label>
-                        <input type="number" id="render-max-re" value="2.0" step="any"
-                            style="width:7em; font-family:monospace; font-size:12px" onfocus="selectViewMode('explicit')" oninput="_onRenderExplicitViewportInput()">
-                        <label style="min-width:52px">Min Im:</label>
-                        <input type="number" id="render-min-im" value="-2.0" step="any"
-                            style="width:7em; font-family:monospace; font-size:12px" onfocus="selectViewMode('explicit')" oninput="_onRenderExplicitViewportInput()">
-                        <label style="min-width:52px">Max Im:</label>
-                        <input type="number" id="render-max-im" value="2.0" step="any"
-                            style="width:7em; font-family:monospace; font-size:12px" onfocus="selectViewMode('explicit')" oninput="_onRenderExplicitViewportInput()">
-                        <span id="render-explicit-aspect" style="color:#555; font-size:10px; margin-left:6px">World aspect Δre:Δim = 1.0 : 1.0</span>
+                        <span class="view-mode-label">Exact</span>
+                        <div class="view-controls view-exact-controls">
+                            <label class="view-field-label" for="render-min-re">Min Re</label>
+                            <input type="number" id="render-min-re" class="view-number-input" value="-2.0" step="any"
+                                onfocus="selectViewMode('explicit')" oninput="_onRenderExplicitViewportInput()">
+                            <label class="view-field-label" for="render-max-re">Max Re</label>
+                            <input type="number" id="render-max-re" class="view-number-input" value="2.0" step="any"
+                                onfocus="selectViewMode('explicit')" oninput="_onRenderExplicitViewportInput()">
+                            <label class="view-field-label" for="render-min-im">Min Im</label>
+                            <input type="number" id="render-min-im" class="view-number-input" value="-2.0" step="any"
+                                onfocus="selectViewMode('explicit')" oninput="_onRenderExplicitViewportInput()">
+                            <label class="view-field-label" for="render-max-im">Max Im</label>
+                            <input type="number" id="render-max-im" class="view-number-input" value="2.0" step="any"
+                                onfocus="selectViewMode('explicit')" oninput="_onRenderExplicitViewportInput()">
+                            <span id="render-explicit-aspect" class="view-helper">World aspect Δre:Δim = 1.0 : 1.0</span>
+                        </div>
                     </div>
                     <div class="color-title" style="margin-top:10px">Rotation</div>
                     <div class="anim-row" style="gap:8px; align-items:center; margin-bottom:0">
@@ -1031,16 +1263,38 @@ button {
                             <option value="cw">CW</option>
                         </select>
                     </div>
-                    <div class="color-title" style="margin-top:10px">Solve Score Palette</div>
-                    <div class="color-row">
-                        <span class="color-row-label" style="min-width:80px">Palette</span>
-                        <div id="palette-circles-solve-score" style="display:inline-flex; gap:4px; flex-wrap:wrap"></div>
-                        <input type="hidden" id="render-solve-score" value="proximity">
-                        <input type="hidden" id="render-solve-score-omega" value="1">
-                        <input type="hidden" id="render-solve-score-omega-phase" value="0">
-                        <input type="hidden" id="render-solve-score-omega-enabled" value="true">
+                    <div class="color-title" style="margin-top:10px">Color</div>
+                    <div class="color-mode-panel" id="render-color-mode-panel">
+                        <div class="color-mode-row active" data-color-interpretation-row="scalar_lut">
+                            <label class="color-mode-choice"><input type="radio" name="render-color-interpretation" value="scalar_lut" checked onchange="_setRenderColorInterpretation(this.value)"><span class="color-mode-name">Scalar LUT</span></label>
+                            <div class="color-mode-detail"><span class="autolevel-stage-text">uses one emitted byte through the selected palette</span></div>
+                        </div>
+                        <div class="color-mode-row" data-color-interpretation-row="rgb">
+                            <label class="color-mode-choice"><input type="radio" name="render-color-interpretation" value="rgb" onchange="_setRenderColorInterpretation(this.value)"><span class="color-mode-name">RGB</span></label>
+                            <div class="color-mode-detail"><span class="autolevel-stage-text">uses three emitted bytes as R/G/B</span></div>
+                        </div>
+                        <div class="color-mode-row" data-color-interpretation-row="hsv">
+                            <label class="color-mode-choice"><input type="radio" name="render-color-interpretation" value="hsv" onchange="_setRenderColorInterpretation(this.value)"><span class="color-mode-name">HSV</span></label>
+                            <div class="color-mode-detail"><span class="autolevel-stage-text">uses three emitted bytes as H/S/V, converted at finalize</span></div>
+                        </div>
+                        <div class="color-mode-row" data-color-interpretation-row="rgb_lut">
+                            <label class="color-mode-choice"><input type="radio" name="render-color-interpretation" value="rgb_lut" onchange="_setRenderColorInterpretation(this.value)"><span class="color-mode-name">RGB LUT</span></label>
+                            <div class="color-mode-detail"><span class="autolevel-stage-text">three emitted bytes sample R/G/B from the selected palette</span></div>
+                        </div>
+                        <div class="color-mode-row" data-color-interpretation-row="hsv_lut">
+                            <label class="color-mode-choice"><input type="radio" name="render-color-interpretation" value="hsv_lut" onchange="_setRenderColorInterpretation(this.value)"><span class="color-mode-name">HSV LUT</span></label>
+                            <div class="color-mode-detail"><span class="autolevel-stage-text">three emitted bytes sample H/S/V from the selected palette in HSV space</span></div>
+                        </div>
+                        <div class="color-mode-palette-row" id="render-color-lut-palette-row">
+                            <span class="color-mode-palette-label">Palette</span>
+                            <div id="palette-circles-solve-score" style="display:inline-flex; gap:4px; flex-wrap:wrap"></div>
+                        </div>
                     </div>
-                    <div class="color-row" style="margin-bottom:0">
+                    <input type="hidden" id="render-solve-score" value="proximity">
+                    <input type="hidden" id="render-solve-score-omega" value="1">
+                    <input type="hidden" id="render-solve-score-omega-phase" value="0">
+                    <input type="hidden" id="render-solve-score-omega-enabled" value="true">
+                    <div class="color-row" style="margin-top:8px; margin-bottom:0">
                         <span class="autolevel-stage-text">Color render is fused-only now. Solve score is the only supported mode.</span>
                     </div>
                 </div>
@@ -1074,8 +1328,24 @@ button {
                         <input type="text" inputmode="numeric" id="render-preview-source-size" placeholder="lores_N" style="width:5em">
                         <span id="render-preview-source-note" style="color:#666; font-size:11px">size ignored for lores</span>
                     </div>
-                    <div id="render-lores-preview-box" style="width:256px; height:256px; max-width:100%; margin-top:8px; border:1px solid #0f3460; border-radius:4px; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden">
-                        <canvas id="render-lores-preview-canvas" width="256" height="256" style="width:100%; height:100%; image-rendering:pixelated; display:block"></canvas>
+                    <div id="render-lores-preview-tabs" class="render-lores-preview-tabs">
+                        <div class="render-lores-preview-tabbar">
+                            <button type="button" id="render-lores-preview-tab-plot" class="render-lores-preview-tab active" onclick="_selectRenderLoresPreviewTab('plot')">Plot</button>
+                            <button type="button" id="render-lores-preview-tab-e1" class="render-lores-preview-tab" style="display:none" onclick="_selectRenderLoresPreviewTab('e1')">E1</button>
+                            <button type="button" id="render-lores-preview-tab-e2" class="render-lores-preview-tab" style="display:none" onclick="_selectRenderLoresPreviewTab('e2')">E2</button>
+                            <button type="button" id="render-lores-preview-tab-e3" class="render-lores-preview-tab" style="display:none" onclick="_selectRenderLoresPreviewTab('e3')">E3</button>
+                        </div>
+                        <div id="render-lores-preview-pane-plot" class="render-lores-preview-pane active">
+                            <div id="render-lores-preview-box" style="width:256px; height:256px; max-width:100%; border:1px solid #0f3460; border-radius:4px; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden">
+                                <div id="render-lores-preview-stage" class="render-lores-preview-stage inactive">
+                                    <canvas id="render-lores-preview-canvas" width="256" height="256" style="width:100%; height:100%; image-rendering:pixelated; display:block"></canvas>
+                                    <div id="render-lores-preview-marquee" class="render-preview-marquee" aria-hidden="true"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="render-lores-preview-pane-e1" class="render-lores-preview-pane"><div class="render-lores-preview-histbox"><canvas id="render-lores-preview-hist-e1" width="256" height="256"></canvas></div></div>
+                        <div id="render-lores-preview-pane-e2" class="render-lores-preview-pane"><div class="render-lores-preview-histbox"><canvas id="render-lores-preview-hist-e2" width="256" height="256"></canvas></div></div>
+                        <div id="render-lores-preview-pane-e3" class="render-lores-preview-pane"><div class="render-lores-preview-histbox"><canvas id="render-lores-preview-hist-e3" width="256" height="256"></canvas></div></div>
                     </div>
                 </div>
                 <div class="color-box" style="grid-column:1 / -1">
@@ -1084,7 +1354,8 @@ button {
                     <div class="solve-score-program-toolbar">
                         <button type="button" class="btn-secondary btn-inline" id="render-solve-score-program-manage" onclick="openSolveScoreProgramModal('render')">Solve Scores...</button>
                         <div class="score-chip-add-wrap">
-                            <button id="ss-add-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleSolveScorePicker('ss',event)">+ score chip</button>
+                            <button id="ss-insert-before-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleSolveScorePicker('ss',event,'before')">+ before</button>
+                            <button id="ss-insert-after-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleSolveScorePicker('ss',event,'after')">+ after</button>
                             <div id="ss-add-popup" class="score-chip-picker" aria-hidden="true"></div>
                             <select id="ss-add" onchange="addChip('ss',this.value);this.value='';" style="display:none">
                                 <option value="">+ add...</option>
@@ -3751,7 +4022,8 @@ function _displaySolveScoreEntry(item) {
         return `weighted_sum(${params[0] || '?'},${params[1] || '?'})`;
     }
     if (_solveScoreOutputSpecs && _solveScoreOutputSpecs[item.name]) {
-        return item.name;
+        const mode = item.name === 'emit_norm' ? 'norm' : (item.name === 'emit_none' ? 'none' : (params[0] || 'raw'));
+        return `emit(${mode})`;
     }
     return _displayTransformEntry(item);
 }
@@ -3943,6 +4215,16 @@ function _normalizeSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQu
         }
         if (!name) return;
         if (name === _solveScoreGenericMetricPublicName) name = _solveScoreGenericMetricChipName;
+        if (name === 'emit_norm') {
+            name = 'emit';
+            params = ['norm'];
+        } else if (name === 'emit_none') {
+            name = 'emit';
+            params = ['none'];
+        } else if (name === 'emit') {
+            const mode = String(params[0] || 'raw').trim().toLowerCase();
+            params = [(mode === 'norm' || mode === 'normalized' || mode === 'emit_norm') ? 'norm' : ((mode === 'none' || mode === 'skip' || mode === 'off' || mode === 'emit_none' || mode === 'emit-none') ? 'none' : 'raw')];
+        }
         if (!_ssCatalog[name]) return;
         if (_isSolveScoreGenericMetricChipName(name)) {
             if (params.length !== 3) {
@@ -4001,6 +4283,11 @@ function _serializeSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQu
             const q = item.params[1];
             return source === 'slv' ? [item.name, q] : [item.name, source, q];
         }
+        if (item.name === 'emit') {
+            const rawMode = String((item.params || [])[0] || 'raw').trim().toLowerCase();
+            const mode = rawMode === 'norm' ? 'norm' : (rawMode === 'none' ? 'none' : 'raw');
+            return ['emit', mode];
+        }
         return item.params && item.params.length ? [item.name, ...item.params] : [item.name];
     });
 }
@@ -4009,6 +4296,7 @@ function _buildSolveScoreProgramSpec(program) {
     return (Array.isArray(program) ? program : []).map((token) => {
         if (!token || !token.kind) return '';
         if (token.kind === 'metric') return `m${token.slot}-${Number(token.lag) || 0}`;
+        if (token.kind === 'const') return `const:${String(token.value)}`;
         if (token.kind === 'omega_cosine') {
             return Math.abs(Number(token.phase) || 0) < 1e-12
                 ? `omega_cosine:${String(token.omega)}`
@@ -4016,6 +4304,13 @@ function _buildSolveScoreProgramSpec(program) {
         }
         if (token.kind === 'sawtooth') return `sawtooth:${String(token.mult)}`;
         if (token.kind === 'weighted_sum') return `weighted_sum:${String(token.a)}:${String(token.b)}`;
+        if (token.kind === 'ema') return `ema:${String(token.alpha)}`;
+        if (token.kind === 'pow') return `pow:${String(token.exponent)}`;
+        if (token.kind === 'emit') {
+            if (token.mode === 'norm') return 'emit_norm';
+            if (token.mode === 'none') return 'emit_none';
+            return 'emit';
+        }
         return token.kind;
     }).filter(Boolean).join(';');
 }
@@ -4028,6 +4323,18 @@ function _solveScoreDraftState(chain, fallbackMetric = 'proximity', legacyQuanti
         if (_solveScoreMetricSet.has(item.name) || _isSolveScoreGenericMetricChipName(item.name)) {
             metricCount += 1;
             stackDepth += 1;
+            return;
+        }
+        if (item.name === 'const') {
+            stackDepth += 1;
+            return;
+        }
+        if (item.name === 'dup') {
+            stackDepth = stackDepth >= 1 ? stackDepth + 1 : 0;
+            return;
+        }
+        if (item.name === 'flush') {
+            stackDepth = 0;
             return;
         }
         if (_solveScoreUnarySpecs[item.name]) {
@@ -4073,6 +4380,7 @@ function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuan
     let omegaEnabled = false;
     const program = [];
     const outputChannels = [];
+    let hasExplicitOutputToken = false;
     normalized.forEach((item) => {
         const metricDetails = _solveScoreItemMetricDetails(item, legacyQuantilePct);
         if (metricDetails) {
@@ -4121,6 +4429,27 @@ function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuan
             stackDepth += 1;
             return;
         }
+        if (item.name === 'const') {
+            if (item.params.length !== 1) throw new Error('const requires exactly one parameter');
+            const value = Number(item.params[0]);
+            if (!Number.isFinite(value)) throw new Error('const requires a finite numeric value');
+            program.push({ kind: 'const', value });
+            stackDepth += 1;
+            return;
+        }
+        if (item.name === 'dup') {
+            if (stackDepth < 1) throw new Error('dup requires one score value on the stack');
+            if (item.params.length !== 0) throw new Error('dup takes no parameters');
+            program.push({ kind: 'dup' });
+            stackDepth += 1;
+            return;
+        }
+        if (item.name === 'flush') {
+            if (item.params.length !== 0) throw new Error('flush takes no parameters');
+            program.push({ kind: 'flush' });
+            stackDepth = 0;
+            return;
+        }
         if (item.name === 'omega_cosine') {
             if (stackDepth < 1) throw new Error('omega_cosine requires one score value on the stack');
             if (item.params.length !== 1 && item.params.length !== 2) {
@@ -4157,18 +4486,39 @@ function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuan
             program.push({ kind: 'flip' });
             return;
         }
+        if (['clamp', 'sin', 'cos', 'log', 'exp'].includes(item.name)) {
+            if (stackDepth < 1) throw new Error(`${item.name} requires one score value on the stack`);
+            if (item.params.length !== 0) throw new Error(`${item.name} takes no parameters`);
+            program.push({ kind: item.name });
+            return;
+        }
+        if (item.name === 'pow') {
+            if (stackDepth < 1) throw new Error('pow requires one score value on the stack');
+            if (item.params.length !== 1) throw new Error('pow requires exactly one exponent parameter');
+            const exponent = Number(item.params[0]);
+            if (!Number.isFinite(exponent)) throw new Error('pow requires a finite exponent');
+            program.push({ kind: 'pow', exponent });
+            return;
+        }
         if (_solveScoreOutputSpecs[item.name]) {
             if (stackDepth < 1) throw new Error(`${item.name} requires one score value on the stack`);
-            if ((item.params || []).length !== 0) throw new Error(`${item.name} takes no parameters`);
-            if (outputChannels.length >= 8) throw new Error('Solve score supports at most 8 output channels');
+            const rawMode = item.name === 'emit_norm' ? 'norm' : String((item.params || [])[0] || 'raw').trim().toLowerCase();
+            const mode = rawMode === 'norm' || rawMode === 'normalized' || rawMode === 'emit_norm'
+                ? 'norm'
+                : ((rawMode === 'none' || rawMode === 'skip' || rawMode === 'off' || rawMode === 'emit_none' || rawMode === 'emit-none') ? 'none' : 'raw');
+            hasExplicitOutputToken = true;
             const channel = outputChannels.length;
-            program.push({ kind: item.name, channel });
-            outputChannels.push({
-                name: `channel_${channel}`,
-                emit: item.name,
-                channel,
-                range_normalized: item.name === 'emit_norm',
-            });
+            program.push({ kind: 'emit', mode, channel });
+            if (mode !== 'none') {
+                if (outputChannels.length >= 8) throw new Error('Solve score supports at most 8 output channels');
+                outputChannels.push({
+                    name: `channel_${channel}`,
+                    emit: mode === 'norm' ? 'emit_norm' : 'emit',
+                    mode,
+                    channel,
+                    range_normalized: mode === 'norm',
+                });
+            }
             stackDepth -= 1;
             return;
         }
@@ -4186,13 +4536,18 @@ function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuan
             if (!(Math.abs(a) > 0 || Math.abs(b) > 0)) throw new Error('weighted_sum requires at least one non-zero weight');
             token.a = a;
             token.b = b;
+        } else if (item.name === 'ema') {
+            const alpha = Number(item.params[0]);
+            if (!Number.isFinite(alpha) || alpha < 0 || alpha > 1) throw new Error('ema alpha must be in [0,1]');
+            token.alpha = alpha;
         }
         program.push(token);
         stackDepth -= spec.arity - 1;
     });
     if (!metrics.length) throw new Error('Solve score chain must contain at least one metric chip');
-    const hasExplicitOutputs = outputChannels.length > 0;
+    const hasExplicitOutputs = hasExplicitOutputToken;
     if (hasExplicitOutputs) {
+        if (outputChannels.length <= 0) throw new Error('Explicit-output solve score chain must emit at least one channel');
         if (stackDepth !== 0) throw new Error(`Explicit-output solve score chain must end with stack depth 0, got ${stackDepth}`);
     } else if (stackDepth !== 1) {
         throw new Error(`Solve score chain must end with stack depth 1, got ${stackDepth}`);
@@ -4230,7 +4585,7 @@ function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuan
         has_explicit_outputs: hasExplicitOutputs,
         output_channel_count: outputChannels.length,
         output_channels: outputChannels,
-        output_interpretation: hasExplicitOutputs && outputChannels.length === 3 ? 'direct_rgb' : 'scalar_palette',
+        output_interpretation: hasExplicitOutputs ? '' : 'scalar_lut',
         chain: _serializeSolveScoreChain(normalized, fallbackMetric, legacyQuantilePct),
         program_spec: programSpec,
         display: normalized.map(item => _displaySolveScoreEntry(item)).join(' '),
@@ -4429,6 +4784,7 @@ function _parseSolveScoreProgram(raw) {
         name: String(raw.name || '').trim(),
         description: String(raw.description || '').trim(),
         chain: _serializeSolveScoreChain(chain),
+        recommended_interpretation: raw.recommended_interpretation ? _normalizeColorInterpretation(raw.recommended_interpretation) : '',
     };
 }
 
@@ -4441,7 +4797,10 @@ function _applySolveScoreProgram(prefix, rawProgram) {
     chain.splice(0, chain.length, ..._normalizeSolveScoreChain(program.chain, fallbackMetric));
     _renderChips(which);
     const compiled = _syncSolveScoreLegacyInputs(prefix);
-    if (prefix === 'render') setColorMode('solve_score');
+    if (prefix === 'render') {
+        setColorMode('solve_score');
+        if (program.recommended_interpretation) _setRenderColorInterpretation(program.recommended_interpretation);
+    }
     _setSolveScoreProgramStatus(prefix, program.name ? `Loaded ${program.name}` : 'Loaded solve-score program');
     return compiled;
 }
@@ -4471,6 +4830,7 @@ function _portableSolveScoreProgramPayload(prefix, nameOverride = '') {
         version: 1,
         name,
         chain: state.chain,
+        recommended_interpretation: prefix === 'render' ? _selectedRenderColorInterpretation() : '',
         metric: state.metric,
         display: state.display,
         program_spec: state.program_spec,
@@ -4499,6 +4859,7 @@ function _formatSolveScoreProgramBlock(program, options = {}) {
         lines.push(`Saved: ${program.saved_at || ''}`);
     }
     lines.push(`Metric: ${program.metric || ''}`);
+    if (program.recommended_interpretation) lines.push(`Color: ${program.recommended_interpretation}`);
     lines.push(`Statements: ${Number(program.statement_count || 0)}`);
     lines.push(`Program spec: ${program.program_spec || ''}`);
     lines.push('Chain:');
@@ -4741,7 +5102,11 @@ async function _saveCurrentSolveScoreProgramFromModal() {
     _setSolveScoreModalStatus('', false);
     _renderSolveScoreProgramModal();
     try {
-        const resp = await lambdaPost('storage', { name: payload.name, chain: payload.chain }, '/save-solve-score-program');
+        const resp = await lambdaPost('storage', {
+            name: payload.name,
+            chain: payload.chain,
+            recommended_interpretation: payload.recommended_interpretation || undefined,
+        }, '/save-solve-score-program');
         const program = resp && resp.program ? resp.program : null;
         if (!program) throw new Error('save-solve-score-program returned no program');
         _solveScoreModalState.selectedId = program.id || '';
@@ -4843,18 +5208,21 @@ async function _importSolveScoreProgramFileFromModal(file) {
 
 function _solveScoreAllowedAdditions(which) {
     const prefix = _solveScorePrefixForWhich(which);
-    const draft = _solveScoreDraftState(
-        _chainForWhich(which),
-        prefix === 'palette' ? paletteTabMetric : renderSolveMetric,
-        _legacySolveScoreQuantilePct(prefix)
-    );
+    let draft = { metricCount: 0 };
+    try {
+        draft = _solveScoreDraftState(
+            _chainForWhich(which),
+            prefix === 'palette' ? paletteTabMetric : renderSolveMetric,
+            _legacySolveScoreQuantilePct(prefix)
+        );
+    } catch (_) {
+        draft = { metricCount: 0 };
+    }
     const allowed = [];
     if (draft.metricCount < 16) allowed.push(_solveScoreGenericMetricChipName, ..._solveScoreMetricNames);
-    Object.entries(_solveScoreCombineSpecs).forEach(([name, spec]) => {
-        if (draft.stackDepth >= spec.arity) allowed.push(name);
-    });
-    if (draft.stackDepth >= 1) allowed.push(...Object.keys(_solveScoreUnarySpecs));
-    if (draft.stackDepth >= 1 && which === 'ss') allowed.push(...Object.keys(_solveScoreOutputSpecs));
+    allowed.push(...Object.keys(_solveScoreCombineSpecs));
+    allowed.push(...Object.keys(_solveScoreUnarySpecs));
+    if (which === 'ss') allowed.push('emit');
     return allowed;
 }
 
@@ -4907,8 +5275,9 @@ function _solveScoreChipHint(name) {
         const sources = _solveScoreMetricAllowedSources(name);
         return `${sources.join('/')} -> score`;
     }
+    if (name === 'flush') return 'stack -> empty';
     if (_solveScoreUnarySpecs[name]) return 'score -> score';
-    if (_solveScoreOutputSpecs[name]) return 'score -> output';
+    if (_solveScoreOutputSpecs[name]) return name === 'emit' ? 'score -> output/empty' : 'score -> output';
     const spec = _solveScoreCombineSpecs[name];
     if (spec) return `${spec.arity} scores -> score`;
     return '';
@@ -4929,12 +5298,16 @@ function _solveScorePickerGroups(which) {
 
 function _scoreChipPickerStateLabel(which) {
     const prefix = _solveScorePrefixForWhich(which);
-    const draft = _solveScoreDraftState(
-        _chainForWhich(which),
-        prefix === 'palette' ? paletteTabMetric : renderSolveMetric,
-        _legacySolveScoreQuantilePct(prefix)
-    );
-    return `stack ${draft.stackDepth} · metrics ${draft.metricCount}`;
+    try {
+        const draft = _solveScoreDraftState(
+            _chainForWhich(which),
+            prefix === 'palette' ? paletteTabMetric : renderSolveMetric,
+            _legacySolveScoreQuantilePct(prefix)
+        );
+        return `stack ${draft.stackDepth} · metrics ${draft.metricCount}`;
+    } catch (e) {
+        return `draft invalid · ${e && e.message ? e.message : String(e)}`;
+    }
 }
 
 function _renderSolveScoreAddPopup(which) {
@@ -4978,16 +5351,24 @@ function _setSolveScorePickerOpen(which, open) {
     if (btn && btn.setAttribute) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 
-function toggleSolveScorePicker(which, eventObj) {
+function toggleSolveScorePicker(which, eventObj, insertMode = null) {
     if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
+    if (insertMode === 'before' || insertMode === 'after') _solveScorePickerInsertMode[which] = insertMode;
     const popup = document.getElementById(which + '-add-popup');
     _setSolveScorePickerOpen(which, !(popup && popup._open));
 }
 
 function selectSolveScoreChip(which, name, eventObj) {
     if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
-    addChip(which, name);
+    addChip(which, name, _solveScorePickerInsertMode[which] || 'after');
     _setSolveScorePickerOpen(which, false);
+}
+
+function selectSolveScoreLine(which, idx, eventObj) {
+    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
+    _solveScoreSelectedIndex[which] = Number(idx);
+    _renderChips(which);
+    _syncSolveScoreAddOptions(which);
 }
 
 function _syncSolveScoreAddOptions(which) {
@@ -5018,11 +5399,18 @@ function _updateSolveScoreStackUi(which) {
     const stackEl = document.getElementById(which === 'palette-ss' ? 'palette-ss-stack' : 'ss-stack');
     const labelEl = document.getElementById(which === 'palette-ss' ? 'palette-ss-stack-label' : 'ss-stack-label');
     if (!stackEl || !labelEl) return;
-    const draft = _solveScoreDraftState(
-        _chainForWhich(which),
-        prefix === 'palette' ? paletteTabMetric : renderSolveMetric,
-        _legacySolveScoreQuantilePct(prefix)
-    );
+    let draft;
+    try {
+        draft = _solveScoreDraftState(
+            _chainForWhich(which),
+            prefix === 'palette' ? paletteTabMetric : renderSolveMetric,
+            _legacySolveScoreQuantilePct(prefix)
+        );
+    } catch (e) {
+        stackEl.innerHTML = '';
+        labelEl.textContent = `invalid · ${e && e.message ? e.message : String(e)}`;
+        return;
+    }
     const blocks = [];
     for (let i = 0; i < Math.max(0, draft.stackDepth); i++) {
         blocks.push(`<span style="display:inline-block; width:8px; height:${10 + i * 2}px; background:#6c8; border:1px solid #385; border-radius:2px"></span>`);
@@ -5213,11 +5601,14 @@ document.addEventListener('keydown', function(e) {
         _closeSolveScorePickers();
         _setParamTransformPickerOpen(false);
         _setCoeffTransformPickerOpen(false);
+        _clearRenderPreviewSelection();
+        _clearRenderLoresPreviewSelection();
     }
 });
 
 /* ---- Color controls ---- */
 let renderColorMode = 'solve_score';
+let renderColorInterpretation = 'scalar_lut';
 let renderMatchMode = 'none';
 let renderRootProximityPalette = 'inferno';
 let renderSolveScorePalette = 'inferno';
@@ -5257,6 +5648,18 @@ let _renderPreviewDragState = {
     start: null,
     rect: null,
 };
+let _renderLoresPreviewMeta = null;
+let _renderLoresPreviewSelectionState = {
+    rect: null,
+};
+let _renderLoresPreviewDragState = {
+    cleanup: null,
+    dragging: false,
+    start: null,
+    rect: null,
+};
+let _renderLoresPreviewActiveTab = 'plot';
+let _renderLoresPreviewEmissionHistograms = [];
 let _renderLoadedJobId = '';
 let _renderNeedsRefresh = false;
 let _favoriteRefs = [];
@@ -5275,6 +5678,8 @@ let _repalettePopupState = { open: false, sourcePaletteId: '', sourceDisplayName
 let _colorRepalettePopupState = { open: false, sourceArtifactId: '', sourceDisplayName: '' };
 let _bilevelPopupState = { open: false, sectionMode: 'logical_sections_auto', sectionCount: '' };
 let _colorToBilevelPopupState = { open: false, sourceArtifactId: '', threshold: 0 };
+let _solveScoreSelectedIndex = { ss: -1, 'palette-ss': -1 };
+let _solveScorePickerInsertMode = { ss: 'after', 'palette-ss': 'after' };
 let _resultsRefreshPopupState = { open: false, workers: 32 };
 let _renderMtPopupState = {
     open: false,
@@ -5685,19 +6090,129 @@ function setColorMode(mode) {
     _updateSolveScoreButtons();
 }
 
+function _normalizeColorInterpretation(value) {
+    const v = String(value || '').trim().toLowerCase();
+    if (v === 'scalar_palette' || v === 'palette' || v === 'scalar') return 'scalar_lut';
+    if (v === 'direct_rgb') return 'rgb';
+    if (v === 'rgb-lut') return 'rgb_lut';
+    if (v === 'hsv-lut') return 'hsv_lut';
+    if (v === 'rgb' || v === 'hsv' || v === 'scalar_lut' || v === 'rgb_lut' || v === 'hsv_lut') return v;
+    return 'scalar_lut';
+}
+
+function _colorInterpretationLabel(value) {
+    const mode = _normalizeColorInterpretation(value);
+    if (mode === 'scalar_lut') return 'Scalar LUT';
+    if (mode === 'rgb') return 'RGB';
+    if (mode === 'hsv') return 'HSV';
+    if (mode === 'rgb_lut') return 'RGB LUT';
+    if (mode === 'hsv_lut') return 'HSV LUT';
+    return mode;
+}
+
+function _artifactColorInterpretation(art) {
+    const raw = String(
+        (art && (
+            art.color_interpretation ||
+            art.score_output_interpretation ||
+            art.raw_interpretation ||
+            art.interpretation ||
+            (art.render_execution && art.render_execution.color_interpretation)
+        )) || ''
+    ).trim();
+    return raw ? _normalizeColorInterpretation(raw) : 'scalar_lut';
+}
+
+function _colorInterpretationUsesPalette(mode) {
+    const normalized = _normalizeColorInterpretation(mode);
+    return normalized === 'scalar_lut' || normalized === 'rgb_lut' || normalized === 'hsv_lut';
+}
+
+function _selectedRenderColorInterpretation() {
+    const checked = document.querySelector('input[name="render-color-interpretation"]:checked');
+    renderColorInterpretation = _normalizeColorInterpretation(checked ? checked.value : renderColorInterpretation);
+    return renderColorInterpretation;
+}
+
+function _solveScoreColorCompatibility(compiled, interpretation = _selectedRenderColorInterpretation()) {
+    const count = Number(compiled && compiled.output_channel_count) || 1;
+    const mode = _normalizeColorInterpretation(interpretation);
+    if (mode === 'scalar_lut' && count !== 1) return `program incompatible with Scalar LUT: expected 1 output, got ${count}`;
+    if (mode === 'rgb' && count !== 3) return `program incompatible with RGB: expected 3 outputs, got ${count}`;
+    if (mode === 'hsv' && count !== 3) return `program incompatible with HSV: expected 3 outputs, got ${count}`;
+    if (mode === 'rgb_lut' && count !== 3) return `program incompatible with RGB LUT: expected 3 outputs, got ${count}`;
+    if (mode === 'hsv_lut' && count !== 3) return `program incompatible with HSV LUT: expected 3 outputs, got ${count}`;
+    return '';
+}
+
+function _syncRenderColorInterpretationUi() {
+    const mode = _selectedRenderColorInterpretation();
+    document.querySelectorAll('[data-color-interpretation-row]').forEach(row => {
+        row.classList.toggle('active', row.getAttribute('data-color-interpretation-row') === mode);
+    });
+    const paletteRow = document.getElementById('render-color-lut-palette-row');
+    if (paletteRow) paletteRow.style.display = _colorInterpretationUsesPalette(mode) ? 'grid' : 'none';
+    _syncScoreNormalizationUi();
+    _updateSolveScoreButtons();
+}
+
+function _setRenderColorInterpretation(value) {
+    renderColorInterpretation = _normalizeColorInterpretation(value);
+    const radio = document.querySelector(`input[name="render-color-interpretation"][value="${renderColorInterpretation}"]`);
+    if (radio) radio.checked = true;
+    _syncRenderColorInterpretationUi();
+}
+
+function _syncScoreNormalizationUi() {
+    const el = document.getElementById('render-score-normalization');
+    if (!el) return;
+    let hasExplicit = false;
+    try {
+        hasExplicit = !!_compileSolveScoreChain(_chainForWhich('ss'), renderSolveMetric).has_explicit_outputs;
+    } catch (_) {
+        try {
+            hasExplicit = _normalizeSolveScoreChain(_chainForWhich('ss'), renderSolveMetric).some(item => item.name === 'emit');
+        } catch (_) {
+            hasExplicit = false;
+        }
+    }
+    el.disabled = hasExplicit;
+    if (hasExplicit) el.checked = false;
+    const wrap = el.closest('label');
+    if (wrap) {
+        wrap.style.opacity = hasExplicit ? '0.45' : '';
+        wrap.title = hasExplicit
+            ? 'Explicit emit chips own output normalization'
+            : 'Normalize the implicit scalar score output using lores q05/q95';
+    }
+}
+
 let _lastCalcHasLores = false;  // set by renderArtifactPanel when calc is loaded
 
 function _updateSolveScoreButtons() {
     const isSolve = renderColorMode === 'solve_score';
     const hasJob = !!(document.getElementById('render-results-dir')?.value?.trim());
     let chainValid = true;
-    try { _compileSolveScoreChain(_chainForWhich('ss'), renderSolveMetric); }
-    catch (e) { chainValid = false; }
+    let issue = '';
+    try {
+        const compiled = _compileSolveScoreChain(_chainForWhich('ss'), renderSolveMetric);
+        issue = _solveScoreColorCompatibility(compiled, _selectedRenderColorInterpretation());
+        chainValid = !issue;
+    }
+    catch (e) {
+        chainValid = false;
+        issue = `invalid program: ${e && e.message ? e.message : String(e)}`;
+    }
     const enabled = isSolve && hasJob && _lastCalcHasLores && chainValid;
     const palBtn = document.getElementById('btn-render-generate');
     const histBtn = document.getElementById('btn-solve-histogram');
     if (palBtn && _renderActiveFamily === 'palette') { palBtn.disabled = !enabled; palBtn.style.opacity = enabled ? '' : '0.4'; }
     if (histBtn) { histBtn.disabled = !enabled; histBtn.style.opacity = enabled ? '' : '0.4'; }
+    const statusEl = document.getElementById('render-solve-score-program-status');
+    if (statusEl) {
+        statusEl.textContent = issue || '';
+        statusEl.className = `solve-score-program-status${issue ? ' error' : ''}`;
+    }
 }
 
 function _updatePaletteCreateButton() {
@@ -8980,16 +9495,31 @@ const _solveScoreUnarySpecs = {
     omega_cosine: { arity: 1, params: [{ ph: 'w', def: '1' }, { ph: 'phase', def: '0' }], tooltip: 'unary stack op: g(u)=0.5*(cos(omega*2*pi*u+phase)+1)' },
     sawtooth: { arity: 1, params: [{ ph: 'mult', def: '10' }], tooltip: 'unary stack op: frac(score*mult)' },
     flip: { arity: 1, params: [], tooltip: 'unary stack op: 1-score' },
+    const: { arity: 0, params: [{ ph: 'value', def: '0' }], tooltip: 'push a finite constant onto the stack' },
+    dup: { arity: 1, params: [], tooltip: 'duplicate the top stack value' },
+    flush: { arity: 0, params: [], tooltip: 'clear the entire score stack' },
+    clamp: { arity: 1, params: [], tooltip: 'clamp the top stack value to [0,1]' },
+    sin: { arity: 1, params: [], tooltip: 'raw sin(score), radians' },
+    cos: { arity: 1, params: [], tooltip: 'raw cos(score), radians' },
+    log: { arity: 1, params: [], tooltip: 'natural log; invalid inputs become 0' },
+    exp: { arity: 1, params: [], tooltip: 'raw exp(score); overflow becomes 0' },
+    pow: { arity: 1, params: [{ ph: 'pow', def: '2' }], tooltip: 'raw pow(score, exponent)' },
 };
 const _solveScoreOutputSpecs = {
-    emit: { arity: 1, params: [], tooltip: 'pop one score and emit it as a raw output byte without range estimation' },
-    emit_norm: { arity: 1, params: [], tooltip: 'pop one score and emit it using lores q05/q95 range normalization' },
+    emit: { arity: 1, params: [{ ph: 'mode', def: 'norm', choices: ['raw', 'norm', 'none'] }], tooltip: 'pop one score; raw/norm emit a byte, none discards it for debugging branches' },
+    emit_norm: { arity: 1, params: [], tooltip: 'legacy alias for emit(norm)' },
+    emit_none: { arity: 1, params: [], tooltip: 'legacy alias for emit(none)' },
 };
 const _solveScoreCombineSpecs = {
     avg: { arity: 2, params: [] },
     min: { arity: 2, params: [] },
     max: { arity: 2, params: [] },
     mul: { arity: 2, params: [] },
+    add: { arity: 2, params: [], tooltip: 'raw a+b' },
+    mult: { arity: 2, params: [], tooltip: 'raw a*b' },
+    subtract: { arity: 2, params: [], tooltip: 'raw a-b; top of stack is b' },
+    ratio: { arity: 2, params: [], tooltip: 'raw a/b; zero if denominator is zero' },
+    ema: { arity: 2, params: [{ ph: 'alpha', def: '0.99' }], tooltip: 'a*alpha + b*(1-alpha), b is top/latest' },
     weighted_sum: { arity: 2, params: [{ ph: 'a', def: '0.5' }, { ph: 'b', def: '0.5' }] },
     abs_diff: { arity: 2, params: [] },
     geometric_mean: { arity: 2, params: [] },
@@ -9451,9 +9981,10 @@ function updateCfpvRow() {
     _markComputePreviewStale();
 }
 
-function addChip(which, name) {
+function addChip(which, name, insertMode = 'append') {
     if (!name) return;
     const chain = _chainForWhich(which);
+    let newItem = null;
     if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {
         if ((which === 'ss' || which === 'palette-ss') && !_solveScoreAllowedAdditions(which).includes(name)) {
             return;
@@ -9461,10 +9992,19 @@ function addChip(which, name) {
         const catalog = _catalogForChain(which);
         const spec = catalog[name] || {};
         const p = spec.params || [];
-        chain.push({ name, params: p.map(d => d.def || '') });
+        newItem = { name, params: p.map(d => d.def || '') };
     } else {
-        chain.push(name);
+        newItem = name;
     }
+    let insertAt = chain.length;
+    if ((which === 'ss' || which === 'palette-ss') && (insertMode === 'before' || insertMode === 'after')) {
+        const selected = Number(_solveScoreSelectedIndex[which]);
+        if (Number.isInteger(selected) && selected >= 0 && selected < chain.length) {
+            insertAt = insertMode === 'before' ? selected : selected + 1;
+        }
+    }
+    chain.splice(insertAt, 0, newItem);
+    if (which === 'ss' || which === 'palette-ss') _solveScoreSelectedIndex[which] = insertAt;
     _renderChips(which);
     if (which === 'pt' || which === 'ct') _markComputePreviewStale();
 }
@@ -9472,6 +10012,10 @@ function addChip(which, name) {
 function removeChip(which, idx) {
     const chain = _chainForWhich(which);
     chain.splice(idx, 1);
+    if (which === 'ss' || which === 'palette-ss') {
+        const selected = Number(_solveScoreSelectedIndex[which]);
+        _solveScoreSelectedIndex[which] = selected === idx ? -1 : (selected > idx ? selected - 1 : selected);
+    }
     _renderChips(which);
     if (which === 'pt' || which === 'ct') _markComputePreviewStale();
 }
@@ -9484,6 +10028,7 @@ function moveChip(which, idx, delta) {
     if (from < 0 || from >= chain.length || to < 0 || to >= chain.length) return;
     const [item] = chain.splice(from, 1);
     chain.splice(to, 0, item);
+    if (which === 'ss' || which === 'palette-ss') _solveScoreSelectedIndex[which] = to;
     _renderChips(which);
     if (which === 'pt' || which === 'ct') _markComputePreviewStale();
 }
@@ -9658,7 +10203,8 @@ function _solveScoreChipShell(which, i, bodyHtml, tooltipAttr = '') {
     const leftDisabled = i <= 0 ? ' disabled' : '';
     const rightDisabled = i >= count - 1 ? ' disabled' : '';
     const moves = `<span class="chip-actions"><button type="button" class="chip-move" onclick="event.stopPropagation();moveChip('${which}',${i},-1)" title="Move left"${leftDisabled}>&lt;</button><button type="button" class="chip-move" onclick="event.stopPropagation();moveChip('${which}',${i},1)" title="Move right"${rightDisabled}>&gt;</button></span>`;
-    return `<span class="chip score-chip"${tooltipAttr}>${moves}${bodyHtml}<span class="chip-x" onclick="event.stopPropagation();removeChip('${which}',${i})">x</span></span>`;
+    const selected = _solveScoreSelectedIndex[which] === i ? ' selected' : '';
+    return `<span class="chip score-chip${selected}" onclick="selectSolveScoreLine('${which}',${i},event)"${tooltipAttr}>${moves}${bodyHtml}<span class="chip-x" onclick="event.stopPropagation();removeChip('${which}',${i})">x</span></span>`;
 }
 
 function _solveScoreInheritedLagQuantile(which, chipIdx, item) {
@@ -9711,9 +10257,15 @@ function _renderRtChipHtml(item, i, which, catalog) {
         const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
         return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>flip</span></span>`, tooltip);
     }
+    if ((which === 'ss' || which === 'palette-ss') && _solveScoreUnarySpecs[item.name]) {
+        const inputs = (item.params || []).map((val, pi) => _chipInputHtml(which, i, pi, val, pDefs[pi] || {})).join('');
+        const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
+        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>${_escapeHtml(item.name)}</span>${inputs}</span>`, tooltip);
+    }
     if ((which === 'ss' || which === 'palette-ss') && _solveScoreOutputSpecs[item.name]) {
         const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
-        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>${_escapeHtml(item.name)}</span></span>`, tooltip);
+        const mode = _chipInputHtml(which, i, 0, (item.name === 'emit_norm' ? 'norm' : ((item.params || [])[0] || 'raw')), pDefs[0]);
+        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>emit(</span><span>${mode}</span><span>)</span></span>`, tooltip);
     }
     if ((which === 'ss' || which === 'palette-ss') && _solveScoreCombineSpecs[item.name]) {
         const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
@@ -9837,6 +10389,7 @@ function _renderChips(which) {
         } catch (e) {
             // Invalid chains are allowed transiently while replacing the metric chip.
         }
+        if (prefix === 'render') _syncScoreNormalizationUi();
         if (prefix === 'render') _updateSolveScoreButtons();
         if (prefix === 'palette') _updatePaletteCreateButton();
     }
@@ -9931,6 +10484,9 @@ function _renderCommonParams(options = {}) {
     const jobId = document.getElementById('render-results-dir').value.trim();
     if (!jobId) throw new Error('No results dir — run Calculate first');
     const solveScore = _resolveSolveScoreState('render', { requireChain: !!options.requireSolveScore });
+    const colorInterpretation = _selectedRenderColorInterpretation();
+    const colorIssue = _solveScoreColorCompatibility(solveScore, colorInterpretation);
+    if (options.requireSolveScore && colorIssue) throw new Error(colorIssue);
     const explicitBounds = _viewMode === 'explicit'
         ? _readRenderExplicitViewportBounds({ requireValid: true })
         : { minRe: null, maxRe: null, minIm: null, maxIm: null };
@@ -9959,6 +10515,7 @@ function _renderCommonParams(options = {}) {
         solveScoreUsesCoeffSource: !!solveScore.uses_coeff_source,
         solveScoreUsesParamSource: !!solveScore.uses_param_source,
         solveScoreUsesNonSolveSource: !!solveScore.uses_non_solve_source,
+        colorInterpretation,
         solveScoreNormalize: !!document.getElementById('render-score-normalization')?.checked,
         rotation: (() => {
             const turns = parseFloat(document.getElementById('render-rotation').value) || 0;
@@ -9999,6 +10556,7 @@ const PALETTE_HARD_STALE_MS = 900000;
 _ensureSolveScoreChainDefaults();
 _renderChips('ss');
 _renderChips('palette-ss');
+_syncRenderColorInterpretationUi();
 
 function _clearPaletteCanvas(msg) {
     const canvas = document.getElementById('palette-canvas');
@@ -10842,6 +11400,7 @@ async function _launchFusedRenderOrchestrator(paramsPatch = null) {
         square_extent: p.squareExtent,
         rotation: p.rotation,
         color_mode: 'solve_score',
+        color_interpretation: p.colorInterpretation,
         solve_score_chain: p.solveScoreChain,
         solve_score_normalize: !!p.solveScoreNormalize,
         palette: _activeRenderPalette() || 'inferno',
@@ -11137,6 +11696,294 @@ function _syncRenderPreviewSourceMode() {
     }
 }
 
+function _renderLoresPreviewTabIndex(tab) {
+    const match = /^e([1-3])$/.exec(String(tab || ''));
+    return match ? Number(match[1]) - 1 : -1;
+}
+
+function _drawRenderLoresPreviewHistogram(index) {
+    const row = _renderLoresPreviewEmissionHistograms[index] || null;
+    const canvas = document.getElementById(`render-lores-preview-hist-e${index + 1}`);
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width || 256;
+    const h = canvas.height || 256;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = '#05070c';
+    ctx.fillRect(0, 0, w, h);
+    if (!row || !Array.isArray(row.histogram)) {
+        ctx.fillStyle = '#778599';
+        ctx.font = '12px monospace';
+        ctx.fillText('No emission data', 14, 24);
+        return;
+    }
+    const hist = row.histogram.slice(0, 256).map(v => Math.max(0, Number(v) || 0));
+    const maxLog = Math.max(1, ...hist.map(v => Math.log1p(v)));
+    const plotLeft = 12;
+    const plotTop = 30;
+    const plotW = w - 24;
+    const plotH = h - 54;
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i += 1) {
+        const y = plotTop + (plotH * i / 4);
+        ctx.beginPath();
+        ctx.moveTo(plotLeft, y);
+        ctx.lineTo(plotLeft + plotW, y);
+        ctx.stroke();
+    }
+    ctx.fillStyle = '#e94560';
+    for (let bin = 0; bin < 256; bin += 1) {
+        const barH = Math.round((Math.log1p(hist[bin]) / maxLog) * plotH);
+        const x = plotLeft + (bin / 256) * plotW;
+        const bw = Math.max(1, Math.ceil(plotW / 256));
+        ctx.fillRect(x, plotTop + plotH - barH, bw, barH);
+    }
+    ctx.fillStyle = '#d8e1f1';
+    ctx.font = '11px monospace';
+    const label = row.label || `E${index + 1}`;
+    const name = row.name && row.name !== label ? ` · ${row.name}` : '';
+    ctx.fillText(`${label}${name} · ${row.emit || 'emit'}`, 12, 18);
+    ctx.fillStyle = '#778599';
+    ctx.fillText(`samples=${Number(row.total || 0).toLocaleString()} nonzero=${Number(row.nonzero_count || 0).toLocaleString()}`, 12, h - 12);
+}
+
+function _selectRenderLoresPreviewTab(tab) {
+    const requested = String(tab || 'plot');
+    const idx = _renderLoresPreviewTabIndex(requested);
+    const next = idx >= 0 && !_renderLoresPreviewEmissionHistograms[idx] ? 'plot' : requested;
+    _renderLoresPreviewActiveTab = next;
+    ['plot', 'e1', 'e2', 'e3'].forEach((name) => {
+        const btn = document.getElementById(`render-lores-preview-tab-${name}`);
+        const pane = document.getElementById(`render-lores-preview-pane-${name}`);
+        if (btn) btn.classList.toggle('active', name === next);
+        if (pane) pane.classList.toggle('active', name === next);
+    });
+    const activeIdx = _renderLoresPreviewTabIndex(next);
+    if (activeIdx >= 0) _drawRenderLoresPreviewHistogram(activeIdx);
+}
+
+function _setRenderLoresPreviewEmissionHistograms(rows) {
+    _renderLoresPreviewEmissionHistograms = Array.isArray(rows) ? rows.slice(0, 3) : [];
+    for (let idx = 0; idx < 3; idx += 1) {
+        const row = _renderLoresPreviewEmissionHistograms[idx] || null;
+        const tab = `e${idx + 1}`;
+        const btn = document.getElementById(`render-lores-preview-tab-${tab}`);
+        if (btn) {
+            btn.style.display = row ? '' : 'none';
+            btn.textContent = row && row.label ? row.label : `E${idx + 1}`;
+            btn.title = row ? `${row.name || row.label || `E${idx + 1}`} histogram` : '';
+        }
+        _drawRenderLoresPreviewHistogram(idx);
+    }
+    if (_renderLoresPreviewTabIndex(_renderLoresPreviewActiveTab) >= _renderLoresPreviewEmissionHistograms.length) {
+        _renderLoresPreviewActiveTab = 'plot';
+    }
+    _selectRenderLoresPreviewTab(_renderLoresPreviewActiveTab);
+}
+
+function _teardownRenderLoresPreviewMarquee() {
+    const cleanup = _renderLoresPreviewDragState.cleanup;
+    _renderLoresPreviewDragState.cleanup = null;
+    _renderLoresPreviewDragState.dragging = false;
+    _renderLoresPreviewDragState.start = null;
+    _renderLoresPreviewDragState.rect = null;
+    if (typeof cleanup === 'function') cleanup();
+}
+
+function _clearRenderLoresPreviewSelection() {
+    _renderLoresPreviewSelectionState.rect = null;
+    _renderLoresPreviewDragState.dragging = false;
+    _renderLoresPreviewDragState.start = null;
+    _renderLoresPreviewDragState.rect = null;
+    _syncRenderLoresPreviewMarquee();
+}
+
+function _renderLoresPreviewCanvasRect(stage, canvas) {
+    if (!stage || !canvas) return null;
+    const stageRect = stage.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+    if (!(stageRect.width > 0 && stageRect.height > 0 && canvasRect.width > 0 && canvasRect.height > 0)) return null;
+    return {
+        x: canvasRect.left - stageRect.left,
+        y: canvasRect.top - stageRect.top,
+        width: canvasRect.width,
+        height: canvasRect.height,
+    };
+}
+
+function _renderLoresPreviewPointerFractions(canvas, event) {
+    if (!canvas || !event) return null;
+    const rect = canvas.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0)) return null;
+    if (
+        Number(event.clientX) < rect.left ||
+        Number(event.clientX) > rect.right ||
+        Number(event.clientY) < rect.top ||
+        Number(event.clientY) > rect.bottom
+    ) return null;
+    return {
+        x: _clampDeepZoomViewportCoord((Number(event.clientX) - rect.left) / rect.width, 0, 1),
+        y: _clampDeepZoomViewportCoord((Number(event.clientY) - rect.top) / rect.height, 0, 1),
+    };
+}
+
+function _syncRenderLoresPreviewMarquee() {
+    const marquee = document.getElementById('render-lores-preview-marquee');
+    if (!marquee) return;
+    const stage = document.getElementById('render-lores-preview-stage');
+    const canvas = document.getElementById('render-lores-preview-canvas');
+    const canvasRect = _renderLoresPreviewCanvasRect(stage, canvas);
+    const rect = _renderLoresPreviewDragState.dragging
+        ? _renderLoresPreviewDragState.rect
+        : _renderLoresPreviewSelectionState.rect;
+    if (!canvasRect || !rect || !(rect.w > 0) || !(rect.h > 0)) {
+        marquee.style.display = 'none';
+        return;
+    }
+    marquee.style.display = 'block';
+    marquee.style.left = `${canvasRect.x + rect.x * canvasRect.width}px`;
+    marquee.style.top = `${canvasRect.y + rect.y * canvasRect.height}px`;
+    marquee.style.width = `${rect.w * canvasRect.width}px`;
+    marquee.style.height = `${rect.h * canvasRect.height}px`;
+}
+
+function _renderLoresPreviewMetaFromResult(result, rotation) {
+    const viewport = result && result.viewport ? result.viewport : {};
+    const canvas = document.getElementById('render-lores-preview-canvas');
+    const width = Number(canvas && canvas.width) || Number(result && result.preview_pix);
+    const height = Number(canvas && canvas.height) || Number(result && result.preview_pix) || width;
+    const minRe = Number(viewport.min_re);
+    const maxRe = Number(viewport.max_re);
+    const minIm = Number(viewport.min_im);
+    const maxIm = Number(viewport.max_im);
+    const rot = Number(rotation);
+    return {
+        width,
+        height,
+        minRe,
+        maxRe,
+        minIm,
+        maxIm,
+        rotation: Number.isFinite(rot) ? rot : 0,
+        hasViewport: (
+            Number.isFinite(width) &&
+            Number.isFinite(height) &&
+            width > 0 &&
+            height > 0 &&
+            Number.isFinite(minRe) &&
+            Number.isFinite(maxRe) &&
+            Number.isFinite(minIm) &&
+            Number.isFinite(maxIm) &&
+            maxRe > minRe &&
+            maxIm > minIm
+        ),
+    };
+}
+
+function _applyRenderLoresPreviewSelectionBounds(meta, rect) {
+    if (!meta || !rect) return;
+    const imgRect = {
+        x: rect.x * meta.width,
+        y: rect.y * meta.height,
+        width: rect.w * meta.width,
+        height: rect.h * meta.height,
+    };
+    const cameraRect = _deepZoomCameraRectFromImageRect(meta, imgRect);
+    const bounds = _deepZoomRenderBoundsFromCameraRect(meta, cameraRect);
+    if (!bounds) return;
+    _setRenderExplicitViewportBounds({
+        minRe: bounds.min_re,
+        maxRe: bounds.max_re,
+        minIm: bounds.min_im,
+        maxIm: bounds.max_im,
+    });
+    selectViewMode('explicit');
+    const statusEl = document.getElementById('render-lores-preview-status');
+    const renderStatusEl = document.getElementById('render-status');
+    const msg = `Preview subview selected · Δre=${bounds.span_re.toPrecision(4)} Δim=${bounds.span_im.toPrecision(4)}`;
+    if (statusEl) statusEl.textContent = msg;
+    if (renderStatusEl && !_activeRenderRun) {
+        renderStatusEl.textContent = 'Ephemeral preview subview selected';
+        renderStatusEl.className = 'status ok';
+    }
+    log(`Render preview selection: exact viewport min_re=${bounds.min_re.toPrecision(8)} max_re=${bounds.max_re.toPrecision(8)} min_im=${bounds.min_im.toPrecision(8)} max_im=${bounds.max_im.toPrecision(8)}`, 'ok', 'render-log');
+}
+
+function _initRenderLoresPreviewMarquee(meta) {
+    _teardownRenderLoresPreviewMarquee();
+    _renderLoresPreviewMeta = meta || null;
+    _clearRenderLoresPreviewSelection();
+    const stage = document.getElementById('render-lores-preview-stage');
+    const canvas = document.getElementById('render-lores-preview-canvas');
+    const marquee = document.getElementById('render-lores-preview-marquee');
+    if (!stage || !canvas || !marquee) return;
+    const interactive = !!(meta && meta.hasViewport);
+    stage.classList.toggle('inactive', !interactive);
+    _syncRenderLoresPreviewMarquee();
+    if (!interactive) return;
+
+    const onMouseDown = (event) => {
+        if (event.button !== 0) return;
+        const start = _renderLoresPreviewPointerFractions(canvas, event);
+        if (!start) return;
+        event.preventDefault();
+        _renderLoresPreviewDragState.dragging = true;
+        _renderLoresPreviewDragState.start = start;
+        _renderLoresPreviewDragState.rect = { x: start.x, y: start.y, w: 0, h: 0 };
+        _syncRenderLoresPreviewMarquee();
+    };
+
+    const onMouseMove = (event) => {
+        if (!_renderLoresPreviewDragState.dragging) return;
+        const current = _renderLoresPreviewPointerFractions(canvas, event);
+        if (!current) return;
+        _renderLoresPreviewDragState.rect = _normalizeRenderPreviewRect(_renderLoresPreviewDragState.start, current);
+        _syncRenderLoresPreviewMarquee();
+    };
+
+    const onMouseUp = (event) => {
+        if (!_renderLoresPreviewDragState.dragging) return;
+        const end = _renderLoresPreviewPointerFractions(canvas, event) || _renderLoresPreviewDragState.start;
+        const rect = _normalizeRenderPreviewRect(_renderLoresPreviewDragState.start, end);
+        _renderLoresPreviewDragState.dragging = false;
+        _renderLoresPreviewDragState.start = null;
+        _renderLoresPreviewDragState.rect = null;
+        if (rect && rect.w > 0 && rect.h > 0) {
+            _renderLoresPreviewSelectionState.rect = rect;
+            _applyRenderLoresPreviewSelectionBounds(_renderLoresPreviewMeta, rect);
+        }
+        _syncRenderLoresPreviewMarquee();
+    };
+
+    const onContextMenu = (event) => {
+        event.preventDefault();
+        if (_renderLoresPreviewDragState.dragging) return;
+        _clearRenderLoresPreviewSelection();
+    };
+
+    const onBlur = () => {
+        if (!_renderLoresPreviewDragState.dragging) return;
+        _renderLoresPreviewDragState.dragging = false;
+        _renderLoresPreviewDragState.start = null;
+        _renderLoresPreviewDragState.rect = null;
+        _syncRenderLoresPreviewMarquee();
+    };
+
+    stage.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+    stage.addEventListener('contextmenu', onContextMenu);
+    window.addEventListener('blur', onBlur);
+    _renderLoresPreviewDragState.cleanup = () => {
+        stage.removeEventListener('mousedown', onMouseDown);
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+        stage.removeEventListener('contextmenu', onContextMenu);
+        window.removeEventListener('blur', onBlur);
+    };
+}
+
 async function runRenderLoresPreview() {
     const btn = document.getElementById('btn-render-lores-preview');
     const statusEl = document.getElementById('render-lores-preview-status');
@@ -11157,6 +12004,8 @@ async function runRenderLoresPreview() {
             renderStatusEl.textContent = 'Rendering lores preview...';
             renderStatusEl.className = 'status';
         }
+        _initRenderLoresPreviewMarquee(null);
+        _setRenderLoresPreviewEmissionHistograms([]);
 
         const detail = await lambdaPost('storage', { job_id: p.jobId }, '/detail');
         const calc = detail.calc || {};
@@ -11222,6 +12071,7 @@ async function runRenderLoresPreview() {
             solve_score_omega_enabled: p.solveScoreOmegaEnabled,
             solve_score_chain: p.solveScoreChain,
             solve_score_normalize: !!p.solveScoreNormalize,
+            color_interpretation: p.colorInterpretation,
             preview_source_mode: previewSourceMode,
             preview_source_size: previewSourceSize,
             lores_bin_key: loresKey,
@@ -11245,6 +12095,7 @@ async function runRenderLoresPreview() {
         log(`Render preview: colorizing ${sourceStartLabel} at ${previewPix}px...`, '', 'render-log');
         const result = await lambdaPost('render-lores-preview', payload);
         if (!result || !result.image_base64) throw new Error('preview response missing image_base64');
+        _setRenderLoresPreviewEmissionHistograms(result.emission_histograms || result.solve_score?.emission_histograms || []);
 
         await new Promise((resolve, reject) => {
             const img = new Image();
@@ -11260,6 +12111,7 @@ async function runRenderLoresPreview() {
             img.onerror = () => reject(new Error('preview PNG decode failed'));
             img.src = `data:${result.content_type || 'image/png'};base64,${result.image_base64}`;
         });
+        _initRenderLoresPreviewMarquee(_renderLoresPreviewMetaFromResult(result, p.rotation));
 
         const raster = result.raster || {};
         const timings = result.timings_ms || {};
@@ -11278,6 +12130,8 @@ async function runRenderLoresPreview() {
         }
         log(`Render preview: ${msg}`, 'ok', 'render-log');
     } catch (e) {
+        _initRenderLoresPreviewMarquee(null);
+        _setRenderLoresPreviewEmissionHistograms([]);
         const msg = e && e.message ? e.message : String(e);
         if (statusEl) statusEl.textContent = 'Error: ' + msg;
         if (renderStatusEl) {
@@ -12570,10 +13424,30 @@ function _clearRenderPreviewSelection() {
     _syncRenderPreviewMarquee();
 }
 
+function _renderPreviewImageRect(stage, img) {
+    if (!stage || !img) return null;
+    const stageRect = stage.getBoundingClientRect();
+    const imgRect = img.getBoundingClientRect();
+    if (!(stageRect.width > 0 && stageRect.height > 0 && imgRect.width > 0 && imgRect.height > 0)) return null;
+    return {
+        x: imgRect.left - stageRect.left,
+        y: imgRect.top - stageRect.top,
+        width: imgRect.width,
+        height: imgRect.height,
+    };
+}
+
 function _renderPreviewPointerFractions(stage, event) {
     if (!stage || !event) return null;
-    const rect = stage.getBoundingClientRect();
+    const img = document.getElementById('render-preview-image');
+    const rect = img ? img.getBoundingClientRect() : stage.getBoundingClientRect();
     if (!(rect.width > 0 && rect.height > 0)) return null;
+    if (
+        Number(event.clientX) < rect.left ||
+        Number(event.clientX) > rect.right ||
+        Number(event.clientY) < rect.top ||
+        Number(event.clientY) > rect.bottom
+    ) return null;
     return {
         x: _clampDeepZoomViewportCoord((Number(event.clientX) - rect.left) / rect.width, 0, 1),
         y: _clampDeepZoomViewportCoord((Number(event.clientY) - rect.top) / rect.height, 0, 1),
@@ -12597,19 +13471,22 @@ function _normalizeRenderPreviewRect(start, end) {
 function _syncRenderPreviewMarquee() {
     const marquee = document.getElementById('render-preview-marquee');
     if (!marquee) return;
+    const stage = document.getElementById('render-preview-stage');
+    const img = document.getElementById('render-preview-image');
+    const imageRect = _renderPreviewImageRect(stage, img);
     const artKey = _renderArtifactStableKey(_renderSelectedArtifactEntry());
     const rect = _renderPreviewDragState.dragging && _renderPreviewDragState.artifactKey === artKey
         ? _renderPreviewDragState.rect
         : (_renderPreviewSelectionState.artifactKey === artKey ? _renderPreviewSelectionState.rect : null);
-    if (!rect || !(rect.w > 0) || !(rect.h > 0)) {
+    if (!imageRect || !rect || !(rect.w > 0) || !(rect.h > 0)) {
         marquee.style.display = 'none';
         return;
     }
     marquee.style.display = 'block';
-    marquee.style.left = `${rect.x * 100}%`;
-    marquee.style.top = `${rect.y * 100}%`;
-    marquee.style.width = `${rect.w * 100}%`;
-    marquee.style.height = `${rect.h * 100}%`;
+    marquee.style.left = `${imageRect.x + rect.x * imageRect.width}px`;
+    marquee.style.top = `${imageRect.y + rect.y * imageRect.height}px`;
+    marquee.style.width = `${rect.w * imageRect.width}px`;
+    marquee.style.height = `${rect.h * imageRect.height}px`;
 }
 
 function _applyRenderPreviewSelectionBounds(meta, rect) {
@@ -12786,8 +13663,10 @@ function _renderArtifactSummary(art) {
         if (art.color_mode === 'solve_score') {
             const solveDisplay = _renderArtifactSolveDisplay(art);
             const sourceColorId = _sourceColorArtifactIdForRenderArtifact(art);
+            const colorInterpretation = _artifactColorInterpretation(art);
             base = [
                 solveDisplay ? `solve:${solveDisplay}` : '',
+                colorInterpretation ? `mode:${_colorInterpretationLabel(colorInterpretation)}` : '',
                 art.palette ? `palette:${art.palette}` : '',
                 sourceColorId ? `color:${sourceColorId}` : '',
             ].filter(Boolean).join(' · ');
@@ -13038,8 +13917,8 @@ function populateSelectedRenderArtifact() {
             _setRenderRootTransforms(art.root_transforms);
         }
         restoreRenderOutputFields(art);
-        _noteSolveScorePopulate('render', art);
         _renderSelectFamily('color');
+        _noteSolveScorePopulate('render', art);
         finishPopulate(art.artifact_id || art.palette_id || 'selected palette artifact');
         return;
     }
@@ -13063,6 +13942,7 @@ function populateSelectedRenderArtifact() {
     if (art.match_mode && art.match_mode !== 'none') warnings.push(`unsupported match ${art.match_mode}`);
 
     setColorMode('solve_score');
+    _setRenderColorInterpretation(_artifactColorInterpretation(art));
     if (!_setSolveScoreChainFromArtifact('render', _artifactSolveScoreChain(art))) {
         warnings.push('solve-score chain');
     }

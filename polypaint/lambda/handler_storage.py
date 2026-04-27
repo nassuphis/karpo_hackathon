@@ -26,6 +26,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from color_artifact_meta import color_artifact_meta_key
+from color_render_contract import normalize_color_interpretation
 from logical_sections import (
     AUTO_FIXED_OVERHEAD_MB,
     AUTO_PER_THREAD_OVERHEAD_MB,
@@ -139,7 +140,14 @@ def _validate_solve_score_program_chain_value(value, path):
     raise ValueError(f"{path} must contain only arrays, strings, and numbers")
 
 
-def _compile_solve_score_program_payload(name, chain, *, saved_at=None, version=SOLVE_SCORE_PROGRAM_VERSION):
+def _compile_solve_score_program_payload(
+    name,
+    chain,
+    *,
+    saved_at=None,
+    version=SOLVE_SCORE_PROGRAM_VERSION,
+    recommended_interpretation=None,
+):
     validated_name = _validate_solve_score_program_name(name)
     if not isinstance(chain, list) or not chain:
         raise ValueError("solve-score program chain must be a non-empty JSON array")
@@ -165,7 +173,7 @@ def _compile_solve_score_program_payload(name, chain, *, saved_at=None, version=
         version_num = int(version)
     except (TypeError, ValueError):
         version_num = SOLVE_SCORE_PROGRAM_VERSION
-    return {
+    program = {
         "version": version_num,
         "id": _slugify_solve_score_program_id(validated_name),
         "name": validated_name,
@@ -176,6 +184,9 @@ def _compile_solve_score_program_payload(name, chain, *, saved_at=None, version=
         "statement_count": len(canonical_chain),
         "saved_at": saved_at_text,
     }
+    if recommended_interpretation not in ("", None):
+        program["recommended_interpretation"] = normalize_color_interpretation(recommended_interpretation)
+    return program
 
 
 def _read_solve_score_program_object(program_id):
@@ -198,6 +209,7 @@ def _read_solve_score_program_object(program_id):
         payload.get("chain"),
         saved_at=payload.get("saved_at", ""),
         version=payload.get("version", SOLVE_SCORE_PROGRAM_VERSION),
+        recommended_interpretation=payload.get("recommended_interpretation"),
     )
     program["id"] = str(program_id)
     return program
@@ -572,6 +584,7 @@ def handle_save_solve_score_program(event):
     program = _compile_solve_score_program_payload(
         params.get("name"),
         params.get("chain"),
+        recommended_interpretation=params.get("recommended_interpretation"),
     )
     key = _solve_score_program_key(program["id"])
     overwritten = _key_exists(key)
@@ -862,6 +875,15 @@ def _parse_bool(value, default=False):
     return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 
+def _parse_color_interpretation(value):
+    if value in ("", None):
+        return ""
+    try:
+        return normalize_color_interpretation(value)
+    except Exception:
+        return ""
+
+
 def _parse_json(value):
     if value in ("", None):
         return None
@@ -942,6 +964,16 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         entry["score_output_normalize"] = _parse_bool(meta.get("score_output_normalize"), False)
         entry["score_output_clip_lo"] = _parse_float(meta.get("score_output_clip_lo"))
         entry["score_output_clip_hi"] = _parse_float(meta.get("score_output_clip_hi"))
+        color_interpretation = _parse_color_interpretation(
+            meta.get("color_interpretation")
+            or meta.get("score_output_interpretation")
+            or meta.get("interpretation")
+        )
+        entry["color_interpretation"] = color_interpretation
+        entry["score_output_interpretation"] = color_interpretation
+        entry["score_output_channel_count"] = _parse_int(meta.get("score_output_channel_count"))
+        entry["raw_channels"] = _parse_int(meta.get("raw_channels"))
+        entry["raw_layout"] = meta.get("raw_layout", "")
         entry["palette_source_id"] = meta.get("palette_source_id", "")
         entry["palette_source_display_name"] = meta.get("palette_source_display_name", "")
         entry["palette_source_palette"] = meta.get("palette_source_palette", "")

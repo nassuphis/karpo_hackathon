@@ -19,6 +19,7 @@ import boto3
 from botocore.config import Config
 
 from color_artifact_meta import split_color_artifact_metadata, write_color_artifact_meta_overlay
+from color_render_contract import normalize_color_interpretation, validate_color_output_contract
 from raw_score_render import render_score_raw, write_equalization_lut
 from raw_sidecar import background_color_hex, build_raw_sidecar
 from shared import BUCKET, imgpipe_env, ok_response, parse_body, parse_boolish, report_status
@@ -308,7 +309,9 @@ def _clip_info_from_payload(params, metadata):
             strict=True,
             label="score_output_has_explicit_outputs",
         ),
-        "score_output_interpretation": str(params.get("score_output_interpretation") or "scalar_palette").strip(),
+        "score_output_interpretation": normalize_color_interpretation(
+            params.get("score_output_interpretation") or "scalar_lut"
+        ),
         "score_output_channels": list(params.get("score_output_channels") or []),
     }
 
@@ -595,6 +598,14 @@ def handler(event, context):
         )
     if channels not in (1, 3):
         raise RuntimeError(f"FinalizeMT v1 supports channels=1 or channels=3, got {channels}")
+    color_contract = validate_color_output_contract(
+        interpretation=clip_info["score_output_interpretation"],
+        output_channel_count=channels,
+        output_channels=clip_info.get("score_output_channels") or [],
+    )
+    clip_info["score_output_interpretation"] = color_contract["interpretation"]
+    clip_info["score_output_channels"] = color_contract["channels"]
+    render_warnings = list(color_contract.get("warnings") or [])
     progress = {
         "phase": "finalize_mt",
         "source_item_count": source_item_count,
@@ -602,8 +613,11 @@ def handler(event, context):
         "width": width,
         "height": height,
         "channels": channels,
+        "interpretation": clip_info["score_output_interpretation"],
         "workers": workers,
     }
+    if render_warnings:
+        progress["warnings"] = render_warnings
     report_status(job_id, task_id, "started", result_data=progress)
 
     raw_path = "/tmp/greyscale.raw"
@@ -681,6 +695,7 @@ def handler(event, context):
         background_color=background_color,
         quality=quality,
         channels=channels,
+        interpretation=clip_info["score_output_interpretation"],
     )
     progress["render_ms"] = int((time.time() - t_render) * 1000)
     progress["encode_ms"] = 0
@@ -772,11 +787,14 @@ def handler(event, context):
     final_metadata["score_output_clip_hi"] = str(clip_info["score_output_clip_hi"])
     final_metadata["score_output_channel_count"] = str(channels)
     final_metadata["score_output_interpretation"] = clip_info["score_output_interpretation"]
+    final_metadata["color_interpretation"] = clip_info["score_output_interpretation"]
+    if render_warnings:
+        final_metadata["render_warnings"] = json.dumps(render_warnings, separators=(",", ":"))
     final_metadata["raw_channels"] = str(channels)
     final_metadata["raw_layout"] = "u8_scalar_row_major" if channels == 1 else "u8_packed_channels_row_major"
     final_metadata["repalette_capable"] = False
     if channels == 3:
-        final_metadata["rgb_source"] = "direct_rgb_raw"
+        final_metadata["rgb_source"] = f"{clip_info['score_output_interpretation']}_raw"
     if associated_palette_result:
         final_metadata["associated_palette_mode"] = "generated"
         final_metadata["associated_palette_id"] = associated_palette_result["palette_id"]

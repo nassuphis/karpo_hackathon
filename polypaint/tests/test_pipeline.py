@@ -3065,6 +3065,11 @@ class TestPaletteInventory(unittest.TestCase):
             "user_meta": {
                 "artifact_id": "color_run_1",
                 "color_mode": "solve_score",
+                "color_interpretation": "direct_rgb",
+                "score_output_interpretation": "direct_rgb",
+                "score_output_channel_count": "3",
+                "raw_channels": "3",
+                "raw_layout": "u8_packed_channels_row_major",
                 "render_execution": json.dumps({
                     "raster_engine": "mt",
                     "raster_mt_threads": 6,
@@ -3083,6 +3088,11 @@ class TestPaletteInventory(unittest.TestCase):
         self.assertEqual(entry["render_execution"]["solve_score_hist_input_mode"], "sectioned")
         self.assertEqual(entry["render_execution"]["palette_chunk_input_mode"], "tmpfile")
         self.assertEqual(entry["render_execution"]["palette_chunk_workers"], 22)
+        self.assertEqual(entry["color_interpretation"], "rgb")
+        self.assertEqual(entry["score_output_interpretation"], "rgb")
+        self.assertEqual(entry["score_output_channel_count"], 3)
+        self.assertEqual(entry["raw_channels"], 3)
+        self.assertEqual(entry["raw_layout"], "u8_packed_channels_row_major")
 
     def test_render_artifact_entry_parses_bilevel_render_execution_and_section_metadata(self):
         from handler_storage import _render_artifact_entry

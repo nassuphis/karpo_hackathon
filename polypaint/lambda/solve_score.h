@@ -925,6 +925,21 @@ enum SolveScoreProgramOp {
     SOLVE_SCORE_OP_FLIP = 11,
     SOLVE_SCORE_OP_EMIT = 12,
     SOLVE_SCORE_OP_EMIT_NORM = 13,
+    SOLVE_SCORE_OP_CONST = 14,
+    SOLVE_SCORE_OP_DUP = 15,
+    SOLVE_SCORE_OP_ADD = 16,
+    SOLVE_SCORE_OP_MULT = 17,
+    SOLVE_SCORE_OP_SUBTRACT = 18,
+    SOLVE_SCORE_OP_RATIO = 19,
+    SOLVE_SCORE_OP_CLAMP = 20,
+    SOLVE_SCORE_OP_EMA = 21,
+    SOLVE_SCORE_OP_SIN = 22,
+    SOLVE_SCORE_OP_COS = 23,
+    SOLVE_SCORE_OP_LOG = 24,
+    SOLVE_SCORE_OP_EXP = 25,
+    SOLVE_SCORE_OP_POW = 26,
+    SOLVE_SCORE_OP_EMIT_NONE = 27,
+    SOLVE_SCORE_OP_FLUSH = 28,
 };
 
 enum SolveScoreMetricSource {
@@ -978,6 +993,10 @@ static double solve_score_clamp_unit(double v) {
     if (v < 0.0) return 0.0;
     if (v > 1.0) return 1.0;
     return v;
+}
+
+static double solve_score_finite_or_zero(double v) {
+    return isfinite(v) ? v : 0.0;
 }
 
 static int parse_solve_score_metric_csv(const char *s, enum SolveMetric *out, int maxMetrics,
@@ -1172,6 +1191,22 @@ static int parse_solve_score_program_spec(const char *spec, int metricCount,
             requiredDepth = 2;
             token.op = SOLVE_SCORE_OP_MUL;
             stackDepth -= 1;
+        } else if (strcmp(tok, "add") == 0) {
+            requiredDepth = 2;
+            token.op = SOLVE_SCORE_OP_ADD;
+            stackDepth -= 1;
+        } else if (strcmp(tok, "mult") == 0) {
+            requiredDepth = 2;
+            token.op = SOLVE_SCORE_OP_MULT;
+            stackDepth -= 1;
+        } else if (strcmp(tok, "subtract") == 0) {
+            requiredDepth = 2;
+            token.op = SOLVE_SCORE_OP_SUBTRACT;
+            stackDepth -= 1;
+        } else if (strcmp(tok, "ratio") == 0) {
+            requiredDepth = 2;
+            token.op = SOLVE_SCORE_OP_RATIO;
+            stackDepth -= 1;
         } else if (strcmp(tok, "abs_diff") == 0) {
             requiredDepth = 2;
             token.op = SOLVE_SCORE_OP_ABS_DIFF;
@@ -1179,6 +1214,18 @@ static int parse_solve_score_program_spec(const char *spec, int metricCount,
         } else if (strcmp(tok, "geometric_mean") == 0) {
             requiredDepth = 2;
             token.op = SOLVE_SCORE_OP_GEOMETRIC_MEAN;
+            stackDepth -= 1;
+        } else if (strncmp(tok, "ema:", 4) == 0) {
+            requiredDepth = 2;
+            char *end = NULL;
+            double alpha = strtod(tok + 4, &end);
+            if (!end || *end != '\0' || !isfinite(alpha) || alpha < 0.0 || alpha > 1.0) {
+                snprintf(err, errCap, "ema requires one alpha parameter in [0,1]");
+                free(copy);
+                return 0;
+            }
+            token.op = SOLVE_SCORE_OP_EMA;
+            token.a = alpha;
             stackDepth -= 1;
         } else if (strncmp(tok, "weighted_sum:", 13) == 0) {
             requiredDepth = 2;
@@ -1252,6 +1299,55 @@ static int parse_solve_score_program_spec(const char *spec, int metricCount,
         } else if (strcmp(tok, "flip") == 0) {
             requiredDepth = 1;
             token.op = SOLVE_SCORE_OP_FLIP;
+        } else if (strcmp(tok, "clamp") == 0) {
+            requiredDepth = 1;
+            token.op = SOLVE_SCORE_OP_CLAMP;
+        } else if (strcmp(tok, "dup") == 0) {
+            requiredDepth = 1;
+            token.op = SOLVE_SCORE_OP_DUP;
+            stackDepth += 1;
+        } else if (strcmp(tok, "sin") == 0) {
+            requiredDepth = 1;
+            token.op = SOLVE_SCORE_OP_SIN;
+        } else if (strcmp(tok, "cos") == 0) {
+            requiredDepth = 1;
+            token.op = SOLVE_SCORE_OP_COS;
+        } else if (strcmp(tok, "log") == 0) {
+            requiredDepth = 1;
+            token.op = SOLVE_SCORE_OP_LOG;
+        } else if (strcmp(tok, "exp") == 0) {
+            requiredDepth = 1;
+            token.op = SOLVE_SCORE_OP_EXP;
+        } else if (strncmp(tok, "pow:", 4) == 0) {
+            requiredDepth = 1;
+            char *end = NULL;
+            double exponent = strtod(tok + 4, &end);
+            if (!end || *end != '\0' || !isfinite(exponent)) {
+                snprintf(err, errCap, "pow requires one finite exponent parameter");
+                free(copy);
+                return 0;
+            }
+            token.op = SOLVE_SCORE_OP_POW;
+            token.a = exponent;
+        } else if (strncmp(tok, "const:", 6) == 0) {
+            char *end = NULL;
+            double value = strtod(tok + 6, &end);
+            if (!end || *end != '\0' || !isfinite(value)) {
+                snprintf(err, errCap, "const requires one finite numeric parameter");
+                free(copy);
+                return 0;
+            }
+            token.op = SOLVE_SCORE_OP_CONST;
+            token.a = value;
+            stackDepth += 1;
+        } else if (strcmp(tok, "flush") == 0) {
+            token.op = SOLVE_SCORE_OP_FLUSH;
+            stackDepth = 0;
+        } else if (strcmp(tok, "emit_none") == 0) {
+            requiredDepth = 1;
+            token.op = SOLVE_SCORE_OP_EMIT_NONE;
+            stackDepth -= 1;
+            hasExplicitOutputs = 1;
         } else if (strcmp(tok, "emit") == 0 || strcmp(tok, "emit_norm") == 0) {
             requiredDepth = 1;
             isOutputToken = 1;
@@ -1555,6 +1651,15 @@ static int solve_score_eval_program_outputs_from_buffers(const float *currentMet
                     return 0;
                 }
                 break;
+            case SOLVE_SCORE_OP_CONST:
+                if (sp >= SOLVE_SCORE_MAX_PROGRAM_TOKENS) return 0;
+                stack[sp++] = token->a;
+                break;
+            case SOLVE_SCORE_OP_DUP:
+                if (sp < 1 || sp >= SOLVE_SCORE_MAX_PROGRAM_TOKENS) return 0;
+                stack[sp] = stack[sp - 1];
+                sp++;
+                break;
             case SOLVE_SCORE_OP_AVG: {
                 if (sp < 2) return 0;
                 double b = stack[--sp];
@@ -1583,11 +1688,46 @@ static int solve_score_eval_program_outputs_from_buffers(const float *currentMet
                 stack[sp - 1] = solve_score_clamp_unit(a * b);
                 break;
             }
+            case SOLVE_SCORE_OP_ADD: {
+                if (sp < 2) return 0;
+                double b = stack[--sp];
+                double a = stack[sp - 1];
+                stack[sp - 1] = solve_score_finite_or_zero(a + b);
+                break;
+            }
+            case SOLVE_SCORE_OP_MULT: {
+                if (sp < 2) return 0;
+                double b = stack[--sp];
+                double a = stack[sp - 1];
+                stack[sp - 1] = solve_score_finite_or_zero(a * b);
+                break;
+            }
+            case SOLVE_SCORE_OP_SUBTRACT: {
+                if (sp < 2) return 0;
+                double b = stack[--sp];
+                double a = stack[sp - 1];
+                stack[sp - 1] = solve_score_finite_or_zero(a - b);
+                break;
+            }
+            case SOLVE_SCORE_OP_RATIO: {
+                if (sp < 2) return 0;
+                double b = stack[--sp];
+                double a = stack[sp - 1];
+                stack[sp - 1] = (!isfinite(b) || b == 0.0) ? 0.0 : solve_score_finite_or_zero(a / b);
+                break;
+            }
             case SOLVE_SCORE_OP_WEIGHTED_SUM: {
                 if (sp < 2) return 0;
                 double b = stack[--sp];
                 double a = stack[sp - 1];
                 stack[sp - 1] = solve_score_clamp_unit(token->a * a + token->b * b);
+                break;
+            }
+            case SOLVE_SCORE_OP_EMA: {
+                if (sp < 2) return 0;
+                double b = stack[--sp];
+                double a = stack[sp - 1];
+                stack[sp - 1] = solve_score_finite_or_zero(token->a * a + (1.0 - token->a) * b);
                 break;
             }
             case SOLVE_SCORE_OP_ABS_DIFF: {
@@ -1617,6 +1757,39 @@ static int solve_score_eval_program_outputs_from_buffers(const float *currentMet
             case SOLVE_SCORE_OP_FLIP:
                 if (sp < 1) return 0;
                 stack[sp - 1] = solve_score_clamp_unit(1.0 - stack[sp - 1]);
+                break;
+            case SOLVE_SCORE_OP_CLAMP:
+                if (sp < 1) return 0;
+                stack[sp - 1] = solve_score_clamp_unit(stack[sp - 1]);
+                break;
+            case SOLVE_SCORE_OP_SIN:
+                if (sp < 1) return 0;
+                stack[sp - 1] = solve_score_finite_or_zero(sin(stack[sp - 1]));
+                break;
+            case SOLVE_SCORE_OP_COS:
+                if (sp < 1) return 0;
+                stack[sp - 1] = solve_score_finite_or_zero(cos(stack[sp - 1]));
+                break;
+            case SOLVE_SCORE_OP_LOG:
+                if (sp < 1) return 0;
+                stack[sp - 1] = (!isfinite(stack[sp - 1]) || stack[sp - 1] <= 0.0)
+                    ? 0.0
+                    : solve_score_finite_or_zero(log(stack[sp - 1]));
+                break;
+            case SOLVE_SCORE_OP_EXP:
+                if (sp < 1) return 0;
+                stack[sp - 1] = solve_score_finite_or_zero(exp(stack[sp - 1]));
+                break;
+            case SOLVE_SCORE_OP_POW:
+                if (sp < 1) return 0;
+                stack[sp - 1] = solve_score_finite_or_zero(pow(stack[sp - 1], token->a));
+                break;
+            case SOLVE_SCORE_OP_FLUSH:
+                sp = 0;
+                break;
+            case SOLVE_SCORE_OP_EMIT_NONE:
+                if (sp < 1) return 0;
+                sp--;
                 break;
             case SOLVE_SCORE_OP_EMIT:
             case SOLVE_SCORE_OP_EMIT_NORM:

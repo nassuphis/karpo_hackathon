@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 
+from color_render_contract import normalize_color_interpretation
 from shared import imgpipe_env
 
 
@@ -89,13 +90,19 @@ def render_score_raw(
     background_color,
     quality,
     channels=1,
+    interpretation=None,
 ):
+    channel_count = int(channels or 1)
+    mode = normalize_color_interpretation(
+        interpretation or ("scalar_lut" if channel_count == 1 else "rgb")
+    )
     cmd = [
         SCORE_RAW_RENDER,
         raw_path,
         out_path,
         f"--pix={int(pix)}",
-        f"--channels={int(channels or 1)}",
+        f"--channels={channel_count}",
+        f"--interpretation={mode}",
         f"--eq_lut={eq_lut_path}",
         f"--palette={str(palette or 'inferno')}",
         f"--background_color={str(background_color or '000000')}",

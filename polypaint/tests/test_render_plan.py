@@ -378,6 +378,7 @@ class TestRenderPlan(unittest.TestCase):
 
         result = handler(_make_event(
             save_associated_palette=False,
+            color_interpretation="rgb",
             solve_score_chain=[
                 ["proximity", "0.1"],
                 ["emit_norm"],
@@ -392,15 +393,41 @@ class TestRenderPlan(unittest.TestCase):
         metadata = plan["outputs"]["metadata"]
         self.assertEqual(metadata["raw_channels"], "3")
         self.assertEqual(metadata["score_output_channel_count"], "3")
-        self.assertEqual(metadata["score_output_interpretation"], "direct_rgb")
+        self.assertEqual(metadata["score_output_interpretation"], "rgb")
         self.assertFalse(plan["associated_palette"]["enabled"])
+
+    @patch("handler_render_plan._storage_call")
+    def test_fused_color_plan_accepts_palette_component_lut_outputs(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        from handler_render_plan import handler
+
+        result = handler(_make_event(
+            save_associated_palette=False,
+            color_interpretation="hsv_lut",
+            solve_score_chain=[
+                ["proximity", "0.1"],
+                ["emit", "norm"],
+                ["spread", "0.1"],
+                ["emit", "norm"],
+                ["angular_entropy_16", "0.1"],
+                ["emit", "norm"],
+            ],
+        ), None)
+        plan = json.loads(result["body"])
+
+        metadata = plan["outputs"]["metadata"]
+        self.assertEqual(metadata["raw_channels"], "3")
+        self.assertEqual(metadata["score_output_interpretation"], "hsv_lut")
+        self.assertEqual(plan["params"]["color_interpretation"], "hsv_lut")
+        channels = json.loads(metadata["score_output_channels"])
+        self.assertEqual([row["name"] for row in channels], ["h_lookup", "s_lookup", "v_lookup"])
 
     @patch("handler_render_plan._storage_call")
     def test_fused_color_plan_rejects_two_channel_outputs_for_v1(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
         from handler_render_plan import handler
 
-        with self.assertRaisesRegex(RuntimeError, "one scalar output or three RGB outputs"):
+        with self.assertRaisesRegex(RuntimeError, "Scalar LUT requires 1"):
             handler(_make_event(
                 solve_score_chain=[
                     ["proximity", "0.1"],

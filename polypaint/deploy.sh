@@ -299,6 +299,7 @@ package_render_plan_zip() {
        lambda/logical_sections.py \
        lambda/calc_chunks.py \
        lambda/param_source.py \
+       lambda/color_render_contract.py \
        lambda/solve_score_chain.py \
        lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PLAN_DIR/"
     cd "$PLAN_DIR" && zip -r9 "$ZIP_PATH" . -q && cd "$SCRIPT_DIR"
@@ -969,7 +970,7 @@ STORAGE_DIR=/tmp/polypaint-storage
 rm -rf "$STORAGE_DIR"
 mkdir -p "$STORAGE_DIR"
 cp lambda/handler_storage.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py \
-   lambda/logical_sections.py "$STORAGE_DIR/"
+   lambda/color_render_contract.py lambda/logical_sections.py "$STORAGE_DIR/"
 cd "$STORAGE_DIR" && zip -r9 /tmp/polypaint-storage.zip . -q && cd "$SCRIPT_DIR"
 echo "  Storage:  $(du -h /tmp/polypaint-storage.zip | cut -f1)  (pure Python)"
 
@@ -996,7 +997,7 @@ echo "  RastMT:   $(du -h /tmp/polypaint-raster-mt.zip | cut -f1)  (fused roots2
 FINALIZE_MT_DIR=/tmp/polypaint-finalize-mt
 rm -rf "$FINALIZE_MT_DIR"
 mkdir -p "$FINALIZE_MT_DIR/lib"
-cp lambda/handler_finalize_mt.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py lambda/raw_sidecar.py lambda/raw_score_render.py "$FINALIZE_MT_DIR/"
+cp lambda/handler_finalize_mt.py lambda/shared.py lambda/color_artifact_meta.py lambda/color_render_contract.py lambda/solve_score_chain.py lambda/raw_sidecar.py lambda/raw_score_render.py "$FINALIZE_MT_DIR/"
 cp lambda/assemble_greyscale lambda/score_raw_render "$FINALIZE_MT_DIR/"
 cp lambda/assemble_greyscale_lib/* "$FINALIZE_MT_DIR/lib/"
 chmod +x "$FINALIZE_MT_DIR"/assemble_greyscale "$FINALIZE_MT_DIR"/score_raw_render
@@ -1025,7 +1026,7 @@ echo "  CPreview: $(du -h /tmp/polypaint-compute-preview.zip | cut -f1)  (sync c
 BILEVEL_DIR=/tmp/polypaint-bilevel
 rm -rf "$BILEVEL_DIR"
 mkdir -p "$BILEVEL_DIR/lib"
-cp lambda/handler_bilevel.py lambda/shared.py lambda/logical_sections.py lambda/raw_sidecar.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$BILEVEL_DIR/"
+cp lambda/handler_bilevel.py lambda/shared.py lambda/logical_sections.py lambda/raw_sidecar.py lambda/color_render_contract.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$BILEVEL_DIR/"
 cp lambda/bilevel_section_raster lambda/coeffs_bilevel_raster lambda/raw_to_bilevel lambda/assemble_greyscale "$BILEVEL_DIR/"
 cp lambda/assemble_greyscale_lib/* "$BILEVEL_DIR/lib/"
 chmod +x "$BILEVEL_DIR"/bilevel_section_raster "$BILEVEL_DIR"/coeffs_bilevel_raster "$BILEVEL_DIR"/raw_to_bilevel "$BILEVEL_DIR"/assemble_greyscale
@@ -1076,7 +1077,7 @@ rm -rf "$RENDER_LORES_PREVIEW_DIR"
 mkdir -p "$RENDER_LORES_PREVIEW_DIR/lib"
 cp lambda/handler_render_lores_preview.py lambda/shared.py \
    lambda/logical_sections.py lambda/logical_lores.py lambda/calc_chunks.py lambda/param_source.py \
-   lambda/solve_score_chain.py lambda/raw_score_render.py "$RENDER_LORES_PREVIEW_DIR/"
+   lambda/color_render_contract.py lambda/solve_score_chain.py lambda/raw_score_render.py "$RENDER_LORES_PREVIEW_DIR/"
 cp lambda/roots2pix_mt lambda/solve_proximity_stats lambda/score_raw_render \
    lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$RENDER_LORES_PREVIEW_DIR/"
 cp lambda/roots2pix_mt_lib/* "$RENDER_LORES_PREVIEW_DIR/lib/"
@@ -1119,7 +1120,7 @@ COLOR_REPALETTE_DIR=/tmp/polypaint-color-repalette
 rm -rf "$COLOR_REPALETTE_DIR"
 mkdir -p "$COLOR_REPALETTE_DIR"
 cp lambda/handler_color_repalette.py lambda/shared.py lambda/raw_sidecar.py lambda/raw_score_render.py \
-   lambda/color_artifact_meta.py lambda/solve_score_chain.py lambda/color_recolor_raw.py \
+   lambda/color_render_contract.py lambda/color_artifact_meta.py lambda/solve_score_chain.py lambda/color_recolor_raw.py \
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$COLOR_REPALETTE_DIR/"
 cp lambda/score_raw_render "$COLOR_REPALETTE_DIR/"
 chmod +x "$COLOR_REPALETTE_DIR"/score_raw_render
@@ -1131,7 +1132,7 @@ RECOLOR_FROM_RAW_DIR=/tmp/polypaint-recolor-from-raw
 rm -rf "$RECOLOR_FROM_RAW_DIR"
 mkdir -p "$RECOLOR_FROM_RAW_DIR"
 cp lambda/handler_recolor_from_raw.py lambda/shared.py lambda/raw_sidecar.py lambda/raw_score_render.py lambda/color_recolor_raw.py \
-   lambda/color_artifact_meta.py lambda/solve_score_chain.py \
+   lambda/color_render_contract.py lambda/color_artifact_meta.py lambda/solve_score_chain.py \
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$RECOLOR_FROM_RAW_DIR/"
 cp lambda/score_raw_render "$RECOLOR_FROM_RAW_DIR/"
 chmod +x "$RECOLOR_FROM_RAW_DIR"/score_raw_render
@@ -1143,7 +1144,7 @@ EXTRACT_PALETTE_FUSED_DIR=/tmp/polypaint-extract-palette-fused
 rm -rf "$EXTRACT_PALETTE_FUSED_DIR"
 mkdir -p "$EXTRACT_PALETTE_FUSED_DIR"
 cp lambda/handler_extract_palette_from_step_scores.py lambda/shared.py lambda/raw_sidecar.py lambda/raw_score_render.py \
-   lambda/color_artifact_meta.py lambda/solve_score_chain.py "$EXTRACT_PALETTE_FUSED_DIR/"
+   lambda/color_render_contract.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$EXTRACT_PALETTE_FUSED_DIR/"
 cp lambda/score_raw_render lambda/step_scores_to_palette_raw "$EXTRACT_PALETTE_FUSED_DIR/"
 chmod +x "$EXTRACT_PALETTE_FUSED_DIR"/score_raw_render "$EXTRACT_PALETTE_FUSED_DIR"/step_scores_to_palette_raw
 cd "$EXTRACT_PALETTE_FUSED_DIR" && zip -r9 /tmp/polypaint-extract-palette-fused.zip . -q && cd "$SCRIPT_DIR"
@@ -1162,7 +1163,7 @@ DZ_EXPORT_DIR=/tmp/polypaint-deepzoom-export
 rm -rf "$DZ_EXPORT_DIR"
 mkdir -p "$DZ_EXPORT_DIR"
 cp lambda/handler_deepzoom_export.py lambda/shared.py lambda/raw_sidecar.py \
-   lambda/color_artifact_meta.py lambda/solve_score_chain.py \
+   lambda/color_render_contract.py lambda/color_artifact_meta.py lambda/solve_score_chain.py \
    lambda/deepzoom_viewer_template.html "$DZ_EXPORT_DIR/"
 cp lambda/dz_export "$DZ_EXPORT_DIR/"
 chmod +x "$DZ_EXPORT_DIR"/dz_export
@@ -1174,7 +1175,7 @@ DZ_FROM_RAW_DIR=/tmp/polypaint-deepzoom-from-raw
 rm -rf "$DZ_FROM_RAW_DIR"
 mkdir -p "$DZ_FROM_RAW_DIR"
 cp lambda/handler_deepzoom_from_raw.py lambda/handler_deepzoom_export.py lambda/shared.py lambda/raw_sidecar.py \
-   lambda/color_artifact_meta.py lambda/solve_score_chain.py \
+   lambda/color_render_contract.py lambda/color_artifact_meta.py lambda/solve_score_chain.py \
    lambda/deepzoom_viewer_template.html "$DZ_FROM_RAW_DIR/"
 cp lambda/dz_export "$DZ_FROM_RAW_DIR/"
 chmod +x "$DZ_FROM_RAW_DIR"/dz_export
@@ -1284,6 +1285,7 @@ cp lambda/handler_render_plan.py lambda/shared.py \
    lambda/logical_sections.py \
    lambda/calc_chunks.py \
    lambda/param_source.py \
+   lambda/color_render_contract.py \
    lambda/solve_score_chain.py \
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PLAN_DIR/"
 cd "$PLAN_DIR" && zip -r9 /tmp/polypaint-render-plan.zip . -q && cd "$SCRIPT_DIR"

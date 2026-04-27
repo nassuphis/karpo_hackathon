@@ -243,6 +243,8 @@ def _render_palette_from_step_scores(job_id, artifact_id, source_meta, task_id):
         _load_json_key(source_raw_meta_key),
         expected_raw_key=source_raw_key,
         expected_artifact_family="color",
+        require_scalar=True,
+        feature="ExtractPalette-from-step-scores",
     )
     step_scores_key = str(raw_sidecar.get("step_scores_key") or source_meta.get("step_scores_key") or "").strip()
     step_count = int(raw_sidecar.get("step_count") or source_meta.get("step_count") or 0)

@@ -873,6 +873,8 @@ def handle_from_raw_color(params):
             _load_json_key(raw_meta_key),
             expected_raw_key=raw_key,
             expected_artifact_family="color",
+            require_scalar=True,
+            feature="Color2Bilevel",
         )
         width = int(raw_sidecar["width"])
         height = int(raw_sidecar["height"])

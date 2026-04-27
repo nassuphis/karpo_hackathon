@@ -15,6 +15,7 @@ import time
 
 import boto3
 
+from color_render_contract import validate_color_output_contract
 from logical_lores import (
     calc_square_grid,
     estimate_logical_lores_bytes,
@@ -550,7 +551,7 @@ def _preview_score_summary(params, *, degree, n_coeffs, compiled, include_coeff,
         "score_output_clip_source": primary.get("clip_source", "identity"),
         "score_output_channel_count": len(output_channels),
         "score_output_has_explicit_outputs": bool(compiled.get("has_explicit_outputs")),
-        "score_output_interpretation": str(compiled.get("output_interpretation") or "scalar_palette"),
+        "score_output_interpretation": "scalar_lut",
         "score_output_channels": output_channels,
     })
     summary["metrics"] = metric_clips
@@ -815,6 +816,7 @@ def _assemble_fragment_to_raw(fragment_path, raw_path, pix, channels=1):
     channels = int(channels or 1)
     record_size = 4 + channels
     raw = bytearray(total_pixels * channels)
+    channel_histograms = [[0] * 256 for _ in range(channels)]
     entries = 0
     if os.path.exists(fragment_path):
         with open(fragment_path, "rb") as fh:
@@ -827,11 +829,35 @@ def _assemble_fragment_to_raw(fragment_path, raw_path, pix, channels=1):
                 idx = int.from_bytes(rec[:4], "little", signed=False)
                 if idx < total_pixels:
                     start = idx * channels
-                    raw[start:start + channels] = rec[4:4 + channels]
+                    values = rec[4:4 + channels]
+                    raw[start:start + channels] = values
+                    for channel, value in enumerate(values):
+                        channel_histograms[channel][value] += 1
                     entries += 1
     with open(raw_path, "wb") as fh:
         fh.write(raw)
-    return entries
+    return entries, channel_histograms
+
+
+def _emission_histograms_from_channels(channel_histograms, output_channels):
+    rows = []
+    metadata = list(output_channels or [])
+    for idx, histogram in enumerate(channel_histograms or []):
+        meta = metadata[idx] if idx < len(metadata) and isinstance(metadata[idx], dict) else {}
+        total = sum(int(v) for v in histogram)
+        zero_count = int(histogram[0]) if histogram else 0
+        rows.append({
+            "channel": idx,
+            "label": f"E{idx + 1}",
+            "name": str(meta.get("display_name") or meta.get("name") or f"E{idx + 1}"),
+            "emit": str(meta.get("emit") or "emit"),
+            "range_normalized": bool(meta.get("range_normalized")),
+            "histogram": [int(v) for v in histogram],
+            "total": int(total),
+            "zero_count": zero_count,
+            "nonzero_count": int(total - zero_count),
+        })
+    return rows
 
 
 def _run_roots2pix(*, params, summary, viewport, manifests, pix, degree, n_coeffs, step_count, include_coeff, include_param):
@@ -930,6 +956,14 @@ def handler(event, context):
         lores_params_key = str(params.get("lores_params_key") or _fallback_lores_params_key(job_id, lores_bin_key)).strip()
 
         compiled = _compile_request_chain(params)
+        solve_score_normalize = parse_boolish(
+            params.get("solve_score_normalize", False),
+            False,
+            strict=True,
+            label="solve_score_normalize",
+        )
+        if compiled.get("has_explicit_outputs") and solve_score_normalize:
+            raise RuntimeError("score normalization checkbox is legacy-only; explicit emit/emit_norm programs own normalization")
         include_coeff = solve_score_uses_source(compiled, "cf")
         include_param = solve_score_uses_source(compiled, "pm")
 
@@ -1034,6 +1068,14 @@ def handler(event, context):
             include_param=include_param,
         )
         summary_ms = int((time.time() - t_summary) * 1000)
+        color_contract = validate_color_output_contract(
+            interpretation=params.get("color_interpretation", params.get("score_output_interpretation", "scalar_lut")),
+            output_channel_count=int(summary.get("score_output_channel_count") or 1),
+            output_channels=summary.get("score_output_channels") or [],
+        )
+        summary["score_output_interpretation"] = color_contract["interpretation"]
+        summary["score_output_channels"] = color_contract["channels"]
+        preview_warnings = list(color_contract.get("warnings") or [])
         metrics = _metric_rows_from_summary(summary)
         include_coeff = _uses_source(metrics, "cf")
         include_param = _uses_source(metrics, "pm")
@@ -1083,11 +1125,16 @@ def handler(event, context):
         raster_ms = int((time.time() - t_raster) * 1000)
 
         output_channels = int(summary.get("score_output_channel_count") or 1)
-        if output_channels not in (1, 3):
-            raise RuntimeError(
-                f"render-lores-preview v1 supports one scalar output or three RGB outputs; got {output_channels}"
-            )
-        fragment_entries = _assemble_fragment_to_raw(TMP_FRAGMENT, TMP_RAW, pix, channels=output_channels)
+        fragment_entries, emission_channel_histograms = _assemble_fragment_to_raw(
+            TMP_FRAGMENT,
+            TMP_RAW,
+            pix,
+            channels=output_channels,
+        )
+        emission_histograms = _emission_histograms_from_channels(
+            emission_channel_histograms,
+            summary.get("score_output_channels") or [],
+        )
         histogram = histogram_from_raw_path_channel0(TMP_RAW, channels=output_channels, expected_size=pix * pix * output_channels)
         nonzero_pixels = write_equalization_lut(TMP_EQ_LUT, histogram)
         render_meta = render_score_raw(
@@ -1100,6 +1147,7 @@ def handler(event, context):
             background_color=str(params.get("background_color") or "000000"),
             quality=_coerce_int(params.get("quality", 90), "quality", default=90, min_value=1, max_value=100),
             channels=output_channels,
+            interpretation=summary["score_output_interpretation"],
         )
         with open(TMP_IMAGE, "rb") as fh:
             image_b64 = base64.b64encode(fh.read()).decode("ascii")
@@ -1156,6 +1204,14 @@ def handler(event, context):
                 )
         else:
             logs.append(f"Physical lores: solves={int(step_count)} roots={int(root_size) / (1024 * 1024):.1f}MB")
+        emit_modes = ",".join(str(row.get("emit") or "emit") for row in (summary.get("score_output_channels") or []))
+        logs.append(
+            "Render preview output: "
+            f"channels={output_channels} interpretation={summary.get('score_output_interpretation')} "
+            f"emit={emit_modes or 'emit'}"
+        )
+        for warning in preview_warnings:
+            logs.append(f"Render preview warning: {warning}")
         logs.append(
             "Render preview timings: "
             f"summary={summary_ms / 1000.0:.2f}s viewport={viewport_ms / 1000.0:.2f}s "
@@ -1176,6 +1232,7 @@ def handler(event, context):
             "viewport": viewport,
             "raster": raster_meta,
             "render": render_meta,
+            "emission_histograms": emission_histograms,
             "logs": logs,
             "solve_score": {
                 "program": summary.get("program"),
@@ -1184,6 +1241,11 @@ def handler(event, context):
                 "score_output_clip_lo": summary.get("score_output_clip_lo"),
                 "score_output_clip_hi": summary.get("score_output_clip_hi"),
                 "score_output_clip_source": summary.get("score_output_clip_source"),
+                "score_output_channel_count": output_channels,
+                "score_output_interpretation": summary.get("score_output_interpretation"),
+                "score_output_channels": summary.get("score_output_channels"),
+                "emission_histograms": emission_histograms,
+                "warnings": preview_warnings,
             },
             "timings_ms": {
                 "materialize": materialize_ms,

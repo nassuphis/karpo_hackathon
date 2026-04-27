@@ -1515,19 +1515,8 @@ int main(int argc, char **argv) {
                 ? solve_score_program_output_is_normalized(&scoreProgram, ch)
                 : scoreOutputNormalize;
             if (ch) printf(",");
-            const char *channelName = explicitOutputs && outputCount == 3
-                ? (ch == 0 ? "r" : (ch == 1 ? "g" : "b"))
-                : NULL;
-            if (channelName) {
-                printf("{\"channel\":%d,\"name\":\"%s\",\"emit\":\"%s\",",
-                       ch, channelName, chNorm ? "emit_norm" : "emit");
-            } else {
-                printf("{\"channel\":%d,\"name\":\"channel_%d\",\"emit\":\"%s\",",
-                       ch, ch, chNorm ? "emit_norm" : "emit");
-            }
-            if (explicitOutputs && outputCount == 3) {
-                printf("\"display_name\":\"%s\",", ch == 0 ? "r" : (ch == 1 ? "g" : "b"));
-            }
+            printf("{\"channel\":%d,\"name\":\"channel_%d\",\"emit\":\"%s\",",
+                   ch, ch, chNorm ? "emit_norm" : "emit");
             printf("\"range_normalized\":%s,", chNorm ? "true" : "false");
             printf("\"min_score\":%.15g,\"max_score\":%.15g,", chMin, chMax);
             printf("\"q05\":%.15g,\"q10\":%.15g,\"q25\":%.15g,\"q50\":%.15g,",

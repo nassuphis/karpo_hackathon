@@ -1341,6 +1341,40 @@ test.describe('Solve Score UI', () => {
     await expect(btn).toBeDisabled();
   });
 
+  test('palette family generate rejects explicit output score programs in the frontend', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate(() => {
+      document.getElementById('render-results-dir').value = 'test_job';
+      renderColorMode = 'solve_score';
+      _renderActiveFamily = 'palette';
+      _lastCalcHasLores = true;
+      renderArtifactPanel('test_job', {
+        families: {
+          color: [],
+          bilevel: [],
+          coeffs: [],
+          palette: [{ artifact_id: 'pal_1', palette_id: 'pal_1', image_url: 'https://example.com/p.jpeg', preview_url: 'https://example.com/p.png' }],
+        },
+        calc: { exists: true, N: 1000, degree: 5, lores: { bin_key: 'renders/test_job/lores.bin' } },
+        artifacts: {},
+        deepzoom_latest: { exists: false },
+      });
+      _renderScoreChain.splice(0, _renderScoreChain.length,
+        { name: 'proximity', params: ['slv', '0.5'] },
+        { name: 'emit', params: ['norm'] },
+        { name: 'spread', params: ['slv', '0.5'] },
+        { name: 'emit', params: ['norm'] },
+        { name: 'angular_entropy_16', params: ['cf', '0.5'] },
+        { name: 'emit', params: ['norm'] },
+      );
+      _setRenderColorInterpretation('rgb');
+      _renderChips('ss');
+      _updateSolveScoreButtons();
+    });
+    await expect(page.locator('#btn-render-generate')).toBeDisabled();
+    await expect(page.locator('#render-solve-score-program-status')).toContainText('Palette Generate requires a scalar');
+  });
+
   test('switching family updates the selected catalog and viewer', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await page.evaluate(() => {

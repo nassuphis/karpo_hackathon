@@ -15,7 +15,7 @@ import time
 
 import boto3
 
-from color_render_contract import validate_color_output_contract
+from color_render_contract import normalize_background_color, validate_color_output_contract
 from logical_lores import (
     calc_square_grid,
     estimate_logical_lores_bytes,
@@ -968,6 +968,7 @@ def handler(event, context):
         if not isinstance(parsed, dict):
             raise RuntimeError("request body must be a JSON object")
         params = parsed
+        params["background_color"] = normalize_background_color(params.get("background_color"))
         _cleanup_tmp()
         job_id = str(params.get("job_id") or "").strip()
         if not job_id:

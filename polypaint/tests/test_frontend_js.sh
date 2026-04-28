@@ -53,6 +53,11 @@ assertIncludes(".color-mode-row label:not(.color-mode-choice)", 'render color ge
 assertIncludes(".color-mode-row .color-mode-choice {\n    display: grid;", 'color mode choices should use fixed selector/text grid alignment with enough specificity');
 assertIncludes(".color-mode-row .color-mode-choice input[type=\"radio\"] {\n    margin: 0;", 'color mode radio inputs should override browser/default label spacing');
 assertIncludes(".color-mode-name {\n    display: block;\n    line-height: 13px;", 'color mode names should use explicit line-height to avoid low text alignment');
+assertIncludes("id=\"render-background-color\" class=\"render-background-color\" value=\"#000000\"", 'render tab should expose a native background color picker');
+assertIncludes("id=\"render-background-hex\" class=\"render-background-hex\" value=\"000000\"", 'render tab should expose exact background hex input');
+assertIncludes("id=\"render-background-eyedropper\"", 'render tab should expose a background pipette button');
+assertIncludes(".render-background-eye {\n    margin: 0;", 'background pipette button should override global button top margin');
+assertIncludes("const normalized = _normalizeRenderBackgroundColor(value, '', { allowShort: !options.fromText });", 'background hex typing should not commit 3-digit shorthand before blur/commit');
 assertNotIncludes("<label><input type=\"radio\" name=\"render-color-interpretation\"", 'render color radios must not use bare label/input markup');
 assertNotIncludes("class=\"color-dot active\" data-mode=\"solve_score\"", 'render tab should not expose a fake solve-score mode toggle');
 assertIncludes("id=\"view-row-explicit\"", 'render tab should expose explicit viewport row');
@@ -70,6 +75,17 @@ assertIncludes("new_interpretation: newInterpretation", 'Color RePalette UI shou
 assertIncludes("id=\"color-repalette-interpretation-row\"", 'Color RePalette popup should expose the interpretation row');
 assertIncludes("id=\"color-repalette-interpretation\"", 'Color RePalette popup should expose the 3-channel interpretation selector');
 assertIncludes("function _selectedColorRepaletteInterpretation(art) {", 'Color RePalette UI should centralize selected interpretation parsing');
+assertIncludes("{ name: 'identity', stops: ['#000000','#ffffff'] }", 'PAL swatch should include the identity greyscale palette');
+assertIncludes("{ name: 'identity_hsv', stops:", 'PAL swatch should include the identity HSV palette');
+assertIncludes("unit_circle: { params: [{ph:'target', def:'both', target: true}] }", 'unit_circle param transform should expose target selection');
+assertIncludes("rtheta: { params: [{ph:'p', def:'1'}, {ph:'target', def:'both', target: true}] }", 'rtheta target selector should preserve legacy p-first ordering');
+assertIncludes("square: { params: [{ph:'target', def:'both', target: true}] }", 'square param transform should expose target selection');
+assertIncludes("function _chipMoveControlsHtml(which, idx) {", 'transform chip renderer should centralize move controls');
+assertIncludes("chip.insertAdjacentHTML('afterbegin', _chipMoveControlsHtml(which, i));", 'param/transform chips should get move arrows');
+assertIncludes("chip-input chip-input-target", 'target parameters should render as dropdown inputs');
+assertIncludes("function _solveScorePaletteCompatibility(compiled) {", 'palette generation should have a scalar-only solve-score compatibility helper');
+assertIncludes("const paletteIssue = _solveScorePaletteCompatibility(score);", 'Palette tab Generate should reject explicit outputs before dispatch');
+assertIncludes("has_explicit_outputs: p.solveScoreHasExplicitOutputs,", 'Render Palette Generate should validate the render solve-score output mode before dispatch');
 const renderCommonSection = src.split("function _renderCommonParams(options = {}) {")[1]?.split("function _renderColorMtEligible()")[0] || '';
 assertSectionNotIncludes(renderCommonSection, "gamma:", '_renderCommonParams should not send dead gamma');
 assertSectionNotIncludes(renderCommonSection, "constantColor:", '_renderCommonParams should not carry dead constant-color state');
@@ -187,8 +203,11 @@ assertIncludes("id=\"render-color-lut-palette-row\"", 'render tab should expose 
 assertIncludes("three emitted bytes sample R/G/B from the selected palette", 'RGB LUT row should explain palette-component lookup');
 assertIncludes("three emitted bytes sample H/S/V from the selected palette in HSV space", 'HSV LUT row should explain HSV palette-component lookup');
 assertIncludes("color_interpretation: p.colorInterpretation,", 'render payload should forward selected color interpretation');
+assertIncludes("const backgroundColor = _readRenderBackgroundColor({ requireValid: true });", '_renderCommonParams should validate/read background color');
+assertIncludes("background_color: p.backgroundColor,", 'render payloads should forward selected background color');
 assertIncludes("function _artifactColorInterpretation(art) {", 'render populate should define artifact color interpretation resolver');
 assertIncludes("_setRenderColorInterpretation(_artifactColorInterpretation(art));", 'render populate should restore selected artifact color interpretation');
+assertIncludes("if (entry.background_color) _setRenderBackgroundColor(entry.background_color);", 'render populate should restore saved background color');
 assertIncludes("mode:${_colorInterpretationLabel(colorInterpretation)}", 'render artifact summaries should disclose color interpretation');
 assertIncludes("id=\"ss-insert-before-btn\"", 'solve-score editor should expose insert-before button');
 assertIncludes("id=\"ss-insert-after-btn\"", 'solve-score editor should expose insert-after button');
@@ -207,6 +226,9 @@ assertIncludes("id=\"render-preview-pix\" value=\"256\"", 'render output should 
 assertIncludes("id=\"btn-render-lores-preview\" onclick=\"runRenderLoresPreview()\"", 'render output should expose lores preview button');
 assertIncludes("id=\"render-lores-preview-stage\"", 'render output preview should expose a marquee stage wrapper');
 assertIncludes("id=\"render-lores-preview-marquee\"", 'render output preview should expose a marquee overlay');
+assertIncludes(".render-lores-preview-tabs {\n    width: 100%;", 'render output preview tabs should fill the Output box width');
+assertIncludes(".render-lores-preview-box {\n    width: 100%;\n    aspect-ratio: 1 / 1;", 'render output preview plot should fill Output width as a square');
+assertNotIncludes("id=\"render-lores-preview-box\" style=\"width:256px;", 'render output preview should not be hardcoded to 256px display width');
 assertIncludes("id=\"render-lores-preview-tab-plot\"", 'render output preview should expose plot tab');
 assertIncludes("id=\"render-lores-preview-tab-palette\"", 'render output preview should expose palette tab');
 assertIncludes("id=\"render-lores-preview-palette-canvas\"", 'render output preview should expose palette canvas');
@@ -386,6 +408,7 @@ async function main() {
     extractFunction('_canExtractPaletteArtifact'),
     extractFunction('_extractPaletteLineageHint'),
     extractFunction('_solveScoreColorCompatibility'),
+    extractFunction('_solveScorePaletteCompatibility'),
     extractFunction('_launchRenderOrchestrator'),
     extractFunction('runRasterPipeline'),
   ].join('\n\n');
@@ -484,6 +507,8 @@ async function main() {
   assert(explicitEmit.output_channel_count === 2, 'explicit output chips should produce two output channels');
   assert(explicitEmit.output_channels[0].range_normalized === true, 'emit_norm should request per-channel range normalization');
   assert(explicitEmit.output_channels[1].range_normalized === false, 'emit should skip per-channel range normalization');
+  assert(ctx._solveScorePaletteCompatibility(explicitEmit).includes('requires a scalar solve-score program'), 'palette generation should reject explicit output solve-score programs in the frontend');
+  assert(ctx._solveScorePaletteCompatibility(ctx._compileSolveScoreChain([['proximity', 'slv', '0.5']], 'proximity', '0.1')) === '', 'palette generation should accept scalar solve-score programs in the frontend');
 
   const emitNone = ctx._compileSolveScoreChain([
     ['proximity', 'slv', '0.5'],

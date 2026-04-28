@@ -2,7 +2,7 @@
 
 BUILTIN_PALETTE_NAMES = {
     "inferno", "viridis", "magma", "plasma", "turbo", "cividis",
-    "warm", "cool", "bwred", "neon_v", "gilded", "reef", "abyss", "rainbow_d3",
+    "identity", "identity_hsv", "warm", "cool", "bwred", "neon_v", "gilded", "reef", "abyss", "rainbow_d3",
 }
 
 try:

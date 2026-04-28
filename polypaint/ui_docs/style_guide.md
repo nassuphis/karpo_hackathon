@@ -224,6 +224,23 @@ For popup tuning controls:
 - use the existing `.autolevel-inline-fields` look
 - use explicit labels like `Workers`, `Threads`, `Input`
 
+### Color Inputs
+
+Use a combined color control when a render-visible color is selected:
+
+- native `input[type=color]` for the browser picker / eyedropper path
+- adjacent monospace 6-digit hex text input for exact reproducibility
+- optional small preset swatches for common values
+- a short status readout showing the committed hex value or validation error
+
+Rules:
+
+- keep the color control in a grid/flex row with explicit alignment
+- inline buttons in the color row must override global button top margin
+- store and send colors as 6-digit hex without `#`
+- do not hide a color change in a CSS-only preview; it must be forwarded into
+  render payloads and persisted in artifact metadata when it affects output
+
 ## Render View Rows
 
 The Render `View` controls are compact mode rows, but they are not plain inline
@@ -266,6 +283,10 @@ Rules:
 
 - Wrap the canvas in a positioned preview stage and draw the marquee overlay in
   that stage.
+- The preview tabset and plot box should use the full available `Output` box
+  width. Do not hardcode the displayed preview to the canvas backing size.
+- Keep the displayed preview square with `aspect-ratio: 1 / 1`; the backing
+  canvas can remain the requested preview pixel size.
 - Use the preview response `viewport` plus the current rotation to compute
   selected exact bounds.
 - Selection must update the `Exact` view inputs and switch View mode to `Exact`.

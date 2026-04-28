@@ -29,7 +29,7 @@ from logical_sections import (
     validate_section_count,
 )
 from palette_names import VALID_PALETTE_NAMES
-from color_render_contract import validate_color_output_contract
+from color_render_contract import DEFAULT_BACKGROUND_COLOR, normalize_background_color, validate_color_output_contract
 from shared import BUCKET, BILEVEL_SPARSE_PIPELINE, REF_SIZE, parse_body, ok_response
 from solve_score_chain import (
     compile_solve_score_chain,
@@ -49,24 +49,27 @@ STORAGE_FUNCTION = os.environ.get("STORAGE_FUNCTION", "polypaint-storage")
 RASTER_MT_FUNCTION = os.environ.get("RASTER_MT_FUNCTION", "polypaint-raster-mt")
 
 MAX_PLAN_BYTES = 200 * 1024  # 200 KB — fail fast before hitting 256 KB SFN limit
-DEFAULT_BACKGROUND_COLOR = "000000"
 DEFAULT_BACKGROUND_THRESHOLD = 4
 
 
-def _plan_params_digest(*, viewport, pix, root_transforms=None, solve_score_normalize=False, color_interpretation="scalar_lut"):
+def _plan_params_digest(*, viewport, pix, root_transforms=None, solve_score_normalize=False, color_interpretation="scalar_lut", background_color=None):
     grid = {"pix": int(pix)}
+    params = {
+        "root_transforms": root_transforms or [],
+        "solve_score_normalize": bool(solve_score_normalize),
+        "color_interpretation": str(color_interpretation or "scalar_lut"),
+    }
+    if background_color is not None:
+        params["background_color"] = str(background_color or DEFAULT_BACKGROUND_COLOR).strip().lower()
     payload = {
         "viewport": viewport,
         "grid": grid,
-        "params": {
-            "root_transforms": root_transforms or [],
-            "solve_score_normalize": bool(solve_score_normalize),
-            "color_interpretation": str(color_interpretation or "scalar_lut"),
-        },
+        "params": params,
         "raster_binary_sha256": str(os.environ.get("RASTER_BINARY_SHA256") or ""),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
 
 def _fallback_lores_coeffs_key(job_id, calc):
     return calc_fallback_lores_coeffs_key(job_id, calc)
@@ -246,6 +249,7 @@ def _fused_render_execution_config(rp):
     return {
         "raster_engine": "mt",
         "save_associated_palette": bool(rp.get("save_associated_palette", False)),
+        "background_color": normalize_background_color(rp.get("background_color")),
         "raster_mt_threads": int(rp.get("raster_mt_threads", 4) or 4),
         "raster_workers": int(rp.get("raster_workers", 10) or 10),
         "solve_score_threads": int(rp.get("solve_score_threads", 4) or 4),
@@ -323,6 +327,7 @@ def _build_fused_color_plan(
         "root_transforms": [],
         "rotation": 0,
         "palette": "inferno",
+        "background_color": DEFAULT_BACKGROUND_COLOR,
         "match_mode": "none",
         "quality": 90,
         "fmt": "jpeg",
@@ -356,6 +361,9 @@ def _build_fused_color_plan(
     if palette not in VALID_PALETTE_NAMES:
         raise RuntimeError(f"Invalid palette: {palette}")
     fused_params["palette"] = palette
+
+    background_color = normalize_background_color(fused_params.get("background_color"))
+    fused_params["background_color"] = background_color
 
     fused_params["raster_engine"] = _validate_raster_engine(fused_params.get("raster_engine", "mt"))
     if fused_params["raster_engine"] != "mt":
@@ -636,7 +644,7 @@ def _build_fused_color_plan(
         "render_warnings": json.dumps(render_warnings, separators=(",", ":")),
         "match_mode": "none",
         "palette": palette,
-        "background_color": DEFAULT_BACKGROUND_COLOR,
+        "background_color": background_color,
         "background_threshold": str(DEFAULT_BACKGROUND_THRESHOLD),
         "repalette_capable": "true",
         "rgb_source": (
@@ -691,6 +699,7 @@ def _build_fused_color_plan(
         root_transforms=fused_params.get("root_transforms", []),
         solve_score_normalize=solve_score_normalize,
         color_interpretation=solve_score_output_interpretation,
+        background_color=background_color,
     )
     outputs = {
         "family": "color",

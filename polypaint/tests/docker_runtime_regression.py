@@ -534,6 +534,42 @@ def test_param_gen_threaded_runtime():
     assert len(mt_bytes) == meta_mt["data_bytes"], "param_gen multi-thread byte count mismatch"
     print("  sweep_coeffgen param_gen n_threads=1 vs 4: OK (%d bytes)" % len(mt_bytes))
 
+    def run_param_target(transforms, path):
+        spec = {
+            "mode": "param_gen",
+            "n1": 4,
+            "n2": 4,
+            "times": 1,
+            "n_threads": 1,
+            "param_transforms": transforms,
+        }
+        proc = subprocess.run(
+            ["/src/sweep_coeffgen", path],
+            input=json.dumps(spec),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        assert proc.returncode == 0, "param_gen target run failed: " + proc.stderr[:200]
+        with open(path, "rb") as fh:
+            return fh.read()
+
+    legacy_uc = run_param_target([["unit_circle"]], "/tmp/param_gen_uc_legacy.bin")
+    both_uc = run_param_target([["unit_circle", "2"]], "/tmp/param_gen_uc_both.bin")
+    t1_uc = run_param_target([["unit_circle", "0"]], "/tmp/param_gen_uc_t1.bin")
+    t2_uc = run_param_target([["unit_circle", "1"]], "/tmp/param_gen_uc_t2.bin")
+    assert legacy_uc == both_uc, "unit_circle target=both must preserve legacy no-arg output"
+    assert t1_uc != both_uc, "unit_circle target=t1 should not match both-target output"
+    assert t2_uc != both_uc, "unit_circle target=t2 should not match both-target output"
+    t1_vals = struct.unpack("<" + "f" * (len(t1_uc) // 4), t1_uc)
+    t2_vals = struct.unpack("<" + "f" * (len(t2_uc) // 4), t2_uc)
+    assert all(abs(t1_vals[i + 3]) < 1e-7 for i in range(0, len(t1_vals), 4)), "target=t1 should leave t2 imaginary raw"
+    assert all(abs(t2_vals[i + 1]) < 1e-7 for i in range(0, len(t2_vals), 4)), "target=t2 should leave t1 imaginary raw"
+    old_rtheta = run_param_target([["rtheta", "1"]], "/tmp/param_gen_rtheta_old.bin")
+    new_rtheta = run_param_target([["rtheta", "1", "2"]], "/tmp/param_gen_rtheta_new.bin")
+    assert old_rtheta == new_rtheta, "rtheta p-only form must remain equivalent to target=both"
+    print("  sweep_coeffgen targetable param transforms: OK")
+
     range_single_path = "/tmp/param_gen_range_single.bin"
     range_mt_path = "/tmp/param_gen_range_mt.bin"
     start, count = 17, 41
@@ -1266,8 +1302,10 @@ def test_roots2pix_mt_explicit_rgb_outputs_runtime():
     hsv_png_path = "/tmp/roots2pix_mt_hsv.png"
     rgb_lut_png_path = "/tmp/roots2pix_mt_rgb_lut.png"
     rgb_lut_palette_png_path = "/tmp/roots2pix_mt_rgb_lut_palette.png"
+    rgb_lut_identity_png_path = "/tmp/roots2pix_mt_rgb_lut_identity.png"
     hsv_lut_png_path = "/tmp/roots2pix_mt_hsv_lut.png"
     hsv_lut_palette_png_path = "/tmp/roots2pix_mt_hsv_lut_palette.png"
+    hsv_lut_identity_png_path = "/tmp/roots2pix_mt_hsv_lut_identity.png"
     cleanup(
         roots_path,
         manifest_path,
@@ -1281,8 +1319,10 @@ def test_roots2pix_mt_explicit_rgb_outputs_runtime():
         hsv_png_path,
         rgb_lut_png_path,
         rgb_lut_palette_png_path,
+        rgb_lut_identity_png_path,
         hsv_lut_png_path,
         hsv_lut_palette_png_path,
+        hsv_lut_identity_png_path,
     )
 
     roots_bytes = bytearray()
@@ -1449,6 +1489,43 @@ def test_roots2pix_mt_explicit_rgb_outputs_runtime():
         r = subprocess.run([
             "/src/score_raw_render",
             raw_path,
+            rgb_lut_identity_png_path,
+            "--pix=8",
+            "--channels=3",
+            "--interpretation=rgb_lut",
+            "--palette=identity",
+            "--background_color=123456",
+            "--zero_background=0",
+            "--quality=90",
+        ], capture_output=True, text=True, timeout=20)
+        assert r.returncode == 0, "score_raw_render RGB LUT identity failed: " + r.stderr[:200]
+        assert read_rgb_pixel_with_vips(rgb_lut_identity_png_path, 6, 4) == (255, 0, 128), (
+            "identity RGB LUT should map byte channels to identical RGB component bytes"
+        )
+        r = subprocess.run([
+            "/src/score_raw_render",
+            raw_path,
+            rgb_lut_identity_png_path,
+            "--pix=8",
+            "--channels=3",
+            "--interpretation=rgb_lut",
+            "--palette=identity",
+            "--background_color=123456",
+            "--quality=90",
+        ], capture_output=True, text=True, timeout=20)
+        assert r.returncode == 0, "score_raw_render RGB LUT identity with background failed: " + r.stderr[:200]
+        assert read_rgb_pixel_with_vips(rgb_lut_identity_png_path, 0, 0) == (18, 52, 86), (
+            "identity RGB LUT all-zero pixel should render background_color"
+        )
+        assert read_rgb_pixel_with_vips(rgb_lut_identity_png_path, 4, 4) == (0, 255, 0), (
+            "identity RGB LUT should not treat a single zero channel as background"
+        )
+        assert read_rgb_pixel_with_vips(rgb_lut_identity_png_path, 6, 4) == (255, 0, 128), (
+            "identity RGB LUT should remain byte-identical when zero_background is enabled"
+        )
+        r = subprocess.run([
+            "/src/score_raw_render",
+            raw_path,
             hsv_lut_png_path,
             "--pix=8",
             "--channels=3",
@@ -1478,6 +1555,40 @@ def test_roots2pix_mt_explicit_rgb_outputs_runtime():
         assert read_rgb_pixel_with_vips(hsv_lut_palette_png_path, 0, 0) == (48, 18, 59), (
             "HSV LUT palette-mode zero should sample the palette left edge"
         )
+        r = subprocess.run([
+            "/src/score_raw_render",
+            raw_path,
+            hsv_lut_identity_png_path,
+            "--pix=8",
+            "--channels=3",
+            "--interpretation=hsv_lut",
+            "--palette=identity_hsv",
+            "--background_color=123456",
+            "--zero_background=0",
+            "--quality=90",
+        ], capture_output=True, text=True, timeout=20)
+        assert r.returncode == 0, "score_raw_render HSV LUT identity_hsv failed: " + r.stderr[:200]
+        assert read_rgb_pixel_with_vips(hsv_lut_identity_png_path, 6, 4) == read_rgb_pixel_with_vips(hsv_png_path, 6, 4), (
+            "identity_hsv HSV LUT should match direct HSV at byte-aligned sample points"
+        )
+        r = subprocess.run([
+            "/src/score_raw_render",
+            raw_path,
+            hsv_lut_identity_png_path,
+            "--pix=8",
+            "--channels=3",
+            "--interpretation=hsv_lut",
+            "--palette=identity_hsv",
+            "--background_color=123456",
+            "--quality=90",
+        ], capture_output=True, text=True, timeout=20)
+        assert r.returncode == 0, "score_raw_render HSV LUT identity_hsv with background failed: " + r.stderr[:200]
+        assert read_rgb_pixel_with_vips(hsv_lut_identity_png_path, 0, 0) == (18, 52, 86), (
+            "identity_hsv HSV LUT all-zero pixel should render background_color"
+        )
+        assert read_rgb_pixel_with_vips(hsv_lut_identity_png_path, 6, 4) == read_rgb_pixel_with_vips(hsv_png_path, 6, 4), (
+            "identity_hsv HSV LUT should remain direct-HSV-compatible when zero_background is enabled"
+        )
         print("  roots2pix_mt explicit RGB outputs: OK")
     finally:
         cleanup(
@@ -1491,8 +1602,10 @@ def test_roots2pix_mt_explicit_rgb_outputs_runtime():
             hsv_png_path,
             rgb_lut_png_path,
             rgb_lut_palette_png_path,
+            rgb_lut_identity_png_path,
             hsv_lut_png_path,
             hsv_lut_palette_png_path,
+            hsv_lut_identity_png_path,
         )
     print("=== roots2pix_mt explicit RGB output runtime PASSED ===")
 

@@ -109,6 +109,42 @@ class TestRenderPlan(unittest.TestCase):
         self.assertEqual(plan["calc"]["n_coeffs"], 6)
         self.assertEqual(plan["calc"]["n_chunks"], 4)
 
+    @patch("handler_render_plan._storage_call")
+    def test_color_plan_accepts_identity_palette(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        from handler_render_plan import handler
+
+        for palette in ("identity", "identity_hsv"):
+            with self.subTest(palette=palette):
+                result = handler(_make_event(palette=palette), None)
+                plan = json.loads(result["body"])
+
+                self.assertEqual(plan["params"]["palette"], palette)
+                self.assertEqual(plan["outputs"]["metadata"]["palette"], palette)
+
+    @patch("handler_render_plan._storage_call")
+    def test_color_plan_accepts_custom_background_color(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        from handler_render_plan import handler
+
+        result = handler(_make_event(background_color="#123456"), None)
+        plan = json.loads(result["body"])
+        default_plan = json.loads(handler(_make_event(), None)["body"])
+
+        self.assertEqual(plan["params"]["background_color"], "123456")
+        self.assertEqual(plan["outputs"]["metadata"]["background_color"], "123456")
+        self.assertIn('"background_color":"123456"', plan["outputs"]["metadata"]["render_execution"])
+        self.assertIn("sha256:", plan["outputs"]["plan_params_digest"])
+        self.assertNotEqual(plan["outputs"]["plan_params_digest"], default_plan["outputs"]["plan_params_digest"])
+
+    @patch("handler_render_plan._storage_call")
+    def test_color_plan_rejects_invalid_background_color(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        from handler_render_plan import handler
+
+        with self.assertRaisesRegex(RuntimeError, "background_color must be 6-digit hex"):
+            handler(_make_event(background_color="not-a-color"), None)
+
     @patch("handler_render_plan._invoke_sync")
     @patch("handler_render_plan._storage_call")
     def test_color_plan_auto_viewport(self, mock_storage, mock_invoke):
@@ -223,6 +259,7 @@ class TestRenderPlan(unittest.TestCase):
             {
                 "raster_engine",
                 "save_associated_palette",
+                "background_color",
                 "raster_mt_threads",
                 "raster_workers",
                 "solve_score_threads",

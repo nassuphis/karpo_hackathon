@@ -469,16 +469,16 @@ The selected palette is treated as a continuous RGB ramp. For each pixel:
 
 ```text
 x0, x1, x2 = emitted bytes
-c0 = palette_rgb((x0 - 1) / 254)
-c1 = palette_rgb((x1 - 1) / 254)
-c2 = palette_rgb((x2 - 1) / 254)
+c0 = palette_rgb(x0 / 255)
+c1 = palette_rgb(x1 / 255)
+c2 = palette_rgb(x2 / 255)
 output_rgb = (c0.r, c1.g, c2.b)
 ```
 
 The three emitted values are not direct RGB components. They are independent
 palette lookup coordinates. If all three bytes are zero, output
-`background_color`. A zero byte in a non-background pixel uses the matching
-background component for that channel.
+`background_color`. A zero byte in a non-background pixel is a normal lookup
+coordinate and uses the palette's left edge for that channel.
 
 For generated associated-palette artifacts, the same bytes are rendered as a
 dense parameter-grid field and zero is not reserved:
@@ -503,9 +503,9 @@ For each pixel:
 
 ```text
 x0, x1, x2 = emitted bytes
-c0 = palette_hsv((x0 - 1) / 254)
-c1 = palette_hsv((x1 - 1) / 254)
-c2 = palette_hsv((x2 - 1) / 254)
+c0 = palette_hsv(x0 / 255)
+c1 = palette_hsv(x1 / 255)
+c2 = palette_hsv(x2 / 255)
 output_hsv = (c0.h, c1.s, c2.v)
 output_rgb = hsv_to_rgb(output_hsv)
 ```
@@ -515,8 +515,8 @@ lookup so zero maps to the palette's left edge instead of background.
 
 The three emitted values are not direct H/S/V components. They are independent
 palette lookup coordinates. If all three bytes are zero, output
-`background_color`. A zero byte in a non-background pixel uses the matching
-background HSV component for that channel.
+`background_color`. A zero byte in a non-background pixel is a normal lookup
+coordinate and uses the palette's left edge for that channel.
 
 ### `palette_mix` / `palette_modulate`
 
@@ -750,9 +750,10 @@ out_v = palette_hsv(raw.channel_2).v
 out.rgb = hsv_to_rgb(out_h, out_s, out_v)
 ```
 
-For final sparse render images, LUT modes reserve zero for background and map
-`1..255` to the palette ramp. For generated associated-palette images, LUT modes
-use dense `0..255` lookup coordinates.
+For final sparse render images, LUT modes reserve only the all-zero tuple for
+background. Individual channel bytes still use dense `0..255` lookup
+coordinates. Generated associated-palette images disable the all-zero background
+rule so `(0, 0, 0)` can be shown as data.
 
 Do not treat RGB repalette as three full RGB palettes unless a combine rule is explicitly added:
 

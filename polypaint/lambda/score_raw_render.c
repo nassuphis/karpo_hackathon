@@ -260,19 +260,8 @@ static int convert_palette_component_lut_raw_to_image(const char *inPath, VipsIm
     }
     unsigned char rLut[256], gLut[256], bLut[256];
     double hLut[256], sLut[256], vLut[256];
-    double bgH = 0.0, bgS = 0.0, bgV = 0.0;
-    rgb_to_hsv_unit(bgR, bgG, bgB, &bgH, &bgS, &bgV);
     for (int i = 0; i < 256; i++) {
-        if (zeroBackground && i == 0) {
-            rLut[i] = bgR;
-            gLut[i] = bgG;
-            bLut[i] = bgB;
-            hLut[i] = bgH;
-            sLut[i] = bgS;
-            vLut[i] = bgV;
-            continue;
-        }
-        double t = zeroBackground ? (double)(i - 1) / 254.0 : (double)i / 255.0;
+        double t = (double)i / 255.0;
         if (hsvSpace) {
             paletteHSV(pal, t, &hLut[i], &sLut[i], &vLut[i]);
         } else {

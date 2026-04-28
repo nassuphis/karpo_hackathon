@@ -18,6 +18,7 @@ INTERPRETATION_ALIASES = {
 
 VALID_COLOR_INTERPRETATIONS = {"scalar_lut", "rgb", "hsv", "rgb_lut", "hsv_lut"}
 CHANNEL_LUT_INTERPRETATIONS = {"rgb_lut", "hsv_lut"}
+DEFAULT_BACKGROUND_COLOR = "000000"
 
 
 def normalize_color_interpretation(value, *, default="scalar_lut"):
@@ -28,6 +29,17 @@ def normalize_color_interpretation(value, *, default="scalar_lut"):
     except KeyError:
         allowed = ", ".join(sorted(VALID_COLOR_INTERPRETATIONS))
         raise RuntimeError(f"color_interpretation must be one of {allowed}, got {value!r}")
+
+
+def normalize_background_color(value, *, default=DEFAULT_BACKGROUND_COLOR):
+    text = str(value if value not in (None, "") else default).strip().lower()
+    if text.startswith("#"):
+        text = text[1:]
+    if len(text) == 3 and all(ch in "0123456789abcdef" for ch in text):
+        text = "".join(ch + ch for ch in text)
+    if len(text) != 6 or any(ch not in "0123456789abcdef" for ch in text):
+        raise RuntimeError(f"background_color must be 6-digit hex, got {value!r}")
+    return text
 
 
 def channel_names_for_interpretation(interpretation, channel_count):

@@ -102,7 +102,7 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         mock_run.side_effect = subprocess_fake
         mock_render.side_effect = render_fake
 
-        resp = handler(_event(lores_N=1), None)
+        resp = handler(_event(lores_N=1, background_color="#abc"), None)
         self.assertEqual(resp["statusCode"], 200, resp["body"])
         body = json.loads(resp["body"])
         self.assertEqual(body["content_type"], "image/png")
@@ -135,8 +135,19 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         self.assertIn("--associated_palette_fragment_prefix=/tmp/render_lores_preview_palette_fragment", raster_cmd)
         self.assertIn("--palette_grid_n=1", raster_cmd)
         self.assertIn("--palette_step_start=0", raster_cmd)
+        image_render_call = mock_render.call_args_list[0].kwargs
+        self.assertEqual(image_render_call["background_color"], "aabbcc")
         palette_render_call = mock_render.call_args_list[1].kwargs
         self.assertFalse(palette_render_call["zero_background"])
+
+    def test_rejects_invalid_background_color(self):
+        from handler_render_lores_preview import handler
+
+        resp = handler(_event(background_color="not-a-color"), None)
+        self.assertEqual(resp["statusCode"], 500)
+        body = json.loads(resp["body"])
+        self.assertIn("background_color must be 6-digit hex", body["detail"])
+        self.assertEqual(body["phase"], "render-lores-preview")
 
     @patch("handler_render_lores_preview.render_score_raw")
     @patch("handler_render_lores_preview.subprocess.run")

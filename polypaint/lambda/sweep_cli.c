@@ -2297,6 +2297,54 @@ static void pt_rrect(double *z1r, double *z1i, double *z2r, double *z2i, int n, 
     else if (n == 2) { pt_rrect_one(z1r, z1i, w, h, m); pt_rrect_one(z2r, z2i, w, h, m); }
 }
 
+static int pt_target_value(const double *args, int nArgs, int idx, int fallback) {
+    if (!args || idx < 0 || idx >= nArgs) return fallback;
+    int n = (int)args[idx];
+    return (n == 0 || n == 1 || n == 2) ? n : fallback;
+}
+
+static void pt_apply_independent_target(ParamTransform fn,
+                                        double *z1r, double *z1i,
+                                        double *z2r, double *z2i,
+                                        int n) {
+    if (!fn) return;
+    if (n == 2) {
+        fn(z1r, z1i, z2r, z2i);
+        return;
+    }
+    if (n == 0) {
+        double t2r = *z2r, t2i = *z2i;
+        fn(z1r, z1i, &t2r, &t2i);
+        return;
+    }
+    if (n == 1) {
+        double t1r = *z1r, t1i = *z1i;
+        fn(&t1r, &t1i, z2r, z2i);
+    }
+}
+
+static int pt_is_targetable_independent(const char *name) {
+    return strcmp(name, "unit_circle") == 0 ||
+           strcmp(name, "square") == 0 ||
+           strcmp(name, "cube") == 0 ||
+           strcmp(name, "reciprocal") == 0 ||
+           strcmp(name, "conjugate") == 0 ||
+           strcmp(name, "negate") == 0 ||
+           strcmp(name, "exp") == 0 ||
+           strcmp(name, "xim") == 0;
+}
+
+static void pt_rtheta_target(double *z1r, double *z1i, double *z2r, double *z2i,
+                             int n, double p) {
+    double in1r = *z1r, in2r = *z2r;
+    double r1 = pow(in1r, p), r2 = pow(in2r, p);
+    double a1 = 2.0 * M_PI * in2r, a2 = 2.0 * M_PI * in1r;
+    double out1r = r1 * cos(a1), out1i = r1 * sin(a1);
+    double out2r = r2 * cos(a2), out2i = r2 * sin(a2);
+    if (n == 0 || n == 2) { *z1r = out1r; *z1i = out1i; }
+    if (n == 1 || n == 2) { *z2r = out2r; *z2i = out2i; }
+}
+
 /* xim: t1' = i*Re(t1), t2' = i*Re(t2). Real parts become imaginary, imag discarded. */
 static void pt_xim(double *z1r, double *z1i, double *z2r, double *z2i) {
     double a = *z1r, c = *z2r;
@@ -3872,10 +3920,8 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
     /* rtheta(p): z1 = pow(x1,p)*exp(2*pi*x2*i), z2 = pow(x2,p)*exp(2*pi*x1*i) */
     if (strcmp(e->name, "rtheta") == 0) {
         double p = e->nArgs > 0 ? e->args[0] : 1.0;
-        double r1 = pow(*z1r, p), r2 = pow(*z2r, p);
-        double a1 = 2.0 * M_PI * *z2r, a2 = 2.0 * M_PI * *z1r;
-        *z1r = r1 * cos(a1); *z1i = r1 * sin(a1);
-        *z2r = r2 * cos(a2); *z2i = r2 * sin(a2);
+        int n = pt_target_value(e->args, e->nArgs, 1, 2);
+        pt_rtheta_target(z1r, z1i, z2r, z2i, n, p);
         return 0;
     }
     if (strcmp(e->name, "moebius") == 0) {
@@ -4027,6 +4073,12 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
     }
     if (strcmp(e->name, "roots6") == 0) {
         pt_roots6(z1r, z1i, z2r, z2i);
+        return 0;
+    }
+    if (pt_is_targetable_independent(e->name)) {
+        ParamTransform fn = lookupParamTransform(e->name);
+        int n = pt_target_value(e->args, e->nArgs, 0, 2);
+        pt_apply_independent_target(fn, z1r, z1i, z2r, z2i, n);
         return 0;
     }
     /* Fall back to standard param transforms (no extra args) */

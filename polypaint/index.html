@@ -186,6 +186,64 @@ button {
     letter-spacing: 0.07em;
     text-transform: uppercase;
 }
+.render-background-panel {
+    display: grid;
+    grid-template-columns: minmax(86px, 112px) minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    margin-top: 6px;
+    padding: 8px;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    background: rgba(255,255,255,0.025);
+}
+.render-background-label {
+    color: #d8e1f1;
+    font-size: 11px;
+    line-height: 13px;
+}
+.render-background-controls {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    flex-wrap: wrap;
+}
+.render-background-color {
+    width: 34px;
+    height: 26px;
+    padding: 0;
+    margin: 0;
+    border: 1px solid rgba(255,255,255,0.18);
+    border-radius: 6px;
+    background: #000;
+    cursor: pointer;
+}
+.render-background-hex {
+    width: 76px;
+    font-family: monospace;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.render-background-swatch {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    margin: 0;
+    border: 1px solid rgba(255,255,255,0.22);
+    border-radius: 50%;
+    cursor: pointer;
+}
+.render-background-eye {
+    margin: 0;
+    padding: 3px 8px;
+    font-size: 10px;
+}
+.render-background-status {
+    color: #778599;
+    font-size: 10px;
+    line-height: 13px;
+}
 .score-chip .chip-actions {
     display: inline-flex; align-items: center; gap: 1px;
     margin-right: 3px;
@@ -836,8 +894,7 @@ button {
     -webkit-user-drag: none;
 }
 .render-lores-preview-tabs {
-    width: 256px;
-    max-width: 100%;
+    width: 100%;
     margin-top: 8px;
 }
 .render-lores-preview-tabbar {
@@ -865,10 +922,21 @@ button {
 .render-lores-preview-pane.active {
     display: block;
 }
+.render-lores-preview-box {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    border: 1px solid #0f3460;
+    border-radius: 4px;
+    background: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    min-width: 0;
+}
 .render-lores-preview-histbox {
-    width: 256px;
-    height: 256px;
-    max-width: 100%;
+    width: 100%;
+    aspect-ratio: 1 / 1;
     border: 1px solid #0f3460;
     border-radius: 4px;
     background: #05070c;
@@ -1263,6 +1331,23 @@ button {
                             <option value="cw">CW</option>
                         </select>
                     </div>
+                    <div class="color-title" style="margin-top:10px">Background</div>
+                    <div class="render-background-panel">
+                        <label class="render-background-label" for="render-background-color">Background</label>
+                        <div class="render-background-controls">
+                            <input type="color" id="render-background-color" class="render-background-color" value="#000000"
+                                oninput="_setRenderBackgroundColor(this.value)">
+                            <input type="text" id="render-background-hex" class="render-background-hex" value="000000" maxlength="7" spellcheck="false"
+                                oninput="_setRenderBackgroundColor(this.value, {fromText:true})"
+                                onblur="_commitRenderBackgroundHex()">
+                            <button type="button" id="render-background-eyedropper" class="btn-secondary render-background-eye" onclick="_pickRenderBackgroundColor()" title="Sample a color from the screen">Pipette</button>
+                            <button type="button" class="render-background-swatch" style="background:#000000" title="Black" onclick="_setRenderBackgroundColor('000000')"></button>
+                            <button type="button" class="render-background-swatch" style="background:#ffffff" title="White" onclick="_setRenderBackgroundColor('ffffff')"></button>
+                            <button type="button" class="render-background-swatch" style="background:#123456" title="Slate" onclick="_setRenderBackgroundColor('123456')"></button>
+                            <button type="button" class="render-background-swatch" style="background:#0f3460" title="PolyPaint blue" onclick="_setRenderBackgroundColor('0f3460')"></button>
+                            <span id="render-background-status" class="render-background-status">#000000</span>
+                        </div>
+                    </div>
                     <div class="color-title" style="margin-top:10px">Color</div>
                     <div class="color-mode-panel" id="render-color-mode-panel">
                         <div class="color-mode-row active" data-color-interpretation-row="scalar_lut">
@@ -1337,7 +1422,7 @@ button {
                             <button type="button" id="render-lores-preview-tab-e3" class="render-lores-preview-tab" style="display:none" onclick="_selectRenderLoresPreviewTab('e3')">E3</button>
                         </div>
                         <div id="render-lores-preview-pane-plot" class="render-lores-preview-pane active">
-                            <div id="render-lores-preview-box" style="width:256px; height:256px; max-width:100%; border:1px solid #0f3460; border-radius:4px; background:#000; display:flex; align-items:center; justify-content:center; overflow:hidden">
+                            <div id="render-lores-preview-box" class="render-lores-preview-box">
                                 <div id="render-lores-preview-stage" class="render-lores-preview-stage inactive">
                                     <canvas id="render-lores-preview-canvas" width="256" height="256" style="width:100%; height:100%; image-rendering:pixelated; display:block"></canvas>
                                     <div id="render-lores-preview-marquee" class="render-preview-marquee" aria-hidden="true"></div>
@@ -4065,6 +4150,81 @@ function _boolish(value, fallback = false) {
     return !!fallback;
 }
 
+function _normalizeRenderBackgroundColor(value, fallback = '', options = {}) {
+    let text = String(value == null ? '' : value).trim().toLowerCase();
+    const allowShort = options.allowShort !== false;
+    if (text.startsWith('#')) text = text.slice(1);
+    if (allowShort && /^[0-9a-f]{3}$/.test(text)) text = text.split('').map(ch => ch + ch).join('');
+    if (/^[0-9a-f]{6}$/.test(text)) return text;
+    return fallback;
+}
+
+function _syncRenderBackgroundColorUi(message = '') {
+    const normalized = _normalizeRenderBackgroundColor(renderBackgroundColor, DEFAULT_RENDER_BACKGROUND_COLOR);
+    renderBackgroundColor = normalized;
+    const colorEl = document.getElementById('render-background-color');
+    const hexEl = document.getElementById('render-background-hex');
+    const statusEl = document.getElementById('render-background-status');
+    const eyeBtn = document.getElementById('render-background-eyedropper');
+    if (colorEl) colorEl.value = '#' + normalized;
+    if (hexEl) hexEl.value = normalized.toUpperCase();
+    if (statusEl) statusEl.textContent = message || ('#' + normalized.toUpperCase());
+    const supportsEyeDropper = typeof window !== 'undefined' && 'EyeDropper' in window;
+    if (eyeBtn && !supportsEyeDropper) {
+        eyeBtn.disabled = true;
+        eyeBtn.title = 'Screen pipette is not supported by this browser';
+    }
+}
+
+function _setRenderBackgroundColor(value, options = {}) {
+    const normalized = _normalizeRenderBackgroundColor(value, '', { allowShort: !options.fromText });
+    const statusEl = document.getElementById('render-background-status');
+    if (!normalized) {
+        if (statusEl) statusEl.textContent = 'Use 6-digit hex';
+        if (!options.fromText) _syncRenderBackgroundColorUi();
+        return false;
+    }
+    renderBackgroundColor = normalized;
+    _syncRenderBackgroundColorUi();
+    return true;
+}
+
+function _commitRenderBackgroundHex() {
+    const hexEl = document.getElementById('render-background-hex');
+    if (!_setRenderBackgroundColor(hexEl ? hexEl.value : renderBackgroundColor)) {
+        _syncRenderBackgroundColorUi();
+    }
+}
+
+function _readRenderBackgroundColor({ requireValid = false } = {}) {
+    const hexEl = document.getElementById('render-background-hex');
+    const value = hexEl ? hexEl.value : renderBackgroundColor;
+    const normalized = _normalizeRenderBackgroundColor(value, '');
+    if (!normalized) {
+        if (requireValid) throw new Error('Background color must be a 6-digit hex color');
+        return _normalizeRenderBackgroundColor(renderBackgroundColor, DEFAULT_RENDER_BACKGROUND_COLOR);
+    }
+    renderBackgroundColor = normalized;
+    _syncRenderBackgroundColorUi();
+    return normalized;
+}
+
+async function _pickRenderBackgroundColor() {
+    if (typeof window === 'undefined' || !('EyeDropper' in window)) {
+        const statusEl = document.getElementById('render-background-status');
+        if (statusEl) statusEl.textContent = 'Pipette unsupported';
+        return;
+    }
+    try {
+        const dropper = new EyeDropper();
+        const result = await dropper.open();
+        if (result && result.sRGBHex) _setRenderBackgroundColor(result.sRGBHex);
+    } catch (e) {
+        const statusEl = document.getElementById('render-background-status');
+        if (statusEl) statusEl.textContent = 'Pipette cancelled';
+    }
+}
+
 function _normalizeSolveScoreMetricSource(value, fallback = 'slv') {
     const source = String(value == null ? '' : value).trim().toLowerCase();
     return (source === 'slv' || source === 'cf' || source === 'pm') ? source : fallback;
@@ -4669,6 +4829,9 @@ function _legacySolveScoreState(prefix) {
         uses_coeff_source: compiled ? compiled.uses_coeff_source : false,
         uses_param_source: compiled ? compiled.uses_param_source : false,
         uses_non_solve_source: compiled ? compiled.uses_non_solve_source : false,
+        has_explicit_outputs: compiled ? !!compiled.has_explicit_outputs : false,
+        output_channel_count: compiled ? Number(compiled.output_channel_count) || 1 : 1,
+        output_channels: compiled ? (compiled.output_channels || []) : [{ name: 'score', emit: 'implicit', channel: 0, range_normalized: false }],
         program_spec: compiled ? compiled.program_spec : '',
         display: compiled ? compiled.display : '',
     };
@@ -5614,9 +5777,11 @@ document.addEventListener('keydown', function(e) {
 });
 
 /* ---- Color controls ---- */
+const DEFAULT_RENDER_BACKGROUND_COLOR = '000000';
 let renderColorMode = 'solve_score';
 let renderColorInterpretation = 'scalar_lut';
 let renderMatchMode = 'none';
+let renderBackgroundColor = DEFAULT_RENDER_BACKGROUND_COLOR;
 let renderRootProximityPalette = 'inferno';
 let renderSolveScorePalette = 'inferno';
 let renderSolveMetric = 'proximity';
@@ -5749,6 +5914,8 @@ const PALETTE_DEFS = [
     { name: 'plasma',   stops: ['#0d0887','#7e03a8','#cc4778','#f89540','#f0f921','#f0f921'] },
     { name: 'turbo',    stops: ['#30123b','#28bbec','#a2fc3c','#fb8022','#7a0403','#7a0403'] },
     { name: 'cividis',  stops: ['#00204c','#31446b','#666870','#958f78','#cebe5a','#fde724'] },
+    { name: 'identity', stops: ['#000000','#ffffff'] },
+    { name: 'identity_hsv', stops: ['#000000','#20201c','#384030','#3c6045','#40806e','#3c56a0','#8240c2','#d224d4','#ff0000'] },
     { name: 'warm',     stops: ['#6e40aa','#e04f7e','#f19938','#c3e032','#aff05b','#aff05b'] },
     { name: 'cool',     stops: ['#6e40aa','#4775de','#1bb5a8','#52f667','#aff05b','#aff05b'] },
     { name: 'bwred',    stops: ['#2166ac','#67a9cf','#c7e5f4','#fde0dd','#e57e6b','#960612'] },
@@ -6153,6 +6320,15 @@ function _solveScoreColorCompatibility(compiled, interpretation = _selectedRende
     return '';
 }
 
+function _solveScorePaletteCompatibility(compiled) {
+    const count = Number(compiled && compiled.output_channel_count) || 1;
+    if (compiled && compiled.has_explicit_outputs) {
+        return 'Palette Generate requires a scalar solve-score program; explicit emit outputs are color-render only in v1';
+    }
+    if (count !== 1) return `Palette Generate requires one scalar output, got ${count}`;
+    return '';
+}
+
 function _syncRenderColorInterpretationUi() {
     const mode = _selectedRenderColorInterpretation();
     document.querySelectorAll('[data-color-interpretation-row]').forEach(row => {
@@ -6204,7 +6380,9 @@ function _updateSolveScoreButtons() {
     let issue = '';
     try {
         const compiled = _compileSolveScoreChain(_chainForWhich('ss'), renderSolveMetric);
-        issue = _solveScoreColorCompatibility(compiled, _selectedRenderColorInterpretation());
+        issue = _renderActiveFamily === 'palette'
+            ? _solveScorePaletteCompatibility(compiled)
+            : _solveScoreColorCompatibility(compiled, _selectedRenderColorInterpretation());
         chainValid = !issue;
     }
     catch (e) {
@@ -6227,12 +6405,18 @@ function _updatePaletteCreateButton() {
     const btn = document.getElementById('btn-palette-create');
     if (!btn) return;
     let enabled = true;
+    let issue = '';
     try {
-        _compileSolveScoreChain(_chainForWhich('palette-ss'), paletteTabMetric);
+        const compiled = _compileSolveScoreChain(_chainForWhich('palette-ss'), paletteTabMetric);
+        issue = _solveScorePaletteCompatibility(compiled);
+        enabled = !issue;
     }
-    catch (e) { enabled = false; }
+    catch (e) { enabled = false; issue = e && e.message ? e.message : String(e); }
     btn.disabled = !enabled || !!_activePaletteRun;
     btn.style.opacity = enabled ? '' : '0.4';
+    btn.title = issue || 'Generate a scalar solve-score palette artifact';
+    const labelEl = document.getElementById('palette-ss-stack-label');
+    if (labelEl && issue) labelEl.textContent = issue;
 }
 
 function setMatch(mode) {
@@ -9392,8 +9576,13 @@ _clearPaletteCanvas('No palette selected');
 /* ---- Chip-based transform chains ---- */
 // params: array of {placeholder, defaultValue} — one input per param. Empty = no params.
 const _ptCatalog = {
-    unit_circle: {}, rtheta: { params: [{ph:'p', def:'1'}] },
-    square: {}, cube: {}, reciprocal: {}, conjugate: {}, swap: {},
+    unit_circle: { params: [{ph:'target', def:'both', target: true}] },
+    rtheta: { params: [{ph:'p', def:'1'}, {ph:'target', def:'both', target: true}] },
+    square: { params: [{ph:'target', def:'both', target: true}] },
+    cube: { params: [{ph:'target', def:'both', target: true}] },
+    reciprocal: { params: [{ph:'target', def:'both', target: true}] },
+    conjugate: { params: [{ph:'target', def:'both', target: true}] },
+    swap: {},
     add_sub: {}, mul_div: {},
     moebius: {
         params: [
@@ -9404,7 +9593,10 @@ const _ptCatalog = {
         ],
         label: 'moebius',
     },
-    negate: {}, exp: {}, xim: {}, zzold: {}, zz1: {}, zz2: {}, zz3: {},
+    negate: { params: [{ph:'target', def:'both', target: true}] },
+    exp: { params: [{ph:'target', def:'both', target: true}] },
+    xim: { params: [{ph:'target', def:'both', target: true}] },
+    zzold: {}, zz1: {}, zz2: {}, zz3: {},
     inv_t_plus_2: { params: [{ph:'re1', def:'2'}, {ph:'im1', def:'0'}, {ph:'re2', def:'2'}, {ph:'im2', def:'0'}] },
     t1radd: { label: 't1.re = t1.re +', params: [{ph:'v', def:'0'}] },
     t1iadd: { label: 't1.im = t1.im +', params: [{ph:'v', def:'0'}] },
@@ -10176,6 +10368,21 @@ function _targetToWire(sym) {
     return '0';
 }
 
+function _paramValue(item, pDefs, idx) {
+    const params = Array.isArray(item && item.params) ? item.params : [];
+    if (params[idx] != null && params[idx] !== '') return params[idx];
+    const def = pDefs && pDefs[idx] ? pDefs[idx].def : '';
+    return def == null ? '' : String(def);
+}
+
+function _chipMoveControlsHtml(which, idx) {
+    if (!['pt', 'ct', 'rt', 'palette-rt'].includes(which)) return '';
+    const count = _chainForWhich(which).length;
+    const leftDisabled = idx <= 0 ? ' disabled' : '';
+    const rightDisabled = idx >= count - 1 ? ' disabled' : '';
+    return `<span class="chip-actions"><button type="button" class="chip-move" onclick="event.stopPropagation();moveChip('${which}',${idx},-1)" title="Move left"${leftDisabled}>&lt;</button><button type="button" class="chip-move" onclick="event.stopPropagation();moveChip('${which}',${idx},1)" title="Move right"${rightDisabled}>&gt;</button></span>`;
+}
+
 function _displayParamTransforms() {
     return _ptChain.map(item => {
         if (!item.params || !item.params.length) return [item.name];
@@ -10309,6 +10516,14 @@ function updateChipParam(chipIdx, paramIdx, value, which) {
 
 function _chipInputHtml(which, chipIdx, paramIdx, value, paramDef) {
     const pd = paramDef || {};
+    if (pd.target) {
+        const normalizedValue = _normalizeTarget(String(value == null ? '' : value)) || _normalizeTarget(String(pd.def || 'both')) || 'both';
+        const options = ['t1', 't2', 'both'].map(choice => {
+            const selected = normalizedValue === choice ? ' selected' : '';
+            return `<option value="${choice}"${selected}>${choice}</option>`;
+        }).join('');
+        return `<select class="chip-input chip-input-target" onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">${options}</select>`;
+    }
     if (Array.isArray(pd.choices) && pd.choices.length) {
         const normalizedValue = String(value == null ? '' : value).trim().toLowerCase();
         const options = pd.choices.map(choice => {
@@ -10492,7 +10707,8 @@ function _renderRtChipHtml(item, i, which, catalog) {
         ).join('');
         return `<span class="chip">${label}${baseInputsHtml}<span class="chip-formula"><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
     }
-    const inputsHtml = item.params.map((val, pi) => _chipInputHtml(which, i, pi, val, pDefs[pi] || {})).join('');
+    const inputDefs = pDefs.length ? pDefs : (item.params || []).map(() => ({}));
+    const inputsHtml = inputDefs.map((pDef, pi) => _chipInputHtml(which, i, pi, _paramValue(item, pDefs, pi), pDef || {})).join('');
     return `<span class="chip">${label}${inputsHtml}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
 }
 
@@ -10503,6 +10719,11 @@ function _renderChips(which) {
     if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {
         const catalog = _catalogForChain(which);
         el.innerHTML = chain.map((item, i) => _renderRtChipHtml(item, i, which, catalog)).join('');
+        if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt') {
+            Array.from(el.children).filter(chip => chip.classList && chip.classList.contains('chip')).forEach((chip, i) => {
+                chip.insertAdjacentHTML('afterbegin', _chipMoveControlsHtml(which, i));
+            });
+        }
     } else {
         el.innerHTML = chain.map((name, i) =>
             `<span class="chip">${_escapeHtml(name)}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`
@@ -10615,6 +10836,7 @@ function _renderCommonParams(options = {}) {
     const colorInterpretation = _selectedRenderColorInterpretation();
     const colorIssue = _solveScoreColorCompatibility(solveScore, colorInterpretation);
     if (options.requireSolveScore && colorIssue) throw new Error(colorIssue);
+    const backgroundColor = _readRenderBackgroundColor({ requireValid: true });
     const explicitBounds = _viewMode === 'explicit'
         ? _readRenderExplicitViewportBounds({ requireValid: true })
         : { minRe: null, maxRe: null, minIm: null, maxIm: null };
@@ -10640,10 +10862,14 @@ function _renderCommonParams(options = {}) {
         solveScoreProgramSpec: solveScore.program_spec,
         solveScoreDisplay: solveScore.display,
         solveScoreMetrics: solveScore.metrics,
+        solveScoreHasExplicitOutputs: !!solveScore.has_explicit_outputs,
+        solveScoreOutputChannelCount: Number(solveScore.output_channel_count) || 1,
+        solveScoreOutputChannels: solveScore.output_channels || [],
         solveScoreUsesCoeffSource: !!solveScore.uses_coeff_source,
         solveScoreUsesParamSource: !!solveScore.uses_param_source,
         solveScoreUsesNonSolveSource: !!solveScore.uses_non_solve_source,
         colorInterpretation,
+        backgroundColor,
         solveScoreNormalize: !!document.getElementById('render-score-normalization')?.checked,
         rotation: (() => {
             const turns = parseFloat(document.getElementById('render-rotation').value) || 0;
@@ -10914,6 +11140,8 @@ async function runPaletteArtifact() {
         log('Palette artifact: starting...', '', 'palette-log');
 
         const score = _resolveSolveScoreState('palette', { requireChain: true });
+        const paletteIssue = _solveScorePaletteCompatibility(score);
+        if (paletteIssue) throw new Error(paletteIssue);
         const runId = _generateRunId();
         const taskId = 'palette_run_' + runId;
         const orchPayload = {
@@ -11529,6 +11757,7 @@ async function _launchFusedRenderOrchestrator(paramsPatch = null) {
         rotation: p.rotation,
         color_mode: 'solve_score',
         color_interpretation: p.colorInterpretation,
+        background_color: p.backgroundColor,
         solve_score_chain: p.solveScoreChain,
         solve_score_normalize: !!p.solveScoreNormalize,
         palette: _activeRenderPalette() || 'inferno',
@@ -12243,7 +12472,7 @@ async function runRenderLoresPreview() {
             preview_pix: previewPix,
             quality: p.quality,
             palette: _activeRenderPalette() || 'inferno',
-            background_color: '000000',
+            background_color: p.backgroundColor,
             view_mode: _viewMode,
             quantile: p.quantile,
             shim: p.shim,
@@ -12527,6 +12756,11 @@ async function runRenderPaletteArtifact() {
         log('Palette artifact: starting...', '', 'render-log');
 
         const p = _renderCommonParams({ requireSolveScore: true });
+        const paletteIssue = _solveScorePaletteCompatibility({
+            has_explicit_outputs: p.solveScoreHasExplicitOutputs,
+            output_channel_count: p.solveScoreOutputChannelCount,
+        });
+        if (paletteIssue) throw new Error(paletteIssue);
         const runId = _generateRunId();
         const taskId = 'palette_run_' + runId;
         const orchPayload = {
@@ -14052,6 +14286,7 @@ function populateSelectedRenderArtifact() {
 
         restoreRenderOutputFields(entry);
         _restoreRenderExecutionState(entry);
+        if (entry.background_color) _setRenderBackgroundColor(entry.background_color);
 
         if (Array.isArray(entry.root_transforms)) {
             _setRenderRootTransforms(entry.root_transforms);
@@ -14103,6 +14338,7 @@ function populateSelectedRenderArtifact() {
         restoreSolveScoreNormalize(art);
         if (art.palette) setPaletteForMode('solve_score', art.palette);
         else warnings.push('palette');
+        if (art.background_color) _setRenderBackgroundColor(art.background_color);
         if (Array.isArray(art.root_transforms)) {
             _setRenderRootTransforms(art.root_transforms);
         }
@@ -16015,6 +16251,7 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
 
 
 // Populate hidden fallback selects and render transform picker popups.
+_syncRenderBackgroundColorUi();
 _syncParamTransformAddOptions();
 _syncCoeffTransformAddOptions();
 

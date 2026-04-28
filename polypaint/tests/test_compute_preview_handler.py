@@ -189,6 +189,69 @@ class TestComputePreviewHandler(unittest.TestCase):
         self.assertIn("param_program", specs[0])
         self.assertEqual(specs[0]["param_program"]["token_count"], 8)
 
+    @patch("handler_compute_preview.tmp_space_stats")
+    @patch("handler_compute_preview.subprocess.run")
+    @patch("handler_compute_preview.compute_viewport_from_bin")
+    def test_compute_preview_accepts_moebius_imag_first_coefficients(self, mock_viewport, mock_run, mock_tmp_stats):
+        import handler_compute_preview as mod
+
+        mock_tmp_stats.return_value = {
+            "path": "/tmp",
+            "free_bytes": 8 * 1024 * 1024 * 1024,
+            "total_bytes": 10 * 1024 * 1024 * 1024,
+        }
+        mock_viewport.return_value = {
+            "center_re": 0.0,
+            "center_im": 0.0,
+            "scale": 4096.0,
+            "n_roots": 32 * 32 * 2,
+            "q_re": [-1.0, 1.0],
+            "q_im": [-1.0, 1.0],
+        }
+        specs = []
+
+        def fake_run(cmd, input=None, capture_output=None, text=None, timeout=None, env=None):
+            exe = os.path.basename(cmd[0])
+            specs.append(json.loads(input))
+            out_path = cmd[1]
+            if exe == "sweep_coeffgen":
+                with open(out_path, "wb") as fh:
+                    fh.write(b"\0" * (32 * 32 * 3 * 8))
+                return unittest.mock.MagicMock(
+                    returncode=0,
+                    stdout=json.dumps({"data_bytes": 32 * 32 * 3 * 8, "n_coeffs": 3, "degree": 2}),
+                    stderr="",
+                )
+            if exe == "sweep_mt":
+                with open(out_path, "wb") as fh:
+                    fh.write(_roots_bytes(32 * 32, 2))
+                return unittest.mock.MagicMock(
+                    returncode=0,
+                    stdout=json.dumps({"n_t": 32 * 32, "degree": 2, "avg_iterations": 0}),
+                    stderr="",
+                )
+            raise AssertionError(f"unexpected subprocess call: {cmd}")
+
+        mock_run.side_effect = fake_run
+
+        result = mod.handler({"body": json.dumps(_event(
+            function="poly_1",
+            param_program_chain=[
+                ["legacy", "unit_circle", "both", "both"],
+                ["legacy", "moebius", "both", "both", "1-2j", "2+1j", "-2j+4", "10j-3"],
+            ],
+            coeff_transforms=[["rev", "0"]],
+        ))}, None)
+
+        self.assertEqual(result["statusCode"], 200)
+        self.assertNotIn("param_program", specs[0])
+        self.assertEqual(specs[0]["param_transforms"][0], ["unit_circle"])
+        self.assertEqual(specs[0]["param_transforms"][1][0], "moebius")
+        self.assertEqual(
+            [complex(value.replace("i", "j")) for value in specs[0]["param_transforms"][1][1:]],
+            [1 - 2j, 2 + 1j, 4 - 2j, -3 + 10j],
+        )
+
     @patch("handler_compute_preview.subprocess.run")
     def test_compute_preview_refuses_large_roots_cm_before_coeffgen(self, mock_run):
         import handler_compute_preview as mod
@@ -239,6 +302,18 @@ class TestComputePreviewHandler(unittest.TestCase):
 
         self.assertEqual(result["statusCode"], 400)
         self.assertIn("unsupported preview solver_mode: aberth", body["message"])
+
+    def test_compute_preview_reports_invalid_param_program_as_request_error(self):
+        import handler_compute_preview as mod
+
+        result = mod.handler({"body": json.dumps(_event(
+            param_program_chain=[["legacy", "moebius", "both", "both", "bad", "0", "0", "1"]]
+        ))}, None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(result["statusCode"], 400)
+        self.assertIn("invalid param_program_chain", body["message"])
+        self.assertIn("legacy(moebius) coefficient 0", body["message"])
 
 
 if __name__ == "__main__":

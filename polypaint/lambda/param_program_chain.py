@@ -261,18 +261,52 @@ def _finite_number(value, label):
     return number
 
 
-def _finite_complex(value, label):
+_COMPLEX_TERM_RE = re.compile(r"[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?")
+
+
+def _parse_complex_literal(value):
     raw = str(value or "").strip().replace("i", "j").replace("I", "j").replace(" ", "")
     if not raw:
-        raise RuntimeError(f"{label} must be a finite complex constant")
-    if raw in {"j", "+j"}:
-        raw = "1j"
-    elif raw == "-j":
-        raw = "-1j"
+        raise ValueError("empty complex literal")
+    real = 0.0
+    imag = 0.0
+    pos = 0
+    saw = False
+    while pos < len(raw):
+        match = _COMPLEX_TERM_RE.match(raw, pos)
+        if match:
+            number = float(match.group(0))
+            pos = match.end()
+            if pos < len(raw) and raw[pos] == "j":
+                imag += number
+                pos += 1
+            else:
+                real += number
+            saw = True
+        elif raw[pos] == "j":
+            imag += 1.0
+            pos += 1
+            saw = True
+        elif raw[pos] in "+-" and pos + 1 < len(raw) and raw[pos + 1] == "j":
+            imag += -1.0 if raw[pos] == "-" else 1.0
+            pos += 2
+            saw = True
+        else:
+            raise ValueError(f"invalid complex literal {value!r}")
+        if not math.isfinite(real) or not math.isfinite(imag):
+            raise ValueError(f"non-finite complex literal {value!r}")
+        if pos < len(raw) and raw[pos] not in "+-":
+            raise ValueError(f"invalid complex literal {value!r}")
+    if not saw:
+        raise ValueError(f"invalid complex literal {value!r}")
+    return complex(real, imag)
+
+
+def _finite_complex(value, label):
     try:
-        number = complex(raw)
-    except ValueError:
-        number = complex(_finite_number(value, label), 0.0)
+        number = _parse_complex_literal(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"{label} must be a finite complex constant, got {value!r}")
     if not math.isfinite(number.real) or not math.isfinite(number.imag):
         raise RuntimeError(f"{label} must be finite, got {value!r}")
     return number

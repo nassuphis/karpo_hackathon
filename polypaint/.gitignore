@@ -40,6 +40,9 @@ lambda/*_test
 lambda/deploy.zip
 lambda/*.zip
 
+# Spreads
+spreads/*.pdf
+
 # Cross-compile layers (large, built separately)
 lambda/layer-build/
 lambda/layer-build-lapack/

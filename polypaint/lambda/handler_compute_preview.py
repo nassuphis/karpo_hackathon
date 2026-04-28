@@ -254,7 +254,10 @@ def handler(event, context):
         if param_program_chain:
             if not isinstance(param_program_chain, list):
                 raise ValueError("param_program_chain must be a list")
-            compiled_param_program = compile_param_program_chain(param_program_chain)
+            try:
+                compiled_param_program = compile_param_program_chain(param_program_chain)
+            except RuntimeError as e:
+                return _json_response(400, {"message": f"invalid param_program_chain: {e}"})
             if compiled_param_program["legacy_transforms"]:
                 param_transforms = compiled_param_program["legacy_transforms"]
             else:

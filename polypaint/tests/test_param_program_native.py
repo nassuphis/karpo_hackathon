@@ -108,8 +108,8 @@ def test_param_dump_compiled_coeff_legacy_tokens_match_param_transforms():
 
 
 def test_param_dump_compiled_moebius_complex_coefficients_match_param_transform():
-    legacy_chain = [["moebius", "1e-3+2e-4i", "0", "-i", "1"]]
-    vm_chain = [["legacy", "moebius", "both", "both", "1e-3+2e-4i", "0", "-i", "1"]]
+    legacy_chain = [["moebius", "1-2j", "2+1j", "-2j+4", "10j-3"]]
+    vm_chain = [["legacy", "moebius", "both", "both", "1-2j", "2+1j", "-2j+4", "10j-3"]]
     legacy_spec = {
         "mode": "param_dump",
         "n1": 12,

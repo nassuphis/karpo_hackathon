@@ -114,12 +114,12 @@ class TestParamProgramChain(unittest.TestCase):
         from param_program_chain import PARAM_OP_LEGACY, compile_param_program_chain
 
         compiled = compile_param_program_chain([
-            ["legacy", "moebius", "both", "both", "1e-3+2e-4i", "0", "-i", "1"]
+            ["legacy", "moebius", "both", "both", "1-2j", "2+1j", "-2j+4", "10j-3"]
         ])
         self.assertEqual(compiled["tokens"][0]["op"], PARAM_OP_LEGACY)
         self.assertEqual(
             compiled["tokens"][0]["args"],
-            [0.001, 0.0002, 0.0, 0.0, 0.0, -1.0, 1.0, 0.0],
+            [1.0, -2.0, 2.0, 1.0, 4.0, -2.0, -3.0, 10.0],
         )
         self.assertEqual(compiled["legacy_transforms"][0][0], "moebius")
         self.assertEqual(len(compiled["legacy_transforms"][0]), 5)
@@ -128,7 +128,7 @@ class TestParamProgramChain(unittest.TestCase):
                 complex(value.replace("i", "j"))
                 for value in compiled["legacy_transforms"][0][1:]
             ],
-            [complex(0.001, 0.0002), 0j, -1j, 1 + 0j],
+            [1 - 2j, 2 + 1j, 4 - 2j, -3 + 10j],
         )
 
     def test_moebius_legacy_chip_rejects_bad_complex_coefficients(self):
@@ -137,7 +137,7 @@ class TestParamProgramChain(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, r"legacy\(moebius\) expects 0, 4, or 8 arguments"):
             compile_param_program_chain([["legacy", "moebius", "both", "both", "1"]])
 
-        with self.assertRaisesRegex(RuntimeError, r"coefficient 0 must be finite"):
+        with self.assertRaisesRegex(RuntimeError, r"coefficient 0 must be a finite complex constant"):
             compile_param_program_chain([
                 ["legacy", "moebius", "both", "both", "nan+i", "0", "0", "1"]
             ])

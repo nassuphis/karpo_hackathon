@@ -775,7 +775,10 @@ button {
 }
 .solve-score-modal-popup {
     width: min(1120px, calc(100vw - 24px));
+    height: min(92vh, 820px);
     max-height: min(92vh, 920px);
+    display: flex;
+    flex-direction: column;
 }
 .solve-score-modal-body {
     display: grid;
@@ -788,8 +791,16 @@ button {
 .solve-score-modal-pane,
 .solve-score-modal-right {
     min-width: 0;
+    min-height: 0;
+}
+.solve-score-modal-pane {
     display: flex;
     flex-direction: column;
+    gap: 10px;
+}
+.solve-score-modal-right {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
     gap: 10px;
 }
 .solve-score-modal-pane-title {
@@ -799,7 +810,8 @@ button {
     text-transform: uppercase;
 }
 .solve-score-modal-table-wrap {
-    min-height: 260px;
+    flex: 1 1 auto;
+    min-height: 0;
     overflow: auto;
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 8px;
@@ -812,19 +824,53 @@ button {
 .solve-score-modal-name-row input {
     width: 100%;
 }
+.solve-score-modal-program-section {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
 .solve-score-modal-display {
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    font-family: monospace;
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    white-space: normal;
     font-size: 11px;
     color: #ccc;
     background: rgba(0,0,0,0.18);
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 8px;
     padding: 10px 12px;
-    min-height: 10em;
-    max-height: 20em;
     overflow: auto;
+}
+.solve-score-modal-program-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    margin-bottom: 8px;
+    color: #8c98aa;
+    font-size: 10px;
+    line-height: 1.35;
+}
+.solve-score-modal-program-meta span {
+    color: #5f6c7c;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-right: 4px;
+}
+.solve-score-modal-chip-strip {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    width: 100%;
+}
+.score-chip-readonly {
+    cursor: default;
+}
+.score-chip-readonly .chip-input-readonly {
+    cursor: default;
+    pointer-events: none;
 }
 .solve-score-modal-selected-empty {
     color: #777;
@@ -1712,13 +1758,13 @@ button {
                     <div class="solve-score-modal-pane-title">Program Name</div>
                     <input id="solve-score-modal-name" type="text" maxlength="120" placeholder="solve-score-program">
                 </div>
-                <div>
+                <div class="solve-score-modal-program-section">
                     <div class="solve-score-modal-pane-title">Current Program</div>
-                    <div id="solve-score-modal-current" class="solve-score-modal-display popup-stable-block large"></div>
+                    <div id="solve-score-modal-current" class="solve-score-modal-display"></div>
                 </div>
-                <div>
+                <div class="solve-score-modal-program-section">
                     <div class="solve-score-modal-pane-title">Selected Saved Program</div>
-                    <div id="solve-score-modal-selected" class="solve-score-modal-display popup-stable-block large"></div>
+                    <div id="solve-score-modal-selected" class="solve-score-modal-display"></div>
                 </div>
             </div>
         </div>
@@ -5019,22 +5065,53 @@ function _currentSolveScoreProgramSummary(prefix) {
     }
 }
 
-function _formatSolveScoreProgramBlock(program, options = {}) {
+function _solveScoreModalMessageHtml(message, isError = false) {
+    const cls = isError ? 'solve-score-program-status error' : 'solve-score-modal-selected-empty';
+    return `<div class="${cls}">${_escapeHtml(message || '')}</div>`;
+}
+
+function _solveScoreProgramMetaHtml(program, options = {}) {
+    const rows = [];
+    const name = String(program && program.name || '').trim();
+    const savedAt = String(program && program.saved_at || '').trim();
+    const color = String(program && program.recommended_interpretation || '').trim();
+    const statements = Number(
+        program && program.statement_count != null
+            ? program.statement_count
+            : (Array.isArray(program && program.chain) ? program.chain.length : NaN)
+    );
+    if (name) rows.push(['Name', name]);
+    if (options.selected && savedAt) rows.push(['Saved', savedAt]);
+    if (color) rows.push(['Color', _colorInterpretationLabel(color)]);
+    if (Number.isFinite(statements)) rows.push(['Statements', String(statements)]);
+    if (!rows.length) return '';
+    return `<div class="solve-score-modal-program-meta">${rows.map(([label, value]) => (
+        `<div><span>${_escapeHtml(label)}</span>${_escapeHtml(value)}</div>`
+    )).join('')}</div>`;
+}
+
+function _renderSolveScoreProgramChipsHtml(program, options = {}) {
+    const fallbackMetric = options.prefix === 'palette' ? paletteTabMetric : renderSolveMetric;
+    const normalized = _normalizeSolveScoreChain(program && program.chain, fallbackMetric || 'proximity');
+    if (!normalized.length) return _solveScoreModalMessageHtml('No solve-score chips.');
+    const renderOptions = { readonly: true, solveScore: true, chain: normalized };
+    const chips = normalized.map((item, i) => _renderRtChipHtml(item, i, 'modal-ss', _ssCatalog, renderOptions)).join('');
+    return `<div class="chip-container solve-score-modal-chip-strip" aria-label="Solve score program chips">${chips}</div>`;
+}
+
+function _renderSolveScoreProgramCardHtml(program, options = {}) {
     const selected = !!options.selected;
-    if (!program) return selected ? 'Select a saved program to inspect before loading.' : 'Current live program is unavailable.';
-    if (program.error) return `Error: ${program.error}`;
-    const lines = [];
-    if (selected) {
-        lines.push(`Name: ${program.name || ''}`);
-        lines.push(`Saved: ${program.saved_at || ''}`);
+    if (!program) {
+        return _solveScoreModalMessageHtml(
+            selected ? 'Select a saved program to inspect before loading.' : 'Current live program is unavailable.'
+        );
     }
-    lines.push(`Metric: ${program.metric || ''}`);
-    if (program.recommended_interpretation) lines.push(`Color: ${program.recommended_interpretation}`);
-    lines.push(`Statements: ${Number(program.statement_count || 0)}`);
-    lines.push(`Program spec: ${program.program_spec || ''}`);
-    lines.push('Chain:');
-    lines.push(JSON.stringify(program.chain || [], null, 2));
-    return lines.join('\n');
+    if (program.error) return _solveScoreModalMessageHtml(`Error: ${program.error}`, true);
+    try {
+        return _solveScoreProgramMetaHtml(program, options) + _renderSolveScoreProgramChipsHtml(program, options);
+    } catch (e) {
+        return _solveScoreModalMessageHtml(`Error: ${e && e.message ? e.message : String(e)}`, true);
+    }
 }
 
 function _setSolveScoreModalStatus(message, isError = false) {
@@ -5076,19 +5153,19 @@ function _renderSolveScoreProgramModal() {
             : 'Global saved solve-score programs on the left; current Render-tab live chain on the right.';
     }
     if (nameEl && nameEl.value !== _solveScoreModalState.nameInput) nameEl.value = _solveScoreModalState.nameInput;
-    if (currentEl) currentEl.textContent = _formatSolveScoreProgramBlock(currentProgram);
+    if (currentEl) currentEl.innerHTML = _renderSolveScoreProgramCardHtml(currentProgram, { prefix: _solveScoreModalState.prefix });
     if (selectedEl) {
         if (_solveScoreModalState.selectedLoading) {
-            selectedEl.textContent = 'Loading selected saved program...';
+            selectedEl.innerHTML = _solveScoreModalMessageHtml('Loading selected saved program...');
             selectedEl.classList.remove('solve-score-modal-selected-empty');
         } else if (_solveScoreModalState.selectedError) {
-            selectedEl.textContent = `Error: ${_solveScoreModalState.selectedError}`;
+            selectedEl.innerHTML = _solveScoreModalMessageHtml(`Error: ${_solveScoreModalState.selectedError}`, true);
             selectedEl.classList.remove('solve-score-modal-selected-empty');
         } else if (_solveScoreModalState.selectedProgram) {
-            selectedEl.textContent = _formatSolveScoreProgramBlock(_solveScoreModalState.selectedProgram, { selected: true });
+            selectedEl.innerHTML = _renderSolveScoreProgramCardHtml(_solveScoreModalState.selectedProgram, { prefix: _solveScoreModalState.prefix, selected: true });
             selectedEl.classList.remove('solve-score-modal-selected-empty');
         } else {
-            selectedEl.textContent = 'Select a saved program to inspect before loading.';
+            selectedEl.innerHTML = _solveScoreModalMessageHtml('Select a saved program to inspect before loading.');
             selectedEl.classList.add('solve-score-modal-selected-empty');
         }
     }
@@ -10514,8 +10591,17 @@ function updateChipParam(chipIdx, paramIdx, value, which) {
     }
 }
 
-function _chipInputHtml(which, chipIdx, paramIdx, value, paramDef) {
+function _chipReadonlyValueHtml(value, paramDef = {}, title = '') {
     const pd = paramDef || {};
+    const fallback = pd.def == null ? '' : pd.def;
+    const text = String(value == null || value === '' ? fallback : value);
+    const titleAttr = title ? ` title="${_escapeHtml(title)}"` : '';
+    return `<span class="chip-input chip-input-readonly"${titleAttr}>${_escapeHtml(text)}</span>`;
+}
+
+function _chipInputHtml(which, chipIdx, paramIdx, value, paramDef, options = {}) {
+    const pd = paramDef || {};
+    if (options.readonly) return _chipReadonlyValueHtml(value, pd);
     if (pd.target) {
         const normalizedValue = _normalizeTarget(String(value == null ? '' : value)) || _normalizeTarget(String(pd.def || 'both')) || 'both';
         const options = ['t1', 't2', 'both'].map(choice => {
@@ -10541,7 +10627,10 @@ function _ctUnaryFormulaChip(which, i, item, fnName, pDefs) {
     return `<span class="chip"><span class="chip-formula"><span>${_escapeHtml(fnName)}(z)</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
 }
 
-function _solveScoreChipShell(which, i, bodyHtml, tooltipAttr = '') {
+function _solveScoreChipShell(which, i, bodyHtml, tooltipAttr = '', options = {}) {
+    if (options.readonly) {
+        return `<span class="chip score-chip score-chip-readonly"${tooltipAttr}>${bodyHtml}</span>`;
+    }
     const count = _chainForWhich(which).length;
     const leftDisabled = i <= 0 ? ' disabled' : '';
     const rightDisabled = i >= count - 1 ? ' disabled' : '';
@@ -10550,69 +10639,75 @@ function _solveScoreChipShell(which, i, bodyHtml, tooltipAttr = '') {
     return `<span class="chip score-chip${selected}" onclick="selectSolveScoreLine('${which}',${i},event)"${tooltipAttr}>${moves}${bodyHtml}<span class="chip-x" onclick="event.stopPropagation();removeChip('${which}',${i})">x</span></span>`;
 }
 
-function _solveScoreInheritedLagQuantile(which, chipIdx, item) {
+function _solveScoreInheritedLagQuantile(which, chipIdx, item, options = {}) {
     const current = _solveScoreItemMetricDetails(item);
     if (!current || current.lag !== 1) return null;
-    const candidates = _chainForWhich(which)
+    const chain = Array.isArray(options.chain) ? options.chain : _chainForWhich(which);
+    const candidates = chain
         .slice(0, chipIdx)
         .map(row => ({ row, details: _solveScoreItemMetricDetails(row) }))
         .filter(entry => entry.details && entry.details.metric === current.metric && entry.details.source === current.source && entry.details.lag === 0);
     return candidates.length === 1 ? candidates[0].details.q : null;
 }
 
-function _renderRtChipHtml(item, i, which, catalog) {
+function _renderRtChipHtml(item, i, which, catalog, options = {}) {
     const spec = catalog[item.name] || {};
     const pDefs = spec.params || [];
-    if ((which === 'ss' || which === 'palette-ss') && _isSolveScoreGenericMetricChipName(item.name)) {
-        const metric = _chipInputHtml(which, i, 0, item.params[0] || (_solveScoreGenericMetricNames[0] || 'proximity'), pDefs[0]);
-        const source = _chipInputHtml(which, i, 1, item.params[1] || 'slv', pDefs[1]);
-        const inheritedQ = _solveScoreInheritedLagQuantile(which, i, item);
+    const isSolveScore = which === 'ss' || which === 'palette-ss' || !!options.solveScore;
+    if (isSolveScore && _isSolveScoreGenericMetricChipName(item.name)) {
+        const metric = _chipInputHtml(which, i, 0, item.params[0] || (_solveScoreGenericMetricNames[0] || 'proximity'), pDefs[0], options);
+        const source = _chipInputHtml(which, i, 1, item.params[1] || 'slv', pDefs[1], options);
+        const inheritedQ = _solveScoreInheritedLagQuantile(which, i, item, options);
         const q = inheritedQ == null
-            ? _chipInputHtml(which, i, 2, item.params[2] || '', pDefs[2])
-            : `<input class="chip-input" type="text" value="${_escapeHtml(inheritedQ)}" disabled title="Inherited from the base metric slot">`;
-        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>metric(</span><span>${metric}</span><span class="chip-op">,</span><span>${source}</span><span class="chip-op">,</span><span>q=</span><span>${q}</span><span>%)</span></span>`);
+            ? _chipInputHtml(which, i, 2, item.params[2] || '', pDefs[2], options)
+            : (options.readonly
+                ? _chipReadonlyValueHtml(inheritedQ, pDefs[2], 'Inherited from the base metric slot')
+                : `<input class="chip-input" type="text" value="${_escapeHtml(inheritedQ)}" disabled title="Inherited from the base metric slot">`);
+        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>metric(</span><span>${metric}</span><span class="chip-op">,</span><span>${source}</span><span class="chip-op">,</span><span>q=</span><span>${q}</span><span>%)</span></span>`, '', options);
     }
-    if ((which === 'ss' || which === 'palette-ss') && _solveScoreMetricSet.has(item.name)) {
-        const source = _chipInputHtml(which, i, 0, item.params[0] || 'slv', pDefs[0]);
-        const inheritedQ = _solveScoreInheritedLagQuantile(which, i, item);
+    if (isSolveScore && _solveScoreMetricSet.has(item.name)) {
+        const source = _chipInputHtml(which, i, 0, item.params[0] || 'slv', pDefs[0], options);
+        const inheritedQ = _solveScoreInheritedLagQuantile(which, i, item, options);
         const q = inheritedQ == null
-            ? _chipInputHtml(which, i, 1, item.params[1] || item.params[0] || '', pDefs[1])
-            : `<input class="chip-input" type="text" value="${_escapeHtml(inheritedQ)}" disabled title="Inherited from the base metric slot">`;
-        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>${_escapeHtml(item.name)}(</span><span>${source}</span><span class="chip-op">,</span><span>q=</span><span>${q}</span><span>%)</span></span>`);
+            ? _chipInputHtml(which, i, 1, item.params[1] || item.params[0] || '', pDefs[1], options)
+            : (options.readonly
+                ? _chipReadonlyValueHtml(inheritedQ, pDefs[1], 'Inherited from the base metric slot')
+                : `<input class="chip-input" type="text" value="${_escapeHtml(inheritedQ)}" disabled title="Inherited from the base metric slot">`);
+        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>${_escapeHtml(item.name)}(</span><span>${source}</span><span class="chip-op">,</span><span>q=</span><span>${q}</span><span>%)</span></span>`, '', options);
     }
-    if ((which === 'ss' || which === 'palette-ss') && item.name === 'omega_cosine') {
-        const omega = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
-        const phase = _chipInputHtml(which, i, 1, item.params[1] || '0', pDefs[1]);
+    if (isSolveScore && item.name === 'omega_cosine') {
+        const omega = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0], options);
+        const phase = _chipInputHtml(which, i, 1, item.params[1] || '0', pDefs[1], options);
         const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
-        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>ω-cos(</span><span>${omega}</span><span class="chip-op">,</span><span>${phase}</span><span>)</span></span>`, tooltip);
+        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>ω-cos(</span><span>${omega}</span><span class="chip-op">,</span><span>${phase}</span><span>)</span></span>`, tooltip, options);
     }
-    if ((which === 'ss' || which === 'palette-ss') && item.name === 'sawtooth') {
-        const mult = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
+    if (isSolveScore && item.name === 'sawtooth') {
+        const mult = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0], options);
         const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
-        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>sawtooth(</span><span>${mult}</span><span>)</span></span>`, tooltip);
+        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>sawtooth(</span><span>${mult}</span><span>)</span></span>`, tooltip, options);
     }
-    if ((which === 'ss' || which === 'palette-ss') && item.name === 'weighted_sum') {
-        const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
-        const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
-        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>weighted_sum(</span><span>${a}</span><span class="chip-op">,</span><span>${b}</span><span>)</span></span>`);
+    if (isSolveScore && item.name === 'weighted_sum') {
+        const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0], options);
+        const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1], options);
+        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>weighted_sum(</span><span>${a}</span><span class="chip-op">,</span><span>${b}</span><span>)</span></span>`, '', options);
     }
-    if ((which === 'ss' || which === 'palette-ss') && item.name === 'flip') {
+    if (isSolveScore && item.name === 'flip') {
         const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
-        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>flip</span></span>`, tooltip);
+        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>flip</span></span>`, tooltip, options);
     }
-    if ((which === 'ss' || which === 'palette-ss') && _solveScoreUnarySpecs[item.name]) {
-        const inputs = (item.params || []).map((val, pi) => _chipInputHtml(which, i, pi, val, pDefs[pi] || {})).join('');
+    if (isSolveScore && _solveScoreUnarySpecs[item.name]) {
+        const inputs = (item.params || []).map((val, pi) => _chipInputHtml(which, i, pi, val, pDefs[pi] || {}, options)).join('');
         const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
-        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>${_escapeHtml(item.name)}</span>${inputs}</span>`, tooltip);
+        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>${_escapeHtml(item.name)}</span>${inputs}</span>`, tooltip, options);
     }
-    if ((which === 'ss' || which === 'palette-ss') && _solveScoreOutputSpecs[item.name]) {
+    if (isSolveScore && _solveScoreOutputSpecs[item.name]) {
         const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
-        const mode = _chipInputHtml(which, i, 0, (item.name === 'emit_norm' ? 'norm' : ((item.params || [])[0] || 'raw')), pDefs[0]);
-        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>emit(</span><span>${mode}</span><span>)</span></span>`, tooltip);
+        const mode = _chipInputHtml(which, i, 0, (item.name === 'emit_norm' ? 'norm' : ((item.params || [])[0] || 'raw')), pDefs[0], options);
+        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>emit(</span><span>${mode}</span><span>)</span></span>`, tooltip, options);
     }
-    if ((which === 'ss' || which === 'palette-ss') && _solveScoreCombineSpecs[item.name]) {
+    if (isSolveScore && _solveScoreCombineSpecs[item.name]) {
         const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
-        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>${_escapeHtml(item.name)}</span></span>`, tooltip);
+        return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>${_escapeHtml(item.name)}</span></span>`, tooltip, options);
     }
     if (which === 'ct' && item.name === 'exp') {
         const a = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);

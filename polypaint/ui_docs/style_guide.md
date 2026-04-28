@@ -397,6 +397,25 @@ Use popups for:
    Reserve space on swap-heavy summary/help blocks with a deliberate
    `min-height` instead of letting the dialog reflow on every selection change.
 
+### Selection/Detail Popups
+
+Popups that show a selectable list/table next to a detail pane need stricter
+layout rules than simple tuning popups.
+
+Rules:
+
+- The popup shell must have a deliberate height, not only `max-height`.
+- The main popup body should consume the remaining shell height with flex/grid
+  sizing and `min-height: 0`.
+- List/table panes and detail panes must be scroll containers inside that fixed
+  body.
+- Selection changes may update scrollable content, but must not change the
+  popup shell height or the sibling pane sizes.
+- `min-height` alone is not enough for swap-heavy detail panes when selected
+  content can grow beyond the reserved space.
+- Use fixed allocated regions such as `height: 100%`, flex children with
+  `min-height: 0`, or grid rows like `minmax(0, 1fr)`.
+
 Examples already shipped:
 - config popup
 - function chooser

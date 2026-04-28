@@ -212,6 +212,16 @@ assertIncludes("mode:${_colorInterpretationLabel(colorInterpretation)}", 'render
 assertIncludes("id=\"ss-insert-before-btn\"", 'solve-score editor should expose insert-before button');
 assertIncludes("id=\"ss-insert-after-btn\"", 'solve-score editor should expose insert-after button');
 assertNotIncludes("id=\"ss-direct-rgb-preset\"", 'solve-score editor should not expose Direct RGB preset; saved programs cover this');
+assertIncludes(".solve-score-modal-popup {\n    width: min(1120px, calc(100vw - 24px));\n    height: min(92vh, 820px);", 'Solve Scores modal should reserve a stable shell height');
+assertIncludes("grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);", 'Solve Scores modal detail panes should use stable allocated grid rows');
+assertIncludes("function _renderSolveScoreProgramCardHtml(program, options = {}) {", 'Solve Scores modal should render selected programs through a card renderer');
+assertIncludes("readonly: true, solveScore: true, chain: normalized", 'Solve Scores modal chip renderer should reuse solve-score chips in read-only mode');
+assertIncludes("currentEl.innerHTML = _renderSolveScoreProgramCardHtml(currentProgram", 'Solve Scores modal current program should render chip markup, not debug text');
+assertIncludes("selectedEl.innerHTML = _renderSolveScoreProgramCardHtml(_solveScoreModalState.selectedProgram", 'Solve Scores modal selected program should render chip markup, not debug text');
+assertIncludes("score-chip-readonly", 'Solve Scores modal should expose read-only chip styling');
+assertNotIncludes("solve-score-modal-display popup-stable-block", 'Solve Scores modal detail panes should not inherit generic min-height popup block sizing');
+assertNotIncludes("Program spec:", 'Solve Scores modal should not show internal program_spec in the main display');
+assertNotIncludes("JSON.stringify(program.chain || [], null, 2)", 'Solve Scores modal should not show saved program JSON in the main display');
 assertIncludes("score normalization: lo=${fmt(s.score_output_clip_lo)}  hi=${fmt(s.score_output_clip_hi)}", 'histogram output should report score normalization range');
 assertIncludes("if (s.raw_hist_space === 'score_output_normalized') rawLabel = 'score-output normalized program output';", 'histogram raw bins should label score-output normalized space');
 assertIncludes("'mean_log_mod',", 'solve-score catalog should expose mean_log_mod');

@@ -19,6 +19,7 @@ from compute_fused import (
     execution_method_from_params,
     validate_fused_threads,
 )
+from param_program_chain import compile_param_program_chain
 from shared import BUCKET, JOBS_TABLE, ok_response, parse_body
 
 s3 = boto3.client("s3")
@@ -104,6 +105,29 @@ def handle_build_plan(params):
         param_transforms = []
     if not isinstance(param_transforms, list):
         raise RuntimeError("param_transforms must be an array")
+    param_program_chain = run_params.get("param_program_chain")
+    param_program = None
+    param_program_metadata = None
+    if param_program_chain:
+        if not isinstance(param_program_chain, list):
+            raise RuntimeError("param_program_chain must be an array")
+        compiled_param_program = compile_param_program_chain(param_program_chain)
+        param_program_metadata = {
+            "version": compiled_param_program["version"],
+            "fingerprint": compiled_param_program["fingerprint"],
+            "display": compiled_param_program["display"],
+            "stack_max": compiled_param_program["stack_max"],
+            "token_count": compiled_param_program["token_count"],
+            "uses_legacy_fast_path": compiled_param_program["uses_legacy_fast_path"],
+        }
+        if compiled_param_program["legacy_transforms"]:
+            param_transforms = compiled_param_program["legacy_transforms"]
+        else:
+            param_transforms = []
+            param_program = {
+                **param_program_metadata,
+                "tokens": compiled_param_program["tokens"],
+            }
 
     cfpv = run_params.get("cfpv")
     if cfpv in (None, ""):
@@ -130,6 +154,7 @@ def handle_build_plan(params):
             param_transforms=param_transforms,
             coeff_transforms=coeff_transforms,
             cfpv=cfpv,
+            param_program=param_program,
         )
         got_signature = str(probe.get("probe_signature") or "").strip()
         if not got_signature or got_signature != expected_signature:
@@ -167,6 +192,11 @@ def handle_build_plan(params):
             "function": function_name,
             "param_transforms": param_transforms,
             "param_transforms_display": param_transforms,
+            "param_program_chain": param_program_chain or [],
+            "param_program": param_program or {},
+            "param_program_display": str((param_program_metadata or {}).get("display") or ""),
+            "param_program_fingerprint": str((param_program_metadata or {}).get("fingerprint") or ""),
+            "param_program_uses_legacy_fast_path": bool((param_program_metadata or {}).get("uses_legacy_fast_path")),
             "coeff_transforms": coeff_transforms,
             "cfpv": cfpv,
         },
@@ -432,6 +462,11 @@ def handle_finalize_metadata(params):
         "pipeline": {
             "param_transforms": plan["pipeline"]["param_transforms"],
             "param_transforms_display": plan["pipeline"]["param_transforms_display"],
+            "param_program_chain": plan["pipeline"].get("param_program_chain", []),
+            "param_program": plan["pipeline"].get("param_program", {}),
+            "param_program_display": plan["pipeline"].get("param_program_display", ""),
+            "param_program_fingerprint": plan["pipeline"].get("param_program_fingerprint", ""),
+            "param_program_uses_legacy_fast_path": bool(plan["pipeline"].get("param_program_uses_legacy_fast_path")),
             "function": plan["pipeline"]["function"],
             "coeff_transforms": plan["pipeline"]["coeff_transforms"],
             "cfpv": plan["pipeline"]["cfpv"],

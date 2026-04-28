@@ -19,6 +19,7 @@ from shared import (
     parse_body,
     tmp_space_stats,
 )
+from param_program_chain import compile_param_program_chain
 
 
 SWEEP_COEFFGEN = os.path.join(os.path.dirname(__file__), "sweep_coeffgen")
@@ -59,10 +60,11 @@ def _format_chain(chain):
     return ",".join(parts) if parts else "none"
 
 
-def _preview_context(*, solver_mode, n_preview, function_name, coeff_transforms, param_transforms):
+def _preview_context(*, solver_mode, n_preview, function_name, coeff_transforms, param_transforms, param_program_chain=None):
+    param_label = _format_chain(param_program_chain) if param_program_chain else _format_chain(param_transforms)
     return (
         f"solver={_solver_tag(solver_mode)}, N_preview={n_preview}, function={function_name}, "
-        f"param={_format_chain(param_transforms)}, coeff={_format_chain(coeff_transforms)}"
+        f"param={param_label}, coeff={_format_chain(coeff_transforms)}"
     )
 
 
@@ -247,6 +249,25 @@ def handler(event, context):
 
         coeff_transforms = params.get("coeff_transforms") or []
         param_transforms = params.get("param_transforms") or []
+        param_program_chain = params.get("param_program_chain") or []
+        param_program = None
+        if param_program_chain:
+            if not isinstance(param_program_chain, list):
+                raise ValueError("param_program_chain must be a list")
+            compiled_param_program = compile_param_program_chain(param_program_chain)
+            if compiled_param_program["legacy_transforms"]:
+                param_transforms = compiled_param_program["legacy_transforms"]
+            else:
+                param_transforms = []
+                param_program = {
+                    "version": compiled_param_program["version"],
+                    "fingerprint": compiled_param_program["fingerprint"],
+                    "display": compiled_param_program["display"],
+                    "stack_max": compiled_param_program["stack_max"],
+                    "token_count": compiled_param_program["token_count"],
+                    "uses_legacy_fast_path": compiled_param_program["uses_legacy_fast_path"],
+                    "tokens": compiled_param_program["tokens"],
+                }
         cfpv = _validate_cfpv(params.get("cfpv"))
         ctx = _preview_context(
             solver_mode=solver_mode,
@@ -254,6 +275,7 @@ def handler(event, context):
             function_name=function_name,
             coeff_transforms=coeff_transforms,
             param_transforms=param_transforms,
+            param_program_chain=param_program_chain,
         )
         budget_error = _sync_preview_budget_error(n_preview=n_preview, coeff_transforms=coeff_transforms)
         if budget_error:
@@ -276,6 +298,8 @@ def handler(event, context):
             "i1_end": n_preview,
             "times": 1,
         }
+        if param_program:
+            coeff_spec["param_program"] = param_program
         if cfpv:
             coeff_spec["cfpv"] = cfpv
         coeff_meta = _run_json_binary(SWEEP_COEFFGEN, TMP_COEFFS, coeff_spec, phase="coeffgen", timeout_s=25)

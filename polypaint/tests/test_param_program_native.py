@@ -1,0 +1,149 @@
+import json
+import os
+import subprocess
+import sys
+
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
+
+from param_program_chain import compile_param_program_chain
+
+
+LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
+SWEEP = os.path.join(LAMBDA_DIR, "sweep_test")
+
+
+def _run_sweep(spec, out_path):
+    proc = subprocess.run(
+        [SWEEP, out_path],
+        input=json.dumps(spec),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert proc.returncode == 0, proc.stderr
+    with open(out_path, "rb") as fh:
+        data = fh.read()
+    os.remove(out_path)
+    return json.loads(proc.stdout), data
+
+
+def _native_payload(chain):
+    compiled = compile_param_program_chain(chain)
+    return {
+        "version": 1,
+        "tokens": compiled["tokens"],
+        "stack_max": compiled["stack_max"],
+        "uses_legacy_fast_path": compiled["uses_legacy_fast_path"],
+    }
+
+
+def test_param_dump_compiled_legacy_tokens_match_param_transforms():
+    legacy_spec = {
+        "mode": "param_dump",
+        "n1": 16,
+        "n2": 16,
+        "param_transforms": [["unit_circle"], ["square"]],
+    }
+    vm_spec = {
+        "mode": "param_dump",
+        "n1": 16,
+        "n2": 16,
+        "param_program": _native_payload([
+            ["legacy", "unit_circle", "both", "both"],
+            ["legacy", "square", "both", "both"],
+        ]),
+    }
+    _, legacy = _run_sweep(legacy_spec, "/tmp/pp_param_dump_legacy.bin")
+    meta, vm = _run_sweep(vm_spec, "/tmp/pp_param_dump_vm.bin")
+    assert meta["param_program_tokens"] == 2
+    assert vm == legacy
+
+
+def test_param_gen_compiled_tokens_match_legacy_threaded_output():
+    legacy_spec = {
+        "mode": "param_gen",
+        "n1": 12,
+        "n2": 12,
+        "times": 2,
+        "n_threads": 1,
+        "param_transforms": [["unit_circle"], ["square"]],
+    }
+    vm_spec = {
+        "mode": "param_gen",
+        "n1": 12,
+        "n2": 12,
+        "times": 2,
+        "n_threads": 4,
+        "param_program": _native_payload([
+            ["legacy", "unit_circle", "both", "both"],
+            ["legacy", "square", "both", "both"],
+        ]),
+    }
+    _, legacy = _run_sweep(legacy_spec, "/tmp/pp_param_gen_legacy.bin")
+    meta, vm = _run_sweep(vm_spec, "/tmp/pp_param_gen_vm.bin")
+    assert meta["threads"] == 4
+    assert meta["param_program_tokens"] == 2
+    assert vm == legacy
+
+
+def test_param_dump_compiled_coeff_legacy_tokens_match_param_transforms():
+    chain = [["coeff2"], ["coeff3"], ["coeff5"], ["coeff12"]]
+    legacy_spec = {
+        "mode": "param_dump",
+        "n1": 12,
+        "n2": 12,
+        "param_transforms": chain,
+    }
+    vm_spec = {
+        "mode": "param_dump",
+        "n1": 12,
+        "n2": 12,
+        "param_program": _native_payload(chain),
+    }
+    _, legacy = _run_sweep(legacy_spec, "/tmp/pp_param_dump_coeff_legacy.bin")
+    meta, vm = _run_sweep(vm_spec, "/tmp/pp_param_dump_coeff_vm.bin")
+    assert meta["param_program_tokens"] == len(chain)
+    assert vm == legacy
+
+
+def test_param_dump_compiled_moebius_complex_coefficients_match_param_transform():
+    legacy_chain = [["moebius", "1e-3+2e-4i", "0", "-i", "1"]]
+    vm_chain = [["legacy", "moebius", "both", "both", "1e-3+2e-4i", "0", "-i", "1"]]
+    legacy_spec = {
+        "mode": "param_dump",
+        "n1": 12,
+        "n2": 12,
+        "param_transforms": legacy_chain,
+    }
+    vm_spec = {
+        "mode": "param_dump",
+        "n1": 12,
+        "n2": 12,
+        "param_program": _native_payload(vm_chain),
+    }
+    _, legacy = _run_sweep(legacy_spec, "/tmp/pp_param_dump_moebius_legacy.bin")
+    meta, vm = _run_sweep(vm_spec, "/tmp/pp_param_dump_moebius_vm.bin")
+    assert meta["param_program_tokens"] == 1
+    assert vm == legacy
+
+
+def test_param_dump_stack_program_expresses_sum_difference():
+    spec = {
+        "mode": "param_dump",
+        "n1": 8,
+        "n2": 8,
+        "param_program": _native_payload([
+            ["push", "t1"],
+            ["push", "t2"],
+            ["add"],
+            ["emit", "p1"],
+            ["push", "t1"],
+            ["push", "t2"],
+            ["subtract"],
+            ["emit", "p2"],
+        ]),
+    }
+    meta, data = _run_sweep(spec, "/tmp/pp_param_dump_sumdiff.bin")
+    assert meta["param_program_tokens"] == 8
+    assert len(data) == 8 * 8 * 16

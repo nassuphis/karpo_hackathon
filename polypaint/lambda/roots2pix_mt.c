@@ -582,7 +582,8 @@ int main(int argc, char **argv) {
     int degree = getArgInt(argc, argv, "--degree", 25);
     int retries = getArgInt(argc, argv, "--retries", 2);
     int requestedThreads = getArgInt(argc, argv, "--threads", 1);
-    long requestedStepCount = getArgLongLong(argc, argv, "--step_count", 0);
+    const char *stepCountArg = getArg(argc, argv, "--step_count");
+    long requestedStepCount = stepCountArg ? (long)atoll(stepCountArg) : 0;
     int solvePreludeRows = getArgInt(argc, argv, "--prelude_rows", 0);
     int scoreCoeffPreludeRows = getArgInt(argc, argv, "--score_coeff_prelude_rows", 0);
     int scoreParamPreludeRows = getArgInt(argc, argv, "--score_param_prelude_rows", 0);
@@ -600,7 +601,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Invalid pix: %d\n", pix);
         return 1;
     }
-    if (requestedStepCount < 1) {
+    if (stepCountArg && requestedStepCount < 1) {
         fprintf(stderr, "roots2pix_mt requires --step_count >= 1\n");
         return 1;
     }
@@ -776,6 +777,15 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Empty multispan input\n");
         multispan_reader_close(&inputReader);
         return 1;
+    }
+    if (!stepCountArg) {
+        requestedStepCount = inputRows - solvePreludeRows;
+        if (requestedStepCount < 1) {
+            fprintf(stderr, "roots2pix_mt could not infer --step_count from input manifest rows=%ld and prelude_rows=%d\n",
+                    inputRows, solvePreludeRows);
+            multispan_reader_close(&inputReader);
+            return 1;
+        }
     }
     nPoints = requestedStepCount;
 

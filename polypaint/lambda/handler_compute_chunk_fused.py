@@ -57,6 +57,7 @@ def handle_fused_chunk(params):
     task_id = str(params.get("task_id") or f"compute_fused_{chunk_idx}")
     function_name = _require_str(params, "function")
     param_transforms = params.get("param_transforms") or []
+    param_program = params.get("param_program") or None
     coeff_transforms = params.get("coeff_transforms") or []
     cfpv = params.get("cfpv") or []
 
@@ -112,6 +113,7 @@ def handle_fused_chunk(params):
                 step_start=step_start,
                 step_count=step_count,
                 param_transforms=param_transforms,
+                param_program=param_program,
                 fused_threads=fused_threads,
             )
             param_gen_us = int(param_meta.get("elapsed_us", 0) or 0)
@@ -265,7 +267,7 @@ def handle_fused_chunk(params):
                 pass
 
 
-def _run_param_gen_local(*, output_path, n, times, step_start, step_count, param_transforms, fused_threads):
+def _run_param_gen_local(*, output_path, n, times, step_start, step_count, param_transforms, fused_threads, param_program=None):
     spec = {
         "mode": "param_gen",
         "n1": n,
@@ -276,6 +278,8 @@ def _run_param_gen_local(*, output_path, n, times, step_start, step_count, param
         "step_count": step_count,
         "n_threads": fused_threads,
     }
+    if param_program:
+        spec["param_program"] = param_program
     t0 = time.time()
     with open(output_path, "wb") as out:
         proc = subprocess.Popen(

@@ -4091,6 +4091,485 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
     return 0;
 }
 
+/* ==== Compiled param-program VM ====
+ * Source chip names are resolved by Python before this point. The row loop
+ * dispatches only on integer opcodes/function indices. */
+#define PARAM_PROGRAM_MAX_TOKENS 64
+#define PARAM_PROGRAM_MAX_STACK 16
+#define PARAM_PROGRAM_MAX_ARGS 8
+
+enum ParamProgramOp {
+    PARAM_OP_PUSH_T1 = 1,
+    PARAM_OP_PUSH_T2 = 2,
+    PARAM_OP_EMIT_P1 = 3,
+    PARAM_OP_EMIT_P2 = 4,
+    PARAM_OP_CONST = 5,
+    PARAM_OP_DUPLICATE = 6,
+    PARAM_OP_SWAP = 7,
+    PARAM_OP_POP = 8,
+    PARAM_OP_FLUSH = 9,
+    PARAM_OP_ADD = 10,
+    PARAM_OP_SUBTRACT = 11,
+    PARAM_OP_MUL = 12,
+    PARAM_OP_RATIO = 13,
+    PARAM_OP_NEGATE = 14,
+    PARAM_OP_CONJ = 15,
+    PARAM_OP_RECIPROCAL = 16,
+    PARAM_OP_UNIT_CIRCLE = 17,
+    PARAM_OP_SQUARE = 18,
+    PARAM_OP_CUBE = 19,
+    PARAM_OP_EXP = 20,
+    PARAM_OP_LEGACY = 21
+};
+
+enum ParamProgramSelector {
+    PARAM_SEL_P1 = 1,
+    PARAM_SEL_P2 = 2,
+    PARAM_SEL_BOTH = 3,
+    PARAM_SEL_POP1 = 4,
+    PARAM_SEL_POP2 = 5,
+    PARAM_SEL_PUSH1 = 6,
+    PARAM_SEL_PUSH2 = 7
+};
+
+typedef struct {
+    double r;
+    double i;
+} ParamCx;
+
+typedef struct {
+    uint16_t op;
+    uint16_t fn_index;
+    uint8_t src;
+    uint8_t tgt;
+    uint8_t n_args;
+    uint8_t reserved;
+    double a;
+    double b;
+    double args[PARAM_PROGRAM_MAX_ARGS];
+} ParamProgramToken;
+
+typedef struct {
+    int token_count;
+    int stack_max;
+    int uses_legacy_fast_path;
+    ParamProgramToken tokens[PARAM_PROGRAM_MAX_TOKENS];
+} ParamProgram;
+
+static ParamCx param_cx(double r, double i) {
+    ParamCx z;
+    z.r = r;
+    z.i = i;
+    return z;
+}
+
+static void param_sanitize(ParamCx *z) {
+    if (!isfinite(z->r) || !isfinite(z->i)) {
+        z->r = 0.0;
+        z->i = 0.0;
+    }
+}
+
+static ParamCx param_add(ParamCx a, ParamCx b) {
+    return param_cx(a.r + b.r, a.i + b.i);
+}
+
+static ParamCx param_sub(ParamCx a, ParamCx b) {
+    return param_cx(a.r - b.r, a.i - b.i);
+}
+
+static ParamCx param_mul(ParamCx a, ParamCx b) {
+    return param_cx(a.r * b.r - a.i * b.i, a.r * b.i + a.i * b.r);
+}
+
+static ParamCx param_ratio(ParamCx a, ParamCx b) {
+    double rr = 0.0, ri = 0.0;
+    double d = b.r * b.r + b.i * b.i;
+    if (d > 1e-300) c_div(a.r, a.i, b.r, b.i, &rr, &ri);
+    return param_cx(rr, ri);
+}
+
+static ParamCx param_unit_circle(ParamCx z) {
+    double u = 2.0 * M_PI * z.r;
+    double s = exp(-2.0 * M_PI * z.i);
+    return param_cx(s * cos(u), s * sin(u));
+}
+
+static ParamCx param_square(ParamCx z) {
+    return param_cx(z.r * z.r - z.i * z.i, 2.0 * z.r * z.i);
+}
+
+static ParamCx param_cube(ParamCx z) {
+    double r = z.r * z.r * z.r - 3.0 * z.r * z.i * z.i;
+    double i = 3.0 * z.r * z.r * z.i - z.i * z.i * z.i;
+    return param_cx(r, i);
+}
+
+static ParamCx param_reciprocal(ParamCx z) {
+    double d = z.r * z.r + z.i * z.i;
+    if (d <= 1e-300) return param_cx(0.0, 0.0);
+    return param_cx(z.r / d, -z.i / d);
+}
+
+static ParamCx param_exp(ParamCx z) {
+    double e = exp(z.r);
+    return param_cx(e * cos(z.i), e * sin(z.i));
+}
+
+static const char *parseParamProgramTokenObject(const char *objStart, const char *objEnd,
+                                                ParamProgramToken *tok) {
+    memset(tok, 0, sizeof(*tok));
+    const char *v;
+    v = findKeyIn(objStart, objEnd, "op");
+    if (!v) {
+        fprintf(stderr, "param_program token missing op\n");
+        return NULL;
+    }
+    tok->op = (uint16_t)parseNum(&v);
+    v = findKeyIn(objStart, objEnd, "fn_index");
+    if (v) tok->fn_index = (uint16_t)parseNum(&v);
+    v = findKeyIn(objStart, objEnd, "src");
+    if (v) tok->src = (uint8_t)parseNum(&v);
+    v = findKeyIn(objStart, objEnd, "tgt");
+    if (v) tok->tgt = (uint8_t)parseNum(&v);
+    int explicitNArgs = -1;
+    v = findKeyIn(objStart, objEnd, "n_args");
+    if (v) {
+        explicitNArgs = (int)parseNum(&v);
+        if (explicitNArgs < 0 || explicitNArgs > PARAM_PROGRAM_MAX_ARGS) {
+            fprintf(stderr, "param_program token has invalid n_args=%d\n", explicitNArgs);
+            return NULL;
+        }
+        tok->n_args = (uint8_t)explicitNArgs;
+    }
+    v = findKeyIn(objStart, objEnd, "a");
+    if (v) tok->a = parseNum(&v);
+    v = findKeyIn(objStart, objEnd, "b");
+    if (v) tok->b = parseNum(&v);
+    v = findKeyIn(objStart, objEnd, "args");
+    if (v) {
+        int parsedNArgs = parseNumArray(v, tok->args, PARAM_PROGRAM_MAX_ARGS);
+        if (parsedNArgs < 0 || parsedNArgs > PARAM_PROGRAM_MAX_ARGS) {
+            fprintf(stderr, "param_program token has invalid args length=%d\n", parsedNArgs);
+            return NULL;
+        }
+        if (explicitNArgs >= 0 && explicitNArgs != parsedNArgs) {
+            fprintf(stderr, "param_program token n_args=%d does not match args length=%d\n", explicitNArgs, parsedNArgs);
+            return NULL;
+        }
+        tok->n_args = (uint8_t)parsedNArgs;
+    }
+    return objEnd;
+}
+
+static int parseParamProgram(const char *buf, ParamProgram *program) {
+    memset(program, 0, sizeof(*program));
+    const char *p = findKey(buf, "param_program");
+    if (!p) return 0;
+    p = skip(p);
+    if (*p == 'n') return 0;
+    if (*p != '{') {
+        fprintf(stderr, "param_program must be an object\n");
+        return -1;
+    }
+    const char *objStart = p;
+    const char *objEnd = findClosing(p, '{', '}');
+    if (!objEnd || objEnd <= objStart) {
+        fprintf(stderr, "param_program object is malformed\n");
+        return -1;
+    }
+    const char *v = findKeyIn(objStart, objEnd, "stack_max");
+    if (v) program->stack_max = (int)parseNum(&v);
+    v = findKeyIn(objStart, objEnd, "uses_legacy_fast_path");
+    if (v) program->uses_legacy_fast_path = parseBool(v);
+
+    const char *tokens = findKeyIn(objStart, objEnd, "tokens");
+    if (!tokens) {
+        fprintf(stderr, "param_program requires tokens array\n");
+        return -1;
+    }
+    tokens = skip(tokens);
+    if (*tokens != '[') {
+        fprintf(stderr, "param_program tokens must be an array\n");
+        return -1;
+    }
+    tokens++;
+    int count = 0;
+    while (*tokens && tokens < objEnd) {
+        tokens = skip(tokens);
+        if (*tokens == ']') break;
+        if (*tokens == ',') {
+            tokens++;
+            continue;
+        }
+        if (*tokens != '{') {
+            fprintf(stderr, "param_program token must be an object\n");
+            return -1;
+        }
+        if (count >= PARAM_PROGRAM_MAX_TOKENS) {
+            fprintf(stderr, "param_program has too many tokens\n");
+            return -1;
+        }
+        const char *tokStart = tokens;
+        const char *tokEnd = findClosing(tokens, '{', '}');
+        if (!tokEnd || tokEnd > objEnd) {
+            fprintf(stderr, "param_program token object is malformed\n");
+            return -1;
+        }
+        if (!parseParamProgramTokenObject(tokStart, tokEnd, &program->tokens[count])) {
+            return -1;
+        }
+        count++;
+        tokens = tokEnd;
+    }
+    program->token_count = count;
+    return 1;
+}
+
+static int paramLegacyApply(int fnIndex, const double *args, int nArgs, int gridN,
+                            ParamCx in1, ParamCx in2, ParamCx *out1, ParamCx *out2) {
+    (void)gridN;
+    double z1r = in1.r, z1i = in1.i, z2r = in2.r, z2i = in2.i;
+    switch (fnIndex) {
+        case 1: pt_none(&z1r, &z1i, &z2r, &z2i); break;
+        case 2: pt_unit_circle(&z1r, &z1i, &z2r, &z2i); break;
+        case 3: pt_square(&z1r, &z1i, &z2r, &z2i); break;
+        case 4: pt_cube(&z1r, &z1i, &z2r, &z2i); break;
+        case 5: pt_reciprocal(&z1r, &z1i, &z2r, &z2i); break;
+        case 6: pt_conjugate(&z1r, &z1i, &z2r, &z2i); break;
+        case 7: pt_negate(&z1r, &z1i, &z2r, &z2i); break;
+        case 8: pt_exp(&z1r, &z1i, &z2r, &z2i); break;
+        case 9: pt_xim(&z1r, &z1i, &z2r, &z2i); break;
+        case 10: pt_add_sub(&z1r, &z1i, &z2r, &z2i); break;
+        case 11: pt_mul_div(&z1r, &z1i, &z2r, &z2i); break;
+        case 12: pt_swap(&z1r, &z1i, &z2r, &z2i); break;
+        case 13: pt_sum_prod(&z1r, &z1i, &z2r, &z2i); break;
+        case 14: pt_roots2(&z1r, &z1i, &z2r, &z2i); break;
+        case 15: pt_roots3(&z1r, &z1i, &z2r, &z2i); break;
+        case 16: pt_roots5(&z1r, &z1i, &z2r, &z2i); break;
+        case 17: pt_roots6(&z1r, &z1i, &z2r, &z2i); break;
+        case 18: pt_rtheta_target(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 1.0); break;
+        case 19:
+            if (nArgs >= 8) {
+                pt_moebius_abcd(&z1r, &z1i, &z2r, &z2i,
+                                args[0], args[1], args[2], args[3],
+                                args[4], args[5], args[6], args[7]);
+            } else {
+                pt_moebius(&z1r, &z1i, &z2r, &z2i);
+            }
+            break;
+        case 20:
+            pt_inv_t_plus_2(&z1r, &z1i, &z2r, &z2i,
+                            nArgs > 0 ? args[0] : 2.0,
+                            nArgs > 1 ? args[1] : 0.0,
+                            nArgs > 2 ? args[2] : 2.0,
+                            nArgs > 3 ? args[3] : 0.0);
+            break;
+        case 21: pt_crd(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 1.0); break;
+        case 22: pt_hrt(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 1.0, nArgs > 1 ? args[1] : 0.0); break;
+        case 23: pt_spdl(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 0.5, nArgs > 1 ? args[1] : 0.2, nArgs > 2 ? args[2] : 1.5); break;
+        case 24: pt_lmc(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 0.3, nArgs > 1 ? args[1] : 0.5); break;
+        case 25: pt_rsc(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 0.5, nArgs > 1 ? args[1] : 2.0); break;
+        case 26: pt_lss(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 0.5, nArgs > 1 ? args[1] : 0.5, nArgs > 2 ? args[2] : 3.0, nArgs > 3 ? args[3] : 2.0, nArgs > 4 ? args[4] : 0.5); break;
+        case 27: pt_ast(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 1.0); break;
+        case 28: pt_asp(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 0.0, nArgs > 1 ? args[1] : 0.1); break;
+        case 29: pt_lsp(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 0.1, nArgs > 1 ? args[1] : 0.15); break;
+        case 30: pt_dlt(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 1.0); break;
+        case 31: pt_rply(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 5.0, nArgs > 1 ? args[1] : 1.0, nArgs > 2 ? args[2] : 0.0); break;
+        case 32: pt_star(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 5.0, nArgs > 1 ? args[1] : 1.0, nArgs > 2 ? args[2] : 0.5); break;
+        case 33: pt_rect(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 2.0, nArgs > 1 ? args[1] : 1.0, nArgs > 2 ? args[2] : 0.0); break;
+        case 34: pt_rrect(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 2.0, nArgs > 1 ? args[1] : 1.0, nArgs > 2 ? args[2] : 4.0); break;
+        case 35: pt_z01(&z1r, &z1i, &z2r, &z2i); break;
+        case 36: pt_coeff2(&z1r, &z1i, &z2r, &z2i); break;
+        case 37: pt_coeff3(&z1r, &z1i, &z2r, &z2i); break;
+        case 38: pt_coeff3a(&z1r, &z1i, &z2r, &z2i); break;
+        case 39: pt_coeff4(&z1r, &z1i, &z2r, &z2i); break;
+        case 40: pt_coeff5(&z1r, &z1i, &z2r, &z2i); break;
+        case 41: pt_coeff5a(&z1r, &z1i, &z2r, &z2i); break;
+        case 42: pt_coeff6(&z1r, &z1i, &z2r, &z2i); break;
+        case 43: pt_coeff7(&z1r, &z1i, &z2r, &z2i); break;
+        case 44: pt_coeff8(&z1r, &z1i, &z2r, &z2i); break;
+        case 45: pt_coeff9(&z1r, &z1i, &z2r, &z2i); break;
+        case 46: pt_coeff10(&z1r, &z1i, &z2r, &z2i); break;
+        case 47: pt_coeff11(&z1r, &z1i, &z2r, &z2i); break;
+        case 48: pt_coeff12(&z1r, &z1i, &z2r, &z2i); break;
+        default:
+            fprintf(stderr, "unknown param legacy fn_index: %d\n", fnIndex);
+            return 1;
+    }
+    *out1 = param_cx(z1r, z1i);
+    *out2 = param_cx(z2r, z2i);
+    param_sanitize(out1);
+    param_sanitize(out2);
+    return 0;
+}
+
+static int paramPush(ParamCx *stack, int *sp, ParamCx value) {
+    if (*sp >= PARAM_PROGRAM_MAX_STACK) return 1;
+    stack[(*sp)++] = value;
+    return 0;
+}
+
+static int paramEvalProgram(const ParamProgram *program, int gridN, double t1r, double t2r,
+                            double *p1r, double *p1i, double *p2r, double *p2i) {
+    ParamCx t1 = param_cx(t1r, 0.0);
+    ParamCx t2 = param_cx(t2r, 0.0);
+    ParamCx p1 = t1;
+    ParamCx p2 = t2;
+    ParamCx stack[PARAM_PROGRAM_MAX_STACK];
+    int sp = 0;
+
+    for (int k = 0; k < program->token_count; k++) {
+        const ParamProgramToken *tok = &program->tokens[k];
+        switch (tok->op) {
+            case PARAM_OP_PUSH_T1:
+                if (paramPush(stack, &sp, t1)) return 1;
+                break;
+            case PARAM_OP_PUSH_T2:
+                if (paramPush(stack, &sp, t2)) return 1;
+                break;
+            case PARAM_OP_EMIT_P1:
+                if (sp < 1) return 1;
+                p1 = stack[--sp];
+                break;
+            case PARAM_OP_EMIT_P2:
+                if (sp < 1) return 1;
+                p2 = stack[--sp];
+                break;
+            case PARAM_OP_CONST:
+                if (paramPush(stack, &sp, param_cx(tok->a, tok->b))) return 1;
+                break;
+            case PARAM_OP_DUPLICATE:
+                if (sp < 1 || paramPush(stack, &sp, stack[sp - 1])) return 1;
+                break;
+            case PARAM_OP_SWAP: {
+                if (sp < 2) return 1;
+                ParamCx tmp = stack[sp - 1];
+                stack[sp - 1] = stack[sp - 2];
+                stack[sp - 2] = tmp;
+                break;
+            }
+            case PARAM_OP_POP:
+                if (sp < 1) return 1;
+                sp--;
+                break;
+            case PARAM_OP_FLUSH:
+                sp = 0;
+                break;
+            case PARAM_OP_ADD: {
+                if (sp < 2) return 1;
+                ParamCx b = stack[--sp], a = stack[sp - 1];
+                stack[sp - 1] = param_add(a, b);
+                break;
+            }
+            case PARAM_OP_SUBTRACT: {
+                if (sp < 2) return 1;
+                ParamCx b = stack[--sp], a = stack[sp - 1];
+                stack[sp - 1] = param_sub(a, b);
+                break;
+            }
+            case PARAM_OP_MUL: {
+                if (sp < 2) return 1;
+                ParamCx b = stack[--sp], a = stack[sp - 1];
+                stack[sp - 1] = param_mul(a, b);
+                break;
+            }
+            case PARAM_OP_RATIO: {
+                if (sp < 2) return 1;
+                ParamCx b = stack[--sp], a = stack[sp - 1];
+                stack[sp - 1] = param_ratio(a, b);
+                break;
+            }
+            case PARAM_OP_NEGATE:
+                if (sp < 1) return 1;
+                stack[sp - 1].r = -stack[sp - 1].r;
+                stack[sp - 1].i = -stack[sp - 1].i;
+                break;
+            case PARAM_OP_CONJ:
+                if (sp < 1) return 1;
+                stack[sp - 1].i = -stack[sp - 1].i;
+                break;
+            case PARAM_OP_RECIPROCAL:
+                if (sp < 1) return 1;
+                stack[sp - 1] = param_reciprocal(stack[sp - 1]);
+                break;
+            case PARAM_OP_UNIT_CIRCLE:
+                if (sp < 1) return 1;
+                stack[sp - 1] = param_unit_circle(stack[sp - 1]);
+                break;
+            case PARAM_OP_SQUARE:
+                if (sp < 1) return 1;
+                stack[sp - 1] = param_square(stack[sp - 1]);
+                break;
+            case PARAM_OP_CUBE:
+                if (sp < 1) return 1;
+                stack[sp - 1] = param_cube(stack[sp - 1]);
+                break;
+            case PARAM_OP_EXP:
+                if (sp < 1) return 1;
+                stack[sp - 1] = param_exp(stack[sp - 1]);
+                break;
+            case PARAM_OP_LEGACY: {
+                ParamCx in1 = p1, in2 = p2, out1, out2;
+                if (tok->src == PARAM_SEL_P1) {
+                    in1 = p1; in2 = p1;
+                } else if (tok->src == PARAM_SEL_P2) {
+                    in1 = p2; in2 = p2;
+                } else if (tok->src == PARAM_SEL_BOTH) {
+                    in1 = p1; in2 = p2;
+                } else if (tok->src == PARAM_SEL_POP1) {
+                    if (sp < 1) return 1;
+                    in1 = stack[--sp]; in2 = in1;
+                } else if (tok->src == PARAM_SEL_POP2) {
+                    if (sp < 2) return 1;
+                    in2 = stack[--sp];
+                    in1 = stack[--sp];
+                } else {
+                    return 1;
+                }
+                if (paramLegacyApply(tok->fn_index, tok->args, tok->n_args, gridN, in1, in2, &out1, &out2) != 0) return 1;
+                if (tok->tgt == PARAM_SEL_P1) {
+                    p1 = out1;
+                } else if (tok->tgt == PARAM_SEL_P2) {
+                    p2 = out1;
+                } else if (tok->tgt == PARAM_SEL_BOTH) {
+                    p1 = out1; p2 = out2;
+                } else if (tok->tgt == PARAM_SEL_PUSH1) {
+                    if (paramPush(stack, &sp, out1)) return 1;
+                } else if (tok->tgt == PARAM_SEL_PUSH2) {
+                    if (paramPush(stack, &sp, out1) || paramPush(stack, &sp, out2)) return 1;
+                } else {
+                    return 1;
+                }
+                break;
+            }
+            default:
+                fprintf(stderr, "unknown param program op: %d\n", tok->op);
+                return 1;
+        }
+        if (sp > 0) param_sanitize(&stack[sp - 1]);
+    }
+    if (sp != 0) return 1;
+    param_sanitize(&p1);
+    param_sanitize(&p2);
+    *p1r = p1.r; *p1i = p1.i; *p2r = p2.r; *p2i = p2.i;
+    return 0;
+}
+
+static int applyParamTransformProgram(double x1, double x2, int gridN,
+                                      const ParamProgram *program, int hasParamProgram,
+                                      const PtEntry *ptEntries, int nPt,
+                                      double *z1r, double *z1i, double *z2r, double *z2i) {
+    if (hasParamProgram) {
+        return paramEvalProgram(program, gridN, x1, x2, z1r, z1i, z2r, z2i);
+    }
+    *z1r = x1; *z1i = 0.0; *z2r = x2; *z2i = 0.0;
+    for (int t = 0; t < nPt; t++) {
+        if (dispatchPt(&ptEntries[t], z1r, z1i, z2r, z2i, gridN) != 0) return 1;
+    }
+    return 0;
+}
+
 /* ==== Wrapped coefficient functions (accept complex inputs) ==== */
 
 /* CoeffFuncC: coefficient function ABI.
@@ -5031,6 +5510,9 @@ static int runParamDump(const char *buf, const char *outPath) {
     int nPt = 0;
     cp = findKey(buf, "param_transforms");
     if (cp) nPt = parsePtChain(cp, ptEntries, MAX_CHAIN);
+    ParamProgram paramProgram;
+    int hasParamProgram = parseParamProgram(buf, &paramProgram);
+    if (hasParamProgram < 0) return 1;
 
     FILE *fout = fopen(outPath, "wb");
     if (!fout) { fprintf(stderr, "Cannot open %s\n", outPath); return 1; }
@@ -5041,7 +5523,13 @@ static int runParamDump(const char *buf, const char *outPath) {
         for (int i2 = 0; i2 < n2; i2++) {
             double x2 = (double)i2 / (double)n2;
             double z1r = x1, z1i = 0.0, z2r = x2, z2i = 0.0;
-            for (int t = 0; t < nPt; t++) dispatchPt(&ptEntries[t], &z1r, &z1i, &z2r, &z2i, n1);
+            if (applyParamTransformProgram(
+                    x1, x2, n1, &paramProgram, hasParamProgram > 0,
+                    ptEntries, nPt, &z1r, &z1i, &z2r, &z2i) != 0) {
+                fclose(fout);
+                fprintf(stderr, "param_dump param program evaluation failed at (%d,%d)\n", i1, i2);
+                return 1;
+            }
             float out[4] = { (float)z1r, (float)z1i, (float)z2r, (float)z2i };
             fwrite(out, sizeof(float), 4, fout);
         }
@@ -5049,8 +5537,9 @@ static int runParamDump(const char *buf, const char *outPath) {
     fclose(fout);
 
     long dataBytes = nPoints * 4 * sizeof(float);
-    printf("{\"mode\":\"param_dump\",\"n_points\":%ld,\"data_bytes\":%ld,\"n1\":%d,\"n2\":%d}\n",
-           nPoints, dataBytes, n1, n2);
+    printf("{\"mode\":\"param_dump\",\"n_points\":%ld,\"data_bytes\":%ld,\"n1\":%d,\"n2\":%d,"
+           "\"param_program_tokens\":%d}\n",
+           nPoints, dataBytes, n1, n2, hasParamProgram > 0 ? paramProgram.token_count : 0);
     return 0;
 }
 
@@ -5080,6 +5569,9 @@ static int runCoeffGen(const char *buf, const char *outPath) {
     int nPt = 0;
     cp = findKey(buf, "param_transforms");
     if (cp) nPt = parsePtChain(cp, ptEntries, MAX_CHAIN);
+    ParamProgram paramProgram;
+    int hasParamProgram = parseParamProgram(buf, &paramProgram);
+    if (hasParamProgram < 0) return 1;
 
     /* Parse coefficient transform chain */
     CtEntry ctEntries[MAX_CHAIN];
@@ -5119,7 +5611,12 @@ static int runCoeffGen(const char *buf, const char *outPath) {
     int probeN;
     {
         double z1r = 0, z1i = 0, z2r = 0, z2i = 0;
-        for (int t = 0; t < nPt; t++) dispatchPt(&ptEntries[t], &z1r, &z1i, &z2r, &z2i, n1);
+        if (applyParamTransformProgram(
+                0.0, 0.0, n1, &paramProgram, hasParamProgram > 0,
+                ptEntries, nPt, &z1r, &z1i, &z2r, &z2i) != 0) {
+            fprintf(stderr, "coeffgen degree probe param program evaluation failed\n");
+            return 1;
+        }
         if (quantizeParams) quantize_params_f32(&z1r, &z1i, &z2r, &z2i);
         coeffFunc(z1r, z1i, z2r, z2i, cfpv, n_cfpv, probeRe, probeIm, &probeN);
         for (int t = 0; t < nCt; t++) {
@@ -5156,7 +5653,14 @@ static int runCoeffGen(const char *buf, const char *outPath) {
             double x2 = (double)i2 / (double)n2;
 
             double z1r = x1, z1i = 0.0, z2r = x2, z2i = 0.0;
-            for (int t = 0; t < nPt; t++) dispatchPt(&ptEntries[t], &z1r, &z1i, &z2r, &z2i, n1);
+            if (applyParamTransformProgram(
+                    x1, x2, n1, &paramProgram, hasParamProgram > 0,
+                    ptEntries, nPt, &z1r, &z1i, &z2r, &z2i) != 0) {
+                fclose(fout);
+                free(stepBuf);
+                fprintf(stderr, "coeffgen param program evaluation failed at (%d,%d) pass %d\n", i1, i2, pass);
+                return 1;
+            }
             if (quantizeParams) quantize_params_f32(&z1r, &z1i, &z2r, &z2i);
 
             double cRe[MAX_COEFFS], cIm[MAX_COEFFS];
@@ -5202,10 +5706,11 @@ static int runCoeffGen(const char *buf, const char *outPath) {
            "\"n1\":%d,\"n2\":%d,"
            "\"i1_start\":%d,\"i1_end\":%d,"
            "\"n_t\":%ld,\"data_bytes\":%ld,"
-           "\"elapsed_us\":%ld}\n",
+           "\"elapsed_us\":%ld,\"param_program_tokens\":%d}\n",
            funcName, nCoeffsOut, degree,
            n1, n2, i1_start, i1_end,
-           totalSteps, dataBytes, elapsed_us);
+           totalSteps, dataBytes, elapsed_us,
+           hasParamProgram > 0 ? paramProgram.token_count : 0);
     return 0;
 }
 
@@ -5224,12 +5729,16 @@ typedef struct {
     int n2;
     int gridN;
     int nPt;
+    int hasParamProgram;
     int slotCount;
     const PtEntry *ptEntries;
+    const ParamProgram *paramProgram;
     long totalRows;
     long nextRow;
     long stepStart;
     long stepEnd;
+    int failed;
+    char error[256];
     ParamGenRowSlot *slots;
     pthread_mutex_t mutex;
     pthread_cond_t cond;
@@ -5239,8 +5748,9 @@ typedef struct {
     ParamGenThreadCtx *ctx;
 } ParamGenWorkerArg;
 
-static void computeParamGenRow(long globalRow, int n1, int n2, int gridN,
-                               const PtEntry *ptEntries, int nPt, float *outRow) {
+static int computeParamGenRow(long globalRow, int n1, int n2, int gridN,
+                              const ParamProgram *paramProgram, int hasParamProgram,
+                              const PtEntry *ptEntries, int nPt, float *outRow) {
     int pass = (int)(globalRow / n1);
     int i1 = (int)(globalRow % n1);
     double x1 = (double)i1 / (double)n1;
@@ -5249,12 +5759,17 @@ static void computeParamGenRow(long globalRow, int n1, int n2, int gridN,
         int i2 = (i1 & 1) ? (n2 - 1 - j) : j;
         double x2 = (double)i2 / (double)n2;
         double z1r = x1, z1i = 0.0, z2r = x2, z2i = 0.0;
-        for (int t = 0; t < nPt; t++) dispatchPt(&ptEntries[t], &z1r, &z1i, &z2r, &z2i, gridN);
+        if (applyParamTransformProgram(
+                x1, x2, gridN, paramProgram, hasParamProgram,
+                ptEntries, nPt, &z1r, &z1i, &z2r, &z2i) != 0) {
+            return 1;
+        }
         outRow[j * 4] = (float)z1r;
         outRow[j * 4 + 1] = (float)z1i;
         outRow[j * 4 + 2] = (float)z2r;
         outRow[j * 4 + 3] = (float)z2i;
     }
+    return 0;
 }
 
 static void *paramGenWorkerMain(void *vp) {
@@ -5265,7 +5780,7 @@ static void *paramGenWorkerMain(void *vp) {
         int slotIdx = -1;
         pthread_mutex_lock(&ctx->mutex);
         for (;;) {
-            if (ctx->nextRow >= ctx->totalRows) {
+            if (ctx->failed || ctx->nextRow >= ctx->totalRows) {
                 pthread_mutex_unlock(&ctx->mutex);
                 return NULL;
             }
@@ -5282,18 +5797,25 @@ static void *paramGenWorkerMain(void *vp) {
         }
         pthread_mutex_unlock(&ctx->mutex);
 
-        computeParamGenRow(
+        int rowRc = computeParamGenRow(
             row,
             ctx->n1,
             ctx->n2,
             ctx->gridN,
+            ctx->paramProgram,
+            ctx->hasParamProgram,
             ctx->ptEntries,
             ctx->nPt,
             ctx->slots[slotIdx].data
         );
 
         pthread_mutex_lock(&ctx->mutex);
-        ctx->slots[slotIdx].ready = 1;
+        if (rowRc != 0) {
+            ctx->failed = 1;
+            snprintf(ctx->error, sizeof(ctx->error), "param_gen param program evaluation failed at row %ld", row);
+        } else {
+            ctx->slots[slotIdx].ready = 1;
+        }
         pthread_cond_broadcast(&ctx->cond);
         pthread_mutex_unlock(&ctx->mutex);
     }
@@ -5313,6 +5835,7 @@ static int writeParamGenRowSlice(FILE *fout, const float *rowData, long row, int
 }
 
 static int runParamGenRangeSerial(FILE *fout, int n1, int n2, int gridN,
+                                  const ParamProgram *paramProgram, int hasParamProgram,
                                   const PtEntry *ptEntries, int nPt,
                                   long stepStart, long stepCount) {
     long stepEnd = stepStart + stepCount;
@@ -5325,7 +5848,11 @@ static int runParamGenRangeSerial(FILE *fout, int n1, int n2, int gridN,
         return 1;
     }
     for (long row = rowStart; row < rowEnd; row++) {
-        computeParamGenRow(row, n1, n2, gridN, ptEntries, nPt, rowData);
+        if (computeParamGenRow(row, n1, n2, gridN, paramProgram, hasParamProgram, ptEntries, nPt, rowData) != 0) {
+            free(rowData);
+            fprintf(stderr, "param_gen range param program evaluation failed at row %ld\n", row);
+            return 1;
+        }
         if (writeParamGenRowSlice(fout, rowData, row, n2, stepStart, stepEnd) != 0) {
             free(rowData);
             fprintf(stderr, "param_gen range write failed\n");
@@ -5337,6 +5864,7 @@ static int runParamGenRangeSerial(FILE *fout, int n1, int n2, int gridN,
 }
 
 static int runParamGenSerial(FILE *fout, int n1, int n2, int gridN, int times,
+                             const ParamProgram *paramProgram, int hasParamProgram,
                              const PtEntry *ptEntries, int nPt) {
     for (int pass = 0; pass < times; pass++) {
         /* Seed RNG per pass — matches coeffgen exactly */
@@ -5349,7 +5877,12 @@ static int runParamGenSerial(FILE *fout, int n1, int n2, int gridN, int times,
                 double x2 = (double)i2 / (double)n2;
 
                 double z1r = x1, z1i = 0.0, z2r = x2, z2i = 0.0;
-                for (int t = 0; t < nPt; t++) dispatchPt(&ptEntries[t], &z1r, &z1i, &z2r, &z2i, gridN);
+                if (applyParamTransformProgram(
+                        x1, x2, gridN, paramProgram, hasParamProgram,
+                        ptEntries, nPt, &z1r, &z1i, &z2r, &z2i) != 0) {
+                    fprintf(stderr, "param_gen param program evaluation failed at (%d,%d) pass %d\n", i1, i2, pass);
+                    return 1;
+                }
 
                 float out[4] = { (float)z1r, (float)z1i, (float)z2r, (float)z2i };
                 fwrite(out, sizeof(float), 4, fout);
@@ -5360,6 +5893,7 @@ static int runParamGenSerial(FILE *fout, int n1, int n2, int gridN, int times,
 }
 
 static int runParamGenThreadedRange(FILE *fout, int n1, int n2, int gridN,
+                                    const ParamProgram *paramProgram, int hasParamProgram,
                                     const PtEntry *ptEntries, int nPt, int nThreads,
                                     long stepStart, long stepCount) {
     long stepEnd = stepStart + stepCount;
@@ -5402,8 +5936,10 @@ static int runParamGenThreadedRange(FILE *fout, int n1, int n2, int gridN,
     ctx.n2 = n2;
     ctx.gridN = gridN;
     ctx.nPt = nPt;
+    ctx.hasParamProgram = hasParamProgram;
     ctx.slotCount = slotCount;
     ctx.ptEntries = ptEntries;
+    ctx.paramProgram = paramProgram;
     ctx.totalRows = totalRows;
     ctx.nextRow = rowStart;
     ctx.stepStart = stepStart;
@@ -5436,8 +5972,22 @@ static int runParamGenThreadedRange(FILE *fout, int n1, int n2, int gridN,
     for (long row = rowStart; row < rowEnd; row++) {
         int slotIdx = (int)(row % slotCount);
         pthread_mutex_lock(&ctx.mutex);
-        while (!(slots[slotIdx].inUse && slots[slotIdx].rowIndex == row && slots[slotIdx].ready)) {
+        while (!ctx.failed && !(slots[slotIdx].inUse && slots[slotIdx].rowIndex == row && slots[slotIdx].ready)) {
             pthread_cond_wait(&ctx.cond, &ctx.mutex);
+        }
+        if (ctx.failed) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "%s", ctx.error[0] ? ctx.error : "param_gen threaded worker failed");
+            pthread_mutex_unlock(&ctx.mutex);
+            for (int i = 0; i < created; i++) pthread_join(threads[i], NULL);
+            pthread_cond_destroy(&ctx.cond);
+            pthread_mutex_destroy(&ctx.mutex);
+            for (int i = 0; i < slotCount; i++) free(slots[i].data);
+            free(slots);
+            free(threads);
+            free(args);
+            fprintf(stderr, "%s\n", msg);
+            return 1;
         }
         pthread_mutex_unlock(&ctx.mutex);
 
@@ -5479,9 +6029,13 @@ static int runParamGenThreadedRange(FILE *fout, int n1, int n2, int gridN,
 }
 
 static int runParamGenThreaded(FILE *fout, int n1, int n2, int gridN, int times,
+                               const ParamProgram *paramProgram, int hasParamProgram,
                                const PtEntry *ptEntries, int nPt, int nThreads) {
     long totalSteps = (long)n1 * (long)n2 * (long)times;
-    return runParamGenThreadedRange(fout, n1, n2, gridN, ptEntries, nPt, nThreads, 0, totalSteps);
+    return runParamGenThreadedRange(
+        fout, n1, n2, gridN, paramProgram, hasParamProgram,
+        ptEntries, nPt, nThreads, 0, totalSteps
+    );
 }
 
 static int runParamGen(const char *buf, const char *outPath) {
@@ -5506,6 +6060,9 @@ static int runParamGen(const char *buf, const char *outPath) {
     int nPt = 0;
     cp = findKey(buf, "param_transforms");
     if (cp) nPt = parsePtChain(cp, ptEntries, MAX_CHAIN);
+    ParamProgram paramProgram;
+    int hasParamProgram = parseParamProgram(buf, &paramProgram);
+    if (hasParamProgram < 0) return 1;
 
     /* outPath "-" means write binary data to stdout (for streaming to S3).
      * Metadata JSON goes to stderr in that case. */
@@ -5550,12 +6107,21 @@ static int runParamGen(const char *buf, const char *outPath) {
     if (threadsUsed <= 1) {
         threadsUsed = 1;
         if (isRange) {
-            rc = runParamGenRangeSerial(fout, n1, n2, gridN, ptEntries, nPt, stepStart, stepCount);
+            rc = runParamGenRangeSerial(
+                fout, n1, n2, gridN, &paramProgram, hasParamProgram > 0,
+                ptEntries, nPt, stepStart, stepCount
+            );
         } else {
-            rc = runParamGenSerial(fout, n1, n2, gridN, times, ptEntries, nPt);
+            rc = runParamGenSerial(
+                fout, n1, n2, gridN, times, &paramProgram, hasParamProgram > 0,
+                ptEntries, nPt
+            );
         }
     } else {
-        rc = runParamGenThreadedRange(fout, n1, n2, gridN, ptEntries, nPt, threadsUsed, stepStart, stepCount);
+        rc = runParamGenThreadedRange(
+            fout, n1, n2, gridN, &paramProgram, hasParamProgram > 0,
+            ptEntries, nPt, threadsUsed, stepStart, stepCount
+        );
     }
     if (rc != 0) {
         if (!streamMode) fclose(fout);
@@ -5574,8 +6140,373 @@ static int runParamGen(const char *buf, const char *outPath) {
     FILE *metaOut = streamMode ? stderr : stdout;
     fprintf(metaOut, "{\"mode\":\"param_gen\",\"n1\":%d,\"n2\":%d,\"times\":%d,"
            "\"n_steps\":%ld,\"total_steps\":%ld,\"step_start\":%ld,\"step_count\":%ld,"
-           "\"data_bytes\":%ld,\"threads\":%d,\"elapsed_us\":%ld}\n",
-           n1, n2, times, stepCount, totalSteps, stepStart, stepCount, dataBytes, threadsUsed, elapsed_us);
+           "\"data_bytes\":%ld,\"threads\":%d,\"elapsed_us\":%ld,"
+           "\"param_program_tokens\":%d}\n",
+           n1, n2, times, stepCount, totalSteps, stepStart, stepCount,
+           dataBytes, threadsUsed, elapsed_us,
+           hasParamProgram > 0 ? paramProgram.token_count : 0);
+    return 0;
+}
+
+/* ==== Param-program benchmark mode ====
+ * Compares the current string-dispatched param transform pipeline with a small
+ * compiled token VM over the same serpentine param-gen traversal. This is a
+ * local architecture benchmark, not a persisted artifact path. */
+typedef struct {
+    double r;
+    double i;
+} BenchCx;
+
+enum {
+    PARAM_BENCH_PUSH_T1 = 1,
+    PARAM_BENCH_PUSH_T2 = 2,
+    PARAM_BENCH_EMIT_P1 = 3,
+    PARAM_BENCH_EMIT_P2 = 4,
+    PARAM_BENCH_CONST = 5,
+    PARAM_BENCH_ADD = 6,
+    PARAM_BENCH_SUBTRACT = 7,
+    PARAM_BENCH_MUL = 8,
+    PARAM_BENCH_UNIT_CIRCLE = 9,
+    PARAM_BENCH_SQUARE = 10,
+    PARAM_BENCH_EXP = 11
+};
+
+typedef struct {
+    int op;
+    double a;
+    double b;
+} ParamBenchToken;
+
+typedef struct {
+    const char *name;
+    PtEntry ptEntries[8];
+    int nPt;
+    ParamBenchToken tokens[64];
+    int nTokens;
+    int comparePipeline;
+} ParamBenchCase;
+
+static BenchCx bench_cx(double r, double i) {
+    BenchCx z;
+    z.r = r;
+    z.i = i;
+    return z;
+}
+
+static BenchCx bench_cx_add(BenchCx a, BenchCx b) {
+    return bench_cx(a.r + b.r, a.i + b.i);
+}
+
+static BenchCx bench_cx_sub(BenchCx a, BenchCx b) {
+    return bench_cx(a.r - b.r, a.i - b.i);
+}
+
+static BenchCx bench_cx_mul(BenchCx a, BenchCx b) {
+    return bench_cx(a.r * b.r - a.i * b.i, a.r * b.i + a.i * b.r);
+}
+
+static BenchCx bench_cx_unit_circle(BenchCx z) {
+    double u = 2.0 * M_PI * z.r;
+    double s = exp(-2.0 * M_PI * z.i);
+    return bench_cx(s * cos(u), s * sin(u));
+}
+
+static BenchCx bench_cx_square(BenchCx z) {
+    return bench_cx(z.r * z.r - z.i * z.i, 2.0 * z.r * z.i);
+}
+
+static BenchCx bench_cx_exp(BenchCx z) {
+    double e = exp(z.r);
+    return bench_cx(e * cos(z.i), e * sin(z.i));
+}
+
+static int bench_eval_program(double t1r, double t2r, const ParamBenchToken *tokens, int nTokens,
+                              double *p1r, double *p1i, double *p2r, double *p2i) {
+    BenchCx t1 = bench_cx(t1r, 0.0);
+    BenchCx t2 = bench_cx(t2r, 0.0);
+    BenchCx p1 = t1;
+    BenchCx p2 = t2;
+    BenchCx stack[16];
+    int sp = 0;
+
+    for (int k = 0; k < nTokens; k++) {
+        const ParamBenchToken *tok = &tokens[k];
+        switch (tok->op) {
+            case PARAM_BENCH_PUSH_T1:
+                if (sp >= 16) return 0;
+                stack[sp++] = t1;
+                break;
+            case PARAM_BENCH_PUSH_T2:
+                if (sp >= 16) return 0;
+                stack[sp++] = t2;
+                break;
+            case PARAM_BENCH_EMIT_P1:
+                if (sp < 1) return 0;
+                p1 = stack[--sp];
+                break;
+            case PARAM_BENCH_EMIT_P2:
+                if (sp < 1) return 0;
+                p2 = stack[--sp];
+                break;
+            case PARAM_BENCH_CONST:
+                if (sp >= 16) return 0;
+                stack[sp++] = bench_cx(tok->a, tok->b);
+                break;
+            case PARAM_BENCH_ADD: {
+                if (sp < 2) return 0;
+                BenchCx b = stack[--sp];
+                BenchCx a = stack[sp - 1];
+                stack[sp - 1] = bench_cx_add(a, b);
+                break;
+            }
+            case PARAM_BENCH_SUBTRACT: {
+                if (sp < 2) return 0;
+                BenchCx b = stack[--sp];
+                BenchCx a = stack[sp - 1];
+                stack[sp - 1] = bench_cx_sub(a, b);
+                break;
+            }
+            case PARAM_BENCH_MUL: {
+                if (sp < 2) return 0;
+                BenchCx b = stack[--sp];
+                BenchCx a = stack[sp - 1];
+                stack[sp - 1] = bench_cx_mul(a, b);
+                break;
+            }
+            case PARAM_BENCH_UNIT_CIRCLE:
+                if (sp < 1) return 0;
+                stack[sp - 1] = bench_cx_unit_circle(stack[sp - 1]);
+                break;
+            case PARAM_BENCH_SQUARE:
+                if (sp < 1) return 0;
+                stack[sp - 1] = bench_cx_square(stack[sp - 1]);
+                break;
+            case PARAM_BENCH_EXP:
+                if (sp < 1) return 0;
+                stack[sp - 1] = bench_cx_exp(stack[sp - 1]);
+                break;
+            default:
+                return 0;
+        }
+    }
+    if (sp != 0) return 0;
+    *p1r = p1.r; *p1i = p1.i; *p2r = p2.r; *p2i = p2.i;
+    return 1;
+}
+
+static void bench_make_pt(PtEntry *e, const char *name) {
+    memset(e, 0, sizeof(*e));
+    snprintf(e->name, sizeof(e->name), "%s", name);
+}
+
+static void bench_mix_u64(uint64_t *h, double v) {
+    union { double d; uint64_t u; } u;
+    u.d = v;
+    *h ^= u.u + 0x9e3779b97f4a7c15ULL + (*h << 6) + (*h >> 2);
+}
+
+static uint64_t bench_pipeline_checksum(int n1, int n2, int times, const PtEntry *ptEntries, int nPt) {
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (int pass = 0; pass < times; pass++) {
+        for (int i1 = 0; i1 < n1; i1++) {
+            double x1 = (double)i1 / (double)n1;
+            for (int j = 0; j < n2; j++) {
+                int i2 = (i1 & 1) ? (n2 - 1 - j) : j;
+                double x2 = (double)i2 / (double)n2;
+                double z1r = x1, z1i = 0.0, z2r = x2, z2i = 0.0;
+                for (int t = 0; t < nPt; t++) {
+                    dispatchPt(&ptEntries[t], &z1r, &z1i, &z2r, &z2i, n1);
+                }
+                bench_mix_u64(&h, z1r);
+                bench_mix_u64(&h, z1i);
+                bench_mix_u64(&h, z2r);
+                bench_mix_u64(&h, z2i);
+            }
+        }
+    }
+    return h;
+}
+
+static uint64_t bench_vm_checksum(int n1, int n2, int times, const ParamBenchToken *tokens, int nTokens) {
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (int pass = 0; pass < times; pass++) {
+        for (int i1 = 0; i1 < n1; i1++) {
+            double x1 = (double)i1 / (double)n1;
+            for (int j = 0; j < n2; j++) {
+                int i2 = (i1 & 1) ? (n2 - 1 - j) : j;
+                double x2 = (double)i2 / (double)n2;
+                double p1r = x1, p1i = 0.0, p2r = x2, p2i = 0.0;
+                if (!bench_eval_program(x1, x2, tokens, nTokens, &p1r, &p1i, &p2r, &p2i)) {
+                    return 0;
+                }
+                bench_mix_u64(&h, p1r);
+                bench_mix_u64(&h, p1i);
+                bench_mix_u64(&h, p2r);
+                bench_mix_u64(&h, p2i);
+            }
+        }
+    }
+    return h;
+}
+
+static long bench_elapsed_us(struct timespec a, struct timespec b) {
+    return (b.tv_sec - a.tv_sec) * 1000000L + (b.tv_nsec - a.tv_nsec) / 1000L;
+}
+
+static int bench_long_cmp(const void *a, const void *b) {
+    long av = *(const long *)a;
+    long bv = *(const long *)b;
+    return (av > bv) - (av < bv);
+}
+
+static long bench_median(long *values, int n) {
+    qsort(values, (size_t)n, sizeof(values[0]), bench_long_cmp);
+    return values[n / 2];
+}
+
+static long bench_min_long(const long *values, int n) {
+    long best = values[0];
+    for (int i = 1; i < n; i++) if (values[i] < best) best = values[i];
+    return best;
+}
+
+static long bench_time_pipeline_us(int n1, int n2, int times, const PtEntry *ptEntries, int nPt, uint64_t *checksum) {
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    *checksum = bench_pipeline_checksum(n1, n2, times, ptEntries, nPt);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    return bench_elapsed_us(t0, t1);
+}
+
+static long bench_time_vm_us(int n1, int n2, int times, const ParamBenchToken *tokens, int nTokens, uint64_t *checksum) {
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    *checksum = bench_vm_checksum(n1, n2, times, tokens, nTokens);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    return bench_elapsed_us(t0, t1);
+}
+
+static int runParamProgramBench(const char *buf) {
+    int n1 = 1000, n2 = 1000, times = 1, reps = 5;
+    const char *cp;
+    cp = findKey(buf, "n1"); if (cp) n1 = (int)parseNum(&cp);
+    cp = findKey(buf, "n2"); if (cp) n2 = (int)parseNum(&cp);
+    cp = findKey(buf, "N"); if (cp) { n1 = (int)parseNum(&cp); n2 = n1; }
+    cp = findKey(buf, "times"); if (cp) times = (int)parseNum(&cp);
+    cp = findKey(buf, "reps"); if (cp) reps = (int)parseNum(&cp);
+    if (n1 < 1) n1 = 1;
+    if (n2 < 1) n2 = 1;
+    if (times < 1) times = 1;
+    if (reps < 1) reps = 1;
+    if (reps > 25) reps = 25;
+
+    ParamBenchCase cases[5];
+    memset(cases, 0, sizeof(cases));
+    int nCases = 0;
+
+    cases[nCases].name = "identity";
+    cases[nCases].comparePipeline = 1;
+    nCases++;
+
+    cases[nCases].name = "unit_circle_both";
+    bench_make_pt(&cases[nCases].ptEntries[0], "unit_circle");
+    cases[nCases].nPt = 1;
+    cases[nCases].tokens[0] = (ParamBenchToken){PARAM_BENCH_PUSH_T1, 0, 0};
+    cases[nCases].tokens[1] = (ParamBenchToken){PARAM_BENCH_UNIT_CIRCLE, 0, 0};
+    cases[nCases].tokens[2] = (ParamBenchToken){PARAM_BENCH_EMIT_P1, 0, 0};
+    cases[nCases].tokens[3] = (ParamBenchToken){PARAM_BENCH_PUSH_T2, 0, 0};
+    cases[nCases].tokens[4] = (ParamBenchToken){PARAM_BENCH_UNIT_CIRCLE, 0, 0};
+    cases[nCases].tokens[5] = (ParamBenchToken){PARAM_BENCH_EMIT_P2, 0, 0};
+    cases[nCases].nTokens = 6;
+    cases[nCases].comparePipeline = 1;
+    nCases++;
+
+    cases[nCases].name = "unit_circle_square";
+    bench_make_pt(&cases[nCases].ptEntries[0], "unit_circle");
+    bench_make_pt(&cases[nCases].ptEntries[1], "square");
+    cases[nCases].nPt = 2;
+    cases[nCases].tokens[0] = (ParamBenchToken){PARAM_BENCH_PUSH_T1, 0, 0};
+    cases[nCases].tokens[1] = (ParamBenchToken){PARAM_BENCH_UNIT_CIRCLE, 0, 0};
+    cases[nCases].tokens[2] = (ParamBenchToken){PARAM_BENCH_SQUARE, 0, 0};
+    cases[nCases].tokens[3] = (ParamBenchToken){PARAM_BENCH_EMIT_P1, 0, 0};
+    cases[nCases].tokens[4] = (ParamBenchToken){PARAM_BENCH_PUSH_T2, 0, 0};
+    cases[nCases].tokens[5] = (ParamBenchToken){PARAM_BENCH_UNIT_CIRCLE, 0, 0};
+    cases[nCases].tokens[6] = (ParamBenchToken){PARAM_BENCH_SQUARE, 0, 0};
+    cases[nCases].tokens[7] = (ParamBenchToken){PARAM_BENCH_EMIT_P2, 0, 0};
+    cases[nCases].nTokens = 8;
+    cases[nCases].comparePipeline = 1;
+    nCases++;
+
+    cases[nCases].name = "sum_difference";
+    bench_make_pt(&cases[nCases].ptEntries[0], "add_sub");
+    cases[nCases].nPt = 1;
+    cases[nCases].tokens[0] = (ParamBenchToken){PARAM_BENCH_PUSH_T1, 0, 0};
+    cases[nCases].tokens[1] = (ParamBenchToken){PARAM_BENCH_PUSH_T2, 0, 0};
+    cases[nCases].tokens[2] = (ParamBenchToken){PARAM_BENCH_ADD, 0, 0};
+    cases[nCases].tokens[3] = (ParamBenchToken){PARAM_BENCH_EMIT_P1, 0, 0};
+    cases[nCases].tokens[4] = (ParamBenchToken){PARAM_BENCH_PUSH_T1, 0, 0};
+    cases[nCases].tokens[5] = (ParamBenchToken){PARAM_BENCH_PUSH_T2, 0, 0};
+    cases[nCases].tokens[6] = (ParamBenchToken){PARAM_BENCH_SUBTRACT, 0, 0};
+    cases[nCases].tokens[7] = (ParamBenchToken){PARAM_BENCH_EMIT_P2, 0, 0};
+    cases[nCases].nTokens = 8;
+    cases[nCases].comparePipeline = 1;
+    nCases++;
+
+    cases[nCases].name = "t2_modulates_t1";
+    cases[nCases].tokens[0] = (ParamBenchToken){PARAM_BENCH_PUSH_T1, 0, 0};
+    cases[nCases].tokens[1] = (ParamBenchToken){PARAM_BENCH_UNIT_CIRCLE, 0, 0};
+    cases[nCases].tokens[2] = (ParamBenchToken){PARAM_BENCH_PUSH_T2, 0, 0};
+    cases[nCases].tokens[3] = (ParamBenchToken){PARAM_BENCH_CONST, 0, 2.0 * M_PI};
+    cases[nCases].tokens[4] = (ParamBenchToken){PARAM_BENCH_MUL, 0, 0};
+    cases[nCases].tokens[5] = (ParamBenchToken){PARAM_BENCH_EXP, 0, 0};
+    cases[nCases].tokens[6] = (ParamBenchToken){PARAM_BENCH_MUL, 0, 0};
+    cases[nCases].tokens[7] = (ParamBenchToken){PARAM_BENCH_EMIT_P1, 0, 0};
+    cases[nCases].nTokens = 8;
+    cases[nCases].comparePipeline = 0;
+    nCases++;
+
+    printf("{\"mode\":\"param_program_bench\",\"n1\":%d,\"n2\":%d,\"times\":%d,\"reps\":%d,"
+           "\"steps\":%ld,\"cases\":[",
+           n1, n2, times, reps, (long)n1 * (long)n2 * (long)times);
+    for (int c = 0; c < nCases; c++) {
+        long pipeTimes[25], vmTimes[25];
+        uint64_t pipeChecksum = 0, vmChecksum = 0;
+        for (int r = 0; r < reps; r++) {
+            if (cases[c].comparePipeline) {
+                pipeTimes[r] = bench_time_pipeline_us(n1, n2, times, cases[c].ptEntries, cases[c].nPt, &pipeChecksum);
+            } else {
+                pipeTimes[r] = 0;
+            }
+            vmTimes[r] = bench_time_vm_us(n1, n2, times, cases[c].tokens, cases[c].nTokens, &vmChecksum);
+        }
+        long pipeMedian = cases[c].comparePipeline ? bench_median(pipeTimes, reps) : 0;
+        long vmMedian = bench_median(vmTimes, reps);
+        long pipeMin = cases[c].comparePipeline ? bench_min_long(pipeTimes, reps) : 0;
+        long vmMin = bench_min_long(vmTimes, reps);
+        double penalty = cases[c].comparePipeline && pipeMedian > 0
+            ? 100.0 * ((double)vmMedian - (double)pipeMedian) / (double)pipeMedian
+            : 0.0;
+        double steps = (double)n1 * (double)n2 * (double)times;
+        if (c > 0) printf(",");
+        printf("{\"name\":\"%s\",\"tokens\":%d,\"legacy_transforms\":%d,"
+               "\"pipeline_us_median\":%ld,\"vm_us_median\":%ld,"
+               "\"pipeline_us_min\":%ld,\"vm_us_min\":%ld,",
+               cases[c].name, cases[c].nTokens, cases[c].nPt,
+               pipeMedian, vmMedian, pipeMin, vmMin);
+        if (cases[c].comparePipeline && pipeMedian > 0) {
+            printf("\"penalty_pct\":%.2f,\"pipeline_rows_per_sec\":%.0f,",
+                   penalty, steps * 1000000.0 / (double)pipeMedian);
+        } else {
+            printf("\"penalty_pct\":null,\"pipeline_rows_per_sec\":null,");
+        }
+        printf("\"vm_rows_per_sec\":%.0f,\"checksum_match\":%s,"
+               "\"pipeline_checksum\":\"%016llx\",\"vm_checksum\":\"%016llx\"}",
+               steps * 1000000.0 / (double)vmMedian,
+               (!cases[c].comparePipeline || pipeChecksum == vmChecksum) ? "true" : "false",
+               (unsigned long long)pipeChecksum,
+               (unsigned long long)vmChecksum);
+    }
+    printf("]}\n");
     return 0;
 }
 
@@ -6273,6 +7204,11 @@ int main(int argc, char **argv) {
         }
         if (strcmp(mode, "param_gen") == 0) {
             int rc = runParamGen(buf, outPath);
+            free(buf);
+            return rc;
+        }
+        if (strcmp(mode, "param_program_bench") == 0) {
+            int rc = runParamProgramBench(buf);
             free(buf);
             return rc;
         }

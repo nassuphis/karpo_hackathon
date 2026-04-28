@@ -407,6 +407,9 @@ Rules:
 - The popup shell must have a deliberate height, not only `max-height`.
 - The main popup body should consume the remaining shell height with flex/grid
   sizing and `min-height: 0`.
+- Action rows must remain inside the fixed popup shell and must never be pushed
+  below the visible viewport. For multi-section dialogs, allocate shell rows
+  explicitly, for example `auto auto minmax(0, 1fr) auto auto`.
 - List/table panes and detail panes must be scroll containers inside that fixed
   body.
 - Selection changes may update scrollable content, but must not change the

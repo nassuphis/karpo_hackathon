@@ -951,7 +951,8 @@ echo "  SweepMT:  $(du -h /tmp/polypaint-sweep-mt.zip | cut -f1)  (sweep_mt)"
 COEFFGEN_DIR=/tmp/polypaint-coeffgen
 rm -rf "$COEFFGEN_DIR"
 mkdir -p "$COEFFGEN_DIR"
-cp lambda/handler_coeffgen.py lambda/shared.py lambda/compute_fused.py "$COEFFGEN_DIR/"
+cp lambda/handler_coeffgen.py lambda/shared.py lambda/compute_fused.py \
+   lambda/param_program_chain.py lambda/param_legacy_registry.json "$COEFFGEN_DIR/"
 cp lambda/sweep_coeffgen "$COEFFGEN_DIR/"
 chmod +x "$COEFFGEN_DIR"/sweep_coeffgen
 cd "$COEFFGEN_DIR" && zip -r9 /tmp/polypaint-coeffgen.zip . -q && cd "$SCRIPT_DIR"
@@ -970,6 +971,7 @@ STORAGE_DIR=/tmp/polypaint-storage
 rm -rf "$STORAGE_DIR"
 mkdir -p "$STORAGE_DIR"
 cp lambda/handler_storage.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py \
+   lambda/param_program_chain.py lambda/param_legacy_registry.json \
    lambda/color_render_contract.py lambda/logical_sections.py "$STORAGE_DIR/"
 cd "$STORAGE_DIR" && zip -r9 /tmp/polypaint-storage.zip . -q && cd "$SCRIPT_DIR"
 echo "  Storage:  $(du -h /tmp/polypaint-storage.zip | cut -f1)  (pure Python)"
@@ -1016,7 +1018,9 @@ echo "  Preview:  $(du -h /tmp/polypaint-preview.zip | cut -f1)  (pure Python)"
 COMPUTE_PREVIEW_DIR=/tmp/polypaint-compute-preview
 rm -rf "$COMPUTE_PREVIEW_DIR"
 mkdir -p "$COMPUTE_PREVIEW_DIR"
-cp lambda/handler_compute_preview.py lambda/shared.py "$COMPUTE_PREVIEW_DIR/"
+cp lambda/handler_compute_preview.py lambda/shared.py \
+   lambda/param_program_chain.py lambda/param_legacy_registry.json \
+   "$COMPUTE_PREVIEW_DIR/"
 cp lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$COMPUTE_PREVIEW_DIR/"
 chmod +x "$COMPUTE_PREVIEW_DIR"/sweep_coeffgen "$COMPUTE_PREVIEW_DIR"/sweep_mt "$COMPUTE_PREVIEW_DIR"/sweep_cm
 cd "$COMPUTE_PREVIEW_DIR" && zip -r9 /tmp/polypaint-compute-preview.zip . -q && cd "$SCRIPT_DIR"
@@ -1037,7 +1041,9 @@ echo "  Bilevel:  $(du -h /tmp/polypaint-bilevel.zip | cut -f1)  (bilevel sparse
 PARAM_DEBUG_DIR=/tmp/polypaint-param-debug
 rm -rf "$PARAM_DEBUG_DIR"
 mkdir -p "$PARAM_DEBUG_DIR"
-cp lambda/handler_param_debug.py lambda/shared.py "$PARAM_DEBUG_DIR/"
+cp lambda/handler_param_debug.py lambda/shared.py \
+   lambda/param_program_chain.py lambda/param_legacy_registry.json \
+   "$PARAM_DEBUG_DIR/"
 cp lambda/sweep lambda/bilevel_merge "$PARAM_DEBUG_DIR/"
 chmod +x "$PARAM_DEBUG_DIR"/sweep "$PARAM_DEBUG_DIR"/bilevel_merge
 cd "$PARAM_DEBUG_DIR" && zip -r9 /tmp/polypaint-param-debug.zip . -q && cd "$SCRIPT_DIR"
@@ -1311,7 +1317,8 @@ echo "  CmpOrch: $(du -h /tmp/polypaint-compute-orchestrator.zip | cut -f1)  (st
 COMP_PLAN_DIR=/tmp/polypaint-compute-plan
 rm -rf "$COMP_PLAN_DIR"
 mkdir -p "$COMP_PLAN_DIR"
-cp lambda/handler_compute_plan.py lambda/shared.py lambda/compute_fused.py "$COMP_PLAN_DIR/"
+cp lambda/handler_compute_plan.py lambda/shared.py lambda/compute_fused.py \
+   lambda/param_program_chain.py lambda/param_legacy_registry.json "$COMP_PLAN_DIR/"
 cd "$COMP_PLAN_DIR" && zip -r9 /tmp/polypaint-compute-plan.zip . -q && cd "$SCRIPT_DIR"
 echo "  CmpPlan: $(du -h /tmp/polypaint-compute-plan.zip | cut -f1)  (plan + finalize)"
 
@@ -1581,6 +1588,10 @@ setup_api_gateway() {
     ensure_route "POST /fetch-solve-score-program" "$STORAGE_INT"
     ensure_route "POST /save-solve-score-program" "$STORAGE_INT"
     ensure_route "POST /delete-solve-score-program" "$STORAGE_INT"
+    ensure_route "POST /list-param-programs" "$STORAGE_INT"
+    ensure_route "POST /fetch-param-program" "$STORAGE_INT"
+    ensure_route "POST /save-param-program" "$STORAGE_INT"
+    ensure_route "POST /delete-param-program" "$STORAGE_INT"
     ensure_route "POST /list-favorites" "$STORAGE_INT"
     ensure_route "POST /add-favorite" "$STORAGE_INT"
     ensure_route "POST /delete-favorite" "$STORAGE_INT"

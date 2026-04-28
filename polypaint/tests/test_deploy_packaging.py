@@ -406,6 +406,8 @@ class TestDeployPackaging(unittest.TestCase):
 
         self.assertIn("handler_compute_preview.py", packaged)
         self.assertIn("sweep_coeffgen", packaged["handler_compute_preview.py"])
+        self.assertIn("param_program_chain.py", packaged["handler_compute_preview.py"])
+        self.assertIn("param_legacy_registry.json", packaged["handler_compute_preview.py"])
         self.assertNotIn("sweep", packaged["handler_compute_preview.py"])
         self.assertIn("sweep_mt", packaged["handler_compute_preview.py"])
         self.assertIn("sweep_cm", packaged["handler_compute_preview.py"])

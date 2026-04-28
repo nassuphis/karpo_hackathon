@@ -29,7 +29,7 @@ class TestComputePlan(unittest.TestCase):
                 "lores_param_gen_threads": 2,
                 "lores_coeffgen_threads": 3,
                 "function": "g1",
-                "param_transforms": [],
+                "param_transforms": [["unit_circle"]],
                 "coeff_transforms": [],
                 "cfpv": [],
             },
@@ -55,6 +55,67 @@ class TestComputePlan(unittest.TestCase):
         self.assertEqual(first["params_bin_size"], first["step_count"] * 16)
         self.assertEqual(first["solve_task_id"], "compute_run_abc_solve_0")
         self.assertEqual(first["bin_key"], "renders/compute_j/chunk_0.bin")
+
+    def test_build_plan_compiles_param_program_chain(self):
+        import handler_compute_plan as mod
+
+        result = mod.handle_build_plan({
+            "job_id": "compute_j",
+            "run_id": "run_param_program",
+            "task_id": "compute_run_aberth_mt_run_param_program",
+            "params": {
+                "solver_mode": "aberth_mt",
+                "N": 20,
+                "times": 1,
+                "n_chunks": 2,
+                "function": "g1",
+                "param_transforms": [["unit_circle"]],
+                "param_program_chain": [
+                    ["push", "t1"],
+                    ["push", "t2"],
+                    ["add"],
+                    ["emit", "p1"],
+                    ["push", "t1"],
+                    ["push", "t2"],
+                    ["subtract"],
+                    ["emit", "p2"],
+                ],
+                "coeff_transforms": [],
+                "cfpv": [],
+            },
+        })
+        plan = json.loads(result["body"])
+        self.assertEqual(plan["pipeline"]["param_transforms"], [])
+        self.assertEqual(plan["pipeline"]["param_program_chain"][0], ["push", "t1"])
+        self.assertEqual(plan["pipeline"]["param_program"]["token_count"], 8)
+        self.assertEqual(plan["pipeline"]["param_program"]["stack_max"], 2)
+        self.assertTrue(plan["pipeline"]["param_program_fingerprint"])
+        self.assertEqual(plan["pipeline"]["param_program_display"], plan["pipeline"]["param_program"]["display"])
+
+    def test_build_plan_keeps_legacy_equivalent_param_program_on_fast_path(self):
+        import handler_compute_plan as mod
+
+        result = mod.handle_build_plan({
+            "job_id": "compute_j",
+            "run_id": "run_param_program_legacy",
+            "task_id": "compute_run_aberth_mt_run_param_program_legacy",
+            "params": {
+                "solver_mode": "aberth_mt",
+                "N": 20,
+                "times": 1,
+                "n_chunks": 2,
+                "function": "g1",
+                "param_transforms": [],
+                "param_program_chain": [["legacy", "rtheta", "both", "both", "1"]],
+                "coeff_transforms": [],
+                "cfpv": [],
+            },
+        })
+        plan = json.loads(result["body"])
+        self.assertEqual(plan["pipeline"]["param_transforms"], [["rtheta", "1"]])
+        self.assertEqual(plan["pipeline"]["param_program"], {})
+        self.assertTrue(plan["pipeline"]["param_program_fingerprint"])
+        self.assertTrue(plan["pipeline"]["param_program_uses_legacy_fast_path"])
 
     def test_build_plan_fused_uses_probe_and_safe_chunk_floor(self):
         import handler_compute_plan as mod

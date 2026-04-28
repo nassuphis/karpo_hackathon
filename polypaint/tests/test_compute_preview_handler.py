@@ -125,6 +125,70 @@ class TestComputePreviewHandler(unittest.TestCase):
         self.assertIn("function=g1", body["message"])
         self.assertIn("coeff=roots_cm(lo)", body["message"])
 
+    @patch("handler_compute_preview.tmp_space_stats")
+    @patch("handler_compute_preview.subprocess.run")
+    @patch("handler_compute_preview.compute_viewport_from_bin")
+    def test_compute_preview_forwards_param_program_chain(self, mock_viewport, mock_run, mock_tmp_stats):
+        import handler_compute_preview as mod
+
+        mock_tmp_stats.return_value = {
+            "path": "/tmp",
+            "free_bytes": 8 * 1024 * 1024 * 1024,
+            "total_bytes": 10 * 1024 * 1024 * 1024,
+        }
+        mock_viewport.return_value = {
+            "center_re": 0.0,
+            "center_im": 0.0,
+            "scale": 4096.0,
+            "n_roots": 32 * 32 * 2,
+            "q_re": [-1.0, 1.0],
+            "q_im": [-1.0, 1.0],
+        }
+        specs = []
+
+        def fake_run(cmd, input=None, capture_output=None, text=None, timeout=None, env=None):
+            exe = os.path.basename(cmd[0])
+            specs.append(json.loads(input))
+            out_path = cmd[1]
+            if exe == "sweep_coeffgen":
+                with open(out_path, "wb") as fh:
+                    fh.write(b"\0" * (32 * 32 * 3 * 8))
+                return unittest.mock.MagicMock(
+                    returncode=0,
+                    stdout=json.dumps({"data_bytes": 32 * 32 * 3 * 8, "n_coeffs": 3, "degree": 2}),
+                    stderr="",
+                )
+            if exe == "sweep_mt":
+                with open(out_path, "wb") as fh:
+                    fh.write(_roots_bytes(32 * 32, 2))
+                return unittest.mock.MagicMock(
+                    returncode=0,
+                    stdout=json.dumps({"n_t": 32 * 32, "degree": 2, "avg_iterations": 0, "skipped_overflow": 0}),
+                    stderr="",
+                )
+            raise AssertionError(f"unexpected subprocess call: {cmd}")
+
+        mock_run.side_effect = fake_run
+
+        result = mod.handler({"body": json.dumps(_event(
+            param_transforms=[["unit_circle"]],
+            param_program_chain=[
+                ["push", "t1"],
+                ["push", "t2"],
+                ["add"],
+                ["emit", "p1"],
+                ["push", "t1"],
+                ["push", "t2"],
+                ["subtract"],
+                ["emit", "p2"],
+            ],
+        ))}, None)
+
+        self.assertEqual(result["statusCode"], 200)
+        self.assertEqual(specs[0]["param_transforms"], [])
+        self.assertIn("param_program", specs[0])
+        self.assertEqual(specs[0]["param_program"]["token_count"], 8)
+
     @patch("handler_compute_preview.subprocess.run")
     def test_compute_preview_refuses_large_roots_cm_before_coeffgen(self, mock_run):
         import handler_compute_preview as mod

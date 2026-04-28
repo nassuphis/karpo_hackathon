@@ -28,6 +28,7 @@ from compute_fused import (
     estimate_fused_chunking,
     validate_fused_threads,
 )
+from param_program_chain import compile_param_program_chain
 from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
 
 s3 = boto3.client("s3")
@@ -77,6 +78,8 @@ def handle_param_gen(params):
             "times": times,
             "param_transforms": contract_param(params, "param_transforms", [], contract_warnings),
         }
+        if params.get("param_program"):
+            spec["param_program"] = params["param_program"]
         if grid_n_override:
             spec["gridN"] = grid_n_override
         if raw_threads not in (None, ""):
@@ -404,6 +407,8 @@ def handle_legacy_coeffgen(params):
             "i1_end": i1_end,
             "times": params.get("times", 1),
         }
+        if params.get("param_program"):
+            spec["param_program"] = params["param_program"]
         if params.get("cfpv"):
             spec["cfpv"] = params["cfpv"]
 
@@ -469,6 +474,25 @@ def handle_degree_probe(params):
         param_transforms = []
     if not isinstance(param_transforms, list):
         raise RuntimeError("param_transforms must be an array")
+    param_program = params.get("param_program") or None
+    param_program_chain = params.get("param_program_chain")
+    if param_program is None and param_program_chain:
+        if not isinstance(param_program_chain, list):
+            raise RuntimeError("param_program_chain must be an array")
+        compiled_param_program = compile_param_program_chain(param_program_chain)
+        if compiled_param_program["legacy_transforms"]:
+            param_transforms = compiled_param_program["legacy_transforms"]
+        else:
+            param_transforms = []
+            param_program = {
+                "version": compiled_param_program["version"],
+                "fingerprint": compiled_param_program["fingerprint"],
+                "display": compiled_param_program["display"],
+                "stack_max": compiled_param_program["stack_max"],
+                "token_count": compiled_param_program["token_count"],
+                "uses_legacy_fast_path": compiled_param_program["uses_legacy_fast_path"],
+                "tokens": compiled_param_program["tokens"],
+            }
     cfpv = params.get("cfpv")
     if cfpv in (None, ""):
         cfpv = []
@@ -497,6 +521,8 @@ def handle_degree_probe(params):
                 "i1_end": i1_end,
                 "times": 1,
             }
+            if param_program:
+                spec["param_program"] = param_program
             if cfpv:
                 spec["cfpv"] = cfpv
             sample_t0 = time.time()
@@ -534,6 +560,7 @@ def handle_degree_probe(params):
             param_transforms=param_transforms,
             coeff_transforms=coeff_transforms,
             cfpv=cfpv,
+            param_program=param_program,
         )
         body = {
             "probe_n": probe_n,

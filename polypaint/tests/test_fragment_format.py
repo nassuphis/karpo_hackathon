@@ -73,7 +73,7 @@ class TestFragmentFormat(unittest.TestCase):
     def test_invalid_length_is_rejected(self):
         result, _ = self._run(2, [b"\x00"])
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("not divisible by 5", result.stderr)
+        self.assertIn("not divisible by record size 5", result.stderr)
 
     def test_zero_score_is_rejected(self):
         result, _ = self._run(2, [_encode_pairs([(1, 0)])])

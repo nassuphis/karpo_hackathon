@@ -98,6 +98,21 @@ button {
     background: #1a1a2e; border: 1px solid #0f3460; border-radius: 3px;
     color: #e0e0e0; font-size: 11px; text-align: center;
 }
+.chip .chip-param-pair {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: 3px;
+}
+.chip .chip-param-name {
+    color: #9ab;
+    font-size: 10px;
+    line-height: 1;
+    white-space: nowrap;
+}
+.chip .chip-param-pair .chip-input {
+    margin-left: 0;
+}
 .chip .chip-input-andy {
     width: 74px;
     text-align: left;
@@ -759,6 +774,50 @@ button {
 .solve-score-program-display .chip {
     flex: 0 0 auto;
 }
+.param-program-box {
+    margin-top: 10px;
+}
+.param-pipeline-row {
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+}
+.param-pipeline-row select {
+    min-width: 180px;
+}
+.param-pipeline-mode-note {
+    color: #888;
+    font-size: 11px;
+}
+.param-pipeline-inactive {
+    opacity: 0.58;
+}
+.param-pipeline-active-label {
+    color: #8fd694;
+    font-size: 11px;
+}
+.param-program-toolbar .btn-inline,
+.param-program-toolbar .score-chip-add-btn {
+    margin: 0;
+}
+.param-program-display {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    width: 100%;
+    min-height: 116px;
+    max-height: 180px;
+    overflow: auto;
+    padding: 6px;
+    margin-left: 0;
+    background: rgba(0,0,0,0.10);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 7px;
+}
+.param-program-display .chip {
+    flex: 0 0 auto;
+}
 .solve-score-program-note {
     color: #777;
     font-size: 11px;
@@ -775,10 +834,12 @@ button {
 }
 .solve-score-modal-popup {
     width: min(1120px, calc(100vw - 24px));
-    height: min(92vh, 820px);
-    max-height: min(92vh, 920px);
-    display: flex;
+    height: min(92dvh, 820px);
+    max-height: calc(100dvh - 24px);
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr) auto auto;
     flex-direction: column;
+    box-sizing: border-box;
 }
 .solve-score-modal-body {
     display: grid;
@@ -787,6 +848,7 @@ button {
     padding: 12px 14px 14px;
     flex: 1 1 auto;
     min-height: 0;
+    overflow: hidden;
 }
 .solve-score-modal-pane,
 .solve-score-modal-right {
@@ -879,7 +941,10 @@ button {
     display: flex;
     justify-content: space-between;
     gap: 8px;
-    padding: 0 14px 14px;
+    padding: 10px 14px 14px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+    background: #16213e;
+    flex: 0 0 auto;
     flex-wrap: wrap;
 }
 .solve-score-modal-actions-left,
@@ -1004,6 +1069,7 @@ button {
 @media (max-width: 900px) {
     .solve-score-modal-body {
         grid-template-columns: minmax(0, 1fr);
+        overflow-y: auto;
     }
 }
 @media (max-width: 760px) {
@@ -1120,7 +1186,15 @@ button {
                 <input type="number" id="render-times" value="1" min="1" max="100" step="1" style="width:5em">
             </div>
             <input type="hidden" id="render-stripes" value="10">
-            <div class="anim-row" style="flex-wrap:wrap">
+            <div class="anim-row param-pipeline-row">
+                <label style="min-width:90px">Use:</label>
+                <select id="param-pipeline-mode" onchange="_setParamPipelineMode(this.value, {markStale:true})">
+                    <option value="legacy">Legacy Param transforms</option>
+                    <option value="param_program">Param Program</option>
+                </select>
+                <span id="param-pipeline-mode-note" class="param-pipeline-mode-note">Legacy Param transforms are active.</span>
+            </div>
+            <div class="anim-row" id="param-transforms-row" style="flex-wrap:wrap">
                 <label style="min-width:90px">Param transforms:</label>
                 <div id="pt-chips" class="chip-container"></div>
                 <div class="score-chip-add-wrap">
@@ -1130,6 +1204,25 @@ button {
                         <option value="">+ add...</option>
                     </select>
                 </div>
+            </div>
+            <div class="color-box param-program-box">
+                <div class="color-title">Param Program</div>
+                <div class="solve-score-program-note">Optional RPN parameter VM. The Use dropdown above decides whether Compute uses this program or the legacy Param transforms row.</div>
+                <div class="solve-score-program-toolbar param-program-toolbar">
+                    <button type="button" class="btn-secondary btn-inline" id="param-program-manage" onclick="openParamProgramModal()">Param Programs...</button>
+                    <div class="score-chip-add-wrap">
+                        <button id="pp-insert-before-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleParamProgramPicker(event,'before')">+ before</button>
+                        <button id="pp-insert-after-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleParamProgramPicker(event,'after')">+ after</button>
+                        <div id="pp-add-popup" class="score-chip-picker" aria-hidden="true"></div>
+                        <select id="pp-add" onchange="addChip('pp',this.value);this.value='';" style="display:none">
+                            <option value="">+ add...</option>
+                        </select>
+                    </div>
+                    <button type="button" class="btn-secondary btn-inline" id="param-program-copy-legacy" onclick="_copyParamTransformsIntoParamProgram()" title="Translate the current Param transforms row into legacy(...) param-program chips">Copy legacy transforms</button>
+                    <button type="button" class="btn-secondary btn-inline" id="param-program-clear" onclick="_clearParamProgramChain()">Clear program</button>
+                </div>
+                <div id="pp-chips" class="chip-container param-program-display"></div>
+                <div id="param-program-status" class="solve-score-program-status"></div>
             </div>
             <div class="anim-row">
                 <label style="min-width:90px">Function:</label>
@@ -1782,6 +1875,60 @@ button {
             </div>
         </div>
         <input id="solve-score-modal-upload-file" type="file" accept="application/json,.json" style="display:none">
+    </div>
+</div>
+<div id="param-program-modal-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup solve-score-modal-popup" role="dialog" aria-modal="true" aria-labelledby="param-program-modal-title">
+        <div class="tri-popup-head">
+            <div id="param-program-modal-title" class="tri-popup-title">Param Programs</div>
+            <button id="param-program-modal-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div id="param-program-modal-summary" class="autolevel-popup-summary"></div>
+        <div class="solve-score-modal-body">
+            <div class="solve-score-modal-pane">
+                <div class="solve-score-modal-pane-title">Saved Programs</div>
+                <div class="solve-score-modal-table-wrap">
+                    <table class="tri-popup-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Statements</th>
+                                <th>Saved</th>
+                            </tr>
+                        </thead>
+                        <tbody id="param-program-modal-body"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="solve-score-modal-right">
+                <div class="solve-score-modal-name-row">
+                    <div class="solve-score-modal-pane-title">Program Name</div>
+                    <input id="param-program-modal-name" type="text" maxlength="120" placeholder="param-program">
+                </div>
+                <div class="solve-score-modal-program-section">
+                    <div class="solve-score-modal-pane-title">Current Program</div>
+                    <div id="param-program-modal-current" class="solve-score-modal-display"></div>
+                </div>
+                <div class="solve-score-modal-program-section">
+                    <div class="solve-score-modal-pane-title">Selected Saved Program</div>
+                    <div id="param-program-modal-selected" class="solve-score-modal-display"></div>
+                </div>
+            </div>
+        </div>
+        <div id="param-program-modal-status" class="solve-score-program-status" style="padding:0 14px 8px"></div>
+        <div class="solve-score-modal-actions">
+            <div class="solve-score-modal-actions-left">
+                <button id="param-program-modal-load" type="button" class="btn-primary" style="padding:6px 12px">Load</button>
+                <button id="param-program-modal-save" type="button" class="btn-primary" style="padding:6px 12px">Save</button>
+                <button id="param-program-modal-delete" type="button" class="btn-secondary" style="padding:6px 12px">Delete</button>
+            </div>
+            <div class="solve-score-modal-actions-right">
+                <button id="param-program-modal-download" type="button" class="btn-secondary" style="padding:6px 12px">Download</button>
+                <button id="param-program-modal-upload" type="button" class="btn-secondary" style="padding:6px 12px">Upload</button>
+                <button id="param-program-modal-cancel" type="button" class="btn-secondary" style="padding:6px 12px">Exit</button>
+            </div>
+        </div>
+        <input id="param-program-modal-upload-file" type="file" accept="application/json,.json" style="display:none">
     </div>
 </div>
 <div id="function-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
@@ -3532,6 +3679,12 @@ function goRenderResult() {
 
 function _setChainFromSaved(which, values) {
     const normalized = Array.isArray(values) ? values : [];
+    if (which === 'pp') {
+        _ppChain = _normalizeParamProgramChain(normalized);
+        _paramProgramSelectedIndex = _ppChain.length ? 0 : -1;
+        _renderChips(which);
+        return;
+    }
     const chain = normalized.map(item => {
         if (Array.isArray(item) && item.length) {
             return { name: String(item[0]), params: item.slice(1).map(v => String(v)) };
@@ -3629,7 +3782,8 @@ function _computePreviewSignatureNow() {
         shim: (parseFloat(document.getElementById('compute-preview-shim')?.value) || 5) / 100,
         function: document.getElementById('render-function')?.value || '',
         cfpv: _cfpv.length ? [..._cfpv] : [],
-        param_transforms: _serializeParamTransforms(),
+        param_transforms: _effectiveParamTransformsForCompute(),
+        param_program_chain: _effectiveParamProgramChainForCompute(),
         coeff_transforms: _serializeCoeffTransforms(),
     });
 }
@@ -3716,11 +3870,12 @@ async function runComputePreview() {
     const solverMode = document.getElementById('compute-preview-solver').value || 'aberth_mt';
     const quantile = Math.max(0, parseFloat(document.getElementById('compute-preview-quantile').value) || 0) / 100;
     const shim = Math.max(0, parseFloat(document.getElementById('compute-preview-shim').value) || 5) / 100;
-    const paramTransforms = _serializeParamTransforms();
+    const paramTransforms = _effectiveParamTransformsForCompute();
+    const paramProgramChain = _effectiveParamProgramChainForCompute();
     const coeffTransforms = _serializeCoeffTransforms();
     const cfpv = _cfpv.length > 0 ? [..._cfpv] : [];
     const coeffTransformsDisplay = _displayCoeffTransforms();
-    const ptDisplay = _displayParamTransforms().map(a => a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : a[0]).join(',');
+    const ptDisplay = _displayActiveParamPipeline(',');
     const rootsCmSyncMaxN = 128;
     if (_chainHasTransformName(coeffTransforms, 'roots_cm') && nPreview > rootsCmSyncMaxN) {
         const requestedN = nPreview;
@@ -3746,6 +3901,7 @@ async function runComputePreview() {
             shim,
             function: funcName,
             param_transforms: paramTransforms,
+            param_program_chain: paramProgramChain,
             coeff_transforms: coeffTransforms,
             cfpv,
         });
@@ -3808,7 +3964,10 @@ function _populateComputeFromDetail(jobId, detail) {
     }
 
     const ptDisplay = pipeline.param_transforms_display || detail.param_transforms_display || pipeline.param_transforms || detail.param_transforms || [];
+    const savedParamProgramChain = pipeline.param_program_chain || detail.param_program_chain || [];
     _setChainFromSaved('pt', ptDisplay);
+    _setChainFromSaved('pp', savedParamProgramChain);
+    _setParamPipelineMode(Array.isArray(savedParamProgramChain) && savedParamProgramChain.length ? 'param_program' : 'legacy');
     _setChainFromSaved('ct', pipeline.coeff_transforms || detail.coeff_transforms || []);
 
     const savedCfpv = Array.isArray(pipeline.cfpv) ? pipeline.cfpv : [];
@@ -4106,6 +4265,7 @@ function _escapeHtml(value) {
 
 function _catalogForChain(which) {
     if (which === 'pt') return _ptCatalog;
+    if (which === 'pp') return _ppCatalog;
     if (which === 'ct') return _ctCatalog;
     if (which === 'ss' || which === 'palette-ss') return _ssCatalog;
     return _rtCatalog;
@@ -4113,6 +4273,7 @@ function _catalogForChain(which) {
 
 function _chainForWhich(which) {
     if (which === 'pt') return _ptChain;
+    if (which === 'pp') return _ppChain;
     if (which === 'rt') return _rtChain;
     if (which === 'palette-rt') return _paletteRtChain;
     if (which === 'ss') return _renderScoreChain;
@@ -5453,6 +5614,398 @@ async function _importSolveScoreProgramFileFromModal(file) {
     }
 }
 
+let _paramProgramModalState = {
+    open: false,
+    tableState: 'idle',
+    rows: [],
+    selectedId: '',
+    selectedProgram: null,
+    selectedError: '',
+    selectedLoading: false,
+    actionBusy: false,
+    status: '',
+    statusError: false,
+    nameInput: '',
+    lastSelectedName: '',
+};
+
+function _paramProgramFilename(name) {
+    const slug = String(name || '').trim().toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'param-program';
+    return `${slug}.json`;
+}
+
+function _setParamProgramModalStatus(message, isError = false) {
+    _paramProgramModalState.status = String(message || '');
+    _paramProgramModalState.statusError = !!isError;
+}
+
+function _currentParamProgramSummary() {
+    try {
+        const payload = _portableParamProgramPayload(_paramProgramModalState.nameInput || _paramProgramDefaultName());
+        return {
+            ...payload,
+            statement_count: Array.isArray(payload.chain) ? payload.chain.length : 0,
+        };
+    } catch (e) {
+        return { error: e && e.message ? e.message : String(e) };
+    }
+}
+
+function _paramProgramMetaHtml(program, options = {}) {
+    const rows = [];
+    const name = String(program && program.name || '').trim();
+    const savedAt = String(program && program.saved_at || '').trim();
+    const statements = Number(
+        program && program.statement_count != null
+            ? program.statement_count
+            : (Array.isArray(program && program.chain) ? program.chain.length : NaN)
+    );
+    const tokenCount = Number(program && program.token_count);
+    if (name) rows.push(['Name', name]);
+    if (options.selected && savedAt) rows.push(['Saved', savedAt]);
+    if (Number.isFinite(statements)) rows.push(['Statements', String(statements)]);
+    if (Number.isFinite(tokenCount)) rows.push(['Tokens', String(tokenCount)]);
+    if (program && program.uses_legacy_fast_path === true) rows.push(['Path', 'legacy']);
+    if (program && program.uses_legacy_fast_path === false) rows.push(['Path', 'VM']);
+    if (!rows.length) return '';
+    return `<div class="solve-score-modal-program-meta">${rows.map(([label, value]) => (
+        `<div><span>${_escapeHtml(label)}</span>${_escapeHtml(value)}</div>`
+    )).join('')}</div>`;
+}
+
+function _renderParamProgramCardHtml(program, options = {}) {
+    const selected = !!options.selected;
+    if (!program) {
+        return _solveScoreModalMessageHtml(
+            selected ? 'Select a saved program to inspect before loading.' : 'Current live program is unavailable.'
+        );
+    }
+    if (program.error) return _solveScoreModalMessageHtml(`Error: ${program.error}`, true);
+    try {
+        return _paramProgramMetaHtml(program, options) + _renderParamProgramChipsHtml(program);
+    } catch (e) {
+        return _solveScoreModalMessageHtml(`Error: ${e && e.message ? e.message : String(e)}`, true);
+    }
+}
+
+function _renderParamProgramModal() {
+    const overlay = document.getElementById('param-program-modal-overlay');
+    const summaryEl = document.getElementById('param-program-modal-summary');
+    const bodyEl = document.getElementById('param-program-modal-body');
+    const nameEl = document.getElementById('param-program-modal-name');
+    const currentEl = document.getElementById('param-program-modal-current');
+    const selectedEl = document.getElementById('param-program-modal-selected');
+    const statusEl = document.getElementById('param-program-modal-status');
+    const loadBtn = document.getElementById('param-program-modal-load');
+    const saveBtn = document.getElementById('param-program-modal-save');
+    const deleteBtn = document.getElementById('param-program-modal-delete');
+    const downloadBtn = document.getElementById('param-program-modal-download');
+    const uploadBtn = document.getElementById('param-program-modal-upload');
+    const currentProgram = _currentParamProgramSummary();
+    const canLoad = _paramProgramModalState.tableState === 'loaded' &&
+        !!_paramProgramModalState.selectedId &&
+        !_paramProgramModalState.selectedLoading &&
+        !_paramProgramModalState.actionBusy;
+    const canDelete = canLoad;
+    const canSave = !_paramProgramModalState.actionBusy &&
+        !!String(_paramProgramModalState.nameInput || '').trim() &&
+        !currentProgram.error;
+    const canDownload = !_paramProgramModalState.actionBusy && !currentProgram.error;
+    const canUpload = !_paramProgramModalState.actionBusy;
+    if (overlay) {
+        overlay.style.display = _paramProgramModalState.open ? 'flex' : 'none';
+        overlay.setAttribute('aria-hidden', _paramProgramModalState.open ? 'false' : 'true');
+    }
+    if (summaryEl) {
+        summaryEl.textContent = 'Global saved parameter programs on the left; current Compute-tab live program on the right. The Compute-tab Use dropdown decides whether legacy transforms or Param Program runs.';
+    }
+    if (nameEl && nameEl.value !== _paramProgramModalState.nameInput) nameEl.value = _paramProgramModalState.nameInput;
+    if (currentEl) currentEl.innerHTML = _renderParamProgramCardHtml(currentProgram);
+    if (selectedEl) {
+        if (_paramProgramModalState.selectedLoading) {
+            selectedEl.innerHTML = _solveScoreModalMessageHtml('Loading selected saved program...');
+        } else if (_paramProgramModalState.selectedError) {
+            selectedEl.innerHTML = _solveScoreModalMessageHtml(`Error: ${_paramProgramModalState.selectedError}`, true);
+        } else if (_paramProgramModalState.selectedProgram) {
+            selectedEl.innerHTML = _renderParamProgramCardHtml(_paramProgramModalState.selectedProgram, { selected: true });
+        } else {
+            selectedEl.innerHTML = _solveScoreModalMessageHtml('Select a saved program to inspect before loading.');
+        }
+    }
+    if (statusEl) {
+        statusEl.textContent = _paramProgramModalState.status;
+        statusEl.className = `solve-score-program-status${_paramProgramModalState.statusError ? ' error' : ''}`;
+    }
+    if (nameEl) nameEl.disabled = _paramProgramModalState.actionBusy;
+    if (loadBtn) loadBtn.disabled = !canLoad;
+    if (saveBtn) saveBtn.disabled = !canSave;
+    if (deleteBtn) deleteBtn.disabled = !canDelete;
+    if (downloadBtn) downloadBtn.disabled = !canDownload;
+    if (uploadBtn) uploadBtn.disabled = !canUpload;
+    if (!bodyEl) return;
+    const rows = Array.isArray(_paramProgramModalState.rows) ? _paramProgramModalState.rows : [];
+    if (_paramProgramModalState.tableState === 'loading') {
+        bodyEl.innerHTML = '<tr class="tri-popup-empty"><td colspan="3">Loading saved programs...</td></tr>';
+        return;
+    }
+    if (_paramProgramModalState.tableState === 'error') {
+        bodyEl.innerHTML = `<tr class="tri-popup-empty"><td colspan="3">${_escapeHtml(_paramProgramModalState.status || 'Failed to load saved programs.')}</td></tr>`;
+        return;
+    }
+    if (!rows.length) {
+        bodyEl.innerHTML = '<tr class="tri-popup-empty"><td colspan="3">No saved param programs found.</td></tr>';
+        return;
+    }
+    bodyEl.innerHTML = rows.map((row) => {
+        const active = row.id === _paramProgramModalState.selectedId ? ' active' : '';
+        return `
+            <tr class="tri-popup-row${active}" data-param-program-id="${_escapeHtml(row.id)}">
+                <td><div class="tri-popup-name"><div>${_escapeHtml(row.name)}</div></div></td>
+                <td>${Number(row.statement_count || 0)}</td>
+                <td>${_escapeHtml(row.saved_at || '')}</td>
+            </tr>
+        `;
+    }).join('');
+    Array.from(bodyEl.querySelectorAll('[data-param-program-id]')).forEach((rowEl) => {
+        rowEl.addEventListener('click', () => {
+            const id = rowEl.getAttribute('data-param-program-id') || '';
+            if (id) void _selectParamProgram(id);
+        });
+    });
+}
+
+async function _fetchParamProgramById(id) {
+    const resp = await lambdaPost('storage', { id }, '/fetch-param-program');
+    return resp.program;
+}
+
+async function _refreshParamProgramRows(options = {}) {
+    const preserveSelection = options.preserveSelection !== false;
+    const keepStatus = !!options.keepStatus;
+    const selectedId = preserveSelection ? _paramProgramModalState.selectedId : '';
+    _paramProgramModalState.tableState = 'loading';
+    if (!keepStatus) _setParamProgramModalStatus('', false);
+    _renderParamProgramModal();
+    try {
+        const resp = await lambdaPost('storage', {}, '/list-param-programs');
+        const rows = Array.isArray(resp.programs) ? resp.programs : [];
+        _paramProgramModalState.rows = rows;
+        _paramProgramModalState.tableState = 'loaded';
+        if (selectedId && rows.some((row) => row.id === selectedId)) {
+            _paramProgramModalState.selectedId = selectedId;
+            if (_paramProgramModalState.selectedProgram && _paramProgramModalState.selectedProgram.id !== selectedId) {
+                _paramProgramModalState.selectedProgram = null;
+            }
+        } else {
+            _paramProgramModalState.selectedId = '';
+            _paramProgramModalState.selectedProgram = null;
+            _paramProgramModalState.selectedError = '';
+            _paramProgramModalState.selectedLoading = false;
+        }
+    } catch (e) {
+        _paramProgramModalState.rows = [];
+        _paramProgramModalState.tableState = 'error';
+        _paramProgramModalState.selectedId = '';
+        _paramProgramModalState.selectedProgram = null;
+        _paramProgramModalState.selectedError = '';
+        _paramProgramModalState.selectedLoading = false;
+        _setParamProgramModalStatus(e && e.message ? e.message : String(e), true);
+    }
+    _renderParamProgramModal();
+}
+
+async function _selectParamProgram(id) {
+    const row = (_paramProgramModalState.rows || []).find((entry) => entry.id === id);
+    if (!row) return;
+    const currentName = String(_paramProgramModalState.nameInput || '').trim();
+    if (!currentName || currentName === _paramProgramModalState.lastSelectedName) {
+        _paramProgramModalState.nameInput = row.name;
+    }
+    _paramProgramModalState.lastSelectedName = row.name;
+    _paramProgramModalState.selectedId = id;
+    if (_paramProgramModalState.selectedProgram && _paramProgramModalState.selectedProgram.id === id) {
+        _paramProgramModalState.selectedError = '';
+        _paramProgramModalState.selectedLoading = false;
+        _renderParamProgramModal();
+        return;
+    }
+    _paramProgramModalState.selectedProgram = null;
+    _paramProgramModalState.selectedError = '';
+    _paramProgramModalState.selectedLoading = true;
+    _renderParamProgramModal();
+    try {
+        const program = await _fetchParamProgramById(id);
+        if (_paramProgramModalState.selectedId !== id) return;
+        _paramProgramModalState.selectedProgram = program;
+        _paramProgramModalState.selectedError = '';
+        _paramProgramModalState.selectedLoading = false;
+    } catch (e) {
+        if (_paramProgramModalState.selectedId !== id) return;
+        _paramProgramModalState.selectedProgram = null;
+        _paramProgramModalState.selectedError = e && e.message ? e.message : String(e);
+        _paramProgramModalState.selectedLoading = false;
+    }
+    _renderParamProgramModal();
+}
+
+function openParamProgramModal() {
+    _paramProgramModalState.open = true;
+    _paramProgramModalState.actionBusy = false;
+    _paramProgramModalState.nameInput = _paramProgramDefaultName();
+    _paramProgramModalState.lastSelectedName = '';
+    _setParamProgramModalStatus('', false);
+    _renderParamProgramModal();
+    void _refreshParamProgramRows({ preserveSelection: true });
+    const nameEl = document.getElementById('param-program-modal-name');
+    if (nameEl && typeof nameEl.focus === 'function') nameEl.focus();
+}
+
+function _closeParamProgramModal() {
+    _paramProgramModalState.open = false;
+    _renderParamProgramModal();
+}
+
+async function _loadSelectedParamProgramFromModal() {
+    if (!_paramProgramModalState.selectedId) return;
+    _paramProgramModalState.actionBusy = true;
+    _setParamProgramModalStatus('', false);
+    _renderParamProgramModal();
+    try {
+        let program = _paramProgramModalState.selectedProgram;
+        if (!program || program.id !== _paramProgramModalState.selectedId) {
+            program = await _fetchParamProgramById(_paramProgramModalState.selectedId);
+            _paramProgramModalState.selectedProgram = program;
+        }
+        _applyParamProgram(program);
+        if (program && program.name) {
+            _paramProgramModalState.nameInput = program.name;
+            _paramProgramModalState.lastSelectedName = program.name;
+        }
+        _setParamProgramModalStatus(program.name ? `Loaded ${program.name}` : 'Loaded param program', false);
+    } catch (e) {
+        _setParamProgramModalStatus(e && e.message ? e.message : String(e), true);
+    } finally {
+        _paramProgramModalState.actionBusy = false;
+        _renderParamProgramModal();
+    }
+}
+
+async function _saveCurrentParamProgramFromModal() {
+    const name = String(_paramProgramModalState.nameInput || '').trim();
+    if (!name) return;
+    let payload;
+    try {
+        payload = _portableParamProgramPayload(name);
+    } catch (e) {
+        _setParamProgramModalStatus(e && e.message ? e.message : String(e), true);
+        _renderParamProgramModal();
+        return;
+    }
+    _paramProgramModalState.actionBusy = true;
+    _setParamProgramModalStatus('', false);
+    _renderParamProgramModal();
+    try {
+        const resp = await lambdaPost('storage', {
+            name: payload.name,
+            chain: payload.chain,
+        }, '/save-param-program');
+        const program = resp && resp.program ? resp.program : null;
+        if (!program) throw new Error('save-param-program returned no program');
+        _paramProgramModalState.selectedId = program.id || '';
+        _paramProgramModalState.selectedProgram = program;
+        _paramProgramModalState.selectedError = '';
+        _paramProgramModalState.selectedLoading = false;
+        _paramProgramModalState.nameInput = program.name || payload.name;
+        _paramProgramModalState.lastSelectedName = program.name || payload.name;
+        const message = resp.overwritten
+            ? `Saved ${program.name} (overwrote existing entry)`
+            : `Saved ${program.name}`;
+        _setParamProgramModalStatus(message, false);
+        _paramProgramStatus(message, false);
+        await _refreshParamProgramRows({ preserveSelection: true, keepStatus: true });
+    } catch (e) {
+        _setParamProgramModalStatus(e && e.message ? e.message : String(e), true);
+    } finally {
+        _paramProgramModalState.actionBusy = false;
+        _renderParamProgramModal();
+    }
+}
+
+async function _deleteSelectedParamProgramFromModal() {
+    const id = String(_paramProgramModalState.selectedId || '').trim();
+    if (!id) return;
+    if (typeof confirm === 'function' && !confirm(`Delete param program "${id}"?`)) return;
+    _paramProgramModalState.actionBusy = true;
+    _setParamProgramModalStatus('', false);
+    _renderParamProgramModal();
+    try {
+        await lambdaPost('storage', { id }, '/delete-param-program');
+        _paramProgramModalState.selectedId = '';
+        _paramProgramModalState.selectedProgram = null;
+        _paramProgramModalState.selectedError = '';
+        _paramProgramModalState.selectedLoading = false;
+        const message = `Deleted ${id}`;
+        _setParamProgramModalStatus(message, false);
+        _paramProgramStatus(message, false);
+        await _refreshParamProgramRows({ preserveSelection: false, keepStatus: true });
+    } catch (e) {
+        _setParamProgramModalStatus(e && e.message ? e.message : String(e), true);
+    } finally {
+        _paramProgramModalState.actionBusy = false;
+        _renderParamProgramModal();
+    }
+}
+
+function _downloadCurrentParamProgramFromModal() {
+    try {
+        const payload = _portableParamProgramPayload(
+            String(_paramProgramModalState.nameInput || '').trim() || _paramProgramDefaultName()
+        );
+        const filename = _paramProgramFilename(payload.name);
+        const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: 'application/json' });
+        _downloadBlob(blob, filename);
+        const message = `Downloaded ${filename}`;
+        _setParamProgramModalStatus(message, false);
+        _paramProgramStatus(message, false);
+    } catch (e) {
+        _setParamProgramModalStatus(e && e.message ? e.message : String(e), true);
+    }
+    _renderParamProgramModal();
+}
+
+function _triggerParamProgramUploadFromModal() {
+    const inputEl = document.getElementById('param-program-modal-upload-file');
+    if (!inputEl || _paramProgramModalState.actionBusy) return;
+    inputEl.value = '';
+    inputEl.click();
+}
+
+async function _importParamProgramFileFromModal(file) {
+    _paramProgramModalState.actionBusy = true;
+    _setParamProgramModalStatus('', false);
+    _renderParamProgramModal();
+    try {
+        const text = await _readTextFile(file);
+        const raw = JSON.parse(text);
+        const parsed = _applyParamProgram(raw);
+        if (parsed.name) {
+            _paramProgramModalState.nameInput = parsed.name;
+            _paramProgramModalState.lastSelectedName = parsed.name;
+        } else if (!String(_paramProgramModalState.nameInput || '').trim()) {
+            _paramProgramModalState.nameInput = _paramProgramDefaultName();
+        }
+        const message = parsed.name ? `Loaded ${parsed.name} from JSON` : 'Loaded param program from JSON';
+        _setParamProgramModalStatus(message, false);
+    } catch (e) {
+        _setParamProgramModalStatus(e && e.message ? e.message : String(e), true);
+    } finally {
+        _paramProgramModalState.actionBusy = false;
+        _renderParamProgramModal();
+    }
+}
+
 function _solveScoreAllowedAdditions(which) {
     const prefix = _solveScorePrefixForWhich(which);
     let draft = { metricCount: 0 };
@@ -5836,6 +6389,12 @@ document.addEventListener('click', function(e) {
     if (ptPopup && ptPopup._open && !_elementContains(ptPopup, target) && !_elementContains(ptBtn, target)) {
         _setParamTransformPickerOpen(false);
     }
+    const ppPopup = document.getElementById('pp-add-popup');
+    const ppBeforeBtn = document.getElementById('pp-insert-before-btn');
+    const ppAfterBtn = document.getElementById('pp-insert-after-btn');
+    if (ppPopup && ppPopup._open && !_elementContains(ppPopup, target) && !_elementContains(ppBeforeBtn, target) && !_elementContains(ppAfterBtn, target)) {
+        _setParamProgramPickerOpen(false);
+    }
     const ctPopup = document.getElementById('ct-add-popup');
     const ctBtn = document.getElementById('ct-add-btn');
     if (ctPopup && ctPopup._open && !_elementContains(ctPopup, target) && !_elementContains(ctBtn, target)) {
@@ -5847,6 +6406,7 @@ document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         _closeSolveScorePickers();
         _setParamTransformPickerOpen(false);
+        _setParamProgramPickerOpen(false);
         _setCoeffTransformPickerOpen(false);
         _clearRenderPreviewSelection();
         _clearRenderLoresPreviewSelection();
@@ -8150,12 +8710,13 @@ async function _refreshComputeMtProbe() {
     const n = Math.max(1, parseInt(document.getElementById('render-n')?.value, 10) || 0);
     const nChunks = Math.max(1, parseInt(_computeMtPopupState.nChunks, 10) || 10);
     const times = Math.max(1, parseInt(document.getElementById('render-times')?.value, 10) || 1);
-    const paramTransforms = _serializeParamTransforms();
+    const paramTransforms = _effectiveParamTransformsForCompute();
+    const paramProgramChain = _effectiveParamProgramChainForCompute();
     const coeffTransforms = _serializeCoeffTransforms();
     const cfpv = _cfpv.length > 0 ? [..._cfpv] : [];
     const fusedThreads = _clampRenderMtThreads(_computeMtPopupState.fusedThreads || 4);
     const solverMode = _computeMtPopupState.solverMode || 'aberth_mt';
-    const probeSignature = JSON.stringify([solverMode, funcName, paramTransforms, coeffTransforms, cfpv, n, times, nChunks, fusedThreads]);
+    const probeSignature = JSON.stringify([solverMode, funcName, paramTransforms, paramProgramChain, coeffTransforms, cfpv, n, times, nChunks, fusedThreads]);
     if (_computeMtPopupState.probeSignature === probeSignature && (_computeMtPopupState.probe || _computeMtPopupState.probeError)) {
         _renderComputeMtPopup();
         return;
@@ -8175,6 +8736,7 @@ async function _refreshComputeMtProbe() {
             fused_threads: fusedThreads,
             execution_method: 'fused_chunk_pipeline',
             param_transforms: paramTransforms,
+            param_program_chain: paramProgramChain,
             coeff_transforms: coeffTransforms,
             cfpv,
         });
@@ -9623,6 +10185,47 @@ function _initSolveScoreProgramModal() {
     }
 }
 
+function _initParamProgramModal() {
+    const nameEl = document.getElementById('param-program-modal-name');
+    const loadBtn = document.getElementById('param-program-modal-load');
+    const saveBtn = document.getElementById('param-program-modal-save');
+    const deleteBtn = document.getElementById('param-program-modal-delete');
+    const downloadBtn = document.getElementById('param-program-modal-download');
+    const uploadBtn = document.getElementById('param-program-modal-upload');
+    const uploadFileEl = document.getElementById('param-program-modal-upload-file');
+    _bindPopupShell({
+        overlayId: 'param-program-modal-overlay',
+        closeId: 'param-program-modal-close',
+        cancelId: 'param-program-modal-cancel',
+        isOpen: () => !!_paramProgramModalState.open,
+        onClose: _closeParamProgramModal,
+        onEnter: () => {
+            if (!_paramProgramModalState.open || _paramProgramModalState.actionBusy) return;
+            if (_paramProgramModalState.selectedId && !_paramProgramModalState.selectedLoading) {
+                void _loadSelectedParamProgramFromModal();
+            }
+        },
+    });
+    if (nameEl) {
+        nameEl.addEventListener('input', (ev) => {
+            _paramProgramModalState.nameInput = String(ev.target && ev.target.value || '');
+            _renderParamProgramModal();
+        });
+    }
+    if (loadBtn) loadBtn.addEventListener('click', () => { void _loadSelectedParamProgramFromModal(); });
+    if (saveBtn) saveBtn.addEventListener('click', () => { void _saveCurrentParamProgramFromModal(); });
+    if (deleteBtn) deleteBtn.addEventListener('click', () => { void _deleteSelectedParamProgramFromModal(); });
+    if (downloadBtn) downloadBtn.addEventListener('click', _downloadCurrentParamProgramFromModal);
+    if (uploadBtn) uploadBtn.addEventListener('click', _triggerParamProgramUploadFromModal);
+    if (uploadFileEl) {
+        uploadFileEl.addEventListener('change', async (ev) => {
+            const file = ev.target && ev.target.files && ev.target.files[0];
+            if (!file) return;
+            await _importParamProgramFileFromModal(file);
+        });
+    }
+}
+
 function buildPaletteCircles(containerId, mode, getCurrentPalette) {
     _syncTriDefaults();
     _renderPaletteRow(mode);
@@ -9646,6 +10249,7 @@ _initComputeMtPopup();
 _initExtractPalettePopup();
 _initPdfColorSpreadPopup();
 _initSolveScoreProgramModal();
+_initParamProgramModal();
 _updateSolveScoreButtons();  // initial disabled state
 _clearPaletteCanvas('No palette selected');
 
@@ -9803,6 +10407,185 @@ const _ptInfo = {
 Object.entries(_ptInfo).forEach(([name, info]) => {
     if (_ptCatalog[name]) Object.assign(_ptCatalog[name], info);
 });
+
+const _paramProgramLegacyNames = [
+    'none',
+    'unit_circle',
+    'square',
+    'cube',
+    'reciprocal',
+    'conjugate',
+    'negate',
+    'exp',
+    'xim',
+    'add_sub',
+    'mul_div',
+    'swap',
+    'sum_prod',
+    'roots2',
+    'roots3',
+    'roots5',
+    'roots6',
+    'rtheta',
+    'moebius',
+    'inv_t_plus_2',
+    'crd',
+    'hrt',
+    'spdl',
+    'lmc',
+    'rsc',
+    'lss',
+    'ast',
+    'asp',
+    'lsp',
+    'dlt',
+    'rply',
+    'star',
+    'rect',
+    'rrect',
+    'z01',
+    'coeff2',
+    'coeff3',
+    'coeff3a',
+    'coeff4',
+    'coeff5',
+    'coeff5a',
+    'coeff6',
+    'coeff7',
+    'coeff8',
+    'coeff9',
+    'coeff10',
+    'coeff11',
+    'coeff12',
+];
+
+const _paramProgramIndependentLegacyTargets = new Set([
+    'unit_circle',
+    'square',
+    'cube',
+    'reciprocal',
+    'conjugate',
+    'negate',
+    'exp',
+    'xim',
+]);
+
+const _paramProgramLegacyTargetArgIndexes = {
+    rtheta: 1,
+    crd: 0,
+    hrt: 0,
+    spdl: 0,
+    lmc: 0,
+    rsc: 0,
+    lss: 0,
+    ast: 0,
+    asp: 0,
+    lsp: 0,
+    dlt: 0,
+    rply: 0,
+    star: 0,
+    rect: 0,
+    rrect: 0,
+};
+
+const _paramProgramLegacyArgSpecs = {
+    rtheta: [{ ph: 'p', def: '1' }],
+    moebius: [
+        { ph: 'a', def: '1', complex: true },
+        { ph: 'b', def: '0', complex: true },
+        { ph: 'c', def: '0', complex: true },
+        { ph: 'd', def: '1', complex: true },
+    ],
+    inv_t_plus_2: [
+        { ph: 're1', def: '2' },
+        { ph: 'im1', def: '0' },
+        { ph: 're2', def: '2' },
+        { ph: 'im2', def: '0' },
+    ],
+    crd: [{ ph: 'size', def: '1' }],
+    hrt: [{ ph: 'size', def: '1' }, { ph: 'turns', def: '0' }],
+    spdl: [{ ph: 'va', def: '0.5' }, { ph: 'vb', def: '0.2' }, { ph: 'vp', def: '1.5' }],
+    lmc: [{ ph: 'a', def: '0.3' }, { ph: 'b', def: '0.5' }],
+    rsc: [{ ph: 'amp', def: '0.5' }, { ph: 'k', def: '2' }],
+    lss: [{ ph: 'A', def: '0.5' }, { ph: 'B', def: '0.5' }, { ph: 'a', def: '3' }, { ph: 'b', def: '2' }, { ph: 'phase', def: '0.5' }],
+    ast: [{ ph: 'scale', def: '1' }],
+    asp: [{ ph: 'a', def: '0' }, { ph: 'b', def: '0.1' }],
+    lsp: [{ ph: 'a', def: '0.1' }, { ph: 'b', def: '0.15' }],
+    dlt: [{ ph: 'R', def: '1' }],
+    rply: [{ ph: 'sides', def: '5' }, { ph: 'radius', def: '1' }, { ph: 'turns', def: '0' }],
+    star: [{ ph: 'points', def: '5' }, { ph: 'outer', def: '1' }, { ph: 'inner', def: '0.5' }],
+    rect: [{ ph: 'width', def: '2' }, { ph: 'height', def: '1' }, { ph: 'turns', def: '0' }],
+    rrect: [{ ph: 'width', def: '2' }, { ph: 'height', def: '1' }, { ph: 'm', def: '4' }],
+};
+
+const _ppCategoryMeta = {
+    io: { title: 'Input + output', help: 'read t1/t2 or write p1/p2 registers' },
+    stack: { title: 'Stack', help: 'reorder or discard temporary complex values' },
+    arithmetic: { title: 'Arithmetic', help: 'combine complex stack values' },
+    unary: { title: 'Complex maps', help: 'apply one complex transform to top of stack' },
+    bridge: { title: 'Legacy bridge', help: 'call existing parameter transforms by integer function index after compile' },
+};
+
+const _ppCatalog = {
+    push: {
+        category: 'io',
+        params: [{ ph: 'src', def: 't1', choices: ['t1', 't2', 'both'] }],
+        desc: 'push t1, t2, or both onto the stack',
+    },
+    emit: {
+        category: 'io',
+        params: [{ ph: 'target', def: 'p1', choices: ['p1', 'p2'] }],
+        desc: 'pop one stack value into output register p1 or p2',
+    },
+    const: {
+        category: 'io',
+        params: [{ ph: 're', def: '0' }, { ph: 'im', def: '0' }],
+        desc: 'push a complex constant',
+    },
+    macro: {
+        category: 'bridge',
+        params: [{ ph: 'program id', def: '' }],
+        desc: 'expand a saved param program at compile time',
+    },
+    duplicate: { category: 'stack', desc: 'duplicate the top stack value' },
+    swap: { category: 'stack', desc: 'swap the top two stack values' },
+    pop: { category: 'stack', desc: 'discard the top stack value' },
+    flush: { category: 'stack', desc: 'clear the whole temporary stack' },
+    add: { category: 'arithmetic', desc: 'a+b; top of stack is b' },
+    subtract: { category: 'arithmetic', desc: 'a-b; top of stack is b' },
+    mul: { category: 'arithmetic', desc: 'a*b' },
+    ratio: { category: 'arithmetic', desc: 'a/b; zero when denominator is zero' },
+    negate: { category: 'unary', desc: '-z' },
+    conj: { category: 'unary', desc: 'complex conjugate' },
+    reciprocal: { category: 'unary', desc: '1/z' },
+    unit_circle: { category: 'unary', desc: 'exp(2*pi*i*z.re) with imaginary scaling' },
+    square: { category: 'unary', desc: 'z squared' },
+    cube: { category: 'unary', desc: 'z cubed' },
+    exp: { category: 'unary', desc: 'complex exponential' },
+    coeff2: { category: 'bridge', desc: 'legacy t1+t2 and t1*t2 map' },
+    coeff3: { category: 'bridge', desc: 'legacy 1/(t+2) map' },
+    coeff3a: { category: 'bridge', desc: 'legacy 1/(t+1) map' },
+    coeff4: { category: 'bridge', desc: 'legacy cos(t1), sin(t2)' },
+    coeff5: { category: 'bridge', desc: 'legacy reciprocal cross map' },
+    coeff5a: { category: 'bridge', desc: 'legacy reciprocal self map' },
+    coeff6: { category: 'bridge', desc: 'legacy cubic fractional map' },
+    coeff7: { category: 'bridge', desc: 'legacy trig fractional map' },
+    coeff8: { category: 'bridge', desc: 'legacy cross trig map' },
+    coeff9: { category: 'bridge', desc: 'legacy squared fractional map' },
+    coeff10: { category: 'bridge', desc: 'legacy fourth-power fractional map' },
+    coeff11: { category: 'bridge', desc: 'legacy log fourth-power map' },
+    coeff12: { category: 'bridge', desc: 'legacy mixed polynomial map' },
+    legacy: {
+        category: 'bridge',
+        params: [
+            { ph: 'name', def: 'unit_circle', choices: _paramProgramLegacyNames },
+            { ph: 'src', def: 'both', choices: ['p1', 'p2', 'both', 'pop1', 'pop2'] },
+            { ph: 'tgt', def: 'both', choices: ['p1', 'p2', 'both', 'push1', 'push2'] },
+            { ph: 'args', def: '' },
+        ],
+        desc: 'call an existing param transform with explicit source and target selectors',
+    },
+};
 
 const _rtCatalog = {
     rotate_roots:     { params: [{ph:'turns', def:'0'}] },
@@ -10194,6 +10977,8 @@ function _syncCoeffTransformAddOptions() {
 }
 
 let _ptChain = [];  // parameter transform chain (array of {name, params: [str,...]})
+let _ppChain = [];  // parameter program chain (array of {name, params: [str,...]})
+let _paramPipelineMode = 'legacy';
 let _ctChain = [];  // coefficient transform chain (array of {name, params: [str,...]})
 let _cfpv = [];     // coefficient function parameter vector (array of doubles)
 let _rtChain = [];  // root transform chain (array of {name, params: [str,...]})
@@ -10382,7 +11167,7 @@ function addChip(which, name, insertMode = 'append') {
     if (!name) return;
     const chain = _chainForWhich(which);
     let newItem = null;
-    if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {
+    if (which === 'pt' || which === 'pp' || which === 'ct' || which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {
         if ((which === 'ss' || which === 'palette-ss') && !_solveScoreAllowedAdditions(which).includes(name)) {
             return;
         }
@@ -10394,16 +11179,17 @@ function addChip(which, name, insertMode = 'append') {
         newItem = name;
     }
     let insertAt = chain.length;
-    if ((which === 'ss' || which === 'palette-ss') && (insertMode === 'before' || insertMode === 'after')) {
-        const selected = Number(_solveScoreSelectedIndex[which]);
+    if ((which === 'ss' || which === 'palette-ss' || which === 'pp') && (insertMode === 'before' || insertMode === 'after')) {
+        const selected = which === 'pp' ? Number(_paramProgramSelectedIndex) : Number(_solveScoreSelectedIndex[which]);
         if (Number.isInteger(selected) && selected >= 0 && selected < chain.length) {
             insertAt = insertMode === 'before' ? selected : selected + 1;
         }
     }
     chain.splice(insertAt, 0, newItem);
     if (which === 'ss' || which === 'palette-ss') _solveScoreSelectedIndex[which] = insertAt;
+    if (which === 'pp') _paramProgramSelectedIndex = insertAt;
     _renderChips(which);
-    if (which === 'pt' || which === 'ct') _markComputePreviewStale();
+    if (_paramPipelineEditAffectsCompute(which)) _markComputePreviewStale();
 }
 
 function removeChip(which, idx) {
@@ -10413,8 +11199,12 @@ function removeChip(which, idx) {
         const selected = Number(_solveScoreSelectedIndex[which]);
         _solveScoreSelectedIndex[which] = selected === idx ? -1 : (selected > idx ? selected - 1 : selected);
     }
+    if (which === 'pp') {
+        const selected = Number(_paramProgramSelectedIndex);
+        _paramProgramSelectedIndex = selected === idx ? -1 : (selected > idx ? selected - 1 : selected);
+    }
     _renderChips(which);
-    if (which === 'pt' || which === 'ct') _markComputePreviewStale();
+    if (_paramPipelineEditAffectsCompute(which)) _markComputePreviewStale();
 }
 
 function moveChip(which, idx, delta) {
@@ -10426,8 +11216,9 @@ function moveChip(which, idx, delta) {
     const [item] = chain.splice(from, 1);
     chain.splice(to, 0, item);
     if (which === 'ss' || which === 'palette-ss') _solveScoreSelectedIndex[which] = to;
+    if (which === 'pp') _paramProgramSelectedIndex = to;
     _renderChips(which);
-    if (which === 'pt' || which === 'ct') _markComputePreviewStale();
+    if (_paramPipelineEditAffectsCompute(which)) _markComputePreviewStale();
 }
 
 function _normalizeTarget(value) {
@@ -10539,6 +11330,83 @@ function _syncParamTransformAddOptions() {
     _renderParamTransformAddPopup();
 }
 
+function _paramProgramCategoryGroups() {
+    const grouped = {};
+    Object.keys(_ppCategoryMeta).forEach(key => { grouped[key] = []; });
+    Object.keys(_ppCatalog).forEach(name => {
+        const spec = _ppCatalog[name] || {};
+        const key = grouped[spec.category] ? spec.category : 'stack';
+        grouped[key].push(name);
+    });
+    return Object.keys(_ppCategoryMeta).map(key => ({
+        key,
+        ..._ppCategoryMeta[key],
+        items: grouped[key] || [],
+    }));
+}
+
+function _renderParamProgramAddPopup() {
+    const popup = document.getElementById('pp-add-popup');
+    if (!popup) return;
+    const head = `<div class="score-chip-picker-head"><span class="score-chip-picker-title">Add param program chip</span><span class="score-chip-picker-state">RPN over t1/t2, output registers p1/p2</span></div>`;
+    const body = _paramProgramCategoryGroups().map(group => {
+        const items = group.items.length
+            ? group.items.map(name => {
+                const spec = _ppCatalog[name] || {};
+                const label = spec.label || name;
+                const paramCount = (spec.params || []).length;
+                const params = paramCount ? ` · ${paramCount} param${paramCount === 1 ? '' : 's'}` : '';
+                return `<button type="button" class="score-chip-option score-chip-option-${_escapeHtml(group.key)}" onclick="selectParamProgramChip('${_escapeHtml(name)}',event)" title="${_escapeHtml(spec.desc || label)}"><span class="score-chip-option-name">${_escapeHtml(label)}</span><span class="score-chip-option-meta">${_escapeHtml((spec.desc || '') + params)}</span></button>`;
+            }).join('')
+            : '<span class="score-chip-empty">No chips</span>';
+        return `<div class="score-chip-category"><div class="score-chip-category-title">${_escapeHtml(group.title)}</div><div class="score-chip-category-help">${_escapeHtml(group.help)}</div><div class="score-chip-options">${items}</div></div>`;
+    }).join('');
+    popup.innerHTML = head + body;
+}
+
+function _setParamProgramPickerOpen(open) {
+    const popup = document.getElementById('pp-add-popup');
+    if (!popup) return;
+    if (open) _renderParamProgramAddPopup();
+    popup._open = !!open;
+    popup.style.display = open ? 'block' : 'none';
+    if (popup.classList && popup.classList.toggle) popup.classList.toggle('active', !!open);
+    if (popup.setAttribute) popup.setAttribute('aria-hidden', open ? 'false' : 'true');
+}
+
+function toggleParamProgramPicker(eventObj, insertMode = null) {
+    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
+    if (insertMode === 'before' || insertMode === 'after') _paramProgramPickerInsertMode = insertMode;
+    const popup = document.getElementById('pp-add-popup');
+    _setParamProgramPickerOpen(!(popup && popup._open));
+}
+
+function selectParamProgramChip(name, eventObj) {
+    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
+    addChip('pp', name, _paramProgramPickerInsertMode || 'after');
+    _setParamProgramPickerOpen(false);
+}
+
+function selectParamProgramLine(idx, eventObj) {
+    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
+    _paramProgramSelectedIndex = Number(idx);
+    _renderChips('pp');
+}
+
+function _syncParamProgramAddOptions() {
+    const sel = document.getElementById('pp-add');
+    if (sel) {
+        const options = ['<option value="">+ add...</option>'].concat(
+            Object.keys(_ppCatalog).map(name => {
+                const spec = _ppCatalog[name] || {};
+                return `<option value="${_escapeHtml(name)}">${_escapeHtml(spec.label || name)}</option>`;
+            })
+        );
+        sel.innerHTML = options.join('');
+    }
+    _renderParamProgramAddPopup();
+}
+
 function _serializeParamTransforms() {
     return _ptChain.map(item => {
         if (!item.params || !item.params.length) return [item.name];
@@ -10547,6 +11415,393 @@ function _serializeParamTransforms() {
         const wireParams = item.params.map((v, i) => (pDefs[i] && pDefs[i].target) ? _targetToWire(v) : v);
         return [item.name, ...wireParams];
     });
+}
+
+let _paramProgramSelectedIndex = -1;
+let _paramProgramPickerInsertMode = 'after';
+
+function _splitParamProgramLegacyArgs(value) {
+    const text = String(value == null ? '' : value).trim();
+    if (!text) return [];
+    return text.split(/[,\s]+/).map(part => part.trim()).filter(Boolean);
+}
+
+function _paramProgramLegacyArgDefs(legacyName) {
+    const name = String(legacyName || '').trim();
+    const defs = _paramProgramLegacyArgSpecs[name];
+    return Array.isArray(defs) ? defs : null;
+}
+
+function _paramProgramLegacyTakesNoArgs(legacyName) {
+    const name = String(legacyName || '').trim();
+    return _paramProgramLegacyNames.includes(name) && !_paramProgramLegacyArgDefs(name);
+}
+
+function _paramProgramLegacyTargetArgIndex(legacyName) {
+    const idx = _paramProgramLegacyTargetArgIndexes[String(legacyName || '').trim()];
+    return Number.isInteger(idx) ? idx : null;
+}
+
+function _migrateParamProgramLegacyTargetArgs(legacyName, src, tgt, args, options = {}) {
+    const name = String(legacyName || '').trim();
+    const values = Array.isArray(args) ? args.map(v => String(v == null ? '' : v).trim()) : [];
+    const targetIdx = _paramProgramLegacyTargetArgIndex(name);
+    if (targetIdx == null || values.length <= targetIdx) return [src, tgt, values];
+    if (!options.force && values.length <= ((_paramProgramLegacyArgDefs(name) || []).length)) {
+        return [src, tgt, values];
+    }
+    const selector = _paramTargetToLegacySelector(values[targetIdx]);
+    const nextSrc = String(src || 'both') === 'both' ? selector : src;
+    const nextTgt = String(tgt || 'both') === 'both' ? selector : tgt;
+    return [nextSrc, nextTgt, values.filter((_, idx) => idx !== targetIdx)];
+}
+
+function _formatParamProgramNumber(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return String(value == null ? '' : value);
+    return String(Object.is(n, -0) ? 0 : n);
+}
+
+function _formatParamProgramComplexArg(reValue, imValue) {
+    const re = Number(reValue);
+    const im = Number(imValue);
+    if (!Number.isFinite(re) || !Number.isFinite(im)) return `${reValue}+${imValue}i`;
+    if (im === 0) return _formatParamProgramNumber(re);
+    if (re === 0) return `${_formatParamProgramNumber(im)}i`;
+    const sign = im < 0 ? '' : '+';
+    return `${_formatParamProgramNumber(re)}${sign}${_formatParamProgramNumber(im)}i`;
+}
+
+function _paramProgramMoebiusArgsForUi(args) {
+    const defaults = [
+        '1',
+        '0',
+        '0',
+        '1',
+    ];
+    if (!Array.isArray(args) || !args.length) return [];
+    const values = args.map(v => String(v == null ? '' : v).trim());
+    if (values.length >= 8) {
+        return [
+            _formatParamProgramComplexArg(values[0], values[1]),
+            _formatParamProgramComplexArg(values[2], values[3]),
+            _formatParamProgramComplexArg(values[4], values[5]),
+            _formatParamProgramComplexArg(values[6], values[7]),
+        ];
+    }
+    return defaults.map((fallback, idx) => values[idx] || fallback);
+}
+
+function _paramProgramLegacyArgsFromInput(legacyName, argsInput, options = {}) {
+    const argDefs = _paramProgramLegacyArgDefs(legacyName);
+    let rawArgs = [];
+    if (Array.isArray(argsInput)) {
+        const values = argsInput.map(v => String(v == null ? '' : v).trim());
+        if (argDefs && values.length > 1) {
+            rawArgs = values;
+        } else {
+            rawArgs = _splitParamProgramLegacyArgs(values.join(','));
+        }
+    } else {
+        rawArgs = _splitParamProgramLegacyArgs(argsInput);
+    }
+    if (_paramProgramLegacyTakesNoArgs(legacyName)) return [];
+    if (String(legacyName || '').trim() === 'moebius') {
+        return _paramProgramMoebiusArgsForUi(rawArgs.length ? rawArgs : (options.fillDefaults ? ['1', '0', '0', '1'] : []));
+    }
+    if (!argDefs) return rawArgs.filter(v => v !== '');
+    if (!options.fillDefaults && !rawArgs.length) return [];
+    return argDefs.map((argDef, idx) => {
+        const value = rawArgs[idx] == null || rawArgs[idx] === '' ? (argDef.def == null ? '' : String(argDef.def)) : rawArgs[idx];
+        return String(value);
+    }).filter(v => v !== '');
+}
+
+function _paramTargetToLegacySelector(value) {
+    const target = _normalizeTarget(String(value == null || value === '' ? 'both' : value));
+    if (target === 't1') return 'p1';
+    if (target === 't2') return 'p2';
+    return 'both';
+}
+
+function _paramProgramBridgeParamsFromLegacyTransform(row) {
+    const name = String((Array.isArray(row) ? row[0] : row) || '').trim();
+    if (!name) return null;
+    const args = Array.isArray(row) ? row.slice(1).map(v => String(v)) : [];
+    if (_paramProgramIndependentLegacyTargets.has(name)) {
+        const selector = _paramTargetToLegacySelector(args[0] || 'both');
+        return [name, selector, selector, ''];
+    }
+    const [source, target, migratedArgs] = _migrateParamProgramLegacyTargetArgs(name, 'both', 'both', args, { force: true });
+    const bridgeArgs = _paramProgramLegacyArgsFromInput(name, name === 'moebius' ? args : migratedArgs, { fillDefaults: !!_paramProgramLegacyArgDefs(name) });
+    return _paramProgramLegacyArgDefs(name)
+        ? [name, source, target, ...bridgeArgs]
+        : [name, source, target, bridgeArgs.join(',')];
+}
+
+function _normalizeLegacyBridgeParams(legacyName, src, tgt, argsInput) {
+    const name = String(legacyName || 'unit_circle').trim() || 'unit_circle';
+    let source = String(src || 'both').trim() || 'both';
+    let target = String(tgt || 'both').trim() || 'both';
+    let rawArgs = Array.isArray(argsInput)
+        ? argsInput.map(v => String(v == null ? '' : v).trim())
+        : _splitParamProgramLegacyArgs(argsInput);
+    [source, target, rawArgs] = _migrateParamProgramLegacyTargetArgs(name, source, target, rawArgs);
+    let args = _paramProgramLegacyArgsFromInput(name, rawArgs, { fillDefaults: !!_paramProgramLegacyArgDefs(name) });
+    if (_paramProgramIndependentLegacyTargets.has(name) && args.length === 1) {
+        const selector = _paramTargetToLegacySelector(args[0]);
+        if (source === 'both' && target === 'both') {
+            source = selector;
+            target = selector;
+        }
+        args = [];
+    }
+    return [name, source, target, args];
+}
+
+function _normalizeParamProgramShortcutChip(name, args) {
+    const chipName = String(name || '').trim();
+    const chipArgs = Array.isArray(args) ? args.map(v => String(v)) : [];
+    if (_paramProgramLegacyNames.includes(chipName) && !_ppCatalog[chipName]) {
+        return [{ name: 'legacy', params: _paramProgramBridgeParamsFromLegacyTransform([chipName, ...chipArgs]) }];
+    }
+    if (!_paramProgramIndependentLegacyTargets.has(chipName) || chipArgs.length !== 1) {
+        return [{ name: chipName, params: chipArgs }];
+    }
+    const selector = _paramTargetToLegacySelector(chipArgs[0]);
+    if (selector === 'p1') {
+        return [
+            { name: 'push', params: ['t1'] },
+            { name: chipName, params: [] },
+            { name: 'emit', params: ['p1'] },
+        ];
+    }
+    if (selector === 'p2') {
+        return [
+            { name: 'push', params: ['t2'] },
+            { name: chipName, params: [] },
+            { name: 'emit', params: ['p2'] },
+        ];
+    }
+    return [
+        { name: 'push', params: ['t1'] },
+        { name: chipName, params: [] },
+        { name: 'emit', params: ['p1'] },
+        { name: 'push', params: ['t2'] },
+        { name: chipName, params: [] },
+        { name: 'emit', params: ['p2'] },
+    ];
+}
+
+function _serializeParamProgramChain() {
+    return _ppChain.map(item => {
+        if (!item || !item.name) return null;
+        const name = String(item.name || '').trim();
+        const params = Array.isArray(item.params) ? item.params.map(v => String(v)) : [];
+        if (name === 'legacy') {
+            const [legacyName, src, tgt, args] = _normalizeLegacyBridgeParams(
+                params[0],
+                params[1],
+                params[2],
+                params.slice(3)
+            );
+            return ['legacy', legacyName, src, tgt, ...args];
+        }
+        if (name === 'const') {
+            const re = String(params[0] || '0').trim() || '0';
+            const im = String(params[1] || '0').trim() || '0';
+            return im === '0' || im === '0.0' ? ['const', re] : ['const', re, im];
+        }
+        const spec = _ppCatalog[name] || {};
+        const pDefs = spec.params || [];
+        const values = pDefs.map((pDef, idx) => {
+            const raw = params[idx] != null && params[idx] !== '' ? params[idx] : (pDef.def == null ? '' : pDef.def);
+            return String(raw);
+        }).filter(v => v !== '');
+        return values.length ? [name, ...values] : [name];
+    }).filter(Boolean);
+}
+
+function _hasParamProgramChain() {
+    return _serializeParamProgramChain().length > 0;
+}
+
+function _selectedParamPipelineMode() {
+    const el = document.getElementById('param-pipeline-mode');
+    const raw = el && el.value ? el.value : _paramPipelineMode;
+    return raw === 'param_program' ? 'param_program' : 'legacy';
+}
+
+function _paramProgramModeSelected() {
+    return _selectedParamPipelineMode() === 'param_program';
+}
+
+function _formatParamProgramChainForLog(chain, separator = ',') {
+    const rows = Array.isArray(chain) ? chain : [];
+    return rows.length
+        ? rows.map(a => Array.isArray(a) && a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : (Array.isArray(a) ? a[0] : String(a))).join(separator)
+        : 'param_program(identity)';
+}
+
+function _displayActiveParamPipeline(separator = ',') {
+    if (_paramProgramModeSelected()) return _formatParamProgramChainForLog(_serializeParamProgramChain(), separator);
+    const rows = _displayParamTransforms();
+    return rows.map(a => a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : a[0]).join(separator) || 'none';
+}
+
+function _paramPipelineEditAffectsCompute(which) {
+    if (which === 'ct') return true;
+    if (which === 'pt') return !_paramProgramModeSelected();
+    if (which === 'pp') return _paramProgramModeSelected();
+    return false;
+}
+
+function _syncParamPipelineModeUi() {
+    const mode = _selectedParamPipelineMode();
+    _paramPipelineMode = mode;
+    const selectEl = document.getElementById('param-pipeline-mode');
+    const noteEl = document.getElementById('param-pipeline-mode-note');
+    const legacyRow = document.getElementById('param-transforms-row');
+    const programBox = document.querySelector('.param-program-box');
+    if (selectEl && selectEl.value !== mode) selectEl.value = mode;
+    if (legacyRow && legacyRow.classList) legacyRow.classList.toggle('param-pipeline-inactive', mode !== 'legacy');
+    if (programBox && programBox.classList) programBox.classList.toggle('param-pipeline-inactive', mode !== 'param_program');
+    const ppLen = _serializeParamProgramChain().length;
+    const ptLen = _serializeParamTransforms().length;
+    if (noteEl) {
+        noteEl.textContent = mode === 'param_program'
+            ? `Param Program is active${ppLen ? ` (${ppLen} chip${ppLen === 1 ? '' : 's'})` : ' (empty identity)'}. Legacy transforms are idle.`
+            : `Legacy Param transforms are active${ptLen ? ` (${ptLen} chip${ptLen === 1 ? '' : 's'})` : ' (none)'}. Param Program is idle.`;
+    }
+}
+
+function _setParamPipelineMode(mode, options = {}) {
+    _paramPipelineMode = mode === 'param_program' ? 'param_program' : 'legacy';
+    _syncParamPipelineModeUi();
+    _renderChips('pp');
+    if (options.markStale) _markComputePreviewStale();
+}
+
+function _effectiveParamTransformsForCompute() {
+    return _paramProgramModeSelected() ? [] : _serializeParamTransforms();
+}
+
+function _effectiveParamProgramChainForCompute() {
+    return _paramProgramModeSelected() ? _serializeParamProgramChain() : [];
+}
+
+function _displayParamProgramEntry(item) {
+    if (!item || !item.name) return '';
+    const params = Array.isArray(item.params) ? item.params.filter(v => String(v || '').trim() !== '') : [];
+    return params.length ? `${item.name}(${params.join(',')})` : item.name;
+}
+
+function _paramProgramStatus(message, isError = false) {
+    const el = document.getElementById('param-program-status');
+    if (!el) return;
+    el.textContent = String(message || '');
+    el.className = `solve-score-program-status${isError ? ' error' : ''}`;
+}
+
+function _paramProgramDefaultName() {
+    try {
+        const chain = _serializeParamProgramChain();
+        const basis = chain.length ? chain.map(row => Array.isArray(row) ? row[0] : String(row)).join('-') : 'param-program';
+        return basis.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'param-program';
+    } catch (_) {
+        return 'param-program';
+    }
+}
+
+function _normalizeParamProgramChain(rawChain) {
+    if (!Array.isArray(rawChain)) return [];
+    return rawChain.flatMap(item => {
+        if (Array.isArray(item) && item.length) {
+            const name = String(item[0] || '').trim();
+            if (!name) return [];
+            if (name === 'legacy') {
+                const [legacyName, src, tgt, args] = _normalizeLegacyBridgeParams(
+                    item[1],
+                    item[2],
+                    item[3],
+                    item.slice(4).map(v => String(v))
+                );
+                const params = _paramProgramLegacyArgDefs(legacyName)
+                    ? [legacyName, src, tgt, ...args]
+                    : [legacyName, src, tgt, args.join(',')];
+                return [{ name: 'legacy', params }];
+            }
+            return _normalizeParamProgramShortcutChip(name, item.slice(1));
+        }
+        if (item == null || item === '') return [];
+        return [{ name: String(item), params: [] }];
+    }).filter(Boolean);
+}
+
+function _parseParamProgramPayload(raw) {
+    if (!raw || typeof raw !== 'object') throw new Error('program JSON must be an object');
+    const chain = Array.isArray(raw.chain) ? raw.chain : null;
+    if (!chain || !chain.length) throw new Error('program JSON is missing a non-empty chain');
+    const hasVersion = Object.prototype.hasOwnProperty.call(raw, 'version');
+    const parsedVersion = Number(raw.version);
+    if (hasVersion && !Number.isFinite(parsedVersion)) throw new Error('program JSON version must be numeric when present');
+    const version = hasVersion ? parsedVersion : 1;
+    if (version !== 1) throw new Error(`program JSON version ${version} is not supported`);
+    const kind = String(raw.program_kind || 'param_program');
+    if (kind !== 'param_program') throw new Error(`program JSON kind ${kind} is not param_program`);
+    return {
+        version,
+        program_kind: 'param_program',
+        name: String(raw.name || '').trim(),
+        description: String(raw.description || '').trim(),
+        chain: _normalizeParamProgramChain(chain),
+    };
+}
+
+function _applyParamProgram(rawProgram) {
+    const program = _parseParamProgramPayload(rawProgram);
+    _ppChain.splice(0, _ppChain.length, ...program.chain);
+    _paramProgramSelectedIndex = _ppChain.length ? Math.min(_ppChain.length - 1, Math.max(0, _paramProgramSelectedIndex)) : -1;
+    _renderChips('pp');
+    if (_paramProgramModeSelected()) _markComputePreviewStale();
+    _paramProgramStatus(program.name ? `Loaded ${program.name}` : 'Loaded param program');
+    return program;
+}
+
+function _copyParamTransformsIntoParamProgram() {
+    const transforms = _serializeParamTransforms();
+    if (!transforms.length) {
+        _paramProgramStatus('No legacy Param transforms to copy', true);
+        return;
+    }
+    const chain = transforms.map(item => {
+        const row = Array.isArray(item) ? item : [String(item)];
+        return { name: 'legacy', params: _paramProgramBridgeParamsFromLegacyTransform(row) };
+    }).filter(item => item && item.params);
+    _ppChain.splice(0, _ppChain.length, ...chain);
+    _paramProgramSelectedIndex = _ppChain.length ? 0 : -1;
+    _renderChips('pp');
+    if (_paramProgramModeSelected()) _markComputePreviewStale();
+    _paramProgramStatus(`Copied ${chain.length} legacy transform${chain.length === 1 ? '' : 's'} into param program`);
+}
+
+function _clearParamProgramChain() {
+    _ppChain.splice(0, _ppChain.length);
+    _paramProgramSelectedIndex = -1;
+    _renderChips('pp');
+    if (_paramProgramModeSelected()) _markComputePreviewStale();
+}
+
+function _portableParamProgramPayload(nameOverride = '') {
+    const chain = _serializeParamProgramChain();
+    if (!chain.length) throw new Error('Param program is empty');
+    return {
+        version: 1,
+        program_kind: 'param_program',
+        name: String(nameOverride || _paramProgramDefaultName()).trim() || 'param-program',
+        chain,
+        display: chain.map(row => Array.isArray(row) ? (row.length > 1 ? `${row[0]}(${row.slice(1).join(',')})` : row[0]) : String(row)).join('; '),
+    };
 }
 
 function updateChipParam(chipIdx, paramIdx, value, which) {
@@ -10573,7 +11828,7 @@ function updateChipParam(chipIdx, paramIdx, value, which) {
                     chain[chipIdx].params[paramIdx] = complex.re;
                     if (paramIdx + 1 < chain[chipIdx].params.length) chain[chipIdx].params[paramIdx + 1] = complex.im;
                     _renderChips(which);
-                    _markComputePreviewStale();
+                    if (_paramPipelineEditAffectsCompute(which)) _markComputePreviewStale();
                     return;
                 }
             }
@@ -10587,7 +11842,7 @@ function updateChipParam(chipIdx, paramIdx, value, which) {
             chain[chipIdx].params[paramIdx] = value;
         }
         _renderChips(which);
-        if (which === 'pt' || which === 'ct') _markComputePreviewStale();
+        if (_paramPipelineEditAffectsCompute(which)) _markComputePreviewStale();
     }
 }
 
@@ -10621,6 +11876,14 @@ function _chipInputHtml(which, chipIdx, paramIdx, value, paramDef, options = {})
     const im = (pd.target || pd.choices || pd.complexPairNext || pd.complex || pd.ph === 'andy') ? 'text' : 'decimal';
     const cls = pd.ph === 'andy' ? 'chip-input chip-input-andy' : 'chip-input';
     return `<input class="${cls}" type="text" inputmode="${im}" value="${_escapeHtml(value)}" placeholder="${_escapeHtml(pd.ph || '')}" onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">`;
+}
+
+function _chipLabeledInputHtml(which, chipIdx, paramIdx, value, paramDef, options = {}) {
+    const pd = paramDef || {};
+    const label = String(pd.label || pd.ph || '').trim();
+    const input = _chipInputHtml(which, chipIdx, paramIdx, value, pd, options);
+    if (!label) return input;
+    return `<span class="chip-param-pair"><span class="chip-param-name">${_escapeHtml(label)}=</span>${input}</span>`;
 }
 
 function _ctUnaryFormulaChip(which, i, item, fnName, pDefs) {
@@ -10807,11 +12070,92 @@ function _renderRtChipHtml(item, i, which, catalog, options = {}) {
     return `<span class="chip">${label}${inputsHtml}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
 }
 
+function _paramProgramChipShellHtml(i, readonly, bodyHtml) {
+    if (readonly) {
+        return `<span class="chip score-chip score-chip-readonly">${bodyHtml}</span>`;
+    }
+    const count = _chainForWhich('pp').length;
+    const selected = _paramProgramSelectedIndex === i ? ' selected' : '';
+    const leftDisabled = i <= 0 ? ' disabled' : '';
+    const rightDisabled = i >= count - 1 ? ' disabled' : '';
+    const moves = `<span class="chip-actions"><button type="button" class="chip-move" onclick="event.stopPropagation();moveChip('pp',${i},-1)" title="Move left"${leftDisabled}>&lt;</button><button type="button" class="chip-move" onclick="event.stopPropagation();moveChip('pp',${i},1)" title="Move right"${rightDisabled}>&gt;</button></span>`;
+    return `<span class="chip score-chip${selected}" onclick="selectParamProgramLine(${i},event)">${moves}${bodyHtml}<span class="chip-x" onclick="event.stopPropagation();removeChip('pp',${i})">x</span></span>`;
+}
+
+function _renderParamProgramChipHtml(item, i, options = {}) {
+    const readonly = !!options.readonly;
+    const spec = _ppCatalog[item.name] || {};
+    const pDefs = spec.params || [];
+    const params = Array.isArray(item.params) ? item.params : [];
+    const label = _escapeHtml(spec.label || item.name);
+    let inputDefs = pDefs.length ? pDefs : params.map(() => ({}));
+    let inputValues = params;
+    let showParamLabels = item.name === 'legacy';
+    if (item.name === 'legacy' && _paramProgramIndependentLegacyTargets.has(String(params[0] || ''))) {
+        inputDefs = pDefs.slice(0, 3);
+        inputValues = params.slice(0, 3);
+    } else if (item.name === 'legacy') {
+        const [legacyName, src, tgt, args] = _normalizeLegacyBridgeParams(params[0], params[1], params[2], params.slice(3));
+        const argDefs = _paramProgramLegacyArgDefs(legacyName);
+        if (legacyName === 'moebius') {
+            const baseDefs = pDefs.slice(0, 3);
+            const baseValues = [legacyName, src, tgt];
+            const coeffDefs = argDefs || [];
+            const coeffValues = _paramProgramMoebiusArgsForUi(args.length ? args : ['1', '0', '0', '1']);
+            const baseInputs = baseDefs.map((pDef, pi) =>
+                _chipLabeledInputHtml('pp', i, pi, baseValues[pi], pDef || {}, { readonly })
+            ).join('');
+            const coeffInputs = coeffDefs.map((pDef, ci) =>
+                _chipLabeledInputHtml('pp', i, ci + 3, coeffValues[ci] || pDef.def || '', pDef || {}, { readonly })
+            );
+            const [a, b, c, d] = coeffInputs;
+            const body = `<span class="chip-formula"><span>${label}</span>${baseInputs}<span class="chip-op">·</span><span>t=(</span>${a}<span class="chip-op">*t+</span>${b}<span>)/(</span>${c}<span class="chip-op">*t+</span>${d}<span>)</span></span>`;
+            return _paramProgramChipShellHtml(i, readonly, body);
+        } else if (argDefs) {
+            inputDefs = pDefs.slice(0, 3).concat(argDefs);
+            inputValues = [legacyName, src, tgt, ...args];
+        } else if (_paramProgramLegacyTakesNoArgs(legacyName)) {
+            inputDefs = pDefs.slice(0, 3);
+            inputValues = [legacyName, src, tgt];
+        }
+    }
+    const inputsHtml = inputDefs.map((pDef, pi) => {
+        const value = inputValues[pi] != null && inputValues[pi] !== ''
+            ? inputValues[pi]
+            : (pDef && pDef.def != null ? String(pDef.def) : '');
+        return showParamLabels
+            ? _chipLabeledInputHtml('pp', i, pi, value, pDef || {}, { readonly })
+            : _chipInputHtml('pp', i, pi, value, pDef || {}, { readonly });
+    }).join('');
+    return _paramProgramChipShellHtml(i, readonly, `<span class="chip-formula"><span>${label}</span>${inputsHtml}</span>`);
+}
+
+function _renderParamProgramChipsHtml(program) {
+    const chain = _normalizeParamProgramChain(program && program.chain);
+    if (!chain.length) return _solveScoreModalMessageHtml('No param-program chips.');
+    const chips = chain.map((item, i) => _renderParamProgramChipHtml(item, i, { readonly: true })).join('');
+    return `<div class="chip-container solve-score-modal-chip-strip" aria-label="Param program chips">${chips}</div>`;
+}
+
 function _renderChips(which) {
     const chain = _chainForWhich(which);
     const el = document.getElementById(which + '-chips');
     if (!el) return;
-    if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {
+    if (which === 'pp') {
+        el.innerHTML = chain.map((item, i) => _renderParamProgramChipHtml(item, i)).join('');
+        _syncParamProgramAddOptions();
+        _syncParamPipelineModeUi();
+        const chainLen = _serializeParamProgramChain().length;
+        if (_paramProgramModeSelected()) {
+            _paramProgramStatus(chainLen
+                ? `Param Program selected · ${chainLen} chip${chainLen === 1 ? '' : 's'}`
+                : 'Param Program selected · empty identity');
+        } else {
+            _paramProgramStatus(chainLen
+                ? `Legacy selected · Param Program idle with ${chainLen} chip${chainLen === 1 ? '' : 's'}`
+                : 'Legacy selected · Param Program empty');
+        }
+    } else if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {
         const catalog = _catalogForChain(which);
         el.innerHTML = chain.map((item, i) => _renderRtChipHtml(item, i, which, catalog)).join('');
         if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt') {
@@ -10837,9 +12181,11 @@ function _renderChips(which) {
         if (prefix === 'render') _updateSolveScoreButtons();
         if (prefix === 'palette') _updatePaletteCreateButton();
     }
+    if (which === 'pt') _syncParamPipelineModeUi();
     if (which === 'ct') _syncCoeffTransformAddOptions();
 }
 _renderChips('palette-rt');
+_renderChips('pp');
 
 const _fmtMs = (ms) => (ms/1000).toFixed(1) + 's';
 const _fmtStatus = (sc) => sc ? Object.entries(sc).map(([k,v]) => `${k}:${v}`).join(' ') : '';
@@ -15806,16 +17152,18 @@ async function runParamDebug() {
     try {
         const n = parseInt(document.getElementById('render-n').value) || 500;
         const mode = document.getElementById('param-debug-mode').value;
-        const paramTransforms = _serializeParamTransforms();
+        const paramTransforms = _effectiveParamTransformsForCompute();
+        const paramProgramChain = _effectiveParamProgramChainForCompute();
         // Empty chain = identity: z1=x1, z2=x2 (no forced unit_circle)
 
-        const ptDisplay = _displayParamTransforms().map(a => a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : a[0]).join(' → ');
+        const ptDisplay = _displayActiveParamPipeline(' → ');
         log(`Param debug: N=${n}, mode=${mode}, transforms=[${ptDisplay}]...`);
         document.getElementById('compute-status').textContent = 'Generating param debug image...';
 
         const result = await lambdaPost('param-debug', {
             N: n,
             param_transforms: paramTransforms,
+            param_program_chain: paramProgramChain,
             mode,
             pix: n * 2,
             job_id: document.getElementById('results-dir').value.trim() || 'debug',
@@ -16125,7 +17473,8 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
     const effectiveParamGenThreads = fused ? fusedThreads : paramGenThreads;
     const effectiveCoeffgenThreads = fused ? fusedThreads : coeffgenThreads;
 
-    const paramTransforms = _serializeParamTransforms();
+    const paramTransforms = _effectiveParamTransformsForCompute();
+    const paramProgramChain = _effectiveParamProgramChainForCompute();
     const coeffTransforms = _serializeCoeffTransforms();
     const cfpv = _cfpv.length > 0 ? [..._cfpv] : null;
     // Build human-readable cfpv display from catalog params
@@ -16135,7 +17484,7 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
         const params = (entry && entry.params) || [];
         cfpvDisplay = cfpv.map((v, i) => params[i] ? `${params[i].name}=${v}` : String(v)).join(', ');
     }
-    const ptDisplay = _displayParamTransforms().map(a => a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : a[0]).join(',');
+    const ptDisplay = _displayActiveParamPipeline(',');
     const cfpvStr = cfpvDisplay ? `(${cfpvDisplay})` : '';
     const coeffTransformsDisplay = _displayCoeffTransforms();
     const pipelineStr = `[${ptDisplay||'none'}] ${funcName}${cfpvStr} [${coeffTransformsDisplay.join(',')||'none'}]`;
@@ -16170,6 +17519,7 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
                 times,
                 function: funcName,
                 param_transforms: paramTransforms,
+                param_program_chain: paramProgramChain,
                 coeff_transforms: coeffTransforms,
                 cfpv: cfpv || [],
             },
@@ -16348,6 +17698,7 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
 // Populate hidden fallback selects and render transform picker popups.
 _syncRenderBackgroundColorUi();
 _syncParamTransformAddOptions();
+_syncParamProgramAddOptions();
 _syncCoeffTransformAddOptions();
 
 // Populate function dropdown from generated catalog

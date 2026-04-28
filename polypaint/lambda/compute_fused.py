@@ -31,10 +31,11 @@ def execution_method_from_params(run_params):
     return raw
 
 
-def build_probe_signature(*, function_name, param_transforms, coeff_transforms, cfpv):
+def build_probe_signature(*, function_name, param_transforms, coeff_transforms, cfpv, param_program=None):
     payload = {
         "function": str(function_name or "").strip(),
         "param_transforms": list(param_transforms or []),
+        "param_program_fingerprint": str((param_program or {}).get("fingerprint") or ""),
         "coeff_transforms": list(coeff_transforms or []),
         "cfpv": list(cfpv or []),
     }

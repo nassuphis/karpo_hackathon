@@ -127,6 +127,7 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
         self.assertEqual(selector["n_coeffs.$"], "$.post.n_coeffs")
         self.assertEqual(selector["degree.$"], "$.post.degree")
         self.assertEqual(selector["fused_threads.$"], "$.plan.fused.threads")
+        self.assertEqual(selector["param_program.$"], "$.plan.pipeline.param_program")
         worker = fused_map["ItemProcessor"]["States"]["FusedChunkWorker"]
         self.assertIn("placeholder-FusedChunkFunctionArn", json.dumps(worker))
 
@@ -135,6 +136,7 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
         payload_json = json.dumps(degree_probe)
         self.assertNotIn("auto_hires_chunks", payload_json)
         self.assertEqual(degree_probe["execution_method"], "fused_chunk_pipeline")
+        self.assertEqual(degree_probe["param_program_chain.$"], "$.params.param_program_chain")
 
     def test_parse_post_coeffgen_drops_large_coeffgen_results(self):
         parse_post = self.states["ParsePostCoeffgen"]
@@ -174,6 +176,7 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
         param_gen = self.states["ParamGenMap"]["ItemSelector"]
         self.assertEqual(param_gen["times.$"], "$.plan.compute.times")
         self.assertEqual(param_gen["param_transforms.$"], "$.plan.pipeline.param_transforms")
+        self.assertEqual(param_gen["param_program.$"], "$.plan.pipeline.param_program")
         self.assertEqual(param_gen["n_threads.$"], "$.plan.compute.param_gen_threads")
         self.assertEqual(param_gen["task_id.$"], "$$.Map.Item.Value.paramgen_task_id")
         self.assertEqual(param_gen["params_key.$"], "$$.Map.Item.Value.params_key")
@@ -183,6 +186,7 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
         lores_param_gen = self.states["LoresParamGenTask"]["Parameters"]["Payload"]
         self.assertEqual(lores_param_gen["times.$"], "$.plan.compute.times")
         self.assertEqual(lores_param_gen["param_transforms.$"], "$.plan.pipeline.param_transforms")
+        self.assertEqual(lores_param_gen["param_program.$"], "$.plan.pipeline.param_program")
         self.assertEqual(lores_param_gen["gridN.$"], "$.plan.compute.N")
         self.assertEqual(lores_param_gen["n_threads.$"], "$.plan.compute.lores_param_gen_threads")
 

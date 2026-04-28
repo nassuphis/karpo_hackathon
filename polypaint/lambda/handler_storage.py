@@ -37,6 +37,11 @@ from logical_sections import (
     summarize_chunk_items,
 )
 from shared import BUCKET, JOBS_TABLE, PRESIGN_EXPIRY, parse_body, ok_response, _get_ddb
+from param_program_chain import (
+    PROGRAM_KIND as PARAM_PROGRAM_KIND,
+    PROGRAM_VERSION as PARAM_PROGRAM_VERSION,
+    compile_param_program_chain,
+)
 from solve_score_chain import compile_solve_score_chain_or_legacy, serialize_solve_score_chain
 
 s3 = boto3.client("s3")
@@ -53,11 +58,23 @@ MAX_SOLVE_SCORE_PROGRAM_NAME_LEN = 120
 MAX_SOLVE_SCORE_PROGRAM_STATEMENTS = 256
 MAX_SOLVE_SCORE_PROGRAM_CHAIN_BYTES = 16 * 1024
 MAX_SOLVE_SCORE_PROGRAM_TOKEN_LEN = 128
+PARAM_PROGRAMS_PREFIX = "polypaint/param-programs/"
+PARAM_PROGRAM_META_NAME = "param_program_name"
+PARAM_PROGRAM_META_STATEMENT_COUNT = "param_program_statement_count"
+PARAM_PROGRAM_META_SAVED_AT = "param_program_saved_at"
+MAX_PARAM_PROGRAM_NAME_LEN = 120
+MAX_PARAM_PROGRAM_STATEMENTS = 256
+MAX_PARAM_PROGRAM_CHAIN_BYTES = 24 * 1024
+MAX_PARAM_PROGRAM_TOKEN_LEN = 256
 DEFAULT_RESULTS_LIST_WORKERS = 32
 MAX_RESULTS_LIST_WORKERS = 64
 
 
 class _SolveScoreProgramNotFound(RuntimeError):
+    pass
+
+
+class _ParamProgramNotFound(RuntimeError):
     pass
 
 
@@ -90,7 +107,7 @@ def _error_response(status_code, message):
 def _handle_storage_route(fn, event):
     try:
         return fn(event)
-    except _SolveScoreProgramNotFound as exc:
+    except (_SolveScoreProgramNotFound, _ParamProgramNotFound) as exc:
         return _error_response(404, exc)
     except (ValueError, KeyError, TypeError, RuntimeError, json.JSONDecodeError) as exc:
         return _error_response(400, exc)
@@ -107,8 +124,19 @@ def _slugify_solve_score_program_id(name):
     return slug or "solve-score-program"
 
 
+def _slugify_param_program_id(name):
+    text = str(name or "").strip().lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+    slug = slug[:64].strip("-")
+    return slug or "param-program"
+
+
 def _solve_score_program_key(program_id):
     return f"{SOLVE_SCORE_PROGRAMS_PREFIX}{program_id}.json"
+
+
+def _param_program_key(program_id):
+    return f"{PARAM_PROGRAMS_PREFIX}{program_id}.json"
 
 
 def _validate_solve_score_program_name(name):
@@ -124,6 +152,19 @@ def _validate_solve_score_program_name(name):
     return text
 
 
+def _validate_param_program_name(name):
+    text = str(name or "").strip()
+    if not text:
+        raise ValueError("param program name is required")
+    if len(text) > MAX_PARAM_PROGRAM_NAME_LEN:
+        raise ValueError(
+            f"param program name must be at most {MAX_PARAM_PROGRAM_NAME_LEN} characters"
+        )
+    if any(ch in "\r\n\t" for ch in text) or not all(ch.isprintable() for ch in text):
+        raise ValueError("param program name must contain printable single-line text")
+    return text
+
+
 def _validate_solve_score_program_chain_value(value, path):
     if isinstance(value, str):
         if len(value) > MAX_SOLVE_SCORE_PROGRAM_TOKEN_LEN:
@@ -136,6 +177,22 @@ def _validate_solve_score_program_chain_value(value, path):
     if isinstance(value, list):
         for idx, item in enumerate(value):
             _validate_solve_score_program_chain_value(item, f"{path}[{idx}]")
+        return
+    raise ValueError(f"{path} must contain only arrays, strings, and numbers")
+
+
+def _validate_param_program_chain_value(value, path):
+    if isinstance(value, str):
+        if len(value) > MAX_PARAM_PROGRAM_TOKEN_LEN:
+            raise ValueError(
+                f"{path} string token must be at most {MAX_PARAM_PROGRAM_TOKEN_LEN} characters"
+            )
+        return
+    if isinstance(value, (int, float)):
+        return
+    if isinstance(value, list):
+        for idx, item in enumerate(value):
+            _validate_param_program_chain_value(item, f"{path}[{idx}]")
         return
     raise ValueError(f"{path} must contain only arrays, strings, and numbers")
 
@@ -189,6 +246,92 @@ def _compile_solve_score_program_payload(
     return program
 
 
+def _read_param_program_source_chain(program_id):
+    key = _param_program_key(program_id)
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=key)
+    except Exception as exc:
+        if _is_missing_s3_error(exc):
+            raise _ParamProgramNotFound(f"param program not found: {program_id}")
+        raise
+    raw = obj["Body"].read()
+    try:
+        payload = json.loads(raw) if raw else {}
+    except Exception as exc:
+        raise RuntimeError(f"saved param program is not valid JSON: {program_id}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"saved param program must be a JSON object: {program_id}")
+    chain = payload.get("chain")
+    if not isinstance(chain, list):
+        raise RuntimeError(f"saved param program chain must be a JSON array: {program_id}")
+    return chain
+
+
+def _param_program_macro_resolver(current_program_id=None):
+    def _resolve(macro_id):
+        macro_id_text = str(macro_id or "").strip()
+        if current_program_id and macro_id_text == current_program_id:
+            raise ValueError(f"param program cannot reference itself as macro({macro_id_text})")
+        return _read_param_program_source_chain(macro_id_text)
+
+    return _resolve
+
+
+def _compile_param_program_payload(
+    name,
+    chain,
+    *,
+    saved_at=None,
+    version=PARAM_PROGRAM_VERSION,
+    program_id=None,
+):
+    validated_name = _validate_param_program_name(name)
+    if not isinstance(chain, list) or not chain:
+        raise ValueError("param program chain must be a non-empty JSON array")
+    if len(chain) > MAX_PARAM_PROGRAM_STATEMENTS:
+        raise ValueError(
+            f"param program chain must contain at most {MAX_PARAM_PROGRAM_STATEMENTS} statements"
+        )
+    _validate_param_program_chain_value(chain, "chain")
+    chain_json = json.dumps(chain, separators=(",", ":"), ensure_ascii=False)
+    if len(chain_json.encode("utf-8")) > MAX_PARAM_PROGRAM_CHAIN_BYTES:
+        raise ValueError(
+            f"param program chain JSON must be at most {MAX_PARAM_PROGRAM_CHAIN_BYTES} bytes"
+        )
+
+    program_id_text = str(program_id or _slugify_param_program_id(validated_name)).strip()
+    compiled = compile_param_program_chain(
+        chain,
+        macro_resolver=_param_program_macro_resolver(program_id_text),
+    )
+    saved_at_text = _utc_now_iso() if saved_at is None else str(saved_at or "").strip()
+    try:
+        version_num = int(version)
+    except (TypeError, ValueError):
+        version_num = PARAM_PROGRAM_VERSION
+    program = {
+        "version": version_num,
+        "program_kind": PARAM_PROGRAM_KIND,
+        "id": program_id_text,
+        "name": validated_name,
+        "chain": compiled["source_chain"],
+        "display": compiled["display"],
+        "expanded_display": compiled["expanded_display"],
+        "fingerprint": compiled["fingerprint"],
+        "execution_spec": compiled["execution_spec"],
+        "statement_count": len(compiled["source_chain"]),
+        "token_count": compiled["token_count"],
+        "stack_max": compiled["stack_max"],
+        "emits": compiled["emits"],
+        "uses_legacy_fast_path": compiled["uses_legacy_fast_path"],
+        "macro_expansions": compiled["macro_expansions"],
+        "saved_at": saved_at_text,
+    }
+    if compiled["legacy_transforms"]:
+        program["legacy_transforms"] = compiled["legacy_transforms"]
+    return program
+
+
 def _read_solve_score_program_object(program_id):
     key = _solve_score_program_key(program_id)
     try:
@@ -215,11 +358,46 @@ def _read_solve_score_program_object(program_id):
     return program
 
 
+def _read_param_program_object(program_id):
+    key = _param_program_key(program_id)
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=key)
+    except Exception as exc:
+        if _is_missing_s3_error(exc):
+            raise _ParamProgramNotFound(f"param program not found: {program_id}")
+        raise
+    raw = obj["Body"].read()
+    try:
+        payload = json.loads(raw) if raw else {}
+    except Exception as exc:
+        raise RuntimeError(f"saved param program is not valid JSON: {program_id}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"saved param program must be a JSON object: {program_id}")
+    if payload.get("program_kind") not in (None, PARAM_PROGRAM_KIND):
+        raise RuntimeError(f"saved program is not a param program: {program_id}")
+    program = _compile_param_program_payload(
+        payload.get("name"),
+        payload.get("chain"),
+        saved_at=payload.get("saved_at", ""),
+        version=payload.get("version", PARAM_PROGRAM_VERSION),
+        program_id=str(program_id),
+    )
+    return program
+
+
 def _solve_score_program_put_metadata(program):
     return {
         SOLVE_SCORE_PROGRAM_META_NAME: str(program.get("name") or ""),
         SOLVE_SCORE_PROGRAM_META_STATEMENT_COUNT: str(int(program.get("statement_count") or 0)),
         SOLVE_SCORE_PROGRAM_META_SAVED_AT: str(program.get("saved_at") or ""),
+    }
+
+
+def _param_program_put_metadata(program):
+    return {
+        PARAM_PROGRAM_META_NAME: str(program.get("name") or ""),
+        PARAM_PROGRAM_META_STATEMENT_COUNT: str(int(program.get("statement_count") or 0)),
+        PARAM_PROGRAM_META_SAVED_AT: str(program.get("saved_at") or ""),
     }
 
 
@@ -236,6 +414,28 @@ def _solve_score_program_summary_from_head(program_id):
     except (TypeError, ValueError) as exc:
         raise RuntimeError(
             f"solve-score program summary metadata invalid statement_count for {program_id}"
+        ) from exc
+    return {
+        "id": str(program_id),
+        "name": name,
+        "statement_count": statement_count,
+        "saved_at": saved_at,
+    }
+
+
+def _param_program_summary_from_head(program_id):
+    resp = s3.head_object(Bucket=BUCKET, Key=_param_program_key(program_id))
+    meta = resp.get("Metadata") or {}
+    name = str(meta.get(PARAM_PROGRAM_META_NAME) or "").strip()
+    saved_at = str(meta.get(PARAM_PROGRAM_META_SAVED_AT) or "").strip()
+    statement_count_raw = str(meta.get(PARAM_PROGRAM_META_STATEMENT_COUNT) or "").strip()
+    if not name or not saved_at or not statement_count_raw:
+        raise RuntimeError(f"param program summary metadata missing for {program_id}")
+    try:
+        statement_count = int(statement_count_raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"param program summary metadata invalid statement_count for {program_id}"
         ) from exc
     return {
         "id": str(program_id),
@@ -438,6 +638,14 @@ def handler(event, context):
         return _handle_storage_route(handle_save_solve_score_program, event)
     elif path.endswith("/delete-solve-score-program"):
         return _handle_storage_route(handle_delete_solve_score_program, event)
+    elif path.endswith("/list-param-programs"):
+        return _handle_storage_route(handle_list_param_programs, event)
+    elif path.endswith("/fetch-param-program"):
+        return _handle_storage_route(handle_fetch_param_program, event)
+    elif path.endswith("/save-param-program"):
+        return _handle_storage_route(handle_save_param_program, event)
+    elif path.endswith("/delete-param-program"):
+        return _handle_storage_route(handle_delete_param_program, event)
     elif path.endswith("/list-favorites"):
         return handle_list_favorites(event)
     elif path.endswith("/add-favorite"):
@@ -606,6 +814,91 @@ def handle_delete_solve_score_program(event):
     key = _solve_score_program_key(program_id)
     if not _key_exists(key):
         raise _SolveScoreProgramNotFound(f"solve-score program not found: {program_id}")
+    s3.delete_object(Bucket=BUCKET, Key=key)
+    return ok_response({"id": program_id, "deleted": 1})
+
+
+def handle_list_param_programs(event):
+    parse_body(event)
+    programs = []
+    errors = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=BUCKET, Prefix=PARAM_PROGRAMS_PREFIX):
+        for obj in page.get("Contents", []):
+            key = obj.get("Key", "")
+            if not key.endswith(".json") or key.endswith("/"):
+                continue
+            program_id = key[len(PARAM_PROGRAMS_PREFIX):-5]
+            if not program_id:
+                continue
+            try:
+                program = _param_program_summary_from_head(program_id)
+            except _ParamProgramNotFound:
+                continue
+            except Exception as exc:
+                try:
+                    program = _read_param_program_object(program_id)
+                except _ParamProgramNotFound:
+                    continue
+                except Exception as read_exc:
+                    err_text = str(read_exc)
+                    print(f"param program list skipped {key}: {err_text}")
+                    errors.append({
+                        "id": program_id,
+                        "error": err_text[:240],
+                    })
+                    continue
+                else:
+                    print(
+                        f"param program list used full read fallback for {key}: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+            programs.append(program)
+    programs = sorted(programs, key=lambda row: row["id"])
+    programs = sorted(programs, key=lambda row: row.get("saved_at") or "", reverse=True)
+    return ok_response({
+        "programs": programs,
+        "count": len(programs),
+        "order": "saved_at_desc",
+        "errors": errors,
+        "error_count": len(errors),
+    })
+
+
+def handle_fetch_param_program(event):
+    params = parse_body(event)
+    program_id = str(params.get("id") or "").strip()
+    if not program_id:
+        raise ValueError("param program fetch requires id")
+    return ok_response({"program": _read_param_program_object(program_id)})
+
+
+def handle_save_param_program(event):
+    params = parse_body(event)
+    program = _compile_param_program_payload(
+        params.get("name"),
+        params.get("chain"),
+    )
+    key = _param_program_key(program["id"])
+    overwritten = _key_exists(key)
+    s3.put_object(
+        Bucket=BUCKET,
+        Key=key,
+        Body=(json.dumps(program, indent=2) + "\n").encode("utf-8"),
+        ContentType="application/json",
+        Metadata=_param_program_put_metadata(program),
+    )
+    return ok_response({"program": program, "overwritten": overwritten})
+
+
+def handle_delete_param_program(event):
+    params = parse_body(event)
+    program_id = str(params.get("id") or "").strip()
+    if not program_id:
+        raise ValueError("param program delete requires id")
+    key = _param_program_key(program_id)
+    if not _key_exists(key):
+        raise _ParamProgramNotFound(f"param program not found: {program_id}")
     s3.delete_object(Bucket=BUCKET, Key=key)
     return ok_response({"id": program_id, "deleted": 1})
 

@@ -36,6 +36,8 @@ def handler(event, context):
     execution_method = execution_method_from_params(run_params)
     run_params.pop("fused", None)
     run_params["execution_method"] = execution_method
+    run_params.setdefault("param_transforms", [])
+    run_params.setdefault("param_program_chain", [])
 
     task_id = f"compute_run_{solver_mode}_{run_id}"
     execution_name = f"compute_{solver_mode}_{run_id}"

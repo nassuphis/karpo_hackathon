@@ -1,0 +1,832 @@
+"""
+Param-program compiler helpers.
+
+This module owns source-chain validation, macro expansion, stack-effect
+validation, canonical execution tokens, and fingerprints. Native row evaluators
+must receive only the compiled integer token stream; source names and macro names
+are compile-time concerns only.
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import os
+import re
+
+
+PROGRAM_KIND = "param_program"
+PROGRAM_VERSION = 1
+MAX_PROGRAM_TOKENS = 64
+MAX_STACK = 16
+MAX_MACRO_DEPTH = 8
+MAX_ARGS = 8
+
+PARAM_OP_PUSH_T1 = 1
+PARAM_OP_PUSH_T2 = 2
+PARAM_OP_EMIT_P1 = 3
+PARAM_OP_EMIT_P2 = 4
+PARAM_OP_CONST = 5
+PARAM_OP_DUPLICATE = 6
+PARAM_OP_SWAP = 7
+PARAM_OP_POP = 8
+PARAM_OP_FLUSH = 9
+PARAM_OP_ADD = 10
+PARAM_OP_SUBTRACT = 11
+PARAM_OP_MUL = 12
+PARAM_OP_RATIO = 13
+PARAM_OP_NEGATE = 14
+PARAM_OP_CONJ = 15
+PARAM_OP_RECIPROCAL = 16
+PARAM_OP_UNIT_CIRCLE = 17
+PARAM_OP_SQUARE = 18
+PARAM_OP_CUBE = 19
+PARAM_OP_EXP = 20
+PARAM_OP_LEGACY = 21
+
+PARAM_SEL_P1 = 1
+PARAM_SEL_P2 = 2
+PARAM_SEL_BOTH = 3
+PARAM_SEL_POP1 = 4
+PARAM_SEL_POP2 = 5
+PARAM_SEL_PUSH1 = 6
+PARAM_SEL_PUSH2 = 7
+
+_OP_NAMES = {
+    PARAM_OP_PUSH_T1: "push_t1",
+    PARAM_OP_PUSH_T2: "push_t2",
+    PARAM_OP_EMIT_P1: "emit_p1",
+    PARAM_OP_EMIT_P2: "emit_p2",
+    PARAM_OP_CONST: "const",
+    PARAM_OP_DUPLICATE: "duplicate",
+    PARAM_OP_SWAP: "swap",
+    PARAM_OP_POP: "pop",
+    PARAM_OP_FLUSH: "flush",
+    PARAM_OP_ADD: "add",
+    PARAM_OP_SUBTRACT: "subtract",
+    PARAM_OP_MUL: "mul",
+    PARAM_OP_RATIO: "ratio",
+    PARAM_OP_NEGATE: "negate",
+    PARAM_OP_CONJ: "conj",
+    PARAM_OP_RECIPROCAL: "reciprocal",
+    PARAM_OP_UNIT_CIRCLE: "unit_circle",
+    PARAM_OP_SQUARE: "square",
+    PARAM_OP_CUBE: "cube",
+    PARAM_OP_EXP: "exp",
+    PARAM_OP_LEGACY: "legacy",
+}
+
+_SELECTOR_NAMES = {
+    PARAM_SEL_P1: "p1",
+    PARAM_SEL_P2: "p2",
+    PARAM_SEL_BOTH: "both",
+    PARAM_SEL_POP1: "pop1",
+    PARAM_SEL_POP2: "pop2",
+    PARAM_SEL_PUSH1: "push1",
+    PARAM_SEL_PUSH2: "push2",
+}
+
+_SOURCE_SELECTORS = {
+    "p1": PARAM_SEL_P1,
+    "p2": PARAM_SEL_P2,
+    "both": PARAM_SEL_BOTH,
+    "pop1": PARAM_SEL_POP1,
+    "pop2": PARAM_SEL_POP2,
+}
+
+_TARGET_SELECTORS = {
+    "p1": PARAM_SEL_P1,
+    "p2": PARAM_SEL_P2,
+    "both": PARAM_SEL_BOTH,
+    "push1": PARAM_SEL_PUSH1,
+    "push2": PARAM_SEL_PUSH2,
+}
+
+_PUSH_TARGETS = {
+    "t1": PARAM_OP_PUSH_T1,
+    "0": PARAM_OP_PUSH_T1,
+    "t2": PARAM_OP_PUSH_T2,
+    "1": PARAM_OP_PUSH_T2,
+}
+
+_EMIT_TARGETS = {
+    "p1": PARAM_OP_EMIT_P1,
+    "0": PARAM_OP_EMIT_P1,
+    "p2": PARAM_OP_EMIT_P2,
+    "1": PARAM_OP_EMIT_P2,
+}
+
+_BINARY_OPS = {
+    "add": PARAM_OP_ADD,
+    "subtract": PARAM_OP_SUBTRACT,
+    "sub": PARAM_OP_SUBTRACT,
+    "mul": PARAM_OP_MUL,
+    "ratio": PARAM_OP_RATIO,
+    "div": PARAM_OP_RATIO,
+}
+
+_UNARY_OPS = {
+    "negate": PARAM_OP_NEGATE,
+    "conj": PARAM_OP_CONJ,
+    "conjugate": PARAM_OP_CONJ,
+    "reciprocal": PARAM_OP_RECIPROCAL,
+    "unit_circle": PARAM_OP_UNIT_CIRCLE,
+    "square": PARAM_OP_SQUARE,
+    "cube": PARAM_OP_CUBE,
+    "exp": PARAM_OP_EXP,
+}
+
+_STACK_OPS = {
+    "duplicate": PARAM_OP_DUPLICATE,
+    "dup": PARAM_OP_DUPLICATE,
+    "swap": PARAM_OP_SWAP,
+    "pop": PARAM_OP_POP,
+    "flush": PARAM_OP_FLUSH,
+}
+
+_TARGETABLE_UNARY_SOURCE = {
+    "unit_circle",
+    "square",
+    "cube",
+    "reciprocal",
+    "conj",
+    "conjugate",
+    "negate",
+    "exp",
+}
+
+_REDUNDANT_LEGACY_TARGET_ARG_NAMES = {
+    "unit_circle",
+    "square",
+    "cube",
+    "reciprocal",
+    "conjugate",
+    "negate",
+    "exp",
+    "xim",
+}
+
+_LEGACY_TARGET_ARG_INDEXES = {
+    "rtheta": 1,
+    "crd": 0,
+    "hrt": 0,
+    "spdl": 0,
+    "lmc": 0,
+    "rsc": 0,
+    "lss": 0,
+    "ast": 0,
+    "asp": 0,
+    "lsp": 0,
+    "dlt": 0,
+    "rply": 0,
+    "star": 0,
+    "rect": 0,
+    "rrect": 0,
+}
+
+_VARIABLE_LEGACY_ARG_COUNTS = {
+    "moebius": {0, 4, 8},
+    "inv_t_plus_2": {0, 1, 2, 3, 4},
+}
+
+
+def _registry_path():
+    return os.path.join(os.path.dirname(__file__), "param_legacy_registry.json")
+
+
+def _load_legacy_registry():
+    with open(_registry_path(), "r", encoding="utf-8") as fh:
+        payload = json.load(fh)
+    if int(payload.get("version") or 0) != 1:
+        raise RuntimeError("param legacy registry version must be 1")
+    by_name = {}
+    by_index = {}
+    for fn in payload.get("functions") or []:
+        name = str(fn.get("name") or "").strip()
+        if not name:
+            raise RuntimeError("param legacy registry function missing name")
+        if name in by_name:
+            raise RuntimeError(f"duplicate param legacy function name: {name}")
+        try:
+            fn_index = int(fn.get("fn_index"))
+        except (TypeError, ValueError):
+            raise RuntimeError(f"param legacy function {name} has invalid fn_index")
+        if fn_index <= 0:
+            raise RuntimeError(f"param legacy function {name} fn_index must be positive")
+        if fn_index in by_index:
+            raise RuntimeError(f"duplicate param legacy fn_index: {fn_index}")
+        args = fn.get("args") or []
+        if len(args) > MAX_ARGS:
+            raise RuntimeError(f"param legacy function {name} has too many args")
+        spec = {
+            "name": name,
+            "fn_index": fn_index,
+            "kind": str(fn.get("kind") or "").strip(),
+            "allowed_src": tuple(str(x).strip() for x in (fn.get("allowed_src") or [])),
+            "allowed_tgt": tuple(str(x).strip() for x in (fn.get("allowed_tgt") or [])),
+            "args": tuple(args),
+        }
+        by_name[name] = spec
+        by_index[fn_index] = spec
+    return {"by_name": by_name, "by_index": by_index}
+
+
+_LEGACY_REGISTRY = None
+
+
+def legacy_registry():
+    global _LEGACY_REGISTRY
+    if _LEGACY_REGISTRY is None:
+        _LEGACY_REGISTRY = _load_legacy_registry()
+    return _LEGACY_REGISTRY
+
+
+def validate_legacy_registry():
+    registry = legacy_registry()
+    return {
+        "version": 1,
+        "count": len(registry["by_name"]),
+        "names": sorted(registry["by_name"]),
+        "fn_indices": sorted(registry["by_index"]),
+    }
+
+
+def _finite_number(value, label):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"{label} must be numeric, got {value!r}")
+    if not math.isfinite(number):
+        raise RuntimeError(f"{label} must be finite, got {value!r}")
+    return number
+
+
+def _finite_complex(value, label):
+    raw = str(value or "").strip().replace("i", "j").replace("I", "j").replace(" ", "")
+    if not raw:
+        raise RuntimeError(f"{label} must be a finite complex constant")
+    if raw in {"j", "+j"}:
+        raw = "1j"
+    elif raw == "-j":
+        raw = "-1j"
+    try:
+        number = complex(raw)
+    except ValueError:
+        number = complex(_finite_number(value, label), 0.0)
+    if not math.isfinite(number.real) or not math.isfinite(number.imag):
+        raise RuntimeError(f"{label} must be finite, got {value!r}")
+    return number
+
+
+def _format_number(value):
+    number = _finite_number(value, "number")
+    if number == 0:
+        number = 0.0
+    return format(number, ".17g")
+
+
+def _format_complex_number(real, imag):
+    real_number = _finite_number(real, "complex real")
+    imag_number = _finite_number(imag, "complex imag")
+    if real_number == 0:
+        real_number = 0.0
+    if imag_number == 0:
+        imag_number = 0.0
+    real_text = _format_number(real_number)
+    imag_text = _format_number(abs(imag_number))
+    if imag_number == 0:
+        return real_text
+    if real_number == 0:
+        return f"{'-' if imag_number < 0 else ''}{imag_text}i"
+    return f"{real_text}{'-' if imag_number < 0 else '+'}{imag_text}i"
+
+
+def _slugify_macro_id(value):
+    text = str(value or "").strip()
+    if not text:
+        raise RuntimeError("macro name is required")
+    return re.sub(r"[^a-zA-Z0-9._-]+", "-", text).strip("-") or text
+
+
+def _chip_name(value, idx):
+    name = str(value or "").strip()
+    if not name:
+        raise RuntimeError(f"param program chip {idx} has empty name")
+    return name.lower()
+
+
+def _chip_args(chip):
+    if isinstance(chip, str):
+        return _chip_name(chip, "?"), []
+    if isinstance(chip, (list, tuple)):
+        if not chip:
+            raise RuntimeError("param program chip cannot be an empty array")
+        return _chip_name(chip[0], "?"), list(chip[1:])
+    raise RuntimeError(f"param program chip must be a string or array, got {chip!r}")
+
+
+def _canonical_source_chain(chain):
+    if not isinstance(chain, list):
+        raise RuntimeError("param program chain must be a JSON array")
+    out = []
+    for idx, chip in enumerate(chain):
+        if isinstance(chip, str):
+            out.append(_chip_name(chip, idx))
+            continue
+        if not isinstance(chip, list) or not chip:
+            raise RuntimeError(f"param program chip {idx} must be a non-empty array or string")
+        name = _chip_name(chip[0], idx)
+        entry = [name]
+        for arg_idx, arg in enumerate(chip[1:]):
+            if isinstance(arg, str):
+                if len(arg) > 256:
+                    raise RuntimeError(f"param program chip {idx} arg {arg_idx} is too long")
+                entry.append(arg.strip())
+            elif isinstance(arg, (int, float)):
+                entry.append(_format_number(arg))
+            else:
+                raise RuntimeError(
+                    f"param program chip {idx} arg {arg_idx} must be a string or number"
+                )
+        out.append(_canonicalize_legacy_bridge_entry(entry))
+    return out
+
+
+def _target_value_for_selector(selector):
+    normalized = _normalize_target(selector)
+    if normalized == "p1":
+        return "0"
+    if normalized == "p2":
+        return "1"
+    return "2"
+
+
+def _migrate_legacy_target_arg(name, src, tgt, args, *, force=False):
+    target_idx = _LEGACY_TARGET_ARG_INDEXES.get(name)
+    values = [str(arg).strip() for arg in args]
+    if target_idx is None or len(values) <= target_idx:
+        return src, tgt, values
+    registry_spec = legacy_registry()["by_name"].get(name)
+    declared_arg_count = len(registry_spec["args"]) if registry_spec else 0
+    if not force and len(values) <= declared_arg_count:
+        return src, tgt, values
+    try:
+        selector = _normalize_target(values[target_idx])
+    except RuntimeError:
+        return src, tgt, values
+    next_src = selector if src == "both" else src
+    next_tgt = selector if tgt == "both" else tgt
+    return next_src, next_tgt, [arg for idx, arg in enumerate(values) if idx != target_idx]
+
+
+def _canonicalize_legacy_bridge_entry(entry):
+    if entry and entry[0] != "legacy" and entry[0] in legacy_registry()["by_name"]:
+        name = entry[0]
+        src, tgt, args = _migrate_legacy_target_arg(name, "both", "both", entry[1:], force=True)
+        if src != "both" or tgt != "both" or name in _LEGACY_TARGET_ARG_INDEXES:
+            return ["legacy", name, src, tgt, *args]
+        return entry
+    if (
+        len(entry) == 5 and
+        entry[0] == "legacy" and
+        entry[1] in _REDUNDANT_LEGACY_TARGET_ARG_NAMES
+    ):
+        try:
+            selector = _normalize_target(entry[4])
+        except RuntimeError:
+            return entry
+        cleaned = entry[:4]
+        if cleaned[2] == "both" and cleaned[3] == "both":
+            cleaned[2] = selector
+            cleaned[3] = selector
+        return cleaned
+    if entry and entry[0] == "legacy" and len(entry) > 4:
+        src, tgt, args = _migrate_legacy_target_arg(entry[1], entry[2], entry[3], entry[4:])
+        if src != entry[2] or tgt != entry[3] or len(args) != len(entry[4:]):
+            return ["legacy", entry[1], src, tgt, *args]
+    return entry
+
+
+def _display_chip(chip):
+    if isinstance(chip, str):
+        return chip
+    if len(chip) == 1:
+        return chip[0]
+    return f"{chip[0]}(" + ", ".join(str(arg) for arg in chip[1:]) + ")"
+
+
+def display_param_program_chain(chain):
+    return "; ".join(_display_chip(chip) for chip in chain)
+
+
+def _token(op, **fields):
+    tok = {"op": int(op)}
+    for key in ("fn_index", "src", "tgt", "n_args"):
+        value = fields.get(key)
+        if value not in (None, 0):
+            tok[key] = int(value)
+    if "a" in fields:
+        tok["a"] = _finite_number(fields["a"], "token a")
+    if "b" in fields:
+        tok["b"] = _finite_number(fields["b"], "token b")
+    args = fields.get("args")
+    if args:
+        tok["args"] = [_finite_number(x, "token arg") for x in args]
+    return tok
+
+
+def _normalize_target(value, *, default="both"):
+    raw = str(default if value in (None, "") else value).strip().lower()
+    if raw in {"t1", "p1", "0"}:
+        return "p1"
+    if raw in {"t2", "p2", "1"}:
+        return "p2"
+    if raw in {"both", "2"}:
+        return "both"
+    raise RuntimeError(f"param target must be t1, t2, or both, got {value!r}")
+
+
+def _emit_target_op(value):
+    raw = str(value or "").strip().lower()
+    if raw in {"t1", "t2"}:
+        raise RuntimeError("emit target cannot be t1/t2; t1/t2 are read-only inputs, emit to p1 or p2")
+    if raw not in _EMIT_TARGETS:
+        raise RuntimeError(f"emit target must be p1 or p2, got {value!r}")
+    return _EMIT_TARGETS[raw]
+
+
+def _push_target_ops(value):
+    raw = str(value or "both").strip().lower()
+    if raw in {"both", "2"}:
+        return [PARAM_OP_PUSH_T1, PARAM_OP_PUSH_T2]
+    if raw in {"p1", "p2"}:
+        raise RuntimeError("push source cannot be p1/p2 in v1; use push(t1)/push(t2) or legacy(..., src=p1/p2, tgt=push1)")
+    if raw not in _PUSH_TARGETS:
+        raise RuntimeError(f"push source must be t1, t2, or both, got {value!r}")
+    return [_PUSH_TARGETS[raw]]
+
+
+def _selector_value(value, mapping, label):
+    raw = str(value or "").strip().lower()
+    if raw in {"t1", "t2"}:
+        raise RuntimeError(
+            f"{label} cannot be {raw}; t1/t2 are read-only inputs accessed via push(t1)/push(t2)"
+        )
+    if raw not in mapping:
+        raise RuntimeError(f"{label} selector is invalid: {value!r}")
+    return raw, mapping[raw]
+
+
+def _legacy_args(spec, raw_args):
+    raw_args = list(raw_args)
+    if spec["name"] == "moebius":
+        if len(raw_args) == 0:
+            return []
+        if len(raw_args) == 4:
+            values = []
+            for idx, value in enumerate(raw_args):
+                coeff = _finite_complex(value, f"legacy(moebius) coefficient {idx}")
+                values.extend([coeff.real, coeff.imag])
+            return values
+        if len(raw_args) == 8:
+            return [_finite_number(value, f"legacy(moebius) arg {idx}") for idx, value in enumerate(raw_args)]
+        raise RuntimeError(f"legacy(moebius) expects 0, 4, or 8 arguments, got {len(raw_args)}")
+    if spec["name"] in _VARIABLE_LEGACY_ARG_COUNTS:
+        allowed = _VARIABLE_LEGACY_ARG_COUNTS[spec["name"]]
+        if len(raw_args) not in allowed:
+            counts = ", ".join(str(count) for count in sorted(allowed))
+            raise RuntimeError(f"legacy({spec['name']}) expects {counts} arguments, got {len(raw_args)}")
+        return [_finite_number(value, f"legacy({spec['name']}) arg {idx}") for idx, value in enumerate(raw_args)]
+    declared = list(spec["args"])
+    if not declared:
+        if raw_args:
+            raise RuntimeError(f"legacy({spec['name']}) takes no arguments")
+        return []
+    if len(raw_args) > len(declared):
+        raise RuntimeError(f"legacy({spec['name']}) got too many arguments")
+    values = []
+    for idx in range(max(len(raw_args), len(declared))):
+        if idx < len(raw_args):
+            values.append(_finite_number(raw_args[idx], f"legacy({spec['name']}) arg {idx}"))
+        elif idx < len(declared):
+            values.append(_finite_number(declared[idx].get("default", 0.0), f"legacy({spec['name']}) default arg {idx}"))
+    if len(values) > MAX_ARGS:
+        raise RuntimeError(f"legacy({spec['name']}) got too many arguments")
+    return values
+
+
+def _legacy_token(name, src, tgt, args):
+    registry = legacy_registry()["by_name"]
+    if name not in registry:
+        raise RuntimeError(f"unknown legacy param transform: {name}")
+    spec = registry[name]
+    src_name, src_val = _selector_value(src, _SOURCE_SELECTORS, "legacy src")
+    tgt_name, tgt_val = _selector_value(tgt, _TARGET_SELECTORS, "legacy tgt")
+    if src_name not in spec["allowed_src"]:
+        allowed = ", ".join(spec["allowed_src"])
+        raise RuntimeError(f"legacy({name}) does not support src={src_name}; allowed: {allowed}")
+    if tgt_name not in spec["allowed_tgt"]:
+        allowed = ", ".join(spec["allowed_tgt"])
+        raise RuntimeError(f"legacy({name}) does not support tgt={tgt_name}; allowed: {allowed}")
+    values = _legacy_args(spec, args)
+    return _token(
+        PARAM_OP_LEGACY,
+        fn_index=spec["fn_index"],
+        src=src_val,
+        tgt=tgt_val,
+        n_args=len(values),
+        args=values,
+    )
+
+
+def _expand_macros(chain, macro_resolver, stack=None, depth=0):
+    if stack is None:
+        stack = []
+    if depth > MAX_MACRO_DEPTH:
+        raise RuntimeError(f"param program macro expansion exceeded depth {MAX_MACRO_DEPTH}")
+    expanded = []
+    expanded_count = 0
+    for chip in chain:
+        name, args = _chip_args(chip)
+        if name != "macro":
+            expanded.append(chip)
+            continue
+        if len(args) != 1:
+            raise RuntimeError("macro chip requires exactly one name")
+        macro_id = _slugify_macro_id(args[0])
+        if macro_id in stack:
+            cycle = " -> ".join(stack + [macro_id])
+            raise RuntimeError(f"param program macro cycle: {cycle}")
+        if macro_resolver is None:
+            raise RuntimeError(f"param program macro resolver is required for macro({macro_id})")
+        resolved = macro_resolver(macro_id)
+        resolved_chain = _canonical_source_chain(resolved)
+        nested, nested_count = _expand_macros(
+            resolved_chain,
+            macro_resolver,
+            stack=stack + [macro_id],
+            depth=depth + 1,
+        )
+        expanded.extend(nested)
+        expanded_count += 1 + nested_count
+    return expanded, expanded_count
+
+
+def _lower_chip(chip):
+    name, args = _chip_args(chip)
+    if name == "macro":
+        raise RuntimeError("macro chip survived expansion")
+    if name == "push":
+        if len(args) > 1:
+            raise RuntimeError("push chip takes at most one source")
+        return [_token(op) for op in _push_target_ops(args[0] if args else "both")]
+    if name == "emit":
+        if len(args) != 1:
+            raise RuntimeError("emit chip requires target p1 or p2")
+        return [_token(_emit_target_op(args[0]))]
+    if name == "const":
+        if len(args) not in {1, 2}:
+            raise RuntimeError("const chip requires real value and optional imaginary value")
+        return [_token(PARAM_OP_CONST, a=args[0], b=args[1] if len(args) == 2 else 0.0)]
+    if name in _STACK_OPS:
+        if args:
+            raise RuntimeError(f"{name} chip takes no arguments")
+        return [_token(_STACK_OPS[name])]
+    if name in _BINARY_OPS:
+        if args:
+            raise RuntimeError(f"{name} chip takes no arguments")
+        return [_token(_BINARY_OPS[name])]
+    if name in _UNARY_OPS:
+        if name in _TARGETABLE_UNARY_SOURCE and len(args) == 1:
+            target = _normalize_target(args[0])
+            op = _UNARY_OPS[name]
+            if target == "p1":
+                return [_token(PARAM_OP_PUSH_T1), _token(op), _token(PARAM_OP_EMIT_P1)]
+            if target == "p2":
+                return [_token(PARAM_OP_PUSH_T2), _token(op), _token(PARAM_OP_EMIT_P2)]
+            return [
+                _token(PARAM_OP_PUSH_T1),
+                _token(op),
+                _token(PARAM_OP_EMIT_P1),
+                _token(PARAM_OP_PUSH_T2),
+                _token(op),
+                _token(PARAM_OP_EMIT_P2),
+            ]
+        if args:
+            raise RuntimeError(f"{name} chip takes no arguments")
+        return [_token(_UNARY_OPS[name])]
+    if name == "legacy":
+        if len(args) < 3:
+            raise RuntimeError("legacy chip requires name, src, tgt, and optional args")
+        legacy_name = str(args[0] or "").strip().lower()
+        return [_legacy_token(legacy_name, args[1], args[2], args[3:])]
+    if name in legacy_registry()["by_name"]:
+        return [_legacy_token(name, "both", "both", args)]
+    raise RuntimeError(f"unknown param program chip: {name}")
+
+
+def _lower_chain(chain):
+    tokens = []
+    for chip in chain:
+        tokens.extend(_lower_chip(chip))
+    if len(tokens) > MAX_PROGRAM_TOKENS:
+        raise RuntimeError(
+            f"param program has {len(tokens)} tokens after expansion; max is {MAX_PROGRAM_TOKENS}"
+        )
+    return tokens
+
+
+def _validate_stack(tokens):
+    depth = 0
+    max_depth = 0
+    emits = []
+    for idx, token in enumerate(tokens):
+        op = int(token.get("op") or 0)
+        before = depth
+        if op in {PARAM_OP_PUSH_T1, PARAM_OP_PUSH_T2, PARAM_OP_CONST}:
+            depth += 1
+        elif op == PARAM_OP_EMIT_P1:
+            if depth < 1:
+                raise RuntimeError(f"emit(p1) at token {idx}: stack depth is {before} (need >=1)")
+            depth -= 1
+            emits.append("p1")
+        elif op == PARAM_OP_EMIT_P2:
+            if depth < 1:
+                raise RuntimeError(f"emit(p2) at token {idx}: stack depth is {before} (need >=1)")
+            depth -= 1
+            emits.append("p2")
+        elif op == PARAM_OP_DUPLICATE:
+            if depth < 1:
+                raise RuntimeError(f"duplicate at token {idx}: stack depth is {before} (need >=1)")
+            depth += 1
+        elif op == PARAM_OP_SWAP:
+            if depth < 2:
+                raise RuntimeError(f"swap at token {idx}: stack depth is {before} (need >=2)")
+        elif op == PARAM_OP_POP:
+            if depth < 1:
+                raise RuntimeError(f"pop at token {idx}: stack depth is {before} (need >=1)")
+            depth -= 1
+        elif op == PARAM_OP_FLUSH:
+            depth = 0
+        elif op in {PARAM_OP_ADD, PARAM_OP_SUBTRACT, PARAM_OP_MUL, PARAM_OP_RATIO}:
+            if depth < 2:
+                raise RuntimeError(f"{_OP_NAMES[op]} at token {idx}: stack depth is {before} (need >=2)")
+            depth -= 1
+        elif op in {PARAM_OP_NEGATE, PARAM_OP_CONJ, PARAM_OP_RECIPROCAL, PARAM_OP_UNIT_CIRCLE, PARAM_OP_SQUARE, PARAM_OP_CUBE, PARAM_OP_EXP}:
+            if depth < 1:
+                raise RuntimeError(f"{_OP_NAMES[op]} at token {idx}: stack depth is {before} (need >=1)")
+        elif op == PARAM_OP_LEGACY:
+            src = int(token.get("src") or 0)
+            tgt = int(token.get("tgt") or 0)
+            if src == PARAM_SEL_POP1:
+                if depth < 1:
+                    raise RuntimeError(f"legacy at token {idx}: stack depth is {before} (need >=1)")
+                depth -= 1
+            elif src == PARAM_SEL_POP2:
+                if depth < 2:
+                    raise RuntimeError(f"legacy at token {idx}: stack depth is {before} (need >=2)")
+                depth -= 2
+            if tgt == PARAM_SEL_PUSH1:
+                depth += 1
+            elif tgt == PARAM_SEL_PUSH2:
+                depth += 2
+        else:
+            raise RuntimeError(f"unknown param program opcode at token {idx}: {op}")
+        if depth > MAX_STACK:
+            raise RuntimeError(f"param program stack depth {depth} exceeds max {MAX_STACK} at token {idx}")
+        max_depth = max(max_depth, depth)
+    if depth != 0:
+        raise RuntimeError(f"param program final stack depth is {depth}; expected 0")
+    return {"stack_max": max_depth, "emits": emits}
+
+
+def _execution_spec(tokens):
+    parts = []
+    for token in tokens:
+        op = int(token["op"])
+        fields = [_OP_NAMES.get(op, str(op))]
+        if op == PARAM_OP_CONST:
+            fields.extend([str(token.get("a", "0")), str(token.get("b", "0"))])
+        elif op == PARAM_OP_LEGACY:
+            spec = legacy_registry()["by_index"].get(int(token.get("fn_index") or 0))
+            name = spec["name"] if spec else str(token.get("fn_index"))
+            src = _SELECTOR_NAMES.get(int(token.get("src") or 0), str(token.get("src") or 0))
+            tgt = _SELECTOR_NAMES.get(int(token.get("tgt") or 0), str(token.get("tgt") or 0))
+            fields.extend([name, src, tgt])
+            fields.extend(str(arg) for arg in token.get("args") or [])
+        parts.append(":".join(fields))
+    return ";".join(parts)
+
+
+def _fingerprint(spec):
+    payload = json.dumps(
+        {"version": PROGRAM_VERSION, "execution_spec": spec},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+
+def _legacy_fast_path(tokens):
+    if not tokens:
+        return True
+    for token in tokens:
+        if int(token.get("op") or 0) != PARAM_OP_LEGACY:
+            return False
+        if int(token.get("src") or 0) != PARAM_SEL_BOTH:
+            return False
+        if int(token.get("tgt") or 0) != PARAM_SEL_BOTH:
+            return False
+    return True
+
+
+def _legacy_transforms(tokens):
+    if not _legacy_fast_path(tokens):
+        return []
+    out = []
+    for token in tokens:
+        spec = legacy_registry()["by_index"].get(int(token.get("fn_index") or 0))
+        if not spec:
+            return []
+        entry = [spec["name"]]
+        token_args = list(token.get("args") or [])
+        if spec["name"] == "moebius" and len(token_args) == 8:
+            args = [
+                _format_complex_number(token_args[0], token_args[1]),
+                _format_complex_number(token_args[2], token_args[3]),
+                _format_complex_number(token_args[4], token_args[5]),
+                _format_complex_number(token_args[6], token_args[7]),
+            ]
+        else:
+            args = [_format_number(arg) for arg in token_args]
+        target_idx = _LEGACY_TARGET_ARG_INDEXES.get(spec["name"])
+        if target_idx is not None:
+            target = _target_value_for_selector(_SELECTOR_NAMES.get(int(token.get("tgt") or 0), "both"))
+            if spec["name"] != "rtheta" or target != "2":
+                args = args[:target_idx] + [target] + args[target_idx:]
+        entry.extend(args)
+        out.append(entry)
+    return out
+
+
+def compile_param_program_chain(chain, *, macro_resolver=None, strict=True):
+    diagnostics = []
+    try:
+        source_chain = _canonical_source_chain(chain)
+        expanded_chain, macro_count = _expand_macros(source_chain, macro_resolver)
+        tokens = _lower_chain(expanded_chain)
+        stack_info = _validate_stack(tokens)
+        spec = _execution_spec(tokens)
+        fast_path = _legacy_fast_path(tokens)
+        return {
+            "version": PROGRAM_VERSION,
+            "program_kind": PROGRAM_KIND,
+            "source_chain": source_chain,
+            "expanded_chain": expanded_chain,
+            "tokens": tokens,
+            "execution_tokens": tokens,
+            "execution_spec": spec,
+            "fingerprint": _fingerprint(spec),
+            "display": display_param_program_chain(source_chain),
+            "expanded_display": display_param_program_chain(expanded_chain),
+            "statement_count": len(source_chain),
+            "token_count": len(tokens),
+            "stack_max": stack_info["stack_max"],
+            "emits": stack_info["emits"],
+            "macro_expansions": macro_count,
+            "uses_legacy_fast_path": fast_path,
+            "legacy_transforms": _legacy_transforms(tokens),
+            "diagnostics": diagnostics,
+        }
+    except Exception as exc:
+        diagnostics.append({"level": "error", "message": str(exc)})
+        if strict:
+            raise
+        return {
+            "version": PROGRAM_VERSION,
+            "program_kind": PROGRAM_KIND,
+            "source_chain": chain if isinstance(chain, list) else [],
+            "expanded_chain": [],
+            "tokens": [],
+            "execution_tokens": [],
+            "execution_spec": "",
+            "fingerprint": "",
+            "display": "",
+            "expanded_display": "",
+            "statement_count": 0,
+            "token_count": 0,
+            "stack_max": 0,
+            "emits": [],
+            "macro_expansions": 0,
+            "uses_legacy_fast_path": False,
+            "legacy_transforms": [],
+            "diagnostics": diagnostics,
+        }
+
+
+def compile_param_program_diagnostics(chain, *, macro_resolver=None):
+    return compile_param_program_chain(chain, macro_resolver=macro_resolver, strict=False)
+
+
+def param_program_chain_id(chain, *, macro_resolver=None):
+    return compile_param_program_chain(chain, macro_resolver=macro_resolver)["fingerprint"]

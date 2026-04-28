@@ -106,6 +106,48 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
     @patch("handler_coeffgen.report_status")
     @patch("handler_coeffgen.s3")
     @patch("handler_coeffgen.subprocess.Popen")
+    def test_param_gen_forwards_compiled_param_program(self, mock_popen, mock_s3, mock_report):
+        import handler_coeffgen as mod
+
+        param_program = {"version": 1, "tokens": [{"op": 1}, {"op": 3}], "stack_max": 1}
+        proc = _DummyProc(
+            b"\x00" * 16,
+            json.dumps({
+                "mode": "param_gen",
+                "n1": 1,
+                "n2": 1,
+                "times": 1,
+                "n_steps": 1,
+                "total_steps": 1,
+                "step_start": 0,
+                "step_count": 1,
+                "data_bytes": 16,
+                "threads": 1,
+                "elapsed_us": 10,
+                "param_program_tokens": 2,
+            }),
+        )
+        mock_popen.return_value = proc
+        mock_s3.create_multipart_upload.return_value = {"UploadId": "u1"}
+        mock_s3.upload_part.return_value = {"ETag": "etag-1"}
+
+        mod.handle_param_gen({
+            "job_id": "compute_j",
+            "task_id": "compute_run_param_program",
+            "N": 1,
+            "times": 1,
+            "param_transforms": [],
+            "param_program": param_program,
+            "params_key": "renders/compute_j/params.bin",
+        })
+
+        spec = json.loads(proc.stdin.data.decode("utf-8"))
+        self.assertEqual(spec["param_program"], param_program)
+        self.assertEqual(spec["param_transforms"], [])
+
+    @patch("handler_coeffgen.report_status")
+    @patch("handler_coeffgen.s3")
+    @patch("handler_coeffgen.subprocess.Popen")
     @patch("handler_coeffgen.time.time")
     def test_param_gen_reports_periodic_progress(self, mock_time, mock_popen, mock_s3, mock_report):
         import handler_coeffgen as mod
@@ -268,6 +310,32 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
         body = json.loads(result["body"])
         self.assertFalse(body["probe_stable"])
         self.assertEqual(len(body["samples"]), 2)
+
+    @patch("handler_coeffgen.os.remove")
+    @patch("handler_coeffgen.subprocess.run")
+    def test_degree_probe_keeps_legacy_equivalent_param_program_on_fast_path(self, mock_run, mock_remove):
+        import handler_coeffgen as mod
+
+        captured_specs = []
+
+        def _run(_args, input=None, capture_output=None, text=None, timeout=None):
+            captured_specs.append(json.loads(input))
+            return _DummyCompleted(json.dumps({"degree": 7, "n_coeffs": 8, "data_bytes": 256}))
+
+        mock_run.side_effect = _run
+
+        result = mod.handle_degree_probe({
+            "function": "g1",
+            "param_transforms": [],
+            "param_program_chain": [["legacy", "rtheta", "both", "both", "1"]],
+            "coeff_transforms": [],
+            "cfpv": [],
+        })
+        body = json.loads(result["body"])
+        self.assertTrue(body["probe_stable"])
+        self.assertEqual(len(captured_specs), 2)
+        self.assertEqual(captured_specs[0]["param_transforms"], [["rtheta", "1"]])
+        self.assertNotIn("param_program", captured_specs[0])
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ import time
 import boto3
 
 from shared import BUCKET, parse_body, ok_response, imgpipe_env
+from param_program_chain import compile_param_program_chain
 
 s3 = boto3.client("s3")
 SWEEP = os.path.join(os.path.dirname(__file__), "sweep")
@@ -105,6 +106,25 @@ def handler(event, context):
     n1 = grid_n
     n2 = grid_n
     transform_chain = params.get("param_transforms", [])
+    param_program_chain = params.get("param_program_chain") or []
+    param_program = None
+    if param_program_chain:
+        if not isinstance(param_program_chain, list):
+            raise RuntimeError("param_program_chain must be a list")
+        compiled_param_program = compile_param_program_chain(param_program_chain)
+        if compiled_param_program["legacy_transforms"]:
+            transform_chain = compiled_param_program["legacy_transforms"]
+        else:
+            transform_chain = []
+            param_program = {
+                "version": compiled_param_program["version"],
+                "fingerprint": compiled_param_program["fingerprint"],
+                "display": compiled_param_program["display"],
+                "stack_max": compiled_param_program["stack_max"],
+                "token_count": compiled_param_program["token_count"],
+                "uses_legacy_fast_path": compiled_param_program["uses_legacy_fast_path"],
+                "tokens": compiled_param_program["tokens"],
+            }
     mode = params.get("mode", "together")  # "together" or "separate"
     pix = int(params.get("pix", 5000))
     job_id = params.get("job_id", "debug")
@@ -113,11 +133,14 @@ def handler(event, context):
 
     # Generate transformed params using sweep in param_dump mode (exact same code path as coeffgen)
     bin_path = "/tmp/params.bin"
-    spec = json.dumps({
+    spec_payload = {
         "mode": "param_dump",
         "n1": n1, "n2": n2,
         "param_transforms": transform_chain,
-    })
+    }
+    if param_program:
+        spec_payload["param_program"] = param_program
+    spec = json.dumps(spec_payload)
     gen_result = subprocess.run(
         [SWEEP, bin_path],
         input=spec, capture_output=True, text=True, timeout=60

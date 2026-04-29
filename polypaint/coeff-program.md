@@ -116,25 +116,31 @@ This preserves today's in-place coefficient-transform chain semantics.
 
 They are not stack vectors, and `push(p1)` / `push(p2)` are not valid vector
 operations. To turn a parameter value into a coefficient vector, use the
-coefficient-program `const(length, value)` chip:
+coefficient-program `push_const(length, value)` chip:
 
 ```text
-const(35, p1)   # push a 35-coefficient vector filled with p1
-const(35, p2)   # push a 35-coefficient vector filled with p2
+push_const(poly_len, p1)   # push a vector matching current poly length, filled with p1
+push_const(poly_len, p2)   # push a vector matching current poly length, filled with p2
 ```
 
 `p1` / `p2` are available to scalar argument expressions in chips that accept
 complex values:
 
 ```text
-const(35, p1 + p2)
+push_const(poly_len, p1 + p2)
 legacy(linear, src=poly, tgt=poly, multiplier=p1, offset=p2)
-legacy(exp, src=poly, tgt=poly, a=real(p1), b=imag(p1))
+legacy(exp, src=poly, tgt=poly, multiplier=p1, offset=p2)
 legacy(pow, src=poly, tgt=poly, a=1, b=0, pr=real(p2), pi=imag(p2))
 ```
 
 The compiler lowers these expressions before native execution. Native hot loops
 must never parse strings to evaluate `p1` / `p2` expressions.
+
+In Chain mode, the historical coefficient transform `exp(a,b)` remains
+`exp(z * (a + i*b))`. In Coeff Program mode, `legacy(exp, src, tgt, field1,
+field2)` uses the richer two-complex-field form `exp(src * field1 + field2)`.
+If `field2` is zero and `field1` is static, the compiler may still lower it to
+the legacy chain-equivalent form.
 
 ### Stack
 
@@ -257,15 +263,17 @@ push
 
 ## Push And Emit
 
-### `const`
+### `push_const`
 
-`const(length, value)` creates a vector filled with one complex scalar value and
-pushes it onto the stack.
+`push_const(length, value)` creates a vector filled with one complex scalar
+value and pushes it onto the stack. Old saved coeff programs may still use
+`const(length, value)` as a compatibility alias, but new UI saves should write
+`push_const`.
 
 Source form:
 
 ```text
-const(length, value)
+push_const(length, value)
 ```
 
 Semantics:
@@ -277,31 +285,53 @@ push(v)
 
 Rules:
 
-- `length` is an integer literal in `[1, COEFF_PROGRAM_MAX_VECTOR_LEN]`
+- `length` is either `poly_len` or an integer literal in
+  `[1, COEFF_PROGRAM_MAX_VECTOR_LEN]`
+- `poly_len` means the current length of the mutable `poly` register at that
+  point in execution
 - `value` is a scalar complex argument expression
 - `value` may reference read-only `p1` and `p2`
 - `value` may not reference `t1` or `t2`; those are Param Program inputs, not
   Coeff Program registers
 - non-finite evaluated values are execution errors
 - the chip has no `src` or `tgt` dropdown in v1
-- UI display should label this as `vector_const(length, value)` to avoid
+- UI display should label this as `push_const(length, value)` to avoid
   confusing it with the coefficient function `const(degree, value)`
 
 Examples:
 
 ```text
-const(35, 1+2i)
-const(35, p1)
-const(35, p1 + p2)
-const(35, p1 * conj(p2))
+push_const(poly_len, 1+2i)
+push_const(35, p1)
+push_const(poly_len, p1 + p2)
+push_const(poly_len, p1 * conj(p2))
 ```
 
 To make the constant vector the final polynomial:
 
 ```text
-const(35, p1)
+push_const(poly_len, p1)
 emit
 ```
+
+### `push_linspace`
+
+`push_linspace(length)` creates and pushes a real vector with `length` entries
+linearly spaced from `0` to `length`, inclusive. For `length=1`, the only value
+is `0`.
+
+Source form:
+
+```text
+push_linspace(poly_len)
+push_linspace(35)
+```
+
+Rules:
+
+- `length` uses the same `poly_len` or integer-literal rule as `push_const`
+- imaginary parts are zero
+- default UI value is `poly_len`
 
 ### `push`
 
@@ -444,12 +474,12 @@ Do not guess these dynamically from the UI catalog. This needs a real registry.
 
 Add a coefficient function named `const`.
 
-This is separate from the Coeff Program `const(length, value)` chip, even though
-the parameters intentionally match. The context disambiguates them:
+This is separate from the Coeff Program `push_const(length, value)` chip, even
+though the parameters intentionally match. The context disambiguates them:
 
 ```text
 coefficient function: const(length, value) -> cf
-coeff-program chip:   const(length, value) -> push vector
+coeff-program chip:   push_const(length, value) -> push vector
 ```
 
 Coefficient function semantics:
@@ -480,7 +510,7 @@ Primary use:
 ```text
 coefficient function: const(length=35, value=1+0i)
 coeff program:
-  const(35, p1); legacy(linear, src=pop, tgt=push, multiplier=p2, offset=0); emit
+  push_const(poly_len, p1); legacy(linear, src=pop, tgt=push, multiplier=p2, offset=0); emit
 ```
 
 This gives users a simple base coefficient vector and makes the interesting
@@ -511,12 +541,11 @@ UI display names should disambiguate the two `const` contexts:
 
 ```text
 coefficient function display: coeff_const(length, value)
-coeff-program chip display:   vector_const(length, value)
+coeff-program chip display:   push_const(length, value)
 ```
 
-The saved/source opcode names may remain `const` in their respective contexts,
-but user-facing display strings should not show two identical `const(...)`
-forms in the same job summary.
+The old coeff-program source opcode `const` remains accepted as an alias, but
+new saves and user-facing display strings should use `push_const(...)`.
 
 ## Andy Semantics
 
@@ -565,7 +594,7 @@ The andy reference is always the input vector to that one legacy chip, after
 
 Some coefficient-program chips need scalar complex arguments:
 
-- `const(length, value)`
+- `push_const(length, value)`
 - legacy transform parameters such as `linear`, `exp`, `round`, and `pow`
 - future vector arithmetic chips, if shipped
 
@@ -602,7 +631,7 @@ Rules:
 - expressions that do not reference `p1` / `p2` should be stored as constants
 - row-loop evaluation walks integer expression opcodes, not strings
 - argument declarations still own type checking:
-  - `const(length,value)` accepts complex expression results for `value`
+  - `push_const(length,value)` accepts complex expression results for `value`
   - `linear` accepts two complex expressions: multiplier and offset
   - other v1 legacy-bridge transform args are limited to real, integer, and
     enum declarations until the C bridge explicitly supports complex args for
@@ -675,8 +704,8 @@ Reject as early as possible:
 
 - if the selected coefficient function has statically-known output length and
   it exceeds 256, reject in render/compute plan before dispatch
-- if a `const(length,value)` coefficient function or chip uses `length > 256`,
-  reject at compile/plan time in Program mode
+- if a `const(length,value)` coefficient function or `push_const(length,value)`
+  chip uses `length > 256`, reject at compile/plan time in Program mode
 - if the registry proves a transform preserves length and the input length is
   already known to exceed 256, reject before execution
 - for `may_change_length` transforms, the native runtime remains authoritative
@@ -854,7 +883,8 @@ Every chip needs explicit effects for editor diagnostics and compiler
 validation.
 
 ```text
-const(length,value) pops 0, pushes 1 vector, writes none
+push_const(length,value) pops 0, pushes 1 vector, writes none
+push_linspace(length) pops 0, pushes 1 vector, writes none
 push(cf)            pops 0, pushes 1 vector, writes none
 push(poly)          pops 0, pushes 1 vector, writes none
 emit                pops 1 if present, pushes 0, writes/commits poly
@@ -1003,7 +1033,8 @@ The Coeff Program add-chip popup should group chips:
 
 ```text
 Input/output:
-const(length, value)
+push_const(length, value)
+push_linspace(length)
 poke_poly(index, value)
 push(cf)
 push(poly)
@@ -1084,14 +1115,20 @@ z*[param1]+[param2]
 The default is `linear(100, 0)`, which preserves the old scale-by-100 behavior.
 Old saved/native `scale100` chains remain accepted as compatibility aliases.
 
-The direct chips like `poly-rev` are source-level sugar. They should lower to:
+The direct chips like `poly-rev` are source-level sugar for fixed legacy
+function names. They expose the same `src` and `tgt` selectors as
+`legacy(...)`, defaulting to `poly -> poly`.
+
+They should lower to:
 
 ```text
-legacy(rev, src=poly, tgt=poly)
+poly-rev(src=poly, tgt=poly) -> legacy(rev, src=poly, tgt=poly)
+poly-rev(src=pop, tgt=push) -> legacy(rev, src=pop, tgt=push)
 ```
 
 The generic `legacy(...)` chip remains available for advanced cases where the
-user needs `src=cf`, `src=pop`, or `tgt=push`.
+user needs the function name itself to be editable. Old saved `poly-rev` forms
+without explicit selectors still load as `poly -> poly`.
 
 Follow `ui_docs/style_guide.md`:
 
@@ -1503,7 +1540,7 @@ Execution is strict:
 - no macro cycles
 - numeric args must be finite
 - enum args must be valid
-- `push(p1)` and `push(p2)` are errors; use `const(length,p1/p2)`
+- `push(p1)` and `push(p2)` are errors; use `push_const(poly_len,p1/p2)`
 - scalar argument expressions must compile and evaluate finitely
 - stack underflow is an error
 - final stack must be empty
@@ -1559,8 +1596,8 @@ program=poly-rev
 program=poly-rev;poly-normalize;poly-conj
 program=deriv
 program=roots(k=8,hi)
-program=const(35,p1);emit
-program=const(35,p1+p2);legacy(rev,pop,push);emit
+program=push_const(poly_len,p1);emit
+program=push_const(poly_len,p1+p2);legacy(rev,pop,push);emit
 program=push(cf); legacy(deriv,pop,push); push(cf); legacy(rev,pop,push); pop; emit
 program=macro-expanded structural chain
 ```
@@ -1712,7 +1749,8 @@ Work:
 - implement minimal token evaluator:
   - read-only scalar registers `p1`, `p2`
   - scalar expression evaluation for literals, `p1`, and `p2`
-  - `const(length,value)`
+  - `push_const(length,value)`
+  - `push_linspace(length)`
   - `blend(t)`
   - `push(cf)`
   - `push(poly)`
@@ -1729,7 +1767,7 @@ Work:
 
 Exit criteria:
 
-- output matches for identity, `const(35,p1);emit`, `rev`, `rev;conj`, and
+- output matches for identity, `push_const(poly_len,p1);emit`, `rev`, `rev;conj`, and
   `normalize`
 - no row-loop allocation
 - benchmark reports penalty and workspace bytes/thread
@@ -1749,7 +1787,8 @@ Work:
 - parse source chains
 - expand macros
 - validate stack effects
-- validate `const(length,value)` chip
+- validate `push_const(length,value)` chip and old `const` alias
+- validate `push_linspace(length)` chip
 - validate `blend(t)` same-length requirement where statically knowable
 - support `peek` source selector
 - emit length diagnostics from registry length policies
@@ -1780,7 +1819,8 @@ Compiler output:
 Exit criteria:
 
 - equivalent source chains hash the same after lowering
-- `const(length,value)` stack effects and vector length validation are covered
+- `push_const(length,value)` and `push_linspace(length)` stack effects and
+  vector length validation are covered
 - `blend(t)` requires equal lengths and reports mismatch with chip context
 - `peek` reads stack top without changing stack depth
 - scalar expressions using `p1` / `p2` compile to canonical bytecode
@@ -1824,10 +1864,11 @@ Exit criteria:
   coefficients
 - Chain mode with `const` and no coefficient transforms works
 - Program mode with `const` and an empty coeff program works
-- Program mode with `const` plus `const(35,p1); emit` proves the coefficient
-  function and Coeff Program chip are disambiguated correctly
+- Program mode with coefficient function `const` plus
+  `push_const(poly_len,p1); emit` proves the coefficient function and Coeff
+  Program chip are disambiguated correctly
 - user-facing display strings are disambiguated as `coeff_const(...)` and
-  `vector_const(...)`
+  `push_const(...)`
 - catalog, generated JS, and native lookup stay in sync
 
 ### Stage 2: Saved Coeff Programs
@@ -1991,8 +2032,10 @@ Use: Chain | Program
   - legacy transform rows muted/idle
 - add Coeff Program editor:
   - chip picker
-  - `const(length,value)` chip with one integer length field and one complex
-    expression field
+  - `push_const(length,value)` chip with a `poly_len`-or-integer length field
+    and one complex expression field
+  - `push_linspace(length)` chip with the same length field and default
+    `poly_len`
   - `poke_poly(index,value)` and `poke_tos(index,value)` chips with one integer
     index field and one complex expression field
   - complex expression fields that make `p1` / `p2` availability clear
@@ -2068,8 +2111,9 @@ uv run python -m pytest tests/test_coeff_program_chain.py tests/test_coeff_progr
 
 Required targeted tests:
 
-- compiler accepts `const(35, 1+2i)` and `const(35, p1+p2)`
-- compiler rejects `const(0, 1)`, `const(257, 1)`, and non-finite values
+- compiler accepts `push_const(poly_len, 1+2i)`,
+  `push_const(35, p1+p2)`, and old alias `const(35, p1+p2)`
+- compiler rejects `push_const(0, 1)`, `push_const(257, 1)`, and non-finite values
 - scalar expression bytecode for `p1`, `p2`, and `p1+p2` is stable in the
   fingerprint
 - real-valued legacy args accept `real(p1)` / `imag(p1)` and reject complex
@@ -2080,7 +2124,8 @@ Required targeted tests:
   change, and cap-risk cases
 - over-limit vectors reject before dispatch when statically knowable and at the
   exact offending chip otherwise
-- native Program mode evaluates `const(length,p1); emit` deterministically
+- native Program mode evaluates `push_const(poly_len,p1); emit` and
+  `push_linspace(poly_len); emit` deterministically
 - native Program mode passes final transformed parameters as `p1` / `p2`, not
   raw serpentine inputs
 - coefficient function `const(length,value)` produces the expected vector in
@@ -2088,7 +2133,7 @@ Required targeted tests:
 - compute preview and full compute agree for `coeff_function=const` plus a
   Coeff Program that reads `p1` / `p2`
 - frontend tests cover the `const` coeff function fields and Coeff Program
-  `const` chip fields
+  `push_const` / `push_linspace` chip fields
 
 Native/runtime gate after changing `sweep_cli.c`, `coeff_program.h`, or rebuilt
 native binaries:
@@ -2117,7 +2162,8 @@ Ship in v1:
 - Coeff Program compiler
 - Coeff Program saved program storage
 - Coeff Program editor
-- Coeff Program chip `const(length,value)`
+- Coeff Program chip `push_const(length,value)` plus old `const` alias
+- Coeff Program chip `push_linspace(length)`
 - `blend(t)` vector-combine chip with same-length-required semantics
 - pinned vector ops: `add`, `subtract`, `multiply`, `divide`, `power`,
   `argsort`, `angle`, `mod`, `abs`, `roll`, `rolr`, `littlewood`
@@ -2156,8 +2202,8 @@ Do not ship in v1:
 2. Should `poly` be readable by `push(poly)` in v1? Recommended: yes, because it
    makes branching from the current transformed vector natural.
 3. Should all direct coeff chips expose `src`/`tgt`, or only the generic
-   `legacy(...)` chip? Resolved: direct chips are named `poly-*` and always mean
-   `poly -> poly`; generic legacy always shows selectors.
+   `legacy(...)` chip? Resolved: direct chips are named `poly-*`, have a fixed
+   function name, and expose `src`/`tgt` selectors defaulting to `poly -> poly`.
 4. Should `andy` remain visible on every direct coeff chip? Recommended: yes
    for parity with existing chain UI, but layout must be improved so it does not
    crowd the chip.

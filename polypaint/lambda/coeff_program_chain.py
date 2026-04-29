@@ -19,6 +19,7 @@ PROGRAM_VERSION = 1
 MAX_PROGRAM_TOKENS = 64
 MAX_VECTOR_STACK = 64
 MAX_VECTOR_LEN = 256
+POLY_LEN_SENTINEL = -1
 MAX_MACRO_DEPTH = 8
 MAX_ARGS = 8
 MAX_SCALAR_EXPR_TOKENS = 32
@@ -39,6 +40,7 @@ COEFF_OP_VECTOR_UNARY = 13
 COEFF_OP_VECTOR_ROLL = 14
 COEFF_OP_VECTOR_ARGSORT = 15
 COEFF_OP_LITTLEWOOD = 16
+COEFF_OP_LINSPACE = 17
 
 COEFF_SEL_CF = 1
 COEFF_SEL_POLY = 2
@@ -59,7 +61,7 @@ EXPR_REAL = 10
 EXPR_IMAG = 11
 
 _OP_NAMES = {
-    COEFF_OP_CONST: "const",
+    COEFF_OP_CONST: "push_const",
     COEFF_OP_PUSH: "push",
     COEFF_OP_EMIT: "emit",
     COEFF_OP_DUPLICATE: "duplicate",
@@ -75,6 +77,7 @@ _OP_NAMES = {
     COEFF_OP_VECTOR_ROLL: "vector_roll",
     COEFF_OP_VECTOR_ARGSORT: "argsort",
     COEFF_OP_LITTLEWOOD: "littlewood",
+    COEFF_OP_LINSPACE: "push_linspace",
 }
 
 _SOURCE_SELECTORS = {
@@ -289,6 +292,16 @@ def _integer_literal(value, label):
     return int(number)
 
 
+def _vector_length_arg(value, label):
+    raw = str(value).strip().lower()
+    if raw == "poly_len":
+        return POLY_LEN_SENTINEL
+    length = _integer_literal(value, label)
+    if length < 1 or length > MAX_VECTOR_LEN:
+        raise RuntimeError(f"{label} must be in [1,{MAX_VECTOR_LEN}] or poly_len, got {value!r}")
+    return length
+
+
 def _format_number(value):
     number = _finite_number(value, "number")
     if number == 0:
@@ -310,6 +323,11 @@ def _format_complex_number(real, imag):
     if real == 0:
         return f"{'-' if imag < 0 else ''}{imag_text}i"
     return f"{real_text}{'-' if imag < 0 else '+'}{imag_text}i"
+
+
+def _format_length_arg(value):
+    number = int(value)
+    return "poly_len" if number == POLY_LEN_SENTINEL else _format_number(number)
 
 
 def _chip_name(value, idx):
@@ -595,6 +613,18 @@ def _compile_andy(raw, scalar_exprs, label):
     return andy, andy_expr_ref
 
 
+def _compile_complex_components(raw, scalar_exprs, label):
+    expr = _compile_expr(raw, label=label, expected="complex")
+    value = _expr_value_if_static(expr)
+    if value is not None:
+        return value.real, value.imag, -1, -1
+    re_expr = _compile_expr(f"real({raw})", label=f"{label} real component", expected="real")
+    im_expr = _compile_expr(f"imag({raw})", label=f"{label} imaginary component", expected="real")
+    re, _re_imag, re_ref = _add_arg_expr(re_expr, scalar_exprs, expected="real")
+    im, _im_imag, im_ref = _add_arg_expr(im_expr, scalar_exprs, expected="real")
+    return re, im, re_ref, im_ref
+
+
 def _selector_value(value, mapping, label):
     raw = str(value or "").strip().lower()
     if raw not in mapping:
@@ -604,13 +634,18 @@ def _selector_value(value, mapping, label):
 
 def _compile_const(args, scalar_exprs):
     if len(args) != 2:
-        raise RuntimeError("const chip requires length and value")
-    length = int(_finite_number(args[0], "const length"))
-    if length < 1 or length > MAX_VECTOR_LEN:
-        raise RuntimeError(f"const length must be in [1,{MAX_VECTOR_LEN}], got {length}")
-    expr = _compile_expr(args[1], label="const value", expected="complex")
+        raise RuntimeError("push_const chip requires length and value")
+    length = _vector_length_arg(args[0], "push_const length")
+    expr = _compile_expr(args[1], label="push_const value", expected="complex")
     re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="complex")
     return _token(COEFF_OP_CONST, n_args=2, args=[length, re], args_im=[0.0, im], expr_refs=[-1, ref])
+
+
+def _compile_linspace(args):
+    if len(args) != 1:
+        raise RuntimeError("push_linspace chip requires length")
+    length = _vector_length_arg(args[0], "push_linspace length")
+    return _token(COEFF_OP_LINSPACE, n_args=1, args=[length], expr_refs=[-1])
 
 
 def _compile_blend(args, scalar_exprs):
@@ -794,9 +829,40 @@ def _pow_legacy_args(spec, raw_args, scalar_exprs):
     raise RuntimeError("legacy(pow) expects multiplier and exponent, or old four real arguments")
 
 
+def _exp_legacy_args(spec, raw_args, scalar_exprs):
+    raw_args = list(raw_args)
+    andy = 0.0
+    andy_expr_ref = -1
+    andy_raw = None
+    if spec.get("supports_andy") and len(raw_args) == 3:
+        andy_raw = raw_args[-1]
+        raw_args = raw_args[:-1]
+    if len(raw_args) > 2:
+        raise RuntimeError("legacy(exp) expects multiplier, optional offset, and optional andy")
+    raw_multiplier = raw_args[0] if len(raw_args) >= 1 else "1"
+    raw_offset = raw_args[1] if len(raw_args) >= 2 else "0"
+    mult_re, mult_im, mult_re_ref, mult_im_ref = _compile_complex_components(
+        raw_multiplier, scalar_exprs, "legacy(exp) multiplier"
+    )
+    off_re, off_im, off_re_ref, off_im_ref = _compile_complex_components(
+        raw_offset, scalar_exprs, "legacy(exp) offset"
+    )
+    if andy_raw is not None:
+        andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, "legacy(exp) andy")
+    return (
+        [mult_re, mult_im, off_re, off_im],
+        [0.0, 0.0, 0.0, 0.0],
+        [mult_re_ref, mult_im_ref, off_re_ref, off_im_ref],
+        andy,
+        andy_expr_ref,
+    )
+
+
 def _legacy_args(spec, raw_args, scalar_exprs):
     if int(spec.get("fn_index") or 0) == 14:
         return _linear_legacy_args(spec, raw_args, scalar_exprs)
+    if int(spec.get("fn_index") or 0) == 16:
+        return _exp_legacy_args(spec, raw_args, scalar_exprs)
     if int(spec.get("fn_index") or 0) == 24:
         return _pow_legacy_args(spec, raw_args, scalar_exprs)
     declared = list(spec["args"])
@@ -908,8 +974,10 @@ def _lower_chip(chip, scalar_exprs):
     name, args = _chip_args(chip)
     if name == "macro":
         raise RuntimeError("macro chip survived expansion")
-    if name == "const":
+    if name in {"push_const", "const"}:
         return [_compile_const(args, scalar_exprs)]
+    if name == "push_linspace":
+        return [_compile_linspace(args)]
     if name == "push":
         if len(args) != 1:
             raise RuntimeError("push chip requires source cf or poly")
@@ -946,6 +1014,11 @@ def _lower_chip(chip, scalar_exprs):
     if name.startswith("poly-"):
         legacy_name = _canonical_legacy_name(name[5:])
         if legacy_name in legacy_registry()["by_name"]:
+            if len(args) >= 2:
+                src = str(args[0]).strip().lower()
+                tgt = str(args[1]).strip().lower()
+                if src in _SOURCE_SELECTORS and tgt in _TARGET_SELECTORS:
+                    return [_legacy_token(legacy_name, args[0], args[1], args[2:], scalar_exprs)]
             return [_legacy_token(legacy_name, "poly", "poly", args, scalar_exprs)]
     legacy_name = _canonical_legacy_name(name)
     if legacy_name in legacy_registry()["by_name"]:
@@ -988,7 +1061,7 @@ def _validate_stack(tokens):
     for idx, token in enumerate(tokens):
         op = int(token.get("op") or 0)
         before = depth
-        if op in {COEFF_OP_CONST, COEFF_OP_PUSH}:
+        if op in {COEFF_OP_CONST, COEFF_OP_PUSH, COEFF_OP_LINSPACE}:
             depth += 1
         elif op == COEFF_OP_EMIT:
             # Coeff Program keeps poly as an explicit mutable output register.
@@ -1059,12 +1132,14 @@ def _execution_spec(tokens, scalar_exprs):
         op = int(token["op"])
         fields = [_OP_NAMES.get(op, str(op))]
         if op == COEFF_OP_CONST:
-            fields.extend(["length", _format_number((token.get("args") or [0])[0])])
+            fields.extend(["length", _format_length_arg((token.get("args") or [0])[0])])
             ref = (token.get("expr_refs") or [-1, -1])[1]
             if ref >= 0:
                 fields.append(f"expr{ref}")
             else:
                 fields.append(_format_complex_number((token.get("args") or [0, 0])[1], (token.get("args_im") or [0, 0])[1]))
+        elif op == COEFF_OP_LINSPACE:
+            fields.extend(["length", _format_length_arg((token.get("args") or [0])[0])])
         elif op == COEFF_OP_PUSH:
             fields.append(_SELECTOR_NAMES.get(int(token.get("src") or 0), str(token.get("src") or 0)))
         elif op == COEFF_OP_BLEND:
@@ -1163,6 +1238,13 @@ def _legacy_fast_path(tokens):
             return False
         if int(token.get("andy_expr_ref", -1)) >= 0:
             return False
+        if int(token.get("fn_index") or 0) == 16:
+            args = list(token.get("args") or [])
+            if len(args) == 4:
+                offset_re = args[2] if len(args) > 2 else 0.0
+                offset_im = args[3] if len(args) > 3 else 0.0
+                if abs(offset_re) > 1e-12 or abs(offset_im) > 1e-12:
+                    return False
     return True
 
 
@@ -1203,6 +1285,26 @@ def _legacy_transforms(tokens):
                     entry.append(_format_number(token["andy"]))
                 out.append(entry)
                 continue
+        if int(token.get("fn_index") or 0) == 16:
+            args = list(token.get("args") or [])
+            refs = list(token.get("expr_refs") or [])
+            if len(args) == 4 and not any(int(ref) >= 0 for ref in refs):
+                multiplier_re = args[0] if len(args) > 0 else 1.0
+                multiplier_im = args[1] if len(args) > 1 else 0.0
+                offset_re = args[2] if len(args) > 2 else 0.0
+                offset_im = args[3] if len(args) > 3 else 0.0
+                if abs(offset_re) > 1e-12 or abs(offset_im) > 1e-12:
+                    return []
+                entry = ["exp"]
+                if abs(multiplier_re - 1.0) > 1e-12 or abs(multiplier_im) > 1e-12 or token.get("andy"):
+                    entry.append(_format_number(multiplier_re))
+                if abs(multiplier_im) > 1e-12 or token.get("andy"):
+                    entry.append(_format_number(multiplier_im))
+                if token.get("andy"):
+                    entry.append(_format_number(token["andy"]))
+                out.append(entry)
+                continue
+            return []
         entry = [spec["name"]]
         args = list(token.get("args") or [])
         while args:

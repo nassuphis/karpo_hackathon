@@ -623,6 +623,7 @@ def test_coeffgen_chunked_threaded_runtime():
     rev_emit_program_path = "/tmp/coeffgen_rev_emit_program.bin"
     const_program_single_path = "/tmp/coeffgen_const_program_single.bin"
     const_program_mt_path = "/tmp/coeffgen_const_program_mt.bin"
+    linspace_program_path = "/tmp/coeffgen_linspace_program.bin"
     blend_program_path = "/tmp/coeffgen_blend_program.bin"
     poke_program_path = "/tmp/coeffgen_poke_program.bin"
     debug_poke_path = "/tmp/compute_debug_poke.bin"
@@ -868,6 +869,44 @@ def test_coeffgen_chunked_threaded_runtime():
             assert abs(got.real - expected.real) <= 1e-6, "const coeff_program real mismatch"
             assert abs(got.imag - expected.imag) <= 1e-6, "const coeff_program imag mismatch"
     print("  coeff_program const(length,p1±p2) threaded runtime: OK")
+
+    linspace_program_spec = {
+        "mode": "coeffgen_chunked",
+        "function": "g1",
+        "coeff_transforms": [],
+        "params_file": params_path,
+        "step_start": 0,
+        "step_count": 5,
+        "n_threads": 1,
+        "coeff_program": {
+            "version": 1,
+            "fingerprint": "docker-push-linspace-poly-len",
+            "tokens": [
+                {"op": 17, "n_args": 1, "args": [-1.0], "expr_refs": [-1]},
+                {"op": 3},
+            ],
+            "scalar_exprs": [],
+        },
+    }
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", linspace_program_path],
+        input=json.dumps(linspace_program_spec),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "coeffgen push_linspace coeff_program failed: " + r.stderr[:200]
+    linspace_meta = json.loads(r.stdout)
+    linspace_vals = read_f32_array(linspace_program_path)
+    n_coeffs = linspace_meta["n_coeffs"]
+    assert n_coeffs >= 1, "push_linspace should emit at least one coefficient"
+    for step in range(linspace_meta["step_count"]):
+        for coeff_idx in range(n_coeffs):
+            base = step * n_coeffs * 2 + coeff_idx * 2
+            expected = 0.0 if n_coeffs == 1 else float(n_coeffs) * float(coeff_idx) / float(n_coeffs - 1)
+            assert abs(linspace_vals[base] - expected) <= 1e-6, "push_linspace real mismatch"
+            assert abs(linspace_vals[base + 1]) <= 1e-6, "push_linspace imag mismatch"
+    print("  coeff_program push_linspace(poly_len) runtime: OK")
 
     blend_program_spec = {
         "mode": "coeffgen_chunked",

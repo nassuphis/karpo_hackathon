@@ -34,6 +34,8 @@ from shared import BUCKET, attach_contract_warnings, contract_param, parse_body,
 
 s3 = boto3.client("s3")
 SWEEP = os.path.join(os.path.dirname(__file__), "sweep_coeffgen")
+PARAM_PROGRAMS_PREFIX = "polypaint/param-programs/"
+COEFF_PROGRAMS_PREFIX = "polypaint/coeff-programs/"
 
 
 def _compiled_coeff_program_payload(compiled):
@@ -50,13 +52,62 @@ def _compiled_coeff_program_payload(compiled):
     }
 
 
+def _is_missing_s3_error(exc):
+    response = getattr(exc, "response", {}) or {}
+    code = str((response.get("Error") or {}).get("Code") or "")
+    return code in {"NoSuchKey", "NoSuchBucket", "404", "NotFound"}
+
+
+def _read_saved_program_source_chain(prefix, program_kind, program_id):
+    macro_id = str(program_id or "").strip()
+    if not macro_id:
+        raise RuntimeError(f"{program_kind} macro name is required")
+    key = f"{prefix}{macro_id}.json"
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=key)
+    except Exception as exc:
+        if _is_missing_s3_error(exc):
+            raise RuntimeError(f"{program_kind} macro not found: {macro_id}") from None
+        raise
+    raw = obj["Body"].read()
+    try:
+        payload = json.loads(raw) if raw else {}
+    except Exception as exc:
+        raise RuntimeError(f"{program_kind} macro is not valid JSON: {macro_id}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{program_kind} macro must be a JSON object: {macro_id}")
+    chain = payload.get("chain")
+    if not isinstance(chain, list):
+        raise RuntimeError(f"{program_kind} macro chain must be a JSON array: {macro_id}")
+    return chain
+
+
+def _param_program_macro_resolver():
+    return lambda macro_id: _read_saved_program_source_chain(
+        PARAM_PROGRAMS_PREFIX,
+        "param program",
+        macro_id,
+    )
+
+
+def _coeff_program_macro_resolver():
+    return lambda macro_id: _read_saved_program_source_chain(
+        COEFF_PROGRAMS_PREFIX,
+        "coeff program",
+        macro_id,
+    )
+
+
 def _resolve_coeff_program(params, coeff_transforms):
     coeff_program = params.get("coeff_program") or None
     coeff_program_chain = params.get("coeff_program_chain")
     if coeff_program is None and coeff_program_chain:
         if not isinstance(coeff_program_chain, list):
             raise RuntimeError("coeff_program_chain must be an array")
-        compiled = compile_coeff_program_chain(coeff_program_chain)
+        compiled = compile_coeff_program_chain(
+            coeff_program_chain,
+            macro_resolver=_coeff_program_macro_resolver(),
+        )
         if compiled["legacy_coeff_transforms"]:
             coeff_transforms = compiled["legacy_coeff_transforms"]
         else:
@@ -544,7 +595,10 @@ def handle_degree_probe(params):
     if param_program is None and param_program_chain:
         if not isinstance(param_program_chain, list):
             raise RuntimeError("param_program_chain must be an array")
-        compiled_param_program = compile_param_program_chain(param_program_chain)
+        compiled_param_program = compile_param_program_chain(
+            param_program_chain,
+            macro_resolver=_param_program_macro_resolver(),
+        )
         if compiled_param_program["legacy_transforms"]:
             param_transforms = compiled_param_program["legacy_transforms"]
         else:

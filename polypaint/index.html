@@ -11575,6 +11575,12 @@ const _ctCatalog = (() => {
     return catalog;
 })();
 
+const _cpExpParamDefs = [
+    { ph: 'field1', label: 'field1', def: '1', complex: true, scalarExpr: 'complex', complexWide: true, title: 'Complex multiplier in exp(z*field1+field2). Program mode accepts p1/p2 expressions.' },
+    { ph: 'field2', label: 'field2', def: '0', complex: true, scalarExpr: 'complex', complexWide: true, title: 'Complex offset in exp(z*field1+field2). Program mode accepts p1/p2 expressions.' },
+    { ..._ctAndyParam },
+];
+
 const _cpCategoryMeta = {
     io: { title: 'Input + output', help: 'push cf/poly, make constant vectors, or emit poly' },
     stack: { title: 'Stack', help: 'reorder or discard vector values' },
@@ -11588,6 +11594,8 @@ const _coeffProgramVectorBinaryNames = ['add', 'subtract', 'multiply', 'divide',
 const _coeffProgramVectorUnaryNames = ['angle', 'mod', 'abs'];
 const _coeffProgramVectorSourceChoices = ['poly', 'pop', 'peek'];
 const _coeffProgramVectorTargetChoices = ['poly', 'push'];
+const _coeffProgramLegacySourceChoices = ['cf', 'poly', 'pop', 'peek'];
+const _coeffProgramLegacyTargetChoices = ['poly', 'push'];
 function _canonicalCoeffTransformName(name) {
     const raw = String(name || '').trim();
     return raw === 'scale100' ? 'linear' : raw;
@@ -11612,14 +11620,21 @@ const _cpCatalog = (() => {
             params: [{ ph: 'src', def: 'cf', choices: ['cf', 'poly'] }],
             desc: 'push a copy of cf or current poly',
         },
-        const: {
+        push_const: {
             category: 'io',
-            label: 'vector_const',
+            label: 'push_const',
             params: [
-                { ph: 'length', label: 'length', def: '35', intLiteral: true, min: 1, max: 256, title: 'Number of coefficients in the vector. Literal integer only; max 256 in Program mode.' },
+                { ph: 'length|poly_len', label: 'length', def: 'poly_len', lengthArg: true, title: 'Vector length. Use poly_len to match the current poly vector, or an integer 1..256.' },
                 { ph: 'value expr', label: 'value', def: '1', scalarExpr: 'complex', title: 'Scalar expression for every coefficient. May use p1/p2, literals, + - * /, conj/real/imag. t1/t2 are not available here.' },
             ],
-            desc: 'push vector_const(length, value); value is a scalar expression over p1/p2, not t1/t2',
+            desc: 'push push_const(length, value); value is a scalar expression over p1/p2, not t1/t2',
+        },
+        push_linspace: {
+            category: 'io',
+            params: [
+                { ph: 'length|poly_len', label: 'length', def: 'poly_len', lengthArg: true, title: 'Vector length. Use poly_len to match the current poly vector, or an integer 1..256.' },
+            ],
+            desc: 'push linspace values from 0 to length using length entries',
         },
         poke_poly: {
             category: 'io',
@@ -11685,8 +11700,8 @@ const _cpCatalog = (() => {
             category: 'legacy',
             params: [
                 { ph: 'name', def: 'rev', choices: _coeffProgramLegacyNames, functionWide: true, title: 'Legacy coefficient transform function. Compiled to a stable numeric function index.' },
-                { ph: 'src', def: 'poly', choices: ['cf', 'poly', 'pop', 'peek'], selectorWide: true, title: 'Input vector: cf read-only coefficients, current poly, pop stack, or peek stack.' },
-                { ph: 'tgt', def: 'poly', choices: ['poly', 'push'], selectorWide: true, title: 'Output target: write poly or push the result onto the stack.' },
+                { ph: 'src', def: 'poly', choices: _coeffProgramLegacySourceChoices, selectorWide: true, title: 'Input vector: cf read-only coefficients, current poly, pop stack, or peek stack.' },
+                { ph: 'tgt', def: 'poly', choices: _coeffProgramLegacyTargetChoices, selectorWide: true, title: 'Output target: write poly or push the result onto the stack.' },
             ],
             desc: 'call an existing coefficient transform with explicit source and target',
         },
@@ -11714,11 +11729,16 @@ const _cpCatalog = (() => {
     });
     Object.entries(_ctCatalog).forEach(([name, spec]) => {
         const sugarName = _coeffProgramPolySugarName(name);
+        const params = name === 'exp' ? _cpExpParamDefs : (spec.params || []);
         catalog[sugarName] = {
             category: 'legacy',
             label: sugarName,
-            params: (spec.params || []).map(p => ({ ...p })),
-            desc: `read poly, run ${name}, write poly${spec.desc ? ` · ${spec.desc}` : ''}`,
+            params: [
+                { ph: 'src', def: 'poly', choices: _coeffProgramLegacySourceChoices, selectorWide: true, title: `Input vector for ${sugarName}: cf, current poly, pop stack, or peek stack.` },
+                { ph: 'tgt', def: 'poly', choices: _coeffProgramLegacyTargetChoices, selectorWide: true, title: `Output target for ${sugarName}: write poly or push result.` },
+                ...params.map(p => ({ ...p })),
+            ],
+            desc: `run ${name} with explicit source/target${name === 'exp' ? ' · exp(src*field1+field2)' : (spec.desc ? ` · ${spec.desc}` : '')}`,
         };
     });
     return catalog;
@@ -11759,6 +11779,30 @@ function _normalizeCoeffTransformItem(item) {
         return { name, params: normalized };
     }
     return { name, params };
+}
+
+function _coeffProgramSugarParamsHaveSelectors(params) {
+    if (!Array.isArray(params) || params.length < 2) return false;
+    const src = String(params[0] || '').trim().toLowerCase();
+    const tgt = String(params[1] || '').trim().toLowerCase();
+    return _coeffProgramLegacySourceChoices.includes(src) && _coeffProgramLegacyTargetChoices.includes(tgt);
+}
+
+function _normalizeCoeffProgramSugarParams(legacyName, params) {
+    const raw = Array.isArray(params) ? params.map(v => String(v)) : [];
+    const hasSelectors = _coeffProgramSugarParamsHaveSelectors(raw);
+    const src = hasSelectors ? raw[0].trim().toLowerCase() : 'poly';
+    const tgt = hasSelectors ? raw[1].trim().toLowerCase() : 'poly';
+    const args = hasSelectors ? raw.slice(2) : raw.slice();
+    if ((legacyName === 'linear' || legacyName === 'pow') && args.length >= 4) {
+        const normalized = [
+            _formatCoeffTransformComplexParts(args[0], args[1]),
+            _formatCoeffTransformComplexParts(args[2], args[3]),
+        ];
+        if (args.length > 4) normalized.push(...args.slice(4));
+        return [src, tgt, ...normalized];
+    }
+    return [src, tgt, ...args];
 }
 
 function _ctAndyIndex(pDefs) {
@@ -13043,29 +13087,15 @@ function _normalizeCoeffProgramChain(rawChain) {
                 }
                 return [{ name, params }];
             }
-            const legacyName = _coeffProgramLegacyNameFromSugar(name);
-            const displayName = legacyName ? _coeffProgramPolySugarName(legacyName) : name;
+            const sourceName = name === 'const' ? 'push_const' : name;
+            const legacyName = _coeffProgramLegacyNameFromSugar(sourceName);
+            const displayName = legacyName ? _coeffProgramPolySugarName(legacyName) : sourceName;
             const params = item.slice(1).map(v => String(v));
-            if (legacyName === 'linear' && params.length >= 4) {
-                const normalized = [
-                    _formatCoeffTransformComplexParts(params[0], params[1]),
-                    _formatCoeffTransformComplexParts(params[2], params[3]),
-                ];
-                if (params.length > 4) normalized.push(params[4]);
-                return [{ name: displayName, params: normalized }];
-            }
-            if (legacyName === 'pow' && params.length >= 4) {
-                const normalized = [
-                    _formatCoeffTransformComplexParts(params[0], params[1]),
-                    _formatCoeffTransformComplexParts(params[2], params[3]),
-                ];
-                if (params.length > 4) normalized.push(params[4]);
-                return [{ name: displayName, params: normalized }];
-            }
+            if (legacyName) return [{ name: displayName, params: _normalizeCoeffProgramSugarParams(legacyName, params) }];
             return [{ name: displayName, params }];
         }
         if (item == null || item === '') return [];
-        const name = String(item).trim();
+        const name = String(item).trim() === 'const' ? 'push_const' : String(item).trim();
         const legacyName = _coeffProgramLegacyNameFromSugar(name);
         return [{ name: legacyName ? _coeffProgramPolySugarName(legacyName) : name, params: [] }];
     }).filter(Boolean);
@@ -13106,23 +13136,24 @@ function _serializeCoeffProgramChain() {
         }
         const legacySugarName = _coeffProgramLegacyNameFromSugar(name);
         if (legacySugarName) {
-            const spec = _ctCatalog[legacySugarName] || {};
-            const pDefs = spec.params || [];
-            const values = pDefs.map((pDef, idx) => params[idx] !== undefined && params[idx] !== ''
-                ? params[idx]
+            const sourceName = _coeffProgramPolySugarName(legacySugarName);
+            const pDefs = (_cpCatalog[sourceName] || {}).params || [];
+            const normalizedParams = _normalizeCoeffProgramSugarParams(legacySugarName, params);
+            const values = pDefs.map((pDef, idx) => normalizedParams[idx] !== undefined && normalizedParams[idx] !== ''
+                ? normalizedParams[idx]
                 : String(pDef.def || ''));
             let last = values.length - 1;
-            if (last >= 0 && pDefs[last] && pDefs[last].ph === 'andy' && _ctAndyIsDefault(values[last])) last--;
-            const sourceName = _coeffProgramPolySugarName(legacySugarName);
-            return last >= 0 ? [sourceName, ...values.slice(0, last + 1)] : [sourceName];
+            if (last >= 2 && pDefs[last] && pDefs[last].ph === 'andy' && _ctAndyIsDefault(values[last])) last--;
+            return [sourceName, ...values.slice(0, Math.max(2, last + 1))];
         }
-        const spec = _cpCatalog[name] || {};
+        const catalogName = name === 'const' ? 'push_const' : name;
+        const spec = _cpCatalog[catalogName] || {};
         const pDefs = spec.params || [];
         const values = pDefs.map((pDef, idx) => params[idx] !== undefined && params[idx] !== ''
             ? params[idx]
             : String(pDef.def || ''));
         let last = values.length - 1;
-        return last >= 0 ? [name, ...values.slice(0, last + 1)] : [name];
+        return last >= 0 ? [catalogName, ...values.slice(0, last + 1)] : [catalogName];
     }).filter(Boolean);
 }
 
@@ -13162,7 +13193,7 @@ function _copyCoeffTransformsIntoCoeffProgram() {
     }
     const chain = transforms.map(row => {
         const values = Array.isArray(row) ? row : [String(row)];
-        return { name: _coeffProgramPolySugarName(values[0]), params: values.slice(1).map(v => String(v)) };
+        return { name: _coeffProgramPolySugarName(values[0]), params: ['poly', 'poly', ...values.slice(1).map(v => String(v))] };
     });
     _cpChain.splice(0, _cpChain.length, ...chain);
     _coeffProgramSelectedIndex = _cpChain.length ? 0 : -1;
@@ -13209,7 +13240,21 @@ function updateChipParam(chipIdx, paramIdx, value, which) {
             }
             chain[chipIdx].params[paramIdx] = norm;
         } else if (which === 'cp' && pDef) {
-            if (pDef.intLiteral) {
+            if (pDef.lengthArg) {
+                const lower = rawText.toLowerCase();
+                if (lower === 'poly_len') {
+                    chain[chipIdx].params[paramIdx] = 'poly_len';
+                } else {
+                    const number = Number(rawText);
+                    const min = pDef.min == null ? 1 : Number(pDef.min);
+                    const max = pDef.max == null ? 256 : Number(pDef.max);
+                    if (!Number.isFinite(number) || !Number.isInteger(number) || number < min || number > max) {
+                        alert(`Invalid ${pDef.label || pDef.ph || 'length'}: "${value}". Use poly_len or an integer in [${min}, ${max}].`);
+                        return;
+                    }
+                    chain[chipIdx].params[paramIdx] = String(number);
+                }
+            } else if (pDef.intLiteral) {
                 const number = Number(rawText);
                 const min = pDef.min == null ? -Infinity : Number(pDef.min);
                 const max = pDef.max == null ? Infinity : Number(pDef.max);
@@ -13309,7 +13354,7 @@ function _chipInputHtml(which, chipIdx, paramIdx, value, paramDef, options = {})
         if (pd.choiceWide || pd.wide === true) clsParts.push('chip-input-wide');
         return `<select class="${clsParts.join(' ')}"${titleAttr} onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">${options}</select>`;
     }
-    const im = (pd.target || pd.choices || pd.complexPairNext || pd.complex || pd.scalarExpr || pd.ph === 'andy') ? 'text' : 'decimal';
+    const im = (pd.target || pd.choices || pd.complexPairNext || pd.complex || pd.scalarExpr || pd.lengthArg || pd.ph === 'andy') ? 'text' : 'decimal';
     const clsParts = ['chip-input'];
     if (pd.ph === 'andy') clsParts.push('chip-input-andy');
     if (pd.complexWide) clsParts.push('chip-input-complex-wide');
@@ -13533,6 +13578,7 @@ function _coeffProgramChipShellHtml(i, readonly, bodyHtml) {
 }
 
 function _coeffProgramLegacyInputDefs(legacyName) {
+    if (String(legacyName || '').trim() === 'exp') return _cpExpParamDefs.map(p => ({ ...p }));
     const spec = _ctCatalog[String(legacyName || '').trim()] || {};
     return (spec.params || []).map(p => ({ ...p }));
 }
@@ -13576,7 +13622,8 @@ function _coeffProgramLegacyFormulaHtml(i, legacyName, values, legacyDefs, optio
     if (legacyName === 'exp' || legacyName === 'round') {
         const field1 = arg(0);
         const field2 = arg(1);
-        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${fn}<span>(</span>${src}<span class="chip-op">*</span>${field1}<span class="chip-op">,</span>${field2}<span>)</span>${andy}</span>`;
+        const op = legacyName === 'exp' ? '+' : ',';
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${fn}<span>(</span>${src}<span class="chip-op">*</span>${field1}<span class="chip-op">${op}</span>${field2}<span>)</span>${andy}</span>`;
     }
     const nonAndyArgs = legacyDefs
         .map((pDef, idx) => ({ pDef, idx }))
@@ -13586,8 +13633,14 @@ function _coeffProgramLegacyFormulaHtml(i, legacyName, values, legacyDefs, optio
     return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${fn}<span>(</span>${src}${nonAndyArgs}<span>)</span>${andy}</span>`;
 }
 
-function _coeffProgramPolySugarFormulaHtml(i, legacyName, params, legacyDefs, options = {}) {
-    const arg = (idx) => _chipInputHtml('cp', i, idx, params[idx] !== undefined && params[idx] !== '' ? params[idx] : String(legacyDefs[idx]?.def || ''), legacyDefs[idx] || {}, options);
+function _coeffProgramPolySugarFormulaHtml(i, legacyName, params, pDefs, options = {}) {
+    const values = _normalizeCoeffProgramSugarParams(legacyName, params);
+    const input = (idx) => _chipInputHtml('cp', i, idx, values[idx] !== undefined && values[idx] !== '' ? values[idx] : String(pDefs[idx]?.def || ''), pDefs[idx] || {}, options);
+    const src = input(0);
+    const tgt = input(1);
+    const arg = (idx) => input(idx + 2);
+    const legacyDefs = pDefs.slice(2);
+    const nameLabel = `<span title="${_escapeHtml(`legacy ${legacyName} transform`)}">${_escapeHtml(legacyName)}</span>`;
     const andyIdx = legacyDefs.findIndex(pDef => pDef && pDef.ph === 'andy');
     const andy = andyIdx >= 0
         ? `<span class="chip-op">andy=</span>${arg(andyIdx)}`
@@ -13595,29 +13648,29 @@ function _coeffProgramPolySugarFormulaHtml(i, legacyName, params, legacyDefs, op
     if (legacyName === 'linear') {
         const field1 = arg(0);
         const field2 = arg(1);
-        return `<span class="chip-formula"><span>poly=linear(poly*</span>${field1}<span class="chip-op">+</span>${field2}<span>)</span>${andy}</span>`;
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${nameLabel}<span>(</span>${src}<span class="chip-op">*</span>${field1}<span class="chip-op">+</span>${field2}<span>)</span>${andy}</span>`;
     }
     if (legacyName === 'pow') {
         const field1 = arg(0);
         const field2 = arg(1);
-        return `<span class="chip-formula"><span>poly=pow(poly*</span>${field1}<span class="chip-op">,</span>${field2}<span>)</span>${andy}</span>`;
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${nameLabel}<span>(</span>${src}<span class="chip-op">*</span>${field1}<span class="chip-op">,</span>${field2}<span>)</span>${andy}</span>`;
     }
     if (legacyName === 'exp') {
         const field1 = arg(0);
         const field2 = arg(1);
-        return `<span class="chip-formula"><span>poly=exp(poly*</span>${field1}<span class="chip-op">,</span>${field2}<span>)</span>${andy}</span>`;
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${nameLabel}<span>(</span>${src}<span class="chip-op">*</span>${field1}<span class="chip-op">+</span>${field2}<span>)</span>${andy}</span>`;
     }
     if (legacyName === 'round') {
         const field1 = arg(0);
         const field2 = arg(1);
-        return `<span class="chip-formula"><span>poly=round(poly*</span>${field1}<span class="chip-op">,</span>${field2}<span>)</span>${andy}</span>`;
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${nameLabel}<span>(</span>${src}<span class="chip-op">*</span>${field1}<span class="chip-op">,</span>${field2}<span>)</span>${andy}</span>`;
     }
     const nonAndyArgs = legacyDefs
         .map((pDef, idx) => ({ pDef, idx }))
         .filter(entry => entry.pDef && entry.pDef.ph !== 'andy')
         .map(entry => `<span class="chip-op">,</span>${arg(entry.idx)}`)
         .join('');
-    return `<span class="chip-formula"><span>poly=${_escapeHtml(legacyName)}(poly</span>${nonAndyArgs}<span>)</span>${andy}</span>`;
+    return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${nameLabel}<span>(</span>${src}${nonAndyArgs}<span>)</span>${andy}</span>`;
 }
 
 function _coeffProgramVectorFormulaHtml(item, i, pDefs, options = {}) {
@@ -13651,16 +13704,6 @@ function _renderCoeffProgramChipHtml(item, i, options = {}) {
         return _coeffProgramChipShellHtml(i, readonly, _coeffProgramLegacyFormulaHtml(i, legacyName, values, legacyDefs, { readonly }));
     }
     const pDefs = spec.params || [];
-    if (item.name === 'poly-linear') {
-        const param1 = _chipInputHtml('cp', i, 0, params[0] || pDefs[0]?.def || '100', pDefs[0] || {}, { readonly });
-        const param2 = _chipInputHtml('cp', i, 1, params[1] || pDefs[1]?.def || '0', pDefs[1] || {}, { readonly });
-        return _coeffProgramChipShellHtml(i, readonly, `<span class="chip-formula"><span>poly=linear(poly*</span>${param1}<span class="chip-op">+</span>${param2}<span>)</span>${_ctAndyHtml('cp', i, item, pDefs, { readonly })}</span>`);
-    }
-    if (item.name === 'poly-pow') {
-        const field1 = _chipInputHtml('cp', i, 0, params[0] || pDefs[0]?.def || '1', pDefs[0] || {}, { readonly });
-        const field2 = _chipInputHtml('cp', i, 1, params[1] || pDefs[1]?.def || '1', pDefs[1] || {}, { readonly });
-        return _coeffProgramChipShellHtml(i, readonly, `<span class="chip-formula"><span>poly=pow(poly*</span>${field1}<span class="chip-op">,</span>${field2}<span>)</span>${_ctAndyHtml('cp', i, item, pDefs, { readonly })}</span>`);
-    }
     if (
         _coeffProgramVectorBinaryNames.includes(item.name)
         || _coeffProgramVectorUnaryNames.includes(item.name)
@@ -13673,12 +13716,11 @@ function _renderCoeffProgramChipHtml(item, i, options = {}) {
     }
     const legacySugarName = _coeffProgramLegacyNameFromSugar(item.name);
     if (legacySugarName) {
-        const legacyDefs = _coeffProgramLegacyInputDefs(legacySugarName);
-        return _coeffProgramChipShellHtml(i, readonly, _coeffProgramPolySugarFormulaHtml(i, legacySugarName, params, legacyDefs, { readonly }));
+        return _coeffProgramChipShellHtml(i, readonly, _coeffProgramPolySugarFormulaHtml(i, legacySugarName, params, pDefs, { readonly }));
     }
     const inputsHtml = pDefs.map((pDef, pi) => {
         const value = params[pi] !== undefined && params[pi] !== '' ? params[pi] : String(pDef.def || '');
-        if (item.name === 'const' || item.name === 'poke_poly' || item.name === 'poke_tos') {
+        if (item.name === 'push_const' || item.name === 'push_linspace' || item.name === 'const' || item.name === 'poke_poly' || item.name === 'poke_tos') {
             return _chipLabeledInputHtml('cp', i, pi, value, pDef || {}, { readonly });
         }
         return _chipInputHtml('cp', i, pi, value, pDef || {}, { readonly });

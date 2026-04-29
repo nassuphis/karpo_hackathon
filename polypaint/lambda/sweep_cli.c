@@ -3004,6 +3004,22 @@ static void ct_exp_affine(double *cRe, double *cIm, int *nCoeffs, double a, doub
     }
 }
 
+static void ct_exp_affine_offset(double *cRe, double *cIm, int *nCoeffs,
+                                 double ar, double ai, double br, double bi) {
+    int n = *nCoeffs;
+    for (int i = 0; i < n; i++) {
+        double mr, mi;
+        c_mul(cRe[i], cIm[i], ar, ai, &mr, &mi);
+        mr += br;
+        mi += bi;
+        c_exp2(mr, mi, &cRe[i], &cIm[i]);
+        if (!isfinite(cRe[i]) || !isfinite(cIm[i])) {
+            cRe[i] = 0.0;
+            cIm[i] = 0.0;
+        }
+    }
+}
+
 static void ct_apply_unary_complex(double *cRe, double *cIm, int *nCoeffs,
                                    void (*fn)(double, double, double *, double *)) {
     int n = *nCoeffs;
@@ -3315,7 +3331,8 @@ enum CoeffProgramOp {
     COEFF_OP_VECTOR_UNARY = 13,
     COEFF_OP_VECTOR_ROLL = 14,
     COEFF_OP_VECTOR_ARGSORT = 15,
-    COEFF_OP_LITTLEWOOD = 16
+    COEFF_OP_LITTLEWOOD = 16,
+    COEFF_OP_LINSPACE = 17
 };
 
 enum CoeffProgramSelector {
@@ -3772,7 +3789,15 @@ static int coeffLegacyApply(int fnIndex, double *re, double *im, int *n,
                                   nArgs > 2 ? args[2] : 0.0,
                                   nArgs > 3 ? args[3] : 0.0); return 0;
         case 15: ct_swirler(re, im, n); return 0;
-        case 16: ct_exp_affine(re, im, n, nArgs > 0 ? args[0] : 1.0, nArgs > 1 ? args[1] : 0.0); return 0;
+        case 16:
+            if (nArgs >= 4) {
+                ct_exp_affine_offset(re, im, n,
+                                     args[0], args[1],
+                                     args[2], args[3]);
+            } else {
+                ct_exp_affine(re, im, n, nArgs > 0 ? args[0] : 1.0, nArgs > 1 ? args[1] : 0.0);
+            }
+            return 0;
         case 17: ct_cos_apply(re, im, n); return 0;
         case 18: ct_sin_apply(re, im, n); return 0;
         case 19: ct_tan_apply(re, im, n); return 0;
@@ -4052,9 +4077,21 @@ static int evalCoeffProgram(const CoeffProgram *program,
         if (tok->op == COEFF_OP_CONST) {
             int len = (int)tok->args[0];
             double vr = 0.0, vi = 0.0;
+            if (len == -1) len = ws->poly_len;
             if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, &vr, &vi) != 0) return 1;
-            if (coeff_program_check_len(len, "const") != 0) return 1;
+            if (coeff_program_check_len(len, "push_const") != 0) return 1;
             for (int i = 0; i < len; i++) { ws->scratch_re[i] = vr; ws->scratch_im[i] = vi; }
+            ws->scratch_len = (uint16_t)len;
+            if (coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, len) != 0) return 1;
+        } else if (tok->op == COEFF_OP_LINSPACE) {
+            int len = (int)tok->args[0];
+            if (len == -1) len = ws->poly_len;
+            if (coeff_program_check_len(len, "push_linspace") != 0) return 1;
+            double denom = len > 1 ? (double)(len - 1) : 1.0;
+            for (int i = 0; i < len; i++) {
+                ws->scratch_re[i] = len > 1 ? ((double)len * (double)i / denom) : 0.0;
+                ws->scratch_im[i] = 0.0;
+            }
             ws->scratch_len = (uint16_t)len;
             if (coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, len) != 0) return 1;
         } else if (tok->op == COEFF_OP_PUSH) {
@@ -4185,6 +4222,17 @@ static int evalCoeffProgram(const CoeffProgram *program,
                 if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, &mr, &mi) != 0) return 1;
                 if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, &offR, &offI) != 0) return 1;
                 args[0] = mr; args[1] = mi; args[2] = offR; args[3] = offI;
+                legacyArgCount = 4;
+            } else if (tok->fn_index == 16 && tok->n_args == 4) {
+                for (int i = 0; i < 4; i++) {
+                    double ar = 0.0, ai = 0.0;
+                    if (coeffArgValue(program, tok, i, p1r, p1i, p2r, p2i, &ar, &ai) != 0) return 1;
+                    if (fabs(ai) > 1e-12) {
+                        fprintf(stderr, "Coeff Program legacy exp component %d is not real\n", i);
+                        return 1;
+                    }
+                    args[i] = ar;
+                }
                 legacyArgCount = 4;
             } else if (tok->fn_index == 24 && tok->n_args == 2) {
                 double mr = 1.0, mi = 0.0, expR = 1.0, expI = 0.0;

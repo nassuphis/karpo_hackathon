@@ -1,4 +1,5 @@
 import json
+import cmath
 import os
 import struct
 import subprocess
@@ -55,7 +56,7 @@ def _complex_f32_values(data):
 
 def test_coeff_program_vector_ops_run_in_native_coeffgen():
     chain = [
-        ["const", "4", "1"],
+        ["push_const", "4", "1"],
         ["poke_tos", "1", "4"],
         ["poke_tos", "2", "2"],
         ["poke_tos", "3", "3"],
@@ -65,13 +66,13 @@ def test_coeff_program_vector_ops_run_in_native_coeffgen():
         ["rolr", "poly", "poly", "2"],
         ["add", "poly", "poly", "poly"],
         ["subtract", "poly", "poly", "poly"],
-        ["const", "4", "2"],
+        ["push_const", "4", "2"],
         ["emit"],
         ["multiply", "poly", "poly", "poly"],
         ["divide", "poly", "poly", "poly"],
         ["power", "poly", "poly", "poly"],
         ["angle", "poly", "poly"],
-        ["const", "4", "3+4j"],
+        ["push_const", "4", "3+4j"],
         ["emit"],
         ["mod", "poly", "poly"],
         ["abs", "poly", "poly"],
@@ -141,3 +142,51 @@ def test_coeff_program_littlewood_runs_in_native_coeffgen():
     })
     blended = _complex_f32_values(blended_data)
     assert all(abs(value.real - 9.0) <= 1e-6 and abs(value.imag) <= 1e-6 for value in blended)
+
+
+def test_coeff_program_exp_accepts_complex_multiplier_and_offset():
+    chain = [
+        ["legacy", "exp", "poly", "poly", "1+1j", "1"],
+    ]
+    _meta, data = _run_coeffgen({
+        "mode": "coeffgen",
+        "function": "const",
+        "cfpv": [1, 1, 0],
+        "n1": 1,
+        "n2": 1,
+        "coeff_transforms": [],
+        "coeff_program": _coeff_program_payload(chain),
+    })
+
+    values = _complex_f32_values(data)
+    assert len(values) == 1
+    expected = cmath.exp((1 + 0j) * (1 + 1j) + 1)
+    assert abs(values[0].real - expected.real) <= 1e-5
+    assert abs(values[0].imag - expected.imag) <= 1e-5
+
+
+def test_coeff_program_push_const_and_linspace_use_poly_len():
+    chain = [
+        ["push_const", "poly_len", "2+3j"],
+        ["emit"],
+        ["push_linspace", "poly_len"],
+        ["emit"],
+    ]
+    meta, data = _run_coeffgen({
+        "mode": "coeffgen",
+        "function": "const",
+        "cfpv": [4, 0, 0],
+        "n1": 1,
+        "n2": 1,
+        "coeff_transforms": [],
+        "coeff_program": _coeff_program_payload(chain),
+    })
+
+    assert meta["coeff_program_tokens"] == len(chain)
+    assert meta["n_coeffs"] == 4
+    values = _complex_f32_values(data)
+    expected = [0.0, 4.0 / 3.0, 8.0 / 3.0, 4.0]
+    assert len(values) == len(expected)
+    for got, want in zip(values, expected):
+        assert abs(got.real - want) <= 1e-6
+        assert abs(got.imag) <= 1e-6

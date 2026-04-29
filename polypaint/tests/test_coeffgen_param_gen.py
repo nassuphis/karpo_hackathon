@@ -337,6 +337,78 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
         self.assertEqual(captured_specs[0]["param_transforms"], [["rtheta", "1"]])
         self.assertNotIn("param_program", captured_specs[0])
 
+    @patch("handler_coeffgen.s3")
+    @patch("handler_coeffgen.os.remove")
+    @patch("handler_coeffgen.subprocess.run")
+    def test_degree_probe_resolves_coeff_program_macro(self, mock_run, mock_remove, mock_s3):
+        import handler_coeffgen as mod
+
+        saved = json.dumps({"chain": [["poly-rev"]]}).encode()
+        mock_s3.get_object.return_value = {
+            "Body": unittest.mock.MagicMock(read=lambda: saved)
+        }
+        captured_specs = []
+
+        def _run(_args, input=None, capture_output=None, text=None, timeout=None):
+            captured_specs.append(json.loads(input))
+            return _DummyCompleted(json.dumps({"degree": 7, "n_coeffs": 8, "data_bytes": 256}))
+
+        mock_run.side_effect = _run
+
+        result = mod.handle_degree_probe({
+            "pipeline_mode": "program",
+            "function": "const",
+            "param_transforms": [],
+            "coeff_transforms": [],
+            "coeff_program_chain": [["macro", "poly-test1"], ["poly-swirler"]],
+            "cfpv": [8, 1, 0],
+        })
+
+        body = json.loads(result["body"])
+        self.assertTrue(body["probe_stable"])
+        mock_s3.get_object.assert_called_once_with(
+            Bucket=mod.BUCKET,
+            Key="polypaint/coeff-programs/poly-test1.json",
+        )
+        self.assertEqual(captured_specs[0]["coeff_transforms"], [["rev"], ["swirler"]])
+        self.assertNotIn("coeff_program", captured_specs[0])
+
+    @patch("handler_coeffgen.s3")
+    @patch("handler_coeffgen.os.remove")
+    @patch("handler_coeffgen.subprocess.run")
+    def test_degree_probe_resolves_param_program_macro(self, mock_run, mock_remove, mock_s3):
+        import handler_coeffgen as mod
+
+        saved = json.dumps({"chain": [["legacy", "unit_circle", "both", "both"]]}).encode()
+        mock_s3.get_object.return_value = {
+            "Body": unittest.mock.MagicMock(read=lambda: saved)
+        }
+        captured_specs = []
+
+        def _run(_args, input=None, capture_output=None, text=None, timeout=None):
+            captured_specs.append(json.loads(input))
+            return _DummyCompleted(json.dumps({"degree": 7, "n_coeffs": 8, "data_bytes": 256}))
+
+        mock_run.side_effect = _run
+
+        result = mod.handle_degree_probe({
+            "pipeline_mode": "program",
+            "function": "const",
+            "param_transforms": [],
+            "param_program_chain": [["macro", "unit"]],
+            "coeff_transforms": [],
+            "cfpv": [8, 1, 0],
+        })
+
+        body = json.loads(result["body"])
+        self.assertTrue(body["probe_stable"])
+        mock_s3.get_object.assert_called_once_with(
+            Bucket=mod.BUCKET,
+            Key="polypaint/param-programs/unit.json",
+        )
+        self.assertEqual(captured_specs[0]["param_transforms"], [["unit_circle"]])
+        self.assertNotIn("param_program", captured_specs[0])
+
 
 if __name__ == "__main__":
     unittest.main()

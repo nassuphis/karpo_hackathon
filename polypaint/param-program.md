@@ -187,7 +187,7 @@ stack program.
 The VM should also support stack-native complex operations:
 
 ```text
-const(re, im)
+const(value)
 add
 subtract
 mul
@@ -210,6 +210,49 @@ swap
 pop
 flush
 ```
+
+### Scalar Expressions
+
+Any numeric Param Program argument can be a compiled scalar expression. The
+compiler parses expression strings once and emits bytecode; native row
+evaluation must not parse expression text.
+
+V1 expression identifiers:
+
+```text
+t1, t2     immutable input parameters
+p1, p2     current mutable output registers
+pi, pi2, pi2i    constants pi, 2*pi, and 2*pi*1j
+```
+
+V1 expression operators/functions:
+
+```text
++  -  *  /
+exp(x)
+real(x)
+imag(x)
+abs(x)
+mod(x)     alias for abs(x)
+```
+
+Expression-enabled fields:
+
+- `const(value)` accepts a complex expression.
+- Legacy numeric args accept expressions.
+- `moebius(a,b,c,d)` uses four complex expression fields.
+- `inv_t_plus_2(z1,z2)` uses two complex expression fields.
+- Shape parameters such as `rtheta(p)`, `crd(size)`, `rect(width,height,turns)`,
+  and `rrect(width,height,m)` use real expression fields.
+
+Selector/name/id fields are not expressions. `push(src)`, `emit(target)`,
+`legacy(name)`, `legacy(src)`, `legacy(tgt)`, and `macro(name)` remain
+compile-time selectors or ids.
+
+For real-only legacy arguments, complex expressions are rejected unless the user
+explicitly projects with `real(...)`, `imag(...)`, `abs(...)`, or `mod(...)`.
+Old `const(re, im)` saved forms remain accepted and are normalized to
+`const(value)` on load/save.
 
 V1 should start smaller:
 
@@ -325,7 +368,7 @@ Every chip needs an explicit stack/register effect. This table is part of the
 compiler contract, not just documentation.
 
 ```text
-const(re, im)       pops 0, pushes 1, writes none
+const(value)        pops 0, pushes 1, writes none
 push(t1)            pops 0, pushes 1, writes none
 push(t2)            pops 0, pushes 1, writes none
 push(both)          pops 0, pushes 2, writes none
@@ -540,7 +583,7 @@ push(t1); push(t2); subtract; emit(p2)
 
 # Use t2 to modulate a transform of t1.
 push(t1); unit_circle;
-push(t2); const(0, 6.283185307179586); mul; exp;
+push(t2); const(6.283185307179586j); mul; exp;
 mul; emit(p1)
 
 # Reuse a named construction, then override only p2.
@@ -915,7 +958,7 @@ Suggested chip categories:
 
 - Input: `push(t1)`, `push(t2)`, `push(both)`
 - Output: `emit(p1)`, `emit(p2)`
-- Constants: `const(re, im)`
+- Constants: `const(value)`
 - Stack: `duplicate`, `swap`, `pop`, `flush`
 - Complex arithmetic: `add`, `subtract`, `mul`, `div`, `pow`
 - Unary complex: `conj`, `negate`, `reciprocal`, `exp`
@@ -1336,7 +1379,7 @@ Stack/input/output chips:
 ```text
 push(source=t1|t2|both)
 emit(target=p1|p2)
-const(re, im)
+const(value)
 duplicate
 swap
 pop

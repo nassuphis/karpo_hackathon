@@ -218,3 +218,42 @@ def test_coeff_program_scalar_expr_reads_cf_poly_tos_and_poly_len():
     for got, want in zip(values, expected):
         assert abs(got.real - want) <= 1e-6
         assert abs(got.imag) <= 1e-6
+
+
+def test_coeff_program_scalar_expr_reads_source_t1_t2_in_chunked_mode():
+    chain = [
+        ["poke_poly", "0", "t1 + t2 + p1 + p2"],
+    ]
+    params = []
+    for _ in range(4):
+        params.extend([9.0, 0.0, 11.0, 0.0])
+    with tempfile.NamedTemporaryFile(prefix="pp_coeff_program_params_", suffix=".bin", delete=False) as fh:
+        params_path = fh.name
+        fh.write(struct.pack("<" + "f" * len(params), *params))
+    try:
+        meta, data = _run_coeffgen({
+            "mode": "coeffgen_chunked",
+            "function": "const",
+            "cfpv": [1, 0, 0],
+            "params_file": params_path,
+            "step_start": 0,
+            "source_step_start": 0,
+            "source_n1": 2,
+            "source_n2": 2,
+            "step_count": 4,
+            "coeff_transforms": [],
+            "coeff_program": _coeff_program_payload(chain),
+        })
+    finally:
+        try:
+            os.remove(params_path)
+        except FileNotFoundError:
+            pass
+
+    assert meta["coeff_program_tokens"] == len(chain)
+    values = _complex_f32_values(data)
+    expected = [20.0, 20.5, 21.0, 20.5]
+    assert len(values) == len(expected)
+    for got, want in zip(values, expected):
+        assert abs(got.real - want) <= 1e-6
+        assert abs(got.imag) <= 1e-6

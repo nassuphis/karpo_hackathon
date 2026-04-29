@@ -215,6 +215,7 @@ def handle_build_plan(params):
             param_program = {
                 **param_program_metadata,
                 "tokens": compiled_param_program["tokens"],
+                "scalar_exprs": compiled_param_program.get("scalar_exprs", []),
             }
     coeff_program_chain = run_params.get("coeff_program_chain") if pipeline_mode == "program" else []
     coeff_program = None

@@ -257,11 +257,50 @@ Rules:
   instead of scrolling down.
 - Enable both vertical and horizontal overflow so long chip formulas remain
   readable without changing the editor height.
-- Expression inputs inside chips must be wide enough to read realistic
-  expressions. Do not use the compact numeric width for fields such as
-  `poke_poly` values or scalar expressions.
 - Param Program and Coeff Program editors should visually match the Solve Score
   chip editor unless there is a deliberate workflow reason to differ.
+
+### Chip Input Widths
+
+Chip editors must size text inputs by the kind of value the user is expected to
+type, not by whatever compact numeric width happens to fit the row. This applies
+to all program editors: Solve Score, Param Program, Coeff Program, and any
+future chip pipeline.
+
+Rules:
+
+- Expression/value fields must be wide enough that typical useful inputs are
+  visible without horizontal scrolling inside the input.
+- Do not give expression/value fields the same width as short selectors.
+- Selector fields such as `src`, `tgt`, `mode`, `target`, and `emit` can be
+  compact, but must still show the full selected value.
+- Program ids, macro names, complex expressions, and formulas must be wide.
+- Inputs for chip parameters that accept expressions should normally be at least
+  `18ch`, and complex/formula-heavy fields should normally be `28ch` or wider.
+- Very short numeric-only fields may be compact only when the value is truly a
+  small scalar, for example a mode count, integer limit, or percentage.
+- If a chip mixes selectors and expressions, give selectors the small columns
+  and reserve the remaining row width for the expression fields.
+- If the row cannot fit readable expression fields, allow the chip row to scroll
+  horizontally inside the fixed editor region. Do not shrink fields until the
+  text becomes unreadable.
+
+Bad:
+
+- `poke_poly` value field with only a few visible characters.
+- Param `const` split into narrow `re` / `im` inputs when the user needs to type
+  `100j*p1`.
+- Coeff `push_const` or `poke_tos` expression inputs narrower than selector
+  dropdowns.
+- Solve Score chip parameters that hide most of a metric/formula-like value.
+
+Good:
+
+- `src` and `tgt` dropdowns are compact.
+- `value`, `expr`, `program id`, `macro`, `a`, `b`, `pow`, and `andy` fields are
+  sized according to the expected text length.
+- Long expressions remain readable via a wide field or horizontal chip-strip
+  scrolling, without changing the editor height.
 
 ### Color Inputs
 

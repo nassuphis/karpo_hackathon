@@ -404,6 +404,7 @@ def handle_coeffgen_chunked(params):
             f.write(params_data)
 
         bin_path = f"/tmp/coeffs_chunk_{chunk_idx}.bin"
+        grid_n = int(params.get("N") or params.get("n1") or 0)
 
         spec = {
             "mode": "coeffgen_chunked",
@@ -411,9 +412,13 @@ def handle_coeffgen_chunked(params):
             "coeff_transforms": contract_param(params, "coeff_transforms", [], contract_warnings),
             "params_file": params_file,
             "step_start": 0,  # file contains only our slice
+            "source_step_start": params_step_start,
             "step_count": step_count,
             "n_threads": coeffgen_threads,
         }
+        if grid_n > 0:
+            spec["source_n1"] = grid_n
+            spec["source_n2"] = grid_n
         if _pipeline_mode_from_params(params) == "program":
             spec["coeff_transforms"], coeff_program = _resolve_coeff_program(params, [])
             if coeff_program:
@@ -611,6 +616,7 @@ def handle_degree_probe(params):
                 "token_count": compiled_param_program["token_count"],
                 "uses_legacy_fast_path": compiled_param_program["uses_legacy_fast_path"],
                 "tokens": compiled_param_program["tokens"],
+                "scalar_exprs": compiled_param_program.get("scalar_exprs", []),
             }
     cfpv = params.get("cfpv")
     if cfpv in (None, ""):

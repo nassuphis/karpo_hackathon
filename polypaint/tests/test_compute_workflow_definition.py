@@ -198,12 +198,14 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
         self.assertEqual(coeffgen["params_key.$"], "$$.Map.Item.Value.params_key")
         self.assertEqual(coeffgen["params_step_start.$"], "$$.Map.Item.Value.params_step_start")
         self.assertEqual(coeffgen["params_step_count.$"], "$$.Map.Item.Value.params_step_count")
+        self.assertEqual(coeffgen["N.$"], "$.plan.compute.N")
         self.assertEqual(coeffgen["n_threads.$"], "$.plan.compute.coeffgen_threads")
 
         lores_coeffgen = self.states["LoresCoeffgenTask"]["Parameters"]["Payload"]
         self.assertEqual(lores_coeffgen["function.$"], "$.plan.pipeline.function")
         self.assertEqual(lores_coeffgen["coeff_transforms.$"], "$.plan.pipeline.coeff_transforms")
         self.assertEqual(lores_coeffgen["cfpv.$"], "$.plan.pipeline.cfpv")
+        self.assertEqual(lores_coeffgen["N.$"], "$.post.lores.N")
         self.assertEqual(lores_coeffgen["n_threads.$"], "$.post.lores.coeffgen_threads")
 
     def test_solve_tasks_forward_chunk_and_solver_fields(self):

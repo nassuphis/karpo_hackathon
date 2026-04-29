@@ -33,6 +33,7 @@ def _native_payload(chain):
     return {
         "version": 1,
         "tokens": compiled["tokens"],
+        "scalar_exprs": compiled.get("scalar_exprs", []),
         "stack_max": compiled["stack_max"],
         "uses_legacy_fast_path": compiled["uses_legacy_fast_path"],
     }
@@ -146,4 +147,47 @@ def test_param_dump_stack_program_expresses_sum_difference():
     }
     meta, data = _run_sweep(spec, "/tmp/pp_param_dump_sumdiff.bin")
     assert meta["param_program_tokens"] == 8
+    assert len(data) == 8 * 8 * 16
+
+
+def test_param_dump_dynamic_const_expression_matches_stack_program():
+    expr_spec = {
+        "mode": "param_dump",
+        "n1": 8,
+        "n2": 8,
+        "param_program": _native_payload([
+            ["const", "t1+t2"],
+            ["emit", "p1"],
+            ["const", "p1*2"],
+            ["emit", "p2"],
+        ]),
+    }
+    expr_meta, expr_data = _run_sweep(expr_spec, "/tmp/pp_param_dump_expr.bin")
+    ref_spec = {
+        "mode": "param_dump",
+        "n1": 8,
+        "n2": 8,
+        "param_program": _native_payload([
+            ["const", "t1+t2"],
+            ["emit", "p1"],
+            ["const", "(t1+t2)*2"],
+            ["emit", "p2"],
+        ]),
+    }
+    _ref_meta, ref_data = _run_sweep(ref_spec, "/tmp/pp_param_dump_expr_ref.bin")
+    assert expr_meta["param_program_tokens"] == 4
+    assert expr_data == ref_data
+
+
+def test_param_dump_dynamic_legacy_arg_runs_native_vm():
+    spec = {
+        "mode": "param_dump",
+        "n1": 8,
+        "n2": 8,
+        "param_program": _native_payload([
+            ["legacy", "rtheta", "both", "both", "abs(p1)+0.5"],
+        ]),
+    }
+    meta, data = _run_sweep(spec, "/tmp/pp_param_dump_dyn_legacy.bin")
+    assert meta["param_program_tokens"] == 1
     assert len(data) == 8 * 8 * 16

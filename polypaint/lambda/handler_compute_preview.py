@@ -309,6 +309,7 @@ def _compile_compute_inputs(params):
                 "token_count": compiled_param_program["token_count"],
                 "uses_legacy_fast_path": compiled_param_program["uses_legacy_fast_path"],
                 "tokens": compiled_param_program["tokens"],
+                "scalar_exprs": compiled_param_program.get("scalar_exprs", []),
             }
 
     if coeff_program_chain:

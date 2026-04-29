@@ -63,6 +63,8 @@ EXPR_POLY_LEN = 12
 EXPR_CF_AT = 13
 EXPR_POLY_AT = 14
 EXPR_TOS_AT = 15
+EXPR_T1 = 16
+EXPR_T2 = 17
 
 _OP_NAMES = {
     COEFF_OP_CONST: "push_const",
@@ -389,6 +391,12 @@ _EXPR_TOKEN_RE = re.compile(
     r"\s*(?:(?P<number>(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?)(?P<imag>[ijIJ])?|(?P<ident>[A-Za-z_][A-Za-z0-9_]*)|(?P<op>[()+\-*/]))"
 )
 
+_EXPR_CONSTANTS = {
+    "pi": complex(math.pi, 0.0),
+    "pi2": complex(2.0 * math.pi, 0.0),
+    "pi2i": complex(0.0, 2.0 * math.pi),
+}
+
 
 class _ExpressionParser:
     def __init__(self, text):
@@ -493,10 +501,27 @@ class _ExpressionParser:
                 dynamic=False,
             )
         if token_type == "ident":
+            if token_value in {"i", "j"}:
+                return _Expr(
+                    [{"op": EXPR_LITERAL, "a": 0.0, "b": 1.0}],
+                    kind="complex",
+                    dynamic=False,
+                )
+            if token_value in _EXPR_CONSTANTS:
+                value = _EXPR_CONSTANTS[token_value]
+                return _Expr(
+                    [{"op": EXPR_LITERAL, "a": value.real, "b": value.imag}],
+                    kind="complex" if value.imag else "real",
+                    dynamic=False,
+                )
             if token_value == "p1":
                 return _Expr([{"op": EXPR_P1}], kind="complex", dynamic=True)
             if token_value == "p2":
                 return _Expr([{"op": EXPR_P2}], kind="complex", dynamic=True)
+            if token_value == "t1":
+                return _Expr([{"op": EXPR_T1}], kind="complex", dynamic=True)
+            if token_value == "t2":
+                return _Expr([{"op": EXPR_T2}], kind="complex", dynamic=True)
             if token_value == "poly_len":
                 return _Expr([{"op": EXPR_POLY_LEN}], kind="real", dynamic=True)
             match = re.fullmatch(r"(cf|poly|tos)(\d+)", token_value)

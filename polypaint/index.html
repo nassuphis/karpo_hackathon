@@ -99,27 +99,31 @@ button {
     color: #e0e0e0; font-size: 11px; text-align: center;
 }
 .chip .chip-input-wide {
-    width: 180px;
+    width: 24ch;
     text-align: left;
 }
 .chip .chip-input-complex-wide {
-    width: 180px;
+    width: 30ch;
     text-align: left;
 }
 .chip .chip-input-program-wide {
-    width: 180px;
+    width: 30ch;
     text-align: left;
 }
 .chip .chip-input-function-wide {
-    width: 120px;
+    width: 16ch;
     text-align: left;
 }
 .chip .chip-input-expr-wide {
-    width: 108px;
+    width: 28ch;
     text-align: left;
 }
 .chip .chip-input-selector-wide {
-    width: 54px;
+    width: 8ch;
+    text-align: left;
+}
+.chip .chip-input-param-program-wide {
+    width: 14ch;
     text-align: left;
 }
 .chip .chip-param-pair {
@@ -11237,33 +11241,31 @@ const _paramProgramLegacyTargetArgIndexes = {
 };
 
 const _paramProgramLegacyArgSpecs = {
-    rtheta: [{ ph: 'p', def: '1' }],
+    rtheta: [{ ph: 'p', def: '1', scalarExpr: true, exprWide: true, title: 'Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers.' }],
     moebius: [
-        { ph: 'a', def: '1', complex: true },
-        { ph: 'b', def: '0', complex: true },
-        { ph: 'c', def: '0', complex: true },
-        { ph: 'd', def: '1', complex: true },
+        { ph: 'a', def: '1', scalarExpr: true, complexWide: true, title: 'Complex expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Functions: exp, real, imag, abs, mod.' },
+        { ph: 'b', def: '0', scalarExpr: true, complexWide: true, title: 'Complex expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Functions: exp, real, imag, abs, mod.' },
+        { ph: 'c', def: '0', scalarExpr: true, complexWide: true, title: 'Complex expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Functions: exp, real, imag, abs, mod.' },
+        { ph: 'd', def: '1', scalarExpr: true, complexWide: true, title: 'Complex expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Functions: exp, real, imag, abs, mod.' },
     ],
     inv_t_plus_2: [
-        { ph: 're1', def: '2' },
-        { ph: 'im1', def: '0' },
-        { ph: 're2', def: '2' },
-        { ph: 'im2', def: '0' },
+        { ph: 'z1', def: '2', scalarExpr: true, complexWide: true, title: 'Complex expression for the first offset.' },
+        { ph: 'z2', def: '2', scalarExpr: true, complexWide: true, title: 'Complex expression for the second offset.' },
     ],
-    crd: [{ ph: 'size', def: '1' }],
-    hrt: [{ ph: 'size', def: '1' }, { ph: 'turns', def: '0' }],
-    spdl: [{ ph: 'va', def: '0.5' }, { ph: 'vb', def: '0.2' }, { ph: 'vp', def: '1.5' }],
-    lmc: [{ ph: 'a', def: '0.3' }, { ph: 'b', def: '0.5' }],
-    rsc: [{ ph: 'amp', def: '0.5' }, { ph: 'k', def: '2' }],
-    lss: [{ ph: 'A', def: '0.5' }, { ph: 'B', def: '0.5' }, { ph: 'a', def: '3' }, { ph: 'b', def: '2' }, { ph: 'phase', def: '0.5' }],
-    ast: [{ ph: 'scale', def: '1' }],
-    asp: [{ ph: 'a', def: '0' }, { ph: 'b', def: '0.1' }],
-    lsp: [{ ph: 'a', def: '0.1' }, { ph: 'b', def: '0.15' }],
-    dlt: [{ ph: 'R', def: '1' }],
-    rply: [{ ph: 'sides', def: '5' }, { ph: 'radius', def: '1' }, { ph: 'turns', def: '0' }],
-    star: [{ ph: 'points', def: '5' }, { ph: 'outer', def: '1' }, { ph: 'inner', def: '0.5' }],
-    rect: [{ ph: 'width', def: '2' }, { ph: 'height', def: '1' }, { ph: 'turns', def: '0' }],
-    rrect: [{ ph: 'width', def: '2' }, { ph: 'height', def: '1' }, { ph: 'm', def: '4' }],
+    crd: [{ ph: 'size', def: '1', scalarExpr: true, exprWide: true }],
+    hrt: [{ ph: 'size', def: '1', scalarExpr: true, exprWide: true }, { ph: 'turns', def: '0', scalarExpr: true, exprWide: true }],
+    spdl: [{ ph: 'va', def: '0.5', scalarExpr: true, exprWide: true }, { ph: 'vb', def: '0.2', scalarExpr: true, exprWide: true }, { ph: 'vp', def: '1.5', scalarExpr: true, exprWide: true }],
+    lmc: [{ ph: 'a', def: '0.3', scalarExpr: true, exprWide: true }, { ph: 'b', def: '0.5', scalarExpr: true, exprWide: true }],
+    rsc: [{ ph: 'amp', def: '0.5', scalarExpr: true, exprWide: true }, { ph: 'k', def: '2', scalarExpr: true, exprWide: true }],
+    lss: [{ ph: 'A', def: '0.5', scalarExpr: true, exprWide: true }, { ph: 'B', def: '0.5', scalarExpr: true, exprWide: true }, { ph: 'a', def: '3', scalarExpr: true, exprWide: true }, { ph: 'b', def: '2', scalarExpr: true, exprWide: true }, { ph: 'phase', def: '0.5', scalarExpr: true, exprWide: true }],
+    ast: [{ ph: 'scale', def: '1', scalarExpr: true, exprWide: true }],
+    asp: [{ ph: 'a', def: '0', scalarExpr: true, exprWide: true }, { ph: 'b', def: '0.1', scalarExpr: true, exprWide: true }],
+    lsp: [{ ph: 'a', def: '0.1', scalarExpr: true, exprWide: true }, { ph: 'b', def: '0.15', scalarExpr: true, exprWide: true }],
+    dlt: [{ ph: 'R', def: '1', scalarExpr: true, exprWide: true }],
+    rply: [{ ph: 'sides', def: '5', scalarExpr: true, exprWide: true }, { ph: 'radius', def: '1', scalarExpr: true, exprWide: true }, { ph: 'turns', def: '0', scalarExpr: true, exprWide: true }],
+    star: [{ ph: 'points', def: '5', scalarExpr: true, exprWide: true }, { ph: 'outer', def: '1', scalarExpr: true, exprWide: true }, { ph: 'inner', def: '0.5', scalarExpr: true, exprWide: true }],
+    rect: [{ ph: 'width', def: '2', scalarExpr: true, exprWide: true }, { ph: 'height', def: '1', scalarExpr: true, exprWide: true }, { ph: 'turns', def: '0', scalarExpr: true, exprWide: true }],
+    rrect: [{ ph: 'width', def: '2', scalarExpr: true, exprWide: true }, { ph: 'height', def: '1', scalarExpr: true, exprWide: true }, { ph: 'm', def: '4', scalarExpr: true, exprWide: true }],
 };
 
 const _ppCategoryMeta = {
@@ -11277,18 +11279,18 @@ const _ppCategoryMeta = {
 const _ppCatalog = {
     push: {
         category: 'io',
-        params: [{ ph: 'src', def: 't1', choices: ['t1', 't2', 'both'] }],
+        params: [{ ph: 'src', def: 't1', choices: ['t1', 't2', 'both'], selectorWide: true }],
         desc: 'push t1, t2, or both onto the stack',
     },
     emit: {
         category: 'io',
-        params: [{ ph: 'target', def: 'p1', choices: ['p1', 'p2'] }],
+        params: [{ ph: 'target', def: 'p1', choices: ['p1', 'p2'], selectorWide: true }],
         desc: 'pop one stack value into output register p1 or p2',
     },
     const: {
         category: 'io',
-        params: [{ ph: 're', def: '0' }, { ph: 'im', def: '0' }],
-        desc: 'push a complex constant',
+        params: [{ ph: 'value', def: '0', scalarExpr: true, complexWide: true, title: 'Complex expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Functions: exp, real, imag, abs, mod.' }],
+        desc: 'push a complex expression value',
     },
     macro: {
         category: 'bridge',
@@ -11326,10 +11328,10 @@ const _ppCatalog = {
     legacy: {
         category: 'bridge',
         params: [
-            { ph: 'name', def: 'unit_circle', choices: _paramProgramLegacyNames },
-            { ph: 'src', def: 'both', choices: ['p1', 'p2', 'both', 'pop1', 'pop2'] },
-            { ph: 'tgt', def: 'both', choices: ['p1', 'p2', 'both', 'push1', 'push2'] },
-            { ph: 'args', def: '' },
+            { ph: 'name', def: 'unit_circle', choices: _paramProgramLegacyNames, paramProgramWide: true },
+            { ph: 'src', def: 'both', choices: ['p1', 'p2', 'both', 'pop1', 'pop2'], selectorWide: true },
+            { ph: 'tgt', def: 'both', choices: ['p1', 'p2', 'both', 'push1', 'push2'], selectorWide: true },
+            { ph: 'args', def: '', scalarExpr: true, complexWide: true },
         ],
         desc: 'call an existing param transform with explicit source and target selectors',
     },
@@ -11499,7 +11501,7 @@ const _ssCatalog = (() => {
     return catalog;
 })();
 
-const _cpScalarExprHelp = 'Program mode accepts p1/p2, poly_len, cfN, polyN, tosN, literals, + - * /, and conj/real/imag.';
+const _cpScalarExprHelp = 'Program mode accepts t1/t2, p1/p2, poly_len, cfN, polyN, tosN, pi, pi2, pi2i, literals, + - * /, and conj/real/imag.';
 const _ctAndyParam = { ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: `Blend amount in [0,1]. ${_cpScalarExprHelp} In Chain mode it must be numeric.` };
 const _ctCategoryMeta = {
     structural: { title: 'Structural', help: 'reorder, normalize, sanitize, or resize the coefficient vector' },
@@ -11622,7 +11624,7 @@ const _cpCatalog = (() => {
     const catalog = {
         push: {
             category: 'io',
-            params: [{ ph: 'src', def: 'cf', choices: ['cf', 'poly'] }],
+            params: [{ ph: 'src', def: 'cf', choices: ['cf', 'poly'], paramProgramWide: true }],
             desc: 'push a copy of cf or current poly',
         },
         push_const: {
@@ -11630,9 +11632,9 @@ const _cpCatalog = (() => {
             label: 'push_const',
             params: [
                 { ph: 'length|poly_len', label: 'length', def: 'poly_len', lengthArg: true, title: 'Vector length. Use poly_len to match the current poly vector, or an integer 1..256.' },
-                { ph: 'value expr', label: 'value', def: '1', scalarExpr: 'complex', title: `Scalar expression for every coefficient. ${_cpScalarExprHelp} t1/t2 are not available here.` },
+                { ph: 'value expr', label: 'value', def: '1', scalarExpr: 'complex', title: `Scalar expression for every coefficient. ${_cpScalarExprHelp}` },
             ],
-            desc: 'push push_const(length, value); value is a scalar expression over p1/p2, not t1/t2',
+            desc: 'push push_const(length, value); value is a scalar expression over t1/t2, p1/p2, and coeff registers',
         },
         push_linspace: {
             category: 'io',
@@ -12729,6 +12731,19 @@ function _paramProgramMoebiusArgsForUi(args) {
     return defaults.map((fallback, idx) => values[idx] || fallback);
 }
 
+function _paramProgramInvTPlus2ArgsForUi(args) {
+    const defaults = ['2', '2'];
+    if (!Array.isArray(args) || !args.length) return [];
+    const values = args.map(v => String(v == null ? '' : v).trim());
+    if (values.length >= 4) {
+        return [
+            _formatParamProgramComplexArg(values[0], values[1]),
+            _formatParamProgramComplexArg(values[2], values[3]),
+        ];
+    }
+    return defaults.map((fallback, idx) => values[idx] || fallback);
+}
+
 function _paramProgramLegacyArgsFromInput(legacyName, argsInput, options = {}) {
     const argDefs = _paramProgramLegacyArgDefs(legacyName);
     let rawArgs = [];
@@ -12745,6 +12760,9 @@ function _paramProgramLegacyArgsFromInput(legacyName, argsInput, options = {}) {
     if (_paramProgramLegacyTakesNoArgs(legacyName)) return [];
     if (String(legacyName || '').trim() === 'moebius') {
         return _paramProgramMoebiusArgsForUi(rawArgs.length ? rawArgs : (options.fillDefaults ? ['1', '0', '0', '1'] : []));
+    }
+    if (String(legacyName || '').trim() === 'inv_t_plus_2') {
+        return _paramProgramInvTPlus2ArgsForUi(rawArgs.length ? rawArgs : (options.fillDefaults ? ['2', '2'] : []));
     }
     if (!argDefs) return rawArgs.filter(v => v !== '');
     if (!options.fillDefaults && !rawArgs.length) return [];
@@ -12845,9 +12863,13 @@ function _serializeParamProgramChain() {
             return ['legacy', legacyName, src, tgt, ...args];
         }
         if (name === 'const') {
-            const re = String(params[0] || '0').trim() || '0';
-            const im = String(params[1] || '0').trim() || '0';
-            return im === '0' || im === '0.0' ? ['const', re] : ['const', re, im];
+            if (params.length >= 2) {
+                const re = String(params[0] || '0').trim() || '0';
+                const im = String(params[1] || '0').trim() || '0';
+                return ['const', `(${re})+(${im})*1j`];
+            }
+            const value = String(params[0] || '0').trim() || '0';
+            return ['const', value];
         }
         const spec = _ppCatalog[name] || {};
         const pDefs = spec.params || [];
@@ -12985,6 +13007,11 @@ function _normalizeParamProgramChain(rawChain) {
         if (Array.isArray(item) && item.length) {
             const name = String(item[0] || '').trim();
             if (!name) return [];
+            if (name === 'const' && item.length >= 3) {
+                const re = String(item[1] == null ? '0' : item[1]).trim() || '0';
+                const im = String(item[2] == null ? '0' : item[2]).trim() || '0';
+                return [{ name: 'const', params: [`(${re})+(${im})*1j`] }];
+            }
             if (name === 'legacy') {
                 const [legacyName, src, tgt, args] = _normalizeLegacyBridgeParams(
                     item[1],
@@ -13334,13 +13361,15 @@ function _chipReadonlyValueHtml(value, paramDef = {}, title = '') {
     const pd = paramDef || {};
     const fallback = pd.def == null ? '' : pd.def;
     const text = String(value == null || value === '' ? fallback : value);
-    const titleAttr = title ? ` title="${_escapeHtml(title)}"` : '';
+    const tooltip = title || pd.title || '';
+    const titleAttr = tooltip ? ` title="${_escapeHtml(tooltip)}"` : '';
     const clsParts = ['chip-input', 'chip-input-readonly'];
     if (pd.selectorWide) clsParts.push('chip-input-selector-wide');
     if (pd.functionWide) clsParts.push('chip-input-function-wide');
     if (pd.complexWide) clsParts.push('chip-input-complex-wide');
     if (pd.exprWide) clsParts.push('chip-input-expr-wide');
     if (pd.programWide) clsParts.push('chip-input-program-wide');
+    if (pd.paramProgramWide) clsParts.push('chip-input-param-program-wide');
     if (pd.wide === true || (pd.scalarExpr && !pd.complexWide && !pd.exprWide)) clsParts.push('chip-input-wide');
     if (pd.ph === 'andy') clsParts.push('chip-input-andy');
     return `<span class="${clsParts.join(' ')}"${titleAttr}>${_escapeHtml(text)}</span>`;
@@ -13349,7 +13378,10 @@ function _chipReadonlyValueHtml(value, paramDef = {}, title = '') {
 function _chipInputHtml(which, chipIdx, paramIdx, value, paramDef, options = {}) {
     const pd = paramDef || {};
     if (options.readonly) return _chipReadonlyValueHtml(value, pd);
-    const titleAttr = pd.title ? ` title="${_escapeHtml(pd.title)}"` : '';
+    const defaultExprTitle = pd.scalarExpr
+        ? 'Expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Functions: exp, real, imag, abs, mod.'
+        : '';
+    const titleAttr = (pd.title || defaultExprTitle) ? ` title="${_escapeHtml(pd.title || defaultExprTitle)}"` : '';
     if (pd.target) {
         const normalizedValue = _normalizeTarget(String(value == null ? '' : value)) || _normalizeTarget(String(pd.def || 'both')) || 'both';
         const options = ['t1', 't2', 'both'].map(choice => {
@@ -13367,6 +13399,7 @@ function _chipInputHtml(which, chipIdx, paramIdx, value, paramDef, options = {})
         const clsParts = ['chip-input'];
         if (pd.selectorWide) clsParts.push('chip-input-selector-wide');
         if (pd.functionWide) clsParts.push('chip-input-function-wide');
+        if (pd.paramProgramWide) clsParts.push('chip-input-param-program-wide');
         if (pd.choiceWide || pd.wide === true) clsParts.push('chip-input-wide');
         return `<select class="${clsParts.join(' ')}"${titleAttr} onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">${options}</select>`;
     }
@@ -13376,6 +13409,7 @@ function _chipInputHtml(which, chipIdx, paramIdx, value, paramDef, options = {})
     if (pd.complexWide) clsParts.push('chip-input-complex-wide');
     if (pd.exprWide) clsParts.push('chip-input-expr-wide');
     if (pd.programWide) clsParts.push('chip-input-program-wide');
+    if (pd.paramProgramWide) clsParts.push('chip-input-param-program-wide');
     if (pd.wide === true || (pd.scalarExpr && !pd.complexWide && !pd.exprWide)) clsParts.push('chip-input-wide');
     const cls = clsParts.join(' ');
     return `<input class="${cls}" type="text" inputmode="${im}" value="${_escapeHtml(value)}" placeholder="${_escapeHtml(pd.ph || '')}"${titleAttr} onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">`;

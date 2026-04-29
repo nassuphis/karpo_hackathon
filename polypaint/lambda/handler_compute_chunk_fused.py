@@ -166,6 +166,8 @@ def handle_fused_chunk(params):
                 coeff_program=coeff_program,
                 cfpv=cfpv,
                 params_path=params_path,
+                n=n,
+                source_step_start=step_start,
                 step_count=step_count,
                 fused_threads=fused_threads,
             )
@@ -301,13 +303,16 @@ def _run_param_gen_local(*, output_path, n, times, step_start, step_count, param
     return meta
 
 
-def _run_coeffgen_local(*, output_path, function_name, coeff_transforms, cfpv, params_path, step_count, fused_threads, coeff_program=None):
+def _run_coeffgen_local(*, output_path, function_name, coeff_transforms, cfpv, params_path, n, source_step_start, step_count, fused_threads, coeff_program=None):
     spec = {
         "mode": "coeffgen_chunked",
         "function": function_name,
         "coeff_transforms": list(coeff_transforms or []),
         "params_file": params_path,
         "step_start": 0,
+        "source_step_start": int(source_step_start),
+        "source_n1": int(n),
+        "source_n2": int(n),
         "step_count": step_count,
         "n_threads": fused_threads,
     }

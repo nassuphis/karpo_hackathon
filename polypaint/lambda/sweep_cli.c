@@ -3377,7 +3377,9 @@ enum CoeffExprOp {
     COEFF_EXPR_POLY_LEN = 12,
     COEFF_EXPR_CF_AT = 13,
     COEFF_EXPR_POLY_AT = 14,
-    COEFF_EXPR_TOS_AT = 15
+    COEFF_EXPR_TOS_AT = 15,
+    COEFF_EXPR_T1 = 16,
+    COEFF_EXPR_T2 = 17
 };
 
 typedef struct {
@@ -3664,6 +3666,7 @@ static int parseCoeffProgram(const char *buf, CoeffProgram *program) {
 
 static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
                                double p1r, double p1i, double p2r, double p2i,
+                               double t1r, double t1i, double t2r, double t2i,
                                const double *cfRe, const double *cfIm, int cfLen,
                                const CoeffProgramWorkspace *ws,
                                double *outR, double *outI) {
@@ -3680,6 +3683,7 @@ static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
         double a = expr->nums[pc + 1];
         double b = expr->nums[pc + 2];
         if (op == COEFF_EXPR_LITERAL || op == COEFF_EXPR_P1 || op == COEFF_EXPR_P2 ||
+            op == COEFF_EXPR_T1 || op == COEFF_EXPR_T2 ||
             op == COEFF_EXPR_POLY_LEN || op == COEFF_EXPR_CF_AT ||
             op == COEFF_EXPR_POLY_AT || op == COEFF_EXPR_TOS_AT) {
             if (sp >= (int)(sizeof(stackR) / sizeof(stackR[0]))) return 1;
@@ -3689,6 +3693,10 @@ static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
                 stackR[sp] = p1r; stackI[sp] = p1i;
             } else if (op == COEFF_EXPR_P2) {
                 stackR[sp] = p2r; stackI[sp] = p2i;
+            } else if (op == COEFF_EXPR_T1) {
+                stackR[sp] = t1r; stackI[sp] = t1i;
+            } else if (op == COEFF_EXPR_T2) {
+                stackR[sp] = t2r; stackI[sp] = t2i;
             } else if (op == COEFF_EXPR_POLY_LEN) {
                 stackR[sp] = ws ? (double)ws->poly_len : 0.0; stackI[sp] = 0.0;
             } else {
@@ -3765,6 +3773,7 @@ static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
 
 static int coeffArgValue(const CoeffProgram *program, const CoeffProgramToken *tok, int idx,
                          double p1r, double p1i, double p2r, double p2i,
+                         double t1r, double t1i, double t2r, double t2i,
                          const double *cfRe, const double *cfIm, int cfLen,
                          const CoeffProgramWorkspace *ws,
                          double *outR, double *outI) {
@@ -3776,7 +3785,9 @@ static int coeffArgValue(const CoeffProgram *program, const CoeffProgramToken *t
                     ref, program->scalar_expr_count);
             return 1;
         }
-        return coeffEvalScalarExpr(program, ref, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, outR, outI);
+        return coeffEvalScalarExpr(program, ref, p1r, p1i, p2r, p2i,
+                                   t1r, t1i, t2r, t2i,
+                                   cfRe, cfIm, cfLen, ws, outR, outI);
     }
     *outR = tok->args[idx];
     *outI = tok->args_im[idx];
@@ -3785,6 +3796,7 @@ static int coeffArgValue(const CoeffProgram *program, const CoeffProgramToken *t
 
 static int coeffAndyValue(const CoeffProgram *program, const CoeffProgramToken *tok,
                           double p1r, double p1i, double p2r, double p2i,
+                          double t1r, double t1i, double t2r, double t2i,
                           const double *cfRe, const double *cfIm, int cfLen,
                           const CoeffProgramWorkspace *ws,
                           double *out) {
@@ -3796,7 +3808,9 @@ static int coeffAndyValue(const CoeffProgram *program, const CoeffProgramToken *
                     tok->andy_expr_ref, program->scalar_expr_count);
             return 1;
         }
-        if (coeffEvalScalarExpr(program, tok->andy_expr_ref, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &ar, &ai) != 0) {
+        if (coeffEvalScalarExpr(program, tok->andy_expr_ref, p1r, p1i, p2r, p2i,
+                                t1r, t1i, t2r, t2i,
+                                cfRe, cfIm, cfLen, ws, &ar, &ai) != 0) {
             return 1;
         }
         if (fabs(ai) > 1e-12 || !isfinite(ar)) {
@@ -4056,12 +4070,14 @@ static int coeffProgramLittlewoodOp(const CoeffProgram *program,
                                     int tokenIndex,
                                     uint64_t evalSeed,
                                     double p1r, double p1i,
-                                    double p2r, double p2i) {
+                                    double p2r, double p2i,
+                                    double t1r, double t1i,
+                                    double t2r, double t2i) {
     double aR = 0.0, aI = 0.0, bR = 0.0, bI = 0.0, andy = 0.0, andyI = 0.0;
-    if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &aR, &aI) != 0) return 1;
-    if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &bR, &bI) != 0) return 1;
+    if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &aR, &aI) != 0) return 1;
+    if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &bR, &bI) != 0) return 1;
     if (tok->n_args > 2) {
-        if (coeffArgValue(program, tok, 2, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &andy, &andyI) != 0) return 1;
+        if (coeffArgValue(program, tok, 2, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &andy, &andyI) != 0) return 1;
         if (fabs(andyI) > 1e-12 || !isfinite(andy)) {
             fprintf(stderr, "Coeff Program littlewood andy requires finite real value\n");
             return 1;
@@ -4100,6 +4116,7 @@ static int coeffProgramLittlewoodOp(const CoeffProgram *program,
 
 static int evalCoeffProgram(const CoeffProgram *program,
                             double p1r, double p1i, double p2r, double p2i,
+                            double t1r, double t1i, double t2r, double t2i,
                             const double *cfRe, const double *cfIm, int cfLen,
                             double *outRe, double *outIm, int *outLen,
                             CoeffProgramWorkspace *ws,
@@ -4122,7 +4139,7 @@ static int evalCoeffProgram(const CoeffProgram *program,
             int len = (int)tok->args[0];
             double vr = 0.0, vi = 0.0;
             if (len == -1) len = ws->poly_len;
-            if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &vr, &vi) != 0) return 1;
+            if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &vr, &vi) != 0) return 1;
             if (coeff_program_check_len(len, "push_const") != 0) return 1;
             for (int i = 0; i < len; i++) { ws->scratch_re[i] = vr; ws->scratch_im[i] = vi; }
             ws->scratch_len = (uint16_t)len;
@@ -4180,7 +4197,7 @@ static int evalCoeffProgram(const CoeffProgram *program,
         } else if (tok->op == COEFF_OP_BLEND) {
             uint16_t top = 0, below = 0;
             double t = 0.0, ti = 0.0;
-            if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &t, &ti) != 0) return 1;
+            if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &t, &ti) != 0) return 1;
             if (fabs(ti) > 1e-12 || !isfinite(t)) {
                 fprintf(stderr, "Coeff Program blend(t) requires finite real t\n");
                 return 1;
@@ -4206,7 +4223,7 @@ static int evalCoeffProgram(const CoeffProgram *program,
                         idx, ws->poly_len);
                 return 1;
             }
-            if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &vr, &vi) != 0) return 1;
+            if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &vr, &vi) != 0) return 1;
             if (!isfinite(vr) || !isfinite(vi)) {
                 fprintf(stderr, "Coeff Program poke_poly value is non-finite\n");
                 return 1;
@@ -4223,7 +4240,7 @@ static int evalCoeffProgram(const CoeffProgram *program,
                         idx, ws->stack_len[slot]);
                 return 1;
             }
-            if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &vr, &vi) != 0) return 1;
+            if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &vr, &vi) != 0) return 1;
             if (!isfinite(vr) || !isfinite(vi)) {
                 fprintf(stderr, "Coeff Program poke_tos value is non-finite\n");
                 return 1;
@@ -4255,22 +4272,22 @@ static int evalCoeffProgram(const CoeffProgram *program,
             if (coeffProgramArgsortVectorOp(ws) != 0) return 1;
             if (coeffProgramTargetFromScratch(ws, tok) != 0) return 1;
         } else if (tok->op == COEFF_OP_LITTLEWOOD) {
-            if (coeffProgramLittlewoodOp(program, tok, ws, cfRe, cfIm, cfLen, k, evalSeed, p1r, p1i, p2r, p2i) != 0) return 1;
+            if (coeffProgramLittlewoodOp(program, tok, ws, cfRe, cfIm, cfLen, k, evalSeed, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i) != 0) return 1;
         } else if (tok->op == COEFF_OP_LEGACY) {
             double args[COEFF_PROGRAM_MAX_ARGS];
             int legacyArgCount = tok->n_args;
             double andy = 0.0;
-            if (coeffAndyValue(program, tok, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &andy) != 0) return 1;
+            if (coeffAndyValue(program, tok, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &andy) != 0) return 1;
             if (tok->fn_index == 14 && tok->n_args == 2) {
                 double mr = 100.0, mi = 0.0, offR = 0.0, offI = 0.0;
-                if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &mr, &mi) != 0) return 1;
-                if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &offR, &offI) != 0) return 1;
+                if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &mr, &mi) != 0) return 1;
+                if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &offR, &offI) != 0) return 1;
                 args[0] = mr; args[1] = mi; args[2] = offR; args[3] = offI;
                 legacyArgCount = 4;
             } else if (tok->fn_index == 16 && tok->n_args == 4) {
                 for (int i = 0; i < 4; i++) {
                     double ar = 0.0, ai = 0.0;
-                    if (coeffArgValue(program, tok, i, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &ar, &ai) != 0) return 1;
+                    if (coeffArgValue(program, tok, i, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &ar, &ai) != 0) return 1;
                     if (fabs(ai) > 1e-12) {
                         fprintf(stderr, "Coeff Program legacy exp component %d is not real\n", i);
                         return 1;
@@ -4280,14 +4297,14 @@ static int evalCoeffProgram(const CoeffProgram *program,
                 legacyArgCount = 4;
             } else if (tok->fn_index == 24 && tok->n_args == 2) {
                 double mr = 1.0, mi = 0.0, expR = 1.0, expI = 0.0;
-                if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &mr, &mi) != 0) return 1;
-                if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &expR, &expI) != 0) return 1;
+                if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &mr, &mi) != 0) return 1;
+                if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &expR, &expI) != 0) return 1;
                 args[0] = mr; args[1] = mi; args[2] = expR; args[3] = expI;
                 legacyArgCount = 4;
             } else {
                 for (int i = 0; i < tok->n_args; i++) {
                     double ar = 0.0, ai = 0.0;
-                    if (coeffArgValue(program, tok, i, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &ar, &ai) != 0) return 1;
+                    if (coeffArgValue(program, tok, i, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &ar, &ai) != 0) return 1;
                     if (fabs(ai) > 1e-12) {
                         fprintf(stderr, "Coeff Program legacy arg %d is not real\n", i);
                         return 1;
@@ -5178,6 +5195,9 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
 #define PARAM_PROGRAM_MAX_TOKENS 64
 #define PARAM_PROGRAM_MAX_STACK 16
 #define PARAM_PROGRAM_MAX_ARGS 8
+#define PARAM_PROGRAM_MAX_SCALAR_EXPRS 64
+#define PARAM_PROGRAM_EXPR_STRIDE 3
+#define PARAM_PROGRAM_MAX_EXPR_NUMS (32 * PARAM_PROGRAM_EXPR_STRIDE)
 
 enum ParamProgramOp {
     PARAM_OP_PUSH_T1 = 1,
@@ -5213,6 +5233,23 @@ enum ParamProgramSelector {
     PARAM_SEL_PUSH2 = 7
 };
 
+enum ParamProgramExprOp {
+    PARAM_EXPR_LITERAL = 1,
+    PARAM_EXPR_T1 = 2,
+    PARAM_EXPR_T2 = 3,
+    PARAM_EXPR_P1 = 4,
+    PARAM_EXPR_P2 = 5,
+    PARAM_EXPR_ADD = 6,
+    PARAM_EXPR_SUB = 7,
+    PARAM_EXPR_MUL = 8,
+    PARAM_EXPR_DIV = 9,
+    PARAM_EXPR_NEG = 10,
+    PARAM_EXPR_EXP = 11,
+    PARAM_EXPR_REAL = 12,
+    PARAM_EXPR_IMAG = 13,
+    PARAM_EXPR_ABS = 14
+};
+
 typedef struct {
     double r;
     double i;
@@ -5228,12 +5265,21 @@ typedef struct {
     double a;
     double b;
     double args[PARAM_PROGRAM_MAX_ARGS];
+    double args_im[PARAM_PROGRAM_MAX_ARGS];
+    int expr_refs[PARAM_PROGRAM_MAX_ARGS];
 } ParamProgramToken;
+
+typedef struct {
+    int n_nums;
+    double nums[PARAM_PROGRAM_MAX_EXPR_NUMS];
+} ParamScalarExpr;
 
 typedef struct {
     int token_count;
     int stack_max;
     int uses_legacy_fast_path;
+    int scalar_expr_count;
+    ParamScalarExpr scalar_exprs[PARAM_PROGRAM_MAX_SCALAR_EXPRS];
     ParamProgramToken tokens[PARAM_PROGRAM_MAX_TOKENS];
 } ParamProgram;
 
@@ -5300,6 +5346,7 @@ static ParamCx param_exp(ParamCx z) {
 static const char *parseParamProgramTokenObject(const char *objStart, const char *objEnd,
                                                 ParamProgramToken *tok) {
     memset(tok, 0, sizeof(*tok));
+    for (int i = 0; i < PARAM_PROGRAM_MAX_ARGS; i++) tok->expr_refs[i] = -1;
     const char *v;
     v = findKeyIn(objStart, objEnd, "op");
     if (!v) {
@@ -5340,6 +5387,26 @@ static const char *parseParamProgramTokenObject(const char *objStart, const char
         }
         tok->n_args = (uint8_t)parsedNArgs;
     }
+    v = findKeyIn(objStart, objEnd, "args_im");
+    if (v) {
+        double tmp[PARAM_PROGRAM_MAX_ARGS];
+        int parsedNArgs = parseNumArray(v, tmp, PARAM_PROGRAM_MAX_ARGS);
+        if (parsedNArgs < 0 || parsedNArgs > PARAM_PROGRAM_MAX_ARGS) {
+            fprintf(stderr, "param_program token has invalid args_im length=%d\n", parsedNArgs);
+            return NULL;
+        }
+        for (int i = 0; i < parsedNArgs; i++) tok->args_im[i] = tmp[i];
+    }
+    v = findKeyIn(objStart, objEnd, "expr_refs");
+    if (v) {
+        double tmp[PARAM_PROGRAM_MAX_ARGS];
+        int parsedNArgs = parseNumArray(v, tmp, PARAM_PROGRAM_MAX_ARGS);
+        if (parsedNArgs < 0 || parsedNArgs > PARAM_PROGRAM_MAX_ARGS) {
+            fprintf(stderr, "param_program token has invalid expr_refs length=%d\n", parsedNArgs);
+            return NULL;
+        }
+        for (int i = 0; i < parsedNArgs; i++) tok->expr_refs[i] = (int)tmp[i];
+    }
     return objEnd;
 }
 
@@ -5363,6 +5430,47 @@ static int parseParamProgram(const char *buf, ParamProgram *program) {
     if (v) program->stack_max = (int)parseNum(&v);
     v = findKeyIn(objStart, objEnd, "uses_legacy_fast_path");
     if (v) program->uses_legacy_fast_path = parseBool(v);
+
+    const char *exprs = findKeyIn(objStart, objEnd, "scalar_exprs");
+    if (exprs) {
+        exprs = skip(exprs);
+        if (*exprs != '[') {
+            fprintf(stderr, "param_program scalar_exprs must be an array\n");
+            return -1;
+        }
+        exprs++;
+        int count = 0;
+        while (*exprs && exprs < objEnd) {
+            exprs = skip(exprs);
+            if (*exprs == ']') break;
+            if (*exprs == ',') {
+                exprs++;
+                continue;
+            }
+            if (*exprs != '[') {
+                fprintf(stderr, "param_program scalar expression must be an array\n");
+                return -1;
+            }
+            if (count >= PARAM_PROGRAM_MAX_SCALAR_EXPRS) {
+                fprintf(stderr, "param_program has too many scalar expressions\n");
+                return -1;
+            }
+            const char *arrEnd = findClosing(exprs, '[', ']');
+            if (!arrEnd || arrEnd > objEnd) {
+                fprintf(stderr, "param_program scalar expression array is malformed\n");
+                return -1;
+            }
+            int n = parseNumArray(exprs, program->scalar_exprs[count].nums, PARAM_PROGRAM_MAX_EXPR_NUMS);
+            if (n < 0 || n > PARAM_PROGRAM_MAX_EXPR_NUMS || n % PARAM_PROGRAM_EXPR_STRIDE != 0) {
+                fprintf(stderr, "param_program scalar expression has invalid length=%d\n", n);
+                return -1;
+            }
+            program->scalar_exprs[count].n_nums = n;
+            count++;
+            exprs = arrEnd;
+        }
+        program->scalar_expr_count = count;
+    }
 
     const char *tokens = findKeyIn(objStart, objEnd, "tokens");
     if (!tokens) {
@@ -5407,7 +5515,93 @@ static int parseParamProgram(const char *buf, ParamProgram *program) {
     return 1;
 }
 
-static int paramLegacyApply(int fnIndex, const double *args, int nArgs, int gridN,
+static int paramEvalScalarExpr(const ParamProgram *program, int ref,
+                               ParamCx t1, ParamCx t2, ParamCx p1, ParamCx p2,
+                               ParamCx *out) {
+    if (!program || !out || ref < 0 || ref >= program->scalar_expr_count) {
+        fprintf(stderr, "param_program scalar expression ref out of range: %d\n", ref);
+        return 1;
+    }
+    const ParamScalarExpr *expr = &program->scalar_exprs[ref];
+    ParamCx stack[PARAM_PROGRAM_MAX_EXPR_NUMS / PARAM_PROGRAM_EXPR_STRIDE];
+    int sp = 0;
+    for (int pc = 0; pc < expr->n_nums; pc += PARAM_PROGRAM_EXPR_STRIDE) {
+        int op = (int)expr->nums[pc];
+        double a = expr->nums[pc + 1];
+        double b = expr->nums[pc + 2];
+        if (op == PARAM_EXPR_LITERAL || op == PARAM_EXPR_T1 || op == PARAM_EXPR_T2 ||
+            op == PARAM_EXPR_P1 || op == PARAM_EXPR_P2) {
+            if (sp >= (int)(sizeof(stack) / sizeof(stack[0]))) return 1;
+            if (op == PARAM_EXPR_LITERAL) stack[sp] = param_cx(a, b);
+            else if (op == PARAM_EXPR_T1) stack[sp] = t1;
+            else if (op == PARAM_EXPR_T2) stack[sp] = t2;
+            else if (op == PARAM_EXPR_P1) stack[sp] = p1;
+            else stack[sp] = p2;
+            sp++;
+            continue;
+        }
+        if (op == PARAM_EXPR_NEG || op == PARAM_EXPR_EXP || op == PARAM_EXPR_REAL ||
+            op == PARAM_EXPR_IMAG || op == PARAM_EXPR_ABS) {
+            if (sp < 1) return 1;
+            ParamCx z = stack[sp - 1];
+            if (op == PARAM_EXPR_NEG) stack[sp - 1] = param_cx(-z.r, -z.i);
+            else if (op == PARAM_EXPR_EXP) stack[sp - 1] = param_exp(z);
+            else if (op == PARAM_EXPR_REAL) stack[sp - 1] = param_cx(z.r, 0.0);
+            else if (op == PARAM_EXPR_IMAG) stack[sp - 1] = param_cx(z.i, 0.0);
+            else stack[sp - 1] = param_cx(sqrt(z.r * z.r + z.i * z.i), 0.0);
+            continue;
+        }
+        if (sp < 2) return 1;
+        ParamCx rhs = stack[--sp];
+        ParamCx lhs = stack[sp - 1];
+        if (op == PARAM_EXPR_ADD) {
+            stack[sp - 1] = param_add(lhs, rhs);
+        } else if (op == PARAM_EXPR_SUB) {
+            stack[sp - 1] = param_sub(lhs, rhs);
+        } else if (op == PARAM_EXPR_MUL) {
+            stack[sp - 1] = param_mul(lhs, rhs);
+        } else if (op == PARAM_EXPR_DIV) {
+            double d = rhs.r * rhs.r + rhs.i * rhs.i;
+            if (d <= 1e-300) {
+                fprintf(stderr, "param_program scalar expression division by zero\n");
+                return 1;
+            }
+            double rr = 0.0, ri = 0.0;
+            c_div(lhs.r, lhs.i, rhs.r, rhs.i, &rr, &ri);
+            stack[sp - 1] = param_cx(rr, ri);
+        } else {
+            fprintf(stderr, "param_program unknown scalar expression opcode %d\n", op);
+            return 1;
+        }
+    }
+    if (sp != 1 || !isfinite(stack[0].r) || !isfinite(stack[0].i)) {
+        fprintf(stderr, "param_program scalar expression produced non-finite result\n");
+        return 1;
+    }
+    *out = stack[0];
+    return 0;
+}
+
+static int paramArgValue(const ParamProgram *program, const ParamProgramToken *tok, int idx,
+                         ParamCx t1, ParamCx t2, ParamCx p1, ParamCx p2, ParamCx *out) {
+    if (!tok || !out || idx < 0 || idx >= PARAM_PROGRAM_MAX_ARGS) return 1;
+    int ref = tok->expr_refs[idx];
+    if (ref >= 0) return paramEvalScalarExpr(program, ref, t1, t2, p1, p2, out);
+    *out = param_cx(tok->args[idx], tok->args_im[idx]);
+    return 0;
+}
+
+static double paramArgReal(const ParamCx *args, int nArgs, int idx, double fallback) {
+    if (!args || idx < 0 || idx >= nArgs) return fallback;
+    return args[idx].r;
+}
+
+static double paramArgImag(const ParamCx *args, int nArgs, int idx, double fallback) {
+    if (!args || idx < 0 || idx >= nArgs) return fallback;
+    return args[idx].i;
+}
+
+static int paramLegacyApply(int fnIndex, const ParamCx *args, int nArgs, int gridN,
                             ParamCx in1, ParamCx in2, ParamCx *out1, ParamCx *out2) {
     (void)gridN;
     double z1r = in1.r, z1i = in1.i, z2r = in2.r, z2i = in2.i;
@@ -5429,37 +5623,53 @@ static int paramLegacyApply(int fnIndex, const double *args, int nArgs, int grid
         case 15: pt_roots3(&z1r, &z1i, &z2r, &z2i); break;
         case 16: pt_roots5(&z1r, &z1i, &z2r, &z2i); break;
         case 17: pt_roots6(&z1r, &z1i, &z2r, &z2i); break;
-        case 18: pt_rtheta_target(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 1.0); break;
+        case 18: pt_rtheta_target(&z1r, &z1i, &z2r, &z2i, 2, paramArgReal(args, nArgs, 0, 1.0)); break;
         case 19:
             if (nArgs >= 8) {
                 pt_moebius_abcd(&z1r, &z1i, &z2r, &z2i,
-                                args[0], args[1], args[2], args[3],
-                                args[4], args[5], args[6], args[7]);
+                                paramArgReal(args, nArgs, 0, 1.0), paramArgReal(args, nArgs, 1, 0.0),
+                                paramArgReal(args, nArgs, 2, 0.0), paramArgReal(args, nArgs, 3, 0.0),
+                                paramArgReal(args, nArgs, 4, 0.0), paramArgReal(args, nArgs, 5, 0.0),
+                                paramArgReal(args, nArgs, 6, 1.0), paramArgReal(args, nArgs, 7, 0.0));
+            } else if (nArgs >= 4) {
+                pt_moebius_abcd(&z1r, &z1i, &z2r, &z2i,
+                                paramArgReal(args, nArgs, 0, 1.0), paramArgImag(args, nArgs, 0, 0.0),
+                                paramArgReal(args, nArgs, 1, 0.0), paramArgImag(args, nArgs, 1, 0.0),
+                                paramArgReal(args, nArgs, 2, 0.0), paramArgImag(args, nArgs, 2, 0.0),
+                                paramArgReal(args, nArgs, 3, 1.0), paramArgImag(args, nArgs, 3, 0.0));
             } else {
                 pt_moebius(&z1r, &z1i, &z2r, &z2i);
             }
             break;
         case 20:
-            pt_inv_t_plus_2(&z1r, &z1i, &z2r, &z2i,
-                            nArgs > 0 ? args[0] : 2.0,
-                            nArgs > 1 ? args[1] : 0.0,
-                            nArgs > 2 ? args[2] : 2.0,
-                            nArgs > 3 ? args[3] : 0.0);
+            if (nArgs >= 4) {
+                pt_inv_t_plus_2(&z1r, &z1i, &z2r, &z2i,
+                                paramArgReal(args, nArgs, 0, 2.0),
+                                paramArgReal(args, nArgs, 1, 0.0),
+                                paramArgReal(args, nArgs, 2, 2.0),
+                                paramArgReal(args, nArgs, 3, 0.0));
+            } else {
+                pt_inv_t_plus_2(&z1r, &z1i, &z2r, &z2i,
+                                paramArgReal(args, nArgs, 0, 2.0),
+                                paramArgImag(args, nArgs, 0, 0.0),
+                                paramArgReal(args, nArgs, 1, 2.0),
+                                paramArgImag(args, nArgs, 1, 0.0));
+            }
             break;
-        case 21: pt_crd(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 1.0); break;
-        case 22: pt_hrt(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 1.0, nArgs > 1 ? args[1] : 0.0); break;
-        case 23: pt_spdl(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 0.5, nArgs > 1 ? args[1] : 0.2, nArgs > 2 ? args[2] : 1.5); break;
-        case 24: pt_lmc(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 0.3, nArgs > 1 ? args[1] : 0.5); break;
-        case 25: pt_rsc(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 0.5, nArgs > 1 ? args[1] : 2.0); break;
-        case 26: pt_lss(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 0.5, nArgs > 1 ? args[1] : 0.5, nArgs > 2 ? args[2] : 3.0, nArgs > 3 ? args[3] : 2.0, nArgs > 4 ? args[4] : 0.5); break;
-        case 27: pt_ast(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 1.0); break;
-        case 28: pt_asp(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 0.0, nArgs > 1 ? args[1] : 0.1); break;
-        case 29: pt_lsp(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 0.1, nArgs > 1 ? args[1] : 0.15); break;
-        case 30: pt_dlt(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 1.0); break;
-        case 31: pt_rply(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 5.0, nArgs > 1 ? args[1] : 1.0, nArgs > 2 ? args[2] : 0.0); break;
-        case 32: pt_star(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 5.0, nArgs > 1 ? args[1] : 1.0, nArgs > 2 ? args[2] : 0.5); break;
-        case 33: pt_rect(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 2.0, nArgs > 1 ? args[1] : 1.0, nArgs > 2 ? args[2] : 0.0); break;
-        case 34: pt_rrect(&z1r, &z1i, &z2r, &z2i, 2, nArgs > 0 ? args[0] : 2.0, nArgs > 1 ? args[1] : 1.0, nArgs > 2 ? args[2] : 4.0); break;
+        case 21: pt_crd(&z1r, &z1i, &z2r, &z2i, 2, paramArgReal(args, nArgs, 0, 1.0)); break;
+        case 22: pt_hrt(&z1r, &z1i, &z2r, &z2i, 2, paramArgReal(args, nArgs, 0, 1.0), paramArgReal(args, nArgs, 1, 0.0)); break;
+        case 23: pt_spdl(&z1r, &z1i, &z2r, &z2i, 2, paramArgReal(args, nArgs, 0, 0.5), paramArgReal(args, nArgs, 1, 0.2), paramArgReal(args, nArgs, 2, 1.5)); break;
+        case 24: pt_lmc(&z1r, &z1i, &z2r, &z2i, 2, paramArgReal(args, nArgs, 0, 0.3), paramArgReal(args, nArgs, 1, 0.5)); break;
+        case 25: pt_rsc(&z1r, &z1i, &z2r, &z2i, 2, paramArgReal(args, nArgs, 0, 0.5), paramArgReal(args, nArgs, 1, 2.0)); break;
+        case 26: pt_lss(&z1r, &z1i, &z2r, &z2i, 2, paramArgReal(args, nArgs, 0, 0.5), paramArgReal(args, nArgs, 1, 0.5), paramArgReal(args, nArgs, 2, 3.0), paramArgReal(args, nArgs, 3, 2.0), paramArgReal(args, nArgs, 4, 0.5)); break;
+        case 27: pt_ast(&z1r, &z1i, &z2r, &z2i, 2, paramArgReal(args, nArgs, 0, 1.0)); break;
+        case 28: pt_asp(&z1r, &z1i, &z2r, &z2i, 2, paramArgReal(args, nArgs, 0, 0.0), paramArgReal(args, nArgs, 1, 0.1)); break;
+        case 29: pt_lsp(&z1r, &z1i, &z2r, &z2i, 2, paramArgReal(args, nArgs, 0, 0.1), paramArgReal(args, nArgs, 1, 0.15)); break;
+        case 30: pt_dlt(&z1r, &z1i, &z2r, &z2i, 2, paramArgReal(args, nArgs, 0, 1.0)); break;
+        case 31: pt_rply(&z1r, &z1i, &z2r, &z2i, 2, paramArgReal(args, nArgs, 0, 5.0), paramArgReal(args, nArgs, 1, 1.0), paramArgReal(args, nArgs, 2, 0.0)); break;
+        case 32: pt_star(&z1r, &z1i, &z2r, &z2i, 2, paramArgReal(args, nArgs, 0, 5.0), paramArgReal(args, nArgs, 1, 1.0), paramArgReal(args, nArgs, 2, 0.5)); break;
+        case 33: pt_rect(&z1r, &z1i, &z2r, &z2i, 2, paramArgReal(args, nArgs, 0, 2.0), paramArgReal(args, nArgs, 1, 1.0), paramArgReal(args, nArgs, 2, 0.0)); break;
+        case 34: pt_rrect(&z1r, &z1i, &z2r, &z2i, 2, paramArgReal(args, nArgs, 0, 2.0), paramArgReal(args, nArgs, 1, 1.0), paramArgReal(args, nArgs, 2, 4.0)); break;
         case 35: pt_z01(&z1r, &z1i, &z2r, &z2i); break;
         case 36: pt_coeff2(&z1r, &z1i, &z2r, &z2i); break;
         case 37: pt_coeff3(&z1r, &z1i, &z2r, &z2i); break;
@@ -5518,7 +5728,13 @@ static int paramEvalProgram(const ParamProgram *program, int gridN, double t1r, 
                 p2 = stack[--sp];
                 break;
             case PARAM_OP_CONST:
-                if (paramPush(stack, &sp, param_cx(tok->a, tok->b))) return 1;
+                if (tok->n_args > 0) {
+                    ParamCx value;
+                    if (paramArgValue(program, tok, 0, t1, t2, p1, p2, &value) != 0) return 1;
+                    if (paramPush(stack, &sp, value)) return 1;
+                } else {
+                    if (paramPush(stack, &sp, param_cx(tok->a, tok->b))) return 1;
+                }
                 break;
             case PARAM_OP_DUPLICATE:
                 if (sp < 1 || paramPush(stack, &sp, stack[sp - 1])) return 1;
@@ -5592,6 +5808,7 @@ static int paramEvalProgram(const ParamProgram *program, int gridN, double t1r, 
                 break;
             case PARAM_OP_LEGACY: {
                 ParamCx in1 = p1, in2 = p2, out1, out2;
+                ParamCx resolvedArgs[PARAM_PROGRAM_MAX_ARGS];
                 if (tok->src == PARAM_SEL_P1) {
                     in1 = p1; in2 = p1;
                 } else if (tok->src == PARAM_SEL_P2) {
@@ -5608,7 +5825,10 @@ static int paramEvalProgram(const ParamProgram *program, int gridN, double t1r, 
                 } else {
                     return 1;
                 }
-                if (paramLegacyApply(tok->fn_index, tok->args, tok->n_args, gridN, in1, in2, &out1, &out2) != 0) return 1;
+                for (int ai = 0; ai < tok->n_args; ai++) {
+                    if (paramArgValue(program, tok, ai, t1, t2, p1, p2, &resolvedArgs[ai]) != 0) return 1;
+                }
+                if (paramLegacyApply(tok->fn_index, resolvedArgs, tok->n_args, gridN, in1, in2, &out1, &out2) != 0) return 1;
                 if (tok->tgt == PARAM_SEL_P1) {
                     p1 = out1;
                 } else if (tok->tgt == PARAM_SEL_P2) {
@@ -6723,6 +6943,7 @@ static int runCoeffGen(const char *buf, const char *outPath) {
             CoeffProgramWorkspace *ws = coeff_program_workspace_new();
             if (!ws) return 1;
             int prc = evalCoeffProgram(&coeffProgram, z1r, z1i, z2r, z2i,
+                                       0.0, 0.0, 0.0, 0.0,
                                        probeRe, probeIm, probeN,
                                        probeRe, probeIm, &probeN, ws, 0ULL);
             free(ws);
@@ -6794,6 +7015,7 @@ static int runCoeffGen(const char *buf, const char *outPath) {
             if (hasCoeffProgram > 0) {
                 uint64_t evalSeed = (uint64_t)(((long)pass * (long)n1 + (long)i1) * (long)n2 + (long)j);
                 if (evalCoeffProgram(&coeffProgram, z1r, z1i, z2r, z2i,
+                                     x1, 0.0, x2, 0.0,
                                      cRe, cIm, nCoeffs, cRe, cIm, &nCoeffs, coeffWs, evalSeed) != 0) {
                     fclose(fout);
                     free(stepBuf);
@@ -6989,6 +7211,7 @@ static int runComputeDebug(const char *buf, const char *outPath) {
         CoeffProgramWorkspace *ws = coeff_program_workspace_new();
         if (!ws) return 1;
         int rc = evalCoeffProgram(&coeffProgram, p1r, p1i, p2r, p2i,
+                                  u, 0.0, v, 0.0,
                                   cfRe, cfIm, cfN,
                                   polyRe, polyIm, &polyN, ws, 0ULL);
         free(ws);
@@ -7830,6 +8053,8 @@ typedef struct {
     int outFd;
     long paramBaseOffset;
     long globalStepStart;
+    int sourceN1;
+    int sourceN2;
     int nCoeffsOut;
     long outRowBytes;
     CoeffFuncC coeffFunc;
@@ -7849,6 +8074,29 @@ typedef struct {
     long stepLo;
     long stepHi;
 } CoeffGenWorkerArg;
+
+static void coeffgenSourceParamsForStep(long globalStep, int n1, int n2,
+                                        const float params[4],
+                                        double *t1r, double *t1i,
+                                        double *t2r, double *t2i) {
+    if (n1 > 0 && n2 > 0) {
+        long row = globalStep / (long)n2;
+        int i1 = (int)(row % (long)n1);
+        int j = (int)(globalStep % (long)n2);
+        int i2 = (i1 & 1) ? (n2 - 1 - j) : j;
+        *t1r = (double)i1 / (double)n1;
+        *t1i = 0.0;
+        *t2r = (double)i2 / (double)n2;
+        *t2i = 0.0;
+        return;
+    }
+    /* Back-compat for direct coeffgen_chunked calls that do not provide the
+     * source grid: t1/t2 fall back to the transformed parameter record. */
+    *t1r = (double)params[0];
+    *t1i = (double)params[1];
+    *t2r = (double)params[2];
+    *t2i = (double)params[3];
+}
 
 static void coeffGenSetThreadError(CoeffGenThreadCtx *ctx, const char *msg) {
     pthread_mutex_lock(&ctx->mutex);
@@ -7891,6 +8139,10 @@ static void *coeffGenWorkerMain(void *vp) {
             break;
         }
 
+        double t1r = 0.0, t1i = 0.0, t2r = 0.0, t2i = 0.0;
+        coeffgenSourceParamsForStep(ctx->globalStepStart + s, ctx->sourceN1, ctx->sourceN2,
+                                    params, &t1r, &t1i, &t2r, &t2i);
+
         int nCoeffs = 0;
         ctx->coeffFunc((double)params[0], (double)params[1],
                        (double)params[2], (double)params[3],
@@ -7899,6 +8151,7 @@ static void *coeffGenWorkerMain(void *vp) {
             if (evalCoeffProgram(ctx->coeffProgram,
                                  (double)params[0], (double)params[1],
                                  (double)params[2], (double)params[3],
+                                 t1r, t1i, t2r, t2i,
                                  cRe, cIm, nCoeffs,
                                  cRe, cIm, &nCoeffs, coeffWs,
                                  (uint64_t)(ctx->globalStepStart + s)) != 0) {
@@ -7955,6 +8208,13 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
     long stepStart = 0, stepCount = 0;
     cp = findKey(buf, "step_start"); if (cp) stepStart = (long)parseNum(&cp);
     cp = findKey(buf, "step_count"); if (cp) stepCount = (long)parseNum(&cp);
+    long sourceStepStart = stepStart;
+    cp = findKey(buf, "source_step_start"); if (cp) sourceStepStart = (long)parseNum(&cp);
+    int sourceN1 = 0, sourceN2 = 0;
+    cp = findKey(buf, "source_n1"); if (cp) sourceN1 = (int)parseNum(&cp);
+    cp = findKey(buf, "source_n2"); if (cp) sourceN2 = (int)parseNum(&cp);
+    if (sourceN1 <= 0) { cp = findKey(buf, "n1"); if (cp) sourceN1 = (int)parseNum(&cp); }
+    if (sourceN2 <= 0) { cp = findKey(buf, "n2"); if (cp) sourceN2 = (int)parseNum(&cp); }
     int requestedThreads = 1;
     cp = findKey(buf, "n_threads"); if (cp) requestedThreads = (int)parseNum(&cp);
     if (requestedThreads < 1) requestedThreads = 1;
@@ -8017,6 +8277,9 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
 
     double probeRe[MAX_COEFFS], probeIm[MAX_COEFFS];
     int probeN;
+    double probeT1r = 0.0, probeT1i = 0.0, probeT2r = 0.0, probeT2i = 0.0;
+    coeffgenSourceParamsForStep(sourceStepStart, sourceN1, sourceN2, probe,
+                                &probeT1r, &probeT1i, &probeT2r, &probeT2i);
     coeffFunc((double)probe[0], (double)probe[1],
               (double)probe[2], (double)probe[3],
               cfpv, n_cfpv, probeRe, probeIm, &probeN);
@@ -8029,9 +8292,10 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
         int prc = evalCoeffProgram(&coeffProgram,
                                    (double)probe[0], (double)probe[1],
                                    (double)probe[2], (double)probe[3],
+                                   probeT1r, probeT1i, probeT2r, probeT2i,
                                    probeRe, probeIm, probeN,
                                    probeRe, probeIm, &probeN, coeffWs,
-                                   (uint64_t)stepStart);
+                                   (uint64_t)sourceStepStart);
         free(coeffWs);
         if (prc != 0) {
             close(paramsFd);
@@ -8094,6 +8358,10 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
                 break;
             }
 
+            double t1r = 0.0, t1i = 0.0, t2r = 0.0, t2i = 0.0;
+            coeffgenSourceParamsForStep(sourceStepStart + s, sourceN1, sourceN2,
+                                        params, &t1r, &t1i, &t2r, &t2i);
+
             double cRe[MAX_COEFFS], cIm[MAX_COEFFS];
             int nCoeffs;
             coeffFunc((double)params[0], (double)params[1],
@@ -8103,9 +8371,10 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
                 if (evalCoeffProgram(&coeffProgram,
                                      (double)params[0], (double)params[1],
                                      (double)params[2], (double)params[3],
+                                     t1r, t1i, t2r, t2i,
                                      cRe, cIm, nCoeffs,
                                      cRe, cIm, &nCoeffs, coeffWs,
-                                     (uint64_t)(stepStart + s)) != 0) {
+                                     (uint64_t)(sourceStepStart + s)) != 0) {
                     rc = 1;
                 }
             } else {
@@ -8143,7 +8412,9 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
         ctx.paramsFd = paramsFd;
         ctx.outFd = outFd;
         ctx.paramBaseOffset = stepStart * recordBytes;
-        ctx.globalStepStart = stepStart;
+        ctx.globalStepStart = sourceStepStart;
+        ctx.sourceN1 = sourceN1;
+        ctx.sourceN2 = sourceN2;
         ctx.nCoeffsOut = nCoeffsOut;
         ctx.outRowBytes = outRowBytes;
         ctx.coeffFunc = coeffFunc;

@@ -150,6 +150,7 @@ def handler(event, context):
                 "token_count": compiled_param_program["token_count"],
                 "uses_legacy_fast_path": compiled_param_program["uses_legacy_fast_path"],
                 "tokens": compiled_param_program["tokens"],
+                "scalar_exprs": compiled_param_program.get("scalar_exprs", []),
             }
     mode = params.get("mode", "together")  # "together" or "separate"
     job_id = params.get("job_id", "debug")

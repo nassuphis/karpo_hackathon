@@ -9,6 +9,7 @@ are compile-time concerns only.
 from __future__ import annotations
 
 import hashlib
+import cmath
 import json
 import math
 import os
@@ -21,6 +22,8 @@ MAX_PROGRAM_TOKENS = 64
 MAX_STACK = 16
 MAX_MACRO_DEPTH = 8
 MAX_ARGS = 8
+MAX_SCALAR_EXPR_TOKENS = 32
+MAX_SCALAR_EXPRS = 64
 
 PARAM_OP_PUSH_T1 = 1
 PARAM_OP_PUSH_T2 = 2
@@ -51,6 +54,21 @@ PARAM_SEL_POP1 = 4
 PARAM_SEL_POP2 = 5
 PARAM_SEL_PUSH1 = 6
 PARAM_SEL_PUSH2 = 7
+
+EXPR_LITERAL = 1
+EXPR_T1 = 2
+EXPR_T2 = 3
+EXPR_P1 = 4
+EXPR_P2 = 5
+EXPR_ADD = 6
+EXPR_SUB = 7
+EXPR_MUL = 8
+EXPR_DIV = 9
+EXPR_NEG = 10
+EXPR_EXP = 11
+EXPR_REAL = 12
+EXPR_IMAG = 13
+EXPR_ABS = 14
 
 _OP_NAMES = {
     PARAM_OP_PUSH_T1: "push_t1",
@@ -215,9 +233,21 @@ def _load_legacy_registry():
             raise RuntimeError(f"param legacy function {name} fn_index must be positive")
         if fn_index in by_index:
             raise RuntimeError(f"duplicate param legacy fn_index: {fn_index}")
-        args = fn.get("args") or []
-        if len(args) > MAX_ARGS:
+        args_raw = fn.get("args") or []
+        if len(args_raw) > MAX_ARGS:
             raise RuntimeError(f"param legacy function {name} has too many args")
+        args = []
+        for idx, arg in enumerate(args_raw):
+            if not isinstance(arg, dict):
+                raise RuntimeError(f"param legacy function {name} arg {idx} must be an object")
+            normalized_arg = dict(arg)
+            arg_type = str(normalized_arg.get("type") or "real").strip().lower()
+            if arg_type not in {"real", "complex"}:
+                raise RuntimeError(
+                    f"param legacy function {name} arg {idx} has unsupported type {arg_type!r}"
+                )
+            normalized_arg["type"] = arg_type
+            args.append(normalized_arg)
         spec = {
             "name": name,
             "fn_index": fn_index,
@@ -382,6 +412,8 @@ def _canonical_source_chain(chain):
                 raise RuntimeError(
                     f"param program chip {idx} arg {arg_idx} must be a string or number"
                 )
+        if name == "const" and len(entry) == 3:
+            entry = ["const", f"({entry[1]})+({entry[2]})*1j"]
         out.append(_canonicalize_legacy_bridge_entry(entry))
     return out
 
@@ -453,6 +485,233 @@ def display_param_program_chain(chain):
     return "; ".join(_display_chip(chip) for chip in chain)
 
 
+class _Expr:
+    __slots__ = ("tokens", "kind", "dynamic", "value")
+
+    def __init__(self, tokens, *, kind="complex", dynamic=True, value=None):
+        self.tokens = tokens
+        self.kind = kind
+        self.dynamic = dynamic
+        self.value = value
+
+
+def _expr_literal(value):
+    if not math.isfinite(value.real) or not math.isfinite(value.imag):
+        raise RuntimeError("param expression literal must be finite")
+    kind = "complex" if value.imag else "real"
+    return _Expr(
+        [{"op": EXPR_LITERAL, "a": value.real, "b": value.imag}],
+        kind=kind,
+        dynamic=False,
+        value=value,
+    )
+
+
+def _expr_dynamic(op, *, kind="complex"):
+    return _Expr([{"op": op}], kind=kind, dynamic=True, value=None)
+
+
+def _expr_binary(left, right, op):
+    if left.value is not None and right.value is not None:
+        if op == EXPR_ADD:
+            return _expr_literal(left.value + right.value)
+        if op == EXPR_SUB:
+            return _expr_literal(left.value - right.value)
+        if op == EXPR_MUL:
+            return _expr_literal(left.value * right.value)
+        if op == EXPR_DIV:
+            if abs(right.value) <= 1e-300:
+                raise RuntimeError("param expression division by zero")
+            return _expr_literal(left.value / right.value)
+    return _Expr(
+        left.tokens + right.tokens + [{"op": op}],
+        kind="complex" if left.kind == "complex" or right.kind == "complex" else "real",
+        dynamic=True,
+        value=None,
+    )
+
+
+def _expr_unary(expr, op, *, kind=None):
+    if expr.value is not None:
+        if op == EXPR_NEG:
+            return _expr_literal(-expr.value)
+        if op == EXPR_EXP:
+            return _expr_literal(cmath.exp(expr.value))
+        if op == EXPR_REAL:
+            return _expr_literal(complex(expr.value.real, 0.0))
+        if op == EXPR_IMAG:
+            return _expr_literal(complex(expr.value.imag, 0.0))
+        if op == EXPR_ABS:
+            return _expr_literal(complex(abs(expr.value), 0.0))
+    return _Expr(
+        expr.tokens + [{"op": op}],
+        kind=kind or expr.kind,
+        dynamic=True,
+        value=None,
+    )
+
+
+_EXPR_TOKEN_RE = re.compile(
+    r"\s*(?:(?P<number>(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?)(?P<imag>[ijIJ])?|(?P<ident>[A-Za-z_][A-Za-z0-9_]*)|(?P<op>[()+\-*/]))"
+)
+
+_EXPR_CONSTANTS = {
+    "pi": complex(math.pi, 0.0),
+    "pi2": complex(2.0 * math.pi, 0.0),
+    "pi2i": complex(0.0, 2.0 * math.pi),
+}
+
+
+class _ExpressionParser:
+    def __init__(self, text):
+        self.text = str(text or "").strip()
+        self.tokens = self._tokenize(self.text)
+        self.pos = 0
+
+    @staticmethod
+    def _tokenize(text):
+        out = []
+        pos = 0
+        while pos < len(text):
+            match = _EXPR_TOKEN_RE.match(text, pos)
+            if not match:
+                raise RuntimeError(f"invalid param expression near {text[pos:]!r}")
+            pos = match.end()
+            if match.group("number") is not None:
+                number = float(match.group("number"))
+                if not math.isfinite(number):
+                    raise RuntimeError("param expression number must be finite")
+                out.append(("number", complex(0.0, number) if match.group("imag") else complex(number, 0.0)))
+            elif match.group("ident") is not None:
+                out.append(("ident", match.group("ident").lower()))
+            else:
+                out.append((match.group("op"), match.group("op")))
+        return out
+
+    def _peek(self):
+        return self.tokens[self.pos] if self.pos < len(self.tokens) else (None, None)
+
+    def _take(self):
+        token = self._peek()
+        self.pos += 1
+        return token
+
+    def parse(self):
+        if not self.tokens:
+            raise RuntimeError("param expression is empty")
+        expr = self._expr()
+        if self.pos != len(self.tokens):
+            raise RuntimeError(f"unexpected param expression token {self._peek()[1]!r}")
+        if len(expr.tokens) > MAX_SCALAR_EXPR_TOKENS:
+            raise RuntimeError(
+                f"param expression has {len(expr.tokens)} tokens; max is {MAX_SCALAR_EXPR_TOKENS}"
+            )
+        return expr
+
+    def _expr(self):
+        left = self._term()
+        while self._peek()[0] in {"+", "-"}:
+            op = self._take()[0]
+            right = self._term()
+            left = _expr_binary(left, right, EXPR_ADD if op == "+" else EXPR_SUB)
+        return left
+
+    def _term(self):
+        left = self._unary()
+        while self._peek()[0] in {"*", "/"}:
+            op = self._take()[0]
+            right = self._unary()
+            left = _expr_binary(left, right, EXPR_MUL if op == "*" else EXPR_DIV)
+        return left
+
+    def _unary(self):
+        token_type, token_value = self._peek()
+        if token_type == "+":
+            self._take()
+            return self._unary()
+        if token_type == "-":
+            self._take()
+            return _expr_unary(self._unary(), EXPR_NEG)
+        if token_type == "ident" and token_value in {"exp", "real", "imag", "abs", "mod"}:
+            self._take()
+            if self._take()[0] != "(":
+                raise RuntimeError(f"{token_value} requires parentheses")
+            expr = self._expr()
+            if self._take()[0] != ")":
+                raise RuntimeError(f"{token_value} missing closing parenthesis")
+            if token_value == "exp":
+                return _expr_unary(expr, EXPR_EXP, kind="complex")
+            if token_value == "real":
+                return _expr_unary(expr, EXPR_REAL, kind="real")
+            if token_value == "imag":
+                return _expr_unary(expr, EXPR_IMAG, kind="real")
+            return _expr_unary(expr, EXPR_ABS, kind="real")
+        return self._primary()
+
+    def _primary(self):
+        token_type, token_value = self._take()
+        if token_type == "number":
+            return _expr_literal(token_value)
+        if token_type == "ident":
+            if token_value in {"i", "j"}:
+                return _expr_literal(complex(0.0, 1.0))
+            if token_value in _EXPR_CONSTANTS:
+                return _expr_literal(_EXPR_CONSTANTS[token_value])
+            if token_value == "t1":
+                return _expr_dynamic(EXPR_T1)
+            if token_value == "t2":
+                return _expr_dynamic(EXPR_T2)
+            if token_value == "p1":
+                return _expr_dynamic(EXPR_P1)
+            if token_value == "p2":
+                return _expr_dynamic(EXPR_P2)
+            raise RuntimeError(f"unknown param expression identifier {token_value!r}")
+        if token_type == "(":
+            expr = self._expr()
+            if self._take()[0] != ")":
+                raise RuntimeError("param expression missing closing parenthesis")
+            return expr
+        raise RuntimeError(f"unexpected param expression token {token_value!r}")
+
+
+def _compile_expr(value, *, label, expected="complex"):
+    try:
+        expr = _expr_literal(_parse_complex_literal(value))
+    except (TypeError, ValueError):
+        try:
+            expr = _ExpressionParser(value).parse()
+        except RuntimeError as exc:
+            raise RuntimeError(f"{label}: {exc}") from None
+    if expected == "real" and expr.kind != "real":
+        raise RuntimeError(
+            f"{label} must be real-valued; use real(...), imag(...), abs(...), or mod(...) explicitly"
+        )
+    return expr
+
+
+def _flatten_expr(expr):
+    flat = []
+    for token in expr.tokens:
+        flat.extend([
+            float(token.get("op") or 0),
+            float(token.get("a", 0.0) or 0.0),
+            float(token.get("b", 0.0) or 0.0),
+        ])
+    return flat
+
+
+def _add_arg_expr(expr, scalar_exprs, *, expected="complex"):
+    if expr.value is not None:
+        if expected == "real":
+            return expr.value.real, 0.0, -1
+        return expr.value.real, expr.value.imag, -1
+    if len(scalar_exprs) >= MAX_SCALAR_EXPRS:
+        raise RuntimeError(f"param program has too many scalar expressions; max is {MAX_SCALAR_EXPRS}")
+    ref = len(scalar_exprs)
+    scalar_exprs.append(_flatten_expr(expr))
+    return 0.0, 0.0, ref
+
+
 def _token(op, **fields):
     tok = {"op": int(op)}
     for key in ("fn_index", "src", "tgt", "n_args"):
@@ -466,6 +725,12 @@ def _token(op, **fields):
     args = fields.get("args")
     if args:
         tok["args"] = [_finite_number(x, "token arg") for x in args]
+    args_im = fields.get("args_im")
+    if args_im:
+        tok["args_im"] = [_finite_number(x, "token arg imag") for x in args_im]
+    expr_refs = fields.get("expr_refs")
+    if expr_refs:
+        tok["expr_refs"] = [int(x) for x in expr_refs]
     return tok
 
 
@@ -511,45 +776,94 @@ def _selector_value(value, mapping, label):
     return raw, mapping[raw]
 
 
-def _legacy_args(spec, raw_args):
+def _legacy_args(spec, raw_args, scalar_exprs):
     raw_args = list(raw_args)
     if spec["name"] == "moebius":
         if len(raw_args) == 0:
-            return []
+            return [], [], []
         if len(raw_args) == 4:
-            values = []
+            args = []
+            args_im = []
+            expr_refs = []
             for idx, value in enumerate(raw_args):
-                coeff = _finite_complex(value, f"legacy(moebius) coefficient {idx}")
-                values.extend([coeff.real, coeff.imag])
-            return values
+                expr = _compile_expr(value, label=f"legacy(moebius) coefficient {idx}", expected="complex")
+                re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="complex")
+                args.append(re)
+                args_im.append(im)
+                expr_refs.append(ref)
+            return args, args_im, expr_refs
         if len(raw_args) == 8:
-            return [_finite_number(value, f"legacy(moebius) arg {idx}") for idx, value in enumerate(raw_args)]
+            args = []
+            args_im = []
+            expr_refs = []
+            for idx, value in enumerate(raw_args):
+                expr = _compile_expr(value, label=f"legacy(moebius) old component arg {idx}", expected="real")
+                re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="real")
+                args.append(re)
+                args_im.append(im)
+                expr_refs.append(ref)
+            return args, args_im, expr_refs
         raise RuntimeError(f"legacy(moebius) expects 0, 4, or 8 arguments, got {len(raw_args)}")
+    if spec["name"] == "inv_t_plus_2" and len(raw_args) in {0, 1, 2}:
+        values = list(raw_args)
+        if len(values) == 0:
+            values = ["2", "2"]
+        elif len(values) == 1:
+            values.append("2")
+        args = []
+        args_im = []
+        expr_refs = []
+        for idx, value in enumerate(values):
+            expr = _compile_expr(value, label=f"legacy(inv_t_plus_2) coefficient {idx}", expected="complex")
+            re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="complex")
+            args.append(re)
+            args_im.append(im)
+            expr_refs.append(ref)
+        return args, args_im, expr_refs
     if spec["name"] in _VARIABLE_LEGACY_ARG_COUNTS:
         allowed = _VARIABLE_LEGACY_ARG_COUNTS[spec["name"]]
         if len(raw_args) not in allowed:
             counts = ", ".join(str(count) for count in sorted(allowed))
             raise RuntimeError(f"legacy({spec['name']}) expects {counts} arguments, got {len(raw_args)}")
-        return [_finite_number(value, f"legacy({spec['name']}) arg {idx}") for idx, value in enumerate(raw_args)]
+        args = []
+        args_im = []
+        expr_refs = []
+        for idx, value in enumerate(raw_args):
+            expr = _compile_expr(value, label=f"legacy({spec['name']}) arg {idx}", expected="real")
+            re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="real")
+            args.append(re)
+            args_im.append(im)
+            expr_refs.append(ref)
+        return args, args_im, expr_refs
     declared = list(spec["args"])
     if not declared:
         if raw_args:
             raise RuntimeError(f"legacy({spec['name']}) takes no arguments")
-        return []
+        return [], [], []
     if len(raw_args) > len(declared):
         raise RuntimeError(f"legacy({spec['name']}) got too many arguments")
-    values = []
+    args = []
+    args_im = []
+    expr_refs = []
     for idx in range(max(len(raw_args), len(declared))):
         if idx < len(raw_args):
-            values.append(_finite_number(raw_args[idx], f"legacy({spec['name']}) arg {idx}"))
+            raw = raw_args[idx]
         elif idx < len(declared):
-            values.append(_finite_number(declared[idx].get("default", 0.0), f"legacy({spec['name']}) default arg {idx}"))
-    if len(values) > MAX_ARGS:
+            raw = declared[idx].get("default", 0.0)
+        else:
+            continue
+        arg_type = str(declared[idx].get("type") or "real").strip().lower()
+        expr = _compile_expr(raw, label=f"legacy({spec['name']}) arg {idx}", expected=arg_type)
+        re, im, ref = _add_arg_expr(expr, scalar_exprs, expected=arg_type)
+        args.append(re)
+        args_im.append(im)
+        expr_refs.append(ref)
+    if len(args) > MAX_ARGS:
         raise RuntimeError(f"legacy({spec['name']}) got too many arguments")
-    return values
+    return args, args_im, expr_refs
 
 
-def _legacy_token(name, src, tgt, args):
+def _legacy_token(name, src, tgt, args, scalar_exprs):
     registry = legacy_registry()["by_name"]
     if name not in registry:
         raise RuntimeError(f"unknown legacy param transform: {name}")
@@ -562,7 +876,7 @@ def _legacy_token(name, src, tgt, args):
     if tgt_name not in spec["allowed_tgt"]:
         allowed = ", ".join(spec["allowed_tgt"])
         raise RuntimeError(f"legacy({name}) does not support tgt={tgt_name}; allowed: {allowed}")
-    values = _legacy_args(spec, args)
+    values, values_im, expr_refs = _legacy_args(spec, args, scalar_exprs)
     return _token(
         PARAM_OP_LEGACY,
         fn_index=spec["fn_index"],
@@ -570,6 +884,8 @@ def _legacy_token(name, src, tgt, args):
         tgt=tgt_val,
         n_args=len(values),
         args=values,
+        args_im=values_im,
+        expr_refs=expr_refs,
     )
 
 
@@ -606,7 +922,7 @@ def _expand_macros(chain, macro_resolver, stack=None, depth=0):
     return expanded, expanded_count
 
 
-def _lower_chip(chip):
+def _lower_chip(chip, scalar_exprs):
     name, args = _chip_args(chip)
     if name == "macro":
         raise RuntimeError("macro chip survived expansion")
@@ -620,8 +936,11 @@ def _lower_chip(chip):
         return [_token(_emit_target_op(args[0]))]
     if name == "const":
         if len(args) not in {1, 2}:
-            raise RuntimeError("const chip requires real value and optional imaginary value")
-        return [_token(PARAM_OP_CONST, a=args[0], b=args[1] if len(args) == 2 else 0.0)]
+            raise RuntimeError("const chip requires value, or legacy real value plus optional imaginary value")
+        raw = args[0] if len(args) == 1 else f"({args[0]})+({args[1]})*1j"
+        expr = _compile_expr(raw, label="const value", expected="complex")
+        re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="complex")
+        return [_token(PARAM_OP_CONST, n_args=1, args=[re], args_im=[im], expr_refs=[ref])]
     if name in _STACK_OPS:
         if args:
             raise RuntimeError(f"{name} chip takes no arguments")
@@ -653,21 +972,22 @@ def _lower_chip(chip):
         if len(args) < 3:
             raise RuntimeError("legacy chip requires name, src, tgt, and optional args")
         legacy_name = str(args[0] or "").strip().lower()
-        return [_legacy_token(legacy_name, args[1], args[2], args[3:])]
+        return [_legacy_token(legacy_name, args[1], args[2], args[3:], scalar_exprs)]
     if name in legacy_registry()["by_name"]:
-        return [_legacy_token(name, "both", "both", args)]
+        return [_legacy_token(name, "both", "both", args, scalar_exprs)]
     raise RuntimeError(f"unknown param program chip: {name}")
 
 
 def _lower_chain(chain):
     tokens = []
+    scalar_exprs = []
     for chip in chain:
-        tokens.extend(_lower_chip(chip))
+        tokens.extend(_lower_chip(chip, scalar_exprs))
     if len(tokens) > MAX_PROGRAM_TOKENS:
         raise RuntimeError(
             f"param program has {len(tokens)} tokens after expansion; max is {MAX_PROGRAM_TOKENS}"
         )
-    return tokens
+    return tokens, scalar_exprs
 
 
 def _validate_stack(tokens):
@@ -734,22 +1054,12 @@ def _validate_stack(tokens):
     return {"stack_max": max_depth, "emits": emits}
 
 
-def _execution_spec(tokens):
-    parts = []
-    for token in tokens:
-        op = int(token["op"])
-        fields = [_OP_NAMES.get(op, str(op))]
-        if op == PARAM_OP_CONST:
-            fields.extend([str(token.get("a", "0")), str(token.get("b", "0"))])
-        elif op == PARAM_OP_LEGACY:
-            spec = legacy_registry()["by_index"].get(int(token.get("fn_index") or 0))
-            name = spec["name"] if spec else str(token.get("fn_index"))
-            src = _SELECTOR_NAMES.get(int(token.get("src") or 0), str(token.get("src") or 0))
-            tgt = _SELECTOR_NAMES.get(int(token.get("tgt") or 0), str(token.get("tgt") or 0))
-            fields.extend([name, src, tgt])
-            fields.extend(str(arg) for arg in token.get("args") or [])
-        parts.append(":".join(fields))
-    return ";".join(parts)
+def _execution_spec(tokens, scalar_exprs):
+    return json.dumps(
+        {"tokens": tokens, "scalar_exprs": scalar_exprs},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def _fingerprint(spec):
@@ -766,6 +1076,8 @@ def _legacy_fast_path(tokens):
         return True
     for token in tokens:
         if int(token.get("op") or 0) != PARAM_OP_LEGACY:
+            return False
+        if any(int(ref) >= 0 for ref in (token.get("expr_refs") or [])):
             return False
         if int(token.get("src") or 0) != PARAM_SEL_BOTH:
             return False
@@ -784,12 +1096,25 @@ def _legacy_transforms(tokens):
             return []
         entry = [spec["name"]]
         token_args = list(token.get("args") or [])
-        if spec["name"] == "moebius" and len(token_args) == 8:
+        token_args_im = list(token.get("args_im") or [])
+        if spec["name"] == "moebius" and len(token_args) == 4:
+            args = [
+                _format_complex_number(token_args[idx], token_args_im[idx] if idx < len(token_args_im) else 0.0)
+                for idx in range(4)
+            ]
+        elif spec["name"] == "moebius" and len(token_args) == 8:
             args = [
                 _format_complex_number(token_args[0], token_args[1]),
                 _format_complex_number(token_args[2], token_args[3]),
                 _format_complex_number(token_args[4], token_args[5]),
                 _format_complex_number(token_args[6], token_args[7]),
+            ]
+        elif spec["name"] == "inv_t_plus_2" and len(token_args) == 2:
+            args = [
+                _format_number(token_args[0]),
+                _format_number(token_args_im[0] if len(token_args_im) > 0 else 0.0),
+                _format_number(token_args[1]),
+                _format_number(token_args_im[1] if len(token_args_im) > 1 else 0.0),
             ]
         else:
             args = [_format_number(arg) for arg in token_args]
@@ -808,9 +1133,9 @@ def compile_param_program_chain(chain, *, macro_resolver=None, strict=True):
     try:
         source_chain = _canonical_source_chain(chain)
         expanded_chain, macro_count = _expand_macros(source_chain, macro_resolver)
-        tokens = _lower_chain(expanded_chain)
+        tokens, scalar_exprs = _lower_chain(expanded_chain)
         stack_info = _validate_stack(tokens)
-        spec = _execution_spec(tokens)
+        spec = _execution_spec(tokens, scalar_exprs)
         fast_path = _legacy_fast_path(tokens)
         return {
             "version": PROGRAM_VERSION,
@@ -818,6 +1143,7 @@ def compile_param_program_chain(chain, *, macro_resolver=None, strict=True):
             "source_chain": source_chain,
             "expanded_chain": expanded_chain,
             "tokens": tokens,
+            "scalar_exprs": scalar_exprs,
             "execution_tokens": tokens,
             "execution_spec": spec,
             "fingerprint": _fingerprint(spec),
@@ -842,6 +1168,7 @@ def compile_param_program_chain(chain, *, macro_resolver=None, strict=True):
             "source_chain": chain if isinstance(chain, list) else [],
             "expanded_chain": [],
             "tokens": [],
+            "scalar_exprs": [],
             "execution_tokens": [],
             "execution_spec": "",
             "fingerprint": "",

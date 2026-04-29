@@ -124,6 +124,20 @@ class TestCoeffProgramChain(unittest.TestCase):
         self.assertEqual([tok["op"] for tok in alias["tokens"]], [COEFF_OP_CONST, COEFF_OP_EMIT])
         self.assertEqual(alias["tokens"][0]["args"][0], 35)
 
+    def test_scalar_expressions_accept_pi_constants(self):
+        import math
+        from coeff_program_chain import COEFF_OP_CONST, compile_coeff_program_chain
+
+        compiled = compile_coeff_program_chain([["push_const", "poly_len", "pi + pi2i"], ["emit"]])
+        token = compiled["tokens"][0]
+        self.assertEqual(token["op"], COEFF_OP_CONST)
+        self.assertAlmostEqual(token["args"][1], math.pi)
+        self.assertAlmostEqual(token["args_im"][1], 2.0 * math.pi)
+        self.assertEqual(token["expr_refs"], [-1, -1])
+        self.assertEqual(compiled["scalar_expr_count"], 0)
+        with self.assertRaisesRegex(RuntimeError, "real-valued"):
+            compile_coeff_program_chain([["blend", "pi2i"]])
+
     def test_push_linspace_with_poly_len_compiles(self):
         from coeff_program_chain import COEFF_OP_EMIT, COEFF_OP_LINSPACE, compile_coeff_program_chain
 
@@ -307,13 +321,15 @@ class TestCoeffProgramChain(unittest.TestCase):
             EXPR_CF_AT,
             EXPR_POLY_AT,
             EXPR_POLY_LEN,
+            EXPR_T1,
+            EXPR_T2,
             EXPR_TOS_AT,
             compile_coeff_program_chain,
         )
 
         compiled = compile_coeff_program_chain([
             ["push", "cf"],
-            ["poke_poly", "0", "cf1 + poly2 + tos3 + poly_len + p1 + p2"],
+            ["poke_poly", "0", "cf1 + poly2 + tos3 + poly_len + t1 + t2 + p1 + p2"],
             ["pop"],
         ])
         self.assertEqual(compiled["scalar_expr_count"], 1)
@@ -323,6 +339,8 @@ class TestCoeffProgramChain(unittest.TestCase):
         self.assertIn(EXPR_POLY_AT, ops)
         self.assertIn(EXPR_TOS_AT, ops)
         self.assertIn(EXPR_POLY_LEN, ops)
+        self.assertIn(EXPR_T1, ops)
+        self.assertIn(EXPR_T2, ops)
 
     def test_round_accepts_compact_complex_multiplier_expression(self):
         from coeff_program_chain import COEFF_OP_LEGACY, compile_coeff_program_chain

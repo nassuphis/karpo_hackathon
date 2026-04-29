@@ -83,6 +83,8 @@ class TestComputeChunkFused(unittest.TestCase):
             "pp-n-coeffs": "7",
             "pp-degree": "7",
         })
+        self.assertEqual(mock_coeff.call_args.kwargs["n"], 100)
+        self.assertEqual(mock_coeff.call_args.kwargs["source_step_start"], 20)
 
     @patch("handler_compute_chunk_fused.os.path.getsize")
     @patch("handler_compute_chunk_fused.report_status")

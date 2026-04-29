@@ -243,6 +243,7 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
             "params_step_count": 4,
             "task_id": "compute_run_coeffgen_2",
             "function": "g1",
+            "N": 100,
             "coeff_transforms": [],
             "n_threads": 5,
             "s3_key": "renders/compute_j/coeffs_0002.bin",
@@ -254,6 +255,9 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
         self.assertEqual(get_kwargs["Range"], "bytes=0-63")
         spec = json.loads(mock_run.call_args.kwargs["input"])
         self.assertEqual(spec["n_threads"], 5)
+        self.assertEqual(spec["source_step_start"], 0)
+        self.assertEqual(spec["source_n1"], 100)
+        self.assertEqual(spec["source_n2"], 100)
         started_call = mock_report.call_args_list[0]
         self.assertEqual(started_call.kwargs["result_data"]["threads"], 5)
         done_call = mock_report.call_args_list[-1]

@@ -599,7 +599,8 @@ Some coefficient-program chips need scalar complex arguments:
 - future vector arithmetic chips, if shipped
 
 V1 should support a small compiled scalar-expression language for these
-arguments. It is row-dependent because it can read `p1`, `p2`, the current
+arguments. It is row-dependent because it can read the original parameter
+inputs `t1`, `t2`, the final Param Program outputs `p1`, `p2`, the current
 coefficient vectors, and the current vector lengths, but it is not
 string-parsed in the row loop.
 
@@ -607,7 +608,8 @@ Allowed source syntax:
 
 ```text
 complex literals:  1, -2.5, 1e-6, 1+2i, -2i+4
-scalar registers:  p1, p2, poly_len
+constants:         pi, pi2, pi2i
+scalar registers:  t1, t2, p1, p2, poly_len
 vector element:    cf0, cf1, poly0, poly31, tos0, tos32
 unary funcs:       conj(x), neg(x), real(x), imag(x)
 binary ops:        x + y, x - y, x * y, x / y
@@ -623,8 +625,14 @@ source expression -> scalar expression bytecode or folded literal
 Native evaluation:
 
 ```text
-eval_scalar_expr(expr, p1, p2, cf, poly, top_of_stack) -> complex scalar
+eval_scalar_expr(expr, t1, t2, p1, p2, cf, poly, top_of_stack) -> complex scalar
 ```
+
+For monolithic `coeffgen`, `t1/t2` are already available as the loop's source
+coordinates. For `coeffgen_chunked`, `params.bin` stores only transformed
+`p1/p2`; the handler must pass `source_step_start` plus the source grid
+dimensions (`source_n1`, `source_n2`) so native code can reconstruct the
+serpentine source coordinates without changing the `params.bin` record format.
 
 Rules:
 
@@ -633,6 +641,10 @@ Rules:
 - expressions that do not reference row-dependent registers should be stored as
   constants
 - row-loop evaluation walks integer expression opcodes, not strings
+- `t1` and `t2` are the original serpentine scan inputs for the row, before
+  Param Program or legacy parameter transforms run
+- `p1` and `p2` are the final transformed parameters passed to the coefficient
+  function
 - `poly_len` evaluates to the current mutable `poly` register length
 - `cfN` reads the Nth element of immutable coefficient-function output `cf`
 - `polyN` reads the Nth element of current mutable output register `poly`
@@ -1274,6 +1286,10 @@ Native contract per coefficient row:
 
 ```c
 CoeffProgramInputs:
+    double t1_re;
+    double t1_im;
+    double t2_re;
+    double t2_im;
     double p1_re;
     double p1_im;
     double p2_re;

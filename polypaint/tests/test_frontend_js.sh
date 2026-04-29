@@ -84,6 +84,8 @@ assertIncludes("id=\"param-program-manage\" onclick=\"openParamProgramModal()\""
 assertIncludes("id=\"param-pipeline-mode\" onchange=\"_setParamPipelineMode(this.value, {markStale:true})\"", 'compute tab should expose explicit legacy-vs-param-program selector');
 assertIncludes("id=\"pp-chips\" class=\"chip-container param-program-display\"", 'compute tab should expose param-program chip display');
 assertIncludes("function _selectedParamPipelineMode() {", 'frontend should centralize selected parameter pipeline mode');
+assertIncludes("function _formatChainRowsForLog(chain, separator = ',') {", 'compute preview logging should use a shared safe chain formatter');
+assertIncludes("return _formatChainRowsForLog(_serializeCoeffTransforms(), separator) || 'none';", 'Chain-mode coeff preview logging should format serialized rows instead of string display values');
 assertIncludes("const _paramProgramIndependentLegacyTargets = new Set([", 'frontend should know which legacy target args are redundant in Param Program bridge chips');
 assertIncludes("'coeff2',\n    'coeff3',\n    'coeff3a',", 'Param Program legacy bridge should include legacy coeff-map names');
 assertIncludes("coeff12: { category: 'bridge', desc: 'legacy mixed polynomial map' }", 'Param Program picker should expose legacy coeff-map chips directly');
@@ -108,6 +110,55 @@ assertIncludes("lambdaPost('storage', { id }, '/fetch-param-program')", 'param-p
 assertIncludes("lambdaPost('storage', { id }, '/delete-param-program')", 'param-program modal should delete saved programs through storage');
 assertIncludes("}, '/save-param-program');", 'param-program modal should save programs through storage');
 assertIncludes("id=\"param-program-modal-overlay\"", 'shared param-program modal markup missing');
+assertIncludes("id=\"coeff-program-manage\" onclick=\"openCoeffProgramModal()\"", 'compute tab should expose Coeff Programs modal launcher');
+assertIncludes("id=\"cp-chips\" class=\"chip-container param-program-display\"", 'compute tab should expose coeff-program chip display');
+assertIncludes("const _cpCatalog = (() => {", 'frontend should build the coeff-program chip catalog');
+assertIncludes("function _coeffProgramPolySugarName(name) {", 'Coeff Program direct legacy sugars should use explicit poly-* names');
+assertIncludes("const sugarName = _coeffProgramPolySugarName(name);", 'Coeff Program catalog should create poly-* direct sugars');
+assertIncludes("label: sugarName", 'Coeff Program direct sugar labels should show the explicit poly-* name');
+assertIncludes("label: 'vector_const'", 'Coeff Program const chip should be disambiguated from the coeff function');
+assertIncludes("{ ph: 'length', label: 'length', def: '35', intLiteral: true", 'Coeff Program const length should remain a literal integer field');
+assertIncludes("{ ph: 'value expr', label: 'value', def: '1', scalarExpr: 'complex'", 'Coeff Program const value should be a scalar expression field');
+assertIncludes("push vector_const(length, value); value is a scalar expression over p1/p2, not t1/t2", 'Coeff Program picker should explain const length/value semantics clearly');
+assertIncludes("poke_poly: {", 'Coeff Program picker should expose poke_poly');
+assertIncludes("poke_tos: {", 'Coeff Program picker should expose poke_tos');
+assertIncludes("write value into poly[index] without touching the stack", 'Coeff Program poke_poly should describe direct poly mutation');
+assertIncludes("write value into the top stack vector without popping it", 'Coeff Program poke_tos should describe top-of-stack mutation');
+assertIncludes("May use p1/p2, literals, + - * /, conj/real/imag. t1/t2 are not available here.", 'Coeff Program const value tooltip should name the allowed scalar-expression registers');
+assertIncludes("commit poly; pops stack top into poly when present", 'Coeff Program picker should describe emit commit semantics');
+assertIncludes("blend below*(1-t) + top*t for same-length vectors", 'Coeff Program picker should expose vector blend chip');
+assertIncludes("id=\"compute-preview-tab-debug\"", 'Compute Preview should include a Compute Debug tab');
+assertIncludes("id=\"compute-debug-u\"", 'Compute Debug should expose u input');
+assertIncludes("id=\"compute-debug-v\"", 'Compute Debug should expose v input');
+assertIncludes("runComputeDebug('param')", 'Compute Debug should expose Param eval action');
+assertIncludes("runComputeDebug('poly')", 'Compute Debug should expose Poly eval action');
+assertIncludes("runComputeDebug('solve_ae')", 'Compute Debug should expose SolveAE eval action');
+assertIncludes("runComputeDebug('solve_cm')", 'Compute Debug should expose SolveCM eval action');
+assertIncludes("debug_stage: stage", 'Compute Debug payload should route through compute-preview debug_stage');
+assertIncludes("function _formatComputeDebugResult(result) {", 'Compute Debug should format native single-point output');
+assertIncludes("if (body.message) parts.push(_clipErrorText(body.message, 260));", 'frontend Lambda error summaries should include validation message bodies');
+assertIncludes("function _serializeCoeffProgramChain() {", 'frontend should serialize coeff-program chips');
+assertIncludes("function _effectiveCoeffProgramChainForCompute() {", 'compute payload should centralize coeff-program selection');
+assertIncludes("function _copyCoeffTransformsIntoCoeffProgram() {", 'Coeff Program UI should translate legacy transforms into program chips');
+assertIncludes("return { name: _coeffProgramPolySugarName(values[0]), params: values.slice(1).map(v => String(v)) };", 'Copy legacy transforms should create explicit poly-* coeff-program chips');
+assertIncludes("coeff_program_chain: coeffProgramChain,", 'compute/preview payloads should forward coeff_program_chain');
+assertIncludes("Coeff Program scalar args are parsed by the compiler. Keep expressions", 'Coeff Program editor should not reject p1/p2 scalar expressions with legacy numeric validation');
+assertIncludes("chain[chipIdx].params[paramIdx] = rawText || String(pDef.def || '');", 'Coeff Program scalar expression fields should preserve raw expression text');
+assertIncludes("poly=pow(poly*", 'Coeff Program poly-pow chip should render as a compact two-complex-field formula');
+assertIncludes("Blend amount. In Program mode this may be a real scalar expression using p1/p2", 'Coeff Program andy fields should advertise expression support');
+assertIncludes("function _parseCtComplexConstant(value) {", 'frontend should parse complex constants consistently for coefficient inputs');
+assertIncludes("function _formatCfpvForDisplay(funcName, cfpv) {", 'coefficient function parameters should have a logical display formatter');
+assertIncludes("return `degree=${degree}, value=${_formatCfpvComplexValue(re, im)}`;", 'const coefficient function should display degree plus one complex value');
+assertIncludes("if (_isConstCoeffFunction(entry)) {\n        const defaults = _constCoeffDefaults(entry);", 'const coefficient function should use a two-field logical UI');
+assertIncludes("_cfpv = (degreeValid && valueValid) ? [degree + 1, value.re, value.im] : [];", 'const coefficient UI should serialize degree/value to native length/re/im CFPV');
+assertIncludes("degreeInp.title = 'Polynomial degree; native coefficient length is degree + 1.';", 'const coefficient degree input should explain degree-to-length encoding');
+assertIncludes("valueInp.title = 'Complex constant value, e.g. 1-2j or 10j-3.';", 'const coefficient value input should accept a single complex constant');
+assertIncludes("_setConstCoeffInputsFromRaw(savedCfpv);", 'populate-from-result should convert raw const CFPV back to degree/value UI fields');
+assertIncludes("lambdaPost('storage', {}, '/list-coeff-programs')", 'coeff-program modal should list saved programs through storage');
+assertIncludes("lambdaPost('storage', { id }, '/fetch-coeff-program')", 'coeff-program modal should fetch saved programs through storage');
+assertIncludes("lambdaPost('storage', { id }, '/delete-coeff-program')", 'coeff-program modal should delete saved programs through storage');
+assertIncludes("}, '/save-coeff-program');", 'coeff-program modal should save programs through storage');
+assertIncludes("id=\"coeff-program-modal-overlay\"", 'shared coeff-program modal markup missing');
 assertIncludes("function _chipMoveControlsHtml(which, idx) {", 'transform chip renderer should centralize move controls');
 assertIncludes("chip.insertAdjacentHTML('afterbegin', _chipMoveControlsHtml(which, i));", 'param/transform chips should get move arrows');
 assertIncludes("chip-input chip-input-target", 'target parameters should render as dropdown inputs');
@@ -409,7 +460,7 @@ function assert(cond, message) {
 async function main() {
   const solveScoreCatalogBlock = extractBetween(
     "const _solveScoreMetricNames = [",
-    "const _ctAndyParam = { ph: 'andy', def: '0' };",
+    "const _ctAndyParam = { ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', wide: true, title: 'Blend amount. In Program mode this may be a real scalar expression using p1/p2; in Chain mode it must be numeric.' };",
     'solve-score catalog block'
   );
   const code = [
@@ -451,6 +502,18 @@ async function main() {
     extractFunction('_solveScorePaletteCompatibility'),
     extractFunction('_launchRenderOrchestrator'),
     extractFunction('runRasterPipeline'),
+    extractFunction('_formatCtConstant'),
+    extractFunction('_parseCtRealConstant'),
+    extractFunction('_hasCtExpressionOperator'),
+    extractFunction('_parseCtComplexConstant'),
+    extractFunction('_splitCtComplexInput'),
+    extractFunction('_getCatalogEntry'),
+    extractFunction('_isConstCoeffFunction'),
+    extractFunction('_constCoeffDefaults'),
+    extractFunction('_coeffFuncUiParamCount'),
+    extractFunction('_formatCfpvComplexValue'),
+    extractFunction('_parseCfpvComplexValue'),
+    extractFunction('_formatCfpvForDisplay'),
   ].join('\n\n');
 
   const renderStatus = { textContent: '', className: '' };
@@ -468,6 +531,11 @@ async function main() {
     _fusedCalls: [],
     _nonColorCalls: [],
     _updateSolveScoreButtonsCalls: 0,
+    window: {
+      _coeffFuncCatalog: [
+        { name: 'const', params: [{ name: 'length', default: 35 }, { name: 'value_re', default: 1 }, { name: 'value_im', default: 0 }] },
+      ],
+    },
     _launchFusedRenderOrchestrator: async (paramsPatch) => {
       ctx._fusedCalls.push(paramsPatch);
       return {};
@@ -497,6 +565,13 @@ async function main() {
 
   vm.createContext(ctx);
   vm.runInContext(code, ctx);
+
+  assert(ctx._coeffFuncUiParamCount(ctx.window._coeffFuncCatalog[0]) === 2, 'const coefficient function should present two logical UI parameters');
+  assert(ctx._formatCfpvForDisplay('const', [35, 1, -2]) === 'degree=34, value=1-2j', 'const CFPV display should hide native length/re/im slots');
+  assert(ctx._formatCfpvForDisplay('const', [8, -3, 10]) === 'degree=7, value=-3+10j', 'const CFPV display should preserve complex values');
+  const cfpvComplex = ctx._parseCfpvComplexValue('10j-3');
+  assert(cfpvComplex && cfpvComplex.re === -3 && cfpvComplex.im === 10, 'const coefficient value parser should accept imag-first complex constants');
+  assert(ctx._splitCtComplexInput('13-22j').re === '13' && ctx._splitCtComplexInput('13-22j').im === '-22', 'complex chip parser should preserve real-first complex constants');
 
   const lagged = ctx._compileSolveScoreChain([
     ['spread', 'slv', '0.4'],
@@ -621,6 +696,28 @@ async function main() {
   assert(ctx._extractPaletteLineageHint(scalarFusedColor).kind === 'fused', 'ExtractPalette lineage hint should prefer fused scalar step-score extraction');
   assert(ctx._extractPaletteLineageHint(rgbFusedColor).kind === 'fused', 'ExtractPalette lineage hint should prefer fused three-channel step-score extraction');
   assert(ctx._extractPaletteLineageHint(scalarLegacyColor).kind === 'solve_score', 'ExtractPalette lineage hint should retain legacy scalar dispatch');
+
+  const previewLogCode = [
+    "var _programMode = false; function _paramProgramModeSelected() { return _programMode; }",
+    extractFunction('_formatChainRowsForLog'),
+    extractFunction('_formatParamProgramChainForLog'),
+    extractFunction('_displayActiveParamPipeline'),
+    extractFunction('_formatCoeffProgramChainForLog'),
+    extractFunction('_displayActiveCoeffPipeline'),
+  ].join('\n\n');
+  const previewCtx = {
+    _serializeParamProgramChain() { return [['push', 't1'], ['emit', 'p1']]; },
+    _displayParamTransforms() { return [['unit_circle', 'both']]; },
+    _serializeCoeffProgramChain() { return [['poly-rev'], ['emit']]; },
+    _serializeCoeffTransforms() { return ['rev', ['exp', '0.5']]; },
+  };
+  vm.createContext(previewCtx);
+  vm.runInContext(previewLogCode, previewCtx);
+  assert(previewCtx._displayActiveCoeffPipeline(',') === 'rev,exp(0.5)', 'Chain-mode coeff preview log should not throw on string transform rows');
+  assert(previewCtx._displayActiveParamPipeline(',') === 'unit_circle(both)', 'Chain-mode param preview log should format transform rows');
+  vm.runInContext('_programMode = true;', previewCtx);
+  assert(previewCtx._displayActiveCoeffPipeline(',') === 'poly-rev,emit', 'Program-mode coeff preview log should format program rows');
+  assert(previewCtx._displayActiveParamPipeline(',') === 'push(t1),emit(p1)', 'Program-mode param preview log should format program rows');
 
   let genericPmRejected = false;
   try {

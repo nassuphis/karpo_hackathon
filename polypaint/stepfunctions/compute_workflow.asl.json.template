@@ -99,10 +99,12 @@
               "FunctionName": "${CoeffgenFunctionArn}",
               "Payload": {
                 "phase": "degree_probe",
+                "pipeline_mode.$": "$.params.pipeline_mode",
                 "function.$": "$.params.function",
                 "param_transforms.$": "$.params.param_transforms",
                 "param_program_chain.$": "$.params.param_program_chain",
                 "coeff_transforms.$": "$.params.coeff_transforms",
+                "coeff_program_chain.$": "$.params.coeff_program_chain",
                 "cfpv.$": "$.params.cfpv",
                 "solver_mode.$": "$.params.solver_mode",
                 "N.$": "$.params.N",
@@ -271,6 +273,7 @@
               "n_threads.$": "$.plan.compute.coeffgen_threads",
               "function.$": "$.plan.pipeline.function",
               "coeff_transforms.$": "$.plan.pipeline.coeff_transforms",
+              "coeff_program.$": "$.plan.pipeline.coeff_program",
               "cfpv.$": "$.plan.pipeline.cfpv",
               "s3_key.$": "$$.Map.Item.Value.coeffs_key"
             },
@@ -437,6 +440,7 @@
                 "n_threads.$": "$.post.lores.coeffgen_threads",
                 "function.$": "$.plan.pipeline.function",
                 "coeff_transforms.$": "$.plan.pipeline.coeff_transforms",
+                "coeff_program.$": "$.plan.pipeline.coeff_program",
                 "cfpv.$": "$.plan.pipeline.cfpv",
                 "s3_key.$": "$.post.lores.coeffs_key"
               }
@@ -544,6 +548,7 @@
               "param_transforms.$": "$.plan.pipeline.param_transforms",
               "param_program.$": "$.plan.pipeline.param_program",
               "coeff_transforms.$": "$.plan.pipeline.coeff_transforms",
+              "coeff_program.$": "$.plan.pipeline.coeff_program",
               "cfpv.$": "$.plan.pipeline.cfpv",
               "solver_mode.$": "$.plan.solve.mode",
               "n_coeffs.$": "$.post.n_coeffs",

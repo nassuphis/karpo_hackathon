@@ -72,6 +72,26 @@ Rules:
   always-open panel.
 - Tabs are for primary workflows, not low-frequency diagnostics.
 
+## Tabsets
+
+PolyPaint has top-level workflow tabs and smaller in-panel tabsets. Both should
+look like tabs, not like unrelated action buttons.
+
+Rules:
+
+- In-panel tabsets must reuse the same visual grammar as the top-level tab bar:
+  rectangular tabs, shared bottom border, rounded top corners, muted inactive
+  text, and pink-red active text.
+- Do not style tab titles as pill buttons or introduce one-off active colors
+  such as green, teal, or purple.
+- Tab titles are navigation state, not execution actions; do not use
+  `.btn-primary` / `.btn-secondary` styling for them.
+- Swapping tab panes must not resize the surrounding workflow area. Allocate a
+  fixed or explicitly bounded pane height and put overflow inside the active
+  pane.
+- Plot/debug/result tabs that share one region must have the same allocated
+  height. Long debug text belongs in an internal scroll container.
+
 ## Layout Primitives
 
 ### `.panel`
@@ -223,6 +243,25 @@ Rule:
 For popup tuning controls:
 - use the existing `.autolevel-inline-fields` look
 - use explicit labels like `Workers`, `Threads`, `Input`
+
+### Program Editors
+
+Chip-based program editors should use the Solve Score editor pattern.
+
+Rules:
+
+- Program chip strips must be fixed-height scroll regions, not auto-growing
+  blocks.
+- Use vertical chip layout with `flex-direction: column` and
+  `flex-wrap: nowrap`; otherwise long programs wrap into sideways columns
+  instead of scrolling down.
+- Enable both vertical and horizontal overflow so long chip formulas remain
+  readable without changing the editor height.
+- Expression inputs inside chips must be wide enough to read realistic
+  expressions. Do not use the compact numeric width for fields such as
+  `poke_poly` values or scalar expressions.
+- Param Program and Coeff Program editors should visually match the Solve Score
+  chip editor unless there is a deliberate workflow reason to differ.
 
 ### Color Inputs
 

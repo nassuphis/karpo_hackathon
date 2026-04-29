@@ -117,6 +117,62 @@ class TestComputePlan(unittest.TestCase):
         self.assertTrue(plan["pipeline"]["param_program_fingerprint"])
         self.assertTrue(plan["pipeline"]["param_program_uses_legacy_fast_path"])
 
+    def test_build_plan_compiles_coeff_program_chain(self):
+        import handler_compute_plan as mod
+
+        result = mod.handle_build_plan({
+            "job_id": "compute_j",
+            "run_id": "run_coeff_program",
+            "task_id": "compute_run_aberth_mt_run_coeff_program",
+            "params": {
+                "pipeline_mode": "program",
+                "solver_mode": "aberth_mt",
+                "N": 20,
+                "times": 1,
+                "n_chunks": 2,
+                "function": "const",
+                "param_transforms": [["unit_circle"]],
+                "param_program_chain": [],
+                "coeff_transforms": [["rev"]],
+                "coeff_program_chain": [["const", "35", "p1+p2"], ["emit"]],
+                "cfpv": [35, 1, 0],
+            },
+        })
+        plan = json.loads(result["body"])
+        self.assertEqual(plan["pipeline"]["pipeline_mode"], "program")
+        self.assertEqual(plan["pipeline"]["param_transforms"], [])
+        self.assertEqual(plan["pipeline"]["coeff_transforms"], [])
+        self.assertEqual(plan["pipeline"]["coeff_program_chain"][0], ["const", "35", "p1+p2"])
+        self.assertEqual(plan["pipeline"]["coeff_program"]["token_count"], 2)
+        self.assertEqual(plan["pipeline"]["coeff_program"]["scalar_expr_count"], 1)
+        self.assertTrue(plan["pipeline"]["coeff_program_fingerprint"])
+
+    def test_probe_signature_includes_program_fingerprints(self):
+        import compute_fused as mod
+
+        base = mod.build_probe_signature(
+            function_name="g1",
+            param_transforms=[],
+            coeff_transforms=[],
+            cfpv=[],
+        )
+        with_param_program = mod.build_probe_signature(
+            function_name="g1",
+            param_transforms=[],
+            coeff_transforms=[],
+            cfpv=[],
+            param_program={"fingerprint": "param-a"},
+        )
+        with_coeff_program = mod.build_probe_signature(
+            function_name="g1",
+            param_transforms=[],
+            coeff_transforms=[],
+            cfpv=[],
+            coeff_program={"fingerprint": "coeff-a"},
+        )
+        self.assertNotEqual(base, with_param_program)
+        self.assertNotEqual(base, with_coeff_program)
+
     def test_build_plan_fused_uses_probe_and_safe_chunk_floor(self):
         import handler_compute_plan as mod
 

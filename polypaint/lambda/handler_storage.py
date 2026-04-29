@@ -37,6 +37,11 @@ from logical_sections import (
     summarize_chunk_items,
 )
 from shared import BUCKET, JOBS_TABLE, PRESIGN_EXPIRY, parse_body, ok_response, _get_ddb
+from coeff_program_chain import (
+    PROGRAM_KIND as COEFF_PROGRAM_KIND,
+    PROGRAM_VERSION as COEFF_PROGRAM_VERSION,
+    compile_coeff_program_chain,
+)
 from param_program_chain import (
     PROGRAM_KIND as PARAM_PROGRAM_KIND,
     PROGRAM_VERSION as PARAM_PROGRAM_VERSION,
@@ -66,6 +71,14 @@ MAX_PARAM_PROGRAM_NAME_LEN = 120
 MAX_PARAM_PROGRAM_STATEMENTS = 256
 MAX_PARAM_PROGRAM_CHAIN_BYTES = 24 * 1024
 MAX_PARAM_PROGRAM_TOKEN_LEN = 256
+COEFF_PROGRAMS_PREFIX = "polypaint/coeff-programs/"
+COEFF_PROGRAM_META_NAME = "coeff_program_name"
+COEFF_PROGRAM_META_STATEMENT_COUNT = "coeff_program_statement_count"
+COEFF_PROGRAM_META_SAVED_AT = "coeff_program_saved_at"
+MAX_COEFF_PROGRAM_NAME_LEN = 120
+MAX_COEFF_PROGRAM_STATEMENTS = 256
+MAX_COEFF_PROGRAM_CHAIN_BYTES = 32 * 1024
+MAX_COEFF_PROGRAM_TOKEN_LEN = 256
 DEFAULT_RESULTS_LIST_WORKERS = 32
 MAX_RESULTS_LIST_WORKERS = 64
 
@@ -75,6 +88,10 @@ class _SolveScoreProgramNotFound(RuntimeError):
 
 
 class _ParamProgramNotFound(RuntimeError):
+    pass
+
+
+class _CoeffProgramNotFound(RuntimeError):
     pass
 
 
@@ -107,7 +124,7 @@ def _error_response(status_code, message):
 def _handle_storage_route(fn, event):
     try:
         return fn(event)
-    except (_SolveScoreProgramNotFound, _ParamProgramNotFound) as exc:
+    except (_SolveScoreProgramNotFound, _ParamProgramNotFound, _CoeffProgramNotFound) as exc:
         return _error_response(404, exc)
     except (ValueError, KeyError, TypeError, RuntimeError, json.JSONDecodeError) as exc:
         return _error_response(400, exc)
@@ -131,12 +148,23 @@ def _slugify_param_program_id(name):
     return slug or "param-program"
 
 
+def _slugify_coeff_program_id(name):
+    text = str(name or "").strip().lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", text).strip("-")
+    slug = slug[:64].strip("-")
+    return slug or "coeff-program"
+
+
 def _solve_score_program_key(program_id):
     return f"{SOLVE_SCORE_PROGRAMS_PREFIX}{program_id}.json"
 
 
 def _param_program_key(program_id):
     return f"{PARAM_PROGRAMS_PREFIX}{program_id}.json"
+
+
+def _coeff_program_key(program_id):
+    return f"{COEFF_PROGRAMS_PREFIX}{program_id}.json"
 
 
 def _validate_solve_score_program_name(name):
@@ -162,6 +190,19 @@ def _validate_param_program_name(name):
         )
     if any(ch in "\r\n\t" for ch in text) or not all(ch.isprintable() for ch in text):
         raise ValueError("param program name must contain printable single-line text")
+    return text
+
+
+def _validate_coeff_program_name(name):
+    text = str(name or "").strip()
+    if not text:
+        raise ValueError("coeff program name is required")
+    if len(text) > MAX_COEFF_PROGRAM_NAME_LEN:
+        raise ValueError(
+            f"coeff program name must be at most {MAX_COEFF_PROGRAM_NAME_LEN} characters"
+        )
+    if any(ch in "\r\n\t" for ch in text) or not all(ch.isprintable() for ch in text):
+        raise ValueError("coeff program name must contain printable single-line text")
     return text
 
 
@@ -193,6 +234,22 @@ def _validate_param_program_chain_value(value, path):
     if isinstance(value, list):
         for idx, item in enumerate(value):
             _validate_param_program_chain_value(item, f"{path}[{idx}]")
+        return
+    raise ValueError(f"{path} must contain only arrays, strings, and numbers")
+
+
+def _validate_coeff_program_chain_value(value, path):
+    if isinstance(value, str):
+        if len(value) > MAX_COEFF_PROGRAM_TOKEN_LEN:
+            raise ValueError(
+                f"{path} string token must be at most {MAX_COEFF_PROGRAM_TOKEN_LEN} characters"
+            )
+        return
+    if isinstance(value, (int, float)):
+        return
+    if isinstance(value, list):
+        for idx, item in enumerate(value):
+            _validate_coeff_program_chain_value(item, f"{path}[{idx}]")
         return
     raise ValueError(f"{path} must contain only arrays, strings, and numbers")
 
@@ -277,6 +334,37 @@ def _param_program_macro_resolver(current_program_id=None):
     return _resolve
 
 
+def _read_coeff_program_source_chain(program_id):
+    key = _coeff_program_key(program_id)
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=key)
+    except Exception as exc:
+        if _is_missing_s3_error(exc):
+            raise _CoeffProgramNotFound(f"coeff program not found: {program_id}")
+        raise
+    raw = obj["Body"].read()
+    try:
+        payload = json.loads(raw) if raw else {}
+    except Exception as exc:
+        raise RuntimeError(f"saved coeff program is not valid JSON: {program_id}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"saved coeff program must be a JSON object: {program_id}")
+    chain = payload.get("chain")
+    if not isinstance(chain, list):
+        raise RuntimeError(f"saved coeff program chain must be a JSON array: {program_id}")
+    return chain
+
+
+def _coeff_program_macro_resolver(current_program_id=None):
+    def _resolve(macro_id):
+        macro_id_text = str(macro_id or "").strip()
+        if current_program_id and macro_id_text == current_program_id:
+            raise ValueError(f"coeff program cannot reference itself as macro({macro_id_text})")
+        return _read_coeff_program_source_chain(macro_id_text)
+
+    return _resolve
+
+
 def _compile_param_program_payload(
     name,
     chain,
@@ -329,6 +417,61 @@ def _compile_param_program_payload(
     }
     if compiled["legacy_transforms"]:
         program["legacy_transforms"] = compiled["legacy_transforms"]
+    return program
+
+
+def _compile_coeff_program_payload(
+    name,
+    chain,
+    *,
+    saved_at=None,
+    version=COEFF_PROGRAM_VERSION,
+    program_id=None,
+):
+    validated_name = _validate_coeff_program_name(name)
+    if not isinstance(chain, list) or not chain:
+        raise ValueError("coeff program chain must be a non-empty JSON array")
+    if len(chain) > MAX_COEFF_PROGRAM_STATEMENTS:
+        raise ValueError(
+            f"coeff program chain must contain at most {MAX_COEFF_PROGRAM_STATEMENTS} statements"
+        )
+    _validate_coeff_program_chain_value(chain, "chain")
+    chain_json = json.dumps(chain, separators=(",", ":"), ensure_ascii=False)
+    if len(chain_json.encode("utf-8")) > MAX_COEFF_PROGRAM_CHAIN_BYTES:
+        raise ValueError(
+            f"coeff program chain JSON must be at most {MAX_COEFF_PROGRAM_CHAIN_BYTES} bytes"
+        )
+
+    program_id_text = str(program_id or _slugify_coeff_program_id(validated_name)).strip()
+    compiled = compile_coeff_program_chain(
+        chain,
+        macro_resolver=_coeff_program_macro_resolver(program_id_text),
+    )
+    saved_at_text = _utc_now_iso() if saved_at is None else str(saved_at or "").strip()
+    try:
+        version_num = int(version)
+    except (TypeError, ValueError):
+        version_num = COEFF_PROGRAM_VERSION
+    program = {
+        "version": version_num,
+        "program_kind": COEFF_PROGRAM_KIND,
+        "id": program_id_text,
+        "name": validated_name,
+        "chain": compiled["source_chain"],
+        "display": compiled["display"],
+        "expanded_display": compiled["expanded_display"],
+        "fingerprint": compiled["fingerprint"],
+        "execution_spec": compiled["execution_spec"],
+        "statement_count": len(compiled["source_chain"]),
+        "token_count": compiled["token_count"],
+        "scalar_expr_count": compiled["scalar_expr_count"],
+        "stack_max": compiled["stack_max"],
+        "uses_legacy_chain_equivalent": compiled["uses_legacy_chain_equivalent"],
+        "macro_expansions": compiled["macro_expansions"],
+        "saved_at": saved_at_text,
+    }
+    if compiled["legacy_coeff_transforms"]:
+        program["legacy_coeff_transforms"] = compiled["legacy_coeff_transforms"]
     return program
 
 
@@ -385,6 +528,33 @@ def _read_param_program_object(program_id):
     return program
 
 
+def _read_coeff_program_object(program_id):
+    key = _coeff_program_key(program_id)
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=key)
+    except Exception as exc:
+        if _is_missing_s3_error(exc):
+            raise _CoeffProgramNotFound(f"coeff program not found: {program_id}")
+        raise
+    raw = obj["Body"].read()
+    try:
+        payload = json.loads(raw) if raw else {}
+    except Exception as exc:
+        raise RuntimeError(f"saved coeff program is not valid JSON: {program_id}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"saved coeff program must be a JSON object: {program_id}")
+    if payload.get("program_kind") not in (None, COEFF_PROGRAM_KIND):
+        raise RuntimeError(f"saved program is not a coeff program: {program_id}")
+    program = _compile_coeff_program_payload(
+        payload.get("name"),
+        payload.get("chain"),
+        saved_at=payload.get("saved_at", ""),
+        version=payload.get("version", COEFF_PROGRAM_VERSION),
+        program_id=str(program_id),
+    )
+    return program
+
+
 def _solve_score_program_put_metadata(program):
     return {
         SOLVE_SCORE_PROGRAM_META_NAME: str(program.get("name") or ""),
@@ -398,6 +568,14 @@ def _param_program_put_metadata(program):
         PARAM_PROGRAM_META_NAME: str(program.get("name") or ""),
         PARAM_PROGRAM_META_STATEMENT_COUNT: str(int(program.get("statement_count") or 0)),
         PARAM_PROGRAM_META_SAVED_AT: str(program.get("saved_at") or ""),
+    }
+
+
+def _coeff_program_put_metadata(program):
+    return {
+        COEFF_PROGRAM_META_NAME: str(program.get("name") or ""),
+        COEFF_PROGRAM_META_STATEMENT_COUNT: str(int(program.get("statement_count") or 0)),
+        COEFF_PROGRAM_META_SAVED_AT: str(program.get("saved_at") or ""),
     }
 
 
@@ -436,6 +614,28 @@ def _param_program_summary_from_head(program_id):
     except (TypeError, ValueError) as exc:
         raise RuntimeError(
             f"param program summary metadata invalid statement_count for {program_id}"
+        ) from exc
+    return {
+        "id": str(program_id),
+        "name": name,
+        "statement_count": statement_count,
+        "saved_at": saved_at,
+    }
+
+
+def _coeff_program_summary_from_head(program_id):
+    resp = s3.head_object(Bucket=BUCKET, Key=_coeff_program_key(program_id))
+    meta = resp.get("Metadata") or {}
+    name = str(meta.get(COEFF_PROGRAM_META_NAME) or "").strip()
+    saved_at = str(meta.get(COEFF_PROGRAM_META_SAVED_AT) or "").strip()
+    statement_count_raw = str(meta.get(COEFF_PROGRAM_META_STATEMENT_COUNT) or "").strip()
+    if not name or not saved_at or not statement_count_raw:
+        raise RuntimeError(f"coeff program summary metadata missing for {program_id}")
+    try:
+        statement_count = int(statement_count_raw)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            f"coeff program summary metadata invalid statement_count for {program_id}"
         ) from exc
     return {
         "id": str(program_id),
@@ -646,6 +846,14 @@ def handler(event, context):
         return _handle_storage_route(handle_save_param_program, event)
     elif path.endswith("/delete-param-program"):
         return _handle_storage_route(handle_delete_param_program, event)
+    elif path.endswith("/list-coeff-programs"):
+        return _handle_storage_route(handle_list_coeff_programs, event)
+    elif path.endswith("/fetch-coeff-program"):
+        return _handle_storage_route(handle_fetch_coeff_program, event)
+    elif path.endswith("/save-coeff-program"):
+        return _handle_storage_route(handle_save_coeff_program, event)
+    elif path.endswith("/delete-coeff-program"):
+        return _handle_storage_route(handle_delete_coeff_program, event)
     elif path.endswith("/list-favorites"):
         return handle_list_favorites(event)
     elif path.endswith("/add-favorite"):
@@ -899,6 +1107,91 @@ def handle_delete_param_program(event):
     key = _param_program_key(program_id)
     if not _key_exists(key):
         raise _ParamProgramNotFound(f"param program not found: {program_id}")
+    s3.delete_object(Bucket=BUCKET, Key=key)
+    return ok_response({"id": program_id, "deleted": 1})
+
+
+def handle_list_coeff_programs(event):
+    parse_body(event)
+    programs = []
+    errors = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=BUCKET, Prefix=COEFF_PROGRAMS_PREFIX):
+        for obj in page.get("Contents", []):
+            key = obj.get("Key", "")
+            if not key.endswith(".json") or key.endswith("/"):
+                continue
+            program_id = key[len(COEFF_PROGRAMS_PREFIX):-5]
+            if not program_id:
+                continue
+            try:
+                program = _coeff_program_summary_from_head(program_id)
+            except _CoeffProgramNotFound:
+                continue
+            except Exception as exc:
+                try:
+                    program = _read_coeff_program_object(program_id)
+                except _CoeffProgramNotFound:
+                    continue
+                except Exception as read_exc:
+                    err_text = str(read_exc)
+                    print(f"coeff program list skipped {key}: {err_text}")
+                    errors.append({
+                        "id": program_id,
+                        "error": err_text[:240],
+                    })
+                    continue
+                else:
+                    print(
+                        f"coeff program list used full read fallback for {key}: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+            programs.append(program)
+    programs = sorted(programs, key=lambda row: row["id"])
+    programs = sorted(programs, key=lambda row: row.get("saved_at") or "", reverse=True)
+    return ok_response({
+        "programs": programs,
+        "count": len(programs),
+        "order": "saved_at_desc",
+        "errors": errors,
+        "error_count": len(errors),
+    })
+
+
+def handle_fetch_coeff_program(event):
+    params = parse_body(event)
+    program_id = str(params.get("id") or "").strip()
+    if not program_id:
+        raise ValueError("coeff program fetch requires id")
+    return ok_response({"program": _read_coeff_program_object(program_id)})
+
+
+def handle_save_coeff_program(event):
+    params = parse_body(event)
+    program = _compile_coeff_program_payload(
+        params.get("name"),
+        params.get("chain"),
+    )
+    key = _coeff_program_key(program["id"])
+    overwritten = _key_exists(key)
+    s3.put_object(
+        Bucket=BUCKET,
+        Key=key,
+        Body=(json.dumps(program, indent=2) + "\n").encode("utf-8"),
+        ContentType="application/json",
+        Metadata=_coeff_program_put_metadata(program),
+    )
+    return ok_response({"program": program, "overwritten": overwritten})
+
+
+def handle_delete_coeff_program(event):
+    params = parse_body(event)
+    program_id = str(params.get("id") or "").strip()
+    if not program_id:
+        raise ValueError("coeff program delete requires id")
+    key = _coeff_program_key(program_id)
+    if not _key_exists(key):
+        raise _CoeffProgramNotFound(f"coeff program not found: {program_id}")
     s3.delete_object(Bucket=BUCKET, Key=key)
     return ok_response({"id": program_id, "deleted": 1})
 

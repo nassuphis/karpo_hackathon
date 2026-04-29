@@ -98,6 +98,10 @@ button {
     background: #1a1a2e; border: 1px solid #0f3460; border-radius: 3px;
     color: #e0e0e0; font-size: 11px; text-align: center;
 }
+.chip .chip-input-wide {
+    width: 180px;
+    text-align: left;
+}
 .chip .chip-param-pair {
     display: inline-flex;
     align-items: center;
@@ -803,17 +807,20 @@ button {
 .param-program-display {
     display: flex;
     flex-direction: column;
+    flex-wrap: nowrap;
     align-items: flex-start;
     gap: 6px;
     width: 100%;
-    min-height: 116px;
-    max-height: 180px;
-    overflow: auto;
+    min-height: 156px;
+    max-height: 156px;
+    overflow-y: auto;
+    overflow-x: auto;
     padding: 6px;
     margin-left: 0;
-    background: rgba(0,0,0,0.10);
-    border: 1px solid rgba(255,255,255,0.06);
-    border-radius: 7px;
+    background: #1a1a2e;
+    border: 1px solid #0f3460;
+    border-radius: 4px;
+    scrollbar-color: #0f3460 #111827;
 }
 .param-program-display .chip {
     flex: 0 0 auto;
@@ -1008,25 +1015,6 @@ button {
     width: 100%;
     margin-top: 8px;
 }
-.render-lores-preview-tabbar {
-    display: flex;
-    gap: 4px;
-    align-items: center;
-    margin-bottom: 5px;
-}
-.render-lores-preview-tab {
-    margin: 0;
-    font-size: 10px;
-    padding: 2px 8px;
-    border: 1px solid rgba(255,255,255,0.1);
-    background: rgba(255,255,255,0.035);
-    color: #9aa7bb;
-}
-.render-lores-preview-tab.active {
-    border-color: rgba(233,69,96,0.6);
-    background: rgba(233,69,96,0.12);
-    color: #e8eef8;
-}
 .render-lores-preview-pane {
     display: none;
 }
@@ -1132,12 +1120,98 @@ button {
     color: #666;
     font-size: 11px;
 }
+.subtab-bar,
+.compute-preview-tabs,
+.render-lores-preview-tabbar {
+    display: flex;
+    gap: 0;
+    align-items: flex-end;
+    margin: 6px 0 8px;
+    border-bottom: 1px solid #0f3460;
+}
+.subtab-btn,
+.compute-preview-tab-btn,
+.render-lores-preview-tab {
+    margin: 0;
+    border: 1px solid #0f3460;
+    border-bottom: none;
+    border-radius: 7px 7px 0 0;
+    background: #1a1a2e;
+    color: #777;
+    padding: 5px 12px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    cursor: pointer;
+}
+.subtab-btn.active,
+.compute-preview-tab-btn.active,
+.render-lores-preview-tab.active {
+    background: #16213e;
+    color: #e94560;
+    border-color: #0f3460;
+}
+.render-artifact-family-tabs {
+    margin-top: 0;
+    margin-bottom: 10px;
+}
+.subtab-count {
+    color: #777;
+    font-weight: 600;
+    margin-left: 3px;
+}
+.compute-preview-panel {
+    display: none;
+    height: 468px;
+    overflow: auto;
+}
+.compute-preview-panel.active {
+    display: block;
+}
+.compute-debug-grid {
+    display: grid;
+    grid-template-columns: 64px 84px 64px 84px repeat(4, minmax(80px, 1fr));
+    gap: 8px;
+    align-items: end;
+}
+.compute-debug-grid label {
+    color: #888;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.compute-debug-grid input,
+.compute-debug-grid button {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+}
+.compute-debug-output {
+    margin-top: 8px;
+    height: 352px;
+    max-height: none;
+    overflow: auto;
+    white-space: pre-wrap;
+    border: 1px solid #172a42;
+    border-radius: 6px;
+    background: #080d14;
+    color: #b9d7c8;
+    padding: 10px;
+    font-family: monospace;
+    font-size: 11px;
+    line-height: 1.45;
+}
 @media (max-width: 760px) {
     .compute-preview-matrix {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
     .compute-preview-note {
         grid-column: 1 / -1;
+    }
+    .compute-debug-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
 
@@ -1181,19 +1255,17 @@ button {
         <div id="tab-compute" class="tab-content active">
             <div class="anim-row" style="flex-wrap:wrap; gap:6px; align-items:center">
                 <label>N:</label>
-                <input type="number" id="render-n" value="500" min="10" max="5000" step="10" style="width:5em">
+                <input type="number" id="render-n" value="500" min="10" max="5000" step="10" style="width:10em">
                 <label>Times:</label>
                 <input type="number" id="render-times" value="1" min="1" max="100" step="1" style="width:5em">
+                <label style="min-width:0">Use:</label>
+                <select id="param-pipeline-mode" onchange="_setParamPipelineMode(this.value, {markStale:true})">
+                    <option value="chain">Chain</option>
+                    <option value="program">Program</option>
+                </select>
+                <span id="param-pipeline-mode-note" class="param-pipeline-mode-note">Legacy transform chains are active.</span>
             </div>
             <input type="hidden" id="render-stripes" value="10">
-            <div class="anim-row param-pipeline-row">
-                <label style="min-width:90px">Use:</label>
-                <select id="param-pipeline-mode" onchange="_setParamPipelineMode(this.value, {markStale:true})">
-                    <option value="legacy">Legacy Param transforms</option>
-                    <option value="param_program">Param Program</option>
-                </select>
-                <span id="param-pipeline-mode-note" class="param-pipeline-mode-note">Legacy Param transforms are active.</span>
-            </div>
             <div class="anim-row" id="param-transforms-row" style="flex-wrap:wrap">
                 <label style="min-width:90px">Param transforms:</label>
                 <div id="pt-chips" class="chip-container"></div>
@@ -1207,7 +1279,7 @@ button {
             </div>
             <div class="color-box param-program-box">
                 <div class="color-title">Param Program</div>
-                <div class="solve-score-program-note">Optional RPN parameter VM. The Use dropdown above decides whether Compute uses this program or the legacy Param transforms row.</div>
+                <div class="solve-score-program-note">Optional RPN parameter VM. Use=Program runs this and the Coeff Program; Use=Chain runs the legacy transform rows.</div>
                 <div class="solve-score-program-toolbar param-program-toolbar">
                     <button type="button" class="btn-secondary btn-inline" id="param-program-manage" onclick="openParamProgramModal()">Param Programs...</button>
                     <div class="score-chip-add-wrap">
@@ -1234,7 +1306,7 @@ button {
                 <label style="min-width:90px">Func params:</label>
                 <div id="cfpv-inputs" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap"></div>
             </div>
-                <div class="anim-row" style="flex-wrap:wrap">
+                <div class="anim-row" id="coeff-transforms-row" style="flex-wrap:wrap">
                 <label style="min-width:90px">Coeff transforms:</label>
                 <div id="ct-chips" class="chip-container"></div>
                 <div class="score-chip-add-wrap">
@@ -1246,7 +1318,7 @@ button {
                         <option value="conj">conj</option>
                         <option value="normalize">normalize</option>
                         <option value="deriv">deriv</option>
-                        <option value="scale100">linear</option>
+                        <option value="linear">linear</option>
                         <option value="safe">safe</option>
                         <option value="negate_odd">negate_odd</option>
                         <option value="max2one">max2one</option>
@@ -1273,31 +1345,67 @@ button {
                     </select>
                 </div>
             </div>
+            <div class="color-box param-program-box coeff-program-box">
+                <div class="color-title">Coeff Program</div>
+                <div class="solve-score-program-note">Optional RPN coefficient-vector VM. It reads immutable cf, writes poly, and can use p1/p2 scalar parameters from the Param Program.</div>
+                <div class="solve-score-program-toolbar param-program-toolbar">
+                    <button type="button" class="btn-secondary btn-inline" id="coeff-program-manage" onclick="openCoeffProgramModal()">Coeff Programs...</button>
+                    <div class="score-chip-add-wrap">
+                        <button id="cp-insert-before-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleCoeffProgramPicker(event,'before')">+ before</button>
+                        <button id="cp-insert-after-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleCoeffProgramPicker(event,'after')">+ after</button>
+                        <div id="cp-add-popup" class="score-chip-picker" aria-hidden="true"></div>
+                    </div>
+                    <button type="button" class="btn-secondary btn-inline" id="coeff-program-copy-legacy" onclick="_copyCoeffTransformsIntoCoeffProgram()" title="Translate the current Coeff transforms row into coeff-program chips">Copy legacy transforms</button>
+                    <button type="button" class="btn-secondary btn-inline" id="coeff-program-clear" onclick="_clearCoeffProgramChain()">Clear program</button>
+                </div>
+                <div id="cp-chips" class="chip-container param-program-display"></div>
+                <div id="coeff-program-status" class="solve-score-program-status"></div>
+            </div>
             <div class="color-box" style="margin-top:10px">
                 <div class="color-title">Compute Preview</div>
-                <div class="compute-preview-matrix">
-                    <div class="compute-preview-matrix-head">N preview</div>
-                    <div class="compute-preview-matrix-head">Solver</div>
-                    <div class="compute-preview-matrix-head">Q%</div>
-                    <div class="compute-preview-matrix-head">Shim%</div>
-                    <div class="compute-preview-matrix-head">Pix</div>
-                    <div class="compute-preview-matrix-head">Action</div>
-
-                    <input type="number" id="compute-preview-n" value="256" min="8" max="1024" step="8" style="width:6em" onchange="_markComputePreviewStale()">
-                    <select id="compute-preview-solver" style="width:7em; font-size:12px" onchange="_markComputePreviewStale()">
-                        <option value="aberth_mt">AE-MT</option>
-                        <option value="companion_matrix">CM</option>
-                    </select>
-                    <input type="number" id="compute-preview-quantile" value="0" min="0" max="10" step="0.1" style="width:5em" onchange="_markComputePreviewStale()">
-                    <input type="number" id="compute-preview-shim" value="5" min="0" max="50" step="0.5" style="width:5em" onchange="_markComputePreviewStale()">
-                    <input type="number" id="compute-preview-size" value="1000" min="64" max="4096" step="8" style="width:6em" onchange="_markComputePreviewStale()">
-                    <button class="btn-primary btn-inline" id="btn-compute-preview" onclick="runComputePreview()" style="background:#375">Preview</button>
-                    <div class="compute-preview-note">ephemeral · times=1 · not saved</div>
+                <div class="compute-preview-tabs" role="tablist" aria-label="Compute preview tabs">
+                    <button type="button" id="compute-preview-tab-plot" class="compute-preview-tab-btn active" onclick="_setComputePreviewTab('plot')">Plot</button>
+                    <button type="button" id="compute-preview-tab-debug" class="compute-preview-tab-btn" onclick="_setComputePreviewTab('debug')">Compute Debug</button>
                 </div>
-                <div id="compute-preview-status" class="status" style="margin-top:0">No compute preview yet</div>
-                <div style="display:flex; gap:12px; align-items:flex-start; margin-top:8px; flex-wrap:wrap">
-                    <div id="compute-preview-box" style="width:320px; height:320px; border:1px solid #0f3460; border-radius:4px; background:#000; display:flex; align-items:center; justify-content:center"><span style="color:#444; font-size:11px">No compute preview yet</span></div>
-                    <div id="compute-preview-info" style="min-width:180px; font-size:11px; color:#888; line-height:1.5"></div>
+                <div id="compute-preview-plot-panel" class="compute-preview-panel active">
+                    <div class="compute-preview-matrix">
+                        <div class="compute-preview-matrix-head">N preview</div>
+                        <div class="compute-preview-matrix-head">Solver</div>
+                        <div class="compute-preview-matrix-head">Q%</div>
+                        <div class="compute-preview-matrix-head">Shim%</div>
+                        <div class="compute-preview-matrix-head">Pix</div>
+                        <div class="compute-preview-matrix-head">Action</div>
+
+                        <input type="number" id="compute-preview-n" value="256" min="8" max="1024" step="8" style="width:8em" onchange="_markComputePreviewStale()">
+                        <select id="compute-preview-solver" style="width:7em; font-size:12px" onchange="_markComputePreviewStale()">
+                            <option value="aberth_mt">AE-MT</option>
+                            <option value="companion_matrix">CM</option>
+                        </select>
+                        <input type="number" id="compute-preview-quantile" value="0" min="0" max="10" step="0.1" style="width:5em" onchange="_markComputePreviewStale()">
+                        <input type="number" id="compute-preview-shim" value="5" min="0" max="50" step="0.5" style="width:5em" onchange="_markComputePreviewStale()">
+                        <input type="number" id="compute-preview-size" value="1000" min="64" max="4096" step="8" style="width:6em" onchange="_markComputePreviewStale()">
+                        <button class="btn-primary btn-inline" id="btn-compute-preview" onclick="runComputePreview()">Preview</button>
+                        <div class="compute-preview-note">ephemeral · times=1 · not saved</div>
+                    </div>
+                    <div id="compute-preview-status" class="status" style="margin-top:0">No compute preview yet</div>
+                    <div style="display:flex; gap:12px; align-items:flex-start; margin-top:8px; flex-wrap:wrap">
+                        <div id="compute-preview-box" style="width:320px; height:320px; border:1px solid #0f3460; border-radius:4px; background:#000; display:flex; align-items:center; justify-content:center"><span style="color:#444; font-size:11px">No compute preview yet</span></div>
+                        <div id="compute-preview-info" style="min-width:180px; font-size:11px; color:#888; line-height:1.5"></div>
+                    </div>
+                </div>
+                <div id="compute-preview-debug-panel" class="compute-preview-panel">
+                    <div class="compute-debug-grid">
+                        <label for="compute-debug-u">u</label>
+                        <input type="number" id="compute-debug-u" value="0.5" min="0" max="1" step="0.001">
+                        <label for="compute-debug-v">v</label>
+                        <input type="number" id="compute-debug-v" value="0.5" min="0" max="1" step="0.001">
+                        <button type="button" class="btn-secondary compute-debug-action" onclick="runComputeDebug('param')">Param eval</button>
+                        <button type="button" class="btn-secondary compute-debug-action" onclick="runComputeDebug('poly')">Poly eval</button>
+                        <button type="button" class="btn-secondary compute-debug-action" onclick="runComputeDebug('solve_ae')">SolveAE eval</button>
+                        <button type="button" class="btn-secondary compute-debug-action" onclick="runComputeDebug('solve_cm')">SolveCM eval</button>
+                    </div>
+                    <div id="compute-debug-status" class="status" style="margin-top:8px">Pick u/v and run one stage.</div>
+                    <pre id="compute-debug-output" class="compute-debug-output">No compute debug run yet.</pre>
                 </div>
             </div>
             <div style="margin-top:8px; display:flex; gap:6px; align-items:center">
@@ -1553,12 +1661,12 @@ button {
                         <span id="render-preview-source-note" style="color:#666; font-size:11px">size ignored for lores</span>
                     </div>
                     <div id="render-lores-preview-tabs" class="render-lores-preview-tabs">
-                        <div class="render-lores-preview-tabbar">
-                            <button type="button" id="render-lores-preview-tab-plot" class="render-lores-preview-tab active" onclick="_selectRenderLoresPreviewTab('plot')">Plot</button>
-                            <button type="button" id="render-lores-preview-tab-palette" class="render-lores-preview-tab" style="display:none" onclick="_selectRenderLoresPreviewTab('palette')">Palette</button>
-                            <button type="button" id="render-lores-preview-tab-e1" class="render-lores-preview-tab" style="display:none" onclick="_selectRenderLoresPreviewTab('e1')">E1</button>
-                            <button type="button" id="render-lores-preview-tab-e2" class="render-lores-preview-tab" style="display:none" onclick="_selectRenderLoresPreviewTab('e2')">E2</button>
-                            <button type="button" id="render-lores-preview-tab-e3" class="render-lores-preview-tab" style="display:none" onclick="_selectRenderLoresPreviewTab('e3')">E3</button>
+                        <div class="render-lores-preview-tabbar" role="tablist" aria-label="Render output preview tabs">
+                            <button type="button" role="tab" id="render-lores-preview-tab-plot" class="render-lores-preview-tab active" onclick="_selectRenderLoresPreviewTab('plot')">Plot</button>
+                            <button type="button" role="tab" id="render-lores-preview-tab-palette" class="render-lores-preview-tab" style="display:none" onclick="_selectRenderLoresPreviewTab('palette')">Palette</button>
+                            <button type="button" role="tab" id="render-lores-preview-tab-e1" class="render-lores-preview-tab" style="display:none" onclick="_selectRenderLoresPreviewTab('e1')">E1</button>
+                            <button type="button" role="tab" id="render-lores-preview-tab-e2" class="render-lores-preview-tab" style="display:none" onclick="_selectRenderLoresPreviewTab('e2')">E2</button>
+                            <button type="button" role="tab" id="render-lores-preview-tab-e3" class="render-lores-preview-tab" style="display:none" onclick="_selectRenderLoresPreviewTab('e3')">E3</button>
                         </div>
                         <div id="render-lores-preview-pane-plot" class="render-lores-preview-pane active">
                             <div id="render-lores-preview-box" class="render-lores-preview-box">
@@ -1929,6 +2037,60 @@ button {
             </div>
         </div>
         <input id="param-program-modal-upload-file" type="file" accept="application/json,.json" style="display:none">
+    </div>
+</div>
+<div id="coeff-program-modal-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup solve-score-modal-popup" role="dialog" aria-modal="true" aria-labelledby="coeff-program-modal-title">
+        <div class="tri-popup-head">
+            <div id="coeff-program-modal-title" class="tri-popup-title">Coeff Programs</div>
+            <button id="coeff-program-modal-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div id="coeff-program-modal-summary" class="autolevel-popup-summary"></div>
+        <div class="solve-score-modal-body">
+            <div class="solve-score-modal-pane">
+                <div class="solve-score-modal-pane-title">Saved Programs</div>
+                <div class="solve-score-modal-table-wrap">
+                    <table class="tri-popup-table">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Statements</th>
+                                <th>Saved</th>
+                            </tr>
+                        </thead>
+                        <tbody id="coeff-program-modal-body"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="solve-score-modal-right">
+                <div class="solve-score-modal-name-row">
+                    <div class="solve-score-modal-pane-title">Program Name</div>
+                    <input id="coeff-program-modal-name" type="text" maxlength="120" placeholder="coeff-program">
+                </div>
+                <div class="solve-score-modal-program-section">
+                    <div class="solve-score-modal-pane-title">Current Program</div>
+                    <div id="coeff-program-modal-current" class="solve-score-modal-display"></div>
+                </div>
+                <div class="solve-score-modal-program-section">
+                    <div class="solve-score-modal-pane-title">Selected Saved Program</div>
+                    <div id="coeff-program-modal-selected" class="solve-score-modal-display"></div>
+                </div>
+            </div>
+        </div>
+        <div id="coeff-program-modal-status" class="solve-score-program-status" style="padding:0 14px 8px"></div>
+        <div class="solve-score-modal-actions">
+            <div class="solve-score-modal-actions-left">
+                <button id="coeff-program-modal-load" type="button" class="btn-primary" style="padding:6px 12px">Load</button>
+                <button id="coeff-program-modal-save" type="button" class="btn-primary" style="padding:6px 12px">Save</button>
+                <button id="coeff-program-modal-delete" type="button" class="btn-secondary" style="padding:6px 12px">Delete</button>
+            </div>
+            <div class="solve-score-modal-actions-right">
+                <button id="coeff-program-modal-download" type="button" class="btn-secondary" style="padding:6px 12px">Download</button>
+                <button id="coeff-program-modal-upload" type="button" class="btn-secondary" style="padding:6px 12px">Upload</button>
+                <button id="coeff-program-modal-cancel" type="button" class="btn-secondary" style="padding:6px 12px">Exit</button>
+            </div>
+        </div>
+        <input id="coeff-program-modal-upload-file" type="file" accept="application/json,.json" style="display:none">
     </div>
 </div>
 <div id="function-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
@@ -3501,7 +3663,7 @@ function _applyDetail(r, detail, previewEl, infoEl, jobId) {
         : 'none';
     const pipeline = detail.pipeline || {};
     const resCfpv = pipeline.cfpv_display ? pipeline.cfpv_display
-        : (pipeline.cfpv && pipeline.cfpv.length) ? pipeline.cfpv.join(', ') : '-';
+        : (pipeline.cfpv && pipeline.cfpv.length) ? (_formatCfpvForDisplay(pipeline.function || detail.function || detail.calc?.function || '', pipeline.cfpv) || pipeline.cfpv.join(', ')) : '-';
     document.getElementById('res-cfpv').textContent = resCfpv;
     document.getElementById('res-cform').textContent = ct.length
         ? ct.map(item => Array.isArray(item) && item.length > 1 ? `${item[0]}(${item.slice(1).join(',')})` : (Array.isArray(item) ? item[0] : item)).join(', ')
@@ -3685,6 +3847,12 @@ function _setChainFromSaved(which, values) {
         _renderChips(which);
         return;
     }
+    if (which === 'cp') {
+        _cpChain = _normalizeCoeffProgramChain(normalized);
+        _coeffProgramSelectedIndex = _cpChain.length ? 0 : -1;
+        _renderChips(which);
+        return;
+    }
     const chain = normalized.map(item => {
         if (Array.isArray(item) && item.length) {
             return { name: String(item[0]), params: item.slice(1).map(v => String(v)) };
@@ -3693,7 +3861,7 @@ function _setChainFromSaved(which, values) {
         return { name: String(item), params: [] };
     }).filter(Boolean);
     if (which === 'pt') _ptChain = chain;
-    else if (which === 'ct') _ctChain = chain;
+    else if (which === 'ct') _ctChain = chain.map(_normalizeCoeffTransformItem);
     else if (which === 'rt') _rtChain = chain;
     else if (which === 'palette-rt') _paletteRtChain = chain;
     _renderChips(which);
@@ -3768,6 +3936,26 @@ function _computePreviewInfoEl() {
     return document.getElementById('compute-preview-info');
 }
 
+function _computeDebugStatusEl() {
+    return document.getElementById('compute-debug-status');
+}
+
+function _computeDebugOutputEl() {
+    return document.getElementById('compute-debug-output');
+}
+
+function _setComputePreviewTab(tab) {
+    const normalized = tab === 'debug' ? 'debug' : 'plot';
+    const plotPanel = document.getElementById('compute-preview-plot-panel');
+    const debugPanel = document.getElementById('compute-preview-debug-panel');
+    const plotTab = document.getElementById('compute-preview-tab-plot');
+    const debugTab = document.getElementById('compute-preview-tab-debug');
+    if (plotPanel && plotPanel.classList) plotPanel.classList.toggle('active', normalized === 'plot');
+    if (debugPanel && debugPanel.classList) debugPanel.classList.toggle('active', normalized === 'debug');
+    if (plotTab && plotTab.classList) plotTab.classList.toggle('active', normalized === 'plot');
+    if (debugTab && debugTab.classList) debugTab.classList.toggle('active', normalized === 'debug');
+}
+
 function _computePreviewHasImage() {
     const box = _computePreviewBox();
     return !!(box && box.dataset && box.dataset.hasImage === '1');
@@ -3784,7 +3972,8 @@ function _computePreviewSignatureNow() {
         cfpv: _cfpv.length ? [..._cfpv] : [],
         param_transforms: _effectiveParamTransformsForCompute(),
         param_program_chain: _effectiveParamProgramChainForCompute(),
-        coeff_transforms: _serializeCoeffTransforms(),
+        coeff_transforms: _effectiveCoeffTransformsForCompute(),
+        coeff_program_chain: _effectiveCoeffProgramChainForCompute(),
     });
 }
 
@@ -3861,6 +4050,118 @@ function _applyComputePreviewResult(result) {
     _renderComputePreviewInfo(infoLines, false);
 }
 
+function _formatDebugComplex(pair) {
+    if (!Array.isArray(pair) || pair.length < 2) return String(pair == null ? '' : pair);
+    const re = Number(pair[0]);
+    const im = Number(pair[1]);
+    if (!Number.isFinite(re) || !Number.isFinite(im)) return `[${pair[0]}, ${pair[1]}]`;
+    return _formatCfpvComplexValue(re, im);
+}
+
+function _formatDebugComplexRows(label, values, limit = 80) {
+    const rows = Array.isArray(values) ? values : [];
+    const shown = rows.slice(0, limit).map((pair, idx) => `${label}[${idx}] = ${_formatDebugComplex(pair)}`);
+    if (rows.length > limit) shown.push(`${label}: ${rows.length - limit} more values omitted`);
+    return shown;
+}
+
+function _formatComputeDebugResult(result) {
+    const debug = result && result.debug ? result.debug : {};
+    const param = debug.param || {};
+    const coeff = debug.coeff || {};
+    const lines = [
+        `stage: ${result.stage || 'debug'}`,
+        `mode: ${result.pipeline_mode || 'chain'}`,
+        `u,v: ${debug.u}, ${debug.v}`,
+        `t1: ${_formatDebugComplex(param.t1)}`,
+        `t2: ${_formatDebugComplex(param.t2)}`,
+        `p1: ${_formatDebugComplex(param.p1)}`,
+        `p2: ${_formatDebugComplex(param.p2)}`,
+        `param tokens: ${result.param_program?.token_count || param.param_program_tokens || 0} · stack max: ${result.param_program?.stack_max || 0}`,
+        `coeff tokens: ${result.coeff_program?.token_count || coeff.coeff_program_tokens || 0} · stack max: ${result.coeff_program?.stack_max || coeff.coeff_program_stack_max || 0} · final stack: 0`,
+        `coeffs: cf_len=${coeff.cf_len || 0} · poly_len=${coeff.poly_len || 0} · degree=${coeff.degree || 0}`,
+    ];
+    const diagnostics = result.coeff_program && Array.isArray(result.coeff_program.diagnostics)
+        ? result.coeff_program.diagnostics
+        : [];
+    diagnostics.forEach(d => lines.push(`diagnostic: ${d.level || 'info'} · ${d.message || ''}`));
+    if (result.solve) {
+        lines.push(`solve: ${JSON.stringify(result.solve)}`);
+    }
+    if (Array.isArray(result.roots)) {
+        lines.push('');
+        lines.push(..._formatDebugComplexRows('root', result.roots, 80));
+    } else if (result.stage === 'param') {
+        lines.push('');
+        lines.push('Poly was evaluated to keep the native path identical; use Poly eval to inspect coefficients.');
+    } else {
+        lines.push('');
+        lines.push(..._formatDebugComplexRows('cf', coeff.cf, 60));
+        lines.push('');
+        lines.push(..._formatDebugComplexRows('poly', coeff.poly, 80));
+    }
+    return lines.join('\n');
+}
+
+async function runComputeDebug(stage) {
+    const buttons = Array.from(document.querySelectorAll('.compute-debug-action'));
+    const statusEl = _computeDebugStatusEl();
+    const outputEl = _computeDebugOutputEl();
+    const funcName = document.getElementById('render-function').value;
+    const u = Number(document.getElementById('compute-debug-u')?.value);
+    const v = Number(document.getElementById('compute-debug-v')?.value);
+    if (!Number.isFinite(u) || !Number.isFinite(v) || u < 0 || u > 1 || v < 0 || v > 1) {
+        if (statusEl) {
+            statusEl.textContent = 'u and v must be numeric values in [0,1].';
+            statusEl.className = 'status error';
+        }
+        return;
+    }
+    const nPreview = Math.max(8, parseInt(document.getElementById('compute-preview-n')?.value) || 256);
+    const paramTransforms = _effectiveParamTransformsForCompute();
+    const paramProgramChain = _effectiveParamProgramChainForCompute();
+    const coeffTransforms = _effectiveCoeffTransformsForCompute();
+    const coeffProgramChain = _effectiveCoeffProgramChainForCompute();
+    const cfpv = _cfpv.length > 0 ? [..._cfpv] : [];
+    const label = stage === 'solve_ae' ? 'SolveAE' : (stage === 'solve_cm' ? 'SolveCM' : (stage === 'poly' ? 'Poly' : 'Param'));
+    buttons.forEach(btn => { btn.disabled = true; });
+    if (statusEl) {
+        statusEl.textContent = `${label} debug running...`;
+        statusEl.className = 'status';
+    }
+    if (outputEl) outputEl.textContent = 'Working...';
+    try {
+        const result = await lambdaPost('compute-preview', {
+            debug_stage: stage,
+            pipeline_mode: _selectedParamPipelineMode(),
+            N_preview: nPreview,
+            function: funcName,
+            u,
+            v,
+            param_transforms: paramTransforms,
+            param_program_chain: paramProgramChain,
+            coeff_transforms: coeffTransforms,
+            coeff_program_chain: coeffProgramChain,
+            cfpv,
+        });
+        if (outputEl) outputEl.textContent = _formatComputeDebugResult(result);
+        if (statusEl) {
+            statusEl.textContent = `${label} debug ready.`;
+            statusEl.className = 'status ok';
+        }
+        log(`Compute debug ${label}: u=${u}, v=${v}, degree=${result.debug?.coeff?.degree ?? '?'}`, 'ok', 'compute-log');
+    } catch (e) {
+        if (statusEl) {
+            statusEl.textContent = `${label} debug failed: ${e.message}`;
+            statusEl.className = 'status error';
+        }
+        if (outputEl) outputEl.textContent = e.message;
+        log(`Compute debug ${label} failed: ${e.message}`, 'err', 'compute-log');
+    } finally {
+        buttons.forEach(btn => { btn.disabled = false; });
+    }
+}
+
 async function runComputePreview() {
     const btn = document.getElementById('btn-compute-preview');
     const statusEl = _computePreviewStatusEl();
@@ -3872,10 +4173,12 @@ async function runComputePreview() {
     const shim = Math.max(0, parseFloat(document.getElementById('compute-preview-shim').value) || 5) / 100;
     const paramTransforms = _effectiveParamTransformsForCompute();
     const paramProgramChain = _effectiveParamProgramChainForCompute();
-    const coeffTransforms = _serializeCoeffTransforms();
+    const coeffTransforms = _effectiveCoeffTransformsForCompute();
+    const coeffProgramChain = _effectiveCoeffProgramChainForCompute();
     const cfpv = _cfpv.length > 0 ? [..._cfpv] : [];
     const coeffTransformsDisplay = _displayCoeffTransforms();
     const ptDisplay = _displayActiveParamPipeline(',');
+    const ctDisplay = _displayActiveCoeffPipeline(',');
     const rootsCmSyncMaxN = 128;
     if (_chainHasTransformName(coeffTransforms, 'roots_cm') && nPreview > rootsCmSyncMaxN) {
         const requestedN = nPreview;
@@ -3892,8 +4195,10 @@ async function runComputePreview() {
     }
     _setComputePreviewPlaceholder('Working...');
     try {
-        log(`Compute preview (${_solverTag(solverMode)}): [${ptDisplay || 'none'}] ${funcName} [${coeffTransformsDisplay.join(',') || 'none'}] N-preview=${nPreview} · pix=${previewSize} · q=${(quantile * 100).toFixed(1)}% · shim=${(shim * 100).toFixed(1)}%...`, '', 'compute-log');
+        const cfpvDisplay = _formatCfpvForDisplay(funcName, cfpv);
+        log(`Compute preview (${_solverTag(solverMode)}): [${ptDisplay || 'none'}] ${funcName}${cfpvDisplay ? '(' + cfpvDisplay + ')' : ''} [${ctDisplay || coeffTransformsDisplay.join(',') || 'none'}] N-preview=${nPreview} · pix=${previewSize} · q=${(quantile * 100).toFixed(1)}% · shim=${(shim * 100).toFixed(1)}%...`, '', 'compute-log');
         const result = await lambdaPost('compute-preview', {
+            pipeline_mode: _selectedParamPipelineMode(),
             solver_mode: solverMode,
             N_preview: nPreview,
             preview_size: previewSize,
@@ -3903,6 +4208,7 @@ async function runComputePreview() {
             param_transforms: paramTransforms,
             param_program_chain: paramProgramChain,
             coeff_transforms: coeffTransforms,
+            coeff_program_chain: coeffProgramChain,
             cfpv,
         });
         _applyComputePreviewResult(result);
@@ -3965,16 +4271,26 @@ function _populateComputeFromDetail(jobId, detail) {
 
     const ptDisplay = pipeline.param_transforms_display || detail.param_transforms_display || pipeline.param_transforms || detail.param_transforms || [];
     const savedParamProgramChain = pipeline.param_program_chain || detail.param_program_chain || [];
+    const savedCoeffProgramChain = pipeline.coeff_program_chain || detail.coeff_program_chain || [];
     _setChainFromSaved('pt', ptDisplay);
     _setChainFromSaved('pp', savedParamProgramChain);
-    _setParamPipelineMode(Array.isArray(savedParamProgramChain) && savedParamProgramChain.length ? 'param_program' : 'legacy');
+    _setChainFromSaved('cp', savedCoeffProgramChain);
+    _setParamPipelineMode(String(pipeline.pipeline_mode || detail.pipeline_mode || '').toLowerCase() === 'program' ||
+        (Array.isArray(savedParamProgramChain) && savedParamProgramChain.length) ||
+        (Array.isArray(savedCoeffProgramChain) && savedCoeffProgramChain.length)
+        ? 'program'
+        : 'chain');
     _setChainFromSaved('ct', pipeline.coeff_transforms || detail.coeff_transforms || []);
 
     const savedCfpv = Array.isArray(pipeline.cfpv) ? pipeline.cfpv : [];
     if (savedCfpv.length) {
-        for (let i = 0; i < savedCfpv.length; i++) {
-            const inp = document.getElementById('cfpv-p' + i);
-            if (inp) inp.value = String(savedCfpv[i]);
+        if (_isConstCoeffFunction(functionName)) {
+            _setConstCoeffInputsFromRaw(savedCfpv);
+        } else {
+            for (let i = 0; i < savedCfpv.length; i++) {
+                const inp = document.getElementById('cfpv-p' + i);
+                if (inp) inp.value = String(savedCfpv[i]);
+            }
         }
         parseCfpv();
     } else {
@@ -4145,6 +4461,7 @@ function _summarizeLambdaErrorPayload(body) {
         parts.push(`${label}=${_clipErrorText(value, maxLen)}`);
     };
     if (body.error) parts.push(_clipErrorText(body.error, 180));
+    if (body.message) parts.push(_clipErrorText(body.message, 260));
     push('phase', body.phase, 80);
     push('metric', body.metric, 80);
     push('program', body.program, 200);
@@ -4266,6 +4583,7 @@ function _escapeHtml(value) {
 function _catalogForChain(which) {
     if (which === 'pt') return _ptCatalog;
     if (which === 'pp') return _ppCatalog;
+    if (which === 'cp') return _cpCatalog;
     if (which === 'ct') return _ctCatalog;
     if (which === 'ss' || which === 'palette-ss') return _ssCatalog;
     return _rtCatalog;
@@ -4274,6 +4592,7 @@ function _catalogForChain(which) {
 function _chainForWhich(which) {
     if (which === 'pt') return _ptChain;
     if (which === 'pp') return _ppChain;
+    if (which === 'cp') return _cpChain;
     if (which === 'rt') return _rtChain;
     if (which === 'palette-rt') return _paletteRtChain;
     if (which === 'ss') return _renderScoreChain;
@@ -6006,6 +6325,324 @@ async function _importParamProgramFileFromModal(file) {
     }
 }
 
+let _coeffProgramModalState = {
+    open: false,
+    tableState: 'idle',
+    rows: [],
+    selectedId: '',
+    selectedProgram: null,
+    selectedError: '',
+    selectedLoading: false,
+    actionBusy: false,
+    status: '',
+    statusError: false,
+    nameInput: '',
+    lastSelectedName: '',
+};
+
+function _coeffProgramFilename(name) {
+    const slug = String(name || '').trim().toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'coeff-program';
+    return `${slug}.json`;
+}
+
+function _setCoeffProgramModalStatus(message, isError = false) {
+    _coeffProgramModalState.status = String(message || '');
+    _coeffProgramModalState.statusError = !!isError;
+}
+
+function _currentCoeffProgramSummary() {
+    try {
+        const payload = _portableCoeffProgramPayload(_coeffProgramModalState.nameInput || _coeffProgramDefaultName());
+        return { ...payload, statement_count: Array.isArray(payload.chain) ? payload.chain.length : 0 };
+    } catch (e) {
+        return { error: e && e.message ? e.message : String(e) };
+    }
+}
+
+function _coeffProgramMetaHtml(program, options = {}) {
+    const rows = [];
+    const name = String(program && program.name || '').trim();
+    const savedAt = String(program && program.saved_at || '').trim();
+    const statements = Number(program && program.statement_count != null ? program.statement_count : (Array.isArray(program && program.chain) ? program.chain.length : NaN));
+    const tokenCount = Number(program && program.token_count);
+    if (name) rows.push(['Name', name]);
+    if (options.selected && savedAt) rows.push(['Saved', savedAt]);
+    if (Number.isFinite(statements)) rows.push(['Statements', String(statements)]);
+    if (Number.isFinite(tokenCount)) rows.push(['Tokens', String(tokenCount)]);
+    if (program && program.uses_legacy_chain_equivalent === true) rows.push(['Path', 'legacy']);
+    if (program && program.uses_legacy_chain_equivalent === false) rows.push(['Path', 'VM']);
+    if (!rows.length) return '';
+    return `<div class="solve-score-modal-program-meta">${rows.map(([label, value]) => (
+        `<div><span>${_escapeHtml(label)}</span>${_escapeHtml(value)}</div>`
+    )).join('')}</div>`;
+}
+
+function _renderCoeffProgramCardHtml(program, options = {}) {
+    const selected = !!options.selected;
+    if (!program) {
+        return _solveScoreModalMessageHtml(selected ? 'Select a saved program to inspect before loading.' : 'Current live program is unavailable.');
+    }
+    if (program.error) return _solveScoreModalMessageHtml(`Error: ${program.error}`, true);
+    try {
+        return _coeffProgramMetaHtml(program, options) + _renderCoeffProgramChipsHtml(program);
+    } catch (e) {
+        return _solveScoreModalMessageHtml(`Error: ${e && e.message ? e.message : String(e)}`, true);
+    }
+}
+
+function _renderCoeffProgramModal() {
+    const overlay = document.getElementById('coeff-program-modal-overlay');
+    const summaryEl = document.getElementById('coeff-program-modal-summary');
+    const bodyEl = document.getElementById('coeff-program-modal-body');
+    const nameEl = document.getElementById('coeff-program-modal-name');
+    const currentEl = document.getElementById('coeff-program-modal-current');
+    const selectedEl = document.getElementById('coeff-program-modal-selected');
+    const statusEl = document.getElementById('coeff-program-modal-status');
+    const currentProgram = _currentCoeffProgramSummary();
+    if (overlay) {
+        overlay.style.display = _coeffProgramModalState.open ? 'flex' : 'none';
+        overlay.setAttribute('aria-hidden', _coeffProgramModalState.open ? 'false' : 'true');
+    }
+    if (summaryEl) summaryEl.textContent = 'Global saved coefficient programs on the left; current Compute-tab live program on the right. Use=Program runs Param Program and Coeff Program together.';
+    if (nameEl && nameEl.value !== _coeffProgramModalState.nameInput) nameEl.value = _coeffProgramModalState.nameInput;
+    if (currentEl) currentEl.innerHTML = _renderCoeffProgramCardHtml(currentProgram);
+    if (selectedEl) {
+        if (_coeffProgramModalState.selectedLoading) selectedEl.innerHTML = _solveScoreModalMessageHtml('Loading selected saved program...');
+        else if (_coeffProgramModalState.selectedError) selectedEl.innerHTML = _solveScoreModalMessageHtml(`Error: ${_coeffProgramModalState.selectedError}`, true);
+        else if (_coeffProgramModalState.selectedProgram) selectedEl.innerHTML = _renderCoeffProgramCardHtml(_coeffProgramModalState.selectedProgram, { selected: true });
+        else selectedEl.innerHTML = _solveScoreModalMessageHtml('Select a saved program to inspect before loading.');
+    }
+    if (statusEl) {
+        statusEl.textContent = _coeffProgramModalState.status;
+        statusEl.className = `solve-score-program-status${_coeffProgramModalState.statusError ? ' error' : ''}`;
+    }
+    const canLoad = _coeffProgramModalState.tableState === 'loaded' && !!_coeffProgramModalState.selectedId && !_coeffProgramModalState.selectedLoading && !_coeffProgramModalState.actionBusy;
+    const canSave = !_coeffProgramModalState.actionBusy && !!String(_coeffProgramModalState.nameInput || '').trim() && !currentProgram.error;
+    [['load', canLoad], ['delete', canLoad], ['save', canSave], ['download', !_coeffProgramModalState.actionBusy && !currentProgram.error], ['upload', !_coeffProgramModalState.actionBusy]].forEach(([id, enabled]) => {
+        const btn = document.getElementById(`coeff-program-modal-${id}`);
+        if (btn) btn.disabled = !enabled;
+    });
+    if (nameEl) nameEl.disabled = _coeffProgramModalState.actionBusy;
+    if (!bodyEl) return;
+    const rows = Array.isArray(_coeffProgramModalState.rows) ? _coeffProgramModalState.rows : [];
+    if (_coeffProgramModalState.tableState === 'loading') {
+        bodyEl.innerHTML = '<tr class="tri-popup-empty"><td colspan="3">Loading saved programs...</td></tr>';
+        return;
+    }
+    if (_coeffProgramModalState.tableState === 'error') {
+        bodyEl.innerHTML = `<tr class="tri-popup-empty"><td colspan="3">${_escapeHtml(_coeffProgramModalState.status || 'Failed to load saved programs.')}</td></tr>`;
+        return;
+    }
+    if (!rows.length) {
+        bodyEl.innerHTML = '<tr class="tri-popup-empty"><td colspan="3">No saved coeff programs found.</td></tr>';
+        return;
+    }
+    bodyEl.innerHTML = rows.map(row => {
+        const active = row.id === _coeffProgramModalState.selectedId ? ' active' : '';
+        return `<tr class="tri-popup-row${active}" data-coeff-program-id="${_escapeHtml(row.id)}"><td><div class="tri-popup-name"><div>${_escapeHtml(row.name)}</div></div></td><td>${Number(row.statement_count || 0)}</td><td>${_escapeHtml(row.saved_at || '')}</td></tr>`;
+    }).join('');
+    Array.from(bodyEl.querySelectorAll('[data-coeff-program-id]')).forEach(rowEl => {
+        rowEl.addEventListener('click', () => {
+            const id = rowEl.getAttribute('data-coeff-program-id') || '';
+            if (id) void _selectCoeffProgram(id);
+        });
+    });
+}
+
+async function _fetchCoeffProgramById(id) {
+    const resp = await lambdaPost('storage', { id }, '/fetch-coeff-program');
+    return resp.program;
+}
+
+async function _refreshCoeffProgramRows(options = {}) {
+    const selectedId = options.preserveSelection !== false ? _coeffProgramModalState.selectedId : '';
+    _coeffProgramModalState.tableState = 'loading';
+    if (!options.keepStatus) _setCoeffProgramModalStatus('', false);
+    _renderCoeffProgramModal();
+    try {
+        const resp = await lambdaPost('storage', {}, '/list-coeff-programs');
+        const rows = Array.isArray(resp.programs) ? resp.programs : [];
+        _coeffProgramModalState.rows = rows;
+        _coeffProgramModalState.tableState = 'loaded';
+        _coeffProgramModalState.selectedId = selectedId && rows.some(row => row.id === selectedId) ? selectedId : '';
+        if (!_coeffProgramModalState.selectedId) {
+            _coeffProgramModalState.selectedProgram = null;
+            _coeffProgramModalState.selectedError = '';
+            _coeffProgramModalState.selectedLoading = false;
+        }
+    } catch (e) {
+        _coeffProgramModalState.rows = [];
+        _coeffProgramModalState.tableState = 'error';
+        _coeffProgramModalState.selectedId = '';
+        _coeffProgramModalState.selectedProgram = null;
+        _coeffProgramModalState.selectedError = '';
+        _coeffProgramModalState.selectedLoading = false;
+        _setCoeffProgramModalStatus(e && e.message ? e.message : String(e), true);
+    }
+    _renderCoeffProgramModal();
+}
+
+async function _selectCoeffProgram(id) {
+    const row = (_coeffProgramModalState.rows || []).find(entry => entry.id === id);
+    if (!row) return;
+    const currentName = String(_coeffProgramModalState.nameInput || '').trim();
+    if (!currentName || currentName === _coeffProgramModalState.lastSelectedName) _coeffProgramModalState.nameInput = row.name;
+    _coeffProgramModalState.lastSelectedName = row.name;
+    _coeffProgramModalState.selectedId = id;
+    _coeffProgramModalState.selectedProgram = null;
+    _coeffProgramModalState.selectedError = '';
+    _coeffProgramModalState.selectedLoading = true;
+    _renderCoeffProgramModal();
+    try {
+        const program = await _fetchCoeffProgramById(id);
+        if (_coeffProgramModalState.selectedId !== id) return;
+        _coeffProgramModalState.selectedProgram = program;
+        _coeffProgramModalState.selectedLoading = false;
+    } catch (e) {
+        if (_coeffProgramModalState.selectedId !== id) return;
+        _coeffProgramModalState.selectedError = e && e.message ? e.message : String(e);
+        _coeffProgramModalState.selectedLoading = false;
+    }
+    _renderCoeffProgramModal();
+}
+
+function openCoeffProgramModal() {
+    _coeffProgramModalState.open = true;
+    _coeffProgramModalState.actionBusy = false;
+    _coeffProgramModalState.nameInput = _coeffProgramDefaultName();
+    _coeffProgramModalState.lastSelectedName = '';
+    _setCoeffProgramModalStatus('', false);
+    _renderCoeffProgramModal();
+    void _refreshCoeffProgramRows({ preserveSelection: true });
+    const nameEl = document.getElementById('coeff-program-modal-name');
+    if (nameEl && typeof nameEl.focus === 'function') nameEl.focus();
+}
+
+function _closeCoeffProgramModal() {
+    _coeffProgramModalState.open = false;
+    _renderCoeffProgramModal();
+}
+
+async function _loadSelectedCoeffProgramFromModal() {
+    if (!_coeffProgramModalState.selectedId) return;
+    _coeffProgramModalState.actionBusy = true;
+    _renderCoeffProgramModal();
+    try {
+        const program = _coeffProgramModalState.selectedProgram || await _fetchCoeffProgramById(_coeffProgramModalState.selectedId);
+        _coeffProgramModalState.selectedProgram = program;
+        _applyCoeffProgram(program);
+        if (program && program.name) {
+            _coeffProgramModalState.nameInput = program.name;
+            _coeffProgramModalState.lastSelectedName = program.name;
+        }
+        _setCoeffProgramModalStatus(program.name ? `Loaded ${program.name}` : 'Loaded coeff program', false);
+    } catch (e) {
+        _setCoeffProgramModalStatus(e && e.message ? e.message : String(e), true);
+    } finally {
+        _coeffProgramModalState.actionBusy = false;
+        _renderCoeffProgramModal();
+    }
+}
+
+async function _saveCurrentCoeffProgramFromModal() {
+    const name = String(_coeffProgramModalState.nameInput || '').trim();
+    if (!name) return;
+    let payload;
+    try {
+        payload = _portableCoeffProgramPayload(name);
+    } catch (e) {
+        _setCoeffProgramModalStatus(e && e.message ? e.message : String(e), true);
+        _renderCoeffProgramModal();
+        return;
+    }
+    _coeffProgramModalState.actionBusy = true;
+    _renderCoeffProgramModal();
+    try {
+        const resp = await lambdaPost('storage', { name: payload.name, chain: payload.chain }, '/save-coeff-program');
+        const program = resp && resp.program ? resp.program : null;
+        if (!program) throw new Error('save-coeff-program returned no program');
+        _coeffProgramModalState.selectedId = program.id || '';
+        _coeffProgramModalState.selectedProgram = program;
+        _coeffProgramModalState.nameInput = program.name || payload.name;
+        _coeffProgramModalState.lastSelectedName = program.name || payload.name;
+        const message = resp.overwritten ? `Saved ${program.name} (overwrote existing entry)` : `Saved ${program.name}`;
+        _setCoeffProgramModalStatus(message, false);
+        _coeffProgramStatus(message, false);
+        await _refreshCoeffProgramRows({ preserveSelection: true, keepStatus: true });
+    } catch (e) {
+        _setCoeffProgramModalStatus(e && e.message ? e.message : String(e), true);
+    } finally {
+        _coeffProgramModalState.actionBusy = false;
+        _renderCoeffProgramModal();
+    }
+}
+
+async function _deleteSelectedCoeffProgramFromModal() {
+    const id = String(_coeffProgramModalState.selectedId || '').trim();
+    if (!id) return;
+    if (typeof confirm === 'function' && !confirm(`Delete coeff program "${id}"?`)) return;
+    _coeffProgramModalState.actionBusy = true;
+    _renderCoeffProgramModal();
+    try {
+        await lambdaPost('storage', { id }, '/delete-coeff-program');
+        _coeffProgramModalState.selectedId = '';
+        _coeffProgramModalState.selectedProgram = null;
+        const message = `Deleted ${id}`;
+        _setCoeffProgramModalStatus(message, false);
+        _coeffProgramStatus(message, false);
+        await _refreshCoeffProgramRows({ preserveSelection: false, keepStatus: true });
+    } catch (e) {
+        _setCoeffProgramModalStatus(e && e.message ? e.message : String(e), true);
+    } finally {
+        _coeffProgramModalState.actionBusy = false;
+        _renderCoeffProgramModal();
+    }
+}
+
+function _downloadCurrentCoeffProgramFromModal() {
+    try {
+        const payload = _portableCoeffProgramPayload(String(_coeffProgramModalState.nameInput || '').trim() || _coeffProgramDefaultName());
+        const filename = _coeffProgramFilename(payload.name);
+        _downloadBlob(new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: 'application/json' }), filename);
+        const message = `Downloaded ${filename}`;
+        _setCoeffProgramModalStatus(message, false);
+        _coeffProgramStatus(message, false);
+    } catch (e) {
+        _setCoeffProgramModalStatus(e && e.message ? e.message : String(e), true);
+    }
+    _renderCoeffProgramModal();
+}
+
+function _triggerCoeffProgramUploadFromModal() {
+    const inputEl = document.getElementById('coeff-program-modal-upload-file');
+    if (!inputEl || _coeffProgramModalState.actionBusy) return;
+    inputEl.value = '';
+    inputEl.click();
+}
+
+async function _importCoeffProgramFileFromModal(file) {
+    _coeffProgramModalState.actionBusy = true;
+    _renderCoeffProgramModal();
+    try {
+        const raw = JSON.parse(await _readTextFile(file));
+        const parsed = _applyCoeffProgram(raw);
+        if (parsed.name) {
+            _coeffProgramModalState.nameInput = parsed.name;
+            _coeffProgramModalState.lastSelectedName = parsed.name;
+        } else if (!String(_coeffProgramModalState.nameInput || '').trim()) {
+            _coeffProgramModalState.nameInput = _coeffProgramDefaultName();
+        }
+        _setCoeffProgramModalStatus(parsed.name ? `Loaded ${parsed.name} from JSON` : 'Loaded coeff program from JSON', false);
+    } catch (e) {
+        _setCoeffProgramModalStatus(e && e.message ? e.message : String(e), true);
+    } finally {
+        _coeffProgramModalState.actionBusy = false;
+        _renderCoeffProgramModal();
+    }
+}
+
 function _solveScoreAllowedAdditions(which) {
     const prefix = _solveScorePrefixForWhich(which);
     let draft = { metricCount: 0 };
@@ -6395,6 +7032,12 @@ document.addEventListener('click', function(e) {
     if (ppPopup && ppPopup._open && !_elementContains(ppPopup, target) && !_elementContains(ppBeforeBtn, target) && !_elementContains(ppAfterBtn, target)) {
         _setParamProgramPickerOpen(false);
     }
+    const cpPopup = document.getElementById('cp-add-popup');
+    const cpBeforeBtn = document.getElementById('cp-insert-before-btn');
+    const cpAfterBtn = document.getElementById('cp-insert-after-btn');
+    if (cpPopup && cpPopup._open && !_elementContains(cpPopup, target) && !_elementContains(cpBeforeBtn, target) && !_elementContains(cpAfterBtn, target)) {
+        _setCoeffProgramPickerOpen(false);
+    }
     const ctPopup = document.getElementById('ct-add-popup');
     const ctBtn = document.getElementById('ct-add-btn');
     if (ctPopup && ctPopup._open && !_elementContains(ctPopup, target) && !_elementContains(ctBtn, target)) {
@@ -6407,6 +7050,7 @@ document.addEventListener('keydown', function(e) {
         _closeSolveScorePickers();
         _setParamTransformPickerOpen(false);
         _setParamProgramPickerOpen(false);
+        _setCoeffProgramPickerOpen(false);
         _setCoeffTransformPickerOpen(false);
         _clearRenderPreviewSelection();
         _clearRenderLoresPreviewSelection();
@@ -8712,11 +9356,12 @@ async function _refreshComputeMtProbe() {
     const times = Math.max(1, parseInt(document.getElementById('render-times')?.value, 10) || 1);
     const paramTransforms = _effectiveParamTransformsForCompute();
     const paramProgramChain = _effectiveParamProgramChainForCompute();
-    const coeffTransforms = _serializeCoeffTransforms();
+    const coeffTransforms = _effectiveCoeffTransformsForCompute();
+    const coeffProgramChain = _effectiveCoeffProgramChainForCompute();
     const cfpv = _cfpv.length > 0 ? [..._cfpv] : [];
     const fusedThreads = _clampRenderMtThreads(_computeMtPopupState.fusedThreads || 4);
     const solverMode = _computeMtPopupState.solverMode || 'aberth_mt';
-    const probeSignature = JSON.stringify([solverMode, funcName, paramTransforms, paramProgramChain, coeffTransforms, cfpv, n, times, nChunks, fusedThreads]);
+    const probeSignature = JSON.stringify([_selectedParamPipelineMode(), solverMode, funcName, paramTransforms, paramProgramChain, coeffTransforms, coeffProgramChain, cfpv, n, times, nChunks, fusedThreads]);
     if (_computeMtPopupState.probeSignature === probeSignature && (_computeMtPopupState.probe || _computeMtPopupState.probeError)) {
         _renderComputeMtPopup();
         return;
@@ -8728,6 +9373,7 @@ async function _refreshComputeMtProbe() {
     try {
         const probe = await lambdaPost('coeffgen', {
             phase: 'degree_probe',
+            pipeline_mode: _selectedParamPipelineMode(),
             function: funcName,
             N: n,
             times,
@@ -8738,6 +9384,7 @@ async function _refreshComputeMtProbe() {
             param_transforms: paramTransforms,
             param_program_chain: paramProgramChain,
             coeff_transforms: coeffTransforms,
+            coeff_program_chain: coeffProgramChain,
             cfpv,
         });
         if (!probe || !probe.probe_stable) {
@@ -10226,6 +10873,47 @@ function _initParamProgramModal() {
     }
 }
 
+function _initCoeffProgramModal() {
+    const nameEl = document.getElementById('coeff-program-modal-name');
+    const loadBtn = document.getElementById('coeff-program-modal-load');
+    const saveBtn = document.getElementById('coeff-program-modal-save');
+    const deleteBtn = document.getElementById('coeff-program-modal-delete');
+    const downloadBtn = document.getElementById('coeff-program-modal-download');
+    const uploadBtn = document.getElementById('coeff-program-modal-upload');
+    const uploadFileEl = document.getElementById('coeff-program-modal-upload-file');
+    _bindPopupShell({
+        overlayId: 'coeff-program-modal-overlay',
+        closeId: 'coeff-program-modal-close',
+        cancelId: 'coeff-program-modal-cancel',
+        isOpen: () => !!_coeffProgramModalState.open,
+        onClose: _closeCoeffProgramModal,
+        onEnter: () => {
+            if (!_coeffProgramModalState.open || _coeffProgramModalState.actionBusy) return;
+            if (_coeffProgramModalState.selectedId && !_coeffProgramModalState.selectedLoading) {
+                void _loadSelectedCoeffProgramFromModal();
+            }
+        },
+    });
+    if (nameEl) {
+        nameEl.addEventListener('input', (ev) => {
+            _coeffProgramModalState.nameInput = String(ev.target && ev.target.value || '');
+            _renderCoeffProgramModal();
+        });
+    }
+    if (loadBtn) loadBtn.addEventListener('click', () => { void _loadSelectedCoeffProgramFromModal(); });
+    if (saveBtn) saveBtn.addEventListener('click', () => { void _saveCurrentCoeffProgramFromModal(); });
+    if (deleteBtn) deleteBtn.addEventListener('click', () => { void _deleteSelectedCoeffProgramFromModal(); });
+    if (downloadBtn) downloadBtn.addEventListener('click', _downloadCurrentCoeffProgramFromModal);
+    if (uploadBtn) uploadBtn.addEventListener('click', _triggerCoeffProgramUploadFromModal);
+    if (uploadFileEl) {
+        uploadFileEl.addEventListener('change', async (ev) => {
+            const file = ev.target && ev.target.files && ev.target.files[0];
+            if (!file) return;
+            await _importCoeffProgramFileFromModal(file);
+        });
+    }
+}
+
 function buildPaletteCircles(containerId, mode, getCurrentPalette) {
     _syncTriDefaults();
     _renderPaletteRow(mode);
@@ -10250,6 +10938,7 @@ _initExtractPalettePopup();
 _initPdfColorSpreadPopup();
 _initSolveScoreProgramModal();
 _initParamProgramModal();
+_initCoeffProgramModal();
 _updateSolveScoreButtons();  // initial disabled state
 _clearPaletteCanvas('No palette selected');
 
@@ -10751,7 +11440,7 @@ const _ssCatalog = (() => {
     return catalog;
 })();
 
-const _ctAndyParam = { ph: 'andy', def: '0' };
+const _ctAndyParam = { ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', wide: true, title: 'Blend amount. In Program mode this may be a real scalar expression using p1/p2; in Chain mode it must be numeric.' };
 const _ctCategoryMeta = {
     structural: { title: 'Structural', help: 'reorder, normalize, sanitize, or resize the coefficient vector' },
     accumulation: { title: 'Ordering + accumulation', help: 'sort or accumulate coefficients across the vector' },
@@ -10764,16 +11453,14 @@ const _ctCatalog = (() => {
         conj: { category: 'structural', desc: 'complex conjugate every coefficient' },
         normalize: { category: 'structural', desc: 'divide by the leading coefficient' },
         deriv: { category: 'structural', desc: 'differentiate the polynomial coefficients' },
-        scale100: {
+        linear: {
             params: [
-                { ph: 'x', def: '100', complexPairNext: true },
-                { ph: 'y', def: '0' },
-                { ph: 'w', def: '0', complexPairNext: true },
-                { ph: 'u', def: '0' },
+                { ph: 'param1', label: 'param1', def: '100', complex: true, title: 'Complex multiplier in z*[param1]+[param2].' },
+                { ph: 'param2', label: 'param2', def: '0', complex: true, title: 'Complex offset in z*[param1]+[param2].' },
             ],
             label: 'linear',
             category: 'elementwise',
-            desc: 'z*(x+i*y)+(w+i*u); defaults to old scale100',
+            desc: 'z*[param1]+[param2]; scale100-compatible affine map',
         },
         safe: { category: 'structural', desc: 'replace non-finite components with zero' },
         negate_odd: { category: 'structural', desc: 'negate odd-indexed coefficients' },
@@ -10793,7 +11480,15 @@ const _ctCatalog = (() => {
         sinh: { label: 'sinh', category: 'elementwise', desc: 'complex hyperbolic sine' },
         tanh: { label: 'tanh', category: 'elementwise', desc: 'complex hyperbolic tangent' },
         round: { params: [{ ph: 'a', def: '1' }, { ph: 'b', def: '0' }], label: 'round', category: 'elementwise', desc: 'round(z*(a+i*b)) componentwise' },
-        pow: { params: [{ ph: 'a', def: '1' }, { ph: 'b', def: '0' }, { ph: 'c', def: '1' }, { ph: 'd', def: '0' }], label: 'pow', category: 'elementwise', desc: 'pow(z*(a+i*b), c+i*d)' },
+        pow: {
+            params: [
+                { ph: 'field1', label: 'field1', def: '1', complex: true, scalarExpr: 'complex', wide: true, title: 'Complex multiplier in pow(z*field1, field2).' },
+                { ph: 'field2', label: 'field2', def: '1', complex: true, scalarExpr: 'complex', wide: true, title: 'Complex exponent in pow(z*field1, field2).' },
+            ],
+            label: 'pow',
+            category: 'elementwise',
+            desc: 'pow(z*field1, field2)',
+        },
         power: { params: [{ ph: 'k', def: '8' }], label: 'p', category: 'elementwise', desc: '(i+1) times a geometric series through z^k' },
         invpower: { params: [{ ph: 'k', def: '4' }], label: 'invp', category: 'elementwise', desc: 'reciprocal-threshold variant of power(k)' },
         roots_cm: { params: [{ ph: 'hi|lo', def: 'hi', choices: ['hi', 'lo'] }], category: 'roots', desc: 'companion-matrix roots padded into coefficient slots' },
@@ -10805,6 +11500,93 @@ const _ctCatalog = (() => {
     return catalog;
 })();
 
+const _cpCategoryMeta = {
+    io: { title: 'Input + output', help: 'push cf/poly, make constant vectors, or emit poly' },
+    stack: { title: 'Stack', help: 'reorder or discard vector values' },
+    vector: { title: 'Vector ops', help: 'combine vectors on the stack' },
+    legacy: { title: 'Legacy coefficient transforms', help: 'call existing coefficient transforms by compiled function index' },
+    macro: { title: 'Macro', help: 'expand a saved coeff program at compile time' },
+};
+
+const _coeffProgramLegacyNames = Object.keys(_ctCatalog);
+function _canonicalCoeffTransformName(name) {
+    const raw = String(name || '').trim();
+    return raw === 'scale100' ? 'linear' : raw;
+}
+function _coeffProgramPolySugarName(name) {
+    return `poly-${_canonicalCoeffTransformName(name)}`;
+}
+function _coeffProgramLegacyNameFromSugar(name) {
+    const raw = String(name || '').trim();
+    if (raw.startsWith('poly-')) {
+        const legacy = _canonicalCoeffTransformName(raw.slice(5));
+        if (_ctCatalog[legacy]) return legacy;
+    }
+    const canonical = _canonicalCoeffTransformName(raw);
+    if (_ctCatalog[canonical]) return canonical;
+    return '';
+}
+const _cpCatalog = (() => {
+    const catalog = {
+        push: {
+            category: 'io',
+            params: [{ ph: 'src', def: 'cf', choices: ['cf', 'poly'] }],
+            desc: 'push a copy of cf or current poly',
+        },
+        const: {
+            category: 'io',
+            label: 'vector_const',
+            params: [
+                { ph: 'length', label: 'length', def: '35', intLiteral: true, min: 1, max: 256, title: 'Number of coefficients in the vector. Literal integer only; max 256 in Program mode.' },
+                { ph: 'value expr', label: 'value', def: '1', scalarExpr: 'complex', title: 'Scalar expression for every coefficient. May use p1/p2, literals, + - * /, conj/real/imag. t1/t2 are not available here.' },
+            ],
+            desc: 'push vector_const(length, value); value is a scalar expression over p1/p2, not t1/t2',
+        },
+        poke_poly: {
+            category: 'io',
+            params: [
+                { ph: 'index', label: 'index', def: '0', intLiteral: true, min: 0, max: 255, title: 'Zero-based poly coefficient index. The current poly vector must contain this index at runtime.' },
+                { ph: 'value expr', label: 'value', def: '100j*p1', scalarExpr: 'complex', title: 'Scalar expression written into poly[index]. May use p1/p2, literals, + - * /, conj/real/imag.' },
+            ],
+            desc: 'write value into poly[index] without touching the stack',
+        },
+        poke_tos: {
+            category: 'stack',
+            params: [
+                { ph: 'index', label: 'index', def: '0', intLiteral: true, min: 0, max: 255, title: 'Zero-based index in the top-of-stack vector. Requires a stack value at runtime.' },
+                { ph: 'value expr', label: 'value', def: '100j*p1', scalarExpr: 'complex', title: 'Scalar expression written into top_of_stack[index]. May use p1/p2, literals, + - * /, conj/real/imag.' },
+            ],
+            desc: 'write value into the top stack vector without popping it',
+        },
+        emit: { category: 'io', desc: 'commit poly; pops stack top into poly when present' },
+        duplicate: { category: 'stack', desc: 'duplicate the top vector' },
+        swap: { category: 'stack', desc: 'swap the top two vectors' },
+        pop: { category: 'stack', desc: 'discard the top vector' },
+        flush: { category: 'stack', desc: 'clear the vector stack' },
+        blend: { category: 'vector', params: [{ ph: 't', def: '0.5', scalarExpr: 'real', title: 'Real scalar expression. Use real(p1) or imag(p2) when deriving from parameter registers.' }], desc: 'blend below*(1-t) + top*t for same-length vectors' },
+        macro: { category: 'macro', params: [{ ph: 'program id', def: '' }], desc: 'expand a saved coeff program at compile time' },
+        legacy: {
+            category: 'legacy',
+            params: [
+                { ph: 'name', def: 'rev', choices: _coeffProgramLegacyNames },
+                { ph: 'src', def: 'poly', choices: ['cf', 'poly', 'pop', 'peek'] },
+                { ph: 'tgt', def: 'poly', choices: ['poly', 'push'] },
+            ],
+            desc: 'call an existing coefficient transform with explicit source and target',
+        },
+    };
+    Object.entries(_ctCatalog).forEach(([name, spec]) => {
+        const sugarName = _coeffProgramPolySugarName(name);
+        catalog[sugarName] = {
+            category: 'legacy',
+            label: sugarName,
+            params: (spec.params || []).map(p => ({ ...p })),
+            desc: `read poly, run ${name}, write poly${spec.desc ? ` · ${spec.desc}` : ''}`,
+        };
+    });
+    return catalog;
+})();
+
 function _ctParamValue(item, idx, pDefs) {
     const raw = item && Array.isArray(item.params) ? item.params[idx] : undefined;
     if (raw !== undefined && raw !== null && raw !== '') return String(raw);
@@ -10812,13 +11594,43 @@ function _ctParamValue(item, idx, pDefs) {
     return def == null ? '' : String(def);
 }
 
+function _formatCoeffTransformComplexParts(reRaw, imRaw) {
+    const re = _parseCtRealConstant(reRaw);
+    const im = _parseCtRealConstant(imRaw);
+    if (re == null || im == null) return `${String(reRaw || '0').trim()}+${String(imRaw || '0').trim()}j`;
+    return _formatCfpvComplexValue(re, im);
+}
+
+function _normalizeCoeffTransformItem(item) {
+    if (!item || !item.name) return item;
+    const name = _canonicalCoeffTransformName(item.name);
+    const params = Array.isArray(item.params) ? item.params.map(v => String(v)) : [];
+    if (name === 'linear' && params.length >= 4) {
+        const normalized = [
+            _formatCoeffTransformComplexParts(params[0], params[1]),
+            _formatCoeffTransformComplexParts(params[2], params[3]),
+        ];
+        if (params.length > 4) normalized.push(params[4]);
+        return { name, params: normalized };
+    }
+    if (name === 'pow' && params.length >= 4) {
+        const normalized = [
+            _formatCoeffTransformComplexParts(params[0], params[1]),
+            _formatCoeffTransformComplexParts(params[2], params[3]),
+        ];
+        if (params.length > 4) normalized.push(params[4]);
+        return { name, params: normalized };
+    }
+    return { name, params };
+}
+
 function _ctAndyIndex(pDefs) {
     return Math.max(0, (pDefs || []).length - 1);
 }
 
-function _ctAndyHtml(which, chipIdx, item, pDefs) {
+function _ctAndyHtml(which, chipIdx, item, pDefs, options = {}) {
     const idx = _ctAndyIndex(pDefs);
-    return `<span class="chip-op">andy=</span>${_chipInputHtml(which, chipIdx, idx, _ctParamValue(item, idx, pDefs), pDefs[idx] || _ctAndyParam)}`;
+    return `<span class="chip-op">andy=</span>${_chipInputHtml(which, chipIdx, idx, _ctParamValue(item, idx, pDefs), pDefs[idx] || _ctAndyParam, options)}`;
 }
 
 function _formatCtConstant(value) {
@@ -10864,27 +11676,49 @@ function _normalizeCtRealInput(value) {
     return _hasCtExpressionOperator(raw) ? _formatCtConstant(parsed) : raw;
 }
 
-function _splitCtComplexInput(value) {
+function _parseCtComplexConstant(value) {
     const s = String(value == null ? '' : value).replace(/\s+/g, '').replace(/i/gi, 'j');
-    if (!/[jJ]$/.test(s)) return null;
-    const body = s.slice(0, -1);
-    if (!body) return null;
-    let sep = -1;
-    for (let i = 1; i < body.length; i++) {
-        if ((body[i] === '+' || body[i] === '-') && body[i - 1] !== 'e' && body[i - 1] !== 'E') sep = i;
+    if (!s) return null;
+    let re = 0;
+    let im = 0;
+    let saw = false;
+    let sawImag = false;
+    let start = 0;
+    const terms = [];
+    for (let i = 1; i < s.length; i++) {
+        if ((s[i] === '+' || s[i] === '-') && s[i - 1] !== 'e' && s[i - 1] !== 'E') {
+            terms.push(s.slice(start, i));
+            start = i;
+        }
     }
-    let reText = '0';
-    let imText = body;
-    if (sep >= 0) {
-        reText = body.slice(0, sep);
-        imText = body.slice(sep);
+    terms.push(s.slice(start));
+    for (const term of terms) {
+        if (!term) return null;
+        if (term.includes('j')) {
+            if (!term.endsWith('j') || term.indexOf('j') !== term.length - 1) return null;
+            let coeff = term.slice(0, -1);
+            if (!coeff || coeff === '+') coeff = '1';
+            else if (coeff === '-') coeff = '-1';
+            const parsed = _parseCtRealConstant(coeff);
+            if (parsed == null) return null;
+            im += parsed;
+            sawImag = true;
+            saw = true;
+        } else {
+            const parsed = _parseCtRealConstant(term);
+            if (parsed == null) return null;
+            re += parsed;
+            saw = true;
+        }
     }
-    if (imText === '+') imText = '1';
-    if (imText === '-') imText = '-1';
-    const re = _parseCtRealConstant(reText);
-    const im = _parseCtRealConstant(imText);
-    if (re == null || im == null) return null;
-    return { re: _formatCtConstant(re), im: _formatCtConstant(im) };
+    if (!saw || !Number.isFinite(re) || !Number.isFinite(im)) return null;
+    return { re, im, sawImag };
+}
+
+function _splitCtComplexInput(value) {
+    const parsed = _parseCtComplexConstant(value);
+    if (!parsed || !parsed.sawImag) return null;
+    return { re: _formatCtConstant(parsed.re), im: _formatCtConstant(parsed.im) };
 }
 
 function _ctAndyIsDefault(value) {
@@ -10893,7 +11727,7 @@ function _ctAndyIsDefault(value) {
 }
 
 function _serializeCoeffTransforms() {
-    return _ctChain.map(item => {
+    return _ctChain.map(item => _normalizeCoeffTransformItem(item)).map(item => {
         if (!item || !item.name) return null;
         const spec = _ctCatalog[item.name] || {};
         const pDefs = spec.params || [];
@@ -10978,8 +11812,9 @@ function _syncCoeffTransformAddOptions() {
 
 let _ptChain = [];  // parameter transform chain (array of {name, params: [str,...]})
 let _ppChain = [];  // parameter program chain (array of {name, params: [str,...]})
-let _paramPipelineMode = 'legacy';
+let _paramPipelineMode = 'chain';
 let _ctChain = [];  // coefficient transform chain (array of {name, params: [str,...]})
+let _cpChain = [];  // coefficient program chain (array of {name, params: [str,...]})
 let _cfpv = [];     // coefficient function parameter vector (array of doubles)
 let _rtChain = [];  // root transform chain (array of {name, params: [str,...]})
 let _paletteRtChain = [];  // palette-tab root transform chain
@@ -10989,6 +11824,84 @@ let _paletteScoreChain = [];
 function _getCatalogEntry(name) {
     const cat = window._coeffFuncCatalog || [];
     return cat.find(e => e.name === name) || null;
+}
+
+function _isConstCoeffFunction(entryOrName) {
+    const name = typeof entryOrName === 'string' ? entryOrName : (entryOrName && entryOrName.name);
+    return String(name || '') === 'const';
+}
+
+function _constCoeffDefaults(entry) {
+    const params = (entry && entry.params) || [];
+    const length = Math.max(1, Math.round(Number(params[0]?.default ?? 35) || 35));
+    const re = Number(params[1]?.default ?? 1);
+    const im = Number(params[2]?.default ?? 0);
+    return {
+        degree: Math.max(0, length - 1),
+        length,
+        re: Number.isFinite(re) ? re : 1,
+        im: Number.isFinite(im) ? im : 0,
+    };
+}
+
+function _coeffFuncUiParamCount(entry) {
+    if (_isConstCoeffFunction(entry)) return 2;
+    return ((entry && entry.params) || []).length;
+}
+
+function _formatCfpvComplexValue(re, im) {
+    const r = Number(re);
+    const i = Number(im);
+    const reText = _formatCtConstant(Number.isFinite(r) ? r : 0);
+    const imVal = Number.isFinite(i) ? i : 0;
+    if (Math.abs(imVal) < 1e-15) return reText;
+    const absImText = _formatCtConstant(Math.abs(imVal));
+    const imText = absImText === '1' ? 'j' : `${absImText}j`;
+    if (Math.abs(Number(reText)) < 1e-15) return imVal < 0 ? `-${imText}` : imText;
+    return `${reText}${imVal < 0 ? '-' : '+'}${imText}`;
+}
+
+function _parseCfpvComplexValue(raw) {
+    const parsed = _parseCtComplexConstant(raw);
+    if (!parsed) return null;
+    return {
+        re: Number(_formatCtConstant(parsed.re)),
+        im: Number(_formatCtConstant(parsed.im)),
+    };
+}
+
+function _formatCfpvForDisplay(funcName, cfpv) {
+    const vals = Array.isArray(cfpv) ? cfpv : [];
+    if (!vals.length) return '';
+    if (_isConstCoeffFunction(funcName)) {
+        const length = Math.max(1, Math.round(Number(vals[0]) || 1));
+        const degree = Math.max(0, length - 1);
+        const re = vals.length > 1 ? vals[1] : 1;
+        const im = vals.length > 2 ? vals[2] : 0;
+        return `degree=${degree}, value=${_formatCfpvComplexValue(re, im)}`;
+    }
+    const entry = _getCatalogEntry(funcName);
+    const params = (entry && entry.params) || [];
+    return vals.map((v, i) => {
+        const p = params[i] || {};
+        const label = p.label || p.name || `p${i + 1}`;
+        return `${label}=${v}`;
+    }).join(', ');
+}
+
+function _setConstCoeffInputsFromRaw(cfpv) {
+    const defaults = _constCoeffDefaults(_getCatalogEntry('const'));
+    const raw = Array.isArray(cfpv) ? cfpv : [];
+    const length = Math.max(1, Math.round(Number(raw[0] ?? defaults.length) || defaults.length));
+    const re = Number(raw[1] ?? defaults.re);
+    const im = Number(raw[2] ?? defaults.im);
+    const degreeInp = document.getElementById('cfpv-p0');
+    const valueInp = document.getElementById('cfpv-p1');
+    if (degreeInp) degreeInp.value = String(Math.max(0, length - 1));
+    if (valueInp) valueInp.value = _formatCfpvComplexValue(
+        Number.isFinite(re) ? re : defaults.re,
+        Number.isFinite(im) ? im : defaults.im
+    );
 }
 
 function _coeffFuncLabel(entry) {
@@ -11012,7 +11925,8 @@ function _coeffFuncMeta(entry) {
         const cases = entry.parity_cases != null ? ` ${entry.parity_cases} case${entry.parity_cases === 1 ? '' : 's'}` : '';
         parts.push(`verified${cases}`);
     }
-    if (entry.params && entry.params.length) parts.push(entry.params.length + ' param' + (entry.params.length === 1 ? '' : 's'));
+    const paramCount = _coeffFuncUiParamCount(entry);
+    if (paramCount) parts.push(paramCount + ' param' + (paramCount === 1 ? '' : 's'));
     return parts.join(' • ');
 }
 
@@ -11058,7 +11972,7 @@ function _visibleFunctionCatalog() {
             entry.agreement_pct != null ? String(entry.agreement_pct) : '',
             entry.parity_verified ? 'verified' : '',
             entry.parity_cases != null ? String(entry.parity_cases) : '',
-            entry.params && entry.params.length ? 'params' : '',
+            _coeffFuncUiParamCount(entry) ? 'params' : '',
         ].join(' ').toLowerCase();
         return text.includes(filter);
     });
@@ -11100,6 +12014,22 @@ function populateDropdown() {
 function parseCfpv() {
     const entry = _getCatalogEntry(document.getElementById('render-function').value);
     const params = (entry && entry.params) || [];
+    if (_isConstCoeffFunction(entry)) {
+        const defaults = _constCoeffDefaults(entry);
+        const degreeInp = document.getElementById('cfpv-p0');
+        const valueInp = document.getElementById('cfpv-p1');
+        const degreeRaw = String(degreeInp ? degreeInp.value : '').trim();
+        const valueRaw = String(valueInp ? valueInp.value : '').trim();
+        const degree = degreeRaw ? Number(degreeRaw) : defaults.degree;
+        const value = valueRaw ? _parseCfpvComplexValue(valueRaw) : { re: defaults.re, im: defaults.im };
+        const degreeValid = Number.isFinite(degree) && Number.isInteger(degree) && degree >= 0;
+        const valueValid = !!value && Number.isFinite(value.re) && Number.isFinite(value.im);
+        if (degreeInp) degreeInp.style.borderColor = degreeValid ? '' : 'red';
+        if (valueInp) valueInp.style.borderColor = valueValid ? '' : 'red';
+        _cfpv = (degreeValid && valueValid) ? [degree + 1, value.re, value.im] : [];
+        _markComputePreviewStale();
+        return;
+    }
     const vals = [];
     let valid = true;
     for (let i = 0; i < params.length; i++) {
@@ -11139,13 +12069,50 @@ function updateCfpvRow() {
     }
     row.style.display = '';
     container.innerHTML = '';
+    if (_isConstCoeffFunction(entry)) {
+        const defaults = _constCoeffDefaults(entry);
+        const degreeLbl = document.createElement('span');
+        degreeLbl.style.fontSize = '11px';
+        degreeLbl.style.color = '#888';
+        degreeLbl.textContent = 'degree:';
+        const degreeInp = document.createElement('input');
+        degreeInp.id = 'cfpv-p0';
+        degreeInp.type = 'number';
+        degreeInp.min = '0';
+        degreeInp.step = '1';
+        degreeInp.value = String(defaults.degree);
+        degreeInp.style.width = '70px';
+        degreeInp.style.fontSize = '12px';
+        degreeInp.title = 'Polynomial degree; native coefficient length is degree + 1.';
+        degreeInp.onchange = parseCfpv;
+        const valueLbl = document.createElement('span');
+        valueLbl.style.fontSize = '11px';
+        valueLbl.style.color = '#888';
+        valueLbl.textContent = 'value:';
+        const valueInp = document.createElement('input');
+        valueInp.id = 'cfpv-p1';
+        valueInp.type = 'text';
+        valueInp.value = _formatCfpvComplexValue(defaults.re, defaults.im);
+        valueInp.placeholder = '1-2j';
+        valueInp.style.width = '120px';
+        valueInp.style.fontSize = '12px';
+        valueInp.title = 'Complex constant value, e.g. 1-2j or 10j-3.';
+        valueInp.onchange = parseCfpv;
+        container.appendChild(degreeLbl);
+        container.appendChild(degreeInp);
+        container.appendChild(valueLbl);
+        container.appendChild(valueInp);
+        _cfpv = [defaults.length, defaults.re, defaults.im];
+        _markComputePreviewStale();
+        return;
+    }
     const defaults = [];
     for (let i = 0; i < params.length; i++) {
         const p = params[i];
         const lbl = document.createElement('span');
         lbl.style.fontSize = '11px';
         lbl.style.color = '#888';
-        lbl.textContent = p.label + ':';
+        lbl.textContent = (p.label || p.name || `p${i + 1}`) + ':';
         const inp = document.createElement('input');
         inp.id = 'cfpv-p' + i;
         inp.type = 'number';
@@ -11165,9 +12132,11 @@ function updateCfpvRow() {
 
 function addChip(which, name, insertMode = 'append') {
     if (!name) return;
+    if (which === 'ct') name = _canonicalCoeffTransformName(name);
+    if (which === 'cp' && String(name || '').startsWith('poly-')) name = _coeffProgramPolySugarName(String(name).slice(5));
     const chain = _chainForWhich(which);
     let newItem = null;
-    if (which === 'pt' || which === 'pp' || which === 'ct' || which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {
+    if (which === 'pt' || which === 'pp' || which === 'cp' || which === 'ct' || which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {
         if ((which === 'ss' || which === 'palette-ss') && !_solveScoreAllowedAdditions(which).includes(name)) {
             return;
         }
@@ -11179,8 +12148,10 @@ function addChip(which, name, insertMode = 'append') {
         newItem = name;
     }
     let insertAt = chain.length;
-    if ((which === 'ss' || which === 'palette-ss' || which === 'pp') && (insertMode === 'before' || insertMode === 'after')) {
-        const selected = which === 'pp' ? Number(_paramProgramSelectedIndex) : Number(_solveScoreSelectedIndex[which]);
+    if ((which === 'ss' || which === 'palette-ss' || which === 'pp' || which === 'cp') && (insertMode === 'before' || insertMode === 'after')) {
+        const selected = which === 'pp'
+            ? Number(_paramProgramSelectedIndex)
+            : (which === 'cp' ? Number(_coeffProgramSelectedIndex) : Number(_solveScoreSelectedIndex[which]));
         if (Number.isInteger(selected) && selected >= 0 && selected < chain.length) {
             insertAt = insertMode === 'before' ? selected : selected + 1;
         }
@@ -11188,6 +12159,7 @@ function addChip(which, name, insertMode = 'append') {
     chain.splice(insertAt, 0, newItem);
     if (which === 'ss' || which === 'palette-ss') _solveScoreSelectedIndex[which] = insertAt;
     if (which === 'pp') _paramProgramSelectedIndex = insertAt;
+    if (which === 'cp') _coeffProgramSelectedIndex = insertAt;
     _renderChips(which);
     if (_paramPipelineEditAffectsCompute(which)) _markComputePreviewStale();
 }
@@ -11203,6 +12175,10 @@ function removeChip(which, idx) {
         const selected = Number(_paramProgramSelectedIndex);
         _paramProgramSelectedIndex = selected === idx ? -1 : (selected > idx ? selected - 1 : selected);
     }
+    if (which === 'cp') {
+        const selected = Number(_coeffProgramSelectedIndex);
+        _coeffProgramSelectedIndex = selected === idx ? -1 : (selected > idx ? selected - 1 : selected);
+    }
     _renderChips(which);
     if (_paramPipelineEditAffectsCompute(which)) _markComputePreviewStale();
 }
@@ -11217,6 +12193,7 @@ function moveChip(which, idx, delta) {
     chain.splice(to, 0, item);
     if (which === 'ss' || which === 'palette-ss') _solveScoreSelectedIndex[which] = to;
     if (which === 'pp') _paramProgramSelectedIndex = to;
+    if (which === 'cp') _coeffProgramSelectedIndex = to;
     _renderChips(which);
     if (_paramPipelineEditAffectsCompute(which)) _markComputePreviewStale();
 }
@@ -11407,6 +12384,73 @@ function _syncParamProgramAddOptions() {
     _renderParamProgramAddPopup();
 }
 
+function _coeffProgramCategoryGroups() {
+    const grouped = {};
+    Object.keys(_cpCategoryMeta).forEach(key => { grouped[key] = []; });
+    Object.keys(_cpCatalog).forEach(name => {
+        const spec = _cpCatalog[name] || {};
+        const key = grouped[spec.category] ? spec.category : 'legacy';
+        grouped[key].push(name);
+    });
+    return Object.keys(_cpCategoryMeta).map(key => ({
+        key,
+        ..._cpCategoryMeta[key],
+        items: grouped[key] || [],
+    }));
+}
+
+function _renderCoeffProgramAddPopup() {
+    const popup = document.getElementById('cp-add-popup');
+    if (!popup) return;
+    const head = `<div class="score-chip-picker-head"><span class="score-chip-picker-title">Add coeff program chip</span><span class="score-chip-picker-state">RPN over coefficient vectors cf → poly</span></div>`;
+    const body = _coeffProgramCategoryGroups().map(group => {
+        const items = group.items.length
+            ? group.items.map(name => {
+                const spec = _cpCatalog[name] || {};
+                const label = spec.label || name;
+                const paramCount = (spec.params || []).length;
+                const params = paramCount ? ` · ${paramCount} param${paramCount === 1 ? '' : 's'}` : '';
+                return `<button type="button" class="score-chip-option score-chip-option-${_escapeHtml(group.key)}" onclick="selectCoeffProgramChip('${_escapeHtml(name)}',event)" title="${_escapeHtml(spec.desc || label)}"><span class="score-chip-option-name">${_escapeHtml(label)}</span><span class="score-chip-option-meta">${_escapeHtml((spec.desc || '') + params)}</span></button>`;
+            }).join('')
+            : '<span class="score-chip-empty">No chips</span>';
+        return `<div class="score-chip-category"><div class="score-chip-category-title">${_escapeHtml(group.title)}</div><div class="score-chip-category-help">${_escapeHtml(group.help)}</div><div class="score-chip-options">${items}</div></div>`;
+    }).join('');
+    popup.innerHTML = head + body;
+}
+
+function _setCoeffProgramPickerOpen(open) {
+    const popup = document.getElementById('cp-add-popup');
+    if (!popup) return;
+    if (open) _renderCoeffProgramAddPopup();
+    popup._open = !!open;
+    popup.style.display = open ? 'block' : 'none';
+    if (popup.classList && popup.classList.toggle) popup.classList.toggle('active', !!open);
+    if (popup.setAttribute) popup.setAttribute('aria-hidden', open ? 'false' : 'true');
+}
+
+function toggleCoeffProgramPicker(eventObj, insertMode = null) {
+    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
+    if (insertMode === 'before' || insertMode === 'after') _coeffProgramPickerInsertMode = insertMode;
+    const popup = document.getElementById('cp-add-popup');
+    _setCoeffProgramPickerOpen(!(popup && popup._open));
+}
+
+function selectCoeffProgramChip(name, eventObj) {
+    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
+    addChip('cp', name, _coeffProgramPickerInsertMode || 'after');
+    _setCoeffProgramPickerOpen(false);
+}
+
+function selectCoeffProgramLine(idx, eventObj) {
+    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
+    _coeffProgramSelectedIndex = Number(idx);
+    _renderChips('cp');
+}
+
+function _syncCoeffProgramAddOptions() {
+    _renderCoeffProgramAddPopup();
+}
+
 function _serializeParamTransforms() {
     return _ptChain.map(item => {
         if (!item.params || !item.params.length) return [item.name];
@@ -11419,6 +12463,8 @@ function _serializeParamTransforms() {
 
 let _paramProgramSelectedIndex = -1;
 let _paramProgramPickerInsertMode = 'after';
+let _coeffProgramSelectedIndex = -1;
+let _coeffProgramPickerInsertMode = 'after';
 
 function _splitParamProgramLegacyArgs(value) {
     const text = String(value == null ? '' : value).trim();
@@ -11629,28 +12675,42 @@ function _hasParamProgramChain() {
 function _selectedParamPipelineMode() {
     const el = document.getElementById('param-pipeline-mode');
     const raw = el && el.value ? el.value : _paramPipelineMode;
-    return raw === 'param_program' ? 'param_program' : 'legacy';
+    if (raw === 'program' || raw === 'param_program') return 'program';
+    return 'chain';
 }
 
 function _paramProgramModeSelected() {
-    return _selectedParamPipelineMode() === 'param_program';
+    return _selectedParamPipelineMode() === 'program';
+}
+
+function _formatChainRowsForLog(chain, separator = ',') {
+    const rows = Array.isArray(chain) ? chain : [];
+    return rows.length
+        ? rows.map(a => Array.isArray(a) && a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : (Array.isArray(a) ? a[0] : String(a))).filter(Boolean).join(separator)
+        : '';
 }
 
 function _formatParamProgramChainForLog(chain, separator = ',') {
-    const rows = Array.isArray(chain) ? chain : [];
-    return rows.length
-        ? rows.map(a => Array.isArray(a) && a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : (Array.isArray(a) ? a[0] : String(a))).join(separator)
-        : 'param_program(identity)';
+    return _formatChainRowsForLog(chain, separator) || 'param_program(identity)';
 }
 
 function _displayActiveParamPipeline(separator = ',') {
     if (_paramProgramModeSelected()) return _formatParamProgramChainForLog(_serializeParamProgramChain(), separator);
-    const rows = _displayParamTransforms();
-    return rows.map(a => a.length > 1 ? `${a[0]}(${a.slice(1).join(',')})` : a[0]).join(separator) || 'none';
+    return _formatChainRowsForLog(_displayParamTransforms(), separator) || 'none';
+}
+
+function _formatCoeffProgramChainForLog(chain, separator = ',') {
+    return _formatChainRowsForLog(chain, separator) || 'coeff_program(identity)';
+}
+
+function _displayActiveCoeffPipeline(separator = ',') {
+    if (_paramProgramModeSelected()) return _formatCoeffProgramChainForLog(_serializeCoeffProgramChain(), separator);
+    return _formatChainRowsForLog(_serializeCoeffTransforms(), separator) || 'none';
 }
 
 function _paramPipelineEditAffectsCompute(which) {
-    if (which === 'ct') return true;
+    if (which === 'ct') return !_paramProgramModeSelected();
+    if (which === 'cp') return _paramProgramModeSelected();
     if (which === 'pt') return !_paramProgramModeSelected();
     if (which === 'pp') return _paramProgramModeSelected();
     return false;
@@ -11663,22 +12723,29 @@ function _syncParamPipelineModeUi() {
     const noteEl = document.getElementById('param-pipeline-mode-note');
     const legacyRow = document.getElementById('param-transforms-row');
     const programBox = document.querySelector('.param-program-box');
+    const coeffProgramBox = document.querySelector('.coeff-program-box');
     if (selectEl && selectEl.value !== mode) selectEl.value = mode;
-    if (legacyRow && legacyRow.classList) legacyRow.classList.toggle('param-pipeline-inactive', mode !== 'legacy');
-    if (programBox && programBox.classList) programBox.classList.toggle('param-pipeline-inactive', mode !== 'param_program');
+    if (legacyRow && legacyRow.classList) legacyRow.classList.toggle('param-pipeline-inactive', mode !== 'chain');
+    const coeffRow = document.getElementById('coeff-transforms-row');
+    if (coeffRow && coeffRow.classList) coeffRow.classList.toggle('param-pipeline-inactive', mode !== 'chain');
+    if (programBox && programBox.classList) programBox.classList.toggle('param-pipeline-inactive', mode !== 'program');
+    if (coeffProgramBox && coeffProgramBox.classList) coeffProgramBox.classList.toggle('param-pipeline-inactive', mode !== 'program');
     const ppLen = _serializeParamProgramChain().length;
+    const cpLen = _serializeCoeffProgramChain().length;
     const ptLen = _serializeParamTransforms().length;
+    const ctLen = _serializeCoeffTransforms().length;
     if (noteEl) {
-        noteEl.textContent = mode === 'param_program'
-            ? `Param Program is active${ppLen ? ` (${ppLen} chip${ppLen === 1 ? '' : 's'})` : ' (empty identity)'}. Legacy transforms are idle.`
-            : `Legacy Param transforms are active${ptLen ? ` (${ptLen} chip${ptLen === 1 ? '' : 's'})` : ' (none)'}. Param Program is idle.`;
+        noteEl.textContent = mode === 'program'
+            ? `Program mode: Param Program ${ppLen ? `${ppLen} chip${ppLen === 1 ? '' : 's'}` : 'identity'}; Coeff Program ${cpLen ? `${cpLen} chip${cpLen === 1 ? '' : 's'}` : 'identity'}. Legacy chains are idle.`
+            : `Chain mode: Param transforms ${ptLen ? `${ptLen} chip${ptLen === 1 ? '' : 's'}` : 'none'}; Coeff transforms ${ctLen ? `${ctLen} chip${ctLen === 1 ? '' : 's'}` : 'none'}. Programs are idle.`;
     }
 }
 
 function _setParamPipelineMode(mode, options = {}) {
-    _paramPipelineMode = mode === 'param_program' ? 'param_program' : 'legacy';
+    _paramPipelineMode = (mode === 'program' || mode === 'param_program') ? 'program' : 'chain';
     _syncParamPipelineModeUi();
     _renderChips('pp');
+    _renderChips('cp');
     if (options.markStale) _markComputePreviewStale();
 }
 
@@ -11688,6 +12755,14 @@ function _effectiveParamTransformsForCompute() {
 
 function _effectiveParamProgramChainForCompute() {
     return _paramProgramModeSelected() ? _serializeParamProgramChain() : [];
+}
+
+function _effectiveCoeffTransformsForCompute() {
+    return _paramProgramModeSelected() ? [] : _serializeCoeffTransforms();
+}
+
+function _effectiveCoeffProgramChainForCompute() {
+    return _paramProgramModeSelected() ? _serializeCoeffProgramChain() : [];
 }
 
 function _displayParamProgramEntry(item) {
@@ -11804,23 +12879,223 @@ function _portableParamProgramPayload(nameOverride = '') {
     };
 }
 
+function _normalizeCoeffProgramChain(rawChain) {
+    if (!Array.isArray(rawChain)) return [];
+    return rawChain.flatMap(item => {
+        if (Array.isArray(item) && item.length) {
+            const name = String(item[0] || '').trim();
+            if (!name) return [];
+            if (name === 'legacy') {
+                const legacyName = _canonicalCoeffTransformName(item[1] || 'rev') || 'rev';
+                const params = [legacyName, ...item.slice(2).map(v => String(v))];
+                if (legacyName === 'linear' && params.length >= 7) {
+                    params.splice(
+                        3,
+                        4,
+                        _formatCoeffTransformComplexParts(params[3], params[4]),
+                        _formatCoeffTransformComplexParts(params[5], params[6]),
+                    );
+                }
+                if (legacyName === 'pow' && params.length >= 7) {
+                    params.splice(
+                        3,
+                        4,
+                        _formatCoeffTransformComplexParts(params[3], params[4]),
+                        _formatCoeffTransformComplexParts(params[5], params[6]),
+                    );
+                }
+                return [{ name, params }];
+            }
+            const legacyName = _coeffProgramLegacyNameFromSugar(name);
+            const displayName = legacyName ? _coeffProgramPolySugarName(legacyName) : name;
+            const params = item.slice(1).map(v => String(v));
+            if (legacyName === 'linear' && params.length >= 4) {
+                const normalized = [
+                    _formatCoeffTransformComplexParts(params[0], params[1]),
+                    _formatCoeffTransformComplexParts(params[2], params[3]),
+                ];
+                if (params.length > 4) normalized.push(params[4]);
+                return [{ name: displayName, params: normalized }];
+            }
+            if (legacyName === 'pow' && params.length >= 4) {
+                const normalized = [
+                    _formatCoeffTransformComplexParts(params[0], params[1]),
+                    _formatCoeffTransformComplexParts(params[2], params[3]),
+                ];
+                if (params.length > 4) normalized.push(params[4]);
+                return [{ name: displayName, params: normalized }];
+            }
+            return [{ name: displayName, params }];
+        }
+        if (item == null || item === '') return [];
+        const name = String(item).trim();
+        const legacyName = _coeffProgramLegacyNameFromSugar(name);
+        return [{ name: legacyName ? _coeffProgramPolySugarName(legacyName) : name, params: [] }];
+    }).filter(Boolean);
+}
+
+function _coeffProgramStatus(message, isError = false) {
+    const el = document.getElementById('coeff-program-status');
+    if (!el) return;
+    el.textContent = String(message || '');
+    el.className = `solve-score-program-status${isError ? ' error' : ''}`;
+}
+
+function _coeffProgramDefaultName() {
+    try {
+        const chain = _serializeCoeffProgramChain();
+        const basis = chain.length ? chain.map(row => Array.isArray(row) ? row[0] : String(row)).join('-') : 'coeff-program';
+        return basis.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'coeff-program';
+    } catch (_) {
+        return 'coeff-program';
+    }
+}
+
+function _serializeCoeffProgramChain() {
+    return _cpChain.map(item => {
+        if (!item || !item.name) return null;
+        const name = String(item.name || '').trim();
+        const params = Array.isArray(item.params) ? item.params.map(v => String(v == null ? '' : v)) : [];
+        if (name === 'legacy') {
+            const legacyName = _canonicalCoeffTransformName(params[0] || 'rev') || 'rev';
+            const spec = _ctCatalog[legacyName] || {};
+            const pDefs = spec.params || [];
+            const values = pDefs.map((pDef, idx) => params[idx + 3] !== undefined && params[idx + 3] !== ''
+                ? params[idx + 3]
+                : String(pDef.def || ''));
+            let last = values.length - 1;
+            if (last >= 0 && pDefs[last] && pDefs[last].ph === 'andy' && _ctAndyIsDefault(values[last])) last--;
+            return ['legacy', legacyName, params[1] || 'poly', params[2] || 'poly', ...values.slice(0, last + 1)];
+        }
+        const legacySugarName = _coeffProgramLegacyNameFromSugar(name);
+        if (legacySugarName) {
+            const spec = _ctCatalog[legacySugarName] || {};
+            const pDefs = spec.params || [];
+            const values = pDefs.map((pDef, idx) => params[idx] !== undefined && params[idx] !== ''
+                ? params[idx]
+                : String(pDef.def || ''));
+            let last = values.length - 1;
+            if (last >= 0 && pDefs[last] && pDefs[last].ph === 'andy' && _ctAndyIsDefault(values[last])) last--;
+            const sourceName = _coeffProgramPolySugarName(legacySugarName);
+            return last >= 0 ? [sourceName, ...values.slice(0, last + 1)] : [sourceName];
+        }
+        const spec = _cpCatalog[name] || {};
+        const pDefs = spec.params || [];
+        const values = pDefs.map((pDef, idx) => params[idx] !== undefined && params[idx] !== ''
+            ? params[idx]
+            : String(pDef.def || ''));
+        let last = values.length - 1;
+        return last >= 0 ? [name, ...values.slice(0, last + 1)] : [name];
+    }).filter(Boolean);
+}
+
+function _parseCoeffProgramPayload(raw) {
+    if (!raw || typeof raw !== 'object') throw new Error('program JSON must be an object');
+    const chain = Array.isArray(raw.chain) ? raw.chain : null;
+    if (!chain || !chain.length) throw new Error('program JSON is missing a non-empty chain');
+    const version = Object.prototype.hasOwnProperty.call(raw, 'version') ? Number(raw.version) : 1;
+    if (!Number.isFinite(version)) throw new Error('program JSON version must be numeric when present');
+    if (version !== 1) throw new Error(`program JSON version ${version} is not supported`);
+    const kind = String(raw.program_kind || 'coeff_program');
+    if (kind !== 'coeff_program') throw new Error(`program JSON kind ${kind} is not coeff_program`);
+    return {
+        version,
+        program_kind: 'coeff_program',
+        name: String(raw.name || '').trim(),
+        description: String(raw.description || '').trim(),
+        chain: _normalizeCoeffProgramChain(chain),
+    };
+}
+
+function _applyCoeffProgram(rawProgram) {
+    const program = _parseCoeffProgramPayload(rawProgram);
+    _cpChain.splice(0, _cpChain.length, ...program.chain);
+    _coeffProgramSelectedIndex = _cpChain.length ? Math.min(_cpChain.length - 1, Math.max(0, _coeffProgramSelectedIndex)) : -1;
+    _renderChips('cp');
+    if (_paramProgramModeSelected()) _markComputePreviewStale();
+    _coeffProgramStatus(program.name ? `Loaded ${program.name}` : 'Loaded coeff program');
+    return program;
+}
+
+function _copyCoeffTransformsIntoCoeffProgram() {
+    const transforms = _serializeCoeffTransforms();
+    if (!transforms.length) {
+        _coeffProgramStatus('No legacy Coeff transforms to copy', true);
+        return;
+    }
+    const chain = transforms.map(row => {
+        const values = Array.isArray(row) ? row : [String(row)];
+        return { name: _coeffProgramPolySugarName(values[0]), params: values.slice(1).map(v => String(v)) };
+    });
+    _cpChain.splice(0, _cpChain.length, ...chain);
+    _coeffProgramSelectedIndex = _cpChain.length ? 0 : -1;
+    _renderChips('cp');
+    if (_paramProgramModeSelected()) _markComputePreviewStale();
+    _coeffProgramStatus(`Copied ${chain.length} legacy coefficient transform${chain.length === 1 ? '' : 's'} into coeff program`);
+}
+
+function _clearCoeffProgramChain() {
+    _cpChain.splice(0, _cpChain.length);
+    _coeffProgramSelectedIndex = -1;
+    _renderChips('cp');
+    if (_paramProgramModeSelected()) _markComputePreviewStale();
+}
+
+function _portableCoeffProgramPayload(nameOverride = '') {
+    const chain = _serializeCoeffProgramChain();
+    if (!chain.length) throw new Error('Coeff program is empty');
+    return {
+        version: 1,
+        program_kind: 'coeff_program',
+        name: String(nameOverride || _coeffProgramDefaultName()).trim() || 'coeff-program',
+        chain,
+        display: chain.map(row => Array.isArray(row) ? (row.length > 1 ? `${row[0]}(${row.slice(1).join(',')})` : row[0]) : String(row)).join('; '),
+    };
+}
+
 function updateChipParam(chipIdx, paramIdx, value, which) {
     const chain = _chainForWhich(which);
     if (chipIdx >= 0 && chipIdx < chain.length) {
         const catalog = _catalogForChain(which);
         const spec = catalog[chain[chipIdx].name] || {};
         const pDef = (spec.params || [])[paramIdx];
+        const rawText = String(value == null ? '' : value).trim();
         if (pDef && pDef.target) {
             const norm = _normalizeTarget(value);
             if (!norm) { alert(`Invalid target: "${value}". Use t1, t2, or both.`); return; }
             chain[chipIdx].params[paramIdx] = norm;
         } else if (pDef && Array.isArray(pDef.choices) && pDef.choices.length) {
-            const norm = String(value == null ? '' : value).trim().toLowerCase();
+            const norm = rawText.toLowerCase();
             if (!pDef.choices.includes(norm)) {
                 alert(`Invalid ${pDef.ph || 'value'}: "${value}". Use ${pDef.choices.join(' or ')}.`);
                 return;
             }
             chain[chipIdx].params[paramIdx] = norm;
+        } else if (which === 'cp' && pDef) {
+            if (pDef.intLiteral) {
+                const number = Number(rawText);
+                const min = pDef.min == null ? -Infinity : Number(pDef.min);
+                const max = pDef.max == null ? Infinity : Number(pDef.max);
+                if (!Number.isFinite(number) || !Number.isInteger(number) || number < min || number > max) {
+                    alert(`Invalid ${pDef.label || pDef.ph || 'value'}: "${value}". Use an integer${Number.isFinite(min) || Number.isFinite(max) ? ` in [${min}, ${max}]` : ''}.`);
+                    return;
+                }
+                chain[chipIdx].params[paramIdx] = String(number);
+            } else if (pDef.scalarExpr) {
+                // Coeff Program scalar args are parsed by the compiler. Keep expressions
+                // like p2, real(p1), or p1+conj(p2) intact instead of applying the
+                // legacy numeric-only transform validator in the editor.
+                chain[chipIdx].params[paramIdx] = rawText || String(pDef.def || '');
+            } else if (pDef.ph === 'andy') {
+                const norm = _normalizeCtRealInput(value);
+                if (norm == null) {
+                    alert(`Invalid ${pDef.ph || 'value'}: "${value}". Use a finite numeric andy value.`);
+                    return;
+                }
+                chain[chipIdx].params[paramIdx] = norm;
+            } else {
+                chain[chipIdx].params[paramIdx] = rawText || String(pDef.def || '');
+            }
         } else if (which === 'ct' && pDef) {
             if (pDef.complexPairNext) {
                 const complex = _splitCtComplexInput(value);
@@ -11831,6 +13106,17 @@ function updateChipParam(chipIdx, paramIdx, value, which) {
                     if (_paramPipelineEditAffectsCompute(which)) _markComputePreviewStale();
                     return;
                 }
+            }
+            if (pDef.complex) {
+                const parsed = _parseCtComplexConstant(value);
+                if (!parsed) {
+                    alert(`Invalid ${pDef.ph || 'value'}: "${value}". Use a finite complex number such as 2-3j.`);
+                    return;
+                }
+                chain[chipIdx].params[paramIdx] = _formatCfpvComplexValue(parsed.re, parsed.im);
+                _renderChips(which);
+                if (_paramPipelineEditAffectsCompute(which)) _markComputePreviewStale();
+                return;
             }
             const norm = _normalizeCtRealInput(value);
             if (norm == null) {
@@ -11857,13 +13143,14 @@ function _chipReadonlyValueHtml(value, paramDef = {}, title = '') {
 function _chipInputHtml(which, chipIdx, paramIdx, value, paramDef, options = {}) {
     const pd = paramDef || {};
     if (options.readonly) return _chipReadonlyValueHtml(value, pd);
+    const titleAttr = pd.title ? ` title="${_escapeHtml(pd.title)}"` : '';
     if (pd.target) {
         const normalizedValue = _normalizeTarget(String(value == null ? '' : value)) || _normalizeTarget(String(pd.def || 'both')) || 'both';
         const options = ['t1', 't2', 'both'].map(choice => {
             const selected = normalizedValue === choice ? ' selected' : '';
             return `<option value="${choice}"${selected}>${choice}</option>`;
         }).join('');
-        return `<select class="chip-input chip-input-target" onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">${options}</select>`;
+        return `<select class="chip-input chip-input-target"${titleAttr} onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">${options}</select>`;
     }
     if (Array.isArray(pd.choices) && pd.choices.length) {
         const normalizedValue = String(value == null ? '' : value).trim().toLowerCase();
@@ -11871,11 +13158,14 @@ function _chipInputHtml(which, chipIdx, paramIdx, value, paramDef, options = {})
             const selected = normalizedValue === choice ? ' selected' : '';
             return `<option value="${_escapeHtml(choice)}"${selected}>${_escapeHtml(choice)}</option>`;
         }).join('');
-        return `<select class="chip-input" onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">${options}</select>`;
+        return `<select class="chip-input"${titleAttr} onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">${options}</select>`;
     }
-    const im = (pd.target || pd.choices || pd.complexPairNext || pd.complex || pd.ph === 'andy') ? 'text' : 'decimal';
-    const cls = pd.ph === 'andy' ? 'chip-input chip-input-andy' : 'chip-input';
-    return `<input class="${cls}" type="text" inputmode="${im}" value="${_escapeHtml(value)}" placeholder="${_escapeHtml(pd.ph || '')}" onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">`;
+    const im = (pd.target || pd.choices || pd.complexPairNext || pd.complex || pd.scalarExpr || pd.ph === 'andy') ? 'text' : 'decimal';
+    const clsParts = ['chip-input'];
+    if (pd.ph === 'andy') clsParts.push('chip-input-andy');
+    if (pd.scalarExpr || pd.wide) clsParts.push('chip-input-wide');
+    const cls = clsParts.join(' ');
+    return `<input class="${cls}" type="text" inputmode="${im}" value="${_escapeHtml(value)}" placeholder="${_escapeHtml(pd.ph || '')}"${titleAttr} onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">`;
 }
 
 function _chipLabeledInputHtml(which, chipIdx, paramIdx, value, paramDef, options = {}) {
@@ -11977,12 +13267,10 @@ function _renderRtChipHtml(item, i, which, catalog, options = {}) {
         const b = _chipInputHtml(which, i, 1, _ctParamValue(item, 1, pDefs), pDefs[1]);
         return `<span class="chip"><span class="chip-equals">f(z)=</span><span class="chip-formula"><span>exp(z*(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>))</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
     }
-    if (which === 'ct' && item.name === 'scale100') {
-        const x = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
-        const y = _chipInputHtml(which, i, 1, _ctParamValue(item, 1, pDefs), pDefs[1]);
-        const w = _chipInputHtml(which, i, 2, _ctParamValue(item, 2, pDefs), pDefs[2]);
-        const u = _chipInputHtml(which, i, 3, _ctParamValue(item, 3, pDefs), pDefs[3]);
-        return `<span class="chip"><span class="chip-equals">f(z)=</span><span class="chip-formula"><span>z*(</span><span>${x}</span><span class="chip-op">+i</span><span>${y}</span><span>)+(</span><span>${w}</span><span class="chip-op">+i</span><span>${u}</span><span>)</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+    if (which === 'ct' && item.name === 'linear') {
+        const param1 = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
+        const param2 = _chipInputHtml(which, i, 1, _ctParamValue(item, 1, pDefs), pDefs[1]);
+        return `<span class="chip"><span class="chip-equals">f(z)=</span><span class="chip-formula"><span>z*</span><span>${param1}</span><span class="chip-op">+</span><span>${param2}</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
     }
     if (which === 'ct' && item.name === 'cos') return _ctUnaryFormulaChip(which, i, item, 'cos', pDefs);
     if (which === 'ct' && item.name === 'sin') return _ctUnaryFormulaChip(which, i, item, 'sin', pDefs);
@@ -11996,11 +13284,9 @@ function _renderRtChipHtml(item, i, which, catalog, options = {}) {
         return `<span class="chip"><span class="chip-equals">f(z)=</span><span class="chip-formula"><span>round(z*(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>))</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
     }
     if (which === 'ct' && item.name === 'pow') {
-        const a = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
-        const b = _chipInputHtml(which, i, 1, _ctParamValue(item, 1, pDefs), pDefs[1]);
-        const c = _chipInputHtml(which, i, 2, _ctParamValue(item, 2, pDefs), pDefs[2]);
-        const d = _chipInputHtml(which, i, 3, _ctParamValue(item, 3, pDefs), pDefs[3]);
-        return `<span class="chip"><span class="chip-equals">f(z)=</span><span class="chip-formula"><span>pow(z*(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>),</span><span>${c}</span><span class="chip-op">+i</span><span>${d}</span><span>)</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+        const field1 = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
+        const field2 = _chipInputHtml(which, i, 1, _ctParamValue(item, 1, pDefs), pDefs[1]);
+        return `<span class="chip"><span class="chip-equals">poly=</span><span class="chip-formula"><span>pow(poly*</span><span>${field1}</span><span class="chip-op">,</span><span>${field2}</span><span>)</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
     }
     if (which === 'ct' && item.name === 'power') {
         const k = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
@@ -12082,6 +13368,62 @@ function _paramProgramChipShellHtml(i, readonly, bodyHtml) {
     return `<span class="chip score-chip${selected}" onclick="selectParamProgramLine(${i},event)">${moves}${bodyHtml}<span class="chip-x" onclick="event.stopPropagation();removeChip('pp',${i})">x</span></span>`;
 }
 
+function _coeffProgramChipShellHtml(i, readonly, bodyHtml) {
+    if (readonly) {
+        return `<span class="chip score-chip score-chip-readonly">${bodyHtml}</span>`;
+    }
+    const count = _chainForWhich('cp').length;
+    const selected = _coeffProgramSelectedIndex === i ? ' selected' : '';
+    const leftDisabled = i <= 0 ? ' disabled' : '';
+    const rightDisabled = i >= count - 1 ? ' disabled' : '';
+    const moves = `<span class="chip-actions"><button type="button" class="chip-move" onclick="event.stopPropagation();moveChip('cp',${i},-1)" title="Move left"${leftDisabled}>&lt;</button><button type="button" class="chip-move" onclick="event.stopPropagation();moveChip('cp',${i},1)" title="Move right"${rightDisabled}>&gt;</button></span>`;
+    return `<span class="chip score-chip${selected}" onclick="selectCoeffProgramLine(${i},event)">${moves}${bodyHtml}<span class="chip-x" onclick="event.stopPropagation();removeChip('cp',${i})">x</span></span>`;
+}
+
+function _coeffProgramLegacyInputDefs(legacyName) {
+    const spec = _ctCatalog[String(legacyName || '').trim()] || {};
+    return (spec.params || []).map(p => ({ ...p }));
+}
+
+function _renderCoeffProgramChipHtml(item, i, options = {}) {
+    const readonly = !!options.readonly;
+    const spec = _cpCatalog[item.name] || {};
+    const params = Array.isArray(item.params) ? item.params : [];
+    const label = _escapeHtml(spec.label || item.name);
+    if (item.name === 'legacy') {
+        const legacyName = String(params[0] || 'rev').trim() || 'rev';
+        const legacyDefs = _coeffProgramLegacyInputDefs(legacyName);
+        const inputDefs = (spec.params || []).concat(legacyDefs);
+        const values = [legacyName, params[1] || 'poly', params[2] || 'poly'];
+        legacyDefs.forEach((pDef, idx) => {
+            values.push(params[idx + 3] !== undefined && params[idx + 3] !== '' ? params[idx + 3] : String(pDef.def || ''));
+        });
+        const inputsHtml = inputDefs.map((pDef, pi) =>
+            _chipLabeledInputHtml('cp', i, pi, values[pi], pDef || {}, { readonly })
+        ).join('');
+        return _coeffProgramChipShellHtml(i, readonly, `<span class="chip-formula"><span>${label}</span>${inputsHtml}</span>`);
+    }
+    const pDefs = spec.params || [];
+    if (item.name === 'poly-linear') {
+        const param1 = _chipInputHtml('cp', i, 0, params[0] || pDefs[0]?.def || '100', pDefs[0] || {}, { readonly });
+        const param2 = _chipInputHtml('cp', i, 1, params[1] || pDefs[1]?.def || '0', pDefs[1] || {}, { readonly });
+        return _coeffProgramChipShellHtml(i, readonly, `<span class="chip-formula"><span>${label}</span><span class="chip-op">·</span><span>z*</span>${param1}<span class="chip-op">+</span>${param2}<span class="chip-op">·</span>${_ctAndyHtml('cp', i, item, pDefs, { readonly })}</span>`);
+    }
+    if (item.name === 'poly-pow') {
+        const field1 = _chipInputHtml('cp', i, 0, params[0] || pDefs[0]?.def || '1', pDefs[0] || {}, { readonly });
+        const field2 = _chipInputHtml('cp', i, 1, params[1] || pDefs[1]?.def || '1', pDefs[1] || {}, { readonly });
+        return _coeffProgramChipShellHtml(i, readonly, `<span class="chip-formula"><span>poly=pow(poly*</span>${field1}<span class="chip-op">,</span>${field2}<span>)</span><span class="chip-op">·</span>${_ctAndyHtml('cp', i, item, pDefs, { readonly })}</span>`);
+    }
+    const inputsHtml = pDefs.map((pDef, pi) => {
+        const value = params[pi] !== undefined && params[pi] !== '' ? params[pi] : String(pDef.def || '');
+        if (item.name === 'const' || item.name === 'poke_poly' || item.name === 'poke_tos') {
+            return _chipLabeledInputHtml('cp', i, pi, value, pDef || {}, { readonly });
+        }
+        return _chipInputHtml('cp', i, pi, value, pDef || {}, { readonly });
+    }).join('');
+    return _coeffProgramChipShellHtml(i, readonly, `<span class="chip-formula"><span>${label}</span>${inputsHtml}</span>`);
+}
+
 function _renderParamProgramChipHtml(item, i, options = {}) {
     const readonly = !!options.readonly;
     const spec = _ppCatalog[item.name] || {};
@@ -12137,6 +13479,13 @@ function _renderParamProgramChipsHtml(program) {
     return `<div class="chip-container solve-score-modal-chip-strip" aria-label="Param program chips">${chips}</div>`;
 }
 
+function _renderCoeffProgramChipsHtml(program) {
+    const chain = _normalizeCoeffProgramChain(program && program.chain);
+    if (!chain.length) return _solveScoreModalMessageHtml('No coeff-program chips.');
+    const chips = chain.map((item, i) => _renderCoeffProgramChipHtml(item, i, { readonly: true })).join('');
+    return `<div class="chip-container solve-score-modal-chip-strip" aria-label="Coeff program chips">${chips}</div>`;
+}
+
 function _renderChips(which) {
     const chain = _chainForWhich(which);
     const el = document.getElementById(which + '-chips');
@@ -12154,6 +13503,19 @@ function _renderChips(which) {
             _paramProgramStatus(chainLen
                 ? `Legacy selected · Param Program idle with ${chainLen} chip${chainLen === 1 ? '' : 's'}`
                 : 'Legacy selected · Param Program empty');
+        }
+    } else if (which === 'cp') {
+        el.innerHTML = chain.map((item, i) => _renderCoeffProgramChipHtml(item, i)).join('');
+        _syncParamPipelineModeUi();
+        const chainLen = _serializeCoeffProgramChain().length;
+        if (_paramProgramModeSelected()) {
+            _coeffProgramStatus(chainLen
+                ? `Coeff Program selected · ${chainLen} chip${chainLen === 1 ? '' : 's'}`
+                : 'Coeff Program selected · empty identity');
+        } else {
+            _coeffProgramStatus(chainLen
+                ? `Chain mode selected · Coeff Program idle with ${chainLen} chip${chainLen === 1 ? '' : 's'}`
+                : 'Chain mode selected · Coeff Program empty');
         }
     } else if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {
         const catalog = _catalogForChain(which);
@@ -12186,6 +13548,7 @@ function _renderChips(which) {
 }
 _renderChips('palette-rt');
 _renderChips('pp');
+_renderChips('cp');
 
 const _fmtMs = (ms) => (ms/1000).toFixed(1) + 's';
 const _fmtStatus = (sc) => sc ? Object.entries(sc).map(([k,v]) => `${k}:${v}`).join(' ') : '';
@@ -16005,7 +17368,7 @@ async function _buildArtifactMeta(jobId, art, options = {}) {
         const ct = (pipeline.coeff_transforms || []).map(item => Array.isArray(item) && item.length > 1 ? `${item[0]}(${item.slice(1).join(',')})` : (Array.isArray(item) ? item[0] : item)).join(', ');
         metaObj.compute = {
             function: pipeline.function || calc.function || '',
-            cfpv: pipeline.cfpv_display || (pipeline.cfpv && pipeline.cfpv.length ? pipeline.cfpv.join(', ') : ''),
+            cfpv: pipeline.cfpv_display || (pipeline.cfpv && pipeline.cfpv.length ? (_formatCfpvForDisplay(pipeline.function || calc.function || '', pipeline.cfpv) || pipeline.cfpv.join(', ')) : ''),
             param_transforms: ptStr || 'none',
             coeff_transforms: ct || 'none',
             degree: calc.degree,
@@ -16229,7 +17592,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     const familyTabs = ['color', 'bilevel', 'coeffs', 'palette', 'pdf'].map((family) => {
         const active = family === _renderActiveFamily;
         const count = (_renderArtifacts[family] || []).length;
-        return `<button class="btn-secondary" data-render-family="${family}" onclick="_renderSelectFamily('${family}')" style="padding:5px 12px; font-size:11px; margin-right:4px; background:${active ? '#30475e' : '#1a1a2e'}; color:${active ? '#fff' : '#aaa'}">${_renderFamilyLabel(family)} <span style="color:#777">(${count})</span></button>`;
+        return `<button type="button" role="tab" class="subtab-btn${active ? ' active' : ''}" data-render-family="${family}" onclick="_renderSelectFamily('${family}')" aria-selected="${active ? 'true' : 'false'}">${_renderFamilyLabel(family)} <span class="subtab-count">(${count})</span></button>`;
     }).join('');
 
     let controlsExtra = '';
@@ -16310,7 +17673,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
 
     preview.innerHTML = `
         <div style="border:1px solid #333; border-radius:6px; padding:10px; background:#141424">
-            <div style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:10px">${familyTabs}</div>
+            <div class="subtab-bar render-artifact-family-tabs" role="tablist" aria-label="Render artifact family tabs">${familyTabs}</div>
             <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:8px">
                 ${actionRowsHtml}
                 <div style="font-size:11px; color:#666">Click row to view. Arrow keys navigate within ${_renderFamilyLabel(_renderActiveFamily)}.</div>
@@ -17475,19 +18838,14 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
 
     const paramTransforms = _effectiveParamTransformsForCompute();
     const paramProgramChain = _effectiveParamProgramChainForCompute();
-    const coeffTransforms = _serializeCoeffTransforms();
+    const coeffTransforms = _effectiveCoeffTransformsForCompute();
+    const coeffProgramChain = _effectiveCoeffProgramChainForCompute();
     const cfpv = _cfpv.length > 0 ? [..._cfpv] : null;
-    // Build human-readable cfpv display from catalog params
-    let cfpvDisplay = '';
-    if (cfpv) {
-        const entry = _getCatalogEntry(funcName);
-        const params = (entry && entry.params) || [];
-        cfpvDisplay = cfpv.map((v, i) => params[i] ? `${params[i].name}=${v}` : String(v)).join(', ');
-    }
+    const cfpvDisplay = cfpv ? _formatCfpvForDisplay(funcName, cfpv) : '';
     const ptDisplay = _displayActiveParamPipeline(',');
+    const coeffDisplay = _displayActiveCoeffPipeline(',');
     const cfpvStr = cfpvDisplay ? `(${cfpvDisplay})` : '';
-    const coeffTransformsDisplay = _displayCoeffTransforms();
-    const pipelineStr = `[${ptDisplay||'none'}] ${funcName}${cfpvStr} [${coeffTransformsDisplay.join(',')||'none'}]`;
+    const pipelineStr = `[${ptDisplay||'none'}] ${funcName}${cfpvStr} [${coeffDisplay||'none'}]`;
 
     const btn = document.getElementById(_solverButtonId(solverMode));
 
@@ -17513,6 +18871,7 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
             job_id: jobId,
             run_id: runId,
             params: {
+                pipeline_mode: _selectedParamPipelineMode(),
                 solver_mode: solverMode,
                 N: n,
                 n_chunks: nChunks,
@@ -17521,6 +18880,7 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
                 param_transforms: paramTransforms,
                 param_program_chain: paramProgramChain,
                 coeff_transforms: coeffTransforms,
+                coeff_program_chain: coeffProgramChain,
                 cfpv: cfpv || [],
             },
         };
@@ -17700,6 +19060,7 @@ _syncRenderBackgroundColorUi();
 _syncParamTransformAddOptions();
 _syncParamProgramAddOptions();
 _syncCoeffTransformAddOptions();
+_syncCoeffProgramAddOptions();
 
 // Populate function dropdown from generated catalog
 populateDropdown();

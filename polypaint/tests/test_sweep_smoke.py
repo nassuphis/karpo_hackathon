@@ -615,45 +615,55 @@ class TestCoeffTransforms(unittest.TestCase):
         self.assertEqual(meta_deriv["degree"], meta_plain["degree"] - 1)
         self.assertEqual(meta_deriv["n_coeffs"], meta_plain["n_coeffs"] - 1)
 
-    def test_scale100_multiplies(self):
-        """ct_scale100 multiplies all coefficients by 100."""
+    def test_linear_multiplies(self):
+        """linear defaults to old scale100 behavior: z*100+0."""
         meta_plain = self._coeffgen([], "/tmp/test_ct_plain4.bin")
-        meta_scaled = self._coeffgen(["scale100"], "/tmp/test_ct_scale100.bin")
+        meta_scaled = self._coeffgen(["linear"], "/tmp/test_ct_linear.bin")
 
         n = meta_plain["n_coeffs"]
         plain = _read_coeffs("/tmp/test_ct_plain4.bin", n)
-        scaled = _read_coeffs("/tmp/test_ct_scale100.bin", n)
+        scaled = _read_coeffs("/tmp/test_ct_linear.bin", n)
 
         for s in range(len(plain)):
             np.testing.assert_allclose(
                 scaled[s], plain[s] * 100, rtol=1e-5,
-                err_msg=f"Step {s}: scale100 did not multiply by 100")
+                err_msg=f"Step {s}: linear did not multiply by 100")
 
-    def test_scale100_linear_affine(self):
-        """scale100 is now the affine transform z*(x+i*y)+(w+i*u)."""
+    def test_linear_affine(self):
+        """linear is the affine transform z*param1+param2."""
         meta_plain = self._coeffgen([], "/tmp/test_ct_plain_linear.bin")
         meta_linear = self._coeffgen(
-            [["scale100", "1+3j", "0", "1-1e-5", "-2"]],
-            "/tmp/test_ct_scale100_linear.bin",
+            [["linear", "1+3j", "1-1e-5-2j"]],
+            "/tmp/test_ct_linear_affine.bin",
         )
 
         n = meta_plain["n_coeffs"]
         self.assertEqual(n, meta_linear["n_coeffs"])
         plain = _read_coeffs("/tmp/test_ct_plain_linear.bin", n)
-        linear = _read_coeffs("/tmp/test_ct_scale100_linear.bin", n)
+        linear = _read_coeffs("/tmp/test_ct_linear_affine.bin", n)
 
         expected = self._as_written_complex64(plain * (1.0 + 3.0j) + (1.0 - 1e-5 - 2.0j))
         np.testing.assert_allclose(linear, expected, rtol=2e-5, atol=2e-5)
 
+    def test_scale100_alias_remains_accepted(self):
+        """Old saved coeff-transform chains can still use scale100."""
+        meta_plain = self._coeffgen([], "/tmp/test_ct_plain_scale100_alias.bin")
+        meta_scaled = self._coeffgen(["scale100"], "/tmp/test_ct_scale100_alias.bin")
+
+        n = meta_plain["n_coeffs"]
+        plain = _read_coeffs("/tmp/test_ct_plain_scale100_alias.bin", n)
+        scaled = _read_coeffs("/tmp/test_ct_scale100_alias.bin", n)
+        np.testing.assert_allclose(scaled, plain * 100, rtol=1e-5)
+
     def test_coeff_transform_andy_blends_with_original(self):
         """Final andy parameter blends f(z) back toward the original coefficients."""
         meta_plain = self._coeffgen([], "/tmp/test_ct_plain_andy.bin")
-        meta_blend = self._coeffgen([["scale100", "100", "0", "0", "0", "1e-5"]], "/tmp/test_ct_scale100_andy.bin")
+        meta_blend = self._coeffgen([["linear", "100", "0", "1e-5"]], "/tmp/test_ct_linear_andy.bin")
 
         n = meta_plain["n_coeffs"]
         self.assertEqual(n, meta_blend["n_coeffs"])
         plain = _read_coeffs("/tmp/test_ct_plain_andy.bin", n)
-        blended = _read_coeffs("/tmp/test_ct_scale100_andy.bin", n)
+        blended = _read_coeffs("/tmp/test_ct_linear_andy.bin", n)
 
         andy = 1e-5
         expected = self._as_written_complex64((plain * 100.0) * (1.0 - andy) + plain * andy)

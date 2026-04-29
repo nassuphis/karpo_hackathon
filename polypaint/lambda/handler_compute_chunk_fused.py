@@ -59,6 +59,7 @@ def handle_fused_chunk(params):
     param_transforms = params.get("param_transforms") or []
     param_program = params.get("param_program") or None
     coeff_transforms = params.get("coeff_transforms") or []
+    coeff_program = params.get("coeff_program") or None
     cfpv = params.get("cfpv") or []
 
     params_key = _require_str(params, "params_key")
@@ -162,6 +163,7 @@ def handle_fused_chunk(params):
                 output_path=coeffs_path,
                 function_name=function_name,
                 coeff_transforms=coeff_transforms,
+                coeff_program=coeff_program,
                 cfpv=cfpv,
                 params_path=params_path,
                 step_count=step_count,
@@ -299,7 +301,7 @@ def _run_param_gen_local(*, output_path, n, times, step_start, step_count, param
     return meta
 
 
-def _run_coeffgen_local(*, output_path, function_name, coeff_transforms, cfpv, params_path, step_count, fused_threads):
+def _run_coeffgen_local(*, output_path, function_name, coeff_transforms, cfpv, params_path, step_count, fused_threads, coeff_program=None):
     spec = {
         "mode": "coeffgen_chunked",
         "function": function_name,
@@ -309,6 +311,8 @@ def _run_coeffgen_local(*, output_path, function_name, coeff_transforms, cfpv, p
         "step_count": step_count,
         "n_threads": fused_threads,
     }
+    if coeff_program:
+        spec["coeff_program"] = coeff_program
     if cfpv:
         spec["cfpv"] = list(cfpv)
     result = subprocess.run(

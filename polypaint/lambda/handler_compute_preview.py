@@ -19,6 +19,7 @@ from shared import (
     parse_body,
     tmp_space_stats,
 )
+from coeff_program_chain import compile_coeff_program_chain
 from param_program_chain import compile_param_program_chain
 
 
@@ -60,12 +61,43 @@ def _format_chain(chain):
     return ",".join(parts) if parts else "none"
 
 
-def _preview_context(*, solver_mode, n_preview, function_name, coeff_transforms, param_transforms, param_program_chain=None):
+def _preview_context(*, solver_mode, n_preview, function_name, coeff_transforms, param_transforms,
+                     param_program_chain=None, coeff_program_chain=None, pipeline_mode="chain"):
     param_label = _format_chain(param_program_chain) if param_program_chain else _format_chain(param_transforms)
+    coeff_label = _format_chain(coeff_program_chain) if coeff_program_chain else _format_chain(coeff_transforms)
     return (
         f"solver={_solver_tag(solver_mode)}, N_preview={n_preview}, function={function_name}, "
-        f"param={param_label}, coeff={_format_chain(coeff_transforms)}"
+        f"use={pipeline_mode}, param={param_label}, coeff={coeff_label}"
     )
+
+
+def _pipeline_mode_from_params(params):
+    raw = str(params.get("pipeline_mode") or params.get("compute_pipeline_mode") or "").strip().lower()
+    if not raw:
+        raw = "program" if (
+            params.get("param_program_chain")
+            or params.get("coeff_program_chain")
+            or params.get("param_program")
+            or params.get("coeff_program")
+        ) else "chain"
+    raw = {"legacy": "chain", "chains": "chain", "programs": "program"}.get(raw, raw)
+    if raw not in {"chain", "program"}:
+        raise ValueError("pipeline_mode must be one of chain, program")
+    return raw
+
+
+def _compiled_coeff_program_payload(compiled):
+    return {
+        "version": compiled["version"],
+        "fingerprint": compiled["fingerprint"],
+        "display": compiled["display"],
+        "stack_max": compiled["stack_max"],
+        "token_count": compiled["token_count"],
+        "scalar_expr_count": compiled["scalar_expr_count"],
+        "uses_legacy_chain_equivalent": compiled["uses_legacy_chain_equivalent"],
+        "tokens": compiled["tokens"],
+        "scalar_exprs": compiled["scalar_exprs"],
+    }
 
 
 def _chain_has_transform(chain, name):
@@ -167,6 +199,172 @@ def _validate_shim(value):
     return shim
 
 
+def _validate_debug_coord(value, label):
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"compute debug {label} must be numeric, got {value!r}") from None
+    if not math.isfinite(parsed) or parsed < 0.0 or parsed > 1.0:
+        raise ValueError(f"compute debug {label} must be in [0, 1], got {value!r}")
+    return parsed
+
+
+def _compile_compute_inputs(params):
+    pipeline_mode = _pipeline_mode_from_params(params)
+    coeff_transforms = params.get("coeff_transforms") or []
+    param_transforms = params.get("param_transforms") or []
+    param_program_chain = params.get("param_program_chain") or []
+    coeff_program_chain = params.get("coeff_program_chain") or []
+    param_program = None
+    coeff_program = None
+    compiled_param_program = None
+    compiled_coeff_program = None
+
+    if pipeline_mode == "program":
+        param_transforms = []
+        coeff_transforms = []
+    else:
+        param_program_chain = []
+        coeff_program_chain = []
+
+    if param_program_chain:
+        if not isinstance(param_program_chain, list):
+            raise ValueError("param_program_chain must be a list")
+        try:
+            compiled_param_program = compile_param_program_chain(param_program_chain)
+        except RuntimeError as e:
+            raise ValueError(f"invalid param_program_chain: {e}") from None
+        if compiled_param_program["legacy_transforms"]:
+            param_transforms = compiled_param_program["legacy_transforms"]
+        else:
+            param_transforms = []
+            param_program = {
+                "version": compiled_param_program["version"],
+                "fingerprint": compiled_param_program["fingerprint"],
+                "display": compiled_param_program["display"],
+                "stack_max": compiled_param_program["stack_max"],
+                "token_count": compiled_param_program["token_count"],
+                "uses_legacy_fast_path": compiled_param_program["uses_legacy_fast_path"],
+                "tokens": compiled_param_program["tokens"],
+            }
+
+    if coeff_program_chain:
+        if not isinstance(coeff_program_chain, list):
+            raise ValueError("coeff_program_chain must be a list")
+        try:
+            compiled_coeff_program = compile_coeff_program_chain(coeff_program_chain)
+        except RuntimeError as e:
+            raise ValueError(f"invalid coeff_program_chain: {e}") from None
+        if compiled_coeff_program["legacy_coeff_transforms"]:
+            coeff_transforms = compiled_coeff_program["legacy_coeff_transforms"]
+        else:
+            coeff_transforms = []
+            coeff_program = _compiled_coeff_program_payload(compiled_coeff_program)
+
+    return {
+        "pipeline_mode": pipeline_mode,
+        "param_transforms": param_transforms,
+        "coeff_transforms": coeff_transforms,
+        "param_program_chain": param_program_chain,
+        "coeff_program_chain": coeff_program_chain,
+        "param_program": param_program,
+        "coeff_program": coeff_program,
+        "compiled_param_program": compiled_param_program,
+        "compiled_coeff_program": compiled_coeff_program,
+        "cfpv": _validate_cfpv(params.get("cfpv")),
+    }
+
+
+def _complex_pairs_from_file(path):
+    with open(path, "rb") as fh:
+        data = fh.read()
+    usable = (len(data) // 8) * 8
+    return [[float(re), float(im)] for re, im in struct.iter_unpack("<ff", data[:usable])]
+
+
+def _handle_compute_debug(params):
+    function_name = str(params.get("function") or "").strip()
+    if not function_name:
+        return _json_response(400, {"message": "compute debug missing function"})
+    stage = str(params.get("debug_stage") or params.get("stage") or "param").strip().lower()
+    stage = {"solveae": "solve_ae", "ae": "solve_ae", "solvecm": "solve_cm", "cm": "solve_cm"}.get(stage, stage)
+    if stage not in {"param", "poly", "solve_ae", "solve_cm"}:
+        return _json_response(400, {"message": f"unsupported compute debug stage: {stage}"})
+
+    u = _validate_debug_coord(params.get("u", 0.0), "u")
+    v = _validate_debug_coord(params.get("v", 0.0), "v")
+    grid_n = _ensure_preview_n(params.get("N_preview") or params.get("grid_n") or 256)
+    compiled = _compile_compute_inputs(params)
+    ctx = _preview_context(
+        solver_mode="aberth_mt" if stage != "solve_cm" else "companion_matrix",
+        n_preview=grid_n,
+        function_name=function_name,
+        coeff_transforms=compiled["coeff_transforms"],
+        param_transforms=compiled["param_transforms"],
+        param_program_chain=compiled["param_program_chain"],
+        coeff_program_chain=compiled["coeff_program_chain"],
+        pipeline_mode=compiled["pipeline_mode"],
+    )
+
+    _cleanup_tmp()
+    spec = {
+        "mode": "compute_debug",
+        "function": function_name,
+        "u": u,
+        "v": v,
+        "grid_n": grid_n,
+        "param_transforms": compiled["param_transforms"],
+        "coeff_transforms": compiled["coeff_transforms"],
+    }
+    if compiled["param_program"]:
+        spec["param_program"] = compiled["param_program"]
+    if compiled["coeff_program"]:
+        spec["coeff_program"] = compiled["coeff_program"]
+    if compiled["cfpv"]:
+        spec["cfpv"] = compiled["cfpv"]
+
+    debug_meta = _run_json_binary(SWEEP_COEFFGEN, TMP_COEFFS, spec, phase="compute_debug", timeout_s=10)
+    coeff = debug_meta.get("coeff") or {}
+    n_coeffs = int(coeff.get("n_coeffs") or 0)
+    degree = int(coeff.get("degree") or max(0, n_coeffs - 1))
+    if n_coeffs < 1:
+        raise RuntimeError(f"compute_debug produced invalid coefficient count {n_coeffs} ({ctx})")
+
+    response = {
+        "stage": stage,
+        "pipeline_mode": compiled["pipeline_mode"],
+        "context": ctx,
+        "debug": debug_meta,
+        "param_program": {
+            "token_count": int((compiled["compiled_param_program"] or {}).get("token_count") or 0),
+            "stack_max": int((compiled["compiled_param_program"] or {}).get("stack_max") or 0),
+            "fingerprint": (compiled["compiled_param_program"] or {}).get("fingerprint") or "",
+        },
+        "coeff_program": {
+            "token_count": int((compiled["compiled_coeff_program"] or {}).get("token_count") or 0),
+            "stack_max": int((compiled["compiled_coeff_program"] or {}).get("stack_max") or 0),
+            "fingerprint": (compiled["compiled_coeff_program"] or {}).get("fingerprint") or "",
+            "diagnostics": (compiled["compiled_coeff_program"] or {}).get("diagnostics") or [],
+        },
+    }
+
+    if stage in {"solve_ae", "solve_cm"}:
+        solve_binary = SWEEP_CM if stage == "solve_cm" else SWEEP_MT
+        solve_spec = {
+            "mode": "solve_cm" if stage == "solve_cm" else "solve_mt",
+            "coeffs_file": TMP_COEFFS,
+            "n_coeffs": n_coeffs,
+        }
+        if stage == "solve_cm":
+            solve_spec["n_steps"] = 1
+        else:
+            solve_spec.update({"n2": 1, "i1_start": 0, "i1_end": 1, "match_roots": False})
+        solve_meta = _run_json_binary(solve_binary, TMP_ROOTS, solve_spec, phase=stage, timeout_s=10)
+        response["solve"] = solve_meta
+        response["roots"] = _complex_pairs_from_file(TMP_ROOTS)[:degree]
+    return _json_response(200, response)
+
+
 def _preflight_tmp_capacity(n_preview):
     n_steps = n_preview * n_preview
     coeffs_est = n_steps * MAX_COEFFS_EST * 8
@@ -235,6 +433,12 @@ def _raster_gray_preview(bin_data, width, height, viewport):
 def handler(event, context):
     try:
         params = parse_body(event)
+        if params.get("debug_stage") or params.get("stage") in {"param", "poly", "solve_ae", "solve_cm", "solveae", "solvecm", "ae", "cm"}:
+            try:
+                return _handle_compute_debug(params)
+            except ValueError as e:
+                return _json_response(400, {"message": str(e)})
+
         function_name = str(params.get("function") or "").strip()
         if not function_name:
             return _json_response(400, {"message": "compute preview missing function"})
@@ -247,31 +451,18 @@ def handler(event, context):
         quantile = _validate_quantile(params.get("quantile", 0.0))
         shim = _validate_shim(params.get("shim", 0.05))
 
-        coeff_transforms = params.get("coeff_transforms") or []
-        param_transforms = params.get("param_transforms") or []
-        param_program_chain = params.get("param_program_chain") or []
-        param_program = None
-        if param_program_chain:
-            if not isinstance(param_program_chain, list):
-                raise ValueError("param_program_chain must be a list")
-            try:
-                compiled_param_program = compile_param_program_chain(param_program_chain)
-            except RuntimeError as e:
-                return _json_response(400, {"message": f"invalid param_program_chain: {e}"})
-            if compiled_param_program["legacy_transforms"]:
-                param_transforms = compiled_param_program["legacy_transforms"]
-            else:
-                param_transforms = []
-                param_program = {
-                    "version": compiled_param_program["version"],
-                    "fingerprint": compiled_param_program["fingerprint"],
-                    "display": compiled_param_program["display"],
-                    "stack_max": compiled_param_program["stack_max"],
-                    "token_count": compiled_param_program["token_count"],
-                    "uses_legacy_fast_path": compiled_param_program["uses_legacy_fast_path"],
-                    "tokens": compiled_param_program["tokens"],
-                }
-        cfpv = _validate_cfpv(params.get("cfpv"))
+        try:
+            compiled = _compile_compute_inputs(params)
+        except ValueError as e:
+            return _json_response(400, {"message": str(e)})
+        pipeline_mode = compiled["pipeline_mode"]
+        coeff_transforms = compiled["coeff_transforms"]
+        param_transforms = compiled["param_transforms"]
+        param_program_chain = compiled["param_program_chain"]
+        coeff_program_chain = compiled["coeff_program_chain"]
+        param_program = compiled["param_program"]
+        coeff_program = compiled["coeff_program"]
+        cfpv = compiled["cfpv"]
         ctx = _preview_context(
             solver_mode=solver_mode,
             n_preview=n_preview,
@@ -279,6 +470,8 @@ def handler(event, context):
             coeff_transforms=coeff_transforms,
             param_transforms=param_transforms,
             param_program_chain=param_program_chain,
+            coeff_program_chain=coeff_program_chain,
+            pipeline_mode=pipeline_mode,
         )
         budget_error = _sync_preview_budget_error(n_preview=n_preview, coeff_transforms=coeff_transforms)
         if budget_error:
@@ -303,6 +496,8 @@ def handler(event, context):
         }
         if param_program:
             coeff_spec["param_program"] = param_program
+        if coeff_program:
+            coeff_spec["coeff_program"] = coeff_program
         if cfpv:
             coeff_spec["cfpv"] = cfpv
         coeff_meta = _run_json_binary(SWEEP_COEFFGEN, TMP_COEFFS, coeff_spec, phase="coeffgen", timeout_s=25)

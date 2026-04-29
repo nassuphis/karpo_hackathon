@@ -617,6 +617,15 @@ def test_coeffgen_chunked_threaded_runtime():
     mt_path = "/tmp/coeffgen_chunk_mt.bin"
     plain_path = "/tmp/coeffgen_chunk_plain.bin"
     andy_path = "/tmp/coeffgen_chunk_andy.bin"
+    legacy_chain_path = "/tmp/coeffgen_legacy_chain.bin"
+    legacy_program_path = "/tmp/coeffgen_legacy_program.bin"
+    rev_emit_chain_path = "/tmp/coeffgen_rev_emit_chain.bin"
+    rev_emit_program_path = "/tmp/coeffgen_rev_emit_program.bin"
+    const_program_single_path = "/tmp/coeffgen_const_program_single.bin"
+    const_program_mt_path = "/tmp/coeffgen_const_program_mt.bin"
+    blend_program_path = "/tmp/coeffgen_blend_program.bin"
+    poke_program_path = "/tmp/coeffgen_poke_program.bin"
+    debug_poke_path = "/tmp/compute_debug_poke.bin"
 
     param_spec = {
         "mode": "param_gen",
@@ -695,7 +704,7 @@ def test_coeffgen_chunked_threaded_runtime():
     assert r.returncode == 0, "coeffgen_chunked plain failed: " + r.stderr[:200]
     r = subprocess.run(
         ["/src/sweep_coeffgen", andy_path],
-        input=json.dumps({**plain_spec, "coeff_transforms": [["scale100", "100", "0", "0", "0", "1e-5"]]}),
+        input=json.dumps({**plain_spec, "coeff_transforms": [["linear", "100", "0", "1e-5"]]}),
         capture_output=True,
         text=True,
         timeout=30,
@@ -709,9 +718,279 @@ def test_coeffgen_chunked_threaded_runtime():
         expected = base * factor
         tol = max(2e-4, abs(expected) * 2e-5)
         assert abs(got - expected) <= tol, "andy blend mismatch at float %d: got %.9g expected %.9g" % (idx, got, expected)
-    print("  coeff transform andy blend: OK (scale100 andy=1e-5)")
+    print("  coeff transform andy blend: OK (linear andy=1e-5)")
 
-    cleanup(params_path, single_path, mt_path, plain_path, andy_path)
+    legacy_chain_spec = {
+        "mode": "coeffgen_chunked",
+        "function": "g1",
+        "coeff_transforms": [["rev"], ["cumsum"], ["sort_abs"], ["exp", "0.5"]],
+        "params_file": params_path,
+        "step_start": 0,
+        "step_count": 200,
+        "n_threads": 1,
+    }
+    legacy_program_spec = {
+        "mode": "coeffgen_chunked",
+        "function": "g1",
+        "coeff_transforms": [],
+        "params_file": params_path,
+        "step_start": 0,
+        "step_count": 200,
+        "n_threads": 1,
+        "coeff_program": {
+            "version": 1,
+            "fingerprint": "docker-legacy-parity",
+            "tokens": [
+                {"op": 9, "fn_index": 1, "src": 2, "tgt": 2},
+                {"op": 9, "fn_index": 11, "src": 2, "tgt": 2},
+                {"op": 9, "fn_index": 10, "src": 2, "tgt": 2},
+                {"op": 9, "fn_index": 16, "src": 2, "tgt": 2, "n_args": 2,
+                 "args": [0.5, 0.0], "args_im": [0.0, 0.0], "expr_refs": [-1, -1]},
+            ],
+            "scalar_exprs": [],
+        },
+    }
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", legacy_chain_path],
+        input=json.dumps(legacy_chain_spec),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "coeffgen legacy chain failed: " + r.stderr[:200]
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", legacy_program_path],
+        input=json.dumps(legacy_program_spec),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "coeffgen legacy-equivalent coeff_program failed: " + r.stderr[:200]
+    legacy_program_meta = json.loads(r.stdout)
+    assert legacy_program_meta["coeff_program_tokens"] == 4, "coeff_program metadata missing token count"
+    with open(legacy_chain_path, "rb") as f:
+        legacy_chain_bytes = f.read()
+    with open(legacy_program_path, "rb") as f:
+        legacy_program_bytes = f.read()
+    assert legacy_chain_bytes == legacy_program_bytes, "coeff_program legacy-equivalent output diverged"
+    print("  coeff_program legacy-chain parity: OK (%d bytes)" % len(legacy_program_bytes))
+
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", rev_emit_chain_path],
+        input=json.dumps({**plain_spec, "coeff_transforms": [["rev"]]}),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "coeffgen rev chain failed: " + r.stderr[:200]
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", rev_emit_program_path],
+        input=json.dumps({
+            **plain_spec,
+            "coeff_transforms": [],
+            "coeff_program": {
+                "version": 1,
+                "fingerprint": "docker-rev-emit-commit",
+                "tokens": [
+                    {"op": 9, "fn_index": 1, "src": 2, "tgt": 2},
+                    {"op": 3},
+                ],
+                "scalar_exprs": [],
+            },
+        }),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "coeffgen rev;emit coeff_program failed: " + r.stderr[:200]
+    with open(rev_emit_chain_path, "rb") as f:
+        rev_emit_chain_bytes = f.read()
+    with open(rev_emit_program_path, "rb") as f:
+        rev_emit_program_bytes = f.read()
+    assert rev_emit_chain_bytes == rev_emit_program_bytes, "coeff_program rev;emit commit output diverged"
+    print("  coeff_program rev;emit commit parity: OK")
+
+    const_program_spec = {
+        "mode": "coeffgen_chunked",
+        "function": "g1",
+        "coeff_transforms": [],
+        "params_file": params_path,
+        "step_start": 0,
+        "step_count": 200,
+        "coeff_program": {
+            "version": 1,
+            "fingerprint": "docker-const-two-exprs",
+            "tokens": [
+                {"op": 1, "n_args": 2, "args": [3.0, 0.0], "args_im": [0.0, 0.0], "expr_refs": [-1, 0]},
+                {"op": 3},
+                {"op": 1, "n_args": 2, "args": [3.0, 0.0], "args_im": [0.0, 0.0], "expr_refs": [-1, 1]},
+                {"op": 3},
+            ],
+            "scalar_exprs": [
+                [2.0, 0.0, 0.0, 3.0, 0.0, 0.0, 4.0, 0.0, 0.0],
+                [2.0, 0.0, 0.0, 3.0, 0.0, 0.0, 5.0, 0.0, 0.0],
+            ],
+        },
+    }
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", const_program_single_path],
+        input=json.dumps({**const_program_spec, "n_threads": 1}),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "coeffgen const coeff_program single-thread failed: " + r.stderr[:200]
+    const_meta = json.loads(r.stdout)
+    assert const_meta["n_coeffs"] == 3, "const coeff_program should emit length 3"
+    assert const_meta["coeff_program_tokens"] == 4, "const coeff_program metadata missing token count"
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", const_program_mt_path],
+        input=json.dumps({**const_program_spec, "n_threads": 4}),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "coeffgen const coeff_program multi-thread failed: " + r.stderr[:200]
+    with open(const_program_single_path, "rb") as f:
+        const_single_bytes = f.read()
+    with open(const_program_mt_path, "rb") as f:
+        const_mt_bytes = f.read()
+    assert const_single_bytes == const_mt_bytes, "const coeff_program threaded output diverged"
+    params_vals = read_f32_array(params_path)
+    const_vals = read_f32_array(const_program_single_path)
+    for step in range(const_meta["step_count"]):
+        p1 = complex(params_vals[step * 4], params_vals[step * 4 + 1])
+        p2 = complex(params_vals[step * 4 + 2], params_vals[step * 4 + 3])
+        expected = p1 - p2
+        for coeff_idx in range(const_meta["n_coeffs"]):
+            base = step * const_meta["n_coeffs"] * 2 + coeff_idx * 2
+            got = complex(const_vals[base], const_vals[base + 1])
+            assert abs(got.real - expected.real) <= 1e-6, "const coeff_program real mismatch"
+            assert abs(got.imag - expected.imag) <= 1e-6, "const coeff_program imag mismatch"
+    print("  coeff_program const(length,p1±p2) threaded runtime: OK")
+
+    blend_program_spec = {
+        "mode": "coeffgen_chunked",
+        "function": "g1",
+        "coeff_transforms": [],
+        "params_file": params_path,
+        "step_start": 0,
+        "step_count": 5,
+        "n_threads": 1,
+        "coeff_program": {
+            "version": 1,
+            "fingerprint": "docker-blend-order",
+            "tokens": [
+                {"op": 1, "n_args": 2, "args": [3.0, 1.0], "args_im": [0.0, 0.0], "expr_refs": [-1, -1]},
+                {"op": 1, "n_args": 2, "args": [3.0, 3.0], "args_im": [0.0, 0.0], "expr_refs": [-1, -1]},
+                {"op": 8, "n_args": 1, "args": [0.25], "args_im": [0.0], "expr_refs": [-1]},
+                {"op": 3},
+            ],
+            "scalar_exprs": [],
+        },
+    }
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", blend_program_path],
+        input=json.dumps(blend_program_spec),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "coeffgen blend coeff_program failed: " + r.stderr[:200]
+    blend_meta = json.loads(r.stdout)
+    assert blend_meta["n_coeffs"] == 3, "blend coeff_program should emit length 3"
+    blend_vals = read_f32_array(blend_program_path)
+    for idx in range(0, len(blend_vals), 2):
+        assert abs(blend_vals[idx] - 1.5) <= 1e-6, "blend order real mismatch"
+        assert abs(blend_vals[idx + 1]) <= 1e-6, "blend order imag mismatch"
+    print("  coeff_program blend(t) order: OK (below*(1-t)+top*t)")
+
+    poke_program_spec = {
+        "mode": "coeffgen_chunked",
+        "function": "g1",
+        "coeff_transforms": [],
+        "params_file": params_path,
+        "step_start": 0,
+        "step_count": 10,
+        "n_threads": 1,
+        "coeff_program": {
+            "version": 1,
+            "fingerprint": "docker-poke-poly-tos",
+            "tokens": [
+                {"op": 10, "n_args": 2, "args": [0.0, 0.0], "args_im": [0.0, 0.0], "expr_refs": [-1, 0]},
+                {"op": 2, "src": 2},
+                {"op": 11, "n_args": 2, "args": [1.0, 0.0], "args_im": [0.0, 0.0], "expr_refs": [-1, 1]},
+                {"op": 3},
+            ],
+            "scalar_exprs": [
+                [1.0, 0.0, 100.0, 2.0, 0.0, 0.0, 6.0, 0.0, 0.0],
+                [3.0, 0.0, 0.0],
+            ],
+        },
+    }
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", poke_program_path],
+        input=json.dumps(poke_program_spec),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "coeffgen poke coeff_program failed: " + r.stderr[:200]
+    poke_meta = json.loads(r.stdout)
+    assert poke_meta["n_coeffs"] >= 2, "poke coeff_program should preserve at least two coefficients"
+    poke_stride = poke_meta["n_coeffs"] * 2
+    poke_vals = read_f32_array(poke_program_path)
+    params_vals = read_f32_array(params_path)
+    for step in range(10):
+        p1 = complex(params_vals[step * 4], params_vals[step * 4 + 1])
+        p2 = complex(params_vals[step * 4 + 2], params_vals[step * 4 + 3])
+        coeff0 = complex(poke_vals[step * poke_stride], poke_vals[step * poke_stride + 1])
+        coeff1 = complex(poke_vals[step * poke_stride + 2], poke_vals[step * poke_stride + 3])
+        expected0 = p1 * 100j
+        assert abs(coeff0.real - expected0.real) <= 1e-5, "poke_poly real mismatch"
+        assert abs(coeff0.imag - expected0.imag) <= 1e-5, "poke_poly imag mismatch"
+        assert abs(coeff1.real - p2.real) <= 1e-6, "poke_tos real mismatch"
+        assert abs(coeff1.imag - p2.imag) <= 1e-6, "poke_tos imag mismatch"
+    print("  coeff_program poke_poly/poke_tos runtime: OK")
+
+    debug_spec = {
+        "mode": "compute_debug",
+        "function": "const",
+        "u": 0.25,
+        "v": 0.75,
+        "grid_n": 32,
+        "cfpv": [3, 1, 0],
+        "coeff_program": {
+            "version": 1,
+            "fingerprint": "docker-debug-poke",
+            "tokens": [
+                {"op": 10, "n_args": 2, "args": [0.0, 0.0], "args_im": [0.0, 0.0], "expr_refs": [-1, 0]},
+            ],
+            "scalar_exprs": [[1.0, 0.0, 100.0, 2.0, 0.0, 0.0, 6.0, 0.0, 0.0]],
+        },
+    }
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", debug_poke_path],
+        input=json.dumps(debug_spec),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "compute_debug poke failed: " + r.stderr[:200]
+    debug_meta = json.loads(r.stdout)
+    assert debug_meta["mode"] == "compute_debug", "compute_debug metadata mode mismatch"
+    assert debug_meta["coeff"]["poly"][0] == [0, 25], "compute_debug should expose poked coefficient"
+    debug_vals = read_f32_array(debug_poke_path)
+    assert abs(debug_vals[0]) <= 1e-6 and abs(debug_vals[1] - 25.0) <= 1e-6, "compute_debug output bytes mismatch"
+    print("  compute_debug single-point coeff output: OK")
+
+    cleanup(
+        params_path, single_path, mt_path, plain_path, andy_path,
+        legacy_chain_path, legacy_program_path,
+        rev_emit_chain_path, rev_emit_program_path,
+        const_program_single_path, const_program_mt_path, blend_program_path,
+        poke_program_path, debug_poke_path,
+    )
     print("=== Coeffgen-chunked threaded runtime PASSED ===")
 
 

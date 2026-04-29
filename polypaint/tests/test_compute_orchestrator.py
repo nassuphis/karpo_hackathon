@@ -50,7 +50,36 @@ class TestComputeStarterLambda(unittest.TestCase):
         self.assertEqual(sfn_input["params"]["coeffgen_threads"], 5)
         self.assertEqual(sfn_input["params"]["lores_param_gen_threads"], 2)
         self.assertEqual(sfn_input["params"]["lores_coeffgen_threads"], 3)
+        self.assertEqual(sfn_input["params"]["pipeline_mode"], "chain")
+        self.assertEqual(sfn_input["params"]["param_program_chain"], [])
+        self.assertEqual(sfn_input["params"]["coeff_program_chain"], [])
         self.assertEqual(body["run_id"], "run_abc")
+
+    @patch("handler_compute_orchestrator.report_status")
+    @patch("handler_compute_orchestrator.sfn_client")
+    def test_starter_defaults_program_mode_when_program_chains_present(self, mock_sfn, mock_report):
+        mock_sfn.start_execution.return_value = {
+            "executionArn": "arn:aws:states:us-east-1:123:execution:wf:exec_program"
+        }
+        import handler_compute_orchestrator as mod
+        mod.STATE_MACHINE_ARN = "arn:aws:states:us-east-1:123:stateMachine:test"
+        mod.handler(_make_event({
+            "job_id": "j",
+            "run_id": "run_program",
+            "params": {
+                "solver_mode": "aberth_mt",
+                "N": 100,
+                "n_chunks": 8,
+                "function": "g1",
+                "coeff_program_chain": [["const", "35", "p1+p2"], ["emit"]],
+            },
+        }), None)
+        sfn_input = json.loads(mock_sfn.start_execution.call_args.kwargs["input"])
+        self.assertEqual(sfn_input["params"]["pipeline_mode"], "program")
+        self.assertEqual(sfn_input["params"]["param_transforms"], [])
+        self.assertEqual(sfn_input["params"]["param_program_chain"], [])
+        self.assertEqual(sfn_input["params"]["coeff_transforms"], [])
+        self.assertEqual(sfn_input["params"]["coeff_program_chain"], [["const", "35", "p1+p2"], ["emit"]])
 
     @patch("handler_compute_orchestrator.report_status")
     @patch("handler_compute_orchestrator.sfn_client")

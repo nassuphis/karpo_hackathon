@@ -1,5 +1,16 @@
 [
   {
+    "name": "const",
+    "c_symbol": "coeff_const_c",
+    "source": "sweep_cli.c",
+    "kind": "built_in",
+    "params": [
+      {"name": "length", "default": 35.0},
+      {"name": "value_re", "default": 1.0},
+      {"name": "value_im", "default": 0.0}
+    ]
+  },
+  {
     "name": "giga_19",
     "c_symbol": "giga_19_c",
     "source": "sweep_cli.c",

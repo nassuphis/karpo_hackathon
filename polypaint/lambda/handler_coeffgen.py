@@ -28,11 +28,56 @@ from compute_fused import (
     estimate_fused_chunking,
     validate_fused_threads,
 )
+from coeff_program_chain import compile_coeff_program_chain
 from param_program_chain import compile_param_program_chain
 from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
 
 s3 = boto3.client("s3")
 SWEEP = os.path.join(os.path.dirname(__file__), "sweep_coeffgen")
+
+
+def _compiled_coeff_program_payload(compiled):
+    return {
+        "version": compiled["version"],
+        "fingerprint": compiled["fingerprint"],
+        "display": compiled["display"],
+        "stack_max": compiled["stack_max"],
+        "token_count": compiled["token_count"],
+        "scalar_expr_count": compiled["scalar_expr_count"],
+        "uses_legacy_chain_equivalent": compiled["uses_legacy_chain_equivalent"],
+        "tokens": compiled["tokens"],
+        "scalar_exprs": compiled["scalar_exprs"],
+    }
+
+
+def _resolve_coeff_program(params, coeff_transforms):
+    coeff_program = params.get("coeff_program") or None
+    coeff_program_chain = params.get("coeff_program_chain")
+    if coeff_program is None and coeff_program_chain:
+        if not isinstance(coeff_program_chain, list):
+            raise RuntimeError("coeff_program_chain must be an array")
+        compiled = compile_coeff_program_chain(coeff_program_chain)
+        if compiled["legacy_coeff_transforms"]:
+            coeff_transforms = compiled["legacy_coeff_transforms"]
+        else:
+            coeff_transforms = []
+            coeff_program = _compiled_coeff_program_payload(compiled)
+    return coeff_transforms, coeff_program
+
+
+def _pipeline_mode_from_params(params):
+    raw = str(params.get("pipeline_mode") or params.get("compute_pipeline_mode") or "").strip().lower()
+    if not raw:
+        raw = "program" if (
+            params.get("param_program_chain")
+            or params.get("coeff_program_chain")
+            or params.get("param_program")
+            or params.get("coeff_program")
+        ) else "chain"
+    raw = {"legacy": "chain", "chains": "chain", "programs": "program"}.get(raw, raw)
+    if raw not in {"chain", "program"}:
+        raise RuntimeError("pipeline_mode must be one of chain, program")
+    return raw
 
 
 def handler(event, context):
@@ -318,6 +363,10 @@ def handle_coeffgen_chunked(params):
             "step_count": step_count,
             "n_threads": coeffgen_threads,
         }
+        if _pipeline_mode_from_params(params) == "program":
+            spec["coeff_transforms"], coeff_program = _resolve_coeff_program(params, [])
+            if coeff_program:
+                spec["coeff_program"] = coeff_program
         if params.get("cfpv"):
             spec["cfpv"] = params["cfpv"]
 
@@ -360,6 +409,7 @@ def handle_coeffgen_chunked(params):
             "n_coeffs": meta["n_coeffs"],
             "degree": meta["degree"],
             "threads": int(meta.get("threads", coeffgen_threads) or coeffgen_threads),
+            "coeff_program_tokens": int(meta.get("coeff_program_tokens", 0) or 0),
             "elapsed_us": int((time.time() - t0) * 1e6),
         }
         report_status(job_id, task_id, "done", result_data=attach_contract_warnings(result_data, contract_warnings))
@@ -369,6 +419,7 @@ def handle_coeffgen_chunked(params):
             "n_coeffs": meta["n_coeffs"],
             "degree": meta["degree"],
             "threads": int(meta.get("threads", coeffgen_threads) or coeffgen_threads),
+            "coeff_program_tokens": int(meta.get("coeff_program_tokens", 0) or 0),
         })
 
     except Exception as e:
@@ -409,6 +460,10 @@ def handle_legacy_coeffgen(params):
         }
         if params.get("param_program"):
             spec["param_program"] = params["param_program"]
+        if _pipeline_mode_from_params(params) == "program":
+            spec["coeff_transforms"], coeff_program = _resolve_coeff_program(params, [])
+            if coeff_program:
+                spec["coeff_program"] = coeff_program
         if params.get("cfpv"):
             spec["cfpv"] = params["cfpv"]
 
@@ -461,6 +516,7 @@ def handle_legacy_coeffgen(params):
 
 
 def handle_degree_probe(params):
+    pipeline_mode = _pipeline_mode_from_params(params)
     function_name = str(params.get("function", "") or "").strip()
     if not function_name:
         raise RuntimeError("function is required")
@@ -469,6 +525,10 @@ def handle_degree_probe(params):
         coeff_transforms = []
     if not isinstance(coeff_transforms, list):
         raise RuntimeError("coeff_transforms must be an array")
+    coeff_program = None
+    if pipeline_mode == "program":
+        coeff_transforms = []
+        coeff_transforms, coeff_program = _resolve_coeff_program(params, coeff_transforms)
     param_transforms = params.get("param_transforms")
     if param_transforms is None:
         param_transforms = []
@@ -476,6 +536,11 @@ def handle_degree_probe(params):
         raise RuntimeError("param_transforms must be an array")
     param_program = params.get("param_program") or None
     param_program_chain = params.get("param_program_chain")
+    if pipeline_mode == "chain":
+        param_program = None
+        param_program_chain = []
+    else:
+        param_transforms = []
     if param_program is None and param_program_chain:
         if not isinstance(param_program_chain, list):
             raise RuntimeError("param_program_chain must be an array")
@@ -523,6 +588,8 @@ def handle_degree_probe(params):
             }
             if param_program:
                 spec["param_program"] = param_program
+            if coeff_program:
+                spec["coeff_program"] = coeff_program
             if cfpv:
                 spec["cfpv"] = cfpv
             sample_t0 = time.time()
@@ -561,6 +628,7 @@ def handle_degree_probe(params):
             coeff_transforms=coeff_transforms,
             cfpv=cfpv,
             param_program=param_program,
+            coeff_program=coeff_program,
         )
         body = {
             "probe_n": probe_n,

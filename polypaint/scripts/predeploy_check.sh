@@ -25,6 +25,17 @@ echo "Running predeploy contract gate..."
     tests/test_raster_mt.py \
     tests/test_bilevel_handler.py \
     tests/test_solve_proximity_handler.py \
+    tests/test_param_program_chain.py \
+    tests/test_param_program_storage.py \
+    tests/test_param_program_native.py \
+    tests/test_coeff_program_chain.py \
+    tests/test_coeff_program_storage.py \
+    tests/test_compute_plan.py \
+    tests/test_compute_orchestrator.py \
+    tests/test_compute_preview_handler.py \
+    tests/test_coeffgen_param_gen.py \
+    tests/test_compute_chunk_fused.py \
+    tests/test_compute_workflow_definition.py \
     -q
 bash tests/test_frontend_js.sh
 echo "Predeploy contract gate passed."

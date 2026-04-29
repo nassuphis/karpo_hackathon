@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "functions": [
+    {"name":"rev","fn_index":1,"category":"structural","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"conj","fn_index":2,"category":"structural","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"normalize","fn_index":3,"category":"structural","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"deriv","fn_index":4,"category":"structural","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[],"supports_andy":true,"length_policy":"may_change"},
+    {"name":"safe","fn_index":5,"category":"structural","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"negate_odd","fn_index":6,"category":"structural","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"max2one","fn_index":7,"category":"structural","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"sort_mod_keep_angle","fn_index":8,"category":"accumulation","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"sort_angle_keep_mod","fn_index":9,"category":"accumulation","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"sort_abs","fn_index":10,"category":"accumulation","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"cumsum","fn_index":11,"category":"accumulation","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"cummax","fn_index":12,"category":"accumulation","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"sort_cumsum","fn_index":13,"category":"accumulation","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"linear","fn_index":14,"category":"elementwise","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[{"name":"multiplier","type":"real","default":100.0},{"name":"offset","type":"real","default":0.0}],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"swirler","fn_index":15,"category":"elementwise","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"exp","fn_index":16,"category":"elementwise","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[{"name":"a","type":"real","default":1.0},{"name":"b","type":"real","default":0.0}],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"cos","fn_index":17,"category":"elementwise","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"sin","fn_index":18,"category":"elementwise","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"tan","fn_index":19,"category":"elementwise","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"cosh","fn_index":20,"category":"elementwise","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"sinh","fn_index":21,"category":"elementwise","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"tanh","fn_index":22,"category":"elementwise","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"round","fn_index":23,"category":"elementwise","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[{"name":"a","type":"real","default":1.0},{"name":"b","type":"real","default":0.0}],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"pow","fn_index":24,"category":"elementwise","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[{"name":"a","type":"real","default":1.0},{"name":"b","type":"real","default":0.0},{"name":"pr","type":"real","default":1.0},{"name":"pi","type":"real","default":0.0}],"supports_andy":true,"length_policy":"preserve"},
+    {"name":"power","fn_index":25,"category":"elementwise","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[{"name":"k","type":"int","default":8}],"supports_andy":true,"length_policy":"may_change"},
+    {"name":"invpower","fn_index":26,"category":"elementwise","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[{"name":"k","type":"int","default":4}],"supports_andy":true,"length_policy":"may_change"},
+    {"name":"roots_cm","fn_index":27,"category":"roots","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[{"name":"pad","type":"enum","default":"hi","choices":["hi","lo"]}],"supports_andy":true,"length_policy":"may_change"},
+    {"name":"roots","fn_index":28,"category":"roots","allowed_src":["cf","poly","pop","peek"],"allowed_tgt":["poly","push"],"args":[{"name":"k","type":"int","default":8},{"name":"pad","type":"enum","default":"hi","choices":["hi","lo"]}],"supports_andy":true,"length_policy":"may_change"}
+  ]
+}

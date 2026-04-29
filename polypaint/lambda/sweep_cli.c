@@ -453,6 +453,7 @@ static int ct_arg_pad_lo(const CtEntry *e, int idx, int fallbackLo) {
 }
 
 static int ct_base_arg_count(const char *name) {
+    if (strcmp(name, "linear") == 0) return 2;
     if (strcmp(name, "scale100") == 0) return 4;
     if (strcmp(name, "power") == 0) return 1;
     if (strcmp(name, "invpower") == 0) return 1;
@@ -464,11 +465,75 @@ static int ct_base_arg_count(const char *name) {
     return 0;
 }
 
+static int ct_base_arg_count_for_entry(const CtEntry *e) {
+    if (!e) return 0;
+    if (strcmp(e->name, "pow") == 0 && e->nArgs <= 3) return 2;
+    return ct_base_arg_count(e->name);
+}
+
 static double ct_arg_andy(const CtEntry *e) {
     if (!e) return 0.0;
-    int idx = ct_base_arg_count(e->name);
+    int idx = ct_base_arg_count_for_entry(e);
     if (idx < 0 || idx >= e->nArgs) return 0.0;
     return ct_arg_double(e, idx, 0.0);
+}
+
+static int ct_parse_complex_arg(const CtEntry *e, int idx, double fallbackRe, double fallbackIm,
+                                double *outRe, double *outIm, const char *label) {
+    if (!e || idx < 0 || idx >= e->nArgs) {
+        *outRe = fallbackRe;
+        *outIm = fallbackIm;
+        return 1;
+    }
+    if (!ct_parse_complex_literal(e->args[idx], outRe, outIm)) {
+        fprintf(stderr, "Invalid complex %s: %s\n", label, e->args[idx]);
+        return 0;
+    }
+    return 1;
+}
+
+static int ct_pow_args(const CtEntry *e, double *a, double *b, double *pr, double *pi) {
+    *a = 1.0; *b = 0.0; *pr = 1.0; *pi = 0.0;
+    if (!e) return 1;
+    if (e->nArgs <= 3) {
+        if (!ct_parse_complex_arg(e, 0, 1.0, 0.0, a, b, "pow multiplier")) return 0;
+        if (!ct_parse_complex_arg(e, 1, 1.0, 0.0, pr, pi, "pow exponent")) return 0;
+        return 1;
+    }
+    *a = ct_arg_double(e, 0, 1.0);
+    *b = ct_arg_double(e, 1, 0.0);
+    *pr = ct_arg_double(e, 2, 1.0);
+    *pi = ct_arg_double(e, 3, 0.0);
+    return 1;
+}
+
+static int ct_linear_args(const CtEntry *e, double *x, double *y, double *w, double *u) {
+    *x = 100.0; *y = 0.0; *w = 0.0; *u = 0.0;
+    if (!e) return 1;
+    if (strcmp(e->name, "linear") == 0) {
+        if (!ct_parse_complex_arg(e, 0, 100.0, 0.0, x, y, "multiplier")) return 0;
+        if (!ct_parse_complex_arg(e, 1, 0.0, 0.0, w, u, "offset")) return 0;
+        return 1;
+    }
+    if (ct_arg_has_complex_unit(e, 0)) {
+        if (!ct_parse_complex_literal(e->args[0], x, y)) {
+            fprintf(stderr, "Invalid scale100 multiplier: %s\n", e->args[0]);
+            return 0;
+        }
+    } else {
+        *x = ct_arg_double(e, 0, 100.0);
+        *y = ct_arg_double(e, 1, 0.0);
+    }
+    if (ct_arg_has_complex_unit(e, 2)) {
+        if (!ct_parse_complex_literal(e->args[2], w, u)) {
+            fprintf(stderr, "Invalid scale100 offset: %s\n", e->args[2]);
+            return 0;
+        }
+    } else {
+        *w = ct_arg_double(e, 2, 0.0);
+        *u = ct_arg_double(e, 3, 0.0);
+    }
+    return 1;
 }
 
 static int parseStringArray(const char *p, char names[][64], int maxCount) {
@@ -2740,10 +2805,6 @@ static void ct_deriv(double *cRe, double *cIm, int *nCoeffs) {
     *nCoeffs = n - 1;
 }
 
-static void ct_scale100(double *cRe, double *cIm, int *nCoeffs) {
-    for (int k = 0; k < *nCoeffs; k++) { cRe[k] *= 100.0; cIm[k] *= 100.0; }
-}
-
 static void ct_linear_affine(double *cRe, double *cIm, int *nCoeffs,
                              double x, double y, double w, double u) {
     int n = *nCoeffs;
@@ -3169,26 +3230,9 @@ static int dispatchCt(const CtEntry *e, double *cRe, double *cIm, int *nCoeffs) 
         }
     }
     int rc = 0;
-    if (strcmp(e->name, "scale100") == 0) {
+    if (strcmp(e->name, "linear") == 0 || strcmp(e->name, "scale100") == 0) {
         double x = 100.0, y = 0.0, w = 0.0, u = 0.0;
-        if (ct_arg_has_complex_unit(e, 0)) {
-            if (!ct_parse_complex_literal(e->args[0], &x, &y)) {
-                fprintf(stderr, "Invalid scale100 multiplier: %s\n", e->args[0]);
-                return 1;
-            }
-        } else {
-            x = ct_arg_double(e, 0, 100.0);
-            y = ct_arg_double(e, 1, 0.0);
-        }
-        if (ct_arg_has_complex_unit(e, 2)) {
-            if (!ct_parse_complex_literal(e->args[2], &w, &u)) {
-                fprintf(stderr, "Invalid scale100 offset: %s\n", e->args[2]);
-                return 1;
-            }
-        } else {
-            w = ct_arg_double(e, 2, 0.0);
-            u = ct_arg_double(e, 3, 0.0);
-        }
+        if (!ct_linear_args(e, &x, &y, &w, &u)) return 1;
         ct_linear_affine(cRe, cIm, nCoeffs, x, y, w, u);
         goto done;
     }
@@ -3221,10 +3265,8 @@ static int dispatchCt(const CtEntry *e, double *cRe, double *cIm, int *nCoeffs) 
         goto done;
     }
     if (strcmp(e->name, "pow") == 0) {
-        double a = ct_arg_double(e, 0, 1.0);
-        double b = ct_arg_double(e, 1, 0.0);
-        double pr = ct_arg_double(e, 2, 1.0);
-        double pi = ct_arg_double(e, 3, 0.0);
+        double a = 1.0, b = 0.0, pr = 1.0, pi = 0.0;
+        if (!ct_pow_args(e, &a, &b, &pr, &pi)) return 1;
         ct_pow_affine(cRe, cIm, nCoeffs, a, b, pr, pi);
         goto done;
     }
@@ -3244,6 +3286,707 @@ static int dispatchCt(const CtEntry *e, double *cRe, double *cIm, int *nCoeffs) 
 done:
     if (rc == 0) ct_blend_with_original(cRe, cIm, nCoeffs, origRe, origIm, origN, andy);
     return rc;
+}
+
+/* ==== Compiled coeff-program VM ====
+ * Source names are resolved by Python before this point. The row loop
+ * dispatches only on integer opcodes/function indices and fixed selectors. */
+#define COEFF_PROGRAM_MAX_TOKENS 64
+#define COEFF_PROGRAM_MAX_VECTOR_STACK 64
+#define COEFF_PROGRAM_MAX_VECTOR_LEN 256
+#define COEFF_PROGRAM_MAX_ARGS 8
+#define COEFF_PROGRAM_MAX_SCALAR_EXPRS 64
+#define COEFF_PROGRAM_MAX_EXPR_NUMS 96
+#define COEFF_PROGRAM_EXPR_STRIDE 3
+
+enum CoeffProgramOp {
+    COEFF_OP_CONST = 1,
+    COEFF_OP_PUSH = 2,
+    COEFF_OP_EMIT = 3,
+    COEFF_OP_DUPLICATE = 4,
+    COEFF_OP_SWAP = 5,
+    COEFF_OP_POP = 6,
+    COEFF_OP_FLUSH = 7,
+    COEFF_OP_BLEND = 8,
+    COEFF_OP_LEGACY = 9,
+    COEFF_OP_POKE_POLY = 10,
+    COEFF_OP_POKE_TOS = 11
+};
+
+enum CoeffProgramSelector {
+    COEFF_SEL_CF = 1,
+    COEFF_SEL_POLY = 2,
+    COEFF_SEL_POP = 3,
+    COEFF_SEL_PEEK = 4,
+    COEFF_SEL_PUSH = 5
+};
+
+enum CoeffExprOp {
+    COEFF_EXPR_LITERAL = 1,
+    COEFF_EXPR_P1 = 2,
+    COEFF_EXPR_P2 = 3,
+    COEFF_EXPR_ADD = 4,
+    COEFF_EXPR_SUB = 5,
+    COEFF_EXPR_MUL = 6,
+    COEFF_EXPR_DIV = 7,
+    COEFF_EXPR_CONJ = 8,
+    COEFF_EXPR_NEG = 9,
+    COEFF_EXPR_REAL = 10,
+    COEFF_EXPR_IMAG = 11
+};
+
+typedef struct {
+    uint16_t op;
+    uint16_t fn_index;
+    uint8_t src;
+    uint8_t tgt;
+    uint8_t n_args;
+    uint8_t reserved;
+    double args[COEFF_PROGRAM_MAX_ARGS];
+    double args_im[COEFF_PROGRAM_MAX_ARGS];
+    int expr_refs[COEFF_PROGRAM_MAX_ARGS];
+    double andy;
+    int andy_expr_ref;
+} CoeffProgramToken;
+
+typedef struct {
+    int n_nums;
+    double nums[COEFF_PROGRAM_MAX_EXPR_NUMS];
+} CoeffScalarExpr;
+
+typedef struct {
+    int token_count;
+    int stack_max;
+    int scalar_expr_count;
+    CoeffProgramToken tokens[COEFF_PROGRAM_MAX_TOKENS];
+    CoeffScalarExpr scalar_exprs[COEFF_PROGRAM_MAX_SCALAR_EXPRS];
+} CoeffProgram;
+
+typedef struct {
+    double stack_re[COEFF_PROGRAM_MAX_VECTOR_STACK][COEFF_PROGRAM_MAX_VECTOR_LEN];
+    double stack_im[COEFF_PROGRAM_MAX_VECTOR_STACK][COEFF_PROGRAM_MAX_VECTOR_LEN];
+    uint16_t stack_len[COEFF_PROGRAM_MAX_VECTOR_STACK];
+    uint16_t stack_depth;
+    uint16_t stack_head;
+
+    double poly_re[COEFF_PROGRAM_MAX_VECTOR_LEN];
+    double poly_im[COEFF_PROGRAM_MAX_VECTOR_LEN];
+    uint16_t poly_len;
+
+    double scratch_re[COEFF_PROGRAM_MAX_VECTOR_LEN];
+    double scratch_im[COEFF_PROGRAM_MAX_VECTOR_LEN];
+    uint16_t scratch_len;
+
+    double original_re[COEFF_PROGRAM_MAX_VECTOR_LEN];
+    double original_im[COEFF_PROGRAM_MAX_VECTOR_LEN];
+    uint16_t original_len;
+} CoeffProgramWorkspace;
+
+/* V1 workspace is about 274 KiB. Allocate it once per worker/probe rather than
+ * placing it on pthread stacks; evalCoeffProgram resets only live cursors and
+ * lengths, so stale buffer contents are never part of ownership semantics. */
+static CoeffProgramWorkspace *coeff_program_workspace_new(void) {
+    CoeffProgramWorkspace *ws = (CoeffProgramWorkspace *)calloc(1, sizeof(CoeffProgramWorkspace));
+    if (!ws) {
+        fprintf(stderr, "Coeff Program workspace allocation failed (%zu bytes)\n",
+                sizeof(CoeffProgramWorkspace));
+    }
+    return ws;
+}
+
+static void coeff_vec_copy(double *dstRe, double *dstIm,
+                           const double *srcRe, const double *srcIm,
+                           int n) {
+    memcpy(dstRe, srcRe, (size_t)n * sizeof(double));
+    memcpy(dstIm, srcIm, (size_t)n * sizeof(double));
+}
+
+static int coeff_program_check_len(int n, const char *where) {
+    if (n < 1 || n > COEFF_PROGRAM_MAX_VECTOR_LEN) {
+        fprintf(stderr, "Coeff Program vector length exceeded at %s: got %d, max %d\n",
+                where, n, COEFF_PROGRAM_MAX_VECTOR_LEN);
+        return 1;
+    }
+    return 0;
+}
+
+static int coeff_stack_push(CoeffProgramWorkspace *ws,
+                            const double *re, const double *im, int n) {
+    if (coeff_program_check_len(n, "push") != 0) return 1;
+    if (ws->stack_depth >= COEFF_PROGRAM_MAX_VECTOR_STACK) {
+        fprintf(stderr, "Coeff Program stack overflow: max %d\n", COEFF_PROGRAM_MAX_VECTOR_STACK);
+        return 1;
+    }
+    uint16_t slot = ws->stack_head;
+    coeff_vec_copy(ws->stack_re[slot], ws->stack_im[slot], re, im, n);
+    ws->stack_len[slot] = (uint16_t)n;
+    ws->stack_head = (uint16_t)((ws->stack_head + 1) % COEFF_PROGRAM_MAX_VECTOR_STACK);
+    ws->stack_depth++;
+    return 0;
+}
+
+static int coeff_stack_pop(CoeffProgramWorkspace *ws, uint16_t *slot) {
+    if (ws->stack_depth == 0) {
+        fprintf(stderr, "Coeff Program stack underflow\n");
+        return 1;
+    }
+    ws->stack_head = (uint16_t)((ws->stack_head + COEFF_PROGRAM_MAX_VECTOR_STACK - 1) %
+                                COEFF_PROGRAM_MAX_VECTOR_STACK);
+    ws->stack_depth--;
+    *slot = ws->stack_head;
+    return 0;
+}
+
+static int coeff_stack_peek(CoeffProgramWorkspace *ws, uint16_t *slot) {
+    if (ws->stack_depth == 0) {
+        fprintf(stderr, "Coeff Program stack underflow on peek\n");
+        return 1;
+    }
+    *slot = (uint16_t)((ws->stack_head + COEFF_PROGRAM_MAX_VECTOR_STACK - 1) %
+                       COEFF_PROGRAM_MAX_VECTOR_STACK);
+    return 0;
+}
+
+static const char *parseCoeffProgramTokenObject(const char *objStart, const char *objEnd,
+                                                CoeffProgramToken *tok) {
+    memset(tok, 0, sizeof(*tok));
+    for (int i = 0; i < COEFF_PROGRAM_MAX_ARGS; i++) tok->expr_refs[i] = -1;
+    tok->andy_expr_ref = -1;
+    const char *v;
+    v = findKeyIn(objStart, objEnd, "op");
+    if (!v) {
+        fprintf(stderr, "coeff_program token missing op\n");
+        return NULL;
+    }
+    tok->op = (uint16_t)parseNum(&v);
+    v = findKeyIn(objStart, objEnd, "fn_index");
+    if (v) tok->fn_index = (uint16_t)parseNum(&v);
+    v = findKeyIn(objStart, objEnd, "src");
+    if (v) tok->src = (uint8_t)parseNum(&v);
+    v = findKeyIn(objStart, objEnd, "tgt");
+    if (v) tok->tgt = (uint8_t)parseNum(&v);
+    v = findKeyIn(objStart, objEnd, "n_args");
+    if (v) {
+        int n = (int)parseNum(&v);
+        if (n < 0 || n > COEFF_PROGRAM_MAX_ARGS) {
+            fprintf(stderr, "coeff_program token has invalid n_args=%d\n", n);
+            return NULL;
+        }
+        tok->n_args = (uint8_t)n;
+    }
+    v = findKeyIn(objStart, objEnd, "args");
+    if (v) {
+        int n = parseNumArray(v, tok->args, COEFF_PROGRAM_MAX_ARGS);
+        if (n < 0 || n > COEFF_PROGRAM_MAX_ARGS) {
+            fprintf(stderr, "coeff_program token has invalid args length=%d\n", n);
+            return NULL;
+        }
+        tok->n_args = (uint8_t)n;
+    }
+    v = findKeyIn(objStart, objEnd, "args_im");
+    if (v) {
+        double tmp[COEFF_PROGRAM_MAX_ARGS];
+        int n = parseNumArray(v, tmp, COEFF_PROGRAM_MAX_ARGS);
+        if (n < 0 || n > COEFF_PROGRAM_MAX_ARGS) {
+            fprintf(stderr, "coeff_program token has invalid args_im length=%d\n", n);
+            return NULL;
+        }
+        for (int i = 0; i < n; i++) tok->args_im[i] = tmp[i];
+    }
+    v = findKeyIn(objStart, objEnd, "expr_refs");
+    if (v) {
+        double tmp[COEFF_PROGRAM_MAX_ARGS];
+        int n = parseNumArray(v, tmp, COEFF_PROGRAM_MAX_ARGS);
+        if (n < 0 || n > COEFF_PROGRAM_MAX_ARGS) {
+            fprintf(stderr, "coeff_program token has invalid expr_refs length=%d\n", n);
+            return NULL;
+        }
+        for (int i = 0; i < n; i++) tok->expr_refs[i] = (int)tmp[i];
+    }
+    v = findKeyIn(objStart, objEnd, "andy");
+    if (v) tok->andy = parseNum(&v);
+    v = findKeyIn(objStart, objEnd, "andy_expr_ref");
+    if (v) tok->andy_expr_ref = (int)parseNum(&v);
+    return objEnd;
+}
+
+static int parseCoeffProgram(const char *buf, CoeffProgram *program) {
+    memset(program, 0, sizeof(*program));
+    const char *p = findKey(buf, "coeff_program");
+    if (!p) return 0;
+    p = skip(p);
+    if (*p == 'n') return 0;
+    if (*p != '{') {
+        fprintf(stderr, "coeff_program must be an object\n");
+        return -1;
+    }
+    const char *objStart = p;
+    const char *objEnd = findClosing(p, '{', '}');
+    if (!objEnd || objEnd <= objStart) {
+        fprintf(stderr, "coeff_program object is malformed\n");
+        return -1;
+    }
+    const char *v = findKeyIn(objStart, objEnd, "stack_max");
+    if (v) program->stack_max = (int)parseNum(&v);
+
+    const char *exprs = findKeyIn(objStart, objEnd, "scalar_exprs");
+    if (exprs) {
+        exprs = skip(exprs);
+        if (*exprs != '[') {
+            fprintf(stderr, "coeff_program scalar_exprs must be an array\n");
+            return -1;
+        }
+        exprs++;
+        int count = 0;
+        while (*exprs && exprs < objEnd) {
+            exprs = skip(exprs);
+            if (*exprs == ']') break;
+            if (*exprs == ',') {
+                exprs++;
+                continue;
+            }
+            if (*exprs != '[') {
+                fprintf(stderr, "coeff_program scalar expression must be an array\n");
+                return -1;
+            }
+            if (count >= COEFF_PROGRAM_MAX_SCALAR_EXPRS) {
+                fprintf(stderr, "coeff_program has too many scalar expressions\n");
+                return -1;
+            }
+            const char *arrEnd = findClosing(exprs, '[', ']');
+            if (!arrEnd || arrEnd > objEnd) {
+                fprintf(stderr, "coeff_program scalar expression array is malformed\n");
+                return -1;
+            }
+            int n = parseNumArray(exprs, program->scalar_exprs[count].nums, COEFF_PROGRAM_MAX_EXPR_NUMS);
+            if (n < 0 || n > COEFF_PROGRAM_MAX_EXPR_NUMS || n % COEFF_PROGRAM_EXPR_STRIDE != 0) {
+                fprintf(stderr, "coeff_program scalar expression has invalid length=%d\n", n);
+                return -1;
+            }
+            program->scalar_exprs[count].n_nums = n;
+            count++;
+            exprs = arrEnd;
+        }
+        program->scalar_expr_count = count;
+    }
+
+    const char *tokens = findKeyIn(objStart, objEnd, "tokens");
+    if (!tokens) {
+        fprintf(stderr, "coeff_program requires tokens array\n");
+        return -1;
+    }
+    tokens = skip(tokens);
+    if (*tokens != '[') {
+        fprintf(stderr, "coeff_program tokens must be an array\n");
+        return -1;
+    }
+    tokens++;
+    int count = 0;
+    while (*tokens && tokens < objEnd) {
+        tokens = skip(tokens);
+        if (*tokens == ']') break;
+        if (*tokens == ',') {
+            tokens++;
+            continue;
+        }
+        if (*tokens != '{') {
+            fprintf(stderr, "coeff_program token must be an object\n");
+            return -1;
+        }
+        if (count >= COEFF_PROGRAM_MAX_TOKENS) {
+            fprintf(stderr, "coeff_program has too many tokens\n");
+            return -1;
+        }
+        const char *tokStart = tokens;
+        const char *tokEnd = findClosing(tokens, '{', '}');
+        if (!tokEnd || tokEnd > objEnd) {
+            fprintf(stderr, "coeff_program token object is malformed\n");
+            return -1;
+        }
+        if (!parseCoeffProgramTokenObject(tokStart, tokEnd, &program->tokens[count])) {
+            return -1;
+        }
+        count++;
+        tokens = tokEnd;
+    }
+    program->token_count = count;
+    return 1;
+}
+
+static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
+                               double p1r, double p1i, double p2r, double p2i,
+                               double *outR, double *outI) {
+    if (ref < 0 || ref >= program->scalar_expr_count) {
+        fprintf(stderr, "coeff_program scalar expression ref out of range: %d\n", ref);
+        return 1;
+    }
+    const CoeffScalarExpr *expr = &program->scalar_exprs[ref];
+    double stackR[COEFF_PROGRAM_MAX_EXPR_NUMS / COEFF_PROGRAM_EXPR_STRIDE];
+    double stackI[COEFF_PROGRAM_MAX_EXPR_NUMS / COEFF_PROGRAM_EXPR_STRIDE];
+    int sp = 0;
+    for (int pc = 0; pc < expr->n_nums; pc += COEFF_PROGRAM_EXPR_STRIDE) {
+        int op = (int)expr->nums[pc];
+        double a = expr->nums[pc + 1];
+        double b = expr->nums[pc + 2];
+        if (op == COEFF_EXPR_LITERAL || op == COEFF_EXPR_P1 || op == COEFF_EXPR_P2) {
+            if (sp >= (int)(sizeof(stackR) / sizeof(stackR[0]))) return 1;
+            if (op == COEFF_EXPR_LITERAL) {
+                stackR[sp] = a; stackI[sp] = b;
+            } else if (op == COEFF_EXPR_P1) {
+                stackR[sp] = p1r; stackI[sp] = p1i;
+            } else {
+                stackR[sp] = p2r; stackI[sp] = p2i;
+            }
+            sp++;
+            continue;
+        }
+        if (op == COEFF_EXPR_CONJ || op == COEFF_EXPR_NEG || op == COEFF_EXPR_REAL || op == COEFF_EXPR_IMAG) {
+            if (sp < 1) return 1;
+            int idx = sp - 1;
+            if (op == COEFF_EXPR_CONJ) stackI[idx] = -stackI[idx];
+            else if (op == COEFF_EXPR_NEG) { stackR[idx] = -stackR[idx]; stackI[idx] = -stackI[idx]; }
+            else if (op == COEFF_EXPR_REAL) stackI[idx] = 0.0;
+            else { stackR[idx] = stackI[idx]; stackI[idx] = 0.0; }
+            continue;
+        }
+        if (sp < 2) return 1;
+        double br = stackR[--sp], bi = stackI[sp];
+        double ar = stackR[sp - 1], ai = stackI[sp - 1];
+        if (op == COEFF_EXPR_ADD) {
+            stackR[sp - 1] = ar + br; stackI[sp - 1] = ai + bi;
+        } else if (op == COEFF_EXPR_SUB) {
+            stackR[sp - 1] = ar - br; stackI[sp - 1] = ai - bi;
+        } else if (op == COEFF_EXPR_MUL) {
+            c_mul(ar, ai, br, bi, &stackR[sp - 1], &stackI[sp - 1]);
+        } else if (op == COEFF_EXPR_DIV) {
+            double d = br * br + bi * bi;
+            if (d <= 1e-300) {
+                fprintf(stderr, "coeff_program scalar expression division by zero\n");
+                return 1;
+            }
+            c_div(ar, ai, br, bi, &stackR[sp - 1], &stackI[sp - 1]);
+        } else {
+            fprintf(stderr, "coeff_program unknown scalar expression opcode %d\n", op);
+            return 1;
+        }
+    }
+    if (sp != 1 || !isfinite(stackR[0]) || !isfinite(stackI[0])) {
+        fprintf(stderr, "coeff_program scalar expression produced non-finite result\n");
+        return 1;
+    }
+    *outR = stackR[0];
+    *outI = stackI[0];
+    return 0;
+}
+
+static int coeffArgValue(const CoeffProgram *program, const CoeffProgramToken *tok, int idx,
+                         double p1r, double p1i, double p2r, double p2i,
+                         double *outR, double *outI) {
+    if (idx < 0 || idx >= COEFF_PROGRAM_MAX_ARGS) return 1;
+    int ref = tok->expr_refs[idx];
+    if (ref >= 0) {
+        if (ref >= program->scalar_expr_count) {
+            fprintf(stderr, "coeff_program scalar expression ref out of range: %d >= %d\n",
+                    ref, program->scalar_expr_count);
+            return 1;
+        }
+        return coeffEvalScalarExpr(program, ref, p1r, p1i, p2r, p2i, outR, outI);
+    }
+    *outR = tok->args[idx];
+    *outI = tok->args_im[idx];
+    return 0;
+}
+
+static int coeffAndyValue(const CoeffProgram *program, const CoeffProgramToken *tok,
+                          double p1r, double p1i, double p2r, double p2i,
+                          double *out) {
+    if (!out) return 1;
+    if (tok->andy_expr_ref >= 0) {
+        double ar = 0.0, ai = 0.0;
+        if (tok->andy_expr_ref >= program->scalar_expr_count) {
+            fprintf(stderr, "coeff_program andy expression ref out of range: %d >= %d\n",
+                    tok->andy_expr_ref, program->scalar_expr_count);
+            return 1;
+        }
+        if (coeffEvalScalarExpr(program, tok->andy_expr_ref, p1r, p1i, p2r, p2i, &ar, &ai) != 0) {
+            return 1;
+        }
+        if (fabs(ai) > 1e-12 || !isfinite(ar)) {
+            fprintf(stderr, "Coeff Program andy expression is not real\n");
+            return 1;
+        }
+        *out = ar;
+        return 0;
+    }
+    *out = tok->andy;
+    return 0;
+}
+
+static int coeffLegacyApply(int fnIndex, double *re, double *im, int *n,
+                            const double *args, int nArgs) {
+    switch (fnIndex) {
+        case 1: ct_rev(re, im, n); return 0;
+        case 2: ct_conj(re, im, n); return 0;
+        case 3: ct_normalize(re, im, n); return 0;
+        case 4: ct_deriv(re, im, n); return 0;
+        case 5: ct_safe(re, im, n); return 0;
+        case 6: ct_negate_odd(re, im, n); return 0;
+        case 7: ct_max2one(re, im, n); return 0;
+        case 8: ct_sort_mod(re, im, n); return 0;
+        case 9: ct_sort_angle_keep_mod(re, im, n); return 0;
+        case 10: ct_sort_abs(re, im, n); return 0;
+        case 11: ct_cumsum(re, im, n); return 0;
+        case 12: ct_cummax(re, im, n); return 0;
+        case 13: ct_sort_cumsum(re, im, n); return 0;
+        case 14: ct_linear_affine(re, im, n,
+                                  nArgs > 0 ? args[0] : 100.0,
+                                  nArgs > 1 ? args[1] : 0.0,
+                                  nArgs > 2 ? args[2] : 0.0,
+                                  nArgs > 3 ? args[3] : 0.0); return 0;
+        case 15: ct_swirler(re, im, n); return 0;
+        case 16: ct_exp_affine(re, im, n, nArgs > 0 ? args[0] : 1.0, nArgs > 1 ? args[1] : 0.0); return 0;
+        case 17: ct_cos_apply(re, im, n); return 0;
+        case 18: ct_sin_apply(re, im, n); return 0;
+        case 19: ct_tan_apply(re, im, n); return 0;
+        case 20: ct_cosh_apply(re, im, n); return 0;
+        case 21: ct_sinh_apply(re, im, n); return 0;
+        case 22: ct_tanh_apply(re, im, n); return 0;
+        case 23: ct_round_affine(re, im, n, nArgs > 0 ? args[0] : 1.0, nArgs > 1 ? args[1] : 0.0); return 0;
+        case 24: ct_pow_affine(re, im, n,
+                               nArgs > 0 ? args[0] : 1.0,
+                               nArgs > 1 ? args[1] : 0.0,
+                               nArgs > 2 ? args[2] : 1.0,
+                               nArgs > 3 ? args[3] : 0.0); return 0;
+        case 25: ct_power(re, im, n, nArgs > 0 ? (int)args[0] : 8); return 0;
+        case 26: ct_invpower(re, im, n, nArgs > 0 ? (int)args[0] : 4); return 0;
+        case 27: return ct_roots_cm(re, im, n, nArgs > 0 ? (int)args[0] : 0);
+        case 28: ct_roots(re, im, n, nArgs > 0 ? (int)args[0] : 8, nArgs > 1 ? (int)args[1] : 0); return 0;
+        default:
+            fprintf(stderr, "unknown coeff legacy fn_index: %d\n", fnIndex);
+            return 1;
+    }
+}
+
+static int coeffProgramSourceToScratch(const double *cfRe, const double *cfIm, int cfLen,
+                                       CoeffProgramWorkspace *ws,
+                                       const CoeffProgramToken *tok) {
+    uint16_t slot = 0;
+    if (tok->src == COEFF_SEL_CF) {
+        coeff_vec_copy(ws->scratch_re, ws->scratch_im, cfRe, cfIm, cfLen);
+        ws->scratch_len = (uint16_t)cfLen;
+        return 0;
+    }
+    if (tok->src == COEFF_SEL_POLY) {
+        coeff_vec_copy(ws->scratch_re, ws->scratch_im, ws->poly_re, ws->poly_im, ws->poly_len);
+        ws->scratch_len = ws->poly_len;
+        return 0;
+    }
+    if (tok->src == COEFF_SEL_POP) {
+        if (coeff_stack_pop(ws, &slot) != 0) return 1;
+        coeff_vec_copy(ws->scratch_re, ws->scratch_im, ws->stack_re[slot], ws->stack_im[slot], ws->stack_len[slot]);
+        ws->scratch_len = ws->stack_len[slot];
+        return 0;
+    }
+    if (tok->src == COEFF_SEL_PEEK) {
+        if (coeff_stack_peek(ws, &slot) != 0) return 1;
+        coeff_vec_copy(ws->scratch_re, ws->scratch_im, ws->stack_re[slot], ws->stack_im[slot], ws->stack_len[slot]);
+        ws->scratch_len = ws->stack_len[slot];
+        return 0;
+    }
+    fprintf(stderr, "invalid coeff_program source selector: %d\n", tok->src);
+    return 1;
+}
+
+static int coeffProgramTargetFromScratch(CoeffProgramWorkspace *ws, const CoeffProgramToken *tok) {
+    if (coeff_program_check_len(ws->scratch_len, "target") != 0) return 1;
+    if (tok->tgt == COEFF_SEL_POLY) {
+        coeff_vec_copy(ws->poly_re, ws->poly_im, ws->scratch_re, ws->scratch_im, ws->scratch_len);
+        ws->poly_len = ws->scratch_len;
+        return 0;
+    }
+    if (tok->tgt == COEFF_SEL_PUSH) {
+        return coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, ws->scratch_len);
+    }
+    fprintf(stderr, "invalid coeff_program target selector: %d\n", tok->tgt);
+    return 1;
+}
+
+static int evalCoeffProgram(const CoeffProgram *program,
+                            double p1r, double p1i, double p2r, double p2i,
+                            const double *cfRe, const double *cfIm, int cfLen,
+                            double *outRe, double *outIm, int *outLen,
+                            CoeffProgramWorkspace *ws) {
+    if (coeff_program_check_len(cfLen, "coefficient function") != 0) return 1;
+    /* Only cursors and lengths are reset per row. Vector buffers are fixed
+     * workspace storage; every live read is preceded by a write. */
+    ws->stack_depth = 0;
+    ws->stack_head = 0;
+    ws->poly_len = 0;
+    ws->scratch_len = 0;
+    ws->original_len = 0;
+    coeff_vec_copy(ws->poly_re, ws->poly_im, cfRe, cfIm, cfLen);
+    ws->poly_len = (uint16_t)cfLen;
+
+    for (int k = 0; k < program->token_count; k++) {
+        const CoeffProgramToken *tok = &program->tokens[k];
+        if (tok->op == COEFF_OP_CONST) {
+            int len = (int)tok->args[0];
+            double vr = 0.0, vi = 0.0;
+            if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, &vr, &vi) != 0) return 1;
+            if (coeff_program_check_len(len, "const") != 0) return 1;
+            for (int i = 0; i < len; i++) { ws->scratch_re[i] = vr; ws->scratch_im[i] = vi; }
+            ws->scratch_len = (uint16_t)len;
+            if (coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, len) != 0) return 1;
+        } else if (tok->op == COEFF_OP_PUSH) {
+            if (tok->src == COEFF_SEL_CF) {
+                if (coeff_stack_push(ws, cfRe, cfIm, cfLen) != 0) return 1;
+            } else if (tok->src == COEFF_SEL_POLY) {
+                if (coeff_stack_push(ws, ws->poly_re, ws->poly_im, ws->poly_len) != 0) return 1;
+            } else {
+                fprintf(stderr, "invalid coeff_program push source: %d\n", tok->src);
+                return 1;
+            }
+        } else if (tok->op == COEFF_OP_EMIT) {
+            uint16_t slot = 0;
+            if (ws->stack_depth > 0) {
+                if (coeff_stack_pop(ws, &slot) != 0) return 1;
+                coeff_vec_copy(ws->poly_re, ws->poly_im, ws->stack_re[slot], ws->stack_im[slot], ws->stack_len[slot]);
+                ws->poly_len = ws->stack_len[slot];
+            }
+        } else if (tok->op == COEFF_OP_DUPLICATE) {
+            uint16_t slot = 0;
+            if (coeff_stack_peek(ws, &slot) != 0) return 1;
+            if (coeff_stack_push(ws, ws->stack_re[slot], ws->stack_im[slot], ws->stack_len[slot]) != 0) return 1;
+        } else if (tok->op == COEFF_OP_SWAP) {
+            if (ws->stack_depth < 2) {
+                fprintf(stderr, "Coeff Program swap needs stack depth >=2\n");
+                return 1;
+            }
+            uint16_t top = (uint16_t)((ws->stack_head + COEFF_PROGRAM_MAX_VECTOR_STACK - 1) % COEFF_PROGRAM_MAX_VECTOR_STACK);
+            uint16_t below = (uint16_t)((ws->stack_head + COEFF_PROGRAM_MAX_VECTOR_STACK - 2) % COEFF_PROGRAM_MAX_VECTOR_STACK);
+            int lenTop = ws->stack_len[top], lenBelow = ws->stack_len[below];
+            coeff_vec_copy(ws->scratch_re, ws->scratch_im, ws->stack_re[top], ws->stack_im[top], lenTop);
+            coeff_vec_copy(ws->stack_re[top], ws->stack_im[top], ws->stack_re[below], ws->stack_im[below], lenBelow);
+            coeff_vec_copy(ws->stack_re[below], ws->stack_im[below], ws->scratch_re, ws->scratch_im, lenTop);
+            ws->stack_len[top] = (uint16_t)lenBelow;
+            ws->stack_len[below] = (uint16_t)lenTop;
+        } else if (tok->op == COEFF_OP_POP) {
+            uint16_t slot = 0;
+            if (coeff_stack_pop(ws, &slot) != 0) return 1;
+        } else if (tok->op == COEFF_OP_FLUSH) {
+            ws->stack_depth = 0;
+            ws->stack_head = 0;
+        } else if (tok->op == COEFF_OP_BLEND) {
+            uint16_t top = 0, below = 0;
+            double t = 0.0, ti = 0.0;
+            if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, &t, &ti) != 0) return 1;
+            if (fabs(ti) > 1e-12 || !isfinite(t)) {
+                fprintf(stderr, "Coeff Program blend(t) requires finite real t\n");
+                return 1;
+            }
+            if (coeff_stack_pop(ws, &top) != 0) return 1;
+            if (coeff_stack_pop(ws, &below) != 0) return 1;
+            int nTop = ws->stack_len[top], nBelow = ws->stack_len[below];
+            if (nTop != nBelow) {
+                fprintf(stderr, "Coeff Program blend length mismatch: %d vs %d\n", nTop, nBelow);
+                return 1;
+            }
+            for (int i = 0; i < nTop; i++) {
+                ws->scratch_re[i] = ws->stack_re[below][i] * (1.0 - t) + ws->stack_re[top][i] * t;
+                ws->scratch_im[i] = ws->stack_im[below][i] * (1.0 - t) + ws->stack_im[top][i] * t;
+            }
+            ws->scratch_len = (uint16_t)nTop;
+            if (coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, nTop) != 0) return 1;
+        } else if (tok->op == COEFF_OP_POKE_POLY) {
+            int idx = (int)tok->args[0];
+            double vr = 0.0, vi = 0.0;
+            if (idx < 0 || idx >= ws->poly_len) {
+                fprintf(stderr, "Coeff Program poke_poly index %d out of range for poly length %d\n",
+                        idx, ws->poly_len);
+                return 1;
+            }
+            if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, &vr, &vi) != 0) return 1;
+            if (!isfinite(vr) || !isfinite(vi)) {
+                fprintf(stderr, "Coeff Program poke_poly value is non-finite\n");
+                return 1;
+            }
+            ws->poly_re[idx] = vr;
+            ws->poly_im[idx] = vi;
+        } else if (tok->op == COEFF_OP_POKE_TOS) {
+            uint16_t slot = 0;
+            int idx = (int)tok->args[0];
+            double vr = 0.0, vi = 0.0;
+            if (coeff_stack_peek(ws, &slot) != 0) return 1;
+            if (idx < 0 || idx >= ws->stack_len[slot]) {
+                fprintf(stderr, "Coeff Program poke_tos index %d out of range for top vector length %d\n",
+                        idx, ws->stack_len[slot]);
+                return 1;
+            }
+            if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, &vr, &vi) != 0) return 1;
+            if (!isfinite(vr) || !isfinite(vi)) {
+                fprintf(stderr, "Coeff Program poke_tos value is non-finite\n");
+                return 1;
+            }
+            ws->stack_re[slot][idx] = vr;
+            ws->stack_im[slot][idx] = vi;
+        } else if (tok->op == COEFF_OP_LEGACY) {
+            double args[COEFF_PROGRAM_MAX_ARGS];
+            int legacyArgCount = tok->n_args;
+            double andy = 0.0;
+            if (coeffAndyValue(program, tok, p1r, p1i, p2r, p2i, &andy) != 0) return 1;
+            if (tok->fn_index == 14 && tok->n_args == 2) {
+                double mr = 100.0, mi = 0.0, offR = 0.0, offI = 0.0;
+                if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, &mr, &mi) != 0) return 1;
+                if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, &offR, &offI) != 0) return 1;
+                args[0] = mr; args[1] = mi; args[2] = offR; args[3] = offI;
+                legacyArgCount = 4;
+            } else if (tok->fn_index == 24 && tok->n_args == 2) {
+                double mr = 1.0, mi = 0.0, expR = 1.0, expI = 0.0;
+                if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, &mr, &mi) != 0) return 1;
+                if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, &expR, &expI) != 0) return 1;
+                args[0] = mr; args[1] = mi; args[2] = expR; args[3] = expI;
+                legacyArgCount = 4;
+            } else {
+                for (int i = 0; i < tok->n_args; i++) {
+                    double ar = 0.0, ai = 0.0;
+                    if (coeffArgValue(program, tok, i, p1r, p1i, p2r, p2i, &ar, &ai) != 0) return 1;
+                    if (fabs(ai) > 1e-12) {
+                        fprintf(stderr, "Coeff Program legacy arg %d is not real\n", i);
+                        return 1;
+                    }
+                    args[i] = ar;
+                }
+            }
+            if (coeffProgramSourceToScratch(cfRe, cfIm, cfLen, ws, tok) != 0) return 1;
+            if (andy != 0.0) {
+                coeff_vec_copy(ws->original_re, ws->original_im, ws->scratch_re, ws->scratch_im, ws->scratch_len);
+                ws->original_len = ws->scratch_len;
+            }
+            int n = ws->scratch_len;
+            if (coeffLegacyApply(tok->fn_index, ws->scratch_re, ws->scratch_im, &n, args, legacyArgCount) != 0) return 1;
+            if (coeff_program_check_len(n, "legacy") != 0) return 1;
+            ws->scratch_len = (uint16_t)n;
+            if (andy != 0.0) {
+                ct_blend_with_original(ws->scratch_re, ws->scratch_im, &n,
+                                       ws->original_re, ws->original_im, ws->original_len, andy);
+                if (coeff_program_check_len(n, "legacy andy") != 0) return 1;
+                ws->scratch_len = (uint16_t)n;
+            }
+            if (coeffProgramTargetFromScratch(ws, tok) != 0) return 1;
+        } else {
+            fprintf(stderr, "unknown coeff_program opcode: %d\n", tok->op);
+            return 1;
+        }
+    }
+
+    if (ws->stack_depth != 0) {
+        fprintf(stderr, "Coeff Program final stack depth is %d; expected 0\n", ws->stack_depth);
+        return 1;
+    }
+    if (coeff_program_check_len(ws->poly_len, "poly") != 0) return 1;
+    coeff_vec_copy(outRe, outIm, ws->poly_re, ws->poly_im, ws->poly_len);
+    *outLen = ws->poly_len;
+    return 0;
 }
 
 /* ==== Fast xorshift64 RNG for dithering ==== */
@@ -5491,6 +6234,22 @@ static void creative9_c(double x1r, double x1i, double x2r, double x2i,
 /* Auto-generated giga functions from giga.py */
 #include "giga_generated.c"
 
+static void coeff_const_c(double x1r, double x1i, double x2r, double x2i,
+                          const double *cfpv, int n_cfpv,
+                          double *cRe, double *cIm, int *nCoeffs) {
+    (void)x1r; (void)x1i; (void)x2r; (void)x2i;
+    int len = n_cfpv > 0 ? (int)cfpv[0] : 35;
+    double vr = n_cfpv > 1 ? cfpv[1] : 1.0;
+    double vi = n_cfpv > 2 ? cfpv[2] : 0.0;
+    if (len < 1) len = 1;
+    if (len > MAX_COEFFS) len = MAX_COEFFS;
+    for (int i = 0; i < len; i++) {
+        cRe[i] = vr;
+        cIm[i] = vi;
+    }
+    *nCoeffs = len;
+}
+
 #include "coeff_func_lookup.h"
 
 /* ==== Coeffgen mode: generate coefficient vectors for the grid ==== */
@@ -5578,7 +6337,10 @@ static int runCoeffGen(const char *buf, const char *outPath) {
     int nCt = 0;
     cp = findKey(buf, "coeff_transforms");
     if (cp) nCt = parseCtChain(cp, ctEntries, MAX_CHAIN);
-    int quantizeParams = coeff_transform_chain_needs_quantized_params(ctEntries, nCt);
+    CoeffProgram coeffProgram;
+    int hasCoeffProgram = parseCoeffProgram(buf, &coeffProgram);
+    if (hasCoeffProgram < 0) return 1;
+    int quantizeParams = coeff_transform_chain_needs_quantized_params(ctEntries, nCt) || hasCoeffProgram > 0;
 
     /* Look up coefficient function spec */
     const CoeffFuncSpec *spec = lookupCoeffFuncSpec(funcName);
@@ -5619,8 +6381,18 @@ static int runCoeffGen(const char *buf, const char *outPath) {
         }
         if (quantizeParams) quantize_params_f32(&z1r, &z1i, &z2r, &z2i);
         coeffFunc(z1r, z1i, z2r, z2i, cfpv, n_cfpv, probeRe, probeIm, &probeN);
-        for (int t = 0; t < nCt; t++) {
-            if (dispatchCt(&ctEntries[t], probeRe, probeIm, &probeN) != 0) return 1;
+        if (hasCoeffProgram > 0) {
+            CoeffProgramWorkspace *ws = coeff_program_workspace_new();
+            if (!ws) return 1;
+            int prc = evalCoeffProgram(&coeffProgram, z1r, z1i, z2r, z2i,
+                                       probeRe, probeIm, probeN,
+                                       probeRe, probeIm, &probeN, ws);
+            free(ws);
+            if (prc != 0) return 1;
+        } else {
+            for (int t = 0; t < nCt; t++) {
+                if (dispatchCt(&ctEntries[t], probeRe, probeIm, &probeN) != 0) return 1;
+            }
         }
     }
     int nCoeffsOut = probeN;
@@ -5630,6 +6402,11 @@ static int runCoeffGen(const char *buf, const char *outPath) {
     if (!fout) { fprintf(stderr, "Cannot open %s\n", outPath); return 1; }
 
     float *stepBuf = malloc(nCoeffsOut * 2 * sizeof(float));
+    if (!stepBuf) {
+        fprintf(stderr, "coeffgen step buffer alloc failed\n");
+        fclose(fout);
+        return 1;
+    }
     int stripeRows = i1_end - i1_start;
     /* Parse times (repeat count for dithering) */
     int times = 1;
@@ -5638,6 +6415,15 @@ static int runCoeffGen(const char *buf, const char *outPath) {
     if (times < 1) times = 1;
 
     long totalSteps = (long)stripeRows * n2 * times;
+    CoeffProgramWorkspace *coeffWs = NULL;
+    if (hasCoeffProgram > 0) {
+        coeffWs = coeff_program_workspace_new();
+        if (!coeffWs) {
+            fclose(fout);
+            free(stepBuf);
+            return 1;
+        }
+    }
 
     struct timespec t0, t1;
     clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -5658,6 +6444,7 @@ static int runCoeffGen(const char *buf, const char *outPath) {
                     ptEntries, nPt, &z1r, &z1i, &z2r, &z2i) != 0) {
                 fclose(fout);
                 free(stepBuf);
+                free(coeffWs);
                 fprintf(stderr, "coeffgen param program evaluation failed at (%d,%d) pass %d\n", i1, i2, pass);
                 return 1;
             }
@@ -5666,11 +6453,22 @@ static int runCoeffGen(const char *buf, const char *outPath) {
             double cRe[MAX_COEFFS], cIm[MAX_COEFFS];
             int nCoeffs;
             coeffFunc(z1r, z1i, z2r, z2i, cfpv, n_cfpv, cRe, cIm, &nCoeffs);
-            for (int t = 0; t < nCt; t++) {
-                if (dispatchCt(&ctEntries[t], cRe, cIm, &nCoeffs) != 0) {
+            if (hasCoeffProgram > 0) {
+                if (evalCoeffProgram(&coeffProgram, z1r, z1i, z2r, z2i,
+                                     cRe, cIm, nCoeffs, cRe, cIm, &nCoeffs, coeffWs) != 0) {
                     fclose(fout);
                     free(stepBuf);
+                    free(coeffWs);
                     return 1;
+                }
+            } else {
+                for (int t = 0; t < nCt; t++) {
+                    if (dispatchCt(&ctEntries[t], cRe, cIm, &nCoeffs) != 0) {
+                        fclose(fout);
+                        free(stepBuf);
+                        free(coeffWs);
+                        return 1;
+                    }
                 }
             }
 
@@ -5679,6 +6477,7 @@ static int runCoeffGen(const char *buf, const char *outPath) {
                         nCoeffsOut, i1, i2, pass, nCoeffs);
                 fclose(fout);
                 free(stepBuf);
+                free(coeffWs);
                 return 1;
             }
 
@@ -5699,6 +6498,7 @@ static int runCoeffGen(const char *buf, const char *outPath) {
                       (t1.tv_nsec - t0.tv_nsec) / 1000L;
     fclose(fout);
     free(stepBuf);
+    free(coeffWs);
 
     long dataBytes = totalSteps * nCoeffsOut * 2 * (long)sizeof(float);
     printf("{\"mode\":\"coeffgen\",\"function\":\"%s\","
@@ -5706,11 +6506,184 @@ static int runCoeffGen(const char *buf, const char *outPath) {
            "\"n1\":%d,\"n2\":%d,"
            "\"i1_start\":%d,\"i1_end\":%d,"
            "\"n_t\":%ld,\"data_bytes\":%ld,"
-           "\"elapsed_us\":%ld,\"param_program_tokens\":%d}\n",
+           "\"elapsed_us\":%ld,\"param_program_tokens\":%d,\"coeff_program_tokens\":%d}\n",
            funcName, nCoeffsOut, degree,
            n1, n2, i1_start, i1_end,
            totalSteps, dataBytes, elapsed_us,
-           hasParamProgram > 0 ? paramProgram.token_count : 0);
+           hasParamProgram > 0 ? paramProgram.token_count : 0,
+           hasCoeffProgram > 0 ? coeffProgram.token_count : 0);
+    return 0;
+}
+
+/* compute_debug: evaluate one pipeline point and write one coefficient vector.
+ * The handler may then pass that file to the existing solve binaries. */
+static void json_print_double(double value) {
+    if (!isfinite(value)) {
+        printf("null");
+        return;
+    }
+    printf("%.17g", value);
+}
+
+static void json_print_complex_pair(double re, double im) {
+    printf("[");
+    json_print_double(re);
+    printf(",");
+    json_print_double(im);
+    printf("]");
+}
+
+static void json_print_complex_array_field(const char *name,
+                                           const double *re, const double *im, int n) {
+    printf("\"%s\":[", name);
+    for (int i = 0; i < n; i++) {
+        if (i) printf(",");
+        json_print_complex_pair(re[i], im[i]);
+    }
+    printf("]");
+}
+
+static int write_single_coeff_record(const char *outPath,
+                                     const double *re, const double *im, int n) {
+    FILE *fout = fopen(outPath, "wb");
+    if (!fout) {
+        fprintf(stderr, "Cannot open %s\n", outPath);
+        return 1;
+    }
+    float buf[MAX_COEFFS * 2];
+    for (int i = 0; i < n; i++) {
+        buf[i * 2] = (float)re[i];
+        buf[i * 2 + 1] = (float)im[i];
+    }
+    size_t wrote = fwrite(buf, sizeof(float), (size_t)n * 2, fout);
+    fclose(fout);
+    if (wrote != (size_t)n * 2) {
+        fprintf(stderr, "compute_debug coeff write failed\n");
+        return 1;
+    }
+    return 0;
+}
+
+static int runComputeDebug(const char *buf, const char *outPath) {
+    char funcName[64] = "";
+    const char *cp = findKey(buf, "function");
+    if (cp) parseString(cp, funcName, sizeof(funcName));
+    if (!funcName[0]) {
+        fprintf(stderr, "compute_debug missing function\n");
+        return 1;
+    }
+
+    double u = 0.0, v = 0.0;
+    cp = findKey(buf, "u"); if (cp) u = parseNum(&cp);
+    cp = findKey(buf, "v"); if (cp) v = parseNum(&cp);
+    if (!isfinite(u) || !isfinite(v)) {
+        fprintf(stderr, "compute_debug u/v must be finite\n");
+        return 1;
+    }
+
+    int gridN = 100;
+    cp = findKey(buf, "grid_n"); if (cp) gridN = (int)parseNum(&cp);
+    cp = findKey(buf, "n1"); if (cp) gridN = (int)parseNum(&cp);
+    if (gridN < 1) gridN = 1;
+
+    PtEntry ptEntries[MAX_CHAIN];
+    int nPt = 0;
+    cp = findKey(buf, "param_transforms");
+    if (cp) nPt = parsePtChain(cp, ptEntries, MAX_CHAIN);
+    ParamProgram paramProgram;
+    int hasParamProgram = parseParamProgram(buf, &paramProgram);
+    if (hasParamProgram < 0) return 1;
+
+    CtEntry ctEntries[MAX_CHAIN];
+    int nCt = 0;
+    cp = findKey(buf, "coeff_transforms");
+    if (cp) nCt = parseCtChain(cp, ctEntries, MAX_CHAIN);
+    CoeffProgram coeffProgram;
+    int hasCoeffProgram = parseCoeffProgram(buf, &coeffProgram);
+    if (hasCoeffProgram < 0) return 1;
+    int quantizeParams = coeff_transform_chain_needs_quantized_params(ctEntries, nCt) || hasCoeffProgram > 0;
+
+    const CoeffFuncSpec *spec = lookupCoeffFuncSpec(funcName);
+    if (!spec) {
+        fprintf(stderr, "Unknown function: %s\n", funcName);
+        return 1;
+    }
+    CoeffFuncC coeffFunc = spec->func;
+
+    double cfpv[MAX_CFPV];
+    int n_cfpv = 0;
+    cp = findKey(buf, "cfpv");
+    if (cp) n_cfpv = parseNumArray(cp, cfpv, MAX_CFPV);
+    if (spec->n_params == 0) {
+        n_cfpv = 0;
+    } else {
+        if (n_cfpv > spec->n_params) {
+            fprintf(stderr, "Too many cfpv params for %s: got %d, expected %d\n",
+                    spec->name, n_cfpv, spec->n_params);
+            return 1;
+        }
+        for (int i = n_cfpv; i < spec->n_params; i++) cfpv[i] = spec->defaults[i];
+        n_cfpv = spec->n_params;
+    }
+
+    double p1r = u, p1i = 0.0, p2r = v, p2i = 0.0;
+    if (applyParamTransformProgram(
+            u, v, gridN, &paramProgram, hasParamProgram > 0,
+            ptEntries, nPt, &p1r, &p1i, &p2r, &p2i) != 0) {
+        fprintf(stderr, "compute_debug param evaluation failed\n");
+        return 1;
+    }
+    if (quantizeParams) quantize_params_f32(&p1r, &p1i, &p2r, &p2i);
+
+    double cfRe[MAX_COEFFS], cfIm[MAX_COEFFS];
+    double polyRe[MAX_COEFFS], polyIm[MAX_COEFFS];
+    int cfN = 0, polyN = 0;
+    coeffFunc(p1r, p1i, p2r, p2i, cfpv, n_cfpv, cfRe, cfIm, &cfN);
+    if (cfN < 1 || cfN > MAX_COEFFS) {
+        fprintf(stderr, "compute_debug coefficient function produced invalid length %d\n", cfN);
+        return 1;
+    }
+    coeff_vec_copy(polyRe, polyIm, cfRe, cfIm, cfN);
+    polyN = cfN;
+
+    if (hasCoeffProgram > 0) {
+        CoeffProgramWorkspace *ws = coeff_program_workspace_new();
+        if (!ws) return 1;
+        int rc = evalCoeffProgram(&coeffProgram, p1r, p1i, p2r, p2i,
+                                  cfRe, cfIm, cfN,
+                                  polyRe, polyIm, &polyN, ws);
+        free(ws);
+        if (rc != 0) return 1;
+    } else {
+        for (int t = 0; t < nCt; t++) {
+            if (dispatchCt(&ctEntries[t], polyRe, polyIm, &polyN) != 0) return 1;
+            if (polyN < 1 || polyN > MAX_COEFFS) {
+                fprintf(stderr, "compute_debug coeff transform produced invalid length %d\n", polyN);
+                return 1;
+            }
+        }
+    }
+
+    if (write_single_coeff_record(outPath, polyRe, polyIm, polyN) != 0) return 1;
+
+    printf("{\"mode\":\"compute_debug\",\"function\":\"%s\",", funcName);
+    printf("\"u\":"); json_print_double(u);
+    printf(",\"v\":"); json_print_double(v);
+    printf(",\"grid_n\":%d,\"quantized_params\":%s,", gridN, quantizeParams ? "true" : "false");
+    printf("\"param\":{\"t1\":"); json_print_complex_pair(u, 0.0);
+    printf(",\"t2\":"); json_print_complex_pair(v, 0.0);
+    printf(",\"p1\":"); json_print_complex_pair(p1r, p1i);
+    printf(",\"p2\":"); json_print_complex_pair(p2r, p2i);
+    printf(",\"param_program_tokens\":%d},", hasParamProgram > 0 ? paramProgram.token_count : 0);
+    printf("\"coeff\":{\"cf_len\":%d,\"poly_len\":%d,\"n_coeffs\":%d,\"degree\":%d,",
+           cfN, polyN, polyN, polyN - 1);
+    printf("\"coeff_program_tokens\":%d,\"coeff_program_stack_max\":%d,",
+           hasCoeffProgram > 0 ? coeffProgram.token_count : 0,
+           hasCoeffProgram > 0 ? coeffProgram.stack_max : 0);
+    json_print_complex_array_field("cf", cfRe, cfIm, cfN);
+    printf(",");
+    json_print_complex_array_field("poly", polyRe, polyIm, polyN);
+    printf("},\"data_bytes\":%ld}\n", (long)polyN * 2L * (long)sizeof(float));
     return 0;
 }
 
@@ -6523,6 +7496,8 @@ typedef struct {
     CoeffFuncC coeffFunc;
     const CtEntry *ctEntries;
     int nCt;
+    const CoeffProgram *coeffProgram;
+    int hasCoeffProgram;
     const double *cfpv;
     int n_cfpv;
     pthread_mutex_t mutex;
@@ -6555,6 +7530,15 @@ static void *coeffGenWorkerMain(void *vp) {
         coeffGenSetThreadError(ctx, "coeffgen threaded step buffer alloc failed");
         return NULL;
     }
+    CoeffProgramWorkspace *coeffWs = NULL;
+    if (ctx->hasCoeffProgram) {
+        coeffWs = coeff_program_workspace_new();
+        if (!coeffWs) {
+            free(stepBuf);
+            coeffGenSetThreadError(ctx, "coeffgen threaded workspace alloc failed");
+            return NULL;
+        }
+    }
 
     for (long s = arg->stepLo; s < arg->stepHi; s++) {
         if (ctx->failed) break;
@@ -6572,10 +7556,20 @@ static void *coeffGenWorkerMain(void *vp) {
         ctx->coeffFunc((double)params[0], (double)params[1],
                        (double)params[2], (double)params[3],
                        ctx->cfpv, ctx->n_cfpv, cRe, cIm, &nCoeffs);
-        for (int t = 0; t < ctx->nCt; t++) {
-            if (dispatchCt(&ctx->ctEntries[t], cRe, cIm, &nCoeffs) != 0) {
-                coeffGenSetThreadError(ctx, "coeffgen threaded coeff transform failed");
-                break;
+        if (ctx->hasCoeffProgram) {
+            if (evalCoeffProgram(ctx->coeffProgram,
+                                 (double)params[0], (double)params[1],
+                                 (double)params[2], (double)params[3],
+                                 cRe, cIm, nCoeffs,
+                                 cRe, cIm, &nCoeffs, coeffWs) != 0) {
+                coeffGenSetThreadError(ctx, "coeffgen threaded coeff program failed");
+            }
+        } else {
+            for (int t = 0; t < ctx->nCt; t++) {
+                if (dispatchCt(&ctx->ctEntries[t], cRe, cIm, &nCoeffs) != 0) {
+                    coeffGenSetThreadError(ctx, "coeffgen threaded coeff transform failed");
+                    break;
+                }
             }
         }
         if (ctx->failed) break;
@@ -6605,6 +7599,7 @@ static void *coeffGenWorkerMain(void *vp) {
     }
 
     free(stepBuf);
+    free(coeffWs);
     return NULL;
 }
 
@@ -6634,6 +7629,9 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
     int nCt = 0;
     cp = findKey(buf, "coeff_transforms");
     if (cp) nCt = parseCtChain(cp, ctEntries, MAX_CHAIN);
+    CoeffProgram coeffProgram;
+    int hasCoeffProgram = parseCoeffProgram(buf, &coeffProgram);
+    if (hasCoeffProgram < 0) return 1;
 
     /* Look up coefficient function spec */
     const CoeffFuncSpec *spec = lookupCoeffFuncSpec(funcName);
@@ -6682,10 +7680,28 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
     coeffFunc((double)probe[0], (double)probe[1],
               (double)probe[2], (double)probe[3],
               cfpv, n_cfpv, probeRe, probeIm, &probeN);
-    for (int t = 0; t < nCt; t++) {
-        if (dispatchCt(&ctEntries[t], probeRe, probeIm, &probeN) != 0) {
+    if (hasCoeffProgram > 0) {
+        CoeffProgramWorkspace *coeffWs = coeff_program_workspace_new();
+        if (!coeffWs) {
             close(paramsFd);
             return 1;
+        }
+        int prc = evalCoeffProgram(&coeffProgram,
+                                   (double)probe[0], (double)probe[1],
+                                   (double)probe[2], (double)probe[3],
+                                   probeRe, probeIm, probeN,
+                                   probeRe, probeIm, &probeN, coeffWs);
+        free(coeffWs);
+        if (prc != 0) {
+            close(paramsFd);
+            return 1;
+        }
+    } else {
+        for (int t = 0; t < nCt; t++) {
+            if (dispatchCt(&ctEntries[t], probeRe, probeIm, &probeN) != 0) {
+                close(paramsFd);
+                return 1;
+            }
         }
     }
     int nCoeffsOut = probeN;
@@ -6719,6 +7735,16 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
             close(outFd);
             return 1;
         }
+        CoeffProgramWorkspace *coeffWs = NULL;
+        if (hasCoeffProgram > 0) {
+            coeffWs = coeff_program_workspace_new();
+            if (!coeffWs) {
+                free(stepBuf);
+                close(paramsFd);
+                close(outFd);
+                return 1;
+            }
+        }
         for (long s = 0; s < stepCount; s++) {
             float params[4];
             if (pread(paramsFd, params, sizeof(params), (off_t)(stepStart * recordBytes + s * recordBytes)) != (ssize_t)sizeof(params)) {
@@ -6732,10 +7758,20 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
             coeffFunc((double)params[0], (double)params[1],
                       (double)params[2], (double)params[3],
                       cfpv, n_cfpv, cRe, cIm, &nCoeffs);
-            for (int t = 0; t < nCt; t++) {
-                if (dispatchCt(&ctEntries[t], cRe, cIm, &nCoeffs) != 0) {
+            if (hasCoeffProgram > 0) {
+                if (evalCoeffProgram(&coeffProgram,
+                                     (double)params[0], (double)params[1],
+                                     (double)params[2], (double)params[3],
+                                     cRe, cIm, nCoeffs,
+                                     cRe, cIm, &nCoeffs, coeffWs) != 0) {
                     rc = 1;
-                    break;
+                }
+            } else {
+                for (int t = 0; t < nCt; t++) {
+                    if (dispatchCt(&ctEntries[t], cRe, cIm, &nCoeffs) != 0) {
+                        rc = 1;
+                        break;
+                    }
                 }
             }
             if (rc != 0) break;
@@ -6757,6 +7793,7 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
                 break;
             }
         }
+        free(coeffWs);
         free(stepBuf);
     } else {
         CoeffGenThreadCtx ctx;
@@ -6770,6 +7807,8 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
         ctx.coeffFunc = coeffFunc;
         ctx.ctEntries = ctEntries;
         ctx.nCt = nCt;
+        ctx.coeffProgram = &coeffProgram;
+        ctx.hasCoeffProgram = hasCoeffProgram > 0;
         ctx.cfpv = cfpv;
         ctx.n_cfpv = n_cfpv;
         pthread_mutex_init(&ctx.mutex, NULL);
@@ -6825,10 +7864,11 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
            "\"n_coeffs\":%d,\"degree\":%d,"
            "\"step_start\":%ld,\"step_count\":%ld,"
            "\"n_t\":%ld,\"data_bytes\":%ld,\"threads\":%d,"
-           "\"elapsed_us\":%ld}\n",
+           "\"elapsed_us\":%ld,\"coeff_program_tokens\":%d}\n",
            funcName, nCoeffsOut, degree,
            stepStart, stepCount,
-           stepCount, dataBytes, threadsUsed, elapsed_us);
+           stepCount, dataBytes, threadsUsed, elapsed_us,
+           hasCoeffProgram > 0 ? coeffProgram.token_count : 0);
     return 0;
 }
 
@@ -7189,6 +8229,11 @@ int main(int argc, char **argv) {
         }
         if (strcmp(mode, "coeffgen") == 0) {
             int rc = runCoeffGen(buf, outPath);
+            free(buf);
+            return rc;
+        }
+        if (strcmp(mode, "compute_debug") == 0) {
+            int rc = runComputeDebug(buf, outPath);
             free(buf);
             return rc;
         }

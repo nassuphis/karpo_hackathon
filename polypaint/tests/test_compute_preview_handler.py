@@ -189,6 +189,59 @@ class TestComputePreviewHandler(unittest.TestCase):
         self.assertIn("param_program", specs[0])
         self.assertEqual(specs[0]["param_program"]["token_count"], 8)
 
+    @patch("handler_compute_preview.subprocess.run")
+    def test_compute_debug_poly_forwards_poke_coeff_program(self, mock_run):
+        import handler_compute_preview as mod
+
+        specs = []
+
+        def fake_run(cmd, input=None, capture_output=None, text=None, timeout=None, env=None):
+            specs.append(json.loads(input))
+            out_path = cmd[1]
+            with open(out_path, "wb") as fh:
+                fh.write(struct.pack("<ffffff", 1.0, 0.0, 2.0, 0.0, 3.0, 0.0))
+            return unittest.mock.MagicMock(
+                returncode=0,
+                stdout=json.dumps({
+                    "mode": "compute_debug",
+                    "function": "const",
+                    "u": 0.25,
+                    "v": 0.75,
+                    "grid_n": 32,
+                    "param": {"t1": [0.25, 0], "t2": [0.75, 0], "p1": [0.25, 0], "p2": [0.75, 0]},
+                    "coeff": {
+                        "cf_len": 3,
+                        "poly_len": 3,
+                        "n_coeffs": 3,
+                        "degree": 2,
+                        "cf": [[1, 0], [1, 0], [1, 0]],
+                        "poly": [[0, 25], [1, 0], [1, 0]],
+                    },
+                    "data_bytes": 24,
+                }),
+                stderr="",
+            )
+
+        mock_run.side_effect = fake_run
+
+        result = mod.handler({"body": json.dumps(_event(
+            debug_stage="poly",
+            pipeline_mode="program",
+            function="const",
+            cfpv=[3, 1, 0],
+            u=0.25,
+            v=0.75,
+            coeff_program_chain=[["poke_poly", "0", "100j*p1"]],
+        ))}, None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(result["statusCode"], 200)
+        self.assertEqual(body["stage"], "poly")
+        self.assertEqual(specs[0]["mode"], "compute_debug")
+        self.assertIn("coeff_program", specs[0])
+        self.assertEqual(specs[0]["coeff_program"]["token_count"], 1)
+        self.assertEqual(specs[0]["coeff_program"]["tokens"][0]["op"], 10)
+
     @patch("handler_compute_preview.tmp_space_stats")
     @patch("handler_compute_preview.subprocess.run")
     @patch("handler_compute_preview.compute_viewport_from_bin")

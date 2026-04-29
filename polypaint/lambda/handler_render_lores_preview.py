@@ -215,16 +215,24 @@ def _calc_pipeline(calc):
         param_transforms = pipeline.get("param_transforms_display")
     if not isinstance(param_transforms, list):
         param_transforms = []
+    param_program = pipeline.get("param_program")
+    if not isinstance(param_program, dict):
+        param_program = {}
     coeff_transforms = pipeline.get("coeff_transforms")
     if not isinstance(coeff_transforms, list):
         coeff_transforms = []
+    coeff_program = pipeline.get("coeff_program")
+    if not isinstance(coeff_program, dict):
+        coeff_program = {}
     cfpv = pipeline.get("cfpv")
     if not isinstance(cfpv, list):
         cfpv = []
     return {
         "function": function_name,
         "param_transforms": param_transforms,
+        "param_program": param_program,
         "coeff_transforms": coeff_transforms,
+        "coeff_program": coeff_program,
         "cfpv": cfpv,
     }
 
@@ -676,6 +684,8 @@ def _materialize_recomputed_preview(*, params, calc, job_id, degree, n_coeffs, v
         "param_transforms": pipeline["param_transforms"],
         "n_threads": int(threads),
     }
+    if pipeline.get("param_program"):
+        param_spec["param_program"] = pipeline["param_program"]
     param_meta = _run_json_binary(SWEEP_COEFFGEN, TMP_PARAMS, param_spec, phase="recompute param_gen", timeout_s=300)
     param_ms = int((time.time() - t_param) * 1000)
     param_size = os.path.getsize(TMP_PARAMS)
@@ -695,6 +705,8 @@ def _materialize_recomputed_preview(*, params, calc, job_id, degree, n_coeffs, v
     }
     if pipeline["cfpv"]:
         coeff_spec["cfpv"] = pipeline["cfpv"]
+    if pipeline.get("coeff_program"):
+        coeff_spec["coeff_program"] = pipeline["coeff_program"]
     coeff_meta = _run_json_binary(SWEEP_COEFFGEN, TMP_COEFFS, coeff_spec, phase="recompute coeffgen", timeout_s=300)
     coeff_ms = int((time.time() - t_coeff) * 1000)
     actual_n_coeffs = int(coeff_meta.get("n_coeffs") or 0)

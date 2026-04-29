@@ -13,6 +13,8 @@ import subprocess
 import time
 
 from shared import (
+    BUCKET,
+    REF_SIZE,
     compute_viewport_from_bin,
     encode_png_gray,
     format_bytes,
@@ -33,6 +35,18 @@ MAX_PREVIEW_PIX = 4096
 MAX_COEFFS_EST = 256
 TMP_HEADROOM = 0.8
 ROOTS_CM_SYNC_MAX_N = int(os.environ.get("COMPUTE_PREVIEW_ROOTS_CM_MAX_N", "128"))
+PARAM_PROGRAMS_PREFIX = "polypaint/param-programs/"
+COEFF_PROGRAMS_PREFIX = "polypaint/coeff-programs/"
+_s3 = None
+
+
+def _s3_client():
+    global _s3
+    if _s3 is None:
+        import boto3
+
+        _s3 = boto3.client("s3")
+    return _s3
 
 
 def _json_response(status_code, body):
@@ -98,6 +112,52 @@ def _compiled_coeff_program_payload(compiled):
         "tokens": compiled["tokens"],
         "scalar_exprs": compiled["scalar_exprs"],
     }
+
+
+def _is_missing_s3_error(exc):
+    response = getattr(exc, "response", {}) or {}
+    code = str((response.get("Error") or {}).get("Code") or "")
+    return code in {"NoSuchKey", "NoSuchBucket", "404", "NotFound"}
+
+
+def _read_saved_program_source_chain(prefix, program_kind, program_id):
+    macro_id = str(program_id or "").strip()
+    if not macro_id:
+        raise RuntimeError(f"{program_kind} macro name is required")
+    key = f"{prefix}{macro_id}.json"
+    try:
+        obj = _s3_client().get_object(Bucket=BUCKET, Key=key)
+    except Exception as exc:
+        if _is_missing_s3_error(exc):
+            raise RuntimeError(f"{program_kind} macro not found: {macro_id}") from None
+        raise
+    raw = obj["Body"].read()
+    try:
+        payload = json.loads(raw) if raw else {}
+    except Exception as exc:
+        raise RuntimeError(f"{program_kind} macro is not valid JSON: {macro_id}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{program_kind} macro must be a JSON object: {macro_id}")
+    chain = payload.get("chain")
+    if not isinstance(chain, list):
+        raise RuntimeError(f"{program_kind} macro chain must be a JSON array: {macro_id}")
+    return chain
+
+
+def _param_program_macro_resolver():
+    return lambda macro_id: _read_saved_program_source_chain(
+        PARAM_PROGRAMS_PREFIX,
+        "param program",
+        macro_id,
+    )
+
+
+def _coeff_program_macro_resolver():
+    return lambda macro_id: _read_saved_program_source_chain(
+        COEFF_PROGRAMS_PREFIX,
+        "coeff program",
+        macro_id,
+    )
 
 
 def _chain_has_transform(chain, name):
@@ -231,7 +291,10 @@ def _compile_compute_inputs(params):
         if not isinstance(param_program_chain, list):
             raise ValueError("param_program_chain must be a list")
         try:
-            compiled_param_program = compile_param_program_chain(param_program_chain)
+            compiled_param_program = compile_param_program_chain(
+                param_program_chain,
+                macro_resolver=_param_program_macro_resolver(),
+            )
         except RuntimeError as e:
             raise ValueError(f"invalid param_program_chain: {e}") from None
         if compiled_param_program["legacy_transforms"]:
@@ -252,7 +315,10 @@ def _compile_compute_inputs(params):
         if not isinstance(coeff_program_chain, list):
             raise ValueError("coeff_program_chain must be a list")
         try:
-            compiled_coeff_program = compile_coeff_program_chain(coeff_program_chain)
+            compiled_coeff_program = compile_coeff_program_chain(
+                coeff_program_chain,
+                macro_resolver=_coeff_program_macro_resolver(),
+            )
         except RuntimeError as e:
             raise ValueError(f"invalid coeff_program_chain: {e}") from None
         if compiled_coeff_program["legacy_coeff_transforms"]:
@@ -411,7 +477,7 @@ def _run_json_binary(binary, out_path, spec, *, phase, timeout_s):
 
 
 def _raster_gray_preview(bin_data, width, height, viewport):
-    scale = viewport["scale"] * width / 4096.0
+    scale = viewport["scale"] * width / float(REF_SIZE)
     cx = viewport["center_re"]
     cy = viewport["center_im"]
     half_w = width / 2.0
@@ -428,6 +494,25 @@ def _raster_gray_preview(bin_data, width, height, viewport):
             gray[py * width + px] = 255
             in_view += 1
     return gray, in_view
+
+
+def _viewport_bounds_for_preview(viewport, width, height):
+    scale = float(viewport["scale"]) * float(width) / float(REF_SIZE)
+    if scale <= 0.0 or not math.isfinite(scale):
+        raise RuntimeError(f"auto viewport returned non-positive scale: {viewport.get('scale')!r}")
+    center_re = float(viewport["center_re"])
+    center_im = float(viewport["center_im"])
+    half_w_world = (float(width) / 2.0) / scale
+    half_h_world = (float(height) / 2.0) / scale
+    return {
+        "min_re": center_re - half_w_world,
+        "max_re": center_re + half_w_world,
+        "min_im": center_im - half_h_world,
+        "max_im": center_im + half_h_world,
+        "center_re": center_re,
+        "center_im": center_im,
+        "scale_ref": float(viewport["scale"]),
+    }
 
 
 def handler(event, context):
@@ -545,6 +630,7 @@ def handler(event, context):
         t0 = time.time()
         gray, n_roots_in_view = _raster_gray_preview(roots_data, preview_size, preview_size, viewport)
         raster_ms = int((time.time() - t0) * 1000)
+        viewport_bounds = _viewport_bounds_for_preview(viewport, preview_size, preview_size)
 
         t0 = time.time()
         png_data = encode_png_gray(preview_size, preview_size, gray)
@@ -574,6 +660,7 @@ def handler(event, context):
             "image_png_base64": base64.b64encode(png_data).decode("ascii"),
             "q_re": viewport["q_re"],
             "q_im": viewport["q_im"],
+            "viewport": viewport_bounds,
             "avg_iterations": solve_meta.get("avg_iterations", 0),
         }
         if "n_threads" in solve_meta:

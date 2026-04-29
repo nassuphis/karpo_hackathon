@@ -151,8 +151,9 @@ Vector {
 Stack entries may have different lengths. Chips that combine two vectors must
 define how length mismatch is handled before they ship.
 
-V1 should avoid ambiguous vector-combine operations unless their length policy is
-pinned.
+V1 ships only pinned vector operations: equal-length binary ops, equal-length
+`argsort`, unary per-element ops, and fixed-length roll ops. Any vector op that
+combines two vectors must reject length mismatch immediately with chip context.
 
 The native implementation must not allocate stack vectors dynamically. The stack
 is a fixed-size per-thread ring of vector slots:
@@ -234,6 +235,24 @@ legacy(rev, src=poly, tgt=poly)
 legacy(deriv, src=cf, tgt=push)
 legacy(normalize, src=pop, tgt=poly)
 legacy(rev, src=peek, tgt=push)
+```
+
+First-class vector ops intentionally do not read `cf` directly in v1; use
+`push(cf)` or `legacy(..., src=cf, tgt=push)` when the immutable coefficient
+function output should participate in a vector expression. Their source
+selectors are:
+
+```text
+poly
+pop
+peek
+```
+
+Their target selectors are:
+
+```text
+poly
+push
 ```
 
 ## Push And Emit
@@ -683,24 +702,77 @@ the input length is known. For transforms such as `roots`, `power`, and
 `invpower`, the editor should display "may change at runtime" unless the
 registry can prove the exact resulting length.
 
-## Vector Combine Chips
+## Vector Ops
 
-Vector combine chips are useful but risky because lengths can differ.
+Vector ops are first-class Coeff Program chips, not legacy transforms. They
+compile to integer opcodes and run in the native VM without string dispatch.
 
-Candidate v2 chips:
+Binary ops:
 
 ```text
-vadd
-vsub
-vmul
-vscale
-concat
-slice
-pad
-blend
+[tgt] = add([src1], [src2])
+[tgt] = subtract([src1], [src2])
+[tgt] = multiply([src1], [src2])
+[tgt] = divide([src1], [src2])
+[tgt] = power([src1], [src2])
 ```
 
-Recommended v1: ship only one generic vector-combine chip, `blend(t)`.
+Rules:
+
+- `tgt` is `poly` or `push`
+- `src1` / `src2` are `poly`, `pop`, or `peek`
+- input lengths must match
+- operations are elementwise complex operations
+- `power` uses the principal branch, equivalent to `exp(src2 * log(src1))`
+- non-finite element results are written as `0+0i`
+
+Unary ops:
+
+```text
+[tgt] = angle([src])
+[tgt] = mod([src])
+[tgt] = abs([src])
+```
+
+Rules:
+
+- `angle(z)` returns `atan2(im, re)` as a real vector
+- `mod(z)` and `abs(z)` return `sqrt(re^2 + im^2)` as real vectors
+
+Ordering and roll ops:
+
+```text
+[tgt] = argsort([src1], [src2])
+[tgt] = roll([src], n)
+[tgt] = rolr([src], n)
+[tgt] = littlewood(field1, field2) andy=field3
+```
+
+`argsort` sorts `src1` by ascending magnitude of `src2`; ties preserve original
+index order. `roll` rolls left by integer `n`; `rolr` rolls right by integer
+`n`. Negative `n` is accepted and naturally rolls in the opposite direction.
+
+`littlewood(field1, field2, andy)` creates a vector with the same length as the
+current `poly`. Each coefficient independently chooses `field1` or `field2`
+with 50/50 odds. `field1` and `field2` are complex scalar expressions; `andy` is
+a real scalar expression. The result is blended against the current `poly` using
+the same coefficient-transform convention:
+
+```text
+out = littlewood_random * (1 - andy) + poly * andy
+```
+
+The random bits must be deterministic for a given compute step, token index, and
+parameter values. Do not use scheduler-dependent thread-local RNG state for this
+chip; threaded and chunked coeffgen must produce identical results for identical
+inputs.
+
+For binary vector ops and `argsort`, source selectors are evaluated left to
+right. If both sources are `pop`, `src1` receives the current stack top and
+`src2` receives the next vector below it. This is explicit so the UI can explain
+the order rather than hiding it.
+
+`blend(t)` remains the stack-oriented two-vector combine chip.
 
 `blend(t)` pops two vectors, requires equal length, and pushes:
 
@@ -730,13 +802,9 @@ Rules:
 - no truncation
 - length mismatch is an execution error with chip context
 
-Defer the rest of the vector-combine set:
+Defer the unbounded or shape-changing vector set:
 
 ```text
-vadd
-vsub
-vmul
-vscale
 concat
 slice
 pad
@@ -794,6 +862,18 @@ macro(name)         source-only; expands before validation
 blend(t)            pops 2, pushes 1 vector, writes none
 poke_poly(i,value)  pops 0, pushes 0, writes poly[i]
 poke_tos(i,value)   pops 0, pushes 0, mutates stack top at [i]
+add(tgt,s1,s2)      pops per source selector, pushes if tgt=push, writes poly if tgt=poly
+subtract(tgt,s1,s2) same as add
+multiply(tgt,s1,s2) same as add
+divide(tgt,s1,s2)   same as add
+power(tgt,s1,s2)    same as add
+argsort(tgt,s1,s2)  reorder s1 by ascending |s2|; same stack effect as binary ops
+angle(tgt,src)      pops per source selector, pushes if tgt=push, writes poly if tgt=poly
+mod(tgt,src)        same as angle
+abs(tgt,src)        same as angle
+roll(tgt,src,n)     same as angle; roll left by integer n
+rolr(tgt,src,n)     same as angle; roll right by integer n
+littlewood(tgt,a,b,andy) pops 0, pushes if tgt=push, writes poly if tgt=poly
 
 duplicate           pops 1, pushes 2, writes none
 swap                pops 2, pushes 2, writes none
@@ -936,6 +1016,20 @@ blend(t)
 poke_tos(index, value)
 pop
 flush
+
+Vector:
+add(tgt, src1, src2)
+subtract(tgt, src1, src2)
+multiply(tgt, src1, src2)
+divide(tgt, src1, src2)
+power(tgt, src1, src2)
+argsort(tgt, src1, src2)
+angle(tgt, src)
+mod(tgt, src)
+abs(tgt, src)
+roll(tgt, src, n)
+rolr(tgt, src, n)
+littlewood(tgt, field1, field2, andy)
 
 Legacy structural:
 rev
@@ -2025,6 +2119,8 @@ Ship in v1:
 - Coeff Program editor
 - Coeff Program chip `const(length,value)`
 - `blend(t)` vector-combine chip with same-length-required semantics
+- pinned vector ops: `add`, `subtract`, `multiply`, `divide`, `power`,
+  `argsort`, `angle`, `mod`, `abs`, `roll`, `rolr`, `littlewood`
 - `poke_poly(index,value)` direct poly coefficient write
 - `poke_tos(index,value)` direct top-of-stack vector coefficient write
 - `push(cf)`, `push(poly)`, `emit`
@@ -2044,7 +2140,7 @@ Ship in v1:
 
 Do not ship in v1:
 
-- generic vector arithmetic beyond `blend(t)` unless length policy is pinned
+- unbounded or shape-changing vector operations without pinned length policy
 - mixed Chain/Program mode in the main UI
 - dynamic macro lookup in native execution
 - string lookup in Program-mode hot loops

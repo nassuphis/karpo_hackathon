@@ -29,6 +29,7 @@ echo "Running predeploy contract gate..."
     tests/test_param_program_storage.py \
     tests/test_param_program_native.py \
     tests/test_coeff_program_chain.py \
+    tests/test_coeff_program_native.py \
     tests/test_coeff_program_storage.py \
     tests/test_compute_plan.py \
     tests/test_compute_orchestrator.py \

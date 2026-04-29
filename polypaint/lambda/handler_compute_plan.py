@@ -28,6 +28,8 @@ _ddb = None
 
 SWEEP_MT_FUNCTION = os.environ.get("SWEEP_MT_FUNCTION", "polypaint-sweep-mt")
 SWEEP_CM_FUNCTION = os.environ.get("SWEEP_CM_FUNCTION", "polypaint-sweep-cm")
+PARAM_PROGRAMS_PREFIX = "polypaint/param-programs/"
+COEFF_PROGRAMS_PREFIX = "polypaint/coeff-programs/"
 
 TARGET_PREVIEW_ROOTS = 250000
 MAX_N = 50000
@@ -49,6 +51,52 @@ def _compiled_coeff_program_payload(compiled):
         "tokens": compiled["tokens"],
         "scalar_exprs": compiled["scalar_exprs"],
     }
+
+
+def _is_missing_s3_error(exc):
+    response = getattr(exc, "response", {}) or {}
+    code = str((response.get("Error") or {}).get("Code") or "")
+    return code in {"NoSuchKey", "NoSuchBucket", "404", "NotFound"}
+
+
+def _read_saved_program_source_chain(prefix, program_kind, program_id):
+    macro_id = str(program_id or "").strip()
+    if not macro_id:
+        raise RuntimeError(f"{program_kind} macro name is required")
+    key = f"{prefix}{macro_id}.json"
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=key)
+    except Exception as exc:
+        if _is_missing_s3_error(exc):
+            raise RuntimeError(f"{program_kind} macro not found: {macro_id}") from None
+        raise
+    raw = obj["Body"].read()
+    try:
+        payload = json.loads(raw) if raw else {}
+    except Exception as exc:
+        raise RuntimeError(f"{program_kind} macro is not valid JSON: {macro_id}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{program_kind} macro must be a JSON object: {macro_id}")
+    chain = payload.get("chain")
+    if not isinstance(chain, list):
+        raise RuntimeError(f"{program_kind} macro chain must be a JSON array: {macro_id}")
+    return chain
+
+
+def _param_program_macro_resolver():
+    return lambda macro_id: _read_saved_program_source_chain(
+        PARAM_PROGRAMS_PREFIX,
+        "param program",
+        macro_id,
+    )
+
+
+def _coeff_program_macro_resolver():
+    return lambda macro_id: _read_saved_program_source_chain(
+        COEFF_PROGRAMS_PREFIX,
+        "coeff program",
+        macro_id,
+    )
 
 
 def _pipeline_mode_from_params(run_params):
@@ -148,7 +196,10 @@ def handle_build_plan(params):
     if param_program_chain:
         if not isinstance(param_program_chain, list):
             raise RuntimeError("param_program_chain must be an array")
-        compiled_param_program = compile_param_program_chain(param_program_chain)
+        compiled_param_program = compile_param_program_chain(
+            param_program_chain,
+            macro_resolver=_param_program_macro_resolver(),
+        )
         param_program_metadata = {
             "version": compiled_param_program["version"],
             "fingerprint": compiled_param_program["fingerprint"],
@@ -171,7 +222,10 @@ def handle_build_plan(params):
     if coeff_program_chain:
         if not isinstance(coeff_program_chain, list):
             raise RuntimeError("coeff_program_chain must be an array")
-        compiled_coeff_program = compile_coeff_program_chain(coeff_program_chain)
+        compiled_coeff_program = compile_coeff_program_chain(
+            coeff_program_chain,
+            macro_resolver=_coeff_program_macro_resolver(),
+        )
         coeff_program_metadata = {
             "version": compiled_coeff_program["version"],
             "fingerprint": compiled_coeff_program["fingerprint"],

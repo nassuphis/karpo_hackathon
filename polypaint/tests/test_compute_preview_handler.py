@@ -91,6 +91,13 @@ class TestComputePreviewHandler(unittest.TestCase):
         self.assertEqual(body["image_height"], 1000)
         self.assertEqual(body["quantile"], 0.02)
         self.assertEqual(body["shim"], 0.1)
+        self.assertEqual(body["viewport"]["center_re"], 0.0)
+        self.assertEqual(body["viewport"]["center_im"], 0.0)
+        self.assertEqual(body["viewport"]["scale_ref"], 4096.0)
+        self.assertAlmostEqual(body["viewport"]["min_re"], -0.5)
+        self.assertAlmostEqual(body["viewport"]["max_re"], 0.5)
+        self.assertAlmostEqual(body["viewport"]["min_im"], -0.5)
+        self.assertAlmostEqual(body["viewport"]["max_im"], 0.5)
         self.assertTrue(body["image_png_base64"].startswith("iVBOR"))
         self.assertGreater(body["n_roots_total"], 0)
         self.assertEqual(calls, ["sweep_coeffgen", "sweep_cm"])
@@ -188,6 +195,71 @@ class TestComputePreviewHandler(unittest.TestCase):
         self.assertEqual(specs[0]["param_transforms"], [])
         self.assertIn("param_program", specs[0])
         self.assertEqual(specs[0]["param_program"]["token_count"], 8)
+
+    @patch("handler_compute_preview.tmp_space_stats")
+    @patch("handler_compute_preview.subprocess.run")
+    @patch("handler_compute_preview.compute_viewport_from_bin")
+    @patch("handler_compute_preview._s3_client")
+    def test_compute_preview_resolves_coeff_program_macro(self, mock_s3_client, mock_viewport, mock_run, mock_tmp_stats):
+        import handler_compute_preview as mod
+
+        mock_tmp_stats.return_value = {
+            "path": "/tmp",
+            "free_bytes": 8 * 1024 * 1024 * 1024,
+            "total_bytes": 10 * 1024 * 1024 * 1024,
+        }
+        mock_viewport.return_value = {
+            "center_re": 0.0,
+            "center_im": 0.0,
+            "scale": 4096.0,
+            "n_roots": 32 * 32 * 2,
+            "q_re": [-1.0, 1.0],
+            "q_im": [-1.0, 1.0],
+        }
+        saved = json.dumps({"chain": [["poly-rev"]]}).encode()
+        mock_s3_client.return_value.get_object.return_value = {
+            "Body": unittest.mock.MagicMock(read=lambda: saved)
+        }
+        specs = []
+
+        def fake_run(cmd, input=None, capture_output=None, text=None, timeout=None, env=None):
+            exe = os.path.basename(cmd[0])
+            specs.append(json.loads(input))
+            out_path = cmd[1]
+            if exe == "sweep_coeffgen":
+                with open(out_path, "wb") as fh:
+                    fh.write(b"\0" * (32 * 32 * 3 * 8))
+                return unittest.mock.MagicMock(
+                    returncode=0,
+                    stdout=json.dumps({"data_bytes": 32 * 32 * 3 * 8, "n_coeffs": 3, "degree": 2}),
+                    stderr="",
+                )
+            if exe == "sweep_mt":
+                with open(out_path, "wb") as fh:
+                    fh.write(_roots_bytes(32 * 32, 2))
+                return unittest.mock.MagicMock(
+                    returncode=0,
+                    stdout=json.dumps({"n_t": 32 * 32, "degree": 2, "avg_iterations": 0}),
+                    stderr="",
+                )
+            raise AssertionError(f"unexpected subprocess call: {cmd}")
+
+        mock_run.side_effect = fake_run
+
+        result = mod.handler({"body": json.dumps(_event(
+            pipeline_mode="program",
+            function="const",
+            cfpv=[3, 1, 0],
+            coeff_program_chain=[["macro", "poly-test1"]],
+        ))}, None)
+
+        self.assertEqual(result["statusCode"], 200)
+        mock_s3_client.return_value.get_object.assert_called_once_with(
+            Bucket=mod.BUCKET,
+            Key="polypaint/coeff-programs/poly-test1.json",
+        )
+        self.assertEqual(specs[0]["coeff_transforms"], [["rev"]])
+        self.assertNotIn("coeff_program", specs[0])
 
     @patch("handler_compute_preview.subprocess.run")
     def test_compute_debug_poly_forwards_poke_coeff_program(self, mock_run):

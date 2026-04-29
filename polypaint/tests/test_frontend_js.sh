@@ -86,6 +86,9 @@ assertIncludes("id=\"pp-chips\" class=\"chip-container param-program-display\"",
 assertIncludes("function _selectedParamPipelineMode() {", 'frontend should centralize selected parameter pipeline mode');
 assertIncludes("function _formatChainRowsForLog(chain, separator = ',') {", 'compute preview logging should use a shared safe chain formatter');
 assertIncludes("return _formatChainRowsForLog(_serializeCoeffTransforms(), separator) || 'none';", 'Chain-mode coeff preview logging should format serialized rows instead of string display values');
+assertIncludes("function _computePreviewViewportInfoLines(result) {", 'compute preview plot info should format returned viewport bounds');
+assertIncludes("viewport Re: ${minRe} .. ${maxRe}", 'compute preview plot info should show displayed Re viewport bounds');
+assertIncludes("viewport Im: ${minIm} .. ${maxIm}", 'compute preview plot info should show displayed Im viewport bounds');
 assertIncludes("const _paramProgramIndependentLegacyTargets = new Set([", 'frontend should know which legacy target args are redundant in Param Program bridge chips');
 assertIncludes("'coeff2',\n    'coeff3',\n    'coeff3a',", 'Param Program legacy bridge should include legacy coeff-map names');
 assertIncludes("coeff12: { category: 'bridge', desc: 'legacy mixed polynomial map' }", 'Param Program picker should expose legacy coeff-map chips directly');
@@ -127,6 +130,16 @@ assertIncludes("write value into the top stack vector without popping it", 'Coef
 assertIncludes("May use p1/p2, literals, + - * /, conj/real/imag. t1/t2 are not available here.", 'Coeff Program const value tooltip should name the allowed scalar-expression registers');
 assertIncludes("commit poly; pops stack top into poly when present", 'Coeff Program picker should describe emit commit semantics');
 assertIncludes("blend below*(1-t) + top*t for same-length vectors", 'Coeff Program picker should expose vector blend chip');
+assertIncludes("const _coeffProgramVectorBinaryNames = ['add', 'subtract', 'multiply', 'divide', 'power'];", 'Coeff Program picker should expose first-class vector binary ops');
+assertIncludes("const _coeffProgramVectorUnaryNames = ['angle', 'mod', 'abs'];", 'Coeff Program picker should expose first-class vector unary ops');
+assertIncludes("argsort: {", 'Coeff Program picker should expose argsort');
+assertIncludes("roll vector left by n positions", 'Coeff Program picker should expose roll-left');
+assertIncludes("roll vector right by n positions", 'Coeff Program picker should expose roll-right');
+assertIncludes("reorder src1 by ascending magnitude of src2", 'Coeff Program argsort should document key semantics');
+assertIncludes("littlewood: {", 'Coeff Program picker should expose littlewood');
+assertIncludes("generate a random Littlewood-style vector using current poly length", 'Coeff Program littlewood should document poly-length semantics');
+assertIncludes("littlewood(</span>${input(1)}", 'Coeff Program littlewood should render as a formula chip');
+assertIncludes("function _coeffProgramVectorFormulaHtml(item, i, pDefs, options = {})", 'Coeff Program vector chips should render as formula chips');
 assertIncludes("id=\"compute-preview-tab-debug\"", 'Compute Preview should include a Compute Debug tab');
 assertIncludes("id=\"compute-debug-u\"", 'Compute Debug should expose u input');
 assertIncludes("id=\"compute-debug-v\"", 'Compute Debug should expose v input');
@@ -145,7 +158,17 @@ assertIncludes("coeff_program_chain: coeffProgramChain,", 'compute/preview paylo
 assertIncludes("Coeff Program scalar args are parsed by the compiler. Keep expressions", 'Coeff Program editor should not reject p1/p2 scalar expressions with legacy numeric validation');
 assertIncludes("chain[chipIdx].params[paramIdx] = rawText || String(pDef.def || '');", 'Coeff Program scalar expression fields should preserve raw expression text');
 assertIncludes("poly=pow(poly*", 'Coeff Program poly-pow chip should render as a compact two-complex-field formula');
-assertIncludes("Blend amount. In Program mode this may be a real scalar expression using p1/p2", 'Coeff Program andy fields should advertise expression support');
+assertIncludes("function _coeffProgramLegacyFormulaHtml(i, legacyName, values, legacyDefs, options = {})", 'generic Coeff Program legacy chips should render as formulas instead of labeled dumps');
+assertIncludes("chip-input-selector-wide", 'Coeff Program legacy source/target selectors should be wide enough to read');
+assertIncludes("chip-input-function-wide", 'Coeff Program legacy function selectors should have a readable but bounded width');
+assertIncludes("chip-input-program-wide", 'Program macro chip inputs should be wide enough for saved program ids');
+assertIncludes("chip-input-complex-wide", 'Coeff Program complex expression fields should be wide enough to read');
+assertIncludes("poly=exp(poly*", 'Coeff Program poly-exp chip should render as a formula using poly and its fields');
+assertIncludes("poly=round(poly*", 'Coeff Program poly-round chip should render as a formula using poly and its fields');
+assertIncludes("Legacy coefficient transform function. Compiled to a stable numeric function index.", 'Coeff Program legacy function selector should explain what it selects');
+assertIncludes("Input vector: cf read-only coefficients, current poly, pop stack, or peek stack.", 'Coeff Program legacy src selector should have a tooltip');
+assertIncludes("Output target: write poly or push the result onto the stack.", 'Coeff Program legacy tgt selector should have a tooltip');
+assertIncludes("Blend amount in [0,1]. In Program mode this may be a real scalar expression using p1/p2", 'Coeff Program andy fields should advertise expression support');
 assertIncludes("function _parseCtComplexConstant(value) {", 'frontend should parse complex constants consistently for coefficient inputs');
 assertIncludes("function _formatCfpvForDisplay(funcName, cfpv) {", 'coefficient function parameters should have a logical display formatter');
 assertIncludes("return `degree=${degree}, value=${_formatCfpvComplexValue(re, im)}`;", 'const coefficient function should display degree plus one complex value');
@@ -460,7 +483,7 @@ function assert(cond, message) {
 async function main() {
   const solveScoreCatalogBlock = extractBetween(
     "const _solveScoreMetricNames = [",
-    "const _ctAndyParam = { ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', wide: true, title: 'Blend amount. In Program mode this may be a real scalar expression using p1/p2; in Chain mode it must be numeric.' };",
+    "const _ctAndyParam = { ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: 'Blend amount in [0,1]. In Program mode this may be a real scalar expression using p1/p2; in Chain mode it must be numeric.' };",
     'solve-score catalog block'
   );
   const code = [

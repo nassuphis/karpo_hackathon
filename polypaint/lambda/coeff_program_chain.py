@@ -34,6 +34,11 @@ COEFF_OP_BLEND = 8
 COEFF_OP_LEGACY = 9
 COEFF_OP_POKE_POLY = 10
 COEFF_OP_POKE_TOS = 11
+COEFF_OP_VECTOR_BINARY = 12
+COEFF_OP_VECTOR_UNARY = 13
+COEFF_OP_VECTOR_ROLL = 14
+COEFF_OP_VECTOR_ARGSORT = 15
+COEFF_OP_LITTLEWOOD = 16
 
 COEFF_SEL_CF = 1
 COEFF_SEL_POLY = 2
@@ -65,6 +70,11 @@ _OP_NAMES = {
     COEFF_OP_LEGACY: "legacy",
     COEFF_OP_POKE_POLY: "poke_poly",
     COEFF_OP_POKE_TOS: "poke_tos",
+    COEFF_OP_VECTOR_BINARY: "vector_binary",
+    COEFF_OP_VECTOR_UNARY: "vector_unary",
+    COEFF_OP_VECTOR_ROLL: "vector_roll",
+    COEFF_OP_VECTOR_ARGSORT: "argsort",
+    COEFF_OP_LITTLEWOOD: "littlewood",
 }
 
 _SOURCE_SELECTORS = {
@@ -77,6 +87,12 @@ _SOURCE_SELECTORS = {
 _TARGET_SELECTORS = {
     "poly": COEFF_SEL_POLY,
     "push": COEFF_SEL_PUSH,
+}
+
+_VECTOR_SOURCE_SELECTORS = {
+    "poly": COEFF_SEL_POLY,
+    "pop": COEFF_SEL_POP,
+    "peek": COEFF_SEL_PEEK,
 }
 
 _SELECTOR_NAMES = {
@@ -103,6 +119,29 @@ _ENUM_ARG_VALUES = {
 _LEGACY_NAME_ALIASES = {
     "scale100": "linear",
 }
+
+_VECTOR_BINARY_OPS = {
+    "add": 1,
+    "subtract": 2,
+    "multiply": 3,
+    "divide": 4,
+    "power": 5,
+}
+
+_VECTOR_UNARY_OPS = {
+    "angle": 1,
+    "mod": 2,
+    "abs": 3,
+}
+
+_VECTOR_ROLL_OPS = {
+    "roll": 1,
+    "rolr": 2,
+}
+
+_VECTOR_BINARY_NAMES = {v: k for k, v in _VECTOR_BINARY_OPS.items()}
+_VECTOR_UNARY_NAMES = {v: k for k, v in _VECTOR_UNARY_OPS.items()}
+_VECTOR_ROLL_NAMES = {v: k for k, v in _VECTOR_ROLL_OPS.items()}
 
 
 class _Expr:
@@ -241,6 +280,13 @@ def _finite_number(value, label):
     if not math.isfinite(number):
         raise RuntimeError(f"{label} must be finite, got {value!r}")
     return number
+
+
+def _integer_literal(value, label):
+    number = _finite_number(value, label)
+    if not number.is_integer():
+        raise RuntimeError(f"{label} must be an integer, got {value!r}")
+    return int(number)
 
 
 def _format_number(value):
@@ -586,6 +632,88 @@ def _compile_poke(op, args, scalar_exprs, label):
     return _token(op, n_args=2, args=[index, re], args_im=[0.0, im], expr_refs=[-1, ref])
 
 
+def _compile_vector_binary(name, args):
+    if len(args) != 3:
+        raise RuntimeError(f"{name} chip requires tgt, src1, src2")
+    _tgt_name, tgt_val = _selector_value(args[0], _TARGET_SELECTORS, f"{name} tgt")
+    _src1_name, src1_val = _selector_value(args[1], _VECTOR_SOURCE_SELECTORS, f"{name} src1")
+    _src2_name, src2_val = _selector_value(args[2], _VECTOR_SOURCE_SELECTORS, f"{name} src2")
+    return _token(
+        COEFF_OP_VECTOR_BINARY,
+        fn_index=_VECTOR_BINARY_OPS[name],
+        src=src1_val,
+        tgt=tgt_val,
+        n_args=1,
+        args=[src2_val],
+    )
+
+
+def _compile_vector_unary(name, args):
+    if len(args) != 2:
+        raise RuntimeError(f"{name} chip requires tgt and src")
+    _tgt_name, tgt_val = _selector_value(args[0], _TARGET_SELECTORS, f"{name} tgt")
+    _src_name, src_val = _selector_value(args[1], _VECTOR_SOURCE_SELECTORS, f"{name} src")
+    return _token(
+        COEFF_OP_VECTOR_UNARY,
+        fn_index=_VECTOR_UNARY_OPS[name],
+        src=src_val,
+        tgt=tgt_val,
+    )
+
+
+def _compile_vector_roll(name, args):
+    if len(args) != 3:
+        raise RuntimeError(f"{name} chip requires tgt, src, n")
+    _tgt_name, tgt_val = _selector_value(args[0], _TARGET_SELECTORS, f"{name} tgt")
+    _src_name, src_val = _selector_value(args[1], _VECTOR_SOURCE_SELECTORS, f"{name} src")
+    n = _integer_literal(args[2], f"{name} n")
+    return _token(
+        COEFF_OP_VECTOR_ROLL,
+        fn_index=_VECTOR_ROLL_OPS[name],
+        src=src_val,
+        tgt=tgt_val,
+        n_args=1,
+        args=[n],
+    )
+
+
+def _compile_vector_argsort(args):
+    if len(args) != 3:
+        raise RuntimeError("argsort chip requires tgt, src1, src2")
+    _tgt_name, tgt_val = _selector_value(args[0], _TARGET_SELECTORS, "argsort tgt")
+    _src1_name, src1_val = _selector_value(args[1], _VECTOR_SOURCE_SELECTORS, "argsort src1")
+    _src2_name, src2_val = _selector_value(args[2], _VECTOR_SOURCE_SELECTORS, "argsort src2")
+    return _token(
+        COEFF_OP_VECTOR_ARGSORT,
+        src=src1_val,
+        tgt=tgt_val,
+        n_args=1,
+        args=[src2_val],
+    )
+
+
+def _compile_littlewood(args, scalar_exprs):
+    if len(args) not in {3, 4}:
+        raise RuntimeError("littlewood chip requires tgt, field1, field2, and optional andy")
+    _tgt_name, tgt_val = _selector_value(args[0], _TARGET_SELECTORS, "littlewood tgt")
+    field1_expr = _compile_expr(args[1], label="littlewood field1", expected="complex")
+    field2_expr = _compile_expr(args[2], label="littlewood field2", expected="complex")
+    field1_re, field1_im, field1_ref = _add_arg_expr(field1_expr, scalar_exprs, expected="complex")
+    field2_re, field2_im, field2_ref = _add_arg_expr(field2_expr, scalar_exprs, expected="complex")
+    andy = 0.0
+    andy_ref = -1
+    if len(args) == 4:
+        andy, andy_ref = _compile_andy(args[3], scalar_exprs, "littlewood andy")
+    return _token(
+        COEFF_OP_LITTLEWOOD,
+        tgt=tgt_val,
+        n_args=3,
+        args=[field1_re, field2_re, andy],
+        args_im=[field1_im, field2_im, 0.0],
+        expr_refs=[field1_ref, field2_ref, andy_ref],
+    )
+
+
 def _linear_legacy_args(spec, raw_args, scalar_exprs):
     raw_args = list(raw_args)
     andy = 0.0
@@ -797,6 +925,16 @@ def _lower_chip(chip, scalar_exprs):
         return [_compile_poke(COEFF_OP_POKE_POLY, args, scalar_exprs, "poke_poly")]
     if name == "poke_tos":
         return [_compile_poke(COEFF_OP_POKE_TOS, args, scalar_exprs, "poke_tos")]
+    if name in _VECTOR_BINARY_OPS:
+        return [_compile_vector_binary(name, args)]
+    if name in _VECTOR_UNARY_OPS:
+        return [_compile_vector_unary(name, args)]
+    if name in _VECTOR_ROLL_OPS:
+        return [_compile_vector_roll(name, args)]
+    if name == "argsort":
+        return [_compile_vector_argsort(args)]
+    if name == "littlewood":
+        return [_compile_littlewood(args, scalar_exprs)]
     if name in _STACK_OPS:
         if args:
             raise RuntimeError(f"{name} chip takes no arguments")
@@ -825,6 +963,22 @@ def _lower_chain(chain):
             f"coeff program has {len(tokens)} tokens after expansion; max is {MAX_PROGRAM_TOKENS}"
         )
     return tokens, scalar_exprs
+
+
+def _validate_vector_source_depth(selector, depth, idx, label):
+    if selector == COEFF_SEL_POP:
+        if depth < 1:
+            raise RuntimeError(f"{label} at token {idx}: stack depth is {depth} (need >=1)")
+        return depth - 1
+    if selector == COEFF_SEL_PEEK:
+        if depth < 1:
+            raise RuntimeError(f"{label}(peek) at token {idx}: stack depth is {depth} (need >=1)")
+        return depth
+    return depth
+
+
+def _validate_vector_target_depth(selector, depth):
+    return depth + 1 if selector == COEFF_SEL_PUSH else depth
 
 
 def _validate_stack(tokens):
@@ -865,6 +1019,16 @@ def _validate_stack(tokens):
         elif op == COEFF_OP_POKE_TOS:
             if depth < 1:
                 raise RuntimeError(f"poke_tos at token {idx}: stack depth is {before} (need >=1)")
+        elif op in {COEFF_OP_VECTOR_BINARY, COEFF_OP_VECTOR_ARGSORT}:
+            src2 = int((token.get("args") or [0])[0])
+            depth = _validate_vector_source_depth(int(token.get("src") or 0), depth, idx, "vector src1")
+            depth = _validate_vector_source_depth(src2, depth, idx, "vector src2")
+            depth = _validate_vector_target_depth(int(token.get("tgt") or 0), depth)
+        elif op in {COEFF_OP_VECTOR_UNARY, COEFF_OP_VECTOR_ROLL}:
+            depth = _validate_vector_source_depth(int(token.get("src") or 0), depth, idx, "vector src")
+            depth = _validate_vector_target_depth(int(token.get("tgt") or 0), depth)
+        elif op == COEFF_OP_LITTLEWOOD:
+            depth = _validate_vector_target_depth(int(token.get("tgt") or 0), depth)
         elif op == COEFF_OP_LEGACY:
             src = int(token.get("src") or 0)
             tgt = int(token.get("tgt") or 0)
@@ -912,6 +1076,43 @@ def _execution_spec(tokens, scalar_exprs):
             refs = token.get("expr_refs") or [-1, -1]
             fields.append(_format_number(args[0]))
             fields.append(f"expr{refs[1]}" if len(refs) > 1 and refs[1] >= 0 else _format_complex_number(args[1], args_im[1] if len(args_im) > 1 else 0.0))
+        elif op == COEFF_OP_VECTOR_BINARY:
+            args = token.get("args") or [0]
+            fields.extend([
+                _VECTOR_BINARY_NAMES.get(int(token.get("fn_index") or 0), str(token.get("fn_index") or 0)),
+                _SELECTOR_NAMES.get(int(token.get("tgt") or 0), str(token.get("tgt") or 0)),
+                _SELECTOR_NAMES.get(int(token.get("src") or 0), str(token.get("src") or 0)),
+                _SELECTOR_NAMES.get(int(args[0]), str(args[0])),
+            ])
+        elif op == COEFF_OP_VECTOR_UNARY:
+            fields.extend([
+                _VECTOR_UNARY_NAMES.get(int(token.get("fn_index") or 0), str(token.get("fn_index") or 0)),
+                _SELECTOR_NAMES.get(int(token.get("tgt") or 0), str(token.get("tgt") or 0)),
+                _SELECTOR_NAMES.get(int(token.get("src") or 0), str(token.get("src") or 0)),
+            ])
+        elif op == COEFF_OP_VECTOR_ROLL:
+            args = token.get("args") or [0]
+            fields.extend([
+                _VECTOR_ROLL_NAMES.get(int(token.get("fn_index") or 0), str(token.get("fn_index") or 0)),
+                _SELECTOR_NAMES.get(int(token.get("tgt") or 0), str(token.get("tgt") or 0)),
+                _SELECTOR_NAMES.get(int(token.get("src") or 0), str(token.get("src") or 0)),
+                _format_number(args[0]),
+            ])
+        elif op == COEFF_OP_VECTOR_ARGSORT:
+            args = token.get("args") or [0]
+            fields.extend([
+                _SELECTOR_NAMES.get(int(token.get("tgt") or 0), str(token.get("tgt") or 0)),
+                _SELECTOR_NAMES.get(int(token.get("src") or 0), str(token.get("src") or 0)),
+                _SELECTOR_NAMES.get(int(args[0]), str(args[0])),
+            ])
+        elif op == COEFF_OP_LITTLEWOOD:
+            args = token.get("args") or [0, 0, 0]
+            args_im = token.get("args_im") or [0, 0, 0]
+            refs = token.get("expr_refs") or [-1, -1, -1]
+            fields.append(_SELECTOR_NAMES.get(int(token.get("tgt") or 0), str(token.get("tgt") or 0)))
+            fields.append(f"expr{refs[0]}" if len(refs) > 0 and refs[0] >= 0 else _format_complex_number(args[0], args_im[0] if len(args_im) > 0 else 0.0))
+            fields.append(f"expr{refs[1]}" if len(refs) > 1 and refs[1] >= 0 else _format_complex_number(args[1], args_im[1] if len(args_im) > 1 else 0.0))
+            fields.append(f"expr{refs[2]}" if len(refs) > 2 and refs[2] >= 0 else _format_number(args[2] if len(args) > 2 else 0.0))
         elif op == COEFF_OP_LEGACY:
             spec = legacy_registry()["by_index"].get(int(token.get("fn_index") or 0))
             fields.extend([

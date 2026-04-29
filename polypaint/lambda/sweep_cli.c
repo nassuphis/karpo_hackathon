@@ -3310,7 +3310,12 @@ enum CoeffProgramOp {
     COEFF_OP_BLEND = 8,
     COEFF_OP_LEGACY = 9,
     COEFF_OP_POKE_POLY = 10,
-    COEFF_OP_POKE_TOS = 11
+    COEFF_OP_POKE_TOS = 11,
+    COEFF_OP_VECTOR_BINARY = 12,
+    COEFF_OP_VECTOR_UNARY = 13,
+    COEFF_OP_VECTOR_ROLL = 14,
+    COEFF_OP_VECTOR_ARGSORT = 15,
+    COEFF_OP_LITTLEWOOD = 16
 };
 
 enum CoeffProgramSelector {
@@ -3319,6 +3324,25 @@ enum CoeffProgramSelector {
     COEFF_SEL_POP = 3,
     COEFF_SEL_PEEK = 4,
     COEFF_SEL_PUSH = 5
+};
+
+enum CoeffVectorBinaryOp {
+    COEFF_VEC_ADD = 1,
+    COEFF_VEC_SUBTRACT = 2,
+    COEFF_VEC_MULTIPLY = 3,
+    COEFF_VEC_DIVIDE = 4,
+    COEFF_VEC_POWER = 5
+};
+
+enum CoeffVectorUnaryOp {
+    COEFF_VEC_ANGLE = 1,
+    COEFF_VEC_MOD = 2,
+    COEFF_VEC_ABS = 3
+};
+
+enum CoeffVectorRollOp {
+    COEFF_VEC_ROLL_LEFT = 1,
+    COEFF_VEC_ROLL_RIGHT = 2
 };
 
 enum CoeffExprOp {
@@ -3380,6 +3404,10 @@ typedef struct {
     double original_re[COEFF_PROGRAM_MAX_VECTOR_LEN];
     double original_im[COEFF_PROGRAM_MAX_VECTOR_LEN];
     uint16_t original_len;
+
+    double aux_re[COEFF_PROGRAM_MAX_VECTOR_LEN];
+    double aux_im[COEFF_PROGRAM_MAX_VECTOR_LEN];
+    uint16_t aux_len;
 } CoeffProgramWorkspace;
 
 /* V1 workspace is about 274 KiB. Allocate it once per worker/probe rather than
@@ -3767,34 +3795,43 @@ static int coeffLegacyApply(int fnIndex, double *re, double *im, int *n,
     }
 }
 
+static int coeffProgramReadSourceToBuffer(const double *cfRe, const double *cfIm, int cfLen,
+                                          CoeffProgramWorkspace *ws,
+                                          int selector,
+                                          double *dstRe, double *dstIm,
+                                          uint16_t *dstLen) {
+    uint16_t slot = 0;
+    if (selector == COEFF_SEL_CF) {
+        coeff_vec_copy(dstRe, dstIm, cfRe, cfIm, cfLen);
+        *dstLen = (uint16_t)cfLen;
+        return 0;
+    }
+    if (selector == COEFF_SEL_POLY) {
+        coeff_vec_copy(dstRe, dstIm, ws->poly_re, ws->poly_im, ws->poly_len);
+        *dstLen = ws->poly_len;
+        return 0;
+    }
+    if (selector == COEFF_SEL_POP) {
+        if (coeff_stack_pop(ws, &slot) != 0) return 1;
+        coeff_vec_copy(dstRe, dstIm, ws->stack_re[slot], ws->stack_im[slot], ws->stack_len[slot]);
+        *dstLen = ws->stack_len[slot];
+        return 0;
+    }
+    if (selector == COEFF_SEL_PEEK) {
+        if (coeff_stack_peek(ws, &slot) != 0) return 1;
+        coeff_vec_copy(dstRe, dstIm, ws->stack_re[slot], ws->stack_im[slot], ws->stack_len[slot]);
+        *dstLen = ws->stack_len[slot];
+        return 0;
+    }
+    fprintf(stderr, "invalid coeff_program source selector: %d\n", selector);
+    return 1;
+}
+
 static int coeffProgramSourceToScratch(const double *cfRe, const double *cfIm, int cfLen,
                                        CoeffProgramWorkspace *ws,
                                        const CoeffProgramToken *tok) {
-    uint16_t slot = 0;
-    if (tok->src == COEFF_SEL_CF) {
-        coeff_vec_copy(ws->scratch_re, ws->scratch_im, cfRe, cfIm, cfLen);
-        ws->scratch_len = (uint16_t)cfLen;
-        return 0;
-    }
-    if (tok->src == COEFF_SEL_POLY) {
-        coeff_vec_copy(ws->scratch_re, ws->scratch_im, ws->poly_re, ws->poly_im, ws->poly_len);
-        ws->scratch_len = ws->poly_len;
-        return 0;
-    }
-    if (tok->src == COEFF_SEL_POP) {
-        if (coeff_stack_pop(ws, &slot) != 0) return 1;
-        coeff_vec_copy(ws->scratch_re, ws->scratch_im, ws->stack_re[slot], ws->stack_im[slot], ws->stack_len[slot]);
-        ws->scratch_len = ws->stack_len[slot];
-        return 0;
-    }
-    if (tok->src == COEFF_SEL_PEEK) {
-        if (coeff_stack_peek(ws, &slot) != 0) return 1;
-        coeff_vec_copy(ws->scratch_re, ws->scratch_im, ws->stack_re[slot], ws->stack_im[slot], ws->stack_len[slot]);
-        ws->scratch_len = ws->stack_len[slot];
-        return 0;
-    }
-    fprintf(stderr, "invalid coeff_program source selector: %d\n", tok->src);
-    return 1;
+    return coeffProgramReadSourceToBuffer(cfRe, cfIm, cfLen, ws, tok->src,
+                                          ws->scratch_re, ws->scratch_im, &ws->scratch_len);
 }
 
 static int coeffProgramTargetFromScratch(CoeffProgramWorkspace *ws, const CoeffProgramToken *tok) {
@@ -3811,11 +3848,193 @@ static int coeffProgramTargetFromScratch(CoeffProgramWorkspace *ws, const CoeffP
     return 1;
 }
 
+static int coeffProgramBinaryVectorOp(CoeffProgramWorkspace *ws, const CoeffProgramToken *tok) {
+    int n1 = ws->scratch_len;
+    int n2 = ws->original_len;
+    if (n1 != n2) {
+        fprintf(stderr, "Coeff Program vector binary length mismatch: %d vs %d\n", n1, n2);
+        return 1;
+    }
+    for (int i = 0; i < n1; i++) {
+        double ar = ws->scratch_re[i], ai = ws->scratch_im[i];
+        double br = ws->original_re[i], bi = ws->original_im[i];
+        double rr = 0.0, ri = 0.0;
+        if (tok->fn_index == COEFF_VEC_ADD) {
+            rr = ar + br; ri = ai + bi;
+        } else if (tok->fn_index == COEFF_VEC_SUBTRACT) {
+            rr = ar - br; ri = ai - bi;
+        } else if (tok->fn_index == COEFF_VEC_MULTIPLY) {
+            c_mul(ar, ai, br, bi, &rr, &ri);
+        } else if (tok->fn_index == COEFF_VEC_DIVIDE) {
+            c_div(ar, ai, br, bi, &rr, &ri);
+        } else if (tok->fn_index == COEFF_VEC_POWER) {
+            c_powc(ar, ai, br, bi, &rr, &ri);
+        } else {
+            fprintf(stderr, "Coeff Program unknown vector binary op: %d\n", tok->fn_index);
+            return 1;
+        }
+        ws->scratch_re[i] = isfinite(rr) ? rr : 0.0;
+        ws->scratch_im[i] = isfinite(ri) ? ri : 0.0;
+    }
+    ws->scratch_len = (uint16_t)n1;
+    return 0;
+}
+
+static int coeffProgramUnaryVectorOp(CoeffProgramWorkspace *ws, const CoeffProgramToken *tok) {
+    int n = ws->scratch_len;
+    for (int i = 0; i < n; i++) {
+        double ar = ws->scratch_re[i], ai = ws->scratch_im[i];
+        double rr = 0.0;
+        if (tok->fn_index == COEFF_VEC_ANGLE) {
+            rr = atan2(ai, ar);
+        } else if (tok->fn_index == COEFF_VEC_MOD || tok->fn_index == COEFF_VEC_ABS) {
+            rr = sqrt(ar * ar + ai * ai);
+        } else {
+            fprintf(stderr, "Coeff Program unknown vector unary op: %d\n", tok->fn_index);
+            return 1;
+        }
+        ws->scratch_re[i] = isfinite(rr) ? rr : 0.0;
+        ws->scratch_im[i] = 0.0;
+    }
+    return 0;
+}
+
+static int coeffProgramRollVectorOp(CoeffProgramWorkspace *ws, const CoeffProgramToken *tok) {
+    int n = ws->scratch_len;
+    if (n <= 0) return 1;
+    int shift = (int)tok->args[0];
+    shift %= n;
+    if (shift < 0) shift += n;
+    coeff_vec_copy(ws->aux_re, ws->aux_im, ws->scratch_re, ws->scratch_im, n);
+    ws->aux_len = (uint16_t)n;
+    for (int i = 0; i < n; i++) {
+        int src = tok->fn_index == COEFF_VEC_ROLL_RIGHT
+            ? (i - shift + n) % n
+            : (i + shift) % n;
+        ws->scratch_re[i] = ws->aux_re[src];
+        ws->scratch_im[i] = ws->aux_im[src];
+    }
+    return 0;
+}
+
+static int coeffProgramArgsortVectorOp(CoeffProgramWorkspace *ws) {
+    int n1 = ws->scratch_len;
+    int n2 = ws->original_len;
+    if (n1 != n2) {
+        fprintf(stderr, "Coeff Program argsort length mismatch: %d vs %d\n", n1, n2);
+        return 1;
+    }
+    uint16_t order[COEFF_PROGRAM_MAX_VECTOR_LEN];
+    double key[COEFF_PROGRAM_MAX_VECTOR_LEN];
+    for (int i = 0; i < n1; i++) {
+        order[i] = (uint16_t)i;
+        key[i] = ws->original_re[i] * ws->original_re[i] + ws->original_im[i] * ws->original_im[i];
+    }
+    for (int gap = n1 / 2; gap > 0; gap /= 2) {
+        for (int i = gap; i < n1; i++) {
+            uint16_t temp = order[i];
+            double tempKey = key[temp];
+            int j = i;
+            while (j >= gap) {
+                uint16_t prev = order[j - gap];
+                double prevKey = key[prev];
+                if (prevKey < tempKey || (prevKey == tempKey && prev < temp)) break;
+                order[j] = prev;
+                j -= gap;
+            }
+            order[j] = temp;
+        }
+    }
+    coeff_vec_copy(ws->aux_re, ws->aux_im, ws->scratch_re, ws->scratch_im, n1);
+    ws->aux_len = (uint16_t)n1;
+    for (int i = 0; i < n1; i++) {
+        uint16_t src = order[i];
+        ws->scratch_re[i] = ws->aux_re[src];
+        ws->scratch_im[i] = ws->aux_im[src];
+    }
+    return 0;
+}
+
+static uint64_t coeffProgramMix64(uint64_t x) {
+    x += 0x9e3779b97f4a7c15ULL;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    return x ^ (x >> 31);
+}
+
+static uint64_t coeffProgramDoubleBits(double value) {
+    if (value == 0.0) value = 0.0;  /* canonicalize -0.0 */
+    uint64_t bits = 0;
+    memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
+
+static uint64_t coeffProgramLittlewoodSeed(uint64_t evalSeed, int tokenIndex,
+                                           double p1r, double p1i,
+                                           double p2r, double p2i) {
+    uint64_t seed = 0xd1b54a32d192ed03ULL ^ coeffProgramMix64(evalSeed);
+    seed ^= coeffProgramMix64((uint64_t)(unsigned int)tokenIndex + 0x94d049bb133111ebULL);
+    seed ^= coeffProgramMix64(coeffProgramDoubleBits(p1r));
+    seed ^= coeffProgramMix64(coeffProgramDoubleBits(p1i) + 0xbf58476d1ce4e5b9ULL);
+    seed ^= coeffProgramMix64(coeffProgramDoubleBits(p2r) + 0x632be59bd9b4e019ULL);
+    seed ^= coeffProgramMix64(coeffProgramDoubleBits(p2i) + 0x85157af5ULL);
+    return seed ? seed : 0x9e3779b97f4a7c15ULL;
+}
+
+static int coeffProgramLittlewoodOp(const CoeffProgram *program,
+                                    const CoeffProgramToken *tok,
+                                    CoeffProgramWorkspace *ws,
+                                    int tokenIndex,
+                                    uint64_t evalSeed,
+                                    double p1r, double p1i,
+                                    double p2r, double p2i) {
+    double aR = 0.0, aI = 0.0, bR = 0.0, bI = 0.0, andy = 0.0, andyI = 0.0;
+    if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, &aR, &aI) != 0) return 1;
+    if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, &bR, &bI) != 0) return 1;
+    if (tok->n_args > 2) {
+        if (coeffArgValue(program, tok, 2, p1r, p1i, p2r, p2i, &andy, &andyI) != 0) return 1;
+        if (fabs(andyI) > 1e-12 || !isfinite(andy)) {
+            fprintf(stderr, "Coeff Program littlewood andy requires finite real value\n");
+            return 1;
+        }
+    }
+    if (!isfinite(aR) || !isfinite(aI) || !isfinite(bR) || !isfinite(bI)) {
+        fprintf(stderr, "Coeff Program littlewood fields must be finite\n");
+        return 1;
+    }
+    int n = ws->poly_len;
+    if (coeff_program_check_len(n, "littlewood") != 0) return 1;
+    if (andy != 0.0) {
+        coeff_vec_copy(ws->original_re, ws->original_im, ws->poly_re, ws->poly_im, n);
+        ws->original_len = (uint16_t)n;
+    }
+    uint64_t state = coeffProgramLittlewoodSeed(evalSeed, tokenIndex, p1r, p1i, p2r, p2i);
+    for (int i = 0; i < n; i++) {
+        state = coeffProgramMix64(state + (uint64_t)i);
+        if (state & 1ULL) {
+            ws->scratch_re[i] = aR;
+            ws->scratch_im[i] = aI;
+        } else {
+            ws->scratch_re[i] = bR;
+            ws->scratch_im[i] = bI;
+        }
+    }
+    ws->scratch_len = (uint16_t)n;
+    if (andy != 0.0) {
+        ct_blend_with_original(ws->scratch_re, ws->scratch_im, &n,
+                               ws->original_re, ws->original_im, ws->original_len, andy);
+        if (coeff_program_check_len(n, "littlewood andy") != 0) return 1;
+        ws->scratch_len = (uint16_t)n;
+    }
+    return coeffProgramTargetFromScratch(ws, tok);
+}
+
 static int evalCoeffProgram(const CoeffProgram *program,
                             double p1r, double p1i, double p2r, double p2i,
                             const double *cfRe, const double *cfIm, int cfLen,
                             double *outRe, double *outIm, int *outLen,
-                            CoeffProgramWorkspace *ws) {
+                            CoeffProgramWorkspace *ws,
+                            uint64_t evalSeed) {
     if (coeff_program_check_len(cfLen, "coefficient function") != 0) return 1;
     /* Only cursors and lengths are reset per row. Vector buffers are fixed
      * workspace storage; every live read is preceded by a write. */
@@ -3824,6 +4043,7 @@ static int evalCoeffProgram(const CoeffProgram *program,
     ws->poly_len = 0;
     ws->scratch_len = 0;
     ws->original_len = 0;
+    ws->aux_len = 0;
     coeff_vec_copy(ws->poly_re, ws->poly_im, cfRe, cfIm, cfLen);
     ws->poly_len = (uint16_t)cfLen;
 
@@ -3929,6 +4149,32 @@ static int evalCoeffProgram(const CoeffProgram *program,
             }
             ws->stack_re[slot][idx] = vr;
             ws->stack_im[slot][idx] = vi;
+        } else if (tok->op == COEFF_OP_VECTOR_BINARY) {
+            int src2 = (int)tok->args[0];
+            if (coeffProgramReadSourceToBuffer(cfRe, cfIm, cfLen, ws, tok->src,
+                                               ws->scratch_re, ws->scratch_im, &ws->scratch_len) != 0) return 1;
+            if (coeffProgramReadSourceToBuffer(cfRe, cfIm, cfLen, ws, src2,
+                                               ws->original_re, ws->original_im, &ws->original_len) != 0) return 1;
+            if (coeffProgramBinaryVectorOp(ws, tok) != 0) return 1;
+            if (coeffProgramTargetFromScratch(ws, tok) != 0) return 1;
+        } else if (tok->op == COEFF_OP_VECTOR_UNARY) {
+            if (coeffProgramSourceToScratch(cfRe, cfIm, cfLen, ws, tok) != 0) return 1;
+            if (coeffProgramUnaryVectorOp(ws, tok) != 0) return 1;
+            if (coeffProgramTargetFromScratch(ws, tok) != 0) return 1;
+        } else if (tok->op == COEFF_OP_VECTOR_ROLL) {
+            if (coeffProgramSourceToScratch(cfRe, cfIm, cfLen, ws, tok) != 0) return 1;
+            if (coeffProgramRollVectorOp(ws, tok) != 0) return 1;
+            if (coeffProgramTargetFromScratch(ws, tok) != 0) return 1;
+        } else if (tok->op == COEFF_OP_VECTOR_ARGSORT) {
+            int src2 = (int)tok->args[0];
+            if (coeffProgramReadSourceToBuffer(cfRe, cfIm, cfLen, ws, tok->src,
+                                               ws->scratch_re, ws->scratch_im, &ws->scratch_len) != 0) return 1;
+            if (coeffProgramReadSourceToBuffer(cfRe, cfIm, cfLen, ws, src2,
+                                               ws->original_re, ws->original_im, &ws->original_len) != 0) return 1;
+            if (coeffProgramArgsortVectorOp(ws) != 0) return 1;
+            if (coeffProgramTargetFromScratch(ws, tok) != 0) return 1;
+        } else if (tok->op == COEFF_OP_LITTLEWOOD) {
+            if (coeffProgramLittlewoodOp(program, tok, ws, k, evalSeed, p1r, p1i, p2r, p2i) != 0) return 1;
         } else if (tok->op == COEFF_OP_LEGACY) {
             double args[COEFF_PROGRAM_MAX_ARGS];
             int legacyArgCount = tok->n_args;
@@ -6386,7 +6632,7 @@ static int runCoeffGen(const char *buf, const char *outPath) {
             if (!ws) return 1;
             int prc = evalCoeffProgram(&coeffProgram, z1r, z1i, z2r, z2i,
                                        probeRe, probeIm, probeN,
-                                       probeRe, probeIm, &probeN, ws);
+                                       probeRe, probeIm, &probeN, ws, 0ULL);
             free(ws);
             if (prc != 0) return 1;
         } else {
@@ -6454,8 +6700,9 @@ static int runCoeffGen(const char *buf, const char *outPath) {
             int nCoeffs;
             coeffFunc(z1r, z1i, z2r, z2i, cfpv, n_cfpv, cRe, cIm, &nCoeffs);
             if (hasCoeffProgram > 0) {
+                uint64_t evalSeed = (uint64_t)(((long)pass * (long)n1 + (long)i1) * (long)n2 + (long)j);
                 if (evalCoeffProgram(&coeffProgram, z1r, z1i, z2r, z2i,
-                                     cRe, cIm, nCoeffs, cRe, cIm, &nCoeffs, coeffWs) != 0) {
+                                     cRe, cIm, nCoeffs, cRe, cIm, &nCoeffs, coeffWs, evalSeed) != 0) {
                     fclose(fout);
                     free(stepBuf);
                     free(coeffWs);
@@ -6651,7 +6898,7 @@ static int runComputeDebug(const char *buf, const char *outPath) {
         if (!ws) return 1;
         int rc = evalCoeffProgram(&coeffProgram, p1r, p1i, p2r, p2i,
                                   cfRe, cfIm, cfN,
-                                  polyRe, polyIm, &polyN, ws);
+                                  polyRe, polyIm, &polyN, ws, 0ULL);
         free(ws);
         if (rc != 0) return 1;
     } else {
@@ -7561,7 +7808,8 @@ static void *coeffGenWorkerMain(void *vp) {
                                  (double)params[0], (double)params[1],
                                  (double)params[2], (double)params[3],
                                  cRe, cIm, nCoeffs,
-                                 cRe, cIm, &nCoeffs, coeffWs) != 0) {
+                                 cRe, cIm, &nCoeffs, coeffWs,
+                                 (uint64_t)(ctx->globalStepStart + s)) != 0) {
                 coeffGenSetThreadError(ctx, "coeffgen threaded coeff program failed");
             }
         } else {
@@ -7690,7 +7938,8 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
                                    (double)probe[0], (double)probe[1],
                                    (double)probe[2], (double)probe[3],
                                    probeRe, probeIm, probeN,
-                                   probeRe, probeIm, &probeN, coeffWs);
+                                   probeRe, probeIm, &probeN, coeffWs,
+                                   (uint64_t)stepStart);
         free(coeffWs);
         if (prc != 0) {
             close(paramsFd);
@@ -7763,7 +8012,8 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
                                      (double)params[0], (double)params[1],
                                      (double)params[2], (double)params[3],
                                      cRe, cIm, nCoeffs,
-                                     cRe, cIm, &nCoeffs, coeffWs) != 0) {
+                                     cRe, cIm, &nCoeffs, coeffWs,
+                                     (uint64_t)(stepStart + s)) != 0) {
                     rc = 1;
                 }
             } else {

@@ -151,6 +151,77 @@ class TestCoeffProgramChain(unittest.TestCase):
         self.assertFalse(compiled["uses_legacy_chain_equivalent"])
         self.assertEqual(compiled["stack_max"], 2)
 
+    def test_vector_binary_unary_roll_and_argsort_compile(self):
+        from coeff_program_chain import (
+            COEFF_OP_EMIT,
+            COEFF_OP_VECTOR_ARGSORT,
+            COEFF_OP_VECTOR_BINARY,
+            COEFF_OP_VECTOR_ROLL,
+            COEFF_OP_VECTOR_UNARY,
+            compile_coeff_program_chain,
+        )
+
+        compiled = compile_coeff_program_chain([
+            ["add", "push", "poly", "poly"],
+            ["angle", "push", "peek"],
+            ["roll", "push", "peek", "2"],
+            ["argsort", "push", "peek", "poly"],
+            ["emit"],
+            ["emit"],
+            ["emit"],
+            ["emit"],
+        ])
+        self.assertEqual(
+            [tok["op"] for tok in compiled["tokens"]],
+            [
+                COEFF_OP_VECTOR_BINARY,
+                COEFF_OP_VECTOR_UNARY,
+                COEFF_OP_VECTOR_ROLL,
+                COEFF_OP_VECTOR_ARGSORT,
+                COEFF_OP_EMIT,
+                COEFF_OP_EMIT,
+                COEFF_OP_EMIT,
+                COEFF_OP_EMIT,
+            ],
+        )
+        self.assertEqual(compiled["tokens"][0]["fn_index"], 1)
+        self.assertEqual(compiled["tokens"][1]["fn_index"], 1)
+        self.assertEqual(compiled["tokens"][2]["fn_index"], 1)
+        self.assertEqual(compiled["stack_max"], 4)
+        self.assertFalse(compiled["uses_legacy_chain_equivalent"])
+
+    def test_vector_pop_sources_are_validated_in_order(self):
+        from coeff_program_chain import compile_coeff_program_chain
+
+        with self.assertRaisesRegex(RuntimeError, "vector src1"):
+            compile_coeff_program_chain([["add", "poly", "pop", "poly"]])
+
+        compiled = compile_coeff_program_chain([
+            ["push", "cf"],
+            ["push", "poly"],
+            ["subtract", "push", "pop", "pop"],
+            ["emit"],
+        ])
+        self.assertEqual(compiled["stack_max"], 2)
+
+        with self.assertRaisesRegex(RuntimeError, "roll n must be an integer"):
+            compile_coeff_program_chain([["roll", "poly", "poly", "1.5"]])
+
+    def test_littlewood_compiles_complex_fields_and_andy_expression(self):
+        from coeff_program_chain import COEFF_OP_EMIT, COEFF_OP_LITTLEWOOD, compile_coeff_program_chain
+
+        compiled = compile_coeff_program_chain([
+            ["littlewood", "push", "p1", "p2", "real(p1)"],
+            ["emit"],
+        ])
+        self.assertEqual([tok["op"] for tok in compiled["tokens"]], [COEFF_OP_LITTLEWOOD, COEFF_OP_EMIT])
+        self.assertEqual(compiled["tokens"][0]["tgt"], 5)
+        self.assertEqual(compiled["tokens"][0]["n_args"], 3)
+        self.assertEqual(compiled["tokens"][0]["expr_refs"], [0, 1, 2])
+        self.assertEqual(compiled["scalar_expr_count"], 3)
+        self.assertEqual(compiled["stack_max"], 1)
+        self.assertFalse(compiled["uses_legacy_chain_equivalent"])
+
     def test_macro_expands_before_hashing(self):
         from coeff_program_chain import compile_coeff_program_chain
 

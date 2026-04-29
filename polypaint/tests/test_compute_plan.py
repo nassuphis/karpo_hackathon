@@ -5,7 +5,7 @@ import json
 import os
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
@@ -146,6 +146,41 @@ class TestComputePlan(unittest.TestCase):
         self.assertEqual(plan["pipeline"]["coeff_program"]["token_count"], 2)
         self.assertEqual(plan["pipeline"]["coeff_program"]["scalar_expr_count"], 1)
         self.assertTrue(plan["pipeline"]["coeff_program_fingerprint"])
+
+    def test_build_plan_resolves_coeff_program_macro(self):
+        import handler_compute_plan as mod
+
+        saved = json.dumps({"chain": [["poly-rev"]]}).encode()
+        fake_s3 = MagicMock()
+        fake_s3.get_object.return_value = {
+            "Body": MagicMock(read=lambda: saved)
+        }
+        with patch.object(mod, "s3", fake_s3):
+            result = mod.handle_build_plan({
+                "job_id": "compute_j",
+                "run_id": "run_coeff_program_macro",
+                "task_id": "compute_run_aberth_mt_run_coeff_program_macro",
+                "params": {
+                    "pipeline_mode": "program",
+                    "solver_mode": "aberth_mt",
+                    "N": 20,
+                    "times": 1,
+                    "n_chunks": 2,
+                    "function": "const",
+                    "param_transforms": [],
+                    "param_program_chain": [],
+                    "coeff_transforms": [],
+                    "coeff_program_chain": [["macro", "poly-test1"]],
+                    "cfpv": [3, 1, 0],
+                },
+            })
+        plan = json.loads(result["body"])
+        self.assertEqual(plan["pipeline"]["coeff_transforms"], [["rev"]])
+        self.assertEqual(plan["pipeline"]["coeff_program"], {})
+        fake_s3.get_object.assert_called_once_with(
+            Bucket=mod.BUCKET,
+            Key="polypaint/coeff-programs/poly-test1.json",
+        )
 
     def test_probe_signature_includes_program_fingerprints(self):
         import compute_fused as mod

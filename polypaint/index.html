@@ -102,6 +102,26 @@ button {
     width: 180px;
     text-align: left;
 }
+.chip .chip-input-complex-wide {
+    width: 180px;
+    text-align: left;
+}
+.chip .chip-input-program-wide {
+    width: 180px;
+    text-align: left;
+}
+.chip .chip-input-function-wide {
+    width: 120px;
+    text-align: left;
+}
+.chip .chip-input-expr-wide {
+    width: 108px;
+    text-align: left;
+}
+.chip .chip-input-selector-wide {
+    width: 54px;
+    text-align: left;
+}
 .chip .chip-param-pair {
     display: inline-flex;
     align-items: center;
@@ -118,7 +138,7 @@ button {
     margin-left: 0;
 }
 .chip .chip-input-andy {
-    width: 74px;
+    width: 72px;
     text-align: left;
 }
 .chip .chip-formula {
@@ -789,6 +809,19 @@ button {
 .param-pipeline-row select {
     min-width: 180px;
 }
+.param-pipeline-mode-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+.param-pipeline-mode-group label {
+    min-width: 0;
+}
+.param-pipeline-mode-group select {
+    min-width: 180px;
+}
 .param-pipeline-mode-note {
     color: #888;
     font-size: 11px;
@@ -1258,11 +1291,13 @@ button {
                 <input type="number" id="render-n" value="500" min="10" max="5000" step="10" style="width:10em">
                 <label>Times:</label>
                 <input type="number" id="render-times" value="1" min="1" max="100" step="1" style="width:5em">
-                <label style="min-width:0">Use:</label>
-                <select id="param-pipeline-mode" onchange="_setParamPipelineMode(this.value, {markStale:true})">
-                    <option value="chain">Chain</option>
-                    <option value="program">Program</option>
-                </select>
+                <span class="param-pipeline-mode-group">
+                    <label for="param-pipeline-mode">Use:</label>
+                    <select id="param-pipeline-mode" onchange="_setParamPipelineMode(this.value, {markStale:true})">
+                        <option value="chain">Chain</option>
+                        <option value="program">Program</option>
+                    </select>
+                </span>
                 <span id="param-pipeline-mode-note" class="param-pipeline-mode-note">Legacy transform chains are active.</span>
             </div>
             <input type="hidden" id="render-stripes" value="10">
@@ -1365,7 +1400,7 @@ button {
                 <div class="color-title">Compute Preview</div>
                 <div class="compute-preview-tabs" role="tablist" aria-label="Compute preview tabs">
                     <button type="button" id="compute-preview-tab-plot" class="compute-preview-tab-btn active" onclick="_setComputePreviewTab('plot')">Plot</button>
-                    <button type="button" id="compute-preview-tab-debug" class="compute-preview-tab-btn" onclick="_setComputePreviewTab('debug')">Compute Debug</button>
+                    <button type="button" id="compute-preview-tab-debug" class="compute-preview-tab-btn" onclick="_setComputePreviewTab('debug')">Debug</button>
                 </div>
                 <div id="compute-preview-plot-panel" class="compute-preview-panel active">
                     <div class="compute-preview-matrix">
@@ -4017,13 +4052,37 @@ function _markComputePreviewStale() {
     }
 }
 
+function _formatComputePreviewViewportNumber(value) {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return null;
+    const mag = Math.abs(num);
+    if (mag === 0) return '0';
+    return mag >= 1e-4 && mag < 1e6 ? Number(num.toPrecision(7)).toString() : num.toExponential(5);
+}
+
+function _computePreviewViewportInfoLines(result) {
+    const vp = result && result.viewport;
+    if (!vp) return [];
+    const minRe = _formatComputePreviewViewportNumber(vp.min_re);
+    const maxRe = _formatComputePreviewViewportNumber(vp.max_re);
+    const minIm = _formatComputePreviewViewportNumber(vp.min_im);
+    const maxIm = _formatComputePreviewViewportNumber(vp.max_im);
+    if (minRe == null || maxRe == null || minIm == null || maxIm == null) return [];
+    return [
+        `viewport Re: ${minRe} .. ${maxRe}`,
+        `viewport Im: ${minIm} .. ${maxIm}`,
+    ];
+}
+
 function _applyComputePreviewResult(result) {
     const box = _computePreviewBox();
     const statusEl = _computePreviewStatusEl();
+    const viewportLines = _computePreviewViewportInfoLines(result);
     const infoLines = [
         `solver: ${_solverTag(result.solver_mode || 'aberth_mt')}`,
         `image: ${result.image_width}×${result.image_height}`,
         `view: q=${((Number(result.quantile) || 0) * 100).toFixed(1)}% · shim=${((Number(result.shim) || 0) * 100).toFixed(1)}%`,
+        ...viewportLines,
         `degree: ${result.degree}`,
         `roots: ${result.n_roots_in_view}/${result.n_roots_total} in view`,
         `coeffs: ${((Number(result.coeffs_size) || 0) / 1e6).toFixed(1)}MB`,
@@ -11233,7 +11292,7 @@ const _ppCatalog = {
     },
     macro: {
         category: 'bridge',
-        params: [{ ph: 'program id', def: '' }],
+        params: [{ ph: 'program id', def: '', programWide: true, title: 'Saved param-program id to expand at compile time.' }],
         desc: 'expand a saved param program at compile time',
     },
     duplicate: { category: 'stack', desc: 'duplicate the top stack value' },
@@ -11440,7 +11499,7 @@ const _ssCatalog = (() => {
     return catalog;
 })();
 
-const _ctAndyParam = { ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', wide: true, title: 'Blend amount. In Program mode this may be a real scalar expression using p1/p2; in Chain mode it must be numeric.' };
+const _ctAndyParam = { ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: 'Blend amount in [0,1]. In Program mode this may be a real scalar expression using p1/p2; in Chain mode it must be numeric.' };
 const _ctCategoryMeta = {
     structural: { title: 'Structural', help: 'reorder, normalize, sanitize, or resize the coefficient vector' },
     accumulation: { title: 'Ordering + accumulation', help: 'sort or accumulate coefficients across the vector' },
@@ -11455,12 +11514,12 @@ const _ctCatalog = (() => {
         deriv: { category: 'structural', desc: 'differentiate the polynomial coefficients' },
         linear: {
             params: [
-                { ph: 'param1', label: 'param1', def: '100', complex: true, title: 'Complex multiplier in z*[param1]+[param2].' },
-                { ph: 'param2', label: 'param2', def: '0', complex: true, title: 'Complex offset in z*[param1]+[param2].' },
+                { ph: 'field1', label: 'field1', def: '100', complex: true, scalarExpr: 'complex', complexWide: true, title: 'Complex multiplier in z*[field1]+[field2]. Program mode accepts p1/p2 expressions.' },
+                { ph: 'field2', label: 'field2', def: '0', complex: true, scalarExpr: 'complex', complexWide: true, title: 'Complex offset in z*[field1]+[field2]. Program mode accepts p1/p2 expressions.' },
             ],
             label: 'linear',
             category: 'elementwise',
-            desc: 'z*[param1]+[param2]; scale100-compatible affine map',
+            desc: 'z*[field1]+[field2]; scale100-compatible affine map',
         },
         safe: { category: 'structural', desc: 'replace non-finite components with zero' },
         negate_odd: { category: 'structural', desc: 'negate odd-indexed coefficients' },
@@ -11472,18 +11531,34 @@ const _ctCatalog = (() => {
         cummax: { category: 'accumulation', desc: 'running maximum by coefficient magnitude' },
         sort_cumsum: { category: 'accumulation', desc: 'sort coefficients by cumulative-sum magnitude' },
         swirler: { category: 'elementwise', desc: 'multiply each coefficient by a modulus-driven complex swirl' },
-        exp: { params: [{ ph: 'a', def: '1' }, { ph: 'b', def: '0' }], label: 'exp', category: 'elementwise', desc: 'exp(z*(a+i*b))' },
+        exp: {
+            params: [
+                { ph: 'field1', label: 'field1', def: '1', scalarExpr: 'real', exprWide: true, title: 'Real multiplier component. Program mode accepts real p1/p2 expressions such as real(p1).' },
+                { ph: 'field2', label: 'field2', def: '0', scalarExpr: 'real', exprWide: true, title: 'Imaginary multiplier component. Program mode accepts real p1/p2 expressions such as imag(p2).' },
+            ],
+            label: 'exp',
+            category: 'elementwise',
+            desc: 'exp(z*(field1+i*field2))',
+        },
         cos: { label: 'cos', category: 'elementwise', desc: 'complex cosine of each coefficient' },
         sin: { label: 'sin', category: 'elementwise', desc: 'complex sine of each coefficient' },
         tan: { label: 'tan', category: 'elementwise', desc: 'complex tangent of each coefficient' },
         cosh: { label: 'cosh', category: 'elementwise', desc: 'complex hyperbolic cosine' },
         sinh: { label: 'sinh', category: 'elementwise', desc: 'complex hyperbolic sine' },
         tanh: { label: 'tanh', category: 'elementwise', desc: 'complex hyperbolic tangent' },
-        round: { params: [{ ph: 'a', def: '1' }, { ph: 'b', def: '0' }], label: 'round', category: 'elementwise', desc: 'round(z*(a+i*b)) componentwise' },
+        round: {
+            params: [
+                { ph: 'field1', label: 'field1', def: '1', scalarExpr: 'real', exprWide: true, title: 'Real multiplier component. Program mode accepts real p1/p2 expressions such as real(p1).' },
+                { ph: 'field2', label: 'field2', def: '0', scalarExpr: 'real', exprWide: true, title: 'Imaginary multiplier component. Program mode accepts real p1/p2 expressions such as imag(p2).' },
+            ],
+            label: 'round',
+            category: 'elementwise',
+            desc: 'round(z*(field1+i*field2)) componentwise',
+        },
         pow: {
             params: [
-                { ph: 'field1', label: 'field1', def: '1', complex: true, scalarExpr: 'complex', wide: true, title: 'Complex multiplier in pow(z*field1, field2).' },
-                { ph: 'field2', label: 'field2', def: '1', complex: true, scalarExpr: 'complex', wide: true, title: 'Complex exponent in pow(z*field1, field2).' },
+                { ph: 'field1', label: 'field1', def: '1', complex: true, scalarExpr: 'complex', complexWide: true, title: 'Complex multiplier in pow(z*field1, field2).' },
+                { ph: 'field2', label: 'field2', def: '1', complex: true, scalarExpr: 'complex', complexWide: true, title: 'Complex exponent in pow(z*field1, field2).' },
             ],
             label: 'pow',
             category: 'elementwise',
@@ -11509,6 +11584,10 @@ const _cpCategoryMeta = {
 };
 
 const _coeffProgramLegacyNames = Object.keys(_ctCatalog);
+const _coeffProgramVectorBinaryNames = ['add', 'subtract', 'multiply', 'divide', 'power'];
+const _coeffProgramVectorUnaryNames = ['angle', 'mod', 'abs'];
+const _coeffProgramVectorSourceChoices = ['poly', 'pop', 'peek'];
+const _coeffProgramVectorTargetChoices = ['poly', 'push'];
 function _canonicalCoeffTransformName(name) {
     const raw = String(name || '').trim();
     return raw === 'scale100' ? 'linear' : raw;
@@ -11564,17 +11643,75 @@ const _cpCatalog = (() => {
         pop: { category: 'stack', desc: 'discard the top vector' },
         flush: { category: 'stack', desc: 'clear the vector stack' },
         blend: { category: 'vector', params: [{ ph: 't', def: '0.5', scalarExpr: 'real', title: 'Real scalar expression. Use real(p1) or imag(p2) when deriving from parameter registers.' }], desc: 'blend below*(1-t) + top*t for same-length vectors' },
-        macro: { category: 'macro', params: [{ ph: 'program id', def: '' }], desc: 'expand a saved coeff program at compile time' },
+        argsort: {
+            category: 'vector',
+            params: [
+                { ph: 'tgt', def: 'poly', choices: _coeffProgramVectorTargetChoices, selectorWide: true, title: 'Output target: write poly or push the sorted result.' },
+                { ph: 'src1', def: 'poly', choices: _coeffProgramVectorSourceChoices, selectorWide: true, title: 'Vector to reorder.' },
+                { ph: 'src2', def: 'poly', choices: _coeffProgramVectorSourceChoices, selectorWide: true, title: 'Sort key vector. Values are ordered by complex magnitude.' },
+            ],
+            desc: 'reorder src1 by ascending magnitude of src2',
+        },
+        roll: {
+            category: 'vector',
+            params: [
+                { ph: 'tgt', def: 'poly', choices: _coeffProgramVectorTargetChoices, selectorWide: true, title: 'Output target: write poly or push the rolled vector.' },
+                { ph: 'src', def: 'poly', choices: _coeffProgramVectorSourceChoices, selectorWide: true, title: 'Input vector to roll left.' },
+                { ph: 'n', def: '1', intLiteral: true, title: 'Integer roll amount. Negative values roll the other direction.' },
+            ],
+            desc: 'roll vector left by n positions',
+        },
+        rolr: {
+            category: 'vector',
+            params: [
+                { ph: 'tgt', def: 'poly', choices: _coeffProgramVectorTargetChoices, selectorWide: true, title: 'Output target: write poly or push the rolled vector.' },
+                { ph: 'src', def: 'poly', choices: _coeffProgramVectorSourceChoices, selectorWide: true, title: 'Input vector to roll right.' },
+                { ph: 'n', def: '1', intLiteral: true, title: 'Integer roll amount. Negative values roll the other direction.' },
+            ],
+            desc: 'roll vector right by n positions',
+        },
+        littlewood: {
+            category: 'vector',
+            params: [
+                { ph: 'tgt', def: 'poly', choices: _coeffProgramVectorTargetChoices, selectorWide: true, title: 'Output target: write poly or push the generated vector.' },
+                { ph: 'field1', label: 'field1', def: '0', complex: true, scalarExpr: 'complex', complexWide: true, title: 'First complex value. Each coefficient randomly chooses field1 or field2 with 50/50 odds.' },
+                { ph: 'field2', label: 'field2', def: '1', complex: true, scalarExpr: 'complex', complexWide: true, title: 'Second complex value. Each coefficient randomly chooses field1 or field2 with 50/50 odds.' },
+                { ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: 'Blend generated values with current poly: output*(1-andy)+poly*andy.' },
+            ],
+            desc: 'generate a random Littlewood-style vector using current poly length',
+        },
+        macro: { category: 'macro', params: [{ ph: 'program id', def: '', programWide: true, title: 'Saved coeff-program id to expand at compile time.' }], desc: 'expand a saved coeff program at compile time' },
         legacy: {
             category: 'legacy',
             params: [
-                { ph: 'name', def: 'rev', choices: _coeffProgramLegacyNames },
-                { ph: 'src', def: 'poly', choices: ['cf', 'poly', 'pop', 'peek'] },
-                { ph: 'tgt', def: 'poly', choices: ['poly', 'push'] },
+                { ph: 'name', def: 'rev', choices: _coeffProgramLegacyNames, functionWide: true, title: 'Legacy coefficient transform function. Compiled to a stable numeric function index.' },
+                { ph: 'src', def: 'poly', choices: ['cf', 'poly', 'pop', 'peek'], selectorWide: true, title: 'Input vector: cf read-only coefficients, current poly, pop stack, or peek stack.' },
+                { ph: 'tgt', def: 'poly', choices: ['poly', 'push'], selectorWide: true, title: 'Output target: write poly or push the result onto the stack.' },
             ],
             desc: 'call an existing coefficient transform with explicit source and target',
         },
     };
+    _coeffProgramVectorBinaryNames.forEach(name => {
+        catalog[name] = {
+            category: 'vector',
+            params: [
+                { ph: 'tgt', def: 'poly', choices: _coeffProgramVectorTargetChoices, selectorWide: true, title: 'Output target: write poly or push the result.' },
+                { ph: 'src1', def: 'poly', choices: _coeffProgramVectorSourceChoices, selectorWide: true, title: 'First input vector. pop consumes the current stack top.' },
+                { ph: 'src2', def: 'poly', choices: _coeffProgramVectorSourceChoices, selectorWide: true, title: 'Second input vector. If src1 also pops, this sees the next stack value.' },
+            ],
+            desc: `${name}(src1, src2) elementwise vector operation`,
+        };
+    });
+    _coeffProgramVectorUnaryNames.forEach(name => {
+        catalog[name] = {
+            category: 'vector',
+            params: [
+                { ph: 'tgt', def: 'poly', choices: _coeffProgramVectorTargetChoices, selectorWide: true, title: 'Output target: write poly or push the result.' },
+                { ph: 'src', def: 'poly', choices: _coeffProgramVectorSourceChoices, selectorWide: true, title: 'Input vector.' },
+            ],
+            desc: `${name}(src) vector operation`,
+        };
+    });
     Object.entries(_ctCatalog).forEach(([name, spec]) => {
         const sugarName = _coeffProgramPolySugarName(name);
         catalog[sugarName] = {
@@ -13137,7 +13274,15 @@ function _chipReadonlyValueHtml(value, paramDef = {}, title = '') {
     const fallback = pd.def == null ? '' : pd.def;
     const text = String(value == null || value === '' ? fallback : value);
     const titleAttr = title ? ` title="${_escapeHtml(title)}"` : '';
-    return `<span class="chip-input chip-input-readonly"${titleAttr}>${_escapeHtml(text)}</span>`;
+    const clsParts = ['chip-input', 'chip-input-readonly'];
+    if (pd.selectorWide) clsParts.push('chip-input-selector-wide');
+    if (pd.functionWide) clsParts.push('chip-input-function-wide');
+    if (pd.complexWide) clsParts.push('chip-input-complex-wide');
+    if (pd.exprWide) clsParts.push('chip-input-expr-wide');
+    if (pd.programWide) clsParts.push('chip-input-program-wide');
+    if (pd.wide === true || (pd.scalarExpr && !pd.complexWide && !pd.exprWide)) clsParts.push('chip-input-wide');
+    if (pd.ph === 'andy') clsParts.push('chip-input-andy');
+    return `<span class="${clsParts.join(' ')}"${titleAttr}>${_escapeHtml(text)}</span>`;
 }
 
 function _chipInputHtml(which, chipIdx, paramIdx, value, paramDef, options = {}) {
@@ -13158,12 +13303,19 @@ function _chipInputHtml(which, chipIdx, paramIdx, value, paramDef, options = {})
             const selected = normalizedValue === choice ? ' selected' : '';
             return `<option value="${_escapeHtml(choice)}"${selected}>${_escapeHtml(choice)}</option>`;
         }).join('');
-        return `<select class="chip-input"${titleAttr} onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">${options}</select>`;
+        const clsParts = ['chip-input'];
+        if (pd.selectorWide) clsParts.push('chip-input-selector-wide');
+        if (pd.functionWide) clsParts.push('chip-input-function-wide');
+        if (pd.choiceWide || pd.wide === true) clsParts.push('chip-input-wide');
+        return `<select class="${clsParts.join(' ')}"${titleAttr} onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">${options}</select>`;
     }
     const im = (pd.target || pd.choices || pd.complexPairNext || pd.complex || pd.scalarExpr || pd.ph === 'andy') ? 'text' : 'decimal';
     const clsParts = ['chip-input'];
     if (pd.ph === 'andy') clsParts.push('chip-input-andy');
-    if (pd.scalarExpr || pd.wide) clsParts.push('chip-input-wide');
+    if (pd.complexWide) clsParts.push('chip-input-complex-wide');
+    if (pd.exprWide) clsParts.push('chip-input-expr-wide');
+    if (pd.programWide) clsParts.push('chip-input-program-wide');
+    if (pd.wide === true || (pd.scalarExpr && !pd.complexWide && !pd.exprWide)) clsParts.push('chip-input-wide');
     const cls = clsParts.join(' ');
     return `<input class="${cls}" type="text" inputmode="${im}" value="${_escapeHtml(value)}" placeholder="${_escapeHtml(pd.ph || '')}"${titleAttr} onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">`;
 }
@@ -13385,6 +13537,108 @@ function _coeffProgramLegacyInputDefs(legacyName) {
     return (spec.params || []).map(p => ({ ...p }));
 }
 
+function _coeffProgramLegacyValues(params, legacyDefs) {
+    const values = [
+        String(params[0] || 'rev').trim() || 'rev',
+        params[1] || 'poly',
+        params[2] || 'poly',
+    ];
+    legacyDefs.forEach((pDef, idx) => {
+        values.push(params[idx + 3] !== undefined && params[idx + 3] !== '' ? params[idx + 3] : String(pDef.def || ''));
+    });
+    return values;
+}
+
+function _coeffProgramLegacyAndyHtml(i, values, legacyDefs, options = {}) {
+    const andyIdx = legacyDefs.findIndex(pDef => pDef && pDef.ph === 'andy');
+    if (andyIdx < 0) return '';
+    const paramIdx = 3 + andyIdx;
+    return `<span class="chip-op">andy=</span>${_chipInputHtml('cp', i, paramIdx, values[paramIdx], legacyDefs[andyIdx] || _ctAndyParam, options)}`;
+}
+
+function _coeffProgramLegacyFormulaHtml(i, legacyName, values, legacyDefs, options = {}) {
+    const pDefs = _cpCatalog.legacy.params || [];
+    const fn = _chipInputHtml('cp', i, 0, values[0], pDefs[0] || {}, options);
+    const src = _chipInputHtml('cp', i, 1, values[1], pDefs[1] || {}, options);
+    const tgt = _chipInputHtml('cp', i, 2, values[2], pDefs[2] || {}, options);
+    const arg = (idx) => _chipInputHtml('cp', i, 3 + idx, values[3 + idx], legacyDefs[idx] || {}, options);
+    const andy = _coeffProgramLegacyAndyHtml(i, values, legacyDefs, options);
+    if (legacyName === 'pow') {
+        const field1 = arg(0);
+        const field2 = arg(1);
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${fn}<span>(</span>${src}<span class="chip-op">*</span>${field1}<span class="chip-op">,</span>${field2}<span>)</span>${andy}</span>`;
+    }
+    if (legacyName === 'linear') {
+        const field1 = arg(0);
+        const field2 = arg(1);
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${fn}<span>(</span>${src}<span class="chip-op">*</span>${field1}<span class="chip-op">+</span>${field2}<span>)</span>${andy}</span>`;
+    }
+    if (legacyName === 'exp' || legacyName === 'round') {
+        const field1 = arg(0);
+        const field2 = arg(1);
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${fn}<span>(</span>${src}<span class="chip-op">*</span>${field1}<span class="chip-op">,</span>${field2}<span>)</span>${andy}</span>`;
+    }
+    const nonAndyArgs = legacyDefs
+        .map((pDef, idx) => ({ pDef, idx }))
+        .filter(entry => entry.pDef && entry.pDef.ph !== 'andy')
+        .map(entry => `<span class="chip-op">,</span>${arg(entry.idx)}`)
+        .join('');
+    return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${fn}<span>(</span>${src}${nonAndyArgs}<span>)</span>${andy}</span>`;
+}
+
+function _coeffProgramPolySugarFormulaHtml(i, legacyName, params, legacyDefs, options = {}) {
+    const arg = (idx) => _chipInputHtml('cp', i, idx, params[idx] !== undefined && params[idx] !== '' ? params[idx] : String(legacyDefs[idx]?.def || ''), legacyDefs[idx] || {}, options);
+    const andyIdx = legacyDefs.findIndex(pDef => pDef && pDef.ph === 'andy');
+    const andy = andyIdx >= 0
+        ? `<span class="chip-op">andy=</span>${arg(andyIdx)}`
+        : '';
+    if (legacyName === 'linear') {
+        const field1 = arg(0);
+        const field2 = arg(1);
+        return `<span class="chip-formula"><span>poly=linear(poly*</span>${field1}<span class="chip-op">+</span>${field2}<span>)</span>${andy}</span>`;
+    }
+    if (legacyName === 'pow') {
+        const field1 = arg(0);
+        const field2 = arg(1);
+        return `<span class="chip-formula"><span>poly=pow(poly*</span>${field1}<span class="chip-op">,</span>${field2}<span>)</span>${andy}</span>`;
+    }
+    if (legacyName === 'exp') {
+        const field1 = arg(0);
+        const field2 = arg(1);
+        return `<span class="chip-formula"><span>poly=exp(poly*</span>${field1}<span class="chip-op">,</span>${field2}<span>)</span>${andy}</span>`;
+    }
+    if (legacyName === 'round') {
+        const field1 = arg(0);
+        const field2 = arg(1);
+        return `<span class="chip-formula"><span>poly=round(poly*</span>${field1}<span class="chip-op">,</span>${field2}<span>)</span>${andy}</span>`;
+    }
+    const nonAndyArgs = legacyDefs
+        .map((pDef, idx) => ({ pDef, idx }))
+        .filter(entry => entry.pDef && entry.pDef.ph !== 'andy')
+        .map(entry => `<span class="chip-op">,</span>${arg(entry.idx)}`)
+        .join('');
+    return `<span class="chip-formula"><span>poly=${_escapeHtml(legacyName)}(poly</span>${nonAndyArgs}<span>)</span>${andy}</span>`;
+}
+
+function _coeffProgramVectorFormulaHtml(item, i, pDefs, options = {}) {
+    const params = Array.isArray(item.params) ? item.params : [];
+    const input = (idx) => _chipInputHtml('cp', i, idx, params[idx] !== undefined && params[idx] !== '' ? params[idx] : String(pDefs[idx]?.def || ''), pDefs[idx] || {}, options);
+    const tgt = input(0);
+    if (_coeffProgramVectorBinaryNames.includes(item.name) || item.name === 'argsort') {
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span><span>${_escapeHtml(item.name)}(</span>${input(1)}<span class="chip-op">,</span>${input(2)}<span>)</span></span>`;
+    }
+    if (_coeffProgramVectorUnaryNames.includes(item.name)) {
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span><span>${_escapeHtml(item.name)}(</span>${input(1)}<span>)</span></span>`;
+    }
+    if (item.name === 'roll' || item.name === 'rolr') {
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span><span>${_escapeHtml(item.name)}(</span>${input(1)}<span class="chip-op">,</span>${input(2)}<span>)</span></span>`;
+    }
+    if (item.name === 'littlewood') {
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span><span>littlewood(</span>${input(1)}<span class="chip-op">,</span>${input(2)}<span>)</span><span class="chip-op">andy=</span>${input(3)}</span>`;
+    }
+    return '';
+}
+
 function _renderCoeffProgramChipHtml(item, i, options = {}) {
     const readonly = !!options.readonly;
     const spec = _cpCatalog[item.name] || {};
@@ -13393,26 +13647,34 @@ function _renderCoeffProgramChipHtml(item, i, options = {}) {
     if (item.name === 'legacy') {
         const legacyName = String(params[0] || 'rev').trim() || 'rev';
         const legacyDefs = _coeffProgramLegacyInputDefs(legacyName);
-        const inputDefs = (spec.params || []).concat(legacyDefs);
-        const values = [legacyName, params[1] || 'poly', params[2] || 'poly'];
-        legacyDefs.forEach((pDef, idx) => {
-            values.push(params[idx + 3] !== undefined && params[idx + 3] !== '' ? params[idx + 3] : String(pDef.def || ''));
-        });
-        const inputsHtml = inputDefs.map((pDef, pi) =>
-            _chipLabeledInputHtml('cp', i, pi, values[pi], pDef || {}, { readonly })
-        ).join('');
-        return _coeffProgramChipShellHtml(i, readonly, `<span class="chip-formula"><span>${label}</span>${inputsHtml}</span>`);
+        const values = _coeffProgramLegacyValues(params, legacyDefs);
+        return _coeffProgramChipShellHtml(i, readonly, _coeffProgramLegacyFormulaHtml(i, legacyName, values, legacyDefs, { readonly }));
     }
     const pDefs = spec.params || [];
     if (item.name === 'poly-linear') {
         const param1 = _chipInputHtml('cp', i, 0, params[0] || pDefs[0]?.def || '100', pDefs[0] || {}, { readonly });
         const param2 = _chipInputHtml('cp', i, 1, params[1] || pDefs[1]?.def || '0', pDefs[1] || {}, { readonly });
-        return _coeffProgramChipShellHtml(i, readonly, `<span class="chip-formula"><span>${label}</span><span class="chip-op">·</span><span>z*</span>${param1}<span class="chip-op">+</span>${param2}<span class="chip-op">·</span>${_ctAndyHtml('cp', i, item, pDefs, { readonly })}</span>`);
+        return _coeffProgramChipShellHtml(i, readonly, `<span class="chip-formula"><span>poly=linear(poly*</span>${param1}<span class="chip-op">+</span>${param2}<span>)</span>${_ctAndyHtml('cp', i, item, pDefs, { readonly })}</span>`);
     }
     if (item.name === 'poly-pow') {
         const field1 = _chipInputHtml('cp', i, 0, params[0] || pDefs[0]?.def || '1', pDefs[0] || {}, { readonly });
         const field2 = _chipInputHtml('cp', i, 1, params[1] || pDefs[1]?.def || '1', pDefs[1] || {}, { readonly });
-        return _coeffProgramChipShellHtml(i, readonly, `<span class="chip-formula"><span>poly=pow(poly*</span>${field1}<span class="chip-op">,</span>${field2}<span>)</span><span class="chip-op">·</span>${_ctAndyHtml('cp', i, item, pDefs, { readonly })}</span>`);
+        return _coeffProgramChipShellHtml(i, readonly, `<span class="chip-formula"><span>poly=pow(poly*</span>${field1}<span class="chip-op">,</span>${field2}<span>)</span>${_ctAndyHtml('cp', i, item, pDefs, { readonly })}</span>`);
+    }
+    if (
+        _coeffProgramVectorBinaryNames.includes(item.name)
+        || _coeffProgramVectorUnaryNames.includes(item.name)
+        || item.name === 'argsort'
+        || item.name === 'roll'
+        || item.name === 'rolr'
+        || item.name === 'littlewood'
+    ) {
+        return _coeffProgramChipShellHtml(i, readonly, _coeffProgramVectorFormulaHtml(item, i, pDefs, { readonly }));
+    }
+    const legacySugarName = _coeffProgramLegacyNameFromSugar(item.name);
+    if (legacySugarName) {
+        const legacyDefs = _coeffProgramLegacyInputDefs(legacySugarName);
+        return _coeffProgramChipShellHtml(i, readonly, _coeffProgramPolySugarFormulaHtml(i, legacySugarName, params, legacyDefs, { readonly }));
     }
     const inputsHtml = pDefs.map((pDef, pi) => {
         const value = params[pi] !== undefined && params[pi] !== '' ? params[pi] : String(pDef.def || '');

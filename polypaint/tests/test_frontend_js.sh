@@ -129,7 +129,7 @@ assertIncludes("poke_poly: {", 'Coeff Program picker should expose poke_poly');
 assertIncludes("poke_tos: {", 'Coeff Program picker should expose poke_tos');
 assertIncludes("write value into poly[index] without touching the stack", 'Coeff Program poke_poly should describe direct poly mutation');
 assertIncludes("write value into the top stack vector without popping it", 'Coeff Program poke_tos should describe top-of-stack mutation');
-assertIncludes("May use p1/p2, literals, + - * /, conj/real/imag. t1/t2 are not available here.", 'Coeff Program const value tooltip should name the allowed scalar-expression registers');
+assertIncludes("Program mode accepts p1/p2, poly_len, cfN, polyN, tosN, literals, + - * /, and conj/real/imag.", 'Coeff Program scalar expression tooltip should name the allowed registers and vector element reads');
 assertIncludes("commit poly; pops stack top into poly when present", 'Coeff Program picker should describe emit commit semantics');
 assertIncludes("blend below*(1-t) + top*t for same-length vectors", 'Coeff Program picker should expose vector blend chip');
 assertIncludes("const _coeffProgramVectorBinaryNames = ['add', 'subtract', 'multiply', 'divide', 'power'];", 'Coeff Program picker should expose first-class vector binary ops');
@@ -170,10 +170,12 @@ assertIncludes("chip-input-complex-wide", 'Coeff Program complex expression fiel
 assertIncludes("legacyName === 'exp'", 'Coeff Program poly-exp chip should render as a formula with source/target selectors');
 assertIncludes("exp(z*field1+field2)", 'Coeff Program exp chip should document complex multiplier plus offset semantics');
 assertIncludes("legacyName === 'round'", 'Coeff Program poly-round chip should render as a formula with source/target selectors');
+assertIncludes("Complex multiplier in round(z*multiplier)", 'Coeff Program round chip should expose one compact complex multiplier field');
+assertIncludes("${nameLabel}<span>(</span>${src}<span class=\"chip-op\">*</span>${field1}<span>)</span>${andy}", 'Coeff Program round formula should not waste UI on field1+i*field2 formatting');
 assertIncludes("Legacy coefficient transform function. Compiled to a stable numeric function index.", 'Coeff Program legacy function selector should explain what it selects');
 assertIncludes("Input vector: cf read-only coefficients, current poly, pop stack, or peek stack.", 'Coeff Program legacy src selector should have a tooltip');
 assertIncludes("Output target: write poly or push the result onto the stack.", 'Coeff Program legacy tgt selector should have a tooltip');
-assertIncludes("Blend amount in [0,1]. In Program mode this may be a real scalar expression using p1/p2", 'Coeff Program andy fields should advertise expression support');
+assertIncludes("Blend amount in [0,1]. ${_cpScalarExprHelp} In Chain mode it must be numeric.", 'Coeff Program andy fields should advertise expression support');
 assertIncludes("function _parseCtComplexConstant(value) {", 'frontend should parse complex constants consistently for coefficient inputs');
 assertIncludes("function _formatCfpvForDisplay(funcName, cfpv) {", 'coefficient function parameters should have a logical display formatter');
 assertIncludes("return `degree=${degree}, value=${_formatCfpvComplexValue(re, im)}`;", 'const coefficient function should display degree plus one complex value');
@@ -488,7 +490,7 @@ function assert(cond, message) {
 async function main() {
   const solveScoreCatalogBlock = extractBetween(
     "const _solveScoreMetricNames = [",
-    "const _ctAndyParam = { ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: 'Blend amount in [0,1]. In Program mode this may be a real scalar expression using p1/p2; in Chain mode it must be numeric.' };",
+    "const _ctAndyParam = { ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: `Blend amount in [0,1]. ${_cpScalarExprHelp} In Chain mode it must be numeric.` };",
     'solve-score catalog block'
   );
   const code = [

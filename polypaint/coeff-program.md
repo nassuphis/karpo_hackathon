@@ -599,17 +599,19 @@ Some coefficient-program chips need scalar complex arguments:
 - future vector arithmetic chips, if shipped
 
 V1 should support a small compiled scalar-expression language for these
-arguments. It is row-dependent because it can read `p1` and `p2`, but it is not
+arguments. It is row-dependent because it can read `p1`, `p2`, the current
+coefficient vectors, and the current vector lengths, but it is not
 string-parsed in the row loop.
 
 Allowed source syntax:
 
 ```text
-complex literals: 1, -2.5, 1e-6, 1+2i, -2i+4
-registers:        p1, p2
-unary funcs:      conj(x), neg(x), real(x), imag(x)
-binary ops:       x + y, x - y, x * y, x / y
-parentheses:      (p1 + p2) * 0.5
+complex literals:  1, -2.5, 1e-6, 1+2i, -2i+4
+scalar registers:  p1, p2, poly_len
+vector element:    cf0, cf1, poly0, poly31, tos0, tos32
+unary funcs:       conj(x), neg(x), real(x), imag(x)
+binary ops:        x + y, x - y, x * y, x / y
+parentheses:       (p1 + p2) * 0.5
 ```
 
 Compile model:
@@ -621,18 +623,29 @@ source expression -> scalar expression bytecode or folded literal
 Native evaluation:
 
 ```text
-eval_scalar_expr(expr, p1, p2) -> complex scalar
+eval_scalar_expr(expr, p1, p2, cf, poly, top_of_stack) -> complex scalar
 ```
 
 Rules:
 
 - expressions are compiled once with the coefficient program
 - literals are folded at compile time
-- expressions that do not reference `p1` / `p2` should be stored as constants
+- expressions that do not reference row-dependent registers should be stored as
+  constants
 - row-loop evaluation walks integer expression opcodes, not strings
+- `poly_len` evaluates to the current mutable `poly` register length
+- `cfN` reads the Nth element of immutable coefficient-function output `cf`
+- `polyN` reads the Nth element of current mutable output register `poly`
+- `tosN` reads the Nth element of the current top-of-stack vector without
+  popping it
+- `cfN`, `polyN`, and `tosN` use zero-based indices and compile only for
+  `N in [0,255]`; runtime rejects out-of-range reads with chip context
+- `tosN` is a runtime error when the vector stack is empty
 - argument declarations still own type checking:
   - `push_const(length,value)` accepts complex expression results for `value`
   - `linear` accepts two complex expressions: multiplier and offset
+  - `exp`, `pow`, and Program-mode `round` also accept compact complex
+    expressions; do not display these as `field1+i*field2` in the Program UI
   - other v1 legacy-bridge transform args are limited to real, integer, and
     enum declarations until the C bridge explicitly supports complex args for
     those transforms

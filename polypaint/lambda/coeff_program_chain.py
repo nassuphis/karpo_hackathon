@@ -59,6 +59,10 @@ EXPR_CONJ = 8
 EXPR_NEG = 9
 EXPR_REAL = 10
 EXPR_IMAG = 11
+EXPR_POLY_LEN = 12
+EXPR_CF_AT = 13
+EXPR_POLY_AT = 14
+EXPR_TOS_AT = 15
 
 _OP_NAMES = {
     COEFF_OP_CONST: "push_const",
@@ -493,6 +497,17 @@ class _ExpressionParser:
                 return _Expr([{"op": EXPR_P1}], kind="complex", dynamic=True)
             if token_value == "p2":
                 return _Expr([{"op": EXPR_P2}], kind="complex", dynamic=True)
+            if token_value == "poly_len":
+                return _Expr([{"op": EXPR_POLY_LEN}], kind="real", dynamic=True)
+            match = re.fullmatch(r"(cf|poly|tos)(\d+)", token_value)
+            if match:
+                index = int(match.group(2))
+                if index < 0 or index >= MAX_VECTOR_LEN:
+                    raise RuntimeError(
+                        f"{match.group(1)} index must be in [0,{MAX_VECTOR_LEN - 1}], got {index}"
+                    )
+                op = {"cf": EXPR_CF_AT, "poly": EXPR_POLY_AT, "tos": EXPR_TOS_AT}[match.group(1)]
+                return _Expr([{"op": op, "a": index}], kind="complex", dynamic=True)
             raise RuntimeError(f"unknown scalar expression identifier {token_value!r}")
         if token_type == "(":
             expr = self._expr()
@@ -858,11 +873,53 @@ def _exp_legacy_args(spec, raw_args, scalar_exprs):
     )
 
 
+def _round_legacy_args(spec, raw_args, scalar_exprs):
+    raw_args = list(raw_args)
+    andy = 0.0
+    andy_expr_ref = -1
+    andy_raw = None
+    if spec.get("supports_andy") and len(raw_args) == 3:
+        # Back-compat for the old real/imag component form: round(a, b, andy).
+        andy_raw = raw_args[-1]
+        raw_args = raw_args[:-1]
+        args = []
+        args_im = []
+        expr_refs = []
+        for idx, raw in enumerate(raw_args):
+            expr = _compile_expr(raw, label=f"legacy(round) old real arg {idx}", expected="real")
+            re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="real")
+            args.append(re)
+            args_im.append(im)
+            expr_refs.append(ref)
+        andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, "legacy(round) andy")
+        return args, args_im, expr_refs, andy, andy_expr_ref
+    if spec.get("supports_andy") and len(raw_args) == 2:
+        andy_raw = raw_args[-1]
+        raw_args = raw_args[:-1]
+    if len(raw_args) > 1:
+        raise RuntimeError("legacy(round) expects multiplier and optional andy")
+    raw_multiplier = raw_args[0] if raw_args else "1"
+    mult_re, mult_im, mult_re_ref, mult_im_ref = _compile_complex_components(
+        raw_multiplier, scalar_exprs, "legacy(round) multiplier"
+    )
+    if andy_raw is not None:
+        andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, "legacy(round) andy")
+    return (
+        [mult_re, mult_im],
+        [0.0, 0.0],
+        [mult_re_ref, mult_im_ref],
+        andy,
+        andy_expr_ref,
+    )
+
+
 def _legacy_args(spec, raw_args, scalar_exprs):
     if int(spec.get("fn_index") or 0) == 14:
         return _linear_legacy_args(spec, raw_args, scalar_exprs)
     if int(spec.get("fn_index") or 0) == 16:
         return _exp_legacy_args(spec, raw_args, scalar_exprs)
+    if int(spec.get("fn_index") or 0) == 23:
+        return _round_legacy_args(spec, raw_args, scalar_exprs)
     if int(spec.get("fn_index") or 0) == 24:
         return _pow_legacy_args(spec, raw_args, scalar_exprs)
     declared = list(spec["args"])

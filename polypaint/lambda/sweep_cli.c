@@ -3373,7 +3373,11 @@ enum CoeffExprOp {
     COEFF_EXPR_CONJ = 8,
     COEFF_EXPR_NEG = 9,
     COEFF_EXPR_REAL = 10,
-    COEFF_EXPR_IMAG = 11
+    COEFF_EXPR_IMAG = 11,
+    COEFF_EXPR_POLY_LEN = 12,
+    COEFF_EXPR_CF_AT = 13,
+    COEFF_EXPR_POLY_AT = 14,
+    COEFF_EXPR_TOS_AT = 15
 };
 
 typedef struct {
@@ -3660,6 +3664,8 @@ static int parseCoeffProgram(const char *buf, CoeffProgram *program) {
 
 static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
                                double p1r, double p1i, double p2r, double p2i,
+                               const double *cfRe, const double *cfIm, int cfLen,
+                               const CoeffProgramWorkspace *ws,
                                double *outR, double *outI) {
     if (ref < 0 || ref >= program->scalar_expr_count) {
         fprintf(stderr, "coeff_program scalar expression ref out of range: %d\n", ref);
@@ -3673,14 +3679,47 @@ static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
         int op = (int)expr->nums[pc];
         double a = expr->nums[pc + 1];
         double b = expr->nums[pc + 2];
-        if (op == COEFF_EXPR_LITERAL || op == COEFF_EXPR_P1 || op == COEFF_EXPR_P2) {
+        if (op == COEFF_EXPR_LITERAL || op == COEFF_EXPR_P1 || op == COEFF_EXPR_P2 ||
+            op == COEFF_EXPR_POLY_LEN || op == COEFF_EXPR_CF_AT ||
+            op == COEFF_EXPR_POLY_AT || op == COEFF_EXPR_TOS_AT) {
             if (sp >= (int)(sizeof(stackR) / sizeof(stackR[0]))) return 1;
             if (op == COEFF_EXPR_LITERAL) {
                 stackR[sp] = a; stackI[sp] = b;
             } else if (op == COEFF_EXPR_P1) {
                 stackR[sp] = p1r; stackI[sp] = p1i;
-            } else {
+            } else if (op == COEFF_EXPR_P2) {
                 stackR[sp] = p2r; stackI[sp] = p2i;
+            } else if (op == COEFF_EXPR_POLY_LEN) {
+                stackR[sp] = ws ? (double)ws->poly_len : 0.0; stackI[sp] = 0.0;
+            } else {
+                int idx = (int)a;
+                if (op == COEFF_EXPR_CF_AT) {
+                    if (idx < 0 || idx >= cfLen) {
+                        fprintf(stderr, "coeff_program scalar expression cf%d out of range for cf_len=%d\n", idx, cfLen);
+                        return 1;
+                    }
+                    stackR[sp] = cfRe[idx]; stackI[sp] = cfIm[idx];
+                } else if (op == COEFF_EXPR_POLY_AT) {
+                    if (!ws || idx < 0 || idx >= ws->poly_len) {
+                        fprintf(stderr, "coeff_program scalar expression poly%d out of range for poly_len=%d\n",
+                                idx, ws ? ws->poly_len : 0);
+                        return 1;
+                    }
+                    stackR[sp] = ws->poly_re[idx]; stackI[sp] = ws->poly_im[idx];
+                } else {
+                    if (!ws || ws->stack_depth == 0) {
+                        fprintf(stderr, "coeff_program scalar expression tos%d requires stack depth >=1\n", idx);
+                        return 1;
+                    }
+                    uint16_t slot = (uint16_t)((ws->stack_head + COEFF_PROGRAM_MAX_VECTOR_STACK - 1) %
+                                               COEFF_PROGRAM_MAX_VECTOR_STACK);
+                    if (idx < 0 || idx >= ws->stack_len[slot]) {
+                        fprintf(stderr, "coeff_program scalar expression tos%d out of range for top vector length=%d\n",
+                                idx, ws->stack_len[slot]);
+                        return 1;
+                    }
+                    stackR[sp] = ws->stack_re[slot][idx]; stackI[sp] = ws->stack_im[slot][idx];
+                }
             }
             sp++;
             continue;
@@ -3726,6 +3765,8 @@ static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
 
 static int coeffArgValue(const CoeffProgram *program, const CoeffProgramToken *tok, int idx,
                          double p1r, double p1i, double p2r, double p2i,
+                         const double *cfRe, const double *cfIm, int cfLen,
+                         const CoeffProgramWorkspace *ws,
                          double *outR, double *outI) {
     if (idx < 0 || idx >= COEFF_PROGRAM_MAX_ARGS) return 1;
     int ref = tok->expr_refs[idx];
@@ -3735,7 +3776,7 @@ static int coeffArgValue(const CoeffProgram *program, const CoeffProgramToken *t
                     ref, program->scalar_expr_count);
             return 1;
         }
-        return coeffEvalScalarExpr(program, ref, p1r, p1i, p2r, p2i, outR, outI);
+        return coeffEvalScalarExpr(program, ref, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, outR, outI);
     }
     *outR = tok->args[idx];
     *outI = tok->args_im[idx];
@@ -3744,6 +3785,8 @@ static int coeffArgValue(const CoeffProgram *program, const CoeffProgramToken *t
 
 static int coeffAndyValue(const CoeffProgram *program, const CoeffProgramToken *tok,
                           double p1r, double p1i, double p2r, double p2i,
+                          const double *cfRe, const double *cfIm, int cfLen,
+                          const CoeffProgramWorkspace *ws,
                           double *out) {
     if (!out) return 1;
     if (tok->andy_expr_ref >= 0) {
@@ -3753,7 +3796,7 @@ static int coeffAndyValue(const CoeffProgram *program, const CoeffProgramToken *
                     tok->andy_expr_ref, program->scalar_expr_count);
             return 1;
         }
-        if (coeffEvalScalarExpr(program, tok->andy_expr_ref, p1r, p1i, p2r, p2i, &ar, &ai) != 0) {
+        if (coeffEvalScalarExpr(program, tok->andy_expr_ref, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &ar, &ai) != 0) {
             return 1;
         }
         if (fabs(ai) > 1e-12 || !isfinite(ar)) {
@@ -4009,15 +4052,16 @@ static uint64_t coeffProgramLittlewoodSeed(uint64_t evalSeed, int tokenIndex,
 static int coeffProgramLittlewoodOp(const CoeffProgram *program,
                                     const CoeffProgramToken *tok,
                                     CoeffProgramWorkspace *ws,
+                                    const double *cfRe, const double *cfIm, int cfLen,
                                     int tokenIndex,
                                     uint64_t evalSeed,
                                     double p1r, double p1i,
                                     double p2r, double p2i) {
     double aR = 0.0, aI = 0.0, bR = 0.0, bI = 0.0, andy = 0.0, andyI = 0.0;
-    if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, &aR, &aI) != 0) return 1;
-    if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, &bR, &bI) != 0) return 1;
+    if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &aR, &aI) != 0) return 1;
+    if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &bR, &bI) != 0) return 1;
     if (tok->n_args > 2) {
-        if (coeffArgValue(program, tok, 2, p1r, p1i, p2r, p2i, &andy, &andyI) != 0) return 1;
+        if (coeffArgValue(program, tok, 2, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &andy, &andyI) != 0) return 1;
         if (fabs(andyI) > 1e-12 || !isfinite(andy)) {
             fprintf(stderr, "Coeff Program littlewood andy requires finite real value\n");
             return 1;
@@ -4078,7 +4122,7 @@ static int evalCoeffProgram(const CoeffProgram *program,
             int len = (int)tok->args[0];
             double vr = 0.0, vi = 0.0;
             if (len == -1) len = ws->poly_len;
-            if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, &vr, &vi) != 0) return 1;
+            if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &vr, &vi) != 0) return 1;
             if (coeff_program_check_len(len, "push_const") != 0) return 1;
             for (int i = 0; i < len; i++) { ws->scratch_re[i] = vr; ws->scratch_im[i] = vi; }
             ws->scratch_len = (uint16_t)len;
@@ -4136,7 +4180,7 @@ static int evalCoeffProgram(const CoeffProgram *program,
         } else if (tok->op == COEFF_OP_BLEND) {
             uint16_t top = 0, below = 0;
             double t = 0.0, ti = 0.0;
-            if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, &t, &ti) != 0) return 1;
+            if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &t, &ti) != 0) return 1;
             if (fabs(ti) > 1e-12 || !isfinite(t)) {
                 fprintf(stderr, "Coeff Program blend(t) requires finite real t\n");
                 return 1;
@@ -4162,7 +4206,7 @@ static int evalCoeffProgram(const CoeffProgram *program,
                         idx, ws->poly_len);
                 return 1;
             }
-            if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, &vr, &vi) != 0) return 1;
+            if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &vr, &vi) != 0) return 1;
             if (!isfinite(vr) || !isfinite(vi)) {
                 fprintf(stderr, "Coeff Program poke_poly value is non-finite\n");
                 return 1;
@@ -4179,7 +4223,7 @@ static int evalCoeffProgram(const CoeffProgram *program,
                         idx, ws->stack_len[slot]);
                 return 1;
             }
-            if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, &vr, &vi) != 0) return 1;
+            if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &vr, &vi) != 0) return 1;
             if (!isfinite(vr) || !isfinite(vi)) {
                 fprintf(stderr, "Coeff Program poke_tos value is non-finite\n");
                 return 1;
@@ -4211,22 +4255,22 @@ static int evalCoeffProgram(const CoeffProgram *program,
             if (coeffProgramArgsortVectorOp(ws) != 0) return 1;
             if (coeffProgramTargetFromScratch(ws, tok) != 0) return 1;
         } else if (tok->op == COEFF_OP_LITTLEWOOD) {
-            if (coeffProgramLittlewoodOp(program, tok, ws, k, evalSeed, p1r, p1i, p2r, p2i) != 0) return 1;
+            if (coeffProgramLittlewoodOp(program, tok, ws, cfRe, cfIm, cfLen, k, evalSeed, p1r, p1i, p2r, p2i) != 0) return 1;
         } else if (tok->op == COEFF_OP_LEGACY) {
             double args[COEFF_PROGRAM_MAX_ARGS];
             int legacyArgCount = tok->n_args;
             double andy = 0.0;
-            if (coeffAndyValue(program, tok, p1r, p1i, p2r, p2i, &andy) != 0) return 1;
+            if (coeffAndyValue(program, tok, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &andy) != 0) return 1;
             if (tok->fn_index == 14 && tok->n_args == 2) {
                 double mr = 100.0, mi = 0.0, offR = 0.0, offI = 0.0;
-                if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, &mr, &mi) != 0) return 1;
-                if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, &offR, &offI) != 0) return 1;
+                if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &mr, &mi) != 0) return 1;
+                if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &offR, &offI) != 0) return 1;
                 args[0] = mr; args[1] = mi; args[2] = offR; args[3] = offI;
                 legacyArgCount = 4;
             } else if (tok->fn_index == 16 && tok->n_args == 4) {
                 for (int i = 0; i < 4; i++) {
                     double ar = 0.0, ai = 0.0;
-                    if (coeffArgValue(program, tok, i, p1r, p1i, p2r, p2i, &ar, &ai) != 0) return 1;
+                    if (coeffArgValue(program, tok, i, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &ar, &ai) != 0) return 1;
                     if (fabs(ai) > 1e-12) {
                         fprintf(stderr, "Coeff Program legacy exp component %d is not real\n", i);
                         return 1;
@@ -4236,14 +4280,14 @@ static int evalCoeffProgram(const CoeffProgram *program,
                 legacyArgCount = 4;
             } else if (tok->fn_index == 24 && tok->n_args == 2) {
                 double mr = 1.0, mi = 0.0, expR = 1.0, expI = 0.0;
-                if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, &mr, &mi) != 0) return 1;
-                if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, &expR, &expI) != 0) return 1;
+                if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &mr, &mi) != 0) return 1;
+                if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &expR, &expI) != 0) return 1;
                 args[0] = mr; args[1] = mi; args[2] = expR; args[3] = expI;
                 legacyArgCount = 4;
             } else {
                 for (int i = 0; i < tok->n_args; i++) {
                     double ar = 0.0, ai = 0.0;
-                    if (coeffArgValue(program, tok, i, p1r, p1i, p2r, p2i, &ar, &ai) != 0) return 1;
+                    if (coeffArgValue(program, tok, i, p1r, p1i, p2r, p2i, cfRe, cfIm, cfLen, ws, &ar, &ai) != 0) return 1;
                     if (fabs(ai) > 1e-12) {
                         fprintf(stderr, "Coeff Program legacy arg %d is not real\n", i);
                         return 1;

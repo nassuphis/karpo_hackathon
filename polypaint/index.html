@@ -11499,7 +11499,8 @@ const _ssCatalog = (() => {
     return catalog;
 })();
 
-const _ctAndyParam = { ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: 'Blend amount in [0,1]. In Program mode this may be a real scalar expression using p1/p2; in Chain mode it must be numeric.' };
+const _cpScalarExprHelp = 'Program mode accepts p1/p2, poly_len, cfN, polyN, tosN, literals, + - * /, and conj/real/imag.';
+const _ctAndyParam = { ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: `Blend amount in [0,1]. ${_cpScalarExprHelp} In Chain mode it must be numeric.` };
 const _ctCategoryMeta = {
     structural: { title: 'Structural', help: 'reorder, normalize, sanitize, or resize the coefficient vector' },
     accumulation: { title: 'Ordering + accumulation', help: 'sort or accumulate coefficients across the vector' },
@@ -11514,8 +11515,8 @@ const _ctCatalog = (() => {
         deriv: { category: 'structural', desc: 'differentiate the polynomial coefficients' },
         linear: {
             params: [
-                { ph: 'field1', label: 'field1', def: '100', complex: true, scalarExpr: 'complex', complexWide: true, title: 'Complex multiplier in z*[field1]+[field2]. Program mode accepts p1/p2 expressions.' },
-                { ph: 'field2', label: 'field2', def: '0', complex: true, scalarExpr: 'complex', complexWide: true, title: 'Complex offset in z*[field1]+[field2]. Program mode accepts p1/p2 expressions.' },
+                { ph: 'field1', label: 'field1', def: '100', complex: true, scalarExpr: 'complex', complexWide: true, title: `Complex multiplier in z*[field1]+[field2]. ${_cpScalarExprHelp}` },
+                { ph: 'field2', label: 'field2', def: '0', complex: true, scalarExpr: 'complex', complexWide: true, title: `Complex offset in z*[field1]+[field2]. ${_cpScalarExprHelp}` },
             ],
             label: 'linear',
             category: 'elementwise',
@@ -11533,8 +11534,8 @@ const _ctCatalog = (() => {
         swirler: { category: 'elementwise', desc: 'multiply each coefficient by a modulus-driven complex swirl' },
         exp: {
             params: [
-                { ph: 'field1', label: 'field1', def: '1', scalarExpr: 'real', exprWide: true, title: 'Real multiplier component. Program mode accepts real p1/p2 expressions such as real(p1).' },
-                { ph: 'field2', label: 'field2', def: '0', scalarExpr: 'real', exprWide: true, title: 'Imaginary multiplier component. Program mode accepts real p1/p2 expressions such as imag(p2).' },
+                { ph: 'field1', label: 'field1', def: '1', scalarExpr: 'real', exprWide: true, title: `Real multiplier component. ${_cpScalarExprHelp}` },
+                { ph: 'field2', label: 'field2', def: '0', scalarExpr: 'real', exprWide: true, title: `Imaginary multiplier component. ${_cpScalarExprHelp}` },
             ],
             label: 'exp',
             category: 'elementwise',
@@ -11548,8 +11549,8 @@ const _ctCatalog = (() => {
         tanh: { label: 'tanh', category: 'elementwise', desc: 'complex hyperbolic tangent' },
         round: {
             params: [
-                { ph: 'field1', label: 'field1', def: '1', scalarExpr: 'real', exprWide: true, title: 'Real multiplier component. Program mode accepts real p1/p2 expressions such as real(p1).' },
-                { ph: 'field2', label: 'field2', def: '0', scalarExpr: 'real', exprWide: true, title: 'Imaginary multiplier component. Program mode accepts real p1/p2 expressions such as imag(p2).' },
+                { ph: 'field1', label: 'field1', def: '1', scalarExpr: 'real', exprWide: true, title: `Real multiplier component. ${_cpScalarExprHelp}` },
+                { ph: 'field2', label: 'field2', def: '0', scalarExpr: 'real', exprWide: true, title: `Imaginary multiplier component. ${_cpScalarExprHelp}` },
             ],
             label: 'round',
             category: 'elementwise',
@@ -11576,8 +11577,12 @@ const _ctCatalog = (() => {
 })();
 
 const _cpExpParamDefs = [
-    { ph: 'field1', label: 'field1', def: '1', complex: true, scalarExpr: 'complex', complexWide: true, title: 'Complex multiplier in exp(z*field1+field2). Program mode accepts p1/p2 expressions.' },
-    { ph: 'field2', label: 'field2', def: '0', complex: true, scalarExpr: 'complex', complexWide: true, title: 'Complex offset in exp(z*field1+field2). Program mode accepts p1/p2 expressions.' },
+    { ph: 'field1', label: 'field1', def: '1', complex: true, scalarExpr: 'complex', complexWide: true, title: `Complex multiplier in exp(z*field1+field2). ${_cpScalarExprHelp}` },
+    { ph: 'field2', label: 'field2', def: '0', complex: true, scalarExpr: 'complex', complexWide: true, title: `Complex offset in exp(z*field1+field2). ${_cpScalarExprHelp}` },
+    { ..._ctAndyParam },
+];
+const _cpRoundParamDefs = [
+    { ph: 'multiplier', label: 'mult', def: '1', complex: true, scalarExpr: 'complex', complexWide: true, title: `Complex multiplier in round(z*multiplier). ${_cpScalarExprHelp}` },
     { ..._ctAndyParam },
 ];
 
@@ -11625,7 +11630,7 @@ const _cpCatalog = (() => {
             label: 'push_const',
             params: [
                 { ph: 'length|poly_len', label: 'length', def: 'poly_len', lengthArg: true, title: 'Vector length. Use poly_len to match the current poly vector, or an integer 1..256.' },
-                { ph: 'value expr', label: 'value', def: '1', scalarExpr: 'complex', title: 'Scalar expression for every coefficient. May use p1/p2, literals, + - * /, conj/real/imag. t1/t2 are not available here.' },
+                { ph: 'value expr', label: 'value', def: '1', scalarExpr: 'complex', title: `Scalar expression for every coefficient. ${_cpScalarExprHelp} t1/t2 are not available here.` },
             ],
             desc: 'push push_const(length, value); value is a scalar expression over p1/p2, not t1/t2',
         },
@@ -11640,7 +11645,7 @@ const _cpCatalog = (() => {
             category: 'io',
             params: [
                 { ph: 'index', label: 'index', def: '0', intLiteral: true, min: 0, max: 255, title: 'Zero-based poly coefficient index. The current poly vector must contain this index at runtime.' },
-                { ph: 'value expr', label: 'value', def: '100j*p1', scalarExpr: 'complex', title: 'Scalar expression written into poly[index]. May use p1/p2, literals, + - * /, conj/real/imag.' },
+                { ph: 'value expr', label: 'value', def: '100j*p1', scalarExpr: 'complex', title: `Scalar expression written into poly[index]. ${_cpScalarExprHelp}` },
             ],
             desc: 'write value into poly[index] without touching the stack',
         },
@@ -11648,7 +11653,7 @@ const _cpCatalog = (() => {
             category: 'stack',
             params: [
                 { ph: 'index', label: 'index', def: '0', intLiteral: true, min: 0, max: 255, title: 'Zero-based index in the top-of-stack vector. Requires a stack value at runtime.' },
-                { ph: 'value expr', label: 'value', def: '100j*p1', scalarExpr: 'complex', title: 'Scalar expression written into top_of_stack[index]. May use p1/p2, literals, + - * /, conj/real/imag.' },
+                { ph: 'value expr', label: 'value', def: '100j*p1', scalarExpr: 'complex', title: `Scalar expression written into top_of_stack[index]. ${_cpScalarExprHelp}` },
             ],
             desc: 'write value into the top stack vector without popping it',
         },
@@ -11729,7 +11734,7 @@ const _cpCatalog = (() => {
     });
     Object.entries(_ctCatalog).forEach(([name, spec]) => {
         const sugarName = _coeffProgramPolySugarName(name);
-        const params = name === 'exp' ? _cpExpParamDefs : (spec.params || []);
+        const params = name === 'exp' ? _cpExpParamDefs : (name === 'round' ? _cpRoundParamDefs : (spec.params || []));
         catalog[sugarName] = {
             category: 'legacy',
             label: sugarName,
@@ -11800,6 +11805,11 @@ function _normalizeCoeffProgramSugarParams(legacyName, params) {
             _formatCoeffTransformComplexParts(args[2], args[3]),
         ];
         if (args.length > 4) normalized.push(...args.slice(4));
+        return [src, tgt, ...normalized];
+    }
+    if (legacyName === 'round' && args.length >= 2) {
+        const normalized = [_formatCoeffTransformComplexParts(args[0], args[1])];
+        if (args.length > 2) normalized.push(...args.slice(2));
         return [src, tgt, ...normalized];
     }
     return [src, tgt, ...args];
@@ -13085,6 +13095,13 @@ function _normalizeCoeffProgramChain(rawChain) {
                         _formatCoeffTransformComplexParts(params[5], params[6]),
                     );
                 }
+                if (legacyName === 'round' && params.length >= 5) {
+                    params.splice(
+                        3,
+                        2,
+                        _formatCoeffTransformComplexParts(params[3], params[4]),
+                    );
+                }
                 return [{ name, params }];
             }
             const sourceName = name === 'const' ? 'push_const' : name;
@@ -13125,8 +13142,7 @@ function _serializeCoeffProgramChain() {
         const params = Array.isArray(item.params) ? item.params.map(v => String(v == null ? '' : v)) : [];
         if (name === 'legacy') {
             const legacyName = _canonicalCoeffTransformName(params[0] || 'rev') || 'rev';
-            const spec = _ctCatalog[legacyName] || {};
-            const pDefs = spec.params || [];
+            const pDefs = _coeffProgramLegacyInputDefs(legacyName);
             const values = pDefs.map((pDef, idx) => params[idx + 3] !== undefined && params[idx + 3] !== ''
                 ? params[idx + 3]
                 : String(pDef.def || ''));
@@ -13579,6 +13595,7 @@ function _coeffProgramChipShellHtml(i, readonly, bodyHtml) {
 
 function _coeffProgramLegacyInputDefs(legacyName) {
     if (String(legacyName || '').trim() === 'exp') return _cpExpParamDefs.map(p => ({ ...p }));
+    if (String(legacyName || '').trim() === 'round') return _cpRoundParamDefs.map(p => ({ ...p }));
     const spec = _ctCatalog[String(legacyName || '').trim()] || {};
     return (spec.params || []).map(p => ({ ...p }));
 }
@@ -13619,11 +13636,14 @@ function _coeffProgramLegacyFormulaHtml(i, legacyName, values, legacyDefs, optio
         const field2 = arg(1);
         return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${fn}<span>(</span>${src}<span class="chip-op">*</span>${field1}<span class="chip-op">+</span>${field2}<span>)</span>${andy}</span>`;
     }
-    if (legacyName === 'exp' || legacyName === 'round') {
+    if (legacyName === 'exp') {
         const field1 = arg(0);
         const field2 = arg(1);
-        const op = legacyName === 'exp' ? '+' : ',';
-        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${fn}<span>(</span>${src}<span class="chip-op">*</span>${field1}<span class="chip-op">${op}</span>${field2}<span>)</span>${andy}</span>`;
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${fn}<span>(</span>${src}<span class="chip-op">*</span>${field1}<span class="chip-op">+</span>${field2}<span>)</span>${andy}</span>`;
+    }
+    if (legacyName === 'round') {
+        const field1 = arg(0);
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${fn}<span>(</span>${src}<span class="chip-op">*</span>${field1}<span>)</span>${andy}</span>`;
     }
     const nonAndyArgs = legacyDefs
         .map((pDef, idx) => ({ pDef, idx }))
@@ -13662,8 +13682,7 @@ function _coeffProgramPolySugarFormulaHtml(i, legacyName, params, pDefs, options
     }
     if (legacyName === 'round') {
         const field1 = arg(0);
-        const field2 = arg(1);
-        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${nameLabel}<span>(</span>${src}<span class="chip-op">*</span>${field1}<span class="chip-op">,</span>${field2}<span>)</span>${andy}</span>`;
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${nameLabel}<span>(</span>${src}<span class="chip-op">*</span>${field1}<span>)</span>${andy}</span>`;
     }
     const nonAndyArgs = legacyDefs
         .map((pDef, idx) => ({ pDef, idx }))

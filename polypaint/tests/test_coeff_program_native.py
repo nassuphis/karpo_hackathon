@@ -190,3 +190,31 @@ def test_coeff_program_push_const_and_linspace_use_poly_len():
     for got, want in zip(values, expected):
         assert abs(got.real - want) <= 1e-6
         assert abs(got.imag) <= 1e-6
+
+
+def test_coeff_program_scalar_expr_reads_cf_poly_tos_and_poly_len():
+    chain = [
+        ["push_const", "4", "3"],
+        ["emit"],
+        ["push_const", "4", "5"],
+        ["poke_poly", "0", "cf1 + poly2 + tos3 + poly_len"],
+        ["pop"],
+    ]
+    meta, data = _run_coeffgen({
+        "mode": "coeffgen",
+        "function": "const",
+        "cfpv": [4, 2, 0],
+        "n1": 1,
+        "n2": 1,
+        "coeff_transforms": [],
+        "coeff_program": _coeff_program_payload(chain),
+    })
+
+    assert meta["coeff_program_tokens"] == len(chain)
+    assert meta["n_coeffs"] == 4
+    values = _complex_f32_values(data)
+    expected = [14.0, 3.0, 3.0, 3.0]
+    assert len(values) == len(expected)
+    for got, want in zip(values, expected):
+        assert abs(got.real - want) <= 1e-6
+        assert abs(got.imag) <= 1e-6

@@ -302,14 +302,40 @@ class TestCoeffProgramChain(unittest.TestCase):
             for arg in spec["args"]:
                 self.assertIn(arg["type"], {"real", "int", "enum"})
 
-    def test_real_legacy_arg_rejects_complex_param_expression(self):
-        from coeff_program_chain import compile_coeff_program_chain
+    def test_scalar_expressions_can_read_coeff_register_values(self):
+        from coeff_program_chain import (
+            EXPR_CF_AT,
+            EXPR_POLY_AT,
+            EXPR_POLY_LEN,
+            EXPR_TOS_AT,
+            compile_coeff_program_chain,
+        )
 
-        with self.assertRaisesRegex(RuntimeError, "must be real-valued"):
-            compile_coeff_program_chain([["round", "p1"]])
-
-        compiled = compile_coeff_program_chain([["round", "real(p1)"]])
+        compiled = compile_coeff_program_chain([
+            ["push", "cf"],
+            ["poke_poly", "0", "cf1 + poly2 + tos3 + poly_len + p1 + p2"],
+            ["pop"],
+        ])
         self.assertEqual(compiled["scalar_expr_count"], 1)
+        expr = compiled["scalar_exprs"][0]
+        ops = [int(expr[i]) for i in range(0, len(expr), 3)]
+        self.assertIn(EXPR_CF_AT, ops)
+        self.assertIn(EXPR_POLY_AT, ops)
+        self.assertIn(EXPR_TOS_AT, ops)
+        self.assertIn(EXPR_POLY_LEN, ops)
+
+    def test_round_accepts_compact_complex_multiplier_expression(self):
+        from coeff_program_chain import COEFF_OP_LEGACY, compile_coeff_program_chain
+
+        compiled = compile_coeff_program_chain([["round", "p1"]])
+        self.assertEqual([tok["op"] for tok in compiled["tokens"]], [COEFF_OP_LEGACY])
+        self.assertEqual(compiled["tokens"][0]["n_args"], 2)
+        self.assertEqual(compiled["tokens"][0]["expr_refs"], [0, 1])
+        self.assertEqual(compiled["scalar_expr_count"], 2)
+
+        old_with_andy = compile_coeff_program_chain([["round", "1", "2", "0.25"]])
+        self.assertEqual(old_with_andy["tokens"][0]["args"], [1.0, 2.0])
+        self.assertEqual(old_with_andy["tokens"][0]["andy"], 0.25)
 
 
 if __name__ == "__main__":

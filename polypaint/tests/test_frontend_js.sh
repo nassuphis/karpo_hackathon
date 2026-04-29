@@ -150,6 +150,11 @@ assertIncludes("runComputeDebug('poly')", 'Compute Debug should expose Poly eval
 assertIncludes("runComputeDebug('solve_ae')", 'Compute Debug should expose SolveAE eval action');
 assertIncludes("runComputeDebug('solve_cm')", 'Compute Debug should expose SolveCM eval action');
 assertIncludes("debug_stage: stage", 'Compute Debug payload should route through compute-preview debug_stage');
+assertIncludes("const PARAM_DEBUG_MAX_N = 512;", 'Param debug image should have a sync-safe N cap');
+assertIncludes("function _paramDebugRequestSettings() {", 'Param debug image should derive preview-scale request settings');
+assertIncludes("const { n, pix, notes } = _paramDebugRequestSettings();", 'Param debug image should use capped preview settings');
+assertIncludes("pix,\n            job_id:", 'Param debug image should forward capped pix instead of N*2');
+assertNotIncludes("pix: n * 2,", 'Param debug image must not derive pix from full Calculate N');
 assertIncludes("function _formatComputeDebugResult(result) {", 'Compute Debug should format native single-point output');
 assertIncludes("if (body.message) parts.push(_clipErrorText(body.message, 260));", 'frontend Lambda error summaries should include validation message bodies');
 assertIncludes("function _serializeCoeffProgramChain() {", 'frontend should serialize coeff-program chips');

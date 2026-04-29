@@ -34,6 +34,7 @@ echo "Running predeploy contract gate..."
     tests/test_compute_plan.py \
     tests/test_compute_orchestrator.py \
     tests/test_compute_preview_handler.py \
+    tests/test_param_debug_handler.py \
     tests/test_coeffgen_param_gen.py \
     tests/test_compute_chunk_fused.py \
     tests/test_compute_workflow_definition.py \

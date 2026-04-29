@@ -23,6 +23,16 @@ s3 = boto3.client("s3")
 SWEEP = os.path.join(os.path.dirname(__file__), "sweep")
 BILEVEL_MERGE = os.path.join(os.path.dirname(__file__), "bilevel_merge")
 PRESIGN_EXPIRY = 3600
+MAX_SYNC_PARAM_DEBUG_N = 512
+MAX_SYNC_PARAM_DEBUG_PIX = 2048
+
+
+def error_response(status_code, message):
+    return {
+        "statusCode": int(status_code),
+        "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
+        "body": json.dumps({"message": str(message)}),
+    }
 
 
 def raster_points_from_bin(bin_path, n_floats_per_point, point_indices, pix):
@@ -105,6 +115,22 @@ def handler(event, context):
     grid_n = int(params.get("N", params.get("n1", 500)))
     n1 = grid_n
     n2 = grid_n
+    pix = int(params.get("pix", min(grid_n * 2, MAX_SYNC_PARAM_DEBUG_PIX)))
+    if grid_n < 8:
+        return error_response(400, "param debug requires N >= 8")
+    if grid_n > MAX_SYNC_PARAM_DEBUG_N:
+        return error_response(
+            400,
+            f"param debug is synchronous; use N <= {MAX_SYNC_PARAM_DEBUG_N} "
+            "or use Compute Preview for larger exploratory runs",
+        )
+    if pix < 64:
+        return error_response(400, "param debug requires pix >= 64")
+    if pix > MAX_SYNC_PARAM_DEBUG_PIX:
+        return error_response(
+            400,
+            f"param debug is synchronous; use pix <= {MAX_SYNC_PARAM_DEBUG_PIX}",
+        )
     transform_chain = params.get("param_transforms", [])
     param_program_chain = params.get("param_program_chain") or []
     param_program = None
@@ -126,7 +152,6 @@ def handler(event, context):
                 "tokens": compiled_param_program["tokens"],
             }
     mode = params.get("mode", "together")  # "together" or "separate"
-    pix = int(params.get("pix", 5000))
     job_id = params.get("job_id", "debug")
 
     t0 = time.time()

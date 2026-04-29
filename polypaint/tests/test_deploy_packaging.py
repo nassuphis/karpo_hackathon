@@ -421,6 +421,14 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('"compute-preview": "%s/compute-preview"', DEPLOY_TEXT)
         self.assertIn('"$LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', DEPLOY_TEXT)
 
+        self.assertIn("handler_param_debug.py", packaged)
+        self.assertIn("param_program_chain.py", packaged["handler_param_debug.py"])
+        self.assertIn("param_legacy_registry.json", packaged["handler_param_debug.py"])
+        self.assertIn("sweep", packaged["handler_param_debug.py"])
+        self.assertIn("bilevel_merge", packaged["handler_param_debug.py"])
+        self.assertIn('ensure_route "POST /param-debug" "$PARAM_DEBUG_INT"', DEPLOY_TEXT)
+        self.assertIn('"param-debug": "%s/param-debug"', DEPLOY_TEXT)
+
         self.assertIn("handler_render_lores_preview.py", packaged)
         self.assertNotIn("handler_solve_proximity.py", packaged["handler_render_lores_preview.py"])
         self.assertIn("logical_sections.py", packaged["handler_render_lores_preview.py"])
@@ -588,6 +596,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("tests/test_compute_plan.py", predeploy_text)
         self.assertIn("tests/test_compute_orchestrator.py", predeploy_text)
         self.assertIn("tests/test_compute_preview_handler.py", predeploy_text)
+        self.assertIn("tests/test_param_debug_handler.py", predeploy_text)
         self.assertIn("tests/test_coeffgen_param_gen.py", predeploy_text)
         self.assertIn("tests/test_compute_chunk_fused.py", predeploy_text)
         self.assertIn("tests/test_compute_workflow_definition.py", predeploy_text)

@@ -1446,7 +1446,7 @@ button {
             <div style="margin-top:8px; display:flex; gap:6px; align-items:center">
                 <button class="btn-primary" id="btn-calculate-mt" onclick="runCalculateAEMT()" style="background:#287">Calculate-AE-MT</button>
                 <button class="btn-primary" id="btn-calculate-cm" onclick="runCalculateCM()" style="background:#64a">Calculate-CM</button>
-                <button class="btn-primary" id="btn-param-debug" onclick="runParamDebug()" style="background:#446">Param</button>
+                <button class="btn-primary" id="btn-param-debug" onclick="runParamDebug()" style="background:#446" title="Preview-scale parameter image. Uses Compute Preview N/Pix, not full Calculate N.">Param</button>
                 <select id="param-debug-mode" style="width:7em; font-size:11px">
                     <option value="together">together</option>
                     <option value="separate">separate</option>
@@ -18832,18 +18832,38 @@ async function _bilevelDispatchAndPoll(opts) {
     return performance.now() - t0;
 }
 
+const PARAM_DEBUG_MAX_N = 512;
+const PARAM_DEBUG_MAX_PIX = 2048;
+
+function _paramDebugRequestSettings() {
+    const previewNRaw = parseInt(document.getElementById('compute-preview-n')?.value, 10);
+    const renderNRaw = parseInt(document.getElementById('render-n')?.value, 10);
+    const previewPixRaw = parseInt(document.getElementById('compute-preview-size')?.value, 10);
+    const sourceN = Number.isFinite(previewNRaw) && previewNRaw > 0
+        ? previewNRaw
+        : (Number.isFinite(renderNRaw) && renderNRaw > 0 ? renderNRaw : 256);
+    const n = Math.max(8, Math.min(PARAM_DEBUG_MAX_N, sourceN));
+    const sourcePix = Number.isFinite(previewPixRaw) && previewPixRaw > 0 ? previewPixRaw : n * 2;
+    const pix = Math.max(64, Math.min(PARAM_DEBUG_MAX_PIX, sourcePix));
+    const notes = [];
+    if (sourceN !== n) notes.push(`N capped from ${sourceN} to ${n}`);
+    if (sourcePix !== pix) notes.push(`pix capped from ${sourcePix} to ${pix}`);
+    return { n, pix, notes };
+}
+
 async function runParamDebug() {
     const btn = document.getElementById('btn-param-debug');
     btn.disabled = true;
     try {
-        const n = parseInt(document.getElementById('render-n').value) || 500;
+        const { n, pix, notes } = _paramDebugRequestSettings();
         const mode = document.getElementById('param-debug-mode').value;
         const paramTransforms = _effectiveParamTransformsForCompute();
         const paramProgramChain = _effectiveParamProgramChainForCompute();
         // Empty chain = identity: z1=x1, z2=x2 (no forced unit_circle)
 
         const ptDisplay = _displayActiveParamPipeline(' → ');
-        log(`Param debug: N=${n}, mode=${mode}, transforms=[${ptDisplay}]...`);
+        log(`Param debug: N=${n}, pix=${pix}, mode=${mode}, transforms=[${ptDisplay}]...`);
+        if (notes.length) log(`  param debug uses preview-scale limits: ${notes.join(', ')}`, 'warn');
         document.getElementById('compute-status').textContent = 'Generating param debug image...';
 
         const result = await lambdaPost('param-debug', {
@@ -18851,7 +18871,7 @@ async function runParamDebug() {
             param_transforms: paramTransforms,
             param_program_chain: paramProgramChain,
             mode,
-            pix: n * 2,
+            pix,
             job_id: document.getElementById('results-dir').value.trim() || 'debug',
         });
 

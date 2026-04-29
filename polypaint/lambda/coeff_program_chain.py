@@ -8,6 +8,7 @@ integer opcodes, selectors, numeric args, and scalar-expression bytecode.
 from __future__ import annotations
 
 import hashlib
+import cmath
 import json
 import math
 import os
@@ -41,6 +42,7 @@ COEFF_OP_VECTOR_ROLL = 14
 COEFF_OP_VECTOR_ARGSORT = 15
 COEFF_OP_LITTLEWOOD = 16
 COEFF_OP_LINSPACE = 17
+COEFF_OP_RANGE = 18
 
 COEFF_SEL_CF = 1
 COEFF_SEL_POLY = 2
@@ -65,6 +67,8 @@ EXPR_POLY_AT = 14
 EXPR_TOS_AT = 15
 EXPR_T1 = 16
 EXPR_T2 = 17
+EXPR_ABS = 18
+EXPR_LOG = 19
 
 _OP_NAMES = {
     COEFF_OP_CONST: "push_const",
@@ -84,6 +88,7 @@ _OP_NAMES = {
     COEFF_OP_VECTOR_ARGSORT: "argsort",
     COEFF_OP_LITTLEWOOD: "littlewood",
     COEFF_OP_LINSPACE: "push_linspace",
+    COEFF_OP_RANGE: "push_range",
 }
 
 _SOURCE_SELECTORS = {
@@ -477,17 +482,24 @@ class _ExpressionParser:
             self._take()
             expr = self._unary()
             return _Expr(expr.tokens + [{"op": EXPR_NEG}], kind=expr.kind, dynamic=expr.dynamic)
-        if token_type == "ident" and token_value in {"conj", "neg", "real", "imag"}:
+        if token_type == "ident" and token_value in {"conj", "neg", "real", "imag", "abs", "log"}:
             self._take()
             if self._take()[0] != "(":
                 raise RuntimeError(f"{token_value} requires parentheses")
             expr = self._expr()
             if self._take()[0] != ")":
                 raise RuntimeError(f"{token_value} missing closing parenthesis")
-            op = {"conj": EXPR_CONJ, "neg": EXPR_NEG, "real": EXPR_REAL, "imag": EXPR_IMAG}[token_value]
+            op = {
+                "conj": EXPR_CONJ,
+                "neg": EXPR_NEG,
+                "real": EXPR_REAL,
+                "imag": EXPR_IMAG,
+                "abs": EXPR_ABS,
+                "log": EXPR_LOG,
+            }[token_value]
             return _Expr(
                 expr.tokens + [{"op": op}],
-                kind="real" if token_value in {"real", "imag"} else expr.kind,
+                kind="real" if token_value in {"real", "imag", "abs"} else expr.kind,
                 dynamic=expr.dynamic,
             )
         return self._primary()
@@ -584,6 +596,14 @@ def _expr_value_if_static(expr):
             stack.append(complex(stack.pop().real, 0.0))
         elif op == EXPR_IMAG:
             stack.append(complex(stack.pop().imag, 0.0))
+        elif op == EXPR_ABS:
+            stack.append(complex(abs(stack.pop()), 0.0))
+        elif op == EXPR_LOG:
+            value = stack.pop()
+            if abs(value) <= 0.0:
+                stack.append(complex(-700.0, 0.0))
+            else:
+                stack.append(cmath.log(value))
         else:
             raise RuntimeError(f"non-static scalar expression opcode: {op}")
     if len(stack) != 1:
@@ -640,6 +660,8 @@ def _add_arg_expr(expr, scalar_exprs, *, expected="complex"):
     value = _expr_value_if_static(expr)
     if value is not None:
         if expected == "real":
+            if abs(value.imag) > 1e-12:
+                raise RuntimeError("scalar expression result must be real-valued")
             return value.real, 0.0, -1
         return value.real, value.imag, -1
     ref = len(scalar_exprs)
@@ -686,6 +708,13 @@ def _compile_linspace(args):
         raise RuntimeError("push_linspace chip requires length")
     length = _vector_length_arg(args[0], "push_linspace length")
     return _token(COEFF_OP_LINSPACE, n_args=1, args=[length], expr_refs=[-1])
+
+
+def _compile_range(args):
+    if len(args) != 1:
+        raise RuntimeError("push_range chip requires length")
+    length = _vector_length_arg(args[0], "push_range length")
+    return _token(COEFF_OP_RANGE, n_args=1, args=[length], expr_refs=[-1])
 
 
 def _compile_blend(args, scalar_exprs):
@@ -1060,6 +1089,8 @@ def _lower_chip(chip, scalar_exprs):
         return [_compile_const(args, scalar_exprs)]
     if name == "push_linspace":
         return [_compile_linspace(args)]
+    if name == "push_range":
+        return [_compile_range(args)]
     if name == "push":
         if len(args) != 1:
             raise RuntimeError("push chip requires source cf or poly")
@@ -1093,18 +1124,6 @@ def _lower_chip(chip, scalar_exprs):
         if len(args) < 3:
             raise RuntimeError("legacy chip requires name, src, tgt, and optional args")
         return [_legacy_token(str(args[0]).strip().lower(), args[1], args[2], args[3:], scalar_exprs)]
-    if name.startswith("poly-"):
-        legacy_name = _canonical_legacy_name(name[5:])
-        if legacy_name in legacy_registry()["by_name"]:
-            if len(args) >= 2:
-                src = str(args[0]).strip().lower()
-                tgt = str(args[1]).strip().lower()
-                if src in _SOURCE_SELECTORS and tgt in _TARGET_SELECTORS:
-                    return [_legacy_token(legacy_name, args[0], args[1], args[2:], scalar_exprs)]
-            return [_legacy_token(legacy_name, "poly", "poly", args, scalar_exprs)]
-    legacy_name = _canonical_legacy_name(name)
-    if legacy_name in legacy_registry()["by_name"]:
-        return [_legacy_token(legacy_name, "poly", "poly", args, scalar_exprs)]
     raise RuntimeError(f"unknown coeff program chip: {name}")
 
 
@@ -1143,13 +1162,12 @@ def _validate_stack(tokens):
     for idx, token in enumerate(tokens):
         op = int(token.get("op") or 0)
         before = depth
-        if op in {COEFF_OP_CONST, COEFF_OP_PUSH, COEFF_OP_LINSPACE}:
+        if op in {COEFF_OP_CONST, COEFF_OP_PUSH, COEFF_OP_LINSPACE, COEFF_OP_RANGE}:
             depth += 1
         elif op == COEFF_OP_EMIT:
             # Coeff Program keeps poly as an explicit mutable output register.
             # emit commits the stack top when present; with an empty stack it is
-            # a harmless "commit current poly" marker so legacy-style programs
-            # like ["rev"], ["emit"] match the editor mental model.
+            # a harmless "commit current poly" marker after direct poly writes.
             if depth >= 1:
                 depth -= 1
         elif op == COEFF_OP_DUPLICATE:
@@ -1221,6 +1239,8 @@ def _execution_spec(tokens, scalar_exprs):
             else:
                 fields.append(_format_complex_number((token.get("args") or [0, 0])[1], (token.get("args_im") or [0, 0])[1]))
         elif op == COEFF_OP_LINSPACE:
+            fields.extend(["length", _format_length_arg((token.get("args") or [0])[0])])
+        elif op == COEFF_OP_RANGE:
             fields.extend(["length", _format_length_arg((token.get("args") or [0])[0])])
         elif op == COEFF_OP_PUSH:
             fields.append(_SELECTOR_NAMES.get(int(token.get("src") or 0), str(token.get("src") or 0)))

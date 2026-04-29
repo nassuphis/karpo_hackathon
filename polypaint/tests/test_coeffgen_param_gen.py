@@ -347,7 +347,7 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
     def test_degree_probe_resolves_coeff_program_macro(self, mock_run, mock_remove, mock_s3):
         import handler_coeffgen as mod
 
-        saved = json.dumps({"chain": [["poly-rev"]]}).encode()
+        saved = json.dumps({"chain": [["legacy", "rev", "poly", "poly"]]}).encode()
         mock_s3.get_object.return_value = {
             "Body": unittest.mock.MagicMock(read=lambda: saved)
         }
@@ -364,7 +364,7 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
             "function": "const",
             "param_transforms": [],
             "coeff_transforms": [],
-            "coeff_program_chain": [["macro", "poly-test1"], ["poly-swirler"]],
+            "coeff_program_chain": [["macro", "poly-test1"], ["legacy", "swirler", "poly", "poly"]],
             "cfpv": [8, 1, 0],
         })
 

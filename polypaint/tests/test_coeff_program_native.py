@@ -1,5 +1,6 @@
 import json
 import cmath
+import math
 import os
 import struct
 import subprocess
@@ -165,11 +166,13 @@ def test_coeff_program_exp_accepts_complex_multiplier_and_offset():
     assert abs(values[0].imag - expected.imag) <= 1e-5
 
 
-def test_coeff_program_push_const_and_linspace_use_poly_len():
+def test_coeff_program_push_const_linspace_and_range_use_poly_len():
     chain = [
         ["push_const", "poly_len", "2+3j"],
         ["emit"],
         ["push_linspace", "poly_len"],
+        ["emit"],
+        ["push_range", "poly_len"],
         ["emit"],
     ]
     meta, data = _run_coeffgen({
@@ -185,7 +188,7 @@ def test_coeff_program_push_const_and_linspace_use_poly_len():
     assert meta["coeff_program_tokens"] == len(chain)
     assert meta["n_coeffs"] == 4
     values = _complex_f32_values(data)
-    expected = [0.0, 4.0 / 3.0, 8.0 / 3.0, 4.0]
+    expected = [0.0, 1.0, 2.0, 3.0]
     assert len(values) == len(expected)
     for got, want in zip(values, expected):
         assert abs(got.real - want) <= 1e-6
@@ -257,3 +260,39 @@ def test_coeff_program_scalar_expr_reads_source_t1_t2_in_chunked_mode():
     for got, want in zip(values, expected):
         assert abs(got.real - want) <= 1e-6
         assert abs(got.imag) <= 1e-6
+
+
+def test_coeff_program_scalar_expr_abs_log_in_native_coeffgen():
+    chain = [
+        ["push_const", "1", "log(abs(p1+p2)+1)*1j"],
+        ["emit"],
+    ]
+    params = [9.0, 0.0, 11.0, 0.0]
+    with tempfile.NamedTemporaryFile(prefix="pp_coeff_program_abs_log_params_", suffix=".bin", delete=False) as fh:
+        params_path = fh.name
+        fh.write(struct.pack("<" + "f" * len(params), *params))
+    try:
+        meta, data = _run_coeffgen({
+            "mode": "coeffgen_chunked",
+            "function": "const",
+            "cfpv": [1, 0, 0],
+            "params_file": params_path,
+            "step_start": 0,
+            "source_step_start": 0,
+            "source_n1": 1,
+            "source_n2": 1,
+            "step_count": 1,
+            "coeff_transforms": [],
+            "coeff_program": _coeff_program_payload(chain),
+        })
+    finally:
+        try:
+            os.remove(params_path)
+        except FileNotFoundError:
+            pass
+
+    assert meta["coeff_program_tokens"] == len(chain)
+    values = _complex_f32_values(data)
+    assert len(values) == 1
+    assert abs(values[0].real) <= 1e-6
+    assert abs(values[0].imag - math.log(21.0)) <= 1e-6

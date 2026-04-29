@@ -111,7 +111,7 @@ class TestCoeffProgramStorage(unittest.TestCase):
         base = handler_storage.handler(
             self._event("/save-coeff-program", {
                 "name": "Legacy Smooth",
-                "chain": [["rev"], ["cumsum"]],
+                "chain": [["legacy", "rev", "poly", "poly"], ["legacy", "cumsum", "poly", "poly"]],
             }),
             None,
         )
@@ -139,8 +139,8 @@ class TestCoeffProgramStorage(unittest.TestCase):
         self._patch_s3(mock_s3, fake_s3)
 
         for body in [
-            {"name": "x" * 121, "chain": [["rev"]]},
-            {"name": "Many", "chain": [["rev"]] * 257},
+            {"name": "x" * 121, "chain": [["legacy", "rev", "poly", "poly"]]},
+            {"name": "Many", "chain": [["legacy", "rev", "poly", "poly"]] * 257},
             {"name": "Token", "chain": [["macro", "x" * 257]]},
             {"name": "Broken", "chain": [["push", "cf"]]},
         ]:

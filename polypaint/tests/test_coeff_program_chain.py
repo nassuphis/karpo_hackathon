@@ -10,7 +10,12 @@ class TestCoeffProgramChain(unittest.TestCase):
     def test_direct_legacy_chain_is_legacy_equivalent(self):
         from coeff_program_chain import COEFF_OP_LEGACY, compile_coeff_program_chain
 
-        compiled = compile_coeff_program_chain([["poly-rev"], ["poly-cumsum"], ["poly-sort_abs"], ["poly-exp", "0.5"]])
+        compiled = compile_coeff_program_chain([
+            ["legacy", "rev", "poly", "poly"],
+            ["legacy", "cumsum", "poly", "poly"],
+            ["legacy", "sort_abs", "poly", "poly"],
+            ["legacy", "exp", "poly", "poly", "0.5"],
+        ])
         self.assertEqual([tok["op"] for tok in compiled["tokens"]], [COEFF_OP_LEGACY] * 4)
         self.assertTrue(compiled["uses_legacy_chain_equivalent"])
         self.assertEqual(
@@ -18,27 +23,26 @@ class TestCoeffProgramChain(unittest.TestCase):
             [["rev"], ["cumsum"], ["sort_abs"], ["exp", "0.5"]],
         )
 
-    def test_bare_legacy_sugar_remains_back_compat_alias(self):
+    def test_direct_legacy_sugars_are_removed(self):
         from coeff_program_chain import compile_coeff_program_chain
 
-        old_form = compile_coeff_program_chain([["rev"]])
-        new_form = compile_coeff_program_chain([["poly-rev"]])
-        self.assertEqual(old_form["execution_spec"], new_form["execution_spec"])
-        self.assertEqual(old_form["legacy_coeff_transforms"], [["rev"]])
-        self.assertEqual(new_form["legacy_coeff_transforms"], [["rev"]])
+        with self.assertRaisesRegex(RuntimeError, "unknown coeff program chip: rev"):
+            compile_coeff_program_chain([["rev"]])
+        with self.assertRaisesRegex(RuntimeError, "unknown coeff program chip: poly-rev"):
+            compile_coeff_program_chain([["poly-rev"]])
 
     def test_scale100_is_linear_back_compat_alias(self):
         from coeff_program_chain import compile_coeff_program_chain
 
-        old_form = compile_coeff_program_chain([["poly-scale100", "1+2j", "3-4j"]])
-        new_form = compile_coeff_program_chain([["poly-linear", "1+2j", "3-4j"]])
+        old_form = compile_coeff_program_chain([["legacy", "scale100", "poly", "poly", "1+2j", "3-4j"]])
+        new_form = compile_coeff_program_chain([["legacy", "linear", "poly", "poly", "1+2j", "3-4j"]])
         self.assertEqual(old_form["execution_spec"], new_form["execution_spec"])
         self.assertEqual(new_form["legacy_coeff_transforms"], [["linear", "1+2i", "3-4i"]])
 
     def test_pow_accepts_compact_complex_args_and_expression_andy(self):
         from coeff_program_chain import COEFF_OP_LEGACY, compile_coeff_program_chain
 
-        compiled = compile_coeff_program_chain([["poly-pow", "p1", "p2", "real(p1)"]])
+        compiled = compile_coeff_program_chain([["legacy", "pow", "poly", "poly", "p1", "p2", "real(p1)"]])
         self.assertEqual([tok["op"] for tok in compiled["tokens"]], [COEFF_OP_LEGACY])
         token = compiled["tokens"][0]
         self.assertEqual(token["n_args"], 2)
@@ -50,7 +54,7 @@ class TestCoeffProgramChain(unittest.TestCase):
     def test_exp_accepts_complex_multiplier_offset_and_expression_andy(self):
         from coeff_program_chain import COEFF_OP_LEGACY, compile_coeff_program_chain
 
-        compiled = compile_coeff_program_chain([["poly-exp", "p1", "p2", "real(p1)"]])
+        compiled = compile_coeff_program_chain([["legacy", "exp", "poly", "poly", "p1", "p2", "real(p1)"]])
         self.assertEqual([tok["op"] for tok in compiled["tokens"]], [COEFF_OP_LEGACY])
         token = compiled["tokens"][0]
         self.assertEqual(token["n_args"], 4)
@@ -80,7 +84,7 @@ class TestCoeffProgramChain(unittest.TestCase):
     def test_pow_old_four_real_args_remain_accepted(self):
         from coeff_program_chain import COEFF_OP_LEGACY, compile_coeff_program_chain
 
-        compiled = compile_coeff_program_chain([["poly-pow", "1", "2", "3", "4"]])
+        compiled = compile_coeff_program_chain([["legacy", "pow", "poly", "poly", "1", "2", "3", "4"]])
         self.assertEqual([tok["op"] for tok in compiled["tokens"]], [COEFF_OP_LEGACY])
         self.assertEqual(compiled["tokens"][0]["n_args"], 4)
         self.assertEqual(compiled["legacy_coeff_transforms"], [["pow", "1", "2", "3", "4"]])
@@ -88,7 +92,7 @@ class TestCoeffProgramChain(unittest.TestCase):
     def test_legacy_direct_chip_allows_redundant_emit_commit(self):
         from coeff_program_chain import COEFF_OP_EMIT, COEFF_OP_LEGACY, compile_coeff_program_chain
 
-        compiled = compile_coeff_program_chain([["poly-rev"], ["emit"]])
+        compiled = compile_coeff_program_chain([["legacy", "rev", "poly", "poly"], ["emit"]])
         self.assertEqual([tok["op"] for tok in compiled["tokens"]], [COEFF_OP_LEGACY, COEFF_OP_EMIT])
         self.assertEqual(compiled["stack_max"], 0)
         self.assertFalse(compiled["uses_legacy_chain_equivalent"])
@@ -103,7 +107,7 @@ class TestCoeffProgramChain(unittest.TestCase):
             ["legacy", "roots6", "both", "both"],
             ["legacy", "asp", "both", "both", "0", "0.1"],
         ]
-        coeff_chain = [["rev"], ["emit"]]
+        coeff_chain = [["legacy", "rev", "poly", "poly"], ["emit"]]
         param = compile_param_program_chain(param_chain)
         coeff = compile_coeff_program_chain(coeff_chain)
         self.assertEqual(param["token_count"], 4)
@@ -139,7 +143,7 @@ class TestCoeffProgramChain(unittest.TestCase):
             compile_coeff_program_chain([["blend", "pi2i"]])
 
     def test_push_linspace_with_poly_len_compiles(self):
-        from coeff_program_chain import COEFF_OP_EMIT, COEFF_OP_LINSPACE, compile_coeff_program_chain
+        from coeff_program_chain import COEFF_OP_EMIT, COEFF_OP_LINSPACE, COEFF_OP_RANGE, compile_coeff_program_chain
 
         compiled = compile_coeff_program_chain([["push_linspace", "poly_len"], ["emit"]])
         self.assertEqual([tok["op"] for tok in compiled["tokens"]], [COEFF_OP_LINSPACE, COEFF_OP_EMIT])
@@ -147,10 +151,26 @@ class TestCoeffProgramChain(unittest.TestCase):
         self.assertEqual(compiled["stack_max"], 1)
         self.assertFalse(compiled["uses_legacy_chain_equivalent"])
 
-    def test_poly_sugar_accepts_explicit_src_tgt(self):
+        range_compiled = compile_coeff_program_chain([["push_range", "poly_len"], ["emit"]])
+        self.assertEqual([tok["op"] for tok in range_compiled["tokens"]], [COEFF_OP_RANGE, COEFF_OP_EMIT])
+        self.assertEqual(range_compiled["tokens"][0]["args"], [-1])
+
+    def test_scalar_expressions_accept_abs_and_log(self):
+        from coeff_program_chain import EXPR_ABS, EXPR_LOG, compile_coeff_program_chain
+
+        compiled = compile_coeff_program_chain([
+            ["push_const", "poly_len", "log(abs(p1+p2)+1)*1j"],
+            ["emit"],
+        ])
+        self.assertEqual(compiled["scalar_expr_count"], 1)
+        ops = [int(compiled["scalar_exprs"][0][idx]) for idx in range(0, len(compiled["scalar_exprs"][0]), 3)]
+        self.assertIn(EXPR_ABS, ops)
+        self.assertIn(EXPR_LOG, ops)
+
+    def test_legacy_chip_accepts_explicit_src_tgt(self):
         from coeff_program_chain import COEFF_OP_LEGACY, compile_coeff_program_chain
 
-        compiled = compile_coeff_program_chain([["push", "cf"], ["poly-rev", "pop", "push"], ["emit"]])
+        compiled = compile_coeff_program_chain([["push", "cf"], ["legacy", "rev", "pop", "push"], ["emit"]])
         self.assertEqual(compiled["tokens"][1]["op"], COEFF_OP_LEGACY)
         self.assertEqual(compiled["tokens"][1]["src"], 3)
         self.assertEqual(compiled["tokens"][1]["tgt"], 5)
@@ -257,6 +277,29 @@ class TestCoeffProgramChain(unittest.TestCase):
         self.assertEqual(compiled["stack_max"], 4)
         self.assertFalse(compiled["uses_legacy_chain_equivalent"])
 
+    def test_vector_power_is_not_legacy_power(self):
+        from coeff_program_chain import (
+            COEFF_OP_DUPLICATE,
+            COEFF_OP_EMIT,
+            COEFF_OP_PUSH,
+            COEFF_OP_VECTOR_BINARY,
+            compile_coeff_program_chain,
+        )
+
+        compiled = compile_coeff_program_chain([
+            ["push", "cf"],
+            ["duplicate"],
+            ["power", "push", "pop", "pop"],
+            ["emit"],
+        ])
+        self.assertEqual(
+            [tok["op"] for tok in compiled["tokens"]],
+            [COEFF_OP_PUSH, COEFF_OP_DUPLICATE, COEFF_OP_VECTOR_BINARY, COEFF_OP_EMIT],
+        )
+        self.assertEqual(compiled["tokens"][2]["fn_index"], 5)
+        with self.assertRaisesRegex(RuntimeError, "unknown coeff program chip: poly-power"):
+            compile_coeff_program_chain([["poly-power", "poly", "poly", "push", "pop"]])
+
     def test_vector_pop_sources_are_validated_in_order(self):
         from coeff_program_chain import compile_coeff_program_chain
 
@@ -292,13 +335,13 @@ class TestCoeffProgramChain(unittest.TestCase):
     def test_macro_expands_before_hashing(self):
         from coeff_program_chain import compile_coeff_program_chain
 
-        macros = {"smooth": [["rev"], ["cumsum"]]}
+        macros = {"smooth": [["legacy", "rev", "poly", "poly"], ["legacy", "cumsum", "poly", "poly"]]}
 
         def resolver(name):
             return macros[name]
 
         macro = compile_coeff_program_chain([["macro", "smooth"]], macro_resolver=resolver)
-        expanded = compile_coeff_program_chain([["rev"], ["cumsum"]])
+        expanded = compile_coeff_program_chain([["legacy", "rev", "poly", "poly"], ["legacy", "cumsum", "poly", "poly"]])
         self.assertEqual(macro["fingerprint"], expanded["fingerprint"])
         self.assertEqual(macro["macro_expansions"], 1)
         self.assertEqual(macro["display"], "macro(smooth)")
@@ -345,13 +388,13 @@ class TestCoeffProgramChain(unittest.TestCase):
     def test_round_accepts_compact_complex_multiplier_expression(self):
         from coeff_program_chain import COEFF_OP_LEGACY, compile_coeff_program_chain
 
-        compiled = compile_coeff_program_chain([["round", "p1"]])
+        compiled = compile_coeff_program_chain([["legacy", "round", "poly", "poly", "p1"]])
         self.assertEqual([tok["op"] for tok in compiled["tokens"]], [COEFF_OP_LEGACY])
         self.assertEqual(compiled["tokens"][0]["n_args"], 2)
         self.assertEqual(compiled["tokens"][0]["expr_refs"], [0, 1])
         self.assertEqual(compiled["scalar_expr_count"], 2)
 
-        old_with_andy = compile_coeff_program_chain([["round", "1", "2", "0.25"]])
+        old_with_andy = compile_coeff_program_chain([["legacy", "round", "poly", "poly", "1", "2", "0.25"]])
         self.assertEqual(old_with_andy["tokens"][0]["args"], [1.0, 2.0])
         self.assertEqual(old_with_andy["tokens"][0]["andy"], 0.25)
 

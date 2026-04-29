@@ -187,10 +187,9 @@ path is multi-threaded. Every worker thread owns its own ring workspace.
 ## Source And Target Selectors
 
 Every compiled coefficient transform chip should have explicit `src` and `tgt`
-selectors, in addition to its own parameters. The editor may hide those
-selectors on direct sugar chips and default them to `poly -> poly`, but the
-source chip name must still make that behavior visible. Direct sugar chips use
-the `poly-*` prefix, e.g. `poly-rev`, `poly-cumsum`, `poly-exp`.
+selectors, in addition to its own parameters. V1 does not expose direct
+legacy-transform sugar chips. Use `legacy(name, src, tgt, ...)` so the data
+source, write target, and legacy function are always visible.
 
 Allowed source selectors:
 
@@ -290,9 +289,7 @@ Rules:
 - `poly_len` means the current length of the mutable `poly` register at that
   point in execution
 - `value` is a scalar complex argument expression
-- `value` may reference read-only `p1` and `p2`
-- `value` may not reference `t1` or `t2`; those are Param Program inputs, not
-  Coeff Program registers
+- `value` may reference read-only `t1`, `t2`, `p1`, and `p2`
 - non-finite evaluated values are execution errors
 - the chip has no `src` or `tgt` dropdown in v1
 - UI display should label this as `push_const(length, value)` to avoid
@@ -332,6 +329,30 @@ Rules:
 - `length` uses the same `poly_len` or integer-literal rule as `push_const`
 - imaginary parts are zero
 - default UI value is `poly_len`
+
+### `push_range`
+
+`push_range(length)` creates and pushes a Python-style real index vector with
+`length` entries:
+
+```text
+0, 1, 2, ..., length-1
+```
+
+Source form:
+
+```text
+push_range(poly_len)
+push_range(35)
+```
+
+Rules:
+
+- `length` uses the same `poly_len` or integer-literal rule as `push_const`
+- imaginary parts are zero
+- default UI value is `poly_len`
+- use `legacy(linear, pop, push, 1, 1)` after `push_range(poly_len)` when a
+  formula needs one-based coefficient ordinals `1..poly_len`
 
 ### `push`
 
@@ -374,8 +395,9 @@ v1. If a target is kept for UI consistency, it should have only one value:
 The program is valid if it emits zero times. In that case `poly` remains whatever
 the in-place transforms made it, or identity `cf` for an empty program.
 
-This means legacy-style direct chips can be written either as `poly-rev` or
-`poly-rev; emit`. Both are valid and equivalent because `poly-rev` mutates
+This means a legacy chip that writes `poly` directly can be followed by `emit`
+as a harmless commit marker. For example, `legacy(rev, poly, poly)` and
+`legacy(rev, poly, poly); emit` are equivalent because the legacy chip mutates
 `poly` directly.
 
 Recommended v1 final-stack rule: final stack must be empty. If users need to
@@ -611,7 +633,7 @@ complex literals:  1, -2.5, 1e-6, 1+2i, -2i+4
 constants:         pi, pi2, pi2i
 scalar registers:  t1, t2, p1, p2, poly_len
 vector element:    cf0, cf1, poly0, poly31, tos0, tos32
-unary funcs:       conj(x), neg(x), real(x), imag(x)
+unary funcs:       conj(x), neg(x), real(x), imag(x), abs(x), log(x)
 binary ops:        x + y, x - y, x * y, x / y
 parentheses:       (p1 + p2) * 0.5
 ```
@@ -910,6 +932,7 @@ validation.
 ```text
 push_const(length,value) pops 0, pushes 1 vector, writes none
 push_linspace(length) pops 0, pushes 1 vector, writes none
+push_range(length)    pops 0, pushes 1 vector, writes none
 push(cf)            pops 0, pushes 1 vector, writes none
 push(poly)          pops 0, pushes 1 vector, writes none
 emit                pops 1 if present, pushes 0, writes/commits poly
@@ -970,9 +993,9 @@ Equivalent coeff program:
 
 ```json
 [
-  ["poly-rev"],
-  ["poly-normalize"],
-  ["poly-roots", "8", "hi"]
+  ["legacy", "rev", "poly", "poly"],
+  ["legacy", "normalize", "poly", "poly"],
+  ["legacy", "roots", "poly", "poly", "8", "hi"]
 ]
 ```
 
@@ -1060,6 +1083,7 @@ The Coeff Program add-chip popup should group chips:
 Input/output:
 push_const(length, value)
 push_linspace(length)
+push_range(length)
 poke_poly(index, value)
 push(cf)
 push(poly)
@@ -1140,20 +1164,10 @@ z*[param1]+[param2]
 The default is `linear(100, 0)`, which preserves the old scale-by-100 behavior.
 Old saved/native `scale100` chains remain accepted as compatibility aliases.
 
-The direct chips like `poly-rev` are source-level sugar for fixed legacy
-function names. They expose the same `src` and `tgt` selectors as
-`legacy(...)`, defaulting to `poly -> poly`.
-
-They should lower to:
-
-```text
-poly-rev(src=poly, tgt=poly) -> legacy(rev, src=poly, tgt=poly)
-poly-rev(src=pop, tgt=push) -> legacy(rev, src=pop, tgt=push)
-```
-
-The generic `legacy(...)` chip remains available for advanced cases where the
-user needs the function name itself to be editable. Old saved `poly-rev` forms
-without explicit selectors still load as `poly -> poly`.
+Legacy coefficient transforms are represented only by the generic
+`legacy(name, src, tgt, ...)` chip. Do not ship separate `poly-*` aliases in the
+UI or compiler. This avoids two spellings for the same operation and keeps the
+source/target selectors visible.
 
 Follow `ui_docs/style_guide.md`:
 
@@ -1203,8 +1217,8 @@ Saved source format:
   "program_kind": "coeff_program",
   "name": "reverse normalized roots",
   "chain": [
-    ["poly-rev"],
-    ["poly-normalize"],
+    ["legacy", "rev", "poly", "poly"],
+    ["legacy", "normalize", "poly", "poly"],
     ["legacy", "roots", "poly", "poly", "8", "hi"]
   ]
 }
@@ -1231,22 +1245,22 @@ Canonical compiler output:
 {
   "program_kind": "coeff_program",
   "version": 1,
-  "source_chain": [["poly-rev"], ["poly-normalize"]],
+  "source_chain": [["legacy", "rev", "poly", "poly"], ["legacy", "normalize", "poly", "poly"]],
   "tokens": [
     {"op": 1, "fn_index": 1, "src": 2, "tgt": 2, "args": []},
     {"op": 1, "fn_index": 3, "src": 2, "tgt": 2, "args": []}
   ],
   "scalar_exprs": [],
   "fingerprint": "sha1...",
-  "display": "poly-rev; poly-normalize",
+  "display": "legacy(rev,poly,poly); legacy(normalize,poly,poly)",
   "stack_max": 0,
   "uses_legacy_chain_equivalent": true
 }
 ```
 
-Bare legacy transform names such as `rev` and `normalize` remain accepted as
-old saved-program aliases, but new UI saves should write `poly-rev` and
-`poly-normalize`.
+Bare legacy transform names such as `rev` and direct aliases such as `poly-rev`
+are not valid Coeff Program chips. Old Chain mode still uses bare coefficient
+transform names, but Program mode uses explicit `legacy(...)` chips.
 
 The exact enum values do not matter in the doc. The stable contract is:
 
@@ -1621,10 +1635,10 @@ rows=10k, 100k, 1M where feasible
 threads=1, 2, 4, 8
 
 program=identity
-program=poly-rev
-program=poly-rev;poly-normalize;poly-conj
-program=deriv
-program=roots(k=8,hi)
+program=legacy(rev,poly,poly)
+program=legacy(rev,poly,poly);legacy(normalize,poly,poly);legacy(conj,poly,poly)
+program=legacy(deriv,poly,poly)
+program=legacy(roots,poly,poly,8,hi)
 program=push_const(poly_len,p1);emit
 program=push_const(poly_len,p1+p2);legacy(rev,pop,push);emit
 program=push(cf); legacy(deriv,pop,push); push(cf); legacy(rev,pop,push); pop; emit
@@ -1753,7 +1767,7 @@ workspace_bytes_per_thread
 
 Output equivalence cases:
 
-- Chain `rev; normalize` equals Program `poly-rev; poly-normalize`
+- Chain `rev; normalize` equals Program `legacy(rev,poly,poly); legacy(normalize,poly,poly)`
 - Chain `roots(8,hi)` equals Program `legacy(roots,poly,poly,8,hi)`
 - Program mode single-thread equals Program mode multi-thread
 
@@ -1818,6 +1832,7 @@ Work:
 - validate stack effects
 - validate `push_const(length,value)` chip and old `const` alias
 - validate `push_linspace(length)` chip
+- validate `push_range(length)` chip
 - validate `blend(t)` same-length requirement where statically knowable
 - support `peek` source selector
 - emit length diagnostics from registry length policies
@@ -1834,11 +1849,11 @@ Compiler output:
 {
   "program_kind": "coeff_program",
   "version": 1,
-  "source_chain": [["poly-rev"], ["poly-normalize"]],
+  "source_chain": [["legacy", "rev", "poly", "poly"], ["legacy", "normalize", "poly", "poly"]],
   "tokens": [],
   "scalar_exprs": [],
   "fingerprint": "sha1...",
-  "display": "poly-rev; poly-normalize",
+  "display": "legacy(rev,poly,poly); legacy(normalize,poly,poly)",
   "stack_max": 0,
   "uses_legacy_chain_equivalent": true,
   "legacy_coeff_transforms": [["rev"], ["normalize"]]
@@ -2154,7 +2169,8 @@ Required targeted tests:
 - over-limit vectors reject before dispatch when statically knowable and at the
   exact offending chip otherwise
 - native Program mode evaluates `push_const(poly_len,p1); emit` and
-  `push_linspace(poly_len); emit` deterministically
+  `push_linspace(poly_len); emit` and `push_range(poly_len); emit`
+  deterministically
 - native Program mode passes final transformed parameters as `p1` / `p2`, not
   raw serpentine inputs
 - coefficient function `const(length,value)` produces the expected vector in
@@ -2193,6 +2209,7 @@ Ship in v1:
 - Coeff Program editor
 - Coeff Program chip `push_const(length,value)` plus old `const` alias
 - Coeff Program chip `push_linspace(length)`
+- Coeff Program chip `push_range(length)`
 - `blend(t)` vector-combine chip with same-length-required semantics
 - pinned vector ops: `add`, `subtract`, `multiply`, `divide`, `power`,
   `argsort`, `angle`, `mod`, `abs`, `roll`, `rolr`, `littlewood`
@@ -2201,13 +2218,11 @@ Ship in v1:
 - `push(cf)`, `push(poly)`, `emit`
 - `duplicate`, `swap`, `pop`, `flush`
 - `macro(name)`
-- direct sugar for every existing coefficient transform as `poly-name`, lowered
-  to `legacy(name, src=poly, tgt=poly, args...)`
 - generic `legacy(name, src, tgt, args...)`
 - source selectors: `cf`, `poly`, `pop`, `peek`
 - target selectors: `poly`, `push`
-- scalar argument expressions with literals, `p1`, `p2`, basic arithmetic,
-  `conj`, `neg`, `real`, and `imag`
+- scalar argument expressions with literals, `t1`, `t2`, `p1`, `p2`, basic
+  arithmetic, `conj`, `neg`, `real`, `imag`, `abs`, and `log`
 - exact legacy-chain equivalence detection
 - compute preview parity with selected mode
 - full compute/fused/lores parity with selected mode
@@ -2231,11 +2246,11 @@ Do not ship in v1:
 2. Should `poly` be readable by `push(poly)` in v1? Recommended: yes, because it
    makes branching from the current transformed vector natural.
 3. Should all direct coeff chips expose `src`/`tgt`, or only the generic
-   `legacy(...)` chip? Resolved: direct chips are named `poly-*`, have a fixed
-   function name, and expose `src`/`tgt` selectors defaulting to `poly -> poly`.
-4. Should `andy` remain visible on every direct coeff chip? Recommended: yes
-   for parity with existing chain UI, but layout must be improved so it does not
-   crowd the chip.
+   `legacy(...)` chip? Resolved: only the generic `legacy(...)` chip ships for
+   coefficient transforms. Direct `poly-*` aliases are redundant and confusing.
+4. Should `andy` remain visible on legacy coeff transform chips? Recommended:
+   yes for parity with existing chain UI, but layout must be improved so it does
+   not crowd the chip.
 5. Should legacy-equivalent Program mode run through the VM or old chain path?
    Recommended: measure first. Preserve Chain mode regardless.
 

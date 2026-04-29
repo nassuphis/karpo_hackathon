@@ -3332,7 +3332,8 @@ enum CoeffProgramOp {
     COEFF_OP_VECTOR_ROLL = 14,
     COEFF_OP_VECTOR_ARGSORT = 15,
     COEFF_OP_LITTLEWOOD = 16,
-    COEFF_OP_LINSPACE = 17
+    COEFF_OP_LINSPACE = 17,
+    COEFF_OP_RANGE = 18
 };
 
 enum CoeffProgramSelector {
@@ -3379,7 +3380,9 @@ enum CoeffExprOp {
     COEFF_EXPR_POLY_AT = 14,
     COEFF_EXPR_TOS_AT = 15,
     COEFF_EXPR_T1 = 16,
-    COEFF_EXPR_T2 = 17
+    COEFF_EXPR_T2 = 17,
+    COEFF_EXPR_ABS = 18,
+    COEFF_EXPR_LOG = 19
 };
 
 typedef struct {
@@ -3732,13 +3735,16 @@ static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
             sp++;
             continue;
         }
-        if (op == COEFF_EXPR_CONJ || op == COEFF_EXPR_NEG || op == COEFF_EXPR_REAL || op == COEFF_EXPR_IMAG) {
+        if (op == COEFF_EXPR_CONJ || op == COEFF_EXPR_NEG || op == COEFF_EXPR_REAL ||
+            op == COEFF_EXPR_IMAG || op == COEFF_EXPR_ABS || op == COEFF_EXPR_LOG) {
             if (sp < 1) return 1;
             int idx = sp - 1;
             if (op == COEFF_EXPR_CONJ) stackI[idx] = -stackI[idx];
             else if (op == COEFF_EXPR_NEG) { stackR[idx] = -stackR[idx]; stackI[idx] = -stackI[idx]; }
             else if (op == COEFF_EXPR_REAL) stackI[idx] = 0.0;
-            else { stackR[idx] = stackI[idx]; stackI[idx] = 0.0; }
+            else if (op == COEFF_EXPR_IMAG) { stackR[idx] = stackI[idx]; stackI[idx] = 0.0; }
+            else if (op == COEFF_EXPR_ABS) { stackR[idx] = c_abs(stackR[idx], stackI[idx]); stackI[idx] = 0.0; }
+            else { c_log(stackR[idx], stackI[idx], &stackR[idx], &stackI[idx]); }
             continue;
         }
         if (sp < 2) return 1;
@@ -4151,6 +4157,16 @@ static int evalCoeffProgram(const CoeffProgram *program,
             double denom = len > 1 ? (double)(len - 1) : 1.0;
             for (int i = 0; i < len; i++) {
                 ws->scratch_re[i] = len > 1 ? ((double)len * (double)i / denom) : 0.0;
+                ws->scratch_im[i] = 0.0;
+            }
+            ws->scratch_len = (uint16_t)len;
+            if (coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, len) != 0) return 1;
+        } else if (tok->op == COEFF_OP_RANGE) {
+            int len = (int)tok->args[0];
+            if (len == -1) len = ws->poly_len;
+            if (coeff_program_check_len(len, "push_range") != 0) return 1;
+            for (int i = 0; i < len; i++) {
+                ws->scratch_re[i] = (double)i;
                 ws->scratch_im[i] = 0.0;
             }
             ws->scratch_len = (uint16_t)len;

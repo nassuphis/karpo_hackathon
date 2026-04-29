@@ -150,7 +150,7 @@ class TestComputePlan(unittest.TestCase):
     def test_build_plan_resolves_coeff_program_macro(self):
         import handler_compute_plan as mod
 
-        saved = json.dumps({"chain": [["poly-rev"]]}).encode()
+        saved = json.dumps({"chain": [["legacy", "rev", "poly", "poly"]]}).encode()
         fake_s3 = MagicMock()
         fake_s3.get_object.return_value = {
             "Body": MagicMock(read=lambda: saved)

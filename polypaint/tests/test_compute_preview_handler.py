@@ -216,7 +216,7 @@ class TestComputePreviewHandler(unittest.TestCase):
             "q_re": [-1.0, 1.0],
             "q_im": [-1.0, 1.0],
         }
-        saved = json.dumps({"chain": [["poly-rev"]]}).encode()
+        saved = json.dumps({"chain": [["legacy", "rev", "poly", "poly"]]}).encode()
         mock_s3_client.return_value.get_object.return_value = {
             "Body": unittest.mock.MagicMock(read=lambda: saved)
         }

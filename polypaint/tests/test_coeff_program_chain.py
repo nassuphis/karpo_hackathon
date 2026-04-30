@@ -208,6 +208,64 @@ class TestCoeffProgramChain(unittest.TestCase):
         self.assertIn(COEFF_OP_TYPED_PUSH_VECTOR, ops)
         self.assertEqual(compiled["stack_max"], 4)
 
+    def test_source_elementary_vector_unary_uses_typed_vector_path(self):
+        from coeff_program_chain import COEFF_OP_NATIVE_TRANSFORM, COEFF_OP_VECTOR_UNARY, compile_coeff_program_chain
+        from coeff_program_source import compile_coeff_program_source
+
+        compiled = compile_coeff_program_source("poly = sin(poly)\nemit")
+        ops = [tok["op"] for tok in compiled["tokens"]]
+        self.assertEqual(ops[0], COEFF_OP_VECTOR_UNARY)
+        self.assertNotIn(COEFF_OP_NATIVE_TRANSFORM, ops)
+
+        affine_exp = compile_coeff_program_source("poly = exp_affine(poly, 1j, 0)\nemit")
+        self.assertIn(COEFF_OP_NATIVE_TRANSFORM, [tok["op"] for tok in affine_exp["tokens"]])
+
+        with self.assertRaisesRegex(RuntimeError, "use exp_affine"):
+            compile_coeff_program_source("poly = exp(poly, 1j, 0)")
+
+        alias = compile_coeff_program_chain([["exp_affine", "poly", "poly", "1j", "0", "0.25"]])
+        self.assertEqual([tok["op"] for tok in alias["tokens"]], [COEFF_OP_NATIVE_TRANSFORM])
+
+        legacy_style = compile_coeff_program_chain([["exp", "poly", "poly", "1j", "0", "0.25"]])
+        self.assertEqual([tok["op"] for tok in legacy_style["tokens"]], [COEFF_OP_NATIVE_TRANSFORM])
+
+    def test_source_push_vec_and_push_scalar_compile_to_typed_stack(self):
+        from coeff_program_chain import (
+            COEFF_OP_CONST,
+            COEFF_OP_EMIT,
+            COEFF_OP_POP,
+            COEFF_OP_TYPED_BINARY,
+            COEFF_OP_TYPED_FILL,
+            COEFF_OP_TYPED_PUSH_SCALAR,
+            compile_coeff_program_chain,
+        )
+        from coeff_program_source import compile_coeff_program_source
+
+        scalar = compile_coeff_program_source("push_scalar(p1)\npush_scalar(p2)\nadd()\ndrop")
+        scalar_ops = [tok["op"] for tok in scalar["tokens"]]
+        self.assertEqual(
+            scalar_ops,
+            [
+                COEFF_OP_TYPED_PUSH_SCALAR,
+                COEFF_OP_TYPED_PUSH_SCALAR,
+                COEFF_OP_TYPED_BINARY,
+                COEFF_OP_POP,
+            ],
+        )
+        self.assertEqual(scalar["stack_max"], 2)
+
+        vector = compile_coeff_program_source("push_vec(p1)\npush_scalar(p2)\nmultiply()\nemit")
+        vector_ops = [tok["op"] for tok in vector["tokens"]]
+        self.assertIn(COEFF_OP_TYPED_FILL, vector_ops)
+        self.assertIn(COEFF_OP_TYPED_BINARY, vector_ops)
+        self.assertEqual(vector_ops[-1], COEFF_OP_EMIT)
+
+        alias = compile_coeff_program_chain([["push_vec", "poly_len", "p1"], ["emit"]])
+        self.assertEqual([tok["op"] for tok in alias["tokens"]], [COEFF_OP_CONST, COEFF_OP_EMIT])
+
+        with self.assertRaisesRegex(RuntimeError, "poly assignment requires a vector"):
+            compile_coeff_program_source("poly = push_scalar(p1)")
+
     def test_source_vector_cf_staging_preserves_binary_order(self):
         from coeff_program_chain import COEFF_OP_PUSH, COEFF_OP_VECTOR_BINARY
         from coeff_program_source import parse_coeff_program_source, compile_coeff_program_source
@@ -252,7 +310,7 @@ class TestCoeffProgramChain(unittest.TestCase):
         from coeff_program_chain import COEFF_OP_NATIVE_TRANSFORM, COEFF_OP_TYPED_PUSH_SCALAR
         from coeff_program_source import compile_coeff_program_source
 
-        compiled = compile_coeff_program_source("poly = exp(poly, p1, p2)\nemit")
+        compiled = compile_coeff_program_source("poly = exp_affine(poly, p1, p2)\nemit")
         ops = [tok["op"] for tok in compiled["tokens"]]
         self.assertEqual(ops[:3], [COEFF_OP_TYPED_PUSH_SCALAR, COEFF_OP_TYPED_PUSH_SCALAR, COEFF_OP_NATIVE_TRANSFORM])
         self.assertEqual(compiled["tokens"][2]["stack_arg_count"], 2)
@@ -265,7 +323,7 @@ class TestCoeffProgramChain(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "rev stack arg count must be <= 0"):
             compile_coeff_program_chain([["_native_transform_stack_args", "rev", "poly", "poly", "1"]])
 
-        compiled = compile_coeff_program_source("poly = exp(poly, p1, p2, real(p1))\nemit")
+        compiled = compile_coeff_program_source("poly = exp_affine(poly, p1, p2, real(p1))\nemit")
         token = next(tok for tok in compiled["tokens"] if tok["op"] == COEFF_OP_NATIVE_TRANSFORM)
         self.assertEqual(token["stack_arg_count"], 2)
         self.assertEqual(token["andy_expr_ref"], 0)
@@ -303,16 +361,56 @@ class TestCoeffProgramChain(unittest.TestCase):
         self.assertEqual(range_compiled["tokens"][0]["args"], [-1])
 
     def test_scalar_expressions_accept_abs_and_log(self):
-        from coeff_program_chain import EXPR_ABS, EXPR_LOG, compile_coeff_program_chain
+        from coeff_program_chain import (
+            EXPR_ABS,
+            EXPR_ANGLE,
+            EXPR_COS,
+            EXPR_COSH,
+            EXPR_EXP,
+            EXPR_LOG,
+            EXPR_SIN,
+            EXPR_SINH,
+            EXPR_SQRT,
+            EXPR_TAN,
+            EXPR_TANH,
+            compile_coeff_program_chain,
+        )
 
         compiled = compile_coeff_program_chain([
             ["push_const", "poly_len", "log(abs(p1+p2)+1)*1j"],
             ["emit"],
+            ["push_const", "poly_len", "sin(p1)+cos(p2)+exp(1j*p1)"],
+            ["emit"],
+            ["push_const", "poly_len", "sqrt(p2)+tan(p1)+sinh(p1)"],
+            ["emit"],
+            ["push_const", "poly_len", "cosh(p2)+tanh(p1)+angle(p2)"],
+            ["emit"],
         ])
-        self.assertEqual(compiled["scalar_expr_count"], 1)
-        ops = [int(compiled["scalar_exprs"][0][idx]) for idx in range(0, len(compiled["scalar_exprs"][0]), 3)]
+        self.assertEqual(compiled["scalar_expr_count"], 4)
+        ops = []
+        for expr in compiled["scalar_exprs"]:
+            ops.extend(int(expr[idx]) for idx in range(0, len(expr), 3))
         self.assertIn(EXPR_ABS, ops)
         self.assertIn(EXPR_LOG, ops)
+        self.assertIn(EXPR_SIN, ops)
+        self.assertIn(EXPR_COS, ops)
+        self.assertIn(EXPR_EXP, ops)
+        self.assertIn(EXPR_SQRT, ops)
+        self.assertIn(EXPR_TAN, ops)
+        self.assertIn(EXPR_SINH, ops)
+        self.assertIn(EXPR_COSH, ops)
+        self.assertIn(EXPR_TANH, ops)
+        self.assertIn(EXPR_ANGLE, ops)
+
+    def test_scalar_expression_elementary_functions_static_fold(self):
+        from coeff_program_chain import compile_coeff_program_chain
+
+        compiled = compile_coeff_program_chain([["push_const", "1", "sin(pi/2)"], ["emit"]])
+        token = compiled["tokens"][0]
+        self.assertEqual(token["expr_refs"], [-1, -1])
+        self.assertAlmostEqual(token["args"][1], 1.0)
+        self.assertAlmostEqual(token["args_im"][1], 0.0)
+        self.assertEqual(compiled["scalar_expr_count"], 0)
 
     def test_legacy_chip_accepts_explicit_src_tgt(self):
         from coeff_program_chain import COEFF_OP_LEGACY, compile_coeff_program_chain

@@ -90,6 +90,15 @@ EXPR_LOG = 19
 EXPR_CF_AT_DYN = 20
 EXPR_POLY_AT_DYN = 21
 EXPR_TOS_AT_DYN = 22
+EXPR_SQRT = 23
+EXPR_EXP = 24
+EXPR_SIN = 25
+EXPR_COS = 26
+EXPR_TAN = 27
+EXPR_SINH = 28
+EXPR_COSH = 29
+EXPR_TANH = 30
+EXPR_ANGLE = 31
 
 _OP_NAMES = {
     COEFF_OP_CONST: "push_const",
@@ -164,6 +173,7 @@ _ENUM_ARG_VALUES = {
 }
 
 _LEGACY_NAME_ALIASES = {
+    "exp_affine": "exp",
     "scale100": "linear",
 }
 
@@ -185,6 +195,13 @@ _VECTOR_UNARY_OPS = {
     "log": 7,
     "real": 8,
     "imag": 9,
+    "exp": 10,
+    "sin": 11,
+    "cos": 12,
+    "tan": 13,
+    "sinh": 14,
+    "cosh": 15,
+    "tanh": 16,
 }
 
 _VECTOR_ROLL_OPS = {
@@ -530,7 +547,24 @@ class _ExpressionParser:
             self._take()
             expr = self._unary()
             return _Expr(expr.tokens + [{"op": EXPR_NEG}], kind=expr.kind, dynamic=expr.dynamic)
-        if token_type == "ident" and token_value in {"conj", "neg", "real", "imag", "abs", "mod", "log"}:
+        if token_type == "ident" and token_value in {
+            "conj",
+            "neg",
+            "real",
+            "imag",
+            "abs",
+            "mod",
+            "log",
+            "sqrt",
+            "exp",
+            "sin",
+            "cos",
+            "tan",
+            "sinh",
+            "cosh",
+            "tanh",
+            "angle",
+        }:
             self._take()
             if self._take()[0] != "(":
                 raise RuntimeError(f"{token_value} requires parentheses")
@@ -545,12 +579,24 @@ class _ExpressionParser:
                 "abs": EXPR_ABS,
                 "mod": EXPR_ABS,
                 "log": EXPR_LOG,
+                "sqrt": EXPR_SQRT,
+                "exp": EXPR_EXP,
+                "sin": EXPR_SIN,
+                "cos": EXPR_COS,
+                "tan": EXPR_TAN,
+                "sinh": EXPR_SINH,
+                "cosh": EXPR_COSH,
+                "tanh": EXPR_TANH,
+                "angle": EXPR_ANGLE,
             }[token_value]
-            return _Expr(
-                expr.tokens + [{"op": op}],
-                kind="real" if token_value in {"real", "imag", "abs", "mod"} else expr.kind,
-                dynamic=expr.dynamic,
+            real_preserving = {"conj", "neg", "exp", "sin", "cos", "tan", "sinh", "cosh", "tanh"}
+            kind = (
+                "real"
+                if token_value in {"real", "imag", "abs", "mod", "angle"}
+                or (expr.kind == "real" and token_value in real_preserving)
+                else "complex"
             )
+            return _Expr(expr.tokens + [{"op": op}], kind=kind, dynamic=expr.dynamic)
         return self._primary()
 
     def _power(self):
@@ -695,6 +741,25 @@ def _expr_value_if_static(expr):
                 stack.append(complex(-700.0, 0.0))
             else:
                 stack.append(cmath.log(value))
+        elif op == EXPR_SQRT:
+            stack.append(cmath.sqrt(stack.pop()))
+        elif op == EXPR_EXP:
+            stack.append(cmath.exp(stack.pop()))
+        elif op == EXPR_SIN:
+            stack.append(cmath.sin(stack.pop()))
+        elif op == EXPR_COS:
+            stack.append(cmath.cos(stack.pop()))
+        elif op == EXPR_TAN:
+            stack.append(cmath.tan(stack.pop()))
+        elif op == EXPR_SINH:
+            stack.append(cmath.sinh(stack.pop()))
+        elif op == EXPR_COSH:
+            stack.append(cmath.cosh(stack.pop()))
+        elif op == EXPR_TANH:
+            stack.append(cmath.tanh(stack.pop()))
+        elif op == EXPR_ANGLE:
+            value = stack.pop()
+            stack.append(complex(math.atan2(value.imag, value.real), 0.0))
         else:
             raise RuntimeError(f"non-static scalar expression opcode: {op}")
     if len(stack) != 1:
@@ -1357,8 +1422,10 @@ def _lower_chip(chip, scalar_exprs):
     name, args = _chip_args(chip)
     if name == "macro":
         raise RuntimeError("macro chip survived expansion")
-    if name in {"push_const", "const"}:
+    if name in {"push_const", "const", "push_vec"}:
         return [_compile_const(args, scalar_exprs)]
+    if name == "push_scalar":
+        return [_compile_typed_push_scalar(args, scalar_exprs)]
     if name == "push_linspace":
         return [_compile_linspace(args, scalar_exprs)]
     if name == "push_range":
@@ -1385,6 +1452,8 @@ def _lower_chip(chip, scalar_exprs):
     if name in _VECTOR_BINARY_OPS:
         return [_compile_vector_binary(name, args)]
     if name in _VECTOR_UNARY_OPS:
+        if len(args) > 2 and name in legacy_registry()["by_name"]:
+            return [_native_transform_token(name, args[1], args[0], args[2:], scalar_exprs)]
         return [_compile_vector_unary(name, args)]
     if name in _VECTOR_ROLL_OPS:
         return [_compile_vector_roll(name, args)]
@@ -1429,7 +1498,7 @@ def _lower_chip(chip, scalar_exprs):
         return [_token(COEFF_OP_TYPED_BLEND)]
     if name == "littlewood":
         return [_compile_littlewood(args, scalar_exprs)]
-    if name in legacy_registry()["by_name"]:
+    if _canonical_legacy_name(name) in legacy_registry()["by_name"]:
         if len(args) < 2:
             raise RuntimeError(f"{name} chip requires target, source, and optional args")
         return [_native_transform_token(name, args[1], args[0], args[2:], scalar_exprs)]

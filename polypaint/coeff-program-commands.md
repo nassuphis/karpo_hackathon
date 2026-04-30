@@ -84,7 +84,8 @@ Operators and functions:
 - Power: `**` with an integer literal exponent only, magnitude <= 32.
 - Unary signs: `+x`, `-x`.
 - Functions: `conj(x)`, `neg(x)`, `real(x)`, `imag(x)`, `abs(x)`, `mod(x)`,
-  `log(x)`.
+  `angle(x)`, `sqrt(x)`, `log(x)`, `exp(x)`, `sin(x)`, `cos(x)`, `tan(x)`,
+  `sinh(x)`, `cosh(x)`, `tanh(x)`.
 
 Notes:
 
@@ -99,9 +100,38 @@ Examples:
 ```text
 poly[0] = 100j*p1
 poly[poly_len-1] = p1 + p2
-push_const(poly_len, log(abs(p1+p2)+1)*1j)
+push_vec(poly_len, log(abs(p1+p2)+1)*1j)
 poly = add(poly, fill(poly_len, cf[0] + poly[poly_len-1]))
 ```
+
+## Scalar Stack Push
+
+### `push_scalar`
+
+Push one scalar value onto the typed stack.
+
+Form:
+
+```text
+push_scalar(value)
+```
+
+Examples:
+
+```text
+push_scalar(p1)
+push_scalar(p2)
+add()
+drop
+
+push_vec(poly_len, 2)
+push_scalar(p1)
+multiply()
+emit
+```
+
+`push_scalar` is for stack calculations. It cannot be assigned directly to
+`poly`, because `poly` must be a vector.
 
 ## Stack Commands
 
@@ -132,17 +162,20 @@ add()
 emit
 ```
 
-## Constructors
+## Vector Constructors
 
 Constructors push vectors unless used on the right-hand side of `poly = ...`.
 
-### `fill`, `const`, `push_const`
+### `push_vec`, `fill`, `const`, `push_const`
 
-Aliases. Create a vector filled with one scalar value.
+Aliases. Create a vector filled with one scalar value. `push_vec` is the
+preferred public name; the other names still compile.
 
 Forms:
 
 ```text
+push_vec(value)            # length defaults to poly_len
+push_vec(length, value)
 fill(value)            # length defaults to poly_len
 fill(length, value)
 const(value)
@@ -154,7 +187,8 @@ push_const(length, value)
 Examples:
 
 ```text
-push_const(poly_len, p1)
+push_vec(poly_len, p1)
+push_vec(p2)
 poly = fill(poly_len, 0)
 poly = add(poly, fill(poly_len, p2*1j))
 ```
@@ -253,6 +287,7 @@ poly[0] = 100j*p1
 poly[poly_len-1] = p2
 poke_poly(10, p1*p2*real(poly6) + imag(poly18)*p1**3)
 poke_tos(0, 1+0j)
+poly[24] = 50 * (sin(p1) + 1j*cos(p2))
 ```
 
 `poke_poly` writes into `poly`. `poke_tos` writes into the top stack vector.
@@ -332,9 +367,14 @@ poly = divide(poly, fill(poly_len, 2))
 poly = power(poly, fill(poly_len, 2))
 
 push_range(poly_len)
-push_const(poly_len, p1)
+push_vec(poly_len, p1)
 power()
 emit
+
+push_scalar(p1)
+push_scalar(p2)
+add()
+drop
 ```
 
 Important: in text mode `pow(...)` and `power(...)` mean vector/scalar binary
@@ -468,6 +508,8 @@ poly = name(source, args...)
 ```
 
 If the transform supports `andy`, a trailing `andy` argument is accepted.
+Plain `exp(source)` is typed unary exponentiation. Use `exp_affine(source, a, b[, andy])`
+for the native affine exponential `exp(source*a+b)`.
 
 Examples:
 
@@ -475,13 +517,13 @@ Examples:
 poly = rev(poly)
 poly = cumsum(poly)
 poly = sort_abs(poly)
-poly = exp(poly, 1j+1, p2, 0.5)
+poly = exp_affine(poly, 1j+1, p2, 0.5)
 poly = round(poly, 2+0j, 0.25)
 poly = roots(poly, 8, hi)
 poly = roots_cm(poly, lo)
 ```
 
-Currently callable native transforms:
+Currently callable transform-style commands:
 
 | Name | Args | Notes |
 | --- | --- | --- |
@@ -498,7 +540,7 @@ Currently callable native transforms:
 | `cummax` | none | Cumulative max-style legacy transform. |
 | `sort_cumsum` | none | Sort then cumulative sum. |
 | `swirler` | none | Legacy swirler transform. |
-| `exp` | `a`, `b`, optional `andy` | Applies legacy affine exp form; `a` and `b` may be complex expressions. |
+| `exp_affine` | `a`, `b`, optional `andy` | Applies native affine exp form `exp(src*a+b)`; `a` and `b` may be complex expressions. Plain `exp(x)` is typed unary exponentiation. |
 | `cos` | none | Elementwise complex cosine. |
 | `sin` | none | Elementwise complex sine. |
 | `tan` | none | Elementwise complex tangent. |
@@ -528,7 +570,7 @@ Create a Littlewood vector and exponentiate it:
 
 ```text
 poly = littlewood(10, -10j)
-poly = exp(poly, 1j+1, 1)
+poly = exp_affine(poly, 1j+1, 1)
 ```
 
 Build `sin(p1**(i/2)) * cos(p2**(i/3))` over indices `i = 1..poly_len`:
@@ -536,13 +578,13 @@ Build `sin(p1**(i/2)) * cos(p2**(i/3))` over indices `i = 1..poly_len`:
 ```text
 range(1, poly_len+1)
 multiply(pop, 0.5)
-push_const(poly_len, p1)
+push_vec(poly_len, p1)
 power(pop, pop)
 sin()
 
 range(1, poly_len+1)
 multiply(pop, 0.3333333333333333)
-push_const(poly_len, p2)
+push_vec(poly_len, p2)
 power(pop, pop)
 cos()
 

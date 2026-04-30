@@ -216,6 +216,115 @@ def test_coeff_program_typed_dynamic_index_and_broadcast_run_in_native_coeffgen(
         assert abs(got.imag) <= 1e-6
 
 
+def test_coeff_program_source_push_scalar_and_push_vec_run_in_native_coeffgen():
+    compiled = compile_coeff_program_source("""
+        push_vec(4, 2)
+        push_scalar(3)
+        multiply()
+        emit
+    """)
+    meta, data = _run_coeffgen({
+        "mode": "coeffgen",
+        "function": "const",
+        "cfpv": [4, 0, 0],
+        "n1": 1,
+        "n2": 1,
+        "coeff_transforms": [],
+        "coeff_program": _compiled_coeff_program_payload(compiled),
+    })
+
+    assert meta["coeff_program_tokens"] == compiled["token_count"]
+    values = _complex_f32_values(data)
+    assert len(values) == 4
+    for got in values:
+        assert abs(got.real - 6.0) <= 1e-6
+        assert abs(got.imag) <= 1e-6
+
+
+def test_coeff_program_scalar_elementary_functions_run_in_native_coeffgen():
+    compiled = compile_coeff_program_source("""
+        poly = push_vec(5, 0)
+        poly[0] = sin(p1)
+        poly[1] = cos(p2)
+        poly[2] = exp(1j*(p1+p2))
+        poly[3] = sqrt(-1)
+        poly[4] = log(1j)
+    """)
+    params = [math.pi / 2.0, 0.0, 0.0, 0.0]
+    with tempfile.NamedTemporaryFile(prefix="pp_coeff_program_scalar_funcs_", suffix=".bin", delete=False) as fh:
+        params_path = fh.name
+        fh.write(struct.pack("<" + "f" * len(params), *params))
+    try:
+        meta, data = _run_coeffgen({
+            "mode": "coeffgen_chunked",
+            "function": "const",
+            "cfpv": [5, 0, 0],
+            "params_file": params_path,
+            "step_start": 0,
+            "source_step_start": 0,
+            "source_n1": 1,
+            "source_n2": 1,
+            "step_count": 1,
+            "coeff_transforms": [],
+            "coeff_program": _compiled_coeff_program_payload(compiled),
+        })
+    finally:
+        try:
+            os.remove(params_path)
+        except FileNotFoundError:
+            pass
+
+    assert meta["coeff_program_tokens"] == compiled["token_count"]
+    values = _complex_f32_values(data)
+    expected = [
+        1.0 + 0.0j,
+        1.0 + 0.0j,
+        0.0 + 1.0j,
+        0.0 + 1.0j,
+        0.0 + (math.pi / 2.0) * 1j,
+    ]
+    assert len(values) == len(expected)
+    for got, want in zip(values, expected):
+        assert abs(got.real - want.real) <= 1e-5
+        assert abs(got.imag - want.imag) <= 1e-5
+
+
+def test_coeff_program_chain_scalar_elementary_functions_run_in_native_coeffgen():
+    compiled = compile_coeff_program_chain([
+        ["push_vec", "3", "sin(p1)+cos(p2)+exp(1j*(p1+p2))"],
+        ["emit"],
+    ])
+    params = [math.pi / 2.0, 0.0, 0.0, 0.0]
+    with tempfile.NamedTemporaryFile(prefix="pp_coeff_program_chain_scalar_funcs_", suffix=".bin", delete=False) as fh:
+        params_path = fh.name
+        fh.write(struct.pack("<" + "f" * len(params), *params))
+    try:
+        meta, data = _run_coeffgen({
+            "mode": "coeffgen_chunked",
+            "function": "const",
+            "cfpv": [3, 0, 0],
+            "params_file": params_path,
+            "step_start": 0,
+            "source_step_start": 0,
+            "source_n1": 1,
+            "source_n2": 1,
+            "step_count": 1,
+            "coeff_transforms": [],
+            "coeff_program": _compiled_coeff_program_payload(compiled),
+        })
+    finally:
+        try:
+            os.remove(params_path)
+        except FileNotFoundError:
+            pass
+
+    assert meta["coeff_program_tokens"] == compiled["token_count"]
+    values = _complex_f32_values(data)
+    for got in values:
+        assert abs(got.real - 2.0) <= 1e-5
+        assert abs(got.imag - 1.0) <= 1e-5
+
+
 def test_coeff_program_static_and_dynamic_poly_index_parity_in_native_coeffgen():
     compiled = compile_coeff_program_source("""
         push_range(0, 5, 1)
@@ -323,7 +432,7 @@ def test_coeff_program_source_typed_blend_runs_in_native_coeffgen():
 def test_coeff_program_source_native_transform_stack_args_run_in_native_coeffgen():
     compiled = compile_coeff_program_source("""
         push_range(0, 2, 1)
-        poly = exp(pop, 1j, 0)
+        poly = exp_affine(pop, 1j, 0)
         emit
     """)
     meta, data = _run_coeffgen({
@@ -348,7 +457,7 @@ def test_coeff_program_source_native_transform_stack_args_run_in_native_coeffgen
 def test_coeff_program_source_native_transform_stack_args_preserve_andy_in_native_coeffgen():
     compiled = compile_coeff_program_source("""
         push_range(0, 3, 1)
-        poly = exp(pop, 0, 0, 1)
+        poly = exp_affine(pop, 0, 0, 1)
         emit
     """)
     meta, data = _run_coeffgen({

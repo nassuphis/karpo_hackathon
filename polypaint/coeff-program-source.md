@@ -88,6 +88,10 @@ real/imag arrays and a length; the typed VM adds three concrete pieces:
   value)`, `dot(vector, vector)`, and broadcast-aware vector/scalar binary ops
 - removal of the separate scalar-expression stack for new payloads, replacing
   it with typed main-VM stack tokens
+- compile-time type specialization for hot-loop tokens: generic typed ops may
+  exist as parser/lowering IR, but final emitted VM opcodes should be
+  scalar/vector/broadcast-specific whenever the compiler already knows the
+  operand types
 - direct source transform calls lower to native transform tokens keyed by
   stable function index; source text no longer emits or accepts
   `legacy(...)`
@@ -222,8 +226,10 @@ Numeric chip arguments accept a scalar expression sublanguage:
 ```text
 identifiers:   t1, t2, p1, p2, poly_len, cfN, polyN, tosN, pi, pi2, pi2i
 literals:      1, -2.5, 1e-6, 1+2j, -2i+4
-operators:     + - * /
-unary funcs:   conj(x), neg(x), real(x), imag(x), abs(x), log(x)
+operators:     + - * / **
+unary funcs:   conj(x), neg(x), real(x), imag(x), abs(x), mod(x), angle(x),
+               sqrt(x), log(x), exp(x), sin(x), cos(x), tan(x),
+               sinh(x), cosh(x), tanh(x)
 parentheses:   (p1 + p2) * 0.5
 ```
 
@@ -273,7 +279,8 @@ nontrivial program.
 legacy(linear, pop, push, 1, 1)    # name, src, tgt, ...args
 add(push, pop, pop)                # tgt, src1, src2
 power(push, pop, pop)              # tgt, src1, src2
-push_const(poly_len, p1)           # length, value (no selectors)
+push_vec(poly_len, p1)             # length, value (no selectors)
+push_scalar(p1)                    # one scalar stack item
 push(cf)                           # src
 poke_poly(10, ...expr)             # index, value (no selectors)
 ```
@@ -422,7 +429,8 @@ v1 features:
   - # single-line comments
   - aliases:
         arange   was push_range
-        fill     was push_const
+        push_vec / fill / const / push_const create filled vectors
+        push_scalar pushes one scalar stack item
         scale(a) -> affine(a, 0)
         shift(b) -> affine(1, b)
         pow      -> the existing vector binary power op
@@ -440,7 +448,7 @@ v1 features:
         set(poly, cf), set(poly, pop), set(poly, peek)
   - emit kept as back-compat sugar for poly = pop
   - direct native transform calls:
-        rev(poly), cumsum(poly), roots(poly, 8, hi)
+        rev(poly), cumsum(poly), roots(poly, 8, hi), exp_affine(poly, a, b)
     The old `legacy(name, src, tgt, ...)` wrapper is Chain/chip-list
     compatibility only, not source syntax.
 ```
@@ -462,13 +470,15 @@ What Phase 2A implements:
 - vector/scalar broadcast for `add`, `subtract`, `multiply`, `divide`, and
   `power`
 - typed unary ops for `abs`/`mod`, `angle`, `neg`, `conj`, `sqrt`, `log`,
-  `real`, and `imag`
+  `exp`, `sin`, `cos`, `tan`, `sinh`, `cosh`, `tanh`, `real`, and `imag`
 - dynamic scalar reads such as `poly[poly_len-1]`, `cf[poly_len-2]`, and
   `tos[poly_len-1]`
 - dynamic scalar writes such as `poly[poly_len-1] = p1`
 - typed `fill(length, value)` so nested forms like
   `add(poly, fill(poly_len, p1))` do not fall back to the old scalar-argument
   VM
+- public `push_vec(length, value)` / `push_vec(value)` sugar for vector fills
+- public `push_scalar(value)` for scalar stack work
 
 The hidden source-lowering opcodes are:
 
@@ -489,6 +499,81 @@ but they are not intended as hand-authored user syntax.
 Phase 2A does not yet implement reductions (`dot`, `sum`, `norm2`), slices,
 `where`, `select`, RNG constructors, `for_each_index`, or automatic Param
 Program migration.
+
+### Phase 2B: Compile-Time Type Specialization
+
+Phase 2A's generic typed opcodes are correct, but they still make the native
+row loop inspect stack-slot types:
+
+```text
+_typed_unary(sin)     # runtime checks scalar vs vector
+_typed_binary(add)    # runtime checks scalar/scalar, vector/vector, broadcasts
+```
+
+That is acceptable as a bridge, but it is not the final performance shape. The
+compiler already runs a typed stack validator, so it knows many stack types
+before native execution:
+
+```text
+push_scalar(p1)
+sin()
+
+push_vec(poly_len, p1)
+sin()
+
+poly = add(poly, p1)
+```
+
+These should lower to specialized hot-loop opcodes:
+
+```text
+scalar_unary(sin)          # scalar -> scalar
+vector_unary(sin)          # vector -> vector
+scalar_binary(add)         # scalar, scalar -> scalar
+vector_binary(add)         # vector, vector -> vector
+broadcast_right(add)       # vector, scalar -> vector
+broadcast_left(add)        # scalar, vector -> vector
+```
+
+Rules:
+
+- The source language remains type-directed: `sin(x)` means scalar or vector
+  based on the type of `x`; `sin()` means operate on typed TOS.
+- The Python compiler's stack-type pass is authoritative for choosing the
+  specialized opcode when all operand types are known.
+- Runtime remains defensive and validates that the stack slots match the
+  specialized opcode's expected shape, because compiled JSON is still an
+  external payload.
+- Generic `_typed_unary` / `_typed_binary` may remain temporarily for old
+  in-flight payloads, diagnostics, or cases that have not been specialized yet,
+  but new source-compiled payloads should prefer specialized opcodes.
+- This is the same cleanup path Param Program should follow: expression syntax
+  lowers into the main typed VM, and compile-time type information removes
+  unnecessary hot-loop dispatch.
+
+Implementation sketch:
+
+```text
+Compiler:
+  - keep lowering source to an internal typed IR
+  - run the existing stack-type validator on that IR
+  - rewrite generic typed ops to specialized VM tokens using known operand
+    types
+  - include source-token-to-specialized-token ranges for diagnostics
+
+Native:
+  - add scalar_unary/vector_unary/scalar_binary/vector_binary/broadcast opcodes
+  - implement each as a tight path with no shape-selection branch
+  - keep old generic typed op handlers during one compatibility window
+
+Tests:
+  - assert push_scalar(p1); sin() emits scalar_unary(sin)
+  - assert push_vec(poly_len,p1); sin() emits vector_unary(sin)
+  - assert add(poly,p1) emits broadcast_right(add)
+  - assert add(p1,poly) emits broadcast_left(add)
+  - assert specialized and generic compatibility paths produce identical
+    native output on representative programs
+```
 
 ### v2 Scope
 
@@ -576,8 +661,9 @@ producers:        arange(poly_len)        # 0..n-1, pushed
 stack ops:        dup, swap, drop, flush
 
 vector ops:       add, sub, mul, div, pow                       # binary, pop pop -> push
-                  abs, mod, angle, neg, conj, sqrt, log          # native unary, pop -> push
-                  sin, cos, exp                                 # registry-backed unary sugar
+                  abs, mod, angle, neg, conj, sqrt, log,
+                  exp, sin, cos, tan, sinh, cosh, tanh,
+                  real, imag                                    # typed unary, pop -> push
 
 scalar ops:       linear(a, b)            # tos -> z*a + b, pops one, pushes one
                   scale(a)                # alias for linear(a, 0)
@@ -600,6 +686,7 @@ explicit target:  poly = pop              # pop top -> poly (canonical emit)
                   poly[a..b] = expr       # slice poke (v2)
 
 native transform: roots(poly, 8, hi)      # direct registry-backed transform
+                  exp_affine(poly, a, b)  # native exp(poly*a+b)
 ```
 
 The unifying rule: a chip name with no parens pops its source from the
@@ -641,6 +728,7 @@ operation directly:
 poly = rev(poly)
 cumsum(poly)
 roots(poly, 8, hi)
+poly = exp_affine(poly, a, b)
 ```
 
 These lower to `COEFF_OP_NATIVE_TRANSFORM` tokens keyed by stable function
@@ -649,12 +737,16 @@ uses the same underlying C transform functions, but the user-facing program
 does not expose a generic `legacy(...)` wrapper.
 
 For direct transform calls, a trailing `andy` argument keeps the same blend
-semantics as Chain mode. Example: `poly = exp(poly, a, b, andy)` compiles `a`
-and `b` as typed-stack scalar arguments, stores `andy` on the transform token,
-and the native evaluator blends the transformed vector with the selected source
-vector. Stack-argument transform tokens must validate their argument count
-against `coeff_legacy_registry.json`; `rev` accepts zero stack args, `exp`
-accepts at most two packed complex args, etc.
+semantics as Chain mode. Example: `poly = exp_affine(poly, a, b, andy)`
+compiles `a` and `b` as typed-stack scalar arguments, stores `andy` on the
+transform token, and the native evaluator blends the transformed vector with
+the selected source vector. `exp(x)` is always typed unary exponentiation;
+`exp_affine(source, a, b[, andy])` is the native transform spelling for
+`exp(source*a+b)`. Stack-argument transform tokens must validate their
+argument count against `coeff_legacy_registry.json`; `rev` accepts zero stack
+args, `exp_affine` accepts at most two packed complex args, etc. Old chip-list
+rows that use `exp` for the affine transform remain accepted as hidden
+compatibility input, but source text and UI display use `exp_affine`.
 
 `legacy(...)` survives only as compatibility plumbing:
 
@@ -1843,7 +1935,9 @@ Statement lowerings:
 arange(n)                 -> ["push_range", n]
 arange(start, stop)       -> ["push_range", start, stop]
 arange(start, stop, step) -> ["push_range", start, stop, step]
-fill(n, expr)             -> ["push_const", n, expr]
+push_vec(n, expr)         -> typed fill sequence
+push_scalar(expr)         -> ["_typed_push_scalar", expr]
+fill(n, expr)             -> typed fill sequence
 linspace(n)               -> ["push_linspace", n]
 linspace(start,stop,n)    -> ["push_linspace", start, stop, n]
 cf                        -> ["push", "cf"]
@@ -1857,8 +1951,9 @@ linear(a,b)               -> typed multiply then typed add
 linear(src,a,b)           -> typed source, multiply, add
 abs/mod/angle/neg/conj/
 sqrt/log                 -> native unary: [name, "push", "pop"]
-sin / cos / exp          -> registry-backed unary sugar when available
-sin(src)                  -> ["_native_transform", "sin", src, "push"]
+sin / cos / exp          -> typed unary
+sin(src)                  -> ["sin", "push", src]
+exp_affine(src,a,b)       -> ["_native_transform", "exp", src, "push", a, b]
 add                       -> ["add", "push", "pop", "pop"]
 mul                       -> ["multiply", "push", "pop", "pop"]
 pow                       -> ["power", "push", "pop", "pop"]
@@ -2378,6 +2473,13 @@ Phase 2A:
 - Vector/scalar broadcast for core binary ops.
 - Typed `fill`, typed unary ops, and nested `add(poly, fill(poly_len, p1))`
   style expressions.
+
+Phase 2B:
+
+- Compile-time specialization of generic typed unary/binary opcodes into
+  scalar/vector/broadcast-specific VM tokens.
+- Native runtime keeps defensive checks but no longer chooses scalar vs vector
+  behavior in the normal hot path.
 
 Remaining full v2:
 

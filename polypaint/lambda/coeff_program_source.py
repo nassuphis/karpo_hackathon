@@ -14,10 +14,14 @@ from dataclasses import dataclass
 from coeff_program_chain import (
     EXPR_ABS,
     EXPR_ADD,
+    EXPR_ANGLE,
     EXPR_CF_AT,
     EXPR_CF_AT_DYN,
     EXPR_CONJ,
+    EXPR_COS,
+    EXPR_COSH,
     EXPR_DIV,
+    EXPR_EXP,
     EXPR_IMAG,
     EXPR_LITERAL,
     EXPR_LOG,
@@ -29,9 +33,14 @@ from coeff_program_chain import (
     EXPR_POLY_AT_DYN,
     EXPR_POLY_LEN,
     EXPR_REAL,
+    EXPR_SIN,
+    EXPR_SINH,
+    EXPR_SQRT,
     EXPR_SUB,
     EXPR_T1,
     EXPR_T2,
+    EXPR_TAN,
+    EXPR_TANH,
     EXPR_TOS_AT,
     EXPR_TOS_AT_DYN,
     MAX_VECTOR_LEN,
@@ -68,6 +77,13 @@ _VECTOR_UNARY_NAMES = {
     "conj",
     "sqrt",
     "log",
+    "exp",
+    "sin",
+    "cos",
+    "tan",
+    "sinh",
+    "cosh",
+    "tanh",
     "real",
     "imag",
 }
@@ -107,6 +123,8 @@ _STACK_ALIASES = {
 
 _SOURCE_NAMES = {"cf", "poly", "pop", "peek"}
 _TARGET_NAMES = {"poly", "push"}
+_VECTOR_FILL_NAMES = {"fill", "const", "push_const", "push_vec"}
+_NATIVE_TRANSFORM_ALIASES = {"exp_affine": "exp"}
 
 
 def _is_source_name(text):
@@ -218,7 +236,11 @@ def _target_selector(text):
 
 def _native_transform_args_and_andy(name, args):
     registry = legacy_registry()["by_name"]
-    spec = registry.get(str(name or "").strip().lower())
+    canonical_name = _NATIVE_TRANSFORM_ALIASES.get(
+        str(name or "").strip().lower(),
+        str(name or "").strip().lower(),
+    )
+    spec = registry.get(canonical_name)
     if not spec or not spec.get("supports_andy"):
         return list(args), None
     raw_args = list(args)
@@ -303,6 +325,24 @@ def _typed_lower_scalar(text):
             chain.append(["_typed_unary", "abs"])
         elif op == EXPR_LOG:
             chain.append(["_typed_unary", "log"])
+        elif op == EXPR_SQRT:
+            chain.append(["_typed_unary", "sqrt"])
+        elif op == EXPR_EXP:
+            chain.append(["_typed_unary", "exp"])
+        elif op == EXPR_SIN:
+            chain.append(["_typed_unary", "sin"])
+        elif op == EXPR_COS:
+            chain.append(["_typed_unary", "cos"])
+        elif op == EXPR_TAN:
+            chain.append(["_typed_unary", "tan"])
+        elif op == EXPR_SINH:
+            chain.append(["_typed_unary", "sinh"])
+        elif op == EXPR_COSH:
+            chain.append(["_typed_unary", "cosh"])
+        elif op == EXPR_TANH:
+            chain.append(["_typed_unary", "tanh"])
+        elif op == EXPR_ANGLE:
+            chain.append(["_typed_unary", "angle"])
         else:
             raise CoeffProgramSourceError(f"unsupported scalar expression opcode {op}")
     return chain
@@ -343,6 +383,12 @@ def _typed_lower_fill(args):
     chain.extend(_typed_lower_scalar(value_expr))
     chain.append(["_typed_fill"])
     return chain, "vector"
+
+
+def _typed_lower_push_scalar(args):
+    if len(args) != 1:
+        raise CoeffProgramSourceError("push_scalar requires one value")
+    return _typed_lower_scalar(args[0]), "scalar"
 
 
 def _typed_lower_binary(name, args):
@@ -407,8 +453,10 @@ def _typed_lower_value(text):
     call = _parse_call(raw)
     if call:
         name, args = call
-        if name in {"fill", "const", "push_const"}:
+        if name in _VECTOR_FILL_NAMES:
             return _typed_lower_fill(args)
+        if name == "push_scalar":
+            return _typed_lower_push_scalar(args)
         if name in {"arange", "range", "push_range"}:
             return _lower_range("range", args), "vector"
         if name in {"linspace", "push_linspace"}:
@@ -445,7 +493,8 @@ def _lower_affine(name, args, *, target):
 def _lower_vector_binary(name, args, *, target):
     chip = _VECTOR_BINARY_ALIASES[name]
     if len(args) == 0:
-        src1, src2 = "pop", "pop"
+        chain = [["_typed_binary", chip]]
+        return _append_typed_target(chain, "vector", target=target)
     elif len(args) == 2:
         if not (_is_source_name(args[0]) and _is_source_name(args[1])):
             chain, value_type = _typed_lower_binary(name, args)
@@ -469,7 +518,8 @@ def _lower_vector_binary(name, args, *, target):
 def _lower_vector_unary(name, args, *, target):
     chip = "abs" if name == "mod" else name
     if len(args) == 0:
-        src = "pop"
+        chain = [["_typed_unary", chip]]
+        return _append_typed_target(chain, "vector", target=target)
     elif len(args) == 1:
         if str(args[0]).strip().lower() == "cf" or not _is_source_name(args[0]):
             chain, value_type = _typed_lower_unary(name, args)
@@ -481,6 +531,7 @@ def _lower_vector_unary(name, args, *, target):
 
 
 def _lower_native_transform_call(name, args, *, target):
+    name = _NATIVE_TRANSFORM_ALIASES.get(str(name or "").strip().lower(), str(name or "").strip().lower())
     if len(args) == 0:
         src = "pop"
         fn_args = []
@@ -513,8 +564,11 @@ def _lower_native_transform_call(name, args, *, target):
 
 def _lower_call(name, args, *, target="push"):
     name = str(name or "").strip().lower()
-    if name in {"fill", "const", "push_const"}:
+    if name in _VECTOR_FILL_NAMES:
         return _lower_const(args, target=target)
+    if name == "push_scalar":
+        chain, value_type = _typed_lower_push_scalar(args)
+        return _append_typed_target(chain, value_type, target=target)
     if name in {"arange", "range", "push_range"}:
         return _lower_range("range", args)
     if name in {"linspace", "push_linspace"}:
@@ -528,7 +582,17 @@ def _lower_call(name, args, *, target="push"):
     if name in _VECTOR_BINARY_ALIASES:
         return _lower_vector_binary(name, args, target=target)
     if name in _VECTOR_UNARY_NAMES:
+        if len(args) > 1:
+            if name == "exp":
+                raise CoeffProgramSourceError("exp(x) is unary; use exp_affine(source, multiplier, offset[, andy]) for exp(source*multiplier+offset)")
+            raise CoeffProgramSourceError(f"{name} requires no args or one source")
         return _lower_vector_unary(name, args, target=target)
+    if name in _NATIVE_TRANSFORM_ALIASES:
+        explicit_source = bool(args) and args[0].strip().lower() in _SOURCE_NAMES
+        valid_counts = {3, 4} if explicit_source else {2, 3}
+        if len(args) not in valid_counts:
+            raise CoeffProgramSourceError("exp_affine requires multiplier, offset, and optional andy; source defaults to pop when omitted")
+        return _lower_native_transform_call(name, args, target=target)
     if name in {"roll", "rolr"}:
         if len(args) == 1:
             src, n = "pop", args[0]

@@ -2523,6 +2523,9 @@ static inline void c_tanh(double ar, double ai, double *rr, double *ri) {
     *ri = sin(y2) / denom;
 }
 static inline void c_log(double ar, double ai, double *rr, double *ri) {
+    /* Canonicalize signed zero so atan2 chooses the principal branch. */
+    if (ar == 0.0) ar = 0.0;
+    if (ai == 0.0) ai = 0.0;
     double m2 = ar*ar + ai*ai;
     *rr = (m2 > 0) ? 0.5 * log(m2) : -700.0;
     *ri = atan2(ai, ar);
@@ -2535,6 +2538,9 @@ static inline void c_exp2(double r, double i, double *rr, double *ri) {
     double e = exp(r); *rr = e * cos(i); *ri = e * sin(i);
 }
 static inline void c_powr(double r, double i, double p, double *rr, double *ri) {
+    /* Canonicalize signed zero so atan2 chooses the principal branch. */
+    if (r == 0.0) r = 0.0;
+    if (i == 0.0) i = 0.0;
     double m2 = r*r + i*i;
     if (m2 < 1e-60) { *rr = 0; *ri = 0; return; }
     double m = sqrt(m2), a = atan2(i, r), mp = pow(m, p);
@@ -3387,7 +3393,14 @@ enum CoeffVectorUnaryOp {
     COEFF_VEC_SQRT = 6,
     COEFF_VEC_LOG = 7,
     COEFF_VEC_REAL = 8,
-    COEFF_VEC_IMAG = 9
+    COEFF_VEC_IMAG = 9,
+    COEFF_VEC_EXP = 10,
+    COEFF_VEC_SIN = 11,
+    COEFF_VEC_COS = 12,
+    COEFF_VEC_TAN = 13,
+    COEFF_VEC_SINH = 14,
+    COEFF_VEC_COSH = 15,
+    COEFF_VEC_TANH = 16
 };
 
 enum CoeffVectorRollOp {
@@ -3417,7 +3430,16 @@ enum CoeffExprOp {
     COEFF_EXPR_LOG = 19,
     COEFF_EXPR_CF_AT_DYN = 20,
     COEFF_EXPR_POLY_AT_DYN = 21,
-    COEFF_EXPR_TOS_AT_DYN = 22
+    COEFF_EXPR_TOS_AT_DYN = 22,
+    COEFF_EXPR_SQRT = 23,
+    COEFF_EXPR_EXP = 24,
+    COEFF_EXPR_SIN = 25,
+    COEFF_EXPR_COS = 26,
+    COEFF_EXPR_TAN = 27,
+    COEFF_EXPR_SINH = 28,
+    COEFF_EXPR_COSH = 29,
+    COEFF_EXPR_TANH = 30,
+    COEFF_EXPR_ANGLE = 31
 };
 
 typedef struct {
@@ -3860,7 +3882,10 @@ static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
             continue;
         }
         if (op == COEFF_EXPR_CONJ || op == COEFF_EXPR_NEG || op == COEFF_EXPR_REAL ||
-            op == COEFF_EXPR_IMAG || op == COEFF_EXPR_ABS || op == COEFF_EXPR_LOG) {
+            op == COEFF_EXPR_IMAG || op == COEFF_EXPR_ABS || op == COEFF_EXPR_LOG ||
+            op == COEFF_EXPR_SQRT || op == COEFF_EXPR_EXP || op == COEFF_EXPR_SIN ||
+            op == COEFF_EXPR_COS || op == COEFF_EXPR_TAN || op == COEFF_EXPR_SINH ||
+            op == COEFF_EXPR_COSH || op == COEFF_EXPR_TANH || op == COEFF_EXPR_ANGLE) {
             if (sp < 1) return 1;
             int idx = sp - 1;
             if (op == COEFF_EXPR_CONJ) stackI[idx] = -stackI[idx];
@@ -3868,7 +3893,16 @@ static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
             else if (op == COEFF_EXPR_REAL) stackI[idx] = 0.0;
             else if (op == COEFF_EXPR_IMAG) { stackR[idx] = stackI[idx]; stackI[idx] = 0.0; }
             else if (op == COEFF_EXPR_ABS) { stackR[idx] = c_abs(stackR[idx], stackI[idx]); stackI[idx] = 0.0; }
-            else { c_log(stackR[idx], stackI[idx], &stackR[idx], &stackI[idx]); }
+            else if (op == COEFF_EXPR_LOG) { c_log(stackR[idx], stackI[idx], &stackR[idx], &stackI[idx]); }
+            else if (op == COEFF_EXPR_SQRT) { c_powr(stackR[idx], stackI[idx], 0.5, &stackR[idx], &stackI[idx]); }
+            else if (op == COEFF_EXPR_EXP) { c_exp2(stackR[idx], stackI[idx], &stackR[idx], &stackI[idx]); }
+            else if (op == COEFF_EXPR_SIN) { c_sin(stackR[idx], stackI[idx], &stackR[idx], &stackI[idx]); }
+            else if (op == COEFF_EXPR_COS) { c_cos(stackR[idx], stackI[idx], &stackR[idx], &stackI[idx]); }
+            else if (op == COEFF_EXPR_TAN) { c_tan(stackR[idx], stackI[idx], &stackR[idx], &stackI[idx]); }
+            else if (op == COEFF_EXPR_SINH) { c_sinh(stackR[idx], stackI[idx], &stackR[idx], &stackI[idx]); }
+            else if (op == COEFF_EXPR_COSH) { c_cosh(stackR[idx], stackI[idx], &stackR[idx], &stackI[idx]); }
+            else if (op == COEFF_EXPR_TANH) { c_tanh(stackR[idx], stackI[idx], &stackR[idx], &stackI[idx]); }
+            else { stackR[idx] = atan2(stackI[idx], stackR[idx]); stackI[idx] = 0.0; }
             continue;
         }
         if (sp < 2) return 1;
@@ -4165,6 +4199,20 @@ static int coeffProgramUnaryVectorOp(CoeffProgramWorkspace *ws, const CoeffProgr
             rr = ar;
         } else if (tok->fn_index == COEFF_VEC_IMAG) {
             rr = ai;
+        } else if (tok->fn_index == COEFF_VEC_EXP) {
+            c_exp2(ar, ai, &rr, &ri);
+        } else if (tok->fn_index == COEFF_VEC_SIN) {
+            c_sin(ar, ai, &rr, &ri);
+        } else if (tok->fn_index == COEFF_VEC_COS) {
+            c_cos(ar, ai, &rr, &ri);
+        } else if (tok->fn_index == COEFF_VEC_TAN) {
+            c_tan(ar, ai, &rr, &ri);
+        } else if (tok->fn_index == COEFF_VEC_SINH) {
+            c_sinh(ar, ai, &rr, &ri);
+        } else if (tok->fn_index == COEFF_VEC_COSH) {
+            c_cosh(ar, ai, &rr, &ri);
+        } else if (tok->fn_index == COEFF_VEC_TANH) {
+            c_tanh(ar, ai, &rr, &ri);
         } else {
             fprintf(stderr, "Coeff Program unknown vector unary op: %d\n", tok->fn_index);
             return 1;
@@ -4275,6 +4323,20 @@ static int coeffProgramApplyTypedUnary(int fnIndex,
         *rr = ar;
     } else if (fnIndex == COEFF_VEC_IMAG) {
         *rr = ai;
+    } else if (fnIndex == COEFF_VEC_EXP) {
+        c_exp2(ar, ai, rr, ri);
+    } else if (fnIndex == COEFF_VEC_SIN) {
+        c_sin(ar, ai, rr, ri);
+    } else if (fnIndex == COEFF_VEC_COS) {
+        c_cos(ar, ai, rr, ri);
+    } else if (fnIndex == COEFF_VEC_TAN) {
+        c_tan(ar, ai, rr, ri);
+    } else if (fnIndex == COEFF_VEC_SINH) {
+        c_sinh(ar, ai, rr, ri);
+    } else if (fnIndex == COEFF_VEC_COSH) {
+        c_cosh(ar, ai, rr, ri);
+    } else if (fnIndex == COEFF_VEC_TANH) {
+        c_tanh(ar, ai, rr, ri);
     } else {
         fprintf(stderr, "Coeff Program unknown typed unary op: %d\n", fnIndex);
         return 1;

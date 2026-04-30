@@ -11619,7 +11619,7 @@ const _ssCatalog = (() => {
     return catalog;
 })();
 
-const _cpScalarExprHelp = 'Program mode accepts t1/t2, p1/p2, poly_len, cfN, polyN, tosN, pi, pi2, pi2i, literals, + - * /, and conj/real/imag/abs/log.';
+const _cpScalarExprHelp = 'Program mode accepts t1/t2, p1/p2, poly_len, cfN, polyN, tosN, pi, pi2, pi2i, literals, + - * /, and conj/real/imag/abs/angle/sqrt/log/exp/sin/cos/tan/sinh/cosh/tanh.';
 const _ctAndyParam = { ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: `Blend amount in [0,1]. ${_cpScalarExprHelp} In Chain mode it must be numeric.` };
 const _ctCategoryMeta = {
     structural: { title: 'Structural', help: 'reorder, normalize, sanitize, or resize the coefficient vector' },
@@ -11719,13 +11719,14 @@ const _cpCategoryMeta = {
 
 const _coeffProgramLegacyNames = Object.keys(_ctCatalog);
 const _coeffProgramVectorBinaryNames = ['add', 'subtract', 'multiply', 'divide', 'power'];
-const _coeffProgramVectorUnaryNames = ['angle', 'mod', 'abs', 'neg', 'conj', 'sqrt', 'log'];
+const _coeffProgramVectorUnaryNames = ['angle', 'mod', 'abs', 'neg', 'conj', 'sqrt', 'log', 'exp', 'sin', 'cos', 'tan', 'sinh', 'cosh', 'tanh'];
 const _coeffProgramVectorSourceChoices = ['poly', 'pop', 'peek'];
 const _coeffProgramVectorTargetChoices = ['poly', 'push'];
 const _coeffProgramLegacySourceChoices = ['cf', 'poly', 'pop', 'peek'];
 const _coeffProgramLegacyTargetChoices = ['poly', 'push'];
 function _canonicalCoeffTransformName(name) {
     const raw = String(name || '').trim();
+    if (raw === 'exp_affine') return 'exp';
     return raw === 'scale100' ? 'linear' : raw;
 }
 const _cpCatalog = (() => {
@@ -11755,14 +11756,33 @@ const _cpCatalog = (() => {
             ],
             desc: 'apply z*a+b with complex expression arguments',
         },
-        push_const: {
+        push_vec: {
             category: 'io',
-            label: 'push_const',
+            label: 'push_vec',
             params: [
                 { ph: 'length|poly_len', label: 'length', def: 'poly_len', lengthArg: true, title: 'Vector length. Use poly_len to match the current poly vector, or an integer 1..256.' },
                 { ph: 'value expr', label: 'value', def: '1', scalarExpr: 'complex', title: `Scalar expression for every coefficient. ${_cpScalarExprHelp}` },
             ],
-            desc: 'push push_const(length, value); value is a scalar expression over t1/t2, p1/p2, and coeff registers',
+            desc: 'push a constant vector push_vec(length, value); value is a scalar expression',
+        },
+        push_scalar: {
+            category: 'stack',
+            label: 'push_scalar',
+            hidden: true,
+            params: [
+                { ph: 'value expr', label: 'value', def: '1', scalarExpr: 'complex', complexWide: true, title: `Scalar expression pushed as one scalar stack item. ${_cpScalarExprHelp}` },
+            ],
+            desc: 'push one scalar stack item for typed stack calculations',
+        },
+        push_const: {
+            category: 'io',
+            label: 'push_const',
+            hidden: true,
+            params: [
+                { ph: 'length|poly_len', label: 'length', def: 'poly_len', lengthArg: true, title: 'Vector length. Use poly_len to match the current poly vector, or an integer 1..256.' },
+                { ph: 'value expr', label: 'value', def: '1', scalarExpr: 'complex', title: `Scalar expression for every coefficient. ${_cpScalarExprHelp}` },
+            ],
+            desc: 'back-compat alias for push_vec(length, value)',
         },
         push_linspace: {
             category: 'io',
@@ -11871,6 +11891,19 @@ const _cpCatalog = (() => {
         };
     });
     Object.entries(_ctCatalog).forEach(([name, ctSpec]) => {
+        if (name === 'exp') {
+            catalog.exp_affine = {
+                category: ctSpec.category || 'elementwise',
+                nativeTransform: true,
+                params: [
+                    { ph: 'tgt', def: 'poly', choices: _coeffProgramLegacyTargetChoices, selectorWide: true, title: 'Output target: write poly or push the transform result.' },
+                    { ph: 'src', def: 'poly', choices: _coeffProgramLegacySourceChoices, selectorWide: true, title: 'Input vector: cf read-only coefficients, current poly, pop stack, or peek stack.' },
+                    ..._cpExpParamDefs.map(pDef => ({ ...pDef })).filter(pDef => !(pDef && pDef.ph === 'andy')),
+                ],
+                label: 'exp_affine',
+                desc: 'exp_affine(src, a, b): exp(src*a+b)',
+            };
+        }
         if (catalog[name]) return;
         const argDefs = _coeffProgramLegacyInputDefs(name)
             .filter(pDef => !(pDef && pDef.ph === 'andy'))
@@ -12811,8 +12844,10 @@ function _coeffProgramSourceFromChain(chain) {
         if (Array.isArray(row) && row.length) {
             const name = String(row[0] || '').trim();
             const params = row.slice(1).map(v => String(v == null ? '' : v));
+            const sourceName = name === 'exp' && params.length > 2 ? 'exp_affine' : name;
             if (name === 'push' && params[0] === 'cf') return 'cf';
             if (name === 'push' && params[0] === 'poly') return 'poly';
+            if ((name === 'push_const' || name === 'const') && params.length >= 2) return `push_vec(${params.join(', ')})`;
             if (name === 'pop') return 'drop';
             if (name === 'set' && params[0] === 'poly' && params[1]) return `poly = ${params[1]}`;
             if (name === 'poke_poly' && params.length >= 2) return `poly[${params[0]}] = ${params[1]}`;
@@ -12823,7 +12858,7 @@ function _coeffProgramSourceFromChain(chain) {
                 if (src1 === 'pop' && src2 === 'pop') return `${name}()`;
                 return `${name}(${src1}, ${src2})`;
             }
-            if (_coeffProgramVectorUnaryNames.includes(name) && params.length >= 2) {
+            if (sourceName === name && _coeffProgramVectorUnaryNames.includes(name) && params.length >= 2) {
                 const [tgt, src] = params;
                 if (tgt === 'poly') return `poly = ${name}(${src})`;
                 return src === 'pop' ? `${name}()` : `${name}(${src})`;
@@ -12842,12 +12877,18 @@ function _coeffProgramSourceFromChain(chain) {
             if (nativeSpec.nativeTransform && params.length >= 2) {
                 const [tgt, src, ...rest] = params;
                 const args = [src || 'poly', ...rest].join(', ');
-                return tgt === 'poly' ? `poly = ${name}(${args})` : `${name}(${args})`;
+                return tgt === 'poly' ? `poly = ${sourceName}(${args})` : `${sourceName}(${args})`;
+            }
+            if (sourceName !== name && params.length >= 2) {
+                const [tgt, src, ...rest] = params;
+                const args = [src || 'poly', ...rest].join(', ');
+                return tgt === 'poly' ? `poly = ${sourceName}(${args})` : `${sourceName}(${args})`;
             }
             if (name === 'legacy') {
                 const [legacyName, src, tgt, ...rest] = params;
+                const callName = legacyName === 'exp' ? 'exp_affine' : (legacyName || 'rev');
                 const args = [src || 'poly', ...rest].join(', ');
-                return tgt === 'poly' ? `poly = ${legacyName || 'rev'}(${args})` : `${legacyName || 'rev'}(${args})`;
+                return tgt === 'poly' ? `poly = ${callName}(${args})` : `${callName}(${args})`;
             }
             return params.length ? `${name}(${params.join(', ')})` : name;
         }
@@ -13399,9 +13440,9 @@ function _normalizeCoeffProgramChain(rawChain) {
                         _formatCoeffTransformComplexParts(params[3], params[4]),
                     );
                 }
-                return [{ name: legacyName, params: [params[2] || 'poly', params[1] || 'poly', ...params.slice(3)] }];
+                return [{ name: legacyName === 'exp' ? 'exp_affine' : legacyName, params: [params[2] || 'poly', params[1] || 'poly', ...params.slice(3)] }];
             }
-            const sourceName = name === 'const' ? 'push_const' : name;
+            const sourceName = name === 'const' ? 'push_const' : (name === 'exp' && item.length > 3 ? 'exp_affine' : name);
             return [{ name: sourceName, params: item.slice(1).map(v => String(v)) }];
         }
         if (item == null || item === '') return [];
@@ -13527,7 +13568,8 @@ function _copyCoeffTransformsIntoCoeffProgram() {
             name: values[0],
             params: values.slice(1).map(v => String(v)),
         });
-        return { name: normalized.name, params: ['poly', 'poly', ...(normalized.params || [])] };
+        const programName = normalized.name === 'exp' ? 'exp_affine' : normalized.name;
+        return { name: programName, params: ['poly', 'poly', ...(normalized.params || [])] };
     });
     _cpChain.splice(0, _cpChain.length, ...chain);
     _coeffProgramSelectedIndex = _cpChain.length ? 0 : -1;
@@ -13926,9 +13968,10 @@ function _coeffProgramChipShellHtml(i, readonly, bodyHtml) {
 }
 
 function _coeffProgramLegacyInputDefs(legacyName) {
-    if (String(legacyName || '').trim() === 'exp') return _cpExpParamDefs.map(p => ({ ...p }));
-    if (String(legacyName || '').trim() === 'round') return _cpRoundParamDefs.map(p => ({ ...p }));
-    const spec = _ctCatalog[String(legacyName || '').trim()] || {};
+    const canonicalName = _canonicalCoeffTransformName(legacyName);
+    if (canonicalName === 'exp') return _cpExpParamDefs.map(p => ({ ...p }));
+    if (canonicalName === 'round') return _cpRoundParamDefs.map(p => ({ ...p }));
+    const spec = _ctCatalog[canonicalName] || {};
     return (spec.params || []).map(p => ({ ...p }));
 }
 
@@ -14005,7 +14048,7 @@ function _coeffProgramNativeTransformFormulaHtml(item, i, pDefs, options = {}) {
     if (item.name === 'linear') {
         return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${src}<span class="chip-op">*</span>${arg(0)}<span class="chip-op">+</span>${arg(1)}</span>`;
     }
-    if (item.name === 'exp') {
+    if (item.name === 'exp' || item.name === 'exp_affine') {
         return `<span class="chip-formula">${tgt}<span class="chip-op">=</span><span>${label}(</span>${src}<span class="chip-op">*</span>${arg(0)}<span class="chip-op">+</span>${arg(1)}<span>)</span></span>`;
     }
     if (item.name === 'round') {
@@ -14072,7 +14115,7 @@ function _renderCoeffProgramChipHtml(item, i, options = {}) {
     }
     const inputsHtml = pDefs.map((pDef, pi) => {
         const value = params[pi] !== undefined && params[pi] !== '' ? params[pi] : String(pDef.def || '');
-        if (item.name === 'push_const' || item.name === 'push_linspace' || item.name === 'push_range' || item.name === 'const' || item.name === 'poke_poly' || item.name === 'poke_tos') {
+        if (item.name === 'push_vec' || item.name === 'push_scalar' || item.name === 'push_const' || item.name === 'push_linspace' || item.name === 'push_range' || item.name === 'const' || item.name === 'poke_poly' || item.name === 'poke_tos') {
             return _chipLabeledInputHtml('cp', i, pi, value, pDef || {}, { readonly });
         }
         return _chipInputHtml('cp', i, pi, value, pDef || {}, { readonly });

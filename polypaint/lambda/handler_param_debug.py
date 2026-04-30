@@ -27,6 +27,22 @@ MAX_SYNC_PARAM_DEBUG_N = 512
 MAX_SYNC_PARAM_DEBUG_PIX = 2048
 
 
+def _compiled_param_program_payload(compiled):
+    payload = {
+        "version": compiled["version"],
+        "fingerprint": compiled["fingerprint"],
+        "display": compiled["display"],
+        "stack_max": compiled["stack_max"],
+        "token_count": compiled["token_count"],
+        "uses_legacy_fast_path": compiled["uses_legacy_fast_path"],
+        "tokens": compiled["tokens"],
+    }
+    scalar_exprs = compiled.get("scalar_exprs") or []
+    if scalar_exprs:
+        payload["scalar_exprs"] = scalar_exprs
+    return payload
+
+
 def error_response(status_code, message):
     return {
         "statusCode": int(status_code),
@@ -142,16 +158,7 @@ def handler(event, context):
             transform_chain = compiled_param_program["legacy_transforms"]
         else:
             transform_chain = []
-            param_program = {
-                "version": compiled_param_program["version"],
-                "fingerprint": compiled_param_program["fingerprint"],
-                "display": compiled_param_program["display"],
-                "stack_max": compiled_param_program["stack_max"],
-                "token_count": compiled_param_program["token_count"],
-                "uses_legacy_fast_path": compiled_param_program["uses_legacy_fast_path"],
-                "tokens": compiled_param_program["tokens"],
-                "scalar_exprs": compiled_param_program.get("scalar_exprs", []),
-            }
+            param_program = _compiled_param_program_payload(compiled_param_program)
     mode = params.get("mode", "together")  # "together" or "separate"
     job_id = params.get("job_id", "debug")
 

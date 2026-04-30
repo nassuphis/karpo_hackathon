@@ -53,6 +53,22 @@ def _compiled_coeff_program_payload(compiled):
     }
 
 
+def _compiled_param_program_payload(compiled):
+    payload = {
+        "version": compiled["version"],
+        "fingerprint": compiled["fingerprint"],
+        "display": compiled["display"],
+        "stack_max": compiled["stack_max"],
+        "token_count": compiled["token_count"],
+        "uses_legacy_fast_path": compiled["uses_legacy_fast_path"],
+        "tokens": compiled["tokens"],
+    }
+    scalar_exprs = compiled.get("scalar_exprs") or []
+    if scalar_exprs:
+        payload["scalar_exprs"] = scalar_exprs
+    return payload
+
+
 def _is_missing_s3_error(exc):
     response = getattr(exc, "response", {}) or {}
     code = str((response.get("Error") or {}).get("Code") or "")
@@ -212,11 +228,7 @@ def handle_build_plan(params):
             param_transforms = compiled_param_program["legacy_transforms"]
         else:
             param_transforms = []
-            param_program = {
-                **param_program_metadata,
-                "tokens": compiled_param_program["tokens"],
-                "scalar_exprs": compiled_param_program.get("scalar_exprs", []),
-            }
+            param_program = _compiled_param_program_payload(compiled_param_program)
     coeff_program_chain = run_params.get("coeff_program_chain") if pipeline_mode == "program" else []
     coeff_program = None
     coeff_program_metadata = None

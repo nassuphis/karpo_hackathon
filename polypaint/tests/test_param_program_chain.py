@@ -31,6 +31,8 @@ class TestParamProgramChain(unittest.TestCase):
         )
         self.assertEqual(compiled["stack_max"], 1)
         self.assertEqual(compiled["emits"], ["p1", "p2"])
+        self.assertEqual(len(compiled["lowered_to_source"]), len(compiled["tokens"]))
+        self.assertEqual(compiled["execution_format"], "single_vm")
         self.assertFalse(compiled["uses_legacy_fast_path"])
 
     def test_register_legacy_transform_is_fast_path_eligible(self):
@@ -147,15 +149,21 @@ class TestParamProgramChain(unittest.TestCase):
             ])
 
     def test_const_accepts_dynamic_scalar_expression(self):
-        from param_program_chain import EXPR_ADD, EXPR_P1, EXPR_P2, PARAM_OP_CONST, compile_param_program_chain
+        from param_program_chain import (
+            PARAM_OP_ADD,
+            PARAM_OP_EMIT_P1,
+            PARAM_OP_PUSH_P1,
+            PARAM_OP_PUSH_P2,
+            compile_param_program_chain,
+        )
 
         compiled = compile_param_program_chain([["const", "p1+p2"], ["emit", "p1"]])
-        self.assertEqual(compiled["tokens"][0]["op"], PARAM_OP_CONST)
-        self.assertEqual(compiled["tokens"][0]["expr_refs"], [0])
         self.assertEqual(
-            [int(compiled["scalar_exprs"][0][idx]) for idx in range(0, len(compiled["scalar_exprs"][0]), 3)],
-            [EXPR_P1, EXPR_P2, EXPR_ADD],
+            [tok["op"] for tok in compiled["tokens"]],
+            [PARAM_OP_PUSH_P1, PARAM_OP_PUSH_P2, PARAM_OP_ADD, PARAM_OP_EMIT_P1],
         )
+        self.assertEqual(compiled["scalar_exprs"], [])
+        self.assertNotIn("scalar_exprs", compiled["execution_spec"])
         self.assertFalse(compiled["uses_legacy_fast_path"])
 
     def test_scalar_expressions_accept_pi_constants(self):
@@ -164,9 +172,8 @@ class TestParamProgramChain(unittest.TestCase):
 
         compiled = compile_param_program_chain([["const", "pi + pi2i"], ["emit", "p1"]])
         token = compiled["tokens"][0]
-        self.assertAlmostEqual(token["args"][0], math.pi)
-        self.assertAlmostEqual(token["args_im"][0], 2.0 * math.pi)
-        self.assertEqual(token["expr_refs"], [-1])
+        self.assertAlmostEqual(token["a"], math.pi)
+        self.assertAlmostEqual(token["b"], 2.0 * math.pi)
         self.assertEqual(compiled["scalar_exprs"], [])
 
         legacy = compile_param_program_chain([["legacy", "rtheta", "both", "both", "pi2"]])
@@ -178,23 +185,32 @@ class TestParamProgramChain(unittest.TestCase):
 
         compiled = compile_param_program_chain([["const", "1", "2"], ["emit", "p1"]])
         self.assertEqual(compiled["source_chain"][0], ["const", "(1)+(2)*1j"])
-        self.assertEqual(compiled["tokens"][0]["args"], [1.0])
-        self.assertEqual(compiled["tokens"][0]["args_im"], [2.0])
-        self.assertEqual(compiled["tokens"][0]["expr_refs"], [-1])
+        self.assertEqual(compiled["tokens"][0]["a"], 1.0)
+        self.assertEqual(compiled["tokens"][0]["b"], 2.0)
 
     def test_abs_and_mod_compile_to_same_expression_opcode(self):
         from param_program_chain import compile_param_program_chain
 
         abs_compiled = compile_param_program_chain([["const", "abs(p1)"], ["emit", "p1"]])
         mod_compiled = compile_param_program_chain([["const", "mod(p1)"], ["emit", "p1"]])
-        self.assertEqual(abs_compiled["scalar_exprs"], mod_compiled["scalar_exprs"])
+        self.assertEqual(abs_compiled["tokens"], mod_compiled["tokens"])
 
     def test_legacy_arg_accepts_dynamic_real_expression(self):
-        from param_program_chain import PARAM_OP_LEGACY, compile_param_program_chain
+        from param_program_chain import (
+            PARAM_OP_ABS,
+            PARAM_OP_CONST,
+            PARAM_OP_DIVIDE,
+            PARAM_OP_LEGACY,
+            PARAM_OP_PUSH_P1,
+            compile_param_program_chain,
+        )
 
         compiled = compile_param_program_chain([["legacy", "rtheta", "both", "both", "abs(p1)/2"]])
-        self.assertEqual(compiled["tokens"][0]["op"], PARAM_OP_LEGACY)
-        self.assertEqual(compiled["tokens"][0]["expr_refs"], [0])
+        self.assertEqual(
+            [tok["op"] for tok in compiled["tokens"]],
+            [PARAM_OP_PUSH_P1, PARAM_OP_ABS, PARAM_OP_CONST, PARAM_OP_DIVIDE, PARAM_OP_LEGACY],
+        )
+        self.assertEqual(compiled["tokens"][-1]["stack_arg_count"], 1)
         self.assertFalse(compiled["uses_legacy_fast_path"])
         self.assertEqual(compiled["legacy_transforms"], [])
 
@@ -210,8 +226,9 @@ class TestParamProgramChain(unittest.TestCase):
         compiled = compile_param_program_chain([
             ["legacy", "moebius", "both", "both", "1", "p1", "0", "exp(t2)"]
         ])
-        self.assertEqual(compiled["tokens"][0]["expr_refs"], [-1, 0, -1, 1])
-        self.assertEqual(len(compiled["scalar_exprs"]), 2)
+        self.assertEqual(compiled["tokens"][-1]["stack_arg_count"], 4)
+        self.assertEqual(compiled["tokens"][-1]["n_args"], 4)
+        self.assertEqual(compiled["scalar_exprs"], [])
 
     def test_macro_expression_expands_into_parent_expression_table(self):
         from param_program_chain import compile_param_program_chain
@@ -224,7 +241,8 @@ class TestParamProgramChain(unittest.TestCase):
         macro = compile_param_program_chain([["macro", "expr"]], macro_resolver=resolver)
         direct = compile_param_program_chain([["const", "t1+t2"], ["emit", "p1"]])
         self.assertEqual(macro["fingerprint"], direct["fingerprint"])
-        self.assertEqual(macro["scalar_exprs"], direct["scalar_exprs"])
+        self.assertEqual(macro["tokens"], direct["tokens"])
+        self.assertEqual(macro["scalar_exprs"], [])
 
     def test_expressive_stack_program_has_stable_fingerprint(self):
         from param_program_chain import compile_param_program_chain

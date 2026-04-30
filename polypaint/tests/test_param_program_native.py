@@ -6,7 +6,14 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
-from param_program_chain import compile_param_program_chain
+from param_program_chain import (
+    EXPR_ADD,
+    EXPR_T1,
+    EXPR_T2,
+    PARAM_OP_CONST,
+    PARAM_OP_EMIT_P1,
+    compile_param_program_chain,
+)
 
 
 LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
@@ -30,13 +37,16 @@ def _run_sweep(spec, out_path):
 
 def _native_payload(chain):
     compiled = compile_param_program_chain(chain)
-    return {
+    payload = {
         "version": 1,
         "tokens": compiled["tokens"],
-        "scalar_exprs": compiled.get("scalar_exprs", []),
         "stack_max": compiled["stack_max"],
         "uses_legacy_fast_path": compiled["uses_legacy_fast_path"],
     }
+    scalar_exprs = compiled.get("scalar_exprs") or []
+    if scalar_exprs:
+        payload["scalar_exprs"] = scalar_exprs
+    return payload
 
 
 def test_param_dump_compiled_legacy_tokens_match_param_transforms():
@@ -175,8 +185,47 @@ def test_param_dump_dynamic_const_expression_matches_stack_program():
         ]),
     }
     _ref_meta, ref_data = _run_sweep(ref_spec, "/tmp/pp_param_dump_expr_ref.bin")
-    assert expr_meta["param_program_tokens"] == 4
+    assert expr_meta["param_program_tokens"] == 8
     assert expr_data == ref_data
+
+
+def test_param_dump_accepts_legacy_nested_scalar_expr_payload():
+    old_payload = {
+        "version": 1,
+        "tokens": [
+            {
+                "op": PARAM_OP_CONST,
+                "n_args": 1,
+                "args": [0.0],
+                "args_im": [0.0],
+                "expr_refs": [0],
+            },
+            {"op": PARAM_OP_EMIT_P1},
+        ],
+        "scalar_exprs": [[
+            float(EXPR_T1), 0.0, 0.0,
+            float(EXPR_T2), 0.0, 0.0,
+            float(EXPR_ADD), 0.0, 0.0,
+        ]],
+        "stack_max": 1,
+        "uses_legacy_fast_path": False,
+    }
+    old_spec = {
+        "mode": "param_dump",
+        "n1": 8,
+        "n2": 8,
+        "param_program": old_payload,
+    }
+    ref_spec = {
+        "mode": "param_dump",
+        "n1": 8,
+        "n2": 8,
+        "param_program": _native_payload([["const", "t1+t2"], ["emit", "p1"]]),
+    }
+    old_meta, old_data = _run_sweep(old_spec, "/tmp/pp_param_dump_old_expr.bin")
+    _ref_meta, ref_data = _run_sweep(ref_spec, "/tmp/pp_param_dump_old_expr_ref.bin")
+    assert old_meta["param_program_tokens"] == 2
+    assert old_data == ref_data
 
 
 def test_param_dump_dynamic_legacy_arg_runs_native_vm():
@@ -189,5 +238,5 @@ def test_param_dump_dynamic_legacy_arg_runs_native_vm():
         ]),
     }
     meta, data = _run_sweep(spec, "/tmp/pp_param_dump_dyn_legacy.bin")
-    assert meta["param_program_tokens"] == 1
+    assert meta["param_program_tokens"] == 5
     assert len(data) == 8 * 8 * 16

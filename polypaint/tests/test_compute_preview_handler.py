@@ -195,6 +195,7 @@ class TestComputePreviewHandler(unittest.TestCase):
         self.assertEqual(specs[0]["param_transforms"], [])
         self.assertIn("param_program", specs[0])
         self.assertEqual(specs[0]["param_program"]["token_count"], 8)
+        self.assertNotIn("scalar_exprs", specs[0]["param_program"])
 
     @patch("handler_compute_preview.tmp_space_stats")
     @patch("handler_compute_preview.subprocess.run")

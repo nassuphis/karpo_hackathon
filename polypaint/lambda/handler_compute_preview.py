@@ -114,6 +114,22 @@ def _compiled_coeff_program_payload(compiled):
     }
 
 
+def _compiled_param_program_payload(compiled):
+    payload = {
+        "version": compiled["version"],
+        "fingerprint": compiled["fingerprint"],
+        "display": compiled["display"],
+        "stack_max": compiled["stack_max"],
+        "token_count": compiled["token_count"],
+        "uses_legacy_fast_path": compiled["uses_legacy_fast_path"],
+        "tokens": compiled["tokens"],
+    }
+    scalar_exprs = compiled.get("scalar_exprs") or []
+    if scalar_exprs:
+        payload["scalar_exprs"] = scalar_exprs
+    return payload
+
+
 def _is_missing_s3_error(exc):
     response = getattr(exc, "response", {}) or {}
     code = str((response.get("Error") or {}).get("Code") or "")
@@ -301,16 +317,7 @@ def _compile_compute_inputs(params):
             param_transforms = compiled_param_program["legacy_transforms"]
         else:
             param_transforms = []
-            param_program = {
-                "version": compiled_param_program["version"],
-                "fingerprint": compiled_param_program["fingerprint"],
-                "display": compiled_param_program["display"],
-                "stack_max": compiled_param_program["stack_max"],
-                "token_count": compiled_param_program["token_count"],
-                "uses_legacy_fast_path": compiled_param_program["uses_legacy_fast_path"],
-                "tokens": compiled_param_program["tokens"],
-                "scalar_exprs": compiled_param_program.get("scalar_exprs", []),
-            }
+            param_program = _compiled_param_program_payload(compiled_param_program)
 
     if coeff_program_chain:
         if not isinstance(coeff_program_chain, list):

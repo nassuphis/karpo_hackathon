@@ -5236,7 +5236,13 @@ enum ParamProgramOp {
     PARAM_OP_SQUARE = 18,
     PARAM_OP_CUBE = 19,
     PARAM_OP_EXP = 20,
-    PARAM_OP_LEGACY = 21
+    PARAM_OP_LEGACY = 21,
+    PARAM_OP_PUSH_P1 = 22,
+    PARAM_OP_PUSH_P2 = 23,
+    PARAM_OP_REAL = 24,
+    PARAM_OP_IMAG = 25,
+    PARAM_OP_ABS = 26,
+    PARAM_OP_DIVIDE = 27
 };
 
 enum ParamProgramSelector {
@@ -5277,7 +5283,7 @@ typedef struct {
     uint8_t src;
     uint8_t tgt;
     uint8_t n_args;
-    uint8_t reserved;
+    uint8_t stack_arg_count;
     double a;
     double b;
     double args[PARAM_PROGRAM_MAX_ARGS];
@@ -5385,6 +5391,15 @@ static const char *parseParamProgramTokenObject(const char *objStart, const char
             return NULL;
         }
         tok->n_args = (uint8_t)explicitNArgs;
+    }
+    v = findKeyIn(objStart, objEnd, "stack_arg_count");
+    if (v) {
+        int stackArgCount = (int)parseNum(&v);
+        if (stackArgCount < 0 || stackArgCount > PARAM_PROGRAM_MAX_ARGS) {
+            fprintf(stderr, "param_program token has invalid stack_arg_count=%d\n", stackArgCount);
+            return NULL;
+        }
+        tok->stack_arg_count = (uint8_t)stackArgCount;
     }
     v = findKeyIn(objStart, objEnd, "a");
     if (v) tok->a = parseNum(&v);
@@ -5617,6 +5632,13 @@ static double paramArgImag(const ParamCx *args, int nArgs, int idx, double fallb
     return args[idx].i;
 }
 
+static int paramLegacyArgAllowsComplex(int fnIndex, int nArgs, int idx) {
+    if (idx < 0 || idx >= nArgs) return 0;
+    if (fnIndex == 19 && nArgs == 4) return 1; /* moebius compact a,b,c,d */
+    if (fnIndex == 20 && nArgs == 2) return 1; /* inv_t_plus_2 compact constants */
+    return 0;
+}
+
 static int paramLegacyApply(int fnIndex, const ParamCx *args, int nArgs, int gridN,
                             ParamCx in1, ParamCx in2, ParamCx *out1, ParamCx *out2) {
     (void)gridN;
@@ -5735,6 +5757,12 @@ static int paramEvalProgram(const ParamProgram *program, int gridN, double t1r, 
             case PARAM_OP_PUSH_T2:
                 if (paramPush(stack, &sp, t2)) return 1;
                 break;
+            case PARAM_OP_PUSH_P1:
+                if (paramPush(stack, &sp, p1)) return 1;
+                break;
+            case PARAM_OP_PUSH_P2:
+                if (paramPush(stack, &sp, p2)) return 1;
+                break;
             case PARAM_OP_EMIT_P1:
                 if (sp < 1) return 1;
                 p1 = stack[--sp];
@@ -5793,6 +5821,19 @@ static int paramEvalProgram(const ParamProgram *program, int gridN, double t1r, 
                 stack[sp - 1] = param_ratio(a, b);
                 break;
             }
+            case PARAM_OP_DIVIDE: {
+                if (sp < 2) return 1;
+                ParamCx b = stack[--sp], a = stack[sp - 1];
+                double d = b.r * b.r + b.i * b.i;
+                if (d <= 1e-300) {
+                    fprintf(stderr, "param_program division by zero\n");
+                    return 1;
+                }
+                double rr = 0.0, ri = 0.0;
+                c_div(a.r, a.i, b.r, b.i, &rr, &ri);
+                stack[sp - 1] = param_cx(rr, ri);
+                break;
+            }
             case PARAM_OP_NEGATE:
                 if (sp < 1) return 1;
                 stack[sp - 1].r = -stack[sp - 1].r;
@@ -5822,9 +5863,45 @@ static int paramEvalProgram(const ParamProgram *program, int gridN, double t1r, 
                 if (sp < 1) return 1;
                 stack[sp - 1] = param_exp(stack[sp - 1]);
                 break;
+            case PARAM_OP_REAL:
+                if (sp < 1) return 1;
+                stack[sp - 1] = param_cx(stack[sp - 1].r, 0.0);
+                break;
+            case PARAM_OP_IMAG:
+                if (sp < 1) return 1;
+                stack[sp - 1] = param_cx(stack[sp - 1].i, 0.0);
+                break;
+            case PARAM_OP_ABS:
+                if (sp < 1) return 1;
+                stack[sp - 1] = param_cx(sqrt(stack[sp - 1].r * stack[sp - 1].r + stack[sp - 1].i * stack[sp - 1].i), 0.0);
+                break;
             case PARAM_OP_LEGACY: {
                 ParamCx in1 = p1, in2 = p2, out1, out2;
                 ParamCx resolvedArgs[PARAM_PROGRAM_MAX_ARGS];
+                int stackArgCount = tok->stack_arg_count;
+                if (stackArgCount < 0 || stackArgCount > tok->n_args || stackArgCount > PARAM_PROGRAM_MAX_ARGS) return 1;
+                if (stackArgCount > 0 && stackArgCount != tok->n_args) {
+                    fprintf(stderr, "param_program legacy mixed stack/static args are not supported\n");
+                    return 1;
+                }
+                if (stackArgCount > 0) {
+                    if (sp < stackArgCount) return 1;
+                    for (int ai = stackArgCount - 1; ai >= 0; ai--) {
+                        resolvedArgs[ai] = stack[--sp];
+                    }
+                } else {
+                    for (int ai = 0; ai < tok->n_args; ai++) {
+                        if (paramArgValue(program, tok, ai, t1, t2, p1, p2, &resolvedArgs[ai]) != 0) return 1;
+                    }
+                }
+                for (int ai = 0; ai < tok->n_args; ai++) {
+                    if (!paramLegacyArgAllowsComplex(tok->fn_index, tok->n_args, ai) &&
+                        fabs(resolvedArgs[ai].i) > 1e-12) {
+                        fprintf(stderr, "param_program legacy fn_index=%d arg %d must be real-valued\n",
+                                tok->fn_index, ai);
+                        return 1;
+                    }
+                }
                 if (tok->src == PARAM_SEL_P1) {
                     in1 = p1; in2 = p1;
                 } else if (tok->src == PARAM_SEL_P2) {
@@ -5840,9 +5917,6 @@ static int paramEvalProgram(const ParamProgram *program, int gridN, double t1r, 
                     in1 = stack[--sp];
                 } else {
                     return 1;
-                }
-                for (int ai = 0; ai < tok->n_args; ai++) {
-                    if (paramArgValue(program, tok, ai, t1, t2, p1, p2, &resolvedArgs[ai]) != 0) return 1;
                 }
                 if (paramLegacyApply(tok->fn_index, resolvedArgs, tok->n_args, gridN, in1, in2, &out1, &out2) != 0) return 1;
                 if (tok->tgt == PARAM_SEL_P1) {

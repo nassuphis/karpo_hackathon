@@ -426,6 +426,9 @@ v2 features:
   - dynamic-index reads and writes:
         poly[i_expr], cf[i_expr]
         poly[i_expr] = expr
+    lowered through typed mixed ops:
+        get_scalar(vector, scalar_index) -> scalar_complex
+        set_scalar(vector_register, scalar_index, scalar_value)
   - slice assignment:
         poly[a..b] = expr
   - for_each_index(idx) { ... } block bodies
@@ -604,13 +607,24 @@ Old single-arg saved forms remain accepted forever.
 
 Replace `cf6`, `poly18`, `tos32` with `cf[6]`, `poly[18]`, `tos[32]`.
 
-- **v1**: literal indices (`poly[6]`, `cf[6]`) and constant-folded
-  compile-time index expressions (`poly[poly_len-1]` if `poly_len` is
-  known statically; otherwise rejected in v1) compile to the existing
-  `EXPR_POLY_AT` / `EXPR_CF_AT` / `EXPR_TOS_AT` opcodes with the index in
-  the operand field.
-- **v2**: full dynamic indices (`poly[i]`, `poly[i_expr]`) need a new
-  runtime opcode that pops or evaluates an index expression at row time.
+- **v1**: literal indices (`poly[6]`, `cf[6]`, `tos[3]`) compile to the
+  existing `EXPR_POLY_AT` / `EXPR_CF_AT` / `EXPR_TOS_AT` opcodes with the
+  index in the operand field. v1 does not need a general index-expression
+  evaluator.
+- **v2**: full dynamic indices (`poly[i]`, `poly[poly_len-1]`,
+  `cf[i_expr]`) lower naturally in the typed VM:
+
+  ```text
+  poly[poly_len - N]
+    -> push_vector(poly)
+       push_scalar(poly_len)
+       push_scalar(N)
+       scalar_sub
+       get_scalar
+  ```
+
+  `get_scalar(vector, scalar_index) -> scalar_complex` is a mixed typed op:
+  one vector input, one scalar input, one scalar output.
 
 ### Static-Index `poly[N] = expr`
 
@@ -621,9 +635,23 @@ shape. The editor and the documented surface use assignment syntax:
 poly[10] = p1*p2*real(poly[6]) + imag(poly[18])*p1**3
 ```
 
-The compiler parses both forms and lowers them to the same compiled
-token. Dynamic-index `poly[i] = expr` and slice `poly[a..b] = expr` are
-v2.
+The compiler parses both forms and lowers them to the same compiled token.
+Dynamic-index `poly[i] = expr` and slice `poly[a..b] = expr` are v2.
+
+In the typed VM, dynamic writes are the write-side mirror of dynamic reads:
+
+```text
+poly[poly_len - N] = expr
+  -> push_scalar(poly_len)
+     push_scalar(N)
+     scalar_sub
+     ... lower expr to scalar_complex ...
+     set_scalar(poly, index, value)
+```
+
+`set_scalar(vector_register, scalar_index, scalar_value)` mutates a writable
+vector register. It must reject non-real indices, non-integer indices, and
+indices outside `[0, vector.length)`. It must not clamp or wrap silently.
 
 ### `**` For Power In Expressions
 
@@ -802,9 +830,8 @@ mirror-pair generators in particular. Those benefits land in v2.
 **It does not regress runtime.** Every transformation in the v1 reform
 lowers to the same compiled tokens that the current source produces.
 There is no perf change, no fingerprint churn for already-deployed
-programs, no migration burden on saved S3 programs. The investment is
-compiler parser changes plus an editor canonicalizer, both isolated to
-the source-input layer.
+programs, no migration burden on saved S3 programs. The investment is a
+backend source parser plus editor plumbing around it.
 
 The acid test holds: a reader who knows the math should read the program
 at roughly the speed of the math. The current source fails that test;
@@ -903,9 +930,10 @@ compiler, the editor, and the runtime each see the form they need:
   lines and formatting preserved verbatim. This is the canonical
   authoring artifact. Save-as-text and load-as-text round-trip through
   this field.
-- `chain` is the canonical lowered chip-as-list form. It is what the
-  compiler accepts as input regardless of how it was produced (UI editor,
-  text editor, macro expansion). Old saved programs that pre-date
+- `chain` is the canonical lowered chip-as-list form produced by the
+  backend parser/compiler. It is what the compiler accepts as input
+  regardless of how it was produced (text editor, chip editor, macro
+  expansion). Old saved programs that pre-date
   `source_text` continue to load through `chain` alone.
 - `tokens` and `fingerprint` are the compiled runtime form, derived from
   `chain` by the compiler. They never participate in authoring.
@@ -913,16 +941,69 @@ compiler, the editor, and the runtime each see the form they need:
 When a program is loaded:
 
 - If `source_text` is present, the editor displays it directly. `chain`
-  is used only for compilation.
+  is used only for compilation and preview display.
 - If `source_text` is absent (legacy saved programs), the editor renders
-  `chain` through the same canonicalizer it would use for a fresh save
-  and treats that rendered text as the editing surface.
+  `chain` through the backend canonicalizer and treats that rendered text as
+  the editing surface.
 
 When a program is saved:
 
 - The editor's text buffer is written to `source_text`.
-- The parser lowers `source_text` to the canonical `chain`.
+- A Lambda-side Python parser lowers `source_text` to the canonical `chain`.
 - The compiler produces `tokens` and `fingerprint` from `chain`.
+
+### Authoritative Parser
+
+The authoritative source parser lives in Python Lambda code, not in
+`index.html`. JavaScript is editor UX only:
+
+- render the textarea/source editor
+- provide a `Text` tab in the Compute tab's Coeff Program section alongside
+  the chip/preview view
+- request validation on debounce
+- display diagnostics with line/column/source spans
+- display the canonical chip preview returned by the backend
+- import/export plain text
+
+JavaScript may contain a lightweight tokenizer for highlighting, but it must
+not be the authority for saved or computed programs. Storage and compute paths
+must be able to compile `source_text` without trusting a JS-generated `chain`.
+
+Add a backend compile endpoint, for example:
+
+```text
+POST /compile-coeff-program-source
+{
+  "name": "poly_1",
+  "source_text": "arange(1, poly_len+1)\n..."
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "chain": [],
+  "display": "...",
+  "fingerprint": "sha1...",
+  "diagnostics": [
+    {
+      "level": "error",
+      "line": 12,
+      "column": 8,
+      "end_line": 12,
+      "end_column": 11,
+      "message": "unknown chip: foo"
+    }
+  ]
+}
+```
+
+The save route calls the same Python parser before writing S3. The compute
+plan route also accepts `source_text` and compiles it through the same path
+if a caller sends source instead of a pre-lowered `chain`. There must be only
+one parser implementation that decides whether a program is valid.
 
 ### Comments And Formatting
 
@@ -954,19 +1035,33 @@ v1 work lives in:
   points for the new aliases (`arange`, `fill`, `scale`, `shift`, `pow`);
   widen `arange`/`linspace` arity; add `**` and `tau`/`tau_i` to the scalar
   expression parser; add `poly[N]` bracket parsing alongside the existing
-  `polyN` form; parse `poly[N] = expr` as sugar for `poke_poly`.
+  `polyN` form; add the authoritative Python source parser; parse
+  `poly[N] = expr` as sugar for `poke_poly`; produce diagnostics with
+  line/column/source-span metadata.
+- **Storage/API** — `lambda/handler_storage.py` or a dedicated handler.
+  Add `/compile-coeff-program-source`; update save/fetch routes so
+  `source_text` is stored verbatim and the backend parser/compiler produces
+  `chain`, `display`, and `fingerprint`.
+- **Compute Plan** — `lambda/handler_compute_plan.py`. Accept either
+  canonical `coeff_program_chain` or `coeff_program_source_text`; when source
+  is present, compile it through the same Python parser path before emitting
+  workflow payloads.
 - **Editor** — `index.html`. Update `_cpCatalog`,
   `_normalizeCoeffProgramChain`, `_serializeCoeffProgramChain`, and
   `_validateCoeffProgramUiChain` for the new chip names; add a text
-  editor surface that round-trips through `source_text`; add the
-  text-to-chain parser and the chain-to-text canonicalizer.
+  editor surface that round-trips through `source_text`; add a `Text` tab in
+  the Compute tab's Coeff Program section so users can author source directly
+  without opening the saved-program modal; call the backend compile endpoint
+  for validation/canonical preview; do not implement the authoritative
+  text-to-chain parser in JS.
 - **Native** — `lambda/sweep_cli.c`. No changes for v1. The runtime
   already handles every v1 lowering through existing opcodes.
 - **Tests** — `tests/test_coeff_program_chain.py`,
   `tests/test_coeff_program_native.py`, `tests/test_frontend_js.sh`,
   `tests/test_coeff_program_storage.py`. Add round-trip assertions for
   `source_text`, alias-equivalence assertions, and old-saved-form
-  loading assertions.
+  loading assertions. Add API tests proving save and compute reject invalid
+  `source_text` even if the client sends a stale or mismatched `chain`.
 
 v2 work additionally:
 
@@ -988,8 +1083,10 @@ do not have to be re-litigated:
 - **In-place register mutations** spell as `poly = chip(poly, ...)`. No
   `@`-decoration syntax. The redundancy of `poly = sin(poly)` is visually
   cheap and removes ambiguity about what the chip does.
-- **`poly[i] = expr` with dynamic indices** is v2, not v1. v1 supports
-  literal indices and statically constant-foldable expressions only.
+- **`poly[i]` and `poly[i] = expr` with dynamic indices** are v2, not v1.
+  v1 supports literal indices only. v2 lowers dynamic reads through
+  `get_scalar(vector, scalar_index)` and dynamic writes through
+  `set_scalar(vector_register, scalar_index, scalar_value)`.
 - **User formatting and comments** survive in `source_text` verbatim.
   Canonicalization happens only when producing `chain` for the compiler;
   it never rewrites `source_text`.

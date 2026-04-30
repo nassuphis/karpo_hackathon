@@ -27,12 +27,14 @@ architecture is now a single Param Program VM: expression fields are lowered
 into ordinary Param Program stack tokens, and legacy chips pop expression
 arguments from the main stack behind the scenes.
 
-This document therefore has two layers:
+Current implementation status:
 
-- Stages 1-4 describe the transitional implementation that already proved the
-  parser, UI, and native payload shape.
-- Stage 5 is the architectural target. It replaces the nested expression VM with
-  single-VM lowering.
+- Stages 1-4 describe the transitional nested-expression implementation that
+  proved the parser, UI, and native payload shape.
+- Stage 5 is implemented on the current branch: new compiler output lowers
+  expression fields into the main Param Program VM token stream.
+- The native reader still accepts the old nested `scalar_exprs` / `expr_refs`
+  payload shape during the Deploy A/B compatibility window.
 
 Do not treat the nested expression VM as the final design.
 
@@ -62,10 +64,16 @@ Do not treat the nested expression VM as the final design.
 - No expressions for selectors, function names, macro ids, or chip names.
 
 Coeff Program expressions are a separate language. They may read coefficient
-state such as `poly_len`, `cfN`, `polyN`, and `tosN`, and they now share the
-same `t1` / `t2` / `p1` / `p2` register names. Do not add coefficient-vector
+state such as `poly_len`, `cfN`, `polyN`, and `tosN`, and they share the same
+`t1` / `t2` / `p1` / `p2` register names. Coeff Program scalar expressions now
+also support `abs(x)` and `log(x)` because coefficient programs need row-local
+scalar constants such as `log(abs(p1+p2)+1)*1j`. Do not add coefficient-vector
 reads to Param Program expressions to make the two languages look identical;
 the execution contexts are different.
+
+Coeff Program also has vector source chips such as `push_range(poly_len)`.
+Those are vector-stack operations, not scalar expression features. Keep them
+out of Param Program expression syntax.
 
 ## Prerequisite: Selector Hygiene
 
@@ -157,6 +165,31 @@ source_n2
 This keeps the existing `params.bin` record format unchanged while making
 `t1/t2` available to Coeff Program expressions in classic, fused, lores, and
 debug paths.
+
+Recent Coeff Program additions that this document should account for:
+
+- `push_range(length)` emits a Python-style real vector
+  `0, 1, 2, ..., length-1`.
+- `push_linspace(length)` remains unchanged and emits `length` samples from
+  `0` to `length`, inclusive.
+- coefficient scalar expressions support `abs(x)` and `log(x)`.
+- a common coefficient-program idiom for one-based coefficient ordinals is:
+
+```text
+push_range(poly_len)
+legacy(linear, pop, push, 1, 1)   # 1, 2, ..., poly_len
+```
+
+A row-local logarithmic constant vector can be written:
+
+```text
+push_const(poly_len, log(abs(p1+p2)+1)*1j)
+```
+
+These are Coeff Program features. Param Program expressions should only gain
+`log(x)` if it is explicitly added to the Param expression opcode set and native
+Param VM. Do not imply Param Program supports `log(x)` just because Coeff
+Program does.
 
 ### V1 Expression Language
 
@@ -312,8 +345,8 @@ Use explicit fixed limits for parsing/lowering:
 
 ```text
 MAX_LOWERED_PARAM_TOKENS_PER_EXPR = 32
-MAX_SCALAR_EXPR_TOKENS = 32          # transitional nested-VM alias only
-PARAM_PROGRAM_MAX_SCALAR_EXPRS = 64  # transitional nested-VM payload only
+MAX_SCALAR_EXPR_TOKENS = 32          # parser limit / transitional naming
+PARAM_PROGRAM_MAX_SCALAR_EXPRS = 64  # native old-payload compatibility only
 ```
 
 `MAX_LOWERED_PARAM_TOKENS_PER_EXPR` is per expression. In the single-VM target
@@ -833,6 +866,11 @@ Suggested tooltip:
 Complex expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Functions: exp, real, imag, abs, mod.
 ```
 
+Do not include Coeff Program-only identifiers such as `poly_len`, `cfN`,
+`polyN`, `tosN`, or vector chips such as `push_range` in Param Program tooltips.
+Do not list `log` in Param Program tooltips unless `PARAM_EXPR_LOG` is added to
+the Param compiler and native VM.
+
 ### Legacy Argument Fields
 
 For legacy chips:
@@ -1152,9 +1190,10 @@ Tests:
 
 ## Concrete Stage 5 File Map
 
-This section is the implementation ticket for the single-VM refactor. It assumes
-Stages 1-4 already landed and the current code still emits `scalar_exprs` /
-`expr_refs`.
+This section is the implementation ticket and as-built checklist for the
+single-VM refactor. Stages 1-4 landed first. Stage 5 now emits single-VM tokens
+for new compiled payloads while retaining native compatibility for old nested
+`scalar_exprs` / `expr_refs` payloads.
 
 ### Implementation Order
 
@@ -1179,8 +1218,7 @@ Constants:
 
 - Keep all existing opcode numbers stable. Current source check:
   `lambda/param_program_chain.py` and `lambda/sweep_cli.c` define Param Program
-  opcodes 1-21 only, with `PARAM_OP_LEGACY = 21`. IDs 22-26 are free in the
-  current checkout.
+  opcodes 1-21 only, with `PARAM_OP_LEGACY = 21`. Stage 5 uses IDs 22-27.
 - Add new compiler/native opcodes after 21:
 
 ```python
@@ -1189,6 +1227,7 @@ PARAM_OP_PUSH_P2 = 23
 PARAM_OP_REAL = 24
 PARAM_OP_IMAG = 25
 PARAM_OP_ABS = 26
+PARAM_OP_DIVIDE = 27
 ```
 
 - Add those names to `_OP_NAMES`.
@@ -1199,22 +1238,23 @@ PARAM_OP_ABS = 26
   expression-bytecode limit.
 - Keep `MAX_SCALAR_EXPR_TOKENS = 32` only as a compatibility alias while the
   nested-VM tests and payload reader still exist.
-- Keep `MAX_SCALAR_EXPRS = 64` only for old nested payload compatibility.
+- Do not keep a Python `MAX_SCALAR_EXPRS` writer path in new compiler output.
+  Old nested payload compatibility lives in the native reader only.
 
 Parser:
 
 - Keep `_compile_expr()` and the expression parser.
 - Keep greedy constant folding.
 - Keep the existing error labels such as `legacy(rtheta) arg 0`.
-- Do not emit `_flatten_expr()` for new payloads.
-- Keep `_flatten_expr()` only for tests or compatibility helpers until Deploy C.
+- Remove `_flatten_expr()` / `_add_arg_expr()` from new compiler output. Old
+  nested payload compatibility is native-read-only during Deploy A/B.
 
 New lowering helper:
 
 Add:
 
 ```python
-def _lower_expr_to_param_tokens(expr, *, label):
+def _expr_to_param_tokens(expr):
     ...
 ```
 
@@ -1229,7 +1269,7 @@ p2              -> PARAM_OP_PUSH_P2
 add             -> PARAM_OP_ADD
 sub             -> PARAM_OP_SUBTRACT
 mul             -> PARAM_OP_MUL
-div             -> PARAM_OP_RATIO
+div             -> PARAM_OP_DIVIDE
 neg             -> PARAM_OP_NEGATE
 exp             -> PARAM_OP_EXP
 real            -> PARAM_OP_REAL
@@ -1237,7 +1277,7 @@ imag            -> PARAM_OP_IMAG
 abs/mod         -> PARAM_OP_ABS
 ```
 
-`_lower_expr_to_param_tokens()` must reject lowered expressions longer than
+`_expr_to_param_tokens()` must reject lowered expressions longer than
 `MAX_LOWERED_PARAM_TOKENS_PER_EXPR`. It must return ordinary `_token(...)`
 dictionaries.
 
@@ -1252,15 +1292,15 @@ dictionaries.
 _token(PARAM_OP_CONST, a=re, b=im)
 ```
 
-- If the expression is dynamic, emit `_lower_expr_to_param_tokens(expr,
-  label="const value")`.
+- If the expression is dynamic, emit `_expr_to_param_tokens(expr)`.
 - Keep accepting old `["const", re, im]` source by converting it to
   `({re})+({im})*1j` before compiling.
 - Do not emit `PARAM_OP_CONST` with `expr_refs` in new payloads.
 
 Legacy arg lowering:
 
-- Replace `_add_arg_expr()` use in `_legacy_args()`.
+- Replace the old `_add_arg_expr()`-based legacy argument writer with
+  `_legacy_arg_exprs()` plus `_expr_to_param_tokens()`.
 - `_legacy_args()` should compile every logical arg to an expression object and
   return:
 
@@ -1365,12 +1405,11 @@ Fingerprinting:
 
 Fast path:
 
-- Current source check: `_legacy_fast_path()` already returns true only when
-  every token is `PARAM_OP_LEGACY`, has no dynamic `expr_refs`, and has
+- Current source check: `_legacy_fast_path()` returns true only when every token
+  is `PARAM_OP_LEGACY`, has `stack_arg_count == 0`, and has
   `src == PARAM_SEL_BOTH` and `tgt == PARAM_SEL_BOTH`.
-- Stage 5 should preserve that shape and add only `stack_arg_count == 0` as the
-  replacement for the old no-dynamic-`expr_refs` condition.
-- Remove the `expr_refs` check after new payloads stop emitting `expr_refs`.
+- New compiler output never emits `expr_refs`, so the fast-path check should not
+  depend on `expr_refs`.
 - Re-benchmark before using this as a performance optimization. If `dispatchPt`
   is slower than the VM, keep `legacy_transforms` empty in Program mode and use
   the VM even for literal legacy-equivalent chains.
@@ -1504,7 +1543,8 @@ PARAM_OP_PUSH_P1 = 22,
 PARAM_OP_PUSH_P2 = 23,
 PARAM_OP_REAL = 24,
 PARAM_OP_IMAG = 25,
-PARAM_OP_ABS = 26
+PARAM_OP_ABS = 26,
+PARAM_OP_DIVIDE = 27
 ```
 
 - Keep old `enum ParamProgramExprOp` until Deploy C, then delete it.
@@ -1822,14 +1862,13 @@ Required changes:
 - Current grep result: `scalar_exprs` does not appear in `index.html` or
   `tests/test_frontend_js.sh`. No frontend `scalar_exprs` cleanup is needed
   unless Stage 5 adds lowered-debug UI assertions.
-- Backend `scalar_exprs` cleanup sites from the current grep:
+- Backend `scalar_exprs` cleanup is complete for new compiler-produced payloads:
+  the handlers use `_compiled_param_program_payload()` and include
+  `scalar_exprs` only when the compiled result is non-empty during Deploy A/B.
+  The compatibility reader remains in native code for old direct payloads.
 
-```text
-lambda/handler_compute_plan.py:52,218
-lambda/handler_compute_preview.py:113,312
-lambda/handler_coeffgen.py:51,614
-lambda/handler_param_debug.py:153
-```
+Current grep should show no unconditional handler insertion of
+`"scalar_exprs"` for compiled Param Program chains.
 
 Do not change the saved source-chain format for this refactor.
 
@@ -1954,6 +1993,23 @@ Expected result:
 
 Record the numbers in this document before deploy.
 
+Current Stage 5 local run, `param_program_bench`, `n1=1024`, `n2=1024`,
+`times=1`, `reps=5`, compiled from `lambda/sweep_cli.c` to `/tmp`:
+
+```text
+case                 pipeline median   VM median    delta
+identity             8.913 ms          7.744 ms     -13.12%
+unit_circle_both     79.585 ms         45.572 ms    -42.74%
+unit_circle_square   172.379 ms        56.208 ms    -67.39%
+sum_difference       78.745 ms         11.958 ms    -84.81%
+t2_modulates_t1      n/a               30.818 ms    VM-only
+```
+
+All comparable checksums matched. This benchmark covers the existing
+pipeline-vs-main-VM cases. The exact expression cases (`const(t1+t2)` and
+dynamic legacy args) are covered by native parity tests; add them to
+`param_program_bench` if we need a dedicated expression microbenchmark.
+
 ### Command Gates
 
 Minimum local gates before deploy:
@@ -2000,8 +2056,10 @@ them on load/save, but the compiler must accept them permanently.
 ### Scope Creep
 
 Do not add stack reads, coefficient reads, arbitrary functions, or expression
-selectors in v1. The feature is useful with registers, arithmetic, and dynamic
-numeric legacy args.
+selectors in v1. Coeff Program-only features such as `poly_len`, `cfN`,
+`polyN`, `tosN`, and `push_range` must stay out of Param Program expressions.
+The feature is useful with registers, arithmetic, and dynamic numeric legacy
+args.
 
 ## Opinion
 

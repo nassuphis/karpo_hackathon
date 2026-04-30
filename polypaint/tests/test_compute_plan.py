@@ -89,6 +89,7 @@ class TestComputePlan(unittest.TestCase):
         self.assertEqual(plan["pipeline"]["param_program_chain"][0], ["push", "t1"])
         self.assertEqual(plan["pipeline"]["param_program"]["token_count"], 8)
         self.assertEqual(plan["pipeline"]["param_program"]["stack_max"], 2)
+        self.assertNotIn("scalar_exprs", plan["pipeline"]["param_program"])
         self.assertTrue(plan["pipeline"]["param_program_fingerprint"])
         self.assertEqual(plan["pipeline"]["param_program_display"], plan["pipeline"]["param_program"]["display"])
 

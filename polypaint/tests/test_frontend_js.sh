@@ -340,8 +340,14 @@ assertIncludes("id=\"ss-insert-after-btn\"", 'solve-score editor should expose i
 assertNotIncludes("id=\"ss-direct-rgb-preset\"", 'solve-score editor should not expose Direct RGB preset; saved programs cover this');
 assertIncludes(".solve-score-modal-popup {\n    width: min(1120px, calc(100vw - 24px));\n    height: min(92dvh, 820px);", 'Solve Scores modal should reserve a stable viewport-safe shell height');
 assertIncludes("grid-template-rows: auto auto minmax(0, 1fr) auto auto;", 'Saved-program modals should keep header/status/actions visible and body scroll-contained');
+assertIncludes("grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);", 'Saved-program modals should keep the saved-program list visible instead of letting previews consume the shell');
 assertIncludes(".solve-score-modal-actions {\n    display: flex;\n    justify-content: space-between;\n    gap: 8px;\n    padding: 10px 14px 14px;", 'Saved-program modal action rows should remain inside the visible shell');
 assertIncludes("grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);", 'Solve Scores modal detail panes should use stable allocated grid rows');
+assertIncludes(".solve-score-modal-display {\n    flex: 1 1 auto;", 'Saved-program modal displays should own their scrolling area');
+assertIncludes("overflow-x: hidden;", 'Saved-program modal displays should not show bottom scrollbars for wide program chips');
+assertIncludes(".solve-score-modal-chip-strip {\n    display: grid;\n    grid-template-columns: minmax(0, 1fr);", 'Saved-program modal chip previews should be fixed-width grid rows');
+assertIncludes(".solve-score-modal-chip-strip .score-chip-readonly {\n    width: 100%;", 'Saved-program modal readonly chips should wrap inside the preview width');
+assertIncludes(".solve-score-modal-chip-strip .chip-input-readonly {\n    display: inline-block;", 'Saved-program modal readonly input values should wrap instead of widening the modal');
 assertIncludes("function _renderSolveScoreProgramCardHtml(program, options = {}) {", 'Solve Scores modal should render selected programs through a card renderer');
 assertIncludes("readonly: true, solveScore: true, chain: normalized", 'Solve Scores modal chip renderer should reuse solve-score chips in read-only mode');
 assertIncludes("currentEl.innerHTML = _renderSolveScoreProgramCardHtml(currentProgram", 'Solve Scores modal current program should render chip markup, not debug text');
@@ -558,6 +564,9 @@ async function main() {
     extractFunction('_isConstCoeffFunction'),
     extractFunction('_constCoeffDefaults'),
     extractFunction('_coeffFuncUiParamCount'),
+    extractFunction('_functionCatalogSearchFields'),
+    extractFunction('_functionFilterMatcher'),
+    extractFunction('_visibleFunctionCatalog'),
     extractFunction('_formatCfpvComplexValue'),
     extractFunction('_parseCfpvComplexValue'),
     extractFunction('_formatCfpvForDisplay'),
@@ -581,8 +590,12 @@ async function main() {
     window: {
       _coeffFuncCatalog: [
         { name: 'const', params: [{ name: 'length', default: 35 }, { name: 'value_re', default: 1 }, { name: 'value_im', default: 0 }] },
+        { name: 'poly_1', kind: 'legacy', source: 'poly.py', degree: 35 },
+        { name: 'poly_10', kind: 'legacy', source: 'poly.py', degree: 35 },
+        { name: 'poly_112', kind: 'legacy', source: 'poly.py', degree: 35 },
       ],
     },
+    _functionPopupState: { filter: '', highlightIdx: 0 },
     _launchFusedRenderOrchestrator: async (paramsPatch) => {
       ctx._fusedCalls.push(paramsPatch);
       return {};
@@ -614,6 +627,15 @@ async function main() {
   vm.runInContext(code, ctx);
 
   assert(ctx._coeffFuncUiParamCount(ctx.window._coeffFuncCatalog[0]) === 2, 'const coefficient function should present two logical UI parameters');
+  ctx._functionPopupState.filter = 'poly_1';
+  assert(ctx._visibleFunctionCatalog().map(entry => entry.name).join(',') === 'poly_1,poly_10,poly_112', 'plain coefficient function filter should preserve substring matching');
+  ctx._functionPopupState.filter = 'poly_1$';
+  assert(ctx._visibleFunctionCatalog().map(entry => entry.name).join(',') === 'poly_1', 'regex coefficient function filter should support exact suffix matching');
+  ctx._functionPopupState.filter = '^poly_10$';
+  assert(ctx._visibleFunctionCatalog().map(entry => entry.name).join(',') === 'poly_10', 'regex coefficient function filter should support anchored exact matching');
+  ctx._functionPopupState.filter = 'poly_[';
+  assert(ctx._functionFilterMatcher(ctx._functionPopupState.filter).mode === 'invalid_regex', 'invalid coefficient function regex should be reported');
+  assert(ctx._visibleFunctionCatalog().length === 0, 'invalid coefficient function regex should not fall back to broad substring matching');
   assert(ctx._formatCfpvForDisplay('const', [35, 1, -2]) === 'degree=34, value=1-2j', 'const CFPV display should hide native length/re/im slots');
   assert(ctx._formatCfpvForDisplay('const', [8, -3, 10]) === 'degree=7, value=-3+10j', 'const CFPV display should preserve complex values');
   const cfpvComplex = ctx._parseCfpvComplexValue('10j-3');

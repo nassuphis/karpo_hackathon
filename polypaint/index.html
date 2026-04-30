@@ -887,7 +887,7 @@ button {
 }
 .solve-score-modal-body {
     display: grid;
-    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+    grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
     gap: 12px;
     padding: 12px 14px 14px;
     flex: 1 1 auto;
@@ -922,6 +922,20 @@ button {
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 8px;
 }
+.solve-score-modal-table-wrap .tri-popup-table {
+    table-layout: fixed;
+}
+.solve-score-modal-table-wrap .tri-popup-row td {
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.solve-score-modal-table-wrap .tri-popup-name,
+.solve-score-modal-table-wrap .tri-popup-name div {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 .solve-score-modal-name-row {
     display: flex;
     flex-direction: column;
@@ -947,7 +961,8 @@ button {
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 8px;
     padding: 10px 12px;
-    overflow: auto;
+    overflow-y: auto;
+    overflow-x: hidden;
 }
 .solve-score-modal-program-meta {
     display: flex;
@@ -965,11 +980,45 @@ button {
     margin-right: 4px;
 }
 .solve-score-modal-chip-strip {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
     align-items: flex-start;
     gap: 6px;
     width: 100%;
+    min-width: 0;
+}
+.solve-score-modal-chip-strip .score-chip-readonly {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    white-space: normal;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    border-radius: 10px;
+}
+.solve-score-modal-chip-strip .chip-formula,
+.solve-score-modal-chip-strip .chip-param-pair {
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: wrap;
+}
+.solve-score-modal-chip-strip .chip-input-readonly {
+    display: inline-block;
+    width: auto;
+    min-width: 3ch;
+    max-width: min(100%, 32ch);
+    height: auto;
+    line-height: 1.25;
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+.solve-score-modal-chip-strip .chip-input-complex-wide,
+.solve-score-modal-chip-strip .chip-input-expr-wide,
+.solve-score-modal-chip-strip .chip-input-program-wide,
+.solve-score-modal-chip-strip .chip-input-wide {
+    max-width: min(100%, 42ch);
 }
 .score-chip-readonly {
     cursor: default;
@@ -2139,7 +2188,7 @@ button {
             <button id="function-popup-close" type="button" class="tri-popup-close">Close</button>
         </div>
         <div class="tri-popup-filter-wrap">
-            <input id="function-popup-filter" type="text" placeholder="Filter by name, kind, source, or degree">
+            <input id="function-popup-filter" type="text" placeholder="Filter by name, kind, source, degree, or regex like poly_1$">
         </div>
         <div class="tri-popup-table-wrap">
             <table class="tri-popup-table">
@@ -10072,6 +10121,7 @@ function _renderFunctionPopup() {
         _closeFunctionPopup();
         return;
     }
+    const matcher = _functionFilterMatcher(_functionPopupState.filter || '');
     const visible = _visibleFunctionCatalog();
     const highlightIdx = visible.length ? Math.max(0, Math.min(_functionPopupState.highlightIdx || 0, visible.length - 1)) : 0;
     _functionPopupState.highlightIdx = highlightIdx;
@@ -10085,10 +10135,14 @@ function _renderFunctionPopup() {
         row.className = 'tri-popup-empty';
         const cell = document.createElement('td');
         cell.colSpan = 5;
-        cell.textContent = 'No coefficient functions match this filter.';
+        cell.textContent = matcher.error
+            ? `Invalid coefficient-function regex: ${matcher.error}`
+            : 'No coefficient functions match this filter.';
         row.appendChild(cell);
         bodyEl.appendChild(row);
-        summaryEl.textContent = 'Select a coefficient function, then press Choose to use it in Compute.';
+        summaryEl.textContent = matcher.error
+            ? 'Fix the regex or clear the filter.'
+            : 'Select a coefficient function, then press Choose to use it in Compute.';
         chooseBtn.disabled = true;
         return;
     }
@@ -12103,23 +12157,51 @@ function _setRenderFunction(name) {
     return true;
 }
 
+function _functionCatalogSearchFields(entry) {
+    return [
+        entry.name || '',
+        entry.kind || '',
+        entry.source || '',
+        entry.degree != null ? String(entry.degree) : '',
+        entry.agreement_pct != null ? String(entry.agreement_pct) : '',
+        entry.parity_verified ? 'verified' : '',
+        entry.parity_cases != null ? String(entry.parity_cases) : '',
+        _coeffFuncUiParamCount(entry) ? 'params' : '',
+    ];
+}
+
+function _functionFilterMatcher(rawFilter) {
+    const raw = String(rawFilter || '').trim();
+    if (!raw) return { mode: 'all', error: '', test: () => true };
+    if (/[\\^$.*+?()[\]{}|]/.test(raw)) {
+        try {
+            const regex = new RegExp(raw, 'i');
+            return {
+                mode: 'regex',
+                error: '',
+                test: entry => _functionCatalogSearchFields(entry).some(field => regex.test(String(field))),
+            };
+        } catch (err) {
+            return {
+                mode: 'invalid_regex',
+                error: err && err.message ? err.message : 'invalid regex',
+                test: () => false,
+            };
+        }
+    }
+    const needle = raw.toLowerCase();
+    return {
+        mode: 'text',
+        error: '',
+        test: entry => _functionCatalogSearchFields(entry).join(' ').toLowerCase().includes(needle),
+    };
+}
+
 function _visibleFunctionCatalog() {
-    const filter = (_functionPopupState.filter || '').trim().toLowerCase();
     const cat = window._coeffFuncCatalog || [];
-    if (!filter) return cat;
-    return cat.filter(entry => {
-        const text = [
-            entry.name || '',
-            entry.kind || '',
-            entry.source || '',
-            entry.degree != null ? String(entry.degree) : '',
-            entry.agreement_pct != null ? String(entry.agreement_pct) : '',
-            entry.parity_verified ? 'verified' : '',
-            entry.parity_cases != null ? String(entry.parity_cases) : '',
-            _coeffFuncUiParamCount(entry) ? 'params' : '',
-        ].join(' ').toLowerCase();
-        return text.includes(filter);
-    });
+    const matcher = _functionFilterMatcher(_functionPopupState.filter || '');
+    if (matcher.mode === 'all') return cat;
+    return cat.filter(entry => matcher.test(entry));
 }
 
 function populateDropdown() {

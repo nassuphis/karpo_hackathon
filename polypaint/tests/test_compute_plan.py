@@ -148,6 +148,33 @@ class TestComputePlan(unittest.TestCase):
         self.assertEqual(plan["pipeline"]["coeff_program"]["scalar_expr_count"], 1)
         self.assertTrue(plan["pipeline"]["coeff_program_fingerprint"])
 
+    def test_build_plan_compiles_coeff_program_source_text(self):
+        import handler_compute_plan as mod
+
+        result = mod.handle_build_plan({
+            "job_id": "compute_j",
+            "run_id": "run_coeff_program_source",
+            "task_id": "compute_run_aberth_mt_run_coeff_program_source",
+            "params": {
+                "pipeline_mode": "program",
+                "solver_mode": "aberth_mt",
+                "N": 20,
+                "times": 1,
+                "n_chunks": 2,
+                "function": "const",
+                "param_transforms": [],
+                "param_program_chain": [],
+                "coeff_transforms": [["rev"]],
+                "coeff_program_source_text": "fill(poly_len, p1+p2)\nemit\n",
+                "cfpv": [35, 1, 0],
+            },
+        })
+        plan = json.loads(result["body"])
+        self.assertEqual(plan["pipeline"]["coeff_transforms"], [])
+        self.assertEqual(plan["pipeline"]["coeff_program_source_text"], "fill(poly_len, p1+p2)\nemit\n")
+        self.assertEqual(plan["pipeline"]["coeff_program_chain"], [["push_const", "poly_len", "p1+p2"], ["emit"]])
+        self.assertEqual(plan["pipeline"]["coeff_program"]["token_count"], 2)
+
     def test_build_plan_resolves_coeff_program_macro(self):
         import handler_compute_plan as mod
 

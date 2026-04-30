@@ -47,14 +47,17 @@ profile: param
   writable scalar registers:  p1, p2
   readable vector registers:  none
   writable vector registers:  none
-  required output contract:   p1 and p2 assigned
+  output contract:            p1 and p2 are emitted at end of row;
+                              default to t1 and t2 if not explicitly written
   typical ops:                scalar arithmetic, scalar functions, assignment
 
 profile: coeff
   readable scalar registers:  t1, t2, p1, p2, poly_len
   readable vector registers:  cf, poly
   writable vector registers:  poly
-  required output contract:   poly assigned or intentionally left as initial cf
+  output contract:            poly is emitted at end of row;
+                              defaults to the initial cf-derived value if not
+                              explicitly written
   typical ops:                scalar arithmetic, vector construction,
                               vector arithmetic, vector assignment
 ```
@@ -64,14 +67,27 @@ The compiler should enforce these profiles. A Param Program must not read
 be shared, but the capability set and output contract remain program-kind
 specific.
 
-Param Program already proved the desired direction: expression fields should
-lower into the main VM token stream, not into a separate expression
-interpreter. Coeff Program should converge on the same principle, with typed
-stack values instead of scalar-only stack values. A coefficient expression
-such as `fill(poly_len, p1*p2)` should compile to ordinary typed VM work:
-compute a scalar `p1*p2`, then construct a vector from that scalar. A vector
-expression such as `mul(poly, cf)` should compile to typed vector operations
-using the same dispatch machinery.
+Param Program has already moved new compiler output in the desired direction:
+expression fields lower into the main VM token stream, not into a separate
+expression interpreter. Its native reader still accepts the old nested
+`scalar_exprs` / `expr_refs` payloads during the compatibility window, but
+the target design is single-VM lowering. Coeff Program should converge on the
+same principle, with typed stack values instead of scalar-only stack values.
+A coefficient expression such as `fill(poly_len, p1*p2)` should compile to
+ordinary typed VM work: compute a scalar `p1*p2`, then construct a vector from
+that scalar. A vector expression such as `mul(poly, cf)` should compile to
+typed vector operations using the same dispatch machinery.
+
+The runtime work is smaller than "rewrite everything" but larger than a
+syntax patch. The current Coeff vector stack already stores vector slots with
+real/imag arrays and a length; the typed VM adds three concrete pieces:
+
+- dispatch metadata that marks each opcode operand as scalar, vector, or
+  mixed
+- mixed operations such as `get_scalar(vector, idx)`, `set_scalar(poly, idx,
+  value)`, `dot(vector, vector)`, and broadcast-aware vector/scalar binary ops
+- removal of the separate scalar-expression stack for new payloads, replacing
+  it with typed main-VM stack tokens
 
 This does not mean rewriting Param and Coeff together. The pragmatic order is:
 
@@ -81,8 +97,16 @@ This does not mean rewriting Param and Coeff together. The pragmatic order is:
    values make the need concrete.
 3. Keep the current Param Program path stable while Coeff validates the typed
    VM design.
-4. Migrate Param Program onto the same parser/typed-VM backend as a second
-   profile only after the Coeff implementation has proven the model.
+4. Migrate Param Program onto the same typed-VM backend as a second profile
+   only after the Coeff implementation has proven the model.
+
+The shared part is the parser/lowering library, typed IR, diagnostics model,
+and native VM core. The frontend remains profile-specific: Param Program has
+scalar output registers and scalar-oriented chips; Coeff Program has vector
+output and vector-oriented source tools. The parser core should be shared, but
+the grammar/catalog tables are profile-specific so Param and Coeff can expose
+different registers, statements, and chip names without pretending to be the
+same surface language.
 
 The hot-loop rule does not change: no string parsing, no string lookup, and no
 heap allocation per row. Source text lowers before execution to typed tokens,
@@ -124,7 +148,7 @@ poke_poly(21, p2*poly10 + real(poly34)*p1*p1*p1)
 poke_poly(32, poly21 - real(poly16)*p1*p1)
 ```
 
-This is 27 chips for what is conceptually:
+This is 29 chips for what is conceptually:
 
 ```text
 v = sin((1..n) * 0.5) ^ p1
@@ -357,22 +381,36 @@ boundary by surprise. The fix is in the compiler: extend the source
 grammar so chip-line positions and chip-arg positions accept the same
 expression syntax, and lower freestanding expressions to chip tokens
 (e.g. `poly + real(poly)*5` -> `push(poly); push(poly); real; scale(5);
-mul; add`). v1 can improve this seam by parsing source text into existing
-chip-list forms. The full v2 fix needs typed-VM lowering so scalar and vector
-expressions share one execution model instead of nesting a scalar evaluator
-inside vector-chip dispatch. Closing this seam is the largest single v2 item.
+mul; add`). v1 reduces this seam by adding native primitives for the common
+assignment, affine, range, and unary-math cases and parsing source text into
+canonical chip-list/native forms. The full v2 fix needs typed-VM lowering so
+scalar and vector expressions share one execution model instead of nesting a
+scalar evaluator inside vector-chip dispatch. Closing this seam is the largest
+single v2 item.
 
 ## Proposed Cleanup
 
-The cleanup is intentionally minimal. The compiler keeps accepting every
-shipped form. The editor learns to write the new form on save. Old
-programs keep running.
+The cleanup is intentionally minimal, but three source-level ideas need real
+VM support instead of legacy-transform abuse:
+
+- `set(poly, src)` is a vector copy. Do not lower assignment through
+  `legacy(linear, ..., 1, 0)`.
+- `linear/scale/shift` are affine vector ops with complex scalar
+  expressions. Do not lower them through legacy `linear`, whose current
+  registry args are real-only.
+- `arange(start, stop, step)` and generalized `linspace` are vector
+  producers. Do not synthesize them by pushing a range and applying a
+  chain of `shift`/`scale` transforms.
+
+The compiler keeps accepting every shipped form. The editor learns to write
+the new form on save. Old programs keep running.
 
 ### v1 Scope
 
-v1 is line-oriented text source plus a small set of aliases. Everything in
-v1 lowers onto existing chip-list forms and existing VM tokens. No new
-opcodes are required.
+v1 is line-oriented text source plus a small set of aliases. It mostly
+lowers onto existing chip-list forms, but the source surface requires three
+native/compiler updates: `COEFF_OP_SET`, `COEFF_OP_AFFINE`, and extended
+`COEFF_OP_RANGE` / `COEFF_OP_LINSPACE` argument support.
 
 ```text
 v1 features:
@@ -382,8 +420,8 @@ v1 features:
   - aliases:
         arange   was push_range
         fill     was push_const
-        scale(a) -> linear(a, 0)
-        shift(b) -> linear(1, b)
+        scale(a) -> affine(a, 0)
+        shift(b) -> affine(1, b)
         pow      -> the existing vector binary power op
   - arange(start, stop) and arange(start, stop, step) overloads
   - poly[N], cf[N], tos[N] static-index brackets in expressions
@@ -395,6 +433,8 @@ v1 features:
   - explicit-target assignment for emit and in-place forms:
         poly = pop, poly = peek
         poly = sin, poly = sin(poly), poly = mul(poly, cf)
+  - explicit set form:
+        set(poly, cf), set(poly, pop), set(poly, peek)
   - emit kept as back-compat sugar for poly = pop
   - legacy(name, src, tgt, ...) remains a visible authoring chip
 ```
@@ -429,6 +469,21 @@ v2 features:
     lowered through typed mixed ops:
         get_scalar(vector, scalar_index) -> scalar_complex
         set_scalar(vector_register, scalar_index, scalar_value)
+  - vector reductions:
+        dot(poly, cf) -> scalar_complex
+        norm2(poly) -> scalar_real
+        sum(poly), mean(poly), prod(poly)
+        norm1(poly), norminf(poly), maxabs(poly)
+        argmaxabs(poly), argminabs(poly)
+    These are mixed typed ops, not LAPACK-dependent calls.
+  - vector construction and structure:
+        zeros(n), ones(n), basis(n, i, value)
+        slice(v, start, stop, step), concat(a, b), pad(v, n, side), trim(v, n, side)
+  - elementwise vector helpers:
+        real(v), imag(v), unit(v), clip_abs(v, lo, hi), center(v), standardize(v)
+  - conditionals:
+        where(mask, a, b) -> vector_complex
+        select(cond, x, y) -> scalar_complex
   - slice assignment:
         poly[a..b] = expr
   - for_each_index(idx) { ... } block bodies
@@ -473,7 +528,8 @@ producers:        arange(poly_len)        # 0..n-1, pushed
 stack ops:        dup, swap, drop, flush
 
 vector ops:       add, sub, mul, div, pow                       # binary, pop pop -> push
-                  conj, neg, sin, cos, exp, sqrt, log, abs      # unary, pop -> push
+                  abs, mod, angle, neg, conj, sqrt, log          # native unary, pop -> push
+                  sin, cos, exp                                 # registry-backed unary sugar
 
 scalar ops:       linear(a, b)            # tos -> z*a + b, pops one, pushes one
                   scale(a)                # alias for linear(a, 0)
@@ -487,6 +543,7 @@ explicit source:  sin(poly)               # poly -> push
 
 explicit target:  poly = pop              # pop top -> poly (canonical emit)
                   poly = peek             # read top -> poly, stack unchanged
+                  set(poly, peek)         # explicit copy spelling
                   poly = sin              # pop top, sin, write to poly
                   poly = sin(poly)        # poly -> sin -> poly (in-place)
                   poly = mul(poly, cf)    # in-place vector multiply
@@ -531,9 +588,9 @@ op (top)`, matching how the stack-only forms compile today.
 
 `legacy(name, src, tgt, ...)` stays visible in the v1 surface syntax. It
 is the explicit, fully-general way to invoke any function in the legacy
-registry, and it remains the canonical compiled token name. Real programs
-exercise dozens of legacy functions with different argument and length
-policies; v1 only ships first-class surface names for the most common
+registry, and explicit legacy calls remain `COEFF_OP_LEGACY` tokens. Real
+programs exercise dozens of legacy functions with different argument and
+length policies; v1 only ships first-class surface names for the most common
 arithmetic chips (`linear`, `scale`, `shift`, `pow`, the unary math ops).
 For everything else, `legacy(...)` is the right answer in v1 and reads
 clearly enough.
@@ -547,19 +604,29 @@ pleasant, not hide every old primitive.
 
 - The compiler keeps accepting `["legacy", name, src, tgt, ...]` as
   saved-form input forever. Old saved programs load and round-trip.
-- `legacy(...)` remains the canonical compiled token name. Compiled
-  payloads, fingerprints, and the JSON storage shape continue to use
-  `op=COEFF_OP_LEGACY` exactly as today.
+- Explicit legacy wrappers remain explicit `op=COEFF_OP_LEGACY` tokens in
+  compiled payloads and saved JSON. Source aliases such as `scale`, `shift`,
+  `poly = peek`, and extended `arange` lower to their native opcodes instead.
 
 ## v1 Features In Detail
 
 ### `linear`, `scale`, And `shift`
 
-`legacy(linear, pop, push, a, b)` becomes `linear(a, b)`. For the two
-cases that show up over and over in real programs, add named aliases:
+`legacy(linear, pop, push, a, b)` becomes source-level `linear(a, b)`, but
+new source lowers to `COEFF_OP_AFFINE`, not to the legacy `linear` transform.
+That matters because source expressions may be complex (`1j*p1`, `p2`, etc.)
+while the current legacy registry marks `linear` args as real-only.
 
-- `scale(a)` lowers to `linear(a, 0)`. Reads as "multiply by a".
-- `shift(b)` lowers to `linear(1, b)`. Reads as "add b".
+The saved chip-list form `["legacy", "linear", ...]` remains accepted for
+back-compatibility and keeps legacy argument validation and semantics. Source
+`linear(...)`, `scale(...)`, and `shift(...)` always lower to `COEFF_OP_AFFINE`.
+These two spellings are intentionally not canonicalized to each other.
+
+For the two cases that show up over and over in real programs, add named
+aliases:
+
+- `scale(a)` lowers to affine multiply by `a` and offset `0`.
+- `shift(b)` lowers to affine multiply by `1` and offset `b`.
 
 The running example's `legacy(linear, pop, push, 1, 1)` becomes
 `shift(1)`. `legacy(linear, pop, push, 0.5, 0)` becomes `scale(0.5)`.
@@ -574,8 +641,10 @@ are.
 ### `arange(start, stop)` And `arange(start, stop, step)` Overloads
 
 The current `push_range(length)` is the zero-based-only special case.
-Real programs need explicit start and stop. Generalize `arange` to accept
-up to three real-valued expression arguments, NumPy-style:
+Real programs need explicit start and stop. Generalize `arange` by extending
+`COEFF_OP_RANGE` so it carries `start`, `step`, and `count`/length metadata,
+all resolved from scalar expressions before the vector is filled. This is a
+native producer, not a hidden `range; shift; scale` lowering.
 
 ```text
 arange(stop)              # 0, 1, ..., stop-1   (current behavior)
@@ -585,8 +654,9 @@ arange(start, stop, step) # start, start+step, ..., < stop
 
 All three arguments are real-valued scalar expressions. They can reference
 `poly_len`, `p1`, `p2`, `t1`, `t2`, and constants. The compiler validates
-that `step != 0` (compile-time error if statically zero) and that the
-result length is bounded by `MAX_VECTOR_LEN` (256).
+statically when it can; the native evaluator must also validate per row that
+`step != 0`, the computed count is an integer in `[1, MAX_VECTOR_LEN]`, and
+the generated values are finite.
 
 This subsumes `arange_one_based` (`arange(1, poly_len+1)`),
 `arange_centered` (`arange(-(poly_len-1)/2, (poly_len+1)/2)`), and any
@@ -594,7 +664,8 @@ future special case without inventing a new chip name. It also kills the
 four `shift(1)` calls in the `poly_1` example — `arange(1, poly_len+1)`
 is the one-based ordinal `1..poly_len` read directly as math.
 
-For symmetry, `linspace` accepts the same generalization:
+For symmetry, `linspace` accepts the same generalization by extending
+`COEFF_OP_LINSPACE` to carry `start`, `stop`, and `count`:
 
 ```text
 linspace(count)               # 0..1 with count entries (current)
@@ -624,7 +695,9 @@ Replace `cf6`, `poly18`, `tos32` with `cf[6]`, `poly[18]`, `tos[32]`.
   ```
 
   `get_scalar(vector, scalar_index) -> scalar_complex` is a mixed typed op:
-  one vector input, one scalar input, one scalar output.
+  one vector input, one scalar input, one scalar output. It must reject
+  non-real indices, non-integer indices, and indices outside
+  `[0, vector.length)`. It must not clamp or wrap silently.
 
 ### Static-Index `poly[N] = expr`
 
@@ -677,26 +750,27 @@ it accidentally.
 
 ### `emit` Becomes Sugar For `poly = pop`
 
-`emit` is exactly `poly = pop` when the stack is non-empty. Under the
-unified function-call/assignment surface, that is the clear spelling.
-Bespoke `emit` and `emit_keep` chip names disappear from new authoring;
-both are subsumed by the assignment form:
+`emit` is source-level sugar for `poly = pop` when the stack is non-empty.
+Under the unified function-call/assignment surface, explicit assignment is the
+clear spelling. Bespoke `emit` and `emit_keep` chip names disappear from new
+authoring; both are subsumed by assignment / set:
 
 ```text
 poly = pop      # pop top -> poly                       (canonical spelling)
 poly = peek     # read top -> poly, stack unchanged     (replaces emit_keep)
+set(poly, peek) # function spelling of the same copy
 emit            # alias for poly = pop                  (back-compat sugar)
 ```
 
-The compiler emits the same `COEFF_OP_EMIT` opcode for `poly = pop` and
-`emit`. The existing `emit`-with-empty-stack no-op behavior is preserved
-only when loading legacy saved programs that depend on it. New
-authoring-time `emit` (or its canonical equivalent `poly = pop`) compiles
-to a clear error if the stack is provably empty at that program point,
-detected by the existing stack-effect analysis. Programs that mutate
-`poly` directly via `poly[...] = expr` or via `poly = chip(poly, ...)`
-simply have no `emit` chip; there is no need for a separate "commit"
-marker.
+New source compiles `poly = pop`, `poly = peek`, and `set(poly, src)` to
+`COEFF_OP_SET`. The existing `COEFF_OP_EMIT` opcode remains accepted for
+legacy chip-list programs. Its empty-stack no-op behavior is preserved only
+when loading old saved programs that depend on it. New authoring-time `emit`
+(or its canonical equivalent `poly = pop`) compiles to a clear error if the
+stack is provably empty at that program point, detected by the existing
+stack-effect analysis. Programs that mutate `poly` directly via
+`poly[...] = expr` or via `poly = chip(poly, ...)` simply have no `emit`
+chip; there is no need for a separate "commit" marker.
 
 `peek` and `pop` are reserved identifiers that may appear only on the
 right-hand side of an explicit-target assignment or as an explicit source
@@ -774,20 +848,18 @@ poly[32] = poly[21] - real(poly[16])*p1**2
 
 ```text
 form              chips    structural noise tokens
-current source       27    16  (4x explicit "+1" via legacy(linear,...,1,1),
+current source       29    16  (4x explicit "+1" via legacy(linear,...,1,1),
                                 12x selector triples)
-v1 reform            23     0
+v1 reform            25     0
 ```
 
 "Structural noise tokens" counts chips and chip arguments that the math
 does not require — selector triples like `(push, pop, pop)` and the
 `+1` shift after every `arange` for one-based ordinals. The compiled VM
-tokens for `arange(1, poly_len+1)` and `push_range(poly_len);
-legacy(linear, pop, push, 1, 1)` are equivalent in semantics; the v1
-reform's lowering may collapse the two into a single `EXPR_*`/legacy pair
-or keep them separate depending on how the compiler chooses to emit
-non-zero-based ranges. Either way, what the author types and the reader
-skims past changes from 16 noise tokens to zero.
+token for `arange(1, poly_len+1)` is the extended `COEFF_OP_RANGE` producer.
+The old spelling `push_range(poly_len); legacy(linear, pop, push, 1, 1)` is
+only a historical equivalence, not the new lowering. What the author types
+and the reader skims past changes from 16 noise tokens to zero.
 
 ### Why This Is Better
 
@@ -806,7 +878,7 @@ subsumes every special case (one-based, centered, strided, partial) and
 matches the NumPy convention users already know.
 
 **It eliminates `legacy(...)` from the common case.** In the current
-source `legacy(...)` accounts for 11 of the 27 chips. In the v1 reform it
+source `legacy(...)` accounts for 11 of the 29 chips. In the v1 reform it
 accounts for zero. The escape hatch still exists for unusual chips
 (`legacy(roots6, ...)`, `legacy(blend, ...)`), but the core arithmetic of
 coefficient generation no longer routes through it. That is what makes
@@ -827,11 +899,12 @@ need `geom`, `mask_real`, `for_each_index`, or `poly[a..b] = expr`. Other
 coefficient functions in the existing C library do — `poly_4` and the
 mirror-pair generators in particular. Those benefits land in v2.
 
-**It does not regress runtime.** Every transformation in the v1 reform
-lowers to the same compiled tokens that the current source produces.
-There is no perf change, no fingerprint churn for already-deployed
-programs, no migration burden on saved S3 programs. The investment is a
-backend source parser plus editor plumbing around it.
+**It should not regress runtime.** v1 replaces several legacy-transform
+abuses with direct native opcodes (`SET`, `AFFINE`, extended ranges), so the
+runtime claim must be proven by native parity and benchmark tests rather than
+assumed from identical lowering. Existing saved S3 programs keep their old
+chip-list form and do not need migration; new source programs compile to the
+new canonical native form.
 
 The acid test holds: a reader who knows the math should read the program
 at roughly the speed of the math. The current source fails that test;
@@ -843,26 +916,187 @@ These need new opcodes and are explicitly v2. Each must justify itself by
 either collapsing a real multi-chip pattern or unblocking an expressive
 gap.
 
-### `geom(length, ratio)` Or `geom(length, base, exponent_ratio)`
+### `geom(...)` Motivation
 
-Geometric sequences appear in many coefficient generators (Chebyshev-style
-seeds, exponential weighting). Today they require `arange; pow` or a
-custom loop. A native `geom(length, r)` chip pushing
-`1, r, r^2, ..., r^(length-1)` is one fused op and a clear tool for the
-job.
+`geom` is specified in the Vector Construction catalog below. It belongs
+there because geometric sequences appear in many coefficient generators
+(Chebyshev-style seeds, exponential weighting). Today they require `arange;
+pow` or a custom loop. A native construction chip is one fused op and a clear
+tool for the job.
 
-### `vec_index_axis(length)`
+### `axis(length, lo, hi)` And `cheb_axis(length)`
 
-Push `(-1, -1+2/n, ..., +1)` real values. Same as `linspace(-1, 1, n)`.
-Useful for parametric basis evaluations. Composable from `linspace` plus
-`linear` once `linspace(start, stop, count)` ships in v1, so this chip is
-optional v2 sugar rather than a v2 requirement.
+Push readable basis axes for coefficient construction. `axis(n, -1, 1)` is
+the old `vec_index_axis(length)` idea with explicit bounds. `cheb_axis(n)`
+pushes Chebyshev nodes `cos(pi*k/(n-1))`, which are common enough to deserve
+a named constructor.
 
 ### `mask_real`, `mask_imag`
 
 Apply `Re(z)` or `Im(z)` element-wise to the top-of-stack vector. Today
 this requires a `poke_tos` loop or a careful `mul` against a real-only
 fill vector. One chip is much cleaner.
+
+### Vector Reductions
+
+These are reductions: vector inputs, scalar output. They are especially
+useful for projections, normalization factors, and basis construction.
+
+```text
+alpha = dot(poly, cf)
+scale(1 / norm2(poly))
+```
+
+They are not LAPACK features. For the current max vector length, implement
+them as tight inline C loops in the typed VM.
+
+Required reductions:
+
+```text
+sum(v)        -> scalar_complex   # sum(v[i])
+mean(v)       -> scalar_complex   # sum(v) / len(v)
+prod(v)       -> scalar_complex   # product(v[i]), sanitize overflow/non-finite
+dot(a, b)     -> scalar_complex   # sum(conj(a[i]) * b[i])
+dotu(a, b)    -> scalar_complex   # sum(a[i] * b[i])
+norm2(v)      -> scalar_real      # sqrt(real(dot(v, v)))
+norm1(v)      -> scalar_real      # sum(abs(v[i]))
+norminf(v)    -> scalar_real      # max(abs(v[i]))
+maxabs(v)     -> scalar_real      # alias for norminf(v)
+argmaxabs(v)  -> scalar_int       # first index with maximum abs(v[i])
+argminabs(v)  -> scalar_int       # first index with minimum abs(v[i])
+```
+
+All reductions reject empty vectors. `dot` / `dotu` require equal vector
+lengths. Index-returning reductions produce real integer scalar values so
+they can feed `get_scalar`, `set_scalar`, `slice`, and future `take`.
+
+### Elementwise Vector Helpers
+
+These are vector-to-vector ops that remove awkward expression loops and
+legacy shims:
+
+```text
+real(v)       -> vector_complex   # re=v.re, im=0
+imag(v)       -> vector_complex   # re=v.im, im=0
+phase(v)      -> vector_complex   # alias for angle(v), re=atan2(im,re), im=0
+arg(v)        -> vector_complex   # alias for angle(v)
+unit(v)       -> vector_complex   # v / abs(v), zero -> 0
+clip_abs(v, lo, hi) -> vector_complex
+normalize(v)  -> vector_complex   # explicit normalized-vector transform
+center(v)     -> vector_complex   # v - mean(v)
+standardize(v)-> vector_complex   # center(v) / norm2(center(v)); zero norm -> 0
+```
+
+`clip_abs` preserves phase and clamps magnitude into `[lo, hi]`. `lo` and
+`hi` are real scalar expressions; reject negative values and `lo > hi`.
+`normalize` should use the existing legacy behavior if it is already well
+defined; otherwise pin it as `v / norminf(v)` with zero norm -> zero vector.
+
+### Vector Construction
+
+These are readable aliases or fused constructors:
+
+```text
+zeros(n)              -> vector_complex   # fill(n, 0)
+ones(n)               -> vector_complex   # fill(n, 1)
+repeat(value, n)      -> vector_complex   # alias for fill(n, value)
+basis(n, i, value=1)  -> vector_complex   # all zero except index i
+geom(n, r)            -> vector_complex   # 1, r, r^2, ...
+axis(n, lo, hi)       -> vector_complex   # linspace(lo, hi, n)
+cheb_axis(n)          -> vector_complex   # cos(pi*k/(n-1)), k=0..n-1
+```
+
+`basis` rejects out-of-range indices; no clamp/wrap. `geom` should evaluate
+iteratively (`x *= r`) instead of calling `pow` per element. `axis` is
+mostly readability sugar over `linspace`; `cheb_axis` is worth having
+because Chebyshev-style bases show up often and are easy to get off by one.
+
+### Vector Structure
+
+These reshape or combine vectors:
+
+```text
+reverse(v)                 -> vector_complex
+diff(v)                    -> vector_complex   # v[i+1] - v[i], length n-1
+slice(v, start, stop, step)-> vector_complex
+concat(a, b)               -> vector_complex
+pad(v, n, side="hi")       -> vector_complex
+trim(v, n, side="hi")      -> vector_complex
+take(v, indices)           -> vector_complex
+```
+
+`reverse` is the source-level name for legacy `rev`. `diff` rejects vectors
+with length < 2. `concat` rejects output length > `MAX_VECTOR_LEN`. `pad`
+extends with zeros; `trim` removes from the selected side. `side` is `"hi"`
+or `"lo"`; `"hi"` means append/remove high-index coefficients. `slice` and
+`take` depend on typed dynamic-index support and must reject non-real,
+non-integer, or out-of-range indices.
+
+### Masked Selection
+
+`where(mask, a, b)` is the vector conditional:
+
+```text
+where(mask, a, b) -> vector_complex
+```
+
+Semantics:
+
+```text
+out[i] = a[i] if real(mask[i]) > 0 else b[i]
+```
+
+The condition is strictly `> 0`; zero selects `b`. The mask's imaginary part
+is ignored. `a` and `b` may be vectors or broadcast scalars. All vector inputs
+must have equal length after broadcast. This should land after
+broadcast/type inference is stable.
+
+The stack sugar is:
+
+```text
+mask
+a
+b
+where
+```
+
+Execution pops in normal stack order:
+
+```text
+b    = pop first
+a    = pop second
+mask = pop third
+```
+
+Avoid a user-facing `popif` name. If a selector form is ever exposed, prefer
+`where(push, pop, pop, pop)` only as a compiled/debug representation; the
+source form should remain `where(mask, a, b)` because it names the roles.
+
+Scalar conditionals use the same rule:
+
+```text
+select(cond, x, y) -> scalar_complex
+```
+
+`select` returns `x` when `real(cond) > 0`, otherwise `y`. It is the scalar
+equivalent of `where`, useful inside scalar expressions and future typed
+function arguments.
+
+### Deterministic Random Generators
+
+Random generators are useful for coefficient experiments but must be
+deterministic per row and reproducible across preview/compute:
+
+```text
+random_uniform(n, seed_expr) -> vector_complex
+random_normal(n, seed_expr)  -> vector_complex
+```
+
+The seed must mix `t1`, `t2`, `p1`, `p2`, the explicit `seed_expr`, and the
+element index. Use `splitmix64` to derive deterministic per-row/per-element
+state and `PCG32` for uniform 32-bit draws. `random_normal` uses Box-Muller
+from two PCG32 uniform draws. These are not allowed to call host/runtime
+random APIs.
 
 ### `roll(k)`, `reverse`, `cumsum`, `diff` As Bare Chip Names
 
@@ -952,6 +1186,14 @@ When a program is saved:
 - A Lambda-side Python parser lowers `source_text` to the canonical `chain`.
 - The compiler produces `tokens` and `fingerprint` from `chain`.
 
+If a client sends both `source_text` and `chain`, `source_text` is
+authoritative. The server compiles `source_text` and ignores the
+client-supplied `chain` for writes. A client-supplied `chain` is accepted
+only when `source_text` is absent, which is the legacy saved-program path.
+Read paths may use the stored `chain` as a display/compile optimization, but
+save and compute must never trust a stale or mismatched client-generated
+`chain` over `source_text`.
+
 ### Authoritative Parser
 
 The authoritative source parser lives in Python Lambda code, not in
@@ -965,9 +1207,11 @@ The authoritative source parser lives in Python Lambda code, not in
 - display the canonical chip preview returned by the backend
 - import/export plain text
 
-JavaScript may contain a lightweight tokenizer for highlighting, but it must
-not be the authority for saved or computed programs. Storage and compute paths
-must be able to compile `source_text` without trusting a JS-generated `chain`.
+JavaScript may contain a lightweight tokenizer for highlighting and advisory
+diagnostics during typing latency, but it must not be the authority for saved
+or computed programs. Backend diagnostics override advisory JS diagnostics.
+Storage and compute paths must be able to compile `source_text` without
+trusting a JS-generated `chain`.
 
 Add a backend compile endpoint, for example:
 
@@ -979,14 +1223,23 @@ POST /compile-coeff-program-source
 }
 ```
 
+Compile endpoints are per-profile routes over the same backend parser/lowering
+library. A future Param source editor should use a matching profile-specific
+route such as `/compile-param-program-source`, not a single untyped universal
+route.
+
 Response:
 
 ```json
 {
   "ok": true,
-  "chain": [],
-  "display": "...",
-  "fingerprint": "sha1...",
+  "program": {
+    "chain": [],
+    "display": "...",
+    "fingerprint": "sha1...",
+    "statement_count": 0,
+    "token_count": 0
+  },
   "diagnostics": [
     {
       "level": "error",
@@ -1015,16 +1268,38 @@ identical compiled output.
 
 ### Old Saved Programs
 
-- The compiler accepts both old and new spellings forever. New names
-  lower to the same compiled tokens as the old names.
+- The compiler accepts both old and new spellings forever. The compatibility
+  contract is semantic, not token identity: old chip-list JSON keeps its
+  existing legacy tokens, while new source aliases may lower to newer native
+  tokens such as `COEFF_OP_SET` or `COEFF_OP_AFFINE`.
 - Saved-form JSON without `source_text` continues to load through
   `chain` alone. The editor synthesizes a `source_text` view from
   `chain` on load for display, and writes it back on the next save.
 - The macro registry round-trips through the same parser/canonicalizer.
-- Tests assert: every old-form program loads, compiles, fingerprints,
-  and renders identically to the corresponding new-form program.
+- Tests assert: every old-form program loads, compiles, and renders
+  identically to its historical behavior. New source spellings must match
+  old-form output numerically where they are semantic aliases, but they do
+  not have to share fingerprints because they may lower to native opcodes.
   Fingerprints for old programs do not change when they acquire a
   `source_text` field on the next save.
+
+### Macro Storage And Expansion
+
+Coeff Program macros are saved Coeff Programs under the existing
+`polypaint/coeff-programs/` prefix. A macro body may be stored as:
+
+- `source_text` plus canonical `chain`
+- legacy `chain` only
+
+When compiling `macro(name)`, the resolver fetches the saved object. If
+`source_text` exists, it is compiled through `coeff_program_source.py` and
+the stored `chain` is treated only as a cached hint. If `source_text` is
+absent, the legacy `chain` path is used. Macro expansion happens after
+source-to-chain lowering and before token lowering/fingerprinting.
+
+Compute plans snapshot the expanded macro body at plan time. Later edits to
+the saved macro do not change an already planned compute job. Live preview
+and save-time validation read the current saved macro body.
 
 ## Implementation Targets
 
@@ -1036,8 +1311,11 @@ v1 work lives in:
   widen `arange`/`linspace` arity; add `**` and `tau`/`tau_i` to the scalar
   expression parser; add `poly[N]` bracket parsing alongside the existing
   `polyN` form; add the authoritative Python source parser; parse
-  `poly[N] = expr` as sugar for `poke_poly`; produce diagnostics with
-  line/column/source-span metadata.
+  `poly[N] = expr` as sugar for `poke_poly`; add `COEFF_OP_SET` for
+  `set(poly, src)` / `poly = src`; add `COEFF_OP_AFFINE` for complex
+  `linear/scale/shift`; extend `COEFF_OP_RANGE` / `COEFF_OP_LINSPACE`
+  argument support; produce diagnostics with line/column/source-span
+  metadata.
 - **Storage/API** — `lambda/handler_storage.py` or a dedicated handler.
   Add `/compile-coeff-program-source`; update save/fetch routes so
   `source_text` is stored verbatim and the backend parser/compiler produces
@@ -1054,8 +1332,11 @@ v1 work lives in:
   without opening the saved-program modal; call the backend compile endpoint
   for validation/canonical preview; do not implement the authoritative
   text-to-chain parser in JS.
-- **Native** — `lambda/sweep_cli.c`. No changes for v1. The runtime
-  already handles every v1 lowering through existing opcodes.
+- **Native** — `lambda/sweep_cli.c`. Add `COEFF_OP_SET` as a direct
+  vector-copy opcode, add `COEFF_OP_AFFINE`, and extend `COEFF_OP_RANGE` /
+  `COEFF_OP_LINSPACE` parsing/evaluation. Extend `COEFF_OP_VECTOR_UNARY`
+  for `neg`, `conj`, `sqrt`, and `log`. No legacy transform should be used
+  to implement these source primitives.
 - **Tests** — `tests/test_coeff_program_chain.py`,
   `tests/test_coeff_program_native.py`, `tests/test_frontend_js.sh`,
   `tests/test_coeff_program_storage.py`. Add round-trip assertions for
@@ -1075,6 +1356,885 @@ v2 work additionally:
   `COEFF_OP_MASK_IMAG`, `COEFF_OP_FOR_EACH_INDEX`, slice-write opcodes);
   typed push ops for what the scalar sublanguage currently reads internally.
 
+## Concrete v1 Implementation Steps
+
+This section is the implementation ticket. It names the files, new symbols,
+route wiring, and tests needed for the text-source v1 cut. Do these steps in
+order; each step should be deployable without breaking existing chain-based
+Coeff Programs.
+
+### 0. Native/Compiler Source Primitives
+
+Add the real source primitives before the source parser lands. Assignment,
+affine transforms, and generalized range producers must not depend on legacy
+identity/shift/scale chains.
+
+Modify `lambda/coeff_program_chain.py`.
+
+- add `COEFF_OP_SET = 19` after the existing `COEFF_OP_RANGE = 18`
+- add display name mapping: `COEFF_OP_SET: "set"`
+- add source parser support for chip-list form:
+
+  ```python
+  ["set", "poly", "peek"]
+  ["set", "poly", "pop"]
+  ["set", "poly", "cf"]
+  ["set", "poly", "poly"]
+  ```
+
+- v1 target is only `poly`; reject `set(push, src)` because `push(src)`
+  already exists and the assignment primitive is about writable registers
+- source selectors allowed for v1: `cf`, `poly`, `pop`, `peek`
+- stack validation:
+  - `set(poly, pop)` requires depth >= 1 and decrements depth by 1
+  - `set(poly, peek)` requires depth >= 1 and leaves depth unchanged
+  - `set(poly, cf)` copies `cf`
+  - `set(poly, poly)` is accepted as an idempotent no-op self-copy
+- display form should render as `set(poly,<src>)`
+- canonical source rendering should prefer assignment:
+  - `set(poly,pop)` -> `poly = pop`
+  - `set(poly,peek)` -> `poly = peek`
+  - `set(poly,cf)` -> `poly = cf`
+  - `set(poly,poly)` -> `poly = poly` only when explicitly loaded; the
+    renderer should not invent this no-op
+
+Modify `lambda/sweep_cli.c`.
+
+- add enum value `COEFF_OP_SET = 19`
+- no JSON shape change is needed; the token already carries `op`, `src`,
+  and `tgt`
+- compiled token JSON uses integer op/selectors, not selector strings:
+
+  ```json
+  {"op": 19, "src": 4, "tgt": 2}
+  ```
+
+  Selector constants are the existing values:
+
+  ```text
+  cf=1, poly=2, pop=3, peek=4, push=5
+  ```
+
+  `COEFF_OP_SET` only accepts `tgt=2` (`poly`). The example above is
+  `set(poly, peek)` / `poly = peek`.
+- evaluator behavior:
+
+  ```text
+  COEFF_OP_SET:
+    reject unless tgt == COEFF_SEL_POLY
+    resolve src vector from cf/poly/pop/peek
+    copy src real/imag arrays and length into ws->poly_re/ws->poly_im/poly_len
+    if src == pop, consume the stack slot
+    if src == peek, leave stack depth/head unchanged
+  ```
+
+- do not call a legacy transform
+- do not apply `andy`
+- do not consult `coeff_legacy_registry.json`
+- sanitize copied values the same way other vector-producing ops sanitize
+  before writing `poly`
+- error messages must include the source selector and current stack depth
+  when `pop`/`peek` fails
+
+Tests:
+
+- add compiler tests for `["set","poly","peek"]`,
+  `["set","poly","pop"]`, and invalid `["set","push","peek"]`
+- add native parity test proving `set(poly,peek)` copies the top vector
+  without consuming it
+- add native parity test proving `set(poly,pop)` copies and consumes the top
+  vector
+
+Add `COEFF_OP_AFFINE`.
+
+Modify `lambda/coeff_program_chain.py`.
+
+- add `COEFF_OP_AFFINE = 20`
+- source/chip-list forms:
+
+  ```python
+  ["affine", "push", "pop", "a_expr", "b_expr"]
+  ["affine", "push", "poly", "a_expr", "b_expr"]
+  ["affine", "poly", "poly", "a_expr", "b_expr"]
+  ```
+
+- `linear(a,b)` lowers to `["affine","push","pop",a,b]`
+- `linear(src,a,b)` lowers to `["affine","push",src,a,b]`
+- `poly = linear(poly,a,b)` lowers to `["affine","poly","poly",a,b]`
+- `scale(a)` lowers to `["affine","push","pop",a,"0"]`
+- `shift(b)` lowers to `["affine","push","pop","1",b]`
+- `a_expr` and `b_expr` are complex scalar expressions, not real-only args
+- compiled token JSON reuses the existing `args`, `args_im`, and `expr_refs`
+  fields. No new fields are added:
+
+  ```json
+  {
+    "op": 20,
+    "src": 3,
+    "tgt": 5,
+    "n_args": 2,
+    "args": [0.0, 1.0],
+    "args_im": [1.0, 0.0],
+    "expr_refs": [-1, -1]
+  }
+  ```
+
+  This example is `affine(push, pop, 1j, 1)`. Dynamic scalar expressions use
+  the existing convention: the literal slot is `0.0 + 0.0j` and `expr_refs[i]`
+  points into `scalar_exprs`; static args use `expr_refs[i] = -1`.
+- stack validation mirrors a unary vector op:
+  - `src=pop` requires depth >= 1 and consumes one vector
+  - `src=peek` requires depth >= 1 and does not consume
+  - `src=cf/poly` leaves stack unchanged
+  - `tgt=push` pushes one vector; `tgt=poly` writes `poly`
+
+Modify `lambda/sweep_cli.c`.
+
+- add enum value `COEFF_OP_AFFINE = 20`
+- token carries `src`, `tgt`, and two scalar-expression args
+- evaluator computes `out[i] = src[i] * a + b` with complex `a` and `b`
+- do not call legacy `linear`
+- do not apply `andy`
+- sanitize non-finite outputs to zero using the same policy as vector ops
+
+Tests:
+
+- `scale(1j*p1)` and `shift(p2)` compile and run through `COEFF_OP_AFFINE`
+- `linear(poly, 0.5, p1+p2)` does not produce a legacy token
+- native parity confirms `affine` matches a Python complex affine reference
+
+Canonical display / source rendering:
+
+- `affine(push,pop,a,0)` renders as `scale(a)`
+- `affine(push,pop,1,b)` renders as `shift(b)`
+- `affine(push,pop,a,b)` renders as `linear(a,b)`
+- `affine(push,src,a,b)` renders as `linear(src,a,b)`
+- `affine(poly,src,a,b)` renders as `poly = linear(src,a,b)`
+- do not render source `linear/scale/shift` as `legacy(linear,...)`
+
+Extend `COEFF_OP_VECTOR_UNARY`.
+
+Modify `lambda/coeff_program_chain.py`.
+
+- keep existing native unary ids stable:
+  - `angle = 1`
+  - `mod = 2`
+  - `abs = 3`
+- add new native unary ids:
+  - `neg = 4`
+  - `conj = 5`
+  - `sqrt = 6`
+  - `log = 7`
+- source/chip-list forms:
+
+  ```python
+  ["sqrt", "push", "pop"]
+  ["log", "push", "poly"]
+  ["neg", "poly", "poly"]
+  ```
+
+- bare `sqrt`, `log`, `neg`, and `conj` pop one vector and push one vector
+- `sqrt(src)`, `log(src)`, `neg(src)`, and `conj(src)` read the explicit
+  source and push the result
+- `poly = sqrt(poly)`, `poly = log(poly)`, `poly = neg(poly)`, and
+  `poly = conj(poly)` write `poly`
+- stack validation mirrors all unary vector ops:
+  - `src=pop` requires depth >= 1 and consumes one vector
+  - `src=peek` requires depth >= 1 and does not consume
+  - `src=cf/poly` leaves stack unchanged
+  - `tgt=push` pushes one vector; `tgt=poly` writes `poly`
+
+Modify `lambda/sweep_cli.c`.
+
+- extend the `COEFF_OP_VECTOR_UNARY` switch
+- `neg(z) = -z`
+- `conj(z) = conjugate(z)`
+- `sqrt(z)` uses the principal complex square root
+- `log(z)` uses the principal complex logarithm; `log(0)` should follow the
+  existing scalar-expression policy and produce a finite sanitized fallback,
+  not NaN/inf
+- sanitize non-finite outputs to zero using the existing vector-op policy
+
+Tests:
+
+- `sqrt`, `log`, `neg`, and `conj` compile to `COEFF_OP_VECTOR_UNARY`
+- native parity checks each against Python/cmath references
+- `poly = neg(poly)` writes `poly` without pushing
+- `sqrt(peek)` does not consume the stack
+
+Extend `COEFF_OP_RANGE` and `COEFF_OP_LINSPACE`.
+
+Modify `lambda/coeff_program_chain.py`.
+
+- keep old chip-list forms accepted:
+  - `["push_range", "poly_len"]`
+  - `["push_linspace", "poly_len"]`
+- allow new forms:
+  - `["push_range", stop]`
+  - `["push_range", start, stop]`
+  - `["push_range", start, stop, step]`
+  - `["push_linspace", count]`
+  - `["push_linspace", start, stop, count]`
+- source aliases:
+  - `arange(...)` lowers to `COEFF_OP_RANGE`
+  - `linspace(...)` lowers to `COEFF_OP_LINSPACE`
+- arguments are real-valued scalar expressions
+- canonical display should prefer `arange(...)` and `linspace(...)`
+
+Modify `lambda/sweep_cli.c`.
+
+- keep enum ids `COEFF_OP_RANGE = 18` and `COEFF_OP_LINSPACE = 17`
+- extend parser/evaluator to read expression-backed `start`, `stop`, `step`,
+  and `count`
+- `arange(stop)`: start=0, step=1, count=stop
+- `arange(start, stop)`: step=1, count=ceil((stop-start)/step) with exact
+  NumPy-style stop-exclusive semantics for positive/negative step
+- `arange(start, stop, step)`: reject step=0; compute stop-exclusive count
+- `linspace(count)`: old behavior, 0..1 inclusive with count entries
+- `linspace(start, stop, count)`: inclusive start..stop with count entries
+- `linspace(start, stop, 1)` produces `[start]`; it does not produce `stop`
+  or the midpoint
+- reject non-real args, non-integer counts, counts outside
+  `[1, COEFF_PROGRAM_MAX_VECTOR_LEN]`, and non-finite generated values
+
+Tests:
+
+- `arange(poly_len)`, `arange(0, poly_len)`, and
+  `arange(1, poly_len+1)` produce expected vectors
+- `arange(5, 0, -1)` produces `[5, 4, 3, 2, 1]`
+- `arange(0, 5, 0)` rejects cleanly
+- `linspace(2, 4, 3)` produces `[2, 3, 4]`
+
+### 1. Backend Parser Module
+
+Add `lambda/coeff_program_source.py`.
+
+Responsibilities:
+
+- parse Coeff Program `source_text` into canonical chip-list `chain`
+- render legacy `chain` back to canonical source text for old saved programs
+- preserve user-authored `source_text` exactly on save; do not format it
+- strip comments and whitespace only while lowering to `chain`
+- produce diagnostics with line/column/source-span metadata
+- expose one compile helper used by storage, compute plan, and preview paths
+
+Public API:
+
+```python
+def parse_coeff_program_source(source_text: str) -> dict:
+    """Return {'chain': list, 'diagnostics': list, 'statement_count': int}."""
+
+def render_coeff_program_source(chain: list) -> str:
+    """Return canonical source text for a legacy chain-only program."""
+
+def compile_coeff_program_source(
+    source_text: str,
+    *,
+    name: str = "",
+    macro_resolver=None,
+    program_id: str | None = None,
+) -> dict:
+    """Parse source, compile chain, return chain/display/fingerprint/etc."""
+
+def compile_coeff_program_payload_from_source_or_chain(
+    *,
+    name: str,
+    source_text=None,
+    chain=None,
+    saved_at=None,
+    version=None,
+    program_id=None,
+    macro_resolver=None,
+) -> dict:
+    """source_text wins over chain. Used by storage save/fetch/compile routes."""
+```
+
+Diagnostic shape:
+
+```json
+{
+  "level": "error",
+  "line": 12,
+  "column": 8,
+  "end_line": 12,
+  "end_column": 11,
+  "message": "unknown chip: foo"
+}
+```
+
+Parser v1 grammar:
+
+Lexical rules:
+
+```text
+IDENT        ::= [A-Za-z_][A-Za-z0-9_]*
+DIGITS       ::= [0-9]+
+EXP          ::= [eE][+-]? DIGITS
+FLOAT        ::= DIGITS "." DIGITS? EXP? | "." DIGITS EXP? | DIGITS EXP?
+IMAG_NUMBER  ::= FLOAT [ij]
+NUMBER       ::= FLOAT
+COMMENT      ::= "#" .* until newline
+```
+
+`2.5j`, `1j`, `.5j`, and `1e-3j` lex as one `IMAG_NUMBER`, not as
+`NUMBER * j`. Bare `i` and `j` remain identifiers that the scalar-expression
+parser resolves to `0+1j`. Whitespace is insignificant except as a token
+separator. Indentation has no meaning. Quoted strings are not part of v1.
+
+Statement splitting:
+
+- newline ends a statement only at bracket depth zero
+- `;` ends a statement only at bracket depth zero
+- bracket depth tracks `()`, `[]`, and `{}` even though `{}` is rejected in v1
+- newline inside parentheses or brackets is a line continuation
+- `#` starts a comment only outside parentheses/brackets; comments are
+  removed before statement parsing but preserved verbatim in `source_text`
+- blank/comment-only statements are ignored
+
+Formal grammar:
+
+```text
+program        ::= sep* statement? (sep+ statement)* sep*
+sep            ::= NEWLINE | ";"
+statement      ::= assignment | index_assignment | call_statement | bare_statement
+
+assignment     ::= "poly" "=" rhs
+index_assignment ::= "poly" "[" INT "]" "=" scalar_expr
+rhs            ::= source_name | call_expr | bare_chip_name
+
+call_statement ::= IDENT "(" arg_list? ")"
+bare_statement ::= IDENT | source_name
+arg_list       ::= arg ("," arg)*
+arg            ::= source_name | target_name | IDENT | scalar_expr
+
+call_expr      ::= IDENT "(" arg_list? ")"
+source_name    ::= "cf" | "poly" | "pop" | "peek"
+target_name    ::= "poly" | "push"
+bare_chip_name ::= IDENT
+```
+
+Scalar-expression grammar:
+
+```text
+scalar_expr ::= sum
+sum         ::= product (("+" | "-") product)*
+product     ::= unary (("*" | "/") unary)*
+unary       ::= ("+" | "-") unary | power
+power       ::= primary ("**" unary)?        # right-associative
+primary     ::= NUMBER | IMAG_NUMBER | IDENT | indexed_ref |
+                IDENT "(" scalar_expr ")" | "(" scalar_expr ")"
+indexed_ref ::= ("poly" | "cf" | "tos") "[" INT "]"
+```
+
+Precedence matches Python for the supported operators: function/index calls,
+then `**` (right associative), then unary `+`/`-`, then `*`/`/`, then `+`/`-`.
+So `-2**2` parses as `-(2**2)`, and `2**-3` parses as `2**(-3)`.
+General expression exponents are v2; v1 accepts integer literal exponents
+only after parsing.
+
+Parser error recovery:
+
+- report diagnostics for as many independent statements as possible
+- after an error in a statement, skip to the next top-level newline or `;`
+- lexical/splitting errors such as unmatched parentheses or brackets halt
+  parsing because statement boundaries are no longer reliable
+- do not emit partial lowered chips for a statement that has an error
+- the compile endpoint returns HTTP 400 when any `level="error"` diagnostic
+  exists, but still includes all collected diagnostics
+
+Empty or whitespace/comment-only source is valid and compiles to an empty
+chain with `statement_count=0`. This means "leave `poly` at its initial
+cf-derived value", matching an empty chip program.
+
+`statement_count` counts source statements after comment stripping and
+top-level `;` splitting, before lowering. A statement that lowers to multiple
+chips still counts as one statement. Blank/comment-only statements do not
+count.
+
+Canonical expression rendering:
+
+- `source_text` is preserved exactly and never rewritten
+- v1 `chain` expression args are normalized strings, not full AST-rendered
+  expressions; they strip internal whitespace and normalize supported aliases
+- aliases normalize in chain args: `tau -> pi2`, `tau_i -> pi2i`,
+  `mod(x) -> abs(x)`
+- fingerprints hash compiled tokens and scalar-expression bytecode, not raw
+  expression text
+- therefore `1+2`, `1 + 2`, and `(1+2)` compile to the same fingerprint
+- cosmetically different source may still produce different `chain` JSON in
+  v1 if the remaining expression text differs after whitespace/alias
+  normalization; full AST rendering is deferred to typed-VM v2
+
+Statement lowerings:
+
+```text
+arange(n)                 -> ["push_range", n]
+arange(start, stop)       -> ["push_range", start, stop]
+arange(start, stop, step) -> ["push_range", start, stop, step]
+fill(n, expr)             -> ["push_const", n, expr]
+linspace(n)               -> ["push_linspace", n]
+linspace(start,stop,n)    -> ["push_linspace", start, stop, n]
+cf                        -> ["push", "cf"]
+poly                      -> ["push", "poly"]
+dup                       -> ["duplicate"]
+drop                      -> ["pop"]
+flush                     -> ["flush"]
+scale(a)                  -> ["affine", "push", "pop", a, "0"]
+shift(b)                  -> ["affine", "push", "pop", "1", b]
+linear(a,b)               -> ["affine", "push", "pop", a, b]
+linear(src,a,b)           -> ["affine", "push", src, a, b]
+abs/mod/angle/neg/conj/
+sqrt/log                 -> native unary: [name, "push", "pop"]
+sin / cos / exp          -> registry-backed unary sugar when available
+sin(src)                  -> ["legacy", "sin", src, "push"]
+add                       -> ["add", "push", "pop", "pop"]
+mul                       -> ["multiply", "push", "pop", "pop"]
+pow                       -> ["power", "push", "pop", "pop"]
+sub                       -> ["subtract", "push", "pop", "pop"]
+div                       -> ["divide", "push", "pop", "pop"]
+mul(poly,cf)              -> ["multiply", "push", "poly", "cf"]
+set(poly,src)             -> ["set", "poly", src]
+poly = pop                -> ["set", "poly", "pop"]
+poly = peek               -> ["set", "poly", "peek"]
+poly = cf                 -> ["set", "poly", "cf"]
+poly = sin                -> ["legacy","sin","pop","poly"]
+poly = sin(poly)          -> ["legacy","sin","poly","poly"]
+poly = mul(poly,cf)       -> ["multiply", "poly", "poly", "cf"]
+poly[N] = expr            -> ["poke_poly", N, expr]
+legacy(name,src,tgt,...)  -> ["legacy", name, src, tgt, ...]
+macro(name)               -> ["macro", name]
+```
+
+Assignment lowering rule:
+
+- `poly = <source>` lowers to `["set", "poly", <source>]`
+- `poly = <bare-chip>` lowers by applying that chip to `pop` with `tgt=poly`
+  (`poly = sin` -> `["legacy", "sin", "pop", "poly"]`)
+- `poly = <chip>(...)` lowers through that chip's normal native/legacy opcode
+  with `tgt=poly`
+- `poly = mul(poly, cf)` is therefore `["multiply", "poly", "poly", "cf"]`,
+  not `mul(...); emit`
+- if a chip has no `tgt=poly` form, assignment to `poly` is a compile error
+
+Two v1 caveats must be enforced by the parser:
+
+- `poly = peek` and `set(poly, peek)` require `COEFF_OP_SET`. Do not lower
+  them through `legacy(linear, peek, poly, 1, 0)`.
+- `linear`, `scale`, and `shift` require `COEFF_OP_AFFINE`. Do not lower
+  them through legacy `linear`.
+- `arange(start, stop, step)` and `linspace(start, stop, n)` require the
+  extended native producer support above. Do not synthesize them by applying
+  affine transforms to a zero-based range.
+- Unary sugar is only available when the operation is either a native vector
+  unary (`abs`, `mod`, `angle`, `neg`, `conj`, `sqrt`, `log`) or a
+  registry-backed transform. `sqrt`, `log`, and `neg` are v1 native unary
+  operations, not legacy aliases.
+
+Expression updates in `lambda/coeff_program_chain.py`:
+
+- add `tau` and `tau_i` as aliases for `pi2` and `pi2i`
+- add bracket reads `poly[N]`, `cf[N]`, `tos[N]` alongside existing `polyN`,
+  `cfN`, `tosN`
+- add `**` for integer literal exponents only in v1
+- reject general complex exponent expressions in v1 with a clear message
+- preserve existing `polyN`/`cfN`/`tosN` forever for old chains
+
+### 2. Storage/API Routes
+
+Modify `lambda/handler_storage.py`.
+
+Imports:
+
+```python
+from coeff_program_source import (
+    compile_coeff_program_payload_from_source_or_chain,
+    compile_coeff_program_source,
+    render_coeff_program_source,
+)
+```
+
+Constants:
+
+```python
+MAX_COEFF_PROGRAM_SOURCE_BYTES = 64 * 1024
+```
+
+The limit is measured in UTF-8 bytes. Exceeding it returns HTTP 400 with a
+diagnostic in the same shape as parser errors; it must not write S3.
+
+Modify `_read_coeff_program_source_chain(program_id)`:
+
+- read saved object
+- if `chain` exists, return it as today
+- if only `source_text` exists, compile source through
+  `compile_coeff_program_source(...).get("chain")`
+- macro resolution must never use client-provided chains
+
+Modify `_compile_coeff_program_payload(...)` or replace it with a wrapper:
+
+- accept `source_text=None` and `chain=None`
+- if `source_text` is present, validate byte size, compile source with Python
+  parser, and ignore any client-supplied `chain`; empty/whitespace source is
+  a valid empty program
+- if `source_text` is absent, keep legacy chain path exactly as today
+- include `source_text` in the saved program only when present
+- include canonical `chain`, `display`, `expanded_display`, `fingerprint`,
+  `execution_spec`, `statement_count`, `token_count`, `scalar_expr_count`,
+  `stack_max`, `uses_legacy_chain_equivalent`, `macro_expansions`
+
+All compile sites must use the same macro resolver semantics. Storage,
+compute-plan, and compute-preview should all resolve through the same
+`_coeff_program_macro_resolver` helper or a shared equivalent; no path may
+expand macros from a client-supplied stale `chain` when `source_text` exists.
+Macro bodies with `source_text` compile through the source parser during
+resolution; macro bodies without `source_text` use the stored legacy `chain`.
+
+Add handler:
+
+```python
+def handle_compile_coeff_program_source(event):
+    params = parse_body(event)
+    program = compile_coeff_program_payload_from_source_or_chain(
+        name=params.get("name") or "coeff-program-source",
+        source_text=params.get("source_text"),
+        chain=params.get("chain"),
+        program_id=params.get("id"),
+        macro_resolver=_coeff_program_macro_resolver(params.get("id")),
+    )
+    return ok_response({"program": program, "diagnostics": program.get("diagnostics", [])})
+```
+
+Route wiring in `handler(event, context)`:
+
+```python
+elif path.endswith("/compile-coeff-program-source"):
+    return _handle_storage_route(handle_compile_coeff_program_source, event)
+```
+
+Modify `handle_save_coeff_program(event)`:
+
+- pass `params.get("source_text")` and `params.get("chain")`
+- if both are sent, source wins
+- store `source_text` verbatim
+- S3 metadata remains name / statement_count / saved_at
+
+Modify `handle_fetch_coeff_program(event)`:
+
+- if stored object lacks `source_text`, add synthesized
+  `source_text = render_coeff_program_source(program["chain"])` in the
+  response only
+- do not mutate S3 on fetch
+
+Deploy route wiring in `deploy.sh`:
+
+- add `lambda/coeff_program_source.py` to every Lambda zip that imports it:
+  storage, compute-plan, compute-preview, coeffgen if needed by compute source
+  fallback
+- add API Gateway route:
+
+```bash
+ensure_route "POST /compile-coeff-program-source" "$STORAGE_INT"
+```
+
+### 3. Compute/Preview Source Support
+
+Modify `lambda/handler_compute_plan.py`.
+
+- import `compile_coeff_program_payload_from_source_or_chain` or a lower-level
+  source compile helper from `coeff_program_source.py`
+- read `coeff_program_source_text` by key presence, not truthiness; an empty
+  string is a valid empty program
+- in Program mode, source wins over `coeff_program_chain`
+- compile source to canonical chain before existing coeff-program compilation
+  payload generation
+- persist in `plan["pipeline"]`:
+
+```json
+{
+  "coeff_program_source_text": "...",
+  "coeff_program_chain": [...],
+  "coeff_program_display": "...",
+  "coeff_program_fingerprint": "..."
+}
+```
+
+- do not forward `source_text` to native payloads
+- include source text in calc metadata only for UI populate/debugging
+
+Modify `lambda/handler_compute_preview.py`.
+
+- accept `coeff_program_source_text`
+- source wins over `coeff_program_chain` when the key is present, even if the
+  value is an empty string
+- compile through the same Python parser path
+- return diagnostics in `programs.coeff_program.diagnostics`
+
+Modify `lambda/handler_coeffgen.py`.
+
+- Accept `coeff_program_source_text` only as a defensive fallback for direct
+  test/manual invocations. Normal workflow payloads should already contain
+  compiled `coeff_program` or canonical `coeff_program_chain`.
+- If both source and compiled program are present, compiled program wins in
+  workflow execution; source is metadata/debug only.
+- This is intentionally different from save/plan-time source precedence.
+  At plan time the compile decision is final; downstream workflow steps
+  execute the compiled program. `source_text` rides through metadata for
+  traceability and must never re-decide program validity inside coeffgen.
+
+Modify `lambda/handler_compute_orchestrator.py`.
+
+- preserve `coeff_program_source_text` in `run_params`
+- `pipeline_mode` auto-selection should treat source text as Program mode:
+
+```python
+"coeff_program_source_text" in run_params
+```
+
+Step Functions template:
+
+- file: `stepfunctions/compute_workflow.asl.json.template`
+- add selectors anywhere `coeff_program_chain.$` is passed:
+
+```json
+"coeff_program_source_text.$": "$.plan.pipeline.coeff_program_source_text"
+```
+
+If source is compiled only in compute-plan and never needed downstream, do
+not add ASL selectors. Prefer this simpler route unless preview/direct
+coeffgen requires source fallback.
+
+### 4. Frontend Compute UI
+
+Modify `index.html`.
+
+Add a tabset inside the Compute tab's Coeff Program section, near
+`id="cp-chips"`:
+
+```html
+<div class="in-panel-tabs coeff-program-tabs">
+  <button id="cp-tab-chips" ...>Chips</button>
+  <button id="cp-tab-text" ...>Text</button>
+</div>
+<div id="cp-chips-panel">existing chip editor</div>
+<div id="cp-text-panel" hidden>
+  <textarea id="cp-source-text" class="program-source-textarea"></textarea>
+  <div id="cp-source-diagnostics" class="program-source-diagnostics"></div>
+  <div id="cp-source-preview" class="solve-score-modal-display"></div>
+</div>
+```
+
+CSS:
+
+- textarea monospace
+- fixed/min height comparable to chip editor
+- vertical scroll inside textarea
+- no modal/compute layout height jumps
+- tabs must use the same visual language as existing tabsets, not generic
+  buttons
+
+State:
+
+```js
+let _coeffProgramEditorMode = 'chips'; // 'chips' | 'text'
+let _coeffProgramSourceText = '';
+let _coeffProgramSourceCompile = null;
+let _coeffProgramSourceTimer = null;
+```
+
+New/modified JS functions:
+
+```js
+function _selectedCoeffProgramEditorMode()
+function _setCoeffProgramEditorMode(mode)
+function _readCoeffProgramSourceText()
+function _setCoeffProgramSourceText(text, options = {})
+async function _compileCoeffProgramSourceTextNow(options = {})
+function _scheduleCoeffProgramSourceCompile()
+function _effectiveCoeffProgramChainForCompute()
+function _effectiveCoeffProgramSourceTextForCompute()
+function _populateCoeffProgramTextFromChain(chain)
+```
+
+Behavior:
+
+- Chips tab keeps current chip editor behavior.
+- Text tab sends `source_text` to `/compile-coeff-program-source` on debounce.
+- Backend response updates canonical preview and diagnostics.
+- v1 adds the Text/Chips tabset only to the Compute tab's Coeff Program
+  editor. The saved-program modal may display source text returned by fetch,
+  but it does not get a separate authoritative textarea/editor in v1.
+- Compute Preview / Calculate in Program mode:
+  - if Text tab is active, send `coeff_program_source_text` even when empty
+    (empty text is a valid empty program)
+  - otherwise send `coeff_program_chain`
+- Saved-program save/load flow:
+  - saving from Text mode sends both `source_text` and current `chain` if
+    available, but backend ignores `chain` when `source_text` exists
+  - saving from Chips mode sends the chip `chain`; backend stores the chain
+    and may return synthesized canonical `source_text` for display
+  - if a Chips-mode save includes synthesized `source_text`, it must be
+    generated by the backend canonicalizer, not by a JS parser
+  - fetching a program with `source_text` populates the Compute Text tab and
+    shows the canonical chain in preview
+- Populate from existing compute:
+  - if `pipeline.coeff_program_source_text` exists, fill Text tab
+  - otherwise synthesize text from `pipeline.coeff_program_chain` via backend
+    fetch/compile route or local display-only renderer
+
+Do not implement authoritative source parsing in JS. JS may do highlighting
+or advisory lint only.
+
+### 5. Packaging
+
+Modify `deploy.sh`.
+
+Add `lambda/coeff_program_source.py` to:
+
+- storage Lambda zip
+- compute-plan Lambda zip
+- compute-preview Lambda zip
+- coeffgen Lambda zip only if direct coeffgen source fallback is implemented
+
+Native rebuilds are required because `lambda/sweep_cli.c` changes:
+
+- local smoke binary: `lambda/sweep_test`
+- deployed coeffgen binary: `lambda/sweep_coeffgen`
+- any Lambda package that includes `sweep_coeffgen`: coeffgen,
+  compute-preview, render-lores-preview, and compute-chunk-fused packages
+
+`deploy.sh` already builds `sweep_test` locally and rebuilds
+`sweep_coeffgen` in the Docker/LAPACK step. The implementation must keep that
+path active; no source-only deploy is valid for this feature.
+
+Add route:
+
+```bash
+ensure_route "POST /compile-coeff-program-source" "$STORAGE_INT"
+```
+
+Modify `tests/test_deploy_packaging.py`:
+
+- assert `coeff_program_source.py` is present in every zip that imports it
+- assert API route list includes `POST /compile-coeff-program-source`
+
+### 6. Tests
+
+Add `tests/test_coeff_program_source.py`.
+
+Required cases:
+
+- empty / whitespace-only source compiles to empty chain with
+  `statement_count=0`
+- `arange(poly_len)` lowers to `push_range`
+- `arange(1, poly_len+1)` lowers to extended `COEFF_OP_RANGE`
+- `linspace(2, 4, 3)` lowers to extended `COEFF_OP_LINSPACE`
+- `linspace(2, 4, 1)` produces `[2]`
+- `fill(poly_len, p1+p2)` lowers to `push_const`
+- `scale(0.5)` lowers to `COEFF_OP_AFFINE`
+- `shift(1)` lowers to `COEFF_OP_AFFINE`
+- `scale(1j*p1)` compiles; it must not be rejected as a real-only legacy arg
+- `set(poly,peek)` and `poly = peek` lower to `COEFF_OP_SET`, not to
+  `legacy(linear,peek,poly,1,0)`
+- compiled token JSON for `set` and `affine` matches the documented
+  `op`/`src`/`tgt`/`args`/`args_im`/`expr_refs` shape
+- `mul(poly,cf)` lowers directly to `multiply(push,poly,cf)`
+- `pow` lowers to vector `power`
+- `sqrt`, `log`, `neg`, and `conj` lower to `COEFF_OP_VECTOR_UNARY`
+- `poly[10] = expr` lowers to `poke_poly`
+- `poly[6]`, `cf[6]`, `tos[3]` compile in scalar expressions
+- `poly[poly_len-1]` is rejected in v1 with a v2/dynamic-index message
+- `p1**3` lowers/compiles; `p1**p2` is rejected in v1
+- `poly = neg(poly)` writes `poly` through `COEFF_OP_VECTOR_UNARY`, not
+  through a legacy transform
+- comments and blank lines are ignored for `chain`
+- comments and formatting are preserved in `source_text`
+- `legacy(...)` source still lowers
+- invalid statement reports line/column
+- multiple independent invalid statements report multiple diagnostics where
+  recovery is possible
+- expression canonicalization gives the same fingerprint for `1+2`, `1 + 2`,
+  and `(1+2)`
+
+Update `tests/test_coeff_program_storage.py`.
+
+- `/compile-coeff-program-source` returns `{program:{chain,display,fingerprint}, diagnostics}`
+- `/save-coeff-program` with `source_text` stores source verbatim
+- if `source_text` and wrong `chain` are both sent, saved `chain` is compiled
+  from source
+- fetch of chain-only old program returns synthesized `source_text`
+- save rejects invalid source and does not write S3
+- macro source programs expand by compiling saved `source_text`; chain-only
+  legacy macros expand through saved canonical chains
+
+Update `tests/test_compute_plan.py`.
+
+- `coeff_program_source_text` in Program mode compiles to canonical chain,
+  including the empty-string case
+- source wins over mismatched `coeff_program_chain`
+- plan pipeline carries `coeff_program_source_text`
+- probe signature/fingerprint changes when source semantics change, not when
+  only comments change
+
+Update `tests/test_compute_preview_handler.py`.
+
+- preview accepts `coeff_program_source_text`
+- invalid source returns HTTP 400 with parser diagnostic
+
+Update `tests/test_frontend_js.sh`.
+
+Grep/source checks:
+
+- `id="cp-tab-text"`
+- `id="cp-source-text"`
+- `/compile-coeff-program-source`
+- no function named `_parseCoeffProgramSource` or equivalent authoritative
+  parser in JS
+- compute payload includes `coeff_program_source_text` when Text mode active
+- Text tab panel has fixed-height/scroll CSS
+
+Update `tests/test_coeff_program_native.py`.
+
+- compile the `poly_1` v1 source through the Python parser and assert native
+  output matches the current chain-based equivalent
+- assert `COEFF_OP_SET`, `COEFF_OP_AFFINE`, extended `COEFF_OP_RANGE`, and
+  extended `COEFF_OP_LINSPACE` match Python references
+- assert native `sqrt`, `log`, `neg`, and `conj` match Python/cmath
+  references
+
+### 7. Rollout Gates
+
+Before deploy:
+
+```bash
+python3 -m py_compile lambda/coeff_program_source.py lambda/handler_storage.py lambda/handler_compute_plan.py lambda/handler_compute_preview.py lambda/handler_coeffgen.py
+uv run python -m pytest tests/test_coeff_program_source.py tests/test_coeff_program_storage.py tests/test_compute_plan.py tests/test_compute_preview_handler.py tests/test_coeff_program_native.py tests/test_deploy_packaging.py -q
+bash tests/test_frontend_js.sh
+./deploy.sh show-build
+bash scripts/test-docker-runtime.sh
+bash scripts/predeploy_check.sh
+```
+
+Because v1 now adds native `SET`/`AFFINE` behavior and extends range
+producers, native parity and the Docker runtime gate are mandatory before
+deploy. Do not use the old "native unchanged" shortcut for this change.
+
+### 8. Explicit Non-Work For v1
+
+Do not implement these in v1:
+
+- dynamic `poly[poly_len-N]` reads/writes
+- vector-to-scalar reductions such as `dot` and `norm2`
+- vector construction/structure primitives such as `basis`, `geom`, `slice`,
+  `concat`, `pad`, `trim`, `take`, `where`, and scalar `select`
+- deterministic random generators
+- slice assignment
+- `for_each_index`
+- typed VM runtime
+- nested vector calls like `pow(poly, fill(poly_len, p1))`
+- general expression exponent `p1**p2`
+- authoritative JS parser
+- automatic migration of Param Program to typed VM
+
 ## Decisions
 
 Items already settled in the body of this document, gathered here so they
@@ -1087,6 +2247,20 @@ do not have to be re-litigated:
   v1 supports literal indices only. v2 lowers dynamic reads through
   `get_scalar(vector, scalar_index)` and dynamic writes through
   `set_scalar(vector_register, scalar_index, scalar_value)`.
+- **`dot` is vector-to-scalar and therefore v2.** It should use the Hermitian
+  convention `sum(conj(a[i]) * b[i])`. If the non-conjugating version is
+  needed, add `dotu` rather than changing `dot`.
+- **All vector reducers and constructors are explicit primitives.** Do not
+  hide `sum`, `mean`, `basis`, `geom`, `slice`, `concat`, `pad`, or `trim`
+  behind unrelated legacy transforms. They are typed-VM operations with
+  direct length/type/error rules.
+- **Conditionals use `where` / `select`, not `popif`.** `where(mask,a,b)`
+  is vector selection and `select(cond,x,y)` is scalar selection. Both use
+  `real(condition) > 0`; zero chooses the false branch. Stack-pop order for
+  bare `where` is `b`, then `a`, then `mask`.
+- **Random generators must be deterministic.** They mix row parameters and
+  an explicit seed expression, use the pinned `splitmix64` + `PCG32` family,
+  and never call host runtime randomness.
 - **User formatting and comments** survive in `source_text` verbatim.
   Canonicalization happens only when producing `chain` for the compiler;
   it never rewrites `source_text`.
@@ -1112,6 +2286,9 @@ v1 (ship first):
   preserved verbatim.
 - Aliases: `arange`, `fill`, `scale`, `shift`, `pow`.
 - `arange(start, stop)` and `arange(start, stop, step)` overloads.
+- Native/compiler updates: `COEFF_OP_SET`, `COEFF_OP_AFFINE`, extended
+  `COEFF_OP_RANGE` / `COEFF_OP_LINSPACE`, and vector-unary support for `neg`,
+  `conj`, `sqrt`, and `log`.
 - `poly[N]`, `cf[N]`, `tos[N]` static-index brackets in expressions.
 - `poly[N] = expr` static-index poke.
 - `**`, `tau`, single-line `#` comments.
@@ -1126,8 +2303,15 @@ v2 (after v1 ships and gets used):
 - Unified expression grammar across chip lines and chip args
   (pain point #11).
 - Dynamic-index reads and writes, slice assignment, `for_each_index`.
-- New opcodes for `geom`, `mask_real`, `mask_imag`, and dynamic
-  `poly[i]`.
+- Vector reductions: `sum`, `mean`, `prod`, `dot`, `dotu`, norms, and
+  arg-extrema.
+- Vector construction and structure: `zeros`, `ones`, `repeat`, `basis`,
+  `geom`, `axis`, `cheb_axis`, `slice`, `concat`, `pad`, `trim`, and `take`.
+- Elementwise helpers: `real`, `imag`, `phase`, `arg`, `unit`, `clip_abs`,
+  `normalize`, `center`, and `standardize`.
+- Masked selection and conditionals: `where` and `select`.
+- Deterministic random generators using the pinned `splitmix64` + `PCG32`
+  family.
 - Possible retirement of user-facing `legacy(...)`.
 
 After v1 ships, the running example reads as math. That is the test.

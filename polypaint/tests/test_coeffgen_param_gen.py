@@ -377,6 +377,34 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
         self.assertEqual(captured_specs[0]["coeff_transforms"], [["rev"], ["swirler"]])
         self.assertNotIn("coeff_program", captured_specs[0])
 
+    @patch("handler_coeffgen.os.remove")
+    @patch("handler_coeffgen.subprocess.run")
+    def test_degree_probe_compiles_coeff_program_source_text(self, mock_run, mock_remove):
+        import handler_coeffgen as mod
+
+        captured_specs = []
+
+        def _run(_args, input=None, capture_output=None, text=None, timeout=None):
+            captured_specs.append(json.loads(input))
+            return _DummyCompleted(json.dumps({"degree": 7, "n_coeffs": 8, "data_bytes": 256}))
+
+        mock_run.side_effect = _run
+
+        result = mod.handle_degree_probe({
+            "pipeline_mode": "program",
+            "function": "const",
+            "param_transforms": [],
+            "coeff_transforms": [],
+            "coeff_program_source_text": "cf\nrev\nemit\n",
+            "cfpv": [8, 1, 0],
+        })
+
+        body = json.loads(result["body"])
+        self.assertTrue(body["probe_stable"])
+        self.assertEqual(captured_specs[0]["coeff_transforms"], [])
+        self.assertIn("coeff_program", captured_specs[0])
+        self.assertEqual(captured_specs[0]["coeff_program"]["token_count"], 3)
+
     @patch("handler_coeffgen.s3")
     @patch("handler_coeffgen.os.remove")
     @patch("handler_coeffgen.subprocess.run")

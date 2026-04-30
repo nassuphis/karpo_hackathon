@@ -29,6 +29,7 @@ from compute_fused import (
     validate_fused_threads,
 )
 from coeff_program_chain import compile_coeff_program_chain
+from coeff_program_source import parse_coeff_program_source
 from param_program_chain import compile_param_program_chain
 from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
 
@@ -92,6 +93,9 @@ def _read_saved_program_source_chain(prefix, program_kind, program_id):
         raise RuntimeError(f"{program_kind} macro is not valid JSON: {macro_id}") from exc
     if not isinstance(payload, dict):
         raise RuntimeError(f"{program_kind} macro must be a JSON object: {macro_id}")
+    if program_kind == "coeff program" and "source_text" in payload:
+        parsed = parse_coeff_program_source(payload.get("source_text") or "")
+        return parsed["chain"]
     chain = payload.get("chain")
     if not isinstance(chain, list):
         raise RuntimeError(f"{program_kind} macro chain must be a JSON array: {macro_id}")
@@ -116,7 +120,16 @@ def _coeff_program_macro_resolver():
 
 def _resolve_coeff_program(params, coeff_transforms):
     coeff_program = params.get("coeff_program") or None
-    coeff_program_chain = params.get("coeff_program_chain")
+    raw_source_text = str(params.get("coeff_program_source_text") or "")
+    if (
+        coeff_program is None
+        and "coeff_program_source_text" in params
+        and (raw_source_text.strip() or not params.get("coeff_program_chain"))
+    ):
+        parsed = parse_coeff_program_source(raw_source_text)
+        coeff_program_chain = parsed["chain"]
+    else:
+        coeff_program_chain = params.get("coeff_program_chain")
     if coeff_program is None and coeff_program_chain:
         if not isinstance(coeff_program_chain, list):
             raise RuntimeError("coeff_program_chain must be an array")
@@ -138,6 +151,7 @@ def _pipeline_mode_from_params(params):
         raw = "program" if (
             params.get("param_program_chain")
             or params.get("coeff_program_chain")
+            or str(params.get("coeff_program_source_text") or "").strip()
             or params.get("param_program")
             or params.get("coeff_program")
         ) else "chain"

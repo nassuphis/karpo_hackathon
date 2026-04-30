@@ -315,6 +315,93 @@ class TestComputePreviewHandler(unittest.TestCase):
         self.assertEqual(specs[0]["coeff_program"]["token_count"], 1)
         self.assertEqual(specs[0]["coeff_program"]["tokens"][0]["op"], 10)
 
+    @patch("handler_compute_preview.subprocess.run")
+    def test_compute_debug_poly_compiles_coeff_program_source_text(self, mock_run):
+        import handler_compute_preview as mod
+
+        specs = []
+
+        def fake_run(cmd, input=None, capture_output=None, text=None, timeout=None, env=None):
+            specs.append(json.loads(input))
+            out_path = cmd[1]
+            with open(out_path, "wb") as fh:
+                fh.write(struct.pack("<ffffff", 1.0, 0.0, 2.0, 0.0, 3.0, 0.0))
+            return unittest.mock.MagicMock(
+                returncode=0,
+                stdout=json.dumps({
+                    "mode": "compute_debug",
+                    "function": "const",
+                    "u": 0.25,
+                    "v": 0.75,
+                    "grid_n": 32,
+                    "param": {"t1": [0.25, 0], "t2": [0.75, 0], "p1": [0.25, 0], "p2": [0.75, 0]},
+                    "coeff": {"cf_len": 3, "poly_len": 3, "n_coeffs": 3, "degree": 2},
+                    "data_bytes": 24,
+                }),
+                stderr="",
+            )
+
+        mock_run.side_effect = fake_run
+
+        result = mod.handler({"body": json.dumps(_event(
+            debug_stage="poly",
+            pipeline_mode="program",
+            function="const",
+            cfpv=[3, 1, 0],
+            u=0.25,
+            v=0.75,
+            coeff_program_source_text="cf\nrev\nemit\n",
+        ))}, None)
+
+        self.assertEqual(result["statusCode"], 200)
+        self.assertEqual(specs[0]["coeff_transforms"], [])
+        self.assertIn("coeff_program", specs[0])
+        self.assertEqual(specs[0]["coeff_program"]["token_count"], 3)
+
+    @patch("handler_compute_preview.subprocess.run")
+    def test_compute_debug_poly_chain_mode_ignores_coeff_program_source_text(self, mock_run):
+        import handler_compute_preview as mod
+
+        specs = []
+
+        def fake_run(cmd, input=None, capture_output=None, text=None, timeout=None, env=None):
+            specs.append(json.loads(input))
+            out_path = cmd[1]
+            with open(out_path, "wb") as fh:
+                fh.write(struct.pack("<ffffff", 1.0, 0.0, 2.0, 0.0, 3.0, 0.0))
+            return unittest.mock.MagicMock(
+                returncode=0,
+                stdout=json.dumps({
+                    "mode": "compute_debug",
+                    "function": "const",
+                    "u": 0.25,
+                    "v": 0.75,
+                    "grid_n": 32,
+                    "param": {"t1": [0.25, 0], "t2": [0.75, 0], "p1": [0.25, 0], "p2": [0.75, 0]},
+                    "coeff": {"cf_len": 3, "poly_len": 3, "n_coeffs": 3, "degree": 2},
+                    "data_bytes": 24,
+                }),
+                stderr="",
+            )
+
+        mock_run.side_effect = fake_run
+
+        result = mod.handler({"body": json.dumps(_event(
+            debug_stage="poly",
+            pipeline_mode="chain",
+            function="const",
+            cfpv=[3, 1, 0],
+            u=0.25,
+            v=0.75,
+            coeff_transforms=[["rev"]],
+            coeff_program_chain=[["const", "3", "1"], ["emit"]],
+            coeff_program_source_text="bad(",
+        ))}, None)
+
+        self.assertEqual(result["statusCode"], 200)
+        self.assertEqual(specs[0]["coeff_transforms"], [["rev"]])
+        self.assertNotIn("coeff_program", specs[0])
+
     @patch("handler_compute_preview.tmp_space_stats")
     @patch("handler_compute_preview.subprocess.run")
     @patch("handler_compute_preview.compute_viewport_from_bin")

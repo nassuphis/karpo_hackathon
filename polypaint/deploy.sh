@@ -953,7 +953,7 @@ rm -rf "$COEFFGEN_DIR"
 mkdir -p "$COEFFGEN_DIR"
 cp lambda/handler_coeffgen.py lambda/shared.py lambda/compute_fused.py \
    lambda/param_program_chain.py lambda/param_legacy_registry.json \
-   lambda/coeff_program_chain.py lambda/coeff_legacy_registry.json "$COEFFGEN_DIR/"
+   lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json "$COEFFGEN_DIR/"
 cp lambda/sweep_coeffgen "$COEFFGEN_DIR/"
 chmod +x "$COEFFGEN_DIR"/sweep_coeffgen
 cd "$COEFFGEN_DIR" && zip -r9 /tmp/polypaint-coeffgen.zip . -q && cd "$SCRIPT_DIR"
@@ -973,7 +973,7 @@ rm -rf "$STORAGE_DIR"
 mkdir -p "$STORAGE_DIR"
 cp lambda/handler_storage.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py \
    lambda/param_program_chain.py lambda/param_legacy_registry.json \
-   lambda/coeff_program_chain.py lambda/coeff_legacy_registry.json \
+   lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
    lambda/color_render_contract.py lambda/logical_sections.py "$STORAGE_DIR/"
 cd "$STORAGE_DIR" && zip -r9 /tmp/polypaint-storage.zip . -q && cd "$SCRIPT_DIR"
 echo "  Storage:  $(du -h /tmp/polypaint-storage.zip | cut -f1)  (pure Python)"
@@ -1022,7 +1022,7 @@ rm -rf "$COMPUTE_PREVIEW_DIR"
 mkdir -p "$COMPUTE_PREVIEW_DIR"
 cp lambda/handler_compute_preview.py lambda/shared.py \
    lambda/param_program_chain.py lambda/param_legacy_registry.json \
-   lambda/coeff_program_chain.py lambda/coeff_legacy_registry.json \
+   lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
    "$COMPUTE_PREVIEW_DIR/"
 cp lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$COMPUTE_PREVIEW_DIR/"
 chmod +x "$COMPUTE_PREVIEW_DIR"/sweep_coeffgen "$COMPUTE_PREVIEW_DIR"/sweep_mt "$COMPUTE_PREVIEW_DIR"/sweep_cm
@@ -1322,7 +1322,7 @@ rm -rf "$COMP_PLAN_DIR"
 mkdir -p "$COMP_PLAN_DIR"
 cp lambda/handler_compute_plan.py lambda/shared.py lambda/compute_fused.py \
    lambda/param_program_chain.py lambda/param_legacy_registry.json \
-   lambda/coeff_program_chain.py lambda/coeff_legacy_registry.json "$COMP_PLAN_DIR/"
+   lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json "$COMP_PLAN_DIR/"
 cd "$COMP_PLAN_DIR" && zip -r9 /tmp/polypaint-compute-plan.zip . -q && cd "$SCRIPT_DIR"
 echo "  CmpPlan: $(du -h /tmp/polypaint-compute-plan.zip | cut -f1)  (plan + finalize)"
 
@@ -1599,6 +1599,7 @@ setup_api_gateway() {
     ensure_route "POST /list-coeff-programs" "$STORAGE_INT"
     ensure_route "POST /fetch-coeff-program" "$STORAGE_INT"
     ensure_route "POST /save-coeff-program" "$STORAGE_INT"
+    ensure_route "POST /compile-coeff-program-source" "$STORAGE_INT"
     ensure_route "POST /delete-coeff-program" "$STORAGE_INT"
     ensure_route "POST /list-favorites" "$STORAGE_INT"
     ensure_route "POST /add-favorite" "$STORAGE_INT"

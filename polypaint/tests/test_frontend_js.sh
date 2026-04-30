@@ -145,7 +145,7 @@ assertIncludes("Program mode accepts t1/t2, p1/p2, poly_len, cfN, polyN, tosN, p
 assertIncludes("commit poly; pops stack top into poly when present", 'Coeff Program picker should describe emit commit semantics');
 assertIncludes("blend below*(1-t) + top*t for same-length vectors", 'Coeff Program picker should expose vector blend chip');
 assertIncludes("const _coeffProgramVectorBinaryNames = ['add', 'subtract', 'multiply', 'divide', 'power'];", 'Coeff Program picker should expose first-class vector binary ops');
-assertIncludes("const _coeffProgramVectorUnaryNames = ['angle', 'mod', 'abs'];", 'Coeff Program picker should expose first-class vector unary ops');
+assertIncludes("const _coeffProgramVectorUnaryNames = ['angle', 'mod', 'abs', 'neg', 'conj', 'sqrt', 'log'];", 'Coeff Program picker should expose first-class vector unary ops');
 assertIncludes("argsort: {", 'Coeff Program picker should expose argsort');
 assertIncludes("roll vector left by n positions", 'Coeff Program picker should expose roll-left');
 assertIncludes("roll vector right by n positions", 'Coeff Program picker should expose roll-right');
@@ -204,8 +204,16 @@ assertIncludes("_setConstCoeffInputsFromRaw(savedCfpv);", 'populate-from-result 
 assertIncludes("lambdaPost('storage', {}, '/list-coeff-programs')", 'coeff-program modal should list saved programs through storage');
 assertIncludes("lambdaPost('storage', { id }, '/fetch-coeff-program')", 'coeff-program modal should fetch saved programs through storage');
 assertIncludes("lambdaPost('storage', { id }, '/delete-coeff-program')", 'coeff-program modal should delete saved programs through storage');
-assertIncludes("}, '/save-coeff-program');", 'coeff-program modal should save programs through storage');
+assertIncludes("'/save-coeff-program');", 'coeff-program modal should save programs through storage');
 assertIncludes("id=\"coeff-program-modal-overlay\"", 'shared coeff-program modal markup missing');
+assertIncludes(".coeff-program-modal-source {", 'Coeff Program modal should render source-text programs as fixed-width source, not stale chip cards');
+assertIncludes("function _coeffProgramSourceStatementCount(sourceText) {", 'Coeff Program text mode should count source statements for modal/save display');
+assertIncludes("function _coeffProgramSourceDisplay(sourceText, separator = ',') {", 'Coeff Program text mode should have a source-aware log/display formatter');
+assertIncludes("if (name === 'push' && params[0] === 'cf') return 'cf';", 'Coeff Program chain-to-source renderer should render push(cf) as valid bare cf syntax');
+assertIncludes("if (name === 'pop') return 'drop';", 'Coeff Program chain-to-source renderer should render drop as drop, not ambiguous standalone pop');
+assertIncludes("if (name === 'poke_poly' && params.length >= 2) return `poly[${params[0]}] = ${params[1]}`;", 'Coeff Program chain-to-source renderer should render poke_poly as valid indexed assignment');
+assertIncludes("if (sourceText.trim()) {\n            return _coeffProgramMetaHtml(program, options)", 'Coeff Program modal should prefer source_text display when a text program is active or saved');
+assertIncludes("Text source changed. It will be compiled by the backend on save/preview/compute.", 'Coeff Program text editor should tell users save uses source text');
 assertIncludes("function _chipMoveControlsHtml(which, idx) {", 'transform chip renderer should centralize move controls');
 assertIncludes("chip.insertAdjacentHTML('afterbegin', _chipMoveControlsHtml(which, i));", 'param/transform chips should get move arrows');
 assertIncludes("chip-input chip-input-target", 'target parameters should render as dropdown inputs');
@@ -298,6 +306,7 @@ assertNotIncludes("id=\"compute-mt-classic-chunks\"", 'AE-MT compute popup shoul
 assertNotIncludes("id=\"compute-mt-param-gen-threads\"", 'AE-MT compute popup should not expose classic param-gen thread input');
 assertNotIncludes("id=\"compute-mt-coeffgen-threads\"", 'AE-MT compute popup should not expose classic coeffgen thread input');
 assertIncludes("runCalculateWithSolver(solverMode, { nChunks, fused: true, fusedThreads, loresParamGenThreads, loresCoeffgenThreads });", 'AE-MT compute popup should launch fused explicitly');
+assertIncludes("const coeffProgramSourceText = _effectiveCoeffProgramSourceTextForCompute() || '';\n    const cfpv = _cfpv.length > 0 ? [..._cfpv] : [];\n    const fusedThreads = _clampRenderMtThreads(_computeMtPopupState.fusedThreads || 4);", 'AE-MT degree probe should define coeffProgramSourceText before using it in the probe signature');
 assertIncludes("function _normalizeComputeSolverMode(solver) {", 'compute should normalize legacy solver metadata to supported solvers');
 assertIncludes("function _computeLoresPhaseTrackers(runId, solverMode) {", 'compute log should define deterministic lores phase trackers');
 assertIncludes("phase: 'lores_param_gen',", 'compute log should track lores param-gen completion');

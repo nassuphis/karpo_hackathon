@@ -42,6 +42,7 @@ from coeff_program_chain import (
     PROGRAM_VERSION as COEFF_PROGRAM_VERSION,
     compile_coeff_program_chain,
 )
+from coeff_program_source import parse_coeff_program_source
 from param_program_chain import (
     PROGRAM_KIND as PARAM_PROGRAM_KIND,
     PROGRAM_VERSION as PARAM_PROGRAM_VERSION,
@@ -349,6 +350,9 @@ def _read_coeff_program_source_chain(program_id):
         raise RuntimeError(f"saved coeff program is not valid JSON: {program_id}") from exc
     if not isinstance(payload, dict):
         raise RuntimeError(f"saved coeff program must be a JSON object: {program_id}")
+    if "source_text" in payload:
+        parsed = parse_coeff_program_source(payload.get("source_text") or "")
+        return parsed["chain"]
     chain = payload.get("chain")
     if not isinstance(chain, list):
         raise RuntimeError(f"saved coeff program chain must be a JSON array: {program_id}")
@@ -422,15 +426,21 @@ def _compile_param_program_payload(
 
 def _compile_coeff_program_payload(
     name,
-    chain,
+    chain=None,
     *,
+    source_text=None,
     saved_at=None,
     version=COEFF_PROGRAM_VERSION,
     program_id=None,
 ):
     validated_name = _validate_coeff_program_name(name)
-    if not isinstance(chain, list) or not chain:
-        raise ValueError("coeff program chain must be a non-empty JSON array")
+    parsed_source = None
+    if source_text is not None:
+        source_text = str(source_text or "")
+        parsed_source = parse_coeff_program_source(source_text)
+        chain = parsed_source["chain"]
+    if not isinstance(chain, list):
+        raise ValueError("coeff program chain must be a JSON array")
     if len(chain) > MAX_COEFF_PROGRAM_STATEMENTS:
         raise ValueError(
             f"coeff program chain must contain at most {MAX_COEFF_PROGRAM_STATEMENTS} statements"
@@ -462,7 +472,7 @@ def _compile_coeff_program_payload(
         "expanded_display": compiled["expanded_display"],
         "fingerprint": compiled["fingerprint"],
         "execution_spec": compiled["execution_spec"],
-        "statement_count": len(compiled["source_chain"]),
+        "statement_count": int(parsed_source["statement_count"]) if parsed_source else len(compiled["source_chain"]),
         "token_count": compiled["token_count"],
         "scalar_expr_count": compiled["scalar_expr_count"],
         "stack_max": compiled["stack_max"],
@@ -470,6 +480,9 @@ def _compile_coeff_program_payload(
         "macro_expansions": compiled["macro_expansions"],
         "saved_at": saved_at_text,
     }
+    if parsed_source is not None:
+        program["source_text"] = source_text
+        program["source_display"] = parsed_source["display"]
     if compiled["legacy_coeff_transforms"]:
         program["legacy_coeff_transforms"] = compiled["legacy_coeff_transforms"]
     return program
@@ -548,6 +561,7 @@ def _read_coeff_program_object(program_id):
     program = _compile_coeff_program_payload(
         payload.get("name"),
         payload.get("chain"),
+        source_text=payload.get("source_text") if "source_text" in payload else None,
         saved_at=payload.get("saved_at", ""),
         version=payload.get("version", COEFF_PROGRAM_VERSION),
         program_id=str(program_id),
@@ -852,6 +866,8 @@ def handler(event, context):
         return _handle_storage_route(handle_fetch_coeff_program, event)
     elif path.endswith("/save-coeff-program"):
         return _handle_storage_route(handle_save_coeff_program, event)
+    elif path.endswith("/compile-coeff-program-source"):
+        return _handle_storage_route(handle_compile_coeff_program_source, event)
     elif path.endswith("/delete-coeff-program"):
         return _handle_storage_route(handle_delete_coeff_program, event)
     elif path.endswith("/list-favorites"):
@@ -1171,6 +1187,7 @@ def handle_save_coeff_program(event):
     program = _compile_coeff_program_payload(
         params.get("name"),
         params.get("chain"),
+        source_text=params.get("source_text") if "source_text" in params else None,
     )
     key = _coeff_program_key(program["id"])
     overwritten = _key_exists(key)
@@ -1182,6 +1199,34 @@ def handle_save_coeff_program(event):
         Metadata=_coeff_program_put_metadata(program),
     )
     return ok_response({"program": program, "overwritten": overwritten})
+
+
+def handle_compile_coeff_program_source(event):
+    params = parse_body(event)
+    source_text = str(params.get("source_text") or "")
+    parsed = parse_coeff_program_source(source_text, strict=False)
+    compiled = compile_coeff_program_chain(
+        parsed["chain"],
+        macro_resolver=_coeff_program_macro_resolver(None),
+        strict=False,
+    )
+    diagnostics = list(parsed.get("diagnostics") or []) + list(compiled.get("diagnostics") or [])
+    return ok_response({
+        "ok": not any(d.get("level") == "error" for d in diagnostics),
+        "chain": parsed["chain"],
+        "display": parsed["display"],
+        "statement_count": parsed["statement_count"],
+        "fingerprint": compiled.get("fingerprint") or "",
+        "diagnostics": diagnostics,
+        "program": {
+            "chain": parsed["chain"],
+            "display": parsed["display"],
+            "fingerprint": compiled.get("fingerprint") or "",
+            "execution_spec": compiled.get("execution_spec") or "",
+            "token_count": compiled.get("token_count") or 0,
+            "stack_max": compiled.get("stack_max") or 0,
+        },
+    })
 
 
 def handle_delete_coeff_program(event):

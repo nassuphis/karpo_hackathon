@@ -40,9 +40,14 @@ def handler(event, context):
     run_params.setdefault("param_program_chain", [])
     run_params.setdefault("coeff_transforms", [])
     run_params.setdefault("coeff_program_chain", [])
+    run_params.setdefault("coeff_program_source_text", "")
     run_params.setdefault(
         "pipeline_mode",
-        "program" if (run_params.get("param_program_chain") or run_params.get("coeff_program_chain")) else "chain",
+        "program" if (
+            run_params.get("param_program_chain")
+            or run_params.get("coeff_program_chain")
+            or str(run_params.get("coeff_program_source_text") or "").strip()
+        ) else "chain",
     )
 
     task_id = f"compute_run_{solver_mode}_{run_id}"

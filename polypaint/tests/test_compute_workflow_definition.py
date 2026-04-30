@@ -137,6 +137,7 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
         self.assertNotIn("auto_hires_chunks", payload_json)
         self.assertEqual(degree_probe["execution_method"], "fused_chunk_pipeline")
         self.assertEqual(degree_probe["param_program_chain.$"], "$.params.param_program_chain")
+        self.assertEqual(degree_probe["coeff_program_source_text.$"], "$.params.coeff_program_source_text")
 
     def test_parse_post_coeffgen_drops_large_coeffgen_results(self):
         parse_post = self.states["ParsePostCoeffgen"]

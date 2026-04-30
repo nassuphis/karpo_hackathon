@@ -20,6 +20,7 @@ from compute_fused import (
     validate_fused_threads,
 )
 from coeff_program_chain import compile_coeff_program_chain
+from coeff_program_source import parse_coeff_program_source
 from param_program_chain import compile_param_program_chain
 from shared import BUCKET, JOBS_TABLE, ok_response, parse_body
 
@@ -94,6 +95,9 @@ def _read_saved_program_source_chain(prefix, program_kind, program_id):
     if not isinstance(payload, dict):
         raise RuntimeError(f"{program_kind} macro must be a JSON object: {macro_id}")
     chain = payload.get("chain")
+    if program_kind == "coeff program" and "source_text" in payload:
+        parsed = parse_coeff_program_source(payload.get("source_text") or "")
+        return parsed["chain"]
     if not isinstance(chain, list):
         raise RuntimeError(f"{program_kind} macro chain must be a JSON array: {macro_id}")
     return chain
@@ -121,6 +125,7 @@ def _pipeline_mode_from_params(run_params):
         raw = "program" if (
             run_params.get("param_program_chain")
             or run_params.get("coeff_program_chain")
+            or str(run_params.get("coeff_program_source_text") or "").strip()
             or run_params.get("param_program")
             or run_params.get("coeff_program")
         ) else "chain"
@@ -229,7 +234,20 @@ def handle_build_plan(params):
         else:
             param_transforms = []
             param_program = _compiled_param_program_payload(compiled_param_program)
-    coeff_program_chain = run_params.get("coeff_program_chain") if pipeline_mode == "program" else []
+    raw_coeff_program_source_text = str(run_params.get("coeff_program_source_text") or "")
+    coeff_program_source_text = (
+        raw_coeff_program_source_text
+        if pipeline_mode == "program"
+        and "coeff_program_source_text" in run_params
+        and (raw_coeff_program_source_text.strip() or not run_params.get("coeff_program_chain"))
+        else None
+    )
+    if coeff_program_source_text is not None:
+        parsed_coeff_source = parse_coeff_program_source(coeff_program_source_text)
+        coeff_program_chain = parsed_coeff_source["chain"]
+    else:
+        parsed_coeff_source = None
+        coeff_program_chain = run_params.get("coeff_program_chain") if pipeline_mode == "program" else []
     coeff_program = None
     coeff_program_metadata = None
     if coeff_program_chain:
@@ -326,6 +344,7 @@ def handle_build_plan(params):
             "param_program_uses_legacy_fast_path": bool((param_program_metadata or {}).get("uses_legacy_fast_path")),
             "coeff_transforms": coeff_transforms,
             "coeff_program_chain": coeff_program_chain or [],
+            "coeff_program_source_text": coeff_program_source_text if coeff_program_source_text is not None else "",
             "coeff_program": coeff_program or {},
             "coeff_program_display": str((coeff_program_metadata or {}).get("display") or ""),
             "coeff_program_fingerprint": str((coeff_program_metadata or {}).get("fingerprint") or ""),

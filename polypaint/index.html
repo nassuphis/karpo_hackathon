@@ -862,6 +862,29 @@ button {
 .param-program-display .chip {
     flex: 0 0 auto;
 }
+.coeff-program-editor-panel {
+    display: none;
+}
+.coeff-program-editor-panel.active {
+    display: block;
+}
+.coeff-program-source-text {
+    width: 100%;
+    min-height: 156px;
+    max-height: 156px;
+    box-sizing: border-box;
+    resize: vertical;
+    overflow: auto;
+    padding: 8px 10px;
+    background: #111827;
+    border: 1px solid #0f3460;
+    border-radius: 4px;
+    color: #e0e0e0;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 12px;
+    line-height: 1.45;
+    scrollbar-color: #0f3460 #111827;
+}
 .solve-score-program-note {
     color: #777;
     font-size: 11px;
@@ -1019,6 +1042,22 @@ button {
 .solve-score-modal-chip-strip .chip-input-program-wide,
 .solve-score-modal-chip-strip .chip-input-wide {
     max-width: min(100%, 42ch);
+}
+.coeff-program-modal-source {
+    margin: 0;
+    padding: 8px 10px;
+    max-height: 100%;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    background: rgba(17,24,39,0.72);
+    border: 1px solid rgba(143,214,148,0.18);
+    border-radius: 8px;
+    color: #dbe7ef;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 11px;
+    line-height: 1.45;
+    scrollbar-color: #0f3460 #111827;
 }
 .score-chip-readonly {
     cursor: default;
@@ -1446,7 +1485,16 @@ button {
                     <button type="button" class="btn-secondary btn-inline" id="coeff-program-copy-legacy" onclick="_copyCoeffTransformsIntoCoeffProgram()" title="Translate the current Coeff transforms row into coeff-program chips">Copy legacy transforms</button>
                     <button type="button" class="btn-secondary btn-inline" id="coeff-program-clear" onclick="_clearCoeffProgramChain()">Clear program</button>
                 </div>
-                <div id="cp-chips" class="chip-container param-program-display"></div>
+                <div class="compute-preview-tabs" role="tablist" aria-label="Coeff program editor tabs">
+                    <button type="button" id="coeff-program-tab-chips" class="compute-preview-tab-btn active" onclick="_setCoeffProgramEditorMode('chips')">Chips</button>
+                    <button type="button" id="coeff-program-tab-text" class="compute-preview-tab-btn" onclick="_setCoeffProgramEditorMode('text')">Text</button>
+                </div>
+                <div id="cp-chips-panel" class="coeff-program-editor-panel active">
+                    <div id="cp-chips" class="chip-container param-program-display"></div>
+                </div>
+                <div id="cp-text-panel" class="coeff-program-editor-panel">
+                    <textarea id="cp-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;cf&#10;rev&#10;emit" oninput="_onCoeffProgramSourceInput()"></textarea>
+                </div>
                 <div id="coeff-program-status" class="solve-score-program-status"></div>
             </div>
             <div class="color-box" style="margin-top:10px">
@@ -4062,6 +4110,7 @@ function _computePreviewSignatureNow() {
         param_program_chain: _effectiveParamProgramChainForCompute(),
         coeff_transforms: _effectiveCoeffTransformsForCompute(),
         coeff_program_chain: _effectiveCoeffProgramChainForCompute(),
+        coeff_program_source_text: _effectiveCoeffProgramSourceTextForCompute() || '',
     });
 }
 
@@ -4234,6 +4283,7 @@ async function runComputeDebug(stage) {
     const paramProgramChain = _effectiveParamProgramChainForCompute();
     const coeffTransforms = _effectiveCoeffTransformsForCompute();
     const coeffProgramChain = _effectiveCoeffProgramChainForCompute();
+    const coeffProgramSourceText = _effectiveCoeffProgramSourceTextForCompute() || '';
     const cfpv = _cfpv.length > 0 ? [..._cfpv] : [];
     const label = stage === 'solve_ae' ? 'SolveAE' : (stage === 'solve_cm' ? 'SolveCM' : (stage === 'poly' ? 'Poly' : 'Param'));
     buttons.forEach(btn => { btn.disabled = true; });
@@ -4243,7 +4293,7 @@ async function runComputeDebug(stage) {
     }
     if (outputEl) outputEl.textContent = 'Working...';
     try {
-        const result = await lambdaPost('compute-preview', {
+        const result = await lambdaPost('compute-preview', _attachCoeffProgramSourcePayload({
             debug_stage: stage,
             pipeline_mode: _selectedParamPipelineMode(),
             N_preview: nPreview,
@@ -4255,7 +4305,7 @@ async function runComputeDebug(stage) {
             coeff_transforms: coeffTransforms,
             coeff_program_chain: coeffProgramChain,
             cfpv,
-        });
+        }));
         if (outputEl) outputEl.textContent = _formatComputeDebugResult(result);
         if (statusEl) {
             statusEl.textContent = `${label} debug ready.`;
@@ -4309,7 +4359,7 @@ async function runComputePreview() {
     try {
         const cfpvDisplay = _formatCfpvForDisplay(funcName, cfpv);
         log(`Compute preview (${_solverTag(solverMode)}): [${ptDisplay || 'none'}] ${funcName}${cfpvDisplay ? '(' + cfpvDisplay + ')' : ''} [${ctDisplay || coeffTransformsDisplay.join(',') || 'none'}] N-preview=${nPreview} · pix=${previewSize} · q=${(quantile * 100).toFixed(1)}% · shim=${(shim * 100).toFixed(1)}%...`, '', 'compute-log');
-        const result = await lambdaPost('compute-preview', {
+        const result = await lambdaPost('compute-preview', _attachCoeffProgramSourcePayload({
             pipeline_mode: _selectedParamPipelineMode(),
             solver_mode: solverMode,
             N_preview: nPreview,
@@ -4322,7 +4372,7 @@ async function runComputePreview() {
             coeff_transforms: coeffTransforms,
             coeff_program_chain: coeffProgramChain,
             cfpv,
-        });
+        }));
         _applyComputePreviewResult(result);
         log(`  preview (${_solverTag(solverMode)}): ${result.total_ms}ms, degree=${result.degree}, roots=${result.n_roots_in_view}/${result.n_roots_total}`, 'ok', 'compute-log');
     } catch (e) {
@@ -4384,12 +4434,16 @@ function _populateComputeFromDetail(jobId, detail) {
     const ptDisplay = pipeline.param_transforms_display || detail.param_transforms_display || pipeline.param_transforms || detail.param_transforms || [];
     const savedParamProgramChain = pipeline.param_program_chain || detail.param_program_chain || [];
     const savedCoeffProgramChain = pipeline.coeff_program_chain || detail.coeff_program_chain || [];
+    const savedCoeffProgramSourceText = String(pipeline.coeff_program_source_text || detail.coeff_program_source_text || '');
     _setChainFromSaved('pt', ptDisplay);
     _setChainFromSaved('pp', savedParamProgramChain);
     _setChainFromSaved('cp', savedCoeffProgramChain);
+    _setCoeffProgramSourceText(savedCoeffProgramSourceText);
+    _setCoeffProgramEditorMode(savedCoeffProgramSourceText.trim() ? 'text' : 'chips');
     _setParamPipelineMode(String(pipeline.pipeline_mode || detail.pipeline_mode || '').toLowerCase() === 'program' ||
         (Array.isArray(savedParamProgramChain) && savedParamProgramChain.length) ||
-        (Array.isArray(savedCoeffProgramChain) && savedCoeffProgramChain.length)
+        (Array.isArray(savedCoeffProgramChain) && savedCoeffProgramChain.length) ||
+        savedCoeffProgramSourceText.trim()
         ? 'program'
         : 'chain');
     _setChainFromSaved('ct', pipeline.coeff_transforms || detail.coeff_transforms || []);
@@ -6467,7 +6521,8 @@ function _setCoeffProgramModalStatus(message, isError = false) {
 function _currentCoeffProgramSummary() {
     try {
         const payload = _portableCoeffProgramPayload(_coeffProgramModalState.nameInput || _coeffProgramDefaultName());
-        return { ...payload, statement_count: Array.isArray(payload.chain) ? payload.chain.length : 0 };
+        const sourceCount = _coeffProgramSourceStatementCount(payload.source_text || '');
+        return { ...payload, statement_count: sourceCount || (Array.isArray(payload.chain) ? payload.chain.length : 0) };
     } catch (e) {
         return { error: e && e.message ? e.message : String(e) };
     }
@@ -6477,7 +6532,8 @@ function _coeffProgramMetaHtml(program, options = {}) {
     const rows = [];
     const name = String(program && program.name || '').trim();
     const savedAt = String(program && program.saved_at || '').trim();
-    const statements = Number(program && program.statement_count != null ? program.statement_count : (Array.isArray(program && program.chain) ? program.chain.length : NaN));
+    const sourceCount = _coeffProgramSourceStatementCount(program && program.source_text || '');
+    const statements = Number(program && program.statement_count != null ? program.statement_count : (sourceCount || (Array.isArray(program && program.chain) ? program.chain.length : NaN)));
     const tokenCount = Number(program && program.token_count);
     if (name) rows.push(['Name', name]);
     if (options.selected && savedAt) rows.push(['Saved', savedAt]);
@@ -6498,6 +6554,11 @@ function _renderCoeffProgramCardHtml(program, options = {}) {
     }
     if (program.error) return _solveScoreModalMessageHtml(`Error: ${program.error}`, true);
     try {
+        const sourceText = String(program.source_text || '');
+        if (sourceText.trim()) {
+            return _coeffProgramMetaHtml(program, options)
+                + `<pre class="coeff-program-modal-source" aria-label="Coeff program source">${_escapeHtml(sourceText)}</pre>`;
+        }
         return _coeffProgramMetaHtml(program, options) + _renderCoeffProgramChipsHtml(program);
     } catch (e) {
         return _solveScoreModalMessageHtml(`Error: ${e && e.message ? e.message : String(e)}`, true);
@@ -6672,7 +6733,9 @@ async function _saveCurrentCoeffProgramFromModal() {
     _coeffProgramModalState.actionBusy = true;
     _renderCoeffProgramModal();
     try {
-        const resp = await lambdaPost('storage', { name: payload.name, chain: payload.chain }, '/save-coeff-program');
+        const savePayload = { name: payload.name, chain: payload.chain };
+        if (Object.prototype.hasOwnProperty.call(payload, 'source_text')) savePayload.source_text = payload.source_text;
+        const resp = await lambdaPost('storage', savePayload, '/save-coeff-program');
         const program = resp && resp.program ? resp.program : null;
         if (!program) throw new Error('save-coeff-program returned no program');
         _coeffProgramModalState.selectedId = program.id || '';
@@ -9470,10 +9533,11 @@ async function _refreshComputeMtProbe() {
     const paramProgramChain = _effectiveParamProgramChainForCompute();
     const coeffTransforms = _effectiveCoeffTransformsForCompute();
     const coeffProgramChain = _effectiveCoeffProgramChainForCompute();
+    const coeffProgramSourceText = _effectiveCoeffProgramSourceTextForCompute() || '';
     const cfpv = _cfpv.length > 0 ? [..._cfpv] : [];
     const fusedThreads = _clampRenderMtThreads(_computeMtPopupState.fusedThreads || 4);
     const solverMode = _computeMtPopupState.solverMode || 'aberth_mt';
-    const probeSignature = JSON.stringify([_selectedParamPipelineMode(), solverMode, funcName, paramTransforms, paramProgramChain, coeffTransforms, coeffProgramChain, cfpv, n, times, nChunks, fusedThreads]);
+    const probeSignature = JSON.stringify([_selectedParamPipelineMode(), solverMode, funcName, paramTransforms, paramProgramChain, coeffTransforms, coeffProgramChain, coeffProgramSourceText, cfpv, n, times, nChunks, fusedThreads]);
     if (_computeMtPopupState.probeSignature === probeSignature && (_computeMtPopupState.probe || _computeMtPopupState.probeError)) {
         _renderComputeMtPopup();
         return;
@@ -9483,7 +9547,7 @@ async function _refreshComputeMtProbe() {
     _computeMtPopupState.probeError = '';
     _renderComputeMtPopup();
     try {
-        const probe = await lambdaPost('coeffgen', {
+        const probe = await lambdaPost('coeffgen', _attachCoeffProgramSourcePayload({
             phase: 'degree_probe',
             pipeline_mode: _selectedParamPipelineMode(),
             function: funcName,
@@ -9498,7 +9562,7 @@ async function _refreshComputeMtProbe() {
             coeff_transforms: coeffTransforms,
             coeff_program_chain: coeffProgramChain,
             cfpv,
-        });
+        }));
         if (!probe || !probe.probe_stable) {
             throw new Error('unstable degree probe');
         }
@@ -11652,7 +11716,7 @@ const _cpCategoryMeta = {
 
 const _coeffProgramLegacyNames = Object.keys(_ctCatalog);
 const _coeffProgramVectorBinaryNames = ['add', 'subtract', 'multiply', 'divide', 'power'];
-const _coeffProgramVectorUnaryNames = ['angle', 'mod', 'abs'];
+const _coeffProgramVectorUnaryNames = ['angle', 'mod', 'abs', 'neg', 'conj', 'sqrt', 'log'];
 const _coeffProgramVectorSourceChoices = ['poly', 'pop', 'peek'];
 const _coeffProgramVectorTargetChoices = ['poly', 'push'];
 const _coeffProgramLegacySourceChoices = ['cf', 'poly', 'pop', 'peek'];
@@ -11667,6 +11731,25 @@ const _cpCatalog = (() => {
             category: 'io',
             params: [{ ph: 'src', def: 'cf', choices: ['cf', 'poly'], paramProgramWide: true }],
             desc: 'push a copy of cf or current poly',
+        },
+        set: {
+            category: 'io',
+            params: [
+                { ph: 'tgt', def: 'poly', choices: ['poly'], selectorWide: true, title: 'Output target. v1 supports writing poly.' },
+                { ph: 'src', def: 'pop', choices: _coeffProgramLegacySourceChoices, selectorWide: true, title: 'Input vector to copy into poly.' },
+            ],
+            desc: 'copy a vector source into poly',
+        },
+        affine: {
+            category: 'vector',
+            label: 'linear',
+            params: [
+                { ph: 'tgt', def: 'poly', choices: _coeffProgramVectorTargetChoices, selectorWide: true, title: 'Output target: write poly or push the affine result.' },
+                { ph: 'src', def: 'pop', choices: _coeffProgramLegacySourceChoices, selectorWide: true, title: 'Input vector.' },
+                { ph: 'multiplier expr', label: 'a', def: '1', scalarExpr: 'complex', complexWide: true, title: `Complex multiplier expression. ${_cpScalarExprHelp}` },
+                { ph: 'offset expr', label: 'b', def: '0', scalarExpr: 'complex', complexWide: true, title: `Complex offset expression. ${_cpScalarExprHelp}` },
+            ],
+            desc: 'apply z*a+b with complex expression arguments',
         },
         push_const: {
             category: 'io',
@@ -12690,6 +12773,94 @@ let _paramProgramSelectedIndex = -1;
 let _paramProgramPickerInsertMode = 'after';
 let _coeffProgramSelectedIndex = -1;
 let _coeffProgramPickerInsertMode = 'after';
+let _coeffProgramEditorMode = 'chips';
+
+function _coeffProgramTextModeSelected() {
+    return _coeffProgramEditorMode === 'text';
+}
+
+function _coeffProgramSourceTextarea() {
+    return document.getElementById('cp-source-text');
+}
+
+function _coeffProgramSourceFromChain(chain) {
+    return (chain || []).map(row => {
+        if (Array.isArray(row) && row.length) {
+            const name = String(row[0] || '').trim();
+            const params = row.slice(1).map(v => String(v == null ? '' : v));
+            if (name === 'push' && params[0] === 'cf') return 'cf';
+            if (name === 'push' && params[0] === 'poly') return 'poly';
+            if (name === 'pop') return 'drop';
+            if (name === 'set' && params[0] === 'poly' && params[1]) return `poly = ${params[1]}`;
+            if (name === 'poke_poly' && params.length >= 2) return `poly[${params[0]}] = ${params[1]}`;
+            if (name === 'poke_tos' && params.length >= 2) return `poke_tos(${params[0]}, ${params[1]})`;
+            if (_coeffProgramVectorBinaryNames.includes(name) && params.length >= 3) {
+                const [tgt, src1, src2] = params;
+                if (tgt === 'poly') return `poly = ${name}(${src1}, ${src2})`;
+                if (src1 === 'pop' && src2 === 'pop') return `${name}()`;
+                return `${name}(${src1}, ${src2})`;
+            }
+            if (_coeffProgramVectorUnaryNames.includes(name) && params.length >= 2) {
+                const [tgt, src] = params;
+                if (tgt === 'poly') return `poly = ${name}(${src})`;
+                return src === 'pop' ? `${name}()` : `${name}(${src})`;
+            }
+            if ((name === 'roll' || name === 'rolr') && params.length >= 3) {
+                const [tgt, src, n] = params;
+                if (tgt === 'poly') return `poly = ${name}(${src}, ${n})`;
+                return src === 'pop' ? `${name}(${n})` : `${name}(${src}, ${n})`;
+            }
+            if (name === 'littlewood' && params.length >= 3) {
+                const [tgt, a, b, andy] = params;
+                const args = [a, b].concat(andy == null || andy === '' ? [] : [andy]).join(', ');
+                return tgt === 'poly' ? `poly = littlewood(${args})` : `littlewood(${args})`;
+            }
+            if (name === 'legacy') return `legacy(${params.join(', ')})`;
+            return params.length ? `${name}(${params.join(', ')})` : name;
+        }
+        return String(row || '');
+    }).filter(Boolean).join('\n');
+}
+
+function _setCoeffProgramSourceText(text) {
+    const value = String(text == null ? '' : text);
+    const el = _coeffProgramSourceTextarea();
+    if (el && el.value !== value) el.value = value;
+}
+
+function _getCoeffProgramSourceText() {
+    const el = _coeffProgramSourceTextarea();
+    return String(el ? el.value : '');
+}
+
+function _setCoeffProgramEditorMode(mode) {
+    const normalized = mode === 'text' ? 'text' : 'chips';
+    _coeffProgramEditorMode = normalized;
+    const chipsPanel = document.getElementById('cp-chips-panel');
+    const textPanel = document.getElementById('cp-text-panel');
+    const chipsTab = document.getElementById('coeff-program-tab-chips');
+    const textTab = document.getElementById('coeff-program-tab-text');
+    if (chipsPanel && chipsPanel.classList) chipsPanel.classList.toggle('active', normalized === 'chips');
+    if (textPanel && textPanel.classList) textPanel.classList.toggle('active', normalized === 'text');
+    if (chipsTab && chipsTab.classList) chipsTab.classList.toggle('active', normalized === 'chips');
+    if (textTab && textTab.classList) textTab.classList.toggle('active', normalized === 'text');
+    if (normalized === 'text' && !_getCoeffProgramSourceText().trim() && _cpChain.length) {
+        _setCoeffProgramSourceText(_coeffProgramSourceFromChain(_serializeCoeffProgramChain()));
+    }
+    _coeffProgramStatus(normalized === 'text'
+        ? 'Text source is authoritative for save, preview, debug, and compute.'
+        : 'Chip editor is authoritative for save, preview, debug, and compute.');
+    _syncParamPipelineModeUi();
+    if (typeof _coeffProgramModalState !== 'undefined' && _coeffProgramModalState.open) _renderCoeffProgramModal();
+    if (_paramProgramModeSelected()) _markComputePreviewStale();
+}
+
+function _onCoeffProgramSourceInput() {
+    if (_coeffProgramTextModeSelected() && _paramProgramModeSelected()) _markComputePreviewStale();
+    _syncParamPipelineModeUi();
+    if (typeof _coeffProgramModalState !== 'undefined' && _coeffProgramModalState.open) _renderCoeffProgramModal();
+    _coeffProgramStatus('Text source changed. It will be compiled by the backend on save/preview/compute.');
+}
 
 function _splitParamProgramLegacyArgs(value) {
     const text = String(value == null ? '' : value).trim();
@@ -12948,7 +13119,29 @@ function _formatCoeffProgramChainForLog(chain, separator = ',') {
     return _formatChainRowsForLog(chain, separator) || 'coeff_program(identity)';
 }
 
+function _coeffProgramSourceStatementCount(sourceText) {
+    return String(sourceText == null ? '' : sourceText)
+        .split(/\n+/)
+        .map(line => line.replace(/#.*$/, '').trim())
+        .filter(Boolean)
+        .length;
+}
+
+function _coeffProgramSourceDisplay(sourceText, separator = ',') {
+    const rows = String(sourceText == null ? '' : sourceText)
+        .split(/\n+/)
+        .map(line => line.replace(/#.*$/, '').trim())
+        .filter(Boolean);
+    if (!rows.length) return 'coeff_program(identity)';
+    const head = rows.slice(0, 6).join(separator);
+    return rows.length > 6 ? `${head}${separator}...` : head;
+}
+
 function _displayActiveCoeffPipeline(separator = ',') {
+    const textMode = typeof _coeffProgramTextModeSelected === 'function' && _coeffProgramTextModeSelected();
+    if (_paramProgramModeSelected() && textMode) {
+        return _coeffProgramSourceDisplay(_getCoeffProgramSourceText(), separator);
+    }
     if (_paramProgramModeSelected()) return _formatCoeffProgramChainForLog(_serializeCoeffProgramChain(), separator);
     return _formatChainRowsForLog(_serializeCoeffTransforms(), separator) || 'none';
 }
@@ -12976,12 +13169,14 @@ function _syncParamPipelineModeUi() {
     if (programBox && programBox.classList) programBox.classList.toggle('param-pipeline-inactive', mode !== 'program');
     if (coeffProgramBox && coeffProgramBox.classList) coeffProgramBox.classList.toggle('param-pipeline-inactive', mode !== 'program');
     const ppLen = _serializeParamProgramChain().length;
-    const cpLen = _serializeCoeffProgramChain().length;
+    const cpLen = _coeffProgramTextModeSelected()
+        ? _coeffProgramSourceStatementCount(_getCoeffProgramSourceText())
+        : _serializeCoeffProgramChain().length;
     const ptLen = _serializeParamTransforms().length;
     const ctLen = _serializeCoeffTransforms().length;
     if (noteEl) {
         noteEl.textContent = mode === 'program'
-            ? `Program mode: Param Program ${ppLen ? `${ppLen} chip${ppLen === 1 ? '' : 's'}` : 'identity'}; Coeff Program ${cpLen ? `${cpLen} chip${cpLen === 1 ? '' : 's'}` : 'identity'}. Legacy chains are idle.`
+            ? `Program mode: Param Program ${ppLen ? `${ppLen} chip${ppLen === 1 ? '' : 's'}` : 'identity'}; Coeff Program ${cpLen ? `${cpLen} ${_coeffProgramTextModeSelected() ? 'source statement' : 'chip'}${cpLen === 1 ? '' : 's'}` : 'identity'}. Legacy chains are idle.`
             : `Chain mode: Param transforms ${ptLen ? `${ptLen} chip${ptLen === 1 ? '' : 's'}` : 'none'}; Coeff transforms ${ctLen ? `${ctLen} chip${ctLen === 1 ? '' : 's'}` : 'none'}. Programs are idle.`;
     }
 }
@@ -13007,7 +13202,17 @@ function _effectiveCoeffTransformsForCompute() {
 }
 
 function _effectiveCoeffProgramChainForCompute() {
-    return _paramProgramModeSelected() ? _serializeCoeffProgramChain() : [];
+    return _paramProgramModeSelected() && !_coeffProgramTextModeSelected() ? _serializeCoeffProgramChain() : [];
+}
+
+function _effectiveCoeffProgramSourceTextForCompute() {
+    return _paramProgramModeSelected() && _coeffProgramTextModeSelected() ? _getCoeffProgramSourceText() : null;
+}
+
+function _attachCoeffProgramSourcePayload(payload) {
+    const sourceText = _effectiveCoeffProgramSourceTextForCompute();
+    if (sourceText !== null) payload.coeff_program_source_text = sourceText;
+    return payload;
 }
 
 function _displayParamProgramEntry(item) {
@@ -13181,6 +13386,10 @@ function _coeffProgramStatus(message, isError = false) {
 
 function _coeffProgramDefaultName() {
     try {
+        if (_coeffProgramTextModeSelected()) {
+            const basis = _coeffProgramSourceDisplay(_getCoeffProgramSourceText(), '-');
+            return basis.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'coeff-program';
+        }
         const chain = _serializeCoeffProgramChain();
         const basis = chain.length ? chain.map(row => Array.isArray(row) ? row[0] : String(row)).join('-') : 'coeff-program';
         return basis.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'coeff-program';
@@ -13232,8 +13441,9 @@ function _validateCoeffProgramUiChain(chain) {
 
 function _parseCoeffProgramPayload(raw) {
     if (!raw || typeof raw !== 'object') throw new Error('program JSON must be an object');
-    const chain = Array.isArray(raw.chain) ? raw.chain : null;
-    if (!chain || !chain.length) throw new Error('program JSON is missing a non-empty chain');
+    const hasSourceText = Object.prototype.hasOwnProperty.call(raw, 'source_text');
+    const chain = Array.isArray(raw.chain) ? raw.chain : [];
+    if (!hasSourceText && !chain.length) throw new Error('program JSON is missing a chain or source_text');
     const version = Object.prototype.hasOwnProperty.call(raw, 'version') ? Number(raw.version) : 1;
     if (!Number.isFinite(version)) throw new Error('program JSON version must be numeric when present');
     if (version !== 1) throw new Error(`program JSON version ${version} is not supported`);
@@ -13247,6 +13457,7 @@ function _parseCoeffProgramPayload(raw) {
         name: String(raw.name || '').trim(),
         description: String(raw.description || '').trim(),
         chain: normalizedChain,
+        source_text: hasSourceText ? String(raw.source_text || '') : '',
     };
 }
 
@@ -13255,6 +13466,12 @@ function _applyCoeffProgram(rawProgram) {
     _cpChain.splice(0, _cpChain.length, ...program.chain);
     _coeffProgramSelectedIndex = _cpChain.length ? Math.min(_cpChain.length - 1, Math.max(0, _coeffProgramSelectedIndex)) : -1;
     _renderChips('cp');
+    if (program.source_text) {
+        _setCoeffProgramSourceText(program.source_text);
+        _setCoeffProgramEditorMode('text');
+    } else {
+        _setCoeffProgramEditorMode('chips');
+    }
     if (_paramProgramModeSelected()) _markComputePreviewStale();
     _coeffProgramStatus(program.name ? `Loaded ${program.name}` : 'Loaded coeff program');
     return program;
@@ -13276,6 +13493,7 @@ function _copyCoeffTransformsIntoCoeffProgram() {
     });
     _cpChain.splice(0, _cpChain.length, ...chain);
     _coeffProgramSelectedIndex = _cpChain.length ? 0 : -1;
+    _setCoeffProgramEditorMode('chips');
     _renderChips('cp');
     if (_paramProgramModeSelected()) _markComputePreviewStale();
     _coeffProgramStatus(`Copied ${chain.length} legacy coefficient transform${chain.length === 1 ? '' : 's'} into coeff program`);
@@ -13284,20 +13502,26 @@ function _copyCoeffTransformsIntoCoeffProgram() {
 function _clearCoeffProgramChain() {
     _cpChain.splice(0, _cpChain.length);
     _coeffProgramSelectedIndex = -1;
+    _setCoeffProgramSourceText('');
     _renderChips('cp');
     if (_paramProgramModeSelected()) _markComputePreviewStale();
 }
 
 function _portableCoeffProgramPayload(nameOverride = '') {
+    const sourceText = _coeffProgramTextModeSelected() ? _getCoeffProgramSourceText() : '';
     const chain = _serializeCoeffProgramChain();
-    if (!chain.length) throw new Error('Coeff program is empty');
-    return {
+    if (!chain.length && !sourceText.trim()) throw new Error('Coeff program is empty');
+    const payload = {
         version: 1,
         program_kind: 'coeff_program',
         name: String(nameOverride || _coeffProgramDefaultName()).trim() || 'coeff-program',
-        chain,
-        display: chain.map(row => Array.isArray(row) ? (row.length > 1 ? `${row[0]}(${row.slice(1).join(',')})` : row[0]) : String(row)).join('; '),
+        chain: sourceText.trim() ? [] : chain,
+        display: sourceText.trim()
+            ? sourceText.split(/\n+/).map(line => line.trim()).filter(Boolean).slice(0, 4).join('; ')
+            : chain.map(row => Array.isArray(row) ? (row.length > 1 ? `${row[0]}(${row.slice(1).join(',')})` : row[0]) : String(row)).join('; '),
     };
+    if (sourceText.trim()) payload.source_text = sourceText;
+    return payload;
 }
 
 function updateChipParam(chipIdx, paramIdx, value, which) {
@@ -13727,6 +13951,12 @@ function _coeffProgramVectorFormulaHtml(item, i, pDefs, options = {}) {
     const params = Array.isArray(item.params) ? item.params : [];
     const input = (idx) => _chipInputHtml('cp', i, idx, params[idx] !== undefined && params[idx] !== '' ? params[idx] : String(pDefs[idx]?.def || ''), pDefs[idx] || {}, options);
     const tgt = input(0);
+    if (item.name === 'set') {
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${input(1)}</span>`;
+    }
+    if (item.name === 'affine') {
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${input(1)}<span class="chip-op">*</span>${input(2)}<span class="chip-op">+</span>${input(3)}</span>`;
+    }
     if (_coeffProgramVectorBinaryNames.includes(item.name) || item.name === 'argsort') {
         return `<span class="chip-formula">${tgt}<span class="chip-op">=</span><span>${_escapeHtml(item.name)}(</span>${input(1)}<span class="chip-op">,</span>${input(2)}<span>)</span></span>`;
     }
@@ -13757,6 +13987,8 @@ function _renderCoeffProgramChipHtml(item, i, options = {}) {
     if (
         _coeffProgramVectorBinaryNames.includes(item.name)
         || _coeffProgramVectorUnaryNames.includes(item.name)
+        || item.name === 'set'
+        || item.name === 'affine'
         || item.name === 'argsort'
         || item.name === 'roll'
         || item.name === 'rolr'
@@ -13857,15 +14089,28 @@ function _renderChips(which) {
     } else if (which === 'cp') {
         el.innerHTML = chain.map((item, i) => _renderCoeffProgramChipHtml(item, i)).join('');
         _syncParamPipelineModeUi();
+        const sourceLen = _coeffProgramSourceStatementCount(_getCoeffProgramSourceText());
         const chainLen = _serializeCoeffProgramChain().length;
         if (_paramProgramModeSelected()) {
-            _coeffProgramStatus(chainLen
-                ? `Coeff Program selected · ${chainLen} chip${chainLen === 1 ? '' : 's'}`
-                : 'Coeff Program selected · empty identity');
+            if (_coeffProgramTextModeSelected()) {
+                _coeffProgramStatus(sourceLen
+                    ? `Coeff Program selected · ${sourceLen} source statement${sourceLen === 1 ? '' : 's'}`
+                    : 'Coeff Program selected · empty text source');
+            } else {
+                _coeffProgramStatus(chainLen
+                    ? `Coeff Program selected · ${chainLen} chip${chainLen === 1 ? '' : 's'}`
+                    : 'Coeff Program selected · empty identity');
+            }
         } else {
-            _coeffProgramStatus(chainLen
-                ? `Chain mode selected · Coeff Program idle with ${chainLen} chip${chainLen === 1 ? '' : 's'}`
-                : 'Chain mode selected · Coeff Program empty');
+            if (_coeffProgramTextModeSelected()) {
+                _coeffProgramStatus(sourceLen
+                    ? `Chain mode selected · Coeff Program text idle with ${sourceLen} source statement${sourceLen === 1 ? '' : 's'}`
+                    : 'Chain mode selected · Coeff Program text empty');
+            } else {
+                _coeffProgramStatus(chainLen
+                    ? `Chain mode selected · Coeff Program idle with ${chainLen} chip${chainLen === 1 ? '' : 's'}`
+                    : 'Chain mode selected · Coeff Program empty');
+            }
         }
     } else if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {
         const catalog = _catalogForChain(which);
@@ -19240,7 +19485,7 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
         const orchPayload = {
             job_id: jobId,
             run_id: runId,
-            params: {
+            params: _attachCoeffProgramSourcePayload({
                 pipeline_mode: _selectedParamPipelineMode(),
                 solver_mode: solverMode,
                 N: n,
@@ -19252,7 +19497,7 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
                 coeff_transforms: coeffTransforms,
                 coeff_program_chain: coeffProgramChain,
                 cfpv: cfpv || [],
-            },
+            }),
         };
         if (computeMtOptions) {
             orchPayload.params.execution_method = fused ? 'fused_chunk_pipeline' : 'classic_chunk_pipeline';

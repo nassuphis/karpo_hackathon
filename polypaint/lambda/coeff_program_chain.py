@@ -43,6 +43,8 @@ COEFF_OP_VECTOR_ARGSORT = 15
 COEFF_OP_LITTLEWOOD = 16
 COEFF_OP_LINSPACE = 17
 COEFF_OP_RANGE = 18
+COEFF_OP_SET = 19
+COEFF_OP_AFFINE = 20
 
 COEFF_SEL_CF = 1
 COEFF_SEL_POLY = 2
@@ -89,6 +91,8 @@ _OP_NAMES = {
     COEFF_OP_LITTLEWOOD: "littlewood",
     COEFF_OP_LINSPACE: "push_linspace",
     COEFF_OP_RANGE: "push_range",
+    COEFF_OP_SET: "set",
+    COEFF_OP_AFFINE: "affine",
 }
 
 _SOURCE_SELECTORS = {
@@ -146,6 +150,10 @@ _VECTOR_UNARY_OPS = {
     "angle": 1,
     "mod": 2,
     "abs": 3,
+    "neg": 4,
+    "conj": 5,
+    "sqrt": 6,
+    "log": 7,
 }
 
 _VECTOR_ROLL_OPS = {
@@ -341,6 +349,13 @@ def _format_length_arg(value):
     return "poly_len" if number == POLY_LEN_SENTINEL else _format_number(number)
 
 
+def _format_length_or_number(value):
+    number = _finite_number(value, "length")
+    if number == POLY_LEN_SENTINEL or float(number).is_integer():
+        return _format_length_arg(number)
+    return _format_number(number)
+
+
 def _chip_name(value, idx):
     name = str(value or "").strip()
     if not name:
@@ -393,13 +408,15 @@ def _slugify_macro_id(value):
 
 
 _EXPR_TOKEN_RE = re.compile(
-    r"\s*(?:(?P<number>(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?)(?P<imag>[ijIJ])?|(?P<ident>[A-Za-z_][A-Za-z0-9_]*)|(?P<op>[()+\-*/]))"
+    r"\s*(?:(?P<number>(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?)(?P<imag>[ijIJ])?|(?P<ident>[A-Za-z_][A-Za-z0-9_]*)|(?P<op>\*\*|[()[\]+\-*/]))"
 )
 
 _EXPR_CONSTANTS = {
     "pi": complex(math.pi, 0.0),
     "pi2": complex(2.0 * math.pi, 0.0),
     "pi2i": complex(0.0, 2.0 * math.pi),
+    "tau": complex(2.0 * math.pi, 0.0),
+    "tau_i": complex(0.0, 2.0 * math.pi),
 }
 
 
@@ -462,10 +479,10 @@ class _ExpressionParser:
         return left
 
     def _term(self):
-        left = self._unary()
+        left = self._power()
         while self._peek()[0] in {"*", "/"}:
             op = self._take()[0]
-            right = self._unary()
+            right = self._power()
             left = _Expr(
                 left.tokens + right.tokens + [{"op": EXPR_MUL if op == "*" else EXPR_DIV}],
                 kind="complex" if left.kind == "complex" or right.kind == "complex" else "real",
@@ -482,7 +499,7 @@ class _ExpressionParser:
             self._take()
             expr = self._unary()
             return _Expr(expr.tokens + [{"op": EXPR_NEG}], kind=expr.kind, dynamic=expr.dynamic)
-        if token_type == "ident" and token_value in {"conj", "neg", "real", "imag", "abs", "log"}:
+        if token_type == "ident" and token_value in {"conj", "neg", "real", "imag", "abs", "mod", "log"}:
             self._take()
             if self._take()[0] != "(":
                 raise RuntimeError(f"{token_value} requires parentheses")
@@ -495,14 +512,51 @@ class _ExpressionParser:
                 "real": EXPR_REAL,
                 "imag": EXPR_IMAG,
                 "abs": EXPR_ABS,
+                "mod": EXPR_ABS,
                 "log": EXPR_LOG,
             }[token_value]
             return _Expr(
                 expr.tokens + [{"op": op}],
-                kind="real" if token_value in {"real", "imag", "abs"} else expr.kind,
+                kind="real" if token_value in {"real", "imag", "abs", "mod"} else expr.kind,
                 dynamic=expr.dynamic,
             )
         return self._primary()
+
+    def _power(self):
+        left = self._unary()
+        if self._peek()[0] != "**":
+            return left
+        self._take()
+        right = self._unary()
+        value = _expr_value_if_static(right)
+        if value is None or abs(value.imag) > 1e-12 or not float(value.real).is_integer():
+            raise RuntimeError("scalar expression ** exponent must be an integer literal")
+        exponent = int(value.real)
+        if abs(exponent) > 32:
+            raise RuntimeError("scalar expression ** exponent magnitude must be <= 32")
+        if exponent == 0:
+            return _Expr([{"op": EXPR_LITERAL, "a": 1.0, "b": 0.0}], kind="real", dynamic=False)
+        tokens = list(left.tokens)
+        for _ in range(abs(exponent) - 1):
+            tokens.extend(left.tokens)
+            tokens.append({"op": EXPR_MUL})
+        if exponent < 0:
+            tokens = [{"op": EXPR_LITERAL, "a": 1.0, "b": 0.0}] + tokens + [{"op": EXPR_DIV}]
+        return _Expr(tokens, kind=left.kind, dynamic=left.dynamic)
+
+    def _indexed_reference(self, name):
+        if self._take()[0] != "[":
+            raise RuntimeError(f"{name}[...] missing opening bracket")
+        index_type, index_value = self._take()
+        if index_type != "number" or abs(index_value.imag) > 1e-12 or not index_value.real.is_integer():
+            raise RuntimeError(f"{name}[index] requires an integer literal index")
+        if self._take()[0] != "]":
+            raise RuntimeError(f"{name}[...] missing closing bracket")
+        index = int(index_value.real)
+        if index < 0 or index >= MAX_VECTOR_LEN:
+            raise RuntimeError(f"{name} index must be in [0,{MAX_VECTOR_LEN - 1}], got {index}")
+        op = {"cf": EXPR_CF_AT, "poly": EXPR_POLY_AT, "tos": EXPR_TOS_AT}[name]
+        return _Expr([{"op": op, "a": index}], kind="complex", dynamic=True)
 
     def _primary(self):
         token_type, token_value = self._take()
@@ -536,6 +590,8 @@ class _ExpressionParser:
                 return _Expr([{"op": EXPR_T2}], kind="complex", dynamic=True)
             if token_value == "poly_len":
                 return _Expr([{"op": EXPR_POLY_LEN}], kind="real", dynamic=True)
+            if token_value in {"cf", "poly", "tos"} and self._peek()[0] == "[":
+                return self._indexed_reference(token_value)
             match = re.fullmatch(r"(cf|poly|tos)(\d+)", token_value)
             if match:
                 index = int(match.group(2))
@@ -703,18 +759,76 @@ def _compile_const(args, scalar_exprs):
     return _token(COEFF_OP_CONST, n_args=2, args=[length, re], args_im=[0.0, im], expr_refs=[-1, ref])
 
 
-def _compile_linspace(args):
-    if len(args) != 1:
-        raise RuntimeError("push_linspace chip requires length")
-    length = _vector_length_arg(args[0], "push_linspace length")
-    return _token(COEFF_OP_LINSPACE, n_args=1, args=[length], expr_refs=[-1])
+def _compile_real_arg(raw, scalar_exprs, label):
+    expr = _compile_expr(raw, label=label, expected="real")
+    value, _imag, ref = _add_arg_expr(expr, scalar_exprs, expected="real")
+    return value, ref
 
 
-def _compile_range(args):
-    if len(args) != 1:
-        raise RuntimeError("push_range chip requires length")
-    length = _vector_length_arg(args[0], "push_range length")
-    return _token(COEFF_OP_RANGE, n_args=1, args=[length], expr_refs=[-1])
+def _compile_real_args(args, scalar_exprs, label):
+    values = []
+    refs = []
+    for idx, raw in enumerate(args):
+        value, ref = _compile_real_arg(raw, scalar_exprs, f"{label} arg {idx}")
+        values.append(value)
+        refs.append(ref)
+    return values, refs
+
+
+def _compile_linspace(args, scalar_exprs):
+    if len(args) == 1:
+        try:
+            length = _vector_length_arg(args[0], "push_linspace length")
+            return _token(COEFF_OP_LINSPACE, n_args=1, args=[length], expr_refs=[-1])
+        except RuntimeError:
+            values, refs = _compile_real_args(args, scalar_exprs, "push_linspace")
+            return _token(COEFF_OP_LINSPACE, n_args=1, args=values, expr_refs=refs)
+    if len(args) != 3:
+        raise RuntimeError("push_linspace chip requires length or start, stop, count")
+    values, refs = _compile_real_args(args, scalar_exprs, "push_linspace")
+    return _token(COEFF_OP_LINSPACE, n_args=3, args=values, expr_refs=refs)
+
+
+def _compile_range(args, scalar_exprs):
+    if len(args) == 1:
+        try:
+            length = _vector_length_arg(args[0], "push_range length")
+            return _token(COEFF_OP_RANGE, n_args=1, args=[length], expr_refs=[-1])
+        except RuntimeError:
+            values, refs = _compile_real_args(args, scalar_exprs, "push_range")
+            return _token(COEFF_OP_RANGE, n_args=1, args=values, expr_refs=refs)
+    if len(args) not in {2, 3}:
+        raise RuntimeError("push_range chip requires length, start/stop, or start/stop/step")
+    values, refs = _compile_real_args(args, scalar_exprs, "push_range")
+    return _token(COEFF_OP_RANGE, n_args=len(values), args=values, expr_refs=refs)
+
+
+def _compile_set(args):
+    if len(args) != 2:
+        raise RuntimeError("set chip requires tgt and src")
+    tgt_name, tgt_val = _selector_value(args[0], {"poly": COEFF_SEL_POLY}, "set tgt")
+    _src_name, src_val = _selector_value(args[1], _SOURCE_SELECTORS, "set src")
+    return _token(COEFF_OP_SET, src=src_val, tgt=tgt_val)
+
+
+def _compile_affine(args, scalar_exprs):
+    if len(args) != 4:
+        raise RuntimeError("affine chip requires tgt, src, multiplier, offset")
+    _tgt_name, tgt_val = _selector_value(args[0], _TARGET_SELECTORS, "affine tgt")
+    _src_name, src_val = _selector_value(args[1], _SOURCE_SELECTORS, "affine src")
+    mult = _compile_expr(args[2], label="affine multiplier", expected="complex")
+    offset = _compile_expr(args[3], label="affine offset", expected="complex")
+    mult_re, mult_im, mult_ref = _add_arg_expr(mult, scalar_exprs, expected="complex")
+    off_re, off_im, off_ref = _add_arg_expr(offset, scalar_exprs, expected="complex")
+    return _token(
+        COEFF_OP_AFFINE,
+        src=src_val,
+        tgt=tgt_val,
+        n_args=2,
+        args=[mult_re, off_re],
+        args_im=[mult_im, off_im],
+        expr_refs=[mult_ref, off_ref],
+    )
 
 
 def _compile_blend(args, scalar_exprs):
@@ -1088,9 +1202,13 @@ def _lower_chip(chip, scalar_exprs):
     if name in {"push_const", "const"}:
         return [_compile_const(args, scalar_exprs)]
     if name == "push_linspace":
-        return [_compile_linspace(args)]
+        return [_compile_linspace(args, scalar_exprs)]
     if name == "push_range":
-        return [_compile_range(args)]
+        return [_compile_range(args, scalar_exprs)]
+    if name == "set":
+        return [_compile_set(args)]
+    if name in {"affine", "linear"}:
+        return [_compile_affine(args, scalar_exprs)]
     if name == "push":
         if len(args) != 1:
             raise RuntimeError("push chip requires source cf or poly")
@@ -1164,6 +1282,11 @@ def _validate_stack(tokens):
         before = depth
         if op in {COEFF_OP_CONST, COEFF_OP_PUSH, COEFF_OP_LINSPACE, COEFF_OP_RANGE}:
             depth += 1
+        elif op == COEFF_OP_SET:
+            depth = _validate_vector_source_depth(int(token.get("src") or 0), depth, idx, "set src")
+        elif op == COEFF_OP_AFFINE:
+            depth = _validate_vector_source_depth(int(token.get("src") or 0), depth, idx, "affine src")
+            depth = _validate_vector_target_depth(int(token.get("tgt") or 0), depth)
         elif op == COEFF_OP_EMIT:
             # Coeff Program keeps poly as an explicit mutable output register.
             # emit commits the stack top when present; with an empty stack it is
@@ -1239,9 +1362,30 @@ def _execution_spec(tokens, scalar_exprs):
             else:
                 fields.append(_format_complex_number((token.get("args") or [0, 0])[1], (token.get("args_im") or [0, 0])[1]))
         elif op == COEFF_OP_LINSPACE:
-            fields.extend(["length", _format_length_arg((token.get("args") or [0])[0])])
+            args = token.get("args") or []
+            refs = token.get("expr_refs") or []
+            for idx, value in enumerate(args):
+                fields.append(f"expr{refs[idx]}" if idx < len(refs) and refs[idx] >= 0 else _format_length_or_number(value) if len(args) == 1 else _format_number(value))
         elif op == COEFF_OP_RANGE:
-            fields.extend(["length", _format_length_arg((token.get("args") or [0])[0])])
+            args = token.get("args") or []
+            refs = token.get("expr_refs") or []
+            for idx, value in enumerate(args):
+                fields.append(f"expr{refs[idx]}" if idx < len(refs) and refs[idx] >= 0 else _format_length_or_number(value) if len(args) == 1 else _format_number(value))
+        elif op == COEFF_OP_SET:
+            fields.extend([
+                _SELECTOR_NAMES.get(int(token.get("tgt") or 0), str(token.get("tgt") or 0)),
+                _SELECTOR_NAMES.get(int(token.get("src") or 0), str(token.get("src") or 0)),
+            ])
+        elif op == COEFF_OP_AFFINE:
+            fields.extend([
+                _SELECTOR_NAMES.get(int(token.get("tgt") or 0), str(token.get("tgt") or 0)),
+                _SELECTOR_NAMES.get(int(token.get("src") or 0), str(token.get("src") or 0)),
+            ])
+            args = token.get("args") or [0, 0]
+            args_im = token.get("args_im") or [0, 0]
+            refs = token.get("expr_refs") or [-1, -1]
+            for idx, value in enumerate(args):
+                fields.append(f"expr{refs[idx]}" if idx < len(refs) and refs[idx] >= 0 else _format_complex_number(value, args_im[idx] if idx < len(args_im) else 0.0))
         elif op == COEFF_OP_PUSH:
             fields.append(_SELECTOR_NAMES.get(int(token.get("src") or 0), str(token.get("src") or 0)))
         elif op == COEFF_OP_BLEND:

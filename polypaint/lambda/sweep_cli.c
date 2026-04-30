@@ -16,6 +16,7 @@
 #include <math.h>
 #include <time.h>
 #include <stdint.h>
+#include <limits.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -3333,7 +3334,9 @@ enum CoeffProgramOp {
     COEFF_OP_VECTOR_ARGSORT = 15,
     COEFF_OP_LITTLEWOOD = 16,
     COEFF_OP_LINSPACE = 17,
-    COEFF_OP_RANGE = 18
+    COEFF_OP_RANGE = 18,
+    COEFF_OP_SET = 19,
+    COEFF_OP_AFFINE = 20
 };
 
 enum CoeffProgramSelector {
@@ -3355,7 +3358,11 @@ enum CoeffVectorBinaryOp {
 enum CoeffVectorUnaryOp {
     COEFF_VEC_ANGLE = 1,
     COEFF_VEC_MOD = 2,
-    COEFF_VEC_ABS = 3
+    COEFF_VEC_ABS = 3,
+    COEFF_VEC_NEG = 4,
+    COEFF_VEC_CONJ = 5,
+    COEFF_VEC_SQRT = 6,
+    COEFF_VEC_LOG = 7
 };
 
 enum CoeffVectorRollOp {
@@ -3800,6 +3807,56 @@ static int coeffArgValue(const CoeffProgram *program, const CoeffProgramToken *t
     return 0;
 }
 
+static int coeffArgRealValue(const CoeffProgram *program, const CoeffProgramToken *tok, int idx,
+                             double p1r, double p1i, double p2r, double p2i,
+                             double t1r, double t1i, double t2r, double t2i,
+                             const double *cfRe, const double *cfIm, int cfLen,
+                             const CoeffProgramWorkspace *ws,
+                             double *out) {
+    double vr = 0.0, vi = 0.0;
+    if (coeffArgValue(program, tok, idx, p1r, p1i, p2r, p2i,
+                      t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
+                      &vr, &vi) != 0) return 1;
+    if (fabs(vi) > 1e-12 || !isfinite(vr)) {
+        fprintf(stderr, "Coeff Program arg %d requires finite real value\n", idx);
+        return 1;
+    }
+    *out = vr;
+    return 0;
+}
+
+static int coeffProgramIntegerFromReal(double value, const char *label, int *out) {
+    double rounded = nearbyint(value);
+    if (!isfinite(value) || fabs(value - rounded) > 1e-9) {
+        fprintf(stderr, "Coeff Program %s must be an integer, got %.17g\n", label, value);
+        return 1;
+    }
+    if (rounded < (double)INT_MIN || rounded > (double)INT_MAX) {
+        fprintf(stderr, "Coeff Program %s is out of integer range\n", label);
+        return 1;
+    }
+    *out = (int)rounded;
+    return 0;
+}
+
+static int coeffProgramLengthArg(const CoeffProgram *program, const CoeffProgramToken *tok, int idx,
+                                 double p1r, double p1i, double p2r, double p2i,
+                                 double t1r, double t1i, double t2r, double t2i,
+                                 const double *cfRe, const double *cfIm, int cfLen,
+                                 const CoeffProgramWorkspace *ws,
+                                 const char *label, int *outLen) {
+    if (idx < 0 || idx >= COEFF_PROGRAM_MAX_ARGS) return 1;
+    if (tok->expr_refs[idx] < 0 && tok->args[idx] == -1.0) {
+        *outLen = ws ? ws->poly_len : 0;
+        return 0;
+    }
+    double value = 0.0;
+    if (coeffArgRealValue(program, tok, idx, p1r, p1i, p2r, p2i,
+                          t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
+                          &value) != 0) return 1;
+    return coeffProgramIntegerFromReal(value, label, outLen);
+}
+
 static int coeffAndyValue(const CoeffProgram *program, const CoeffProgramToken *tok,
                           double p1r, double p1i, double p2r, double p2i,
                           double t1r, double t1i, double t2r, double t2i,
@@ -3972,17 +4029,25 @@ static int coeffProgramUnaryVectorOp(CoeffProgramWorkspace *ws, const CoeffProgr
     int n = ws->scratch_len;
     for (int i = 0; i < n; i++) {
         double ar = ws->scratch_re[i], ai = ws->scratch_im[i];
-        double rr = 0.0;
+        double rr = 0.0, ri = 0.0;
         if (tok->fn_index == COEFF_VEC_ANGLE) {
             rr = atan2(ai, ar);
         } else if (tok->fn_index == COEFF_VEC_MOD || tok->fn_index == COEFF_VEC_ABS) {
             rr = sqrt(ar * ar + ai * ai);
+        } else if (tok->fn_index == COEFF_VEC_NEG) {
+            rr = -ar; ri = -ai;
+        } else if (tok->fn_index == COEFF_VEC_CONJ) {
+            rr = ar; ri = -ai;
+        } else if (tok->fn_index == COEFF_VEC_SQRT) {
+            c_powr(ar, ai, 0.5, &rr, &ri);
+        } else if (tok->fn_index == COEFF_VEC_LOG) {
+            c_log(ar, ai, &rr, &ri);
         } else {
             fprintf(stderr, "Coeff Program unknown vector unary op: %d\n", tok->fn_index);
             return 1;
         }
         ws->scratch_re[i] = isfinite(rr) ? rr : 0.0;
-        ws->scratch_im[i] = 0.0;
+        ws->scratch_im[i] = isfinite(ri) ? ri : 0.0;
     }
     return 0;
 }
@@ -4142,35 +4207,103 @@ static int evalCoeffProgram(const CoeffProgram *program,
     for (int k = 0; k < program->token_count; k++) {
         const CoeffProgramToken *tok = &program->tokens[k];
         if (tok->op == COEFF_OP_CONST) {
-            int len = (int)tok->args[0];
             double vr = 0.0, vi = 0.0;
-            if (len == -1) len = ws->poly_len;
+            int len = 0;
+            if (coeffProgramLengthArg(program, tok, 0, p1r, p1i, p2r, p2i,
+                                      t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
+                                      "push_const length", &len) != 0) return 1;
             if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &vr, &vi) != 0) return 1;
             if (coeff_program_check_len(len, "push_const") != 0) return 1;
             for (int i = 0; i < len; i++) { ws->scratch_re[i] = vr; ws->scratch_im[i] = vi; }
             ws->scratch_len = (uint16_t)len;
             if (coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, len) != 0) return 1;
         } else if (tok->op == COEFF_OP_LINSPACE) {
-            int len = (int)tok->args[0];
-            if (len == -1) len = ws->poly_len;
+            int len = 0;
+            double start = 0.0, stop = 0.0, countValue = 0.0;
+            if (tok->n_args <= 1) {
+                if (coeffProgramLengthArg(program, tok, 0, p1r, p1i, p2r, p2i,
+                                          t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
+                                          "push_linspace length", &len) != 0) return 1;
+                stop = (double)len;
+            } else if (tok->n_args == 3) {
+                if (coeffArgRealValue(program, tok, 0, p1r, p1i, p2r, p2i,
+                                      t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
+                                      &start) != 0) return 1;
+                if (coeffArgRealValue(program, tok, 1, p1r, p1i, p2r, p2i,
+                                      t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
+                                      &stop) != 0) return 1;
+                if (coeffArgRealValue(program, tok, 2, p1r, p1i, p2r, p2i,
+                                      t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
+                                      &countValue) != 0) return 1;
+                if (coeffProgramIntegerFromReal(countValue, "push_linspace count", &len) != 0) return 1;
+            } else {
+                fprintf(stderr, "push_linspace expects 1 or 3 args, got %d\n", tok->n_args);
+                return 1;
+            }
             if (coeff_program_check_len(len, "push_linspace") != 0) return 1;
             double denom = len > 1 ? (double)(len - 1) : 1.0;
             for (int i = 0; i < len; i++) {
-                ws->scratch_re[i] = len > 1 ? ((double)len * (double)i / denom) : 0.0;
+                ws->scratch_re[i] = len > 1 ? start + (stop - start) * (double)i / denom : start;
                 ws->scratch_im[i] = 0.0;
             }
             ws->scratch_len = (uint16_t)len;
             if (coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, len) != 0) return 1;
         } else if (tok->op == COEFF_OP_RANGE) {
-            int len = (int)tok->args[0];
-            if (len == -1) len = ws->poly_len;
+            int len = 0;
+            double start = 0.0, stop = 0.0, step = 1.0;
+            if (tok->n_args <= 1) {
+                if (coeffProgramLengthArg(program, tok, 0, p1r, p1i, p2r, p2i,
+                                          t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
+                                          "push_range length", &len) != 0) return 1;
+                stop = (double)len;
+            } else {
+                if (coeffArgRealValue(program, tok, 0, p1r, p1i, p2r, p2i,
+                                      t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
+                                      &start) != 0) return 1;
+                if (coeffArgRealValue(program, tok, 1, p1r, p1i, p2r, p2i,
+                                      t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
+                                      &stop) != 0) return 1;
+                if (tok->n_args >= 3 &&
+                    coeffArgRealValue(program, tok, 2, p1r, p1i, p2r, p2i,
+                                      t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
+                                      &step) != 0) return 1;
+                if (!isfinite(step) || fabs(step) <= 1e-300) {
+                    fprintf(stderr, "push_range step must be finite and non-zero\n");
+                    return 1;
+                }
+                double span = (stop - start) / step;
+                len = span > 0.0 ? (int)ceil(span - 1e-12) : 0;
+            }
             if (coeff_program_check_len(len, "push_range") != 0) return 1;
             for (int i = 0; i < len; i++) {
-                ws->scratch_re[i] = (double)i;
+                ws->scratch_re[i] = start + step * (double)i;
                 ws->scratch_im[i] = 0.0;
             }
             ws->scratch_len = (uint16_t)len;
             if (coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, len) != 0) return 1;
+        } else if (tok->op == COEFF_OP_SET) {
+            if (coeffProgramSourceToScratch(cfRe, cfIm, cfLen, ws, tok) != 0) return 1;
+            if (tok->tgt != COEFF_SEL_POLY) {
+                fprintf(stderr, "Coeff Program set target must be poly\n");
+                return 1;
+            }
+            if (coeffProgramTargetFromScratch(ws, tok) != 0) return 1;
+        } else if (tok->op == COEFF_OP_AFFINE) {
+            double ar = 1.0, ai = 0.0, br = 0.0, bi = 0.0;
+            if (coeffProgramSourceToScratch(cfRe, cfIm, cfLen, ws, tok) != 0) return 1;
+            if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i,
+                              cfRe, cfIm, cfLen, ws, &ar, &ai) != 0) return 1;
+            if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i,
+                              cfRe, cfIm, cfLen, ws, &br, &bi) != 0) return 1;
+            for (int i = 0; i < ws->scratch_len; i++) {
+                double rr = 0.0, ri = 0.0;
+                c_mul(ws->scratch_re[i], ws->scratch_im[i], ar, ai, &rr, &ri);
+                rr += br;
+                ri += bi;
+                ws->scratch_re[i] = isfinite(rr) ? rr : 0.0;
+                ws->scratch_im[i] = isfinite(ri) ? ri : 0.0;
+            }
+            if (coeffProgramTargetFromScratch(ws, tok) != 0) return 1;
         } else if (tok->op == COEFF_OP_PUSH) {
             if (tok->src == COEFF_SEL_CF) {
                 if (coeff_stack_push(ws, cfRe, cfIm, cfLen) != 0) return 1;

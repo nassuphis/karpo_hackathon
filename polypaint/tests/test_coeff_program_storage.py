@@ -132,6 +132,37 @@ class TestCoeffProgramStorage(unittest.TestCase):
         self.assertEqual(macro_body["program"]["fingerprint"], base_body["program"]["fingerprint"])
 
     @patch("handler_storage.s3")
+    def test_source_text_save_fetch_and_compile_route(self, mock_s3):
+        import handler_storage
+
+        fake_s3 = _FakeS3()
+        self._patch_s3(mock_s3, fake_s3)
+
+        source = "cf\nrev\nemit\n"
+        save_resp = handler_storage.handler(
+            self._event("/save-coeff-program", {"name": "Source Rev", "source_text": source}),
+            None,
+        )
+        self.assertEqual(save_resp["statusCode"], 200)
+        program = json.loads(save_resp["body"])["program"]
+        self.assertEqual(program["source_text"], source)
+        self.assertEqual(program["chain"], [["push", "cf"], ["legacy", "rev", "pop", "push"], ["emit"]])
+        self.assertEqual(program["statement_count"], 3)
+
+        fetch_resp = handler_storage.handler(self._event("/fetch-coeff-program", {"id": program["id"]}), None)
+        fetch_program = json.loads(fetch_resp["body"])["program"]
+        self.assertEqual(fetch_program["source_text"], source)
+        self.assertEqual(fetch_program["fingerprint"], program["fingerprint"])
+
+        compile_resp = handler_storage.handler(
+            self._event("/compile-coeff-program-source", {"source_text": "poly = cf"}),
+            None,
+        )
+        compile_body = json.loads(compile_resp["body"])
+        self.assertTrue(compile_body["ok"])
+        self.assertEqual(compile_body["chain"], [["set", "poly", "cf"]])
+
+    @patch("handler_storage.s3")
     def test_validation_limits_and_missing_ids(self, mock_s3):
         import handler_storage
 

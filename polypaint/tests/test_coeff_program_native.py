@@ -11,6 +11,7 @@ import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
 from coeff_program_chain import compile_coeff_program_chain
+from coeff_program_source import compile_coeff_program_source
 
 
 LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
@@ -18,7 +19,10 @@ SWEEP = os.path.join(LAMBDA_DIR, "sweep_test")
 
 
 def _coeff_program_payload(chain):
-    compiled = compile_coeff_program_chain(chain)
+    return _compiled_coeff_program_payload(compile_coeff_program_chain(chain))
+
+
+def _compiled_coeff_program_payload(compiled):
     return {
         "version": 1,
         "fingerprint": compiled["fingerprint"],
@@ -53,6 +57,87 @@ def _run_coeffgen(spec):
 def _complex_f32_values(data):
     values = struct.unpack("<" + "f" * (len(data) // 4), data)
     return [complex(values[i], values[i + 1]) for i in range(0, len(values), 2)]
+
+
+def _complex_expr(value):
+    return f"{value.real}{'+' if value.imag >= 0 else ''}{value.imag}j"
+
+
+def test_coeff_program_source_set_affine_and_extended_range_run_in_native_coeffgen():
+    compiled = compile_coeff_program_source("""
+        push_range(0, 5, 2)
+        linear(2+1j, 1-1j)
+        poly = pop
+        emit
+    """)
+    meta, data = _run_coeffgen({
+        "mode": "coeffgen",
+        "function": "const",
+        "cfpv": [3, 0, 0],
+        "n1": 1,
+        "n2": 1,
+        "coeff_transforms": [],
+        "coeff_program": _compiled_coeff_program_payload(compiled),
+    })
+
+    assert meta["coeff_program_tokens"] == compiled["token_count"]
+    values = _complex_f32_values(data)
+    expected = [1 - 1j, 5 + 1j, 9 + 3j]
+    assert len(values) == len(expected)
+    for got, want in zip(values, expected):
+        assert abs(got.real - want.real) <= 1e-6
+        assert abs(got.imag - want.imag) <= 1e-6
+
+
+def test_coeff_program_source_extended_linspace_runs_in_native_coeffgen():
+    compiled = compile_coeff_program_source("""
+        push_linspace(2, 8, 4)
+        emit
+    """)
+    meta, data = _run_coeffgen({
+        "mode": "coeffgen",
+        "function": "const",
+        "cfpv": [4, 0, 0],
+        "n1": 1,
+        "n2": 1,
+        "coeff_transforms": [],
+        "coeff_program": _compiled_coeff_program_payload(compiled),
+    })
+
+    assert meta["coeff_program_tokens"] == compiled["token_count"]
+    values = _complex_f32_values(data)
+    expected = [2.0, 4.0, 6.0, 8.0]
+    assert len(values) == len(expected)
+    for got, want in zip(values, expected):
+        assert abs(got.real - want) <= 1e-6
+        assert abs(got.imag) <= 1e-6
+
+
+def test_coeff_program_new_unary_ops_run_in_native_coeffgen():
+    cases = [
+        ("neg", 1 + 2j, -1 - 2j),
+        ("conj", 1 + 2j, 1 - 2j),
+        ("sqrt", 3 + 4j, cmath.sqrt(3 + 4j)),
+        ("log", math.e + 0j, 1 + 0j),
+    ]
+    for op, value, expected in cases:
+        meta, data = _run_coeffgen({
+            "mode": "coeffgen",
+            "function": "const",
+            "cfpv": [1, 0, 0],
+            "n1": 1,
+            "n2": 1,
+            "coeff_transforms": [],
+            "coeff_program": _coeff_program_payload([
+                ["push_const", "1", _complex_expr(value)],
+                [op, "poly", "pop"],
+                ["emit"],
+            ]),
+        })
+        assert meta["coeff_program_tokens"] == 3
+        got = _complex_f32_values(data)[0]
+        assert abs(got.real - expected.real) <= 1e-5
+        assert abs(got.imag - expected.imag) <= 1e-5
 
 
 def test_coeff_program_vector_ops_run_in_native_coeffgen():

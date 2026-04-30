@@ -142,6 +142,69 @@ class TestCoeffProgramChain(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "real-valued"):
             compile_coeff_program_chain([["blend", "pi2i"]])
 
+    def test_source_native_ops_compile(self):
+        from coeff_program_chain import (
+            COEFF_OP_AFFINE,
+            COEFF_OP_EMIT,
+            COEFF_OP_POKE_POLY,
+            COEFF_OP_RANGE,
+            COEFF_OP_SET,
+            COEFF_OP_VECTOR_UNARY,
+        )
+        from coeff_program_source import compile_coeff_program_source
+
+        compiled = compile_coeff_program_source("""
+            arange(1, poly_len + 1)
+            linear(1j*p1, p2)
+            poly = sqrt(pop)
+            poly[10] = p1*p2*real(poly[6]) + imag(poly[18])*p1**3
+            emit
+        """)
+        self.assertEqual(
+            [tok["op"] for tok in compiled["tokens"]],
+            [COEFF_OP_RANGE, COEFF_OP_AFFINE, COEFF_OP_VECTOR_UNARY, COEFF_OP_POKE_POLY, COEFF_OP_EMIT],
+        )
+        self.assertEqual(compiled["tokens"][1]["op"], COEFF_OP_AFFINE)
+        self.assertEqual(compiled["source_statement_count"], 5)
+        self.assertGreaterEqual(compiled["scalar_expr_count"], 3)
+
+        copy = compile_coeff_program_source("poly = cf")
+        self.assertEqual(copy["tokens"][0]["op"], COEFF_OP_SET)
+
+    def test_source_vector_cf_staging_preserves_binary_order(self):
+        from coeff_program_chain import COEFF_OP_PUSH, COEFF_OP_VECTOR_BINARY
+        from coeff_program_source import parse_coeff_program_source, compile_coeff_program_source
+
+        parsed = parse_coeff_program_source("poly = sub(poly, cf)")
+        self.assertEqual(parsed["chain"], [
+            ["push", "cf"],
+            ["push", "poly"],
+            ["subtract", "poly", "pop", "pop"],
+        ])
+        compiled = compile_coeff_program_source("poly = sub(poly, cf)")
+        self.assertEqual([tok["op"] for tok in compiled["tokens"]], [COEFF_OP_PUSH, COEFF_OP_PUSH, COEFF_OP_VECTOR_BINARY])
+
+    def test_source_rejects_standalone_pop_and_peek(self):
+        from coeff_program_source import compile_coeff_program_source
+
+        with self.assertRaisesRegex(RuntimeError, "pop is not a standalone statement"):
+            compile_coeff_program_source("pop")
+        with self.assertRaisesRegex(RuntimeError, "peek is not a standalone statement"):
+            compile_coeff_program_source("peek")
+
+        dropped = compile_coeff_program_source("cf\ndrop")
+        self.assertEqual(dropped["source_statement_count"], 2)
+        assigned = compile_coeff_program_source("cf\npoly = pop\nemit")
+        self.assertEqual(assigned["source_statement_count"], 3)
+
+    def test_source_accepts_explicit_poke_calls_for_chain_roundtrip(self):
+        from coeff_program_chain import COEFF_OP_POKE_POLY, COEFF_OP_POKE_TOS
+        from coeff_program_source import compile_coeff_program_source
+
+        compiled = compile_coeff_program_source("push_const(3, 0)\npoke_tos(1, p1)\npoke_poly(2, p2)\ndrop")
+        self.assertIn(COEFF_OP_POKE_TOS, [tok["op"] for tok in compiled["tokens"]])
+        self.assertIn(COEFF_OP_POKE_POLY, [tok["op"] for tok in compiled["tokens"]])
+
     def test_push_linspace_with_poly_len_compiles(self):
         from coeff_program_chain import COEFF_OP_EMIT, COEFF_OP_LINSPACE, COEFF_OP_RANGE, compile_coeff_program_chain
 

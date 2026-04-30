@@ -22,6 +22,7 @@ from shared import (
     tmp_space_stats,
 )
 from coeff_program_chain import compile_coeff_program_chain
+from coeff_program_source import parse_coeff_program_source
 from param_program_chain import compile_param_program_chain
 
 
@@ -91,6 +92,7 @@ def _pipeline_mode_from_params(params):
         raw = "program" if (
             params.get("param_program_chain")
             or params.get("coeff_program_chain")
+            or str(params.get("coeff_program_source_text") or "").strip()
             or params.get("param_program")
             or params.get("coeff_program")
         ) else "chain"
@@ -154,6 +156,9 @@ def _read_saved_program_source_chain(prefix, program_kind, program_id):
         raise RuntimeError(f"{program_kind} macro is not valid JSON: {macro_id}") from exc
     if not isinstance(payload, dict):
         raise RuntimeError(f"{program_kind} macro must be a JSON object: {macro_id}")
+    if program_kind == "coeff program" and "source_text" in payload:
+        parsed = parse_coeff_program_source(payload.get("source_text") or "")
+        return parsed["chain"]
     chain = payload.get("chain")
     if not isinstance(chain, list):
         raise RuntimeError(f"{program_kind} macro chain must be a JSON array: {macro_id}")
@@ -290,7 +295,22 @@ def _compile_compute_inputs(params):
     coeff_transforms = params.get("coeff_transforms") or []
     param_transforms = params.get("param_transforms") or []
     param_program_chain = params.get("param_program_chain") or []
-    coeff_program_chain = params.get("coeff_program_chain") or []
+    raw_coeff_program_source_text = str(params.get("coeff_program_source_text") or "")
+    coeff_program_source_text = (
+        raw_coeff_program_source_text
+        if pipeline_mode == "program"
+        and "coeff_program_source_text" in params
+        and (raw_coeff_program_source_text.strip() or not params.get("coeff_program_chain"))
+        else None
+    )
+    if coeff_program_source_text is not None:
+        try:
+            parsed_coeff_source = parse_coeff_program_source(coeff_program_source_text)
+        except RuntimeError as e:
+            raise ValueError(f"invalid coeff_program_source_text: {e}") from None
+        coeff_program_chain = parsed_coeff_source["chain"]
+    else:
+        coeff_program_chain = params.get("coeff_program_chain") or []
     param_program = None
     coeff_program = None
     compiled_param_program = None
@@ -302,6 +322,7 @@ def _compile_compute_inputs(params):
     else:
         param_program_chain = []
         coeff_program_chain = []
+        coeff_program_source_text = None
 
     if param_program_chain:
         if not isinstance(param_program_chain, list):
@@ -341,6 +362,7 @@ def _compile_compute_inputs(params):
         "coeff_transforms": coeff_transforms,
         "param_program_chain": param_program_chain,
         "coeff_program_chain": coeff_program_chain,
+        "coeff_program_source_text": coeff_program_source_text,
         "param_program": param_program,
         "coeff_program": coeff_program,
         "compiled_param_program": compiled_param_program,

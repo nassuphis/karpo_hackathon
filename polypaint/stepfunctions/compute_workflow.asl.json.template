@@ -105,6 +105,7 @@
                 "param_program_chain.$": "$.params.param_program_chain",
                 "coeff_transforms.$": "$.params.coeff_transforms",
                 "coeff_program_chain.$": "$.params.coeff_program_chain",
+                "coeff_program_source_text.$": "$.params.coeff_program_source_text",
                 "cfpv.$": "$.params.cfpv",
                 "solver_mode.$": "$.params.solver_mode",
                 "N.$": "$.params.N",

@@ -146,7 +146,7 @@ class TestCoeffProgramStorage(unittest.TestCase):
         self.assertEqual(save_resp["statusCode"], 200)
         program = json.loads(save_resp["body"])["program"]
         self.assertEqual(program["source_text"], source)
-        self.assertEqual(program["chain"], [["push", "cf"], ["legacy", "rev", "pop", "push"], ["emit"]])
+        self.assertEqual(program["chain"], [["push", "cf"], ["_native_transform", "rev", "pop", "push"], ["emit"]])
         self.assertEqual(program["statement_count"], 3)
 
         fetch_resp = handler_storage.handler(self._event("/fetch-coeff-program", {"id": program["id"]}), None)

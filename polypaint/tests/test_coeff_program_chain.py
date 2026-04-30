@@ -23,11 +23,14 @@ class TestCoeffProgramChain(unittest.TestCase):
             [["rev"], ["cumsum"], ["sort_abs"], ["exp", "0.5"]],
         )
 
-    def test_direct_legacy_sugars_are_removed(self):
-        from coeff_program_chain import compile_coeff_program_chain
+    def test_direct_transform_chips_compile_to_native_transform(self):
+        from coeff_program_chain import COEFF_OP_NATIVE_TRANSFORM, compile_coeff_program_chain
 
-        with self.assertRaisesRegex(RuntimeError, "unknown coeff program chip: rev"):
+        with self.assertRaisesRegex(RuntimeError, "rev chip requires target, source"):
             compile_coeff_program_chain([["rev"]])
+        compiled = compile_coeff_program_chain([["rev", "poly", "poly"]])
+        self.assertEqual([tok["op"] for tok in compiled["tokens"]], [COEFF_OP_NATIVE_TRANSFORM])
+        self.assertFalse(compiled["uses_legacy_chain_equivalent"])
         with self.assertRaisesRegex(RuntimeError, "unknown coeff program chip: poly-rev"):
             compile_coeff_program_chain([["poly-rev"]])
 
@@ -146,9 +149,12 @@ class TestCoeffProgramChain(unittest.TestCase):
         from coeff_program_chain import (
             COEFF_OP_AFFINE,
             COEFF_OP_EMIT,
-            COEFF_OP_POKE_POLY,
             COEFF_OP_RANGE,
             COEFF_OP_SET,
+            COEFF_OP_TYPED_BINARY,
+            COEFF_OP_TYPED_POKE_POLY,
+            COEFF_OP_TYPED_PUSH_SCALAR,
+            COEFF_OP_TYPED_PUSH_VECTOR,
             COEFF_OP_VECTOR_UNARY,
         )
         from coeff_program_source import compile_coeff_program_source
@@ -160,16 +166,47 @@ class TestCoeffProgramChain(unittest.TestCase):
             poly[10] = p1*p2*real(poly[6]) + imag(poly[18])*p1**3
             emit
         """)
-        self.assertEqual(
-            [tok["op"] for tok in compiled["tokens"]],
-            [COEFF_OP_RANGE, COEFF_OP_AFFINE, COEFF_OP_VECTOR_UNARY, COEFF_OP_POKE_POLY, COEFF_OP_EMIT],
-        )
-        self.assertEqual(compiled["tokens"][1]["op"], COEFF_OP_AFFINE)
+        ops = [tok["op"] for tok in compiled["tokens"]]
+        self.assertEqual(ops[0], COEFF_OP_RANGE)
+        self.assertIn(COEFF_OP_TYPED_PUSH_VECTOR, ops)
+        self.assertIn(COEFF_OP_TYPED_PUSH_SCALAR, ops)
+        self.assertIn(COEFF_OP_TYPED_BINARY, ops)
+        self.assertIn(COEFF_OP_VECTOR_UNARY, ops)
+        self.assertIn(COEFF_OP_TYPED_POKE_POLY, ops)
+        self.assertNotIn(COEFF_OP_AFFINE, ops)
+        self.assertEqual(ops[-1], COEFF_OP_EMIT)
         self.assertEqual(compiled["source_statement_count"], 5)
-        self.assertGreaterEqual(compiled["scalar_expr_count"], 3)
+        self.assertEqual(compiled["scalar_expr_count"], 1)
 
         copy = compile_coeff_program_source("poly = cf")
         self.assertEqual(copy["tokens"][0]["op"], COEFF_OP_SET)
+
+    def test_source_dynamic_index_and_mixed_ops_compile_to_typed_tokens(self):
+        from coeff_program_chain import (
+            COEFF_OP_TYPED_BINARY,
+            COEFF_OP_TYPED_FILL,
+            COEFF_OP_TYPED_GET_SCALAR,
+            COEFF_OP_TYPED_POKE_POLY,
+            COEFF_OP_TYPED_SET_POLY,
+            COEFF_OP_TYPED_PUSH_SCALAR,
+            COEFF_OP_TYPED_PUSH_VECTOR,
+        )
+        from coeff_program_source import compile_coeff_program_source
+
+        compiled = compile_coeff_program_source("""
+            poly[poly_len - 1] = p1 + poly[poly_len - 2]
+            poly = multiply(poly, p2)
+            poly = add(poly, fill(poly_len, p1))
+        """)
+        ops = [tok["op"] for tok in compiled["tokens"]]
+        self.assertIn(COEFF_OP_TYPED_GET_SCALAR, ops)
+        self.assertIn(COEFF_OP_TYPED_POKE_POLY, ops)
+        self.assertIn(COEFF_OP_TYPED_BINARY, ops)
+        self.assertIn(COEFF_OP_TYPED_FILL, ops)
+        self.assertIn(COEFF_OP_TYPED_SET_POLY, ops)
+        self.assertIn(COEFF_OP_TYPED_PUSH_SCALAR, ops)
+        self.assertIn(COEFF_OP_TYPED_PUSH_VECTOR, ops)
+        self.assertEqual(compiled["stack_max"], 4)
 
     def test_source_vector_cf_staging_preserves_binary_order(self):
         from coeff_program_chain import COEFF_OP_PUSH, COEFF_OP_VECTOR_BINARY
@@ -198,12 +235,59 @@ class TestCoeffProgramChain(unittest.TestCase):
         self.assertEqual(assigned["source_statement_count"], 3)
 
     def test_source_accepts_explicit_poke_calls_for_chain_roundtrip(self):
-        from coeff_program_chain import COEFF_OP_POKE_POLY, COEFF_OP_POKE_TOS
+        from coeff_program_chain import COEFF_OP_POKE_TOS, COEFF_OP_TYPED_POKE_POLY
         from coeff_program_source import compile_coeff_program_source
 
         compiled = compile_coeff_program_source("push_const(3, 0)\npoke_tos(1, p1)\npoke_poly(2, p2)\ndrop")
         self.assertIn(COEFF_OP_POKE_TOS, [tok["op"] for tok in compiled["tokens"]])
-        self.assertIn(COEFF_OP_POKE_POLY, [tok["op"] for tok in compiled["tokens"]])
+        self.assertIn(COEFF_OP_TYPED_POKE_POLY, [tok["op"] for tok in compiled["tokens"]])
+
+    def test_source_rejects_explicit_legacy_wrapper(self):
+        from coeff_program_source import compile_coeff_program_source
+
+        with self.assertRaisesRegex(RuntimeError, "legacy\\(\\.\\.\\.\\) is not valid"):
+            compile_coeff_program_source("legacy(rev, poly, poly)")
+
+    def test_source_native_transform_args_lower_to_typed_stack_args(self):
+        from coeff_program_chain import COEFF_OP_NATIVE_TRANSFORM, COEFF_OP_TYPED_PUSH_SCALAR
+        from coeff_program_source import compile_coeff_program_source
+
+        compiled = compile_coeff_program_source("poly = exp(poly, p1, p2)\nemit")
+        ops = [tok["op"] for tok in compiled["tokens"]]
+        self.assertEqual(ops[:3], [COEFF_OP_TYPED_PUSH_SCALAR, COEFF_OP_TYPED_PUSH_SCALAR, COEFF_OP_NATIVE_TRANSFORM])
+        self.assertEqual(compiled["tokens"][2]["stack_arg_count"], 2)
+        self.assertEqual(compiled["scalar_expr_count"], 0)
+
+    def test_native_transform_stack_args_validate_arity_and_preserve_andy(self):
+        from coeff_program_chain import COEFF_OP_NATIVE_TRANSFORM, compile_coeff_program_chain
+        from coeff_program_source import compile_coeff_program_source
+
+        with self.assertRaisesRegex(RuntimeError, "rev stack arg count must be <= 0"):
+            compile_coeff_program_chain([["_native_transform_stack_args", "rev", "poly", "poly", "1"]])
+
+        compiled = compile_coeff_program_source("poly = exp(poly, p1, p2, real(p1))\nemit")
+        token = next(tok for tok in compiled["tokens"] if tok["op"] == COEFF_OP_NATIVE_TRANSFORM)
+        self.assertEqual(token["stack_arg_count"], 2)
+        self.assertEqual(token["andy_expr_ref"], 0)
+        self.assertEqual(compiled["scalar_expr_count"], 1)
+
+    def test_typed_stack_validator_rejects_type_mismatches(self):
+        from coeff_program_chain import compile_coeff_program_chain
+
+        with self.assertRaisesRegex(RuntimeError, "get_scalar.*source is scalar"):
+            compile_coeff_program_chain([
+                ["_typed_push_scalar", "1"],
+                ["_typed_push_scalar", "0"],
+                ["_typed_get_scalar"],
+            ])
+
+        with self.assertRaisesRegex(RuntimeError, "typed_blend.*t is vector"):
+            compile_coeff_program_chain([
+                ["push_const", "2", "1"],
+                ["push_const", "2", "2"],
+                ["push", "cf"],
+                ["_typed_blend"],
+            ])
 
     def test_push_linspace_with_poly_len_compiles(self):
         from coeff_program_chain import COEFF_OP_EMIT, COEFF_OP_LINSPACE, COEFF_OP_RANGE, compile_coeff_program_chain
@@ -414,6 +498,19 @@ class TestCoeffProgramChain(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "final stack depth"):
             compile_coeff_program_chain([["push", "cf"]])
+
+    def test_program_token_cap_allows_typed_source_expansion_over_old_64_limit(self):
+        from coeff_program_chain import MAX_PROGRAM_TOKENS, compile_coeff_program_chain
+
+        chain = []
+        for idx in range(65):
+            chain.append(["push_const", "1", str(idx)])
+            chain.append(["emit"])
+        compiled = compile_coeff_program_chain(chain)
+
+        self.assertEqual(compiled["token_count"], 130)
+        self.assertLessEqual(compiled["token_count"], MAX_PROGRAM_TOKENS)
+        self.assertEqual(compiled["stack_max"], 1)
 
     def test_legacy_args_are_real_int_or_enum_only(self):
         from coeff_program_chain import legacy_registry

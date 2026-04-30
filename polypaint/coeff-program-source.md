@@ -88,6 +88,9 @@ real/imag arrays and a length; the typed VM adds three concrete pieces:
   value)`, `dot(vector, vector)`, and broadcast-aware vector/scalar binary ops
 - removal of the separate scalar-expression stack for new payloads, replacing
   it with typed main-VM stack tokens
+- direct source transform calls lower to native transform tokens keyed by
+  stable function index; source text no longer emits or accepts
+  `legacy(...)`
 
 This does not mean rewriting Param and Coeff together. The pragmatic order is:
 
@@ -436,34 +439,79 @@ v1 features:
   - explicit set form:
         set(poly, cf), set(poly, pop), set(poly, peek)
   - emit kept as back-compat sugar for poly = pop
-  - legacy(name, src, tgt, ...) remains a visible authoring chip
+  - direct native transform calls:
+        rev(poly), cumsum(poly), roots(poly, 8, hi)
+    The old `legacy(name, src, tgt, ...)` wrapper is Chain/chip-list
+    compatibility only, not source syntax.
 ```
 
 v1 is the "make poly_1 read like math" cut. Everything in the cleaned-up
 example below compiles under v1.
 
+### Phase 2A: Typed Stack, Dynamic Indexing, And Broadcast
+
+Phase 2A is the first typed-VM cut. It is intentionally additive: existing
+v1 chip-list tokens and saved programs keep their current behavior, while
+source programs that need mixed scalar/vector behavior lower to hidden typed
+tokens in the same `coeff_program.tokens` payload.
+
+What Phase 2A implements:
+
+- one shared ring stack that can hold either vector values or scalar complex
+  values
+- vector/scalar broadcast for `add`, `subtract`, `multiply`, `divide`, and
+  `power`
+- typed unary ops for `abs`/`mod`, `angle`, `neg`, `conj`, `sqrt`, `log`,
+  `real`, and `imag`
+- dynamic scalar reads such as `poly[poly_len-1]`, `cf[poly_len-2]`, and
+  `tos[poly_len-1]`
+- dynamic scalar writes such as `poly[poly_len-1] = p1`
+- typed `fill(length, value)` so nested forms like
+  `add(poly, fill(poly_len, p1))` do not fall back to the old scalar-argument
+  VM
+
+The hidden source-lowering opcodes are:
+
+```text
+_typed_push_scalar(expr)   -> scalar
+_typed_push_vector(src)    -> vector
+_typed_binary(op)          -> scalar or vector, with vector/scalar broadcast
+_typed_unary(op)           -> scalar or vector, preserving shape
+_typed_get_scalar          -> get_scalar(vector, scalar_index)
+_typed_set_poly            -> poly = vector
+_typed_poke_poly           -> set_scalar(poly, scalar_index, scalar_value)
+_typed_fill                -> fill(scalar_length, scalar_value)
+```
+
+These names are compiler-internal. They may appear in compiled/debug output,
+but they are not intended as hand-authored user syntax.
+
+Phase 2A does not yet implement reductions (`dot`, `sum`, `norm2`), slices,
+`where`, `select`, RNG constructors, `for_each_index`, or automatic Param
+Program migration.
+
 ### v2 Scope
 
-v2 unifies the chip-line grammar with the chip-arg expression grammar
-(pain point #11). It needs a real vector-expression parser, nested
-temporary lowering, a shared typed-VM token stream, dynamic-index opcodes,
-slice semantics, and richer diagnostics.
+Full v2 continues the Phase 2A typed stack into a richer vector-expression
+language. It needs slice semantics, reductions, conditionals, deterministic
+random constructors, and richer diagnostics.
 
 ```text
 v2 features:
-  - unify scalar expressions with the vector stack VM so + - * / and
+  - continue unifying scalar expressions with the vector stack VM so + - * / and
     real/imag/abs/log/conj/neg are sugar for the same stack ops in both
     chip args and freestanding lines:
         poly + real(poly) * 5
         fill(poly_len, p1*p2)         # auto-routes to scalar-only path
-  - scalar/vector type inference with broadcast (length-1 broadcasts
-    against poly_len-length vectors)
+  - scalar/vector type inference with broadcast (Phase 2A has binary
+    vector/scalar broadcast; full v2 extends this to all typed primitives)
   - nested function-call lowering inside chip arguments:
         pow(poly, fill(poly_len, p1))
   - new stack-push ops for what the scalar sublanguage reads today:
         push_t1, push_t2, push_p1, push_p2, push_poly_len,
         push_poly_at(N), push_cf_at(N), push_tos_at(N)
-  - dynamic-index reads and writes:
+  - dynamic-index reads and writes (Phase 2A has scalar element reads/writes;
+    full v2 adds slices):
         poly[i_expr], cf[i_expr]
         poly[i_expr] = expr
     lowered through typed mixed ops:
@@ -492,10 +540,10 @@ v2 features:
     names exist
 ```
 
-v2 should land only after v1 ships and after at least one user has tried
-authoring nontrivial programs in v1. The v1 surface is enough to confirm
-the syntactic direction; v2 either inherits from confirmed user value or
-is deferred.
+Phase 2A landed before full v2 because dynamic indices and broadcast are
+load-bearing for real programs. The remaining full-v2 items should still be
+added only when they collapse concrete user pain, not as speculative language
+surface.
 
 ### Principle: Implicit Stack, Explicit Deviation
 
@@ -547,11 +595,11 @@ explicit target:  poly = pop              # pop top -> poly (canonical emit)
                   poly = sin              # pop top, sin, write to poly
                   poly = sin(poly)        # poly -> sin -> poly (in-place)
                   poly = mul(poly, cf)    # in-place vector multiply
-                  poly[10] = expr         # static-index poke (v1)
-                  poly[i] = expr          # dynamic-index poke (v2)
+                  poly[10] = expr         # static-index typed poke
+                  poly[i] = expr          # dynamic-index typed poke
                   poly[a..b] = expr       # slice poke (v2)
 
-escape hatch:     legacy(name, src, tgt, ...)   # any shipped legacy chip
+native transform: roots(poly, 8, hi)      # direct registry-backed transform
 ```
 
 The unifying rule: a chip name with no parens pops its source from the
@@ -584,43 +632,51 @@ poly = mul(poly, cf)         # in-place
 RPN ordering convention is preserved: `sub` and `div` evaluate `(below)
 op (top)`, matching how the stack-only forms compile today.
 
-### `legacy(...)` In v1
+### Direct Native Transforms Replace `legacy(...)` In Source
 
-`legacy(name, src, tgt, ...)` stays visible in the v1 surface syntax. It
-is the explicit, fully-general way to invoke any function in the legacy
-registry, and explicit legacy calls remain `COEFF_OP_LEGACY` tokens. Real
-programs exercise dozens of legacy functions with different argument and
-length policies; v1 only ships first-class surface names for the most common
-arithmetic chips (`linear`, `scale`, `shift`, `pow`, the unary math ops).
-For everything else, `legacy(...)` is the right answer in v1 and reads
-clearly enough.
+`legacy(name, src, tgt, ...)` is not source syntax. Source text calls the
+operation directly:
 
-v2 may eventually retire `legacy(...)` from the user-facing surface by
-promoting more legacy functions to first-class names, but that is an
-intentionally deferred decision. The first cut should make common math
-pleasant, not hide every old primitive.
+```text
+poly = rev(poly)
+cumsum(poly)
+roots(poly, 8, hi)
+```
 
-`legacy(...)` always survives in two non-surface roles:
+These lower to `COEFF_OP_NATIVE_TRANSFORM` tokens keyed by stable function
+index. There is still no string lookup in the hot loop. The native evaluator
+uses the same underlying C transform functions, but the user-facing program
+does not expose a generic `legacy(...)` wrapper.
 
-- The compiler keeps accepting `["legacy", name, src, tgt, ...]` as
-  saved-form input forever. Old saved programs load and round-trip.
-- Explicit legacy wrappers remain explicit `op=COEFF_OP_LEGACY` tokens in
-  compiled payloads and saved JSON. Source aliases such as `scale`, `shift`,
-  `poly = peek`, and extended `arange` lower to their native opcodes instead.
+For direct transform calls, a trailing `andy` argument keeps the same blend
+semantics as Chain mode. Example: `poly = exp(poly, a, b, andy)` compiles `a`
+and `b` as typed-stack scalar arguments, stores `andy` on the transform token,
+and the native evaluator blends the transformed vector with the selected source
+vector. Stack-argument transform tokens must validate their argument count
+against `coeff_legacy_registry.json`; `rev` accepts zero stack args, `exp`
+accepts at most two packed complex args, etc.
+
+`legacy(...)` survives only as compatibility plumbing:
+
+- Chain mode still uses the old coefficient-transform chain.
+- The chip-list compiler may keep accepting `["legacy", name, src, tgt, ...]`
+  while old saved development artifacts exist.
+- The Compute-tab Program authoring surface should hide `legacy(...)` and
+  offer direct transform chips instead.
 
 ## v1 Features In Detail
 
 ### `linear`, `scale`, And `shift`
 
-`legacy(linear, pop, push, a, b)` becomes source-level `linear(a, b)`, but
-new source lowers to `COEFF_OP_AFFINE`, not to the legacy `linear` transform.
+`legacy(linear, pop, push, a, b)` becomes source-level `linear(a, b)`.
+New source lowers through the typed stack as ordinary vector/scalar work:
+push source vector, compute scalar `a`, multiply, compute scalar `b`, add.
 That matters because source expressions may be complex (`1j*p1`, `p2`, etc.)
-while the current legacy registry marks `linear` args as real-only.
+without depending on the old real-only legacy registry metadata.
 
-The saved chip-list form `["legacy", "linear", ...]` remains accepted for
-back-compatibility and keeps legacy argument validation and semantics. Source
-`linear(...)`, `scale(...)`, and `shift(...)` always lower to `COEFF_OP_AFFINE`.
-These two spellings are intentionally not canonicalized to each other.
+The saved chip-list forms `["legacy", "linear", ...]` and `["affine", ...]`
+may remain accepted for compatibility, but source `linear(...)`, `scale(...)`,
+and `shift(...)` should not emit the old scalar-expression VM path.
 
 For the two cases that show up over and over in real programs, add named
 aliases:
@@ -682,7 +738,7 @@ Replace `cf6`, `poly18`, `tos32` with `cf[6]`, `poly[18]`, `tos[32]`.
   existing `EXPR_POLY_AT` / `EXPR_CF_AT` / `EXPR_TOS_AT` opcodes with the
   index in the operand field. v1 does not need a general index-expression
   evaluator.
-- **v2**: full dynamic indices (`poly[i]`, `poly[poly_len-1]`,
+- **Phase 2A**: dynamic scalar indices (`poly[i]`, `poly[poly_len-1]`,
   `cf[i_expr]`) lower naturally in the typed VM:
 
   ```text
@@ -877,13 +933,10 @@ reads as "the integers 1..poly_len" directly. Generalizing the primitive
 subsumes every special case (one-based, centered, strided, partial) and
 matches the NumPy convention users already know.
 
-**It eliminates `legacy(...)` from the common case.** In the current
-source `legacy(...)` accounts for 11 of the 29 chips. In the v1 reform it
-accounts for zero. The escape hatch still exists for unusual chips
-(`legacy(roots6, ...)`, `legacy(blend, ...)`), but the core arithmetic of
-coefficient generation no longer routes through it. That is what makes
-Coeff Programs a real authoring surface rather than a thin shim around
-the legacy registry.
+**It eliminates `legacy(...)` from source authoring.** Direct transform
+names cover the coefficient-transform registry. Chain mode remains the old
+pipeline path; Program source should read like operations, not a bridge
+wrapper around the registry.
 
 **`poly[i]` and `**` matter disproportionately.** The three `poke_poly`
 expressions at the bottom of the program are dense — they reference five
@@ -1100,10 +1153,10 @@ random APIs.
 
 ### `roll(k)`, `reverse`, `cumsum`, `diff` As Bare Chip Names
 
-These exist as legacy registry entries today. Promote the most common
-ones to top-level chip names so authors do not have to remember the
-registry. They still lower to `legacy(...)` underneath but read as
-`cumsum`, `reverse`, `roll(2)`.
+These exist in the coefficient transform registry today. Promote them to
+top-level chip/source names so authors do not have to remember the
+compatibility wrapper. They lower to `COEFF_OP_NATIVE_TRANSFORM` with a
+stable function index, not to user-authored `legacy(...)`.
 
 ### `for_each_index(idx) { ... }`
 
@@ -1344,7 +1397,20 @@ v1 work lives in:
   loading assertions. Add API tests proving save and compute reject invalid
   `source_text` even if the client sends a stale or mismatched `chain`.
 
-v2 work additionally:
+Phase 2A work lives in the same files:
+
+- **Compiler** — `lambda/coeff_program_chain.py` adds hidden typed opcodes
+  and stack validation for scalar/vector stack entries. `lambda/coeff_program_source.py`
+  lowers mixed source expressions and dynamic index syntax to those hidden
+  typed rows.
+- **Native** — `lambda/sweep_cli.c` uses the existing fixed ring stack for
+  vector slots and adds per-slot scalar storage plus typed dispatch for
+  broadcast, dynamic `get_scalar`, dynamic `set_scalar`, and typed `fill`.
+- **Tests** — `tests/test_coeff_program_chain.py` checks typed lowering and
+  stack typing; `tests/test_coeff_program_native.py` verifies the rebuilt
+  native binary executes dynamic indexing and vector/scalar broadcast.
+
+Remaining full-v2 work additionally:
 
 - **Compiler** — vector-expression parser, scalar/vector type inference
   with broadcast, typed-VM token lowering, dynamic-index opcodes, slice
@@ -1445,7 +1511,9 @@ Tests:
 - add native parity test proving `set(poly,pop)` copies and consumes the top
   vector
 
-Add `COEFF_OP_AFFINE`.
+Keep `COEFF_OP_AFFINE` for existing chip-list compatibility, but do not use
+it for new source `linear`/`scale`/`shift` lowering. New source lowers those
+forms to typed vector/scalar operations in the main stack.
 
 Modify `lambda/coeff_program_chain.py`.
 
@@ -1458,11 +1526,12 @@ Modify `lambda/coeff_program_chain.py`.
   ["affine", "poly", "poly", "a_expr", "b_expr"]
   ```
 
-- `linear(a,b)` lowers to `["affine","push","pop",a,b]`
-- `linear(src,a,b)` lowers to `["affine","push",src,a,b]`
-- `poly = linear(poly,a,b)` lowers to `["affine","poly","poly",a,b]`
-- `scale(a)` lowers to `["affine","push","pop",a,"0"]`
-- `shift(b)` lowers to `["affine","push","pop","1",b]`
+- `linear(a,b)` lowers to typed `pop * a + b`
+- `linear(src,a,b)` lowers to typed `src * a + b`
+- `poly = linear(poly,a,b)` lowers to typed `poly * a + b` then
+  `COEFF_OP_TYPED_SET_POLY`
+- `scale(a)` lowers to typed multiply
+- `shift(b)` lowers to typed add
 - `a_expr` and `b_expr` are complex scalar expressions, not real-only args
 - compiled token JSON reuses the existing `args`, `args_im`, and `expr_refs`
   fields. No new fields are added:
@@ -1497,9 +1566,12 @@ Modify `lambda/sweep_cli.c`.
 - do not apply `andy`
 - sanitize non-finite outputs to zero using the same policy as vector ops
 
-Tests:
+Compatibility tests:
 
-- `scale(1j*p1)` and `shift(p2)` compile and run through `COEFF_OP_AFFINE`
+- old explicit `["affine", ...]` chip-list forms compile and run through
+  `COEFF_OP_AFFINE`
+- `scale(1j*p1)` and `shift(p2)` source compile and run through typed stack
+  tokens, not `COEFF_OP_AFFINE`
 - `linear(poly, 0.5, p1+p2)` does not produce a legacy token
 - native parity confirms `affine` matches a Python complex affine reference
 
@@ -1779,14 +1851,14 @@ poly                      -> ["push", "poly"]
 dup                       -> ["duplicate"]
 drop                      -> ["pop"]
 flush                     -> ["flush"]
-scale(a)                  -> ["affine", "push", "pop", a, "0"]
-shift(b)                  -> ["affine", "push", "pop", "1", b]
-linear(a,b)               -> ["affine", "push", "pop", a, b]
-linear(src,a,b)           -> ["affine", "push", src, a, b]
+scale(a)                  -> typed multiply
+shift(b)                  -> typed add
+linear(a,b)               -> typed multiply then typed add
+linear(src,a,b)           -> typed source, multiply, add
 abs/mod/angle/neg/conj/
 sqrt/log                 -> native unary: [name, "push", "pop"]
 sin / cos / exp          -> registry-backed unary sugar when available
-sin(src)                  -> ["legacy", "sin", src, "push"]
+sin(src)                  -> ["_native_transform", "sin", src, "push"]
 add                       -> ["add", "push", "pop", "pop"]
 mul                       -> ["multiply", "push", "pop", "pop"]
 pow                       -> ["power", "push", "pop", "pop"]
@@ -1797,11 +1869,11 @@ set(poly,src)             -> ["set", "poly", src]
 poly = pop                -> ["set", "poly", "pop"]
 poly = peek               -> ["set", "poly", "peek"]
 poly = cf                 -> ["set", "poly", "cf"]
-poly = sin                -> ["legacy","sin","pop","poly"]
-poly = sin(poly)          -> ["legacy","sin","poly","poly"]
+poly = sin                -> ["_native_transform","sin","pop","poly"]
+poly = sin(poly)          -> ["_native_transform","sin","poly","poly"]
 poly = mul(poly,cf)       -> ["multiply", "poly", "poly", "cf"]
-poly[N] = expr            -> ["poke_poly", N, expr]
-legacy(name,src,tgt,...)  -> ["legacy", name, src, tgt, ...]
+poly[N] = expr            -> typed index/value + ["_typed_poke_poly"]
+legacy(name,src,tgt,...)  -> invalid in source text; use direct names or Chain mode
 macro(name)               -> ["macro", name]
 ```
 
@@ -1820,8 +1892,9 @@ Two v1 caveats must be enforced by the parser:
 
 - `poly = peek` and `set(poly, peek)` require `COEFF_OP_SET`. Do not lower
   them through `legacy(linear, peek, poly, 1, 0)`.
-- `linear`, `scale`, and `shift` require `COEFF_OP_AFFINE`. Do not lower
-  them through legacy `linear`.
+- `linear`, `scale`, and `shift` source requires typed vector/scalar lowering.
+  Do not lower them through legacy `linear` or the old scalar-expression
+  `COEFF_OP_AFFINE` path.
 - `arange(start, stop, step)` and `linspace(start, stop, n)` require the
   extended native producer support above. Do not synthesize them by applying
   affine transforms to a zero-based range.
@@ -2129,9 +2202,9 @@ Required cases:
 - `arange(1, poly_len+1)` lowers to extended `COEFF_OP_RANGE`
 - `linspace(2, 4, 3)` lowers to extended `COEFF_OP_LINSPACE`
 - `linspace(2, 4, 1)` produces `[2]`
-- `fill(poly_len, p1+p2)` lowers to `push_const`
-- `scale(0.5)` lowers to `COEFF_OP_AFFINE`
-- `shift(1)` lowers to `COEFF_OP_AFFINE`
+- `fill(poly_len, p1+p2)` lowers to typed scalar work plus `COEFF_OP_TYPED_FILL`
+- `scale(0.5)` lowers to typed vector/scalar multiply
+- `shift(1)` lowers to typed vector/scalar add
 - `scale(1j*p1)` compiles; it must not be rejected as a real-only legacy arg
 - `set(poly,peek)` and `poly = peek` lower to `COEFF_OP_SET`, not to
   `legacy(linear,peek,poly,1,0)`
@@ -2140,15 +2213,16 @@ Required cases:
 - `mul(poly,cf)` lowers directly to `multiply(push,poly,cf)`
 - `pow` lowers to vector `power`
 - `sqrt`, `log`, `neg`, and `conj` lower to `COEFF_OP_VECTOR_UNARY`
-- `poly[10] = expr` lowers to `poke_poly`
+- `poly[10] = expr` lowers to `COEFF_OP_TYPED_POKE_POLY`
 - `poly[6]`, `cf[6]`, `tos[3]` compile in scalar expressions
-- `poly[poly_len-1]` is rejected in v1 with a v2/dynamic-index message
+- `poly[poly_len-1]` lowers to typed dynamic indexing
 - `p1**3` lowers/compiles; `p1**p2` is rejected in v1
 - `poly = neg(poly)` writes `poly` through `COEFF_OP_VECTOR_UNARY`, not
   through a legacy transform
 - comments and blank lines are ignored for `chain`
 - comments and formatting are preserved in `source_text`
-- `legacy(...)` source still lowers
+- `legacy(...)` source is rejected; direct transform names lower to
+  `COEFF_OP_NATIVE_TRANSFORM`
 - invalid statement reports line/column
 - multiple independent invalid statements report multiple diagnostics where
   recovery is possible
@@ -2229,7 +2303,7 @@ Do not implement these in v1:
 - deterministic random generators
 - slice assignment
 - `for_each_index`
-- typed VM runtime
+- typed VM runtime beyond the additive Phase 2A hidden opcodes
 - nested vector calls like `pow(poly, fill(poly_len, p1))`
 - general expression exponent `p1**p2`
 - authoritative JS parser
@@ -2243,8 +2317,8 @@ do not have to be re-litigated:
 - **In-place register mutations** spell as `poly = chip(poly, ...)`. No
   `@`-decoration syntax. The redundancy of `poly = sin(poly)` is visually
   cheap and removes ambiguity about what the chip does.
-- **`poly[i]` and `poly[i] = expr` with dynamic indices** are v2, not v1.
-  v1 supports literal indices only. v2 lowers dynamic reads through
+- **`poly[i]` and `poly[i] = expr` with dynamic indices** are Phase 2A, not
+  v1. v1 supports literal indices only. Phase 2A lowers dynamic reads through
   `get_scalar(vector, scalar_index)` and dynamic writes through
   `set_scalar(vector_register, scalar_index, scalar_value)`.
 - **`dot` is vector-to-scalar and therefore v2.** It should use the Hermitian
@@ -2270,10 +2344,8 @@ do not have to be re-litigated:
 - **`tau` does not replace `pi2` in the saved form.** The display layer
   translates `pi2` to `tau` for users who prefer it. No fingerprint
   churn for the rename.
-- **`legacy(...)` stays visible in v1.** It is the explicit, fully-
-  general way to invoke any function in the legacy registry. v1 only
-  promotes the most common arithmetic chips to first-class names.
-  Retiring `legacy(...)` entirely is v2 and intentionally deferred.
+- **`legacy(...)` is removed from source authoring.** Direct transform names
+  are the source surface; Chain mode remains the legacy path.
 
 ## Summary
 
@@ -2287,22 +2359,31 @@ v1 (ship first):
 - Aliases: `arange`, `fill`, `scale`, `shift`, `pow`.
 - `arange(start, stop)` and `arange(start, stop, step)` overloads.
 - Native/compiler updates: `COEFF_OP_SET`, `COEFF_OP_AFFINE`, extended
-  `COEFF_OP_RANGE` / `COEFF_OP_LINSPACE`, and vector-unary support for `neg`,
-  `conj`, `sqrt`, and `log`.
+  `COEFF_OP_RANGE` / `COEFF_OP_LINSPACE`, `COEFF_OP_NATIVE_TRANSFORM`,
+  `COEFF_OP_TYPED_BLEND`, and vector-unary support for `neg`, `conj`,
+  `sqrt`, and `log`.
 - `poly[N]`, `cf[N]`, `tos[N]` static-index brackets in expressions.
-- `poly[N] = expr` static-index poke.
+- `poly[N] = expr` static-index poke through typed stack tokens.
 - `**`, `tau`, single-line `#` comments.
 - Function-call source notation: `sin(poly)`, `mul(poly, cf)`.
 - Assignment-form target: `poly = pop`, `poly = peek`,
   `poly = sin(poly)`.
-- `legacy(name, src, tgt, ...)` remains a visible authoring chip.
+- Direct native transform names replace user-facing `legacy(...)`.
 - Every existing saved program loads, compiles, and renders identically.
 
-v2 (after v1 ships and gets used):
+Phase 2A:
+
+- Additive typed stack with scalar/vector values.
+- Dynamic scalar element reads and writes.
+- Vector/scalar broadcast for core binary ops.
+- Typed `fill`, typed unary ops, and nested `add(poly, fill(poly_len, p1))`
+  style expressions.
+
+Remaining full v2:
 
 - Unified expression grammar across chip lines and chip args
-  (pain point #11).
-- Dynamic-index reads and writes, slice assignment, `for_each_index`.
+  beyond the Phase 2A function-call lowering.
+- Slice assignment and `for_each_index`.
 - Vector reductions: `sum`, `mean`, `prod`, `dot`, `dotu`, norms, and
   arg-extrema.
 - Vector construction and structure: `zeros`, `ones`, `repeat`, `basis`,
@@ -2312,6 +2393,5 @@ v2 (after v1 ships and gets used):
 - Masked selection and conditionals: `where` and `select`.
 - Deterministic random generators using the pinned `splitmix64` + `PCG32`
   family.
-- Possible retirement of user-facing `legacy(...)`.
 
 After v1 ships, the running example reads as math. That is the test.

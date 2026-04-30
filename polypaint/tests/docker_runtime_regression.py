@@ -625,6 +625,9 @@ def test_coeffgen_chunked_threaded_runtime():
     const_program_mt_path = "/tmp/coeffgen_const_program_mt.bin"
     linspace_program_path = "/tmp/coeffgen_linspace_program.bin"
     blend_program_path = "/tmp/coeffgen_blend_program.bin"
+    native_typed_program_path = "/tmp/coeffgen_native_typed_program.bin"
+    native_stack_arg_program_path = "/tmp/coeffgen_native_stack_arg_program.bin"
+    long_program_path = "/tmp/coeffgen_long_program.bin"
     poke_program_path = "/tmp/coeffgen_poke_program.bin"
     debug_poke_path = "/tmp/compute_debug_poke.bin"
 
@@ -944,6 +947,126 @@ def test_coeffgen_chunked_threaded_runtime():
         assert abs(blend_vals[idx + 1]) <= 1e-6, "blend order imag mismatch"
     print("  coeff_program blend(t) order: OK (below*(1-t)+top*t)")
 
+    native_typed_program_spec = {
+        "mode": "coeffgen_chunked",
+        "function": "g1",
+        "coeff_transforms": [],
+        "params_file": params_path,
+        "step_start": 0,
+        "step_count": 5,
+        "n_threads": 1,
+        "coeff_program": {
+            "version": 1,
+            "fingerprint": "docker-native-transform-typed-blend",
+            "tokens": [
+                {"op": 18, "n_args": 3, "args": [0.0, 4.0, 1.0], "expr_refs": [-1, -1, -1]},
+                {"op": 29, "fn_index": 1, "src": 3, "tgt": 5},
+                {"op": 21, "n_args": 1, "args": [4.0], "args_im": [0.0], "expr_refs": [-1]},
+                {"op": 21, "n_args": 1, "args": [1.0], "args_im": [0.0], "expr_refs": [-1]},
+                {"op": 28},
+                {"op": 21, "n_args": 1, "args": [0.25], "args_im": [0.0], "expr_refs": [-1]},
+                {"op": 30},
+                {"op": 3},
+            ],
+            "scalar_exprs": [],
+        },
+    }
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", native_typed_program_path],
+        input=json.dumps(native_typed_program_spec),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "coeffgen native transform + typed blend failed: " + r.stderr[:200]
+    native_typed_meta = json.loads(r.stdout)
+    assert native_typed_meta["n_coeffs"] == 4, "native transform typed blend should emit length 4"
+    native_typed_vals = read_f32_array(native_typed_program_path)
+    expected_native_typed = [2.5, 1.75, 1.0, 0.25]
+    for step in range(native_typed_meta["step_count"]):
+        for coeff_idx, expected in enumerate(expected_native_typed):
+            base = step * native_typed_meta["n_coeffs"] * 2 + coeff_idx * 2
+            assert abs(native_typed_vals[base] - expected) <= 1e-6, "native transform typed blend real mismatch"
+            assert abs(native_typed_vals[base + 1]) <= 1e-6, "native transform typed blend imag mismatch"
+    print("  coeff_program native transform + typed blend runtime: OK")
+
+    native_stack_arg_program_spec = {
+        "mode": "coeffgen_chunked",
+        "function": "g1",
+        "coeff_transforms": [],
+        "params_file": params_path,
+        "step_start": 0,
+        "step_count": 5,
+        "n_threads": 1,
+        "coeff_program": {
+            "version": 1,
+            "fingerprint": "docker-native-transform-stack-args",
+            "tokens": [
+                {"op": 18, "n_args": 3, "args": [0.0, 2.0, 1.0], "expr_refs": [-1, -1, -1]},
+                {"op": 21, "n_args": 1, "args": [0.0], "args_im": [1.0], "expr_refs": [-1]},
+                {"op": 21, "n_args": 1, "args": [0.0], "args_im": [0.0], "expr_refs": [-1]},
+                {"op": 29, "fn_index": 16, "src": 3, "tgt": 5, "stack_arg_count": 2},
+                {"op": 3},
+            ],
+            "scalar_exprs": [],
+        },
+    }
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", native_stack_arg_program_path],
+        input=json.dumps(native_stack_arg_program_spec),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "coeffgen native transform stack args failed: " + r.stderr[:200]
+    native_stack_arg_meta = json.loads(r.stdout)
+    assert native_stack_arg_meta["n_coeffs"] == 2, "native transform stack args should emit length 2"
+    native_stack_arg_vals = read_f32_array(native_stack_arg_program_path)
+    expected_exp = [(1.0, 0.0), (math.cos(1.0), math.sin(1.0))]
+    for step in range(native_stack_arg_meta["step_count"]):
+        for coeff_idx, (er, ei) in enumerate(expected_exp):
+            base = step * native_stack_arg_meta["n_coeffs"] * 2 + coeff_idx * 2
+            assert abs(native_stack_arg_vals[base] - er) <= 1e-6, "native transform stack args real mismatch"
+            assert abs(native_stack_arg_vals[base + 1] - ei) <= 1e-6, "native transform stack args imag mismatch"
+    print("  coeff_program native transform stack args runtime: OK")
+
+    long_tokens = []
+    for idx in range(40):
+        long_tokens.append({"op": 1, "n_args": 2, "args": [1.0, float(idx)], "args_im": [0.0, 0.0], "expr_refs": [-1, -1]})
+        long_tokens.append({"op": 3})
+    long_program_spec = {
+        "mode": "coeffgen_chunked",
+        "function": "g1",
+        "coeff_transforms": [],
+        "params_file": params_path,
+        "step_start": 0,
+        "step_count": 5,
+        "n_threads": 1,
+        "coeff_program": {
+            "version": 1,
+            "fingerprint": "docker-over-old-64-token-cap",
+            "tokens": long_tokens,
+            "scalar_exprs": [],
+        },
+    }
+    r = subprocess.run(
+        ["/src/sweep_coeffgen", long_program_path],
+        input=json.dumps(long_program_spec),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert r.returncode == 0, "coeffgen long coeff_program failed: " + r.stderr[:200]
+    long_meta = json.loads(r.stdout)
+    assert long_meta["coeff_program_tokens"] == 80, "long coeff_program should report 80 tokens"
+    assert long_meta["n_coeffs"] == 1, "long coeff_program should emit one coefficient"
+    long_vals = read_f32_array(long_program_path)
+    for step in range(long_meta["step_count"]):
+        base = step * 2
+        assert abs(long_vals[base] - 39.0) <= 1e-6, "long coeff_program real mismatch"
+        assert abs(long_vals[base + 1]) <= 1e-6, "long coeff_program imag mismatch"
+    print("  coeff_program over old 64-token cap runtime: OK")
+
     poke_program_spec = {
         "mode": "coeffgen_chunked",
         "function": "g1",
@@ -1027,7 +1150,8 @@ def test_coeffgen_chunked_threaded_runtime():
         params_path, single_path, mt_path, plain_path, andy_path,
         legacy_chain_path, legacy_program_path,
         rev_emit_chain_path, rev_emit_program_path,
-        const_program_single_path, const_program_mt_path, blend_program_path,
+        const_program_single_path, const_program_mt_path, linspace_program_path,
+        blend_program_path, native_typed_program_path, native_stack_arg_program_path, long_program_path,
         poke_program_path, debug_poke_path,
     )
     print("=== Coeffgen-chunked threaded runtime PASSED ===")

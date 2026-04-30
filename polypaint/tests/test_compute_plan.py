@@ -172,8 +172,16 @@ class TestComputePlan(unittest.TestCase):
         plan = json.loads(result["body"])
         self.assertEqual(plan["pipeline"]["coeff_transforms"], [])
         self.assertEqual(plan["pipeline"]["coeff_program_source_text"], "fill(poly_len, p1+p2)\nemit\n")
-        self.assertEqual(plan["pipeline"]["coeff_program_chain"], [["push_const", "poly_len", "p1+p2"], ["emit"]])
-        self.assertEqual(plan["pipeline"]["coeff_program"]["token_count"], 2)
+        self.assertEqual(plan["pipeline"]["coeff_program_chain"], [
+            ["_typed_push_scalar", "poly_len"],
+            ["_typed_push_scalar", "p1"],
+            ["_typed_push_scalar", "p2"],
+            ["_typed_binary", "add"],
+            ["_typed_fill"],
+            ["emit"],
+        ])
+        self.assertEqual(plan["pipeline"]["coeff_program"]["token_count"], 6)
+        self.assertEqual(plan["pipeline"]["coeff_program"]["scalar_expr_count"], 0)
 
     def test_build_plan_resolves_coeff_program_macro(self):
         import handler_compute_plan as mod

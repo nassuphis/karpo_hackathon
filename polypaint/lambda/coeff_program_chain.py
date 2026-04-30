@@ -17,7 +17,7 @@ import re
 
 PROGRAM_KIND = "coeff_program"
 PROGRAM_VERSION = 1
-MAX_PROGRAM_TOKENS = 64
+MAX_PROGRAM_TOKENS = 256
 MAX_VECTOR_STACK = 64
 MAX_VECTOR_LEN = 256
 POLY_LEN_SENTINEL = -1
@@ -45,12 +45,28 @@ COEFF_OP_LINSPACE = 17
 COEFF_OP_RANGE = 18
 COEFF_OP_SET = 19
 COEFF_OP_AFFINE = 20
+COEFF_OP_TYPED_PUSH_SCALAR = 21
+COEFF_OP_TYPED_PUSH_VECTOR = 22
+COEFF_OP_TYPED_BINARY = 23
+COEFF_OP_TYPED_UNARY = 24
+COEFF_OP_TYPED_GET_SCALAR = 25
+COEFF_OP_TYPED_SET_POLY = 26
+COEFF_OP_TYPED_POKE_POLY = 27
+COEFF_OP_TYPED_FILL = 28
+COEFF_OP_NATIVE_TRANSFORM = 29
+COEFF_OP_TYPED_BLEND = 30
 
 COEFF_SEL_CF = 1
 COEFF_SEL_POLY = 2
 COEFF_SEL_POP = 3
 COEFF_SEL_PEEK = 4
 COEFF_SEL_PUSH = 5
+
+COEFF_SCALAR_SRC_P1 = 1
+COEFF_SCALAR_SRC_P2 = 2
+COEFF_SCALAR_SRC_T1 = 3
+COEFF_SCALAR_SRC_T2 = 4
+COEFF_SCALAR_SRC_POLY_LEN = 5
 
 EXPR_LITERAL = 1
 EXPR_P1 = 2
@@ -71,6 +87,9 @@ EXPR_T1 = 16
 EXPR_T2 = 17
 EXPR_ABS = 18
 EXPR_LOG = 19
+EXPR_CF_AT_DYN = 20
+EXPR_POLY_AT_DYN = 21
+EXPR_TOS_AT_DYN = 22
 
 _OP_NAMES = {
     COEFF_OP_CONST: "push_const",
@@ -93,6 +112,16 @@ _OP_NAMES = {
     COEFF_OP_RANGE: "push_range",
     COEFF_OP_SET: "set",
     COEFF_OP_AFFINE: "affine",
+    COEFF_OP_TYPED_PUSH_SCALAR: "typed_push_scalar",
+    COEFF_OP_TYPED_PUSH_VECTOR: "typed_push_vector",
+    COEFF_OP_TYPED_BINARY: "typed_binary",
+    COEFF_OP_TYPED_UNARY: "typed_unary",
+    COEFF_OP_TYPED_GET_SCALAR: "typed_get_scalar",
+    COEFF_OP_TYPED_SET_POLY: "typed_set_poly",
+    COEFF_OP_TYPED_POKE_POLY: "typed_poke_poly",
+    COEFF_OP_TYPED_FILL: "typed_fill",
+    COEFF_OP_NATIVE_TRANSFORM: "native_transform",
+    COEFF_OP_TYPED_BLEND: "typed_blend",
 }
 
 _SOURCE_SELECTORS = {
@@ -154,6 +183,8 @@ _VECTOR_UNARY_OPS = {
     "conj": 5,
     "sqrt": 6,
     "log": 7,
+    "real": 8,
+    "imag": 9,
 }
 
 _VECTOR_ROLL_OPS = {
@@ -547,16 +578,20 @@ class _ExpressionParser:
     def _indexed_reference(self, name):
         if self._take()[0] != "[":
             raise RuntimeError(f"{name}[...] missing opening bracket")
-        index_type, index_value = self._take()
-        if index_type != "number" or abs(index_value.imag) > 1e-12 or not index_value.real.is_integer():
-            raise RuntimeError(f"{name}[index] requires an integer literal index")
+        index_expr = self._expr()
         if self._take()[0] != "]":
             raise RuntimeError(f"{name}[...] missing closing bracket")
-        index = int(index_value.real)
-        if index < 0 or index >= MAX_VECTOR_LEN:
-            raise RuntimeError(f"{name} index must be in [0,{MAX_VECTOR_LEN - 1}], got {index}")
-        op = {"cf": EXPR_CF_AT, "poly": EXPR_POLY_AT, "tos": EXPR_TOS_AT}[name]
-        return _Expr([{"op": op, "a": index}], kind="complex", dynamic=True)
+        value = _expr_value_if_static(index_expr)
+        if value is not None:
+            if abs(value.imag) > 1e-12 or not value.real.is_integer():
+                raise RuntimeError(f"{name}[index] requires an integer index")
+            index = int(value.real)
+            if index < 0 or index >= MAX_VECTOR_LEN:
+                raise RuntimeError(f"{name} index must be in [0,{MAX_VECTOR_LEN - 1}], got {index}")
+            op = {"cf": EXPR_CF_AT, "poly": EXPR_POLY_AT, "tos": EXPR_TOS_AT}[name]
+            return _Expr([{"op": op, "a": index}], kind="complex", dynamic=True)
+        op = {"cf": EXPR_CF_AT_DYN, "poly": EXPR_POLY_AT_DYN, "tos": EXPR_TOS_AT_DYN}[name]
+        return _Expr(index_expr.tokens + [{"op": op}], kind="complex", dynamic=True)
 
     def _primary(self):
         token_type, token_value = self._take()
@@ -695,7 +730,7 @@ def display_coeff_program_chain(chain):
 
 def _token(op, **fields):
     tok = {"op": int(op)}
-    for key in ("fn_index", "src", "tgt", "n_args"):
+    for key in ("fn_index", "src", "tgt", "n_args", "stack_arg_count"):
         value = fields.get(key)
         if value not in (None, 0):
             tok[key] = int(value)
@@ -908,6 +943,57 @@ def _compile_vector_argsort(args):
         n_args=1,
         args=[src2_val],
     )
+
+
+def _compile_typed_push_scalar(args, scalar_exprs):
+    if len(args) != 1:
+        raise RuntimeError("typed_push_scalar requires one expression")
+    raw = str(args[0]).strip().lower()
+    scalar_sources = {
+        "p1": COEFF_SCALAR_SRC_P1,
+        "p2": COEFF_SCALAR_SRC_P2,
+        "t1": COEFF_SCALAR_SRC_T1,
+        "t2": COEFF_SCALAR_SRC_T2,
+        "poly_len": COEFF_SCALAR_SRC_POLY_LEN,
+    }
+    if raw in scalar_sources:
+        return _token(COEFF_OP_TYPED_PUSH_SCALAR, fn_index=scalar_sources[raw])
+    expr = _compile_expr(args[0], label="typed scalar", expected="complex")
+    re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="complex")
+    return _token(
+        COEFF_OP_TYPED_PUSH_SCALAR,
+        n_args=1,
+        args=[re],
+        args_im=[im],
+        expr_refs=[ref],
+    )
+
+
+def _compile_typed_push_vector(args):
+    if len(args) != 1:
+        raise RuntimeError("typed_push_vector requires one source")
+    src_name, src_val = _selector_value(args[0], _SOURCE_SELECTORS, "typed vector source")
+    return _token(COEFF_OP_TYPED_PUSH_VECTOR, src=src_val)
+
+
+def _compile_typed_binary(args):
+    if len(args) != 1:
+        raise RuntimeError("typed_binary requires one op name")
+    name = str(args[0]).strip().lower()
+    name = {"sub": "subtract", "mul": "multiply", "div": "divide", "pow": "power"}.get(name, name)
+    if name not in _VECTOR_BINARY_OPS:
+        raise RuntimeError(f"unknown typed binary op: {args[0]}")
+    return _token(COEFF_OP_TYPED_BINARY, fn_index=_VECTOR_BINARY_OPS[name])
+
+
+def _compile_typed_unary(args):
+    if len(args) != 1:
+        raise RuntimeError("typed_unary requires one op name")
+    name = str(args[0]).strip().lower()
+    name = "abs" if name == "mod" else name
+    if name not in _VECTOR_UNARY_OPS:
+        raise RuntimeError(f"unknown typed unary op: {args[0]}")
+    return _token(COEFF_OP_TYPED_UNARY, fn_index=_VECTOR_UNARY_OPS[name])
 
 
 def _compile_littlewood(args, scalar_exprs):
@@ -1163,6 +1249,78 @@ def _legacy_token(name, src, tgt, args, scalar_exprs):
     )
 
 
+def _native_transform_token(name, src, tgt, args, scalar_exprs):
+    registry = legacy_registry()["by_name"]
+    canonical_name = _canonical_legacy_name(name)
+    if canonical_name not in registry:
+        raise RuntimeError(f"unknown native coeff transform: {name}")
+    spec = registry[canonical_name]
+    src_name, src_val = _selector_value(src, _SOURCE_SELECTORS, "native transform src")
+    tgt_name, tgt_val = _selector_value(tgt, _TARGET_SELECTORS, "native transform tgt")
+    if src_name not in spec["allowed_src"]:
+        raise RuntimeError(f"{canonical_name} does not support src={src_name}")
+    if tgt_name not in spec["allowed_tgt"]:
+        raise RuntimeError(f"{canonical_name} does not support tgt={tgt_name}")
+    values, values_im, expr_refs, andy, andy_expr_ref = _legacy_args(spec, args, scalar_exprs)
+    return _token(
+        COEFF_OP_NATIVE_TRANSFORM,
+        fn_index=spec["fn_index"],
+        src=src_val,
+        tgt=tgt_val,
+        n_args=len(values),
+        args=values,
+        args_im=values_im,
+        expr_refs=expr_refs,
+        andy=andy,
+        andy_expr_ref=andy_expr_ref,
+    )
+
+
+def _max_native_transform_stack_arg_count(spec):
+    fn_index = int(spec.get("fn_index") or 0)
+    if fn_index in {14, 16, 24}:
+        return 2
+    if fn_index == 23:
+        return 1
+    return len(spec.get("args") or [])
+
+
+def _native_transform_stack_arg_token(name, src, tgt, stack_arg_count, scalar_exprs, andy_arg=None):
+    registry = legacy_registry()["by_name"]
+    canonical_name = _canonical_legacy_name(name)
+    if canonical_name not in registry:
+        raise RuntimeError(f"unknown native coeff transform: {name}")
+    spec = registry[canonical_name]
+    src_name, src_val = _selector_value(src, _SOURCE_SELECTORS, "native transform src")
+    tgt_name, tgt_val = _selector_value(tgt, _TARGET_SELECTORS, "native transform tgt")
+    if src_name not in spec["allowed_src"]:
+        raise RuntimeError(f"{canonical_name} does not support src={src_name}")
+    if tgt_name not in spec["allowed_tgt"]:
+        raise RuntimeError(f"{canonical_name} does not support tgt={tgt_name}")
+    count = int(stack_arg_count)
+    if count < 0 or count > MAX_ARGS:
+        raise RuntimeError(f"{canonical_name} stack arg count must be in [0,{MAX_ARGS}]")
+    max_count = _max_native_transform_stack_arg_count(spec)
+    if count > max_count:
+        raise RuntimeError(f"{canonical_name} stack arg count must be <= {max_count}, got {count}")
+    fields = dict(
+        fn_index=spec["fn_index"],
+        src=src_val,
+        tgt=tgt_val,
+        stack_arg_count=count,
+    )
+    if andy_arg is not None:
+        if not spec.get("supports_andy"):
+            raise RuntimeError(f"{canonical_name} does not support andy")
+        andy, andy_expr_ref = _compile_andy(andy_arg, scalar_exprs, f"native transform {canonical_name} andy")
+        fields["andy"] = andy
+        fields["andy_expr_ref"] = andy_expr_ref
+    return _token(
+        COEFF_OP_NATIVE_TRANSFORM,
+        **fields,
+    )
+
+
 def _expand_macros(chain, macro_resolver, stack=None, depth=0):
     if stack is None:
         stack = []
@@ -1232,8 +1390,49 @@ def _lower_chip(chip, scalar_exprs):
         return [_compile_vector_roll(name, args)]
     if name == "argsort":
         return [_compile_vector_argsort(args)]
+    if name == "_typed_push_scalar":
+        return [_compile_typed_push_scalar(args, scalar_exprs)]
+    if name == "_typed_push_vector":
+        return [_compile_typed_push_vector(args)]
+    if name == "_typed_binary":
+        return [_compile_typed_binary(args)]
+    if name == "_typed_unary":
+        return [_compile_typed_unary(args)]
+    if name == "_typed_get_scalar":
+        if args:
+            raise RuntimeError("typed_get_scalar takes no arguments")
+        return [_token(COEFF_OP_TYPED_GET_SCALAR)]
+    if name == "_typed_set_poly":
+        if args:
+            raise RuntimeError("typed_set_poly takes no arguments")
+        return [_token(COEFF_OP_TYPED_SET_POLY)]
+    if name == "_typed_poke_poly":
+        if args:
+            raise RuntimeError("typed_poke_poly takes no arguments")
+        return [_token(COEFF_OP_TYPED_POKE_POLY)]
+    if name == "_typed_fill":
+        if args:
+            raise RuntimeError("typed_fill takes no arguments")
+        return [_token(COEFF_OP_TYPED_FILL)]
+    if name == "_native_transform":
+        if len(args) < 3:
+            raise RuntimeError("native transform chip requires name, src, tgt, and optional args")
+        return [_native_transform_token(str(args[0]).strip().lower(), args[1], args[2], args[3:], scalar_exprs)]
+    if name == "_native_transform_stack_args":
+        if len(args) not in {4, 5}:
+            raise RuntimeError("native transform stack-args chip requires name, src, tgt, arg count, and optional andy")
+        andy_arg = args[4] if len(args) == 5 else None
+        return [_native_transform_stack_arg_token(str(args[0]).strip().lower(), args[1], args[2], args[3], scalar_exprs, andy_arg)]
+    if name == "_typed_blend":
+        if args:
+            raise RuntimeError("typed_blend takes no arguments")
+        return [_token(COEFF_OP_TYPED_BLEND)]
     if name == "littlewood":
         return [_compile_littlewood(args, scalar_exprs)]
+    if name in legacy_registry()["by_name"]:
+        if len(args) < 2:
+            raise RuntimeError(f"{name} chip requires target, source, and optional args")
+        return [_native_transform_token(name, args[1], args[0], args[2:], scalar_exprs)]
     if name in _STACK_OPS:
         if args:
             raise RuntimeError(f"{name} chip takes no arguments")
@@ -1257,95 +1456,179 @@ def _lower_chain(chain):
     return tokens, scalar_exprs
 
 
-def _validate_vector_source_depth(selector, depth, idx, label):
-    if selector == COEFF_SEL_POP:
-        if depth < 1:
-            raise RuntimeError(f"{label} at token {idx}: stack depth is {depth} (need >=1)")
-        return depth - 1
-    if selector == COEFF_SEL_PEEK:
-        if depth < 1:
-            raise RuntimeError(f"{label}(peek) at token {idx}: stack depth is {depth} (need >=1)")
-        return depth
-    return depth
-
-
-def _validate_vector_target_depth(selector, depth):
-    return depth + 1 if selector == COEFF_SEL_PUSH else depth
-
-
 def _validate_stack(tokens):
-    depth = 0
+    types = []
     max_depth = 0
     diagnostics = []
+
+    def depth():
+        return len(types)
+
+    def need_any(idx, label):
+        if not types:
+            raise RuntimeError(f"{label} at token {idx}: stack depth is 0 (need >=1)")
+        return types.pop()
+
+    def need_vector_pop(idx, label):
+        before = depth()
+        item = need_any(idx, label)
+        if item != "vector":
+            raise RuntimeError(f"{label} at token {idx}: top of stack is {item} (need vector)")
+
+    def need_vector_peek(idx, label):
+        if not types:
+            raise RuntimeError(f"{label}(peek) at token {idx}: stack depth is 0 (need >=1)")
+        if types[-1] != "vector":
+            raise RuntimeError(f"{label}(peek) at token {idx}: top of stack is {types[-1]} (need vector)")
+
+    def vector_source(selector, idx, label):
+        if selector == COEFF_SEL_POP:
+            need_vector_pop(idx, label)
+        elif selector == COEFF_SEL_PEEK:
+            need_vector_peek(idx, label)
+
+    def vector_target(selector):
+        if selector == COEFF_SEL_PUSH:
+            types.append("vector")
+
     for idx, token in enumerate(tokens):
         op = int(token.get("op") or 0)
-        before = depth
+        before = depth()
         if op in {COEFF_OP_CONST, COEFF_OP_PUSH, COEFF_OP_LINSPACE, COEFF_OP_RANGE}:
-            depth += 1
+            types.append("vector")
         elif op == COEFF_OP_SET:
-            depth = _validate_vector_source_depth(int(token.get("src") or 0), depth, idx, "set src")
+            vector_source(int(token.get("src") or 0), idx, "set src")
         elif op == COEFF_OP_AFFINE:
-            depth = _validate_vector_source_depth(int(token.get("src") or 0), depth, idx, "affine src")
-            depth = _validate_vector_target_depth(int(token.get("tgt") or 0), depth)
+            vector_source(int(token.get("src") or 0), idx, "affine src")
+            vector_target(int(token.get("tgt") or 0))
         elif op == COEFF_OP_EMIT:
             # Coeff Program keeps poly as an explicit mutable output register.
             # emit commits the stack top when present; with an empty stack it is
             # a harmless "commit current poly" marker after direct poly writes.
-            if depth >= 1:
-                depth -= 1
+            if types:
+                item = types.pop()
+                if item != "vector":
+                    raise RuntimeError(f"emit at token {idx}: top of stack is {item} (need vector)")
         elif op == COEFF_OP_DUPLICATE:
-            if depth < 1:
+            if depth() < 1:
                 raise RuntimeError(f"duplicate at token {idx}: stack depth is {before} (need >=1)")
-            depth += 1
+            types.append(types[-1])
         elif op == COEFF_OP_SWAP:
-            if depth < 2:
+            if depth() < 2:
                 raise RuntimeError(f"swap at token {idx}: stack depth is {before} (need >=2)")
+            types[-1], types[-2] = types[-2], types[-1]
         elif op == COEFF_OP_POP:
-            if depth < 1:
+            if depth() < 1:
                 raise RuntimeError(f"pop at token {idx}: stack depth is {before} (need >=1)")
-            depth -= 1
+            types.pop()
         elif op == COEFF_OP_FLUSH:
-            depth = 0
+            types = []
         elif op == COEFF_OP_BLEND:
-            if depth < 2:
+            if depth() < 2:
                 raise RuntimeError(f"blend at token {idx}: stack depth is {before} (need >=2)")
-            depth -= 1
+            need_vector_pop(idx, "blend top")
+            need_vector_pop(idx, "blend below")
+            types.append("vector")
         elif op == COEFF_OP_POKE_POLY:
             pass
         elif op == COEFF_OP_POKE_TOS:
-            if depth < 1:
+            if depth() < 1:
                 raise RuntimeError(f"poke_tos at token {idx}: stack depth is {before} (need >=1)")
+            if types[-1] != "vector":
+                raise RuntimeError(f"poke_tos at token {idx}: top of stack is {types[-1]} (need vector)")
         elif op in {COEFF_OP_VECTOR_BINARY, COEFF_OP_VECTOR_ARGSORT}:
             src2 = int((token.get("args") or [0])[0])
-            depth = _validate_vector_source_depth(int(token.get("src") or 0), depth, idx, "vector src1")
-            depth = _validate_vector_source_depth(src2, depth, idx, "vector src2")
-            depth = _validate_vector_target_depth(int(token.get("tgt") or 0), depth)
+            vector_source(int(token.get("src") or 0), idx, "vector src1")
+            vector_source(src2, idx, "vector src2")
+            vector_target(int(token.get("tgt") or 0))
         elif op in {COEFF_OP_VECTOR_UNARY, COEFF_OP_VECTOR_ROLL}:
-            depth = _validate_vector_source_depth(int(token.get("src") or 0), depth, idx, "vector src")
-            depth = _validate_vector_target_depth(int(token.get("tgt") or 0), depth)
+            vector_source(int(token.get("src") or 0), idx, "vector src")
+            vector_target(int(token.get("tgt") or 0))
         elif op == COEFF_OP_LITTLEWOOD:
-            depth = _validate_vector_target_depth(int(token.get("tgt") or 0), depth)
-        elif op == COEFF_OP_LEGACY:
+            vector_target(int(token.get("tgt") or 0))
+        elif op in {COEFF_OP_LEGACY, COEFF_OP_NATIVE_TRANSFORM}:
+            stack_arg_count = int(token.get("stack_arg_count") or 0)
+            for _ in range(stack_arg_count):
+                item = need_any(idx, "native transform arg")
+                if item != "scalar":
+                    raise RuntimeError(f"native transform arg at token {idx}: top of stack is {item} (need scalar)")
             src = int(token.get("src") or 0)
             tgt = int(token.get("tgt") or 0)
             if src == COEFF_SEL_POP:
-                if depth < 1:
-                    raise RuntimeError(f"legacy at token {idx}: stack depth is {before} (need >=1)")
-                depth -= 1
-            elif src == COEFF_SEL_PEEK and depth < 1:
-                raise RuntimeError(f"legacy(peek) at token {idx}: stack depth is {before} (need >=1)")
-            if tgt == COEFF_SEL_PUSH:
-                depth += 1
+                need_vector_pop(idx, "native transform")
+            elif src == COEFF_SEL_PEEK:
+                need_vector_peek(idx, "native transform")
+            vector_target(tgt)
             spec = legacy_registry()["by_index"].get(int(token.get("fn_index") or 0))
             if spec and spec.get("length_policy") == "may_change":
-                diagnostics.append({"level": "info", "message": f"legacy({spec['name']}) may change vector length"})
+                diagnostics.append({"level": "info", "message": f"{spec['name']} may change vector length"})
+        elif op == COEFF_OP_TYPED_PUSH_SCALAR:
+            types.append("scalar")
+        elif op == COEFF_OP_TYPED_PUSH_VECTOR:
+            vector_source(int(token.get("src") or 0), idx, "typed vector source")
+            types.append("vector")
+        elif op == COEFF_OP_TYPED_BINARY:
+            if depth() < 2:
+                raise RuntimeError(f"typed binary at token {idx}: stack depth is {before} (need >=2)")
+            right = types.pop()
+            left = types.pop()
+            types.append("vector" if "vector" in {left, right} else "scalar")
+        elif op == COEFF_OP_TYPED_UNARY:
+            if depth() < 1:
+                raise RuntimeError(f"typed unary at token {idx}: stack depth is {before} (need >=1)")
+        elif op == COEFF_OP_TYPED_GET_SCALAR:
+            if depth() < 2:
+                raise RuntimeError(f"get_scalar at token {idx}: stack depth is {before} (need >=2)")
+            index_type = types.pop()
+            vector_type = types.pop()
+            if index_type != "scalar":
+                raise RuntimeError(f"get_scalar at token {idx}: index is {index_type} (need scalar)")
+            if vector_type != "vector":
+                raise RuntimeError(f"get_scalar at token {idx}: source is {vector_type} (need vector)")
+            types.append("scalar")
+        elif op == COEFF_OP_TYPED_SET_POLY:
+            if depth() < 1:
+                raise RuntimeError(f"typed_set_poly at token {idx}: stack depth is {before} (need >=1)")
+            item = types.pop()
+            if item != "vector":
+                raise RuntimeError(f"typed_set_poly at token {idx}: top of stack is {item} (need vector)")
+        elif op == COEFF_OP_TYPED_POKE_POLY:
+            if depth() < 2:
+                raise RuntimeError(f"typed_poke_poly at token {idx}: stack depth is {before} (need >=2)")
+            value_type = types.pop()
+            index_type = types.pop()
+            if value_type != "scalar":
+                raise RuntimeError(f"typed_poke_poly at token {idx}: value is {value_type} (need scalar)")
+            if index_type != "scalar":
+                raise RuntimeError(f"typed_poke_poly at token {idx}: index is {index_type} (need scalar)")
+        elif op == COEFF_OP_TYPED_FILL:
+            if depth() < 2:
+                raise RuntimeError(f"typed_fill at token {idx}: stack depth is {before} (need >=2)")
+            value_type = types.pop()
+            length_type = types.pop()
+            if value_type != "scalar":
+                raise RuntimeError(f"typed_fill at token {idx}: value is {value_type} (need scalar)")
+            if length_type != "scalar":
+                raise RuntimeError(f"typed_fill at token {idx}: length is {length_type} (need scalar)")
+            types.append("vector")
+        elif op == COEFF_OP_TYPED_BLEND:
+            if depth() < 3:
+                raise RuntimeError(f"typed_blend at token {idx}: stack depth is {before} (need >=3)")
+            t_type = types.pop()
+            top_type = types.pop()
+            below_type = types.pop()
+            if t_type != "scalar":
+                raise RuntimeError(f"typed_blend at token {idx}: t is {t_type} (need scalar)")
+            if top_type != "vector" or below_type != "vector":
+                raise RuntimeError(f"typed_blend at token {idx}: inputs must be vectors")
+            types.append("vector")
         else:
             raise RuntimeError(f"unknown coeff program opcode at token {idx}: {op}")
-        if depth > MAX_VECTOR_STACK:
-            raise RuntimeError(f"coeff program stack depth {depth} exceeds max {MAX_VECTOR_STACK} at token {idx}")
-        max_depth = max(max_depth, depth)
-    if depth != 0:
-        raise RuntimeError(f"coeff program final stack depth is {depth}; expected 0")
+        if depth() > MAX_VECTOR_STACK:
+            raise RuntimeError(f"coeff program stack depth {depth()} exceeds max {MAX_VECTOR_STACK} at token {idx}")
+        max_depth = max(max_depth, depth())
+    if depth() != 0:
+        raise RuntimeError(f"coeff program final stack depth is {depth()}; expected 0")
     return {"stack_max": max_depth, "diagnostics": diagnostics}
 
 
@@ -1386,6 +1669,30 @@ def _execution_spec(tokens, scalar_exprs):
             refs = token.get("expr_refs") or [-1, -1]
             for idx, value in enumerate(args):
                 fields.append(f"expr{refs[idx]}" if idx < len(refs) and refs[idx] >= 0 else _format_complex_number(value, args_im[idx] if idx < len(args_im) else 0.0))
+        elif op == COEFF_OP_TYPED_PUSH_SCALAR:
+            scalar_src_names = {
+                COEFF_SCALAR_SRC_P1: "p1",
+                COEFF_SCALAR_SRC_P2: "p2",
+                COEFF_SCALAR_SRC_T1: "t1",
+                COEFF_SCALAR_SRC_T2: "t2",
+                COEFF_SCALAR_SRC_POLY_LEN: "poly_len",
+            }
+            scalar_src = int(token.get("fn_index") or 0)
+            if scalar_src:
+                fields.append(scalar_src_names.get(scalar_src, str(scalar_src)))
+            else:
+                refs = token.get("expr_refs") or [-1]
+                args = token.get("args") or [0]
+                args_im = token.get("args_im") or [0]
+                fields.append(f"expr{refs[0]}" if refs and refs[0] >= 0 else _format_complex_number(args[0], args_im[0] if args_im else 0.0))
+        elif op == COEFF_OP_TYPED_PUSH_VECTOR:
+            fields.append(_SELECTOR_NAMES.get(int(token.get("src") or 0), str(token.get("src") or 0)))
+        elif op == COEFF_OP_TYPED_BINARY:
+            fields.append(_VECTOR_BINARY_NAMES.get(int(token.get("fn_index") or 0), str(token.get("fn_index") or 0)))
+        elif op == COEFF_OP_TYPED_UNARY:
+            fields.append(_VECTOR_UNARY_NAMES.get(int(token.get("fn_index") or 0), str(token.get("fn_index") or 0)))
+        elif op in {COEFF_OP_TYPED_GET_SCALAR, COEFF_OP_TYPED_SET_POLY, COEFF_OP_TYPED_POKE_POLY, COEFF_OP_TYPED_FILL, COEFF_OP_TYPED_BLEND}:
+            pass
         elif op == COEFF_OP_PUSH:
             fields.append(_SELECTOR_NAMES.get(int(token.get("src") or 0), str(token.get("src") or 0)))
         elif op == COEFF_OP_BLEND:
@@ -1434,7 +1741,7 @@ def _execution_spec(tokens, scalar_exprs):
             fields.append(f"expr{refs[0]}" if len(refs) > 0 and refs[0] >= 0 else _format_complex_number(args[0], args_im[0] if len(args_im) > 0 else 0.0))
             fields.append(f"expr{refs[1]}" if len(refs) > 1 and refs[1] >= 0 else _format_complex_number(args[1], args_im[1] if len(args_im) > 1 else 0.0))
             fields.append(f"expr{refs[2]}" if len(refs) > 2 and refs[2] >= 0 else _format_number(args[2] if len(args) > 2 else 0.0))
-        elif op == COEFF_OP_LEGACY:
+        elif op in {COEFF_OP_LEGACY, COEFF_OP_NATIVE_TRANSFORM}:
             spec = legacy_registry()["by_index"].get(int(token.get("fn_index") or 0))
             fields.extend([
                 spec["name"] if spec else str(token.get("fn_index")),
@@ -1455,6 +1762,8 @@ def _execution_spec(tokens, scalar_exprs):
                 fields.append(f"andy=expr{int(token.get('andy_expr_ref'))}")
             elif token.get("andy"):
                 fields.append(f"andy={_format_number(token.get('andy'))}")
+            if int(token.get("stack_arg_count") or 0):
+                fields.append(f"stack_args={int(token.get('stack_arg_count') or 0)}")
         parts.append(":".join(fields))
     if scalar_exprs:
         parts.append("exprs=" + json.dumps(scalar_exprs, sort_keys=True, separators=(",", ":")))

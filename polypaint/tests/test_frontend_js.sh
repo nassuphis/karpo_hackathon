@@ -172,9 +172,14 @@ assertIncludes("if (body.message) parts.push(_clipErrorText(body.message, 260));
 assertIncludes("function _serializeCoeffProgramChain() {", 'frontend should serialize coeff-program chips');
 assertIncludes("function _validateCoeffProgramUiChain(chain) {", 'Coeff Program saved-program load should validate stale/unknown chips immediately');
 assertIncludes("unknown coeff program chip at", 'Coeff Program stale poly-* saved programs should fail with a clear load-time error');
+assertIncludes("const normalizedChain = hasSourceText ? [] : _normalizeCoeffProgramChain(chain);", 'Coeff Program source_text payloads should not validate compiler-internal lowered chains as chip UI');
+assertIncludes("if (!hasSourceText) _validateCoeffProgramUiChain(normalizedChain);", 'Coeff Program chip validation should apply only to chip-authored programs');
+assertIncludes("if (program.has_source_text) {", 'Coeff Program source_text payloads should load into Text mode even when source_text is empty');
 assertIncludes("function _effectiveCoeffProgramChainForCompute() {", 'compute payload should centralize coeff-program selection');
 assertIncludes("function _copyCoeffTransformsIntoCoeffProgram() {", 'Coeff Program UI should translate legacy transforms into program chips');
-assertIncludes("return { name: 'legacy', params: [normalized.name, 'poly', 'poly', ...(normalized.params || [])] };", 'Copy legacy transforms should create explicit legacy coeff-program chips');
+assertIncludes("return { name: normalized.name, params: ['poly', 'poly', ...(normalized.params || [])] };", 'Copy legacy transforms should create direct native coeff-program chips');
+assertIncludes("nativeTransform: true,", 'Coeff Program picker should expose direct native transform chips instead of a visible legacy wrapper');
+assertIncludes("hidden: true,\n            params:", 'Coeff Program compatibility-only legacy chip should be hidden from authoring menus');
 assertIncludes("coeff_program_chain: coeffProgramChain,", 'compute/preview payloads should forward coeff_program_chain');
 assertIncludes("Coeff Program scalar args are parsed by the compiler. Keep expressions", 'Coeff Program editor should not reject p1/p2 scalar expressions with legacy numeric validation');
 assertIncludes("chain[chipIdx].params[paramIdx] = rawText || String(pDef.def || '');", 'Coeff Program scalar expression fields should preserve raw expression text');
@@ -212,6 +217,8 @@ assertIncludes("function _coeffProgramSourceDisplay(sourceText, separator = ',')
 assertIncludes("if (name === 'push' && params[0] === 'cf') return 'cf';", 'Coeff Program chain-to-source renderer should render push(cf) as valid bare cf syntax');
 assertIncludes("if (name === 'pop') return 'drop';", 'Coeff Program chain-to-source renderer should render drop as drop, not ambiguous standalone pop');
 assertIncludes("if (name === 'poke_poly' && params.length >= 2) return `poly[${params[0]}] = ${params[1]}`;", 'Coeff Program chain-to-source renderer should render poke_poly as valid indexed assignment');
+assertIncludes("if (name === 'legacy') {\n                const [legacyName, src, tgt, ...rest] = params;", 'Coeff Program chain-to-source renderer should unwrap old legacy-form saved chips');
+assertIncludes("return tgt === 'poly' ? `poly = ${legacyName || 'rev'}(${args})` : `${legacyName || 'rev'}(${args})`;", 'Coeff Program legacy-form source rendering should produce direct source syntax, not legacy(...)');
 assertIncludes("if (sourceText.trim()) {\n            return _coeffProgramMetaHtml(program, options)", 'Coeff Program modal should prefer source_text display when a text program is active or saved');
 assertIncludes("Text source changed. It will be compiled by the backend on save/preview/compute.", 'Coeff Program text editor should tell users save uses source text');
 assertIncludes("function _chipMoveControlsHtml(which, idx) {", 'transform chip renderer should centralize move controls');
@@ -786,7 +793,7 @@ async function main() {
   const previewCtx = {
     _serializeParamProgramChain() { return [['push', 't1'], ['emit', 'p1']]; },
     _displayParamTransforms() { return [['unit_circle', 'both']]; },
-    _serializeCoeffProgramChain() { return [['legacy', 'rev', 'poly', 'poly'], ['emit']]; },
+  _serializeCoeffProgramChain() { return [['rev', 'poly', 'poly'], ['emit']]; },
     _serializeCoeffTransforms() { return ['rev', ['exp', '0.5']]; },
   };
   vm.createContext(previewCtx);
@@ -794,7 +801,7 @@ async function main() {
   assert(previewCtx._displayActiveCoeffPipeline(',') === 'rev,exp(0.5)', 'Chain-mode coeff preview log should not throw on string transform rows');
   assert(previewCtx._displayActiveParamPipeline(',') === 'unit_circle(both)', 'Chain-mode param preview log should format transform rows');
   vm.runInContext('_programMode = true;', previewCtx);
-  assert(previewCtx._displayActiveCoeffPipeline(',') === 'legacy(rev,poly,poly),emit', 'Program-mode coeff preview log should format program rows');
+  assert(previewCtx._displayActiveCoeffPipeline(',') === 'rev(poly,poly),emit', 'Program-mode coeff preview log should format direct native program rows');
   assert(previewCtx._displayActiveParamPipeline(',') === 'push(t1),emit(p1)', 'Program-mode param preview log should format program rows');
 
   let genericPmRejected = false;

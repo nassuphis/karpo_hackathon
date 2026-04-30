@@ -11710,7 +11710,10 @@ const _cpCategoryMeta = {
     io: { title: 'Input + output', help: 'push cf/poly, make constant vectors, or emit poly' },
     stack: { title: 'Stack', help: 'reorder or discard vector values' },
     vector: { title: 'Vector ops', help: 'combine vectors on the stack' },
-    legacy: { title: 'Legacy coefficient transforms', help: 'call existing coefficient transforms by compiled function index' },
+    structural: { title: 'Structural transforms', help: 'native transforms that reorder, resize, sanitize, or normalize poly vectors' },
+    accumulation: { title: 'Ordering + accumulation', help: 'native transforms that sort or accumulate coefficient vectors' },
+    elementwise: { title: 'Elementwise transforms', help: 'native transforms that apply a complex function per coefficient' },
+    roots: { title: 'Root transforms', help: 'native transforms that replace coefficients with root-derived vectors' },
     macro: { title: 'Macro', help: 'expand a saved coeff program at compile time' },
 };
 
@@ -11743,6 +11746,7 @@ const _cpCatalog = (() => {
         affine: {
             category: 'vector',
             label: 'linear',
+            hidden: true,
             params: [
                 { ph: 'tgt', def: 'poly', choices: _coeffProgramVectorTargetChoices, selectorWide: true, title: 'Output target: write poly or push the affine result.' },
                 { ph: 'src', def: 'pop', choices: _coeffProgramLegacySourceChoices, selectorWide: true, title: 'Input vector.' },
@@ -11835,13 +11839,14 @@ const _cpCatalog = (() => {
         },
         macro: { category: 'macro', params: [{ ph: 'program id', def: '', programWide: true, title: 'Saved coeff-program id to expand at compile time.' }], desc: 'expand a saved coeff program at compile time' },
         legacy: {
-            category: 'legacy',
+            category: 'macro',
+            hidden: true,
             params: [
                 { ph: 'name', def: 'rev', choices: _coeffProgramLegacyNames, functionWide: true, title: 'Legacy coefficient transform function. Compiled to a stable numeric function index.' },
                 { ph: 'src', def: 'poly', choices: _coeffProgramLegacySourceChoices, selectorWide: true, title: 'Input vector: cf read-only coefficients, current poly, pop stack, or peek stack.' },
                 { ph: 'tgt', def: 'poly', choices: _coeffProgramLegacyTargetChoices, selectorWide: true, title: 'Output target: write poly or push the result onto the stack.' },
             ],
-            desc: 'call an existing coefficient transform with explicit source and target',
+            desc: 'compatibility-only wrapper for old saved coeff-program chips',
         },
     };
     _coeffProgramVectorBinaryNames.forEach(name => {
@@ -11863,6 +11868,23 @@ const _cpCatalog = (() => {
                 { ph: 'src', def: 'poly', choices: _coeffProgramVectorSourceChoices, selectorWide: true, title: 'Input vector.' },
             ],
             desc: `${name}(src) vector operation`,
+        };
+    });
+    Object.entries(_ctCatalog).forEach(([name, ctSpec]) => {
+        if (catalog[name]) return;
+        const argDefs = _coeffProgramLegacyInputDefs(name)
+            .filter(pDef => !(pDef && pDef.ph === 'andy'))
+            .map(pDef => ({ ...pDef }));
+        catalog[name] = {
+            category: ctSpec.category || 'elementwise',
+            nativeTransform: true,
+            params: [
+                { ph: 'tgt', def: 'poly', choices: _coeffProgramLegacyTargetChoices, selectorWide: true, title: 'Output target: write poly or push the transform result.' },
+                { ph: 'src', def: 'poly', choices: _coeffProgramLegacySourceChoices, selectorWide: true, title: 'Input vector: cf read-only coefficients, current poly, pop stack, or peek stack.' },
+                ...argDefs,
+            ],
+            label: ctSpec.label || name,
+            desc: ctSpec.desc || `${name}(src) native coefficient transform`,
         };
     });
     return catalog;
@@ -12697,7 +12719,8 @@ function _coeffProgramCategoryGroups() {
     Object.keys(_cpCategoryMeta).forEach(key => { grouped[key] = []; });
     Object.keys(_cpCatalog).forEach(name => {
         const spec = _cpCatalog[name] || {};
-        const key = grouped[spec.category] ? spec.category : 'legacy';
+        if (spec.hidden) return;
+        const key = grouped[spec.category] ? spec.category : 'elementwise';
         grouped[key].push(name);
     });
     return Object.keys(_cpCategoryMeta).map(key => ({
@@ -12815,7 +12838,17 @@ function _coeffProgramSourceFromChain(chain) {
                 const args = [a, b].concat(andy == null || andy === '' ? [] : [andy]).join(', ');
                 return tgt === 'poly' ? `poly = littlewood(${args})` : `littlewood(${args})`;
             }
-            if (name === 'legacy') return `legacy(${params.join(', ')})`;
+            const nativeSpec = _cpCatalog[name] || {};
+            if (nativeSpec.nativeTransform && params.length >= 2) {
+                const [tgt, src, ...rest] = params;
+                const args = [src || 'poly', ...rest].join(', ');
+                return tgt === 'poly' ? `poly = ${name}(${args})` : `${name}(${args})`;
+            }
+            if (name === 'legacy') {
+                const [legacyName, src, tgt, ...rest] = params;
+                const args = [src || 'poly', ...rest].join(', ');
+                return tgt === 'poly' ? `poly = ${legacyName || 'rev'}(${args})` : `${legacyName || 'rev'}(${args})`;
+            }
             return params.length ? `${name}(${params.join(', ')})` : name;
         }
         return String(row || '');
@@ -13366,7 +13399,7 @@ function _normalizeCoeffProgramChain(rawChain) {
                         _formatCoeffTransformComplexParts(params[3], params[4]),
                     );
                 }
-                return [{ name, params }];
+                return [{ name: legacyName, params: [params[2] || 'poly', params[1] || 'poly', ...params.slice(3)] }];
             }
             const sourceName = name === 'const' ? 'push_const' : name;
             return [{ name: sourceName, params: item.slice(1).map(v => String(v)) }];
@@ -13420,6 +13453,10 @@ function _serializeCoeffProgramChain() {
             ? params[idx]
             : String(pDef.def || ''));
         let last = values.length - 1;
+        if (spec.nativeTransform) {
+            while (last >= 2 && (values[last] === '' || values[last] === String((pDefs[last] && pDefs[last].def) || ''))) last--;
+            return [catalogName, ...values.slice(0, Math.max(last + 1, 2))];
+        }
         return last >= 0 ? [catalogName, ...values.slice(0, last + 1)] : [catalogName];
     }).filter(Boolean);
 }
@@ -13449,14 +13486,15 @@ function _parseCoeffProgramPayload(raw) {
     if (version !== 1) throw new Error(`program JSON version ${version} is not supported`);
     const kind = String(raw.program_kind || 'coeff_program');
     if (kind !== 'coeff_program') throw new Error(`program JSON kind ${kind} is not coeff_program`);
-    const normalizedChain = _normalizeCoeffProgramChain(chain);
-    _validateCoeffProgramUiChain(normalizedChain);
+    const normalizedChain = hasSourceText ? [] : _normalizeCoeffProgramChain(chain);
+    if (!hasSourceText) _validateCoeffProgramUiChain(normalizedChain);
     return {
         version,
         program_kind: 'coeff_program',
         name: String(raw.name || '').trim(),
         description: String(raw.description || '').trim(),
         chain: normalizedChain,
+        has_source_text: hasSourceText,
         source_text: hasSourceText ? String(raw.source_text || '') : '',
     };
 }
@@ -13466,7 +13504,7 @@ function _applyCoeffProgram(rawProgram) {
     _cpChain.splice(0, _cpChain.length, ...program.chain);
     _coeffProgramSelectedIndex = _cpChain.length ? Math.min(_cpChain.length - 1, Math.max(0, _coeffProgramSelectedIndex)) : -1;
     _renderChips('cp');
-    if (program.source_text) {
+    if (program.has_source_text) {
         _setCoeffProgramSourceText(program.source_text);
         _setCoeffProgramEditorMode('text');
     } else {
@@ -13489,14 +13527,14 @@ function _copyCoeffTransformsIntoCoeffProgram() {
             name: values[0],
             params: values.slice(1).map(v => String(v)),
         });
-        return { name: 'legacy', params: [normalized.name, 'poly', 'poly', ...(normalized.params || [])] };
+        return { name: normalized.name, params: ['poly', 'poly', ...(normalized.params || [])] };
     });
     _cpChain.splice(0, _cpChain.length, ...chain);
     _coeffProgramSelectedIndex = _cpChain.length ? 0 : -1;
     _setCoeffProgramEditorMode('chips');
     _renderChips('cp');
     if (_paramProgramModeSelected()) _markComputePreviewStale();
-    _coeffProgramStatus(`Copied ${chain.length} legacy coefficient transform${chain.length === 1 ? '' : 's'} into coeff program`);
+    _coeffProgramStatus(`Copied ${chain.length} coefficient transform${chain.length === 1 ? '' : 's'} into coeff program`);
 }
 
 function _clearCoeffProgramChain() {
@@ -13947,6 +13985,39 @@ function _coeffProgramLegacyFormulaHtml(i, legacyName, values, legacyDefs, optio
     return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${fn}<span>(</span>${src}${nonAndyArgs}<span>)</span>${andy}</span>`;
 }
 
+function _coeffProgramNativeTransformFormulaHtml(item, i, pDefs, options = {}) {
+    const params = Array.isArray(item.params) ? item.params : [];
+    const input = (idx) => _chipInputHtml(
+        'cp',
+        i,
+        idx,
+        params[idx] !== undefined && params[idx] !== '' ? params[idx] : String(pDefs[idx]?.def || ''),
+        pDefs[idx] || {},
+        options
+    );
+    const tgt = input(0);
+    const src = input(1);
+    const arg = (idx) => input(2 + idx);
+    const label = _escapeHtml((_cpCatalog[item.name] && _cpCatalog[item.name].label) || item.name);
+    if (item.name === 'pow') {
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span><span>${label}(</span>${src}<span class="chip-op">*</span>${arg(0)}<span class="chip-op">,</span>${arg(1)}<span>)</span></span>`;
+    }
+    if (item.name === 'linear') {
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${src}<span class="chip-op">*</span>${arg(0)}<span class="chip-op">+</span>${arg(1)}</span>`;
+    }
+    if (item.name === 'exp') {
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span><span>${label}(</span>${src}<span class="chip-op">*</span>${arg(0)}<span class="chip-op">+</span>${arg(1)}<span>)</span></span>`;
+    }
+    if (item.name === 'round') {
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span><span>${label}(</span>${src}<span class="chip-op">*</span>${arg(0)}<span>)</span></span>`;
+    }
+    const rest = (pDefs || [])
+        .slice(2)
+        .map((pDef, idx) => `<span class="chip-op">,</span>${arg(idx)}`)
+        .join('');
+    return `<span class="chip-formula">${tgt}<span class="chip-op">=</span><span>${label}(</span>${src}${rest}<span>)</span></span>`;
+}
+
 function _coeffProgramVectorFormulaHtml(item, i, pDefs, options = {}) {
     const params = Array.isArray(item.params) ? item.params : [];
     const input = (idx) => _chipInputHtml('cp', i, idx, params[idx] !== undefined && params[idx] !== '' ? params[idx] : String(pDefs[idx]?.def || ''), pDefs[idx] || {}, options);
@@ -13984,6 +14055,9 @@ function _renderCoeffProgramChipHtml(item, i, options = {}) {
         return _coeffProgramChipShellHtml(i, readonly, _coeffProgramLegacyFormulaHtml(i, legacyName, values, legacyDefs, { readonly }));
     }
     const pDefs = spec.params || [];
+    if (spec.nativeTransform) {
+        return _coeffProgramChipShellHtml(i, readonly, _coeffProgramNativeTransformFormulaHtml(item, i, pDefs, { readonly }));
+    }
     if (
         _coeffProgramVectorBinaryNames.includes(item.name)
         || _coeffProgramVectorUnaryNames.includes(item.name)

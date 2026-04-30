@@ -1372,7 +1372,7 @@ allocator pressure.
 Recommended v1 limits:
 
 ```text
-MAX_PROGRAM_TOKENS = 64 after macro expansion
+MAX_PROGRAM_TOKENS = 256 after macro/source lowering
 MAX_VECTOR_STACK   = 64 ring slots
 MAX_VECTOR_LEN     = 256 complex coefficients
 MAX_MACRO_DEPTH    = 8

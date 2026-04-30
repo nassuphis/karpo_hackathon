@@ -12,7 +12,30 @@ import re
 from dataclasses import dataclass
 
 from coeff_program_chain import (
+    EXPR_ABS,
+    EXPR_ADD,
+    EXPR_CF_AT,
+    EXPR_CF_AT_DYN,
+    EXPR_CONJ,
+    EXPR_DIV,
+    EXPR_IMAG,
+    EXPR_LITERAL,
+    EXPR_LOG,
+    EXPR_MUL,
+    EXPR_NEG,
+    EXPR_P1,
+    EXPR_P2,
+    EXPR_POLY_AT,
+    EXPR_POLY_AT_DYN,
+    EXPR_POLY_LEN,
+    EXPR_REAL,
+    EXPR_SUB,
+    EXPR_T1,
+    EXPR_T2,
+    EXPR_TOS_AT,
+    EXPR_TOS_AT_DYN,
     MAX_VECTOR_LEN,
+    _ExpressionParser,
     compile_coeff_program_chain,
     display_coeff_program_chain,
     legacy_registry,
@@ -23,6 +46,7 @@ MAX_COEFF_PROGRAM_SOURCE_BYTES = 64 * 1024
 
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _INDEX_RE = re.compile(r"^poly\[(\d+)\]$", re.IGNORECASE)
+_ANY_INDEX_RE = re.compile(r"^(cf|poly|tos)\[(.*)\]$", re.IGNORECASE)
 
 _VECTOR_BINARY_ALIASES = {
     "add": "add",
@@ -44,6 +68,8 @@ _VECTOR_UNARY_NAMES = {
     "conj",
     "sqrt",
     "log",
+    "real",
+    "imag",
 }
 
 _LEGACY_UNARY_NAMES = {
@@ -81,6 +107,10 @@ _STACK_ALIASES = {
 
 _SOURCE_NAMES = {"cf", "poly", "pop", "peek"}
 _TARGET_NAMES = {"poly", "push"}
+
+
+def _is_source_name(text):
+    return str(text or "").strip().lower() in _SOURCE_NAMES
 
 
 @dataclass(frozen=True)
@@ -186,12 +216,215 @@ def _target_selector(text):
     return raw
 
 
-def _lower_const(args, *, target):
+def _native_transform_args_and_andy(name, args):
+    registry = legacy_registry()["by_name"]
+    spec = registry.get(str(name or "").strip().lower())
+    if not spec or not spec.get("supports_andy"):
+        return list(args), None
+    raw_args = list(args)
+    fn_index = int(spec.get("fn_index") or 0)
+    # Mirrors coeffProgramNativeTransformOp's packed-arg cases for the stable
+    # coeff_legacy_registry.json ids: linear=14, exp=16, round=23, pow=24.
+    if fn_index in {14, 24}:
+        if len(raw_args) in {3, 5}:
+            return raw_args[:-1], raw_args[-1]
+        return raw_args, None
+    if fn_index == 16:
+        if len(raw_args) == 3:
+            return raw_args[:-1], raw_args[-1]
+        return raw_args, None
+    if fn_index == 23:
+        if len(raw_args) in {2, 3}:
+            return raw_args[:-1], raw_args[-1]
+        return raw_args, None
+    declared = list(spec.get("args") or [])
+    if len(raw_args) == len(declared) + 1:
+        return raw_args[:-1], raw_args[-1]
+    return raw_args, None
+
+
+def _append_typed_target(chain, value_type, *, target):
+    if target == "push":
+        return chain
+    if target != "poly":
+        raise CoeffProgramSourceError(f"unsupported typed target {target!r}")
+    if value_type != "vector":
+        raise CoeffProgramSourceError("poly assignment requires a vector-valued expression")
+    return chain + [["_typed_set_poly"]]
+
+
+def _typed_lower_scalar(text):
+    try:
+        expr = _ExpressionParser(_canonical_expr(text)).parse()
+    except Exception as exc:
+        raise CoeffProgramSourceError(str(exc))
+    chain = []
+    for token in expr.tokens:
+        op = int(token.get("op") or 0)
+        if op == EXPR_LITERAL:
+            chain.append(["_typed_push_scalar", f"{token.get('a', 0.0)}+{token.get('b', 0.0)}j"])
+        elif op == EXPR_P1:
+            chain.append(["_typed_push_scalar", "p1"])
+        elif op == EXPR_P2:
+            chain.append(["_typed_push_scalar", "p2"])
+        elif op == EXPR_T1:
+            chain.append(["_typed_push_scalar", "t1"])
+        elif op == EXPR_T2:
+            chain.append(["_typed_push_scalar", "t2"])
+        elif op == EXPR_POLY_LEN:
+            chain.append(["_typed_push_scalar", "poly_len"])
+        elif op in {EXPR_CF_AT, EXPR_POLY_AT, EXPR_TOS_AT}:
+            src = {EXPR_CF_AT: "cf", EXPR_POLY_AT: "poly", EXPR_TOS_AT: "tos"}[op]
+            chain.extend(_typed_lower_vector_source(src))
+            chain.append(["_typed_push_scalar", str(int(token.get("a") or 0))])
+            chain.append(["_typed_get_scalar"])
+        elif op in {EXPR_CF_AT_DYN, EXPR_POLY_AT_DYN, EXPR_TOS_AT_DYN}:
+            src = {EXPR_CF_AT_DYN: "cf", EXPR_POLY_AT_DYN: "poly", EXPR_TOS_AT_DYN: "tos"}[op]
+            chain.extend(_typed_lower_vector_source(src))
+            chain.append(["swap"])
+            chain.append(["_typed_get_scalar"])
+        elif op == EXPR_ADD:
+            chain.append(["_typed_binary", "add"])
+        elif op == EXPR_SUB:
+            chain.append(["_typed_binary", "subtract"])
+        elif op == EXPR_MUL:
+            chain.append(["_typed_binary", "multiply"])
+        elif op == EXPR_DIV:
+            chain.append(["_typed_binary", "divide"])
+        elif op == EXPR_CONJ:
+            chain.append(["_typed_unary", "conj"])
+        elif op == EXPR_NEG:
+            chain.append(["_typed_unary", "neg"])
+        elif op == EXPR_REAL:
+            chain.append(["_typed_unary", "real"])
+        elif op == EXPR_IMAG:
+            chain.append(["_typed_unary", "imag"])
+        elif op == EXPR_ABS:
+            chain.append(["_typed_unary", "abs"])
+        elif op == EXPR_LOG:
+            chain.append(["_typed_unary", "log"])
+        else:
+            raise CoeffProgramSourceError(f"unsupported scalar expression opcode {op}")
+    return chain
+
+
+def _typed_lower_vector_source(name):
+    raw = str(name or "").strip().lower()
+    if raw == "tos":
+        raw = "peek"
+    if raw not in _SOURCE_NAMES:
+        raise CoeffProgramSourceError(f"expected vector source, got {name!r}")
+    return [["_typed_push_vector", raw]]
+
+
+def _typed_lower_index_reference(text):
+    match = _ANY_INDEX_RE.match(str(text or "").strip())
+    if not match:
+        return None
+    name = match.group(1).lower()
+    index_expr = match.group(2).strip()
+    if not index_expr:
+        raise CoeffProgramSourceError(f"{name}[...] index expression is empty")
+    chain = _typed_lower_vector_source(name)
+    chain.extend(_typed_lower_scalar(index_expr))
+    chain.append(["_typed_get_scalar"])
+    return chain, "scalar"
+
+
+def _typed_lower_fill(args):
     if len(args) == 1:
-        return [["push_const", "poly_len", _canonical_expr(args[0])]]
+        length_expr = "poly_len"
+        value_expr = args[0]
+    elif len(args) == 2:
+        length_expr, value_expr = args
+    else:
+        raise CoeffProgramSourceError("fill/const requires value or length, value")
+    chain = _typed_lower_scalar(length_expr)
+    chain.extend(_typed_lower_scalar(value_expr))
+    chain.append(["_typed_fill"])
+    return chain, "vector"
+
+
+def _typed_lower_binary(name, args):
+    if len(args) != 2:
+        raise CoeffProgramSourceError(f"{name} requires two arguments in typed expressions")
+    chip = _VECTOR_BINARY_ALIASES[name]
+    chain, left_type = _typed_lower_value(args[0])
+    right_chain, right_type = _typed_lower_value(args[1])
+    chain.extend(right_chain)
+    chain.append(["_typed_binary", chip])
+    return chain, "vector" if "vector" in {left_type, right_type} else "scalar"
+
+
+def _typed_lower_unary(name, args):
+    if len(args) != 1:
+        raise CoeffProgramSourceError(f"{name} requires one argument in typed expressions")
+    chain, value_type = _typed_lower_value(args[0])
+    chain.append(["_typed_unary", "abs" if name == "mod" else name])
+    return chain, value_type
+
+
+def _typed_lower_affine(name, args):
+    if name == "scale":
+        if len(args) == 1:
+            src, multiplier = "pop", args[0]
+        elif len(args) == 2:
+            src, multiplier = args
+        else:
+            raise CoeffProgramSourceError("scale requires multiplier or source, multiplier")
+        return _typed_lower_binary("multiply", [src, multiplier])
+    if name == "shift":
+        if len(args) == 1:
+            src, offset = "pop", args[0]
+        elif len(args) == 2:
+            src, offset = args
+        else:
+            raise CoeffProgramSourceError("shift requires offset or source, offset")
+        return _typed_lower_binary("add", [src, offset])
     if len(args) == 2:
-        return [["push_const", _canonical_expr(args[0]), _canonical_expr(args[1])]]
-    raise CoeffProgramSourceError("fill/const requires value or length, value")
+        src, multiplier, offset = "pop", args[0], args[1]
+    elif len(args) == 3:
+        src, multiplier, offset = args
+    else:
+        raise CoeffProgramSourceError("linear requires multiplier, offset or source, multiplier, offset")
+    chain, multiplied_type = _typed_lower_binary("multiply", [src, multiplier])
+    offset_chain, offset_type = _typed_lower_value(offset)
+    chain.extend(offset_chain)
+    chain.append(["_typed_binary", "add"])
+    return chain, "vector" if "vector" in {multiplied_type, offset_type} else "scalar"
+
+
+def _typed_lower_value(text):
+    raw = str(text or "").strip()
+    if not raw:
+        raise CoeffProgramSourceError("expression is empty")
+    indexed = _typed_lower_index_reference(raw)
+    if indexed is not None:
+        return indexed
+    lowered = raw.lower()
+    if lowered in {"cf", "poly", "pop", "peek", "tos"}:
+        return _typed_lower_vector_source(lowered), "vector"
+    call = _parse_call(raw)
+    if call:
+        name, args = call
+        if name in {"fill", "const", "push_const"}:
+            return _typed_lower_fill(args)
+        if name in {"arange", "range", "push_range"}:
+            return _lower_range("range", args), "vector"
+        if name in {"linspace", "push_linspace"}:
+            return _lower_range("linspace", args), "vector"
+        if name in _VECTOR_BINARY_ALIASES:
+            return _typed_lower_binary(name, args)
+        if name in _VECTOR_UNARY_NAMES:
+            return _typed_lower_unary(name, args)
+        if name in {"scale", "shift", "linear"}:
+            return _typed_lower_affine(name, args)
+    return _typed_lower_scalar(raw), "scalar"
+
+
+def _lower_const(args, *, target):
+    chain, value_type = _typed_lower_fill(args)
+    return _append_typed_target(chain, value_type, target=target)
 
 
 def _lower_range(name, args):
@@ -205,29 +438,8 @@ def _lower_range(name, args):
 
 
 def _lower_affine(name, args, *, target):
-    if name == "scale":
-        if len(args) == 1:
-            src, a = "pop", args[0]
-        elif len(args) == 2:
-            src, a = _source_selector(args[0]), args[1]
-        else:
-            raise CoeffProgramSourceError("scale requires multiplier or source, multiplier")
-        return [["affine", target, src, _canonical_expr(a), "0"]]
-    if name == "shift":
-        if len(args) == 1:
-            src, b = "pop", args[0]
-        elif len(args) == 2:
-            src, b = _source_selector(args[0]), args[1]
-        else:
-            raise CoeffProgramSourceError("shift requires offset or source, offset")
-        return [["affine", target, src, "1", _canonical_expr(b)]]
-    if len(args) == 2:
-        src, a, b = "pop", args[0], args[1]
-    elif len(args) == 3:
-        src, a, b = _source_selector(args[0]), args[1], args[2]
-    else:
-        raise CoeffProgramSourceError("linear requires multiplier, offset or source, multiplier, offset")
-    return [["affine", target, src, _canonical_expr(a), _canonical_expr(b)]]
+    chain, value_type = _typed_lower_affine(name, args)
+    return _append_typed_target(chain, value_type, target=target)
 
 
 def _lower_vector_binary(name, args, *, target):
@@ -235,6 +447,9 @@ def _lower_vector_binary(name, args, *, target):
     if len(args) == 0:
         src1, src2 = "pop", "pop"
     elif len(args) == 2:
+        if not (_is_source_name(args[0]) and _is_source_name(args[1])):
+            chain, value_type = _typed_lower_binary(name, args)
+            return _append_typed_target(chain, value_type, target=target)
         src1, src2 = _source_selector(args[0]), _source_selector(args[1])
     else:
         raise CoeffProgramSourceError(f"{name} requires no args or src1, src2")
@@ -256,13 +471,16 @@ def _lower_vector_unary(name, args, *, target):
     if len(args) == 0:
         src = "pop"
     elif len(args) == 1:
+        if str(args[0]).strip().lower() == "cf" or not _is_source_name(args[0]):
+            chain, value_type = _typed_lower_unary(name, args)
+            return _append_typed_target(chain, value_type, target=target)
         src = _source_selector(args[0], allow_cf=False)
     else:
         raise CoeffProgramSourceError(f"{name} requires no args or one source")
     return [[chip, target, src]]
 
 
-def _lower_legacy_call(name, args, *, target):
+def _lower_native_transform_call(name, args, *, target):
     if len(args) == 0:
         src = "pop"
         fn_args = []
@@ -274,7 +492,23 @@ def _lower_legacy_call(name, args, *, target):
         else:
             src = "pop"
             fn_args = args
-    return [["legacy", name, src, target] + [_canonical_expr(arg) for arg in fn_args]]
+    fn_args, andy_arg = _native_transform_args_and_andy(name, fn_args)
+    if fn_args:
+        try:
+            chain = []
+            for arg in fn_args:
+                chain.extend(_typed_lower_scalar(arg))
+            chip = ["_native_transform_stack_args", name, src, target, str(len(fn_args))]
+            if andy_arg is not None:
+                chip.append(_canonical_expr(andy_arg))
+            chain.append(chip)
+            return chain
+        except CoeffProgramSourceError:
+            pass
+    fallback_args = list(fn_args)
+    if andy_arg is not None:
+        fallback_args.append(andy_arg)
+    return [["_native_transform", name, src, target] + [_canonical_expr(arg) for arg in fallback_args]]
 
 
 def _lower_call(name, args, *, target="push"):
@@ -314,10 +548,17 @@ def _lower_call(name, args, *, target="push"):
             raise CoeffProgramSourceError("blend writes to stack; assign it with emit or set afterward")
         if len(args) != 1:
             raise CoeffProgramSourceError("blend requires t")
-        return [["blend", _canonical_expr(args[0])]]
+        chain = _typed_lower_scalar(args[0])
+        chain.append(["_typed_blend"])
+        return chain
     if name in {"poke_poly", "poke_tos"}:
         if len(args) != 2:
             raise CoeffProgramSourceError(f"{name} requires index, value")
+        if name == "poke_poly":
+            chain = _typed_lower_scalar(args[0])
+            chain.extend(_typed_lower_scalar(args[1]))
+            chain.append(["_typed_poke_poly"])
+            return chain
         return [[name, _canonical_expr(args[0]), _canonical_expr(args[1])]]
     if name == "littlewood":
         if len(args) not in {2, 3}:
@@ -331,11 +572,11 @@ def _lower_call(name, args, *, target="push"):
             raise CoeffProgramSourceError("macro name is empty")
         return [["macro", macro_name]]
     if name == "legacy":
-        if len(args) < 3:
-            raise CoeffProgramSourceError("legacy requires name, src, tgt, optional args")
-        return [["legacy", args[0].strip().lower(), _source_selector(args[1]), _target_selector(args[2])] + [_canonical_expr(arg) for arg in args[3:]]]
+        raise CoeffProgramSourceError(
+            "legacy(...) is not valid in coeff source text; use Chain mode for legacy chains or call the transform directly"
+        )
     if name in _LEGACY_UNARY_NAMES or name in legacy_registry()["by_name"]:
-        return _lower_legacy_call(name, args, target=target)
+        return _lower_native_transform_call(name, args, target=target)
     raise CoeffProgramSourceError(f"unknown coeff program source function {name!r}")
 
 
@@ -356,7 +597,19 @@ def _lower_statement(statement):
                     line=statement.line,
                     column=statement.column,
                 )
-            return [["poke_poly", str(idx), _canonical_expr(rhs)]]
+            chain = _typed_lower_scalar(str(idx))
+            chain.extend(_typed_lower_scalar(rhs))
+            chain.append(["_typed_poke_poly"])
+            return chain
+        dynamic_index_match = re.match(r"^poly\[(.*)\]$", lhs, flags=re.IGNORECASE)
+        if dynamic_index_match:
+            index_expr = dynamic_index_match.group(1).strip()
+            if not index_expr:
+                raise CoeffProgramSourceError("poly[...] index expression is empty", line=statement.line, column=statement.column)
+            chain = _typed_lower_scalar(index_expr)
+            chain.extend(_typed_lower_scalar(rhs))
+            chain.append(["_typed_poke_poly"])
+            return chain
         if lhs.lower() != "poly":
             raise CoeffProgramSourceError("only poly assignments are supported in v1", line=statement.line, column=statement.column)
         call = _parse_call(rhs)
@@ -367,7 +620,8 @@ def _lower_statement(statement):
             return [["set", "poly", bare]]
         if _IDENT_RE.match(bare):
             return _lower_call(bare, [], target="poly")
-        raise CoeffProgramSourceError("poly assignment requires a source or function call", line=statement.line, column=statement.column)
+        chain, value_type = _typed_lower_value(rhs)
+        return _append_typed_target(chain, value_type, target="poly")
 
     call = _parse_call(text)
     if call:

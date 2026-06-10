@@ -21,8 +21,12 @@ The program's job is to leave the desired coefficient vector in `poly`.
 ## Syntax Basics
 
 - Statements are separated by newlines or `;`.
-- `#` starts a comment when it appears outside parentheses and brackets.
+- `#` starts a comment that runs to the end of the line, including inside
+  parentheses and brackets (the statement continues on the next line there).
 - Parentheses and brackets may span lines.
+- Only value-producing forms may appear on the right of `poly = ...`.
+  `affine(...)`, `macro(...)`, `poke_poly(...)`, and `poke_tos(...)` write
+  their own targets and are statements only.
 - Function names and register names are case-insensitive after parsing.
 - `legacy(...)` is not valid in text mode. Use direct transform names instead,
   or use Chain mode for old legacy chains.
@@ -81,7 +85,11 @@ Values:
 Operators and functions:
 
 - Binary operators: `+`, `-`, `*`, `/`.
-- Power: `**` with an integer literal exponent only, magnitude <= 32.
+- Power: `**` with an integer literal exponent only, magnitude <= 32. The
+  expanded expression still has to fit the 32-token scalar budget, so deep
+  bases or nested `**` reduce the usable exponent. Unary minus binds tighter
+  than `**`: `-2**2` is `(-2)**2 = 4`, unlike Python. `**` does not chain;
+  write `(x**3)**2` instead of `x**3**2`.
 - Unary signs: `+x`, `-x`.
 - Functions: `conj(x)`, `neg(x)`, `real(x)`, `imag(x)`, `abs(x)`, `mod(x)`,
   `angle(x)`, `sqrt(x)`, `log(x)`, `exp(x)`, `sin(x)`, `cos(x)`, `tan(x)`,
@@ -540,23 +548,31 @@ Currently callable transform-style commands:
 | `cummax` | none | Cumulative max-style legacy transform. |
 | `sort_cumsum` | none | Sort then cumulative sum. |
 | `swirler` | none | Legacy swirler transform. |
-| `exp_affine` | `a`, `b`, optional `andy` | Applies native affine exp form `exp(src*a+b)`; `a` and `b` may be complex expressions. Plain `exp(x)` is typed unary exponentiation. |
-| `cos` | none | Elementwise complex cosine. |
-| `sin` | none | Elementwise complex sine. |
-| `tan` | none | Elementwise complex tangent. |
-| `cosh` | none | Elementwise complex hyperbolic cosine. |
-| `sinh` | none | Elementwise complex hyperbolic sine. |
-| `tanh` | none | Elementwise complex hyperbolic tangent. |
-| `round` | `a`, optional `andy` | Legacy round affine form; `a` may be complex. |
-| `invpower` | `k`, optional `andy` | Inverse power transform; may change length. |
+| `exp_affine` | `a`, `b`, optional `andy` | Applies native affine exp form `exp(src*a+b)`; `a` and `b` may be complex expressions. Args default to `a=1, b=0`. Plain `exp(x)` is typed unary exponentiation. |
+| `pow_affine` | `a`, `e`, optional `andy` | Applies native affine power form `pow(src*a, e)`; args default to `a=1, e=1`. Plain `pow(x, y)` is typed binary power. |
+| `power_series` | `k`, optional `andy` | Native `(i+1) * geometric series through z^k` transform. Plain `power(x, y)` is typed binary power. |
+| `cos` | optional `andy` | Elementwise complex cosine. Bare `cos(src)` is the typed unary; `cos(src, andy)` reaches the native transform with blending. |
+| `sin` | optional `andy` | Elementwise complex sine; same bare/andy split as `cos`. |
+| `tan` | optional `andy` | Elementwise complex tangent; same bare/andy split as `cos`. |
+| `cosh` | optional `andy` | Elementwise complex hyperbolic cosine; same bare/andy split as `cos`. |
+| `sinh` | optional `andy` | Elementwise complex hyperbolic sine; same bare/andy split as `cos`. |
+| `tanh` | optional `andy` | Elementwise complex hyperbolic tangent; same bare/andy split as `cos`. |
+| `round` | `a`, optional `andy` | Legacy round affine form; `a` may be complex. The old component form `round(src, a, b, andy)` is also accepted. |
+| `invpower` | `k`, optional `andy` | Inverse power transform; may change length. `k` magnitude is capped at 4096. |
 | `roots_cm` | `pad`, optional `andy` | `pad` is `hi` or `lo`; may change length. |
-| `roots` | `k`, `pad`, optional `andy` | `pad` is `hi` or `lo`; may change length. |
+| `roots` | `k`, `pad`, optional `andy` | `pad` is `hi` or `lo`; may change length. `k` magnitude is capped at 4096. |
 
-Names shadowed by first-class text syntax:
+Names shadowed by first-class text syntax (use the alias for the native form):
 
-- `linear` is a text-mode affine helper, not the old native `linear` bridge.
+- `linear` is the text-mode affine helper (`linear(src, a, b)`); the 4-arg
+  form `linear(src, a, b, andy)` reaches the old native `linear` bridge so
+  andy blending stays expressible.
 - `conj` is a typed unary operation.
-- `pow` and `power` are vector/scalar binary power operations.
+- `pow` and `power` are vector/scalar binary power operations; use
+  `pow_affine(...)` for native `pow(src*a, e)` and `power_series(k)` for the
+  native geometric-series transform.
+- `exp` is typed unary exponentiation; use `exp_affine(...)` for the native
+  affine form.
 
 ## Complete Examples
 
@@ -616,9 +632,23 @@ emit
 - Source text size: 64 KiB.
 - Compiled tokens after macro/source lowering: 256.
 - Stack depth: 64.
-- Max vector length: 256.
+- Max vector length: 256. Static `range`/`linspace`/`push_const` lengths are
+  checked at compile time; dynamic lengths at run time.
 - Max scalar-expression tokens: 32.
-- Macro expansion depth: 8.
+- Max distinct scalar expressions per program: 64 (identical expressions
+  share one slot).
+- Macro expansion depth: 8; total expansion is budgeted at 256 chips and 256
+  macro calls.
+- Integer args to native transforms (`power_series`, `invpower`, `roots` k
+  and iteration counts): magnitude capped at 4096.
+
+Numeric notes:
+
+- Signed zero is canonicalized: `-0.0` and `0.0` compile to identical tokens
+  and fingerprints, and native `log`/`sqrt`/`angle` use the principal branch.
+  One corner: a statically folded `sqrt` of a negative real with a literal
+  `-0` imaginary part follows Python's signed-zero branch (`-i`), while the
+  dynamic path canonicalizes to `+i`.
 
 If execution fails, common causes are:
 

@@ -62,8 +62,9 @@ class TestCoeffProgramChain(unittest.TestCase):
         token = compiled["tokens"][0]
         self.assertEqual(token["n_args"], 4)
         self.assertEqual(token["expr_refs"], [0, 1, 2, 3])
-        self.assertEqual(token["andy_expr_ref"], 4)
-        self.assertEqual(compiled["scalar_expr_count"], 5)
+        # andy real(p1) dedups to the multiplier's real-component expression.
+        self.assertEqual(token["andy_expr_ref"], 0)
+        self.assertEqual(compiled["scalar_expr_count"], 4)
         self.assertFalse(compiled["uses_legacy_chain_equivalent"])
 
     def test_reported_littlewood_exp_program_shape_compiles(self):
@@ -655,6 +656,211 @@ class TestCoeffProgramChain(unittest.TestCase):
         old_with_andy = compile_coeff_program_chain([["legacy", "round", "poly", "poly", "1", "2", "0.25"]])
         self.assertEqual(old_with_andy["tokens"][0]["args"], [1.0, 2.0])
         self.assertEqual(old_with_andy["tokens"][0]["andy"], 0.25)
+
+
+class TestCoeffProgramReviewFixes(unittest.TestCase):
+    """Regression tests for the code-review-1.md fixes."""
+
+    def _parse(self, text, strict=False):
+        from coeff_program_source import parse_coeff_program_source
+        return parse_coeff_program_source(text, strict=strict)
+
+    def test_assignment_to_range_and_linspace_sets_poly(self):
+        for text in ("poly = range(5)", "poly = linspace(4)", "poly = arange(1, 6)"):
+            parsed = self._parse(text)
+            self.assertEqual(parsed["diagnostics"], [], text)
+            self.assertEqual(parsed["chain"][-1], ["_typed_set_poly"], text)
+
+    def test_assignment_to_statement_only_forms_is_rejected(self):
+        for text in ("poly = affine(poly, cf, 1, 0)", "poly = macro(x)", "poly = poke_tos(1, 2)"):
+            parsed = self._parse(text)
+            self.assertTrue(parsed["diagnostics"], text)
+
+    def test_lowering_errors_carry_statement_line_numbers(self):
+        parsed = self._parse("poly = sin(poly)\npoly = nosuchfn(poly)")
+        self.assertEqual(len(parsed["diagnostics"]), 1)
+        self.assertEqual(parsed["diagnostics"][0]["line"], 2)
+
+    def test_compound_index_expressions_parse_in_value_position(self):
+        from coeff_program_chain import compile_coeff_program_chain
+        parsed = self._parse("poly = add(cf[0]*cf[1], poly)")
+        self.assertEqual(parsed["diagnostics"], [])
+        compile_coeff_program_chain(parsed["chain"])
+        parsed = self._parse("poly = add(cf[poly_len-1], poly)")
+        self.assertEqual(parsed["diagnostics"], [])
+
+    def test_round_old_form_compiles_from_source_text(self):
+        from coeff_program_chain import COEFF_OP_NATIVE_TRANSFORM, compile_coeff_program_chain
+        parsed = self._parse("poly = round(poly, 1, 2, 0.5)")
+        self.assertEqual(parsed["diagnostics"], [])
+        compiled = compile_coeff_program_chain(parsed["chain"])
+        token = next(t for t in compiled["tokens"] if t["op"] == COEFF_OP_NATIVE_TRANSFORM)
+        self.assertEqual(token["fn_index"], 23)
+        self.assertEqual(token["andy"], 0.5)
+
+    def test_trig_with_andy_routes_to_native_transform(self):
+        from coeff_program_chain import (
+            COEFF_OP_NATIVE_TRANSFORM,
+            COEFF_OP_VECTOR_UNARY,
+            compile_coeff_program_chain,
+        )
+        parsed = self._parse("poly = cos(poly, 0.5)")
+        self.assertEqual(parsed["diagnostics"], [])
+        compiled = compile_coeff_program_chain(parsed["chain"])
+        token = compiled["tokens"][0]
+        self.assertEqual(token["op"], COEFF_OP_NATIVE_TRANSFORM)
+        self.assertEqual(token["fn_index"], 17)
+        self.assertEqual(token["andy"], 0.5)
+        bare = compile_coeff_program_chain(self._parse("poly = cos(poly)")["chain"])
+        self.assertEqual(bare["tokens"][0]["op"], COEFF_OP_VECTOR_UNARY)
+
+    def test_shadowed_transform_aliases_compile(self):
+        from coeff_program_chain import COEFF_OP_NATIVE_TRANSFORM, compile_coeff_program_chain
+        cases = {
+            "poly = pow_affine(poly, 2, 1)": 24,
+            "poly = power_series(poly, 8)": 25,
+            "poly = exp_affine(poly)": 16,
+            "poly = linear(poly, 2, 1, 0.5)": 14,
+        }
+        for text, fn_index in cases.items():
+            parsed = self._parse(text)
+            self.assertEqual(parsed["diagnostics"], [], text)
+            compiled = compile_coeff_program_chain(parsed["chain"])
+            token = next(t for t in compiled["tokens"] if t["op"] == COEFF_OP_NATIVE_TRANSFORM)
+            self.assertEqual(token["fn_index"], fn_index, text)
+
+    def test_scalar_expr_count_is_capped_and_deduped(self):
+        from coeff_program_chain import MAX_SCALAR_EXPRS, compile_coeff_program_chain
+        big = [["poke_poly", str(i % 4), f"p1+p1*{i}"] for i in range(MAX_SCALAR_EXPRS + 6)]
+        with self.assertRaisesRegex(RuntimeError, "scalar expressions"):
+            compile_coeff_program_chain(big)
+        deduped = compile_coeff_program_chain([
+            ["poke_poly", "0", "p1+p2"],
+            ["poke_poly", "1", "p1+p2"],
+        ])
+        self.assertEqual(deduped["scalar_expr_count"], 1)
+        refs = [t["expr_refs"][1] for t in deduped["tokens"]]
+        self.assertEqual(refs, [0, 0])
+
+    def test_macro_expansion_is_budgeted(self):
+        from coeff_program_chain import compile_coeff_program_chain
+
+        def resolver(macro_id):
+            n = int(macro_id[1:])
+            if n >= 8:
+                return [["push_range", "4"], ["emit"]]
+            return [["macro", f"m{n + 1}"]] * 4
+
+        with self.assertRaisesRegex(RuntimeError, "macro"):
+            compile_coeff_program_chain([["macro", "m1"]], macro_resolver=resolver)
+
+        def small(macro_id):
+            return [["push_range", "4"], ["emit"]]
+
+        ok = compile_coeff_program_chain([["macro", "a"], ["macro", "b"]], macro_resolver=small)
+        self.assertEqual(ok["token_count"], 4)
+
+    def test_power_expansion_is_budgeted_before_materializing(self):
+        from coeff_program_chain import compile_coeff_program_chain
+        with self.assertRaises(RuntimeError):
+            compile_coeff_program_chain([["push_scalar", "(((p1**32)**32)**32)**32"], ["pop"]])
+        ok = compile_coeff_program_chain([["push_scalar", "p1**16"], ["pop"]])
+        self.assertEqual(ok["token_count"], 2)
+        with self.assertRaisesRegex(RuntimeError, "exponent magnitude"):
+            compile_coeff_program_chain([["push_scalar", "p1**33"], ["pop"]])
+
+    def test_signed_zero_is_canonical_in_token_args(self):
+        import math
+        from coeff_program_chain import compile_coeff_program_chain
+        negative = compile_coeff_program_chain([["push_const", "4", "-(0)"], ["emit"]])
+        positive = compile_coeff_program_chain([["push_const", "4", "0"], ["emit"]])
+        self.assertEqual(negative["fingerprint"], positive["fingerprint"])
+        for value in negative["tokens"][0]["args"] + negative["tokens"][0].get("args_im", []):
+            self.assertGreater(math.copysign(1.0, value), 0.0)
+
+    def test_static_range_lengths_are_bounds_checked(self):
+        from coeff_program_chain import compile_coeff_program_chain
+        for bad in ("500", "0", "-3", "-1", "250+250"):
+            with self.assertRaisesRegex(RuntimeError, r"\[1,256\]", msg=bad):
+                compile_coeff_program_chain([["push_range", bad], ["emit"]])
+        for good in ("4", "poly_len", "2+2"):
+            compile_coeff_program_chain([["push_range", good], ["emit"]])
+        dynamic = compile_coeff_program_chain([["push_range", "poly_len-1"], ["emit"]])
+        self.assertEqual(dynamic["scalar_expr_count"], 1)
+
+    def test_roll_shift_and_poke_index_are_validated(self):
+        from coeff_program_chain import compile_coeff_program_chain
+        with self.assertRaisesRegex(RuntimeError, "roll n"):
+            compile_coeff_program_chain([["roll", "poly", "poly", "1e18"]])
+        with self.assertRaisesRegex(RuntimeError, "poke_tos index"):
+            compile_coeff_program_chain([["poke_tos", "1.9", "5"]])
+        with self.assertRaisesRegex(RuntimeError, "stack arg count"):
+            compile_coeff_program_chain([["_native_transform_stack_args", "linear", "poly", "poly", "1.5"]])
+
+    def test_legacy_int_args_are_clamped(self):
+        from coeff_program_chain import compile_coeff_program_chain
+        with self.assertRaisesRegex(RuntimeError, "4096"):
+            compile_coeff_program_chain([["legacy", "power", "poly", "poly", "1000000000"]])
+        compile_coeff_program_chain([["legacy", "power", "poly", "poly", "64"]])
+
+    def test_expression_constants_tau_and_bare_i_fold(self):
+        import math
+        from coeff_program_chain import compile_coeff_program_chain
+        cases = {
+            "tau": complex(2.0 * math.pi, 0.0),
+            "tau_i": complex(0.0, 2.0 * math.pi),
+            "pi2": complex(2.0 * math.pi, 0.0),
+            "i": complex(0.0, 1.0),
+        }
+        for name, want in cases.items():
+            compiled = compile_coeff_program_chain([["push_const", "2", name], ["emit"]])
+            token = compiled["tokens"][0]
+            self.assertAlmostEqual(token["args"][1], want.real, msg=name)
+            self.assertAlmostEqual(token["args_im"][1], want.imag, msg=name)
+            self.assertEqual(compiled["scalar_expr_count"], 0, name)
+
+    def test_source_comments_and_semicolons(self):
+        parsed = self._parse("# leading comment\ncf; rev # trailing\npoly = pop")
+        self.assertEqual(parsed["diagnostics"], [])
+        self.assertEqual(parsed["statement_count"], 3)
+        parsed = self._parse("push_scalar(p1 # inline comment\n + 1)\ndrop")
+        self.assertEqual(parsed["diagnostics"], [])
+
+    def test_source_stack_ops_and_scalar_dup(self):
+        from coeff_program_chain import compile_coeff_program_chain
+        parsed = self._parse("push_scalar(1)\ndup\nswap\ndrop\ndrop\ncf\nflush")
+        self.assertEqual(parsed["diagnostics"], [])
+        compile_coeff_program_chain(parsed["chain"])
+
+    def test_source_macro_statement_round_trips(self):
+        from coeff_program_chain import compile_coeff_program_chain
+        parsed = self._parse("macro(my-prog)\npoly = pop")
+        self.assertEqual(parsed["diagnostics"], [])
+
+        def resolver(macro_id):
+            self.assertEqual(macro_id, "my-prog")
+            return [["push_range", "4"]]
+
+        compiled = compile_coeff_program_chain(parsed["chain"], macro_resolver=resolver)
+        self.assertEqual(compiled["macro_expansions"], 1)
+
+    def test_bare_tos_is_a_typed_vector_source(self):
+        from coeff_program_chain import compile_coeff_program_chain
+        parsed = self._parse("cf\npoly = add(tos, poly)\ndrop")
+        self.assertEqual(parsed["diagnostics"], [])
+        compile_coeff_program_chain(parsed["chain"])
+
+    def test_registry_rejects_unknown_enum_choices(self):
+        import coeff_program_chain as chain_mod
+        original = dict(chain_mod._ENUM_ARG_VALUES)
+        try:
+            chain_mod._ENUM_ARG_VALUES.clear()
+            chain_mod._ENUM_ARG_VALUES["hi"] = 0.0
+            with self.assertRaisesRegex(RuntimeError, "enum choice"):
+                chain_mod._load_legacy_registry()
+        finally:
+            chain_mod._ENUM_ARG_VALUES.clear()
+            chain_mod._ENUM_ARG_VALUES.update(original)
 
 
 if __name__ == "__main__":

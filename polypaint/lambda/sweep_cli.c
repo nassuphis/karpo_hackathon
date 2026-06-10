@@ -212,15 +212,18 @@ static const char *findKeyIn(const char *start, const char *end, const char *key
     return NULL;
 }
 
-/* Parse a JSON array of numbers: [1.0, 2.0, ...] */
+/* Parse a JSON array of numbers: [1.0, 2.0, ...].
+ * Returns -1 when the array holds more than maxCount elements so callers can
+ * reject oversized input instead of silently operating on a truncated prefix. */
 static int parseNumArray(const char *p, double *out, int maxCount) {
     p = skip(p);
     if (*p != '[') return 0;
     p++;
     int count = 0;
-    while (*p && *p != ']' && count < maxCount) {
+    while (*p && *p != ']') {
         p = skip(p);
         if (*p == ']') break;
+        if (count >= maxCount) return -1;
         out[count++] = parseNum(&p);
         p = skip(p);
         if (*p == ',') p++;
@@ -2437,6 +2440,19 @@ static inline void c_div(double ar, double ai, double br, double bi, double *rr,
     *rr = (ar*br + ai*bi) / d;
     *ri = (ai*br - ar*bi) / d;
 }
+/* Scaled (Smith) division for the Coeff Program VM: correct over the full
+ * finite range so dynamic evaluation matches the Python compiler's static
+ * folds. c_div keeps its small-denominator cutoff for the param transforms
+ * that rely on snapping near-pole values to zero. */
+static inline void c_div_full(double ar, double ai, double br, double bi, double *rr, double *ri) {
+    double scale = fabs(br) > fabs(bi) ? fabs(br) : fabs(bi);
+    if (scale == 0.0) { *rr = 0; *ri = 0; return; }
+    double sr = br / scale, si = bi / scale;
+    double d = sr * sr + si * si;
+    double nar = ar / scale, nai = ai / scale;
+    *rr = (nar * sr + nai * si) / d;
+    *ri = (nai * sr - nar * si) / d;
+}
 static inline double c_scale_safe(double scale, double factor) {
     if (!isfinite(scale)) {
         if (fabs(factor) < 1e-300) return 0.0;
@@ -2526,8 +2542,10 @@ static inline void c_log(double ar, double ai, double *rr, double *ri) {
     /* Canonicalize signed zero so atan2 chooses the principal branch. */
     if (ar == 0.0) ar = 0.0;
     if (ai == 0.0) ai = 0.0;
-    double m2 = ar*ar + ai*ai;
-    *rr = (m2 > 0) ? 0.5 * log(m2) : -700.0;
+    /* hypot avoids the |z|^2 underflow/overflow that made tiny or huge
+     * magnitudes diverge from the Python compiler's static folds. */
+    double m = hypot(ar, ai);
+    *rr = (m > 0.0) ? log(m) : -700.0;
     *ri = atan2(ai, ar);
 }
 
@@ -2541,9 +2559,11 @@ static inline void c_powr(double r, double i, double p, double *rr, double *ri) 
     /* Canonicalize signed zero so atan2 chooses the principal branch. */
     if (r == 0.0) r = 0.0;
     if (i == 0.0) i = 0.0;
-    double m2 = r*r + i*i;
-    if (m2 < 1e-60) { *rr = 0; *ri = 0; return; }
-    double m = sqrt(m2), a = atan2(i, r), mp = pow(m, p);
+    /* hypot avoids the |z|^2 underflow/overflow that zeroed sqrt() of tiny
+     * magnitudes and broke huge ones (diverging from Python static folds). */
+    double m = hypot(r, i);
+    if (m == 0.0) { *rr = 0; *ri = 0; return; }
+    double a = atan2(i, r), mp = pow(m, p);
     *rr = mp * cos(p * a); *ri = mp * sin(p * a);
 }
 static inline void c_powc(double ar, double ai, double br, double bi, double *rr, double *ri) {
@@ -3791,7 +3811,12 @@ static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
     double stackI[COEFF_PROGRAM_MAX_EXPR_NUMS / COEFF_PROGRAM_EXPR_STRIDE];
     int sp = 0;
     for (int pc = 0; pc < expr->n_nums; pc += COEFF_PROGRAM_EXPR_STRIDE) {
-        int op = (int)expr->nums[pc];
+        double opRaw = expr->nums[pc];
+        if (!(opRaw >= 0.0 && opRaw <= 255.0)) {
+            fprintf(stderr, "coeff_program scalar expression opcode out of range\n");
+            return 1;
+        }
+        int op = (int)opRaw;
         double a = expr->nums[pc + 1];
         double b = expr->nums[pc + 2];
         if (op == COEFF_EXPR_LITERAL || op == COEFF_EXPR_P1 || op == COEFF_EXPR_P2 ||
@@ -3838,7 +3863,13 @@ static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
                                 idx, ws->stack_len[slot]);
                         return 1;
                     }
-                    stackR[sp] = ws->stack_re[slot][idx]; stackI[sp] = ws->stack_im[slot][idx];
+                    if (ws->stack_type[slot] == COEFF_STACK_SCALAR) {
+                        /* push_scalar never writes stack_re/stack_im; reading
+                         * them here returned a previous row's stale vector. */
+                        stackR[sp] = ws->stack_scalar_re[slot]; stackI[sp] = ws->stack_scalar_im[slot];
+                    } else {
+                        stackR[sp] = ws->stack_re[slot][idx]; stackI[sp] = ws->stack_im[slot][idx];
+                    }
                 }
             }
             sp++;
@@ -3871,13 +3902,17 @@ static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
                 }
                 uint16_t slot = (uint16_t)((ws->stack_head + COEFF_PROGRAM_MAX_VECTOR_STACK - 1) %
                                            COEFF_PROGRAM_MAX_VECTOR_STACK);
-                if (coeff_stack_require_vector(ws, slot, "tos scalar expression") != 0) return 1;
                 if (idx < 0 || idx >= ws->stack_len[slot]) {
                     fprintf(stderr, "coeff_program scalar expression tos[%d] out of range for top vector length=%d\n",
                             idx, ws->stack_len[slot]);
                     return 1;
                 }
-                stackR[sp - 1] = ws->stack_re[slot][idx]; stackI[sp - 1] = ws->stack_im[slot][idx];
+                if (ws->stack_type[slot] == COEFF_STACK_SCALAR) {
+                    /* Same scalar-aware read as the static tosN path. */
+                    stackR[sp - 1] = ws->stack_scalar_re[slot]; stackI[sp - 1] = ws->stack_scalar_im[slot];
+                } else {
+                    stackR[sp - 1] = ws->stack_re[slot][idx]; stackI[sp - 1] = ws->stack_im[slot][idx];
+                }
             }
             continue;
         }
@@ -3915,12 +3950,19 @@ static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
         } else if (op == COEFF_EXPR_MUL) {
             c_mul(ar, ai, br, bi, &stackR[sp - 1], &stackI[sp - 1]);
         } else if (op == COEFF_EXPR_DIV) {
-            double d = br * br + bi * bi;
-            if (d <= 1e-300) {
+            double scale = fabs(br) > fabs(bi) ? fabs(br) : fabs(bi);
+            if (scale == 0.0) {
                 fprintf(stderr, "coeff_program scalar expression division by zero\n");
                 return 1;
             }
-            c_div(ar, ai, br, bi, &stackR[sp - 1], &stackI[sp - 1]);
+            /* Scaled division covers the full finite range, matching the
+             * Python compiler's static folds; c_div's 1e-15 denominator
+             * cutoff silently zeroed e.g. 1/1e-16 here. */
+            double sr = br / scale, si = bi / scale;
+            double d = sr * sr + si * si;
+            double nar = ar / scale, nai = ai / scale;
+            stackR[sp - 1] = (nar * sr + nai * si) / d;
+            stackI[sp - 1] = (nai * sr - nar * si) / d;
         } else {
             fprintf(stderr, "coeff_program unknown scalar expression opcode %d\n", op);
             return 1;
@@ -4038,6 +4080,17 @@ static int coeffAndyValue(const CoeffProgram *program, const CoeffProgramToken *
     return 0;
 }
 
+/* Mirrors MAX_LEGACY_INT_ARG in coeff_program_chain.py. Clamping before the
+ * double->int conversion also avoids UB on out-of-range values and bounds the
+ * per-row work of iteration-count args (power/invpower/roots). */
+#define COEFF_LEGACY_MAX_INT_ARG 4096
+static int coeffLegacyIntArg(double value, int fallback) {
+    if (!isfinite(value)) return fallback;
+    if (value > (double)COEFF_LEGACY_MAX_INT_ARG) return COEFF_LEGACY_MAX_INT_ARG;
+    if (value < -(double)COEFF_LEGACY_MAX_INT_ARG) return -COEFF_LEGACY_MAX_INT_ARG;
+    return (int)value;
+}
+
 static int coeffLegacyApply(int fnIndex, double *re, double *im, int *n,
                             const double *args, int nArgs) {
     switch (fnIndex) {
@@ -4081,10 +4134,10 @@ static int coeffLegacyApply(int fnIndex, double *re, double *im, int *n,
                                nArgs > 1 ? args[1] : 0.0,
                                nArgs > 2 ? args[2] : 1.0,
                                nArgs > 3 ? args[3] : 0.0); return 0;
-        case 25: ct_power(re, im, n, nArgs > 0 ? (int)args[0] : 8); return 0;
-        case 26: ct_invpower(re, im, n, nArgs > 0 ? (int)args[0] : 4); return 0;
-        case 27: return ct_roots_cm(re, im, n, nArgs > 0 ? (int)args[0] : 0);
-        case 28: ct_roots(re, im, n, nArgs > 0 ? (int)args[0] : 8, nArgs > 1 ? (int)args[1] : 0); return 0;
+        case 25: ct_power(re, im, n, nArgs > 0 ? coeffLegacyIntArg(args[0], 8) : 8); return 0;
+        case 26: ct_invpower(re, im, n, nArgs > 0 ? coeffLegacyIntArg(args[0], 4) : 4); return 0;
+        case 27: return ct_roots_cm(re, im, n, nArgs > 0 ? coeffLegacyIntArg(args[0], 0) : 0);
+        case 28: ct_roots(re, im, n, nArgs > 0 ? coeffLegacyIntArg(args[0], 8) : 8, nArgs > 1 ? coeffLegacyIntArg(args[1], 0) : 0); return 0;
         default:
             fprintf(stderr, "unknown coeff legacy fn_index: %d\n", fnIndex);
             return 1;
@@ -4164,7 +4217,7 @@ static int coeffProgramBinaryVectorOp(CoeffProgramWorkspace *ws, const CoeffProg
         } else if (tok->fn_index == COEFF_VEC_MULTIPLY) {
             c_mul(ar, ai, br, bi, &rr, &ri);
         } else if (tok->fn_index == COEFF_VEC_DIVIDE) {
-            c_div(ar, ai, br, bi, &rr, &ri);
+            c_div_full(ar, ai, br, bi, &rr, &ri);
         } else if (tok->fn_index == COEFF_VEC_POWER) {
             c_powc(ar, ai, br, bi, &rr, &ri);
         } else {
@@ -4226,7 +4279,9 @@ static int coeffProgramUnaryVectorOp(CoeffProgramWorkspace *ws, const CoeffProgr
 static int coeffProgramRollVectorOp(CoeffProgramWorkspace *ws, const CoeffProgramToken *tok) {
     int n = ws->scratch_len;
     if (n <= 0) return 1;
-    int shift = (int)tok->args[0];
+    /* fmod keeps the conversion in range (the raw double->int cast was UB
+     * for out-of-int-range shifts) and preserves modulo semantics. */
+    int shift = (int)fmod(tok->args[0], (double)n);
     shift %= n;
     if (shift < 0) shift += n;
     coeff_vec_copy(ws->aux_re, ws->aux_im, ws->scratch_re, ws->scratch_im, n);
@@ -4290,7 +4345,7 @@ static int coeffProgramApplyTypedBinary(int fnIndex,
     } else if (fnIndex == COEFF_VEC_MULTIPLY) {
         c_mul(ar, ai, br, bi, rr, ri);
     } else if (fnIndex == COEFF_VEC_DIVIDE) {
-        c_div(ar, ai, br, bi, rr, ri);
+        c_div_full(ar, ai, br, bi, rr, ri);
     } else if (fnIndex == COEFF_VEC_POWER) {
         c_powc(ar, ai, br, bi, rr, ri);
     } else {
@@ -4569,7 +4624,11 @@ static int coeffProgramNativeTransformOp(const CoeffProgram *program,
             args[0] = tok->stack_arg_count >= 1 ? stackR[0] : 1.0;
             args[1] = tok->stack_arg_count >= 1 ? stackI[0] : 0.0;
             legacyArgCount = 2;
-        } else if (tok->fn_index == 24 && tok->stack_arg_count <= 2) {
+        } else if (tok->fn_index == 24) {
+            if (tok->stack_arg_count > 2) {
+                fprintf(stderr, "Coeff Program %s pow expects at most 2 stack args\n", label);
+                return 1;
+            }
             double mr = tok->stack_arg_count >= 1 ? stackR[0] : 1.0;
             double mi = tok->stack_arg_count >= 1 ? stackI[0] : 0.0;
             double er = tok->stack_arg_count >= 2 ? stackR[1] : 1.0;
@@ -4812,6 +4871,11 @@ static int evalCoeffProgram(const CoeffProgram *program,
                     return 1;
                 }
                 double span = (stop - start) / step;
+                if (!isfinite(span) || span > (double)(COEFF_PROGRAM_MAX_VECTOR_LEN + 1)) {
+                    fprintf(stderr, "push_range span %g exceeds max vector length %d\n",
+                            span, COEFF_PROGRAM_MAX_VECTOR_LEN);
+                    return 1;
+                }
                 len = span > 0.0 ? (int)ceil(span - 1e-12) : 0;
             }
             if (coeff_program_check_len(len, "push_range") != 0) return 1;
@@ -4917,7 +4981,9 @@ static int evalCoeffProgram(const CoeffProgram *program,
                 return 1;
             }
             if (coeff_stack_pop(ws, &top) != 0) return 1;
+            if (coeff_stack_require_vector(ws, top, "blend top") != 0) return 1;
             if (coeff_stack_pop(ws, &below) != 0) return 1;
+            if (coeff_stack_require_vector(ws, below, "blend below") != 0) return 1;
             int nTop = ws->stack_len[top], nBelow = ws->stack_len[below];
             if (nTop != nBelow) {
                 fprintf(stderr, "Coeff Program blend length mismatch: %d vs %d\n", nTop, nBelow);
@@ -4930,8 +4996,9 @@ static int evalCoeffProgram(const CoeffProgram *program,
             ws->scratch_len = (uint16_t)nTop;
             if (coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, nTop) != 0) return 1;
         } else if (tok->op == COEFF_OP_POKE_POLY) {
-            int idx = (int)tok->args[0];
+            int idx = 0;
             double vr = 0.0, vi = 0.0;
+            if (coeffProgramIntegerFromReal(tok->args[0], "poke_poly index", &idx) != 0) return 1;
             if (idx < 0 || idx >= ws->poly_len) {
                 fprintf(stderr, "Coeff Program poke_poly index %d out of range for poly length %d\n",
                         idx, ws->poly_len);
@@ -4946,8 +5013,9 @@ static int evalCoeffProgram(const CoeffProgram *program,
             ws->poly_im[idx] = vi;
         } else if (tok->op == COEFF_OP_POKE_TOS) {
             uint16_t slot = 0;
-            int idx = (int)tok->args[0];
+            int idx = 0;
             double vr = 0.0, vi = 0.0;
+            if (coeffProgramIntegerFromReal(tok->args[0], "poke_tos index", &idx) != 0) return 1;
             if (coeff_stack_peek(ws, &slot) != 0) return 1;
             if (coeff_stack_require_vector(ws, slot, "poke_tos") != 0) return 1;
             if (idx < 0 || idx >= ws->stack_len[slot]) {
@@ -7691,6 +7759,7 @@ static int runCoeffGen(const char *buf, const char *outPath) {
     int n_cfpv = 0;
     cp = findKey(buf, "cfpv");
     if (cp) n_cfpv = parseNumArray(cp, cfpv, MAX_CFPV);
+    if (n_cfpv < 0) n_cfpv = MAX_CFPV; /* keep legacy truncation for oversized cfpv */
     if (spec->n_params == 0) {
         n_cfpv = 0;
     } else {
@@ -7953,6 +8022,7 @@ static int runComputeDebug(const char *buf, const char *outPath) {
     int n_cfpv = 0;
     cp = findKey(buf, "cfpv");
     if (cp) n_cfpv = parseNumArray(cp, cfpv, MAX_CFPV);
+    if (n_cfpv < 0) n_cfpv = MAX_CFPV; /* keep legacy truncation for oversized cfpv */
     if (spec->n_params == 0) {
         n_cfpv = 0;
     } else {
@@ -9024,6 +9094,7 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
     int n_cfpv = 0;
     cp = findKey(buf, "cfpv");
     if (cp) n_cfpv = parseNumArray(cp, cfpv, MAX_CFPV);
+    if (n_cfpv < 0) n_cfpv = MAX_CFPV; /* keep legacy truncation for oversized cfpv */
     if (spec->n_params == 0) {
         n_cfpv = 0;
     } else {

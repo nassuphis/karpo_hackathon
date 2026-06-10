@@ -48,6 +48,7 @@ from coeff_program_chain import (
     compile_coeff_program_chain,
     display_coeff_program_chain,
     legacy_registry,
+    native_transform_stack_arg_limit,
 )
 
 
@@ -55,7 +56,6 @@ MAX_COEFF_PROGRAM_SOURCE_BYTES = 64 * 1024
 
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _INDEX_RE = re.compile(r"^poly\[(\d+)\]$", re.IGNORECASE)
-_ANY_INDEX_RE = re.compile(r"^(cf|poly|tos)\[(.*)\]$", re.IGNORECASE)
 
 _VECTOR_BINARY_ALIASES = {
     "add": "add",
@@ -102,13 +102,6 @@ _LEGACY_UNARY_NAMES = {
     "cummax",
     "sort_cumsum",
     "swirler",
-    "exp",
-    "cos",
-    "sin",
-    "tan",
-    "cosh",
-    "sinh",
-    "tanh",
     "round",
 }
 
@@ -124,7 +117,14 @@ _STACK_ALIASES = {
 _SOURCE_NAMES = {"cf", "poly", "pop", "peek"}
 _TARGET_NAMES = {"poly", "push"}
 _VECTOR_FILL_NAMES = {"fill", "const", "push_const", "push_vec"}
-_NATIVE_TRANSFORM_ALIASES = {"exp_affine": "exp"}
+# Source-text aliases for native transforms whose registry names are shadowed
+# by typed-expression builtins (exp/pow/power). Mirrored by _LEGACY_NAME_ALIASES
+# in coeff_program_chain and by the chip synthesizer in index.html.
+_NATIVE_TRANSFORM_ALIASES = {
+    "exp_affine": "exp",
+    "pow_affine": "pow",
+    "power_series": "power",
+}
 
 
 def _is_source_name(text):
@@ -139,7 +139,10 @@ class _Statement:
 
 
 class CoeffProgramSourceError(RuntimeError):
-    def __init__(self, message: str, *, line: int = 1, column: int = 1):
+    # line/column default to 0 (unknown) so callers can fall back to the
+    # enclosing statement's location with `exc.line or stmt.line`. A truthy
+    # default of 1 used to pin every lowering error to line 1, column 1.
+    def __init__(self, message: str, *, line: int = 0, column: int = 0):
         super().__init__(message)
         self.line = line
         self.column = column
@@ -358,11 +361,29 @@ def _typed_lower_vector_source(name):
 
 
 def _typed_lower_index_reference(text):
-    match = _ANY_INDEX_RE.match(str(text or "").strip())
-    if not match:
+    raw = str(text or "").strip()
+    match = re.match(r"^(cf|poly|tos)\[", raw, re.IGNORECASE)
+    if not match or not raw.endswith("]"):
+        return None
+    # Only a bare reference when the opening bracket's match closes at the
+    # very end. Otherwise this is a larger expression (e.g. cf[0]*cf[1]) and
+    # the scalar lowering path owns it; a greedy regex used to swallow those.
+    depth = 0
+    open_idx = match.end() - 1
+    close_idx = -1
+    for idx in range(open_idx, len(raw)):
+        ch = raw[idx]
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+            if depth == 0:
+                close_idx = idx
+                break
+    if close_idx != len(raw) - 1:
         return None
     name = match.group(1).lower()
-    index_expr = match.group(2).strip()
+    index_expr = raw[open_idx + 1:close_idx].strip()
     if not index_expr:
         raise CoeffProgramSourceError(f"{name}[...] index expression is empty")
     chain = _typed_lower_vector_source(name)
@@ -544,7 +565,10 @@ def _lower_native_transform_call(name, args, *, target):
             src = "pop"
             fn_args = args
     fn_args, andy_arg = _native_transform_args_and_andy(name, fn_args)
-    if fn_args:
+    # The VM caps stack args per transform (e.g. round takes one packed
+    # multiplier); over-limit arg lists must take the full-args token, which
+    # knows the back-compat packings like round(a, b, andy).
+    if fn_args and len(fn_args) <= native_transform_stack_arg_limit(name):
         try:
             chain = []
             for arg in fn_args:
@@ -555,6 +579,9 @@ def _lower_native_transform_call(name, args, *, target):
             chain.append(chip)
             return chain
         except CoeffProgramSourceError:
+            # Args that are not scalar expressions (e.g. enum names like
+            # hi/lo for roots) take the full-args token below, which
+            # validates them against the registry declaration.
             pass
     fallback_args = list(fn_args)
     if andy_arg is not None:
@@ -570,14 +597,22 @@ def _lower_call(name, args, *, target="push"):
         chain, value_type = _typed_lower_push_scalar(args)
         return _append_typed_target(chain, value_type, target=target)
     if name in {"arange", "range", "push_range"}:
-        return _lower_range("range", args)
+        return _append_typed_target(_lower_range("range", args), "vector", target=target)
     if name in {"linspace", "push_linspace"}:
-        return _lower_range("linspace", args)
+        return _append_typed_target(_lower_range("linspace", args), "vector", target=target)
     if name in {"scale", "shift", "linear", "affine"}:
         if name == "affine":
+            if target == "poly":
+                raise CoeffProgramSourceError(
+                    "affine names its own target; write affine(poly, src, multiplier, offset) as a statement"
+                )
             if len(args) != 4:
                 raise CoeffProgramSourceError("affine requires target, source, multiplier, offset")
             return [["affine", _target_selector(args[0]), _source_selector(args[1]), _canonical_expr(args[2]), _canonical_expr(args[3])]]
+        if name == "linear" and len(args) == 4 and _is_source_name(args[0]):
+            # linear(src, multiplier, offset, andy): the typed affine lowering
+            # has no andy; route to the native transform (registry fn 14).
+            return _lower_native_transform_call(name, args, target=target)
         return _lower_affine(name, args, target=target)
     if name in _VECTOR_BINARY_ALIASES:
         return _lower_vector_binary(name, args, target=target)
@@ -585,13 +620,15 @@ def _lower_call(name, args, *, target="push"):
         if len(args) > 1:
             if name == "exp":
                 raise CoeffProgramSourceError("exp(x) is unary; use exp_affine(source, multiplier, offset[, andy]) for exp(source*multiplier+offset)")
+            registry = legacy_registry()["by_name"]
+            if name in registry and registry[name].get("supports_andy") and not registry[name].get("args"):
+                # sin/cos/tan/sinh/cosh/tanh with a trailing andy reach the
+                # native transform (registry fn 17-22); the bare unary forms
+                # stay on the typed/vector unary path.
+                return _lower_native_transform_call(name, args, target=target)
             raise CoeffProgramSourceError(f"{name} requires no args or one source")
         return _lower_vector_unary(name, args, target=target)
     if name in _NATIVE_TRANSFORM_ALIASES:
-        explicit_source = bool(args) and args[0].strip().lower() in _SOURCE_NAMES
-        valid_counts = {3, 4} if explicit_source else {2, 3}
-        if len(args) not in valid_counts:
-            raise CoeffProgramSourceError("exp_affine requires multiplier, offset, and optional andy; source defaults to pop when omitted")
         return _lower_native_transform_call(name, args, target=target)
     if name in {"roll", "rolr"}:
         if len(args) == 1:
@@ -616,6 +653,10 @@ def _lower_call(name, args, *, target="push"):
         chain.append(["_typed_blend"])
         return chain
     if name in {"poke_poly", "poke_tos"}:
+        if target == "poly":
+            raise CoeffProgramSourceError(
+                f"{name} writes in place and returns nothing; use it as a statement"
+            )
         if len(args) != 2:
             raise CoeffProgramSourceError(f"{name} requires index, value")
         if name == "poke_poly":
@@ -629,6 +670,10 @@ def _lower_call(name, args, *, target="push"):
             raise CoeffProgramSourceError("littlewood requires value1, value2, optional andy")
         return [["littlewood", target] + [_canonical_expr(arg) for arg in args]]
     if name == "macro":
+        if target == "poly":
+            raise CoeffProgramSourceError(
+                "macro inlines another program and has no single value; use it as a statement"
+            )
         if len(args) != 1:
             raise CoeffProgramSourceError("macro requires one program name")
         macro_name = args[0].strip()
@@ -736,7 +781,10 @@ def split_coeff_program_statements(source_text):
             else:
                 col += 1
             continue
-        if ch == "#" and paren == 0 and bracket == 0:
+        if ch == "#":
+            # Comments run to end of line at any nesting depth; inside
+            # parens/brackets the newline is preserved so the statement
+            # continues (the in_comment branch re-appends it at depth > 0).
             in_comment = True
             col += 1
             continue
@@ -789,7 +837,7 @@ def parse_coeff_program_source(source_text, *, strict=True):
     try:
         statements = split_coeff_program_statements(source_text)
     except CoeffProgramSourceError as exc:
-        diagnostics.append(_diagnostic(exc, line=exc.line, column=exc.column))
+        diagnostics.append(_diagnostic(exc, line=exc.line or 1, column=exc.column or 1))
         if strict:
             raise RuntimeError(str(exc))
         return {"chain": [], "display": "", "statement_count": 0, "diagnostics": diagnostics}

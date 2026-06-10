@@ -24,6 +24,8 @@ POLY_LEN_SENTINEL = -1
 MAX_MACRO_DEPTH = 8
 MAX_ARGS = 8
 MAX_SCALAR_EXPR_TOKENS = 32
+MAX_SCALAR_EXPRS = 64  # mirrors COEFF_PROGRAM_MAX_SCALAR_EXPRS in sweep_cli.c
+MAX_LEGACY_INT_ARG = 4096  # mirrors the clamp in coeffProgramLegacyOp dispatch
 
 COEFF_OP_CONST = 1
 COEFF_OP_PUSH = 2
@@ -260,6 +262,13 @@ def _load_legacy_registry():
                     "v1 legacy bridge supports real, int, and enum args only"
                 )
             normalized_arg["type"] = arg_type
+            if arg_type == "enum":
+                for choice in normalized_arg.get("choices") or []:
+                    if str(choice).strip().lower() not in _ENUM_ARG_VALUES:
+                        raise RuntimeError(
+                            f"coeff legacy function {name} arg {idx} enum choice {choice!r} "
+                            f"is not supported; known choices: {sorted(_ENUM_ARG_VALUES)}"
+                        )
             args.append(normalized_arg)
         spec = {
             "name": name,
@@ -613,6 +622,13 @@ class _ExpressionParser:
             raise RuntimeError("scalar expression ** exponent magnitude must be <= 32")
         if exponent == 0:
             return _Expr([{"op": EXPR_LITERAL, "a": 1.0, "b": 0.0}], kind="real", dynamic=False)
+        # Check the expanded size before materializing: nested ** forms would
+        # otherwise build huge intermediate lists ahead of the final size check.
+        projected = abs(exponent) * len(left.tokens) + (abs(exponent) - 1) + (2 if exponent < 0 else 0)
+        if projected > MAX_SCALAR_EXPR_TOKENS:
+            raise RuntimeError(
+                f"scalar expression has {projected} tokens; max is {MAX_SCALAR_EXPR_TOKENS}"
+            )
         tokens = list(left.tokens)
         for _ in range(abs(exponent) - 1):
             tokens.extend(left.tokens)
@@ -793,6 +809,13 @@ def display_coeff_program_chain(chain):
     return "; ".join(_display_chip(chip) for chip in chain)
 
 
+def _canonical_zero(value):
+    # -0.0 and +0.0 must serialize identically: the fingerprint side
+    # (_format_number) already canonicalizes signed zero, so the executed
+    # token payload has to match it or fingerprint-equal programs diverge.
+    return 0.0 if value == 0 else value
+
+
 def _token(op, **fields):
     tok = {"op": int(op)}
     for key in ("fn_index", "src", "tgt", "n_args", "stack_arg_count"):
@@ -800,13 +823,13 @@ def _token(op, **fields):
         if value not in (None, 0):
             tok[key] = int(value)
     if "args" in fields:
-        tok["args"] = [_finite_number(x, "token arg") for x in (fields.get("args") or [])]
+        tok["args"] = [_canonical_zero(_finite_number(x, "token arg")) for x in (fields.get("args") or [])]
     if "args_im" in fields:
-        tok["args_im"] = [_finite_number(x, "token arg imag") for x in (fields.get("args_im") or [])]
+        tok["args_im"] = [_canonical_zero(_finite_number(x, "token arg imag")) for x in (fields.get("args_im") or [])]
     if "expr_refs" in fields:
         tok["expr_refs"] = [int(x) for x in (fields.get("expr_refs") or [])]
     if "andy" in fields:
-        tok["andy"] = _finite_number(fields["andy"], "token andy")
+        tok["andy"] = _canonical_zero(_finite_number(fields["andy"], "token andy"))
     if "andy_expr_ref" in fields and int(fields["andy_expr_ref"]) >= 0:
         tok["andy_expr_ref"] = int(fields["andy_expr_ref"])
     return tok
@@ -820,8 +843,16 @@ def _add_arg_expr(expr, scalar_exprs, *, expected="complex"):
                 raise RuntimeError("scalar expression result must be real-valued")
             return value.real, 0.0, -1
         return value.real, value.imag, -1
+    flat = _flatten_expr(expr)
+    for ref, existing in enumerate(scalar_exprs):
+        if existing == flat:
+            return 0.0, 0.0, ref
+    if len(scalar_exprs) >= MAX_SCALAR_EXPRS:
+        raise RuntimeError(
+            f"coeff program has more than {MAX_SCALAR_EXPRS} scalar expressions"
+        )
     ref = len(scalar_exprs)
-    scalar_exprs.append(_flatten_expr(expr))
+    scalar_exprs.append(flat)
     return 0.0, 0.0, ref
 
 
@@ -875,14 +906,33 @@ def _compile_real_args(args, scalar_exprs, label):
     return values, refs
 
 
+def _is_literal_length(value):
+    raw = str(value).strip().lower()
+    if raw == "poly_len":
+        return True
+    try:
+        float(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _compile_vector_length_token(op, args, scalar_exprs, label):
+    # Numeric literals must go through _vector_length_arg so the [1,256]
+    # range check applies; only genuine expressions take the dynamic path.
+    # Statically-folded expressions get the same range check on the result.
+    if _is_literal_length(args[0]):
+        length = _vector_length_arg(args[0], f"{label} length")
+        return _token(op, n_args=1, args=[length], expr_refs=[-1])
+    values, refs = _compile_real_args(args, scalar_exprs, label)
+    if refs[0] < 0:
+        values[0] = _vector_length_arg(values[0], f"{label} length")
+    return _token(op, n_args=1, args=values, expr_refs=refs)
+
+
 def _compile_linspace(args, scalar_exprs):
     if len(args) == 1:
-        try:
-            length = _vector_length_arg(args[0], "push_linspace length")
-            return _token(COEFF_OP_LINSPACE, n_args=1, args=[length], expr_refs=[-1])
-        except RuntimeError:
-            values, refs = _compile_real_args(args, scalar_exprs, "push_linspace")
-            return _token(COEFF_OP_LINSPACE, n_args=1, args=values, expr_refs=refs)
+        return _compile_vector_length_token(COEFF_OP_LINSPACE, args, scalar_exprs, "push_linspace")
     if len(args) != 3:
         raise RuntimeError("push_linspace chip requires length or start, stop, count")
     values, refs = _compile_real_args(args, scalar_exprs, "push_linspace")
@@ -891,12 +941,7 @@ def _compile_linspace(args, scalar_exprs):
 
 def _compile_range(args, scalar_exprs):
     if len(args) == 1:
-        try:
-            length = _vector_length_arg(args[0], "push_range length")
-            return _token(COEFF_OP_RANGE, n_args=1, args=[length], expr_refs=[-1])
-        except RuntimeError:
-            values, refs = _compile_real_args(args, scalar_exprs, "push_range")
-            return _token(COEFF_OP_RANGE, n_args=1, args=values, expr_refs=refs)
+        return _compile_vector_length_token(COEFF_OP_RANGE, args, scalar_exprs, "push_range")
     if len(args) not in {2, 3}:
         raise RuntimeError("push_range chip requires length, start/stop, or start/stop/step")
     values, refs = _compile_real_args(args, scalar_exprs, "push_range")
@@ -942,7 +987,7 @@ def _compile_blend(args, scalar_exprs):
 def _compile_poke(op, args, scalar_exprs, label):
     if len(args) != 2:
         raise RuntimeError(f"{label} chip requires index and value")
-    index = int(_finite_number(args[0], f"{label} index"))
+    index = _integer_literal(args[0], f"{label} index")
     if index < 0 or index >= MAX_VECTOR_LEN:
         raise RuntimeError(f"{label} index must be in [0,{MAX_VECTOR_LEN - 1}], got {index}")
     expr = _compile_expr(args[1], label=f"{label} value", expected="complex")
@@ -985,6 +1030,8 @@ def _compile_vector_roll(name, args):
     _tgt_name, tgt_val = _selector_value(args[0], _TARGET_SELECTORS, f"{name} tgt")
     _src_name, src_val = _selector_value(args[1], _VECTOR_SOURCE_SELECTORS, f"{name} src")
     n = _integer_literal(args[2], f"{name} n")
+    if abs(n) > MAX_VECTOR_LEN:
+        raise RuntimeError(f"{name} n must be in [-{MAX_VECTOR_LEN},{MAX_VECTOR_LEN}], got {n}")
     return _token(
         COEFF_OP_VECTOR_ROLL,
         fn_index=_VECTOR_ROLL_OPS[name],
@@ -1037,7 +1084,7 @@ def _compile_typed_push_scalar(args, scalar_exprs):
 def _compile_typed_push_vector(args):
     if len(args) != 1:
         raise RuntimeError("typed_push_vector requires one source")
-    src_name, src_val = _selector_value(args[0], _SOURCE_SELECTORS, "typed vector source")
+    _src_name, src_val = _selector_value(args[0], _SOURCE_SELECTORS, "typed vector source")
     return _token(COEFF_OP_TYPED_PUSH_VECTOR, src=src_val)
 
 
@@ -1268,7 +1315,11 @@ def _legacy_args(spec, raw_args, scalar_exprs):
             args_im.append(0.0)
             expr_refs.append(-1)
         elif arg_type == "int":
-            number = int(_finite_number(raw, f"legacy({spec['name']}) arg {idx}"))
+            number = _integer_literal(raw, f"legacy({spec['name']}) arg {idx}")
+            if abs(number) > MAX_LEGACY_INT_ARG:
+                raise RuntimeError(
+                    f"legacy({spec['name']}) arg {idx} magnitude must be <= {MAX_LEGACY_INT_ARG}, got {number}"
+                )
             args.append(float(number))
             args_im.append(0.0)
             expr_refs.append(-1)
@@ -1350,6 +1401,17 @@ def _max_native_transform_stack_arg_count(spec):
     return len(spec.get("args") or [])
 
 
+def native_transform_stack_arg_limit(name):
+    """Max stack args the VM accepts for a native transform.
+
+    Shared with coeff_program_source so the source lowerer routes over-limit
+    arg lists to the full-args token instead of emitting a stack-args chip
+    that this module would reject later (the round(a, b, andy) drift).
+    """
+    spec = legacy_registry()["by_name"].get(_canonical_legacy_name(name))
+    return _max_native_transform_stack_arg_count(spec) if spec else 0
+
+
 def _native_transform_stack_arg_token(name, src, tgt, stack_arg_count, scalar_exprs, andy_arg=None):
     registry = legacy_registry()["by_name"]
     canonical_name = _canonical_legacy_name(name)
@@ -1362,7 +1424,7 @@ def _native_transform_stack_arg_token(name, src, tgt, stack_arg_count, scalar_ex
         raise RuntimeError(f"{canonical_name} does not support src={src_name}")
     if tgt_name not in spec["allowed_tgt"]:
         raise RuntimeError(f"{canonical_name} does not support tgt={tgt_name}")
-    count = int(stack_arg_count)
+    count = _integer_literal(stack_arg_count, f"{canonical_name} stack arg count")
     if count < 0 or count > MAX_ARGS:
         raise RuntimeError(f"{canonical_name} stack arg count must be in [0,{MAX_ARGS}]")
     max_count = _max_native_transform_stack_arg_count(spec)
@@ -1386,9 +1448,14 @@ def _native_transform_stack_arg_token(name, src, tgt, stack_arg_count, scalar_ex
     )
 
 
-def _expand_macros(chain, macro_resolver, stack=None, depth=0):
+def _expand_macros(chain, macro_resolver, stack=None, depth=0, budget=None):
     if stack is None:
         stack = []
+    if budget is None:
+        # Shared across the whole expansion: bounds the cumulative number of
+        # chips and resolver calls so nested macros cannot amplify
+        # exponentially before the post-expansion token-count check runs.
+        budget = {"chips": 0, "macros": 0}
     if depth > MAX_MACRO_DEPTH:
         raise RuntimeError(f"coeff program macro expansion exceeded depth {MAX_MACRO_DEPTH}")
     expanded = []
@@ -1396,8 +1463,18 @@ def _expand_macros(chain, macro_resolver, stack=None, depth=0):
     for chip in chain:
         name, args = _chip_args(chip)
         if name != "macro":
+            budget["chips"] += 1
+            if budget["chips"] > MAX_PROGRAM_TOKENS:
+                raise RuntimeError(
+                    f"coeff program macro expansion exceeded {MAX_PROGRAM_TOKENS} chips"
+                )
             expanded.append(chip)
             continue
+        budget["macros"] += 1
+        if budget["macros"] > MAX_PROGRAM_TOKENS:
+            raise RuntimeError(
+                f"coeff program macro expansion exceeded {MAX_PROGRAM_TOKENS} macro calls"
+            )
         if len(args) != 1:
             raise RuntimeError("macro chip requires exactly one name")
         macro_id = _slugify_macro_id(args[0])
@@ -1412,6 +1489,7 @@ def _expand_macros(chain, macro_resolver, stack=None, depth=0):
             macro_resolver,
             stack=stack + [macro_id],
             depth=depth + 1,
+            budget=budget,
         )
         expanded.extend(nested)
         expanded_count += 1 + nested_count
@@ -1539,7 +1617,6 @@ def _validate_stack(tokens):
         return types.pop()
 
     def need_vector_pop(idx, label):
-        before = depth()
         item = need_any(idx, label)
         if item != "vector":
             raise RuntimeError(f"{label} at token {idx}: top of stack is {item} (need vector)")
@@ -1986,10 +2063,14 @@ def compile_coeff_program_chain(chain, *, macro_resolver=None, strict=True):
         diagnostics.append({"level": "error", "message": str(exc)})
         if strict:
             raise
+        try:
+            safe_chain = _canonical_source_chain(chain)
+        except Exception:
+            safe_chain = []
         return {
             "version": PROGRAM_VERSION,
             "program_kind": PROGRAM_KIND,
-            "source_chain": chain if isinstance(chain, list) else [],
+            "source_chain": safe_chain,
             "expanded_chain": [],
             "tokens": [],
             "execution_tokens": [],

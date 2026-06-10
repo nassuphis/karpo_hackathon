@@ -12839,6 +12839,11 @@ function _coeffProgramSourceTextarea() {
     return document.getElementById('cp-source-text');
 }
 
+// Registry names that the source parser shadows with typed builtins; the
+// synthesizer must emit the parser-side aliases (mirrors
+// _NATIVE_TRANSFORM_ALIASES in lambda/coeff_program_source.py).
+const _coeffProgramSourceAliasNames = { exp: 'exp_affine', pow: 'pow_affine', power: 'power_series' };
+
 function _coeffProgramSourceFromChain(chain) {
     return (chain || []).map(row => {
         if (Array.isArray(row) && row.length) {
@@ -12859,14 +12864,23 @@ function _coeffProgramSourceFromChain(chain) {
                 return `${name}(${src1}, ${src2})`;
             }
             if (sourceName === name && _coeffProgramVectorUnaryNames.includes(name) && params.length >= 2) {
-                const [tgt, src] = params;
-                if (tgt === 'poly') return `poly = ${name}(${src})`;
-                return src === 'pop' ? `${name}()` : `${name}(${src})`;
+                // Trailing params after tgt/src (e.g. andy on sin/cos) must
+                // survive synthesis; the parser routes them to the native
+                // transform path.
+                const [tgt, src, ...rest] = params;
+                const extras = rest.filter(v => v !== '');
+                const args = [src, ...extras].join(', ');
+                if (tgt === 'poly') return `poly = ${name}(${args})`;
+                return (src === 'pop' && !extras.length) ? `${name}()` : `${name}(${args})`;
             }
             if ((name === 'roll' || name === 'rolr') && params.length >= 3) {
                 const [tgt, src, n] = params;
                 if (tgt === 'poly') return `poly = ${name}(${src}, ${n})`;
                 return src === 'pop' ? `${name}(${n})` : `${name}(${src}, ${n})`;
+            }
+            if (name === 'argsort' && params.length >= 3) {
+                const [tgt, src1, src2] = params;
+                return tgt === 'poly' ? `poly = argsort(${src1}, ${src2})` : `argsort(${src1}, ${src2})`;
             }
             if (name === 'littlewood' && params.length >= 3) {
                 const [tgt, a, b, andy] = params;
@@ -12875,9 +12889,10 @@ function _coeffProgramSourceFromChain(chain) {
             }
             const nativeSpec = _cpCatalog[name] || {};
             if (nativeSpec.nativeTransform && params.length >= 2) {
+                const callName = _coeffProgramSourceAliasNames[name] || sourceName;
                 const [tgt, src, ...rest] = params;
                 const args = [src || 'poly', ...rest].join(', ');
-                return tgt === 'poly' ? `poly = ${sourceName}(${args})` : `${sourceName}(${args})`;
+                return tgt === 'poly' ? `poly = ${callName}(${args})` : `${callName}(${args})`;
             }
             if (sourceName !== name && params.length >= 2) {
                 const [tgt, src, ...rest] = params;
@@ -12886,7 +12901,7 @@ function _coeffProgramSourceFromChain(chain) {
             }
             if (name === 'legacy') {
                 const [legacyName, src, tgt, ...rest] = params;
-                const callName = legacyName === 'exp' ? 'exp_affine' : (legacyName || 'rev');
+                const callName = _coeffProgramSourceAliasNames[legacyName] || legacyName || 'rev';
                 const args = [src || 'poly', ...rest].join(', ');
                 return tgt === 'poly' ? `poly = ${callName}(${args})` : `${callName}(${args})`;
             }
@@ -12907,6 +12922,12 @@ function _getCoeffProgramSourceText() {
     return String(el ? el.value : '');
 }
 
+// True while the text area holds an auto-synthesized rendering of the chip
+// chain (not user-authored text). Cleared on any manual edit so switching
+// back to the Text tab re-synthesizes from the latest chips instead of
+// leaving stale text authoritative.
+let _coeffProgramSourceAutoSynthed = false;
+
 function _setCoeffProgramEditorMode(mode) {
     const normalized = mode === 'text' ? 'text' : 'chips';
     _coeffProgramEditorMode = normalized;
@@ -12918,8 +12939,10 @@ function _setCoeffProgramEditorMode(mode) {
     if (textPanel && textPanel.classList) textPanel.classList.toggle('active', normalized === 'text');
     if (chipsTab && chipsTab.classList) chipsTab.classList.toggle('active', normalized === 'chips');
     if (textTab && textTab.classList) textTab.classList.toggle('active', normalized === 'text');
-    if (normalized === 'text' && !_getCoeffProgramSourceText().trim() && _cpChain.length) {
+    if (normalized === 'text' && _cpChain.length &&
+        (!_getCoeffProgramSourceText().trim() || _coeffProgramSourceAutoSynthed)) {
         _setCoeffProgramSourceText(_coeffProgramSourceFromChain(_serializeCoeffProgramChain()));
+        _coeffProgramSourceAutoSynthed = true;
     }
     _coeffProgramStatus(normalized === 'text'
         ? 'Text source is authoritative for save, preview, debug, and compute.'
@@ -12929,7 +12952,36 @@ function _setCoeffProgramEditorMode(mode) {
     if (_paramProgramModeSelected()) _markComputePreviewStale();
 }
 
+// Debounced advisory validation of text source against the authoritative
+// backend parser; the status line shows the first diagnostic. Save/preview
+// still compile strictly server-side — this is editor feedback only.
+let _coeffProgramSourceValidationTimer = null;
+let _coeffProgramSourceValidationSeq = 0;
+function _scheduleCoeffProgramSourceValidation() {
+    if (_coeffProgramSourceValidationTimer) clearTimeout(_coeffProgramSourceValidationTimer);
+    _coeffProgramSourceValidationTimer = setTimeout(async () => {
+        _coeffProgramSourceValidationTimer = null;
+        const sourceText = _getCoeffProgramSourceText();
+        if (!sourceText.trim() || !_coeffProgramTextModeSelected()) return;
+        const seq = ++_coeffProgramSourceValidationSeq;
+        try {
+            const resp = await lambdaPost('storage', { source_text: sourceText }, '/compile-coeff-program-source');
+            if (seq !== _coeffProgramSourceValidationSeq || sourceText !== _getCoeffProgramSourceText()) return;
+            if (resp && resp.ok) {
+                _coeffProgramStatus(`Text source OK: ${resp.statement_count} statement${resp.statement_count === 1 ? '' : 's'}, ${resp.program && resp.program.token_count || 0} tokens.`);
+            } else if (resp && Array.isArray(resp.diagnostics)) {
+                const first = resp.diagnostics.find(d => d && d.level === 'error') || resp.diagnostics[0];
+                if (first) _coeffProgramStatus(`Line ${first.line}: ${first.message}`, true);
+            }
+        } catch (_) {
+            /* advisory only; save/preview surface real errors */
+        }
+    }, 900);
+}
+
 function _onCoeffProgramSourceInput() {
+    _coeffProgramSourceAutoSynthed = false;
+    _scheduleCoeffProgramSourceValidation();
     if (_coeffProgramTextModeSelected() && _paramProgramModeSelected()) _markComputePreviewStale();
     _syncParamPipelineModeUi();
     if (typeof _coeffProgramModalState !== 'undefined' && _coeffProgramModalState.open) _renderCoeffProgramModal();
@@ -13194,11 +13246,35 @@ function _formatCoeffProgramChainForLog(chain, separator = ',') {
 }
 
 function _coeffProgramSourceStatementCount(sourceText) {
-    return String(sourceText == null ? '' : sourceText)
-        .split(/\n+/)
-        .map(line => line.replace(/#.*$/, '').trim())
-        .filter(Boolean)
-        .length;
+    // Mirrors split_coeff_program_statements in lambda/coeff_program_source.py:
+    // statements split on newlines AND semicolons at bracket depth zero, with
+    // # comments stripped, so the count matches the backend's metadata.
+    const text = String(sourceText == null ? '' : sourceText);
+    let count = 0;
+    let buffer = '';
+    let depth = 0;
+    let inComment = false;
+    for (const ch of text) {
+        if (inComment) {
+            if (ch === '\n') {
+                inComment = false;
+                if (depth === 0) { if (buffer.trim()) count++; buffer = ''; }
+                else buffer += ch;
+            }
+            continue;
+        }
+        if (ch === '#') { inComment = true; continue; }
+        if (ch === '(' || ch === '[') depth++;
+        else if (ch === ')' || ch === ']') depth = Math.max(0, depth - 1);
+        if ((ch === ';' || ch === '\n') && depth === 0) {
+            if (buffer.trim()) count++;
+            buffer = '';
+            continue;
+        }
+        buffer += ch;
+    }
+    if (buffer.trim()) count++;
+    return count;
 }
 
 function _coeffProgramSourceDisplay(sourceText, separator = ',') {
@@ -13440,7 +13516,26 @@ function _normalizeCoeffProgramChain(rawChain) {
                         _formatCoeffTransformComplexParts(params[3], params[4]),
                     );
                 }
-                return [{ name: legacyName === 'exp' ? 'exp_affine' : legacyName, params: [params[2] || 'poly', params[1] || 'poly', ...params.slice(3)] }];
+                // The named-chip catalogs filter out the andy param, so a
+                // legacy row carrying a non-default andy must stay a legacy
+                // chip or the andy is silently dropped on the next serialize.
+                const fullDefs = _coeffProgramLegacyInputDefs(legacyName);
+                const legacyArgs = params.slice(3);
+                const lastDef = fullDefs.length ? fullDefs[fullDefs.length - 1] : null;
+                const carriesAndy = lastDef && lastDef.ph === 'andy'
+                    && legacyArgs.length === fullDefs.length
+                    && !_ctAndyIsDefault(legacyArgs[legacyArgs.length - 1]);
+                if (carriesAndy) {
+                    return [{ name: 'legacy', params: [legacyName, params[1] || 'poly', params[2] || 'poly', ...legacyArgs] }];
+                }
+                return [{ name: legacyName === 'exp' ? 'exp_affine' : legacyName, params: [params[2] || 'poly', params[1] || 'poly', ...legacyArgs] }];
+            }
+            // Unary native transforms (sin/cos/...) with a trailing andy have
+            // andy-less catalog params; keep them as legacy chips too.
+            const rest = item.slice(1).map(v => String(v));
+            if (_coeffProgramVectorUnaryNames.includes(name) && name !== 'exp' && rest.length > 2
+                && _ctCatalog[name] && !_ctAndyIsDefault(rest[rest.length - 1])) {
+                return [{ name: 'legacy', params: [name, rest[1] || 'poly', rest[0] || 'poly', ...rest.slice(2)] }];
             }
             const sourceName = name === 'const' ? 'push_const' : (name === 'exp' && item.length > 3 ? 'exp_affine' : name);
             return [{ name: sourceName, params: item.slice(1).map(v => String(v)) }];
@@ -13495,6 +13590,9 @@ function _serializeCoeffProgramChain() {
             : String(pDef.def || ''));
         let last = values.length - 1;
         if (spec.nativeTransform) {
+            // linear compiles via the strict affine chip (tgt, src, multiplier,
+            // offset); the backend rejects default-trimmed forms, so emit all args.
+            if (catalogName === 'linear') return [catalogName, ...values];
             while (last >= 2 && (values[last] === '' || values[last] === String((pDefs[last] && pDefs[last].def) || ''))) last--;
             return [catalogName, ...values.slice(0, Math.max(last + 1, 2))];
         }
@@ -13519,7 +13617,10 @@ function _validateCoeffProgramUiChain(chain) {
 
 function _parseCoeffProgramPayload(raw) {
     if (!raw || typeof raw !== 'object') throw new Error('program JSON must be an object');
-    const hasSourceText = Object.prototype.hasOwnProperty.call(raw, 'source_text');
+    // Key presence alone is not enough: an empty source_text with a non-empty
+    // chain must load as a chain program, not silently discard the chain.
+    const hasSourceText = Object.prototype.hasOwnProperty.call(raw, 'source_text')
+        && String(raw.source_text || '').trim() !== '';
     const chain = Array.isArray(raw.chain) ? raw.chain : [];
     if (!hasSourceText && !chain.length) throw new Error('program JSON is missing a chain or source_text');
     const version = Object.prototype.hasOwnProperty.call(raw, 'version') ? Number(raw.version) : 1;
@@ -13547,8 +13648,13 @@ function _applyCoeffProgram(rawProgram) {
     _renderChips('cp');
     if (program.has_source_text) {
         _setCoeffProgramSourceText(program.source_text);
+        _coeffProgramSourceAutoSynthed = false;
         _setCoeffProgramEditorMode('text');
     } else {
+        // Clear any previous program's text so it cannot become authoritative
+        // for this chain-only program when the user opens the Text tab.
+        _setCoeffProgramSourceText('');
+        _coeffProgramSourceAutoSynthed = false;
         _setCoeffProgramEditorMode('chips');
     }
     if (_paramProgramModeSelected()) _markComputePreviewStale();

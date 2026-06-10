@@ -222,7 +222,15 @@ assertIncludes("if (name === 'push' && params[0] === 'cf') return 'cf';", 'Coeff
 assertIncludes("if (name === 'pop') return 'drop';", 'Coeff Program chain-to-source renderer should render drop as drop, not ambiguous standalone pop');
 assertIncludes("if (name === 'poke_poly' && params.length >= 2) return `poly[${params[0]}] = ${params[1]}`;", 'Coeff Program chain-to-source renderer should render poke_poly as valid indexed assignment');
 assertIncludes("if (name === 'legacy') {\n                const [legacyName, src, tgt, ...rest] = params;", 'Coeff Program chain-to-source renderer should unwrap old legacy-form saved chips');
-assertIncludes("const callName = legacyName === 'exp' ? 'exp_affine' : (legacyName || 'rev');", 'Coeff Program legacy-form source rendering should rename affine exp to exp_affine');
+assertIncludes("const callName = _coeffProgramSourceAliasNames[legacyName] || legacyName || 'rev';", 'Coeff Program legacy-form source rendering should map shadowed registry names (exp/pow/power) to parser aliases');
+assertIncludes("const _coeffProgramSourceAliasNames = { exp: 'exp_affine', pow: 'pow_affine', power: 'power_series' };", 'Coeff Program synthesizer should define the parser-alias map for shadowed transforms');
+assertIncludes("if (catalogName === 'linear') return [catalogName, ...values];", 'Coeff Program serializer must emit all linear args; the backend affine chip rejects trimmed forms');
+assertIncludes("if (name === 'argsort' && params.length >= 3) {", 'Coeff Program chain-to-source renderer should synthesize argsort without the target selector');
+assertIncludes("let _coeffProgramSourceAutoSynthed = false;", 'Coeff Program text tab should track auto-synthesized vs user-authored source');
+assertIncludes("(!_getCoeffProgramSourceText().trim() || _coeffProgramSourceAutoSynthed)) {", 'Coeff Program tab switch should re-synthesize auto-generated text from the latest chips');
+assertIncludes("&& String(raw.source_text || '').trim() !== '';", 'Coeff Program payload parsing should not let an empty source_text discard a non-empty chain');
+assertIncludes("function _scheduleCoeffProgramSourceValidation() {", 'Coeff Program text editor should debounce advisory backend validation');
+assertIncludes("'/compile-coeff-program-source');", 'Coeff Program text editor should validate via the compile-coeff-program-source route');
 assertIncludes("return tgt === 'poly' ? `poly = ${callName}(${args})` : `${callName}(${args})`;", 'Coeff Program legacy-form source rendering should produce direct source syntax, not legacy(...)');
 assertIncludes("if (sourceText.trim()) {\n            return _coeffProgramMetaHtml(program, options)", 'Coeff Program modal should prefer source_text display when a text program is active or saved');
 assertIncludes("Text source changed. It will be compiled by the backend on save/preview/compute.", 'Coeff Program text editor should tell users save uses source text');

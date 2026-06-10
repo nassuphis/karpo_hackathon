@@ -1211,20 +1211,26 @@ def handle_compile_coeff_program_source(event):
         strict=False,
     )
     diagnostics = list(parsed.get("diagnostics") or []) + list(compiled.get("diagnostics") or [])
+    has_errors = any(d.get("level") == "error" for d in diagnostics)
+    # Non-strict parsing skips failing statements and keeps lowering the rest.
+    # Never hand back that partial chain/fingerprint: a caller that persists
+    # the program payload without checking `ok` would store a truncated program.
+    chain_out = [] if has_errors else parsed["chain"]
+    fingerprint = "" if has_errors else (compiled.get("fingerprint") or "")
     return ok_response({
-        "ok": not any(d.get("level") == "error" for d in diagnostics),
-        "chain": parsed["chain"],
+        "ok": not has_errors,
+        "chain": chain_out,
         "display": parsed["display"],
         "statement_count": parsed["statement_count"],
-        "fingerprint": compiled.get("fingerprint") or "",
+        "fingerprint": fingerprint,
         "diagnostics": diagnostics,
         "program": {
-            "chain": parsed["chain"],
+            "chain": chain_out,
             "display": parsed["display"],
-            "fingerprint": compiled.get("fingerprint") or "",
-            "execution_spec": compiled.get("execution_spec") or "",
-            "token_count": compiled.get("token_count") or 0,
-            "stack_max": compiled.get("stack_max") or 0,
+            "fingerprint": fingerprint,
+            "execution_spec": "" if has_errors else (compiled.get("execution_spec") or ""),
+            "token_count": 0 if has_errors else (compiled.get("token_count") or 0),
+            "stack_max": 0 if has_errors else (compiled.get("stack_max") or 0),
         },
     })
 

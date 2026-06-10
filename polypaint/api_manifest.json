@@ -162,6 +162,7 @@
       "/add-favorite",
       "/check-status",
       "/cleanup",
+      "/compile-coeff-program-source",
       "/delete",
       "/delete-coeff-program",
       "/delete-favorite",

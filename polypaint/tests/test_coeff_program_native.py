@@ -984,3 +984,54 @@ def test_coeff_program_sin_with_andy_blends_natively():
     for got in keep:
         assert abs(got.real - 2.0) <= 1e-6
         assert abs(got.imag) <= 1e-6
+
+
+def test_coeff_program_angle_branch_parity_static_vs_dynamic():
+    # angle of (-x, -0) used to give -pi dynamically (raw atan2) while the
+    # canonicalized helpers gave +pi; both paths now canonicalize signed zero.
+    p1 = 1.0
+    _meta, values = _run_source_with_params(
+        """
+        poly = push_vec(2, 0)
+        poly[0] = angle(neg(1))
+        poly[1] = angle(neg(p1))
+        """,
+        [p1, 0.0, 0.0, 0.0],
+        cfpv=[2, 0, 0],
+    )
+    assert abs(values[0].real - math.pi) <= 1e-6
+    assert abs(values[1].real - math.pi) <= 1e-6
+
+
+def test_coeff_program_abs_uses_full_range_magnitude():
+    # abs of |z| ~ 1e-200 used to underflow to 0 via sqrt(|z|^2); log(abs(z))
+    # then hit the -700 sentinel. With hypot it matches the static fold.
+    p1 = 1.0
+    _meta, values = _run_source_with_params(
+        """
+        poly = push_vec(2, 0)
+        poly[0] = log(abs(2e-200))
+        poly[1] = log(abs(p1*2e-200))
+        """,
+        [p1, 0.0, 0.0, 0.0],
+        cfpv=[2, 0, 0],
+    )
+    want = math.log(2e-200)
+    assert abs(values[0].real - want) <= 1e-3
+    assert abs(values[1].real - want) <= 1e-3
+
+
+def test_coeff_program_elementwise_divide_by_zero_yields_zero():
+    # Elementwise division is deliberately forgiving: a zero denominator
+    # element yields 0 and the row continues (scalar expressions error).
+    chain = [
+        ["push_const", "2", "1"],
+        ["poke_tos", "1", "4"],
+        ["emit"],
+        ["push_const", "2", "0"],
+        ["poke_tos", "1", "2"],
+        ["divide", "poly", "poly", "pop"],
+    ]
+    _meta, values = _run_chain_values(chain, n_coeffs=2)
+    assert abs(values[0].real) <= 1e-12
+    assert abs(values[1].real - 2.0) <= 1e-12

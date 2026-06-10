@@ -178,7 +178,16 @@ assertIncludes("if (!hasSourceText) _validateCoeffProgramUiChain(normalizedChain
 assertIncludes("if (program.has_source_text) {", 'Coeff Program source_text payloads should load into Text mode even when source_text is empty');
 assertIncludes("function _effectiveCoeffProgramChainForCompute() {", 'compute payload should centralize coeff-program selection');
 assertIncludes("function _copyCoeffTransformsIntoCoeffProgram() {", 'Coeff Program UI should translate legacy transforms into program chips');
-assertIncludes("const programName = normalized.name === 'exp' ? 'exp_affine' : normalized.name;", 'Copy legacy transforms should rename affine exp to exp_affine in coeff-program chips');
+assertIncludes("const _coeffProgramRegistryChipNames = { exp: 'exp_affine', power: 'power_series' };", 'normalize/copy should share one registry-to-chip name map (exp and power are shadowed in the catalog)');
+assertIncludes("return { name: _coeffProgramRegistryChipName(normalized.name), params: ['poly', 'poly', ...args] };", 'Copy legacy transforms should map shadowed registry names through the shared chip-name map');
+assertIncludes("return [{ name: _coeffProgramRegistryChipName(legacyName), params: [legacyTgt, legacySrc, ...legacyArgs] }];", 'Normalize should map shadowed registry names through the shared chip-name map');
+assertIncludes("// LAYOUT CONTRACT: legacy rows are source-first", 'The legacy-vs-chip param order flip must stay documented at the normalize seam');
+assertIncludes("function _isAndyParam(pDef) {", 'andy identity should be real metadata (kind), not placeholder text');
+assertIncludes("kind: 'andy', ph: 'andy'", 'the base andy param def should carry the kind marker');
+assertIncludes("catalog.power_series = {", 'Coeff Program catalog should expose the registry power transform as a power_series chip');
+assertIncludes("return { name: 'legacy', params: [normalized.name, 'poly', 'poly', ...args] };", 'Copy legacy transforms must keep andy-carrying rows as legacy chips (named chips drop andy)');
+assertIncludes("if (normalized === 'text' && _coeffProgramSourceAutoSynthed && !_cpChain.length) {", 'Emptying the chip chain must clear stale auto-synthesized text');
+assertIncludes("function _coeffProgramSourceStatements(sourceText) {", 'statement counter and display should share one backend-mirroring splitter');
 assertIncludes("nativeTransform: true,", 'Coeff Program picker should expose direct native transform chips instead of a visible legacy wrapper');
 assertIncludes("catalog.exp_affine = {", 'Coeff Program picker should expose affine exponential as exp_affine');
 assertIncludes("desc: 'exp_affine(src, a, b): exp(src*a+b)'", 'Coeff Program exp_affine chip should document native affine exponential semantics');
@@ -192,7 +201,7 @@ assertIncludes("chip-input-function-wide", 'Coeff Program legacy function select
 assertIncludes("chip-input-program-wide", 'Program macro chip inputs should be wide enough for saved program ids');
 assertIncludes("chip-input-complex-wide", 'Coeff Program complex expression fields should be wide enough to read');
 assertIncludes("legacyName === 'exp'", 'Coeff Program legacy exp chip should render as a formula with source/target selectors');
-assertIncludes("item.name === 'exp' || item.name === 'exp_affine'", 'Coeff Program exp_affine chip should render as affine exp, not unary exp');
+assertIncludes("if (item.name === 'exp_affine') {", 'Coeff Program exp_affine chip should render the affine formula (only exp_affine reaches the nativeTransform renderer)');
 assertIncludes("exp(z*field1+field2)", 'Coeff Program exp chip should document complex multiplier plus offset semantics');
 assertIncludes("legacyName === 'round'", 'Coeff Program legacy round chip should render as a formula with source/target selectors');
 assertIncludes("Complex multiplier in round(z*multiplier)", 'Coeff Program round chip should expose one compact complex multiplier field');
@@ -542,7 +551,7 @@ function assert(cond, message) {
 async function main() {
   const solveScoreCatalogBlock = extractBetween(
     "const _solveScoreMetricNames = [",
-    "const _ctAndyParam = { ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: `Blend amount in [0,1]. ${_cpScalarExprHelp} In Chain mode it must be numeric.` };",
+    "const _ctAndyParam = { kind: 'andy', ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: `Blend amount in [0,1]. ${_cpScalarExprHelp} In Chain mode it must be numeric.` };",
     'solve-score catalog block'
   );
   const code = [

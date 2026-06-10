@@ -128,18 +128,34 @@ class TestDeployPackaging(unittest.TestCase):
         )
         self.assertNotIn('stepfunctions/render_workflow.asl.json.template > /tmp/render_workflow.asl.json', joined)
 
-    def test_palette_workflow_template_substitutes_attach_palette_arn_in_both_deploy_paths(self):
+    def test_palette_and_compute_workflows_template_via_shared_functions(self):
+        # The templating lives in one function per workflow (like the render
+        # workflow), called from both the create and update paths, so the two
+        # paths cannot drift.
         joined = _joined_shell_lines(DEPLOY_TEXT)
-        matches = list(re.finditer(
-            r'sed -e "s\|\\\$\{PlanFunctionArn\}\|\$\{PALETTE_PLAN_ARN\}\|g".*?'
-            r'stepfunctions/palette_workflow\.asl\.json\.template > /tmp/palette_workflow\.asl\.json',
-            joined,
-        ))
-        self.assertEqual(len(matches), 2, "expected create and update palette-workflow sed blocks")
-        for idx, match in enumerate(matches, start=1):
-            block = match.group(0)
-            self.assertIn(r'-e "s|\${AttachPaletteFunctionArn}|${ATTACH_PALETTE_ARN}|g"', block,
-                          f"palette workflow sed block {idx} missing AttachPaletteFunctionArn substitution")
+        for fn_name, template in (
+            ("render_palette_workflow_definition", "palette_workflow"),
+            ("render_compute_workflow_definition", "compute_workflow"),
+        ):
+            helper_match = re.search(
+                rf'{fn_name}\(\)\s*\{{(?P<body>.*?)\n\}}',
+                DEPLOY_TEXT,
+                re.DOTALL,
+            )
+            self.assertIsNotNone(helper_match, f"deploy.sh should define {fn_name}()")
+            self.assertIn(f"stepfunctions/{template}.asl.json.template", helper_match.group("body"))
+            self.assertEqual(
+                joined.count(f'{fn_name} /tmp/{template}.asl.json "$ACCT"'),
+                2,
+                f"expected create and update paths to both use {fn_name}",
+            )
+            self.assertNotIn(
+                f'stepfunctions/{template}.asl.json.template > /tmp/{template}.asl.json',
+                joined,
+                f"raw {template} sed block should be gone",
+            )
+        self.assertIn(r'-e "s|\${AttachPaletteFunctionArn}|${ATTACH_ARN}|g"', DEPLOY_TEXT,
+                      "palette workflow function missing AttachPaletteFunctionArn substitution")
 
     def test_all_api_gateway_integrations_have_invoke_permission(self):
         joined = _joined_shell_lines(DEPLOY_TEXT)
@@ -451,6 +467,15 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('"render-lores-preview": "%s/render-lores-preview"', DEPLOY_TEXT)
         self.assertIn('cp lambda/roots2pix_mt_lib/* "$RENDER_LORES_PREVIEW_DIR/lib/"', DEPLOY_TEXT)
         self.assertNotIn('cp lambda/roots2pix_mt_lib/* "$RENDER_LORES_PREVIEW_DIR/lib/" 2>/dev/null || true', DEPLOY_TEXT)
+        self.assertNotIn('cp lambda/roots2pix_mt_lib/* "$RASTER_MT_DIR/lib/" 2>/dev/null || true', DEPLOY_TEXT)
+        self.assertNotIn('cp lambda/solve_proximity_hist_sectioned_lib/* "$SP_DIR/lib/" 2>/dev/null || true', DEPLOY_TEXT)
+        self.assertNotIn('cp lambda/solve_proximity_hist_sectioned_lib/* "$SP_BENCH_DIR/lib/" 2>/dev/null || true', DEPLOY_TEXT)
+        self.assertNotIn('cp lambda/solve_palette_chunk_mt_lib/* "$PAL_CHUNK_DIR/lib/" 2>/dev/null || true', DEPLOY_TEXT)
+        # A silent '|| true' on any lib copy can ship a zip whose binary
+        # cannot load libcurl; the pattern must stay banned everywhere.
+        for line in DEPLOY_TEXT.splitlines():
+            if "_lib/*" in line and "cp lambda/" in line:
+                self.assertNotIn("|| true", line, f"silent lib copy: {line.strip()}")
         docker_script = (ROOT / "scripts" / "test-docker-runtime.sh").read_text()
         self.assertIn('"$ROOT/lambda/solve_proximity_stats"', docker_script)
 
@@ -511,8 +536,8 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('curl -s -o /dev/null -w "%{http_code}" "${SITE_URL}/${asset}"', DEPLOY_TEXT)
         self.assertIn('mkdir -p "$(dirname "${TMP_DIR}/${asset}")"', DEPLOY_TEXT)
         self.assertIn('curl -fsS "${SITE_URL}/${asset}" -o "${TMP_DIR}/${asset}"', DEPLOY_TEXT)
-        self.assertIn('LOCAL_HASH=$(shasum "$SCRIPT_DIR/${asset}" | cut -d\' \' -f1)', DEPLOY_TEXT)
-        self.assertIn('REMOTE_HASH=$(shasum "${TMP_DIR}/${asset}" | cut -d\' \' -f1)', DEPLOY_TEXT)
+        self.assertIn('LOCAL_HASH=$(shasum -a 256 "$SCRIPT_DIR/${asset}" | cut -d\' \' -f1)', DEPLOY_TEXT)
+        self.assertIn('REMOTE_HASH=$(shasum -a 256 "${TMP_DIR}/${asset}" | cut -d\' \' -f1)', DEPLOY_TEXT)
         self.assertIn('FATAL: deployed ${asset} does not match local file', DEPLOY_TEXT)
 
     def test_deploy_includes_solve_score_program_assets(self):

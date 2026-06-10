@@ -865,3 +865,119 @@ class TestCoeffProgramReviewFixes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCodeReview3Fixes(unittest.TestCase):
+    """Regression tests for the code-review-3.md fixes."""
+
+    def _parse(self, text):
+        from coeff_program_source import parse_coeff_program_source
+        return parse_coeff_program_source(text, strict=False)
+
+    def test_shadowed_transform_chips_compile_in_chain_mode(self):
+        from coeff_program_chain import COEFF_OP_NATIVE_TRANSFORM, compile_coeff_program_chain
+        for name, fn_index in (("pow_affine", 24), ("power_series", 25), ("exp_affine", 16)):
+            compiled = compile_coeff_program_chain([[name, "poly", "poly"]])
+            token = compiled["tokens"][0]
+            self.assertEqual(token["op"], COEFF_OP_NATIVE_TRANSFORM, name)
+            self.assertEqual(token["fn_index"], fn_index, name)
+
+    def test_affine_shorthand_rejects_source_like_value_slots(self):
+        cases = {
+            "cf\npoly = linear(poly, 5)": "ambiguous",
+            "cf\npoly = scale(poly)": "missing the multiplier",
+            "cf\npoly = shift(poly)": "missing the offset",
+            "poly = scale(2, 3)": "source must be",
+            "poly = shift(2, 3)": "source must be",
+            "linear(100, 0, 1)\ndrop": "three values",
+        }
+        for text, fragment in cases.items():
+            parsed = self._parse(text)
+            self.assertTrue(
+                any(fragment in d["message"] for d in parsed["diagnostics"]),
+                (text, parsed["diagnostics"]),
+            )
+
+    def test_affine_shorthand_valid_forms_still_lower(self):
+        for text in (
+            "poly = linear(poly, 5, 0)",
+            "poly = linear(2, 3)",
+            "poly = linear(poly, 2, 3, 0.5)",
+            "poly = scale(poly, 2)",
+            "cf\npoly = scale(2)",
+            "cf\npoly = shift(3)",
+        ):
+            parsed = self._parse(text)
+            self.assertEqual(parsed["diagnostics"], [], text)
+
+    def test_mod_and_abs_share_one_wire_encoding(self):
+        from coeff_program_chain import compile_coeff_program_chain
+        via_mod = compile_coeff_program_chain([["mod", "poly", "poly"]])
+        via_abs = compile_coeff_program_chain([["abs", "poly", "poly"]])
+        self.assertEqual(via_mod["fingerprint"], via_abs["fingerprint"])
+        self.assertIn("vector_unary:abs", via_mod["execution_spec"])
+
+    def test_blend_supports_poly_assignment(self):
+        from coeff_program_chain import compile_coeff_program_chain
+        parsed = self._parse("cf\ncf\npoly = blend(0.25)")
+        self.assertEqual(parsed["diagnostics"], [])
+        self.assertEqual(parsed["chain"][-1], ["_typed_set_poly"])
+        compile_coeff_program_chain(parsed["chain"])
+
+    def test_source_constants_fold_to_single_literal_push(self):
+        from coeff_program_chain import compile_coeff_program_chain
+        parsed = self._parse("push_scalar(1-2j)\ndrop")
+        self.assertEqual(len(parsed["chain"]), 2)
+        self.assertEqual(parsed["chain"][0][0], "_typed_push_scalar")
+        folded = compile_coeff_program_chain(parsed["chain"])
+        chip = compile_coeff_program_chain([["push_scalar", "1-2j"], ["pop"]])
+        self.assertEqual(folded["fingerprint"], chip["fingerprint"])
+        with_pi = self._parse("push_scalar(pi/2)\ndrop")
+        self.assertEqual(len(with_pi["chain"]), 2)
+
+    def test_source_static_division_by_zero_is_rejected(self):
+        parsed = self._parse("push_scalar(1/0)\ndrop")
+        self.assertTrue(any("division" in d["message"] for d in parsed["diagnostics"]))
+
+    def test_stack_op_call_forms_and_poly_pop_call(self):
+        parsed = self._parse("cf\ndup()\nemit()\nemit")
+        self.assertEqual(parsed["diagnostics"], [])
+        parsed = self._parse("cf\npoly = pop()")
+        self.assertEqual(parsed["diagnostics"], [])
+        self.assertIn(["set", "poly", "pop"], parsed["chain"])
+        parsed = self._parse("cf\ndup(1)")
+        self.assertTrue(any("takes no arguments" in d["message"] for d in parsed["diagnostics"]))
+
+    def test_disallowed_source_selector_message_names_the_restriction(self):
+        parsed = self._parse("cf\nroll(cf, 2)\ndrop")
+        self.assertTrue(
+            any("not allowed as a source" in d["message"] for d in parsed["diagnostics"]),
+            parsed["diagnostics"],
+        )
+
+    def test_branch_folds_canonicalize_signed_zero(self):
+        import math
+        from coeff_program_chain import compile_coeff_program_chain
+        angle = compile_coeff_program_chain([["push_const", "2", "angle(neg(1))"], ["emit"]])
+        self.assertAlmostEqual(angle["tokens"][0]["args"][1], math.pi)
+        sqrt = compile_coeff_program_chain([["push_const", "2", "sqrt(neg(1))"], ["emit"]])
+        self.assertAlmostEqual(sqrt["tokens"][0]["args_im"][1], 1.0)
+
+    def test_round_two_arg_form_is_multiplier_and_andy(self):
+        # Pinned decision: 2-arg legacy round is (multiplier, andy); the old
+        # component pair (a, b) with b != 0 must use the 3-arg form.
+        from coeff_program_chain import compile_coeff_program_chain
+        compiled = compile_coeff_program_chain([["legacy", "round", "poly", "poly", "2", "3"]])
+        token = compiled["tokens"][0]
+        self.assertEqual(token["args"], [2.0, 0.0])
+        self.assertEqual(token["andy"], 3.0)
+
+    def test_dead_entry_points_removed(self):
+        import coeff_program_chain as chain_mod
+        import coeff_program_source as source_mod
+        for missing in ("compile_coeff_program_diagnostics", "coeff_program_chain_id", "validate_legacy_registry"):
+            self.assertFalse(hasattr(chain_mod, missing), missing)
+        self.assertFalse(hasattr(source_mod, "compile_coeff_program_source_diagnostics"))
+        self.assertFalse(hasattr(source_mod, "_LEGACY_UNARY_NAMES"))
+        compiled = chain_mod.compile_coeff_program_chain([["push_range", "4"], ["emit"]])
+        self.assertNotIn("execution_tokens", compiled)

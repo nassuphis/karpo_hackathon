@@ -31,7 +31,9 @@ The program's job is to leave the desired coefficient vector in `poly`.
 - `legacy(...)` is not valid in text mode. Use direct transform names instead,
   or use Chain mode for old legacy chains.
 - Standalone `pop` and `peek` are invalid. Use `drop`, or write `poly = pop`
-  / `poly = peek` explicitly.
+  / `poly = peek` explicitly (`poly = pop()` also works).
+- Stack operations accept both bare and call forms: `emit` and `emit()`,
+  `dup` and `dup()`, etc.
 
 Example:
 
@@ -315,7 +317,18 @@ shift(source, offset)
 
 linear(multiplier, offset)     # source defaults to pop
 linear(source, multiplier, offset)
+linear(source, multiplier, offset, andy)   # native transform with blending
 ```
+
+The shorthand forms resolve arguments positionally, so ambiguous shapes are
+rejected instead of silently rebinding:
+
+- `scale(poly)` / `shift(poly)` — a source with no value is an error.
+- `scale(2, 3)` / `shift(2, 3)` — two values with no source is an error.
+- `linear(poly, 5)` — a source with only one value is an error; write
+  `linear(poly, 5, 0)`.
+- `linear(100, 0, 1)` — three bare values is an error (it is *not* read as
+  multiplier, offset, andy); use the explicit 4-arg source form for andy.
 
 Examples:
 
@@ -482,10 +495,11 @@ Blend consumes two vectors and a scalar `t`, then pushes:
 below*(1-t) + top*t
 ```
 
-Form:
+Forms:
 
 ```text
-blend(t)
+blend(t)            # push the blended vector
+poly = blend(t)     # assign it directly
 ```
 
 Example:
@@ -497,9 +511,6 @@ poly
 blend(0.25)
 emit
 ```
-
-`blend` always writes to the stack. Use `emit` or `poly = pop` afterward if you
-want the blended vector in `poly`.
 
 ## Native Coefficient Transforms
 
@@ -644,11 +655,15 @@ emit
 
 Numeric notes:
 
-- Signed zero is canonicalized: `-0.0` and `0.0` compile to identical tokens
-  and fingerprints, and native `log`/`sqrt`/`angle` use the principal branch.
-  One corner: a statically folded `sqrt` of a negative real with a literal
-  `-0` imaginary part follows Python's signed-zero branch (`-i`), while the
-  dynamic path canonicalizes to `+i`.
+- Signed zero is canonicalized everywhere: `-0.0` and `0.0` compile to
+  identical tokens and fingerprints, and `log`/`sqrt`/`angle` choose the
+  principal branch (e.g. `angle(neg(1))` is `+pi`) identically in static
+  folds and dynamic evaluation.
+- Constant scalar expressions fold at compile time: `push_scalar(pi/2)` costs
+  one token and fingerprints identically whether authored as text or chips.
+- Division: scalar expressions error on a zero denominator (matching
+  compile-time folds); elementwise vector division is forgiving — a zero
+  denominator element yields 0 and the row continues.
 
 If execution fails, common causes are:
 

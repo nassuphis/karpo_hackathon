@@ -11620,7 +11620,12 @@ const _ssCatalog = (() => {
 })();
 
 const _cpScalarExprHelp = 'Program mode accepts t1/t2, p1/p2, poly_len, cfN, polyN, tosN, pi, pi2, pi2i, literals, + - * /, and conj/real/imag/abs/angle/sqrt/log/exp/sin/cos/tan/sinh/cosh/tanh.';
-const _ctAndyParam = { ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: `Blend amount in [0,1]. ${_cpScalarExprHelp} In Chain mode it must be numeric.` };
+// kind: 'andy' is the semantic marker (filtering/serialization/validation
+// key off it); ph is display-only placeholder text.
+const _ctAndyParam = { kind: 'andy', ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: `Blend amount in [0,1]. ${_cpScalarExprHelp} In Chain mode it must be numeric.` };
+function _isAndyParam(pDef) {
+    return !!(pDef && pDef.kind === 'andy');
+}
 const _ctCategoryMeta = {
     structural: { title: 'Structural', help: 'reorder, normalize, sanitize, or resize the coefficient vector' },
     accumulation: { title: 'Ordering + accumulation', help: 'sort or accumulate coefficients across the vector' },
@@ -11853,7 +11858,7 @@ const _cpCatalog = (() => {
                 { ph: 'tgt', def: 'poly', choices: _coeffProgramVectorTargetChoices, selectorWide: true, title: 'Output target: write poly or push the generated vector.' },
                 { ph: 'field1', label: 'field1', def: '0', complex: true, scalarExpr: 'complex', complexWide: true, title: 'First complex value. Each coefficient randomly chooses field1 or field2 with 50/50 odds.' },
                 { ph: 'field2', label: 'field2', def: '1', complex: true, scalarExpr: 'complex', complexWide: true, title: 'Second complex value. Each coefficient randomly chooses field1 or field2 with 50/50 odds.' },
-                { ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: 'Blend generated values with current poly: output*(1-andy)+poly*andy.' },
+                { ..._ctAndyParam, title: 'Blend generated values with current poly: output*(1-andy)+poly*andy.' },
             ],
             desc: 'generate a random Littlewood-style vector using current poly length',
         },
@@ -11898,15 +11903,33 @@ const _cpCatalog = (() => {
                 params: [
                     { ph: 'tgt', def: 'poly', choices: _coeffProgramLegacyTargetChoices, selectorWide: true, title: 'Output target: write poly or push the transform result.' },
                     { ph: 'src', def: 'poly', choices: _coeffProgramLegacySourceChoices, selectorWide: true, title: 'Input vector: cf read-only coefficients, current poly, pop stack, or peek stack.' },
-                    ..._cpExpParamDefs.map(pDef => ({ ...pDef })).filter(pDef => !(pDef && pDef.ph === 'andy')),
+                    ..._cpExpParamDefs.map(pDef => ({ ...pDef })).filter(pDef => !_isAndyParam(pDef)),
                 ],
                 label: 'exp_affine',
                 desc: 'exp_affine(src, a, b): exp(src*a+b)',
             };
         }
+        if (name === 'power') {
+            // The registry's power transform is shadowed in this catalog by
+            // the vector-binary power chip; expose it under the chip/source
+            // name power_series instead.
+            catalog.power_series = {
+                category: ctSpec.category || 'elementwise',
+                nativeTransform: true,
+                params: [
+                    { ph: 'tgt', def: 'poly', choices: _coeffProgramLegacyTargetChoices, selectorWide: true, title: 'Output target: write poly or push the transform result.' },
+                    { ph: 'src', def: 'poly', choices: _coeffProgramLegacySourceChoices, selectorWide: true, title: 'Input vector: cf read-only coefficients, current poly, pop stack, or peek stack.' },
+                    ..._coeffProgramLegacyInputDefs(name)
+                        .filter(pDef => !_isAndyParam(pDef))
+                        .map(pDef => ({ ...pDef })),
+                ],
+                label: 'power_series',
+                desc: ctSpec.desc || 'power_series(src, k): (i+1) times a geometric series through z^k',
+            };
+        }
         if (catalog[name]) return;
         const argDefs = _coeffProgramLegacyInputDefs(name)
-            .filter(pDef => !(pDef && pDef.ph === 'andy'))
+            .filter(pDef => !_isAndyParam(pDef))
             .map(pDef => ({ ...pDef }));
         catalog[name] = {
             category: ctSpec.category || 'elementwise',
@@ -12844,12 +12867,20 @@ function _coeffProgramSourceTextarea() {
 // _NATIVE_TRANSFORM_ALIASES in lambda/coeff_program_source.py).
 const _coeffProgramSourceAliasNames = { exp: 'exp_affine', pow: 'pow_affine', power: 'power_series' };
 
+// Forward map from registry transform names to Coeff Program chip names.
+// exp and power are shadowed in the chip catalog (exp by the vector unary,
+// power by the vector binary), so normalize/copy must emit the dedicated
+// chips or the rows compile as the wrong operation.
+const _coeffProgramRegistryChipNames = { exp: 'exp_affine', power: 'power_series' };
+function _coeffProgramRegistryChipName(name) {
+    return _coeffProgramRegistryChipNames[name] || name;
+}
+
 function _coeffProgramSourceFromChain(chain) {
     return (chain || []).map(row => {
         if (Array.isArray(row) && row.length) {
             const name = String(row[0] || '').trim();
             const params = row.slice(1).map(v => String(v == null ? '' : v));
-            const sourceName = name === 'exp' && params.length > 2 ? 'exp_affine' : name;
             if (name === 'push' && params[0] === 'cf') return 'cf';
             if (name === 'push' && params[0] === 'poly') return 'poly';
             if ((name === 'push_const' || name === 'const') && params.length >= 2) return `push_vec(${params.join(', ')})`;
@@ -12863,7 +12894,7 @@ function _coeffProgramSourceFromChain(chain) {
                 if (src1 === 'pop' && src2 === 'pop') return `${name}()`;
                 return `${name}(${src1}, ${src2})`;
             }
-            if (sourceName === name && _coeffProgramVectorUnaryNames.includes(name) && params.length >= 2) {
+            if (_coeffProgramVectorUnaryNames.includes(name) && params.length >= 2) {
                 // Trailing params after tgt/src (e.g. andy on sin/cos) must
                 // survive synthesis; the parser routes them to the native
                 // transform path.
@@ -12889,15 +12920,10 @@ function _coeffProgramSourceFromChain(chain) {
             }
             const nativeSpec = _cpCatalog[name] || {};
             if (nativeSpec.nativeTransform && params.length >= 2) {
-                const callName = _coeffProgramSourceAliasNames[name] || sourceName;
+                const callName = _coeffProgramSourceAliasNames[name] || name;
                 const [tgt, src, ...rest] = params;
                 const args = [src || 'poly', ...rest].join(', ');
                 return tgt === 'poly' ? `poly = ${callName}(${args})` : `${callName}(${args})`;
-            }
-            if (sourceName !== name && params.length >= 2) {
-                const [tgt, src, ...rest] = params;
-                const args = [src || 'poly', ...rest].join(', ');
-                return tgt === 'poly' ? `poly = ${sourceName}(${args})` : `${sourceName}(${args})`;
             }
             if (name === 'legacy') {
                 const [legacyName, src, tgt, ...rest] = params;
@@ -12939,14 +12965,21 @@ function _setCoeffProgramEditorMode(mode) {
     if (textPanel && textPanel.classList) textPanel.classList.toggle('active', normalized === 'text');
     if (chipsTab && chipsTab.classList) chipsTab.classList.toggle('active', normalized === 'chips');
     if (textTab && textTab.classList) textTab.classList.toggle('active', normalized === 'text');
-    if (normalized === 'text' && _cpChain.length &&
+    if (normalized === 'text' && _coeffProgramSourceAutoSynthed && !_cpChain.length) {
+        // The synthesized program's chips were all removed; stale auto-text
+        // must not stay authoritative for compute.
+        _setCoeffProgramSourceText('');
+    } else if (normalized === 'text' && _cpChain.length &&
         (!_getCoeffProgramSourceText().trim() || _coeffProgramSourceAutoSynthed)) {
         _setCoeffProgramSourceText(_coeffProgramSourceFromChain(_serializeCoeffProgramChain()));
         _coeffProgramSourceAutoSynthed = true;
     }
+    const computeScope = _paramProgramModeSelected()
+        ? ', and compute'
+        : '; compute ignores the program while the Chain pipeline is selected';
     _coeffProgramStatus(normalized === 'text'
-        ? 'Text source is authoritative for save, preview, debug, and compute.'
-        : 'Chip editor is authoritative for save, preview, debug, and compute.');
+        ? `Text source is authoritative for save, preview, debug${computeScope}.`
+        : `Chip editor is authoritative for save, preview, debug${computeScope}.`);
     _syncParamPipelineModeUi();
     if (typeof _coeffProgramModalState !== 'undefined' && _coeffProgramModalState.open) _renderCoeffProgramModal();
     if (_paramProgramModeSelected()) _markComputePreviewStale();
@@ -13245,12 +13278,12 @@ function _formatCoeffProgramChainForLog(chain, separator = ',') {
     return _formatChainRowsForLog(chain, separator) || 'coeff_program(identity)';
 }
 
-function _coeffProgramSourceStatementCount(sourceText) {
+function _coeffProgramSourceStatements(sourceText) {
     // Mirrors split_coeff_program_statements in lambda/coeff_program_source.py:
     // statements split on newlines AND semicolons at bracket depth zero, with
-    // # comments stripped, so the count matches the backend's metadata.
+    // # comments stripped, so counts and displays match the backend.
     const text = String(sourceText == null ? '' : sourceText);
-    let count = 0;
+    const statements = [];
     let buffer = '';
     let depth = 0;
     let inComment = false;
@@ -13258,7 +13291,7 @@ function _coeffProgramSourceStatementCount(sourceText) {
         if (inComment) {
             if (ch === '\n') {
                 inComment = false;
-                if (depth === 0) { if (buffer.trim()) count++; buffer = ''; }
+                if (depth === 0) { if (buffer.trim()) statements.push(buffer.trim()); buffer = ''; }
                 else buffer += ch;
             }
             continue;
@@ -13267,21 +13300,22 @@ function _coeffProgramSourceStatementCount(sourceText) {
         if (ch === '(' || ch === '[') depth++;
         else if (ch === ')' || ch === ']') depth = Math.max(0, depth - 1);
         if ((ch === ';' || ch === '\n') && depth === 0) {
-            if (buffer.trim()) count++;
+            if (buffer.trim()) statements.push(buffer.trim());
             buffer = '';
             continue;
         }
         buffer += ch;
     }
-    if (buffer.trim()) count++;
-    return count;
+    if (buffer.trim()) statements.push(buffer.trim());
+    return statements;
+}
+
+function _coeffProgramSourceStatementCount(sourceText) {
+    return _coeffProgramSourceStatements(sourceText).length;
 }
 
 function _coeffProgramSourceDisplay(sourceText, separator = ',') {
-    const rows = String(sourceText == null ? '' : sourceText)
-        .split(/\n+/)
-        .map(line => line.replace(/#.*$/, '').trim())
-        .filter(Boolean);
+    const rows = _coeffProgramSourceStatements(sourceText);
     if (!rows.length) return 'coeff_program(identity)';
     const head = rows.slice(0, 6).join(separator);
     return rows.length > 6 ? `${head}${separator}...` : head;
@@ -13522,20 +13556,29 @@ function _normalizeCoeffProgramChain(rawChain) {
                 const fullDefs = _coeffProgramLegacyInputDefs(legacyName);
                 const legacyArgs = params.slice(3);
                 const lastDef = fullDefs.length ? fullDefs[fullDefs.length - 1] : null;
-                const carriesAndy = lastDef && lastDef.ph === 'andy'
+                const carriesAndy = _isAndyParam(lastDef)
                     && legacyArgs.length === fullDefs.length
                     && !_ctAndyIsDefault(legacyArgs[legacyArgs.length - 1]);
+                // LAYOUT CONTRACT: legacy rows are source-first
+                // ['legacy', name, src, tgt, ...args]; named chip params are
+                // target-first [tgt, src, ...args]. Converting between the
+                // two REORDERS — keep the named locals, never bare indexes.
+                const legacySrc = params[1] || 'poly';
+                const legacyTgt = params[2] || 'poly';
                 if (carriesAndy) {
-                    return [{ name: 'legacy', params: [legacyName, params[1] || 'poly', params[2] || 'poly', ...legacyArgs] }];
+                    return [{ name: 'legacy', params: [legacyName, legacySrc, legacyTgt, ...legacyArgs] }];
                 }
-                return [{ name: legacyName === 'exp' ? 'exp_affine' : legacyName, params: [params[2] || 'poly', params[1] || 'poly', ...legacyArgs] }];
+                return [{ name: _coeffProgramRegistryChipName(legacyName), params: [legacyTgt, legacySrc, ...legacyArgs] }];
             }
             // Unary native transforms (sin/cos/...) with a trailing andy have
             // andy-less catalog params; keep them as legacy chips too.
             const rest = item.slice(1).map(v => String(v));
             if (_coeffProgramVectorUnaryNames.includes(name) && name !== 'exp' && rest.length > 2
                 && _ctCatalog[name] && !_ctAndyIsDefault(rest[rest.length - 1])) {
-                return [{ name: 'legacy', params: [name, rest[1] || 'poly', rest[0] || 'poly', ...rest.slice(2)] }];
+                // Chip rows are target-first; the legacy row being built is
+                // source-first (see LAYOUT CONTRACT above).
+                const [chipTgt, chipSrc, ...unaryArgs] = rest;
+                return [{ name: 'legacy', params: [name, chipSrc || 'poly', chipTgt || 'poly', ...unaryArgs] }];
             }
             const sourceName = name === 'const' ? 'push_const' : (name === 'exp' && item.length > 3 ? 'exp_affine' : name);
             return [{ name: sourceName, params: item.slice(1).map(v => String(v)) }];
@@ -13579,7 +13622,7 @@ function _serializeCoeffProgramChain() {
                 ? params[idx + 3]
                 : String(pDef.def || ''));
             let last = values.length - 1;
-            if (last >= 0 && pDefs[last] && pDefs[last].ph === 'andy' && _ctAndyIsDefault(values[last])) last--;
+            if (last >= 0 && _isAndyParam(pDefs[last]) && _ctAndyIsDefault(values[last])) last--;
             return ['legacy', legacyName, params[1] || 'poly', params[2] || 'poly', ...values.slice(0, last + 1)];
         }
         const catalogName = name === 'const' ? 'push_const' : name;
@@ -13674,11 +13717,29 @@ function _copyCoeffTransformsIntoCoeffProgram() {
             name: values[0],
             params: values.slice(1).map(v => String(v)),
         });
-        const programName = normalized.name === 'exp' ? 'exp_affine' : normalized.name;
-        return { name: programName, params: ['poly', 'poly', ...(normalized.params || [])] };
+        const args = (normalized.params || []).map(v => String(v));
+        // Named chips have andy-less params (the catalogs filter it), so a
+        // transform carrying a non-default andy must stay a legacy chip or
+        // the andy is silently dropped on the next serialize — same rule as
+        // _normalizeCoeffProgramChain.
+        const fullDefs = _coeffProgramLegacyInputDefs(normalized.name);
+        const lastDef = fullDefs.length ? fullDefs[fullDefs.length - 1] : null;
+        const carriesAndy = _isAndyParam(lastDef)
+            && args.length === fullDefs.length
+            && !_ctAndyIsDefault(args[args.length - 1]);
+        if (carriesAndy) {
+            // legacy rows are source-first: [name, src, tgt, ...args]
+            return { name: 'legacy', params: [normalized.name, 'poly', 'poly', ...args] };
+        }
+        // named chip params are target-first: [tgt, src, ...args]
+        return { name: _coeffProgramRegistryChipName(normalized.name), params: ['poly', 'poly', ...args] };
     });
     _cpChain.splice(0, _cpChain.length, ...chain);
     _coeffProgramSelectedIndex = _cpChain.length ? 0 : -1;
+    // The copied transforms are now the program; stale text (user-authored or
+    // synthesized from the previous chain) must not stay authoritative.
+    _setCoeffProgramSourceText('');
+    _coeffProgramSourceAutoSynthed = false;
     _setCoeffProgramEditorMode('chips');
     _renderChips('cp');
     if (_paramProgramModeSelected()) _markComputePreviewStale();
@@ -13757,7 +13818,7 @@ function updateChipParam(chipIdx, paramIdx, value, which) {
                 // like p2, real(p1), or p1+conj(p2) intact instead of applying the
                 // legacy numeric-only transform validator in the editor.
                 chain[chipIdx].params[paramIdx] = rawText || String(pDef.def || '');
-            } else if (pDef.ph === 'andy') {
+            } else if (_isAndyParam(pDef)) {
                 const norm = _normalizeCtRealInput(value);
                 if (norm == null) {
                     alert(`Invalid ${pDef.ph || 'value'}: "${value}". Use a finite numeric andy value.`);
@@ -13817,7 +13878,7 @@ function _chipReadonlyValueHtml(value, paramDef = {}, title = '') {
     if (pd.programWide) clsParts.push('chip-input-program-wide');
     if (pd.paramProgramWide) clsParts.push('chip-input-param-program-wide');
     if (pd.wide === true || (pd.scalarExpr && !pd.complexWide && !pd.exprWide)) clsParts.push('chip-input-wide');
-    if (pd.ph === 'andy') clsParts.push('chip-input-andy');
+    if (_isAndyParam(pd)) clsParts.push('chip-input-andy');
     return `<span class="${clsParts.join(' ')}"${titleAttr}>${_escapeHtml(text)}</span>`;
 }
 
@@ -13849,9 +13910,9 @@ function _chipInputHtml(which, chipIdx, paramIdx, value, paramDef, options = {})
         if (pd.choiceWide || pd.wide === true) clsParts.push('chip-input-wide');
         return `<select class="${clsParts.join(' ')}"${titleAttr} onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">${options}</select>`;
     }
-    const im = (pd.target || pd.choices || pd.complexPairNext || pd.complex || pd.scalarExpr || pd.lengthArg || pd.ph === 'andy') ? 'text' : 'decimal';
+    const im = (pd.target || pd.choices || pd.complexPairNext || pd.complex || pd.scalarExpr || pd.lengthArg || _isAndyParam(pd)) ? 'text' : 'decimal';
     const clsParts = ['chip-input'];
-    if (pd.ph === 'andy') clsParts.push('chip-input-andy');
+    if (_isAndyParam(pd)) clsParts.push('chip-input-andy');
     if (pd.complexWide) clsParts.push('chip-input-complex-wide');
     if (pd.exprWide) clsParts.push('chip-input-expr-wide');
     if (pd.programWide) clsParts.push('chip-input-program-wide');
@@ -14094,7 +14155,7 @@ function _coeffProgramLegacyValues(params, legacyDefs) {
 }
 
 function _coeffProgramLegacyAndyHtml(i, values, legacyDefs, options = {}) {
-    const andyIdx = legacyDefs.findIndex(pDef => pDef && pDef.ph === 'andy');
+    const andyIdx = legacyDefs.findIndex(_isAndyParam);
     if (andyIdx < 0) return '';
     const paramIdx = 3 + andyIdx;
     return `<span class="chip-op">andy=</span>${_chipInputHtml('cp', i, paramIdx, values[paramIdx], legacyDefs[andyIdx] || _ctAndyParam, options)}`;
@@ -14154,7 +14215,7 @@ function _coeffProgramNativeTransformFormulaHtml(item, i, pDefs, options = {}) {
     if (item.name === 'linear') {
         return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${src}<span class="chip-op">*</span>${arg(0)}<span class="chip-op">+</span>${arg(1)}</span>`;
     }
-    if (item.name === 'exp' || item.name === 'exp_affine') {
+    if (item.name === 'exp_affine') {
         return `<span class="chip-formula">${tgt}<span class="chip-op">=</span><span>${label}(</span>${src}<span class="chip-op">*</span>${arg(0)}<span class="chip-op">+</span>${arg(1)}<span>)</span></span>`;
     }
     if (item.name === 'round') {

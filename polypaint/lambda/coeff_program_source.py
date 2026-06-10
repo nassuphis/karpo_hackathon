@@ -12,6 +12,8 @@ import re
 from dataclasses import dataclass
 
 from coeff_program_chain import (
+    _canonical_unary_op_name,
+    _expr_value_if_static,
     EXPR_ABS,
     EXPR_ADD,
     EXPR_ANGLE,
@@ -88,23 +90,6 @@ _VECTOR_UNARY_NAMES = {
     "imag",
 }
 
-_LEGACY_UNARY_NAMES = {
-    "rev",
-    "normalize",
-    "deriv",
-    "safe",
-    "negate_odd",
-    "max2one",
-    "sort_mod_keep_angle",
-    "sort_angle_keep_mod",
-    "sort_abs",
-    "cumsum",
-    "cummax",
-    "sort_cumsum",
-    "swirler",
-    "round",
-}
-
 _STACK_ALIASES = {
     "dup": "duplicate",
     "duplicate": "duplicate",
@@ -115,6 +100,8 @@ _STACK_ALIASES = {
 }
 
 _SOURCE_NAMES = {"cf", "poly", "pop", "peek"}
+# Typed expressions additionally accept `tos` as a peek alias.
+_TYPED_VECTOR_SOURCE_NAMES = frozenset(_SOURCE_NAMES | {"tos"})
 _TARGET_NAMES = {"poly", "push"}
 _VECTOR_FILL_NAMES = {"fill", "const", "push_const", "push_vec"}
 # Source-text aliases for native transforms whose registry names are shadowed
@@ -129,6 +116,10 @@ _NATIVE_TRANSFORM_ALIASES = {
 
 def _is_source_name(text):
     return str(text or "").strip().lower() in _SOURCE_NAMES
+
+
+def _is_vector_source_text(text):
+    return str(text or "").strip().lower() in _TYPED_VECTOR_SOURCE_NAMES
 
 
 @dataclass(frozen=True)
@@ -158,12 +149,11 @@ def _diagnostic(message, *, line=1, column=1, level="error"):
 
 
 def _canonical_expr(text):
+    # The chain expression parser natively understands mod()/tau/tau_i, so
+    # only whitespace normalization is needed here.
     raw = str(text or "").strip()
     if not raw:
         raise CoeffProgramSourceError("expression is empty")
-    raw = re.sub(r"\bmod\s*\(", "abs(", raw, flags=re.IGNORECASE)
-    raw = re.sub(r"\btau_i\b", "pi2i", raw, flags=re.IGNORECASE)
-    raw = re.sub(r"\btau\b", "pi2", raw, flags=re.IGNORECASE)
     return re.sub(r"\s+", "", raw)
 
 
@@ -226,6 +216,10 @@ def _source_selector(text, *, allow_cf=True):
     raw = str(text or "").strip().lower()
     allowed = _SOURCE_NAMES if allow_cf else (_SOURCE_NAMES - {"cf"})
     if raw not in allowed:
+        if raw in _SOURCE_NAMES:
+            raise CoeffProgramSourceError(
+                f"{raw} is not allowed as a source here; use one of {', '.join(sorted(allowed))}"
+            )
         raise CoeffProgramSourceError(f"expected source selector, got {text!r}")
     return raw
 
@@ -278,11 +272,25 @@ def _append_typed_target(chain, value_type, *, target):
     return chain + [["_typed_set_poly"]]
 
 
+def _format_scalar_literal(value):
+    re_part = 0.0 if value.real == 0 else float(value.real)
+    im_part = 0.0 if value.imag == 0 else float(value.imag)
+    if im_part >= 0:
+        return f"{re_part!r}+{im_part!r}j"
+    return f"{re_part!r}{im_part!r}j"
+
+
 def _typed_lower_scalar(text):
     try:
         expr = _ExpressionParser(_canonical_expr(text)).parse()
+        static_value = _expr_value_if_static(expr)
     except Exception as exc:
         raise CoeffProgramSourceError(str(exc))
+    if static_value is not None:
+        # Fold constant expressions to a single literal push so text-authored
+        # constants cost one token and fingerprint identically to chip-
+        # authored ones.
+        return [["_typed_push_scalar", _format_scalar_literal(static_value)]]
     chain = []
     for token in expr.tokens:
         op = int(token.get("op") or 0)
@@ -427,30 +435,58 @@ def _typed_lower_unary(name, args):
     if len(args) != 1:
         raise CoeffProgramSourceError(f"{name} requires one argument in typed expressions")
     chain, value_type = _typed_lower_value(args[0])
-    chain.append(["_typed_unary", "abs" if name == "mod" else name])
+    chain.append(["_typed_unary", _canonical_unary_op_name(name)])
     return chain, value_type
 
 
 def _typed_lower_affine(name, args):
+    # The shorthand forms resolve args positionally, so a vector-source name
+    # in a value slot (scale(poly), linear(poly, 5)) would silently bind the
+    # source as a multiplier/offset; reject those shapes outright.
     if name == "scale":
         if len(args) == 1:
+            if _is_vector_source_text(args[0]):
+                raise CoeffProgramSourceError(
+                    "scale(source) is missing the multiplier; write scale(source, multiplier) or scale(multiplier)"
+                )
             src, multiplier = "pop", args[0]
         elif len(args) == 2:
+            if not _is_vector_source_text(args[0]):
+                raise CoeffProgramSourceError(
+                    f"scale source must be cf/poly/pop/peek/tos, got {args[0]!r}"
+                )
             src, multiplier = args
         else:
             raise CoeffProgramSourceError("scale requires multiplier or source, multiplier")
         return _typed_lower_binary("multiply", [src, multiplier])
     if name == "shift":
         if len(args) == 1:
+            if _is_vector_source_text(args[0]):
+                raise CoeffProgramSourceError(
+                    "shift(source) is missing the offset; write shift(source, offset) or shift(offset)"
+                )
             src, offset = "pop", args[0]
         elif len(args) == 2:
+            if not _is_vector_source_text(args[0]):
+                raise CoeffProgramSourceError(
+                    f"shift source must be cf/poly/pop/peek/tos, got {args[0]!r}"
+                )
             src, offset = args
         else:
             raise CoeffProgramSourceError("shift requires offset or source, offset")
         return _typed_lower_binary("add", [src, offset])
     if len(args) == 2:
+        if _is_vector_source_text(args[0]):
+            raise CoeffProgramSourceError(
+                "linear(source, multiplier) is ambiguous; use linear(source, multiplier, offset)"
+            )
         src, multiplier, offset = "pop", args[0], args[1]
     elif len(args) == 3:
+        if not _is_vector_source_text(args[0]):
+            raise CoeffProgramSourceError(
+                "linear with three values is read as (source, multiplier, offset); "
+                "for (multiplier, offset, andy) use linear(source, multiplier, offset, andy)"
+            )
         src, multiplier, offset = args
     else:
         raise CoeffProgramSourceError("linear requires multiplier, offset or source, multiplier, offset")
@@ -469,7 +505,7 @@ def _typed_lower_value(text):
     if indexed is not None:
         return indexed
     lowered = raw.lower()
-    if lowered in {"cf", "poly", "pop", "peek", "tos"}:
+    if lowered in _TYPED_VECTOR_SOURCE_NAMES:
         return _typed_lower_vector_source(lowered), "vector"
     call = _parse_call(raw)
     if call:
@@ -537,7 +573,7 @@ def _lower_vector_binary(name, args, *, target):
 
 
 def _lower_vector_unary(name, args, *, target):
-    chip = "abs" if name == "mod" else name
+    chip = _canonical_unary_op_name(name)
     if len(args) == 0:
         chain = [["_typed_unary", chip]]
         return _append_typed_target(chain, "vector", target=target)
@@ -545,7 +581,9 @@ def _lower_vector_unary(name, args, *, target):
         if str(args[0]).strip().lower() == "cf" or not _is_source_name(args[0]):
             chain, value_type = _typed_lower_unary(name, args)
             return _append_typed_target(chain, value_type, target=target)
-        src = _source_selector(args[0], allow_cf=False)
+        # cf and non-source args were consumed above, so args[0] is a plain
+        # poly/pop/peek selector here.
+        src = _source_selector(args[0])
     else:
         raise CoeffProgramSourceError(f"{name} requires no args or one source")
     return [[chip, target, src]]
@@ -591,6 +629,22 @@ def _lower_native_transform_call(name, args, *, target):
 
 def _lower_call(name, args, *, target="push"):
     name = str(name or "").strip().lower()
+    if name in _STACK_ALIASES:
+        # Accept the call forms emit()/dup()/swap()/drop()/flush() alongside
+        # the bare statements; every other zero-arg construct allows both.
+        if args:
+            raise CoeffProgramSourceError(f"{name} takes no arguments")
+        if target == "poly":
+            raise CoeffProgramSourceError(f"{name} is a statement; it cannot be assigned to poly")
+        return [[_STACK_ALIASES[name]]]
+    if name in {"pop", "peek"}:
+        if args:
+            raise CoeffProgramSourceError(f"{name} takes no arguments")
+        if target == "poly":
+            return [["set", "poly", name]]
+        raise CoeffProgramSourceError(
+            f"{name} is not a standalone statement; use drop to discard the stack top, or write poly = pop / poly = peek"
+        )
     if name in _VECTOR_FILL_NAMES:
         return _lower_const(args, target=target)
     if name == "push_scalar":
@@ -645,13 +699,11 @@ def _lower_call(name, args, *, target="push"):
             raise CoeffProgramSourceError("argsort requires src1, src2")
         return [["argsort", target, src1, src2]]
     if name == "blend":
-        if target != "push":
-            raise CoeffProgramSourceError("blend writes to stack; assign it with emit or set afterward")
         if len(args) != 1:
             raise CoeffProgramSourceError("blend requires t")
         chain = _typed_lower_scalar(args[0])
         chain.append(["_typed_blend"])
-        return chain
+        return _append_typed_target(chain, "vector", target=target)
     if name in {"poke_poly", "poke_tos"}:
         if target == "poly":
             raise CoeffProgramSourceError(
@@ -684,7 +736,7 @@ def _lower_call(name, args, *, target="push"):
         raise CoeffProgramSourceError(
             "legacy(...) is not valid in coeff source text; use Chain mode for legacy chains or call the transform directly"
         )
-    if name in _LEGACY_UNARY_NAMES or name in legacy_registry()["by_name"]:
+    if name in legacy_registry()["by_name"]:
         return _lower_native_transform_call(name, args, target=target)
     raise CoeffProgramSourceError(f"unknown coeff program source function {name!r}")
 
@@ -868,5 +920,3 @@ def compile_coeff_program_source(source_text, *, macro_resolver=None, strict=Tru
     return compiled
 
 
-def compile_coeff_program_source_diagnostics(source_text, *, macro_resolver=None):
-    return compile_coeff_program_source(source_text, macro_resolver=macro_resolver, strict=False)

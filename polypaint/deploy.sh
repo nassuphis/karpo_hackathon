@@ -173,6 +173,10 @@ ensure_bucket_website() {
         --region "$REGION"
     echo "  website hosting: OK"
 
+    # SECURITY MODEL (deliberate, single-user art project): the whole bucket
+    # is public-read and the HTTP API has no authorizer, including the
+    # destructive storage routes. Anyone with the URL can read artifacts and
+    # delete prefixes. Acceptable here; revisit before sharing the stack.
     # Public access block off (required for anonymous GetObject)
     aws s3api put-public-access-block --bucket "$BUCKET" \
         --public-access-block-configuration \
@@ -214,7 +218,7 @@ build_deploy_metadata() {
     BUILD_FRONTEND_SHA256=$(
         while IFS= read -r asset; do
             cat "$SCRIPT_DIR/$asset"
-        done < <(frontend_asset_keys) | shasum | cut -d' ' -f1
+        done < <(frontend_asset_keys) | shasum -a 256 | cut -d' ' -f1
     )
 
     local BUILD_HASH_SHORT
@@ -242,8 +246,8 @@ verify_frontend_assets() {
         local LOCAL_HASH REMOTE_HASH
         mkdir -p "$(dirname "${TMP_DIR}/${asset}")"
         curl -fsS "${SITE_URL}/${asset}" -o "${TMP_DIR}/${asset}"
-        LOCAL_HASH=$(shasum "$SCRIPT_DIR/${asset}" | cut -d' ' -f1)
-        REMOTE_HASH=$(shasum "${TMP_DIR}/${asset}" | cut -d' ' -f1)
+        LOCAL_HASH=$(shasum -a 256 "$SCRIPT_DIR/${asset}" | cut -d' ' -f1)
+        REMOTE_HASH=$(shasum -a 256 "${TMP_DIR}/${asset}" | cut -d' ' -f1)
         if [ "$LOCAL_HASH" != "$REMOTE_HASH" ]; then
             echo "FATAL: deployed ${asset} does not match local file"
             echo "  local:  ${LOCAL_HASH}"
@@ -302,7 +306,68 @@ package_render_plan_zip() {
        lambda/color_render_contract.py \
        lambda/solve_score_chain.py \
        lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PLAN_DIR/"
-    cd "$PLAN_DIR" && zip -r9 "$ZIP_PATH" . -q && cd "$SCRIPT_DIR"
+    cd "$PLAN_DIR" && zip -FS -r9 "$ZIP_PATH" . -q && cd "$SCRIPT_DIR"
+}
+
+render_compute_workflow_definition() {
+    local OUT_PATH="$1"
+    local ACCT="$2"
+    local PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_PLAN_NAME}"
+    local STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_STATUS_NAME}"
+    local COEFFGEN_FN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COEFFGEN_NAME}"
+    local FUSED_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_FUSED_CHUNK_NAME}"
+    sed -e "s|\${PlanFunctionArn}|${PLAN_ARN}|g" \
+        -e "s|\${StatusFunctionArn}|${STATUS_ARN}|g" \
+        -e "s|\${CoeffgenFunctionArn}|${COEFFGEN_FN_ARN}|g" \
+        -e "s|\${FusedChunkFunctionArn}|${FUSED_ARN}|g" \
+        stepfunctions/compute_workflow.asl.json.template > "$OUT_PATH"
+}
+
+render_palette_workflow_definition() {
+    local OUT_PATH="$1"
+    local ACCT="$2"
+    local PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_PLAN_NAME}"
+    local STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_STATUS_NAME}"
+    local PROX_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${SOLVE_PROXIMITY_NAME}"
+    local CHUNK_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_CHUNK_NAME}"
+    local FINALIZE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_FINALIZE_NAME}"
+    local ATTACH_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${ATTACH_PALETTE_NAME}"
+    sed -e "s|\${PlanFunctionArn}|${PLAN_ARN}|g" \
+        -e "s|\${StatusFunctionArn}|${STATUS_ARN}|g" \
+        -e "s|\${SolveProximityFunctionArn}|${PROX_ARN}|g" \
+        -e "s|\${PaletteChunkFunctionArn}|${CHUNK_ARN}|g" \
+        -e "s|\${PaletteFinalizeFunctionArn}|${FINALIZE_ARN}|g" \
+        -e "s|\${AttachPaletteFunctionArn}|${ATTACH_ARN}|g" \
+        stepfunctions/palette_workflow.asl.json.template > "$OUT_PATH"
+}
+
+# Async invoke config, shared by the create and update paths. Must-succeed:
+# stdout is silenced but stderr stays visible and set -e aborts on failure
+# (the old >/dev/null 2>&1 form died silently on throttles).
+configure_async_invoke_policies() {
+    # No retries for most Lambdas (prevents retry storms), but bilevel gets
+    # 2 retries / 1hr age to handle concurrency throttle drops.
+    local fn
+    for fn in "$FINALIZE_MT_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME" "$ATTACH_PALETTE_NAME"; do
+        aws lambda put-function-event-invoke-config \
+            --function-name "$fn" \
+            --maximum-retry-attempts 0 \
+            --maximum-event-age-in-seconds 300 \
+            --region "$REGION" >/dev/null
+    done
+    aws lambda put-function-event-invoke-config \
+        --function-name "$BILEVEL_NAME" \
+        --maximum-retry-attempts 2 \
+        --maximum-event-age-in-seconds 3600 \
+        --region "$REGION" >/dev/null
+    # Orchestrators: no retries (self-reinvoke), long event age.
+    for fn in "$RENDER_ORCHESTRATOR_NAME" "$PALETTE_ORCHESTRATOR_NAME"; do
+        aws lambda put-function-event-invoke-config \
+            --function-name "$fn" \
+            --maximum-retry-attempts 0 \
+            --maximum-event-age-in-seconds 3600 \
+            --region "$REGION" >/dev/null
+    done
 }
 
 render_render_workflow_definition() {
@@ -443,14 +508,18 @@ fi
 
 # --- Generate palette assets ---
 echo "Generating palette assets..."
-python3 "$SCRIPT_DIR/scripts/generate_tri_palettes.py" || { echo "FATAL: tri-palette generation failed"; exit 1; }
-python3 "$SCRIPT_DIR/scripts/generate_long_palettes.py" || { echo "FATAL: long-palette generation failed"; exit 1; }
+"${TEST_PYTHON[@]}" "$SCRIPT_DIR/scripts/generate_tri_palettes.py" || { echo "FATAL: tri-palette generation failed"; exit 1; }
+"${TEST_PYTHON[@]}" "$SCRIPT_DIR/scripts/generate_long_palettes.py" || { echo "FATAL: long-palette generation failed"; exit 1; }
 
 # --- JS syntax check ---
 echo "Checking index.html JS syntax..."
+SCRIPT_BLOCKS=$(grep -c '<script>' index.html || true)
+if [ "$SCRIPT_BLOCKS" != "1" ]; then
+    echo "ERROR: expected exactly one <script> block in index.html, found $SCRIPT_BLOCKS; the JS gate extraction below would corrupt."
+    exit 1
+fi
 sed -n '/<script>/,/<\/script>/p' index.html | sed '1d;$d' > /tmp/_jscheck.js
-node --check /tmp/_jscheck.js 2>&1
-if [ $? -ne 0 ]; then
+if ! node --check /tmp/_jscheck.js; then
     rm -f /tmp/_jscheck.js
     echo "ERROR: index.html has JavaScript syntax errors. Aborting deploy."
     exit 1
@@ -497,13 +566,14 @@ build_and_publish_layer() {
     local S3_KEY
     SCRIPT_HASH=$(shasum "$BUILD_SCRIPT" | cut -d' ' -f1)
 
-    # Skip rebuild if zip exists and build script hasn't changed
+    # Skip rebuild if zip exists and build script hasn't changed. The cache
+    # key is the build-script hash only (deliberate): layers pick up new
+    # upstream package versions only when the script text changes.
     if [ -f "$ZIP_PATH" ] && [ -f "$HASH_FILE" ] && [ "$(cat "$HASH_FILE")" = "$SCRIPT_HASH" ]; then
         echo "  $LAYER_NAME: zip up to date (skipping rebuild)"
     else
         echo "  $LAYER_NAME: building..."
-        bash "$BUILD_SCRIPT"
-        if [ $? -ne 0 ]; then
+        if ! bash "$BUILD_SCRIPT"; then
             echo "FATAL: $BUILD_SCRIPT failed"
             exit 1
         fi
@@ -580,7 +650,7 @@ echo "  PDF_PY_LAYER=$PDF_PY_LAYER"
 # --- Regenerate catalog artifacts ---
 # Step 1: Generate C lookup header from catalog JSON (no binary needed)
 echo "Generating C lookup header from catalog..."
-(cd lambda && python3 -c "
+(cd lambda && "${TEST_PYTHON[@]}" -c "
 from gen_catalog import load_catalog, generate_c_header, H_OUT
 catalog = load_catalog()
 h = generate_c_header(catalog)
@@ -599,7 +669,7 @@ echo "Generating parity overlay from pytest..."
 
 # Step 4: Probe degrees and generate JS catalog
 echo "Generating JS catalog (probing degrees)..."
-(cd lambda && python3 -c "
+(cd lambda && "${TEST_PYTHON[@]}" -c "
 from gen_catalog import load_catalog, load_metrics, generate_js, JS_OUT
 catalog = load_catalog()
 metrics = load_metrics()
@@ -730,7 +800,7 @@ echo "  palette_bins_render (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/palette_bins_render lambda/palette_bins_render.c -lm
 
 echo "  step_scores_to_palette_raw (static, ARM64)..."
-aarch64-linux-musl-gcc -O3 -static -o lambda/step_scores_to_palette_raw lambda/step_scores_to_palette_raw.c
+aarch64-linux-musl-gcc -O3 -static -o lambda/step_scores_to_palette_raw lambda/step_scores_to_palette_raw.c -lm
 
 # param_gen removed — param debug now uses sweep in param_dump mode
 
@@ -944,7 +1014,7 @@ mkdir -p "$SWEEP_MT_DIR"
 cp lambda/handler_sweep_mt.py lambda/shared.py "$SWEEP_MT_DIR/"
 cp lambda/sweep_mt "$SWEEP_MT_DIR/"
 chmod +x "$SWEEP_MT_DIR"/sweep_mt
-cd "$SWEEP_MT_DIR" && zip -r9 /tmp/polypaint-sweep-mt.zip . -q && cd "$SCRIPT_DIR"
+cd "$SWEEP_MT_DIR" && zip -FS -r9 /tmp/polypaint-sweep-mt.zip . -q && cd "$SCRIPT_DIR"
 echo "  SweepMT:  $(du -h /tmp/polypaint-sweep-mt.zip | cut -f1)  (sweep_mt)"
 
 # Coeffgen: handler_coeffgen.py + shared.py + compute_fused.py + sweep_coeffgen (needs LAPACK layer)
@@ -956,7 +1026,7 @@ cp lambda/handler_coeffgen.py lambda/shared.py lambda/compute_fused.py \
    lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json "$COEFFGEN_DIR/"
 cp lambda/sweep_coeffgen "$COEFFGEN_DIR/"
 chmod +x "$COEFFGEN_DIR"/sweep_coeffgen
-cd "$COEFFGEN_DIR" && zip -r9 /tmp/polypaint-coeffgen.zip . -q && cd "$SCRIPT_DIR"
+cd "$COEFFGEN_DIR" && zip -FS -r9 /tmp/polypaint-coeffgen.zip . -q && cd "$SCRIPT_DIR"
 echo "  Coeffgen: $(du -h /tmp/polypaint-coeffgen.zip | cut -f1)  (sweep_coeffgen + LAPACK layer)"
 
 # Viewport: handler_viewport.py + shared.py (pure Python)
@@ -964,7 +1034,7 @@ VIEWPORT_DIR=/tmp/polypaint-viewport
 rm -rf "$VIEWPORT_DIR"
 mkdir -p "$VIEWPORT_DIR"
 cp lambda/handler_viewport.py lambda/shared.py "$VIEWPORT_DIR/"
-cd "$VIEWPORT_DIR" && zip -r9 /tmp/polypaint-viewport.zip . -q && cd "$SCRIPT_DIR"
+cd "$VIEWPORT_DIR" && zip -FS -r9 /tmp/polypaint-viewport.zip . -q && cd "$SCRIPT_DIR"
 echo "  Viewport: $(du -h /tmp/polypaint-viewport.zip | cut -f1)  (pure Python)"
 
 # Storage: handler_storage.py + shared.py + color artifact metadata + logical section helpers (pure Python)
@@ -975,7 +1045,7 @@ cp lambda/handler_storage.py lambda/shared.py lambda/color_artifact_meta.py lamb
    lambda/param_program_chain.py lambda/param_legacy_registry.json \
    lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
    lambda/color_render_contract.py lambda/logical_sections.py "$STORAGE_DIR/"
-cd "$STORAGE_DIR" && zip -r9 /tmp/polypaint-storage.zip . -q && cd "$SCRIPT_DIR"
+cd "$STORAGE_DIR" && zip -FS -r9 /tmp/polypaint-storage.zip . -q && cd "$SCRIPT_DIR"
 echo "  Storage:  $(du -h /tmp/polypaint-storage.zip | cut -f1)  (pure Python)"
 
 # Dispatch: handler_dispatch.py + shared.py (pure Python, invokes render Lambdas)
@@ -983,7 +1053,7 @@ DISPATCH_DIR=/tmp/polypaint-dispatch
 rm -rf "$DISPATCH_DIR"
 mkdir -p "$DISPATCH_DIR"
 cp lambda/handler_dispatch.py lambda/shared.py "$DISPATCH_DIR/"
-cd "$DISPATCH_DIR" && zip -r9 /tmp/polypaint-dispatch.zip . -q && cd "$SCRIPT_DIR"
+cd "$DISPATCH_DIR" && zip -FS -r9 /tmp/polypaint-dispatch.zip . -q && cd "$SCRIPT_DIR"
 echo "  Dispatch: $(du -h /tmp/polypaint-dispatch.zip | cut -f1)  (pure Python)"
 
 # Raster-MT: handler_raster_mt.py + shared.py + solve_score_chain.py + roots2pix_mt
@@ -992,9 +1062,9 @@ rm -rf "$RASTER_MT_DIR"
 mkdir -p "$RASTER_MT_DIR/lib"
 cp lambda/handler_raster_mt.py lambda/shared.py lambda/solve_score_chain.py lambda/logical_sections.py "$RASTER_MT_DIR/"
 cp lambda/roots2pix_mt "$RASTER_MT_DIR/"
-cp lambda/roots2pix_mt_lib/* "$RASTER_MT_DIR/lib/" 2>/dev/null || true
+cp lambda/roots2pix_mt_lib/* "$RASTER_MT_DIR/lib/"
 chmod +x "$RASTER_MT_DIR"/roots2pix_mt
-cd "$RASTER_MT_DIR" && zip -r9 /tmp/polypaint-raster-mt.zip . -q && cd "$SCRIPT_DIR"
+cd "$RASTER_MT_DIR" && zip -FS -r9 /tmp/polypaint-raster-mt.zip . -q && cd "$SCRIPT_DIR"
 echo "  RastMT:   $(du -h /tmp/polypaint-raster-mt.zip | cut -f1)  (fused roots2pix_mt)"
 
 # Finalize-MT: fused solve-score assemble + encode from raw score bins
@@ -1005,7 +1075,7 @@ cp lambda/handler_finalize_mt.py lambda/shared.py lambda/color_artifact_meta.py 
 cp lambda/assemble_greyscale lambda/score_raw_render "$FINALIZE_MT_DIR/"
 cp lambda/assemble_greyscale_lib/* "$FINALIZE_MT_DIR/lib/"
 chmod +x "$FINALIZE_MT_DIR"/assemble_greyscale "$FINALIZE_MT_DIR"/score_raw_render
-cd "$FINALIZE_MT_DIR" && zip -r9 /tmp/polypaint-finalize-mt.zip . -q && cd "$SCRIPT_DIR"
+cd "$FINALIZE_MT_DIR" && zip -FS -r9 /tmp/polypaint-finalize-mt.zip . -q && cd "$SCRIPT_DIR"
 echo "  FnlzMT:   $(du -h /tmp/polypaint-finalize-mt.zip | cut -f1)  (fused assemble + encode)"
 
 # Preview: handler_preview.py + shared.py (pure Python, PNG via zlib)
@@ -1013,7 +1083,7 @@ PREVIEW_DIR=/tmp/polypaint-preview
 rm -rf "$PREVIEW_DIR"
 mkdir -p "$PREVIEW_DIR"
 cp lambda/handler_preview.py lambda/shared.py "$PREVIEW_DIR/"
-cd "$PREVIEW_DIR" && zip -r9 /tmp/polypaint-preview.zip . -q && cd "$SCRIPT_DIR"
+cd "$PREVIEW_DIR" && zip -FS -r9 /tmp/polypaint-preview.zip . -q && cd "$SCRIPT_DIR"
 echo "  Preview:  $(du -h /tmp/polypaint-preview.zip | cut -f1)  (pure Python)"
 
 # Compute Preview: handler_compute_preview.py + shared.py + coeffgen/solve binaries
@@ -1026,7 +1096,7 @@ cp lambda/handler_compute_preview.py lambda/shared.py \
    "$COMPUTE_PREVIEW_DIR/"
 cp lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$COMPUTE_PREVIEW_DIR/"
 chmod +x "$COMPUTE_PREVIEW_DIR"/sweep_coeffgen "$COMPUTE_PREVIEW_DIR"/sweep_mt "$COMPUTE_PREVIEW_DIR"/sweep_cm
-cd "$COMPUTE_PREVIEW_DIR" && zip -r9 /tmp/polypaint-compute-preview.zip . -q && cd "$SCRIPT_DIR"
+cd "$COMPUTE_PREVIEW_DIR" && zip -FS -r9 /tmp/polypaint-compute-preview.zip . -q && cd "$SCRIPT_DIR"
 echo "  CPreview: $(du -h /tmp/polypaint-compute-preview.zip | cut -f1)  (sync coeffgen+solve preview)"
 
 # Bilevel: handler_bilevel.py + shared.py + sparse section/finalize helpers (needs libvips layer)
@@ -1037,7 +1107,7 @@ cp lambda/handler_bilevel.py lambda/shared.py lambda/logical_sections.py lambda/
 cp lambda/bilevel_section_raster lambda/coeffs_bilevel_raster lambda/raw_to_bilevel lambda/assemble_greyscale "$BILEVEL_DIR/"
 cp lambda/assemble_greyscale_lib/* "$BILEVEL_DIR/lib/"
 chmod +x "$BILEVEL_DIR"/bilevel_section_raster "$BILEVEL_DIR"/coeffs_bilevel_raster "$BILEVEL_DIR"/raw_to_bilevel "$BILEVEL_DIR"/assemble_greyscale
-cd "$BILEVEL_DIR" && zip -r9 /tmp/polypaint-bilevel.zip . -q && cd "$SCRIPT_DIR"
+cd "$BILEVEL_DIR" && zip -FS -r9 /tmp/polypaint-bilevel.zip . -q && cd "$SCRIPT_DIR"
 echo "  Bilevel:  $(du -h /tmp/polypaint-bilevel.zip | cut -f1)  (bilevel sparse fragments + finalize)"
 
 # Param Debug: handler_param_debug.py + shared.py + bilevel_merge (needs libvips layer)
@@ -1049,7 +1119,7 @@ cp lambda/handler_param_debug.py lambda/shared.py \
    "$PARAM_DEBUG_DIR/"
 cp lambda/sweep lambda/bilevel_merge "$PARAM_DEBUG_DIR/"
 chmod +x "$PARAM_DEBUG_DIR"/sweep "$PARAM_DEBUG_DIR"/bilevel_merge
-cd "$PARAM_DEBUG_DIR" && zip -r9 /tmp/polypaint-param-debug.zip . -q && cd "$SCRIPT_DIR"
+cd "$PARAM_DEBUG_DIR" && zip -FS -r9 /tmp/polypaint-param-debug.zip . -q && cd "$SCRIPT_DIR"
 echo "  ParamDbg: $(du -h /tmp/polypaint-param-debug.zip | cut -f1)  (param debug + libvips layer)"
 
 # TIFF Compat: handler_tiff_compat.py + shared.py + tiff_compat (needs libtiff from layer)
@@ -1059,7 +1129,7 @@ mkdir -p "$TIFF_COMPAT_DIR"
 cp lambda/handler_tiff_compat.py lambda/shared.py "$TIFF_COMPAT_DIR/"
 cp lambda/tiff_compat "$TIFF_COMPAT_DIR/"
 chmod +x "$TIFF_COMPAT_DIR"/tiff_compat
-cd "$TIFF_COMPAT_DIR" && zip -r9 /tmp/polypaint-tiff-compat.zip . -q && cd "$SCRIPT_DIR"
+cd "$TIFF_COMPAT_DIR" && zip -FS -r9 /tmp/polypaint-tiff-compat.zip . -q && cd "$SCRIPT_DIR"
 echo "  TiffCmp: $(du -h /tmp/polypaint-tiff-compat.zip | cut -f1)  (tiff_compat + libtiff layer)"
 
 # PNG Export: handler_png_export.py + shared.py + png_export (needs libvips layer)
@@ -1069,7 +1139,7 @@ mkdir -p "$PNG_EXPORT_DIR"
 cp lambda/handler_png_export.py lambda/shared.py "$PNG_EXPORT_DIR/"
 cp lambda/png_export "$PNG_EXPORT_DIR/"
 chmod +x "$PNG_EXPORT_DIR"/png_export
-cd "$PNG_EXPORT_DIR" && zip -r9 /tmp/polypaint-png-export.zip . -q && cd "$SCRIPT_DIR"
+cd "$PNG_EXPORT_DIR" && zip -FS -r9 /tmp/polypaint-png-export.zip . -q && cd "$SCRIPT_DIR"
 echo "  PngExp:  $(du -h /tmp/polypaint-png-export.zip | cut -f1)  (png_export + libvips layer)"
 
 # Render Preview: handler_render_preview.py + shared.py (needs libvips layer for vipsthumbnail)
@@ -1077,7 +1147,7 @@ RENDER_PREVIEW_DIR=/tmp/polypaint-render-preview
 rm -rf "$RENDER_PREVIEW_DIR"
 mkdir -p "$RENDER_PREVIEW_DIR"
 cp lambda/handler_render_preview.py lambda/shared.py "$RENDER_PREVIEW_DIR/"
-cd "$RENDER_PREVIEW_DIR" && zip -r9 /tmp/polypaint-render-preview.zip . -q && cd "$SCRIPT_DIR"
+cd "$RENDER_PREVIEW_DIR" && zip -FS -r9 /tmp/polypaint-render-preview.zip . -q && cd "$SCRIPT_DIR"
 echo "  RndPrev: $(du -h /tmp/polypaint-render-preview.zip | cut -f1)  (vipsthumbnail via libvips layer)"
 
 # Render Lores Preview: ephemeral lores fused raster + palette encode (needs libcurl + libvips layers)
@@ -1092,7 +1162,7 @@ cp lambda/roots2pix_mt lambda/solve_proximity_stats lambda/score_raw_render \
 cp lambda/roots2pix_mt_lib/* "$RENDER_LORES_PREVIEW_DIR/lib/"
 chmod +x "$RENDER_LORES_PREVIEW_DIR"/roots2pix_mt "$RENDER_LORES_PREVIEW_DIR"/solve_proximity_stats "$RENDER_LORES_PREVIEW_DIR"/score_raw_render \
     "$RENDER_LORES_PREVIEW_DIR"/sweep_coeffgen "$RENDER_LORES_PREVIEW_DIR"/sweep_mt "$RENDER_LORES_PREVIEW_DIR"/sweep_cm
-cd "$RENDER_LORES_PREVIEW_DIR" && zip -r9 /tmp/polypaint-render-lores-preview.zip . -q && cd "$SCRIPT_DIR"
+cd "$RENDER_LORES_PREVIEW_DIR" && zip -FS -r9 /tmp/polypaint-render-lores-preview.zip . -q && cd "$SCRIPT_DIR"
 echo "  LoresPv: $(du -h /tmp/polypaint-render-lores-preview.zip | cut -f1)  (ephemeral lores render preview)"
 
 # Autolevels: handler_autolevels.py + shared.py + color_artifact_meta.py + autolevels_render (needs libvips layer)
@@ -1102,7 +1172,7 @@ mkdir -p "$AUTOLEVELS_DIR"
 cp lambda/handler_autolevels.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$AUTOLEVELS_DIR/"
 cp lambda/autolevels_render "$AUTOLEVELS_DIR/"
 chmod +x "$AUTOLEVELS_DIR"/autolevels_render
-cd "$AUTOLEVELS_DIR" && zip -r9 /tmp/polypaint-autolevels.zip . -q && cd "$SCRIPT_DIR"
+cd "$AUTOLEVELS_DIR" && zip -FS -r9 /tmp/polypaint-autolevels.zip . -q && cd "$SCRIPT_DIR"
 echo "  AutoLvl: $(du -h /tmp/polypaint-autolevels.zip | cut -f1)  (autolevels_render + libvips layer)"
 
 # Resize Artifact: handler_resize_artifact.py + shared.py + color_artifact_meta.py (needs libvips layer)
@@ -1110,7 +1180,7 @@ RESIZE_ARTIFACT_DIR=/tmp/polypaint-resize-artifact
 rm -rf "$RESIZE_ARTIFACT_DIR"
 mkdir -p "$RESIZE_ARTIFACT_DIR"
 cp lambda/handler_resize_artifact.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$RESIZE_ARTIFACT_DIR/"
-cd "$RESIZE_ARTIFACT_DIR" && zip -r9 /tmp/polypaint-resize-artifact.zip . -q && cd "$SCRIPT_DIR"
+cd "$RESIZE_ARTIFACT_DIR" && zip -FS -r9 /tmp/polypaint-resize-artifact.zip . -q && cd "$SCRIPT_DIR"
 echo "  Resize:  $(du -h /tmp/polypaint-resize-artifact.zip | cut -f1)  (resize artifact + libvips layer)"
 
 # RePalette: handler_repalette.py + shared.py + palette helpers + palette_bins_render + raw2jpeg (needs libvips layer)
@@ -1121,7 +1191,7 @@ cp lambda/handler_repalette.py lambda/shared.py \
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$REPALETTE_DIR/"
 cp lambda/palette_bins_render lambda/raw2jpeg "$REPALETTE_DIR/"
 chmod +x "$REPALETTE_DIR"/palette_bins_render "$REPALETTE_DIR"/raw2jpeg
-cd "$REPALETTE_DIR" && zip -r9 /tmp/polypaint-repalette.zip . -q && cd "$SCRIPT_DIR"
+cd "$REPALETTE_DIR" && zip -FS -r9 /tmp/polypaint-repalette.zip . -q && cd "$SCRIPT_DIR"
 echo "  RePal:   $(du -h /tmp/polypaint-repalette.zip | cut -f1)  (repalette + libvips layer)"
 
 # Color RePalette: handler_color_repalette.py + shared raw-sidecar recolor helpers
@@ -1133,7 +1203,7 @@ cp lambda/handler_color_repalette.py lambda/shared.py lambda/raw_sidecar.py lamb
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$COLOR_REPALETTE_DIR/"
 cp lambda/score_raw_render "$COLOR_REPALETTE_DIR/"
 chmod +x "$COLOR_REPALETTE_DIR"/score_raw_render
-cd "$COLOR_REPALETTE_DIR" && zip -r9 /tmp/polypaint-color-repalette.zip . -q && cd "$SCRIPT_DIR"
+cd "$COLOR_REPALETTE_DIR" && zip -FS -r9 /tmp/polypaint-color-repalette.zip . -q && cd "$SCRIPT_DIR"
 echo "  ClrRePal: $(du -h /tmp/polypaint-color-repalette.zip | cut -f1)  (raw-sidecar score_raw_render)"
 
 # Recolor-from-raw: standalone raw-sidecar recolor path
@@ -1145,7 +1215,7 @@ cp lambda/handler_recolor_from_raw.py lambda/shared.py lambda/raw_sidecar.py lam
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$RECOLOR_FROM_RAW_DIR/"
 cp lambda/score_raw_render "$RECOLOR_FROM_RAW_DIR/"
 chmod +x "$RECOLOR_FROM_RAW_DIR"/score_raw_render
-cd "$RECOLOR_FROM_RAW_DIR" && zip -r9 /tmp/polypaint-recolor-from-raw.zip . -q && cd "$SCRIPT_DIR"
+cd "$RECOLOR_FROM_RAW_DIR" && zip -FS -r9 /tmp/polypaint-recolor-from-raw.zip . -q && cd "$SCRIPT_DIR"
 echo "  RecolorRaw: $(du -h /tmp/polypaint-recolor-from-raw.zip | cut -f1)  (standalone score_raw_render)"
 
 # ExtractPalette-fused: standalone step_scores.raw -> associated palette path
@@ -1156,7 +1226,7 @@ cp lambda/handler_extract_palette_from_step_scores.py lambda/shared.py lambda/ra
    lambda/color_render_contract.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$EXTRACT_PALETTE_FUSED_DIR/"
 cp lambda/score_raw_render lambda/step_scores_to_palette_raw "$EXTRACT_PALETTE_FUSED_DIR/"
 chmod +x "$EXTRACT_PALETTE_FUSED_DIR"/score_raw_render "$EXTRACT_PALETTE_FUSED_DIR"/step_scores_to_palette_raw
-cd "$EXTRACT_PALETTE_FUSED_DIR" && zip -r9 /tmp/polypaint-extract-palette-fused.zip . -q && cd "$SCRIPT_DIR"
+cd "$EXTRACT_PALETTE_FUSED_DIR" && zip -FS -r9 /tmp/polypaint-extract-palette-fused.zip . -q && cd "$SCRIPT_DIR"
 echo "  ExtPalFx: $(du -h /tmp/polypaint-extract-palette-fused.zip | cut -f1)  (step_scores_to_palette_raw + score_raw_render)"
 
 # PDF Artifact: handler_pdf_artifact.py + shared.py + color artifact metadata + spread builder
@@ -1164,7 +1234,7 @@ PDF_ARTIFACT_DIR=/tmp/polypaint-pdf-artifact
 rm -rf "$PDF_ARTIFACT_DIR"
 mkdir -p "$PDF_ARTIFACT_DIR"
 cp lambda/handler_pdf_artifact.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py lambda/spread_pdf.py "$PDF_ARTIFACT_DIR/"
-cd "$PDF_ARTIFACT_DIR" && zip -r9 /tmp/polypaint-pdf-artifact.zip . -q && cd "$SCRIPT_DIR"
+cd "$PDF_ARTIFACT_DIR" && zip -FS -r9 /tmp/polypaint-pdf-artifact.zip . -q && cd "$SCRIPT_DIR"
 echo "  PDFArt:  $(du -h /tmp/polypaint-pdf-artifact.zip | cut -f1)  (spread builder + python pdf layer)"
 
 # DeepZoom Export: handler_deepzoom_export.py + shared.py + source metadata helpers + dz_export (needs libvips layer)
@@ -1176,7 +1246,7 @@ cp lambda/handler_deepzoom_export.py lambda/shared.py lambda/raw_sidecar.py \
    lambda/deepzoom_viewer_template.html "$DZ_EXPORT_DIR/"
 cp lambda/dz_export "$DZ_EXPORT_DIR/"
 chmod +x "$DZ_EXPORT_DIR"/dz_export
-cd "$DZ_EXPORT_DIR" && zip -r9 /tmp/polypaint-deepzoom-export.zip . -q && cd "$SCRIPT_DIR"
+cd "$DZ_EXPORT_DIR" && zip -FS -r9 /tmp/polypaint-deepzoom-export.zip . -q && cd "$SCRIPT_DIR"
 echo "  DzExp:   $(du -h /tmp/polypaint-deepzoom-export.zip | cut -f1)  (dz_export + libvips layer)"
 
 # DeepZoom-from-raw: strict wrapper over the raw-sidecar DeepZoom path
@@ -1188,7 +1258,7 @@ cp lambda/handler_deepzoom_from_raw.py lambda/handler_deepzoom_export.py lambda/
    lambda/deepzoom_viewer_template.html "$DZ_FROM_RAW_DIR/"
 cp lambda/dz_export "$DZ_FROM_RAW_DIR/"
 chmod +x "$DZ_FROM_RAW_DIR"/dz_export
-cd "$DZ_FROM_RAW_DIR" && zip -r9 /tmp/polypaint-deepzoom-from-raw.zip . -q && cd "$SCRIPT_DIR"
+cd "$DZ_FROM_RAW_DIR" && zip -FS -r9 /tmp/polypaint-deepzoom-from-raw.zip . -q && cd "$SCRIPT_DIR"
 echo "  DzRaw:   $(du -h /tmp/polypaint-deepzoom-from-raw.zip | cut -f1)  (raw-sidecar-only deepzoom)"
 
 # Solve Proximity: handler_solve_proximity.py + shared.py + solve_score_chain.py + logical section helpers + solve_proximity_stats binary
@@ -1198,9 +1268,9 @@ mkdir -p "$SP_DIR/lib"
 cp lambda/handler_solve_proximity.py lambda/shared.py lambda/solve_score_chain.py \
    lambda/logical_sections.py "$SP_DIR/"
 cp lambda/solve_proximity_stats lambda/solve_proximity_hist_sectioned "$SP_DIR/"
-cp lambda/solve_proximity_hist_sectioned_lib/* "$SP_DIR/lib/" 2>/dev/null || true
+cp lambda/solve_proximity_hist_sectioned_lib/* "$SP_DIR/lib/"
 chmod +x "$SP_DIR"/solve_proximity_stats "$SP_DIR"/solve_proximity_hist_sectioned
-cd "$SP_DIR" && zip -r9 /tmp/polypaint-solve-proximity.zip . -q && cd "$SCRIPT_DIR"
+cd "$SP_DIR" && zip -FS -r9 /tmp/polypaint-solve-proximity.zip . -q && cd "$SCRIPT_DIR"
 echo "  SolvPrx: $(du -h /tmp/polypaint-solve-proximity.zip | cut -f1)  (solve_proximity_stats + sectioned hist)"
 
 # Solve Proximity Bench: benchmark handler + solve proximity helpers + logical section helpers + solve_proximity_stats binary
@@ -1210,9 +1280,9 @@ mkdir -p "$SP_BENCH_DIR/lib"
 cp lambda/handler_solve_proximity_bench.py lambda/handler_solve_proximity.py lambda/shared.py \
    lambda/solve_score_chain.py lambda/logical_sections.py "$SP_BENCH_DIR/"
 cp lambda/solve_proximity_stats lambda/solve_proximity_hist_sectioned "$SP_BENCH_DIR/"
-cp lambda/solve_proximity_hist_sectioned_lib/* "$SP_BENCH_DIR/lib/" 2>/dev/null || true
+cp lambda/solve_proximity_hist_sectioned_lib/* "$SP_BENCH_DIR/lib/"
 chmod +x "$SP_BENCH_DIR"/solve_proximity_stats "$SP_BENCH_DIR"/solve_proximity_hist_sectioned
-cd "$SP_BENCH_DIR" && zip -r9 /tmp/polypaint-solve-proximity-bench.zip . -q && cd "$SCRIPT_DIR"
+cd "$SP_BENCH_DIR" && zip -FS -r9 /tmp/polypaint-solve-proximity-bench.zip . -q && cd "$SCRIPT_DIR"
 echo "  SolvPrxB: $(du -h /tmp/polypaint-solve-proximity-bench.zip | cut -f1)  (AWS hist benchmark)"
 
 # Palette Debug: handler_palette_debug.py + shared.py + solve_palette_debug + raw2jpeg (needs libvips layer)
@@ -1223,7 +1293,7 @@ cp lambda/handler_palette_debug.py lambda/shared.py \
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PD_DIR/"
 cp lambda/solve_palette_debug lambda/raw2jpeg "$PD_DIR/"
 chmod +x "$PD_DIR"/solve_palette_debug "$PD_DIR"/raw2jpeg
-cd "$PD_DIR" && zip -r9 /tmp/polypaint-palette-debug.zip . -q && cd "$SCRIPT_DIR"
+cd "$PD_DIR" && zip -FS -r9 /tmp/polypaint-palette-debug.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalDbg:  $(du -h /tmp/polypaint-palette-debug.zip | cut -f1)  (palette debug)"
 
 # Palette Orchestrator: handler_palette_orchestrator.py + shared.py
@@ -1231,7 +1301,7 @@ PAL_ORCH_DIR=/tmp/polypaint-palette-orchestrator
 rm -rf "$PAL_ORCH_DIR"
 mkdir -p "$PAL_ORCH_DIR"
 cp lambda/handler_palette_orchestrator.py lambda/shared.py "$PAL_ORCH_DIR/"
-cd "$PAL_ORCH_DIR" && zip -r9 /tmp/polypaint-palette-orchestrator.zip . -q && cd "$SCRIPT_DIR"
+cd "$PAL_ORCH_DIR" && zip -FS -r9 /tmp/polypaint-palette-orchestrator.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalOrch: $(du -h /tmp/polypaint-palette-orchestrator.zip | cut -f1)  (starter only)"
 
 # Palette Render Plan: handler_palette_render_plan.py + shared.py + chunk helpers
@@ -1245,7 +1315,7 @@ cp lambda/handler_palette_render_plan.py lambda/shared.py \
    lambda/solve_score_chain.py \
    lambda/logical_sections.py \
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PAL_PLAN_DIR/"
-cd "$PAL_PLAN_DIR" && zip -r9 /tmp/polypaint-palette-render-plan.zip . -q && cd "$SCRIPT_DIR"
+cd "$PAL_PLAN_DIR" && zip -FS -r9 /tmp/polypaint-palette-render-plan.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalPlan: $(du -h /tmp/polypaint-palette-render-plan.zip | cut -f1)  (plan builder)"
 
 # Palette Chunk: handler_palette_chunk.py + shared.py + solve_score_chain.py + logical section helpers + solve_palette_chunk + solve_palette_chunk_mt
@@ -1255,9 +1325,9 @@ mkdir -p "$PAL_CHUNK_DIR/lib"
 cp lambda/handler_palette_chunk.py lambda/shared.py lambda/solve_score_chain.py \
    lambda/logical_sections.py "$PAL_CHUNK_DIR/"
 cp lambda/solve_palette_chunk lambda/solve_palette_chunk_mt "$PAL_CHUNK_DIR/"
-cp lambda/solve_palette_chunk_mt_lib/* "$PAL_CHUNK_DIR/lib/" 2>/dev/null || true
+cp lambda/solve_palette_chunk_mt_lib/* "$PAL_CHUNK_DIR/lib/"
 chmod +x "$PAL_CHUNK_DIR"/solve_palette_chunk "$PAL_CHUNK_DIR"/solve_palette_chunk_mt
-cd "$PAL_CHUNK_DIR" && zip -r9 /tmp/polypaint-palette-chunk.zip . -q && cd "$SCRIPT_DIR"
+cd "$PAL_CHUNK_DIR" && zip -FS -r9 /tmp/polypaint-palette-chunk.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalChnk: $(du -h /tmp/polypaint-palette-chunk.zip | cut -f1)  (chunk scorer)"
 
 # Palette Finalize: handler_palette_finalize.py + shared.py + source metadata helpers + palette_bins_render + raw2jpeg (needs libvips layer)
@@ -1267,7 +1337,7 @@ mkdir -p "$PAL_FINAL_DIR"
 cp lambda/handler_palette_finalize.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$PAL_FINAL_DIR/"
 cp lambda/palette_bins_render lambda/raw2jpeg "$PAL_FINAL_DIR/"
 chmod +x "$PAL_FINAL_DIR"/palette_bins_render "$PAL_FINAL_DIR"/raw2jpeg
-cd "$PAL_FINAL_DIR" && zip -r9 /tmp/polypaint-palette-finalize.zip . -q && cd "$SCRIPT_DIR"
+cd "$PAL_FINAL_DIR" && zip -FS -r9 /tmp/polypaint-palette-finalize.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalFin:  $(du -h /tmp/polypaint-palette-finalize.zip | cut -f1)  (finalize + libvips layer)"
 
 # Attach Palette to Color: handler_attach_palette_to_color.py + shared.py + color_artifact_meta.py
@@ -1275,7 +1345,7 @@ ATTACH_PAL_DIR=/tmp/polypaint-attach-palette-to-color
 rm -rf "$ATTACH_PAL_DIR"
 mkdir -p "$ATTACH_PAL_DIR"
 cp lambda/handler_attach_palette_to_color.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$ATTACH_PAL_DIR/"
-cd "$ATTACH_PAL_DIR" && zip -r9 /tmp/polypaint-attach-palette-to-color.zip . -q && cd "$SCRIPT_DIR"
+cd "$ATTACH_PAL_DIR" && zip -FS -r9 /tmp/polypaint-attach-palette-to-color.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalAtt:  $(du -h /tmp/polypaint-attach-palette-to-color.zip | cut -f1)  (attach associated palette metadata)"
 
 # Render Orchestrator (starter): handler_render_orchestrator.py + shared.py
@@ -1283,21 +1353,11 @@ ORCH_DIR=/tmp/polypaint-render-orchestrator
 rm -rf "$ORCH_DIR"
 mkdir -p "$ORCH_DIR"
 cp lambda/handler_render_orchestrator.py lambda/shared.py "$ORCH_DIR/"
-cd "$ORCH_DIR" && zip -r9 /tmp/polypaint-render-orchestrator.zip . -q && cd "$SCRIPT_DIR"
+cd "$ORCH_DIR" && zip -FS -r9 /tmp/polypaint-render-orchestrator.zip . -q && cd "$SCRIPT_DIR"
 echo "  RndOrch: $(du -h /tmp/polypaint-render-orchestrator.zip | cut -f1)  (starter only)"
 
-# Render Plan: handler_render_plan.py + shared.py + logical section helpers + chunk helpers
-PLAN_DIR=/tmp/polypaint-render-plan
-rm -rf "$PLAN_DIR"
-mkdir -p "$PLAN_DIR"
-cp lambda/handler_render_plan.py lambda/shared.py \
-   lambda/logical_sections.py \
-   lambda/calc_chunks.py \
-   lambda/param_source.py \
-   lambda/color_render_contract.py \
-   lambda/solve_score_chain.py \
-   lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PLAN_DIR/"
-cd "$PLAN_DIR" && zip -r9 /tmp/polypaint-render-plan.zip . -q && cd "$SCRIPT_DIR"
+# Render Plan: same file list as show-build, via the shared helper
+package_render_plan_zip /tmp/polypaint-render-plan.zip /tmp/polypaint-render-plan
 echo "  RndPlan: $(du -h /tmp/polypaint-render-plan.zip | cut -f1)  (plan builder)"
 
 # Render Status: handler_render_status.py + shared.py
@@ -1305,7 +1365,7 @@ STATUS_DIR=/tmp/polypaint-render-status
 rm -rf "$STATUS_DIR"
 mkdir -p "$STATUS_DIR"
 cp lambda/handler_render_status.py lambda/shared.py "$STATUS_DIR/"
-cd "$STATUS_DIR" && zip -r9 /tmp/polypaint-render-status.zip . -q && cd "$SCRIPT_DIR"
+cd "$STATUS_DIR" && zip -FS -r9 /tmp/polypaint-render-status.zip . -q && cd "$SCRIPT_DIR"
 echo "  RndStat: $(du -h /tmp/polypaint-render-status.zip | cut -f1)  (status updater)"
 
 # Compute Orchestrator (starter): handler_compute_orchestrator.py + shared.py + compute_fused.py
@@ -1313,7 +1373,7 @@ COMP_ORCH_DIR=/tmp/polypaint-compute-orchestrator
 rm -rf "$COMP_ORCH_DIR"
 mkdir -p "$COMP_ORCH_DIR"
 cp lambda/handler_compute_orchestrator.py lambda/shared.py lambda/compute_fused.py "$COMP_ORCH_DIR/"
-cd "$COMP_ORCH_DIR" && zip -r9 /tmp/polypaint-compute-orchestrator.zip . -q && cd "$SCRIPT_DIR"
+cd "$COMP_ORCH_DIR" && zip -FS -r9 /tmp/polypaint-compute-orchestrator.zip . -q && cd "$SCRIPT_DIR"
 echo "  CmpOrch: $(du -h /tmp/polypaint-compute-orchestrator.zip | cut -f1)  (starter only)"
 
 # Compute Plan: handler_compute_plan.py + shared.py + compute_fused.py
@@ -1323,7 +1383,7 @@ mkdir -p "$COMP_PLAN_DIR"
 cp lambda/handler_compute_plan.py lambda/shared.py lambda/compute_fused.py \
    lambda/param_program_chain.py lambda/param_legacy_registry.json \
    lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json "$COMP_PLAN_DIR/"
-cd "$COMP_PLAN_DIR" && zip -r9 /tmp/polypaint-compute-plan.zip . -q && cd "$SCRIPT_DIR"
+cd "$COMP_PLAN_DIR" && zip -FS -r9 /tmp/polypaint-compute-plan.zip . -q && cd "$SCRIPT_DIR"
 echo "  CmpPlan: $(du -h /tmp/polypaint-compute-plan.zip | cut -f1)  (plan + finalize)"
 
 # Compute Fused Chunk: handler_compute_chunk_fused.py + shared.py + native compute binaries
@@ -1333,7 +1393,7 @@ mkdir -p "$COMP_FUSED_DIR"
 cp lambda/handler_compute_chunk_fused.py lambda/shared.py "$COMP_FUSED_DIR/"
 cp lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$COMP_FUSED_DIR/"
 chmod +x "$COMP_FUSED_DIR"/sweep_coeffgen "$COMP_FUSED_DIR"/sweep_mt "$COMP_FUSED_DIR"/sweep_cm
-cd "$COMP_FUSED_DIR" && zip -r9 /tmp/polypaint-compute-fused-chunk.zip . -q && cd "$SCRIPT_DIR"
+cd "$COMP_FUSED_DIR" && zip -FS -r9 /tmp/polypaint-compute-fused-chunk.zip . -q && cd "$SCRIPT_DIR"
 echo "  CmpFuse: $(du -h /tmp/polypaint-compute-fused-chunk.zip | cut -f1)  (fused chunk worker)"
 
 # Compute Status: handler_compute_status.py + shared.py
@@ -1341,7 +1401,7 @@ COMP_STATUS_DIR=/tmp/polypaint-compute-status
 rm -rf "$COMP_STATUS_DIR"
 mkdir -p "$COMP_STATUS_DIR"
 cp lambda/handler_compute_status.py lambda/shared.py "$COMP_STATUS_DIR/"
-cd "$COMP_STATUS_DIR" && zip -r9 /tmp/polypaint-compute-status.zip . -q && cd "$SCRIPT_DIR"
+cd "$COMP_STATUS_DIR" && zip -FS -r9 /tmp/polypaint-compute-status.zip . -q && cd "$SCRIPT_DIR"
 echo "  CmpStat: $(du -h /tmp/polypaint-compute-status.zip | cut -f1)  (status updater)"
 
 # Sweep-CM: handler_sweep_cm.py + shared.py + sweep_cm (needs LAPACK layer)
@@ -1351,12 +1411,19 @@ mkdir -p "$CM_DIR"
 cp lambda/handler_sweep_cm.py lambda/shared.py "$CM_DIR/"
 cp lambda/sweep_cm "$CM_DIR/"
 chmod +x "$CM_DIR"/sweep_cm
-cd "$CM_DIR" && zip -r9 /tmp/polypaint-sweep-cm.zip . -q && cd "$SCRIPT_DIR"
+cd "$CM_DIR" && zip -FS -r9 /tmp/polypaint-sweep-cm.zip . -q && cd "$SCRIPT_DIR"
 echo "  SweepCM: $(du -h /tmp/polypaint-sweep-cm.zip | cut -f1)  (sweep_cm + LAPACK layer)"
 
 # Helper: create a Lambda function
 create_lambda() {
     local NAME="$1" HANDLER="$2" ZIP="$3" MEM="$4" ROLE="$5" LAYERS="${6:-}" ENV_VARS="$7" TMP="${8:-512}"
+    if aws lambda get-function --function-name "$NAME" --region "$REGION" >/dev/null 2>&1; then
+        # Re-running create against an existing stack: converge via update
+        # instead of dying on ResourceConflictException.
+        echo "  $NAME already exists; updating instead..."
+        update_lambda "$NAME" "$HANDLER" "$ZIP" "$MEM" "$LAYERS" "$ENV_VARS" "$TMP"
+        return
+    fi
     echo "Creating $NAME ($MEM MB, /tmp=${TMP}MB)..."
     local LAYER_ARGS=""
     if [ -n "$LAYERS" ]; then
@@ -1378,20 +1445,34 @@ create_lambda() {
         --query 'FunctionArn' --output text
 }
 
+# Dispatch routes async work to the per-task Lambdas; the function-name env
+# list exists once so the create and update paths cannot drift.
+DISPATCH_ENV_VARS="BUCKET=$BUCKET,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,COLOR_TO_BILEVEL_FUNCTION=$COLOR_TO_BILEVEL_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,DZ_FROM_RAW_FUNCTION=$DZ_FROM_RAW_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,RECOLOR_FROM_RAW_FUNCTION=$RECOLOR_FROM_RAW_NAME,EXTRACT_PALETTE_FUSED_FUNCTION=$EXTRACT_PALETTE_FUSED_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
+
 # Helper: update a Lambda function
 update_lambda() {
     local NAME="$1" HANDLER="$2" ZIP="$3" MEM="$4" LAYERS="${5:-}" ENV_VARS="$6" TMP="${7:-512}"
     echo "Updating $NAME code..."
-    aws lambda update-function-code \
+    local UPDATE_OUT
+    if ! UPDATE_OUT=$(aws lambda update-function-code \
         --function-name "$NAME" \
         --zip-file "fileb://$ZIP" \
         --region "$REGION" \
-        --query 'FunctionArn' --output text 2>/dev/null || {
+        --query 'FunctionArn' --output text 2>&1); then
+        # Only a genuinely missing function falls through to create; any other
+        # failure (oversized zip, in-progress update, throttle) aborts with
+        # the real error instead of a confusing "already exists" from create.
+        if ! grep -q "ResourceNotFoundException" <<< "$UPDATE_OUT"; then
+            echo "FATAL: update-function-code failed for $NAME:" >&2
+            echo "$UPDATE_OUT" >&2
+            return 1
+        fi
         echo "  $NAME doesn't exist yet, creating..."
         ROLE_ARN=$(aws iam get-role --role-name "$ROLE_NAME" --query 'Role.Arn' --output text)
         create_lambda "$NAME" "$HANDLER" "$ZIP" "$MEM" "$ROLE_ARN" "$LAYERS" "$ENV_VARS" "$TMP"
         return
-    }
+    fi
+    echo "$UPDATE_OUT"
 
     echo "Updating $NAME config ($MEM MB)..."
     aws lambda wait function-updated --function-name "$NAME" --region "$REGION" 2>/dev/null || true
@@ -1438,7 +1519,7 @@ setup_api_gateway() {
         # Create default stage with auto-deploy
         aws apigatewayv2 create-stage --api-id "$API_ID" \
             --stage-name '$default' --auto-deploy \
-            --region "$REGION" >/dev/null 2>&1
+            --region "$REGION" >/dev/null
         echo "  Created API Gateway: $API_ID"
     else
         echo "  Using existing API Gateway: $API_ID"
@@ -1489,11 +1570,11 @@ setup_api_gateway() {
         EXISTING=$(first_api_gateway_id "$EXISTING_RAW" || true)
         if is_api_gateway_id "$EXISTING"; then
             aws apigatewayv2 update-route --api-id "$API_ID" --route-id "$EXISTING" \
-                --target "integrations/$INT_ID" --region "$REGION" >/dev/null 2>&1
+                --target "integrations/$INT_ID" --region "$REGION" >/dev/null
         else
             aws apigatewayv2 create-route --api-id "$API_ID" \
                 --route-key "$ROUTE_KEY" --target "integrations/$INT_ID" \
-                --region "$REGION" >/dev/null 2>&1
+                --region "$REGION" >/dev/null
         fi
     }
 
@@ -1532,7 +1613,9 @@ setup_api_gateway() {
     }
 
     # Grant API Gateway permission to invoke each Lambda
-    for FNAME in "$SWEEP_MT_NAME" "$COEFFGEN_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$PREVIEW_NAME" "$COMPUTE_PREVIEW_NAME" "$RENDER_LORES_PREVIEW_NAME" "$BILEVEL_NAME" "$PARAM_DEBUG_NAME" "$TIFF_COMPAT_NAME" "$PNG_EXPORT_NAME" "$DZ_EXPORT_NAME" "$SWEEP_CM_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_DEBUG_NAME" "$REPALETTE_NAME"; do
+    # Only functions with API Gateway integrations belong here; bilevel and
+    # repalette are invoked async by dispatch, not through the gateway.
+    for FNAME in "$SWEEP_MT_NAME" "$COEFFGEN_NAME" "$VIEWPORT_NAME" "$STORAGE_NAME" "$DISPATCH_NAME" "$PREVIEW_NAME" "$COMPUTE_PREVIEW_NAME" "$RENDER_LORES_PREVIEW_NAME" "$PARAM_DEBUG_NAME" "$TIFF_COMPAT_NAME" "$PNG_EXPORT_NAME" "$DZ_EXPORT_NAME" "$SWEEP_CM_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_DEBUG_NAME"; do
         aws lambda add-permission --function-name "$FNAME" \
             --statement-id "apigateway-invoke" \
             --action lambda:InvokeFunction \
@@ -1656,7 +1739,8 @@ setup_api_gateway() {
   }
 }' "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$API_URL" "$BUILD_ID" "$BUILD_DEPLOYED_AT_UTC" "$BUILD_GIT_REV" "$BUILD_GIT_DIRTY" "$BUILD_FRONTEND_SHA256" \
     | aws s3 cp - "s3://$BUCKET/config.json" \
-        --content-type "application/json" --region "$REGION"
+        --content-type "application/json" \
+        --cache-control "no-cache" --region "$REGION"
     echo "  config.json uploaded"
     echo "  Build ID: $BUILD_ID"
 }
@@ -1767,7 +1851,7 @@ if [ "$ACTION" = "create" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     create_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,COLOR_TO_BILEVEL_FUNCTION=$COLOR_TO_BILEVEL_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,DZ_FROM_RAW_FUNCTION=$DZ_FROM_RAW_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,RECOLOR_FROM_RAW_FUNCTION=$RECOLOR_FROM_RAW_NAME,EXTRACT_PALETTE_FUSED_FUNCTION=$EXTRACT_PALETTE_FUSED_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
+        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "$DISPATCH_ENV_VARS"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -1888,23 +1972,9 @@ if [ "$ACTION" = "create" ]; then
         }"
 
     # Render ASL template with actual Lambda ARNs
-    RENDER_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_PLAN_NAME}"
-    RENDER_STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_STATUS_NAME}"
-    COMPUTE_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_PLAN_NAME}"
-    COMPUTE_FUSED_CHUNK_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_FUSED_CHUNK_NAME}"
-    COMPUTE_STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_STATUS_NAME}"
-    COEFFGEN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COEFFGEN_NAME}"
-    FINALIZE_MT_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${FINALIZE_MT_NAME}"
-    STORAGE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${STORAGE_NAME}"
-    BILEVEL_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_NAME}"
-    SOLVE_PROXIMITY_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${SOLVE_PROXIMITY_NAME}"
     render_render_workflow_definition /tmp/render_workflow.asl.json "$ACCT"
 
-    sed -e "s|\${PlanFunctionArn}|${COMPUTE_PLAN_ARN}|g" \
-        -e "s|\${StatusFunctionArn}|${COMPUTE_STATUS_ARN}|g" \
-        -e "s|\${CoeffgenFunctionArn}|${COEFFGEN_ARN}|g" \
-        -e "s|\${FusedChunkFunctionArn}|${COMPUTE_FUSED_CHUNK_ARN}|g" \
-        stepfunctions/compute_workflow.asl.json.template > /tmp/compute_workflow.asl.json
+    render_compute_workflow_definition /tmp/compute_workflow.asl.json "$ACCT"
 
     # Create or update state machine
     RENDER_SM_ARN=$(aws stepfunctions create-state-machine \
@@ -1941,17 +2011,7 @@ if [ "$ACTION" = "create" ]; then
 
     COMPUTE_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${COMPUTE_STATE_MACHINE_NAME}"
 
-    PALETTE_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_PLAN_NAME}"
-    PALETTE_CHUNK_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_CHUNK_NAME}"
-    PALETTE_FINALIZE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_FINALIZE_NAME}"
-    ATTACH_PALETTE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${ATTACH_PALETTE_NAME}"
-    sed -e "s|\${PlanFunctionArn}|${PALETTE_PLAN_ARN}|g" \
-        -e "s|\${StatusFunctionArn}|${RENDER_STATUS_ARN}|g" \
-        -e "s|\${SolveProximityFunctionArn}|${SOLVE_PROXIMITY_ARN}|g" \
-        -e "s|\${PaletteChunkFunctionArn}|${PALETTE_CHUNK_ARN}|g" \
-        -e "s|\${PaletteFinalizeFunctionArn}|${PALETTE_FINALIZE_ARN}|g" \
-        -e "s|\${AttachPaletteFunctionArn}|${ATTACH_PALETTE_ARN}|g" \
-        stepfunctions/palette_workflow.asl.json.template > /tmp/palette_workflow.asl.json
+    render_palette_workflow_definition /tmp/palette_workflow.asl.json "$ACCT"
 
     PALETTE_SM_ARN=$(aws stepfunctions create-state-machine \
         --name "$PALETTE_STATE_MACHINE_NAME" \
@@ -2000,31 +2060,7 @@ if [ "$ACTION" = "create" ]; then
     create_lambda "$SWEEP_CM_NAME" "handler_sweep_cm.handler" "/tmp/polypaint-sweep-cm.zip" \
         "$SWEEP_CM_MEMORY" "$ROLE_ARN" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
-    # Async invoke config: no retries for most Lambdas (prevents retry storms),
-    # but bilevel gets 2 retries / 1hr age to handle concurrency throttle drops.
-    for fn in "$FINALIZE_MT_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME" "$ATTACH_PALETTE_NAME"; do
-        aws lambda put-function-event-invoke-config \
-            --function-name "$fn" \
-            --maximum-retry-attempts 0 \
-            --maximum-event-age-in-seconds 300 \
-            --region "$REGION" >/dev/null 2>&1
-    done
-    aws lambda put-function-event-invoke-config \
-        --function-name "$BILEVEL_NAME" \
-        --maximum-retry-attempts 2 \
-        --maximum-event-age-in-seconds 3600 \
-        --region "$REGION" >/dev/null 2>&1
-    # Orchestrator: no retries (self-reinvokes), long event age
-    aws lambda put-function-event-invoke-config \
-        --function-name "$RENDER_ORCHESTRATOR_NAME" \
-        --maximum-retry-attempts 0 \
-        --maximum-event-age-in-seconds 3600 \
-        --region "$REGION" >/dev/null 2>&1
-    aws lambda put-function-event-invoke-config \
-        --function-name "$PALETTE_ORCHESTRATOR_NAME" \
-        --maximum-retry-attempts 0 \
-        --maximum-event-age-in-seconds 3600 \
-        --region "$REGION" >/dev/null 2>&1
+    configure_async_invoke_policies
 
     # --- Set up API Gateway routes ---
     echo ""
@@ -2038,7 +2074,8 @@ if [ "$ACTION" = "create" ]; then
     echo "Uploading frontend assets to S3..."
     while IFS= read -r asset; do
         aws s3 cp "$SCRIPT_DIR/$asset" "s3://$BUCKET/$asset" \
-            --content-type "$(frontend_asset_content_type "$asset")" --region "$REGION"
+            --content-type "$(frontend_asset_content_type "$asset")" \
+            --cache-control "no-cache" --region "$REGION"
     done < <(frontend_asset_keys)
     verify_frontend_assets
 
@@ -2073,7 +2110,7 @@ elif [ "$ACTION" = "update" ]; then
         --reserved-concurrent-executions 5 --region "$REGION"
 
     update_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "" "BUCKET=$BUCKET,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,COLOR_TO_BILEVEL_FUNCTION=$COLOR_TO_BILEVEL_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,DZ_FROM_RAW_FUNCTION=$DZ_FROM_RAW_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,RECOLOR_FROM_RAW_FUNCTION=$RECOLOR_FROM_RAW_NAME,EXTRACT_PALETTE_FUSED_FUNCTION=$EXTRACT_PALETTE_FUSED_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME"
+        "$DISPATCH_MEMORY" "" "$DISPATCH_ENV_VARS"
     # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
     aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
         --reserved-concurrent-executions 5 --region "$REGION"
@@ -2170,22 +2207,8 @@ elif [ "$ACTION" = "update" ]; then
     # Update Step Functions state machine
     echo "Updating Step Functions state machine..."
     ACCT=$(aws sts get-caller-identity --query 'Account' --output text)
-    RENDER_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_PLAN_NAME}"
-    RENDER_STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${RENDER_STATUS_NAME}"
-    COMPUTE_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_PLAN_NAME}"
-    COMPUTE_FUSED_CHUNK_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_FUSED_CHUNK_NAME}"
-    COMPUTE_STATUS_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COMPUTE_STATUS_NAME}"
-    COEFFGEN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${COEFFGEN_NAME}"
-    FINALIZE_MT_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${FINALIZE_MT_NAME}"
-    STORAGE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${STORAGE_NAME}"
-    BILEVEL_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${BILEVEL_NAME}"
-    SOLVE_PROXIMITY_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${SOLVE_PROXIMITY_NAME}"
     RENDER_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${RENDER_STATE_MACHINE_NAME}"
     COMPUTE_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${COMPUTE_STATE_MACHINE_NAME}"
-    PALETTE_PLAN_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_PLAN_NAME}"
-    PALETTE_CHUNK_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_CHUNK_NAME}"
-    PALETTE_FINALIZE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${PALETTE_FINALIZE_NAME}"
-    ATTACH_PALETTE_ARN="arn:aws:lambda:${REGION}:${ACCT}:function:${ATTACH_PALETTE_NAME}"
     PALETTE_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${PALETTE_STATE_MACHINE_NAME}"
 
     SFN_ROLE_NAME="polypaint-sfn-execution-role"
@@ -2193,19 +2216,9 @@ elif [ "$ACTION" = "update" ]; then
 
     render_render_workflow_definition /tmp/render_workflow.asl.json "$ACCT"
 
-    sed -e "s|\${PlanFunctionArn}|${COMPUTE_PLAN_ARN}|g" \
-        -e "s|\${StatusFunctionArn}|${COMPUTE_STATUS_ARN}|g" \
-        -e "s|\${CoeffgenFunctionArn}|${COEFFGEN_ARN}|g" \
-        -e "s|\${FusedChunkFunctionArn}|${COMPUTE_FUSED_CHUNK_ARN}|g" \
-        stepfunctions/compute_workflow.asl.json.template > /tmp/compute_workflow.asl.json
+    render_compute_workflow_definition /tmp/compute_workflow.asl.json "$ACCT"
 
-    sed -e "s|\${PlanFunctionArn}|${PALETTE_PLAN_ARN}|g" \
-        -e "s|\${StatusFunctionArn}|${RENDER_STATUS_ARN}|g" \
-        -e "s|\${SolveProximityFunctionArn}|${SOLVE_PROXIMITY_ARN}|g" \
-        -e "s|\${PaletteChunkFunctionArn}|${PALETTE_CHUNK_ARN}|g" \
-        -e "s|\${PaletteFinalizeFunctionArn}|${PALETTE_FINALIZE_ARN}|g" \
-        -e "s|\${AttachPaletteFunctionArn}|${ATTACH_PALETTE_ARN}|g" \
-        stepfunctions/palette_workflow.asl.json.template > /tmp/palette_workflow.asl.json
+    render_palette_workflow_definition /tmp/palette_workflow.asl.json "$ACCT"
 
     SFN_TRUST='{
         "Version": "2012-10-17",
@@ -2307,30 +2320,7 @@ elif [ "$ACTION" = "update" ]; then
     update_lambda "$SWEEP_CM_NAME" "handler_sweep_cm.handler" "/tmp/polypaint-sweep-cm.zip" \
         "$SWEEP_CM_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
 
-    # Async invoke config: no retries for most Lambdas (prevents retry storms),
-    # but bilevel gets 2 retries / 1hr age to handle concurrency throttle drops.
-    for fn in "$FINALIZE_MT_NAME" "$DZ_EXPORT_NAME" "$RENDER_PREVIEW_NAME" "$AUTOLEVELS_NAME" "$RESIZE_ARTIFACT_NAME" "$REPALETTE_NAME" "$PDF_ARTIFACT_NAME" "$SOLVE_PROXIMITY_NAME" "$PALETTE_CHUNK_NAME" "$PALETTE_FINALIZE_NAME" "$ATTACH_PALETTE_NAME"; do
-        aws lambda put-function-event-invoke-config \
-            --function-name "$fn" \
-            --maximum-retry-attempts 0 \
-            --maximum-event-age-in-seconds 300 \
-            --region "$REGION" >/dev/null 2>&1
-    done
-    aws lambda put-function-event-invoke-config \
-        --function-name "$BILEVEL_NAME" \
-        --maximum-retry-attempts 2 \
-        --maximum-event-age-in-seconds 3600 \
-        --region "$REGION" >/dev/null 2>&1
-    aws lambda put-function-event-invoke-config \
-        --function-name "$RENDER_ORCHESTRATOR_NAME" \
-        --maximum-retry-attempts 0 \
-        --maximum-event-age-in-seconds 3600 \
-        --region "$REGION" >/dev/null 2>&1
-    aws lambda put-function-event-invoke-config \
-        --function-name "$PALETTE_ORCHESTRATOR_NAME" \
-        --maximum-retry-attempts 0 \
-        --maximum-event-age-in-seconds 3600 \
-        --region "$REGION" >/dev/null 2>&1
+    configure_async_invoke_policies
 
     # Add Lambda invoke + DynamoDB permissions if missing
     ACCT=$(aws sts get-caller-identity --query 'Account' --output text)
@@ -2383,7 +2373,8 @@ elif [ "$ACTION" = "update" ]; then
     while IFS= read -r asset; do
         echo "Uploading ${asset} to S3..."
         aws s3 cp "$SCRIPT_DIR/$asset" "s3://$BUCKET/$asset" \
-            --content-type "$(frontend_asset_content_type "$asset")" --region "$REGION"
+            --content-type "$(frontend_asset_content_type "$asset")" \
+            --cache-control "no-cache" --region "$REGION"
     done < <(frontend_asset_keys)
     verify_frontend_assets
 

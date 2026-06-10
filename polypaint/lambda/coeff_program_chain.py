@@ -25,7 +25,7 @@ MAX_MACRO_DEPTH = 8
 MAX_ARGS = 8
 MAX_SCALAR_EXPR_TOKENS = 32
 MAX_SCALAR_EXPRS = 64  # mirrors COEFF_PROGRAM_MAX_SCALAR_EXPRS in sweep_cli.c
-MAX_LEGACY_INT_ARG = 4096  # mirrors the clamp in coeffProgramLegacyOp dispatch
+MAX_LEGACY_INT_ARG = 4096  # mirrors COEFF_LEGACY_MAX_INT_ARG (coeffLegacyIntArg) in sweep_cli.c
 
 COEFF_OP_CONST = 1
 COEFF_OP_PUSH = 2
@@ -174,10 +174,26 @@ _ENUM_ARG_VALUES = {
     "lo": 1.0,
 }
 
+# Chip-name aliases for registry transforms. exp/pow/power are shadowed by
+# typed-expression builtins, so chips and source text use the *_affine /
+# *_series names; scale100 is the historical name for linear. Mirrors
+# _NATIVE_TRANSFORM_ALIASES in coeff_program_source.py.
 _LEGACY_NAME_ALIASES = {
     "exp_affine": "exp",
+    "pow_affine": "pow",
+    "power_series": "power",
     "scale100": "linear",
 }
+
+# Typed-op shorthand aliases shared by _compile_typed_binary and the source
+# layer's _VECTOR_BINARY_ALIASES.
+_TYPED_BINARY_NAME_ALIASES = {"sub": "subtract", "mul": "multiply", "div": "divide", "pow": "power"}
+
+
+def _canonical_unary_op_name(name):
+    # mod and abs are the same operation; canonicalize to abs so chip-, typed-
+    # and source-authored programs share one wire encoding (and fingerprint).
+    return "abs" if name == "mod" else name
 
 _VECTOR_BINARY_OPS = {
     "add": 1,
@@ -298,16 +314,6 @@ def legacy_registry():
 def _canonical_legacy_name(name):
     raw = str(name or "").strip().lower()
     return _LEGACY_NAME_ALIASES.get(raw, raw)
-
-
-def validate_legacy_registry():
-    registry = legacy_registry()
-    return {
-        "version": 1,
-        "count": len(registry["by_name"]),
-        "names": sorted(registry["by_name"]),
-        "fn_indices": sorted(registry["by_index"]),
-    }
 
 
 _COMPLEX_TERM_RE = re.compile(r"[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?")
@@ -722,6 +728,16 @@ def _compile_expr(value, *, label, expected="complex"):
     return expr
 
 
+def _canonical_branch_operand(value):
+    # Match the C VM: canonicalize signed zero before the atan2-consuming
+    # functions (log/sqrt/angle) so static folds and dynamic evaluation pick
+    # the same principal branch for values like (-x, -0).
+    return complex(
+        0.0 if value.real == 0 else value.real,
+        0.0 if value.imag == 0 else value.imag,
+    )
+
+
 def _expr_value_if_static(expr):
     if expr.dynamic:
         return None
@@ -752,13 +768,13 @@ def _expr_value_if_static(expr):
         elif op == EXPR_ABS:
             stack.append(complex(abs(stack.pop()), 0.0))
         elif op == EXPR_LOG:
-            value = stack.pop()
+            value = _canonical_branch_operand(stack.pop())
             if abs(value) <= 0.0:
                 stack.append(complex(-700.0, 0.0))
             else:
                 stack.append(cmath.log(value))
         elif op == EXPR_SQRT:
-            stack.append(cmath.sqrt(stack.pop()))
+            stack.append(cmath.sqrt(_canonical_branch_operand(stack.pop())))
         elif op == EXPR_EXP:
             stack.append(cmath.exp(stack.pop()))
         elif op == EXPR_SIN:
@@ -774,7 +790,7 @@ def _expr_value_if_static(expr):
         elif op == EXPR_TANH:
             stack.append(cmath.tanh(stack.pop()))
         elif op == EXPR_ANGLE:
-            value = stack.pop()
+            value = _canonical_branch_operand(stack.pop())
             stack.append(complex(math.atan2(value.imag, value.real), 0.0))
         else:
             raise RuntimeError(f"non-static scalar expression opcode: {op}")
@@ -1014,6 +1030,7 @@ def _compile_vector_binary(name, args):
 def _compile_vector_unary(name, args):
     if len(args) != 2:
         raise RuntimeError(f"{name} chip requires tgt and src")
+    name = _canonical_unary_op_name(name)
     _tgt_name, tgt_val = _selector_value(args[0], _TARGET_SELECTORS, f"{name} tgt")
     _src_name, src_val = _selector_value(args[1], _VECTOR_SOURCE_SELECTORS, f"{name} src")
     return _token(
@@ -1092,7 +1109,7 @@ def _compile_typed_binary(args):
     if len(args) != 1:
         raise RuntimeError("typed_binary requires one op name")
     name = str(args[0]).strip().lower()
-    name = {"sub": "subtract", "mul": "multiply", "div": "divide", "pow": "power"}.get(name, name)
+    name = _TYPED_BINARY_NAME_ALIASES.get(name, name)
     if name not in _VECTOR_BINARY_OPS:
         raise RuntimeError(f"unknown typed binary op: {args[0]}")
     return _token(COEFF_OP_TYPED_BINARY, fn_index=_VECTOR_BINARY_OPS[name])
@@ -1101,8 +1118,7 @@ def _compile_typed_binary(args):
 def _compile_typed_unary(args):
     if len(args) != 1:
         raise RuntimeError("typed_unary requires one op name")
-    name = str(args[0]).strip().lower()
-    name = "abs" if name == "mod" else name
+    name = _canonical_unary_op_name(str(args[0]).strip().lower())
     if name not in _VECTOR_UNARY_OPS:
         raise RuntimeError(f"unknown typed unary op: {args[0]}")
     return _token(COEFF_OP_TYPED_UNARY, fn_index=_VECTOR_UNARY_OPS[name])
@@ -1130,7 +1146,13 @@ def _compile_littlewood(args, scalar_exprs):
     )
 
 
-def _linear_legacy_args(spec, raw_args, scalar_exprs):
+def _affine_pair_legacy_args(spec, raw_args, scalar_exprs, *, name, labels, defaults):
+    """Shared packing for the linear (fn 14) and pow (fn 24) affine pairs.
+
+    New form: (a, b[, andy]) as complex args. Old form: four real components
+    plus optional andy. Serves both legacy chips and source-text native calls,
+    so diagnostics use the plain transform name.
+    """
     raw_args = list(raw_args)
     andy = 0.0
     andy_expr_ref = -1
@@ -1138,76 +1160,49 @@ def _linear_legacy_args(spec, raw_args, scalar_exprs):
     if spec.get("supports_andy") and len(raw_args) in {3, 5}:
         andy_raw = raw_args[-1]
         raw_args = raw_args[:-1]
+    args = []
+    args_im = []
+    expr_refs = []
     if len(raw_args) in {0, 1, 2}:
-        raw_multiplier = raw_args[0] if len(raw_args) >= 1 else "100"
-        raw_offset = raw_args[1] if len(raw_args) >= 2 else "0"
-        args = []
-        args_im = []
-        expr_refs = []
-        for label, raw in (("multiplier", raw_multiplier), ("offset", raw_offset)):
-            expr = _compile_expr(raw, label=f"legacy(linear) {label}", expected="complex")
+        pairs = (
+            (labels[0], raw_args[0] if len(raw_args) >= 1 else defaults[0]),
+            (labels[1], raw_args[1] if len(raw_args) >= 2 else defaults[1]),
+        )
+        for label, raw in pairs:
+            expr = _compile_expr(raw, label=f"{name} {label}", expected="complex")
             re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="complex")
             args.append(re)
             args_im.append(im)
             expr_refs.append(ref)
-        if andy_raw is not None:
-            andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, "legacy(linear) andy")
-        return args, args_im, expr_refs, andy, andy_expr_ref
-    if len(raw_args) == 4:
-        args = []
-        args_im = []
-        expr_refs = []
+    elif len(raw_args) == 4:
         for idx, raw in enumerate(raw_args):
-            expr = _compile_expr(raw, label=f"legacy(scale100) arg {idx}", expected="real")
+            expr = _compile_expr(raw, label=f"{name} old real arg {idx}", expected="real")
             re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="real")
             args.append(re)
             args_im.append(im)
             expr_refs.append(ref)
-        if andy_raw is not None:
-            andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, "legacy(linear) andy")
-        return args, args_im, expr_refs, andy, andy_expr_ref
-    raise RuntimeError(
-        "legacy(linear) expects multiplier and offset, or legacy scale100 four real arguments"
+    else:
+        raise RuntimeError(
+            f"{name} expects {labels[0]} and {labels[1]} (plus optional andy), "
+            "or the old four real components"
+        )
+    if andy_raw is not None:
+        andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, f"{name} andy")
+    return args, args_im, expr_refs, andy, andy_expr_ref
+
+
+def _linear_legacy_args(spec, raw_args, scalar_exprs):
+    return _affine_pair_legacy_args(
+        spec, raw_args, scalar_exprs,
+        name="linear", labels=("multiplier", "offset"), defaults=("100", "0"),
     )
 
 
 def _pow_legacy_args(spec, raw_args, scalar_exprs):
-    raw_args = list(raw_args)
-    andy = 0.0
-    andy_expr_ref = -1
-    andy_raw = None
-    if spec.get("supports_andy") and len(raw_args) in {3, 5}:
-        andy_raw = raw_args[-1]
-        raw_args = raw_args[:-1]
-    if len(raw_args) in {0, 1, 2}:
-        raw_multiplier = raw_args[0] if len(raw_args) >= 1 else "1"
-        raw_exponent = raw_args[1] if len(raw_args) >= 2 else "1"
-        args = []
-        args_im = []
-        expr_refs = []
-        for label, raw in (("multiplier", raw_multiplier), ("exponent", raw_exponent)):
-            expr = _compile_expr(raw, label=f"legacy(pow) {label}", expected="complex")
-            re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="complex")
-            args.append(re)
-            args_im.append(im)
-            expr_refs.append(ref)
-        if andy_raw is not None:
-            andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, "legacy(pow) andy")
-        return args, args_im, expr_refs, andy, andy_expr_ref
-    if len(raw_args) == 4:
-        args = []
-        args_im = []
-        expr_refs = []
-        for idx, raw in enumerate(raw_args):
-            expr = _compile_expr(raw, label=f"legacy(pow) old real arg {idx}", expected="real")
-            re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="real")
-            args.append(re)
-            args_im.append(im)
-            expr_refs.append(ref)
-        if andy_raw is not None:
-            andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, "legacy(pow) andy")
-        return args, args_im, expr_refs, andy, andy_expr_ref
-    raise RuntimeError("legacy(pow) expects multiplier and exponent, or old four real arguments")
+    return _affine_pair_legacy_args(
+        spec, raw_args, scalar_exprs,
+        name="pow", labels=("multiplier", "exponent"), defaults=("1", "1"),
+    )
 
 
 def _exp_legacy_args(spec, raw_args, scalar_exprs):
@@ -1219,17 +1214,17 @@ def _exp_legacy_args(spec, raw_args, scalar_exprs):
         andy_raw = raw_args[-1]
         raw_args = raw_args[:-1]
     if len(raw_args) > 2:
-        raise RuntimeError("legacy(exp) expects multiplier, optional offset, and optional andy")
+        raise RuntimeError("exp expects multiplier, optional offset, and optional andy")
     raw_multiplier = raw_args[0] if len(raw_args) >= 1 else "1"
     raw_offset = raw_args[1] if len(raw_args) >= 2 else "0"
     mult_re, mult_im, mult_re_ref, mult_im_ref = _compile_complex_components(
-        raw_multiplier, scalar_exprs, "legacy(exp) multiplier"
+        raw_multiplier, scalar_exprs, "exp multiplier"
     )
     off_re, off_im, off_re_ref, off_im_ref = _compile_complex_components(
-        raw_offset, scalar_exprs, "legacy(exp) offset"
+        raw_offset, scalar_exprs, "exp offset"
     )
     if andy_raw is not None:
-        andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, "legacy(exp) andy")
+        andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, "exp andy")
     return (
         [mult_re, mult_im, off_re, off_im],
         [0.0, 0.0, 0.0, 0.0],
@@ -1246,30 +1241,34 @@ def _round_legacy_args(spec, raw_args, scalar_exprs):
     andy_raw = None
     if spec.get("supports_andy") and len(raw_args) == 3:
         # Back-compat for the old real/imag component form: round(a, b, andy).
+        # NOTE (pinned decision): the 2-arg form below is (multiplier, andy),
+        # which matches the current chip UI. Old persisted component-form
+        # pairs (a, b) with b != 0 and a trimmed default andy are reinterpreted
+        # under that rule; such data must use the explicit 3-arg form.
         andy_raw = raw_args[-1]
         raw_args = raw_args[:-1]
         args = []
         args_im = []
         expr_refs = []
         for idx, raw in enumerate(raw_args):
-            expr = _compile_expr(raw, label=f"legacy(round) old real arg {idx}", expected="real")
+            expr = _compile_expr(raw, label=f"round old real arg {idx}", expected="real")
             re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="real")
             args.append(re)
             args_im.append(im)
             expr_refs.append(ref)
-        andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, "legacy(round) andy")
+        andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, "round andy")
         return args, args_im, expr_refs, andy, andy_expr_ref
     if spec.get("supports_andy") and len(raw_args) == 2:
         andy_raw = raw_args[-1]
         raw_args = raw_args[:-1]
     if len(raw_args) > 1:
-        raise RuntimeError("legacy(round) expects multiplier and optional andy")
+        raise RuntimeError("round expects multiplier and optional andy")
     raw_multiplier = raw_args[0] if raw_args else "1"
     mult_re, mult_im, mult_re_ref, mult_im_ref = _compile_complex_components(
-        raw_multiplier, scalar_exprs, "legacy(round) multiplier"
+        raw_multiplier, scalar_exprs, "round multiplier"
     )
     if andy_raw is not None:
-        andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, "legacy(round) andy")
+        andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, "round andy")
     return (
         [mult_re, mult_im],
         [0.0, 0.0],
@@ -1297,7 +1296,7 @@ def _legacy_args(spec, raw_args, scalar_exprs):
         andy_raw = raw_args[-1]
         raw_args = raw_args[:-1]
     if len(raw_args) > len(declared):
-        raise RuntimeError(f"legacy({spec['name']}) got too many arguments")
+        raise RuntimeError(f"{spec['name']} got too many arguments")
     args = []
     args_im = []
     expr_refs = []
@@ -1309,50 +1308,50 @@ def _legacy_args(spec, raw_args, scalar_exprs):
             choices = [str(x).strip().lower() for x in (decl.get("choices") or [])]
             if value not in choices:
                 raise RuntimeError(
-                    f"legacy({spec['name']}) arg {idx} must be one of {choices}, got {raw!r}"
+                    f"{spec['name']} arg {idx} must be one of {choices}, got {raw!r}"
                 )
             args.append(_ENUM_ARG_VALUES[value])
             args_im.append(0.0)
             expr_refs.append(-1)
         elif arg_type == "int":
-            number = _integer_literal(raw, f"legacy({spec['name']}) arg {idx}")
+            number = _integer_literal(raw, f"{spec['name']} arg {idx}")
             if abs(number) > MAX_LEGACY_INT_ARG:
                 raise RuntimeError(
-                    f"legacy({spec['name']}) arg {idx} magnitude must be <= {MAX_LEGACY_INT_ARG}, got {number}"
+                    f"{spec['name']} arg {idx} magnitude must be <= {MAX_LEGACY_INT_ARG}, got {number}"
                 )
             args.append(float(number))
             args_im.append(0.0)
             expr_refs.append(-1)
         elif arg_type == "real":
-            expr = _compile_expr(raw, label=f"legacy({spec['name']}) arg {idx}", expected="real")
+            expr = _compile_expr(raw, label=f"{spec['name']} arg {idx}", expected="real")
             re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="real")
             args.append(re)
             args_im.append(im)
             expr_refs.append(ref)
         else:
             raise RuntimeError(
-                f"legacy({spec['name']}) arg {idx} has unsupported type {arg_type!r}"
+                f"{spec['name']} arg {idx} has unsupported type {arg_type!r}"
             )
     if andy_raw is not None:
-        andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, f"legacy({spec['name']}) andy")
+        andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, f"{spec['name']} andy")
     return args, args_im, expr_refs, andy, andy_expr_ref
 
 
-def _legacy_token(name, src, tgt, args, scalar_exprs):
+def _registry_transform_token(op, kind_label, name, src, tgt, args, scalar_exprs):
     registry = legacy_registry()["by_name"]
     canonical_name = _canonical_legacy_name(name)
     if canonical_name not in registry:
-        raise RuntimeError(f"unknown legacy coeff transform: {name}")
+        raise RuntimeError(f"unknown {kind_label}: {name}")
     spec = registry[canonical_name]
-    src_name, src_val = _selector_value(src, _SOURCE_SELECTORS, "legacy src")
-    tgt_name, tgt_val = _selector_value(tgt, _TARGET_SELECTORS, "legacy tgt")
+    src_name, src_val = _selector_value(src, _SOURCE_SELECTORS, f"{canonical_name} src")
+    tgt_name, tgt_val = _selector_value(tgt, _TARGET_SELECTORS, f"{canonical_name} tgt")
     if src_name not in spec["allowed_src"]:
-        raise RuntimeError(f"legacy({canonical_name}) does not support src={src_name}")
+        raise RuntimeError(f"{canonical_name} does not support src={src_name}")
     if tgt_name not in spec["allowed_tgt"]:
-        raise RuntimeError(f"legacy({canonical_name}) does not support tgt={tgt_name}")
+        raise RuntimeError(f"{canonical_name} does not support tgt={tgt_name}")
     values, values_im, expr_refs, andy, andy_expr_ref = _legacy_args(spec, args, scalar_exprs)
     return _token(
-        COEFF_OP_LEGACY,
+        op,
         fn_index=spec["fn_index"],
         src=src_val,
         tgt=tgt_val,
@@ -1365,30 +1364,15 @@ def _legacy_token(name, src, tgt, args, scalar_exprs):
     )
 
 
+def _legacy_token(name, src, tgt, args, scalar_exprs):
+    return _registry_transform_token(
+        COEFF_OP_LEGACY, "legacy coeff transform", name, src, tgt, args, scalar_exprs
+    )
+
+
 def _native_transform_token(name, src, tgt, args, scalar_exprs):
-    registry = legacy_registry()["by_name"]
-    canonical_name = _canonical_legacy_name(name)
-    if canonical_name not in registry:
-        raise RuntimeError(f"unknown native coeff transform: {name}")
-    spec = registry[canonical_name]
-    src_name, src_val = _selector_value(src, _SOURCE_SELECTORS, "native transform src")
-    tgt_name, tgt_val = _selector_value(tgt, _TARGET_SELECTORS, "native transform tgt")
-    if src_name not in spec["allowed_src"]:
-        raise RuntimeError(f"{canonical_name} does not support src={src_name}")
-    if tgt_name not in spec["allowed_tgt"]:
-        raise RuntimeError(f"{canonical_name} does not support tgt={tgt_name}")
-    values, values_im, expr_refs, andy, andy_expr_ref = _legacy_args(spec, args, scalar_exprs)
-    return _token(
-        COEFF_OP_NATIVE_TRANSFORM,
-        fn_index=spec["fn_index"],
-        src=src_val,
-        tgt=tgt_val,
-        n_args=len(values),
-        args=values,
-        args_im=values_im,
-        expr_refs=expr_refs,
-        andy=andy,
-        andy_expr_ref=andy_expr_ref,
+    return _registry_transform_token(
+        COEFF_OP_NATIVE_TRANSFORM, "native coeff transform", name, src, tgt, args, scalar_exprs
     )
 
 
@@ -1531,6 +1515,8 @@ def _lower_chip(chip, scalar_exprs):
         return [_compile_vector_binary(name, args)]
     if name in _VECTOR_UNARY_OPS:
         if len(args) > 2 and name in legacy_registry()["by_name"]:
+            # Chip rows are target-first [tgt, src, ...]; the token builder
+            # takes (name, src, tgt, ...) — args[1]/args[0] is a reorder.
             return [_native_transform_token(name, args[1], args[0], args[2:], scalar_exprs)]
         return [_compile_vector_unary(name, args)]
     if name in _VECTOR_ROLL_OPS:
@@ -1579,6 +1565,8 @@ def _lower_chip(chip, scalar_exprs):
     if _canonical_legacy_name(name) in legacy_registry()["by_name"]:
         if len(args) < 2:
             raise RuntimeError(f"{name} chip requires target, source, and optional args")
+        # Chip rows are target-first [tgt, src, ...]; the token builder
+        # takes (name, src, tgt, ...) — args[1]/args[0] is a reorder.
         return [_native_transform_token(name, args[1], args[0], args[2:], scalar_exprs)]
     if name in _STACK_OPS:
         if args:
@@ -1587,6 +1575,8 @@ def _lower_chip(chip, scalar_exprs):
     if name == "legacy":
         if len(args) < 3:
             raise RuntimeError("legacy chip requires name, src, tgt, and optional args")
+        # Legacy rows are source-first [name, src, tgt, ...] — same order as
+        # the token builder, so no reorder here (unlike the chip rows above).
         return [_legacy_token(str(args[0]).strip().lower(), args[1], args[2], args[3:], scalar_exprs)]
     raise RuntimeError(f"unknown coeff program chip: {name}")
 
@@ -1987,25 +1977,23 @@ def _legacy_transforms(tokens):
                 out.append(entry)
                 continue
         if int(token.get("fn_index") or 0) == 16:
+            # _legacy_fast_path already excluded fn16 tokens with expr refs or
+            # a non-zero offset; legacy fn16 tokens always carry four static
+            # components, so only the shape guard remains.
             args = list(token.get("args") or [])
-            refs = list(token.get("expr_refs") or [])
-            if len(args) == 4 and not any(int(ref) >= 0 for ref in refs):
-                multiplier_re = args[0] if len(args) > 0 else 1.0
-                multiplier_im = args[1] if len(args) > 1 else 0.0
-                offset_re = args[2] if len(args) > 2 else 0.0
-                offset_im = args[3] if len(args) > 3 else 0.0
-                if abs(offset_re) > 1e-12 or abs(offset_im) > 1e-12:
-                    return []
-                entry = ["exp"]
-                if abs(multiplier_re - 1.0) > 1e-12 or abs(multiplier_im) > 1e-12 or token.get("andy"):
-                    entry.append(_format_number(multiplier_re))
-                if abs(multiplier_im) > 1e-12 or token.get("andy"):
-                    entry.append(_format_number(multiplier_im))
-                if token.get("andy"):
-                    entry.append(_format_number(token["andy"]))
-                out.append(entry)
-                continue
-            return []
+            if len(args) != 4:
+                return []
+            multiplier_re = args[0]
+            multiplier_im = args[1]
+            entry = ["exp"]
+            if abs(multiplier_re - 1.0) > 1e-12 or abs(multiplier_im) > 1e-12 or token.get("andy"):
+                entry.append(_format_number(multiplier_re))
+            if abs(multiplier_im) > 1e-12 or token.get("andy"):
+                entry.append(_format_number(multiplier_im))
+            if token.get("andy"):
+                entry.append(_format_number(token["andy"]))
+            out.append(entry)
+            continue
         entry = [spec["name"]]
         args = list(token.get("args") or [])
         while args:
@@ -2044,7 +2032,6 @@ def compile_coeff_program_chain(chain, *, macro_resolver=None, strict=True):
             "source_chain": source_chain,
             "expanded_chain": expanded_chain,
             "tokens": tokens,
-            "execution_tokens": tokens,
             "scalar_exprs": scalar_exprs,
             "execution_spec": spec,
             "fingerprint": _fingerprint(spec),
@@ -2073,7 +2060,6 @@ def compile_coeff_program_chain(chain, *, macro_resolver=None, strict=True):
             "source_chain": safe_chain,
             "expanded_chain": [],
             "tokens": [],
-            "execution_tokens": [],
             "scalar_exprs": [],
             "execution_spec": "",
             "fingerprint": "",
@@ -2090,9 +2076,3 @@ def compile_coeff_program_chain(chain, *, macro_resolver=None, strict=True):
         }
 
 
-def compile_coeff_program_diagnostics(chain, *, macro_resolver=None):
-    return compile_coeff_program_chain(chain, macro_resolver=macro_resolver, strict=False)
-
-
-def coeff_program_chain_id(chain, *, macro_resolver=None):
-    return compile_coeff_program_chain(chain, macro_resolver=macro_resolver)["fingerprint"]

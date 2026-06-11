@@ -629,9 +629,12 @@ echo "  sweep_mt (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/sweep_mt lambda/sweep_mt.c -lm
 
 # Helper: compile one dynamically-linked ARM64 binary against system libcurl
-# inside Amazon Linux 2023 (the Lambda runtime image), then stage its non-base
-# shared libraries into lambda/<name>_lib/ — packaged as lib/ next to the
-# binary and found via -rpath $ORIGIN/lib (LD_LIBRARY_PATH=/var/task/lib).
+# inside Amazon Linux 2023, then stage its non-base shared libraries into
+# lambda/<name>_lib/ — packaged as lib/ next to the binary. --disable-new-dtags
+# emits DT_RPATH (not RUNPATH), so $ORIGIN/lib resolves the binary's WHOLE
+# dependency closure by itself. Function envs must NOT put /var/task/lib on
+# LD_LIBRARY_PATH: the staged OpenSSL would shadow the runtime's and break the
+# Lambda python's `import ssl` (the 2026-06 lores-preview outage).
 # Args: binary name, then any extra .c inputs (e.g. multispan_reader.c).
 build_libcurl_binary() {
     local BIN="$1"; shift
@@ -649,7 +652,7 @@ build_libcurl_binary() {
             set -euo pipefail
             dnf install -y gcc libcurl-devel 2>&1 | tail -1
             gcc -O3 -pthread -o "/src/$BIN" $GCC_INPUTS \
-                -lcurl -lm -Wl,-rpath,\$ORIGIN/lib
+                -lcurl -lm -Wl,--disable-new-dtags -Wl,-rpath,\$ORIGIN/lib
             rm -rf "/src/${BIN}_lib"
             mkdir -p "/src/${BIN}_lib"
             for lib in $(ldd "/src/$BIN" | awk "/=> \// {print \$3}"); do

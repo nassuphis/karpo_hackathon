@@ -158,7 +158,7 @@
       "handler": "handler_raster_mt.handler",
       "zip": "/tmp/polypaint-raster-mt.zip",
       "layers": [],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RASTER_MT_THREADS=$RASTER_MT_THREADS,LD_LIBRARY_PATH=/var/task/lib",
+      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RASTER_MT_THREADS=$RASTER_MT_THREADS",
       "group": "core",
       "memory_why": "max memory/CPU tier for native pthread raster on large fused renders",
       "tmp": "binary"
@@ -174,7 +174,7 @@
       "layers": [
         "libvips"
       ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib:/opt/lib",
+      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
       "group": "core",
       "memory_why": "fused solve-score raw assemble + encode",
       "tmp": "binary"
@@ -225,7 +225,7 @@
       "layers": [
         "libvips"
       ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib:/opt/lib",
+      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
       "group": "core",
       "memory_why": "1 vCPU, bilevel raster + merge",
       "tmp": "binary"
@@ -241,7 +241,7 @@
       "layers": [
         "libvips"
       ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib:/opt/lib",
+      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
       "group": "core",
       "memory_why": "raw-sidecar thresholding is single-shot and CPU-bound on large images",
       "tmp": "binary"
@@ -365,7 +365,7 @@
         "libvips",
         "lapack"
       ],
-      "env": "BUCKET=$BUCKET,LD_LIBRARY_PATH=/var/task/lib:/opt/lib",
+      "env": "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib",
       "group": "core",
       "memory_why": "sync lores fused raster + score_raw_render preview",
       "tmp": "binary",
@@ -493,7 +493,7 @@
       "handler": "handler_solve_proximity.handler",
       "zip": "/tmp/polypaint-solve-proximity.zip",
       "layers": [],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib",
+      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE",
       "group": "core",
       "memory_why": "higher CPU tier for pthread solve-score phases",
       "tmp": "binary",
@@ -510,7 +510,7 @@
       "handler": "handler_solve_proximity_bench.handler",
       "zip": "/tmp/polypaint-solve-proximity-bench.zip",
       "layers": [],
-      "env": "BUCKET=$BUCKET,LD_LIBRARY_PATH=/var/task/lib",
+      "env": "BUCKET=$BUCKET",
       "group": "core",
       "memory_why": "benchmark Lambda for high-CPU/high-network hist concurrency sweeps",
       "tmp": "binary"
@@ -554,7 +554,7 @@
       "handler": "handler_palette_chunk.handler",
       "zip": "/tmp/polypaint-palette-chunk.zip",
       "layers": [],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib",
+      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE",
       "group": "core",
       "tmp": "binary"
     },

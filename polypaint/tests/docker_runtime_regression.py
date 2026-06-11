@@ -3349,6 +3349,47 @@ def test_catalog_degrees():
     print("=== Catalog degree verification PASSED ===")
 
 
+def test_libcurl_binaries_use_rpath_not_runpath():
+    """The four libcurl binaries must carry DT_RPATH (not DT_RUNPATH).
+
+    DT_RPATH makes $ORIGIN/lib resolve the binary's whole dependency closure,
+    so function envs need no /var/task/lib on LD_LIBRARY_PATH — which is what
+    put our staged OpenSSL in front of the Lambda runtime python and broke
+    `import ssl` (the 2026-06 render-lores-preview outage).
+    """
+    import struct
+
+    DT_RPATH, DT_RUNPATH, PT_DYNAMIC = 15, 29, 2
+    for bin_path in [
+        "/src/roots2pix_mt",
+        "/src/assemble_greyscale",
+        "/src/solve_proximity_hist_sectioned",
+        "/src/solve_palette_chunk_mt",
+    ]:
+        data = open(bin_path, "rb").read()
+        assert data[:4] == b"\x7fELF" and data[4] == 2, "%s: not ELF64" % bin_path
+        e_phoff, = struct.unpack_from("<Q", data, 0x20)
+        e_phentsize, = struct.unpack_from("<H", data, 0x36)
+        e_phnum, = struct.unpack_from("<H", data, 0x38)
+        tags = set()
+        for i in range(e_phnum):
+            off = e_phoff + i * e_phentsize
+            p_type, = struct.unpack_from("<I", data, off)
+            if p_type != PT_DYNAMIC:
+                continue
+            p_offset, = struct.unpack_from("<Q", data, off + 0x08)
+            p_filesz, = struct.unpack_from("<Q", data, off + 0x20)
+            for j in range(p_filesz // 16):
+                d_tag, = struct.unpack_from("<q", data, p_offset + j * 16)
+                if d_tag == 0:
+                    break
+                tags.add(d_tag)
+        assert DT_RPATH in tags, "%s: missing DT_RPATH (built without --disable-new-dtags?)" % bin_path
+        assert DT_RUNPATH not in tags, "%s: has DT_RUNPATH; transitive deps would leak to LD_LIBRARY_PATH" % bin_path
+        print("  %s: DT_RPATH OK (hermetic $ORIGIN/lib closure)" % bin_path)
+    print("=== libcurl binary linkage check PASSED ===")
+
+
 # ── Main ─────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -3371,6 +3412,8 @@ if __name__ == "__main__":
         magic = open(bin_path, "rb").read(4)
         assert magic == b"\x7fELF", "%s is not an ELF binary" % bin_path
         print("  %s: ELF OK" % bin_path)
+
+    test_libcurl_binaries_use_rpath_not_runpath()
 
     print("--- Generating test fixtures ---")
     test_ae_cm_solvers()

@@ -317,7 +317,12 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('cp lambda/roots2pix_mt "$RASTER_MT_DIR/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/handler_raster_mt.py lambda/shared.py lambda/solve_score_chain.py lambda/logical_sections.py "$RASTER_MT_DIR/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/roots2pix_mt_lib/* "$RASTER_MT_DIR/lib/"', DEPLOY_TEXT)
-        self.assertIn('LD_LIBRARY_PATH=/var/task/lib', DEPLOY_TEXT)
+        # /var/task/lib must never be on a function's LD_LIBRARY_PATH: the
+        # staged OpenSSL would shadow the runtime python's and break
+        # `import ssl` at INIT (binaries self-resolve via DT_RPATH instead).
+        for fn in DEPLOY_MANIFEST["functions"]:
+            self.assertNotIn("/var/task/lib", fn["env"], fn["key"])
+        self.assertNotIn("/var/task/lib", GEN_TEXT)
         docker_runtime_text = (ROOT / "tests" / "docker_runtime_regression.py").read_text()
         self.assertIn("--score_output_normalize=1", docker_runtime_text)
         self.assertIn("test_roots2pix_mt_score_output_normalization_runtime()", docker_runtime_text)
@@ -368,7 +373,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('build_libcurl_binary solve_palette_chunk_mt multispan_reader.c', DEPLOY_TEXT)
         self.assertIn('cp lambda/solve_palette_chunk lambda/solve_palette_chunk_mt "$PALETTE_CHUNK_DIR/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/solve_palette_chunk_mt_lib/* "$PALETTE_CHUNK_DIR/lib/"', DEPLOY_TEXT)
-        self.assertRegex(joined, r'deploy_lambda "\$PALETTE_CHUNK_NAME" "handler_palette_chunk\.handler" "/tmp/polypaint-palette-chunk\.zip"\s+"\$PALETTE_CHUNK_MEMORY" "" "BUCKET=\$BUCKET,JOBS_TABLE=\$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib" "\$BINARY_TMP"')
+        self.assertRegex(joined, r'deploy_lambda "\$PALETTE_CHUNK_NAME" "handler_palette_chunk\.handler" "/tmp/polypaint-palette-chunk\.zip"\s+"\$PALETTE_CHUNK_MEMORY" "" "BUCKET=\$BUCKET,JOBS_TABLE=\$JOBS_TABLE" "\$BINARY_TMP"')
 
         self.assertIn("handler_autolevels.py", packaged)
         self.assertIn("autolevels_render", packaged["handler_autolevels.py"])
@@ -476,7 +481,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("sweep_mt", packaged["handler_render_lores_preview.py"])
         self.assertIn("sweep_cm", packaged["handler_render_lores_preview.py"])
         self.assertIn('deploy_lambda "$RENDER_LORES_PREVIEW_NAME" "handler_render_lores_preview.handler" "/tmp/polypaint-render-lores-preview.zip"', GEN_TEXT)
-        self.assertIn('"$LIBVIPS_LAYER $LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"', GEN_TEXT)
+        self.assertIn('"$LIBVIPS_LAYER $LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', GEN_TEXT)
         self.assertIn('ensure_route "POST /render-lores-preview" "$INT"', GEN_TEXT)
         self.assertIn('"render-lores-preview": "%s/render-lores-preview"', DEPLOY_TEXT)
         self.assertIn('cp lambda/roots2pix_mt_lib/* "$RENDER_LORES_PREVIEW_DIR/lib/"', DEPLOY_TEXT)

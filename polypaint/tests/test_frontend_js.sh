@@ -638,6 +638,8 @@ async function main() {
     _ctCatalog: {
       rev: { params: [] },
       cos: { params: [{ kind: 'andy', ph: 'andy', def: '0' }] },
+      pow: { params: [{ ph: 'field1', def: '1' }, { ph: 'field2', def: '1' }, { kind: 'andy', ph: 'andy', def: '0' }] },
+      power: { params: [{ ph: 'k', def: '8' }] },
     },
     _statusCalls: [],
     _logs: [],
@@ -699,6 +701,10 @@ async function main() {
   assert(cfpvComplex && cfpvComplex.re === -3 && cfpvComplex.im === 10, 'const coefficient value parser should accept imag-first complex constants');
   assert(ctx._splitCtComplexInput('13-22j').re === '13' && ctx._splitCtComplexInput('13-22j').im === '-22', 'complex chip parser should preserve real-first complex constants');
 
+  assert(ctx._canonicalCoeffTransformName('pow_affine') === 'pow', 'transform canonicalizer should mirror the backend pow_affine alias');
+  assert(ctx._canonicalCoeffTransformName('power_series') === 'power', 'transform canonicalizer should mirror the backend power_series alias');
+  assert(ctx._canonicalCoeffTransformName('exp_affine') === 'exp' && ctx._canonicalCoeffTransformName('scale100') === 'linear', 'transform canonicalizer should keep the existing backend aliases');
+  assert(ctx._canonicalCoeffTransformName('pow') === 'pow' && ctx._canonicalCoeffTransformName('power') === 'power', 'transform canonicalizer should pass canonical names through');
   assert(ctx._canonicalCoeffProgramChipName('const') === 'push_const', 'chip canonicalizer should map the historical const alias');
   assert(ctx._canonicalCoeffProgramChipName('push_vec') === 'push_vec', 'chip canonicalizer should pass canonical names through');
   ctx._coeffProgramChain = [
@@ -706,12 +712,16 @@ async function main() {
     { name: 'const', params: ['8', '2'] },
     { name: 'legacy', params: ['cos', 'poly', 'poly', '0'] },
     { name: 'legacy', params: ['cos', 'poly', 'poly', '0.5'] },
+    { name: 'legacy', params: ['pow_affine', 'poly', 'poly', '2', '3', '0'] },
+    { name: 'legacy', params: ['power_series', 'poly', 'poly', '9'] },
   ];
   const serializedChips = ctx._serializeCoeffProgramChain();
   assert(JSON.stringify(serializedChips[0]) === JSON.stringify(['push_vec', 'poly_len', '0']), 'chip serialization should keep canonical chip rows intact');
   assert(JSON.stringify(serializedChips[1]) === JSON.stringify(['push_const', '8', '2']), 'chip serialization should canonicalize const rows to push_const');
   assert(JSON.stringify(serializedChips[2]) === JSON.stringify(['legacy', 'cos', 'poly', 'poly']), 'chip serialization should trim a default andy from legacy rows');
   assert(JSON.stringify(serializedChips[3]) === JSON.stringify(['legacy', 'cos', 'poly', 'poly', '0.5']), 'chip serialization should keep a non-default andy on legacy rows');
+  assert(JSON.stringify(serializedChips[4]) === JSON.stringify(['legacy', 'pow', 'poly', 'poly', '2', '3']), 'imported pow_affine legacy rows should canonicalize to pow and use its catalog defs');
+  assert(JSON.stringify(serializedChips[5]) === JSON.stringify(['legacy', 'power', 'poly', 'poly', '9']), 'imported power_series legacy rows should canonicalize to power and use its catalog defs');
   ctx._coeffProgramChain = [];
 
   const lagged = ctx._compileSolveScoreChain([

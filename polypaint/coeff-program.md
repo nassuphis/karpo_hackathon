@@ -644,6 +644,14 @@ Compile model:
 source expression -> scalar expression bytecode or folded literal
 ```
 
+This split is permanent by design, not a migration in flight: the typed stack
+evaluates stack *values*, while scalar-expression bytecode evaluates per-row
+chip *arguments* (range/linspace bounds, littlewood values, native-transform
+args, andy). Expression refs are part of the fingerprinted wire format that
+saved programs persist, and the layer is bounded (64 distinct expressions per
+program, 32 tokens each, pinned by the drift tests) — so the second evaluator
+cannot grow unbounded and cannot be removed without a fingerprint migration.
+
 Native evaluation:
 
 ```text

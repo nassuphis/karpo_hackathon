@@ -3843,7 +3843,14 @@ static int parseCoeffProgram(const char *buf, CoeffProgram *program) {
 
 static int coeffProgramIntegerFromReal(double value, const char *label, int *out);
 
-/* ======== Coeff Program: scalar expressions and arg plumbing ======== */
+/* ======== Coeff Program: scalar expressions and arg plumbing ========
+ *
+ * Permanent design, not a compatibility layer: chip arguments that vary per
+ * row (range/linspace bounds, littlewood values, transform args, andy)
+ * compile to scalar-expression bytecode (COEFF_EXPR_*) referenced through
+ * expr_refs, while the typed stack evaluates stack values. expr_refs are
+ * fingerprinted wire format, bounded by COEFF_PROGRAM_MAX_SCALAR_EXPRS and
+ * COEFF_PROGRAM_MAX_EXPR_NUMS. */
 
 static int coeffEvalScalarExpr(const CoeffEvalContext *ctx, int ref,
                                double *outR, double *outI) {

@@ -875,6 +875,10 @@ def _token(op, **fields):
 
 
 def _add_arg_expr(expr, scalar_exprs, *, expected="complex"):
+    # Dynamic chip arguments compile to scalar-expression bytecode by design
+    # (the typed stack covers stack values, not per-row args). Static values
+    # fold to literals here; identical dynamic expressions share one ref.
+    # Refs are fingerprinted wire format — this layer is permanent.
     value = expr_value_if_static(expr)
     if value is not None:
         if expected == "real":

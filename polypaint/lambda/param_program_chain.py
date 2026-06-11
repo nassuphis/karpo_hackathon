@@ -5,6 +5,12 @@ This module owns source-chain validation, macro expansion, stack-effect
 validation, canonical execution tokens, and fingerprints. Native row evaluators
 must receive only the compiled integer token stream; source names and macro names
 are compile-time concerns only.
+
+Legacy bridge rows (``legacy(...)`` and bare legacy transform names) are
+supported in Program mode by design: they are the compatibility path for
+Param-Chain stacks copied into programs and for old saved programs, and are
+pinned by the param-program test suites. Removing them would orphan saved
+payloads, so any retirement needs a payload migration, not a code deletion.
 """
 from __future__ import annotations
 

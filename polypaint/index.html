@@ -11761,8 +11761,13 @@ const _coeffProgramVectorSourceChoices = ['poly', 'pop', 'peek'];
 const _coeffProgramLegacySourceChoices = ['cf', 'poly', 'pop', 'peek'];
 const _coeffProgramTargetChoices = ['poly', 'push'];
 function _canonicalCoeffTransformName(name) {
+    // Mirrors LEGACY_NAME_ALIASES in coeff_program_chain.py exactly, so
+    // imported legacy rows resolve the same _ctCatalog metadata the backend
+    // compiles them against.
     const raw = String(name || '').trim();
     if (raw === 'exp_affine') return 'exp';
+    if (raw === 'pow_affine') return 'pow';
+    if (raw === 'power_series') return 'power';
     return raw === 'scale100' ? 'linear' : raw;
 }
 const _coeffProgramCatalog = (() => {

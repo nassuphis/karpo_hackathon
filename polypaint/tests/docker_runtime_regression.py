@@ -3421,13 +3421,15 @@ def test_libcurl_binaries_use_rpath_not_runpath():
     # and reached via the vips binaries' DT_RPATH; it must exist there and
     # must never leak into lib/ (the banned check above enforces the latter).
     vipsdeps = "/src/layer-build/vipsdeps"
-    if os.path.isdir(vipsdeps):
-        deps = set(os.listdir(vipsdeps))
-        for need in ("libcrypto.so.3", "liblzma.so.5", "libzstd.so.1", "liblz4.so.1"):
-            assert need in deps, "vipsdeps missing %s (rebuild lambda/build-libvips-layer.sh)" % need
-        print("  layer-build/vipsdeps: libarchive crypto chain vendored (%d libs)" % len(deps))
-    else:
-        print("  layer-build/vipsdeps: ABSENT (pre-vendoring layer; rebuild to adopt CR10)")
+    assert os.path.isdir(vipsdeps), (
+        "layer-build/vipsdeps missing — the vips binaries carry RPATH"
+        " /opt/lib:/opt/vipsdeps, so the layer must ship it"
+        " (rebuild lambda/build-libvips-layer.sh)"
+    )
+    deps = set(os.listdir(vipsdeps))
+    for need in ("libcrypto.so.3", "liblzma.so.5", "libzstd.so.1", "liblz4.so.1"):
+        assert need in deps, "vipsdeps missing %s (rebuild lambda/build-libvips-layer.sh)" % need
+    print("  layer-build/vipsdeps: libarchive crypto chain vendored (%d libs)" % len(deps))
     print("=== libcurl binary linkage check PASSED ===")
 
 

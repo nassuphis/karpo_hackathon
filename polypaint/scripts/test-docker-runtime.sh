@@ -57,13 +57,53 @@ docker run --rm --platform linux/arm64 \
   public.ecr.aws/amazonlinux/amazonlinux:2023 \
   bash -c '
     set -euo pipefail
-    # Merge both layers into /opt (Lambda runtime layout)
+    # Merge both layers into /opt (Lambda runtime layout). vipsdeps is the
+    # vendored libarchive crypto chain (CR10/CR11) and is REQUIRED: the vips
+    # binaries and CLI tools carry RPATH /opt/lib:/opt/vipsdeps.
     cp -a /opt-lapack/lib /opt/ 2>/dev/null || true
     cp -a /opt-vips/lib/* /opt/lib/ 2>/dev/null || true
+    if [ ! -d /opt-vips/vipsdeps ]; then
+        echo "FATAL: layer-build/vipsdeps missing; rebuild lambda/build-libvips-layer.sh"
+        exit 1
+    fi
+    cp -a /opt-vips/vipsdeps /opt/
     mkdir -p /opt/bin
     cp -a /opt-vips/bin/* /opt/bin/ 2>/dev/null || true
-    export LD_LIBRARY_PATH=/src/assemble_greyscale_lib:/src/solve_palette_chunk_mt_lib:/src/solve_proximity_hist_sectioned_lib:/src/roots2pix_mt_lib:/opt/lib
+    # Production rule: only layer paths on LD_LIBRARY_PATH. The staged
+    # libcurl closures are exercised hermetically below via zip layouts;
+    # the python test process must not see them (the 2026-06 outage class).
+    export LD_LIBRARY_PATH=/opt/lib
     export PATH="/opt/bin:$PATH"
+
+    echo "--- Hermetic loader-resolution assertions ---"
+    # libcurl binaries: zip layout (binary + lib/), DT_RPATH must resolve
+    # the entire closure from $ORIGIN/lib with NO env help.
+    for b in roots2pix_mt assemble_greyscale solve_proximity_hist_sectioned solve_palette_chunk_mt; do
+        mkdir -p "/hermetic/$b/lib"
+        cp "/src/$b" "/hermetic/$b/"
+        cp "/src/${b}_lib/"* "/hermetic/$b/lib/"
+        NF=$(env -u LD_LIBRARY_PATH ldd "/hermetic/$b/$b" | grep -c "not found" || true)
+        SYS_CURL=$(env -u LD_LIBRARY_PATH ldd "/hermetic/$b/$b" | grep "libcurl" | grep -c "/hermetic/" || true)
+        if [ "$NF" != "0" ] || [ "$SYS_CURL" != "1" ]; then
+            echo "FATAL: $b zip-layout closure broken (not_found=$NF curl_from_layout=$SYS_CURL)"
+            env -u LD_LIBRARY_PATH ldd "/hermetic/$b/$b" | grep -E "not found|curl"
+            exit 1
+        fi
+        echo "  $b: hermetic closure OK"
+    done
+    # vips binaries + layer CLI tools: libarchive crypto chain must resolve
+    # from /opt/vipsdeps, never the container system.
+    for b in /src/raw2jpeg /src/score_raw_render /src/bilevel_merge /src/raw_to_bilevel /src/tiff_compat /src/png_export /src/dz_export /src/autolevels_render /opt/bin/vips /opt/bin/vipsthumbnail; do
+        [ -f "$b" ] || { echo "FATAL: missing $b"; exit 1; }
+        BAD=$(ldd "$b" 2>/dev/null | grep -E "libcrypto|liblzma|libzstd|liblz4" | grep -vc "/opt/vipsdeps" || true)
+        if [ "$BAD" != "0" ]; then
+            echo "FATAL: $b resolves libarchive chain outside /opt/vipsdeps:"
+            ldd "$b" | grep -E "libcrypto|liblzma|libzstd|liblz4"
+            exit 1
+        fi
+        echo "  $(basename $b): crypto chain from /opt/vipsdeps OK"
+    done
+    echo "--- Loader assertions PASSED ---"
 
     # Install Python
     dnf install -y python3 2>&1 | tail -1

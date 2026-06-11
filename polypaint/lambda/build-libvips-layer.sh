@@ -143,6 +143,18 @@ docker run --rm --platform linux/arm64 \
       fi
     done
 
+    echo "--- Patching CLI tool RPATH (vips, vipsthumbnail) ---"
+    # The layer CLI tools ship with empty RPATH; handlers exec them with only
+    # LD_LIBRARY_PATH=/opt/lib, which would resolve libarchive'"'"'s crypto
+    # chain from the pinned runtime system — the CR10/CR11 coupling class.
+    dnf install -y patchelf 2>&1 | tail -1
+    for tool in /out/bin/vips /out/bin/vipsthumbnail; do
+      [ -f "$tool" ] || continue
+      patchelf --remove-rpath "$tool" 2>/dev/null || true
+      patchelf --force-rpath --set-rpath /opt/lib:/opt/vipsdeps "$tool"
+      echo "  patched: $tool -> RPATH=/opt/lib:/opt/vipsdeps"
+    done
+
     echo "--- Vendoring libarchive crypto chain into vipsdeps/ ---"
     # libarchive needs libcrypto/lzma/zstd/lz4. They must NOT live in
     # /opt/lib (python searches it via LD_LIBRARY_PATH and a layer libcrypto

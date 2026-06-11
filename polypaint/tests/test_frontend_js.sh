@@ -27,6 +27,9 @@ const fs = require('fs');
 
 const htmlPath = process.argv[2];
 const src = fs.readFileSync(htmlPath, 'utf8');
+// Generated registry vocab: chip param shapes/descs/titles live there now
+// (lambda/coeff_legacy_registry.json ui blocks -> coeff_vocab_js.js).
+const vocabSrc = fs.readFileSync(require('path').join(require('path').dirname(htmlPath), 'coeff_vocab_js.js'), 'utf8');
 
 function fail(message) {
   console.error('FATAL: ' + message);
@@ -204,9 +207,9 @@ assertIncludes("chip-input-program-wide", 'Program macro chip inputs should be w
 assertIncludes("chip-input-complex-wide", 'Coeff Program complex expression fields should be wide enough to read');
 assertIncludes("legacyName === 'exp'", 'Coeff Program legacy exp chip should render as a formula with source/target selectors');
 assertIncludes("if (item.name === 'exp_affine') {", 'Coeff Program exp_affine chip should render the affine formula (only exp_affine reaches the nativeTransform renderer)');
-assertIncludes("exp(z*field1+field2)", 'Coeff Program exp chip should document complex multiplier plus offset semantics');
+if (!vocabSrc.includes("exp(z*field1+field2)")) fail('generated vocab should document complex multiplier plus offset semantics for the exp chip');
 assertIncludes("legacyName === 'round'", 'Coeff Program legacy round chip should render as a formula with source/target selectors');
-assertIncludes("Complex multiplier in round(z*multiplier)", 'Coeff Program round chip should expose one compact complex multiplier field');
+if (!vocabSrc.includes("Complex multiplier in round(z*multiplier)")) fail('generated vocab should expose one compact complex multiplier field for round');
 assertIncludes("${fn}<span>(</span>${src}<span class=\"chip-op\">*</span>${field1}<span>)</span>${andy}", 'Coeff Program round formula should not waste UI on field1+i*field2 formatting');
 assertIncludes("Legacy coefficient transform function. Compiled to a stable numeric function index.", 'Coeff Program legacy function selector should explain what it selects');
 assertIncludes("Input vector: cf read-only coefficients, current poly, pop stack, or peek stack.", 'Coeff Program legacy src selector should have a tooltip');
@@ -709,6 +712,8 @@ async function main() {
   assert(cfpvComplex && cfpvComplex.re === -3 && cfpvComplex.im === 10, 'const coefficient value parser should accept imag-first complex constants');
   assert(ctx._splitCtComplexInput('13-22j').re === '13' && ctx._splitCtComplexInput('13-22j').im === '-22', 'complex chip parser should preserve real-first complex constants');
 
+  assert(Object.keys(coeffRegistryVocab.ctCatalog).length === 28, 'generated vocab should carry all 28 registry chip entries');
+  assert(coeffRegistryVocab.ctCatalog.linear.params.length === 2 && coeffRegistryVocab.ctCatalog.rev.desc, 'generated chip entries should carry param shapes and descs');
   assert(ctx._canonicalCoeffTransformName('pow_affine') === 'pow', 'transform canonicalizer should mirror the backend pow_affine alias');
   assert(ctx._canonicalCoeffTransformName('power_series') === 'power', 'transform canonicalizer should mirror the backend power_series alias');
   assert(ctx._canonicalCoeffTransformName('exp_affine') === 'exp' && ctx._canonicalCoeffTransformName('scale100') === 'linear', 'transform canonicalizer should keep the existing backend aliases');

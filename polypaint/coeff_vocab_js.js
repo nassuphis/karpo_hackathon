@@ -9,9 +9,266 @@ window._coeffRegistryVocab = {
     "power_series": "power",
     "scale100": "linear"
   },
+  "categoryMeta": {
+    "accumulation": {
+      "help": "sort or accumulate coefficients across the vector",
+      "title": "Ordering + accumulation"
+    },
+    "elementwise": {
+      "help": "apply a complex function to each coefficient independently",
+      "title": "Elementwise functions"
+    },
+    "roots": {
+      "help": "replace coefficients with roots computed from the current coefficient vector",
+      "title": "Root-derived"
+    },
+    "structural": {
+      "help": "reorder, normalize, sanitize, or resize the coefficient vector",
+      "title": "Structural"
+    }
+  },
   "chipNameByRegistryName": {
     "exp": "exp_affine",
     "power": "power_series"
+  },
+  "ctCatalog": {
+    "conj": {
+      "category": "structural",
+      "desc": "complex conjugate every coefficient"
+    },
+    "cos": {
+      "category": "elementwise",
+      "desc": "complex cosine of each coefficient",
+      "label": "cos"
+    },
+    "cosh": {
+      "category": "elementwise",
+      "desc": "complex hyperbolic cosine",
+      "label": "cosh"
+    },
+    "cummax": {
+      "category": "accumulation",
+      "desc": "running maximum by coefficient magnitude"
+    },
+    "cumsum": {
+      "category": "accumulation",
+      "desc": "running complex cumulative sum"
+    },
+    "deriv": {
+      "category": "structural",
+      "desc": "differentiate the polynomial coefficients"
+    },
+    "exp": {
+      "category": "elementwise",
+      "desc": "exp(z*(field1+i*field2))",
+      "label": "exp",
+      "params": [
+        {
+          "def": "1",
+          "exprWide": true,
+          "label": "field1",
+          "ph": "field1",
+          "scalarExpr": "real",
+          "title": "Real multiplier component. {SCALAR_EXPR_HELP}"
+        },
+        {
+          "def": "0",
+          "exprWide": true,
+          "label": "field2",
+          "ph": "field2",
+          "scalarExpr": "real",
+          "title": "Imaginary multiplier component. {SCALAR_EXPR_HELP}"
+        }
+      ]
+    },
+    "invpower": {
+      "category": "elementwise",
+      "desc": "reciprocal-threshold variant of power(k)",
+      "label": "invp",
+      "params": [
+        {
+          "def": "4",
+          "ph": "k"
+        }
+      ]
+    },
+    "linear": {
+      "category": "elementwise",
+      "desc": "z*[field1]+[field2]; scale100-compatible affine map",
+      "label": "linear",
+      "params": [
+        {
+          "complex": true,
+          "complexWide": true,
+          "def": "100",
+          "label": "field1",
+          "ph": "field1",
+          "scalarExpr": "complex",
+          "title": "Complex multiplier in z*[field1]+[field2]. {SCALAR_EXPR_HELP}"
+        },
+        {
+          "complex": true,
+          "complexWide": true,
+          "def": "0",
+          "label": "field2",
+          "ph": "field2",
+          "scalarExpr": "complex",
+          "title": "Complex offset in z*[field1]+[field2]. {SCALAR_EXPR_HELP}"
+        }
+      ]
+    },
+    "max2one": {
+      "category": "structural",
+      "desc": "set the largest-magnitude coefficient to 1"
+    },
+    "negate_odd": {
+      "category": "structural",
+      "desc": "negate odd-indexed coefficients"
+    },
+    "normalize": {
+      "category": "structural",
+      "desc": "divide by the leading coefficient"
+    },
+    "pow": {
+      "category": "elementwise",
+      "desc": "pow(z*field1, field2)",
+      "label": "pow",
+      "params": [
+        {
+          "complex": true,
+          "complexWide": true,
+          "def": "1",
+          "label": "field1",
+          "ph": "field1",
+          "scalarExpr": "complex",
+          "title": "Complex multiplier in pow(z*field1, field2)."
+        },
+        {
+          "complex": true,
+          "complexWide": true,
+          "def": "1",
+          "label": "field2",
+          "ph": "field2",
+          "scalarExpr": "complex",
+          "title": "Complex exponent in pow(z*field1, field2)."
+        }
+      ]
+    },
+    "power": {
+      "category": "elementwise",
+      "desc": "(i+1) times a geometric series through z^k",
+      "label": "p",
+      "params": [
+        {
+          "def": "8",
+          "ph": "k"
+        }
+      ]
+    },
+    "rev": {
+      "category": "structural",
+      "desc": "reverse coefficient order"
+    },
+    "roots": {
+      "category": "roots",
+      "desc": "Aberth roots after k iterations, padded hi or lo",
+      "label": "roots",
+      "params": [
+        {
+          "def": "8",
+          "ph": "k"
+        },
+        {
+          "choices": [
+            "hi",
+            "lo"
+          ],
+          "def": "hi",
+          "ph": "hi|lo"
+        }
+      ]
+    },
+    "roots_cm": {
+      "category": "roots",
+      "desc": "companion-matrix roots padded into coefficient slots",
+      "params": [
+        {
+          "choices": [
+            "hi",
+            "lo"
+          ],
+          "def": "hi",
+          "ph": "hi|lo"
+        }
+      ]
+    },
+    "round": {
+      "category": "elementwise",
+      "desc": "round(z*(field1+i*field2)) componentwise",
+      "label": "round",
+      "params": [
+        {
+          "def": "1",
+          "exprWide": true,
+          "label": "field1",
+          "ph": "field1",
+          "scalarExpr": "real",
+          "title": "Real multiplier component. {SCALAR_EXPR_HELP}"
+        },
+        {
+          "def": "0",
+          "exprWide": true,
+          "label": "field2",
+          "ph": "field2",
+          "scalarExpr": "real",
+          "title": "Imaginary multiplier component. {SCALAR_EXPR_HELP}"
+        }
+      ]
+    },
+    "safe": {
+      "category": "structural",
+      "desc": "replace non-finite components with zero"
+    },
+    "sin": {
+      "category": "elementwise",
+      "desc": "complex sine of each coefficient",
+      "label": "sin"
+    },
+    "sinh": {
+      "category": "elementwise",
+      "desc": "complex hyperbolic sine",
+      "label": "sinh"
+    },
+    "sort_abs": {
+      "category": "accumulation",
+      "desc": "sort coefficients by magnitude"
+    },
+    "sort_angle_keep_mod": {
+      "category": "accumulation",
+      "desc": "sort angles while keeping original magnitudes"
+    },
+    "sort_cumsum": {
+      "category": "accumulation",
+      "desc": "sort coefficients by cumulative-sum magnitude"
+    },
+    "sort_mod_keep_angle": {
+      "category": "accumulation",
+      "desc": "sort magnitudes while keeping original angles"
+    },
+    "swirler": {
+      "category": "elementwise",
+      "desc": "multiply each coefficient by a modulus-driven complex swirl"
+    },
+    "tan": {
+      "category": "elementwise",
+      "desc": "complex tangent of each coefficient",
+      "label": "tan"
+    },
+    "tanh": {
+      "category": "elementwise",
+      "desc": "complex hyperbolic tangent",
+      "label": "tanh"
+    }
   },
   "fnIndexByName": {
     "conj": 2,
@@ -73,6 +330,39 @@ window._coeffRegistryVocab = {
     "roots_cm",
     "roots"
   ],
+  "programParamDefs": {
+    "exp": [
+      {
+        "complex": true,
+        "complexWide": true,
+        "def": "1",
+        "label": "field1",
+        "ph": "field1",
+        "scalarExpr": "complex",
+        "title": "Complex multiplier in exp(z*field1+field2). {SCALAR_EXPR_HELP}"
+      },
+      {
+        "complex": true,
+        "complexWide": true,
+        "def": "0",
+        "label": "field2",
+        "ph": "field2",
+        "scalarExpr": "complex",
+        "title": "Complex offset in exp(z*field1+field2). {SCALAR_EXPR_HELP}"
+      }
+    ],
+    "round": [
+      {
+        "complex": true,
+        "complexWide": true,
+        "def": "1",
+        "label": "mult",
+        "ph": "multiplier",
+        "scalarExpr": "complex",
+        "title": "Complex multiplier in round(z*multiplier). {SCALAR_EXPR_HELP}"
+      }
+    ]
+  },
   "sourceAliasByName": {
     "exp": "exp_affine",
     "pow": "pow_affine",

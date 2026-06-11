@@ -349,6 +349,9 @@ def _load_legacy_registry():
                 str(x).strip().lower() for x in (fn.get("chain_only_aliases") or [])
             ),
             "chip_name": str(fn.get("chip_name") or name),
+            # Display-only chip metadata for the generated JS catalog
+            # (gen_coeff_vocab.py); not used by the compiler.
+            "ui": dict(fn.get("ui") or {}),
         }
         by_name[name] = spec
         by_index[fn_index] = spec

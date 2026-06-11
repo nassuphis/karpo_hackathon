@@ -11631,99 +11631,57 @@ const _ctAndyParam = { kind: 'andy', ph: 'andy', label: 'andy', def: '0', scalar
 function _isAndyParam(pDef) {
     return !!(pDef && pDef.kind === 'andy');
 }
-const _ctCategoryMeta = {
-    structural: { title: 'Structural', help: 'reorder, normalize, sanitize, or resize the coefficient vector' },
-    accumulation: { title: 'Ordering + accumulation', help: 'sort or accumulate coefficients across the vector' },
-    elementwise: { title: 'Elementwise functions', help: 'apply a complex function to each coefficient independently' },
-    roots: { title: 'Root-derived', help: 'replace coefficients with roots computed from the current coefficient vector' },
-};
+// Registry-transform vocabulary, generated from lambda/coeff_legacy_registry.json
+// (lambda/gen_coeff_vocab.py -> coeff_vocab_js.js, regenerated on every deploy
+// and loaded as a script tag before this bundle). Single source of truth with
+// the backend compilers for aliases (wire format: saved chip rows carry
+// them), chip-name shadowing, and text-alias synthesis.
+const _coeffRegistryVocab = (typeof window !== 'undefined' && window._coeffRegistryVocab) || null;
+if (!_coeffRegistryVocab) console.error('coeff_vocab_js.js did not load — registry transform vocabulary unavailable');
+
 // Adding a coeff transform end to end:
 //   1. lambda/coeff_legacy_registry.json — new entry with the next fn_index
-//      (wire format: never renumber; tests/test_coeff_program_drift.py pins them).
+//      (wire format: never renumber; tests/test_coeff_program_drift.py pins
+//      them) plus its ui block (label/desc/params — this is where the chip's
+//      fields and tooltips live now).
 //   2. lambda/sweep_cli.c — implement ct_<name> and add its case to the legacy
 //      fn_index switch; rebuild sweep_test (cc -O2 -pthread) and the ARM binaries.
-//   3. This catalog — chip entry here (and in _coeffProgramCatalog if it should
-//      be authorable in program mode).
+//   3. lambda/gen_coeff_vocab.py regenerates coeff_vocab_js.js (deploy does
+//      this automatically; predeploy --check fails on a stale file).
 //   4. tests/test_coeff_program_native.py — a native value test for the new fn.
+//
+// _ctCatalog hydrates from the generated registry vocab: titles carry a
+// {SCALAR_EXPR_HELP} placeholder resolved here, and every transform gets the
+// shared andy param appended (all registry transforms support andy).
+function _hydrateCtParamDef(pDef) {
+    const out = { ...pDef };
+    if (out.title) out.title = out.title.replace('{SCALAR_EXPR_HELP}', _coeffProgramScalarExprHelp);
+    return out;
+}
 const _ctCatalog = (() => {
-    const catalog = {
-        rev: { category: 'structural', desc: 'reverse coefficient order' },
-        conj: { category: 'structural', desc: 'complex conjugate every coefficient' },
-        normalize: { category: 'structural', desc: 'divide by the leading coefficient' },
-        deriv: { category: 'structural', desc: 'differentiate the polynomial coefficients' },
-        linear: {
-            params: [
-                { ph: 'field1', label: 'field1', def: '100', complex: true, scalarExpr: 'complex', complexWide: true, title: `Complex multiplier in z*[field1]+[field2]. ${_coeffProgramScalarExprHelp}` },
-                { ph: 'field2', label: 'field2', def: '0', complex: true, scalarExpr: 'complex', complexWide: true, title: `Complex offset in z*[field1]+[field2]. ${_coeffProgramScalarExprHelp}` },
-            ],
-            label: 'linear',
-            category: 'elementwise',
-            desc: 'z*[field1]+[field2]; scale100-compatible affine map',
-        },
-        safe: { category: 'structural', desc: 'replace non-finite components with zero' },
-        negate_odd: { category: 'structural', desc: 'negate odd-indexed coefficients' },
-        max2one: { category: 'structural', desc: 'set the largest-magnitude coefficient to 1' },
-        sort_mod_keep_angle: { category: 'accumulation', desc: 'sort magnitudes while keeping original angles' },
-        sort_angle_keep_mod: { category: 'accumulation', desc: 'sort angles while keeping original magnitudes' },
-        sort_abs: { category: 'accumulation', desc: 'sort coefficients by magnitude' },
-        cumsum: { category: 'accumulation', desc: 'running complex cumulative sum' },
-        cummax: { category: 'accumulation', desc: 'running maximum by coefficient magnitude' },
-        sort_cumsum: { category: 'accumulation', desc: 'sort coefficients by cumulative-sum magnitude' },
-        swirler: { category: 'elementwise', desc: 'multiply each coefficient by a modulus-driven complex swirl' },
-        exp: {
-            params: [
-                { ph: 'field1', label: 'field1', def: '1', scalarExpr: 'real', exprWide: true, title: `Real multiplier component. ${_coeffProgramScalarExprHelp}` },
-                { ph: 'field2', label: 'field2', def: '0', scalarExpr: 'real', exprWide: true, title: `Imaginary multiplier component. ${_coeffProgramScalarExprHelp}` },
-            ],
-            label: 'exp',
-            category: 'elementwise',
-            desc: 'exp(z*(field1+i*field2))',
-        },
-        cos: { label: 'cos', category: 'elementwise', desc: 'complex cosine of each coefficient' },
-        sin: { label: 'sin', category: 'elementwise', desc: 'complex sine of each coefficient' },
-        tan: { label: 'tan', category: 'elementwise', desc: 'complex tangent of each coefficient' },
-        cosh: { label: 'cosh', category: 'elementwise', desc: 'complex hyperbolic cosine' },
-        sinh: { label: 'sinh', category: 'elementwise', desc: 'complex hyperbolic sine' },
-        tanh: { label: 'tanh', category: 'elementwise', desc: 'complex hyperbolic tangent' },
-        round: {
-            params: [
-                { ph: 'field1', label: 'field1', def: '1', scalarExpr: 'real', exprWide: true, title: `Real multiplier component. ${_coeffProgramScalarExprHelp}` },
-                { ph: 'field2', label: 'field2', def: '0', scalarExpr: 'real', exprWide: true, title: `Imaginary multiplier component. ${_coeffProgramScalarExprHelp}` },
-            ],
-            label: 'round',
-            category: 'elementwise',
-            desc: 'round(z*(field1+i*field2)) componentwise',
-        },
-        pow: {
-            params: [
-                { ph: 'field1', label: 'field1', def: '1', complex: true, scalarExpr: 'complex', complexWide: true, title: 'Complex multiplier in pow(z*field1, field2).' },
-                { ph: 'field2', label: 'field2', def: '1', complex: true, scalarExpr: 'complex', complexWide: true, title: 'Complex exponent in pow(z*field1, field2).' },
-            ],
-            label: 'pow',
-            category: 'elementwise',
-            desc: 'pow(z*field1, field2)',
-        },
-        power: { params: [{ ph: 'k', def: '8' }], label: 'p', category: 'elementwise', desc: '(i+1) times a geometric series through z^k' },
-        invpower: { params: [{ ph: 'k', def: '4' }], label: 'invp', category: 'elementwise', desc: 'reciprocal-threshold variant of power(k)' },
-        roots_cm: { params: [{ ph: 'hi|lo', def: 'hi', choices: ['hi', 'lo'] }], category: 'roots', desc: 'companion-matrix roots padded into coefficient slots' },
-        roots: { params: [{ ph: 'k', def: '8' }, { ph: 'hi|lo', def: 'hi', choices: ['hi', 'lo'] }], label: 'roots', category: 'roots', desc: 'Aberth roots after k iterations, padded hi or lo' },
-    };
-    Object.values(catalog).forEach(spec => {
-        spec.params = [...(spec.params || []), { ..._ctAndyParam }];
+    const catalog = {};
+    const specs = _coeffRegistryVocab ? _coeffRegistryVocab.ctCatalog : {};
+    Object.entries(specs).forEach(([name, spec]) => {
+        const entry = {
+            category: spec.category,
+            desc: spec.desc,
+            params: [...(spec.params || []).map(_hydrateCtParamDef), { ..._ctAndyParam }],
+        };
+        if (spec.label) entry.label = spec.label;
+        catalog[name] = entry;
     });
     return catalog;
 })();
 
-const _coeffProgramExpParamDefs = [
-    { ph: 'field1', label: 'field1', def: '1', complex: true, scalarExpr: 'complex', complexWide: true, title: `Complex multiplier in exp(z*field1+field2). ${_coeffProgramScalarExprHelp}` },
-    { ph: 'field2', label: 'field2', def: '0', complex: true, scalarExpr: 'complex', complexWide: true, title: `Complex offset in exp(z*field1+field2). ${_coeffProgramScalarExprHelp}` },
-    { ..._ctAndyParam },
-];
-const _coeffProgramRoundParamDefs = [
-    { ph: 'multiplier', label: 'mult', def: '1', complex: true, scalarExpr: 'complex', complexWide: true, title: `Complex multiplier in round(z*multiplier). ${_coeffProgramScalarExprHelp}` },
-    { ..._ctAndyParam },
-];
-
+const _ctCategoryMeta = _coeffRegistryVocab ? _coeffRegistryVocab.categoryMeta : {};
+function _coeffProgramWideParamDefs(name) {
+    // Program-mode wide-editor defs for exp/round legacy chips (different
+    // defaults and titles than the chain-row fields), from the registry ui.
+    const defs = (_coeffRegistryVocab && _coeffRegistryVocab.programParamDefs[name]) || [];
+    return [...defs.map(_hydrateCtParamDef), { ..._ctAndyParam }];
+}
+const _coeffProgramExpParamDefs = _coeffProgramWideParamDefs('exp');
+const _coeffProgramRoundParamDefs = _coeffProgramWideParamDefs('round');
 const _coeffProgramCategoryMeta = {
     io: { title: 'Input + output', help: 'push cf/poly, make constant vectors, or emit poly' },
     stack: { title: 'Stack', help: 'reorder or discard vector values' },
@@ -11761,14 +11719,6 @@ const _coeffProgramVectorUnaryNames = ['angle', 'mod', 'abs', 'neg', 'conj', 'sq
 const _coeffProgramVectorSourceChoices = ['poly', 'pop', 'peek'];
 const _coeffProgramLegacySourceChoices = ['cf', 'poly', 'pop', 'peek'];
 const _coeffProgramTargetChoices = ['poly', 'push'];
-// Registry-transform vocabulary, generated from lambda/coeff_legacy_registry.json
-// (lambda/gen_coeff_vocab.py -> coeff_vocab_js.js, regenerated on every deploy
-// and loaded as a script tag before this bundle). Single source of truth with
-// the backend compilers for aliases (wire format: saved chip rows carry
-// them), chip-name shadowing, and text-alias synthesis.
-const _coeffRegistryVocab = (typeof window !== 'undefined' && window._coeffRegistryVocab) || null;
-if (!_coeffRegistryVocab) console.error('coeff_vocab_js.js did not load — registry transform vocabulary unavailable');
-
 function _canonicalCoeffTransformName(name) {
     // Aliases come from the registry vocab above, so imported legacy rows
     // resolve the same _ctCatalog metadata the backend compiles them against.

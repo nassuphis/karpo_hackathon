@@ -201,6 +201,18 @@ def test_generated_js_vocab_matches_registry():
     assert vocab["fnIndexByName"] == {
         name: spec["fn_index"] for name, spec in legacy_registry()["by_name"].items()
     }
+    # The chip catalog (param shapes/descs/UI hints) is part of the vocab:
+    # every registry function must have a ui block with a desc, categories
+    # must match the registry, and the andy flag stays universal (the JS
+    # hydrator appends the shared andy param to every transform).
+    registry = legacy_registry()["by_name"]
+    assert set(vocab["ctCatalog"]) == set(registry)
+    for name, entry in vocab["ctCatalog"].items():
+        assert entry.get("desc"), f"{name}: missing ui desc"
+        assert entry["category"] == registry[name]["category"], name
+        assert registry[name]["supports_andy"], name
+    assert set(vocab["programParamDefs"]) == {"exp", "round"}
+    assert set(vocab["categoryMeta"]) == {"structural", "accumulation", "elementwise", "roots"}
     with open(JS_OUT, "r", encoding="utf-8") as fh:
         assert fh.read() == render_js(), "coeff_vocab_js.js is stale; run lambda/gen_coeff_vocab.py"
 

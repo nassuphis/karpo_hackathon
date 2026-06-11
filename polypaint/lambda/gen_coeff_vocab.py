@@ -26,6 +26,20 @@ def build_vocab():
     with open(REGISTRY_PATH, "r", encoding="utf-8") as fh:
         payload = json.load(fh)
     functions = sorted(payload["functions"], key=lambda fn: int(fn["fn_index"]))
+    ct_catalog = {}
+    program_param_defs = {}
+    for fn in functions:
+        ui = dict(fn.get("ui") or {})
+        if not ui.get("desc"):
+            raise SystemExit(f"registry function {fn['name']} is missing ui.desc")
+        entry = {"category": fn["category"], "desc": ui["desc"]}
+        if ui.get("label"):
+            entry["label"] = ui["label"]
+        if ui.get("params"):
+            entry["params"] = ui["params"]
+        ct_catalog[fn["name"]] = entry
+        if ui.get("program_params"):
+            program_param_defs[fn["name"]] = ui["program_params"]
     names = [fn["name"] for fn in functions]
     alias_to_canonical = {}
     source_alias_by_name = {}
@@ -49,6 +63,9 @@ def build_vocab():
         "sourceAliasByName": source_alias_by_name,
         "chipNameByRegistryName": chip_name_by_registry_name,
         "supportsAndy": supports_andy,
+        "ctCatalog": ct_catalog,
+        "categoryMeta": payload.get("category_meta") or {},
+        "programParamDefs": program_param_defs,
     }
 
 

@@ -108,6 +108,19 @@ def validate(manifest):
                 if var in ALLOWED_EXTERNAL_VARS or var in declared_vars:
                     continue
                 err(f"{key}: env references undeclared variable ${var}")
+            for part in fn["env"].split(","):
+                if not part.startswith("LD_LIBRARY_PATH="):
+                    continue
+                for lib_dir in part.split("=", 1)[1].split(":"):
+                    if not lib_dir.startswith("/opt"):
+                        err(
+                            f"{key}: LD_LIBRARY_PATH entry {lib_dir!r} — only layer"
+                            " paths (/opt/...) are allowed. Bundle paths like"
+                            " /var/task/lib put staged libs (OpenSSL) in front of"
+                            " the runtime python and break `import ssl` at INIT;"
+                            " native binaries must self-resolve via DT_RPATH"
+                            " ($ORIGIN/lib, --disable-new-dtags) instead."
+                        )
 
     removed = manifest.get("removed", {})
     active_names = {fn.get("name") for fn in functions}

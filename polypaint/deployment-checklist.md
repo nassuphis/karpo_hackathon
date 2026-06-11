@@ -207,6 +207,19 @@ Runtime checks should include shared-library resolution, not just binary presenc
 
 - e.g. run `ldd` in the Lambda-like container and assert there are no `not found` lines
 
+Hermetic-linkage rule (from the 2026-06 import outage):
+
+- Never put bundle paths (`/var/task/...`) on a function's `LD_LIBRARY_PATH`.
+  Staged libraries (OpenSSL) load into the runtime python itself and break
+  `import ssl` at INIT — and only against the *pinned* runtime version, so
+  local Lambda-image tests can pass while production dies.
+- Native binaries must self-resolve their whole dependency closure via
+  `DT_RPATH` (`-Wl,--disable-new-dtags -Wl,-rpath,$ORIGIN/lib`).
+  `LD_LIBRARY_PATH` entries may only reference layer paths (`/opt/...`).
+- Enforced by `deploy_manifest.py --check` (deploy refuses), the
+  `/var/task/lib` ban in tests/test_deploy_packaging.py, and the DT_RPATH
+  assertion in tests/docker_runtime_regression.py.
+
 ## 9. Handler Tests
 
 - Add or update handler tests that call the actual Python handler function directly.
@@ -336,8 +349,15 @@ current tree just because AWS accepted the update.
 Run:
 
 ```bash
+bash scripts/postdeploy_init_check.sh
 ./deploy.sh show-build
 ```
+
+The INIT sweep invokes every deployed function once with a meaningless probe
+payload and fails on `Runtime.ImportModuleError` (and friends): an
+import-dead Lambda 500s on every call but is invisible until someone clicks
+the feature. A handler-level error on the probe payload is a pass — only
+"cannot start" fails. Run it before any manual smoke testing.
 
 Treat `show-build` as the source of truth for:
 

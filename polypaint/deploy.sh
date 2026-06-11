@@ -1,20 +1,26 @@
 #!/bin/bash
-# Deploy the polypaint Lambda functions
+# Deploy the polypaint stack (Lambdas, Step Functions, API Gateway, frontend).
 # Usage: ./deploy.sh [create|update|show-build]
 #
-# Core Lambdas:
-#   polypaint-sweep-mt     — multithreaded AE root solver (sweep_mt binary)
-#   polypaint-coeffgen     — composable coefficient generation (sweep_coeffgen binary, coeffgen mode)
-#   polypaint-raster-mt    — multithreaded color raster via parallel roots2pix workers
-#   polypaint-viewport     — compute viewport from lores.bin (pure Python)
-#   polypaint-storage      — S3 list/delete/metadata (pure Python)
-#   polypaint-dispatch     — async Lambda invocation dispatcher (pure Python)
+# Phases, in execution order (create and update share every helper; the
+# branches differ only in IAM/DynamoDB bootstrap):
+#   1. Palette assets + JS syntax check + predeploy contract checks
+#   2. Lambda layers: libvips, LAPACK, PDF python (built once, ARNs cached)
+#   3. Catalog artifacts + parity overlay + fused-render JS execution test
+#   4. Native binaries: static musl-gcc + Docker amazonlinux builds (with smoke tests)
+#   5. Docker runtime regression test (tests/docker_runtime_regression.py)
+#   6. Per-Lambda zip staging under /tmp/polypaint-*
+#   7. deploy_all_lambdas: one create-or-update spec per function
+#   8. Step Functions state machines, orchestrators, IAM policies
+#   9. API Gateway routes, config.json, frontend upload + hash verification
+#
+# show-build deploys nothing: it diffs what is live against the local build.
 
 set -euo pipefail
 export AWS_PAGER=""
 
 SWEEP_MT_NAME="polypaint-sweep-mt"
-REMOVED_SWEEP_NAME="polypaint-sweep"
+REMOVED_SWEEP_NAME="polypaint-sweep"  # retired single-thread solver; deleted if still deployed
 VIEWPORT_NAME="polypaint-viewport"
 STORAGE_NAME="polypaint-storage"
 DISPATCH_NAME="polypaint-dispatch"
@@ -694,51 +700,46 @@ aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/sweep lambda/sweep_cli.c -
 echo "  sweep_mt (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/sweep_mt lambda/sweep_mt.c -lm
 
-echo "  roots2pix_mt (Docker ARM64, dynamic libcurl)..."
-docker run --rm --platform linux/arm64 \
-    -v "$SCRIPT_DIR/lambda:/src" \
-    public.ecr.aws/amazonlinux/amazonlinux:2023 \
-    bash -c '
-        set -euo pipefail
-        dnf install -y gcc libcurl-devel 2>&1 | tail -1
-        gcc -O3 -pthread -o /src/roots2pix_mt /src/roots2pix_mt.c /src/multispan_reader.c \
-            -lcurl -lm -Wl,-rpath,\$ORIGIN/lib
-        rm -rf /src/roots2pix_mt_lib
-        mkdir -p /src/roots2pix_mt_lib
-        for lib in $(ldd /src/roots2pix_mt | awk "/=> \// {print \$3}"); do
-            base=$(basename "$lib")
-            case "$base" in
-                libc.so.*|libm.so.*|libpthread.so.*|ld-linux-aarch64.so.*|libdl.so.*|librt.so.*)
-                    continue
-                    ;;
-            esac
-            cp -L "$lib" /src/roots2pix_mt_lib/
-        done
-        echo "  roots2pix_mt compiled: $(file /src/roots2pix_mt)"
-    '
+# Helper: compile one dynamically-linked ARM64 binary against system libcurl
+# inside Amazon Linux 2023 (the Lambda runtime image), then stage its non-base
+# shared libraries into lambda/<name>_lib/ — packaged as lib/ next to the
+# binary and found via -rpath $ORIGIN/lib (LD_LIBRARY_PATH=/var/task/lib).
+# Args: binary name, then any extra .c inputs (e.g. multispan_reader.c).
+build_libcurl_binary() {
+    local BIN="$1"; shift
+    local GCC_INPUTS="/src/$BIN.c"
+    local EXTRA
+    for EXTRA in "$@"; do
+        GCC_INPUTS="$GCC_INPUTS /src/$EXTRA"
+    done
+    echo "  $BIN (Docker ARM64, dynamic libcurl)..."
+    docker run --rm --platform linux/arm64 \
+        -v "$SCRIPT_DIR/lambda:/src" \
+        -e "BIN=$BIN" -e "GCC_INPUTS=$GCC_INPUTS" \
+        public.ecr.aws/amazonlinux/amazonlinux:2023 \
+        bash -c '
+            set -euo pipefail
+            dnf install -y gcc libcurl-devel 2>&1 | tail -1
+            gcc -O3 -pthread -o "/src/$BIN" $GCC_INPUTS \
+                -lcurl -lm -Wl,-rpath,\$ORIGIN/lib
+            rm -rf "/src/${BIN}_lib"
+            mkdir -p "/src/${BIN}_lib"
+            for lib in $(ldd "/src/$BIN" | awk "/=> \// {print \$3}"); do
+                base=$(basename "$lib")
+                case "$base" in
+                    libc.so.*|libm.so.*|libpthread.so.*|ld-linux-aarch64.so.*|libdl.so.*|librt.so.*)
+                        continue
+                        ;;
+                esac
+                cp -L "$lib" "/src/${BIN}_lib/"
+            done
+            echo "  $BIN compiled: $(file "/src/$BIN")"
+        '
+}
 
-echo "  assemble_greyscale (Docker ARM64, dynamic libcurl)..."
-docker run --rm --platform linux/arm64 \
-    -v "$SCRIPT_DIR/lambda:/src" \
-    public.ecr.aws/amazonlinux/amazonlinux:2023 \
-    bash -c '
-        set -euo pipefail
-        dnf install -y gcc libcurl-devel 2>&1 | tail -1
-        gcc -O3 -pthread -o /src/assemble_greyscale /src/assemble_greyscale.c \
-            -lcurl -lm -Wl,-rpath,\$ORIGIN/lib
-        rm -rf /src/assemble_greyscale_lib
-        mkdir -p /src/assemble_greyscale_lib
-        for lib in $(ldd /src/assemble_greyscale | awk "/=> \// {print \$3}"); do
-            base=$(basename "$lib")
-            case "$base" in
-                libc.so.*|libm.so.*|libpthread.so.*|ld-linux-aarch64.so.*|libdl.so.*|librt.so.*)
-                    continue
-                    ;;
-            esac
-            cp -L "$lib" /src/assemble_greyscale_lib/
-        done
-        echo "  assemble_greyscale compiled: $(file /src/assemble_greyscale)"
-    '
+build_libcurl_binary roots2pix_mt multispan_reader.c
+
+build_libcurl_binary assemble_greyscale
 
 echo "  coeffs_bilevel_raster (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/coeffs_bilevel_raster lambda/coeffs_bilevel_raster.c -lm
@@ -748,54 +749,12 @@ aarch64-linux-musl-gcc -O3 -static -o lambda/bilevel_section_raster lambda/bilev
 
 echo "  solve_proximity_stats (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/solve_proximity_stats lambda/solve_proximity_stats.c -lm
-echo "  solve_proximity_hist_sectioned (Docker ARM64, dynamic libcurl)..."
-docker run --rm --platform linux/arm64 \
-    -v "$SCRIPT_DIR/lambda:/src" \
-    public.ecr.aws/amazonlinux/amazonlinux:2023 \
-    bash -c '
-        set -euo pipefail
-        dnf install -y gcc libcurl-devel 2>&1 | tail -1
-        gcc -O3 -pthread -o /src/solve_proximity_hist_sectioned /src/solve_proximity_hist_sectioned.c /src/multispan_reader.c \
-            -lcurl -lm -Wl,-rpath,\$ORIGIN/lib
-        rm -rf /src/solve_proximity_hist_sectioned_lib
-        mkdir -p /src/solve_proximity_hist_sectioned_lib
-        for lib in $(ldd /src/solve_proximity_hist_sectioned | awk "/=> \// {print \$3}"); do
-            base=$(basename "$lib")
-            case "$base" in
-                libc.so.*|libm.so.*|libpthread.so.*|ld-linux-aarch64.so.*|libdl.so.*|librt.so.*)
-                    continue
-                    ;;
-            esac
-            cp -L "$lib" /src/solve_proximity_hist_sectioned_lib/
-        done
-        echo "  solve_proximity_hist_sectioned compiled: $(file /src/solve_proximity_hist_sectioned)"
-    '
+build_libcurl_binary solve_proximity_hist_sectioned multispan_reader.c
 echo "  solve_palette_debug (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/solve_palette_debug lambda/solve_palette_debug.c -lm
 echo "  solve_palette_chunk (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/solve_palette_chunk lambda/solve_palette_chunk.c -lm
-echo "  solve_palette_chunk_mt (Docker ARM64, dynamic libcurl)..."
-docker run --rm --platform linux/arm64 \
-    -v "$SCRIPT_DIR/lambda:/src" \
-    public.ecr.aws/amazonlinux/amazonlinux:2023 \
-    bash -c '
-        set -euo pipefail
-        dnf install -y gcc libcurl-devel 2>&1 | tail -1
-        gcc -O3 -pthread -o /src/solve_palette_chunk_mt /src/solve_palette_chunk_mt.c /src/multispan_reader.c \
-            -lcurl -lm -Wl,-rpath,\$ORIGIN/lib
-        rm -rf /src/solve_palette_chunk_mt_lib
-        mkdir -p /src/solve_palette_chunk_mt_lib
-        for lib in $(ldd /src/solve_palette_chunk_mt | awk "/=> \// {print \$3}"); do
-            base=$(basename "$lib")
-            case "$base" in
-                libc.so.*|libm.so.*|libpthread.so.*|ld-linux-aarch64.so.*|libdl.so.*|librt.so.*)
-                    continue
-                    ;;
-            esac
-            cp -L "$lib" /src/solve_palette_chunk_mt_lib/
-        done
-        echo "  solve_palette_chunk_mt compiled: $(file /src/solve_palette_chunk_mt)"
-    '
+build_libcurl_binary solve_palette_chunk_mt multispan_reader.c
 echo "  palette_bins_render (static, ARM64)..."
 aarch64-linux-musl-gcc -O3 -static -o lambda/palette_bins_render lambda/palette_bins_render.c -lm
 
@@ -817,53 +776,25 @@ docker run --rm --platform linux/arm64 \
     bash -c '
         set -euo pipefail
         dnf install -y gcc glib2-devel libtiff-devel 2>&1 | tail -1
-        gcc -O3 -o /src/raw2jpeg /src/raw2jpeg.c \
-            -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \
-            -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include \
-            -L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm \
-            -Wl,-rpath,/opt/lib
+        # Shared libvips build flags; every gcc below uses the same set.
+        VIPS_CFLAGS="-I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include"
+        VIPS_LIBS="-L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm -Wl,-rpath,/opt/lib"
+        VIPS_TIFF_LIBS="-L/opt/lib -lvips -ltiff -lgobject-2.0 -lglib-2.0 -lm -Wl,-rpath,/opt/lib"
+        gcc -O3 -o /src/raw2jpeg /src/raw2jpeg.c $VIPS_CFLAGS $VIPS_LIBS
         echo "  raw2jpeg compiled: $(file /src/raw2jpeg)"
-        gcc -O3 -o /src/score_raw_render /src/score_raw_render.c \
-            -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \
-            -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include \
-            -L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm \
-            -Wl,-rpath,/opt/lib
+        gcc -O3 -o /src/score_raw_render /src/score_raw_render.c $VIPS_CFLAGS $VIPS_LIBS
         echo "  score_raw_render compiled: $(file /src/score_raw_render)"
-        gcc -O3 -o /src/bilevel_merge /src/bilevel_merge.c \
-            -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \
-            -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include \
-            -L/opt/lib -lvips -ltiff -lgobject-2.0 -lglib-2.0 -lm \
-            -Wl,-rpath,/opt/lib
+        gcc -O3 -o /src/bilevel_merge /src/bilevel_merge.c $VIPS_CFLAGS $VIPS_TIFF_LIBS
         echo "  bilevel_merge compiled: $(file /src/bilevel_merge)"
-        gcc -O3 -o /src/raw_to_bilevel /src/raw_to_bilevel.c \
-            -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \
-            -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include \
-            -L/opt/lib -lvips -ltiff -lgobject-2.0 -lglib-2.0 -lm \
-            -Wl,-rpath,/opt/lib
+        gcc -O3 -o /src/raw_to_bilevel /src/raw_to_bilevel.c $VIPS_CFLAGS $VIPS_TIFF_LIBS
         echo "  raw_to_bilevel compiled: $(file /src/raw_to_bilevel)"
-        gcc -O3 -o /src/tiff_compat /src/tiff_compat.c \
-            -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \
-            -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include \
-            -L/opt/lib -lvips -ltiff -lgobject-2.0 -lglib-2.0 -lm \
-            -Wl,-rpath,/opt/lib
+        gcc -O3 -o /src/tiff_compat /src/tiff_compat.c $VIPS_CFLAGS $VIPS_TIFF_LIBS
         echo "  tiff_compat compiled: $(file /src/tiff_compat)"
-        gcc -O3 -o /src/png_export /src/png_export.c \
-            -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \
-            -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include \
-            -L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm \
-            -Wl,-rpath,/opt/lib
+        gcc -O3 -o /src/png_export /src/png_export.c $VIPS_CFLAGS $VIPS_LIBS
         echo "  png_export compiled: $(file /src/png_export)"
-        gcc -O3 -o /src/dz_export /src/dz_export.c \
-            -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \
-            -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include \
-            -L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm \
-            -Wl,-rpath,/opt/lib
+        gcc -O3 -o /src/dz_export /src/dz_export.c $VIPS_CFLAGS $VIPS_LIBS
         echo "  dz_export compiled: $(file /src/dz_export)"
-        gcc -O3 -o /src/autolevels_render /src/autolevels_render.c \
-            -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \
-            -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include \
-            -L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm \
-            -Wl,-rpath,/opt/lib
+        gcc -O3 -o /src/autolevels_render /src/autolevels_render.c $VIPS_CFLAGS $VIPS_LIBS
         echo "  autolevels_render compiled: $(file /src/autolevels_render)"
 
         # ── Runtime smoke tests ──────────────────────────────────────
@@ -889,10 +820,7 @@ int main(int argc, char **argv) {
     return fail;
 }
 PROBE
-        gcc -O2 -o /tmp/probe_ops /tmp/probe_ops.c \
-            -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \
-            -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include \
-            -L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm -Wl,-rpath,/opt/lib
+        gcc -O2 -o /tmp/probe_ops /tmp/probe_ops.c $VIPS_CFLAGS $VIPS_LIBS
         /tmp/probe_ops || { echo "FATAL: libvips missing required operations"; exit 1; }
 
         # 2. Create a tiny test TIFF (8x8 white)
@@ -918,10 +846,7 @@ int main(int argc, char **argv) {
     return 0;
 }
 TIFTEST
-        gcc -O2 -o /tmp/make_test_tif /tmp/make_test_tif.c \
-            -I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include \
-            -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include \
-            -L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm -Wl,-rpath,/opt/lib
+        gcc -O2 -o /tmp/make_test_tif /tmp/make_test_tif.c $VIPS_CFLAGS $VIPS_LIBS
         /tmp/make_test_tif || { echo "FATAL: cannot create test TIFF"; exit 1; }
 
         # 3. Smoke test dz_export (actual DeepZoom generation)
@@ -1262,98 +1187,98 @@ cd "$DZ_FROM_RAW_DIR" && zip -FS -r9 /tmp/polypaint-deepzoom-from-raw.zip . -q &
 echo "  DzRaw:   $(du -h /tmp/polypaint-deepzoom-from-raw.zip | cut -f1)  (raw-sidecar-only deepzoom)"
 
 # Solve Proximity: handler_solve_proximity.py + shared.py + solve_score_chain.py + logical section helpers + solve_proximity_stats binary
-SP_DIR=/tmp/polypaint-solve-proximity
-rm -rf "$SP_DIR"
-mkdir -p "$SP_DIR/lib"
+SOLVE_PROXIMITY_DIR=/tmp/polypaint-solve-proximity
+rm -rf "$SOLVE_PROXIMITY_DIR"
+mkdir -p "$SOLVE_PROXIMITY_DIR/lib"
 cp lambda/handler_solve_proximity.py lambda/shared.py lambda/solve_score_chain.py \
-   lambda/logical_sections.py "$SP_DIR/"
-cp lambda/solve_proximity_stats lambda/solve_proximity_hist_sectioned "$SP_DIR/"
-cp lambda/solve_proximity_hist_sectioned_lib/* "$SP_DIR/lib/"
-chmod +x "$SP_DIR"/solve_proximity_stats "$SP_DIR"/solve_proximity_hist_sectioned
-cd "$SP_DIR" && zip -FS -r9 /tmp/polypaint-solve-proximity.zip . -q && cd "$SCRIPT_DIR"
+   lambda/logical_sections.py "$SOLVE_PROXIMITY_DIR/"
+cp lambda/solve_proximity_stats lambda/solve_proximity_hist_sectioned "$SOLVE_PROXIMITY_DIR/"
+cp lambda/solve_proximity_hist_sectioned_lib/* "$SOLVE_PROXIMITY_DIR/lib/"
+chmod +x "$SOLVE_PROXIMITY_DIR"/solve_proximity_stats "$SOLVE_PROXIMITY_DIR"/solve_proximity_hist_sectioned
+cd "$SOLVE_PROXIMITY_DIR" && zip -FS -r9 /tmp/polypaint-solve-proximity.zip . -q && cd "$SCRIPT_DIR"
 echo "  SolvPrx: $(du -h /tmp/polypaint-solve-proximity.zip | cut -f1)  (solve_proximity_stats + sectioned hist)"
 
 # Solve Proximity Bench: benchmark handler + solve proximity helpers + logical section helpers + solve_proximity_stats binary
-SP_BENCH_DIR=/tmp/polypaint-solve-proximity-bench
-rm -rf "$SP_BENCH_DIR"
-mkdir -p "$SP_BENCH_DIR/lib"
+SOLVE_PROXIMITY_BENCH_DIR=/tmp/polypaint-solve-proximity-bench
+rm -rf "$SOLVE_PROXIMITY_BENCH_DIR"
+mkdir -p "$SOLVE_PROXIMITY_BENCH_DIR/lib"
 cp lambda/handler_solve_proximity_bench.py lambda/handler_solve_proximity.py lambda/shared.py \
-   lambda/solve_score_chain.py lambda/logical_sections.py "$SP_BENCH_DIR/"
-cp lambda/solve_proximity_stats lambda/solve_proximity_hist_sectioned "$SP_BENCH_DIR/"
-cp lambda/solve_proximity_hist_sectioned_lib/* "$SP_BENCH_DIR/lib/"
-chmod +x "$SP_BENCH_DIR"/solve_proximity_stats "$SP_BENCH_DIR"/solve_proximity_hist_sectioned
-cd "$SP_BENCH_DIR" && zip -FS -r9 /tmp/polypaint-solve-proximity-bench.zip . -q && cd "$SCRIPT_DIR"
+   lambda/solve_score_chain.py lambda/logical_sections.py "$SOLVE_PROXIMITY_BENCH_DIR/"
+cp lambda/solve_proximity_stats lambda/solve_proximity_hist_sectioned "$SOLVE_PROXIMITY_BENCH_DIR/"
+cp lambda/solve_proximity_hist_sectioned_lib/* "$SOLVE_PROXIMITY_BENCH_DIR/lib/"
+chmod +x "$SOLVE_PROXIMITY_BENCH_DIR"/solve_proximity_stats "$SOLVE_PROXIMITY_BENCH_DIR"/solve_proximity_hist_sectioned
+cd "$SOLVE_PROXIMITY_BENCH_DIR" && zip -FS -r9 /tmp/polypaint-solve-proximity-bench.zip . -q && cd "$SCRIPT_DIR"
 echo "  SolvPrxB: $(du -h /tmp/polypaint-solve-proximity-bench.zip | cut -f1)  (AWS hist benchmark)"
 
 # Palette Debug: handler_palette_debug.py + shared.py + solve_palette_debug + raw2jpeg (needs libvips layer)
-PD_DIR=/tmp/polypaint-palette-debug
-rm -rf "$PD_DIR"
-mkdir -p "$PD_DIR"
+PALETTE_DEBUG_DIR=/tmp/polypaint-palette-debug
+rm -rf "$PALETTE_DEBUG_DIR"
+mkdir -p "$PALETTE_DEBUG_DIR"
 cp lambda/handler_palette_debug.py lambda/shared.py \
-   lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PD_DIR/"
-cp lambda/solve_palette_debug lambda/raw2jpeg "$PD_DIR/"
-chmod +x "$PD_DIR"/solve_palette_debug "$PD_DIR"/raw2jpeg
-cd "$PD_DIR" && zip -FS -r9 /tmp/polypaint-palette-debug.zip . -q && cd "$SCRIPT_DIR"
+   lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PALETTE_DEBUG_DIR/"
+cp lambda/solve_palette_debug lambda/raw2jpeg "$PALETTE_DEBUG_DIR/"
+chmod +x "$PALETTE_DEBUG_DIR"/solve_palette_debug "$PALETTE_DEBUG_DIR"/raw2jpeg
+cd "$PALETTE_DEBUG_DIR" && zip -FS -r9 /tmp/polypaint-palette-debug.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalDbg:  $(du -h /tmp/polypaint-palette-debug.zip | cut -f1)  (palette debug)"
 
 # Palette Orchestrator: handler_palette_orchestrator.py + shared.py
-PAL_ORCH_DIR=/tmp/polypaint-palette-orchestrator
-rm -rf "$PAL_ORCH_DIR"
-mkdir -p "$PAL_ORCH_DIR"
-cp lambda/handler_palette_orchestrator.py lambda/shared.py "$PAL_ORCH_DIR/"
-cd "$PAL_ORCH_DIR" && zip -FS -r9 /tmp/polypaint-palette-orchestrator.zip . -q && cd "$SCRIPT_DIR"
+PALETTE_ORCHESTRATOR_DIR=/tmp/polypaint-palette-orchestrator
+rm -rf "$PALETTE_ORCHESTRATOR_DIR"
+mkdir -p "$PALETTE_ORCHESTRATOR_DIR"
+cp lambda/handler_palette_orchestrator.py lambda/shared.py "$PALETTE_ORCHESTRATOR_DIR/"
+cd "$PALETTE_ORCHESTRATOR_DIR" && zip -FS -r9 /tmp/polypaint-palette-orchestrator.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalOrch: $(du -h /tmp/polypaint-palette-orchestrator.zip | cut -f1)  (starter only)"
 
 # Palette Render Plan: handler_palette_render_plan.py + shared.py + chunk helpers
-PAL_PLAN_DIR=/tmp/polypaint-palette-render-plan
-rm -rf "$PAL_PLAN_DIR"
-mkdir -p "$PAL_PLAN_DIR"
+PALETTE_PLAN_DIR=/tmp/polypaint-palette-render-plan
+rm -rf "$PALETTE_PLAN_DIR"
+mkdir -p "$PALETTE_PLAN_DIR"
 cp lambda/handler_palette_render_plan.py lambda/shared.py \
    lambda/calc_chunks.py \
    lambda/param_source.py \
    lambda/color_artifact_meta.py \
    lambda/solve_score_chain.py \
    lambda/logical_sections.py \
-   lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PAL_PLAN_DIR/"
-cd "$PAL_PLAN_DIR" && zip -FS -r9 /tmp/polypaint-palette-render-plan.zip . -q && cd "$SCRIPT_DIR"
+   lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PALETTE_PLAN_DIR/"
+cd "$PALETTE_PLAN_DIR" && zip -FS -r9 /tmp/polypaint-palette-render-plan.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalPlan: $(du -h /tmp/polypaint-palette-render-plan.zip | cut -f1)  (plan builder)"
 
 # Palette Chunk: handler_palette_chunk.py + shared.py + solve_score_chain.py + logical section helpers + solve_palette_chunk + solve_palette_chunk_mt
-PAL_CHUNK_DIR=/tmp/polypaint-palette-chunk
-rm -rf "$PAL_CHUNK_DIR"
-mkdir -p "$PAL_CHUNK_DIR/lib"
+PALETTE_CHUNK_DIR=/tmp/polypaint-palette-chunk
+rm -rf "$PALETTE_CHUNK_DIR"
+mkdir -p "$PALETTE_CHUNK_DIR/lib"
 cp lambda/handler_palette_chunk.py lambda/shared.py lambda/solve_score_chain.py \
-   lambda/logical_sections.py "$PAL_CHUNK_DIR/"
-cp lambda/solve_palette_chunk lambda/solve_palette_chunk_mt "$PAL_CHUNK_DIR/"
-cp lambda/solve_palette_chunk_mt_lib/* "$PAL_CHUNK_DIR/lib/"
-chmod +x "$PAL_CHUNK_DIR"/solve_palette_chunk "$PAL_CHUNK_DIR"/solve_palette_chunk_mt
-cd "$PAL_CHUNK_DIR" && zip -FS -r9 /tmp/polypaint-palette-chunk.zip . -q && cd "$SCRIPT_DIR"
+   lambda/logical_sections.py "$PALETTE_CHUNK_DIR/"
+cp lambda/solve_palette_chunk lambda/solve_palette_chunk_mt "$PALETTE_CHUNK_DIR/"
+cp lambda/solve_palette_chunk_mt_lib/* "$PALETTE_CHUNK_DIR/lib/"
+chmod +x "$PALETTE_CHUNK_DIR"/solve_palette_chunk "$PALETTE_CHUNK_DIR"/solve_palette_chunk_mt
+cd "$PALETTE_CHUNK_DIR" && zip -FS -r9 /tmp/polypaint-palette-chunk.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalChnk: $(du -h /tmp/polypaint-palette-chunk.zip | cut -f1)  (chunk scorer)"
 
 # Palette Finalize: handler_palette_finalize.py + shared.py + source metadata helpers + palette_bins_render + raw2jpeg (needs libvips layer)
-PAL_FINAL_DIR=/tmp/polypaint-palette-finalize
-rm -rf "$PAL_FINAL_DIR"
-mkdir -p "$PAL_FINAL_DIR"
-cp lambda/handler_palette_finalize.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$PAL_FINAL_DIR/"
-cp lambda/palette_bins_render lambda/raw2jpeg "$PAL_FINAL_DIR/"
-chmod +x "$PAL_FINAL_DIR"/palette_bins_render "$PAL_FINAL_DIR"/raw2jpeg
-cd "$PAL_FINAL_DIR" && zip -FS -r9 /tmp/polypaint-palette-finalize.zip . -q && cd "$SCRIPT_DIR"
+PALETTE_FINALIZE_DIR=/tmp/polypaint-palette-finalize
+rm -rf "$PALETTE_FINALIZE_DIR"
+mkdir -p "$PALETTE_FINALIZE_DIR"
+cp lambda/handler_palette_finalize.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$PALETTE_FINALIZE_DIR/"
+cp lambda/palette_bins_render lambda/raw2jpeg "$PALETTE_FINALIZE_DIR/"
+chmod +x "$PALETTE_FINALIZE_DIR"/palette_bins_render "$PALETTE_FINALIZE_DIR"/raw2jpeg
+cd "$PALETTE_FINALIZE_DIR" && zip -FS -r9 /tmp/polypaint-palette-finalize.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalFin:  $(du -h /tmp/polypaint-palette-finalize.zip | cut -f1)  (finalize + libvips layer)"
 
 # Attach Palette to Color: handler_attach_palette_to_color.py + shared.py + color_artifact_meta.py
-ATTACH_PAL_DIR=/tmp/polypaint-attach-palette-to-color
-rm -rf "$ATTACH_PAL_DIR"
-mkdir -p "$ATTACH_PAL_DIR"
-cp lambda/handler_attach_palette_to_color.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$ATTACH_PAL_DIR/"
-cd "$ATTACH_PAL_DIR" && zip -FS -r9 /tmp/polypaint-attach-palette-to-color.zip . -q && cd "$SCRIPT_DIR"
+ATTACH_PALETTE_DIR=/tmp/polypaint-attach-palette-to-color
+rm -rf "$ATTACH_PALETTE_DIR"
+mkdir -p "$ATTACH_PALETTE_DIR"
+cp lambda/handler_attach_palette_to_color.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$ATTACH_PALETTE_DIR/"
+cd "$ATTACH_PALETTE_DIR" && zip -FS -r9 /tmp/polypaint-attach-palette-to-color.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalAtt:  $(du -h /tmp/polypaint-attach-palette-to-color.zip | cut -f1)  (attach associated palette metadata)"
 
 # Render Orchestrator (starter): handler_render_orchestrator.py + shared.py
-ORCH_DIR=/tmp/polypaint-render-orchestrator
-rm -rf "$ORCH_DIR"
-mkdir -p "$ORCH_DIR"
-cp lambda/handler_render_orchestrator.py lambda/shared.py "$ORCH_DIR/"
-cd "$ORCH_DIR" && zip -FS -r9 /tmp/polypaint-render-orchestrator.zip . -q && cd "$SCRIPT_DIR"
+RENDER_ORCHESTRATOR_DIR=/tmp/polypaint-render-orchestrator
+rm -rf "$RENDER_ORCHESTRATOR_DIR"
+mkdir -p "$RENDER_ORCHESTRATOR_DIR"
+cp lambda/handler_render_orchestrator.py lambda/shared.py "$RENDER_ORCHESTRATOR_DIR/"
+cd "$RENDER_ORCHESTRATOR_DIR" && zip -FS -r9 /tmp/polypaint-render-orchestrator.zip . -q && cd "$SCRIPT_DIR"
 echo "  RndOrch: $(du -h /tmp/polypaint-render-orchestrator.zip | cut -f1)  (starter only)"
 
 # Render Plan: same file list as show-build, via the shared helper
@@ -1361,57 +1286,57 @@ package_render_plan_zip /tmp/polypaint-render-plan.zip /tmp/polypaint-render-pla
 echo "  RndPlan: $(du -h /tmp/polypaint-render-plan.zip | cut -f1)  (plan builder)"
 
 # Render Status: handler_render_status.py + shared.py
-STATUS_DIR=/tmp/polypaint-render-status
-rm -rf "$STATUS_DIR"
-mkdir -p "$STATUS_DIR"
-cp lambda/handler_render_status.py lambda/shared.py "$STATUS_DIR/"
-cd "$STATUS_DIR" && zip -FS -r9 /tmp/polypaint-render-status.zip . -q && cd "$SCRIPT_DIR"
+RENDER_STATUS_DIR=/tmp/polypaint-render-status
+rm -rf "$RENDER_STATUS_DIR"
+mkdir -p "$RENDER_STATUS_DIR"
+cp lambda/handler_render_status.py lambda/shared.py "$RENDER_STATUS_DIR/"
+cd "$RENDER_STATUS_DIR" && zip -FS -r9 /tmp/polypaint-render-status.zip . -q && cd "$SCRIPT_DIR"
 echo "  RndStat: $(du -h /tmp/polypaint-render-status.zip | cut -f1)  (status updater)"
 
 # Compute Orchestrator (starter): handler_compute_orchestrator.py + shared.py + compute_fused.py
-COMP_ORCH_DIR=/tmp/polypaint-compute-orchestrator
-rm -rf "$COMP_ORCH_DIR"
-mkdir -p "$COMP_ORCH_DIR"
-cp lambda/handler_compute_orchestrator.py lambda/shared.py lambda/compute_fused.py "$COMP_ORCH_DIR/"
-cd "$COMP_ORCH_DIR" && zip -FS -r9 /tmp/polypaint-compute-orchestrator.zip . -q && cd "$SCRIPT_DIR"
+COMPUTE_ORCHESTRATOR_DIR=/tmp/polypaint-compute-orchestrator
+rm -rf "$COMPUTE_ORCHESTRATOR_DIR"
+mkdir -p "$COMPUTE_ORCHESTRATOR_DIR"
+cp lambda/handler_compute_orchestrator.py lambda/shared.py lambda/compute_fused.py "$COMPUTE_ORCHESTRATOR_DIR/"
+cd "$COMPUTE_ORCHESTRATOR_DIR" && zip -FS -r9 /tmp/polypaint-compute-orchestrator.zip . -q && cd "$SCRIPT_DIR"
 echo "  CmpOrch: $(du -h /tmp/polypaint-compute-orchestrator.zip | cut -f1)  (starter only)"
 
 # Compute Plan: handler_compute_plan.py + shared.py + compute_fused.py
-COMP_PLAN_DIR=/tmp/polypaint-compute-plan
-rm -rf "$COMP_PLAN_DIR"
-mkdir -p "$COMP_PLAN_DIR"
+COMPUTE_PLAN_DIR=/tmp/polypaint-compute-plan
+rm -rf "$COMPUTE_PLAN_DIR"
+mkdir -p "$COMPUTE_PLAN_DIR"
 cp lambda/handler_compute_plan.py lambda/shared.py lambda/compute_fused.py \
    lambda/param_program_chain.py lambda/param_legacy_registry.json \
-   lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json "$COMP_PLAN_DIR/"
-cd "$COMP_PLAN_DIR" && zip -FS -r9 /tmp/polypaint-compute-plan.zip . -q && cd "$SCRIPT_DIR"
+   lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json "$COMPUTE_PLAN_DIR/"
+cd "$COMPUTE_PLAN_DIR" && zip -FS -r9 /tmp/polypaint-compute-plan.zip . -q && cd "$SCRIPT_DIR"
 echo "  CmpPlan: $(du -h /tmp/polypaint-compute-plan.zip | cut -f1)  (plan + finalize)"
 
 # Compute Fused Chunk: handler_compute_chunk_fused.py + shared.py + native compute binaries
-COMP_FUSED_DIR=/tmp/polypaint-compute-fused-chunk
-rm -rf "$COMP_FUSED_DIR"
-mkdir -p "$COMP_FUSED_DIR"
-cp lambda/handler_compute_chunk_fused.py lambda/shared.py "$COMP_FUSED_DIR/"
-cp lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$COMP_FUSED_DIR/"
-chmod +x "$COMP_FUSED_DIR"/sweep_coeffgen "$COMP_FUSED_DIR"/sweep_mt "$COMP_FUSED_DIR"/sweep_cm
-cd "$COMP_FUSED_DIR" && zip -FS -r9 /tmp/polypaint-compute-fused-chunk.zip . -q && cd "$SCRIPT_DIR"
+COMPUTE_FUSED_CHUNK_DIR=/tmp/polypaint-compute-fused-chunk
+rm -rf "$COMPUTE_FUSED_CHUNK_DIR"
+mkdir -p "$COMPUTE_FUSED_CHUNK_DIR"
+cp lambda/handler_compute_chunk_fused.py lambda/shared.py "$COMPUTE_FUSED_CHUNK_DIR/"
+cp lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$COMPUTE_FUSED_CHUNK_DIR/"
+chmod +x "$COMPUTE_FUSED_CHUNK_DIR"/sweep_coeffgen "$COMPUTE_FUSED_CHUNK_DIR"/sweep_mt "$COMPUTE_FUSED_CHUNK_DIR"/sweep_cm
+cd "$COMPUTE_FUSED_CHUNK_DIR" && zip -FS -r9 /tmp/polypaint-compute-fused-chunk.zip . -q && cd "$SCRIPT_DIR"
 echo "  CmpFuse: $(du -h /tmp/polypaint-compute-fused-chunk.zip | cut -f1)  (fused chunk worker)"
 
 # Compute Status: handler_compute_status.py + shared.py
-COMP_STATUS_DIR=/tmp/polypaint-compute-status
-rm -rf "$COMP_STATUS_DIR"
-mkdir -p "$COMP_STATUS_DIR"
-cp lambda/handler_compute_status.py lambda/shared.py "$COMP_STATUS_DIR/"
-cd "$COMP_STATUS_DIR" && zip -FS -r9 /tmp/polypaint-compute-status.zip . -q && cd "$SCRIPT_DIR"
+COMPUTE_STATUS_DIR=/tmp/polypaint-compute-status
+rm -rf "$COMPUTE_STATUS_DIR"
+mkdir -p "$COMPUTE_STATUS_DIR"
+cp lambda/handler_compute_status.py lambda/shared.py "$COMPUTE_STATUS_DIR/"
+cd "$COMPUTE_STATUS_DIR" && zip -FS -r9 /tmp/polypaint-compute-status.zip . -q && cd "$SCRIPT_DIR"
 echo "  CmpStat: $(du -h /tmp/polypaint-compute-status.zip | cut -f1)  (status updater)"
 
 # Sweep-CM: handler_sweep_cm.py + shared.py + sweep_cm (needs LAPACK layer)
-CM_DIR=/tmp/polypaint-sweep-cm
-rm -rf "$CM_DIR"
-mkdir -p "$CM_DIR"
-cp lambda/handler_sweep_cm.py lambda/shared.py "$CM_DIR/"
-cp lambda/sweep_cm "$CM_DIR/"
-chmod +x "$CM_DIR"/sweep_cm
-cd "$CM_DIR" && zip -FS -r9 /tmp/polypaint-sweep-cm.zip . -q && cd "$SCRIPT_DIR"
+SWEEP_CM_DIR=/tmp/polypaint-sweep-cm
+rm -rf "$SWEEP_CM_DIR"
+mkdir -p "$SWEEP_CM_DIR"
+cp lambda/handler_sweep_cm.py lambda/shared.py "$SWEEP_CM_DIR/"
+cp lambda/sweep_cm "$SWEEP_CM_DIR/"
+chmod +x "$SWEEP_CM_DIR"/sweep_cm
+cd "$SWEEP_CM_DIR" && zip -FS -r9 /tmp/polypaint-sweep-cm.zip . -q && cd "$SCRIPT_DIR"
 echo "  SweepCM: $(du -h /tmp/polypaint-sweep-cm.zip | cut -f1)  (sweep_cm + LAPACK layer)"
 
 # Helper: create a Lambda function
@@ -1489,6 +1414,232 @@ update_lambda() {
         --environment "Variables={$ENV_VARS}" \
         --region "$REGION" \
         --query 'MemorySize' --output text
+}
+
+
+# Helper: create or update one Lambda depending on $ACTION. Every per-function
+# spec goes through this wrapper, so the create and update paths share one
+# spec list and cannot drift. (create_lambda takes ROLE_ARN as its fifth
+# argument and update_lambda does not; the wrapper hides that difference.)
+deploy_lambda() {
+    local NAME="$1" HANDLER="$2" ZIP="$3" MEM="$4" LAYERS="${5:-}" ENV_VARS="$6" TMP="${7:-512}"
+    if [ "$ACTION" = "create" ]; then
+        create_lambda "$NAME" "$HANDLER" "$ZIP" "$MEM" "$ROLE_ARN" "$LAYERS" "$ENV_VARS" "$TMP"
+    else
+        update_lambda "$NAME" "$HANDLER" "$ZIP" "$MEM" "$LAYERS" "$ENV_VARS" "$TMP"
+    fi
+}
+
+# The Lambda spec list: one deploy_lambda call per function — name, handler,
+# zip, memory, layers, env, /tmp MB. Both action branches run this verbatim.
+# Only the orchestrators deploy separately (deploy_orchestrator_lambdas);
+# they need the state machine ARNs in their env.
+deploy_all_lambdas() {
+    deploy_lambda "$SWEEP_MT_NAME" "handler_sweep_mt.handler" "/tmp/polypaint-sweep-mt.zip" \
+        "$SWEEP_MT_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
+
+    deploy_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip" \
+        "$COEFFGEN_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib,FUSED_WORKER_MEMORY_MB=$COMPUTE_FUSED_CHUNK_MEMORY,FUSED_WORKER_TMP_MB=$BINARY_TMP,FUSED_WORKER_TIMEOUT_SEC=$TIMEOUT" "$BINARY_TMP"
+
+    deploy_lambda "$SWEEP_CM_NAME" "handler_sweep_cm.handler" "/tmp/polypaint-sweep-cm.zip" \
+        "$SWEEP_CM_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    deploy_lambda "$VIEWPORT_NAME" "handler_viewport.handler" "/tmp/polypaint-viewport.zip" \
+        "$VIEWPORT_MEMORY" "" "BUCKET=$BUCKET"
+
+    deploy_lambda "$STORAGE_NAME" "handler_storage.handler" "/tmp/polypaint-storage.zip" \
+        "$STORAGE_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
+    # Reserve concurrency for storage so it's never starved by render/merge Lambdas
+    aws lambda put-function-concurrency --function-name "$STORAGE_NAME" \
+        --reserved-concurrent-executions 5 --region "$REGION"
+
+    deploy_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
+        "$DISPATCH_MEMORY" "" "$DISPATCH_ENV_VARS"
+    # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
+    aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
+        --reserved-concurrent-executions 5 --region "$REGION"
+
+    deploy_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip" \
+        "$RASTER_MT_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RASTER_MT_THREADS=$RASTER_MT_THREADS,LD_LIBRARY_PATH=/var/task/lib" "$BINARY_TMP"
+
+    deploy_lambda "$FINALIZE_MT_NAME" "handler_finalize_mt.handler" "/tmp/polypaint-finalize-mt.zip" \
+        "$FINALIZE_MT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
+
+    deploy_lambda "$PREVIEW_NAME" "handler_preview.handler" "/tmp/polypaint-preview.zip" \
+        "$PREVIEW_MEMORY" "" "BUCKET=$BUCKET"
+
+    deploy_lambda "$COMPUTE_PREVIEW_NAME" "handler_compute_preview.handler" "/tmp/polypaint-compute-preview.zip" \
+        "$COMPUTE_PREVIEW_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    deploy_lambda "$BILEVEL_NAME" "handler_bilevel.handler" "/tmp/polypaint-bilevel.zip" \
+        "$BILEVEL_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
+
+    deploy_lambda "$COLOR_TO_BILEVEL_NAME" "handler_bilevel.handler" "/tmp/polypaint-bilevel.zip" \
+        "$COLOR_TO_BILEVEL_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
+
+    deploy_lambda "$PARAM_DEBUG_NAME" "handler_param_debug.handler" "/tmp/polypaint-param-debug.zip" \
+        "$PARAM_DEBUG_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib"
+
+    deploy_lambda "$TIFF_COMPAT_NAME" "handler_tiff_compat.handler" "/tmp/polypaint-tiff-compat.zip" \
+        "$TIFF_COMPAT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    deploy_lambda "$PNG_EXPORT_NAME" "handler_png_export.handler" "/tmp/polypaint-png-export.zip" \
+        "$PNG_EXPORT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    deploy_lambda "$DZ_EXPORT_NAME" "handler_deepzoom_export.handler" "/tmp/polypaint-deepzoom-export.zip" \
+        "$DZ_EXPORT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    deploy_lambda "$DZ_FROM_RAW_NAME" "handler_deepzoom_from_raw.handler" "/tmp/polypaint-deepzoom-from-raw.zip" \
+        "$DZ_FROM_RAW_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    deploy_lambda "$RENDER_PREVIEW_NAME" "handler_render_preview.handler" "/tmp/polypaint-render-preview.zip" \
+        "$RENDER_PREVIEW_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    deploy_lambda "$RENDER_LORES_PREVIEW_NAME" "handler_render_lores_preview.handler" "/tmp/polypaint-render-lores-preview.zip" \
+        "$RENDER_LORES_PREVIEW_MEMORY" "$LIBVIPS_LAYER $LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
+
+    deploy_lambda "$AUTOLEVELS_NAME" "handler_autolevels.handler" "/tmp/polypaint-autolevels.zip" \
+        "$AUTOLEVELS_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    deploy_lambda "$RESIZE_ARTIFACT_NAME" "handler_resize_artifact.handler" "/tmp/polypaint-resize-artifact.zip" \
+        "$RESIZE_ARTIFACT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    deploy_lambda "$REPALETTE_NAME" "handler_repalette.handler" "/tmp/polypaint-repalette.zip" \
+        "$REPALETTE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    deploy_lambda "$COLOR_REPALETTE_NAME" "handler_color_repalette.handler" "/tmp/polypaint-color-repalette.zip" \
+        "$COLOR_REPALETTE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    deploy_lambda "$RECOLOR_FROM_RAW_NAME" "handler_recolor_from_raw.handler" "/tmp/polypaint-recolor-from-raw.zip" \
+        "$RECOLOR_FROM_RAW_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    deploy_lambda "$EXTRACT_PALETTE_FUSED_NAME" "handler_extract_palette_from_step_scores.handler" "/tmp/polypaint-extract-palette-fused.zip" \
+        "$EXTRACT_PALETTE_FUSED_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    deploy_lambda "$PDF_ARTIFACT_NAME" "handler_pdf_artifact.handler" "/tmp/polypaint-pdf-artifact.zip" \
+        "$PDF_ARTIFACT_MEMORY" "$PDF_PY_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
+
+    deploy_lambda "$SOLVE_PROXIMITY_NAME" "handler_solve_proximity.handler" "/tmp/polypaint-solve-proximity.zip" \
+        "$SOLVE_PROXIMITY_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib" "$BINARY_TMP"
+
+    deploy_lambda "$SOLVE_PROXIMITY_BENCH_NAME" "handler_solve_proximity_bench.handler" "/tmp/polypaint-solve-proximity-bench.zip" \
+        "$SOLVE_PROXIMITY_BENCH_MEMORY" "" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/var/task/lib" "$BINARY_TMP"
+
+    deploy_lambda "$PALETTE_DEBUG_NAME" "handler_palette_debug.handler" "/tmp/polypaint-palette-debug.zip" \
+        "$PALETTE_DEBUG_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    deploy_lambda "$PALETTE_PLAN_NAME" "handler_palette_render_plan.handler" "/tmp/polypaint-palette-render-plan.zip" \
+        "$PALETTE_PLAN_MEMORY" "" "BUCKET=$BUCKET"
+
+    deploy_lambda "$PALETTE_CHUNK_NAME" "handler_palette_chunk.handler" "/tmp/polypaint-palette-chunk.zip" \
+        "$PALETTE_CHUNK_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib" "$BINARY_TMP"
+
+    deploy_lambda "$PALETTE_FINALIZE_NAME" "handler_palette_finalize.handler" "/tmp/polypaint-palette-finalize.zip" \
+        "$PALETTE_FINALIZE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    deploy_lambda "$ATTACH_PALETTE_NAME" "handler_attach_palette_to_color.handler" "/tmp/polypaint-attach-palette-to-color.zip" \
+        "$ATTACH_PALETTE_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
+
+    # Render/compute plan + status Lambdas (workers are referenced by name, not ARN)
+    deploy_lambda "$RENDER_PLAN_NAME" "handler_render_plan.handler" "/tmp/polypaint-render-plan.zip" \
+        "$RENDER_PLAN_MEMORY" "" "BUCKET=$BUCKET,VIEWPORT_FUNCTION=$VIEWPORT_NAME,STORAGE_FUNCTION=$STORAGE_NAME,RASTER_MT_FUNCTION=$RASTER_MT_NAME"
+
+    deploy_lambda "$RENDER_STATUS_NAME" "handler_render_status.handler" "/tmp/polypaint-render-status.zip" \
+        "$RENDER_STATUS_MEMORY" "" "JOBS_TABLE=$JOBS_TABLE"
+
+    deploy_lambda "$COMPUTE_PLAN_NAME" "handler_compute_plan.handler" "/tmp/polypaint-compute-plan.zip" \
+        "$COMPUTE_PLAN_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,FUSED_WORKER_MEMORY_MB=$COMPUTE_FUSED_CHUNK_MEMORY,FUSED_WORKER_TMP_MB=$BINARY_TMP,FUSED_WORKER_TIMEOUT_SEC=$TIMEOUT"
+
+    deploy_lambda "$COMPUTE_FUSED_CHUNK_NAME" "handler_compute_chunk_fused.handler" "/tmp/polypaint-compute-fused-chunk.zip" \
+        "$COMPUTE_FUSED_CHUNK_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+
+    deploy_lambda "$COMPUTE_STATUS_NAME" "handler_compute_status.handler" "/tmp/polypaint-compute-status.zip" \
+        "$COMPUTE_STATUS_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
+}
+
+# Orchestrator Lambdas start Step Functions executions, so they deploy after
+# the state machines exist and take the machine ARNs via env.
+deploy_orchestrator_lambdas() {
+    deploy_lambda "$RENDER_ORCHESTRATOR_NAME" "handler_render_orchestrator.handler" "/tmp/polypaint-render-orchestrator.zip" \
+        "$RENDER_ORCHESTRATOR_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RENDER_STATE_MACHINE_ARN=$RENDER_SM_ARN"
+    deploy_lambda "$COMPUTE_ORCHESTRATOR_NAME" "handler_compute_orchestrator.handler" "/tmp/polypaint-compute-orchestrator.zip" \
+        "$COMPUTE_ORCHESTRATOR_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,COMPUTE_STATE_MACHINE_ARN=$COMPUTE_SM_ARN"
+    deploy_lambda "$PALETTE_ORCHESTRATOR_NAME" "handler_palette_orchestrator.handler" "/tmp/polypaint-palette-orchestrator.zip" \
+        "$PALETTE_ORCHESTRATOR_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,PALETTE_STATE_MACHINE_ARN=$PALETTE_SM_ARN"
+}
+
+# Get-or-create the Step Functions execution role and converge its
+# Lambda-invoke policy. Sets SFN_ROLE_ARN for ensure_state_machine.
+ensure_sfn_execution_role() {
+    local ACCT="$1"
+    SFN_ROLE_NAME="polypaint-sfn-execution-role"
+    local SFN_TRUST='"'"'{
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"Service": "states.amazonaws.com"},
+            "Action": "sts:AssumeRole"
+        }]
+    }'"'"'
+    local CREATED=0
+    SFN_ROLE_ARN=$(aws iam get-role --role-name "$SFN_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || echo "")
+    if [ -z "$SFN_ROLE_ARN" ]; then
+        echo "  Creating SFN execution role..."
+        SFN_ROLE_ARN=$(aws iam create-role \
+            --role-name "$SFN_ROLE_NAME" \
+            --assume-role-policy-document "$SFN_TRUST" \
+            --query 'Role.Arn' --output text)
+        CREATED=1
+    fi
+    aws iam put-role-policy --role-name "$SFN_ROLE_NAME" \
+        --policy-name polypaint-sfn-lambda-invoke \
+        --policy-document "{
+            \"Version\": \"2012-10-17\",
+            \"Statement\": [{
+                \"Effect\": \"Allow\",
+                \"Action\": \"lambda:InvokeFunction\",
+                \"Resource\": \"arn:aws:lambda:${REGION}:${ACCT}:function:polypaint-*\"
+            }]
+        }"
+    if [ "$CREATED" = "1" ]; then
+        sleep 5  # let the new role propagate before Step Functions validates it
+    fi
+}
+
+# Update the state machine definition, creating the machine if it doesn't
+# exist yet. Command output is deliberately not captured: update returns an
+# updateDate (not an ARN), so callers construct the ARN from the name.
+ensure_state_machine() {
+    local SM_NAME="$1" DEF_FILE="$2"
+    if ! aws stepfunctions update-state-machine \
+        --state-machine-arn "arn:aws:states:${REGION}:${ACCT}:stateMachine:${SM_NAME}" \
+        --definition "file://$DEF_FILE" \
+        --role-arn "$SFN_ROLE_ARN" \
+        --region "$REGION" >/dev/null 2>&1; then
+        echo "  State machine $SM_NAME doesn't exist, creating..."
+        aws stepfunctions create-state-machine \
+            --name "$SM_NAME" \
+            --definition "file://$DEF_FILE" \
+            --role-arn "$SFN_ROLE_ARN" \
+            --type STANDARD \
+            --region "$REGION" \
+            --query 'stateMachineArn' --output text >/dev/null
+    fi
+    echo "  State machine: $SM_NAME"
+}
+
+# Allow the Lambda execution role to start the three workflows.
+grant_sfn_start_policy() {
+    aws iam put-role-policy --role-name "$ROLE_NAME" \
+        --policy-name polypaint-sfn-start \
+        --policy-document "{
+            \"Version\": \"2012-10-17\",
+            \"Statement\": [{
+                \"Effect\": \"Allow\",
+                \"Action\": \"states:StartExecution\",
+                \"Resource\": [\"${RENDER_SM_ARN}\", \"${COMPUTE_SM_ARN}\", \"${PALETTE_SM_ARN}\"]
+            }]
+        }"
 }
 
 # Helper: delete a Lambda that has been removed from active deployment.
@@ -1706,7 +1857,8 @@ setup_api_gateway() {
     ensure_route "POST /list-deepzoom" "$STORAGE_INT"
     ensure_route "POST /dispatch-render" "$DISPATCH_INT"
 
-    # Get API URL and write config.json
+    # Get API URL and write config.json. The "%s" placeholders are parsed by
+    # api_manifest.py (_extract_deploy_config_services); keep the printf form.
     local API_URL
     API_URL=$(aws apigatewayv2 get-api --api-id "$API_ID" --region "$REGION" \
         --query 'ApiEndpoint' --output text)
@@ -1834,231 +1986,28 @@ if [ "$ACTION" = "create" ]; then
 
     delete_lambda_if_exists "$REMOVED_SWEEP_NAME"
 
-    # --- Create all Lambdas ---
-    create_lambda "$SWEEP_MT_NAME" "handler_sweep_mt.handler" "/tmp/polypaint-sweep-mt.zip" \
-        "$SWEEP_MT_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
+    # --- Lambdas (single spec list shared with the update path) ---
+    deploy_all_lambdas
 
-    create_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip" \
-        "$COEFFGEN_MEMORY" "$ROLE_ARN" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib,FUSED_WORKER_MEMORY_MB=$COMPUTE_FUSED_CHUNK_MEMORY,FUSED_WORKER_TMP_MB=$BINARY_TMP,FUSED_WORKER_TIMEOUT_SEC=$TIMEOUT" "$BINARY_TMP"
-
-    create_lambda "$VIEWPORT_NAME" "handler_viewport.handler" "/tmp/polypaint-viewport.zip" \
-        "$VIEWPORT_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET"
-
-    create_lambda "$STORAGE_NAME" "handler_storage.handler" "/tmp/polypaint-storage.zip" \
-        "$STORAGE_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
-    # Reserve concurrency for storage so it's never starved by render/merge Lambdas
-    aws lambda put-function-concurrency --function-name "$STORAGE_NAME" \
-        --reserved-concurrent-executions 5 --region "$REGION"
-
-    create_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "$ROLE_ARN" "" "$DISPATCH_ENV_VARS"
-    # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
-    aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
-        --reserved-concurrent-executions 5 --region "$REGION"
-
-    create_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip" \
-        "$RASTER_MT_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RASTER_MT_THREADS=$RASTER_MT_THREADS,LD_LIBRARY_PATH=/var/task/lib" "$BINARY_TMP"
-    create_lambda "$FINALIZE_MT_NAME" "handler_finalize_mt.handler" "/tmp/polypaint-finalize-mt.zip" \
-        "$FINALIZE_MT_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
-
-    create_lambda "$PREVIEW_NAME" "handler_preview.handler" "/tmp/polypaint-preview.zip" \
-        "$PREVIEW_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET"
-
-    create_lambda "$COMPUTE_PREVIEW_NAME" "handler_compute_preview.handler" "/tmp/polypaint-compute-preview.zip" \
-        "$COMPUTE_PREVIEW_MEMORY" "$ROLE_ARN" "$LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    create_lambda "$BILEVEL_NAME" "handler_bilevel.handler" "/tmp/polypaint-bilevel.zip" \
-        "$BILEVEL_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
-
-    create_lambda "$COLOR_TO_BILEVEL_NAME" "handler_bilevel.handler" "/tmp/polypaint-bilevel.zip" \
-        "$COLOR_TO_BILEVEL_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
-
-    create_lambda "$PARAM_DEBUG_NAME" "handler_param_debug.handler" "/tmp/polypaint-param-debug.zip" \
-        "$PARAM_DEBUG_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib"
-
-    create_lambda "$TIFF_COMPAT_NAME" "handler_tiff_compat.handler" "/tmp/polypaint-tiff-compat.zip" \
-        "$TIFF_COMPAT_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    create_lambda "$PNG_EXPORT_NAME" "handler_png_export.handler" "/tmp/polypaint-png-export.zip" \
-        "$PNG_EXPORT_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    create_lambda "$DZ_EXPORT_NAME" "handler_deepzoom_export.handler" "/tmp/polypaint-deepzoom-export.zip" \
-        "$DZ_EXPORT_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-    create_lambda "$DZ_FROM_RAW_NAME" "handler_deepzoom_from_raw.handler" "/tmp/polypaint-deepzoom-from-raw.zip" \
-        "$DZ_FROM_RAW_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    create_lambda "$RENDER_PREVIEW_NAME" "handler_render_preview.handler" "/tmp/polypaint-render-preview.zip" \
-        "$RENDER_PREVIEW_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    create_lambda "$RENDER_LORES_PREVIEW_NAME" "handler_render_lores_preview.handler" "/tmp/polypaint-render-lores-preview.zip" \
-        "$RENDER_LORES_PREVIEW_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER $LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
-
-    create_lambda "$AUTOLEVELS_NAME" "handler_autolevels.handler" "/tmp/polypaint-autolevels.zip" \
-        "$AUTOLEVELS_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    create_lambda "$RESIZE_ARTIFACT_NAME" "handler_resize_artifact.handler" "/tmp/polypaint-resize-artifact.zip" \
-        "$RESIZE_ARTIFACT_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    create_lambda "$REPALETTE_NAME" "handler_repalette.handler" "/tmp/polypaint-repalette.zip" \
-        "$REPALETTE_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    create_lambda "$COLOR_REPALETTE_NAME" "handler_color_repalette.handler" "/tmp/polypaint-color-repalette.zip" \
-        "$COLOR_REPALETTE_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-    create_lambda "$RECOLOR_FROM_RAW_NAME" "handler_recolor_from_raw.handler" "/tmp/polypaint-recolor-from-raw.zip" \
-        "$RECOLOR_FROM_RAW_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-    create_lambda "$EXTRACT_PALETTE_FUSED_NAME" "handler_extract_palette_from_step_scores.handler" "/tmp/polypaint-extract-palette-fused.zip" \
-        "$EXTRACT_PALETTE_FUSED_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    create_lambda "$PDF_ARTIFACT_NAME" "handler_pdf_artifact.handler" "/tmp/polypaint-pdf-artifact.zip" \
-        "$PDF_ARTIFACT_MEMORY" "$ROLE_ARN" "$PDF_PY_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
-
-    create_lambda "$SOLVE_PROXIMITY_NAME" "handler_solve_proximity.handler" "/tmp/polypaint-solve-proximity.zip" \
-        "$SOLVE_PROXIMITY_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib" "$BINARY_TMP"
-
-    create_lambda "$SOLVE_PROXIMITY_BENCH_NAME" "handler_solve_proximity_bench.handler" "/tmp/polypaint-solve-proximity-bench.zip" \
-        "$SOLVE_PROXIMITY_BENCH_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/var/task/lib" "$BINARY_TMP"
-
-    create_lambda "$PALETTE_DEBUG_NAME" "handler_palette_debug.handler" "/tmp/polypaint-palette-debug.zip" \
-        "$PALETTE_DEBUG_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    create_lambda "$PALETTE_PLAN_NAME" "handler_palette_render_plan.handler" "/tmp/polypaint-palette-render-plan.zip" \
-        "$PALETTE_PLAN_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET"
-
-    create_lambda "$PALETTE_CHUNK_NAME" "handler_palette_chunk.handler" "/tmp/polypaint-palette-chunk.zip" \
-        "$PALETTE_CHUNK_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib" "$BINARY_TMP"
-
-    create_lambda "$PALETTE_FINALIZE_NAME" "handler_palette_finalize.handler" "/tmp/polypaint-palette-finalize.zip" \
-        "$PALETTE_FINALIZE_MEMORY" "$ROLE_ARN" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    create_lambda "$ATTACH_PALETTE_NAME" "handler_attach_palette_to_color.handler" "/tmp/polypaint-attach-palette-to-color.zip" \
-        "$ATTACH_PALETTE_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
-
-    # Render plan + status Lambdas
-    create_lambda "$RENDER_PLAN_NAME" "handler_render_plan.handler" "/tmp/polypaint-render-plan.zip" \
-        "$RENDER_PLAN_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,VIEWPORT_FUNCTION=$VIEWPORT_NAME,STORAGE_FUNCTION=$STORAGE_NAME,RASTER_MT_FUNCTION=$RASTER_MT_NAME"
-
-    create_lambda "$RENDER_STATUS_NAME" "handler_render_status.handler" "/tmp/polypaint-render-status.zip" \
-        "$RENDER_STATUS_MEMORY" "$ROLE_ARN" "" "JOBS_TABLE=$JOBS_TABLE"
-
-    # Step Functions state machine
-    echo "Deploying Step Functions state machine..."
+    # Step Functions state machines
+    echo "Deploying Step Functions state machines..."
     ACCT=$(aws sts get-caller-identity --query 'Account' --output text)
+    ensure_sfn_execution_role "$ACCT"
 
-    # Create Step Functions execution role
-    SFN_ROLE_NAME="polypaint-sfn-execution-role"
-    SFN_TRUST='{
-        "Version": "2012-10-17",
-        "Statement": [{
-            "Effect": "Allow",
-            "Principal": {"Service": "states.amazonaws.com"},
-            "Action": "sts:AssumeRole"
-        }]
-    }'
-    SFN_ROLE_ARN=$(aws iam create-role \
-        --role-name "$SFN_ROLE_NAME" \
-        --assume-role-policy-document "$SFN_TRUST" \
-        --query 'Role.Arn' --output text 2>/dev/null || \
-        aws iam get-role --role-name "$SFN_ROLE_NAME" --query 'Role.Arn' --output text)
-
-    aws iam put-role-policy --role-name "$SFN_ROLE_NAME" \
-        --policy-name polypaint-sfn-lambda-invoke \
-        --policy-document "{
-            \"Version\": \"2012-10-17\",
-            \"Statement\": [{
-                \"Effect\": \"Allow\",
-                \"Action\": \"lambda:InvokeFunction\",
-                \"Resource\": \"arn:aws:lambda:${REGION}:${ACCT}:function:polypaint-*\"
-            }]
-        }"
-
-    # Render ASL template with actual Lambda ARNs
     render_render_workflow_definition /tmp/render_workflow.asl.json "$ACCT"
-
     render_compute_workflow_definition /tmp/compute_workflow.asl.json "$ACCT"
-
-    # Create or update state machine
-    RENDER_SM_ARN=$(aws stepfunctions create-state-machine \
-        --name "$RENDER_STATE_MACHINE_NAME" \
-        --definition "file:///tmp/render_workflow.asl.json" \
-        --role-arn "$SFN_ROLE_ARN" \
-        --type STANDARD \
-        --region "$REGION" \
-        --query 'stateMachineArn' --output text 2>/dev/null || \
-        aws stepfunctions update-state-machine \
-            --state-machine-arn "arn:aws:states:${REGION}:${ACCT}:stateMachine:${RENDER_STATE_MACHINE_NAME}" \
-            --definition "file:///tmp/render_workflow.asl.json" \
-            --role-arn "$SFN_ROLE_ARN" \
-            --region "$REGION" \
-            --query 'updateDate' --output text)
-    echo "  State machine: $RENDER_STATE_MACHINE_NAME ($RENDER_SM_ARN)"
-
-    RENDER_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${RENDER_STATE_MACHINE_NAME}"
-
-    COMPUTE_SM_ARN=$(aws stepfunctions create-state-machine \
-        --name "$COMPUTE_STATE_MACHINE_NAME" \
-        --definition "file:///tmp/compute_workflow.asl.json" \
-        --role-arn "$SFN_ROLE_ARN" \
-        --type STANDARD \
-        --region "$REGION" \
-        --query 'stateMachineArn' --output text 2>/dev/null || \
-        aws stepfunctions update-state-machine \
-            --state-machine-arn "arn:aws:states:${REGION}:${ACCT}:stateMachine:${COMPUTE_STATE_MACHINE_NAME}" \
-            --definition "file:///tmp/compute_workflow.asl.json" \
-            --role-arn "$SFN_ROLE_ARN" \
-            --region "$REGION" \
-            --query 'updateDate' --output text)
-    echo "  State machine: $COMPUTE_STATE_MACHINE_NAME ($COMPUTE_SM_ARN)"
-
-    COMPUTE_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${COMPUTE_STATE_MACHINE_NAME}"
-
     render_palette_workflow_definition /tmp/palette_workflow.asl.json "$ACCT"
 
-    PALETTE_SM_ARN=$(aws stepfunctions create-state-machine \
-        --name "$PALETTE_STATE_MACHINE_NAME" \
-        --definition "file:///tmp/palette_workflow.asl.json" \
-        --role-arn "$SFN_ROLE_ARN" \
-        --type STANDARD \
-        --region "$REGION" \
-        --query 'stateMachineArn' --output text 2>/dev/null || \
-        aws stepfunctions update-state-machine \
-            --state-machine-arn "arn:aws:states:${REGION}:${ACCT}:stateMachine:${PALETTE_STATE_MACHINE_NAME}" \
-            --definition "file:///tmp/palette_workflow.asl.json" \
-            --role-arn "$SFN_ROLE_ARN" \
-            --region "$REGION" \
-            --query 'updateDate' --output text)
-    echo "  State machine: $PALETTE_STATE_MACHINE_NAME ($PALETTE_SM_ARN)"
-
+    RENDER_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${RENDER_STATE_MACHINE_NAME}"
+    COMPUTE_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${COMPUTE_STATE_MACHINE_NAME}"
     PALETTE_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${PALETTE_STATE_MACHINE_NAME}"
+    ensure_state_machine "$RENDER_STATE_MACHINE_NAME" /tmp/render_workflow.asl.json
+    ensure_state_machine "$COMPUTE_STATE_MACHINE_NAME" /tmp/compute_workflow.asl.json
+    ensure_state_machine "$PALETTE_STATE_MACHINE_NAME" /tmp/palette_workflow.asl.json
 
-    # Starter Lambda — now only needs state machine ARN, not all worker names
-    create_lambda "$RENDER_ORCHESTRATOR_NAME" "handler_render_orchestrator.handler" "/tmp/polypaint-render-orchestrator.zip" \
-        "$RENDER_ORCHESTRATOR_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RENDER_STATE_MACHINE_ARN=$RENDER_SM_ARN"
-    create_lambda "$COMPUTE_ORCHESTRATOR_NAME" "handler_compute_orchestrator.handler" "/tmp/polypaint-compute-orchestrator.zip" \
-        "$COMPUTE_ORCHESTRATOR_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,COMPUTE_STATE_MACHINE_ARN=$COMPUTE_SM_ARN"
-    create_lambda "$COMPUTE_PLAN_NAME" "handler_compute_plan.handler" "/tmp/polypaint-compute-plan.zip" \
-        "$COMPUTE_PLAN_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,FUSED_WORKER_MEMORY_MB=$COMPUTE_FUSED_CHUNK_MEMORY,FUSED_WORKER_TMP_MB=$BINARY_TMP,FUSED_WORKER_TIMEOUT_SEC=$TIMEOUT"
-    create_lambda "$COMPUTE_FUSED_CHUNK_NAME" "handler_compute_chunk_fused.handler" "/tmp/polypaint-compute-fused-chunk.zip" \
-        "$COMPUTE_FUSED_CHUNK_MEMORY" "$ROLE_ARN" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-    create_lambda "$COMPUTE_STATUS_NAME" "handler_compute_status.handler" "/tmp/polypaint-compute-status.zip" \
-        "$COMPUTE_STATUS_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
+    deploy_orchestrator_lambdas
 
-    create_lambda "$PALETTE_ORCHESTRATOR_NAME" "handler_palette_orchestrator.handler" "/tmp/polypaint-palette-orchestrator.zip" \
-        "$PALETTE_ORCHESTRATOR_MEMORY" "$ROLE_ARN" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,PALETTE_STATE_MACHINE_ARN=$PALETTE_SM_ARN"
-
-    # Add states:StartExecution permission to Lambda role
-    aws iam put-role-policy --role-name "$ROLE_NAME" \
-        --policy-name polypaint-sfn-start \
-        --policy-document "{
-            \"Version\": \"2012-10-17\",
-            \"Statement\": [{
-                \"Effect\": \"Allow\",
-                \"Action\": \"states:StartExecution\",
-                \"Resource\": [\"${RENDER_SM_ARN}\", \"${COMPUTE_SM_ARN}\", \"${PALETTE_SM_ARN}\"]
-            }]
-        }"
-
-    create_lambda "$SWEEP_CM_NAME" "handler_sweep_cm.handler" "/tmp/polypaint-sweep-cm.zip" \
-        "$SWEEP_CM_MEMORY" "$ROLE_ARN" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+    grant_sfn_start_policy
 
     configure_async_invoke_policies
 
@@ -2094,231 +2043,28 @@ if [ "$ACTION" = "create" ]; then
 elif [ "$ACTION" = "update" ]; then
     delete_lambda_if_exists "$REMOVED_SWEEP_NAME"
 
-    update_lambda "$SWEEP_MT_NAME" "handler_sweep_mt.handler" "/tmp/polypaint-sweep-mt.zip" \
-        "$SWEEP_MT_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE" "$BINARY_TMP"
+    # --- Lambdas (single spec list shared with the create path) ---
+    deploy_all_lambdas
 
-    update_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip" \
-        "$COEFFGEN_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib,FUSED_WORKER_MEMORY_MB=$COMPUTE_FUSED_CHUNK_MEMORY,FUSED_WORKER_TMP_MB=$BINARY_TMP,FUSED_WORKER_TIMEOUT_SEC=$TIMEOUT" "$BINARY_TMP"
-
-    update_lambda "$VIEWPORT_NAME" "handler_viewport.handler" "/tmp/polypaint-viewport.zip" \
-        "$VIEWPORT_MEMORY" "" "BUCKET=$BUCKET"
-
-    update_lambda "$STORAGE_NAME" "handler_storage.handler" "/tmp/polypaint-storage.zip" \
-        "$STORAGE_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
-    # Reserve concurrency for storage so it's never starved by render/merge Lambdas
-    aws lambda put-function-concurrency --function-name "$STORAGE_NAME" \
-        --reserved-concurrent-executions 5 --region "$REGION"
-
-    update_lambda "$DISPATCH_NAME" "handler_dispatch.handler" "/tmp/polypaint-dispatch.zip" \
-        "$DISPATCH_MEMORY" "" "$DISPATCH_ENV_VARS"
-    # Reserve concurrency for dispatch so it's never starved by render/merge Lambdas
-    aws lambda put-function-concurrency --function-name "$DISPATCH_NAME" \
-        --reserved-concurrent-executions 5 --region "$REGION"
-
-    update_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip" \
-        "$RASTER_MT_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RASTER_MT_THREADS=$RASTER_MT_THREADS,LD_LIBRARY_PATH=/var/task/lib" "$BINARY_TMP"
-    update_lambda "$FINALIZE_MT_NAME" "handler_finalize_mt.handler" "/tmp/polypaint-finalize-mt.zip" \
-        "$FINALIZE_MT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
-
-    update_lambda "$PREVIEW_NAME" "handler_preview.handler" "/tmp/polypaint-preview.zip" \
-        "$PREVIEW_MEMORY" "" "BUCKET=$BUCKET"
-
-    update_lambda "$COMPUTE_PREVIEW_NAME" "handler_compute_preview.handler" "/tmp/polypaint-compute-preview.zip" \
-        "$COMPUTE_PREVIEW_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    update_lambda "$BILEVEL_NAME" "handler_bilevel.handler" "/tmp/polypaint-bilevel.zip" \
-        "$BILEVEL_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
-
-    update_lambda "$COLOR_TO_BILEVEL_NAME" "handler_bilevel.handler" "/tmp/polypaint-bilevel.zip" \
-        "$COLOR_TO_BILEVEL_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
-
-    update_lambda "$PARAM_DEBUG_NAME" "handler_param_debug.handler" "/tmp/polypaint-param-debug.zip" \
-        "$PARAM_DEBUG_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib"
-
-    update_lambda "$TIFF_COMPAT_NAME" "handler_tiff_compat.handler" "/tmp/polypaint-tiff-compat.zip" \
-        "$TIFF_COMPAT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    update_lambda "$PNG_EXPORT_NAME" "handler_png_export.handler" "/tmp/polypaint-png-export.zip" \
-        "$PNG_EXPORT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    update_lambda "$DZ_EXPORT_NAME" "handler_deepzoom_export.handler" "/tmp/polypaint-deepzoom-export.zip" \
-        "$DZ_EXPORT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-    update_lambda "$DZ_FROM_RAW_NAME" "handler_deepzoom_from_raw.handler" "/tmp/polypaint-deepzoom-from-raw.zip" \
-        "$DZ_FROM_RAW_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    update_lambda "$RENDER_PREVIEW_NAME" "handler_render_preview.handler" "/tmp/polypaint-render-preview.zip" \
-        "$RENDER_PREVIEW_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    update_lambda "$RENDER_LORES_PREVIEW_NAME" "handler_render_lores_preview.handler" "/tmp/polypaint-render-lores-preview.zip" \
-        "$RENDER_LORES_PREVIEW_MEMORY" "$LIBVIPS_LAYER $LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"
-
-    update_lambda "$AUTOLEVELS_NAME" "handler_autolevels.handler" "/tmp/polypaint-autolevels.zip" \
-        "$AUTOLEVELS_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    update_lambda "$RESIZE_ARTIFACT_NAME" "handler_resize_artifact.handler" "/tmp/polypaint-resize-artifact.zip" \
-        "$RESIZE_ARTIFACT_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    update_lambda "$REPALETTE_NAME" "handler_repalette.handler" "/tmp/polypaint-repalette.zip" \
-        "$REPALETTE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    update_lambda "$COLOR_REPALETTE_NAME" "handler_color_repalette.handler" "/tmp/polypaint-color-repalette.zip" \
-        "$COLOR_REPALETTE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-    update_lambda "$RECOLOR_FROM_RAW_NAME" "handler_recolor_from_raw.handler" "/tmp/polypaint-recolor-from-raw.zip" \
-        "$RECOLOR_FROM_RAW_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-    update_lambda "$EXTRACT_PALETTE_FUSED_NAME" "handler_extract_palette_from_step_scores.handler" "/tmp/polypaint-extract-palette-fused.zip" \
-        "$EXTRACT_PALETTE_FUSED_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    update_lambda "$PDF_ARTIFACT_NAME" "handler_pdf_artifact.handler" "/tmp/polypaint-pdf-artifact.zip" \
-        "$PDF_ARTIFACT_MEMORY" "$PDF_PY_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
-
-    update_lambda "$SOLVE_PROXIMITY_NAME" "handler_solve_proximity.handler" "/tmp/polypaint-solve-proximity.zip" \
-        "$SOLVE_PROXIMITY_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib" "$BINARY_TMP"
-
-    update_lambda "$SOLVE_PROXIMITY_BENCH_NAME" "handler_solve_proximity_bench.handler" "/tmp/polypaint-solve-proximity-bench.zip" \
-        "$SOLVE_PROXIMITY_BENCH_MEMORY" "" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/var/task/lib" "$BINARY_TMP"
-
-    update_lambda "$PALETTE_DEBUG_NAME" "handler_palette_debug.handler" "/tmp/polypaint-palette-debug.zip" \
-        "$PALETTE_DEBUG_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    update_lambda "$PALETTE_PLAN_NAME" "handler_palette_render_plan.handler" "/tmp/polypaint-palette-render-plan.zip" \
-        "$PALETTE_PLAN_MEMORY" "" "BUCKET=$BUCKET"
-
-    update_lambda "$PALETTE_CHUNK_NAME" "handler_palette_chunk.handler" "/tmp/polypaint-palette-chunk.zip" \
-        "$PALETTE_CHUNK_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/var/task/lib" "$BINARY_TMP"
-
-    update_lambda "$PALETTE_FINALIZE_NAME" "handler_palette_finalize.handler" "/tmp/polypaint-palette-finalize.zip" \
-        "$PALETTE_FINALIZE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-
-    update_lambda "$ATTACH_PALETTE_NAME" "handler_attach_palette_to_color.handler" "/tmp/polypaint-attach-palette-to-color.zip" \
-        "$ATTACH_PALETTE_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
-
-    update_lambda "$RENDER_PLAN_NAME" "handler_render_plan.handler" "/tmp/polypaint-render-plan.zip" \
-        "$RENDER_PLAN_MEMORY" "" "BUCKET=$BUCKET,VIEWPORT_FUNCTION=$VIEWPORT_NAME,STORAGE_FUNCTION=$STORAGE_NAME,RASTER_MT_FUNCTION=$RASTER_MT_NAME"
-
-    update_lambda "$RENDER_STATUS_NAME" "handler_render_status.handler" "/tmp/polypaint-render-status.zip" \
-        "$RENDER_STATUS_MEMORY" "" "JOBS_TABLE=$JOBS_TABLE"
-    update_lambda "$COMPUTE_PLAN_NAME" "handler_compute_plan.handler" "/tmp/polypaint-compute-plan.zip" \
-        "$COMPUTE_PLAN_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,FUSED_WORKER_MEMORY_MB=$COMPUTE_FUSED_CHUNK_MEMORY,FUSED_WORKER_TMP_MB=$BINARY_TMP,FUSED_WORKER_TIMEOUT_SEC=$TIMEOUT"
-    update_lambda "$COMPUTE_FUSED_CHUNK_NAME" "handler_compute_chunk_fused.handler" "/tmp/polypaint-compute-fused-chunk.zip" \
-        "$COMPUTE_FUSED_CHUNK_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
-    update_lambda "$COMPUTE_STATUS_NAME" "handler_compute_status.handler" "/tmp/polypaint-compute-status.zip" \
-        "$COMPUTE_STATUS_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
-
-    # Update Step Functions state machine
-    echo "Updating Step Functions state machine..."
+    # Step Functions state machines
+    echo "Updating Step Functions state machines..."
     ACCT=$(aws sts get-caller-identity --query 'Account' --output text)
+    ensure_sfn_execution_role "$ACCT"
+
+    render_render_workflow_definition /tmp/render_workflow.asl.json "$ACCT"
+    render_compute_workflow_definition /tmp/compute_workflow.asl.json "$ACCT"
+    render_palette_workflow_definition /tmp/palette_workflow.asl.json "$ACCT"
+
     RENDER_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${RENDER_STATE_MACHINE_NAME}"
     COMPUTE_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${COMPUTE_STATE_MACHINE_NAME}"
     PALETTE_SM_ARN="arn:aws:states:${REGION}:${ACCT}:stateMachine:${PALETTE_STATE_MACHINE_NAME}"
+    ensure_state_machine "$RENDER_STATE_MACHINE_NAME" /tmp/render_workflow.asl.json
+    ensure_state_machine "$COMPUTE_STATE_MACHINE_NAME" /tmp/compute_workflow.asl.json
+    ensure_state_machine "$PALETTE_STATE_MACHINE_NAME" /tmp/palette_workflow.asl.json
 
-    SFN_ROLE_NAME="polypaint-sfn-execution-role"
-    SFN_ROLE_ARN=$(aws iam get-role --role-name "$SFN_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || echo "")
+    deploy_orchestrator_lambdas
 
-    render_render_workflow_definition /tmp/render_workflow.asl.json "$ACCT"
-
-    render_compute_workflow_definition /tmp/compute_workflow.asl.json "$ACCT"
-
-    render_palette_workflow_definition /tmp/palette_workflow.asl.json "$ACCT"
-
-    SFN_TRUST='{
-        "Version": "2012-10-17",
-        "Statement": [{
-            "Effect": "Allow",
-            "Principal": {"Service": "states.amazonaws.com"},
-            "Action": "sts:AssumeRole"
-        }]
-    }'
-    if [ -z "$SFN_ROLE_ARN" ]; then
-        echo "  Creating SFN execution role..."
-        SFN_ROLE_ARN=$(aws iam create-role \
-            --role-name "$SFN_ROLE_NAME" \
-            --assume-role-policy-document "$SFN_TRUST" \
-            --query 'Role.Arn' --output text 2>/dev/null || \
-            aws iam get-role --role-name "$SFN_ROLE_NAME" --query 'Role.Arn' --output text)
-        aws iam put-role-policy --role-name "$SFN_ROLE_NAME" \
-            --policy-name polypaint-sfn-lambda-invoke \
-            --policy-document "{
-                \"Version\": \"2012-10-17\",
-                \"Statement\": [{
-                    \"Effect\": \"Allow\",
-                    \"Action\": \"lambda:InvokeFunction\",
-                    \"Resource\": \"arn:aws:lambda:${REGION}:${ACCT}:function:polypaint-*\"
-                }]
-            }"
-        sleep 5  # IAM propagation
-    fi
-
-    # Create or update state machine
-    aws stepfunctions update-state-machine \
-        --state-machine-arn "$RENDER_SM_ARN" \
-        --definition "$(cat /tmp/render_workflow.asl.json)" \
-        --role-arn "$SFN_ROLE_ARN" \
-        --region "$REGION" >/dev/null 2>&1 || {
-        echo "  State machine doesn't exist, creating..."
-        aws stepfunctions create-state-machine \
-            --name "$RENDER_STATE_MACHINE_NAME" \
-            --definition "$(cat /tmp/render_workflow.asl.json)" \
-            --role-arn "$SFN_ROLE_ARN" \
-            --type STANDARD \
-            --region "$REGION" \
-            --query 'stateMachineArn' --output text
-    }
-    echo "  State machine: $RENDER_STATE_MACHINE_NAME"
-
-    aws stepfunctions update-state-machine \
-        --state-machine-arn "$COMPUTE_SM_ARN" \
-        --definition "$(cat /tmp/compute_workflow.asl.json)" \
-        --role-arn "$SFN_ROLE_ARN" \
-        --region "$REGION" >/dev/null 2>&1 || {
-        echo "  Compute state machine doesn't exist, creating..."
-        aws stepfunctions create-state-machine \
-            --name "$COMPUTE_STATE_MACHINE_NAME" \
-            --definition "$(cat /tmp/compute_workflow.asl.json)" \
-            --role-arn "$SFN_ROLE_ARN" \
-            --type STANDARD \
-            --region "$REGION" \
-            --query 'stateMachineArn' --output text
-    }
-    echo "  State machine: $COMPUTE_STATE_MACHINE_NAME"
-
-    aws stepfunctions update-state-machine \
-        --state-machine-arn "$PALETTE_SM_ARN" \
-        --definition "$(cat /tmp/palette_workflow.asl.json)" \
-        --role-arn "$SFN_ROLE_ARN" \
-        --region "$REGION" >/dev/null 2>&1 || {
-        echo "  Palette state machine doesn't exist, creating..."
-        aws stepfunctions create-state-machine \
-            --name "$PALETTE_STATE_MACHINE_NAME" \
-            --definition "$(cat /tmp/palette_workflow.asl.json)" \
-            --role-arn "$SFN_ROLE_ARN" \
-            --type STANDARD \
-            --region "$REGION" \
-            --query 'stateMachineArn' --output text
-    }
-    echo "  State machine: $PALETTE_STATE_MACHINE_NAME"
-
-    # Starter Lambda — uses state machine ARN, not worker names
-    update_lambda "$RENDER_ORCHESTRATOR_NAME" "handler_render_orchestrator.handler" "/tmp/polypaint-render-orchestrator.zip" \
-        "$RENDER_ORCHESTRATOR_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RENDER_STATE_MACHINE_ARN=$RENDER_SM_ARN"
-    update_lambda "$COMPUTE_ORCHESTRATOR_NAME" "handler_compute_orchestrator.handler" "/tmp/polypaint-compute-orchestrator.zip" \
-        "$COMPUTE_ORCHESTRATOR_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,COMPUTE_STATE_MACHINE_ARN=$COMPUTE_SM_ARN"
-    update_lambda "$PALETTE_ORCHESTRATOR_NAME" "handler_palette_orchestrator.handler" "/tmp/polypaint-palette-orchestrator.zip" \
-        "$PALETTE_ORCHESTRATOR_MEMORY" "" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,PALETTE_STATE_MACHINE_ARN=$PALETTE_SM_ARN"
-
-    # Ensure states:StartExecution permission
-    aws iam put-role-policy --role-name "$ROLE_NAME" \
-        --policy-name polypaint-sfn-start \
-        --policy-document "{
-            \"Version\": \"2012-10-17\",
-            \"Statement\": [{
-                \"Effect\": \"Allow\",
-                \"Action\": \"states:StartExecution\",
-                \"Resource\": [\"${RENDER_SM_ARN}\", \"${COMPUTE_SM_ARN}\", \"${PALETTE_SM_ARN}\"]
-            }]
-        }" 2>/dev/null || true
-
-    update_lambda "$SWEEP_CM_NAME" "handler_sweep_cm.handler" "/tmp/polypaint-sweep-cm.zip" \
-        "$SWEEP_CM_MEMORY" "$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"
+    grant_sfn_start_policy 2>/dev/null || true
 
     configure_async_invoke_policies
 

@@ -4,6 +4,26 @@ This is the current manual for Coeff Program **Text** mode. It is based on the
 implemented parser in `lambda/coeff_program_source.py` and compiler/runtime in
 `lambda/coeff_program_chain.py` and `lambda/sweep_cli.c`.
 
+## Contents
+
+- [Mental Model](#mental-model)
+- [Syntax Basics](#syntax-basics)
+- [Sources And Targets](#sources-and-targets)
+- [Scalar Expressions](#scalar-expressions)
+- [Scalar Stack Push](#scalar-stack-push)
+- [Stack Commands](#stack-commands)
+- [Vector Constructors](#vector-constructors)
+- [Assignment And Indexing](#assignment-and-indexing)
+- [Affine Helpers](#affine-helpers)
+- [Vector Binary Operations](#vector-binary-operations)
+- [Vector Unary Operations](#vector-unary-operations)
+- [Reordering And Keyed Operations](#reordering-and-keyed-operations)
+- [Blend](#blend)
+- [Native Coefficient Transforms](#native-coefficient-transforms) — including
+  [Blending (andy)](#blending-andy) and [Shadowed Names](#shadowed-names)
+- [Complete Examples](#complete-examples)
+- [Limits](#limits)
+
 ## Mental Model
 
 Each evaluation starts with:
@@ -232,10 +252,13 @@ Aliases. Create a real vector with inclusive endpoints.
 Forms:
 
 ```text
-linspace(length)               # length values from 0 to length
-linspace(start, stop, count)   # count values from start to stop
+linspace(count)                # count values from 0 to count, both endpoints included
+linspace(start, stop, count)   # count values from start to stop, both endpoints included
 push_linspace(...)
 ```
+
+In the one-argument form the argument is both the element count and the stop
+value: `linspace(5)` is `0, 1.25, 2.5, 3.75, 5`.
 
 Examples:
 
@@ -265,7 +288,7 @@ poly = littlewood(0, 1)
 poly = littlewood(10, -10j, 0.25)
 ```
 
-`andy` is a real blend factor against the input `poly`.
+`andy` blends against the input `poly` — see [Blending (andy)](#blending-andy).
 
 ## Assignment And Indexing
 
@@ -398,8 +421,8 @@ add()
 drop
 ```
 
-Important: in text mode `pow(...)` and `power(...)` mean vector/scalar binary
-power. They shadow the old native coefficient-transform names `pow` and `power`.
+Note: `pow(...)` and `power(...)` here shadow the old native transform names —
+see [Shadowed Names](#shadowed-names) for the affine/series aliases.
 
 ## Vector Unary Operations
 
@@ -516,6 +539,19 @@ emit
 
 Most legacy coefficient transforms are called directly by name in text mode.
 
+### Blending (andy)
+
+Transforms marked "optional `andy`" accept one trailing real argument that
+blends the transformed vector with the transform's input:
+
+```text
+out = (1 - andy) * transformed + andy * input
+```
+
+`andy = 0` (the default) applies the transform fully; `andy = 1` returns the
+input unchanged. The value must be numeric in Chain mode; text mode also
+accepts real scalar expressions.
+
 General forms:
 
 ```text
@@ -547,18 +583,18 @@ Currently callable transform-style commands:
 | Name | Args | Notes |
 | --- | --- | --- |
 | `rev` | none | Reverse coefficient order. |
-| `normalize` | none | Normalize coefficients. |
-| `deriv` | none | Derivative; may change length. |
-| `safe` | none | Legacy safe transform. |
+| `normalize` | none | Divide every coefficient by `c[0]`, making the leading coefficient `1`. No-op when `|c[0]|` is ~0. |
+| `deriv` | none | Polynomial derivative (leading-first); length shrinks by one. |
+| `safe` | none | Replace non-finite (inf/NaN) real or imaginary parts with 0. |
 | `negate_odd` | none | Negate odd-indexed coefficients. |
-| `max2one` | none | Legacy max-to-one normalization. |
+| `max2one` | none | Set the largest-magnitude coefficient to exactly `1+0j`; others unchanged. |
 | `sort_mod_keep_angle` | none | Sort by magnitude, keep angle. |
 | `sort_angle_keep_mod` | none | Sort by angle, keep magnitude. |
 | `sort_abs` | none | Sort by absolute value. |
 | `cumsum` | none | Cumulative sum. |
-| `cummax` | none | Cumulative max-style legacy transform. |
+| `cummax` | none | Running maximum: each element becomes the largest-magnitude coefficient seen so far. |
 | `sort_cumsum` | none | Sort then cumulative sum. |
-| `swirler` | none | Legacy swirler transform. |
+| `swirler` | none | Multiply each `z` by `exp(a^4 + b^4 + 2*pi*i*a*b)` with `a = \|100z\| mod 1`, `b = \|10z\| mod 1` — a deterministic magnitude-keyed swirl. |
 | `exp_affine` | `a`, `b`, optional `andy` | Applies native affine exp form `exp(src*a+b)`; `a` and `b` may be complex expressions. Args default to `a=1, b=0`. Plain `exp(x)` is typed unary exponentiation. |
 | `pow_affine` | `a`, `e`, optional `andy` | Applies native affine power form `pow(src*a, e)`; args default to `a=1, e=1`. Plain `pow(x, y)` is typed binary power. |
 | `power_series` | `k`, optional `andy` | Native `(i+1) * geometric series through z^k` transform. Plain `power(x, y)` is typed binary power. |
@@ -568,12 +604,15 @@ Currently callable transform-style commands:
 | `cosh` | optional `andy` | Elementwise complex hyperbolic cosine; same bare/andy split as `cos`. |
 | `sinh` | optional `andy` | Elementwise complex hyperbolic sine; same bare/andy split as `cos`. |
 | `tanh` | optional `andy` | Elementwise complex hyperbolic tangent; same bare/andy split as `cos`. |
-| `round` | `a`, optional `andy` | Legacy round affine form; `a` may be complex. The old component form `round(src, a, b, andy)` is also accepted. |
+| `round` | `a`, optional `andy` | Round real and imaginary parts of `src*a` to the nearest integers; `a` may be complex. The old component form `round(src, a, b, andy)` is also accepted. |
 | `invpower` | `k`, optional `andy` | Inverse power transform; may change length. `k` magnitude is capped at 4096. |
 | `roots_cm` | `pad`, optional `andy` | `pad` is `hi` or `lo`; may change length. |
 | `roots` | `k`, `pad`, optional `andy` | `pad` is `hi` or `lo`; may change length. `k` magnitude is capped at 4096. |
 
-Names shadowed by first-class text syntax (use the alias for the native form):
+### Shadowed Names
+
+These names are first-class text syntax, so the native transform of the same
+name needs an alias:
 
 - `linear` is the text-mode affine helper (`linear(src, a, b)`); the 4-arg
   form `linear(src, a, b, andy)` reaches the old native `linear` bridge so
@@ -643,7 +682,7 @@ emit
 - Source text size: 64 KiB.
 - Compiled tokens after macro/source lowering: 256.
 - Stack depth: 64.
-- Max vector length: 256. Static `range`/`linspace`/`push_const` lengths are
+- Max vector length: 256. Static `range`/`linspace`/`push_vec` lengths are
   checked at compile time; dynamic lengths at run time.
 - Max scalar-expression tokens: 32.
 - Max distinct scalar expressions per program: 64 (identical expressions

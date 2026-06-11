@@ -2453,6 +2453,9 @@ static inline void c_div_full(double ar, double ai, double br, double bi, double
     *rr = (nar * sr + nai * si) / d;
     *ri = (nai * sr - nar * si) / d;
 }
+/* The 350.0 thresholds below are ~half of log(DBL_MAX) (~709.8): the
+ * formulas square/double the exponent range, so beyond 350 they switch to
+ * scaled forms that cannot overflow intermediate terms. */
 static inline double c_scale_safe(double scale, double factor) {
     if (!isfinite(scale)) {
         if (fabs(factor) < 1e-300) return 0.0;
@@ -2545,6 +2548,7 @@ static inline void c_log(double ar, double ai, double *rr, double *ri) {
     /* hypot avoids the |z|^2 underflow/overflow that made tiny or huge
      * magnitudes diverge from the Python compiler's static folds. */
     double m = hypot(ar, ai);
+    /* -700 ~= log(DBL_MIN): a finite floor for log(0) instead of -inf. */
     *rr = (m > 0.0) ? log(m) : -700.0;
     *ri = atan2(ai, ar);
 }
@@ -3343,6 +3347,10 @@ done:
 #define COEFF_PROGRAM_MAX_SCALAR_EXPRS 64
 #define COEFF_PROGRAM_MAX_EXPR_NUMS 96
 #define COEFF_PROGRAM_EXPR_STRIDE 3
+/* Treat |Im| below this as real: the compiler emits exact reals, the
+ * tolerance only absorbs c_* helper roundoff. (Distinct from the range
+ * ceil fudge, which uses a literal 1e-12 for a different purpose.) */
+#define COEFF_PROGRAM_IMAG_TOL 1e-12
 
 enum CoeffProgramOp {
     COEFF_OP_CONST = 1,
@@ -3474,6 +3482,8 @@ typedef struct {
     double args[COEFF_PROGRAM_MAX_ARGS];
     double args_im[COEFF_PROGRAM_MAX_ARGS];
     int expr_refs[COEFF_PROGRAM_MAX_ARGS];
+    /* andy: post-transform blend back toward the input,
+     * out = (1-andy)*transformed + andy*input. */
     double andy;
     int andy_expr_ref;
 } CoeffProgramToken;
@@ -3496,26 +3506,48 @@ typedef struct {
     double stack_im[COEFF_PROGRAM_MAX_VECTOR_STACK][COEFF_PROGRAM_MAX_VECTOR_LEN];
     uint16_t stack_len[COEFF_PROGRAM_MAX_VECTOR_STACK];
     uint8_t stack_type[COEFF_PROGRAM_MAX_VECTOR_STACK];
+    /* Scalar slots live beside the vector planes: push_scalar writes ONLY
+     * stack_scalar_re/_im (stack_re of that slot keeps stale bytes). */
     double stack_scalar_re[COEFF_PROGRAM_MAX_VECTOR_STACK];
     double stack_scalar_im[COEFF_PROGRAM_MAX_VECTOR_STACK];
     uint16_t stack_depth;
     uint16_t stack_head;
 
+    /* poly: the program's mutable output register (committed by emit/set). */
     double poly_re[COEFF_PROGRAM_MAX_VECTOR_LEN];
     double poly_im[COEFF_PROGRAM_MAX_VECTOR_LEN];
     uint16_t poly_len;
 
+    /* scratch: the current op's working vector; also the SWAP temp.
+     * Clobbered by nearly every op — never holds state across ops. */
     double scratch_re[COEFF_PROGRAM_MAX_VECTOR_LEN];
     double scratch_im[COEFF_PROGRAM_MAX_VECTOR_LEN];
     uint16_t scratch_len;
 
+    /* original: dual-purpose second buffer — the pre-transform snapshot for
+     * andy blending, AND the second operand of vector binary/argsort. */
     double original_re[COEFF_PROGRAM_MAX_VECTOR_LEN];
     double original_im[COEFF_PROGRAM_MAX_VECTOR_LEN];
     uint16_t original_len;
 
+    /* aux: permutation temp for roll/argsort only. */
     double aux_re[COEFF_PROGRAM_MAX_VECTOR_LEN];
     double aux_im[COEFF_PROGRAM_MAX_VECTOR_LEN];
 } CoeffProgramWorkspace;
+
+/* Per-row evaluation context: everything that stays constant while one
+ * program runs for one parameter-grid row. Built once in evalCoeffProgram;
+ * threading it through the helpers replaced the 12-value argument caravan
+ * that used to repeat at every call site. */
+typedef struct {
+    const CoeffProgram *program;
+    double p1r, p1i, p2r, p2i;
+    double t1r, t1i, t2r, t2i;
+    const double *cfRe;
+    const double *cfIm;
+    int cfLen;
+    CoeffProgramWorkspace *ws;
+} CoeffEvalContext;
 
 /* V1 workspace is about 274 KiB. Allocate it once per worker/probe rather than
  * placing it on pthread stacks; evalCoeffProgram resets only live cursors and
@@ -3523,7 +3555,7 @@ typedef struct {
 static CoeffProgramWorkspace *coeff_program_workspace_new(void) {
     CoeffProgramWorkspace *ws = (CoeffProgramWorkspace *)calloc(1, sizeof(CoeffProgramWorkspace));
     if (!ws) {
-        fprintf(stderr, "Coeff Program workspace allocation failed (%zu bytes)\n",
+        fprintf(stderr, "coeff_program workspace allocation failed (%zu bytes)\n",
                 sizeof(CoeffProgramWorkspace));
     }
     return ws;
@@ -3538,7 +3570,7 @@ static void coeff_vec_copy(double *dstRe, double *dstIm,
 
 static int coeff_program_check_len(int n, const char *where) {
     if (n < 1 || n > COEFF_PROGRAM_MAX_VECTOR_LEN) {
-        fprintf(stderr, "Coeff Program vector length exceeded at %s: got %d, max %d\n",
+        fprintf(stderr, "coeff_program vector length exceeded at %s: got %d, max %d\n",
                 where, n, COEFF_PROGRAM_MAX_VECTOR_LEN);
         return 1;
     }
@@ -3549,7 +3581,7 @@ static int coeff_stack_push(CoeffProgramWorkspace *ws,
                             const double *re, const double *im, int n) {
     if (coeff_program_check_len(n, "push") != 0) return 1;
     if (ws->stack_depth >= COEFF_PROGRAM_MAX_VECTOR_STACK) {
-        fprintf(stderr, "Coeff Program stack overflow: max %d\n", COEFF_PROGRAM_MAX_VECTOR_STACK);
+        fprintf(stderr, "coeff_program stack overflow: max %d\n", COEFF_PROGRAM_MAX_VECTOR_STACK);
         return 1;
     }
     uint16_t slot = ws->stack_head;
@@ -3563,11 +3595,11 @@ static int coeff_stack_push(CoeffProgramWorkspace *ws,
 
 static int coeff_stack_push_scalar(CoeffProgramWorkspace *ws, double re, double im) {
     if (!isfinite(re) || !isfinite(im)) {
-        fprintf(stderr, "Coeff Program scalar stack value is non-finite\n");
+        fprintf(stderr, "coeff_program scalar stack value is non-finite\n");
         return 1;
     }
     if (ws->stack_depth >= COEFF_PROGRAM_MAX_VECTOR_STACK) {
-        fprintf(stderr, "Coeff Program stack overflow: max %d\n", COEFF_PROGRAM_MAX_VECTOR_STACK);
+        fprintf(stderr, "coeff_program stack overflow: max %d\n", COEFF_PROGRAM_MAX_VECTOR_STACK);
         return 1;
     }
     uint16_t slot = ws->stack_head;
@@ -3580,13 +3612,19 @@ static int coeff_stack_push_scalar(CoeffProgramWorkspace *ws, double re, double 
     return 0;
 }
 
+static uint16_t coeff_stack_top_slot(const CoeffProgramWorkspace *ws) {
+    /* stack_head points at the next free slot; the top of stack is one
+     * behind it (callers must have checked stack_depth > 0). */
+    return (uint16_t)((ws->stack_head + COEFF_PROGRAM_MAX_VECTOR_STACK - 1) %
+                      COEFF_PROGRAM_MAX_VECTOR_STACK);
+}
+
 static int coeff_stack_pop(CoeffProgramWorkspace *ws, uint16_t *slot) {
     if (ws->stack_depth == 0) {
-        fprintf(stderr, "Coeff Program stack underflow\n");
+        fprintf(stderr, "coeff_program stack underflow\n");
         return 1;
     }
-    ws->stack_head = (uint16_t)((ws->stack_head + COEFF_PROGRAM_MAX_VECTOR_STACK - 1) %
-                                COEFF_PROGRAM_MAX_VECTOR_STACK);
+    ws->stack_head = coeff_stack_top_slot(ws);
     ws->stack_depth--;
     *slot = ws->stack_head;
     return 0;
@@ -3594,7 +3632,7 @@ static int coeff_stack_pop(CoeffProgramWorkspace *ws, uint16_t *slot) {
 
 static int coeff_stack_require_vector(const CoeffProgramWorkspace *ws, uint16_t slot, const char *where) {
     if (ws->stack_type[slot] != COEFF_STACK_VECTOR) {
-        fprintf(stderr, "Coeff Program %s requires vector stack value, got type %d\n",
+        fprintf(stderr, "coeff_program %s requires vector stack value, got type %d\n",
                 where, ws->stack_type[slot]);
         return 1;
     }
@@ -3603,7 +3641,7 @@ static int coeff_stack_require_vector(const CoeffProgramWorkspace *ws, uint16_t 
 
 static int coeff_stack_require_scalar(const CoeffProgramWorkspace *ws, uint16_t slot, const char *where) {
     if (ws->stack_type[slot] != COEFF_STACK_SCALAR) {
-        fprintf(stderr, "Coeff Program %s requires scalar stack value, got type %d\n",
+        fprintf(stderr, "coeff_program %s requires scalar stack value, got type %d\n",
                 where, ws->stack_type[slot]);
         return 1;
     }
@@ -3612,13 +3650,14 @@ static int coeff_stack_require_scalar(const CoeffProgramWorkspace *ws, uint16_t 
 
 static int coeff_stack_peek(CoeffProgramWorkspace *ws, uint16_t *slot) {
     if (ws->stack_depth == 0) {
-        fprintf(stderr, "Coeff Program stack underflow on peek\n");
+        fprintf(stderr, "coeff_program stack underflow on peek\n");
         return 1;
     }
-    *slot = (uint16_t)((ws->stack_head + COEFF_PROGRAM_MAX_VECTOR_STACK - 1) %
-                       COEFF_PROGRAM_MAX_VECTOR_STACK);
+    *slot = coeff_stack_top_slot(ws);
     return 0;
 }
+
+/* ======== Coeff Program: JSON parse layer ======== */
 
 static const char *parseCoeffProgramTokenObject(const char *objStart, const char *objEnd,
                                                 CoeffProgramToken *tok) {
@@ -3804,12 +3843,17 @@ static int parseCoeffProgram(const char *buf, CoeffProgram *program) {
 
 static int coeffProgramIntegerFromReal(double value, const char *label, int *out);
 
-static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
-                               double p1r, double p1i, double p2r, double p2i,
-                               double t1r, double t1i, double t2r, double t2i,
-                               const double *cfRe, const double *cfIm, int cfLen,
-                               const CoeffProgramWorkspace *ws,
+/* ======== Coeff Program: scalar expressions and arg plumbing ======== */
+
+static int coeffEvalScalarExpr(const CoeffEvalContext *ctx, int ref,
                                double *outR, double *outI) {
+    const CoeffProgram *program = ctx->program;
+    const double p1r = ctx->p1r, p1i = ctx->p1i, p2r = ctx->p2r, p2i = ctx->p2i;
+    const double t1r = ctx->t1r, t1i = ctx->t1i, t2r = ctx->t2r, t2i = ctx->t2i;
+    const double *cfRe = ctx->cfRe;
+    const double *cfIm = ctx->cfIm;
+    const int cfLen = ctx->cfLen;
+    const CoeffProgramWorkspace *ws = ctx->ws;
     if (ref < 0 || ref >= program->scalar_expr_count) {
         fprintf(stderr, "coeff_program scalar expression ref out of range: %d\n", ref);
         return 1;
@@ -3846,7 +3890,7 @@ static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
             } else if (op == COEFF_EXPR_T2) {
                 stackR[sp] = t2r; stackI[sp] = t2i;
             } else if (op == COEFF_EXPR_POLY_LEN) {
-                stackR[sp] = ws ? (double)ws->poly_len : 0.0; stackI[sp] = 0.0;
+                stackR[sp] = (double)ws->poly_len; stackI[sp] = 0.0;
             } else {
                 if (!(a >= 0.0 && a < (double)COEFF_PROGRAM_MAX_VECTOR_LEN)) {
                     fprintf(stderr, "coeff_program scalar expression index out of range\n");
@@ -3860,19 +3904,18 @@ static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
                     }
                     stackR[sp] = cfRe[idx]; stackI[sp] = cfIm[idx];
                 } else if (op == COEFF_EXPR_POLY_AT) {
-                    if (!ws || idx < 0 || idx >= ws->poly_len) {
+                    if (idx < 0 || idx >= ws->poly_len) {
                         fprintf(stderr, "coeff_program scalar expression poly%d out of range for poly_len=%d\n",
-                                idx, ws ? ws->poly_len : 0);
+                                idx, ws->poly_len);
                         return 1;
                     }
                     stackR[sp] = ws->poly_re[idx]; stackI[sp] = ws->poly_im[idx];
                 } else {
-                    if (!ws || ws->stack_depth == 0) {
+                    if (ws->stack_depth == 0) {
                         fprintf(stderr, "coeff_program scalar expression tos%d requires stack depth >=1\n", idx);
                         return 1;
                     }
-                    uint16_t slot = (uint16_t)((ws->stack_head + COEFF_PROGRAM_MAX_VECTOR_STACK - 1) %
-                                               COEFF_PROGRAM_MAX_VECTOR_STACK);
+                    uint16_t slot = coeff_stack_top_slot(ws);
                     if (idx < 0 || idx >= ws->stack_len[slot]) {
                         fprintf(stderr, "coeff_program scalar expression tos%d out of range for top vector length=%d\n",
                                 idx, ws->stack_len[slot]);
@@ -3897,7 +3940,7 @@ static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
             }
             double idxR = stackR[sp - 1], idxI = stackI[sp - 1];
             int idx = 0;
-            if (fabs(idxI) > 1e-12) {
+            if (fabs(idxI) > COEFF_PROGRAM_IMAG_TOL) {
                 fprintf(stderr, "coeff_program dynamic scalar index must be real\n");
                 return 1;
             }
@@ -3911,19 +3954,18 @@ static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
                 }
                 stackR[sp - 1] = cfRe[idx]; stackI[sp - 1] = cfIm[idx];
             } else if (op == COEFF_EXPR_POLY_AT_DYN) {
-                if (!ws || idx < 0 || idx >= ws->poly_len) {
+                if (idx < 0 || idx >= ws->poly_len) {
                     fprintf(stderr, "coeff_program scalar expression poly[%d] out of range for poly_len=%d\n",
-                            idx, ws ? ws->poly_len : 0);
+                            idx, ws->poly_len);
                     return 1;
                 }
                 stackR[sp - 1] = ws->poly_re[idx]; stackI[sp - 1] = ws->poly_im[idx];
             } else {
-                if (!ws || ws->stack_depth == 0) {
+                if (ws->stack_depth == 0) {
                     fprintf(stderr, "coeff_program scalar expression tos[%d] requires stack depth >=1\n", idx);
                     return 1;
                 }
-                uint16_t slot = (uint16_t)((ws->stack_head + COEFF_PROGRAM_MAX_VECTOR_STACK - 1) %
-                                           COEFF_PROGRAM_MAX_VECTOR_STACK);
+                uint16_t slot = coeff_stack_top_slot(ws);
                 if (idx < 0 || idx >= ws->stack_len[slot]) {
                     fprintf(stderr, "coeff_program scalar expression tos[%d] out of range for top vector length=%d\n",
                             idx, ws->stack_len[slot]);
@@ -4006,11 +4048,7 @@ static int coeffEvalScalarExpr(const CoeffProgram *program, int ref,
     return 0;
 }
 
-static int coeffArgValue(const CoeffProgram *program, const CoeffProgramToken *tok, int idx,
-                         double p1r, double p1i, double p2r, double p2i,
-                         double t1r, double t1i, double t2r, double t2i,
-                         const double *cfRe, const double *cfIm, int cfLen,
-                         const CoeffProgramWorkspace *ws,
+static int coeffArgValue(const CoeffEvalContext *ctx, const CoeffProgramToken *tok, int idx,
                          double *outR, double *outI) {
     if (idx < 0 || idx >= COEFF_PROGRAM_MAX_ARGS) {
         fprintf(stderr, "coeff_program token arg index %d out of range\n", idx);
@@ -4019,27 +4057,19 @@ static int coeffArgValue(const CoeffProgram *program, const CoeffProgramToken *t
     int ref = tok->expr_refs[idx];
     if (ref >= 0) {
         /* coeffEvalScalarExpr validates the ref range on entry. */
-        return coeffEvalScalarExpr(program, ref, p1r, p1i, p2r, p2i,
-                                   t1r, t1i, t2r, t2i,
-                                   cfRe, cfIm, cfLen, ws, outR, outI);
+        return coeffEvalScalarExpr(ctx, ref, outR, outI);
     }
     *outR = tok->args[idx];
     *outI = tok->args_im[idx];
     return 0;
 }
 
-static int coeffArgRealValue(const CoeffProgram *program, const CoeffProgramToken *tok, int idx,
-                             double p1r, double p1i, double p2r, double p2i,
-                             double t1r, double t1i, double t2r, double t2i,
-                             const double *cfRe, const double *cfIm, int cfLen,
-                             const CoeffProgramWorkspace *ws,
+static int coeffArgRealValue(const CoeffEvalContext *ctx, const CoeffProgramToken *tok, int idx,
                              double *out) {
     double vr = 0.0, vi = 0.0;
-    if (coeffArgValue(program, tok, idx, p1r, p1i, p2r, p2i,
-                      t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
-                      &vr, &vi) != 0) return 1;
-    if (fabs(vi) > 1e-12 || !isfinite(vr)) {
-        fprintf(stderr, "Coeff Program arg %d requires finite real value\n", idx);
+    if (coeffArgValue(ctx, tok, idx, &vr, &vi) != 0) return 1;
+    if (fabs(vi) > COEFF_PROGRAM_IMAG_TOL || !isfinite(vr)) {
+        fprintf(stderr, "coeff_program arg %d requires finite real value\n", idx);
         return 1;
     }
     *out = vr;
@@ -4048,44 +4078,37 @@ static int coeffArgRealValue(const CoeffProgram *program, const CoeffProgramToke
 
 static int coeffProgramIntegerFromReal(double value, const char *label, int *out) {
     double rounded = nearbyint(value);
+    /* 1e-9 absorbs float32 param roundoff while rejecting genuine fractions. */
     if (!isfinite(value) || fabs(value - rounded) > 1e-9) {
-        fprintf(stderr, "Coeff Program %s must be an integer, got %.17g\n", label, value);
+        fprintf(stderr, "coeff_program %s must be an integer, got %.17g\n", label, value);
         return 1;
     }
     if (rounded < (double)INT_MIN || rounded > (double)INT_MAX) {
-        fprintf(stderr, "Coeff Program %s is out of integer range\n", label);
+        fprintf(stderr, "coeff_program %s is out of integer range\n", label);
         return 1;
     }
     *out = (int)rounded;
     return 0;
 }
 
-static int coeffProgramLengthArg(const CoeffProgram *program, const CoeffProgramToken *tok, int idx,
-                                 double p1r, double p1i, double p2r, double p2i,
-                                 double t1r, double t1i, double t2r, double t2i,
-                                 const double *cfRe, const double *cfIm, int cfLen,
-                                 const CoeffProgramWorkspace *ws,
+static int coeffProgramLengthArg(const CoeffEvalContext *ctx, const CoeffProgramToken *tok, int idx,
                                  const char *label, int *outLen) {
+    const CoeffProgramWorkspace *ws = ctx->ws;
     if (idx < 0 || idx >= COEFF_PROGRAM_MAX_ARGS) {
         fprintf(stderr, "coeff_program %s arg index %d out of range\n", label, idx);
         return 1;
     }
+    /* -1.0 is the compiler's poly_len sentinel (POLY_LEN_SENTINEL). */
     if (tok->expr_refs[idx] < 0 && tok->args[idx] == -1.0) {
-        *outLen = ws ? ws->poly_len : 0;
+        *outLen = ws->poly_len;
         return 0;
     }
     double value = 0.0;
-    if (coeffArgRealValue(program, tok, idx, p1r, p1i, p2r, p2i,
-                          t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
-                          &value) != 0) return 1;
+    if (coeffArgRealValue(ctx, tok, idx, &value) != 0) return 1;
     return coeffProgramIntegerFromReal(value, label, outLen);
 }
 
-static int coeffAndyValue(const CoeffProgram *program, const CoeffProgramToken *tok,
-                          double p1r, double p1i, double p2r, double p2i,
-                          double t1r, double t1i, double t2r, double t2i,
-                          const double *cfRe, const double *cfIm, int cfLen,
-                          const CoeffProgramWorkspace *ws,
+static int coeffAndyValue(const CoeffEvalContext *ctx, const CoeffProgramToken *tok,
                           double *out) {
     if (!out) {
         fprintf(stderr, "coeff_program andy output pointer is NULL\n");
@@ -4094,13 +4117,11 @@ static int coeffAndyValue(const CoeffProgram *program, const CoeffProgramToken *
     if (tok->andy_expr_ref >= 0) {
         double ar = 0.0, ai = 0.0;
         /* coeffEvalScalarExpr validates the ref range on entry. */
-        if (coeffEvalScalarExpr(program, tok->andy_expr_ref, p1r, p1i, p2r, p2i,
-                                t1r, t1i, t2r, t2i,
-                                cfRe, cfIm, cfLen, ws, &ar, &ai) != 0) {
+        if (coeffEvalScalarExpr(ctx, tok->andy_expr_ref, &ar, &ai) != 0) {
             return 1;
         }
-        if (fabs(ai) > 1e-12 || !isfinite(ar)) {
-            fprintf(stderr, "Coeff Program andy expression is not real\n");
+        if (fabs(ai) > COEFF_PROGRAM_IMAG_TOL || !isfinite(ar)) {
+            fprintf(stderr, "coeff_program andy expression is not real\n");
             return 1;
         }
         *out = ar;
@@ -4169,7 +4190,7 @@ static int coeffLegacyApply(int fnIndex, double *re, double *im, int *n,
         case 27: return ct_roots_cm(re, im, n, nArgs > 0 ? coeffLegacyIntArg(args[0], 0) : 0);
         case 28: ct_roots(re, im, n, nArgs > 0 ? coeffLegacyIntArg(args[0], 8) : 8, nArgs > 1 ? coeffLegacyIntArg(args[1], 0) : 0); return 0;
         default:
-            fprintf(stderr, "unknown coeff legacy fn_index: %d\n", fnIndex);
+            fprintf(stderr, "coeff_program unknown legacy fn_index: %d\n", fnIndex);
             return 1;
     }
 }
@@ -4229,10 +4250,12 @@ static int coeffProgramTargetFromScratch(CoeffProgramWorkspace *ws, const CoeffP
     return 1;
 }
 
+/* ======== Coeff Program: per-op kernels ======== */
+
 /* Single implementations of the binary/unary op tables, shared by the
  * legacy vector opcodes (12/13) and the typed stack opcodes (23/24). The
  * tables used to be duplicated and had to be patched in two places. */
-static int coeffProgramApplyTypedBinary(int fnIndex,
+static int coeffProgramApplyBinaryFn(int fnIndex,
                                         double ar, double ai,
                                         double br, double bi,
                                         double *rr, double *ri) {
@@ -4251,7 +4274,7 @@ static int coeffProgramApplyTypedBinary(int fnIndex,
     } else if (fnIndex == COEFF_VEC_POWER) {
         c_powc(ar, ai, br, bi, rr, ri);
     } else {
-        fprintf(stderr, "Coeff Program unknown vector binary op: %d\n", fnIndex);
+        fprintf(stderr, "coeff_program unknown vector binary op: %d\n", fnIndex);
         return 1;
     }
     if (!isfinite(*rr)) *rr = 0.0;
@@ -4259,7 +4282,7 @@ static int coeffProgramApplyTypedBinary(int fnIndex,
     return 0;
 }
 
-static int coeffProgramApplyTypedUnary(int fnIndex,
+static int coeffProgramApplyUnaryFn(int fnIndex,
                                        double ar, double ai,
                                        double *rr, double *ri) {
     *rr = 0.0;
@@ -4301,7 +4324,7 @@ static int coeffProgramApplyTypedUnary(int fnIndex,
     } else if (fnIndex == COEFF_VEC_TANH) {
         c_tanh(ar, ai, rr, ri);
     } else {
-        fprintf(stderr, "Coeff Program unknown vector unary op: %d\n", fnIndex);
+        fprintf(stderr, "coeff_program unknown vector unary op: %d\n", fnIndex);
         return 1;
     }
     if (!isfinite(*rr)) *rr = 0.0;
@@ -4313,12 +4336,12 @@ static int coeffProgramBinaryVectorOp(CoeffProgramWorkspace *ws, const CoeffProg
     int n1 = ws->scratch_len;
     int n2 = ws->original_len;
     if (n1 != n2) {
-        fprintf(stderr, "Coeff Program vector binary length mismatch: %d vs %d\n", n1, n2);
+        fprintf(stderr, "coeff_program vector binary length mismatch: %d vs %d\n", n1, n2);
         return 1;
     }
     for (int i = 0; i < n1; i++) {
         double rr = 0.0, ri = 0.0;
-        if (coeffProgramApplyTypedBinary(tok->fn_index,
+        if (coeffProgramApplyBinaryFn(tok->fn_index,
                                          ws->scratch_re[i], ws->scratch_im[i],
                                          ws->original_re[i], ws->original_im[i],
                                          &rr, &ri) != 0) return 1;
@@ -4333,7 +4356,7 @@ static int coeffProgramUnaryVectorOp(CoeffProgramWorkspace *ws, const CoeffProgr
     int n = ws->scratch_len;
     for (int i = 0; i < n; i++) {
         double rr = 0.0, ri = 0.0;
-        if (coeffProgramApplyTypedUnary(tok->fn_index,
+        if (coeffProgramApplyUnaryFn(tok->fn_index,
                                         ws->scratch_re[i], ws->scratch_im[i],
                                         &rr, &ri) != 0) return 1;
         ws->scratch_re[i] = rr;
@@ -4349,7 +4372,7 @@ static int coeffProgramRollVectorOp(CoeffProgramWorkspace *ws, const CoeffProgra
         return 1;
     }
     if (!isfinite(tok->args[0])) {
-        fprintf(stderr, "Coeff Program roll shift must be finite\n");
+        fprintf(stderr, "coeff_program roll shift must be finite\n");
         return 1;
     }
     /* fmod keeps the conversion in range for all finite shifts (the raw
@@ -4372,7 +4395,7 @@ static int coeffProgramArgsortVectorOp(CoeffProgramWorkspace *ws) {
     int n1 = ws->scratch_len;
     int n2 = ws->original_len;
     if (n1 != n2) {
-        fprintf(stderr, "Coeff Program argsort length mismatch: %d vs %d\n", n1, n2);
+        fprintf(stderr, "coeff_program argsort length mismatch: %d vs %d\n", n1, n2);
         return 1;
     }
     uint16_t order[COEFF_PROGRAM_MAX_VECTOR_LEN];
@@ -4413,7 +4436,7 @@ static int coeffProgramTypedBinaryOp(CoeffProgramWorkspace *ws, const CoeffProgr
     int rightType = ws->stack_type[right];
     if (leftType == COEFF_STACK_SCALAR && rightType == COEFF_STACK_SCALAR) {
         double rr = 0.0, ri = 0.0;
-        if (coeffProgramApplyTypedBinary(tok->fn_index,
+        if (coeffProgramApplyBinaryFn(tok->fn_index,
                                          ws->stack_scalar_re[left], ws->stack_scalar_im[left],
                                          ws->stack_scalar_re[right], ws->stack_scalar_im[right],
                                          &rr, &ri) != 0) return 1;
@@ -4422,7 +4445,7 @@ static int coeffProgramTypedBinaryOp(CoeffProgramWorkspace *ws, const CoeffProgr
     int n = 0;
     if (leftType == COEFF_STACK_VECTOR && rightType == COEFF_STACK_VECTOR) {
         if (ws->stack_len[left] != ws->stack_len[right]) {
-            fprintf(stderr, "Coeff Program typed binary length mismatch: %d vs %d\n",
+            fprintf(stderr, "coeff_program typed binary length mismatch: %d vs %d\n",
                     ws->stack_len[left], ws->stack_len[right]);
             return 1;
         }
@@ -4432,7 +4455,7 @@ static int coeffProgramTypedBinaryOp(CoeffProgramWorkspace *ws, const CoeffProgr
     } else if (leftType == COEFF_STACK_SCALAR && rightType == COEFF_STACK_VECTOR) {
         n = ws->stack_len[right];
     } else {
-        fprintf(stderr, "Coeff Program typed binary received invalid stack types %d/%d\n",
+        fprintf(stderr, "coeff_program typed binary received invalid stack types %d/%d\n",
                 leftType, rightType);
         return 1;
     }
@@ -4442,7 +4465,7 @@ static int coeffProgramTypedBinaryOp(CoeffProgramWorkspace *ws, const CoeffProgr
         double ai = leftType == COEFF_STACK_VECTOR ? ws->stack_im[left][i] : ws->stack_scalar_im[left];
         double br = rightType == COEFF_STACK_VECTOR ? ws->stack_re[right][i] : ws->stack_scalar_re[right];
         double bi = rightType == COEFF_STACK_VECTOR ? ws->stack_im[right][i] : ws->stack_scalar_im[right];
-        if (coeffProgramApplyTypedBinary(tok->fn_index, ar, ai, br, bi,
+        if (coeffProgramApplyBinaryFn(tok->fn_index, ar, ai, br, bi,
                                          &ws->scratch_re[i], &ws->scratch_im[i]) != 0) return 1;
     }
     ws->scratch_len = (uint16_t)n;
@@ -4454,19 +4477,19 @@ static int coeffProgramTypedUnaryOp(CoeffProgramWorkspace *ws, const CoeffProgra
     if (coeff_stack_pop(ws, &slot) != 0) return 1;
     if (ws->stack_type[slot] == COEFF_STACK_SCALAR) {
         double rr = 0.0, ri = 0.0;
-        if (coeffProgramApplyTypedUnary(tok->fn_index,
+        if (coeffProgramApplyUnaryFn(tok->fn_index,
                                         ws->stack_scalar_re[slot], ws->stack_scalar_im[slot],
                                         &rr, &ri) != 0) return 1;
         return coeff_stack_push_scalar(ws, rr, ri);
     }
     if (ws->stack_type[slot] != COEFF_STACK_VECTOR) {
-        fprintf(stderr, "Coeff Program typed unary received invalid stack type %d\n", ws->stack_type[slot]);
+        fprintf(stderr, "coeff_program typed unary received invalid stack type %d\n", ws->stack_type[slot]);
         return 1;
     }
     int n = ws->stack_len[slot];
     if (coeff_program_check_len(n, "typed unary") != 0) return 1;
     for (int i = 0; i < n; i++) {
-        if (coeffProgramApplyTypedUnary(tok->fn_index,
+        if (coeffProgramApplyUnaryFn(tok->fn_index,
                                         ws->stack_re[slot][i], ws->stack_im[slot][i],
                                         &ws->scratch_re[i], &ws->scratch_im[i]) != 0) return 1;
     }
@@ -4479,8 +4502,8 @@ static int coeffProgramTypedIndexFromSlot(const CoeffProgramWorkspace *ws,
                                           const char *label,
                                           int *idx) {
     if (coeff_stack_require_scalar(ws, slot, label) != 0) return 1;
-    if (fabs(ws->stack_scalar_im[slot]) > 1e-12) {
-        fprintf(stderr, "Coeff Program %s index must be real\n", label);
+    if (fabs(ws->stack_scalar_im[slot]) > COEFF_PROGRAM_IMAG_TOL) {
+        fprintf(stderr, "coeff_program %s index must be real\n", label);
         return 1;
     }
     return coeffProgramIntegerFromReal(ws->stack_scalar_re[slot], label, idx);
@@ -4494,7 +4517,7 @@ static int coeffProgramTypedGetScalar(CoeffProgramWorkspace *ws) {
     if (coeffProgramTypedIndexFromSlot(ws, indexSlot, "get_scalar", &idx) != 0) return 1;
     if (coeff_stack_require_vector(ws, vectorSlot, "get_scalar") != 0) return 1;
     if (idx < 0 || idx >= ws->stack_len[vectorSlot]) {
-        fprintf(stderr, "Coeff Program get_scalar index %d out of range for vector length %d\n",
+        fprintf(stderr, "coeff_program get_scalar index %d out of range for vector length %d\n",
                 idx, ws->stack_len[vectorSlot]);
         return 1;
     }
@@ -4519,7 +4542,7 @@ static int coeffProgramTypedPokePoly(CoeffProgramWorkspace *ws) {
     if (coeffProgramTypedIndexFromSlot(ws, indexSlot, "typed_poke_poly", &idx) != 0) return 1;
     if (coeff_stack_require_scalar(ws, valueSlot, "typed_poke_poly value") != 0) return 1;
     if (idx < 0 || idx >= ws->poly_len) {
-        fprintf(stderr, "Coeff Program typed_poke_poly index %d out of range for poly length %d\n",
+        fprintf(stderr, "coeff_program typed_poke_poly index %d out of range for poly length %d\n",
                 idx, ws->poly_len);
         return 1;
     }
@@ -4554,7 +4577,7 @@ static int coeffProgramBlendTopVectors(CoeffProgramWorkspace *ws, double t, cons
     if (coeff_stack_require_vector(ws, below, label) != 0) return 1;
     int nTop = ws->stack_len[top], nBelow = ws->stack_len[below];
     if (nTop != nBelow) {
-        fprintf(stderr, "Coeff Program %s length mismatch: %d vs %d\n", label, nTop, nBelow);
+        fprintf(stderr, "coeff_program %s length mismatch: %d vs %d\n", label, nTop, nBelow);
         return 1;
     }
     for (int i = 0; i < nTop; i++) {
@@ -4569,27 +4592,24 @@ static int coeffProgramTypedBlend(CoeffProgramWorkspace *ws) {
     uint16_t tSlot = 0;
     if (coeff_stack_pop(ws, &tSlot) != 0) return 1;
     if (coeff_stack_require_scalar(ws, tSlot, "typed_blend t") != 0) return 1;
-    if (fabs(ws->stack_scalar_im[tSlot]) > 1e-12 || !isfinite(ws->stack_scalar_re[tSlot])) {
-        fprintf(stderr, "Coeff Program typed_blend requires finite real t\n");
+    if (fabs(ws->stack_scalar_im[tSlot]) > COEFF_PROGRAM_IMAG_TOL || !isfinite(ws->stack_scalar_re[tSlot])) {
+        fprintf(stderr, "coeff_program typed_blend requires finite real t\n");
         return 1;
     }
     return coeffProgramBlendTopVectors(ws, ws->stack_scalar_re[tSlot], "typed_blend");
 }
 
-static int coeffProgramNativeTransformOp(const CoeffProgram *program,
+static int coeffProgramNativeTransformOp(const CoeffEvalContext *ctx,
                                          const CoeffProgramToken *tok,
-                                         CoeffProgramWorkspace *ws,
-                                         const double *cfRe, const double *cfIm, int cfLen,
-                                         double p1r, double p1i,
-                                         double p2r, double p2i,
-                                         double t1r, double t1i,
-                                         double t2r, double t2i,
                                          const char *label) {
+    CoeffProgramWorkspace *ws = ctx->ws;
+    const double *cfRe = ctx->cfRe;
+    const double *cfIm = ctx->cfIm;
+    const int cfLen = ctx->cfLen;
     double args[COEFF_PROGRAM_MAX_ARGS];
     int legacyArgCount = tok->n_args;
     double andy = 0.0;
-    if (coeffAndyValue(program, tok, p1r, p1i, p2r, p2i,
-                       t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &andy) != 0) return 1;
+    if (coeffAndyValue(ctx, tok, &andy) != 0) return 1;
     if (tok->stack_arg_count > 0) {
         double stackR[COEFF_PROGRAM_MAX_ARGS];
         double stackI[COEFF_PROGRAM_MAX_ARGS];
@@ -4604,9 +4624,11 @@ static int coeffProgramNativeTransformOp(const CoeffProgram *program,
          * whose source syntax packs complex user args into the legacy real
          * component layout expected by coeffLegacyApply.
          */
-        if (tok->fn_index == 14) {
+        if (tok->fn_index == 14 || tok->fn_index == 16) {
+            /* linear and exp share the packing: (multiplier, offset) complex
+             * pair into four real components. */
             if (tok->stack_arg_count > 2) {
-                fprintf(stderr, "Coeff Program %s linear expects at most 2 stack args\n", label);
+                fprintf(stderr, "coeff_program %s linear/exp expects at most 2 stack args\n", label);
                 return 1;
             }
             /* Gated on stack_arg_count > 0, so the first arg is always
@@ -4617,20 +4639,9 @@ static int coeffProgramNativeTransformOp(const CoeffProgram *program,
             double bi = tok->stack_arg_count >= 2 ? stackI[1] : 0.0;
             args[0] = mr; args[1] = mi; args[2] = br; args[3] = bi;
             legacyArgCount = 4;
-        } else if (tok->fn_index == 16) {
-            if (tok->stack_arg_count > 2) {
-                fprintf(stderr, "Coeff Program %s exp expects at most 2 stack args\n", label);
-                return 1;
-            }
-            double mr = stackR[0];
-            double mi = stackI[0];
-            double br = tok->stack_arg_count >= 2 ? stackR[1] : 0.0;
-            double bi = tok->stack_arg_count >= 2 ? stackI[1] : 0.0;
-            args[0] = mr; args[1] = mi; args[2] = br; args[3] = bi;
-            legacyArgCount = 4;
         } else if (tok->fn_index == 23) {
             if (tok->stack_arg_count > 1) {
-                fprintf(stderr, "Coeff Program %s round expects at most 1 stack arg\n", label);
+                fprintf(stderr, "coeff_program %s round expects at most 1 stack arg\n", label);
                 return 1;
             }
             args[0] = stackR[0];
@@ -4638,7 +4649,7 @@ static int coeffProgramNativeTransformOp(const CoeffProgram *program,
             legacyArgCount = 2;
         } else if (tok->fn_index == 24) {
             if (tok->stack_arg_count > 2) {
-                fprintf(stderr, "Coeff Program %s pow expects at most 2 stack args\n", label);
+                fprintf(stderr, "coeff_program %s pow expects at most 2 stack args\n", label);
                 return 1;
             }
             double mr = stackR[0];
@@ -4649,8 +4660,8 @@ static int coeffProgramNativeTransformOp(const CoeffProgram *program,
             legacyArgCount = 4;
         } else {
             for (int i = 0; i < tok->stack_arg_count; i++) {
-                if (fabs(stackI[i]) > 1e-12) {
-                    fprintf(stderr, "Coeff Program %s arg %d is not real\n", label, i);
+                if (fabs(stackI[i]) > COEFF_PROGRAM_IMAG_TOL) {
+                    fprintf(stderr, "coeff_program %s arg %d is not real\n", label, i);
                     return 1;
                 }
                 args[i] = stackR[i];
@@ -4661,29 +4672,24 @@ static int coeffProgramNativeTransformOp(const CoeffProgram *program,
     }
     if (tok->fn_index == 14 && tok->n_args == 2) {
         double mr = 100.0, mi = 0.0, offR = 0.0, offI = 0.0;
-        if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i,
-                          t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &mr, &mi) != 0) return 1;
-        if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i,
-                          t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &offR, &offI) != 0) return 1;
+        if (coeffArgValue(ctx, tok, 0, &mr, &mi) != 0) return 1;
+        if (coeffArgValue(ctx, tok, 1, &offR, &offI) != 0) return 1;
         args[0] = mr; args[1] = mi; args[2] = offR; args[3] = offI;
         legacyArgCount = 4;
     } else if (tok->fn_index == 24 && tok->n_args == 2) {
         /* fn16 (exp) static args always arrive as four real components and
          * take the generic loop below — no special packing needed. */
         double mr = 1.0, mi = 0.0, expR = 1.0, expI = 0.0;
-        if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i,
-                          t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &mr, &mi) != 0) return 1;
-        if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i,
-                          t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &expR, &expI) != 0) return 1;
+        if (coeffArgValue(ctx, tok, 0, &mr, &mi) != 0) return 1;
+        if (coeffArgValue(ctx, tok, 1, &expR, &expI) != 0) return 1;
         args[0] = mr; args[1] = mi; args[2] = expR; args[3] = expI;
         legacyArgCount = 4;
     } else {
         for (int i = 0; i < tok->n_args; i++) {
             double ar = 0.0, ai = 0.0;
-            if (coeffArgValue(program, tok, i, p1r, p1i, p2r, p2i,
-                              t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &ar, &ai) != 0) return 1;
-            if (fabs(ai) > 1e-12) {
-                fprintf(stderr, "Coeff Program %s arg %d is not real\n", label, i);
+            if (coeffArgValue(ctx, tok, i, &ar, &ai) != 0) return 1;
+            if (fabs(ai) > COEFF_PROGRAM_IMAG_TOL) {
+                fprintf(stderr, "coeff_program %s arg %d is not real\n", label, i);
                 return 1;
             }
             args[i] = ar;
@@ -4735,28 +4741,24 @@ static uint64_t coeffProgramLittlewoodSeed(uint64_t evalSeed, int tokenIndex,
     return seed ? seed : 0x9e3779b97f4a7c15ULL;
 }
 
-static int coeffProgramLittlewoodOp(const CoeffProgram *program,
+static int coeffProgramLittlewoodOp(const CoeffEvalContext *ctx,
                                     const CoeffProgramToken *tok,
-                                    CoeffProgramWorkspace *ws,
-                                    const double *cfRe, const double *cfIm, int cfLen,
                                     int tokenIndex,
-                                    uint64_t evalSeed,
-                                    double p1r, double p1i,
-                                    double p2r, double p2i,
-                                    double t1r, double t1i,
-                                    double t2r, double t2i) {
+                                    uint64_t evalSeed) {
+    CoeffProgramWorkspace *ws = ctx->ws;
+    const double p1r = ctx->p1r, p1i = ctx->p1i, p2r = ctx->p2r, p2i = ctx->p2i;
     double aR = 0.0, aI = 0.0, bR = 0.0, bI = 0.0, andy = 0.0, andyI = 0.0;
-    if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &aR, &aI) != 0) return 1;
-    if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &bR, &bI) != 0) return 1;
+    if (coeffArgValue(ctx, tok, 0, &aR, &aI) != 0) return 1;
+    if (coeffArgValue(ctx, tok, 1, &bR, &bI) != 0) return 1;
     if (tok->n_args > 2) {
-        if (coeffArgValue(program, tok, 2, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &andy, &andyI) != 0) return 1;
-        if (fabs(andyI) > 1e-12 || !isfinite(andy)) {
-            fprintf(stderr, "Coeff Program littlewood andy requires finite real value\n");
+        if (coeffArgValue(ctx, tok, 2, &andy, &andyI) != 0) return 1;
+        if (fabs(andyI) > COEFF_PROGRAM_IMAG_TOL || !isfinite(andy)) {
+            fprintf(stderr, "coeff_program littlewood andy requires finite real value\n");
             return 1;
         }
     }
     if (!isfinite(aR) || !isfinite(aI) || !isfinite(bR) || !isfinite(bI)) {
-        fprintf(stderr, "Coeff Program littlewood fields must be finite\n");
+        fprintf(stderr, "coeff_program littlewood fields must be finite\n");
         return 1;
     }
     int n = ws->poly_len;
@@ -4786,6 +4788,308 @@ static int coeffProgramLittlewoodOp(const CoeffProgram *program,
     return coeffProgramTargetFromScratch(ws, tok);
 }
 
+
+/* ======== Coeff Program: evaluator ======== */
+
+/* Per-opcode handlers for evalCoeffProgram's dispatch switch. */
+
+static int coeffProgramConstOp(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
+    CoeffProgramWorkspace *ws = ctx->ws;
+    double vr = 0.0, vi = 0.0;
+    int len = 0;
+    if (coeffProgramLengthArg(ctx, tok, 0, "push_const length", &len) != 0) return 1;
+    if (coeffArgValue(ctx, tok, 1, &vr, &vi) != 0) return 1;
+    if (coeff_program_check_len(len, "push_const") != 0) return 1;
+    for (int i = 0; i < len; i++) { ws->scratch_re[i] = vr; ws->scratch_im[i] = vi; }
+    ws->scratch_len = (uint16_t)len;
+    return coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, len);
+}
+
+static int coeffProgramLinspaceOp(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
+    CoeffProgramWorkspace *ws = ctx->ws;
+    int len = 0;
+    double start = 0.0, stop = 0.0, countValue = 0.0;
+    if (tok->n_args <= 1) {
+        if (coeffProgramLengthArg(ctx, tok, 0, "push_linspace length", &len) != 0) return 1;
+        stop = (double)len;
+    } else if (tok->n_args == 3) {
+        if (coeffArgRealValue(ctx, tok, 0, &start) != 0) return 1;
+        if (coeffArgRealValue(ctx, tok, 1, &stop) != 0) return 1;
+        if (coeffArgRealValue(ctx, tok, 2, &countValue) != 0) return 1;
+        if (coeffProgramIntegerFromReal(countValue, "push_linspace count", &len) != 0) return 1;
+    } else {
+        fprintf(stderr, "coeff_program push_linspace expects 1 or 3 args, got %d\n", tok->n_args);
+        return 1;
+    }
+    if (coeff_program_check_len(len, "push_linspace") != 0) return 1;
+    double denom = len > 1 ? (double)(len - 1) : 1.0;
+    for (int i = 0; i < len; i++) {
+        ws->scratch_re[i] = len > 1 ? start + (stop - start) * (double)i / denom : start;
+        ws->scratch_im[i] = 0.0;
+    }
+    ws->scratch_len = (uint16_t)len;
+    return coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, len);
+}
+
+static int coeffProgramRangeOp(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
+    CoeffProgramWorkspace *ws = ctx->ws;
+    int len = 0;
+    double start = 0.0, stop = 0.0, step = 1.0;
+    if (tok->n_args <= 1) {
+        if (coeffProgramLengthArg(ctx, tok, 0, "push_range length", &len) != 0) return 1;
+        stop = (double)len;
+    } else {
+        if (coeffArgRealValue(ctx, tok, 0, &start) != 0) return 1;
+        if (coeffArgRealValue(ctx, tok, 1, &stop) != 0) return 1;
+        if (tok->n_args >= 3 &&
+            coeffArgRealValue(ctx, tok, 2, &step) != 0) return 1;
+        if (!isfinite(step) || fabs(step) <= 1e-300) {
+            fprintf(stderr, "coeff_program push_range step must be finite and non-zero\n");
+            return 1;
+        }
+        double span = (stop - start) / step;
+        if (!isfinite(span) || span > (double)COEFF_PROGRAM_MAX_VECTOR_LEN) {
+            fprintf(stderr, "coeff_program push_range span %g exceeds max vector length %d\n",
+                    span, COEFF_PROGRAM_MAX_VECTOR_LEN);
+            return 1;
+        }
+        len = span > 0.0 ? (int)ceil(span - 1e-12) : 0;
+    }
+    if (coeff_program_check_len(len, "push_range") != 0) return 1;
+    for (int i = 0; i < len; i++) {
+        ws->scratch_re[i] = start + step * (double)i;
+        ws->scratch_im[i] = 0.0;
+    }
+    ws->scratch_len = (uint16_t)len;
+    return coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, len);
+}
+
+static int coeffProgramSetOp(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
+    CoeffProgramWorkspace *ws = ctx->ws;
+    if (coeffProgramSourceToScratch(ctx->cfRe, ctx->cfIm, ctx->cfLen, ws, tok) != 0) return 1;
+    if (tok->tgt != COEFF_SEL_POLY) {
+        fprintf(stderr, "coeff_program set target must be poly\n");
+        return 1;
+    }
+    return coeffProgramTargetFromScratch(ws, tok);
+}
+
+static int coeffProgramAffineOp(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
+    CoeffProgramWorkspace *ws = ctx->ws;
+    double ar = 1.0, ai = 0.0, br = 0.0, bi = 0.0;
+    if (coeffProgramSourceToScratch(ctx->cfRe, ctx->cfIm, ctx->cfLen, ws, tok) != 0) return 1;
+    if (coeffArgValue(ctx, tok, 0, &ar, &ai) != 0) return 1;
+    if (coeffArgValue(ctx, tok, 1, &br, &bi) != 0) return 1;
+    for (int i = 0; i < ws->scratch_len; i++) {
+        double rr = 0.0, ri = 0.0;
+        c_mul(ws->scratch_re[i], ws->scratch_im[i], ar, ai, &rr, &ri);
+        rr += br;
+        ri += bi;
+        ws->scratch_re[i] = isfinite(rr) ? rr : 0.0;
+        ws->scratch_im[i] = isfinite(ri) ? ri : 0.0;
+    }
+    return coeffProgramTargetFromScratch(ws, tok);
+}
+
+static int coeffProgramPushOp(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
+    CoeffProgramWorkspace *ws = ctx->ws;
+    if (tok->src == COEFF_SEL_CF) {
+        return coeff_stack_push(ws, ctx->cfRe, ctx->cfIm, ctx->cfLen);
+    }
+    if (tok->src == COEFF_SEL_POLY) {
+        return coeff_stack_push(ws, ws->poly_re, ws->poly_im, ws->poly_len);
+    }
+    fprintf(stderr, "invalid coeff_program push source: %d\n", tok->src);
+    return 1;
+}
+
+static int coeffProgramEmitOp(CoeffProgramWorkspace *ws) {
+    /* emit commits the stack top to poly; on an empty stack it is a
+     * deliberate no-op ("commit current poly" marker) — the Python
+     * validator documents the same contract. */
+    uint16_t slot = 0;
+    if (ws->stack_depth == 0) return 0;
+    if (coeff_stack_pop(ws, &slot) != 0) return 1;
+    if (coeff_stack_require_vector(ws, slot, "emit") != 0) return 1;
+    coeff_vec_copy(ws->poly_re, ws->poly_im, ws->stack_re[slot], ws->stack_im[slot], ws->stack_len[slot]);
+    ws->poly_len = ws->stack_len[slot];
+    return 0;
+}
+
+static int coeffProgramDuplicateOp(CoeffProgramWorkspace *ws) {
+    uint16_t slot = 0;
+    if (coeff_stack_peek(ws, &slot) != 0) return 1;
+    if (ws->stack_type[slot] == COEFF_STACK_SCALAR) {
+        return coeff_stack_push_scalar(ws, ws->stack_scalar_re[slot], ws->stack_scalar_im[slot]);
+    }
+    if (ws->stack_type[slot] == COEFF_STACK_VECTOR) {
+        return coeff_stack_push(ws, ws->stack_re[slot], ws->stack_im[slot], ws->stack_len[slot]);
+    }
+    fprintf(stderr, "coeff_program duplicate received invalid stack type %d\n", ws->stack_type[slot]);
+    return 1;
+}
+
+static int coeffProgramSwapOp(CoeffProgramWorkspace *ws) {
+    if (ws->stack_depth < 2) {
+        fprintf(stderr, "coeff_program swap needs stack depth >=2\n");
+        return 1;
+    }
+    uint16_t top = coeff_stack_top_slot(ws);
+    uint16_t below = (uint16_t)((ws->stack_head + COEFF_PROGRAM_MAX_VECTOR_STACK - 2) % COEFF_PROGRAM_MAX_VECTOR_STACK);
+    int topType = ws->stack_type[top];
+    int belowType = ws->stack_type[below];
+    int lenTop = ws->stack_len[top], lenBelow = ws->stack_len[below];
+    double topScalarRe = ws->stack_scalar_re[top], topScalarIm = ws->stack_scalar_im[top];
+    if (topType == COEFF_STACK_VECTOR) {
+        coeff_vec_copy(ws->scratch_re, ws->scratch_im, ws->stack_re[top], ws->stack_im[top], lenTop);
+    }
+    if (belowType == COEFF_STACK_VECTOR) {
+        coeff_vec_copy(ws->stack_re[top], ws->stack_im[top], ws->stack_re[below], ws->stack_im[below], lenBelow);
+    } else {
+        ws->stack_scalar_re[top] = ws->stack_scalar_re[below];
+        ws->stack_scalar_im[top] = ws->stack_scalar_im[below];
+    }
+    if (topType == COEFF_STACK_VECTOR) {
+        coeff_vec_copy(ws->stack_re[below], ws->stack_im[below], ws->scratch_re, ws->scratch_im, lenTop);
+    } else {
+        ws->stack_scalar_re[below] = topScalarRe;
+        ws->stack_scalar_im[below] = topScalarIm;
+    }
+    ws->stack_type[top] = (uint8_t)belowType;
+    ws->stack_type[below] = (uint8_t)topType;
+    ws->stack_len[top] = (uint16_t)lenBelow;
+    ws->stack_len[below] = (uint16_t)lenTop;
+    return 0;
+}
+
+static int coeffProgramBlendOp(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
+    double t = 0.0, ti = 0.0;
+    if (coeffArgValue(ctx, tok, 0, &t, &ti) != 0) return 1;
+    if (fabs(ti) > COEFF_PROGRAM_IMAG_TOL || !isfinite(t)) {
+        fprintf(stderr, "coeff_program blend(t) requires finite real t\n");
+        return 1;
+    }
+    return coeffProgramBlendTopVectors(ctx->ws, t, "blend");
+}
+
+static int coeffProgramPokePolyOp(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
+    CoeffProgramWorkspace *ws = ctx->ws;
+    int idx = 0;
+    double vr = 0.0, vi = 0.0;
+    if (coeffProgramIntegerFromReal(tok->args[0], "poke_poly index", &idx) != 0) return 1;
+    if (idx < 0 || idx >= ws->poly_len) {
+        fprintf(stderr, "coeff_program poke_poly index %d out of range for poly length %d\n",
+                idx, ws->poly_len);
+        return 1;
+    }
+    if (coeffArgValue(ctx, tok, 1, &vr, &vi) != 0) return 1;
+    if (!isfinite(vr) || !isfinite(vi)) {
+        fprintf(stderr, "coeff_program poke_poly value is non-finite\n");
+        return 1;
+    }
+    ws->poly_re[idx] = vr;
+    ws->poly_im[idx] = vi;
+    return 0;
+}
+
+static int coeffProgramPokeTosOp(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
+    CoeffProgramWorkspace *ws = ctx->ws;
+    uint16_t slot = 0;
+    int idx = 0;
+    double vr = 0.0, vi = 0.0;
+    if (coeffProgramIntegerFromReal(tok->args[0], "poke_tos index", &idx) != 0) return 1;
+    if (coeff_stack_peek(ws, &slot) != 0) return 1;
+    if (coeff_stack_require_vector(ws, slot, "poke_tos") != 0) return 1;
+    if (idx < 0 || idx >= ws->stack_len[slot]) {
+        fprintf(stderr, "coeff_program poke_tos index %d out of range for top vector length %d\n",
+                idx, ws->stack_len[slot]);
+        return 1;
+    }
+    if (coeffArgValue(ctx, tok, 1, &vr, &vi) != 0) return 1;
+    if (!isfinite(vr) || !isfinite(vi)) {
+        fprintf(stderr, "coeff_program poke_tos value is non-finite\n");
+        return 1;
+    }
+    ws->stack_re[slot][idx] = vr;
+    ws->stack_im[slot][idx] = vi;
+    return 0;
+}
+
+static int coeffProgramVectorSrc2(const CoeffProgramToken *tok, int *src2) {
+    if (!(tok->args[0] >= (double)COEFF_SEL_CF && tok->args[0] <= (double)COEFF_SEL_PUSH)) {
+        fprintf(stderr, "coeff_program vector src2 selector out of range\n");
+        return 1;
+    }
+    *src2 = (int)tok->args[0];
+    return 0;
+}
+
+static int coeffProgramVectorBinaryDispatch(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
+    CoeffProgramWorkspace *ws = ctx->ws;
+    int src2 = 0;
+    if (coeffProgramVectorSrc2(tok, &src2) != 0) return 1;
+    if (coeffProgramReadSourceToBuffer(ctx->cfRe, ctx->cfIm, ctx->cfLen, ws, tok->src,
+                                       ws->scratch_re, ws->scratch_im, &ws->scratch_len) != 0) return 1;
+    if (coeffProgramReadSourceToBuffer(ctx->cfRe, ctx->cfIm, ctx->cfLen, ws, src2,
+                                       ws->original_re, ws->original_im, &ws->original_len) != 0) return 1;
+    if (coeffProgramBinaryVectorOp(ws, tok) != 0) return 1;
+    return coeffProgramTargetFromScratch(ws, tok);
+}
+
+static int coeffProgramVectorUnaryDispatch(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
+    CoeffProgramWorkspace *ws = ctx->ws;
+    if (coeffProgramSourceToScratch(ctx->cfRe, ctx->cfIm, ctx->cfLen, ws, tok) != 0) return 1;
+    if (coeffProgramUnaryVectorOp(ws, tok) != 0) return 1;
+    return coeffProgramTargetFromScratch(ws, tok);
+}
+
+static int coeffProgramVectorRollDispatch(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
+    CoeffProgramWorkspace *ws = ctx->ws;
+    if (coeffProgramSourceToScratch(ctx->cfRe, ctx->cfIm, ctx->cfLen, ws, tok) != 0) return 1;
+    if (coeffProgramRollVectorOp(ws, tok) != 0) return 1;
+    return coeffProgramTargetFromScratch(ws, tok);
+}
+
+static int coeffProgramArgsortDispatch(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
+    CoeffProgramWorkspace *ws = ctx->ws;
+    int src2 = 0;
+    if (coeffProgramVectorSrc2(tok, &src2) != 0) return 1;
+    if (coeffProgramReadSourceToBuffer(ctx->cfRe, ctx->cfIm, ctx->cfLen, ws, tok->src,
+                                       ws->scratch_re, ws->scratch_im, &ws->scratch_len) != 0) return 1;
+    if (coeffProgramReadSourceToBuffer(ctx->cfRe, ctx->cfIm, ctx->cfLen, ws, src2,
+                                       ws->original_re, ws->original_im, &ws->original_len) != 0) return 1;
+    if (coeffProgramArgsortVectorOp(ws) != 0) return 1;
+    return coeffProgramTargetFromScratch(ws, tok);
+}
+
+static int coeffProgramTypedPushScalarOp(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
+    CoeffProgramWorkspace *ws = ctx->ws;
+    double vr = 0.0, vi = 0.0;
+    if (tok->fn_index == COEFF_SCALAR_SRC_P1) {
+        vr = ctx->p1r; vi = ctx->p1i;
+    } else if (tok->fn_index == COEFF_SCALAR_SRC_P2) {
+        vr = ctx->p2r; vi = ctx->p2i;
+    } else if (tok->fn_index == COEFF_SCALAR_SRC_T1) {
+        vr = ctx->t1r; vi = ctx->t1i;
+    } else if (tok->fn_index == COEFF_SCALAR_SRC_T2) {
+        vr = ctx->t2r; vi = ctx->t2i;
+    } else if (tok->fn_index == COEFF_SCALAR_SRC_POLY_LEN) {
+        vr = (double)ws->poly_len; vi = 0.0;
+    } else if (tok->fn_index == 0) {
+        if (coeffArgValue(ctx, tok, 0, &vr, &vi) != 0) return 1;
+    } else {
+        fprintf(stderr, "coeff_program unknown typed scalar source %d\n", tok->fn_index);
+        return 1;
+    }
+    return coeff_stack_push_scalar(ws, vr, vi);
+}
+
+static int coeffProgramTypedPushVectorOp(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
+    CoeffProgramWorkspace *ws = ctx->ws;
+    if (coeffProgramSourceToScratch(ctx->cfRe, ctx->cfIm, ctx->cfLen, ws, tok) != 0) return 1;
+    return coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, ws->scratch_len);
+}
+
 static int evalCoeffProgram(const CoeffProgram *program,
                             double p1r, double p1i, double p2r, double p2i,
                             double t1r, double t1i, double t2r, double t2i,
@@ -4804,304 +5108,65 @@ static int evalCoeffProgram(const CoeffProgram *program,
     coeff_vec_copy(ws->poly_re, ws->poly_im, cfRe, cfIm, cfLen);
     ws->poly_len = (uint16_t)cfLen;
 
+    const CoeffEvalContext ctxStorage = {
+        .program = program,
+        .p1r = p1r, .p1i = p1i, .p2r = p2r, .p2i = p2i,
+        .t1r = t1r, .t1i = t1i, .t2r = t2r, .t2i = t2i,
+        .cfRe = cfRe, .cfIm = cfIm, .cfLen = cfLen,
+        .ws = ws,
+    };
+    const CoeffEvalContext *ctx = &ctxStorage;
+
     for (int k = 0; k < program->token_count; k++) {
         const CoeffProgramToken *tok = &program->tokens[k];
-        if (tok->op == COEFF_OP_CONST) {
-            double vr = 0.0, vi = 0.0;
-            int len = 0;
-            if (coeffProgramLengthArg(program, tok, 0, p1r, p1i, p2r, p2i,
-                                      t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
-                                      "push_const length", &len) != 0) return 1;
-            if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &vr, &vi) != 0) return 1;
-            if (coeff_program_check_len(len, "push_const") != 0) return 1;
-            for (int i = 0; i < len; i++) { ws->scratch_re[i] = vr; ws->scratch_im[i] = vi; }
-            ws->scratch_len = (uint16_t)len;
-            if (coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, len) != 0) return 1;
-        } else if (tok->op == COEFF_OP_LINSPACE) {
-            int len = 0;
-            double start = 0.0, stop = 0.0, countValue = 0.0;
-            if (tok->n_args <= 1) {
-                if (coeffProgramLengthArg(program, tok, 0, p1r, p1i, p2r, p2i,
-                                          t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
-                                          "push_linspace length", &len) != 0) return 1;
-                stop = (double)len;
-            } else if (tok->n_args == 3) {
-                if (coeffArgRealValue(program, tok, 0, p1r, p1i, p2r, p2i,
-                                      t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
-                                      &start) != 0) return 1;
-                if (coeffArgRealValue(program, tok, 1, p1r, p1i, p2r, p2i,
-                                      t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
-                                      &stop) != 0) return 1;
-                if (coeffArgRealValue(program, tok, 2, p1r, p1i, p2r, p2i,
-                                      t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
-                                      &countValue) != 0) return 1;
-                if (coeffProgramIntegerFromReal(countValue, "push_linspace count", &len) != 0) return 1;
-            } else {
-                fprintf(stderr, "push_linspace expects 1 or 3 args, got %d\n", tok->n_args);
+        int rc = 0;
+        switch (tok->op) {  /* cases in COEFF_OP_* enum order */
+            case COEFF_OP_CONST:             rc = coeffProgramConstOp(ctx, tok); break;
+            case COEFF_OP_PUSH:              rc = coeffProgramPushOp(ctx, tok); break;
+            case COEFF_OP_EMIT:              rc = coeffProgramEmitOp(ws); break;
+            case COEFF_OP_DUPLICATE:         rc = coeffProgramDuplicateOp(ws); break;
+            case COEFF_OP_SWAP:              rc = coeffProgramSwapOp(ws); break;
+            case COEFF_OP_POP: {
+                uint16_t slot = 0;
+                rc = coeff_stack_pop(ws, &slot);
+                break;
+            }
+            case COEFF_OP_FLUSH:
+                ws->stack_depth = 0;
+                ws->stack_head = 0;
+                break;
+            case COEFF_OP_BLEND:             rc = coeffProgramBlendOp(ctx, tok); break;
+            case COEFF_OP_LEGACY:            rc = coeffProgramNativeTransformOp(ctx, tok, "legacy"); break;
+            case COEFF_OP_POKE_POLY:         rc = coeffProgramPokePolyOp(ctx, tok); break;
+            case COEFF_OP_POKE_TOS:          rc = coeffProgramPokeTosOp(ctx, tok); break;
+            case COEFF_OP_VECTOR_BINARY:     rc = coeffProgramVectorBinaryDispatch(ctx, tok); break;
+            case COEFF_OP_VECTOR_UNARY:      rc = coeffProgramVectorUnaryDispatch(ctx, tok); break;
+            case COEFF_OP_VECTOR_ROLL:       rc = coeffProgramVectorRollDispatch(ctx, tok); break;
+            case COEFF_OP_VECTOR_ARGSORT:    rc = coeffProgramArgsortDispatch(ctx, tok); break;
+            case COEFF_OP_LITTLEWOOD:        rc = coeffProgramLittlewoodOp(ctx, tok, k, evalSeed); break;
+            case COEFF_OP_LINSPACE:          rc = coeffProgramLinspaceOp(ctx, tok); break;
+            case COEFF_OP_RANGE:             rc = coeffProgramRangeOp(ctx, tok); break;
+            case COEFF_OP_SET:               rc = coeffProgramSetOp(ctx, tok); break;
+            case COEFF_OP_AFFINE:            rc = coeffProgramAffineOp(ctx, tok); break;
+            case COEFF_OP_TYPED_PUSH_SCALAR: rc = coeffProgramTypedPushScalarOp(ctx, tok); break;
+            case COEFF_OP_TYPED_PUSH_VECTOR: rc = coeffProgramTypedPushVectorOp(ctx, tok); break;
+            case COEFF_OP_TYPED_BINARY:      rc = coeffProgramTypedBinaryOp(ws, tok); break;
+            case COEFF_OP_TYPED_UNARY:       rc = coeffProgramTypedUnaryOp(ws, tok); break;
+            case COEFF_OP_TYPED_GET_SCALAR:  rc = coeffProgramTypedGetScalar(ws); break;
+            case COEFF_OP_TYPED_SET_POLY:    rc = coeffProgramTypedSetPoly(ws); break;
+            case COEFF_OP_TYPED_POKE_POLY:   rc = coeffProgramTypedPokePoly(ws); break;
+            case COEFF_OP_TYPED_FILL:        rc = coeffProgramTypedFill(ws); break;
+            case COEFF_OP_NATIVE_TRANSFORM:  rc = coeffProgramNativeTransformOp(ctx, tok, "native transform"); break;
+            case COEFF_OP_TYPED_BLEND:       rc = coeffProgramTypedBlend(ws); break;
+            default:
+                fprintf(stderr, "unknown coeff_program opcode: %d\n", tok->op);
                 return 1;
-            }
-            if (coeff_program_check_len(len, "push_linspace") != 0) return 1;
-            double denom = len > 1 ? (double)(len - 1) : 1.0;
-            for (int i = 0; i < len; i++) {
-                ws->scratch_re[i] = len > 1 ? start + (stop - start) * (double)i / denom : start;
-                ws->scratch_im[i] = 0.0;
-            }
-            ws->scratch_len = (uint16_t)len;
-            if (coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, len) != 0) return 1;
-        } else if (tok->op == COEFF_OP_RANGE) {
-            int len = 0;
-            double start = 0.0, stop = 0.0, step = 1.0;
-            if (tok->n_args <= 1) {
-                if (coeffProgramLengthArg(program, tok, 0, p1r, p1i, p2r, p2i,
-                                          t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
-                                          "push_range length", &len) != 0) return 1;
-                stop = (double)len;
-            } else {
-                if (coeffArgRealValue(program, tok, 0, p1r, p1i, p2r, p2i,
-                                      t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
-                                      &start) != 0) return 1;
-                if (coeffArgRealValue(program, tok, 1, p1r, p1i, p2r, p2i,
-                                      t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
-                                      &stop) != 0) return 1;
-                if (tok->n_args >= 3 &&
-                    coeffArgRealValue(program, tok, 2, p1r, p1i, p2r, p2i,
-                                      t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
-                                      &step) != 0) return 1;
-                if (!isfinite(step) || fabs(step) <= 1e-300) {
-                    fprintf(stderr, "push_range step must be finite and non-zero\n");
-                    return 1;
-                }
-                double span = (stop - start) / step;
-                if (!isfinite(span) || span > (double)COEFF_PROGRAM_MAX_VECTOR_LEN) {
-                    fprintf(stderr, "push_range span %g exceeds max vector length %d\n",
-                            span, COEFF_PROGRAM_MAX_VECTOR_LEN);
-                    return 1;
-                }
-                len = span > 0.0 ? (int)ceil(span - 1e-12) : 0;
-            }
-            if (coeff_program_check_len(len, "push_range") != 0) return 1;
-            for (int i = 0; i < len; i++) {
-                ws->scratch_re[i] = start + step * (double)i;
-                ws->scratch_im[i] = 0.0;
-            }
-            ws->scratch_len = (uint16_t)len;
-            if (coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, len) != 0) return 1;
-        } else if (tok->op == COEFF_OP_SET) {
-            if (coeffProgramSourceToScratch(cfRe, cfIm, cfLen, ws, tok) != 0) return 1;
-            if (tok->tgt != COEFF_SEL_POLY) {
-                fprintf(stderr, "Coeff Program set target must be poly\n");
-                return 1;
-            }
-            if (coeffProgramTargetFromScratch(ws, tok) != 0) return 1;
-        } else if (tok->op == COEFF_OP_AFFINE) {
-            double ar = 1.0, ai = 0.0, br = 0.0, bi = 0.0;
-            if (coeffProgramSourceToScratch(cfRe, cfIm, cfLen, ws, tok) != 0) return 1;
-            if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i,
-                              cfRe, cfIm, cfLen, ws, &ar, &ai) != 0) return 1;
-            if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i,
-                              cfRe, cfIm, cfLen, ws, &br, &bi) != 0) return 1;
-            for (int i = 0; i < ws->scratch_len; i++) {
-                double rr = 0.0, ri = 0.0;
-                c_mul(ws->scratch_re[i], ws->scratch_im[i], ar, ai, &rr, &ri);
-                rr += br;
-                ri += bi;
-                ws->scratch_re[i] = isfinite(rr) ? rr : 0.0;
-                ws->scratch_im[i] = isfinite(ri) ? ri : 0.0;
-            }
-            if (coeffProgramTargetFromScratch(ws, tok) != 0) return 1;
-        } else if (tok->op == COEFF_OP_PUSH) {
-            if (tok->src == COEFF_SEL_CF) {
-                if (coeff_stack_push(ws, cfRe, cfIm, cfLen) != 0) return 1;
-            } else if (tok->src == COEFF_SEL_POLY) {
-                if (coeff_stack_push(ws, ws->poly_re, ws->poly_im, ws->poly_len) != 0) return 1;
-            } else {
-                fprintf(stderr, "invalid coeff_program push source: %d\n", tok->src);
-                return 1;
-            }
-        } else if (tok->op == COEFF_OP_EMIT) {
-            uint16_t slot = 0;
-            if (ws->stack_depth > 0) {
-                if (coeff_stack_pop(ws, &slot) != 0) return 1;
-                if (coeff_stack_require_vector(ws, slot, "emit") != 0) return 1;
-                coeff_vec_copy(ws->poly_re, ws->poly_im, ws->stack_re[slot], ws->stack_im[slot], ws->stack_len[slot]);
-                ws->poly_len = ws->stack_len[slot];
-            }
-        } else if (tok->op == COEFF_OP_DUPLICATE) {
-            uint16_t slot = 0;
-            if (coeff_stack_peek(ws, &slot) != 0) return 1;
-            if (ws->stack_type[slot] == COEFF_STACK_SCALAR) {
-                if (coeff_stack_push_scalar(ws, ws->stack_scalar_re[slot], ws->stack_scalar_im[slot]) != 0) return 1;
-            } else if (ws->stack_type[slot] == COEFF_STACK_VECTOR) {
-                if (coeff_stack_push(ws, ws->stack_re[slot], ws->stack_im[slot], ws->stack_len[slot]) != 0) return 1;
-            } else {
-                fprintf(stderr, "Coeff Program duplicate received invalid stack type %d\n", ws->stack_type[slot]);
-                return 1;
-            }
-        } else if (tok->op == COEFF_OP_SWAP) {
-            if (ws->stack_depth < 2) {
-                fprintf(stderr, "Coeff Program swap needs stack depth >=2\n");
-                return 1;
-            }
-            uint16_t top = (uint16_t)((ws->stack_head + COEFF_PROGRAM_MAX_VECTOR_STACK - 1) % COEFF_PROGRAM_MAX_VECTOR_STACK);
-            uint16_t below = (uint16_t)((ws->stack_head + COEFF_PROGRAM_MAX_VECTOR_STACK - 2) % COEFF_PROGRAM_MAX_VECTOR_STACK);
-            int topType = ws->stack_type[top];
-            int belowType = ws->stack_type[below];
-            int lenTop = ws->stack_len[top], lenBelow = ws->stack_len[below];
-            double topScalarRe = ws->stack_scalar_re[top], topScalarIm = ws->stack_scalar_im[top];
-            if (topType == COEFF_STACK_VECTOR) {
-                coeff_vec_copy(ws->scratch_re, ws->scratch_im, ws->stack_re[top], ws->stack_im[top], lenTop);
-            }
-            if (belowType == COEFF_STACK_VECTOR) {
-                coeff_vec_copy(ws->stack_re[top], ws->stack_im[top], ws->stack_re[below], ws->stack_im[below], lenBelow);
-            } else {
-                ws->stack_scalar_re[top] = ws->stack_scalar_re[below];
-                ws->stack_scalar_im[top] = ws->stack_scalar_im[below];
-            }
-            if (topType == COEFF_STACK_VECTOR) {
-                coeff_vec_copy(ws->stack_re[below], ws->stack_im[below], ws->scratch_re, ws->scratch_im, lenTop);
-            } else {
-                ws->stack_scalar_re[below] = topScalarRe;
-                ws->stack_scalar_im[below] = topScalarIm;
-            }
-            ws->stack_type[top] = (uint8_t)belowType;
-            ws->stack_type[below] = (uint8_t)topType;
-            ws->stack_len[top] = (uint16_t)lenBelow;
-            ws->stack_len[below] = (uint16_t)lenTop;
-        } else if (tok->op == COEFF_OP_POP) {
-            uint16_t slot = 0;
-            if (coeff_stack_pop(ws, &slot) != 0) return 1;
-        } else if (tok->op == COEFF_OP_FLUSH) {
-            ws->stack_depth = 0;
-            ws->stack_head = 0;
-        } else if (tok->op == COEFF_OP_BLEND) {
-            double t = 0.0, ti = 0.0;
-            if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &t, &ti) != 0) return 1;
-            if (fabs(ti) > 1e-12 || !isfinite(t)) {
-                fprintf(stderr, "Coeff Program blend(t) requires finite real t\n");
-                return 1;
-            }
-            if (coeffProgramBlendTopVectors(ws, t, "blend") != 0) return 1;
-        } else if (tok->op == COEFF_OP_POKE_POLY) {
-            int idx = 0;
-            double vr = 0.0, vi = 0.0;
-            if (coeffProgramIntegerFromReal(tok->args[0], "poke_poly index", &idx) != 0) return 1;
-            if (idx < 0 || idx >= ws->poly_len) {
-                fprintf(stderr, "Coeff Program poke_poly index %d out of range for poly length %d\n",
-                        idx, ws->poly_len);
-                return 1;
-            }
-            if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &vr, &vi) != 0) return 1;
-            if (!isfinite(vr) || !isfinite(vi)) {
-                fprintf(stderr, "Coeff Program poke_poly value is non-finite\n");
-                return 1;
-            }
-            ws->poly_re[idx] = vr;
-            ws->poly_im[idx] = vi;
-        } else if (tok->op == COEFF_OP_POKE_TOS) {
-            uint16_t slot = 0;
-            int idx = 0;
-            double vr = 0.0, vi = 0.0;
-            if (coeffProgramIntegerFromReal(tok->args[0], "poke_tos index", &idx) != 0) return 1;
-            if (coeff_stack_peek(ws, &slot) != 0) return 1;
-            if (coeff_stack_require_vector(ws, slot, "poke_tos") != 0) return 1;
-            if (idx < 0 || idx >= ws->stack_len[slot]) {
-                fprintf(stderr, "Coeff Program poke_tos index %d out of range for top vector length %d\n",
-                        idx, ws->stack_len[slot]);
-                return 1;
-            }
-            if (coeffArgValue(program, tok, 1, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws, &vr, &vi) != 0) return 1;
-            if (!isfinite(vr) || !isfinite(vi)) {
-                fprintf(stderr, "Coeff Program poke_tos value is non-finite\n");
-                return 1;
-            }
-            ws->stack_re[slot][idx] = vr;
-            ws->stack_im[slot][idx] = vi;
-        } else if (tok->op == COEFF_OP_VECTOR_BINARY) {
-            if (!(tok->args[0] >= 1.0 && tok->args[0] <= 5.0)) {
-                fprintf(stderr, "Coeff Program vector src2 selector out of range\n");
-                return 1;
-            }
-            int src2 = (int)tok->args[0];
-            if (coeffProgramReadSourceToBuffer(cfRe, cfIm, cfLen, ws, tok->src,
-                                               ws->scratch_re, ws->scratch_im, &ws->scratch_len) != 0) return 1;
-            if (coeffProgramReadSourceToBuffer(cfRe, cfIm, cfLen, ws, src2,
-                                               ws->original_re, ws->original_im, &ws->original_len) != 0) return 1;
-            if (coeffProgramBinaryVectorOp(ws, tok) != 0) return 1;
-            if (coeffProgramTargetFromScratch(ws, tok) != 0) return 1;
-        } else if (tok->op == COEFF_OP_VECTOR_UNARY) {
-            if (coeffProgramSourceToScratch(cfRe, cfIm, cfLen, ws, tok) != 0) return 1;
-            if (coeffProgramUnaryVectorOp(ws, tok) != 0) return 1;
-            if (coeffProgramTargetFromScratch(ws, tok) != 0) return 1;
-        } else if (tok->op == COEFF_OP_VECTOR_ROLL) {
-            if (coeffProgramSourceToScratch(cfRe, cfIm, cfLen, ws, tok) != 0) return 1;
-            if (coeffProgramRollVectorOp(ws, tok) != 0) return 1;
-            if (coeffProgramTargetFromScratch(ws, tok) != 0) return 1;
-        } else if (tok->op == COEFF_OP_VECTOR_ARGSORT) {
-            if (!(tok->args[0] >= 1.0 && tok->args[0] <= 5.0)) {
-                fprintf(stderr, "Coeff Program vector src2 selector out of range\n");
-                return 1;
-            }
-            int src2 = (int)tok->args[0];
-            if (coeffProgramReadSourceToBuffer(cfRe, cfIm, cfLen, ws, tok->src,
-                                               ws->scratch_re, ws->scratch_im, &ws->scratch_len) != 0) return 1;
-            if (coeffProgramReadSourceToBuffer(cfRe, cfIm, cfLen, ws, src2,
-                                               ws->original_re, ws->original_im, &ws->original_len) != 0) return 1;
-            if (coeffProgramArgsortVectorOp(ws) != 0) return 1;
-            if (coeffProgramTargetFromScratch(ws, tok) != 0) return 1;
-        } else if (tok->op == COEFF_OP_LITTLEWOOD) {
-            if (coeffProgramLittlewoodOp(program, tok, ws, cfRe, cfIm, cfLen, k, evalSeed, p1r, p1i, p2r, p2i, t1r, t1i, t2r, t2i) != 0) return 1;
-        } else if (tok->op == COEFF_OP_TYPED_PUSH_SCALAR) {
-            double vr = 0.0, vi = 0.0;
-            if (tok->fn_index == COEFF_SCALAR_SRC_P1) {
-                vr = p1r; vi = p1i;
-            } else if (tok->fn_index == COEFF_SCALAR_SRC_P2) {
-                vr = p2r; vi = p2i;
-            } else if (tok->fn_index == COEFF_SCALAR_SRC_T1) {
-                vr = t1r; vi = t1i;
-            } else if (tok->fn_index == COEFF_SCALAR_SRC_T2) {
-                vr = t2r; vi = t2i;
-            } else if (tok->fn_index == COEFF_SCALAR_SRC_POLY_LEN) {
-                vr = (double)ws->poly_len; vi = 0.0;
-            } else if (tok->fn_index == 0) {
-                if (coeffArgValue(program, tok, 0, p1r, p1i, p2r, p2i,
-                                  t1r, t1i, t2r, t2i, cfRe, cfIm, cfLen, ws,
-                                  &vr, &vi) != 0) return 1;
-            } else {
-                fprintf(stderr, "Coeff Program unknown typed scalar source %d\n", tok->fn_index);
-                return 1;
-            }
-            if (coeff_stack_push_scalar(ws, vr, vi) != 0) return 1;
-        } else if (tok->op == COEFF_OP_TYPED_PUSH_VECTOR) {
-            if (coeffProgramSourceToScratch(cfRe, cfIm, cfLen, ws, tok) != 0) return 1;
-            if (coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, ws->scratch_len) != 0) return 1;
-        } else if (tok->op == COEFF_OP_TYPED_BINARY) {
-            if (coeffProgramTypedBinaryOp(ws, tok) != 0) return 1;
-        } else if (tok->op == COEFF_OP_TYPED_UNARY) {
-            if (coeffProgramTypedUnaryOp(ws, tok) != 0) return 1;
-        } else if (tok->op == COEFF_OP_TYPED_GET_SCALAR) {
-            if (coeffProgramTypedGetScalar(ws) != 0) return 1;
-        } else if (tok->op == COEFF_OP_TYPED_SET_POLY) {
-            if (coeffProgramTypedSetPoly(ws) != 0) return 1;
-        } else if (tok->op == COEFF_OP_TYPED_POKE_POLY) {
-            if (coeffProgramTypedPokePoly(ws) != 0) return 1;
-        } else if (tok->op == COEFF_OP_TYPED_FILL) {
-            if (coeffProgramTypedFill(ws) != 0) return 1;
-        } else if (tok->op == COEFF_OP_TYPED_BLEND) {
-            if (coeffProgramTypedBlend(ws) != 0) return 1;
-        } else if (tok->op == COEFF_OP_LEGACY || tok->op == COEFF_OP_NATIVE_TRANSFORM) {
-            const char *label = tok->op == COEFF_OP_LEGACY ? "legacy" : "native transform";
-            if (coeffProgramNativeTransformOp(program, tok, ws, cfRe, cfIm, cfLen,
-                                              p1r, p1i, p2r, p2i,
-                                              t1r, t1i, t2r, t2i,
-                                              label) != 0) return 1;
-        } else {
-            fprintf(stderr, "unknown coeff_program opcode: %d\n", tok->op);
-            return 1;
         }
+        if (rc != 0) return 1;
     }
 
     if (ws->stack_depth != 0) {
-        fprintf(stderr, "Coeff Program final stack depth is %d; expected 0\n", ws->stack_depth);
+        fprintf(stderr, "coeff_program final stack depth is %d; expected 0\n", ws->stack_depth);
         return 1;
     }
     if (coeff_program_check_len(ws->poly_len, "poly") != 0) return 1;

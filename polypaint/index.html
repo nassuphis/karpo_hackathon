@@ -3984,8 +3984,8 @@ function _setChainFromSaved(which, values) {
         return;
     }
     if (which === 'cp') {
-        _cpChain = _normalizeCoeffProgramChain(normalized);
-        _coeffProgramSelectedIndex = _cpChain.length ? 0 : -1;
+        _coeffProgramChain = _normalizeCoeffProgramChain(normalized);
+        _coeffProgramSelectedIndex = _coeffProgramChain.length ? 0 : -1;
         _renderChips(which);
         return;
     }
@@ -4749,16 +4749,20 @@ function _escapeHtml(value) {
 function _catalogForChain(which) {
     if (which === 'pt') return _ptCatalog;
     if (which === 'pp') return _ppCatalog;
-    if (which === 'cp') return _cpCatalog;
+    if (which === 'cp') return _coeffProgramCatalog;
     if (which === 'ct') return _ctCatalog;
     if (which === 'ss' || which === 'palette-ss') return _ssCatalog;
     return _rtCatalog;
 }
 
+// `which` codes used across the chip-editor helpers:
+//   pt = param transforms (legacy), pp = param program, ct = coeff
+//   transforms (legacy), cp = coeff program, rt = root transforms,
+//   ss = solve score, palette-ss = palette solve score.
 function _chainForWhich(which) {
     if (which === 'pt') return _ptChain;
     if (which === 'pp') return _ppChain;
-    if (which === 'cp') return _cpChain;
+    if (which === 'cp') return _coeffProgramChain;
     if (which === 'rt') return _rtChain;
     if (which === 'palette-rt') return _paletteRtChain;
     if (which === 'ss') return _renderScoreChain;
@@ -4843,7 +4847,7 @@ function _boolish(value, fallback = false) {
 }
 
 function _normalizeRenderBackgroundColor(value, fallback = '', options = {}) {
-    let text = String(value == null ? '' : value).trim().toLowerCase();
+    let text = _str(value).trim().toLowerCase();
     const allowShort = options.allowShort !== false;
     if (text.startsWith('#')) text = text.slice(1);
     if (allowShort && /^[0-9a-f]{3}$/.test(text)) text = text.split('').map(ch => ch + ch).join('');
@@ -4918,12 +4922,12 @@ async function _pickRenderBackgroundColor() {
 }
 
 function _normalizeSolveScoreMetricSource(value, fallback = 'slv') {
-    const source = String(value == null ? '' : value).trim().toLowerCase();
+    const source = _str(value).trim().toLowerCase();
     return (source === 'slv' || source === 'cf' || source === 'pm') ? source : fallback;
 }
 
 function _splitSolveScoreMetricSourceLag(value, fallback = 'slv') {
-    const raw = String(value == null ? '' : value).trim().toLowerCase();
+    const raw = _str(value).trim().toLowerCase();
     if (raw === 'slv' || raw === 'cf' || raw === 'pm') return { source: raw, lag: 0, wire: raw };
     if (raw.endsWith('-1')) {
         const base = raw.slice(0, -2);
@@ -11619,10 +11623,10 @@ const _ssCatalog = (() => {
     return catalog;
 })();
 
-const _cpScalarExprHelp = 'Program mode accepts t1/t2, p1/p2, poly_len, cfN, polyN, tosN, pi, pi2, pi2i, literals, + - * /, and conj/real/imag/abs/angle/sqrt/log/exp/sin/cos/tan/sinh/cosh/tanh.';
+const _coeffProgramScalarExprHelp = 'Program mode accepts t1/t2, p1/p2, poly_len, cfN, polyN, tosN, pi, pi2, pi2i, literals, + - * /, and conj/real/imag/abs/angle/sqrt/log/exp/sin/cos/tan/sinh/cosh/tanh.';
 // kind: 'andy' is the semantic marker (filtering/serialization/validation
 // key off it); ph is display-only placeholder text.
-const _ctAndyParam = { kind: 'andy', ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: `Blend amount in [0,1]. ${_cpScalarExprHelp} In Chain mode it must be numeric.` };
+const _ctAndyParam = { kind: 'andy', ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: `Blend amount in [0,1]. ${_coeffProgramScalarExprHelp} In Chain mode it must be numeric.` };
 function _isAndyParam(pDef) {
     return !!(pDef && pDef.kind === 'andy');
 }
@@ -11632,6 +11636,14 @@ const _ctCategoryMeta = {
     elementwise: { title: 'Elementwise functions', help: 'apply a complex function to each coefficient independently' },
     roots: { title: 'Root-derived', help: 'replace coefficients with roots computed from the current coefficient vector' },
 };
+// Adding a coeff transform end to end:
+//   1. lambda/coeff_legacy_registry.json — new entry with the next fn_index
+//      (wire format: never renumber; tests/test_coeff_program_drift.py pins them).
+//   2. lambda/sweep_cli.c — implement ct_<name> and add its case to the legacy
+//      fn_index switch; rebuild sweep_test (cc -O2 -pthread) and the ARM binaries.
+//   3. This catalog — chip entry here (and in _coeffProgramCatalog if it should
+//      be authorable in program mode).
+//   4. tests/test_coeff_program_native.py — a native value test for the new fn.
 const _ctCatalog = (() => {
     const catalog = {
         rev: { category: 'structural', desc: 'reverse coefficient order' },
@@ -11640,8 +11652,8 @@ const _ctCatalog = (() => {
         deriv: { category: 'structural', desc: 'differentiate the polynomial coefficients' },
         linear: {
             params: [
-                { ph: 'field1', label: 'field1', def: '100', complex: true, scalarExpr: 'complex', complexWide: true, title: `Complex multiplier in z*[field1]+[field2]. ${_cpScalarExprHelp}` },
-                { ph: 'field2', label: 'field2', def: '0', complex: true, scalarExpr: 'complex', complexWide: true, title: `Complex offset in z*[field1]+[field2]. ${_cpScalarExprHelp}` },
+                { ph: 'field1', label: 'field1', def: '100', complex: true, scalarExpr: 'complex', complexWide: true, title: `Complex multiplier in z*[field1]+[field2]. ${_coeffProgramScalarExprHelp}` },
+                { ph: 'field2', label: 'field2', def: '0', complex: true, scalarExpr: 'complex', complexWide: true, title: `Complex offset in z*[field1]+[field2]. ${_coeffProgramScalarExprHelp}` },
             ],
             label: 'linear',
             category: 'elementwise',
@@ -11659,8 +11671,8 @@ const _ctCatalog = (() => {
         swirler: { category: 'elementwise', desc: 'multiply each coefficient by a modulus-driven complex swirl' },
         exp: {
             params: [
-                { ph: 'field1', label: 'field1', def: '1', scalarExpr: 'real', exprWide: true, title: `Real multiplier component. ${_cpScalarExprHelp}` },
-                { ph: 'field2', label: 'field2', def: '0', scalarExpr: 'real', exprWide: true, title: `Imaginary multiplier component. ${_cpScalarExprHelp}` },
+                { ph: 'field1', label: 'field1', def: '1', scalarExpr: 'real', exprWide: true, title: `Real multiplier component. ${_coeffProgramScalarExprHelp}` },
+                { ph: 'field2', label: 'field2', def: '0', scalarExpr: 'real', exprWide: true, title: `Imaginary multiplier component. ${_coeffProgramScalarExprHelp}` },
             ],
             label: 'exp',
             category: 'elementwise',
@@ -11674,8 +11686,8 @@ const _ctCatalog = (() => {
         tanh: { label: 'tanh', category: 'elementwise', desc: 'complex hyperbolic tangent' },
         round: {
             params: [
-                { ph: 'field1', label: 'field1', def: '1', scalarExpr: 'real', exprWide: true, title: `Real multiplier component. ${_cpScalarExprHelp}` },
-                { ph: 'field2', label: 'field2', def: '0', scalarExpr: 'real', exprWide: true, title: `Imaginary multiplier component. ${_cpScalarExprHelp}` },
+                { ph: 'field1', label: 'field1', def: '1', scalarExpr: 'real', exprWide: true, title: `Real multiplier component. ${_coeffProgramScalarExprHelp}` },
+                { ph: 'field2', label: 'field2', def: '0', scalarExpr: 'real', exprWide: true, title: `Imaginary multiplier component. ${_coeffProgramScalarExprHelp}` },
             ],
             label: 'round',
             category: 'elementwise',
@@ -11701,17 +11713,17 @@ const _ctCatalog = (() => {
     return catalog;
 })();
 
-const _cpExpParamDefs = [
-    { ph: 'field1', label: 'field1', def: '1', complex: true, scalarExpr: 'complex', complexWide: true, title: `Complex multiplier in exp(z*field1+field2). ${_cpScalarExprHelp}` },
-    { ph: 'field2', label: 'field2', def: '0', complex: true, scalarExpr: 'complex', complexWide: true, title: `Complex offset in exp(z*field1+field2). ${_cpScalarExprHelp}` },
+const _coeffProgramExpParamDefs = [
+    { ph: 'field1', label: 'field1', def: '1', complex: true, scalarExpr: 'complex', complexWide: true, title: `Complex multiplier in exp(z*field1+field2). ${_coeffProgramScalarExprHelp}` },
+    { ph: 'field2', label: 'field2', def: '0', complex: true, scalarExpr: 'complex', complexWide: true, title: `Complex offset in exp(z*field1+field2). ${_coeffProgramScalarExprHelp}` },
     { ..._ctAndyParam },
 ];
-const _cpRoundParamDefs = [
-    { ph: 'multiplier', label: 'mult', def: '1', complex: true, scalarExpr: 'complex', complexWide: true, title: `Complex multiplier in round(z*multiplier). ${_cpScalarExprHelp}` },
+const _coeffProgramRoundParamDefs = [
+    { ph: 'multiplier', label: 'mult', def: '1', complex: true, scalarExpr: 'complex', complexWide: true, title: `Complex multiplier in round(z*multiplier). ${_coeffProgramScalarExprHelp}` },
     { ..._ctAndyParam },
 ];
 
-const _cpCategoryMeta = {
+const _coeffProgramCategoryMeta = {
     io: { title: 'Input + output', help: 'push cf/poly, make constant vectors, or emit poly' },
     stack: { title: 'Stack', help: 'reorder or discard vector values' },
     vector: { title: 'Vector ops', help: 'combine vectors on the stack' },
@@ -11723,18 +11735,37 @@ const _cpCategoryMeta = {
 };
 
 const _coeffProgramLegacyNames = Object.keys(_ctCatalog);
+function _paramValueOrDefault(params, idx, pDef) {
+    return params[idx] !== undefined && params[idx] !== ''
+        ? params[idx]
+        : String((pDef && pDef.def) || '');
+}
+
+function _chainDisplayString(chain) {
+    return chain.map(row => Array.isArray(row)
+        ? (row.length > 1 ? `${row[0]}(${row.slice(1).join(',')})` : row[0])
+        : String(row)).join('; ');
+}
+
+function _str(value) {
+    return String(value == null ? '' : value);
+}
+
+function _pluralize(count, word) {
+    return `${count} ${word}${count === 1 ? '' : 's'}`;
+}
+
 const _coeffProgramVectorBinaryNames = ['add', 'subtract', 'multiply', 'divide', 'power'];
 const _coeffProgramVectorUnaryNames = ['angle', 'mod', 'abs', 'neg', 'conj', 'sqrt', 'log', 'exp', 'sin', 'cos', 'tan', 'sinh', 'cosh', 'tanh'];
 const _coeffProgramVectorSourceChoices = ['poly', 'pop', 'peek'];
-const _coeffProgramVectorTargetChoices = ['poly', 'push'];
 const _coeffProgramLegacySourceChoices = ['cf', 'poly', 'pop', 'peek'];
-const _coeffProgramLegacyTargetChoices = ['poly', 'push'];
+const _coeffProgramTargetChoices = ['poly', 'push'];
 function _canonicalCoeffTransformName(name) {
     const raw = String(name || '').trim();
     if (raw === 'exp_affine') return 'exp';
     return raw === 'scale100' ? 'linear' : raw;
 }
-const _cpCatalog = (() => {
+const _coeffProgramCatalog = (() => {
     const catalog = {
         push: {
             category: 'io',
@@ -11752,12 +11783,14 @@ const _cpCatalog = (() => {
         affine: {
             category: 'vector',
             label: 'linear',
+            // hidden: parser-internal strict form; users author `linear`,
+            // which serializes through this chip's params.
             hidden: true,
             params: [
-                { ph: 'tgt', def: 'poly', choices: _coeffProgramVectorTargetChoices, selectorWide: true, title: 'Output target: write poly or push the affine result.' },
+                { ph: 'tgt', def: 'poly', choices: _coeffProgramTargetChoices, selectorWide: true, title: 'Output target: write poly or push the affine result.' },
                 { ph: 'src', def: 'pop', choices: _coeffProgramLegacySourceChoices, selectorWide: true, title: 'Input vector.' },
-                { ph: 'multiplier expr', label: 'a', def: '1', scalarExpr: 'complex', complexWide: true, title: `Complex multiplier expression. ${_cpScalarExprHelp}` },
-                { ph: 'offset expr', label: 'b', def: '0', scalarExpr: 'complex', complexWide: true, title: `Complex offset expression. ${_cpScalarExprHelp}` },
+                { ph: 'multiplier expr', label: 'a', def: '1', scalarExpr: 'complex', complexWide: true, title: `Complex multiplier expression. ${_coeffProgramScalarExprHelp}` },
+                { ph: 'offset expr', label: 'b', def: '0', scalarExpr: 'complex', complexWide: true, title: `Complex offset expression. ${_coeffProgramScalarExprHelp}` },
             ],
             desc: 'apply z*a+b with complex expression arguments',
         },
@@ -11766,18 +11799,19 @@ const _cpCatalog = (() => {
             label: 'push_vec',
             params: [
                 { ph: 'length|poly_len', label: 'length', def: 'poly_len', lengthArg: true, title: 'Vector length. Use poly_len to match the current poly vector, or an integer 1..256.' },
-                { ph: 'value expr', label: 'value', def: '1', scalarExpr: 'complex', title: `Scalar expression for every coefficient. ${_cpScalarExprHelp}` },
+                { ph: 'value expr', label: 'value', def: '1', scalarExpr: 'complex', title: `Scalar expression for every coefficient. ${_coeffProgramScalarExprHelp}` },
             ],
             desc: 'push a constant vector push_vec(length, value); value is a scalar expression',
         },
         push_scalar: {
             category: 'stack',
             label: 'push_scalar',
+            // hidden: emitted by the text-source lowerer; not user-addable.
             hidden: true,
             params: [
-                { ph: 'value expr', label: 'value', def: '1', scalarExpr: 'complex', complexWide: true, title: `Scalar expression pushed as one scalar stack item. ${_cpScalarExprHelp}` },
+                { ph: 'value expr', label: 'value', def: '1', scalarExpr: 'complex', complexWide: true, title: `Scalar expression pushed as one scalar stack item. ${_coeffProgramScalarExprHelp}` },
             ],
-            desc: 'push one scalar stack item for typed stack calculations',
+            desc: 'push one scalar stack item from a scalar expression',
         },
         push_const: {
             category: 'io',
@@ -11785,7 +11819,7 @@ const _cpCatalog = (() => {
             hidden: true,
             params: [
                 { ph: 'length|poly_len', label: 'length', def: 'poly_len', lengthArg: true, title: 'Vector length. Use poly_len to match the current poly vector, or an integer 1..256.' },
-                { ph: 'value expr', label: 'value', def: '1', scalarExpr: 'complex', title: `Scalar expression for every coefficient. ${_cpScalarExprHelp}` },
+                { ph: 'value expr', label: 'value', def: '1', scalarExpr: 'complex', title: `Scalar expression for every coefficient. ${_coeffProgramScalarExprHelp}` },
             ],
             desc: 'back-compat alias for push_vec(length, value)',
         },
@@ -11807,7 +11841,7 @@ const _cpCatalog = (() => {
             category: 'io',
             params: [
                 { ph: 'index', label: 'index', def: '0', intLiteral: true, min: 0, max: 255, title: 'Zero-based poly coefficient index. The current poly vector must contain this index at runtime.' },
-                { ph: 'value expr', label: 'value', def: '100j*p1', scalarExpr: 'complex', title: `Scalar expression written into poly[index]. ${_cpScalarExprHelp}` },
+                { ph: 'value expr', label: 'value', def: '100j*p1', scalarExpr: 'complex', title: `Scalar expression written into poly[index]. ${_coeffProgramScalarExprHelp}` },
             ],
             desc: 'write value into poly[index] without touching the stack',
         },
@@ -11815,7 +11849,7 @@ const _cpCatalog = (() => {
             category: 'stack',
             params: [
                 { ph: 'index', label: 'index', def: '0', intLiteral: true, min: 0, max: 255, title: 'Zero-based index in the top-of-stack vector. Requires a stack value at runtime.' },
-                { ph: 'value expr', label: 'value', def: '100j*p1', scalarExpr: 'complex', title: `Scalar expression written into top_of_stack[index]. ${_cpScalarExprHelp}` },
+                { ph: 'value expr', label: 'value', def: '100j*p1', scalarExpr: 'complex', title: `Scalar expression written into top_of_stack[index]. ${_coeffProgramScalarExprHelp}` },
             ],
             desc: 'write value into the top stack vector without popping it',
         },
@@ -11828,7 +11862,7 @@ const _cpCatalog = (() => {
         argsort: {
             category: 'vector',
             params: [
-                { ph: 'tgt', def: 'poly', choices: _coeffProgramVectorTargetChoices, selectorWide: true, title: 'Output target: write poly or push the sorted result.' },
+                { ph: 'tgt', def: 'poly', choices: _coeffProgramTargetChoices, selectorWide: true, title: 'Output target: write poly or push the sorted result.' },
                 { ph: 'src1', def: 'poly', choices: _coeffProgramVectorSourceChoices, selectorWide: true, title: 'Vector to reorder.' },
                 { ph: 'src2', def: 'poly', choices: _coeffProgramVectorSourceChoices, selectorWide: true, title: 'Sort key vector. Values are ordered by complex magnitude.' },
             ],
@@ -11837,7 +11871,7 @@ const _cpCatalog = (() => {
         roll: {
             category: 'vector',
             params: [
-                { ph: 'tgt', def: 'poly', choices: _coeffProgramVectorTargetChoices, selectorWide: true, title: 'Output target: write poly or push the rolled vector.' },
+                { ph: 'tgt', def: 'poly', choices: _coeffProgramTargetChoices, selectorWide: true, title: 'Output target: write poly or push the rolled vector.' },
                 { ph: 'src', def: 'poly', choices: _coeffProgramVectorSourceChoices, selectorWide: true, title: 'Input vector to roll left.' },
                 { ph: 'n', def: '1', intLiteral: true, title: 'Integer roll amount. Negative values roll the other direction.' },
             ],
@@ -11846,7 +11880,7 @@ const _cpCatalog = (() => {
         rolr: {
             category: 'vector',
             params: [
-                { ph: 'tgt', def: 'poly', choices: _coeffProgramVectorTargetChoices, selectorWide: true, title: 'Output target: write poly or push the rolled vector.' },
+                { ph: 'tgt', def: 'poly', choices: _coeffProgramTargetChoices, selectorWide: true, title: 'Output target: write poly or push the rolled vector.' },
                 { ph: 'src', def: 'poly', choices: _coeffProgramVectorSourceChoices, selectorWide: true, title: 'Input vector to roll right.' },
                 { ph: 'n', def: '1', intLiteral: true, title: 'Integer roll amount. Negative values roll the other direction.' },
             ],
@@ -11855,9 +11889,9 @@ const _cpCatalog = (() => {
         littlewood: {
             category: 'vector',
             params: [
-                { ph: 'tgt', def: 'poly', choices: _coeffProgramVectorTargetChoices, selectorWide: true, title: 'Output target: write poly or push the generated vector.' },
-                { ph: 'field1', label: 'field1', def: '0', complex: true, scalarExpr: 'complex', complexWide: true, title: 'First complex value. Each coefficient randomly chooses field1 or field2 with 50/50 odds.' },
-                { ph: 'field2', label: 'field2', def: '1', complex: true, scalarExpr: 'complex', complexWide: true, title: 'Second complex value. Each coefficient randomly chooses field1 or field2 with 50/50 odds.' },
+                { ph: 'tgt', def: 'poly', choices: _coeffProgramTargetChoices, selectorWide: true, title: 'Output target: write poly or push the generated vector.' },
+                { ph: 'value1', label: 'value1', def: '0', complex: true, scalarExpr: 'complex', complexWide: true, title: 'First complex value. Each coefficient randomly chooses value1 or value2 with 50/50 odds.' },
+                { ph: 'value2', label: 'value2', def: '1', complex: true, scalarExpr: 'complex', complexWide: true, title: 'Second complex value. Each coefficient randomly chooses value1 or value2 with 50/50 odds.' },
                 { ..._ctAndyParam, title: 'Blend generated values with current poly: output*(1-andy)+poly*andy.' },
             ],
             desc: 'generate a random Littlewood-style vector using current poly length',
@@ -11869,7 +11903,7 @@ const _cpCatalog = (() => {
             params: [
                 { ph: 'name', def: 'rev', choices: _coeffProgramLegacyNames, functionWide: true, title: 'Legacy coefficient transform function. Compiled to a stable numeric function index.' },
                 { ph: 'src', def: 'poly', choices: _coeffProgramLegacySourceChoices, selectorWide: true, title: 'Input vector: cf read-only coefficients, current poly, pop stack, or peek stack.' },
-                { ph: 'tgt', def: 'poly', choices: _coeffProgramLegacyTargetChoices, selectorWide: true, title: 'Output target: write poly or push the result onto the stack.' },
+                { ph: 'tgt', def: 'poly', choices: _coeffProgramTargetChoices, selectorWide: true, title: 'Output target: write poly or push the result onto the stack.' },
             ],
             desc: 'compatibility-only wrapper for old saved coeff-program chips',
         },
@@ -11878,7 +11912,7 @@ const _cpCatalog = (() => {
         catalog[name] = {
             category: 'vector',
             params: [
-                { ph: 'tgt', def: 'poly', choices: _coeffProgramVectorTargetChoices, selectorWide: true, title: 'Output target: write poly or push the result.' },
+                { ph: 'tgt', def: 'poly', choices: _coeffProgramTargetChoices, selectorWide: true, title: 'Output target: write poly or push the result.' },
                 { ph: 'src1', def: 'poly', choices: _coeffProgramVectorSourceChoices, selectorWide: true, title: 'First input vector. pop consumes the current stack top.' },
                 { ph: 'src2', def: 'poly', choices: _coeffProgramVectorSourceChoices, selectorWide: true, title: 'Second input vector. If src1 also pops, this sees the next stack value.' },
             ],
@@ -11889,7 +11923,7 @@ const _cpCatalog = (() => {
         catalog[name] = {
             category: 'vector',
             params: [
-                { ph: 'tgt', def: 'poly', choices: _coeffProgramVectorTargetChoices, selectorWide: true, title: 'Output target: write poly or push the result.' },
+                { ph: 'tgt', def: 'poly', choices: _coeffProgramTargetChoices, selectorWide: true, title: 'Output target: write poly or push the result.' },
                 { ph: 'src', def: 'poly', choices: _coeffProgramVectorSourceChoices, selectorWide: true, title: 'Input vector.' },
             ],
             desc: `${name}(src) vector operation`,
@@ -11901,9 +11935,9 @@ const _cpCatalog = (() => {
                 category: ctSpec.category || 'elementwise',
                 nativeTransform: true,
                 params: [
-                    { ph: 'tgt', def: 'poly', choices: _coeffProgramLegacyTargetChoices, selectorWide: true, title: 'Output target: write poly or push the transform result.' },
+                    { ph: 'tgt', def: 'poly', choices: _coeffProgramTargetChoices, selectorWide: true, title: 'Output target: write poly or push the transform result.' },
                     { ph: 'src', def: 'poly', choices: _coeffProgramLegacySourceChoices, selectorWide: true, title: 'Input vector: cf read-only coefficients, current poly, pop stack, or peek stack.' },
-                    ..._cpExpParamDefs.map(pDef => ({ ...pDef })).filter(pDef => !_isAndyParam(pDef)),
+                    ..._coeffProgramExpParamDefs.map(pDef => ({ ...pDef })).filter(pDef => !_isAndyParam(pDef)),
                 ],
                 label: 'exp_affine',
                 desc: 'exp_affine(src, a, b): exp(src*a+b)',
@@ -11917,7 +11951,7 @@ const _cpCatalog = (() => {
                 category: ctSpec.category || 'elementwise',
                 nativeTransform: true,
                 params: [
-                    { ph: 'tgt', def: 'poly', choices: _coeffProgramLegacyTargetChoices, selectorWide: true, title: 'Output target: write poly or push the transform result.' },
+                    { ph: 'tgt', def: 'poly', choices: _coeffProgramTargetChoices, selectorWide: true, title: 'Output target: write poly or push the transform result.' },
                     { ph: 'src', def: 'poly', choices: _coeffProgramLegacySourceChoices, selectorWide: true, title: 'Input vector: cf read-only coefficients, current poly, pop stack, or peek stack.' },
                     ..._coeffProgramLegacyInputDefs(name)
                         .filter(pDef => !_isAndyParam(pDef))
@@ -11935,7 +11969,7 @@ const _cpCatalog = (() => {
             category: ctSpec.category || 'elementwise',
             nativeTransform: true,
             params: [
-                { ph: 'tgt', def: 'poly', choices: _coeffProgramLegacyTargetChoices, selectorWide: true, title: 'Output target: write poly or push the transform result.' },
+                { ph: 'tgt', def: 'poly', choices: _coeffProgramTargetChoices, selectorWide: true, title: 'Output target: write poly or push the transform result.' },
                 { ph: 'src', def: 'poly', choices: _coeffProgramLegacySourceChoices, selectorWide: true, title: 'Input vector: cf read-only coefficients, current poly, pop stack, or peek stack.' },
                 ...argDefs,
             ],
@@ -11984,7 +12018,9 @@ function _normalizeCoeffTransformItem(item) {
 }
 
 function _ctAndyIndex(pDefs) {
-    return Math.max(0, (pDefs || []).length - 1);
+    const idx = (pDefs || []).findIndex(_isAndyParam);
+    // Catalog construction appends andy last, so the fallback matches it.
+    return idx >= 0 ? idx : Math.max(0, (pDefs || []).length - 1);
 }
 
 function _ctAndyHtml(which, chipIdx, item, pDefs, options = {}) {
@@ -11998,7 +12034,7 @@ function _formatCtConstant(value) {
 }
 
 function _parseCtRealConstant(value) {
-    const s = String(value == null ? '' : value).replace(/\s+/g, '');
+    const s = _str(value).replace(/\s+/g, '');
     if (!s) return null;
     let idx = 0;
     let total = 0;
@@ -12020,7 +12056,7 @@ function _parseCtRealConstant(value) {
 }
 
 function _hasCtExpressionOperator(value) {
-    const s = String(value == null ? '' : value).replace(/\s+/g, '');
+    const s = _str(value).replace(/\s+/g, '');
     for (let i = 1; i < s.length; i++) {
         if ((s[i] === '+' || s[i] === '-') && s[i - 1] !== 'e' && s[i - 1] !== 'E') return true;
     }
@@ -12028,7 +12064,7 @@ function _hasCtExpressionOperator(value) {
 }
 
 function _normalizeCtRealInput(value) {
-    const raw = String(value == null ? '' : value).trim();
+    const raw = _str(value).trim();
     if (!raw) return raw;
     const parsed = _parseCtRealConstant(raw);
     if (parsed == null) return null;
@@ -12036,7 +12072,7 @@ function _normalizeCtRealInput(value) {
 }
 
 function _parseCtComplexConstant(value) {
-    const s = String(value == null ? '' : value).replace(/\s+/g, '').replace(/i/gi, 'j');
+    const s = _str(value).replace(/\s+/g, '').replace(/i/gi, 'j');
     if (!s) return null;
     let re = 0;
     let im = 0;
@@ -12123,7 +12159,7 @@ function _renderCoeffTransformAddPopup() {
             const spec = _ctCatalog[name] || {};
             const label = spec.label || name;
             const paramCount = Math.max(0, (spec.params || []).length - 1);
-            const params = paramCount ? ` · ${paramCount} param${paramCount === 1 ? '' : 's'} + andy` : ' · andy';
+            const params = paramCount ? ` · ${_pluralize(paramCount, 'param')} + andy` : ' · andy';
             return `<button type="button" class="score-chip-option score-chip-option-${_escapeHtml(group.key)}" onclick="selectCoeffTransformChip('${_escapeHtml(name)}',event)" title="${_escapeHtml(spec.desc || label)}"><span class="score-chip-option-name">${_escapeHtml(label)}</span><span class="score-chip-option-meta">${_escapeHtml((spec.desc || '') + params)}</span></button>`;
         }).join('');
         return `<div class="score-chip-category"><div class="score-chip-category-title">${_escapeHtml(group.title)}</div><div class="score-chip-category-help">${_escapeHtml(group.help)}</div><div class="score-chip-options">${items}</div></div>`;
@@ -12173,7 +12209,7 @@ let _ptChain = [];  // parameter transform chain (array of {name, params: [str,.
 let _ppChain = [];  // parameter program chain (array of {name, params: [str,...]})
 let _paramPipelineMode = 'chain';
 let _ctChain = [];  // coefficient transform chain (array of {name, params: [str,...]})
-let _cpChain = [];  // coefficient program chain (array of {name, params: [str,...]})
+let _coeffProgramChain = [];  // coefficient program chain (array of {name, params: [str,...]})
 let _cfpv = [];     // coefficient function parameter vector (array of doubles)
 let _rtChain = [];  // root transform chain (array of {name, params: [str,...]})
 let _paletteRtChain = [];  // palette-tab root transform chain
@@ -12646,7 +12682,7 @@ function _renderParamTransformAddPopup() {
                 const spec = _ptCatalog[name] || {};
                 const label = spec.label || name;
                 const paramCount = (spec.params || []).length;
-                const params = paramCount ? ` · ${paramCount} param${paramCount === 1 ? '' : 's'}` : '';
+                const params = paramCount ? ` · ${_pluralize(paramCount, 'param')}` : '';
                 return `<button type="button" class="score-chip-option score-chip-option-${_escapeHtml(group.key)}" onclick="selectParamTransformChip('${_escapeHtml(name)}',event)" title="${_escapeHtml(spec.desc || label)}"><span class="score-chip-option-name">${_escapeHtml(label)}</span><span class="score-chip-option-meta">${_escapeHtml((spec.desc || '') + params)}</span></button>`;
             }).join('')
             : '<span class="score-chip-empty">No transforms</span>';
@@ -12708,18 +12744,48 @@ function _paramProgramCategoryGroups() {
     }));
 }
 
-function _renderParamProgramAddPopup() {
-    const popup = document.getElementById('pp-add-popup');
+// One picker implementation drives both program chip pickers; the
+// descriptors carry everything that differs. The public function names
+// below stay as thin wrappers because generated onclick strings and HTML
+// reference them directly.
+const _chipPickers = {
+    pp: {
+        which: 'pp',
+        popupId: 'pp-add-popup',
+        headTitle: 'Add param program chip',
+        headHint: 'RPN over t1/t2, output registers p1/p2',
+        catalog: () => _ppCatalog,
+        groups: () => _paramProgramCategoryGroups(),
+        selectFnName: 'selectParamProgramChip',
+        getInsertMode: () => _paramProgramPickerInsertMode,
+        setInsertMode: (mode) => { _paramProgramPickerInsertMode = mode; },
+    },
+    cp: {
+        which: 'cp',
+        popupId: 'cp-add-popup',
+        headTitle: 'Add coeff program chip',
+        headHint: 'RPN over coefficient vectors cf → poly',
+        catalog: () => _coeffProgramCatalog,
+        groups: () => _coeffProgramCategoryGroups(),
+        selectFnName: 'selectCoeffProgramChip',
+        getInsertMode: () => _coeffProgramPickerInsertMode,
+        setInsertMode: (mode) => { _coeffProgramPickerInsertMode = mode; },
+    },
+};
+
+function _renderChipPickerPopup(picker) {
+    const popup = document.getElementById(picker.popupId);
     if (!popup) return;
-    const head = `<div class="score-chip-picker-head"><span class="score-chip-picker-title">Add param program chip</span><span class="score-chip-picker-state">RPN over t1/t2, output registers p1/p2</span></div>`;
-    const body = _paramProgramCategoryGroups().map(group => {
+    const catalog = picker.catalog();
+    const head = `<div class="score-chip-picker-head"><span class="score-chip-picker-title">${_escapeHtml(picker.headTitle)}</span><span class="score-chip-picker-state">${_escapeHtml(picker.headHint)}</span></div>`;
+    const body = picker.groups().map(group => {
         const items = group.items.length
             ? group.items.map(name => {
-                const spec = _ppCatalog[name] || {};
+                const spec = catalog[name] || {};
                 const label = spec.label || name;
                 const paramCount = (spec.params || []).length;
-                const params = paramCount ? ` · ${paramCount} param${paramCount === 1 ? '' : 's'}` : '';
-                return `<button type="button" class="score-chip-option score-chip-option-${_escapeHtml(group.key)}" onclick="selectParamProgramChip('${_escapeHtml(name)}',event)" title="${_escapeHtml(spec.desc || label)}"><span class="score-chip-option-name">${_escapeHtml(label)}</span><span class="score-chip-option-meta">${_escapeHtml((spec.desc || '') + params)}</span></button>`;
+                const params = paramCount ? ` · ${_pluralize(paramCount, 'param')}` : '';
+                return `<button type="button" class="score-chip-option score-chip-option-${_escapeHtml(group.key)}" onclick="${picker.selectFnName}('${_escapeHtml(name)}',event)" title="${_escapeHtml(spec.desc || label)}"><span class="score-chip-option-name">${_escapeHtml(label)}</span><span class="score-chip-option-meta">${_escapeHtml((spec.desc || '') + params)}</span></button>`;
             }).join('')
             : '<span class="score-chip-empty">No chips</span>';
         return `<div class="score-chip-category"><div class="score-chip-category-title">${_escapeHtml(group.title)}</div><div class="score-chip-category-help">${_escapeHtml(group.help)}</div><div class="score-chip-options">${items}</div></div>`;
@@ -12727,27 +12793,43 @@ function _renderParamProgramAddPopup() {
     popup.innerHTML = head + body;
 }
 
-function _setParamProgramPickerOpen(open) {
-    const popup = document.getElementById('pp-add-popup');
+function _setChipPickerOpen(picker, open) {
+    const popup = document.getElementById(picker.popupId);
     if (!popup) return;
-    if (open) _renderParamProgramAddPopup();
+    if (open) _renderChipPickerPopup(picker);
     popup._open = !!open;
     popup.style.display = open ? 'block' : 'none';
     if (popup.classList && popup.classList.toggle) popup.classList.toggle('active', !!open);
     if (popup.setAttribute) popup.setAttribute('aria-hidden', open ? 'false' : 'true');
 }
 
-function toggleParamProgramPicker(eventObj, insertMode = null) {
+function _toggleChipPicker(picker, eventObj, insertMode) {
     if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
-    if (insertMode === 'before' || insertMode === 'after') _paramProgramPickerInsertMode = insertMode;
-    const popup = document.getElementById('pp-add-popup');
-    _setParamProgramPickerOpen(!(popup && popup._open));
+    if (insertMode === 'before' || insertMode === 'after') picker.setInsertMode(insertMode);
+    const popup = document.getElementById(picker.popupId);
+    _setChipPickerOpen(picker, !(popup && popup._open));
+}
+
+function _selectChipFromPicker(picker, name, eventObj) {
+    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
+    addChip(picker.which, name, picker.getInsertMode() || 'after');
+    _setChipPickerOpen(picker, false);
+}
+
+function _renderParamProgramAddPopup() {
+    _renderChipPickerPopup(_chipPickers.pp);
+}
+
+function _setParamProgramPickerOpen(open) {
+    _setChipPickerOpen(_chipPickers.pp, open);
+}
+
+function toggleParamProgramPicker(eventObj, insertMode = null) {
+    _toggleChipPicker(_chipPickers.pp, eventObj, insertMode);
 }
 
 function selectParamProgramChip(name, eventObj) {
-    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
-    addChip('pp', name, _paramProgramPickerInsertMode || 'after');
-    _setParamProgramPickerOpen(false);
+    _selectChipFromPicker(_chipPickers.pp, name, eventObj);
 }
 
 function selectParamProgramLine(idx, eventObj) {
@@ -12772,60 +12854,34 @@ function _syncParamProgramAddOptions() {
 
 function _coeffProgramCategoryGroups() {
     const grouped = {};
-    Object.keys(_cpCategoryMeta).forEach(key => { grouped[key] = []; });
-    Object.keys(_cpCatalog).forEach(name => {
-        const spec = _cpCatalog[name] || {};
+    Object.keys(_coeffProgramCategoryMeta).forEach(key => { grouped[key] = []; });
+    Object.keys(_coeffProgramCatalog).forEach(name => {
+        const spec = _coeffProgramCatalog[name] || {};
         if (spec.hidden) return;
         const key = grouped[spec.category] ? spec.category : 'elementwise';
         grouped[key].push(name);
     });
-    return Object.keys(_cpCategoryMeta).map(key => ({
+    return Object.keys(_coeffProgramCategoryMeta).map(key => ({
         key,
-        ..._cpCategoryMeta[key],
+        ..._coeffProgramCategoryMeta[key],
         items: grouped[key] || [],
     }));
 }
 
 function _renderCoeffProgramAddPopup() {
-    const popup = document.getElementById('cp-add-popup');
-    if (!popup) return;
-    const head = `<div class="score-chip-picker-head"><span class="score-chip-picker-title">Add coeff program chip</span><span class="score-chip-picker-state">RPN over coefficient vectors cf → poly</span></div>`;
-    const body = _coeffProgramCategoryGroups().map(group => {
-        const items = group.items.length
-            ? group.items.map(name => {
-                const spec = _cpCatalog[name] || {};
-                const label = spec.label || name;
-                const paramCount = (spec.params || []).length;
-                const params = paramCount ? ` · ${paramCount} param${paramCount === 1 ? '' : 's'}` : '';
-                return `<button type="button" class="score-chip-option score-chip-option-${_escapeHtml(group.key)}" onclick="selectCoeffProgramChip('${_escapeHtml(name)}',event)" title="${_escapeHtml(spec.desc || label)}"><span class="score-chip-option-name">${_escapeHtml(label)}</span><span class="score-chip-option-meta">${_escapeHtml((spec.desc || '') + params)}</span></button>`;
-            }).join('')
-            : '<span class="score-chip-empty">No chips</span>';
-        return `<div class="score-chip-category"><div class="score-chip-category-title">${_escapeHtml(group.title)}</div><div class="score-chip-category-help">${_escapeHtml(group.help)}</div><div class="score-chip-options">${items}</div></div>`;
-    }).join('');
-    popup.innerHTML = head + body;
+    _renderChipPickerPopup(_chipPickers.cp);
 }
 
 function _setCoeffProgramPickerOpen(open) {
-    const popup = document.getElementById('cp-add-popup');
-    if (!popup) return;
-    if (open) _renderCoeffProgramAddPopup();
-    popup._open = !!open;
-    popup.style.display = open ? 'block' : 'none';
-    if (popup.classList && popup.classList.toggle) popup.classList.toggle('active', !!open);
-    if (popup.setAttribute) popup.setAttribute('aria-hidden', open ? 'false' : 'true');
+    _setChipPickerOpen(_chipPickers.cp, open);
 }
 
 function toggleCoeffProgramPicker(eventObj, insertMode = null) {
-    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
-    if (insertMode === 'before' || insertMode === 'after') _coeffProgramPickerInsertMode = insertMode;
-    const popup = document.getElementById('cp-add-popup');
-    _setCoeffProgramPickerOpen(!(popup && popup._open));
+    _toggleChipPicker(_chipPickers.cp, eventObj, insertMode);
 }
 
 function selectCoeffProgramChip(name, eventObj) {
-    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
-    addChip('cp', name, _coeffProgramPickerInsertMode || 'after');
-    _setCoeffProgramPickerOpen(false);
+    _selectChipFromPicker(_chipPickers.cp, name, eventObj);
 }
 
 function selectCoeffProgramLine(idx, eventObj) {
@@ -12834,6 +12890,8 @@ function selectCoeffProgramLine(idx, eventObj) {
     _renderChips('cp');
 }
 
+// pp has a hidden fallback <select>; cp does not, so this only re-renders
+// the popup. Kept for symmetry with _syncParamProgramAddOptions.
 function _syncCoeffProgramAddOptions() {
     _renderCoeffProgramAddPopup();
 }
@@ -12872,15 +12930,19 @@ const _coeffProgramSourceAliasNames = { exp: 'exp_affine', pow: 'pow_affine', po
 // power by the vector binary), so normalize/copy must emit the dedicated
 // chips or the rows compile as the wrong operation.
 const _coeffProgramRegistryChipNames = { exp: 'exp_affine', power: 'power_series' };
+function _canonicalCoeffProgramChipName(name) {
+    // 'const' is the historical alias of the push_const chip.
+    return _canonicalCoeffProgramChipName(name);
+}
 function _coeffProgramRegistryChipName(name) {
     return _coeffProgramRegistryChipNames[name] || name;
 }
 
-function _coeffProgramSourceFromChain(chain) {
+function _coeffProgramSourceFromRows(chain) {
     return (chain || []).map(row => {
         if (Array.isArray(row) && row.length) {
             const name = String(row[0] || '').trim();
-            const params = row.slice(1).map(v => String(v == null ? '' : v));
+            const params = row.slice(1).map(v => _str(v));
             if (name === 'push' && params[0] === 'cf') return 'cf';
             if (name === 'push' && params[0] === 'poly') return 'poly';
             if ((name === 'push_const' || name === 'const') && params.length >= 2) return `push_vec(${params.join(', ')})`;
@@ -12918,7 +12980,7 @@ function _coeffProgramSourceFromChain(chain) {
                 const args = [a, b].concat(andy == null || andy === '' ? [] : [andy]).join(', ');
                 return tgt === 'poly' ? `poly = littlewood(${args})` : `littlewood(${args})`;
             }
-            const nativeSpec = _cpCatalog[name] || {};
+            const nativeSpec = _coeffProgramCatalog[name] || {};
             if (nativeSpec.nativeTransform && params.length >= 2) {
                 const callName = _coeffProgramSourceAliasNames[name] || name;
                 const [tgt, src, ...rest] = params;
@@ -12965,13 +13027,13 @@ function _setCoeffProgramEditorMode(mode) {
     if (textPanel && textPanel.classList) textPanel.classList.toggle('active', normalized === 'text');
     if (chipsTab && chipsTab.classList) chipsTab.classList.toggle('active', normalized === 'chips');
     if (textTab && textTab.classList) textTab.classList.toggle('active', normalized === 'text');
-    if (normalized === 'text' && _coeffProgramSourceAutoSynthed && !_cpChain.length) {
+    if (normalized === 'text' && _coeffProgramSourceAutoSynthed && !_coeffProgramChain.length) {
         // The synthesized program's chips were all removed; stale auto-text
         // must not stay authoritative for compute.
         _setCoeffProgramSourceText('');
-    } else if (normalized === 'text' && _cpChain.length &&
+    } else if (normalized === 'text' && _coeffProgramChain.length &&
         (!_getCoeffProgramSourceText().trim() || _coeffProgramSourceAutoSynthed)) {
-        _setCoeffProgramSourceText(_coeffProgramSourceFromChain(_serializeCoeffProgramChain()));
+        _setCoeffProgramSourceText(_coeffProgramSourceFromRows(_serializeCoeffProgramChain()));
         _coeffProgramSourceAutoSynthed = true;
     }
     const computeScope = _paramProgramModeSelected()
@@ -12981,6 +13043,8 @@ function _setCoeffProgramEditorMode(mode) {
         ? `Text source is authoritative for save, preview, debug${computeScope}.`
         : `Chip editor is authoritative for save, preview, debug${computeScope}.`);
     _syncParamPipelineModeUi();
+    // typeof guard: _coeffProgramModalState is declared with `let` later in
+    // the file; this can run during initial render before that declaration.
     if (typeof _coeffProgramModalState !== 'undefined' && _coeffProgramModalState.open) _renderCoeffProgramModal();
     if (_paramProgramModeSelected()) _markComputePreviewStale();
 }
@@ -13017,12 +13081,14 @@ function _onCoeffProgramSourceInput() {
     _scheduleCoeffProgramSourceValidation();
     if (_coeffProgramTextModeSelected() && _paramProgramModeSelected()) _markComputePreviewStale();
     _syncParamPipelineModeUi();
+    // typeof guard: _coeffProgramModalState is declared with `let` later in
+    // the file; this can run during initial render before that declaration.
     if (typeof _coeffProgramModalState !== 'undefined' && _coeffProgramModalState.open) _renderCoeffProgramModal();
     _coeffProgramStatus('Text source changed. It will be compiled by the backend on save/preview/compute.');
 }
 
 function _splitParamProgramLegacyArgs(value) {
-    const text = String(value == null ? '' : value).trim();
+    const text = _str(value).trim();
     if (!text) return [];
     return text.split(/[,\s]+/).map(part => part.trim()).filter(Boolean);
 }
@@ -13045,7 +13111,7 @@ function _paramProgramLegacyTargetArgIndex(legacyName) {
 
 function _migrateParamProgramLegacyTargetArgs(legacyName, src, tgt, args, options = {}) {
     const name = String(legacyName || '').trim();
-    const values = Array.isArray(args) ? args.map(v => String(v == null ? '' : v).trim()) : [];
+    const values = Array.isArray(args) ? args.map(v => _str(v).trim()) : [];
     const targetIdx = _paramProgramLegacyTargetArgIndex(name);
     if (targetIdx == null || values.length <= targetIdx) return [src, tgt, values];
     if (!options.force && values.length <= ((_paramProgramLegacyArgDefs(name) || []).length)) {
@@ -13059,7 +13125,7 @@ function _migrateParamProgramLegacyTargetArgs(legacyName, src, tgt, args, option
 
 function _formatParamProgramNumber(value) {
     const n = Number(value);
-    if (!Number.isFinite(n)) return String(value == null ? '' : value);
+    if (!Number.isFinite(n)) return _str(value);
     return String(Object.is(n, -0) ? 0 : n);
 }
 
@@ -13081,7 +13147,7 @@ function _paramProgramMoebiusArgsForUi(args) {
         '1',
     ];
     if (!Array.isArray(args) || !args.length) return [];
-    const values = args.map(v => String(v == null ? '' : v).trim());
+    const values = args.map(v => _str(v).trim());
     if (values.length >= 8) {
         return [
             _formatParamProgramComplexArg(values[0], values[1]),
@@ -13096,7 +13162,7 @@ function _paramProgramMoebiusArgsForUi(args) {
 function _paramProgramInvTPlus2ArgsForUi(args) {
     const defaults = ['2', '2'];
     if (!Array.isArray(args) || !args.length) return [];
-    const values = args.map(v => String(v == null ? '' : v).trim());
+    const values = args.map(v => _str(v).trim());
     if (values.length >= 4) {
         return [
             _formatParamProgramComplexArg(values[0], values[1]),
@@ -13110,7 +13176,7 @@ function _paramProgramLegacyArgsFromInput(legacyName, argsInput, options = {}) {
     const argDefs = _paramProgramLegacyArgDefs(legacyName);
     let rawArgs = [];
     if (Array.isArray(argsInput)) {
-        const values = argsInput.map(v => String(v == null ? '' : v).trim());
+        const values = argsInput.map(v => _str(v).trim());
         if (argDefs && values.length > 1) {
             rawArgs = values;
         } else {
@@ -13161,7 +13227,7 @@ function _normalizeLegacyBridgeParams(legacyName, src, tgt, argsInput) {
     let source = String(src || 'both').trim() || 'both';
     let target = String(tgt || 'both').trim() || 'both';
     let rawArgs = Array.isArray(argsInput)
-        ? argsInput.map(v => String(v == null ? '' : v).trim())
+        ? argsInput.map(v => _str(v).trim())
         : _splitParamProgramLegacyArgs(argsInput);
     [source, target, rawArgs] = _migrateParamProgramLegacyTargetArgs(name, source, target, rawArgs);
     let args = _paramProgramLegacyArgsFromInput(name, rawArgs, { fillDefaults: !!_paramProgramLegacyArgDefs(name) });
@@ -13317,11 +13383,14 @@ function _coeffProgramSourceStatementCount(sourceText) {
 function _coeffProgramSourceDisplay(sourceText, separator = ',') {
     const rows = _coeffProgramSourceStatements(sourceText);
     if (!rows.length) return 'coeff_program(identity)';
+    // Preview cap: 6 statements (the modal list shows a short head only).
     const head = rows.slice(0, 6).join(separator);
     return rows.length > 6 ? `${head}${separator}...` : head;
 }
 
 function _displayActiveCoeffPipeline(separator = ',') {
+    // typeof guard: the frontend test harness executes this function in
+    // isolation, without the rest of the file's declarations.
     const textMode = typeof _coeffProgramTextModeSelected === 'function' && _coeffProgramTextModeSelected();
     if (_paramProgramModeSelected() && textMode) {
         return _coeffProgramSourceDisplay(_getCoeffProgramSourceText(), separator);
@@ -13360,8 +13429,8 @@ function _syncParamPipelineModeUi() {
     const ctLen = _serializeCoeffTransforms().length;
     if (noteEl) {
         noteEl.textContent = mode === 'program'
-            ? `Program mode: Param Program ${ppLen ? `${ppLen} chip${ppLen === 1 ? '' : 's'}` : 'identity'}; Coeff Program ${cpLen ? `${cpLen} ${_coeffProgramTextModeSelected() ? 'source statement' : 'chip'}${cpLen === 1 ? '' : 's'}` : 'identity'}. Legacy chains are idle.`
-            : `Chain mode: Param transforms ${ptLen ? `${ptLen} chip${ptLen === 1 ? '' : 's'}` : 'none'}; Coeff transforms ${ctLen ? `${ctLen} chip${ctLen === 1 ? '' : 's'}` : 'none'}. Programs are idle.`;
+            ? `Program mode: Param Program ${ppLen ? `${_pluralize(ppLen, 'chip')}` : 'identity'}; Coeff Program ${cpLen ? `${cpLen} ${_coeffProgramTextModeSelected() ? 'source statement' : 'chip'}${cpLen === 1 ? '' : 's'}` : 'identity'}. Legacy chains are idle.`
+            : `Chain mode: Param transforms ${ptLen ? `${_pluralize(ptLen, 'chip')}` : 'none'}; Coeff transforms ${ctLen ? `${_pluralize(ctLen, 'chip')}` : 'none'}. Programs are idle.`;
     }
 }
 
@@ -13373,6 +13442,10 @@ function _setParamPipelineMode(mode, options = {}) {
     if (options.markStale) _markComputePreviewStale();
 }
 
+// Which pipeline is authoritative for a compute payload:
+// - chain mode sends legacy transforms (pt/ct) and empty programs;
+// - program mode sends programs (pp + cp-or-source) and empty transforms.
+// Exactly one side is ever non-empty, so the backend needs no mode flag.
 function _effectiveParamTransformsForCompute() {
     return _paramProgramModeSelected() ? [] : _serializeParamTransforms();
 }
@@ -13514,7 +13587,7 @@ function _portableParamProgramPayload(nameOverride = '') {
         program_kind: 'param_program',
         name: String(nameOverride || _paramProgramDefaultName()).trim() || 'param-program',
         chain,
-        display: chain.map(row => Array.isArray(row) ? (row.length > 1 ? `${row[0]}(${row.slice(1).join(',')})` : row[0]) : String(row)).join('; '),
+        display: _chainDisplayString(chain),
     };
 }
 
@@ -13611,10 +13684,10 @@ function _coeffProgramDefaultName() {
 }
 
 function _serializeCoeffProgramChain() {
-    return _cpChain.map(item => {
+    return _coeffProgramChain.map(item => {
         if (!item || !item.name) return null;
         const name = String(item.name || '').trim();
-        const params = Array.isArray(item.params) ? item.params.map(v => String(v == null ? '' : v)) : [];
+        const params = Array.isArray(item.params) ? item.params.map(v => _str(v)) : [];
         if (name === 'legacy') {
             const legacyName = _canonicalCoeffTransformName(params[0] || 'rev') || 'rev';
             const pDefs = _coeffProgramLegacyInputDefs(legacyName);
@@ -13625,12 +13698,10 @@ function _serializeCoeffProgramChain() {
             if (last >= 0 && _isAndyParam(pDefs[last]) && _ctAndyIsDefault(values[last])) last--;
             return ['legacy', legacyName, params[1] || 'poly', params[2] || 'poly', ...values.slice(0, last + 1)];
         }
-        const catalogName = name === 'const' ? 'push_const' : name;
-        const spec = _cpCatalog[catalogName] || {};
+        const catalogName = _canonicalCoeffProgramChipName(name);
+        const spec = _coeffProgramCatalog[catalogName] || {};
         const pDefs = spec.params || [];
-        const values = pDefs.map((pDef, idx) => params[idx] !== undefined && params[idx] !== ''
-            ? params[idx]
-            : String(pDef.def || ''));
+        const values = pDefs.map((pDef, idx) => _paramValueOrDefault(params, idx, pDef));
         let last = values.length - 1;
         if (spec.nativeTransform) {
             // linear compiles via the strict affine chip (tgt, src, multiplier,
@@ -13646,7 +13717,7 @@ function _serializeCoeffProgramChain() {
 function _validateCoeffProgramUiChain(chain) {
     (chain || []).forEach((item, idx) => {
         const name = String(item && item.name || '').trim();
-        if (!name || !_cpCatalog[name]) {
+        if (!name || !_coeffProgramCatalog[name]) {
             throw new Error(`unknown coeff program chip at ${idx}: ${name || '(empty)'}`);
         }
         if (name === 'legacy') {
@@ -13686,8 +13757,8 @@ function _parseCoeffProgramPayload(raw) {
 
 function _applyCoeffProgram(rawProgram) {
     const program = _parseCoeffProgramPayload(rawProgram);
-    _cpChain.splice(0, _cpChain.length, ...program.chain);
-    _coeffProgramSelectedIndex = _cpChain.length ? Math.min(_cpChain.length - 1, Math.max(0, _coeffProgramSelectedIndex)) : -1;
+    _coeffProgramChain.splice(0, _coeffProgramChain.length, ...program.chain);
+    _coeffProgramSelectedIndex = _coeffProgramChain.length ? Math.min(_coeffProgramChain.length - 1, Math.max(0, _coeffProgramSelectedIndex)) : -1;
     _renderChips('cp');
     if (program.has_source_text) {
         _setCoeffProgramSourceText(program.source_text);
@@ -13734,8 +13805,8 @@ function _copyCoeffTransformsIntoCoeffProgram() {
         // named chip params are target-first: [tgt, src, ...args]
         return { name: _coeffProgramRegistryChipName(normalized.name), params: ['poly', 'poly', ...args] };
     });
-    _cpChain.splice(0, _cpChain.length, ...chain);
-    _coeffProgramSelectedIndex = _cpChain.length ? 0 : -1;
+    _coeffProgramChain.splice(0, _coeffProgramChain.length, ...chain);
+    _coeffProgramSelectedIndex = _coeffProgramChain.length ? 0 : -1;
     // The copied transforms are now the program; stale text (user-authored or
     // synthesized from the previous chain) must not stay authoritative.
     _setCoeffProgramSourceText('');
@@ -13747,7 +13818,7 @@ function _copyCoeffTransformsIntoCoeffProgram() {
 }
 
 function _clearCoeffProgramChain() {
-    _cpChain.splice(0, _cpChain.length);
+    _coeffProgramChain.splice(0, _coeffProgramChain.length);
     _coeffProgramSelectedIndex = -1;
     _setCoeffProgramSourceText('');
     _renderChips('cp');
@@ -13764,104 +13835,98 @@ function _portableCoeffProgramPayload(nameOverride = '') {
         name: String(nameOverride || _coeffProgramDefaultName()).trim() || 'coeff-program',
         chain: sourceText.trim() ? [] : chain,
         display: sourceText.trim()
+            // Preview cap: 4 lines for the compact payload display.
             ? sourceText.split(/\n+/).map(line => line.trim()).filter(Boolean).slice(0, 4).join('; ')
-            : chain.map(row => Array.isArray(row) ? (row.length > 1 ? `${row[0]}(${row.slice(1).join(',')})` : row[0]) : String(row)).join('; '),
+            : _chainDisplayString(chain),
     };
     if (sourceText.trim()) payload.source_text = sourceText;
     return payload;
 }
 
+// Validates one chip-param edit against its catalog param def. Returns
+// { value } to store — plus { valueNext } when a complex constant spans the
+// following slot — or { error } with the alert text. Kind checks run in
+// catalog order: target, choices, then the cp/ct kind flags.
+function _validateChipParamValue(which, pDef, value) {
+    const rawText = _str(value).trim();
+    if (pDef && pDef.target) {
+        const norm = _normalizeTarget(value);
+        return norm ? { value: norm } : { error: `Invalid target: "${value}". Use t1, t2, or both.` };
+    }
+    if (pDef && Array.isArray(pDef.choices) && pDef.choices.length) {
+        const norm = rawText.toLowerCase();
+        return pDef.choices.includes(norm)
+            ? { value: norm }
+            : { error: `Invalid ${pDef.ph || 'value'}: "${value}". Use ${pDef.choices.join(' or ')}.` };
+    }
+    if (which === 'cp' && pDef) {
+        if (pDef.lengthArg) {
+            if (rawText.toLowerCase() === 'poly_len') return { value: 'poly_len' };
+            const number = Number(rawText);
+            const min = pDef.min == null ? 1 : Number(pDef.min);
+            const max = pDef.max == null ? 256 : Number(pDef.max);
+            if (!Number.isFinite(number) || !Number.isInteger(number) || number < min || number > max) {
+                return { error: `Invalid ${pDef.label || pDef.ph || 'length'}: "${value}". Use poly_len or an integer in [${min}, ${max}].` };
+            }
+            return { value: String(number) };
+        }
+        if (pDef.intLiteral) {
+            const number = Number(rawText);
+            const min = pDef.min == null ? -Infinity : Number(pDef.min);
+            const max = pDef.max == null ? Infinity : Number(pDef.max);
+            if (!Number.isFinite(number) || !Number.isInteger(number) || number < min || number > max) {
+                return { error: `Invalid ${pDef.label || pDef.ph || 'value'}: "${value}". Use an integer${Number.isFinite(min) || Number.isFinite(max) ? ` in [${min}, ${max}]` : ''}.` };
+            }
+            return { value: String(number) };
+        }
+        if (pDef.scalarExpr) {
+            // Coeff Program scalar args are parsed by the compiler. Keep expressions
+            // like p2, real(p1), or p1+conj(p2) intact instead of applying the
+            // legacy numeric-only transform validator in the editor.
+            return { value: rawText || String(pDef.def || '') };
+        }
+        if (_isAndyParam(pDef)) {
+            const norm = _normalizeCtRealInput(value);
+            return norm == null
+                ? { error: `Invalid ${pDef.ph || 'value'}: "${value}". Use a finite numeric andy value.` }
+                : { value: norm };
+        }
+        return { value: rawText || String(pDef.def || '') };
+    }
+    if (which === 'ct' && pDef) {
+        if (pDef.complexPairNext) {
+            const complex = _splitCtComplexInput(value);
+            if (complex) return { value: complex.re, valueNext: complex.im };
+            // not a pair: fall through and treat the edit as this slot only
+        }
+        if (pDef.complex) {
+            const parsed = _parseCtComplexConstant(value);
+            return parsed
+                ? { value: _formatCfpvComplexValue(parsed.re, parsed.im) }
+                : { error: `Invalid ${pDef.ph || 'value'}: "${value}". Use a finite complex number such as 2-3j.` };
+        }
+        const norm = _normalizeCtRealInput(value);
+        return norm == null
+            ? { error: `Invalid ${pDef.ph || 'value'}: "${value}". Use a number, scientific notation, or a simple +/- constant expression.` }
+            : { value: norm };
+    }
+    return { value };
+}
+
 function updateChipParam(chipIdx, paramIdx, value, which) {
     const chain = _chainForWhich(which);
-    if (chipIdx >= 0 && chipIdx < chain.length) {
-        const catalog = _catalogForChain(which);
-        const spec = catalog[chain[chipIdx].name] || {};
-        const pDef = (spec.params || [])[paramIdx];
-        const rawText = String(value == null ? '' : value).trim();
-        if (pDef && pDef.target) {
-            const norm = _normalizeTarget(value);
-            if (!norm) { alert(`Invalid target: "${value}". Use t1, t2, or both.`); return; }
-            chain[chipIdx].params[paramIdx] = norm;
-        } else if (pDef && Array.isArray(pDef.choices) && pDef.choices.length) {
-            const norm = rawText.toLowerCase();
-            if (!pDef.choices.includes(norm)) {
-                alert(`Invalid ${pDef.ph || 'value'}: "${value}". Use ${pDef.choices.join(' or ')}.`);
-                return;
-            }
-            chain[chipIdx].params[paramIdx] = norm;
-        } else if (which === 'cp' && pDef) {
-            if (pDef.lengthArg) {
-                const lower = rawText.toLowerCase();
-                if (lower === 'poly_len') {
-                    chain[chipIdx].params[paramIdx] = 'poly_len';
-                } else {
-                    const number = Number(rawText);
-                    const min = pDef.min == null ? 1 : Number(pDef.min);
-                    const max = pDef.max == null ? 256 : Number(pDef.max);
-                    if (!Number.isFinite(number) || !Number.isInteger(number) || number < min || number > max) {
-                        alert(`Invalid ${pDef.label || pDef.ph || 'length'}: "${value}". Use poly_len or an integer in [${min}, ${max}].`);
-                        return;
-                    }
-                    chain[chipIdx].params[paramIdx] = String(number);
-                }
-            } else if (pDef.intLiteral) {
-                const number = Number(rawText);
-                const min = pDef.min == null ? -Infinity : Number(pDef.min);
-                const max = pDef.max == null ? Infinity : Number(pDef.max);
-                if (!Number.isFinite(number) || !Number.isInteger(number) || number < min || number > max) {
-                    alert(`Invalid ${pDef.label || pDef.ph || 'value'}: "${value}". Use an integer${Number.isFinite(min) || Number.isFinite(max) ? ` in [${min}, ${max}]` : ''}.`);
-                    return;
-                }
-                chain[chipIdx].params[paramIdx] = String(number);
-            } else if (pDef.scalarExpr) {
-                // Coeff Program scalar args are parsed by the compiler. Keep expressions
-                // like p2, real(p1), or p1+conj(p2) intact instead of applying the
-                // legacy numeric-only transform validator in the editor.
-                chain[chipIdx].params[paramIdx] = rawText || String(pDef.def || '');
-            } else if (_isAndyParam(pDef)) {
-                const norm = _normalizeCtRealInput(value);
-                if (norm == null) {
-                    alert(`Invalid ${pDef.ph || 'value'}: "${value}". Use a finite numeric andy value.`);
-                    return;
-                }
-                chain[chipIdx].params[paramIdx] = norm;
-            } else {
-                chain[chipIdx].params[paramIdx] = rawText || String(pDef.def || '');
-            }
-        } else if (which === 'ct' && pDef) {
-            if (pDef.complexPairNext) {
-                const complex = _splitCtComplexInput(value);
-                if (complex) {
-                    chain[chipIdx].params[paramIdx] = complex.re;
-                    if (paramIdx + 1 < chain[chipIdx].params.length) chain[chipIdx].params[paramIdx + 1] = complex.im;
-                    _renderChips(which);
-                    if (_paramPipelineEditAffectsCompute(which)) _markComputePreviewStale();
-                    return;
-                }
-            }
-            if (pDef.complex) {
-                const parsed = _parseCtComplexConstant(value);
-                if (!parsed) {
-                    alert(`Invalid ${pDef.ph || 'value'}: "${value}". Use a finite complex number such as 2-3j.`);
-                    return;
-                }
-                chain[chipIdx].params[paramIdx] = _formatCfpvComplexValue(parsed.re, parsed.im);
-                _renderChips(which);
-                if (_paramPipelineEditAffectsCompute(which)) _markComputePreviewStale();
-                return;
-            }
-            const norm = _normalizeCtRealInput(value);
-            if (norm == null) {
-                alert(`Invalid ${pDef.ph || 'value'}: "${value}". Use a number, scientific notation, or a simple +/- constant expression.`);
-                return;
-            }
-            chain[chipIdx].params[paramIdx] = norm;
-        } else {
-            chain[chipIdx].params[paramIdx] = value;
-        }
-        _renderChips(which);
-        if (_paramPipelineEditAffectsCompute(which)) _markComputePreviewStale();
+    if (chipIdx < 0 || chipIdx >= chain.length) return;
+    const catalog = _catalogForChain(which);
+    const spec = catalog[chain[chipIdx].name] || {};
+    const pDef = (spec.params || [])[paramIdx];
+    const result = _validateChipParamValue(which, pDef, value);
+    if (result.error) { alert(result.error); return; }
+    chain[chipIdx].params[paramIdx] = result.value;
+    if (result.valueNext !== undefined && paramIdx + 1 < chain[chipIdx].params.length) {
+        chain[chipIdx].params[paramIdx + 1] = result.valueNext;
     }
+    _renderChips(which);
+    if (_paramPipelineEditAffectsCompute(which)) _markComputePreviewStale();
 }
 
 function _chipReadonlyValueHtml(value, paramDef = {}, title = '') {
@@ -13890,7 +13955,7 @@ function _chipInputHtml(which, chipIdx, paramIdx, value, paramDef, options = {})
         : '';
     const titleAttr = (pd.title || defaultExprTitle) ? ` title="${_escapeHtml(pd.title || defaultExprTitle)}"` : '';
     if (pd.target) {
-        const normalizedValue = _normalizeTarget(String(value == null ? '' : value)) || _normalizeTarget(String(pd.def || 'both')) || 'both';
+        const normalizedValue = _normalizeTarget(_str(value)) || _normalizeTarget(String(pd.def || 'both')) || 'both';
         const options = ['t1', 't2', 'both'].map(choice => {
             const selected = normalizedValue === choice ? ' selected' : '';
             return `<option value="${choice}"${selected}>${choice}</option>`;
@@ -13898,7 +13963,7 @@ function _chipInputHtml(which, chipIdx, paramIdx, value, paramDef, options = {})
         return `<select class="chip-input chip-input-target"${titleAttr} onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">${options}</select>`;
     }
     if (Array.isArray(pd.choices) && pd.choices.length) {
-        const normalizedValue = String(value == null ? '' : value).trim().toLowerCase();
+        const normalizedValue = _str(value).trim().toLowerCase();
         const options = pd.choices.map(choice => {
             const selected = normalizedValue === choice ? ' selected' : '';
             return `<option value="${_escapeHtml(choice)}"${selected}>${_escapeHtml(choice)}</option>`;
@@ -14136,8 +14201,8 @@ function _coeffProgramChipShellHtml(i, readonly, bodyHtml) {
 
 function _coeffProgramLegacyInputDefs(legacyName) {
     const canonicalName = _canonicalCoeffTransformName(legacyName);
-    if (canonicalName === 'exp') return _cpExpParamDefs.map(p => ({ ...p }));
-    if (canonicalName === 'round') return _cpRoundParamDefs.map(p => ({ ...p }));
+    if (canonicalName === 'exp') return _coeffProgramExpParamDefs.map(p => ({ ...p }));
+    if (canonicalName === 'round') return _coeffProgramRoundParamDefs.map(p => ({ ...p }));
     const spec = _ctCatalog[canonicalName] || {};
     return (spec.params || []).map(p => ({ ...p }));
 }
@@ -14162,7 +14227,7 @@ function _coeffProgramLegacyAndyHtml(i, values, legacyDefs, options = {}) {
 }
 
 function _coeffProgramLegacyFormulaHtml(i, legacyName, values, legacyDefs, options = {}) {
-    const pDefs = _cpCatalog.legacy.params || [];
+    const pDefs = _coeffProgramCatalog.legacy.params || [];
     const fn = _chipInputHtml('cp', i, 0, values[0], pDefs[0] || {}, options);
     const src = _chipInputHtml('cp', i, 1, values[1], pDefs[1] || {}, options);
     const tgt = _chipInputHtml('cp', i, 2, values[2], pDefs[2] || {}, options);
@@ -14197,18 +14262,11 @@ function _coeffProgramLegacyFormulaHtml(i, legacyName, values, legacyDefs, optio
 
 function _coeffProgramNativeTransformFormulaHtml(item, i, pDefs, options = {}) {
     const params = Array.isArray(item.params) ? item.params : [];
-    const input = (idx) => _chipInputHtml(
-        'cp',
-        i,
-        idx,
-        params[idx] !== undefined && params[idx] !== '' ? params[idx] : String(pDefs[idx]?.def || ''),
-        pDefs[idx] || {},
-        options
-    );
+    const input = (idx) => _chipInputHtml('cp', i, idx, _paramValueOrDefault(params, idx, pDefs[idx]), pDefs[idx] || {}, options);
     const tgt = input(0);
     const src = input(1);
     const arg = (idx) => input(2 + idx);
-    const label = _escapeHtml((_cpCatalog[item.name] && _cpCatalog[item.name].label) || item.name);
+    const label = _escapeHtml((_coeffProgramCatalog[item.name] && _coeffProgramCatalog[item.name].label) || item.name);
     if (item.name === 'pow') {
         return `<span class="chip-formula">${tgt}<span class="chip-op">=</span><span>${label}(</span>${src}<span class="chip-op">*</span>${arg(0)}<span class="chip-op">,</span>${arg(1)}<span>)</span></span>`;
     }
@@ -14230,7 +14288,7 @@ function _coeffProgramNativeTransformFormulaHtml(item, i, pDefs, options = {}) {
 
 function _coeffProgramVectorFormulaHtml(item, i, pDefs, options = {}) {
     const params = Array.isArray(item.params) ? item.params : [];
-    const input = (idx) => _chipInputHtml('cp', i, idx, params[idx] !== undefined && params[idx] !== '' ? params[idx] : String(pDefs[idx]?.def || ''), pDefs[idx] || {}, options);
+    const input = (idx) => _chipInputHtml('cp', i, idx, _paramValueOrDefault(params, idx, pDefs[idx]), pDefs[idx] || {}, options);
     const tgt = input(0);
     if (item.name === 'set') {
         return `<span class="chip-formula">${tgt}<span class="chip-op">=</span>${input(1)}</span>`;
@@ -14248,14 +14306,15 @@ function _coeffProgramVectorFormulaHtml(item, i, pDefs, options = {}) {
         return `<span class="chip-formula">${tgt}<span class="chip-op">=</span><span>${_escapeHtml(item.name)}(</span>${input(1)}<span class="chip-op">,</span>${input(2)}<span>)</span></span>`;
     }
     if (item.name === 'littlewood') {
-        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span><span>littlewood(</span>${input(1)}<span class="chip-op">,</span>${input(2)}<span>)</span><span class="chip-op">andy=</span>${input(3)}</span>`;
+        const andyIdx = _ctAndyIndex(pDefs);
+        return `<span class="chip-formula">${tgt}<span class="chip-op">=</span><span>littlewood(</span>${input(1)}<span class="chip-op">,</span>${input(2)}<span>)</span><span class="chip-op">andy=</span>${input(andyIdx)}</span>`;
     }
     return '';
 }
 
 function _renderCoeffProgramChipHtml(item, i, options = {}) {
     const readonly = !!options.readonly;
-    const spec = _cpCatalog[item.name] || {};
+    const spec = _coeffProgramCatalog[item.name] || {};
     const params = Array.isArray(item.params) ? item.params : [];
     const label = _escapeHtml(spec.label || item.name);
     if (item.name === 'legacy') {
@@ -14363,12 +14422,12 @@ function _renderChips(which) {
         const chainLen = _serializeParamProgramChain().length;
         if (_paramProgramModeSelected()) {
             _paramProgramStatus(chainLen
-                ? `Param Program selected · ${chainLen} chip${chainLen === 1 ? '' : 's'}`
+                ? `Param Program selected · ${_pluralize(chainLen, 'chip')}`
                 : 'Param Program selected · empty identity');
         } else {
             _paramProgramStatus(chainLen
-                ? `Legacy selected · Param Program idle with ${chainLen} chip${chainLen === 1 ? '' : 's'}`
-                : 'Legacy selected · Param Program empty');
+                ? `Chain pipeline selected · Param Program idle with ${_pluralize(chainLen, 'chip')}`
+                : 'Chain pipeline selected · Param Program empty');
         }
     } else if (which === 'cp') {
         el.innerHTML = chain.map((item, i) => _renderCoeffProgramChipHtml(item, i)).join('');
@@ -14382,18 +14441,18 @@ function _renderChips(which) {
                     : 'Coeff Program selected · empty text source');
             } else {
                 _coeffProgramStatus(chainLen
-                    ? `Coeff Program selected · ${chainLen} chip${chainLen === 1 ? '' : 's'}`
+                    ? `Coeff Program selected · ${_pluralize(chainLen, 'chip')}`
                     : 'Coeff Program selected · empty identity');
             }
         } else {
             if (_coeffProgramTextModeSelected()) {
                 _coeffProgramStatus(sourceLen
-                    ? `Chain mode selected · Coeff Program text idle with ${sourceLen} source statement${sourceLen === 1 ? '' : 's'}`
-                    : 'Chain mode selected · Coeff Program text empty');
+                    ? `Chain pipeline selected · Coeff Program text idle with ${sourceLen} source statement${sourceLen === 1 ? '' : 's'}`
+                    : 'Chain pipeline selected · Coeff Program text empty');
             } else {
                 _coeffProgramStatus(chainLen
-                    ? `Chain mode selected · Coeff Program idle with ${chainLen} chip${chainLen === 1 ? '' : 's'}`
-                    : 'Chain mode selected · Coeff Program empty');
+                    ? `Chain pipeline selected · Coeff Program idle with ${_pluralize(chainLen, 'chip')}`
+                    : 'Chain pipeline selected · Coeff Program empty');
             }
         }
     } else if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {

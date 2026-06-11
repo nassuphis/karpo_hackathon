@@ -12,41 +12,34 @@ import re
 from dataclasses import dataclass
 
 from coeff_program_chain import (
-    _canonical_unary_op_name,
-    _expr_value_if_static,
-    EXPR_ABS,
+    canonical_unary_op_name,
+    expr_value_if_static,
     EXPR_ADD,
-    EXPR_ANGLE,
     EXPR_CF_AT,
     EXPR_CF_AT_DYN,
-    EXPR_CONJ,
-    EXPR_COS,
-    EXPR_COSH,
     EXPR_DIV,
-    EXPR_EXP,
-    EXPR_IMAG,
     EXPR_LITERAL,
-    EXPR_LOG,
     EXPR_MUL,
-    EXPR_NEG,
     EXPR_P1,
     EXPR_P2,
     EXPR_POLY_AT,
     EXPR_POLY_AT_DYN,
     EXPR_POLY_LEN,
-    EXPR_REAL,
-    EXPR_SIN,
-    EXPR_SINH,
-    EXPR_SQRT,
     EXPR_SUB,
     EXPR_T1,
     EXPR_T2,
-    EXPR_TAN,
-    EXPR_TANH,
     EXPR_TOS_AT,
     EXPR_TOS_AT_DYN,
+    FN_LINEAR,
+    FN_EXP,
+    FN_ROUND,
+    FN_POW,
     MAX_VECTOR_LEN,
-    _ExpressionParser,
+    ExpressionParser,
+    SCALAR_UNARY_EXPR_OPS,
+    TYPED_BINARY_NAME_ALIASES,
+    VECTOR_BINARY_OPS,
+    VECTOR_UNARY_OPS,
     compile_coeff_program_chain,
     display_coeff_program_chain,
     legacy_registry,
@@ -59,35 +52,37 @@ MAX_COEFF_PROGRAM_SOURCE_BYTES = 64 * 1024
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _INDEX_RE = re.compile(r"^poly\[(\d+)\]$", re.IGNORECASE)
 
+# Canonical names plus the typed shorthands, both derived from the chain
+# layer's tables so the vocabularies cannot drift.
 _VECTOR_BINARY_ALIASES = {
-    "add": "add",
-    "sub": "subtract",
-    "subtract": "subtract",
-    "mul": "multiply",
-    "multiply": "multiply",
-    "div": "divide",
-    "divide": "divide",
-    "pow": "power",
-    "power": "power",
+    **{name: name for name in VECTOR_BINARY_OPS},
+    **TYPED_BINARY_NAME_ALIASES,
 }
 
-_VECTOR_UNARY_NAMES = {
-    "angle",
-    "mod",
-    "abs",
-    "neg",
-    "conj",
-    "sqrt",
-    "log",
-    "exp",
-    "sin",
-    "cos",
-    "tan",
-    "sinh",
-    "cosh",
-    "tanh",
-    "real",
-    "imag",
+_VECTOR_UNARY_NAMES = frozenset(VECTOR_UNARY_OPS)
+
+# EXPR opcode -> typed unary chip name, inverted from the chain layer's map
+# ("mod" and "abs" share an opcode; the canonical chip name wins).
+_EXPR_UNARY_CHIP_NAMES = {
+    op: canonical_unary_op_name(name)
+    for name, op in SCALAR_UNARY_EXPR_OPS.items()
+}
+
+# Remaining EXPR-opcode lowering tables (the push/index/binary families).
+_EXPR_SCALAR_PUSHES = {
+    EXPR_P1: "p1",
+    EXPR_P2: "p2",
+    EXPR_T1: "t1",
+    EXPR_T2: "t2",
+    EXPR_POLY_LEN: "poly_len",
+}
+_EXPR_INDEX_SOURCES = {EXPR_CF_AT: "cf", EXPR_POLY_AT: "poly", EXPR_TOS_AT: "tos"}
+_EXPR_DYN_INDEX_SOURCES = {EXPR_CF_AT_DYN: "cf", EXPR_POLY_AT_DYN: "poly", EXPR_TOS_AT_DYN: "tos"}
+_EXPR_BINARY_CHIP_NAMES = {
+    EXPR_ADD: "add",
+    EXPR_SUB: "subtract",
+    EXPR_MUL: "multiply",
+    EXPR_DIV: "divide",
 }
 
 _STACK_ALIASES = {
@@ -105,7 +100,7 @@ _TYPED_VECTOR_SOURCE_NAMES = frozenset(_SOURCE_NAMES | {"tos"})
 _TARGET_NAMES = {"poly", "push"}
 _VECTOR_FILL_NAMES = {"fill", "const", "push_const", "push_vec"}
 # Source-text aliases for native transforms whose registry names are shadowed
-# by typed-expression builtins (exp/pow/power). Mirrored by _LEGACY_NAME_ALIASES
+# by typed-expression builtins (exp/pow/power). Mirrored by LEGACY_NAME_ALIASES
 # in coeff_program_chain and by the chip synthesizer in index.html.
 _NATIVE_TRANSFORM_ALIASES = {
     "exp_affine": "exp",
@@ -139,9 +134,9 @@ class CoeffProgramSourceError(RuntimeError):
         self.column = column
 
 
-def _diagnostic(message, *, line=1, column=1, level="error"):
+def _diagnostic(message, *, line=1, column=1):
     return {
-        "level": level,
+        "level": "error",
         "message": str(message),
         "line": int(line),
         "column": int(column),
@@ -231,33 +226,31 @@ def _target_selector(text):
     return raw
 
 
-def _native_transform_args_and_andy(name, args):
-    registry = legacy_registry()["by_name"]
-    canonical_name = _NATIVE_TRANSFORM_ALIASES.get(
-        str(name or "").strip().lower(),
-        str(name or "").strip().lower(),
-    )
-    spec = registry.get(canonical_name)
+def _canonical_native_name(name):
+    raw = str(name or "").strip().lower()
+    return _NATIVE_TRANSFORM_ALIASES.get(raw, raw)
+
+
+def _split_native_transform_andy(name, args):
+    """Strip the trailing andy arg when the count matches the fn's packing.
+
+    Mirrors coeffProgramNativeTransformOp's packed-arg cases (the FN_*
+    registry ids) and coeff_program_chain's _legacy_args family.
+    """
+    spec = legacy_registry()["by_name"].get(_canonical_native_name(name))
     if not spec or not spec.get("supports_andy"):
         return list(args), None
     raw_args = list(args)
     fn_index = int(spec.get("fn_index") or 0)
-    # Mirrors coeffProgramNativeTransformOp's packed-arg cases for the stable
-    # coeff_legacy_registry.json ids: linear=14, exp=16, round=23, pow=24.
-    if fn_index in {14, 24}:
-        if len(raw_args) in {3, 5}:
-            return raw_args[:-1], raw_args[-1]
-        return raw_args, None
-    if fn_index == 16:
-        if len(raw_args) == 3:
-            return raw_args[:-1], raw_args[-1]
-        return raw_args, None
-    if fn_index == 23:
-        if len(raw_args) in {2, 3}:
-            return raw_args[:-1], raw_args[-1]
-        return raw_args, None
-    declared = list(spec.get("args") or [])
-    if len(raw_args) == len(declared) + 1:
+    if fn_index in {FN_LINEAR, FN_POW}:
+        andy_arities = {3, 5}
+    elif fn_index == FN_EXP:
+        andy_arities = {3}
+    elif fn_index == FN_ROUND:
+        andy_arities = {2, 3}
+    else:
+        andy_arities = {len(spec.get("args") or []) + 1}
+    if len(raw_args) in andy_arities:
         return raw_args[:-1], raw_args[-1]
     return raw_args, None
 
@@ -282,8 +275,8 @@ def _format_scalar_literal(value):
 
 def _typed_lower_scalar(text):
     try:
-        expr = _ExpressionParser(_canonical_expr(text)).parse()
-        static_value = _expr_value_if_static(expr)
+        expr = ExpressionParser(_canonical_expr(text)).parse()
+        static_value = expr_value_if_static(expr)
     except Exception as exc:
         raise CoeffProgramSourceError(str(exc))
     if static_value is not None:
@@ -296,64 +289,20 @@ def _typed_lower_scalar(text):
         op = int(token.get("op") or 0)
         if op == EXPR_LITERAL:
             chain.append(["_typed_push_scalar", f"{token.get('a', 0.0)}+{token.get('b', 0.0)}j"])
-        elif op == EXPR_P1:
-            chain.append(["_typed_push_scalar", "p1"])
-        elif op == EXPR_P2:
-            chain.append(["_typed_push_scalar", "p2"])
-        elif op == EXPR_T1:
-            chain.append(["_typed_push_scalar", "t1"])
-        elif op == EXPR_T2:
-            chain.append(["_typed_push_scalar", "t2"])
-        elif op == EXPR_POLY_LEN:
-            chain.append(["_typed_push_scalar", "poly_len"])
-        elif op in {EXPR_CF_AT, EXPR_POLY_AT, EXPR_TOS_AT}:
-            src = {EXPR_CF_AT: "cf", EXPR_POLY_AT: "poly", EXPR_TOS_AT: "tos"}[op]
-            chain.extend(_typed_lower_vector_source(src))
+        elif op in _EXPR_SCALAR_PUSHES:
+            chain.append(["_typed_push_scalar", _EXPR_SCALAR_PUSHES[op]])
+        elif op in _EXPR_INDEX_SOURCES:
+            chain.extend(_typed_lower_vector_source(_EXPR_INDEX_SOURCES[op]))
             chain.append(["_typed_push_scalar", str(int(token.get("a") or 0))])
             chain.append(["_typed_get_scalar"])
-        elif op in {EXPR_CF_AT_DYN, EXPR_POLY_AT_DYN, EXPR_TOS_AT_DYN}:
-            src = {EXPR_CF_AT_DYN: "cf", EXPR_POLY_AT_DYN: "poly", EXPR_TOS_AT_DYN: "tos"}[op]
-            chain.extend(_typed_lower_vector_source(src))
+        elif op in _EXPR_DYN_INDEX_SOURCES:
+            chain.extend(_typed_lower_vector_source(_EXPR_DYN_INDEX_SOURCES[op]))
             chain.append(["swap"])
             chain.append(["_typed_get_scalar"])
-        elif op == EXPR_ADD:
-            chain.append(["_typed_binary", "add"])
-        elif op == EXPR_SUB:
-            chain.append(["_typed_binary", "subtract"])
-        elif op == EXPR_MUL:
-            chain.append(["_typed_binary", "multiply"])
-        elif op == EXPR_DIV:
-            chain.append(["_typed_binary", "divide"])
-        elif op == EXPR_CONJ:
-            chain.append(["_typed_unary", "conj"])
-        elif op == EXPR_NEG:
-            chain.append(["_typed_unary", "neg"])
-        elif op == EXPR_REAL:
-            chain.append(["_typed_unary", "real"])
-        elif op == EXPR_IMAG:
-            chain.append(["_typed_unary", "imag"])
-        elif op == EXPR_ABS:
-            chain.append(["_typed_unary", "abs"])
-        elif op == EXPR_LOG:
-            chain.append(["_typed_unary", "log"])
-        elif op == EXPR_SQRT:
-            chain.append(["_typed_unary", "sqrt"])
-        elif op == EXPR_EXP:
-            chain.append(["_typed_unary", "exp"])
-        elif op == EXPR_SIN:
-            chain.append(["_typed_unary", "sin"])
-        elif op == EXPR_COS:
-            chain.append(["_typed_unary", "cos"])
-        elif op == EXPR_TAN:
-            chain.append(["_typed_unary", "tan"])
-        elif op == EXPR_SINH:
-            chain.append(["_typed_unary", "sinh"])
-        elif op == EXPR_COSH:
-            chain.append(["_typed_unary", "cosh"])
-        elif op == EXPR_TANH:
-            chain.append(["_typed_unary", "tanh"])
-        elif op == EXPR_ANGLE:
-            chain.append(["_typed_unary", "angle"])
+        elif op in _EXPR_BINARY_CHIP_NAMES:
+            chain.append(["_typed_binary", _EXPR_BINARY_CHIP_NAMES[op]])
+        elif op in _EXPR_UNARY_CHIP_NAMES:
+            chain.append(["_typed_unary", _EXPR_UNARY_CHIP_NAMES[op]])
         else:
             raise CoeffProgramSourceError(f"unsupported scalar expression opcode {op}")
     return chain
@@ -407,7 +356,7 @@ def _typed_lower_fill(args):
     elif len(args) == 2:
         length_expr, value_expr = args
     else:
-        raise CoeffProgramSourceError("fill/const requires value or length, value")
+        raise CoeffProgramSourceError("fill requires fill(value) or fill(length, value)")
     chain = _typed_lower_scalar(length_expr)
     chain.extend(_typed_lower_scalar(value_expr))
     chain.append(["_typed_fill"])
@@ -435,46 +384,39 @@ def _typed_lower_unary(name, args):
     if len(args) != 1:
         raise CoeffProgramSourceError(f"{name} requires one argument in typed expressions")
     chain, value_type = _typed_lower_value(args[0])
-    chain.append(["_typed_unary", _canonical_unary_op_name(name)])
+    chain.append(["_typed_unary", canonical_unary_op_name(name)])
     return chain, value_type
+
+
+_AFFINE_SHORTHANDS = {
+    # name -> (value word for diagnostics, typed binary chip)
+    "scale": ("multiplier", "multiply"),
+    "shift": ("offset", "add"),
+}
 
 
 def _typed_lower_affine(name, args):
     # The shorthand forms resolve args positionally, so a vector-source name
     # in a value slot (scale(poly), linear(poly, 5)) would silently bind the
     # source as a multiplier/offset; reject those shapes outright.
-    if name == "scale":
+    if name in _AFFINE_SHORTHANDS:
+        value_word, chip = _AFFINE_SHORTHANDS[name]
         if len(args) == 1:
             if _is_vector_source_text(args[0]):
                 raise CoeffProgramSourceError(
-                    "scale(source) is missing the multiplier; write scale(source, multiplier) or scale(multiplier)"
+                    f"{name}(source) is missing the {value_word}; "
+                    f"write {name}(source, {value_word}) or {name}({value_word})"
                 )
-            src, multiplier = "pop", args[0]
+            src, value = "pop", args[0]
         elif len(args) == 2:
             if not _is_vector_source_text(args[0]):
                 raise CoeffProgramSourceError(
-                    f"scale source must be cf/poly/pop/peek/tos, got {args[0]!r}"
+                    f"{name} source must be cf/poly/pop/peek/tos, got {args[0]!r}"
                 )
-            src, multiplier = args
+            src, value = args
         else:
-            raise CoeffProgramSourceError("scale requires multiplier or source, multiplier")
-        return _typed_lower_binary("multiply", [src, multiplier])
-    if name == "shift":
-        if len(args) == 1:
-            if _is_vector_source_text(args[0]):
-                raise CoeffProgramSourceError(
-                    "shift(source) is missing the offset; write shift(source, offset) or shift(offset)"
-                )
-            src, offset = "pop", args[0]
-        elif len(args) == 2:
-            if not _is_vector_source_text(args[0]):
-                raise CoeffProgramSourceError(
-                    f"shift source must be cf/poly/pop/peek/tos, got {args[0]!r}"
-                )
-            src, offset = args
-        else:
-            raise CoeffProgramSourceError("shift requires offset or source, offset")
-        return _typed_lower_binary("add", [src, offset])
+            raise CoeffProgramSourceError(f"{name} requires {value_word} or source, {value_word}")
+        return _typed_lower_binary(chip, [src, value])
     if len(args) == 2:
         if _is_vector_source_text(args[0]):
             raise CoeffProgramSourceError(
@@ -515,9 +457,9 @@ def _typed_lower_value(text):
         if name == "push_scalar":
             return _typed_lower_push_scalar(args)
         if name in {"arange", "range", "push_range"}:
-            return _lower_range("range", args), "vector"
+            return _lower_range("range", args, target="push"), "vector"
         if name in {"linspace", "push_linspace"}:
-            return _lower_range("linspace", args), "vector"
+            return _lower_range("linspace", args, target="push"), "vector"
         if name in _VECTOR_BINARY_ALIASES:
             return _typed_lower_binary(name, args)
         if name in _VECTOR_UNARY_NAMES:
@@ -532,14 +474,18 @@ def _lower_const(args, *, target):
     return _append_typed_target(chain, value_type, target=target)
 
 
-def _lower_range(name, args):
+def _lower_range(name, args, *, target):
+    # Takes target like its sibling lowerers so callers cannot forget the
+    # poly-assignment wrapper.
     if name == "linspace":
         if len(args) not in {1, 3}:
             raise CoeffProgramSourceError("linspace requires length or start, stop, count")
-        return [["push_linspace"] + [_canonical_expr(arg) for arg in args]]
-    if len(args) not in {1, 2, 3}:
-        raise CoeffProgramSourceError("arange/range requires length, start/stop, or start/stop/step")
-    return [["push_range"] + [_canonical_expr(arg) for arg in args]]
+        chain = [["push_linspace"] + [_canonical_expr(arg) for arg in args]]
+    else:
+        if len(args) not in {1, 2, 3}:
+            raise CoeffProgramSourceError("arange/range requires length, start/stop, or start/stop/step")
+        chain = [["push_range"] + [_canonical_expr(arg) for arg in args]]
+    return _append_typed_target(chain, "vector", target=target)
 
 
 def _lower_affine(name, args, *, target):
@@ -565,6 +511,7 @@ def _lower_vector_binary(name, args, *, target):
                 f"{name} with cf can only stage cf/poly sources in v1"
             )
         staged = []
+        # Pushed in reverse: the staged chip pops src1 first, then src2.
         for src in (src2, src1):
             staged.append(["push", src])
         staged.append([chip, target, "pop", "pop"])
@@ -573,7 +520,7 @@ def _lower_vector_binary(name, args, *, target):
 
 
 def _lower_vector_unary(name, args, *, target):
-    chip = _canonical_unary_op_name(name)
+    chip = canonical_unary_op_name(name)
     if len(args) == 0:
         chain = [["_typed_unary", chip]]
         return _append_typed_target(chain, "vector", target=target)
@@ -590,7 +537,7 @@ def _lower_vector_unary(name, args, *, target):
 
 
 def _lower_native_transform_call(name, args, *, target):
-    name = _NATIVE_TRANSFORM_ALIASES.get(str(name or "").strip().lower(), str(name or "").strip().lower())
+    name = _canonical_native_name(name)
     if len(args) == 0:
         src = "pop"
         fn_args = []
@@ -602,7 +549,7 @@ def _lower_native_transform_call(name, args, *, target):
         else:
             src = "pop"
             fn_args = args
-    fn_args, andy_arg = _native_transform_args_and_andy(name, fn_args)
+    fn_args, andy_arg = _split_native_transform_andy(name, fn_args)
     # The VM caps stack args per transform (e.g. round takes one packed
     # multiplier); over-limit arg lists must take the full-args token, which
     # knows the back-compat packings like round(a, b, andy).
@@ -651,9 +598,9 @@ def _lower_call(name, args, *, target="push"):
         chain, value_type = _typed_lower_push_scalar(args)
         return _append_typed_target(chain, value_type, target=target)
     if name in {"arange", "range", "push_range"}:
-        return _append_typed_target(_lower_range("range", args), "vector", target=target)
+        return _lower_range("range", args, target=target)
     if name in {"linspace", "push_linspace"}:
-        return _append_typed_target(_lower_range("linspace", args), "vector", target=target)
+        return _lower_range("linspace", args, target=target)
     if name in {"scale", "shift", "linear", "affine"}:
         if name == "affine":
             if target == "poly":
@@ -801,6 +748,12 @@ def _lower_statement(statement):
 
 
 def split_coeff_program_statements(source_text):
+    """Split source text into _Statement(text, line, column) records.
+
+    Statements break on newlines and semicolons at bracket depth zero;
+    # comments run to end of line; parenthesized statements may span lines.
+    Mirrored by _coeffProgramSourceStatements in index.html.
+    """
     text = str(source_text or "")
     source_bytes = len(text.encode("utf-8"))
     if source_bytes > MAX_COEFF_PROGRAM_SOURCE_BYTES:
@@ -884,6 +837,13 @@ def split_coeff_program_statements(source_text):
 
 
 def parse_coeff_program_source(source_text, *, strict=True):
+    """Lower source text to a chip chain: {chain, display, statement_count,
+    diagnostics}.
+
+    strict=True raises RuntimeError on the first error; strict=False skips
+    failing statements and reports them in diagnostics (callers must check
+    before persisting the partial chain).
+    """
     diagnostics = []
     chain = []
     try:
@@ -911,6 +871,13 @@ def parse_coeff_program_source(source_text, *, strict=True):
 
 
 def compile_coeff_program_source(source_text, *, macro_resolver=None, strict=True):
+    """Parse + compile in one call: the chain compiler's payload plus
+    source_text/source_display/source_statement_count and merged diagnostics.
+
+    Production handlers currently compose parse_coeff_program_source and
+    compile_coeff_program_chain themselves; this wrapper is the convenience
+    form (used by the native tests).
+    """
     parsed = parse_coeff_program_source(source_text, strict=strict)
     compiled = compile_coeff_program_chain(parsed["chain"], macro_resolver=macro_resolver, strict=strict)
     compiled["source_text"] = str(source_text or "")

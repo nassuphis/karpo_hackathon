@@ -83,12 +83,12 @@ def test_selector_and_scalar_source_enums_match_python():
 def test_vector_op_tables_match_python():
     source = _c_source()
     c_vec = _c_enum_values(source, "COEFF_VEC_")
-    for name, fn_index in chain._VECTOR_BINARY_OPS.items():
+    for name, fn_index in chain.VECTOR_BINARY_OPS.items():
         assert c_vec[name.upper()] == fn_index, f"vector binary {name}"
-    for name, fn_index in chain._VECTOR_UNARY_OPS.items():
+    for name, fn_index in chain.VECTOR_UNARY_OPS.items():
         assert c_vec[name.upper()] == fn_index, f"vector unary {name}"
-    assert c_vec["ROLL_LEFT"] == chain._VECTOR_ROLL_OPS["roll"]
-    assert c_vec["ROLL_RIGHT"] == chain._VECTOR_ROLL_OPS["rolr"]
+    assert c_vec["ROLL_LEFT"] == chain.VECTOR_ROLL_OPS["roll"]
+    assert c_vec["ROLL_RIGHT"] == chain.VECTOR_ROLL_OPS["rolr"]
 
 
 def test_limits_match_c_defines():
@@ -150,7 +150,7 @@ def test_source_transform_aliases_are_mirrored_in_chain():
     from coeff_program_source import _NATIVE_TRANSFORM_ALIASES
 
     for alias, target in _NATIVE_TRANSFORM_ALIASES.items():
-        assert chain._LEGACY_NAME_ALIASES.get(alias) == target, alias
+        assert chain.LEGACY_NAME_ALIASES.get(alias) == target, alias
 
 
 def test_native_transform_packing_parity_between_source_and_chain():

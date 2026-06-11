@@ -54,6 +54,37 @@ def _run_coeffgen(spec):
             pass
 
 
+def _run_chunked_with_params(coeff_program, params, *, cfpv, source_n1=1, source_n2=1, step_count=1):
+    """Run coeffgen_chunked with a float32 params file.
+
+    coeff_program is the payload dict from _coeff_program_payload /
+    _compiled_coeff_program_payload; params is the flat [p1r, p1i, p2r, p2i,
+    ...] array the chunked mode reads per step.
+    """
+    with tempfile.NamedTemporaryFile(prefix="pp_coeff_program_params_", suffix=".bin", delete=False) as fh:
+        params_path = fh.name
+        fh.write(struct.pack("<" + "f" * len(params), *params))
+    try:
+        return _run_coeffgen({
+            "mode": "coeffgen_chunked",
+            "function": "const",
+            "cfpv": list(cfpv),
+            "params_file": params_path,
+            "step_start": 0,
+            "source_step_start": 0,
+            "source_n1": source_n1,
+            "source_n2": source_n2,
+            "step_count": step_count,
+            "coeff_transforms": [],
+            "coeff_program": coeff_program,
+        })
+    finally:
+        try:
+            os.remove(params_path)
+        except FileNotFoundError:
+            pass
+
+
 def _complex_f32_values(data):
     values = struct.unpack("<" + "f" * (len(data) // 4), data)
     return [complex(values[i], values[i + 1]) for i in range(0, len(values), 2)]
@@ -184,28 +215,7 @@ def test_coeff_program_typed_dynamic_index_and_broadcast_run_in_native_coeffgen(
         emit
     """)
     params = [3.0, 0.0, 4.0, 0.0]
-    with tempfile.NamedTemporaryFile(prefix="pp_coeff_program_typed_params_", suffix=".bin", delete=False) as fh:
-        params_path = fh.name
-        fh.write(struct.pack("<" + "f" * len(params), *params))
-    try:
-        meta, data = _run_coeffgen({
-            "mode": "coeffgen_chunked",
-            "function": "const",
-            "cfpv": [4, 2, 0],
-            "params_file": params_path,
-            "step_start": 0,
-            "source_step_start": 0,
-            "source_n1": 1,
-            "source_n2": 1,
-            "step_count": 1,
-            "coeff_transforms": [],
-            "coeff_program": _compiled_coeff_program_payload(compiled),
-        })
-    finally:
-        try:
-            os.remove(params_path)
-        except FileNotFoundError:
-            pass
+    meta, data = _run_chunked_with_params(_compiled_coeff_program_payload(compiled), params, cfpv=[4, 2, 0])
 
     assert meta["coeff_program_tokens"] == compiled["token_count"]
     values = _complex_f32_values(data)
@@ -251,28 +261,7 @@ def test_coeff_program_scalar_elementary_functions_run_in_native_coeffgen():
         poly[4] = log(1j)
     """)
     params = [math.pi / 2.0, 0.0, 0.0, 0.0]
-    with tempfile.NamedTemporaryFile(prefix="pp_coeff_program_scalar_funcs_", suffix=".bin", delete=False) as fh:
-        params_path = fh.name
-        fh.write(struct.pack("<" + "f" * len(params), *params))
-    try:
-        meta, data = _run_coeffgen({
-            "mode": "coeffgen_chunked",
-            "function": "const",
-            "cfpv": [5, 0, 0],
-            "params_file": params_path,
-            "step_start": 0,
-            "source_step_start": 0,
-            "source_n1": 1,
-            "source_n2": 1,
-            "step_count": 1,
-            "coeff_transforms": [],
-            "coeff_program": _compiled_coeff_program_payload(compiled),
-        })
-    finally:
-        try:
-            os.remove(params_path)
-        except FileNotFoundError:
-            pass
+    meta, data = _run_chunked_with_params(_compiled_coeff_program_payload(compiled), params, cfpv=[5, 0, 0])
 
     assert meta["coeff_program_tokens"] == compiled["token_count"]
     values = _complex_f32_values(data)
@@ -295,28 +284,7 @@ def test_coeff_program_chain_scalar_elementary_functions_run_in_native_coeffgen(
         ["emit"],
     ])
     params = [math.pi / 2.0, 0.0, 0.0, 0.0]
-    with tempfile.NamedTemporaryFile(prefix="pp_coeff_program_chain_scalar_funcs_", suffix=".bin", delete=False) as fh:
-        params_path = fh.name
-        fh.write(struct.pack("<" + "f" * len(params), *params))
-    try:
-        meta, data = _run_coeffgen({
-            "mode": "coeffgen_chunked",
-            "function": "const",
-            "cfpv": [3, 0, 0],
-            "params_file": params_path,
-            "step_start": 0,
-            "source_step_start": 0,
-            "source_n1": 1,
-            "source_n2": 1,
-            "step_count": 1,
-            "coeff_transforms": [],
-            "coeff_program": _compiled_coeff_program_payload(compiled),
-        })
-    finally:
-        try:
-            os.remove(params_path)
-        except FileNotFoundError:
-            pass
+    meta, data = _run_chunked_with_params(_compiled_coeff_program_payload(compiled), params, cfpv=[3, 0, 0])
 
     assert meta["coeff_program_tokens"] == compiled["token_count"]
     values = _complex_f32_values(data)
@@ -753,28 +721,9 @@ def test_coeff_program_scalar_expr_reads_source_t1_t2_in_chunked_mode():
     params = []
     for _ in range(4):
         params.extend([9.0, 0.0, 11.0, 0.0])
-    with tempfile.NamedTemporaryFile(prefix="pp_coeff_program_params_", suffix=".bin", delete=False) as fh:
-        params_path = fh.name
-        fh.write(struct.pack("<" + "f" * len(params), *params))
-    try:
-        meta, data = _run_coeffgen({
-            "mode": "coeffgen_chunked",
-            "function": "const",
-            "cfpv": [1, 0, 0],
-            "params_file": params_path,
-            "step_start": 0,
-            "source_step_start": 0,
-            "source_n1": 2,
-            "source_n2": 2,
-            "step_count": 4,
-            "coeff_transforms": [],
-            "coeff_program": _coeff_program_payload(chain),
-        })
-    finally:
-        try:
-            os.remove(params_path)
-        except FileNotFoundError:
-            pass
+    meta, data = _run_chunked_with_params(
+        _coeff_program_payload(chain), params, cfpv=[1, 0, 0], source_n1=2, source_n2=2, step_count=4
+    )
 
     assert meta["coeff_program_tokens"] == len(chain)
     values = _complex_f32_values(data)
@@ -791,28 +740,7 @@ def test_coeff_program_scalar_expr_abs_log_in_native_coeffgen():
         ["emit"],
     ]
     params = [9.0, 0.0, 11.0, 0.0]
-    with tempfile.NamedTemporaryFile(prefix="pp_coeff_program_abs_log_params_", suffix=".bin", delete=False) as fh:
-        params_path = fh.name
-        fh.write(struct.pack("<" + "f" * len(params), *params))
-    try:
-        meta, data = _run_coeffgen({
-            "mode": "coeffgen_chunked",
-            "function": "const",
-            "cfpv": [1, 0, 0],
-            "params_file": params_path,
-            "step_start": 0,
-            "source_step_start": 0,
-            "source_n1": 1,
-            "source_n2": 1,
-            "step_count": 1,
-            "coeff_transforms": [],
-            "coeff_program": _coeff_program_payload(chain),
-        })
-    finally:
-        try:
-            os.remove(params_path)
-        except FileNotFoundError:
-            pass
+    meta, data = _run_chunked_with_params(_coeff_program_payload(chain), params, cfpv=[1, 0, 0])
 
     assert meta["coeff_program_tokens"] == len(chain)
     values = _complex_f32_values(data)
@@ -823,28 +751,7 @@ def test_coeff_program_scalar_expr_abs_log_in_native_coeffgen():
 
 def _run_source_with_params(source_text, params, *, cfpv):
     compiled = compile_coeff_program_source(source_text)
-    with tempfile.NamedTemporaryFile(prefix="pp_coeff_program_dyn_", suffix=".bin", delete=False) as fh:
-        params_path = fh.name
-        fh.write(struct.pack("<" + "f" * len(params), *params))
-    try:
-        meta, data = _run_coeffgen({
-            "mode": "coeffgen_chunked",
-            "function": "const",
-            "cfpv": list(cfpv),
-            "params_file": params_path,
-            "step_start": 0,
-            "source_step_start": 0,
-            "source_n1": 1,
-            "source_n2": 1,
-            "step_count": 1,
-            "coeff_transforms": [],
-            "coeff_program": _compiled_coeff_program_payload(compiled),
-        })
-    finally:
-        try:
-            os.remove(params_path)
-        except FileNotFoundError:
-            pass
+    meta, data = _run_chunked_with_params(_compiled_coeff_program_payload(compiled), params, cfpv=cfpv)
     return meta, _complex_f32_values(data)
 
 
@@ -932,28 +839,9 @@ def test_coeff_program_tos_reads_vector_and_scalar_slots():
             ["pop"],
         ]
         compiled = compile_coeff_program_chain(chain)
-        with tempfile.NamedTemporaryFile(prefix="pp_coeff_program_tos_scalar_", suffix=".bin", delete=False) as fh:
-            params_path = fh.name
-            fh.write(struct.pack("<4f", p1, 0.0, 0.0, 0.0))
-        try:
-            _meta, data = _run_coeffgen({
-                "mode": "coeffgen_chunked",
-                "function": "const",
-                "cfpv": [4, 0, 0],
-                "params_file": params_path,
-                "step_start": 0,
-                "source_step_start": 0,
-                "source_n1": 1,
-                "source_n2": 1,
-                "step_count": 1,
-                "coeff_transforms": [],
-                "coeff_program": _compiled_coeff_program_payload(compiled),
-            })
-        finally:
-            try:
-                os.remove(params_path)
-            except FileNotFoundError:
-                pass
+        _meta, data = _run_chunked_with_params(
+            _compiled_coeff_program_payload(compiled), [p1, 0.0, 0.0, 0.0], cfpv=[4, 0, 0]
+        )
         values = _complex_f32_values(data)
         for got in values:
             assert abs(got.real - expected) <= 1e-6, value_expr

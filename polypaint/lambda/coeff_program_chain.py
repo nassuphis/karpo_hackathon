@@ -34,10 +34,9 @@ MAX_LEGACY_INT_ARG = 4096  # mirrors COEFF_LEGACY_MAX_INT_ARG (coeffLegacyIntArg
 # whose arguments are specially packed into the legacy real-component layout
 # (complex pairs). Pinned by test_registry_fn_indices_are_pinned and used by
 # the packing dispatch here, the source lowerer, and sweep_cli.c.
-FN_LINEAR = 14
-FN_EXP = 16
-FN_ROUND = 23
-FN_POW = 24
+# FN_LINEAR/FN_EXP/FN_ROUND/FN_POW and the alias tables are derived from
+# coeff_legacy_registry.json right after the loader below — the registry is
+# the single source of truth for registry-transform vocabulary.
 
 COEFF_OP_CONST = 1
 COEFF_OP_PUSH = 2
@@ -194,23 +193,17 @@ _ENUM_ARG_VALUES = {
     "lo": 1.0,
 }
 
-# Chip-name aliases for registry transforms. exp/pow/power are shadowed by
-# typed-expression builtins, so chips and source text use the *_affine /
-# *_series names; scale100 is the historical name for linear. Mirrors
-# _NATIVE_TRANSFORM_ALIASES in coeff_program_source.py.
-#
 # GLOSSARY — one registry (coeff_legacy_registry.json), three historical
 # terms: a "legacy" chip/token is the old form (COEFF_OP_LEGACY, opcode 9);
 # a "native transform" is the SAME registry function emitted through the
 # newer opcode (COEFF_OP_NATIVE_TRANSFORM, 29) that supports stack args;
 # "registry transform" is the neutral umbrella for both. Adding a plain
 # transform needs only a registry JSON entry + the C case — no Python edits.
-LEGACY_NAME_ALIASES = {
-    "exp_affine": "exp",
-    "pow_affine": "pow",
-    "power_series": "power",
-    "scale100": "linear",
-}
+#
+# LEGACY_NAME_ALIASES / TEXT_NAME_ALIASES (exp_affine, pow_affine,
+# power_series, scale100) are derived from the registry JSON after the
+# loader below; the JS side consumes the same data via the generated
+# coeff_vocab_js.js.
 
 # Typed-op shorthand aliases shared by _compile_typed_binary and the source
 # layer's _VECTOR_BINARY_ALIASES.
@@ -346,10 +339,35 @@ def _load_legacy_registry():
             "args": tuple(args),
             "supports_andy": bool(fn.get("supports_andy")),
             "length_policy": str(fn.get("length_policy") or "unknown"),
+            # Aliases are wire format: saved chip rows carry them, so entries
+            # may be added but never removed or remapped. chain_only_aliases
+            # are accepted by the chip compiler but are not valid source text
+            # (scale100 predates text mode). chip_name is the dedicated UI
+            # chip when the registry name is shadowed by a text builtin.
+            "aliases": tuple(str(x).strip().lower() for x in (fn.get("aliases") or [])),
+            "chain_only_aliases": tuple(
+                str(x).strip().lower() for x in (fn.get("chain_only_aliases") or [])
+            ),
+            "chip_name": str(fn.get("chip_name") or name),
         }
         by_name[name] = spec
         by_index[fn_index] = spec
-    return {"by_name": by_name, "by_index": by_index}
+
+    alias_to_canonical = {}
+    text_alias_to_canonical = {}
+    for spec in by_index.values():
+        for alias in spec["aliases"] + spec["chain_only_aliases"]:
+            if alias in by_name or alias in alias_to_canonical:
+                raise RuntimeError(f"coeff legacy alias {alias!r} collides with an existing name")
+            alias_to_canonical[alias] = spec["name"]
+        for alias in spec["aliases"]:
+            text_alias_to_canonical[alias] = spec["name"]
+    return {
+        "by_name": by_name,
+        "by_index": by_index,
+        "alias_to_canonical": alias_to_canonical,
+        "text_alias_to_canonical": text_alias_to_canonical,
+    }
 
 
 _LEGACY_REGISTRY = None
@@ -365,6 +383,16 @@ def legacy_registry():
     if _LEGACY_REGISTRY is None:
         _LEGACY_REGISTRY = _load_legacy_registry()
     return _LEGACY_REGISTRY
+
+
+# Derived registry vocabulary (see GLOSSARY above): chip-compiler aliases,
+# text-mode aliases, and the special packing fn indices.
+LEGACY_NAME_ALIASES = dict(legacy_registry()["alias_to_canonical"])
+TEXT_NAME_ALIASES = dict(legacy_registry()["text_alias_to_canonical"])
+FN_LINEAR = legacy_registry()["by_name"]["linear"]["fn_index"]
+FN_EXP = legacy_registry()["by_name"]["exp"]["fn_index"]
+FN_ROUND = legacy_registry()["by_name"]["round"]["fn_index"]
+FN_POW = legacy_registry()["by_name"]["pow"]["fn_index"]
 
 
 def _canonical_legacy_name(name):

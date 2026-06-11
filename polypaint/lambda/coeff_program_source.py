@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass
 
 from coeff_program_chain import (
+    TEXT_NAME_ALIASES,
     canonical_unary_op_name,
     expr_value_if_static,
     EXPR_ADD,
@@ -100,13 +101,10 @@ _TYPED_VECTOR_SOURCE_NAMES = frozenset(_SOURCE_NAMES | {"tos"})
 _TARGET_NAMES = {"poly", "push"}
 _VECTOR_FILL_NAMES = {"fill", "const", "push_const", "push_vec"}
 # Source-text aliases for native transforms whose registry names are shadowed
-# by typed-expression builtins (exp/pow/power). Mirrored by LEGACY_NAME_ALIASES
-# in coeff_program_chain and by the chip synthesizer in index.html.
-_NATIVE_TRANSFORM_ALIASES = {
-    "exp_affine": "exp",
-    "pow_affine": "pow",
-    "power_series": "power",
-}
+# by typed-expression builtins (exp/pow/power). Single source of truth:
+# coeff_legacy_registry.json, via the chain loader (the chip compiler and the
+# generated JS vocab consume the same data).
+_NATIVE_TRANSFORM_ALIASES = dict(TEXT_NAME_ALIASES)
 
 
 def _is_source_name(text):

@@ -178,7 +178,8 @@ assertIncludes("if (!hasSourceText) _validateCoeffProgramUiChain(normalizedChain
 assertIncludes("if (program.has_source_text) {", 'Coeff Program source_text payloads should load into Text mode even when source_text is empty');
 assertIncludes("function _effectiveCoeffProgramChainForCompute() {", 'compute payload should centralize coeff-program selection');
 assertIncludes("function _copyCoeffTransformsIntoCoeffProgram() {", 'Coeff Program UI should translate legacy transforms into program chips');
-assertIncludes("const _coeffProgramRegistryChipNames = { exp: 'exp_affine', power: 'power_series' };", 'normalize/copy should share one registry-to-chip name map (exp and power are shadowed in the catalog)');
+assertIncludes("const _coeffProgramRegistryChipNames = _coeffRegistryVocab ? _coeffRegistryVocab.chipNameByRegistryName : {};", 'normalize/copy should derive the registry-to-chip name map from the generated vocab');
+assertIncludes('<script src="coeff_vocab_js.js"></script>', 'the generated registry vocab must load before the main bundle');
 assertIncludes("return { name: _coeffProgramRegistryChipName(normalized.name), params: ['poly', 'poly', ...args] };", 'Copy legacy transforms should map shadowed registry names through the shared chip-name map');
 assertIncludes("return [{ name: _coeffProgramRegistryChipName(legacyName), params: [legacyTgt, legacySrc, ...legacyArgs] }];", 'Normalize should map shadowed registry names through the shared chip-name map');
 assertIncludes("// LAYOUT CONTRACT: legacy rows are source-first", 'The legacy-vs-chip param order flip must stay documented at the normalize seam');
@@ -233,7 +234,7 @@ assertIncludes("if (name === 'pop') return 'drop';", 'Coeff Program chain-to-sou
 assertIncludes("if (name === 'poke_poly' && params.length >= 2) return `poly[${params[0]}] = ${params[1]}`;", 'Coeff Program chain-to-source renderer should render poke_poly as valid indexed assignment');
 assertIncludes("if (name === 'legacy') {\n                const [legacyName, src, tgt, ...rest] = params;", 'Coeff Program chain-to-source renderer should unwrap old legacy-form saved chips');
 assertIncludes("const callName = _coeffProgramSourceAliasNames[legacyName] || legacyName || 'rev';", 'Coeff Program legacy-form source rendering should map shadowed registry names (exp/pow/power) to parser aliases');
-assertIncludes("const _coeffProgramSourceAliasNames = { exp: 'exp_affine', pow: 'pow_affine', power: 'power_series' };", 'Coeff Program synthesizer should define the parser-alias map for shadowed transforms');
+assertIncludes("const _coeffProgramSourceAliasNames = _coeffRegistryVocab ? _coeffRegistryVocab.sourceAliasByName : {};", 'Coeff Program synthesizer should derive the parser-alias map from the generated vocab');
 assertIncludes("if (catalogName === 'linear') return [catalogName, ...values];", 'Coeff Program serializer must emit all linear args; the backend affine chip rejects trimmed forms');
 assertIncludes("if (name === 'argsort' && params.length >= 3) {", 'Coeff Program chain-to-source renderer should synthesize argsort without the target selector');
 assertIncludes("let _coeffProgramSourceAutoSynthed = false;", 'Coeff Program text tab should track auto-synthesized vs user-authored source');
@@ -512,6 +513,12 @@ const vm = require('vm');
 const htmlPath = process.argv[2];
 const src = fs.readFileSync(htmlPath, 'utf8');
 
+// The real generated registry vocab (coeff_vocab_js.js): the runtime checks
+// below exercise the same artifact the browser loads, so alias drift between
+// the registry JSON and the deployed JS fails here.
+const vocabSrc = fs.readFileSync(require('path').join(require('path').dirname(htmlPath), 'coeff_vocab_js.js'), 'utf8');
+const coeffRegistryVocab = JSON.parse(vocabSrc.slice(vocabSrc.indexOf('{'), vocabSrc.lastIndexOf('}') + 1));
+
 function fail(message) {
   console.error('FATAL: ' + message);
   process.exit(1);
@@ -630,6 +637,7 @@ async function main() {
     _renderArtifacts: { color: [] },
     _renderMtPopupState: { saveAssociatedPalette: false },
     _solveScoreProgramRememberedNames: { render: 'pal5', palette: 'keep' },
+    _coeffRegistryVocab: coeffRegistryVocab,
     _coeffProgramChain: [],
     _coeffProgramCatalog: {
       push_vec: { params: [{ ph: 'length', def: 'poly_len' }, { ph: 'value', def: '0' }] },

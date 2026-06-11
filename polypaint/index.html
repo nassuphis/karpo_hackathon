@@ -2923,6 +2923,7 @@ button {
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/openseadragon.min.js"></script>
+<script src="coeff_vocab_js.js"></script>
 <script src="coeff_func_catalog_js.js"></script>
 <script src="tri_palette_catalog_js.js"></script>
 <script src="long_palette_catalog_js.js"></script>
@@ -11760,15 +11761,20 @@ const _coeffProgramVectorUnaryNames = ['angle', 'mod', 'abs', 'neg', 'conj', 'sq
 const _coeffProgramVectorSourceChoices = ['poly', 'pop', 'peek'];
 const _coeffProgramLegacySourceChoices = ['cf', 'poly', 'pop', 'peek'];
 const _coeffProgramTargetChoices = ['poly', 'push'];
+// Registry-transform vocabulary, generated from lambda/coeff_legacy_registry.json
+// (lambda/gen_coeff_vocab.py -> coeff_vocab_js.js, regenerated on every deploy
+// and loaded as a script tag before this bundle). Single source of truth with
+// the backend compilers for aliases (wire format: saved chip rows carry
+// them), chip-name shadowing, and text-alias synthesis.
+const _coeffRegistryVocab = (typeof window !== 'undefined' && window._coeffRegistryVocab) || null;
+if (!_coeffRegistryVocab) console.error('coeff_vocab_js.js did not load — registry transform vocabulary unavailable');
+
 function _canonicalCoeffTransformName(name) {
-    // Mirrors LEGACY_NAME_ALIASES in coeff_program_chain.py exactly, so
-    // imported legacy rows resolve the same _ctCatalog metadata the backend
-    // compiles them against.
+    // Aliases come from the registry vocab above, so imported legacy rows
+    // resolve the same _ctCatalog metadata the backend compiles them against.
     const raw = String(name || '').trim();
-    if (raw === 'exp_affine') return 'exp';
-    if (raw === 'pow_affine') return 'pow';
-    if (raw === 'power_series') return 'power';
-    return raw === 'scale100' ? 'linear' : raw;
+    const aliases = _coeffRegistryVocab ? _coeffRegistryVocab.aliasToCanonical : {};
+    return aliases[raw] || raw;
 }
 const _coeffProgramCatalog = (() => {
     const catalog = {
@@ -12928,13 +12934,13 @@ function _coeffProgramSourceTextarea() {
 // Registry names that the source parser shadows with typed builtins; the
 // synthesizer must emit the parser-side aliases (mirrors
 // _NATIVE_TRANSFORM_ALIASES in lambda/coeff_program_source.py).
-const _coeffProgramSourceAliasNames = { exp: 'exp_affine', pow: 'pow_affine', power: 'power_series' };
+const _coeffProgramSourceAliasNames = _coeffRegistryVocab ? _coeffRegistryVocab.sourceAliasByName : {};
 
 // Forward map from registry transform names to Coeff Program chip names.
 // exp and power are shadowed in the chip catalog (exp by the vector unary,
 // power by the vector binary), so normalize/copy must emit the dedicated
 // chips or the rows compile as the wrong operation.
-const _coeffProgramRegistryChipNames = { exp: 'exp_affine', power: 'power_series' };
+const _coeffProgramRegistryChipNames = _coeffRegistryVocab ? _coeffRegistryVocab.chipNameByRegistryName : {};
 function _canonicalCoeffProgramChipName(name) {
     // 'const' is the historical alias of the push_const chip.
     return name === 'const' ? 'push_const' : name;

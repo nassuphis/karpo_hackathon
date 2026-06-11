@@ -73,6 +73,7 @@ source "$DEPLOY_SPECS_SH"
 frontend_asset_keys() {
     printf '%s\n' \
         "index.html" \
+        "coeff_vocab_js.js" \
         "coeff_func_catalog_js.js" \
         "tri_palette_catalog_js.js" \
         "long_palette_catalog_js.js"
@@ -614,6 +615,10 @@ import re
 count = len(re.findall(r'\"name\":', js))
 print(f'  coeff_func_catalog_js.js: {count} entries')
 " 2>&1) || { echo "FATAL: JS catalog generation failed"; exit 1; }
+
+# Step 5: Registry-transform vocabulary (aliases, chip names, andy) for the
+# browser — same source of truth the Python compilers load.
+"${TEST_PYTHON[@]}" lambda/gen_coeff_vocab.py || { echo "FATAL: coeff vocab generation failed"; exit 1; }
 
 # --- Frontend JS execution test ---
 echo "Running frontend JS execution test..."

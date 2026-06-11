@@ -144,13 +144,65 @@ def test_sweep_test_binary_is_not_older_than_source():
     )
 
 
+# Aliases are wire format: saved chip rows carry them, so the set is pinned
+# literally — entries may be added but never removed or remapped. The chain
+# and source tables and the generated JS vocab all derive from
+# coeff_legacy_registry.json; these tests fail if any consumer drifts from
+# the registry or the registry drifts from this pin.
+EXPECTED_ALIASES = {
+    "exp_affine": "exp",
+    "pow_affine": "pow",
+    "power_series": "power",
+    "scale100": "linear",
+}
+EXPECTED_TEXT_ALIASES = {
+    "exp_affine": "exp",
+    "pow_affine": "pow",
+    "power_series": "power",
+}
+EXPECTED_CHIP_NAMES = {"exp": "exp_affine", "power": "power_series"}
+
+
+def test_registry_aliases_are_pinned_wire_format():
+    assert chain.LEGACY_NAME_ALIASES == EXPECTED_ALIASES
+    assert chain.TEXT_NAME_ALIASES == EXPECTED_TEXT_ALIASES
+    registry = legacy_registry()
+    assert registry["alias_to_canonical"] == EXPECTED_ALIASES
+    assert registry["text_alias_to_canonical"] == EXPECTED_TEXT_ALIASES
+    chip_names = {
+        spec["name"]: spec["chip_name"]
+        for spec in registry["by_name"].values()
+        if spec["chip_name"] != spec["name"]
+    }
+    assert chip_names == EXPECTED_CHIP_NAMES
+
+
 def test_source_transform_aliases_are_mirrored_in_chain():
     # pow_affine/power_series/exp_affine must be accepted by BOTH frontends;
     # a source-only alias produced chips the chain compiler rejected (CR2-1).
     from coeff_program_source import _NATIVE_TRANSFORM_ALIASES
 
+    assert _NATIVE_TRANSFORM_ALIASES == EXPECTED_TEXT_ALIASES
     for alias, target in _NATIVE_TRANSFORM_ALIASES.items():
         assert chain.LEGACY_NAME_ALIASES.get(alias) == target, alias
+
+
+def test_generated_js_vocab_matches_registry():
+    # coeff_vocab_js.js is what the browser loads; the frontend harness runs
+    # against the file on disk, so a stale or hand-edited artifact must fail
+    # here (and in gen_coeff_vocab.py --check / the predeploy gate).
+    sys.path.insert(0, LAMBDA_DIR)
+    from gen_coeff_vocab import build_vocab, render_js, JS_OUT
+
+    vocab = build_vocab()
+    assert vocab["aliasToCanonical"] == EXPECTED_ALIASES
+    assert vocab["sourceAliasByName"] == {v: k for k, v in EXPECTED_TEXT_ALIASES.items()}
+    assert vocab["chipNameByRegistryName"] == EXPECTED_CHIP_NAMES
+    assert vocab["fnIndexByName"] == {
+        name: spec["fn_index"] for name, spec in legacy_registry()["by_name"].items()
+    }
+    with open(JS_OUT, "r", encoding="utf-8") as fh:
+        assert fh.read() == render_js(), "coeff_vocab_js.js is stale; run lambda/gen_coeff_vocab.py"
 
 
 def test_native_transform_packing_parity_between_source_and_chain():

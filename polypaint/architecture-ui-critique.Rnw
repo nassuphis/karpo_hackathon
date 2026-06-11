@@ -1,0 +1,788 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=2.4cm]{geometry}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\definecolor{accent}{HTML}{E94560}
+\definecolor{ink}{HTML}{16213E}
+\newcommand{\verdict}[1]{\textbf{\textcolor{ink}{Verdict:}} #1}
+
+\title{\textbf{PolyPaint: Architecture \& UI Critique}\\
+\large Current state, trade-offs, and concrete alternatives}
+\author{Prepared from a full-tree review}
+\date{June 2026}
+
+\begin{document}
+\maketitle
+
+<<setup, echo=FALSE>>=
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center", dev = "pdf",
+                      fig.pos = "ht")
+ACC <- "#E94560"; INK <- "#16213E"; PAPER <- "#F7F7F9"; LINE <- "#3A3A44"
+SOFT <- "#9aa0b0"
+wf_new <- function() {
+  par(mar = c(0.2, 0.2, 0.2, 0.2))
+  plot.new(); plot.window(xlim = c(0, 100), ylim = c(0, 100))
+}
+wf_box <- function(x, y, w, h, label = "", fill = PAPER, border = LINE,
+                   cex = 0.62, tcol = "#16161D", lwd = 1, lty = 1,
+                   align = "c", font = 1) {
+  rect(x, y, x + w, y + h, col = fill, border = border, lwd = lwd, lty = lty)
+  if (nzchar(label)) {
+    if (align == "c") text(x + w/2, y + h/2, label, cex = cex, col = tcol, font = font)
+    else text(x + 1.6, y + h/2, label, cex = cex, col = tcol, adj = c(0, 0.5), font = font)
+  }
+}
+wf_chip <- function(x, y, label, w = NULL, h = 5, fill = "#EDF0FA",
+                    border = "#7A86A8", cex = 0.5) {
+  if (is.null(w)) w <- 3.4 + 1.55 * nchar(label)
+  rect(x, y, x + w, y + h, col = fill, border = border, lwd = 0.9)
+  text(x + w/2, y + h/2, label, cex = cex, col = "#222633", family = "mono")
+  invisible(x + w + 1.4)
+}
+wf_arrow <- function(x1, y1, x2, y2, col = LINE, lwd = 1.2, code = 2) {
+  arrows(x1, y1, x2, y2, length = 0.055, lwd = lwd, col = col, code = code)
+}
+wf_note <- function(x, y, label, cex = 0.52, col = "#555a6a", adj = c(0, 0.5)) {
+  text(x, y, label, cex = cex, col = col, adj = adj, font = 3)
+}
+wf_tabbar <- function(x, y, w, tabs, active = 1, h = 5.4) {
+  tw <- w / length(tabs)
+  for (i in seq_along(tabs)) {
+    fill <- if (i == active) INK else "#E3E5EC"
+    tcol <- if (i == active) "white" else "#3A3A44"
+    rect(x + (i-1)*tw, y, x + i*tw, y + h, col = fill, border = LINE, lwd = 0.8)
+    text(x + (i-0.5)*tw, y + h/2, tabs[i], cex = 0.56, col = tcol,
+         font = if (i == active) 2 else 1)
+  }
+}
+@
+
+\section*{Executive summary}
+
+PolyPaint is a working end-to-end system with unusually strong
+\emph{verification culture}: cross-language drift tests, payload-contract
+tests, a Docker runtime gate, fingerprint-stable wire formats, and a deploy
+script that converges instead of hoping. The architecture's defining choice
+is \textbf{radical buildlessness} --- one HTML file, one bash deployer, zips
+of plain Python around native ARM binaries --- and most observed costs are
+the predictable tax of that choice rather than accidents.
+
+Three findings dominate:
+
+\begin{enumerate}[leftmargin=1.4em]
+  \item \textbf{The four-representation program pipeline (text
+  $\to$ chips $\to$ tokens $\to$ C VM, mirrored again in the JS catalog) is
+  the system's largest standing risk.} Every recent defect class --- alias
+  drift, canonicalization gaps, layout-order flips --- is a synchronization
+  failure between copies of the same fact. The fix is not a rewrite; it is
+  generating the mirrors from one machine-readable catalog.
+  \item \textbf{The UI is information-dense but workflow-poor.} It shows
+  every knob of one stage at a time, while the actual creative loop
+  (edit program $\to$ compute $\to$ preview $\to$ render $\to$ compare)
+  crosses four tabs and lives partly in the user's memory. ``Constraining''
+  is the right word: the layout mirrors the wire format, not the loop.
+  \item \textbf{The biggest UI unlocks are cheap.} A persistent jobs rail, a
+  click-to-inspect chip editor, side-by-side text$\,\leftrightarrow\,$chips,
+  and an XY scrub pad driving the \emph{already-deployed} lores-preview
+  Lambda would transform feel without touching the backend.
+\end{enumerate}
+
+\section{System inventory}
+
+Numbers measured on the current tree (post CR1--CR7 fixes, deployed).
+
+<<inventory, results='asis'>>=
+inv <- data.frame(
+  Component = c(
+    "Frontend (index.html, vanilla JS, no build)",
+    "JS functions in frontend",
+    "Backend Lambda handlers (Python 3.12, arm64)",
+    "Python modules under lambda/",
+    "Native C sources (solver, raster, codecs)",
+    "Largest C source (sweep\\_cli.c: solver + 2 program VMs)",
+    "Deployed Lambda functions (single spec list)",
+    "API Gateway routes (POST)",
+    "Step Functions state machines",
+    "deploy.sh (idempotent create/update, gates inline)",
+    "Test files / passing tests",
+    "Program DSLs (param + coeff), text and chip front ends"
+  ),
+  Size = c("20{,}033 lines", "774", "40 files", "89 files",
+           "39 files, 167k lines", "9{,}956 lines", "41", "49", "3",
+           "2{,}144 lines", "113 / 1{,}279 (+33 subtests)", "2")
+)
+knitr::kable(inv, format = "latex", booktabs = TRUE, escape = FALSE,
+             align = "lr", linesep = "")
+@
+
+\section{Architecture critique}
+
+Each decision below gets the same treatment: what it is, what it buys, what
+it costs, real alternatives, and a verdict. ``Replace'' appears rarely ---
+most of this architecture is earning its keep.
+
+\subsection{D1 --- One 20k-line HTML file, vanilla JS, no build step}
+
+\textbf{Pros.} Deploy is \texttt{aws s3 cp} with a hash check; zero
+dependency churn or supply-chain surface; everything greppable in one file;
+the test harness can extract and execute real source; no framework
+abandonment risk; instant cold load (one fetch).
+
+\textbf{Cons.} No module system, so isolation is by naming convention
+(\texttt{\_coeffProgram*}) and load-order/TDZ guards that look like noise
+until removed; 774 functions share one namespace; no static analysis ---
+the serializer self-recursion shipped because nothing type-checks or
+lint-checks the file; editing is index-arithmetic at 20k lines; review
+diffs concentrate in one path.
+
+\textbf{Alternatives.}
+\begin{enumerate}[leftmargin=1.6em,itemsep=1pt]
+  \item \emph{ES modules, still no bundler.} Split into
+  \texttt{js/*.mjs} loaded via \texttt{<script type="module">}; S3 serves
+  them fine. Real imports kill the TDZ-guard idiom and give the harness
+  import-level seams. Cost: a deliberate state-object pass (the implicit
+  global state must become explicit), cache-busting on
+  uploads. Medium effort, permanent payoff.
+  \item \emph{Keep one file, add checking.} JSDoc type annotations +
+  \texttt{tsc --checkJs} + ESLint (\texttt{no-self-compare},
+  recursion and shadow rules) wired into \texttt{predeploy\_check.sh}.
+  Catches the bug classes actually observed. Days, not weeks.
+  \item \emph{A framework (React/Svelte/Vue).} Componentized chips and
+  panels, but imports a build pipeline, a dependency treadmill, and a full
+  state-management rewrite into a codebase whose value is determinism.
+  Weakest option here.
+\end{enumerate}
+
+\verdict{Keep the buildless philosophy; do alternative 2 now and treat
+alternative 1 as the next structural step. Skip 3.}
+
+\subsection{D2 --- bash deploy.sh as the infrastructure layer}
+
+\textbf{Pros.} Readable end to end; no opaque CloudFormation state or drift
+mystery; converge semantics (create falls through to update and vice
+versa); \texttt{show-build} verifies deployed-vs-local instead of assuming;
+after the CR5 unification there is exactly one Lambda spec list, structure
+pinned by tests.
+
+\textbf{Cons.} 2{,}144 lines of bash is a bespoke platform: no plan/diff
+before apply, no changesets or rollback, IAM hand-rolled, no second
+environment without hand-cloning names/buckets; failure mid-deploy leaves a
+partially-updated stack (mitigated, not solved, by idempotence).
+
+\textbf{Alternatives.}
+\begin{enumerate}[leftmargin=1.6em,itemsep=1pt]
+  \item \emph{Terraform/CDK/SAM wholesale.} Plan-before-apply and
+  environments for free, but you trade a transparent script for state files
+  and abstractions, re-encode 41 functions + 3 ASL templates + IAM, and
+  lose the inline gates. High cost, moderate payoff at this team size.
+  \item \emph{Manifest-driven bash.} Keep the engine, move the data out:
+  the spec list, routes, and env maps become one JSON (the repo already has
+  \texttt{api\_manifest.json} as a half-step); deploy.sh iterates it, tests
+  validate it, and the same JSON could later feed any IaC tool. Low cost,
+  kills remaining list-drift classes.
+  \item \emph{Hybrid:} Terraform for the slow-moving substrate (bucket,
+  table, roles, API), script for the fast-moving Lambda/ASL layer.
+\end{enumerate}
+
+\verdict{Keep, with alternative 2. Revisit IaC only when a second
+environment or a second operator becomes real.}
+
+\subsection{D3 --- 41 single-purpose Lambdas, shared code copied into each zip}
+
+\textbf{Pros.} Per-function memory/CPU tuning (10{,}240\,MB solvers next to
+512\,MB metadata routes --- this is real money); blast-radius isolation;
+reserved concurrency protects storage/dispatch from render storms;
+per-function logs.
+
+\textbf{Cons.} 41 zips $\times$ (handler, deps, env, layers, tmp, IAM,
+route, permission) is wiring that must be tested to stay true ---
+the packaging tests exist \emph{because} the surface is wide;
+\texttt{shared.py} and friends are \emph{copied} into every zip, so two
+Lambdas can run different versions of the same module mid-deploy; 41 cold
+starts; per-zip 250\,MB limits force the layer dance for libvips/LAPACK.
+
+\textbf{Alternatives.}
+\begin{enumerate}[leftmargin=1.6em,itemsep=1pt]
+  \item \emph{Shared-code layer.} One \texttt{polypaint-common} layer for
+  the pure-Python helpers; zips shrink to handler + binaries; version skew
+  window collapses to the layer publish. Low effort; the layer mechanism is
+  already in daily use.
+  \item \emph{One container image, many handlers.} A single ECR image with
+  every handler and binary; each function differs only by \texttt{CMD}.
+  Kills zip drift entirely, slower publishes, 10\,GB budget. Medium effort.
+  \item \emph{Consolidation into role-based Lambdas} (sync API, async
+  worker, orchestration): fewer moving parts but loses per-function tuning
+  --- the 10\,GB/512\,MB split is worth keeping.
+  \item \emph{Fargate for the long renders}: removes the 15-minute ceiling
+  if it ever binds; not currently binding.
+\end{enumerate}
+
+\verdict{Keep the topology; adopt alternative 1 (shared layer) --- it is
+the cheapest fix for the realest risk (version skew).}
+
+\subsection{D4 --- Python handlers around native C binaries via JSON-over-stdin}
+
+\textbf{Pros.} The solver runs at native speed with LAPACK where it counts;
+process isolation means a solver crash is a clean Python exception, not a
+corrupted runtime; the JSON protocol is observable (any spec replays from a
+shell); Python stays in charge of S3/DynamoDB where it belongs.
+
+\textbf{Cons.} Cross-language duplication is structural: opcodes, limits,
+selector enums, and registry ids exist in Python, C, and JS, held together
+by drift tests (a tax, paid correctly, but a tax); process spawn +
+serialization per invocation; builds require a Docker round-trip inside
+deploy; binary staleness is a real failure mode (hence the mtime gate).
+
+\textbf{Alternatives.}
+\begin{enumerate}[leftmargin=1.6em,itemsep=1pt]
+  \item \emph{Generate the mirrors.} One \texttt{vm\_spec.json} (opcodes,
+  limits, fn indices, aliases) from which a small generator emits the C
+  header, the Python constants, and the JS tables ---
+  \texttt{gen\_catalog} already proves the pattern in this repo. Drift
+  tests then verify generated output instead of hand-copies. This is the
+  highest-leverage architecture change available.
+  \item \emph{In-process via cffi/ctypes.} Load the VM as a shared library:
+  no spawn, no JSON hop. Loses crash isolation and complicates the layer
+  story; only worth it if per-call overhead ever shows in profiles.
+  \item \emph{Rust + PyO3.} One toolchain, memory safety, good cross-compile.
+  A future, not a refactor: 10k lines of validated C with 40 WASM-parity
+  tests is an asset, not a liability.
+\end{enumerate}
+
+\verdict{Keep the split; do alternative 1. Treat 2 and 3 as
+profile-driven, not aesthetic, decisions.}
+
+\subsection{D5 --- Two stack-machine DSLs with text and chip front ends}
+
+\textbf{Pros.} Fingerprintable, deterministic, bounded programs (no
+\texttt{eval}, no user JS in Lambdas); text mode for power, chips for
+discoverability, one compiler under both; macros enable composition; the
+typed stack + scalar-expression bytecode split cleanly separates stack
+values from per-row arguments (now documented as design).
+
+\textbf{Cons.} Four representations of one program (text, chip rows, binary
+tokens, JS catalog) and \emph{two} sibling-but-different VMs (param vs
+coeff) multiply every concept; the recent review cycle (CR2, CR6, CR7) was
+dominated by mirror-sync bugs --- aliases, canonical names, src/tgt order;
+chips serialize wire rows rather than user intent, which leaks all the way
+into the UI (Section~4).
+
+\textbf{Alternatives.}
+\begin{enumerate}[leftmargin=1.6em,itemsep=1pt]
+  \item \emph{Single catalog source of truth} (same move as D4-1): chip
+  defs, aliases, param shapes, andy arity, selector vocab in one JSON; JS
+  catalog and Python tables generated. Eliminates the CR6/CR7 bug class
+  rather than patching instances of it.
+  \item \emph{Unify the two VMs}: one token VM with two register files
+  (param scalars, coeff vectors). Conceptually right, but fingerprints are
+  wire format --- this is a migration with versioned specs, not a refactor.
+  Queue behind a real feature need.
+  \item \emph{Adopt an existing language} (Lua, a JS subset): more
+  expressive, but forfeits determinism, fingerprint stability, and the
+  bounded execution that makes Lambda-side eval safe. Wrong trade here.
+  \item \emph{Make text the only source} and render chips as a read-only
+  visualization: halves the editing surface; viable only after the UI in
+  Section~5.2 exists.
+\end{enumerate}
+
+\verdict{Keep the DSL design; invest in alternative 1 immediately, hold 2
+until a feature forces a fingerprint version bump anyway.}
+
+\subsection{D6 --- Fingerprint-addressed artifact cache, frozen wire formats}
+
+\textbf{Pros.} Identical work is never recomputed; cache keys are
+content-derived so correctness does not depend on invalidation logic;
+byte-stability discipline made several refactors provably safe (verified
+against HEAD during the cleanup pass).
+
+\textbf{Cons.} The freeze constrains internals forever (the
+\texttt{\_execution\_spec} printer cannot change cosmetically); a
+historical quirk --- the src/tgt order flip between row layouts --- is now
+permanent; nothing in the key encodes \emph{format generation}, so any
+future change is all-or-nothing.
+
+\textbf{Alternatives.} Add a \texttt{spec\_version} field folded into the
+fingerprint: old artifacts stay valid under v1 while v2 can fix layout
+quirks; dual-read during transition. Cheap insurance, no behavior change
+today.
+
+\verdict{Keep; add the version field at the next natural migration.}
+
+\subsection{D7 --- Step Functions + dispatch Lambda + DynamoDB status + UI polling}
+
+\textbf{Pros.} Standard workflows give visible execution history, retries,
+and state-size discipline; DynamoDB rows with TTL are a clean progress
+ledger; the dispatch Lambda centralizes async fan-out targets in one env
+map (single spec list, post-CR5).
+
+\textbf{Cons.} ASL templating via \texttt{sed} substitution in deploy is
+stringly-typed (mitigated by shared renderers + definition tests);
+payload-contract drift across planner/ASL/worker is the checklist's
+heaviest section for a reason; the UI polls --- status latency and request
+noise --- and shows text, not the DAG that Step Functions already knows.
+
+\textbf{Alternatives.} (1) WebSocket API or IoT-Core topic pushing status
+deltas: kills polling, enables the jobs rail in Section~5.3; medium effort.
+(2) EventBridge-driven choreography instead of orchestration: more
+decoupled, much harder to see; not recommended --- visibility is this
+system's strength. (3) Surface the existing SFN execution history directly
+in the UI (read-only API call) before building anything new.
+
+\verdict{Keep; do alternative 3 cheaply, then 1 when the jobs rail lands.}
+
+\subsection{D8 --- The verification stack}
+
+\textbf{Pros.} This is the standout: enum/limit drift tests across three
+languages; packaging tests that parse deploy.sh; payload-shape contract
+tests; a Docker gate that runs the real ARM binaries; a frontend harness
+that now \emph{executes} extracted source (the recursion bug forced that
+upgrade); fingerprint-stability checks against HEAD during refactors.
+
+\textbf{Cons.} The JS harness is homegrown extract-and-pin --- exact-text
+pins mean edits to pinned lines must update the harness in the same change
+(a feature for wire format, friction elsewhere); no browser-level E2E, so
+DOM wiring (onclick strings, element ids) is tested only by convention;
+property-based testing is absent where it would shine (random programs:
+Python fold vs C eval parity).
+
+\textbf{Alternatives.} A 10-case Playwright smoke (load, add chip, compute
+preview, render, fetch result) covering the DOM seam; Hypothesis-based
+program generators for VM parity; after an ES-module split, real unit
+imports replace source extraction.
+
+\verdict{Keep and extend: Playwright smoke + property tests are the two
+missing legs.}
+
+\subsection{Decision matrix}
+
+<<matrix, results='asis'>>=
+m <- data.frame(
+  Decision = c("D1 buildless single-file UI", "D2 bash deployer",
+               "D3 41 small Lambdas", "D4 C core via subprocess",
+               "D5 two DSLs, four mirrors", "D6 fingerprint cache",
+               "D7 SFN + polling", "D8 verification stack"),
+  Call = c("Keep + add checking", "Keep + manifest-drive",
+           "Keep + shared layer", "Keep + generate mirrors",
+           "Keep + one catalog", "Keep + spec version",
+           "Keep + push status", "Keep + E2E/property"),
+  Risk.if.ignored = c("more unexecuted-path bugs", "second-env pain",
+                      "mid-deploy version skew", "three-way drift tax grows",
+                      "next CR6-class bug", "frozen quirks accumulate",
+                      "polling UX ceiling", "DOM-seam regressions")
+)
+names(m) <- c("Decision", "Call", "Risk if ignored")
+knitr::kable(m, format = "latex", booktabs = TRUE, align = "lll", linesep = "")
+@
+
+\section{The workflow as built}
+
+<<workflow, fig.width=6.9, fig.height=3.7>>=
+wf_new()
+wf_box(2, 78, 22, 16, "", fill = "#FFFFFF")
+text(13, 90.5, "Browser", cex = 0.6, font = 2, col = INK)
+wf_note(4, 86.5, "index.html (one file)")
+wf_note(4, 83,   "chips/text editors")
+wf_note(4, 79.7, "status polling loop")
+wf_box(34, 80, 16, 12, "API Gateway\n49 POST routes", fill = "#FFFFFF", cex = 0.55)
+wf_arrow(24, 86, 34, 86)
+wf_box(58, 84, 18, 9, "orchestrators (3)", fill = "#FFFFFF", cex = 0.55)
+wf_arrow(50, 87, 58, 88)
+wf_box(58, 64, 38, 15, "", fill = "#FFFFFF")
+text(77, 75.5, "Step Functions (Standard) x3", cex = 0.56, font = 2, col = INK)
+wf_note(60, 71.5, "compute: plan > fused chunks > status")
+wf_note(60, 68.3, "render: plan > raster-mt xN > finalize-mt")
+wf_note(60, 65.3, "palette: plan > chunks > finalize")
+wf_arrow(67, 84, 67, 79)
+wf_box(58, 46, 38, 13, "", fill = "#FFFFFF")
+text(77, 55.5, "worker Lambdas (41 total)", cex = 0.56, font = 2, col = INK)
+wf_note(60, 51.8, "native: sweep_mt / sweep_cm / coeffgen")
+wf_note(60, 48.7, "raster / finalize / derive / debug")
+wf_arrow(77, 64, 77, 59)
+wf_box(34, 60, 16, 12, "dispatch\n(async fan-out)", fill = "#FFFFFF", cex = 0.55)
+wf_arrow(44, 80, 44, 72)
+wf_arrow(50, 64, 58, 53)
+wf_box(10, 30, 34, 13, "", fill = "#FFFFFF")
+text(27, 39.5, "S3", cex = 0.6, font = 2, col = INK)
+wf_note(12, 35.8, "artifacts + raw sidecars + meta.json")
+wf_note(12, 32.6, "config.json + the site itself")
+wf_box(52, 30, 30, 13, "", fill = "#FFFFFF")
+text(67, 39.5, "DynamoDB", cex = 0.6, font = 2, col = INK)
+wf_note(54, 35.8, "job/task status rows (TTL)")
+wf_note(54, 32.6, "polled by the browser")
+wf_arrow(70, 46, 62, 43)
+wf_arrow(60, 46, 36, 43)
+wf_arrow(13, 78, 13, 43); wf_note(2.5, 60, "fetch results /\nupload site", cex = 0.48)
+wf_arrow(52, 36, 24, 79, col = ACC, lwd = 1.4)
+wf_note(28, 56, "status poll (the UI's only live signal)", col = ACC, cex = 0.5)
+wf_box(2, 8, 94, 12, "", fill = "#FFFFFF")
+text(49, 16.5, "deploy.sh (one converge script)", cex = 0.56, font = 2, col = INK)
+wf_note(4, 12.8, "gates: pytest + JS harness + predeploy contracts + Docker runtime regression")
+wf_note(4, 9.8,  "builds: musl static + Docker amazonlinux (libcurl/libvips/LAPACK) > 41 zips > one spec list > SFN > routes > site")
+@
+
+\textbf{Pain points in the loop, as experienced:} the browser's only live
+signal is a poll against status rows (accent arrow above); job topology is
+invisible in the UI even though Step Functions has it; and the
+creative iteration loop (edit $\to$ preview $\to$ commit $\to$ compare)
+crosses four tabs with no persistent job context.
+
+\section{The UI as built}
+
+One dark-theme page, six tabs. The Compute tab is a vertical stack of
+rows; programs are edited as inline ``chips'' with small parameter boxes;
+the Coeff Program additionally has a Chips/Text toggle. Status is text
+lines under each box.
+
+<<currentui, fig.width=6.9, fig.height=4.1>>=
+wf_new()
+wf_tabbar(2, 92, 60, c("Compute","Results","Palette","Render","Favorites","DeepZoom"), active = 1)
+wf_box(2, 2, 96, 88, "", fill = "#FBFBFD")
+wf_box(4, 84, 92, 6, "", fill = "#FFFFFF")
+wf_note(6, 87, "N [500]   Times [1]   Use: [Chain v]   'Legacy transform chains are active.'", cex = 0.5)
+wf_box(4, 76, 92, 6.5, "", fill = "#FFFFFF")
+wf_note(6, 81.2, "Param transforms:", cex = 0.5)
+x <- 21; x <- wf_chip(x, 77, "p1=sin(p1)*2"); x <- wf_chip(x, 77, "p2=p2+0.1"); x <- wf_chip(x, 77, "+ param transform")
+wf_box(4, 60, 92, 14.5, "", fill = "#FFFFFF")
+text(6, 72.4, "Param Program", cex = 0.55, font = 2, col = INK, adj = c(0, 0.5))
+wf_note(6, 69.2, "[Param Programs...] [+ before] [+ after] [Copy legacy transforms] [Clear program]", cex = 0.47)
+x <- 6; x <- wf_chip(x, 62.5, "push p1"); x <- wf_chip(x, 62.5, "sin"); x <- wf_chip(x, 62.5, "p2"); x <- wf_chip(x, 62.5, "mul"); x <- wf_chip(x, 62.5, "emit p1")
+wf_note(6, 60.9, "status: 5 chips - program ready", cex = 0.45)
+wf_box(4, 53, 92, 5.5, "", fill = "#FFFFFF")
+wf_note(6, 55.7, "Function: [Choose coefficient function...]   degree=34, value=1-2j", cex = 0.5)
+wf_box(4, 45.5, 92, 6.5, "", fill = "#FFFFFF")
+wf_note(6, 50.6, "Coeff transforms:", cex = 0.5)
+x <- 21; x <- wf_chip(x, 46.5, "rev"); x <- wf_chip(x, 46.5, "cumsum"); x <- wf_chip(x, 46.5, "linear(100,0)"); x <- wf_chip(x, 46.5, "+ 28 items")
+wf_box(4, 22, 92, 22, "", fill = "#FFFFFF")
+text(6, 41.6, "Coeff Program", cex = 0.55, font = 2, col = INK, adj = c(0, 0.5))
+wf_note(6, 38.6, "[Coeff Programs...] [+ before] [+ after] [Copy legacy transforms] [Clear program]", cex = 0.47)
+rect(6, 33.2, 14, 36.6, col = INK, border = LINE); text(10, 34.9, "Chips", cex = 0.48, col = "white", font = 2)
+rect(14, 33.2, 22, 36.6, col = "#E3E5EC", border = LINE); text(18, 34.9, "Text", cex = 0.48)
+x <- 6; x <- wf_chip(x, 28.4, "cf"); x <- wf_chip(x, 28.4, "littlewood(0,1)"); x <- wf_chip(x, 28.4, "linear(poly,2,3)"); x <- wf_chip(x, 28.4, "emit")
+wf_note(6, 25.6, "status: Chain pipeline selected - 4 chips", cex = 0.45)
+wf_note(40, 35, "<- binary mode toggle: text OR chips, never both", col = ACC, cex = 0.5)
+wf_box(4, 4, 92, 16, "", fill = "#FFFFFF")
+wf_note(6, 17.2, "Compute preview (lores) + actions + scrolling status log", cex = 0.52)
+wf_box(6, 5.5, 22, 9.5, "preview\ncanvas", fill = "#EDEDF2", cex = 0.5)
+wf_note(31, 12.5, "[Compute] [Preview] ...", cex = 0.5)
+wf_note(31, 8.5, "log: 'compute dispatched...', 'status: running (12/40)...'", cex = 0.45)
+@
+
+\subsection{What works}
+
+Density without navigation depth --- every control is one click away;
+chips render as readable formulas, not opaque IDs; the text editor with a
+real compiler and diagnostics is a power feature most tools never get;
+dark theme and accent discipline are consistent; nothing lies --- status
+text reflects the actual contract.
+
+\subsection{Why it feels constraining}
+
+\begin{enumerate}[leftmargin=1.6em,itemsep=2pt]
+  \item \textbf{The layout mirrors the wire format, not the workflow.} Each
+  row is a payload field. The loop you actually run (edit $\to$ preview
+  $\to$ render $\to$ compare) is spread across Compute, Render, and Results
+  tabs that cannot be seen together.
+  \item \textbf{Stack programs in a flat strip.} RPN chips hide the one
+  thing that matters --- stack depth and what each chip consumes/produces.
+  You simulate the machine in your head; the compiler knows but the UI
+  doesn't show it.
+  \item \textbf{Editing in 12-character boxes.} Scalar expressions like
+  \texttt{log(abs(p1+p2)+1)*1j} are edited in tiny inline inputs; the
+  \texttt{*Wide} CSS classes are band-aids on a structural problem (no
+  inspector surface).
+  \item \textbf{Binary Chips/Text toggle.} The two views never coexist, so
+  text users lose chip affordances and chip users never learn the text
+  idiom. Param Program doesn't get a text mode at all --- an asymmetry with
+  no user-facing reason.
+  \item \textbf{Catalog browsing by native \texttt{<select>}.} 28 coeff
+  transforms in a dropdown; pickers are popup lists without search-as-you-
+  type, previews, or examples.
+  \item \textbf{Jobs are log lines.} Long pipelines report through appended
+  text; there is no persistent surface answering ``what is running, how far
+  along, what did it produce'' --- despite the backend knowing exactly that.
+  \item \textbf{No direct manipulation of parameters.} \texttt{p1/p2/t1/t2}
+  exploration is type-a-number-and-recompute, although a lores preview
+  Lambda exists that could make dragging live.
+  \item \textbf{Fixed geometry.} No panel resize, no collapse memory beyond
+  preview tabs, no layout choice for wide monitors.
+\end{enumerate}
+
+\section{UI alternatives}
+
+Ordered roughly by effort. A--D keep the existing DOM and grow it; E--F are
+structural.
+
+\subsection{A --- Command palette + chip inspector (days)}
+
+Two additive features. \texttt{Ctrl-K} opens a fuzzy palette over
+\emph{every} action and catalog entry (add chip, switch tab, run compute,
+open saved program). Clicking any chip opens a right-side inspector with
+full-width labeled fields, the chip's doc line, and stack effect --- the
+tiny inline boxes stay for glanceability but stop being the only editor.
+
+<<mockA, fig.width=6.9, fig.height=3.4>>=
+wf_new()
+wf_box(2, 2, 60, 92, "", fill = "#FBFBFD")
+wf_note(4, 90, "Compute tab as today...", cex = 0.52)
+x <- 4; x <- wf_chip(x, 80, "cf"); x <- wf_chip(x, 80, "littlewood(0,1)")
+xsel <- x; x <- wf_chip(x, 80, "linear(poly,2,3)", fill = "#FFE3E9"); x <- wf_chip(x, 80, "emit")
+wf_note(4, 74, "selected chip highlighted", cex = 0.47, col = ACC)
+wf_box(14, 30, 40, 26, "", fill = "#FFFFFF", border = ACC, lwd = 1.6)
+text(34, 52.5, "Ctrl-K  command palette", cex = 0.56, font = 2, col = INK)
+wf_box(16, 44.5, 36, 4.5, "> lin", fill = "#F2F3F8", cex = 0.5, align = "l")
+wf_note(17, 41.0, "linear(src, a, b)        coeff chip", cex = 0.48)
+wf_note(17, 38.0, "linspace(start,stop,n)   constructor", cex = 0.48)
+wf_note(17, 35.0, "Copy legacy transforms   action", cex = 0.48)
+wf_note(17, 32.0, "Render: generate MT      action", cex = 0.48)
+wf_box(64, 2, 34, 92, "", fill = "#FFFFFF", border = ACC, lwd = 1.6)
+text(81, 90, "Inspector: linear", cex = 0.6, font = 2, col = INK)
+wf_note(66, 84.5, "linear(src, multiplier, offset[, andy])", cex = 0.5)
+wf_note(66, 80.5, "src*a + b, elementwise", cex = 0.5)
+wf_box(66, 70, 30, 6, " src        [poly        v]", cex = 0.5, align = "l", fill = "#F7F7FB")
+wf_box(66, 62, 30, 6, " multiplier [2                ]", cex = 0.5, align = "l", fill = "#F7F7FB")
+wf_box(66, 54, 30, 6, " offset     [3                ]", cex = 0.5, align = "l", fill = "#F7F7FB")
+wf_box(66, 46, 30, 6, " andy       [0       ] blend", cex = 0.5, align = "l", fill = "#F7F7FB")
+wf_note(66, 38, "stack: consumes 0, writes poly", cex = 0.5)
+wf_note(66, 34, "docs: scale/shift shorthands exist", cex = 0.5)
+wf_note(66, 28, "full-width fields end the 12-char box era", cex = 0.5, col = ACC)
+@
+
+\textbf{Cost/benefit.} No layout change, no backend change; the inspector
+reuses the existing catalog metadata verbatim. Highest
+value-per-line-of-code available.
+
+\subsection{B --- Unified program editor: text and chips side by side (1--2 weeks)}
+
+Kill the mode toggle. One pane shows text, the other chips; both are views
+of the same parsed program, edits in either round-trip live through the
+existing compiler. A gutter shows per-statement stack depth (the compiler
+already computes \texttt{stack\_max}); errors annotate the offending line
+\emph{and} chip. Param Program gets text mode for free since it shares the
+machinery.
+
+<<mockB, fig.width=6.9, fig.height=3.3>>=
+wf_new()
+wf_box(2, 2, 96, 92, "", fill = "#FBFBFD")
+text(4, 90, "Coeff Program", cex = 0.6, font = 2, col = INK, adj = c(0,0.5))
+wf_box(4, 10, 44, 74, "", fill = "#1B1B26")
+wf_note(6, 80, "1  cf                      | 1", col = "#D8D8E4", cex = 0.52)
+wf_note(6, 75, "2  littlewood(0, 1)        | 2", col = "#D8D8E4", cex = 0.52)
+wf_note(6, 70, "3  blend(0.25)             | 1", col = "#D8D8E4", cex = 0.52)
+wf_note(6, 65, "4  linear(pop, 2, 3)       | 1", col = "#D8D8E4", cex = 0.52)
+wf_note(6, 60, "5  emit                    | 0", col = "#D8D8E4", cex = 0.52)
+wf_note(6, 52, "6  emit", col = "#FF8AA0", cex = 0.52)
+wf_note(6, 46, "   ^ stack is empty here", col = "#FF8AA0", cex = 0.5)
+wf_note(33, 86.8, "stack depth gutter", col = ACC, cex = 0.48)
+wf_box(50, 10, 46, 74, "", fill = "#FFFFFF")
+y <- 76
+lab <- c("cf", "littlewood(0,1)", "blend(0.25)", "linear(pop,2,3)", "emit")
+dep <- c("d1","d2","d1","d1","d0")
+for (i in seq_along(lab)) {
+  wf_chip(52, y, lab[i], w = 26)
+  wf_note(80, y + 2.5, dep[i], cex = 0.48, col = "#7A86A8")
+  if (i < length(lab)) wf_arrow(65, y, 65, y - 2.6, lwd = 0.9)
+  y <- y - 7.6
+}
+wf_box(52, y, 26, 5, "", fill = "#FFE3E9", border = ACC)
+text(65, y + 2.5, "emit  (error)", cex = 0.5, col = ACC, family = "mono")
+wf_note(50, 6, "same AST, two live views; selecting either side highlights both", cex = 0.52, col = ACC)
+@
+
+\textbf{Cost/benefit.} Pure frontend; the compiler endpoints exist
+(\texttt{/compile-coeff-program-source} round-trips today). Makes the stack
+visible, ends the toggle, and converts the text editor from expert escape
+hatch into the primary surface with training wheels.
+
+\subsection{C --- Jobs rail: the pipeline as a first-class surface (1 week)}
+
+A persistent bottom strip across all tabs: one card per job showing the
+compute$\to$render$\to$finalize stages with live per-stage state from the
+existing status rows (later, pushed over WebSocket). Click a stage for its
+log slice and outputs; click the artifact to jump to Results with it
+selected. The log lines remain, demoted to a detail view.
+
+<<mockC, fig.width=6.9, fig.height=2.6>>=
+wf_new()
+wf_box(2, 40, 96, 54, "", fill = "#FBFBFD")
+wf_note(4, 88, "any tab content above...", cex = 0.52)
+wf_box(2, 2, 96, 34, "", fill = "#FFFFFF", border = ACC, lwd = 1.5)
+text(4, 31.5, "Jobs", cex = 0.58, font = 2, col = INK, adj = c(0,0.5))
+wf_box(4, 8, 28, 19, "", fill = "#F7F7FB")
+wf_note(5.5, 23.5, "job 7f3a  'littlewood sweep'", cex = 0.5)
+wf_box(6, 11, 7, 7, "plan\ndone", fill = "#DDF2E4", cex = 0.42)
+wf_box(14, 11, 7, 7, "chunks\n31/40", fill = "#FFF3D6", cex = 0.42)
+wf_box(22, 11, 7, 7, "final\n--", fill = "#EFEFF4", cex = 0.42)
+wf_arrow(13, 14.5, 14, 14.5, lwd = 0.9); wf_arrow(21, 14.5, 22, 14.5, lwd = 0.9)
+wf_box(36, 8, 28, 19, "", fill = "#F7F7FB")
+wf_note(37.5, 23.5, "job 9c01  render 12000px", cex = 0.5)
+wf_box(38, 11, 7, 7, "raster\ndone", fill = "#DDF2E4", cex = 0.42)
+wf_box(46, 11, 7, 7, "merge\ndone", fill = "#DDF2E4", cex = 0.42)
+wf_box(54, 11, 7, 7, "finalize\nrun 102s", fill = "#FFF3D6", cex = 0.42)
+wf_arrow(45, 14.5, 46, 14.5, lwd = 0.9); wf_arrow(53, 14.5, 54, 14.5, lwd = 0.9)
+wf_box(68, 8, 28, 19, "", fill = "#F7F7FB")
+wf_note(69.5, 23.5, "job a2b8  palette x256", cex = 0.5)
+wf_box(70, 11, 7, 7, "FAILED", fill = "#FFE3E9", cex = 0.42, border = ACC)
+wf_note(78.5, 14.5, "chunk 3: vector len 257 > 256\n[retry] [open log]", cex = 0.42)
+@
+
+\textbf{Cost/benefit.} Frontend + one read endpoint reshuffle; the data
+already exists in DynamoDB and SFN history. This single feature addresses
+the loudest ``constraining'' complaint --- losing sight of work in flight.
+
+\subsection{D --- Direct manipulation: XY pad + draggable markers (1 week)}
+
+Bind a 2-D pad to \texttt{(p1, p2)} with the grid extent drawn on it; drag
+to scrub --- each move debounces into the deployed lores-preview Lambda and
+paints the small canvas; release to commit values back into the form.
+Scrubbing \emph{is} exploration; the current sweep grid becomes a window
+you position by feel.
+
+<<mockD, fig.width=6.9, fig.height=3.0>>=
+wf_new()
+wf_box(2, 2, 44, 92, "", fill = "#FFFFFF")
+text(4, 89, "Param pad (p1 x p2)", cex = 0.58, font = 2, col = INK, adj = c(0,0.5))
+wf_box(6, 10, 36, 72, "", fill = "#FBFBFD")
+for (g in seq(6, 42, by = 6)) { segments(g, 10, g, 82, col = "#E4E6EE"); }
+for (g in seq(10, 82, by = 12)) { segments(6, g, 42, g, col = "#E4E6EE"); }
+rect(14, 30, 30, 58, col = NA, border = ACC, lwd = 1.4, lty = 2)
+wf_note(15, 60.5, "sweep window (N=500)", cex = 0.45, col = ACC)
+points(22, 44, pch = 19, col = ACC, cex = 1.1)
+wf_note(24, 44, "drag = live lores preview", cex = 0.48, col = ACC)
+wf_box(50, 2, 48, 92, "", fill = "#FFFFFF")
+text(52, 89, "Lores preview (deployed Lambda, ~sync)", cex = 0.58, font = 2, col = INK, adj = c(0,0.5))
+wf_box(54, 14, 40, 68, "", fill = "#16213E")
+wf_note(56, 76, "root cloud renders here as you drag", col = "#9fb0d8", cex = 0.5)
+wf_note(52, 7, "release -> p1/p2 fields update; double-click -> recenter sweep window", cex = 0.5)
+@
+
+\textbf{Cost/benefit.} The expensive part (a fast preview path) is already
+deployed; this is wiring and debouncing. Highest delight-per-effort of the
+six.
+
+\subsection{E --- Gallery-first Results with a compare tray (1--2 weeks)}
+
+Replace row-list results with a thumbnail grid (the previews exist),
+faceted by function, palette, fingerprint family, and date; hover for
+metadata, click for detail, and a pinned ``compare tray'' that holds 2--4
+artifacts side by side at matched zoom. Derivation actions (autolevels,
+repalette, bilevel, DeepZoom) move onto the detail view as buttons they
+already are.
+
+<<mockE, fig.width=6.9, fig.height=3.0>>=
+wf_new()
+wf_tabbar(2, 92, 60, c("Compute","Results","Palette","Render","Favorites","DeepZoom"), active = 2)
+wf_box(2, 2, 96, 88, "", fill = "#FBFBFD")
+wf_note(4, 86, "filter: [function v] [palette v] [family v] [date v]   search: [littlewood____]", cex = 0.5)
+set.seed(7)
+xs <- seq(4, 76, by = 12.2)
+for (r in 0:2) for (i in seq_along(xs)) {
+  y0 <- 56 - r * 17
+  wf_box(xs[i], y0, 10.5, 13, "", fill = c("#2A2A3C", "#1F2A44", "#33203A")[1 + (i + r) %% 3])
+  if ((i + r) %% 4 == 1) rect(xs[i], y0, xs[i] + 10.5, y0 + 13, border = ACC, lwd = 1.5)
+}
+wf_note(4, 73.5, "thumbnails stream in from existing previews; accent = in compare tray", cex = 0.48)
+wf_box(82, 6, 14, 78, "", fill = "#FFFFFF", border = ACC, lwd = 1.4)
+text(89, 80.5, "Compare", cex = 0.52, font = 2, col = INK)
+wf_box(84, 62, 10, 14, "A", fill = "#2A2A3C", cex = 0.6, tcol = "white")
+wf_box(84, 45, 10, 14, "B", fill = "#1F2A44", cex = 0.6, tcol = "white")
+wf_note(83.5, 38, "matched zoom,\nsynced pan", cex = 0.45)
+wf_note(83.5, 28, "[diff palettes]\n[open both]", cex = 0.45)
+@
+
+\textbf{Cost/benefit.} Pure frontend over the existing
+\texttt{/list}-lean-then-\texttt{/detail} flow; turns Results from a
+filing cabinet into the place where judgment happens.
+
+\subsection{F --- Studio shell: dockable three-pane layout (2--4 weeks)}
+
+The structural option: program editor left (the B editor), canvas/preview
+center, inspector right (the A inspector), jobs rail bottom (C). Tabs
+shrink to workspace presets rather than walls between stages. This is the
+layout the workflow has been asking for; the four prior pieces become its
+panels, which is the argument for building them first.
+
+<<mockF, fig.width=6.9, fig.height=3.4>>=
+wf_new()
+wf_box(2, 88, 96, 7, "", fill = "#FFFFFF")
+wf_note(4, 91.5, "PolyPaint   [workspace: Explore v]   Ctrl-K: command palette", cex = 0.52)
+wf_box(2, 28, 30, 58, "", fill = "#FFFFFF")
+text(4, 82.5, "Program (text + chips)", cex = 0.52, font = 2, col = INK, adj = c(0,0.5))
+wf_note(4, 78, "the B editor docks here", cex = 0.47)
+wf_box(4, 30, 26, 44, "", fill = "#1B1B26")
+wf_box(34, 28, 38, 58, "", fill = "#16213E")
+text(36, 82.5, "Canvas / preview", cex = 0.52, font = 2, col = "white", adj = c(0,0.5))
+wf_note(36, 78, "lores while editing; full render on demand", cex = 0.47, col = "#9fb0d8")
+wf_box(74, 28, 24, 58, "", fill = "#FFFFFF")
+text(76, 82.5, "Inspector", cex = 0.52, font = 2, col = INK, adj = c(0,0.5))
+wf_note(76, 78, "selected chip / artifact;\nA's panel docks here", cex = 0.47)
+wf_box(76, 40, 20, 30, "", fill = "#F7F7FB")
+wf_box(2, 2, 96, 22, "", fill = "#FFFFFF", border = ACC, lwd = 1.2)
+text(4, 20.5, "Jobs rail (C)", cex = 0.52, font = 2, col = INK, adj = c(0,0.5))
+wf_box(6, 6, 24, 11, "compute 31/40", fill = "#FFF3D6", cex = 0.48)
+wf_box(33, 6, 24, 11, "render done", fill = "#DDF2E4", cex = 0.48)
+wf_box(60, 6, 24, 11, "palette FAILED", fill = "#FFE3E9", cex = 0.48, border = ACC)
+wf_note(35, 25.9, "splitters draggable; panel sizes persist", cex = 0.47)
+@
+
+\textbf{Cost/benefit.} The only alternative requiring real layout surgery
+in the 20k-line file (or, more honestly, the moment the ES-module split
+from D1 pays for itself). Do it after A--D exist as panels.
+
+\paragraph{Considered and not recommended (now).} A node-graph editor
+(Blender-style) for the program DSLs: the stack machine is linear with
+occasional branches, and the B editor's depth gutter conveys the same
+information at a tenth of the cost. Revisit only if programs grow real
+DAG structure. Likewise a full framework rewrite (D1-3): nothing in A--F
+needs it.
+
+\section{Roadmap}
+
+<<roadmap, results='asis'>>=
+r <- data.frame(
+  Horizon = c("Now (days)", "Now (days)", "Now (days)",
+              "Next (1--2 wks)", "Next (1--2 wks)", "Next (1--2 wks)",
+              "Then (1--2 wks)", "Then (1--2 wks)", "Then (2--4 wks)"),
+  Item = c("A: command palette + chip inspector (low risk)",
+           "tsc --checkJs + ESLint in predeploy (low)",
+           "shared-code Lambda layer (low)",
+           "C: jobs rail --- poll first, push later (low)",
+           "D: XY scrub pad on lores preview (low)",
+           "one catalog generates JS/Py/C tables (medium)",
+           "B: unified text + chips editor (medium)",
+           "E: gallery results + compare tray (low)",
+           "F: studio shell on ES modules (high)"),
+  Payoff = c("ends tiny-box editing",
+             "catches the observed bug classes",
+             "kills mid-deploy version skew",
+             "work in flight becomes visible",
+             "exploration becomes tactile",
+             "retires the CR6/CR7 drift class",
+             "stack visible; toggle dies",
+             "judgment surface for outputs",
+             "layout matches the loop")
+)
+cat("\\begingroup\\small\n")
+cat(knitr::kable(r, format = "latex", booktabs = TRUE, align = "lll",
+                 linesep = c("", "", "\\addlinespace", "", "", "\\addlinespace", "", "", "")))
+cat("\n\\endgroup\n")
+@
+
+\section{Closing}
+
+The architecture is coherent: buildless, observable, verified, and frozen
+where freezing pays (wire formats) --- the critique is not ``modernize''
+but ``stop hand-copying facts'' (one catalog, one shared layer, generated
+mirrors). The UI's bones are good and its density is a feature; what it
+lacks is the workflow layer --- visible jobs, a real editing surface, and
+direct manipulation. Alternatives A, C, and D are small, independent, and
+each removes a distinct constraint; B and E complete the loop; F is the
+eventual shape once the panels exist. None of it requires touching the
+solver, the DSLs' semantics, or the deploy substrate --- which is the
+strongest endorsement of the choices made that this review can offer.
+
+\end{document}

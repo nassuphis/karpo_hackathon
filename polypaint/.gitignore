@@ -94,3 +94,9 @@ jetbrains-mono-font-family/
 lyon-font/
 sabon-similar/
 sohne-font-family/
+
+# knitr/LaTeX build artifacts (architecture-ui-critique.Rnw -> pdf)
+*.aux
+*.out
+architecture-ui-critique.tex
+figure/

@@ -1,13 +1,23 @@
 import ast
+import json
 import pathlib
 import re
 import shlex
+import subprocess
+import sys
 import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LAMBDA_DIR = ROOT / "lambda"
 DEPLOY_TEXT = (ROOT / "deploy.sh").read_text()
+DEPLOY_MANIFEST = json.loads((ROOT / "deploy_manifest.json").read_text())
+# The fleet bash deploy.sh actually sources: validate + emit in one shot so a
+# manifest error fails the suite before any per-test assertion runs.
+GEN_TEXT = subprocess.run(
+    [sys.executable, str(ROOT / "deploy_manifest.py"), "--emit-bash"],
+    capture_output=True, text=True, check=True,
+).stdout
 LOCAL_MODULES = {p.stem for p in LAMBDA_DIR.glob("*.py")}
 HANDLER_STORAGE_TEXT = (LAMBDA_DIR / "handler_storage.py").read_text()
 API_MANIFEST_PATH = ROOT / "api_manifest.json"
@@ -86,19 +96,20 @@ def _local_dependencies(py_name, seen=None):
 
 
 class TestDeployPackaging(unittest.TestCase):
+    def _manifest_fn(self, key):
+        return next(fn for fn in DEPLOY_MANIFEST["functions"] if fn["key"] == key)
+
     def test_raster_mt_memory_is_maxed_for_large_fused_renders(self):
-        self.assertRegex(
-            DEPLOY_TEXT,
-            r"(?m)^RASTER_MT_MEMORY=10240\s+# max memory/CPU tier for native pthread raster on large fused renders$",
-            "fused raster Lambda memory should stay at 10240 MB for large solve-score renders",
-        )
+        fn = self._manifest_fn("raster_mt")
+        self.assertEqual(fn["memory_mb"], 10240,
+                         "fused raster Lambda memory should stay at 10240 MB for large solve-score renders")
+        self.assertIn("max memory/CPU tier", fn["memory_why"])
 
     def test_color_to_bilevel_memory_is_maxed_for_large_raw_threshold_derivations(self):
-        self.assertRegex(
-            DEPLOY_TEXT,
-            r"(?m)^COLOR_TO_BILEVEL_MEMORY=10240\s+# raw-sidecar thresholding is single-shot and CPU-bound on large images$",
-            "Color2Bilevel Lambda memory should stay at 10240 MB for large raw-threshold derivations",
-        )
+        fn = self._manifest_fn("color_to_bilevel")
+        self.assertEqual(fn["memory_mb"], 10240,
+                         "Color2Bilevel Lambda memory should stay at 10240 MB for large raw-threshold derivations")
+        self.assertIn("single-shot and CPU-bound", fn["memory_why"])
 
     def test_render_workflow_definition_uses_shared_renderer_in_deploy_and_tests(self):
         self.assertTrue(WORKFLOW_RENDERER_PATH.exists(), "workflow_template_render.py should exist")
@@ -158,19 +169,28 @@ class TestDeployPackaging(unittest.TestCase):
                       "palette workflow function missing AttachPaletteFunctionArn substitution")
 
     def test_create_and_update_share_one_lambda_spec_list(self):
-        # Every per-function spec lives once, in deploy_all_lambdas /
-        # deploy_orchestrator_lambdas; both action branches invoke those, and
-        # nothing else calls the raw create/update helpers. This is what
-        # retired the old duplicated-spec-list drift failure mode.
+        # Every per-function spec lives once, in deploy_manifest.json; the
+        # generator emits deploy_all_lambdas / deploy_orchestrator_lambdas,
+        # deploy.sh sources that output, and both action branches invoke the
+        # shared functions. Nothing else calls the raw create/update helpers.
+        self.assertIn('deploy_manifest.py" --check', DEPLOY_TEXT)
+        self.assertIn('deploy_manifest.py" --emit-bash > "$DEPLOY_SPECS_SH"', DEPLOY_TEXT)
+        self.assertIn('source "$DEPLOY_SPECS_SH"', DEPLOY_TEXT)
         self.assertEqual(len(re.findall(r"(?m)^    deploy_all_lambdas$", DEPLOY_TEXT)), 2)
         self.assertEqual(len(re.findall(r"(?m)^    deploy_orchestrator_lambdas$", DEPLOY_TEXT)), 2)
-        self.assertEqual(len(re.findall(r'(?m)^\s*deploy_lambda "\$\w+_NAME"', DEPLOY_TEXT)), 41)
+        self.assertEqual(len(re.findall(r"(?m)^    delete_removed_lambdas$", DEPLOY_TEXT)), 2)
+        # specs exist only in the generated bash, one per manifest function
+        self.assertEqual(len(re.findall(r'(?m)^\s*deploy_lambda "\$\w+_NAME"', DEPLOY_TEXT)), 0)
+        self.assertEqual(
+            len(re.findall(r'(?m)^\s*deploy_lambda "\$\w+_NAME"', GEN_TEXT)),
+            len(DEPLOY_MANIFEST["functions"]),
+        )
         # raw helpers: the deploy_lambda wrapper plus the two converge fallbacks
         self.assertEqual(len(re.findall(r'(?m)^\s*create_lambda "\$', DEPLOY_TEXT)), 2)
         self.assertEqual(len(re.findall(r'(?m)^\s*update_lambda "\$', DEPLOY_TEXT)), 2)
 
     def test_all_api_gateway_integrations_have_invoke_permission(self):
-        joined = _joined_shell_lines(DEPLOY_TEXT)
+        joined = _joined_shell_lines(GEN_TEXT)
         integrated = set(re.findall(r'create_integration "\$(\w+)"', joined))
         self.assertGreater(len(integrated), 10, "failed to discover API Gateway integrations")
 
@@ -184,6 +204,10 @@ class TestDeployPackaging(unittest.TestCase):
             [],
             f"API Gateway integrations missing invoke permission: {', '.join(missing)}",
         )
+        # The permission list is derived: exactly the routed manifest functions.
+        routed = {fn["name_var"] for fn in DEPLOY_MANIFEST["functions"] if fn.get("routes")}
+        self.assertEqual(permitted, routed)
+        self.assertEqual(integrated, routed)
 
     def test_packaged_handlers_include_all_local_dependencies(self):
         packaged = _packaged_handlers()
@@ -269,8 +293,8 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("coeffs_bilevel_raster", packaged["handler_bilevel.py"])
         self.assertIn("raw_to_bilevel", packaged["handler_bilevel.py"])
         self.assertIn("assemble_greyscale", packaged["handler_bilevel.py"])
-        self.assertIn('deploy_lambda "$COLOR_TO_BILEVEL_NAME" "handler_bilevel.handler" "/tmp/polypaint-bilevel.zip"', DEPLOY_TEXT)
-        self.assertIn("COLOR_TO_BILEVEL_FUNCTION", DEPLOY_TEXT)
+        self.assertIn('deploy_lambda "$COLOR_TO_BILEVEL_NAME" "handler_bilevel.handler" "/tmp/polypaint-bilevel.zip"', GEN_TEXT)
+        self.assertIn("COLOR_TO_BILEVEL_FUNCTION", GEN_TEXT)
         self.assertIn("assemble_greyscale", packaged["handler_finalize_mt.py"])
         self.assertIn("score_raw_render", packaged["handler_finalize_mt.py"])
         self.assertIn("raw_score_render.py", packaged["handler_finalize_mt.py"])
@@ -283,11 +307,11 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("handler_solve_proximity.py", packaged["handler_solve_proximity_bench.py"])
         self.assertIn("solve_proximity_stats", packaged["handler_solve_proximity_bench.py"])
         self.assertIn("solve_proximity_hist_sectioned", packaged["handler_solve_proximity_bench.py"])
-        self.assertIn('deploy_lambda "$SOLVE_PROXIMITY_BENCH_NAME" "handler_solve_proximity_bench.handler" "/tmp/polypaint-solve-proximity-bench.zip"', DEPLOY_TEXT)
+        self.assertIn('deploy_lambda "$SOLVE_PROXIMITY_BENCH_NAME" "handler_solve_proximity_bench.handler" "/tmp/polypaint-solve-proximity-bench.zip"', GEN_TEXT)
 
         self.assertIn("handler_raster_mt.py", packaged)
         self.assertIn("roots2pix_mt", packaged["handler_raster_mt.py"])
-        self.assertIn('deploy_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip"', DEPLOY_TEXT)
+        self.assertIn('deploy_lambda "$RASTER_MT_NAME" "handler_raster_mt.handler" "/tmp/polypaint-raster-mt.zip"', GEN_TEXT)
         self.assertIn("RASTER_MT_THREADS", DEPLOY_TEXT)
         self.assertIn('build_libcurl_binary roots2pix_mt multispan_reader.c', DEPLOY_TEXT)
         self.assertIn('cp lambda/roots2pix_mt "$RASTER_MT_DIR/"', DEPLOY_TEXT)
@@ -301,18 +325,19 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("test_roots2pix_mt_local_file_manifest_runtime()", docker_runtime_text)
         self.assertIn("aarch64-linux-musl-gcc -O3 -static -pthread -o lambda/solve_proximity_stats lambda/solve_proximity_stats.c -lm", DEPLOY_TEXT)
         self.assertNotIn("handler_raster.py", packaged)
-        self.assertNotIn('deploy_lambda "$RASTER_NAME"', DEPLOY_TEXT)
+        self.assertNotIn('deploy_lambda "$RASTER_NAME"', GEN_TEXT)
 
         self.assertIn("handler_sweep_mt.py", packaged)
         self.assertIn("sweep_mt", packaged["handler_sweep_mt.py"])
-        self.assertIn('deploy_lambda "$SWEEP_MT_NAME" "handler_sweep_mt.handler" "/tmp/polypaint-sweep-mt.zip"', DEPLOY_TEXT)
+        self.assertIn('deploy_lambda "$SWEEP_MT_NAME" "handler_sweep_mt.handler" "/tmp/polypaint-sweep-mt.zip"', GEN_TEXT)
         self.assertNotIn("handler_sweep.py", packaged)
-        self.assertNotIn('deploy_lambda "$SWEEP_NAME"', DEPLOY_TEXT)
-        self.assertNotIn('ensure_route "POST /sweep" "$SWEEP_INT"', DEPLOY_TEXT)
-        self.assertIn('REMOVED_SWEEP_NAME="polypaint-sweep"', DEPLOY_TEXT)
-        self.assertEqual(DEPLOY_TEXT.count('delete_lambda_if_exists "$REMOVED_SWEEP_NAME"'), 2)
-        self.assertIn('delete_route_if_exists "POST /sweep"', DEPLOY_TEXT)
-        self.assertIn('delete_integration_for_lambda_if_exists "$REMOVED_SWEEP_NAME"', DEPLOY_TEXT)
+        self.assertNotIn('deploy_lambda "$SWEEP_NAME"', GEN_TEXT)
+        self.assertNotIn('ensure_route "POST /sweep" ', GEN_TEXT)
+        self.assertEqual(DEPLOY_MANIFEST["removed"]["functions"], ["polypaint-sweep"])
+        self.assertIn("/sweep", DEPLOY_MANIFEST["removed"]["routes"])
+        self.assertIn('delete_lambda_if_exists "polypaint-sweep"', GEN_TEXT)
+        self.assertIn('delete_route_if_exists "POST /sweep"', GEN_TEXT)
+        self.assertIn('delete_integration_for_lambda_if_exists "polypaint-sweep"', GEN_TEXT)
         self.assertIn("first_api_gateway_id", DEPLOY_TEXT)
         self.assertNotIn(".RouteId | [0]", DEPLOY_TEXT)
         self.assertNotIn(".IntegrationId | [0]", DEPLOY_TEXT)
@@ -322,17 +347,17 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("Warning: failed to delete removed route", DEPLOY_TEXT)
         self.assertIn("Warning: failed to delete removed integration", DEPLOY_TEXT)
         self.assertNotIn('"sweep": "%s/sweep"', DEPLOY_TEXT)
-        joined = _joined_shell_lines(DEPLOY_TEXT)
+        joined = _joined_shell_lines(GEN_TEXT)
         self.assertRegex(joined, r'deploy_lambda "\$SWEEP_MT_NAME" "handler_sweep_mt\.handler" "/tmp/polypaint-sweep-mt\.zip"\s+"\$SWEEP_MT_MEMORY" "" "BUCKET=\$BUCKET,JOBS_TABLE=\$JOBS_TABLE" "\$BINARY_TMP"')
-        self.assertIn("SWEEP_MT_FUNCTION", DEPLOY_TEXT)
-        self.assertIn('ensure_route "POST /sweep-mt" "$SWEEP_MT_INT"', DEPLOY_TEXT)
+        self.assertIn("SWEEP_MT_FUNCTION", GEN_TEXT)
+        self.assertIn('ensure_route "POST /sweep-mt" "$INT"', GEN_TEXT)
         self.assertIn('"sweep-mt": "%s/sweep-mt"', DEPLOY_TEXT)
         self.assertIn('build_libcurl_binary solve_proximity_hist_sectioned multispan_reader.c', DEPLOY_TEXT)
         self.assertIn('cp lambda/solve_proximity_stats lambda/solve_proximity_hist_sectioned "$SOLVE_PROXIMITY_DIR/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/solve_proximity_stats lambda/solve_proximity_hist_sectioned "$SOLVE_PROXIMITY_BENCH_DIR/"', DEPLOY_TEXT)
-        self.assertIn('ensure_route "POST /list-favorites" "$STORAGE_INT"', DEPLOY_TEXT)
-        self.assertIn('ensure_route "POST /add-favorite" "$STORAGE_INT"', DEPLOY_TEXT)
-        self.assertIn('ensure_route "POST /delete-favorite" "$STORAGE_INT"', DEPLOY_TEXT)
+        self.assertIn('ensure_route "POST /list-favorites" "$INT"', GEN_TEXT)
+        self.assertIn('ensure_route "POST /add-favorite" "$INT"', GEN_TEXT)
+        self.assertIn('ensure_route "POST /delete-favorite" "$INT"', GEN_TEXT)
         self.assertIn("handler_storage.py", packaged)
         self.assertIn("color_artifact_meta.py", packaged["handler_storage.py"])
         self.assertIn("color_render_contract.py", packaged["handler_storage.py"])
@@ -354,9 +379,9 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("shared.py", packaged["handler_resize_artifact.py"])
         self.assertIn("color_artifact_meta.py", packaged["handler_resize_artifact.py"])
         self.assertIn("solve_score_chain.py", packaged["handler_resize_artifact.py"])
-        self.assertIn('deploy_lambda "$RESIZE_ARTIFACT_NAME" "handler_resize_artifact.handler" "/tmp/polypaint-resize-artifact.zip"', DEPLOY_TEXT)
-        self.assertIn('RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME', DEPLOY_TEXT)
-        self.assertIn('"$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', DEPLOY_TEXT)
+        self.assertIn('deploy_lambda "$RESIZE_ARTIFACT_NAME" "handler_resize_artifact.handler" "/tmp/polypaint-resize-artifact.zip"', GEN_TEXT)
+        self.assertIn('RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME', GEN_TEXT)
+        self.assertIn('"$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', GEN_TEXT)
 
         self.assertIn("handler_repalette.py", packaged)
         self.assertIn("palette_names.py", packaged["handler_repalette.py"])
@@ -371,11 +396,11 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("assemble_greyscale", packaged["handler_finalize_mt.py"])
         self.assertIn("score_raw_render", packaged["handler_finalize_mt.py"])
         self.assertNotIn("handler_finalize.py", packaged)
-        self.assertNotIn('deploy_lambda "$FINALIZE_NAME"', DEPLOY_TEXT)
-        self.assertIn('deploy_lambda "$FINALIZE_MT_NAME" "handler_finalize_mt.handler" "/tmp/polypaint-finalize-mt.zip"', DEPLOY_TEXT)
-        self.assertIn('deploy_lambda "$RECOLOR_FROM_RAW_NAME" "handler_recolor_from_raw.handler" "/tmp/polypaint-recolor-from-raw.zip"', DEPLOY_TEXT)
-        self.assertIn('deploy_lambda "$EXTRACT_PALETTE_FUSED_NAME" "handler_extract_palette_from_step_scores.handler" "/tmp/polypaint-extract-palette-fused.zip"', DEPLOY_TEXT)
-        self.assertIn('deploy_lambda "$DZ_FROM_RAW_NAME" "handler_deepzoom_from_raw.handler" "/tmp/polypaint-deepzoom-from-raw.zip"', DEPLOY_TEXT)
+        self.assertNotIn('deploy_lambda "$FINALIZE_NAME"', GEN_TEXT)
+        self.assertIn('deploy_lambda "$FINALIZE_MT_NAME" "handler_finalize_mt.handler" "/tmp/polypaint-finalize-mt.zip"', GEN_TEXT)
+        self.assertIn('deploy_lambda "$RECOLOR_FROM_RAW_NAME" "handler_recolor_from_raw.handler" "/tmp/polypaint-recolor-from-raw.zip"', GEN_TEXT)
+        self.assertIn('deploy_lambda "$EXTRACT_PALETTE_FUSED_NAME" "handler_extract_palette_from_step_scores.handler" "/tmp/polypaint-extract-palette-fused.zip"', GEN_TEXT)
+        self.assertIn('deploy_lambda "$DZ_FROM_RAW_NAME" "handler_deepzoom_from_raw.handler" "/tmp/polypaint-deepzoom-from-raw.zip"', GEN_TEXT)
         self.assertIn('build_libcurl_binary assemble_greyscale', DEPLOY_TEXT)
         self.assertIn('gcc -O3 -o /src/score_raw_render /src/score_raw_render.c', DEPLOY_TEXT)
         self.assertIn('aarch64-linux-musl-gcc -O3 -static -o lambda/bilevel_section_raster lambda/bilevel_section_raster.c -lm', DEPLOY_TEXT)
@@ -397,10 +422,10 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('cp lambda/handler_extract_palette_from_step_scores.py lambda/shared.py lambda/raw_sidecar.py lambda/raw_score_render.py \\', DEPLOY_TEXT)
         self.assertIn('lambda/color_render_contract.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$EXTRACT_PALETTE_FUSED_DIR/"', DEPLOY_TEXT)
         self.assertIn('cp lambda/score_raw_render lambda/step_scores_to_palette_raw "$EXTRACT_PALETTE_FUSED_DIR/"', DEPLOY_TEXT)
-        self.assertIn('"$COLOR_REPALETTE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', DEPLOY_TEXT)
-        self.assertIn('"$RECOLOR_FROM_RAW_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', DEPLOY_TEXT)
-        self.assertIn('"$EXTRACT_PALETTE_FUSED_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', DEPLOY_TEXT)
-        self.assertIn("EXTRACT_PALETTE_FUSED_FUNCTION", DEPLOY_TEXT)
+        self.assertIn('"$COLOR_REPALETTE_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', GEN_TEXT)
+        self.assertIn('"$RECOLOR_FROM_RAW_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', GEN_TEXT)
+        self.assertIn('"$EXTRACT_PALETTE_FUSED_MEMORY" "$LIBVIPS_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', GEN_TEXT)
+        self.assertIn("EXTRACT_PALETTE_FUSED_FUNCTION", GEN_TEXT)
         self.assertIn('--finalize-mt-function-arn "$FINALIZE_MT_ARN"', DEPLOY_TEXT)
         self.assertIn("handler_palette_finalize.py", packaged)
         self.assertIn("solve_score_chain.py", packaged["handler_palette_finalize.py"])
@@ -410,8 +435,8 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("coeff_program_chain.py", packaged["handler_coeffgen.py"])
         self.assertIn("coeff_legacy_registry.json", packaged["handler_coeffgen.py"])
         self.assertIn('cp lambda/sweep_coeffgen "$COEFFGEN_DIR/"', DEPLOY_TEXT)
-        self.assertIn('deploy_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip"', DEPLOY_TEXT)
-        self.assertIn('"$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib"', DEPLOY_TEXT)
+        self.assertIn('deploy_lambda "$COEFFGEN_NAME" "handler_coeffgen.handler" "/tmp/polypaint-coeffgen.zip"', GEN_TEXT)
+        self.assertIn('"$LAPACK_LAYER" "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib"', GEN_TEXT)
 
         self.assertIn("handler_compute_preview.py", packaged)
         self.assertIn("sweep_coeffgen", packaged["handler_compute_preview.py"])
@@ -422,17 +447,17 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertNotIn("sweep", packaged["handler_compute_preview.py"])
         self.assertIn("sweep_mt", packaged["handler_compute_preview.py"])
         self.assertIn("sweep_cm", packaged["handler_compute_preview.py"])
-        self.assertIn('deploy_lambda "$COMPUTE_PREVIEW_NAME" "handler_compute_preview.handler" "/tmp/polypaint-compute-preview.zip"', DEPLOY_TEXT)
-        self.assertIn('ensure_route "POST /compute-preview" "$COMPUTE_PREVIEW_INT"', DEPLOY_TEXT)
+        self.assertIn('deploy_lambda "$COMPUTE_PREVIEW_NAME" "handler_compute_preview.handler" "/tmp/polypaint-compute-preview.zip"', GEN_TEXT)
+        self.assertIn('ensure_route "POST /compute-preview" "$INT"', GEN_TEXT)
         self.assertIn('"compute-preview": "%s/compute-preview"', DEPLOY_TEXT)
-        self.assertIn('"$LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', DEPLOY_TEXT)
+        self.assertIn('"$LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib" "$BINARY_TMP"', GEN_TEXT)
 
         self.assertIn("handler_param_debug.py", packaged)
         self.assertIn("param_program_chain.py", packaged["handler_param_debug.py"])
         self.assertIn("param_legacy_registry.json", packaged["handler_param_debug.py"])
         self.assertIn("sweep", packaged["handler_param_debug.py"])
         self.assertIn("bilevel_merge", packaged["handler_param_debug.py"])
-        self.assertIn('ensure_route "POST /param-debug" "$PARAM_DEBUG_INT"', DEPLOY_TEXT)
+        self.assertIn('ensure_route "POST /param-debug" "$INT"', GEN_TEXT)
         self.assertIn('"param-debug": "%s/param-debug"', DEPLOY_TEXT)
 
         self.assertIn("handler_render_lores_preview.py", packaged)
@@ -450,9 +475,9 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("sweep_coeffgen", packaged["handler_render_lores_preview.py"])
         self.assertIn("sweep_mt", packaged["handler_render_lores_preview.py"])
         self.assertIn("sweep_cm", packaged["handler_render_lores_preview.py"])
-        self.assertIn('deploy_lambda "$RENDER_LORES_PREVIEW_NAME" "handler_render_lores_preview.handler" "/tmp/polypaint-render-lores-preview.zip"', DEPLOY_TEXT)
-        self.assertIn('"$LIBVIPS_LAYER $LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"', DEPLOY_TEXT)
-        self.assertIn('ensure_route "POST /render-lores-preview" "$RENDER_LORES_PREVIEW_INT"', DEPLOY_TEXT)
+        self.assertIn('deploy_lambda "$RENDER_LORES_PREVIEW_NAME" "handler_render_lores_preview.handler" "/tmp/polypaint-render-lores-preview.zip"', GEN_TEXT)
+        self.assertIn('"$LIBVIPS_LAYER $LAPACK_LAYER" "BUCKET=$BUCKET,LD_LIBRARY_PATH=/var/task/lib:/opt/lib" "$BINARY_TMP"', GEN_TEXT)
+        self.assertIn('ensure_route "POST /render-lores-preview" "$INT"', GEN_TEXT)
         self.assertIn('"render-lores-preview": "%s/render-lores-preview"', DEPLOY_TEXT)
         self.assertIn('cp lambda/roots2pix_mt_lib/* "$RENDER_LORES_PREVIEW_DIR/lib/"', DEPLOY_TEXT)
         self.assertNotIn('cp lambda/roots2pix_mt_lib/* "$RENDER_LORES_PREVIEW_DIR/lib/" 2>/dev/null || true', DEPLOY_TEXT)
@@ -477,18 +502,18 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("handler_attach_palette_to_color.py", packaged)
         self.assertIn("color_artifact_meta.py", packaged["handler_attach_palette_to_color.py"])
         self.assertIn("solve_score_chain.py", packaged["handler_attach_palette_to_color.py"])
-        self.assertIn('deploy_lambda "$ATTACH_PALETTE_NAME" "handler_attach_palette_to_color.handler" "/tmp/polypaint-attach-palette-to-color.zip"', DEPLOY_TEXT)
+        self.assertIn('deploy_lambda "$ATTACH_PALETTE_NAME" "handler_attach_palette_to_color.handler" "/tmp/polypaint-attach-palette-to-color.zip"', GEN_TEXT)
 
         self.assertIn("handler_compute_orchestrator.py", packaged)
         self.assertIn("handler_compute_plan.py", packaged)
         self.assertIn("coeff_program_chain.py", packaged["handler_compute_plan.py"])
         self.assertIn("coeff_legacy_registry.json", packaged["handler_compute_plan.py"])
         self.assertIn("handler_compute_status.py", packaged)
-        self.assertIn('deploy_lambda "$COMPUTE_ORCHESTRATOR_NAME" "handler_compute_orchestrator.handler" "/tmp/polypaint-compute-orchestrator.zip"', DEPLOY_TEXT)
-        self.assertIn('deploy_lambda "$COMPUTE_PLAN_NAME" "handler_compute_plan.handler" "/tmp/polypaint-compute-plan.zip"', DEPLOY_TEXT)
-        self.assertIn('deploy_lambda "$COMPUTE_STATUS_NAME" "handler_compute_status.handler" "/tmp/polypaint-compute-status.zip"', DEPLOY_TEXT)
+        self.assertIn('deploy_lambda "$COMPUTE_ORCHESTRATOR_NAME" "handler_compute_orchestrator.handler" "/tmp/polypaint-compute-orchestrator.zip"', GEN_TEXT)
+        self.assertIn('deploy_lambda "$COMPUTE_PLAN_NAME" "handler_compute_plan.handler" "/tmp/polypaint-compute-plan.zip"', GEN_TEXT)
+        self.assertIn('deploy_lambda "$COMPUTE_STATUS_NAME" "handler_compute_status.handler" "/tmp/polypaint-compute-status.zip"', GEN_TEXT)
         self.assertIn("COMPUTE_STATE_MACHINE_NAME", DEPLOY_TEXT)
-        self.assertIn("COMPUTE_ORCHESTRATOR_FUNCTION", DEPLOY_TEXT)
+        self.assertIn("COMPUTE_ORCHESTRATOR_FUNCTION", GEN_TEXT)
 
         self.assertIn("handler_pdf_artifact.py", packaged)
         self.assertIn("spread_pdf.py", packaged["handler_pdf_artifact.py"])
@@ -496,7 +521,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("solve_score_chain.py", packaged["handler_pdf_artifact.py"])
         self.assertIn("PDF_PY_LAYER_NAME", DEPLOY_TEXT)
         self.assertIn("build-pdf-python-layer.sh", DEPLOY_TEXT)
-        self.assertIn('deploy_lambda "$PDF_ARTIFACT_NAME" "handler_pdf_artifact.handler" "/tmp/polypaint-pdf-artifact.zip"', DEPLOY_TEXT)
+        self.assertIn('deploy_lambda "$PDF_ARTIFACT_NAME" "handler_pdf_artifact.handler" "/tmp/polypaint-pdf-artifact.zip"', GEN_TEXT)
         self.assertIn("lambda/gen_parity_results.py", DEPLOY_TEXT)
 
     def test_deploy_regenerates_parity_overlay_before_js_catalog(self):
@@ -572,11 +597,13 @@ class TestDeployPackaging(unittest.TestCase):
     def test_storage_handler_routes_are_published_by_deploy(self):
         storage_routes = sorted(set(re.findall(r'path\.endswith\("/([^"]+)"\)', HANDLER_STORAGE_TEXT)))
         self.assertGreater(len(storage_routes), 10, "failed to discover storage handler routes")
+        storage_fn = next(fn for fn in DEPLOY_MANIFEST["functions"] if fn["key"] == "storage")
         missing = []
         for route in storage_routes:
-            needle = f'ensure_route "POST /{route}" "$STORAGE_INT"'
-            if needle not in DEPLOY_TEXT:
+            if f"/{route}" not in storage_fn["routes"]:
                 missing.append(route)
+            elif f'ensure_route "POST /{route}" "$INT"' not in GEN_TEXT:
+                missing.append(f"{route} (in manifest but not emitted)")
         if missing:
             self.fail(
                 "deploy.sh is missing API Gateway storage routes for: "
@@ -589,6 +616,8 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('bash "$SCRIPT_DIR/scripts/predeploy_check.sh"', DEPLOY_TEXT)
         predeploy_text = PREDEPLOY_SCRIPT_PATH.read_text()
         self.assertIn("api_manifest.py --check", predeploy_text)
+        self.assertIn("deploy_manifest.py --check", predeploy_text)
+        self.assertIn("deploy_manifest.py --emit-bash", predeploy_text)
         self.assertIn("tests/test_api_route_contracts.py", predeploy_text)
         self.assertIn("tests/test_deploy_packaging.py", predeploy_text)
         self.assertIn("tests/test_render_workflow_definition.py", predeploy_text)

@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parent
 MANIFEST_PATH = ROOT / "api_manifest.json"
 INDEX_PATH = ROOT / "index.html"
 DEPLOY_PATH = ROOT / "deploy.sh"
+DEPLOY_MANIFEST_PATH = ROOT / "deploy_manifest.json"
 STORAGE_HANDLER_PATH = ROOT / "lambda" / "handler_storage.py"
 DISPATCH_HANDLER_PATH = ROOT / "lambda" / "handler_dispatch.py"
 
@@ -172,8 +173,14 @@ def _extract_deploy_config_services(deploy_text: str) -> dict[str, str]:
     return {key: services[key] for key in sorted(services)}
 
 
-def _extract_deploy_routes(deploy_text: str) -> list[str]:
-    return sorted(set(re.findall(r'ensure_route "POST ([^"]+)" "\$[A-Z0-9_]+_INT"', deploy_text)))
+def _extract_deploy_routes() -> list[str]:
+    # Routes live in deploy_manifest.json (the fleet source of truth that
+    # deploy.sh sources via deploy_manifest.py --emit-bash), not in deploy.sh.
+    manifest = json.loads(_read(DEPLOY_MANIFEST_PATH))
+    routes = set()
+    for fn in manifest.get("functions", []):
+        routes.update(fn.get("routes", []))
+    return sorted(routes)
 
 
 def build_manifest() -> dict:
@@ -204,7 +211,7 @@ def build_manifest() -> dict:
         },
         "deploy": {
             "config_services": _extract_deploy_config_services(deploy_text),
-            "api_routes": _extract_deploy_routes(deploy_text),
+            "api_routes": _extract_deploy_routes(),
         },
     }
     return manifest

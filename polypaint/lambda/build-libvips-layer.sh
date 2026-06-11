@@ -143,17 +143,41 @@ docker run --rm --platform linux/arm64 \
       fi
     done
 
+    echo "--- Vendoring libarchive crypto chain into vipsdeps/ ---"
+    # libarchive needs libcrypto/lzma/zstd/lz4. They must NOT live in
+    # /opt/lib (python searches it via LD_LIBRARY_PATH and a layer libcrypto
+    # newer than the pinned runtime breaks `import ssl` — the 2026-06
+    # outage class). They go in /opt/vipsdeps, reachable only through the
+    # vips binaries DT_RPATH, so the binary stack is version-consistent
+    # with the layer and python never loads any of it.
+    mkdir -p /out/vipsdeps
+    for lib in libcrypto.so liblzma.so libzstd.so liblz4.so; do
+      FOUND=$(find /usr/lib64 /lib64 -name "${lib}*" 2>/dev/null | head -1)
+      if [ -z "$FOUND" ]; then echo "  WARNING: $lib not found"; continue; fi
+      LIBDIR=$(dirname "$FOUND")
+      BASENAME=$(basename "$FOUND" | sed "s/\.so.*//")
+      for f in "${LIBDIR}/${BASENAME}".so*; do
+        if [ -L "$f" ]; then
+          cp "$(readlink -f "$f")" "/out/vipsdeps/$(basename "$f")"
+        elif [ -f "$f" ]; then
+          cp "$f" "/out/vipsdeps/$(basename "$f")"
+        fi
+      done
+      echo "  vendored: $lib"
+    done
+
     echo "--- Layer contents ---"
     ls -lh /out/lib/*.so* 2>/dev/null || true
+    ls -lh /out/vipsdeps/*.so* 2>/dev/null || true
     echo "--- Done ---"
   '
 
 echo "=== Creating layer zip ==="
 cd "$OUTDIR"
 # Zip lib/, bin/ (if exists), and include/ at root level
-ZIPDIRS="lib/ include/"
+ZIPDIRS="lib/ vipsdeps/ include/"
 if [ -d "$OUTDIR/bin" ] && [ "$(ls -A "$OUTDIR/bin" 2>/dev/null)" ]; then
-    ZIPDIRS="lib/ bin/ include/"
+    ZIPDIRS="lib/ vipsdeps/ bin/ include/"
 fi
 zip -r9 "$OUTDIR/libvips-layer.zip" $ZIPDIRS
 echo "Layer zip: $OUTDIR/libvips-layer.zip ($(du -h libvips-layer.zip | cut -f1))"

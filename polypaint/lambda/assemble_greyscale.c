@@ -136,13 +136,15 @@ static int download_url_bytes(WorkerCtx *ctx, const char *url, uint8_t **outData
     curl_easy_getinfo(ctx->curl, CURLINFO_RESPONSE_CODE, &httpStatus);
     if (rc != CURLE_OK) {
         free(dl.data);
-        set_error(
-            ctx->st,
-            "assemble_greyscale: failed to download %s (%lld %lld)",
-            url,
-            (long long)rc,
-            (long long)httpStatus
-        );
+        /* Diagnostics lead: presigned URLs (~1.5 KB) overflow the 512-byte
+         * error buffer, so anything formatted after the URL is truncated
+         * away (this hid the curl rc during the 2026-06 incident). */
+        char detail[512];
+        snprintf(detail, sizeof(detail),
+                 "assemble_greyscale: download failed (curl %d %s; http %ld; %s): %s",
+                 (int)rc, curl_easy_strerror(rc), httpStatus,
+                 curlErr[0] ? curlErr : "no detail", url);
+        set_error(ctx->st, "%s", detail, 0, 0);
         return 0;
     }
 

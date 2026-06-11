@@ -3386,7 +3386,48 @@ def test_libcurl_binaries_use_rpath_not_runpath():
                 tags.add(d_tag)
         assert DT_RPATH in tags, "%s: missing DT_RPATH (built without --disable-new-dtags?)" % bin_path
         assert DT_RUNPATH not in tags, "%s: has DT_RUNPATH; transitive deps would leak to LD_LIBRARY_PATH" % bin_path
-        print("  %s: DT_RPATH OK (hermetic $ORIGIN/lib closure)" % bin_path)
+        # glibc-family libs must come from the runtime, never the staged
+        # closure: a newer staged libresolv against the pinned runtime glibc
+        # broke DNS inside curl (2026-06 incident).
+        lib_dir = bin_path + "_lib"
+        staged = sorted(os.listdir(lib_dir)) if os.path.isdir(lib_dir) else []
+        bad = [f for f in staged if f.startswith(("libresolv.", "libnss_", "libc.", "libm.", "libpthread.", "ld-linux"))]
+        assert not bad, "%s stages glibc-family libs: %s" % (lib_dir, bad)
+        print("  %s: DT_RPATH OK, staged closure clean (%d libs)" % (bin_path, len(staged)))
+
+    # Layer hygiene: layers ride on LD_LIBRARY_PATH=/opt/lib, which the
+    # runtime python's own extension loader also searches. Libraries that
+    # python or its ssl stack dlopens must never ship in a layer built from
+    # a NEWER Amazon Linux than the pinned Lambda runtime — that is the
+    # 2026-06 outage class. glibc-family and the OpenSSL pair are banned
+    # outright; the frozen-version shadows python relies on (zlib/bz2/ffi/
+    # gcc_s) are pinned so a layer rebuild that moves them fails loudly and
+    # forces a deliberate decision plus the post-deploy INIT sweep.
+    BANNED = ("libresolv.", "libnss_", "libssl.", "libcrypto.", "libc.", "ld-linux")
+    PINNED_SHADOWS = {
+        "layer-build": {"libz.so.1.2.11", "libbz2.so.1.0.8", "libffi.so.8.1.2"},
+        "layer-build-lapack": {"libgcc_s.so.1"},
+    }
+    for layer, expected in PINNED_SHADOWS.items():
+        layer_dir = "/src/" + layer + "/lib"
+        files = set(os.listdir(layer_dir))
+        banned = sorted(f for f in files if f.startswith(BANNED))
+        assert not banned, "%s ships python-critical libs: %s" % (layer, banned)
+        missing = expected - files
+        assert not missing, "%s pinned shadow set changed (missing %s); layer rebuilt against a newer userland? Verify against the pinned runtime and update this pin deliberately." % (layer, sorted(missing))
+        print("  %s: no banned libs, pinned shadows intact" % layer)
+
+    # libarchive's crypto chain is vendored OUTSIDE /opt/lib (python-invisible)
+    # and reached via the vips binaries' DT_RPATH; it must exist there and
+    # must never leak into lib/ (the banned check above enforces the latter).
+    vipsdeps = "/src/layer-build/vipsdeps"
+    if os.path.isdir(vipsdeps):
+        deps = set(os.listdir(vipsdeps))
+        for need in ("libcrypto.so.3", "liblzma.so.5", "libzstd.so.1", "liblz4.so.1"):
+            assert need in deps, "vipsdeps missing %s (rebuild lambda/build-libvips-layer.sh)" % need
+        print("  layer-build/vipsdeps: libarchive crypto chain vendored (%d libs)" % len(deps))
+    else:
+        print("  layer-build/vipsdeps: ABSENT (pre-vendoring layer; rebuild to adopt CR10)")
     print("=== libcurl binary linkage check PASSED ===")
 
 

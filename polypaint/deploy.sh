@@ -663,7 +663,10 @@ build_libcurl_binary() {
             for lib in $(ldd "/src/$BIN" | awk "/=> \// {print \$3}"); do
                 base=$(basename "$lib")
                 case "$base" in
-                    libc.so.*|libm.so.*|libpthread.so.*|ld-linux-aarch64.so.*|libdl.so.*|librt.so.*)
+                    # glibc family: must come from the runtime, never the
+                    # build image — a staged libresolv newer than the pinned
+                    # runtime glibc breaks DNS inside curl (2026-06 incident).
+                    libc.so.*|libm.so.*|libpthread.so.*|ld-linux-aarch64.so.*|libdl.so.*|librt.so.*|libresolv.so.*|libnss_*.so.*)
                         continue
                         ;;
                 esac
@@ -714,8 +717,11 @@ docker run --rm --platform linux/arm64 \
         dnf install -y gcc glib2-devel libtiff-devel 2>&1 | tail -1
         # Shared libvips build flags; every gcc below uses the same set.
         VIPS_CFLAGS="-I/opt/include -I/opt/include/glib-2.0 -I/opt/lib/glib-2.0/include -I/usr/include/glib-2.0 -I/usr/lib64/glib-2.0/include"
-        VIPS_LIBS="-L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm -Wl,-rpath,/opt/lib"
-        VIPS_TIFF_LIBS="-L/opt/lib -lvips -ltiff -lgobject-2.0 -lglib-2.0 -lm -Wl,-rpath,/opt/lib"
+        # --disable-new-dtags: DT_RPATH covers transitive deps, so
+        # libarchive resolves its crypto chain from /opt/vipsdeps (vendored,
+        # python-invisible) instead of the runtime system.
+        VIPS_LIBS="-L/opt/lib -lvips -lgobject-2.0 -lglib-2.0 -lm -Wl,--disable-new-dtags -Wl,-rpath,/opt/lib:/opt/vipsdeps"
+        VIPS_TIFF_LIBS="-L/opt/lib -lvips -ltiff -lgobject-2.0 -lglib-2.0 -lm -Wl,--disable-new-dtags -Wl,-rpath,/opt/lib:/opt/vipsdeps"
         gcc -O3 -o /src/raw2jpeg /src/raw2jpeg.c $VIPS_CFLAGS $VIPS_LIBS
         echo "  raw2jpeg compiled: $(file /src/raw2jpeg)"
         gcc -O3 -o /src/score_raw_render /src/score_raw_render.c $VIPS_CFLAGS $VIPS_LIBS

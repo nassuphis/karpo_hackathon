@@ -219,6 +219,13 @@ Hermetic-linkage rule (from the 2026-06 import outage):
 - Enforced by `deploy_manifest.py --check` (deploy refuses), the
   `/var/task/lib` ban in tests/test_deploy_packaging.py, and the DT_RPATH
   assertion in tests/docker_runtime_regression.py.
+- The same class applies to layers: `/opt/lib` is on `LD_LIBRARY_PATH`, so a
+  layer must never ship glibc-family or OpenSSL libraries, and the
+  frozen-version shadows python relies on (zlib/bz2/ffi/gcc_s) are pinned in
+  the Docker gate. Rebuilding any layer or libcurl binary against current
+  Amazon Linux while the runtime stays pinned is the trigger for this whole
+  failure family — after any such rebuild, run the Docker gate, redeploy,
+  and run the post-deploy INIT sweep before trusting anything.
 
 ## 9. Handler Tests
 

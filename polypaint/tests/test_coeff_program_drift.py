@@ -212,7 +212,10 @@ def test_generated_js_vocab_matches_registry():
         assert entry["category"] == registry[name]["category"], name
         assert registry[name]["supports_andy"], name
     assert set(vocab["programParamDefs"]) == {"exp", "round"}
-    assert set(vocab["categoryMeta"]) == {"structural", "accumulation", "elementwise", "roots"}
+    # Ordering is UI contract: ctCatalog keys appear in the transform picker
+    # in insertion order (fn_index order), categories in registry order.
+    assert list(vocab["ctCatalog"]) == vocab["names"]
+    assert list(vocab["categoryMeta"]) == ["structural", "accumulation", "elementwise", "roots"]
     with open(JS_OUT, "r", encoding="utf-8") as fh:
         assert fh.read() == render_js(), "coeff_vocab_js.js is stale; run lambda/gen_coeff_vocab.py"
 

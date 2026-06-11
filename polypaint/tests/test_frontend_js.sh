@@ -586,6 +586,16 @@ async function main() {
     extractFunction('_buildSolveScoreProgramSpec'),
     extractFunction('_compileSolveScoreChain'),
     solveScoreCatalogBlock,
+    // The real registry-chip hydrator: builds _ctCatalog/_ctCategoryMeta and
+    // the exp/round wide defs from the generated vocab, exactly as shipped.
+    extractBetween(
+      'function _hydrateCtParamDef(pDef) {',
+      "const _coeffProgramRoundParamDefs = _coeffProgramWideParamDefs('round');",
+      'registry chip hydrator block'
+    ),
+    // vm scripts keep top-level consts lexical; bridge them onto the context
+    // so the assertions below can inspect the hydrated objects.
+    'globalThis._ctCatalog = _ctCatalog; globalThis._ctCategoryMeta = _ctCategoryMeta;',
     extractFunction('_linkedColorIdForPaletteArtifact'),
     extractFunction('_sourceColorArtifactIdForRenderArtifact'),
     extractFunction('_noteSolveScorePopulate'),
@@ -645,12 +655,6 @@ async function main() {
     _coeffProgramCatalog: {
       push_vec: { params: [{ ph: 'length', def: 'poly_len' }, { ph: 'value', def: '0' }] },
       push_const: { params: [{ ph: 'length', def: 'poly_len' }, { ph: 'value', def: '0' }] },
-    },
-    _ctCatalog: {
-      rev: { params: [] },
-      cos: { params: [{ kind: 'andy', ph: 'andy', def: '0' }] },
-      pow: { params: [{ ph: 'field1', def: '1' }, { ph: 'field2', def: '1' }, { kind: 'andy', ph: 'andy', def: '0' }] },
-      power: { params: [{ ph: 'k', def: '8' }] },
     },
     _statusCalls: [],
     _logs: [],
@@ -712,8 +716,13 @@ async function main() {
   assert(cfpvComplex && cfpvComplex.re === -3 && cfpvComplex.im === 10, 'const coefficient value parser should accept imag-first complex constants');
   assert(ctx._splitCtComplexInput('13-22j').re === '13' && ctx._splitCtComplexInput('13-22j').im === '-22', 'complex chip parser should preserve real-first complex constants');
 
-  assert(Object.keys(coeffRegistryVocab.ctCatalog).length === 28, 'generated vocab should carry all 28 registry chip entries');
-  assert(coeffRegistryVocab.ctCatalog.linear.params.length === 2 && coeffRegistryVocab.ctCatalog.rev.desc, 'generated chip entries should carry param shapes and descs');
+  assert(JSON.stringify(Object.keys(coeffRegistryVocab.ctCatalog)) === JSON.stringify(coeffRegistryVocab.names), 'generated chip entries should cover every registry function in fn_index order');
+  assert(JSON.stringify(Object.keys(ctx._ctCatalog)) === JSON.stringify(coeffRegistryVocab.names), 'hydrated _ctCatalog should preserve registry order (the transform picker order)');
+  assert(JSON.stringify(Object.keys(ctx._ctCategoryMeta)) === JSON.stringify(['structural', 'accumulation', 'elementwise', 'roots']), 'category order is UI contract');
+  assert(ctx._ctCatalog.linear.params.length === 3 && ctx._ctCatalog.rev.params.length === 1, 'hydration should append the shared andy param to every transform');
+  assert(ctx._ctCatalog.linear.params[0].title.includes('Program mode accepts') && !ctx._ctCatalog.linear.params[0].title.includes('{SCALAR_EXPR_HELP}'), 'hydration should resolve the scalar-expr help placeholder');
+  assert(ctx._coeffProgramWideParamDefs('exp').length === 3 && ctx._coeffProgramWideParamDefs('round').length === 2, 'program-mode exp/round wide defs should hydrate from the vocab');
+  assert(ctx._ctCatalog.pow.params[0].def === '1' && ctx._ctCatalog.power.params[0].def === '8' && ctx._ctCatalog.roots.params.length === 3, 'hydrated param shapes should match the registry ui blocks');
   assert(ctx._canonicalCoeffTransformName('pow_affine') === 'pow', 'transform canonicalizer should mirror the backend pow_affine alias');
   assert(ctx._canonicalCoeffTransformName('power_series') === 'power', 'transform canonicalizer should mirror the backend power_series alias');
   assert(ctx._canonicalCoeffTransformName('exp_affine') === 'exp' && ctx._canonicalCoeffTransformName('scale100') === 'linear', 'transform canonicalizer should keep the existing backend aliases');

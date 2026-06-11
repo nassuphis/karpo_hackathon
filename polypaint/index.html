@@ -12932,7 +12932,7 @@ const _coeffProgramSourceAliasNames = { exp: 'exp_affine', pow: 'pow_affine', po
 const _coeffProgramRegistryChipNames = { exp: 'exp_affine', power: 'power_series' };
 function _canonicalCoeffProgramChipName(name) {
     // 'const' is the historical alias of the push_const chip.
-    return _canonicalCoeffProgramChipName(name);
+    return name === 'const' ? 'push_const' : name;
 }
 function _coeffProgramRegistryChipName(name) {
     return _coeffProgramRegistryChipNames[name] || name;

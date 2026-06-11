@@ -163,6 +163,58 @@ class TestCoeffProgramStorage(unittest.TestCase):
         self.assertEqual(compile_body["chain"], [["set", "poly", "cf"]])
 
     @patch("handler_storage.s3")
+    def test_blank_source_text_does_not_shadow_saved_chain(self, mock_s3):
+        import handler_storage
+
+        fake_s3 = _FakeS3()
+        self._patch_s3(mock_s3, fake_s3)
+
+        # Imported/hand-edited saved object carrying both keys: blank source
+        # must not shadow the chain on fetch or macro expansion.
+        stale = {
+            "name": "Stale Both Keys",
+            "program_kind": "coeff_program",
+            "chain": [["legacy", "rev", "poly", "poly"]],
+            "source_text": "",
+        }
+        fake_s3.objects["polypaint/coeff-programs/stale-both-keys.json"] = (
+            json.dumps(stale).encode("utf-8")
+        )
+
+        fetched = handler_storage.handler(
+            self._event("/fetch-coeff-program", {"id": "stale-both-keys"}), None
+        )
+        self.assertEqual(fetched["statusCode"], 200)
+        program = json.loads(fetched["body"])["program"]
+        self.assertEqual(program["chain"], [["legacy", "rev", "poly", "poly"]])
+        self.assertGreater(program["token_count"], 0)
+
+        macro = handler_storage.handler(
+            self._event("/save-coeff-program", {
+                "name": "Macro Over Stale",
+                "chain": [["macro", "stale-both-keys"]],
+            }),
+            None,
+        )
+        self.assertEqual(macro["statusCode"], 200)
+        macro_program = json.loads(macro["body"])["program"]
+        self.assertEqual(macro_program["macro_expansions"], 1)
+        self.assertGreater(macro_program["token_count"], 0)
+
+        # The save route accepts the same shape from non-UI clients.
+        saved = handler_storage.handler(
+            self._event("/save-coeff-program", {
+                "name": "Save Both Keys",
+                "chain": [["legacy", "rev", "poly", "poly"]],
+                "source_text": "",
+            }),
+            None,
+        )
+        self.assertEqual(saved["statusCode"], 200)
+        save_program = json.loads(saved["body"])["program"]
+        self.assertEqual(save_program["chain"], [["legacy", "rev", "poly", "poly"]])
+
+    @patch("handler_storage.s3")
     def test_validation_limits_and_missing_ids(self, mock_s3):
         import handler_storage
 

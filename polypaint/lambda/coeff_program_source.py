@@ -836,6 +836,24 @@ def split_coeff_program_statements(source_text):
     return statements
 
 
+def coeff_source_text_from_payload(payload):
+    """Source-vs-chain precedence for saved coeff-program payloads.
+
+    Returns the source text when it is authoritative — non-blank, or present
+    with no chain to fall back to — else None, meaning use the chain. This is
+    the same rule the UI applies on load and the compute request paths apply
+    to run params: a payload carrying both keys with a blank source_text
+    (e.g. an imported or hand-edited S3 object) must compile its chain, not
+    silently become an empty program.
+    """
+    if not isinstance(payload, dict) or "source_text" not in payload:
+        return None
+    raw = str(payload.get("source_text") or "")
+    if raw.strip() or not payload.get("chain"):
+        return raw
+    return None
+
+
 def parse_coeff_program_source(source_text, *, strict=True):
     """Lower source text to a chip chain: {chain, display, statement_count,
     diagnostics}.

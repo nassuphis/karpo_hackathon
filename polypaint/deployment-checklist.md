@@ -333,26 +333,26 @@ bash scripts/test-docker-runtime.sh
 After `./deploy.sh update`, do not assume the deployed behavior matches the
 current tree just because AWS accepted the update.
 
-- Run:
+Run:
 
 ```bash
 ./deploy.sh show-build
 ```
 
-- Treat `show-build` as the source of truth for:
-  - deployed frontend/config vs local source
-  - deployed critical Lambda bundle hash vs local packaged bundle
-  - deployed Step Functions definition vs local rendered definition
-- If the app still shows stale behavior and `show-build` says `MATCH`, debug the
-  runtime path.
-- If the app still shows stale behavior and `show-build` says `MISMATCH`, stop
-  guessing and fix deploy drift first.
+Treat `show-build` as the source of truth for:
+
+- deployed frontend/config vs local source
+- deployed critical Lambda bundle hash vs local packaged bundle
+- deployed Step Functions definition vs local rendered definition
+
+If the app still shows stale behavior:
+
+- if `show-build` says `MATCH`, debug the runtime path
+- if `show-build` says `MISMATCH`, stop guessing and fix deploy drift first
 
 The Docker gate is only valid if it exercised freshly rebuilt artifacts.
 
-## 19. Post-Deploy Reality
-
-If the feature is new and user-visible, the final confidence level should distinguish:
+For new user-visible features, the final confidence level must distinguish:
 
 - `locally verified`
 - `runtime verified in docker`
@@ -360,7 +360,7 @@ If the feature is new and user-visible, the final confidence level should distin
 
 Do not collapse those into one statement.
 
-If the feature is user-facing, add:
+For user-facing features, add:
 
 - one real post-deploy smoke invocation
 - confirmation that the expected UI surface works against the deployed backend
@@ -374,4 +374,6 @@ Minimum default smoke floor for major user-facing releases:
 - one palette flow
 - one compute-preview flow
 
-When routes are added or changed, also run at least one deployed payload-shape smoke against the real API route and assert it returns structured JSON rather than a permission or gateway failure.
+When routes are added or changed, also run at least one deployed payload-shape
+smoke against the real API route and assert it returns structured JSON rather
+than a permission or gateway failure.

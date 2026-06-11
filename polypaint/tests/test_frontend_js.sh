@@ -183,6 +183,7 @@ assertIncludes("return { name: _coeffProgramRegistryChipName(normalized.name), p
 assertIncludes("return [{ name: _coeffProgramRegistryChipName(legacyName), params: [legacyTgt, legacySrc, ...legacyArgs] }];", 'Normalize should map shadowed registry names through the shared chip-name map');
 assertIncludes("// LAYOUT CONTRACT: legacy rows are source-first", 'The legacy-vs-chip param order flip must stay documented at the normalize seam');
 assertIncludes("function _isAndyParam(pDef) {", 'andy identity should be real metadata (kind), not placeholder text');
+assertIncludes("return name === 'const' ? 'push_const' : name;", 'coeff program chip canonicalizer must map const to push_const (a self-call here recursed forever)');
 assertIncludes("kind: 'andy', ph: 'andy'", 'the base andy param def should carry the kind marker');
 assertIncludes("catalog.power_series = {", 'Coeff Program catalog should expose the registry power transform as a power_series chip');
 assertIncludes("return { name: 'legacy', params: [normalized.name, 'poly', 'poly', ...args] };", 'Copy legacy transforms must keep andy-carrying rows as legacy chips (named chips drop andy)');
@@ -600,6 +601,13 @@ async function main() {
     extractFunction('_hasCtExpressionOperator'),
     extractFunction('_parseCtComplexConstant'),
     extractFunction('_splitCtComplexInput'),
+    extractFunction('_isAndyParam'),
+    extractFunction('_ctAndyIsDefault'),
+    extractFunction('_canonicalCoeffTransformName'),
+    extractFunction('_coeffProgramLegacyInputDefs'),
+    extractFunction('_canonicalCoeffProgramChipName'),
+    extractFunction('_paramValueOrDefault'),
+    extractFunction('_serializeCoeffProgramChain'),
     extractFunction('_getCatalogEntry'),
     extractFunction('_isConstCoeffFunction'),
     extractFunction('_constCoeffDefaults'),
@@ -622,6 +630,15 @@ async function main() {
     _renderArtifacts: { color: [] },
     _renderMtPopupState: { saveAssociatedPalette: false },
     _solveScoreProgramRememberedNames: { render: 'pal5', palette: 'keep' },
+    _coeffProgramChain: [],
+    _coeffProgramCatalog: {
+      push_vec: { params: [{ ph: 'length', def: 'poly_len' }, { ph: 'value', def: '0' }] },
+      push_const: { params: [{ ph: 'length', def: 'poly_len' }, { ph: 'value', def: '0' }] },
+    },
+    _ctCatalog: {
+      rev: { params: [] },
+      cos: { params: [{ kind: 'andy', ph: 'andy', def: '0' }] },
+    },
     _statusCalls: [],
     _logs: [],
     _fusedCalls: [],
@@ -681,6 +698,21 @@ async function main() {
   const cfpvComplex = ctx._parseCfpvComplexValue('10j-3');
   assert(cfpvComplex && cfpvComplex.re === -3 && cfpvComplex.im === 10, 'const coefficient value parser should accept imag-first complex constants');
   assert(ctx._splitCtComplexInput('13-22j').re === '13' && ctx._splitCtComplexInput('13-22j').im === '-22', 'complex chip parser should preserve real-first complex constants');
+
+  assert(ctx._canonicalCoeffProgramChipName('const') === 'push_const', 'chip canonicalizer should map the historical const alias');
+  assert(ctx._canonicalCoeffProgramChipName('push_vec') === 'push_vec', 'chip canonicalizer should pass canonical names through');
+  ctx._coeffProgramChain = [
+    { name: 'push_vec', params: ['poly_len', '0'] },
+    { name: 'const', params: ['8', '2'] },
+    { name: 'legacy', params: ['cos', 'poly', 'poly', '0'] },
+    { name: 'legacy', params: ['cos', 'poly', 'poly', '0.5'] },
+  ];
+  const serializedChips = ctx._serializeCoeffProgramChain();
+  assert(JSON.stringify(serializedChips[0]) === JSON.stringify(['push_vec', 'poly_len', '0']), 'chip serialization should keep canonical chip rows intact');
+  assert(JSON.stringify(serializedChips[1]) === JSON.stringify(['push_const', '8', '2']), 'chip serialization should canonicalize const rows to push_const');
+  assert(JSON.stringify(serializedChips[2]) === JSON.stringify(['legacy', 'cos', 'poly', 'poly']), 'chip serialization should trim a default andy from legacy rows');
+  assert(JSON.stringify(serializedChips[3]) === JSON.stringify(['legacy', 'cos', 'poly', 'poly', '0.5']), 'chip serialization should keep a non-default andy on legacy rows');
+  ctx._coeffProgramChain = [];
 
   const lagged = ctx._compileSolveScoreChain([
     ['spread', 'slv', '0.4'],

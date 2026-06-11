@@ -42,7 +42,7 @@ from coeff_program_chain import (
     PROGRAM_VERSION as COEFF_PROGRAM_VERSION,
     compile_coeff_program_chain,
 )
-from coeff_program_source import parse_coeff_program_source
+from coeff_program_source import coeff_source_text_from_payload, parse_coeff_program_source
 from param_program_chain import (
     PROGRAM_KIND as PARAM_PROGRAM_KIND,
     PROGRAM_VERSION as PARAM_PROGRAM_VERSION,
@@ -350,8 +350,9 @@ def _read_coeff_program_source_chain(program_id):
         raise RuntimeError(f"saved coeff program is not valid JSON: {program_id}") from exc
     if not isinstance(payload, dict):
         raise RuntimeError(f"saved coeff program must be a JSON object: {program_id}")
-    if "source_text" in payload:
-        parsed = parse_coeff_program_source(payload.get("source_text") or "")
+    source_text = coeff_source_text_from_payload(payload)
+    if source_text is not None:
+        parsed = parse_coeff_program_source(source_text)
         return parsed["chain"]
     chain = payload.get("chain")
     if not isinstance(chain, list):
@@ -561,7 +562,7 @@ def _read_coeff_program_object(program_id):
     program = _compile_coeff_program_payload(
         payload.get("name"),
         payload.get("chain"),
-        source_text=payload.get("source_text") if "source_text" in payload else None,
+        source_text=coeff_source_text_from_payload(payload),
         saved_at=payload.get("saved_at", ""),
         version=payload.get("version", COEFF_PROGRAM_VERSION),
         program_id=str(program_id),
@@ -1187,7 +1188,7 @@ def handle_save_coeff_program(event):
     program = _compile_coeff_program_payload(
         params.get("name"),
         params.get("chain"),
-        source_text=params.get("source_text") if "source_text" in params else None,
+        source_text=coeff_source_text_from_payload(params),
     )
     key = _coeff_program_key(program["id"])
     overwritten = _key_exists(key)

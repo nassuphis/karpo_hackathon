@@ -29,7 +29,7 @@ from compute_fused import (
     validate_fused_threads,
 )
 from coeff_program_chain import compile_coeff_program_chain
-from coeff_program_source import parse_coeff_program_source
+from coeff_program_source import coeff_source_text_from_payload, parse_coeff_program_source
 from param_program_chain import compile_param_program_chain
 from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
 
@@ -93,9 +93,11 @@ def _read_saved_program_source_chain(prefix, program_kind, program_id):
         raise RuntimeError(f"{program_kind} macro is not valid JSON: {macro_id}") from exc
     if not isinstance(payload, dict):
         raise RuntimeError(f"{program_kind} macro must be a JSON object: {macro_id}")
-    if program_kind == "coeff program" and "source_text" in payload:
-        parsed = parse_coeff_program_source(payload.get("source_text") or "")
-        return parsed["chain"]
+    if program_kind == "coeff program":
+        source_text = coeff_source_text_from_payload(payload)
+        if source_text is not None:
+            parsed = parse_coeff_program_source(source_text)
+            return parsed["chain"]
     chain = payload.get("chain")
     if not isinstance(chain, list):
         raise RuntimeError(f"{program_kind} macro chain must be a JSON array: {macro_id}")

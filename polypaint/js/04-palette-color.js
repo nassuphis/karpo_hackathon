@@ -1,0 +1,1414 @@
+// PolyPaint 04-palette-color — split from index.html's single script block.
+// Classic script: load order matters and is defined by the
+// <script src="js/..."> tags in index.html (top-level functions and
+// let/const bindings are shared across all parts, exactly as before
+// the split). Cache-busting: deploy appends ?v=<BUILD_ID> to the tags.
+function _syncSolveScoreAddOptions(which) {
+    const sel = document.getElementById(which + '-add');
+    const allowed = _solveScoreAllowedAdditions(which);
+    if (sel) {
+        const options = ['<option value="">+ add...</option>'].concat(
+            allowed.map(name => {
+                const spec = _ssCatalog[name] || {};
+                const label = spec.label || name;
+                return `<option value="${_escapeHtml(name)}">${_escapeHtml(label)}</option>`;
+            })
+        );
+        sel.innerHTML = options.join('');
+        sel.disabled = allowed.length === 0;
+    }
+    const btn = document.getElementById(which + '-add-btn');
+    if (btn) {
+        btn.disabled = allowed.length === 0;
+        btn.textContent = allowed.length ? '+ score chip' : '+ blocked';
+        btn.title = allowed.length ? 'Add a score function, transform, or combination' : 'Current stack cannot accept another chip';
+    }
+    _renderSolveScoreAddPopup(which);
+}
+
+function _updateSolveScoreStackUi(which) {
+    const prefix = _solveScorePrefixForWhich(which);
+    const stackEl = document.getElementById(which === 'palette-ss' ? 'palette-ss-stack' : 'ss-stack');
+    const labelEl = document.getElementById(which === 'palette-ss' ? 'palette-ss-stack-label' : 'ss-stack-label');
+    if (!stackEl || !labelEl) return;
+    let draft;
+    try {
+        draft = _solveScoreDraftState(
+            _chainForWhich(which),
+            prefix === 'palette' ? paletteTabMetric : renderSolveMetric,
+            _legacySolveScoreQuantilePct(prefix)
+        );
+    } catch (e) {
+        stackEl.innerHTML = '';
+        labelEl.textContent = `invalid · ${e && e.message ? e.message : String(e)}`;
+        return;
+    }
+    const blocks = [];
+    for (let i = 0; i < Math.max(0, draft.stackDepth); i++) {
+        blocks.push(`<span style="display:inline-block; width:8px; height:${10 + i * 2}px; background:#6c8; border:1px solid #385; border-radius:2px"></span>`);
+    }
+    stackEl.innerHTML = blocks.join('');
+    labelEl.textContent = `depth ${draft.stackDepth} · metrics ${draft.metricCount}`;
+}
+
+function _ensureSolveScoreChainDefaults() {
+    if (!_normalizeSolveScoreChain(_renderScoreChain).length) {
+        _renderScoreChain.splice(0, _renderScoreChain.length, ..._defaultSolveScoreChain(renderSolveMetric || 'proximity'));
+    }
+    if (!_normalizeSolveScoreChain(_paletteScoreChain).length) {
+        _paletteScoreChain.splice(0, _paletteScoreChain.length, ..._defaultSolveScoreChain(paletteTabMetric || 'proximity'));
+    }
+}
+
+function _displayCoeffTransforms() {
+    return _chainForWhich('ct').map(_displayTransformEntry);
+}
+
+function _chainHasTransformName(chain, name) {
+    if (!Array.isArray(chain)) return false;
+    return chain.some(item => {
+        if (Array.isArray(item)) return item[0] === name;
+        return item === name;
+    });
+}
+
+function _safeHttpUrl(value) {
+    const s = value == null ? '' : String(value).trim();
+    if (!s) return '';
+    try {
+        const base = (window.location && window.location.href) ? window.location.href : 'http://localhost/';
+        const resolved = new URL(s, base);
+        if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') return '';
+        return resolved.href;
+    } catch (e) {
+        return '';
+    }
+}
+
+function _setInlineError(container, message, styleText) {
+    if (!container) return;
+    container.replaceChildren();
+    const errorEl = document.createElement('div');
+    errorEl.style.cssText = styleText || 'color:#e94560';
+    errorEl.textContent = 'Error: ' + (message == null ? '' : String(message));
+    container.appendChild(errorEl);
+}
+
+function _setPreviewPlaceholder(previewEl, message) {
+    if (!previewEl) return;
+    previewEl.replaceChildren();
+    const placeholderEl = document.createElement('span');
+    placeholderEl.style.cssText = 'color:#444; font-size:11px';
+    placeholderEl.textContent = message;
+    previewEl.appendChild(placeholderEl);
+}
+
+function _setPreviewImage(previewEl, url) {
+    if (!previewEl) return;
+    const safeUrl = _safeHttpUrl(url);
+    if (!safeUrl) {
+        _setPreviewPlaceholder(previewEl, 'No preview');
+        return;
+    }
+    previewEl.replaceChildren();
+    const imgEl = document.createElement('img');
+    imgEl.src = safeUrl;
+    imgEl.style.cssText = 'max-width:100%; max-height:100%; image-rendering:pixelated';
+    previewEl.appendChild(imgEl);
+}
+
+// Download a file via presigned URL with Content-Disposition: attachment
+// Gets a new presigned URL with download filename baked in, then navigates to it.
+async function downloadPresignedFile(originalUrl, filename, explicitKey, clickEvent) {
+    const activeEvent = clickEvent || ((typeof window !== 'undefined' && window.event) ? window.event : null);
+    const btn = activeEvent && activeEvent.target ? activeEvent.target : null;
+    const origText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Preparing download...'; }
+    try {
+        // Re-presign with Content-Disposition: attachment so browser saves instead of displaying
+        const key = explicitKey || _lastDownloadKey;
+        if (key) {
+            const result = await lambdaPost('storage', { key, filename }, '/presign');
+            window.location.href = result.url;
+        } else {
+            // Fallback: use <a download> trick
+            const a = document.createElement('a');
+            a.href = originalUrl;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+    } catch (e) {
+        alert('Download failed: ' + e.message);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = origText; }
+    }
+}
+
+async function _presignStorageKey(key, filename) {
+    return await lambdaPost('storage', { key, filename }, '/presign');
+}
+
+async function _fetchStorageBlob(key, filename) {
+    const presign = await _presignStorageKey(key, filename);
+    const resp = await fetch(presign.url);
+    if (!resp.ok) throw new Error(`Download failed: ${resp.status}`);
+    return await resp.blob();
+}
+
+function _downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+async function _downloadStorageKeyBlob(key, filename) {
+    const blob = await _fetchStorageBlob(key, filename);
+    _downloadBlob(blob, filename);
+}
+let _lastDownloadKey = null;
+
+// Concurrency-limited parallel execution (prevents browser connection exhaustion)
+async function asyncPool(limit, items, fn) {
+    const results = [];
+    const executing = new Set();
+    for (const item of items) {
+        const p = fn(item).then(r => { executing.delete(p); return r; });
+        executing.add(p);
+        results.push(p);
+        if (executing.size >= limit) await Promise.race(executing);
+    }
+    return Promise.all(results);
+}
+
+// Load config on page load
+loadLambdaConfig();
+
+document.addEventListener('click', function(e) {
+    const popup = document.getElementById('config-popup');
+    const btn = document.getElementById('btn-config-toggle');
+    if (!popup || !popup._open) return;
+    const target = e.target;
+    if (popup.contains(target) || (btn && btn.contains(target))) return;
+    _setConfigPopupOpen(false);
+});
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') _setConfigPopupOpen(false);
+});
+
+function _elementContains(el, target) {
+    return !!(el && typeof el.contains === 'function' && el.contains(target));
+}
+
+document.addEventListener('click', function(e) {
+    const target = e.target;
+    ['ss', 'palette-ss'].forEach(which => {
+        const popup = document.getElementById(which + '-add-popup');
+        const btn = document.getElementById(which + '-add-btn');
+        if (!popup || !popup._open) return;
+        if (_elementContains(popup, target) || _elementContains(btn, target)) return;
+        _setSolveScorePickerOpen(which, false);
+    });
+    const ptPopup = document.getElementById('pt-add-popup');
+    const ptBtn = document.getElementById('pt-add-btn');
+    if (ptPopup && ptPopup._open && !_elementContains(ptPopup, target) && !_elementContains(ptBtn, target)) {
+        _setParamTransformPickerOpen(false);
+    }
+    const ppPopup = document.getElementById('pp-add-popup');
+    const ppBeforeBtn = document.getElementById('pp-insert-before-btn');
+    const ppAfterBtn = document.getElementById('pp-insert-after-btn');
+    if (ppPopup && ppPopup._open && !_elementContains(ppPopup, target) && !_elementContains(ppBeforeBtn, target) && !_elementContains(ppAfterBtn, target)) {
+        _setParamProgramPickerOpen(false);
+    }
+    const cpPopup = document.getElementById('cp-add-popup');
+    const cpBeforeBtn = document.getElementById('cp-insert-before-btn');
+    const cpAfterBtn = document.getElementById('cp-insert-after-btn');
+    if (cpPopup && cpPopup._open && !_elementContains(cpPopup, target) && !_elementContains(cpBeforeBtn, target) && !_elementContains(cpAfterBtn, target)) {
+        _setCoeffProgramPickerOpen(false);
+    }
+    const ctPopup = document.getElementById('ct-add-popup');
+    const ctBtn = document.getElementById('ct-add-btn');
+    if (ctPopup && ctPopup._open && !_elementContains(ctPopup, target) && !_elementContains(ctBtn, target)) {
+        _setCoeffTransformPickerOpen(false);
+    }
+});
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        _closeSolveScorePickers();
+        _setParamTransformPickerOpen(false);
+        _setParamProgramPickerOpen(false);
+        _setCoeffProgramPickerOpen(false);
+        _setCoeffTransformPickerOpen(false);
+        _clearRenderPreviewSelection();
+        _clearRenderLoresPreviewSelection();
+    }
+});
+
+/* ---- Color controls ---- */
+const DEFAULT_RENDER_BACKGROUND_COLOR = '000000';
+let renderColorMode = 'solve_score';
+let renderColorInterpretation = 'scalar_lut';
+let renderMatchMode = 'none';
+let renderBackgroundColor = DEFAULT_RENDER_BACKGROUND_COLOR;
+let renderRootProximityPalette = 'inferno';
+let renderSolveScorePalette = 'inferno';
+let renderSolveMetric = 'proximity';
+let paletteTabPalette = 'inferno';
+let paletteTabMetric = 'proximity';
+let renderRootProximityBuiltinPalette = 'inferno';
+let renderSolveScoreBuiltinPalette = 'inferno';
+let paletteTabBuiltinPalette = 'inferno';
+let renderRootProximityTriName = 'redgold';
+let renderSolveScoreTriName = 'redgold';
+let paletteTabTriName = 'redgold';
+let renderRootProximityLongName = '';
+let renderSolveScoreLongName = '';
+let paletteTabLongName = '';
+let repalettePalette = 'inferno';
+let repaletteBuiltinPalette = 'inferno';
+let repaletteTriName = 'redgold';
+let repaletteLongName = '';
+let colorRepalettePalette = 'inferno';
+let colorRepaletteBuiltinPalette = 'inferno';
+let colorRepaletteTriName = 'redgold';
+let colorRepaletteLongName = '';
+let _renderActiveFamily = 'color';
+let _renderArtifacts = { color: [], bilevel: [], coeffs: [], palette: [], pdf: [] };
+let _renderSelectedArtifact = { color: -1, bilevel: -1, coeffs: -1, palette: -1, pdf: -1 };
+let _renderSelectedArtifactKey = { color: '', bilevel: '', coeffs: '', palette: '', pdf: '' };
+let _renderCatalogScrollTop = { color: 0, bilevel: 0, coeffs: 0, palette: 0, pdf: 0 };
+let _renderPreviewSelectionState = {
+    artifactKey: '',
+    rect: null,
+};
+let _renderPreviewDragState = {
+    cleanup: null,
+    dragging: false,
+    artifactKey: '',
+    start: null,
+    rect: null,
+};
+let _renderLoresPreviewMeta = null;
+let _renderLoresPreviewSelectionState = {
+    rect: null,
+};
+let _renderLoresPreviewDragState = {
+    cleanup: null,
+    dragging: false,
+    start: null,
+    rect: null,
+};
+let _renderLoresPreviewActiveTab = 'plot';
+let _renderLoresPreviewEmissionHistograms = [];
+let _renderLoresPreviewHasPalette = false;
+let _renderLoadedJobId = '';
+let _renderNeedsRefresh = false;
+let _favoriteRefs = [];
+let _favoriteArtifacts = [];
+let _favoriteSelectedIdx = -1;
+let _favoriteSelectedKey = '';
+let _favoriteCatalogScrollTop = 0;
+let _favoriteSaveDirHandle = null;
+let _favoriteRefsLoaded = false;
+let _triPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
+let _builtinPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
+let _longPopupState = { open: false, mode: null, filter: '', highlightIdx: 0 };
+let _autolevelPopupState = { open: false, sourceArtifactId: '', sourceImageKey: '' };
+let _resizePopupState = { open: false, sourceArtifactId: '', sourceImageKey: '' };
+let _repalettePopupState = { open: false, sourcePaletteId: '', sourceDisplayName: '' };
+let _colorRepalettePopupState = { open: false, sourceArtifactId: '', sourceDisplayName: '', interpretation: '' };
+let _bilevelPopupState = { open: false, sectionMode: 'logical_sections_auto', sectionCount: '' };
+let _colorToBilevelPopupState = { open: false, sourceArtifactId: '', threshold: 0 };
+let _solveScoreSelectedIndex = { ss: -1, 'palette-ss': -1 };
+let _solveScorePickerInsertMode = { ss: 'after', 'palette-ss': 'after' };
+let _resultsRefreshPopupState = { open: false, workers: 32 };
+let _renderMtPopupState = {
+    open: false,
+    rasterThreads: 4,
+    rasterWorkers: 10,
+    solveScoreThreads: 4,
+    rasterRetries: 2,
+    finalizeWorkers: 16,
+    rasterSectionMode: 'logical_sections_auto',
+    rasterSectionCount: '',
+    saveAssociatedPalette: false,
+};
+function _defaultComputePopupPrefs(solverMode) {
+    return {
+        solverMode: solverMode || 'aberth_mt',
+        fused: true,
+        nChunks: 10,
+        fusedThreads: 4,
+        loresParamGenThreads: 1,
+        loresCoeffgenThreads: 1,
+        probe: null,
+        probeError: '',
+        probeLoading: false,
+        probeSignature: '',
+    };
+}
+
+let _computePopupPrefsBySolver = {
+    aberth_mt: _defaultComputePopupPrefs('aberth_mt'),
+    companion_matrix: _defaultComputePopupPrefs('companion_matrix'),
+};
+
+let _computeMtPopupState = {
+    open: false,
+    ..._defaultComputePopupPrefs('aberth_mt'),
+};
+let _extractPalettePopupState = {
+    open: false,
+    solveScoreThreads: 4,
+    histInputMode: 'tmpfile',
+    histRetries: 2,
+    mergeWorkers: 16,
+    chunkThreads: 4,
+    chunkInputMode: 'sectioned',
+    chunkRetries: 2,
+    chunkWorkers: 16,
+};
+let _pdfColorSpreadPopupState = { open: false, filter: '', highlightIdx: 0, sourceArtifactId: '' };
+let _functionPopupState = { open: false, filter: '', highlightIdx: 0 };
+
+function _stopsToGradient(stops) {
+    return `linear-gradient(to right, ${stops.map((s, i) => s + ' ' + Math.round(i/(stops.length-1)*100) + '%').join(', ')})`;
+}
+
+const PALETTE_DEFS = [
+    { name: 'inferno',  stops: ['#000004','#420a68','#932667','#dd513a','#fca50a','#fcffa4'] },
+    { name: 'viridis',  stops: ['#440154','#3b528b','#21918c','#5ec962','#fde725','#fde725'] },
+    { name: 'magma',    stops: ['#000004','#51127c','#b73779','#fc8961','#fcfdbf','#fcfdbf'] },
+    { name: 'plasma',   stops: ['#0d0887','#7e03a8','#cc4778','#f89540','#f0f921','#f0f921'] },
+    { name: 'turbo',    stops: ['#30123b','#28bbec','#a2fc3c','#fb8022','#7a0403','#7a0403'] },
+    { name: 'cividis',  stops: ['#00204c','#31446b','#666870','#958f78','#cebe5a','#fde724'] },
+    { name: 'identity', stops: ['#000000','#ffffff'] },
+    { name: 'identity_hsv', stops: ['#000000','#20201c','#384030','#3c6045','#40806e','#3c56a0','#8240c2','#d224d4','#ff0000'] },
+    { name: 'warm',     stops: ['#6e40aa','#e04f7e','#f19938','#c3e032','#aff05b','#aff05b'] },
+    { name: 'cool',     stops: ['#6e40aa','#4775de','#1bb5a8','#52f667','#aff05b','#aff05b'] },
+    { name: 'bwred',    stops: ['#2166ac','#67a9cf','#c7e5f4','#fde0dd','#e57e6b','#960612'] },
+    { name: 'neon_v',   stops: ['#ff0080','#550070','#0f0519','#1d1e4b','#5a8cd2','#8cffff'] },
+    { name: 'gilded',   stops: ['#ffd700','#c89b14','#64142d','#2d0a19','#9119b4','#dc64ff'] },
+    { name: 'reef',     stops: ['#00ffdc','#008c8c','#0a2340','#0c1223','#a04b0f','#ffc832'] },
+    { name: 'abyss',    stops: ['#beff32','#6e9e1c','#1e2616','#0a0f14','#371c64','#d26eff'] },
+    { name: 'rainbow_d3', stops: ['#6e40aa','#bd3caf','#ff5473','#ff853d','#d7c33b','#80f558','#24e794','#1ccbbb','#3a9ee0','#5b5bcf','#6e40aa'] },
+];
+
+const BUILTIN_PALETTE_ENTRIES = PALETTE_DEFS.map(def => ({
+    ...def,
+    palette_id: def.name,
+    gradient_css: _stopsToGradient(def.stops),
+    search_text: def.name.toLowerCase(),
+}));
+
+function _paletteContainerId(mode) {
+    return mode === 'proximity' ? 'palette-circles-root-proximity'
+        : mode === 'solve_score' ? 'palette-circles-solve-score'
+        : mode === 'repalette' ? 'palette-circles-repalette'
+        : mode === 'color_repalette' ? 'palette-circles-color-repalette'
+        : 'palette-circles-palette-tab';
+}
+
+function _triCatalog() {
+    return Array.isArray(window._triPaletteCatalog) ? window._triPaletteCatalog : [];
+}
+
+function _longCatalog() {
+    return Array.isArray(window._longPaletteCatalog) ? window._longPaletteCatalog : [];
+}
+
+function _modeUsesBuiltinPopup(mode) {
+    return mode === 'proximity' || mode === 'solve_score' || mode === 'palette_tab' || mode === 'repalette' || mode === 'color_repalette';
+}
+
+function _builtinPaletteEntryByName(name) {
+    return BUILTIN_PALETTE_ENTRIES.find(entry => entry.name === name) || null;
+}
+
+function _defaultBuiltinPaletteName() {
+    return BUILTIN_PALETTE_ENTRIES.length ? BUILTIN_PALETTE_ENTRIES[0].name : 'inferno';
+}
+
+function _builtinPaletteForMode(mode) {
+    if (mode === 'proximity') return renderRootProximityBuiltinPalette;
+    if (mode === 'solve_score') return renderSolveScoreBuiltinPalette;
+    if (mode === 'repalette') return repaletteBuiltinPalette;
+    if (mode === 'color_repalette') return colorRepaletteBuiltinPalette;
+    return paletteTabBuiltinPalette;
+}
+
+function _setRememberedBuiltinPalette(mode, paletteName) {
+    if (mode === 'proximity') renderRootProximityBuiltinPalette = paletteName;
+    else if (mode === 'solve_score') renderSolveScoreBuiltinPalette = paletteName;
+    else if (mode === 'repalette') repaletteBuiltinPalette = paletteName;
+    else if (mode === 'color_repalette') colorRepaletteBuiltinPalette = paletteName;
+    else paletteTabBuiltinPalette = paletteName;
+}
+
+function _syncBuiltinDefaults() {
+    const fallback = _defaultBuiltinPaletteName();
+    ['proximity', 'solve_score', 'palette_tab', 'repalette', 'color_repalette'].forEach(mode => {
+        const entry = _builtinPaletteEntryByName(_builtinPaletteForMode(mode));
+        if (!entry) _setRememberedBuiltinPalette(mode, fallback);
+    });
+}
+
+function _triCatalogAvailable() {
+    return _triCatalog().length > 0;
+}
+
+function _longCatalogAvailable() {
+    return _longCatalog().length > 0;
+}
+
+function _triPaletteEntryByName(name) {
+    return _triCatalog().find(entry => entry.name === name) || null;
+}
+
+function _longPaletteEntryByName(name) {
+    return _longCatalog().find(entry => entry.name === name) || null;
+}
+
+function _defaultTriPaletteName() {
+    const cat = _triCatalog();
+    return cat.length ? cat[0].name : 'redgold';
+}
+
+function _defaultLongPaletteName() {
+    const cat = _longCatalog();
+    return cat.length ? cat[0].name : '';
+}
+
+function _triPaletteForMode(mode) {
+    if (mode === 'proximity') return renderRootProximityTriName;
+    if (mode === 'solve_score') return renderSolveScoreTriName;
+    if (mode === 'repalette') return repaletteTriName;
+    if (mode === 'color_repalette') return colorRepaletteTriName;
+    return paletteTabTriName;
+}
+
+function _longPaletteForMode(mode) {
+    if (mode === 'proximity') return renderRootProximityLongName;
+    if (mode === 'solve_score') return renderSolveScoreLongName;
+    if (mode === 'repalette') return repaletteLongName;
+    if (mode === 'color_repalette') return colorRepaletteLongName;
+    return paletteTabLongName;
+}
+
+function _setRememberedTriPalette(mode, triName) {
+    if (mode === 'proximity') renderRootProximityTriName = triName;
+    else if (mode === 'solve_score') renderSolveScoreTriName = triName;
+    else if (mode === 'repalette') repaletteTriName = triName;
+    else if (mode === 'color_repalette') colorRepaletteTriName = triName;
+    else paletteTabTriName = triName;
+}
+
+function _setRememberedLongPalette(mode, longName) {
+    if (mode === 'proximity') renderRootProximityLongName = longName;
+    else if (mode === 'solve_score') renderSolveScoreLongName = longName;
+    else if (mode === 'repalette') repaletteLongName = longName;
+    else if (mode === 'color_repalette') colorRepaletteLongName = longName;
+    else paletteTabLongName = longName;
+}
+
+function _currentPaletteForMode(mode) {
+    if (mode === 'proximity') return renderRootProximityPalette;
+    if (mode === 'solve_score') return renderSolveScorePalette;
+    if (mode === 'repalette') return repalettePalette;
+    if (mode === 'color_repalette') return colorRepalettePalette;
+    return paletteTabPalette;
+}
+
+function _syncTriDefaults() {
+    const fallback = _defaultTriPaletteName();
+    ['proximity', 'solve_score', 'palette_tab', 'repalette', 'color_repalette'].forEach(mode => {
+        const name = _triPaletteForMode(mode);
+        if (!_triPaletteEntryByName(name)) _setRememberedTriPalette(mode, fallback);
+    });
+}
+
+function _syncLongDefaults() {
+    const fallback = _defaultLongPaletteName();
+    ['proximity', 'solve_score', 'palette_tab', 'repalette', 'color_repalette'].forEach(mode => {
+        const name = _longPaletteForMode(mode);
+        if (!_longPaletteEntryByName(name)) _setRememberedLongPalette(mode, fallback);
+    });
+}
+
+function _triSwatchTitle(mode) {
+    if (!_triCatalogAvailable()) return 'TRI catalog unavailable';
+    const entry = _triPaletteEntryByName(_triPaletteForMode(mode));
+    if (!entry) return 'TRI unavailable';
+    let title = 'TRI: ' + entry.name;
+    if (entry.aliases && entry.aliases.length) title += ' (aliases: ' + entry.aliases.join(', ') + ')';
+    return title;
+}
+
+function _longSwatchTitle(mode) {
+    if (!_longCatalogAvailable()) return 'LONG catalog unavailable';
+    const entry = _longPaletteEntryByName(_longPaletteForMode(mode));
+    if (!entry) return 'LONG unavailable';
+    let title = 'LONG: ' + entry.name;
+    if (entry.aliases && entry.aliases.length) title += ' (aliases: ' + entry.aliases.join(', ') + ')';
+    return title;
+}
+
+function _visibleTriPaletteCatalog() {
+    const filter = (_triPopupState.filter || '').trim().toLowerCase();
+    const cat = _triCatalog();
+    if (!filter) return cat;
+    return cat.filter(entry => (entry.search_text || '').includes(filter));
+}
+
+function _visibleLongPaletteCatalog() {
+    const filter = (_longPopupState.filter || '').trim().toLowerCase();
+    const cat = _longCatalog();
+    if (!filter) return cat;
+    return cat.filter(entry => (entry.search_text || '').includes(filter));
+}
+
+function _builtinSwatchTitle(mode) {
+    const entry = _builtinPaletteEntryByName(_builtinPaletteForMode(mode));
+    return entry ? ('Palette: ' + entry.name) : 'Palette unavailable';
+}
+
+function _visibleBuiltinPaletteCatalog() {
+    const filter = (_builtinPopupState.filter || '').trim().toLowerCase();
+    if (!filter) return BUILTIN_PALETTE_ENTRIES;
+    return BUILTIN_PALETTE_ENTRIES.filter(entry => entry.search_text.includes(filter));
+}
+
+function _palettePreviewCss(name) {
+    const builtin = _builtinPaletteEntryByName(name);
+    if (builtin) return builtin.gradient_css;
+    if (typeof name === 'string' && name.startsWith('tri_')) {
+        const tri = _triPaletteEntryByName(name.slice(4));
+        if (tri) return tri.gradient_css;
+    }
+    if (typeof name === 'string' && name.startsWith('long_')) {
+        const longEntry = _longPaletteEntryByName(name.slice(5));
+        if (longEntry) return longEntry.gradient_css;
+    }
+    return '#555';
+}
+
+function _popupModeLabel(mode) {
+    return mode === 'proximity' ? 'Root proximity'
+        : mode === 'solve_score' ? 'Solve score'
+        : mode === 'repalette' ? 'RePalette'
+        : mode === 'color_repalette' ? 'Color RePalette'
+        : 'Palette tab';
+}
+
+function _renderPaletteRow(mode) {
+    const container = document.getElementById(_paletteContainerId(mode));
+    if (!container) return;
+    const currentPalette = _currentPaletteForMode(mode);
+    const children = [];
+    if (_modeUsesBuiltinPopup(mode)) {
+        const builtinEntry = _builtinPaletteEntryByName(_builtinPaletteForMode(mode)) || BUILTIN_PALETTE_ENTRIES[0];
+        const builtinActive = !!_builtinPaletteEntryByName(currentPalette);
+        const builtin = document.createElement('div');
+        builtin.className = 'pal-circle pal-circle-builtin' + (builtinActive ? ' active' : '');
+        builtin.dataset.palettePopup = 'builtin';
+        builtin.textContent = 'PAL';
+        builtin.title = _builtinSwatchTitle(mode);
+        builtin.style.background = builtinEntry ? builtinEntry.gradient_css : '#555';
+        builtin.onclick = () => _openBuiltinPalettePopup(mode);
+        children.push(builtin);
+    } else {
+        PALETTE_DEFS.forEach(p => {
+            const el = document.createElement('div');
+            el.className = 'pal-circle' + (p.name === currentPalette ? ' active' : '');
+            el.dataset.palette = p.name;
+            el.title = p.name;
+            el.style.background = _stopsToGradient(p.stops);
+            el.onclick = () => {
+                setPaletteForMode(mode, p.name);
+                if (mode === 'proximity' || mode === 'solve_score') setColorMode(mode);
+            };
+            children.push(el);
+        });
+    }
+
+    const tri = document.createElement('div');
+    const triEntry = _triPaletteEntryByName(_triPaletteForMode(mode));
+    const triActive = typeof currentPalette === 'string' && currentPalette.startsWith('tri_');
+    tri.className = 'pal-circle pal-circle-tri' + (triActive ? ' active' : '') + (_triCatalogAvailable() ? '' : ' disabled');
+    tri.textContent = 'TRI';
+    tri.title = _triSwatchTitle(mode);
+    tri.style.background = triEntry ? triEntry.gradient_css : '#555';
+    tri.onclick = (ev) => {
+        if (!_triCatalogAvailable()) return;
+        if (ev && ev.altKey) {
+            _setTriPaletteForMode(mode, _triPaletteForMode(mode), true);
+            return;
+        }
+        _openTriPalettePopup(mode);
+    };
+    tri.oncontextmenu = (ev) => {
+        if (ev && typeof ev.preventDefault === 'function') ev.preventDefault();
+        if (_triCatalogAvailable()) _setTriPaletteForMode(mode, _triPaletteForMode(mode), true);
+        return false;
+    };
+    children.push(tri);
+
+    const longEntry = _longPaletteEntryByName(_longPaletteForMode(mode));
+    const longActive = typeof currentPalette === 'string' && currentPalette.startsWith('long_');
+    const longSwatch = document.createElement('div');
+    longSwatch.className = 'pal-circle pal-circle-builtin pal-circle-long' + (longActive ? ' active' : '') + (_longCatalogAvailable() ? '' : ' disabled');
+    longSwatch.dataset.palettePopup = 'long';
+    longSwatch.textContent = 'LONG';
+    longSwatch.title = _longSwatchTitle(mode);
+    longSwatch.style.background = longEntry ? longEntry.gradient_css : '#555';
+    longSwatch.onclick = () => {
+        if (!_longCatalogAvailable()) return;
+        _openLongPalettePopup(mode);
+    };
+    children.push(longSwatch);
+
+    container.replaceChildren();
+    children.forEach(child => container.appendChild(child));
+}
+
+function _renderAllPaletteRows() {
+    _syncBuiltinDefaults();
+    _syncTriDefaults();
+    _syncLongDefaults();
+    _renderPaletteRow('proximity');
+    _renderPaletteRow('solve_score');
+    _renderPaletteRow('palette_tab');
+}
+
+function _solveScoreOmegaEnabled(prefix) {
+    const which = _solveScoreWhichForPrefix(prefix);
+    try {
+        return !!_compileSolveScoreChain(_chainForWhich(which), prefix === 'palette' ? paletteTabMetric : renderSolveMetric).omega_enabled;
+    } catch (e) {
+        const el = document.getElementById(`${prefix}-solve-score-omega-enabled`);
+        return el ? String(el.value || '').trim().toLowerCase() !== 'false' : false;
+    }
+}
+
+function _setSolveScoreOmegaEnabled(prefix, enabled) {
+    const which = _solveScoreWhichForPrefix(prefix);
+    const chain = _normalizeSolveScoreChain(_chainForWhich(which), prefix === 'palette' ? paletteTabMetric : renderSolveMetric);
+    const removedOmega = [...chain].reverse().find(item => item.name === 'omega_cosine');
+    const next = chain.filter(item => item.name !== 'omega_cosine');
+    if (enabled) {
+        const omegaEl = document.getElementById(`${prefix}-solve-score-omega`);
+        const phaseEl = document.getElementById(`${prefix}-solve-score-omega-phase`);
+        const omega = Number(omegaEl && omegaEl.value);
+        const phase = Number(phaseEl && phaseEl.value);
+        const preservedPhase = removedOmega && removedOmega.params && removedOmega.params.length > 1
+            ? Number(removedOmega.params[1])
+            : phase;
+        next.push({
+            name: 'omega_cosine',
+            params: [
+                String(Number.isFinite(omega) ? omega : 1),
+                String(Number.isFinite(preservedPhase) ? preservedPhase : 0),
+            ],
+        });
+    }
+    const target = _chainForWhich(which);
+    target.splice(0, target.length, ...next);
+    _renderChips(which);
+}
+
+function _syncSolveScoreOmegaUi(prefix) {
+    try {
+        _syncSolveScoreLegacyInputs(prefix);
+    } catch (e) {
+        // no-op; invalid chains are prevented at add-time
+    }
+}
+
+function _omegaSummaryLabel(enabled, omega) {
+    return enabled ? `w=${Number(omega).toFixed(0)}` : 'w=off';
+}
+
+function setColorMode(mode) {
+    renderColorMode = 'solve_score';
+    _updateSolveScoreButtons();
+}
+
+function _normalizeColorInterpretation(value) {
+    const v = String(value || '').trim().toLowerCase();
+    if (v === 'scalar_palette' || v === 'palette' || v === 'scalar') return 'scalar_lut';
+    if (v === 'direct_rgb') return 'rgb';
+    if (v === 'rgb-lut') return 'rgb_lut';
+    if (v === 'hsv-lut') return 'hsv_lut';
+    if (v === 'rgb' || v === 'hsv' || v === 'scalar_lut' || v === 'rgb_lut' || v === 'hsv_lut') return v;
+    return 'scalar_lut';
+}
+
+function _colorInterpretationLabel(value) {
+    const mode = _normalizeColorInterpretation(value);
+    if (mode === 'scalar_lut') return 'Scalar LUT';
+    if (mode === 'rgb') return 'RGB';
+    if (mode === 'hsv') return 'HSV';
+    if (mode === 'rgb_lut') return 'RGB LUT';
+    if (mode === 'hsv_lut') return 'HSV LUT';
+    return mode;
+}
+
+function _artifactColorInterpretation(art) {
+    const raw = String(
+        (art && (
+            art.color_interpretation ||
+            art.score_output_interpretation ||
+            art.raw_interpretation ||
+            art.interpretation ||
+            (art.render_execution && art.render_execution.color_interpretation)
+        )) || ''
+    ).trim();
+    return raw ? _normalizeColorInterpretation(raw) : 'scalar_lut';
+}
+
+function _colorInterpretationUsesPalette(mode) {
+    const normalized = _normalizeColorInterpretation(mode);
+    return normalized === 'scalar_lut' || normalized === 'rgb_lut' || normalized === 'hsv_lut';
+}
+
+function _selectedRenderColorInterpretation() {
+    const checked = document.querySelector('input[name="render-color-interpretation"]:checked');
+    renderColorInterpretation = _normalizeColorInterpretation(checked ? checked.value : renderColorInterpretation);
+    return renderColorInterpretation;
+}
+
+function _solveScoreColorCompatibility(compiled, interpretation = _selectedRenderColorInterpretation()) {
+    const count = Number(compiled && compiled.output_channel_count) || 1;
+    const mode = _normalizeColorInterpretation(interpretation);
+    if (mode === 'scalar_lut' && count !== 1) return `program incompatible with Scalar LUT: expected 1 output, got ${count}`;
+    if (mode === 'rgb' && count !== 3) return `program incompatible with RGB: expected 3 outputs, got ${count}`;
+    if (mode === 'hsv' && count !== 3) return `program incompatible with HSV: expected 3 outputs, got ${count}`;
+    if (mode === 'rgb_lut' && count !== 3) return `program incompatible with RGB LUT: expected 3 outputs, got ${count}`;
+    if (mode === 'hsv_lut' && count !== 3) return `program incompatible with HSV LUT: expected 3 outputs, got ${count}`;
+    return '';
+}
+
+function _solveScorePaletteCompatibility(compiled) {
+    const count = Number(compiled && compiled.output_channel_count) || 1;
+    if (compiled && compiled.has_explicit_outputs) {
+        return 'Palette Generate requires a scalar solve-score program; explicit emit outputs are color-render only in v1';
+    }
+    if (count !== 1) return `Palette Generate requires one scalar output, got ${count}`;
+    return '';
+}
+
+function _syncRenderColorInterpretationUi() {
+    const mode = _selectedRenderColorInterpretation();
+    document.querySelectorAll('[data-color-interpretation-row]').forEach(row => {
+        row.classList.toggle('active', row.getAttribute('data-color-interpretation-row') === mode);
+    });
+    const paletteRow = document.getElementById('render-color-lut-palette-row');
+    if (paletteRow) paletteRow.style.display = _colorInterpretationUsesPalette(mode) ? 'grid' : 'none';
+    _syncScoreNormalizationUi();
+    _updateSolveScoreButtons();
+}
+
+function _setRenderColorInterpretation(value) {
+    renderColorInterpretation = _normalizeColorInterpretation(value);
+    const radio = document.querySelector(`input[name="render-color-interpretation"][value="${renderColorInterpretation}"]`);
+    if (radio) radio.checked = true;
+    _syncRenderColorInterpretationUi();
+}
+
+function _syncScoreNormalizationUi() {
+    const el = document.getElementById('render-score-normalization');
+    if (!el) return;
+    let hasExplicit = false;
+    try {
+        hasExplicit = !!_compileSolveScoreChain(_chainForWhich('ss'), renderSolveMetric).has_explicit_outputs;
+    } catch (_) {
+        try {
+            hasExplicit = _normalizeSolveScoreChain(_chainForWhich('ss'), renderSolveMetric).some(item => item.name === 'emit');
+        } catch (_) {
+            hasExplicit = false;
+        }
+    }
+    el.disabled = hasExplicit;
+    if (hasExplicit) el.checked = false;
+    const wrap = el.closest('label');
+    if (wrap) {
+        wrap.style.opacity = hasExplicit ? '0.45' : '';
+        wrap.title = hasExplicit
+            ? 'Explicit emit chips own output normalization'
+            : 'Normalize the implicit scalar score output using lores q05/q95';
+    }
+}
+
+let _lastCalcHasLores = false;  // set by renderArtifactPanel when calc is loaded
+
+function _updateSolveScoreButtons() {
+    const isSolve = renderColorMode === 'solve_score';
+    const hasJob = !!(document.getElementById('render-results-dir')?.value?.trim());
+    let chainValid = true;
+    let issue = '';
+    try {
+        const compiled = _compileSolveScoreChain(_chainForWhich('ss'), renderSolveMetric);
+        issue = _renderActiveFamily === 'palette'
+            ? _solveScorePaletteCompatibility(compiled)
+            : _solveScoreColorCompatibility(compiled, _selectedRenderColorInterpretation());
+        chainValid = !issue;
+    }
+    catch (e) {
+        chainValid = false;
+        issue = `invalid program: ${e && e.message ? e.message : String(e)}`;
+    }
+    const enabled = isSolve && hasJob && _lastCalcHasLores && chainValid;
+    const palBtn = document.getElementById('btn-render-generate');
+    const histBtn = document.getElementById('btn-solve-histogram');
+    if (palBtn && _renderActiveFamily === 'palette') { palBtn.disabled = !enabled; palBtn.style.opacity = enabled ? '' : '0.4'; }
+    if (histBtn) { histBtn.disabled = !enabled; histBtn.style.opacity = enabled ? '' : '0.4'; }
+    const statusEl = document.getElementById('render-solve-score-program-status');
+    if (statusEl) {
+        statusEl.textContent = issue || '';
+        statusEl.className = `solve-score-program-status${issue ? ' error' : ''}`;
+    }
+}
+
+function _updatePaletteCreateButton() {
+    const btn = document.getElementById('btn-palette-create');
+    if (!btn) return;
+    let enabled = true;
+    let issue = '';
+    try {
+        const compiled = _compileSolveScoreChain(_chainForWhich('palette-ss'), paletteTabMetric);
+        issue = _solveScorePaletteCompatibility(compiled);
+        enabled = !issue;
+    }
+    catch (e) { enabled = false; issue = e && e.message ? e.message : String(e); }
+    btn.disabled = !enabled || !!_activePaletteRun;
+    btn.style.opacity = enabled ? '' : '0.4';
+    btn.title = issue || 'Generate a scalar solve-score palette artifact';
+    const labelEl = document.getElementById('palette-ss-stack-label');
+    if (labelEl && issue) labelEl.textContent = issue;
+}
+
+function setMatch(mode) {
+    renderMatchMode = mode;
+    document.querySelectorAll('.strat-chip').forEach(c => c.classList.toggle('active', c.dataset.match === mode));
+}
+
+function setPaletteForMode(mode, name) {
+    if (mode === 'proximity') renderRootProximityPalette = name;
+    else if (mode === 'solve_score') renderSolveScorePalette = name;
+    else if (mode === 'repalette') repalettePalette = name;
+    else if (mode === 'color_repalette') colorRepalettePalette = name;
+    else if (mode === 'palette_tab') paletteTabPalette = name;
+    const builtinEntry = _builtinPaletteEntryByName(name);
+    if (builtinEntry) _setRememberedBuiltinPalette(mode, builtinEntry.name);
+    else if (typeof name === 'string' && name.startsWith('tri_')) {
+        const triName = name.slice(4);
+        if (_triPaletteEntryByName(triName)) _setRememberedTriPalette(mode, triName);
+    } else if (typeof name === 'string' && name.startsWith('long_')) {
+        const longName = name.slice(5);
+        if (_longPaletteEntryByName(longName)) _setRememberedLongPalette(mode, longName);
+    }
+    _renderPaletteRow(mode);
+    if (mode === 'repalette' && _repalettePopupState.open) _renderRepalettePopup();
+    if (mode === 'color_repalette' && _colorRepalettePopupState.open) _renderColorRepalettePopup();
+    if (_renderMtPopupState.open) _renderRenderMtPopup();
+}
+
+function _activeRenderPalette() {
+    return renderSolveScorePalette;
+}
+
+function setSolveMetric(name) {
+    if (!_solveScoreMetricSet.has(name)) return;
+    const legacy = _legacySolveScoreState('render');
+    _setSolveScoreChainFromLegacy('render', name, legacy.quantile * 100, legacy.omega, legacy.omega_enabled, legacy.omega_phase);
+    setColorMode('solve_score');
+}
+
+function setPaletteMetric(name) {
+    if (!_solveScoreMetricSet.has(name)) return;
+    const legacy = _legacySolveScoreState('palette');
+    _setSolveScoreChainFromLegacy('palette', name, legacy.quantile * 100, legacy.omega, legacy.omega_enabled, legacy.omega_phase);
+}
+
+function _setTriPaletteForMode(mode, triName, activate = true) {
+    if (!_triCatalogAvailable()) return;
+    const entry = _triPaletteEntryByName(triName) || _triCatalog()[0];
+    if (!entry) return;
+    _setRememberedTriPalette(mode, entry.name);
+    if (activate) setPaletteForMode(mode, entry.palette_id);
+    else _renderPaletteRow(mode);
+    if (activate && (mode === 'proximity' || mode === 'solve_score')) setColorMode(mode);
+}
+
+function _setBuiltinPaletteForMode(mode, paletteName, activate = true) {
+    const entry = _builtinPaletteEntryByName(paletteName) || BUILTIN_PALETTE_ENTRIES[0];
+    if (!entry) return;
+    _setRememberedBuiltinPalette(mode, entry.name);
+    if (activate) setPaletteForMode(mode, entry.palette_id);
+    else _renderPaletteRow(mode);
+    if (activate && (mode === 'proximity' || mode === 'solve_score')) setColorMode(mode);
+}
+
+function _setLongPaletteForMode(mode, longName, activate = true) {
+    if (!_longCatalogAvailable()) return;
+    const entry = _longPaletteEntryByName(longName) || _longCatalog()[0];
+    if (!entry) return;
+    _setRememberedLongPalette(mode, entry.name);
+    if (activate) setPaletteForMode(mode, entry.palette_id);
+    else _renderPaletteRow(mode);
+    if (activate && (mode === 'proximity' || mode === 'solve_score')) setColorMode(mode);
+}
+
+function _closeBuiltinPalettePopup() {
+    _builtinPopupState.open = false;
+    const overlay = document.getElementById('builtin-popup-overlay');
+    const filter = document.getElementById('builtin-popup-filter');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+    if (filter) filter.value = '';
+}
+
+function _closeLongPalettePopup() {
+    _longPopupState.open = false;
+    const overlay = document.getElementById('long-popup-overlay');
+    const filter = document.getElementById('long-popup-filter');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+    if (filter) filter.value = '';
+}
+
+function _closeTriPalettePopup() {
+    _triPopupState.open = false;
+    const overlay = document.getElementById('tri-popup-overlay');
+    const filter = document.getElementById('tri-popup-filter');
+    if (overlay) {
+        overlay.style.display = 'none';
+        overlay.setAttribute('aria-hidden', 'true');
+    }
+    if (filter) filter.value = '';
+}
+
+function _renderTriPalettePopup() {
+    const overlay = document.getElementById('tri-popup-overlay');
+    const titleEl = document.getElementById('tri-popup-title');
+    const bodyEl = document.getElementById('tri-popup-body');
+    const filterEl = document.getElementById('tri-popup-filter');
+    if (!overlay || !titleEl || !bodyEl || !filterEl) return;
+    if (!_triPopupState.open || !_triCatalogAvailable()) {
+        _closeTriPalettePopup();
+        return;
+    }
+
+    const visible = _visibleTriPaletteCatalog();
+    const highlightIdx = visible.length ? Math.max(0, Math.min(_triPopupState.highlightIdx || 0, visible.length - 1)) : 0;
+    _triPopupState.highlightIdx = highlightIdx;
+
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    titleEl.textContent = 'Select TRI palette for ' + _popupModeLabel(_triPopupState.mode);
+    filterEl.value = _triPopupState.filter || '';
+    bodyEl.replaceChildren();
+
+    if (!visible.length) {
+        const row = document.createElement('tr');
+        row.className = 'tri-popup-empty';
+        const cell = document.createElement('td');
+        cell.colSpan = 2;
+        cell.textContent = 'No tri palettes match this filter.';
+        row.appendChild(cell);
+        bodyEl.appendChild(row);
+        return;
+    }
+
+    visible.forEach((entry, idx) => {
+        const row = document.createElement('tr');
+        const activeName = _triPaletteForMode(_triPopupState.mode);
+        const cls = ['tri-popup-row'];
+        if (entry.name === activeName) cls.push('active');
+        if (idx === highlightIdx) cls.push('highlight');
+        row.className = cls.join(' ');
+        row.onclick = () => {
+            _setTriPaletteForMode(_triPopupState.mode, entry.name, true);
+            _closeTriPalettePopup();
+        };
+
+        const nameCell = document.createElement('td');
+        const nameWrap = document.createElement('div');
+        nameWrap.className = 'tri-popup-name';
+        const nameMain = document.createElement('div');
+        nameMain.textContent = entry.name;
+        nameWrap.appendChild(nameMain);
+        if (entry.aliases && entry.aliases.length) {
+            const aliases = document.createElement('div');
+            aliases.className = 'tri-popup-aliases';
+            aliases.textContent = 'aliases: ' + entry.aliases.join(', ');
+            nameWrap.appendChild(aliases);
+        }
+        nameCell.appendChild(nameWrap);
+
+        const stripCell = document.createElement('td');
+        const strip = document.createElement('div');
+        strip.className = 'tri-popup-strip';
+        strip.style.background = entry.gradient_css;
+        strip.title = entry.name;
+        stripCell.appendChild(strip);
+
+        row.appendChild(nameCell);
+        row.appendChild(stripCell);
+        bodyEl.appendChild(row);
+    });
+}
+
+function _openTriPalettePopup(mode) {
+    if (!_triCatalogAvailable()) return;
+    _closeBuiltinPalettePopup();
+    _closeLongPalettePopup();
+    _syncTriDefaults();
+    const visible = _triCatalog();
+    const activeName = _triPaletteForMode(mode);
+    const activeIdx = Math.max(0, visible.findIndex(entry => entry.name === activeName));
+    _triPopupState = { open: true, mode, filter: '', highlightIdx: activeIdx >= 0 ? activeIdx : 0 };
+    _renderTriPalettePopup();
+    const filter = document.getElementById('tri-popup-filter');
+    if (filter && typeof filter.focus === 'function') filter.focus();
+}
+
+function _applyTriPopupFilter(text) {
+    _triPopupState.filter = String(text || '');
+    _triPopupState.highlightIdx = 0;
+    _renderTriPalettePopup();
+}
+
+function _renderLongPalettePopup() {
+    const overlay = document.getElementById('long-popup-overlay');
+    const titleEl = document.getElementById('long-popup-title');
+    const bodyEl = document.getElementById('long-popup-body');
+    const filterEl = document.getElementById('long-popup-filter');
+    if (!overlay || !titleEl || !bodyEl || !filterEl) return;
+    if (!_longPopupState.open || !_longCatalogAvailable()) {
+        _closeLongPalettePopup();
+        return;
+    }
+
+    const visible = _visibleLongPaletteCatalog();
+    const highlightIdx = visible.length ? Math.max(0, Math.min(_longPopupState.highlightIdx || 0, visible.length - 1)) : 0;
+    _longPopupState.highlightIdx = highlightIdx;
+
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    titleEl.textContent = 'Select LONG palette for ' + _popupModeLabel(_longPopupState.mode);
+    filterEl.value = _longPopupState.filter || '';
+    bodyEl.replaceChildren();
+
+    if (!visible.length) {
+        const row = document.createElement('tr');
+        row.className = 'tri-popup-empty';
+        const cell = document.createElement('td');
+        cell.colSpan = 2;
+        cell.textContent = 'No long palettes match this filter.';
+        row.appendChild(cell);
+        bodyEl.appendChild(row);
+        return;
+    }
+
+    visible.forEach((entry, idx) => {
+        const row = document.createElement('tr');
+        const activeName = _longPaletteForMode(_longPopupState.mode);
+        const cls = ['tri-popup-row'];
+        if (entry.name === activeName) cls.push('active');
+        if (idx === highlightIdx) cls.push('highlight');
+        row.className = cls.join(' ');
+        row.onclick = () => {
+            _setLongPaletteForMode(_longPopupState.mode, entry.name, true);
+            _closeLongPalettePopup();
+        };
+
+        const nameCell = document.createElement('td');
+        const nameWrap = document.createElement('div');
+        nameWrap.className = 'tri-popup-name';
+        const nameMain = document.createElement('div');
+        nameMain.textContent = entry.name;
+        nameWrap.appendChild(nameMain);
+        if (entry.aliases && entry.aliases.length) {
+            const aliases = document.createElement('div');
+            aliases.className = 'tri-popup-aliases';
+            aliases.textContent = 'aliases: ' + entry.aliases.join(', ');
+            nameWrap.appendChild(aliases);
+        }
+        nameCell.appendChild(nameWrap);
+
+        const stripCell = document.createElement('td');
+        const strip = document.createElement('div');
+        strip.className = 'tri-popup-strip';
+        strip.style.background = entry.gradient_css;
+        strip.title = entry.name;
+        stripCell.appendChild(strip);
+
+        row.appendChild(nameCell);
+        row.appendChild(stripCell);
+        bodyEl.appendChild(row);
+    });
+}
+
+function _openLongPalettePopup(mode) {
+    if (!_longCatalogAvailable()) return;
+    _closeBuiltinPalettePopup();
+    _closeTriPalettePopup();
+    _syncLongDefaults();
+    const visible = _longCatalog();
+    const activeName = _longPaletteForMode(mode);
+    const activeIdx = Math.max(0, visible.findIndex(entry => entry.name === activeName));
+    _longPopupState = { open: true, mode, filter: '', highlightIdx: activeIdx >= 0 ? activeIdx : 0 };
+    _renderLongPalettePopup();
+    const filter = document.getElementById('long-popup-filter');
+    if (filter && typeof filter.focus === 'function') filter.focus();
+}
+
+function _applyLongPopupFilter(text) {
+    _longPopupState.filter = String(text || '');
+    _longPopupState.highlightIdx = 0;
+    _renderLongPalettePopup();
+}
+
+function _renderBuiltinPalettePopup() {
+    const overlay = document.getElementById('builtin-popup-overlay');
+    const titleEl = document.getElementById('builtin-popup-title');
+    const bodyEl = document.getElementById('builtin-popup-body');
+    const filterEl = document.getElementById('builtin-popup-filter');
+    if (!overlay || !titleEl || !bodyEl || !filterEl) return;
+    if (!_builtinPopupState.open) {
+        _closeBuiltinPalettePopup();
+        return;
+    }
+
+    const visible = _visibleBuiltinPaletteCatalog();
+    const highlightIdx = visible.length ? Math.max(0, Math.min(_builtinPopupState.highlightIdx || 0, visible.length - 1)) : 0;
+    _builtinPopupState.highlightIdx = highlightIdx;
+
+    overlay.style.display = 'flex';
+    overlay.setAttribute('aria-hidden', 'false');
+    titleEl.textContent = 'Select palette for ' + _popupModeLabel(_builtinPopupState.mode);
+    filterEl.value = _builtinPopupState.filter || '';
+    bodyEl.replaceChildren();
+
+    if (!visible.length) {
+        const row = document.createElement('tr');
+        row.className = 'tri-popup-empty';
+        const cell = document.createElement('td');
+        cell.colSpan = 2;
+        cell.textContent = 'No built-in palettes match this filter.';
+        row.appendChild(cell);
+        bodyEl.appendChild(row);
+        return;
+    }
+
+    visible.forEach((entry, idx) => {
+        const row = document.createElement('tr');
+        const activeName = _builtinPaletteForMode(_builtinPopupState.mode);
+        const cls = ['tri-popup-row'];
+        if (entry.name === activeName) cls.push('active');
+        if (idx === highlightIdx) cls.push('highlight');
+        row.className = cls.join(' ');
+        row.onclick = () => {
+            _setBuiltinPaletteForMode(_builtinPopupState.mode, entry.name, true);
+            _closeBuiltinPalettePopup();
+        };
+
+        const nameCell = document.createElement('td');
+        const nameWrap = document.createElement('div');
+        nameWrap.className = 'tri-popup-name';
+        const nameMain = document.createElement('div');
+        nameMain.textContent = entry.name;
+        nameWrap.appendChild(nameMain);
+        nameCell.appendChild(nameWrap);
+
+        const stripCell = document.createElement('td');
+        const strip = document.createElement('div');
+        strip.className = 'tri-popup-strip';
+        strip.style.background = entry.gradient_css;
+        strip.title = entry.name;
+        stripCell.appendChild(strip);
+
+        row.appendChild(nameCell);
+        row.appendChild(stripCell);
+        bodyEl.appendChild(row);
+    });
+}
+
+function _openBuiltinPalettePopup(mode) {
+    _closeTriPalettePopup();
+    _closeLongPalettePopup();
+    _syncBuiltinDefaults();
+    const visible = BUILTIN_PALETTE_ENTRIES;
+    const activeName = _builtinPaletteForMode(mode);
+    const activeIdx = Math.max(0, visible.findIndex(entry => entry.name === activeName));
+    _builtinPopupState = { open: true, mode, filter: '', highlightIdx: activeIdx >= 0 ? activeIdx : 0 };
+    _renderBuiltinPalettePopup();
+    const filter = document.getElementById('builtin-popup-filter');
+    if (filter && typeof filter.focus === 'function') filter.focus();
+}
+
+function _applyBuiltinPopupFilter(text) {
+    _builtinPopupState.filter = String(text || '');
+    _builtinPopupState.highlightIdx = 0;
+    _renderBuiltinPalettePopup();
+}
+
+function _bindPopupShell({ overlayId, closeId, cancelId, isOpen, onClose, onEnter, onArrowDown, onArrowUp }) {
+    const overlay = document.getElementById(overlayId);
+    const closeBtn = closeId ? document.getElementById(closeId) : null;
+    const cancelBtn = cancelId ? document.getElementById(cancelId) : null;
+    if (overlay) {
+        overlay.addEventListener('click', (ev) => {
+            if (ev.target === overlay) onClose();
+        });
+    }
+    if (closeBtn) closeBtn.addEventListener('click', onClose);
+    if (cancelBtn) cancelBtn.addEventListener('click', onClose);
+    document.addEventListener('keydown', (ev) => {
+        if (!isOpen()) return;
+        if (ev.key === 'Escape') {
+            ev.preventDefault();
+            onClose();
+            return;
+        }
+        if (ev.key === 'ArrowDown' && onArrowDown) {
+            ev.preventDefault();
+            onArrowDown(ev);
+            return;
+        }
+        if (ev.key === 'ArrowUp' && onArrowUp) {
+            ev.preventDefault();
+            onArrowUp(ev);
+            return;
+        }
+        if (ev.key === 'Enter' && onEnter) {
+            ev.preventDefault();
+            onEnter(ev);
+        }
+    });
+}
+
+function _initTriPalettePopup() {
+    const filterEl = document.getElementById('tri-popup-filter');
+    _bindPopupShell({
+        overlayId: 'tri-popup-overlay',
+        closeId: 'tri-popup-close',
+        isOpen: () => !!_triPopupState.open,
+        onClose: _closeTriPalettePopup,
+        onArrowDown: () => {
+            const visible = _visibleTriPaletteCatalog();
+            if (!visible.length) return;
+            _triPopupState.highlightIdx = Math.min((_triPopupState.highlightIdx || 0) + 1, visible.length - 1);
+            _renderTriPalettePopup();
+        },
+        onArrowUp: () => {
+            const visible = _visibleTriPaletteCatalog();
+            if (!visible.length) return;
+            _triPopupState.highlightIdx = Math.max((_triPopupState.highlightIdx || 0) - 1, 0);
+            _renderTriPalettePopup();
+        },
+        onEnter: () => {
+            const visible = _visibleTriPaletteCatalog();
+            if (!visible.length) return;
+            const entry = visible[Math.max(0, Math.min(_triPopupState.highlightIdx || 0, visible.length - 1))];
+            if (!entry) return;
+            _setTriPaletteForMode(_triPopupState.mode, entry.name, true);
+            _closeTriPalettePopup();
+        },
+    });
+    if (filterEl) filterEl.addEventListener('input', (ev) => _applyTriPopupFilter(ev.target.value));
+}
+
+function _initBuiltinPalettePopup() {
+    const filterEl = document.getElementById('builtin-popup-filter');
+    _bindPopupShell({
+        overlayId: 'builtin-popup-overlay',
+        closeId: 'builtin-popup-close',
+        isOpen: () => !!_builtinPopupState.open,
+        onClose: _closeBuiltinPalettePopup,
+        onArrowDown: () => {
+            const visible = _visibleBuiltinPaletteCatalog();
+            if (!visible.length) return;
+            _builtinPopupState.highlightIdx = Math.min((_builtinPopupState.highlightIdx || 0) + 1, visible.length - 1);
+            _renderBuiltinPalettePopup();
+        },
+        onArrowUp: () => {
+            const visible = _visibleBuiltinPaletteCatalog();
+            if (!visible.length) return;
+            _builtinPopupState.highlightIdx = Math.max((_builtinPopupState.highlightIdx || 0) - 1, 0);
+            _renderBuiltinPalettePopup();
+        },
+        onEnter: () => {
+            const visible = _visibleBuiltinPaletteCatalog();
+            if (!visible.length) return;
+            const entry = visible[Math.max(0, Math.min(_builtinPopupState.highlightIdx || 0, visible.length - 1))];
+            if (!entry) return;
+            _setBuiltinPaletteForMode(_builtinPopupState.mode, entry.name, true);
+            _closeBuiltinPalettePopup();
+        },
+    });
+    if (filterEl) filterEl.addEventListener('input', (ev) => _applyBuiltinPopupFilter(ev.target.value));
+}
+
+function _initLongPalettePopup() {
+    const filterEl = document.getElementById('long-popup-filter');
+    _bindPopupShell({
+        overlayId: 'long-popup-overlay',
+        closeId: 'long-popup-close',
+        isOpen: () => !!_longPopupState.open,
+        onClose: _closeLongPalettePopup,
+        onArrowDown: () => {
+            const visible = _visibleLongPaletteCatalog();
+            if (!visible.length) return;
+            _longPopupState.highlightIdx = Math.min((_longPopupState.highlightIdx || 0) + 1, visible.length - 1);
+            _renderLongPalettePopup();
+        },
+        onArrowUp: () => {
+            const visible = _visibleLongPaletteCatalog();
+            if (!visible.length) return;
+            _longPopupState.highlightIdx = Math.max((_longPopupState.highlightIdx || 0) - 1, 0);
+            _renderLongPalettePopup();
+        },
+        onEnter: () => {
+            const visible = _visibleLongPaletteCatalog();
+            if (!visible.length) return;
+            const entry = visible[Math.max(0, Math.min(_longPopupState.highlightIdx || 0, visible.length - 1))];
+            if (!entry) return;
+            _setLongPaletteForMode(_longPopupState.mode, entry.name, true);
+            _closeLongPalettePopup();
+        },
+    });
+    if (filterEl) filterEl.addEventListener('input', (ev) => _applyLongPopupFilter(ev.target.value));
+}
+
+function _canRepaletteArtifact(art) {
+    if (!art || !art.palette_id) return false;
+    return !!(art.palette_bins_key || art.chunk_bins_prefix);
+}
+
+function _hasColorRawSidecar(art) {
+    return !!(art && art.raw_key && art.raw_meta_key);
+}
+
+function _canColorRepaletteArtifact(art) {
+    if (!art || art.family !== 'color') return false;
+    if (art.postprocess_kind) return false;
+    if (art.color_mode !== 'solve_score' && art.color_mode !== 'saved_palette') return false;
+    if (![1, 3].includes(_artifactOutputChannelCount(art))) return false;
+    return !!_hasColorRawSidecar(art);
+}
+
+;(window.__ppParts = window.__ppParts || []).push('04-palette-color');

@@ -550,13 +550,17 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('curl -s -o /dev/null -w "%{http_code}" "${SITE_URL}/${asset}"', DEPLOY_TEXT)
         self.assertIn('mkdir -p "$(dirname "${TMP_DIR}/${asset}")"', DEPLOY_TEXT)
         self.assertIn('curl -fsS "${SITE_URL}/${asset}" -o "${TMP_DIR}/${asset}"', DEPLOY_TEXT)
-        self.assertIn('LOCAL_HASH=$(shasum -a 256 "$SCRIPT_DIR/${asset}" | cut -d\' \' -f1)', DEPLOY_TEXT)
+        self.assertIn('LOCAL_HASH=$(shasum -a 256 "$LOCAL_SRC" | cut -d\' \' -f1)', DEPLOY_TEXT)
+        self.assertIn('LOCAL_SRC=$(stamped_index_html)', DEPLOY_TEXT)
+        self.assertIn('upload_frontend_assets', DEPLOY_TEXT)
+        self.assertIn('?v=${BUILD_ID}', DEPLOY_TEXT)
         self.assertIn('REMOTE_HASH=$(shasum -a 256 "${TMP_DIR}/${asset}" | cut -d\' \' -f1)', DEPLOY_TEXT)
         self.assertIn('FATAL: deployed ${asset} does not match local file', DEPLOY_TEXT)
 
     def test_deploy_includes_solve_score_program_assets(self):
         self.assertIn('frontend_asset_keys() {', DEPLOY_TEXT)
         self.assertIn('find "solve-score-programs" -type f | sort', DEPLOY_TEXT)
+        self.assertIn('find "js" -name "*.js" -type f | sort', DEPLOY_TEXT)
         self.assertIn('frontend_asset_content_type() {', DEPLOY_TEXT)
         self.assertIn('*.json) echo "application/json" ;;', DEPLOY_TEXT)
         self.assertIn('done < <(frontend_asset_keys)', DEPLOY_TEXT)

@@ -77,6 +77,12 @@ frontend_asset_keys() {
         "coeff_func_catalog_js.js" \
         "tri_palette_catalog_js.js" \
         "long_palette_catalog_js.js"
+    if [ -d "$SCRIPT_DIR/js" ]; then
+        (
+            cd "$SCRIPT_DIR" || exit 1
+            find "js" -name "*.js" -type f | sort
+        )
+    fi
     if [ -d "$SCRIPT_DIR/solve-score-programs" ]; then
         (
             cd "$SCRIPT_DIR"
@@ -165,6 +171,35 @@ build_deploy_metadata() {
 }
 
 # --- Deployed frontend smoke test ---
+# Stamp index.html's local script tags with ?v=$BUILD_ID into a temp copy.
+# Cache-busting: every deploy gives the js/ parts and generated catalogs
+# version-unique URLs, so caches can never serve a stale or mixed set; the
+# files themselves upload unstamped (their names are the source of truth).
+stamped_index_html() {
+    local STAMPED=/tmp/polypaint-index-stamped.html
+    if [ -z "$BUILD_ID" ]; then
+        echo "FATAL: stamped_index_html called before build_deploy_metadata" >&2
+        return 1
+    fi
+    sed -E "s|<script src=\"(js/[^\"]+\.js)\"></script>|<script src=\"\1?v=${BUILD_ID}\"></script>|; s|<script src=\"([a-z_]+_js\.js)\"></script>|<script src=\"\1?v=${BUILD_ID}\"></script>|" \
+        "$SCRIPT_DIR/index.html" > "$STAMPED"
+    echo "$STAMPED"
+}
+
+upload_frontend_assets() {
+    local STAMPED
+    STAMPED=$(stamped_index_html)
+    while IFS= read -r asset; do
+        local SRC_PATH="$SCRIPT_DIR/$asset"
+        if [ "$asset" = "index.html" ]; then
+            SRC_PATH="$STAMPED"
+        fi
+        aws s3 cp "$SRC_PATH" "s3://$BUCKET/$asset" \
+            --content-type "$(frontend_asset_content_type "$asset")" \
+            --cache-control "no-cache" --region "$REGION"
+    done < <(frontend_asset_keys)
+}
+
 verify_frontend_assets() {
     local SITE_URL="http://${BUCKET}.s3-website-${REGION}.amazonaws.com"
     local TMP_DIR
@@ -181,7 +216,11 @@ verify_frontend_assets() {
         local LOCAL_HASH REMOTE_HASH
         mkdir -p "$(dirname "${TMP_DIR}/${asset}")"
         curl -fsS "${SITE_URL}/${asset}" -o "${TMP_DIR}/${asset}"
-        LOCAL_HASH=$(shasum -a 256 "$SCRIPT_DIR/${asset}" | cut -d' ' -f1)
+        local LOCAL_SRC="$SCRIPT_DIR/${asset}"
+        if [ "$asset" = "index.html" ]; then
+            LOCAL_SRC=$(stamped_index_html)
+        fi
+        LOCAL_HASH=$(shasum -a 256 "$LOCAL_SRC" | cut -d' ' -f1)
         REMOTE_HASH=$(shasum -a 256 "${TMP_DIR}/${asset}" | cut -d' ' -f1)
         if [ "$LOCAL_HASH" != "$REMOTE_HASH" ]; then
             echo "FATAL: deployed ${asset} does not match local file"
@@ -447,20 +486,31 @@ echo "Generating palette assets..."
 "${TEST_PYTHON[@]}" "$SCRIPT_DIR/scripts/generate_long_palettes.py" || { echo "FATAL: long-palette generation failed"; exit 1; }
 
 # --- JS syntax check ---
-echo "Checking index.html JS syntax..."
+# The app JS lives in ordered js/ parts (classic scripts; tags in index.html);
+# index.html keeps only the small part-consistency boot block.
+echo "Checking index.html + js/ part syntax..."
 SCRIPT_BLOCKS=$(grep -c '<script>' index.html || true)
 if [ "$SCRIPT_BLOCKS" != "1" ]; then
-    echo "ERROR: expected exactly one <script> block in index.html, found $SCRIPT_BLOCKS; the JS gate extraction below would corrupt."
+    echo "ERROR: expected exactly one inline <script> block (the boot check) in index.html, found $SCRIPT_BLOCKS."
     exit 1
 fi
 sed -n '/<script>/,/<\/script>/p' index.html | sed '1d;$d' > /tmp/_jscheck.js
 if ! node --check /tmp/_jscheck.js; then
     rm -f /tmp/_jscheck.js
-    echo "ERROR: index.html has JavaScript syntax errors. Aborting deploy."
+    echo "ERROR: index.html boot block has JavaScript syntax errors. Aborting deploy."
     exit 1
 fi
 rm -f /tmp/_jscheck.js
-echo "  JS syntax OK"
+for PART in js/*.js; do
+    node --check "$PART" || { echo "ERROR: $PART has JavaScript syntax errors. Aborting deploy."; exit 1; }
+done
+TAGGED=$(grep -c '<script src="js/' index.html || true)
+ON_DISK=$(ls js/*.js | wc -l | tr -d " ")
+if [ "$TAGGED" != "$ON_DISK" ]; then
+    echo "ERROR: index.html references $TAGGED js/ parts but $ON_DISK exist on disk."
+    exit 1
+fi
+echo "  JS syntax OK ($ON_DISK parts + boot block; tags match disk)"
 
 echo ""
 echo "Running predeploy contract gate..."
@@ -1732,13 +1782,9 @@ if [ "$ACTION" = "create" ]; then
     # Ensure bucket is configured for website hosting
     ensure_bucket_website
 
-    # Upload frontend assets to S3
+    # Upload frontend assets to S3 (index.html ships build-stamped)
     echo "Uploading frontend assets to S3..."
-    while IFS= read -r asset; do
-        aws s3 cp "$SCRIPT_DIR/$asset" "s3://$BUCKET/$asset" \
-            --content-type "$(frontend_asset_content_type "$asset")" \
-            --cache-control "no-cache" --region "$REGION"
-    done < <(frontend_asset_keys)
+    upload_frontend_assets
     verify_frontend_assets
 
     echo ""
@@ -1828,13 +1874,9 @@ elif [ "$ACTION" = "update" ]; then
     # Ensure bucket is configured for website hosting
     ensure_bucket_website
 
-    # Upload frontend assets to S3
-    while IFS= read -r asset; do
-        echo "Uploading ${asset} to S3..."
-        aws s3 cp "$SCRIPT_DIR/$asset" "s3://$BUCKET/$asset" \
-            --content-type "$(frontend_asset_content_type "$asset")" \
-            --cache-control "no-cache" --region "$REGION"
-    done < <(frontend_asset_keys)
+    # Upload frontend assets to S3 (index.html ships build-stamped)
+    echo "Uploading frontend assets to S3..."
+    upload_frontend_assets
     verify_frontend_assets
 
     echo ""

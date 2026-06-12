@@ -14,7 +14,7 @@
 \title{\textbf{PolyPaint: Architecture \& UI Critique}\\
 \large Current state, trade-offs, and concrete alternatives}
 \author{Prepared from a full-tree review}
-\date{June 2026}
+\date{June 2026 --- revised June 12 after the implementation sprint}
 
 \begin{document}
 \maketitle
@@ -72,6 +72,17 @@ is \textbf{radical buildlessness} --- one HTML file, one bash deployer, zips
 of plain Python around native ARM binaries --- and most observed costs are
 the predictable tax of that choice rather than accidents.
 
+\textbf{Revision note (June 12).} Between first issue and this revision,
+three of the top recommendations were implemented and verified: the deploy
+data moved into \texttt{deploy\_manifest.json} (D2), the registry
+vocabulary and chip catalog now generate from
+\texttt{coeff\_legacy\_registry.json} (D4/D5), and the frontend harness
+executes the real generated artifacts (D8). Two production incidents (a
+Lambda \texttt{import ssl} outage and a DNS failure inside curl) exposed a
+decision this review had not examined --- how native binaries couple to the
+\emph{pinned} Lambda runtime --- now covered as D9 with its own guard
+stack. Sections are updated in place.
+
 Three findings dominate:
 
 \begin{enumerate}[leftmargin=1.4em]
@@ -94,7 +105,7 @@ Three findings dominate:
 
 \section{System inventory}
 
-Numbers measured on the current tree (post CR1--CR7 fixes, deployed).
+Numbers measured on the current tree (post CR1--CR11 fixes).
 
 <<inventory, results='asis'>>=
 inv <- data.frame(
@@ -112,9 +123,10 @@ inv <- data.frame(
     "Test files / passing tests",
     "Program DSLs (param + coeff), text and chip front ends"
   ),
-  Size = c("20{,}033 lines", "774", "40 files", "89 files",
-           "39 files, 167k lines", "9{,}956 lines", "41", "49", "3",
-           "2{,}144 lines", "113 / 1{,}279 (+33 subtests)", "2")
+  Size = c("19{,}989 lines", "780+", "40 files", "90 files",
+           "39 files, 167k lines", "9{,}956 lines", "41 (one manifest)", "48", "3",
+           "1{,}857 lines (data in deploy\\_manifest.json)",
+           "114 / 1{,}289 (+33 subtests)", "2")
 )
 knitr::kable(inv, format = "latex", booktabs = TRUE, escape = FALSE,
              align = "lr", linesep = "")
@@ -158,8 +170,16 @@ diffs concentrate in one path.
   Weakest option here.
 \end{enumerate}
 
-\verdict{Keep the buildless philosophy; do alternative 2 now and treat
-alternative 1 as the next structural step. Skip 3.}
+\verdict{Keep the buildless philosophy. Alternative 1's \textbf{stage 1
+landed June 12}: the monolith is split into 12 ordered \texttt{js/} parts
+(988--1{,}819 lines each; classic scripts, so globals and load order are
+byte-identical to before --- verified by concatenation parity), with
+build-stamped \texttt{?v=} URLs at upload, a runtime part-consistency
+check, and tags-vs-disk equality enforced by the harness and the deploy
+gate. index.html is now 2{,}945 lines of HTML/CSS. The ESM conversion
+proper (explicit state object, import seams, window-export shim for the
+inline handlers) is the remaining stage 2. Do alternative 2 (tsc/ESLint)
+next. Skip 3.}
 
 \subsection{D2 --- bash deploy.sh as the infrastructure layer}
 
@@ -189,8 +209,15 @@ partially-updated stack (mitigated, not solved, by idempotence).
   table, roles, API), script for the fast-moving Lambda/ASL layer.
 \end{enumerate}
 
-\verdict{Keep, with alternative 2. Revisit IaC only when a second
-environment or a second operator becomes real.}
+\verdict{\textbf{Implemented} (alternative 2). The fleet data --- 41
+function specs, 48 routes, gateway permissions, retired resources --- lives
+in \texttt{deploy\_manifest.json}; \texttt{deploy\_manifest.py} validates
+it (uniqueness, route ownership, env-variable declarations, a layer-only
+\texttt{LD\_LIBRARY\_PATH} rule) and emits the bash deploy.sh sources.
+deploy.sh fell from 2{,}144 to 1{,}857 lines; the migration was proven by
+byte-parity of all 41 specs against the previous branch lists, and
+api\_manifest.py reads routes from the manifest instead of regexing the
+script. Revisit full IaC only when a second environment becomes real.}
 
 \subsection{D3 --- 41 single-purpose Lambdas, shared code copied into each zip}
 
@@ -254,7 +281,14 @@ deploy; binary staleness is a real failure mode (hence the mtime gate).
   tests is an asset, not a liability.
 \end{enumerate}
 
-\verdict{Keep the split; do alternative 1. Treat 2 and 3 as
+\verdict{Keep the split; alternative 1 is \textbf{implemented} for the
+registry: \texttt{coeff\_legacy\_registry.json} carries aliases (wire
+format), chip-name shadowing, andy flags, and full per-transform UI blocks
+(param shapes, defaults, tooltips); the Python compilers derive their
+tables at load, and \texttt{gen\_coeff\_vocab.py} emits
+\texttt{coeff\_vocab\_js.js} for the browser, freshness-gated in
+predeploy with ordering pinned as UI contract. Adding a plain transform is
+now a registry entry plus the C case --- zero JS edits. Treat 2 and 3 as
 profile-driven, not aesthetic, decisions.}
 
 \subsection{D5 --- Two stack-machine DSLs with text and chip front ends}
@@ -290,8 +324,14 @@ into the UI (Section~4).
   Section~5.2 exists.
 \end{enumerate}
 
-\verdict{Keep the DSL design; invest in alternative 1 immediately, hold 2
-until a feature forces a fingerprint version bump anyway.}
+\verdict{Keep the DSL design; alternative 1 \textbf{landed} for the
+registry-transform vocabulary and chip catalog (see D4) --- the CR6/CR7
+drift class is structurally gone, with the migration verified by
+deep-equality of the hydrated catalog against the original hand-written
+literal. The $\sim$20 structural program chips (push, set, emit,
+littlewood, macro, \ldots) remain hand-written JS --- program-VM
+vocabulary paired with the chain compiler, the natural next extraction.
+Hold alternative 2 until a feature forces a fingerprint version bump.}
 
 \subsection{D6 --- Fingerprint-addressed artifact cache, frozen wire formats}
 
@@ -355,8 +395,51 @@ preview, render, fetch result) covering the DOM seam; Hypothesis-based
 program generators for VM parity; after an ES-module split, real unit
 imports replace source extraction.
 
-\verdict{Keep and extend: Playwright smoke + property tests are the two
-missing legs.}
+\verdict{Keep and extend. Since first issue: the harness executes the
+real chip-catalog hydrator and serializer against the shipped generated
+artifacts (no fixture stubs on that path); the Docker gate gained
+loader-resolution assertions (hermetic DT\_RPATH closures, layer hygiene,
+the vipsdeps chain) and runs under the production env shape; and a
+post-deploy INIT sweep probes all 41 functions for import-dead state
+seconds after deploy --- on its first run it mapped the June outage to
+exactly the 8 broken functions. Playwright smoke + property tests remain
+the two missing legs.}
+
+\subsection{D9 --- Native library exposure: four link modes against a pinned runtime}
+
+\textbf{What happened.} Two production incidents (June 11) defined this
+decision area. The Lambda runtime is a \emph{pinned} snapshot
+(\texttt{python:3.12.mainlinev2.v11}) while native artifacts are rebuilt
+against \emph{current} Amazon Linux, so any library crossing that boundary
+couples two userland vintages. Incident one: staged OpenSSL on
+\texttt{LD\_LIBRARY\_PATH=/var/task/lib} shadowed the runtime python's
+\texttt{\_ssl} and killed \texttt{import ssl} at INIT for 8 functions.
+Incident two: a staged June \texttt{libresolv} (glibc-internal) against
+the pinned glibc broke DNS inside curl. Neither reproduces in the current
+local Lambda image --- it tolerates what the pinned runtime rejects --- so
+the defense must be structural, not test-against-the-runtime.
+
+\textbf{The settled design.} Four link modes, each with an explicit
+exposure contract: static musl (immune); libcurl binaries carrying
+\texttt{--disable-new-dtags} DT\_RPATH that resolves their whole closure
+from \texttt{\$ORIGIN/lib}, with the glibc family excluded from staging;
+libvips binaries \emph{and the layer CLI tools} (patched via patchelf)
+resolving libarchive's crypto chain from \texttt{/opt/vipsdeps} ---
+vendored outside \texttt{/opt/lib} so the runtime python never sees it;
+and \texttt{LD\_LIBRARY\_PATH} restricted to layer paths by the
+deploy-manifest validator. Python only ever loads runtime libraries;
+binaries only ever load version-consistent vendored sets.
+
+\textbf{Guards.} Docker-gate loader assertions (zip-layout \texttt{ldd}
+with no environment; crypto chain from vipsdeps for all ten vips
+executables); layer hygiene pins (no glibc-family or OpenSSL in
+\texttt{/opt/lib}, frozen-shadow versions pinned); the post-deploy INIT
+sweep; and download errors that lead with curl diagnostics so a 1.5\,KB
+presigned URL cannot truncate them away.
+
+\verdict{Settled. The failure family has one trigger --- rebuilding
+against current userland under a pinned runtime --- and every known edge
+is now structurally closed or gate-pinned.}
 
 \subsection{Decision matrix}
 
@@ -365,15 +448,18 @@ m <- data.frame(
   Decision = c("D1 buildless single-file UI", "D2 bash deployer",
                "D3 41 small Lambdas", "D4 C core via subprocess",
                "D5 two DSLs, four mirrors", "D6 fingerprint cache",
-               "D7 SFN + polling", "D8 verification stack"),
-  Call = c("Keep + add checking", "Keep + manifest-drive",
-           "Keep + shared layer", "Keep + generate mirrors",
-           "Keep + one catalog", "Keep + spec version",
-           "Keep + push status", "Keep + E2E/property"),
-  Risk.if.ignored = c("more unexecuted-path bugs", "second-env pain",
-                      "mid-deploy version skew", "three-way drift tax grows",
-                      "next CR6-class bug", "frozen quirks accumulate",
-                      "polling UX ceiling", "DOM-seam regressions")
+               "D7 SFN + polling", "D8 verification stack",
+               "D9 native lib exposure"),
+  Call = c("Keep + add checking", "DONE: manifest-driven",
+           "Keep + shared layer", "DONE: registry generates JS/Py",
+           "DONE for registry; program chips next", "Keep + spec version",
+           "Keep + push status", "Extended; E2E/property open",
+           "Settled: hermetic + gates"),
+  Risk.if.ignored = c("more unexecuted-path bugs", "(retired)",
+                      "mid-deploy version skew", "(retired: CR6/CR7 class)",
+                      "program chips still hand JS", "frozen quirks accumulate",
+                      "polling UX ceiling", "DOM-seam regressions",
+                      "next pinned-runtime outage")
 )
 names(m) <- c("Decision", "Call", "Risk if ignored")
 knitr::kable(m, format = "latex", booktabs = TRUE, align = "lll", linesep = "")
@@ -742,33 +828,36 @@ needs it.
 
 \section{Roadmap}
 
+The backend items at the top of the original roadmap are done; the UI
+alternatives (Sections~5.1--5.6) are untouched and remain the standing
+backlog --- nothing in the implementation sprint touched the interface.
+
 <<roadmap, results='asis'>>=
 r <- data.frame(
-  Horizon = c("Now (days)", "Now (days)", "Now (days)",
-              "Next (1--2 wks)", "Next (1--2 wks)", "Next (1--2 wks)",
-              "Then (1--2 wks)", "Then (1--2 wks)", "Then (2--4 wks)"),
-  Item = c("A: command palette + chip inspector (low risk)",
+  Status = c("DONE", "DONE", "open", "open",
+             "open", "open", "open", "open", "open"),
+  Item = c("manifest-driven deploy + validator + INIT sweep",
+           "one catalog: registry vocab + chip defs -> JS/Py",
            "tsc --checkJs + ESLint in predeploy (low)",
            "shared-code Lambda layer (low)",
+           "A: command palette + chip inspector (low)",
            "C: jobs rail --- poll first, push later (low)",
            "D: XY scrub pad on lores preview (low)",
-           "one catalog generates JS/Py/C tables (medium)",
-           "B: unified text + chips editor (medium)",
-           "E: gallery results + compare tray (low)",
+           "B: unified text + chips editor; E: gallery (medium)",
            "F: studio shell on ES modules (high)"),
-  Payoff = c("ends tiny-box editing",
+  Payoff = c("one spec list; deploy refuses bad data",
+             "CR6/CR7 drift class retired; zero-JS transforms",
              "catches the observed bug classes",
              "kills mid-deploy version skew",
+             "ends tiny-box editing",
              "work in flight becomes visible",
              "exploration becomes tactile",
-             "retires the CR6/CR7 drift class",
-             "stack visible; toggle dies",
-             "judgment surface for outputs",
+             "stack visible; judgment surface",
              "layout matches the loop")
 )
 cat("\\begingroup\\small\n")
 cat(knitr::kable(r, format = "latex", booktabs = TRUE, align = "lll",
-                 linesep = c("", "", "\\addlinespace", "", "", "\\addlinespace", "", "", "")))
+                 linesep = c("", "\\addlinespace", "", "\\addlinespace", "", "", "", "", "")))
 cat("\n\\endgroup\n")
 @
 
@@ -784,5 +873,14 @@ each removes a distinct constraint; B and E complete the loop; F is the
 eventual shape once the panels exist. None of it requires touching the
 solver, the DSLs' semantics, or the deploy substrate --- which is the
 strongest endorsement of the choices made that this review can offer.
+
+\textbf{Post-revision standing:} the architecture half of this review is
+substantially executed --- manifest-driven deploy, generated registry
+vocabulary and chip catalog, an executed (not grepped) frontend harness,
+and a settled native-dependency design hardened by two real incidents.
+What remains is exactly the UI half: alternatives A--F, unchanged and
+still ordered by effort. The next unit of work that changes how the tool
+\emph{feels} is A (command palette + inspector); the next that changes
+how it \emph{fails} is the tsc/ESLint gate.
 
 \end{document}

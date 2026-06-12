@@ -2,6 +2,7 @@ import json
 import math
 import subprocess
 import unittest
+import re
 from pathlib import Path
 
 
@@ -38,8 +39,17 @@ def _extract_function(source, name):
     raise RuntimeError(f"could not find closing brace for {name}")
 
 
+def _frontend_source():
+    """index.html plus its js/ parts in script-tag order (what the browser runs)."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    parts = re.findall(r'<script src="js/([^"?]+\.js)"></script>', html)
+    return html + "\n" + "\n".join(
+        (ROOT / "js" / name).read_text(encoding="utf-8") for name in parts
+    )
+
+
 def _deepzoom_js_source():
-    source = INDEX_HTML.read_text(encoding="utf-8")
+    source = _frontend_source()
     return "\n\n".join(_extract_function(source, name) for name in _DEEPZOOM_JS_FUNCTIONS)
 
 

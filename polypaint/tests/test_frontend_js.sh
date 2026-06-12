@@ -26,7 +26,7 @@ node - "$HTML" <<'NODE'
 const fs = require('fs');
 
 const htmlPath = process.argv[2];
-const src = fs.readFileSync(htmlPath, 'utf8');
+const htmlSrc = fs.readFileSync(htmlPath, 'utf8');
 // Generated registry vocab: chip param shapes/descs/titles live there now
 // (lambda/coeff_legacy_registry.json ui blocks -> coeff_vocab_js.js).
 const vocabSrc = fs.readFileSync(require('path').join(require('path').dirname(htmlPath), 'coeff_vocab_js.js'), 'utf8');
@@ -35,6 +35,19 @@ function fail(message) {
   console.error('FATAL: ' + message);
   process.exit(1);
 }
+
+// The app's JS is split into ordered js/ parts (classic scripts; see the
+// <script src="js/..."> tags). Assemble them in tag order — exactly what the
+// browser executes — and fail if the tags and the files on disk disagree.
+const path = require('path');
+const baseDir = path.dirname(htmlPath);
+const partNames = [...htmlSrc.matchAll(/<script src="js\/([^"?]+\.js)"><\/script>/g)].map(m => m[1]);
+if (!partNames.length) fail('no js/ part tags found in index.html');
+const diskParts = fs.readdirSync(path.join(baseDir, 'js')).filter(f => f.endsWith('.js')).sort();
+if (JSON.stringify(diskParts) !== JSON.stringify([...partNames].sort())) {
+  fail('js/ files on disk do not match index.html script tags: tags=' + partNames.join(',') + ' disk=' + diskParts.join(','));
+}
+const src = htmlSrc + '\n' + partNames.map(n => fs.readFileSync(path.join(baseDir, 'js', n), 'utf8')).join('\n');
 
 function assertIncludes(snippet, message) {
   if (!src.includes(snippet)) fail(message);
@@ -514,13 +527,31 @@ const fs = require('fs');
 const vm = require('vm');
 
 const htmlPath = process.argv[2];
-const src = fs.readFileSync(htmlPath, 'utf8');
+const htmlSrc = fs.readFileSync(htmlPath, 'utf8');
 
 // The real generated registry vocab (coeff_vocab_js.js): the runtime checks
 // below exercise the same artifact the browser loads, so alias drift between
 // the registry JSON and the deployed JS fails here.
 const vocabSrc = fs.readFileSync(require('path').join(require('path').dirname(htmlPath), 'coeff_vocab_js.js'), 'utf8');
 const coeffRegistryVocab = JSON.parse(vocabSrc.slice(vocabSrc.indexOf('{'), vocabSrc.lastIndexOf('}') + 1));
+
+function fail(message) {
+  console.error('FATAL: ' + message);
+  process.exit(1);
+}
+
+// The app's JS is split into ordered js/ parts (classic scripts; see the
+// <script src="js/..."> tags). Assemble them in tag order — exactly what the
+// browser executes — and fail if the tags and the files on disk disagree.
+const path = require('path');
+const baseDir = path.dirname(htmlPath);
+const partNames = [...htmlSrc.matchAll(/<script src="js\/([^"?]+\.js)"><\/script>/g)].map(m => m[1]);
+if (!partNames.length) fail('no js/ part tags found in index.html');
+const diskParts = fs.readdirSync(path.join(baseDir, 'js')).filter(f => f.endsWith('.js')).sort();
+if (JSON.stringify(diskParts) !== JSON.stringify([...partNames].sort())) {
+  fail('js/ files on disk do not match index.html script tags: tags=' + partNames.join(',') + ' disk=' + diskParts.join(','));
+}
+const src = htmlSrc + '\n' + partNames.map(n => fs.readFileSync(path.join(baseDir, 'js', n), 'utf8')).join('\n');
 
 function fail(message) {
   console.error('FATAL: ' + message);

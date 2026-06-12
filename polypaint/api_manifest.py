@@ -18,6 +18,18 @@ def _read(path: Path) -> str:
     return path.read_text()
 
 
+def _frontend_source() -> str:
+    """index.html plus its js/ parts, concatenated in script-tag order.
+
+    The app JS is split across js/*.js classic scripts; this is exactly what
+    the browser executes, so frontend-contract extraction reads the same."""
+    html = _read(INDEX_PATH)
+    parts = re.findall(r'<script src="js/([^"?]+\.js)"></script>', html)
+    if not parts:
+        raise RuntimeError("index.html lists no js/ parts")
+    return html + "\n" + "\n".join(_read(ROOT / "js" / name) for name in parts)
+
+
 def _extract_function_calls(text: str, func_name: str) -> list[str]:
     needle = func_name + "("
     calls = []
@@ -184,7 +196,7 @@ def _extract_deploy_routes() -> list[str]:
 
 
 def build_manifest() -> dict:
-    index_text = _read(INDEX_PATH)
+    index_text = _frontend_source()
     deploy_text = _read(DEPLOY_PATH)
     storage_text = _read(STORAGE_HANDLER_PATH)
     dispatch_text = _read(DISPATCH_HANDLER_PATH)

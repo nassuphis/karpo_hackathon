@@ -547,13 +547,24 @@ class TestDeployPackaging(unittest.TestCase):
 
     def test_deploy_verifies_uploaded_frontend_content_matches_local(self):
         self.assertIn('verify_frontend_assets() {', DEPLOY_TEXT)
-        self.assertIn('curl -s -o /dev/null -w "%{http_code}" "${SITE_URL}/${asset}"', DEPLOY_TEXT)
+        self.assertIn('curl -s -o /dev/null -w "%{http_code}" "${SITE_URL}/${DEPLOYED_KEY}"', DEPLOY_TEXT)
         self.assertIn('mkdir -p "$(dirname "${TMP_DIR}/${asset}")"', DEPLOY_TEXT)
-        self.assertIn('curl -fsS "${SITE_URL}/${asset}" -o "${TMP_DIR}/${asset}"', DEPLOY_TEXT)
+        self.assertIn('curl -fsS "${SITE_URL}/${DEPLOYED_KEY}" -o "${TMP_DIR}/${asset}"', DEPLOY_TEXT)
         self.assertIn('LOCAL_HASH=$(shasum -a 256 "$LOCAL_SRC" | cut -d\' \' -f1)', DEPLOY_TEXT)
         self.assertIn('LOCAL_SRC=$(stamped_index_html)', DEPLOY_TEXT)
         self.assertIn('upload_frontend_assets', DEPLOY_TEXT)
-        self.assertIn('?v=${BUILD_ID}', DEPLOY_TEXT)
+        # Mixed-set safety needs versioned KEYS, not query strings: S3 serves
+        # stable keys regardless of ?v=, so scripts live under a per-build
+        # prefix and only the index flips (last) to the new set.
+        self.assertIn('assets/${BUILD_ID}/', DEPLOY_TEXT)
+        self.assertIn('deployed_asset_key', DEPLOY_TEXT)
+        helper = re.search(r"upload_frontend_assets\(\) \{(?P<body>.*?)\n\}", DEPLOY_TEXT, re.DOTALL)
+        self.assertIsNotNone(helper, "upload_frontend_assets helper missing")
+        body = helper.group("body")
+        skip_at = body.index('if [ "$asset" = "index.html" ]')
+        index_upload_at = body.index('aws s3 cp "$STAMPED" "s3://$BUCKET/index.html"')
+        self.assertLess(skip_at, index_upload_at,
+                        "index.html must upload LAST, after every versioned script object")
         self.assertIn('REMOTE_HASH=$(shasum -a 256 "${TMP_DIR}/${asset}" | cut -d\' \' -f1)', DEPLOY_TEXT)
         self.assertIn('FATAL: deployed ${asset} does not match local file', DEPLOY_TEXT)
 

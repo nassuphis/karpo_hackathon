@@ -171,33 +171,47 @@ build_deploy_metadata() {
 }
 
 # --- Deployed frontend smoke test ---
-# Stamp index.html's local script tags with ?v=$BUILD_ID into a temp copy.
-# Cache-busting: every deploy gives the js/ parts and generated catalogs
-# version-unique URLs, so caches can never serve a stale or mixed set; the
-# files themselves upload unstamped (their names are the source of truth).
+# Rewrite index.html's script tags to build-versioned asset keys
+# (assets/$BUILD_ID/...) in a temp copy. Versioned KEYS — not query strings —
+# are what make a deploy mixed-set safe: a query string only busts browser
+# caches, while S3 keeps serving the same object key, so overwriting js/x.js
+# in place would race a live old index. With per-build keys the old index
+# keeps resolving the old objects untouched, and the new index (uploaded
+# last) flips the site to the new set atomically. Old assets/ prefixes
+# accumulate; prune manually when convenient — live old tabs reference them.
 stamped_index_html() {
     local STAMPED=/tmp/polypaint-index-stamped.html
     if [ -z "$BUILD_ID" ]; then
         echo "FATAL: stamped_index_html called before build_deploy_metadata" >&2
         return 1
     fi
-    sed -E "s|<script src=\"(js/[^\"]+\.js)\"></script>|<script src=\"\1?v=${BUILD_ID}\"></script>|; s|<script src=\"([a-z_]+_js\.js)\"></script>|<script src=\"\1?v=${BUILD_ID}\"></script>|" \
+    sed -E "s|<script src=\"(js/[^\"]+\.js)\"></script>|<script src=\"assets/${BUILD_ID}/\1\"></script>|; s|<script src=\"([a-z_]+_js\.js)\"></script>|<script src=\"assets/${BUILD_ID}/\1\"></script>|" \
         "$SCRIPT_DIR/index.html" > "$STAMPED"
     echo "$STAMPED"
+}
+
+# Where an asset lives in the bucket: scripts go under the build-versioned
+# prefix; index.html (and any non-script asset) keeps its stable key.
+deployed_asset_key() {
+    local ASSET="$1"
+    case "$ASSET" in
+        index.html) echo "index.html" ;;
+        js/*|*_js.js) echo "assets/${BUILD_ID}/${ASSET}" ;;
+        *) echo "$ASSET" ;;
+    esac
 }
 
 upload_frontend_assets() {
     local STAMPED
     STAMPED=$(stamped_index_html)
-    # Order matters: every js part and generated catalog must be in place
-    # before the (stamped) index.html that references them goes live —
-    # otherwise a loading browser can fetch a new index pointing at missing
-    # or old-body part keys.
+    # Order matters: every script lands at its build-versioned key before
+    # the index.html that references those keys goes live. The old index
+    # keeps serving the old build's objects throughout.
     while IFS= read -r asset; do
         if [ "$asset" = "index.html" ]; then
             continue
         fi
-        aws s3 cp "$SCRIPT_DIR/$asset" "s3://$BUCKET/$asset" \
+        aws s3 cp "$SCRIPT_DIR/$asset" "s3://$BUCKET/$(deployed_asset_key "$asset")" \
             --content-type "$(frontend_asset_content_type "$asset")" \
             --cache-control "no-cache" --region "$REGION"
     done < <(frontend_asset_keys)
@@ -213,15 +227,16 @@ verify_frontend_assets() {
     trap 'rm -rf "$TMP_DIR"' RETURN
     echo "Verifying deployed frontend assets..."
     while IFS= read -r asset; do
-        local STATUS
-        STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${SITE_URL}/${asset}")
+        local DEPLOYED_KEY STATUS
+        DEPLOYED_KEY=$(deployed_asset_key "$asset")
+        STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${SITE_URL}/${DEPLOYED_KEY}")
         if [ "$STATUS" != "200" ]; then
-            echo "FATAL: ${SITE_URL}/${asset} returned HTTP ${STATUS} (expected 200)"
+            echo "FATAL: ${SITE_URL}/${DEPLOYED_KEY} returned HTTP ${STATUS} (expected 200)"
             exit 1
         fi
         local LOCAL_HASH REMOTE_HASH
         mkdir -p "$(dirname "${TMP_DIR}/${asset}")"
-        curl -fsS "${SITE_URL}/${asset}" -o "${TMP_DIR}/${asset}"
+        curl -fsS "${SITE_URL}/${DEPLOYED_KEY}" -o "${TMP_DIR}/${asset}"
         local LOCAL_SRC="$SCRIPT_DIR/${asset}"
         if [ "$asset" = "index.html" ]; then
             LOCAL_SRC=$(stamped_index_html)

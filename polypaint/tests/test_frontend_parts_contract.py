@@ -1,14 +1,22 @@
 """Structural contract for the split frontend parts (js/*.js).
 
-Classic scripts hoist per-file only, so top-level *executable* statements in
-one part must not reference functions defined in a later part — the CR12
-load-order blocker. The runtime sequential-load gate (tests/test_frontend_js.sh)
-catches everything that executes under its DOM stub, but a top-level
-statement behind a condition could slip past it. This test closes that gap
-structurally: every part may contain only declarations at top level;
-executable statements are allowed solely inside the marked boot block at the
-end of js/12 (which runs after every part is parsed) plus each part's
-__ppParts registration line.
+Classic scripts hoist per-file only, so top-level code in one part must not
+reference functions defined in a later part — the CR12 load-order blocker.
+This test enforces a *statement-level* rule: every part may contain only
+declarations at top level; executable statements live solely inside the
+marked boot block at the end of js/12 (plus each part's __ppParts
+registration line).
+
+What this does and does not prove (CR13): a declaration INITIALIZER can
+still execute at load (`const x = laterPartFn();` passes this scanner).
+Unconditional initializers are fully covered by the runtime sequential-load
+gate in tests/test_frontend_js.sh, which executes every script separately
+in tag order. The residual gap — a *conditional* expression inside an
+initializer calling a later part — is not machine-checked; flagging every
+initializer with call syntax would drown the legitimate catalog IIFEs in
+whitelist churn. Statements (including conditional ones) ARE fully covered
+here; initializers are covered for the unconditional case by the runtime
+gate.
 
 The scanner is template-literal-aware (multi-line HTML strings contain
 column-zero lines that are not top-level code).
@@ -109,6 +117,16 @@ class TestFrontendPartsContract(unittest.TestCase):
         disk = sorted(p.name for p in (ROOT / "js").glob("*.js"))
         self.assertEqual(sorted(tags), disk)
         self.assertEqual(len(tags), len(set(tags)))
+
+    def test_boot_block_exists_only_in_final_part(self):
+        # The boot exemption must not be claimable by earlier parts.
+        for name in _part_names():
+            raw = (ROOT / "js" / name).read_text()
+            count = raw.count(BOOT_START)
+            if name == "12-deepzoom-boot.js":
+                self.assertEqual(count, 1, "js/12 must contain exactly one boot banner")
+            else:
+                self.assertEqual(count, 0, f"{name} must not contain a boot banner")
 
     def test_parts_are_declaration_only_outside_boot(self):
         violations = []

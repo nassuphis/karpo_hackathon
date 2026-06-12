@@ -503,15 +503,8 @@ async function goRenderSelectedFavorite() {
 }
 
 // Arrow key navigation for favorites inventory
-document.addEventListener('keydown', function(e) {
-    const favTab = document.getElementById('tab-favorites');
-    if (!favTab || !favTab.classList.contains('active')) return;
-    const inv = _favoriteArtifacts || [];
-    if (!inv.length) return;
-    let idx = _favoriteSelectedIdx ?? -1;
-    if (e.key === 'ArrowDown') { e.preventDefault(); _favoriteSelect(Math.min(idx + 1, inv.length - 1)); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); _favoriteSelect(Math.max(idx - 1, 0)); }
-});
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
 
 function _toggleFavoritesDownloadMenu() {
     const menu = document.getElementById('favorites-download-menu');
@@ -528,11 +521,8 @@ function _toggleFavoritesDownloadMenu() {
     }
 }
 
-document.addEventListener('click', function(e) {
-    const menu = document.getElementById('favorites-download-menu');
-    const btn = document.getElementById('btn-favorites-download');
-    if (menu && btn && !btn.contains(e.target) && !menu.contains(e.target)) menu.style.display = 'none';
-});
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
 
 async function _favoritesDlMenuAction(mode) {
     const menu = document.getElementById('favorites-download-menu');
@@ -912,55 +902,17 @@ function _applyDetail(r, detail, previewEl, infoEl, jobId) {
     }
 }
 
-document.addEventListener('keydown', (e) => {
-    if (!document.getElementById('tab-results').classList.contains('active')) return;
-    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-    if (!_resultsCache.length) return;
-    e.preventDefault();
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
 
-    const idx = _selectedJobId ? _resultsCache.findIndex(r => r.job_id === _selectedJobId) : -1;
-    let next;
-    if (e.key === 'ArrowDown') {
-        next = idx < _resultsCache.length - 1 ? idx + 1 : idx;
-    } else {
-        next = idx > 0 ? idx - 1 : 0;
-    }
-    selectResult(_resultsCache[next].job_id);
-});
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
 
-document.addEventListener('keydown', (e) => {
-    if (!document.getElementById('tab-palette').classList.contains('active')) return;
-    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-    if (!_paletteInventory.length) return;
-    e.preventDefault();
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
 
-    const idx = _paletteSelectedIdx;
-    let next;
-    if (e.key === 'ArrowDown') next = idx < _paletteInventory.length - 1 ? idx + 1 : idx;
-    else next = idx > 0 ? idx - 1 : 0;
-    _paletteSelect(next);
-});
-
-document.addEventListener('keydown', (e) => {
-    if (!document.getElementById('tab-render').classList.contains('active')) return;
-    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
-    const inv = _renderArtifacts[_renderActiveFamily] || [];
-    if (!inv.length) return;
-    e.preventDefault();
-
-    const idx = _renderSelectedArtifact[_renderActiveFamily];
-    let next;
-    if (e.key === 'ArrowDown') next = idx < inv.length - 1 ? idx + 1 : idx;
-    else next = idx > 0 ? idx - 1 : 0;
-    _renderSelectArtifact(_renderActiveFamily, next);
-});
-
-document.addEventListener('keydown', (e) => {
-    if (!document.getElementById('tab-render').classList.contains('active')) return;
-    if (e.key !== 'Escape') return;
-    if (!_renderPreviewSelectionState.rect || !_renderPreviewSelectionState.artifactKey) return;
-    _clearRenderPreviewSelection();
-});
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
 
 async function previewResult() {
     if (!_selectedJobId) return;

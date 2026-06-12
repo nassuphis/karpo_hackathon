@@ -1019,4 +1019,59 @@ async function main() {
 main().catch((err) => fail(err && err.stack ? err.stack : String(err)));
 NODE
 
+
+# --- Sequential load gate (browser semantics) ---
+# Classic scripts hoist per-file only: top-level code in one part must not
+# reference functions defined in a later part. Concatenated extraction (the
+# checks above) cannot catch that, so execute each script tag separately in
+# index.html order with a lenient DOM stub — exactly how the browser loads.
+node - "$HTML" <<'NODE'
+const fs = require('fs'), vm = require('vm'), path = require('path');
+const root = path.dirname(process.argv[2]);
+const html = fs.readFileSync(process.argv[2], 'utf8');
+const tags = [...html.matchAll(/<script src="(js\/[^"?]+\.js|[a-z_]+_js\.js)"><\/script>/g)].map(m => m[1]);
+if (tags.length < 13) { console.error('FATAL: expected generated catalogs + js parts, found ' + tags.length + ' tags'); process.exit(1); }
+function el() {
+  return new Proxy(function () {}, {
+    get(t, p) {
+      if (p === Symbol.toPrimitive || p === 'toString') return () => '';
+      if (p === 'length') return 0;
+      return el();
+    },
+    apply() { return el(); },
+    set() { return true; },
+  });
+}
+const ctx = {
+  console: { log() {}, warn() {}, error() {}, info() {} },
+  document: el(), navigator: el(), location: { search: '', href: '', origin: '' },
+  localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+  setTimeout: () => 0, clearTimeout() {}, setInterval: () => 0, clearInterval() {},
+  fetch: () => new Promise(() => {}), URLSearchParams, URL, Math, JSON, Date, RegExp,
+  Promise, Array, Object, Number, String, Boolean, Map, Set, Symbol, Infinity, NaN,
+  isFinite, isNaN, parseFloat, parseInt, structuredClone: x => x,
+  requestAnimationFrame: () => 0, performance: { now: () => 0 },
+  Image: function () { return el(); }, AudioContext: function () { return el(); },
+  addEventListener() {}, removeEventListener() {}, alert() {}, confirm: () => false,
+  Blob: function () {}, FileReader: function () { return el(); }, atob: s => s, btoa: s => s,
+};
+ctx.window = ctx; ctx.globalThis = ctx;
+vm.createContext(ctx);
+for (const tag of tags) {
+  try {
+    vm.runInContext(fs.readFileSync(path.join(root, tag), 'utf8'), ctx, { filename: tag });
+  } catch (e) {
+    console.error('FATAL: sequential load failed at ' + tag + ': ' + e.constructor.name + ': ' + e.message);
+    console.error('(top-level code referencing a later part? move the call to js/12 boot or the definition earlier)');
+    process.exit(1);
+  }
+}
+const parts = ctx.__ppParts || [];
+if (parts.length !== tags.filter(t => t.startsWith('js/')).length) {
+  console.error('FATAL: part registrations (' + parts.length + ') do not match js/ tags');
+  process.exit(1);
+}
+console.log('Frontend sequential load checks: OK (' + tags.length + ' scripts)');
+NODE
+
 echo "=== Frontend fused render source test passed ==="

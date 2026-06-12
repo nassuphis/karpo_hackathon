@@ -1684,45 +1684,14 @@ async function _pollActiveRenderRun() {
 }
 
 // Visibility/focus handlers for observer
-document.addEventListener('visibilitychange', function() {
-    if (document.visibilityState === 'visible') {
-        resumeActiveRenderObserver();
-        resumeActivePaletteObserver();
-    } else {
-        stopActiveRenderObserver();
-        stopActivePaletteObserver();
-    }
-});
-window.addEventListener('focus', function() {
-    resumeActiveRenderObserver();
-    resumeActivePaletteObserver();
-});
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
 
 // Restore active runs on page load
-(function() {
-    _syncSolveScoreOmegaUi('render');
-    _syncSolveScoreOmegaUi('palette');
-    _syncRenderPreviewSourceMode();
-    _updateResultsFilterUi();
-    const renderJobInput = document.getElementById('render-results-dir');
-    if (renderJobInput && !renderJobInput._polypaintBound) {
-        renderJobInput._polypaintBound = true;
-        renderJobInput.addEventListener('input', function() {
-            const current = String(renderJobInput.value || '').trim();
-            if (current !== _renderLoadedJobId) _invalidateRenderInventory(current);
-        });
-    }
-    const renderRun = _loadActiveRun();
-    if (renderRun) {
-        _activeRenderRun = renderRun;
-        startActiveRenderObserver();
-    }
-    const paletteRun = _loadActivePaletteRun();
-    if (paletteRun) {
-        _activePaletteRun = paletteRun;
-        startActivePaletteObserver();
-    }
-})();
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
 
 /* ---- Render artifact discovery and UI rendering ---- */
 

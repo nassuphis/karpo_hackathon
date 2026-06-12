@@ -254,15 +254,8 @@ async function _dzDeleteSelected() {
 }
 
 // Arrow key navigation for deepzoom inventory
-document.addEventListener('keydown', function(e) {
-    const dzTab = document.getElementById('tab-deepzoom');
-    if (!dzTab || !dzTab.classList.contains('active')) return;
-    const inv = window._dzInventory || [];
-    if (!inv.length) return;
-    let idx = window._dzSelectedIdx ?? -1;
-    if (e.key === 'ArrowDown') { e.preventDefault(); _dzSelect(Math.min(idx + 1, inv.length - 1)); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); _dzSelect(Math.max(idx - 1, 0)); }
-});
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
 
 function viewDeepZoom(dziUrl) {
     const viewerEl = document.getElementById('deepzoom-viewer');
@@ -982,13 +975,299 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
 
 
 // Populate hidden fallback selects and render transform picker popups.
-_syncRenderBackgroundColorUi();
-_syncParamTransformAddOptions();
-_syncParamProgramAddOptions();
-_syncCoeffTransformAddOptions();
-_syncCoeffProgramAddOptions();
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
 
 // Populate function dropdown from generated catalog
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
+
+
+/* Statements relocated from parts 01-05 (ran before the popup-init
+   calls in the monolith): global listeners and the config load. */
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
+
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
+
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
+
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
+
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
+
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
+
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
+
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
+
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
+
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
+
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
+
+/* ---- Boot sequence ----
+   Moved from the monolith's mid-file position (js/06 tail): these are
+   the top-level initializer calls, and they reference functions from
+   several parts, so they must run only after every part is parsed. */
+buildPaletteCircles('palette-circles-root-proximity', 'proximity', () => renderRootProximityPalette);
+buildPaletteCircles('palette-circles-solve-score', 'solve_score', () => renderSolveScorePalette);
+buildPaletteCircles('palette-circles-palette-tab', 'palette_tab', () => paletteTabPalette);
+_initTriPalettePopup();
+_initBuiltinPalettePopup();
+_initLongPalettePopup();
+_initFunctionPopup();
+_initAutolevelPopup();
+_initResizePopup();
+_initRepalettePopup();
+_initColorRepalettePopup();
+_initBilevelPopup();
+_initColorToBilevelPopup();
+_initResultsRefreshPopup();
+_initRenderMtPopup();
+_initComputeMtPopup();
+_initExtractPalettePopup();
+_initPdfColorSpreadPopup();
+_initSolveScoreProgramModal();
+_initParamProgramModal();
+_initCoeffProgramModal();
+_updateSolveScoreButtons();  // initial disabled state
+_clearPaletteCanvas('No palette selected');
+
+
+/* Statements relocated from parts 07-11 (ran after the popup-init
+   calls in the monolith): initial chip renders, vocab-load guard,
+   visibility-change listener. */
+if (!_coeffRegistryVocab) console.error('coeff_vocab_js.js did not load — registry transform vocabulary unavailable');
+
+_renderChips('palette-rt');
+
+_renderChips('pp');
+
+_renderChips('cp');
+
+_ensureSolveScoreChainDefaults();
+
+_renderChips('ss');
+
+_renderChips('palette-ss');
+
+_syncRenderColorInterpretationUi();
+
+document.addEventListener('visibilitychange', function() {
+    if (document.visibilityState === 'visible') {
+        resumeActiveRenderObserver();
+        resumeActivePaletteObserver();
+    } else {
+        stopActiveRenderObserver();
+        stopActivePaletteObserver();
+    }
+});
+
+
+/* Statements relocated from later parts (round 1): listeners,
+   window exports, sync calls — monolith tail order preserved. */
+window.addEventListener('focus', function() {
+    resumeActiveRenderObserver();
+    resumeActivePaletteObserver();
+});
+
+(function() {
+    _syncSolveScoreOmegaUi('render');
+    _syncSolveScoreOmegaUi('palette');
+    _syncRenderPreviewSourceMode();
+    _updateResultsFilterUi();
+    const renderJobInput = document.getElementById('render-results-dir');
+    if (renderJobInput && !renderJobInput._polypaintBound) {
+        renderJobInput._polypaintBound = true;
+        renderJobInput.addEventListener('input', function() {
+            const current = String(renderJobInput.value || '').trim();
+            if (current !== _renderLoadedJobId) _invalidateRenderInventory(current);
+        });
+    }
+    const renderRun = _loadActiveRun();
+    if (renderRun) {
+        _activeRenderRun = renderRun;
+        startActiveRenderObserver();
+    }
+    const paletteRun = _loadActivePaletteRun();
+    if (paletteRun) {
+        _activePaletteRun = paletteRun;
+        startActivePaletteObserver();
+    }
+})();
+
+document.addEventListener('click', function(e) {
+    const menu = document.getElementById('download-menu');
+    const btn = document.getElementById('btn-render-download');
+    if (menu && btn && !btn.contains(e.target) && !menu.contains(e.target)) {
+        menu.style.display = 'none';
+    }
+});
+
+window._dzViewportReadoutState = _dzViewportReadoutState;
+
+document.addEventListener('keydown', function(e) {
+    const dzTab = document.getElementById('tab-deepzoom');
+    if (!dzTab || !dzTab.classList.contains('active')) return;
+    const inv = window._dzInventory || [];
+    if (!inv.length) return;
+    let idx = window._dzSelectedIdx ?? -1;
+    if (e.key === 'ArrowDown') { e.preventDefault(); _dzSelect(Math.min(idx + 1, inv.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); _dzSelect(Math.max(idx - 1, 0)); }
+});
+
+_syncRenderBackgroundColorUi();
+
+_syncParamTransformAddOptions();
+
+_syncParamProgramAddOptions();
+
+_syncCoeffTransformAddOptions();
+
+_syncCoeffProgramAddOptions();
+
 populateDropdown();
+
+document.addEventListener('keydown', function(e) {
+    const favTab = document.getElementById('tab-favorites');
+    if (!favTab || !favTab.classList.contains('active')) return;
+    const inv = _favoriteArtifacts || [];
+    if (!inv.length) return;
+    let idx = _favoriteSelectedIdx ?? -1;
+    if (e.key === 'ArrowDown') { e.preventDefault(); _favoriteSelect(Math.min(idx + 1, inv.length - 1)); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); _favoriteSelect(Math.max(idx - 1, 0)); }
+});
+
+document.addEventListener('click', function(e) {
+    const menu = document.getElementById('favorites-download-menu');
+    const btn = document.getElementById('btn-favorites-download');
+    if (menu && btn && !btn.contains(e.target) && !menu.contains(e.target)) menu.style.display = 'none';
+});
+
+document.addEventListener('keydown', (e) => {
+    if (!document.getElementById('tab-results').classList.contains('active')) return;
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    if (!_resultsCache.length) return;
+    e.preventDefault();
+
+    const idx = _selectedJobId ? _resultsCache.findIndex(r => r.job_id === _selectedJobId) : -1;
+    let next;
+    if (e.key === 'ArrowDown') {
+        next = idx < _resultsCache.length - 1 ? idx + 1 : idx;
+    } else {
+        next = idx > 0 ? idx - 1 : 0;
+    }
+    selectResult(_resultsCache[next].job_id);
+});
+
+document.addEventListener('keydown', (e) => {
+    if (!document.getElementById('tab-palette').classList.contains('active')) return;
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    if (!_paletteInventory.length) return;
+    e.preventDefault();
+
+    const idx = _paletteSelectedIdx;
+    let next;
+    if (e.key === 'ArrowDown') next = idx < _paletteInventory.length - 1 ? idx + 1 : idx;
+    else next = idx > 0 ? idx - 1 : 0;
+    _paletteSelect(next);
+});
+
+document.addEventListener('keydown', (e) => {
+    if (!document.getElementById('tab-render').classList.contains('active')) return;
+    if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    const inv = _renderArtifacts[_renderActiveFamily] || [];
+    if (!inv.length) return;
+    e.preventDefault();
+
+    const idx = _renderSelectedArtifact[_renderActiveFamily];
+    let next;
+    if (e.key === 'ArrowDown') next = idx < inv.length - 1 ? idx + 1 : idx;
+    else next = idx > 0 ? idx - 1 : 0;
+    _renderSelectArtifact(_renderActiveFamily, next);
+});
+
+document.addEventListener('keydown', (e) => {
+    if (!document.getElementById('tab-render').classList.contains('active')) return;
+    if (e.key !== 'Escape') return;
+    if (!_renderPreviewSelectionState.rect || !_renderPreviewSelectionState.artifactKey) return;
+    _clearRenderPreviewSelection();
+});
+
+loadLambdaConfig();
+
+document.addEventListener('click', function(e) {
+    const popup = document.getElementById('config-popup');
+    const btn = document.getElementById('btn-config-toggle');
+    if (!popup || !popup._open) return;
+    const target = e.target;
+    if (popup.contains(target) || (btn && btn.contains(target))) return;
+    _setConfigPopupOpen(false);
+});
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') _setConfigPopupOpen(false);
+});
+
+
+/* Statements relocated from later parts (round 2): listeners,
+   window exports, sync calls — monolith tail order preserved. */
+document.addEventListener('click', function(e) {
+    const target = e.target;
+    ['ss', 'palette-ss'].forEach(which => {
+        const popup = document.getElementById(which + '-add-popup');
+        const btn = document.getElementById(which + '-add-btn');
+        if (!popup || !popup._open) return;
+        if (_elementContains(popup, target) || _elementContains(btn, target)) return;
+        _setSolveScorePickerOpen(which, false);
+    });
+    const ptPopup = document.getElementById('pt-add-popup');
+    const ptBtn = document.getElementById('pt-add-btn');
+    if (ptPopup && ptPopup._open && !_elementContains(ptPopup, target) && !_elementContains(ptBtn, target)) {
+        _setParamTransformPickerOpen(false);
+    }
+    const ppPopup = document.getElementById('pp-add-popup');
+    const ppBeforeBtn = document.getElementById('pp-insert-before-btn');
+    const ppAfterBtn = document.getElementById('pp-insert-after-btn');
+    if (ppPopup && ppPopup._open && !_elementContains(ppPopup, target) && !_elementContains(ppBeforeBtn, target) && !_elementContains(ppAfterBtn, target)) {
+        _setParamProgramPickerOpen(false);
+    }
+    const cpPopup = document.getElementById('cp-add-popup');
+    const cpBeforeBtn = document.getElementById('cp-insert-before-btn');
+    const cpAfterBtn = document.getElementById('cp-insert-after-btn');
+    if (cpPopup && cpPopup._open && !_elementContains(cpPopup, target) && !_elementContains(cpBeforeBtn, target) && !_elementContains(cpAfterBtn, target)) {
+        _setCoeffProgramPickerOpen(false);
+    }
+    const ctPopup = document.getElementById('ct-add-popup');
+    const ctBtn = document.getElementById('ct-add-btn');
+    if (ctPopup && ctPopup._open && !_elementContains(ctPopup, target) && !_elementContains(ctBtn, target)) {
+        _setCoeffTransformPickerOpen(false);
+    }
+});
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        _closeSolveScorePickers();
+        _setParamTransformPickerOpen(false);
+        _setParamProgramPickerOpen(false);
+        _setCoeffProgramPickerOpen(false);
+        _setCoeffTransformPickerOpen(false);
+        _clearRenderPreviewSelection();
+        _clearRenderLoresPreviewSelection();
+    }
+});
 
 ;(window.__ppParts = window.__ppParts || []).push('12-deepzoom-boot');

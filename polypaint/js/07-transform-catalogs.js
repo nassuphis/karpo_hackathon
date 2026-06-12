@@ -84,8 +84,12 @@ const _ptInfo = {
     coeff12: { category: 'legacy', desc: 'legacy mixed polynomial map' },
 };
 
-Object.entries(_ptInfo).forEach(([name, info]) => {
+// Declaration form: top-level executable statements are reserved for the
+// js/12 boot block (parts-contract test); this enrichment must run here at
+// load because later parts read the enriched catalog while parsing.
+const _ptCatalogEnriched = Object.entries(_ptInfo).every(([name, info]) => {
     if (_ptCatalog[name]) Object.assign(_ptCatalog[name], info);
+    return true;
 });
 
 const _paramProgramLegacyNames = [
@@ -442,7 +446,8 @@ function _isAndyParam(pDef) {
 // the backend compilers for aliases (wire format: saved chip rows carry
 // them), chip-name shadowing, and text-alias synthesis.
 const _coeffRegistryVocab = (typeof window !== 'undefined' && window._coeffRegistryVocab) || null;
-if (!_coeffRegistryVocab) console.error('coeff_vocab_js.js did not load — registry transform vocabulary unavailable');
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
 
 // Adding a coeff transform end to end:
 //   1. lambda/coeff_legacy_registry.json — new entry with the next fn_index
@@ -531,6 +536,14 @@ function _canonicalCoeffTransformName(name) {
     const aliases = _coeffRegistryVocab ? _coeffRegistryVocab.aliasToCanonical : {};
     return aliases[raw] || raw;
 }
+function _coeffProgramLegacyInputDefs(legacyName) {
+    const canonicalName = _canonicalCoeffTransformName(legacyName);
+    if (canonicalName === 'exp') return _coeffProgramExpParamDefs.map(p => ({ ...p }));
+    if (canonicalName === 'round') return _coeffProgramRoundParamDefs.map(p => ({ ...p }));
+    const spec = _ctCatalog[canonicalName] || {};
+    return (spec.params || []).map(p => ({ ...p }));
+}
+
 const _coeffProgramCatalog = (() => {
     const catalog = {
         push: {

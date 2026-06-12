@@ -746,13 +746,8 @@ function _toggleDownloadMenu() {
     }
 }
 // Close menu on outside click
-document.addEventListener('click', function(e) {
-    const menu = document.getElementById('download-menu');
-    const btn = document.getElementById('btn-render-download');
-    if (menu && btn && !btn.contains(e.target) && !menu.contains(e.target)) {
-        menu.style.display = 'none';
-    }
-});
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
 
 async function _buildArtifactMeta(jobId, art, options = {}) {
     const imageFilename = String(options.imageFilename || '').trim() || String(art?.image_key || '').split('/').pop() || '';
@@ -1224,7 +1219,8 @@ async function runDeepZoomExport(jobId, sourceKey, btnEl, options = null) {
 
 let _osdViewer = null;
 const _dzViewportReadoutState = { rafPending: false, meta: null, visibleBounds: null };
-window._dzViewportReadoutState = _dzViewportReadoutState;
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
 
 function _requestAnimationFrameCompat(fn) {
     if (typeof window.requestAnimationFrame === 'function') return window.requestAnimationFrame(fn);

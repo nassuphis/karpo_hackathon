@@ -180,13 +180,8 @@ function _coeffProgramChipShellHtml(i, readonly, bodyHtml) {
     return `<span class="chip score-chip${selected}" onclick="selectCoeffProgramLine(${i},event)">${moves}${bodyHtml}<span class="chip-x" onclick="event.stopPropagation();removeChip('cp',${i})">x</span></span>`;
 }
 
-function _coeffProgramLegacyInputDefs(legacyName) {
-    const canonicalName = _canonicalCoeffTransformName(legacyName);
-    if (canonicalName === 'exp') return _coeffProgramExpParamDefs.map(p => ({ ...p }));
-    if (canonicalName === 'round') return _coeffProgramRoundParamDefs.map(p => ({ ...p }));
-    const spec = _ctCatalog[canonicalName] || {};
-    return (spec.params || []).map(p => ({ ...p }));
-}
+// _coeffProgramLegacyInputDefs moved to js/07-transform-catalogs.js: the
+// catalog IIFE there calls it at load time.
 
 function _coeffProgramLegacyValues(params, legacyDefs) {
     const values = [
@@ -465,9 +460,8 @@ function _renderChips(which) {
     if (which === 'pt') _syncParamPipelineModeUi();
     if (which === 'ct') _syncCoeffTransformAddOptions();
 }
-_renderChips('palette-rt');
-_renderChips('pp');
-_renderChips('cp');
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
 
 const _fmtMs = (ms) => (ms/1000).toFixed(1) + 's';
 const _fmtStatus = (sc) => sc ? Object.entries(sc).map(([k,v]) => `${k}:${v}`).join(' ') : '';
@@ -630,10 +624,8 @@ const PALETTE_NO_ROW_STALE_MS = 120000;
 const PALETTE_WARN_STALE_MS = 300000;
 const PALETTE_HARD_STALE_MS = 900000;
 
-_ensureSolveScoreChainDefaults();
-_renderChips('ss');
-_renderChips('palette-ss');
-_syncRenderColorInterpretationUi();
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
 
 function _clearPaletteCanvas(msg) {
     const canvas = document.getElementById('palette-canvas');

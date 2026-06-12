@@ -189,15 +189,21 @@ stamped_index_html() {
 upload_frontend_assets() {
     local STAMPED
     STAMPED=$(stamped_index_html)
+    # Order matters: every js part and generated catalog must be in place
+    # before the (stamped) index.html that references them goes live —
+    # otherwise a loading browser can fetch a new index pointing at missing
+    # or old-body part keys.
     while IFS= read -r asset; do
-        local SRC_PATH="$SCRIPT_DIR/$asset"
         if [ "$asset" = "index.html" ]; then
-            SRC_PATH="$STAMPED"
+            continue
         fi
-        aws s3 cp "$SRC_PATH" "s3://$BUCKET/$asset" \
+        aws s3 cp "$SCRIPT_DIR/$asset" "s3://$BUCKET/$asset" \
             --content-type "$(frontend_asset_content_type "$asset")" \
             --cache-control "no-cache" --region "$REGION"
     done < <(frontend_asset_keys)
+    aws s3 cp "$STAMPED" "s3://$BUCKET/index.html" \
+        --content-type "$(frontend_asset_content_type "index.html")" \
+        --cache-control "no-cache" --region "$REGION"
 }
 
 verify_frontend_assets() {

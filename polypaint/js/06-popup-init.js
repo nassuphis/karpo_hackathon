@@ -1309,29 +1309,8 @@ function buildPaletteCircles(containerId, mode, getCurrentPalette) {
     _syncTriDefaults();
     _renderPaletteRow(mode);
 }
-buildPaletteCircles('palette-circles-root-proximity', 'proximity', () => renderRootProximityPalette);
-buildPaletteCircles('palette-circles-solve-score', 'solve_score', () => renderSolveScorePalette);
-buildPaletteCircles('palette-circles-palette-tab', 'palette_tab', () => paletteTabPalette);
-_initTriPalettePopup();
-_initBuiltinPalettePopup();
-_initLongPalettePopup();
-_initFunctionPopup();
-_initAutolevelPopup();
-_initResizePopup();
-_initRepalettePopup();
-_initColorRepalettePopup();
-_initBilevelPopup();
-_initColorToBilevelPopup();
-_initResultsRefreshPopup();
-_initRenderMtPopup();
-_initComputeMtPopup();
-_initExtractPalettePopup();
-_initPdfColorSpreadPopup();
-_initSolveScoreProgramModal();
-_initParamProgramModal();
-_initCoeffProgramModal();
-_updateSolveScoreButtons();  // initial disabled state
-_clearPaletteCanvas('No palette selected');
+// (popup/modal boot calls moved to js/12-deepzoom-boot.js — they must run
+// after every part has been parsed; classic scripts hoist per-file only.)
 
 /* ---- Render ---- */
 /* ---- Chip-based transform chains ---- */

@@ -188,69 +188,24 @@ async function asyncPool(limit, items, fn) {
 }
 
 // Load config on page load
-loadLambdaConfig();
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
 
-document.addEventListener('click', function(e) {
-    const popup = document.getElementById('config-popup');
-    const btn = document.getElementById('btn-config-toggle');
-    if (!popup || !popup._open) return;
-    const target = e.target;
-    if (popup.contains(target) || (btn && btn.contains(target))) return;
-    _setConfigPopupOpen(false);
-});
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
 
-document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') _setConfigPopupOpen(false);
-});
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
 
 function _elementContains(el, target) {
     return !!(el && typeof el.contains === 'function' && el.contains(target));
 }
 
-document.addEventListener('click', function(e) {
-    const target = e.target;
-    ['ss', 'palette-ss'].forEach(which => {
-        const popup = document.getElementById(which + '-add-popup');
-        const btn = document.getElementById(which + '-add-btn');
-        if (!popup || !popup._open) return;
-        if (_elementContains(popup, target) || _elementContains(btn, target)) return;
-        _setSolveScorePickerOpen(which, false);
-    });
-    const ptPopup = document.getElementById('pt-add-popup');
-    const ptBtn = document.getElementById('pt-add-btn');
-    if (ptPopup && ptPopup._open && !_elementContains(ptPopup, target) && !_elementContains(ptBtn, target)) {
-        _setParamTransformPickerOpen(false);
-    }
-    const ppPopup = document.getElementById('pp-add-popup');
-    const ppBeforeBtn = document.getElementById('pp-insert-before-btn');
-    const ppAfterBtn = document.getElementById('pp-insert-after-btn');
-    if (ppPopup && ppPopup._open && !_elementContains(ppPopup, target) && !_elementContains(ppBeforeBtn, target) && !_elementContains(ppAfterBtn, target)) {
-        _setParamProgramPickerOpen(false);
-    }
-    const cpPopup = document.getElementById('cp-add-popup');
-    const cpBeforeBtn = document.getElementById('cp-insert-before-btn');
-    const cpAfterBtn = document.getElementById('cp-insert-after-btn');
-    if (cpPopup && cpPopup._open && !_elementContains(cpPopup, target) && !_elementContains(cpBeforeBtn, target) && !_elementContains(cpAfterBtn, target)) {
-        _setCoeffProgramPickerOpen(false);
-    }
-    const ctPopup = document.getElementById('ct-add-popup');
-    const ctBtn = document.getElementById('ct-add-btn');
-    if (ctPopup && ctPopup._open && !_elementContains(ctPopup, target) && !_elementContains(ctBtn, target)) {
-        _setCoeffTransformPickerOpen(false);
-    }
-});
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
 
-document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') {
-        _closeSolveScorePickers();
-        _setParamTransformPickerOpen(false);
-        _setParamProgramPickerOpen(false);
-        _setCoeffProgramPickerOpen(false);
-        _setCoeffTransformPickerOpen(false);
-        _clearRenderPreviewSelection();
-        _clearRenderLoresPreviewSelection();
-    }
-});
+// (top-level statement moved to the js/12 boot block — parts are
+//  declarations-only; see tests/test_frontend_parts_contract.py)
 
 /* ---- Color controls ---- */
 const DEFAULT_RENDER_BACKGROUND_COLOR = '000000';

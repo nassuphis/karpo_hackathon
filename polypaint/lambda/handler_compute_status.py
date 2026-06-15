@@ -1,5 +1,5 @@
 """
-Compute status Lambda — updates the top-level compute run DDB row.
+Compute status Lambda - updates the top-level compute run DDB row.
 
 Called by Step Functions between phases to report progress to the browser.
 Does NOT dispatch workers, poll for completion, or perform phase transitions.
@@ -95,11 +95,13 @@ def _write_done(params, job_id, task_id):
 def _write_error(params, job_id, task_id):
     now_ms = int(time.time() * 1000)
     error_msg = _extract_error_message(params)
+    previous = _get_existing_result_data(job_id, task_id)
     result_data = _base_result_data({
         **params,
         "phase": "error",
         "phase_label": "Error",
     }, now_ms)
+    _attach_failed_phase_context(result_data, params, previous)
     _put_row(job_id, task_id, "error", result_data, error_msg=error_msg)
     return ok_response({"action": "error", "error_msg": error_msg})
 
@@ -127,6 +129,43 @@ def _extract_error_message(params):
     if error:
         return str(error)[:1000]
     return "Unknown error"
+
+
+def _get_existing_result_data(job_id, task_id):
+    """Best-effort read of the last phase row before the error overwrite."""
+    try:
+        resp = _get_ddb().get_item(
+            TableName=JOBS_TABLE,
+            Key={"job_id": {"S": job_id}, "task_id": {"S": task_id}},
+        )
+        raw = resp.get("Item", {}).get("result_data", {}).get("S")
+        if not raw:
+            return {}
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        # Error reporting must not fail because the previous row is absent or
+        # malformed; the current error message is still the authoritative row.
+        return {}
+
+
+def _attach_failed_phase_context(result_data, params, previous):
+    failed_phase = params.get("failed_phase") or previous.get("phase")
+    if failed_phase and failed_phase not in {"error", "done"}:
+        result_data["failed_phase"] = str(failed_phase)
+
+    failed_label = params.get("failed_phase_label") or previous.get("phase_label")
+    if failed_label:
+        result_data["failed_phase_label"] = str(failed_label)
+
+    failed_subtask_prefix = params.get("failed_subtask_prefix") or previous.get("subtask_prefix")
+    if failed_subtask_prefix:
+        result_data["failed_subtask_prefix"] = str(failed_subtask_prefix)
+
+    if "expected" in previous:
+        result_data["failed_expected"] = previous["expected"]
+    if "Error" in params:
+        result_data["failed_error"] = str(params["Error"])[:1000]
 
 
 def _put_row(job_id, task_id, status, result_data, error_msg=None):

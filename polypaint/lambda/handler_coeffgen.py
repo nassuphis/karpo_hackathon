@@ -30,6 +30,11 @@ from compute_fused import (
 )
 from coeff_program_chain import compile_coeff_program_chain
 from coeff_program_source import coeff_source_text_from_payload, parse_coeff_program_source
+from pipeline_programs import (
+    coeff_source_text_for_run,
+    parse_coeff_source_for_run,
+    pipeline_mode_from_params,
+)
 from param_program_chain import compile_param_program_chain
 from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, report_status
 
@@ -122,13 +127,11 @@ def _coeff_program_macro_resolver():
 
 def _resolve_coeff_program(params, coeff_transforms):
     coeff_program = params.get("coeff_program") or None
-    raw_source_text = str(params.get("coeff_program_source_text") or "")
-    if (
-        coeff_program is None
-        and "coeff_program_source_text" in params
-        and (raw_source_text.strip() or not params.get("coeff_program_chain"))
-    ):
-        parsed = parse_coeff_program_source(raw_source_text)
+    # Probe payloads are mode-filtered upstream, so the precedence helper
+    # runs without the mode gate; compile failures carry line/column.
+    source_text = coeff_source_text_for_run(params, None) if coeff_program is None else None
+    if source_text is not None:
+        parsed = parse_coeff_source_for_run(source_text)
         coeff_program_chain = parsed["chain"]
     else:
         coeff_program_chain = params.get("coeff_program_chain")
@@ -147,20 +150,7 @@ def _resolve_coeff_program(params, coeff_transforms):
     return coeff_transforms, coeff_program
 
 
-def _pipeline_mode_from_params(params):
-    raw = str(params.get("pipeline_mode") or params.get("compute_pipeline_mode") or "").strip().lower()
-    if not raw:
-        raw = "program" if (
-            params.get("param_program_chain")
-            or params.get("coeff_program_chain")
-            or str(params.get("coeff_program_source_text") or "").strip()
-            or params.get("param_program")
-            or params.get("coeff_program")
-        ) else "chain"
-    raw = {"legacy": "chain", "chains": "chain", "programs": "program"}.get(raw, raw)
-    if raw not in {"chain", "program"}:
-        raise RuntimeError("pipeline_mode must be one of chain, program")
-    return raw
+# _pipeline_mode_from_params moved to pipeline_programs (shared — CR14).
 
 
 def handler(event, context):
@@ -451,7 +441,7 @@ def handle_coeffgen_chunked(params):
         if grid_n > 0:
             spec["source_n1"] = grid_n
             spec["source_n2"] = grid_n
-        if _pipeline_mode_from_params(params) == "program":
+        if pipeline_mode_from_params(params) == "program":
             spec["coeff_transforms"], coeff_program = _resolve_coeff_program(params, [])
             if coeff_program:
                 spec["coeff_program"] = coeff_program
@@ -548,7 +538,7 @@ def handle_legacy_coeffgen(params):
         }
         if params.get("param_program"):
             spec["param_program"] = params["param_program"]
-        if _pipeline_mode_from_params(params) == "program":
+        if pipeline_mode_from_params(params) == "program":
             spec["coeff_transforms"], coeff_program = _resolve_coeff_program(params, [])
             if coeff_program:
                 spec["coeff_program"] = coeff_program
@@ -604,7 +594,7 @@ def handle_legacy_coeffgen(params):
 
 
 def handle_degree_probe(params):
-    pipeline_mode = _pipeline_mode_from_params(params)
+    pipeline_mode = pipeline_mode_from_params(params)
     function_name = str(params.get("function", "") or "").strip()
     if not function_name:
         raise RuntimeError("function is required")

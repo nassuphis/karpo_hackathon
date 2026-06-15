@@ -23,6 +23,12 @@ from shared import (
 )
 from coeff_program_chain import compile_coeff_program_chain
 from coeff_program_source import coeff_source_text_from_payload, parse_coeff_program_source
+from pipeline_programs import (
+    CoeffSourceCompileError,
+    coeff_source_text_for_run,
+    parse_coeff_source_for_run,
+    pipeline_mode_from_params,
+)
 from param_program_chain import compile_param_program_chain
 
 
@@ -86,20 +92,8 @@ def _preview_context(*, solver_mode, n_preview, function_name, coeff_transforms,
     )
 
 
-def _pipeline_mode_from_params(params):
-    raw = str(params.get("pipeline_mode") or params.get("compute_pipeline_mode") or "").strip().lower()
-    if not raw:
-        raw = "program" if (
-            params.get("param_program_chain")
-            or params.get("coeff_program_chain")
-            or str(params.get("coeff_program_source_text") or "").strip()
-            or params.get("param_program")
-            or params.get("coeff_program")
-        ) else "chain"
-    raw = {"legacy": "chain", "chains": "chain", "programs": "program"}.get(raw, raw)
-    if raw not in {"chain", "program"}:
-        raise ValueError("pipeline_mode must be one of chain, program")
-    return raw
+# _pipeline_mode_from_params moved to pipeline_programs (shared with plan
+# and coeffgen so the mode rules cannot drift — CR14).
 
 
 def _compiled_coeff_program_payload(compiled):
@@ -293,23 +287,13 @@ def _validate_debug_coord(value, label):
 
 
 def _compile_compute_inputs(params):
-    pipeline_mode = _pipeline_mode_from_params(params)
+    pipeline_mode = pipeline_mode_from_params(params)
     coeff_transforms = params.get("coeff_transforms") or []
     param_transforms = params.get("param_transforms") or []
     param_program_chain = params.get("param_program_chain") or []
-    raw_coeff_program_source_text = str(params.get("coeff_program_source_text") or "")
-    coeff_program_source_text = (
-        raw_coeff_program_source_text
-        if pipeline_mode == "program"
-        and "coeff_program_source_text" in params
-        and (raw_coeff_program_source_text.strip() or not params.get("coeff_program_chain"))
-        else None
-    )
+    coeff_program_source_text = coeff_source_text_for_run(params, pipeline_mode)
     if coeff_program_source_text is not None:
-        try:
-            parsed_coeff_source = parse_coeff_program_source(coeff_program_source_text)
-        except RuntimeError as e:
-            raise ValueError(f"invalid coeff_program_source_text: {e}") from None
+        parsed_coeff_source = parse_coeff_source_for_run(coeff_program_source_text)
         coeff_program_chain = parsed_coeff_source["chain"]
     else:
         coeff_program_chain = params.get("coeff_program_chain") or []
@@ -560,16 +544,23 @@ def handler(event, context):
         if not function_name:
             return _json_response(400, {"message": "compute preview missing function"})
 
-        n_preview = _ensure_preview_n(params.get("N_preview"))
-        preview_size = _ensure_preview_size(params.get("preview_size", 1000))
+        try:
+            # Client-input validation: bad request values are 400s, not 500s.
+            n_preview = _ensure_preview_n(params.get("N_preview"))
+            preview_size = _ensure_preview_size(params.get("preview_size", 1000))
+            quantile = _validate_quantile(params.get("quantile", 0.0))
+            shim = _validate_shim(params.get("shim", 0.05))
+        except ValueError as e:
+            return _json_response(400, {"message": str(e)})
         solver_mode = str(params.get("solver_mode") or "aberth_mt").strip() or "aberth_mt"
         if solver_mode not in {"aberth_mt", "companion_matrix"}:
             return _json_response(400, {"message": f"unsupported preview solver_mode: {solver_mode}"})
-        quantile = _validate_quantile(params.get("quantile", 0.0))
-        shim = _validate_shim(params.get("shim", 0.05))
 
         try:
             compiled = _compile_compute_inputs(params)
+        except CoeffSourceCompileError as e:
+            # Keep the editor-grade structure: line/column per diagnostic.
+            return _json_response(400, {"message": str(e), "diagnostics": e.diagnostics})
         except ValueError as e:
             return _json_response(400, {"message": str(e)})
         pipeline_mode = compiled["pipeline_mode"]

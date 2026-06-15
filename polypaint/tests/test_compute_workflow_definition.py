@@ -82,6 +82,13 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
         self.assertIn("States.ALL", wrapper["Catch"][0]["ErrorEquals"])
         self.assertEqual(wrapper["Catch"][0]["Next"], "ReportError")
 
+    def test_report_error_forwards_stepfunctions_error_payload(self):
+        report_error = self.top_states["ReportError"]
+        payload = report_error["Parameters"]["Payload"]
+        self.assertEqual(payload["action"], "error")
+        self.assertEqual(payload["Error.$"], "$.error_info.Error")
+        self.assertEqual(payload["Cause.$"], "$.error_info.Cause")
+
     def test_status_tasks_use_null_result_path(self):
         for name, state in self.all_states.items():
             if state.get("Type") != "Task":

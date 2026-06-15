@@ -490,21 +490,23 @@ class TestComputePreviewHandler(unittest.TestCase):
         mock_run.assert_not_called()
 
     def test_compute_preview_rejects_invalid_quantile_and_shim(self):
+        # Client-input mistakes are 400s, not server faults (CR14): invalid
+        # request values must not be indistinguishable from backend crashes.
         import handler_compute_preview as mod
 
         result = mod.handler({"body": json.dumps(_event(quantile=0.6))}, None)
         body = json.loads(result["body"])
-        self.assertEqual(result["statusCode"], 500)
+        self.assertEqual(result["statusCode"], 400)
         self.assertIn("preview quantile must be in [0, 0.5)", body["message"])
 
         result = mod.handler({"body": json.dumps(_event(shim=1.5))}, None)
         body = json.loads(result["body"])
-        self.assertEqual(result["statusCode"], 500)
+        self.assertEqual(result["statusCode"], 400)
         self.assertIn("preview shim must be in [0, 1]", body["message"])
 
         result = mod.handler({"body": json.dumps(_event(preview_size=99999))}, None)
         body = json.loads(result["body"])
-        self.assertEqual(result["statusCode"], 500)
+        self.assertEqual(result["statusCode"], 400)
         self.assertIn("preview size must be between 64 and", body["message"])
 
     def test_compute_preview_rejects_removed_ae_solver(self):

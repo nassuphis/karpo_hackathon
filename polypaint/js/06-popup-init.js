@@ -2,7 +2,8 @@
 // Classic script: load order matters and is defined by the
 // <script src="js/..."> tags in index.html (top-level functions and
 // let/const bindings are shared across all parts, exactly as before
-// the split). Cache-busting: deploy appends ?v=<BUILD_ID> to the tags.
+// the split). Deploy rewrites the script tags to build-versioned asset
+// keys (assets/<BUILD_ID>/...), so a deploy flips atomically via index.html.
 function _initColorRepalettePopup() {
     const runBtn = document.getElementById('color-repalette-popup-run');
     _bindPopupShell({

@@ -21,6 +21,11 @@ from compute_fused import (
 )
 from coeff_program_chain import compile_coeff_program_chain
 from coeff_program_source import coeff_source_text_from_payload, parse_coeff_program_source
+from pipeline_programs import (
+    coeff_source_text_for_run,
+    parse_coeff_source_for_run,
+    pipeline_mode_from_params,
+)
 from param_program_chain import compile_param_program_chain
 from shared import BUCKET, JOBS_TABLE, ok_response, parse_body
 
@@ -121,21 +126,7 @@ def _coeff_program_macro_resolver():
     )
 
 
-def _pipeline_mode_from_params(run_params):
-    raw = str(run_params.get("pipeline_mode") or run_params.get("compute_pipeline_mode") or "").strip().lower()
-    if not raw:
-        raw = "program" if (
-            run_params.get("param_program_chain")
-            or run_params.get("coeff_program_chain")
-            or str(run_params.get("coeff_program_source_text") or "").strip()
-            or run_params.get("param_program")
-            or run_params.get("coeff_program")
-        ) else "chain"
-    aliases = {"legacy": "chain", "chains": "chain", "programs": "program"}
-    raw = aliases.get(raw, raw)
-    if raw not in {"chain", "program"}:
-        raise RuntimeError("pipeline_mode must be one of chain, program")
-    return raw
+# _pipeline_mode_from_params moved to pipeline_programs (shared — CR14).
 
 
 def _get_ddb():
@@ -162,7 +153,7 @@ def handle_build_plan(params):
     run_id = params["run_id"]
     task_id = params["task_id"]
     run_params = params.get("params", {})
-    pipeline_mode = _pipeline_mode_from_params(run_params)
+    pipeline_mode = pipeline_mode_from_params(run_params)
 
     solver_mode = _validate_solver_mode(run_params.get("solver_mode", "aberth_mt"))
     execution_method = execution_method_from_params(run_params)
@@ -236,16 +227,11 @@ def handle_build_plan(params):
         else:
             param_transforms = []
             param_program = _compiled_param_program_payload(compiled_param_program)
-    raw_coeff_program_source_text = str(run_params.get("coeff_program_source_text") or "")
-    coeff_program_source_text = (
-        raw_coeff_program_source_text
-        if pipeline_mode == "program"
-        and "coeff_program_source_text" in run_params
-        and (raw_coeff_program_source_text.strip() or not run_params.get("coeff_program_chain"))
-        else None
-    )
+    coeff_program_source_text = coeff_source_text_for_run(run_params, pipeline_mode)
     if coeff_program_source_text is not None:
-        parsed_coeff_source = parse_coeff_program_source(coeff_program_source_text)
+        # Structured compile: a failure carries line/column in its message,
+        # which survives the Step Functions Cause and the error status row.
+        parsed_coeff_source = parse_coeff_source_for_run(coeff_program_source_text)
         coeff_program_chain = parsed_coeff_source["chain"]
     else:
         parsed_coeff_source = None

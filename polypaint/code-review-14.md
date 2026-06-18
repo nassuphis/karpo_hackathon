@@ -106,6 +106,18 @@ The CR14 follow-up change addressed the five findings:
 - Updated compute status error rows to preserve the last reported phase as `failed_phase`, `failed_phase_label`, and related context by reading the previous task row before the error overwrite.
 - Updated the split-JS headers to describe build-versioned asset keys instead of stale `?v=<BUILD_ID>` query stamping.
 
+Failure-phase note: this implementation intentionally does not thread
+`failed_state` through the top-level Step Functions catch. In a `States.ALL`
+catch on the top-level `Parallel`, the failing inner state name is not available
+in the catch payload, and `$$.State.Name` would identify the reporting state
+rather than the failed inner task. Instead, the workflow writes a phase row
+immediately before each risky task, and the final error write recovers that row
+as `failed_phase`. That makes the recovered phase the phase that failed, not the
+previous completed phase. The only uncovered corners are failures before the
+first phase row can be written, and failures of the status-write mechanism
+itself. Step Functions execution history remains the authoritative source for
+the exact failed state.
+
 Follow-up verification:
 
 ```text

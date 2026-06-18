@@ -42,6 +42,7 @@ class TestComputeStatusHandler(unittest.TestCase):
 
         self.assertEqual(result["statusCode"], 200)
         mock_ddb.get_item.assert_called_once()
+        self.assertTrue(mock_ddb.get_item.call_args.kwargs["ConsistentRead"])
         item = mock_ddb.put_item.call_args[1]["Item"]
         self.assertEqual(item["task_status"]["S"], "error")
         self.assertEqual(item["error_msg"]["S"], "degree probe failed")

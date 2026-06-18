@@ -32,6 +32,195 @@ def _event(**params):
 
 class TestPaletteRenderPlan(unittest.TestCase):
 
+    def test_palette_variant_identity_is_stable_and_discriminates_render_contract(self):
+        from handler_palette_render_plan import _palette_variant_identity
+
+        base = {
+            "job_id": "j",
+            "compiled_score_fingerprint": "fp1",
+            "score_chain_public": [["proximity", "1"]],
+            "metric": "proximity",
+            "quantile": 0.01,
+            "omega": 3.0,
+            "omega_enabled": True,
+            "color_interpretation": "scalar_lut",
+            "output_channel_count": 1,
+            "output_channels": [],
+            "palette": "reef",
+            "root_transforms": [["rotate_roots", "0.25"]],
+        }
+
+        first = _palette_variant_identity(**base)
+        second = _palette_variant_identity(**dict(base))
+        self.assertEqual(first, second)
+        self.assertTrue(first[0].startswith("pal_proximity_scalar_lut_"))
+        self.assertTrue(first[1].startswith("sha256:"))
+
+        omega_changed = _palette_variant_identity(**{**base, "omega": 4.0})
+        self.assertNotEqual(first[0], omega_changed[0])
+        self.assertNotEqual(first[1], omega_changed[1])
+
+        interpretation_changed = _palette_variant_identity(**{
+            **base,
+            "color_interpretation": "rgb",
+            "output_channel_count": 3,
+            "output_channels": [{"channel": 0}, {"channel": 1}, {"channel": 2}],
+        })
+        self.assertNotEqual(first[0], interpretation_changed[0])
+        self.assertNotEqual(first[1], interpretation_changed[1])
+
+    def test_palette_variant_identity_ignores_palette_for_direct_rgb(self):
+        from handler_palette_render_plan import _palette_variant_identity
+
+        base = {
+            "job_id": "j",
+            "compiled_score_fingerprint": "fp_rgb",
+            "score_chain_public": [["proximity", "1"], ["emit_norm"], ["spread", "1"], ["emit_norm"], ["crowding", "1"], ["emit_norm"]],
+            "metric": "proximity",
+            "quantile": 0.01,
+            "omega": 3.0,
+            "omega_enabled": True,
+            "color_interpretation": "rgb",
+            "output_channel_count": 3,
+            "output_channels": [{"channel": 0}, {"channel": 1}, {"channel": 2}],
+            "palette": "reef",
+            "root_transforms": [],
+        }
+
+        reef = _palette_variant_identity(**base)
+        inferno = _palette_variant_identity(**{**base, "palette": "inferno"})
+        self.assertEqual(reef[0], inferno[0])
+        self.assertEqual(reef[1], inferno[1])
+        self.assertEqual(reef[2]["palette"], "none")
+
+    @patch("handler_palette_render_plan.s3")
+    def test_palette_plan_reuses_existing_matching_variant_as_done(self, mock_s3):
+        from handler_palette_render_plan import (
+            _palette_variant_identity,
+            compile_solve_score_chain_or_legacy,
+            compiled_solve_score_fingerprint,
+            handler,
+            public_solve_score_chain,
+        )
+        from color_render_contract import validate_color_output_contract
+
+        params = {
+            "metric": "crowding",
+            "palette": "reef",
+            "solve_score_quantile": 0.01,
+            "solve_score_omega": 3,
+            "root_transforms": [["rotate_roots", "0.25"]],
+        }
+        compiled = compile_solve_score_chain_or_legacy(
+            "",
+            "crowding",
+            0.01,
+            3,
+            True,
+            default_metric="proximity",
+        )
+        color_contract = validate_color_output_contract(
+            interpretation="scalar_lut",
+            output_channel_count=compiled.get("output_channel_count") or 1,
+            output_channels=compiled.get("output_channels") or [],
+        )
+        chain_public = public_solve_score_chain(compiled["chain"])
+        palette_id, fingerprint, _payload = _palette_variant_identity(
+            job_id="j",
+            compiled_score_fingerprint=compiled_solve_score_fingerprint(compiled),
+            score_chain_public=chain_public,
+            metric=compiled["metric"],
+            quantile=compiled["quantile"],
+            omega=compiled["omega"],
+            omega_enabled=compiled["omega_enabled"],
+            color_interpretation=color_contract["interpretation"],
+            output_channel_count=color_contract["channel_count"],
+            output_channels=color_contract["channels"],
+            palette="reef",
+            root_transforms=params["root_transforms"],
+        )
+        meta_key = f"renders/j/palettes/{palette_id}/meta.json"
+        meta = {
+            "job_id": "j",
+            "palette_id": palette_id,
+            "palette_variant_fingerprint": fingerprint,
+            "image_key": f"renders/j/palettes/{palette_id}/image.jpeg",
+            "preview_key": f"renders/j/palettes/{palette_id}/preview.png",
+            "render_reusable": True,
+            "data_layout": "chunk_all_pass_v1",
+            "palette_bins_key": f"renders/j/palettes/{palette_id}/chunks/palette_bins_section_0.bin",
+        }
+
+        mock_s3.head_object.return_value = {}
+        mock_s3.get_object.return_value = {"Body": MagicMock(read=lambda: json.dumps(meta).encode())}
+
+        result = handler(_event(params=params), None)
+        plan = json.loads(result["body"])
+
+        self.assertEqual(plan["palette_id"], palette_id)
+        self.assertEqual(plan["extract"]["action"], "done")
+        self.assertEqual(plan["extract"]["reason"], "palette_artifact_already_exists")
+        self.assertEqual(plan["outputs"]["palette_variant_fingerprint"], fingerprint)
+        self.assertEqual(mock_s3.get_object.call_args.kwargs["Key"], meta_key)
+
+    @patch("handler_palette_render_plan.s3")
+    def test_palette_plan_fails_loudly_on_existing_variant_fingerprint_mismatch(self, mock_s3):
+        from handler_palette_render_plan import (
+            _palette_variant_identity,
+            compile_solve_score_chain_or_legacy,
+            compiled_solve_score_fingerprint,
+            handler,
+            public_solve_score_chain,
+        )
+        from color_render_contract import validate_color_output_contract
+
+        params = {
+            "metric": "crowding",
+            "palette": "reef",
+            "solve_score_quantile": 0.01,
+            "solve_score_omega": 3,
+            "root_transforms": [["rotate_roots", "0.25"]],
+        }
+        compiled = compile_solve_score_chain_or_legacy(
+            "",
+            "crowding",
+            0.01,
+            3,
+            True,
+            default_metric="proximity",
+        )
+        color_contract = validate_color_output_contract(
+            interpretation="scalar_lut",
+            output_channel_count=compiled.get("output_channel_count") or 1,
+            output_channels=compiled.get("output_channels") or [],
+        )
+        palette_id, _fingerprint, _payload = _palette_variant_identity(
+            job_id="j",
+            compiled_score_fingerprint=compiled_solve_score_fingerprint(compiled),
+            score_chain_public=public_solve_score_chain(compiled["chain"]),
+            metric=compiled["metric"],
+            quantile=compiled["quantile"],
+            omega=compiled["omega"],
+            omega_enabled=compiled["omega_enabled"],
+            color_interpretation=color_contract["interpretation"],
+            output_channel_count=color_contract["channel_count"],
+            output_channels=color_contract["channels"],
+            palette="reef",
+            root_transforms=params["root_transforms"],
+        )
+
+        mock_s3.head_object.return_value = {}
+        mock_s3.get_object.return_value = {
+            "Body": MagicMock(read=lambda: json.dumps({
+                "job_id": "j",
+                "palette_id": palette_id,
+                "palette_variant_fingerprint": "sha256:wrong",
+            }).encode())
+        }
+
+        with self.assertRaisesRegex(RuntimeError, "Palette artifact id collision"):
+            handler(_event(params=params), None)
+
     @patch("handler_palette_render_plan.s3")
     def test_plan_reconstructs_full_chunk_spans_and_output_prefixes(self, mock_s3):
         from handler_palette_render_plan import handler

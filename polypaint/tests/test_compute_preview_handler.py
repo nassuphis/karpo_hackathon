@@ -358,6 +358,27 @@ class TestComputePreviewHandler(unittest.TestCase):
         self.assertIn("coeff_program", specs[0])
         self.assertEqual(specs[0]["coeff_program"]["token_count"], 3)
 
+    def test_compute_debug_poly_source_parse_error_returns_structured_diagnostics(self):
+        import handler_compute_preview as mod
+
+        result = mod.handler({"body": json.dumps(_event(
+            debug_stage="poly",
+            pipeline_mode="program",
+            function="const",
+            cfpv=[3, 1, 0],
+            u=0.25,
+            v=0.75,
+            coeff_program_source_text="bad(",
+        ))}, None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(result["statusCode"], 400)
+        self.assertIn("diagnostics", body)
+        self.assertGreaterEqual(len(body["diagnostics"]), 1)
+        self.assertIn("line", body["diagnostics"][0])
+        self.assertIn("column", body["diagnostics"][0])
+        self.assertIn("message", body["diagnostics"][0])
+
     @patch("handler_compute_preview.subprocess.run")
     def test_compute_debug_poly_chain_mode_ignores_coeff_program_source_text(self, mock_run):
         import handler_compute_preview as mod

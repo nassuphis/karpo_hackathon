@@ -537,6 +537,8 @@ def handler(event, context):
         if params.get("debug_stage") or params.get("stage") in {"param", "poly", "solve_ae", "solve_cm", "solveae", "solvecm", "ae", "cm"}:
             try:
                 return _handle_compute_debug(params)
+            except CoeffSourceCompileError as e:
+                return _json_response(400, {"message": str(e), "diagnostics": e.diagnostics})
             except ValueError as e:
                 return _json_response(400, {"message": str(e)})
 

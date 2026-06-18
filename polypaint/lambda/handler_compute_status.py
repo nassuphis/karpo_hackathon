@@ -137,6 +137,7 @@ def _get_existing_result_data(job_id, task_id):
         resp = _get_ddb().get_item(
             TableName=JOBS_TABLE,
             Key={"job_id": {"S": job_id}, "task_id": {"S": task_id}},
+            ConsistentRead=True,
         )
         raw = resp.get("Item", {}).get("result_data", {}).get("S")
         if not raw:

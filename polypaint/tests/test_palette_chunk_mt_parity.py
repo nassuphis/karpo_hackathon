@@ -150,6 +150,51 @@ class TestPaletteChunkMtParity(unittest.TestCase):
     def _run_binary(self, args):
         return subprocess.run(args, capture_output=True, text=True)
 
+    def test_explicit_three_channel_emit_norm_writes_packed_bytes_and_scores(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            roots_path = self._write_float_file(
+                root / "roots.bin",
+                [
+                    0.0, 0.0, 1.0, 0.0,
+                    0.0, 1.0, 1.0, 1.0,
+                ],
+            )
+            scores_path = root / "scores.bin"
+            bins_path = root / "bins.bin"
+
+            result = self._run_binary([
+                str(self._binary),
+                str(roots_path),
+                "--degree=2",
+                "--metric=proximity",
+                "--clip_lo=0",
+                "--clip_hi=1",
+                "--cuts=0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9",
+                "--step_count=2",
+                "--threads=2",
+                f"--scores_out={scores_path}",
+                f"--bins_out={bins_path}",
+                "--score_metrics=proximity",
+                "--score_clip_los=0",
+                "--score_clip_his=1",
+                "--score_program=const:0.25;emit_norm;const:0.5;emit_norm;const:0.75;emit_norm",
+                "--score_output_channel_count=3",
+                "--score_output_clip_los=0,0,0",
+                "--score_output_clip_his=1,1,1",
+            ])
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(list(bins_path.read_bytes()), [64, 128, 191, 64, 128, 191])
+
+            scores = array("f")
+            with open(scores_path, "rb") as f:
+                scores.fromfile(f, 6)
+            self.assertEqual(len(scores), 6)
+            expected = [0.25, 0.5, 0.75, 0.25, 0.5, 0.75]
+            for got, want in zip(scores, expected):
+                self.assertAlmostEqual(got, want, places=6)
+
     def test_tmpfile_and_multispan_sectioned_outputs_match_for_mixed_sources(self):
         from logical_sections import build_native_multispan_manifest, build_solve_source_manifest
 

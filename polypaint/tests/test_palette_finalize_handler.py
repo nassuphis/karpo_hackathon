@@ -330,6 +330,155 @@ class TestPaletteFinalizeHandler(unittest.TestCase):
     @patch("handler_palette_finalize._delete_keys")
     @patch("handler_palette_finalize._list_keys")
     @patch("handler_palette_finalize.s3")
+    @patch("handler_palette_finalize.render_score_raw")
+    def test_finalize_assembles_multi_channel_raw_rows_without_mirroring(
+        self, mock_render_raw, mock_s3, mock_list_keys, mock_delete_keys, mock_report
+    ):
+        import handler_palette_finalize as mod
+        from solve_score_chain import compile_solve_score_chain_or_legacy, compiled_solve_score_fingerprint
+
+        score_chain = [
+            ["proximity", "0.5"],
+            ["emit_norm"],
+            ["spread", "0.5"],
+            ["emit_norm"],
+            ["angular_entropy_16", "0.5"],
+            ["emit_norm"],
+        ]
+        compiled = compile_solve_score_chain_or_legacy(
+            score_chain,
+            "proximity",
+            0.01,
+            3.0,
+            True,
+            default_metric="proximity",
+        )
+        chain_fingerprint = compiled_solve_score_fingerprint(compiled)
+
+        with tempfile.TemporaryDirectory() as td, \
+             patch.object(mod, "_TMP_BINS", os.path.join(td, "bins_full.bin")), \
+             patch.object(mod, "_TMP_RAW_SCORE", os.path.join(td, "score.raw")), \
+             patch.object(mod, "_TMP_EQ_LUT", os.path.join(td, "eq.lut")), \
+             patch.object(mod, "_TMP_JPEG", os.path.join(td, "palette.jpeg")), \
+             patch.object(mod, "_TMP_PREVIEW", os.path.join(td, "palette_preview.png")):
+
+            mock_list_keys.side_effect = lambda prefix: (
+                ["renders/j/palettes/pal_1/chunks/meta_chunk_0.json"]
+                if prefix.endswith("meta_chunk_")
+                else ["renders/j/palettes/pal_1/solve_score/chunk_0_hist.json"]
+            )
+
+            meta0 = {
+                "chunk_idx": 0,
+                "step_start": 0,
+                "step_count": 4,
+                "raw_channels": 3,
+                "score_output_channel_count": 3,
+                "palette_bins_key": "renders/j/palettes/pal_1/chunks/palette_bins_chunk_0.bin",
+            }
+            raw_chunk = bytes([
+                0, 1, 2,      # g0, row 0 col 0
+                10, 11, 12,   # g1, row 0 col 1
+                20, 21, 22,   # g2, row 1 logical col 0, displayed right
+                30, 31, 32,   # g3, row 1 logical col 1, displayed left
+            ])
+            bins_meta = {
+                "version": 2,
+                "chain_fingerprint": chain_fingerprint,
+                "program": compiled["program_spec"],
+                "metrics": [
+                    {"slot": 0, "metric": "proximity", "source": "slv", "clip_lo": 0.0, "clip_hi": 1.0},
+                    {"slot": 1, "metric": "spread", "source": "slv", "clip_lo": 0.0, "clip_hi": 1.0},
+                    {"slot": 2, "metric": "angular_entropy_16", "source": "slv", "clip_lo": 0.0, "clip_hi": 1.0},
+                ],
+                "score_output_channel_count": 3,
+                "score_output_channels": [
+                    {"channel": 0, "range_normalized": True, "clip_lo": 0.0, "clip_hi": 1.0},
+                    {"channel": 1, "range_normalized": True, "clip_lo": 0.0, "clip_hi": 1.0},
+                    {"channel": 2, "range_normalized": True, "clip_lo": 0.0, "clip_hi": 1.0},
+                ],
+                "clip_lo": 0.0,
+                "clip_hi": 1.0,
+                "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+            }
+            clip_meta = {
+                "version": 2,
+                "chain_fingerprint": chain_fingerprint,
+                "clip_fallback": False,
+                "clip_fallback_reason": None,
+            }
+
+            def get_object(**kwargs):
+                key = kwargs["Key"]
+                mapping = {
+                    "renders/j/palettes/pal_1/chunks/meta_chunk_0.json": json.dumps(meta0).encode(),
+                    "renders/j/palettes/pal_1/chunks/palette_bins_chunk_0.bin": raw_chunk,
+                    "renders/j/palettes/pal_1/solve_score/crowding_bins.json": json.dumps(bins_meta).encode(),
+                    "renders/j/palettes/pal_1/solve_score/crowding_clip.json": json.dumps(clip_meta).encode(),
+                }
+                if key not in mapping:
+                    raise AssertionError(f"unexpected get_object key: {key}")
+                return {"Body": MagicMock(read=lambda data=mapping[key]: data)}
+
+            mock_s3.get_object.side_effect = get_object
+            uploads = {}
+            mock_s3.upload_fileobj.side_effect = lambda fileobj, bucket, key, ExtraArgs=None: uploads.setdefault(key, fileobj.read())
+
+            expected_display_raw = bytes([
+                0, 1, 2,
+                10, 11, 12,
+                30, 31, 32,
+                20, 21, 22,
+            ])
+
+            def render_raw_side_effect(**kwargs):
+                self.assertEqual(kwargs["channels"], 3)
+                self.assertEqual(kwargs["interpretation"], "rgb")
+                self.assertEqual(kwargs["eq_lut_path"], "")
+                with open(kwargs["raw_path"], "rb") as rf:
+                    self.assertEqual(rf.read(), expected_display_raw)
+                with open(kwargs["out_path"], "wb") as jf:
+                    jf.write(b"\xff\xd8rgbjpeg")
+                with open(kwargs["preview_path"], "wb") as pf:
+                    pf.write(b"\x89PNGrgbpreview")
+                return {"file_size": 9, "preview_file_size": 14}
+
+            mock_render_raw.side_effect = render_raw_side_effect
+
+            result = mod.handler(_event(
+                N=2,
+                times=1,
+                metric="proximity",
+                solve_score_chain=score_chain,
+                color_interpretation="rgb",
+                score_output_channel_count=3,
+                score_output_channels=bins_meta["score_output_channels"],
+                raw_key="renders/j/palettes/pal_1/greyscale.raw",
+                raw_meta_key="renders/j/palettes/pal_1/greyscale.meta.json",
+                raw_layout="u8_packed_channels_row_major",
+            ), None)
+            body = json.loads(result["body"])
+
+            self.assertEqual(body["raw_channels"], 3)
+            self.assertEqual(body["color_interpretation"], "rgb")
+            self.assertFalse(body["render_reusable"])
+            self.assertEqual(uploads["renders/j/palettes/pal_1/greyscale.raw"], expected_display_raw)
+
+            put_by_key = {call.kwargs["Key"]: call.kwargs for call in mock_s3.put_object.call_args_list}
+            sidecar = json.loads(put_by_key["renders/j/palettes/pal_1/greyscale.meta.json"]["Body"])
+            self.assertEqual(sidecar["channels"], 3)
+            self.assertEqual(sidecar["interpretation"], "rgb")
+            self.assertEqual(sidecar["keys"]["raw_key"], "renders/j/palettes/pal_1/greyscale.raw")
+            meta = json.loads(put_by_key["renders/j/palettes/pal_1/meta.json"]["Body"])
+            self.assertEqual(meta["raw_channels"], 3)
+            self.assertEqual(meta["color_interpretation"], "rgb")
+            self.assertEqual(meta["data_layout"], "u8_packed_channels_row_major")
+            self.assertFalse(meta["render_reusable"])
+
+    @patch("handler_palette_finalize.report_status")
+    @patch("handler_palette_finalize._delete_keys")
+    @patch("handler_palette_finalize._list_keys")
+    @patch("handler_palette_finalize.s3")
     @patch("handler_palette_finalize.subprocess.run")
     def test_finalize_respects_explicit_omega_enabled_false(
         self, mock_run, mock_s3, mock_list_keys, mock_delete_keys, mock_report

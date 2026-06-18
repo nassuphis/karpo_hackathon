@@ -1770,7 +1770,7 @@ button {
                     <div class="color-title">Output</div>
                     <div class="anim-row">
                         <label>Pix:</label>
-                        <input type="text" inputmode="numeric" id="render-pix" value="4096" style="width:7em">
+                        <input type="text" inputmode="numeric" id="render-pix" value="4096" max="32768" style="width:7em">
                         <label>Format:</label>
                         <select id="render-format" style="width:5em">
                             <option value="jpeg">JPEG</option>
@@ -1925,7 +1925,6 @@ button {
                     <label style="color:#888; font-size:10px; min-width:70px">Stack:</label>
                     <span id="palette-ss-stack" style="display:inline-flex; gap:3px; align-items:flex-end; min-height:16px"></span>
                     <span id="palette-ss-stack-label" style="font-size:10px; color:#888; min-width:80px; margin-left:6px"></span>
-                    <button id="btn-palette-create" class="btn-inline-offset" onclick="runPaletteArtifact()" style="font-size:10px; padding:1px 8px">Palette</button>
                 </div>
                 <div class="color-row" style="margin-bottom:0">
                     <label style="color:#888; font-size:10px; min-width:70px">Palette:</label>
@@ -1941,6 +1940,10 @@ button {
                         <option value="hsv_lut">HSV LUT</option>
                     </select>
                     <span id="palette-color-interpretation-help" style="font-size:10px; color:#888">Matches the Render tab color-output mode.</span>
+                </div>
+                <div class="color-row" style="margin-bottom:0">
+                    <label style="color:#888; font-size:10px; min-width:70px">Action:</label>
+                    <button id="btn-palette-create" class="btn-secondary btn-inline" onclick="runPaletteArtifact()">Generate Artifact</button>
                 </div>
                 <div id="palette-solve-score-program-status" class="solve-score-program-status"></div>
             </div>

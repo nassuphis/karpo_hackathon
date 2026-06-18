@@ -56,6 +56,27 @@ class TestComputePlan(unittest.TestCase):
         self.assertEqual(first["solve_task_id"], "compute_run_abc_solve_0")
         self.assertEqual(first["bin_key"], "renders/compute_j/chunk_0.bin")
 
+    def test_build_plan_rejects_stepfunctions_state_overflow(self):
+        import handler_compute_plan as mod
+
+        with patch.object(mod, "MAX_PLAN_BYTES", 1500):
+            with self.assertRaisesRegex(RuntimeError, "Compute plan too large"):
+                mod.handle_build_plan({
+                    "job_id": "compute_j",
+                    "run_id": "run_big_plan",
+                    "task_id": "compute_run_aberth_mt_run_big_plan",
+                    "params": {
+                        "solver_mode": "aberth_mt",
+                        "N": 100,
+                        "times": 1,
+                        "n_chunks": 8,
+                        "function": "g1",
+                        "param_transforms": [],
+                        "coeff_transforms": [],
+                        "cfpv": [],
+                    },
+                })
+
     def test_build_plan_compiles_param_program_chain(self):
         import handler_compute_plan as mod
 

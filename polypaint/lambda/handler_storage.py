@@ -122,13 +122,28 @@ def _error_response(status_code, message):
     }
 
 
+def _client_error_message(exc):
+    response = getattr(exc, "response", {}) or {}
+    err = response.get("Error") or {}
+    code = str(err.get("Code") or exc.__class__.__name__)
+    message = str(err.get("Message") or exc)
+    return f"{code}: {message}"
+
+
 def _handle_storage_route(fn, event):
     try:
         return fn(event)
     except (_SolveScoreProgramNotFound, _ParamProgramNotFound, _CoeffProgramNotFound) as exc:
         return _error_response(404, exc)
+    except ClientError as exc:
+        response = getattr(exc, "response", {}) or {}
+        code = str((response.get("Error") or {}).get("Code") or "")
+        status = 404 if code in {"NoSuchKey", "NoSuchBucket", "404", "NotFound"} else 500
+        return _error_response(status, _client_error_message(exc))
     except (ValueError, KeyError, TypeError, RuntimeError, json.JSONDecodeError) as exc:
         return _error_response(400, exc)
+    except Exception as exc:
+        return _error_response(500, exc)
 
 
 def _utc_now_iso():
@@ -844,7 +859,7 @@ def _read_favorites():
 def handler(event, context):
     path = event.get("rawPath", event.get("path", "/"))
     if path.endswith("/list"):
-        return handle_list(event)
+        return _handle_storage_route(handle_list, event)
     elif path.endswith("/list-solve-score-programs"):
         return _handle_storage_route(handle_list_solve_score_programs, event)
     elif path.endswith("/fetch-solve-score-program"):
@@ -872,45 +887,45 @@ def handler(event, context):
     elif path.endswith("/delete-coeff-program"):
         return _handle_storage_route(handle_delete_coeff_program, event)
     elif path.endswith("/list-favorites"):
-        return handle_list_favorites(event)
+        return _handle_storage_route(handle_list_favorites, event)
     elif path.endswith("/add-favorite"):
-        return handle_add_favorite(event)
+        return _handle_storage_route(handle_add_favorite, event)
     elif path.endswith("/delete-favorite"):
-        return handle_delete_favorite(event)
+        return _handle_storage_route(handle_delete_favorite, event)
     elif path.endswith("/list-palettes"):
-        return handle_list_palettes(event)
+        return _handle_storage_route(handle_list_palettes, event)
     elif path.endswith("/delete-palette"):
-        return handle_delete_palette(event)
+        return _handle_storage_route(handle_delete_palette, event)
     elif path.endswith("/delete-render-artifact"):
-        return handle_delete_render_artifact(event)
+        return _handle_storage_route(handle_delete_render_artifact, event)
     elif path.endswith("/delete"):
-        return handle_delete(event)
+        return _handle_storage_route(handle_delete, event)
     elif path.endswith("/save-metadata"):
-        return handle_save_metadata(event)
+        return _handle_storage_route(handle_save_metadata, event)
     elif path.endswith("/cleanup"):
-        return handle_cleanup(event)
+        return _handle_storage_route(handle_cleanup, event)
     elif path.endswith("/clean-render"):
-        return handle_clean_render(event)
+        return _handle_storage_route(handle_clean_render, event)
     elif path.endswith("/check-keys"):
-        return handle_check_keys(event)
+        return _handle_storage_route(handle_check_keys, event)
     elif path.endswith("/check-status"):
-        return handle_check_status(event)
+        return _handle_storage_route(handle_check_status, event)
     elif path.endswith("/detail"):
-        return handle_detail(event)
+        return _handle_storage_route(handle_detail, event)
     elif path.endswith("/presign"):
-        return handle_presign(event)
+        return _handle_storage_route(handle_presign, event)
     elif path.endswith("/list-prefix"):
-        return handle_list_prefix(event)
+        return _handle_storage_route(handle_list_prefix, event)
     elif path.endswith("/head-keys"):
-        return handle_head_keys(event)
+        return _handle_storage_route(handle_head_keys, event)
     elif path.endswith("/render-summary"):
-        return handle_render_summary(event)
+        return _handle_storage_route(handle_render_summary, event)
     elif path.endswith("/delete-task"):
-        return handle_delete_task(event)
+        return _handle_storage_route(handle_delete_task, event)
     elif path.endswith("/delete-prefix"):
-        return handle_delete_prefix(event)
+        return _handle_storage_route(handle_delete_prefix, event)
     elif path.endswith("/list-deepzoom"):
-        return handle_list_deepzoom(event)
+        return _handle_storage_route(handle_list_deepzoom, event)
     return {
         "statusCode": 400,
         "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
@@ -2246,29 +2261,61 @@ def handle_presign(event):
     return ok_response({"url": url, "key": key})
 
 
+def _is_cleanup_allowed_key(key):
+    key = str(key or "").strip()
+    if not key or key.startswith("/") or "\\" in key:
+        return False
+    parts = key.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        return False
+    if len(parts) < 3 or parts[0] != "renders":
+        return False
+    if len(parts) == 3 and parts[-1] == "deepzoom_latest.json":
+        return True
+    filename = parts[-1]
+    temp_suffixes = (".tmp", ".part", ".frag")
+    if filename.endswith(temp_suffixes):
+        return True
+    temp_markers = ("stripe", "merge", "chunk", "section", "temp", "tmp")
+    if any(marker in filename for marker in temp_markers):
+        return filename.endswith((".raw", ".bin", ".json", ".frag"))
+    return False
+
+
 def handle_cleanup(event):
-    """Delete a list of S3 keys (temp .raw and merge files).
+    """Delete explicit temp S3 keys under renders/<job>/ only.
     Input: {keys: ["renders/job/stripe_0.raw", ...]}
     """
     params = parse_body(event)
     keys = params.get("keys", [])
+    if not isinstance(keys, list):
+        raise ValueError("cleanup keys must be an array")
 
     if not keys:
         return ok_response({"deleted": 0})
 
-    total_deleted = 0
-    for i in range(0, len(keys), 1000):
-        batch = keys[i:i + 1000]
-        try:
-            resp = s3.delete_objects(Bucket=BUCKET, Delete={
-                "Objects": [{"Key": k} for k in batch],
-                "Quiet": True,
-            })
-            total_deleted += len(batch)
-        except Exception:
-            pass
+    normalized = [str(key or "").strip() for key in keys]
+    invalid = [key for key in normalized if not _is_cleanup_allowed_key(key)]
+    if invalid:
+        sample = ", ".join(invalid[:5])
+        raise ValueError(f"cleanup key not allowed: {sample}")
 
-    return ok_response({"deleted": total_deleted})
+    total_deleted = 0
+    errors = []
+    for i in range(0, len(keys), 1000):
+        batch = normalized[i:i + 1000]
+        resp = s3.delete_objects(
+            Bucket=BUCKET,
+            Delete={"Objects": [{"Key": k} for k in batch]},
+        )
+        total_deleted += len(resp.get("Deleted", []))
+        for err in resp.get("Errors", []):
+            errors.append(f"{err.get('Key', '?')}: {err.get('Code', 'Error')}")
+
+    result = {"deleted": total_deleted}
+    if errors:
+        result["errors"] = errors
+    return ok_response(result)
 
 
 def handle_detail(event):

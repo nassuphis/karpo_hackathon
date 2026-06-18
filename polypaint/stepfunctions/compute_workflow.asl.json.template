@@ -604,7 +604,7 @@
           "SolveMap": {
             "Type": "Map",
             "ItemsPath": "$.plan.chunk_items",
-            "MaxConcurrency": 500,
+            "MaxConcurrency": 50,
             "ItemSelector": {
               "job_id.$": "$.job_id",
               "chunk_idx.$": "$$.Map.Item.Value.chunk_idx",
@@ -625,7 +625,7 @@
                   "Parameters": { "FunctionName.$": "$.solver_function_name", "Payload.$": "$" },
                   "ResultSelector": { "body.$": "States.StringToJson($.Payload.body)" },
                   "OutputPath": "$.body",
-                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
                   "End": true
                 }
               }

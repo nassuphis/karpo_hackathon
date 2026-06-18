@@ -41,6 +41,7 @@ TARGET_PREVIEW_ROOTS = 250000
 MAX_N = 50000
 MAX_TIMES = 1000
 MAX_CHUNKS = 5000
+MAX_PLAN_BYTES = 200 * 1024  # Fail fast before the 256 KB Step Functions state limit.
 MAX_TOTAL_STEPS = 2_500_000_000
 MAX_PARAM_GEN_THREADS = 64
 
@@ -73,6 +74,23 @@ def _compiled_param_program_payload(compiled):
     if scalar_exprs:
         payload["scalar_exprs"] = scalar_exprs
     return payload
+
+
+def _plan_size_error_message(plan, plan_size):
+    compute = dict(plan.get("compute") or {})
+    return (
+        f"Compute plan too large: {plan_size} bytes > {MAX_PLAN_BYTES} limit. "
+        f"Counts: chunks={int(compute.get('n_chunks') or 0)}, "
+        f"N={int(compute.get('N') or 0)}, times={int(compute.get('times') or 0)}. "
+        f"Controls: reduce n_chunks, N, times, or disable auto hires chunking."
+    )
+
+
+def _assert_plan_size(plan):
+    plan_json = json.dumps(plan)
+    plan_size = len(plan_json.encode("utf-8"))
+    if plan_size > MAX_PLAN_BYTES:
+        raise RuntimeError(_plan_size_error_message(plan, plan_size))
 
 
 def _is_missing_s3_error(exc):
@@ -411,6 +429,7 @@ def handle_build_plan(params):
             "estimate": fused_estimate,
         }
         plan["post_seed"] = post_seed
+    _assert_plan_size(plan)
     return ok_response(plan)
 
 

@@ -49,6 +49,7 @@ STORAGE_FUNCTION = os.environ.get("STORAGE_FUNCTION", "polypaint-storage")
 RASTER_MT_FUNCTION = os.environ.get("RASTER_MT_FUNCTION", "polypaint-raster-mt")
 
 MAX_PLAN_BYTES = 200 * 1024  # 200 KB — fail fast before hitting 256 KB SFN limit
+MAX_PIX = 32768
 DEFAULT_BACKGROUND_THRESHOLD = 4
 
 
@@ -294,6 +295,8 @@ def _require_pix_only_grid_params(rp):
         raise RuntimeError("render plan requires integer pix") from exc
     if pix <= 0:
         raise RuntimeError(f"render plan requires pix > 0, got {pix}")
+    if pix > MAX_PIX:
+        raise RuntimeError(f"render plan requires pix <= {MAX_PIX}, got {pix}")
     rp["pix"] = pix
     return pix
 

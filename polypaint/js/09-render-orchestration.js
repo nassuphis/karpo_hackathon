@@ -4,6 +4,14 @@
 // let/const bindings are shared across all parts, exactly as before
 // the split). Deploy rewrites the script tags to build-versioned asset
 // keys (assets/<BUILD_ID>/...), so a deploy flips atomically via index.html.
+const RENDER_MAX_PIX = 32768;
+
+function _clampRenderPix(value) {
+    const pix = Number(value);
+    if (!Number.isFinite(pix)) return 0;
+    return Math.max(1, Math.min(RENDER_MAX_PIX, Math.round(pix)));
+}
+
 function _renderRtChipHtml(item, i, which, catalog, options = {}) {
     const spec = catalog[item.name] || {};
     const pDefs = spec.params || [];
@@ -558,9 +566,12 @@ function _renderCommonParams(options = {}) {
     const explicitBounds = _viewMode === 'explicit'
         ? _readRenderExplicitViewportBounds({ requireValid: true })
         : { minRe: null, maxRe: null, minIm: null, maxIm: null };
+    const pixEl = document.getElementById('render-pix');
+    const pix = _clampRenderPix(pixEl && pixEl.value);
+    if (pixEl && pix > 0) pixEl.value = String(pix);
     return {
         jobId,
-        pix: parseInt(document.getElementById('render-pix').value),
+        pix,
         fmt: document.getElementById('render-format').value,
         quality: parseInt(document.getElementById('render-quality').value),
         viewMode: _viewMode,

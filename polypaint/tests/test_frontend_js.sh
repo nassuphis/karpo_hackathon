@@ -73,6 +73,10 @@ assertIncludes("id=\"render-background-color\" class=\"render-background-color\"
 assertIncludes("id=\"render-background-hex\" class=\"render-background-hex\" value=\"000000\"", 'render tab should expose exact background hex input');
 assertIncludes("id=\"render-background-eyedropper\"", 'render tab should expose a background pipette button');
 assertIncludes(".render-background-eye {\n    margin: 0;", 'background pipette button should override global button top margin');
+assertIncludes("id=\"render-pix\" value=\"4096\" max=\"32768\"", 'render pix input should expose the backend maximum');
+assertIncludes("const RENDER_MAX_PIX = 32768;", 'render orchestration should clamp pix before dispatch');
+assertIncludes("id=\"btn-palette-create\" class=\"btn-secondary btn-inline\" onclick=\"runPaletteArtifact()\">Generate Artifact</button>", 'palette tab action should be a clearly labeled generate artifact button');
+assertNotIncludes("btn-palette-create\" class=\"btn-inline-offset\"", 'palette generate action should not live in the compact stack row');
 assertIncludes("const normalized = _normalizeRenderBackgroundColor(value, '', { allowShort: !options.fromText });", 'background hex typing should not commit 3-digit shorthand before blur/commit');
 assertNotIncludes("<label><input type=\"radio\" name=\"render-color-interpretation\"", 'render color radios must not use bare label/input markup');
 assertNotIncludes("class=\"color-dot active\" data-mode=\"solve_score\"", 'render tab should not expose a fake solve-score mode toggle');

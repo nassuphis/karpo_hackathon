@@ -60,7 +60,7 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
     def test_map_concurrency_matches_current_compute_shape(self):
         self.assertEqual(self.states["ParamGenMap"]["MaxConcurrency"], 50)
         self.assertEqual(self.states["CoeffgenMap"]["MaxConcurrency"], 50)
-        self.assertEqual(self.states["SolveMap"]["MaxConcurrency"], 500)
+        self.assertEqual(self.states["SolveMap"]["MaxConcurrency"], 50)
         self.assertEqual(self.states["FusedChunkMap"]["MaxConcurrency"], 50)
 
     def test_worker_states_have_retry(self):
@@ -104,6 +104,8 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
         solve_worker = self.states["SolveMap"]["ItemProcessor"]["States"]["SolveWorker"]
         self.assertEqual(solve_worker["OutputPath"], "$.body")
         self.assertIn("States.StringToJson($.Payload.body)", json.dumps(solve_worker["ResultSelector"]))
+        retry_errors = solve_worker["Retry"][0]["ErrorEquals"]
+        self.assertIn("Lambda.TooManyRequestsException", retry_errors)
 
         fused_worker = self.states["FusedChunkMap"]["ItemProcessor"]["States"]["FusedChunkWorker"]
         self.assertEqual(fused_worker["OutputPath"], "$.body")

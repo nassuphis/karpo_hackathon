@@ -110,6 +110,15 @@ class TestRenderPlan(unittest.TestCase):
         self.assertEqual(plan["calc"]["n_chunks"], 4)
 
     @patch("handler_render_plan._storage_call")
+    def test_render_plan_rejects_oversized_pix(self, mock_storage):
+        mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
+        import handler_render_plan as mod
+
+        with self.assertRaisesRegex(RuntimeError, "pix <= 32768"):
+            mod.handler(_make_event(pix=32769), None)
+        mock_storage.assert_not_called()
+
+    @patch("handler_render_plan._storage_call")
     def test_color_plan_accepts_identity_palette(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
         from handler_render_plan import handler

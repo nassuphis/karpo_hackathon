@@ -47,6 +47,10 @@ def handler(event, context):
     omega = contract_param(params, "associated_palette_omega", "", contract_warnings)
     omega_enabled = parse_boolish(contract_param(params, "associated_palette_omega_enabled", True, contract_warnings), True)
     score_chain = contract_param(params, "associated_palette_score_chain", "", contract_warnings)
+    color_interpretation = str(contract_param(params, "associated_palette_color_interpretation", "", contract_warnings) or "").strip()
+    raw_key = str(contract_param(params, "associated_palette_raw_key", "", contract_warnings) or "").strip()
+    raw_meta_key = str(contract_param(params, "associated_palette_raw_meta_key", "", contract_warnings) or "").strip()
+    assoc_meta_key = str(contract_param(params, "associated_palette_meta_key", "", contract_warnings) or "").strip()
 
     if mode not in ("generated", "dependency"):
         raise RuntimeError(f"associated_palette_mode must be 'generated' or 'dependency', got {mode!r}")
@@ -80,6 +84,10 @@ def handler(event, context):
             omega=omega,
             omega_enabled=omega_enabled,
             score_chain=score_chain,
+            color_interpretation=color_interpretation,
+            raw_key=raw_key,
+            raw_meta_key=raw_meta_key,
+            meta_key=assoc_meta_key,
         )
         existing_overlay = load_color_artifact_meta_overlay(s3, BUCKET, job_id, artifact_id)
         merged_meta = merge_metadata(existing_overlay, assoc_meta)
@@ -97,6 +105,9 @@ def handler(event, context):
                 "meta_key": meta_key,
                 "associated_palette_mode": mode,
                 "associated_palette_id": palette_id,
+                "associated_palette_color_interpretation": color_interpretation,
+                "associated_palette_raw_key": raw_key,
+                "associated_palette_raw_meta_key": raw_meta_key,
             },
             contract_warnings,
         )

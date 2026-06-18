@@ -1045,6 +1045,7 @@ _initSolveScoreProgramModal();
 _initParamProgramModal();
 _initCoeffProgramModal();
 _updateSolveScoreButtons();  // initial disabled state
+_syncPaletteColorInterpretationUi();
 _clearPaletteCanvas('No palette selected');
 
 

@@ -248,6 +248,13 @@ def handler(event, context):
         report_status(job_id, task_id, "started", result_data=progress)
 
         source_meta = _load_palette_meta(job_id, source_palette_id)
+        raw_channels = int(source_meta.get("raw_channels") or source_meta.get("score_output_channel_count") or 1)
+        if raw_channels != 1 or source_meta.get("raw_key"):
+            raise RuntimeError(
+                "RePalette requires an implicit scalar-lut palette artifact; "
+                f"{source_palette_id} is {source_meta.get('color_interpretation') or 'unknown'} "
+                f"with raw_channels={raw_channels}"
+            )
         metric = source_meta.get("metric", "proximity")
         q = float(source_meta.get("solve_score_quantile", 0.001))
         omega = float(source_meta.get("solve_score_omega", 1.0))

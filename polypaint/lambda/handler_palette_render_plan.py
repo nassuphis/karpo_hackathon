@@ -7,7 +7,6 @@ all-pass chunk-local bin/score data so saved palettes can later drive Color rend
 """
 import hashlib
 import json
-import time
 
 import boto3
 
@@ -18,6 +17,7 @@ from calc_chunks import (
     fallback_params_global_key,
 )
 from color_artifact_meta import load_color_artifact_head, parse_root_transforms
+from color_render_contract import normalize_color_interpretation, validate_color_output_contract
 from logical_sections import build_physical_section_items, build_solve_source_manifest
 from palette_names import VALID_PALETTE_NAMES
 from param_source import chunk_items_have_params
@@ -25,6 +25,7 @@ from shared import BUCKET, parse_body, ok_response
 from solve_score_chain import (
     VALID_SOLVE_SCORE_METRICS,
     compile_solve_score_chain_or_legacy,
+    compiled_solve_score_fingerprint,
     emit_solve_score_metadata,
     format_solve_score_chain_display,
     public_solve_score_chain,
@@ -147,12 +148,69 @@ def _validate_omega_enabled(value):
     raise RuntimeError(f"solve_score_omega_enabled must be boolean-like, got {value!r}")
 
 
-def _palette_variant_id(chain, metric, q, omega, omega_enabled, palette, root_transforms):
-    score_id = solve_score_chain_id(chain, legacy_quantile=q)
-    rt_json = json.dumps(root_transforms or [], separators=(",", ":"))
-    rt_hash = hashlib.sha1(rt_json.encode("utf-8")).hexdigest()[:8]
-    metric_part = str(metric or "score").replace(" ", "_")
-    return f"pal_{int(time.time() * 1000)}_{metric_part}_{score_id}_{palette}_rt{rt_hash}"
+def _slug(value, default="score"):
+    text = str(value or default).strip().lower().replace(" ", "_")
+    return "".join(ch if (ch.isalnum() or ch in "_-") else "_" for ch in text).strip("_") or default
+
+
+def _interpretation_uses_palette(interpretation):
+    return normalize_color_interpretation(interpretation) in {"scalar_lut", "rgb_lut", "hsv_lut"}
+
+
+def _color_interpretation_from_params(pp, default="scalar_lut"):
+    primary = pp.get("color_interpretation")
+    alias = pp.get("score_output_interpretation")
+    mode = normalize_color_interpretation(primary if primary not in ("", None) else default)
+    if alias not in ("", None):
+        alias_mode = normalize_color_interpretation(alias)
+        if primary not in ("", None) and alias_mode != mode:
+            raise RuntimeError(
+                "color_interpretation and score_output_interpretation disagree: "
+                f"{primary!r} vs {alias!r}"
+            )
+        mode = alias_mode
+    return mode
+
+
+def _palette_identity_payload(
+    *,
+    job_id,
+    compiled_score_fingerprint,
+    score_chain_public,
+    metric,
+    quantile,
+    omega,
+    omega_enabled,
+    color_interpretation,
+    output_channel_count,
+    output_channels,
+    palette,
+    root_transforms,
+):
+    mode = normalize_color_interpretation(color_interpretation)
+    return {
+        "scheme": "palette_variant_id_v2",
+        "job_id": str(job_id),
+        "solve_score_fingerprint": str(compiled_score_fingerprint),
+        "solve_score_chain": score_chain_public or [],
+        "metric": str(metric or ""),
+        "quantile": float(quantile),
+        "omega": float(omega),
+        "omega_enabled": bool(omega_enabled),
+        "color_interpretation": mode,
+        "output_channel_count": int(output_channel_count or 1),
+        "output_channels": output_channels or [],
+        "palette": str(palette or "") if _interpretation_uses_palette(mode) else "none",
+        "root_transforms": root_transforms or [],
+    }
+
+
+def _palette_variant_identity(**kwargs):
+    payload = _palette_identity_payload(**kwargs)
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    palette_id = f"pal_{_slug(payload.get('metric'))}_{payload['color_interpretation']}_{digest[:12]}"
+    return palette_id, f"sha256:{digest}", payload
 
 
 def _omega_display(enabled, omega):
@@ -195,6 +253,53 @@ def _load_palette_meta(job_id, palette_id):
     meta = json.loads(obj["Body"].read())
     if meta.get("job_id") and meta.get("job_id") != job_id:
         raise RuntimeError(f"Palette artifact {palette_id} belongs to {meta.get('job_id')}, not {job_id}")
+    return meta
+
+
+def _s3_key_exists(key):
+    if not key:
+        return False
+    try:
+        res = s3.head_object(Bucket=BUCKET, Key=key)
+        return isinstance(res, dict)
+    except Exception as exc:
+        if _missing_s3_key(exc):
+            return False
+        raise
+
+
+def _existing_palette_artifact_is_complete(meta):
+    if not _s3_key_exists(str(meta.get("image_key") or "")):
+        return False
+    if not _s3_key_exists(str(meta.get("preview_key") or "")):
+        return False
+    channels = int(meta.get("raw_channels") or meta.get("score_output_channel_count") or 1)
+    raw_key = str(meta.get("raw_key") or "")
+    raw_meta_key = str(meta.get("raw_meta_key") or "")
+    if channels > 1 or raw_key or raw_meta_key:
+        return _s3_key_exists(raw_key) and _s3_key_exists(raw_meta_key)
+    if meta.get("render_reusable") is True or str(meta.get("render_reusable", "")).lower() == "true":
+        return bool(meta.get("section_bins_prefix") or meta.get("chunk_bins_prefix") or meta.get("palette_bins_key"))
+    return bool(meta.get("palette_bins_key") or meta.get("section_bins_prefix") or meta.get("chunk_bins_prefix"))
+
+
+def _load_existing_palette_for_identity(job_id, palette_id, fingerprint):
+    meta_key = f"renders/{job_id}/palettes/{palette_id}/meta.json"
+    if not _s3_key_exists(meta_key):
+        return None
+    try:
+        meta = _load_palette_meta(job_id, palette_id)
+    except Exception as exc:
+        if _missing_s3_key(exc):
+            return None
+        raise
+    actual = str(meta.get("palette_variant_fingerprint") or meta.get("content_fingerprint") or "").strip()
+    if actual != str(fingerprint):
+        raise RuntimeError(
+            f"Palette artifact id collision for {palette_id}: expected fingerprint {fingerprint}, got {actual or '<missing>'}"
+        )
+    if not _existing_palette_artifact_is_complete(meta):
+        return None
     return meta
 
 
@@ -311,7 +416,16 @@ def _base_extract_plan(
     omega,
     omega_enabled,
     score_chain,
+    color_interpretation="scalar_lut",
+    output_channel_count=1,
+    output_channels=None,
+    raw_key="",
+    raw_meta_key="",
+    raw_layout="",
+    raw_channels=1,
+    palette_variant_fingerprint="",
 ):
+    mode = normalize_color_interpretation(color_interpretation)
     return {
         "job_id": job_id,
         "run_id": run_id,
@@ -334,11 +448,25 @@ def _base_extract_plan(
             "omega": omega,
             "omega_enabled": omega_enabled,
             "score_chain": public_solve_score_chain(score_chain) if score_chain not in ("", None, []) else score_chain,
+            "color_interpretation": mode,
+            "raw_key": raw_key,
+            "raw_meta_key": raw_meta_key,
+            "meta_key": f"renders/{job_id}/palettes/{palette_id}/meta.json" if palette_id else "",
+        },
+        "solve_score": {
+            "chain_fingerprint": "",
+            "output_channel_count": int(output_channel_count or 1),
+            "output_channels": list(output_channels or []),
         },
         "outputs": {
             "image_key": image_key,
             "preview_key": preview_key,
             "meta_key": f"renders/{job_id}/palettes/{palette_id}/meta.json" if palette_id else "",
+            "raw_key": raw_key,
+            "raw_meta_key": raw_meta_key,
+            "raw_layout": raw_layout,
+            "raw_channels": int(raw_channels or output_channel_count or 1),
+            "palette_variant_fingerprint": palette_variant_fingerprint,
             "chunks_prefix": "",
             "section_scores_prefix": "",
             "section_bins_prefix": "",
@@ -362,6 +490,79 @@ def _execution_params(raw_params):
         "palette_chunk_retries": _validate_sectioned_retries(pp.get("palette_chunk_retries", 2)),
         "palette_chunk_workers": _validate_palette_chunk_workers(pp.get("palette_chunk_workers", 16), default=16),
     }
+
+
+def _done_plan_for_existing_palette(
+    *,
+    job_id,
+    run_id,
+    task_id,
+    palette_id,
+    meta,
+    metric,
+    palette,
+    quantile,
+    omega,
+    omega_enabled,
+    score_chain,
+    color_interpretation,
+    output_channel_count,
+    output_channels,
+    palette_variant_fingerprint,
+):
+    plan = _base_extract_plan(
+        job_id,
+        run_id,
+        task_id,
+        {"artifact_id": ""},
+        palette_id=palette_id,
+        display_name=str(meta.get("display_name") or ""),
+        image_key=str(meta.get("image_key") or f"renders/{job_id}/palettes/{palette_id}/image.jpeg"),
+        preview_key=str(meta.get("preview_key") or f"renders/{job_id}/palettes/{palette_id}/preview.png"),
+        metric=metric,
+        palette=palette,
+        q=quantile,
+        omega=omega,
+        omega_enabled=omega_enabled,
+        score_chain=score_chain,
+        color_interpretation=color_interpretation,
+        output_channel_count=output_channel_count,
+        output_channels=output_channels,
+        raw_key=str(meta.get("raw_key") or ""),
+        raw_meta_key=str(meta.get("raw_meta_key") or ""),
+        raw_layout=str(meta.get("raw_layout") or ""),
+        raw_channels=int(meta.get("raw_channels") or output_channel_count or 1),
+        palette_variant_fingerprint=palette_variant_fingerprint,
+    )
+    plan["mode"] = "palette"
+    plan["params"] = {
+        "metric": metric,
+        "palette": palette,
+        "solve_score_chain": score_chain,
+        "solve_score_quantile": quantile,
+        "solve_score_omega": omega,
+        "solve_score_omega_enabled": omega_enabled,
+        "root_transforms": meta.get("root_transforms") or [],
+        "color_interpretation": normalize_color_interpretation(color_interpretation),
+    }
+    plan["extract"] = {
+        "action": "done",
+        "reason": "palette_artifact_already_exists",
+        "source_artifact_id": "",
+        "target_artifact_id": "",
+    }
+    plan["attach"]["enabled"] = False
+    plan["solve_score"].update({
+        "metric": metric,
+        "quantile": quantile,
+        "omega": omega,
+        "omega_enabled": omega_enabled,
+        "chain": score_chain,
+        "chain_fingerprint": str(meta.get("chain_fingerprint") or meta.get("solve_score_chain_fingerprint") or ""),
+        "output_channel_count": int(output_channel_count or 1),
+        "output_channels": list(output_channels or []),
+    })
+    return plan
 
 
 def _fallback_lores_coeffs_key(job_id, calc):
@@ -397,6 +598,10 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
             omega=assoc_selected["omega"],
             omega_enabled=assoc_selected["omega_enabled"],
             score_chain=assoc_selected["chain_public"],
+            color_interpretation=selected.get("associated_palette_color_interpretation", "scalar_lut"),
+            raw_key=selected.get("associated_palette_raw_key", ""),
+            raw_meta_key=selected.get("associated_palette_raw_meta_key", ""),
+            raw_channels=int(selected.get("associated_palette_raw_channels") or selected.get("raw_channels") or 1),
         )
         plan["params"].update(execution)
         plan["extract"] = {"action": "done", "reason": "already_associated", "source_artifact_id": selected["artifact_id"]}
@@ -420,6 +625,10 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
             omega=assoc_source["omega"],
             omega_enabled=assoc_source["omega_enabled"],
             score_chain=assoc_source["chain_public"],
+            color_interpretation=source.get("associated_palette_color_interpretation", "scalar_lut"),
+            raw_key=source.get("associated_palette_raw_key", ""),
+            raw_meta_key=source.get("associated_palette_raw_meta_key", ""),
+            raw_channels=int(source.get("associated_palette_raw_channels") or source.get("raw_channels") or 1),
         )
         plan["params"].update(execution)
         plan["extract"] = {"action": "attach", "reason": "inherit_existing_association", "source_artifact_id": source["artifact_id"]}
@@ -448,6 +657,13 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
             omega=source_score["omega"],
             omega_enabled=source_score["omega_enabled"],
             score_chain=source_score["chain_public"],
+            color_interpretation=palette_meta.get("color_interpretation", "scalar_lut"),
+            output_channel_count=int(palette_meta.get("score_output_channel_count") or palette_meta.get("raw_channels") or 1),
+            output_channels=palette_meta.get("score_output_channels") or [],
+            raw_key=str(palette_meta.get("raw_key") or ""),
+            raw_meta_key=str(palette_meta.get("raw_meta_key") or ""),
+            raw_layout=str(palette_meta.get("raw_layout") or ""),
+            raw_channels=int(palette_meta.get("raw_channels") or palette_meta.get("score_output_channel_count") or 1),
         )
         plan["params"].update(execution)
         plan["extract"] = {"action": "attach", "reason": "saved_palette_dependency", "source_artifact_id": source["artifact_id"]}
@@ -489,7 +705,24 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
     source_score_chain_internal = source_score["chain"]
     source_score_chain_public = source_score["chain_public"]
     scratch_ok, clip_key, bins_key = _scratch_matches(job_id, source_score_chain_internal, metric, q, omega, omega_enabled, root_transforms)
-    palette_id = _palette_variant_id(source_score_chain_internal, metric, q, omega, omega_enabled, palette, root_transforms)
+    output_channel_count = 1
+    output_channels = []
+    color_interpretation = "scalar_lut"
+    chain_fingerprint = source_score["chain_fingerprint"]
+    palette_id, palette_variant_fingerprint, _identity_payload = _palette_variant_identity(
+        job_id=job_id,
+        compiled_score_fingerprint=chain_fingerprint,
+        score_chain_public=source_score_chain_public,
+        metric=metric,
+        quantile=q,
+        omega=omega,
+        omega_enabled=omega_enabled,
+        color_interpretation=color_interpretation,
+        output_channel_count=output_channel_count,
+        output_channels=output_channels,
+        palette=palette,
+        root_transforms=root_transforms,
+    )
     prefix = f"renders/{job_id}/palettes/{palette_id}/"
     solve_prefix = prefix + "solve_score/"
     chunks_prefix = prefix + "chunks/"
@@ -509,6 +742,10 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         omega=omega,
         omega_enabled=omega_enabled,
         score_chain=source_score_chain_public,
+        color_interpretation=color_interpretation,
+        output_channel_count=output_channel_count,
+        output_channels=output_channels,
+        palette_variant_fingerprint=palette_variant_fingerprint,
     )
     plan["mode"] = "extract_palette"
     plan["params"] = {
@@ -519,6 +756,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         "solve_score_omega": omega,
         "solve_score_omega_enabled": omega_enabled,
         "root_transforms": root_transforms,
+        "color_interpretation": color_interpretation,
         **execution,
     }
     plan["extract"] = {
@@ -568,6 +806,11 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         "chain": source_score_chain_public,
         "metrics": source_score["metrics"],
         "program": source_score["program_spec"],
+        "chain_fingerprint": chain_fingerprint,
+        "output_channel_count": output_channel_count,
+        "output_channels": output_channels,
+        "has_explicit_outputs": False,
+        "raw_output_path": False,
         "uses_lag": uses_lag,
         "prelude_by_source": prelude_by_source,
         "prelude_rows": int(prelude_by_source.get("slv", 0)),
@@ -582,6 +825,11 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         "image_key": prefix + "image.jpeg",
         "preview_key": prefix + "preview.png",
         "meta_key": prefix + "meta.json",
+        "raw_key": "",
+        "raw_meta_key": "",
+        "raw_layout": "",
+        "raw_channels": output_channel_count,
+        "palette_variant_fingerprint": palette_variant_fingerprint,
         "chunks_prefix": chunks_prefix,
         "section_scores_prefix": chunks_prefix + "score_section_",
         "section_bins_prefix": chunks_prefix + "palette_bins_section_",
@@ -611,6 +859,7 @@ def handler(event, context):
     pp = dict(params.get("params", {}))
 
     execution = _execution_params(pp)
+    color_interpretation = _color_interpretation_from_params(pp)
     compiled_score = compile_solve_score_chain_or_legacy(
         pp.get("solve_score_chain", ""),
         pp.get("metric", "proximity"),
@@ -619,25 +868,73 @@ def handler(event, context):
         pp.get("solve_score_omega_enabled", True),
         default_metric="proximity",
     )
-    if compiled_score.get("has_explicit_outputs"):
-        raise RuntimeError("Palette extraction/generation requires a scalar solve-score program; explicit emit/emit_norm outputs are color-render only in v1")
+    output_channel_count = int(compiled_score.get("output_channel_count") or 1)
+    color_contract = validate_color_output_contract(
+        interpretation=color_interpretation,
+        output_channel_count=output_channel_count,
+        output_channels=compiled_score.get("output_channels") or [],
+    )
+    color_interpretation = color_contract["interpretation"]
+    output_channels = color_contract["channels"]
+    chain_fingerprint = compiled_solve_score_fingerprint(compiled_score)
+    has_explicit_outputs = bool(compiled_score.get("has_explicit_outputs"))
+    raw_output_path = has_explicit_outputs or output_channel_count != 1
     prelude_by_source = solve_score_lag_prelude_by_source(compiled_score)
     uses_lag = bool(compiled_score.get("uses_lag"))
     if uses_lag:
         # Lag can cross physical chunk boundaries, so use manifest-backed reads.
         execution["solve_score_hist_input_mode"] = "sectioned"
         execution["palette_chunk_input_mode"] = "sectioned"
+    if raw_output_path:
+        execution["palette_chunk_input_mode"] = "sectioned"
     metric = compiled_score["metric"]
-    palette = pp.get("palette", "inferno")
+    requested_palette = pp.get("palette", "inferno")
+    palette = requested_palette if _interpretation_uses_palette(color_interpretation) else ""
     root_transforms = pp.get("root_transforms", [])
     if metric not in VALID_METRICS:
         raise RuntimeError(f"Invalid metric: {metric}")
-    if palette not in VALID_PALETTE_NAMES:
+    if _interpretation_uses_palette(color_interpretation) and palette not in VALID_PALETTE_NAMES:
         raise RuntimeError(f"Invalid palette: {palette}")
     q = compiled_score["quantile"]
     omega = compiled_score["omega"]
     omega_enabled = compiled_score["omega_enabled"]
     compiled_score_chain_public = public_solve_score_chain(compiled_score["chain"])
+
+    palette_id, palette_variant_fingerprint, _identity_payload = _palette_variant_identity(
+        job_id=job_id,
+        compiled_score_fingerprint=chain_fingerprint,
+        score_chain_public=compiled_score_chain_public,
+        metric=metric,
+        quantile=q,
+        omega=omega,
+        omega_enabled=omega_enabled,
+        color_interpretation=color_interpretation,
+        output_channel_count=output_channel_count,
+        output_channels=output_channels,
+        palette=palette,
+        root_transforms=root_transforms,
+    )
+    existing = _load_existing_palette_for_identity(job_id, palette_id, palette_variant_fingerprint)
+    if existing:
+        return ok_response(
+            _done_plan_for_existing_palette(
+                job_id=job_id,
+                run_id=run_id,
+                task_id=task_id,
+                palette_id=palette_id,
+                meta=existing,
+                metric=metric,
+                palette=palette,
+                quantile=q,
+                omega=omega,
+                omega_enabled=omega_enabled,
+                score_chain=compiled_score_chain_public,
+                color_interpretation=color_interpretation,
+                output_channel_count=output_channel_count,
+                output_channels=output_channels,
+                palette_variant_fingerprint=palette_variant_fingerprint,
+            )
+        )
 
     calc = _load_calc(job_id)
     degree = calc.get("degree")
@@ -672,7 +969,6 @@ def handler(event, context):
     if solve_score_uses_source(compiled_score, "pm") and not chunk_items_have_params(chunk_items):
         raise RuntimeError("Param-source solve score requires full-res params metadata on every chunk")
 
-    palette_id = _palette_variant_id(compiled_score["chain"], metric, q, omega, omega_enabled, palette, root_transforms)
     prefix = f"renders/{job_id}/palettes/{palette_id}/"
     clip_key, solve_prefix, bins_key = _solve_score_scratch_keys(
         job_id,
@@ -703,6 +999,9 @@ def handler(event, context):
         "params": {
             "metric": metric,
             "palette": palette,
+            "requested_palette": requested_palette,
+            "color_interpretation": color_interpretation,
+            "score_output_interpretation": color_interpretation,
             "solve_score_chain": compiled_score_chain_public,
             "solve_score_quantile": q,
             "solve_score_omega": omega,
@@ -731,6 +1030,10 @@ def handler(event, context):
             "omega": "",
             "omega_enabled": True,
             "score_chain": "",
+            "color_interpretation": color_interpretation,
+            "raw_key": "",
+            "raw_meta_key": "",
+            "meta_key": "",
         },
         "prefix": prefix,
         "logical_section": uses_lag,
@@ -758,6 +1061,11 @@ def handler(event, context):
             "chain": compiled_score_chain_public,
             "metrics": compiled_score["metrics"],
             "program": compiled_score["program_spec"],
+            "chain_fingerprint": chain_fingerprint,
+            "output_channel_count": output_channel_count,
+            "output_channels": output_channels,
+            "has_explicit_outputs": has_explicit_outputs,
+            "raw_output_path": raw_output_path,
             "uses_lag": uses_lag,
             "prelude_by_source": prelude_by_source,
             "prelude_rows": int(prelude_by_source.get("slv", 0)),
@@ -772,6 +1080,11 @@ def handler(event, context):
             "image_key": prefix + "image.jpeg",
             "preview_key": prefix + "preview.png",
             "meta_key": prefix + "meta.json",
+            "raw_key": prefix + "greyscale.raw" if raw_output_path else "",
+            "raw_meta_key": prefix + "greyscale.meta.json" if raw_output_path else "",
+            "raw_layout": "u8_packed_channels_row_major" if output_channel_count > 1 else ("u8_scalar_row_major" if raw_output_path else ""),
+            "raw_channels": output_channel_count,
+            "palette_variant_fingerprint": palette_variant_fingerprint,
             "chunks_prefix": chunks_prefix,
             "section_scores_prefix": section_scores_prefix,
             "section_bins_prefix": section_bins_prefix,

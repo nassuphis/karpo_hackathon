@@ -6,10 +6,14 @@ import json
 import os
 import subprocess
 import time
+import hashlib
 
 import boto3
 
 from color_artifact_meta import load_color_artifact_head
+from color_render_contract import normalize_color_interpretation
+from raw_score_render import histogram_from_raw_path_channel0, render_score_raw, write_equalization_lut
+from raw_sidecar import build_raw_sidecar
 from solve_score_chain import (
     compile_solve_score_chain_or_legacy,
     compiled_solve_score_fingerprint,
@@ -34,6 +38,8 @@ S3_USER_METADATA_LIMIT_BYTES = 2048
 
 _TMP_BINS = "/tmp/palette_bins_full.bin"
 _TMP_RAW = "/tmp/palette_image.raw"
+_TMP_RAW_SCORE = "/tmp/palette_score.raw"
+_TMP_EQ_LUT = "/tmp/palette_eq.lut"
 _TMP_JPEG = "/tmp/palette_image.jpeg"
 _TMP_PREVIEW = "/tmp/palette_preview.png"
 VIEWPORT_METADATA_KEYS = (
@@ -50,7 +56,7 @@ VIEWPORT_METADATA_KEYS = (
 
 
 def _cleanup_tmp():
-    for p in (_TMP_BINS, _TMP_RAW, _TMP_JPEG, _TMP_PREVIEW):
+    for p in (_TMP_BINS, _TMP_RAW, _TMP_RAW_SCORE, _TMP_EQ_LUT, _TMP_JPEG, _TMP_PREVIEW):
         try:
             os.remove(p)
         except OSError:
@@ -89,6 +95,17 @@ def _delete_keys(keys):
         s3.delete_objects(Bucket=BUCKET, Delete={"Objects": [{"Key": k} for k in batch]})
 
 
+def _stable_digest(payload):
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _write_identity_lut(path):
+    with open(path, "wb") as fh:
+        fh.write(bytes(range(256)))
+
+
 def _list_keys(prefix):
     keys = []
     paginator = s3.get_paginator("list_objects_v2")
@@ -107,17 +124,23 @@ def _read_palette_bin_prefix(key, n_bytes):
     return obj["Body"].read()
 
 
-def _copy_pass0_chunk_rows(dst, src, *, full_n, step_start):
+def _copy_pass0_chunk_rows(dst, src, *, full_n, step_start, channels=1):
     """Copy a contiguous pass-0 chunk into the serpentine image buffer."""
     src_len = len(src)
     if src_len == 0:
         return 0
+    channels = int(channels or 1)
+    if channels < 1:
+        raise RuntimeError(f"channels must be >= 1, got {channels}")
+    if src_len % channels != 0:
+        raise RuntimeError(f"Chunk byte length {src_len} is not divisible by channels={channels}")
     if step_start < 0:
         raise RuntimeError(f"Chunk writes negative solve index at {step_start}")
 
     g = step_start
     src_pos = 0
-    end = step_start + src_len
+    sample_count = src_len // channels
+    end = step_start + sample_count
     while g < end:
         row = g // full_n
         row_start = row * full_n
@@ -126,17 +149,22 @@ def _copy_pass0_chunk_rows(dst, src, *, full_n, step_start):
         seg_len = seg_end - g
         j0 = g - row_start
         j1 = j0 + seg_len
-        segment = src[src_pos:src_pos + seg_len]
+        byte_len = seg_len * channels
+        segment = src[src_pos:src_pos + byte_len]
         if row % 2 == 0:
-            dst0 = row_start + j0
-            dst[dst0:dst0 + seg_len] = segment
+            dst0 = (row_start + j0) * channels
+            dst[dst0:dst0 + byte_len] = segment
         else:
-            dst0 = row_start + (full_n - j1)
-            dst1 = row_start + (full_n - j0)
-            dst[dst0:dst1] = segment[::-1]
-        src_pos += seg_len
+            dst0 = (row_start + (full_n - j1)) * channels
+            dst1 = (row_start + (full_n - j0)) * channels
+            for px in range(seg_len):
+                src_px = seg_len - 1 - px
+                dst[dst0 + px * channels:dst0 + (px + 1) * channels] = (
+                    segment[src_px * channels:(src_px + 1) * channels]
+                )
+        src_pos += byte_len
         g = seg_end
-    return src_len
+    return sample_count
 
 
 def handler(event, context):
@@ -169,6 +197,18 @@ def handler(event, context):
     image_key = params["image_key"]
     preview_key = params["preview_key"]
     meta_key = params["meta_key"]
+    raw_key = str(params.get("raw_key") or "").strip()
+    raw_meta_key = str(params.get("raw_meta_key") or "").strip()
+    color_interpretation = normalize_color_interpretation(params.get("color_interpretation") or "scalar_lut")
+    score_output_channel_count = int(params.get("score_output_channel_count") or params.get("raw_channels") or 1)
+    if not (1 <= score_output_channel_count <= 8):
+        raise RuntimeError(f"score_output_channel_count must be in [1, 8], got {score_output_channel_count}")
+    score_output_channels = list(params.get("score_output_channels") or [])
+    raw_layout = str(
+        params.get("raw_layout")
+        or ("u8_scalar_row_major" if score_output_channel_count == 1 else "u8_packed_channels_row_major")
+    )
+    raw_output_path = bool(raw_key or score_output_channel_count != 1 or compiled.get("has_explicit_outputs"))
     chunks_prefix = params["chunks_prefix"]
     solve_score_prefix = params["solve_score_prefix"]
     solve_score_clip_key = params["solve_score_clip_key"]
@@ -206,7 +246,8 @@ def handler(event, context):
         chunk_meta.sort(key=lambda m: (m.get("step_start", 0), m.get("section_idx", m.get("chunk_idx", 0))))
 
         pass0_steps = full_n * full_n
-        bins = bytearray(pass0_steps)
+        assembled_channels = score_output_channel_count if raw_output_path else 1
+        bins = bytearray(pass0_steps * assembled_channels)
 
         filled = 0
         pass0_chunks_read = 0
@@ -222,29 +263,50 @@ def handler(event, context):
                 pass0_chunks_skipped += 1
                 continue
             bin_key = meta["palette_bins_key"]
-            range_count = pass0_count if pass0_count < step_count else None
+            meta_channels = int(meta.get("raw_channels") or meta.get("score_output_channel_count") or 1)
+            if meta_channels != assembled_channels:
+                raise RuntimeError(
+                    f"Section {meta.get('section_idx', meta.get('chunk_idx'))} channel count "
+                    f"{meta_channels} != expected {assembled_channels}"
+                )
+            range_count = (pass0_count * assembled_channels) if pass0_count < step_count else None
             bin_bytes = _read_palette_bin_prefix(bin_key, range_count)
-            expected_len = pass0_count if range_count is not None else step_count
+            expected_len = (pass0_count if range_count is not None else step_count) * assembled_channels
             if len(bin_bytes) != expected_len:
                 raise RuntimeError(
                     f"Section {meta.get('section_idx', meta.get('chunk_idx'))} "
                     f"bin length {len(bin_bytes)} != {expected_len}"
                 )
             if range_count is None:
-                bin_bytes = bin_bytes[:pass0_count]
+                bin_bytes = bin_bytes[:pass0_count * assembled_channels]
 
-            filled += _copy_pass0_chunk_rows(bins, bin_bytes, full_n=full_n, step_start=step_start)
+            filled += _copy_pass0_chunk_rows(
+                bins,
+                bin_bytes,
+                full_n=full_n,
+                step_start=step_start,
+                channels=assembled_channels,
+            )
             pass0_chunks_read += 1
             pass0_bytes_read += len(bin_bytes)
 
         if filled != pass0_steps:
             raise RuntimeError(f"Palette finalize filled {filled} samples, expected {pass0_steps}")
 
-        with open(_TMP_BINS, "wb") as bf:
+        assembled_path = _TMP_RAW_SCORE if raw_output_path else _TMP_BINS
+        with open(assembled_path, "wb") as bf:
             bf.write(bins)
 
         bins_obj = s3.get_object(Bucket=BUCKET, Key=solve_score_bins_key)
         bins_meta = json.loads(bins_obj["Body"].read())
+        bins_channel_count = int(bins_meta.get("score_output_channel_count") or 1)
+        if bins_channel_count != score_output_channel_count:
+            raise RuntimeError(
+                "Solve-score bins channel count mismatch: "
+                f"expected {score_output_channel_count}, got {bins_channel_count}"
+            )
+        if bins_meta.get("score_output_channels"):
+            score_output_channels = list(bins_meta.get("score_output_channels") or [])
         clip_obj = s3.get_object(Bucket=BUCKET, Key=solve_score_clip_key)
         clip_meta = json.loads(clip_obj["Body"].read())
         actual_bins_fingerprint = str(bins_meta.get("chain_fingerprint") or "").strip()
@@ -285,39 +347,80 @@ def handler(event, context):
             result_data=attach_contract_warnings({**progress, **assemble_stats}, contract_warnings),
         )
 
-        t1 = time.time()
-        env = imgpipe_env()
-        result = subprocess.run(
-            [PALETTE_RENDER, _TMP_BINS, _TMP_RAW, f"--n={full_n}", f"--palette={palette}"],
-            capture_output=True, text=True, timeout=300,
-        )
-        render_ms = int((time.time() - t1) * 1000)
-        if result.returncode != 0:
-            raise RuntimeError(f"palette_bins_render failed: {result.stderr.strip()}")
+        raw_histogram = None
+        raw_file_size = 0
+        raw_sidecar_body = None
+        if raw_output_path:
+            if not raw_key or not raw_meta_key:
+                raise RuntimeError("Raw palette output requires raw_key and raw_meta_key")
+            expected_raw_size = pass0_steps * score_output_channel_count
+            raw_file_size = os.path.getsize(_TMP_RAW_SCORE)
+            if raw_file_size != expected_raw_size:
+                raise RuntimeError(f"Raw palette size mismatch: expected {expected_raw_size}, got {raw_file_size}")
+            raw_histogram = histogram_from_raw_path_channel0(
+                _TMP_RAW_SCORE,
+                channels=score_output_channel_count,
+                expected_size=expected_raw_size,
+            )
+            eq_lut_path = ""
+            if score_output_channel_count == 1 and color_interpretation == "scalar_lut":
+                _write_identity_lut(_TMP_EQ_LUT)
+                eq_lut_path = _TMP_EQ_LUT
+            t1 = time.time()
+            encode_meta = render_score_raw(
+                raw_path=_TMP_RAW_SCORE,
+                out_path=_TMP_JPEG,
+                preview_path=_TMP_PREVIEW,
+                pix=full_n,
+                eq_lut_path=eq_lut_path,
+                palette=palette or "inferno",
+                background_color="000000",
+                quality=90,
+                channels=score_output_channel_count,
+                interpretation=color_interpretation,
+                zero_background=False,
+            )
+            render_ms = int((time.time() - t1) * 1000)
+            encode_ms = 0
+            file_size = int(encode_meta["file_size"])
+        else:
+            t1 = time.time()
+            env = imgpipe_env()
+            result = subprocess.run(
+                [PALETTE_RENDER, _TMP_BINS, _TMP_RAW, f"--n={full_n}", f"--palette={palette}"],
+                capture_output=True, text=True, timeout=300,
+            )
+            render_ms = int((time.time() - t1) * 1000)
+            if result.returncode != 0:
+                raise RuntimeError(f"palette_bins_render failed: {result.stderr.strip()}")
 
-        t2 = time.time()
-        enc = subprocess.run(
-            [RAW2JPEG, _TMP_RAW, _TMP_JPEG, "--quality=90"],
-            capture_output=True, text=True, timeout=300, env=env,
-        )
-        encode_ms = int((time.time() - t2) * 1000)
-        if enc.returncode != 0:
-            raise RuntimeError(f"raw2jpeg failed: {enc.stderr.strip()}")
+            t2 = time.time()
+            enc = subprocess.run(
+                [RAW2JPEG, _TMP_RAW, _TMP_JPEG, "--quality=90"],
+                capture_output=True, text=True, timeout=300, env=env,
+            )
+            encode_ms = int((time.time() - t2) * 1000)
+            if enc.returncode != 0:
+                raise RuntimeError(f"raw2jpeg failed: {enc.stderr.strip()}")
 
-        vt_path = "/opt/bin/vipsthumbnail"
-        prev = subprocess.run(
-            [vt_path, _TMP_JPEG, "-s", "512x512", "-o", _TMP_PREVIEW + "[strip]"],
-            capture_output=True, text=True, timeout=60, env=env,
-        )
-        if prev.returncode != 0:
-            raise RuntimeError(f"Preview generation failed: {prev.stderr.strip()}")
+            vt_path = "/opt/bin/vipsthumbnail"
+            prev = subprocess.run(
+                [vt_path, _TMP_JPEG, "-s", "512x512", "-o", _TMP_PREVIEW + "[strip]"],
+                capture_output=True, text=True, timeout=60, env=env,
+            )
+            if prev.returncode != 0:
+                raise RuntimeError(f"Preview generation failed: {prev.stderr.strip()}")
 
-        file_size = os.path.getsize(_TMP_JPEG)
+            file_size = os.path.getsize(_TMP_JPEG)
         metadata = {
             "pix": str(full_n),
             "width": str(full_n),
             "height": str(full_n),
             "palette": palette,
+            "color_interpretation": color_interpretation,
+            "score_output_channel_count": str(score_output_channel_count),
+            "raw_channels": str(score_output_channel_count if raw_output_path else 1),
+            "raw_layout": raw_layout if raw_output_path else "",
             "full_n": str(full_n),
             "times": str(times),
             "using_pass": "0",
@@ -335,8 +438,72 @@ def handler(event, context):
             s3.upload_fileobj(fh, BUCKET, image_key, ExtraArgs={"ContentType": "image/jpeg", "Metadata": metadata})
         with open(_TMP_PREVIEW, "rb") as pf:
             s3.upload_fileobj(pf, BUCKET, preview_key, ExtraArgs={"ContentType": "image/png"})
+        if raw_output_path:
+            with open(_TMP_RAW_SCORE, "rb") as rf:
+                s3.upload_fileobj(rf, BUCKET, raw_key, ExtraArgs={"ContentType": "application/octet-stream"})
 
         created_at = _utc_now_iso()
+        plan_params_digest = _stable_digest({
+            "metric": metric,
+            "palette": palette,
+            "color_interpretation": color_interpretation,
+            "score_output_channel_count": score_output_channel_count,
+            "solve_score_chain": solve_score_chain,
+            "solve_score_quantile": q,
+            "solve_score_omega": omega,
+            "solve_score_omega_enabled": omega_enabled,
+            "root_transforms": root_transforms or [],
+        })
+        if raw_output_path:
+            raw_sidecar_body = build_raw_sidecar(
+                job_id=job_id,
+                run_id=params.get("run_id") or "",
+                artifact_family="palette",
+                artifact_id=palette_id,
+                width=full_n,
+                height=full_n,
+                chain_fingerprint=chain_fingerprint,
+                score_chain=solve_score_chain,
+                score_program=bins_meta.get("program") or compiled.get("program_spec") or "",
+                clip_slots=bins_meta.get("metrics") or [
+                    {
+                        "slot": 0,
+                        "metric": metric,
+                        "source": "slv",
+                        "clip_lo": bins_meta.get("clip_lo", 0.0),
+                        "clip_hi": bins_meta.get("clip_hi", 1.0),
+                    }
+                ],
+                score_output_normalize=any(
+                    bool(ch.get("range_normalized", ch.get("normalized", False)))
+                    for ch in score_output_channels
+                    if isinstance(ch, dict)
+                ),
+                score_output_clip_lo=(score_output_channels[0].get("clip_lo", 0.0) if score_output_channels and isinstance(score_output_channels[0], dict) else 0.0),
+                score_output_clip_hi=(score_output_channels[0].get("clip_hi", 1.0) if score_output_channels and isinstance(score_output_channels[0], dict) else 1.0),
+                background_color="000000",
+                plan_params_digest=plan_params_digest,
+                render_execution=render_execution if isinstance(render_execution, dict) else {},
+                raw_key=raw_key,
+                image_key=image_key,
+                preview_key=preview_key,
+                meta_key=meta_key,
+                created_at=created_at,
+                histogram=raw_histogram or [0] * 256,
+                step_scores_key=raw_key,
+                step_count=pass0_steps,
+                step_scores_grid_n=full_n,
+                channels=score_output_channel_count,
+                raw_layout=raw_layout,
+                interpretation=color_interpretation,
+                output_channels=score_output_channels,
+            )
+            s3.put_object(
+                Bucket=BUCKET,
+                Key=raw_meta_key,
+                Body=json.dumps(raw_sidecar_body),
+                ContentType="application/json",
+            )
         meta_body = {
             "job_id": job_id,
             "palette_id": palette_id,
@@ -352,8 +519,19 @@ def handler(event, context):
             "base_grid_solves": pass0_steps,
             "total_solves": sum(int(m.get("step_count", 0)) for m in chunk_meta),
             "pass_count": times,
-            "data_layout": "chunk_all_pass_v1",
-            "render_reusable": True,
+            "data_layout": raw_layout if raw_output_path else "chunk_all_pass_v1",
+            "render_reusable": not raw_output_path,
+            "color_interpretation": color_interpretation,
+            "score_output_channel_count": score_output_channel_count,
+            "score_output_channels": score_output_channels,
+            "raw_channels": score_output_channel_count if raw_output_path else 1,
+            "raw_layout": raw_layout if raw_output_path else "",
+            "raw_key": raw_key if raw_output_path else "",
+            "raw_meta_key": raw_meta_key if raw_output_path else "",
+            "raw_file_size": raw_file_size,
+            "raw_sidecar_version": (raw_sidecar_body or {}).get("version") if raw_output_path else None,
+            "palette_variant_fingerprint": params.get("palette_variant_fingerprint") or "",
+            "content_fingerprint": params.get("palette_variant_fingerprint") or "",
             "clip_lo": bins_meta.get("clip_lo"),
             "clip_hi": bins_meta.get("clip_hi"),
             "cuts_norm": bins_meta.get("cuts_norm", []),
@@ -387,6 +565,7 @@ def handler(event, context):
                         chain=solve_score_chain,
                     )["solve_score_chain"]
                 ),
+                "solve_score_chain_fingerprint": chain_fingerprint,
             }
         )
         if source_color_artifact_id:
@@ -404,6 +583,11 @@ def handler(event, context):
             "image_key": image_key,
             "preview_key": preview_key,
             "file_size": file_size,
+            "raw_key": raw_key if raw_output_path else "",
+            "raw_meta_key": raw_meta_key if raw_output_path else "",
+            "raw_channels": score_output_channel_count if raw_output_path else 1,
+            "color_interpretation": color_interpretation,
+            "render_reusable": not raw_output_path,
             **assemble_stats,
             "render_ms": render_ms,
             "encode_ms": encode_ms,

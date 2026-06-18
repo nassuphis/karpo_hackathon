@@ -219,6 +219,7 @@ let renderSolveScorePalette = 'inferno';
 let renderSolveMetric = 'proximity';
 let paletteTabPalette = 'inferno';
 let paletteTabMetric = 'proximity';
+let paletteTabColorInterpretation = 'scalar_lut';
 let renderRootProximityBuiltinPalette = 'inferno';
 let renderSolveScoreBuiltinPalette = 'inferno';
 let paletteTabBuiltinPalette = 'inferno';
@@ -741,6 +742,12 @@ function _selectedRenderColorInterpretation() {
     return renderColorInterpretation;
 }
 
+function _selectedPaletteColorInterpretation() {
+    const el = document.getElementById('palette-color-interpretation');
+    paletteTabColorInterpretation = _normalizeColorInterpretation(el ? el.value : paletteTabColorInterpretation);
+    return paletteTabColorInterpretation;
+}
+
 function _solveScoreColorCompatibility(compiled, interpretation = _selectedRenderColorInterpretation()) {
     const count = Number(compiled && compiled.output_channel_count) || 1;
     const mode = _normalizeColorInterpretation(interpretation);
@@ -752,13 +759,11 @@ function _solveScoreColorCompatibility(compiled, interpretation = _selectedRende
     return '';
 }
 
-function _solveScorePaletteCompatibility(compiled) {
-    const count = Number(compiled && compiled.output_channel_count) || 1;
-    if (compiled && compiled.has_explicit_outputs) {
-        return 'Palette Generate requires a scalar solve-score program; explicit emit outputs are color-render only in v1';
-    }
-    if (count !== 1) return `Palette Generate requires one scalar output, got ${count}`;
-    return '';
+function _solveScorePaletteCompatibility(compiled, interpretation) {
+    const mode = interpretation == null
+        ? (typeof _selectedPaletteColorInterpretation === 'function' ? _selectedPaletteColorInterpretation() : 'scalar_lut')
+        : interpretation;
+    return _solveScoreColorCompatibility(compiled, mode);
 }
 
 function _syncRenderColorInterpretationUi() {
@@ -777,6 +782,26 @@ function _setRenderColorInterpretation(value) {
     const radio = document.querySelector(`input[name="render-color-interpretation"][value="${renderColorInterpretation}"]`);
     if (radio) radio.checked = true;
     _syncRenderColorInterpretationUi();
+}
+
+function _syncPaletteColorInterpretationUi() {
+    const mode = _selectedPaletteColorInterpretation();
+    const select = document.getElementById('palette-color-interpretation');
+    if (select) select.value = mode;
+    const paletteRow = document.getElementById('palette-circles-palette-tab')?.closest('.color-row');
+    if (paletteRow) paletteRow.style.display = _colorInterpretationUsesPalette(mode) ? '' : 'none';
+    const help = document.getElementById('palette-color-interpretation-help');
+    if (help) {
+        help.textContent = _colorInterpretationUsesPalette(mode)
+            ? 'Uses the selected palette LUT.'
+            : 'Direct color mode; palette name is ignored.';
+    }
+    _updatePaletteCreateButton();
+}
+
+function _setPaletteColorInterpretation(value) {
+    paletteTabColorInterpretation = _normalizeColorInterpretation(value);
+    _syncPaletteColorInterpretationUi();
 }
 
 function _syncScoreNormalizationUi() {
@@ -813,7 +838,7 @@ function _updateSolveScoreButtons() {
     try {
         const compiled = _compileSolveScoreChain(_chainForWhich('ss'), renderSolveMetric);
         issue = _renderActiveFamily === 'palette'
-            ? _solveScorePaletteCompatibility(compiled)
+            ? _solveScorePaletteCompatibility(compiled, _selectedRenderColorInterpretation())
             : _solveScoreColorCompatibility(compiled, _selectedRenderColorInterpretation());
         chainValid = !issue;
     }
@@ -840,13 +865,13 @@ function _updatePaletteCreateButton() {
     let issue = '';
     try {
         const compiled = _compileSolveScoreChain(_chainForWhich('palette-ss'), paletteTabMetric);
-        issue = _solveScorePaletteCompatibility(compiled);
+        issue = _solveScorePaletteCompatibility(compiled, _selectedPaletteColorInterpretation());
         enabled = !issue;
     }
     catch (e) { enabled = false; issue = e && e.message ? e.message : String(e); }
     btn.disabled = !enabled || !!_activePaletteRun;
     btn.style.opacity = enabled ? '' : '0.4';
-    btn.title = issue || 'Generate a scalar solve-score palette artifact';
+    btn.title = issue || 'Generate a solve-score palette/color artifact';
     const labelEl = document.getElementById('palette-ss-stack-label');
     if (labelEl && issue) labelEl.textContent = issue;
 }
@@ -1352,7 +1377,9 @@ function _initLongPalettePopup() {
 
 function _canRepaletteArtifact(art) {
     if (!art || !art.palette_id) return false;
-    return !!(art.palette_bins_key || art.chunk_bins_prefix);
+    if (art.raw_key || Number(art.raw_channels || art.score_output_channel_count || 1) > 1) return false;
+    if (art.render_reusable === false && !(art.palette_bins_key || art.chunk_bins_prefix || art.section_bins_prefix)) return false;
+    return !!(art.palette_bins_key || art.chunk_bins_prefix || art.section_bins_prefix);
 }
 
 function _hasColorRawSidecar(art) {

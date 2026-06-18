@@ -145,6 +145,9 @@ def associated_palette_metadata(
     omega_enabled: bool,
     score_chain=None,
     color_interpretation: str = "",
+    raw_key: str = "",
+    raw_meta_key: str = "",
+    meta_key: str = "",
 ) -> Dict[str, str]:
     meta = {
         "associated_palette_mode": str(mode or ""),
@@ -156,6 +159,12 @@ def associated_palette_metadata(
     }
     if color_interpretation not in ("", None):
         meta["associated_palette_color_interpretation"] = str(color_interpretation)
+    if raw_key not in ("", None):
+        meta["associated_palette_raw_key"] = str(raw_key)
+    if raw_meta_key not in ("", None):
+        meta["associated_palette_raw_meta_key"] = str(raw_meta_key)
+    if meta_key not in ("", None):
+        meta["associated_palette_meta_key"] = str(meta_key)
     meta.update(
         emit_solve_score_metadata(
             "associated_palette",
@@ -187,6 +196,9 @@ def inherit_associated_palette_metadata(source_meta: Dict[str, str]) -> Dict[str
         omega_enabled=parse_boolish((source_meta or {}).get("associated_palette_omega_enabled", True), True),
         score_chain=(source_meta or {}).get("associated_palette_score_chain", ""),
         color_interpretation=(source_meta or {}).get("associated_palette_color_interpretation", ""),
+        raw_key=(source_meta or {}).get("associated_palette_raw_key", ""),
+        raw_meta_key=(source_meta or {}).get("associated_palette_raw_meta_key", ""),
+        meta_key=(source_meta or {}).get("associated_palette_meta_key", ""),
     )
     for key in (
         "associated_palette_color_interpretation",

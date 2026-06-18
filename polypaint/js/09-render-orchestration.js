@@ -456,7 +456,7 @@ function _renderChips(which) {
         }
         if (prefix === 'render') _syncScoreNormalizationUi();
         if (prefix === 'render') _updateSolveScoreButtons();
-        if (prefix === 'palette') _updatePaletteCreateButton();
+        if (prefix === 'palette') _syncPaletteColorInterpretationUi();
     }
     if (which === 'pt') _syncParamPipelineModeUi();
     if (which === 'ct') _syncCoeffTransformAddOptions();
@@ -856,7 +856,8 @@ async function runPaletteArtifact() {
         log('Palette artifact: starting...', '', 'palette-log');
 
         const score = _resolveSolveScoreState('palette', { requireChain: true });
-        const paletteIssue = _solveScorePaletteCompatibility(score);
+        const colorInterpretation = _selectedPaletteColorInterpretation();
+        const paletteIssue = _solveScorePaletteCompatibility(score, colorInterpretation);
         if (paletteIssue) throw new Error(paletteIssue);
         const runId = _generateRunId();
         const taskId = 'palette_run_' + runId;
@@ -867,6 +868,7 @@ async function runPaletteArtifact() {
             params: {
                 metric: score.metric,
                 palette: paletteTabPalette,
+                color_interpretation: colorInterpretation,
                 solve_score_quantile: score.quantile,
                 solve_score_omega: score.omega,
                 solve_score_omega_enabled: score.omega_enabled,

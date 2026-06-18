@@ -293,10 +293,10 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(plan["solve_score"]["metrics"][1]["source"], "cf")
 
     @patch("handler_palette_render_plan.s3")
-    def test_palette_generation_rejects_explicit_output_chain(self, mock_s3):
+    def test_palette_generation_rejects_explicit_output_chain_for_scalar_lut(self, mock_s3):
         from handler_palette_render_plan import handler
 
-        with self.assertRaisesRegex(RuntimeError, "explicit emit/emit_norm outputs are color-render only"):
+        with self.assertRaisesRegex(RuntimeError, "Scalar LUT requires 1 solve-score output"):
             handler(_event(params={
                 "metric": "proximity",
                 "palette": "reef",
@@ -311,6 +311,44 @@ class TestPaletteRenderPlan(unittest.TestCase):
             }), None)
 
         mock_s3.get_object.assert_not_called()
+
+    @patch("handler_palette_render_plan.s3")
+    def test_palette_generation_accepts_rgb_explicit_outputs(self, mock_s3):
+        from handler_palette_render_plan import handler
+
+        calc = {
+            "degree": 5,
+            "N": 4,
+            "times": 1,
+            "lores": {"bin_key": "renders/j/lores.bin"},
+            "chunks": [{"idx": 0, "bin_key": "renders/j/chunk_0.bin", "n_t": 16}],
+        }
+        mock_s3.get_object.return_value = {"Body": MagicMock(read=lambda: json.dumps(calc).encode())}
+
+        result = handler(_event(params={
+            "metric": "proximity",
+            "palette": "reef",
+            "color_interpretation": "rgb",
+            "solve_score_chain": [
+                ["proximity", "0.1"],
+                ["emit_norm"],
+                ["spread", "0.1"],
+                ["emit_norm"],
+                ["angular_entropy_16", "0.1"],
+                ["emit_norm"],
+            ],
+        }), None)
+        plan = json.loads(result["body"])
+
+        self.assertEqual(plan["params"]["color_interpretation"], "rgb")
+        self.assertEqual(plan["params"]["palette"], "")
+        self.assertTrue(plan["solve_score"]["has_explicit_outputs"])
+        self.assertTrue(plan["solve_score"]["raw_output_path"])
+        self.assertEqual(plan["solve_score"]["output_channel_count"], 3)
+        self.assertEqual(plan["outputs"]["raw_channels"], 3)
+        self.assertEqual(plan["outputs"]["raw_layout"], "u8_packed_channels_row_major")
+        self.assertTrue(plan["outputs"]["raw_key"].endswith("/greyscale.raw"))
+        self.assertTrue(plan["outputs"]["palette_variant_fingerprint"].startswith("sha256:"))
 
     @patch("handler_palette_render_plan.s3")
     def test_extract_plan_rejects_direct_rgb_color_artifact(self, mock_s3):

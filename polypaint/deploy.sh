@@ -1251,6 +1251,7 @@ cp lambda/handler_palette_render_plan.py lambda/shared.py \
    lambda/calc_chunks.py \
    lambda/param_source.py \
    lambda/color_artifact_meta.py \
+   lambda/color_render_contract.py \
    lambda/solve_score_chain.py \
    lambda/logical_sections.py \
    lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PALETTE_PLAN_DIR/"
@@ -1269,13 +1270,14 @@ chmod +x "$PALETTE_CHUNK_DIR"/solve_palette_chunk "$PALETTE_CHUNK_DIR"/solve_pal
 cd "$PALETTE_CHUNK_DIR" && zip -FS -r9 /tmp/polypaint-palette-chunk.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalChnk: $(du -h /tmp/polypaint-palette-chunk.zip | cut -f1)  (chunk scorer)"
 
-# Palette Finalize: handler_palette_finalize.py + shared.py + source metadata helpers + palette_bins_render + raw2jpeg (needs libvips layer)
+# Palette Finalize: handler_palette_finalize.py + shared.py + source metadata helpers + palette_bins_render/raw render binaries (needs libvips layer)
 PALETTE_FINALIZE_DIR=/tmp/polypaint-palette-finalize
 rm -rf "$PALETTE_FINALIZE_DIR"
 mkdir -p "$PALETTE_FINALIZE_DIR"
-cp lambda/handler_palette_finalize.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$PALETTE_FINALIZE_DIR/"
-cp lambda/palette_bins_render lambda/raw2jpeg "$PALETTE_FINALIZE_DIR/"
-chmod +x "$PALETTE_FINALIZE_DIR"/palette_bins_render "$PALETTE_FINALIZE_DIR"/raw2jpeg
+cp lambda/handler_palette_finalize.py lambda/shared.py lambda/color_artifact_meta.py lambda/color_render_contract.py \
+   lambda/raw_score_render.py lambda/raw_sidecar.py lambda/solve_score_chain.py "$PALETTE_FINALIZE_DIR/"
+cp lambda/palette_bins_render lambda/raw2jpeg lambda/score_raw_render "$PALETTE_FINALIZE_DIR/"
+chmod +x "$PALETTE_FINALIZE_DIR"/palette_bins_render "$PALETTE_FINALIZE_DIR"/raw2jpeg "$PALETTE_FINALIZE_DIR"/score_raw_render
 cd "$PALETTE_FINALIZE_DIR" && zip -FS -r9 /tmp/polypaint-palette-finalize.zip . -q && cd "$SCRIPT_DIR"
 echo "  PalFin:  $(du -h /tmp/polypaint-palette-finalize.zip | cut -f1)  (finalize + libvips layer)"
 

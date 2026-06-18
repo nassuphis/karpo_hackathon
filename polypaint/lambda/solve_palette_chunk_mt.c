@@ -17,8 +17,10 @@
  * roots each.
  *
  * Output:
- *   - scores_out: float32[count]
- *   - bins_out: uint8[count] in range 0..9
+ *   - scores_out: float32[count * output_channel_count]
+ *   - bins_out: uint8[count * output_channel_count]. Legacy implicit scalar
+ *     writes 0..9 palette bins; explicit program outputs write normalized
+ *     color bytes 0..255.
  *   - stdout: compact JSON metadata with perf counters
  *
  * Build (Amazon Linux / Lambda-compatible):
@@ -171,6 +173,9 @@ typedef struct {
     double omega;
     int omegaEnabled;
     double cuts[9];
+    int outputChannelCount;
+    double scoreOutputClipLos[SOLVE_SCORE_MAX_OUTPUT_CHANNELS];
+    double scoreOutputClipHis[SOLVE_SCORE_MAX_OUTPUT_CHANNELS];
     int retries;
     float *scoresOut;
     unsigned char *binsOut;
@@ -357,8 +362,8 @@ static void compute_scores_for_roots(const float *roots, const float *coeffRoots
             }
             solveParamValues = paramValues + paramLocalIdx * arg->scoreParamStride;
         }
-        double score;
-        if (usesLag) {
+        double score = 0.0;
+        if (arg->useProgram) {
             const float *step = prepare_step(solveRoots, arg->degree, arg->rtChain, arg->nRt, stepBuf, wkRe, wkIm);
             if (!solve_score_eval_metric_slots(
                     step, arg->degree, solveCoeffRoots, arg->scoreCoeffDegree,
@@ -368,7 +373,7 @@ static void compute_scores_for_roots(const float *roots, const float *coeffRoots
                 arg->failed = 1;
                 break;
             }
-            if (!recentInitialized) {
+            if (usesLag && !recentInitialized) {
                 memcpy(recentMetricBuffer, currentMetricBuffer, sizeof(float) * (size_t)arg->program.metricCount);
                 const float *prevStep = step;
                 const float *prevCoeffRoots = solveCoeffRoots;
@@ -396,37 +401,54 @@ static void compute_scores_for_roots(const float *roots, const float *coeffRoots
                 }
                 recentInitialized = 1;
             }
-            score = solve_score_eval_program_from_buffers(currentMetricBuffer, recentMetricBuffer, &arg->program);
-            if (!isfinite(score)) {
+            double outputValues[SOLVE_SCORE_MAX_OUTPUT_CHANNELS];
+            int gotOutputs = 0;
+            if (!solve_score_eval_program_outputs_from_buffers(
+                    currentMetricBuffer,
+                    usesLag ? recentMetricBuffer : NULL,
+                    &arg->program,
+                    outputValues,
+                    SOLVE_SCORE_MAX_OUTPUT_CHANNELS,
+                    &gotOutputs) ||
+                gotOutputs != arg->outputChannelCount) {
                 snprintf(arg->error, sizeof(arg->error), "solve-score program evaluation failed");
                 arg->failed = 1;
                 break;
             }
-        } else if (arg->useProgram) {
-            if (solve_score_program_uses_coeff_sources(&arg->program) || solve_score_program_uses_param_sources(&arg->program)) {
-                score = (arg->nRt > 0)
-                    ? score_program_xformed_with_sources(
-                        solveRoots, arg->degree, solveCoeffRoots, arg->scoreCoeffDegree, solveParamValues, arg->scoreParamDegree,
-                        &arg->program, arg->rtChain, arg->nRt, wkRe, wkIm
-                    )
-                    : solve_score_eval_program_with_sources(
-                        solveRoots, arg->degree, solveCoeffRoots, arg->scoreCoeffDegree,
-                        solveParamValues, arg->scoreParamDegree, &arg->program
-                    );
+
+            score = outputValues[0];
+            if (solve_score_program_has_explicit_outputs(&arg->program)) {
+                for (int ch = 0; ch < arg->outputChannelCount; ch++) {
+                    double u = outputValues[ch];
+                    if (solve_score_program_output_is_normalized(&arg->program, ch)) {
+                        double range = arg->scoreOutputClipHis[ch] - arg->scoreOutputClipLos[ch];
+                        if (isfinite(range) && range > 1e-12) {
+                            u = (u - arg->scoreOutputClipLos[ch]) / range;
+                        }
+                    }
+                    u = solve_score_clamp_unit(u);
+                    int rawByte = (int)llround(u * 255.0);
+                    if (rawByte < 0) rawByte = 0;
+                    if (rawByte > 255) rawByte = 255;
+                    arg->binsOut[outIdx * arg->outputChannelCount + ch] = (unsigned char)rawByte;
+                    arg->scoresOut[outIdx * arg->outputChannelCount + ch] = (float)outputValues[ch];
+                }
             } else {
-                score = (arg->nRt > 0)
-                    ? score_program_xformed(solveRoots, arg->degree, &arg->program, arg->rtChain, arg->nRt, wkRe, wkIm)
-                    : solve_score_eval_program(solveRoots, arg->degree, &arg->program);
+                if (!isfinite(score)) {
+                    snprintf(arg->error, sizeof(arg->error), "solve-score program evaluation failed");
+                    arg->failed = 1;
+                    break;
+                }
+                arg->scoresOut[outIdx] = (float)score;
+                arg->binsOut[outIdx] = u_to_bin(score, arg->cuts);
             }
         } else {
             score = (arg->nRt > 0)
                 ? score_xformed(solveRoots, arg->degree, arg->metric, arg->rtChain, arg->nRt, wkRe, wkIm)
                 : compute_solve_metric_score(solveRoots, arg->degree, arg->metric);
+            arg->scoresOut[outIdx] = (float)score;
+            arg->binsOut[outIdx] = score_to_bin(score, arg->clipLo, arg->clipHi, arg->omega, arg->omegaEnabled, arg->cuts);
         }
-        arg->scoresOut[outIdx] = (float)score;
-        arg->binsOut[outIdx] = arg->useProgram
-            ? u_to_bin(score, arg->cuts)
-            : score_to_bin(score, arg->clipLo, arg->clipHi, arg->omega, arg->omegaEnabled, arg->cuts);
         if (usesLag) {
             memcpy(recentMetricBuffer, currentMetricBuffer, sizeof(float) * (size_t)arg->program.metricCount);
         }
@@ -772,6 +794,9 @@ int main(int argc, char **argv) {
     const char *scoreClipLosCsv = getArgStr(argc, argv, "--score_clip_los", NULL);
     const char *scoreClipHisCsv = getArgStr(argc, argv, "--score_clip_his", NULL);
     const char *scoreProgramSpec = getArgStr(argc, argv, "--score_program", NULL);
+    const char *scoreOutputClipLosCsv = getArgStr(argc, argv, "--score_output_clip_los", NULL);
+    const char *scoreOutputClipHisCsv = getArgStr(argc, argv, "--score_output_clip_his", NULL);
+    int requestedOutputChannelCount = getArgInt(argc, argv, "--score_output_channel_count", 1);
     const char *scoreCoeffsFile = getArgStr(argc, argv, "--score_coeffs_file", NULL);
     const char *scoreCoeffsUrl = getArgStr(argc, argv, "--score_coeffs_url", NULL);
     const char *scoreCoeffManifest = getArgStr(argc, argv, "--score_coeff_manifest", NULL);
@@ -848,6 +873,72 @@ int main(int argc, char **argv) {
         }
         metric = scoreProgram.metrics[0];
         useScoreProgram = 1;
+    }
+
+    int outputChannelCount = useScoreProgram ? solve_score_program_output_count(&scoreProgram) : 1;
+    if (requestedOutputChannelCount > 0) {
+        outputChannelCount = requestedOutputChannelCount;
+    }
+    if (outputChannelCount < 1 || outputChannelCount > SOLVE_SCORE_MAX_OUTPUT_CHANNELS) {
+        fprintf(stderr, "Invalid score_output_channel_count: %d\n", outputChannelCount);
+        return 1;
+    }
+    if (!useScoreProgram && outputChannelCount != 1) {
+        fprintf(stderr, "legacy metric palette chunk requires score_output_channel_count=1\n");
+        return 1;
+    }
+    if (useScoreProgram && outputChannelCount != solve_score_program_output_count(&scoreProgram)) {
+        fprintf(stderr, "score output channel count mismatch: expected %d, got %d\n",
+                solve_score_program_output_count(&scoreProgram), outputChannelCount);
+        return 1;
+    }
+    double scoreOutputClipLos[SOLVE_SCORE_MAX_OUTPUT_CHANNELS];
+    double scoreOutputClipHis[SOLVE_SCORE_MAX_OUTPUT_CHANNELS];
+    for (int i = 0; i < SOLVE_SCORE_MAX_OUTPUT_CHANNELS; i++) {
+        scoreOutputClipLos[i] = 0.0;
+        scoreOutputClipHis[i] = 1.0;
+    }
+    if (scoreOutputClipLosCsv || scoreOutputClipHisCsv) {
+        char scoreErr[256] = {0};
+        if (!scoreOutputClipLosCsv || !scoreOutputClipHisCsv) {
+            fprintf(stderr, "score output channel clip arrays require both --score_output_clip_los and --score_output_clip_his\n");
+            return 1;
+        }
+        int loCount = parse_solve_score_double_csv(
+            scoreOutputClipLosCsv, scoreOutputClipLos, SOLVE_SCORE_MAX_OUTPUT_CHANNELS, scoreErr, sizeof(scoreErr)
+        );
+        if (loCount <= 0) {
+            fprintf(stderr, "Invalid score output clip lows: %s\n", scoreErr[0] ? scoreErr : "unknown error");
+            return 1;
+        }
+        int hiCount = parse_solve_score_double_csv(
+            scoreOutputClipHisCsv, scoreOutputClipHis, SOLVE_SCORE_MAX_OUTPUT_CHANNELS, scoreErr, sizeof(scoreErr)
+        );
+        if (hiCount <= 0) {
+            fprintf(stderr, "Invalid score output clip highs: %s\n", scoreErr[0] ? scoreErr : "unknown error");
+            return 1;
+        }
+        if (loCount != outputChannelCount || hiCount != outputChannelCount) {
+            fprintf(stderr, "score output clip array length mismatch: expected %d, got lows=%d highs=%d\n",
+                    outputChannelCount, loCount, hiCount);
+            return 1;
+        }
+    }
+    if (useScoreProgram) {
+        for (int ch = 0; ch < outputChannelCount; ch++) {
+            if (solve_score_program_output_is_normalized(&scoreProgram, ch)) {
+                if (!isfinite(scoreOutputClipLos[ch]) || !isfinite(scoreOutputClipHis[ch])) {
+                    fprintf(stderr, "score output channel %d clip bounds must be finite\n", ch);
+                    return 1;
+                }
+                if (scoreOutputClipHis[ch] - scoreOutputClipLos[ch] <= 1e-12) {
+                    fprintf(stderr, "solve_score_output_normalize: degenerate channel %d range [%g,%g], using identity\n",
+                            ch, scoreOutputClipLos[ch], scoreOutputClipHis[ch]);
+                    scoreOutputClipLos[ch] = 0.0;
+                    scoreOutputClipHis[ch] = 1.0;
+                }
+            }
+        }
     }
 
     double cuts[9];
@@ -1238,8 +1329,9 @@ int main(int argc, char **argv) {
         remoteCurlInitialized = 1;
     }
 
-    float *scoresOut = malloc((size_t)stepCount * sizeof(float));
-    unsigned char *binsOut = malloc((size_t)stepCount);
+    size_t outputValueCount = (size_t)stepCount * (size_t)outputChannelCount;
+    float *scoresOut = malloc(outputValueCount * sizeof(float));
+    unsigned char *binsOut = malloc(outputValueCount);
     if (!scoresOut || !binsOut) {
         fprintf(stderr, "Out of memory for outputs\n");
         free(scoresOut);
@@ -1330,6 +1422,9 @@ int main(int argc, char **argv) {
         arg->omega = omega;
         arg->omegaEnabled = omegaEnabled;
         memcpy(arg->cuts, cuts, sizeof(cuts));
+        arg->outputChannelCount = outputChannelCount;
+        memcpy(arg->scoreOutputClipLos, scoreOutputClipLos, sizeof(scoreOutputClipLos));
+        memcpy(arg->scoreOutputClipHis, scoreOutputClipHis, sizeof(scoreOutputClipHis));
         arg->retries = retries;
         arg->scoresOut = scoresOut;
         arg->binsOut = binsOut;
@@ -1381,7 +1476,7 @@ int main(int argc, char **argv) {
         REMOTE_CLEANUP();
         return 1;
     }
-    if (fwrite(scoresOut, sizeof(float), (size_t)stepCount, sf) != (size_t)stepCount) {
+    if (fwrite(scoresOut, sizeof(float), outputValueCount, sf) != outputValueCount) {
         fprintf(stderr, "Short write to %s\n", scoresOutPath);
         fclose(sf);
         free(threadIds);
@@ -1405,7 +1500,7 @@ int main(int argc, char **argv) {
         REMOTE_CLEANUP();
         return 1;
     }
-    if (fwrite(binsOut, 1, (size_t)stepCount, bf) != (size_t)stepCount) {
+    if (fwrite(binsOut, 1, outputValueCount, bf) != outputValueCount) {
         fprintf(stderr, "Short write to %s\n", binsOutPath);
         fclose(bf);
         free(threadIds);
@@ -1420,17 +1515,18 @@ int main(int argc, char **argv) {
 
     double minScore = scoresOut[0];
     double maxScore = scoresOut[0];
-    for (int i = 1; i < stepCount; i++) {
+    for (size_t i = 1; i < outputValueCount; i++) {
         if (scoresOut[i] < minScore) minScore = scoresOut[i];
         if (scoresOut[i] > maxScore) maxScore = scoresOut[i];
     }
 
     printf("{\"mode\":\"palette_chunk\",\"metric\":\"%s\",\"n_samples\":%d,"
+           "\"output_channel_count\":%d,"
            "\"omega\":%.15g,\"omega_enabled\":%s,\"clip_lo\":%.15g,\"clip_hi\":%.15g,"
            "\"min_score\":%.15g,\"max_score\":%.15g,"
            "\"threads\":%d,\"input_mode\":\"%s\",\"retries\":%d,"
            "\"download_ms\":%ld,\"compute_ms\":%ld,\"bytes_downloaded\":%ld}\n",
-           solve_metric_name(metric), stepCount, omega, omegaEnabled ? "true" : "false",
+           solve_metric_name(metric), stepCount, outputChannelCount, omega, omegaEnabled ? "true" : "false",
            clipLo, clipHi, minScore, maxScore, threads, inputMode, retries,
            totalDownloadMs, totalComputeMs, totalBytesDownloaded);
 

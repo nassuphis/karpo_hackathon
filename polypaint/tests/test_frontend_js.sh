@@ -264,8 +264,8 @@ assertIncludes("Text source changed. It will be compiled by the backend on save/
 assertIncludes("function _chipMoveControlsHtml(which, idx) {", 'transform chip renderer should centralize move controls');
 assertIncludes("chip.insertAdjacentHTML('afterbegin', _chipMoveControlsHtml(which, i));", 'param/transform chips should get move arrows');
 assertIncludes("chip-input chip-input-target", 'target parameters should render as dropdown inputs');
-assertIncludes("function _solveScorePaletteCompatibility(compiled) {", 'palette generation should have a scalar-only solve-score compatibility helper');
-assertIncludes("const paletteIssue = _solveScorePaletteCompatibility(score);", 'Palette tab Generate should reject explicit outputs before dispatch');
+assertIncludes("function _solveScorePaletteCompatibility(compiled, interpretation) {", 'palette generation should share the color-mode compatibility helper');
+assertIncludes("const colorInterpretation = _selectedPaletteColorInterpretation();", 'Palette tab Generate should validate against the selected palette interpretation before dispatch');
 assertIncludes("has_explicit_outputs: p.solveScoreHasExplicitOutputs,", 'Render Palette Generate should validate the render solve-score output mode before dispatch');
 const renderCommonSection = src.split("function _renderCommonParams(options = {}) {")[1]?.split("function _renderColorMtEligible()")[0] || '';
 assertSectionNotIncludes(renderCommonSection, "gamma:", '_renderCommonParams should not send dead gamma');
@@ -826,7 +826,16 @@ async function main() {
   assert(explicitEmit.output_channel_count === 2, 'explicit output chips should produce two output channels');
   assert(explicitEmit.output_channels[0].range_normalized === true, 'emit_norm should request per-channel range normalization');
   assert(explicitEmit.output_channels[1].range_normalized === false, 'emit should skip per-channel range normalization');
-  assert(ctx._solveScorePaletteCompatibility(explicitEmit).includes('requires a scalar solve-score program'), 'palette generation should reject explicit output solve-score programs in the frontend');
+  assert(ctx._solveScorePaletteCompatibility(explicitEmit, 'scalar_lut').includes('expected 1 output'), 'scalar LUT palette generation should require one output');
+  const explicitRgb = ctx._compileSolveScoreChain([
+    ['proximity', 'slv', '0.5'],
+    ['emit', 'norm'],
+    ['spread', 'cf', '0.5'],
+    ['emit', 'raw'],
+    ['angular_entropy_16', 'slv', '0.5'],
+    ['emit', 'raw'],
+  ], 'proximity', '0.1');
+  assert(ctx._solveScorePaletteCompatibility(explicitRgb, 'rgb') === '', 'RGB palette generation should accept explicit 3-output programs');
   assert(ctx._solveScorePaletteCompatibility(ctx._compileSolveScoreChain([['proximity', 'slv', '0.5']], 'proximity', '0.1')) === '', 'palette generation should accept scalar solve-score programs in the frontend');
 
   const emitNone = ctx._compileSolveScoreChain([

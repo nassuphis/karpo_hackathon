@@ -786,10 +786,11 @@ async function runRenderPaletteArtifact() {
         log('Palette artifact: starting...', '', 'render-log');
 
         const p = _renderCommonParams({ requireSolveScore: true });
+        const colorInterpretation = _selectedRenderColorInterpretation();
         const paletteIssue = _solveScorePaletteCompatibility({
             has_explicit_outputs: p.solveScoreHasExplicitOutputs,
             output_channel_count: p.solveScoreOutputChannelCount,
-        });
+        }, colorInterpretation);
         if (paletteIssue) throw new Error(paletteIssue);
         const runId = _generateRunId();
         const taskId = 'palette_run_' + runId;
@@ -800,6 +801,7 @@ async function runRenderPaletteArtifact() {
             params: {
                 metric: p.solveScoreMetric,
                 palette: _activeRenderPalette() || 'inferno',
+                color_interpretation: colorInterpretation,
                 solve_score_quantile: p.solveScoreQuantile,
                 solve_score_omega: p.solveScoreOmega,
                 solve_score_omega_enabled: p.solveScoreOmegaEnabled,

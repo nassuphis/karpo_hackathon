@@ -1454,6 +1454,20 @@ def _list_saved_palettes(job_id):
             meta["chunk_meta_prefix"] = section_meta_prefix
             meta["render_reusable"] = render_reusable
             meta["data_layout"] = data_layout
+            color_interpretation = _parse_color_interpretation(
+                meta.get("color_interpretation")
+                or meta.get("score_output_interpretation")
+                or meta.get("interpretation")
+            )
+            meta["color_interpretation"] = color_interpretation
+            meta["score_output_interpretation"] = color_interpretation
+            meta["score_output_channel_count"] = _parse_int(meta.get("score_output_channel_count")) or 1
+            meta["raw_channels"] = _parse_int(meta.get("raw_channels")) or meta["score_output_channel_count"]
+            meta["raw_layout"] = meta.get("raw_layout", "")
+            meta["raw_key"] = meta.get("raw_key", "")
+            meta["raw_meta_key"] = meta.get("raw_meta_key", "")
+            meta["palette_variant_fingerprint"] = meta.get("palette_variant_fingerprint", "")
+            meta["content_fingerprint"] = meta.get("content_fingerprint", "")
             meta["solve_score_omega_enabled"] = _parse_bool(meta.get("solve_score_omega_enabled"), True)
             meta["solve_score_chain"] = meta.get("solve_score_chain", [])
             meta["derived_from_palette_id"] = meta.get("derived_from_palette_id", "")

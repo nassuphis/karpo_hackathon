@@ -257,6 +257,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("calc_chunks.py", packaged["handler_render_plan.py"])
         self.assertIn("handler_palette_render_plan.py", packaged)
         self.assertIn("color_artifact_meta.py", packaged["handler_palette_render_plan.py"])
+        self.assertIn("color_render_contract.py", packaged["handler_palette_render_plan.py"])
         self.assertIn("solve_score_chain.py", packaged["handler_palette_render_plan.py"])
         self.assertIn("param_source.py", packaged["handler_palette_render_plan.py"])
         self.assertIn("calc_chunks.py", packaged["handler_palette_render_plan.py"])
@@ -434,6 +435,10 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('--finalize-mt-function-arn "$FINALIZE_MT_ARN"', DEPLOY_TEXT)
         self.assertIn("handler_palette_finalize.py", packaged)
         self.assertIn("solve_score_chain.py", packaged["handler_palette_finalize.py"])
+        self.assertIn("color_render_contract.py", packaged["handler_palette_finalize.py"])
+        self.assertIn("raw_score_render.py", packaged["handler_palette_finalize.py"])
+        self.assertIn("raw_sidecar.py", packaged["handler_palette_finalize.py"])
+        self.assertIn("score_raw_render", packaged["handler_palette_finalize.py"])
 
         self.assertIn("handler_coeffgen.py", packaged)
         self.assertIn("sweep_coeffgen", packaged["handler_coeffgen.py"])

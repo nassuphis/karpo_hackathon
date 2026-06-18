@@ -170,6 +170,89 @@ class TestPaletteChunkHandler(unittest.TestCase):
     @patch("handler_palette_chunk.report_status")
     @patch("handler_palette_chunk.s3")
     @patch("handler_palette_chunk.subprocess.run")
+    def test_explicit_rgb_output_uses_mt_and_channel_packed_outputs(self, mock_run, mock_s3, mock_report):
+        import handler_palette_chunk as mod
+
+        with tempfile.TemporaryDirectory() as td, \
+             patch.object(mod, "_TMP_INPUT", os.path.join(td, "input.bin")), \
+             patch.object(mod, "_TMP_SCORES", os.path.join(td, "scores.bin")), \
+             patch.object(mod, "_TMP_BINS", os.path.join(td, "bins.bin")), \
+             patch.object(mod, "_TMP_XFORMS", os.path.join(td, "xforms.json")):
+
+            chunk_bytes = b"\x00" * (5 * 2 * 4 * 4)
+            bins_meta = {
+                "family": "solve_score",
+                "version": 2,
+                "program": "m0-0;emit_norm;m1-0;emit_norm;m2-0;emit_norm",
+                "metrics": [
+                    {"slot": 0, "source": "slv", "metric": "proximity", "clip_lo": 0.0, "clip_hi": 1.0},
+                    {"slot": 1, "source": "slv", "metric": "spread", "clip_lo": 0.0, "clip_hi": 2.0},
+                    {"slot": 2, "source": "slv", "metric": "angular_entropy_16", "clip_lo": 0.0, "clip_hi": 3.0},
+                ],
+                "chain_fingerprint": "fp_rgb",
+                "score_output_channel_count": 3,
+                "score_output_channels": [
+                    {"channel": 0, "range_normalized": True, "clip_lo": 0.0, "clip_hi": 1.0},
+                    {"channel": 1, "range_normalized": True, "clip_lo": 0.0, "clip_hi": 2.0},
+                    {"channel": 2, "range_normalized": True, "clip_lo": 0.0, "clip_hi": 3.0},
+                ],
+                "cuts_norm": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+            }
+
+            def get_object(**kwargs):
+                key = kwargs["Key"]
+                if key == "renders/j/chunk_3.bin":
+                    body = MagicMock()
+                    body.iter_chunks.return_value = [chunk_bytes]
+                    return {"Body": body}
+                if key == "renders/j/palettes/p1/solve_score/crowding_bins.json":
+                    return {"Body": MagicMock(read=lambda: json.dumps(bins_meta).encode())}
+                raise AssertionError(f"unexpected get_object key: {key}")
+
+            mock_s3.get_object.side_effect = get_object
+            uploads = {}
+            mock_s3.upload_fileobj.side_effect = lambda fileobj, bucket, key, ExtraArgs=None: uploads.setdefault(key, fileobj.read())
+
+            def run_side_effect(cmd, capture_output, text, timeout):
+                self.assertEqual(cmd[0], mod.BINARY_MT)
+                self.assertIn("--score_output_channel_count=3", cmd)
+                self.assertIn("--score_output_clip_los=0.0,0.0,0.0", cmd)
+                self.assertIn("--score_output_clip_his=1.0,2.0,3.0", cmd)
+                scores = array("f", [float(i) for i in range(12)])
+                with open(mod._TMP_SCORES, "wb") as f:
+                    scores.tofile(f)
+                with open(mod._TMP_BINS, "wb") as f:
+                    f.write(bytes(range(12)))
+                return MagicMock(
+                    returncode=0,
+                    stdout=json.dumps({"min_score": 0.0, "max_score": 11.0, "output_channel_count": 3}),
+                    stderr="",
+                )
+
+            mock_run.side_effect = run_side_effect
+
+            result = mod.handler(_event(
+                score_output_channel_count=3,
+                score_output_channels=bins_meta["score_output_channels"],
+                score_output_has_explicit_outputs=True,
+                color_interpretation="rgb",
+                solve_score_chain_fingerprint="fp_rgb",
+            ), None)
+            body = json.loads(result["body"])
+
+            self.assertEqual(len(uploads["renders/j/palettes/p1/chunks/score_chunk_3.bin"]), 48)
+            self.assertEqual(uploads["renders/j/palettes/p1/chunks/palette_bins_chunk_3.bin"], bytes(range(12)))
+            self.assertEqual(body["score_output_channel_count"], 3)
+            self.assertEqual(body["raw_channels"], 3)
+            self.assertEqual(body["color_interpretation"], "rgb")
+            meta = json.loads(mock_s3.put_object.call_args.kwargs["Body"])
+            self.assertEqual(meta["raw_channels"], 3)
+            self.assertEqual(meta["score_output_channel_count"], 3)
+            self.assertTrue(meta["raw_output_path"])
+
+    @patch("handler_palette_chunk.report_status")
+    @patch("handler_palette_chunk.s3")
+    @patch("handler_palette_chunk.subprocess.run")
     def test_bins_quantile_mismatch_raises_and_reports_error(self, mock_run, mock_s3, mock_report):
         import handler_palette_chunk as mod
 

@@ -128,6 +128,34 @@ def _validate_workers(value):
     return workers
 
 
+def _validate_output_channel_count(value):
+    try:
+        n = int(value or 1)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"score_output_channel_count must be an integer, got {value!r}")
+    if not (1 <= n <= 8):
+        raise RuntimeError(f"score_output_channel_count must be in [1, 8], got {n}")
+    return n
+
+
+def _score_output_clip_csvs(bins_data, channel_count):
+    channels = list((bins_data or {}).get("score_output_channels") or [])
+    if not channels:
+        return None, None
+    if len(channels) != int(channel_count):
+        raise RuntimeError(
+            f"score_output_channels length mismatch: expected {channel_count}, got {len(channels)}"
+        )
+    lows = []
+    highs = []
+    for idx, channel in enumerate(channels):
+        if not isinstance(channel, dict):
+            raise RuntimeError(f"score_output_channels[{idx}] must be an object")
+        lows.append(str(float(channel.get("clip_lo", 0.0))))
+        highs.append(str(float(channel.get("clip_hi", 1.0))))
+    return ",".join(lows), ",".join(highs)
+
+
 def _sectioned_input_size_limit():
     try:
         memory_mb = int(os.environ.get("AWS_LAMBDA_FUNCTION_MEMORY_SIZE", "0") or 0)
@@ -204,6 +232,14 @@ def handler(event, context):
     input_mode = _validate_input_mode(contract_param(params, "palette_chunk_input_mode", "tmpfile", contract_warnings))
     retries = _validate_retries(contract_param(params, "palette_chunk_retries", 2, contract_warnings))
     workers = _validate_workers(contract_param(params, "palette_chunk_workers", 1, contract_warnings))
+    score_output_channel_count = _validate_output_channel_count(params.get("score_output_channel_count", 1))
+    color_interpretation = str(params.get("color_interpretation") or "scalar_lut")
+    score_output_has_explicit_outputs = parse_boolish(
+        params.get("score_output_has_explicit_outputs", False),
+        False,
+    )
+    score_output_channels = list(params.get("score_output_channels") or [])
+    raw_output_path = score_output_has_explicit_outputs or score_output_channel_count != 1
     coeffs_key = str(params.get("coeffs_key") or "").strip()
     coeffs_bin_size = params.get("coeffs_bin_size")
     params_key = str(params.get("params_key") or "").strip()
@@ -261,6 +297,9 @@ def handler(event, context):
         "compute_ms": 0,
         "upload_ms": 0,
         "step_count": step_count,
+        "score_output_channel_count": score_output_channel_count,
+        "color_interpretation": color_interpretation,
+        "raw_output_path": raw_output_path,
         "prelude_rows": actual_solve_prelude,
         "score_coeff_prelude_rows": actual_coeff_prelude,
         "score_param_prelude_rows": actual_param_prelude,
@@ -344,6 +383,16 @@ def handler(event, context):
         cuts = bins_data.get("cuts_norm", [])
         if len(cuts) != 9:
             raise RuntimeError(f"Bins artifact must contain 9 cuts, got {len(cuts)}")
+        bins_output_channel_count = int(bins_data.get("score_output_channel_count") or 1)
+        if bins_output_channel_count != score_output_channel_count:
+            raise RuntimeError(
+                "Bins score_output_channel_count mismatch: "
+                f"expected {score_output_channel_count}, got {bins_output_channel_count}"
+            )
+        score_output_clip_los_csv, score_output_clip_his_csv = _score_output_clip_csvs(
+            bins_data,
+            score_output_channel_count,
+        )
         is_v2_bins = int(bins_data.get("version", 1) or 1) >= 2
         uses_coeff_source = is_v2_bins and _solve_score_bins_uses_source(bins_data, "cf")
         uses_param_source = is_v2_bins and _solve_score_bins_uses_source(bins_data, "pm")
@@ -455,7 +504,7 @@ def handler(event, context):
 
         if uses_lag and effective_input_mode != "multispan_sectioned":
             raise RuntimeError("lagged palette chunk requires multispan_sectioned native input")
-        use_legacy_binary = (not uses_lag) and threads == 1 and effective_input_mode == "tmpfile"
+        use_legacy_binary = (not raw_output_path) and (not uses_lag) and threads == 1 and effective_input_mode == "tmpfile"
         cmd = [
             BINARY if use_legacy_binary else BINARY_MT,
             _TMP_INPUT,
@@ -464,7 +513,13 @@ def handler(event, context):
             f"--step_count={step_count}",
             f"--scores_out={_TMP_SCORES}",
             f"--bins_out={_TMP_BINS}",
+            f"--score_output_channel_count={score_output_channel_count}",
         ]
+        if score_output_clip_los_csv and score_output_clip_his_csv:
+            cmd.extend([
+                f"--score_output_clip_los={score_output_clip_los_csv}",
+                f"--score_output_clip_his={score_output_clip_his_csv}",
+            ])
         if is_v2_bins:
             cmd.extend(_solve_score_program_args(bins_data))
             if uses_coeff_source:
@@ -594,6 +649,21 @@ def handler(event, context):
         progress["input_mode"] = str(meta.get("input_mode", effective_input_mode) or effective_input_mode)
         progress["retries"] = int(meta.get("retries", retries) or retries)
         progress["n_samples"] = int(meta.get("n_samples", step_count) or step_count)
+        progress["score_output_channel_count"] = int(
+            meta.get("output_channel_count", score_output_channel_count) or score_output_channel_count
+        )
+        expected_scores_size = int(step_count) * int(score_output_channel_count) * 4
+        expected_bins_size = int(step_count) * int(score_output_channel_count)
+        actual_scores_size = os.path.getsize(_TMP_SCORES)
+        actual_bins_size = os.path.getsize(_TMP_BINS)
+        if actual_scores_size != expected_scores_size:
+            raise RuntimeError(
+                f"score output size mismatch: expected {expected_scores_size} bytes, got {actual_scores_size}"
+            )
+        if actual_bins_size != expected_bins_size:
+            raise RuntimeError(
+                f"palette/raw bin output size mismatch: expected {expected_bins_size} bytes, got {actual_bins_size}"
+            )
 
         report_status(
             job_id,
@@ -627,6 +697,13 @@ def handler(event, context):
             "cuts_norm": cuts,
             "score_key": score_key,
             "palette_bins_key": palette_bins_key,
+            "score_output_channel_count": score_output_channel_count,
+            "score_output_channels": score_output_channels,
+            "raw_channels": score_output_channel_count,
+            "color_interpretation": color_interpretation,
+            "raw_output_path": raw_output_path,
+            "score_bytes": actual_scores_size,
+            "palette_bins_bytes": actual_bins_size,
             "min_score": meta.get("min_score"),
             "max_score": meta.get("max_score"),
         }
@@ -659,6 +736,11 @@ def handler(event, context):
             "prelude_rows": actual_solve_prelude,
             "score_coeff_prelude_rows": actual_coeff_prelude,
             "score_param_prelude_rows": actual_param_prelude,
+            "score_output_channel_count": score_output_channel_count,
+            "score_output_channels": score_output_channels,
+            "raw_channels": score_output_channel_count,
+            "color_interpretation": color_interpretation,
+            "raw_output_path": raw_output_path,
         }, contract_warnings)
         report_status(job_id, task_id, "done", result_data=result_data)
         return ok_response(result_data)

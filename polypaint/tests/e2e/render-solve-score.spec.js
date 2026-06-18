@@ -1372,7 +1372,7 @@ test.describe('Solve Score UI', () => {
       _updateSolveScoreButtons();
     });
     await expect(page.locator('#btn-render-generate')).toBeDisabled();
-    await expect(page.locator('#render-solve-score-program-status')).toContainText('Palette Generate requires a scalar');
+    await expect(page.locator('#render-solve-score-program-status')).toContainText('program incompatible with RGB');
   });
 
   test('switching family updates the selected catalog and viewer', async ({ page }) => {

@@ -1931,6 +1931,17 @@ button {
                     <label style="color:#888; font-size:10px; min-width:70px">Palette:</label>
                     <div id="palette-circles-palette-tab" style="display:inline-flex; gap:4px; flex-wrap:wrap"></div>
                 </div>
+                <div class="color-row" style="margin-bottom:0">
+                    <label for="palette-color-interpretation" style="color:#888; font-size:10px; min-width:70px">Mode:</label>
+                    <select id="palette-color-interpretation" onchange="_setPaletteColorInterpretation(this.value)" style="width:150px; font-size:11px">
+                        <option value="scalar_lut">Scalar LUT</option>
+                        <option value="rgb">RGB</option>
+                        <option value="hsv">HSV</option>
+                        <option value="rgb_lut">RGB LUT</option>
+                        <option value="hsv_lut">HSV LUT</option>
+                    </select>
+                    <span id="palette-color-interpretation-help" style="font-size:10px; color:#888">Matches the Render tab color-output mode.</span>
+                </div>
                 <div id="palette-solve-score-program-status" class="solve-score-program-status"></div>
             </div>
             <div class="anim-row" style="flex-wrap:wrap; margin-top:8px">

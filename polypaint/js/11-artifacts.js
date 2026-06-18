@@ -338,9 +338,13 @@ function _renderArtifactSummary(art) {
         const sourceColorId = _sourceColorArtifactIdForRenderArtifact(art);
         const rawColorInterpretation = art.color_interpretation || art.score_output_interpretation || '';
         const colorInterpretation = rawColorInterpretation ? _normalizeColorInterpretation(rawColorInterpretation) : '';
+        const reuseLabel = art.raw_key || Number(art.raw_channels || art.score_output_channel_count || 1) > 1
+            ? 'raw'
+            : (art.render_reusable === false ? 'pass0' : 'reusable');
         return [
             solveDisplay ? `solve:${solveDisplay}` : '',
             colorInterpretation ? `mode:${_colorInterpretationLabel(colorInterpretation)}` : '',
+            reuseLabel,
             art.palette ? `palette:${art.palette}` : '',
             sourceColorId ? `color:${sourceColorId}` : '',
             derived,

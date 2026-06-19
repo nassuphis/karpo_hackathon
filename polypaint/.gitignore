@@ -95,6 +95,9 @@ lyon-font/
 sabon-similar/
 sohne-font-family/
 
+# CR18 oracle/bench output (Phase -1 of cr18-implementation-plan.md)
+reports/
+
 # knitr/LaTeX build artifacts (architecture-ui-critique.Rnw -> pdf)
 *.aux
 *.out

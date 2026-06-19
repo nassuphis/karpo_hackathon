@@ -341,7 +341,13 @@ function _populateComputeFromDetail(jobId, detail) {
     const ptDisplay = pipeline.param_transforms_display || detail.param_transforms_display || pipeline.param_transforms || detail.param_transforms || [];
     const savedParamProgramChain = pipeline.param_program_chain || detail.param_program_chain || [];
     const savedCoeffProgramChain = pipeline.coeff_program_chain || detail.coeff_program_chain || [];
-    const savedCoeffProgramSourceText = String(pipeline.coeff_program_source_text || detail.coeff_program_source_text || '');
+    const savedCoeffProgramSourceText = [
+        pipeline.coeff_program_source_text,
+        detail.coeff_program_source_text,
+        calc.coeff_program_source_text,
+        pipeline.coeff_program && pipeline.coeff_program.source_text,
+        detail.coeff_program && detail.coeff_program.source_text,
+    ].map(v => typeof v === 'string' ? v : '').find(v => v.trim()) || '';
     _setChainFromSaved('pt', ptDisplay);
     _setChainFromSaved('pp', savedParamProgramChain);
     _setChainFromSaved('cp', savedCoeffProgramChain);

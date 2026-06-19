@@ -559,6 +559,7 @@ def handle_finalize_metadata(params):
             "function": plan["pipeline"]["function"],
             "coeff_transforms": plan["pipeline"]["coeff_transforms"],
             "coeff_program_chain": plan["pipeline"].get("coeff_program_chain", []),
+            "coeff_program_source_text": plan["pipeline"].get("coeff_program_source_text", ""),
             "coeff_program": plan["pipeline"].get("coeff_program", {}),
             "coeff_program_display": plan["pipeline"].get("coeff_program_display", ""),
             "coeff_program_fingerprint": plan["pipeline"].get("coeff_program_fingerprint", ""),

@@ -196,6 +196,8 @@ assertIncludes("unknown coeff program chip at", 'Coeff Program stale poly-* save
 assertIncludes("const normalizedChain = hasSourceText ? [] : _normalizeCoeffProgramChain(chain);", 'Coeff Program source_text payloads should not validate compiler-internal lowered chains as chip UI');
 assertIncludes("if (!hasSourceText) _validateCoeffProgramUiChain(normalizedChain);", 'Coeff Program chip validation should apply only to chip-authored programs');
 assertIncludes("if (program.has_source_text) {", 'Coeff Program source_text payloads should load into Text mode even when source_text is empty');
+assertIncludes("pipeline.coeff_program_source_text,\n        detail.coeff_program_source_text,\n        calc.coeff_program_source_text,\n        pipeline.coeff_program && pipeline.coeff_program.source_text", 'Compute result Populate should prefer stored coeff source text over lowered chip chains');
+assertIncludes("} else if (options.auto === false || value.trim()) {\n        _coeffProgramSourceAutoSynthed = false;", 'Restored coeff source text should clear auto-synth state before switching to Text mode');
 assertIncludes("function _effectiveCoeffProgramChainForCompute() {", 'compute payload should centralize coeff-program selection');
 assertIncludes("function _copyCoeffTransformsIntoCoeffProgram() {", 'Coeff Program UI should translate legacy transforms into program chips');
 assertIncludes("const _coeffProgramRegistryChipNames = _coeffRegistryVocab ? _coeffRegistryVocab.chipNameByRegistryName : {};", 'normalize/copy should derive the registry-to-chip name map from the generated vocab');

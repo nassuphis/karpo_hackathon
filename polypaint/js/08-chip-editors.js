@@ -368,10 +368,15 @@ function _coeffProgramSourceFromRows(chain) {
     }).filter(Boolean).join('\n');
 }
 
-function _setCoeffProgramSourceText(text) {
+function _setCoeffProgramSourceText(text, options = {}) {
     const value = String(text == null ? '' : text);
     const el = _coeffProgramSourceTextarea();
     if (el && el.value !== value) el.value = value;
+    if (options.auto === true) {
+        _coeffProgramSourceAutoSynthed = true;
+    } else if (options.auto === false || value.trim()) {
+        _coeffProgramSourceAutoSynthed = false;
+    }
 }
 
 function _getCoeffProgramSourceText() {
@@ -399,11 +404,10 @@ function _setCoeffProgramEditorMode(mode) {
     if (normalized === 'text' && _coeffProgramSourceAutoSynthed && !_coeffProgramChain.length) {
         // The synthesized program's chips were all removed; stale auto-text
         // must not stay authoritative for compute.
-        _setCoeffProgramSourceText('');
+        _setCoeffProgramSourceText('', { auto: false });
     } else if (normalized === 'text' && _coeffProgramChain.length &&
         (!_getCoeffProgramSourceText().trim() || _coeffProgramSourceAutoSynthed)) {
-        _setCoeffProgramSourceText(_coeffProgramSourceFromRows(_serializeCoeffProgramChain()));
-        _coeffProgramSourceAutoSynthed = true;
+        _setCoeffProgramSourceText(_coeffProgramSourceFromRows(_serializeCoeffProgramChain()), { auto: true });
     }
     const computeScope = _paramProgramModeSelected()
         ? ', and compute'

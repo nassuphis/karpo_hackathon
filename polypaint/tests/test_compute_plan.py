@@ -494,6 +494,7 @@ class TestComputePlan(unittest.TestCase):
                 "param_transforms": [],
                 "param_transforms_display": [],
                 "coeff_transforms": [],
+                "coeff_program_source_text": "poly[0] = p1\npoly = rev(poly)\n",
                 "cfpv": [],
             },
             "compute": {"N": 100, "times": 1, "n_chunks": 1, "n_steps": 10000, "param_storage_mode": "chunked", "params_key": "", "param_gen_threads": 5, "coeffgen_threads": 4, "lores_param_gen_threads": 2, "lores_coeffgen_threads": 3},
@@ -540,6 +541,7 @@ class TestComputePlan(unittest.TestCase):
         self.assertEqual(body["lores_coeffgen_threads"], 3)
         self.assertEqual(body["lores"]["param_gen_threads"], 2)
         self.assertEqual(body["lores"]["coeffgen_threads"], 3)
+        self.assertEqual(body["pipeline"]["coeff_program_source_text"], "poly[0] = p1\npoly = rev(poly)\n")
         self.assertEqual(body["param_storage_mode"], "chunked")
         self.assertEqual(body["params_key"], "")
         self.assertEqual(body["chunks"][0]["params_key"], "renders/compute_j/params_0000.bin")

@@ -823,6 +823,14 @@ function _effectiveParamProgramChainForCompute() {
     return _paramProgramModeSelected() ? _serializeParamProgramChain() : [];
 }
 
+function _effectiveParamProgramSourceTextForCompute() {
+    if (!_paramProgramModeSelected()) return null;
+    if (typeof window._getParamProgramSourceText === 'function') {
+        return window._getParamProgramSourceText();
+    }
+    return null;
+}
+
 function _effectiveCoeffTransformsForCompute() {
     return _paramProgramModeSelected() ? [] : _serializeCoeffTransforms();
 }
@@ -839,6 +847,12 @@ function _attachCoeffProgramSourcePayload(payload) {
     const sourceText = _effectiveCoeffProgramSourceTextForCompute();
     if (sourceText !== null) payload.coeff_program_source_text = sourceText;
     return payload;
+}
+
+function _attachProgramSourcePayload(payload) {
+    const paramSourceText = _effectiveParamProgramSourceTextForCompute();
+    if (paramSourceText !== null) payload.param_program_source_text = paramSourceText;
+    return _attachCoeffProgramSourcePayload(payload);
 }
 
 function _paramProgramStatus(message, isError = false) {

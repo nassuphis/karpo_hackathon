@@ -960,8 +960,9 @@ COEFFGEN_DIR=/tmp/polypaint-coeffgen
 rm -rf "$COEFFGEN_DIR"
 mkdir -p "$COEFFGEN_DIR"
 cp lambda/handler_coeffgen.py lambda/shared.py lambda/compute_fused.py \
-   lambda/param_program_chain.py lambda/param_legacy_registry.json \
+   lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
    lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
+   lambda/program_source_core.py lambda/program_profiles.json \
    lambda/pipeline_programs.py lambda/program_compile_helpers.py "$COEFFGEN_DIR/"
 cp lambda/sweep_coeffgen "$COEFFGEN_DIR/"
 chmod +x "$COEFFGEN_DIR"/sweep_coeffgen
@@ -981,8 +982,9 @@ STORAGE_DIR=/tmp/polypaint-storage
 rm -rf "$STORAGE_DIR"
 mkdir -p "$STORAGE_DIR"
 cp lambda/handler_storage.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py \
-   lambda/param_program_chain.py lambda/param_legacy_registry.json \
+   lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
    lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
+   lambda/program_source_core.py lambda/program_profiles.json \
    lambda/color_render_contract.py lambda/logical_sections.py "$STORAGE_DIR/"
 cd "$STORAGE_DIR" && zip -FS -r9 /tmp/polypaint-storage.zip . -q && cd "$SCRIPT_DIR"
 echo "  Storage:  $(du -h /tmp/polypaint-storage.zip | cut -f1)  (pure Python)"
@@ -1030,8 +1032,9 @@ COMPUTE_PREVIEW_DIR=/tmp/polypaint-compute-preview
 rm -rf "$COMPUTE_PREVIEW_DIR"
 mkdir -p "$COMPUTE_PREVIEW_DIR"
 cp lambda/handler_compute_preview.py lambda/shared.py \
-   lambda/param_program_chain.py lambda/param_legacy_registry.json \
+   lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
    lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
+   lambda/program_source_core.py lambda/program_profiles.json \
    lambda/pipeline_programs.py lambda/program_compile_helpers.py "$COMPUTE_PREVIEW_DIR/"
 cp lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$COMPUTE_PREVIEW_DIR/"
 chmod +x "$COMPUTE_PREVIEW_DIR"/sweep_coeffgen "$COMPUTE_PREVIEW_DIR"/sweep_mt "$COMPUTE_PREVIEW_DIR"/sweep_cm
@@ -1054,9 +1057,10 @@ PARAM_DEBUG_DIR=/tmp/polypaint-param-debug
 rm -rf "$PARAM_DEBUG_DIR"
 mkdir -p "$PARAM_DEBUG_DIR"
 cp lambda/handler_param_debug.py lambda/shared.py \
-   lambda/param_program_chain.py lambda/param_legacy_registry.json \
+   lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
    lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
-   lambda/program_compile_helpers.py \
+   lambda/program_source_core.py lambda/program_profiles.json \
+   lambda/pipeline_programs.py lambda/program_compile_helpers.py \
    "$PARAM_DEBUG_DIR/"
 cp lambda/sweep lambda/bilevel_merge "$PARAM_DEBUG_DIR/"
 chmod +x "$PARAM_DEBUG_DIR"/sweep "$PARAM_DEBUG_DIR"/bilevel_merge
@@ -1324,8 +1328,9 @@ COMPUTE_PLAN_DIR=/tmp/polypaint-compute-plan
 rm -rf "$COMPUTE_PLAN_DIR"
 mkdir -p "$COMPUTE_PLAN_DIR"
 cp lambda/handler_compute_plan.py lambda/shared.py lambda/compute_fused.py \
-   lambda/param_program_chain.py lambda/param_legacy_registry.json \
+   lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
    lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
+   lambda/program_source_core.py lambda/program_profiles.json \
    lambda/pipeline_programs.py lambda/program_compile_helpers.py "$COMPUTE_PLAN_DIR/"
 cd "$COMPUTE_PLAN_DIR" && zip -FS -r9 /tmp/polypaint-compute-plan.zip . -q && cd "$SCRIPT_DIR"
 echo "  CmpPlan: $(du -h /tmp/polypaint-compute-plan.zip | cut -f1)  (plan + finalize)"

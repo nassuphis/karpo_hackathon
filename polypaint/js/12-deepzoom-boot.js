@@ -790,7 +790,7 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
         const orchPayload = {
             job_id: jobId,
             run_id: runId,
-            params: _attachCoeffProgramSourcePayload({
+            params: _attachProgramSourcePayload({
                 pipeline_mode: _selectedParamPipelineMode(),
                 solver_mode: solverMode,
                 N: n,

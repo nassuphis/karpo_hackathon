@@ -114,6 +114,85 @@ class TestComputePlan(unittest.TestCase):
         self.assertTrue(plan["pipeline"]["param_program_fingerprint"])
         self.assertEqual(plan["pipeline"]["param_program_display"], plan["pipeline"]["param_program"]["display"])
 
+    def test_build_plan_compiles_param_program_source_text(self):
+        import handler_compute_plan as mod
+
+        result = mod.handle_build_plan({
+            "job_id": "compute_j",
+            "run_id": "run_param_program_source",
+            "task_id": "compute_run_aberth_mt_run_param_program_source",
+            "params": {
+                "pipeline_mode": "program",
+                "solver_mode": "aberth_mt",
+                "N": 20,
+                "times": 1,
+                "n_chunks": 2,
+                "function": "g1",
+                "param_transforms": [["unit_circle"]],
+                "param_program_chain": [["push", "t1"]],
+                "param_program_source_text": "p1 = t1 + t2\np2 = t1 - t2",
+                "coeff_transforms": [],
+                "cfpv": [],
+            },
+        })
+        plan = json.loads(result["body"])
+        self.assertEqual(plan["pipeline"]["param_transforms"], [])
+        self.assertEqual(plan["pipeline"]["param_program_chain"][0], ["const", "t1+t2"])
+        self.assertEqual(plan["pipeline"]["param_program_source_text"], "p1 = t1 + t2\np2 = t1 - t2")
+        self.assertTrue(plan["pipeline"]["param_program_fingerprint"])
+        self.assertNotEqual(plan["pipeline"]["param_program_chain"], [["push", "t1"]])
+
+    def test_build_plan_blank_source_defaults_do_not_shadow_other_program(self):
+        import handler_compute_plan as mod
+
+        coeff_only = mod.handle_build_plan({
+            "job_id": "compute_j",
+            "run_id": "run_coeff_only",
+            "task_id": "compute_run_aberth_mt_run_coeff_only",
+            "params": {
+                "pipeline_mode": "program",
+                "solver_mode": "aberth_mt",
+                "N": 20,
+                "times": 1,
+                "n_chunks": 2,
+                "function": "const",
+                "param_transforms": [],
+                "param_program_chain": [],
+                "param_program_source_text": "",
+                "coeff_transforms": [],
+                "coeff_program_chain": [["push", "cf"], ["emit"]],
+                "coeff_program_source_text": "",
+                "cfpv": [8, 1, 0],
+            },
+        })
+        coeff_plan = json.loads(coeff_only["body"])
+        self.assertEqual(coeff_plan["pipeline"]["param_program"], {})
+        self.assertTrue(coeff_plan["pipeline"]["coeff_program_fingerprint"])
+
+        param_only = mod.handle_build_plan({
+            "job_id": "compute_j",
+            "run_id": "run_param_only",
+            "task_id": "compute_run_aberth_mt_run_param_only",
+            "params": {
+                "pipeline_mode": "program",
+                "solver_mode": "aberth_mt",
+                "N": 20,
+                "times": 1,
+                "n_chunks": 2,
+                "function": "g1",
+                "param_transforms": [],
+                "param_program_chain": [["push", "t1"], ["emit", "p1"]],
+                "param_program_source_text": "",
+                "coeff_transforms": [],
+                "coeff_program_chain": [],
+                "coeff_program_source_text": "",
+                "cfpv": [],
+            },
+        })
+        param_plan = json.loads(param_only["body"])
+        self.assertTrue(param_plan["pipeline"]["param_program_fingerprint"])
+        self.assertEqual(param_plan["pipeline"]["coeff_program"], {})
+
     def test_build_plan_keeps_legacy_equivalent_param_program_on_fast_path(self):
         import handler_compute_plan as mod
 

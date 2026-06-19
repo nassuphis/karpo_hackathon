@@ -1,0 +1,226 @@
+"""Shared source-parser utilities for program DSLs.
+
+The profile-specific modules own semantic lowering. This core owns the pieces
+that must not drift between Param/Coeff/Solve-Score text frontends: statement
+splitting, top-level call/assignment parsing, source spans, diagnostics, and
+profile symbol lookup.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+from dataclasses import dataclass
+
+
+_IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+@dataclass(frozen=True)
+class SourceStatement:
+    text: str
+    line: int
+    column: int
+
+
+class ProgramSourceError(ValueError):
+    def __init__(self, message: str, *, line: int = 0, column: int = 0, code: str = "source_error"):
+        super().__init__(message)
+        self.line = int(line or 0)
+        self.column = int(column or 0)
+        self.code = str(code or "source_error")
+
+
+def diagnostic(message, *, line=1, column=1, code="source_error", level="error"):
+    return {
+        "level": str(level or "error"),
+        "message": str(message),
+        "line": int(line or 1),
+        "column": int(column or 1),
+        "code": str(code or "source_error"),
+    }
+
+
+def _profiles_path():
+    return os.path.join(os.path.dirname(__file__), "program_profiles.json")
+
+
+_PROFILES = None
+
+
+def load_program_profiles():
+    global _PROFILES
+    if _PROFILES is None:
+        with open(_profiles_path(), "r", encoding="utf-8") as fh:
+            _PROFILES = json.load(fh)
+    return _PROFILES
+
+
+def program_profile(name):
+    profiles = load_program_profiles()
+    profile = (profiles.get("profiles") or {}).get(str(name or ""))
+    if not isinstance(profile, dict):
+        raise ProgramSourceError(f"unknown program profile: {name}", code="unknown_profile")
+    return profile
+
+
+def profile_symbol(profile, name):
+    symbols = profile.get("symbols") or {}
+    symbol = symbols.get(str(name or "").strip())
+    return symbol if isinstance(symbol, dict) else None
+
+
+def symbol_access(profile, name):
+    symbol = profile_symbol(profile, name)
+    return str((symbol or {}).get("access") or "")
+
+
+def is_identifier(text):
+    return bool(_IDENT_RE.match(str(text or "").strip()))
+
+
+def split_top_level(text, sep=",", *, error_cls=ProgramSourceError):
+    out = []
+    start = 0
+    paren = bracket = 0
+    for idx, ch in enumerate(str(text or "")):
+        if ch == "(":
+            paren += 1
+        elif ch == ")":
+            paren -= 1
+            if paren < 0:
+                raise error_cls("unexpected closing parenthesis", column=idx + 1, code="unexpected_close")
+        elif ch == "[":
+            bracket += 1
+        elif ch == "]":
+            bracket -= 1
+            if bracket < 0:
+                raise error_cls("unexpected closing bracket", column=idx + 1, code="unexpected_close")
+        elif ch == sep and paren == 0 and bracket == 0:
+            out.append(str(text)[start:idx].strip())
+            start = idx + 1
+    if paren != 0:
+        raise error_cls("unclosed parenthesis", code="unclosed_parenthesis")
+    if bracket != 0:
+        raise error_cls("unclosed bracket", code="unclosed_bracket")
+    out.append(str(text or "")[start:].strip())
+    return out
+
+
+def find_top_level_assignment(text):
+    paren = bracket = 0
+    for idx, ch in enumerate(str(text or "")):
+        if ch == "(":
+            paren += 1
+        elif ch == ")":
+            paren -= 1
+        elif ch == "[":
+            bracket += 1
+        elif ch == "]":
+            bracket -= 1
+        elif ch == "=" and paren == 0 and bracket == 0:
+            return idx
+    return -1
+
+
+def parse_call(text, *, error_cls=ProgramSourceError):
+    raw = str(text or "").strip()
+    match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*\(", raw)
+    if not match:
+        return None
+    if not raw.endswith(")"):
+        raise error_cls("function call is missing closing parenthesis", code="unclosed_parenthesis")
+    name = match.group(1).lower()
+    inner = raw[match.end():-1]
+    args = [] if not inner.strip() else split_top_level(inner, error_cls=error_cls)
+    return name, args
+
+
+def split_program_statements(source_text, *, error_cls=ProgramSourceError, max_bytes=None):
+    raw = str(source_text or "")
+    if max_bytes is not None and len(raw.encode("utf-8")) > int(max_bytes):
+        raise error_cls(
+            f"source text exceeds {int(max_bytes)} UTF-8 bytes",
+            line=1,
+            column=1,
+            code="source_too_large",
+        )
+    statements = []
+    buf = []
+    start_line = 1
+    start_col = 1
+    line = 1
+    col = 1
+    paren = bracket = 0
+    in_comment = False
+
+    def flush(end_line, end_col):
+        nonlocal buf, start_line, start_col
+        text = "".join(buf).strip()
+        if text:
+            leading = len("".join(buf)) - len("".join(buf).lstrip())
+            statements.append(SourceStatement(text=text, line=start_line, column=start_col + leading))
+        buf = []
+        start_line = end_line
+        start_col = end_col
+
+    for ch in raw:
+        if in_comment:
+            if ch == "\n":
+                in_comment = False
+                if paren == 0 and bracket == 0:
+                    flush(line, col)
+                line += 1
+                col = 1
+                if not buf:
+                    start_line = line
+                    start_col = col
+            else:
+                col += 1
+            continue
+        if ch == "#":
+            in_comment = True
+            col += 1
+            continue
+        if ch == "(":
+            paren += 1
+        elif ch == ")":
+            paren -= 1
+            if paren < 0:
+                raise error_cls("unexpected closing parenthesis", line=line, column=col, code="unexpected_close")
+        elif ch == "[":
+            bracket += 1
+        elif ch == "]":
+            bracket -= 1
+            if bracket < 0:
+                raise error_cls("unexpected closing bracket", line=line, column=col, code="unexpected_close")
+
+        if ch == ";" and paren == 0 and bracket == 0:
+            flush(line, col + 1)
+            col += 1
+            start_line = line
+            start_col = col
+            continue
+        if ch == "\n":
+            if paren == 0 and bracket == 0:
+                flush(line + 1, 1)
+            else:
+                buf.append(ch)
+            line += 1
+            col = 1
+            if not buf:
+                start_line = line
+                start_col = col
+            continue
+        if not buf:
+            start_line = line
+            start_col = col
+        buf.append(ch)
+        col += 1
+
+    if paren != 0:
+        raise error_cls("unclosed parenthesis", line=start_line, column=start_col, code="unclosed_parenthesis")
+    if bracket != 0:
+        raise error_cls("unclosed bracket", line=start_line, column=start_col, code="unclosed_bracket")
+    flush(line, col)
+    return statements

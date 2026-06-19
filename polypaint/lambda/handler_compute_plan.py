@@ -22,8 +22,11 @@ from compute_fused import (
 )
 from coeff_program_chain import compile_coeff_program_chain
 from pipeline_programs import (
+    ParamSourceCompileError,
     coeff_source_text_for_run,
+    param_source_text_for_run,
     parse_coeff_source_for_run,
+    parse_param_source_for_run,
     pipeline_mode_from_params,
 )
 from param_program_chain import compile_param_program_chain
@@ -153,7 +156,13 @@ def handle_build_plan(params):
         # compiled program lowers exactly to the legacy chain representation.
         param_transforms = []
         coeff_transforms = []
-    param_program_chain = run_params.get("param_program_chain") if pipeline_mode == "program" else []
+    param_program_source_text = param_source_text_for_run(run_params, pipeline_mode)
+    if param_program_source_text is not None:
+        parsed_param_source = parse_param_source_for_run(param_program_source_text)
+        param_program_chain = parsed_param_source["chain"]
+    else:
+        parsed_param_source = None
+        param_program_chain = run_params.get("param_program_chain") if pipeline_mode == "program" else []
     param_program = None
     param_program_metadata = None
     if param_program_chain:
@@ -282,6 +291,7 @@ def handle_build_plan(params):
             "param_transforms": param_transforms,
             "param_transforms_display": param_transforms,
             "param_program_chain": param_program_chain or [],
+            "param_program_source_text": param_program_source_text if param_program_source_text is not None else "",
             "param_program": param_program or {},
             "param_program_display": str((param_program_metadata or {}).get("display") or ""),
             "param_program_fingerprint": str((param_program_metadata or {}).get("fingerprint") or ""),
@@ -562,6 +572,7 @@ def handle_finalize_metadata(params):
             "param_transforms": plan["pipeline"]["param_transforms"],
             "param_transforms_display": plan["pipeline"]["param_transforms_display"],
             "param_program_chain": plan["pipeline"].get("param_program_chain", []),
+            "param_program_source_text": plan["pipeline"].get("param_program_source_text", ""),
             "param_program": plan["pipeline"].get("param_program", {}),
             "param_program_display": plan["pipeline"].get("param_program_display", ""),
             "param_program_fingerprint": plan["pipeline"].get("param_program_fingerprint", ""),

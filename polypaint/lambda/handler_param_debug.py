@@ -18,6 +18,7 @@ import boto3
 
 from shared import BUCKET, parse_body, ok_response, imgpipe_env
 from param_program_chain import compile_param_program_chain
+from pipeline_programs import param_source_text_for_run, parse_param_source_for_run
 from program_compile_helpers import compiled_param_program_payload as _compiled_param_program_payload
 
 s3 = boto3.client("s3")
@@ -133,7 +134,12 @@ def handler(event, context):
             f"param debug is synchronous; use pix <= {MAX_SYNC_PARAM_DEBUG_PIX}",
         )
     transform_chain = params.get("param_transforms", [])
-    param_program_chain = params.get("param_program_chain") or []
+    param_program_source_text = param_source_text_for_run(params, None)
+    if param_program_source_text is not None:
+        parsed_param_source = parse_param_source_for_run(param_program_source_text)
+        param_program_chain = parsed_param_source["chain"]
+    else:
+        param_program_chain = params.get("param_program_chain") or []
     param_program = None
     if param_program_chain:
         if not isinstance(param_program_chain, list):

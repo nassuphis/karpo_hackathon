@@ -551,6 +551,17 @@ class TestComputePreviewHandler(unittest.TestCase):
         self.assertIn("invalid param_program_chain", body["message"])
         self.assertIn("legacy(moebius) coefficient 0", body["message"])
 
+    def test_compute_preview_param_source_parse_error_returns_structured_diagnostics(self):
+        import handler_compute_preview as mod
+
+        result = mod.handler({"body": json.dumps(_event(param_program_source_text="emit(p1)"))}, None)
+        body = json.loads(result["body"])
+
+        self.assertEqual(result["statusCode"], 400)
+        self.assertIn("diagnostics", body)
+        self.assertEqual(body["diagnostics"][0]["code"], "noncanonical_emit")
+        self.assertIn("param program source line", body["message"])
+
 
 if __name__ == "__main__":
     unittest.main()

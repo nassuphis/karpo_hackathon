@@ -103,6 +103,7 @@
         "/list-param-programs",
         "/fetch-param-program",
         "/save-param-program",
+        "/compile-param-program-source",
         "/delete-param-program",
         "/list-coeff-programs",
         "/fetch-coeff-program",

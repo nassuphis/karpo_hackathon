@@ -149,6 +149,44 @@ class TestParamProgramStorage(unittest.TestCase):
         self.assertEqual(macro_body["program"]["fingerprint"], base_body["program"]["fingerprint"])
 
     @patch("handler_storage.s3")
+    def test_storage_routes_round_trip_param_program_source_text(self, mock_s3):
+        import handler_storage
+
+        fake_s3 = _FakeS3()
+        self._patch_s3(mock_s3, fake_s3)
+
+        compile_resp = handler_storage.handler(
+            self._event("/compile-param-program-source", {"source_text": "p1 = t1 + t2\np2 = t1 - t2"}),
+            None,
+        )
+        self.assertEqual(compile_resp["statusCode"], 200)
+        compiled = json.loads(compile_resp["body"])
+        self.assertTrue(compiled["ok"])
+        self.assertEqual(compiled["chain"][0], ["const", "t1+t2"])
+        self.assertTrue(compiled["fingerprint"])
+
+        save_resp = handler_storage.handler(
+            self._event(
+                "/save-param-program",
+                {
+                    "name": "Source Param",
+                    "source_text": "p1 = t1 + t2\np2 = t1 - t2",
+                    "chain": [["push", "t1"]],
+                },
+            ),
+            None,
+        )
+        self.assertEqual(save_resp["statusCode"], 200)
+        program = json.loads(save_resp["body"])["program"]
+        self.assertEqual(program["chain"][0], ["const", "t1+t2"])
+        self.assertIn("source_text", program)
+
+        fetch_resp = handler_storage.handler(self._event("/fetch-param-program", {"id": program["id"]}), None)
+        fetched = json.loads(fetch_resp["body"])["program"]
+        self.assertEqual(fetched["fingerprint"], program["fingerprint"])
+        self.assertEqual(fetched["source_text"], program["source_text"])
+
+    @patch("handler_storage.s3")
     def test_self_macro_reference_is_rejected(self, mock_s3):
         import handler_storage
 

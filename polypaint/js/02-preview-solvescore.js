@@ -15,6 +15,7 @@ function _computePreviewSignatureNow() {
         cfpv: _cfpv.length ? [..._cfpv] : [],
         param_transforms: _effectiveParamTransformsForCompute(),
         param_program_chain: _effectiveParamProgramChainForCompute(),
+        param_program_source_text: _effectiveParamProgramSourceTextForCompute() || '',
         coeff_transforms: _effectiveCoeffTransformsForCompute(),
         coeff_program_chain: _effectiveCoeffProgramChainForCompute(),
         coeff_program_source_text: _effectiveCoeffProgramSourceTextForCompute() || '',
@@ -200,7 +201,7 @@ async function runComputeDebug(stage) {
     }
     if (outputEl) outputEl.textContent = 'Working...';
     try {
-        const result = await lambdaPost('compute-preview', _attachCoeffProgramSourcePayload({
+        const result = await lambdaPost('compute-preview', _attachProgramSourcePayload({
             debug_stage: stage,
             pipeline_mode: _selectedParamPipelineMode(),
             N_preview: nPreview,
@@ -266,7 +267,7 @@ async function runComputePreview() {
     try {
         const cfpvDisplay = _formatCfpvForDisplay(funcName, cfpv);
         log(`Compute preview (${_solverTag(solverMode)}): [${ptDisplay || 'none'}] ${funcName}${cfpvDisplay ? '(' + cfpvDisplay + ')' : ''} [${ctDisplay || coeffTransformsDisplay.join(',') || 'none'}] N-preview=${nPreview} · pix=${previewSize} · q=${(quantile * 100).toFixed(1)}% · shim=${(shim * 100).toFixed(1)}%...`, '', 'compute-log');
-        const result = await lambdaPost('compute-preview', _attachCoeffProgramSourcePayload({
+        const result = await lambdaPost('compute-preview', _attachProgramSourcePayload({
             pipeline_mode: _selectedParamPipelineMode(),
             solver_mode: solverMode,
             N_preview: nPreview,

@@ -48,6 +48,10 @@ from param_program_chain import (
     PROGRAM_VERSION as PARAM_PROGRAM_VERSION,
     compile_param_program_chain,
 )
+from param_program_source import (
+    param_source_text_from_payload,
+    parse_param_program_source,
+)
 from solve_score_chain import compile_solve_score_chain_or_legacy, serialize_solve_score_chain
 
 s3 = boto3.client("s3")
@@ -334,6 +338,10 @@ def _read_param_program_source_chain(program_id):
         raise RuntimeError(f"saved param program is not valid JSON: {program_id}") from exc
     if not isinstance(payload, dict):
         raise RuntimeError(f"saved param program must be a JSON object: {program_id}")
+    source_text = param_source_text_from_payload(payload)
+    if source_text is not None:
+        parsed = parse_param_program_source(source_text)
+        return parsed["chain"]
     chain = payload.get("chain")
     if not isinstance(chain, list):
         raise RuntimeError(f"saved param program chain must be a JSON array: {program_id}")
@@ -387,13 +395,19 @@ def _coeff_program_macro_resolver(current_program_id=None):
 
 def _compile_param_program_payload(
     name,
-    chain,
+    chain=None,
     *,
+    source_text=None,
     saved_at=None,
     version=PARAM_PROGRAM_VERSION,
     program_id=None,
 ):
     validated_name = _validate_param_program_name(name)
+    parsed_source = None
+    if source_text is not None:
+        source_text = str(source_text or "")
+        parsed_source = parse_param_program_source(source_text)
+        chain = parsed_source["chain"]
     if not isinstance(chain, list) or not chain:
         raise ValueError("param program chain must be a non-empty JSON array")
     if len(chain) > MAX_PARAM_PROGRAM_STATEMENTS:
@@ -435,6 +449,10 @@ def _compile_param_program_payload(
         "macro_expansions": compiled["macro_expansions"],
         "saved_at": saved_at_text,
     }
+    if parsed_source is not None:
+        program["source_text"] = source_text
+        program["source_display"] = parsed_source.get("display") or compiled["display"]
+        program["source_statement_count"] = parsed_source.get("statement_count") or len(compiled["source_chain"])
     if compiled["legacy_transforms"]:
         program["legacy_transforms"] = compiled["legacy_transforms"]
     return program
@@ -550,6 +568,7 @@ def _read_param_program_object(program_id):
     program = _compile_param_program_payload(
         payload.get("name"),
         payload.get("chain"),
+        source_text=param_source_text_from_payload(payload),
         saved_at=payload.get("saved_at", ""),
         version=payload.get("version", PARAM_PROGRAM_VERSION),
         program_id=str(program_id),
@@ -872,6 +891,8 @@ def handler(event, context):
         return _handle_storage_route(handle_fetch_param_program, event)
     elif path.endswith("/save-param-program"):
         return _handle_storage_route(handle_save_param_program, event)
+    elif path.endswith("/compile-param-program-source"):
+        return _handle_storage_route(handle_compile_param_program_source, event)
     elif path.endswith("/delete-param-program"):
         return _handle_storage_route(handle_delete_param_program, event)
     elif path.endswith("/list-coeff-programs"):
@@ -1116,6 +1137,7 @@ def handle_save_param_program(event):
     program = _compile_param_program_payload(
         params.get("name"),
         params.get("chain"),
+        source_text=param_source_text_from_payload(params),
     )
     key = _param_program_key(program["id"])
     overwritten = _key_exists(key)
@@ -1139,6 +1161,37 @@ def handle_delete_param_program(event):
         raise _ParamProgramNotFound(f"param program not found: {program_id}")
     s3.delete_object(Bucket=BUCKET, Key=key)
     return ok_response({"id": program_id, "deleted": 1})
+
+
+def handle_compile_param_program_source(event):
+    params = parse_body(event)
+    source_text = str(params.get("source_text") or "")
+    parsed = parse_param_program_source(source_text, strict=False)
+    compiled = compile_param_program_chain(
+        parsed["chain"],
+        macro_resolver=_param_program_macro_resolver(None),
+        strict=False,
+    )
+    diagnostics = list(parsed.get("diagnostics") or []) + list(compiled.get("diagnostics") or [])
+    has_errors = any(d.get("level") == "error" for d in diagnostics)
+    chain_out = [] if has_errors else parsed["chain"]
+    fingerprint = "" if has_errors else (compiled.get("fingerprint") or "")
+    return ok_response({
+        "ok": not has_errors,
+        "chain": chain_out,
+        "display": parsed["display"],
+        "statement_count": parsed["statement_count"],
+        "fingerprint": fingerprint,
+        "diagnostics": diagnostics,
+        "program": {
+            "chain": chain_out,
+            "display": parsed["display"],
+            "fingerprint": fingerprint,
+            "execution_spec": "" if has_errors else (compiled.get("execution_spec") or ""),
+            "token_count": 0 if has_errors else (compiled.get("token_count") or 0),
+            "stack_max": 0 if has_errors else (compiled.get("stack_max") or 0),
+        },
+    })
 
 
 def handle_list_coeff_programs(event):

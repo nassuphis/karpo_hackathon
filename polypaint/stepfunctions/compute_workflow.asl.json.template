@@ -103,6 +103,7 @@
                 "function.$": "$.params.function",
                 "param_transforms.$": "$.params.param_transforms",
                 "param_program_chain.$": "$.params.param_program_chain",
+                "param_program_source_text.$": "$.params.param_program_source_text",
                 "coeff_transforms.$": "$.params.coeff_transforms",
                 "coeff_program_chain.$": "$.params.coeff_program_chain",
                 "coeff_program_source_text.$": "$.params.coeff_program_source_text",

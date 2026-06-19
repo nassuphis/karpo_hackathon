@@ -1146,7 +1146,7 @@ async function _refreshComputeMtProbe() {
     _computeMtPopupState.probeError = '';
     _renderComputeMtPopup();
     try {
-        const probe = await lambdaPost('coeffgen', _attachCoeffProgramSourcePayload({
+        const probe = await lambdaPost('coeffgen', _attachProgramSourcePayload({
             phase: 'degree_probe',
             pipeline_mode: _selectedParamPipelineMode(),
             function: funcName,

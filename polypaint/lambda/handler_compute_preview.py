@@ -24,8 +24,11 @@ from shared import (
 from coeff_program_chain import compile_coeff_program_chain
 from pipeline_programs import (
     CoeffSourceCompileError,
+    ParamSourceCompileError,
     coeff_source_text_for_run,
+    param_source_text_for_run,
     parse_coeff_source_for_run,
+    parse_param_source_for_run,
     pipeline_mode_from_params,
 )
 from param_program_chain import compile_param_program_chain
@@ -220,7 +223,12 @@ def _compile_compute_inputs(params):
     pipeline_mode = pipeline_mode_from_params(params)
     coeff_transforms = params.get("coeff_transforms") or []
     param_transforms = params.get("param_transforms") or []
-    param_program_chain = params.get("param_program_chain") or []
+    param_program_source_text = param_source_text_for_run(params, pipeline_mode)
+    if param_program_source_text is not None:
+        parsed_param_source = parse_param_source_for_run(param_program_source_text)
+        param_program_chain = parsed_param_source["chain"]
+    else:
+        param_program_chain = params.get("param_program_chain") or []
     coeff_program_source_text = coeff_source_text_for_run(params, pipeline_mode)
     if coeff_program_source_text is not None:
         parsed_coeff_source = parse_coeff_source_for_run(coeff_program_source_text)
@@ -238,6 +246,7 @@ def _compile_compute_inputs(params):
     else:
         param_program_chain = []
         coeff_program_chain = []
+        param_program_source_text = None
         coeff_program_source_text = None
 
     if param_program_chain:
@@ -277,6 +286,7 @@ def _compile_compute_inputs(params):
         "param_transforms": param_transforms,
         "coeff_transforms": coeff_transforms,
         "param_program_chain": param_program_chain,
+        "param_program_source_text": param_program_source_text,
         "coeff_program_chain": coeff_program_chain,
         "coeff_program_source_text": coeff_program_source_text,
         "param_program": param_program,
@@ -469,6 +479,8 @@ def handler(event, context):
                 return _handle_compute_debug(params)
             except CoeffSourceCompileError as e:
                 return _json_response(400, {"message": str(e), "diagnostics": e.diagnostics})
+            except ParamSourceCompileError as e:
+                return _json_response(400, {"message": str(e), "diagnostics": e.diagnostics})
             except ValueError as e:
                 return _json_response(400, {"message": str(e)})
 
@@ -492,6 +504,8 @@ def handler(event, context):
             compiled = _compile_compute_inputs(params)
         except CoeffSourceCompileError as e:
             # Keep the editor-grade structure: line/column per diagnostic.
+            return _json_response(400, {"message": str(e), "diagnostics": e.diagnostics})
+        except ParamSourceCompileError as e:
             return _json_response(400, {"message": str(e), "diagnostics": e.diagnostics})
         except ValueError as e:
             return _json_response(400, {"message": str(e)})

@@ -92,6 +92,7 @@ def handler(event, context):
     run_params["execution_method"] = execution_method
     run_params.setdefault("param_transforms", [])
     run_params.setdefault("param_program_chain", [])
+    run_params.setdefault("param_program_source_text", "")
     run_params.setdefault("coeff_transforms", [])
     run_params.setdefault("coeff_program_chain", [])
     run_params.setdefault("coeff_program_source_text", "")
@@ -99,6 +100,7 @@ def handler(event, context):
         "pipeline_mode",
         "program" if (
             run_params.get("param_program_chain")
+            or str(run_params.get("param_program_source_text") or "").strip()
             or run_params.get("coeff_program_chain")
             or str(run_params.get("coeff_program_source_text") or "").strip()
         ) else "chain",

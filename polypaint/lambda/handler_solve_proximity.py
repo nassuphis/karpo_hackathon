@@ -23,13 +23,14 @@ from logical_sections import (
     write_native_multispan_manifest,
 )
 from solve_score_chain import (
+    SOLVE_SCORE_SPEC_VERSION,
     VALID_SOLVE_SCORE_METRICS,
-    canonicalize_solve_score_program_spec,
     compiled_solve_score_fingerprint,
     compile_solve_score_chain_or_legacy,
     serialize_solve_score_chain,
     solve_score_lag_prelude_by_source,
     solve_score_program_cli_payload,
+    solve_score_program_specs_match,
     solve_score_uses_source,
 )
 from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, parse_boolish, report_status
@@ -412,7 +413,11 @@ def _validate_clip_artifact(clip_data, compiled):
         clip_program = str(clip_data.get("program") or "")
         if not clip_program and compiled.get("uses_lag"):
             raise RuntimeError("Clip artifact missing program for lagged solve-score chain")
-        if clip_program and canonicalize_solve_score_program_spec(clip_program) != compiled["program_spec"]:
+        if clip_program and not solve_score_program_specs_match(
+            clip_program,
+            compiled["program_spec"],
+            version=clip_data.get("solve_score_spec_version"),
+        ):
             raise RuntimeError(f"Clip program mismatch: expected {compiled['program_spec']}, got {clip_program!r}")
         clip_metrics = _clip_artifact_metrics(clip_data, compiled, compiled["quantile"])
         if len(clip_metrics) != compiled["metric_count"]:
@@ -476,6 +481,7 @@ def _solve_score_error_fields(compiled):
         "metric": compiled["metric"],
         "metric_count": compiled["metric_count"],
         "chain_fingerprint": compiled_solve_score_fingerprint(compiled),
+        "solve_score_spec_version": SOLVE_SCORE_SPEC_VERSION,
         "program": compiled["program_spec"],
         "program_id": compiled["program_id"],
         "score_metrics": [row["metric"] for row in compiled["metrics"]],
@@ -721,7 +727,11 @@ def _load_merge_histogram_artifact(client, hist_prefix, section_idx, compiled, h
 
     if data.get("family") == "solve_score" and data.get("version", 1) >= 2:
         _validate_artifact_chain_fingerprint(data, compiled, f"Section {section_idx}")
-        if canonicalize_solve_score_program_spec(data.get("program") or "") != compiled["program_spec"]:
+        if not solve_score_program_specs_match(
+            data.get("program") or "",
+            compiled["program_spec"],
+            version=data.get("solve_score_spec_version"),
+        ):
             raise RuntimeError(
                 f"Section {section_idx} program mismatch: expected {compiled['program_spec']}, got {data.get('program')!r}"
             )
@@ -898,6 +908,7 @@ def handle_clip(params):
         ]
         progress["score_program"] = compiled["program_spec"]
         progress["chain_fingerprint"] = compiled_solve_score_fingerprint(compiled)
+        progress["solve_score_spec_version"] = SOLVE_SCORE_SPEC_VERSION
         progress.update(score_output_clip)
 
         report_status(job_id, task_id, "computed", result_data=progress)
@@ -911,6 +922,7 @@ def handle_clip(params):
             "omega": solve_score_omega,
             "omega_enabled": solve_score_omega_enabled,
             "chain_fingerprint": compiled_solve_score_fingerprint(compiled),
+            "solve_score_spec_version": SOLVE_SCORE_SPEC_VERSION,
             "clip_lo": metric_clips[0]["clip_lo"],
             "clip_hi": metric_clips[0]["clip_hi"],
             "n_solves": metric_clips[0]["n_solves"],
@@ -1440,6 +1452,7 @@ def handle_hist(params):
             "omega": solve_score_omega,
             "omega_enabled": solve_score_omega_enabled,
             "chain_fingerprint": compiled_solve_score_fingerprint(compiled),
+            "solve_score_spec_version": SOLVE_SCORE_SPEC_VERSION,
             "chunk_idx": int(section_idx),
             "hist_bins": hist_bins,
             "clip_lo": primary_metric_clip["clip_lo"],
@@ -1581,6 +1594,7 @@ def handle_merge(params):
             "omega": solve_score_omega,
             "omega_enabled": solve_score_omega_enabled,
             "chain_fingerprint": compiled_solve_score_fingerprint(compiled),
+            "solve_score_spec_version": SOLVE_SCORE_SPEC_VERSION,
             "hist_bins": hist_bins,
             "final_bins": final_bins,
             "clip_lo": metrics_with_clips[0]["clip_lo"],

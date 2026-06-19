@@ -23,7 +23,11 @@ from color_render_contract import normalize_color_interpretation, validate_color
 from raw_score_render import render_score_raw, write_equalization_lut
 from raw_sidecar import background_color_hex, build_raw_sidecar
 from shared import BUCKET, imgpipe_env, ok_response, parse_body, parse_boolish, report_status
-from solve_score_chain import read_solve_score_metadata
+from solve_score_chain import (
+    SOLVE_SCORE_SPEC_VERSION,
+    normalize_solve_score_spec_version,
+    read_solve_score_metadata,
+)
 
 
 s3 = boto3.client("s3")
@@ -108,6 +112,9 @@ def _validate_fragment_manifest(manifest, *, source_item_count, fragment_prefix,
             "fragment_manifest.chain_fingerprint mismatch: "
             f"expected {expected_chain_fingerprint}, got {manifest_fingerprint!r}"
         )
+    solve_score_spec_version = normalize_solve_score_spec_version(
+        manifest.get("solve_score_spec_version", SOLVE_SCORE_SPEC_VERSION)
+    )
     return {
         "version": version,
         "pair_encoding": pair_encoding,
@@ -116,6 +123,7 @@ def _validate_fragment_manifest(manifest, *, source_item_count, fragment_prefix,
         "item_count": manifest_item_count,
         "fragment_prefix": manifest_prefix,
         "chain_fingerprint": manifest_fingerprint,
+        "solve_score_spec_version": solve_score_spec_version,
     }
 
 
@@ -291,6 +299,9 @@ def _clip_info_from_payload(params, metadata):
     )
     return {
         "chain_fingerprint": actual_fingerprint,
+        "solve_score_spec_version": normalize_solve_score_spec_version(
+            params.get("solve_score_spec_version", metadata.get("solve_score_spec_version", SOLVE_SCORE_SPEC_VERSION))
+        ),
         "score_program": payload_program,
         "clip_slots": _normalize_clip_slots(params.get("clip_slots")),
         "score_output_normalize": score_output_normalize,
@@ -427,6 +438,7 @@ def _finalize_associated_palette(
         width=grid_n,
         height=grid_n,
         chain_fingerprint=chain_fingerprint,
+        solve_score_spec_version=associated_score.get("spec_version", SOLVE_SCORE_SPEC_VERSION),
         score_chain=associated_palette.get("score_chain", metadata.get("solve_score_chain", "")),
         score_program=score_program,
         clip_slots=clip_slots,
@@ -521,6 +533,7 @@ def _finalize_associated_palette(
         "metric": associated_score["metric"],
         "solve_score_chain": associated_score["chain_json"],
         "chain_fingerprint": chain_fingerprint,
+        "solve_score_spec_version": associated_score.get("spec_version", SOLVE_SCORE_SPEC_VERSION),
         "derived_from_color_artifact_id": str(associated_palette.get("source_color_artifact_id") or ""),
         "derivation_kind": "extract_palette",
         "assemble_ms": assemble_ms,
@@ -733,6 +746,7 @@ def handler(event, context):
         width=width,
         height=height,
         chain_fingerprint=clip_info["chain_fingerprint"],
+        solve_score_spec_version=clip_info["solve_score_spec_version"],
         score_chain=metadata.get("solve_score_chain", ""),
         score_program=clip_info["score_program"],
         clip_slots=clip_info["clip_slots"],
@@ -815,6 +829,7 @@ def handler(event, context):
     final_metadata["score_output_clip_lo"] = str(clip_info["score_output_clip_lo"])
     final_metadata["score_output_clip_hi"] = str(clip_info["score_output_clip_hi"])
     final_metadata["score_output_channel_count"] = str(channels)
+    final_metadata["solve_score_spec_version"] = str(clip_info["solve_score_spec_version"])
     final_metadata["score_output_interpretation"] = clip_info["score_output_interpretation"]
     final_metadata["color_interpretation"] = clip_info["score_output_interpretation"]
     if render_warnings:

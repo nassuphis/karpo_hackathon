@@ -15,6 +15,7 @@ from color_render_contract import normalize_color_interpretation
 from raw_score_render import histogram_from_raw_path_channel0, render_score_raw, write_equalization_lut
 from raw_sidecar import build_raw_sidecar
 from solve_score_chain import (
+    SOLVE_SCORE_SPEC_VERSION,
     compile_solve_score_chain_or_legacy,
     compiled_solve_score_fingerprint,
     emit_solve_score_metadata,
@@ -31,6 +32,7 @@ from shared import (
 )
 
 s3 = boto3.client("s3")
+PALETTE_VARIANT_SPEC_VERSION = 1
 PALETTE_RENDER = os.path.join(os.path.dirname(__file__), "palette_bins_render")
 RAW2JPEG = os.path.join(os.path.dirname(__file__), "raw2jpeg")
 PRESIGN_EXPIRY = 3600
@@ -463,6 +465,9 @@ def handler(event, context):
                 width=full_n,
                 height=full_n,
                 chain_fingerprint=chain_fingerprint,
+                solve_score_spec_version=int(
+                    params.get("solve_score_spec_version", SOLVE_SCORE_SPEC_VERSION) or SOLVE_SCORE_SPEC_VERSION
+                ),
                 score_chain=solve_score_chain,
                 score_program=bins_meta.get("program") or compiled.get("program_spec") or "",
                 clip_slots=bins_meta.get("metrics") or [
@@ -531,6 +536,10 @@ def handler(event, context):
             "raw_file_size": raw_file_size,
             "raw_sidecar_version": (raw_sidecar_body or {}).get("version") if raw_output_path else None,
             "palette_variant_fingerprint": params.get("palette_variant_fingerprint") or "",
+            "palette_variant_spec_version": int(
+                params.get("palette_variant_spec_version", PALETTE_VARIANT_SPEC_VERSION)
+                or PALETTE_VARIANT_SPEC_VERSION
+            ),
             "content_fingerprint": params.get("palette_variant_fingerprint") or "",
             "clip_lo": bins_meta.get("clip_lo"),
             "clip_hi": bins_meta.get("clip_hi"),
@@ -566,6 +575,10 @@ def handler(event, context):
                     )["solve_score_chain"]
                 ),
                 "solve_score_chain_fingerprint": chain_fingerprint,
+                "solve_score_spec_version": int(
+                    params.get("solve_score_spec_version", SOLVE_SCORE_SPEC_VERSION)
+                    or SOLVE_SCORE_SPEC_VERSION
+                ),
             }
         )
         if source_color_artifact_id:

@@ -23,6 +23,7 @@ from palette_names import VALID_PALETTE_NAMES
 from param_source import chunk_items_have_params
 from shared import BUCKET, parse_body, ok_response
 from solve_score_chain import (
+    SOLVE_SCORE_SPEC_VERSION,
     VALID_SOLVE_SCORE_METRICS,
     compile_solve_score_chain_or_legacy,
     compiled_solve_score_fingerprint,
@@ -41,6 +42,7 @@ s3 = boto3.client("s3")
 
 MAX_PLAN_BYTES = 200 * 1024  # fail fast before 256KB Step Functions limit
 VALID_METRICS = VALID_SOLVE_SCORE_METRICS
+PALETTE_VARIANT_SPEC_VERSION = 1
 
 
 def _validate_threads(value, default=1):
@@ -449,6 +451,7 @@ def _base_extract_plan(
         },
         "solve_score": {
             "chain_fingerprint": "",
+            "spec_version": SOLVE_SCORE_SPEC_VERSION,
             "output_channel_count": int(output_channel_count or 1),
             "output_channels": list(output_channels or []),
         },
@@ -461,6 +464,7 @@ def _base_extract_plan(
             "raw_layout": raw_layout,
             "raw_channels": int(raw_channels or output_channel_count or 1),
             "palette_variant_fingerprint": palette_variant_fingerprint,
+            "palette_variant_spec_version": PALETTE_VARIANT_SPEC_VERSION,
             "chunks_prefix": "",
             "section_scores_prefix": "",
             "section_bins_prefix": "",
@@ -815,6 +819,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         "metrics": source_score["metrics"],
         "program": source_score["program_spec"],
         "chain_fingerprint": chain_fingerprint,
+        "spec_version": source_score.get("spec_version", SOLVE_SCORE_SPEC_VERSION),
         "output_channel_count": output_channel_count,
         "output_channels": output_channels,
         "has_explicit_outputs": False,
@@ -838,6 +843,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         "raw_layout": "",
         "raw_channels": output_channel_count,
         "palette_variant_fingerprint": palette_variant_fingerprint,
+        "palette_variant_spec_version": PALETTE_VARIANT_SPEC_VERSION,
         "chunks_prefix": chunks_prefix,
         "section_scores_prefix": chunks_prefix + "score_section_",
         "section_bins_prefix": chunks_prefix + "palette_bins_section_",
@@ -1084,6 +1090,7 @@ def handler(event, context):
             "metrics": compiled_score["metrics"],
             "program": compiled_score["program_spec"],
             "chain_fingerprint": chain_fingerprint,
+            "spec_version": SOLVE_SCORE_SPEC_VERSION,
             "output_channel_count": output_channel_count,
             "output_channels": output_channels,
             "has_explicit_outputs": has_explicit_outputs,
@@ -1107,6 +1114,7 @@ def handler(event, context):
             "raw_layout": "u8_packed_channels_row_major" if output_channel_count > 1 else ("u8_scalar_row_major" if raw_output_path else ""),
             "raw_channels": output_channel_count,
             "palette_variant_fingerprint": palette_variant_fingerprint,
+            "palette_variant_spec_version": PALETTE_VARIANT_SPEC_VERSION,
             "chunks_prefix": chunks_prefix,
             "section_scores_prefix": section_scores_prefix,
             "section_bins_prefix": section_bins_prefix,

@@ -3755,6 +3755,12 @@ static int parseCoeffProgram(const char *buf, CoeffProgram *program) {
         return -1;
     }
     const char *v = findKeyIn(objStart, objEnd, "stack_max");
+    const char *ver = findKeyIn(objStart, objEnd, "version");
+    double version = ver ? parseNum(&ver) : 1.0;
+    if (version != 1.0) {
+        fprintf(stderr, "coeff_program version %.17g is not supported\n", version);
+        return -1;
+    }
     if (v) program->stack_max = (int)parseNum(&v);
 
     const char *exprs = findKeyIn(objStart, objEnd, "scalar_exprs");
@@ -6281,6 +6287,12 @@ static int parseParamProgram(const char *buf, ParamProgram *program) {
         return -1;
     }
     const char *v = findKeyIn(objStart, objEnd, "stack_max");
+    const char *ver = findKeyIn(objStart, objEnd, "version");
+    double version = ver ? parseNum(&ver) : 1.0;
+    if (version != 1.0) {
+        fprintf(stderr, "param_program version %.17g is not supported\n", version);
+        return -1;
+    }
     if (v) program->stack_max = (int)parseNum(&v);
     v = findKeyIn(objStart, objEnd, "uses_legacy_fast_path");
     if (v) program->uses_legacy_fast_path = parseBool(v);

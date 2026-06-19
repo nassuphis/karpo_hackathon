@@ -67,6 +67,7 @@ RENDER_FINALIZE_MT_FRAGMENT_MANIFEST = {
     "item_count.$": "$.plan.raster.item_count",
     "fragment_prefix.$": "$.plan.outputs.fragment_prefix",
     "chain_fingerprint.$": "$.plan.outputs.metadata.solve_score_chain_fingerprint",
+    "solve_score_spec_version.$": "$.plan.outputs.metadata.solve_score_spec_version",
 }
 
 RENDER_FINALIZE_MT_TASK_PAYLOAD = {
@@ -100,6 +101,7 @@ RENDER_FINALIZE_MT_TASK_PAYLOAD = {
     "score_output_interpretation.$": "$.plan.outputs.metadata.score_output_interpretation",
     "score_output_channels.$": "$.solve_score_clip.parsed.score_output_channels",
     "chain_fingerprint.$": "$.solve_score_clip.parsed.chain_fingerprint",
+    "solve_score_spec_version.$": "$.plan.outputs.metadata.solve_score_spec_version",
     "fragment_prefix.$": "$.plan.outputs.fragment_prefix",
     "fragment_manifest": RENDER_FINALIZE_MT_FRAGMENT_MANIFEST,
     "associated_palette.$": "$.plan.associated_palette",

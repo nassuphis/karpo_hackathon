@@ -39,6 +39,7 @@ class TestRawSidecar(unittest.TestCase):
             step_scores_grid_n=3,
         )
         self.assertEqual(sidecar["version"], 3)
+        self.assertEqual(sidecar["solve_score_spec_version"], 1)
         self.assertEqual(sidecar["pix"], 4)
         self.assertEqual(sidecar["score_output_normalize"], True)
         self.assertEqual(sidecar["score_output_clip_lo"], 0.02)
@@ -49,6 +50,7 @@ class TestRawSidecar(unittest.TestCase):
             expected_artifact_family="color",
         )
         self.assertEqual(validated["version"], 3)
+        self.assertEqual(validated["solve_score_spec_version"], 1)
         self.assertEqual(validated["pix"], 4)
         self.assertEqual(validated["step_scores_key"], "renders/j/color/color_1/step_scores.raw")
         self.assertEqual(validated["step_count"], 9)

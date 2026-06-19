@@ -158,7 +158,12 @@ class TestSolveScoreChain(unittest.TestCase):
         self.assertFalse(compiled["omega_enabled"])
 
     def test_emit_and_read_metadata_round_trip_for_scopes(self):
-        from solve_score_chain import emit_solve_score_metadata, read_solve_score_metadata
+        from solve_score_chain import (
+            SOLVE_SCORE_SPEC_VERSION,
+            emit_solve_score_metadata,
+            normalize_solve_score_spec_version,
+            read_solve_score_metadata,
+        )
 
         metadata = {}
         metadata.update(
@@ -195,6 +200,18 @@ class TestSolveScoreChain(unittest.TestCase):
         solve = read_solve_score_metadata("solve", metadata)
         source = read_solve_score_metadata("palette_source", metadata)
         assoc = read_solve_score_metadata("associated_palette", metadata)
+
+        self.assertEqual(metadata["solve_score_spec_version"], SOLVE_SCORE_SPEC_VERSION)
+        self.assertEqual(metadata["palette_source_spec_version"], SOLVE_SCORE_SPEC_VERSION)
+        self.assertEqual(metadata["associated_palette_spec_version"], SOLVE_SCORE_SPEC_VERSION)
+        self.assertEqual(solve["spec_version"], SOLVE_SCORE_SPEC_VERSION)
+        self.assertEqual(source["spec_version"], SOLVE_SCORE_SPEC_VERSION)
+        self.assertEqual(assoc["spec_version"], SOLVE_SCORE_SPEC_VERSION)
+        self.assertEqual(normalize_solve_score_spec_version("1"), SOLVE_SCORE_SPEC_VERSION)
+        with self.assertRaisesRegex(RuntimeError, "must be an integer"):
+            normalize_solve_score_spec_version(1.2)
+        with self.assertRaisesRegex(RuntimeError, "not supported"):
+            normalize_solve_score_spec_version(2)
 
         self.assertEqual(
             solve["chain"],

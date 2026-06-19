@@ -27,11 +27,11 @@ from logical_sections import (
     write_native_multispan_manifest,
 )
 from solve_score_chain import (
-    canonicalize_solve_score_program_spec,
     compile_solve_score_chain,
     compiled_solve_score_fingerprint,
     solve_score_lag_prelude_by_source,
     solve_score_program_cli_payload,
+    solve_score_program_specs_match,
 )
 from shared import (
     BUCKET,
@@ -260,7 +260,11 @@ def _build_cmd(params):
             raise RuntimeError(
                 f"solve-score clip artifact fingerprint mismatch: expected {chain_fingerprint}, got {actual_fingerprint}"
             )
-        if canonicalize_solve_score_program_spec(score_artifact.get("program") or "") != compiled["program_spec"]:
+        if not solve_score_program_specs_match(
+            score_artifact.get("program") or "",
+            compiled["program_spec"],
+            version=score_artifact.get("solve_score_spec_version"),
+        ):
             raise RuntimeError(
                 f"solve-score clip artifact program mismatch: expected {compiled['program_spec']}, got {score_artifact.get('program')!r}"
             )

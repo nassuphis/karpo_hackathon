@@ -13,6 +13,7 @@ import os
 import boto3
 
 from compute_fused import (
+    PROBE_SIGNATURE_SPEC_VERSION,
     build_chunk_items,
     build_probe_signature,
     estimate_fused_chunking,
@@ -239,6 +240,13 @@ def handle_build_plan(params):
         got_signature = str(probe.get("probe_signature") or "").strip()
         if not got_signature or got_signature != expected_signature:
             raise RuntimeError("fused compute probe signature mismatch")
+        probe_signature_spec_version = int(
+            probe.get("probe_signature_spec_version", PROBE_SIGNATURE_SPEC_VERSION) or PROBE_SIGNATURE_SPEC_VERSION
+        )
+        if probe_signature_spec_version != PROBE_SIGNATURE_SPEC_VERSION:
+            raise RuntimeError(
+                f"unsupported probe_signature_spec_version {probe_signature_spec_version}"
+            )
         fused_estimate = estimate_fused_chunking(
             n=n,
             times=times,
@@ -341,6 +349,7 @@ def handle_build_plan(params):
             "probe_degree": int(probe_degree),
             "probe_n_coeffs": int(probe_n_coeffs),
             "probe_signature": str(probe.get("probe_signature") or ""),
+            "probe_signature_spec_version": PROBE_SIGNATURE_SPEC_VERSION,
             "fused_threads": int(fused_threads),
         }
         plan["compute"].update({
@@ -349,6 +358,7 @@ def handle_build_plan(params):
             "probe_degree": int(probe_degree),
             "probe_n_coeffs": int(probe_n_coeffs),
             "probe_signature": str(probe.get("probe_signature") or ""),
+            "probe_signature_spec_version": PROBE_SIGNATURE_SPEC_VERSION,
             "min_safe_chunks": int(fused_estimate["min_safe_chunks"]),
             "safe_chunk_limit_reason": str(fused_estimate["safe_chunk_limit_reason"]),
         })
@@ -583,6 +593,10 @@ def handle_finalize_metadata(params):
         "probe_degree": int(plan["compute"].get("probe_degree", 0) or 0),
         "probe_n_coeffs": int(plan["compute"].get("probe_n_coeffs", 0) or 0),
         "probe_signature": str(plan["compute"].get("probe_signature") or ""),
+        "probe_signature_spec_version": int(
+            plan["compute"].get("probe_signature_spec_version", PROBE_SIGNATURE_SPEC_VERSION)
+            or PROBE_SIGNATURE_SPEC_VERSION
+        ),
         "min_safe_chunks": int(plan["compute"].get("min_safe_chunks", 0) or 0),
         "safe_chunk_limit_reason": str(plan["compute"].get("safe_chunk_limit_reason") or ""),
         "times": int(plan["compute"]["times"]),

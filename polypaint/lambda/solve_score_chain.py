@@ -133,11 +133,13 @@ STACK_CHIPS = {
 MAX_METRIC_SLOTS = 16
 MAX_PROGRAM_TOKENS = 32
 MAX_OUTPUT_CHANNELS = 8
+SOLVE_SCORE_SPEC_VERSION = 1
 
 _FIELD_MAP = {
     "solve": {
         "chain": "solve_score_chain",
         "fingerprint": "solve_score_chain_fingerprint",
+        "spec_version": "solve_score_spec_version",
         "metric": "solve_metric",
         "quantile": "solve_score_quantile",
         "omega": "solve_score_omega",
@@ -146,6 +148,7 @@ _FIELD_MAP = {
     "palette_source": {
         "chain": "palette_source_score_chain",
         "fingerprint": "palette_source_chain_fingerprint",
+        "spec_version": "palette_source_spec_version",
         "metric": "palette_source_metric",
         "quantile": "palette_source_quantile",
         "omega": "palette_source_omega",
@@ -154,6 +157,7 @@ _FIELD_MAP = {
     "associated_palette": {
         "chain": "associated_palette_score_chain",
         "fingerprint": "associated_palette_chain_fingerprint",
+        "spec_version": "associated_palette_spec_version",
         "metric": "associated_palette_metric",
         "quantile": "associated_palette_quantile",
         "omega": "associated_palette_omega",
@@ -167,6 +171,32 @@ def _scope_fields(scope):
         return _FIELD_MAP[scope]
     except KeyError:
         raise RuntimeError(f"Unknown solve-score metadata scope: {scope!r}")
+
+
+def normalize_solve_score_spec_version(value=None):
+    if value in ("", None):
+        return SOLVE_SCORE_SPEC_VERSION
+    if isinstance(value, bool):
+        raise RuntimeError(f"solve-score spec version must be an integer, got {value!r}")
+    if isinstance(value, int):
+        version = value
+    elif isinstance(value, float):
+        if not value.is_integer():
+            raise RuntimeError(f"solve-score spec version must be an integer, got {value!r}")
+        version = int(value)
+    else:
+        text = str(value).strip()
+        if not re.fullmatch(r"[0-9]+", text):
+            raise RuntimeError(f"solve-score spec version must be an integer, got {value!r}")
+        version = int(text)
+    if version != SOLVE_SCORE_SPEC_VERSION:
+        raise RuntimeError(f"solve-score spec version {version} is not supported")
+    return version
+
+
+def solve_score_spec_version_from_meta(meta, scope="solve"):
+    fields = _scope_fields(scope)
+    return normalize_solve_score_spec_version((meta or {}).get(fields["spec_version"]))
 
 
 def _validate_metric(value):
@@ -537,7 +567,8 @@ def _canonical_metric_ref_token(token):
     return f"m{int(slot_text)}-{lag}"
 
 
-def canonicalize_solve_score_program_spec(program_spec):
+def canonicalize_solve_score_program_spec(program_spec, version=None):
+    normalize_solve_score_spec_version(version)
     parts = []
     for raw in str(program_spec or "").split(";"):
         token = raw.strip()
@@ -549,6 +580,14 @@ def canonicalize_solve_score_program_spec(program_spec):
         else:
             parts.append(metric_ref)
     return ";".join(parts)
+
+
+def solve_score_program_specs_match(stored_spec, expected_spec, *, version=None):
+    spec_version = normalize_solve_score_spec_version(version)
+    return (
+        canonicalize_solve_score_program_spec(stored_spec, version=spec_version)
+        == canonicalize_solve_score_program_spec(expected_spec, version=spec_version)
+    )
 
 
 def solve_score_program_spec_uses_lag(program_spec):
@@ -638,7 +677,8 @@ def solve_score_chain_id(chain, legacy_quantile=None):
     return hashlib.sha1(serialize_solve_score_chain(semantic_chain).encode("utf-8")).hexdigest()[:12]
 
 
-def compiled_solve_score_fingerprint(compiled):
+def compiled_solve_score_fingerprint(compiled, version=None):
+    normalize_solve_score_spec_version(version)
     payload = {
         "program_spec": str(compiled["program_spec"]),
         "metrics": [
@@ -1063,6 +1103,7 @@ def emit_solve_score_metadata(scope, metric, quantile, omega, omega_enabled, cha
     metadata = {
         fields["chain"]: serialize_solve_score_chain(compiled["chain"]),
         fields["fingerprint"]: compiled_solve_score_fingerprint(compiled),
+        fields["spec_version"]: SOLVE_SCORE_SPEC_VERSION,
         fields["quantile"]: "" if compiled["quantile"] in ("", None) else str(compiled["quantile"]),
     }
     if include_legacy_scalars:
@@ -1086,11 +1127,13 @@ def read_solve_score_metadata(scope, meta, default_metric=None, default_omega_en
     )
     quantile = compiled["quantile"]
     chain_json = serialize_solve_score_chain(compiled["chain"])
+    spec_version = solve_score_spec_version_from_meta(meta, scope)
     return {
         "chain": compiled["chain"],
         "chain_public": json.loads(chain_json),
         "chain_json": chain_json,
-        "chain_fingerprint": (meta or {}).get(fields["fingerprint"]) or compiled_solve_score_fingerprint(compiled),
+        "chain_fingerprint": (meta or {}).get(fields["fingerprint"]) or compiled_solve_score_fingerprint(compiled, version=spec_version),
+        "spec_version": spec_version,
         "metric": compiled["metric"],
         "metrics": compiled["metrics"],
         "quantile": quantile,

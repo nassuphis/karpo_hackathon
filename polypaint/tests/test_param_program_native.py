@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
@@ -33,6 +34,24 @@ def _run_sweep(spec, out_path):
         data = fh.read()
     os.remove(out_path)
     return json.loads(proc.stdout), data
+
+
+def _run_sweep_process(spec):
+    with tempfile.NamedTemporaryFile(prefix="pp_param_program_native_", suffix=".bin", delete=False) as fh:
+        out_path = fh.name
+    try:
+        return subprocess.run(
+            [SWEEP, out_path],
+            input=json.dumps(spec),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    finally:
+        try:
+            os.remove(out_path)
+        except FileNotFoundError:
+            pass
 
 
 def _native_payload(chain):
@@ -158,6 +177,33 @@ def test_param_dump_stack_program_expresses_sum_difference():
     meta, data = _run_sweep(spec, "/tmp/pp_param_dump_sumdiff.bin")
     assert meta["param_program_tokens"] == 8
     assert len(data) == 8 * 8 * 16
+
+
+def test_param_program_native_accepts_missing_v1_version_and_rejects_unknown_version():
+    payload = _native_payload([
+        ["const", "1"],
+        ["emit", "p1"],
+    ])
+    payload_without_version = dict(payload)
+    payload_without_version.pop("version", None)
+    base = {
+        "mode": "param_dump",
+        "n1": 4,
+        "n2": 4,
+    }
+
+    meta, data = _run_sweep(
+        {**base, "param_program": payload_without_version},
+        "/tmp/pp_param_dump_missing_version.bin",
+    )
+    assert meta["param_program_tokens"] == 2
+    assert len(data) == 4 * 4 * 16
+
+    bad_payload = dict(payload)
+    bad_payload["version"] = 2
+    proc = _run_sweep_process({**base, "param_program": bad_payload})
+    assert proc.returncode != 0
+    assert "param_program version 2 is not supported" in proc.stderr
 
 
 def test_param_dump_dynamic_const_expression_matches_stack_program():

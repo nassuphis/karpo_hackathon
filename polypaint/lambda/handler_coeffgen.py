@@ -24,6 +24,7 @@ import boto3
 
 from compute_fused import (
     PROBE_N,
+    PROBE_SIGNATURE_SPEC_VERSION,
     build_probe_signature,
     estimate_fused_chunking,
     validate_fused_threads,
@@ -668,6 +669,7 @@ def handle_degree_probe(params):
             "probe_n": probe_n,
             "probe_step_count": probe_n * probe_n,
             "probe_signature": probe_signature,
+            "probe_signature_spec_version": PROBE_SIGNATURE_SPEC_VERSION,
             "probe_stable": bool(stable),
             "degree": int(degree),
             "n_coeffs": int(n_coeffs),

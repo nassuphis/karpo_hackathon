@@ -54,6 +54,24 @@ def _run_coeffgen(spec):
             pass
 
 
+def _run_coeffgen_process(spec):
+    with tempfile.NamedTemporaryFile(prefix="pp_coeff_program_native_", suffix=".bin", delete=False) as fh:
+        out_path = fh.name
+    try:
+        return subprocess.run(
+            [SWEEP, out_path],
+            input=json.dumps(spec),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    finally:
+        try:
+            os.remove(out_path)
+        except FileNotFoundError:
+            pass
+
+
 def _run_chunked_with_params(coeff_program, params, *, cfpv, source_n1=1, source_n2=1, step_count=1):
     """Run coeffgen_chunked with a float32 params file.
 
@@ -181,6 +199,31 @@ def test_coeff_program_native_accepts_more_than_old_64_token_cap():
     assert len(values) == 1
     assert abs(values[0].real - 39.0) <= 1e-6
     assert abs(values[0].imag) <= 1e-6
+
+
+def test_coeff_program_native_accepts_missing_v1_version_and_rejects_unknown_version():
+    compiled = compile_coeff_program_chain([["push_const", "1", "7"], ["emit"]])
+    payload = _compiled_coeff_program_payload(compiled)
+    payload_without_version = dict(payload)
+    payload_without_version.pop("version", None)
+    base = {
+        "mode": "coeffgen",
+        "function": "const",
+        "cfpv": [1, 0, 0],
+        "n1": 1,
+        "n2": 1,
+        "coeff_transforms": [],
+    }
+
+    meta, data = _run_coeffgen({**base, "coeff_program": payload_without_version})
+    assert meta["coeff_program_tokens"] == compiled["token_count"]
+    assert _complex_f32_values(data)[0] == complex(7.0, 0.0)
+
+    bad_payload = dict(payload)
+    bad_payload["version"] = 2
+    proc = _run_coeffgen_process({**base, "coeff_program": bad_payload})
+    assert proc.returncode != 0
+    assert "coeff_program version 2 is not supported" in proc.stderr
 
 
 def test_coeff_program_source_extended_linspace_runs_in_native_coeffgen():

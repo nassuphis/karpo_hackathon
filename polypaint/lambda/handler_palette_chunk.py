@@ -20,11 +20,13 @@ from logical_sections import (
     write_native_multispan_manifest,
 )
 from solve_score_chain import (
+    SOLVE_SCORE_SPEC_VERSION,
     canonicalize_solve_score_program_spec,
     compile_solve_score_chain_or_legacy,
     compiled_solve_score_fingerprint,
     solve_score_lag_prelude_by_source,
     solve_score_program_spec_uses_lag,
+    solve_score_program_specs_match,
     solve_score_program_cli_payload,
 )
 from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, parse_boolish, report_status
@@ -293,6 +295,7 @@ def handler(event, context):
         "section_count": section_count,
         "metric": metric,
         "chain_fingerprint": chain_fingerprint,
+        "solve_score_spec_version": SOLVE_SCORE_SPEC_VERSION,
         "threads": threads,
         "requested_input_mode": input_mode,
         "input_mode": input_mode,
@@ -418,7 +421,11 @@ def handler(event, context):
                     raise RuntimeError(
                         f"Bins fingerprint mismatch: expected {chain_fingerprint}, got {actual_fingerprint}"
                     )
-                if canonicalize_solve_score_program_spec(bins_data.get("program") or "") != compiled["program_spec"]:
+                if not solve_score_program_specs_match(
+                    bins_data.get("program") or "",
+                    compiled["program_spec"],
+                    version=bins_data.get("solve_score_spec_version"),
+                ):
                     raise RuntimeError(
                         f"Bins program mismatch: expected {compiled['program_spec']}, got {bins_data.get('program')!r}"
                     )
@@ -718,6 +725,9 @@ def handler(event, context):
                 chunk_meta["chain_fingerprint"] = chain_fingerprint
             elif bins_data.get("chain_fingerprint"):
                 chunk_meta["chain_fingerprint"] = bins_data.get("chain_fingerprint")
+            chunk_meta["solve_score_spec_version"] = int(
+                bins_data.get("solve_score_spec_version", SOLVE_SCORE_SPEC_VERSION) or SOLVE_SCORE_SPEC_VERSION
+            )
             chunk_meta["program"] = bins_data.get("program")
             chunk_meta["metrics"] = bins_data.get("metrics")
         s3.put_object(Bucket=BUCKET, Key=meta_key, Body=json.dumps(chunk_meta), ContentType="application/json")

@@ -19,6 +19,7 @@ from logical_sections import (
     build_native_manifest_urls,
     build_native_multispan_manifest,
     build_source_spans,
+    resolve_solve_source_manifest,
     write_native_multispan_manifest,
 )
 from solve_score_chain import (
@@ -978,7 +979,12 @@ def handle_hist(params):
     coeff_spans = list(params.get("coeff_spans") or [])
     param_spans = list(params.get("param_spans") or [])
     logical_section = parse_boolish(params.get("logical_section"), bool(root_spans))
-    solve_source_manifest = dict(params.get("solve_source_manifest") or {})
+    solve_source_manifest = resolve_solve_source_manifest(
+        params,
+        s3,
+        BUCKET,
+        required_context="solve score hist",
+    )
     degree = params["degree"]
     clip_key = params["clip_key"]
     hist_bins = params.get("hist_bins", 100)

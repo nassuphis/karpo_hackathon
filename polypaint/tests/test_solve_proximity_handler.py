@@ -1226,9 +1226,12 @@ def test_hist_v2_logical_section_sectioned_uses_multispan_manifests():
     from logical_sections import build_solve_source_manifest
 
     mock_s3 = mock.MagicMock()
+    manifest_by_key = {}
 
     def mock_get(**kwargs):
         key = kwargs.get("Key", "")
+        if key in manifest_by_key:
+            return {"Body": _ChunkBody(json.dumps(manifest_by_key[key]).encode())}
         if key == "renders/test/solve_scores/clip.json":
             clip_data = {
                 "family": "solve_score",
@@ -1295,6 +1298,8 @@ def test_hist_v2_logical_section_sectioned_uses_multispan_manifests():
                 degree=2,
                 n_coeffs=3,
             )
+            solve_source_manifest_key = "renders/test/manifests/run_pal/palette_solve_source_manifest.json"
+            manifest_by_key[solve_source_manifest_key] = solve_source_manifest
             with mock.patch.object(hsp, "_TMP_INPUT_MANIFEST", input_manifest), \
                  mock.patch.object(hsp, "_TMP_COEFF_INPUT_MANIFEST", coeff_manifest), \
                  mock.patch.object(hsp, "_cleanup_tmp", mock.MagicMock()):
@@ -1305,7 +1310,7 @@ def test_hist_v2_logical_section_sectioned_uses_multispan_manifests():
                     "section_idx": 0,
                     "section_count": 2,
                     "logical_section": True,
-                    "solve_source_manifest": solve_source_manifest,
+                    "solve_source_manifest_key": solve_source_manifest_key,
                     "metric": "spread",
                     "solve_score_quantile": 0.02,
                     "solve_score_chain": [["spread", "slv", "2"], ["spread", "cf", "2"], ["max"]],

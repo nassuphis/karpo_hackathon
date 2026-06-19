@@ -4,7 +4,7 @@ Companion to `code-review-18.md` (the design review). CR18 holds the *why* and t
 
 Verified against the `1a1996d` source snapshot; **all later commits touch only docs (CR18 + this plan) and populate-source persistence — no VM/source change — so every file:line below is current** (no specific "current HEAD" hash is pinned here, since it advances with each doc commit). C/Python/JS paths are under `lambda/`, repo root, and `js/` respectively.
 
-**Dependency order & gates.** **−1** → 0 → 1 → 2A → 2B → 3 → 4 → 5. **Phase −1 (the verification harness) is a hard prerequisite for Phase 2** — DD5 (a Python solve-score oracle + the whole-sweep byte oracle) and DD6 (benchmarks) must exist before any interpreter merge (see Phase −1). Also: **DD2 native version gate must precede any opcode renumbering (Phase 4)**. Phases −1, 0, 1, 3 are independently shippable with value; Phases 2, 4 are the risk concentration.
+**Dependency order & gates.** **−1** → 0 → 1 → 2A → 2B → 3 → 4 → 5. **Phase −1 (the verification harness) is a hard prerequisite for Phase 2** — DD5 (a Python solve-score oracle + the whole-sweep byte oracle) and DD6 (benchmarks) must exist before any interpreter merge (see Phase −1). Also: **DD2 native version gate must precede any opcode renumbering (Phase 4)**. Phases −1, 0, 1, 3 are independently shippable with value; Phases 2, 4 are the risk concentration. **Phase 1 now also owns the profile symbol table** — the parser/IR/frontend profiles must be table-driven before the Phase-3 param source parser and the Phase-4 merged IR land, otherwise the new parser repeats the hardwired `t1/t2/p1/p2/cf/poly` split that CR18 is trying to eliminate. The Phase-1 profile table is **not** the native runtime's source of truth in Phase 2A; native caps/layout stay in C and are drift-checked against the profile table (§1.4), keeping the FP-critical path out of JSON.
 
 ---
 
@@ -68,9 +68,9 @@ The dual-read field table is in CR18 §4.2. **Centralization opportunity:** all 
 
 ---
 
-## Phase 1 — Structural-chip registry (single source of truth)
+## Phase 1 — Structural-chip registry + profile symbol table (single source of truth)
 
-**Objective.** A JSON registry for the **program chips** (the `_CHIP_COMPILERS` stack-VM vocabulary) that drives **registry metadata + arg/stack/selector validation + the dispatch map** (which named handler to call) for Python/C/JS, gated by a drift test — **not** data-only compilation: the semantic compiler handlers stay as named functions (see §1.2). **This is new ground:** today the ~25 program chips are hardcoded Python compiler functions with *no* registry, *no* generated JS mirror, and *no* drift gate (only the 28 *transforms* in `coeff_legacy_registry.json` are registry-driven). No runtime VM change.
+**Objective.** A JSON registry for the **program chips** (the `_CHIP_COMPILERS` stack-VM vocabulary) plus a **profile symbol table** for param/coeff/root/solve-score. The chip registry drives **registry metadata + arg/stack/selector validation + the dispatch map** (which named handler to call) for Python/C/JS, gated by a drift test — **not** data-only compilation: the semantic compiler handlers stay as named functions (see §1.2). The symbol table makes identifiers (`t1`, `p1`, `cf`, `poly`, `poly_len`, metric slots, roots) profile configuration, not parser magic. **This is new ground:** today the ~25 program chips are hardcoded Python compiler functions with *no* registry, *no* generated JS mirror, and *no* drift gate (only the 28 *transforms* in `coeff_legacy_registry.json` are registry-driven), and parser/lowerer code directly knows each program kind's register names. No runtime VM change: Phase 1 feeds Python parser/validation/frontend metadata, while C keeps its existing constants and receives a drift test.
 
 ### 1.1 Registry schema — `structural_chips.json` (new)
 Per entry (modelled on the verified per-chip table; tiers from `coeff_program_chain.py:1622` dispatch):
@@ -102,7 +102,79 @@ Keep the `--check` byte-equality drift mechanism (`gen_coeff_vocab.py:88`).
 ### 1.3 Drift gate — extend `tests/test_coeff_program_drift.py`
 The existing test pins `COEFF_OP_*` / `COEFF_EXPR_*` / `COEFF_SEL_*` enums + the 28-transform fn_index + aliases + generated-JS byte-equality (`:45,:113,:152,:190`). Add: pin every structural-chip `name → opcode → stack_effect → args → selectors` across registry/Python/C/JS. **Also bring the param VM under the gate** — today `test_coeff_program_drift.py` only scrapes `COEFF_*`; `PARAM_OP_*` / `PARAM_EXPR_*` have *no* drift test (CR18 C2 risk). Add `test_param_program_drift.py` mirroring it. *This is a Phase-1 deliverable because C2 (the fn_index/opcode reconciliation) lands in untested param space otherwise.*
 
-**File map:** new `structural_chips.json`, `param_legacy_registry.json` drift coverage; `gen_coeff_vocab.py` (+ maybe split a `gen_program_chips.py`); `coeff_program_chain.py` (dispatch driven from registry); generated C header; `js/07-transform-catalogs.js` (catalog generated); `tests/test_coeff_program_drift.py` + new `test_param_program_drift.py`. **Risk:** low-medium — bigger than a vocab-gen (the chips carry compiler semantics, §CR18 Phase 1), but no runtime change; the drift gate de-risks divergence.
+### 1.4 Profile symbol table — `program_profiles.json` (new)
+Add a profile registry that the source parsers, validation layer, generated JS metadata, and drift tests consume. The C runtime does **not** consume this JSON in Phase 2A; it keeps its reviewed constants/layout/init code and is checked against the profile table. This is the simplifying architecture where it is useful: **same parser core, same typed IR vocabulary, different profile symbol tables + small lowering hooks**. The parser should ask "what is this identifier in this profile?" instead of hardcoding `p1` for Param and `poly` for Coeff in separate branches.
+
+Schema sketch:
+```jsonc
+{
+  "profile": "param",
+  "value_caps": {
+    "program_tokens": 64,
+    "total_stack": 16,
+    "vector_len": 0,
+    "vector_capable_stack": 0
+  },
+  "symbols": {
+    "t1": { "type": "scalar_complex", "access": "read", "role": "input", "contexts": ["expr", "selector"] },
+    "t2": { "type": "scalar_complex", "access": "read", "role": "input", "contexts": ["expr", "selector"] },
+    "p1": { "type": "scalar_complex", "access": "read_write", "role": "output", "initial": "t1", "contexts": ["expr", "lhs", "selector"] },
+    "p2": { "type": "scalar_complex", "access": "read_write", "role": "output", "initial": "t2", "contexts": ["expr", "lhs", "selector"] }
+  },
+  "selectors": {
+    "legacy_src": ["p1", "p2", "both", "pop1", "pop2"],
+    "legacy_tgt": ["p1", "p2", "both", "push1", "push2"]
+  },
+  "outputs": ["p1", "p2"],
+  "output_contract": { "kind": "scalar_registers", "default_initialization": true }
+}
+```
+The same table covers Coeff:
+```jsonc
+{
+  "profile": "coeff",
+  "value_caps": {
+    "program_tokens": 256,
+    "total_stack": 64,
+    "vector_len": 256,
+    "vector_capable_stack": 64,
+    "max_args": 8,
+    "scalar_exprs": 64,
+    "expr_tokens": 32
+  },
+  "symbols": {
+    "t1": { "type": "scalar_complex", "access": "read", "role": "input", "contexts": ["expr"] },
+    "t2": { "type": "scalar_complex", "access": "read", "role": "input", "contexts": ["expr"] },
+    "p1": { "type": "scalar_complex", "access": "read", "role": "input", "contexts": ["expr"] },
+    "p2": { "type": "scalar_complex", "access": "read", "role": "input", "contexts": ["expr"] },
+    "cf": { "type": "vector_complex", "access": "read", "role": "input", "contexts": ["expr_index_base", "selector", "rhs"] },
+    "poly": { "type": "vector_complex", "access": "read_write", "role": "output", "initial": "cf", "contexts": ["expr_index_base", "selector", "lhs", "rhs"] },
+    "poly_len": { "type": "int", "access": "read", "role": "derived", "from": "poly.length", "contexts": ["expr", "length_arg"] },
+    "tos": { "type": "stack_pseudo", "access": "read", "role": "stack_top", "contexts": ["expr_index_base"] }
+  },
+  "selectors": {
+    "src": ["cf", "poly", "pop", "peek"],
+    "tgt": ["poly", "push"]
+  },
+  "outputs": ["poly"],
+  "output_contract": { "kind": "fixed_vector", "initial": "cf", "fixed_output_length": true }
+}
+```
+Root and solve-score also get profiles even if they stay chip-primary in v1:
+- **root:** `roots` is a `vector_float` read/write input-output symbol, in-place, length-preserving, NaN-poison policy, raster-stage execution context.
+- **solve-score:** `m0..m15` is a generated `scalar_real` metric-slot **namespace** with optional lag reads (`mN-1`), not a static binding — the actual metric/source/quantile bindings still arrive at runtime through `--score_metrics` / `--score_sources` / clips (§4.1a). Output is implicit terminal scalar or explicit `emit*` channels; stack is scalar-only.
+
+**Caps semantics:** `program_tokens` mirrors the native token cap (`PARAM_PROGRAM_MAX_TOKENS=64`, `COEFF_PROGRAM_MAX_TOKENS=256`). `total_stack` is the total VM stack depth. `vector_capable_stack` is the subset of stack slots that may hold vectors (`coeff: 64/64`, all stack slots vector-capable; `param: 16/0`, no vector stack). `vector_len` is max vector length. `max_args` / `scalar_exprs` / `expr_tokens` are included only where that profile owns those wire caps; if Phase 2A keeps the coeff expression arena C-only, the drift test still asserts these profile values equal the C constants rather than using JSON at runtime.
+
+**Selector authority:** selector verbs live in the **profile**, not scattered across chip schemas. `structural_chips.json` declares selector *slots* (`src`, `tgt`, `legacy_src`, `legacy_tgt`), while `program_profiles.json` declares which selector tokens are legal for each slot in each profile. The drift gate checks the join: every chip's selector slot must resolve to profile selectors, and every selector accepted by Python/C/JS must appear in the profile. This prevents a new split-brain between `src_selectors` in structural chips and `contexts:["selector"]` on value symbols.
+
+**Symbol fields:** `type ∈ {scalar_complex, scalar_real, int, vector_complex, vector_float, stack_pseudo, metric_slot}`; `access ∈ {read, write, read_write}`; `role ∈ {input, output, derived, scratch, stack_top, metric}`; `initial` is a symbolic initializer (`p1=t1`, `p2=t2`, `poly=cf`); `contexts` gates where the name is legal (`expr`, `lhs`, `selector`, `rhs`, `expr_index_base`, `length_arg`, `emit`). Invalid cases become uniform diagnostics: `cf[i] = ...` fails because `cf.access=read`; `p1 = ...` is legal in Param and illegal in Coeff because Coeff `p1.access=read`; `poly_len = ...` fails because derived symbols are not writable.
+
+**Generated outputs:** `program_profiles.py` / JS mirror. The Python parser uses the table for identifier resolution and source diagnostics; the Python lowerers use it to select profile-specific register opcodes; the frontend uses it for editor help, autocomplete, and disabling illegal assignments before save. C gets a generated **drift-check header/report**, not a runtime dependency in Phase 2A: native constants/layout/initializers stay in C for FP determinism, and `test_program_profiles_drift.py` asserts the JSON profile matches C (`PROGRAM_MAX_TOKENS`, stack caps, vector caps, output contract flags, selector enums). If a later phase chooses to generate C config from the profile table, that must explicitly enter the DD5 byte-oracle blast radius.
+
+**Important boundary:** the symbol table is not a replacement for semantic hooks. It solves name lookup, access control, type/kind checks, initialization, and output contracts. Profile-specific lowering still exists for solve-score metric-slot CSE/lag, coeff fixed-vector enforcement, root float/NaN behavior, and legacy transform packing. This keeps the parser/config readable instead of turning JSON into a hidden programming language.
+
+**File map:** new `structural_chips.json`, new `program_profiles.json`, generated `program_profiles.py` + JS mirror + C drift-report/header, `param_legacy_registry.json` drift coverage; `gen_coeff_vocab.py` (split to `gen_program_metadata.py` if useful); `coeff_program_chain.py` / `param_program_chain.py` (dispatch + identifier validation driven from registries); generated C drift header/report; `js/07-transform-catalogs.js` (catalog generated); `tests/test_coeff_program_drift.py` + new `test_param_program_drift.py` + new `test_program_profiles_drift.py`. **Risk:** low-medium — bigger than a vocab-gen (the chips carry compiler semantics, §CR18 Phase 1), with expanded validation/frontend blast radius but **no runtime behavior change**; the drift gate de-risks divergence.
 
 ---
 
@@ -111,13 +183,13 @@ The existing test pins `COEFF_OP_*` / `COEFF_EXPR_*` / `COEFF_SEL_*` enums + the
 **Objective.** One native interpreter core behind byte-identical per-VM front-ends (DD1 adapter) + the expression-temp arena (DD1 + §2a isolation). **The solve-score lag refactor is split out into Phase 2B** — two unrelated high-risk native changes (VM merge vs lag double-buffer) must be *separate phases behind the same DD5 oracle*, so any numerical drift bisects to one of them. Fingerprints do not move (front-ends frozen). Gated by native parity + DD5 + DD6.
 
 ### 2.1 Unified value model + workspace (native structs)
-Merge `CoeffProgramWorkspace` (`sweep_cli.c:3504-3536`: planar `stack_re/stack_im[64][256]`, scalar slots, `poly`, scratch/original/aux) and the param state (`ParamProgram`/`ParamProgramToken`/`ParamCx`, `sweep_cli.c:6097-6128`) into one runtime that the config (CR18 §3.3) parametrizes (enabled ops, register layout, caps coeff 256/64/256 vs param 64/16). **Per-profile workspace sizing** (CR18 §3.1, corrected): size to the profile's caps; do not assume a single shared constant (note `MAXDEG` is *inconsistent* across rasterizers — `roots2pix_mt.c:28` 256 vs others 1024 — reconcile, not "size for 1024"; roots can't exceed `MAX_DEGREE 255`).
+Merge `CoeffProgramWorkspace` (`sweep_cli.c:3504-3536`: planar `stack_re/stack_im[64][256]`, scalar slots, `poly`, scratch/original/aux) and the param state (`ParamProgram`/`ParamProgramToken`/`ParamCx`, `sweep_cli.c:6097-6128`) into one runtime with explicit per-profile C config (enabled ops, register layout, initialization rules, output contract, caps coeff 256/64/256 vs param 64/16). The generated profile table (§1.4) is a **drift-checked mirror**, not a runtime dependency, so a JSON typo cannot perturb the FP-critical path. **Per-profile workspace sizing** (CR18 §3.1, corrected): size to the profile's caps; do not assume a single shared constant (note `MAXDEG` is *inconsistent* across rasterizers — `roots2pix_mt.c:28` 256 vs others 1024 — reconcile, not "size for 1024"; roots can't exceed `MAX_DEGREE 255`).
 
 **Fixed-output-length contract (CR18 §7.5 — must be in the runtime config).** Coeff output length is probed once at (0,0) and **hard-asserted constant** for the whole grid (`sweep_cli.c:7841,7948`), and the warm-start chain depends on it. The unified config needs a `fixed_output_length` flag (true for coeff) that makes the interpreter **reject a per-row length change** — load-bearing once the unified op set includes dynamic indexing (`typed_get_scalar`) and length-changing transforms (`length_policy: may_change`), which could otherwise vary `poly_len` per cell. Other profiles have their own output contracts: param → `p1,p2` scalars; root → in-place, same-length; solve-score → 1 scalar or N channels. **Where the expected length lives (a boolean isn't enough):** the (0,0) degree probe (`sweep_cli.c:7841`) computes it once; pass it into the per-row eval as `expected_out_len`, and the interpreter rejects any row whose `poly_len != expected_out_len` — surfaced by the **row loop** (retaining today's outer assertion at `:7948`), never a silent truncation. So `fixed_output_length` means "assert `poly_len == expected_out_len`, where `expected_out_len` is the probed length passed into eval."
 
 ### 2.2 Expression-temp arena (DD1 implementation sketch — the §2a isolation)
 Add a **separate** per-thread arena distinct from the user value planes (**coeff-only** — this whole section concerns the coeff expr-plan lowering; param builds no arena in Phase 2A, §2.3):
-- *struct:* `double tempRe[N]/tempIm[N]` (coeff) / `ParamCx temp[N]` (param), `N = MAX_EXPR_NUMS/EXPR_STRIDE` (the existing private-stack sizing at `:3869/:6380`).
+- *struct:* `double tempRe[N]/tempIm[N]`, `N = COEFF_PROGRAM_MAX_EXPR_NUMS/COEFF_PROGRAM_EXPR_STRIDE` (the existing private-stack sizing at `:3869`).
 - *cap:* the existing `MAX_EXPR_NUMS/STRIDE`; a single expression's lowered sub-sequence must fit it (compile-time check). **Separate from** the user 64/16 cap.
 - *frame base / `tos[i]` — ONE base per TOKEN, not per arg (load-bearing):* capture a single `token_frame_base = user_sp` **before evaluating any of the token's dynamic args**; every arg's `tos[i]` reads `user_stack[token_frame_base-1-i]` — the **pre-token** stack. This prevents a multi-dynamic-arg token from letting arg 2 see arg 1's pushed result through `tos0`. Arg intermediates live only in the hidden arena; `user_sp` grows only by the final pushed arg results.
 - *Two arg-delivery mechanisms (full ABI in §2.2a):* (i) **resolved-arg ops** — the ~12 ops that read `coeffArgValue` today (affine/const/littlewood/poke/set/blend/typed/…) take args from a per-token **resolved-arg array**, *not* the user stack; (ii) **stack-arg `native_transform`** (the `stack_arg_count` form only) pops K args off the user stack (each a net **+1** push, intermediates in the arena). Most ops are (i); (ii) is the minority path.
@@ -175,30 +247,32 @@ Add a stateful lagged-stream object to `solve_score.h` (init + per-row `advance(
 
 ---
 
-## Phase 3 — Text parser (param); root + solve-score stay chip-primary
+## Phase 3 — Shared source parser core + Param profile; root + solve-score stay chip-primary
 
-**Objective.** Build the **one** missing compute-path text parser — **param** — so coeff+param are text-first authorable. **Root stays a chip-editable flat array** (`[name,...params]`): optional read-only text *export*, **not** a source parser (§3.2 — this refines CR18 §9.3, which over-eagerly listed root as "text-first"; root is text-*able* but not worth a source-editing parser, and it stays chip-editable in Phase 5). **Solve-score stays chip-primary** with read-only text export (CR18 §9.3 — its declarative slot-CSE + lag has no clean text shape).
+**Objective.** Build the shared source parser core and the **one** missing compute-path text profile — **param** — so coeff+param are text-first authorable without copy-pasting parser rules. **Root stays a chip-editable flat array** (`[name,...params]`): optional read-only text *export*, **not** a source parser (§3.2 — this refines CR18 §9.3, which over-eagerly listed root as "text-first"; root is text-*able* but not worth a source-editing parser, and it stays chip-editable in Phase 5). **Solve-score stays chip-primary** with read-only text export (CR18 §9.3 — its declarative slot-CSE + lag has no clean text shape). The architectural rule is: **one lexer/parser/diagnostic engine, profile symbol tables for identifier legality, profile hooks for the semantics that are not data-only**.
 
 ### 3.1 `param_program_source.py` (new) — mirror `coeff_program_source.py`
-Architecture (template at `coeff_program_source.py`): lower source text → existing chip list → existing `compile_param_program_chain`. Four entrypoints mirroring coeff (`:855,889,837,748`): `parse_param_program_source`, `compile_param_program_source`, `param_source_text_from_payload`, `split_param_program_statements`. **Reuse** `param_program_chain`'s `_ExpressionParser` (`:573`), `_expr_to_param_tokens` (`:700`), and target `_lower_chip` (`:950`) — derive all op tables from the chain layer (the coeff parser's "vocabularies cannot drift" pattern, `coeff_program_source.py:14-48`). **Param-specific grammar:** the canonical emit is the assignment `p1 = expr` / `p2 = expr` (**not** `emit p1`, §3.1 grammar); the stack ops `push` (= both) / `push(t1)` / `push(t2)` + `emit_p1` / `emit_p2` / `dup` / `swap` / `pop` / `flush`; the targetable-unary sugar `square(p1)` (which means `p1 = square(t1)` — input is the *matching grid coord*, not current p1; `param_program_chain.py:977`), `legacy(name,src,tgt,…)` (the load-bearing bridge — param *cannot* ban it the way coeff text does; its name+selectors are a distinct arg category from expr args), `both` target default. Error type `ParamProgramSourceError` (line/col) mirroring `CoeffProgramSourceError` (`:125`).
+Architecture: add **`lambda/program_source_core.py`** containing the shared lexer, statement splitter, expression parser, source-span diagnostics, assignment parsing, call parsing, and profile-symbol resolution. `param_program_source.py` is then a thin profile wrapper: source text → shared parser with `profile="param"` → existing chip list → existing `compile_param_program_chain`. Four entrypoints mirroring coeff (`:855,889,837,748`): `parse_param_program_source`, `compile_param_program_source`, `param_source_text_from_payload`, `split_param_program_statements`. **Do not clone `coeff_program_source.py` wholesale**: move reusable pieces into `program_source_core.py`, but keep the coeff retrofit optional/deferred. The shared core must be designed as a coeff-capable superset from day one (indexed lvalues/rvalues, source/target selector slots, vector/scalar values, source-first vs target-first call layouts), but Phase 3 does **not** require porting coeff onto it. If/when coeff opts in, it is gated by byte-equivalence over a source corpus: old coeff parser → chain/fingerprint must match shared-core coeff parser → chain/fingerprint, including macro expansion and canonical source regeneration. Reuse `param_program_chain`'s expression lowering (`_expr_to_param_tokens`, `:700`) and target `_lower_chip` (`:950`) for the final chip-list compile; derive op tables from the chain layer plus `program_profiles.json` so vocabularies cannot drift. **Param profile grammar:** the canonical emit is assignment to writable output symbols (`p1 = expr` / `p2 = expr`, discovered from the profile table, **not** hardcoded parser magic and **not** `emit p1`); the stack ops `push` (= both) / `push(t1)` / `push(t2)` + `emit_p1` / `emit_p2` / `dup` / `swap` / `pop` / `flush`; the targetable-unary sugar `square(p1)` (which means `p1 = square(t1)` by the Param profile's "matching grid coord" hook, not a universal parser rule); `legacy(name,src,tgt,…)` (the load-bearing bridge — param *cannot* ban it the way coeff text does; its name+selectors are a distinct arg category from expr args), `both` target default. Error type `ParamProgramSourceError` (line/col) mirroring `CoeffProgramSourceError` (`:125`).
 
 **Grammar (EBNF sketch):**
 ```
 program       := statement ((";" | "\n") statement)*
 statement     := assign | unary_stmt | legacy_call | registry_call | macro_call | stackop
-assign        := ("p1" | "p2") "=" expr                       # CANONICAL emit (push expr; emit_pN)
-unary_stmt    := unary_name "(" reg ")"                       # reg = unary_name(matching grid coord) — see note
+assign        := output_symbol "=" expr                       # CANONICAL emit (Param: p1/p2; profile table decides)
+unary_stmt    := unary_name "(" writable_symbol ")"           # Param sugar: square(p1) -> p1 = square(t1); see note
 legacy_call   := "legacy" "(" name "," sel "," sel ("," expr)* ")"   # bridge: name + 2 selectors, then EXPR args
 registry_call := name "(" [ expr ("," expr)* ] ")"           # bare pt_* transform: EXPR args only
 macro_call    := "macro" "(" id ")"
-stackop       := "push" | "push" "(" ("t1" | "t2") ")" | "emit_p1" | "emit_p2" | "dup" | "swap" | "pop" | "flush"
+stackop       := "push" | "push" "(" stack_push_symbol ")" | "emit_p1" | "emit_p2" | "dup" | "swap" | "pop" | "flush"
                                                               # push bare = both; t1/t2 only — push(p1)/push(p2) rejected (param_program_chain.py:790)
-expr          := <param ExpressionParser: t1,t2,p1,p2, literals (i/j), + - * /, unary exp/real/imag/abs>
-sel           := "p1" | "p2" | "both" | "pop1" | "pop2" | "push1" | "push2"   # legacy src/tgt selectors
-reg           := "t1" | "t2" | "p1" | "p2"
+expr          := <shared expression parser; identifiers resolved by the active profile symbol table>
+sel           := <legacy selector symbol from the active profile>             # Param: p1,p2,both,pop1,pop2,push1,push2
+output_symbol := <symbol with role=output and write access>                   # Param: p1,p2
+writable_symbol := <symbol with write access>                                 # Param: p1,p2
+stack_push_symbol := <profile-allowed explicit push source>                   # Param: t1,t2
 unary_name    := "square" | "cube" | "conj" | "negate" | "reciprocal" | "unit_circle" | "exp"
 ```
-**Selector args ≠ expression args** (resolves the `args:=expr` bug): `legacy(name, src, tgt, …)` takes an identifier `name` + two `sel` selectors, *then* expr args — `expr` applies only to the trailing args, never to the name/selectors. **One canonical form per construct:** emit is the assignment `p1 = expr` (not `emit p1` / `emit(p1)`); `emit_p1`/`emit_p2` are the explicit zero-arg stack-pop ops. **`unary_name(reg)` is documented sugar** (resolves the `square(p1)` ambiguity): it applies the op to the *matching grid coordinate* — `square(p1) ≡ p1 = square(t1)`, `square(p2) ≡ p2 = square(t2)` — **not** "square the current p1". The source-from-chain renderer emits exactly this form for targetable-unary chips.
+**Selector args ≠ expression args** (resolves the `args:=expr` bug): `legacy(name, src, tgt, …)` takes an identifier `name` + two `sel` selectors, *then* expr args — `expr` applies only to the trailing args, never to the name/selectors. **One canonical form per construct:** emit is assignment to a profile-writable output symbol (`p1 = expr`, `p2 = expr` in Param), not `emit p1` / `emit(p1)`; `emit_p1`/`emit_p2` are the explicit zero-arg stack-pop ops. **`unary_name(reg)` is documented Param-profile sugar** (resolves the `square(p1)` ambiguity): it applies the op to the *matching grid coordinate* — `square(p1) ≡ p1 = square(t1)`, `square(p2) ≡ p2 = square(t2)` — **not** "square the current p1". The source-from-chain renderer emits exactly this form for targetable-unary chips.
 **Canonical source-from-chain is first-class (the populate path) — and needs a NEW serializer.** `display_param_program_chain` (`param_program_chain.py:492`) is a *display formatter* (`"; ".join` of `name(args)` chips) — it emits non-canonical forms like `emit(p1)`, which the grammar above rejects (canonical emit is `p1 = expr`). So **add a real `param_source_text_from_chain(chain)`** that renders the *canonical* surface (`p1 = expr`, `push(t1)`, `square(p1)`, `legacy(...)`) — never `emit(p1)`, never internal synth chips (`push;_typed_unary;emit`) — mirroring coeff's source serializer. The populate path and the round-trip gate use **this** serializer. Pin **compiled equivalence**, not raw chain equality (aliases/canonicalization can legitimately reshape surface rows): `compile_param_program_chain(parse_param_program_source(param_source_text_from_chain(c))).execution_spec == compile_param_program_chain(c).execution_spec` **and equal `fingerprint`**, over a corpus including legacy-bridge and expression chips. `display_param_program_chain` stays the chip *display* formatter (Phase 5 readonly view). The Legacy-tab/populate flow depends on the new serializer.
 **Error recovery:** `strict=True` raises on first error (save/preview); `strict=False` skips the failing statement, records `{line,column,message}` in `diagnostics`, continues (editor live-compile) — exactly coeff's `parse_coeff_program_source(strict=)` (`:855`).
 **Examples:**
@@ -228,7 +302,7 @@ A `/compile-param-program-source` route is **not sufficient**: `coeff_program_so
 **Gate:** a contract test asserting `param_program_source_text` reaches each carrier (mirror the coeff source-text tests); packaging (§3.4); api_manifest for the new route.
 
 ### 3.4 Packaging fan-out (CR18 §9.4 — per parser, different bundles)
-`param_program_source.py` is compute-path → the same 5 bundles as `coeff_program_source.py`: coeffgen, storage, compute_preview, param_debug, compute_plan (`deploy.sh:964,985,1034,1058,1328`). A missing `cp` is a runtime ImportError caught by `test_deploy_packaging.py`'s AST walk (static imports only). **No root source module** (3.2). **Gates:** `test_param_program_*` (native + storage + source round-trip), the AST packaging gate, api_manifest regen for the new route. **Risk:** low-medium (param is a coeff-parser subset).
+`param_program_source.py` and `program_source_core.py` are compute-path → the same 5 bundles as `coeff_program_source.py`: coeffgen, storage, compute_preview, param_debug, compute_plan (`deploy.sh:964,985,1034,1058,1328`). `program_profiles.py/json` must ride with every bundle that imports either source parser. A missing `cp` is a runtime ImportError caught by `test_deploy_packaging.py`'s AST walk (static imports only). **No root source module** (3.2). **Gates:** `test_param_program_*` (native + storage + source round-trip), shared parser-core unit tests, profile-symbol diagnostics tests, the AST packaging gate, api_manifest regen for the new route. **Risk:** low-medium (param is a profile over the shared parser core; semantic hooks are small).
 
 ### 3.5 Param text-editor UI file map (concrete)
 Mirror coeff's text-editor wiring (Phase 5 §5.2/5.3 lists the coeff/readonly sites):
@@ -369,10 +443,10 @@ Dispatch maps to update when retiring cp/pp: `_chainForWhich` (`js/02-preview-so
 |---|---|---|---|
 | −1 verification harness | yes (oracle + benches) | — | none — it's the gate everything else leans on |
 | 0 versioning | yes (pure insurance) | — | regression if missing≠v1 (mitigated) |
-| 1 chip registry | yes (kills drift) | — | semantics in the schema; param drift gate |
+| 1 chip registry + symbol table | yes (kills drift + hardwired-name duplication) | — | semantics in the schema; param/profile drift gate |
 | 2A shared runtime (VM merge) | yes (one interpreter) | DD5 oracle + DD6 benchmarks | FP determinism, perf |
 | 2B lag facility (separate from 2A) | yes | 2A landed + same DD5 oracle | FP drift — kept bisectable by the split |
-| 3 text parser (param) | yes (param text-first; root stays chips) | — | low (param ⊂ coeff) |
+| 3 text parser (param) | yes (param text-first; root stays chips; coeff core retrofit optional/deferred) | — | low-medium (param is smaller vocabulary, but coeff grammar is the superset and must not be silently rewritten) |
 | 4 v2 migration | no (the bump) | DD2 gate (Phase 0) + DD5 | the migration proper |
 | 5 chips display-only | no | Phases 3+4 | low |
 

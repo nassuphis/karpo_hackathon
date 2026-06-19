@@ -4,7 +4,21 @@ Companion to `code-review-18.md` (the design review). CR18 holds the *why* and t
 
 Verified against the `1a1996d` source snapshot; **all later commits touch only docs (CR18 + this plan) and populate-source persistence — no VM/source change — so every file:line below is current** (no specific "current HEAD" hash is pinned here, since it advances with each doc commit). C/Python/JS paths are under `lambda/`, repo root, and `js/` respectively.
 
-**Dependency order & gates.** 0 → 1 → 2A → 2B → 3 → 4 → 5, but two gates from CR18 are hard prerequisites: **DD2 native version gate must precede any opcode renumbering (Phase 4)**; **DD5 whole-sweep byte oracle + a Python solve-score evaluator must exist before Phase 2 ships**; **DD6 benchmarks before the unified dispatch ships (Phase 2)**. Phases 0,1,3 are independently shippable with value; Phases 2,4 are the risk concentration.
+**Dependency order & gates.** **−1** → 0 → 1 → 2A → 2B → 3 → 4 → 5. **Phase −1 (the verification harness) is a hard prerequisite for Phase 2** — DD5 (a Python solve-score oracle + the whole-sweep byte oracle) and DD6 (benchmarks) must exist before any interpreter merge (see Phase −1). Also: **DD2 native version gate must precede any opcode renumbering (Phase 4)**. Phases −1, 0, 1, 3 are independently shippable with value; Phases 2, 4 are the risk concentration.
+
+---
+
+## Phase −1 — Verification harness (DD5 + DD6): build BEFORE Phase 2
+
+The gates Phase 2 depends on **don't exist yet** — build them first as their own deliverable; Phase 2A cannot start without them. (Independent of Phases 0/1/3, which don't need it.)
+
+**(a) Python solve-score evaluator — the DD5 oracle for solve-score.** Today `solve_score_chain.py` only *compiles* — no numeric eval, so solve-score has no cross-language oracle (CR18 §7.1). Add **`lambda/solve_score_eval.py`**: a pure-Python mirror of `solve_score.h` — the metric prepass (`compute_solve_metric_score`), the postfix scalar VM, lag (`mN-1`), and emit — taking roots/coeff/param inputs → scalar or N channels. Pin it with **`tests/test_solve_score_native_parity.py`**: feed the same roots `.bin` + program to both `solve_score_eval.py` and the C binary, assert agreement (epsilon for floats; exact for SHA-addressed bytes).
+
+**(b) Whole-sweep byte oracle — DD5 for the VM merge.** **`tests/test_whole_sweep_oracle.py`**: for a corpus of warm-start-sensitive programs (clustered / near-degenerate roots), run the FULL coeffgen + solve and compare the complete coeffs `.bin` + roots `.bin` **byte-for-byte** between the pre-merge binary and the post-merge binary — single-cell parity is insufficient under the serpentine warm-start cascade (CR18 §7.1). Snapshot the old-binary outputs as a baseline (**`scripts/oracle_baseline.sh`**) *before* Phase 2A touches the interpreter.
+
+**(c) Per-profile benchmarks — DD6.** **`tests/bench_vm.py`** (or `scripts/bench_vm.sh`) timing the 5 profiles — param-only, coeff scalar-heavy, coeff vector-heavy, solve-score multi-channel, root-raster — plus per-thread workspace bytes, vs the current tight-`switch` baseline.
+
+**Commands:** `uv run python -m pytest tests/test_solve_score_native_parity.py tests/test_whole_sweep_oracle.py`; `uv run python tests/bench_vm.py --against-baseline`. **Files:** new `lambda/solve_score_eval.py`, `tests/test_solve_score_native_parity.py`, `tests/test_whole_sweep_oracle.py`, `tests/bench_vm.py`, `scripts/oracle_baseline.sh` + a warm-start corpus. **Gate:** parity green + bench within an agreed threshold (e.g. ≤5% regression) before any interpreter merge in Phase 2A/2B.
 
 ---
 
@@ -40,7 +54,7 @@ Do **not** rename existing fingerprint fields (a rename is itself a wire change)
 ### 0.3 Dual-read at the 14 READ/compare sites
 Read the stored **family** version (`solve_score_spec_version` / `palette_variant_spec_version` / `probe_signature_spec_version` — and for raw-sidecar/fragment-manifest the `solve_score_spec_version` sibling **inside** the container, *not* the container's own `version`; **missing ⇒ 1**) → compute the matching-scheme fingerprint → compare; during transition compute *both* and accept a match on the stored version.
 
-**`program_spec` string compares need a *versioned compare API*, not just a versioned hash (blocker).** The sites at `handler_raster_mt.py:263` / `handler_palette_chunk.py:421` / `handler_solve_proximity.py:415,724` / `handler_finalize_mt.py:282` compare the *canonical string* directly (`canonicalize_solve_score_program_spec(...)`). Versioning the `sha256` does **not** cover these. Add `canonicalize_solve_score_program_spec(spec, version)` and compare `canonicalize(stored, stored_ver) == canonicalize(expected, stored_ver)`. The v2 canonical renderer (Phase 4.3) and this versioned canonicalizer are the **same** change — both must land together.
+**`program_spec` string compares need a *versioned compare API*, not just a versioned hash (blocker).** The sites at `handler_raster_mt.py:263` / `handler_palette_chunk.py:421` / `handler_solve_proximity.py:415,724` / `handler_finalize_mt.py:282` compare the *canonical string* directly (`canonicalize_solve_score_program_spec(...)`). Versioning the `sha256` does **not** cover these. Add `canonicalize_solve_score_program_spec(spec, version)` and compare `canonicalize(stored, stored_ver) == canonicalize(expected, stored_ver)`. **Phase 0 ships the *signature* with v1-only behavior** (`version=1` is the only implemented scheme — no behavior change); **Phase 4.3 adds the v2 renderer branch.** So Phase 0 lands the versioned API + dual-read plumbing now, without the v2 scheme — they do **not** have to land together.
 | sites | type |
 |---|---|
 | `handler_raster_mt.py:259`, `handler_solve_proximity.py:404`, `handler_palette_finalize.py:316,331`, `handler_finalize_mt.py:106,274`, `handler_palette_chunk.py:417` | `chain_fingerprint` hash compare |
@@ -134,7 +148,7 @@ typedef struct { double re[COEFF_PROGRAM_MAX_ARGS], im[COEFF_PROGRAM_MAX_ARGS]; 
 The `expr_plans` live in the per-program workspace (`MAX_SCALAR_EXPRS × MAX_EXPR_NUMS/STRIDE`), built once; row eval calls `resolve_token_args` then the op reads `rargs`. This is the shared ABI Phase-2A must pin before touching C.
 
 ### 2.3 Retire the nested scalar-expr evaluators
-Delete `coeffEvalScalarExpr` (`sweep_cli.c:3855-4056`) and `paramEvalScalarExpr` (`:6372-6436`) — both are `[op,a,b]`-triple if/else loops over private stacks. Replace with **native load-time lowering** (once, at parse time — *not* in the per-row loop): the compact `scalar_exprs` wire stays (DD1); `parseCoeffProgram`/`parseParamProgram` lower it **once** into cached temp-arena token sequences, and the per-row evaluator only *executes* those pre-lowered tokens (no per-row re-lowering).
+**Phase 2A deletes/replaces only the COEFF evaluator** `coeffEvalScalarExpr` (`sweep_cli.c:3855-4056`). **`paramEvalScalarExpr` (`:6372-6436`) stays as a compatibility path through Phase 2A** — it serves legacy nested-expr param payloads and can only be removed *after* the Phase-4 opcode-renumber drain (§4.6) proves none can still arrive (its new output already carries no `expr_refs`, so it's idle for v2 programs). Replace the coeff evaluator with **native load-time lowering** (once, at parse time — *not* in the per-row loop): the compact `scalar_exprs` wire stays (DD1); `parseCoeffProgram`/`parseParamProgram` lower it **once** into cached temp-arena token sequences, and the per-row evaluator only *executes* those pre-lowered tokens (no per-row re-lowering).
 
 **Every `expr_refs` consumer must be migrated — not just `native_transform`.** `coeffArgValue` (`sweep_cli.c:4058`) is read by ~12 ops: affine (`:4682-4683`), exp/pow + legacy arg packing (`:4690-4697`), littlewood (`:4758-4761`), const (`:4808`), set/blend/poke/fill and the typed family (`:4888,4974,4992,5015,5086`), plus `coeffAndyValue` (`:4118`). For **each**, the load-time lowering must materialize its args (literal + dynamic, in order, §2.2) before the op runs — an op whose args aren't lowered would call a deleted evaluator. Treat the consumer set as an explicit checklist; the native-parity gate must exercise each op with a dynamic arg. The merged opcode enum + the param-as-config mapping are **internal only**; the per-VM `execution_spec`/fingerprint stay byte-identical (param still `del scalar_exprs` at `param_program_chain.py:1107`; coeff spec bytes still wire, `coeff_program_chain.py:1838`).
 
@@ -191,7 +205,7 @@ unary_name    := "square" | "cube" | "conj" | "negate" | "reciprocal" | "unit_ci
 p1 = t1*t2 + p1                          # push expr; emit_p1
 p2 = exp(t1)                             # push expr; emit_p2
 square(p1)                               # sugar: p1 = square(t1) — input is the matching grid coord, NOT current p1
-legacy(moebius, p1, push1, 1, 0, 0, 1)   # bridge: name + 2 selectors (p1, push1) + 4 expr args
+legacy(asp, p1, push1, 0, 0.1)           # bridge: name + 2 selectors (p1, push1) + 2 expr args (asp takes a,b)
 push t1; dup; mul; emit_p1               # explicit stack form
 ```
 
@@ -221,12 +235,12 @@ One merged opcode enum across param+coeff (C1: today op 8 = param POP vs coeff B
 - **solve-score** → `reduce_metric` + scalar ops + `emit` — but the hard parts must be specified, not hidden: **(a) metric-slot CSE** (dedup `(metric,source,quantile)` into shared slots, the `program_spec` slot model); **(b) lag references** (`mN-1` reads the prior step — the Phase-2B facility); **(c) implicit scalar output vs explicit `emit`s** (single-score path vs N channels); **(d) per-channel normalization** (`emit_norm`); **(e) the multi-channel output contract** (channel count ↔ `color_interpretation`, CR18 §3.2). Preserve omega/phase exactly (already in `program_spec`). This is why solve-score stays chip-primary — translation is its *only* migration target and the trickiest.
 Injection point: the payload compilers already override `chain` from source (`_compile_coeff_program_payload:454`) — `translate_from_old` plugs in there.
 
-**v2 token shapes (so Phase 4 is codeable, not prose).** The unified token extends today's coeff token (`op, fn_index, src, tgt, n_args, args[], args_im[], expr_refs[], andy`) with a `registry` discriminator on `native_transform`, and adds the solve-score ops; the `program_spec` token fields (`op, metricSlot, lagDepth, a, b`, `solve_score.h:982`) carry over:
+**v2 token shapes (so Phase 4 is codeable, not prose).** These are the **compiler IR** (`translate_from_old` output) — op names are strings for readability; the **native wire lowers every op to a stable numeric id in the merged opcode enum** (`native_transform` → 29; `reduce_metric`/`push_metric`/`emit*` get numeric opcodes too). One canonical representation: **IR = string op-names at the compiler layer; wire = numeric opcodes**. The IR token extends today's coeff token (`op, fn_index, src, tgt, n_args, args[], args_im[], expr_refs[], andy`) with a `registry` discriminator on `native_transform`, and adds the solve-score ops; the `program_spec` fields (`op, metricSlot, lagDepth, a, b`, `solve_score.h:982`) carry over:
 ```jsonc
-// root transform (e.g. moebius) — registry-namespaced native_transform (op 29):
-{ "op": 29, "registry": "root", "fn_index": 8, "n_args": 4, "args": [1,0,0,1], "args_im": [0,0,0,0] }
+// root transform — registry-namespaced native_transform (IR op-name; wire: numeric 29):
+{ "op": "native_transform", "registry": "root", "fn_index": 8, "n_args": 4, "args": [1,0,0,1], "args_im": [0,0,0,0] }
 // coeff/param legacy stay native_transform with registry "coeff"/"param":
-{ "op": 29, "registry": "coeff", "fn_index": 27, "src": 1, "tgt": 1, "andy": 0.0 }
+{ "op": "native_transform", "registry": "coeff", "fn_index": 27, "src": 1, "tgt": 1, "andy": 0.0 }
 // solve-score metric reduction (slot-CSE'd: metric+source+quantile → normalized slot):
 { "op": "reduce_metric", "metric": "proximity", "source": "slv", "quantile": 0.001, "slot": 0 }
 { "op": "push_metric", "slot": 0, "lag": 1 }      // lag read of slot 0 at the PRIOR step (mN-1)
@@ -278,7 +292,7 @@ Step Functions forwards compiled `coeff_program`/`param_program` straight into n
 - `_chipPickers` `pp`/`cp` entries + picker engine: `js/08-chip-editors.js:120-186` (and the pp/cp wrappers `:188-253`).
 - Mutators' cp/pp branches: `addChip` (`js/07-transform-catalogs.js:1335`), `removeChip` (`:1368`), `moveChip` (`:1387`), `updateChipParam` (`js/08-chip-editors.js:1279`).
 - Editable shell arms: `_paramProgramChipShellHtml` editable arm (`js/09-render-orchestration.js:172-177`), `_coeffProgramChipShellHtml` editable arm (`:184-189`), and the `<select>/<input>` emitters with `updateChipParam` onchange (`js/08-chip-editors.js:1326,1339,1350`).
-- **Retiring the pre-VM by-name dispatch requires removing or translating Chain mode first.** `lookupCoeffTransform` (`sweep_cli.c:3246`), `parseCtChain` (`:5641`), `parsePtChain` (`:5576`) are the **live Chain-mode** parsers — `pipeline_mode_from_params` (`pipeline_programs.py:35`) still returns `chain` vs `program`, and `coeff_transforms`/`param_transforms` arrays still flow to native (`parsePtChain` called at `sweep_cli.c:7740,7799`). So Phase 5 cannot just delete them. **Decided: translate Chain-mode requests to Program v2 at the Lambda boundary** (keep the UI's Chain/Program mode *during* migration), then **delete native `parseCtChain`/`parsePtChain` only after a test proves no Chain arrays reach native** (assert no `coeff_transforms`/`param_transforms` in any dispatched native payload). Removing Chain mode from the UI is a later, separate step. This is a gating prerequisite, not a cleanup.
+- **Retiring the pre-VM by-name dispatch requires removing or translating Chain mode first.** `lookupCoeffTransform` (`sweep_cli.c:3246`), `parseCtChain` (`:5641`), `parsePtChain` (`:5576`) are the **live Chain-mode** parsers — `pipeline_mode_from_params` (`pipeline_programs.py:35`) still returns `chain` vs `program`, and `coeff_transforms`/`param_transforms` arrays still flow to native (`parsePtChain` called at `sweep_cli.c:7740,7799`). So Phase 5 cannot just delete them. **Decided: translate Chain-mode requests to Program v2 at the Lambda boundary** (keep the UI's Chain/Program mode *during* migration), then **delete native `parseCtChain`/`parsePtChain` only after a test proves no Chain arrays reach native** (assert no `coeff_transforms`/`param_transforms` in any dispatched native payload). Removing Chain mode from the UI is a later, separate step. This is a gating prerequisite, not a cleanup. **Boundary file map:** the Chain→Program v2 translation lives in `pipeline_programs.py` (the `chain`-mode branch of `pipeline_mode_from_params:35`) and the three compute handlers that emit the transform arrays to native — `handler_compute_plan.py` (`coeff_transforms`/`param_transforms`, `:139-146`), `handler_compute_preview.py`, `handler_coeffgen.py` — translate there *before* the native payload is built. **No ASL field change** (the migrated program rides the existing `coeff_program`/`param_program` slots). **Gating test:** assert no `coeff_transforms`/`param_transforms` key in any dispatched native payload (extend the payload-contract tests); the native-parser deletion is blocked on that test passing.
 
 ### 5.2 Keep (readonly renderers)
 `_renderCoeffProgramChipHtml`/`_renderParamProgramChipHtml` with `{readonly:true}` (`js/09-render-orchestration.js:300,337` — already support it), `_chipReadonlyValueHtml` (`js/08-chip-editors.js:1295`). These become the display layer over parsed text; the readonly call sites already exist (`:388,:395`). Chips-as-display needs the parser to emit **per-chip source spans** (an editor parser, for click-to-locate / error underlining) — build alongside Phase 3's parsers.
@@ -292,6 +306,7 @@ Dispatch maps to update when retiring cp/pp: `_chainForWhich` (`js/02-preview-so
 
 | Phase | Ships standalone? | Hard gate before it | Primary risk |
 |---|---|---|---|
+| −1 verification harness | yes (oracle + benches) | — | none — it's the gate everything else leans on |
 | 0 versioning | yes (pure insurance) | — | regression if missing≠v1 (mitigated) |
 | 1 chip registry | yes (kills drift) | — | semantics in the schema; param drift gate |
 | 2A shared runtime (VM merge) | yes (one interpreter) | DD5 oracle + DD6 benchmarks | FP determinism, perf |

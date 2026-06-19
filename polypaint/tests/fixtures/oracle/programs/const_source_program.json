@@ -1,0 +1,15 @@
+{
+  "name": "const_source_program",
+  "coeffgen": {
+    "mode": "coeffgen",
+    "function": "const",
+    "cfpv": [6, 1, 0],
+    "n1": 4,
+    "n2": 4,
+    "times": 1,
+    "coeff_program_source_text": "poly = arange(1, poly_len + 1)\npoly = linear(poly, 0.25, 1)\npoly = rev(poly)"
+  },
+  "solve": {
+    "match_roots": true
+  }
+}

@@ -10,7 +10,9 @@ Verified against the `1a1996d` source snapshot; **all later commits touch only d
 
 ## Phase −1 — Verification harness (DD5 + DD6): build BEFORE Phase 2
 
-The gates Phase 2 depends on **don't exist yet** — build them first as their own deliverable; Phase 2A cannot start without them. (Independent of Phases 0/1/3, which don't need it.)
+The gates Phase 2 depends on are a standalone deliverable; Phase 2A cannot start without them. (Independent of Phases 0/1/3, which don't need it.)
+
+**Implementation status:** landed as the Phase −1 harness in `lambda/solve_score_eval.py`, `tests/test_solve_score_native_parity.py`, `tests/oracle_runner.py`, `tests/test_whole_sweep_oracle.py`, `tests/fixtures/oracle/`, `scripts/oracle_baseline.sh`, and `tests/bench_vm.py`. The harness compiles native test binaries from source; it does not trust checked-in native binaries.
 
 **(a) Python solve-score evaluator — the DD5 oracle for solve-score.** Today `solve_score_chain.py` only *compiles* — no numeric eval, so solve-score has no cross-language oracle (CR18 §7.1). Add **`lambda/solve_score_eval.py`**: a pure-Python mirror of `solve_score.h` — the metric prepass (`compute_solve_metric_score`), the postfix scalar VM, lag (`mN-1`), and emit — taking roots/coeff/param inputs → scalar or N channels. Pin it with **`tests/test_solve_score_native_parity.py`**: feed the same roots `.bin` + program to both `solve_score_eval.py` and the C binary, assert agreement (epsilon for floats; exact for SHA-addressed bytes).
 
@@ -18,7 +20,7 @@ The gates Phase 2 depends on **don't exist yet** — build them first as their o
 
 **(c) Per-profile benchmarks — DD6.** **`tests/bench_vm.py`** (or `scripts/bench_vm.sh`) timing the 5 profiles — param-only, coeff scalar-heavy, coeff vector-heavy, solve-score multi-channel, root-raster — plus per-thread workspace bytes, vs the current tight-`switch` baseline.
 
-**Commands:** `uv run python -m pytest tests/test_solve_score_native_parity.py tests/test_whole_sweep_oracle.py`; `uv run python tests/bench_vm.py --against-baseline`. **Files:** new `lambda/solve_score_eval.py`, `tests/test_solve_score_native_parity.py`, `tests/test_whole_sweep_oracle.py`, `tests/bench_vm.py`, `scripts/oracle_baseline.sh` + a warm-start corpus. **Gate:** parity green + bench within an agreed threshold (e.g. ≤5% regression) before any interpreter merge in Phase 2A/2B.
+**Commands:** `uv run python -m pytest tests/test_solve_score_native_parity.py tests/test_whole_sweep_oracle.py`; `uv run python tests/bench_vm.py --against-baseline tests/fixtures/oracle/bench_baseline.json`. **Files:** `lambda/solve_score_eval.py`, `tests/test_solve_score_native_parity.py`, `tests/test_whole_sweep_oracle.py`, `tests/bench_vm.py`, `scripts/oracle_baseline.sh` + the warm-start corpus under `tests/fixtures/oracle/`. **Gate:** parity green + bench within the configured threshold (default 10%; tighten only after host variance is measured) before any interpreter merge in Phase 2A/2B.
 
 ---
 

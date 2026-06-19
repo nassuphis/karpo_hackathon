@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "cases": [
+    {"name": "poly1_chain_rev", "program": "programs/poly1_chain_rev.json"},
+    {"name": "const_source_program", "program": "programs/const_source_program.json"}
+  ]
+}

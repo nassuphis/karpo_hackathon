@@ -1,0 +1,10 @@
+{
+  "coeffs_bytes": 768,
+  "coeffs_sha256": "614dd7fcde0f04df8bae8dbc34f89c4fa16059e93b62c8ccb76652d07eb73290",
+  "degree": 5,
+  "n_coeffs": 6,
+  "name": "const_source_program",
+  "roots_bytes": 640,
+  "roots_sha256": "32597bb540a20823deda992648d3ed792552ec47248de36691342ba49fc40018",
+  "version": 1
+}

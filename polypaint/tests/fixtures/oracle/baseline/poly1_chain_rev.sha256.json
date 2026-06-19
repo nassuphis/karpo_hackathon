@@ -1,0 +1,10 @@
+{
+  "coeffs_bytes": 4608,
+  "coeffs_sha256": "591c38bd03aa085c4a18115dc138b81475b3e5acc8b8d25d32fb523922017083",
+  "degree": 35,
+  "n_coeffs": 36,
+  "name": "poly1_chain_rev",
+  "roots_bytes": 4480,
+  "roots_sha256": "06627cc5486d1ab465a147985484aae129100777006ce3d22695b2169b04e5c5",
+  "version": 1
+}

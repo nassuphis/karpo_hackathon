@@ -1,0 +1,15 @@
+{
+  "name": "poly1_chain_rev",
+  "coeffgen": {
+    "mode": "coeffgen",
+    "function": "poly_1",
+    "cfpv": [],
+    "n1": 4,
+    "n2": 4,
+    "times": 1,
+    "coeff_transforms": ["rev"]
+  },
+  "solve": {
+    "match_roots": true
+  }
+}

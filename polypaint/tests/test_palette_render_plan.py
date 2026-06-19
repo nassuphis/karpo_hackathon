@@ -355,7 +355,14 @@ class TestPaletteRenderPlan(unittest.TestCase):
         self.assertEqual(plan["solve_score"]["prelude_rows"], 1)
         self.assertEqual(plan["solve_score"]["score_coeff_prelude_rows"], 0)
         self.assertEqual(plan["solve_score"]["score_param_prelude_rows"], 0)
-        self.assertIn("s", plan["solve_source_manifest"])
+        self.assertEqual(plan["solve_source_manifest"], {})
+        self.assertEqual(
+            plan["solve_source_manifest_key"],
+            "renders/j/manifests/run_pal/palette_solve_source_manifest.json",
+        )
+        manifest_put = mock_s3.put_object.call_args.kwargs
+        self.assertEqual(manifest_put["Key"], plan["solve_source_manifest_key"])
+        self.assertIn("s", json.loads(manifest_put["Body"].decode("utf-8")))
 
     @patch("handler_palette_render_plan.s3")
     def test_plan_derives_step_count_from_bin_size(self, mock_s3):

@@ -27,6 +27,7 @@ from logical_sections import (
     normalize_section_mode,
     summarize_chunk_items,
     validate_section_count,
+    write_solve_source_manifest,
 )
 from palette_names import VALID_PALETTE_NAMES
 from color_render_contract import DEFAULT_BACKGROUND_COLOR, normalize_background_color, validate_color_output_contract
@@ -617,6 +618,14 @@ def _build_fused_color_plan(
         include_coeff=solve_score_uses_coeff,
         include_param=solve_score_uses_param,
     )
+    solve_source_manifest_ref = write_solve_source_manifest(
+        s3,
+        BUCKET,
+        solve_source_manifest,
+        job_id=job_id,
+        run_id=run_id,
+        suffix="color_solve_source_manifest",
+    )
 
     artifact_meta = {
         "artifact_id": artifact_id,
@@ -741,7 +750,9 @@ def _build_fused_color_plan(
         "grid": {
             "pix": pix,
         },
-        "solve_source_manifest": solve_source_manifest,
+        "solve_source_manifest": {},
+        "solve_source_manifest_key": solve_source_manifest_ref["key"],
+        "solve_source_manifest_bytes": solve_source_manifest_ref["bytes"],
         "physical_source_items": [],
         "solve_score": solve_score,
         "finalize": finalize,
@@ -935,6 +946,14 @@ def _build_non_color_plan(
         include_coeff=mode == "coeff_bilevel",
         include_param=False,
     )
+    solve_source_manifest_ref = write_solve_source_manifest(
+        s3,
+        BUCKET,
+        solve_source_manifest,
+        job_id=job_id,
+        run_id=run_id,
+        suffix=f"{mode}_solve_source_manifest",
+    )
 
     artifact_family = "coeffs" if mode == "coeff_bilevel" else mode
     artifact_id = f"{artifact_family}_{run_id}"
@@ -1016,7 +1035,9 @@ def _build_non_color_plan(
         "grid": {
             "pix": pix,
         },
-        "solve_source_manifest": solve_source_manifest,
+        "solve_source_manifest": {},
+        "solve_source_manifest_key": solve_source_manifest_ref["key"],
+        "solve_source_manifest_bytes": solve_source_manifest_ref["bytes"],
         "physical_source_items": [],
         "bilevel": bilevel,
         "coeff_bilevel": coeff_bilevel,

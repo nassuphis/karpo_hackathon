@@ -88,6 +88,13 @@ def _assert_plan_path_exists(testcase, plan, jsonpath):
 
 
 class TestRenderPlan(unittest.TestCase):
+    def setUp(self):
+        import handler_render_plan as mod
+
+        self._s3_patcher = patch.object(mod, "s3")
+        self.mock_s3 = self._s3_patcher.start()
+        self.addCleanup(self._s3_patcher.stop)
+
     @patch("handler_render_plan._storage_call")
     def test_color_plan_square_viewport_and_grid(self, mock_storage):
         mock_storage.side_effect = _mock_storage_detail(_base_color_calc())
@@ -367,7 +374,15 @@ class TestRenderPlan(unittest.TestCase):
         ), None)
         plan = json.loads(result["body"])
 
-        manifest = plan["solve_source_manifest"]["s"]
+        self.assertEqual(plan["solve_source_manifest"], {})
+        self.assertEqual(
+            plan["solve_source_manifest_key"],
+            "renders/j/manifests/run_t/color_solve_source_manifest.json",
+        )
+        manifest_put = self.mock_s3.put_object.call_args.kwargs
+        self.assertEqual(manifest_put["Bucket"], "polypaint")
+        self.assertEqual(manifest_put["Key"], plan["solve_source_manifest_key"])
+        manifest = json.loads(manifest_put["Body"].decode("utf-8"))["s"]
         self.assertGreater(manifest["slv"]["r"], 0)
         self.assertGreater(manifest["cf"]["r"], 0)
         self.assertGreater(manifest["pm"]["r"], 0)

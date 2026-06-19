@@ -14,12 +14,62 @@ import time
 import boto3
 
 from compute_fused import execution_method_from_params
-from shared import ok_response, parse_body, report_status
+from shared import JOBS_TABLE, ok_response, parse_body, report_status
 
 sfn_client = boto3.client("stepfunctions", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+ddb_client = boto3.client("dynamodb", region_name=os.environ.get("AWS_REGION", "us-east-1"))
 
 STATE_MACHINE_ARN = os.environ.get("COMPUTE_STATE_MACHINE_ARN", "")
 VALID_SOLVERS = {"aberth_mt", "companion_matrix"}
+TERMINAL_STATUSES = {"done", "error"}
+
+
+def _json_response(status_code, body):
+    return {
+        "statusCode": int(status_code),
+        "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
+        "body": json.dumps(body),
+    }
+
+
+def _active_execution_for_job(job_id, task_prefix):
+    resp = ddb_client.query(
+        TableName=JOBS_TABLE,
+        KeyConditionExpression="job_id = :job_id AND begins_with(task_id, :task_prefix)",
+        ExpressionAttributeValues={
+            ":job_id": {"S": str(job_id)},
+            ":task_prefix": {"S": str(task_prefix)},
+        },
+        ConsistentRead=True,
+    )
+    active = []
+    for item in resp.get("Items", []):
+        status = item.get("task_status", {}).get("S", "")
+        if status in TERMINAL_STATUSES:
+            continue
+        task_id = item.get("task_id", {}).get("S", "")
+        updated = int(item.get("updated_at_ms", {}).get("N", "0") or 0)
+        result_data = {}
+        raw_result = item.get("result_data", {}).get("S")
+        if raw_result:
+            try:
+                parsed = json.loads(raw_result)
+                if isinstance(parsed, dict):
+                    result_data = parsed
+            except (TypeError, ValueError):
+                result_data = {}
+        active.append({
+            "task_id": task_id,
+            "status": status,
+            "phase": result_data.get("phase", status),
+            "phase_label": result_data.get("phase_label", ""),
+            "execution_arn": result_data.get("execution_arn", ""),
+            "updated_at_ms": updated,
+        })
+    if not active:
+        return None
+    active.sort(key=lambda row: row.get("updated_at_ms", 0), reverse=True)
+    return active[0]
 
 
 def handler(event, context):
@@ -53,6 +103,18 @@ def handler(event, context):
     task_id = f"compute_run_{solver_mode}_{run_id}"
     execution_name = f"compute_{solver_mode}_{run_id}"
     now_ms = int(time.time() * 1000)
+    active = _active_execution_for_job(job_id, f"compute_run_{solver_mode}_")
+    if active:
+        return _json_response(409, {
+            "error": "A compute run is already active for this job and solver_mode.",
+            "job_id": job_id,
+            "solver_mode": solver_mode,
+            "active_task_id": active["task_id"],
+            "active_status": active["status"],
+            "active_phase": active["phase"],
+            "active_phase_label": active["phase_label"],
+            "execution_arn": active["execution_arn"],
+        })
 
     sfn_input = {
         "job_id": job_id,

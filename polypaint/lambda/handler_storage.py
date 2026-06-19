@@ -790,7 +790,7 @@ def _put_favorite_meta():
             raise
 
 
-def _put_favorite_entry(entry, allow_existing=False):
+def _put_favorite_entry(entry):
     item = {
         "job_id": {"S": FAVORITES_DDB_JOB_ID},
         "task_id": {"S": _favorite_task_id(entry["job_id"], entry["artifact_id"])},
@@ -813,8 +813,6 @@ def _put_favorite_entry(entry, allow_existing=False):
         return True
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code")
-        if code == "ConditionalCheckFailedException" and allow_existing:
-            return False
         if code == "ConditionalCheckFailedException":
             return False
         raise
@@ -847,7 +845,7 @@ def _ensure_favorites_store_ready():
                 "display_name": entry.get("display_name"),
                 "image_key": entry.get("image_key"),
                 "preview_key": entry.get("preview_key"),
-            }, allow_existing=True)
+            })
 
 
 def _read_favorites():
@@ -956,7 +954,7 @@ def handle_add_favorite(event):
         value = params.get(field)
         if value:
             entry[field] = value
-    added = _put_favorite_entry(entry, allow_existing=True)
+    added = _put_favorite_entry(entry)
     favorites = _read_favorites_from_ddb()
     return ok_response({"added": added, "favorites": favorites, "count": len(favorites)})
 
@@ -1992,7 +1990,7 @@ def handle_check_keys(event):
 def handle_check_status(event):
     """Query DynamoDB for task completion status.
     Input: {job_id, task_prefix, expected}
-    task_prefix examples: "stripe_" (render), "merge_0_" (merge round 0)
+    task_prefix examples: "render_<run>_raster_" or "merge_0_"
     Returns: {done, errors, error_details, total, expected, complete}
     """
     params = parse_body(event)
@@ -2284,7 +2282,7 @@ def _is_cleanup_allowed_key(key):
 
 def handle_cleanup(event):
     """Delete explicit temp S3 keys under renders/<job>/ only.
-    Input: {keys: ["renders/job/stripe_0.raw", ...]}
+    Input: {keys: ["renders/job/chunk_0.raw", ...]}
     """
     params = parse_body(event)
     keys = params.get("keys", [])

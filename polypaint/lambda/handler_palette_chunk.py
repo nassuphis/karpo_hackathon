@@ -15,6 +15,7 @@ from logical_sections import (
     build_native_manifest_urls,
     build_native_multispan_manifest,
     build_source_spans,
+    resolve_solve_source_manifest,
     stitch_spans_to_file,
     write_native_multispan_manifest,
 )
@@ -250,7 +251,12 @@ def handler(event, context):
     coeff_spans = list(params.get("coeff_spans") or [])
     param_spans = list(params.get("param_spans") or [])
     logical_section = parse_boolish(params.get("logical_section"), bool(root_spans))
-    solve_source_manifest = dict(params.get("solve_source_manifest") or {})
+    solve_source_manifest = resolve_solve_source_manifest(
+        params,
+        s3,
+        BUCKET,
+        required_context="palette chunk",
+    )
     uses_lag = bool(compiled and compiled.get("uses_lag"))
     prelude_by_source = solve_score_lag_prelude_by_source(compiled) if compiled else {"slv": 0, "cf": 0, "pm": 0}
     requested_solve_prelude = int(params.get("prelude_rows") or 0)

@@ -6,6 +6,7 @@ import os
 MB = 1024 * 1024
 VALID_SECTION_MODES = {"physical_chunks", "logical_sections", "logical_sections_auto"}
 MAX_LOGICAL_SECTIONS = 4096
+SOLVE_SOURCE_MANIFEST_CONTENT_TYPE = "application/json"
 
 DEFAULT_SOLVE_SCORE_MEMORY_MB = int(os.environ.get("SOLVE_PROXIMITY_MEMORY_MB", "4096") or 4096)
 DEFAULT_PALETTE_CHUNK_MEMORY_MB = int(os.environ.get("PALETTE_CHUNK_MEMORY_MB", "1769") or 1769)
@@ -324,6 +325,57 @@ def build_solve_source_manifest(chunk_items, *, job_id, degree, n_coeffs, includ
             "pm": _compact_manifest_source(items, family="pm", degree=degree, n_coeffs=n_coeffs, include=include_param),
         },
     }
+
+
+def solve_source_manifest_key(*, job_id, run_id, suffix="solve_source_manifest"):
+    job = str(job_id or "").strip()
+    run = str(run_id or "").strip()
+    name = str(suffix or "solve_source_manifest").strip()
+    if not job:
+        raise RuntimeError("solve_source_manifest_key requires job_id")
+    if not run:
+        raise RuntimeError("solve_source_manifest_key requires run_id")
+    safe_name = "".join(ch if ch.isalnum() or ch in ("_", "-") else "_" for ch in name)
+    return f"renders/{job}/manifests/{run}/{safe_name}.json"
+
+
+def write_solve_source_manifest(s3_client, bucket, manifest, *, job_id, run_id, suffix="solve_source_manifest"):
+    key = solve_source_manifest_key(job_id=job_id, run_id=run_id, suffix=suffix)
+    body = json.dumps(dict(manifest or {}), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    s3_client.put_object(
+        Bucket=bucket,
+        Key=key,
+        Body=body,
+        ContentType=SOLVE_SOURCE_MANIFEST_CONTENT_TYPE,
+    )
+    return {"key": key, "bytes": len(body)}
+
+
+def load_solve_source_manifest(s3_client, bucket, key):
+    manifest_key = str(key or "").strip()
+    if not manifest_key:
+        raise RuntimeError("solve_source_manifest_key is required")
+    try:
+        obj = s3_client.get_object(Bucket=bucket, Key=manifest_key)
+        body = obj["Body"].read()
+        if isinstance(body, str):
+            body = body.encode("utf-8")
+        parsed = json.loads(body.decode("utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"Failed to load solve_source_manifest s3://{bucket}/{manifest_key}: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError(f"solve_source_manifest s3://{bucket}/{manifest_key} must be a JSON object")
+    return parsed
+
+
+def resolve_solve_source_manifest(payload, s3_client, bucket, *, required_context="solve_source_manifest"):
+    inline = payload.get("solve_source_manifest") if isinstance(payload, dict) else None
+    if isinstance(inline, dict) and inline:
+        return dict(inline)
+    key = str((payload or {}).get("solve_source_manifest_key") or "").strip()
+    if key:
+        return load_solve_source_manifest(s3_client, bucket, key)
+    return {}
 
 
 def build_source_spans(solve_source_manifest, *, source_family, solve_start, solve_count):

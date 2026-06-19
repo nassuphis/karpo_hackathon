@@ -9740,8 +9740,26 @@ int main(int argc, char **argv) {
     char *buf = malloc(BUF_SIZE);
     if (!buf) { fprintf(stderr, "malloc failed\n"); return 1; }
     int len = 0, n;
-    while ((n = fread(buf + len, 1, BUF_SIZE - len - 1, stdin)) > 0)
+    while (len < BUF_SIZE - 1 && (n = fread(buf + len, 1, BUF_SIZE - len - 1, stdin)) > 0)
         len += n;
+    if (ferror(stdin)) {
+        fprintf(stderr, "failed to read stdin JSON\n");
+        free(buf);
+        return 1;
+    }
+    if (len >= BUF_SIZE - 1) {
+        int extra = fgetc(stdin);
+        if (extra != EOF) {
+            fprintf(stderr, "stdin JSON exceeds %d byte limit\n", BUF_SIZE - 1);
+            free(buf);
+            return 1;
+        }
+        if (ferror(stdin)) {
+            fprintf(stderr, "failed to read stdin JSON\n");
+            free(buf);
+            return 1;
+        }
+    }
     buf[len] = '\0';
 
     /* Dispatch on mode */

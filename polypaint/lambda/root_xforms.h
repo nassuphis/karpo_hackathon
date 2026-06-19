@@ -87,12 +87,15 @@ static int parse_root_xform_file(const char *path, RootXformEntry *entries, int 
     if (!path || !path[0]) return 0;
     FILE *f = fopen(path, "r");
     if (!f) return 0;
-    fseek(f, 0, SEEK_END);
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return 0; }
     long sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
+    if (sz < 0) { fclose(f); return 0; }
+    if (fseek(f, 0, SEEK_SET) != 0) { fclose(f); return 0; }
     if (sz <= 0 || sz > 65536) { fclose(f); return 0; }
     char *buf = malloc(sz + 1);
-    fread(buf, 1, sz, f);
+    if (!buf) { fclose(f); return 0; }
+    size_t got = fread(buf, 1, (size_t)sz, f);
+    if (got != (size_t)sz) { free(buf); fclose(f); return 0; }
     buf[sz] = '\0';
     fclose(f);
     int n = parse_root_xform_json(buf, entries, maxCount);

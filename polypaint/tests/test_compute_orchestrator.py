@@ -22,6 +22,13 @@ def _make_event(payload):
 
 
 class TestComputeStarterLambda(unittest.TestCase):
+    def setUp(self):
+        import handler_compute_orchestrator as mod
+
+        self._ddb_patcher = patch.object(mod, "ddb_client")
+        self.mock_ddb = self._ddb_patcher.start()
+        self.mock_ddb.query.return_value = {"Items": []}
+        self.addCleanup(self._ddb_patcher.stop)
 
     @patch("handler_compute_orchestrator.report_status")
     @patch("handler_compute_orchestrator.sfn_client")
@@ -124,6 +131,35 @@ class TestComputeStarterLambda(unittest.TestCase):
         self.assertEqual(body["execution_arn"], "arn:aws:states:us-east-1:123:execution:wf:exec1")
         self.assertEqual(body["task_id"], "compute_run_aberth_mt_run_r")
         self.assertEqual(body["run_id"], "run_r")
+
+    @patch("handler_compute_orchestrator.report_status")
+    @patch("handler_compute_orchestrator.sfn_client")
+    def test_starter_rejects_duplicate_active_compute_run(self, mock_sfn, mock_report):
+        import handler_compute_orchestrator as mod
+        mod.STATE_MACHINE_ARN = "arn:aws:states:us-east-1:123:stateMachine:test"
+        self.mock_ddb.query.return_value = {
+            "Items": [{
+                "task_id": {"S": "compute_run_aberth_mt_run_existing"},
+                "task_status": {"S": "coeffgen"},
+                "updated_at_ms": {"N": "1000"},
+                "result_data": {"S": json.dumps({
+                    "phase": "coeffgen",
+                    "phase_label": "Coeffgen",
+                    "execution_arn": "arn:existing",
+                })},
+            }]
+        }
+        result = mod.handler(_make_event({
+            "job_id": "j",
+            "run_id": "run_new",
+            "params": {"solver_mode": "aberth_mt", "N": 100, "n_chunks": 8, "function": "g1"},
+        }), None)
+        body = json.loads(result["body"])
+        self.assertEqual(result["statusCode"], 409)
+        self.assertEqual(body["active_task_id"], "compute_run_aberth_mt_run_existing")
+        self.assertEqual(body["active_phase"], "coeffgen")
+        mock_sfn.start_execution.assert_not_called()
+        mock_report.assert_not_called()
 
     @patch("handler_compute_orchestrator.report_status")
     @patch("handler_compute_orchestrator.sfn_client")

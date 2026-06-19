@@ -24,6 +24,13 @@ def _make_event(payload):
 
 
 class TestStarterLambda(unittest.TestCase):
+    def setUp(self):
+        import handler_render_orchestrator as mod
+
+        self._ddb_patcher = patch.object(mod, "ddb_client")
+        self.mock_ddb = self._ddb_patcher.start()
+        self.mock_ddb.query.return_value = {"Items": []}
+        self.addCleanup(self._ddb_patcher.stop)
 
     @patch("handler_render_orchestrator.report_status")
     @patch("handler_render_orchestrator.sfn_client")
@@ -86,6 +93,33 @@ class TestStarterLambda(unittest.TestCase):
         assert body["execution_arn"] == "arn:aws:states:us-east-1:123:execution:wf:exec1"
         assert body["task_id"] == "render_run_color_run_r"
         assert body["run_id"] == "run_r"
+
+    @patch("handler_render_orchestrator.report_status")
+    @patch("handler_render_orchestrator.sfn_client")
+    def test_starter_rejects_duplicate_active_render_run(self, mock_sfn, mock_report):
+        from handler_render_orchestrator import handler
+        self.mock_ddb.query.return_value = {
+            "Items": [{
+                "task_id": {"S": "render_run_color_run_existing"},
+                "task_status": {"S": "raster"},
+                "updated_at_ms": {"N": "1000"},
+                "result_data": {"S": json.dumps({
+                    "phase": "raster",
+                    "phase_label": "Raster",
+                    "execution_arn": "arn:existing",
+                })},
+            }]
+        }
+        result = handler(_make_event({
+            "job_id": "j", "run_id": "run_new", "mode": "color",
+            "params": {"pix": 512},
+        }), None)
+        body = json.loads(result["body"])
+        assert result["statusCode"] == 409
+        assert body["active_task_id"] == "render_run_color_run_existing"
+        assert body["active_phase"] == "raster"
+        mock_sfn.start_execution.assert_not_called()
+        mock_report.assert_not_called()
 
     @patch("handler_render_orchestrator.report_status")
     @patch("handler_render_orchestrator.sfn_client")

@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import unittest
@@ -10,7 +11,29 @@ from logical_sections import (
     build_native_multispan_manifest,
     build_solve_source_manifest,
     build_source_spans,
+    resolve_solve_source_manifest,
+    write_solve_source_manifest,
 )
+
+
+class _FakeBody:
+    def __init__(self, data):
+        self._data = data
+
+    def read(self):
+        return self._data
+
+
+class _FakeS3:
+    def __init__(self):
+        self.objects = {}
+
+    def put_object(self, *, Bucket, Key, Body, ContentType):
+        self.objects[(Bucket, Key)] = {"Body": Body, "ContentType": ContentType}
+
+    def get_object(self, *, Bucket, Key):
+        obj = self.objects[(Bucket, Key)]
+        return {"Body": _FakeBody(obj["Body"])}
 
 
 class TestLogicalSections(unittest.TestCase):
@@ -81,6 +104,28 @@ class TestLogicalSections(unittest.TestCase):
         self.assertEqual([cf_source["k"][row[0]] for row in cf_segments], ["renders/j/coeffs_0000.bin", "renders/j/coeffs_0002.bin"])
         self.assertEqual([pm_source["k"][row[0]] for row in pm_segments], ["renders/j/params_0000.bin", "renders/j/params_0002.bin"])
         self.assertEqual(pm_segments[1][3], 10)
+
+    def test_solve_source_manifest_round_trips_through_s3_key(self):
+        manifest = build_solve_source_manifest(self._chunk_items(), job_id="j", degree=2, n_coeffs=3)
+        fake_s3 = _FakeS3()
+
+        ref = write_solve_source_manifest(
+            fake_s3,
+            "bucket",
+            manifest,
+            job_id="j",
+            run_id="run_1",
+            suffix="test_manifest",
+        )
+        resolved = resolve_solve_source_manifest(
+            {"solve_source_manifest_key": ref["key"]},
+            fake_s3,
+            "bucket",
+        )
+
+        self.assertEqual(ref["key"], "renders/j/manifests/run_1/test_manifest.json")
+        self.assertEqual(resolved, manifest)
+        self.assertEqual(json.loads(fake_s3.objects[("bucket", ref["key"])]["Body"].decode("utf-8")), manifest)
 
     def test_build_source_spans_inside_single_segment(self):
         manifest = build_solve_source_manifest(self._chunk_items(), job_id="j", degree=2, n_coeffs=3)

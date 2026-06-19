@@ -506,6 +506,10 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
         if (degree < 2) return 0.0;
         double s1[1024];
         double *s1_buf = degree <= 1024 ? s1 : (double *)malloc(degree * sizeof(double));
+        if (!s1_buf) {
+            if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+            return 0.0;
+        }
         compute_nearest_neighbor_scores(roots, degree, s1_buf);
 
         double result;
@@ -532,6 +536,10 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
     if (metric == SOLVE_METRIC_REAL_AXIS_PROXIMITY) {
         double abs_im[1024];
         double *buf = degree <= 1024 ? abs_im : (double *)malloc(degree * sizeof(double));
+        if (!buf) {
+            if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+            return 0.0;
+        }
         for (int i = 0; i < degree; i++)
             buf[i] = fabs(roots[i * 2 + 1]);
         double im_med = median_inplace(buf, degree);
@@ -839,6 +847,10 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
         if (degree < 2) return 0.0;
         double rho[1024];
         double *rho_buf = degree <= 1024 ? rho : (double *)malloc(degree * sizeof(double));
+        if (!rho_buf) {
+            if (ownedRoots && ownedRoots != stackRoots) free(ownedRoots);
+            return 0.0;
+        }
         compute_radii_from_centroid(roots, degree, mean_re, mean_im, rho_buf);
 
         double result;

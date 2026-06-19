@@ -1217,7 +1217,14 @@ class TestCoeffgenHandler(unittest.TestCase):
         self.assertIn("coeffgen failed", str(ctx.exception))
 
         # Verify error was reported to DDB
-        mock_report.assert_any_call("fail-test", "coeffgen_0", "error", unittest.mock.ANY)
+        error_call = mock_report.call_args_list[-1]
+        self.assertEqual(error_call.args[:4], ("fail-test", "coeffgen_0", "error", "coeffgen failed: bad function name"))
+        result_data = error_call.kwargs["result_data"]
+        self.assertEqual(result_data["phase"], "legacy_coeffgen")
+        self.assertEqual(result_data["phase_label"], "Legacy coeffgen")
+        self.assertEqual(result_data["stripe_idx"], 0)
+        self.assertEqual(result_data["row_start"], 0)
+        self.assertEqual(result_data["row_end"], 5)
 
     @patch("builtins.open")
     @patch("handler_coeffgen.os.path.getsize")

@@ -675,6 +675,31 @@ button {
 .color-row {
     display: flex; gap: 8px; align-items: center; margin-bottom: 10px; font-size: 10px;
 }
+.palette-field-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin: 9px 0 0;
+    min-height: 24px;
+    font-size: 11px;
+}
+.palette-field-row + .palette-field-row {
+    margin-top: 10px;
+}
+.palette-field-label {
+    color: #e94560;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.2;
+    min-width: 70px;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+}
+.palette-field-help {
+    color: #778599;
+    font-size: 11px;
+    line-height: 1.25;
+}
 .view-row {
     display: grid;
     grid-template-columns: 14px 58px minmax(0, 1fr);
@@ -1921,28 +1946,28 @@ button {
                 <div class="color-row">
                     <div id="palette-ss-chips" class="chip-container solve-score-program-display"></div>
                 </div>
-                <div class="color-row" style="margin-bottom:0">
-                    <label style="color:#888; font-size:10px; min-width:70px">Stack:</label>
+                <div class="palette-field-row">
+                    <label class="palette-field-label">Stack</label>
                     <span id="palette-ss-stack" style="display:inline-flex; gap:3px; align-items:flex-end; min-height:16px"></span>
                     <span id="palette-ss-stack-label" style="font-size:10px; color:#888; min-width:80px; margin-left:6px"></span>
                 </div>
-                <div class="color-row" style="margin-bottom:0">
-                    <label style="color:#888; font-size:10px; min-width:70px">Palette:</label>
+                <div class="palette-field-row">
+                    <label class="palette-field-label">Palette</label>
                     <div id="palette-circles-palette-tab" style="display:inline-flex; gap:4px; flex-wrap:wrap"></div>
                 </div>
-                <div class="color-row" style="margin-bottom:0">
-                    <label for="palette-color-interpretation" style="color:#888; font-size:10px; min-width:70px">Mode:</label>
-                    <select id="palette-color-interpretation" onchange="_setPaletteColorInterpretation(this.value)" style="width:150px; font-size:11px">
+                <div class="palette-field-row">
+                    <label for="palette-color-interpretation" class="palette-field-label">Mode</label>
+                    <select id="palette-color-interpretation" onchange="_setPaletteColorInterpretation(this.value)" style="width:150px; font-size:12px">
                         <option value="scalar_lut">Scalar LUT</option>
                         <option value="rgb">RGB</option>
                         <option value="hsv">HSV</option>
                         <option value="rgb_lut">RGB LUT</option>
                         <option value="hsv_lut">HSV LUT</option>
                     </select>
-                    <span id="palette-color-interpretation-help" style="font-size:10px; color:#888">Matches the Render tab color-output mode.</span>
+                    <span id="palette-color-interpretation-help" class="palette-field-help">Matches the Render tab color-output mode.</span>
                 </div>
-                <div class="color-row" style="margin-bottom:0">
-                    <label style="color:#888; font-size:10px; min-width:70px">Action:</label>
+                <div class="palette-field-row">
+                    <label class="palette-field-label">Action</label>
                     <button id="btn-palette-create" class="btn-secondary btn-inline" onclick="runPaletteArtifact()">Generate Artifact</button>
                 </div>
                 <div id="palette-solve-score-program-status" class="solve-score-program-status"></div>

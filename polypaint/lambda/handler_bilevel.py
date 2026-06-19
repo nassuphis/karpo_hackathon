@@ -23,7 +23,7 @@ import boto3
 from botocore.config import Config
 
 from color_artifact_meta import load_color_artifact_head
-from logical_sections import build_source_spans, stitch_spans_to_file
+from logical_sections import build_source_spans, resolve_solve_source_manifest, stitch_spans_to_file
 from raw_sidecar import validate_raw_sidecar
 from shared import BILEVEL_SPARSE_PIPELINE, BUCKET, imgpipe_env, ok_response, parse_body, report_status
 
@@ -470,7 +470,12 @@ def handle_coeff_raster(params):
         if section_idx < 0:
             raise RuntimeError(f"coeff bilevel raster requires section_idx >= 0, got {section_idx}")
         task_id = str(params.get("task_id") or f"coeff_bilevel_section_{section_idx}").strip() or f"coeff_bilevel_section_{section_idx}"
-        solve_source_manifest = dict(params.get("solve_source_manifest") or {})
+        solve_source_manifest = resolve_solve_source_manifest(
+            params,
+            s3,
+            BUCKET,
+            required_context="coeff bilevel raster",
+        )
         step_start_raw = params.get("step_start")
         if step_start_raw in (None, ""):
             raise RuntimeError("coeff bilevel raster requires step_start")
@@ -486,7 +491,7 @@ def handle_coeff_raster(params):
             raise RuntimeError(f"coeff bilevel raster requires integer step_count, got {params.get('step_count')!r}") from e
         fragment_prefix = str(params.get("fragment_prefix") or "").strip()
         if not solve_source_manifest:
-            raise RuntimeError("coeff bilevel raster requires solve_source_manifest")
+            raise RuntimeError("coeff bilevel raster requires solve_source_manifest_key")
         if step_count <= 0:
             raise RuntimeError("coeff bilevel raster requires step_count > 0")
         if not fragment_prefix:
@@ -582,7 +587,12 @@ def handle_section_raster(params):
         if section_idx < 0:
             raise RuntimeError(f"bilevel section raster requires section_idx >= 0, got {section_idx}")
         task_id = params.get("task_id", f"bilevel_section_{section_idx}")
-        solve_source_manifest = dict(params.get("solve_source_manifest") or {})
+        solve_source_manifest = resolve_solve_source_manifest(
+            params,
+            s3,
+            BUCKET,
+            required_context="bilevel section raster",
+        )
         step_start_raw = params.get("step_start")
         if step_start_raw in (None, ""):
             raise RuntimeError("bilevel section raster requires step_start")
@@ -592,7 +602,7 @@ def handle_section_raster(params):
         step_count = int(params.get("step_count", 0) or 0)
         fragment_prefix = str(params.get("fragment_prefix") or "").strip()
         if not solve_source_manifest:
-            raise RuntimeError("bilevel section raster requires solve_source_manifest")
+            raise RuntimeError("bilevel section raster requires solve_source_manifest_key")
         if step_count <= 0:
             raise RuntimeError("bilevel section raster requires step_count > 0")
         if not fragment_prefix:

@@ -18,7 +18,7 @@ from calc_chunks import (
 )
 from color_artifact_meta import load_color_artifact_head, parse_root_transforms
 from color_render_contract import normalize_color_interpretation, validate_color_output_contract
-from logical_sections import build_physical_section_items, build_solve_source_manifest
+from logical_sections import build_physical_section_items, build_solve_source_manifest, write_solve_source_manifest
 from palette_names import VALID_PALETTE_NAMES
 from param_source import chunk_items_have_params
 from shared import BUCKET, parse_body, ok_response
@@ -781,8 +781,22 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         degree=degree,
         n_coeffs=n_coeffs,
     )
+    solve_source_manifest_ref = (
+        write_solve_source_manifest(
+            s3,
+            BUCKET,
+            solve_source_manifest,
+            job_id=job_id,
+            run_id=run_id,
+            suffix="palette_reuse_solve_source_manifest",
+        )
+        if uses_lag
+        else {"key": "", "bytes": 0}
+    )
     plan["logical_section"] = uses_lag
-    plan["solve_source_manifest"] = solve_source_manifest if uses_lag else {}
+    plan["solve_source_manifest"] = {}
+    plan["solve_source_manifest_key"] = solve_source_manifest_ref["key"]
+    plan["solve_source_manifest_bytes"] = solve_source_manifest_ref["bytes"]
     plan["calc"] = {
         "degree": degree,
         "N": full_n,
@@ -990,6 +1004,18 @@ def handler(event, context):
         degree=degree,
         n_coeffs=n_coeffs,
     )
+    solve_source_manifest_ref = (
+        write_solve_source_manifest(
+            s3,
+            BUCKET,
+            solve_source_manifest,
+            job_id=job_id,
+            run_id=run_id,
+            suffix="palette_solve_source_manifest",
+        )
+        if uses_lag
+        else {"key": "", "bytes": 0}
+    )
 
     plan = {
         "job_id": job_id,
@@ -1037,7 +1063,9 @@ def handler(event, context):
         },
         "prefix": prefix,
         "logical_section": uses_lag,
-        "solve_source_manifest": solve_source_manifest if uses_lag else {},
+        "solve_source_manifest": {},
+        "solve_source_manifest_key": solve_source_manifest_ref["key"],
+        "solve_source_manifest_bytes": solve_source_manifest_ref["bytes"],
         "calc": {
             "degree": degree,
             "N": full_n,

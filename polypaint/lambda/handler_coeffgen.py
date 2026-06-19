@@ -362,7 +362,12 @@ def handle_param_gen(params):
         return ok_response({"job_id": job_id, **result_data})
 
     except Exception as e:
-        report_status(job_id, task_id, "error", str(e), result_data=attach_contract_warnings({"phase": "param_gen"}, contract_warnings))
+        error_data = dict(locals().get("phase_meta", {}) or {})
+        error_data.setdefault("phase", "param_gen")
+        error_data.setdefault("phase_label", "Param gen")
+        error_data.setdefault("job_id", job_id)
+        error_data.setdefault("params_key", params.get("params_key", f"renders/{job_id}/params.bin"))
+        report_status(job_id, task_id, "error", str(e), result_data=attach_contract_warnings(error_data, contract_warnings))
         raise
 
 
@@ -378,12 +383,29 @@ def handle_coeffgen_chunked(params):
     task_id = params.get("task_id", f"coeffgen_{chunk_idx}")
     contract_warnings = []
     raw_threads = params.get("n_threads")
+    phase_meta = {
+        "phase": "coeffgen_chunked",
+        "phase_label": "Coeffgen chunk",
+        "job_id": job_id,
+        "chunk_idx": chunk_idx,
+        "params_key": params_key,
+        "step_start": step_start,
+        "step_count": step_count,
+        "params_step_start": params_step_start,
+        "params_step_count": params_step_count,
+    }
 
     try:
         step_start = int(step_start)
         step_count = int(step_count)
         params_step_start = int(params_step_start)
         params_step_count = int(params_step_count)
+        phase_meta.update({
+            "step_start": step_start,
+            "step_count": step_count,
+            "params_step_start": params_step_start,
+            "params_step_count": params_step_count,
+        })
         if step_start < 0 or step_count < 1:
             raise RuntimeError(f"step_start/step_count must be valid, got {step_start}/{step_count}")
         if params_step_start < 0 or params_step_count < 1:
@@ -501,7 +523,7 @@ def handle_coeffgen_chunked(params):
         })
 
     except Exception as e:
-        report_status(job_id, task_id, "error", str(e), result_data=attach_contract_warnings({"phase": "coeffgen_chunked", "chunk_idx": chunk_idx}, contract_warnings))
+        report_status(job_id, task_id, "error", str(e), result_data=attach_contract_warnings(dict(phase_meta), contract_warnings))
         for p in ["/tmp/params_chunk.bin", f"/tmp/coeffs_chunk_{chunk_idx}.bin"]:
             try:
                 os.remove(p)
@@ -518,6 +540,15 @@ def handle_legacy_coeffgen(params):
     i1_start = params.get("row_start", params.get("i1_start"))
     i1_end = params.get("row_end", params.get("i1_end"))
     task_id = params.get("task_id", f"coeffgen_{stripe_idx}")
+    phase_meta = {
+        "phase": "legacy_coeffgen",
+        "phase_label": "Legacy coeffgen",
+        "job_id": job_id,
+        "stripe_idx": stripe_idx,
+        "grid_n": grid_n,
+        "row_start": i1_start,
+        "row_end": i1_end,
+    }
 
     try:
         report_status(job_id, task_id, "started")
@@ -589,7 +620,7 @@ def handle_legacy_coeffgen(params):
         return ok_response(result_data)
 
     except Exception as e:
-        report_status(job_id, task_id, "error", str(e))
+        report_status(job_id, task_id, "error", str(e), result_data=dict(phase_meta))
         raise
 
 

@@ -506,6 +506,24 @@ int main(int argc, char **argv) {
         return 1;
     }
     size_t n = fread(buf, 1, BUF_SIZE - 1, stdin);
+    if (ferror(stdin)) {
+        fprintf(stderr, "Failed to read stdin JSON\n");
+        free(buf);
+        return 1;
+    }
+    if (n >= BUF_SIZE - 1) {
+        int extra = fgetc(stdin);
+        if (extra != EOF) {
+            fprintf(stderr, "stdin JSON exceeds %d byte limit\n", BUF_SIZE - 1);
+            free(buf);
+            return 1;
+        }
+        if (ferror(stdin)) {
+            fprintf(stderr, "Failed to read stdin JSON\n");
+            free(buf);
+            return 1;
+        }
+    }
     buf[n] = '\0';
 
     char mode[32] = "";

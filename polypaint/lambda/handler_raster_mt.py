@@ -23,6 +23,7 @@ from logical_sections import (
     build_native_manifest_urls,
     build_native_multispan_manifest,
     build_source_spans,
+    resolve_solve_source_manifest,
     write_native_multispan_manifest,
 )
 from solve_score_chain import (
@@ -317,9 +318,14 @@ def _build_cmd(params):
 
 
 def _prepare_fused_section_inputs(section_params):
-    solve_source_manifest = dict(section_params.get("solve_source_manifest") or {})
+    solve_source_manifest = resolve_solve_source_manifest(
+        section_params,
+        s3,
+        BUCKET,
+        required_context="fused raster",
+    )
     if not solve_source_manifest:
-        raise RuntimeError("fused raster requires solve_source_manifest")
+        raise RuntimeError("fused raster requires solve_source_manifest_key")
 
     ss_data = dict(section_params.get("solve_score_bins_data") or {})
     step_start = int(section_params.get("step_start") or 0)

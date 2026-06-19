@@ -2,7 +2,7 @@
 
 Companion to `code-review-18.md` (the design review). CR18 holds the *why* and the design decisions (DD1–DD6, the three conflicts C1/C2/C3, the verification prerequisites); this doc holds the *how* — per-phase file maps, native structs, schemas, tests, and migration routes, so each phase is codeable without re-deriving current state.
 
-Verified against the source snapshot `1a1996d` (current HEAD `f0785ef` adds only CR18 + populate-source persistence — no VM change). All file:line are current. C/Python/JS paths are under `lambda/`, repo root, and `js/` respectively.
+Verified against the `1a1996d` source snapshot; current HEAD `7d312a1` adds only docs (CR18 + this plan) + populate-source persistence — **no VM/source change, so every file:line below is current**. C/Python/JS paths are under `lambda/`, repo root, and `js/` respectively.
 
 **Dependency order & gates.** 0 → 1 → 2 → 3 → 4 → 5, but two gates from CR18 are hard prerequisites: **DD2 native version gate must precede any opcode renumbering (Phase 4)**; **DD5 whole-sweep byte oracle + a Python solve-score evaluator must exist before Phase 2 ships**; **DD6 benchmarks before the unified dispatch ships (Phase 2)**. Phases 0,1,3 are independently shippable with value; Phases 2,4 are the risk concentration.
 
@@ -24,7 +24,7 @@ The payload already ships `"version": 1` (`program_compile_helpers.py:19,33`); t
 **Rollback floor (DD2):** once this ships, pre-Phase-0 binaries are no longer valid rollback targets (they ignore the field). Record in the deploy runbook.
 
 ### 0.2 `spec_version` sibling at WRITE sites
-Add a `spec_version` int (=1 now) beside each persisted fingerprint. **Three families need a new sibling field; two already carry their own `version` int and extend it instead.**
+Add a **family-specific** version int (=1 now) beside each persisted fingerprint — **not a single generic `spec_version`**, because one meta object can carry several families: `handler_palette_finalize.py:533` writes `palette_variant_fingerprint`/`content_fingerprint` *and* `:568` writes `solve_score_chain_fingerprint` in the **same** `meta.json`, so one sibling can't say which it versions. Use `solve_score_spec_version`, `palette_variant_spec_version`, `probe_signature_spec_version` (or a single `spec_versions` map keyed by family). Missing ⇒ 1. **Three families need a new field; two already carry their own `version` int and extend it instead.**
 
 | family | representative WRITE sites | action |
 |---|---|---|
@@ -53,7 +53,7 @@ The dual-read field table is in CR18 §4.2. **Centralization opportunity:** all 
 
 ## Phase 1 — Structural-chip registry (single source of truth)
 
-**Objective.** A JSON registry for the **program chips** (the `_CHIP_COMPILERS` stack-VM vocabulary) that generates Python compiler-dispatch metadata + C dispatch tables + JS catalog, gated by a drift test. **This is new ground:** today the ~25 program chips are hardcoded Python compiler functions with *no* registry, *no* generated JS mirror, and *no* drift gate (only the 28 *transforms* in `coeff_legacy_registry.json` are registry-driven). No runtime VM change.
+**Objective.** A JSON registry for the **program chips** (the `_CHIP_COMPILERS` stack-VM vocabulary) that drives **registry metadata + arg/stack/selector validation + the dispatch map** (which named handler to call) for Python/C/JS, gated by a drift test — **not** data-only compilation: the semantic compiler handlers stay as named functions (see §1.2). **This is new ground:** today the ~25 program chips are hardcoded Python compiler functions with *no* registry, *no* generated JS mirror, and *no* drift gate (only the 28 *transforms* in `coeff_legacy_registry.json` are registry-driven). No runtime VM change.
 
 ### 1.1 Registry schema — `structural_chips.json` (new)
 Per entry (modelled on the verified per-chip table; tiers from `coeff_program_chain.py:1622` dispatch):
@@ -75,7 +75,7 @@ Arg `type ∈ {int, real, complex, selector, enum, registry_ref}`. `synth_only` 
 
 ### 1.2 Generator — extend `gen_coeff_vocab.py`
 Today `build_vocab()` emits `window._coeffRegistryVocab = {names, fnIndexByName, aliasToCanonical, sourceAliasByName, chipNameByRegistryName, supportsAndy, ctCatalog, categoryMeta, programParamDefs}` to `coeff_vocab_js.js` (transforms only). Add a parallel `build_structural_chips()` emitting:
-- **Python:** a generated table that *drives* `_CHIP_COMPILERS` / `_ZERO_ARG_CHIP_OPS` / the name-family tables (`coeff_program_chain.py:1584,1595,1632`) — the compiler dispatches *from* the registry, not hardcoded.
+- **Python:** a generated table supplying the **metadata + dispatch map** for `_CHIP_COMPILERS` / `_ZERO_ARG_CHIP_OPS` / the name-family tables (`coeff_program_chain.py:1584,1595,1632`). The registry says *which* named handler to call and drives arg/stack/selector validation; it does **not** replace the handler bodies — the semantic functions (e.g. `_compile_affine`, the linear/exp/pow arg-packing special cases) remain **named compiler handlers referenced by `lower_to`**. (A registry can't magically encode every special case; "registry-driven metadata + validation + dispatch," not data-only.)
 - **C:** a generated header (chip→`COEFF_OP_*`→stack-effect/arg-shape) the dispatch (`sweep_cli.c:5130`) and parser validate against.
 - **JS:** `_coeffProgramCatalog` (today hand-maintained in `js/07-transform-catalogs.js`).
 Keep the `--check` byte-equality drift mechanism (`gen_coeff_vocab.py:88`).
@@ -98,11 +98,11 @@ Merge `CoeffProgramWorkspace` (`sweep_cli.c:3504-3536`: planar `stack_re/stack_i
 Add a **separate** per-thread arena distinct from the user value planes:
 - *struct:* `double tempRe[N]/tempIm[N]` (coeff) / `ParamCx temp[N]` (param), `N = MAX_EXPR_NUMS/EXPR_STRIDE` (the existing private-stack sizing at `:3869/:6380`).
 - *cap:* the existing `MAX_EXPR_NUMS/STRIDE`; a single expression's lowered sub-sequence must fit it (compile-time check). **Separate from** the user 64/16 cap.
-- *frame base / `tos[i]`:* on entering a lowered expression capture `frame_base = user_sp`; `tos[i]` reads `user_stack[frame_base-1-i]`; `user_sp` does not move during eval.
-- *`native_transform` args:* each lowered expression computes in the arena, pushes **exactly one** value to the user stack; a `stack_arg_count=K` transform is fed by K such expressions (K user-stack slots, as today), intermediates stayed in the arena off the 64/16 budget. Net user-stack effect per arg-expression: **+1**.
+- *frame base / `tos[i]` — ONE base per TOKEN, not per arg (load-bearing):* capture a single `token_frame_base = user_sp` **before evaluating any of the token's dynamic args**; every arg's `tos[i]` reads `user_stack[token_frame_base-1-i]` — the **pre-token** stack. This prevents a multi-dynamic-arg token from letting arg 2 see arg 1's pushed result through `tos0`. Arg intermediates live only in the hidden arena; `user_sp` grows only by the final pushed arg results.
+- *`native_transform` args:* each arg expression computes in the arena reading only the pre-token stack (above), then pushes **exactly one** final value; a `stack_arg_count=K` transform is fed by K such args (K user-stack slots, as today), every intermediate off the 64/16 budget. Net per arg: **+1**; the transform pops its K at the end.
 
 ### 2.3 Retire the nested scalar-expr evaluators
-Delete `coeffEvalScalarExpr` (`sweep_cli.c:3855-4056`) and `paramEvalScalarExpr` (`:6372-6436`) — both are `[op,a,b]`-triple if/else loops over private stacks. Replace with **parser-side lowering** of the compact `scalar_exprs` wire (which stays — DD1) into typed-stack tokens executed against the arena (2.2). The merged opcode enum + the param-as-config mapping are **internal only**; the per-VM `execution_spec`/fingerprint stay byte-identical (param still `del scalar_exprs` at `param_program_chain.py:1107`; coeff spec bytes still wire, `coeff_program_chain.py:1838`).
+Delete `coeffEvalScalarExpr` (`sweep_cli.c:3855-4056`) and `paramEvalScalarExpr` (`:6372-6436`) — both are `[op,a,b]`-triple if/else loops over private stacks. Replace with **native load-time lowering** (once, at parse time — *not* in the per-row loop): the compact `scalar_exprs` wire stays (DD1); `parseCoeffProgram`/`parseParamProgram` lower it **once** into cached temp-arena token sequences, and the per-row evaluator only *executes* those pre-lowered tokens (no per-row re-lowering). The merged opcode enum + the param-as-config mapping are **internal only**; the per-VM `execution_spec`/fingerprint stay byte-identical (param still `del scalar_exprs` at `param_program_chain.py:1107`; coeff spec bytes still wire, `coeff_program_chain.py:1838`).
 
 ### 2.4 Centralize the solve-score lag facility
 Today 5 call sites across 4 files hand-roll the current/recent double-buffer + step-0 warm-up + per-step memcpy:
@@ -120,14 +120,14 @@ Add a stateful lagged-stream object to `solve_score.h` (init + per-row `advance(
 
 ---
 
-## Phase 3 — Text parsers (param, root); solve-score stays chip-primary
+## Phase 3 — Text parser (param); root + solve-score stay chip-primary
 
-**Objective.** Build the two missing text parsers so coeff/param/root are text-first authorable. **Solve-score stays chip-primary** with read-only text export (CR18 §9.3 — its declarative slot-CSE + lag has no clean text shape).
+**Objective.** Build the **one** missing compute-path text parser — **param** — so coeff+param are text-first authorable. **Root stays a chip-editable flat array** (`[name,...params]`): optional read-only text *export*, **not** a source parser (§3.2 — this refines CR18 §9.3, which over-eagerly listed root as "text-first"; root is text-*able* but not worth a source-editing parser, and it stays chip-editable in Phase 5). **Solve-score stays chip-primary** with read-only text export (CR18 §9.3 — its declarative slot-CSE + lag has no clean text shape).
 
 ### 3.1 `param_program_source.py` (new) — mirror `coeff_program_source.py`
 Architecture (template at `coeff_program_source.py`): lower source text → existing chip list → existing `compile_param_program_chain`. Four entrypoints mirroring coeff (`:855,889,837,748`): `parse_param_program_source`, `compile_param_program_source`, `param_source_text_from_payload`, `split_param_program_statements`. **Reuse** `param_program_chain`'s `_ExpressionParser` (`:573`), `_expr_to_param_tokens` (`:700`), and target `_lower_chip` (`:950`) — derive all op tables from the chain layer (the coeff parser's "vocabularies cannot drift" pattern, `coeff_program_source.py:14-48`). **Param-specific grammar:** `emit p1`/`emit p2`, `push`/`push t1`, the dual-register unary forms (`square(p1)`-style, `param_program_chain.py:977`), `legacy(name,src,tgt,…)` (the load-bearing bridge — param *cannot* ban it the way coeff text does), `both` target default. Error type `ParamProgramSourceError` (line/col) mirroring `CoeffProgramSourceError` (`:125`).
 
-### 3.2 Root transforms — text optional (likely unnecessary)
+### 3.2 Root transforms — stays chip/array (optional read-only export, no source parser)
 Root is a flat `[name,...params]` array (`root_xforms.h:43`, `js/07-transform-catalogs.js:993`) with 9 fixed transforms; chips→display works without a parser since the wire is already an array. **Recommendation:** a trivial one-transform-per-line text form (`rotate_roots(0.5)`) is ~30 lines if wanted, but **no compute-path source module is needed** — don't add a root `*_source.py` to compute bundles.
 
 ### 3.3 Storage round-trip + route
@@ -196,10 +196,10 @@ Dispatch maps to update when retiring cp/pp: `_chainForWhich` (`js/02-preview-so
 | 0 versioning | yes (pure insurance) | — | regression if missing≠v1 (mitigated) |
 | 1 chip registry | yes (kills drift) | — | semantics in the schema; param drift gate |
 | 2 shared runtime | yes (one interpreter) | DD5 oracle + DD6 benchmarks | FP determinism, perf |
-| 3 text parsers | yes (param/root text) | — | low (param ⊂ coeff) |
+| 3 text parser (param) | yes (param text-first; root stays chips) | — | low (param ⊂ coeff) |
 | 4 v2 migration | no (the bump) | DD2 gate (Phase 0) + DD5 | the migration proper |
 | 5 chips display-only | no | Phases 3+4 | low |
 
-If appetite is limited: **0 + 1 + 3** deliver versioning insurance, drift elimination, and text-first param/root **without** the v2 fingerprint migration or the native merge — a coherent stopping point that leaves chips editable and fingerprints untouched.
+If appetite is limited: **0 + 1 + 3** deliver versioning insurance, drift elimination, and text-first **param** (root/solve-score stay chips) **without** the v2 fingerprint migration or the native merge — a coherent stopping point that leaves chips editable and fingerprints untouched.
 
 *No production code was modified writing this plan; all current-state references verified against the `1a1996d` source snapshot.*

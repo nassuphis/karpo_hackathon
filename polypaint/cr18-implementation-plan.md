@@ -24,7 +24,7 @@ The payload already ships `"version": 1` (`program_compile_helpers.py:19,33`); t
 **Rollback floor (DD2):** once this ships, pre-Phase-0 binaries are no longer valid rollback targets (they ignore the field). Record in the deploy runbook.
 
 ### 0.2 `spec_version` sibling at WRITE sites
-Add a **family-specific** version int (=1 now) beside each persisted fingerprint — **not a single generic `spec_version`**, because one meta object can carry several families: `handler_palette_finalize.py:533` writes `palette_variant_fingerprint`/`content_fingerprint` *and* `:568` writes `solve_score_chain_fingerprint` in the **same** `meta.json`, so one sibling can't say which it versions. Use `solve_score_spec_version`, `palette_variant_spec_version`, `probe_signature_spec_version` (or a single `spec_versions` map keyed by family). Missing ⇒ 1. **Three families need a new field; two already carry their own `version` int and extend it instead.**
+Add a **family-specific** version int (=1 now) beside each persisted fingerprint — **not a single generic `spec_version`**, because one meta object can carry several families: `handler_palette_finalize.py:533` writes `palette_variant_fingerprint`/`content_fingerprint` *and* `:568` writes `solve_score_chain_fingerprint` in the **same** `meta.json`, so one sibling can't say which it versions. Use `solve_score_spec_version`, `palette_variant_spec_version`, `probe_signature_spec_version` (or a single `spec_versions` map keyed by family). Missing ⇒ 1. **All these families take a new sibling field — including the solve-score fingerprint *embedded* in raw-sidecar/fragment-manifest, whose sibling lives *inside* the container (NOT the container's own `version`, which is fail-closed — see table). Only the coeff/param *program* fingerprint takes no sibling (it's versioned by the in-hash `PROGRAM_VERSION`).**
 
 | family | representative WRITE sites | action |
 |---|---|---|
@@ -38,7 +38,7 @@ Add a **family-specific** version int (=1 now) beside each persisted fingerprint
 Do **not** rename existing fingerprint fields (a rename is itself a wire change). Do **not** fold `spec_version` into the hashed payload (`compiled_solve_score_fingerprint`, `solve_score_chain.py:641`) — that re-keys every artifact (the whole point of "adjacent").
 
 ### 0.3 Dual-read at the 14 READ/compare sites
-Read the stored **family** version (`solve_score_spec_version` / `palette_variant_spec_version` / `probe_signature_spec_version`, or the container's own `version` for raw-sidecar/fragment-manifest; **missing ⇒ 1**) → compute the matching-scheme fingerprint → compare; during transition compute *both* and accept a match on the stored version.
+Read the stored **family** version (`solve_score_spec_version` / `palette_variant_spec_version` / `probe_signature_spec_version` — and for raw-sidecar/fragment-manifest the `solve_score_spec_version` sibling **inside** the container, *not* the container's own `version`; **missing ⇒ 1**) → compute the matching-scheme fingerprint → compare; during transition compute *both* and accept a match on the stored version.
 
 **`program_spec` string compares need a *versioned compare API*, not just a versioned hash (blocker).** The sites at `handler_raster_mt.py:263` / `handler_palette_chunk.py:421` / `handler_solve_proximity.py:415,724` / `handler_finalize_mt.py:282` compare the *canonical string* directly (`canonicalize_solve_score_program_spec(...)`). Versioning the `sha256` does **not** cover these. Add `canonicalize_solve_score_program_spec(spec, version)` and compare `canonicalize(stored, stored_ver) == canonicalize(expected, stored_ver)`. The v2 canonical renderer (Phase 4.3) and this versioned canonicalizer are the **same** change — both must land together.
 | sites | type |
@@ -138,6 +138,8 @@ Delete `coeffEvalScalarExpr` (`sweep_cli.c:3855-4056`) and `paramEvalScalarExpr`
 
 **Every `expr_refs` consumer must be migrated — not just `native_transform`.** `coeffArgValue` (`sweep_cli.c:4058`) is read by ~12 ops: affine (`:4682-4683`), exp/pow + legacy arg packing (`:4690-4697`), littlewood (`:4758-4761`), const (`:4808`), set/blend/poke/fill and the typed family (`:4888,4974,4992,5015,5086`), plus `coeffAndyValue` (`:4118`). For **each**, the load-time lowering must materialize its args (literal + dynamic, in order, §2.2) before the op runs — an op whose args aren't lowered would call a deleted evaluator. Treat the consumer set as an explicit checklist; the native-parity gate must exercise each op with a dynamic arg. The merged opcode enum + the param-as-config mapping are **internal only**; the per-VM `execution_spec`/fingerprint stay byte-identical (param still `del scalar_exprs` at `param_program_chain.py:1107`; coeff spec bytes still wire, `coeff_program_chain.py:1838`).
 
+**Param needs no resolved-arg ABI — only a drain-gate.** The new param compiler lowers *every* expression into main tokens (`_expr_to_param_tokens`; `_lower_chain` returns `scalar_exprs=[]`, `param_program_chain.py:1005`), so new param tokens carry **no `expr_refs`**, and `paramArgValue`/`paramEvalScalarExpr` (`sweep_cli.c:6438`) are reached **only by legacy nested-expr payloads** the C still accepts (`test_param_program_native.py`). So §2.2a's `ResolvedArgs`/`expr_plans` are **coeff-only** (coeff alone keeps the side-table, DD1); for param, just **drain-gate the deletion** — remove `paramEvalScalarExpr` once no legacy nested-expr payload can still arrive (the same opcode-renumber drain, §4.6). No param arg-plan to build.
+
 ---
 
 ## Phase 2B — Centralize the solve-score lag facility
@@ -182,7 +184,7 @@ reg           := "t1" | "t2" | "p1" | "p2"
 unary_name    := "square" | "cube" | "conj" | "negate" | "reciprocal" | "unit_circle" | "exp"
 ```
 **Selector args ≠ expression args** (resolves the `args:=expr` bug): `legacy(name, src, tgt, …)` takes an identifier `name` + two `sel` selectors, *then* expr args — `expr` applies only to the trailing args, never to the name/selectors. **One canonical form per construct:** emit is the assignment `p1 = expr` (not `emit p1` / `emit(p1)`); `emit_p1`/`emit_p2` are the explicit zero-arg stack-pop ops. **`unary_name(reg)` is documented sugar** (resolves the `square(p1)` ambiguity): it applies the op to the *matching grid coordinate* — `square(p1) ≡ p1 = square(t1)`, `square(p2) ≡ p2 = square(t2)` — **not** "square the current p1". The source-from-chain renderer emits exactly this form for targetable-unary chips.
-**Canonical source-from-chain is first-class (the populate path).** The recent "populate emits `_typed_*` garbage" bug means reconstruction must be a real, tested feature: `display_param_program_chain` (`param_program_chain.py:492`) must render clean, **re-parseable** source — never internal synth chips — so a synth-bearing chain renders to its *surface* form (`square(p1)`, not `push;_typed_unary;emit`). Pin `parse_param_program_source(display_param_program_chain(c)) ≡ c` over a corpus including legacy-bridge and expression chips; the Legacy-tab/populate flow depends on it.
+**Canonical source-from-chain is first-class (the populate path).** The recent "populate emits `_typed_*` garbage" bug means reconstruction must be a real, tested feature: `display_param_program_chain` (`param_program_chain.py:492`) must render clean, **re-parseable** source — never internal synth chips — so a synth-bearing chain renders to its *surface* form (`square(p1)`, not `push;_typed_unary;emit`). Pin **compiled equivalence**, not raw chain equality (aliases/canonicalization can legitimately reshape surface rows): `compile_param_program_chain(parse_param_program_source(display_param_program_chain(c))).execution_spec == compile_param_program_chain(c).execution_spec` **and equal `fingerprint`**, over a corpus including legacy-bridge and expression chips. The Legacy-tab/populate flow depends on it.
 **Error recovery:** `strict=True` raises on first error (save/preview); `strict=False` skips the failing statement, records `{line,column,message}` in `diagnostics`, continues (editor live-compile) — exactly coeff's `parse_coeff_program_source(strict=)` (`:855`).
 **Examples:**
 ```
@@ -219,6 +221,24 @@ One merged opcode enum across param+coeff (C1: today op 8 = param POP vs coeff B
 - **solve-score** → `reduce_metric` + scalar ops + `emit` — but the hard parts must be specified, not hidden: **(a) metric-slot CSE** (dedup `(metric,source,quantile)` into shared slots, the `program_spec` slot model); **(b) lag references** (`mN-1` reads the prior step — the Phase-2B facility); **(c) implicit scalar output vs explicit `emit`s** (single-score path vs N channels); **(d) per-channel normalization** (`emit_norm`); **(e) the multi-channel output contract** (channel count ↔ `color_interpretation`, CR18 §3.2). Preserve omega/phase exactly (already in `program_spec`). This is why solve-score stays chip-primary — translation is its *only* migration target and the trickiest.
 Injection point: the payload compilers already override `chain` from source (`_compile_coeff_program_payload:454`) — `translate_from_old` plugs in there.
 
+**v2 token shapes (so Phase 4 is codeable, not prose).** The unified token extends today's coeff token (`op, fn_index, src, tgt, n_args, args[], args_im[], expr_refs[], andy`) with a `registry` discriminator on `native_transform`, and adds the solve-score ops; the `program_spec` token fields (`op, metricSlot, lagDepth, a, b`, `solve_score.h:982`) carry over:
+```jsonc
+// root transform (e.g. moebius) — registry-namespaced native_transform (op 29):
+{ "op": 29, "registry": "root", "fn_index": 8, "n_args": 4, "args": [1,0,0,1], "args_im": [0,0,0,0] }
+// coeff/param legacy stay native_transform with registry "coeff"/"param":
+{ "op": 29, "registry": "coeff", "fn_index": 27, "src": 1, "tgt": 1, "andy": 0.0 }
+// solve-score metric reduction (slot-CSE'd: metric+source+quantile → normalized slot):
+{ "op": "reduce_metric", "metric": "proximity", "source": "slv", "quantile": 0.001, "slot": 0 }
+{ "op": "push_metric", "slot": 0, "lag": 1 }      // lag read of slot 0 at the PRIOR step (mN-1)
+{ "op": "weighted_sum", "a": 0.5, "b": 0.5 }      { "op": "omega_cosine", "a": 1.0, "b": 0.0 }
+{ "op": "emit" }          // explicit channel, raw
+{ "op": "emit_norm" }     // explicit channel, range-normalized
+{ "op": "emit_none" }     // discard a stack value, still explicit-output mode
+// implicit scalar output  = NO emit op + terminal stack depth 1 (the single score)
+// multi-channel output     = N emit/emit_norm ops, terminal depth 0, channel_count = #emits (≤8) ↔ color_interpretation (CR18 §3.2)
+```
+v2 only *adds* `registry` to `native_transform` and renumbers the merged opcode enum; the reduce/lag/emit shapes mirror the current `program_spec` tokens. The implicit-vs-explicit and channel-count↔`color_interpretation` contracts are unchanged.
+
 ### 4.3 v2 fingerprint scheme + dual-read
 Bump the family `spec_version` → 2 at the WRITE sites (Phase 0.2); the READ sites (Phase 0.3) already dual-read. Add the v2 canonical renderer in `compiled_solve_score_fingerprint` / the per-VM `execution_spec`. Old artifacts stay v1; new work emits v2.
 
@@ -226,6 +246,19 @@ Bump the family `spec_version` → 2 at the WRITE sites (Phase 0.2); the READ si
 - New routes in `handler_storage.py` dispatch (`:857-931`, the `path.endswith` chain): **`/migrate-{coeff,param,solve-score}-program` — per-kind (decided)**, matching the existing per-kind storage-route convention (save/fetch/list/delete are all per-kind; the Legacy tab lists per-kind, so per-kind migrate is the least-surprising shape for api_manifest/JS/tests). No `/migrate-program` umbrella; no root migrate route (root isn't a saved-program kind — §4.5). Version-aware fetch (compile mode): require v2 deps (§macro rule below); the `v2/`-else-v1 fallback is list/display/discovery only. **Non-overwriting save** (today save-by-slug overwrites, `handler_storage.py:1199`,`1114`,`1028`): v2 writes to the `v2/` namespace, v1 stays immutable.
 - **Macro refs stay by logical `<id>`** (not `<id>@v2`), resolved by a **version-aware fetch with two modes** (this resolves the apparent contradiction): for **v2 compile**, the resolver **requires v2 dependencies** — a v2 program whose macro is still v1-only is an *error* (fail the compile), which forces bottom-up migration; the **v1-fallback** ("prefer `v2/` else v1") is **only** for list/display/migration-discovery, *never* for v2 compile. Migrate the DAG **bottom-up** (leaves first), reusing the existing cycle/depth guard (`handler_storage.py:343,378`).
 - **Route 3-source sync** (`api_manifest.py`): a new route must be added to (a) the `handler_storage.py` dispatch (auto-detected by `_extract_storage_routes`), (b) `deploy_manifest.json` `polypaint-storage` `routes[]` (`:97-132`), (c) the frontend `lambdaPost('storage',…,'/X')` call (`js/03-program-modals.js`), then `api_manifest.py --write`; `--check` fails CI otherwise. New migrate/translate handlers also need payload-contract tests (api_manifest pins routes, not payload shapes).
+- **Route contracts (request/response — pin before JS/tests):** each `/migrate-{kind}-program` (POST via the `storage` dispatcher):
+```jsonc
+// request
+{ "id": "<program id>", "from_version": 1, "dry_run": true }
+// response (dry_run=true → preview only, no write):
+{ "id": "...", "kind": "coeff|param|solve-score",
+  "migrated": { "source_text": "...", "chain": [...], "fingerprint": "sha1:...", "spec_version": 2, "program_version": 2 },
+  "v1": { "fingerprint": "...", "spec_version": 1 },   // for the Legacy-tab diff
+  "wrote": false }                                      // true when dry_run=false (writes v2/<id>.json)
+// conflict:      v2/<id>.json already exists with a different fingerprint → 409 { "error": "v2 exists", "existing_fingerprint": "..." }
+// macro-missing: a referenced macro has no v2 yet → 422 { "error": "macro not migrated", "missing": ["<id>", ...] }  (bottom-up, §macro rule)
+```
+`dry_run=true` powers the Legacy-tab diff; `dry_run=false` does the non-overwriting `v2/` save. Add this shape to the payload-contract tests.
 
 ### 4.5 Legacy tab UI (per-kind — CR18 §4.4)
 A tab that loads an old saved program and runs `translate_from_old`, **per-kind**: **coeff/param → migrated text form** (Phase 3 param parser; coeff already has one); **root → migrated chain/array form** (+ optional read-only text export — *no* source parser, §3.2); **solve-score → chain + `program_spec` preview** (no text source). Save the v2 copy under the versioned id. **Decided: root is NOT promoted to a saved-program kind** — its `root_transforms` live embedded in render/palette artifacts and migrate **in place** under the v2 palette identity (no new `polypaint/root-programs/` prefix, no root migrate route, no root entry in the Legacy tab's program list). So the Legacy tab lists/migrates only coeff/param/solve-score. UI plugs into `js/03-program-modals.js` (the per-kind fetch/list/save/delete call sites).
@@ -245,7 +278,7 @@ Step Functions forwards compiled `coeff_program`/`param_program` straight into n
 - `_chipPickers` `pp`/`cp` entries + picker engine: `js/08-chip-editors.js:120-186` (and the pp/cp wrappers `:188-253`).
 - Mutators' cp/pp branches: `addChip` (`js/07-transform-catalogs.js:1335`), `removeChip` (`:1368`), `moveChip` (`:1387`), `updateChipParam` (`js/08-chip-editors.js:1279`).
 - Editable shell arms: `_paramProgramChipShellHtml` editable arm (`js/09-render-orchestration.js:172-177`), `_coeffProgramChipShellHtml` editable arm (`:184-189`), and the `<select>/<input>` emitters with `updateChipParam` onchange (`js/08-chip-editors.js:1326,1339,1350`).
-- **Retiring the pre-VM by-name dispatch requires removing or translating Chain mode first.** `lookupCoeffTransform` (`sweep_cli.c:3246`), `parseCtChain` (`:5641`), `parsePtChain` (`:5576`) are the **live Chain-mode** parsers — `pipeline_mode_from_params` (`pipeline_programs.py:35`) still returns `chain` vs `program`, and `coeff_transforms`/`param_transforms` arrays still flow to native (`parsePtChain` called at `sweep_cli.c:7740,7799`). So Phase 5 cannot just delete them: it must **either remove Chain mode entirely** (migrate all saved Chain-mode payloads to Program v2 + drop the `chain` branch in `pipeline_mode_from_params`) **or translate every Chain-mode request to a Program at the Lambda boundary before native**. Pick one and gate the deletion on it — a prerequisite, not a cleanup.
+- **Retiring the pre-VM by-name dispatch requires removing or translating Chain mode first.** `lookupCoeffTransform` (`sweep_cli.c:3246`), `parseCtChain` (`:5641`), `parsePtChain` (`:5576`) are the **live Chain-mode** parsers — `pipeline_mode_from_params` (`pipeline_programs.py:35`) still returns `chain` vs `program`, and `coeff_transforms`/`param_transforms` arrays still flow to native (`parsePtChain` called at `sweep_cli.c:7740,7799`). So Phase 5 cannot just delete them. **Decided: translate Chain-mode requests to Program v2 at the Lambda boundary** (keep the UI's Chain/Program mode *during* migration), then **delete native `parseCtChain`/`parsePtChain` only after a test proves no Chain arrays reach native** (assert no `coeff_transforms`/`param_transforms` in any dispatched native payload). Removing Chain mode from the UI is a later, separate step. This is a gating prerequisite, not a cleanup.
 
 ### 5.2 Keep (readonly renderers)
 `_renderCoeffProgramChipHtml`/`_renderParamProgramChipHtml` with `{readonly:true}` (`js/09-render-orchestration.js:300,337` — already support it), `_chipReadonlyValueHtml` (`js/08-chip-editors.js:1295`). These become the display layer over parsed text; the readonly call sites already exist (`:388,:395`). Chips-as-display needs the parser to emit **per-chip source spans** (an editor parser, for click-to-locate / error underlining) — build alongside Phase 3's parsers.

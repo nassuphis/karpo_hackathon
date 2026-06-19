@@ -14,7 +14,7 @@ The gates Phase 2 depends on **don't exist yet** — build them first as their o
 
 **(a) Python solve-score evaluator — the DD5 oracle for solve-score.** Today `solve_score_chain.py` only *compiles* — no numeric eval, so solve-score has no cross-language oracle (CR18 §7.1). Add **`lambda/solve_score_eval.py`**: a pure-Python mirror of `solve_score.h` — the metric prepass (`compute_solve_metric_score`), the postfix scalar VM, lag (`mN-1`), and emit — taking roots/coeff/param inputs → scalar or N channels. Pin it with **`tests/test_solve_score_native_parity.py`**: feed the same roots `.bin` + program to both `solve_score_eval.py` and the C binary, assert agreement (epsilon for floats; exact for SHA-addressed bytes).
 
-**(b) Whole-sweep byte oracle — DD5 for the VM merge.** **`tests/test_whole_sweep_oracle.py`**: for a corpus of warm-start-sensitive programs (clustered / near-degenerate roots), run the FULL coeffgen + solve and compare the complete coeffs `.bin` + roots `.bin` **byte-for-byte** between the pre-merge binary and the post-merge binary — single-cell parity is insufficient under the serpentine warm-start cascade (CR18 §7.1). Snapshot the old-binary outputs as a baseline (**`scripts/oracle_baseline.sh`**) *before* Phase 2A touches the interpreter.
+**(b) Whole-sweep byte oracle — DD5 for the VM merge.** **`tests/test_whole_sweep_oracle.py`**: for a corpus of warm-start-sensitive programs (clustered / near-degenerate roots), run the FULL coeffgen + solve and compare the complete coeffs `.bin` + roots `.bin` **byte-for-byte** between the pre-merge binary and the post-merge binary — single-cell parity is insufficient under the serpentine warm-start cascade (CR18 §7.1). Snapshot the old-binary outputs as a baseline (**`scripts/oracle_baseline.sh`**) *before* Phase 2A touches the interpreter. **Artifact locations (pin, don't drift):** the warm-start **corpus** (programs + inputs) is **checked in** (`tests/fixtures/oracle/`); the byte baselines are stored as **checked-in sha256 manifests** (small — not the raw `.bin`), and the test regenerates the `.bin` under its own tmp dir and compares to the manifest (deterministic, not "works on my machine"); **bench results** go to `reports/` (gitignored) and gate on a **threshold**, not absolute numbers.
 
 **(c) Per-profile benchmarks — DD6.** **`tests/bench_vm.py`** (or `scripts/bench_vm.sh`) timing the 5 profiles — param-only, coeff scalar-heavy, coeff vector-heavy, solve-score multi-channel, root-raster — plus per-thread workspace bytes, vs the current tight-`switch` baseline.
 
@@ -171,7 +171,7 @@ Today 5 call sites across 4 files hand-roll the current/recent double-buffer + s
 
 Add a stateful lagged-stream object to `solve_score.h` (init + per-row `advance(current_sources, prev_row_accessor)` that owns the two buffers + `recentInitialized` warm-up + end-of-step swap), using `solve_score_eval_metric_slots` (`:1593`), `solve_score_eval_lagged_metric_slots` (`:1607`), and the buffer-eval (`:1636`). The **row-addressing differs** per file (sectioned byte offsets vs `idx*stride` vs prelude math) → the object takes a **callback accessor** "give me row N's solve/coeff/param pointers," not the buffers themselves.
 
-**Phase 2A file map:** `sweep_cli.c` (interpreter restructure, delete the 2 scalar-expr evaluators, add the temp arena). **Phase 2B file map:** `solve_score.h` (lag-stream object), the 4 rasterizers (replace hand-rolled lag). **Gates (both phases, behind the *same* DD5 oracle):** native-parity tests bit-identical to *both* old interpreters; the **DD5 whole-sweep byte oracle** (full coeffgen + roots `.bin`, old-VM-vs-new-VM, on warm-start-sensitive programs — single-cell parity is insufficient, CR18 §7.1); **DD6 per-profile benchmarks** (param-only / coeff scalar / coeff vector / solve-score multi-channel / root-raster + per-thread workspace bytes) vs the current tight-`switch` baseline. **Risk:** the highest C changes — running 2A and 2B as separate phases is precisely what keeps FP-drift bisectable.
+**Phase 2A file map:** `sweep_cli.c` (interpreter restructure, **delete the COEFF scalar-expr evaluator `coeffEvalScalarExpr` only** — `paramEvalScalarExpr` stays a compat path until the Phase-4 drain, §2.3 — add the temp arena). **Phase 2B file map:** `solve_score.h` (lag-stream object), the 4 rasterizers (replace hand-rolled lag). **Gates (both phases, behind the *same* DD5 oracle):** native-parity tests bit-identical to *both* old interpreters; the **DD5 whole-sweep byte oracle** (full coeffgen + roots `.bin`, old-VM-vs-new-VM, on warm-start-sensitive programs — single-cell parity is insufficient, CR18 §7.1); **DD6 per-profile benchmarks** (param-only / coeff scalar / coeff vector / solve-score multi-channel / root-raster + per-thread workspace bytes) vs the current tight-`switch` baseline. **Risk:** the highest C changes — running 2A and 2B as separate phases is precisely what keeps FP-drift bisectable.
 
 ---
 
@@ -228,6 +228,16 @@ Root is a flat `[name,...params]` array (`root_xforms.h:43`, `js/07-transform-ca
 ### 4.1 Merged opcode IR (v2) — resolve C1/C2
 One merged opcode enum across param+coeff (C1: today op 8 = param POP vs coeff BLEND; op 10 = param ADD vs coeff POKE_POLY). `native_transform` gains a **registry-namespace discriminator** (C2: `ct_*` 1–28 vs `pt_*` 1–48 collide) **plus per-registry capability metadata** — `andy` and `length_policy` are coeff-only (CR18 §7.6); the param/root registries declare them absent, and the unified op validates capabilities per registry (no `andy` on a root transform; no length change where the profile's fixed-output contract forbids it, §2.1). Bump `program.version` → 2. The native parser (version-gated since Phase 0) keeps a v1 legacy-decode path through the drain (4.6) and adds the v2 decode. The merged enum is the wire only at this phase (Phase 2 kept it internal).
 
+**Merged opcode-ID allocation — reserve ranges *before* coding (so implementers don't collide):**
+| range | owner | notes |
+|---|---|---|
+| 1–30 | **coeff** ops (reference, unchanged) | `CONST=1 … TYPED_BLEND=30` keep their ids — coeff is the superset; `native_transform`=29 stays, gains the `registry` discriminator |
+| 31–47 | **param-specific** ops with no coeff equivalent | `push_t1/t2/p1/p2`, `emit_p1/p2`, `ratio` (param's zero→0 divide); the rest fold into coeff `typed_binary`/`typed_unary` |
+| 48–63 | reserved | future |
+| 64–95 | **solve-score** ops | the 28 today (`solve_score.h:927-954`: `push_metric/avg/…/weighted_sum/omega_cosine/emit/emit_norm/emit_none/flush`) **+ `reduce_metric`** (the prepass-as-opcode, new) |
+
+Example final ids (pinned at implementation in a shared header the Phase-1 drift gate checks across Python/C/JS): `reduce_metric=64, push_metric=65, weighted_sum=70, omega_cosine=73, emit=80, emit_norm=81, emit_none=82`.
+
 ### 4.2 `translate_from_old(kind, payload) → unified_chain`
 - **coeff** → near-identity at the *chip* level, **but NOT at the wire level**: v2 inserts the registry-namespace discriminator (`registry='coeff'`) into native/legacy tokens that lack it, renumbers to the merged opcode enum (C1), then re-fingerprints under v2. The chips are unchanged; the token bytes are not.
 - **param** → dedicated arithmetic opcodes → typed-op equivalents; `pt_*` legacy → `native_transform[param_registry, fn_index]` (preserve fn_index, C2); `emit_p1/p2` → output projection.
@@ -266,7 +276,10 @@ Bump the family `spec_version` → 2 at the WRITE sites (Phase 0.2); the READ si
 { "id": "<program id>", "from_version": 1, "dry_run": true }
 // response (dry_run=true → preview only, no write):
 { "id": "...", "kind": "coeff|param|solve-score",
-  "migrated": { "source_text": "...", "chain": [...], "fingerprint": "sha1:...", "spec_version": 2, "program_version": 2 },
+  // migrated is PER-KIND: coeff/param carry source_text; solve-score has NO source text (chip-primary) — it returns program_spec instead:
+  "migrated": {  // coeff/param: { "source_text": "...", "chain": [...], "fingerprint": "sha1:...", "spec_version": 2, "program_version": 2 }
+                 // solve-score: { "program_spec": "...", "chain": [...], "fingerprint": "sha256:...", "spec_version": 2 }  (no source_text)
+  },
   "v1": { "fingerprint": "...", "spec_version": 1 },   // for the Legacy-tab diff
   "wrote": false }                                      // true when dry_run=false (writes v2/<id>.json)
 // conflict:      v2/<id>.json already exists with a different fingerprint → 409 { "error": "v2 exists", "existing_fingerprint": "..." }

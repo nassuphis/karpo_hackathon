@@ -31,8 +31,9 @@ Add a **family-specific** version int (=1 now) beside each persisted fingerprint
 | solve-score `chain_fingerprint` / `program_spec` | clip `handler_solve_proximity.py:913`; section-hist `:1442`; bins `:1583`; palette meta `handler_palette_finalize.py:534,568`; render plan `handler_palette_render_plan.py:817,1086`; raster `handler_raster_mt.py:587`; extract `handler_extract_palette_from_step_scores.py:545`; recolor `color_recolor_raw.py:419`; saved programs `handler_storage.py:313,428,489` | add **`solve_score_spec_version`** sibling |
 | palette `palette_variant_fingerprint` / `content_fingerprint` | `handler_palette_render_plan.py:463,840,1109`; `handler_palette_finalize.py:533` | add **`palette_variant_spec_version`** sibling |
 | `probe_signature` | `handler_coeffgen.py:670` (built by `compute_fused.py:34`); stored in plan `handler_compute_plan.py` | **`probe_signature_spec_version`** (recompute under the program's versions) |
-| raw sidecar (incl. its embedded `chain_fingerprint`, `raw_sidecar.py:222`) | `raw_sidecar.py:9-11` (`RAW_SIDECAR_VERSION=3`) | **extend the sidecar's own `version`** — *no* `solve_score_spec_version` sibling here (the container version covers its embedded fingerprint; this resolves the apparent raw-sidecar overlap) |
-| fragment manifest (incl. embedded `chain_fingerprint`, `handler_finalize_mt.py:523`) | `handler_finalize_mt.py:35` (`FRAGMENT_MANIFEST_VERSION=1`) | **extend existing `version`** |
+| raw sidecar (embeds `chain_fingerprint`, `raw_sidecar.py:222`) | container `version` (`raw_sidecar.py:9-11`) | **add `solve_score_spec_version` *inside* the sidecar — do NOT bump the container `version`** for a fingerprint-scheme change: `validate_raw_sidecar` (`raw_sidecar.py:268`) *rejects* unknown container versions, so a bump is **fail-closed on old readers** (rollback breaks). Reserve the container `version` for actual sidecar-layout changes. |
+| fragment manifest (embeds `chain_fingerprint`, `handler_finalize_mt.py:523`) | container `version` (`handler_finalize_mt.py:35`) | **add `solve_score_spec_version` *inside* the manifest** — same reason: `handler_finalize_mt.py:69` rejects unknown `version` (fail-closed). |
+| coeff/param **program** fingerprint | `handler_compute_plan.py:279,286`; folded into `probe_signature` (`compute_fused.py:34`) | **no sibling needed** — versioned by the **in-hash `PROGRAM_VERSION`** (`coeff_program_chain.py:1977`: `sha1({version, execution_spec})`, = DD2's `program.version`). A v2 bump re-keys it automatically; `probe_signature` (which folds it) carries `probe_signature_spec_version`. |
 
 Do **not** rename existing fingerprint fields (a rename is itself a wire change). Do **not** fold `spec_version` into the hashed payload (`compiled_solve_score_fingerprint`, `solve_score_chain.py:641`) — that re-keys every artifact (the whole point of "adjacent").
 
@@ -98,16 +99,39 @@ The existing test pins `COEFF_OP_*` / `COEFF_EXPR_*` / `COEFF_SEL_*` enums + the
 ### 2.1 Unified value model + workspace (native structs)
 Merge `CoeffProgramWorkspace` (`sweep_cli.c:3504-3536`: planar `stack_re/stack_im[64][256]`, scalar slots, `poly`, scratch/original/aux) and the param state (`ParamProgram`/`ParamProgramToken`/`ParamCx`, `sweep_cli.c:6097-6128`) into one runtime that the config (CR18 §3.3) parametrizes (enabled ops, register layout, caps coeff 256/64/256 vs param 64/16). **Per-profile workspace sizing** (CR18 §3.1, corrected): size to the profile's caps; do not assume a single shared constant (note `MAXDEG` is *inconsistent* across rasterizers — `roots2pix_mt.c:28` 256 vs others 1024 — reconcile, not "size for 1024"; roots can't exceed `MAX_DEGREE 255`).
 
-**Fixed-output-length contract (CR18 §7.5 — must be in the runtime config).** Coeff output length is probed once at (0,0) and **hard-asserted constant** for the whole grid (`sweep_cli.c:7841,7948`), and the warm-start chain depends on it. The unified config needs a `fixed_output_length` flag (true for coeff) that makes the interpreter **reject a per-row length change** — load-bearing once the unified op set includes dynamic indexing (`typed_get_scalar`) and length-changing transforms (`length_policy: may_change`), which could otherwise vary `poly_len` per cell. Other profiles have their own output contracts: param → `p1,p2` scalars; root → in-place, same-length; solve-score → 1 scalar or N channels.
+**Fixed-output-length contract (CR18 §7.5 — must be in the runtime config).** Coeff output length is probed once at (0,0) and **hard-asserted constant** for the whole grid (`sweep_cli.c:7841,7948`), and the warm-start chain depends on it. The unified config needs a `fixed_output_length` flag (true for coeff) that makes the interpreter **reject a per-row length change** — load-bearing once the unified op set includes dynamic indexing (`typed_get_scalar`) and length-changing transforms (`length_policy: may_change`), which could otherwise vary `poly_len` per cell. Other profiles have their own output contracts: param → `p1,p2` scalars; root → in-place, same-length; solve-score → 1 scalar or N channels. **Where the expected length lives (a boolean isn't enough):** the (0,0) degree probe (`sweep_cli.c:7841`) computes it once; pass it into the per-row eval as `expected_out_len`, and the interpreter rejects any row whose `poly_len != expected_out_len` — surfaced by the **row loop** (retaining today's outer assertion at `:7948`), never a silent truncation. So `fixed_output_length` means "assert `poly_len == expected_out_len`, where `expected_out_len` is the probed length passed into eval."
 
 ### 2.2 Expression-temp arena (DD1 implementation sketch — the §2a isolation)
 Add a **separate** per-thread arena distinct from the user value planes:
 - *struct:* `double tempRe[N]/tempIm[N]` (coeff) / `ParamCx temp[N]` (param), `N = MAX_EXPR_NUMS/EXPR_STRIDE` (the existing private-stack sizing at `:3869/:6380`).
 - *cap:* the existing `MAX_EXPR_NUMS/STRIDE`; a single expression's lowered sub-sequence must fit it (compile-time check). **Separate from** the user 64/16 cap.
 - *frame base / `tos[i]` — ONE base per TOKEN, not per arg (load-bearing):* capture a single `token_frame_base = user_sp` **before evaluating any of the token's dynamic args**; every arg's `tos[i]` reads `user_stack[token_frame_base-1-i]` — the **pre-token** stack. This prevents a multi-dynamic-arg token from letting arg 2 see arg 1's pushed result through `tos0`. Arg intermediates live only in the hidden arena; `user_sp` grows only by the final pushed arg results.
-- *`native_transform` args:* each arg expression computes in the arena reading only the pre-token stack (above), then pushes **exactly one** final value; a `stack_arg_count=K` transform is fed by K such args (K user-stack slots, as today), every intermediate off the 64/16 budget. Net per arg: **+1**; the transform pops its K at the end.
-- *Mixed literal + dynamic args (load-bearing):* a token can carry some literal args and some `expr_refs` (e.g. `affine(tgt,src, 2.0, p1*cf[0])`). To keep `stack_arg_count` positions stable, **lower ALL args in positional order — literals as constant-pushes, dynamics as lowered expressions** — so the K pushed slots are exactly the token's K args in order. (The alternative, per-arg source metadata, is more complex; prefer lower-all-in-order.)
+- *Two arg-delivery mechanisms (full ABI in §2.2a):* (i) **resolved-arg ops** — the ~12 ops that read `coeffArgValue` today (affine/const/littlewood/poke/set/blend/typed/…) take args from a per-token **resolved-arg array**, *not* the user stack; (ii) **stack-arg `native_transform`** (the `stack_arg_count` form only) pops K args off the user stack (each a net **+1** push, intermediates in the arena). Most ops are (i); (ii) is the minority path.
+- *Mixed literal + dynamic args:* a token can carry some literal args and some `expr_refs` (e.g. `affine(tgt,src, 2.0, p1*cf[0])`). Resolve **all** args in positional order (literal → copy `token.args[i]`; dynamic → run the lowered plan into the arena → slot `i`); resolved-arg ops read them from the array, the stack-arg form pushes them in order. See §2.2a.
 - *`andy_expr_ref` must be lowered too (this is the bug class we already hit):* `andy` is evaluated by a *separate* call today — `coeffAndyValue` → `coeffEvalScalarExpr` (`sweep_cli.c:4118-4119`, used at `:4619`). Deleting the evaluator (§2.3) without lowering `andy_expr_ref` would dangle it. The lowering must treat `andy_expr_ref` as one more arg expression (into the arena), its result consumed by the transform's blend-back.
+
+### 2.2a Arg-resolution ABI + lowered-plan storage (the Phase-2A native contract)
+`coeffArgValue` (`sweep_cli.c:4058`) — today literal-or-`coeffEvalScalarExpr` — is replaced by a pre-resolved array filled before each op dispatches. The concrete native contract (so implementers don't invent incompatible mechanics):
+```c
+// Built ONCE at parse/load (load-time lowering, §2.3), per program:
+typedef struct { uint16_t op; double a, b; } LoweredExprToken;        // a typed-stack token
+typedef struct { LoweredExprToken toks[COEFF_PROGRAM_MAX_EXPR_NUMS/COEFF_PROGRAM_EXPR_STRIDE]; uint16_t n; } LoweredExprPlan;
+LoweredExprPlan expr_plans[COEFF_PROGRAM_MAX_SCALAR_EXPRS];           // indexed by the OLD expr_ref id; token.expr_refs[i] still indexes it
+
+// Per token, BEFORE op dispatch (replaces the scattered coeffArgValue calls):
+typedef struct { double re[COEFF_PROGRAM_MAX_ARGS], im[COEFF_PROGRAM_MAX_ARGS]; int n;
+                 double andy_re, andy_im; int has_andy; } ResolvedArgs;
+// resolve_token_args(tok, ctx, arena) -> ResolvedArgs:
+//   for i in 0..tok->n_args:
+//     rargs.re/im[i] = (tok->expr_refs[i] >= 0) ? run expr_plans[tok->expr_refs[i]] in the arena   // §2.2 frame-base rules
+//                                               : (tok->args[i], tok->args_im[i]);                  // literal
+//   andy: tok->andy_expr_ref>=0 ? run that plan -> andy : (tok->andy ? literal : none)
+```
+**Op classification (implementer checklist):**
+- **resolved-arg ops** (read `rargs.re/im[i]`): const, affine/linear, littlewood, poke_poly/poke_tos, set, blend, the typed family, and the *non-stack* `native_transform`/legacy arg path — i.e. every `coeffArgValue` site at `sweep_cli.c:4682–5086`.
+- **stack-arg op**: `native_transform` **`stack_arg_count` form only** — pops K from the user stack (§2.2 (ii)).
+- **andy**: always a resolved scalar (`rargs.andy`), consumed by the transform's blend-back.
+The `expr_plans` live in the per-program workspace (`MAX_SCALAR_EXPRS × MAX_EXPR_NUMS/STRIDE`), built once; row eval calls `resolve_token_args` then the op reads `rargs`. This is the shared ABI Phase-2A must pin before touching C.
 
 ### 2.3 Retire the nested scalar-expr evaluators
 Delete `coeffEvalScalarExpr` (`sweep_cli.c:3855-4056`) and `paramEvalScalarExpr` (`:6372-6436`) — both are `[op,a,b]`-triple if/else loops over private stacks. Replace with **native load-time lowering** (once, at parse time — *not* in the per-row loop): the compact `scalar_exprs` wire stays (DD1); `parseCoeffProgram`/`parseParamProgram` lower it **once** into cached temp-arena token sequences, and the per-row evaluator only *executes* those pre-lowered tokens (no per-row re-lowering).
@@ -140,26 +164,32 @@ Add a stateful lagged-stream object to `solve_score.h` (init + per-row `advance(
 **Objective.** Build the **one** missing compute-path text parser — **param** — so coeff+param are text-first authorable. **Root stays a chip-editable flat array** (`[name,...params]`): optional read-only text *export*, **not** a source parser (§3.2 — this refines CR18 §9.3, which over-eagerly listed root as "text-first"; root is text-*able* but not worth a source-editing parser, and it stays chip-editable in Phase 5). **Solve-score stays chip-primary** with read-only text export (CR18 §9.3 — its declarative slot-CSE + lag has no clean text shape).
 
 ### 3.1 `param_program_source.py` (new) — mirror `coeff_program_source.py`
-Architecture (template at `coeff_program_source.py`): lower source text → existing chip list → existing `compile_param_program_chain`. Four entrypoints mirroring coeff (`:855,889,837,748`): `parse_param_program_source`, `compile_param_program_source`, `param_source_text_from_payload`, `split_param_program_statements`. **Reuse** `param_program_chain`'s `_ExpressionParser` (`:573`), `_expr_to_param_tokens` (`:700`), and target `_lower_chip` (`:950`) — derive all op tables from the chain layer (the coeff parser's "vocabularies cannot drift" pattern, `coeff_program_source.py:14-48`). **Param-specific grammar:** `emit p1`/`emit p2`, `push`/`push t1`, the dual-register unary forms (`square(p1)`-style, `param_program_chain.py:977`), `legacy(name,src,tgt,…)` (the load-bearing bridge — param *cannot* ban it the way coeff text does), `both` target default. Error type `ParamProgramSourceError` (line/col) mirroring `CoeffProgramSourceError` (`:125`).
+Architecture (template at `coeff_program_source.py`): lower source text → existing chip list → existing `compile_param_program_chain`. Four entrypoints mirroring coeff (`:855,889,837,748`): `parse_param_program_source`, `compile_param_program_source`, `param_source_text_from_payload`, `split_param_program_statements`. **Reuse** `param_program_chain`'s `_ExpressionParser` (`:573`), `_expr_to_param_tokens` (`:700`), and target `_lower_chip` (`:950`) — derive all op tables from the chain layer (the coeff parser's "vocabularies cannot drift" pattern, `coeff_program_source.py:14-48`). **Param-specific grammar:** `emit p1`/`emit p2`, `push`/`push t1`, the targetable-unary sugar `square(p1)` (which means `p1 = square(t1)` — input is the *matching grid coord*, not current p1; `param_program_chain.py:977`), `legacy(name,src,tgt,…)` (the load-bearing bridge — param *cannot* ban it the way coeff text does; its name+selectors are a distinct arg category from expr args), `both` target default. Error type `ParamProgramSourceError` (line/col) mirroring `CoeffProgramSourceError` (`:125`).
 
 **Grammar (EBNF sketch):**
 ```
-program   := statement ((";" | "\n") statement)*
-statement := assign | call | stackop
-assign    := ("p1" | "p2") "=" expr           # → push(expr); emit_p1/p2
-call      := name "(" [args] ")"              # emit/push/unary/legacy/macro
-stackop   := "push" [reg] | "dup" | "swap" | "pop" | "flush"
-expr      := <the existing param ExpressionParser: t1,t2,p1,p2, + - * /, unary exp/real/imag/abs, complex i>
-args      := expr ("," expr)* ;  reg := "t1" | "t2" | "p1" | "p2"
+program       := statement ((";" | "\n") statement)*
+statement     := assign | unary_stmt | legacy_call | registry_call | macro_call | stackop
+assign        := ("p1" | "p2") "=" expr                       # CANONICAL emit (push expr; emit_pN)
+unary_stmt    := unary_name "(" reg ")"                       # reg = unary_name(matching grid coord) — see note
+legacy_call   := "legacy" "(" name "," sel "," sel ("," expr)* ")"   # bridge: name + 2 selectors, then EXPR args
+registry_call := name "(" [ expr ("," expr)* ] ")"           # bare pt_* transform: EXPR args only
+macro_call    := "macro" "(" id ")"
+stackop       := "push" reg | "emit_p1" | "emit_p2" | "dup" | "swap" | "pop" | "flush"
+expr          := <param ExpressionParser: t1,t2,p1,p2, literals (i/j), + - * /, unary exp/real/imag/abs>
+sel           := "p1" | "p2" | "both" | "pop1" | "pop2" | "push1" | "push2"   # legacy src/tgt selectors
+reg           := "t1" | "t2" | "p1" | "p2"
+unary_name    := "square" | "cube" | "conj" | "negate" | "reciprocal" | "unit_circle" | "exp"
 ```
+**Selector args ≠ expression args** (resolves the `args:=expr` bug): `legacy(name, src, tgt, …)` takes an identifier `name` + two `sel` selectors, *then* expr args — `expr` applies only to the trailing args, never to the name/selectors. **One canonical form per construct:** emit is the assignment `p1 = expr` (not `emit p1` / `emit(p1)`); `emit_p1`/`emit_p2` are the explicit zero-arg stack-pop ops. **`unary_name(reg)` is documented sugar** (resolves the `square(p1)` ambiguity): it applies the op to the *matching grid coordinate* — `square(p1) ≡ p1 = square(t1)`, `square(p2) ≡ p2 = square(t2)` — **not** "square the current p1". The source-from-chain renderer emits exactly this form for targetable-unary chips.
 **Canonical source-from-chain is first-class (the populate path).** The recent "populate emits `_typed_*` garbage" bug means reconstruction must be a real, tested feature: `display_param_program_chain` (`param_program_chain.py:492`) must render clean, **re-parseable** source — never internal synth chips — so a synth-bearing chain renders to its *surface* form (`square(p1)`, not `push;_typed_unary;emit`). Pin `parse_param_program_source(display_param_program_chain(c)) ≡ c` over a corpus including legacy-bridge and expression chips; the Legacy-tab/populate flow depends on it.
 **Error recovery:** `strict=True` raises on first error (save/preview); `strict=False` skips the failing statement, records `{line,column,message}` in `diagnostics`, continues (editor live-compile) — exactly coeff's `parse_coeff_program_source(strict=)` (`:855`).
 **Examples:**
 ```
 p1 = t1*t2 + p1                          # push expr; emit_p1
 p2 = exp(t1)                             # push expr; emit_p2
-square(p1)                               # push p1; square; emit_p1  (dual-register sugar)
-legacy(moebius, p1, push1, 1, 0, 0, 1)   # the load-bearing bridge
+square(p1)                               # sugar: p1 = square(t1) — input is the matching grid coord, NOT current p1
+legacy(moebius, p1, push1, 1, 0, 0, 1)   # bridge: name + 2 selectors (p1, push1) + 4 expr args
 push t1; dup; mul; emit_p1               # explicit stack form
 ```
 
@@ -193,12 +223,12 @@ Injection point: the payload compilers already override `chain` from source (`_c
 Bump the family `spec_version` → 2 at the WRITE sites (Phase 0.2); the READ sites (Phase 0.3) already dual-read. Add the v2 canonical renderer in `compiled_solve_score_fingerprint` / the per-VM `execution_spec`. Old artifacts stay v1; new work emits v2.
 
 ### 4.4 Migration routes + macro DAG (DD3)
-- New routes in `handler_storage.py` dispatch (`:857-931`, the `path.endswith` chain): `/migrate-{coeff,param,solve-score}-program` (or one `/migrate-program`). Version-aware fetch: **prefer the `v2/` namespace object** (e.g. `polypaint/coeff-programs/v2/<id>.json`), else v1. **Non-overwriting save** (today save-by-slug overwrites, `handler_storage.py:1199`,`1114`,`1028`): v2 writes to `v2/`, v1 stays immutable.
+- New routes in `handler_storage.py` dispatch (`:857-931`, the `path.endswith` chain): **`/migrate-{coeff,param,solve-score}-program` — per-kind (decided)**, matching the existing per-kind storage-route convention (save/fetch/list/delete are all per-kind; the Legacy tab lists per-kind, so per-kind migrate is the least-surprising shape for api_manifest/JS/tests). No `/migrate-program` umbrella; no root migrate route (root isn't a saved-program kind — §4.5). Version-aware fetch (compile mode): require v2 deps (§macro rule below); the `v2/`-else-v1 fallback is list/display/discovery only. **Non-overwriting save** (today save-by-slug overwrites, `handler_storage.py:1199`,`1114`,`1028`): v2 writes to the `v2/` namespace, v1 stays immutable.
 - **Macro refs stay by logical `<id>`** (not `<id>@v2`), resolved by a **version-aware fetch with two modes** (this resolves the apparent contradiction): for **v2 compile**, the resolver **requires v2 dependencies** — a v2 program whose macro is still v1-only is an *error* (fail the compile), which forces bottom-up migration; the **v1-fallback** ("prefer `v2/` else v1") is **only** for list/display/migration-discovery, *never* for v2 compile. Migrate the DAG **bottom-up** (leaves first), reusing the existing cycle/depth guard (`handler_storage.py:343,378`).
 - **Route 3-source sync** (`api_manifest.py`): a new route must be added to (a) the `handler_storage.py` dispatch (auto-detected by `_extract_storage_routes`), (b) `deploy_manifest.json` `polypaint-storage` `routes[]` (`:97-132`), (c) the frontend `lambdaPost('storage',…,'/X')` call (`js/03-program-modals.js`), then `api_manifest.py --write`; `--check` fails CI otherwise. New migrate/translate handlers also need payload-contract tests (api_manifest pins routes, not payload shapes).
 
 ### 4.5 Legacy tab UI (per-kind — CR18 §4.4)
-A tab that loads an old saved program and runs `translate_from_old`, **per-kind**: **coeff/param → migrated text form** (Phase 3 param parser; coeff already has one); **root → migrated chain/array form** (+ optional read-only text export — *no* source parser, §3.2); **solve-score → chain + `program_spec` preview** (no text source). Save the v2 copy under the versioned id. **Root needs a new saved-program kind** (it isn't one today — `handler_storage.py` has only coeff/param/solve-score prefixes) — add the prefix + handlers, or store migrated root chains under a render-side home. UI plugs into `js/03-program-modals.js` (the per-kind fetch/list/save/delete call sites).
+A tab that loads an old saved program and runs `translate_from_old`, **per-kind**: **coeff/param → migrated text form** (Phase 3 param parser; coeff already has one); **root → migrated chain/array form** (+ optional read-only text export — *no* source parser, §3.2); **solve-score → chain + `program_spec` preview** (no text source). Save the v2 copy under the versioned id. **Decided: root is NOT promoted to a saved-program kind** — its `root_transforms` live embedded in render/palette artifacts and migrate **in place** under the v2 palette identity (no new `polypaint/root-programs/` prefix, no root migrate route, no root entry in the Legacy tab's program list). So the Legacy tab lists/migrates only coeff/param/solve-score. UI plugs into `js/03-program-modals.js` (the per-kind fetch/list/save/delete call sites).
 
 ### 4.6 Opcode-renumber drain (DD2)
 Step Functions forwards compiled `coeff_program`/`param_program` straight into native (`compute_workflow.asl.json.template:211,278`). Deploy so no in-flight execution straddles the renumbering (drain window, or translate at the Lambda boundary). The `scalar_exprs` form is *not* part of this drain (permanent wire, DD1) — only the opcode numbering changes.

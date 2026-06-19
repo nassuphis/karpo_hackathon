@@ -353,7 +353,6 @@ const _solveScoreGenericMetricNames = _solveScoreMetricNames.filter(name => {
     return sources.includes('slv') && sources.includes('cf');
 });
 const _solveScoreGenericSourceChoices = ['slv', 'cf', 'slv-1', 'cf-1'];
-const _solveScoreSourceChoices = ['slv', 'cf', 'pm'];
 const _solveScoreUnarySpecs = {
     omega_cosine: { arity: 1, params: [{ ph: 'w', def: '1' }, { ph: 'phase', def: '0' }], tooltip: 'unary stack op: g(u)=0.5*(cos(omega*2*pi*u+phase)+1)' },
     sawtooth: { arity: 1, params: [{ ph: 'mult', def: '10' }], tooltip: 'unary stack op: frac(score*mult)' },

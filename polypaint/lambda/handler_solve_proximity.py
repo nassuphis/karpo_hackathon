@@ -395,11 +395,6 @@ def _compile_request_chain(params, metric, *, default_metric="proximity"):
     )
 
 
-def _reject_lagged_unsupported_phase(compiled, phase):
-    if compiled.get("uses_lag"):
-        raise RuntimeError(f"lagged solve-score refs are not supported by {phase} in v1")
-
-
 def _validate_artifact_chain_fingerprint(data, compiled, label):
     actual = str((data or {}).get("chain_fingerprint") or "").strip()
     if not actual:

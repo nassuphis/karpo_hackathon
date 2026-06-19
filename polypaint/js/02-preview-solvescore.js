@@ -723,12 +723,6 @@ function _displaySolveScoreEntry(item) {
     return _displayTransformEntry(item);
 }
 
-function _serializeNamedChain(chain) {
-    return (Array.isArray(chain) ? chain : []).map(item =>
-        item && item.params && item.params.length ? [item.name, ...item.params] : item.name
-    );
-}
-
 function _solveScorePrefixForWhich(which) {
     return which === 'palette-ss' ? 'palette' : 'render';
 }

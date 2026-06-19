@@ -15,8 +15,8 @@ import numpy as np
 
 # --------------- Load Python poly functions from poly500.py ---------------
 
-POLY_SRC = os.path.join(os.path.dirname(__file__), "lambda", "poly500.py")
-SWEEP_BIN = os.path.join(os.path.dirname(__file__), "lambda", "sweep_test")
+POLY_SRC = os.path.join(os.path.dirname(__file__), "..", "lambda", "poly500.py")
+SWEEP_BIN = os.path.join(os.path.dirname(__file__), "..", "lambda", "sweep_test")
 
 # Parse source with ast, extract individual function defs
 with open(POLY_SRC, "r") as f:

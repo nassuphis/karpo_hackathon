@@ -2,7 +2,7 @@
 Test all transpiled poly400 (301-400) and poly500 (401-500) functions.
 Compares C sweep pipeline vs Python reference via pixel overlap.
 
-Run: cd polypaint/lambda && uv run python test_transpiler_all.py
+Run: uv run python test-visual/lambda-manual/test_transpiler_all.py
 """
 import ast
 import json
@@ -14,7 +14,8 @@ import os
 import textwrap
 import numpy as np
 
-SWEEP = "./sweep_test"
+LAMBDA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "lambda"))
+SWEEP = os.path.join(LAMBDA_DIR, "sweep_test")
 IMG_SIZE = 1000
 EXTENT = 2.0
 N1, N2 = 100, 100
@@ -127,8 +128,8 @@ def run_python_pipeline(func):
 def main():
     # Test poly400 (301-400) and poly500 (401-500)
     batches = [
-        ("poly400.py", range(301, 401)),
-        ("poly500.py", range(401, 501)),
+        (os.path.join(LAMBDA_DIR, "poly400.py"), range(301, 401)),
+        (os.path.join(LAMBDA_DIR, "poly500.py"), range(401, 501)),
     ]
 
     all_results = []

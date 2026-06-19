@@ -12,7 +12,8 @@ import sys
 import time
 import numpy as np
 
-SWEEP = "./sweep_test"
+LAMBDA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "lambda"))
+SWEEP = os.path.join(LAMBDA_DIR, "sweep_test")
 N1, N2 = 100, 100
 EXTENT = 2.0  # [-2,2] x [-2,2]
 IMG_SIZE = 1000
@@ -157,7 +158,7 @@ def main():
     func_names = [f"poly_{i}" for i in range(301, 326)]
 
     print("Loading Python functions from poly400.py...")
-    py_funcs = load_poly_funcs("poly400.py", set(func_names))
+    py_funcs = load_poly_funcs(os.path.join(LAMBDA_DIR, "poly400.py"), set(func_names))
     print(f"  Loaded: {sorted(py_funcs.keys())}\n")
 
     results = []

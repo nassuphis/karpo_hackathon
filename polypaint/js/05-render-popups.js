@@ -739,20 +739,6 @@ function _normalizeRasterInputMode(value) {
     return 'tmpfile';
 }
 
-function _normalizePixelBinFragmentMode(value) {
-    const mode = String(value || 'sparse_chunks').trim().toLowerCase();
-    if (mode === 'dense_grouped' || mode === 'dense-grouped' || mode === 'grouped_dense') return 'dense_grouped';
-    return 'sparse_chunks';
-}
-
-function _normalizeRasterBinGroupSize(value) {
-    const raw = String(value ?? '').trim();
-    if (!raw) return '';
-    let n = parseInt(raw, 10);
-    if (!Number.isFinite(n)) return '';
-    return Math.max(1, Math.min(1000, n));
-}
-
 function _normalizeRenderMtSectionMode(value) {
     const mode = String(value || 'physical_chunks').trim().toLowerCase();
     if (mode === 'logical_sections' || mode === 'logical_sections_auto') return mode;
@@ -1222,10 +1208,6 @@ async function openComputeSolverPopup(solverMode) {
     void _refreshComputeMtProbe();
     const inputEl = document.getElementById('compute-mt-fused-threads');
     if (inputEl && typeof inputEl.focus === 'function') inputEl.focus();
-}
-
-async function openComputeMtPopup() {
-    return openComputeSolverPopup('aberth_mt');
 }
 
 function _visiblePdfColorSpreadCatalog() {

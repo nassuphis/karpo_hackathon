@@ -11,8 +11,9 @@ import numpy as np
 from pathlib import Path
 
 WORKDIR = Path(__file__).parent
-SWEEP_BIN = WORKDIR / "lambda" / "sweep_test"
-POLY_SRC = WORKDIR / "lambda" / "poly300.py"
+LAMBDA_DIR = WORKDIR.parent / "lambda"
+SWEEP_BIN = LAMBDA_DIR / "sweep_test"
+POLY_SRC = LAMBDA_DIR / "poly300.py"
 
 N1, N2 = 100, 100
 IMG_SIZE = 1000

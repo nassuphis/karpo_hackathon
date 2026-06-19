@@ -16,7 +16,3 @@ except ImportError:  # pragma: no cover - generator should create this before pa
     LONG_PALETTE_NAMES = set()
 
 VALID_PALETTE_NAMES = BUILTIN_PALETTE_NAMES | set(TRI_PALETTE_NAMES) | set(LONG_PALETTE_NAMES)
-
-
-def is_valid_palette_name(name):
-    return name in VALID_PALETTE_NAMES

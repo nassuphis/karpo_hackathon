@@ -16,8 +16,8 @@ FUNCTIONS = [f"poly_{n}" for n in range(146, 161)]
 N1, N2 = 100, 100
 CANVAS = 1000
 EXTENT = 2.0  # [-2, 2] x [-2, 2]
-SWEEP_BIN = os.path.join(os.path.dirname(__file__), "lambda", "sweep_test")
-POLY200_PATH = os.path.join(os.path.dirname(__file__), "lambda", "poly200.py")
+SWEEP_BIN = os.path.join(os.path.dirname(__file__), "..", "lambda", "sweep_test")
+POLY200_PATH = os.path.join(os.path.dirname(__file__), "..", "lambda", "poly200.py")
 
 
 # ── Extract Python functions from poly200.py using ast ──────────────────────

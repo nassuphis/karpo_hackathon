@@ -22,7 +22,6 @@ from shared import (
     tmp_space_stats,
 )
 from coeff_program_chain import compile_coeff_program_chain
-from coeff_program_source import coeff_source_text_from_payload, parse_coeff_program_source
 from pipeline_programs import (
     CoeffSourceCompileError,
     coeff_source_text_for_run,
@@ -30,6 +29,12 @@ from pipeline_programs import (
     pipeline_mode_from_params,
 )
 from param_program_chain import compile_param_program_chain
+from program_compile_helpers import (
+    coeff_program_macro_resolver,
+    compiled_coeff_program_payload as _compiled_coeff_program_payload,
+    compiled_param_program_payload as _compiled_param_program_payload,
+    param_program_macro_resolver,
+)
 
 
 SWEEP_COEFFGEN = os.path.join(os.path.dirname(__file__), "sweep_coeffgen")
@@ -42,8 +47,6 @@ MAX_PREVIEW_PIX = 4096
 MAX_COEFFS_EST = 256
 TMP_HEADROOM = 0.8
 ROOTS_CM_SYNC_MAX_N = int(os.environ.get("COMPUTE_PREVIEW_ROOTS_CM_MAX_N", "128"))
-PARAM_PROGRAMS_PREFIX = "polypaint/param-programs/"
-COEFF_PROGRAMS_PREFIX = "polypaint/coeff-programs/"
 _s3 = None
 
 
@@ -92,89 +95,16 @@ def _preview_context(*, solver_mode, n_preview, function_name, coeff_transforms,
     )
 
 
-# _pipeline_mode_from_params moved to pipeline_programs (shared with plan
-# and coeffgen so the mode rules cannot drift — CR14).
-
-
-def _compiled_coeff_program_payload(compiled):
-    return {
-        "version": compiled["version"],
-        "fingerprint": compiled["fingerprint"],
-        "display": compiled["display"],
-        "stack_max": compiled["stack_max"],
-        "token_count": compiled["token_count"],
-        "scalar_expr_count": compiled["scalar_expr_count"],
-        "uses_legacy_chain_equivalent": compiled["uses_legacy_chain_equivalent"],
-        "tokens": compiled["tokens"],
-        "scalar_exprs": compiled["scalar_exprs"],
-    }
-
-
-def _compiled_param_program_payload(compiled):
-    payload = {
-        "version": compiled["version"],
-        "fingerprint": compiled["fingerprint"],
-        "display": compiled["display"],
-        "stack_max": compiled["stack_max"],
-        "token_count": compiled["token_count"],
-        "uses_legacy_fast_path": compiled["uses_legacy_fast_path"],
-        "tokens": compiled["tokens"],
-    }
-    scalar_exprs = compiled.get("scalar_exprs") or []
-    if scalar_exprs:
-        payload["scalar_exprs"] = scalar_exprs
-    return payload
-
-
-def _is_missing_s3_error(exc):
-    response = getattr(exc, "response", {}) or {}
-    code = str((response.get("Error") or {}).get("Code") or "")
-    return code in {"NoSuchKey", "NoSuchBucket", "404", "NotFound"}
-
-
-def _read_saved_program_source_chain(prefix, program_kind, program_id):
-    macro_id = str(program_id or "").strip()
-    if not macro_id:
-        raise RuntimeError(f"{program_kind} macro name is required")
-    key = f"{prefix}{macro_id}.json"
-    try:
-        obj = _s3_client().get_object(Bucket=BUCKET, Key=key)
-    except Exception as exc:
-        if _is_missing_s3_error(exc):
-            raise RuntimeError(f"{program_kind} macro not found: {macro_id}") from None
-        raise
-    raw = obj["Body"].read()
-    try:
-        payload = json.loads(raw) if raw else {}
-    except Exception as exc:
-        raise RuntimeError(f"{program_kind} macro is not valid JSON: {macro_id}") from exc
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"{program_kind} macro must be a JSON object: {macro_id}")
-    if program_kind == "coeff program":
-        source_text = coeff_source_text_from_payload(payload)
-        if source_text is not None:
-            parsed = parse_coeff_program_source(source_text)
-            return parsed["chain"]
-    chain = payload.get("chain")
-    if not isinstance(chain, list):
-        raise RuntimeError(f"{program_kind} macro chain must be a JSON array: {macro_id}")
-    return chain
+# _pipeline_mode_from_params and compile payload helpers are shared with plan
+# and coeffgen so the mode/payload rules cannot drift — CR14/CR17.
 
 
 def _param_program_macro_resolver():
-    return lambda macro_id: _read_saved_program_source_chain(
-        PARAM_PROGRAMS_PREFIX,
-        "param program",
-        macro_id,
-    )
+    return param_program_macro_resolver(s3_client_factory=_s3_client)
 
 
 def _coeff_program_macro_resolver():
-    return lambda macro_id: _read_saved_program_source_chain(
-        COEFF_PROGRAMS_PREFIX,
-        "coeff program",
-        macro_id,
-    )
+    return coeff_program_macro_resolver(s3_client_factory=_s3_client)
 
 
 def _chain_has_transform(chain, name):

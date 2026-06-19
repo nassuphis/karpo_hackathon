@@ -324,10 +324,6 @@ def _format_quantile_percent(value):
     return _format_number(_validate_quantile_percent(value))
 
 
-def _quantile_percent_to_fraction(value):
-    return _validate_quantile_percent(value) / 100.0
-
-
 def _normalize_chain_item(item):
     if isinstance(item, str):
         name = str(item).strip()
@@ -701,10 +697,6 @@ def solve_score_uses_non_solve_sources(compiled_or_metrics):
     if not isinstance(metrics, list):
         return False
     return any(_validate_metric_source(metric.get("source", "slv")) != "slv" for metric in metrics)
-
-
-def solve_score_uses_lag(compiled):
-    return bool(isinstance(compiled, dict) and compiled.get("uses_lag"))
 
 
 def solve_score_lag_prelude_by_source(compiled):

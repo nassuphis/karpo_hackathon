@@ -678,10 +678,6 @@ function _serializeParamProgramChain() {
     }).filter(Boolean);
 }
 
-function _hasParamProgramChain() {
-    return _serializeParamProgramChain().length > 0;
-}
-
 function _selectedParamPipelineMode() {
     const el = document.getElementById('param-pipeline-mode');
     const raw = el && el.value ? el.value : _paramPipelineMode;
@@ -839,12 +835,6 @@ function _attachCoeffProgramSourcePayload(payload) {
     const sourceText = _effectiveCoeffProgramSourceTextForCompute();
     if (sourceText !== null) payload.coeff_program_source_text = sourceText;
     return payload;
-}
-
-function _displayParamProgramEntry(item) {
-    if (!item || !item.name) return '';
-    const params = Array.isArray(item.params) ? item.params.filter(v => String(v || '').trim() !== '') : [];
-    return params.length ? `${item.name}(${params.join(',')})` : item.name;
 }
 
 function _paramProgramStatus(message, isError = false) {

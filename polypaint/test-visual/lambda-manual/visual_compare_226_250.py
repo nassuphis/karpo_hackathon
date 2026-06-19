@@ -32,8 +32,9 @@ import numpy as np
 N1, N2 = 100, 100
 IMG_W, IMG_H = 1000, 1000
 EXTENT = 2.0  # [-2, 2] x [-2, 2]
-SWEEP = "./sweep_test"
-POLY_SRC = "poly300.py"
+LAMBDA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "lambda"))
+SWEEP = os.path.join(LAMBDA_DIR, "sweep_test")
+POLY_SRC = os.path.join(LAMBDA_DIR, "poly300.py")
 FUNCS = [f"poly_{n}" for n in range(226, 251)]
 
 

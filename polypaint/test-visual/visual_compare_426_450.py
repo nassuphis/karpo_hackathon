@@ -18,8 +18,9 @@ import textwrap
 import numpy as np
 from pathlib import Path
 
-SWEEP = "./lambda/sweep_test"
-POLY_SRC = "./lambda/poly500.py"
+LAMBDA_DIR = Path(__file__).resolve().parent.parent / "lambda"
+SWEEP = str(LAMBDA_DIR / "sweep_test")
+POLY_SRC = str(LAMBDA_DIR / "poly500.py")
 IMG_SIZE = 1000
 EXTENT = 2.0  # [-2, 2] x [-2, 2]
 N1, N2 = 100, 100

@@ -25,8 +25,8 @@ import textwrap
 import numpy as np
 import os
 
-SWEEP = os.path.join(os.path.dirname(__file__), "lambda", "sweep_test")
-POLY_SRC = os.path.join(os.path.dirname(__file__), "lambda", "poly300.py")
+SWEEP = os.path.join(os.path.dirname(__file__), "..", "lambda", "sweep_test")
+POLY_SRC = os.path.join(os.path.dirname(__file__), "..", "lambda", "poly300.py")
 
 # Image parameters
 IMG_SIZE = 1000

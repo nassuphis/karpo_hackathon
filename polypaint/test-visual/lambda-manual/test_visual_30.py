@@ -5,11 +5,12 @@ Runs C pipeline (coeffgen -> solve -> read roots -> rasterize) and Python pipeli
 (extract function from poly200.py -> evaluate -> np.roots -> rasterize), then
 compares overlap of rasterized pixels on a 1000x1000 grid with extent [-2,2]x[-2,2].
 
-Run: cd polypaint/lambda && uv run python test_visual_30.py
+Run: uv run python test-visual/lambda-manual/test_visual_30.py
 """
 import ast
 import json
 import math
+import os
 import struct
 import subprocess
 import sys
@@ -17,7 +18,8 @@ import textwrap
 import time
 import numpy as np
 
-SWEEP = "./sweep_test"
+LAMBDA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "lambda"))
+SWEEP = os.path.join(LAMBDA_DIR, "sweep_test")
 N1, N2 = 100, 100
 IMG_SIZE = 1000
 EXTENT = 2.0  # [-2, 2] x [-2, 2]
@@ -195,7 +197,7 @@ def main():
     print()
 
     # Extract Python functions
-    py_path = "poly200.py"
+    py_path = os.path.join(LAMBDA_DIR, "poly200.py")
     func_sources = extract_python_functions(py_path, set(FUNCTIONS))
     ns = build_python_namespace()
 

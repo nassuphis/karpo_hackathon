@@ -18,6 +18,7 @@ import boto3
 
 from shared import BUCKET, parse_body, ok_response, imgpipe_env
 from param_program_chain import compile_param_program_chain
+from program_compile_helpers import compiled_param_program_payload as _compiled_param_program_payload
 
 s3 = boto3.client("s3")
 SWEEP = os.path.join(os.path.dirname(__file__), "sweep")
@@ -25,22 +26,6 @@ BILEVEL_MERGE = os.path.join(os.path.dirname(__file__), "bilevel_merge")
 PRESIGN_EXPIRY = 3600
 MAX_SYNC_PARAM_DEBUG_N = 512
 MAX_SYNC_PARAM_DEBUG_PIX = 2048
-
-
-def _compiled_param_program_payload(compiled):
-    payload = {
-        "version": compiled["version"],
-        "fingerprint": compiled["fingerprint"],
-        "display": compiled["display"],
-        "stack_max": compiled["stack_max"],
-        "token_count": compiled["token_count"],
-        "uses_legacy_fast_path": compiled["uses_legacy_fast_path"],
-        "tokens": compiled["tokens"],
-    }
-    scalar_exprs = compiled.get("scalar_exprs") or []
-    if scalar_exprs:
-        payload["scalar_exprs"] = scalar_exprs
-    return payload
 
 
 def error_response(status_code, message):

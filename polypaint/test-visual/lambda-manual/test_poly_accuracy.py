@@ -1,7 +1,7 @@
 """
 Test that transpiled C poly functions match the Python originals.
 
-Run: cd polypaint/lambda && uv run python test_poly_accuracy.py
+Run: uv run python test-visual/lambda-manual/test_poly_accuracy.py
 """
 import json
 import os
@@ -10,7 +10,7 @@ import subprocess
 import sys
 import numpy as np
 
-_LAMBDA_DIR = os.path.dirname(__file__)
+_LAMBDA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "lambda"))
 
 
 def poly_16(t1, t2):

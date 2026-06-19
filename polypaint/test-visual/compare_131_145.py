@@ -10,8 +10,8 @@ import os
 import numpy as np
 from PIL import Image
 
-SWEEP_BIN = os.path.join(os.path.dirname(__file__), "lambda", "sweep_test")
-POLY_SRC = os.path.join(os.path.dirname(__file__), "lambda", "poly200.py")
+SWEEP_BIN = os.path.join(os.path.dirname(__file__), "..", "lambda", "sweep_test")
+POLY_SRC = os.path.join(os.path.dirname(__file__), "..", "lambda", "poly200.py")
 
 N1, N2 = 100, 100
 IMG_SIZE = 1000

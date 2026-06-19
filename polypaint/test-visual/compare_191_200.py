@@ -16,8 +16,8 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-SWEEP_BIN = os.path.join(os.path.dirname(__file__), "lambda", "sweep_test")
-POLY_PY = os.path.join(os.path.dirname(__file__), "lambda", "poly200.py")
+SWEEP_BIN = os.path.join(os.path.dirname(__file__), "..", "lambda", "sweep_test")
+POLY_PY = os.path.join(os.path.dirname(__file__), "..", "lambda", "poly200.py")
 
 CANVAS_SIZE = 1000
 EXTENT = 2.0  # [-2, 2] x [-2, 2]

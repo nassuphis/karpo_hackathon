@@ -543,20 +543,6 @@ function _visibleBuiltinPaletteCatalog() {
     return BUILTIN_PALETTE_ENTRIES.filter(entry => entry.search_text.includes(filter));
 }
 
-function _palettePreviewCss(name) {
-    const builtin = _builtinPaletteEntryByName(name);
-    if (builtin) return builtin.gradient_css;
-    if (typeof name === 'string' && name.startsWith('tri_')) {
-        const tri = _triPaletteEntryByName(name.slice(4));
-        if (tri) return tri.gradient_css;
-    }
-    if (typeof name === 'string' && name.startsWith('long_')) {
-        const longEntry = _longPaletteEntryByName(name.slice(5));
-        if (longEntry) return longEntry.gradient_css;
-    }
-    return '#555';
-}
-
 function _popupModeLabel(mode) {
     return mode === 'proximity' ? 'Root proximity'
         : mode === 'solve_score' ? 'Solve score'
@@ -634,51 +620,6 @@ function _renderPaletteRow(mode) {
 
     container.replaceChildren();
     children.forEach(child => container.appendChild(child));
-}
-
-function _renderAllPaletteRows() {
-    _syncBuiltinDefaults();
-    _syncTriDefaults();
-    _syncLongDefaults();
-    _renderPaletteRow('proximity');
-    _renderPaletteRow('solve_score');
-    _renderPaletteRow('palette_tab');
-}
-
-function _solveScoreOmegaEnabled(prefix) {
-    const which = _solveScoreWhichForPrefix(prefix);
-    try {
-        return !!_compileSolveScoreChain(_chainForWhich(which), prefix === 'palette' ? paletteTabMetric : renderSolveMetric).omega_enabled;
-    } catch (e) {
-        const el = document.getElementById(`${prefix}-solve-score-omega-enabled`);
-        return el ? String(el.value || '').trim().toLowerCase() !== 'false' : false;
-    }
-}
-
-function _setSolveScoreOmegaEnabled(prefix, enabled) {
-    const which = _solveScoreWhichForPrefix(prefix);
-    const chain = _normalizeSolveScoreChain(_chainForWhich(which), prefix === 'palette' ? paletteTabMetric : renderSolveMetric);
-    const removedOmega = [...chain].reverse().find(item => item.name === 'omega_cosine');
-    const next = chain.filter(item => item.name !== 'omega_cosine');
-    if (enabled) {
-        const omegaEl = document.getElementById(`${prefix}-solve-score-omega`);
-        const phaseEl = document.getElementById(`${prefix}-solve-score-omega-phase`);
-        const omega = Number(omegaEl && omegaEl.value);
-        const phase = Number(phaseEl && phaseEl.value);
-        const preservedPhase = removedOmega && removedOmega.params && removedOmega.params.length > 1
-            ? Number(removedOmega.params[1])
-            : phase;
-        next.push({
-            name: 'omega_cosine',
-            params: [
-                String(Number.isFinite(omega) ? omega : 1),
-                String(Number.isFinite(preservedPhase) ? preservedPhase : 0),
-            ],
-        });
-    }
-    const target = _chainForWhich(which);
-    target.splice(0, target.length, ...next);
-    _renderChips(which);
 }
 
 function _syncSolveScoreOmegaUi(prefix) {
@@ -911,12 +852,6 @@ function setSolveMetric(name) {
     const legacy = _legacySolveScoreState('render');
     _setSolveScoreChainFromLegacy('render', name, legacy.quantile * 100, legacy.omega, legacy.omega_enabled, legacy.omega_phase);
     setColorMode('solve_score');
-}
-
-function setPaletteMetric(name) {
-    if (!_solveScoreMetricSet.has(name)) return;
-    const legacy = _legacySolveScoreState('palette');
-    _setSolveScoreChainFromLegacy('palette', name, legacy.quantile * 100, legacy.omega, legacy.omega_enabled, legacy.omega_phase);
 }
 
 function _setTriPaletteForMode(mode, triName, activate = true) {

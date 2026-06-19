@@ -1403,13 +1403,6 @@ function _scheduleDeepZoomViewportReadout() {
     });
 }
 
-async function openDeepZoomViewer(dziUrl) {
-    switchTab('deepzoom');
-    if (dziUrl) {
-        viewDeepZoom(dziUrl);
-    }
-}
-
 async function loadDeepZoomInventory(options = {}) {
     const container = document.getElementById('deepzoom-inventory');
     const statusEl = document.getElementById('deepzoom-status');

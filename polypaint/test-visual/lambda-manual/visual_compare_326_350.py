@@ -17,18 +17,19 @@ import time
 
 import numpy as np
 
-SWEEP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sweep_test")
+LAMBDA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "lambda"))
+SWEEP = os.path.join(LAMBDA_DIR, "sweep_test")
 N1, N2 = 100, 100
 IMG_SIZE = 1000
 EXTENT = 2.0  # [-2, 2] x [-2, 2]
 STUBBED = {328, 332, 339, 347, 349}
 
-POLY_SOURCE = "poly400.py"
+POLY_SOURCE = os.path.join(LAMBDA_DIR, "poly400.py")
 
 
 def load_poly_func(func_name):
     """Load a single poly function from poly400.py using ast.parse + exec."""
-    with open(os.path.join(os.path.dirname(__file__), POLY_SOURCE), "r") as f:
+    with open(POLY_SOURCE, "r") as f:
         source = f.read()
 
     tree = ast.parse(source)

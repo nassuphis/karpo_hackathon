@@ -1,6 +1,6 @@
 # `ops_xfrm.py` Transform Reference
 
-This document translates the transforms in [ops_xfrm.py](/Users/nicknassuphis/karpo_hackathon/polypaint/lambda/ops_xfrm.py) into the `t1, t2` style used in this project.
+This document translates the transforms in [ops_xfrm.py](/Users/nicknassuphis/karpo_hackathon/polypaint/test-visual/prototypes/ops_xfrm.py) into the `t1, t2` style used in this project.
 
 The source file uses the signature:
 

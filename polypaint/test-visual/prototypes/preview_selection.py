@@ -1,8 +1,9 @@
 """Generate side-by-side C vs Python comparison PNGs for selected functions."""
-import ast, json, subprocess, textwrap, numpy as np
+import ast, json, os, subprocess, textwrap, numpy as np
 from PIL import Image
 
-SWEEP = "./sweep_test"
+LAMBDA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "lambda"))
+SWEEP = os.path.join(LAMBDA_DIR, "sweep_test")
 IMG_SIZE = 500
 EXTENT = 2.0
 N1, N2 = 100, 100
@@ -166,9 +167,9 @@ def main():
 
     py_funcs = {}
     if py400_names:
-        py_funcs.update(load_poly_funcs("poly400.py", py400_names))
+        py_funcs.update(load_poly_funcs(os.path.join(LAMBDA_DIR, "poly400.py"), py400_names))
     if py500_names:
-        py_funcs.update(load_poly_funcs("poly500.py", py500_names))
+        py_funcs.update(load_poly_funcs(os.path.join(LAMBDA_DIR, "poly500.py"), py500_names))
 
     paths = []
     for name, src, desc in SELECTION:

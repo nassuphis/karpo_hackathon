@@ -2,7 +2,7 @@
 Visual comparison: C sweep pipeline vs Python reference for poly_351..poly_375.
 Generates 1000x1000 root density images and computes pixel overlap.
 
-Run: cd polypaint/lambda && uv run python visual_cmp_351_375.py
+Run: uv run python test-visual/lambda-manual/visual_cmp_351_375.py
 """
 import ast
 import json
@@ -15,7 +15,8 @@ import time
 
 import numpy as np
 
-SWEEP = "./sweep_test"
+LAMBDA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "lambda"))
+SWEEP = os.path.join(LAMBDA_DIR, "sweep_test")
 EXTENT = 2.0  # [-2,2] x [-2,2]
 IMG_SIZE = 1000
 N1 = 100
@@ -160,7 +161,7 @@ def run_python_pipeline(func):
 
 def main():
     print("Loading Python poly functions from poly400.py...")
-    func_sources = load_poly_functions("poly400.py", set(POLY_RANGE))
+    func_sources = load_poly_functions(os.path.join(LAMBDA_DIR, "poly400.py"), set(POLY_RANGE))
     print(f"  Found {len(func_sources)} functions")
 
     results = []

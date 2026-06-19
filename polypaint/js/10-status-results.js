@@ -834,10 +834,6 @@ async function runRenderPaletteArtifact() {
     }
 }
 
-async function runPaletteDebug() {
-    return runRenderPaletteArtifact();
-}
-
 // ── Render Observer ──────────────────────────────────────────────────────
 
 function startActiveRenderObserver() {

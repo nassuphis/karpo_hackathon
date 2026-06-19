@@ -211,59 +211,6 @@ def build_physical_section_items(chunk_items):
     return out
 
 
-def _source_segments_from_chunk_items(items, *, family, degree, n_coeffs):
-    if family == "slv":
-        row_bytes = root_row_bytes(degree)
-        key_field = "bin_key"
-        size_field = "bin_size"
-        source_start_field = None
-        solve_count_field = "step_count"
-    elif family == "cf":
-        row_bytes = coeff_row_bytes(n_coeffs)
-        key_field = "coeffs_key"
-        size_field = "coeffs_bin_size"
-        source_start_field = None
-        solve_count_field = "step_count"
-    elif family == "pm":
-        row_bytes = param_row_bytes()
-        key_field = "params_key"
-        size_field = "params_bin_size"
-        source_start_field = "params_step_start"
-        solve_count_field = "params_step_count"
-    else:
-        raise RuntimeError(f"Unknown source family: {family}")
-
-    segments = []
-    for idx, item in enumerate(items):
-        key = str(item.get(key_field) or "").strip()
-        if not key:
-            continue
-        solve_start = item.get("step_start")
-        solve_count = item.get(solve_count_field)
-        if solve_start in ("", None) or solve_count in ("", None):
-            continue
-        solve_start = int(solve_start)
-        solve_count = int(solve_count)
-        if solve_count <= 0:
-            continue
-        source_solve_start = int(item.get(source_start_field) or 0) if source_start_field else 0
-        byte_size = item.get(size_field)
-        if byte_size in ("", None):
-            byte_size = solve_count * row_bytes
-        segments.append({
-            "storage_id": f"{family}_{idx:04d}",
-            "key": key,
-            "solve_start": solve_start,
-            "solve_count": solve_count,
-            "source_solve_start": source_solve_start,
-            "byte_size": int(byte_size),
-        })
-    return {
-        "row_bytes": row_bytes,
-        "segments": segments,
-    }
-
-
 def _compact_manifest_source(items, *, family, degree, n_coeffs, include=True):
     if family == "slv":
         row_bytes = root_row_bytes(degree)

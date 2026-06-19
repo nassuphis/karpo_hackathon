@@ -962,7 +962,7 @@ mkdir -p "$COEFFGEN_DIR"
 cp lambda/handler_coeffgen.py lambda/shared.py lambda/compute_fused.py \
    lambda/param_program_chain.py lambda/param_legacy_registry.json \
    lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
-   lambda/pipeline_programs.py "$COEFFGEN_DIR/"
+   lambda/pipeline_programs.py lambda/program_compile_helpers.py "$COEFFGEN_DIR/"
 cp lambda/sweep_coeffgen "$COEFFGEN_DIR/"
 chmod +x "$COEFFGEN_DIR"/sweep_coeffgen
 cd "$COEFFGEN_DIR" && zip -FS -r9 /tmp/polypaint-coeffgen.zip . -q && cd "$SCRIPT_DIR"
@@ -1032,7 +1032,7 @@ mkdir -p "$COMPUTE_PREVIEW_DIR"
 cp lambda/handler_compute_preview.py lambda/shared.py \
    lambda/param_program_chain.py lambda/param_legacy_registry.json \
    lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
-   lambda/pipeline_programs.py "$COMPUTE_PREVIEW_DIR/"
+   lambda/pipeline_programs.py lambda/program_compile_helpers.py "$COMPUTE_PREVIEW_DIR/"
 cp lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$COMPUTE_PREVIEW_DIR/"
 chmod +x "$COMPUTE_PREVIEW_DIR"/sweep_coeffgen "$COMPUTE_PREVIEW_DIR"/sweep_mt "$COMPUTE_PREVIEW_DIR"/sweep_cm
 cd "$COMPUTE_PREVIEW_DIR" && zip -FS -r9 /tmp/polypaint-compute-preview.zip . -q && cd "$SCRIPT_DIR"
@@ -1055,6 +1055,8 @@ rm -rf "$PARAM_DEBUG_DIR"
 mkdir -p "$PARAM_DEBUG_DIR"
 cp lambda/handler_param_debug.py lambda/shared.py \
    lambda/param_program_chain.py lambda/param_legacy_registry.json \
+   lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
+   lambda/program_compile_helpers.py \
    "$PARAM_DEBUG_DIR/"
 cp lambda/sweep lambda/bilevel_merge "$PARAM_DEBUG_DIR/"
 chmod +x "$PARAM_DEBUG_DIR"/sweep "$PARAM_DEBUG_DIR"/bilevel_merge
@@ -1324,7 +1326,7 @@ mkdir -p "$COMPUTE_PLAN_DIR"
 cp lambda/handler_compute_plan.py lambda/shared.py lambda/compute_fused.py \
    lambda/param_program_chain.py lambda/param_legacy_registry.json \
    lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
-   lambda/pipeline_programs.py "$COMPUTE_PLAN_DIR/"
+   lambda/pipeline_programs.py lambda/program_compile_helpers.py "$COMPUTE_PLAN_DIR/"
 cd "$COMPUTE_PLAN_DIR" && zip -FS -r9 /tmp/polypaint-compute-plan.zip . -q && cd "$SCRIPT_DIR"
 echo "  CmpPlan: $(du -h /tmp/polypaint-compute-plan.zip | cut -f1)  (plan + finalize)"
 

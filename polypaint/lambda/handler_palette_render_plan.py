@@ -341,12 +341,6 @@ def _artifact_meta_quantile(meta, field_name):
     return float(raw)
 
 
-def _artifact_meta_omega_enabled(meta, field_name):
-    if field_name not in meta:
-        return None
-    return _validate_omega_enabled(meta.get(field_name))
-
-
 def _resolve_color_lineage(job_id, artifact_id):
     selected = _load_color_artifact(job_id, artifact_id)
     current = selected

@@ -2,7 +2,7 @@
 Visual comparison tests for poly_376 through poly_400.
 Compares C sweep pipeline vs Python reference (roots plotted on 1000x1000 grid).
 
-Run: cd polypaint/lambda && uv run python test_visual_376_400.py
+Run: uv run python test-visual/lambda-manual/test_visual_376_400.py
 """
 import ast
 import json
@@ -13,14 +13,15 @@ import os
 import numpy as np
 import textwrap
 
-SWEEP = "./sweep_test"
+LAMBDA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "lambda"))
+SWEEP = os.path.join(LAMBDA_DIR, "sweep_test")
 IMG_SIZE = 1000
 EXTENT = 2.0  # [-2, 2] x [-2, 2]
 N1, N2 = 100, 100
 
 def load_poly_funcs_from_source():
     """Parse poly400.py source and extract poly_376..poly_400 functions."""
-    src_path = os.path.join(os.path.dirname(__file__), "poly400.py")
+    src_path = os.path.join(LAMBDA_DIR, "poly400.py")
     with open(src_path, "r") as f:
         source = f.read()
 

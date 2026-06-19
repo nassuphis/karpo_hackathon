@@ -6,7 +6,7 @@ For each function:
   Py: load func from poly500.py via ast, 100x100 grid, unit_circle params, reverse coeffs, np.roots, rasterize
   Compare: pixel overlap %
 
-Run: cd polypaint/lambda && uv run python visual_compare_476_500.py
+Run: uv run python test-visual/lambda-manual/visual_compare_476_500.py
 """
 import ast
 import json
@@ -18,7 +18,8 @@ import os
 import textwrap
 import numpy as np
 
-SWEEP = "./sweep_test"
+LAMBDA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "lambda"))
+SWEEP = os.path.join(LAMBDA_DIR, "sweep_test")
 IMG_SIZE = 1000
 EXTENT = 2.0  # [-2, 2] x [-2, 2]
 N1, N2 = 100, 100
@@ -193,7 +194,7 @@ def run_python_pipeline(func):
 
 def main():
     func_names = [f"poly_{i}" for i in range(476, 501)]
-    py_funcs = load_poly_funcs("poly500.py", set(func_names))
+    py_funcs = load_poly_funcs(os.path.join(LAMBDA_DIR, "poly500.py"), set(func_names))
 
     results = []
     print(f"{'Function':<12} {'C pixels':>10} {'Py pixels':>10} {'Overlap':>10} {'Overlap%':>10}")

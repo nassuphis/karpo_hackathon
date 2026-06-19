@@ -15,6 +15,7 @@ Reports: C pixels, Py pixels, overlap % for each function. Summary table at end.
 import ast
 import json
 import math
+import os
 import struct
 import subprocess
 import sys
@@ -25,8 +26,9 @@ import numpy as np
 
 warnings.filterwarnings("ignore")
 
-SWEEP = "./sweep_test"
-POLY_SRC = "./poly300.py"
+LAMBDA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "lambda"))
+SWEEP = os.path.join(LAMBDA_DIR, "sweep_test")
+POLY_SRC = os.path.join(LAMBDA_DIR, "poly300.py")
 IMG_SIZE = 1000
 EXTENT = 2.0  # [-2, 2] x [-2, 2]
 N1, N2 = 100, 100

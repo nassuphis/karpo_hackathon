@@ -473,7 +473,6 @@ function _renderChips(which) {
 //  declarations-only; see tests/test_frontend_parts_contract.py)
 
 const _fmtMs = (ms) => (ms/1000).toFixed(1) + 's';
-const _fmtStatus = (sc) => sc ? Object.entries(sc).map(([k,v]) => `${k}:${v}`).join(' ') : '';
 
 let _viewMode = 'auto';
 function selectViewMode(mode) {

@@ -350,16 +350,6 @@ def _parse_complex_literal(value):
     return complex(real, imag)
 
 
-def _finite_complex(value, label):
-    try:
-        number = _parse_complex_literal(value)
-    except (TypeError, ValueError):
-        raise RuntimeError(f"{label} must be a finite complex constant, got {value!r}")
-    if not math.isfinite(number.real) or not math.isfinite(number.imag):
-        raise RuntimeError(f"{label} must be finite, got {value!r}")
-    return number
-
-
 def _format_number(value):
     number = _finite_number(value, "number")
     if number == 0:
@@ -1250,7 +1240,3 @@ def compile_param_program_chain(chain, *, macro_resolver=None, strict=True):
 
 def compile_param_program_diagnostics(chain, *, macro_resolver=None):
     return compile_param_program_chain(chain, macro_resolver=macro_resolver, strict=False)
-
-
-def param_program_chain_id(chain, *, macro_resolver=None):
-    return compile_param_program_chain(chain, macro_resolver=macro_resolver)["fingerprint"]

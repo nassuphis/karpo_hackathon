@@ -105,45 +105,6 @@ def _transforms_summary(raw):
     return "; ".join(parts) if parts else "none"
 
 
-def _body_from(job_id, calc, src_meta, created_at):
-    lines = [
-        f"Job {job_id}.",
-        f"Artifact {src_meta.get('artifact_id', '')}.",
-    ]
-    fn = calc.get("function")
-    if fn:
-        lines.append(f"Function {fn}.")
-    degree = calc.get("degree")
-    if degree not in ("", None):
-        lines.append(f"Degree {degree}.")
-    n_val = calc.get("N", calc.get("n1"))
-    if n_val not in ("", None):
-        lines.append(f"N {n_val}.")
-    times = calc.get("times")
-    if times not in ("", None):
-        lines.append(f"Times {times}.")
-    color_mode = src_meta.get("color_mode")
-    if color_mode:
-        lines.append(f"Mode {color_mode}.")
-    palette = src_meta.get("palette")
-    if palette:
-        lines.append(f"Palette {palette}.")
-    try:
-        if color_mode == "solve_score":
-            score = read_solve_score_metadata("solve", src_meta, default_metric="proximity")
-        elif color_mode == "saved_palette":
-            score = read_solve_score_metadata("palette_source", src_meta, default_metric="proximity")
-        else:
-            score = None
-    except Exception:
-        score = None
-    if score and score.get("display"):
-        lines.append(f"Score {score['display']}.")
-    lines.append(f"Transforms {_transforms_summary(src_meta.get('root_transforms'))}.")
-    lines.append(f"Created {created_at}.")
-    return " ".join(str(x).strip() for x in lines if str(x).strip())
-
-
 def _build_spread_meta(job_id, calc, src_meta, source_artifact_id):
     """Build structured metadata dict for the PDF text page."""
     # Pipeline line: [transforms] function [coeff_transforms] N=..., times=...

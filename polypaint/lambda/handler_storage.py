@@ -2416,7 +2416,7 @@ def _head_artifact_keys(keys, presign=True):
                 info["url"] = s3.generate_presigned_url(
                     "get_object",
                     Params={"Bucket": BUCKET, "Key": key},
-                    ExpiresIn=3600)
+                    ExpiresIn=PRESIGN_EXPIRY)
             return key, info
         except Exception:
             return key, {"exists": False, "key": key, "size": 0, "type": "", "width": None, "height": None, "url": None, "modified_at": None, "user_meta": {}}

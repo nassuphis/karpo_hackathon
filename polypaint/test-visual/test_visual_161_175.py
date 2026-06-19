@@ -11,7 +11,7 @@ import textwrap
 import numpy as np
 from pathlib import Path
 
-SWEEP_BIN = os.path.join(os.path.dirname(__file__), 'lambda', 'sweep_test')
+SWEEP_BIN = os.path.join(os.path.dirname(__file__), "..", "lambda", 'sweep_test')
 CANVAS_SIZE = 1000
 EXTENT = 2.0  # [-2, 2] x [-2, 2]
 N1, N2 = 100, 100
@@ -35,7 +35,7 @@ def extract_poly_functions(filepath, func_names):
             funcs[node.name] = ns[node.name]
     return funcs
 
-poly200_path = os.path.join(os.path.dirname(__file__), 'lambda', 'poly200.py')
+poly200_path = os.path.join(os.path.dirname(__file__), "..", "lambda", 'poly200.py')
 func_names = [f"poly_{n}" for n in range(161, 176)]
 extracted = extract_poly_functions(poly200_path, func_names)
 

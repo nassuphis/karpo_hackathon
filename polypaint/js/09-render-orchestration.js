@@ -699,8 +699,10 @@ function _paletteSelectKey(key) {
     const clipHi = pal.clip_hi != null && pal.clip_hi.toFixed ? pal.clip_hi.toFixed(3) : pal.clip_hi;
     infoEl.textContent = `${pal.display_name || pal.palette_id || ''} | clip ${clipLo} .. ${clipHi} | RT ${rtSummary || 'none'}`;
     _drawPaletteCanvas(pal.image_url || pal.preview_url || '');
+    const populateBtn = document.getElementById('btn-palette-populate');
     const dlBtn = document.getElementById('btn-palette-download');
     const delBtn = document.getElementById('btn-palette-delete');
+    if (populateBtn) populateBtn.disabled = false;
     if (dlBtn) dlBtn.disabled = false;
     if (delBtn) delBtn.disabled = false;
 }
@@ -711,12 +713,14 @@ async function loadPaletteInventory(opts) {
     const container = document.getElementById('palette-inventory');
     const infoEl = document.getElementById('palette-info');
     const statusEl = document.getElementById('palette-status');
+    const populateBtn = document.getElementById('btn-palette-populate');
     const dlBtn = document.getElementById('btn-palette-download');
     const delBtn = document.getElementById('btn-palette-delete');
     if (!container) return;
     if (!jobId) {
         container.innerHTML = '<div style="color:#666; padding:8px">No results dir selected.</div>';
         infoEl.textContent = '';
+        if (populateBtn) populateBtn.disabled = true;
         if (dlBtn) dlBtn.disabled = true;
         if (delBtn) delBtn.disabled = true;
         _paletteInventory = [];
@@ -739,6 +743,7 @@ async function loadPaletteInventory(opts) {
             infoEl.textContent = '';
             statusEl.textContent = 'Ready';
             statusEl.className = 'status ok';
+            if (populateBtn) populateBtn.disabled = true;
             if (dlBtn) dlBtn.disabled = true;
             if (delBtn) delBtn.disabled = true;
             _paletteSelectedIdx = -1;
@@ -781,6 +786,7 @@ async function loadPaletteInventory(opts) {
         infoEl.textContent = '';
         statusEl.textContent = 'Refresh failed: ' + e.message;
         statusEl.className = 'status error';
+        if (populateBtn) populateBtn.disabled = true;
         if (dlBtn) dlBtn.disabled = true;
         if (delBtn) delBtn.disabled = true;
         _paletteInventory = [];
@@ -827,6 +833,102 @@ async function downloadSelectedPalette() {
     const pal = _paletteInventory[idx];
     const filename = `${jobId}_${pal.palette_id || 'palette'}.jpeg`;
     await downloadPresignedFile(pal.image_url || pal.preview_url || '', filename, pal.image_key);
+}
+
+function _paletteArtifactSolveScoreChain(pal) {
+    if (!pal) return [];
+    const candidates = [
+        pal.solve_score_chain,
+        pal.palette_source_score_chain,
+        pal.associated_palette_score_chain,
+    ];
+    for (const chain of candidates) {
+        if (Array.isArray(chain) && chain.length) return chain;
+    }
+
+    const metric = String(pal.metric || paletteTabMetric || 'proximity');
+    const quantilePct = pal.solve_score_quantile != null
+        ? Number(pal.solve_score_quantile) * 100
+        : 0.1;
+    return _defaultSolveScoreChain(
+        metric,
+        Number.isFinite(quantilePct) ? quantilePct : 0.1,
+        pal.solve_score_omega != null ? pal.solve_score_omega : 1,
+        pal.solve_score_omega_enabled != null ? _boolish(pal.solve_score_omega_enabled, true) : false,
+        pal.solve_score_omega_phase != null ? pal.solve_score_omega_phase : 0
+    );
+}
+
+function _setPaletteRootTransformsFromArtifact(transforms) {
+    if (!Array.isArray(transforms)) return false;
+    const next = transforms.map(item => {
+        if (!Array.isArray(item) || !item.length) return null;
+        return { name: item[0], params: item.slice(1).map(v => String(v)) };
+    }).filter(Boolean);
+    _paletteRtChain.splice(0, _paletteRtChain.length, ...next);
+    _renderChips('palette-rt');
+    return true;
+}
+
+function populateSelectedPalette() {
+    const jobId = document.getElementById('palette-results-dir')?.value.trim() || '';
+    const idx = _paletteSelectedIdx;
+    if (!jobId || idx < 0 || idx >= _paletteInventory.length) return;
+    const pal = _paletteInventory[idx];
+    const warnings = [];
+
+    const fallbackMetric = String(pal.metric || paletteTabMetric || 'proximity');
+    const quantilePct = pal.solve_score_quantile != null
+        ? Number(pal.solve_score_quantile) * 100
+        : 0.1;
+    const chain = _normalizeSolveScoreChain(
+        _paletteArtifactSolveScoreChain(pal),
+        fallbackMetric,
+        Number.isFinite(quantilePct) ? quantilePct : 0.1
+    );
+    if (chain.length) {
+        const target = _chainForWhich('palette-ss');
+        target.splice(0, target.length, ...chain);
+        _renderChips('palette-ss');
+        try {
+            _syncSolveScoreLegacyInputs('palette');
+        } catch (_) {
+            paletteTabMetric = fallbackMetric;
+        }
+        _solveScoreProgramRememberedNames.palette = '';
+        _setSolveScoreProgramStatus('palette', `Populated from ${pal.display_name || pal.palette_id || 'selected palette'}`, false);
+    } else {
+        warnings.push('solve-score program');
+    }
+
+    if (pal.palette) {
+        setPaletteForMode('palette_tab', pal.palette);
+    } else {
+        warnings.push('palette');
+    }
+
+    const colorInterpretation = pal.color_interpretation || pal.score_output_interpretation || pal.interpretation;
+    if (colorInterpretation) {
+        _setPaletteColorInterpretation(colorInterpretation);
+    } else {
+        warnings.push('mode');
+    }
+
+    if (Array.isArray(pal.root_transforms)) {
+        _setPaletteRootTransformsFromArtifact(pal.root_transforms);
+    }
+
+    _updatePaletteCreateButton();
+    const label = pal.display_name || pal.palette_id || 'selected palette';
+    const msg = warnings.length
+        ? `Populate complete (missing saved ${warnings.join(', ')})`
+        : `Populate complete: ${label}`;
+    const statusEl = document.getElementById('palette-status');
+    if (statusEl) {
+        statusEl.textContent = msg;
+        statusEl.className = warnings.length ? 'status' : 'status ok';
+    }
+    log(msg, warnings.length ? '' : 'ok', 'palette-log');
 }
 
 async function deleteSelectedPalette() {

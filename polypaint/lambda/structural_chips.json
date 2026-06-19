@@ -1,0 +1,284 @@
+{
+  "version": 1,
+  "program_kind": "coeff_program",
+  "notes": [
+    "Structural Coeff Program chip vocabulary. Registry transforms live in coeff_legacy_registry.json.",
+    "Selector values are owned by program_profiles.json; chips reference selector slots by name."
+  ],
+  "selector_slots": {
+    "src": "coeff.src",
+    "tgt": "coeff.tgt",
+    "push_src": "coeff.push_src",
+    "set_tgt": "coeff.set_tgt",
+    "vector_src": "coeff.vector_src",
+    "typed_vector_src": "coeff.typed_vector_src"
+  },
+  "chips": [
+    {
+      "name": "push_const",
+      "op_symbol": "COEFF_OP_CONST",
+      "op": 1,
+      "aliases": ["const", "push_vec"],
+      "source_aliases": ["fill"],
+      "args": [
+        {"name": "length", "type": "length_expr"},
+        {"name": "value", "type": "complex_expr"}
+      ]
+    },
+    {
+      "name": "push",
+      "op_symbol": "COEFF_OP_PUSH",
+      "op": 2,
+      "selector_slots": {"src": "push_src"}
+    },
+    {
+      "name": "emit",
+      "op_symbol": "COEFF_OP_EMIT",
+      "op": 3
+    },
+    {
+      "name": "duplicate",
+      "op_symbol": "COEFF_OP_DUPLICATE",
+      "op": 4,
+      "aliases": ["dup"]
+    },
+    {
+      "name": "swap",
+      "op_symbol": "COEFF_OP_SWAP",
+      "op": 5
+    },
+    {
+      "name": "pop",
+      "op_symbol": "COEFF_OP_POP",
+      "op": 6,
+      "source_aliases": ["drop"]
+    },
+    {
+      "name": "flush",
+      "op_symbol": "COEFF_OP_FLUSH",
+      "op": 7
+    },
+    {
+      "name": "blend",
+      "op_symbol": "COEFF_OP_BLEND",
+      "op": 8,
+      "args": [{"name": "t", "type": "real_expr"}]
+    },
+    {
+      "name": "legacy",
+      "op_symbol": "COEFF_OP_LEGACY",
+      "op": 9,
+      "args": [
+        {"name": "name", "type": "registry_transform"},
+        {"name": "src", "type": "selector", "slot": "src"},
+        {"name": "tgt", "type": "selector", "slot": "tgt"}
+      ]
+    },
+    {
+      "name": "poke_poly",
+      "op_symbol": "COEFF_OP_POKE_POLY",
+      "op": 10,
+      "args": [
+        {"name": "index", "type": "int_literal"},
+        {"name": "value", "type": "complex_expr"}
+      ]
+    },
+    {
+      "name": "poke_tos",
+      "op_symbol": "COEFF_OP_POKE_TOS",
+      "op": 11,
+      "args": [
+        {"name": "index", "type": "int_literal"},
+        {"name": "value", "type": "complex_expr"}
+      ]
+    },
+    {
+      "name": "vector_binary",
+      "op_symbol": "COEFF_OP_VECTOR_BINARY",
+      "op": 12,
+      "family": true,
+      "selector_slots": {"tgt": "tgt", "src1": "vector_src", "src2": "vector_src"},
+      "sub_ops": [
+        {"name": "add", "symbol": "COEFF_VEC_ADD", "value": 1},
+        {"name": "subtract", "symbol": "COEFF_VEC_SUBTRACT", "value": 2, "source_aliases": ["sub"]},
+        {"name": "multiply", "symbol": "COEFF_VEC_MULTIPLY", "value": 3, "source_aliases": ["mul"]},
+        {"name": "divide", "symbol": "COEFF_VEC_DIVIDE", "value": 4, "source_aliases": ["div"]},
+        {"name": "power", "symbol": "COEFF_VEC_POWER", "value": 5, "source_aliases": ["pow"]}
+      ]
+    },
+    {
+      "name": "vector_unary",
+      "op_symbol": "COEFF_OP_VECTOR_UNARY",
+      "op": 13,
+      "family": true,
+      "selector_slots": {"tgt": "tgt", "src": "vector_src"},
+      "sub_ops": [
+        {"name": "angle", "symbol": "COEFF_VEC_ANGLE", "value": 1},
+        {"name": "mod", "symbol": "COEFF_VEC_MOD", "value": 2, "canonical": "abs"},
+        {"name": "abs", "symbol": "COEFF_VEC_ABS", "value": 3},
+        {"name": "neg", "symbol": "COEFF_VEC_NEG", "value": 4},
+        {"name": "conj", "symbol": "COEFF_VEC_CONJ", "value": 5},
+        {"name": "sqrt", "symbol": "COEFF_VEC_SQRT", "value": 6},
+        {"name": "log", "symbol": "COEFF_VEC_LOG", "value": 7},
+        {"name": "real", "symbol": "COEFF_VEC_REAL", "value": 8},
+        {"name": "imag", "symbol": "COEFF_VEC_IMAG", "value": 9},
+        {"name": "exp", "symbol": "COEFF_VEC_EXP", "value": 10},
+        {"name": "sin", "symbol": "COEFF_VEC_SIN", "value": 11},
+        {"name": "cos", "symbol": "COEFF_VEC_COS", "value": 12},
+        {"name": "tan", "symbol": "COEFF_VEC_TAN", "value": 13},
+        {"name": "sinh", "symbol": "COEFF_VEC_SINH", "value": 14},
+        {"name": "cosh", "symbol": "COEFF_VEC_COSH", "value": 15},
+        {"name": "tanh", "symbol": "COEFF_VEC_TANH", "value": 16}
+      ]
+    },
+    {
+      "name": "vector_roll",
+      "op_symbol": "COEFF_OP_VECTOR_ROLL",
+      "op": 14,
+      "family": true,
+      "selector_slots": {"tgt": "tgt", "src": "vector_src"},
+      "sub_ops": [
+        {"name": "roll", "symbol": "COEFF_VEC_ROLL_LEFT", "value": 1},
+        {"name": "rolr", "symbol": "COEFF_VEC_ROLL_RIGHT", "value": 2}
+      ]
+    },
+    {
+      "name": "argsort",
+      "op_symbol": "COEFF_OP_VECTOR_ARGSORT",
+      "op": 15,
+      "selector_slots": {"tgt": "tgt", "src1": "vector_src", "src2": "vector_src"}
+    },
+    {
+      "name": "littlewood",
+      "op_symbol": "COEFF_OP_LITTLEWOOD",
+      "op": 16,
+      "selector_slots": {"tgt": "tgt"},
+      "args": [
+        {"name": "value1", "type": "complex_expr"},
+        {"name": "value2", "type": "complex_expr"},
+        {"name": "andy", "type": "real_expr"}
+      ]
+    },
+    {
+      "name": "push_linspace",
+      "op_symbol": "COEFF_OP_LINSPACE",
+      "op": 17,
+      "source_aliases": ["linspace"],
+      "args": [{"name": "length_or_start", "type": "real_expr"}]
+    },
+    {
+      "name": "push_range",
+      "op_symbol": "COEFF_OP_RANGE",
+      "op": 18,
+      "source_aliases": ["arange", "range"],
+      "args": [{"name": "length_or_start", "type": "real_expr"}]
+    },
+    {
+      "name": "set",
+      "op_symbol": "COEFF_OP_SET",
+      "op": 19,
+      "selector_slots": {"tgt": "set_tgt", "src": "src"}
+    },
+    {
+      "name": "affine",
+      "op_symbol": "COEFF_OP_AFFINE",
+      "op": 20,
+      "aliases": ["linear"],
+      "source_aliases": ["scale", "shift"],
+      "selector_slots": {"tgt": "tgt", "src": "src"},
+      "args": [
+        {"name": "multiplier", "type": "complex_expr"},
+        {"name": "offset", "type": "complex_expr"}
+      ]
+    },
+    {
+      "name": "_typed_push_scalar",
+      "op_symbol": "COEFF_OP_TYPED_PUSH_SCALAR",
+      "op": 21,
+      "aliases": ["push_scalar"],
+      "internal": true,
+      "args": [{"name": "value", "type": "complex_expr"}]
+    },
+    {
+      "name": "_typed_push_vector",
+      "op_symbol": "COEFF_OP_TYPED_PUSH_VECTOR",
+      "op": 22,
+      "internal": true,
+      "selector_slots": {"src": "typed_vector_src"}
+    },
+    {
+      "name": "_typed_binary",
+      "op_symbol": "COEFF_OP_TYPED_BINARY",
+      "op": 23,
+      "internal": true,
+      "sub_ops_from": "vector_binary"
+    },
+    {
+      "name": "_typed_unary",
+      "op_symbol": "COEFF_OP_TYPED_UNARY",
+      "op": 24,
+      "internal": true,
+      "sub_ops_from": "vector_unary"
+    },
+    {
+      "name": "_typed_get_scalar",
+      "op_symbol": "COEFF_OP_TYPED_GET_SCALAR",
+      "op": 25,
+      "internal": true
+    },
+    {
+      "name": "_typed_set_poly",
+      "op_symbol": "COEFF_OP_TYPED_SET_POLY",
+      "op": 26,
+      "internal": true
+    },
+    {
+      "name": "_typed_poke_poly",
+      "op_symbol": "COEFF_OP_TYPED_POKE_POLY",
+      "op": 27,
+      "internal": true
+    },
+    {
+      "name": "_typed_fill",
+      "op_symbol": "COEFF_OP_TYPED_FILL",
+      "op": 28,
+      "internal": true
+    },
+    {
+      "name": "_native_transform",
+      "op_symbol": "COEFF_OP_NATIVE_TRANSFORM",
+      "op": 29,
+      "internal": true,
+      "args": [
+        {"name": "name", "type": "registry_transform"},
+        {"name": "src", "type": "selector", "slot": "src"},
+        {"name": "tgt", "type": "selector", "slot": "tgt"}
+      ]
+    },
+    {
+      "name": "_native_transform_stack_args",
+      "op_symbol": "COEFF_OP_NATIVE_TRANSFORM",
+      "op": 29,
+      "internal": true,
+      "args": [
+        {"name": "name", "type": "registry_transform"},
+        {"name": "src", "type": "selector", "slot": "src"},
+        {"name": "tgt", "type": "selector", "slot": "tgt"},
+        {"name": "stack_arg_count", "type": "int_literal"}
+      ]
+    },
+    {
+      "name": "_typed_blend",
+      "op_symbol": "COEFF_OP_TYPED_BLEND",
+      "op": 30,
+      "internal": true
+    },
+    {
+      "name": "macro",
+      "op_symbol": null,
+      "op": null,
+      "compile_time_only": true,
+      "args": [{"name": "name", "type": "saved_program_name"}]
+    }
+  ]
+}

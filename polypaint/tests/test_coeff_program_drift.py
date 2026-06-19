@@ -10,6 +10,7 @@ to the Python side, pins the registry ids, and checks limit parity.
 import os
 import re
 import sys
+import json
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
@@ -19,6 +20,8 @@ from coeff_program_chain import legacy_registry
 LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
 SWEEP_CLI = os.path.join(LAMBDA_DIR, "sweep_cli.c")
 SWEEP_TEST = os.path.join(LAMBDA_DIR, "sweep_test")
+STRUCTURAL_CHIPS = os.path.join(LAMBDA_DIR, "structural_chips.json")
+PROGRAM_PROFILES = os.path.join(LAMBDA_DIR, "program_profiles.json")
 
 
 def _c_source():
@@ -33,11 +36,38 @@ def _c_enum_values(source, prefix):
     }
 
 
-def _c_defines(source):
+def _c_defines(source, prefix="COEFF_PROGRAM_"):
     return {
         name: int(value)
-        for name, value in re.findall(r"#define\s+(COEFF_PROGRAM_\w+)\s+(\d+)", source)
+        for name, value in re.findall(rf"#define\s+({prefix}\w+)\s+(\d+)", source)
     }
+
+
+def _json_payload(path):
+    with open(path, "r", encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def _structural_payload():
+    return _json_payload(STRUCTURAL_CHIPS)
+
+
+def _program_profiles():
+    return _json_payload(PROGRAM_PROFILES)["profiles"]
+
+
+def _structural_chips_by_name():
+    return {chip["name"]: chip for chip in _structural_payload()["chips"]}
+
+
+def _structural_chain_names():
+    names = set()
+    for chip in _structural_payload()["chips"]:
+        names.add(chip["name"])
+        names.update(chip.get("aliases") or [])
+        for sub in chip.get("sub_ops") or []:
+            names.add(sub["name"])
+    return names
 
 
 def test_coeff_op_enum_matches_python():
@@ -91,6 +121,70 @@ def test_vector_op_tables_match_python():
     assert c_vec["ROLL_RIGHT"] == chain.VECTOR_ROLL_OPS["rolr"]
 
 
+def test_structural_chip_opcodes_match_coeff_python_and_c():
+    source = _c_source()
+    c_ops = _c_enum_values(source, "COEFF_OP_")
+    seen_ops = set()
+    for chip in _structural_payload()["chips"]:
+        symbol = chip.get("op_symbol")
+        if not symbol:
+            assert chip.get("compile_time_only"), chip
+            continue
+        short = symbol[len("COEFF_OP_"):]
+        assert chip["op"] == getattr(chain, symbol), chip["name"]
+        assert chip["op"] == c_ops[short], chip["name"]
+        seen_ops.add(chip["op"])
+    py_ops = {
+        value for name, value in vars(chain).items()
+        if name.startswith("COEFF_OP_")
+    }
+    assert py_ops <= seen_ops
+
+
+def test_structural_chip_inventory_covers_chain_compiler_names():
+    names = _structural_chain_names()
+    compiler_names = (
+        set(chain._ZERO_ARG_CHIP_OPS)
+        | set(chain._CHIP_COMPILERS)
+        | set(chain.VECTOR_BINARY_OPS)
+        | set(chain.VECTOR_UNARY_OPS)
+        | set(chain.VECTOR_ROLL_OPS)
+    )
+    assert compiler_names - names == set()
+
+
+def test_structural_subop_tables_match_python_and_c():
+    chips = _structural_chips_by_name()
+    c_vec = _c_enum_values(_c_source(), "COEFF_VEC_")
+    families = {
+        "vector_binary": chain.VECTOR_BINARY_OPS,
+        "vector_unary": chain.VECTOR_UNARY_OPS,
+        "vector_roll": chain.VECTOR_ROLL_OPS,
+    }
+    for family_name, py_table in families.items():
+        sub_ops = {entry["name"]: entry for entry in chips[family_name]["sub_ops"]}
+        assert {name: entry["value"] for name, entry in sub_ops.items()} == py_table
+        for name, entry in sub_ops.items():
+            assert c_vec[entry["symbol"][len("COEFF_VEC_"):]] == entry["value"], name
+
+
+def test_structural_selector_slots_resolve_through_coeff_profile():
+    payload = _structural_payload()
+    slot_defs = payload["selector_slots"]
+    coeff_selectors = _program_profiles()["coeff"]["selectors"]
+    referenced = set()
+    for chip in payload["chips"]:
+        referenced.update((chip.get("selector_slots") or {}).values())
+        for arg in chip.get("args") or []:
+            if arg.get("slot"):
+                referenced.add(arg["slot"])
+    for slot in referenced:
+        assert slot in slot_defs, slot
+        profile_name, selector_name = slot_defs[slot].split(".", 1)
+        assert profile_name == "coeff", slot
+        assert selector_name in coeff_selectors, slot
+
+
 def test_limits_match_c_defines():
     defines = _c_defines(_c_source())
     assert defines["COEFF_PROGRAM_MAX_TOKENS"] == chain.MAX_PROGRAM_TOKENS
@@ -101,6 +195,28 @@ def test_limits_match_c_defines():
     assert defines["COEFF_PROGRAM_MAX_EXPR_NUMS"] == (
         chain.MAX_SCALAR_EXPR_TOKENS * defines["COEFF_PROGRAM_EXPR_STRIDE"]
     )
+
+
+def test_coeff_profile_caps_and_selectors_match_python_and_c():
+    profile = _program_profiles()["coeff"]
+    caps = profile["value_caps"]
+    defines = _c_defines(_c_source())
+    assert caps["program_tokens"] == chain.MAX_PROGRAM_TOKENS == defines["COEFF_PROGRAM_MAX_TOKENS"]
+    assert caps["total_stack"] == chain.MAX_VECTOR_STACK == defines["COEFF_PROGRAM_MAX_VECTOR_STACK"]
+    assert caps["vector_capable_stack"] == chain.MAX_VECTOR_STACK
+    assert caps["vector_len"] == chain.MAX_VECTOR_LEN == defines["COEFF_PROGRAM_MAX_VECTOR_LEN"]
+    assert caps["max_args"] == chain.MAX_ARGS == defines["COEFF_PROGRAM_MAX_ARGS"]
+    assert caps["scalar_exprs"] == chain.MAX_SCALAR_EXPRS == defines["COEFF_PROGRAM_MAX_SCALAR_EXPRS"]
+    assert caps["expr_tokens"] == chain.MAX_SCALAR_EXPR_TOKENS
+    assert caps["legacy_int_arg"] == chain.MAX_LEGACY_INT_ARG
+
+    selectors = profile["selectors"]
+    assert selectors["src"] == list(chain._SOURCE_SELECTORS)
+    assert selectors["tgt"] == list(chain._TARGET_SELECTORS)
+    assert selectors["push_src"] == ["cf", "poly"]
+    assert selectors["set_tgt"] == ["poly"]
+    assert selectors["vector_src"] == list(chain._VECTOR_SOURCE_SELECTORS)
+    assert set(selectors["typed_vector_src"]) == set(chain._SOURCE_SELECTORS) | {"tos"}
 
 
 def test_legacy_int_arg_clamp_matches_c():
@@ -195,6 +311,8 @@ def test_generated_js_vocab_matches_registry():
     from gen_coeff_vocab import build_vocab, render_js, JS_OUT
 
     vocab = build_vocab()
+    assert vocab["structuralChips"] == _structural_payload()
+    assert vocab["programProfiles"] == _json_payload(PROGRAM_PROFILES)
     assert vocab["aliasToCanonical"] == EXPECTED_ALIASES
     assert vocab["sourceAliasByName"] == {v: k for k, v in EXPECTED_TEXT_ALIASES.items()}
     assert vocab["chipNameByRegistryName"] == EXPECTED_CHIP_NAMES

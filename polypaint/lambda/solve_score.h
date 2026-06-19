@@ -1619,6 +1619,90 @@ static int solve_score_eval_lagged_metric_slots(const float *roots, int degree,
     return 1;
 }
 
+typedef struct {
+    const float *roots;
+    int degree;
+    const float *coeffRoots;
+    int coeffDegree;
+    const float *paramValues;
+    int paramDegree;
+} SolveScoreSourceSet;
+
+typedef int (*SolveScoreLagPreviousAccessor)(void *user,
+                                             long rowIndex,
+                                             const SolveScoreSourceSet *current,
+                                             SolveScoreSourceSet *previous);
+
+typedef struct {
+    const SolveScoreProgram *program;
+    int usesLag;
+    int recentInitialized;
+    float currentMetricBuffer[SOLVE_SCORE_MAX_METRIC_SLOTS];
+    float recentMetricBuffer[SOLVE_SCORE_MAX_METRIC_SLOTS];
+} SolveScoreLagStream;
+
+static void solve_score_lag_stream_init(SolveScoreLagStream *stream,
+                                        const SolveScoreProgram *program) {
+    memset(stream, 0, sizeof(*stream));
+    stream->program = program;
+    stream->usesLag = solve_score_program_uses_lag(program);
+}
+
+static const float *solve_score_lag_stream_current(const SolveScoreLagStream *stream) {
+    return stream ? stream->currentMetricBuffer : NULL;
+}
+
+static const float *solve_score_lag_stream_recent_or_null(const SolveScoreLagStream *stream) {
+    return (stream && stream->usesLag) ? stream->recentMetricBuffer : NULL;
+}
+
+static int solve_score_lag_stream_eval_current(SolveScoreLagStream *stream,
+                                               const SolveScoreSourceSet *current,
+                                               long rowIndex,
+                                               SolveScoreLagPreviousAccessor previousAccessor,
+                                               void *previousUser,
+                                               int *lagFailure) {
+    if (lagFailure) *lagFailure = 0;
+    if (!stream || !stream->program || !current) return 0;
+    if (!solve_score_eval_metric_slots(
+            current->roots, current->degree,
+            current->coeffRoots, current->coeffDegree,
+            current->paramValues, current->paramDegree,
+            stream->program,
+            stream->currentMetricBuffer)) {
+        return 0;
+    }
+    if (stream->usesLag && !stream->recentInitialized) {
+        memcpy(stream->recentMetricBuffer,
+               stream->currentMetricBuffer,
+               sizeof(float) * (size_t)stream->program->metricCount);
+        SolveScoreSourceSet previous = *current;
+        if (previousAccessor &&
+            !previousAccessor(previousUser, rowIndex, current, &previous)) {
+            if (lagFailure) *lagFailure = 1;
+            return 0;
+        }
+        if (!solve_score_eval_lagged_metric_slots(
+                previous.roots, previous.degree,
+                previous.coeffRoots, previous.coeffDegree,
+                previous.paramValues, previous.paramDegree,
+                stream->program,
+                stream->recentMetricBuffer)) {
+            if (lagFailure) *lagFailure = 1;
+            return 0;
+        }
+        stream->recentInitialized = 1;
+    }
+    return 1;
+}
+
+static void solve_score_lag_stream_advance(SolveScoreLagStream *stream) {
+    if (!stream || !stream->usesLag || !stream->program) return;
+    memcpy(stream->recentMetricBuffer,
+           stream->currentMetricBuffer,
+           sizeof(float) * (size_t)stream->program->metricCount);
+}
+
 static int solve_score_program_has_explicit_outputs(const SolveScoreProgram *program) {
     return program && program->hasExplicitOutputs && program->outputCount > 0;
 }

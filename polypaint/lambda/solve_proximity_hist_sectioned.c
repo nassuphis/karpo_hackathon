@@ -247,6 +247,45 @@ typedef struct {
     char error[256];
 } HistSectionArgs;
 
+typedef struct {
+    HistSectionArgs *arg;
+    unsigned char *rootBytes;
+    unsigned char *coeffBytes;
+    unsigned char *paramBytes;
+    long sourceRows;
+    long coeffRows;
+    long paramRows;
+    float *prevStepBuf;
+    float *prevWkRe;
+    float *prevWkIm;
+} HistLagAccessorCtx;
+
+static int hist_lag_previous_sources(void *user,
+                                     long globalIdx,
+                                     const SolveScoreSourceSet *current,
+                                     SolveScoreSourceSet *previous) {
+    HistLagAccessorCtx *ctx = (HistLagAccessorCtx *)user;
+    HistSectionArgs *arg = ctx->arg;
+    *previous = *current;
+    long prevSourceLocalIdx = arg->solvePreludeRows + globalIdx - arg->sourceReadStart - 1;
+    long prevCoeffLocalIdx = arg->scoreCoeffPreludeRows + globalIdx - arg->scoreCoeffReadStart - 1;
+    long prevParamLocalIdx = arg->scoreParamPreludeRows + globalIdx - arg->scoreParamReadStart - 1;
+    if (arg->usesSolveLag && prevSourceLocalIdx >= 0) {
+        const float *prevRaw = (const float *)(void *)(ctx->rootBytes + (size_t)prevSourceLocalIdx * (size_t)arg->solveBytes);
+        previous->roots = prepare_step(prevRaw, arg->degree, arg->rtChain, arg->nRt,
+                                       ctx->prevStepBuf, ctx->prevWkRe, ctx->prevWkIm);
+    }
+    if (arg->usesCoeffLag && ctx->coeffBytes &&
+        prevCoeffLocalIdx >= 0 && prevCoeffLocalIdx < ctx->coeffRows) {
+        previous->coeffRoots = (const float *)(void *)(ctx->coeffBytes + (size_t)prevCoeffLocalIdx * (size_t)arg->scoreCoeffSolveBytes);
+    }
+    if (arg->usesParamLag && ctx->paramBytes &&
+        prevParamLocalIdx >= 0 && prevParamLocalIdx < ctx->paramRows) {
+        previous->paramValues = (const float *)(void *)(ctx->paramBytes + (size_t)prevParamLocalIdx * 4u * sizeof(float));
+    }
+    return 1;
+}
+
 static void sleep_ms(long ms) {
     if (ms <= 0) return;
     struct timespec ts;
@@ -378,12 +417,23 @@ static void *hist_section_worker_main(void *arg_) {
         long coeffRows = arg->scoreCoeffSolveBytes > 0 ? (long)(arg->scoreCoeffSectionBytes / (size_t)arg->scoreCoeffSolveBytes) : 0;
         long paramRows = arg->scoreParamSectionBytes > 0 ? (long)(arg->scoreParamSectionBytes / (4u * sizeof(float))) : 0;
         int usesLag = arg->program && solve_score_program_uses_lag(arg->program);
-        int recentInitialized = 0;
         float prevWkRe[MAXDEG], prevWkIm[MAXDEG];
         float stepBuf[MAXDEG * 2];
         float prevStepBuf[MAXDEG * 2];
-        float currentMetricBuffer[SOLVE_SCORE_MAX_METRIC_SLOTS];
-        float recentMetricBuffer[SOLVE_SCORE_MAX_METRIC_SLOTS];
+        SolveScoreLagStream lagStream;
+        if (arg->program) solve_score_lag_stream_init(&lagStream, arg->program);
+        HistLagAccessorCtx lagCtx = {
+            .arg = arg,
+            .rootBytes = rootBytes,
+            .coeffBytes = coeffBytes,
+            .paramBytes = paramBytes,
+            .sourceRows = sourceRows,
+            .coeffRows = coeffRows,
+            .paramRows = paramRows,
+            .prevStepBuf = prevStepBuf,
+            .prevWkRe = prevWkRe,
+            .prevWkIm = prevWkIm,
+        };
         long computeStart = monotonic_ms();
         for (long s = 0; s < arg->solveCount; s++) {
             long globalIdx = arg->startSolve + s;
@@ -417,43 +467,28 @@ static void *hist_section_worker_main(void *arg_) {
             double u;
             if (usesLag) {
                 const float *step = prepare_step(roots, arg->degree, arg->rtChain, arg->nRt, stepBuf, wkRe, wkIm);
-                if (!solve_score_eval_metric_slots(
-                        step, arg->degree, coeffRoots, arg->scoreCoeffDegree,
-                        paramValues, arg->scoreParamDegree, arg->program,
-                        currentMetricBuffer)) {
-                    snprintf(arg->error, sizeof(arg->error), "solve-score metric evaluation failed");
+                SolveScoreSourceSet sources = {
+                    .roots = step,
+                    .degree = arg->degree,
+                    .coeffRoots = coeffRoots,
+                    .coeffDegree = arg->scoreCoeffDegree,
+                    .paramValues = paramValues,
+                    .paramDegree = arg->scoreParamDegree,
+                };
+                int lagFailure = 0;
+                if (!solve_score_lag_stream_eval_current(
+                        &lagStream, &sources, globalIdx,
+                        hist_lag_previous_sources, &lagCtx, &lagFailure)) {
+                    snprintf(arg->error, sizeof(arg->error),
+                             lagFailure ? "solve-score lag metric evaluation failed"
+                                        : "solve-score metric evaluation failed");
                     arg->failed = 1;
                     break;
                 }
-                if (!recentInitialized) {
-                    memcpy(recentMetricBuffer, currentMetricBuffer, sizeof(float) * (size_t)arg->program->metricCount);
-                    const float *prevStep = step;
-                    const float *prevCoeffRoots = coeffRoots;
-                    const float *prevParamValues = paramValues;
-                    long prevSourceLocalIdx = sourceLocalIdx - 1;
-                    long prevCoeffLocalIdx = arg->scoreCoeffPreludeRows + globalIdx - arg->scoreCoeffReadStart - 1;
-                    long prevParamLocalIdx = arg->scoreParamPreludeRows + globalIdx - arg->scoreParamReadStart - 1;
-                    if (arg->usesSolveLag && prevSourceLocalIdx >= 0) {
-                        const float *prevRaw = (const float *)(void *)(rootBytes + (size_t)prevSourceLocalIdx * (size_t)arg->solveBytes);
-                        prevStep = prepare_step(prevRaw, arg->degree, arg->rtChain, arg->nRt, prevStepBuf, prevWkRe, prevWkIm);
-                    }
-                    if (arg->usesCoeffLag && coeffBytes && prevCoeffLocalIdx >= 0 && prevCoeffLocalIdx < coeffRows) {
-                        prevCoeffRoots = (const float *)(void *)(coeffBytes + (size_t)prevCoeffLocalIdx * (size_t)arg->scoreCoeffSolveBytes);
-                    }
-                    if (arg->usesParamLag && paramBytes && prevParamLocalIdx >= 0 && prevParamLocalIdx < paramRows) {
-                        prevParamValues = (const float *)(void *)(paramBytes + (size_t)prevParamLocalIdx * 4u * sizeof(float));
-                    }
-                    if (!solve_score_eval_lagged_metric_slots(
-                            prevStep, arg->degree, prevCoeffRoots, arg->scoreCoeffDegree,
-                            prevParamValues, arg->scoreParamDegree, arg->program,
-                            recentMetricBuffer)) {
-                        snprintf(arg->error, sizeof(arg->error), "solve-score lag metric evaluation failed");
-                        arg->failed = 1;
-                        break;
-                    }
-                    recentInitialized = 1;
-                }
-                u = solve_score_eval_program_from_buffers(currentMetricBuffer, recentMetricBuffer, arg->program);
+                u = solve_score_eval_program_from_buffers(
+                    solve_score_lag_stream_current(&lagStream),
+                    solve_score_lag_stream_recent_or_null(&lagStream),
+                    arg->program);
                 if (!isfinite(u)) {
                     snprintf(arg->error, sizeof(arg->error), "solve-score program evaluation failed");
                     arg->failed = 1;
@@ -478,7 +513,7 @@ static void *hist_section_worker_main(void *arg_) {
             if (h >= arg->histBins) h = arg->histBins - 1;
             arg->hist[h]++;
             if (usesLag) {
-                memcpy(recentMetricBuffer, currentMetricBuffer, sizeof(float) * (size_t)arg->program->metricCount);
+                solve_score_lag_stream_advance(&lagStream);
             }
         }
         arg->computeMs = monotonic_ms() - computeStart;

@@ -230,6 +230,47 @@ static const float *prepare_step(const float *raw, int degree,
     return stepBuf;
 }
 
+typedef struct {
+    const float *buf;
+    const float *coeffBuf;
+    const float *paramBuf;
+    int stride;
+    int coeffStride;
+    int paramStride;
+    int degree;
+    int coeffDegree;
+    int paramDegree;
+    int usesSolveLag;
+    int usesCoeffLag;
+    int usesParamLag;
+    RootXformEntry *rtChain;
+    int nRt;
+    float *prevStepBuf;
+    float *prevWkRe;
+    float *prevWkIm;
+} StatsLagAccessorCtx;
+
+static int stats_lag_previous_sources(void *user,
+                                      long s,
+                                      const SolveScoreSourceSet *current,
+                                      SolveScoreSourceSet *previous) {
+    StatsLagAccessorCtx *ctx = (StatsLagAccessorCtx *)user;
+    *previous = *current;
+    if (s <= 0) return 1;
+    if (ctx->usesSolveLag) {
+        const float *prevRoots = ctx->buf + (s - 1) * ctx->stride;
+        previous->roots = prepare_step(prevRoots, ctx->degree, ctx->rtChain, ctx->nRt,
+                                       ctx->prevStepBuf, ctx->prevWkRe, ctx->prevWkIm);
+    }
+    if (ctx->usesCoeffLag && ctx->coeffBuf && ctx->coeffDegree > 0) {
+        previous->coeffRoots = ctx->coeffBuf + (s - 1) * ctx->coeffStride;
+    }
+    if (ctx->usesParamLag && ctx->paramBuf && ctx->paramDegree > 0) {
+        previous->paramValues = ctx->paramBuf + (s - 1) * ctx->paramStride;
+    }
+    return 1;
+}
+
 static double score_program_xformed(const float *roots, int degree, const SolveScoreProgram *program,
                                     RootXformEntry *rtChain, int nRt,
                                     float *wkRe, float *wkIm) {
@@ -575,13 +616,31 @@ static int compute_scores_lagged_summary(
     int minFinite = degree;
     int maxFinite = 0;
 
-    int recentInitialized = 0;
-    float currentMetricBuffer[SOLVE_SCORE_MAX_METRIC_SLOTS];
-    float recentMetricBuffer[SOLVE_SCORE_MAX_METRIC_SLOTS];
+    SolveScoreLagStream lagStream;
+    solve_score_lag_stream_init(&lagStream, program);
     float wkRe[MAXDEG], wkIm[MAXDEG];
     float prevWkRe[MAXDEG], prevWkIm[MAXDEG];
     float stepBuf[MAXDEG * 2];
     float prevStepBuf[MAXDEG * 2];
+    StatsLagAccessorCtx lagCtx = {
+        .buf = buf,
+        .coeffBuf = coeffBuf,
+        .paramBuf = paramBuf,
+        .stride = stride,
+        .coeffStride = coeffStride,
+        .paramStride = paramStride,
+        .degree = degree,
+        .coeffDegree = coeffDegree,
+        .paramDegree = paramDegree,
+        .usesSolveLag = usesSolveLag,
+        .usesCoeffLag = usesCoeffLag,
+        .usesParamLag = usesParamLag,
+        .rtChain = rtChain,
+        .nRt = nRt,
+        .prevStepBuf = prevStepBuf,
+        .prevWkRe = prevWkRe,
+        .prevWkIm = prevWkIm,
+    };
 
     for (long s = 0; s < nSolves; s++) {
         const float *roots = buf + s * stride;
@@ -606,51 +665,34 @@ static int compute_scores_lagged_summary(
         if (finiteRoots > maxFinite) maxFinite = finiteRoots;
 
         const float *step = prepare_step(roots, degree, rtChain, nRt, stepBuf, wkRe, wkIm);
-        if (!solve_score_eval_metric_slots(
-                step, degree,
-                coeffRoots, coeffDegree,
-                paramValues, paramDegree,
-                program,
-                currentMetricBuffer)) {
-            fprintf(stderr, "solve-score metric evaluation failed in summary row %ld\n", s);
+        SolveScoreSourceSet sources = {
+            .roots = step,
+            .degree = degree,
+            .coeffRoots = coeffRoots,
+            .coeffDegree = coeffDegree,
+            .paramValues = paramValues,
+            .paramDegree = paramDegree,
+        };
+        int lagFailure = 0;
+        if (!solve_score_lag_stream_eval_current(
+                &lagStream, &sources, s,
+                stats_lag_previous_sources, &lagCtx, &lagFailure)) {
+            fprintf(stderr, "%s in summary row %ld\n",
+                    lagFailure ? "solve-score lag metric evaluation failed"
+                               : "solve-score metric evaluation failed",
+                    s);
             return 0;
         }
 
-        if (!recentInitialized) {
-            memcpy(recentMetricBuffer, currentMetricBuffer, sizeof(float) * (size_t)program->metricCount);
-            const float *prevStep = step;
-            const float *prevCoeffRoots = coeffRoots;
-            const float *prevParamValues = paramValues;
-            if (s > 0) {
-                if (usesSolveLag) {
-                    const float *prevRoots = buf + (s - 1) * stride;
-                    prevStep = prepare_step(prevRoots, degree, rtChain, nRt, prevStepBuf, prevWkRe, prevWkIm);
-                }
-                if (usesCoeffLag && coeffBuf && coeffDegree > 0) {
-                    prevCoeffRoots = coeffBuf + (s - 1) * coeffStride;
-                }
-                if (usesParamLag && paramBuf && paramDegree > 0) {
-                    prevParamValues = paramBuf + (s - 1) * paramStride;
-                }
-            }
-            if (!solve_score_eval_lagged_metric_slots(
-                    prevStep, degree,
-                    prevCoeffRoots, coeffDegree,
-                    prevParamValues, paramDegree,
-                    program,
-                    recentMetricBuffer)) {
-                fprintf(stderr, "solve-score lag metric evaluation failed in summary row %ld\n", s);
-                return 0;
-            }
-            recentInitialized = 1;
-        }
-
-        scores[s] = solve_score_eval_program_from_buffers(currentMetricBuffer, recentMetricBuffer, program);
+        scores[s] = solve_score_eval_program_from_buffers(
+            solve_score_lag_stream_current(&lagStream),
+            solve_score_lag_stream_recent_or_null(&lagStream),
+            program);
         if (!isfinite(scores[s])) {
             fprintf(stderr, "solve-score program evaluation failed in summary row %ld\n", s);
             return 0;
         }
-        memcpy(recentMetricBuffer, currentMetricBuffer, sizeof(float) * (size_t)program->metricCount);
+        solve_score_lag_stream_advance(&lagStream);
     }
 
     if (finiteRootCount) *finiteRootCount = finiteRootsTotal;
@@ -714,14 +756,32 @@ static int compute_program_outputs_summary(
     int minFinite = degree;
     int maxFinite = 0;
 
-    int recentInitialized = 0;
-    float currentMetricBuffer[SOLVE_SCORE_MAX_METRIC_SLOTS];
-    float recentMetricBuffer[SOLVE_SCORE_MAX_METRIC_SLOTS];
+    SolveScoreLagStream lagStream;
+    solve_score_lag_stream_init(&lagStream, program);
     double outputs[SOLVE_SCORE_MAX_OUTPUT_CHANNELS];
     float wkRe[MAXDEG], wkIm[MAXDEG];
     float prevWkRe[MAXDEG], prevWkIm[MAXDEG];
     float stepBuf[MAXDEG * 2];
     float prevStepBuf[MAXDEG * 2];
+    StatsLagAccessorCtx lagCtx = {
+        .buf = buf,
+        .coeffBuf = coeffBuf,
+        .paramBuf = paramBuf,
+        .stride = stride,
+        .coeffStride = coeffStride,
+        .paramStride = paramStride,
+        .degree = degree,
+        .coeffDegree = coeffDegree,
+        .paramDegree = paramDegree,
+        .usesSolveLag = usesSolveLag,
+        .usesCoeffLag = usesCoeffLag,
+        .usesParamLag = usesParamLag,
+        .rtChain = rtChain,
+        .nRt = nRt,
+        .prevStepBuf = prevStepBuf,
+        .prevWkRe = prevWkRe,
+        .prevWkIm = prevWkIm,
+    };
 
     for (long s = 0; s < nSolves; s++) {
         const float *roots = buf + s * stride;
@@ -746,53 +806,29 @@ static int compute_program_outputs_summary(
         if (finiteRoots > maxFinite) maxFinite = finiteRoots;
 
         const float *step = prepare_step(roots, degree, rtChain, nRt, stepBuf, wkRe, wkIm);
-        if (!solve_score_eval_metric_slots(
-                step, degree,
-                coeffRoots, coeffDegree,
-                paramValues, paramDegree,
-                program,
-                currentMetricBuffer)) {
-            fprintf(stderr, "solve-score metric evaluation failed in summary row %ld\n", s);
+        SolveScoreSourceSet sources = {
+            .roots = step,
+            .degree = degree,
+            .coeffRoots = coeffRoots,
+            .coeffDegree = coeffDegree,
+            .paramValues = paramValues,
+            .paramDegree = paramDegree,
+        };
+        int lagFailure = 0;
+        if (!solve_score_lag_stream_eval_current(
+                &lagStream, &sources, s,
+                stats_lag_previous_sources, &lagCtx, &lagFailure)) {
+            fprintf(stderr, "%s in summary row %ld\n",
+                    lagFailure ? "solve-score lag metric evaluation failed"
+                               : "solve-score metric evaluation failed",
+                    s);
             return 0;
-        }
-
-        const float *recentForEval = NULL;
-        if (usesLag) {
-            if (!recentInitialized) {
-                memcpy(recentMetricBuffer, currentMetricBuffer, sizeof(float) * (size_t)program->metricCount);
-                const float *prevStep = step;
-                const float *prevCoeffRoots = coeffRoots;
-                const float *prevParamValues = paramValues;
-                if (s > 0) {
-                    if (usesSolveLag) {
-                        const float *prevRoots = buf + (s - 1) * stride;
-                        prevStep = prepare_step(prevRoots, degree, rtChain, nRt, prevStepBuf, prevWkRe, prevWkIm);
-                    }
-                    if (usesCoeffLag && coeffBuf && coeffDegree > 0) {
-                        prevCoeffRoots = coeffBuf + (s - 1) * coeffStride;
-                    }
-                    if (usesParamLag && paramBuf && paramDegree > 0) {
-                        prevParamValues = paramBuf + (s - 1) * paramStride;
-                    }
-                }
-                if (!solve_score_eval_lagged_metric_slots(
-                        prevStep, degree,
-                        prevCoeffRoots, coeffDegree,
-                        prevParamValues, paramDegree,
-                        program,
-                        recentMetricBuffer)) {
-                    fprintf(stderr, "solve-score lag metric evaluation failed in summary row %ld\n", s);
-                    return 0;
-                }
-                recentInitialized = 1;
-            }
-            recentForEval = recentMetricBuffer;
         }
 
         int gotOutputs = 0;
         if (!solve_score_eval_program_outputs_from_buffers(
-                currentMetricBuffer,
-                recentForEval,
+                solve_score_lag_stream_current(&lagStream),
+                solve_score_lag_stream_recent_or_null(&lagStream),
                 program,
                 outputs,
                 SOLVE_SCORE_MAX_OUTPUT_CHANNELS,
@@ -805,7 +841,7 @@ static int compute_program_outputs_summary(
             scoresByChannel[(long)ch * nSolves + s] = outputs[ch];
         }
         if (usesLag) {
-            memcpy(recentMetricBuffer, currentMetricBuffer, sizeof(float) * (size_t)program->metricCount);
+            solve_score_lag_stream_advance(&lagStream);
         }
     }
 

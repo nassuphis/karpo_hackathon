@@ -891,6 +891,21 @@ def test_coeff_program_tos_reads_vector_and_scalar_slots():
             assert abs(got.imag) <= 1e-6, value_expr
 
 
+def test_coeff_program_resolves_dynamic_args_before_source_pop():
+    # Phase 2A resolved-arg ordering: affine(src=pop, multiplier=tos0)
+    # must read tos0 from the pre-token stack frame. The old source-first
+    # handler ordering popped the source before resolving the dynamic arg.
+    _meta, values = _run_chain_values([
+        ["push_const", "4", "2"],
+        ["affine", "push", "pop", "tos0", "0"],
+        ["emit"],
+    ])
+    assert len(values) == 4
+    for got in values:
+        assert abs(got.real - 4.0) <= 1e-6
+        assert abs(got.imag) <= 1e-6
+
+
 def test_coeff_program_sin_with_andy_blends_natively():
     # sin(poly, andy): source routes to the native transform (fn 18); andy=1
     # keeps the input, andy=0 applies sin fully.

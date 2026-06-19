@@ -314,6 +314,47 @@ static unsigned char u_to_bin(double u, const double cuts[9]) {
     return bin;
 }
 
+typedef struct {
+    ChunkWorkerArgs *arg;
+    const float *roots;
+    const float *coeffRoots;
+    const float *paramValues;
+    long sourceRows;
+    long coeffRows;
+    long paramRows;
+    int stride;
+    int coeffStride;
+    float *prevStepBuf;
+    float *prevWkRe;
+    float *prevWkIm;
+} PaletteLagAccessorCtx;
+
+static int palette_lag_previous_sources(void *user,
+                                        long outIdx,
+                                        const SolveScoreSourceSet *current,
+                                        SolveScoreSourceSet *previous) {
+    PaletteLagAccessorCtx *ctx = (PaletteLagAccessorCtx *)user;
+    ChunkWorkerArgs *arg = ctx->arg;
+    *previous = *current;
+    long prevSourceLocalIdx = arg->solvePreludeRows + outIdx - arg->sourceReadStart - 1;
+    long prevCoeffLocalIdx = arg->scoreCoeffPreludeRows + outIdx - arg->scoreCoeffReadStart - 1;
+    long prevParamLocalIdx = arg->scoreParamPreludeRows + outIdx - arg->scoreParamReadStart - 1;
+    if (arg->usesSolveLag && prevSourceLocalIdx >= 0) {
+        const float *prevRaw = ctx->roots + prevSourceLocalIdx * ctx->stride;
+        previous->roots = prepare_step(prevRaw, arg->degree, arg->rtChain, arg->nRt,
+                                       ctx->prevStepBuf, ctx->prevWkRe, ctx->prevWkIm);
+    }
+    if (arg->usesCoeffLag && ctx->coeffRoots &&
+        prevCoeffLocalIdx >= 0 && prevCoeffLocalIdx < ctx->coeffRows) {
+        previous->coeffRoots = ctx->coeffRoots + prevCoeffLocalIdx * ctx->coeffStride;
+    }
+    if (arg->usesParamLag && ctx->paramValues &&
+        prevParamLocalIdx >= 0 && prevParamLocalIdx < ctx->paramRows) {
+        previous->paramValues = ctx->paramValues + prevParamLocalIdx * arg->scoreParamStride;
+    }
+    return 1;
+}
+
 static void compute_scores_for_roots(const float *roots, const float *coeffRoots, const float *paramValues,
                                      long solveCount, long solveStart,
                                      ChunkWorkerArgs *arg) {
@@ -321,8 +362,6 @@ static void compute_scores_for_roots(const float *roots, const float *coeffRoots
     float prevWkRe[MAXDEG], prevWkIm[MAXDEG];
     float stepBuf[MAXDEG * 2];
     float prevStepBuf[MAXDEG * 2];
-    float currentMetricBuffer[SOLVE_SCORE_MAX_METRIC_SLOTS];
-    float recentMetricBuffer[SOLVE_SCORE_MAX_METRIC_SLOTS];
     int stride = arg->degree * 2;
     int coeffStride = arg->scoreCoeffStride;
     long sourceRows = arg->solveBytes > 0 ? (long)(arg->sectionBytes / (size_t)arg->solveBytes) : 0;
@@ -331,7 +370,22 @@ static void compute_scores_for_roots(const float *roots, const float *coeffRoots
         ? (long)(arg->scoreParamSectionBytes / ((size_t)arg->scoreParamStride * sizeof(float)))
         : 0;
     int usesLag = arg->useProgram && solve_score_program_uses_lag(&arg->program);
-    int recentInitialized = 0;
+    SolveScoreLagStream lagStream;
+    if (arg->useProgram) solve_score_lag_stream_init(&lagStream, &arg->program);
+    PaletteLagAccessorCtx lagCtx = {
+        .arg = arg,
+        .roots = roots,
+        .coeffRoots = coeffRoots,
+        .paramValues = paramValues,
+        .sourceRows = sourceRows,
+        .coeffRows = coeffRows,
+        .paramRows = paramRows,
+        .stride = stride,
+        .coeffStride = coeffStride,
+        .prevStepBuf = prevStepBuf,
+        .prevWkRe = prevWkRe,
+        .prevWkIm = prevWkIm,
+    };
     long computeStart = monotonic_ms();
     for (long s = 0; s < solveCount; s++) {
         long outIdx = solveStart + s;
@@ -365,47 +419,29 @@ static void compute_scores_for_roots(const float *roots, const float *coeffRoots
         double score = 0.0;
         if (arg->useProgram) {
             const float *step = prepare_step(solveRoots, arg->degree, arg->rtChain, arg->nRt, stepBuf, wkRe, wkIm);
-            if (!solve_score_eval_metric_slots(
-                    step, arg->degree, solveCoeffRoots, arg->scoreCoeffDegree,
-                    solveParamValues, arg->scoreParamDegree, &arg->program,
-                    currentMetricBuffer)) {
-                snprintf(arg->error, sizeof(arg->error), "solve-score metric evaluation failed");
+            SolveScoreSourceSet sources = {
+                .roots = step,
+                .degree = arg->degree,
+                .coeffRoots = solveCoeffRoots,
+                .coeffDegree = arg->scoreCoeffDegree,
+                .paramValues = solveParamValues,
+                .paramDegree = arg->scoreParamDegree,
+            };
+            int lagFailure = 0;
+            if (!solve_score_lag_stream_eval_current(
+                    &lagStream, &sources, outIdx,
+                    palette_lag_previous_sources, &lagCtx, &lagFailure)) {
+                snprintf(arg->error, sizeof(arg->error),
+                         lagFailure ? "solve-score lag metric evaluation failed"
+                                    : "solve-score metric evaluation failed");
                 arg->failed = 1;
                 break;
-            }
-            if (usesLag && !recentInitialized) {
-                memcpy(recentMetricBuffer, currentMetricBuffer, sizeof(float) * (size_t)arg->program.metricCount);
-                const float *prevStep = step;
-                const float *prevCoeffRoots = solveCoeffRoots;
-                const float *prevParamValues = solveParamValues;
-                long prevSourceLocalIdx = sourceLocalIdx - 1;
-                long prevCoeffLocalIdx = arg->scoreCoeffPreludeRows + outIdx - arg->scoreCoeffReadStart - 1;
-                long prevParamLocalIdx = arg->scoreParamPreludeRows + outIdx - arg->scoreParamReadStart - 1;
-                if (arg->usesSolveLag && prevSourceLocalIdx >= 0) {
-                    const float *prevRaw = roots + prevSourceLocalIdx * stride;
-                    prevStep = prepare_step(prevRaw, arg->degree, arg->rtChain, arg->nRt, prevStepBuf, prevWkRe, prevWkIm);
-                }
-                if (arg->usesCoeffLag && coeffRoots && prevCoeffLocalIdx >= 0 && prevCoeffLocalIdx < coeffRows) {
-                    prevCoeffRoots = coeffRoots + prevCoeffLocalIdx * coeffStride;
-                }
-                if (arg->usesParamLag && paramValues && prevParamLocalIdx >= 0 && prevParamLocalIdx < paramRows) {
-                    prevParamValues = paramValues + prevParamLocalIdx * arg->scoreParamStride;
-                }
-                if (!solve_score_eval_lagged_metric_slots(
-                        prevStep, arg->degree, prevCoeffRoots, arg->scoreCoeffDegree,
-                        prevParamValues, arg->scoreParamDegree, &arg->program,
-                        recentMetricBuffer)) {
-                    snprintf(arg->error, sizeof(arg->error), "solve-score lag metric evaluation failed");
-                    arg->failed = 1;
-                    break;
-                }
-                recentInitialized = 1;
             }
             double outputValues[SOLVE_SCORE_MAX_OUTPUT_CHANNELS];
             int gotOutputs = 0;
             if (!solve_score_eval_program_outputs_from_buffers(
-                    currentMetricBuffer,
-                    usesLag ? recentMetricBuffer : NULL,
+                    solve_score_lag_stream_current(&lagStream),
+                    solve_score_lag_stream_recent_or_null(&lagStream),
                     &arg->program,
                     outputValues,
                     SOLVE_SCORE_MAX_OUTPUT_CHANNELS,
@@ -450,7 +486,7 @@ static void compute_scores_for_roots(const float *roots, const float *coeffRoots
             arg->binsOut[outIdx] = score_to_bin(score, arg->clipLo, arg->clipHi, arg->omega, arg->omegaEnabled, arg->cuts);
         }
         if (usesLag) {
-            memcpy(recentMetricBuffer, currentMetricBuffer, sizeof(float) * (size_t)arg->program.metricCount);
+            solve_score_lag_stream_advance(&lagStream);
         }
     }
     arg->computeMs = monotonic_ms() - computeStart;

@@ -182,6 +182,8 @@ Root and solve-score also get profiles even if they stay chip-primary in v1:
 
 ## Phase 2A — Shared runtime (VM merge) behind frozen front-ends
 
+**Implementation status (2026-06-20): landed.** `sweep_cli.c` now lowers coeff `scalar_exprs` once at parse/load into cached expression plans, evaluates them in a hidden workspace temp arena, resolves all token args/`andy` before dispatch, and enforces the probed fixed-output length inside `evalCoeffProgram` for row paths. `paramEvalScalarExpr` intentionally remains as the legacy nested-expr compatibility path until the Phase-4 drain. Gates run: coeff native/compiler tests, DD5 whole-sweep oracle, full pytest, predeploy, DD6 benchmark.
+
 **Objective.** One native interpreter core behind byte-identical per-VM front-ends (DD1 adapter) + the expression-temp arena (DD1 + §2a isolation). **The solve-score lag refactor is split out into Phase 2B** — two unrelated high-risk native changes (VM merge vs lag double-buffer) must be *separate phases behind the same DD5 oracle*, so any numerical drift bisects to one of them. Fingerprints do not move (front-ends frozen). Gated by native parity + DD5 + DD6.
 
 ### 2.1 Unified value model + workspace (native structs)
@@ -231,6 +233,8 @@ The `expr_plans` live in the per-program workspace (`MAX_SCALAR_EXPRS × MAX_EXP
 ---
 
 ## Phase 2B — Centralize the solve-score lag facility
+
+**Implementation status (2026-06-20): landed.** `solve_score.h` owns `SolveScoreLagStream` (current/recent metric buffers, first-row lag warm-up, and row advance). The five previous hand-rolled lag loops in `roots2pix_mt.c`, `solve_palette_chunk_mt.c`, `solve_proximity_hist_sectioned.c`, and both `solve_proximity_stats.c` summary paths now use per-file previous-row accessors plus the shared stream. Gates run: targeted solve/palette/proximity tests, DD5 whole-sweep oracle, full pytest, predeploy, DD6 benchmark.
 
 **Objective.** Replace the 5 hand-rolled current/recent lag buffers with one `solve_score.h` facility. **Run after Phase 2A lands clean, behind the same DD5 oracle** — keeping the VM merge and the lag refactor as separate phases means a numerical-drift regression bisects to exactly one of them.
 

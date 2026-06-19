@@ -25,7 +25,7 @@
               }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "BuildPlan"
           },
 
@@ -40,7 +40,7 @@
               "plan.$": "$.Payload.body"
             },
             "ResultPath": "$.plan_raw",
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "ParsePlan"
           },
 
@@ -84,7 +84,7 @@
               }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "SolveScoreClipTask"
           },
 
@@ -113,7 +113,7 @@
               }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "SolveScoreHistPhase"
           },
 
@@ -135,7 +135,7 @@
               }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "SolveScoreHistMap"
           },
 
@@ -185,7 +185,7 @@
                   "Resource": "arn:aws:states:::lambda:invoke",
                   "Parameters": { "FunctionName": "${SolveProximityFunctionArn}", "Payload.$": "$" },
                   "ResultPath": null,
-                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
                   "End": true
                 }
               }
@@ -211,7 +211,7 @@
               }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "SolveScoreMergeTask"
           },
 
@@ -238,7 +238,7 @@
               }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "PaletteChunkPhase"
           },
 
@@ -260,7 +260,7 @@
               }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "PaletteChunkMap"
           },
 
@@ -317,7 +317,7 @@
                   "Resource": "arn:aws:states:::lambda:invoke",
                   "Parameters": { "FunctionName": "${PaletteChunkFunctionArn}", "Payload.$": "$" },
                   "ResultPath": null,
-                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
                   "End": true
                 }
               }
@@ -343,7 +343,7 @@
               }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "PaletteFinalizeTask"
           },
 
@@ -390,7 +390,7 @@
               }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "PostFinalizeAttachChoice"
           },
 
@@ -419,7 +419,7 @@
               }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "AttachAssociatedPaletteTask"
           },
 
@@ -450,7 +450,7 @@
               }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "ReportDone"
           },
 
@@ -472,7 +472,7 @@
               }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "InnerSucceed"
           },
 
@@ -506,7 +506,7 @@
         }
       },
       "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
       "Next": "Fail"
     },
 

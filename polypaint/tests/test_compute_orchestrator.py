@@ -132,9 +132,10 @@ class TestComputeStarterLambda(unittest.TestCase):
         self.assertEqual(body["task_id"], "compute_run_aberth_mt_run_r")
         self.assertEqual(body["run_id"], "run_r")
 
+    @patch("handler_compute_orchestrator.time.time", return_value=2.0)
     @patch("handler_compute_orchestrator.report_status")
     @patch("handler_compute_orchestrator.sfn_client")
-    def test_starter_rejects_duplicate_active_compute_run(self, mock_sfn, mock_report):
+    def test_starter_rejects_duplicate_active_compute_run(self, mock_sfn, mock_report, mock_time):
         import handler_compute_orchestrator as mod
         mod.STATE_MACHINE_ARN = "arn:aws:states:us-east-1:123:stateMachine:test"
         self.mock_ddb.query.return_value = {
@@ -160,6 +161,33 @@ class TestComputeStarterLambda(unittest.TestCase):
         self.assertEqual(body["active_phase"], "coeffgen")
         mock_sfn.start_execution.assert_not_called()
         mock_report.assert_not_called()
+
+    @patch("handler_compute_orchestrator.time.time", return_value=200000.0)
+    @patch("handler_compute_orchestrator.report_status")
+    @patch("handler_compute_orchestrator.sfn_client")
+    def test_starter_ignores_stale_active_compute_row(self, mock_sfn, mock_report, mock_time):
+        import handler_compute_orchestrator as mod
+        mod.STATE_MACHINE_ARN = "arn:aws:states:us-east-1:123:stateMachine:test"
+        mock_sfn.start_execution.return_value = {
+            "executionArn": "arn:aws:states:us-east-1:123:execution:wf:new"
+        }
+        self.mock_ddb.query.return_value = {
+            "Items": [{
+                "task_id": {"S": "compute_run_aberth_mt_run_stale"},
+                "task_status": {"S": "coeffgen"},
+                "updated_at_ms": {"N": str(100000 * 1000)},
+                "result_data": {"S": json.dumps({"phase": "coeffgen"})},
+            }]
+        }
+        result = mod.handler(_make_event({
+            "job_id": "j",
+            "run_id": "run_new",
+            "params": {"solver_mode": "aberth_mt", "N": 100, "n_chunks": 8, "function": "g1"},
+        }), None)
+        body = json.loads(result["body"])
+        self.assertEqual(result["statusCode"], 200)
+        self.assertEqual(body["run_id"], "run_new")
+        mock_sfn.start_execution.assert_called_once()
 
     @patch("handler_compute_orchestrator.report_status")
     @patch("handler_compute_orchestrator.sfn_client")

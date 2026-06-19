@@ -57,6 +57,15 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
             "$.plan.params.palette_chunk_workers",
         )
 
+    def test_map_workers_retry_lambda_throttles(self):
+        for map_name, worker_name in [
+            ("SolveScoreHistMap", "SolveHistWorker"),
+            ("PaletteChunkMap", "PaletteChunkWorker"),
+        ]:
+            worker = self.states[map_name]["ItemProcessor"]["States"][worker_name]
+            retry_errors = worker["Retry"][0]["ErrorEquals"]
+            self.assertIn("Lambda.TooManyRequestsException", retry_errors, map_name)
+
     def test_parallel_wrapper_catches_all(self):
         wrapper = self.top_states["WorkflowWrapper"]
         self.assertEqual(wrapper["Type"], "Parallel")

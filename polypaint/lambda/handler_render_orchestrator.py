@@ -24,6 +24,7 @@ ddb_client = boto3.client("dynamodb", region_name=os.environ.get("AWS_REGION", "
 STATE_MACHINE_ARN = os.environ.get("RENDER_STATE_MACHINE_ARN", "")
 VALID_MODES = {"color", "bilevel", "coeff_bilevel"}
 TERMINAL_STATUSES = {"done", "error"}
+ACTIVE_RUN_STALE_MS = int(os.environ.get("ACTIVE_RUN_STALE_MS", str(24 * 60 * 60 * 1000)) or 0)
 
 
 def _json_response(status_code, body):
@@ -35,6 +36,7 @@ def _json_response(status_code, body):
 
 
 def _active_execution_for_job(job_id, task_prefix):
+    now_ms = int(time.time() * 1000)
     resp = ddb_client.query(
         TableName=JOBS_TABLE,
         KeyConditionExpression="job_id = :job_id AND begins_with(task_id, :task_prefix)",
@@ -51,6 +53,8 @@ def _active_execution_for_job(job_id, task_prefix):
             continue
         task_id = item.get("task_id", {}).get("S", "")
         updated = int(item.get("updated_at_ms", {}).get("N", "0") or 0)
+        if ACTIVE_RUN_STALE_MS > 0 and updated > 0 and now_ms - updated > ACTIVE_RUN_STALE_MS:
+            continue
         result_data = {}
         raw_result = item.get("result_data", {}).get("S")
         if raw_result:

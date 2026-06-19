@@ -170,6 +170,16 @@ class TestWorkflowDefinition(unittest.TestCase):
         self.assertEqual(self.states["BilevelRasterMap"]["MaxConcurrency"], 10)
         self.assertEqual(self.states["CoeffRasterMap"]["MaxConcurrency"], 10)
 
+    def test_map_workers_retry_lambda_throttles(self):
+        for map_name, worker_name in [
+            ("ColorRasterMap", "ColorRasterWorker"),
+            ("BilevelRasterMap", "BilevelRasterWorker"),
+            ("CoeffRasterMap", "CoeffRasterWorker"),
+        ]:
+            worker = self.states[map_name]["ItemProcessor"]["States"][worker_name]
+            retry_errors = worker["Retry"][0]["ErrorEquals"]
+            self.assertIn("Lambda.TooManyRequestsException", retry_errors, map_name)
+
     def test_color_clip_payload_threads_coeffs_and_params(self):
         payload = self.states["ColorClipTask"]["Parameters"]["Payload"]
         self._assert_exact_mapping(payload, RENDER_COLOR_CLIP_TASK_PAYLOAD)

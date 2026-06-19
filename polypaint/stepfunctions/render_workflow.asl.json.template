@@ -26,7 +26,7 @@
               }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "BuildPlan"
           },
 
@@ -41,7 +41,7 @@
               "plan.$": "$.Payload.body"
             },
             "ResultPath": "$.plan_raw",
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "ParsePlan"
           },
 
@@ -88,7 +88,7 @@
               }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "ColorClipTask"
           },
 
@@ -117,7 +117,7 @@
               "parsed.$": "States.StringToJson($.Payload.body)"
             },
             "ResultPath": "$.solve_score_clip",
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "ColorRasterPhase"
           },
 
@@ -140,7 +140,7 @@
               }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "ColorRasterMap"
           },
 
@@ -189,7 +189,7 @@
                   "Resource": "arn:aws:states:::lambda:invoke",
                   "Parameters": { "FunctionName.$": "$.raster_function_name", "Payload.$": "$" },
                   "ResultPath": null,
-                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+                  "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
                   "End": true
                 }
               }
@@ -217,7 +217,7 @@
               }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "ColorAssembleEncodeTask"
           },
 
@@ -275,7 +275,7 @@
               }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "ReportDoneColor"
           },
 
@@ -287,7 +287,7 @@
               "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "family.$": "$.plan.outputs.family", "artifact_id.$": "$.plan.outputs.artifact_id", "image_key.$": "$.plan.outputs.image_key" }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "InnerSucceed"
           },
 
@@ -299,7 +299,7 @@
               "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "phase": "bilevel_raster", "phase_label": "BiLevel raster", "expected.$": "$.plan.bilevel.item_count", "subtask_prefix.$": "States.Format('render_{}_bilevel_section_', $.run_id)" }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "BilevelRasterMap"
           },
 
@@ -322,7 +322,7 @@
               "rotation.$": "$.plan.params.rotation", "degree.$": "$.plan.calc.degree",
               "root_transforms.$": "$.plan.params.root_transforms"
             },
-            "ItemProcessor": { "ProcessorConfig": {"Mode": "INLINE"}, "StartAt": "BilevelRasterWorker", "States": { "BilevelRasterWorker": { "Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": { "FunctionName": "${BilevelFunctionArn}", "Payload.$": "$" }, "ResultPath": null, "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}], "End": true } } },
+            "ItemProcessor": { "ProcessorConfig": {"Mode": "INLINE"}, "StartAt": "BilevelRasterWorker", "States": { "BilevelRasterWorker": { "Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": { "FunctionName": "${BilevelFunctionArn}", "Payload.$": "$" }, "ResultPath": null, "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}], "End": true } } },
             "ResultPath": null, "Next": "BilevelFinalizePhase"
           },
 
@@ -334,7 +334,7 @@
               "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "phase": "bilevel_finalize", "phase_label": "Assemble + encode", "expected": 1 }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "BilevelFinalizeTask"
           },
 
@@ -356,7 +356,7 @@
               }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "ReportDoneBilevel"
           },
 
@@ -368,7 +368,7 @@
               "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "family.$": "$.plan.outputs.family", "artifact_id.$": "$.plan.outputs.artifact_id", "image_key.$": "$.plan.outputs.bilevel_key" }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "InnerSucceed"
           },
 
@@ -380,7 +380,7 @@
               "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "phase": "coeff_raster", "phase_label": "Coeffs raster", "expected.$": "$.plan.coeff_bilevel.item_count", "subtask_prefix.$": "States.Format('render_{}_coeff_bilevel_section_', $.run_id)" }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "CoeffRasterMap"
           },
 
@@ -402,7 +402,7 @@
               "min_im.$": "$.plan.viewport.min_im", "max_im.$": "$.plan.viewport.max_im",
               "rotation.$": "$.plan.params.rotation", "degree.$": "$.plan.calc.degree", "n_coeffs.$": "$.plan.calc.n_coeffs"
             },
-            "ItemProcessor": { "ProcessorConfig": {"Mode": "INLINE"}, "StartAt": "CoeffRasterWorker", "States": { "CoeffRasterWorker": { "Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": { "FunctionName": "${BilevelFunctionArn}", "Payload.$": "$" }, "ResultPath": null, "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}], "End": true } } },
+            "ItemProcessor": { "ProcessorConfig": {"Mode": "INLINE"}, "StartAt": "CoeffRasterWorker", "States": { "CoeffRasterWorker": { "Type": "Task", "Resource": "arn:aws:states:::lambda:invoke", "Parameters": { "FunctionName": "${BilevelFunctionArn}", "Payload.$": "$" }, "ResultPath": null, "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}], "End": true } } },
             "ResultPath": null, "Next": "CoeffFinalizePhase"
           },
 
@@ -414,7 +414,7 @@
               "Payload": { "action": "phase", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "phase": "coeff_finalize", "phase_label": "Coeff assemble + encode", "expected": 1 }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "CoeffFinalizeTask"
           },
 
@@ -436,7 +436,7 @@
               }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "ReportDoneCoeffBilevel"
           },
 
@@ -448,7 +448,7 @@
               "Payload": { "action": "done", "job_id.$": "$.job_id", "task_id.$": "$.task_id", "run_id.$": "$.run_id", "run_started_at_ms.$": "$.run_started_at_ms", "mode.$": "$.mode", "family.$": "$.plan.outputs.family", "artifact_id.$": "$.plan.outputs.artifact_id", "image_key.$": "$.plan.outputs.coeff_bilevel_key" }
             },
             "ResultPath": null,
-            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+            "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
             "Next": "InnerSucceed"
           },
 
@@ -484,7 +484,7 @@
         }
       },
       "ResultPath": null,
-      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
+      "Retry": [{"ErrorEquals": ["Lambda.ServiceException","Lambda.AWSLambdaException","Lambda.SdkClientException","Lambda.TooManyRequestsException"], "IntervalSeconds": 2, "BackoffRate": 2.0, "MaxAttempts": 3}],
       "Next": "Fail"
     },
 

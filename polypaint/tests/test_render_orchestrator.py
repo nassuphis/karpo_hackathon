@@ -94,9 +94,10 @@ class TestStarterLambda(unittest.TestCase):
         assert body["task_id"] == "render_run_color_run_r"
         assert body["run_id"] == "run_r"
 
+    @patch("handler_render_orchestrator.time.time", return_value=2.0)
     @patch("handler_render_orchestrator.report_status")
     @patch("handler_render_orchestrator.sfn_client")
-    def test_starter_rejects_duplicate_active_render_run(self, mock_sfn, mock_report):
+    def test_starter_rejects_duplicate_active_render_run(self, mock_sfn, mock_report, mock_time):
         from handler_render_orchestrator import handler
         self.mock_ddb.query.return_value = {
             "Items": [{
@@ -120,6 +121,31 @@ class TestStarterLambda(unittest.TestCase):
         assert body["active_phase"] == "raster"
         mock_sfn.start_execution.assert_not_called()
         mock_report.assert_not_called()
+
+    @patch("handler_render_orchestrator.time.time", return_value=200000.0)
+    @patch("handler_render_orchestrator.report_status")
+    @patch("handler_render_orchestrator.sfn_client")
+    def test_starter_ignores_stale_active_render_row(self, mock_sfn, mock_report, mock_time):
+        from handler_render_orchestrator import handler
+        mock_sfn.start_execution.return_value = {
+            "executionArn": "arn:aws:states:us-east-1:123:execution:wf:new"
+        }
+        self.mock_ddb.query.return_value = {
+            "Items": [{
+                "task_id": {"S": "render_run_color_run_stale"},
+                "task_status": {"S": "raster"},
+                "updated_at_ms": {"N": str(100000 * 1000)},
+                "result_data": {"S": json.dumps({"phase": "raster"})},
+            }]
+        }
+        result = handler(_make_event({
+            "job_id": "j", "run_id": "run_new", "mode": "color",
+            "params": {"pix": 512},
+        }), None)
+        body = json.loads(result["body"])
+        assert result["statusCode"] == 200
+        assert body["run_id"] == "run_new"
+        mock_sfn.start_execution.assert_called_once()
 
     @patch("handler_render_orchestrator.report_status")
     @patch("handler_render_orchestrator.sfn_client")

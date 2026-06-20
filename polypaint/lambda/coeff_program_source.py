@@ -903,3 +903,79 @@ def compile_coeff_program_source(source_text, *, macro_resolver=None, strict=Tru
     return compiled
 
 
+def _source_call(name, args):
+    return f"{name}({', '.join(str(arg) for arg in args)})" if args else str(name)
+
+
+def _chain_row_name_args(row):
+    if isinstance(row, str):
+        return row, []
+    if isinstance(row, list) and row:
+        return str(row[0]), [str(arg) for arg in row[1:]]
+    return str(row), []
+
+
+def _native_transform_source_line(name, src, tgt, args):
+    name = _canonical_native_name(name)
+    src = str(src or "pop").strip().lower()
+    tgt = str(tgt or "push").strip().lower()
+    call_args = []
+    if src != "pop" or args:
+        call_args.append(src)
+    call_args.extend(str(arg) for arg in (args or []))
+    call = _source_call(name, call_args)
+    return f"poly = {call}" if tgt == "poly" else call
+
+
+def coeff_source_text_from_chain(chain):
+    """Render a canonical, reparseable Coeff source approximation.
+
+    This is for migration/populate flows. It is intentionally separate from
+    display_coeff_program_chain, which is a log/UI display string.
+    """
+    if not isinstance(chain, list):
+        return ""
+    lines = []
+    for row in chain:
+        name, args = _chain_row_name_args(row)
+        lname = name.strip().lower()
+        if lname in {"cf", "poly"} and not args:
+            lines.append(lname)
+        elif lname == "push" and len(args) == 1:
+            lines.append(args[0].strip().lower())
+        elif lname == "emit" and not args:
+            lines.append("emit")
+        elif lname == "pop" and not args:
+            lines.append("drop")
+        elif lname in {"duplicate", "dup", "swap", "flush"} and not args:
+            lines.append("dup" if lname == "duplicate" else lname)
+        elif lname == "set" and len(args) == 2:
+            lines.append(f"{args[0].strip().lower()} = {args[1].strip().lower()}")
+        elif lname in {"const", "push_const", "push_vec", "fill"}:
+            lines.append(_source_call("push_vec", args))
+        elif lname in {"push_linspace", "linspace"}:
+            lines.append(_source_call("linspace", args))
+        elif lname in {"push_range", "range", "arange"}:
+            lines.append(_source_call("arange", args))
+        elif lname in {"legacy", "_native_transform"} and len(args) >= 3:
+            lines.append(_native_transform_source_line(args[0], args[1], args[2], args[3:]))
+        elif lname == "_native_transform_stack_args" and len(args) >= 4:
+            fn_name, src, tgt, count = args[0], args[1], args[2], int(args[3] or 0)
+            fn_args = args[4:4 + count]
+            if len(args) > 4 + count:
+                fn_args.append(args[4 + count])
+            lines.append(_native_transform_source_line(fn_name, src, tgt, fn_args))
+        elif lname in _VECTOR_BINARY_ALIASES and len(args) == 3:
+            lines.append(f"{args[0].strip().lower()} = {_source_call(lname, [args[1], args[2]])}")
+        elif lname in _VECTOR_UNARY_NAMES and len(args) == 2:
+            lines.append(f"{args[0].strip().lower()} = {_source_call(lname, [args[1]])}")
+        elif lname in {"roll", "rolr"} and len(args) == 3:
+            lines.append(f"{args[0].strip().lower()} = {_source_call(lname, [args[1], args[2]])}")
+        elif lname == "argsort" and len(args) == 3:
+            lines.append(f"{args[0].strip().lower()} = {_source_call(lname, [args[1], args[2]])}")
+        elif lname in {"poke_poly", "poke_tos", "littlewood", "macro"}:
+            lines.append(_source_call(lname, args))
+        else:
+            lines.append(_source_call(lname, args))
+    return "\n".join(lines)
+

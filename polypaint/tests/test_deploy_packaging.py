@@ -370,6 +370,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("solve_score_chain.py", packaged["handler_storage.py"])
         self.assertIn("param_program_source.py", packaged["handler_storage.py"])
         self.assertIn("program_source_core.py", packaged["handler_storage.py"])
+        self.assertIn("program_v2_translate.py", packaged["handler_storage.py"])
         self.assertIn("program_profiles.json", packaged["handler_storage.py"])
         self.assertIn("handler_palette_chunk.py", packaged)
         self.assertIn("solve_palette_chunk", packaged["handler_palette_chunk.py"])

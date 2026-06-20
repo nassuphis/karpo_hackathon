@@ -36,7 +36,7 @@ from logical_sections import (
     DEFAULT_SOLVE_SCORE_MEMORY_MB,
     summarize_chunk_items,
 )
-from shared import BUCKET, JOBS_TABLE, PRESIGN_EXPIRY, parse_body, ok_response, _get_ddb
+from shared import BUCKET, JOBS_TABLE, PRESIGN_EXPIRY, parse_body, ok_response, _get_ddb, parse_boolish
 from coeff_program_chain import (
     PROGRAM_KIND as COEFF_PROGRAM_KIND,
     PROGRAM_VERSION as COEFF_PROGRAM_VERSION,
@@ -53,6 +53,14 @@ from param_program_source import (
     parse_param_program_source,
 )
 from solve_score_chain import compile_solve_score_chain_or_legacy, serialize_solve_score_chain
+from program_v2_translate import (
+    V2_PROGRAM_VERSION,
+    V2_SPEC_VERSION,
+    translate_coeff_from_old,
+    translate_param_from_old,
+    translate_solve_score_from_old,
+    v1_summary,
+)
 
 s3 = boto3.client("s3")
 FAVORITES_KEY = "polypaint/favorites/color_artifacts.json"
@@ -100,6 +108,23 @@ class _CoeffProgramNotFound(RuntimeError):
     pass
 
 
+class _MigrationConflict(RuntimeError):
+    status_code = 409
+
+    def __init__(self, message, *, existing_fingerprint="", migrated_fingerprint=""):
+        super().__init__(message)
+        self.existing_fingerprint = existing_fingerprint
+        self.migrated_fingerprint = migrated_fingerprint
+
+
+class _MigrationMissingMacros(RuntimeError):
+    status_code = 422
+
+    def __init__(self, missing):
+        self.missing = list(missing or [])
+        super().__init__("macro not migrated: " + ", ".join(self.missing))
+
+
 def _validate_results_list_workers(value):
     if value in (None, ""):
         value = DEFAULT_RESULTS_LIST_WORKERS
@@ -126,6 +151,17 @@ def _error_response(status_code, message):
     }
 
 
+def _json_error_response(status_code, body):
+    payload = dict(body or {})
+    if "error" in payload:
+        payload["error"] = str(payload["error"])[:1000]
+    return {
+        "statusCode": int(status_code),
+        "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
+        "body": json.dumps(payload),
+    }
+
+
 def _client_error_message(exc):
     response = getattr(exc, "response", {}) or {}
     err = response.get("Error") or {}
@@ -139,6 +175,14 @@ def _handle_storage_route(fn, event):
         return fn(event)
     except (_SolveScoreProgramNotFound, _ParamProgramNotFound, _CoeffProgramNotFound) as exc:
         return _error_response(404, exc)
+    except _MigrationConflict as exc:
+        return _json_error_response(409, {
+            "error": str(exc),
+            "existing_fingerprint": exc.existing_fingerprint,
+            "migrated_fingerprint": exc.migrated_fingerprint,
+        })
+    except _MigrationMissingMacros as exc:
+        return _json_error_response(422, {"error": "macro not migrated", "missing": exc.missing})
     except ClientError as exc:
         response = getattr(exc, "response", {}) or {}
         code = str((response.get("Error") or {}).get("Code") or "")
@@ -179,12 +223,24 @@ def _solve_score_program_key(program_id):
     return f"{SOLVE_SCORE_PROGRAMS_PREFIX}{program_id}.json"
 
 
+def _solve_score_program_v2_key(program_id):
+    return f"{SOLVE_SCORE_PROGRAMS_PREFIX}v2/{program_id}.json"
+
+
 def _param_program_key(program_id):
     return f"{PARAM_PROGRAMS_PREFIX}{program_id}.json"
 
 
+def _param_program_v2_key(program_id):
+    return f"{PARAM_PROGRAMS_PREFIX}v2/{program_id}.json"
+
+
 def _coeff_program_key(program_id):
     return f"{COEFF_PROGRAMS_PREFIX}{program_id}.json"
+
+
+def _coeff_program_v2_key(program_id):
+    return f"{COEFF_PROGRAMS_PREFIX}v2/{program_id}.json"
 
 
 def _validate_solve_score_program_name(name):
@@ -604,6 +660,124 @@ def _read_coeff_program_object(program_id):
     return program
 
 
+def _read_json_program_key(key, label):
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=key)
+    except Exception as exc:
+        if _is_missing_s3_error(exc):
+            raise RuntimeError(f"{label} not found")
+        raise
+    raw = obj["Body"].read()
+    try:
+        payload = json.loads(raw) if raw else {}
+    except Exception as exc:
+        raise RuntimeError(f"{label} is not valid JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{label} must be a JSON object")
+    return payload
+
+
+def _migration_kind_config(kind):
+    raw = str(kind or "").strip().lower()
+    if raw in {"solve-score", "solve_score", "solve"}:
+        return {
+            "kind": "solve-score",
+            "read": _read_solve_score_program_object,
+            "v2_key": _solve_score_program_v2_key,
+            "put_meta": _solve_score_program_put_metadata,
+            "translate": lambda program: translate_solve_score_from_old(program),
+            "macro_kind": None,
+        }
+    if raw == "param":
+        return {
+            "kind": "param",
+            "read": _read_param_program_object,
+            "v2_key": _param_program_v2_key,
+            "put_meta": _param_program_put_metadata,
+            "translate": lambda program: translate_param_from_old(program, macro_resolver=_param_program_macro_resolver(program.get("id"))),
+            "macro_kind": "param",
+        }
+    if raw == "coeff":
+        return {
+            "kind": "coeff",
+            "read": _read_coeff_program_object,
+            "v2_key": _coeff_program_v2_key,
+            "put_meta": _coeff_program_put_metadata,
+            "translate": lambda program: translate_coeff_from_old(program, macro_resolver=_coeff_program_macro_resolver(program.get("id"))),
+            "macro_kind": "coeff",
+        }
+    raise ValueError(f"unknown program migration kind: {kind}")
+
+
+def _v2_key_exists_for_kind(kind, program_id):
+    if kind == "param":
+        return _key_exists(_param_program_v2_key(program_id))
+    if kind == "coeff":
+        return _key_exists(_coeff_program_v2_key(program_id))
+    if kind == "solve-score":
+        return _key_exists(_solve_score_program_v2_key(program_id))
+    raise ValueError(f"unknown migration kind: {kind}")
+
+
+def _missing_v2_macros(kind, migrated):
+    if kind not in {"param", "coeff"}:
+        return []
+    missing = []
+    for macro_id in migrated.get("macro_ids") or []:
+        if not _v2_key_exists_for_kind(kind, macro_id):
+            missing.append(str(macro_id))
+    return sorted(set(missing))
+
+
+def _handle_migrate_program(event, kind):
+    params = parse_body(event)
+    cfg = _migration_kind_config(kind)
+    program_id = str(params.get("id") or "").strip()
+    if not program_id:
+        raise ValueError(f"{cfg['kind']} program migration requires id")
+    dry_run = parse_boolish(params.get("dry_run", True), True, strict=True, label="dry_run")
+    program = cfg["read"](program_id)
+    migrated = cfg["translate"](program)
+    migrated["id"] = program_id
+    migrated["saved_at"] = _utc_now_iso()
+    response = {
+        "id": program_id,
+        "kind": cfg["kind"],
+        "migrated": migrated,
+        "v1": v1_summary(program),
+        "wrote": False,
+    }
+    if dry_run:
+        return ok_response(response)
+
+    missing = _missing_v2_macros(cfg["kind"], migrated)
+    if missing:
+        raise _MigrationMissingMacros(missing)
+
+    key = cfg["v2_key"](program_id)
+    if _key_exists(key):
+        existing = _read_json_program_key(key, f"v2 {cfg['kind']} program {program_id}")
+        existing_fp = str(existing.get("fingerprint") or "")
+        migrated_fp = str(migrated.get("fingerprint") or "")
+        if existing_fp != migrated_fp:
+            raise _MigrationConflict(
+                "v2 exists",
+                existing_fingerprint=existing_fp,
+                migrated_fingerprint=migrated_fp,
+            )
+        return ok_response(response)
+
+    s3.put_object(
+        Bucket=BUCKET,
+        Key=key,
+        Body=(json.dumps(migrated, indent=2) + "\n").encode("utf-8"),
+        ContentType="application/json",
+        Metadata=cfg["put_meta"](migrated),
+    )
+    response["wrote"] = True
+    return ok_response(response)
+
+
 def _solve_score_program_put_metadata(program):
     return {
         SOLVE_SCORE_PROGRAM_META_NAME: str(program.get("name") or ""),
@@ -885,6 +1059,8 @@ def handler(event, context):
         return _handle_storage_route(handle_save_solve_score_program, event)
     elif path.endswith("/delete-solve-score-program"):
         return _handle_storage_route(handle_delete_solve_score_program, event)
+    elif path.endswith("/migrate-solve-score-program"):
+        return _handle_storage_route(lambda ev: _handle_migrate_program(ev, "solve-score"), event)
     elif path.endswith("/list-param-programs"):
         return _handle_storage_route(handle_list_param_programs, event)
     elif path.endswith("/fetch-param-program"):
@@ -895,6 +1071,8 @@ def handler(event, context):
         return _handle_storage_route(handle_compile_param_program_source, event)
     elif path.endswith("/delete-param-program"):
         return _handle_storage_route(handle_delete_param_program, event)
+    elif path.endswith("/migrate-param-program"):
+        return _handle_storage_route(lambda ev: _handle_migrate_program(ev, "param"), event)
     elif path.endswith("/list-coeff-programs"):
         return _handle_storage_route(handle_list_coeff_programs, event)
     elif path.endswith("/fetch-coeff-program"):
@@ -905,6 +1083,8 @@ def handler(event, context):
         return _handle_storage_route(handle_compile_coeff_program_source, event)
     elif path.endswith("/delete-coeff-program"):
         return _handle_storage_route(handle_delete_coeff_program, event)
+    elif path.endswith("/migrate-coeff-program"):
+        return _handle_storage_route(lambda ev: _handle_migrate_program(ev, "coeff"), event)
     elif path.endswith("/list-favorites"):
         return _handle_storage_route(handle_list_favorites, event)
     elif path.endswith("/add-favorite"):

@@ -48,13 +48,6 @@ def _diagnostic_shape(diag):
     }
 
 
-def _has_internal_synth_tokens(chain):
-    for row in chain or []:
-        if isinstance(row, list) and row and str(row[0]).startswith("_typed_"):
-            return True
-    return False
-
-
 class TestCoeffSourceEquivalence(unittest.TestCase):
     def _corpus(self):
         return _load_json("corpus.json")
@@ -88,15 +81,15 @@ class TestCoeffSourceEquivalence(unittest.TestCase):
                 )
                 self.assertEqual(_selected_compile_fields(new_compiled), _selected_compile_fields(old_compiled))
 
-                if not _has_internal_synth_tokens(new_parsed["chain"]):
-                    canonical = current.coeff_source_text_from_chain(new_parsed["chain"])
-                    reparsed = current.compile_coeff_program_source(
-                        canonical,
-                        macro_resolver=resolver,
-                        strict=True,
-                    )
-                    self.assertEqual(reparsed["execution_spec"], new_compiled["execution_spec"])
-                    self.assertEqual(reparsed["fingerprint"], new_compiled["fingerprint"])
+                canonical = current.coeff_source_text_from_chain(new_parsed["chain"])
+                self.assertNotIn("_typed_", canonical)
+                reparsed = current.compile_coeff_program_source(
+                    canonical,
+                    macro_resolver=resolver,
+                    strict=True,
+                )
+                self.assertEqual(reparsed["execution_spec"], new_compiled["execution_spec"])
+                self.assertEqual(reparsed["fingerprint"], new_compiled["fingerprint"])
 
     def test_canonical_source_regeneration_for_representable_chain(self):
         import coeff_program_source as current
@@ -106,6 +99,66 @@ class TestCoeffSourceEquivalence(unittest.TestCase):
         self.assertNotIn("_typed_", source)
         compiled = current.compile_coeff_program_source(source, strict=True)
         self.assertEqual(compiled["execution_spec"], current.compile_coeff_program_source("poly = rev(poly)\nemit")["execution_spec"])
+
+    def test_canonical_source_regeneration_for_typed_internal_chain(self):
+        import coeff_program_source as current
+
+        chain = [
+            ["push_range", "1", "poly_len+1"],
+            ["_typed_set_poly"],
+            ["_typed_push_vector", "poly"],
+            ["_typed_push_scalar", "0.25+0.0j"],
+            ["_typed_binary", "multiply"],
+            ["_typed_push_scalar", "1.0+0.0j"],
+            ["_typed_binary", "add"],
+            ["_typed_set_poly"],
+            ["_typed_push_scalar", "poly_len"],
+            ["_typed_push_scalar", "1.0+0.0j"],
+            ["_typed_binary", "subtract"],
+            ["_typed_push_scalar", "p1"],
+            ["_typed_push_scalar", "poly_len"],
+            ["_typed_push_scalar", "2.0+0.0j"],
+            ["_typed_binary", "subtract"],
+            ["_typed_push_vector", "poly"],
+            ["swap"],
+            ["_typed_get_scalar"],
+            ["_typed_binary", "add"],
+            ["_typed_poke_poly"],
+            ["emit"],
+        ]
+        source = current.coeff_source_text_from_chain(chain)
+        self.assertNotIn("_typed_", source)
+        self.assertIn("poly[(poly_len-1.0)]", source)
+        compiled = current.compile_coeff_program_source(source, strict=True)
+        direct = current.compile_coeff_program_source(
+            """
+            poly = arange(1, poly_len+1)
+            poly = add(multiply(poly, 0.25), 1.0)
+            poly[(poly_len-1.0)] = (p1+poly[(poly_len-2.0)])
+            emit
+            """,
+            strict=True,
+        )
+        self.assertEqual(compiled["execution_spec"], direct["execution_spec"])
+        self.assertEqual(compiled["fingerprint"], direct["fingerprint"])
+
+    def test_canonical_source_regeneration_consumes_native_stack_args(self):
+        import coeff_program_source as current
+
+        chain = [
+            ["_typed_push_scalar", "0.0+1.0j"],
+            ["_typed_push_scalar", "p2"],
+            ["_native_transform_stack_args", "exp", "poly", "poly", "2", "0.25"],
+            ["emit"],
+        ]
+        source = current.coeff_source_text_from_chain(chain)
+        self.assertIn("exp_affine(poly, 0.0+1.0j, p2, 0.25)", source)
+        compiled = current.compile_coeff_program_source(source, strict=True)
+        direct = current.compile_coeff_program_source(
+            "poly = exp_affine(poly, 0.0+1.0j, p2, 0.25)\nemit",
+            strict=True,
+        )
+        self.assertEqual(compiled["fingerprint"], direct["fingerprint"])
 
     def test_current_parser_matches_legacy_shell_oracle_diagnostic_shape(self):
         import coeff_program_source as current

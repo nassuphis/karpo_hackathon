@@ -806,7 +806,7 @@ def _chain_row_name_args(row):
 
 
 def _native_transform_source_line(name, src, tgt, args):
-    name = _canonical_native_name(name)
+    name = _source_native_name(name, args)
     src = str(src or "pop").strip().lower()
     tgt = str(tgt or "push").strip().lower()
     call_args = []
@@ -815,6 +815,65 @@ def _native_transform_source_line(name, src, tgt, args):
     call_args.extend(str(arg) for arg in (args or []))
     call = _source_call(name, call_args)
     return f"poly = {call}" if tgt == "poly" else call
+
+
+def _source_native_name(name, args=None):
+    """Return the source-safe transform name for a canonical registry name."""
+    canonical = _canonical_native_name(name)
+    argc = len(args or [])
+    # exp/pow/power are shadowed by typed source syntax. Use the text aliases
+    # so regenerated source parses back to the native transform, not to the
+    # typed unary/binary forms.
+    if canonical == "exp" and argc:
+        return "exp_affine"
+    if canonical == "pow":
+        return "pow_affine"
+    if canonical == "power" and argc:
+        return "power_series"
+    return canonical
+
+
+_SCALAR_BINARY_INFIX = {
+    "add": "+",
+    "subtract": "-",
+    "multiply": "*",
+    "divide": "/",
+    "power": "**",
+}
+
+
+def _typed_source_binary_expr(name, left, right, result_type):
+    chip = _VECTOR_BINARY_ALIASES.get(str(name or "").strip().lower(), str(name or "").strip().lower())
+    if result_type == "scalar" and chip in _SCALAR_BINARY_INFIX:
+        return f"({left}{_SCALAR_BINARY_INFIX[chip]}{right})"
+    return _source_call(chip, [left, right])
+
+
+def _typed_source_unary_expr(name, value):
+    return _source_call(canonical_unary_op_name(str(name or "").strip().lower()), [value])
+
+
+def _source_scalar_text(text):
+    raw = _canonical_expr(text)
+    try:
+        static_value = expr_value_if_static(ExpressionParser(raw).parse())
+    except Exception:
+        static_value = None
+    if static_value is None:
+        return raw
+    if static_value.imag == 0:
+        real_value = 0.0 if static_value.real == 0 else float(static_value.real)
+        return f"{real_value!r}"
+    return _format_scalar_literal(static_value)
+
+
+def _typed_pending_line(kind, text):
+    if kind == "scalar":
+        return _source_call("push_scalar", [text])
+    raw = str(text or "").strip()
+    if raw in {"cf", "poly"}:
+        return raw
+    return raw
 
 
 def coeff_source_text_from_chain(chain):
@@ -826,45 +885,203 @@ def coeff_source_text_from_chain(chain):
     if not isinstance(chain, list):
         return ""
     lines = []
+
+    # Pending source values mirror the VM stack only while a lowered typed
+    # sequence is being decompiled. They are flushed before user-visible stack
+    # operations (drop/dup/native calls) so canonical regeneration preserves
+    # explicit stack effects instead of optimizing them away.
+    pending = []
+
+    def push_pending(kind, text):
+        pending.append((kind, str(text)))
+
+    def pop_pending(expected=None):
+        if not pending:
+            return None
+        item = pending.pop()
+        if expected and item[0] != expected:
+            pending.append(item)
+            return None
+        return item
+
+    def flush_pending():
+        while pending:
+            kind, text = pending.pop(0)
+            lines.append(_typed_pending_line(kind, text))
+
+    def materialize_vector_for_index(kind, text):
+        raw = str(text).strip().lower()
+        if raw == "peek":
+            return "tos"
+        if raw in {"cf", "poly", "tos"}:
+            return raw
+        flush_pending()
+        lines.append(_typed_pending_line(kind, text))
+        return "tos"
+
+    def source_vector_from_selector(src):
+        src = str(src or "").strip().lower()
+        if src == "tos":
+            src = "peek"
+        if src == "pop" and pending:
+            return pop_pending("vector")
+        if src == "peek":
+            # Preserve the VM source selector. Replacing peek with the known
+            # pending vector (e.g. cf) is semantically equivalent in many
+            # cases, but it changes the compiled opcode from TOS_AT to CF_AT.
+            return ("vector", "tos")
+        return ("vector", "tos" if src == "peek" else src)
+
+    def pop_stack_arg_scalars(count):
+        values = []
+        for _ in range(max(0, int(count or 0))):
+            item = pop_pending("scalar")
+            if not item:
+                break
+            values.append(item[1])
+        values.reverse()
+        return values
+
     for row in chain:
         name, args = _chain_row_name_args(row)
         lname = name.strip().lower()
-        if lname in {"cf", "poly"} and not args:
-            lines.append(lname)
+
+        if lname == "_typed_push_scalar" and len(args) == 1:
+            push_pending("scalar", _source_scalar_text(args[0]))
+        elif lname == "_typed_push_vector" and len(args) == 1:
+            kind, text = source_vector_from_selector(args[0])
+            push_pending(kind, text)
+        elif lname == "_typed_binary" and len(args) == 1:
+            right = pop_pending()
+            left = pop_pending()
+            if not left or not right:
+                flush_pending()
+                lines.append(_source_call(_VECTOR_BINARY_ALIASES.get(args[0], args[0]), []))
+                continue
+            result_type = "vector" if "vector" in {left[0], right[0]} else "scalar"
+            push_pending(result_type, _typed_source_binary_expr(args[0], left[1], right[1], result_type))
+        elif lname == "_typed_unary" and len(args) == 1:
+            value = pop_pending()
+            if not value:
+                flush_pending()
+                lines.append(_source_call(canonical_unary_op_name(args[0]), []))
+                continue
+            push_pending(value[0], _typed_source_unary_expr(args[0], value[1]))
+        elif lname == "_typed_get_scalar" and not args:
+            index = pop_pending("scalar")
+            vector = pop_pending("vector")
+            if not index or not vector:
+                flush_pending()
+                lines.append("_typed_get_scalar")
+                continue
+            source = materialize_vector_for_index(vector[0], vector[1])
+            push_pending("scalar", f"{source}[{index[1]}]")
+        elif lname == "_typed_set_poly" and not args:
+            value = pop_pending("vector")
+            if not value:
+                flush_pending()
+                lines.append("_typed_set_poly")
+                continue
+            flush_pending()
+            lines.append(f"poly = {value[1]}")
+        elif lname == "_typed_poke_poly" and not args:
+            value = pop_pending("scalar")
+            index = pop_pending("scalar")
+            if not index or not value:
+                flush_pending()
+                lines.append("_typed_poke_poly")
+                continue
+            flush_pending()
+            lines.append(f"poly[{index[1]}] = {value[1]}")
+        elif lname == "_typed_fill" and not args:
+            value = pop_pending("scalar")
+            length = pop_pending("scalar")
+            if not length or not value:
+                flush_pending()
+                lines.append("fill()")
+                continue
+            push_pending("vector", _source_call("fill", [length[1], value[1]]))
+        elif lname == "_typed_blend" and not args:
+            t = pop_pending("scalar")
+            if not t:
+                flush_pending()
+                lines.append("blend()")
+                continue
+            # blend(t) consumes two vectors from the runtime stack. Materialize
+            # any pending vectors first, then keep the result pending so a
+            # following _typed_set_poly can render `poly = blend(t)`.
+            flush_pending()
+            push_pending("vector", _source_call("blend", [t[1]]))
+        elif lname == "swap" and not args and len(pending) >= 2:
+            pending[-1], pending[-2] = pending[-2], pending[-1]
+        elif lname in {"cf", "poly"} and not args:
+            push_pending("vector", lname)
         elif lname == "push" and len(args) == 1:
-            lines.append(args[0].strip().lower())
+            push_pending("vector", args[0].strip().lower())
         elif lname == "emit" and not args:
+            flush_pending()
             lines.append("emit")
         elif lname == "pop" and not args:
+            flush_pending()
             lines.append("drop")
         elif lname in {"duplicate", "dup", "swap", "flush"} and not args:
+            flush_pending()
             lines.append("dup" if lname == "duplicate" else lname)
         elif lname == "set" and len(args) == 2:
+            flush_pending()
             lines.append(f"{args[0].strip().lower()} = {args[1].strip().lower()}")
         elif lname in {"const", "push_const", "push_vec", "fill"}:
-            lines.append(_source_call("push_vec", args))
+            if len(args) == 1:
+                push_pending("vector", _source_call("fill", ["poly_len", args[0]]))
+            else:
+                push_pending("vector", _source_call("fill", args))
         elif lname in {"push_linspace", "linspace"}:
-            lines.append(_source_call("linspace", args))
+            push_pending("vector", _source_call("linspace", args))
         elif lname in {"push_range", "range", "arange"}:
-            lines.append(_source_call("arange", args))
+            push_pending("vector", _source_call("arange", args))
         elif lname in {"legacy", "_native_transform"} and len(args) >= 3:
-            lines.append(_native_transform_source_line(args[0], args[1], args[2], args[3:]))
+            flush_pending()
+            line = _native_transform_source_line(args[0], args[1], args[2], args[3:])
+            if args[2].strip().lower() == "push":
+                push_pending("vector", line)
+            else:
+                lines.append(line)
         elif lname == "_native_transform_stack_args" and len(args) >= 4:
             fn_name, src, tgt, count = args[0], args[1], args[2], int(args[3] or 0)
-            fn_args = args[4:4 + count]
-            if len(args) > 4 + count:
-                fn_args.append(args[4 + count])
-            lines.append(_native_transform_source_line(fn_name, src, tgt, fn_args))
+            fn_args = pop_stack_arg_scalars(count)
+            if len(args) > 4:
+                fn_args.append(args[4])
+            flush_pending()
+            line = _native_transform_source_line(fn_name, src, tgt, fn_args)
+            if tgt.strip().lower() == "push":
+                push_pending("vector", line)
+            else:
+                lines.append(line)
         elif lname in _VECTOR_BINARY_ALIASES and len(args) == 3:
-            lines.append(f"{args[0].strip().lower()} = {_source_call(lname, [args[1], args[2]])}")
+            flush_pending()
+            call = _source_call(lname, [args[1], args[2]])
+            if args[0].strip().lower() == "push":
+                push_pending("vector", call)
+            else:
+                lines.append(f"{args[0].strip().lower()} = {call}")
         elif lname in _VECTOR_UNARY_NAMES and len(args) == 2:
-            lines.append(f"{args[0].strip().lower()} = {_source_call(lname, [args[1]])}")
+            flush_pending()
+            call = _source_call(lname, [args[1]])
+            if args[0].strip().lower() == "push":
+                push_pending("vector", call)
+            else:
+                lines.append(f"{args[0].strip().lower()} = {call}")
         elif lname in {"roll", "rolr"} and len(args) == 3:
+            flush_pending()
             lines.append(f"{args[0].strip().lower()} = {_source_call(lname, [args[1], args[2]])}")
         elif lname == "argsort" and len(args) == 3:
+            flush_pending()
             lines.append(f"{args[0].strip().lower()} = {_source_call(lname, [args[1], args[2]])}")
         elif lname in {"poke_poly", "poke_tos", "littlewood", "macro"}:
+            flush_pending()
             lines.append(_source_call(lname, args))
         else:
+            flush_pending()
             lines.append(_source_call(lname, args))
+    flush_pending()
     return "\n".join(lines)

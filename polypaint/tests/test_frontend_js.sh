@@ -217,6 +217,7 @@ assertIncludes("function _effectiveCoeffProgramChainForCompute() {", 'compute pa
 assertIncludes("function _copyCoeffTransformsIntoCoeffProgram() {", 'Coeff Program UI should translate legacy transforms into program chips');
 assertIncludes("const _coeffProgramRegistryChipNames = _coeffRegistryVocab ? _coeffRegistryVocab.chipNameByRegistryName : {};", 'normalize/copy should derive the registry-to-chip name map from the generated vocab');
 assertIncludes('<script src="program_profiles_js.js"></script>', 'the generated program profile mirror must load before the main bundle');
+assertIncludes('<script src="merged_opcodes_js.js"></script>', 'the generated merged opcode mirror must load before the main bundle');
 assertIncludes('<script src="coeff_vocab_js.js"></script>', 'the generated registry vocab must load before the main bundle');
 assertIncludes("return { name: _coeffProgramRegistryChipName(normalized.name), params: ['poly', 'poly', ...args] };", 'Copy legacy transforms should map shadowed registry names through the shared chip-name map');
 assertIncludes("return [{ name: _coeffProgramRegistryChipName(legacyName), params: [legacyTgt, legacySrc, ...legacyArgs] }];", 'Normalize should map shadowed registry names through the shared chip-name map');

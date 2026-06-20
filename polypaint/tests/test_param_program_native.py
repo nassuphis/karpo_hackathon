@@ -15,6 +15,16 @@ from param_program_chain import (
     PARAM_OP_EMIT_P1,
     compile_param_program_chain,
 )
+from merged_opcodes import (
+    MERGED_OP_NATIVE_TRANSFORM,
+    MERGED_OP_PARAM_EMIT_P1,
+    MERGED_OP_PARAM_EMIT_P2,
+    MERGED_OP_PARAM_PUSH_T1,
+    MERGED_OP_PARAM_PUSH_T2,
+    MERGED_OP_PARAM_UNIT_CIRCLE,
+    MERGED_OP_TYPED_BINARY,
+    MERGED_OP_TYPED_PUSH_SCALAR,
+)
 
 
 LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
@@ -179,7 +189,7 @@ def test_param_dump_stack_program_expresses_sum_difference():
     assert len(data) == 8 * 8 * 16
 
 
-def test_param_program_native_accepts_missing_v1_version_and_rejects_unknown_version():
+def test_param_program_native_accepts_missing_v1_version_and_v2_equivalent_payloads():
     payload = _native_payload([
         ["const", "1"],
         ["emit", "p1"],
@@ -199,11 +209,54 @@ def test_param_program_native_accepts_missing_v1_version_and_rejects_unknown_ver
     assert meta["param_program_tokens"] == 2
     assert len(data) == 4 * 4 * 16
 
-    bad_payload = dict(payload)
-    bad_payload["version"] = 2
+    v1_payload = _native_payload([
+        ["push", "t1"],
+        ["const", "1"],
+        ["add"],
+        ["emit", "p1"],
+        ["push", "t2"],
+        ["unit_circle"],
+        ["emit", "p2"],
+    ])
+    v2_payload = {
+        "version": 2,
+        "tokens": [
+            {"op": MERGED_OP_PARAM_PUSH_T1},
+            {"op": MERGED_OP_TYPED_PUSH_SCALAR, "n_args": 1, "args": [1.0], "args_im": [0.0]},
+            {"op": MERGED_OP_TYPED_BINARY, "fn_index": 1},
+            {"op": MERGED_OP_PARAM_EMIT_P1},
+            {"op": MERGED_OP_PARAM_PUSH_T2},
+            {"op": MERGED_OP_PARAM_UNIT_CIRCLE},
+            {"op": MERGED_OP_PARAM_EMIT_P2},
+        ],
+        "stack_max": 2,
+        "uses_legacy_fast_path": False,
+    }
+    _, v1_data = _run_sweep({**base, "param_program": v1_payload}, "/tmp/pp_param_dump_v1_program.bin")
+    meta, v2_data = _run_sweep({**base, "param_program": v2_payload}, "/tmp/pp_param_dump_v2_program.bin")
+    assert meta["param_program_tokens"] == len(v2_payload["tokens"])
+    assert v2_data == v1_data
+
+    native_transform_payload = {
+        "version": 2,
+        "tokens": [
+            {"op": MERGED_OP_NATIVE_TRANSFORM, "registry": "param", "fn_index": 2, "src": 3, "tgt": 3}
+        ],
+        "stack_max": 0,
+        "uses_legacy_fast_path": False,
+    }
+    meta, data = _run_sweep({**base, "param_program": native_transform_payload}, "/tmp/pp_param_dump_v2_native_transform.bin")
+    assert meta["param_program_tokens"] == 1
+    assert len(data) == 4 * 4 * 16
+
+    bad_payload = {
+        "version": 2,
+        "tokens": [{"op": MERGED_OP_NATIVE_TRANSFORM, "registry": "coeff", "fn_index": 2, "src": 3, "tgt": 3}],
+        "stack_max": 0,
+    }
     proc = _run_sweep_process({**base, "param_program": bad_payload})
     assert proc.returncode != 0
-    assert "param_program version 2 is not supported" in proc.stderr
+    assert "registry must be param" in proc.stderr
 
 
 def test_param_dump_dynamic_const_expression_matches_stack_program():

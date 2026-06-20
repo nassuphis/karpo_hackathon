@@ -67,6 +67,9 @@ class TestProgramV2Migration(unittest.TestCase):
         self.assertEqual(dry_body["migrated"]["spec_version"], 2)
         self.assertEqual(dry_body["migrated"]["program_version"], 2)
         self.assertTrue(dry_body["migrated"]["fingerprint"].startswith("sha256:"))
+        self.assertEqual(dry_body["migrated"]["tokens"][0]["op"], 31)  # push_t1 in merged Param range
+        self.assertIn(23, [tok["op"] for tok in dry_body["migrated"]["tokens"]])  # typed_binary
+        self.assertIn('"version":2', dry_body["migrated"]["execution_spec"])
         self.assertNotIn("polypaint/param-programs/v2/param-v1.json", fake_s3.objects)
 
         write = handler_storage.handler(_event("/migrate-param-program", {"id": "param-v1", "dry_run": False}), None)
@@ -132,6 +135,9 @@ class TestProgramV2Migration(unittest.TestCase):
         self.assertEqual(body["migrated"]["spec_version"], 2)
         self.assertIn("source_text", body["migrated"])
         self.assertIn("rev", body["migrated"]["source_text"])
+        native_tokens = [tok for tok in body["migrated"]["tokens"] if tok["op"] == 29]
+        self.assertEqual(native_tokens[0]["registry"], "coeff")
+        self.assertIn('"version":2', body["migrated"]["execution_spec"])
         reparsed = parse_coeff_program_source(body["migrated"]["source_text"])
         self.assertTrue(reparsed["chain"])
 

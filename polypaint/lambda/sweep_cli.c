@@ -21,6 +21,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include "companion_solver.h"
+#include "merged_opcodes.h"
 
 #define MAX_DEGREE 255
 #define MAX_COEFFS 256
@@ -3476,6 +3477,7 @@ enum CoeffExprOp {
 typedef struct {
     uint16_t op;
     uint16_t fn_index;
+    uint8_t registry;
     uint8_t src;
     uint8_t tgt;
     uint8_t n_args;
@@ -3689,9 +3691,21 @@ static int coeff_stack_peek(CoeffProgramWorkspace *ws, uint16_t *slot) {
 
 /* ======== Coeff Program: JSON parse layer ======== */
 
+static int mergedProgramRegistryFromString(const char *name) {
+    if (strcmp(name, "coeff") == 0) return MERGED_REGISTRY_COEFF;
+    if (strcmp(name, "param") == 0) return MERGED_REGISTRY_PARAM;
+    if (strcmp(name, "root") == 0) return MERGED_REGISTRY_ROOT;
+    if (strcmp(name, "solve_score") == 0 || strcmp(name, "solve-score") == 0) {
+        return MERGED_REGISTRY_SOLVE_SCORE;
+    }
+    return 0;
+}
+
 static const char *parseCoeffProgramTokenObject(const char *objStart, const char *objEnd,
-                                                CoeffProgramToken *tok) {
+                                                CoeffProgramToken *tok,
+                                                int programVersion) {
     memset(tok, 0, sizeof(*tok));
+    tok->registry = MERGED_REGISTRY_COEFF;
     for (int i = 0; i < COEFF_PROGRAM_MAX_ARGS; i++) tok->expr_refs[i] = -1;
     tok->andy_expr_ref = -1;
     const char *v;
@@ -3701,6 +3715,32 @@ static const char *parseCoeffProgramTokenObject(const char *objStart, const char
         return NULL;
     }
     tok->op = (uint16_t)parseNum(&v);
+    int registryPresent = 0;
+    v = findKeyIn(objStart, objEnd, "registry");
+    if (v) {
+        char registryName[32];
+        if (!parseString(v, registryName, sizeof(registryName))) {
+            fprintf(stderr, "coeff_program token has invalid registry\n");
+            return NULL;
+        }
+        int registry = mergedProgramRegistryFromString(registryName);
+        if (registry != MERGED_REGISTRY_COEFF) {
+            fprintf(stderr, "coeff_program v2 native_transform registry must be coeff, got %s\n",
+                    registryName);
+            return NULL;
+        }
+        tok->registry = (uint8_t)registry;
+        registryPresent = 1;
+    }
+    if (programVersion == 2 && tok->op == MERGED_OP_NATIVE_TRANSFORM && !registryPresent) {
+        fprintf(stderr, "coeff_program v2 native_transform token requires registry=\"coeff\"\n");
+        return NULL;
+    }
+    if (programVersion == 2 && tok->op > MERGED_OP_COEFF_TYPED_BLEND) {
+        fprintf(stderr, "coeff_program v2 token opcode %u is not executable by the coeff VM\n",
+                (unsigned)tok->op);
+        return NULL;
+    }
     v = findKeyIn(objStart, objEnd, "fn_index");
     if (v) tok->fn_index = (uint16_t)parseNum(&v);
     v = findKeyIn(objStart, objEnd, "src");
@@ -3829,7 +3869,7 @@ static int parseCoeffProgram(const char *buf, CoeffProgram *program) {
     const char *v = findKeyIn(objStart, objEnd, "stack_max");
     const char *ver = findKeyIn(objStart, objEnd, "version");
     double version = ver ? parseNum(&ver) : 1.0;
-    if (version != 1.0) {
+    if (version != 1.0 && version != 2.0) {
         fprintf(stderr, "coeff_program version %.17g is not supported\n", version);
         return -1;
     }
@@ -3913,7 +3953,7 @@ static int parseCoeffProgram(const char *buf, CoeffProgram *program) {
             fprintf(stderr, "coeff_program token object is malformed\n");
             return -1;
         }
-        if (!parseCoeffProgramTokenObject(tokStart, tokEnd, &program->tokens[count])) {
+        if (!parseCoeffProgramTokenObject(tokStart, tokEnd, &program->tokens[count], (int)version)) {
             return -1;
         }
         count++;
@@ -6227,6 +6267,7 @@ typedef struct {
 typedef struct {
     uint16_t op;
     uint16_t fn_index;
+    uint8_t registry;
     uint8_t src;
     uint8_t tgt;
     uint8_t n_args;
@@ -6314,8 +6355,10 @@ static ParamCx param_exp(ParamCx z) {
 }
 
 static const char *parseParamProgramTokenObject(const char *objStart, const char *objEnd,
-                                                ParamProgramToken *tok) {
+                                                ParamProgramToken *tok,
+                                                int programVersion) {
     memset(tok, 0, sizeof(*tok));
+    tok->registry = MERGED_REGISTRY_PARAM;
     for (int i = 0; i < PARAM_PROGRAM_MAX_ARGS; i++) tok->expr_refs[i] = -1;
     const char *v;
     v = findKeyIn(objStart, objEnd, "op");
@@ -6324,6 +6367,23 @@ static const char *parseParamProgramTokenObject(const char *objStart, const char
         return NULL;
     }
     tok->op = (uint16_t)parseNum(&v);
+    int registryPresent = 0;
+    v = findKeyIn(objStart, objEnd, "registry");
+    if (v) {
+        char registryName[32];
+        if (!parseString(v, registryName, sizeof(registryName))) {
+            fprintf(stderr, "param_program token has invalid registry\n");
+            return NULL;
+        }
+        int registry = mergedProgramRegistryFromString(registryName);
+        if (registry != MERGED_REGISTRY_PARAM) {
+            fprintf(stderr, "param_program v2 native_transform registry must be param, got %s\n",
+                    registryName);
+            return NULL;
+        }
+        tok->registry = (uint8_t)registry;
+        registryPresent = 1;
+    }
     v = findKeyIn(objStart, objEnd, "fn_index");
     if (v) tok->fn_index = (uint16_t)parseNum(&v);
     v = findKeyIn(objStart, objEnd, "src");
@@ -6386,6 +6446,61 @@ static const char *parseParamProgramTokenObject(const char *objStart, const char
         }
         for (int i = 0; i < parsedNArgs; i++) tok->expr_refs[i] = (int)tmp[i];
     }
+    if (programVersion == 2) {
+        switch (tok->op) {
+            case MERGED_OP_DUPLICATE: tok->op = PARAM_OP_DUPLICATE; break;
+            case MERGED_OP_SWAP: tok->op = PARAM_OP_SWAP; break;
+            case MERGED_OP_POP: tok->op = PARAM_OP_POP; break;
+            case MERGED_OP_FLUSH: tok->op = PARAM_OP_FLUSH; break;
+            case MERGED_OP_TYPED_PUSH_SCALAR: tok->op = PARAM_OP_CONST; break;
+            case MERGED_OP_TYPED_BINARY:
+                if (tok->fn_index == 1) tok->op = PARAM_OP_ADD;
+                else if (tok->fn_index == 2) tok->op = PARAM_OP_SUBTRACT;
+                else if (tok->fn_index == 3) tok->op = PARAM_OP_MUL;
+                else {
+                    fprintf(stderr, "param_program v2 typed_binary fn_index=%u is not executable\n",
+                            (unsigned)tok->fn_index);
+                    return NULL;
+                }
+                break;
+            case MERGED_OP_TYPED_UNARY:
+                if (tok->fn_index == 3) tok->op = PARAM_OP_ABS;
+                else if (tok->fn_index == 4) tok->op = PARAM_OP_NEGATE;
+                else if (tok->fn_index == 5) tok->op = PARAM_OP_CONJ;
+                else if (tok->fn_index == 8) tok->op = PARAM_OP_REAL;
+                else if (tok->fn_index == 9) tok->op = PARAM_OP_IMAG;
+                else if (tok->fn_index == 10) tok->op = PARAM_OP_EXP;
+                else {
+                    fprintf(stderr, "param_program v2 typed_unary fn_index=%u is not executable\n",
+                            (unsigned)tok->fn_index);
+                    return NULL;
+                }
+                break;
+            case MERGED_OP_NATIVE_TRANSFORM:
+                if (!registryPresent) {
+                    fprintf(stderr, "param_program v2 native_transform token requires registry=\"param\"\n");
+                    return NULL;
+                }
+                tok->op = PARAM_OP_LEGACY;
+                break;
+            case MERGED_OP_PARAM_PUSH_T1: tok->op = PARAM_OP_PUSH_T1; break;
+            case MERGED_OP_PARAM_PUSH_T2: tok->op = PARAM_OP_PUSH_T2; break;
+            case MERGED_OP_PARAM_PUSH_P1: tok->op = PARAM_OP_PUSH_P1; break;
+            case MERGED_OP_PARAM_PUSH_P2: tok->op = PARAM_OP_PUSH_P2; break;
+            case MERGED_OP_PARAM_EMIT_P1: tok->op = PARAM_OP_EMIT_P1; break;
+            case MERGED_OP_PARAM_EMIT_P2: tok->op = PARAM_OP_EMIT_P2; break;
+            case MERGED_OP_PARAM_RATIO: tok->op = PARAM_OP_RATIO; break;
+            case MERGED_OP_PARAM_DIVIDE: tok->op = PARAM_OP_DIVIDE; break;
+            case MERGED_OP_PARAM_RECIPROCAL: tok->op = PARAM_OP_RECIPROCAL; break;
+            case MERGED_OP_PARAM_UNIT_CIRCLE: tok->op = PARAM_OP_UNIT_CIRCLE; break;
+            case MERGED_OP_PARAM_SQUARE: tok->op = PARAM_OP_SQUARE; break;
+            case MERGED_OP_PARAM_CUBE: tok->op = PARAM_OP_CUBE; break;
+            default:
+                fprintf(stderr, "param_program v2 token opcode %u is not executable by the param VM\n",
+                        (unsigned)tok->op);
+                return NULL;
+        }
+    }
     return objEnd;
 }
 
@@ -6408,7 +6523,7 @@ static int parseParamProgram(const char *buf, ParamProgram *program) {
     const char *v = findKeyIn(objStart, objEnd, "stack_max");
     const char *ver = findKeyIn(objStart, objEnd, "version");
     double version = ver ? parseNum(&ver) : 1.0;
-    if (version != 1.0) {
+    if (version != 1.0 && version != 2.0) {
         fprintf(stderr, "param_program version %.17g is not supported\n", version);
         return -1;
     }
@@ -6490,7 +6605,7 @@ static int parseParamProgram(const char *buf, ParamProgram *program) {
             fprintf(stderr, "param_program token object is malformed\n");
             return -1;
         }
-        if (!parseParamProgramTokenObject(tokStart, tokEnd, &program->tokens[count])) {
+        if (!parseParamProgramTokenObject(tokStart, tokEnd, &program->tokens[count], (int)version)) {
             return -1;
         }
         count++;

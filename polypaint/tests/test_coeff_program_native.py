@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
 from coeff_program_chain import compile_coeff_program_chain
 from coeff_program_source import compile_coeff_program_source
+from merged_opcodes import MERGED_OP_NATIVE_TRANSFORM
 
 
 LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
@@ -201,7 +202,7 @@ def test_coeff_program_native_accepts_more_than_old_64_token_cap():
     assert abs(values[0].imag) <= 1e-6
 
 
-def test_coeff_program_native_accepts_missing_v1_version_and_rejects_unknown_version():
+def test_coeff_program_native_accepts_missing_v1_version_and_v2_equivalent_payloads():
     compiled = compile_coeff_program_chain([["push_const", "1", "7"], ["emit"]])
     payload = _compiled_coeff_program_payload(compiled)
     payload_without_version = dict(payload)
@@ -219,11 +220,30 @@ def test_coeff_program_native_accepts_missing_v1_version_and_rejects_unknown_ver
     assert meta["coeff_program_tokens"] == compiled["token_count"]
     assert _complex_f32_values(data)[0] == complex(7.0, 0.0)
 
-    bad_payload = dict(payload)
-    bad_payload["version"] = 2
+    v2_payload = dict(payload)
+    v2_payload["version"] = 2
+    meta, data = _run_coeffgen({**base, "coeff_program": v2_payload})
+    assert meta["coeff_program_tokens"] == compiled["token_count"]
+    assert _complex_f32_values(data)[0] == complex(7.0, 0.0)
+
+    rev = compile_coeff_program_chain([["push", "cf"], ["_native_transform", "rev", "pop", "push"], ["emit"]])
+    rev_payload = _compiled_coeff_program_payload(rev)
+    rev_payload["version"] = 2
+    for token in rev_payload["tokens"]:
+        if token["op"] == MERGED_OP_NATIVE_TRANSFORM:
+            token["registry"] = "coeff"
+    meta, data = _run_coeffgen({**base, "cfpv": [3, 1, 0], "coeff_program": rev_payload})
+    values = _complex_f32_values(data)
+    assert [round(v.real) for v in values] == [1, 1, 1]
+
+    bad_payload = dict(rev_payload)
+    bad_payload["tokens"] = [dict(t) for t in rev_payload["tokens"]]
+    for token in bad_payload["tokens"]:
+        if token["op"] == MERGED_OP_NATIVE_TRANSFORM:
+            token["registry"] = "param"
     proc = _run_coeffgen_process({**base, "coeff_program": bad_payload})
     assert proc.returncode != 0
-    assert "coeff_program version 2 is not supported" in proc.stderr
+    assert "registry must be coeff" in proc.stderr
 
 
 def test_coeff_program_source_extended_linspace_runs_in_native_coeffgen():

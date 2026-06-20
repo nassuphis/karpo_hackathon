@@ -18,12 +18,14 @@ echo "Running predeploy contract gate..."
 "${TEST_PYTHON[@]}" api_manifest.py --check
 "${TEST_PYTHON[@]}" deploy_manifest.py --check
 "${TEST_PYTHON[@]}" lambda/gen_program_profiles.py --check
+"${TEST_PYTHON[@]}" lambda/gen_merged_opcodes.py --check
 "${TEST_PYTHON[@]}" lambda/gen_coeff_vocab.py --check
 "${TEST_PYTHON[@]}" deploy_manifest.py --emit-bash > /tmp/polypaint-deploy-specs-gate.sh
 bash -n /tmp/polypaint-deploy-specs-gate.sh
 "${TEST_PYTHON[@]}" -m pytest \
     tests/test_api_route_contracts.py \
     tests/test_deploy_packaging.py \
+    tests/test_merged_opcodes_drift.py \
     tests/test_render_workflow_definition.py \
     tests/test_render_plan.py \
     tests/test_finalize_mt_handler.py \

@@ -1187,6 +1187,7 @@ function _initSolveScoreProgramModal() {
     const loadBtn = document.getElementById('solve-score-modal-load');
     const saveBtn = document.getElementById('solve-score-modal-save');
     const deleteBtn = document.getElementById('solve-score-modal-delete');
+    const migrateBtn = document.getElementById('solve-score-modal-migrate');
     const downloadBtn = document.getElementById('solve-score-modal-download');
     const uploadBtn = document.getElementById('solve-score-modal-upload');
     const uploadFileEl = document.getElementById('solve-score-modal-upload-file');
@@ -1213,6 +1214,7 @@ function _initSolveScoreProgramModal() {
     if (loadBtn) loadBtn.addEventListener('click', () => { void _loadSelectedSolveScoreProgramFromModal(); });
     if (saveBtn) saveBtn.addEventListener('click', () => { void _saveCurrentSolveScoreProgramFromModal(); });
     if (deleteBtn) deleteBtn.addEventListener('click', () => { void _deleteSelectedSolveScoreProgramFromModal(); });
+    if (migrateBtn) migrateBtn.addEventListener('click', () => { void _migrateSelectedSolveScoreProgramFromModal(); });
     if (downloadBtn) downloadBtn.addEventListener('click', _downloadCurrentSolveScoreProgramFromModal);
     if (uploadBtn) uploadBtn.addEventListener('click', _triggerSolveScoreProgramUploadFromModal);
     if (uploadFileEl) {
@@ -1229,6 +1231,7 @@ function _initParamProgramModal() {
     const loadBtn = document.getElementById('param-program-modal-load');
     const saveBtn = document.getElementById('param-program-modal-save');
     const deleteBtn = document.getElementById('param-program-modal-delete');
+    const migrateBtn = document.getElementById('param-program-modal-migrate');
     const downloadBtn = document.getElementById('param-program-modal-download');
     const uploadBtn = document.getElementById('param-program-modal-upload');
     const uploadFileEl = document.getElementById('param-program-modal-upload-file');
@@ -1254,6 +1257,7 @@ function _initParamProgramModal() {
     if (loadBtn) loadBtn.addEventListener('click', () => { void _loadSelectedParamProgramFromModal(); });
     if (saveBtn) saveBtn.addEventListener('click', () => { void _saveCurrentParamProgramFromModal(); });
     if (deleteBtn) deleteBtn.addEventListener('click', () => { void _deleteSelectedParamProgramFromModal(); });
+    if (migrateBtn) migrateBtn.addEventListener('click', () => { void _migrateSelectedParamProgramFromModal(); });
     if (downloadBtn) downloadBtn.addEventListener('click', _downloadCurrentParamProgramFromModal);
     if (uploadBtn) uploadBtn.addEventListener('click', _triggerParamProgramUploadFromModal);
     if (uploadFileEl) {
@@ -1270,6 +1274,7 @@ function _initCoeffProgramModal() {
     const loadBtn = document.getElementById('coeff-program-modal-load');
     const saveBtn = document.getElementById('coeff-program-modal-save');
     const deleteBtn = document.getElementById('coeff-program-modal-delete');
+    const migrateBtn = document.getElementById('coeff-program-modal-migrate');
     const downloadBtn = document.getElementById('coeff-program-modal-download');
     const uploadBtn = document.getElementById('coeff-program-modal-upload');
     const uploadFileEl = document.getElementById('coeff-program-modal-upload-file');
@@ -1295,6 +1300,7 @@ function _initCoeffProgramModal() {
     if (loadBtn) loadBtn.addEventListener('click', () => { void _loadSelectedCoeffProgramFromModal(); });
     if (saveBtn) saveBtn.addEventListener('click', () => { void _saveCurrentCoeffProgramFromModal(); });
     if (deleteBtn) deleteBtn.addEventListener('click', () => { void _deleteSelectedCoeffProgramFromModal(); });
+    if (migrateBtn) migrateBtn.addEventListener('click', () => { void _migrateSelectedCoeffProgramFromModal(); });
     if (downloadBtn) downloadBtn.addEventListener('click', _downloadCurrentCoeffProgramFromModal);
     if (uploadBtn) uploadBtn.addEventListener('click', _triggerCoeffProgramUploadFromModal);
     if (uploadFileEl) {

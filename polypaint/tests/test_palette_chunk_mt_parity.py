@@ -486,7 +486,7 @@ class TestPaletteChunkMtParity(unittest.TestCase):
                     "--score_metrics=centroid_re",
                     "--score_clip_los=0",
                     "--score_clip_his=10",
-                    "--score_program=m0-0;m0-1;abs_diff",
+                    "--score_program=v2;m0-0;m0-1;abs_diff",
                 ])
                 self.assertEqual(result.returncode, 0, result.stderr)
                 scores = array("f")

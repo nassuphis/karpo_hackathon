@@ -28,9 +28,36 @@
 
 typedef struct {
     char name[64];
+    int fn_index;
     double args[MAX_RT_ARGS];
     int n_args;
 } RootXformEntry;
+
+enum RootXformFnIndex {
+    RT_FN_ROTATE_ROOTS = 1,
+    RT_FN_PULL_UNIT_CIRCLE = 2,
+    RT_FN_ROOTS_TOLINE = 3,
+    RT_FN_LINE_TO_UNIT_CIRCLE = 4,
+    RT_FN_INVERT_ROOTS = 5,
+    RT_FN_ADD_COMPLEX = 6,
+    RT_FN_MUL_COMPLEX = 7,
+    RT_FN_MOEBIUS = 8,
+    RT_FN_PULL_TOWARDS_CENTER = 9
+};
+
+static int rt_fn_index_by_name(const char *name) {
+    if (!name || !*name) return 0;
+    if (strcmp(name, "rotate_roots") == 0) return RT_FN_ROTATE_ROOTS;
+    if (strcmp(name, "pull_unit_circle") == 0) return RT_FN_PULL_UNIT_CIRCLE;
+    if (strcmp(name, "roots_toline") == 0) return RT_FN_ROOTS_TOLINE;
+    if (strcmp(name, "line_to_unit_circle") == 0) return RT_FN_LINE_TO_UNIT_CIRCLE;
+    if (strcmp(name, "invert_roots") == 0) return RT_FN_INVERT_ROOTS;
+    if (strcmp(name, "add_complex") == 0) return RT_FN_ADD_COMPLEX;
+    if (strcmp(name, "mul_complex") == 0) return RT_FN_MUL_COMPLEX;
+    if (strcmp(name, "moebius") == 0) return RT_FN_MOEBIUS;
+    if (strcmp(name, "pull_towards_center") == 0) return RT_FN_PULL_TOWARDS_CENTER;
+    return 0;
+}
 
 /* ---- Parsing ---- */
 
@@ -39,7 +66,66 @@ static const char *rt_skip(const char *p) {
     return p;
 }
 
-/* Parse root_transforms JSON: [["rotate_roots","0.5"],["pull_unit_circle","0.75","1.0"]] */
+static const char *rt_find_object_end(const char *p) {
+    int depth = 0;
+    int in_string = 0;
+    for (; *p; p++) {
+        if (*p == '"' && (p == 0 || p[-1] != '\\')) in_string = !in_string;
+        if (in_string) continue;
+        if (*p == '{') depth++;
+        else if (*p == '}') {
+            depth--;
+            if (depth == 0) return p + 1;
+        }
+    }
+    return NULL;
+}
+
+static int rt_parse_object_entry(const char *objStart, const char *objEnd, RootXformEntry *entry) {
+    memset(entry, 0, sizeof(*entry));
+    const char *p = strstr(objStart, "\"name\"");
+    if (p && p < objEnd) {
+        const char *colon = strchr(p, ':');
+        p = colon ? rt_skip(colon + 1) : NULL;
+        if (p && p < objEnd && *p == '"') {
+            p++;
+            int i = 0;
+            while (*p && p < objEnd && *p != '"' && i < 63) entry->name[i++] = *p++;
+            entry->name[i] = '\0';
+        }
+    }
+    p = strstr(objStart, "\"fn_index\"");
+    if (p && p < objEnd) {
+        const char *colon = strchr(p, ':');
+        if (colon && colon < objEnd) entry->fn_index = atoi(colon + 1);
+    }
+    p = strstr(objStart, "\"args\"");
+    if (p && p < objEnd) {
+        const char *arr = strchr(p, '[');
+        const char *arrEnd = arr ? strchr(arr, ']') : NULL;
+        if (arr && arrEnd && arrEnd < objEnd) {
+            p = arr + 1;
+            while (entry->n_args < MAX_RT_ARGS && p < arrEnd) {
+                p = rt_skip(p);
+                if (*p == ',') { p++; continue; }
+                if (*p == '"') p++;
+                char *end = NULL;
+                double value = strtod(p, &end);
+                if (end == p) break;
+                entry->args[entry->n_args++] = value;
+                p = end;
+                if (*p == '"') p++;
+            }
+        }
+    }
+    if (!entry->fn_index) entry->fn_index = rt_fn_index_by_name(entry->name);
+    if (!entry->fn_index && entry->name[0]) {
+        fprintf(stderr, "unknown root transform: %s\n", entry->name);
+    }
+    return entry->fn_index || entry->name[0];
+}
+
+/* Parse root_transforms JSON: [["rotate_roots","0.5"], {"fn_index":1,"args":[0.5]}] */
 static int parse_root_xform_json(const char *p, RootXformEntry *entries, int maxCount) {
     p = rt_skip(p);
     if (*p != '[') return 0;
@@ -49,6 +135,14 @@ static int parse_root_xform_json(const char *p, RootXformEntry *entries, int max
         p = rt_skip(p);
         if (*p == ']') break;
         if (*p == ',') { p++; p = rt_skip(p); }
+        if (*p == '{') {
+            const char *objEnd = rt_find_object_end(p);
+            if (!objEnd) break;
+            rt_parse_object_entry(p, objEnd, &entries[count]);
+            count++;
+            p = objEnd;
+            continue;
+        }
         if (*p != '[') break;
         p++;
         p = rt_skip(p);
@@ -57,6 +151,10 @@ static int parse_root_xform_json(const char *p, RootXformEntry *entries, int max
         int i = 0;
         while (*p && *p != '"' && i < 63) entries[count].name[i++] = *p++;
         entries[count].name[i] = '\0';
+        entries[count].fn_index = rt_fn_index_by_name(entries[count].name);
+        if (!entries[count].fn_index && entries[count].name[0]) {
+            fprintf(stderr, "unknown root transform: %s\n", entries[count].name);
+        }
         if (*p == '"') p++;
         entries[count].n_args = 0;
         while (entries[count].n_args < MAX_RT_ARGS) {
@@ -243,39 +341,39 @@ static void apply_root_xforms(const RootXformEntry *entries, int n_entries,
                                float *re, float *im, int degree) {
     for (int t = 0; t < n_entries; t++) {
         const RootXformEntry *e = &entries[t];
-        if (strcmp(e->name, "rotate_roots") == 0) {
+        int fn_index = e->fn_index ? e->fn_index : rt_fn_index_by_name(e->name);
+        if (fn_index == RT_FN_ROTATE_ROOTS) {
             double turns = e->n_args > 0 ? e->args[0] : 0.0;
             rt_rotate_roots(re, im, degree, turns);
-        } else if (strcmp(e->name, "pull_unit_circle") == 0) {
+        } else if (fn_index == RT_FN_PULL_UNIT_CIRCLE) {
             double sigma = e->n_args > 0 ? e->args[0] : 0.75;
             double alpha = e->n_args > 1 ? e->args[1] : 1.0;
             rt_pull_unit_circle(re, im, degree, sigma, alpha);
-        } else if (strcmp(e->name, "roots_toline") == 0) {
+        } else if (fn_index == RT_FN_ROOTS_TOLINE) {
             rt_roots_toline(re, im, degree);
-        } else if (strcmp(e->name, "line_to_unit_circle") == 0) {
+        } else if (fn_index == RT_FN_LINE_TO_UNIT_CIRCLE) {
             rt_line_to_unit_circle(re, im, degree);
-        } else if (strcmp(e->name, "invert_roots") == 0) {
+        } else if (fn_index == RT_FN_INVERT_ROOTS) {
             rt_invert_roots(re, im, degree);
-        } else if (strcmp(e->name, "add_complex") == 0) {
+        } else if (fn_index == RT_FN_ADD_COMPLEX) {
             double a = e->n_args > 0 ? e->args[0] : 0.0;
             double b = e->n_args > 1 ? e->args[1] : 0.0;
             rt_add_complex(re, im, degree, a, b);
-        } else if (strcmp(e->name, "mul_complex") == 0) {
+        } else if (fn_index == RT_FN_MUL_COMPLEX) {
             double a = e->n_args > 0 ? e->args[0] : 1.0;
             double b = e->n_args > 1 ? e->args[1] : 0.0;
             rt_mul_complex(re, im, degree, a, b);
-        } else if (strcmp(e->name, "moebius") == 0) {
+        } else if (fn_index == RT_FN_MOEBIUS) {
             double a = e->n_args > 0 ? e->args[0] : 1.0;
             double b = e->n_args > 1 ? e->args[1] : 0.0;
             double c = e->n_args > 2 ? e->args[2] : 0.0;
             double d = e->n_args > 3 ? e->args[3] : 1.0;
             rt_moebius(re, im, degree, a, b, c, d);
-        } else if (strcmp(e->name, "pull_towards_center") == 0) {
+        } else if (fn_index == RT_FN_PULL_TOWARDS_CENTER) {
             double alpha = e->n_args > 0 ? e->args[0] : 1.0;
             double sigma = e->n_args > 1 ? e->args[1] : 0.75;
             rt_pull_towards_center(re, im, degree, alpha, sigma);
         }
-        /* unknown transforms silently ignored */
     }
 }
 

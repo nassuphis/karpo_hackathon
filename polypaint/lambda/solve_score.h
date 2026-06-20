@@ -924,34 +924,34 @@ static double compute_solve_metric_score(const float *roots, int degree, enum So
 #define SOLVE_SCORE_MAX_OUTPUT_CHANNELS 8
 
 enum SolveScoreProgramOp {
-    SOLVE_SCORE_OP_PUSH_METRIC = 1,
-    SOLVE_SCORE_OP_AVG = 2,
-    SOLVE_SCORE_OP_MIN = 3,
-    SOLVE_SCORE_OP_MAX = 4,
-    SOLVE_SCORE_OP_MUL = 5,
-    SOLVE_SCORE_OP_WEIGHTED_SUM = 6,
-    SOLVE_SCORE_OP_ABS_DIFF = 7,
-    SOLVE_SCORE_OP_GEOMETRIC_MEAN = 8,
-    SOLVE_SCORE_OP_OMEGA_COSINE = 9,
-    SOLVE_SCORE_OP_SAWTOOTH = 10,
-    SOLVE_SCORE_OP_FLIP = 11,
-    SOLVE_SCORE_OP_EMIT = 12,
-    SOLVE_SCORE_OP_EMIT_NORM = 13,
-    SOLVE_SCORE_OP_CONST = 14,
-    SOLVE_SCORE_OP_DUP = 15,
-    SOLVE_SCORE_OP_ADD = 16,
-    SOLVE_SCORE_OP_MULT = 17,
-    SOLVE_SCORE_OP_SUBTRACT = 18,
-    SOLVE_SCORE_OP_RATIO = 19,
-    SOLVE_SCORE_OP_CLAMP = 20,
-    SOLVE_SCORE_OP_EMA = 21,
-    SOLVE_SCORE_OP_SIN = 22,
-    SOLVE_SCORE_OP_COS = 23,
-    SOLVE_SCORE_OP_LOG = 24,
-    SOLVE_SCORE_OP_EXP = 25,
-    SOLVE_SCORE_OP_POW = 26,
-    SOLVE_SCORE_OP_EMIT_NONE = 27,
-    SOLVE_SCORE_OP_FLUSH = 28,
+    SOLVE_SCORE_OP_PUSH_METRIC = 65,
+    SOLVE_SCORE_OP_AVG = 66,
+    SOLVE_SCORE_OP_MIN = 67,
+    SOLVE_SCORE_OP_MAX = 68,
+    SOLVE_SCORE_OP_MUL = 69,
+    SOLVE_SCORE_OP_WEIGHTED_SUM = 70,
+    SOLVE_SCORE_OP_ABS_DIFF = 71,
+    SOLVE_SCORE_OP_GEOMETRIC_MEAN = 72,
+    SOLVE_SCORE_OP_OMEGA_COSINE = 73,
+    SOLVE_SCORE_OP_SAWTOOTH = 74,
+    SOLVE_SCORE_OP_FLIP = 75,
+    SOLVE_SCORE_OP_EMIT = 76,
+    SOLVE_SCORE_OP_EMIT_NORM = 77,
+    SOLVE_SCORE_OP_CONST = 78,
+    SOLVE_SCORE_OP_DUP = 79,
+    SOLVE_SCORE_OP_ADD = 80,
+    SOLVE_SCORE_OP_MULT = 81,
+    SOLVE_SCORE_OP_SUBTRACT = 82,
+    SOLVE_SCORE_OP_RATIO = 83,
+    SOLVE_SCORE_OP_CLAMP = 84,
+    SOLVE_SCORE_OP_EMA = 85,
+    SOLVE_SCORE_OP_SIN = 86,
+    SOLVE_SCORE_OP_COS = 87,
+    SOLVE_SCORE_OP_LOG = 88,
+    SOLVE_SCORE_OP_EXP = 89,
+    SOLVE_SCORE_OP_POW = 90,
+    SOLVE_SCORE_OP_EMIT_NONE = 91,
+    SOLVE_SCORE_OP_FLUSH = 92,
 };
 
 enum SolveScoreMetricSource {
@@ -1166,7 +1166,20 @@ static int parse_solve_score_program_spec(const char *spec, int metricCount,
         snprintf(err, errCap, "missing score program");
         return 0;
     }
-    char *copy = strdup(spec);
+    int specVersion = 1;
+    const char *body = spec;
+    if (strncmp(spec, "v2;", 3) == 0) {
+        specVersion = 2;
+        body = spec + 3;
+    } else if (spec[0] == 'v' && spec[1] >= '0' && spec[1] <= '9') {
+        snprintf(err, errCap, "unsupported score program version marker");
+        return 0;
+    }
+    if (specVersion != 1 && specVersion != 2) {
+        snprintf(err, errCap, "unsupported score program version v%d", specVersion);
+        return 0;
+    }
+    char *copy = strdup(body);
     if (!copy) {
         snprintf(err, errCap, "out of memory parsing score program");
         return 0;

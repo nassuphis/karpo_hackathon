@@ -990,7 +990,7 @@ cp lambda/handler_storage.py lambda/shared.py lambda/color_artifact_meta.py lamb
    lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
    lambda/program_source_core.py lambda/program_profiles.py lambda/program_v2_translate.py \
    lambda/program_profiles.json lambda/merged_opcodes.py lambda/merged_opcodes.json \
-   lambda/color_render_contract.py lambda/logical_sections.py "$STORAGE_DIR/"
+   lambda/root_legacy_registry.json lambda/color_render_contract.py lambda/logical_sections.py "$STORAGE_DIR/"
 cd "$STORAGE_DIR" && zip -FS -r9 /tmp/polypaint-storage.zip . -q && cd "$SCRIPT_DIR"
 echo "  Storage:  $(du -h /tmp/polypaint-storage.zip | cut -f1)  (pure Python)"
 

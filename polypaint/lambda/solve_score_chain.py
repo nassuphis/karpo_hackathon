@@ -133,7 +133,8 @@ STACK_CHIPS = {
 MAX_METRIC_SLOTS = 16
 MAX_PROGRAM_TOKENS = 32
 MAX_OUTPUT_CHANNELS = 8
-SOLVE_SCORE_SPEC_VERSION = 1
+SOLVE_SCORE_LEGACY_SPEC_VERSION = 1
+SOLVE_SCORE_SPEC_VERSION = 2
 
 _FIELD_MAP = {
     "solve": {
@@ -173,9 +174,9 @@ def _scope_fields(scope):
         raise RuntimeError(f"Unknown solve-score metadata scope: {scope!r}")
 
 
-def normalize_solve_score_spec_version(value=None):
+def normalize_solve_score_spec_version(value=None, *, default=SOLVE_SCORE_SPEC_VERSION):
     if value in ("", None):
-        return SOLVE_SCORE_SPEC_VERSION
+        return default
     if isinstance(value, bool):
         raise RuntimeError(f"solve-score spec version must be an integer, got {value!r}")
     if isinstance(value, int):
@@ -189,14 +190,43 @@ def normalize_solve_score_spec_version(value=None):
         if not re.fullmatch(r"[0-9]+", text):
             raise RuntimeError(f"solve-score spec version must be an integer, got {value!r}")
         version = int(text)
-    if version != SOLVE_SCORE_SPEC_VERSION:
+    if version not in (SOLVE_SCORE_LEGACY_SPEC_VERSION, SOLVE_SCORE_SPEC_VERSION):
         raise RuntimeError(f"solve-score spec version {version} is not supported")
     return version
 
 
 def solve_score_spec_version_from_meta(meta, scope="solve"):
     fields = _scope_fields(scope)
-    return normalize_solve_score_spec_version((meta or {}).get(fields["spec_version"]))
+    return normalize_solve_score_spec_version(
+        (meta or {}).get(fields["spec_version"]),
+        default=SOLVE_SCORE_LEGACY_SPEC_VERSION,
+    )
+
+
+def strip_solve_score_version(program_spec):
+    """Return (version, body) for semicolon score-program specs.
+
+    Missing sentinel is v1 by wire contract. v2 is represented by a leading
+    ``v2;`` token; consumers must call this before splitting on semicolons so
+    the sentinel never appears as a bogus score op.
+    """
+    text = str(program_spec or "").strip()
+    if text.startswith("v2;"):
+        return SOLVE_SCORE_SPEC_VERSION, text[3:]
+    if re.match(r"^v[0-9]+(?:;|$)", text):
+        version_text, _, body = text.partition(";")
+        version = normalize_solve_score_spec_version(version_text[1:])
+        return version, body
+    return SOLVE_SCORE_LEGACY_SPEC_VERSION, text
+
+
+def render_solve_score_program_spec(program_spec, version=None):
+    target_version = normalize_solve_score_spec_version(version)
+    _, body = strip_solve_score_version(program_spec)
+    body = canonicalize_solve_score_program_spec(body, version=SOLVE_SCORE_LEGACY_SPEC_VERSION)
+    if target_version == SOLVE_SCORE_SPEC_VERSION:
+        return f"v2;{body}" if body else "v2;"
+    return body
 
 
 def _validate_metric(value):
@@ -568,9 +598,14 @@ def _canonical_metric_ref_token(token):
 
 
 def canonicalize_solve_score_program_spec(program_spec, version=None):
-    normalize_solve_score_spec_version(version)
+    target_version = normalize_solve_score_spec_version(version)
+    detected_version, body = strip_solve_score_version(program_spec)
+    if version not in ("", None) and detected_version != SOLVE_SCORE_LEGACY_SPEC_VERSION and detected_version != target_version:
+        raise RuntimeError(
+            f"solve-score program spec has v{detected_version} sentinel but v{target_version} was requested"
+        )
     parts = []
-    for raw in str(program_spec or "").split(";"):
+    for raw in body.split(";"):
         token = raw.strip()
         if not token:
             continue
@@ -579,7 +614,10 @@ def canonicalize_solve_score_program_spec(program_spec, version=None):
             parts.append(token)
         else:
             parts.append(metric_ref)
-    return ";".join(parts)
+    body = ";".join(parts)
+    if target_version == SOLVE_SCORE_SPEC_VERSION:
+        return f"v2;{body}" if body else "v2;"
+    return body
 
 
 def solve_score_program_specs_match(stored_spec, expected_spec, *, version=None):
@@ -591,7 +629,8 @@ def solve_score_program_specs_match(stored_spec, expected_spec, *, version=None)
 
 
 def solve_score_program_spec_uses_lag(program_spec):
-    for raw in str(program_spec or "").split(";"):
+    _, body = strip_solve_score_version(program_spec)
+    for raw in body.split(";"):
         token = raw.strip()
         if not token:
             continue
@@ -678,9 +717,9 @@ def solve_score_chain_id(chain, legacy_quantile=None):
 
 
 def compiled_solve_score_fingerprint(compiled, version=None):
-    normalize_solve_score_spec_version(version)
+    spec_version = normalize_solve_score_spec_version(version)
     payload = {
-        "program_spec": str(compiled["program_spec"]),
+        "program_spec": render_solve_score_program_spec(compiled["program_spec"], version=spec_version),
         "metrics": [
             {
                 "slot": int(metric["slot"]),
@@ -710,7 +749,10 @@ def solve_score_chain_fingerprint(raw_chain, metric=None, quantile=None, omega=N
 def solve_score_program_cli_payload(compiled_or_metrics):
     if isinstance(compiled_or_metrics, dict) and "metrics" in compiled_or_metrics:
         metrics = compiled_or_metrics["metrics"]
-        program_spec = compiled_or_metrics["program_spec"]
+        program_spec = render_solve_score_program_spec(
+            compiled_or_metrics["program_spec"],
+            version=compiled_or_metrics.get("spec_version", SOLVE_SCORE_SPEC_VERSION),
+        )
     else:
         raise RuntimeError("solve_score_program_cli_payload expects a compiled solve-score chain")
     payload = {
@@ -1016,6 +1058,7 @@ def compile_solve_score_chain(raw_chain, legacy_quantile=None):
         "chain": chain,
         "expanded_chain": expanded_chain,
         "metrics": metrics,
+        "spec_version": SOLVE_SCORE_SPEC_VERSION,
         "metric_count": len(metrics),
         "metric": primary_metric,
         "quantile": primary_quantile,

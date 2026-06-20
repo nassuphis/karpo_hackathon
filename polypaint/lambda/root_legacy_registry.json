@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "functions": [
+    {"name": "rotate_roots", "fn_index": 1, "args": [{"name": "turns", "type": "real", "default": 0.0}]},
+    {"name": "pull_unit_circle", "fn_index": 2, "args": [{"name": "sigma", "type": "real", "default": 0.75}, {"name": "alpha", "type": "real", "default": 1.0}]},
+    {"name": "roots_toline", "fn_index": 3, "args": []},
+    {"name": "line_to_unit_circle", "fn_index": 4, "args": []},
+    {"name": "invert_roots", "fn_index": 5, "args": []},
+    {"name": "add_complex", "fn_index": 6, "args": [{"name": "re", "type": "real", "default": 0.0}, {"name": "im", "type": "real", "default": 0.0}]},
+    {"name": "mul_complex", "fn_index": 7, "args": [{"name": "re", "type": "real", "default": 1.0}, {"name": "im", "type": "real", "default": 0.0}]},
+    {"name": "moebius", "fn_index": 8, "args": [{"name": "a", "type": "real", "default": 1.0}, {"name": "b", "type": "real", "default": 0.0}, {"name": "c", "type": "real", "default": 0.0}, {"name": "d", "type": "real", "default": 1.0}]},
+    {"name": "pull_towards_center", "fn_index": 9, "args": [{"name": "alpha", "type": "real", "default": 1.0}, {"name": "sigma", "type": "real", "default": 0.75}]}
+  ]
+}

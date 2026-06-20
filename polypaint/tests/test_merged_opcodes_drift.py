@@ -106,6 +106,4 @@ def test_merged_solve_score_ids_map_to_existing_solve_score_constants():
             continue
         source_symbol = op["source_symbol"]
         expected = int(op["id"])
-        # Solve-score keeps a dedicated 64+ merged range: source id + 64, with
-        # reduce_metric inserted at 64 before the existing native enum.
-        assert expected == score_ops[source_symbol[len("SOLVE_SCORE_OP_"):]] + 64
+        assert expected == score_ops[source_symbol[len("SOLVE_SCORE_OP_"):]]

@@ -16,7 +16,11 @@ from color_artifact_meta import (
 from raw_score_render import histogram_from_raw_path, histogram_from_raw_path_channel0, render_score_raw, write_equalization_lut
 from raw_sidecar import background_color_hex, build_raw_sidecar, validate_raw_sidecar
 from shared import BUCKET, imgpipe_env, ok_response, parse_body, report_status
-from solve_score_chain import format_solve_score_chain_display, read_solve_score_metadata
+from solve_score_chain import (
+    format_solve_score_chain_display,
+    read_solve_score_metadata,
+    strip_solve_score_version,
+)
 
 
 s3 = boto3.client("s3")
@@ -150,7 +154,8 @@ def _palette_raw_allows_zero(raw_sidecar, channels):
     if int(channels or 1) > 1:
         return True
     program = str((raw_sidecar or {}).get("score_program") or "")
-    return any(token in {"emit", "emit_norm"} for token in program.split(";"))
+    _, program_body = strip_solve_score_version(program)
+    return any(token in {"emit", "emit_norm"} for token in program_body.split(";"))
 
 
 def _multi_output_extract_error(artifact_id, source):

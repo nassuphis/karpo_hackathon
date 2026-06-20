@@ -73,7 +73,7 @@ class TestRasterMtParity(unittest.TestCase):
             f"--score_metrics={metric}",
             f"--score_clip_los={clip_lo}",
             f"--score_clip_his={clip_hi}",
-            "--score_program=m0",
+            "--score_program=v2;m0",
         ]
 
     def _score_case_payloads(self):
@@ -639,7 +639,7 @@ class TestRasterMtParity(unittest.TestCase):
                     "--score_metrics=centroid_re",
                     "--score_clip_los=0",
                     "--score_clip_his=1",
-                    "--score_program=m0-0;emit;m0-0;emit;m0-0;emit",
+                    "--score_program=v2;m0-0;emit;m0-0;emit;m0-0;emit",
                     f"--fragment_prefix={fragment_prefix}",
                     f"--associated_palette_fragment_prefix={palette_prefix}",
                     "--palette_grid_n=2",
@@ -836,7 +836,7 @@ class TestRasterMtParity(unittest.TestCase):
                     "--score_metrics=centroid_re",
                     "--score_clip_los=-1",
                     "--score_clip_his=1",
-                    "--score_program=m0-0;emit_none;flush;m0-0;emit_norm;m0-0;flip;emit_norm;m0-0;sawtooth:2;emit",
+                    "--score_program=v2;m0-0;emit_none;flush;m0-0;emit_norm;m0-0;flip;emit_norm;m0-0;sawtooth:2;emit",
                     "--score_output_clip_los=0.5,0.25,0",
                     "--score_output_clip_his=0.75,0.5,1",
                     f"--fragment_prefix={fragment_prefix}",

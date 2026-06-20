@@ -212,6 +212,12 @@ assertIncludes("const normalizedChain = hasSourceText ? [] : _normalizeCoeffProg
 assertIncludes("if (!hasSourceText) _validateCoeffProgramUiChain(normalizedChain);", 'Coeff Program chip validation should apply only to chip-authored programs');
 assertIncludes("if (program.has_source_text) {", 'Coeff Program source_text payloads should load into Text mode even when source_text is empty');
 assertIncludes("pipeline.coeff_program_source_text,\n        detail.coeff_program_source_text,\n        calc.coeff_program_source_text,\n        pipeline.coeff_program && pipeline.coeff_program.source_text", 'Compute result Populate should prefer stored coeff source text over lowered chip chains');
+assertIncludes("id=\"solve-score-modal-migrate\"", 'Solve-score saved-program modal should expose the Legacy v2 migration action');
+assertIncludes("id=\"param-program-modal-migrate\"", 'Param saved-program modal should expose the Legacy v2 migration action');
+assertIncludes("id=\"coeff-program-modal-migrate\"", 'Coeff saved-program modal should expose the Legacy v2 migration action');
+assertIncludes("'/migrate-solve-score-program'", 'Solve-score modal should call the v2 migration route');
+assertIncludes("'/migrate-param-program'", 'Param modal should call the v2 migration route');
+assertIncludes("'/migrate-coeff-program'", 'Coeff modal should call the v2 migration route');
 assertIncludes("} else if (options.auto === false || value.trim()) {\n        _coeffProgramSourceAutoSynthed = false;", 'Restored coeff source text should clear auto-synth state before switching to Text mode');
 assertIncludes("function _effectiveCoeffProgramChainForCompute() {", 'compute payload should centralize coeff-program selection');
 assertIncludes("function _copyCoeffTransformsIntoCoeffProgram() {", 'Coeff Program UI should translate legacy transforms into program chips');

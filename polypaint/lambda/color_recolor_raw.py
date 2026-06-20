@@ -20,7 +20,11 @@ from raw_score_render import (
     write_equalization_lut,
 )
 from raw_sidecar import background_color_hex, build_raw_sidecar, validate_raw_sidecar
-from solve_score_chain import format_solve_score_chain_display, read_solve_score_metadata
+from solve_score_chain import (
+    format_solve_score_chain_display,
+    read_solve_score_metadata,
+    strip_solve_score_version,
+)
 from shared import BUCKET, ok_response, report_status
 
 
@@ -139,7 +143,8 @@ def _sidecar_allows_zero(sidecar):
     if channels > 1:
         return True
     score_program = str((sidecar or {}).get("score_program") or "")
-    tokens = [tok.strip().split(":", 1)[0] for tok in score_program.split(";") if tok.strip()]
+    _, program_body = strip_solve_score_version(score_program)
+    tokens = [tok.strip().split(":", 1)[0] for tok in program_body.split(";") if tok.strip()]
     return any(tok in ("emit", "emit_norm") for tok in tokens)
 
 

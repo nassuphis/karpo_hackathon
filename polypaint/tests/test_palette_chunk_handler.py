@@ -73,7 +73,7 @@ class TestPaletteChunkHandler(unittest.TestCase):
         }
 
         args = mod._solve_score_program_args(bins_meta)
-        self.assertIn("--score_program=m0-0;m0-1;abs_diff", args)
+        self.assertIn("--score_program=v2;m0-0;m0-1;abs_diff", args)
         self.assertIn("--score_metrics=proximity", args)
 
     @patch("handler_palette_chunk.report_status")
@@ -414,7 +414,7 @@ class TestPaletteChunkHandler(unittest.TestCase):
                 self.assertIn("--score_metrics=spread,shelliness", cmd)
                 self.assertIn("--score_clip_los=-1.5,-0.75", cmd)
                 self.assertIn("--score_clip_his=2.5,1.75", cmd)
-                self.assertIn("--score_program=m0-0;m1-0;weighted_sum:0.7:0.3;omega_cosine:5", cmd)
+                self.assertIn("--score_program=v2;m0-0;m1-0;weighted_sum:0.7:0.3;omega_cosine:5", cmd)
                 self.assertFalse(any(a.startswith("--metric=") for a in cmd))
                 self.assertFalse(any(a.startswith("--clip_lo=") for a in cmd))
                 self.assertFalse(any(a.startswith("--clip_hi=") for a in cmd))
@@ -491,7 +491,7 @@ class TestPaletteChunkHandler(unittest.TestCase):
                 self.assertIn("--input_mode=sectioned", cmd)
                 self.assertIn("--url=https://example.com/chunk_3.bin", cmd)
                 self.assertIn("--score_sources=slv,cf", cmd)
-                self.assertIn("--score_program=m0-0;m1-0;max", cmd)
+                self.assertIn("--score_program=v2;m0-0;m1-0;max", cmd)
                 self.assertIn("--score_coeffs_url=https://example.com/coeffs_3.bin", cmd)
                 self.assertIn("--score_coeff_input_size=112", cmd)
                 self.assertIn("--score_coeff_degree=7", cmd)
@@ -825,7 +825,7 @@ class TestPaletteChunkHandler(unittest.TestCase):
                 self.assertIn("--prelude_rows=1", cmd)
                 self.assertIn("--score_coeff_prelude_rows=0", cmd)
                 self.assertIn("--score_param_prelude_rows=0", cmd)
-                self.assertIn("--score_program=m0-0;m0-1;abs_diff", cmd)
+                self.assertIn("--score_program=v2;m0-0;m0-1;abs_diff", cmd)
                 input_manifest = next(arg.split("=", 1)[1] for arg in cmd if arg.startswith("--input_manifest="))
                 with open(input_manifest) as fh:
                     input_meta = json.load(fh)
@@ -947,7 +947,7 @@ class TestPaletteChunkHandler(unittest.TestCase):
                 self.assertIn("--input_mode=sectioned", cmd)
                 self.assertIn("--url=https://example.com/chunk_3.bin", cmd)
                 self.assertIn("--score_sources=pm,slv", cmd)
-                self.assertIn("--score_program=m0-0;m1-0;max", cmd)
+                self.assertIn("--score_program=v2;m0-0;m1-0;max", cmd)
                 self.assertIn(f"--score_params_file={mod._TMP_SCORE_PARAMS}", cmd)
                 scores = array("f", [1.0, 2.0, 3.0, 4.0])
                 with open(mod._TMP_SCORES, "wb") as f:

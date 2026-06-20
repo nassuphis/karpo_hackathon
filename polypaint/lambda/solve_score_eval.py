@@ -11,7 +11,7 @@ import math
 import struct
 from dataclasses import dataclass
 
-from solve_score_chain import compile_solve_score_chain_or_legacy
+from solve_score_chain import compile_solve_score_chain_or_legacy, strip_solve_score_version
 
 
 EPS2 = 1e-300
@@ -418,7 +418,8 @@ def eval_program_outputs_from_buffers(current_metrics, program_spec, recent_metr
     stack = []
     outputs = []
     has_explicit_outputs = False
-    for raw in str(program_spec).split(";"):
+    _, program_body = strip_solve_score_version(program_spec)
+    for raw in program_body.split(";"):
         token = raw.strip()
         if not token:
             continue

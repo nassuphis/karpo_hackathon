@@ -157,7 +157,31 @@ class TestProgramV2Migration(unittest.TestCase):
         migrated = json.loads(resp["body"])["migrated"]
         self.assertEqual(migrated["spec_version"], 2)
         self.assertIn("program_spec", migrated)
+        self.assertTrue(migrated["program_spec"].startswith("v2;"))
+        self.assertIn(64, [tok["op"] for tok in migrated["tokens"]])  # reduce_metric
+        self.assertIn(65, [tok["op"] for tok in migrated["tokens"]])  # push_metric
+        self.assertIn(77, [tok["op"] for tok in migrated["tokens"]])  # emit_norm
+        self.assertIn('"version":2', migrated["execution_spec"])
         self.assertNotIn("source_text", migrated)
+
+    def test_translate_root_transforms_from_old_uses_registry_indices(self):
+        from program_v2_translate import translate_root_from_old
+
+        migrated = translate_root_from_old({
+            "root_transforms": [
+                ["rotate_roots", "0.25"],
+                {"name": "mul_complex", "args": [0, 1]},
+                ["unknown_root_op", "1"],
+            ]
+        })
+
+        self.assertEqual(migrated["spec_version"], 2)
+        self.assertEqual([tok["registry"] for tok in migrated["tokens"]], ["root", "root"])
+        self.assertEqual([tok["fn_index"] for tok in migrated["tokens"]], [1, 7])
+        self.assertEqual(migrated["tokens"][0]["op"], 29)
+        self.assertEqual(migrated["tokens"][1]["args"], [0.0, 1.0])
+        self.assertEqual(migrated["diagnostics"][0]["level"], "warning")
+        self.assertIn("unknown_root_op", migrated["diagnostics"][0]["message"])
 
 
 if __name__ == "__main__":

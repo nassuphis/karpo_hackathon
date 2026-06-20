@@ -406,7 +406,7 @@ def test_hist_v2_clip_uses_program_cli_flags():
         assert any(arg == "--score_metrics=spread,shelliness" for arg in cmd)
         assert any(arg == "--score_clip_los=-1,-0.5" for arg in cmd)
         assert any(arg == "--score_clip_his=2,1.5" for arg in cmd)
-        assert any(arg == "--score_program=m0-0;m1-0;weighted_sum:0.7:0.3;omega_cosine:5" for arg in cmd)
+        assert any(arg == "--score_program=v2;m0-0;m1-0;weighted_sum:0.7:0.3;omega_cosine:5" for arg in cmd)
         assert not any(arg.startswith("--metric=") for arg in cmd)
         assert not any(arg.startswith("--clip_lo=") for arg in cmd)
         assert not any(arg.startswith("--clip_hi=") for arg in cmd)
@@ -469,7 +469,7 @@ def test_hist_v2_clip_preserves_omega_phase_in_program_cli():
         body = json.loads(result["body"])
         assert body["metric"] == "spread"
         cmd = mock_run.call_args.args[0]
-        assert any(arg == "--score_program=m0-0;omega_cosine:5:1.25" for arg in cmd)
+        assert any(arg == "--score_program=v2;m0-0;omega_cosine:5:1.25" for arg in cmd)
         written = json.loads(hsp.s3.put_object.call_args.kwargs["Body"])
         assert written["program"] == "m0-0;omega_cosine:5:1.25"
     finally:
@@ -642,7 +642,7 @@ def test_clip_score_normalization_estimates_program_output_quantile_range():
         assert written["score_output_clip_source"] == "lores_q05_q95"
         assert len(commands) == 2
         summary_cmd = next(cmd for cmd in commands if "--mode=summary" in cmd)
-        assert "--score_program=m0-0;m0-1;abs_diff" in summary_cmd
+        assert "--score_program=v2;m0-0;m0-1;abs_diff" in summary_cmd
         assert "--score_metrics=proximity" in summary_cmd
     finally:
         hsp.s3 = orig_s3
@@ -708,7 +708,7 @@ def test_summary_score_normalization_reports_quantile_range():
         assert body["score_output_clip_hi"] == 0.08
         assert body["score_output_clip_source"] == "lores_q05_q95"
         summary_cmd = next(cmd for cmd in calls if "--mode=summary" in cmd)
-        assert "--score_program=m0-0;omega_cosine:1" in summary_cmd
+        assert "--score_program=v2;m0-0;omega_cosine:1" in summary_cmd
         assert "--score_metrics=proximity" in summary_cmd
         assert not any(arg.startswith("--metric=") for arg in summary_cmd)
     finally:
@@ -770,7 +770,7 @@ def test_summary_score_normalization_uses_program_output_for_omega_chip():
         })
         body = json.loads(result["body"])
         summary_cmd = next(cmd for cmd in calls if "--mode=summary" in cmd)
-        assert any(arg.startswith("--score_program=m0-0;omega_cosine:25") for arg in summary_cmd)
+        assert any(arg.startswith("--score_program=v2;m0-0;omega_cosine:25") for arg in summary_cmd)
         assert "--score_clip_los=-10" in summary_cmd
         assert "--score_clip_his=10" in summary_cmd
         assert body["score_output_normalize"] is True
@@ -904,7 +904,7 @@ def test_summary_allows_lagged_program_and_forwards_program_args():
         })
         body = json.loads(result["body"])
         summary_cmd = next(cmd for cmd in calls if "--mode=summary" in cmd)
-        assert "--score_program=m0-0;m0-1;abs_diff" in summary_cmd
+        assert "--score_program=v2;m0-0;m0-1;abs_diff" in summary_cmd
         assert "--score_metrics=proximity" in summary_cmd
         assert not any(arg.startswith("--score_sources=") for arg in summary_cmd)
         assert body["program"] == "m0-0;m0-1;abs_diff"
@@ -1211,7 +1211,7 @@ def test_hist_v2_mixed_source_sectioned_passes_coeff_url_cli_flags():
         assert body["input_mode"] == "sectioned"
         cmd = mock_run.call_args.args[0]
         assert "--score_sources=slv,cf" in cmd
-        assert "--score_program=m0-0;m1-0;max" in cmd
+        assert "--score_program=v2;m0-0;m1-0;max" in cmd
         assert "--score_coeffs_url=https://example.com/coeffs.bin" in cmd
         assert "--score_coeff_input_size=80" in cmd
         assert "--score_coeff_degree=5" in cmd
@@ -1440,7 +1440,7 @@ def test_hist_v2_lagged_logical_section_threads_prelude_to_native():
             cmd = mock_run.call_args.args[0]
             assert "--input_mode=multispan_sectioned" in cmd
             assert "--prelude_rows=1" in cmd
-            assert "--score_program=m0-0;m0-1;abs_diff" in cmd
+            assert "--score_program=v2;m0-0;m0-1;abs_diff" in cmd
             with open(input_manifest, "r", encoding="utf-8") as f:
                 manifest = json.load(f)
             assert manifest["logical_size"] == 3 * 2 * 2 * 4
@@ -1682,7 +1682,7 @@ def test_hist_v2_param_source_sectioned_passes_param_file_cli_flags():
         assert body["input_mode"] == "sectioned"
         cmd = mock_run.call_args.args[0]
         assert "--score_sources=pm,slv" in cmd
-        assert "--score_program=m0-0;m1-0;max" in cmd
+        assert "--score_program=v2;m0-0;m1-0;max" in cmd
         assert f"--score_params_file={hsp._TMP_PARAM_INPUT}" in cmd
     finally:
         hsp.s3 = orig_s3

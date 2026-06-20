@@ -125,7 +125,7 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         summary_cmd = next(call[0][0] for call in mock_run.call_args_list if "--mode=summary" in call[0][0])
         raster_cmd = mock_run.call_args_list[-1][0][0]
         self.assertIn("--score_output_normalize=1", summary_cmd)
-        self.assertIn("--score_program=m0-0", summary_cmd)
+        self.assertIn("--score_program=v2;m0-0", summary_cmd)
         self.assertIn("--score_metrics=proximity", summary_cmd)
         self.assertFalse(any(arg.startswith("--metric=") for arg in summary_cmd))
         self.assertIn("--score_output_normalize=1", raster_cmd)

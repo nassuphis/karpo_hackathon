@@ -55,7 +55,7 @@ class TestSolveScoreChain(unittest.TestCase):
         self.assertEqual(payload["score_metrics"], "spread,shelliness")
         self.assertEqual(payload["score_clip_los"], "-1,-0.5")
         self.assertEqual(payload["score_clip_his"], "2,1.5")
-        self.assertEqual(payload["score_program"], "m0-0;m1-0;weighted_sum:0.7:0.3;omega_cosine:5")
+        self.assertEqual(payload["score_program"], "v2;m0-0;m1-0;weighted_sum:0.7:0.3;omega_cosine:5")
         self.assertNotIn("score_sources", payload)
 
     def test_compile_chain_accepts_internal_transfer_before_combine(self):
@@ -207,11 +207,11 @@ class TestSolveScoreChain(unittest.TestCase):
         self.assertEqual(solve["spec_version"], SOLVE_SCORE_SPEC_VERSION)
         self.assertEqual(source["spec_version"], SOLVE_SCORE_SPEC_VERSION)
         self.assertEqual(assoc["spec_version"], SOLVE_SCORE_SPEC_VERSION)
-        self.assertEqual(normalize_solve_score_spec_version("1"), SOLVE_SCORE_SPEC_VERSION)
+        self.assertEqual(normalize_solve_score_spec_version("1"), 1)
         with self.assertRaisesRegex(RuntimeError, "must be an integer"):
             normalize_solve_score_spec_version(1.2)
         with self.assertRaisesRegex(RuntimeError, "not supported"):
-            normalize_solve_score_spec_version(2)
+            normalize_solve_score_spec_version(3)
 
         self.assertEqual(
             solve["chain"],

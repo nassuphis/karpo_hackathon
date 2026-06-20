@@ -183,6 +183,7 @@ function _renderSolveScoreProgramModal() {
     const loadBtn = document.getElementById('solve-score-modal-load');
     const saveBtn = document.getElementById('solve-score-modal-save');
     const deleteBtn = document.getElementById('solve-score-modal-delete');
+    const migrateBtn = document.getElementById('solve-score-modal-migrate');
     const downloadBtn = document.getElementById('solve-score-modal-download');
     const uploadBtn = document.getElementById('solve-score-modal-upload');
     const currentProgram = _currentSolveScoreProgramSummary(_solveScoreModalState.prefix);
@@ -230,6 +231,7 @@ function _renderSolveScoreProgramModal() {
     if (loadBtn) loadBtn.disabled = !canLoad;
     if (saveBtn) saveBtn.disabled = !canSave;
     if (deleteBtn) deleteBtn.disabled = !canDelete;
+    if (migrateBtn) migrateBtn.disabled = !canLoad;
     if (downloadBtn) downloadBtn.disabled = !canDownload;
     if (uploadBtn) uploadBtn.disabled = !canUpload;
     if (!bodyEl) return;
@@ -455,6 +457,47 @@ async function _deleteSelectedSolveScoreProgramFromModal() {
     }
 }
 
+async function _migrateSelectedProgramFromModal(kind, state, setStatus, renderFn, refreshFn, liveStatusFn) {
+    const id = String(state.selectedId || '').trim();
+    if (!id) return;
+    const route = {
+        'solve-score': '/migrate-solve-score-program',
+        param: '/migrate-param-program',
+        coeff: '/migrate-coeff-program',
+    }[kind];
+    if (!route) return;
+    state.actionBusy = true;
+    setStatus('', false);
+    renderFn();
+    try {
+        const resp = await lambdaPost('storage', { id, dry_run: false }, route);
+        const migrated = resp && resp.migrated ? resp.migrated : {};
+        const version = Number(migrated.spec_version || migrated.program_version || 2);
+        const message = resp && resp.wrote
+            ? `Migrated ${id} to v${version}`
+            : `v${version} copy for ${id} is already current`;
+        setStatus(message, false);
+        if (typeof liveStatusFn === 'function') liveStatusFn(message, false);
+        await refreshFn({ preserveSelection: true, keepStatus: true });
+    } catch (e) {
+        setStatus(e && e.message ? e.message : String(e), true);
+    } finally {
+        state.actionBusy = false;
+        renderFn();
+    }
+}
+
+async function _migrateSelectedSolveScoreProgramFromModal() {
+    await _migrateSelectedProgramFromModal(
+        'solve-score',
+        _solveScoreModalState,
+        _setSolveScoreModalStatus,
+        _renderSolveScoreProgramModal,
+        _refreshSolveScoreProgramRows,
+        (message, isError) => _setSolveScoreProgramStatus(_solveScoreModalState.prefix, message, isError)
+    );
+}
+
 function _downloadCurrentSolveScoreProgramFromModal() {
     try {
         const payload = _portableSolveScoreProgramPayload(
@@ -600,6 +643,7 @@ function _renderParamProgramModal() {
     const loadBtn = document.getElementById('param-program-modal-load');
     const saveBtn = document.getElementById('param-program-modal-save');
     const deleteBtn = document.getElementById('param-program-modal-delete');
+    const migrateBtn = document.getElementById('param-program-modal-migrate');
     const downloadBtn = document.getElementById('param-program-modal-download');
     const uploadBtn = document.getElementById('param-program-modal-upload');
     const currentProgram = _currentParamProgramSummary();
@@ -641,6 +685,7 @@ function _renderParamProgramModal() {
     if (loadBtn) loadBtn.disabled = !canLoad;
     if (saveBtn) saveBtn.disabled = !canSave;
     if (deleteBtn) deleteBtn.disabled = !canDelete;
+    if (migrateBtn) migrateBtn.disabled = !canLoad;
     if (downloadBtn) downloadBtn.disabled = !canDownload;
     if (uploadBtn) uploadBtn.disabled = !canUpload;
     if (!bodyEl) return;
@@ -857,6 +902,17 @@ async function _deleteSelectedParamProgramFromModal() {
     }
 }
 
+async function _migrateSelectedParamProgramFromModal() {
+    await _migrateSelectedProgramFromModal(
+        'param',
+        _paramProgramModalState,
+        _setParamProgramModalStatus,
+        _renderParamProgramModal,
+        _refreshParamProgramRows,
+        _paramProgramStatus
+    );
+}
+
 function _downloadCurrentParamProgramFromModal() {
     try {
         const payload = _portableParamProgramPayload(
@@ -1007,7 +1063,7 @@ function _renderCoeffProgramModal() {
     }
     const canLoad = _coeffProgramModalState.tableState === 'loaded' && !!_coeffProgramModalState.selectedId && !_coeffProgramModalState.selectedLoading && !_coeffProgramModalState.actionBusy;
     const canSave = !_coeffProgramModalState.actionBusy && !!String(_coeffProgramModalState.nameInput || '').trim() && !currentProgram.error;
-    [['load', canLoad], ['delete', canLoad], ['save', canSave], ['download', !_coeffProgramModalState.actionBusy && !currentProgram.error], ['upload', !_coeffProgramModalState.actionBusy]].forEach(([id, enabled]) => {
+    [['load', canLoad], ['delete', canLoad], ['migrate', canLoad], ['save', canSave], ['download', !_coeffProgramModalState.actionBusy && !currentProgram.error], ['upload', !_coeffProgramModalState.actionBusy]].forEach(([id, enabled]) => {
         const btn = document.getElementById(`coeff-program-modal-${id}`);
         if (btn) btn.disabled = !enabled;
     });
@@ -1188,6 +1244,17 @@ async function _deleteSelectedCoeffProgramFromModal() {
         _coeffProgramModalState.actionBusy = false;
         _renderCoeffProgramModal();
     }
+}
+
+async function _migrateSelectedCoeffProgramFromModal() {
+    await _migrateSelectedProgramFromModal(
+        'coeff',
+        _coeffProgramModalState,
+        _setCoeffProgramModalStatus,
+        _renderCoeffProgramModal,
+        _refreshCoeffProgramRows,
+        _coeffProgramStatus
+    );
 }
 
 function _downloadCurrentCoeffProgramFromModal() {

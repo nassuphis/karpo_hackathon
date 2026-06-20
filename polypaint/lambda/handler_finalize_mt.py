@@ -24,6 +24,7 @@ from raw_score_render import render_score_raw, write_equalization_lut
 from raw_sidecar import background_color_hex, build_raw_sidecar
 from shared import BUCKET, imgpipe_env, ok_response, parse_body, parse_boolish, report_status
 from solve_score_chain import (
+    SOLVE_SCORE_LEGACY_SPEC_VERSION,
     SOLVE_SCORE_SPEC_VERSION,
     normalize_solve_score_spec_version,
     read_solve_score_metadata,
@@ -113,7 +114,8 @@ def _validate_fragment_manifest(manifest, *, source_item_count, fragment_prefix,
             f"expected {expected_chain_fingerprint}, got {manifest_fingerprint!r}"
         )
     solve_score_spec_version = normalize_solve_score_spec_version(
-        manifest.get("solve_score_spec_version", SOLVE_SCORE_SPEC_VERSION)
+        manifest.get("solve_score_spec_version", SOLVE_SCORE_LEGACY_SPEC_VERSION),
+        default=SOLVE_SCORE_LEGACY_SPEC_VERSION,
     )
     return {
         "version": version,
@@ -300,7 +302,11 @@ def _clip_info_from_payload(params, metadata):
     return {
         "chain_fingerprint": actual_fingerprint,
         "solve_score_spec_version": normalize_solve_score_spec_version(
-            params.get("solve_score_spec_version", metadata.get("solve_score_spec_version", SOLVE_SCORE_SPEC_VERSION))
+            params.get(
+                "solve_score_spec_version",
+                metadata.get("solve_score_spec_version", SOLVE_SCORE_LEGACY_SPEC_VERSION),
+            ),
+            default=SOLVE_SCORE_LEGACY_SPEC_VERSION,
         ),
         "score_program": payload_program,
         "clip_slots": _normalize_clip_slots(params.get("clip_slots")),

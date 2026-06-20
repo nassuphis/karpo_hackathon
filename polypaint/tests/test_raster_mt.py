@@ -518,7 +518,7 @@ class TestRasterMT(unittest.TestCase):
 
         def fake_run(cmd, capture_output=False, text=False, timeout=None):
             self.assertIn("--score_sources=slv,cf,pm", cmd)
-            self.assertIn("--score_program=m0-0;m1-0;avg;m2-0;avg", cmd)
+            self.assertIn("--score_program=v2;m0-0;m1-0;avg;m2-0;avg", cmd)
             self.assertTrue(any(arg.startswith("--score_coeff_manifest=") for arg in cmd))
             self.assertIn("--score_coeff_degree=6", cmd)
             self.assertTrue(any(arg.startswith("--score_params_manifest=") for arg in cmd))

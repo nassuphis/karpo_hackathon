@@ -20,6 +20,7 @@ from logical_sections import (
     write_native_multispan_manifest,
 )
 from solve_score_chain import (
+    SOLVE_SCORE_LEGACY_SPEC_VERSION,
     SOLVE_SCORE_SPEC_VERSION,
     canonicalize_solve_score_program_spec,
     compile_solve_score_chain_or_legacy,
@@ -726,7 +727,8 @@ def handler(event, context):
             elif bins_data.get("chain_fingerprint"):
                 chunk_meta["chain_fingerprint"] = bins_data.get("chain_fingerprint")
             chunk_meta["solve_score_spec_version"] = int(
-                bins_data.get("solve_score_spec_version", SOLVE_SCORE_SPEC_VERSION) or SOLVE_SCORE_SPEC_VERSION
+                bins_data.get("solve_score_spec_version", SOLVE_SCORE_LEGACY_SPEC_VERSION)
+                or SOLVE_SCORE_LEGACY_SPEC_VERSION
             )
             chunk_meta["program"] = bins_data.get("program")
             chunk_meta["metrics"] = bins_data.get("metrics")

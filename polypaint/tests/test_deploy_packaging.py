@@ -375,6 +375,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("program_profiles.json", packaged["handler_storage.py"])
         self.assertIn("merged_opcodes.py", packaged["handler_storage.py"])
         self.assertIn("merged_opcodes.json", packaged["handler_storage.py"])
+        self.assertIn("root_legacy_registry.json", packaged["handler_storage.py"])
         self.assertIn("handler_palette_chunk.py", packaged)
         self.assertIn("solve_palette_chunk", packaged["handler_palette_chunk.py"])
         self.assertIn("solve_palette_chunk_mt", packaged["handler_palette_chunk.py"])

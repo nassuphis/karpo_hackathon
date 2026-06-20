@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 
 from coeff_program_chain import COEFF_OP_LEGACY, COEFF_OP_NATIVE_TRANSFORM
 from coeff_program_chain import compile_coeff_program_chain
 from coeff_program_source import coeff_source_text_from_chain, coeff_source_text_from_payload
+import merged_opcodes as merged
 from merged_opcodes import (
     MERGED_OP_DUPLICATE,
     MERGED_OP_FLUSH,
@@ -68,12 +70,14 @@ from param_program_chain import compile_param_program_chain
 from param_program_source import param_source_text_from_chain, param_source_text_from_payload
 from solve_score_chain import (
     compile_solve_score_chain_or_legacy,
+    render_solve_score_program_spec,
     serialize_solve_score_chain,
 )
 
 
 V2_SPEC_VERSION = 2
 V2_PROGRAM_VERSION = 2
+_LAMBDA_DIR = Path(__file__).resolve().parent
 
 _V2_TYPED_BINARY_FN = {
     PARAM_OP_ADD: 1,
@@ -188,6 +192,173 @@ def _execution_spec_v2(kind, tokens, scalar_exprs=None):
     return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
+def _load_root_registry_by_name():
+    path = _LAMBDA_DIR / "root_legacy_registry.json"
+    with path.open("r", encoding="utf-8") as fh:
+        payload = json.load(fh)
+    return {
+        str(item["name"]): dict(item)
+        for item in payload.get("functions") or []
+        if isinstance(item, dict) and item.get("name")
+    }
+
+
+def _root_transform_items(payload):
+    if isinstance(payload, list):
+        return payload
+    if not isinstance(payload, dict):
+        return []
+    raw = (
+        payload.get("root_transforms")
+        or payload.get("root_transform_chain")
+        or payload.get("chain")
+        or []
+    )
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return []
+    return raw if isinstance(raw, list) else []
+
+
+def _coerce_root_arg(value):
+    if isinstance(value, bool):
+        raise RuntimeError(f"root transform arg must be numeric, got {value!r}")
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(f"root transform arg must be numeric, got {value!r}") from exc
+
+
+def _root_token_from_item(item, registry_by_name):
+    if isinstance(item, dict):
+        name = str(item.get("name") or "").strip()
+        args = item.get("args")
+        if args is None:
+            args = item.get("params") or []
+        if not isinstance(args, list):
+            raise RuntimeError(f"root transform args must be a list, got {args!r}")
+        fn_index = int(item.get("fn_index") or 0)
+    elif isinstance(item, (list, tuple)) and item:
+        name = str(item[0] or "").strip()
+        args = list(item[1:])
+        fn_index = 0
+    else:
+        return None, {"level": "warning", "message": f"dropped invalid root transform: {item!r}"}
+
+    spec = registry_by_name.get(name)
+    if spec is None and fn_index:
+        spec = next(
+            (candidate for candidate in registry_by_name.values() if int(candidate.get("fn_index") or 0) == fn_index),
+            None,
+        )
+    if spec is None:
+        label = name or f"fn_index={fn_index}"
+        return None, {"level": "warning", "message": f"dropped unknown root transform: {label}"}
+    if not fn_index:
+        fn_index = int(spec["fn_index"])
+    coerced_args = [_coerce_root_arg(arg) for arg in args]
+    return _clean_token({
+        "op": MERGED_OP_NATIVE_TRANSFORM,
+        "registry": "root",
+        "fn_index": fn_index,
+        "name": str(spec["name"]),
+        "n_args": len(coerced_args),
+        "args": coerced_args,
+        "args_im": [0.0 for _ in coerced_args],
+    }), None
+
+
+_SOLVE_SCORE_KIND_TO_OP = {
+    "avg": merged.MERGED_OP_SCORE_AVG,
+    "min": merged.MERGED_OP_SCORE_MIN,
+    "max": merged.MERGED_OP_SCORE_MAX,
+    "mul": merged.MERGED_OP_SCORE_MUL,
+    "weighted_sum": merged.MERGED_OP_SCORE_WEIGHTED_SUM,
+    "abs_diff": merged.MERGED_OP_SCORE_ABS_DIFF,
+    "geometric_mean": merged.MERGED_OP_SCORE_GEOMETRIC_MEAN,
+    "omega_cosine": merged.MERGED_OP_SCORE_OMEGA_COSINE,
+    "sawtooth": merged.MERGED_OP_SCORE_SAWTOOTH,
+    "flip": merged.MERGED_OP_SCORE_FLIP,
+    "emit": merged.MERGED_OP_SCORE_EMIT,
+    "const": merged.MERGED_OP_SCORE_CONST,
+    "dup": merged.MERGED_OP_SCORE_DUP,
+    "add": merged.MERGED_OP_SCORE_ADD,
+    "mult": merged.MERGED_OP_SCORE_MULT,
+    "subtract": merged.MERGED_OP_SCORE_SUBTRACT,
+    "ratio": merged.MERGED_OP_SCORE_RATIO,
+    "clamp": merged.MERGED_OP_SCORE_CLAMP,
+    "ema": merged.MERGED_OP_SCORE_EMA,
+    "sin": merged.MERGED_OP_SCORE_SIN,
+    "cos": merged.MERGED_OP_SCORE_COS,
+    "log": merged.MERGED_OP_SCORE_LOG,
+    "exp": merged.MERGED_OP_SCORE_EXP,
+    "pow": merged.MERGED_OP_SCORE_POW,
+    "flush": merged.MERGED_OP_SCORE_FLUSH,
+}
+
+
+def _solve_score_tokens_v2(compiled):
+    tokens = []
+    for metric in compiled.get("metrics") or []:
+        tokens.append(_clean_token({
+            "op": merged.MERGED_OP_SCORE_REDUCE_METRIC,
+            "metric": str(metric["metric"]),
+            "source": str(metric.get("source", "slv")),
+            "quantile": float(metric["quantile"]),
+            "slot": int(metric["slot"]),
+        }))
+    for raw in compiled.get("program_tokens") or []:
+        token = dict(raw)
+        kind = str(token.get("kind") or "")
+        if kind == "metric":
+            out = {
+                "op": merged.MERGED_OP_SCORE_PUSH_METRIC,
+                "metric_slot": int(token["slot"]),
+                "lag_depth": int(token.get("lag", 0) or 0),
+            }
+        elif kind == "const":
+            out = {"op": merged.MERGED_OP_SCORE_CONST, "value": float(token["value"])}
+        elif kind == "weighted_sum":
+            out = {
+                "op": merged.MERGED_OP_SCORE_WEIGHTED_SUM,
+                "a": float(token["a"]),
+                "b": float(token["b"]),
+            }
+        elif kind == "ema":
+            out = {"op": merged.MERGED_OP_SCORE_EMA, "alpha": float(token["alpha"])}
+        elif kind == "pow":
+            out = {"op": merged.MERGED_OP_SCORE_POW, "exponent": float(token["exponent"])}
+        elif kind == "omega_cosine":
+            out = {
+                "op": merged.MERGED_OP_SCORE_OMEGA_COSINE,
+                "omega": float(token["omega"]),
+                "phase": float(token.get("phase", 0.0) or 0.0),
+            }
+        elif kind == "sawtooth":
+            out = {"op": merged.MERGED_OP_SCORE_SAWTOOTH, "mult": float(token["mult"])}
+        elif kind == "emit":
+            mode = str(token.get("mode", "raw") or "raw")
+            op = {
+                "raw": merged.MERGED_OP_SCORE_EMIT,
+                "norm": merged.MERGED_OP_SCORE_EMIT_NORM,
+                "none": merged.MERGED_OP_SCORE_EMIT_NONE,
+            }.get(mode)
+            if op is None:
+                raise RuntimeError(f"solve-score v2 translation has no emit mode {mode!r}")
+            out = {"op": op, "mode": mode}
+            if mode != "none":
+                out["channel"] = int(token.get("channel", 0) or 0)
+        else:
+            op = _SOLVE_SCORE_KIND_TO_OP.get(kind)
+            if op is None:
+                raise RuntimeError(f"solve-score v2 translation has no merged opcode for {kind!r}")
+            out = {"op": op}
+        tokens.append(_clean_token(out))
+    return tokens
+
+
 def v1_summary(program):
     return {
         "fingerprint": str(program.get("fingerprint") or ""),
@@ -284,10 +455,14 @@ def translate_solve_score_from_old(program):
         default_metric="proximity",
     )
     canonical_chain = json.loads(serialize_solve_score_chain(compiled["chain"]))
+    program_spec = render_solve_score_program_spec(compiled["program_spec"], version=V2_SPEC_VERSION)
+    v2_tokens = _solve_score_tokens_v2(compiled)
+    v2_spec = _execution_spec_v2("solve-score", v2_tokens, [])
     fingerprint = _v2_fingerprint(
         "solve-score",
         {
-            "program_spec": compiled["program_spec"],
+            "execution_spec": v2_spec,
+            "program_spec": program_spec,
             "metrics": compiled.get("metrics") or [],
             "chain": canonical_chain,
         },
@@ -301,13 +476,57 @@ def translate_solve_score_from_old(program):
         "chain": canonical_chain,
         "metric": compiled["metric"],
         "display": compiled["display"],
-        "program_spec": compiled["program_spec"],
+        "program_spec": program_spec,
+        "tokens": v2_tokens,
+        "execution_spec": v2_spec,
         "fingerprint": fingerprint,
         "statement_count": len(canonical_chain),
+        "token_count": len(v2_tokens),
         "metric_count": len(compiled.get("metrics") or []),
         "output_channel_count": compiled.get("output_channel_count", 0),
+        "output_channels": compiled.get("output_channels") or [],
         "has_explicit_outputs": bool(compiled.get("has_explicit_outputs")),
     }
     if program.get("recommended_interpretation") not in ("", None):
         migrated["recommended_interpretation"] = program["recommended_interpretation"]
     return migrated
+
+
+def translate_root_from_old(program):
+    registry_by_name = _load_root_registry_by_name()
+    source_chain = _root_transform_items(program)
+    tokens = []
+    diagnostics = []
+    canonical_chain = []
+    for item in source_chain:
+        token, diagnostic = _root_token_from_item(item, registry_by_name)
+        if diagnostic is not None:
+            diagnostics.append(diagnostic)
+            continue
+        tokens.append(token)
+        canonical_chain.append({
+            "name": token["name"],
+            "fn_index": token["fn_index"],
+            "args": list(token.get("args") or []),
+        })
+    v2_spec = _execution_spec_v2("root", tokens, [])
+    fingerprint = _v2_fingerprint(
+        "root",
+        {
+            "execution_spec": v2_spec,
+            "chain": canonical_chain,
+        },
+    )
+    return {
+        "program_kind": "root_transforms",
+        "version": V2_PROGRAM_VERSION,
+        "program_version": V2_PROGRAM_VERSION,
+        "spec_version": V2_SPEC_VERSION,
+        "chain": canonical_chain,
+        "tokens": tokens,
+        "diagnostics": diagnostics,
+        "fingerprint": fingerprint,
+        "execution_spec": v2_spec,
+        "statement_count": len(canonical_chain),
+        "token_count": len(tokens),
+    }

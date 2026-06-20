@@ -484,17 +484,17 @@ Dispatch maps to update when retiring cp/pp: `_chainForWhich` (`js/02-preview-so
 
 ## Cross-phase summary
 
-| Phase | Ships standalone? | Hard gate before it | Primary risk |
+| Phase | Status | Verification / remaining boundary | Primary risk now |
 |---|---|---|---|
-| −1 verification harness | yes (oracle + benches) | — | none — it's the gate everything else leans on |
-| 0 versioning | yes (pure insurance) | — | regression if missing≠v1 (mitigated) |
-| 1 chip registry + symbol table | yes (kills drift + hardwired-name duplication) | — | semantics in the schema; param/profile drift gate |
-| 2A shared runtime (VM merge) | yes (one interpreter) | DD5 oracle + DD6 benchmarks | FP determinism, perf |
-| 2B lag facility (separate from 2A) | yes | 2A landed + same DD5 oracle | FP drift — kept bisectable by the split |
-| 3 shared source parser (param first, coeff before v2) | yes for the Param increment; complete only after Coeff migration | — | low-medium for Param; medium for Coeff because its grammar is the superset and fingerprint-critical |
-| 4 v2 migration | no (the bump) | **start:** DD2 gate (Phase 0) + DD5 · **ship:** + Coeff shared-core equivalence gate (§3.6) | the migration proper |
-| 5 chips display-only | no | Phases 3+4 | low |
+| −1 verification harness | landed | oracle/benchmark harness is the gate for later phases | none — it is test infrastructure |
+| 0 versioning | landed | native version gates + sibling spec-version dual-read/write coverage | low; rollback floor rises only once v2 payloads exist |
+| 1 chip registry + symbol table | landed | generated Python/JS profile mirrors and drift gates are checked by predeploy | low-medium; schema metadata must stay gated |
+| 2A shared runtime (VM merge) | landed | coeff scalar expressions lower once at parse/load; `paramEvalScalarExpr` remains only for v1 compatibility until the drain | FP/perf regressions, covered by oracle/bench gates |
+| 2B lag facility | landed | solve-score lag streams centralized and parity-gated | low; bisectable from 2A |
+| 3 shared source parser | landed | Param source support and Coeff production flip are complete; `coeff_program_source_legacy.py` is retained test-only as the v2 release oracle | medium only while oracle exists; production has one parser |
+| 4 v2 migration | landed | v2 translate/routes/fingerprints/native decode/Legacy migration UI/root registry are present; v1 read paths remain accepted | migration correctness and dual-read coverage |
+| 5 chips display-only | landed | Compute is Program-only; chips are read-only display for coeff/param; ASL no longer forwards transform arrays | low; old transform rows are Lambda-boundary compatibility input only |
 
-If appetite is limited: **0 + 1 + 3** deliver versioning insurance, drift elimination, and text-first Param/Coeff authoring (root/solve-score stay chips) without requiring the full v2 fingerprint migration or native merge — a coherent stopping point that leaves chips editable and fingerprints untouched. The remaining full shared-language work is the Phase-4/5 migration surface: v2 execution rollout, solve-score/root translation, the Legacy tab, and eventually making chips display-only.
+Current CR18 state: phases −1 through 5 are implemented and gate-passing. The only intentional leftovers are compatibility mechanisms, not missing features: `coeff_program_source_legacy.py` remains as the equivalence oracle until the v2 release gate has fully drained, and the v1 nested scalar-expression wire (`scalar_exprs` / `expr_refs`, including `paramEvalScalarExpr`) remains accepted for old payloads. New compute execution is Program-only and native transform-array parsers are retired.
 
-*No production code was modified writing this plan; all current-state references verified against the `1a1996d` source snapshot.*
+Latest verification for the completed plan: targeted compute/ASL/frontend gates passed, ASL JSON validates, `git diff --check` is clean, and the full suite passed outside sandbox with `1371 passed, 1 skipped, 40 subtests passed`.

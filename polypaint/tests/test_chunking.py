@@ -16,12 +16,14 @@ import os
 import struct
 import subprocess
 
+from tests.native_program_helpers import translate_legacy_transforms_for_native
+
 LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
 SWEEP = os.path.join(LAMBDA_DIR, "sweep_test")
 
 
 def run_mode(spec, out_path):
-    r = subprocess.run([SWEEP, out_path], input=json.dumps(spec),
+    r = subprocess.run([SWEEP, out_path], input=json.dumps(translate_legacy_transforms_for_native(spec)),
                        capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, f"Failed: {r.stderr}"
     return json.loads(r.stdout)

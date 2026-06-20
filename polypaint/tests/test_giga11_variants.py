@@ -4,6 +4,7 @@ import struct
 import subprocess
 
 import numpy as np
+from tests.native_program_helpers import translate_legacy_transforms_for_native
 
 
 ROOT = os.path.dirname(os.path.dirname(__file__))
@@ -14,7 +15,7 @@ SWEEP = os.path.join(LAMBDA_DIR, "sweep_test")
 def _run_sweep(spec, out_path):
     result = subprocess.run(
         [SWEEP, out_path],
-        input=json.dumps(spec),
+        input=json.dumps(translate_legacy_transforms_for_native(spec)),
         capture_output=True,
         text=True,
         timeout=30,

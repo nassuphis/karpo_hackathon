@@ -194,11 +194,13 @@ function _setParamProgramPickerOpen(open) {
 }
 
 function toggleParamProgramPicker(eventObj, insertMode = null) {
-    _toggleChipPicker(_chipPickers.pp, eventObj, insertMode);
+    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
+    _paramProgramStatus('Param Program chips are read-only; edit the Text tab.');
 }
 
 function selectParamProgramChip(name, eventObj) {
-    _selectChipFromPicker(_chipPickers.pp, name, eventObj);
+    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
+    _paramProgramStatus('Param Program chips are read-only; edit the Text tab.');
 }
 
 function selectParamProgramLine(idx, eventObj) {
@@ -210,15 +212,8 @@ function selectParamProgramLine(idx, eventObj) {
 function _syncParamProgramAddOptions() {
     const sel = document.getElementById('pp-add');
     if (sel) {
-        const options = ['<option value="">+ add...</option>'].concat(
-            Object.keys(_ppCatalog).map(name => {
-                const spec = _ppCatalog[name] || {};
-                return `<option value="${_escapeHtml(name)}">${_escapeHtml(spec.label || name)}</option>`;
-            })
-        );
-        sel.innerHTML = options.join('');
+        sel.innerHTML = '<option value="">Text mode only</option>';
     }
-    _renderParamProgramAddPopup();
 }
 
 function _coeffProgramCategoryGroups() {
@@ -246,11 +241,13 @@ function _setCoeffProgramPickerOpen(open) {
 }
 
 function toggleCoeffProgramPicker(eventObj, insertMode = null) {
-    _toggleChipPicker(_chipPickers.cp, eventObj, insertMode);
+    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
+    _coeffProgramStatus('Coeff Program chips are read-only; edit the Text tab.');
 }
 
 function selectCoeffProgramChip(name, eventObj) {
-    _selectChipFromPicker(_chipPickers.cp, name, eventObj);
+    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
+    _coeffProgramStatus('Coeff Program chips are read-only; edit the Text tab.');
 }
 
 function selectCoeffProgramLine(idx, eventObj) {
@@ -259,10 +256,8 @@ function selectCoeffProgramLine(idx, eventObj) {
     _renderChips('cp');
 }
 
-// pp has a hidden fallback <select>; cp does not, so this only re-renders
-// the popup. Kept for symmetry with _syncParamProgramAddOptions.
 function _syncCoeffProgramAddOptions() {
-    _renderCoeffProgramAddPopup();
+    // Coeff Program chips are readonly visualization now; Text is editable.
 }
 
 function _serializeParamTransforms() {
@@ -277,10 +272,10 @@ function _serializeParamTransforms() {
 
 let _paramProgramSelectedIndex = -1;
 let _paramProgramPickerInsertMode = 'after';
-let _paramProgramEditorMode = 'chips';
+let _paramProgramEditorMode = 'text';
 let _coeffProgramSelectedIndex = -1;
 let _coeffProgramPickerInsertMode = 'after';
-let _coeffProgramEditorMode = 'chips';
+let _coeffProgramEditorMode = 'text';
 
 function _paramProgramTextModeSelected() {
     return _paramProgramEditorMode === 'text';
@@ -373,7 +368,7 @@ function _setParamProgramEditorMode(mode) {
         : '; compute ignores the program while the Chain pipeline is selected';
     _paramProgramStatus(normalized === 'text'
         ? `Text source is authoritative for save, preview, debug${computeScope}.`
-        : `Chip editor is authoritative for save, preview, debug${computeScope}.`);
+        : `Chip view is read-only; Text source remains authoritative for save, preview, debug${computeScope}.`);
     _syncParamPipelineModeUi();
     if (typeof _paramProgramModalState !== 'undefined' && _paramProgramModalState.open) _renderParamProgramModal();
     if (_paramProgramModeSelected()) _markComputePreviewStale();
@@ -537,7 +532,7 @@ function _setCoeffProgramEditorMode(mode) {
         : '; compute ignores the program while the Chain pipeline is selected';
     _coeffProgramStatus(normalized === 'text'
         ? `Text source is authoritative for save, preview, debug${computeScope}.`
-        : `Chip editor is authoritative for save, preview, debug${computeScope}.`);
+        : `Chip view is read-only; Text source remains authoritative for save, preview, debug${computeScope}.`);
     _syncParamPipelineModeUi();
     // typeof guard: _coeffProgramModalState is declared with `let` later in
     // the file; this can run during initial render before that declaration.
@@ -964,11 +959,13 @@ function _effectiveParamTransformsForCompute() {
 }
 
 function _effectiveParamProgramChainForCompute() {
-    return _paramProgramModeSelected() && !_paramProgramTextModeSelected() ? _serializeParamProgramChain() : [];
+    return [];
 }
 
 function _effectiveParamProgramSourceTextForCompute() {
-    return _paramProgramModeSelected() && _paramProgramTextModeSelected() ? _getParamProgramSourceText() : null;
+    if (!_paramProgramModeSelected()) return null;
+    const sourceText = _getParamProgramSourceText();
+    return sourceText.trim() ? sourceText : null;
 }
 
 function _effectiveCoeffTransformsForCompute() {
@@ -976,11 +973,13 @@ function _effectiveCoeffTransformsForCompute() {
 }
 
 function _effectiveCoeffProgramChainForCompute() {
-    return _paramProgramModeSelected() && !_coeffProgramTextModeSelected() ? _serializeCoeffProgramChain() : [];
+    return [];
 }
 
 function _effectiveCoeffProgramSourceTextForCompute() {
-    return _paramProgramModeSelected() && _coeffProgramTextModeSelected() ? _getCoeffProgramSourceText() : null;
+    if (!_paramProgramModeSelected()) return null;
+    const sourceText = _getCoeffProgramSourceText();
+    return sourceText.trim() ? sourceText : null;
 }
 
 function _attachCoeffProgramSourcePayload(payload) {
@@ -1080,9 +1079,8 @@ function _applyParamProgram(rawProgram) {
         _paramProgramSourceAutoSynthed = false;
         _setParamProgramEditorMode('text');
     } else {
-        _setParamProgramSourceText('');
-        _paramProgramSourceAutoSynthed = false;
-        _setParamProgramEditorMode('chips');
+        _setParamProgramSourceText(_paramProgramSourceFromRows(_serializeParamProgramChain()), { auto: true });
+        _setParamProgramEditorMode('text');
     }
     if (_paramProgramModeSelected()) _markComputePreviewStale();
     _paramProgramStatus(program.name ? `Loaded ${program.name}` : 'Loaded param program');
@@ -1101,9 +1099,8 @@ function _copyParamTransformsIntoParamProgram() {
     }).filter(item => item && item.params);
     _ppChain.splice(0, _ppChain.length, ...chain);
     _paramProgramSelectedIndex = _ppChain.length ? 0 : -1;
-    _setParamProgramSourceText('');
-    _paramProgramSourceAutoSynthed = false;
-    _setParamProgramEditorMode('chips');
+    _setParamProgramSourceText(_paramProgramSourceFromRows(_serializeParamProgramChain()), { auto: true });
+    _setParamProgramEditorMode('text');
     _renderChips('pp');
     if (_paramProgramModeSelected()) _markComputePreviewStale();
     _paramProgramStatus(`Copied ${chain.length} legacy transform${chain.length === 1 ? '' : 's'} into param program`);
@@ -1309,11 +1306,8 @@ function _applyCoeffProgram(rawProgram) {
         _coeffProgramSourceAutoSynthed = false;
         _setCoeffProgramEditorMode('text');
     } else {
-        // Clear any previous program's text so it cannot become authoritative
-        // for this chain-only program when the user opens the Text tab.
-        _setCoeffProgramSourceText('');
-        _coeffProgramSourceAutoSynthed = false;
-        _setCoeffProgramEditorMode('chips');
+        _setCoeffProgramSourceText(_coeffProgramSourceFromRows(_serializeCoeffProgramChain()), { auto: true });
+        _setCoeffProgramEditorMode('text');
     }
     if (_paramProgramModeSelected()) _markComputePreviewStale();
     _coeffProgramStatus(program.name ? `Loaded ${program.name}` : 'Loaded coeff program');
@@ -1351,11 +1345,8 @@ function _copyCoeffTransformsIntoCoeffProgram() {
     });
     _coeffProgramChain.splice(0, _coeffProgramChain.length, ...chain);
     _coeffProgramSelectedIndex = _coeffProgramChain.length ? 0 : -1;
-    // The copied transforms are now the program; stale text (user-authored or
-    // synthesized from the previous chain) must not stay authoritative.
-    _setCoeffProgramSourceText('');
-    _coeffProgramSourceAutoSynthed = false;
-    _setCoeffProgramEditorMode('chips');
+    _setCoeffProgramSourceText(_coeffProgramSourceFromRows(_serializeCoeffProgramChain()), { auto: true });
+    _setCoeffProgramEditorMode('text');
     _renderChips('cp');
     if (_paramProgramModeSelected()) _markComputePreviewStale();
     _coeffProgramStatus(`Copied ${chain.length} coefficient transform${chain.length === 1 ? '' : 's'} into coeff program`);
@@ -1458,6 +1449,14 @@ function _validateChipParamValue(which, pDef, value) {
 }
 
 function updateChipParam(chipIdx, paramIdx, value, which) {
+    if (which === 'pp') {
+        _paramProgramStatus('Param Program chips are read-only; edit the Text tab.');
+        return;
+    }
+    if (which === 'cp') {
+        _coeffProgramStatus('Coeff Program chips are read-only; edit the Text tab.');
+        return;
+    }
     const chain = _chainForWhich(which);
     if (chipIdx < 0 || chipIdx >= chain.length) return;
     const catalog = _catalogForChain(which);

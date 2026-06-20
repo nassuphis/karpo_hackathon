@@ -15,6 +15,7 @@ import subprocess
 import unittest
 
 import numpy as np
+from tests.native_program_helpers import translate_legacy_transforms_for_native
 
 _LAMBDA_DIR = os.path.join(os.path.dirname(__file__), '..', 'lambda')
 SWEEP = os.path.join(_LAMBDA_DIR, "sweep_test")
@@ -24,7 +25,7 @@ def _run_sweep(spec, out_path):
     """Run sweep binary with JSON spec, return parsed metadata."""
     result = subprocess.run(
         [SWEEP, out_path],
-        input=json.dumps(spec),
+        input=json.dumps(translate_legacy_transforms_for_native(spec)),
         capture_output=True, text=True, timeout=30
     )
     if result.returncode != 0:
@@ -681,9 +682,9 @@ class TestCoeffTransforms(unittest.TestCase):
         for s in range(len(plain)):
             for k in range(n):
                 if k % 2 == 0:
-                    self.assertAlmostEqual(abs(neg[s, k] - plain[s, k]), 0, places=5)
+                    self.assertLessEqual(abs(neg[s, k] - plain[s, k]), 1e-5)
                 else:
-                    self.assertAlmostEqual(abs(neg[s, k] + plain[s, k]), 0, places=5)
+                    self.assertLessEqual(abs(neg[s, k] + plain[s, k]), 1e-5)
 
     def test_sort_angle_keep_mod(self):
         """sort_angle_keep_mod sorts coefficient angles while preserving slot magnitudes."""

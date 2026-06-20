@@ -307,6 +307,7 @@ def render_python(poly_func, N, pix, extent):
 
 
 SWEEP = os.path.join(os.path.dirname(__file__), "..", "lambda", "sweep_test")
+from tests.native_program_helpers import translate_legacy_transforms_for_native
 
 
 def render_sweep(func_name, N, pix, extent):
@@ -315,7 +316,7 @@ def render_sweep(func_name, N, pix, extent):
 
     # Coeffgen
     coeffs_path = f"/tmp/{func_name}_coeffs.bin"
-    cg_json = json.dumps({
+    cg_json = json.dumps(translate_legacy_transforms_for_native({
         "mode": "coeffgen",
         "function": func_name,
         "n1": N, "n2": N,
@@ -323,7 +324,7 @@ def render_sweep(func_name, N, pix, extent):
         "param_transforms": [["unit_circle"]],
         "coeff_transforms": ["rev"],
         "times": 1, "dither_pass": 0
-    })
+    }))
     r = subprocess.run([SWEEP, coeffs_path], input=cg_json.encode(),
                        capture_output=True, timeout=60)
     if r.returncode != 0:

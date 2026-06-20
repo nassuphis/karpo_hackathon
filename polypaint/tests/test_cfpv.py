@@ -17,6 +17,8 @@ import struct
 import subprocess
 import sys
 
+from tests.native_program_helpers import translate_legacy_transforms_for_native
+
 LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
 SWEEP = os.path.join(LAMBDA_DIR, "sweep_test")
 
@@ -28,7 +30,7 @@ def run_sweep(spec, out_path="/tmp/cfpv_test.bin"):
     """Run sweep binary with JSON spec, return (meta_dict, returncode, stderr)."""
     r = subprocess.run(
         [SWEEP, out_path],
-        input=json.dumps(spec),
+        input=json.dumps(translate_legacy_transforms_for_native(spec)),
         capture_output=True, text=True, timeout=30,
     )
     meta = None
@@ -158,11 +160,11 @@ def test_chunked_with_cfpv():
     params_path = "/tmp/cfpv_test_params.bin"
     r = subprocess.run(
         [SWEEP, params_path],
-        input=json.dumps({
+        input=json.dumps(translate_legacy_transforms_for_native({
             "mode": "param_gen",
             "n1": 5, "n2": 5, "times": 1,
             "param_transforms": [["unit_circle"]],
-        }),
+        })),
         capture_output=True, text=True, timeout=30,
     )
     if r.returncode != 0:
@@ -191,11 +193,11 @@ def test_chunked_without_cfpv():
     params_path = "/tmp/cfpv_test_params2.bin"
     subprocess.run(
         [SWEEP, params_path],
-        input=json.dumps({
+        input=json.dumps(translate_legacy_transforms_for_native({
             "mode": "param_gen",
             "n1": 4, "n2": 4, "times": 1,
             "param_transforms": [["unit_circle"]],
-        }),
+        })),
         capture_output=True, text=True, timeout=30,
     )
 

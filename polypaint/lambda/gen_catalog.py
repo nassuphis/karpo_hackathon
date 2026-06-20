@@ -29,6 +29,8 @@ import os
 import subprocess
 import sys
 
+from param_program_chain import compile_param_program_chain
+
 LAMBDA_DIR = os.path.dirname(os.path.abspath(__file__))
 SWEEP = os.environ.get("SWEEP_BIN", os.path.join(LAMBDA_DIR, "sweep_test"))
 CATALOG_PATH = os.path.join(LAMBDA_DIR, "coeff_func_catalog.json")
@@ -38,6 +40,25 @@ JS_OUT = os.path.join(LAMBDA_DIR, "..", "coeff_func_catalog_js.js")
 H_OUT = os.path.join(LAMBDA_DIR, "coeff_func_lookup.h")
 
 
+def _program_payload(compiled):
+    payload = {
+        "version": compiled["version"],
+        "fingerprint": compiled["fingerprint"],
+        "tokens": compiled["tokens"],
+        "stack_max": compiled["stack_max"],
+        "token_count": compiled["token_count"],
+        "uses_legacy_fast_path": compiled["uses_legacy_fast_path"],
+    }
+    if compiled.get("scalar_exprs"):
+        payload["scalar_exprs"] = compiled["scalar_exprs"]
+    return payload
+
+
+UNIT_CIRCLE_PARAM_PROGRAM = _program_payload(
+    compile_param_program_chain([["legacy", "unit_circle", "both", "both"]])
+)
+
+
 def probe_degree(func_name):
     """Run sweep binary to get actual degree for a function."""
     spec = json.dumps({
@@ -45,7 +66,8 @@ def probe_degree(func_name):
         "function": func_name,
         "n1": 2, "n2": 2,
         "i1_start": 0, "i1_end": 1,
-        "param_transforms": [["unit_circle"]],
+        "param_transforms": [],
+        "param_program": UNIT_CIRCLE_PARAM_PROGRAM,
         "coeff_transforms": [],
         "times": 1,
     })

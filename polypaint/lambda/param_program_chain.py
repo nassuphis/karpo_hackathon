@@ -223,6 +223,34 @@ _LEGACY_TARGET_ARG_INDEXES = {
 _VARIABLE_LEGACY_ARG_COUNTS = {
     "moebius": {0, 4, 8},
     "inv_t_plus_2": {0, 1, 2, 3, 4},
+    "add": {0, 1, 2},
+}
+
+_LEGACY_TARGET_FIRST_CHIPS = {
+    "crd",
+    "hrt",
+    "spdl",
+    "lmc",
+    "rsc",
+    "lss",
+    "ast",
+    "asp",
+    "lsp",
+    "dlt",
+    "rply",
+    "star",
+    "rect",
+    "rrect",
+}
+
+_LEGACY_TARGET_LAST_CHIPS = {"rtheta"}
+
+_LEGACY_DITHER_TARGET_FIRST_CHIPS = {
+    "ddith",
+    "adth",
+    "ldth",
+    "crdth",
+    "scdth",
 }
 
 
@@ -804,8 +832,43 @@ def _selector_value(value, mapping, label):
     return raw, mapping[raw]
 
 
+def _legacy_target_selector(value):
+    raw = str(value if value is not None else "both").strip().lower()
+    if raw in {"0", "t1", "p1"}:
+        return "p1"
+    if raw in {"1", "t2", "p2"}:
+        return "p2"
+    if raw in {"2", "both", ""}:
+        return "both"
+    raise RuntimeError(f"legacy target selector is invalid: {value!r}")
+
+
+def _legacy_target_index(value):
+    raw = str(value if value is not None else "both").strip().lower()
+    if raw in {"0", "t1", "p1"}:
+        return "0"
+    if raw in {"1", "t2", "p2"}:
+        return "1"
+    if raw in {"2", "both", ""}:
+        return "2"
+    raise RuntimeError(f"legacy target selector is invalid: {value!r}")
+
+
+def _legacy_direct_chip_tokens(name, args):
+    values = list(args)
+    if name in _LEGACY_TARGET_LAST_CHIPS and len(values) >= 2:
+        target = _legacy_target_selector(values.pop())
+        return _legacy_tokens(name, target, target, values)
+    if name in _LEGACY_TARGET_FIRST_CHIPS and values:
+        target = _legacy_target_selector(values[0])
+        return _legacy_tokens(name, target, target, values[1:])
+    return _legacy_tokens(name, "both", "both", values)
+
+
 def _legacy_arg_exprs(spec, raw_args):
     raw_args = list(raw_args)
+    if spec["name"] in _LEGACY_DITHER_TARGET_FIRST_CHIPS and raw_args:
+        raw_args[0] = _legacy_target_index(raw_args[0])
     if spec["name"] == "moebius":
         if len(raw_args) == 0:
             return []
@@ -842,6 +905,17 @@ def _legacy_arg_exprs(spec, raw_args):
                 expected="complex",
             ))
         return exprs
+    if spec["name"] == "add":
+        if len(raw_args) == 0:
+            return []
+        if len(raw_args) == 1:
+            return [_compile_expr(raw_args[0], label="legacy(add) scalar offset", expected="real")]
+        if len(raw_args) == 2:
+            return [
+                _compile_expr(raw_args[0], label="legacy(add) p1 offset", expected="complex"),
+                _compile_expr(raw_args[1], label="legacy(add) p2 offset", expected="complex"),
+            ]
+        raise RuntimeError(f"legacy(add) expects 0, 1, or 2 arguments, got {len(raw_args)}")
     if spec["name"] in _VARIABLE_LEGACY_ARG_COUNTS:
         allowed = _VARIABLE_LEGACY_ARG_COUNTS[spec["name"]]
         if len(raw_args) not in allowed:
@@ -998,7 +1072,7 @@ def _lower_chip(chip):
         legacy_name = str(args[0] or "").strip().lower()
         return _legacy_tokens(legacy_name, args[1], args[2], args[3:])
     if name in legacy_registry()["by_name"]:
-        return _legacy_tokens(name, "both", "both", args)
+        return _legacy_direct_chip_tokens(name, args)
     raise RuntimeError(f"unknown param program chip: {name}")
 
 

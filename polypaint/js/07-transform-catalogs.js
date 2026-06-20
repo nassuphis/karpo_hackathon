@@ -1343,6 +1343,14 @@ function updateCfpvRow() {
 
 function addChip(which, name, insertMode = 'append') {
     if (!name) return;
+    if (which === 'pp') {
+        if (typeof _paramProgramStatus === 'function') _paramProgramStatus('Param Program chips are read-only; edit the Text tab.');
+        return;
+    }
+    if (which === 'cp') {
+        if (typeof _coeffProgramStatus === 'function') _coeffProgramStatus('Coeff Program chips are read-only; edit the Text tab.');
+        return;
+    }
     if (which === 'ct') name = _canonicalCoeffTransformName(name);
     const chain = _chainForWhich(which);
     let newItem = null;
@@ -1375,6 +1383,14 @@ function addChip(which, name, insertMode = 'append') {
 }
 
 function removeChip(which, idx) {
+    if (which === 'pp') {
+        if (typeof _paramProgramStatus === 'function') _paramProgramStatus('Param Program chips are read-only; edit the Text tab.');
+        return;
+    }
+    if (which === 'cp') {
+        if (typeof _coeffProgramStatus === 'function') _coeffProgramStatus('Coeff Program chips are read-only; edit the Text tab.');
+        return;
+    }
     const chain = _chainForWhich(which);
     chain.splice(idx, 1);
     if (which === 'ss' || which === 'palette-ss') {
@@ -1394,6 +1410,14 @@ function removeChip(which, idx) {
 }
 
 function moveChip(which, idx, delta) {
+    if (which === 'pp') {
+        if (typeof _paramProgramStatus === 'function') _paramProgramStatus('Param Program chips are read-only; edit the Text tab.');
+        return;
+    }
+    if (which === 'cp') {
+        if (typeof _coeffProgramStatus === 'function') _coeffProgramStatus('Coeff Program chips are read-only; edit the Text tab.');
+        return;
+    }
     const chain = _chainForWhich(which);
     const from = Number(idx);
     const to = from + Number(delta);

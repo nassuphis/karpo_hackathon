@@ -11,17 +11,19 @@ import os
 import struct
 import subprocess
 
+from tests.native_program_helpers import translate_legacy_transforms_for_native
+
 LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
 SWEEP = os.path.join(LAMBDA_DIR, "sweep_test")
 
 
 def run_param_dump(n, transforms):
     out_path = "/tmp/test_pdump.bin"
-    spec = json.dumps({
+    spec = json.dumps(translate_legacy_transforms_for_native({
         "mode": "param_dump",
         "n1": n, "n2": n,
         "param_transforms": transforms,
-    })
+    }))
     r = subprocess.run([SWEEP, out_path], input=spec, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, f"param_dump failed: {r.stderr}"
     meta = json.loads(r.stdout)

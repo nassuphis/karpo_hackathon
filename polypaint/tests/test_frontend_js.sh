@@ -103,7 +103,8 @@ assertIncludes("square: { params: [{ph:'target', def:'both', target: true}] }", 
 assertIncludes("id=\"param-program-manage\" onclick=\"openParamProgramModal()\"", 'compute tab should expose Param Programs modal launcher');
 assertIncludes("id=\"param-pipeline-mode\" onchange=\"_setParamPipelineMode(this.value, {markStale:true})\"", 'compute tab should expose explicit legacy-vs-param-program selector');
 assertIncludes("id=\"pp-chips\" class=\"chip-container param-program-display\"", 'compute tab should expose param-program chip display');
-assertIncludes("id=\"param-program-tab-text\" class=\"compute-preview-tab-btn\" onclick=\"_setParamProgramEditorMode('text')\"", 'Param Program should expose a Text editor tab');
+assertIncludes("id=\"param-program-tab-text\" class=\"compute-preview-tab-btn active\" onclick=\"_setParamProgramEditorMode('text')\"", 'Param Program should expose an active Text editor tab');
+assertIncludes("id=\"param-program-tab-chips\" class=\"compute-preview-tab-btn\" onclick=\"_setParamProgramEditorMode('chips')\">Chips (read-only)</button>", 'Param Program chips tab should be readonly display');
 assertIncludes("id=\"pp-source-text\" class=\"coeff-program-source-text\"", 'Param Program should expose a source textarea');
 assertIncludes("function _paramProgramTextModeSelected() {", 'Param Program text mode should have a single source of truth');
 assertIncludes("function _paramProgramSourceFromRows(chain) {", 'Param Program should synthesize editable source from chip chains');
@@ -140,8 +141,8 @@ assertIncludes("function _paramProgramBridgeParamsFromLegacyTransform(row) {", '
 assertIncludes("const bridgeArgs = _paramProgramLegacyArgsFromInput(name, name === 'moebius' ? args : migratedArgs,", 'Copy legacy moebius transforms should preserve four complex coefficients in the UI chain');
 assertIncludes("function _serializeParamProgramChain() {", 'frontend should serialize param-program chips');
 assertIncludes("function _effectiveParamTransformsForCompute() {", 'compute payload should centralize legacy-vs-param-program selection');
-assertIncludes("return _paramProgramModeSelected() && !_paramProgramTextModeSelected() ? _serializeParamProgramChain() : [];", 'Param Program text mode should send an empty chip chain');
-assertIncludes("return _paramProgramModeSelected() && _paramProgramTextModeSelected() ? _getParamProgramSourceText() : null;", 'Param Program text mode should send source text');
+assertIncludes("function _effectiveParamProgramChainForCompute() {\n    return [];\n}", 'Param Program compute payload should never send editable chip chains');
+assertIncludes("const sourceText = _getParamProgramSourceText();\n    return sourceText.trim() ? sourceText : null;", 'Param Program compute payload should send nonblank source text');
 assertIncludes("param_program_chain: paramProgramChain,", 'compute/preview payloads should forward param_program_chain');
 assertIncludes("if (paramSourceText !== null) payload.param_program_source_text = paramSourceText;", 'compute/preview payloads should forward param_program_source_text');
 assertIncludes("lambdaPost('storage', {}, '/list-param-programs')", 'param-program modal should list saved programs through storage');
@@ -220,6 +221,7 @@ assertIncludes("'/migrate-param-program'", 'Param modal should call the v2 migra
 assertIncludes("'/migrate-coeff-program'", 'Coeff modal should call the v2 migration route');
 assertIncludes("} else if (options.auto === false || value.trim()) {\n        _coeffProgramSourceAutoSynthed = false;", 'Restored coeff source text should clear auto-synth state before switching to Text mode');
 assertIncludes("function _effectiveCoeffProgramChainForCompute() {", 'compute payload should centralize coeff-program selection');
+assertIncludes("function _effectiveCoeffProgramChainForCompute() {\n    return [];\n}", 'Coeff Program compute payload should never send editable chip chains');
 assertIncludes("function _copyCoeffTransformsIntoCoeffProgram() {", 'Coeff Program UI should translate legacy transforms into program chips');
 assertIncludes("const _coeffProgramRegistryChipNames = _coeffRegistryVocab ? _coeffRegistryVocab.chipNameByRegistryName : {};", 'normalize/copy should derive the registry-to-chip name map from the generated vocab');
 assertIncludes('<script src="program_profiles_js.js"></script>', 'the generated program profile mirror must load before the main bundle');

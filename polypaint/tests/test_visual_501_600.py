@@ -2,6 +2,7 @@
 Run: cd polypaint/tests && uv run python test_visual_501_600.py
 """
 import ast, json, os, subprocess, textwrap, numpy as np
+from tests.native_program_helpers import translate_legacy_transforms_for_native
 
 LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
 
@@ -38,12 +39,12 @@ def load_poly_funcs(path, names):
 def run_c_pipeline(func_name):
     coeffs_file = f"/tmp/{func_name}_coeffs.bin"
     roots_file = f"/tmp/{func_name}_roots.bin"
-    spec = json.dumps({
+    spec = json.dumps(translate_legacy_transforms_for_native({
         "mode": "coeffgen", "function": func_name,
         "n1": N1, "n2": N2, "i1_start": 0, "i1_end": N1,
         "param_transforms": [["unit_circle"]],
         "coeff_transforms": ["rev"], "times": 1, "dither_pass": 0,
-    })
+    }))
     result = subprocess.run([SWEEP, coeffs_file], input=spec, capture_output=True, text=True, timeout=30)
     if result.returncode != 0:
         raise RuntimeError(f"coeffgen failed: {result.stderr[:200]}")

@@ -140,11 +140,84 @@ def _transform_row_name_args(row, *, label):
     return name, args
 
 
+_PARAM_TARGET_FIRST_TRANSFORMS = {
+    "crd",
+    "hrt",
+    "spdl",
+    "lmc",
+    "rsc",
+    "lss",
+    "ast",
+    "asp",
+    "lsp",
+    "dlt",
+    "rply",
+    "star",
+    "rect",
+    "rrect",
+}
+
+_PARAM_DITHER_TARGET_FIRST_TRANSFORMS = {
+    "ddith",
+    "adth",
+    "ldth",
+    "crdth",
+    "scdth",
+}
+
+_PARAM_TARGET_LAST_TRANSFORMS = {"rtheta"}
+
+
+def _param_legacy_target_selector(value):
+    raw = str(value if value is not None else "both").strip().lower()
+    if raw in {"0", "t1", "p1"}:
+        return "p1"
+    if raw in {"1", "t2", "p2"}:
+        return "p2"
+    if raw in {"2", "both", ""}:
+        return "both"
+    raise ValueError(f"param transform target must be t1, t2, or both, got {value!r}")
+
+
+def _param_legacy_target_index(value):
+    raw = str(value if value is not None else "both").strip().lower()
+    if raw in {"0", "t1", "p1"}:
+        return "0"
+    if raw in {"1", "t2", "p2"}:
+        return "1"
+    if raw in {"2", "both", ""}:
+        return "2"
+    raise ValueError(f"param transform target must be t1, t2, or both, got {value!r}")
+
+
 def param_transforms_to_program_chain(transforms):
-    """Translate legacy Param Chain rows into Param Program legacy chips."""
+    """Translate legacy Param Chain rows into Param Program legacy chips.
+
+    Old chip rows encode some target selectors as ordinary arguments. The
+    Param Program VM has explicit src/tgt selector slots, so normalize those
+    rows here instead of forwarding obsolete target arguments to the compiler.
+    Dither rows intentionally keep a numeric target argument because the RNG
+    draw count is part of the historical behavior.
+    """
     chain = []
     for row in list(transforms or []):
         name, args = _transform_row_name_args(row, label="param")
+        legacy_name = name.strip().lower()
+        if legacy_name in _PARAM_TARGET_LAST_TRANSFORMS:
+            value_args = list(args)
+            target = "both"
+            if len(value_args) >= 2:
+                target = _param_legacy_target_selector(value_args.pop())
+            chain.append(["legacy", name, target, target, *value_args])
+            continue
+        if legacy_name in _PARAM_TARGET_FIRST_TRANSFORMS:
+            target = _param_legacy_target_selector(args[0]) if args else "both"
+            chain.append(["legacy", name, target, target, *args[1:]])
+            continue
+        if legacy_name in _PARAM_DITHER_TARGET_FIRST_TRANSFORMS:
+            target = _param_legacy_target_index(args[0]) if args else "2"
+            chain.append(["legacy", name, "both", "both", target, *args[1:]])
+            continue
         chain.append(["legacy", name, "both", "both", *args])
     return chain
 
@@ -158,6 +231,26 @@ def coeff_transforms_to_program_chain(transforms):
     chain = []
     for row in list(transforms or []):
         name, args = _transform_row_name_args(row, label="coeff")
+        legacy_name = name.strip().lower()
+        if legacy_name == "exp" and len(args) in {2, 3}:
+            # Old Chain exp(a,b[,andy]) means exp(z*(a+b*i)). The Program
+            # form is exp_affine(multiplier, offset[,andy]), so repack the
+            # old real/imag pair and pin offset to zero.
+            multiplier = f"({args[0]})+({args[1]})*1j"
+            next_args = [multiplier, "0"]
+            if len(args) == 3:
+                next_args.append(args[2])
+            chain.append(["legacy", name, "poly", "poly", *next_args])
+            continue
+        if legacy_name == "round" and len(args) in {2, 3}:
+            # Old Chain round(a,b[,andy]) means round(z*(a+b*i)); Program
+            # round takes the packed complex multiplier as one field.
+            multiplier = f"({args[0]})+({args[1]})*1j"
+            next_args = [multiplier]
+            if len(args) == 3:
+                next_args.append(args[2])
+            chain.append(["legacy", name, "poly", "poly", *next_args])
+            continue
         chain.append(["legacy", name, "poly", "poly", *args])
     if chain:
         chain.append(["emit"])

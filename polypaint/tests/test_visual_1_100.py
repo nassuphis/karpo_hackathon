@@ -2,6 +2,7 @@
 Run: cd polypaint/tests && uv run python test_visual_1_100.py
 """
 import ast, json, os, subprocess, textwrap, numpy as np
+from tests.native_program_helpers import translate_legacy_transforms_for_native
 
 LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
 SWEEP = os.path.join(LAMBDA_DIR, "sweep_test"); IMG_SIZE = 1000; EXTENT = 2.0; N1 = N2 = 100
@@ -18,7 +19,7 @@ def load_poly_funcs(path, names):
 
 def run_c(name):
     cf = f'/tmp/{name}_c.bin'; rf = f'/tmp/{name}_r.bin'
-    r = subprocess.run([SWEEP, cf], input=json.dumps({'mode':'coeffgen','function':name,'n1':N1,'n2':N2,'i1_start':0,'i1_end':N1,'param_transforms':[['unit_circle']],'coeff_transforms':['rev'],'times':1,'dither_pass':0}), capture_output=True, text=True, timeout=30)
+    r = subprocess.run([SWEEP, cf], input=json.dumps(translate_legacy_transforms_for_native({'mode':'coeffgen','function':name,'n1':N1,'n2':N2,'i1_start':0,'i1_end':N1,'param_transforms':[['unit_circle']],'coeff_transforms':['rev'],'times':1,'dither_pass':0})), capture_output=True, text=True, timeout=30)
     if r.returncode != 0: raise RuntimeError(r.stderr[:200])
     m = json.loads(r.stdout)
     r2 = subprocess.run([SWEEP, rf], input=json.dumps({'mode':'solve','coeffs_file':cf,'n_coeffs':m['n_coeffs'],'n1':N1,'n2':N2,'i1_start':0,'i1_end':N1,'match_roots':False}), capture_output=True, text=True, timeout=60)

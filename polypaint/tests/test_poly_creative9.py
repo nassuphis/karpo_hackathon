@@ -10,6 +10,7 @@ import os
 import struct
 import subprocess
 import numpy as np
+from tests.native_program_helpers import translate_legacy_transforms_for_native
 
 LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
 SWEEP = os.path.join(LAMBDA_DIR, "sweep_test")
@@ -34,7 +35,7 @@ def poly_creative9_py(t1, t2):
 def run_c():
     """Run C creative9 via coeffgen and return raw coefficient data."""
     cf_path = "/tmp/creative9_test.bin"
-    spec = json.dumps({
+    spec = json.dumps(translate_legacy_transforms_for_native({
         "mode": "coeffgen",
         "function": "creative9",
         "n1": N1, "n2": N2,
@@ -42,7 +43,7 @@ def run_c():
         "param_transforms": [["unit_circle"]],
         "coeff_transforms": [],
         "times": 1,
-    })
+    }))
     r = subprocess.run([SWEEP, cf_path], input=spec, capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, f"coeffgen failed: {r.stderr[:200]}"
     meta = json.loads(r.stdout)

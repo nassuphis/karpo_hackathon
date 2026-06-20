@@ -25,6 +25,11 @@ ROOT = Path(__file__).resolve().parent.parent
 TESTS_DIR = ROOT / "tests"
 DEFAULT_OUTPUT = Path(__file__).resolve().parent / "coeff_func_parity.json"
 
+for _path in (ROOT, TESTS_DIR, ROOT / "lambda"):
+    _text = str(_path)
+    if _text not in sys.path:
+        sys.path.insert(0, _text)
+
 
 def _load_test_module(path: Path):
     module_name = f"_parity_{path.stem}"

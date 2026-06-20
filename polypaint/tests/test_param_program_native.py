@@ -78,13 +78,18 @@ def _native_payload(chain):
     return payload
 
 
-def test_param_dump_compiled_legacy_tokens_match_param_transforms():
-    legacy_spec = {
+def test_param_dump_rejects_native_param_transforms():
+    proc = _run_sweep_process({
         "mode": "param_dump",
         "n1": 16,
         "n2": 16,
         "param_transforms": [["unit_circle"], ["square"]],
-    }
+    })
+    assert proc.returncode != 0
+    assert "param_transforms is no longer accepted by the native runtime" in proc.stderr
+
+
+def test_param_dump_compiled_legacy_tokens_run_without_native_chain():
     vm_spec = {
         "mode": "param_dump",
         "n1": 16,
@@ -94,21 +99,12 @@ def test_param_dump_compiled_legacy_tokens_match_param_transforms():
             ["legacy", "square", "both", "both"],
         ]),
     }
-    _, legacy = _run_sweep(legacy_spec, "/tmp/pp_param_dump_legacy.bin")
     meta, vm = _run_sweep(vm_spec, "/tmp/pp_param_dump_vm.bin")
     assert meta["param_program_tokens"] == 2
-    assert vm == legacy
+    assert len(vm) == 16 * 16 * 16
 
 
-def test_param_gen_compiled_tokens_match_legacy_threaded_output():
-    legacy_spec = {
-        "mode": "param_gen",
-        "n1": 12,
-        "n2": 12,
-        "times": 2,
-        "n_threads": 1,
-        "param_transforms": [["unit_circle"], ["square"]],
-    }
+def test_param_gen_compiled_tokens_threaded_output_runs_without_native_chain():
     vm_spec = {
         "mode": "param_gen",
         "n1": 12,
@@ -120,52 +116,36 @@ def test_param_gen_compiled_tokens_match_legacy_threaded_output():
             ["legacy", "square", "both", "both"],
         ]),
     }
-    _, legacy = _run_sweep(legacy_spec, "/tmp/pp_param_gen_legacy.bin")
     meta, vm = _run_sweep(vm_spec, "/tmp/pp_param_gen_vm.bin")
     assert meta["threads"] == 4
     assert meta["param_program_tokens"] == 2
-    assert vm == legacy
+    assert len(vm) == 12 * 12 * 2 * 16
 
 
-def test_param_dump_compiled_coeff_legacy_tokens_match_param_transforms():
+def test_param_dump_compiled_coeff_legacy_tokens_run_without_native_chain():
     chain = [["coeff2"], ["coeff3"], ["coeff5"], ["coeff12"]]
-    legacy_spec = {
-        "mode": "param_dump",
-        "n1": 12,
-        "n2": 12,
-        "param_transforms": chain,
-    }
     vm_spec = {
         "mode": "param_dump",
         "n1": 12,
         "n2": 12,
         "param_program": _native_payload(chain),
     }
-    _, legacy = _run_sweep(legacy_spec, "/tmp/pp_param_dump_coeff_legacy.bin")
     meta, vm = _run_sweep(vm_spec, "/tmp/pp_param_dump_coeff_vm.bin")
     assert meta["param_program_tokens"] == len(chain)
-    assert vm == legacy
+    assert len(vm) == 12 * 12 * 16
 
 
-def test_param_dump_compiled_moebius_complex_coefficients_match_param_transform():
-    legacy_chain = [["moebius", "1-2j", "2+1j", "-2j+4", "10j-3"]]
+def test_param_dump_compiled_moebius_complex_coefficients_run_without_native_chain():
     vm_chain = [["legacy", "moebius", "both", "both", "1-2j", "2+1j", "-2j+4", "10j-3"]]
-    legacy_spec = {
-        "mode": "param_dump",
-        "n1": 12,
-        "n2": 12,
-        "param_transforms": legacy_chain,
-    }
     vm_spec = {
         "mode": "param_dump",
         "n1": 12,
         "n2": 12,
         "param_program": _native_payload(vm_chain),
     }
-    _, legacy = _run_sweep(legacy_spec, "/tmp/pp_param_dump_moebius_legacy.bin")
     meta, vm = _run_sweep(vm_spec, "/tmp/pp_param_dump_moebius_vm.bin")
     assert meta["param_program_tokens"] == 1
-    assert vm == legacy
+    assert len(vm) == 12 * 12 * 16
 
 
 def test_param_dump_stack_program_expresses_sum_difference():

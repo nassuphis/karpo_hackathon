@@ -197,6 +197,23 @@ static const char *findKey(const char *json, const char *key) {
     return skip(p);
 }
 
+static int jsonArrayHasEntries(const char *p) {
+    p = skip(p);
+    if (*p != '[') return 0;
+    p++;
+    p = skip(p);
+    return *p && *p != ']';
+}
+
+static int rejectLegacyTransformChain(const char *p, const char *key) {
+    if (!jsonArrayHasEntries(p)) return 0;
+    fprintf(stderr,
+            "%s is no longer accepted by the native runtime; compile legacy transforms "
+            "to param_program/coeff_program before dispatch\n",
+            key);
+    return -1;
+}
+
 /* Find key within a bounded region (for nested objects) */
 static const char *findKeyIn(const char *start, const char *end, const char *key) {
     char pattern[64];
@@ -5737,138 +5754,6 @@ typedef struct {
     int nArgs;
 } PtEntry;
 
-/* Parse param_transforms: [["unit_circle"], ["sdith", "3"], ...] */
-static int parsePtChain(const char *p, PtEntry *entries, int maxCount) {
-    p = skip(p);
-    if (*p != '[') return 0;
-    p++; /* outer [ */
-    int count = 0;
-    while (count < maxCount) {
-        p = skip(p);
-        if (*p == ']') break;
-        if (*p == ',') { p++; p = skip(p); }
-        if (*p != '[') break;
-        p++; /* inner [ */
-        /* First element: the name (string) */
-        p = skip(p);
-        if (*p != '"') break;
-        p++;
-        int i = 0;
-        while (*p && *p != '"' && i < 63) entries[count].name[i++] = *p++;
-        entries[count].name[i] = '\0';
-        if (*p == '"') p++;
-        /* Remaining elements: numeric or string args */
-        entries[count].nArgs = 0;
-        while (entries[count].nArgs < MAX_PT_ARGS) {
-            p = skip(p);
-            if (*p == ']') break;
-            if (*p == ',') { p++; p = skip(p); }
-            if (*p == '"') {
-                /* String arg — parse as double */
-                p++;
-                char tmp[64]; int j = 0;
-                while (*p && *p != '"' && j < 63) tmp[j++] = *p++;
-                tmp[j] = '\0';
-                if (*p == '"') p++;
-                snprintf(entries[count].rawArgs[entries[count].nArgs], sizeof(entries[count].rawArgs[entries[count].nArgs]), "%s", tmp);
-                entries[count].args[entries[count].nArgs++] = atof(tmp);
-            } else if (*p == '-' || (*p >= '0' && *p <= '9')) {
-                /* Bare number */
-                int argIdx = entries[count].nArgs;
-                int j = 0;
-                const char *q = p;
-                while (*q && *q != ',' && *q != ']' && j < 63) {
-                    entries[count].rawArgs[argIdx][j++] = *q++;
-                }
-                while (j > 0 && (entries[count].rawArgs[argIdx][j - 1] == ' ' ||
-                                 entries[count].rawArgs[argIdx][j - 1] == '\t' ||
-                                 entries[count].rawArgs[argIdx][j - 1] == '\n' ||
-                                 entries[count].rawArgs[argIdx][j - 1] == '\r')) {
-                    j--;
-                }
-                entries[count].rawArgs[argIdx][j] = '\0';
-                entries[count].args[entries[count].nArgs++] = atof(p);
-                while (*p && *p != ',' && *p != ']') p++;
-            } else {
-                break;
-            }
-        }
-        p = skip(p);
-        if (*p == ']') p++; /* close inner ] */
-        count++;
-    }
-    return count;
-}
-
-/* ==== Coefficient transform dispatch (string-or-array format) ==== */
-
-/* Parse coeff_transforms: ["rev", ["roots", "8"], ...] */
-static int parseCtChain(const char *p, CtEntry *entries, int maxCount) {
-    p = skip(p);
-    if (*p != '[') return 0;
-    p++;
-    int count = 0;
-    while (count < maxCount) {
-        p = skip(p);
-        if (*p == ']') break;
-        if (*p == ',') { p++; p = skip(p); }
-
-        entries[count].nArgs = 0;
-        if (*p == '"') {
-            p++;
-            int i = 0;
-            while (*p && *p != '"' && i < 63) entries[count].name[i++] = *p++;
-            entries[count].name[i] = '\0';
-            if (*p == '"') p++;
-            count++;
-            continue;
-        }
-
-        if (*p != '[') break;
-        p++;
-        p = skip(p);
-        if (*p != '"') break;
-        p++;
-        int i = 0;
-        while (*p && *p != '"' && i < 63) entries[count].name[i++] = *p++;
-        entries[count].name[i] = '\0';
-        if (*p == '"') p++;
-
-        while (entries[count].nArgs < MAX_CT_ARGS) {
-            p = skip(p);
-            if (*p == ']') break;
-            if (*p == ',') { p++; p = skip(p); }
-            if (*p == '"') {
-                p++;
-                int j = 0;
-                while (*p && *p != '"' && j < 63) entries[count].args[entries[count].nArgs][j++] = *p++;
-                entries[count].args[entries[count].nArgs][j] = '\0';
-                if (*p == '"') p++;
-                entries[count].nArgs++;
-            } else if (*p == '-' || (*p >= '0' && *p <= '9')) {
-                int j = 0;
-                while (*p && *p != ',' && *p != ']' && j < 63) {
-                    entries[count].args[entries[count].nArgs][j++] = *p++;
-                }
-                while (j > 0 && (entries[count].args[entries[count].nArgs][j - 1] == ' ' ||
-                                 entries[count].args[entries[count].nArgs][j - 1] == '\t' ||
-                                 entries[count].args[entries[count].nArgs][j - 1] == '\n' ||
-                                 entries[count].args[entries[count].nArgs][j - 1] == '\r')) {
-                    j--;
-                }
-                entries[count].args[entries[count].nArgs][j] = '\0';
-                entries[count].nArgs++;
-            } else {
-                break;
-            }
-        }
-        p = skip(p);
-        if (*p == ']') p++;
-        count++;
-    }
-    return count;
-}
-
 static int pt_arg_complex(const PtEntry *e, int idx, double fallbackRe, double fallbackIm,
                           double *outRe, double *outIm) {
     if (!outRe || !outIm) return 0;
@@ -6704,12 +6589,12 @@ static int paramLegacyArgAllowsComplex(int fnIndex, int nArgs, int idx) {
     if (idx < 0 || idx >= nArgs) return 0;
     if (fnIndex == 19 && nArgs == 4) return 1; /* moebius compact a,b,c,d */
     if (fnIndex == 20 && nArgs == 2) return 1; /* inv_t_plus_2 compact constants */
+    if (fnIndex == 59 && nArgs == 2) return 1; /* add compact p1,p2 offsets */
     return 0;
 }
 
 static int paramLegacyApply(int fnIndex, const ParamCx *args, int nArgs, int gridN,
                             ParamCx in1, ParamCx in2, ParamCx *out1, ParamCx *out2) {
-    (void)gridN;
     double z1r = in1.r, z1i = in1.i, z2r = in2.r, z2i = in2.i;
     switch (fnIndex) {
         case 1: pt_none(&z1r, &z1i, &z2r, &z2i); break;
@@ -6790,6 +6675,98 @@ static int paramLegacyApply(int fnIndex, const ParamCx *args, int nArgs, int gri
         case 46: pt_coeff10(&z1r, &z1i, &z2r, &z2i); break;
         case 47: pt_coeff11(&z1r, &z1i, &z2r, &z2i); break;
         case 48: pt_coeff12(&z1r, &z1i, &z2r, &z2i); break;
+        case 49: pt_zzold(&z1r, &z1i, &z2r, &z2i); break;
+        case 50: pt_zz1(&z1r, &z1i, &z2r, &z2i); break;
+        case 51: pt_zz2(&z1r, &z1i, &z2r, &z2i); break;
+        case 52: pt_zz3(&z1r, &z1i, &z2r, &z2i); break;
+        case 53: z1r += paramArgReal(args, nArgs, 0, 0.0); break;
+        case 54: z1i += paramArgReal(args, nArgs, 0, 0.0); break;
+        case 55: z2r += paramArgReal(args, nArgs, 0, 0.0); break;
+        case 56: z2i += paramArgReal(args, nArgs, 0, 0.0); break;
+        case 57: {
+            double v = paramArgReal(args, nArgs, 0, 0.0);
+            z1r += v; z2r += v;
+            break;
+        }
+        case 58: {
+            double v = paramArgReal(args, nArgs, 0, 0.0);
+            z1i += v; z2i += v;
+            break;
+        }
+        case 59:
+            if (nArgs >= 2) {
+                z1r += paramArgReal(args, nArgs, 0, 0.0);
+                z1i += paramArgImag(args, nArgs, 0, 0.0);
+                z2r += paramArgReal(args, nArgs, 1, 0.0);
+                z2i += paramArgImag(args, nArgs, 1, 0.0);
+            } else {
+                double v = paramArgReal(args, nArgs, 0, 0.0);
+                z1r += v; z1i += v; z2r += v; z2i += v;
+            }
+            break;
+        case 60: {
+            double re = paramArgReal(args, nArgs, 0, 0.0);
+            double im = paramArgReal(args, nArgs, 1, 0.0);
+            z1r += re; z1i += im; z2r += re; z2i += im;
+            break;
+        }
+        case 61: {
+            double v = paramArgReal(args, nArgs, 0, 1.0);
+            z1r *= v; z2r *= v;
+            break;
+        }
+        case 62: {
+            double v = paramArgReal(args, nArgs, 0, 1.0);
+            z1i *= v; z2i *= v;
+            break;
+        }
+        case 63: {
+            double v = paramArgReal(args, nArgs, 0, 1.0);
+            z1r *= v; z1i *= v; z2r *= v; z2i *= v;
+            break;
+        }
+        case 64:
+            pt_sdith(&z1r, &z1i, &z2r, &z2i, paramArgReal(args, nArgs, 0, 1.0), gridN);
+            break;
+        case 65:
+            pt_ddith(&z1r, &z1i, &z2r, &z2i,
+                     (int)paramArgReal(args, nArgs, 0, 2.0),
+                     paramArgReal(args, nArgs, 1, 1.0),
+                     paramArgReal(args, nArgs, 2, 0.5),
+                     gridN);
+            break;
+        case 66:
+            pt_ndith(&z1r, &z1i, &z2r, &z2i, paramArgReal(args, nArgs, 0, 1.0), gridN);
+            break;
+        case 67:
+            pt_adth(&z1r, &z1i, &z2r, &z2i,
+                    (int)paramArgReal(args, nArgs, 0, 2.0),
+                    paramArgReal(args, nArgs, 1, 1.0),
+                    paramArgReal(args, nArgs, 2, 0.4),
+                    gridN);
+            break;
+        case 68:
+            pt_ldth(&z1r, &z1i, &z2r, &z2i,
+                    (int)paramArgReal(args, nArgs, 0, 2.0),
+                    paramArgReal(args, nArgs, 1, 1.0),
+                    paramArgReal(args, nArgs, 2, 1.0),
+                    paramArgReal(args, nArgs, 3, 0.0),
+                    gridN);
+            break;
+        case 69:
+            pt_crdth(&z1r, &z1i, &z2r, &z2i,
+                     (int)paramArgReal(args, nArgs, 0, 2.0),
+                     paramArgReal(args, nArgs, 1, 1.0),
+                     gridN);
+            break;
+        case 70:
+            pt_scdth(&z1r, &z1i, &z2r, &z2i,
+                     (int)paramArgReal(args, nArgs, 0, 2.0),
+                     paramArgReal(args, nArgs, 1, 1.0),
+                     paramArgReal(args, nArgs, 2, 0.25),
+                     paramArgReal(args, nArgs, 3, 0.0),
+                     gridN);
+            break;
         default:
             fprintf(stderr, "unknown param legacy fn_index: %d\n", fnIndex);
             return 1;
@@ -7983,7 +7960,7 @@ static int runParamDump(const char *buf, const char *outPath) {
     PtEntry ptEntries[MAX_CHAIN];
     int nPt = 0;
     cp = findKey(buf, "param_transforms");
-    if (cp) nPt = parsePtChain(cp, ptEntries, MAX_CHAIN);
+    if (cp && rejectLegacyTransformChain(cp, "param_transforms") != 0) return 1;
     ParamProgram paramProgram;
     int hasParamProgram = parseParamProgram(buf, &paramProgram);
     if (hasParamProgram < 0) return 1;
@@ -8042,7 +8019,7 @@ static int runCoeffGen(const char *buf, const char *outPath) {
     PtEntry ptEntries[MAX_CHAIN];
     int nPt = 0;
     cp = findKey(buf, "param_transforms");
-    if (cp) nPt = parsePtChain(cp, ptEntries, MAX_CHAIN);
+    if (cp && rejectLegacyTransformChain(cp, "param_transforms") != 0) return 1;
     ParamProgram paramProgram;
     int hasParamProgram = parseParamProgram(buf, &paramProgram);
     if (hasParamProgram < 0) return 1;
@@ -8051,7 +8028,7 @@ static int runCoeffGen(const char *buf, const char *outPath) {
     CtEntry ctEntries[MAX_CHAIN];
     int nCt = 0;
     cp = findKey(buf, "coeff_transforms");
-    if (cp) nCt = parseCtChain(cp, ctEntries, MAX_CHAIN);
+    if (cp && rejectLegacyTransformChain(cp, "coeff_transforms") != 0) return 1;
     CoeffProgram coeffProgram;
     int hasCoeffProgram = parseCoeffProgram(buf, &coeffProgram);
     if (hasCoeffProgram < 0) return 1;
@@ -8309,7 +8286,7 @@ static int runComputeDebug(const char *buf, const char *outPath) {
     PtEntry ptEntries[MAX_CHAIN];
     int nPt = 0;
     cp = findKey(buf, "param_transforms");
-    if (cp) nPt = parsePtChain(cp, ptEntries, MAX_CHAIN);
+    if (cp && rejectLegacyTransformChain(cp, "param_transforms") != 0) return 1;
     ParamProgram paramProgram;
     int hasParamProgram = parseParamProgram(buf, &paramProgram);
     if (hasParamProgram < 0) return 1;
@@ -8317,7 +8294,7 @@ static int runComputeDebug(const char *buf, const char *outPath) {
     CtEntry ctEntries[MAX_CHAIN];
     int nCt = 0;
     cp = findKey(buf, "coeff_transforms");
-    if (cp) nCt = parseCtChain(cp, ctEntries, MAX_CHAIN);
+    if (cp && rejectLegacyTransformChain(cp, "coeff_transforms") != 0) return 1;
     CoeffProgram coeffProgram;
     int hasCoeffProgram = parseCoeffProgram(buf, &coeffProgram);
     if (hasCoeffProgram < 0) return 1;
@@ -8754,7 +8731,7 @@ static int runParamGen(const char *buf, const char *outPath) {
     PtEntry ptEntries[MAX_CHAIN];
     int nPt = 0;
     cp = findKey(buf, "param_transforms");
-    if (cp) nPt = parsePtChain(cp, ptEntries, MAX_CHAIN);
+    if (cp && rejectLegacyTransformChain(cp, "param_transforms") != 0) return 1;
     ParamProgram paramProgram;
     int hasParamProgram = parseParamProgram(buf, &paramProgram);
     if (hasParamProgram < 0) return 1;
@@ -9389,7 +9366,7 @@ static int runCoeffGenChunked(const char *buf, const char *outPath) {
     CtEntry ctEntries[MAX_CHAIN];
     int nCt = 0;
     cp = findKey(buf, "coeff_transforms");
-    if (cp) nCt = parseCtChain(cp, ctEntries, MAX_CHAIN);
+    if (cp && rejectLegacyTransformChain(cp, "coeff_transforms") != 0) return 1;
     CoeffProgram coeffProgram;
     int hasCoeffProgram = parseCoeffProgram(buf, &coeffProgram);
     if (hasCoeffProgram < 0) return 1;

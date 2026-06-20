@@ -113,6 +113,19 @@ def _complex_expr(value):
     return f"{value.real}{'+' if value.imag >= 0 else ''}{value.imag}j"
 
 
+def test_coeffgen_rejects_native_coeff_transforms():
+    proc = _run_coeffgen_process({
+        "mode": "coeffgen",
+        "function": "const",
+        "cfpv": [3, 1, 0],
+        "n1": 1,
+        "n2": 1,
+        "coeff_transforms": [["rev"]],
+    })
+    assert proc.returncode != 0
+    assert "coeff_transforms is no longer accepted by the native runtime" in proc.stderr
+
+
 def test_coeff_program_source_set_affine_and_extended_range_run_in_native_coeffgen():
     compiled = compile_coeff_program_source("""
         push_range(0, 5, 2)

@@ -20,6 +20,9 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 LAMBDA_DIR = ROOT / "lambda"
 FIXTURE_DIR = ROOT / "tests" / "fixtures" / "oracle"
 sys.path.insert(0, str(LAMBDA_DIR))
+sys.path.insert(0, str(ROOT))
+
+from tests.native_program_helpers import translate_legacy_transforms_for_native
 
 
 def compile_sweep_binary(out_path: pathlib.Path):
@@ -107,7 +110,9 @@ def run_case(binary: pathlib.Path, case: dict, workdir: pathlib.Path):
     name = case["name"]
     coeffs_path = workdir / f"{name}.coeffs.bin"
     roots_path = workdir / f"{name}.roots.bin"
-    coeffgen_payload = _compile_coeff_program_source(dict(case["coeffgen"]))
+    coeffgen_payload = translate_legacy_transforms_for_native(
+        _compile_coeff_program_source(dict(case["coeffgen"]))
+    )
     coeff_meta = _run_json(binary, coeffgen_payload, coeffs_path)
     solve_payload = dict(case.get("solve") or {})
     solve_payload.update(

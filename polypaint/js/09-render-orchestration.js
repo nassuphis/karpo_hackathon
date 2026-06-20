@@ -401,7 +401,7 @@ function _renderChips(which) {
     const el = document.getElementById(which + '-chips');
     if (!el) return;
     if (which === 'pp') {
-        el.innerHTML = chain.map((item, i) => _renderParamProgramChipHtml(item, i)).join('');
+        el.innerHTML = chain.map((item, i) => _renderParamProgramChipHtml(item, i, { readonly: true })).join('');
         _syncParamProgramAddOptions();
         _syncParamPipelineModeUi();
         const sourceLen = _paramProgramSourceStatementCount(_getParamProgramSourceText());
@@ -428,7 +428,7 @@ function _renderChips(which) {
             }
         }
     } else if (which === 'cp') {
-        el.innerHTML = chain.map((item, i) => _renderCoeffProgramChipHtml(item, i)).join('');
+        el.innerHTML = chain.map((item, i) => _renderCoeffProgramChipHtml(item, i, { readonly: true })).join('');
         _syncParamPipelineModeUi();
         const sourceLen = _coeffProgramSourceStatementCount(_getCoeffProgramSourceText());
         const chainLen = _serializeCoeffProgramChain().length;

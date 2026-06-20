@@ -1434,25 +1434,17 @@ button {
                 <div class="solve-score-program-note">Optional RPN parameter VM. Use=Program runs this and the Coeff Program; Use=Chain runs the legacy transform rows.</div>
                 <div class="solve-score-program-toolbar param-program-toolbar">
                     <button type="button" class="btn-secondary btn-inline" id="param-program-manage" onclick="openParamProgramModal()">Param Programs...</button>
-                    <div class="score-chip-add-wrap">
-                        <button id="pp-insert-before-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleParamProgramPicker(event,'before')">+ before</button>
-                        <button id="pp-insert-after-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleParamProgramPicker(event,'after')">+ after</button>
-                        <div id="pp-add-popup" class="score-chip-picker" aria-hidden="true"></div>
-                        <select id="pp-add" onchange="addChip('pp',this.value);this.value='';" style="display:none">
-                            <option value="">+ add...</option>
-                        </select>
-                    </div>
                     <button type="button" class="btn-secondary btn-inline" id="param-program-copy-legacy" onclick="_copyParamTransformsIntoParamProgram()" title="Translate the current Param transforms row into legacy(...) param-program chips">Copy legacy transforms</button>
                     <button type="button" class="btn-secondary btn-inline" id="param-program-clear" onclick="_clearParamProgramChain()">Clear program</button>
                 </div>
                 <div class="compute-preview-tabs" role="tablist" aria-label="Param program editor tabs">
-                    <button type="button" id="param-program-tab-chips" class="compute-preview-tab-btn active" onclick="_setParamProgramEditorMode('chips')">Chips</button>
-                    <button type="button" id="param-program-tab-text" class="compute-preview-tab-btn" onclick="_setParamProgramEditorMode('text')">Text</button>
+                    <button type="button" id="param-program-tab-text" class="compute-preview-tab-btn active" onclick="_setParamProgramEditorMode('text')">Text</button>
+                    <button type="button" id="param-program-tab-chips" class="compute-preview-tab-btn" onclick="_setParamProgramEditorMode('chips')">Chips (read-only)</button>
                 </div>
-                <div id="pp-chips-panel" class="coeff-program-editor-panel active">
+                <div id="pp-chips-panel" class="coeff-program-editor-panel">
                     <div id="pp-chips" class="chip-container param-program-display"></div>
                 </div>
-                <div id="pp-text-panel" class="coeff-program-editor-panel">
+                <div id="pp-text-panel" class="coeff-program-editor-panel active">
                     <textarea id="pp-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;p1 = t1 + t2&#10;p2 = exp(t1*pi2i)" oninput="_onParamProgramSourceInput()"></textarea>
                 </div>
                 <div id="param-program-status" class="solve-score-program-status"></div>
@@ -1511,22 +1503,17 @@ button {
                 <div class="solve-score-program-note">Optional RPN coefficient-vector VM. It reads immutable cf, writes poly, and can use p1/p2 scalar parameters from the Param Program.</div>
                 <div class="solve-score-program-toolbar param-program-toolbar">
                     <button type="button" class="btn-secondary btn-inline" id="coeff-program-manage" onclick="openCoeffProgramModal()">Coeff Programs...</button>
-                    <div class="score-chip-add-wrap">
-                        <button id="cp-insert-before-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleCoeffProgramPicker(event,'before')">+ before</button>
-                        <button id="cp-insert-after-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleCoeffProgramPicker(event,'after')">+ after</button>
-                        <div id="cp-add-popup" class="score-chip-picker" aria-hidden="true"></div>
-                    </div>
                     <button type="button" class="btn-secondary btn-inline" id="coeff-program-copy-legacy" onclick="_copyCoeffTransformsIntoCoeffProgram()" title="Translate the current Coeff transforms row into coeff-program chips">Copy legacy transforms</button>
                     <button type="button" class="btn-secondary btn-inline" id="coeff-program-clear" onclick="_clearCoeffProgramChain()">Clear program</button>
                 </div>
                 <div class="compute-preview-tabs" role="tablist" aria-label="Coeff program editor tabs">
-                    <button type="button" id="coeff-program-tab-chips" class="compute-preview-tab-btn active" onclick="_setCoeffProgramEditorMode('chips')">Chips</button>
-                    <button type="button" id="coeff-program-tab-text" class="compute-preview-tab-btn" onclick="_setCoeffProgramEditorMode('text')">Text</button>
+                    <button type="button" id="coeff-program-tab-text" class="compute-preview-tab-btn active" onclick="_setCoeffProgramEditorMode('text')">Text</button>
+                    <button type="button" id="coeff-program-tab-chips" class="compute-preview-tab-btn" onclick="_setCoeffProgramEditorMode('chips')">Chips (read-only)</button>
                 </div>
-                <div id="cp-chips-panel" class="coeff-program-editor-panel active">
+                <div id="cp-chips-panel" class="coeff-program-editor-panel">
                     <div id="cp-chips" class="chip-container param-program-display"></div>
                 </div>
-                <div id="cp-text-panel" class="coeff-program-editor-panel">
+                <div id="cp-text-panel" class="coeff-program-editor-panel active">
                     <textarea id="cp-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;cf&#10;rev&#10;emit" oninput="_onCoeffProgramSourceInput()"></textarea>
                 </div>
                 <div id="coeff-program-status" class="solve-score-program-status"></div>

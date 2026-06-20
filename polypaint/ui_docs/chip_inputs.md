@@ -125,14 +125,12 @@ In `dispatchPt(...)`, keep:
 
 No structural change is needed if the helper functions understand `2`.
 
-## Optional Parser Enhancement
+## Parser Boundary
 
-If you want the backend itself to accept symbolic strings directly, then `parsePtChain(...)` must stop treating string args as plain `atof(tmp)`.
-
-Right now:
-
-- `"t1"` parses to `0`
-- `"t2"` also parses to `0`
+The native `parsePtChain(...)` JSON-chain parser has been retired. Chain-mode
+rows are translated to Param Program payloads at the Lambda boundary, so
+symbolic strings such as `t1` / `t2` must be handled by the Param Program
+compiler and profile symbol table, not by native transform-chain parsing.
 
 So backend symbolic parsing is currently unsafe.
 

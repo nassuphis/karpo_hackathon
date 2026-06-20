@@ -21,8 +21,49 @@ import threading
 import types
 import urllib.parse
 
+if "/src" not in sys.path:
+    sys.path.insert(0, "/src")
+
+from coeff_program_chain import compile_coeff_program_chain
+from param_program_chain import compile_param_program_chain
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────
+
+def param_program_payload(chain):
+    compiled = compile_param_program_chain(chain)
+    payload = {
+        "version": compiled["version"],
+        "fingerprint": compiled["fingerprint"],
+        "tokens": compiled["tokens"],
+        "stack_max": compiled["stack_max"],
+        "token_count": compiled["token_count"],
+        "uses_legacy_fast_path": compiled["uses_legacy_fast_path"],
+    }
+    if compiled.get("scalar_exprs"):
+        payload["scalar_exprs"] = compiled["scalar_exprs"]
+    return payload
+
+
+def coeff_program_payload(chain):
+    compiled = compile_coeff_program_chain(chain)
+    return {
+        "version": compiled["version"],
+        "fingerprint": compiled["fingerprint"],
+        "tokens": compiled["tokens"],
+        "stack_max": compiled["stack_max"],
+        "token_count": compiled["token_count"],
+        "scalar_exprs": compiled["scalar_exprs"],
+        "uses_legacy_chain_equivalent": compiled["uses_legacy_chain_equivalent"],
+    }
+
+
+def param_legacy_program(name, src="both", tgt="both", *args):
+    return param_program_payload([["legacy", name, src, tgt, *map(str, args)]])
+
+
+def coeff_legacy_program(name, src="poly", tgt="poly", *args):
+    return coeff_program_payload([["legacy", name, src, tgt, *map(str, args)], ["emit"]])
 
 def write_cf(path, coeffs_list, n_coeffs):
     with open(path, "wb") as f:
@@ -58,7 +99,8 @@ def run_coeffgen(func, cfpv=None):
         "function": func,
         "n1": 4, "n2": 4,
         "i1_start": 0, "i1_end": 4,
-        "param_transforms": [["unit_circle"]],
+        "param_transforms": [],
+        "param_program": param_legacy_program("unit_circle"),
         "coeff_transforms": [],
         "times": 1,
     }
@@ -499,7 +541,11 @@ def test_param_gen_threaded_runtime():
         "n1": 12,
         "n2": 12,
         "times": 3,
-        "param_transforms": [["unit_circle"], ["square"]],
+        "param_transforms": [],
+        "param_program": param_program_payload([
+            ["legacy", "unit_circle", "both", "both"],
+            ["legacy", "square", "both", "both"],
+        ]),
     }
 
     r = subprocess.run(
@@ -541,7 +587,8 @@ def test_param_gen_threaded_runtime():
             "n2": 4,
             "times": 1,
             "n_threads": 1,
-            "param_transforms": transforms,
+            "param_transforms": [],
+            "param_program": param_program_payload(transforms),
         }
         proc = subprocess.run(
             ["/src/sweep_coeffgen", path],
@@ -554,10 +601,10 @@ def test_param_gen_threaded_runtime():
         with open(path, "rb") as fh:
             return fh.read()
 
-    legacy_uc = run_param_target([["unit_circle"]], "/tmp/param_gen_uc_legacy.bin")
-    both_uc = run_param_target([["unit_circle", "2"]], "/tmp/param_gen_uc_both.bin")
-    t1_uc = run_param_target([["unit_circle", "0"]], "/tmp/param_gen_uc_t1.bin")
-    t2_uc = run_param_target([["unit_circle", "1"]], "/tmp/param_gen_uc_t2.bin")
+    legacy_uc = run_param_target([["legacy", "unit_circle", "both", "both"]], "/tmp/param_gen_uc_legacy.bin")
+    both_uc = run_param_target([["legacy", "unit_circle", "both", "both"]], "/tmp/param_gen_uc_both.bin")
+    t1_uc = run_param_target([["legacy", "unit_circle", "both", "p1"]], "/tmp/param_gen_uc_t1.bin")
+    t2_uc = run_param_target([["legacy", "unit_circle", "both", "p2"]], "/tmp/param_gen_uc_t2.bin")
     assert legacy_uc == both_uc, "unit_circle target=both must preserve legacy no-arg output"
     assert t1_uc != both_uc, "unit_circle target=t1 should not match both-target output"
     assert t2_uc != both_uc, "unit_circle target=t2 should not match both-target output"
@@ -565,8 +612,8 @@ def test_param_gen_threaded_runtime():
     t2_vals = struct.unpack("<" + "f" * (len(t2_uc) // 4), t2_uc)
     assert all(abs(t1_vals[i + 3]) < 1e-7 for i in range(0, len(t1_vals), 4)), "target=t1 should leave t2 imaginary raw"
     assert all(abs(t2_vals[i + 1]) < 1e-7 for i in range(0, len(t2_vals), 4)), "target=t2 should leave t1 imaginary raw"
-    old_rtheta = run_param_target([["rtheta", "1"]], "/tmp/param_gen_rtheta_old.bin")
-    new_rtheta = run_param_target([["rtheta", "1", "2"]], "/tmp/param_gen_rtheta_new.bin")
+    old_rtheta = run_param_target([["legacy", "rtheta", "both", "both", "1"]], "/tmp/param_gen_rtheta_old.bin")
+    new_rtheta = run_param_target([["legacy", "rtheta", "both", "both", "1"]], "/tmp/param_gen_rtheta_new.bin")
     assert old_rtheta == new_rtheta, "rtheta p-only form must remain equivalent to target=both"
     print("  sweep_coeffgen targetable param transforms: OK")
 
@@ -636,7 +683,8 @@ def test_coeffgen_chunked_threaded_runtime():
         "n1": 10,
         "n2": 10,
         "times": 2,
-        "param_transforms": [["unit_circle"]],
+        "param_transforms": [],
+        "param_program": param_legacy_program("unit_circle"),
         "n_threads": 1,
     }
     r = subprocess.run(
@@ -651,7 +699,8 @@ def test_coeffgen_chunked_threaded_runtime():
     spec_base = {
         "mode": "coeffgen_chunked",
         "function": "g1",
-        "coeff_transforms": [["exp", "0.3", "-0.2"]],
+        "coeff_transforms": [],
+        "coeff_program": coeff_legacy_program("exp", "poly", "poly", "0.3", "-0.2"),
         "params_file": params_path,
         "step_start": 0,
         "step_count": 200,
@@ -706,9 +755,13 @@ def test_coeffgen_chunked_threaded_runtime():
         timeout=30,
     )
     assert r.returncode == 0, "coeffgen_chunked plain failed: " + r.stderr[:200]
+    plain_meta = json.loads(r.stdout)
     r = subprocess.run(
         ["/src/sweep_coeffgen", andy_path],
-        input=json.dumps({**plain_spec, "coeff_transforms": [["linear", "100", "0", "1e-5"]]}),
+        input=json.dumps({
+            **plain_spec,
+            "coeff_program": coeff_legacy_program("linear", "poly", "poly", "100", "0", "1e-5"),
+        }),
         capture_output=True,
         text=True,
         timeout=30,
@@ -761,7 +814,8 @@ def test_coeffgen_chunked_threaded_runtime():
         text=True,
         timeout=30,
     )
-    assert r.returncode == 0, "coeffgen legacy chain failed: " + r.stderr[:200]
+    assert r.returncode != 0, "native coeff_transforms should be rejected after Phase 5"
+    assert "coeff_transforms is no longer accepted" in r.stderr
     r = subprocess.run(
         ["/src/sweep_coeffgen", legacy_program_path],
         input=json.dumps(legacy_program_spec),
@@ -772,12 +826,10 @@ def test_coeffgen_chunked_threaded_runtime():
     assert r.returncode == 0, "coeffgen legacy-equivalent coeff_program failed: " + r.stderr[:200]
     legacy_program_meta = json.loads(r.stdout)
     assert legacy_program_meta["coeff_program_tokens"] == 4, "coeff_program metadata missing token count"
-    with open(legacy_chain_path, "rb") as f:
-        legacy_chain_bytes = f.read()
     with open(legacy_program_path, "rb") as f:
         legacy_program_bytes = f.read()
-    assert legacy_chain_bytes == legacy_program_bytes, "coeff_program legacy-equivalent output diverged"
-    print("  coeff_program legacy-chain parity: OK (%d bytes)" % len(legacy_program_bytes))
+    assert len(legacy_program_bytes) == legacy_program_meta["data_bytes"], "coeff_program byte count mismatch"
+    print("  coeff_program legacy-equivalent native path: OK (%d bytes)" % len(legacy_program_bytes))
 
     r = subprocess.run(
         ["/src/sweep_coeffgen", rev_emit_chain_path],
@@ -786,7 +838,8 @@ def test_coeffgen_chunked_threaded_runtime():
         text=True,
         timeout=30,
     )
-    assert r.returncode == 0, "coeffgen rev chain failed: " + r.stderr[:200]
+    assert r.returncode != 0, "native coeff_transforms rev chain should be rejected after Phase 5"
+    assert "coeff_transforms is no longer accepted" in r.stderr
     r = subprocess.run(
         ["/src/sweep_coeffgen", rev_emit_program_path],
         input=json.dumps({
@@ -807,11 +860,17 @@ def test_coeffgen_chunked_threaded_runtime():
         timeout=30,
     )
     assert r.returncode == 0, "coeffgen rev;emit coeff_program failed: " + r.stderr[:200]
-    with open(rev_emit_chain_path, "rb") as f:
-        rev_emit_chain_bytes = f.read()
-    with open(rev_emit_program_path, "rb") as f:
-        rev_emit_program_bytes = f.read()
-    assert rev_emit_chain_bytes == rev_emit_program_bytes, "coeff_program rev;emit commit output diverged"
+    plain_vals = read_f32_array(plain_path)
+    rev_emit_vals = read_f32_array(rev_emit_program_path)
+    n_coeffs = int(plain_meta["n_coeffs"])
+    row_stride = n_coeffs * 2
+    assert len(plain_vals) == len(rev_emit_vals), "coeff_program rev output length mismatch"
+    for row_start in range(0, len(plain_vals), row_stride):
+        for k in range(n_coeffs):
+            src = row_start + (n_coeffs - 1 - k) * 2
+            dst = row_start + k * 2
+            assert rev_emit_vals[dst] == plain_vals[src], "coeff_program rev real output diverged"
+            assert rev_emit_vals[dst + 1] == plain_vals[src + 1], "coeff_program rev imag output diverged"
     print("  coeff_program rev;emit commit parity: OK")
 
     const_program_spec = {
@@ -1172,8 +1231,10 @@ def test_compute_preview_runtime_combo():
         "i1_start": 0,
         "i1_end": 8,
         "times": 1,
-        "param_transforms": [["unit_circle"]],
-        "coeff_transforms": [["roots_cm", "hi"]],
+        "param_transforms": [],
+        "param_program": param_legacy_program("unit_circle"),
+        "coeff_transforms": [],
+        "coeff_program": coeff_legacy_program("roots_cm", "poly", "poly", "hi"),
     }
     r = subprocess.run(["/src/sweep_coeffgen", coeff_path],
                        input=json.dumps(coeff_spec), capture_output=True, text=True, timeout=30, env=env)

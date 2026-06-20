@@ -221,7 +221,7 @@ def parse_coeff_program_source(source_text, *, strict=True):
     with _legacy_shell_installed():
         for stmt in statements:
             try:
-                chain.extend(_current._lower_statement(stmt))
+                chain.extend(_current._legacy_lower_statement(stmt))
             except Exception as exc:
                 diagnostics.append(_diagnostic(exc, line=getattr(exc, "line", 0) or stmt.line, column=getattr(exc, "column", 0) or stmt.column))
     if diagnostics and strict:

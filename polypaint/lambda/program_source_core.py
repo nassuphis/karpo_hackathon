@@ -244,3 +244,95 @@ def split_program_statements(source_text, *, error_cls=ProgramSourceError, max_b
         raise error_cls("unclosed bracket", line=line, column=col, code="unclosed_bracket")
     flush(line, col)
     return statements
+
+
+class ProfileStatementLowerer:
+    """Shared statement dispatcher for profile-backed source languages.
+
+    Profile modules still own semantic lowering. This class centralizes the
+    grammar split that must not drift between Param/Coeff: assignment vs call
+    vs bare statement, RHS emptiness checks, indexed-lvalue detection, and
+    profile-symbol writability checks. Subclasses implement the profile hooks.
+    """
+
+    def __init__(self, profile, *, error_cls=ProgramSourceError):
+        self.profile = profile
+        self.error_cls = error_cls
+        self._writable_lhs = set(
+            profile_symbols_with_context(profile, "lhs", access="read_write")
+        )
+        if self._writable_lhs:
+            names = "|".join(
+                re.escape(name)
+                for name in sorted(self._writable_lhs, key=len, reverse=True)
+            )
+            self._indexed_lhs_re = re.compile(r"^(" + names + r")\[(.*)\]$", re.IGNORECASE)
+        else:
+            self._indexed_lhs_re = None
+
+    @property
+    def writable_lhs(self):
+        return frozenset(self._writable_lhs)
+
+    def source_error(self, message, *, line=0, column=0, code="source_error"):
+        return self.error_cls(message, line=line, column=column, code=code)
+
+    def lower_statement(self, statement):
+        text = statement.text.strip()
+        assignment = find_top_level_assignment(text)
+        if assignment >= 0:
+            lhs = re.sub(r"\s+", "", text[:assignment])
+            rhs = text[assignment + 1:].strip()
+            if not rhs:
+                raise self.source_error(
+                    "assignment right-hand side is empty",
+                    line=statement.line,
+                    column=assignment + 2,
+                )
+            return self.lower_assignment(statement, lhs, rhs)
+
+        call = parse_call(text, error_cls=self.error_cls)
+        if call:
+            return self.lower_call_statement(statement, call[0], call[1])
+        return self.lower_bare_statement(statement, text.strip())
+
+    def lower_assignment(self, statement, lhs, rhs):
+        lowered_lhs = str(lhs or "").lower()
+        indexed_lhs = self._indexed_lhs_re.match(lhs) if self._indexed_lhs_re else None
+        if indexed_lhs:
+            lhs_name = indexed_lhs.group(1).lower()
+            index_expr = indexed_lhs.group(2).strip()
+            if lhs_name not in self._writable_lhs:
+                raise self.source_error(
+                    f"{lhs_name}[...] is read-only in source",
+                    line=statement.line,
+                    column=statement.column,
+                )
+            if not index_expr:
+                raise self.source_error(
+                    f"{lhs_name}[...] index expression is empty",
+                    line=statement.line,
+                    column=statement.column,
+                )
+            return self.lower_indexed_assignment(statement, lhs_name, index_expr, rhs)
+
+        if lowered_lhs not in self._writable_lhs:
+            allowed = ", ".join(sorted(self._writable_lhs)) or "<none>"
+            raise self.source_error(
+                f"only {allowed} assignments are supported in this source profile",
+                line=statement.line,
+                column=statement.column,
+            )
+        return self.lower_symbol_assignment(statement, lowered_lhs, rhs)
+
+    def lower_indexed_assignment(self, statement, lhs_name, index_expr, rhs):
+        raise NotImplementedError
+
+    def lower_symbol_assignment(self, statement, lhs, rhs):
+        raise NotImplementedError
+
+    def lower_call_statement(self, statement, name, args):
+        raise NotImplementedError
+
+    def lower_bare_statement(self, statement, text):
+        raise NotImplementedError

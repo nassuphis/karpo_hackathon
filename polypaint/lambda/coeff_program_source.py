@@ -47,6 +47,7 @@ from coeff_program_chain import (
 )
 from program_source_core import (
     ProgramSourceError,
+    ProfileStatementLowerer,
     diagnostic as _core_diagnostic,
     find_top_level_assignment,
     parse_call,
@@ -669,7 +670,7 @@ def _lower_call(name, args, *, target="push"):
     raise CoeffProgramSourceError(f"unknown coeff program source function {name!r}")
 
 
-def _lower_statement(statement):
+def _legacy_lower_statement(statement):
     text = statement.text.strip()
     assignment = _find_top_level_assignment(text)
     if assignment >= 0:
@@ -732,6 +733,76 @@ def _lower_statement(statement):
     if _IDENT_RE.match(bare):
         return _lower_call(bare, [], target="push")
     raise CoeffProgramSourceError(f"cannot parse coeff program statement {text!r}", line=statement.line, column=statement.column)
+
+
+class _CoeffStatementLowerer(ProfileStatementLowerer):
+    """Coeff source semantics through the shared statement dispatcher."""
+
+    def __init__(self):
+        super().__init__(_PROFILE, error_cls=CoeffProgramSourceError)
+
+    def lower_indexed_assignment(self, statement, lhs_name, index_expr, rhs):
+        if lhs_name not in _WRITABLE_LHS_NAMES:
+            raise CoeffProgramSourceError(
+                f"{lhs_name}[...] is read-only in Coeff Program source",
+                line=statement.line,
+                column=statement.column,
+            )
+        if index_expr.isdigit():
+            idx = int(index_expr)
+            if idx < 0 or idx >= MAX_VECTOR_LEN:
+                raise CoeffProgramSourceError(
+                    f"{lhs_name} index must be in [0,{MAX_VECTOR_LEN - 1}], got {idx}",
+                    line=statement.line,
+                    column=statement.column,
+                )
+        chain = _typed_lower_scalar(index_expr)
+        chain.extend(_typed_lower_scalar(rhs))
+        chain.append(["_typed_poke_poly"])
+        return chain
+
+    def lower_symbol_assignment(self, statement, lhs, rhs):
+        call = _parse_call(rhs)
+        if call:
+            return _lower_call(call[0], call[1], target=lhs)
+        bare = rhs.strip().lower()
+        if bare in _SOURCE_NAMES:
+            return [["set", lhs, bare]]
+        if _IDENT_RE.match(bare):
+            return _lower_call(bare, [], target=lhs)
+        chain, value_type = _typed_lower_value(rhs)
+        return _append_typed_target(chain, value_type, target=lhs)
+
+    def lower_call_statement(self, statement, name, args):
+        return _lower_call(name, args, target="push")
+
+    def lower_bare_statement(self, statement, text):
+        bare = text.strip().lower()
+        if bare in _PUSH_SOURCE_NAMES:
+            return [["push", bare]]
+        if bare in _STACK_ALIASES:
+            return [[_STACK_ALIASES[bare]]]
+        if bare in {"pop", "peek"}:
+            hint = f"use drop to discard the stack top, or write {_POLY_SYMBOL} = pop / {_POLY_SYMBOL} = peek explicitly"
+            raise CoeffProgramSourceError(
+                f"{bare} is not a standalone statement; {hint}",
+                line=statement.line,
+                column=statement.column,
+            )
+        if _IDENT_RE.match(bare):
+            return _lower_call(bare, [], target="push")
+        raise CoeffProgramSourceError(
+            f"cannot parse coeff program statement {text!r}",
+            line=statement.line,
+            column=statement.column,
+        )
+
+
+_COEFF_STATEMENT_LOWERER = _CoeffStatementLowerer()
+
+
+def _lower_statement(statement):
+    return _COEFF_STATEMENT_LOWERER.lower_statement(statement)
 
 
 def split_coeff_program_statements(source_text):

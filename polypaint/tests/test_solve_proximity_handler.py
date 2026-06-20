@@ -81,7 +81,7 @@ def _make_hist_mock_s3(bin_bytes, clip_data):
     return mock_s3
 
 
-def _fingerprint(chain, metric="proximity", quantile=0.001, omega=1.0, omega_enabled=True):
+def _fingerprint(chain, metric="proximity", quantile=0.001, omega=1.0, omega_enabled=True, version=None):
     from solve_score_chain import compile_solve_score_chain_or_legacy, compiled_solve_score_fingerprint
 
     compiled = compile_solve_score_chain_or_legacy(
@@ -92,7 +92,30 @@ def _fingerprint(chain, metric="proximity", quantile=0.001, omega=1.0, omega_ena
         omega_enabled,
         default_metric=metric,
     )
-    return compiled_solve_score_fingerprint(compiled)
+    return compiled_solve_score_fingerprint(compiled, version=version)
+
+
+def test_versioned_artifact_fingerprint_validation_accepts_missing_spec_version_v1_artifact():
+    import handler_solve_proximity as hsp
+    from solve_score_chain import compile_solve_score_chain_or_legacy, compiled_solve_score_fingerprint
+
+    compiled = compile_solve_score_chain_or_legacy(
+        [["spread", "2"], ["omega_cosine", "5"]],
+        "spread",
+        0.02,
+        5.0,
+        True,
+        default_metric="spread",
+    )
+    artifact = {
+        "family": "solve_score",
+        "version": 2,
+        # Old artifacts have no solve_score_spec_version sibling, so reads
+        # must treat them as v1 even though new writes default to v2.
+        "chain_fingerprint": compiled_solve_score_fingerprint(compiled, version=1),
+    }
+
+    hsp._validate_artifact_chain_fingerprint(artifact, compiled, "Clip")
 
 
 def _run_merge(n_chunks, clip_data, hist_responses, metric="proximity", solve_score_quantile=0.001,

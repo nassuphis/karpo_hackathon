@@ -339,7 +339,7 @@ function _populateComputeFromDetail(jobId, detail) {
 
     const ptDisplay = pipeline.param_transforms_display || detail.param_transforms_display || pipeline.param_transforms || detail.param_transforms || [];
     const savedParamProgramChain = pipeline.param_program_chain || detail.param_program_chain || [];
-    const savedParamProgramSourceText = [
+    let savedParamProgramSourceText = [
         pipeline.param_program_source_text,
         detail.param_program_source_text,
         calc.param_program_source_text,
@@ -347,13 +347,21 @@ function _populateComputeFromDetail(jobId, detail) {
         detail.param_program && detail.param_program.source_text,
     ].map(v => typeof v === 'string' ? v : '').find(v => v.trim()) || '';
     const savedCoeffProgramChain = pipeline.coeff_program_chain || detail.coeff_program_chain || [];
-    const savedCoeffProgramSourceText = [
+    let savedCoeffProgramSourceText = [
         pipeline.coeff_program_source_text,
         detail.coeff_program_source_text,
         calc.coeff_program_source_text,
         pipeline.coeff_program && pipeline.coeff_program.source_text,
         detail.coeff_program && detail.coeff_program.source_text,
     ].map(v => typeof v === 'string' ? v : '').find(v => v.trim()) || '';
+    if (!savedParamProgramSourceText.trim() && Array.isArray(savedParamProgramChain) && savedParamProgramChain.length &&
+        typeof _paramProgramSourceFromRows === 'function') {
+        savedParamProgramSourceText = _paramProgramSourceFromRows(savedParamProgramChain);
+    }
+    if (!savedCoeffProgramSourceText.trim() && Array.isArray(savedCoeffProgramChain) && savedCoeffProgramChain.length &&
+        typeof _coeffProgramSourceFromRows === 'function') {
+        savedCoeffProgramSourceText = _coeffProgramSourceFromRows(savedCoeffProgramChain);
+    }
     _setChainFromSaved('pt', ptDisplay);
     _setChainFromSaved('pp', savedParamProgramChain);
     _setParamProgramSourceText(savedParamProgramSourceText);

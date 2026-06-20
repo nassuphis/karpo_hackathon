@@ -117,6 +117,34 @@ class TestProgramV2Migration(unittest.TestCase):
         self.assertEqual(json.loads(conflict["body"])["existing_fingerprint"], "sha256:different")
 
     @patch("handler_storage.s3")
+    def test_migrate_param_program_requires_transitive_macros_to_be_v2(self, mock_s3):
+        import handler_storage
+
+        fake_s3 = _FakeS3()
+        _patch_s3(mock_s3, fake_s3)
+        handler_storage.handler(_event("/save-param-program", {
+            "name": "Leaf Param",
+            "chain": [["push", "t1"], ["emit", "p1"]],
+        }), None)
+        handler_storage.handler(_event("/save-param-program", {
+            "name": "Base Param",
+            "chain": [["macro", "leaf-param"]],
+        }), None)
+        handler_storage.handler(_event("/save-param-program", {
+            "name": "Uses Macro",
+            "chain": [["macro", "base-param"]],
+        }), None)
+        fake_s3.put_object(
+            Key="polypaint/param-programs/v2/base-param.json",
+            Body=json.dumps({"fingerprint": "sha256:base"}).encode("utf-8"),
+            Metadata={},
+        )
+
+        missing = handler_storage.handler(_event("/migrate-param-program", {"id": "uses-macro", "dry_run": False}), None)
+        self.assertEqual(missing["statusCode"], 422)
+        self.assertEqual(json.loads(missing["body"])["missing"], ["leaf-param"])
+
+    @patch("handler_storage.s3")
     def test_migrate_coeff_program_dry_run_renders_source_text(self, mock_s3):
         import handler_storage
         from coeff_program_source import parse_coeff_program_source

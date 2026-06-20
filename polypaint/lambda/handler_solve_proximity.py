@@ -31,6 +31,7 @@ from solve_score_chain import (
     solve_score_lag_prelude_by_source,
     solve_score_program_cli_payload,
     solve_score_program_specs_match,
+    solve_score_spec_version_from_meta,
     solve_score_uses_source,
 )
 from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, parse_boolish, report_status
@@ -400,8 +401,17 @@ def _validate_artifact_chain_fingerprint(data, compiled, label):
     actual = str((data or {}).get("chain_fingerprint") or "").strip()
     if not actual:
         raise RuntimeError(f"{label} missing chain_fingerprint")
-    expected = compiled_solve_score_fingerprint(compiled)
-    if actual != expected:
+    stored_version = solve_score_spec_version_from_meta(data)
+    versions = [stored_version]
+    for candidate in (1, SOLVE_SCORE_SPEC_VERSION):
+        if candidate not in versions:
+            versions.append(candidate)
+    expected_by_version = {
+        version: compiled_solve_score_fingerprint(compiled, version=version)
+        for version in versions
+    }
+    if actual not in expected_by_version.values():
+        expected = expected_by_version[stored_version]
         raise RuntimeError(f"{label} fingerprint mismatch: expected {expected}, got {actual}")
 
 

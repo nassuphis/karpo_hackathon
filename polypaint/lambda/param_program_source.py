@@ -64,6 +64,19 @@ class ParamProgramSourceError(ProgramSourceError):
     pass
 
 
+class ParamProgramSourceCompileError(RuntimeError):
+    """Strict-mode source compile failure with structured diagnostics."""
+
+    def __init__(self, diagnostics):
+        self.diagnostics = list(diagnostics or [])
+        message = "; ".join(d["message"] for d in self.diagnostics if d.get("level") == "error")
+        super().__init__(
+            f"invalid param_program_source_text: {message}"
+            if message
+            else "invalid param_program_source_text"
+        )
+
+
 def _canonical_expr(text):
     raw = str(text or "").strip()
     if not raw:
@@ -194,7 +207,7 @@ def parse_param_program_source(source_text, *, strict=True):
     except ParamProgramSourceError as exc:
         diagnostics.append(diagnostic(str(exc), line=exc.line or 1, column=exc.column or 1, code=exc.code))
         if strict:
-            raise RuntimeError(f"invalid param_program_source_text: {diagnostics[0]['message']}") from exc
+            raise ParamProgramSourceCompileError(diagnostics) from exc
         return {
             "chain": [],
             "display": "",
@@ -211,12 +224,11 @@ def parse_param_program_source(source_text, *, strict=True):
         except ParamProgramSourceError as exc:
             diagnostics.append(_source_diag(exc, stmt))
             if strict:
-                messages = "; ".join(d["message"] for d in diagnostics)
-                raise RuntimeError(f"invalid param_program_source_text: {messages}") from exc
+                raise ParamProgramSourceCompileError(diagnostics) from exc
     if not chain and not diagnostics:
         diagnostics.append(diagnostic("param program source is empty", line=1, column=1, code="empty_source"))
         if strict:
-            raise RuntimeError("invalid param_program_source_text: param program source is empty")
+            raise ParamProgramSourceCompileError(diagnostics)
     has_errors = any(d.get("level") == "error" for d in diagnostics)
     return {
         "chain": [] if has_errors else chain,

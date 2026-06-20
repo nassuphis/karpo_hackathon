@@ -144,6 +144,7 @@ assertIncludes("function _effectiveParamTransformsForCompute() {", 'compute payl
 assertIncludes("function _effectiveParamProgramChainForCompute() {\n    return [];\n}", 'Param Program compute payload should never send editable chip chains');
 assertIncludes("const sourceText = _getParamProgramSourceText();\n    return sourceText.trim() ? sourceText : null;", 'Param Program compute payload should send nonblank source text');
 assertIncludes("param_program_chain: paramProgramChain,", 'compute/preview payloads should forward param_program_chain');
+assertIncludes("savedParamProgramSourceText = _paramProgramSourceFromRows(savedParamProgramChain);", 'populate-from-result should synthesize Param source from legacy chain-only artifacts');
 assertIncludes("if (paramSourceText !== null) payload.param_program_source_text = paramSourceText;", 'compute/preview payloads should forward param_program_source_text');
 assertIncludes("lambdaPost('storage', {}, '/list-param-programs')", 'param-program modal should list saved programs through storage');
 assertIncludes("lambdaPost('storage', { id }, '/fetch-param-program')", 'param-program modal should fetch saved programs through storage');
@@ -242,6 +243,7 @@ assertIncludes("catalog.exp_affine = {", 'Coeff Program picker should expose aff
 assertIncludes("desc: 'exp_affine(src, a, b): exp(src*a+b)'", 'Coeff Program exp_affine chip should document native affine exponential semantics');
 assertIncludes("hidden: true,\n            params:", 'Coeff Program compatibility-only legacy chip should be hidden from authoring menus');
 assertIncludes("coeff_program_chain: coeffProgramChain,", 'compute/preview payloads should forward coeff_program_chain');
+assertIncludes("savedCoeffProgramSourceText = _coeffProgramSourceFromRows(savedCoeffProgramChain);", 'populate-from-result should synthesize Coeff source from legacy chain-only artifacts');
 assertIncludes("Coeff Program scalar args are parsed by the compiler. Keep expressions", 'Coeff Program editor should not reject p1/p2 scalar expressions with legacy numeric validation');
 assertIncludes("return { value: rawText || String(pDef.def || '') };", 'Coeff Program scalar expression fields should preserve raw expression text');
 assertIncludes("function _coeffProgramLegacyFormulaHtml(i, legacyName, values, legacyDefs, options = {})", 'generic Coeff Program legacy chips should render as formulas instead of labeled dumps');

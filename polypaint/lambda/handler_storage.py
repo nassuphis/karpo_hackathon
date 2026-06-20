@@ -719,13 +719,37 @@ def _v2_key_exists_for_kind(kind, program_id):
     raise ValueError(f"unknown migration kind: {kind}")
 
 
+def _direct_macro_ids(chain):
+    out = []
+    for chip in chain or []:
+        if isinstance(chip, list) and len(chip) >= 2 and str(chip[0]).strip().lower() == "macro":
+            macro_id = str(chip[1] or "").strip()
+            if macro_id:
+                out.append(macro_id)
+    return out
+
+
+def _collect_missing_v2_macros(kind, program_id, seen):
+    program_id = str(program_id or "").strip()
+    if not program_id or program_id in seen:
+        return []
+    seen.add(program_id)
+    cfg = _migration_kind_config(kind)
+    program = cfg["read"](program_id)
+    missing = []
+    if not _v2_key_exists_for_kind(kind, program_id):
+        missing.append(program_id)
+    for child_id in _direct_macro_ids(program.get("chain") or []):
+        missing.extend(_collect_missing_v2_macros(kind, child_id, seen))
+    return missing
+
+
 def _missing_v2_macros(kind, migrated):
     if kind not in {"param", "coeff"}:
         return []
     missing = []
     for macro_id in migrated.get("macro_ids") or []:
-        if not _v2_key_exists_for_kind(kind, macro_id):
-            missing.append(str(macro_id))
+        missing.extend(_collect_missing_v2_macros(kind, macro_id, set()))
     return sorted(set(missing))
 
 

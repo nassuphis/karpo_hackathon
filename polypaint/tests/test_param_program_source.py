@@ -50,6 +50,15 @@ class TestParamProgramSource(unittest.TestCase):
         self.assertEqual(parsed["diagnostics"][0]["code"], "noncanonical_emit")
         self.assertIn("emit_p1", parsed["diagnostics"][0]["message"])
 
+    def test_strict_errors_carry_structured_diagnostics(self):
+        from param_program_source import ParamProgramSourceCompileError, parse_param_program_source
+
+        with self.assertRaises(ParamProgramSourceCompileError) as caught:
+            parse_param_program_source("emit(p1)")
+        self.assertIn("invalid param_program_source_text", str(caught.exception))
+        self.assertEqual(caught.exception.diagnostics[0]["code"], "noncanonical_emit")
+        self.assertEqual(caught.exception.diagnostics[0]["line"], 1)
+
     def test_source_text_from_chain_round_trips(self):
         from param_program_chain import compile_param_program_chain
         from param_program_source import param_source_text_from_chain, parse_param_program_source

@@ -10,11 +10,26 @@ Companion to `cr18-implementation-plan.md` (the design) and `code-review-18.md` 
 
 ---
 
+## Follow-up Resolution
+
+**Resolution update (2026-06-20).** The original findings below are preserved as the review record for `dbbc10f..bb68183`; the follow-up implementation fixed the highest-risk legacy-artifact regressions and one migration correctness gap:
+
+- **H1 / M5 fixed at the validate site:** solve-score artifact hash validation now reads `solve_score_spec_version_from_meta(meta)` (missing ⇒ v1) and accepts either v1 or current v2 fingerprints during the transition. Regression coverage reads a container-v2 artifact with a missing solve-score spec sibling and a v1 hash.
+- **H2 fixed:** populate-from-result synthesizes Param/Coeff source text from chain-only legacy program artifacts before switching the editor to text mode, so compute no longer drops old program payloads silently.
+- **M4 fixed:** v2 migration dependency validation now walks macro dependencies transitively and rejects v1-only macro descendants, not only direct macro ids.
+- **L2 fixed:** strict Param source parse failures now raise `ParamProgramSourceCompileError`, a `RuntimeError` subclass carrying structured diagnostics.
+- **M3/M6/L4 plan wording reconciled:** `cr18-implementation-plan.md` now states that the coeff legacy oracle freezes the parser shell only, Phase-1 registries drift-check rather than drive compiler dispatch, and structural chips intentionally omit stack-effect/lowerer semantics.
+- **L8 corrected:** a standalone profile JS mirror exists as root-level `program_profiles_js.js`; browser code also consumes profile data embedded in `coeff_vocab_js.js`.
+
+Focused gates run for the follow-up: solve-proximity v1-artifact validation, transitive macro migration, frontend source checks, and the impacted compute/storage/solve-score Python tests.
+
+---
+
 ## Verdict
 
 **The implementation is faithful and substantially correct.** The two highest-risk phases — the native VM merge (2A) and the lag centralization (2B) — are **FP-clean and bit-faithful** to the old interpreters (verified: lowered-expr executor is character-identical, signed-zero `atan2` canonicalization preserved, lag warm-up/buffer-separation equivalent). The opcode allocation, `translate_from_old`, root registry, migration routes, the shared solve-score version helper, the frozen coeff equivalence oracle, and the Phase −1 oracle are all real and match the plan.
 
-**But it is not "done-done".** There are **two HIGH-severity correctness regressions** on *legacy-artifact reuse paths* — exactly the paths the green tests don't cover — plus a cluster of MEDIUM gaps where the plan's intent was only half-realized (param parser didn't migrate onto the shared core; equivalence corpus lacks the required saved-program snapshot; macro-DAG isn't transitive; one dual-read site). Fix the two HIGHs before relying on this for old renders.
+**At the reviewed SHA it was not "done-done".** The two HIGH-severity correctness regressions on *legacy-artifact reuse paths* and the non-transitive macro-DAG check have since been fixed in follow-up code. The remaining meaningful gaps are completeness/maintainability work: the param parser still has its own dispatcher, the coeff equivalence gate still lacks a saved-program snapshot/export corpus, and the Phase −1 byte-oracle corpus is still too easy.
 
 ---
 
@@ -50,13 +65,13 @@ Companion to `cr18-implementation-plan.md` (the design) and `code-review-18.md` 
 ### LOW / NIT
 
 - **L1** `sweep_cli.c:3578-3585,4218` — `CoeffResolvedArgs.has_andy` is set but never read (dead field; `coeffAndyValue` reads `andy_re/im` directly). [verified-ish]
-- **L2** `param_program_source.py:194-219` — param strict mode raises a **plain `RuntimeError`** (drops computed diagnostics), unlike coeff's structured `CoeffProgramSourceCompileError`. Parity gap. [reported]
+- **L2** fixed after review: param strict mode now raises a `ParamProgramSourceCompileError` carrying structured diagnostics, matching the coeff source pattern.
 - **L3** `solve_score.h` — the `v2;` marker + opcode renumber (65–92) rode along in the **Phase-2B lag commit**; it's internally consistent but bundling muddies the "drift bisects to one phase" intent. Scope-hygiene only. [reported]
 - **L4** `structural_chips.json` — ships `op/op_symbol/selector_slots/internal`, not the plan's `stack_effect/tier/lower_to/synth_only`. Consequently the drift gate does **not** pin each chip's pop/push `stack_effect` (§1.3 wanted it). Update §1.1/§1.3 or add `stack_effect` + gate it. [reported]
 - **L5** JS editable machinery is **disabled but not deleted** (`_chipPickers.pp/.cp` engine `js/08-chip-editors.js:120-143`; the now-unreachable editable arms in `js/09-render-orchestration.js:172-189`). §5.1 said "retire"; this is the follow-up cleanup left undone (dead code). [reported]
 - **L6** `pipeline_programs.py:80-169` — the Chain→Program target-arg→selector translation duplicates logic already in `compile_param_program_chain`; and the `exp/round` real/imag→complex repack (`:151-169`) has no dedicated numeric-parity test for the Chain→Program path. Maintenance smell. [reported]
 - **L7** `program_source_core.py:65` — `load_program_profiles` falls back JSON-on-`except Exception`, masking a real import error as "module missing". [reported]
-- **L8** `js/program_profiles_gen.js` (a standalone JS profile mirror, §1.4) does not exist; profile data reaches JS via the catalog generator instead. Likely fine (browser is a thin client, doesn't execute opcodes), but the plan implies a standalone mirror — note or drop. [verified absent]
+- **L8** corrected after review: the standalone JS profile mirror exists as root-level `program_profiles_js.js`; profile data is also embedded in `coeff_vocab_js.js` for browser catalog consumers. The earlier `js/program_profiles_gen.js` path expectation was wrong.
 
 ---
 
@@ -86,12 +101,10 @@ Companion to `cr18-implementation-plan.md` (the design) and `code-review-18.md` 
 
 ## Recommended before calling CR18 "done"
 
-1. **Fix H1** (thread `solve_score_spec_version_from_meta(data)` into the two hash-validate sites + accept either scheme in transition) and add the missing **read-old-v1-artifact** regression test.
-2. **Fix H2** (populate must synth canonical source, or route the chain through the boundary translator).
-3. Close the §3.6 release-gate gaps: **M2** (saved-program corpus + export script) and document **M3** (shell-only oracle).
-4. **M4** transitive macro-DAG enforcement.
-5. **M1** migrate param onto the shared dispatcher (the anti-duplication this phase exists for) + param-source profile drift test.
-6. Reconcile plan vs reality: **M6** (§1.2 dispatch wording), **L4** (`stack_effect` scope), **M7** (warm-start corpus), **L8** (JS profile mirror).
-7. Cleanup: **L5** (delete dead editable JS), **L2** (param structured exception), **L1/L7** nits.
+1. **Done:** H1/H2/M4 follow-up fixes and regression tests.
+2. **Still open:** close the §3.6 release-gate corpus gap: **M2** (saved-program corpus + export script).
+3. **Still open:** **M1** migrate param onto the shared dispatcher (the anti-duplication this phase exists for) + param-source profile drift test.
+4. **Still open:** strengthen **M7** with clustered / near-degenerate warm-start byte-oracle fixtures.
+5. **Still open cleanup:** **L5** (delete dead editable JS), **L1/L7** nits.
 
-*Items 1–2 are correctness regressions on legacy-artifact paths and should land first; 3–7 are completeness/maintainability and can follow.*
+*The remaining items are completeness/maintainability and additional oracle strength; the originally identified legacy-artifact correctness regressions have been closed.*

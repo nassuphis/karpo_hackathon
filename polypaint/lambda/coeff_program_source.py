@@ -47,10 +47,12 @@ from coeff_program_chain import (
 )
 from program_source_core import (
     ProgramSourceError,
-    SourceStatement as _Statement,
     diagnostic as _core_diagnostic,
     find_top_level_assignment,
     parse_call,
+    profile_selectors,
+    profile_symbols_with_context,
+    program_profile,
     split_program_statements,
     split_top_level,
 )
@@ -59,7 +61,25 @@ from program_source_core import (
 MAX_COEFF_PROGRAM_SOURCE_BYTES = 64 * 1024
 
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_INDEX_RE = re.compile(r"^poly\[(\d+)\]$", re.IGNORECASE)
+
+_PROFILE = program_profile("coeff")
+_PROFILE_OUTPUTS = tuple(str(name) for name in (_PROFILE.get("outputs") or ()))
+_POLY_SYMBOL = _PROFILE_OUTPUTS[0] if _PROFILE_OUTPUTS else "poly"
+_SOURCE_NAMES = frozenset(profile_selectors(_PROFILE, "src"))
+_VECTOR_SOURCE_NAMES = frozenset(profile_selectors(_PROFILE, "vector_src"))
+_TYPED_VECTOR_SOURCE_NAMES = frozenset(profile_selectors(_PROFILE, "typed_vector_src"))
+_TARGET_NAMES = frozenset(profile_selectors(_PROFILE, "tgt"))
+_PUSH_SOURCE_NAMES = frozenset(profile_selectors(_PROFILE, "push_src"))
+_INDEX_BASE_NAMES = frozenset(profile_symbols_with_context(_PROFILE, "expr_index_base"))
+_WRITABLE_LHS_NAMES = frozenset(profile_symbols_with_context(_PROFILE, "lhs", access="read_write"))
+_INDEX_BASE_RE = re.compile(
+    r"^(" + "|".join(re.escape(name) for name in sorted(_INDEX_BASE_NAMES, key=len, reverse=True)) + r")\[",
+    re.IGNORECASE,
+)
+_INDEXED_LHS_RE = re.compile(
+    r"^(" + "|".join(re.escape(name) for name in sorted(_WRITABLE_LHS_NAMES, key=len, reverse=True)) + r")\[(.*)\]$",
+    re.IGNORECASE,
+)
 
 # Canonical names plus the typed shorthands, both derived from the chain
 # layer's tables so the vocabularies cannot drift.
@@ -103,10 +123,6 @@ _STACK_ALIASES = {
     "emit": "emit",
 }
 
-_SOURCE_NAMES = {"cf", "poly", "pop", "peek"}
-# Typed expressions additionally accept `tos` as a peek alias.
-_TYPED_VECTOR_SOURCE_NAMES = frozenset(_SOURCE_NAMES | {"tos"})
-_TARGET_NAMES = {"poly", "push"}
 _VECTOR_FILL_NAMES = {"fill", "const", "push_const", "push_vec"}
 # Source-text aliases for native transforms whose registry names are shadowed
 # by typed-expression builtins (exp/pow/power). Single source of truth:
@@ -172,7 +188,7 @@ def _parse_call(text):
 
 def _source_selector(text, *, allow_cf=True):
     raw = str(text or "").strip().lower()
-    allowed = _SOURCE_NAMES if allow_cf else (_SOURCE_NAMES - {"cf"})
+    allowed = _SOURCE_NAMES if allow_cf else _VECTOR_SOURCE_NAMES
     if raw not in allowed:
         if raw in _SOURCE_NAMES:
             raise CoeffProgramSourceError(
@@ -221,10 +237,10 @@ def _split_native_transform_andy(name, args):
 def _append_typed_target(chain, value_type, *, target):
     if target == "push":
         return chain
-    if target != "poly":
+    if target != _POLY_SYMBOL:
         raise CoeffProgramSourceError(f"unsupported typed target {target!r}")
     if value_type != "vector":
-        raise CoeffProgramSourceError("poly assignment requires a vector-valued expression")
+        raise CoeffProgramSourceError(f"{_POLY_SYMBOL} assignment requires a vector-valued expression")
     return chain + [["_typed_set_poly"]]
 
 
@@ -273,6 +289,8 @@ def _typed_lower_scalar(text):
 
 def _typed_lower_vector_source(name):
     raw = str(name or "").strip().lower()
+    if raw not in _TYPED_VECTOR_SOURCE_NAMES:
+        raise CoeffProgramSourceError(f"expected vector source, got {name!r}")
     if raw == "tos":
         raw = "peek"
     if raw not in _SOURCE_NAMES:
@@ -282,7 +300,7 @@ def _typed_lower_vector_source(name):
 
 def _typed_lower_index_reference(text):
     raw = str(text or "").strip()
-    match = re.match(r"^(cf|poly|tos)\[", raw, re.IGNORECASE)
+    match = _INDEX_BASE_RE.match(raw)
     if not match or not raw.endswith("]"):
         return None
     # Only a bare reference when the opening bracket's match closes at the
@@ -374,7 +392,7 @@ def _typed_lower_affine(name, args):
         elif len(args) == 2:
             if not _is_vector_source_text(args[0]):
                 raise CoeffProgramSourceError(
-                    f"{name} source must be cf/poly/pop/peek/tos, got {args[0]!r}"
+                    f"{name} source must be one of {', '.join(sorted(_TYPED_VECTOR_SOURCE_NAMES))}, got {args[0]!r}"
                 )
             src, value = args
         else:
@@ -544,16 +562,16 @@ def _lower_call(name, args, *, target="push"):
         # the bare statements; every other zero-arg construct allows both.
         if args:
             raise CoeffProgramSourceError(f"{name} takes no arguments")
-        if target == "poly":
-            raise CoeffProgramSourceError(f"{name} is a statement; it cannot be assigned to poly")
+        if target == _POLY_SYMBOL:
+            raise CoeffProgramSourceError(f"{name} is a statement; it cannot be assigned to {_POLY_SYMBOL}")
         return [[_STACK_ALIASES[name]]]
     if name in {"pop", "peek"}:
         if args:
             raise CoeffProgramSourceError(f"{name} takes no arguments")
-        if target == "poly":
-            return [["set", "poly", name]]
+        if target == _POLY_SYMBOL:
+            return [["set", _POLY_SYMBOL, name]]
         raise CoeffProgramSourceError(
-            f"{name} is not a standalone statement; use drop to discard the stack top, or write poly = pop / poly = peek"
+            f"{name} is not a standalone statement; use drop to discard the stack top, or write {_POLY_SYMBOL} = pop / {_POLY_SYMBOL} = peek"
         )
     if name in _VECTOR_FILL_NAMES:
         return _lower_const(args, target=target)
@@ -566,9 +584,9 @@ def _lower_call(name, args, *, target="push"):
         return _lower_range("linspace", args, target=target)
     if name in {"scale", "shift", "linear", "affine"}:
         if name == "affine":
-            if target == "poly":
+            if target == _POLY_SYMBOL:
                 raise CoeffProgramSourceError(
-                    "affine names its own target; write affine(poly, src, multiplier, offset) as a statement"
+                    f"affine names its own target; write affine({_POLY_SYMBOL}, src, multiplier, offset) as a statement"
                 )
             if len(args) != 4:
                 raise CoeffProgramSourceError("affine requires target, source, multiplier, offset")
@@ -615,7 +633,7 @@ def _lower_call(name, args, *, target="push"):
         chain.append(["_typed_blend"])
         return _append_typed_target(chain, "vector", target=target)
     if name in {"poke_poly", "poke_tos"}:
-        if target == "poly":
+        if target == _POLY_SYMBOL:
             raise CoeffProgramSourceError(
                 f"{name} writes in place and returns nothing; use it as a statement"
             )
@@ -632,7 +650,7 @@ def _lower_call(name, args, *, target="push"):
             raise CoeffProgramSourceError("littlewood requires value1, value2, optional andy")
         return [["littlewood", target] + [_canonical_expr(arg) for arg in args]]
     if name == "macro":
-        if target == "poly":
+        if target == _POLY_SYMBOL:
             raise CoeffProgramSourceError(
                 "macro inlines another program and has no single value; use it as a statement"
             )
@@ -659,51 +677,57 @@ def _lower_statement(statement):
         rhs = text[assignment + 1:].strip()
         if not rhs:
             raise CoeffProgramSourceError("assignment right-hand side is empty", line=statement.line, column=assignment + 2)
-        index_match = _INDEX_RE.match(lhs)
-        if index_match:
-            idx = int(index_match.group(1))
-            if idx < 0 or idx >= MAX_VECTOR_LEN:
+        indexed_lhs = _INDEXED_LHS_RE.match(lhs)
+        if indexed_lhs:
+            lhs_name = indexed_lhs.group(1).lower()
+            index_expr = indexed_lhs.group(2).strip()
+            if lhs_name not in _WRITABLE_LHS_NAMES:
                 raise CoeffProgramSourceError(
-                    f"poly index must be in [0,{MAX_VECTOR_LEN - 1}], got {idx}",
+                    f"{lhs_name}[...] is read-only in Coeff Program source",
                     line=statement.line,
                     column=statement.column,
                 )
-            chain = _typed_lower_scalar(str(idx))
-            chain.extend(_typed_lower_scalar(rhs))
-            chain.append(["_typed_poke_poly"])
-            return chain
-        dynamic_index_match = re.match(r"^poly\[(.*)\]$", lhs, flags=re.IGNORECASE)
-        if dynamic_index_match:
-            index_expr = dynamic_index_match.group(1).strip()
             if not index_expr:
-                raise CoeffProgramSourceError("poly[...] index expression is empty", line=statement.line, column=statement.column)
+                raise CoeffProgramSourceError(f"{lhs_name}[...] index expression is empty", line=statement.line, column=statement.column)
+            if index_expr.isdigit():
+                idx = int(index_expr)
+                if idx < 0 or idx >= MAX_VECTOR_LEN:
+                    raise CoeffProgramSourceError(
+                        f"{lhs_name} index must be in [0,{MAX_VECTOR_LEN - 1}], got {idx}",
+                        line=statement.line,
+                        column=statement.column,
+                    )
             chain = _typed_lower_scalar(index_expr)
             chain.extend(_typed_lower_scalar(rhs))
             chain.append(["_typed_poke_poly"])
             return chain
-        if lhs.lower() != "poly":
-            raise CoeffProgramSourceError("only poly assignments are supported in v1", line=statement.line, column=statement.column)
+        if lhs.lower() not in _WRITABLE_LHS_NAMES:
+            raise CoeffProgramSourceError(
+                f"only {', '.join(sorted(_WRITABLE_LHS_NAMES))} assignments are supported in v1",
+                line=statement.line,
+                column=statement.column,
+            )
         call = _parse_call(rhs)
         if call:
-            return _lower_call(call[0], call[1], target="poly")
+            return _lower_call(call[0], call[1], target=lhs.lower())
         bare = rhs.strip().lower()
         if bare in _SOURCE_NAMES:
-            return [["set", "poly", bare]]
+            return [["set", lhs.lower(), bare]]
         if _IDENT_RE.match(bare):
-            return _lower_call(bare, [], target="poly")
+            return _lower_call(bare, [], target=lhs.lower())
         chain, value_type = _typed_lower_value(rhs)
-        return _append_typed_target(chain, value_type, target="poly")
+        return _append_typed_target(chain, value_type, target=lhs.lower())
 
     call = _parse_call(text)
     if call:
         return _lower_call(call[0], call[1], target="push")
     bare = text.strip().lower()
-    if bare in {"cf", "poly"}:
+    if bare in _PUSH_SOURCE_NAMES:
         return [["push", bare]]
     if bare in _STACK_ALIASES:
         return [[_STACK_ALIASES[bare]]]
     if bare in {"pop", "peek"}:
-        hint = "use drop to discard the stack top, or write poly = pop / poly = peek explicitly"
+        hint = f"use drop to discard the stack top, or write {_POLY_SYMBOL} = pop / {_POLY_SYMBOL} = peek explicitly"
         raise CoeffProgramSourceError(f"{bare} is not a standalone statement; {hint}", line=statement.line, column=statement.column)
     if _IDENT_RE.match(bare):
         return _lower_call(bare, [], target="push")

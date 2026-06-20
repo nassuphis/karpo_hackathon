@@ -1445,7 +1445,16 @@ button {
                     <button type="button" class="btn-secondary btn-inline" id="param-program-copy-legacy" onclick="_copyParamTransformsIntoParamProgram()" title="Translate the current Param transforms row into legacy(...) param-program chips">Copy legacy transforms</button>
                     <button type="button" class="btn-secondary btn-inline" id="param-program-clear" onclick="_clearParamProgramChain()">Clear program</button>
                 </div>
-                <div id="pp-chips" class="chip-container param-program-display"></div>
+                <div class="compute-preview-tabs" role="tablist" aria-label="Param program editor tabs">
+                    <button type="button" id="param-program-tab-chips" class="compute-preview-tab-btn active" onclick="_setParamProgramEditorMode('chips')">Chips</button>
+                    <button type="button" id="param-program-tab-text" class="compute-preview-tab-btn" onclick="_setParamProgramEditorMode('text')">Text</button>
+                </div>
+                <div id="pp-chips-panel" class="coeff-program-editor-panel active">
+                    <div id="pp-chips" class="chip-container param-program-display"></div>
+                </div>
+                <div id="pp-text-panel" class="coeff-program-editor-panel">
+                    <textarea id="pp-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;p1 = t1 + t2&#10;p2 = exp(t1*pi2i)" oninput="_onParamProgramSourceInput()"></textarea>
+                </div>
                 <div id="param-program-status" class="solve-score-program-status"></div>
             </div>
             <div class="anim-row">

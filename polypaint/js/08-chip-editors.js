@@ -277,16 +277,139 @@ function _serializeParamTransforms() {
 
 let _paramProgramSelectedIndex = -1;
 let _paramProgramPickerInsertMode = 'after';
+let _paramProgramEditorMode = 'chips';
 let _coeffProgramSelectedIndex = -1;
 let _coeffProgramPickerInsertMode = 'after';
 let _coeffProgramEditorMode = 'chips';
+
+function _paramProgramTextModeSelected() {
+    return _paramProgramEditorMode === 'text';
+}
 
 function _coeffProgramTextModeSelected() {
     return _coeffProgramEditorMode === 'text';
 }
 
+function _paramProgramSourceTextarea() {
+    return document.getElementById('pp-source-text');
+}
+
 function _coeffProgramSourceTextarea() {
     return document.getElementById('cp-source-text');
+}
+
+function _paramProgramSourceFromRows(chain) {
+    const rows = Array.isArray(chain) ? chain : [];
+    const lines = [];
+    for (let idx = 0; idx < rows.length; idx++) {
+        const row = Array.isArray(rows[idx]) ? rows[idx] : [String(rows[idx] || '')];
+        const name = String(row[0] || '').trim();
+        const params = row.slice(1).map(v => _str(v));
+        const next = Array.isArray(rows[idx + 1]) ? rows[idx + 1] : null;
+        if (name === 'const' && params.length >= 1 && next && next[0] === 'emit' && next[1]) {
+            lines.push(`${String(next[1]).trim()} = ${params[0]}`);
+            idx++;
+            continue;
+        }
+        if (name === 'const' && params.length >= 1) {
+            lines.push(`const(${params[0]})`);
+        } else if (name === 'push') {
+            lines.push(params[0] ? `push(${params[0]})` : 'push');
+        } else if (name === 'emit') {
+            const target = params[0] || 'p1';
+            lines.push(target === 'p2' ? 'emit_p2' : 'emit_p1');
+        } else if (name === 'duplicate') {
+            lines.push('dup');
+        } else if (name === 'legacy') {
+            lines.push(`legacy(${params.join(', ')})`);
+        } else if (name === 'macro' && params[0]) {
+            lines.push(`macro(${params[0]})`);
+        } else if (params.length) {
+            lines.push(`${name}(${params.join(', ')})`);
+        } else if (name) {
+            lines.push(name);
+        }
+    }
+    return lines.filter(Boolean).join('\n');
+}
+
+function _setParamProgramSourceText(text, options = {}) {
+    const value = String(text == null ? '' : text);
+    const el = _paramProgramSourceTextarea();
+    if (el && el.value !== value) el.value = value;
+    if (options.auto === true) {
+        _paramProgramSourceAutoSynthed = true;
+    } else if (options.auto === false || value.trim()) {
+        _paramProgramSourceAutoSynthed = false;
+    }
+}
+
+function _getParamProgramSourceText() {
+    const el = _paramProgramSourceTextarea();
+    return String(el ? el.value : '');
+}
+
+let _paramProgramSourceAutoSynthed = false;
+
+function _setParamProgramEditorMode(mode) {
+    const normalized = mode === 'text' ? 'text' : 'chips';
+    _paramProgramEditorMode = normalized;
+    const chipsPanel = document.getElementById('pp-chips-panel');
+    const textPanel = document.getElementById('pp-text-panel');
+    const chipsTab = document.getElementById('param-program-tab-chips');
+    const textTab = document.getElementById('param-program-tab-text');
+    if (chipsPanel && chipsPanel.classList) chipsPanel.classList.toggle('active', normalized === 'chips');
+    if (textPanel && textPanel.classList) textPanel.classList.toggle('active', normalized === 'text');
+    if (chipsTab && chipsTab.classList) chipsTab.classList.toggle('active', normalized === 'chips');
+    if (textTab && textTab.classList) textTab.classList.toggle('active', normalized === 'text');
+    if (normalized === 'text' && _paramProgramSourceAutoSynthed && !_ppChain.length) {
+        _setParamProgramSourceText('', { auto: false });
+    } else if (normalized === 'text' && _ppChain.length &&
+        (!_getParamProgramSourceText().trim() || _paramProgramSourceAutoSynthed)) {
+        _setParamProgramSourceText(_paramProgramSourceFromRows(_serializeParamProgramChain()), { auto: true });
+    }
+    const computeScope = _paramProgramModeSelected()
+        ? ', and compute'
+        : '; compute ignores the program while the Chain pipeline is selected';
+    _paramProgramStatus(normalized === 'text'
+        ? `Text source is authoritative for save, preview, debug${computeScope}.`
+        : `Chip editor is authoritative for save, preview, debug${computeScope}.`);
+    _syncParamPipelineModeUi();
+    if (typeof _paramProgramModalState !== 'undefined' && _paramProgramModalState.open) _renderParamProgramModal();
+    if (_paramProgramModeSelected()) _markComputePreviewStale();
+}
+
+let _paramProgramSourceValidationTimer = null;
+let _paramProgramSourceValidationSeq = 0;
+function _scheduleParamProgramSourceValidation() {
+    if (_paramProgramSourceValidationTimer) clearTimeout(_paramProgramSourceValidationTimer);
+    _paramProgramSourceValidationTimer = setTimeout(async () => {
+        _paramProgramSourceValidationTimer = null;
+        const sourceText = _getParamProgramSourceText();
+        if (!sourceText.trim() || !_paramProgramTextModeSelected()) return;
+        const seq = ++_paramProgramSourceValidationSeq;
+        try {
+            const resp = await lambdaPost('storage', { source_text: sourceText }, '/compile-param-program-source');
+            if (seq !== _paramProgramSourceValidationSeq || sourceText !== _getParamProgramSourceText()) return;
+            if (resp && resp.ok) {
+                _paramProgramStatus(`Text source OK: ${resp.statement_count} statement${resp.statement_count === 1 ? '' : 's'}, ${resp.program && resp.program.token_count || 0} tokens.`);
+            } else if (resp && Array.isArray(resp.diagnostics)) {
+                const first = resp.diagnostics.find(d => d && d.level === 'error') || resp.diagnostics[0];
+                if (first) _paramProgramStatus(`Line ${first.line}: ${first.message}`, true);
+            }
+        } catch (_) {
+            /* advisory only */
+        }
+    }, 900);
+}
+
+function _onParamProgramSourceInput() {
+    _paramProgramSourceAutoSynthed = false;
+    _scheduleParamProgramSourceValidation();
+    if (_paramProgramTextModeSelected() && _paramProgramModeSelected()) _markComputePreviewStale();
+    _syncParamPipelineModeUi();
+    if (typeof _paramProgramModalState !== 'undefined' && _paramProgramModalState.open) _renderParamProgramModal();
+    _paramProgramStatus('Text source changed. It will be compiled by the backend on save/preview/compute.');
 }
 
 // Registry names that the source parser shadows with typed builtins; the
@@ -704,7 +827,26 @@ function _formatParamProgramChainForLog(chain, separator = ',') {
     return _formatChainRowsForLog(chain, separator) || 'param_program(identity)';
 }
 
+function _paramProgramSourceStatements(sourceText) {
+    return _coeffProgramSourceStatements(sourceText);
+}
+
+function _paramProgramSourceStatementCount(sourceText) {
+    return _paramProgramSourceStatements(sourceText).length;
+}
+
+function _paramProgramSourceDisplay(sourceText, separator = ',') {
+    const rows = _paramProgramSourceStatements(sourceText);
+    if (!rows.length) return 'param_program(identity)';
+    const head = rows.slice(0, 6).join(separator);
+    return rows.length > 6 ? `${head}${separator}...` : head;
+}
+
 function _displayActiveParamPipeline(separator = ',') {
+    const textMode = typeof _paramProgramTextModeSelected === 'function' && _paramProgramTextModeSelected();
+    if (_paramProgramModeSelected() && textMode) {
+        return _paramProgramSourceDisplay(_getParamProgramSourceText(), separator);
+    }
     if (_paramProgramModeSelected()) return _formatParamProgramChainForLog(_serializeParamProgramChain(), separator);
     return _formatChainRowsForLog(_displayParamTransforms(), separator) || 'none';
 }
@@ -790,7 +932,9 @@ function _syncParamPipelineModeUi() {
     if (coeffRow && coeffRow.classList) coeffRow.classList.toggle('param-pipeline-inactive', mode !== 'chain');
     if (programBox && programBox.classList) programBox.classList.toggle('param-pipeline-inactive', mode !== 'program');
     if (coeffProgramBox && coeffProgramBox.classList) coeffProgramBox.classList.toggle('param-pipeline-inactive', mode !== 'program');
-    const ppLen = _serializeParamProgramChain().length;
+    const ppLen = _paramProgramTextModeSelected()
+        ? _paramProgramSourceStatementCount(_getParamProgramSourceText())
+        : _serializeParamProgramChain().length;
     const cpLen = _coeffProgramTextModeSelected()
         ? _coeffProgramSourceStatementCount(_getCoeffProgramSourceText())
         : _serializeCoeffProgramChain().length;
@@ -798,7 +942,7 @@ function _syncParamPipelineModeUi() {
     const ctLen = _serializeCoeffTransforms().length;
     if (noteEl) {
         noteEl.textContent = mode === 'program'
-            ? `Program mode: Param Program ${ppLen ? `${_pluralize(ppLen, 'chip')}` : 'identity'}; Coeff Program ${cpLen ? `${cpLen} ${_coeffProgramTextModeSelected() ? 'source statement' : 'chip'}${cpLen === 1 ? '' : 's'}` : 'identity'}. Legacy chains are idle.`
+            ? `Program mode: Param Program ${ppLen ? `${ppLen} ${_paramProgramTextModeSelected() ? 'source statement' : 'chip'}${ppLen === 1 ? '' : 's'}` : 'identity'}; Coeff Program ${cpLen ? `${cpLen} ${_coeffProgramTextModeSelected() ? 'source statement' : 'chip'}${cpLen === 1 ? '' : 's'}` : 'identity'}. Legacy chains are idle.`
             : `Chain mode: Param transforms ${ptLen ? `${_pluralize(ptLen, 'chip')}` : 'none'}; Coeff transforms ${ctLen ? `${_pluralize(ctLen, 'chip')}` : 'none'}. Programs are idle.`;
     }
 }
@@ -820,15 +964,11 @@ function _effectiveParamTransformsForCompute() {
 }
 
 function _effectiveParamProgramChainForCompute() {
-    return _paramProgramModeSelected() ? _serializeParamProgramChain() : [];
+    return _paramProgramModeSelected() && !_paramProgramTextModeSelected() ? _serializeParamProgramChain() : [];
 }
 
 function _effectiveParamProgramSourceTextForCompute() {
-    if (!_paramProgramModeSelected()) return null;
-    if (typeof window._getParamProgramSourceText === 'function') {
-        return window._getParamProgramSourceText();
-    }
-    return null;
+    return _paramProgramModeSelected() && _paramProgramTextModeSelected() ? _getParamProgramSourceText() : null;
 }
 
 function _effectiveCoeffTransformsForCompute() {
@@ -864,6 +1004,10 @@ function _paramProgramStatus(message, isError = false) {
 
 function _paramProgramDefaultName() {
     try {
+        if (_paramProgramTextModeSelected()) {
+            const basis = _paramProgramSourceDisplay(_getParamProgramSourceText(), '-');
+            return basis.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'param-program';
+        }
         const chain = _serializeParamProgramChain();
         const basis = chain.length ? chain.map(row => Array.isArray(row) ? row[0] : String(row)).join('-') : 'param-program';
         return basis.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'param-program';
@@ -904,8 +1048,10 @@ function _normalizeParamProgramChain(rawChain) {
 
 function _parseParamProgramPayload(raw) {
     if (!raw || typeof raw !== 'object') throw new Error('program JSON must be an object');
-    const chain = Array.isArray(raw.chain) ? raw.chain : null;
-    if (!chain || !chain.length) throw new Error('program JSON is missing a non-empty chain');
+    const hasSourceText = Object.prototype.hasOwnProperty.call(raw, 'source_text')
+        && String(raw.source_text || '').trim() !== '';
+    const chain = Array.isArray(raw.chain) ? raw.chain : [];
+    if (!hasSourceText && !chain.length) throw new Error('program JSON is missing a chain or source_text');
     const hasVersion = Object.prototype.hasOwnProperty.call(raw, 'version');
     const parsedVersion = Number(raw.version);
     if (hasVersion && !Number.isFinite(parsedVersion)) throw new Error('program JSON version must be numeric when present');
@@ -918,7 +1064,9 @@ function _parseParamProgramPayload(raw) {
         program_kind: 'param_program',
         name: String(raw.name || '').trim(),
         description: String(raw.description || '').trim(),
-        chain: _normalizeParamProgramChain(chain),
+        chain: hasSourceText ? [] : _normalizeParamProgramChain(chain),
+        has_source_text: hasSourceText,
+        source_text: hasSourceText ? String(raw.source_text || '') : '',
     };
 }
 
@@ -927,6 +1075,15 @@ function _applyParamProgram(rawProgram) {
     _ppChain.splice(0, _ppChain.length, ...program.chain);
     _paramProgramSelectedIndex = _ppChain.length ? Math.min(_ppChain.length - 1, Math.max(0, _paramProgramSelectedIndex)) : -1;
     _renderChips('pp');
+    if (program.has_source_text) {
+        _setParamProgramSourceText(program.source_text);
+        _paramProgramSourceAutoSynthed = false;
+        _setParamProgramEditorMode('text');
+    } else {
+        _setParamProgramSourceText('');
+        _paramProgramSourceAutoSynthed = false;
+        _setParamProgramEditorMode('chips');
+    }
     if (_paramProgramModeSelected()) _markComputePreviewStale();
     _paramProgramStatus(program.name ? `Loaded ${program.name}` : 'Loaded param program');
     return program;
@@ -944,6 +1101,9 @@ function _copyParamTransformsIntoParamProgram() {
     }).filter(item => item && item.params);
     _ppChain.splice(0, _ppChain.length, ...chain);
     _paramProgramSelectedIndex = _ppChain.length ? 0 : -1;
+    _setParamProgramSourceText('');
+    _paramProgramSourceAutoSynthed = false;
+    _setParamProgramEditorMode('chips');
     _renderChips('pp');
     if (_paramProgramModeSelected()) _markComputePreviewStale();
     _paramProgramStatus(`Copied ${chain.length} legacy transform${chain.length === 1 ? '' : 's'} into param program`);
@@ -952,20 +1112,27 @@ function _copyParamTransformsIntoParamProgram() {
 function _clearParamProgramChain() {
     _ppChain.splice(0, _ppChain.length);
     _paramProgramSelectedIndex = -1;
+    _setParamProgramSourceText('');
+    _paramProgramSourceAutoSynthed = false;
     _renderChips('pp');
     if (_paramProgramModeSelected()) _markComputePreviewStale();
 }
 
 function _portableParamProgramPayload(nameOverride = '') {
+    const sourceText = _paramProgramTextModeSelected() ? _getParamProgramSourceText() : '';
     const chain = _serializeParamProgramChain();
-    if (!chain.length) throw new Error('Param program is empty');
-    return {
+    if (!chain.length && !sourceText.trim()) throw new Error('Param program is empty');
+    const payload = {
         version: 1,
         program_kind: 'param_program',
         name: String(nameOverride || _paramProgramDefaultName()).trim() || 'param-program',
-        chain,
-        display: _chainDisplayString(chain),
+        chain: sourceText.trim() ? [] : chain,
+        display: sourceText.trim()
+            ? sourceText.split(/\n+/).map(line => line.trim()).filter(Boolean).slice(0, 4).join('; ')
+            : _chainDisplayString(chain),
     };
+    if (sourceText.trim()) payload.source_text = sourceText;
+    return payload;
 }
 
 function _normalizeCoeffProgramChain(rawChain) {

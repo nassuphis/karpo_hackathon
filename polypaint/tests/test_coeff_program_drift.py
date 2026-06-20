@@ -219,6 +219,30 @@ def test_coeff_profile_caps_and_selectors_match_python_and_c():
     assert set(selectors["typed_vector_src"]) == set(chain._SOURCE_SELECTORS) | {"tos"}
 
 
+def test_coeff_source_parser_uses_profile_selectors_and_symbols():
+    import coeff_program_source as source
+
+    profile = _program_profiles()["coeff"]
+    selectors = profile["selectors"]
+    index_bases = {
+        name
+        for name, spec in profile["symbols"].items()
+        if "expr_index_base" in (spec.get("contexts") or [])
+    }
+    writable_lhs = {
+        name
+        for name, spec in profile["symbols"].items()
+        if spec.get("access") == "read_write" and "lhs" in (spec.get("contexts") or [])
+    }
+    assert source._SOURCE_NAMES == set(selectors["src"])
+    assert source._VECTOR_SOURCE_NAMES == set(selectors["vector_src"])
+    assert source._TYPED_VECTOR_SOURCE_NAMES == set(selectors["typed_vector_src"])
+    assert source._TARGET_NAMES == set(selectors["tgt"])
+    assert source._PUSH_SOURCE_NAMES == set(selectors["push_src"])
+    assert source._INDEX_BASE_NAMES == index_bases
+    assert source._WRITABLE_LHS_NAMES == writable_lhs
+
+
 def test_legacy_int_arg_clamp_matches_c():
     source = _c_source()
     match = re.search(r"#define\s+COEFF_LEGACY_MAX_INT_ARG\s+(\d+)", source)

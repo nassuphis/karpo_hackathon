@@ -341,6 +341,13 @@ function _populateComputeFromDetail(jobId, detail) {
 
     const ptDisplay = pipeline.param_transforms_display || detail.param_transforms_display || pipeline.param_transforms || detail.param_transforms || [];
     const savedParamProgramChain = pipeline.param_program_chain || detail.param_program_chain || [];
+    const savedParamProgramSourceText = [
+        pipeline.param_program_source_text,
+        detail.param_program_source_text,
+        calc.param_program_source_text,
+        pipeline.param_program && pipeline.param_program.source_text,
+        detail.param_program && detail.param_program.source_text,
+    ].map(v => typeof v === 'string' ? v : '').find(v => v.trim()) || '';
     const savedCoeffProgramChain = pipeline.coeff_program_chain || detail.coeff_program_chain || [];
     const savedCoeffProgramSourceText = [
         pipeline.coeff_program_source_text,
@@ -351,11 +358,14 @@ function _populateComputeFromDetail(jobId, detail) {
     ].map(v => typeof v === 'string' ? v : '').find(v => v.trim()) || '';
     _setChainFromSaved('pt', ptDisplay);
     _setChainFromSaved('pp', savedParamProgramChain);
+    _setParamProgramSourceText(savedParamProgramSourceText);
+    _setParamProgramEditorMode(savedParamProgramSourceText.trim() ? 'text' : 'chips');
     _setChainFromSaved('cp', savedCoeffProgramChain);
     _setCoeffProgramSourceText(savedCoeffProgramSourceText);
     _setCoeffProgramEditorMode(savedCoeffProgramSourceText.trim() ? 'text' : 'chips');
     _setParamPipelineMode(String(pipeline.pipeline_mode || detail.pipeline_mode || '').toLowerCase() === 'program' ||
         (Array.isArray(savedParamProgramChain) && savedParamProgramChain.length) ||
+        savedParamProgramSourceText.trim() ||
         (Array.isArray(savedCoeffProgramChain) && savedCoeffProgramChain.length) ||
         savedCoeffProgramSourceText.trim()
         ? 'program'

@@ -404,15 +404,28 @@ function _renderChips(which) {
         el.innerHTML = chain.map((item, i) => _renderParamProgramChipHtml(item, i)).join('');
         _syncParamProgramAddOptions();
         _syncParamPipelineModeUi();
+        const sourceLen = _paramProgramSourceStatementCount(_getParamProgramSourceText());
         const chainLen = _serializeParamProgramChain().length;
         if (_paramProgramModeSelected()) {
-            _paramProgramStatus(chainLen
-                ? `Param Program selected · ${_pluralize(chainLen, 'chip')}`
-                : 'Param Program selected · empty identity');
+            if (_paramProgramTextModeSelected()) {
+                _paramProgramStatus(sourceLen
+                    ? `Param Program selected · ${sourceLen} source statement${sourceLen === 1 ? '' : 's'}`
+                    : 'Param Program selected · empty identity');
+            } else {
+                _paramProgramStatus(chainLen
+                    ? `Param Program selected · ${_pluralize(chainLen, 'chip')}`
+                    : 'Param Program selected · empty identity');
+            }
         } else {
-            _paramProgramStatus(chainLen
-                ? `Chain pipeline selected · Param Program idle with ${_pluralize(chainLen, 'chip')}`
-                : 'Chain pipeline selected · Param Program empty');
+            if (_paramProgramTextModeSelected()) {
+                _paramProgramStatus(sourceLen
+                    ? `Chain pipeline selected · Param Program idle with ${sourceLen} source statement${sourceLen === 1 ? '' : 's'}`
+                    : 'Chain pipeline selected · Param Program empty');
+            } else {
+                _paramProgramStatus(chainLen
+                    ? `Chain pipeline selected · Param Program idle with ${_pluralize(chainLen, 'chip')}`
+                    : 'Chain pipeline selected · Param Program empty');
+            }
         }
     } else if (which === 'cp') {
         el.innerHTML = chain.map((item, i) => _renderCoeffProgramChipHtml(item, i)).join('');

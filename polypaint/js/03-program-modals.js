@@ -538,7 +538,9 @@ function _currentParamProgramSummary() {
         const payload = _portableParamProgramPayload(_paramProgramModalState.nameInput || _paramProgramDefaultName());
         return {
             ...payload,
-            statement_count: Array.isArray(payload.chain) ? payload.chain.length : 0,
+            statement_count: payload.source_text
+                ? _paramProgramSourceStatementCount(payload.source_text)
+                : (Array.isArray(payload.chain) ? payload.chain.length : 0),
         };
     } catch (e) {
         return { error: e && e.message ? e.message : String(e) };
@@ -576,6 +578,11 @@ function _renderParamProgramCardHtml(program, options = {}) {
     }
     if (program.error) return _solveScoreModalMessageHtml(`Error: ${program.error}`, true);
     try {
+        const sourceText = String(program.source_text || '');
+        if (sourceText.trim()) {
+            return _paramProgramMetaHtml(program, options)
+                + `<pre class="coeff-program-modal-source" aria-label="Param program source">${_escapeHtml(sourceText)}</pre>`;
+        }
         return _paramProgramMetaHtml(program, options) + _renderParamProgramChipsHtml(program);
     } catch (e) {
         return _solveScoreModalMessageHtml(`Error: ${e && e.message ? e.message : String(e)}`, true);

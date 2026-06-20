@@ -443,14 +443,14 @@ async function runParamDebug() {
         if (notes.length) log(`  param debug uses preview-scale limits: ${notes.join(', ')}`, 'warn');
         document.getElementById('compute-status').textContent = 'Generating param debug image...';
 
-        const result = await lambdaPost('param-debug', {
+        const result = await lambdaPost('param-debug', _attachProgramSourcePayload({
             N: n,
             param_transforms: paramTransforms,
             param_program_chain: paramProgramChain,
             mode,
             pix,
             job_id: document.getElementById('results-dir').value.trim() || 'debug',
-        });
+        }));
 
         const images = result.images || [];
         log(`  param debug: ${result.total_ms}ms, ${result.n_points} points, ${images.length} image(s)`, 'ok');

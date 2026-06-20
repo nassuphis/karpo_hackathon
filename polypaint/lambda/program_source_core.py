@@ -70,6 +70,26 @@ def profile_symbol(profile, name):
     return symbol if isinstance(symbol, dict) else None
 
 
+def profile_selectors(profile, name):
+    selectors = profile.get("selectors") or {}
+    values = selectors.get(str(name or "").strip()) or []
+    return tuple(str(value) for value in values)
+
+
+def profile_symbols_with_context(profile, context, *, access=None, role=None):
+    wanted_context = str(context or "")
+    out = []
+    for name, spec in (profile.get("symbols") or {}).items():
+        if wanted_context and wanted_context not in (spec.get("contexts") or []):
+            continue
+        if access is not None and spec.get("access") != access:
+            continue
+        if role is not None and spec.get("role") != role:
+            continue
+        out.append(str(name))
+    return tuple(out)
+
+
 def symbol_access(profile, name):
     symbol = profile_symbol(profile, name)
     return str((symbol or {}).get("access") or "")

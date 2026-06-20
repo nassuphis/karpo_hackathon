@@ -171,6 +171,7 @@
       "/check-status",
       "/cleanup",
       "/compile-coeff-program-source",
+      "/compile-param-program-source",
       "/delete",
       "/delete-coeff-program",
       "/delete-favorite",

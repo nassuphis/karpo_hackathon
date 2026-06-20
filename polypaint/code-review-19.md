@@ -13,7 +13,7 @@ Reviewed files:
 - `lambda/solve_score_chain.py`
 - `lambda/solve_score.h`
 - `lambda/handler_storage.py`
-- root/score payload call sites in `lambda/handler_render_plan.py`, `lambda/handler_palette_render_plan.py`, `lambda/handler_raster_mt.py`, `lambda/handler_palette_chunk.py`, `lambda/handler_solve_proximity.py`, `lambda/handler_render_lores_preview.py`
+- root/score payload call sites in `lambda/handler_render_plan.py`, `lambda/handler_palette_render_plan.py`, `lambda/handler_raster_mt.py`, `lambda/handler_palette_chunk.py`, `lambda/handler_solve_proximity.py`, `lambda/handler_render_lores_preview.py`, `lambda/handler_bilevel.py`, and `lambda/handler_palette_debug.py`
 - UI state in `js/02-preview-solvescore.js`, `js/03-program-modals.js`, `js/07-transform-catalogs.js`, `js/09-render-orchestration.js`
 - CR18 design notes in `cr18-implementation-plan.md` and `code-review-18.md`
 
@@ -53,7 +53,7 @@ But root is not actually a first-class program yet:
 - There is no `root_program_source.py`.
 - There are no storage routes: `/list-root-programs`, `/fetch-root-program`, `/save-root-program`, `/delete-root-program`, `/migrate-root-program`.
 - The UI stores root transforms in global arrays (`_rtChain`, `_paletteRtChain`) and serializes them directly as `root_transforms`.
-- Render/palette/proximity handlers pass `root_transforms` through to many binaries as `--root_xforms=<json file>`.
+- Render/palette/proximity/bilevel/debug handlers pass `root_transforms` through to many binaries as `--root_xforms=<json file>`.
 - Native binaries still parse root transforms from the legacy JSON file shape through `parse_root_xform_file`.
 - Root transforms are embedded in render/palette artifacts; there is no reusable saved root program object.
 
@@ -82,11 +82,11 @@ These are the implementation facts that matter for folding Root and Solve-Score 
 
 1. `program_source_core.py` is already the right shared parser boundary, but it is intentionally small. It owns statement splitting, assignment detection, call parsing, source spans, diagnostics, and profile lookup. It does **not** own expression semantics, locals, metric CSE, root dispatch, or VM lowering. Root and Solve-Score should add profile-specific source modules that use this core, not a second parser core.
 
-2. `pipeline_programs.py` currently covers only Param/Coeff source-vs-chain precedence and legacy transform-to-program translation. Root and Solve-Score must be added there. Do not add a parallel resolver module; render/palette/proximity already have enough duplicated score/root handling.
+2. `pipeline_programs.py` currently covers only Param/Coeff source-vs-chain precedence and legacy transform-to-program translation. Root and Solve-Score must be added there. Do not add a parallel resolver module; render/palette/proximity/bilevel/debug already have enough duplicated score/root handling.
 
 3. `handler_storage.py` already gives Solve-Score saved-program CRUD, but `_compile_solve_score_program_payload()` accepts only `chain`. Param/Coeff storage already use the correct source-wins pattern with `*_source_text_from_payload()`, compile routes, canonical source display, and derived fields ignored from the client. Solve-Score should copy that pattern exactly.
 
-4. Root has no storage routes, but Phase 6A should not start there. The code currently treats root transforms as embedded render/palette/proximity artifact state. The lowest-risk fix is to add embedded `root_program_source_text` and compiled root metadata to those payloads first, then decide whether standalone root CRUD is worth the product surface.
+4. Root has no storage routes, but Phase 6A should not start there. The code currently treats root transforms as embedded render/palette/proximity/bilevel artifact state. The lowest-risk fix is to add embedded `root_program_source_text` and compiled root metadata to those payloads first, then decide whether standalone root CRUD is worth the product surface.
 
 5. Root v2 translation already exists: `translate_root_from_old()` emits `MERGED_OP_NATIVE_TRANSFORM` with `registry: "root"`. Root source should lower to that same canonical root chain/token shape. It should not invent root-specific opcodes in v1.
 
@@ -109,6 +109,20 @@ These are the implementation facts that matter for folding Root and Solve-Score 
 14. Deployment packaging currently copies `solve_score_chain.py` broadly but no future `root_program_source.py` / `solve_score_program_source.py`. Every Lambda that parses source must package the new modules plus `program_source_core.py`, `program_profiles.py/json`, `merged_opcodes.py/json` where needed.
 
 15. `program_v2_translate.py` is not yet source-aware for these two profiles. `translate_root_from_old()` currently returns `program_kind: "root_transforms"`, and `translate_solve_score_from_old()` returns no `source_text`. CR19 must update both translators so migrated v2 objects are editable source-backed programs.
+
+16. Root row shape is already split in practice. Native `root_xforms.h` accepts both legacy array rows (`["rotate_roots","0.25"]`) and object rows (`{"name":"rotate_roots","fn_index":1,"args":[0.25]}`), but JS populate/edit paths currently understand only array rows. Source-backed root programs may use default-expanded object rows internally, but any compatibility `root_transforms` field sent to current JS/native paths must either stay array-form or every parser/populate path must be upgraded to accept both. Do not silently switch artifact `root_transforms` to object-only rows.
+
+17. Current artifact editability is chain-only. `raw_sidecar.py`, `color_artifact_meta.py`, render metadata, palette metadata, and JS populate restore `solve_score_chain`, `score_program`, and `root_transforms`, not source text. This is exactly the class of bug already hit by Coeff populate returning `_typed_*` internal rows. Phase 6 must treat source text as first-class artifact metadata, not as an optional storage-only field.
+
+18. `program_source_core.parse_call()` lowercases call names, and `ProfileStatementLowerer` lowercases writable LHS symbols. Root/Solve-Score source should explicitly adopt lowercase canonical identifiers. This is not a user-facing restriction on typing case; it is the canonicalization rule. Serializers emit lowercase names, and conflict checks compare lowercase names.
+
+19. V2 execution-spec profile strings are already identity-bearing. `translate_root_from_old()` uses `_execution_spec_v2("root", ...)`; `translate_solve_score_from_old()` uses `_execution_spec_v2("solve-score", ...)`. New `program_kind` values may become `root_program` and `solve_score_program`, but the execution-spec kind strings must stay `"root"` and `"solve-score"` unless a deliberate spec-version bump and cache invalidation are intended.
+
+20. Current solve-score migration tests explicitly assert that migrated solve-score programs have no `source_text`. That is not a harmless missing test; it is a pinned old contract. Phase 6B must invert that test in the same commit that changes the migration response schema.
+
+21. `root_program_source.py` must not rely on native default behavior for canonical identity. Native omission defaults are runtime behavior; source fingerprints and migrated V2 payloads need default-expanded args before hashing, before source regeneration, and before artifact metadata is written.
+
+22. Root transforms are consumed outside the color/palette/proximity happy path. Grep shows `root_xforms.h` wired into `roots2pix_mt.c`, `solve_palette_chunk*.c`, `solve_palette_debug.c`, `solve_proximity_hist_sectioned.c`, `solve_proximity_stats.c`, and `bilevel_section_raster.c`; Python handlers include render plan/lores/raster, palette plan/chunk/debug/finalize, solve proximity, and bilevel. Phase 6A must either route all user-facing root-transform entrypoints through `root_program_for_run()` or explicitly mark a path as legacy-only. Do not leave bilevel as an unplanned exception.
 
 ## Architectural Target
 
@@ -172,11 +186,11 @@ Current root args are real literals. Pin v1 to finite real static args only. Thi
 
 Later versions may allow static real expressions over constants (`pi`, arithmetic), folded at compile time, but that is not required to make root source-backed. Dynamic expressions over p1/p2/t1/t2 are out of scope until every root-consuming runtime has a well-defined row/sample context.
 
-Do not add p1/p2/t1/t2 access casually. Root transforms execute after solving and are reused in render/palette/proximity contexts; those stages do not all carry the same source registers.
+Do not add p1/p2/t1/t2 access casually. Root transforms execute after solving and are reused in render/palette/proximity/bilevel contexts; those stages do not all carry the same source registers.
 
 ### Program Object
 
-Phase 6A does **not** require root saved-program CRUD to ship. The minimum object that must exist is an embedded compiled root program carried by render/palette/proximity payloads:
+Phase 6A does **not** require root saved-program CRUD to ship. The minimum object that must exist is an embedded compiled root program carried by render/palette/proximity/bilevel payloads:
 
 ```json
 {
@@ -268,7 +282,7 @@ Required tests:
 - `test_program_v2_migration.py`: root migration keeps fn_index and unknown names become diagnostics.
 - Native parity: root program source -> canonical root chain -> existing `root_xforms.h` output matches old root transforms.
 - NaN propagation: `invert_roots` on zero and Cayley poles still poison roots.
-- Plan identity: root program fingerprint replaces raw `root_transforms` in render/palette/proximity cache keys.
+- Plan identity: root program fingerprint replaces raw `root_transforms` in render/palette/proximity cache keys, and direct bilevel/debug paths carry the same fingerprint in artifact/status metadata where they persist root state.
 - dual-read identity: missing `root_spec_version` reads as v1; current writes include `root_spec_version`.
 - Workflow tests: ASL forwards compiled root program fields, not raw editable rows.
 
@@ -494,7 +508,7 @@ Short-term:
 - Source compiles to existing chain.
 - Existing `solve_score_program_cli_payload` still emits `score_metrics`, `score_sources`, `score_clip_los`, `score_clip_his`, and `score_program`.
 - Native `parse_solve_score_program_spec` remains the runtime parser.
-- All render/palette/proximity paths get source support without native changes.
+- All render/palette/proximity/bilevel/debug paths get source support without native changes.
 
 Long-term:
 
@@ -639,13 +653,13 @@ It does not require one physical runtime workspace.
 - `lambda/solve_score_chain.py`: keep as the semantic chain compiler; export/reuse its op tables and constants from `solve_score_program_source.py` rather than moving source parsing into this file.
 - `lambda/root_xforms.h`: eventually parse versioned root program tokens, not just old JSON names.
 - `lambda/solve_score.h`: eventually parse versioned numeric score program tokens, not semicolon strings.
-- render/palette/proximity handlers: replace direct `root_transforms` and `solve_score_chain` reads with shared compiled program resolvers.
+- render/palette/proximity/bilevel/debug handlers: replace direct `root_transforms` and `solve_score_chain` reads with shared compiled program resolvers where those program families are accepted.
 - `workflow_contracts.py` and ASL templates: forward source/program fields where needed.
 - `js/02-preview-solvescore.js`: add source text state and populate behavior.
 - `js/03-program-modals.js`: source-first solve-score modal; new root-program modal or unified program modal only if Phase 6A.2 saved root CRUD ships.
 - `js/07-transform-catalogs.js` and `js/09-render-orchestration.js`: root/score chips become visualization and compatibility input, not authority.
 - `api_manifest.py` / `deploy_manifest.json`: source compile routes and optional Phase 6A.2 root CRUD routes if added.
-- `deploy.sh`: package new source modules into storage/render/palette/proximity bundles.
+- `deploy.sh`: package new source modules into storage/render/palette/proximity/bilevel/debug bundles where source is parsed.
 
 ## Migration Order
 
@@ -655,8 +669,8 @@ Root is the easiest and gives immediate architectural consistency.
 
 1. Add `root_program_source.py`.
 2. Add source serializer from legacy root transforms.
-3. Add render/palette/proximity payload resolver in `pipeline_programs.py`: `root_program_source_text` wins, else embedded `root_program`, else legacy `root_transforms`.
-4. Store embedded compiled root program metadata, `root_program_fingerprint`, and `root_spec_version` on render/palette/proximity artifacts.
+3. Add render/palette/proximity/bilevel/debug payload resolver in `pipeline_programs.py`: `root_program_source_text` wins, else embedded `root_program`, else legacy `root_transforms`.
+4. Store embedded compiled root program metadata, `root_program_fingerprint`, and `root_spec_version` on render/palette/proximity/bilevel artifacts.
 5. Continue emitting `--root_xforms` from the compiled root program for native compatibility.
 6. Update UI populate behavior so artifacts restore root source text if present, else synthesize it from legacy rows.
 7. Add native parity, dual-read, and cache identity tests.
@@ -701,7 +715,7 @@ Root transforms are float, raster-stage, in-place, NaN-poisoning operations. The
 
 ### Risk 3 - Another duplicated resolver layer
 
-Do not add independent source-vs-chain precedence logic to every render/palette/proximity handler. Add one resolver per program family and test it.
+Do not add independent source-vs-chain precedence logic to every render/palette/proximity/bilevel/debug handler. Add one resolver per program family and test it.
 
 ### Risk 4 - Old artifacts lose editable source on populate
 
@@ -758,6 +772,21 @@ This section is the implementation ticket and the **authoritative** specificatio
 
 Root (6A) is shippable through Steps 0–3 plus the root slices of 5/8/9/10; solve-score (6B) adds Steps 4/6/7 plus the score slices.
 
+**6B completion rule.** Solve-score source migration is not allowed to be "best effort" for valid programs. The existing solve-score chain language is finite and fully expressible in the source grammar once `dup()`, `flush()`, and `emit_none()` are included. Therefore every chain that currently compiles with `compile_solve_score_chain_or_legacy()` must round-trip through source. A round-trip failure on a valid chain is an implementation bug, not an accepted limitation. Only malformed/corrupt historical payloads that already fail the current chain compiler may remain legacy/unmigrated.
+
+**6B implementation order.** Do solve-score in this exact order so failures are localized:
+
+1. Step 0/1 foundation: fix profile caps, add kwargs/percent parsing, and add source-core tests.
+2. Step 4 forward compiler: implement `solve_score_program_source.py` source -> chain -> existing compiler, with unit tests for every operation class in the operation coverage table.
+3. Step 4 reverse serializer: implement total `solve_score_source_text_from_chain()` over valid canonical chains, including `dup()`, `flush()`, and `emit_none()` compatibility, with round-trip assertions in tests.
+4. Step 6 storage: add source-aware save/fetch/list/compile route. Chain-only valid saved programs must synthesize source on fetch.
+5. Step 7 pipeline resolver: route render/palette/lores/proximity/chunk/finalize/extract paths through `solve_score_program_for_run()`.
+6. Step 8/9 metadata and UI: persist source text on artifacts/raw sidecars and make populate/text tabs prefer source.
+7. Step 5 migration: update V2 translation only after the reverse serializer and storage fetch path pass the real-corpus gate.
+8. Step 10/11 packaging and gates: package modules, update manifests, run corpus/native/UI/deploy gates.
+
+There are no remaining solve-score design choices after this section: if an implementation discovers a valid canonical chain that cannot be represented, the source grammar or serializer is incomplete and must be extended in the same phase.
+
 ### Step 0 - Fix Shared Metadata Drift
 
 1. Update `lambda/program_profiles.json`:
@@ -784,11 +813,18 @@ Root (6A) is shippable through Steps 0–3 plus the root slices of 5/8/9/10; sol
 3. Keep existing Param/Coeff behavior unchanged:
    - `parse_call()` can continue returning raw arg strings for old callers.
    - New helpers must be opt-in from Root/Solve-Score modules.
-4. Add unit tests in a new or existing source-core test:
+4. Pin identifier canonicalization:
+   - Function names are canonical lowercase, matching current `parse_call()`.
+   - Writable profile symbols are canonical lowercase, matching `ProfileStatementLowerer`.
+   - Root transform names, solve-score chip names, metric names, metric sources, and source locals compare lowercase.
+   - Serializers emit lowercase names.
+   - Local variables that differ only by case are a duplicate-name diagnostic.
+5. Add unit tests in a new or existing source-core test:
    - top-level split with `metric(..., q=0.1%)`
    - duplicate keyword diagnostic
    - positional-after-keyword diagnostic
    - percent literal rejected by profiles that do not opt in
+   - case-normalized call names and local-name collision diagnostics
 
 ### Step 2 - Add Root Source Module
 
@@ -805,6 +841,8 @@ Required API:
 - `display_root_program_chain(chain)`
 - `serialize_root_program_chain(chain)`
 - `compile_root_program_chain(chain, strict=True)`
+- `root_transforms_from_program_chain(chain)`
+- `root_program_chain_from_transforms(root_transforms)`
 
 Lowering rules:
 
@@ -820,6 +858,7 @@ Lowering rules:
 - Unknown root transform names are errors in source mode.
 - Old migration may still drop unknown root transform names with warnings.
 - `moebius` resolves through `root_legacy_registry.json`, not through Param.
+- Transform names are canonical lowercase.
 
 Canonical chain shape is default-expanded:
 
@@ -845,6 +884,8 @@ Compilation:
 - Include `args_im` as zeros for shape consistency.
 - Fingerprint over the canonical root execution spec, not raw text.
 - Default-expanded source, default-expanded legacy rows, and already-explicit rows must have the same fingerprint.
+- Return both canonical program chain and compatibility `root_transforms` rows.
+- The canonical program chain may be object-form. The compatibility `root_transforms` rows must remain accepted by current native/JS paths. In v1, prefer legacy array rows for `root_transforms` unless every consumer listed in Step 3 is updated to accept object rows.
 
 Storage/API route:
 
@@ -883,12 +924,14 @@ Return a normalized object with:
 - `root_transforms` compatibility rows for `--root_xforms`
 - `diagnostics`
 
-Modify render/palette/proximity plan handlers:
+Modify root consumer handlers:
 
 - `lambda/handler_render_plan.py`
 - `lambda/handler_palette_render_plan.py`
 - `lambda/handler_render_lores_preview.py`
 - `lambda/handler_solve_proximity.py`
+- `lambda/handler_bilevel.py`
+- `lambda/handler_palette_debug.py`
 - `lambda/handler_storage.py` for `/compile-root-program-source`
 - any helper path that currently reads `params["root_transforms"]`
 
@@ -899,24 +942,34 @@ Exact identity helpers to update:
 - `handler_palette_render_plan._solve_score_scratch_keys()`
 - `handler_palette_render_plan._scratch_matches()`
 - `handler_palette_render_plan._palette_identity_payload()`
+- `color_artifact_meta.parse_root_transforms()`
+- `handler_storage._parse_root_transforms()`
+- JS `_setRenderRootTransforms()` and `_setPaletteRootTransformsFromArtifact()`
 
 Rules:
 
 - Plan-time compilation happens once.
 - Downstream tasks still receive `root_transforms` compatibility rows until Phase C.
+- Direct API handlers that do not have a separate plan stage still call `root_program_for_run()` before writing `--root_xforms`.
 - Plan outputs/artifact metadata also include `root_program`, `root_program_source_text`, `root_program_fingerprint`, and `root_spec_version`.
 - Cache keys that currently hash raw `root_transforms` hash `root_program_fingerprint` instead, with a dual-read fallback for old artifacts missing `root_spec_version`.
 - Scratch reuse checks compare root fingerprints first; only old metadata without `root_spec_version` falls back to comparing parsed raw `root_transforms`.
+- Artifact metadata keeps `root_transforms` for old consumers and adds `root_program_source_text` / `root_program` for editability.
+- Populate prefers `root_program_source_text`. If missing, it synthesizes source from `root_program.chain` or legacy `root_transforms`.
+- Any parser/populate helper that receives `root_transforms` must accept both array rows and object rows, because native already accepts both and migration will produce object-form program chains.
 
 Tests:
 
 - Compile route returns `{ok, chain, display, fingerprint, diagnostics, program}` for root source.
 - Source wins over legacy `root_transforms`.
 - Embedded `root_program.chain` wins over legacy `root_transforms`.
+- Bilevel and palette-debug root source requests produce the same native `--root_xforms` rows as old `root_transforms`.
 - Missing `root_spec_version` reads as v1.
 - Same legacy rows and equivalent source produce the same root fingerprint.
 - Omitted default args and explicit default args produce the same root fingerprint.
 - Unknown source transform is an error; unknown legacy migration row is a warning.
+- Object-form root rows and array-form root rows both populate editable source.
+- Artifact `root_transforms` remains consumable by existing native `parse_root_xform_file()` until Phase C.
 
 ### Step 4 - Add Solve-Score Source Module
 
@@ -936,11 +989,35 @@ Grammar:
 - Assignment: `name = expression`
 - Reserved implicit output assignment: `score = expression`
 - Explicit emits: `emit(expr)`, `emit_norm(expr)`, `emit_none(expr)`
-- Metric leaf: `metric(metric_name, source, q=0.1%, lag=0|1)`
-- Function calls: current solve-score op set from `solve_score_chain.py`
+- Metric leaf: `metric(metric_name, source, q=0.1%, lag=0|1)`. This is the canonical emitted source form for every metric. Metric-specific chain rows such as `["proximity", "slv", "0.1"]` serialize back to `metric(proximity, slv, q=0.1%)`, not `proximity(...)`.
+- Function calls: current non-metric solve-score op set from `solve_score_chain.py`; metric names appear only as the first argument of `metric(...)` in source v1.
 - Expressions are call-tree expressions: metric calls, numeric literals, `const(value)`, local names, and named solve-score functions. **Infix arithmetic is rejected with a diagnostic** in the solve-score profile — the shared core may parse `a+b` for Param/Coeff, but the solve-score profile must reject it (call-tree only), never silently lower it.
 - No bare expression statements in v1.
 - Compatibility statements `dup()` and `flush()` are valid only to preserve old stack-chain identity; generated source may use them when needed. **These make the parser stack-aware, not purely expression-based**: it must track stack depth so a `dup()`/`flush()` against an invalid stack state is a diagnostic. Implement this as a small stack-depth check alongside the expression lowering — it is the only non-expression state the solve-score parser carries.
+
+Operation coverage is total over the current `solve_score_chain.py` language:
+
+- Metric leaves:
+  - Generic public metric chip: `["metric", metric_name, source, q_percent]`.
+  - Metric-specific rows: any `name in VALID_SOLVE_SCORE_METRICS` with canonical params `[source_or_source-1, q_percent]`.
+  - Canonical source always emits `metric(metric_name, source, q=q_percent%, lag=0|1)`.
+- Stack leaves/statements:
+  - `const(value)` -> `["const", value]`
+  - `dup()` -> `["dup"]`
+  - `flush()` -> `["flush"]`
+- Unary calls:
+  - `omega_cosine(x, omega[, phase])`
+  - `sawtooth(x, mult)`
+  - `flip(x)`, `clamp(x)`, `sin(x)`, `cos(x)`, `log(x)`, `exp(x)`
+  - `pow(x, exponent)`
+- Binary calls:
+  - `avg(a,b)`, `min(a,b)`, `max(a,b)`, `mul(a,b)`, `add(a,b)`, `mult(a,b)`, `subtract(a,b)`, `ratio(a,b)`, `abs_diff(a,b)`, `geometric_mean(a,b)`
+  - `ema(a,b,alpha)`
+  - `weighted_sum(a,b,wa,wb)`
+- Output calls:
+  - `emit(expr)`, `emit_norm(expr)`, `emit_none(expr)`
+
+If `solve_score_chain.py` gains a new chip, Phase 6B is not complete until this table, the parser, the reverse serializer, and the corpus gate are updated.
 
 Local semantics:
 
@@ -949,6 +1026,8 @@ Local semantics:
 - Reassignment error.
 - `score` is reserved output, not a readable local.
 - Local references inline into RPN lowering.
+- Local names are canonical lowercase; `a = ...` and `A = ...` collide.
+- Local names may not collide with solve-score chip names, output calls, metric names, metric sources, or reserved words (`score`, `emit`, `emit_norm`, `emit_none`, `metric`, `const`, `dup`, `flush`).
 
 Expression-to-chain lowering:
 
@@ -971,14 +1050,48 @@ Expression-to-chain lowering:
 - `flush()` lowers to `["flush"]`.
 - Explicit emit consumes the expression chain and appends `["emit_norm"]`, `["emit"]`, or `["emit_none"]`.
 - Implicit scalar mode appends no emit; the chain must end with stack depth 1 after lowering `score = expr`.
+- `emit_none(expr)` is an explicit output statement that consumes its expression but contributes zero color channels. It must preserve the old `program_spec` behavior for chains that used `emit_none` as a sink.
 
 Canonical source regeneration:
 
-- `solve_score_source_text_from_chain()` emits named-variable/expression source when that can preserve the same `program_spec`.
-- It may generate synthetic names (`m0`, `m1`, `v0`) when the old RPN chain cannot recover user names.
-- It must never emit bare trailing expressions.
-- It may emit `dup()` or `flush()` compatibility statements only when required to keep the old chain's `program_spec` byte-identical.
-- It must reparse to the same canonical serialized/public chain, same fingerprint, and same `program_spec`.
+`solve_score_source_text_from_chain()` is the hard part of Phase 6B and must be implemented with an explicit reverse-lowering algorithm, not a best-effort display renderer.
+
+Algorithm:
+
+1. Compile/canonicalize the input chain first with `compile_solve_score_chain_or_legacy()` and `serialize_solve_score_chain()`. The serializer works from canonical public rows, not raw user rows.
+2. Walk the canonical chain once with a symbolic stack. Each stack item is an expression node containing:
+   - `source`: source text for the expression.
+   - `chain`: canonical chain rows that reproduce it.
+   - `program_spec`: optional rendered sub-spec fragment for diagnostics/debug.
+3. Metric rows create leaf nodes:
+   - `["metric", "proximity", "slv", "0.1"]` -> `metric(proximity, slv, q=0.1%)`
+   - `["proximity", "slv", "0.1"]` -> `metric(proximity, slv, q=0.1%)`
+   - `["proximity", "slv-1", "0.1"]` -> `metric(proximity, slv, q=0.1%, lag=1)`
+   - `source-1` maps to `lag=1`; any other source suffix is invalid because the current compiler rejects it.
+4. `["const", value]` creates `const(value)` unless a bare numeric literal is required for exact round-trip readability. The serializer may emit either form only if reparsing produces the identical canonical chain and `program_spec`.
+5. Pure unary/binary/parameterized chips pop expression nodes and produce call-tree nodes using the same function names as Step 4 lowering: `avg(a,b)`, `abs(x)`, `omega_cosine(x,omega)`, `ema(a,b,alpha)`, etc.
+6. `["dup"]` duplicates the top symbolic stack item and records that the generated source must include an explicit `dup()` compatibility statement unless the final reparse can remove it without changing `program_spec`.
+7. `["flush"]` clears the symbolic stack and records an explicit `flush()` compatibility statement.
+8. `["emit"]`, `["emit_norm"]`, and `["emit_none"]` pop one expression node and emit the corresponding source statement. `emit_none(expr)` emits a statement but contributes zero output channels.
+9. At end of chain:
+   - If there were explicit emits, final symbolic stack depth must be zero after any required compatibility statements.
+   - If there were no emits, final stack depth must be one and source emits `score = <expr>`.
+10. Synthetic local names are optional. Use them only to keep generated source readable when an expression node would otherwise be duplicated or very long. Generated locals use deterministic lowercase names (`v0`, `v1`, ...), are single-assignment, and are emitted before first use.
+11. After generating source, reparse it with `compile_solve_score_program_source()` and assert all of the following match the canonical input:
+   - `serialize_solve_score_chain(chain)`
+   - `compiled_solve_score_fingerprint`
+   - rendered `program_spec`
+   - `output_channel_count`
+   - `output_channels`
+12. If the generated source cannot satisfy the exact round-trip assertions for a chain that compiles today, the implementation must raise a test failure. For malformed/corrupt historical payloads that already fail the current compiler, the serializer fails closed with a structured diagnostic (`source_roundtrip_failed`) and returns no authoritative `source_text`. Storage/fetch/populate may then display the old chip chain, but migration must not claim the corrupt payload is source-backed.
+
+Rules:
+
+- The serializer must never emit bare trailing expressions.
+- The serializer must never emit lowered/internal token names.
+- The serializer may emit `dup()` or `flush()` compatibility statements only when required for exact old-chain identity.
+- Exact `program_spec` parity is a release gate, not a nice-to-have.
+- For every valid canonical chain, `solve_score_source_text_from_chain()` is total. There is no expected-fail list for valid chains.
 
 Compilation:
 
@@ -995,9 +1108,11 @@ Modify `lambda/program_v2_translate.py`:
 - `translate_root_from_old()` calls the root canonicalizer/compiler.
 - It returns `program_kind: "root_program"`, not `"root_transforms"`.
 - It includes default-expanded `chain`, `source_text`, `source_display`, `tokens`, `execution_spec`, `fingerprint`, diagnostics, and counts.
+- It keeps `_execution_spec_v2("root", ...)` unless the V2 spec version is deliberately bumped.
 - It keeps warning diagnostics for unknown old root transform rows.
 - `translate_solve_score_from_old()` calls `solve_score_source_text_from_chain()` after compiling/canonicalizing the old chain.
 - It includes `source_text`, `source_display`, `chain`, `program_spec`, `tokens`, `execution_spec`, `fingerprint`, output contract fields, and counts.
+- It keeps `_execution_spec_v2("solve-score", ...)` unless the V2 spec version is deliberately bumped.
 - Root and solve-score v2 fingerprints must be computed from canonical compiled payloads, not from raw old rows.
 
 Tests:
@@ -1007,6 +1122,8 @@ Tests:
 - Solve-score migration now includes reparseable `source_text`.
 - Existing `test_migrate_solve_score_program_dry_run_has_no_source_text` is inverted/renamed to require source text. **This deliberately changes the CR18 §4.4 per-kind migrate-response contract** — solve-score previously returned `program_spec` with *no* `source_text`; update the migrate-route response schema and its payload-contract test together so the change reads as intended rather than as a regression.
 - Migrated source reparses to the same canonical serialized/public chain, fingerprint, and `program_spec`.
+- Execution-spec kind strings remain `"root"` and `"solve-score"` for equivalent old/new migrated programs.
+- Every valid solve-score v1/v2 chain accepted by `compile_solve_score_chain_or_legacy()` migrates with `source_text`. Migration may omit `source_text` only for payloads that fail the existing compiler, and those responses must carry diagnostics explaining that the old payload is invalid/corrupt.
 
 ### Step 6 - Update Solve-Score Storage
 
@@ -1031,6 +1148,8 @@ Tests:
 - Compile route returns `{ok, chain, display, fingerprint, diagnostics, program}`.
 - Chain-only saved program fetch synthesizes reparseable source.
 - `program_spec` string parity with equivalent old chain.
+- If a chain-only saved program is valid under the current compiler, fetch/list must synthesize source and set `has_source_text`.
+- If a chain-only saved program is invalid/corrupt under the current compiler, fetch/list surfaces it as legacy/chip-only with diagnostics and does not set `has_source_text`.
 
 ### Step 7 - Add Solve-Score Resolver To `pipeline_programs.py`
 
@@ -1056,6 +1175,10 @@ Return a compiled object matching `compile_solve_score_chain_or_legacy()` plus:
 - `chain_public`
 - `fingerprint`
 - `spec_version`
+- `program_spec`
+- `output_channel_count`
+- `output_channels`
+- `has_explicit_outputs`
 
 Modify all direct compile call sites:
 
@@ -1074,6 +1197,7 @@ Rules:
 - Chunk/finalize handlers primarily consume plan-provided canonical chain/program fields; they should not re-resolve UI source unless they are direct API entrypoints.
 - Keep `score_program` semicolon wire until Phase C.
 - `program_spec` compatibility string must be byte-identical for source and equivalent chain.
+- Missing `solve_score_spec_version` reads as legacy/current default exactly as today; source support must not break old artifacts.
 
 Tests:
 
@@ -1091,7 +1215,8 @@ Modify:
 - `lambda/workflow_contracts.py`
 - `stepfunctions/render_workflow.asl.json.template`
 - `stepfunctions/palette_workflow.asl.json.template`
-- plan metadata writers in render/palette/proximity handlers
+- plan/artifact metadata writers in render/palette/proximity/bilevel/debug handlers
+- bilevel and palette-debug metadata writers
 - `lambda/raw_sidecar.py`
 - `lambda/color_artifact_meta.py`
 - `lambda/handler_extract_palette_from_step_scores.py`
@@ -1120,12 +1245,19 @@ Rules:
 - Artifact populate must prefer stored source text.
 - Old artifacts without source text synthesize source from rows.
 - Cache identity uses fingerprints/spec versions with missing-version fallback for old artifacts.
+- Raw sidecars add source fields without removing `score_chain` or `score_program`.
+- Color artifact overlays add source fields without removing `root_transforms`, `solve_score_chain`, or `score_program`.
+- Metadata copy helpers (`attach`, `repalette`, `recolor`, associated-palette inheritance) must preserve source fields together with the existing compatibility fields.
+- `score_program` remains the semicolon native wire and validation string; `solve_score_program_source_text` is editability metadata.
+- `root_transforms` remains the native wire; `root_program_source_text` is editability metadata.
 
 Tests:
 
 - ASL definition tests assert new fields are forwarded where needed.
-- Artifact metadata tests assert source text survives render/palette/proximity flows.
+- Artifact metadata tests assert source text survives render/palette/proximity/bilevel flows.
 - Populate tests assert text restoration from new artifacts and source synthesis from old chain-only artifacts.
+- Raw sidecar validation round-trips `solve_score_program_source_text` while preserving `score_program`.
+- Color artifact inventory exposes root and solve-score source fields without breaking old artifacts.
 
 ### Step 9 - UI Source Tabs And Populate
 
@@ -1143,9 +1275,11 @@ Root UI:
 
 - Add source state for render root and palette root.
 - Add Text/Chips tabset for root transforms where root chains are edited.
-- Non-blank root source wins when launching render/palette/proximity.
+- Non-blank root source wins when launching render/palette/proximity/bilevel/debug.
 - Chips become visualization/compatibility input.
 - Populate restores `root_program_source_text` if present, else synthesizes from `root_transforms`.
+- Root chip population must accept both legacy array rows and canonical object rows.
+- Text edits must not leave stale chip rows authoritative; launch payload includes source text whenever the text tab has non-blank source.
 
 Solve-score UI:
 
@@ -1155,6 +1289,8 @@ Solve-score UI:
 - Saved solve-score modal shows source first and saves source text.
 - Populate restores `solve_score_program_source_text` if present, else synthesizes from `solve_score_chain`.
 - Multi-channel mode uses compiled output contract from backend, not stale chip count.
+- Text-mode source is what saved-program modals save. Chip rows are compatibility visualization/input only when source text is blank.
+- Populate must never display lowered/internal implementation rows (`_typed_*`, v2 op rows, or raw token dictionaries) as source text.
 
 Backend authority:
 
@@ -1178,6 +1314,8 @@ Package `root_program_source.py` into zips that parse or resolve root source:
 - palette render plan
 - render lores preview
 - solve proximity
+- bilevel
+- palette debug if that Lambda remains a direct root-transform entrypoint
 
 Package `solve_score_program_source.py` into zips that parse or resolve score source:
 
@@ -1194,6 +1332,7 @@ Package shared dependencies wherever new source modules are packaged:
 - `program_source_core.py`
 - `program_profiles.py`
 - `program_profiles.json`
+- `gen_program_profiles.py` is not packaged, but its generated output must be committed before packaging.
 - `merged_opcodes.py`
 - `merged_opcodes.json`
 - `root_legacy_registry.json`
@@ -1212,14 +1351,25 @@ Minimum Python/unit gates:
 - `tests/test_solve_score_program_pipeline.py`
 - `tests/test_program_profiles_drift.py`
 - `tests/test_program_v2_migration.py`
-- render/palette/proximity plan tests
+- render/palette/proximity/bilevel/debug plan/direct-handler tests
+- bilevel and palette-debug root-source tests
 - workflow definition tests
 - deploy packaging tests
 - `api_manifest.py --check` — the two new `/compile-{root,solve-score}-program-source` routes synced across the handler dispatch, `deploy_manifest.json`, and the frontend `lambdaPost`
 - frontend grep/harness tests for source tabs and populate
+- frontend populate tests that old artifacts synthesize readable source and new artifacts restore stored source
 - root default-arg canonicalization tests (`pull_unit_circle()` equals explicit defaults)
 - solve-score compatibility synthesis tests for old chains containing `dup` and `flush`
+- solve-score compatibility synthesis tests for `emit_none`
 - profile cap drift tests for solve-score token/metric/output caps
+- root array-row and object-row compatibility tests through storage inventory and JS populate serializers
+- V2 execution-spec kind stability tests for `"root"` and `"solve-score"`
+- tests that no source serializer emits internal lowered row names as user-editable text
+- solve-score real-corpus equivalence test. Build a fixture corpus from:
+  - every saved solve-score program JSON currently in storage fixtures or exported from S3,
+  - every render/palette/proximity artifact metadata fixture containing `solve_score_chain`,
+  - representative associated-palette metadata and raw-sidecar metadata containing `score_chain`.
+  For each corpus chain that compiles today, assert `chain -> source -> chain` preserves canonical serialized chain, fingerprint, `program_spec`, output contract fields, and native score parity. There is no expected-fail list for valid chains. Invalid/corrupt corpus payloads must be separated into a corrupt-fixture list and must already fail the current compiler before they are allowed to remain non-source-backed.
 
 Minimum native/parity gates:
 

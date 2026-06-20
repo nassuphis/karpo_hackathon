@@ -1,0 +1,13 @@
+{
+  "valid": [
+    {"id": "typed_index", "path": "programs/typed_index.json"},
+    {"id": "selector_layouts", "path": "programs/selector_layouts.json"},
+    {"id": "tos_index", "path": "programs/tos_index.json"},
+    {"id": "macro_native", "path": "programs/macro_native.json"}
+  ],
+  "invalid": [
+    {"id": "unclosed_parenthesis", "source_text": "poly = sin(poly\npoly = cos(poly)"},
+    {"id": "standalone_pop", "source_text": "cf\npop\nemit"},
+    {"id": "readonly_lhs", "source_text": "cf[0] = p1"}
+  ]
+}

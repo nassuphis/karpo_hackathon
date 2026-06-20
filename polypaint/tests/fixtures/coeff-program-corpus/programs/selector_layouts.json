@@ -1,0 +1,3 @@
+{
+  "source_text": "cf\ndup\npoly = multiply(pop, peek)\npoly = rev(poly)\ndrop\nemit"
+}

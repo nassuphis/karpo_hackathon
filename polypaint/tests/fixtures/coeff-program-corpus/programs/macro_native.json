@@ -1,0 +1,6 @@
+{
+  "source_text": "macro(base)\npoly = add(poly, cf)\nemit",
+  "macros": {
+    "base": [["legacy", "rev", "poly", "poly"]]
+  }
+}

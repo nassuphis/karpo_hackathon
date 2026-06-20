@@ -1,0 +1,3 @@
+{
+  "source_text": "cf\npush_scalar(tos[0])\ndrop\ndrop\nemit"
+}

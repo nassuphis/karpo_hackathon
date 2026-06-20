@@ -219,8 +219,8 @@ def split_program_statements(source_text, *, error_cls=ProgramSourceError, max_b
         col += 1
 
     if paren != 0:
-        raise error_cls("unclosed parenthesis", line=start_line, column=start_col, code="unclosed_parenthesis")
+        raise error_cls("unclosed parenthesis", line=line, column=col, code="unclosed_parenthesis")
     if bracket != 0:
-        raise error_cls("unclosed bracket", line=start_line, column=start_col, code="unclosed_bracket")
+        raise error_cls("unclosed bracket", line=line, column=col, code="unclosed_bracket")
     flush(line, col)
     return statements

@@ -680,6 +680,26 @@ class TestCoeffProgramReviewFixes(unittest.TestCase):
         parsed = self._parse("poly = sin(poly)\npoly = nosuchfn(poly)")
         self.assertEqual(len(parsed["diagnostics"]), 1)
         self.assertEqual(parsed["diagnostics"][0]["line"], 2)
+        self.assertIn("code", parsed["diagnostics"][0])
+
+    def test_source_parser_uses_shared_core_diagnostic_codes(self):
+        parsed = self._parse("poly = sin(poly\npoly = cos(poly)")
+        self.assertEqual(parsed["chain"], [])
+        self.assertEqual(len(parsed["diagnostics"]), 1)
+        self.assertEqual(parsed["diagnostics"][0]["code"], "unclosed_parenthesis")
+
+    def test_strict_source_errors_keep_structured_diagnostics(self):
+        from coeff_program_source import CoeffProgramSourceCompileError, parse_coeff_program_source
+        with self.assertRaises(CoeffProgramSourceCompileError) as ctx:
+            parse_coeff_program_source("poly = sin(poly", strict=True)
+        self.assertEqual(ctx.exception.diagnostics[0]["code"], "unclosed_parenthesis")
+        self.assertIn("line", ctx.exception.diagnostics[0])
+        self.assertIn("column", ctx.exception.diagnostics[0])
+
+    def test_source_parser_splits_shared_core_comments_semicolons_and_brackets(self):
+        parsed = self._parse("poly[poly_len - 1] = p1; # tail edit\npoly = cos(poly)")
+        self.assertEqual(parsed["diagnostics"], [])
+        self.assertEqual(parsed["statement_count"], 2)
 
     def test_compound_index_expressions_parse_in_value_position(self):
         from coeff_program_chain import compile_coeff_program_chain

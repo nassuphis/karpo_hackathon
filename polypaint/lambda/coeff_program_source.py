@@ -9,7 +9,6 @@ coeff_program_chain compile that list to VM tokens.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 
 from coeff_program_chain import (
     TEXT_NAME_ALIASES,
@@ -45,6 +44,15 @@ from coeff_program_chain import (
     display_coeff_program_chain,
     legacy_registry,
     native_transform_stack_arg_limit,
+)
+from program_source_core import (
+    ProgramSourceError,
+    SourceStatement as _Statement,
+    diagnostic as _core_diagnostic,
+    find_top_level_assignment,
+    parse_call,
+    split_program_statements,
+    split_top_level,
 )
 
 
@@ -115,30 +123,30 @@ def _is_vector_source_text(text):
     return str(text or "").strip().lower() in _TYPED_VECTOR_SOURCE_NAMES
 
 
-@dataclass(frozen=True)
-class _Statement:
-    text: str
-    line: int
-    column: int
-
-
-class CoeffProgramSourceError(RuntimeError):
+class CoeffProgramSourceError(ProgramSourceError):
     # line/column default to 0 (unknown) so callers can fall back to the
     # enclosing statement's location with `exc.line or stmt.line`. A truthy
     # default of 1 used to pin every lowering error to line 1, column 1.
-    def __init__(self, message: str, *, line: int = 0, column: int = 0):
-        super().__init__(message)
-        self.line = line
-        self.column = column
+    def __init__(self, message: str, *, line: int = 0, column: int = 0, code: str = "source_error"):
+        super().__init__(message, line=line, column=column, code=code)
 
 
-def _diagnostic(message, *, line=1, column=1):
-    return {
-        "level": "error",
-        "message": str(message),
-        "line": int(line),
-        "column": int(column),
-    }
+class CoeffProgramSourceCompileError(RuntimeError):
+    """Strict-mode source compile failure with structured diagnostics."""
+
+    def __init__(self, diagnostics):
+        self.diagnostics = list(diagnostics or [])
+        message = "; ".join(d["message"] for d in self.diagnostics if d.get("level") == "error")
+        super().__init__(message or "invalid coeff program source")
+
+
+def _diagnostic(message, *, line=1, column=1, code=None):
+    return _core_diagnostic(
+        str(message),
+        line=line,
+        column=column,
+        code=code or getattr(message, "code", "source_error"),
+    )
 
 
 def _canonical_expr(text):
@@ -151,58 +159,15 @@ def _canonical_expr(text):
 
 
 def _split_top_level(text, sep=","):
-    out = []
-    start = 0
-    paren = bracket = 0
-    for idx, ch in enumerate(text):
-        if ch == "(":
-            paren += 1
-        elif ch == ")":
-            paren -= 1
-            if paren < 0:
-                raise CoeffProgramSourceError("unexpected closing parenthesis")
-        elif ch == "[":
-            bracket += 1
-        elif ch == "]":
-            bracket -= 1
-            if bracket < 0:
-                raise CoeffProgramSourceError("unexpected closing bracket")
-        elif ch == sep and paren == 0 and bracket == 0:
-            out.append(text[start:idx].strip())
-            start = idx + 1
-    if paren != 0:
-        raise CoeffProgramSourceError("unclosed parenthesis")
-    if bracket != 0:
-        raise CoeffProgramSourceError("unclosed bracket")
-    out.append(text[start:].strip())
-    return out
+    return split_top_level(text, sep=sep, error_cls=CoeffProgramSourceError)
 
 
 def _find_top_level_assignment(text):
-    paren = bracket = 0
-    for idx, ch in enumerate(text):
-        if ch == "(":
-            paren += 1
-        elif ch == ")":
-            paren -= 1
-        elif ch == "[":
-            bracket += 1
-        elif ch == "]":
-            bracket -= 1
-        elif ch == "=" and paren == 0 and bracket == 0:
-            return idx
-    return -1
+    return find_top_level_assignment(text)
 
 
 def _parse_call(text):
-    raw = str(text or "").strip()
-    match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*\(", raw)
-    if not match or not raw.endswith(")"):
-        return None
-    name = match.group(1).lower()
-    inner = raw[match.end():-1]
-    args = [] if not inner.strip() else _split_top_level(inner)
-    return name, args
+    return parse_call(text, error_cls=CoeffProgramSourceError)
 
 
 def _source_selector(text, *, allow_cf=True):
@@ -752,86 +717,11 @@ def split_coeff_program_statements(source_text):
     # comments run to end of line; parenthesized statements may span lines.
     Mirrored by _coeffProgramSourceStatements in index.html.
     """
-    text = str(source_text or "")
-    source_bytes = len(text.encode("utf-8"))
-    if source_bytes > MAX_COEFF_PROGRAM_SOURCE_BYTES:
-        raise CoeffProgramSourceError(
-            f"coeff program source is {source_bytes} bytes; max is {MAX_COEFF_PROGRAM_SOURCE_BYTES}"
-        )
-    statements = []
-    buffer = []
-    start_line = 1
-    start_col = 1
-    line = 1
-    col = 1
-    paren = bracket = 0
-    in_comment = False
-    for ch in text:
-        if in_comment:
-            if ch == "\n":
-                in_comment = False
-                if paren == 0 and bracket == 0:
-                    stmt = "".join(buffer).strip()
-                    if stmt:
-                        statements.append(_Statement(stmt, start_line, start_col))
-                    buffer = []
-                    start_line = line + 1
-                    start_col = 1
-                else:
-                    buffer.append(ch)
-                line += 1
-                col = 1
-            else:
-                col += 1
-            continue
-        if ch == "#":
-            # Comments run to end of line at any nesting depth; inside
-            # parens/brackets the newline is preserved so the statement
-            # continues (the in_comment branch re-appends it at depth > 0).
-            in_comment = True
-            col += 1
-            continue
-        if ch == "(":
-            paren += 1
-        elif ch == ")":
-            paren -= 1
-            if paren < 0:
-                raise CoeffProgramSourceError("unexpected closing parenthesis", line=line, column=col)
-        elif ch == "[":
-            bracket += 1
-        elif ch == "]":
-            bracket -= 1
-            if bracket < 0:
-                raise CoeffProgramSourceError("unexpected closing bracket", line=line, column=col)
-        if (ch == ";" or ch == "\n") and paren == 0 and bracket == 0:
-            stmt = "".join(buffer).strip()
-            if stmt:
-                statements.append(_Statement(stmt, start_line, start_col))
-            buffer = []
-            if ch == "\n":
-                line += 1
-                col = 1
-                start_line = line
-                start_col = col
-            else:
-                col += 1
-                start_line = line
-                start_col = col
-            continue
-        buffer.append(ch)
-        if ch == "\n":
-            line += 1
-            col = 1
-        else:
-            col += 1
-    if paren != 0:
-        raise CoeffProgramSourceError("unclosed parenthesis", line=line, column=col)
-    if bracket != 0:
-        raise CoeffProgramSourceError("unclosed bracket", line=line, column=col)
-    stmt = "".join(buffer).strip()
-    if stmt:
-        statements.append(_Statement(stmt, start_line, start_col))
-    return statements
+    return split_program_statements(
+        source_text,
+        error_cls=CoeffProgramSourceError,
+        max_bytes=MAX_COEFF_PROGRAM_SOURCE_BYTES,
+    )
 
 
 def coeff_source_text_from_payload(payload):
@@ -867,7 +757,7 @@ def parse_coeff_program_source(source_text, *, strict=True):
     except CoeffProgramSourceError as exc:
         diagnostics.append(_diagnostic(exc, line=exc.line or 1, column=exc.column or 1))
         if strict:
-            raise RuntimeError(str(exc))
+            raise CoeffProgramSourceCompileError(diagnostics) from exc
         return {"chain": [], "display": "", "statement_count": 0, "diagnostics": diagnostics}
     for stmt in statements:
         try:
@@ -877,7 +767,7 @@ def parse_coeff_program_source(source_text, *, strict=True):
         except Exception as exc:
             diagnostics.append(_diagnostic(exc, line=stmt.line, column=stmt.column))
     if diagnostics and strict:
-        raise RuntimeError("; ".join(d["message"] for d in diagnostics if d.get("level") == "error"))
+        raise CoeffProgramSourceCompileError(diagnostics)
     return {
         "chain": chain,
         "display": display_coeff_program_chain(chain),
@@ -978,4 +868,3 @@ def coeff_source_text_from_chain(chain):
         else:
             lines.append(_source_call(lname, args))
     return "\n".join(lines)
-

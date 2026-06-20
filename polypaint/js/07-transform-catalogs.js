@@ -526,9 +526,18 @@ function _pluralize(count, word) {
 
 const _coeffProgramVectorBinaryNames = ['add', 'subtract', 'multiply', 'divide', 'power'];
 const _coeffProgramVectorUnaryNames = ['angle', 'mod', 'abs', 'neg', 'conj', 'sqrt', 'log', 'exp', 'sin', 'cos', 'tan', 'sinh', 'cosh', 'tanh'];
-const _coeffProgramVectorSourceChoices = ['poly', 'pop', 'peek'];
-const _coeffProgramLegacySourceChoices = ['cf', 'poly', 'pop', 'peek'];
-const _coeffProgramTargetChoices = ['poly', 'push'];
+const _programProfiles = (typeof window !== 'undefined' && window._programProfiles)
+    || (_coeffRegistryVocab && _coeffRegistryVocab.programProfiles)
+    || null;
+const _coeffProfile = _programProfiles && _programProfiles.profiles ? _programProfiles.profiles.coeff : null;
+const _coeffProfileSelectors = (_coeffProfile && _coeffProfile.selectors) || {};
+function _profileSelectorChoices(name, fallback) {
+    const values = _coeffProfileSelectors[name];
+    return Array.isArray(values) && values.length ? values.slice() : fallback.slice();
+}
+const _coeffProgramVectorSourceChoices = _profileSelectorChoices('vector_src', ['poly', 'pop', 'peek']);
+const _coeffProgramLegacySourceChoices = _profileSelectorChoices('src', ['cf', 'poly', 'pop', 'peek']);
+const _coeffProgramTargetChoices = _profileSelectorChoices('tgt', ['poly', 'push']);
 function _canonicalCoeffTransformName(name) {
     // Aliases come from the registry vocab above, so imported legacy rows
     // resolve the same _ctCatalog metadata the backend compiles them against.
@@ -548,7 +557,7 @@ const _coeffProgramCatalog = (() => {
     const catalog = {
         push: {
             category: 'io',
-            params: [{ ph: 'src', def: 'cf', choices: ['cf', 'poly'], paramProgramWide: true }],
+            params: [{ ph: 'src', def: 'cf', choices: _profileSelectorChoices('push_src', ['cf', 'poly']), paramProgramWide: true }],
             desc: 'push a copy of cf or current poly',
         },
         set: {

@@ -61,8 +61,13 @@ _PROFILES = None
 def load_program_profiles():
     global _PROFILES
     if _PROFILES is None:
-        with open(_profiles_path(), "r", encoding="utf-8") as fh:
-            _PROFILES = json.load(fh)
+        try:
+            from program_profiles import PROGRAM_PROFILES
+
+            _PROFILES = PROGRAM_PROFILES
+        except Exception:
+            with open(_profiles_path(), "r", encoding="utf-8") as fh:
+                _PROFILES = json.load(fh)
     return _PROFILES
 
 

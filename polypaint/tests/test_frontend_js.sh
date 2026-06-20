@@ -157,12 +157,14 @@ assertIncludes("const result = await lambdaPost('param-debug', _attachProgramSou
 assertIncludes("id=\"coeff-program-manage\" onclick=\"openCoeffProgramModal()\"", 'compute tab should expose Coeff Programs modal launcher');
 assertIncludes("id=\"cp-chips\" class=\"chip-container param-program-display\"", 'compute tab should expose coeff-program chip display');
 assertIncludes("const _coeffProgramCatalog = (() => {", 'frontend should build the coeff-program chip catalog');
+assertIncludes("const _programProfiles = (typeof window !== 'undefined' && window._programProfiles)", 'frontend should consume the generated program profile mirror');
+assertIncludes("function _profileSelectorChoices(name, fallback) {", 'Coeff Program selector choices should derive from profile metadata');
 assertNotIncludes("function _coeffProgramPolySugarName(name) {", 'Coeff Program should not expose redundant poly-* legacy sugar helpers');
 assertNotIncludes("const sugarName = _coeffProgramPolySugarName(name);", 'Coeff Program catalog should not create redundant poly-* direct sugars');
 assertNotIncludes("label: sugarName", 'Coeff Program direct sugar labels should not expose poly-* names');
 assertIncludes("label: 'push_vec'", 'Coeff Program vector-constant chip should be named push_vec');
 assertIncludes("push_scalar: {", 'Coeff Program catalog should understand text-mode push_scalar');
-assertIncludes("params: [{ ph: 'src', def: 'cf', choices: ['cf', 'poly'], paramProgramWide: true }]", 'Coeff Program push source selector should use the wider control');
+assertIncludes("params: [{ ph: 'src', def: 'cf', choices: _profileSelectorChoices('push_src', ['cf', 'poly']), paramProgramWide: true }]", 'Coeff Program push source selector should derive from profile metadata and use the wider control');
 assertIncludes("{ ph: 'length|poly_len', label: 'length', def: 'poly_len', lengthArg: true", 'Coeff Program const length should allow poly_len by default');
 assertIncludes("{ ph: 'value expr', label: 'value', def: '1', scalarExpr: 'complex'", 'Coeff Program const value should be a scalar expression field');
 assertIncludes("conj/real/imag/abs/angle/sqrt/log/exp/sin/cos/tan/sinh/cosh/tanh", 'Coeff Program scalar expression help should include elementary scalar functions');
@@ -214,6 +216,7 @@ assertIncludes("} else if (options.auto === false || value.trim()) {\n        _c
 assertIncludes("function _effectiveCoeffProgramChainForCompute() {", 'compute payload should centralize coeff-program selection');
 assertIncludes("function _copyCoeffTransformsIntoCoeffProgram() {", 'Coeff Program UI should translate legacy transforms into program chips');
 assertIncludes("const _coeffProgramRegistryChipNames = _coeffRegistryVocab ? _coeffRegistryVocab.chipNameByRegistryName : {};", 'normalize/copy should derive the registry-to-chip name map from the generated vocab');
+assertIncludes('<script src="program_profiles_js.js"></script>', 'the generated program profile mirror must load before the main bundle');
 assertIncludes('<script src="coeff_vocab_js.js"></script>', 'the generated registry vocab must load before the main bundle');
 assertIncludes("return { name: _coeffProgramRegistryChipName(normalized.name), params: ['poly', 'poly', ...args] };", 'Copy legacy transforms should map shadowed registry names through the shared chip-name map');
 assertIncludes("return [{ name: _coeffProgramRegistryChipName(legacyName), params: [legacyTgt, legacySrc, ...legacyArgs] }];", 'Normalize should map shadowed registry names through the shared chip-name map');

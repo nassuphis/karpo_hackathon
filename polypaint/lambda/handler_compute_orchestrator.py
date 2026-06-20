@@ -90,21 +90,10 @@ def handler(event, context):
     execution_method = execution_method_from_params(run_params)
     run_params.pop("fused", None)
     run_params["execution_method"] = execution_method
-    run_params.setdefault("param_transforms", [])
     run_params.setdefault("param_program_chain", [])
     run_params.setdefault("param_program_source_text", "")
-    run_params.setdefault("coeff_transforms", [])
     run_params.setdefault("coeff_program_chain", [])
     run_params.setdefault("coeff_program_source_text", "")
-    run_params.setdefault(
-        "pipeline_mode",
-        "program" if (
-            run_params.get("param_program_chain")
-            or str(run_params.get("param_program_source_text") or "").strip()
-            or run_params.get("coeff_program_chain")
-            or str(run_params.get("coeff_program_source_text") or "").strip()
-        ) else "chain",
-    )
 
     task_id = f"compute_run_{solver_mode}_{run_id}"
     execution_name = f"compute_{solver_mode}_{run_id}"

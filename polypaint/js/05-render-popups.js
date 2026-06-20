@@ -1136,7 +1136,7 @@ async function _refreshComputeMtProbe() {
     const cfpv = _cfpv.length > 0 ? [..._cfpv] : [];
     const fusedThreads = _clampRenderMtThreads(_computeMtPopupState.fusedThreads || 4);
     const solverMode = _computeMtPopupState.solverMode || 'aberth_mt';
-    const probeSignature = JSON.stringify([_selectedParamPipelineMode(), solverMode, funcName, paramTransforms, paramProgramChain, coeffTransforms, coeffProgramChain, coeffProgramSourceText, cfpv, n, times, nChunks, fusedThreads]);
+    const probeSignature = JSON.stringify([solverMode, funcName, paramTransforms, paramProgramChain, coeffTransforms, coeffProgramChain, coeffProgramSourceText, cfpv, n, times, nChunks, fusedThreads]);
     if (_computeMtPopupState.probeSignature === probeSignature && (_computeMtPopupState.probe || _computeMtPopupState.probeError)) {
         _renderComputeMtPopup();
         return;
@@ -1148,7 +1148,6 @@ async function _refreshComputeMtProbe() {
     try {
         const probe = await lambdaPost('coeffgen', _attachProgramSourcePayload({
             phase: 'degree_probe',
-            pipeline_mode: _selectedParamPipelineMode(),
             function: funcName,
             N: n,
             times,

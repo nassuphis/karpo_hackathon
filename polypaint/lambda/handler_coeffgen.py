@@ -62,17 +62,14 @@ def _coeff_program_macro_resolver():
 
 def _resolve_coeff_program(params, coeff_transforms, *, pipeline_mode=None):
     coeff_program = params.get("coeff_program") or None
-    allow_program_fields = pipeline_mode != "chain"
-    if not allow_program_fields:
-        coeff_program = None
     # Probe payloads are mode-filtered upstream, so the precedence helper
     # runs without the mode gate; compile failures carry line/column.
-    source_text = coeff_source_text_for_run(params, None) if allow_program_fields and coeff_program is None else None
+    source_text = coeff_source_text_for_run(params, None) if coeff_program is None else None
     if source_text is not None:
         parsed = parse_coeff_source_for_run(source_text)
         coeff_program_chain = parsed["chain"]
     else:
-        coeff_program_chain = params.get("coeff_program_chain") if allow_program_fields else None
+        coeff_program_chain = params.get("coeff_program_chain")
     if coeff_program is None and not coeff_program_chain and coeff_transforms:
         coeff_program_chain = coeff_transforms_to_program_chain(coeff_transforms)
     if coeff_program is None and coeff_program_chain:
@@ -84,20 +81,19 @@ def _resolve_coeff_program(params, coeff_transforms, *, pipeline_mode=None):
         )
         coeff_transforms = []
         coeff_program = _compiled_coeff_program_payload(compiled)
+    if coeff_program is not None:
+        coeff_transforms = []
     return coeff_transforms, coeff_program
 
 
 def _resolve_param_program(params, param_transforms, *, pipeline_mode=None):
     param_program = params.get("param_program") or None
-    allow_program_fields = pipeline_mode != "chain"
-    if not allow_program_fields:
-        param_program = None
-    source_text = param_source_text_for_run(params, None) if allow_program_fields and param_program is None else None
+    source_text = param_source_text_for_run(params, None) if param_program is None else None
     if source_text is not None:
         parsed = parse_param_source_for_run(source_text)
         param_program_chain = parsed["chain"]
     else:
-        param_program_chain = params.get("param_program_chain") if allow_program_fields else None
+        param_program_chain = params.get("param_program_chain")
     if param_program is None and not param_program_chain and param_transforms:
         param_program_chain = param_transforms_to_program_chain(param_transforms)
     if param_program is None and param_program_chain:
@@ -109,6 +105,8 @@ def _resolve_param_program(params, param_transforms, *, pipeline_mode=None):
         )
         param_transforms = []
         param_program = _compiled_param_program_payload(compiled)
+    if param_program is not None:
+        param_transforms = []
     return param_transforms, param_program
 
 
@@ -608,8 +606,6 @@ def handle_degree_probe(params):
     if not isinstance(coeff_transforms, list):
         raise RuntimeError("coeff_transforms must be an array")
     coeff_program = None
-    if pipeline_mode == "program":
-        coeff_transforms = []
     coeff_transforms, coeff_program = _resolve_coeff_program(
         params, coeff_transforms, pipeline_mode=pipeline_mode
     )
@@ -618,8 +614,6 @@ def handle_degree_probe(params):
         param_transforms = []
     if not isinstance(param_transforms, list):
         raise RuntimeError("param_transforms must be an array")
-    if pipeline_mode == "program":
-        param_transforms = []
     param_transforms, param_program = _resolve_param_program(
         params, param_transforms, pipeline_mode=pipeline_mode
     )

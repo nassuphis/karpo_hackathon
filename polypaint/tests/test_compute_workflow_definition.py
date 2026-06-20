@@ -182,11 +182,11 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
         self.assertEqual(post_phase["Parameters"]["Payload"]["phase"], "post_coeffgen")
         self.assertEqual(post_phase["Parameters"]["Payload"]["phase_label"], "Post coeffgen")
 
-    def test_param_gen_tasks_forward_times_and_param_transforms(self):
+    def test_param_gen_tasks_forward_times_and_param_program(self):
         self.assertEqual(self.states["ParamGenPhase"]["Parameters"]["Payload"]["expected.$"], "$.plan.compute.n_chunks")
         param_gen = self.states["ParamGenMap"]["ItemSelector"]
         self.assertEqual(param_gen["times.$"], "$.plan.compute.times")
-        self.assertEqual(param_gen["param_transforms.$"], "$.plan.pipeline.param_transforms")
+        self.assertNotIn("param_transforms.$", param_gen)
         self.assertEqual(param_gen["param_program.$"], "$.plan.pipeline.param_program")
         self.assertEqual(param_gen["n_threads.$"], "$.plan.compute.param_gen_threads")
         self.assertEqual(param_gen["task_id.$"], "$$.Map.Item.Value.paramgen_task_id")
@@ -196,7 +196,7 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
 
         lores_param_gen = self.states["LoresParamGenTask"]["Parameters"]["Payload"]
         self.assertEqual(lores_param_gen["times.$"], "$.plan.compute.times")
-        self.assertEqual(lores_param_gen["param_transforms.$"], "$.plan.pipeline.param_transforms")
+        self.assertNotIn("param_transforms.$", lores_param_gen)
         self.assertEqual(lores_param_gen["param_program.$"], "$.plan.pipeline.param_program")
         self.assertEqual(lores_param_gen["gridN.$"], "$.plan.compute.N")
         self.assertEqual(lores_param_gen["n_threads.$"], "$.plan.compute.lores_param_gen_threads")
@@ -204,7 +204,8 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
     def test_coeffgen_tasks_forward_pipeline_fields(self):
         coeffgen = self.states["CoeffgenMap"]["ItemSelector"]
         self.assertEqual(coeffgen["function.$"], "$.plan.pipeline.function")
-        self.assertEqual(coeffgen["coeff_transforms.$"], "$.plan.pipeline.coeff_transforms")
+        self.assertNotIn("coeff_transforms.$", coeffgen)
+        self.assertEqual(coeffgen["coeff_program.$"], "$.plan.pipeline.coeff_program")
         self.assertEqual(coeffgen["cfpv.$"], "$.plan.pipeline.cfpv")
         self.assertEqual(coeffgen["params_key.$"], "$$.Map.Item.Value.params_key")
         self.assertEqual(coeffgen["params_step_start.$"], "$$.Map.Item.Value.params_step_start")
@@ -214,7 +215,8 @@ class TestComputeWorkflowDefinition(unittest.TestCase):
 
         lores_coeffgen = self.states["LoresCoeffgenTask"]["Parameters"]["Payload"]
         self.assertEqual(lores_coeffgen["function.$"], "$.plan.pipeline.function")
-        self.assertEqual(lores_coeffgen["coeff_transforms.$"], "$.plan.pipeline.coeff_transforms")
+        self.assertNotIn("coeff_transforms.$", lores_coeffgen)
+        self.assertEqual(lores_coeffgen["coeff_program.$"], "$.plan.pipeline.coeff_program")
         self.assertEqual(lores_coeffgen["cfpv.$"], "$.plan.pipeline.cfpv")
         self.assertEqual(lores_coeffgen["N.$"], "$.post.lores.N")
         self.assertEqual(lores_coeffgen["n_threads.$"], "$.post.lores.coeffgen_threads")

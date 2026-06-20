@@ -363,12 +363,9 @@ function _setParamProgramEditorMode(mode) {
         (!_getParamProgramSourceText().trim() || _paramProgramSourceAutoSynthed)) {
         _setParamProgramSourceText(_paramProgramSourceFromRows(_serializeParamProgramChain()), { auto: true });
     }
-    const computeScope = _paramProgramModeSelected()
-        ? ', and compute'
-        : '; compute ignores the program while the Chain pipeline is selected';
     _paramProgramStatus(normalized === 'text'
-        ? `Text source is authoritative for save, preview, debug${computeScope}.`
-        : `Chip view is read-only; Text source remains authoritative for save, preview, debug${computeScope}.`);
+        ? 'Text source is authoritative for save, preview, debug, and compute.'
+        : 'Chip view is read-only; Text source remains authoritative for save, preview, debug, and compute.');
     _syncParamPipelineModeUi();
     if (typeof _paramProgramModalState !== 'undefined' && _paramProgramModalState.open) _renderParamProgramModal();
     if (_paramProgramModeSelected()) _markComputePreviewStale();
@@ -527,12 +524,9 @@ function _setCoeffProgramEditorMode(mode) {
         (!_getCoeffProgramSourceText().trim() || _coeffProgramSourceAutoSynthed)) {
         _setCoeffProgramSourceText(_coeffProgramSourceFromRows(_serializeCoeffProgramChain()), { auto: true });
     }
-    const computeScope = _paramProgramModeSelected()
-        ? ', and compute'
-        : '; compute ignores the program while the Chain pipeline is selected';
     _coeffProgramStatus(normalized === 'text'
-        ? `Text source is authoritative for save, preview, debug${computeScope}.`
-        : `Chip view is read-only; Text source remains authoritative for save, preview, debug${computeScope}.`);
+        ? 'Text source is authoritative for save, preview, debug, and compute.'
+        : 'Chip view is read-only; Text source remains authoritative for save, preview, debug, and compute.');
     _syncParamPipelineModeUi();
     // typeof guard: _coeffProgramModalState is declared with `let` later in
     // the file; this can run during initial render before that declaration.
@@ -801,14 +795,12 @@ function _serializeParamProgramChain() {
 }
 
 function _selectedParamPipelineMode() {
-    const el = document.getElementById('param-pipeline-mode');
-    const raw = el && el.value ? el.value : _paramPipelineMode;
-    if (raw === 'program' || raw === 'param_program') return 'program';
-    return 'chain';
+    _paramPipelineMode = 'program';
+    return 'program';
 }
 
 function _paramProgramModeSelected() {
-    return _selectedParamPipelineMode() === 'program';
+    return true;
 }
 
 function _formatChainRowsForLog(chain, separator = ',') {
@@ -839,11 +831,10 @@ function _paramProgramSourceDisplay(sourceText, separator = ',') {
 
 function _displayActiveParamPipeline(separator = ',') {
     const textMode = typeof _paramProgramTextModeSelected === 'function' && _paramProgramTextModeSelected();
-    if (_paramProgramModeSelected() && textMode) {
+    if (textMode) {
         return _paramProgramSourceDisplay(_getParamProgramSourceText(), separator);
     }
-    if (_paramProgramModeSelected()) return _formatParamProgramChainForLog(_serializeParamProgramChain(), separator);
-    return _formatChainRowsForLog(_displayParamTransforms(), separator) || 'none';
+    return _formatParamProgramChainForLog(_serializeParamProgramChain(), separator);
 }
 
 function _formatCoeffProgramChainForLog(chain, separator = ',') {
@@ -898,64 +889,43 @@ function _displayActiveCoeffPipeline(separator = ',') {
     // typeof guard: the frontend test harness executes this function in
     // isolation, without the rest of the file's declarations.
     const textMode = typeof _coeffProgramTextModeSelected === 'function' && _coeffProgramTextModeSelected();
-    if (_paramProgramModeSelected() && textMode) {
+    if (textMode) {
         return _coeffProgramSourceDisplay(_getCoeffProgramSourceText(), separator);
     }
-    if (_paramProgramModeSelected()) return _formatCoeffProgramChainForLog(_serializeCoeffProgramChain(), separator);
-    return _formatChainRowsForLog(_serializeCoeffTransforms(), separator) || 'none';
+    return _formatCoeffProgramChainForLog(_serializeCoeffProgramChain(), separator);
 }
 
 function _paramPipelineEditAffectsCompute(which) {
-    if (which === 'ct') return !_paramProgramModeSelected();
-    if (which === 'cp') return _paramProgramModeSelected();
-    if (which === 'pt') return !_paramProgramModeSelected();
-    if (which === 'pp') return _paramProgramModeSelected();
+    if (which === 'ct' || which === 'pt') return false;
+    if (which === 'cp' || which === 'pp') return true;
     return false;
 }
 
 function _syncParamPipelineModeUi() {
-    const mode = _selectedParamPipelineMode();
+    const mode = 'program';
     _paramPipelineMode = mode;
-    const selectEl = document.getElementById('param-pipeline-mode');
-    const noteEl = document.getElementById('param-pipeline-mode-note');
     const legacyRow = document.getElementById('param-transforms-row');
     const programBox = document.querySelector('.param-program-box');
     const coeffProgramBox = document.querySelector('.coeff-program-box');
-    if (selectEl && selectEl.value !== mode) selectEl.value = mode;
-    if (legacyRow && legacyRow.classList) legacyRow.classList.toggle('param-pipeline-inactive', mode !== 'chain');
+    if (legacyRow && legacyRow.classList) legacyRow.classList.add('param-pipeline-inactive');
     const coeffRow = document.getElementById('coeff-transforms-row');
-    if (coeffRow && coeffRow.classList) coeffRow.classList.toggle('param-pipeline-inactive', mode !== 'chain');
-    if (programBox && programBox.classList) programBox.classList.toggle('param-pipeline-inactive', mode !== 'program');
-    if (coeffProgramBox && coeffProgramBox.classList) coeffProgramBox.classList.toggle('param-pipeline-inactive', mode !== 'program');
-    const ppLen = _paramProgramTextModeSelected()
-        ? _paramProgramSourceStatementCount(_getParamProgramSourceText())
-        : _serializeParamProgramChain().length;
-    const cpLen = _coeffProgramTextModeSelected()
-        ? _coeffProgramSourceStatementCount(_getCoeffProgramSourceText())
-        : _serializeCoeffProgramChain().length;
-    const ptLen = _serializeParamTransforms().length;
-    const ctLen = _serializeCoeffTransforms().length;
-    if (noteEl) {
-        noteEl.textContent = mode === 'program'
-            ? `Program mode: Param Program ${ppLen ? `${ppLen} ${_paramProgramTextModeSelected() ? 'source statement' : 'chip'}${ppLen === 1 ? '' : 's'}` : 'identity'}; Coeff Program ${cpLen ? `${cpLen} ${_coeffProgramTextModeSelected() ? 'source statement' : 'chip'}${cpLen === 1 ? '' : 's'}` : 'identity'}. Legacy chains are idle.`
-            : `Chain mode: Param transforms ${ptLen ? `${_pluralize(ptLen, 'chip')}` : 'none'}; Coeff transforms ${ctLen ? `${_pluralize(ctLen, 'chip')}` : 'none'}. Programs are idle.`;
-    }
+    if (coeffRow && coeffRow.classList) coeffRow.classList.add('param-pipeline-inactive');
+    if (programBox && programBox.classList) programBox.classList.remove('param-pipeline-inactive');
+    if (coeffProgramBox && coeffProgramBox.classList) coeffProgramBox.classList.remove('param-pipeline-inactive');
 }
 
 function _setParamPipelineMode(mode, options = {}) {
-    _paramPipelineMode = (mode === 'program' || mode === 'param_program') ? 'program' : 'chain';
+    _paramPipelineMode = 'program';
     _syncParamPipelineModeUi();
     _renderChips('pp');
     _renderChips('cp');
     if (options.markStale) _markComputePreviewStale();
 }
 
-// Which pipeline is authoritative for a compute payload:
-// - chain mode sends legacy transforms (pt/ct) and empty programs;
-// - program mode sends programs (pp + cp-or-source) and empty transforms.
-// Exactly one side is ever non-empty, so the backend needs no mode flag.
+// Compute is program-only. Legacy transform rows are no longer an editable
+// compute path; old payloads are translated at the Lambda boundary.
 function _effectiveParamTransformsForCompute() {
-    return _paramProgramModeSelected() ? [] : _serializeParamTransforms();
+    return [];
 }
 
 function _effectiveParamProgramChainForCompute() {
@@ -963,13 +933,12 @@ function _effectiveParamProgramChainForCompute() {
 }
 
 function _effectiveParamProgramSourceTextForCompute() {
-    if (!_paramProgramModeSelected()) return null;
     const sourceText = _getParamProgramSourceText();
     return sourceText.trim() ? sourceText : null;
 }
 
 function _effectiveCoeffTransformsForCompute() {
-    return _paramProgramModeSelected() ? [] : _serializeCoeffTransforms();
+    return [];
 }
 
 function _effectiveCoeffProgramChainForCompute() {
@@ -977,7 +946,6 @@ function _effectiveCoeffProgramChainForCompute() {
 }
 
 function _effectiveCoeffProgramSourceTextForCompute() {
-    if (!_paramProgramModeSelected()) return null;
     const sourceText = _getCoeffProgramSourceText();
     return sourceText.trim() ? sourceText : null;
 }

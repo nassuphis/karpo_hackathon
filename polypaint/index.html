@@ -830,31 +830,6 @@ button {
 .param-program-box {
     margin-top: 10px;
 }
-.param-pipeline-row {
-    align-items: center;
-    gap: 8px;
-    margin-top: 8px;
-}
-.param-pipeline-row select {
-    min-width: 180px;
-}
-.param-pipeline-mode-group {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    flex: 0 0 auto;
-    white-space: nowrap;
-}
-.param-pipeline-mode-group label {
-    min-width: 0;
-}
-.param-pipeline-mode-group select {
-    min-width: 180px;
-}
-.param-pipeline-mode-note {
-    color: #888;
-    font-size: 11px;
-}
 .param-pipeline-inactive {
     opacity: 0.58;
 }
@@ -1408,33 +1383,13 @@ button {
                 <input type="number" id="render-n" value="500" min="10" max="5000" step="10" style="width:10em">
                 <label>Times:</label>
                 <input type="number" id="render-times" value="1" min="1" max="100" step="1" style="width:5em">
-                <span class="param-pipeline-mode-group">
-                    <label for="param-pipeline-mode">Use:</label>
-                    <select id="param-pipeline-mode" onchange="_setParamPipelineMode(this.value, {markStale:true})">
-                        <option value="chain">Chain</option>
-                        <option value="program">Program</option>
-                    </select>
-                </span>
-                <span id="param-pipeline-mode-note" class="param-pipeline-mode-note">Legacy transform chains are active.</span>
             </div>
             <input type="hidden" id="render-stripes" value="10">
-            <div class="anim-row" id="param-transforms-row" style="flex-wrap:wrap">
-                <label style="min-width:90px">Param transforms:</label>
-                <div id="pt-chips" class="chip-container"></div>
-                <div class="score-chip-add-wrap">
-                    <button id="pt-add-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleParamTransformPicker(event)">+ param transform</button>
-                    <div id="pt-add-popup" class="score-chip-picker" aria-hidden="true"></div>
-                    <select id="pt-add" onchange="addChip('pt',this.value);this.value='';" style="display:none">
-                        <option value="">+ add...</option>
-                    </select>
-                </div>
-            </div>
             <div class="color-box param-program-box">
                 <div class="color-title">Param Program</div>
-                <div class="solve-score-program-note">Optional RPN parameter VM. Use=Program runs this and the Coeff Program; Use=Chain runs the legacy transform rows.</div>
+                <div class="solve-score-program-note">Text-first parameter program. It writes p1/p2 from t1/t2 before the coefficient program runs.</div>
                 <div class="solve-score-program-toolbar param-program-toolbar">
                     <button type="button" class="btn-secondary btn-inline" id="param-program-manage" onclick="openParamProgramModal()">Param Programs...</button>
-                    <button type="button" class="btn-secondary btn-inline" id="param-program-copy-legacy" onclick="_copyParamTransformsIntoParamProgram()" title="Translate the current Param transforms row into legacy(...) param-program chips">Copy legacy transforms</button>
                     <button type="button" class="btn-secondary btn-inline" id="param-program-clear" onclick="_clearParamProgramChain()">Clear program</button>
                 </div>
                 <div class="compute-preview-tabs" role="tablist" aria-label="Param program editor tabs">
@@ -1459,51 +1414,11 @@ button {
                 <label style="min-width:90px">Func params:</label>
                 <div id="cfpv-inputs" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap"></div>
             </div>
-                <div class="anim-row" id="coeff-transforms-row" style="flex-wrap:wrap">
-                <label style="min-width:90px">Coeff transforms:</label>
-                <div id="ct-chips" class="chip-container"></div>
-                <div class="score-chip-add-wrap">
-                    <button id="ct-add-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleCoeffTransformPicker(event)">+ coeff transform</button>
-                    <div id="ct-add-popup" class="score-chip-picker" aria-hidden="true"></div>
-                    <select id="ct-add" onchange="addChip('ct',this.value);this.value='';" style="display:none">
-                        <option value="">+ add...</option>
-                        <option value="rev">rev</option>
-                        <option value="conj">conj</option>
-                        <option value="normalize">normalize</option>
-                        <option value="deriv">deriv</option>
-                        <option value="linear">linear</option>
-                        <option value="safe">safe</option>
-                        <option value="negate_odd">negate_odd</option>
-                        <option value="max2one">max2one</option>
-                        <option value="swirler">swirler</option>
-                        <option value="sort_mod_keep_angle">sort_mod_keep_angle</option>
-                        <option value="sort_angle_keep_mod">sort_angle_keep_mod</option>
-                        <option value="sort_abs">sort_abs</option>
-                        <option value="cumsum">cumsum</option>
-                        <option value="cummax">cummax</option>
-                        <option value="sort_cumsum">sort_cumsum</option>
-                        <option value="exp">exp</option>
-                        <option value="cos">cos</option>
-                        <option value="sin">sin</option>
-                        <option value="tan">tan</option>
-                        <option value="cosh">cosh</option>
-                        <option value="sinh">sinh</option>
-                        <option value="tanh">tanh</option>
-                        <option value="round">round</option>
-                        <option value="pow">pow</option>
-                        <option value="power">power</option>
-                        <option value="invpower">invpower</option>
-                        <option value="roots_cm">roots_cm</option>
-                        <option value="roots">roots</option>
-                    </select>
-                </div>
-            </div>
             <div class="color-box param-program-box coeff-program-box">
                 <div class="color-title">Coeff Program</div>
-                <div class="solve-score-program-note">Optional RPN coefficient-vector VM. It reads immutable cf, writes poly, and can use p1/p2 scalar parameters from the Param Program.</div>
+                <div class="solve-score-program-note">Text-first coefficient-vector program. It reads immutable cf, writes poly, and can use t1/t2 and p1/p2.</div>
                 <div class="solve-score-program-toolbar param-program-toolbar">
                     <button type="button" class="btn-secondary btn-inline" id="coeff-program-manage" onclick="openCoeffProgramModal()">Coeff Programs...</button>
-                    <button type="button" class="btn-secondary btn-inline" id="coeff-program-copy-legacy" onclick="_copyCoeffTransformsIntoCoeffProgram()" title="Translate the current Coeff transforms row into coeff-program chips">Copy legacy transforms</button>
                     <button type="button" class="btn-secondary btn-inline" id="coeff-program-clear" onclick="_clearCoeffProgramChain()">Clear program</button>
                 </div>
                 <div class="compute-preview-tabs" role="tablist" aria-label="Coeff program editor tabs">

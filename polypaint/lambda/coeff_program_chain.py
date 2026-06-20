@@ -1580,7 +1580,7 @@ def _macro_survived_expansion(args, scalar_exprs):
 # Chips that compile to a bare opcode and take no arguments. The stack ops
 # double as the bare-statement forms; the "_typed_*" names are
 # synthesizer-internal chips emitted by the source lowerer (not
-# user-authorable in Chain mode, though they appear in display strings).
+# user-authorable source forms, though they appear in display strings).
 _ZERO_ARG_CHIP_OPS = {
     **_STACK_OPS,
     "emit": COEFF_OP_EMIT,
@@ -2154,5 +2154,4 @@ def compile_coeff_program_chain(chain, *, macro_resolver=None, strict=True):
         except Exception:
             safe_chain = []
         return _result_payload(diagnostics, source_chain=safe_chain)
-
 

@@ -155,19 +155,13 @@ def handle_build_plan(params):
         raise RuntimeError("param_transforms must be an array")
     param_transforms_display = list(param_transforms)
     coeff_transforms_display = list(coeff_transforms)
-    if pipeline_mode == "program":
-        # Program mode is explicit: legacy transform arrays are idle. Program
-        # payloads execute legacy chips through the VM instead of native chain
-        # parsers.
-        param_transforms = []
-        coeff_transforms = []
     param_program_source_text = param_source_text_for_run(run_params, pipeline_mode)
     if param_program_source_text is not None:
         parsed_param_source = parse_param_source_for_run(param_program_source_text)
         param_program_chain = parsed_param_source["chain"]
     else:
         parsed_param_source = None
-        param_program_chain = run_params.get("param_program_chain") if pipeline_mode == "program" else param_transforms_to_program_chain(param_transforms)
+        param_program_chain = run_params.get("param_program_chain") or param_transforms_to_program_chain(param_transforms)
     param_program = None
     param_program_metadata = None
     if param_program_chain:
@@ -195,7 +189,7 @@ def handle_build_plan(params):
         coeff_program_chain = parsed_coeff_source["chain"]
     else:
         parsed_coeff_source = None
-        coeff_program_chain = run_params.get("coeff_program_chain") if pipeline_mode == "program" else coeff_transforms_to_program_chain(coeff_transforms)
+        coeff_program_chain = run_params.get("coeff_program_chain") or coeff_transforms_to_program_chain(coeff_transforms)
     coeff_program = None
     coeff_program_metadata = None
     if coeff_program_chain:
@@ -216,6 +210,12 @@ def handle_build_plan(params):
         }
         coeff_transforms = []
         coeff_program = _compiled_coeff_program_payload(compiled_coeff_program)
+
+    # Native Chain mode is retired. Transform rows are preserved only as
+    # display metadata and stale-client translation input; never forward them
+    # into sweep_cli.c.
+    param_transforms = []
+    coeff_transforms = []
 
     cfpv = run_params.get("cfpv")
     if cfpv in (None, ""):

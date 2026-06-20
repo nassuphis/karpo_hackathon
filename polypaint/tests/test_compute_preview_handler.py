@@ -130,7 +130,7 @@ class TestComputePreviewHandler(unittest.TestCase):
         self.assertIn("solver=AE-MT", body["message"])
         self.assertIn("N_preview=32", body["message"])
         self.assertIn("function=g1", body["message"])
-        self.assertIn("coeff=roots_cm(lo)", body["message"])
+        self.assertIn("coeff=legacy(roots_cm,poly,poly,lo),emit", body["message"])
 
     @patch("handler_compute_preview.tmp_space_stats")
     @patch("handler_compute_preview.subprocess.run")
@@ -382,7 +382,7 @@ class TestComputePreviewHandler(unittest.TestCase):
         self.assertIn("message", body["diagnostics"][0])
 
     @patch("handler_compute_preview.subprocess.run")
-    def test_compute_debug_poly_chain_mode_ignores_coeff_program_source_text(self, mock_run):
+    def test_compute_debug_poly_stale_chain_mode_translates_coeff_transforms(self, mock_run):
         import handler_compute_preview as mod
 
         specs = []
@@ -417,8 +417,6 @@ class TestComputePreviewHandler(unittest.TestCase):
             u=0.25,
             v=0.75,
             coeff_transforms=[["rev"]],
-            coeff_program_chain=[["const", "3", "1"], ["emit"]],
-            coeff_program_source_text="bad(",
         ))}, None)
 
         self.assertEqual(result["statusCode"], 200)
@@ -518,7 +516,7 @@ class TestComputePreviewHandler(unittest.TestCase):
         self.assertIn("roots_cm coefficient transform is too slow", body["message"])
         self.assertIn("N-preview=256", body["message"])
         self.assertIn("N-preview <= 128", body["message"])
-        self.assertIn("coeff=power(8),roots_cm(hi)", body["message"])
+        self.assertIn("coeff=legacy(power,poly,poly,8),legacy(roots_cm,poly,poly,hi),emit", body["message"])
         mock_run.assert_not_called()
 
     def test_compute_preview_rejects_invalid_quantile_and_shim(self):

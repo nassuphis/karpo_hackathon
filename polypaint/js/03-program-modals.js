@@ -662,7 +662,7 @@ function _renderParamProgramModal() {
         overlay.setAttribute('aria-hidden', _paramProgramModalState.open ? 'false' : 'true');
     }
     if (summaryEl) {
-        summaryEl.textContent = 'Global saved parameter programs on the left; current Compute-tab live program on the right. The Compute-tab Use dropdown decides whether legacy transforms or Param Program runs.';
+        summaryEl.textContent = 'Global saved parameter programs on the left; current Compute-tab live text program on the right.';
     }
     if (nameEl && nameEl.value !== _paramProgramModalState.nameInput) nameEl.value = _paramProgramModalState.nameInput;
     if (currentEl) currentEl.innerHTML = _renderParamProgramCardHtml(currentProgram);
@@ -1048,7 +1048,7 @@ function _renderCoeffProgramModal() {
         overlay.style.display = _coeffProgramModalState.open ? 'flex' : 'none';
         overlay.setAttribute('aria-hidden', _coeffProgramModalState.open ? 'false' : 'true');
     }
-    if (summaryEl) summaryEl.textContent = 'Global saved coefficient programs on the left; current Compute-tab live program on the right. Use=Program runs Param Program and Coeff Program together.';
+    if (summaryEl) summaryEl.textContent = 'Global saved coefficient programs on the left; current Compute-tab live program on the right. Compute runs Param Program and Coeff Program together.';
     if (nameEl && nameEl.value !== _coeffProgramModalState.nameInput) nameEl.value = _coeffProgramModalState.nameInput;
     if (currentEl) currentEl.innerHTML = _renderCoeffProgramCardHtml(currentProgram);
     if (selectedEl) {

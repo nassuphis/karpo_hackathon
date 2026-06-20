@@ -1,12 +1,13 @@
-"""Shared pipeline-mode and program-source resolution for compute handlers.
+"""Shared program-source resolution for compute handlers.
 
 One source of truth (CR14) for three rules that were independently
 implemented in handler_compute_plan, handler_compute_preview, and
 handler_coeffgen - exactly the duplication class that produced the CR6
 blank-source_text drift:
 
-- pipeline_mode_from_params: Chain vs Program mode selection (Chain mode
-  zeroes programs downstream; Program mode zeroes legacy transforms).
+- pipeline_mode_from_params: compatibility shim for the retired Chain/Program
+  selector. All accepted legacy aliases normalize to Program; legacy transform
+  rows, when present, are translated to program payloads at the Lambda boundary.
 - coeff_source_text_for_run / param_source_text_for_run: request-path
   precedence - non-blank source text wins over a chain. Blank strings are
   treated as absent because orchestrators add them as ASL JSONPath defaults.
@@ -43,30 +44,27 @@ class ParamSourceCompileError(ValueError):
 
 
 def pipeline_mode_from_params(params):
-    """Chain vs Program selection, with legacy aliases and inference."""
+    """Return the only supported compute pipeline mode.
+
+    Chain mode was retired after the native chain parsers were deleted. Keep
+    accepting old aliases so stale browser tabs and saved payloads still route
+    through the boundary translators instead of reaching native arrays.
+    """
     raw = str(params.get("pipeline_mode") or params.get("compute_pipeline_mode") or "").strip().lower()
     if not raw:
-        raw = "program" if (
-            params.get("param_program_chain")
-            or str(params.get("param_program_source_text") or "").strip()
-            or params.get("coeff_program_chain")
-            or str(params.get("coeff_program_source_text") or "").strip()
-            or params.get("param_program")
-            or params.get("coeff_program")
-        ) else "chain"
-    raw = {"legacy": "chain", "chains": "chain", "programs": "program"}.get(raw, raw)
-    if raw not in {"chain", "program"}:
-        raise ValueError("pipeline_mode must be one of chain, program")
-    return raw
+        return "program"
+    raw = {"legacy": "program", "chains": "program", "chain": "program", "programs": "program"}.get(raw, raw)
+    if raw != "program":
+        raise ValueError("pipeline_mode must be program")
+    return "program"
 
 
 def coeff_source_text_for_run(params, pipeline_mode):
     """Request-path source-vs-chain precedence.
 
     Returns the source text when it is authoritative for this run, else
-    None (use the chain). pipeline_mode=None skips the mode gate for
-    callers whose payloads are already mode-filtered upstream (the
-    coeffgen degree probe).
+    None (use the chain/legacy fallback). pipeline_mode is kept only for
+    old call sites; Chain mode normalizes to Program before this point.
     """
     if pipeline_mode is not None and pipeline_mode != "program":
         return None

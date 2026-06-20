@@ -791,7 +791,6 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
             job_id: jobId,
             run_id: runId,
             params: _attachProgramSourcePayload({
-                pipeline_mode: _selectedParamPipelineMode(),
                 solver_mode: solverMode,
                 N: n,
                 n_chunks: nChunks,

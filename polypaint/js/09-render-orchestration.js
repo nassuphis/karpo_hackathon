@@ -406,52 +406,28 @@ function _renderChips(which) {
         _syncParamPipelineModeUi();
         const sourceLen = _paramProgramSourceStatementCount(_getParamProgramSourceText());
         const chainLen = _serializeParamProgramChain().length;
-        if (_paramProgramModeSelected()) {
-            if (_paramProgramTextModeSelected()) {
-                _paramProgramStatus(sourceLen
-                    ? `Param Program selected · ${sourceLen} source statement${sourceLen === 1 ? '' : 's'}`
-                    : 'Param Program selected · empty identity');
-            } else {
-                _paramProgramStatus(chainLen
-                    ? `Param Program selected · ${_pluralize(chainLen, 'chip')}`
-                    : 'Param Program selected · empty identity');
-            }
+        if (_paramProgramTextModeSelected()) {
+            _paramProgramStatus(sourceLen
+                ? `Param Program selected · ${sourceLen} source statement${sourceLen === 1 ? '' : 's'}`
+                : 'Param Program selected · empty identity');
         } else {
-            if (_paramProgramTextModeSelected()) {
-                _paramProgramStatus(sourceLen
-                    ? `Chain pipeline selected · Param Program idle with ${sourceLen} source statement${sourceLen === 1 ? '' : 's'}`
-                    : 'Chain pipeline selected · Param Program empty');
-            } else {
-                _paramProgramStatus(chainLen
-                    ? `Chain pipeline selected · Param Program idle with ${_pluralize(chainLen, 'chip')}`
-                    : 'Chain pipeline selected · Param Program empty');
-            }
+            _paramProgramStatus(chainLen
+                ? `Param Program selected · ${_pluralize(chainLen, 'chip')}`
+                : 'Param Program selected · empty identity');
         }
     } else if (which === 'cp') {
         el.innerHTML = chain.map((item, i) => _renderCoeffProgramChipHtml(item, i, { readonly: true })).join('');
         _syncParamPipelineModeUi();
         const sourceLen = _coeffProgramSourceStatementCount(_getCoeffProgramSourceText());
         const chainLen = _serializeCoeffProgramChain().length;
-        if (_paramProgramModeSelected()) {
-            if (_coeffProgramTextModeSelected()) {
-                _coeffProgramStatus(sourceLen
-                    ? `Coeff Program selected · ${sourceLen} source statement${sourceLen === 1 ? '' : 's'}`
-                    : 'Coeff Program selected · empty text source');
-            } else {
-                _coeffProgramStatus(chainLen
-                    ? `Coeff Program selected · ${_pluralize(chainLen, 'chip')}`
-                    : 'Coeff Program selected · empty identity');
-            }
+        if (_coeffProgramTextModeSelected()) {
+            _coeffProgramStatus(sourceLen
+                ? `Coeff Program selected · ${sourceLen} source statement${sourceLen === 1 ? '' : 's'}`
+                : 'Coeff Program selected · empty text source');
         } else {
-            if (_coeffProgramTextModeSelected()) {
-                _coeffProgramStatus(sourceLen
-                    ? `Chain pipeline selected · Coeff Program text idle with ${sourceLen} source statement${sourceLen === 1 ? '' : 's'}`
-                    : 'Chain pipeline selected · Coeff Program text empty');
-            } else {
-                _coeffProgramStatus(chainLen
-                    ? `Chain pipeline selected · Coeff Program idle with ${_pluralize(chainLen, 'chip')}`
-                    : 'Chain pipeline selected · Coeff Program empty');
-            }
+            _coeffProgramStatus(chainLen
+                ? `Coeff Program selected · ${_pluralize(chainLen, 'chip')}`
+                : 'Coeff Program selected · empty identity');
         }
     } else if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {
         const catalog = _catalogForChain(which);

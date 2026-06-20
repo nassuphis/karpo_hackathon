@@ -436,7 +436,7 @@ const _ssCatalog = (() => {
 const _coeffProgramScalarExprHelp = 'Program mode accepts t1/t2, p1/p2, poly_len, cfN, polyN, tosN, pi, pi2, pi2i, literals, + - * /, and conj/real/imag/abs/angle/sqrt/log/exp/sin/cos/tan/sinh/cosh/tanh.';
 // kind: 'andy' is the semantic marker (filtering/serialization/validation
 // key off it); ph is display-only placeholder text.
-const _ctAndyParam = { kind: 'andy', ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: `Blend amount in [0,1]. ${_coeffProgramScalarExprHelp} In Chain mode it must be numeric.` };
+const _ctAndyParam = { kind: 'andy', ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: `Blend amount in [0,1]. ${_coeffProgramScalarExprHelp}` };
 function _isAndyParam(pDef) {
     return !!(pDef && pDef.kind === 'andy');
 }
@@ -995,7 +995,7 @@ function _syncCoeffTransformAddOptions() {
 
 let _ptChain = [];  // parameter transform chain (array of {name, params: [str,...]})
 let _ppChain = [];  // parameter program chain (array of {name, params: [str,...]})
-let _paramPipelineMode = 'chain';
+let _paramPipelineMode = 'program';
 let _ctChain = [];  // coefficient transform chain (array of {name, params: [str,...]})
 let _coeffProgramChain = [];  // coefficient program chain (array of {name, params: [str,...]})
 let _cfpv = [];     // coefficient function parameter vector (array of doubles)

@@ -232,28 +232,20 @@ def _compile_compute_inputs(params):
         parsed_param_source = parse_param_source_for_run(param_program_source_text)
         param_program_chain = parsed_param_source["chain"]
     else:
-        param_program_chain = params.get("param_program_chain") if pipeline_mode == "program" else param_transforms_to_program_chain(param_transforms)
+        param_program_chain = params.get("param_program_chain") or param_transforms_to_program_chain(param_transforms)
     coeff_program_source_text = coeff_source_text_for_run(params, pipeline_mode)
     if coeff_program_source_text is not None:
         parsed_coeff_source = parse_coeff_source_for_run(coeff_program_source_text)
         coeff_program_chain = parsed_coeff_source["chain"]
     else:
-        coeff_program_chain = params.get("coeff_program_chain") if pipeline_mode == "program" else []
+        coeff_program_chain = params.get("coeff_program_chain") or coeff_transforms_to_program_chain(coeff_transforms)
     param_program = None
     coeff_program = None
     compiled_param_program = None
     compiled_coeff_program = None
 
-    if pipeline_mode == "program":
-        param_transforms = []
-        coeff_transforms = []
-    else:
-        if not param_program_chain:
-            param_program_chain = []
-        if not coeff_program_chain:
-            coeff_program_chain = coeff_transforms_to_program_chain(coeff_transforms)
-        param_program_source_text = None
-        coeff_program_source_text = None
+    param_transforms = []
+    coeff_transforms = []
 
     if param_program_chain:
         if not isinstance(param_program_chain, list):

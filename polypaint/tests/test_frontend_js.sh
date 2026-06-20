@@ -101,7 +101,7 @@ assertIncludes("unit_circle: { params: [{ph:'target', def:'both', target: true}]
 assertIncludes("rtheta: { params: [{ph:'p', def:'1'}, {ph:'target', def:'both', target: true}] }", 'rtheta target selector should preserve legacy p-first ordering');
 assertIncludes("square: { params: [{ph:'target', def:'both', target: true}] }", 'square param transform should expose target selection');
 assertIncludes("id=\"param-program-manage\" onclick=\"openParamProgramModal()\"", 'compute tab should expose Param Programs modal launcher');
-assertIncludes("id=\"param-pipeline-mode\" onchange=\"_setParamPipelineMode(this.value, {markStale:true})\"", 'compute tab should expose explicit legacy-vs-param-program selector');
+assertNotIncludes("id=\"param-pipeline-mode\"", 'compute tab should not expose retired Chain/Program selector');
 assertIncludes("id=\"pp-chips\" class=\"chip-container param-program-display\"", 'compute tab should expose param-program chip display');
 assertIncludes("id=\"param-program-tab-text\" class=\"compute-preview-tab-btn active\" onclick=\"_setParamProgramEditorMode('text')\"", 'Param Program should expose an active Text editor tab');
 assertIncludes("id=\"param-program-tab-chips\" class=\"compute-preview-tab-btn\" onclick=\"_setParamProgramEditorMode('chips')\">Chips (read-only)</button>", 'Param Program chips tab should be readonly display');
@@ -111,7 +111,7 @@ assertIncludes("function _paramProgramSourceFromRows(chain) {", 'Param Program s
 assertIncludes("lambdaPost('storage', { source_text: sourceText }, '/compile-param-program-source')", 'Param Program text editor should validate against the backend parser');
 assertIncludes("function _selectedParamPipelineMode() {", 'frontend should centralize selected parameter pipeline mode');
 assertIncludes("function _formatChainRowsForLog(chain, separator = ',') {", 'compute preview logging should use a shared safe chain formatter');
-assertIncludes("return _formatChainRowsForLog(_serializeCoeffTransforms(), separator) || 'none';", 'Chain-mode coeff preview logging should format serialized rows instead of string display values');
+assertIncludes("return _formatCoeffProgramChainForLog(_serializeCoeffProgramChain(), separator);", 'Program-only coeff preview logging should format the read-only program chip view when text is inactive');
 assertIncludes("function _computePreviewViewportInfoLines(result) {", 'compute preview plot info should format returned viewport bounds');
 assertIncludes("viewport Re: ${minRe} .. ${maxRe}", 'compute preview plot info should show displayed Re viewport bounds');
 assertIncludes("viewport Im: ${minIm} .. ${maxIm}", 'compute preview plot info should show displayed Im viewport bounds');
@@ -258,7 +258,7 @@ assertIncludes("${fn}<span>(</span>${src}<span class=\"chip-op\">*</span>${field
 assertIncludes("Legacy coefficient transform function. Compiled to a stable numeric function index.", 'Coeff Program legacy function selector should explain what it selects');
 assertIncludes("Input vector: cf read-only coefficients, current poly, pop stack, or peek stack.", 'Coeff Program legacy src selector should have a tooltip');
 assertIncludes("Output target: write poly or push the result onto the stack.", 'Coeff Program legacy tgt selector should have a tooltip');
-assertIncludes("Blend amount in [0,1]. ${_coeffProgramScalarExprHelp} In Chain mode it must be numeric.", 'Coeff Program andy fields should advertise expression support');
+assertIncludes("Blend amount in [0,1]. ${_coeffProgramScalarExprHelp}", 'Coeff Program andy fields should advertise expression support');
 assertIncludes("const _coeffProgramScalarExprHelp = 'Program mode accepts t1/t2, p1/p2, poly_len, cfN, polyN, tosN, pi, pi2, pi2i, literals, + - * /, and conj/real/imag/abs/angle/sqrt/log/exp/sin/cos/tan/sinh/cosh/tanh.';", 'Coeff Program expression help should advertise pi, pi2, pi2i, and elementary scalar functions');
 assertIncludes("function _parseCtComplexConstant(value) {", 'frontend should parse complex constants consistently for coefficient inputs');
 assertIncludes("function _formatCfpvForDisplay(funcName, cfpv) {", 'coefficient function parameters should have a logical display formatter');
@@ -624,7 +624,7 @@ function assert(cond, message) {
 async function main() {
   const solveScoreCatalogBlock = extractBetween(
     "const _solveScoreMetricNames = [",
-    "const _ctAndyParam = { kind: 'andy', ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: `Blend amount in [0,1]. ${_coeffProgramScalarExprHelp} In Chain mode it must be numeric.` };",
+    "const _ctAndyParam = { kind: 'andy', ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: `Blend amount in [0,1]. ${_coeffProgramScalarExprHelp}` };",
     'solve-score catalog block'
   );
   const code = [
@@ -942,7 +942,6 @@ async function main() {
   assert(ctx._extractPaletteLineageHint(scalarLegacyColor).kind === 'solve_score', 'ExtractPalette lineage hint should retain legacy scalar dispatch');
 
   const previewLogCode = [
-    "var _programMode = false; function _paramProgramModeSelected() { return _programMode; }",
     extractFunction('_formatChainRowsForLog'),
     extractFunction('_formatParamProgramChainForLog'),
     extractFunction('_displayActiveParamPipeline'),
@@ -951,15 +950,12 @@ async function main() {
   ].join('\n\n');
   const previewCtx = {
     _serializeParamProgramChain() { return [['push', 't1'], ['emit', 'p1']]; },
-    _displayParamTransforms() { return [['unit_circle', 'both']]; },
-  _serializeCoeffProgramChain() { return [['rev', 'poly', 'poly'], ['emit']]; },
-    _serializeCoeffTransforms() { return ['rev', ['exp', '0.5']]; },
+    _displayParamTransforms() { throw new Error('legacy param transforms should not be displayed'); },
+    _serializeCoeffProgramChain() { return [['rev', 'poly', 'poly'], ['emit']]; },
+    _serializeCoeffTransforms() { throw new Error('legacy coeff transforms should not be displayed'); },
   };
   vm.createContext(previewCtx);
   vm.runInContext(previewLogCode, previewCtx);
-  assert(previewCtx._displayActiveCoeffPipeline(',') === 'rev,exp(0.5)', 'Chain-mode coeff preview log should not throw on string transform rows');
-  assert(previewCtx._displayActiveParamPipeline(',') === 'unit_circle(both)', 'Chain-mode param preview log should format transform rows');
-  vm.runInContext('_programMode = true;', previewCtx);
   assert(previewCtx._displayActiveCoeffPipeline(',') === 'rev(poly,poly),emit', 'Program-mode coeff preview log should format direct native program rows');
   assert(previewCtx._displayActiveParamPipeline(',') === 'push(t1),emit(p1)', 'Program-mode param preview log should format program rows');
 

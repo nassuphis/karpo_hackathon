@@ -654,7 +654,7 @@ def _lower_call(name, args, *, target="push"):
         return [["macro", macro_name]]
     if name == "legacy":
         raise CoeffProgramSourceError(
-            "legacy(...) is not valid in coeff source text; use Chain mode for legacy chains or call the transform directly"
+            "legacy(...) is not valid in coeff source text; call the transform directly"
         )
     if name in legacy_registry()["by_name"]:
         return _lower_native_transform_call(name, args, target=target)

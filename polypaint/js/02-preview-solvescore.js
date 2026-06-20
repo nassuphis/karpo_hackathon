@@ -140,7 +140,7 @@ function _formatComputeDebugResult(result) {
     const coeff = debug.coeff || {};
     const lines = [
         `stage: ${result.stage || 'debug'}`,
-        `mode: ${result.pipeline_mode || 'chain'}`,
+        `mode: ${result.pipeline_mode || 'program'}`,
         `u,v: ${debug.u}, ${debug.v}`,
         `t1: ${_formatDebugComplex(param.t1)}`,
         `t2: ${_formatDebugComplex(param.t2)}`,
@@ -203,7 +203,6 @@ async function runComputeDebug(stage) {
     try {
         const result = await lambdaPost('compute-preview', _attachProgramSourcePayload({
             debug_stage: stage,
-            pipeline_mode: _selectedParamPipelineMode(),
             N_preview: nPreview,
             function: funcName,
             u,
@@ -268,7 +267,6 @@ async function runComputePreview() {
         const cfpvDisplay = _formatCfpvForDisplay(funcName, cfpv);
         log(`Compute preview (${_solverTag(solverMode)}): [${ptDisplay || 'none'}] ${funcName}${cfpvDisplay ? '(' + cfpvDisplay + ')' : ''} [${ctDisplay || coeffTransformsDisplay.join(',') || 'none'}] N-preview=${nPreview} · pix=${previewSize} · q=${(quantile * 100).toFixed(1)}% · shim=${(shim * 100).toFixed(1)}%...`, '', 'compute-log');
         const result = await lambdaPost('compute-preview', _attachProgramSourcePayload({
-            pipeline_mode: _selectedParamPipelineMode(),
             solver_mode: solverMode,
             N_preview: nPreview,
             preview_size: previewSize,
@@ -363,13 +361,7 @@ function _populateComputeFromDetail(jobId, detail) {
     _setChainFromSaved('cp', savedCoeffProgramChain);
     _setCoeffProgramSourceText(savedCoeffProgramSourceText);
     _setCoeffProgramEditorMode(savedCoeffProgramSourceText.trim() ? 'text' : 'chips');
-    _setParamPipelineMode(String(pipeline.pipeline_mode || detail.pipeline_mode || '').toLowerCase() === 'program' ||
-        (Array.isArray(savedParamProgramChain) && savedParamProgramChain.length) ||
-        savedParamProgramSourceText.trim() ||
-        (Array.isArray(savedCoeffProgramChain) && savedCoeffProgramChain.length) ||
-        savedCoeffProgramSourceText.trim()
-        ? 'program'
-        : 'chain');
+    _setParamPipelineMode('program');
     _setChainFromSaved('ct', pipeline.coeff_transforms || detail.coeff_transforms || []);
 
     const savedCfpv = Array.isArray(pipeline.cfpv) ? pipeline.cfpv : [];

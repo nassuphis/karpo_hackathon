@@ -193,7 +193,7 @@ class TestComputePlan(unittest.TestCase):
         self.assertTrue(param_plan["pipeline"]["param_program_fingerprint"])
         self.assertEqual(param_plan["pipeline"]["coeff_program"], {})
 
-    def test_build_plan_keeps_legacy_equivalent_param_program_on_fast_path(self):
+    def test_build_plan_keeps_legacy_equivalent_param_program_as_vm_payload(self):
         import handler_compute_plan as mod
 
         result = mod.handle_build_plan({
@@ -213,8 +213,9 @@ class TestComputePlan(unittest.TestCase):
             },
         })
         plan = json.loads(result["body"])
-        self.assertEqual(plan["pipeline"]["param_transforms"], [["rtheta", "1"]])
-        self.assertEqual(plan["pipeline"]["param_program"], {})
+        self.assertEqual(plan["pipeline"]["param_transforms"], [])
+        self.assertEqual(plan["pipeline"]["param_program"]["token_count"], 1)
+        self.assertTrue(plan["pipeline"]["param_program"]["uses_legacy_fast_path"])
         self.assertTrue(plan["pipeline"]["param_program_fingerprint"])
         self.assertTrue(plan["pipeline"]["param_program_uses_legacy_fast_path"])
 
@@ -309,10 +310,12 @@ class TestComputePlan(unittest.TestCase):
                     "coeff_program_chain": [["macro", "poly-test1"]],
                     "cfpv": [3, 1, 0],
                 },
-            })
+        })
         plan = json.loads(result["body"])
-        self.assertEqual(plan["pipeline"]["coeff_transforms"], [["rev"]])
-        self.assertEqual(plan["pipeline"]["coeff_program"], {})
+        self.assertEqual(plan["pipeline"]["coeff_transforms"], [])
+        self.assertEqual(plan["pipeline"]["coeff_program"]["token_count"], 1)
+        self.assertTrue(plan["pipeline"]["coeff_program"]["uses_legacy_chain_equivalent"])
+        self.assertTrue(plan["pipeline"]["coeff_program_uses_legacy_chain_equivalent"])
         fake_s3.get_object.assert_called_once_with(
             Bucket=mod.BUCKET,
             Key="polypaint/coeff-programs/poly-test1.json",

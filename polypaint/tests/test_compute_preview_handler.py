@@ -259,8 +259,10 @@ class TestComputePreviewHandler(unittest.TestCase):
             Bucket=mod.BUCKET,
             Key="polypaint/coeff-programs/poly-test1.json",
         )
-        self.assertEqual(specs[0]["coeff_transforms"], [["rev"]])
-        self.assertNotIn("coeff_program", specs[0])
+        self.assertEqual(specs[0]["coeff_transforms"], [])
+        self.assertIn("coeff_program", specs[0])
+        self.assertEqual(specs[0]["coeff_program"]["token_count"], 1)
+        self.assertTrue(specs[0]["coeff_program"]["uses_legacy_chain_equivalent"])
 
     @patch("handler_compute_preview.subprocess.run")
     def test_compute_debug_poly_forwards_poke_coeff_program(self, mock_run):
@@ -420,8 +422,9 @@ class TestComputePreviewHandler(unittest.TestCase):
         ))}, None)
 
         self.assertEqual(result["statusCode"], 200)
-        self.assertEqual(specs[0]["coeff_transforms"], [["rev"]])
-        self.assertNotIn("coeff_program", specs[0])
+        self.assertEqual(specs[0]["coeff_transforms"], [])
+        self.assertIn("coeff_program", specs[0])
+        self.assertEqual(specs[0]["coeff_program"]["token_count"], 2)
 
     @patch("handler_compute_preview.tmp_space_stats")
     @patch("handler_compute_preview.subprocess.run")
@@ -478,11 +481,19 @@ class TestComputePreviewHandler(unittest.TestCase):
         ))}, None)
 
         self.assertEqual(result["statusCode"], 200)
-        self.assertNotIn("param_program", specs[0])
-        self.assertEqual(specs[0]["param_transforms"][0], ["unit_circle"])
-        self.assertEqual(specs[0]["param_transforms"][1][0], "moebius")
+        self.assertEqual(specs[0]["param_transforms"], [])
+        self.assertIn("param_program", specs[0])
+        self.assertTrue(specs[0]["param_program"]["uses_legacy_fast_path"])
+        self.assertEqual(specs[0]["param_program"]["tokens"][0]["fn_index"], 2)
+        self.assertEqual(specs[0]["param_program"]["tokens"][1]["fn_index"], 19)
         self.assertEqual(
-            [complex(value.replace("i", "j")) for value in specs[0]["param_transforms"][1][1:]],
+            [
+                complex(re, im)
+                for re, im in zip(
+                    specs[0]["param_program"]["tokens"][1]["args"],
+                    specs[0]["param_program"]["tokens"][1]["args_im"],
+                )
+            ],
             [1 - 2j, 2 + 1j, 4 - 2j, -3 + 10j],
         )
 

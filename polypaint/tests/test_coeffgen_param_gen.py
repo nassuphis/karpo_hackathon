@@ -89,7 +89,10 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
         spec = json.loads(proc.stdin.data.decode("utf-8"))
         self.assertEqual(spec["mode"], "param_gen")
         self.assertEqual(spec["n_threads"], 6)
-        self.assertEqual(spec["param_transforms"], [["unit_circle"]])
+        self.assertEqual(spec["param_transforms"], [])
+        self.assertIn("param_program", spec)
+        self.assertEqual(spec["param_program"]["token_count"], 1)
+        self.assertTrue(spec["param_program"]["uses_legacy_fast_path"])
         self.assertEqual(spec["step_start"], 4)
         self.assertEqual(spec["step_count"], 4)
 
@@ -317,7 +320,7 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
 
     @patch("handler_coeffgen.os.remove")
     @patch("handler_coeffgen.subprocess.run")
-    def test_degree_probe_keeps_legacy_equivalent_param_program_on_fast_path(self, mock_run, mock_remove):
+    def test_degree_probe_keeps_legacy_equivalent_param_program_as_vm_payload(self, mock_run, mock_remove):
         import handler_coeffgen as mod
 
         captured_specs = []
@@ -338,8 +341,10 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
         body = json.loads(result["body"])
         self.assertTrue(body["probe_stable"])
         self.assertEqual(len(captured_specs), 2)
-        self.assertEqual(captured_specs[0]["param_transforms"], [["rtheta", "1"]])
-        self.assertNotIn("param_program", captured_specs[0])
+        self.assertEqual(captured_specs[0]["param_transforms"], [])
+        self.assertIn("param_program", captured_specs[0])
+        self.assertEqual(captured_specs[0]["param_program"]["token_count"], 1)
+        self.assertTrue(captured_specs[0]["param_program"]["uses_legacy_fast_path"])
 
     @patch("handler_coeffgen.os.remove")
     @patch("handler_coeffgen.subprocess.run")
@@ -403,8 +408,10 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
             Bucket=mod.BUCKET,
             Key="polypaint/coeff-programs/poly-test1.json",
         )
-        self.assertEqual(captured_specs[0]["coeff_transforms"], [["rev"], ["swirler"]])
-        self.assertNotIn("coeff_program", captured_specs[0])
+        self.assertEqual(captured_specs[0]["coeff_transforms"], [])
+        self.assertIn("coeff_program", captured_specs[0])
+        self.assertEqual(captured_specs[0]["coeff_program"]["token_count"], 2)
+        self.assertTrue(captured_specs[0]["coeff_program"]["uses_legacy_chain_equivalent"])
 
     @patch("handler_coeffgen.os.remove")
     @patch("handler_coeffgen.subprocess.run")
@@ -467,8 +474,10 @@ class TestCoeffgenParamGenHandler(unittest.TestCase):
             Bucket=mod.BUCKET,
             Key="polypaint/param-programs/unit.json",
         )
-        self.assertEqual(captured_specs[0]["param_transforms"], [["unit_circle"]])
-        self.assertNotIn("param_program", captured_specs[0])
+        self.assertEqual(captured_specs[0]["param_transforms"], [])
+        self.assertIn("param_program", captured_specs[0])
+        self.assertEqual(captured_specs[0]["param_program"]["token_count"], 1)
+        self.assertTrue(captured_specs[0]["param_program"]["uses_legacy_fast_path"])
 
 
 if __name__ == "__main__":

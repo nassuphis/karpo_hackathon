@@ -124,3 +124,41 @@ def parse_param_source_for_run(source_text):
             summary += f" (+{len(diagnostics) - 1} more)"
         raise ParamSourceCompileError(summary, diagnostics)
     return parsed
+
+
+def _transform_row_name_args(row, *, label):
+    if isinstance(row, str):
+        name = row.strip()
+        args = []
+    elif isinstance(row, list) and row:
+        name = str(row[0] or "").strip()
+        args = [str(arg) for arg in row[1:]]
+    else:
+        raise ValueError(f"{label} transform row must be a non-empty string or array")
+    if not name:
+        raise ValueError(f"{label} transform name is empty")
+    return name, args
+
+
+def param_transforms_to_program_chain(transforms):
+    """Translate legacy Param Chain rows into Param Program legacy chips."""
+    chain = []
+    for row in list(transforms or []):
+        name, args = _transform_row_name_args(row, label="param")
+        chain.append(["legacy", name, "both", "both", *args])
+    return chain
+
+
+def coeff_transforms_to_program_chain(transforms):
+    """Translate legacy Coeff Chain rows into a Coeff Program.
+
+    Coeff Program starts with poly initialized from cf; each legacy transform
+    mutates poly in-place; emit finalizes the result.
+    """
+    chain = []
+    for row in list(transforms or []):
+        name, args = _transform_row_name_args(row, label="coeff")
+        chain.append(["legacy", name, "poly", "poly", *args])
+    if chain:
+        chain.append(["emit"])
+    return chain

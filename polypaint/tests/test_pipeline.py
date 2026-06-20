@@ -1150,10 +1150,16 @@ class TestCoeffgenHandler(unittest.TestCase):
         body = json.loads(result["body"])
         self.assertEqual(result["statusCode"], 200)
 
-        # Verify transforms passed through to sweep spec
+        # Phase 5: handler boundaries translate legacy chain rows to VM
+        # payloads; native transform arrays stay inert.
         spec = json.loads(mock_subprocess.run.call_args[1]["input"])
-        self.assertEqual(spec["param_transforms"], ["unit_circle", "square"])
-        self.assertEqual(spec["coeff_transforms"], ["rev", "conj"])
+        self.assertEqual(spec["param_transforms"], [])
+        self.assertIn("param_program", spec)
+        self.assertEqual(spec["param_program"]["token_count"], 2)
+        self.assertTrue(spec["param_program"]["uses_legacy_fast_path"])
+        self.assertEqual(spec["coeff_transforms"], [])
+        self.assertIn("coeff_program", spec)
+        self.assertEqual(spec["coeff_program"]["token_count"], 3)
 
     @patch("builtins.open")
     @patch("handler_coeffgen.os.path.getsize")

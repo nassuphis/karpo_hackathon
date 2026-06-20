@@ -24,7 +24,9 @@ from coeff_program_chain import compile_coeff_program_chain
 from pipeline_programs import (
     ParamSourceCompileError,
     coeff_source_text_for_run,
+    coeff_transforms_to_program_chain,
     param_source_text_for_run,
+    param_transforms_to_program_chain,
     parse_coeff_source_for_run,
     parse_param_source_for_run,
     pipeline_mode_from_params,
@@ -151,9 +153,12 @@ def handle_build_plan(params):
         param_transforms = []
     if not isinstance(param_transforms, list):
         raise RuntimeError("param_transforms must be an array")
+    param_transforms_display = list(param_transforms)
+    coeff_transforms_display = list(coeff_transforms)
     if pipeline_mode == "program":
-        # Program mode is explicit: legacy transform chains are idle unless a
-        # compiled program lowers exactly to the legacy chain representation.
+        # Program mode is explicit: legacy transform arrays are idle. Program
+        # payloads execute legacy chips through the VM instead of native chain
+        # parsers.
         param_transforms = []
         coeff_transforms = []
     param_program_source_text = param_source_text_for_run(run_params, pipeline_mode)
@@ -162,7 +167,7 @@ def handle_build_plan(params):
         param_program_chain = parsed_param_source["chain"]
     else:
         parsed_param_source = None
-        param_program_chain = run_params.get("param_program_chain") if pipeline_mode == "program" else []
+        param_program_chain = run_params.get("param_program_chain") if pipeline_mode == "program" else param_transforms_to_program_chain(param_transforms)
     param_program = None
     param_program_metadata = None
     if param_program_chain:
@@ -180,11 +185,8 @@ def handle_build_plan(params):
             "token_count": compiled_param_program["token_count"],
             "uses_legacy_fast_path": compiled_param_program["uses_legacy_fast_path"],
         }
-        if compiled_param_program["legacy_transforms"]:
-            param_transforms = compiled_param_program["legacy_transforms"]
-        else:
-            param_transforms = []
-            param_program = _compiled_param_program_payload(compiled_param_program)
+        param_transforms = []
+        param_program = _compiled_param_program_payload(compiled_param_program)
     coeff_program_source_text = coeff_source_text_for_run(run_params, pipeline_mode)
     if coeff_program_source_text is not None:
         # Structured compile: a failure carries line/column in its message,
@@ -193,7 +195,7 @@ def handle_build_plan(params):
         coeff_program_chain = parsed_coeff_source["chain"]
     else:
         parsed_coeff_source = None
-        coeff_program_chain = run_params.get("coeff_program_chain") if pipeline_mode == "program" else []
+        coeff_program_chain = run_params.get("coeff_program_chain") if pipeline_mode == "program" else coeff_transforms_to_program_chain(coeff_transforms)
     coeff_program = None
     coeff_program_metadata = None
     if coeff_program_chain:
@@ -212,11 +214,8 @@ def handle_build_plan(params):
             "scalar_expr_count": compiled_coeff_program["scalar_expr_count"],
             "uses_legacy_chain_equivalent": compiled_coeff_program["uses_legacy_chain_equivalent"],
         }
-        if compiled_coeff_program["legacy_coeff_transforms"]:
-            coeff_transforms = compiled_coeff_program["legacy_coeff_transforms"]
-        else:
-            coeff_transforms = []
-            coeff_program = _compiled_coeff_program_payload(compiled_coeff_program)
+        coeff_transforms = []
+        coeff_program = _compiled_coeff_program_payload(compiled_coeff_program)
 
     cfpv = run_params.get("cfpv")
     if cfpv in (None, ""):
@@ -289,7 +288,7 @@ def handle_build_plan(params):
             "pipeline_mode": pipeline_mode,
             "function": function_name,
             "param_transforms": param_transforms,
-            "param_transforms_display": param_transforms,
+            "param_transforms_display": param_transforms_display,
             "param_program_chain": param_program_chain or [],
             "param_program_source_text": param_program_source_text if param_program_source_text is not None else "",
             "param_program": param_program or {},
@@ -297,6 +296,7 @@ def handle_build_plan(params):
             "param_program_fingerprint": str((param_program_metadata or {}).get("fingerprint") or ""),
             "param_program_uses_legacy_fast_path": bool((param_program_metadata or {}).get("uses_legacy_fast_path")),
             "coeff_transforms": coeff_transforms,
+            "coeff_transforms_display": coeff_transforms_display,
             "coeff_program_chain": coeff_program_chain or [],
             "coeff_program_source_text": coeff_program_source_text if coeff_program_source_text is not None else "",
             "coeff_program": coeff_program or {},
@@ -579,6 +579,7 @@ def handle_finalize_metadata(params):
             "param_program_uses_legacy_fast_path": bool(plan["pipeline"].get("param_program_uses_legacy_fast_path")),
             "function": plan["pipeline"]["function"],
             "coeff_transforms": plan["pipeline"]["coeff_transforms"],
+            "coeff_transforms_display": plan["pipeline"].get("coeff_transforms_display", plan["pipeline"]["coeff_transforms"]),
             "coeff_program_chain": plan["pipeline"].get("coeff_program_chain", []),
             "coeff_program_source_text": plan["pipeline"].get("coeff_program_source_text", ""),
             "coeff_program": plan["pipeline"].get("coeff_program", {}),

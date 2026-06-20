@@ -48,8 +48,8 @@ from coeff_program_chain import (
 from program_source_core import (
     ProgramSourceError,
     ProfileStatementLowerer,
-    diagnostic as _core_diagnostic,
     find_top_level_assignment,
+    parse_profile_source,
     parse_call,
     profile_selectors,
     profile_symbols_with_context,
@@ -155,15 +155,6 @@ class CoeffProgramSourceCompileError(RuntimeError):
         self.diagnostics = list(diagnostics or [])
         message = "; ".join(d["message"] for d in self.diagnostics if d.get("level") == "error")
         super().__init__(message or "invalid coeff program source")
-
-
-def _diagnostic(message, *, line=1, column=1, code=None):
-    return _core_diagnostic(
-        str(message),
-        line=line,
-        column=column,
-        code=code or getattr(message, "code", "source_error"),
-    )
 
 
 def _canonical_expr(text):
@@ -841,34 +832,18 @@ def parse_coeff_program_source(source_text, *, strict=True):
     """Lower source text to a chip chain: {chain, display, statement_count,
     diagnostics}.
 
-    strict=True raises RuntimeError on the first error; strict=False skips
-    failing statements and reports them in diagnostics (callers must check
-    before persisting the partial chain).
+    The shared parser core owns splitting, diagnostic shape, and strict vs
+    non-strict behavior. Coeff supplies only profile-specific semantic hooks.
     """
-    diagnostics = []
-    chain = []
-    try:
-        statements = split_coeff_program_statements(source_text)
-    except CoeffProgramSourceError as exc:
-        diagnostics.append(_diagnostic(exc, line=exc.line or 1, column=exc.column or 1))
-        if strict:
-            raise CoeffProgramSourceCompileError(diagnostics) from exc
-        return {"chain": [], "display": "", "statement_count": 0, "diagnostics": diagnostics}
-    for stmt in statements:
-        try:
-            chain.extend(_lower_statement(stmt))
-        except CoeffProgramSourceError as exc:
-            diagnostics.append(_diagnostic(exc, line=exc.line or stmt.line, column=exc.column or stmt.column))
-        except Exception as exc:
-            diagnostics.append(_diagnostic(exc, line=stmt.line, column=stmt.column))
-    if diagnostics and strict:
-        raise CoeffProgramSourceCompileError(diagnostics)
-    return {
-        "chain": chain,
-        "display": display_coeff_program_chain(chain),
-        "statement_count": len(statements),
-        "diagnostics": diagnostics,
-    }
+    return parse_profile_source(
+        source_text,
+        lowerer=_COEFF_STATEMENT_LOWERER,
+        display_fn=display_coeff_program_chain,
+        error_cls=CoeffProgramSourceError,
+        compile_error_cls=CoeffProgramSourceCompileError,
+        max_bytes=MAX_COEFF_PROGRAM_SOURCE_BYTES,
+        strict=strict,
+    )
 
 
 def compile_coeff_program_source(source_text, *, macro_resolver=None, strict=True):

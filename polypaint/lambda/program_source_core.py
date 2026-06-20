@@ -41,6 +41,16 @@ def diagnostic(message, *, line=1, column=1, code="source_error", level="error")
     }
 
 
+def diagnostic_from_exception(exc, *, line=1, column=1, level="error"):
+    return diagnostic(
+        str(exc),
+        line=line,
+        column=column,
+        code=getattr(exc, "code", "source_error"),
+        level=level,
+    )
+
+
 def _profiles_path():
     return os.path.join(os.path.dirname(__file__), "program_profiles.json")
 
@@ -336,3 +346,70 @@ class ProfileStatementLowerer:
 
     def lower_bare_statement(self, statement, text):
         raise NotImplementedError
+
+
+def parse_profile_source(
+    source_text,
+    *,
+    lowerer,
+    display_fn,
+    error_cls=ProgramSourceError,
+    compile_error_cls=None,
+    max_bytes=None,
+    strict=True,
+):
+    """Split, lower, and diagnose a profile-backed source program.
+
+    The active profile supplies only `lowerer.lower_statement`. This shared
+    routine owns the orchestration contract for source parsers: one splitter,
+    consistent source spans, strict/non-strict behavior, diagnostic shape, and
+    display rendering.
+    """
+
+    diagnostics = []
+    chain = []
+    try:
+        statements = split_program_statements(
+            source_text,
+            error_cls=error_cls,
+            max_bytes=max_bytes,
+        )
+    except error_cls as exc:
+        diagnostics.append(
+            diagnostic_from_exception(
+                exc,
+                line=getattr(exc, "line", 0) or 1,
+                column=getattr(exc, "column", 0) or 1,
+            )
+        )
+        if strict:
+            if compile_error_cls is not None:
+                raise compile_error_cls(diagnostics) from exc
+            messages = "; ".join(d["message"] for d in diagnostics)
+            raise RuntimeError(messages or "invalid program source") from exc
+        return {"chain": [], "display": "", "statement_count": 0, "diagnostics": diagnostics}
+
+    for stmt in statements:
+        try:
+            chain.extend(lowerer.lower_statement(stmt))
+        except error_cls as exc:
+            diagnostics.append(
+                diagnostic_from_exception(
+                    exc,
+                    line=getattr(exc, "line", 0) or stmt.line,
+                    column=getattr(exc, "column", 0) or stmt.column,
+                )
+            )
+        except Exception as exc:
+            diagnostics.append(diagnostic_from_exception(exc, line=stmt.line, column=stmt.column))
+    if diagnostics and strict:
+        if compile_error_cls is not None:
+            raise compile_error_cls(diagnostics)
+        messages = "; ".join(d["message"] for d in diagnostics)
+        raise RuntimeError(messages or "invalid program source")
+    return {
+        "chain": chain,
+        "display": display_fn(chain) if chain else "",
+        "statement_count": len(statements),
+        "diagnostics": diagnostics,
+    }

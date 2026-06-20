@@ -737,7 +737,26 @@ Once those two land, the project finally has the intended shape: four profiles, 
 
 ## Implementation Section - Exact Steps
 
-This section is the implementation ticket. Do these in order; later steps depend on earlier source/identity contracts.
+This section is the implementation ticket and the **authoritative** specification — the "Root Program Design" and "Solve-Score Program Design" sections above are rationale/background, and **on any conflict these Steps win**. Do them in order; later steps depend on earlier source/identity contracts.
+
+**Step → Phase map.** Steps 0–11 deliver **Phase 6A** (root source/profile) + **Phase 6B** (solve-score source), both on the short-term native wire. **Phase 6C (native-wire cleanup) has no Step here** — it is a separate later ticket gated by the solve-score oracle and the whole-sweep byte oracle.
+
+| Step | Phase |
+|---|---|
+| 0 Fix shared metadata drift | prerequisite (both) |
+| 1 Extend `program_source_core.py` | 6A + 6B foundation |
+| 2 Root source module | 6A |
+| 3 Root resolver + embedded payload | 6A |
+| 4 Solve-score source module | 6B |
+| 5 Update v2 translation | 6A + 6B |
+| 6 Solve-score storage | 6B |
+| 7 Solve-score resolver | 6B |
+| 8 Workflow + artifact metadata | 6A + 6B |
+| 9 UI source tabs + populate | 6A + 6B |
+| 10 Deployment packaging | 6A + 6B |
+| 11 Required test gates | all |
+
+Root (6A) is shippable through Steps 0–3 plus the root slices of 5/8/9/10; solve-score (6B) adds Steps 4/6/7 plus the score slices.
 
 ### Step 0 - Fix Shared Metadata Drift
 
@@ -751,7 +770,7 @@ This section is the implementation ticket. Do these in order; later steps depend
    - Assert solve-score profile `program_tokens == solve_score_chain.MAX_PROGRAM_TOKENS`.
    - Assert solve-score profile metric slot cap equals `solve_score_chain.MAX_METRIC_SLOTS`.
    - Assert solve-score profile output channel cap equals `solve_score_chain.MAX_OUTPUT_CHANNELS`.
-   - Assert root profile references `root_legacy_registry.json` and the registry names match `root_xforms.h`.
+   - Assert root profile references `root_legacy_registry.json` and the registry names match `root_xforms.h`. (Root's `value_caps.program_tokens`/stack fields are **nominal** — root is not a token/stack VM — so do not assert them against a native constant; for root only the registry-name match matters.)
 
 ### Step 1 - Extend `program_source_core.py`
 
@@ -919,9 +938,9 @@ Grammar:
 - Explicit emits: `emit(expr)`, `emit_norm(expr)`, `emit_none(expr)`
 - Metric leaf: `metric(metric_name, source, q=0.1%, lag=0|1)`
 - Function calls: current solve-score op set from `solve_score_chain.py`
-- Expressions are call-tree expressions: metric calls, numeric literals, `const(value)`, local names, and named solve-score functions. Do not add general infix arithmetic in v1.
+- Expressions are call-tree expressions: metric calls, numeric literals, `const(value)`, local names, and named solve-score functions. **Infix arithmetic is rejected with a diagnostic** in the solve-score profile — the shared core may parse `a+b` for Param/Coeff, but the solve-score profile must reject it (call-tree only), never silently lower it.
 - No bare expression statements in v1.
-- Compatibility statements `dup()` and `flush()` are valid only to preserve old stack-chain identity; generated source may use them when needed.
+- Compatibility statements `dup()` and `flush()` are valid only to preserve old stack-chain identity; generated source may use them when needed. **These make the parser stack-aware, not purely expression-based**: it must track stack depth so a `dup()`/`flush()` against an invalid stack state is a diagnostic. Implement this as a small stack-depth check alongside the expression lowering — it is the only non-expression state the solve-score parser carries.
 
 Local semantics:
 
@@ -986,7 +1005,7 @@ Tests:
 - Root migration emits `program_kind: "root_program"`.
 - Root migration default-expands omitted args before fingerprinting.
 - Solve-score migration now includes reparseable `source_text`.
-- Existing `test_migrate_solve_score_program_dry_run_has_no_source_text` is inverted/renamed to require source text.
+- Existing `test_migrate_solve_score_program_dry_run_has_no_source_text` is inverted/renamed to require source text. **This deliberately changes the CR18 §4.4 per-kind migrate-response contract** — solve-score previously returned `program_spec` with *no* `source_text`; update the migrate-route response schema and its payload-contract test together so the change reads as intended rather than as a regression.
 - Migrated source reparses to the same canonical serialized/public chain, fingerprint, and `program_spec`.
 
 ### Step 6 - Update Solve-Score Storage
@@ -1196,6 +1215,7 @@ Minimum Python/unit gates:
 - render/palette/proximity plan tests
 - workflow definition tests
 - deploy packaging tests
+- `api_manifest.py --check` — the two new `/compile-{root,solve-score}-program-source` routes synced across the handler dispatch, `deploy_manifest.json`, and the frontend `lambdaPost`
 - frontend grep/harness tests for source tabs and populate
 - root default-arg canonicalization tests (`pull_unit_circle()` equals explicit defaults)
 - solve-score compatibility synthesis tests for old chains containing `dup` and `flush`

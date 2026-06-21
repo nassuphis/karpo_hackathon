@@ -173,6 +173,7 @@ def build_raw_sidecar(
     solve_score_spec_version=1,
     score_chain,
     score_program,
+    score_source_text="",
     clip_slots,
     score_output_normalize=False,
     score_output_clip_lo=0.0,
@@ -200,6 +201,7 @@ def build_raw_sidecar(
     score_program = str(score_program or "").strip()
     if not score_program:
         raise RuntimeError("score_program is required for greyscale sidecar")
+    score_source_text = str(score_source_text or "")
     include_step_scores = (
         str(step_scores_key or "").strip() != ""
         or step_count not in ("", None, 0)
@@ -224,6 +226,8 @@ def build_raw_sidecar(
         "solve_score_spec_version": _coerce_int(solve_score_spec_version, "solve_score_spec_version"),
         "score_chain": _parse_chain(score_chain),
         "score_program": score_program,
+        "score_source_text": score_source_text,
+        "solve_score_program_source_text": score_source_text,
         "clip_slots": _normalize_clip_slots(clip_slots),
         "score_output_normalize": _normalize_boolish(
             score_output_normalize,
@@ -314,6 +318,16 @@ def validate_raw_sidecar(sidecar, *, expected_raw_key=None, expected_artifact_fa
         "solve_score_spec_version": _coerce_int(sidecar.get("solve_score_spec_version", 1), "solve_score_spec_version"),
         "score_chain": _parse_chain(sidecar.get("score_chain")),
         "score_program": str(sidecar.get("score_program") or "").strip(),
+        "score_source_text": str(
+            sidecar.get("score_source_text")
+            or sidecar.get("solve_score_program_source_text")
+            or ""
+        ),
+        "solve_score_program_source_text": str(
+            sidecar.get("solve_score_program_source_text")
+            or sidecar.get("score_source_text")
+            or ""
+        ),
         "clip_slots": _normalize_clip_slots(sidecar.get("clip_slots")),
         "score_output_normalize": _normalize_boolish(
             sidecar.get("score_output_normalize", False),

@@ -21,6 +21,7 @@ class TestRawSidecar(unittest.TestCase):
             chain_fingerprint="fp_123",
             score_chain=[["crowding", "0.1"]],
             score_program="m0",
+            score_source_text="score = metric(crowding, slv, q=0.1%)\nemit(score)",
             clip_slots=[{"slot": 0, "metric": "crowding", "source": "slv", "clip_lo": 0.1, "clip_hi": 0.9}],
             score_output_normalize=True,
             score_output_clip_lo=0.02,
@@ -42,6 +43,7 @@ class TestRawSidecar(unittest.TestCase):
         self.assertEqual(sidecar["solve_score_spec_version"], 1)
         self.assertEqual(sidecar["pix"], 4)
         self.assertEqual(sidecar["score_output_normalize"], True)
+        self.assertEqual(sidecar["solve_score_program_source_text"], "score = metric(crowding, slv, q=0.1%)\nemit(score)")
         self.assertEqual(sidecar["score_output_clip_lo"], 0.02)
         self.assertEqual(sidecar["score_output_clip_hi"], 0.08)
         validated = validate_raw_sidecar(
@@ -55,6 +57,8 @@ class TestRawSidecar(unittest.TestCase):
         self.assertEqual(validated["step_scores_key"], "renders/j/color/color_1/step_scores.raw")
         self.assertEqual(validated["step_count"], 9)
         self.assertEqual(validated["step_scores_grid_n"], 3)
+        self.assertEqual(validated["score_source_text"], "score = metric(crowding, slv, q=0.1%)\nemit(score)")
+        self.assertEqual(validated["solve_score_program_source_text"], "score = metric(crowding, slv, q=0.1%)\nemit(score)")
         self.assertEqual(validated["score_output_normalize"], True)
         self.assertEqual(validated["score_output_clip_lo"], 0.02)
         self.assertEqual(validated["score_output_clip_hi"], 0.08)

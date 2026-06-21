@@ -300,6 +300,12 @@ package_render_plan_zip() {
        lambda/logical_sections.py \
        lambda/calc_chunks.py \
        lambda/param_source.py \
+       lambda/pipeline_programs.py lambda/root_pipeline_programs.py lambda/solve_score_pipeline_programs.py lambda/root_program_source.py lambda/program_source_core.py \
+       lambda/solve_score_program_source.py \
+       lambda/program_profiles.py lambda/program_profiles.json lambda/merged_opcodes.py lambda/merged_opcodes.json \
+       lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
+       lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
+       lambda/root_legacy_registry.json \
        lambda/color_render_contract.py \
        lambda/solve_score_chain.py \
        lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PLAN_DIR/"
@@ -967,7 +973,9 @@ cp lambda/handler_coeffgen.py lambda/shared.py lambda/compute_fused.py \
    lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
    lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
    lambda/program_source_core.py lambda/program_profiles.py lambda/program_profiles.json \
-   lambda/pipeline_programs.py lambda/program_compile_helpers.py "$COEFFGEN_DIR/"
+   lambda/pipeline_programs.py lambda/root_pipeline_programs.py lambda/solve_score_pipeline_programs.py lambda/program_compile_helpers.py \
+   lambda/root_program_source.py lambda/root_legacy_registry.json lambda/merged_opcodes.py \
+   lambda/solve_score_program_source.py lambda/solve_score_chain.py "$COEFFGEN_DIR/"
 cp lambda/sweep_coeffgen "$COEFFGEN_DIR/"
 chmod +x "$COEFFGEN_DIR"/sweep_coeffgen
 cd "$COEFFGEN_DIR" && zip -FS -r9 /tmp/polypaint-coeffgen.zip . -q && cd "$SCRIPT_DIR"
@@ -986,8 +994,10 @@ STORAGE_DIR=/tmp/polypaint-storage
 rm -rf "$STORAGE_DIR"
 mkdir -p "$STORAGE_DIR"
 cp lambda/handler_storage.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py \
+   lambda/solve_score_program_source.py \
    lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
    lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
+   lambda/root_program_source.py \
    lambda/program_source_core.py lambda/program_profiles.py lambda/program_v2_translate.py \
    lambda/program_profiles.json lambda/merged_opcodes.py lambda/merged_opcodes.json \
    lambda/root_legacy_registry.json lambda/color_render_contract.py lambda/logical_sections.py "$STORAGE_DIR/"
@@ -1006,7 +1016,9 @@ echo "  Dispatch: $(du -h /tmp/polypaint-dispatch.zip | cut -f1)  (pure Python)"
 RASTER_MT_DIR=/tmp/polypaint-raster-mt
 rm -rf "$RASTER_MT_DIR"
 mkdir -p "$RASTER_MT_DIR/lib"
-cp lambda/handler_raster_mt.py lambda/shared.py lambda/solve_score_chain.py lambda/logical_sections.py "$RASTER_MT_DIR/"
+cp lambda/handler_raster_mt.py lambda/shared.py lambda/solve_score_chain.py lambda/solve_score_pipeline_programs.py \
+   lambda/solve_score_program_source.py lambda/program_source_core.py lambda/program_profiles.py lambda/program_profiles.json \
+   lambda/logical_sections.py "$RASTER_MT_DIR/"
 cp lambda/roots2pix_mt "$RASTER_MT_DIR/"
 cp lambda/roots2pix_mt_lib/* "$RASTER_MT_DIR/lib/"
 chmod +x "$RASTER_MT_DIR"/roots2pix_mt
@@ -1040,7 +1052,9 @@ cp lambda/handler_compute_preview.py lambda/shared.py \
    lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
    lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
    lambda/program_source_core.py lambda/program_profiles.py lambda/program_profiles.json \
-   lambda/pipeline_programs.py lambda/program_compile_helpers.py "$COMPUTE_PREVIEW_DIR/"
+   lambda/pipeline_programs.py lambda/root_pipeline_programs.py lambda/solve_score_pipeline_programs.py lambda/program_compile_helpers.py \
+   lambda/root_program_source.py lambda/root_legacy_registry.json lambda/merged_opcodes.py \
+   lambda/solve_score_program_source.py lambda/solve_score_chain.py "$COMPUTE_PREVIEW_DIR/"
 cp lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$COMPUTE_PREVIEW_DIR/"
 chmod +x "$COMPUTE_PREVIEW_DIR"/sweep_coeffgen "$COMPUTE_PREVIEW_DIR"/sweep_mt "$COMPUTE_PREVIEW_DIR"/sweep_cm
 cd "$COMPUTE_PREVIEW_DIR" && zip -FS -r9 /tmp/polypaint-compute-preview.zip . -q && cd "$SCRIPT_DIR"
@@ -1050,7 +1064,9 @@ echo "  CPreview: $(du -h /tmp/polypaint-compute-preview.zip | cut -f1)  (sync c
 BILEVEL_DIR=/tmp/polypaint-bilevel
 rm -rf "$BILEVEL_DIR"
 mkdir -p "$BILEVEL_DIR/lib"
-cp lambda/handler_bilevel.py lambda/shared.py lambda/logical_sections.py lambda/raw_sidecar.py lambda/color_render_contract.py lambda/color_artifact_meta.py lambda/solve_score_chain.py "$BILEVEL_DIR/"
+cp lambda/handler_bilevel.py lambda/shared.py lambda/logical_sections.py lambda/raw_sidecar.py lambda/color_render_contract.py lambda/color_artifact_meta.py lambda/solve_score_chain.py \
+   lambda/root_pipeline_programs.py lambda/root_program_source.py lambda/program_source_core.py lambda/program_profiles.py lambda/program_profiles.json \
+   lambda/root_legacy_registry.json lambda/merged_opcodes.py "$BILEVEL_DIR/"
 cp lambda/bilevel_section_raster lambda/coeffs_bilevel_raster lambda/raw_to_bilevel lambda/assemble_greyscale "$BILEVEL_DIR/"
 cp lambda/assemble_greyscale_lib/* "$BILEVEL_DIR/lib/"
 chmod +x "$BILEVEL_DIR"/bilevel_section_raster "$BILEVEL_DIR"/coeffs_bilevel_raster "$BILEVEL_DIR"/raw_to_bilevel "$BILEVEL_DIR"/assemble_greyscale
@@ -1065,7 +1081,9 @@ cp lambda/handler_param_debug.py lambda/shared.py \
    lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
    lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
    lambda/program_source_core.py lambda/program_profiles.py lambda/program_profiles.json \
-   lambda/pipeline_programs.py lambda/program_compile_helpers.py \
+   lambda/pipeline_programs.py lambda/root_pipeline_programs.py lambda/solve_score_pipeline_programs.py lambda/program_compile_helpers.py \
+   lambda/root_program_source.py lambda/root_legacy_registry.json lambda/merged_opcodes.py \
+   lambda/solve_score_program_source.py lambda/solve_score_chain.py \
    "$PARAM_DEBUG_DIR/"
 cp lambda/sweep lambda/bilevel_merge "$PARAM_DEBUG_DIR/"
 chmod +x "$PARAM_DEBUG_DIR"/sweep "$PARAM_DEBUG_DIR"/bilevel_merge
@@ -1106,7 +1124,10 @@ rm -rf "$RENDER_LORES_PREVIEW_DIR"
 mkdir -p "$RENDER_LORES_PREVIEW_DIR/lib"
 cp lambda/handler_render_lores_preview.py lambda/shared.py \
    lambda/logical_sections.py lambda/logical_lores.py lambda/calc_chunks.py lambda/param_source.py \
-   lambda/color_render_contract.py lambda/solve_score_chain.py lambda/raw_score_render.py "$RENDER_LORES_PREVIEW_DIR/"
+   lambda/color_render_contract.py lambda/solve_score_chain.py lambda/raw_score_render.py \
+   lambda/root_pipeline_programs.py lambda/solve_score_pipeline_programs.py lambda/root_program_source.py \
+   lambda/solve_score_program_source.py lambda/program_source_core.py lambda/program_profiles.py lambda/program_profiles.json \
+   lambda/root_legacy_registry.json lambda/merged_opcodes.py "$RENDER_LORES_PREVIEW_DIR/"
 cp lambda/roots2pix_mt lambda/solve_proximity_stats lambda/score_raw_render \
    lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$RENDER_LORES_PREVIEW_DIR/"
 cp lambda/roots2pix_mt_lib/* "$RENDER_LORES_PREVIEW_DIR/lib/"
@@ -1216,7 +1237,10 @@ SOLVE_PROXIMITY_DIR=/tmp/polypaint-solve-proximity
 rm -rf "$SOLVE_PROXIMITY_DIR"
 mkdir -p "$SOLVE_PROXIMITY_DIR/lib"
 cp lambda/handler_solve_proximity.py lambda/shared.py lambda/solve_score_chain.py \
-   lambda/logical_sections.py "$SOLVE_PROXIMITY_DIR/"
+   lambda/logical_sections.py \
+   lambda/root_pipeline_programs.py lambda/solve_score_pipeline_programs.py lambda/root_program_source.py \
+   lambda/solve_score_program_source.py lambda/program_source_core.py lambda/program_profiles.py lambda/program_profiles.json \
+   lambda/root_legacy_registry.json lambda/merged_opcodes.py "$SOLVE_PROXIMITY_DIR/"
 cp lambda/solve_proximity_stats lambda/solve_proximity_hist_sectioned "$SOLVE_PROXIMITY_DIR/"
 cp lambda/solve_proximity_hist_sectioned_lib/* "$SOLVE_PROXIMITY_DIR/lib/"
 chmod +x "$SOLVE_PROXIMITY_DIR"/solve_proximity_stats "$SOLVE_PROXIMITY_DIR"/solve_proximity_hist_sectioned
@@ -1228,7 +1252,10 @@ SOLVE_PROXIMITY_BENCH_DIR=/tmp/polypaint-solve-proximity-bench
 rm -rf "$SOLVE_PROXIMITY_BENCH_DIR"
 mkdir -p "$SOLVE_PROXIMITY_BENCH_DIR/lib"
 cp lambda/handler_solve_proximity_bench.py lambda/handler_solve_proximity.py lambda/shared.py \
-   lambda/solve_score_chain.py lambda/logical_sections.py "$SOLVE_PROXIMITY_BENCH_DIR/"
+   lambda/solve_score_chain.py lambda/logical_sections.py \
+   lambda/root_pipeline_programs.py lambda/solve_score_pipeline_programs.py lambda/root_program_source.py \
+   lambda/solve_score_program_source.py lambda/program_source_core.py lambda/program_profiles.py lambda/program_profiles.json \
+   lambda/root_legacy_registry.json lambda/merged_opcodes.py "$SOLVE_PROXIMITY_BENCH_DIR/"
 cp lambda/solve_proximity_stats lambda/solve_proximity_hist_sectioned "$SOLVE_PROXIMITY_BENCH_DIR/"
 cp lambda/solve_proximity_hist_sectioned_lib/* "$SOLVE_PROXIMITY_BENCH_DIR/lib/"
 chmod +x "$SOLVE_PROXIMITY_BENCH_DIR"/solve_proximity_stats "$SOLVE_PROXIMITY_BENCH_DIR"/solve_proximity_hist_sectioned
@@ -1240,7 +1267,9 @@ PALETTE_DEBUG_DIR=/tmp/polypaint-palette-debug
 rm -rf "$PALETTE_DEBUG_DIR"
 mkdir -p "$PALETTE_DEBUG_DIR"
 cp lambda/handler_palette_debug.py lambda/shared.py \
-   lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py "$PALETTE_DEBUG_DIR/"
+   lambda/palette_names.py lambda/tri_palette_names_generated.py lambda/long_palette_names_generated.py \
+   lambda/root_pipeline_programs.py lambda/root_program_source.py lambda/program_source_core.py lambda/program_profiles.py lambda/program_profiles.json \
+   lambda/root_legacy_registry.json lambda/merged_opcodes.py "$PALETTE_DEBUG_DIR/"
 cp lambda/solve_palette_debug lambda/raw2jpeg "$PALETTE_DEBUG_DIR/"
 chmod +x "$PALETTE_DEBUG_DIR"/solve_palette_debug "$PALETTE_DEBUG_DIR"/raw2jpeg
 cd "$PALETTE_DEBUG_DIR" && zip -FS -r9 /tmp/polypaint-palette-debug.zip . -q && cd "$SCRIPT_DIR"
@@ -1261,6 +1290,12 @@ mkdir -p "$PALETTE_PLAN_DIR"
 cp lambda/handler_palette_render_plan.py lambda/shared.py \
    lambda/calc_chunks.py \
    lambda/param_source.py \
+   lambda/pipeline_programs.py lambda/root_pipeline_programs.py lambda/solve_score_pipeline_programs.py lambda/root_program_source.py lambda/program_source_core.py \
+   lambda/solve_score_program_source.py \
+   lambda/program_profiles.py lambda/program_profiles.json lambda/merged_opcodes.py lambda/merged_opcodes.json \
+   lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
+   lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
+   lambda/root_legacy_registry.json \
    lambda/color_artifact_meta.py \
    lambda/color_render_contract.py \
    lambda/solve_score_chain.py \
@@ -1274,7 +1309,8 @@ PALETTE_CHUNK_DIR=/tmp/polypaint-palette-chunk
 rm -rf "$PALETTE_CHUNK_DIR"
 mkdir -p "$PALETTE_CHUNK_DIR/lib"
 cp lambda/handler_palette_chunk.py lambda/shared.py lambda/solve_score_chain.py \
-   lambda/logical_sections.py "$PALETTE_CHUNK_DIR/"
+   lambda/solve_score_pipeline_programs.py lambda/solve_score_program_source.py lambda/program_source_core.py \
+   lambda/program_profiles.py lambda/program_profiles.json lambda/logical_sections.py "$PALETTE_CHUNK_DIR/"
 cp lambda/solve_palette_chunk lambda/solve_palette_chunk_mt "$PALETTE_CHUNK_DIR/"
 cp lambda/solve_palette_chunk_mt_lib/* "$PALETTE_CHUNK_DIR/lib/"
 chmod +x "$PALETTE_CHUNK_DIR"/solve_palette_chunk "$PALETTE_CHUNK_DIR"/solve_palette_chunk_mt
@@ -1286,7 +1322,9 @@ PALETTE_FINALIZE_DIR=/tmp/polypaint-palette-finalize
 rm -rf "$PALETTE_FINALIZE_DIR"
 mkdir -p "$PALETTE_FINALIZE_DIR"
 cp lambda/handler_palette_finalize.py lambda/shared.py lambda/color_artifact_meta.py lambda/color_render_contract.py \
-   lambda/raw_score_render.py lambda/raw_sidecar.py lambda/solve_score_chain.py "$PALETTE_FINALIZE_DIR/"
+   lambda/raw_score_render.py lambda/raw_sidecar.py lambda/solve_score_chain.py lambda/solve_score_pipeline_programs.py \
+   lambda/solve_score_program_source.py lambda/program_source_core.py lambda/program_profiles.py lambda/program_profiles.json \
+   "$PALETTE_FINALIZE_DIR/"
 cp lambda/palette_bins_render lambda/raw2jpeg lambda/score_raw_render "$PALETTE_FINALIZE_DIR/"
 chmod +x "$PALETTE_FINALIZE_DIR"/palette_bins_render "$PALETTE_FINALIZE_DIR"/raw2jpeg "$PALETTE_FINALIZE_DIR"/score_raw_render
 cd "$PALETTE_FINALIZE_DIR" && zip -FS -r9 /tmp/polypaint-palette-finalize.zip . -q && cd "$SCRIPT_DIR"
@@ -1336,7 +1374,9 @@ cp lambda/handler_compute_plan.py lambda/shared.py lambda/compute_fused.py \
    lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
    lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
    lambda/program_source_core.py lambda/program_profiles.py lambda/program_profiles.json \
-   lambda/pipeline_programs.py lambda/program_compile_helpers.py "$COMPUTE_PLAN_DIR/"
+   lambda/pipeline_programs.py lambda/root_pipeline_programs.py lambda/solve_score_pipeline_programs.py lambda/program_compile_helpers.py \
+   lambda/root_program_source.py lambda/root_legacy_registry.json lambda/merged_opcodes.py \
+   lambda/solve_score_program_source.py lambda/solve_score_chain.py "$COMPUTE_PLAN_DIR/"
 cd "$COMPUTE_PLAN_DIR" && zip -FS -r9 /tmp/polypaint-compute-plan.zip . -q && cd "$SCRIPT_DIR"
 echo "  CmpPlan: $(du -h /tmp/polypaint-compute-plan.zip | cut -f1)  (plan + finalize)"
 

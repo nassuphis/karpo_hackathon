@@ -22,11 +22,12 @@ from logical_sections import (
     resolve_solve_source_manifest,
     write_native_multispan_manifest,
 )
+from root_pipeline_programs import root_program_for_run
+from solve_score_pipeline_programs import solve_score_program_for_run
 from solve_score_chain import (
     SOLVE_SCORE_SPEC_VERSION,
     VALID_SOLVE_SCORE_METRICS,
     compiled_solve_score_fingerprint,
-    compile_solve_score_chain_or_legacy,
     serialize_solve_score_chain,
     solve_score_lag_prelude_by_source,
     solve_score_program_cli_payload,
@@ -387,14 +388,14 @@ def _clip_artifact_metrics(clip_data, compiled, fallback_quantile):
 
 
 def _compile_request_chain(params, metric, *, default_metric="proximity"):
-    return compile_solve_score_chain_or_legacy(
-        params.get("solve_score_chain", ""),
-        metric,
-        params.get("solve_score_quantile", 0.001),
-        params.get("solve_score_omega", 1.0),
-        params.get("solve_score_omega_enabled", True),
-        default_metric=default_metric,
-    )
+    merged = dict(params)
+    merged.setdefault("metric", metric)
+    merged.setdefault("solve_metric", metric)
+    return solve_score_program_for_run(merged)
+
+
+def _root_transforms_for_run(params):
+    return root_program_for_run(params)["chain"]
 
 
 def _validate_artifact_chain_fingerprint(data, compiled, label):
@@ -784,7 +785,8 @@ def handle_clip(params):
     lores_coeffs_key = str(params.get("lores_coeffs_key", "") or "").strip()
     lores_params_key = str(params.get("lores_params_key", "") or "").strip()
     n_coeffs = params.get("n_coeffs")
-    root_transforms = contract_param(params, "root_transforms", [], contract_warnings)
+    contract_param(params, "root_transforms", [], contract_warnings)
+    root_transforms = _root_transforms_for_run(params)
     out_key = params["out_key"]
     compiled = _compile_request_chain(params, metric, default_metric="proximity")
     solve_score_normalize = parse_boolish(
@@ -1005,7 +1007,8 @@ def handle_hist(params):
     degree = params["degree"]
     clip_key = params["clip_key"]
     hist_bins = params.get("hist_bins", 100)
-    root_transforms = contract_param(params, "root_transforms", [], contract_warnings)
+    contract_param(params, "root_transforms", [], contract_warnings)
+    root_transforms = _root_transforms_for_run(params)
     out_key = params["out_key"]
     compiled = _compile_request_chain(params, metric, default_metric="proximity")
     metric = compiled["metric"]
@@ -1649,7 +1652,7 @@ def handle_summary(params):
     lores_coeffs_key = params.get("lores_coeffs_key", "")
     lores_params_key = params.get("lores_params_key", "")
     n_coeffs = params.get("n_coeffs")
-    root_transforms = params.get("root_transforms")
+    root_transforms = _root_transforms_for_run(params)
     solve_score_normalize = parse_boolish(
         params.get("solve_score_normalize", False),
         False,

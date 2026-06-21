@@ -33,10 +33,11 @@ from logical_sections import (
     write_native_multispan_manifest,
 )
 from raw_score_render import histogram_from_raw_path_channel0, render_score_raw, write_equalization_lut
+from root_pipeline_programs import root_program_for_run
 from shared import BUCKET, REF_SIZE, compute_viewport_from_bin, ok_response, parse_body, parse_boolish
+from solve_score_pipeline_programs import solve_score_program_for_run
 from solve_score_chain import (
     compiled_solve_score_fingerprint,
-    compile_solve_score_chain_or_legacy,
     serialize_solve_score_chain,
     solve_score_program_cli_payload,
     solve_score_uses_source,
@@ -330,14 +331,11 @@ def _compute_preview_viewport(params, roots_path):
 
 
 def _compile_request_chain(params):
-    return compile_solve_score_chain_or_legacy(
-        params.get("solve_score_chain", ""),
-        params.get("metric", "proximity"),
-        params.get("solve_score_quantile", 0.001),
-        params.get("solve_score_omega", 1.0),
-        params.get("solve_score_omega_enabled", True),
-        default_metric="proximity",
-    )
+    return solve_score_program_for_run(params)
+
+
+def _root_transforms_for_run(params):
+    return root_program_for_run(params)["chain"]
 
 
 def _clip_widen_half_width(center, lo, hi, min_score=None, max_score=None):
@@ -504,7 +502,7 @@ def _build_program_cmd_args(compiled, metrics_with_clips):
 
 def _preview_score_summary(params, *, degree, n_coeffs, compiled, include_coeff, include_param):
     threads = _coerce_int(params.get("solve_score_threads", 1), "solve_score_threads", default=1, min_value=1)
-    root_transforms = params.get("root_transforms") or []
+    root_transforms = _root_transforms_for_run(params)
     solve_score_normalize = parse_boolish(
         params.get("solve_score_normalize", False),
         False,
@@ -909,7 +907,7 @@ def _run_roots2pix(*, params, summary, viewport, manifests, pix, degree, n_coeff
         "metrics": metrics,
         "program_spec": str(summary.get("program") or "m0"),
     })
-    root_transforms = params.get("root_transforms") or []
+    root_transforms = _root_transforms_for_run(params)
     xforms_path = _write_xforms(root_transforms)
     cmd = [
         ROOTS2PIX_MT,

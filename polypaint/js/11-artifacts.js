@@ -268,6 +268,39 @@ function _artifactSolveScoreChain(art) {
     return [];
 }
 
+function _artifactSolveScoreSourceText(art) {
+    if (!art) return '';
+    const candidates = [
+        art.solve_score_program_source_text,
+        art.score_source_text,
+        art.palette_source_score_source_text,
+        art.palette_source_solve_score_program_source_text,
+        art.associated_palette_score_source_text,
+        art.associated_palette_solve_score_program_source_text,
+    ];
+    for (const raw of candidates) {
+        const text = String(raw || '');
+        if (text.trim()) return text;
+    }
+    return '';
+}
+
+function _restoreSolveScoreSourceFromArtifact(prefix, art) {
+    const text = _artifactSolveScoreSourceText(art);
+    if (!text.trim()) return false;
+    _setSolveScoreProgramSourceText(prefix, text);
+    _setSolveScoreProgramEditorMode(prefix, 'text');
+    return true;
+}
+
+function _restoreRootSourceFromArtifact(prefix, art) {
+    const text = String((art && art.root_program_source_text) || '');
+    if (!text.trim()) return false;
+    _setRootProgramSourceText(prefix, text);
+    _setRootProgramEditorMode(prefix, 'text');
+    return true;
+}
+
 function _renderArtifactSolveDisplay(art) {
     if (!art) return '';
     const chain = _artifactSolveScoreChain(art);
@@ -397,6 +430,12 @@ function _setRenderRotationFromRadians(rad) {
 function _setRenderRootTransforms(transforms) {
     if (!Array.isArray(transforms)) return;
     _rtChain = transforms.map(item => {
+        if (item && typeof item === 'object' && !Array.isArray(item)) {
+            const name = String(item.name || '').trim();
+            if (!name) return null;
+            const args = Array.isArray(item.args) ? item.args : (Array.isArray(item.params) ? item.params : []);
+            return { name, params: args.map(v => String(v)) };
+        }
         if (!Array.isArray(item) || !item.length) return null;
         return { name: item[0], params: item.slice(1).map(v => String(v)) };
     }).filter(Boolean);
@@ -550,6 +589,7 @@ function populateSelectedRenderArtifact() {
         if (!_setSolveScoreChainFromArtifact('render', _artifactSolveScoreChain(art))) {
             warnings.push('solve-score chain');
         }
+        _restoreSolveScoreSourceFromArtifact('render', art);
         restoreSolveScoreNormalize(art);
         if (art.palette) setPaletteForMode('solve_score', art.palette);
         else warnings.push('palette');
@@ -557,6 +597,7 @@ function populateSelectedRenderArtifact() {
         if (Array.isArray(art.root_transforms)) {
             _setRenderRootTransforms(art.root_transforms);
         }
+        _restoreRootSourceFromArtifact('render', art);
         restoreRenderOutputFields(art);
         _renderSelectFamily('color');
         _noteSolveScorePopulate('render', art);
@@ -587,9 +628,11 @@ function populateSelectedRenderArtifact() {
     if (!_setSolveScoreChainFromArtifact('render', _artifactSolveScoreChain(art))) {
         warnings.push('solve-score chain');
     }
+    _restoreSolveScoreSourceFromArtifact('render', art);
     restoreSolveScoreNormalize(art);
     if (art.palette) setPaletteForMode('solve_score', art.palette);
     _noteSolveScorePopulate('render', art);
+    _restoreRootSourceFromArtifact('render', art);
     finishPopulate(art.artifact_id || 'selected color artifact');
 }
 

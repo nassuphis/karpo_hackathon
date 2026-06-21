@@ -27,12 +27,12 @@ from logical_sections import (
     write_native_multispan_manifest,
 )
 from solve_score_chain import (
-    compile_solve_score_chain,
     compiled_solve_score_fingerprint,
     solve_score_lag_prelude_by_source,
     solve_score_program_cli_payload,
     solve_score_program_specs_match,
 )
+from solve_score_pipeline_programs import solve_score_program_for_run
 from shared import (
     BUCKET,
     attach_contract_warnings,
@@ -583,10 +583,14 @@ def _handle_fused_raster_request(params):
         perf["step_score_channels"] = step_score_channels if emit_step_scores else 0
 
         raw_chain = section_params.get("solve_score_chain", "")
-        section_params["solve_score_chain_present"] = raw_chain not in ("", None, [])
+        has_source = bool(str(section_params.get("solve_score_program_source_text") or "").strip())
+        has_program = isinstance(section_params.get("solve_score_program"), dict)
+        section_params["solve_score_chain_present"] = raw_chain not in ("", None, []) or has_source or has_program
         if not section_params["solve_score_chain_present"]:
-            raise RuntimeError("fused raster requires solve_score_chain")
-        compiled = compile_solve_score_chain(raw_chain)
+            raise RuntimeError("fused raster requires solve_score_chain or solve_score_program_source_text")
+        compiled = solve_score_program_for_run(section_params)
+        section_params["solve_score_chain"] = compiled.get("chain_public") or raw_chain
+        section_params["solve_score_program_source_text"] = compiled.get("source_text", "")
         section_params["solve_score_compiled"] = compiled
         section_params["solve_score_chain_fingerprint"] = compiled_solve_score_fingerprint(compiled)
         prelude_by_source = solve_score_lag_prelude_by_source(compiled)

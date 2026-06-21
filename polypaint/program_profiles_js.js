@@ -236,6 +236,10 @@ window._programProfiles = {
       ],
       "program_kind": "root_program",
       "selectors": {},
+      "source": {
+        "args": "finite_real_static",
+        "registry": "root_legacy_registry.json"
+      },
       "symbols": {
         "roots": {
           "access": "read_write",
@@ -264,6 +268,30 @@ window._programProfiles = {
       ],
       "program_kind": "solve_score_program",
       "selectors": {},
+      "source": {
+        "locals": {
+          "access": "read_write",
+          "type": "scalar_score"
+        },
+        "metric_kwargs": {
+          "lag": [
+            0,
+            1
+          ],
+          "q": "percent"
+        },
+        "metric_sources": [
+          "slv",
+          "cf",
+          "pm"
+        ],
+        "output_calls": [
+          "emit",
+          "emit_norm",
+          "emit_none"
+        ],
+        "reserved_output": "score"
+      },
       "symbols": {
         "metrics": {
           "access": "read",
@@ -284,8 +312,9 @@ window._programProfiles = {
         }
       },
       "value_caps": {
+        "max_metric_slots": 16,
         "max_output_channels": 8,
-        "program_tokens": 256,
+        "program_tokens": 32,
         "total_stack": 64,
         "vector_capable_stack": 0,
         "vector_len": 0

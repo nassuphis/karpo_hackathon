@@ -513,6 +513,7 @@ async function runRenderLoresPreview() {
             solve_score_omega: p.solveScoreOmega,
             solve_score_omega_enabled: p.solveScoreOmegaEnabled,
             solve_score_chain: p.solveScoreChain,
+            solve_score_program_source_text: p.solveScoreProgramSourceText,
             solve_score_normalize: !!p.solveScoreNormalize,
             color_interpretation: p.colorInterpretation,
             preview_source_mode: previewSourceMode,
@@ -522,6 +523,7 @@ async function runRenderLoresPreview() {
             lores_coeffs_key: p.solveScoreUsesCoeffSource ? loresCoeffsKey : undefined,
             lores_params_key: p.solveScoreUsesParamSource ? loresParamsKey : undefined,
             root_transforms: p.rootTransforms || [],
+            root_program_source_text: p.rootProgramSourceText || undefined,
             raster_mt_threads: 4,
             solve_score_threads: 4,
             raster_sectioned_retries: 2,
@@ -637,11 +639,13 @@ async function runSolveScoreHistogramDebug() {
             solve_score_omega: p.solveScoreOmega,
             solve_score_omega_enabled: p.solveScoreOmegaEnabled,
             solve_score_chain: p.solveScoreChain,
+            solve_score_program_source_text: p.solveScoreProgramSourceText,
             solve_score_normalize: !!p.solveScoreNormalize,
             lores_bin_key: loresKey,
             lores_coeffs_key: p.solveScoreUsesCoeffSource ? loresCoeffsKey : undefined,
             lores_params_key: p.solveScoreUsesParamSource ? loresParamsKey : undefined,
             root_transforms: p.rootTransforms || [],
+            root_program_source_text: p.rootProgramSourceText || undefined,
         };
         const chainSummary = _formatErrorChain(p.solveScoreChain);
         const metricsSummary = _solveScoreMetricSummary(p.solveScoreMetrics);
@@ -806,7 +810,9 @@ async function runRenderPaletteArtifact() {
                 solve_score_omega: p.solveScoreOmega,
                 solve_score_omega_enabled: p.solveScoreOmegaEnabled,
                 solve_score_chain: p.solveScoreChain,
+                solve_score_program_source_text: p.solveScoreProgramSourceText,
                 root_transforms: p.rootTransforms || [],
+                root_program_source_text: p.rootProgramSourceText || undefined,
             },
         };
         const dispResult = await lambdaPost('dispatch', {

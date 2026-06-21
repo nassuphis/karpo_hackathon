@@ -68,10 +68,20 @@ from param_program_chain import (
 )
 from param_program_chain import compile_param_program_chain
 from param_program_source import param_source_text_from_chain, param_source_text_from_payload
+from root_program_source import (
+    RootProgramSourceError,
+    canonicalize_root_transform_item,
+    compile_root_program_chain,
+    root_source_text_from_chain,
+)
 from solve_score_chain import (
     compile_solve_score_chain_or_legacy,
     render_solve_score_program_spec,
     serialize_solve_score_chain,
+)
+from solve_score_program_source import (
+    SolveScoreProgramSourceError,
+    solve_score_source_text_from_chain,
 )
 
 
@@ -455,6 +465,16 @@ def translate_solve_score_from_old(program):
         default_metric="proximity",
     )
     canonical_chain = json.loads(serialize_solve_score_chain(compiled["chain"]))
+    diagnostics = []
+    try:
+        source_text = solve_score_source_text_from_chain(canonical_chain)
+    except (SolveScoreProgramSourceError, RuntimeError, ValueError) as exc:
+        source_text = ""
+        diagnostics.append({
+            "level": "warning",
+            "code": getattr(exc, "code", "source_roundtrip_failed") or "source_roundtrip_failed",
+            "message": f"solve-score source regeneration failed during migration: {exc}",
+        })
     program_spec = render_solve_score_program_spec(compiled["program_spec"], version=V2_SPEC_VERSION)
     v2_tokens = _solve_score_tokens_v2(compiled)
     v2_spec = _execution_spec_v2("solve-score", v2_tokens, [])
@@ -473,6 +493,8 @@ def translate_solve_score_from_old(program):
         "spec_version": V2_SPEC_VERSION,
         "id": str(program.get("id") or ""),
         "name": str(program.get("name") or ""),
+        "source_text": source_text,
+        "source_display": source_text,
         "chain": canonical_chain,
         "metric": compiled["metric"],
         "display": compiled["display"],
@@ -486,6 +508,7 @@ def translate_solve_score_from_old(program):
         "output_channel_count": compiled.get("output_channel_count", 0),
         "output_channels": compiled.get("output_channels") or [],
         "has_explicit_outputs": bool(compiled.get("has_explicit_outputs")),
+        "diagnostics": diagnostics,
     }
     if program.get("recommended_interpretation") not in ("", None):
         migrated["recommended_interpretation"] = program["recommended_interpretation"]
@@ -493,40 +516,29 @@ def translate_solve_score_from_old(program):
 
 
 def translate_root_from_old(program):
-    registry_by_name = _load_root_registry_by_name()
     source_chain = _root_transform_items(program)
-    tokens = []
     diagnostics = []
     canonical_chain = []
     for item in source_chain:
-        token, diagnostic = _root_token_from_item(item, registry_by_name)
-        if diagnostic is not None:
-            diagnostics.append(diagnostic)
+        try:
+            canonical_chain.append(canonicalize_root_transform_item(item))
+        except (RootProgramSourceError, RuntimeError, ValueError) as exc:
+            diagnostics.append({"level": "warning", "message": str(exc)})
             continue
-        tokens.append(token)
-        canonical_chain.append({
-            "name": token["name"],
-            "fn_index": token["fn_index"],
-            "args": list(token.get("args") or []),
-        })
-    v2_spec = _execution_spec_v2("root", tokens, [])
-    fingerprint = _v2_fingerprint(
-        "root",
-        {
-            "execution_spec": v2_spec,
-            "chain": canonical_chain,
-        },
-    )
+    compiled = compile_root_program_chain(canonical_chain, strict=True)
     return {
-        "program_kind": "root_transforms",
+        "program_kind": "root_program",
         "version": V2_PROGRAM_VERSION,
         "program_version": V2_PROGRAM_VERSION,
         "spec_version": V2_SPEC_VERSION,
-        "chain": canonical_chain,
-        "tokens": tokens,
+        "source_text": root_source_text_from_chain(canonical_chain),
+        "source_display": compiled["display"],
+        "chain": compiled["chain"],
+        "root_transforms": compiled["root_transforms"],
+        "tokens": compiled["tokens"],
         "diagnostics": diagnostics,
-        "fingerprint": fingerprint,
-        "execution_spec": v2_spec,
-        "statement_count": len(canonical_chain),
-        "token_count": len(tokens),
+        "fingerprint": compiled["fingerprint"],
+        "execution_spec": compiled["execution_spec"],
+        "statement_count": len(compiled["chain"]),
+        "token_count": len(compiled["tokens"]),
     }

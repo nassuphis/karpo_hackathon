@@ -101,6 +101,8 @@
         "/save-solve-score-program",
         "/delete-solve-score-program",
         "/migrate-solve-score-program",
+      "/compile-root-program-source",
+      "/compile-solve-score-program-source",
         "/list-param-programs",
         "/fetch-param-program",
         "/save-param-program",

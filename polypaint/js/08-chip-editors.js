@@ -404,6 +404,183 @@ function _onParamProgramSourceInput() {
     _paramProgramStatus('Text source changed. It will be compiled by the backend on save/preview/compute.');
 }
 
+let _solveScoreProgramEditorMode = { render: 'chips', palette: 'chips' };
+let _rootProgramEditorMode = { render: 'chips', palette: 'chips' };
+
+function _editorPrefix(prefix) {
+    return prefix === 'palette' ? 'palette' : 'render';
+}
+
+function _solveScoreSourceTextarea(prefix) {
+    return document.getElementById(`${_editorPrefix(prefix)}-ss-source-text`);
+}
+
+function _rootProgramSourceTextarea(prefix) {
+    return document.getElementById(`${_editorPrefix(prefix)}-rt-source-text`);
+}
+
+function _getSolveScoreProgramSourceText(prefix) {
+    const el = _solveScoreSourceTextarea(prefix);
+    return String(el ? el.value : '');
+}
+
+function _setSolveScoreProgramSourceText(prefix, text) {
+    const el = _solveScoreSourceTextarea(prefix);
+    const value = String(text == null ? '' : text);
+    if (el && el.value !== value) el.value = value;
+}
+
+function _effectiveSolveScoreProgramSourceText(prefix) {
+    const text = _getSolveScoreProgramSourceText(prefix);
+    return text.trim() ? text : '';
+}
+
+function _getRootProgramSourceText(prefix) {
+    const el = _rootProgramSourceTextarea(prefix);
+    return String(el ? el.value : '');
+}
+
+function _setRootProgramSourceText(prefix, text) {
+    const el = _rootProgramSourceTextarea(prefix);
+    const value = String(text == null ? '' : text);
+    if (el && el.value !== value) el.value = value;
+}
+
+function _effectiveRootProgramSourceText(prefix) {
+    const text = _getRootProgramSourceText(prefix);
+    return text.trim() ? text : '';
+}
+
+function _setPanelTabActive(panelBase, mode) {
+    const normalized = mode === 'text' ? 'text' : 'chips';
+    const chipsPanel = document.getElementById(`${panelBase}-chips-panel`);
+    const textPanel = document.getElementById(`${panelBase}-text-panel`);
+    const chipsTab = document.getElementById(`${panelBase}-tab-chips`);
+    const textTab = document.getElementById(`${panelBase}-tab-text`);
+    if (chipsPanel && chipsPanel.classList) chipsPanel.classList.toggle('active', normalized === 'chips');
+    if (textPanel && textPanel.classList) textPanel.classList.toggle('active', normalized === 'text');
+    if (chipsTab && chipsTab.classList) chipsTab.classList.toggle('active', normalized === 'chips');
+    if (textTab && textTab.classList) textTab.classList.toggle('active', normalized === 'text');
+}
+
+function _setSolveScoreProgramEditorMode(prefix, mode) {
+    const p = _editorPrefix(prefix);
+    const normalized = mode === 'text' ? 'text' : 'chips';
+    _solveScoreProgramEditorMode[p] = normalized;
+    _setPanelTabActive(`${p}-ss`, normalized);
+    _setSolveScoreProgramStatus(
+        p,
+        normalized === 'text'
+            ? 'Solve-score text source is authoritative when nonblank; compile refreshes the chip preview.'
+            : 'Solve-score chips are active unless the Text tab has nonblank source.'
+    );
+}
+
+function _setRootProgramEditorMode(prefix, mode) {
+    const p = _editorPrefix(prefix);
+    const normalized = mode === 'text' ? 'text' : 'chips';
+    _rootProgramEditorMode[p] = normalized;
+    _setPanelTabActive(`${p}-rt`, normalized);
+}
+
+function _onSolveScoreProgramSourceInput(prefix) {
+    _setSolveScoreProgramStatus(_editorPrefix(prefix), 'Text source changed. Compile to refresh chip preview; backend compiles it on render.', false);
+}
+
+function _onRootProgramSourceInput(prefix) {
+    const statusId = _editorPrefix(prefix) === 'palette' ? 'palette-status' : 'render-status';
+    const el = document.getElementById(statusId);
+    if (el) {
+        el.textContent = 'Root transform text changed. Compile to refresh chip preview; backend compiles it on render.';
+        el.className = 'status';
+    }
+}
+
+function _rootWhichForPrefix(prefix) {
+    return _editorPrefix(prefix) === 'palette' ? 'palette-rt' : 'rt';
+}
+
+function _rootSourceFromRows(chain) {
+    return (chain || []).map(item => {
+        if (Array.isArray(item) && item.length) {
+            return item.length > 1 ? `${item[0]}(${item.slice(1).join(', ')})` : String(item[0]);
+        }
+        if (item && typeof item === 'object') {
+            const name = String(item.name || '').trim();
+            const params = Array.isArray(item.params) ? item.params : (Array.isArray(item.args) ? item.args : []);
+            return params.length ? `${name}(${params.join(', ')})` : name;
+        }
+        return String(item || '');
+    }).filter(Boolean).join('\n');
+}
+
+async function _compileSolveScoreSourceEditor(prefix) {
+    const p = _editorPrefix(prefix);
+    const sourceText = _getSolveScoreProgramSourceText(p);
+    if (!sourceText.trim()) {
+        _setSolveScoreProgramStatus(p, 'Solve-score source is empty.', true);
+        return null;
+    }
+    try {
+        const resp = await lambdaPost('storage', { source_text: sourceText, strict: true }, '/compile-solve-score-program-source');
+        if (!resp || !resp.ok) {
+            const first = resp && Array.isArray(resp.diagnostics)
+                ? (resp.diagnostics.find(d => d && d.level === 'error') || resp.diagnostics[0])
+                : null;
+            throw new Error(first ? `Line ${first.line || '?'}: ${first.message}` : 'solve-score source did not compile');
+        }
+        const program = resp.program || resp;
+        const chain = Array.isArray(program.chain) ? program.chain : (Array.isArray(resp.chain) ? resp.chain : []);
+        const which = _solveScoreWhichForPrefix(p);
+        const target = _chainForWhich(which);
+        target.splice(0, target.length, ..._normalizeSolveScoreChain(chain, p === 'palette' ? paletteTabMetric : renderSolveMetric));
+        _renderChips(which);
+        _setSolveScoreProgramEditorMode(p, 'text');
+        _setSolveScoreProgramStatus(p, `Text source OK: ${program.statement_count || resp.statement_count || chain.length} statement${(program.statement_count || resp.statement_count || chain.length) === 1 ? '' : 's'}.`);
+        return program;
+    } catch (e) {
+        _setSolveScoreProgramStatus(p, e && e.message ? e.message : String(e), true);
+        throw e;
+    }
+}
+
+async function _compileRootSourceEditor(prefix) {
+    const p = _editorPrefix(prefix);
+    const sourceText = _getRootProgramSourceText(p);
+    if (!sourceText.trim()) return null;
+    const statusId = p === 'palette' ? 'palette-status' : 'render-status';
+    const statusEl = document.getElementById(statusId);
+    try {
+        const resp = await lambdaPost('storage', { source_text: sourceText, strict: true }, '/compile-root-program-source');
+        if (!resp || !resp.ok) {
+            const first = resp && Array.isArray(resp.diagnostics)
+                ? (resp.diagnostics.find(d => d && d.level === 'error') || resp.diagnostics[0])
+                : null;
+            throw new Error(first ? `Line ${first.line || '?'}: ${first.message}` : 'root source did not compile');
+        }
+        const chain = Array.isArray(resp.root_transforms) ? resp.root_transforms : (Array.isArray(resp.chain) ? resp.chain : []);
+        const which = _rootWhichForPrefix(p);
+        const target = _chainForWhich(which);
+        target.splice(0, target.length, ...chain.map(item => {
+            if (Array.isArray(item) && item.length) return { name: item[0], params: item.slice(1).map(v => String(v)) };
+            return item && typeof item === 'object' ? { name: item.name, params: (item.params || item.args || []).map(v => String(v)) } : null;
+        }).filter(Boolean));
+        _renderChips(which);
+        _setRootProgramEditorMode(p, 'text');
+        if (statusEl) {
+            statusEl.textContent = `Root source OK: ${resp.statement_count || chain.length} statement${(resp.statement_count || chain.length) === 1 ? '' : 's'}.`;
+            statusEl.className = 'status ok';
+        }
+        return resp.program || resp;
+    } catch (e) {
+        if (statusEl) {
+            statusEl.textContent = e && e.message ? e.message : String(e);
+            statusEl.className = 'status error';
+        }
+        throw e;
+    }
+}
+
 // Registry names that the source parser shadows with typed builtins; the
 // synthesizer must emit the parser-side aliases (mirrors
 // _NATIVE_TRANSFORM_ALIASES in lambda/coeff_program_source.py).

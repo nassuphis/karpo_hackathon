@@ -13,6 +13,7 @@ import time
 import boto3
 
 from palette_names import VALID_PALETTE_NAMES
+from root_pipeline_programs import root_program_for_run
 from shared import BUCKET, parse_body, ok_response, imgpipe_env
 
 s3 = boto3.client("s3")
@@ -95,7 +96,7 @@ def handler(event, context):
     solve_score_quantile = params.get("solve_score_quantile", 0.001)
     solve_score_omega = _validate_omega(params.get("solve_score_omega", 1.0))
     solve_score_omega_enabled = _validate_omega_enabled(params.get("solve_score_omega_enabled", True))
-    root_transforms = params.get("root_transforms", [])
+    root_transforms = root_program_for_run(params)["chain"]
     persistent = bool(params.get("persistent", False))
 
     try:

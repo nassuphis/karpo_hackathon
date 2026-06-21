@@ -46,3 +46,26 @@ def test_profile_registry_has_required_profiles_and_contracts():
     assert profiles["coeff"]["output_contract"]["kind"] == "fixed_vector"
     assert profiles["root"]["output_contract"]["kind"] == "in_place_vector"
     assert profiles["solve_score"]["output_contract"]["kind"] == "terminal_scalar_or_emit_channels"
+
+
+def test_solve_score_profile_caps_match_compiler_constants():
+    import solve_score_chain
+
+    caps = _json_profiles()["profiles"]["solve_score"]["value_caps"]
+    assert caps["program_tokens"] == solve_score_chain.MAX_PROGRAM_TOKENS
+    assert caps["max_metric_slots"] == solve_score_chain.MAX_METRIC_SLOTS
+    assert caps["max_output_channels"] == solve_score_chain.MAX_OUTPUT_CHANNELS
+
+
+def test_root_profile_registry_matches_root_xforms_dispatch():
+    profiles = _json_profiles()["profiles"]
+    root_profile = profiles["root"]
+    assert root_profile["source"]["registry"] == "root_legacy_registry.json"
+    registry_path = os.path.join(LAMBDA_DIR, root_profile["source"]["registry"])
+    with open(registry_path, "r", encoding="utf-8") as fh:
+        registry = json.load(fh)
+    names = {str(item["name"]) for item in registry.get("functions") or []}
+    with open(os.path.join(LAMBDA_DIR, "root_xforms.h"), "r", encoding="utf-8") as fh:
+        root_xforms = fh.read()
+    for name in names:
+        assert f'"{name}"' in root_xforms

@@ -16,10 +16,10 @@ from raw_score_render import histogram_from_raw_path_channel0, render_score_raw,
 from raw_sidecar import build_raw_sidecar
 from solve_score_chain import (
     SOLVE_SCORE_SPEC_VERSION,
-    compile_solve_score_chain_or_legacy,
     compiled_solve_score_fingerprint,
     emit_solve_score_metadata,
 )
+from solve_score_pipeline_programs import solve_score_program_for_run
 from shared import (
     BUCKET,
     attach_contract_warnings,
@@ -181,13 +181,15 @@ def handler(event, context):
     metric = params["metric"]
     palette = params["palette"]
     solve_score_chain = contract_param(params, "solve_score_chain", "", contract_warnings)
-    compiled = compile_solve_score_chain_or_legacy(
-        solve_score_chain,
-        metric,
-        params.get("solve_score_quantile", 0.001),
-        params.get("solve_score_omega", 1.0),
-        params.get("solve_score_omega_enabled", True),
-        default_metric=metric,
+    compile_params = dict(params)
+    compile_params.setdefault("metric", metric)
+    compile_params.setdefault("solve_metric", metric)
+    compiled = solve_score_program_for_run(compile_params)
+    solve_score_chain = compiled.get("chain_public") or solve_score_chain
+    solve_score_program_source_text = str(
+        params.get("solve_score_program_source_text")
+        or compiled.get("source_text")
+        or ""
     )
     metric = compiled["metric"]
     q = compiled["quantile"]
@@ -196,6 +198,18 @@ def handler(event, context):
     chain_fingerprint = compiled_solve_score_fingerprint(compiled)
     render_execution = contract_param(params, "render_execution", None, contract_warnings)
     root_transforms = contract_param(params, "root_transforms", [], contract_warnings)
+    root_program = params.get("root_program") if isinstance(params.get("root_program"), dict) else {}
+    root_program_source_text = str(
+        params.get("root_program_source_text")
+        or root_program.get("source_text")
+        or ""
+    )
+    root_program_fingerprint = str(
+        params.get("root_program_fingerprint")
+        or root_program.get("fingerprint")
+        or ""
+    )
+    root_spec_version = int(params.get("root_spec_version") or root_program.get("spec_version") or 1)
     image_key = params["image_key"]
     preview_key = params["preview_key"]
     meta_key = params["meta_key"]
@@ -429,6 +443,9 @@ def handler(event, context):
             "clip_lo": str(bins_meta.get("clip_lo", "")),
             "clip_hi": str(bins_meta.get("clip_hi", "")),
         }
+        if root_program_fingerprint:
+            metadata["root_program_fingerprint"] = root_program_fingerprint
+            metadata["root_spec_version"] = str(root_spec_version)
         _copy_viewport_metadata(metadata, source_view_meta)
         metadata_size = _metadata_size_bytes(metadata)
         if metadata_size > S3_USER_METADATA_LIMIT_BYTES:
@@ -451,9 +468,12 @@ def handler(event, context):
             "color_interpretation": color_interpretation,
             "score_output_channel_count": score_output_channel_count,
             "solve_score_chain": solve_score_chain,
+            "solve_score_program_source_text": solve_score_program_source_text,
             "solve_score_quantile": q,
             "solve_score_omega": omega,
             "solve_score_omega_enabled": omega_enabled,
+            "root_program_fingerprint": root_program_fingerprint,
+            "root_spec_version": root_spec_version,
             "root_transforms": root_transforms or [],
         })
         if raw_output_path:
@@ -470,6 +490,7 @@ def handler(event, context):
                 ),
                 score_chain=solve_score_chain,
                 score_program=bins_meta.get("program") or compiled.get("program_spec") or "",
+                score_source_text=solve_score_program_source_text,
                 clip_slots=bins_meta.get("metrics") or [
                     {
                         "slot": 0,
@@ -558,6 +579,11 @@ def handler(event, context):
         }
         if isinstance(render_execution, dict):
             meta_body["render_execution"] = render_execution
+        if root_program_fingerprint:
+            meta_body["root_program_source_text"] = root_program_source_text
+            meta_body["root_program"] = root_program
+            meta_body["root_program_fingerprint"] = root_program_fingerprint
+            meta_body["root_spec_version"] = root_spec_version
         meta_body.update(
             {
                 "metric": metric,
@@ -575,6 +601,7 @@ def handler(event, context):
                     )["solve_score_chain"]
                 ),
                 "solve_score_chain_fingerprint": chain_fingerprint,
+                "solve_score_program_source_text": solve_score_program_source_text,
                 "solve_score_spec_version": int(
                     params.get("solve_score_spec_version", SOLVE_SCORE_SPEC_VERSION)
                     or SOLVE_SCORE_SPEC_VERSION

@@ -576,6 +576,7 @@ function _renderCommonParams(options = {}) {
         solveScoreOmegaPhase: solveScore.omega_phase,
         solveScoreOmegaEnabled: solveScore.omega_enabled,
         solveScoreChain: solveScore.chain,
+        solveScoreProgramSourceText: _effectiveSolveScoreProgramSourceText('render'),
         solveScoreProgramSpec: solveScore.program_spec,
         solveScoreDisplay: solveScore.display,
         solveScoreMetrics: solveScore.metrics,
@@ -595,6 +596,7 @@ function _renderCommonParams(options = {}) {
         })(),
         rootTransforms: _rtChain.map(item =>
             item.params && item.params.length ? [item.name, ...item.params] : [item.name]),
+        rootProgramSourceText: _effectiveRootProgramSourceText('render'),
     };
 }
 
@@ -851,6 +853,12 @@ function _paletteArtifactSolveScoreChain(pal) {
 function _setPaletteRootTransformsFromArtifact(transforms) {
     if (!Array.isArray(transforms)) return false;
     const next = transforms.map(item => {
+        if (item && typeof item === 'object' && !Array.isArray(item)) {
+            const name = String(item.name || '').trim();
+            if (!name) return null;
+            const args = Array.isArray(item.args) ? item.args : (Array.isArray(item.params) ? item.params : []);
+            return { name, params: args.map(v => String(v)) };
+        }
         if (!Array.isArray(item) || !item.length) return null;
         return { name: item[0], params: item.slice(1).map(v => String(v)) };
     }).filter(Boolean);
@@ -886,6 +894,9 @@ function populateSelectedPalette() {
         }
         _solveScoreProgramRememberedNames.palette = '';
         _setSolveScoreProgramStatus('palette', `Populated from ${pal.display_name || pal.palette_id || 'selected palette'}`, false);
+        if (typeof _restoreSolveScoreSourceFromArtifact === 'function') {
+            _restoreSolveScoreSourceFromArtifact('palette', pal);
+        }
     } else {
         warnings.push('solve-score program');
     }
@@ -905,6 +916,9 @@ function populateSelectedPalette() {
 
     if (Array.isArray(pal.root_transforms)) {
         _setPaletteRootTransformsFromArtifact(pal.root_transforms);
+    }
+    if (typeof _restoreRootSourceFromArtifact === 'function') {
+        _restoreRootSourceFromArtifact('palette', pal);
     }
 
     _updatePaletteCreateButton();
@@ -974,7 +988,9 @@ async function runPaletteArtifact() {
                 solve_score_omega: score.omega,
                 solve_score_omega_enabled: score.omega_enabled,
                 solve_score_chain: score.chain,
+                solve_score_program_source_text: _effectiveSolveScoreProgramSourceText('palette'),
                 root_transforms: _paletteRootTransforms(),
+                root_program_source_text: _effectiveRootProgramSourceText('palette') || undefined,
             },
         };
         const dispResult = await lambdaPost('dispatch', {
@@ -1547,6 +1563,7 @@ async function _launchNonColorRenderOrchestrator(mode, paramsPatch = null) {
         square_extent: p.squareExtent,
         rotation: p.rotation,
         root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
+        root_program_source_text: p.rootProgramSourceText || undefined,
     };
     if (_viewMode === 'explicit') {
         params.min_re = p.minRe;
@@ -1578,9 +1595,11 @@ async function _launchFusedRenderOrchestrator(paramsPatch = null) {
         color_interpretation: p.colorInterpretation,
         background_color: p.backgroundColor,
         solve_score_chain: p.solveScoreChain,
+        solve_score_program_source_text: p.solveScoreProgramSourceText,
         solve_score_normalize: !!p.solveScoreNormalize,
         palette: _activeRenderPalette() || 'inferno',
         root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
+        root_program_source_text: p.rootProgramSourceText || undefined,
         raster_engine: 'mt',
         raster_mt_threads: 4,
         solve_score_threads: 4,

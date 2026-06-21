@@ -23,13 +23,13 @@ from solve_score_chain import (
     SOLVE_SCORE_LEGACY_SPEC_VERSION,
     SOLVE_SCORE_SPEC_VERSION,
     canonicalize_solve_score_program_spec,
-    compile_solve_score_chain_or_legacy,
     compiled_solve_score_fingerprint,
     solve_score_lag_prelude_by_source,
     solve_score_program_spec_uses_lag,
     solve_score_program_specs_match,
     solve_score_program_cli_payload,
 )
+from solve_score_pipeline_programs import solve_score_program_for_run
 from shared import BUCKET, attach_contract_warnings, contract_param, parse_body, ok_response, parse_boolish, report_status
 
 s3 = boto3.client("s3")
@@ -206,16 +206,19 @@ def handler(event, context):
     degree = params["degree"]
     metric = params["metric"]
     raw_chain = params.get("solve_score_chain", "")
-    has_request_chain = raw_chain not in ("", None, [])
+    has_request_chain = (
+        raw_chain not in ("", None, [])
+        or bool(str(params.get("solve_score_program_source_text") or "").strip())
+        or isinstance(params.get("solve_score_program"), dict)
+    )
     if has_request_chain:
-        compiled = compile_solve_score_chain_or_legacy(
-            raw_chain,
-            metric,
-            params.get("solve_score_quantile", 0.001),
-            params.get("solve_score_omega", 1.0),
-            params.get("solve_score_omega_enabled", True),
-            default_metric=metric,
-        )
+        compile_params = dict(params)
+        compile_params.setdefault("metric", metric)
+        compile_params.setdefault("solve_metric", metric)
+        compiled = solve_score_program_for_run(compile_params)
+        raw_chain = compiled.get("chain_public") or raw_chain
+        params["solve_score_chain"] = raw_chain
+        params["solve_score_program_source_text"] = compiled.get("source_text", "")
         metric = compiled["metric"]
         q = compiled["quantile"]
         omega = compiled["omega"]
@@ -732,6 +735,8 @@ def handler(event, context):
             )
             chunk_meta["program"] = bins_data.get("program")
             chunk_meta["metrics"] = bins_data.get("metrics")
+            if compiled and compiled.get("source_text"):
+                chunk_meta["solve_score_program_source_text"] = compiled.get("source_text", "")
         s3.put_object(Bucket=BUCKET, Key=meta_key, Body=json.dumps(chunk_meta), ContentType="application/json")
 
         result_data = attach_contract_warnings({

@@ -144,6 +144,7 @@ def associated_palette_metadata(
     omega,
     omega_enabled: bool,
     score_chain=None,
+    score_source_text="",
     color_interpretation: str = "",
     raw_key: str = "",
     raw_meta_key: str = "",
@@ -175,6 +176,9 @@ def associated_palette_metadata(
             chain=score_chain,
         )
     )
+    if score_source_text not in ("", None):
+        meta["associated_palette_score_source_text"] = str(score_source_text)
+        meta["associated_palette_solve_score_program_source_text"] = str(score_source_text)
     return meta
 
 
@@ -195,6 +199,11 @@ def inherit_associated_palette_metadata(source_meta: Dict[str, str]) -> Dict[str
         omega=(source_meta or {}).get("associated_palette_omega", ""),
         omega_enabled=parse_boolish((source_meta or {}).get("associated_palette_omega_enabled", True), True),
         score_chain=(source_meta or {}).get("associated_palette_score_chain", ""),
+        score_source_text=(
+            (source_meta or {}).get("associated_palette_score_source_text")
+            or (source_meta or {}).get("associated_palette_solve_score_program_source_text")
+            or ""
+        ),
         color_interpretation=(source_meta or {}).get("associated_palette_color_interpretation", ""),
         raw_key=(source_meta or {}).get("associated_palette_raw_key", ""),
         raw_meta_key=(source_meta or {}).get("associated_palette_raw_meta_key", ""),
@@ -203,6 +212,8 @@ def inherit_associated_palette_metadata(source_meta: Dict[str, str]) -> Dict[str
     for key in (
         "associated_palette_color_interpretation",
         "associated_palette_score_chain",
+        "associated_palette_score_source_text",
+        "associated_palette_solve_score_program_source_text",
         "associated_palette_metric",
         "associated_palette_quantile",
         "associated_palette_omega",

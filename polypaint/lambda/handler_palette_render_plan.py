@@ -21,6 +21,7 @@ from color_render_contract import normalize_color_interpretation, validate_color
 from logical_sections import build_physical_section_items, build_solve_source_manifest, write_solve_source_manifest
 from palette_names import VALID_PALETTE_NAMES
 from param_source import chunk_items_have_params
+from pipeline_programs import root_program_for_run, solve_score_program_for_run
 from shared import BUCKET, parse_body, ok_response
 from solve_score_chain import (
     SOLVE_SCORE_SPEC_VERSION,
@@ -43,6 +44,32 @@ s3 = boto3.client("s3")
 MAX_PLAN_BYTES = 200 * 1024  # fail fast before 256KB Step Functions limit
 VALID_METRICS = VALID_SOLVE_SCORE_METRICS
 PALETTE_VARIANT_SPEC_VERSION = 1
+
+
+def _root_program_payload(compiled):
+    return {
+        "program_kind": "root_program",
+        "spec_version": int(compiled.get("spec_version") or 2),
+        "source_text": str(compiled.get("source_text") or ""),
+        "chain": compiled.get("chain") or [],
+        "root_transforms": compiled.get("root_transforms") or [],
+        "display": compiled.get("display") or "",
+        "fingerprint": compiled.get("fingerprint") or "",
+        "execution_spec": compiled.get("execution_spec") or "",
+        "tokens": compiled.get("tokens") or [],
+        "token_count": int(compiled.get("token_count") or 0),
+    }
+
+
+def _apply_root_program_to_params(params):
+    compiled = root_program_for_run(params)
+    payload = _root_program_payload(compiled)
+    params["root_transforms"] = payload["root_transforms"]
+    params["root_program_source_text"] = payload["source_text"]
+    params["root_program"] = payload
+    params["root_program_fingerprint"] = payload["fingerprint"]
+    params["root_spec_version"] = payload["spec_version"]
+    return payload
 
 
 def _validate_threads(value, default=1):
@@ -685,7 +712,13 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         raise RuntimeError(f"Solve-score Color artifact {source['artifact_id']} is missing solve_score_quantile")
     omega = source_score["omega"]
     omega_enabled = source_score["omega_enabled"]
-    root_transforms = list(source.get("root_transforms") or [])
+    root_params = {
+        "root_transforms": list(source.get("root_transforms") or []),
+        "root_program_source_text": source.get("root_program_source_text", ""),
+        "root_program": source.get("root_program"),
+    }
+    root_program_payload = _apply_root_program_to_params(root_params)
+    root_transforms = root_params["root_transforms"]
 
     calc = _load_calc(job_id)
     degree = calc.get("degree")
@@ -754,6 +787,10 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         "solve_score_omega": omega,
         "solve_score_omega_enabled": omega_enabled,
         "root_transforms": root_transforms,
+        "root_program_source_text": root_program_payload.get("source_text", ""),
+        "root_program": root_program_payload,
+        "root_program_fingerprint": root_program_payload.get("fingerprint", ""),
+        "root_spec_version": root_program_payload.get("spec_version", 2),
         "color_interpretation": color_interpretation,
         **execution,
     }
@@ -874,14 +911,7 @@ def handler(event, context):
 
     execution = _execution_params(pp)
     color_interpretation = _color_interpretation_from_params(pp)
-    compiled_score = compile_solve_score_chain_or_legacy(
-        pp.get("solve_score_chain", ""),
-        pp.get("metric", "proximity"),
-        pp.get("solve_score_quantile", 0.001),
-        pp.get("solve_score_omega", 1.0),
-        pp.get("solve_score_omega_enabled", True),
-        default_metric="proximity",
-    )
+    compiled_score = solve_score_program_for_run(pp)
     output_channel_count = int(compiled_score.get("output_channel_count") or 1)
     color_contract = validate_color_output_contract(
         interpretation=color_interpretation,
@@ -904,7 +934,13 @@ def handler(event, context):
     metric = compiled_score["metric"]
     requested_palette = pp.get("palette", "inferno")
     palette = requested_palette if _interpretation_uses_palette(color_interpretation) else ""
-    root_transforms = pp.get("root_transforms", [])
+    root_params = {
+        "root_transforms": pp.get("root_transforms", []),
+        "root_program_source_text": pp.get("root_program_source_text", ""),
+        "root_program": pp.get("root_program"),
+    }
+    root_program_payload = _apply_root_program_to_params(root_params)
+    root_transforms = root_params["root_transforms"]
     if metric not in VALID_METRICS:
         raise RuntimeError(f"Invalid metric: {metric}")
     if _interpretation_uses_palette(color_interpretation) and palette not in VALID_PALETTE_NAMES:
@@ -913,6 +949,7 @@ def handler(event, context):
     omega = compiled_score["omega"]
     omega_enabled = compiled_score["omega_enabled"]
     compiled_score_chain_public = public_solve_score_chain(compiled_score["chain"])
+    compiled_score_source_text = str(compiled_score.get("source_text") or "")
 
     palette_id, palette_variant_fingerprint, _identity_payload = _palette_variant_identity(
         job_id=job_id,
@@ -1029,10 +1066,15 @@ def handler(event, context):
             "color_interpretation": color_interpretation,
             "score_output_interpretation": color_interpretation,
             "solve_score_chain": compiled_score_chain_public,
+            "solve_score_program_source_text": compiled_score_source_text,
             "solve_score_quantile": q,
             "solve_score_omega": omega,
             "solve_score_omega_enabled": omega_enabled,
             "root_transforms": root_transforms,
+            "root_program_source_text": root_program_payload.get("source_text", ""),
+            "root_program": root_program_payload,
+            "root_program_fingerprint": root_program_payload.get("fingerprint", ""),
+            "root_spec_version": root_program_payload.get("spec_version", 2),
             **execution,
         },
         "palette_id": palette_id,
@@ -1087,6 +1129,7 @@ def handler(event, context):
             "omega": omega,
             "omega_enabled": omega_enabled,
             "chain": compiled_score_chain_public,
+            "source_text": compiled_score_source_text,
             "metrics": compiled_score["metrics"],
             "program": compiled_score["program_spec"],
             "chain_fingerprint": chain_fingerprint,

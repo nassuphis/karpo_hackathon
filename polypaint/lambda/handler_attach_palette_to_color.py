@@ -47,6 +47,11 @@ def handler(event, context):
     omega = contract_param(params, "associated_palette_omega", "", contract_warnings)
     omega_enabled = parse_boolish(contract_param(params, "associated_palette_omega_enabled", True, contract_warnings), True)
     score_chain = contract_param(params, "associated_palette_score_chain", "", contract_warnings)
+    score_source_text = str(
+        contract_param(params, "associated_palette_score_source_text", "", contract_warnings)
+        or contract_param(params, "associated_palette_solve_score_program_source_text", "", contract_warnings)
+        or ""
+    )
     color_interpretation = str(contract_param(params, "associated_palette_color_interpretation", "", contract_warnings) or "").strip()
     raw_key = str(contract_param(params, "associated_palette_raw_key", "", contract_warnings) or "").strip()
     raw_meta_key = str(contract_param(params, "associated_palette_raw_meta_key", "", contract_warnings) or "").strip()
@@ -84,6 +89,7 @@ def handler(event, context):
             omega=omega,
             omega_enabled=omega_enabled,
             score_chain=score_chain,
+            score_source_text=score_source_text,
             color_interpretation=color_interpretation,
             raw_key=raw_key,
             raw_meta_key=raw_meta_key,

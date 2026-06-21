@@ -544,6 +544,17 @@ assertNotIncludes("id=\"render-solve-score-program-save\"", 'render tab should n
 assertNotIncludes("id=\"palette-solve-score-program-save\"", 'palette tab should not keep save-json button');
 assertNotIncludes("id=\"render-solve-score-program-file\"", 'render tab should not keep per-tab solve-score upload input');
 assertNotIncludes("id=\"palette-solve-score-program-file\"", 'palette tab should not keep per-tab solve-score upload input');
+assertIncludes("id=\"render-ss-tab-text\" class=\"compute-preview-tab-btn\" onclick=\"_setSolveScoreProgramEditorMode('render','text')\"", 'render solve-score editor should expose a Text tab');
+assertIncludes("id=\"palette-ss-tab-text\" class=\"compute-preview-tab-btn\" onclick=\"_setSolveScoreProgramEditorMode('palette','text')\"", 'palette solve-score editor should expose a Text tab');
+assertIncludes("id=\"render-rt-tab-text\" class=\"compute-preview-tab-btn\" onclick=\"_setRootProgramEditorMode('render','text')\"", 'render root editor should expose a Text tab');
+assertIncludes("id=\"palette-rt-tab-text\" class=\"compute-preview-tab-btn\" onclick=\"_setRootProgramEditorMode('palette','text')\"", 'palette root editor should expose a Text tab');
+assertIncludes("lambdaPost('storage', { source_text: sourceText, strict: true }, '/compile-solve-score-program-source')", 'solve-score source editor should compile through the backend route');
+assertIncludes("lambdaPost('storage', { source_text: sourceText, strict: true }, '/compile-root-program-source')", 'root source editor should compile through the backend route');
+assertIncludes("solve_score_program_source_text: p.solveScoreProgramSourceText,", 'render/preview payloads should forward solve-score source text');
+assertIncludes("root_program_source_text: p.rootProgramSourceText || undefined,", 'render/preview payloads should forward root source text');
+assertIncludes("solve_score_program_source_text: _effectiveSolveScoreProgramSourceText('palette'),", 'palette payload should forward solve-score source text');
+assertIncludes("_restoreSolveScoreSourceFromArtifact('render', art);", 'render Populate should restore solve-score source text when metadata has it');
+assertIncludes("_restoreRootSourceFromArtifact('palette', pal);", 'palette Populate should restore root source text when metadata has it');
 assertIncludes("lambdaPost('storage', {}, '/list-solve-score-programs')", 'solve-score modal should list saved programs through storage');
 assertIncludes("lambdaPost('storage', { id }, '/fetch-solve-score-program')", 'solve-score modal should fetch saved programs through storage');
 assertIncludes("recommended_interpretation: payload.recommended_interpretation || undefined,", 'solve-score modal should save recommended color interpretation through storage');

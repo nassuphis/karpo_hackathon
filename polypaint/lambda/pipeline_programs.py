@@ -16,10 +16,19 @@ blank-source_text drift:
 - parse_coeff_source_for_run: compile with structured diagnostics. The
   editor's save/compile route always preserved line/column diagnostics;
   the compute paths used to flatten them into a bare string, making
-  preview/probe failures needlessly hard to debug.
+preview/probe failures needlessly hard to debug.
 """
-from coeff_program_source import parse_coeff_program_source
-from param_program_source import parse_param_program_source
+from root_pipeline_programs import (
+    RootSourceCompileError,
+    root_program_for_run,
+    root_source_text_for_run,
+    root_transforms_to_program_chain,
+)
+from solve_score_pipeline_programs import (
+    SolveScoreSourceCompileError,
+    solve_score_program_for_run,
+    solve_score_source_text_for_run,
+)
 
 
 class CoeffSourceCompileError(ValueError):
@@ -94,6 +103,8 @@ def parse_coeff_source_for_run(source_text):
     Uses strict=False so every diagnostic keeps its line/column instead of
     the first error aborting with a flattened message.
     """
+    from coeff_program_source import parse_coeff_program_source
+
     parsed = parse_coeff_program_source(source_text, strict=False)
     diagnostics = parsed.get("diagnostics") or []
     if diagnostics:
@@ -110,6 +121,8 @@ def parse_coeff_source_for_run(source_text):
 
 def parse_param_source_for_run(source_text):
     """Parse Param source, raising ParamSourceCompileError with structure."""
+    from param_program_source import parse_param_program_source
+
     parsed = parse_param_program_source(source_text, strict=False)
     diagnostics = parsed.get("diagnostics") or []
     if diagnostics:

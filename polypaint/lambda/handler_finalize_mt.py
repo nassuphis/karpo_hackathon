@@ -435,6 +435,13 @@ def _finalize_associated_palette(
         },
         default_metric=source_score["metric"],
     )
+    associated_score_source_text = str(
+        associated_palette.get("score_source_text")
+        or associated_palette.get("solve_score_program_source_text")
+        or metadata.get("solve_score_program_source_text")
+        or metadata.get("score_source_text")
+        or ""
+    )
 
     sidecar = build_raw_sidecar(
         job_id=job_id,
@@ -447,6 +454,7 @@ def _finalize_associated_palette(
         solve_score_spec_version=associated_score.get("spec_version", SOLVE_SCORE_SPEC_VERSION),
         score_chain=associated_palette.get("score_chain", metadata.get("solve_score_chain", "")),
         score_program=score_program,
+        score_source_text=associated_score_source_text,
         clip_slots=clip_slots,
         score_output_normalize=score_output_normalize,
         score_output_clip_lo=score_output_clip_lo,
@@ -538,6 +546,8 @@ def _finalize_associated_palette(
         "raw_meta_key": raw_meta_key,
         "metric": associated_score["metric"],
         "solve_score_chain": associated_score["chain_json"],
+        "solve_score_program_source_text": associated_score_source_text,
+        "score_source_text": associated_score_source_text,
         "chain_fingerprint": chain_fingerprint,
         "solve_score_spec_version": associated_score.get("spec_version", SOLVE_SCORE_SPEC_VERSION),
         "derived_from_color_artifact_id": str(associated_palette.get("source_color_artifact_id") or ""),
@@ -562,6 +572,8 @@ def _finalize_associated_palette(
         "palette": str(associated_palette.get("palette") or metadata.get("palette") or ""),
         "metric": associated_score["metric"],
         "score_chain": associated_score["chain_json"],
+        "score_source_text": associated_score_source_text,
+        "solve_score_program_source_text": associated_score_source_text,
         "image_key": image_key,
         "preview_key": preview_key,
         "raw_key": raw_key,
@@ -755,6 +767,11 @@ def handler(event, context):
         solve_score_spec_version=clip_info["solve_score_spec_version"],
         score_chain=metadata.get("solve_score_chain", ""),
         score_program=clip_info["score_program"],
+        score_source_text=str(
+            metadata.get("solve_score_program_source_text")
+            or metadata.get("score_source_text")
+            or ""
+        ),
         clip_slots=clip_info["clip_slots"],
         score_output_normalize=clip_info["score_output_normalize"],
         score_output_clip_lo=clip_info["score_output_clip_lo"],
@@ -836,6 +853,11 @@ def handler(event, context):
     final_metadata["score_output_clip_hi"] = str(clip_info["score_output_clip_hi"])
     final_metadata["score_output_channel_count"] = str(channels)
     final_metadata["solve_score_spec_version"] = str(clip_info["solve_score_spec_version"])
+    final_metadata["solve_score_program_source_text"] = str(
+        metadata.get("solve_score_program_source_text")
+        or metadata.get("score_source_text")
+        or ""
+    )
     final_metadata["score_output_interpretation"] = clip_info["score_output_interpretation"]
     final_metadata["color_interpretation"] = clip_info["score_output_interpretation"]
     if render_warnings:
@@ -855,6 +877,11 @@ def handler(event, context):
         final_metadata["associated_palette_color_interpretation"] = associated_palette_result.get("color_interpretation", "")
         final_metadata["associated_palette_metric"] = associated_palette_result["metric"]
         final_metadata["associated_palette_score_chain"] = associated_palette_result["score_chain"]
+        final_metadata["associated_palette_score_source_text"] = associated_palette_result.get("score_source_text", "")
+        final_metadata["associated_palette_solve_score_program_source_text"] = associated_palette_result.get(
+            "solve_score_program_source_text",
+            associated_palette_result.get("score_source_text", ""),
+        )
         final_metadata["associated_palette_raw_key"] = associated_palette_result["raw_key"]
         final_metadata["associated_palette_raw_meta_key"] = associated_palette_result["raw_meta_key"]
         final_metadata["associated_palette_meta_key"] = associated_palette_result["meta_key"]

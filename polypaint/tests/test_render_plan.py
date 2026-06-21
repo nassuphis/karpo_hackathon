@@ -87,6 +87,31 @@ def _assert_plan_path_exists(testcase, plan, jsonpath):
         cur = cur[part]
 
 
+class TestRenderPlanHelpers(unittest.TestCase):
+    def test_solve_score_scratch_key_uses_root_program_fingerprint_when_available(self):
+        from handler_render_plan import _solve_score_scratch_key
+
+        compiled = {
+            "metric": "proximity",
+            "legacy_compatible": True,
+            "chain": [["proximity", "0.1"]],
+        }
+        key = _solve_score_scratch_key(
+            "job1",
+            compiled,
+            [["rotate_roots", "0.25"]],
+            root_program_fingerprint="sha256:abcdef123456",
+        )
+        fallback = _solve_score_scratch_key(
+            "job1",
+            compiled,
+            [["rotate_roots", "0.25"]],
+        )
+
+        self.assertIn("_rtabcdef12/", key)
+        self.assertNotEqual(key, fallback)
+
+
 class TestRenderPlan(unittest.TestCase):
     def setUp(self):
         import handler_render_plan as mod
@@ -262,6 +287,7 @@ class TestRenderPlan(unittest.TestCase):
                 "enabled",
                 "threads",
                 "chain",
+                "source_text",
                 "clip_key",
                 "uses_lag",
                 "max_lag",
@@ -586,6 +612,10 @@ class TestRenderPlan(unittest.TestCase):
                 "shim",
                 "square_extent",
                 "root_transforms",
+                "root_program_source_text",
+                "root_program",
+                "root_program_fingerprint",
+                "root_spec_version",
                 "rotation",
                 "raster_section_mode",
                 "raster_section_count",
@@ -637,6 +667,10 @@ class TestRenderPlan(unittest.TestCase):
                 "shim",
                 "square_extent",
                 "root_transforms",
+                "root_program_source_text",
+                "root_program",
+                "root_program_fingerprint",
+                "root_spec_version",
                 "rotation",
                 "raster_section_mode",
                 "raster_section_count",

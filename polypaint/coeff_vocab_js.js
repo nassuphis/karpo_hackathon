@@ -1161,6 +1161,10 @@ window._coeffRegistryVocab = {
           "vector_len": 256,
           "vector_capable_stack": 0
         },
+        "source": {
+          "registry": "root_legacy_registry.json",
+          "args": "finite_real_static"
+        },
         "symbols": {
           "roots": {
             "type": "vector_float",
@@ -1185,11 +1189,36 @@ window._coeffRegistryVocab = {
       "solve_score": {
         "program_kind": "solve_score_program",
         "value_caps": {
-          "program_tokens": 256,
+          "program_tokens": 32,
           "total_stack": 64,
           "vector_len": 0,
           "vector_capable_stack": 0,
+          "max_metric_slots": 16,
           "max_output_channels": 8
+        },
+        "source": {
+          "locals": {
+            "type": "scalar_score",
+            "access": "read_write"
+          },
+          "reserved_output": "score",
+          "metric_sources": [
+            "slv",
+            "cf",
+            "pm"
+          ],
+          "output_calls": [
+            "emit",
+            "emit_norm",
+            "emit_none"
+          ],
+          "metric_kwargs": {
+            "q": "percent",
+            "lag": [
+              0,
+              1
+            ]
+          }
         },
         "symbols": {
           "metrics": {

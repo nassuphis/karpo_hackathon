@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_NUMBER_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?%?$")
 
 
 @dataclass(frozen=True)
@@ -142,6 +143,27 @@ def split_top_level(text, sep=",", *, error_cls=ProgramSourceError):
     return out
 
 
+def is_numeric_literal(text, *, allow_percent=False):
+    raw = str(text or "").strip()
+    if not allow_percent and raw.endswith("%"):
+        return False
+    return bool(_NUMBER_RE.fullmatch(raw))
+
+
+def format_numeric_literal(value):
+    num = float(value)
+    if num.is_integer():
+        return str(int(num))
+    return f"{num:g}"
+
+
+def format_percent_literal(value):
+    raw = str(value or "").strip()
+    if raw.endswith("%"):
+        raw = raw[:-1].strip()
+    return format_numeric_literal(raw)
+
+
 def find_top_level_assignment(text):
     paren = bracket = 0
     for idx, ch in enumerate(str(text or "")):
@@ -156,6 +178,25 @@ def find_top_level_assignment(text):
         elif ch == "=" and paren == 0 and bracket == 0:
             return idx
     return -1
+
+
+def parse_keyword_args(args, *, allowed, error_cls=ProgramSourceError):
+    positional = []
+    kwargs = {}
+    allowed_keys = {str(key).strip().lower() for key in (allowed or [])}
+    for raw in args:
+        idx = find_top_level_assignment(raw)
+        if idx < 0:
+            positional.append(str(raw).strip())
+            continue
+        key = str(raw[:idx]).strip().lower()
+        value = str(raw[idx + 1:]).strip()
+        if key not in allowed_keys:
+            raise error_cls(f"unknown keyword argument {key!r}")
+        if key in kwargs:
+            raise error_cls(f"duplicate keyword argument {key!r}")
+        kwargs[key] = value
+    return positional, kwargs
 
 
 def parse_call(text, *, error_cls=ProgramSourceError):

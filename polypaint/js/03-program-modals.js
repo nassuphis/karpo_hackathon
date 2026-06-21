@@ -52,6 +52,7 @@ function _parseSolveScoreProgram(raw) {
         version,
         name: String(raw.name || '').trim(),
         description: String(raw.description || '').trim(),
+        source_text: String(raw.source_text || raw.solve_score_program_source_text || '').trim(),
         chain: _serializeSolveScoreChain(chain),
         recommended_interpretation: raw.recommended_interpretation ? _normalizeColorInterpretation(raw.recommended_interpretation) : '',
     };
@@ -65,6 +66,10 @@ function _applySolveScoreProgram(prefix, rawProgram) {
     _compileSolveScoreChain(program.chain, fallbackMetric);
     chain.splice(0, chain.length, ..._normalizeSolveScoreChain(program.chain, fallbackMetric));
     _renderChips(which);
+    if (program.source_text) {
+        _setSolveScoreProgramSourceText(prefix, program.source_text);
+        _setSolveScoreProgramEditorMode(prefix, 'text');
+    }
     const compiled = _syncSolveScoreLegacyInputs(prefix);
     if (prefix === 'render') {
         setColorMode('solve_score');
@@ -98,6 +103,8 @@ function _portableSolveScoreProgramPayload(prefix, nameOverride = '') {
     return {
         version: 1,
         name,
+        source_text: _effectiveSolveScoreProgramSourceText(prefix),
+        source_text_authoritative: !!_effectiveSolveScoreProgramSourceText(prefix).trim(),
         chain: state.chain,
         recommended_interpretation: prefix === 'render' ? _selectedRenderColorInterpretation() : '',
         metric: state.metric,

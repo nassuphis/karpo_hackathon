@@ -41,6 +41,8 @@ ASSOCIATED_PALETTE_METADATA_KEYS = (
     "associated_palette_color_interpretation",
     "associated_palette_metric",
     "associated_palette_score_chain",
+    "associated_palette_score_source_text",
+    "associated_palette_solve_score_program_source_text",
     "associated_palette_quantile",
     "associated_palette_omega",
     "associated_palette_omega_enabled",
@@ -245,6 +247,11 @@ def _apply_associated_palette_metadata(metadata, palette_result):
     metadata["associated_palette_color_interpretation"] = palette_result.get("color_interpretation", "")
     metadata["associated_palette_metric"] = palette_result["metric"]
     metadata["associated_palette_score_chain"] = palette_result["score_chain"]
+    metadata["associated_palette_score_source_text"] = palette_result.get("score_source_text", "")
+    metadata["associated_palette_solve_score_program_source_text"] = palette_result.get(
+        "solve_score_program_source_text",
+        palette_result.get("score_source_text", ""),
+    )
     metadata["associated_palette_quantile"] = palette_result["quantile"]
     metadata["associated_palette_omega"] = palette_result["omega"]
     metadata["associated_palette_omega_enabled"] = palette_result["omega_enabled"]

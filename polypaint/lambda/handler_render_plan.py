@@ -41,6 +41,7 @@ from solve_score_chain import (
     solve_score_lag_prelude_by_source,
     solve_score_uses_source,
 )
+from pipeline_programs import root_program_for_run, solve_score_program_for_run
 
 s3 = boto3.client("s3")
 lambda_client = boto3.client("lambda", region_name=os.environ.get("AWS_REGION", "us-east-1"))
@@ -54,13 +55,16 @@ MAX_PIX = 32768
 DEFAULT_BACKGROUND_THRESHOLD = 4
 
 
-def _plan_params_digest(*, viewport, pix, root_transforms=None, solve_score_normalize=False, color_interpretation="scalar_lut", background_color=None):
+def _plan_params_digest(*, viewport, pix, root_transforms=None, root_program_fingerprint="", solve_score_normalize=False, color_interpretation="scalar_lut", background_color=None):
     grid = {"pix": int(pix)}
     params = {
-        "root_transforms": root_transforms or [],
         "solve_score_normalize": bool(solve_score_normalize),
         "color_interpretation": str(color_interpretation or "scalar_lut"),
     }
+    if root_program_fingerprint:
+        params["root_program_fingerprint"] = str(root_program_fingerprint)
+    else:
+        params["root_transforms"] = root_transforms or []
     if background_color is not None:
         params["background_color"] = str(background_color or DEFAULT_BACKGROUND_COLOR).strip().lower()
     payload = {
@@ -71,6 +75,42 @@ def _plan_params_digest(*, viewport, pix, root_transforms=None, solve_score_norm
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
+
+def _root_program_payload(compiled):
+    return {
+        "program_kind": "root_program",
+        "spec_version": int(compiled.get("spec_version") or 2),
+        "source_text": str(compiled.get("source_text") or ""),
+        "chain": compiled.get("chain") or [],
+        "root_transforms": compiled.get("root_transforms") or [],
+        "display": compiled.get("display") or "",
+        "fingerprint": compiled.get("fingerprint") or "",
+        "execution_spec": compiled.get("execution_spec") or "",
+        "tokens": compiled.get("tokens") or [],
+        "token_count": int(compiled.get("token_count") or 0),
+    }
+
+
+def _apply_root_program_to_params(params):
+    compiled = root_program_for_run(params)
+    payload = _root_program_payload(compiled)
+    params["root_transforms"] = payload["root_transforms"]
+    params["root_program_source_text"] = payload["source_text"]
+    params["root_program"] = payload
+    params["root_program_fingerprint"] = payload["fingerprint"]
+    params["root_spec_version"] = payload["spec_version"]
+    return payload
+
+
+def _root_program_metadata(payload):
+    return {
+        "root_transforms": json.dumps(payload.get("root_transforms") or [], separators=(",", ":")),
+        "root_program_source_text": str(payload.get("source_text") or ""),
+        "root_program": json.dumps(payload, separators=(",", ":")),
+        "root_program_fingerprint": str(payload.get("fingerprint") or ""),
+        "root_spec_version": str(payload.get("spec_version") or 2),
+    }
 
 
 def _fallback_lores_coeffs_key(job_id, calc):
@@ -131,9 +171,16 @@ def _associated_palette_mode_for_output(color_interpretation, output_channel_cou
     )
 
 
-def _solve_score_scratch_key(job_id, compiled, root_transforms, score_normalize=False):
+def _root_identity_hash(root_transforms, root_program_fingerprint=""):
+    fingerprint = str(root_program_fingerprint or "").strip()
+    if fingerprint:
+        return fingerprint.split(":", 1)[-1][:8]
     rt_json = json.dumps(root_transforms or [], separators=(",", ":"))
-    rt_hash = hashlib.sha1(rt_json.encode("utf-8")).hexdigest()[:8]
+    return hashlib.sha1(rt_json.encode("utf-8")).hexdigest()[:8]
+
+
+def _solve_score_scratch_key(job_id, compiled, root_transforms, score_normalize=False, root_program_fingerprint=""):
+    rt_hash = _root_identity_hash(root_transforms, root_program_fingerprint)
     norm_suffix = "_sn1" if score_normalize else ""
     if compiled:
         metric_slug = str(compiled["metric"] or "score").replace(" ", "_")
@@ -329,6 +376,8 @@ def _build_fused_color_plan(
     }
     defaults = {
         "root_transforms": [],
+        "root_program_source_text": "",
+        "root_program": None,
         "rotation": 0,
         "palette": "inferno",
         "background_color": DEFAULT_BACKGROUND_COLOR,
@@ -347,11 +396,14 @@ def _build_fused_color_plan(
         "solve_score_threads": "",
         "finalize_workers": 16,
         "solve_score_chain": "",
+        "solve_score_program_source_text": "",
+        "solve_score_program": None,
         "solve_score_normalize": False,
         "save_associated_palette": False,
     }
     for key, default in defaults.items():
         fused_params[key] = rp.get(key, default)
+    root_program_payload = _apply_root_program_to_params(fused_params)
 
     fused_params["color_mode"] = str(fused_params.get("color_mode") or "solve_score").strip().lower()
     if fused_params["color_mode"] != "solve_score":
@@ -430,12 +482,11 @@ def _build_fused_color_plan(
             "and step_scores.raw are well-defined"
         )
 
-    solve_score_chain = fused_params.get("solve_score_chain", "")
-    if solve_score_chain in ("", None, []):
-        raise RuntimeError("fused color requires solve_score_chain")
-    solve_score_compiled = compile_solve_score_chain(solve_score_chain)
+    if fused_params.get("solve_score_chain") in ("", None, []) and not str(fused_params.get("solve_score_program_source_text") or "").strip() and not isinstance(fused_params.get("solve_score_program"), dict):
+        raise RuntimeError("fused color requires solve_score_chain or solve_score_program_source_text")
+    solve_score_compiled = solve_score_program_for_run(fused_params)
     solve_score_chain_internal = solve_score_compiled["chain"]
-    solve_score_chain_public = public_solve_score_chain(solve_score_chain_internal)
+    solve_score_chain_public = solve_score_compiled.get("chain_public") or public_solve_score_chain(solve_score_chain_internal)
     solve_metric = solve_score_compiled["metric"]
     solve_score_quantile = solve_score_compiled["quantile"]
     solve_score_omega = solve_score_compiled["omega"]
@@ -461,6 +512,7 @@ def _build_fused_color_plan(
         raise RuntimeError("score normalization checkbox is legacy-only; explicit emit/emit_norm programs own normalization")
     fused_params["solve_score_normalize"] = solve_score_normalize
     fused_params["solve_score_chain"] = solve_score_chain_public
+    fused_params["solve_score_program_source_text"] = solve_score_compiled.get("source_text", "")
     fused_params["color_interpretation"] = solve_score_output_interpretation
 
     pix = fused_params["pix"]
@@ -502,11 +554,13 @@ def _build_fused_color_plan(
         solve_score_compiled,
         fused_params.get("root_transforms", []),
         score_normalize=solve_score_normalize,
+        root_program_fingerprint=root_program_payload.get("fingerprint", ""),
     )
     solve_score = {
         "enabled": True,
         "threads": fused_params["solve_score_threads"],
         "chain": solve_score_chain_public,
+        "source_text": solve_score_compiled.get("source_text", ""),
         "clip_key": solve_score_clip_key,
         "uses_lag": bool(solve_score_compiled.get("uses_lag")),
         "max_lag": int(solve_score_compiled.get("max_lag") or 0),
@@ -642,7 +696,6 @@ def _build_fused_color_plan(
         "min_im": str(viewport["min_im"]),
         "max_im": str(viewport["max_im"]),
         "rotation": str(fused_params.get("rotation", 0.0)),
-        "root_transforms": json.dumps(fused_params.get("root_transforms", [])),
         "render_execution": json.dumps(render_execution, separators=(",", ":")),
         "format": "jpeg" if fused_params.get("fmt", "jpeg") != "png" else "png",
         "quality": str(fused_params.get("quality", 90)),
@@ -668,6 +721,7 @@ def _build_fused_color_plan(
         "raw_meta_key": artifact_prefix + "greyscale.meta.json",
         "fragment_prefix": artifact_prefix + "fragments/section_",
     }
+    artifact_meta.update(_root_program_metadata(root_program_payload))
     artifact_meta.update(
         emit_solve_score_metadata(
             "solve",
@@ -680,6 +734,7 @@ def _build_fused_color_plan(
         )
     )
     artifact_meta["score_program"] = solve_score_compiled["program_spec"]
+    artifact_meta["solve_score_program_source_text"] = solve_score_compiled.get("source_text", "")
     artifact_meta["score_output_channels"] = json.dumps(
         solve_score_output_channels,
         separators=(",", ":"),
@@ -709,6 +764,7 @@ def _build_fused_color_plan(
         viewport=viewport,
         pix=pix,
         root_transforms=fused_params.get("root_transforms", []),
+        root_program_fingerprint=root_program_payload.get("fingerprint", ""),
         solve_score_normalize=solve_score_normalize,
         color_interpretation=solve_score_output_interpretation,
         background_color=background_color,
@@ -871,8 +927,11 @@ def _build_non_color_plan(
         "shim": rp.get("shim", 0.05),
         "square_extent": rp.get("square_extent", 2.0),
         "root_transforms": rp.get("root_transforms", []),
+        "root_program_source_text": rp.get("root_program_source_text", ""),
+        "root_program": rp.get("root_program"),
         "rotation": rp.get("rotation", 0),
     }
+    root_program_payload = _apply_root_program_to_params(non_color_params)
     non_color_params["raster_section_mode"] = normalize_section_mode(
         rp.get("raster_section_mode", "logical_sections_auto")
     )
@@ -975,9 +1034,9 @@ def _build_non_color_plan(
         "min_im": str(viewport["min_im"]),
         "max_im": str(viewport["max_im"]),
         "rotation": str(non_color_params.get("rotation", 0.0)),
-        "root_transforms": json.dumps(non_color_params.get("root_transforms", [])),
         "render_execution": json.dumps(render_execution, separators=(",", ":")),
     }
+    artifact_meta.update(_root_program_metadata(root_program_payload))
     if mode == "bilevel":
         artifact_meta.update({
             "format": "tif",
@@ -999,6 +1058,7 @@ def _build_non_color_plan(
         viewport=viewport,
         pix=pix,
         root_transforms=non_color_params.get("root_transforms", []),
+        root_program_fingerprint=root_program_payload.get("fingerprint", ""),
     )
     outputs = {
         "family": artifact_family,

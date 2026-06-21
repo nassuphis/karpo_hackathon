@@ -84,6 +84,7 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
     def test_finalize_task_preserves_omega_enabled(self):
         payload = self.states["PaletteFinalizeTask"]["Parameters"]["Payload"]
         self.assertEqual(payload["solve_score_chain.$"], "$.plan.solve_score.chain")
+        self.assertEqual(payload["solve_score_program_source_text.$"], "$.plan.solve_score.source_text")
         self.assertEqual(payload["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(
             payload["solve_score_omega_enabled.$"],
@@ -93,6 +94,7 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
     def test_solve_score_tasks_forward_critical_fields(self):
         clip = self.states["SolveScoreClipTask"]["Parameters"]["Payload"]
         self.assertEqual(clip["solve_score_quantile.$"], "$.plan.solve_score.quantile")
+        self.assertEqual(clip["solve_score_program_source_text.$"], "$.plan.solve_score.source_text")
         self.assertEqual(clip["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(clip["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
         self.assertEqual(clip["solve_score_threads.$"], "$.plan.params.solve_score_threads")
@@ -104,6 +106,7 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
         self.assertEqual(hist["section_idx.$"], "$$.Map.Item.Value.section_idx")
         self.assertNotIn("chunk_idx.$", hist)
         self.assertEqual(hist["solve_score_quantile.$"], "$.plan.solve_score.quantile")
+        self.assertEqual(hist["solve_score_program_source_text.$"], "$.plan.solve_score.source_text")
         self.assertEqual(hist["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(hist["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
         self.assertEqual(hist["solve_score_threads.$"], "$.plan.params.solve_score_threads")
@@ -123,6 +126,7 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
 
         merge = self.states["SolveScoreMergeTask"]["Parameters"]["Payload"]
         self.assertEqual(merge["solve_score_quantile.$"], "$.plan.solve_score.quantile")
+        self.assertEqual(merge["solve_score_program_source_text.$"], "$.plan.solve_score.source_text")
         self.assertEqual(merge["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(merge["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
         self.assertEqual(merge["solve_score_threads.$"], "$.plan.params.solve_score_threads")
@@ -134,6 +138,7 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
         self.assertEqual(chunk["section_idx.$"], "$$.Map.Item.Value.section_idx")
         self.assertNotIn("chunk_idx.$", chunk)
         self.assertEqual(chunk["solve_score_quantile.$"], "$.plan.solve_score.quantile")
+        self.assertEqual(chunk["solve_score_program_source_text.$"], "$.plan.solve_score.source_text")
         self.assertEqual(chunk["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(chunk["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
         self.assertEqual(chunk["solve_score_chain_fingerprint.$"], "$.plan.solve_score.chain_fingerprint")
@@ -165,12 +170,17 @@ class TestPaletteWorkflowDefinition(unittest.TestCase):
         finalize = self.states["PaletteFinalizeTask"]["Parameters"]["Payload"]
         self.assertEqual(finalize["times.$"], "$.plan.calc.times")
         self.assertEqual(finalize["solve_score_quantile.$"], "$.plan.solve_score.quantile")
+        self.assertEqual(finalize["solve_score_program_source_text.$"], "$.plan.solve_score.source_text")
         self.assertEqual(finalize["solve_score_omega.$"], "$.plan.solve_score.omega")
         self.assertEqual(finalize["solve_score_omega_enabled.$"], "$.plan.solve_score.omega_enabled")
         self.assertEqual(finalize["score_output_channel_count.$"], "$.plan.solve_score.output_channel_count")
         self.assertEqual(finalize["score_output_channels.$"], "$.plan.solve_score.output_channels")
         self.assertEqual(finalize["color_interpretation.$"], "$.plan.params.color_interpretation")
         self.assertEqual(finalize["root_transforms.$"], "$.plan.params.root_transforms")
+        self.assertEqual(finalize["root_program_source_text.$"], "$.plan.params.root_program_source_text")
+        self.assertEqual(finalize["root_program.$"], "$.plan.params.root_program")
+        self.assertEqual(finalize["root_program_fingerprint.$"], "$.plan.params.root_program_fingerprint")
+        self.assertEqual(finalize["root_spec_version.$"], "$.plan.params.root_spec_version")
         self.assertEqual(finalize["raw_key.$"], "$.plan.outputs.raw_key")
         self.assertEqual(finalize["raw_meta_key.$"], "$.plan.outputs.raw_meta_key")
         self.assertEqual(finalize["raw_layout.$"], "$.plan.outputs.raw_layout")

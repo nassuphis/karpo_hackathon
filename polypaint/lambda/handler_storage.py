@@ -52,7 +52,16 @@ from param_program_source import (
     param_source_text_from_payload,
     parse_param_program_source,
 )
-from solve_score_chain import compile_solve_score_chain_or_legacy, serialize_solve_score_chain
+from root_program_source import compile_root_program_source
+from solve_score_chain import (
+    compile_solve_score_chain_or_legacy,
+    compiled_solve_score_fingerprint,
+    serialize_solve_score_chain,
+)
+from solve_score_program_source import (
+    compile_solve_score_program_source,
+    solve_score_source_text_from_chain,
+)
 from program_v2_translate import (
     V2_PROGRAM_VERSION,
     V2_SPEC_VERSION,
@@ -334,11 +343,17 @@ def _compile_solve_score_program_payload(
     name,
     chain,
     *,
+    source_text=None,
     saved_at=None,
     version=SOLVE_SCORE_PROGRAM_VERSION,
     recommended_interpretation=None,
 ):
     validated_name = _validate_solve_score_program_name(name)
+    source_text_value = str(source_text or "")
+    source_text_authoritative = bool(source_text_value.strip())
+    if source_text_authoritative:
+        source_compiled = compile_solve_score_program_source(source_text_value, strict=True)
+        chain = source_compiled["chain"]
     if not isinstance(chain, list) or not chain:
         raise ValueError("solve-score program chain must be a non-empty JSON array")
     if len(chain) > MAX_SOLVE_SCORE_PROGRAM_STATEMENTS:
@@ -358,6 +373,8 @@ def _compile_solve_score_program_payload(
         default_metric="proximity",
     )
     canonical_chain = json.loads(serialize_solve_score_chain(compiled["chain"]))
+    if not source_text_value.strip():
+        source_text_value = solve_score_source_text_from_chain(canonical_chain)
     saved_at_text = _utc_now_iso() if saved_at is None else str(saved_at or "").strip()
     try:
         version_num = int(version)
@@ -370,7 +387,15 @@ def _compile_solve_score_program_payload(
         "chain": canonical_chain,
         "metric": compiled["metric"],
         "display": compiled["display"],
+        "source_text": source_text_value,
+        "source_text_authoritative": source_text_authoritative,
+        "source_display": source_text_value.strip(),
+        "source_statement_count": sum(1 for split in source_text_value.splitlines() if split.strip()),
         "program_spec": compiled["program_spec"],
+        "fingerprint": compiled_solve_score_fingerprint(compiled),
+        "output_channel_count": compiled.get("output_channel_count", 1),
+        "output_channels": list(compiled.get("output_channels") or []),
+        "has_explicit_outputs": bool(compiled.get("has_explicit_outputs")),
         "statement_count": len(canonical_chain),
         "saved_at": saved_at_text,
     }
@@ -596,6 +621,11 @@ def _read_solve_score_program_object(program_id):
     program = _compile_solve_score_program_payload(
         payload.get("name"),
         payload.get("chain"),
+        source_text=(
+            payload.get("source_text") or payload.get("solve_score_program_source_text")
+            if payload.get("source_text_authoritative")
+            else None
+        ),
         saved_at=payload.get("saved_at", ""),
         version=payload.get("version", SOLVE_SCORE_PROGRAM_VERSION),
         recommended_interpretation=payload.get("recommended_interpretation"),
@@ -807,6 +837,7 @@ def _solve_score_program_put_metadata(program):
         SOLVE_SCORE_PROGRAM_META_NAME: str(program.get("name") or ""),
         SOLVE_SCORE_PROGRAM_META_STATEMENT_COUNT: str(int(program.get("statement_count") or 0)),
         SOLVE_SCORE_PROGRAM_META_SAVED_AT: str(program.get("saved_at") or ""),
+        "solve_score_has_source_text": "true" if str(program.get("source_text") or "").strip() else "false",
     }
 
 
@@ -845,6 +876,7 @@ def _solve_score_program_summary_from_head(program_id):
         "name": name,
         "statement_count": statement_count,
         "saved_at": saved_at,
+        "has_source_text": str(meta.get("solve_score_has_source_text") or "").lower() == "true",
     }
 
 
@@ -1085,6 +1117,10 @@ def handler(event, context):
         return _handle_storage_route(handle_delete_solve_score_program, event)
     elif path.endswith("/migrate-solve-score-program"):
         return _handle_storage_route(lambda ev: _handle_migrate_program(ev, "solve-score"), event)
+    elif path.endswith("/compile-solve-score-program-source"):
+        return _handle_storage_route(handle_compile_solve_score_program_source, event)
+    elif path.endswith("/compile-root-program-source"):
+        return _handle_storage_route(handle_compile_root_program_source, event)
     elif path.endswith("/list-param-programs"):
         return _handle_storage_route(handle_list_param_programs, event)
     elif path.endswith("/fetch-param-program"):
@@ -1255,6 +1291,7 @@ def handle_save_solve_score_program(event):
     program = _compile_solve_score_program_payload(
         params.get("name"),
         params.get("chain"),
+        source_text=params.get("source_text") or params.get("solve_score_program_source_text"),
         recommended_interpretation=params.get("recommended_interpretation"),
     )
     key = _solve_score_program_key(program["id"])
@@ -1279,6 +1316,41 @@ def handle_delete_solve_score_program(event):
         raise _SolveScoreProgramNotFound(f"solve-score program not found: {program_id}")
     s3.delete_object(Bucket=BUCKET, Key=key)
     return ok_response({"id": program_id, "deleted": 1})
+
+
+def handle_compile_solve_score_program_source(event):
+    params = parse_body(event)
+    source_text = str(params.get("source_text") or params.get("solve_score_program_source_text") or "")
+    strict = parse_boolish(params.get("strict"), False, strict=False, label="strict")
+    compiled = compile_solve_score_program_source(source_text, strict=strict)
+    ok = not compiled.get("diagnostics")
+    program = {
+        "program_kind": "solve_score_program",
+        "spec_version": compiled["spec_version"],
+        "source_text": compiled["source_text"],
+        "source_display": compiled["source_display"],
+        "chain": compiled["chain"],
+        "display": compiled["display"],
+        "program_spec": compiled["program_spec"],
+        "fingerprint": compiled["fingerprint"],
+        "output_channel_count": compiled["output_channel_count"],
+        "output_channels": compiled["output_channels"],
+        "has_explicit_outputs": compiled["has_explicit_outputs"],
+        "statement_count": compiled["statement_count"],
+        "metric_count": compiled["metric_count"],
+    }
+    return ok_response({
+        "ok": ok,
+        "chain": compiled["chain"],
+        "display": compiled["display"],
+        "program_spec": compiled["program_spec"],
+        "fingerprint": compiled["fingerprint"],
+        "output_channel_count": compiled["output_channel_count"],
+        "output_channels": compiled["output_channels"],
+        "statement_count": compiled["statement_count"],
+        "diagnostics": compiled.get("diagnostics") or [],
+        "program": program,
+    })
 
 
 def handle_list_param_programs(event):
@@ -1394,6 +1466,38 @@ def handle_compile_param_program_source(event):
             "execution_spec": "" if has_errors else (compiled.get("execution_spec") or ""),
             "token_count": 0 if has_errors else (compiled.get("token_count") or 0),
             "stack_max": 0 if has_errors else (compiled.get("stack_max") or 0),
+        },
+    })
+
+
+def handle_compile_root_program_source(event):
+    params = parse_body(event)
+    source_text = str(params.get("source_text") or "")
+    compiled = compile_root_program_source(source_text, strict=False)
+    diagnostics = list(compiled.get("diagnostics") or [])
+    has_errors = any(d.get("level") == "error" for d in diagnostics)
+    chain_out = [] if has_errors else compiled.get("chain", [])
+    root_transforms = [] if has_errors else compiled.get("root_transforms", [])
+    fingerprint = "" if has_errors else (compiled.get("fingerprint") or "")
+    return ok_response({
+        "ok": not has_errors,
+        "chain": chain_out,
+        "root_transforms": root_transforms,
+        "display": compiled.get("display") or "",
+        "statement_count": compiled.get("statement_count") or 0,
+        "fingerprint": fingerprint,
+        "diagnostics": diagnostics,
+        "program": {
+            "program_kind": "root_program",
+            "spec_version": compiled.get("spec_version") or 2,
+            "source_text": "" if has_errors else source_text,
+            "chain": chain_out,
+            "root_transforms": root_transforms,
+            "display": compiled.get("display") or "",
+            "fingerprint": fingerprint,
+            "execution_spec": "" if has_errors else (compiled.get("execution_spec") or ""),
+            "tokens": [] if has_errors else (compiled.get("tokens") or []),
+            "token_count": 0 if has_errors else (compiled.get("token_count") or 0),
         },
     })
 
@@ -1858,6 +1962,25 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         "content_type": image_info.get("type", ""),
         "format": meta.get("format") or image_key.rsplit(".", 1)[-1].lower(),
         "root_transforms": _parse_root_transforms(meta.get("root_transforms")),
+        "root_program_source_text": meta.get("root_program_source_text", ""),
+        "root_program": _parse_json(meta.get("root_program")) or {},
+        "root_program_fingerprint": meta.get("root_program_fingerprint", ""),
+        "root_spec_version": _parse_int(meta.get("root_spec_version")) or 1,
+        "solve_score_chain": _parse_json(meta.get("solve_score_chain")),
+        "solve_score_program_source_text": (
+            meta.get("solve_score_program_source_text")
+            or meta.get("score_source_text")
+            or ""
+        ),
+        "score_source_text": (
+            meta.get("score_source_text")
+            or meta.get("solve_score_program_source_text")
+            or ""
+        ),
+        "palette_source_score_source_text": meta.get("palette_source_score_source_text", ""),
+        "palette_source_solve_score_program_source_text": meta.get("palette_source_solve_score_program_source_text", ""),
+        "associated_palette_score_source_text": meta.get("associated_palette_score_source_text", ""),
+        "associated_palette_solve_score_program_source_text": meta.get("associated_palette_solve_score_program_source_text", ""),
         "rotation": _parse_float(meta.get("rotation")),
         "degree": meta.get("degree"),
         "pix": meta.get("pix"),
@@ -1881,7 +2004,6 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         entry["constant_color"] = meta.get("constant_color", "")
         entry["background_color"] = meta.get("background_color", "")
         entry["background_threshold"] = _parse_float(meta.get("background_threshold"))
-        entry["solve_score_chain"] = _parse_json(meta.get("solve_score_chain"))
         entry["solve_score_normalize"] = _parse_bool(meta.get("solve_score_normalize"), False)
         entry["score_output_normalize"] = _parse_bool(meta.get("score_output_normalize"), False)
         entry["score_output_clip_lo"] = _parse_float(meta.get("score_output_clip_lo"))

@@ -80,6 +80,9 @@ class TestSolveScoreProgramStorage(unittest.TestCase):
         program_id = save_body["program"]["id"]
         self.assertFalse(save_body["overwritten"])
         self.assertEqual(save_body["program"]["chain"], [["proximity", "0.1"]])
+        self.assertIn("source_text", save_body["program"])
+        self.assertIn("metric(proximity", save_body["program"]["source_text"])
+        self.assertTrue(save_body["program"]["fingerprint"].startswith("sha256:"))
         self.assertEqual(save_body["program"]["recommended_interpretation"], "rgb")
 
         list_resp = handler_storage.handler(self._event("/list-solve-score-programs", {}), None)
@@ -96,6 +99,7 @@ class TestSolveScoreProgramStorage(unittest.TestCase):
         fetch_body = json.loads(fetch_resp["body"])
         self.assertEqual(fetch_body["program"]["id"], program_id)
         self.assertEqual(fetch_body["program"]["metric"], "proximity")
+        self.assertIn("metric(proximity", fetch_body["program"]["source_text"])
         self.assertEqual(fetch_body["program"]["recommended_interpretation"], "rgb")
 
         delete_resp = handler_storage.handler(
@@ -110,6 +114,43 @@ class TestSolveScoreProgramStorage(unittest.TestCase):
             None,
         )
         self.assertEqual(refetch_resp["statusCode"], 404)
+
+    @patch("handler_storage.s3")
+    def test_compile_solve_score_program_source_route_and_source_wins_save(self, mock_s3):
+        import handler_storage
+
+        fake_s3 = _FakeS3()
+        mock_s3.get_paginator.side_effect = fake_s3.get_paginator
+        mock_s3.get_object.side_effect = fake_s3.get_object
+        mock_s3.put_object.side_effect = fake_s3.put_object
+        mock_s3.head_object.side_effect = fake_s3.head_object
+
+        source_text = "score = omega_cosine(metric(crowding, slv, q=1%), 4)"
+        compile_resp = handler_storage.handler(
+            self._event("/compile-solve-score-program-source", {"source_text": source_text}),
+            None,
+        )
+        self.assertEqual(compile_resp["statusCode"], 200)
+        compile_body = json.loads(compile_resp["body"])
+        self.assertTrue(compile_body["ok"])
+        self.assertEqual(compile_body["chain"], [["crowding", "1"], ["omega_cosine", "4"]])
+        self.assertEqual(compile_body["program_spec"], "m0-0;omega_cosine:4")
+
+        save_resp = handler_storage.handler(
+            self._event(
+                "/save-solve-score-program",
+                {
+                    "name": "Source Wins",
+                    "source_text": source_text,
+                    "chain": [["proximity", "0.1"]],
+                },
+            ),
+            None,
+        )
+        self.assertEqual(save_resp["statusCode"], 200)
+        program = json.loads(save_resp["body"])["program"]
+        self.assertEqual(program["chain"], [["crowding", "1"], ["omega_cosine", "4"]])
+        self.assertEqual(program["source_text"], source_text)
 
     @patch("handler_storage.s3")
     def test_generic_metric_chip_round_trips_as_saved_program(self, mock_s3):

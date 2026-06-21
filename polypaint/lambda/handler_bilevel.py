@@ -25,6 +25,7 @@ from botocore.config import Config
 from color_artifact_meta import load_color_artifact_head
 from logical_sections import build_source_spans, resolve_solve_source_manifest, stitch_spans_to_file
 from raw_sidecar import validate_raw_sidecar
+from root_pipeline_programs import root_program_for_run
 from shared import BILEVEL_SPARSE_PIPELINE, BUCKET, imgpipe_env, ok_response, parse_body, report_status
 
 s3 = boto3.client("s3")
@@ -637,7 +638,7 @@ def handle_section_raster(params):
             f"--degree={params['degree']}",
             f"--rotation={params.get('rotation', 0.0)}",
         ]
-        rt_path = _write_root_xforms(_TMP_ROOT_XFORMS, params.get("root_transforms", []))
+        rt_path = _write_root_xforms(_TMP_ROOT_XFORMS, root_program_for_run(params)["chain"])
         if rt_path:
             cmd.append(f"--root_xforms={rt_path}")
 

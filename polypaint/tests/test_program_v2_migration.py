@@ -170,7 +170,7 @@ class TestProgramV2Migration(unittest.TestCase):
         self.assertTrue(reparsed["chain"])
 
     @patch("handler_storage.s3")
-    def test_migrate_solve_score_program_dry_run_has_no_source_text(self, mock_s3):
+    def test_migrate_solve_score_program_dry_run_has_source_text(self, mock_s3):
         import handler_storage
 
         fake_s3 = _FakeS3()
@@ -185,12 +185,33 @@ class TestProgramV2Migration(unittest.TestCase):
         migrated = json.loads(resp["body"])["migrated"]
         self.assertEqual(migrated["spec_version"], 2)
         self.assertIn("program_spec", migrated)
+        self.assertIn("source_text", migrated)
+        self.assertIn("emit_norm(metric(proximity", migrated["source_text"])
         self.assertTrue(migrated["program_spec"].startswith("v2;"))
         self.assertIn(64, [tok["op"] for tok in migrated["tokens"]])  # reduce_metric
         self.assertIn(65, [tok["op"] for tok in migrated["tokens"]])  # push_metric
         self.assertIn(77, [tok["op"] for tok in migrated["tokens"]])  # emit_norm
         self.assertIn('"version":2', migrated["execution_spec"])
-        self.assertNotIn("source_text", migrated)
+
+    def test_translate_solve_score_program_fail_closed_when_source_roundtrip_fails(self):
+        from program_v2_translate import translate_solve_score_from_old
+
+        with patch(
+            "program_v2_translate.solve_score_source_text_from_chain",
+            side_effect=RuntimeError("boom"),
+        ):
+            migrated = translate_solve_score_from_old({
+                "id": "score-v1",
+                "name": "Score V1",
+                "chain": [["proximity", "0.1"], ["emit", "norm"]],
+            })
+
+        self.assertEqual(migrated["source_text"], "")
+        self.assertEqual(migrated["source_display"], "")
+        self.assertEqual(migrated["chain"], [["proximity", "0.1"], ["emit", "norm"]])
+        self.assertTrue(migrated["program_spec"].startswith("v2;"))
+        self.assertEqual(migrated["diagnostics"][0]["code"], "source_roundtrip_failed")
+        self.assertIn("boom", migrated["diagnostics"][0]["message"])
 
     def test_translate_root_transforms_from_old_uses_registry_indices(self):
         from program_v2_translate import translate_root_from_old
@@ -203,13 +224,26 @@ class TestProgramV2Migration(unittest.TestCase):
             ]
         })
 
+        self.assertEqual(migrated["program_kind"], "root_program")
         self.assertEqual(migrated["spec_version"], 2)
         self.assertEqual([tok["registry"] for tok in migrated["tokens"]], ["root", "root"])
         self.assertEqual([tok["fn_index"] for tok in migrated["tokens"]], [1, 7])
         self.assertEqual(migrated["tokens"][0]["op"], 29)
         self.assertEqual(migrated["tokens"][1]["args"], [0.0, 1.0])
+        self.assertIn("rotate_roots(0.25)", migrated["source_text"])
+        self.assertEqual(migrated["root_transforms"][1], ["mul_complex", "0", "1"])
         self.assertEqual(migrated["diagnostics"][0]["level"], "warning")
         self.assertIn("unknown_root_op", migrated["diagnostics"][0]["message"])
+
+    def test_translate_root_transforms_default_expands_before_fingerprint(self):
+        from program_v2_translate import translate_root_from_old
+
+        omitted = translate_root_from_old({"root_transforms": [["pull_unit_circle"]]})
+        explicit = translate_root_from_old({"root_transforms": [["pull_unit_circle", "0.75", "1.0"]]})
+
+        self.assertEqual(omitted["chain"], explicit["chain"])
+        self.assertEqual(omitted["fingerprint"], explicit["fingerprint"])
+        self.assertEqual(omitted["source_text"], "pull_unit_circle(0.75, 1)")
 
 
 if __name__ == "__main__":

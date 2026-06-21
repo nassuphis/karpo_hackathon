@@ -1761,49 +1761,75 @@ button {
                 <div class="color-box" style="grid-column:1 / -1">
                     <div class="color-title">Solve Score Program</div>
                     <div class="solve-score-program-note">Used when Color mode is Solve score. Manage shared saved programs in the Solve Scores popup.</div>
-                    <div class="solve-score-program-toolbar">
-                        <button type="button" class="btn-secondary btn-inline" id="render-solve-score-program-manage" onclick="openSolveScoreProgramModal('render')">Solve Scores...</button>
-                        <div class="score-chip-add-wrap">
-                            <button id="ss-insert-before-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleSolveScorePicker('ss',event,'before')">+ before</button>
-                            <button id="ss-insert-after-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleSolveScorePicker('ss',event,'after')">+ after</button>
-                            <div id="ss-add-popup" class="score-chip-picker" aria-hidden="true"></div>
-                            <select id="ss-add" onchange="addChip('ss',this.value);this.value='';" style="display:none">
-                                <option value="">+ add...</option>
-                            </select>
+                    <div class="render-lores-preview-tabbar" role="tablist" aria-label="Render solve-score editor mode">
+                        <button type="button" id="render-ss-tab-chips" class="compute-preview-tab-btn active" onclick="_setSolveScoreProgramEditorMode('render','chips')">Chips</button>
+                        <button type="button" id="render-ss-tab-text" class="compute-preview-tab-btn" onclick="_setSolveScoreProgramEditorMode('render','text')">Text</button>
+                    </div>
+                    <div id="render-ss-chips-panel" class="coeff-program-editor-panel active">
+                        <div class="solve-score-program-toolbar">
+                            <button type="button" class="btn-secondary btn-inline" id="render-solve-score-program-manage" onclick="openSolveScoreProgramModal('render')">Solve Scores...</button>
+                            <div class="score-chip-add-wrap">
+                                <button id="ss-insert-before-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleSolveScorePicker('ss',event,'before')">+ before</button>
+                                <button id="ss-insert-after-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleSolveScorePicker('ss',event,'after')">+ after</button>
+                                <div id="ss-add-popup" class="score-chip-picker" aria-hidden="true"></div>
+                                <select id="ss-add" onchange="addChip('ss',this.value);this.value='';" style="display:none">
+                                    <option value="">+ add...</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="color-row">
+                            <div id="ss-chips" class="chip-container solve-score-program-display"></div>
+                        </div>
+                        <div class="color-row" style="margin-bottom:0">
+                            <label style="color:#888; font-size:10px; min-width:70px">Stack:</label>
+                            <span id="ss-stack" style="display:inline-flex; gap:3px; align-items:flex-end; min-height:16px"></span>
+                            <span id="ss-stack-label" style="font-size:10px; color:#888; min-width:80px; margin-left:6px"></span>
+                            <input type="hidden" id="render-solve-score-quantile" value="0.1">
+                            <label style="font-size:10px; color:#888; display:inline-flex; align-items:center; gap:3px; margin-left:6px" title="Normalize the final composed score program output using the lores q05/q95 estimate before packing to raw score bytes">
+                                <input type="checkbox" id="render-score-normalization" style="margin:0"> Score normalization
+                            </label>
+                            <button id="btn-solve-histogram" class="btn-inline-offset" onclick="runSolveScoreHistogramDebug()" style="font-size:10px; padding:1px 8px">Histogram</button>
                         </div>
                     </div>
-                    <div class="color-row">
-                        <div id="ss-chips" class="chip-container solve-score-program-display"></div>
-                    </div>
-                    <div class="color-row" style="margin-bottom:0">
-                        <label style="color:#888; font-size:10px; min-width:70px">Stack:</label>
-                        <span id="ss-stack" style="display:inline-flex; gap:3px; align-items:flex-end; min-height:16px"></span>
-                        <span id="ss-stack-label" style="font-size:10px; color:#888; min-width:80px; margin-left:6px"></span>
-                        <input type="hidden" id="render-solve-score-quantile" value="0.1">
-                        <label style="font-size:10px; color:#888; display:inline-flex; align-items:center; gap:3px; margin-left:6px" title="Normalize the final composed score program output using the lores q05/q95 estimate before packing to raw score bytes">
-                            <input type="checkbox" id="render-score-normalization" style="margin:0"> Score normalization
-                        </label>
-                        <button id="btn-solve-histogram" class="btn-inline-offset" onclick="runSolveScoreHistogramDebug()" style="font-size:10px; padding:1px 8px">Histogram</button>
+                    <div id="render-ss-text-panel" class="coeff-program-editor-panel">
+                        <textarea id="render-ss-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;score = metric(proximity, slv, q=0.1%)&#10;emit(score)" oninput="_onSolveScoreProgramSourceInput('render')"></textarea>
+                        <div class="solve-score-program-toolbar">
+                            <button type="button" class="btn-secondary btn-inline" onclick="_compileSolveScoreSourceEditor('render')">Compile Text</button>
+                            <span class="solve-score-program-note">Backend source wins over chips on preview/render.</span>
+                        </div>
                     </div>
                     <div id="render-solve-score-program-status" class="solve-score-program-status"></div>
                 </div>
                 <div class="color-box" style="grid-column:1 / -1">
                     <div class="color-title">Root Transforms</div>
-                    <div class="anim-row" style="flex-wrap:wrap; margin-bottom:0">
-                        <label style="min-width:90px">Chain:</label>
-                        <div id="rt-chips" class="chip-container"></div>
-                        <select id="rt-add" onchange="addChip('rt',this.value);this.value='';" style="width:120px; font-size:12px">
-                            <option value="">+ add...</option>
-                            <option value="rotate_roots">rotate_roots</option>
-                            <option value="pull_unit_circle">pull_unit_circle</option>
-                            <option value="roots_toline">roots_toline (Cayley)</option>
-                            <option value="line_to_unit_circle">line_to_unit_circle (inverse Cayley)</option>
-                            <option value="invert_roots">invert_roots (1/z)</option>
-                            <option value="add_complex">add_complex</option>
-                            <option value="mul_complex">mul_complex</option>
-                            <option value="moebius">moebius</option>
-                            <option value="pull_towards_center">pull_towards_center</option>
-                        </select>
+                    <div class="render-lores-preview-tabbar" role="tablist" aria-label="Render root-transform editor mode">
+                        <button type="button" id="render-rt-tab-chips" class="compute-preview-tab-btn active" onclick="_setRootProgramEditorMode('render','chips')">Chips</button>
+                        <button type="button" id="render-rt-tab-text" class="compute-preview-tab-btn" onclick="_setRootProgramEditorMode('render','text')">Text</button>
+                    </div>
+                    <div id="render-rt-chips-panel" class="coeff-program-editor-panel active">
+                        <div class="anim-row" style="flex-wrap:wrap; margin-bottom:0">
+                            <label style="min-width:90px">Chain:</label>
+                            <div id="rt-chips" class="chip-container"></div>
+                            <select id="rt-add" onchange="addChip('rt',this.value);this.value='';" style="width:120px; font-size:12px">
+                                <option value="">+ add...</option>
+                                <option value="rotate_roots">rotate_roots</option>
+                                <option value="pull_unit_circle">pull_unit_circle</option>
+                                <option value="roots_toline">roots_toline (Cayley)</option>
+                                <option value="line_to_unit_circle">line_to_unit_circle (inverse Cayley)</option>
+                                <option value="invert_roots">invert_roots (1/z)</option>
+                                <option value="add_complex">add_complex</option>
+                                <option value="mul_complex">mul_complex</option>
+                                <option value="moebius">moebius</option>
+                                <option value="pull_towards_center">pull_towards_center</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="render-rt-text-panel" class="coeff-program-editor-panel">
+                        <textarea id="render-rt-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;rotate_roots(0.25)&#10;moebius(1, 0, 0, 1)" oninput="_onRootProgramSourceInput('render')"></textarea>
+                        <div class="solve-score-program-toolbar">
+                            <button type="button" class="btn-secondary btn-inline" onclick="_compileRootSourceEditor('render')">Compile Text</button>
+                            <span class="solve-score-program-note">Backend source wins over root chips on render.</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1844,23 +1870,36 @@ button {
             <div class="color-box">
                 <div class="color-title">Solve Score Program</div>
                 <div class="solve-score-program-note">Manage shared saved solve-score programs for the Palette tab.</div>
-                <div class="solve-score-program-toolbar">
-                    <button type="button" class="btn-secondary btn-inline" id="palette-solve-score-program-manage" onclick="openSolveScoreProgramModal('palette')">Solve Scores...</button>
-                    <div class="score-chip-add-wrap">
-                        <button id="palette-ss-add-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleSolveScorePicker('palette-ss',event)">+ score chip</button>
-                        <div id="palette-ss-add-popup" class="score-chip-picker" aria-hidden="true"></div>
-                        <select id="palette-ss-add" onchange="addChip('palette-ss',this.value);this.value='';" style="display:none">
-                            <option value="">+ add...</option>
-                        </select>
+                <div class="render-lores-preview-tabbar" role="tablist" aria-label="Palette solve-score editor mode">
+                    <button type="button" id="palette-ss-tab-chips" class="compute-preview-tab-btn active" onclick="_setSolveScoreProgramEditorMode('palette','chips')">Chips</button>
+                    <button type="button" id="palette-ss-tab-text" class="compute-preview-tab-btn" onclick="_setSolveScoreProgramEditorMode('palette','text')">Text</button>
+                </div>
+                <div id="palette-ss-chips-panel" class="coeff-program-editor-panel active">
+                    <div class="solve-score-program-toolbar">
+                        <button type="button" class="btn-secondary btn-inline" id="palette-solve-score-program-manage" onclick="openSolveScoreProgramModal('palette')">Solve Scores...</button>
+                        <div class="score-chip-add-wrap">
+                            <button id="palette-ss-add-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleSolveScorePicker('palette-ss',event)">+ score chip</button>
+                            <div id="palette-ss-add-popup" class="score-chip-picker" aria-hidden="true"></div>
+                            <select id="palette-ss-add" onchange="addChip('palette-ss',this.value);this.value='';" style="display:none">
+                                <option value="">+ add...</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="color-row">
+                        <div id="palette-ss-chips" class="chip-container solve-score-program-display"></div>
+                    </div>
+                    <div class="palette-field-row">
+                        <label class="palette-field-label">Stack</label>
+                        <span id="palette-ss-stack" style="display:inline-flex; gap:3px; align-items:flex-end; min-height:16px"></span>
+                        <span id="palette-ss-stack-label" style="font-size:10px; color:#888; min-width:80px; margin-left:6px"></span>
                     </div>
                 </div>
-                <div class="color-row">
-                    <div id="palette-ss-chips" class="chip-container solve-score-program-display"></div>
-                </div>
-                <div class="palette-field-row">
-                    <label class="palette-field-label">Stack</label>
-                    <span id="palette-ss-stack" style="display:inline-flex; gap:3px; align-items:flex-end; min-height:16px"></span>
-                    <span id="palette-ss-stack-label" style="font-size:10px; color:#888; min-width:80px; margin-left:6px"></span>
+                <div id="palette-ss-text-panel" class="coeff-program-editor-panel">
+                    <textarea id="palette-ss-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;score = metric(proximity, slv, q=0.1%)&#10;emit(score)" oninput="_onSolveScoreProgramSourceInput('palette')"></textarea>
+                    <div class="solve-score-program-toolbar">
+                        <button type="button" class="btn-secondary btn-inline" onclick="_compileSolveScoreSourceEditor('palette')">Compile Text</button>
+                        <span class="solve-score-program-note">Backend source wins over chips on palette generation.</span>
+                    </div>
                 </div>
                 <div class="palette-field-row">
                     <label class="palette-field-label">Palette</label>
@@ -1883,21 +1922,37 @@ button {
                 </div>
                 <div id="palette-solve-score-program-status" class="solve-score-program-status"></div>
             </div>
-            <div class="anim-row" style="flex-wrap:wrap; margin-top:8px">
-                <label style="min-width:90px">Root transforms:</label>
-                <div id="palette-rt-chips" class="chip-container"></div>
-                <select id="palette-rt-add" onchange="addChip('palette-rt',this.value);this.value='';" style="width:120px; font-size:12px">
-                    <option value="">+ add...</option>
-                    <option value="rotate_roots">rotate_roots</option>
-                    <option value="pull_unit_circle">pull_unit_circle</option>
-                    <option value="roots_toline">roots_toline (Cayley)</option>
-                    <option value="line_to_unit_circle">line_to_unit_circle (inverse Cayley)</option>
-                    <option value="invert_roots">invert_roots (1/z)</option>
-                    <option value="add_complex">add_complex</option>
-                    <option value="mul_complex">mul_complex</option>
-                    <option value="moebius">moebius</option>
-                    <option value="pull_towards_center">pull_towards_center</option>
-                </select>
+            <div class="color-box" style="margin-top:8px">
+                <div class="color-title">Root Transforms</div>
+                <div class="render-lores-preview-tabbar" role="tablist" aria-label="Palette root-transform editor mode">
+                    <button type="button" id="palette-rt-tab-chips" class="compute-preview-tab-btn active" onclick="_setRootProgramEditorMode('palette','chips')">Chips</button>
+                    <button type="button" id="palette-rt-tab-text" class="compute-preview-tab-btn" onclick="_setRootProgramEditorMode('palette','text')">Text</button>
+                </div>
+                <div id="palette-rt-chips-panel" class="coeff-program-editor-panel active">
+                    <div class="anim-row" style="flex-wrap:wrap; margin-top:8px">
+                        <label style="min-width:90px">Root transforms:</label>
+                        <div id="palette-rt-chips" class="chip-container"></div>
+                        <select id="palette-rt-add" onchange="addChip('palette-rt',this.value);this.value='';" style="width:120px; font-size:12px">
+                            <option value="">+ add...</option>
+                            <option value="rotate_roots">rotate_roots</option>
+                            <option value="pull_unit_circle">pull_unit_circle</option>
+                            <option value="roots_toline">roots_toline (Cayley)</option>
+                            <option value="line_to_unit_circle">line_to_unit_circle (inverse Cayley)</option>
+                            <option value="invert_roots">invert_roots (1/z)</option>
+                            <option value="add_complex">add_complex</option>
+                            <option value="mul_complex">mul_complex</option>
+                            <option value="moebius">moebius</option>
+                            <option value="pull_towards_center">pull_towards_center</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="palette-rt-text-panel" class="coeff-program-editor-panel">
+                    <textarea id="palette-rt-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;rotate_roots(0.25)&#10;pull_unit_circle" oninput="_onRootProgramSourceInput('palette')"></textarea>
+                    <div class="solve-score-program-toolbar">
+                        <button type="button" class="btn-secondary btn-inline" onclick="_compileRootSourceEditor('palette')">Compile Text</button>
+                        <span class="solve-score-program-note">Backend source wins over root chips on palette generation.</span>
+                    </div>
+                </div>
             </div>
             <div class="status" id="palette-status"></div>
             <div id="palette-viewer" style="margin-top:8px">

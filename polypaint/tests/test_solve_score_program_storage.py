@@ -150,6 +150,20 @@ class TestSolveScoreProgramStorage(unittest.TestCase):
         self.assertTrue(all("/" not in pid for pid in ids))
         self.assertEqual(list_body["count"], 1)
 
+    def test_program_key_builders_normalize_stray_v2_prefix(self):
+        # A phantom id carrying a stray v2/ prefix must never double-prefix into
+        # .../v2/v2/<id>.json on any program kind.
+        import handler_storage as hs
+
+        self.assertEqual(hs._solve_score_program_v2_key("v2/hsv-3"), hs._solve_score_program_v2_key("hsv-3"))
+        self.assertEqual(hs._solve_score_program_key("v2/v2/hsv-3"), hs._solve_score_program_key("hsv-3"))
+        self.assertNotIn("v2/v2", hs._solve_score_program_v2_key("v2/v2/hsv-3"))
+        self.assertEqual(hs._param_program_v2_key("v2/foo"), hs._param_program_v2_key("foo"))
+        self.assertEqual(hs._coeff_program_v2_key("v2/v2/bar"), hs._coeff_program_v2_key("bar"))
+        # Flat ids are untouched.
+        self.assertTrue(hs._solve_score_program_key("hsv-3").endswith("solve-score-programs/hsv-3.json"))
+        self.assertTrue(hs._solve_score_program_v2_key("hsv-3").endswith("solve-score-programs/v2/hsv-3.json"))
+
     @patch("handler_storage.s3")
     def test_fetch_prefers_v2_copy_when_present(self, mock_s3):
         # Load must prefer the migrated v2/ copy (with its source_text) over v1,

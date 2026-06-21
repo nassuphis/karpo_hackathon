@@ -228,28 +228,42 @@ def _slugify_coeff_program_id(name):
     return slug or "coeff-program"
 
 
+def _normalize_program_id(program_id):
+    """Strip any stray ``v2/`` namespace prefix from a program id.
+
+    Saved program ids are flat slugs and never contain ``/``, so this only ever
+    undoes a phantom id (e.g. one that leaked from an old list surfacing the
+    ``v2/`` subdirectory). It guarantees a v2-key can never double-prefix into
+    ``.../v2/v2/<id>.json`` no matter what id a (possibly stale) client sends.
+    """
+    pid = str(program_id or "").strip()
+    while pid.startswith("v2/"):
+        pid = pid[len("v2/"):]
+    return pid
+
+
 def _solve_score_program_key(program_id):
-    return f"{SOLVE_SCORE_PROGRAMS_PREFIX}{program_id}.json"
+    return f"{SOLVE_SCORE_PROGRAMS_PREFIX}{_normalize_program_id(program_id)}.json"
 
 
 def _solve_score_program_v2_key(program_id):
-    return f"{SOLVE_SCORE_PROGRAMS_PREFIX}v2/{program_id}.json"
+    return f"{SOLVE_SCORE_PROGRAMS_PREFIX}v2/{_normalize_program_id(program_id)}.json"
 
 
 def _param_program_key(program_id):
-    return f"{PARAM_PROGRAMS_PREFIX}{program_id}.json"
+    return f"{PARAM_PROGRAMS_PREFIX}{_normalize_program_id(program_id)}.json"
 
 
 def _param_program_v2_key(program_id):
-    return f"{PARAM_PROGRAMS_PREFIX}v2/{program_id}.json"
+    return f"{PARAM_PROGRAMS_PREFIX}v2/{_normalize_program_id(program_id)}.json"
 
 
 def _coeff_program_key(program_id):
-    return f"{COEFF_PROGRAMS_PREFIX}{program_id}.json"
+    return f"{COEFF_PROGRAMS_PREFIX}{_normalize_program_id(program_id)}.json"
 
 
 def _coeff_program_v2_key(program_id):
-    return f"{COEFF_PROGRAMS_PREFIX}v2/{program_id}.json"
+    return f"{COEFF_PROGRAMS_PREFIX}v2/{_normalize_program_id(program_id)}.json"
 
 
 def _validate_solve_score_program_name(name):

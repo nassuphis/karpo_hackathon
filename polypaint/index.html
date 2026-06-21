@@ -1764,10 +1764,10 @@ button {
                     <div class="render-lores-preview-tabbar" role="tablist" aria-label="Render solve-score editor mode">
                         <button type="button" id="render-ss-tab-chips" class="compute-preview-tab-btn active" onclick="_setSolveScoreProgramEditorMode('render','chips')">Chips</button>
                         <button type="button" id="render-ss-tab-text" class="compute-preview-tab-btn" onclick="_setSolveScoreProgramEditorMode('render','text')">Text</button>
+                        <button type="button" class="btn-secondary btn-inline" id="render-solve-score-program-manage" onclick="openSolveScoreProgramModal('render')" style="margin-left:auto">Solve Scores...</button>
                     </div>
                     <div id="render-ss-chips-panel" class="coeff-program-editor-panel active">
                         <div class="solve-score-program-toolbar">
-                            <button type="button" class="btn-secondary btn-inline" id="render-solve-score-program-manage" onclick="openSolveScoreProgramModal('render')">Solve Scores...</button>
                             <div class="score-chip-add-wrap">
                                 <button id="ss-insert-before-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleSolveScorePicker('ss',event,'before')">+ before</button>
                                 <button id="ss-insert-after-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleSolveScorePicker('ss',event,'after')">+ after</button>
@@ -1873,10 +1873,10 @@ button {
                 <div class="render-lores-preview-tabbar" role="tablist" aria-label="Palette solve-score editor mode">
                     <button type="button" id="palette-ss-tab-chips" class="compute-preview-tab-btn active" onclick="_setSolveScoreProgramEditorMode('palette','chips')">Chips</button>
                     <button type="button" id="palette-ss-tab-text" class="compute-preview-tab-btn" onclick="_setSolveScoreProgramEditorMode('palette','text')">Text</button>
+                    <button type="button" class="btn-secondary btn-inline" id="palette-solve-score-program-manage" onclick="openSolveScoreProgramModal('palette')" style="margin-left:auto">Solve Scores...</button>
                 </div>
                 <div id="palette-ss-chips-panel" class="coeff-program-editor-panel active">
                     <div class="solve-score-program-toolbar">
-                        <button type="button" class="btn-secondary btn-inline" id="palette-solve-score-program-manage" onclick="openSolveScoreProgramModal('palette')">Solve Scores...</button>
                         <div class="score-chip-add-wrap">
                             <button id="palette-ss-add-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleSolveScorePicker('palette-ss',event)">+ score chip</button>
                             <div id="palette-ss-add-popup" class="score-chip-picker" aria-hidden="true"></div>

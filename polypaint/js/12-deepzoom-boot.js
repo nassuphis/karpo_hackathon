@@ -1121,6 +1121,7 @@ document.addEventListener('click', function(e) {
 window._dzViewportReadoutState = _dzViewportReadoutState;
 
 document.addEventListener('keydown', function(e) {
+    if (_isTextInputFocused()) return;
     const dzTab = document.getElementById('tab-deepzoom');
     if (!dzTab || !dzTab.classList.contains('active')) return;
     const inv = window._dzInventory || [];
@@ -1143,6 +1144,7 @@ _syncCoeffProgramAddOptions();
 populateDropdown();
 
 document.addEventListener('keydown', function(e) {
+    if (_isTextInputFocused()) return;
     const favTab = document.getElementById('tab-favorites');
     if (!favTab || !favTab.classList.contains('active')) return;
     const inv = _favoriteArtifacts || [];
@@ -1161,6 +1163,7 @@ document.addEventListener('click', function(e) {
 document.addEventListener('keydown', (e) => {
     if (!document.getElementById('tab-results').classList.contains('active')) return;
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    if (_isTextInputFocused()) return;
     if (!_resultsCache.length) return;
     e.preventDefault();
 
@@ -1177,6 +1180,7 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('keydown', (e) => {
     if (!document.getElementById('tab-palette').classList.contains('active')) return;
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    if (_isTextInputFocused()) return;
     if (!_paletteInventory.length) return;
     e.preventDefault();
 
@@ -1190,6 +1194,7 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('keydown', (e) => {
     if (!document.getElementById('tab-render').classList.contains('active')) return;
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+    if (_isTextInputFocused()) return;
     const inv = _renderArtifacts[_renderActiveFamily] || [];
     if (!inv.length) return;
     e.preventDefault();

@@ -1182,6 +1182,15 @@ function _applyBuiltinPopupFilter(text) {
     _renderBuiltinPalettePopup();
 }
 
+function _isTextInputFocused(multilineOnly) {
+    const ae = document.activeElement;
+    if (!ae) return false;
+    if (ae.isContentEditable) return true;
+    const tag = ae.tagName;
+    if (tag === 'TEXTAREA') return true;
+    return !multilineOnly && tag === 'INPUT';
+}
+
 function _bindPopupShell({ overlayId, closeId, cancelId, isOpen, onClose, onEnter, onArrowDown, onArrowUp }) {
     const overlay = document.getElementById(overlayId);
     const closeBtn = closeId ? document.getElementById(closeId) : null;
@@ -1200,17 +1209,17 @@ function _bindPopupShell({ overlayId, closeId, cancelId, isOpen, onClose, onEnte
             onClose();
             return;
         }
-        if (ev.key === 'ArrowDown' && onArrowDown) {
+        if (ev.key === 'ArrowDown' && onArrowDown && !_isTextInputFocused()) {
             ev.preventDefault();
             onArrowDown(ev);
             return;
         }
-        if (ev.key === 'ArrowUp' && onArrowUp) {
+        if (ev.key === 'ArrowUp' && onArrowUp && !_isTextInputFocused()) {
             ev.preventDefault();
             onArrowUp(ev);
             return;
         }
-        if (ev.key === 'Enter' && onEnter) {
+        if (ev.key === 'Enter' && onEnter && !_isTextInputFocused(true)) {
             ev.preventDefault();
             onEnter(ev);
         }

@@ -414,6 +414,7 @@ async function _saveCurrentSolveScoreProgramFromModal() {
         const resp = await lambdaPost('storage', {
             name: payload.name,
             chain: payload.chain,
+            source_text: payload.source_text || undefined,
             recommended_interpretation: payload.recommended_interpretation || undefined,
         }, '/save-solve-score-program');
         const program = resp && resp.program ? resp.program : null;

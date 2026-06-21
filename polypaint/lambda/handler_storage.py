@@ -603,8 +603,12 @@ def _compile_coeff_program_payload(
     return program
 
 
-def _read_solve_score_program_object(program_id):
+def _read_solve_score_program_object(program_id, prefer_v2=False):
     key = _solve_score_program_key(program_id)
+    from_v2 = False
+    if prefer_v2 and _key_exists(_solve_score_program_v2_key(program_id)):
+        key = _solve_score_program_v2_key(program_id)
+        from_v2 = True
     try:
         obj = s3.get_object(Bucket=BUCKET, Key=key)
     except Exception as exc:
@@ -623,7 +627,7 @@ def _read_solve_score_program_object(program_id):
         payload.get("chain"),
         source_text=(
             payload.get("source_text") or payload.get("solve_score_program_source_text")
-            if payload.get("source_text_authoritative")
+            if (from_v2 or payload.get("source_text_authoritative"))
             else None
         ),
         saved_at=payload.get("saved_at", ""),
@@ -634,8 +638,10 @@ def _read_solve_score_program_object(program_id):
     return program
 
 
-def _read_param_program_object(program_id):
+def _read_param_program_object(program_id, prefer_v2=False):
     key = _param_program_key(program_id)
+    if prefer_v2 and _key_exists(_param_program_v2_key(program_id)):
+        key = _param_program_v2_key(program_id)
     try:
         obj = s3.get_object(Bucket=BUCKET, Key=key)
     except Exception as exc:
@@ -662,8 +668,10 @@ def _read_param_program_object(program_id):
     return program
 
 
-def _read_coeff_program_object(program_id):
+def _read_coeff_program_object(program_id, prefer_v2=False):
     key = _coeff_program_key(program_id)
+    if prefer_v2 and _key_exists(_coeff_program_v2_key(program_id)):
+        key = _coeff_program_v2_key(program_id)
     try:
         obj = s3.get_object(Bucket=BUCKET, Key=key)
     except Exception as exc:
@@ -1283,7 +1291,7 @@ def handle_fetch_solve_score_program(event):
     program_id = str(params.get("id") or "").strip()
     if not program_id:
         raise ValueError("solve-score program fetch requires id")
-    return ok_response({"program": _read_solve_score_program_object(program_id)})
+    return ok_response({"program": _read_solve_score_program_object(program_id, prefer_v2=True)})
 
 
 def handle_save_solve_score_program(event):
@@ -1405,7 +1413,7 @@ def handle_fetch_param_program(event):
     program_id = str(params.get("id") or "").strip()
     if not program_id:
         raise ValueError("param program fetch requires id")
-    return ok_response({"program": _read_param_program_object(program_id)})
+    return ok_response({"program": _read_param_program_object(program_id, prefer_v2=True)})
 
 
 def handle_save_param_program(event):
@@ -1554,7 +1562,7 @@ def handle_fetch_coeff_program(event):
     program_id = str(params.get("id") or "").strip()
     if not program_id:
         raise ValueError("coeff program fetch requires id")
-    return ok_response({"program": _read_coeff_program_object(program_id)})
+    return ok_response({"program": _read_coeff_program_object(program_id, prefer_v2=True)})
 
 
 def handle_save_coeff_program(event):

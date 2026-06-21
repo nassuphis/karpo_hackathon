@@ -132,6 +132,43 @@ class TestCoeffProgramStorage(unittest.TestCase):
         self.assertEqual(macro_body["program"]["fingerprint"], base_body["program"]["fingerprint"])
 
     @patch("handler_storage.s3")
+    def test_fetch_prefers_v2_copy_when_present(self, mock_s3):
+        # Load prefers the migrated v2/ copy, falls back to v1 when absent.
+        import handler_storage
+
+        fake_s3 = _FakeS3()
+        self._patch_s3(mock_s3, fake_s3)
+
+        save_resp = handler_storage.handler(
+            self._event("/save-coeff-program", {"name": "C", "chain": [["const", "35", "p1+p2"], ["emit"]]}),
+            None,
+        )
+        program_id = json.loads(save_resp["body"])["program"]["id"]
+
+        v2_obj = {
+            "program_kind": "coeff_program",
+            "version": 2,
+            "id": program_id,
+            "name": "C",
+            "source_text": "poly = cf\n",
+            "chain": [["set", "poly", "cf"]],
+        }
+        v2_key = f"polypaint/coeff-programs/v2/{program_id}.json"
+        fake_s3.objects[v2_key] = (json.dumps(v2_obj) + "\n").encode("utf-8")
+        fake_s3.metadata[v2_key] = {}
+
+        prog = json.loads(
+            handler_storage.handler(self._event("/fetch-coeff-program", {"id": program_id}), None)["body"]
+        )["program"]
+        self.assertNotIn("const", json.dumps(prog["chain"]))  # v2 (poly = cf) preferred
+
+        del fake_s3.objects[v2_key]
+        prog2 = json.loads(
+            handler_storage.handler(self._event("/fetch-coeff-program", {"id": program_id}), None)["body"]
+        )["program"]
+        self.assertIn("const", json.dumps(prog2["chain"]))  # v1 fallback
+
+    @patch("handler_storage.s3")
     def test_source_text_save_fetch_and_compile_route(self, mock_s3):
         import handler_storage
 

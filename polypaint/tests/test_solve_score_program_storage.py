@@ -151,6 +151,55 @@ class TestSolveScoreProgramStorage(unittest.TestCase):
         self.assertEqual(list_body["count"], 1)
 
     @patch("handler_storage.s3")
+    def test_fetch_prefers_v2_copy_when_present(self, mock_s3):
+        # Load must prefer the migrated v2/ copy (with its source_text) over v1,
+        # and fall back to v1 when no v2 copy exists.
+        import handler_storage
+
+        fake_s3 = _FakeS3()
+        mock_s3.get_paginator.side_effect = fake_s3.get_paginator
+        mock_s3.paginate.side_effect = getattr(fake_s3, "paginate", None)
+        mock_s3.get_object.side_effect = fake_s3.get_object
+        mock_s3.put_object.side_effect = fake_s3.put_object
+        mock_s3.head_object.side_effect = fake_s3.head_object
+        mock_s3.delete_object.side_effect = fake_s3.delete_object
+
+        save_resp = handler_storage.handler(
+            self._event("/save-solve-score-program", {"name": "hsv 3", "chain": [["proximity", "0.1"]]}),
+            None,
+        )
+        program_id = json.loads(save_resp["body"])["program"]["id"]
+
+        # A migrated v2 copy with distinct, source-backed content (no
+        # source_text_authoritative flag, mirroring translate_solve_score_from_old).
+        v2_obj = {
+            "program_kind": "solve_score_program",
+            "version": 2,
+            "spec_version": 2,
+            "id": program_id,
+            "name": "hsv 3",
+            "source_text": "score = metric(area, slv, q=0.5%)\n",
+            "chain": [["area", "0.5"]],
+        }
+        v2_key = f"{handler_storage.SOLVE_SCORE_PROGRAMS_PREFIX}v2/{program_id}.json"
+        fake_s3.objects[v2_key] = (json.dumps(v2_obj) + "\n").encode("utf-8")
+        fake_s3.metadata[v2_key] = {}
+
+        prog = json.loads(
+            handler_storage.handler(self._event("/fetch-solve-score-program", {"id": program_id}), None)["body"]
+        )["program"]
+        self.assertIn("area", prog["source_text"])  # v2 source surfaced (forced authoritative)
+        self.assertNotIn("proximity", prog["source_text"])
+
+        # Without the v2 copy, fetch falls back to v1.
+        del fake_s3.objects[v2_key]
+        prog2 = json.loads(
+            handler_storage.handler(self._event("/fetch-solve-score-program", {"id": program_id}), None)["body"]
+        )["program"]
+        self.assertIn("proximity", prog2["source_text"])
+        self.assertNotIn("area", prog2["source_text"])
+
+    @patch("handler_storage.s3")
     def test_compile_solve_score_program_source_route_and_source_wins_save(self, mock_s3):
         import handler_storage
 

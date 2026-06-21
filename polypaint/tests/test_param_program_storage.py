@@ -149,6 +149,43 @@ class TestParamProgramStorage(unittest.TestCase):
         self.assertEqual(macro_body["program"]["fingerprint"], base_body["program"]["fingerprint"])
 
     @patch("handler_storage.s3")
+    def test_fetch_prefers_v2_copy_when_present(self, mock_s3):
+        # Load prefers the migrated v2/ copy, falls back to v1 when absent.
+        import handler_storage
+
+        fake_s3 = _FakeS3()
+        self._patch_s3(mock_s3, fake_s3)
+
+        save_resp = handler_storage.handler(
+            self._event("/save-param-program", {"name": "P", "chain": [["push", "t1"], ["emit", "p1"]]}),
+            None,
+        )
+        program_id = json.loads(save_resp["body"])["program"]["id"]
+
+        v2_obj = {
+            "program_kind": "param_program",
+            "version": 2,
+            "id": program_id,
+            "name": "P",
+            "source_text": "p2 = t2\n",
+            "chain": [["push", "t2"], ["emit", "p2"]],
+        }
+        v2_key = f"polypaint/param-programs/v2/{program_id}.json"
+        fake_s3.objects[v2_key] = (json.dumps(v2_obj) + "\n").encode("utf-8")
+        fake_s3.metadata[v2_key] = {}
+
+        prog = json.loads(
+            handler_storage.handler(self._event("/fetch-param-program", {"id": program_id}), None)["body"]
+        )["program"]
+        self.assertEqual(prog["emits"], ["p2"])  # v2 preferred
+
+        del fake_s3.objects[v2_key]
+        prog2 = json.loads(
+            handler_storage.handler(self._event("/fetch-param-program", {"id": program_id}), None)["body"]
+        )["program"]
+        self.assertEqual(prog2["emits"], ["p1"])  # v1 fallback
+
+    @patch("handler_storage.s3")
     def test_storage_routes_round_trip_param_program_source_text(self, mock_s3):
         import handler_storage
 

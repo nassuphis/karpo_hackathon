@@ -116,6 +116,41 @@ class TestSolveScoreProgramStorage(unittest.TestCase):
         self.assertEqual(refetch_resp["statusCode"], 404)
 
     @patch("handler_storage.s3")
+    def test_list_excludes_v2_subdirectory_copies(self, mock_s3):
+        # Regression: a Migrate-v2 copy under solve-score-programs/v2/<id>.json
+        # must NOT surface as a phantom "v2/<id>" program (which then double-
+        # prefixed into v2/v2/<id> on migrate/load).
+        import handler_storage
+
+        fake_s3 = _FakeS3()
+        mock_s3.get_paginator.side_effect = fake_s3.get_paginator
+        mock_s3.paginate.side_effect = getattr(fake_s3, "paginate", None)
+        mock_s3.get_object.side_effect = fake_s3.get_object
+        mock_s3.put_object.side_effect = fake_s3.put_object
+        mock_s3.head_object.side_effect = fake_s3.head_object
+        mock_s3.delete_object.side_effect = fake_s3.delete_object
+
+        save_resp = handler_storage.handler(
+            self._event("/save-solve-score-program", {"name": "hsv 3", "chain": [["proximity", "0.1"]]}),
+            None,
+        )
+        program_id = json.loads(save_resp["body"])["program"]["id"]
+
+        # Simulate the Migrate-v2 copy living under the v2/ subdirectory.
+        v1_key = f"{handler_storage.SOLVE_SCORE_PROGRAMS_PREFIX}{program_id}.json"
+        v2_key = f"{handler_storage.SOLVE_SCORE_PROGRAMS_PREFIX}v2/{program_id}.json"
+        fake_s3.objects[v2_key] = fake_s3.objects[v1_key]
+        fake_s3.metadata[v2_key] = dict(fake_s3.metadata.get(v1_key) or {})
+
+        list_resp = handler_storage.handler(self._event("/list-solve-score-programs", {}), None)
+        list_body = json.loads(list_resp["body"])
+        ids = [p["id"] for p in list_body["programs"]]
+        self.assertEqual(ids, [program_id])
+        self.assertNotIn(f"v2/{program_id}", ids)
+        self.assertTrue(all("/" not in pid for pid in ids))
+        self.assertEqual(list_body["count"], 1)
+
+    @patch("handler_storage.s3")
     def test_compile_solve_score_program_source_route_and_source_wins_save(self, mock_s3):
         import handler_storage
 

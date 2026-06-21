@@ -1241,7 +1241,7 @@ def handle_list_solve_score_programs(event):
             if not key.endswith(".json") or key.endswith("/"):
                 continue
             program_id = key[len(SOLVE_SCORE_PROGRAMS_PREFIX):-5]
-            if not program_id:
+            if not program_id or "/" in program_id:
                 continue
             try:
                 program = _solve_score_program_summary_from_head(program_id)
@@ -1364,7 +1364,7 @@ def handle_list_param_programs(event):
             if not key.endswith(".json") or key.endswith("/"):
                 continue
             program_id = key[len(PARAM_PROGRAMS_PREFIX):-5]
-            if not program_id:
+            if not program_id or "/" in program_id:
                 continue
             try:
                 program = _param_program_summary_from_head(program_id)
@@ -1513,7 +1513,7 @@ def handle_list_coeff_programs(event):
             if not key.endswith(".json") or key.endswith("/"):
                 continue
             program_id = key[len(COEFF_PROGRAMS_PREFIX):-5]
-            if not program_id:
+            if not program_id or "/" in program_id:
                 continue
             try:
                 program = _coeff_program_summary_from_head(program_id)

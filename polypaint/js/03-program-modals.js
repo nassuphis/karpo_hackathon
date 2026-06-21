@@ -45,7 +45,7 @@ function _parseSolveScoreProgram(raw) {
         throw new Error('program JSON version must be numeric when present');
     }
     const version = hasVersion ? parsedVersion : 1;
-    if (version !== 1) {
+    if (version !== 1 && version !== 2) {
         throw new Error(`program JSON version ${version} is not supported`);
     }
     return {

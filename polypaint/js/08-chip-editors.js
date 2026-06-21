@@ -1200,7 +1200,7 @@ function _parseParamProgramPayload(raw) {
     const parsedVersion = Number(raw.version);
     if (hasVersion && !Number.isFinite(parsedVersion)) throw new Error('program JSON version must be numeric when present');
     const version = hasVersion ? parsedVersion : 1;
-    if (version !== 1) throw new Error(`program JSON version ${version} is not supported`);
+    if (version !== 1 && version !== 2) throw new Error(`program JSON version ${version} is not supported`);
     const kind = String(raw.program_kind || 'param_program');
     if (kind !== 'param_program') throw new Error(`program JSON kind ${kind} is not param_program`);
     return {
@@ -1425,7 +1425,7 @@ function _parseCoeffProgramPayload(raw) {
     if (!hasSourceText && !chain.length) throw new Error('program JSON is missing a chain or source_text');
     const version = Object.prototype.hasOwnProperty.call(raw, 'version') ? Number(raw.version) : 1;
     if (!Number.isFinite(version)) throw new Error('program JSON version must be numeric when present');
-    if (version !== 1) throw new Error(`program JSON version ${version} is not supported`);
+    if (version !== 1 && version !== 2) throw new Error(`program JSON version ${version} is not supported`);
     const kind = String(raw.program_kind || 'coeff_program');
     if (kind !== 'coeff_program') throw new Error(`program JSON kind ${kind} is not coeff_program`);
     const normalizedChain = hasSourceText ? [] : _normalizeCoeffProgramChain(chain);

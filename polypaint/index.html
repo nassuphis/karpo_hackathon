@@ -1392,13 +1392,6 @@ button {
                     <button type="button" class="btn-secondary btn-inline" id="param-program-manage" onclick="openParamProgramModal()">Param Programs...</button>
                     <button type="button" class="btn-secondary btn-inline" id="param-program-clear" onclick="_clearParamProgramChain()">Clear program</button>
                 </div>
-                <div class="compute-preview-tabs" role="tablist" aria-label="Param program editor tabs">
-                    <button type="button" id="param-program-tab-text" class="compute-preview-tab-btn active" onclick="_setParamProgramEditorMode('text')">Text</button>
-                    <button type="button" id="param-program-tab-chips" class="compute-preview-tab-btn" onclick="_setParamProgramEditorMode('chips')">Chips (read-only)</button>
-                </div>
-                <div id="pp-chips-panel" class="coeff-program-editor-panel">
-                    <div id="pp-chips" class="chip-container param-program-display"></div>
-                </div>
                 <div id="pp-text-panel" class="coeff-program-editor-panel active">
                     <textarea id="pp-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;p1 = t1 + t2&#10;p2 = exp(t1*pi2i)" oninput="_onParamProgramSourceInput()"></textarea>
                 </div>
@@ -1420,13 +1413,6 @@ button {
                 <div class="solve-score-program-toolbar param-program-toolbar">
                     <button type="button" class="btn-secondary btn-inline" id="coeff-program-manage" onclick="openCoeffProgramModal()">Coeff Programs...</button>
                     <button type="button" class="btn-secondary btn-inline" id="coeff-program-clear" onclick="_clearCoeffProgramChain()">Clear program</button>
-                </div>
-                <div class="compute-preview-tabs" role="tablist" aria-label="Coeff program editor tabs">
-                    <button type="button" id="coeff-program-tab-text" class="compute-preview-tab-btn active" onclick="_setCoeffProgramEditorMode('text')">Text</button>
-                    <button type="button" id="coeff-program-tab-chips" class="compute-preview-tab-btn" onclick="_setCoeffProgramEditorMode('chips')">Chips (read-only)</button>
-                </div>
-                <div id="cp-chips-panel" class="coeff-program-editor-panel">
-                    <div id="cp-chips" class="chip-container param-program-display"></div>
                 </div>
                 <div id="cp-text-panel" class="coeff-program-editor-panel active">
                     <textarea id="cp-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;cf&#10;rev&#10;emit" oninput="_onCoeffProgramSourceInput()"></textarea>

@@ -346,26 +346,21 @@ function _getParamProgramSourceText() {
 
 let _paramProgramSourceAutoSynthed = false;
 
-function _setParamProgramEditorMode(mode) {
-    const normalized = mode === 'text' ? 'text' : 'chips';
-    _paramProgramEditorMode = normalized;
-    const chipsPanel = document.getElementById('pp-chips-panel');
+function _setParamProgramEditorMode(_mode) {
+    // Param Program is text-only (the read-only chips tab was removed). Pin the
+    // mode to 'text' so save/preview/debug/compute always send the source, and
+    // still synthesize text from a loaded chain (chain-only programs) so the
+    // editor is never empty when there is a program to show.
+    _paramProgramEditorMode = 'text';
     const textPanel = document.getElementById('pp-text-panel');
-    const chipsTab = document.getElementById('param-program-tab-chips');
-    const textTab = document.getElementById('param-program-tab-text');
-    if (chipsPanel && chipsPanel.classList) chipsPanel.classList.toggle('active', normalized === 'chips');
-    if (textPanel && textPanel.classList) textPanel.classList.toggle('active', normalized === 'text');
-    if (chipsTab && chipsTab.classList) chipsTab.classList.toggle('active', normalized === 'chips');
-    if (textTab && textTab.classList) textTab.classList.toggle('active', normalized === 'text');
-    if (normalized === 'text' && _paramProgramSourceAutoSynthed && !_ppChain.length) {
+    if (textPanel && textPanel.classList) textPanel.classList.add('active');
+    if (_paramProgramSourceAutoSynthed && !_ppChain.length) {
         _setParamProgramSourceText('', { auto: false });
-    } else if (normalized === 'text' && _ppChain.length &&
+    } else if (_ppChain.length &&
         (!_getParamProgramSourceText().trim() || _paramProgramSourceAutoSynthed)) {
         _setParamProgramSourceText(_paramProgramSourceFromRows(_serializeParamProgramChain()), { auto: true });
     }
-    _paramProgramStatus(normalized === 'text'
-        ? 'Text source is authoritative for save, preview, debug, and compute.'
-        : 'Chip view is read-only; Text source remains authoritative for save, preview, debug, and compute.');
+    _paramProgramStatus('Text source is authoritative for save, preview, debug, and compute.');
     _syncParamPipelineModeUi();
     if (typeof _paramProgramModalState !== 'undefined' && _paramProgramModalState.open) _renderParamProgramModal();
     if (_paramProgramModeSelected()) _markComputePreviewStale();
@@ -682,28 +677,22 @@ function _getCoeffProgramSourceText() {
 // leaving stale text authoritative.
 let _coeffProgramSourceAutoSynthed = false;
 
-function _setCoeffProgramEditorMode(mode) {
-    const normalized = mode === 'text' ? 'text' : 'chips';
-    _coeffProgramEditorMode = normalized;
-    const chipsPanel = document.getElementById('cp-chips-panel');
+function _setCoeffProgramEditorMode(_mode) {
+    // Coeff Program is text-only (the read-only chips tab was removed). Pin the
+    // mode to 'text' so save/preview/debug/compute always send the source, and
+    // still synthesize text from a loaded chain (chain-only programs) so the
+    // editor is never empty when there is a program to show.
+    _coeffProgramEditorMode = 'text';
     const textPanel = document.getElementById('cp-text-panel');
-    const chipsTab = document.getElementById('coeff-program-tab-chips');
-    const textTab = document.getElementById('coeff-program-tab-text');
-    if (chipsPanel && chipsPanel.classList) chipsPanel.classList.toggle('active', normalized === 'chips');
-    if (textPanel && textPanel.classList) textPanel.classList.toggle('active', normalized === 'text');
-    if (chipsTab && chipsTab.classList) chipsTab.classList.toggle('active', normalized === 'chips');
-    if (textTab && textTab.classList) textTab.classList.toggle('active', normalized === 'text');
-    if (normalized === 'text' && _coeffProgramSourceAutoSynthed && !_coeffProgramChain.length) {
-        // The synthesized program's chips were all removed; stale auto-text
-        // must not stay authoritative for compute.
+    if (textPanel && textPanel.classList) textPanel.classList.add('active');
+    if (_coeffProgramSourceAutoSynthed && !_coeffProgramChain.length) {
+        // Stale auto-synthesized text must not stay authoritative for compute.
         _setCoeffProgramSourceText('', { auto: false });
-    } else if (normalized === 'text' && _coeffProgramChain.length &&
+    } else if (_coeffProgramChain.length &&
         (!_getCoeffProgramSourceText().trim() || _coeffProgramSourceAutoSynthed)) {
         _setCoeffProgramSourceText(_coeffProgramSourceFromRows(_serializeCoeffProgramChain()), { auto: true });
     }
-    _coeffProgramStatus(normalized === 'text'
-        ? 'Text source is authoritative for save, preview, debug, and compute.'
-        : 'Chip view is read-only; Text source remains authoritative for save, preview, debug, and compute.');
+    _coeffProgramStatus('Text source is authoritative for save, preview, debug, and compute.');
     _syncParamPipelineModeUi();
     // typeof guard: _coeffProgramModalState is declared with `let` later in
     // the file; this can run during initial render before that declaration.

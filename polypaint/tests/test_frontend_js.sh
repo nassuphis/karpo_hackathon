@@ -102,9 +102,9 @@ assertIncludes("rtheta: { params: [{ph:'p', def:'1'}, {ph:'target', def:'both', 
 assertIncludes("square: { params: [{ph:'target', def:'both', target: true}] }", 'square param transform should expose target selection');
 assertIncludes("id=\"param-program-manage\" onclick=\"openParamProgramModal()\"", 'compute tab should expose Param Programs modal launcher');
 assertNotIncludes("id=\"param-pipeline-mode\"", 'compute tab should not expose retired Chain/Program selector');
-assertIncludes("id=\"pp-chips\" class=\"chip-container param-program-display\"", 'compute tab should expose param-program chip display');
-assertIncludes("id=\"param-program-tab-text\" class=\"compute-preview-tab-btn active\" onclick=\"_setParamProgramEditorMode('text')\"", 'Param Program should expose an active Text editor tab');
-assertIncludes("id=\"param-program-tab-chips\" class=\"compute-preview-tab-btn\" onclick=\"_setParamProgramEditorMode('chips')\">Chips (read-only)</button>", 'Param Program chips tab should be readonly display');
+assertNotIncludes("id=\"pp-chips\"", 'Param Program read-only chip display removed (text-only editor)');
+assertNotIncludes("param-program-tab-chips", 'Param Program read-only chips tab removed (text-only editor)');
+assertIncludes("id=\"pp-text-panel\" class=\"coeff-program-editor-panel active\"", 'Param Program text panel should stay active in the text-only editor');
 assertIncludes("id=\"pp-source-text\" class=\"coeff-program-source-text\"", 'Param Program should expose a source textarea');
 assertIncludes("function _paramProgramTextModeSelected() {", 'Param Program text mode should have a single source of truth');
 assertIncludes("function _paramProgramSourceFromRows(chain) {", 'Param Program should synthesize editable source from chip chains');
@@ -157,7 +157,9 @@ assertIncludes("<pre class=\"coeff-program-modal-source\" aria-label=\"Param pro
 assertIncludes("savedParamProgramSourceText", 'Compute result Populate should prefer stored param source text over lowered chip chains');
 assertIncludes("const result = await lambdaPost('param-debug', _attachProgramSourcePayload({", 'Param Debug should forward Param source text through the shared payload helper');
 assertIncludes("id=\"coeff-program-manage\" onclick=\"openCoeffProgramModal()\"", 'compute tab should expose Coeff Programs modal launcher');
-assertIncludes("id=\"cp-chips\" class=\"chip-container param-program-display\"", 'compute tab should expose coeff-program chip display');
+assertNotIncludes("id=\"cp-chips\"", 'Coeff Program read-only chip display removed (text-only editor)');
+assertNotIncludes("coeff-program-tab-chips", 'Coeff Program read-only chips tab removed (text-only editor)');
+assertIncludes("id=\"cp-text-panel\" class=\"coeff-program-editor-panel active\"", 'Coeff Program text panel should stay active in the text-only editor');
 assertIncludes("const _coeffProgramCatalog = (() => {", 'frontend should build the coeff-program chip catalog');
 assertIncludes("const _programProfiles = (typeof window !== 'undefined' && window._programProfiles)", 'frontend should consume the generated program profile mirror');
 assertIncludes("function _profileSelectorChoices(name, fallback) {", 'Coeff Program selector choices should derive from profile metadata');
@@ -236,7 +238,7 @@ assertIncludes("return name === 'const' ? 'push_const' : name;", 'coeff program 
 assertIncludes("kind: 'andy', ph: 'andy'", 'the base andy param def should carry the kind marker');
 assertIncludes("catalog.power_series = {", 'Coeff Program catalog should expose the registry power transform as a power_series chip');
 assertIncludes("return { name: 'legacy', params: [normalized.name, 'poly', 'poly', ...args] };", 'Copy legacy transforms must keep andy-carrying rows as legacy chips (named chips drop andy)');
-assertIncludes("if (normalized === 'text' && _coeffProgramSourceAutoSynthed && !_coeffProgramChain.length) {", 'Emptying the chip chain must clear stale auto-synthesized text');
+assertIncludes("if (_coeffProgramSourceAutoSynthed && !_coeffProgramChain.length) {", 'Emptying the chip chain must clear stale auto-synthesized text');
 assertIncludes("function _coeffProgramSourceStatements(sourceText) {", 'statement counter and display should share one backend-mirroring splitter');
 assertIncludes("nativeTransform: true,", 'Coeff Program picker should expose direct native transform chips instead of a visible legacy wrapper');
 assertIncludes("catalog.exp_affine = {", 'Coeff Program picker should expose affine exponential as exp_affine');

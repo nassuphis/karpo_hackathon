@@ -365,10 +365,10 @@ function _populateComputeFromDetail(jobId, detail) {
     _setChainFromSaved('pt', ptDisplay);
     _setChainFromSaved('pp', savedParamProgramChain);
     _setParamProgramSourceText(savedParamProgramSourceText);
-    _setParamProgramEditorMode(savedParamProgramSourceText.trim() ? 'text' : 'chips');
+    _setParamProgramEditorMode('text');
     _setChainFromSaved('cp', savedCoeffProgramChain);
     _setCoeffProgramSourceText(savedCoeffProgramSourceText);
-    _setCoeffProgramEditorMode(savedCoeffProgramSourceText.trim() ? 'text' : 'chips');
+    _setCoeffProgramEditorMode('text');
     _setParamPipelineMode('program');
     _setChainFromSaved('ct', pipeline.coeff_transforms || detail.coeff_transforms || []);
 

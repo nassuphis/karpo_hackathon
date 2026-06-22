@@ -539,6 +539,10 @@ assertNotIncludes("id=\"resize-crop\"", 'resize popup should not expose a crop c
 assertNotIncludes("id=\"resize-vscale\"", 'resize popup should not expose a vscale control');
 assertIncludes("Both engines produce a square pix x pix artifact", 'resize popup should document square pix output');
 assertIncludes(">ColorRender-MT</button>", 'color render primary action should be labeled ColorRender-MT');
+assertIncludes("id=\"btn-render-pdf-colorspread\" onclick=\"runPdfColorSpreadSelectedRenderArtifact()\"", 'Color tab should expose a direct PDF action for the selected Color artifact');
+assertIncludes("PDF artifacts are generated from the selected Color artifact using the PDF button on the Color tab.", 'PDF tab copy should explain PDFs are generated from Color selection');
+assertIncludes("async function runPdfColorSpreadForArtifact(art, btn) {", 'PDF ColorSpread dispatch should use a reusable selected-artifact runner');
+assertIncludes("async function runPdfColorSpreadSelectedRenderArtifact() {", 'Render PDF action should dispatch from the selected Color artifact without a popup');
 assertIncludes("ColorRender-MT exposes fused clip/raster/finalize controls only", 'render tab copy should describe the ColorRender-MT action');
 assertIncludes("function _sourceColorArtifactIdForRenderArtifact(art) {", 'render artifact source-color helper missing');
 assertIncludes("function _renderArtifactSolveDisplay(art) {", 'render artifact solve-display helper missing');

@@ -677,7 +677,6 @@ function _updateRenderActionButtons() {
     const pdfBtn = document.getElementById('btn-render-pdf-colorspread');
     const tiffCompatBtn = document.getElementById('btn-tiff-compat');
     const pngExportBtn = document.getElementById('btn-png-export');
-    const colorSources = _pdfColorSourceArtifacts();
     const linkedPaletteId = _linkedPaletteIdForColorArtifact(art);
     const linkedColorId = _linkedColorIdForPaletteArtifact(art);
     const isTiffArtifact = !!(art && art.image_key && /\.tiff?$/i.test(String(art.image_key)));
@@ -709,7 +708,7 @@ function _updateRenderActionButtons() {
             ? _extractPaletteLineageHint(art).label
             : '';
     }
-    if (pdfBtn) pdfBtn.disabled = !(_renderActiveFamily === 'pdf' && colorSources.length > 0) || !!_activeRenderRun;
+    if (pdfBtn) pdfBtn.disabled = !(_renderActiveFamily === 'color' && hasSelection && inventoryMatchesJob && art && art.artifact_id && art.image_key && (art.content_type || '').indexOf('image/') === 0) || !!_activeRenderRun;
     if (tiffCompatBtn) tiffCompatBtn.disabled = !canConvertBilevel || !!_activeRenderRun;
     if (pngExportBtn) pngExportBtn.disabled = !canConvertBilevel || !!_activeRenderRun;
     if (goResultBtn) goResultBtn.disabled = !(_renderActiveFamily === 'color' && jobId) || !!_activeRenderRun;
@@ -1070,7 +1069,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     } else if (_renderActiveFamily === 'bilevel') {
         controlsExtra = '<span style="font-size:11px; color:#666">Generate opens the BiLevel popup and runs the logical-section path: sectioned solve reads, sparse occupancy fragments, then one assemble+encode finalize. Color2Bilevel is the faster derived path from a fused Color artifact and appears on the Color tab.</span>';
     } else if (_renderActiveFamily === 'pdf') {
-        controlsExtra = '<span style="font-size:11px; color:#666">ColorSpread creates a single spread PDF from a selected Color artifact. The left page uses metadata-derived text and the right page uses the saved Color image.</span>';
+        controlsExtra = '<span style="font-size:11px; color:#666">PDF artifacts are generated from the selected Color artifact using the PDF button on the Color tab. This tab lists and previews completed PDFs.</span>';
     }
 
     let catalogHtml = '';
@@ -1104,12 +1103,11 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     }
 
     const actionButtons = [];
-    if (_renderActiveFamily === 'pdf') {
-        actionButtons.push('<button class="btn-primary" id="btn-render-pdf-colorspread" onclick="openPdfColorSpreadPopup()" style="padding:4px 12px; font-size:11px">ColorSpread</button>');
-    } else if (_renderActiveFamily !== 'color') {
+    if (_renderActiveFamily !== 'color' && _renderActiveFamily !== 'pdf') {
         actionButtons.push('<button class="btn-primary" id="btn-render-generate" onclick="generateSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px">Generate</button>');
     }
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-primary" id="btn-render-generate-mt" onclick="generateSelectedRenderArtifactMT()" style="padding:4px 12px; font-size:11px">ColorRender-MT</button>');
+    if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-pdf-colorspread" onclick="runPdfColorSpreadSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>PDF</button>');
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-extract-palette" onclick="openExtractPalettePopup()" style="padding:4px 12px; font-size:11px" disabled>ExtractPalette</button>');
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-color-repalette" onclick="openColorRepalettePopup()" style="padding:4px 12px; font-size:11px" disabled>RePalette</button>');
     if (_renderActiveFamily === 'color') actionButtons.push('<button class="btn-secondary" id="btn-render-color-to-bilevel" onclick="openColorToBilevelPopup()" style="padding:4px 12px; font-size:11px" disabled>Color2Bilevel</button>');

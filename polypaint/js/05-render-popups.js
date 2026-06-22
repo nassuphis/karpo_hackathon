@@ -286,7 +286,10 @@ async function runColorRepaletteSelectedArtifact() {
             statusEl.className = 'status error';
         }
     } finally {
-        if (btn) { btn.disabled = false; btn.textContent = orig; }
+        if (btn) {
+            btn.textContent = orig;
+            btn.disabled = !!_activeRenderRun;
+        }
     }
 }
 
@@ -1325,17 +1328,14 @@ function _applyPdfColorSpreadFilter(text) {
     _renderPdfColorSpreadPopup();
 }
 
-async function runPdfColorSpreadSelected() {
+async function runPdfColorSpreadForArtifact(art, btn) {
     if (_activeRenderRun) return;
-    const visible = _visiblePdfColorSpreadCatalog();
-    if (!visible.length) return;
-    const idx = Math.max(0, Math.min(_pdfColorSpreadPopupState.highlightIdx || 0, visible.length - 1));
-    const art = visible[idx];
+    if (!art || !art.artifact_id || !art.image_key) return;
     const jobId = document.getElementById('render-results-dir').value.trim();
-    const btn = document.getElementById('pdf-colorspread-popup-run');
+    if (!jobId) return;
     const orig = btn ? btn.textContent : 'Execute';
     try {
-        if (btn) { btn.disabled = true; btn.textContent = 'Executing...'; }
+        if (btn) { btn.disabled = true; btn.textContent = 'Queuing...'; }
         const runId = _generateRunId();
         const taskId = 'pdf_' + runId;
         const artifactId = 'pdf_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
@@ -1357,11 +1357,14 @@ async function runPdfColorSpreadSelected() {
             mode: 'pdf',
             run_id: runId,
             task_id: taskId,
+            source_artifact_id: art.artifact_id,
             started_at_ms: Date.now(),
         });
-        document.getElementById('render-status').textContent = 'PDF ColorSpread queued...';
-        document.getElementById('render-status').className = 'status';
-        _closePdfColorSpreadPopup();
+        const statusEl = document.getElementById('render-status');
+        if (statusEl) {
+            statusEl.textContent = `PDF ColorSpread queued for ${art.artifact_id}...`;
+            statusEl.className = 'status';
+        }
         startActiveRenderObserver();
     } catch (e) {
         const statusEl = document.getElementById('render-status');
@@ -1373,6 +1376,22 @@ async function runPdfColorSpreadSelected() {
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = orig; }
     }
+}
+
+async function runPdfColorSpreadSelected() {
+    const visible = _visiblePdfColorSpreadCatalog();
+    if (!visible.length) return;
+    const idx = Math.max(0, Math.min(_pdfColorSpreadPopupState.highlightIdx || 0, visible.length - 1));
+    const btn = document.getElementById('pdf-colorspread-popup-run');
+    await runPdfColorSpreadForArtifact(visible[idx], btn);
+    if (_activeRenderRun) _closePdfColorSpreadPopup();
+}
+
+async function runPdfColorSpreadSelectedRenderArtifact() {
+    if (_renderActiveFamily !== 'color') return;
+    const art = _renderSelectedArtifactEntry();
+    const btn = document.getElementById('btn-render-pdf-colorspread');
+    await runPdfColorSpreadForArtifact(art, btn);
 }
 
 function _initRepalettePopup() {

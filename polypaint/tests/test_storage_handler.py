@@ -175,6 +175,75 @@ class TestComputeMigration(unittest.TestCase):
         self.assertFalse(body["pipeline_migratable"])
 
     @patch("handler_storage.s3")
+    def test_detail_reconstructs_readable_coeff_source_for_chain_only_result(self, mock_s3):
+        # Older results store the coeff program only as a lowered _typed_* chain
+        # with no coeff_program_source_text; Populate then synthesized unparseable
+        # _typed_* source. /detail now reconstructs readable, equivalent source.
+        import handler_storage
+        from coeff_program_source import compile_coeff_program_source
+
+        fake = _FakeS3()
+        self._patch(mock_s3, fake)
+        calc = {
+            "function": "const",
+            "pipeline": {
+                "function": "const",
+                "coeff_program_chain": [
+                    ["_typed_push_scalar", "0.0+0.0j"],
+                    ["_typed_push_scalar", "1.0+0.0j"],
+                    ["_typed_poke_poly"],
+                    ["_typed_push_scalar", "19.0+0.0j"],
+                    ["_typed_push_scalar", "9.0+0.0j"],
+                    ["_typed_unary", "neg"],
+                    ["_typed_push_scalar", "p1"],
+                    ["_typed_push_scalar", "1000.0+0.0j"],
+                    ["_typed_binary", "multiply"],
+                    ["_typed_binary", "add"],
+                    ["_typed_poke_poly"],
+                ],
+            },
+        }
+        self._store(fake, "jrecon", calc)
+
+        detail = json.loads(handler_storage.handler(_event("/detail", {"job_id": "jrecon"}), None)["body"])
+        src = detail.get("coeff_program_source_text")
+        self.assertTrue(src and src.strip(), "detail should reconstruct coeff source from a chain-only result")
+        self.assertNotIn("_typed_push_scalar", src)  # readable, not raw VM tokens
+        # ...and the reconstructed source is the SAME program as the raw chain.
+        raw = (
+            "_typed_push_scalar(0.0+0.0j)\n_typed_push_scalar(1.0+0.0j)\n_typed_poke_poly\n"
+            "_typed_push_scalar(19.0+0.0j)\n_typed_push_scalar(9.0+0.0j)\n_typed_unary(neg)\n"
+            "_typed_push_scalar(p1)\n_typed_push_scalar(1000.0+0.0j)\n"
+            "_typed_binary(multiply)\n_typed_binary(add)\n_typed_poke_poly\n"
+        )
+        self.assertEqual(
+            compile_coeff_program_source(src)["fingerprint"],
+            compile_coeff_program_source(raw)["fingerprint"],
+        )
+
+    @patch("handler_storage.s3")
+    def test_detail_keeps_stored_coeff_source_when_present(self, mock_s3):
+        # Stored source text always wins over reconstruction.
+        import handler_storage
+
+        fake = _FakeS3()
+        self._patch(mock_s3, fake)
+        calc = {
+            "function": "g1",
+            "pipeline": {
+                "function": "g1",
+                "coeff_program_source_text": "poly = rev(cf)\nemit\n",
+                "coeff_program_chain": [["_typed_push_scalar", "0.0+0.0j"], ["_typed_poke_poly"]],
+            },
+        }
+        self._store(fake, "jstored", calc)
+
+        detail = json.loads(handler_storage.handler(_event("/detail", {"job_id": "jstored"}), None)["body"])
+        # No top-level reconstruction override; the stored source stays authoritative.
+        self.assertNotIn("coeff_program_source_text", detail)
+        self.assertEqual(detail["pipeline"]["coeff_program_source_text"], "poly = rev(cf)\nemit\n")
+
+    @patch("handler_storage.s3")
     def test_migrate_compute_translates_legacy_calc_in_place(self, mock_s3):
         import handler_storage
 

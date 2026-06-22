@@ -42,13 +42,18 @@ from coeff_program_chain import (
     PROGRAM_VERSION as COEFF_PROGRAM_VERSION,
     compile_coeff_program_chain,
 )
-from coeff_program_source import coeff_source_text_from_payload, parse_coeff_program_source
+from coeff_program_source import (
+    coeff_source_text_from_chain,
+    coeff_source_text_from_payload,
+    parse_coeff_program_source,
+)
 from param_program_chain import (
     PROGRAM_KIND as PARAM_PROGRAM_KIND,
     PROGRAM_VERSION as PARAM_PROGRAM_VERSION,
     compile_param_program_chain,
 )
 from param_program_source import (
+    param_source_text_from_chain,
     param_source_text_from_payload,
     parse_param_program_source,
 )
@@ -2886,6 +2891,30 @@ def handle_detail(event):
         version = _calc_pipeline_program_version(pipeline)
         result["pipeline_program_version"] = version
         result["pipeline_migratable"] = version == 1
+        # Reconstruct readable, reparseable program source for Populate when the
+        # result predates stored source text. {coeff,param}_source_text_from_chain
+        # is the same equivalent reconstruction migration uses (verified to
+        # compile to an identical program), so populated programs read cleanly and
+        # recompute correctly instead of showing lowered _typed_* tokens — without
+        # rewriting the saved result. Stored source text always wins.
+        if not pipeline.get("coeff_program_source_text"):
+            coeff_chain = pipeline.get("coeff_program_chain")
+            if isinstance(coeff_chain, list) and coeff_chain:
+                try:
+                    text = coeff_source_text_from_chain(coeff_chain)
+                    if text and text.strip():
+                        result["coeff_program_source_text"] = text
+                except Exception:
+                    pass
+        if not pipeline.get("param_program_source_text"):
+            param_chain = pipeline.get("param_program_chain")
+            if isinstance(param_chain, list) and param_chain:
+                try:
+                    text = param_source_text_from_chain(param_chain)
+                    if text and text.strip():
+                        result["param_program_source_text"] = text
+                except Exception:
+                    pass
     except Exception:
         pass
 

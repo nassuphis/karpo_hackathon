@@ -49,6 +49,8 @@ def solve_score_program_for_run(params, *, scope="solve", strict=True):
         solve_score_source_text_from_chain,
     )
 
+    source_key = "solve_score_program_source_text" if scope == "solve" else f"{scope}_score_program_source_text"
+    source_key_present = source_key in params
     source_text = solve_score_source_text_for_run(params, scope=scope)
     if source_text is not None:
         source_compiled = compile_solve_score_program_source(source_text, strict=False)
@@ -80,6 +82,11 @@ def solve_score_program_for_run(params, *, scope="solve", strict=True):
             "source_text": str(program.get("source_text") or "")
             or solve_score_source_text_from_chain(public_solve_score_chain(compiled["chain"])),
         }
+
+    has_chain = params.get("solve_score_chain") not in ("", None, [])
+    has_legacy_metric = bool(str(params.get("solve_metric") or params.get("metric") or "").strip())
+    if source_key_present and not has_chain and not has_legacy_metric:
+        raise RuntimeError("solve-score program source is empty and no solve_score_chain was provided")
 
     compiled = compile_solve_score_chain_or_legacy(
         params.get("solve_score_chain", ""),

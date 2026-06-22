@@ -68,6 +68,8 @@ GENERIC_METRIC_CHIP_NAME = "__metric"
 GENERIC_METRIC_SOURCES = {"slv", "cf"}
 VALID_SOLVE_SCORE_SOURCES = {"slv", "cf", "pm"}
 VALID_SOLVE_SCORE_LAG_DEPTHS = {0, 1}
+SOLVE_SCORE_QUANTILE_PERCENT_MIN = 0.1
+SOLVE_SCORE_QUANTILE_PERCENT_MAX = 5.0
 PARAM_SOLVE_SCORE_METRICS = {
     "t1_re",
     "t1_im",
@@ -368,7 +370,7 @@ def _validate_quantile_percent(value):
         pct = float(value)
     except (TypeError, ValueError):
         raise RuntimeError(f"solve-score metric q must be numeric percent, got {value!r}")
-    if not (0.1 <= pct <= 5.0):
+    if not (SOLVE_SCORE_QUANTILE_PERCENT_MIN <= pct <= SOLVE_SCORE_QUANTILE_PERCENT_MAX):
         raise RuntimeError(f"solve-score metric q must be in [0.1, 5.0] percent, got {pct}")
     return pct
 

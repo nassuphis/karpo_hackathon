@@ -430,6 +430,15 @@ function _effectiveSolveScoreProgramSourceText(prefix) {
     return text.trim() ? text : '';
 }
 
+function _requireSolveScoreProgramSourceText(prefix) {
+    const p = _editorPrefix(prefix);
+    const text = _effectiveSolveScoreProgramSourceText(p);
+    if (text) return text;
+    const message = 'Solve-score source is empty. Enter, load, or populate a text program before rendering.';
+    _setSolveScoreProgramStatus(p, message, true);
+    throw new Error(message);
+}
+
 function _defaultSolveScoreProgramSourceText(prefix) {
     const p = _editorPrefix(prefix);
     const metric = p === 'palette'
@@ -437,7 +446,7 @@ function _defaultSolveScoreProgramSourceText(prefix) {
         : String(renderSolveMetric || 'proximity');
     const choices = _solveScoreMetricAllowedSources(metric);
     const source = choices.includes('slv') ? 'slv' : (choices[0] || 'slv');
-    return `score = metric(${metric}, ${source}, q=0.1%)\nemit_norm(score)\n`;
+    return `score = metric(${metric}, ${source}, q=0.1%)\n`;
 }
 
 function _ensureSolveScoreSourceDefaults() {
@@ -519,9 +528,10 @@ function _insertSolveScoreSourceSnippet(prefix, snippet) {
 
 function _solveScoreMetricSnippet(name) {
     const metric = String(name || 'proximity');
+    if (_solveScoreMetricSnippets[metric]) return String(_solveScoreMetricSnippets[metric]);
     const choices = _solveScoreMetricAllowedSources(metric);
     const source = choices.includes('slv') ? 'slv' : (choices[0] || 'slv');
-    return `metric(${metric}, ${source}, q=0.1%)`;
+    return `score = metric(${metric}, ${source}, q=0.1%)`;
 }
 
 function _solveScoreSnippetParamValues(params) {
@@ -529,15 +539,22 @@ function _solveScoreSnippetParamValues(params) {
 }
 
 function _solveScoreUnarySnippet(name, spec) {
+    if (spec && spec.snippet) return String(spec.snippet);
+    if (name === 'const') return 'score = add(metric(proximity, slv, q=0.1%), const(0))';
+    if (name === 'dup') return 'push(metric(proximity, slv, q=0.1%))\ndup()\nflush()\nscore = metric(proximity, slv, q=0.1%)';
+    if (name === 'flush') return 'push(metric(proximity, slv, q=0.1%))\nflush()\nscore = metric(proximity, slv, q=0.1%)';
     const args = ['score'].concat(_solveScoreSnippetParamValues(spec && spec.params));
-    return `${name}(${args.join(', ')})`;
+    args[0] = 'metric(proximity, slv, q=0.1%)';
+    return `score = ${name}(${args.join(', ')})`;
 }
 
 function _solveScoreCombineSnippet(name, spec) {
+    if (spec && spec.snippet) return String(spec.snippet);
     const arity = Number(spec && spec.arity) || 2;
-    const args = Array.from({ length: arity }, (_, i) => i === 0 ? 'a' : (i === 1 ? 'b' : `v${i + 1}`))
+    const metrics = ['proximity', 'spread', 'crowding', 'area'];
+    const args = Array.from({ length: arity }, (_, i) => `metric(${metrics[i] || 'proximity'}, slv, q=0.1%)`)
         .concat(_solveScoreSnippetParamValues(spec && spec.params));
-    return `${name}(${args.join(', ')})`;
+    return `score = ${name}(${args.join(', ')})`;
 }
 
 function _solveScoreCheatButtonHtml(prefix, label, snippet, title = '') {
@@ -557,17 +574,20 @@ function _renderSolveScoreCheatsheet(prefix) {
     const el = document.getElementById(`${p}-ss-cheatsheet`);
     if (!el) return;
     const metrics = _solveScoreMetricNames.slice();
-    const starters = [
-        _solveScoreCheatButtonHtml(p, 'score = proximity', 'score = metric(proximity, slv, q=0.1%)'),
-        _solveScoreCheatButtonHtml(p, 'emit_norm proximity', 'emit_norm(metric(proximity, slv, q=0.1%))'),
-        _solveScoreCheatButtonHtml(p, 'two channels', 'emit_norm(metric(proximity, slv, q=0.1%))\nemit_norm(metric(spread, slv, q=0.1%))'),
-    ];
+    const starters = (_solveScoreStarterSnippets.length ? _solveScoreStarterSnippets : [
+        { label: 'score = proximity', snippet: 'score = metric(proximity, slv, q=0.1%)' },
+        { label: 'emit_norm proximity', snippet: 'emit_norm(metric(proximity, slv, q=0.1%))' },
+        { label: 'two channels', snippet: 'emit_norm(metric(proximity, slv, q=0.1%))\nemit_norm(metric(spread, slv, q=0.1%))' },
+    ]).map(item => _solveScoreCheatButtonHtml(p, item.label, item.snippet));
     const metricButtons = metrics.map(name => {
         const choices = _solveScoreMetricAllowedSources(name).join('/');
         return _solveScoreCheatButtonHtml(p, name, _solveScoreMetricSnippet(name), choices ? `${choices}; q=0.1%` : '');
     });
     const outputButtons = Object.keys(_solveScoreOutputSpecs).map(name => {
-        const fn = name === 'emit' ? 'emit(score)' : `${name}(score)`;
+        const expr = 'metric(proximity, slv, q=0.1%)';
+        const fn = _solveScoreOutputSpecs[name].snippet || (name === 'emit'
+            ? `emit(${expr})`
+            : (name === 'emit_none' ? `emit_none(${expr})\nemit_norm(${expr})` : `${name}(${expr})`));
         return _solveScoreCheatButtonHtml(p, name, fn, (_solveScoreOutputSpecs[name] || {}).tooltip || '');
     });
     const unaryButtons = Object.keys(_solveScoreUnarySpecs).map(name => (

@@ -550,6 +550,9 @@ function _renderCommonParams(options = {}) {
     const jobId = document.getElementById('render-results-dir').value.trim();
     if (!jobId) throw new Error('No results dir — run Calculate first');
     const solveScore = _resolveSolveScoreState('render', { requireChain: !!options.requireSolveScore });
+    const solveScoreProgramSourceText = options.requireSolveScore
+        ? _requireSolveScoreProgramSourceText('render')
+        : _effectiveSolveScoreProgramSourceText('render');
     const colorInterpretation = _selectedRenderColorInterpretation();
     const colorIssue = _solveScoreColorCompatibility(solveScore, colorInterpretation);
     if (options.requireSolveScore && colorIssue) throw new Error(colorIssue);
@@ -579,7 +582,7 @@ function _renderCommonParams(options = {}) {
         solveScoreOmegaPhase: solveScore.omega_phase,
         solveScoreOmegaEnabled: solveScore.omega_enabled,
         solveScoreChain: solveScore.chain,
-        solveScoreProgramSourceText: _effectiveSolveScoreProgramSourceText('render'),
+        solveScoreProgramSourceText,
         solveScoreProgramSpec: solveScore.program_spec,
         solveScoreDisplay: solveScore.display,
         solveScoreMetrics: solveScore.metrics,
@@ -974,6 +977,7 @@ async function runPaletteArtifact() {
         log('Palette artifact: starting...', '', 'palette-log');
 
         const score = _resolveSolveScoreState('palette', { requireChain: true });
+        const scoreSourceText = _requireSolveScoreProgramSourceText('palette');
         const colorInterpretation = _selectedPaletteColorInterpretation();
         const paletteIssue = _solveScorePaletteCompatibility(score, colorInterpretation);
         if (paletteIssue) throw new Error(paletteIssue);
@@ -990,7 +994,7 @@ async function runPaletteArtifact() {
                 solve_score_quantile: score.quantile,
                 solve_score_omega: score.omega,
                 solve_score_omega_enabled: score.omega_enabled,
-                solve_score_program_source_text: _effectiveSolveScoreProgramSourceText('palette'),
+                solve_score_program_source_text: scoreSourceText,
                 root_transforms: _paletteRootTransforms(),
                 root_program_source_text: _effectiveRootProgramSourceText('palette') || undefined,
             },

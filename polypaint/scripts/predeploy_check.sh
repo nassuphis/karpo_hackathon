@@ -40,6 +40,7 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_coeff_program_native.py \
     tests/test_coeff_program_storage.py \
     tests/test_solve_score_chain.py \
+    tests/test_solve_score_pipeline_programs.py \
     tests/test_solve_score_program_source.py \
     tests/test_solve_score_source_equivalence.py \
     tests/test_solve_score_program_storage.py \

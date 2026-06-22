@@ -1,8 +1,17 @@
 import json
 import os
 import sys
+import pathlib
+
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+
+
+def _load_solve_score_vocab():
+    raw = (ROOT / "solve_score_vocab_js.js").read_text()
+    return json.loads(raw[raw.index("{"):raw.rindex("}") + 1])
 
 
 def test_solve_score_source_compiles_scalar_expression():
@@ -16,6 +25,36 @@ def test_solve_score_source_compiles_scalar_expression():
     assert compiled["program_spec"] == "m0-0;omega_cosine:4"
     assert compiled["output_channel_count"] == 1
     assert compiled["source_text"].startswith("score = ")
+
+
+def test_generated_solve_score_vocab_snippets_compile():
+    from solve_score_program_source import compile_solve_score_program_source
+
+    vocab = _load_solve_score_vocab()
+    snippets = []
+    snippets.extend((f"starter:{item['label']}", item["snippet"]) for item in vocab["starterSnippets"])
+    snippets.extend((f"metric:{name}", snippet) for name, snippet in vocab["metricSnippets"].items())
+    for group in ("stackSpecs", "unarySpecs", "combineSpecs", "outputSpecs"):
+        snippets.extend(
+            (f"{group}:{name}", spec["snippet"])
+            for name, spec in vocab[group].items()
+        )
+
+    assert snippets
+    for label, source in snippets:
+        compiled = compile_solve_score_program_source(source)
+        assert not compiled.get("diagnostics"), label
+        assert compiled["program_spec"], label
+
+
+def test_generated_solve_score_vocab_exposes_quantile_range_and_source_order():
+    vocab = _load_solve_score_vocab()
+
+    assert vocab["quantilePercentRange"] == [0.1, 5.0]
+    assert vocab["sourceNames"][:3] == ["slv", "cf", "pm"]
+    for metric, sources in vocab["allowedSourcesByMetric"].items():
+        if "slv" in sources:
+            assert sources[0] == "slv", metric
 
 
 def test_solve_score_source_compiles_explicit_outputs_and_sources():
@@ -112,6 +151,24 @@ def test_solve_score_source_text_from_chain_preserves_emit_none_flush():
     assert "emit_none(" in source
     assert "flush()" in source
     assert compiled["chain"] == [["proximity", "0.5"], ["emit", "none"], "flush", ["spread", "0.5"], ["emit", "norm"]]
+
+
+def test_solve_score_source_text_from_chain_reports_roundtrip_failures(monkeypatch):
+    import solve_score_program_source as mod
+
+    original_compile = mod.compile_solve_score_program_source
+
+    def compile_with_bad_fingerprint(*args, **kwargs):
+        compiled = original_compile(*args, **kwargs)
+        compiled["fingerprint"] = "sha256:forced-mismatch"
+        return compiled
+
+    monkeypatch.setattr(mod, "compile_solve_score_program_source", compile_with_bad_fingerprint)
+
+    with pytest.raises(mod.SolveScoreProgramSourceError) as exc:
+        mod.solve_score_source_text_from_chain([["proximity", "slv", "0.5"]])
+
+    assert exc.value.code == "source_roundtrip_failed"
 
 
 def test_solve_score_source_text_from_chain_preserves_dup_and_flush_stack_history():

@@ -267,8 +267,36 @@ class TestSolveScoreProgramStorage(unittest.TestCase):
         self.assertEqual(body["chain"], [["proximity", "0.1"], ["emit", "norm"]])
         self.assertEqual(body["program_spec"], "m0-0;emit_norm")
         self.assertEqual(body["output_channel_count"], 1)
+        self.assertEqual(body["output_channels"][0]["mode"], "norm")
+        self.assertEqual(body["output_channels"][0]["emit"], "emit_norm")
         self.assertTrue(body["has_explicit_outputs"])
         self.assertTrue(body["fingerprint"].startswith("sha256:"))
+
+    def test_solve_score_chain_to_source_route_rejects_empty_or_bad_chain(self):
+        import handler_storage
+
+        for payload in ({}, {"chain": []}, {"chain": ""}, {"chain": [["not_a_metric", "0.1"]]}):
+            resp = handler_storage.handler(self._event("/solve-score-chain-to-source", payload), None)
+            self.assertEqual(resp["statusCode"], 400, payload)
+            body = json.loads(resp["body"])
+            self.assertFalse(body["ok"])
+            self.assertIn("error", body)
+
+    def test_solve_score_chain_to_source_route_propagates_roundtrip_code(self):
+        import handler_storage
+        from solve_score_program_source import SolveScoreProgramSourceError
+
+        with patch(
+            "handler_storage.solve_score_source_text_from_chain",
+            side_effect=SolveScoreProgramSourceError("forced roundtrip failure", code="source_roundtrip_failed"),
+        ):
+            resp = handler_storage.handler(
+                self._event("/solve-score-chain-to-source", {"chain": [["proximity", "slv", "0.1"]]}),
+                None,
+            )
+        self.assertEqual(resp["statusCode"], 400)
+        body = json.loads(resp["body"])
+        self.assertEqual(body["code"], "source_roundtrip_failed")
 
     def test_render_artifact_entry_reconstructs_source_for_chain_only_metadata(self):
         import handler_storage
@@ -288,6 +316,33 @@ class TestSolveScoreProgramStorage(unittest.TestCase):
         self.assertIn("metric(spread", entry["solve_score_program_source_text"])
         self.assertIn("cf", entry["solve_score_program_source_text"])
         self.assertEqual(entry["score_source_text"], entry["solve_score_program_source_text"])
+
+    def test_render_artifact_entry_reconstructs_palette_and_associated_sources(self):
+        import handler_storage
+
+        entry = handler_storage._render_artifact_entry(
+            "color",
+            "artifact-2",
+            {
+                "key": "renders/job/artifact-2.png",
+                "url": "https://example.invalid/artifact-2.png",
+                "modified_at": "2026-06-22T00:00:00Z",
+                "user_meta": {
+                    "palette_source_score_chain": json.dumps([["spread", "cf", "0.5"], ["emit", "norm"]]),
+                    "associated_palette_score_chain": json.dumps([["crowding", "slv", "0.5"], ["emit", "norm"]]),
+                },
+            },
+        )
+        self.assertIn("metric(spread", entry["palette_source_solve_score_program_source_text"])
+        self.assertEqual(
+            entry["palette_source_score_source_text"],
+            entry["palette_source_solve_score_program_source_text"],
+        )
+        self.assertIn("metric(crowding", entry["associated_palette_solve_score_program_source_text"])
+        self.assertEqual(
+            entry["associated_palette_score_source_text"],
+            entry["associated_palette_solve_score_program_source_text"],
+        )
 
     @patch("handler_storage.s3")
     def test_generic_metric_chip_round_trips_as_saved_program(self, mock_s3):

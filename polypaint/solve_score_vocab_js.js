@@ -64,138 +64,138 @@ window._solveScoreVocab = {
   ],
   "allowedSourcesByMetric": {
     "angular_entropy_16": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "angular_order_2": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "angular_order_3": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "angular_order_4": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "anisotropy": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "area": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "asymmetry_re": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "centroid_dist": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "centroid_im": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "centroid_re": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "clusteriness": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "crowding": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "diagonal_proximity": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "dist_unit_circle": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "imag_axis_proximity": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "inside_unit_fraction": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "max_im": [
+      "slv",
       "cf",
-      "pm",
-      "slv"
+      "pm"
     ],
     "max_mod": [
+      "slv",
       "cf",
-      "pm",
-      "slv"
+      "pm"
     ],
     "max_re": [
+      "slv",
       "cf",
-      "pm",
-      "slv"
+      "pm"
     ],
     "mean_log_mod": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "min_angular_separation": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "min_im": [
+      "slv",
       "cf",
-      "pm",
-      "slv"
+      "pm"
     ],
     "min_mod": [
+      "slv",
       "cf",
-      "pm",
-      "slv"
+      "pm"
     ],
     "min_re": [
+      "slv",
       "cf",
-      "pm",
-      "slv"
+      "pm"
     ],
     "nn_variation": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "outlierness": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "proximity": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "real_axis_proximity": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "sd_log_mod": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "sector_max_share_16": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "shelliness": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "spread": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ],
     "t1_abs": [
       "pm"
@@ -222,24 +222,85 @@ window._solveScoreVocab = {
       "pm"
     ],
     "unit_annulus_fraction_01": [
-      "cf",
-      "slv"
+      "slv",
+      "cf"
     ]
   },
   "sourceNames": [
+    "slv",
     "cf",
-    "pm",
-    "slv"
+    "pm"
+  ],
+  "quantilePercentRange": [
+    0.1,
+    5.0
   ],
   "lagDepths": [
     0,
     1
   ],
+  "starterSnippets": [
+    {
+      "label": "score = proximity",
+      "snippet": "score = metric(proximity, slv, q=0.1%)"
+    },
+    {
+      "label": "emit_norm proximity",
+      "snippet": "emit_norm(metric(proximity, slv, q=0.1%))"
+    },
+    {
+      "label": "two channels",
+      "snippet": "emit_norm(metric(proximity, slv, q=0.1%))\nemit_norm(metric(spread, slv, q=0.1%))"
+    }
+  ],
+  "metricSnippets": {
+    "angular_entropy_16": "score = metric(angular_entropy_16, slv, q=0.1%)",
+    "angular_order_2": "score = metric(angular_order_2, slv, q=0.1%)",
+    "angular_order_3": "score = metric(angular_order_3, slv, q=0.1%)",
+    "angular_order_4": "score = metric(angular_order_4, slv, q=0.1%)",
+    "anisotropy": "score = metric(anisotropy, slv, q=0.1%)",
+    "area": "score = metric(area, slv, q=0.1%)",
+    "asymmetry_re": "score = metric(asymmetry_re, slv, q=0.1%)",
+    "centroid_dist": "score = metric(centroid_dist, slv, q=0.1%)",
+    "centroid_im": "score = metric(centroid_im, slv, q=0.1%)",
+    "centroid_re": "score = metric(centroid_re, slv, q=0.1%)",
+    "clusteriness": "score = metric(clusteriness, slv, q=0.1%)",
+    "crowding": "score = metric(crowding, slv, q=0.1%)",
+    "diagonal_proximity": "score = metric(diagonal_proximity, slv, q=0.1%)",
+    "dist_unit_circle": "score = metric(dist_unit_circle, slv, q=0.1%)",
+    "imag_axis_proximity": "score = metric(imag_axis_proximity, slv, q=0.1%)",
+    "inside_unit_fraction": "score = metric(inside_unit_fraction, slv, q=0.1%)",
+    "max_im": "score = metric(max_im, slv, q=0.1%)",
+    "max_mod": "score = metric(max_mod, slv, q=0.1%)",
+    "max_re": "score = metric(max_re, slv, q=0.1%)",
+    "mean_log_mod": "score = metric(mean_log_mod, slv, q=0.1%)",
+    "min_angular_separation": "score = metric(min_angular_separation, slv, q=0.1%)",
+    "min_im": "score = metric(min_im, slv, q=0.1%)",
+    "min_mod": "score = metric(min_mod, slv, q=0.1%)",
+    "min_re": "score = metric(min_re, slv, q=0.1%)",
+    "nn_variation": "score = metric(nn_variation, slv, q=0.1%)",
+    "outlierness": "score = metric(outlierness, slv, q=0.1%)",
+    "proximity": "score = metric(proximity, slv, q=0.1%)",
+    "real_axis_proximity": "score = metric(real_axis_proximity, slv, q=0.1%)",
+    "sd_log_mod": "score = metric(sd_log_mod, slv, q=0.1%)",
+    "sector_max_share_16": "score = metric(sector_max_share_16, slv, q=0.1%)",
+    "shelliness": "score = metric(shelliness, slv, q=0.1%)",
+    "spread": "score = metric(spread, slv, q=0.1%)",
+    "t1_abs": "score = metric(t1_abs, pm, q=0.1%)",
+    "t1_im": "score = metric(t1_im, pm, q=0.1%)",
+    "t1_phase": "score = metric(t1_phase, pm, q=0.1%)",
+    "t1_re": "score = metric(t1_re, pm, q=0.1%)",
+    "t2_abs": "score = metric(t2_abs, pm, q=0.1%)",
+    "t2_im": "score = metric(t2_im, pm, q=0.1%)",
+    "t2_phase": "score = metric(t2_phase, pm, q=0.1%)",
+    "t2_re": "score = metric(t2_re, pm, q=0.1%)",
+    "unit_annulus_fraction_01": "score = metric(unit_annulus_fraction_01, slv, q=0.1%)"
+  },
   "genericMetricPublicName": "metric",
   "genericMetricChipName": "__metric",
   "genericMetricSources": [
-    "cf",
-    "slv"
+    "slv",
+    "cf"
   ],
   "genericMetricNames": [
     "angular_entropy_16",
@@ -280,27 +341,32 @@ window._solveScoreVocab = {
     "clamp": {
       "arity": 1,
       "params": [],
-      "tooltip": "clamp the top stack value to [0,1]"
+      "tooltip": "clamp the top stack value to [0,1]",
+      "snippet": "score = clamp(metric(proximity, slv, q=0.1%))"
     },
     "cos": {
       "arity": 1,
       "params": [],
-      "tooltip": "raw cos(score), radians"
+      "tooltip": "raw cos(score), radians",
+      "snippet": "score = cos(metric(proximity, slv, q=0.1%))"
     },
     "exp": {
       "arity": 1,
       "params": [],
-      "tooltip": "raw exp(score); overflow becomes 0"
+      "tooltip": "raw exp(score); overflow becomes 0",
+      "snippet": "score = exp(metric(proximity, slv, q=0.1%))"
     },
     "flip": {
       "arity": 1,
       "params": [],
-      "tooltip": "unary stack op: 1-score"
+      "tooltip": "unary stack op: 1-score",
+      "snippet": "score = flip(metric(proximity, slv, q=0.1%))"
     },
     "log": {
       "arity": 1,
       "params": [],
-      "tooltip": "natural log; invalid inputs become 0"
+      "tooltip": "natural log; invalid inputs become 0",
+      "snippet": "score = log(metric(proximity, slv, q=0.1%))"
     },
     "omega_cosine": {
       "arity": 1,
@@ -314,7 +380,8 @@ window._solveScoreVocab = {
           "def": "0"
         }
       ],
-      "tooltip": "unary stack op: g(u)=0.5*(cos(omega*2*pi*u+phase)+1)"
+      "tooltip": "unary stack op: g(u)=0.5*(cos(omega*2*pi*u+phase)+1)",
+      "snippet": "score = omega_cosine(metric(proximity, slv, q=0.1%), 1, 0)"
     },
     "pow": {
       "arity": 1,
@@ -324,7 +391,8 @@ window._solveScoreVocab = {
           "def": "2"
         }
       ],
-      "tooltip": "raw pow(score, exponent)"
+      "tooltip": "raw pow(score, exponent)",
+      "snippet": "score = pow(metric(proximity, slv, q=0.1%), 2)"
     },
     "sawtooth": {
       "arity": 1,
@@ -334,29 +402,34 @@ window._solveScoreVocab = {
           "def": "10"
         }
       ],
-      "tooltip": "unary stack op: frac(score*mult)"
+      "tooltip": "unary stack op: frac(score*mult)",
+      "snippet": "score = sawtooth(metric(proximity, slv, q=0.1%), 10)"
     },
     "sin": {
       "arity": 1,
       "params": [],
-      "tooltip": "raw sin(score), radians"
+      "tooltip": "raw sin(score), radians",
+      "snippet": "score = sin(metric(proximity, slv, q=0.1%))"
     }
   },
   "combineSpecs": {
     "abs_diff": {
       "arity": 2,
       "params": [],
-      "tooltip": "stack 2 -> 1"
+      "tooltip": "stack 2 -> 1",
+      "snippet": "score = abs_diff(metric(proximity, slv, q=0.1%), metric(spread, slv, q=0.1%))"
     },
     "add": {
       "arity": 2,
       "params": [],
-      "tooltip": "raw a+b"
+      "tooltip": "raw a+b",
+      "snippet": "score = add(metric(proximity, slv, q=0.1%), metric(spread, slv, q=0.1%))"
     },
     "avg": {
       "arity": 2,
       "params": [],
-      "tooltip": "stack 2 -> 1"
+      "tooltip": "stack 2 -> 1",
+      "snippet": "score = avg(metric(proximity, slv, q=0.1%), metric(spread, slv, q=0.1%))"
     },
     "ema": {
       "arity": 2,
@@ -366,42 +439,50 @@ window._solveScoreVocab = {
           "def": "0.99"
         }
       ],
-      "tooltip": "a*alpha + b*(1-alpha), b is top/latest"
+      "tooltip": "a*alpha + b*(1-alpha), b is top/latest",
+      "snippet": "score = ema(metric(proximity, slv, q=0.1%), metric(spread, slv, q=0.1%), 0.99)"
     },
     "geometric_mean": {
       "arity": 2,
       "params": [],
-      "tooltip": "stack 2 -> 1"
+      "tooltip": "stack 2 -> 1",
+      "snippet": "score = geometric_mean(metric(proximity, slv, q=0.1%), metric(spread, slv, q=0.1%))"
     },
     "max": {
       "arity": 2,
       "params": [],
-      "tooltip": "stack 2 -> 1"
+      "tooltip": "stack 2 -> 1",
+      "snippet": "score = max(metric(proximity, slv, q=0.1%), metric(spread, slv, q=0.1%))"
     },
     "min": {
       "arity": 2,
       "params": [],
-      "tooltip": "stack 2 -> 1"
+      "tooltip": "stack 2 -> 1",
+      "snippet": "score = min(metric(proximity, slv, q=0.1%), metric(spread, slv, q=0.1%))"
     },
     "mul": {
       "arity": 2,
       "params": [],
-      "tooltip": "stack 2 -> 1"
+      "tooltip": "stack 2 -> 1",
+      "snippet": "score = mul(metric(proximity, slv, q=0.1%), metric(spread, slv, q=0.1%))"
     },
     "mult": {
       "arity": 2,
       "params": [],
-      "tooltip": "raw a*b"
+      "tooltip": "raw a*b",
+      "snippet": "score = mult(metric(proximity, slv, q=0.1%), metric(spread, slv, q=0.1%))"
     },
     "ratio": {
       "arity": 2,
       "params": [],
-      "tooltip": "raw a/b; zero if denominator is zero"
+      "tooltip": "raw a/b; zero if denominator is zero",
+      "snippet": "score = ratio(metric(proximity, slv, q=0.1%), metric(spread, slv, q=0.1%))"
     },
     "subtract": {
       "arity": 2,
       "params": [],
-      "tooltip": "raw a-b; top of stack is b"
+      "tooltip": "raw a-b; top of stack is b",
+      "snippet": "score = subtract(metric(proximity, slv, q=0.1%), metric(spread, slv, q=0.1%))"
     },
     "weighted_sum": {
       "arity": 2,
@@ -415,7 +496,8 @@ window._solveScoreVocab = {
           "def": "0.5"
         }
       ],
-      "tooltip": "stack 2 -> 1"
+      "tooltip": "stack 2 -> 1",
+      "snippet": "score = weighted_sum(metric(proximity, slv, q=0.1%), metric(spread, slv, q=0.1%), 0.5, 0.5)"
     }
   },
   "outputSpecs": {
@@ -432,12 +514,14 @@ window._solveScoreVocab = {
           ]
         }
       ],
-      "tooltip": "pop one score; raw/norm emit a byte, none discards it for debugging branches"
+      "tooltip": "pop one score; raw/norm emit a byte, none discards it for debugging branches",
+      "snippet": "emit(metric(proximity, slv, q=0.1%))"
     },
     "emit_none": {
       "arity": 1,
       "params": [],
       "tooltip": "legacy alias for emit(none)",
+      "snippet": "emit_none(metric(proximity, slv, q=0.1%))\nemit_norm(metric(proximity, slv, q=0.1%))",
       "legacy_alias": [
         "emit",
         "none"
@@ -447,6 +531,7 @@ window._solveScoreVocab = {
       "arity": 1,
       "params": [],
       "tooltip": "legacy alias for emit(norm)",
+      "snippet": "emit_norm(metric(proximity, slv, q=0.1%))",
       "legacy_alias": [
         "emit",
         "norm"
@@ -463,18 +548,21 @@ window._solveScoreVocab = {
         }
       ],
       "tooltip": "push a finite constant onto the stack",
+      "snippet": "score = add(metric(proximity, slv, q=0.1%), const(0))",
       "delta": 1
     },
     "dup": {
       "arity": 1,
       "params": [],
       "tooltip": "duplicate the top stack value",
+      "snippet": "push(metric(proximity, slv, q=0.1%))\ndup()\nflush()\nscore = metric(proximity, slv, q=0.1%)",
       "delta": 1
     },
     "flush": {
       "arity": 0,
       "params": [],
       "tooltip": "clear the entire score stack",
+      "snippet": "push(metric(proximity, slv, q=0.1%))\nflush()\nscore = metric(proximity, slv, q=0.1%)",
       "delta": null
     }
   }

@@ -776,6 +776,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("tests/test_coeff_program_chain.py", predeploy_text)
         self.assertIn("tests/test_coeff_program_storage.py", predeploy_text)
         self.assertIn("tests/test_solve_score_chain.py", predeploy_text)
+        self.assertIn("tests/test_solve_score_pipeline_programs.py", predeploy_text)
         self.assertIn("tests/test_solve_score_program_source.py", predeploy_text)
         self.assertIn("tests/test_solve_score_source_equivalence.py", predeploy_text)
         self.assertIn("tests/test_solve_score_program_storage.py", predeploy_text)

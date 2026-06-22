@@ -412,7 +412,9 @@ assertNotIncludes("id=\"palette-solve-score-omega-enabled\"", 'palette tab shoul
 assertNotIncludes("id=\"palette-solve-score-quantile-val\"", 'palette tab should not ship hidden legacy quantile display span');
 assertNotIncludes("id=\"palette-solve-score-omega-val\"", 'palette tab should not ship hidden legacy omega display span');
 assertIncludes("id=\"render-solve-score-program-manage\" onclick=\"openSolveScoreProgramModal('render')\"", 'render tab should expose Solve Scores modal launcher');
+assertIncludes("id=\"render-solve-score-quantile\"", 'render solve-score quantile control should survive text-only relocation');
 assertIncludes("id=\"render-score-normalization\"", 'render tab should expose score normalization checkbox');
+assertIncludes("id=\"btn-solve-histogram\"", 'Solve histogram button should survive text-only relocation');
 assertIncludes("solveScoreNormalize: !!document.getElementById('render-score-normalization')?.checked,", '_renderCommonParams should read score normalization checkbox');
 assertIncludes("solve_score_normalize: !!p.solveScoreNormalize,", 'fused render payload should forward score normalization flag');
 assertIncludes("name=\"render-color-interpretation\" value=\"scalar_lut\"", 'render tab should expose Scalar LUT color interpretation');
@@ -464,6 +466,9 @@ if (!solveVocabSrc.includes("sector_max_share_16")) fail('generated solve-score 
 if (!solveVocabSrc.includes("angular_order_4")) fail('generated solve-score vocab should expose angular_order_4');
 assertIncludes("const _solveScoreGenericMetricPublicName = _solveScoreVocab.genericMetricPublicName || 'metric';", 'solve-score editor should derive public generic metric chip name from generated vocab');
 assertIncludes("const _solveScoreGenericMetricChipName = _solveScoreVocab.genericMetricChipName || '__metric';", 'solve-score editor should derive generic metric internal name from generated vocab');
+assertIncludes("function _requireSolveScoreProgramSourceText(prefix) {", 'solve-score dispatch should have a nonblank source guard');
+assertIncludes("const solveScoreProgramSourceText = options.requireSolveScore", 'render common params should derive source text before fused dispatch');
+assertIncludes("const scoreSourceText = _requireSolveScoreProgramSourceText('palette');", 'palette artifact dispatch should reject blank solve-score source client-side');
 assertIncludes("catalog[_solveScoreGenericMetricChipName] = {", 'solve-score catalog should expose generic metric chip');
 assertIncludes("return [_solveScoreGenericMetricPublicName, ...(item.params || [])];", 'generic metric chip should serialize publicly without desugaring in saved programs');
 assertIncludes("id=\"render-preview-pix\" value=\"256\"", 'render output should expose default 256px lores preview size input');
@@ -502,6 +507,7 @@ assertIncludes("_setRenderLoresPreviewEmissionHistograms(result.emission_histogr
 assertIncludes("await _setRenderLoresPreviewPaletteImage(result);", 'render lores preview should draw returned palette image');
 if (!solveVocabSrc.includes('"none"')) fail('generated solve-score output vocab should expose none mode');
 if (!solveVocabSrc.includes('"flush"')) fail('generated solve-score stack vocab should expose flush');
+if (!solveVocabSrc.includes('"quantilePercentRange"')) fail('generated solve-score vocab should expose quantile percent range');
 assertIncludes("omega_cosine requires one finite numeric omega", 'omega_cosine frontend validation should not cap frequency at 10');
 assertNotIncludes("omega_cosine requires one numeric omega in [1, 10]", 'omega_cosine frontend validation should not retain old [1,10] range');
 assertIncludes("id=\"palette-solve-score-program-manage\" onclick=\"openSolveScoreProgramModal('palette')\"", 'palette tab should expose Solve Scores modal launcher');
@@ -566,7 +572,7 @@ assertIncludes("lambdaPost('storage', { source_text: sourceText, strict: true },
 assertIncludes("solve_score_program_source_text: p.solveScoreProgramSourceText,", 'render/preview payloads should forward solve-score source text');
 assertNotIncludes("solve_score_chain: p.solveScoreChain,", 'render/preview browser payloads should not send solve-score chip chains');
 assertIncludes("root_program_source_text: p.rootProgramSourceText || undefined,", 'render/preview payloads should forward root source text');
-assertIncludes("solve_score_program_source_text: _effectiveSolveScoreProgramSourceText('palette'),", 'palette payload should forward solve-score source text');
+assertIncludes("solve_score_program_source_text: scoreSourceText,", 'palette payload should forward guarded solve-score source text');
 assertNotIncludes("solve_score_chain: score.chain,", 'palette browser payload should not send solve-score chip chains');
 assertIncludes("_restoreSolveScoreSourceFromArtifact('render', art);", 'render Populate should restore solve-score source text when metadata has it');
 assertIncludes("_restoreRootSourceFromArtifact('palette', pal);", 'palette Populate should restore root source text when metadata has it');
@@ -694,9 +700,14 @@ async function main() {
     extractFunction('_noteSolveScorePopulate'),
     extractFunction('_editorPrefix'),
     extractFunction('_solveScoreSourceTextarea'),
+    extractFunction('_getSolveScoreProgramSourceText'),
     extractFunction('_setSolveScoreProgramSourceText'),
+    extractFunction('_effectiveSolveScoreProgramSourceText'),
+    extractFunction('_requireSolveScoreProgramSourceText'),
+    extractFunction('_defaultSolveScoreProgramSourceText'),
     extractFunction('_setPanelTabActive'),
     extractFunction('_setSolveScoreProgramEditorMode'),
+    extractFunction('_renderChips'),
     extractFunction('_artifactSolveScoreSourceText'),
     extractFunction('_restoreSolveScoreSourceFromArtifact'),
     extractFunction('setColorMode'),
@@ -752,6 +763,8 @@ async function main() {
     Math,
     JSON,
     renderColorMode: 'rainbow',
+    renderSolveMetric: 'proximity',
+    paletteTabMetric: 'proximity',
     _renderArtifacts: { color: [] },
     _renderMtPopupState: { saveAssociatedPalette: false },
     _solveScoreProgramEditorMode: { render: 'text', palette: 'text' },
@@ -767,6 +780,10 @@ async function main() {
     _fusedCalls: [],
     _nonColorCalls: [],
     _updateSolveScoreButtonsCalls: 0,
+    _syncSolveScoreLegacyInputsCalls: 0,
+    _scoreNormalizationSyncCalls: 0,
+    _stackUiCalls: 0,
+    _paletteInterpretationSyncCalls: 0,
     window: {
       _solveScoreVocab: solveScoreVocab,
       _coeffFuncCatalog: [
@@ -798,6 +815,22 @@ async function main() {
   ctx._updateSolveScoreButtons = () => {
     ctx._updateSolveScoreButtonsCalls += 1;
   };
+  ctx._chainForWhich = () => [];
+  ctx._solveScorePrefixForWhich = () => 'render';
+  ctx._syncSolveScoreLegacyInputs = () => {
+    ctx._syncSolveScoreLegacyInputsCalls += 1;
+    return ctx._compileSolveScoreChain([['proximity', 'slv', '0.1']], 'proximity', '0.1');
+  };
+  ctx._syncScoreNormalizationUi = () => {
+    ctx._scoreNormalizationSyncCalls += 1;
+  };
+  ctx._syncSolveScoreAddOptions = () => {};
+  ctx._updateSolveScoreStackUi = () => {
+    ctx._stackUiCalls += 1;
+  };
+  ctx._syncPaletteColorInterpretationUi = () => {
+    ctx._paletteInterpretationSyncCalls += 1;
+  };
   ctx._setSolveScoreProgramStatus = (prefix, message, isError) => {
     ctx._statusCalls.push({ prefix, message, isError });
   };
@@ -807,6 +840,22 @@ async function main() {
 
   vm.createContext(ctx);
   vm.runInContext(code, ctx);
+
+  assert(ctx._defaultSolveScoreProgramSourceText('render') === 'score = metric(proximity, slv, q=0.1%)\n', 'default solve-score source should be a single compilable implicit-score statement');
+  assert(!ctx._defaultSolveScoreProgramSourceText('render').includes('emit_norm(score)'), 'default solve-score source must not mix score assignment with explicit emits');
+  ssSourceTextarea.value = '';
+  let blankGuarded = false;
+  try {
+    ctx._requireSolveScoreProgramSourceText('render');
+  } catch (e) {
+    blankGuarded = String(e.message || e).includes('Solve-score source is empty');
+  }
+  assert(blankGuarded, 'blank solve-score text should be rejected client-side before dispatch');
+  ssSourceTextarea.value = 'score = metric(proximity, slv, q=0.1%)\n';
+  assert(ctx._requireSolveScoreProgramSourceText('render') === ssSourceTextarea.value, 'nonblank solve-score text should pass the dispatch guard without rewriting source');
+  ctx._renderChips('ss');
+  assert(ctx._syncSolveScoreLegacyInputsCalls === 1, '_renderChips(ss) should sync derived solve-score state even without #ss-chips');
+  assert(ctx._updateSolveScoreButtonsCalls === 1, '_renderChips(ss) should refresh solve-score buttons even without #ss-chips');
 
   assert(ctx._coeffFuncUiParamCount(ctx.window._coeffFuncCatalog[0]) === 2, 'const coefficient function should present two logical UI parameters');
   ctx._functionPopupState.filter = 'poly_1';
@@ -1044,6 +1093,7 @@ async function main() {
   }
   assert(ambiguousRejected, 'lagged UI compiler should reject ambiguous previous refs');
 
+  ctx._updateSolveScoreButtonsCalls = 0;
   ctx.setColorMode('proximity');
   assert(ctx.renderColorMode === 'solve_score', 'setColorMode should force solve_score at runtime');
   assert(ctx._updateSolveScoreButtonsCalls === 1, 'setColorMode should refresh solve-score buttons');
@@ -1081,9 +1131,9 @@ async function main() {
 
   // An artifact that DOES carry a text program restores it verbatim and shows text.
   ssSourceTextarea.value = '';
-  const ssRestored = ctx._restoreSolveScoreSourceFromArtifact('render', { solve_score_program_source_text: 'm0-0\nemit norm\n' });
+  const ssRestored = ctx._restoreSolveScoreSourceFromArtifact('render', { solve_score_program_source_text: 'score = metric(proximity, slv, q=0.1%)\n' });
   assert(ssRestored === true, 'populate from a source-text artifact should report source restored');
-  assert(ssSourceTextarea.value === 'm0-0\nemit norm\n', 'populate should restore the artifact text program verbatim');
+  assert(ssSourceTextarea.value === 'score = metric(proximity, slv, q=0.1%)\n', 'populate should restore the artifact text program verbatim');
   assert(ctx._solveScoreProgramEditorMode.render === 'text', 'populate from a source-text artifact should switch the editor to text');
 
   ctx.renderColorMode = 'solve_score';

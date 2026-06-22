@@ -75,6 +75,43 @@ def _tooltip(kind: str, name: str, spec: dict) -> str:
     return ""
 
 
+def _base_metric(metric: str = "proximity", source: str = "slv") -> str:
+    return f"metric({metric}, {source}, q=0.1%)"
+
+
+def _metric_snippet(name: str, allowed_sources: dict) -> str:
+    sources = list(allowed_sources.get(name) or ["slv"])
+    source = "slv" if "slv" in sources else sources[0]
+    return f"score = {_base_metric(name, source)}"
+
+
+def _op_snippet(kind: str, name: str, spec: dict) -> str:
+    if kind == "stack":
+        if name == "const":
+            return f"score = add({_base_metric()}, const(0))"
+        if name == "dup":
+            return f"push({_base_metric()})\ndup()\nflush()\nscore = {_base_metric()}"
+        if name == "flush":
+            return f"push({_base_metric()})\nflush()\nscore = {_base_metric()}"
+    if kind == "output":
+        if name == "emit":
+            return f"emit({_base_metric()})"
+        if name == "emit_none":
+            return f"emit_none({_base_metric()})\nemit_norm({_base_metric()})"
+        return f"{name}({_base_metric()})"
+    if kind == "combine":
+        metrics = ["proximity", "spread", "crowding", "area"]
+        args = [
+            _base_metric(metrics[idx] if idx < len(metrics) else "proximity")
+            for idx in range(int(spec.get("arity", 2)))
+        ]
+        args.extend(str(p["def"]) for p in _param_defs(name, spec))
+        return f"score = {name}({', '.join(args)})"
+    args = [_base_metric()]
+    args.extend(str(p["def"]) for p in _param_defs(name, spec))
+    return f"score = {name}({', '.join(args)})"
+
+
 def build_vocab() -> dict:
     sys.path.insert(0, LAMBDA_DIR)
     from solve_score_chain import (  # pylint: disable=import-error,import-outside-toplevel
@@ -85,6 +122,8 @@ def build_vocab() -> dict:
         OUTPUT_CHIPS,
         PARAM_CAPABLE_SOLVE_SCORE_METRICS,
         PARAM_SOLVE_SCORE_METRICS,
+        SOLVE_SCORE_QUANTILE_PERCENT_MAX,
+        SOLVE_SCORE_QUANTILE_PERCENT_MIN,
         STACK_CHIPS,
         UNARY_CHIPS,
         VALID_SOLVE_SCORE_LAG_DEPTHS,
@@ -96,8 +135,9 @@ def build_vocab() -> dict:
     metric_names = sorted(VALID_SOLVE_SCORE_METRICS)
     param_metrics = sorted(PARAM_SOLVE_SCORE_METRICS)
     param_capable_metrics = sorted(PARAM_CAPABLE_SOLVE_SCORE_METRICS)
+    source_rank = {"slv": 0, "cf": 1, "pm": 2}
     allowed_sources = {
-        name: sorted(_METRIC_ALLOWED_SOURCES[name])
+        name: sorted(_METRIC_ALLOWED_SOURCES[name], key=lambda item: (source_rank.get(item, 99), item))
         for name in metric_names
     }
     generic_metric_names = [
@@ -114,6 +154,7 @@ def build_vocab() -> dict:
                 "arity": int(spec.get("arity", 1)),
                 "params": _param_defs(name, spec),
                 "tooltip": _tooltip(kind, name, spec),
+                "snippet": _op_snippet(kind, name, spec),
             }
             if "delta" in spec:
                 entry["delta"] = spec["delta"]
@@ -127,6 +168,7 @@ def build_vocab() -> dict:
             "arity": 1,
             "params": [],
             "tooltip": _tooltip("output", name, spec),
+            "snippet": _op_snippet("output", name, spec),
         }
         if name == "emit":
             entry["params"] = [{"ph": "mode", "def": "norm", "choices": ["raw", "norm", "none"]}]
@@ -139,11 +181,27 @@ def build_vocab() -> dict:
         "paramMetricNames": param_metrics,
         "paramCapableMetricNames": param_capable_metrics,
         "allowedSourcesByMetric": allowed_sources,
-        "sourceNames": sorted(VALID_SOLVE_SCORE_SOURCES),
+        "sourceNames": sorted(VALID_SOLVE_SCORE_SOURCES, key=lambda item: (source_rank.get(item, 99), item)),
+        "quantilePercentRange": [
+            float(SOLVE_SCORE_QUANTILE_PERCENT_MIN),
+            float(SOLVE_SCORE_QUANTILE_PERCENT_MAX),
+        ],
         "lagDepths": sorted(int(v) for v in VALID_SOLVE_SCORE_LAG_DEPTHS),
+        "starterSnippets": [
+            {"label": "score = proximity", "snippet": f"score = {_base_metric()}"},
+            {"label": "emit_norm proximity", "snippet": f"emit_norm({_base_metric()})"},
+            {
+                "label": "two channels",
+                "snippet": f"emit_norm({_base_metric()})\nemit_norm({_base_metric('spread')})",
+            },
+        ],
+        "metricSnippets": {
+            name: _metric_snippet(name, allowed_sources)
+            for name in metric_names
+        },
         "genericMetricPublicName": GENERIC_METRIC_PUBLIC_NAME,
         "genericMetricChipName": GENERIC_METRIC_CHIP_NAME,
-        "genericMetricSources": sorted(GENERIC_METRIC_SOURCES),
+        "genericMetricSources": sorted(GENERIC_METRIC_SOURCES, key=lambda item: (source_rank.get(item, 99), item)),
         "genericMetricNames": generic_metric_names,
         "unarySpecs": _op_specs("unary", UNARY_CHIPS),
         "combineSpecs": _op_specs("combine", COMBINE_CHIPS),

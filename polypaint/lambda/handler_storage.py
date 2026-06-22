@@ -2845,6 +2845,41 @@ def handle_cleanup(event):
     return ok_response(result)
 
 
+def _detail_populate_program_form(pipeline, profile):
+    """Program chain + readable source for Populate, derived read-only.
+
+    Populate restores programs in program mode, but older results store the
+    program either as a lowered _typed_* chain or as legacy *_transforms with no
+    program chain at all (e.g. a v1 result with param_transforms unit_circle,exp).
+    Translate legacy transforms when there is no chain, then reconstruct readable,
+    reparseable source (the same equivalent reconstruction migration uses) so
+    Populate shows a clean, computable program instead of an empty editor.
+    Returns (chain_to_provide_or_None, source_to_provide_or_None); a stored
+    source text always wins (source is None then). Never rewrites the result.
+    """
+    if profile == "param":
+        to_chain = param_transforms_to_program_chain
+        to_source = param_source_text_from_chain
+    else:
+        to_chain = coeff_transforms_to_program_chain
+        to_source = coeff_source_text_from_chain
+    chain = pipeline.get("%s_program_chain" % profile)
+    provided_chain = None
+    if not (isinstance(chain, list) and chain):
+        transforms = pipeline.get("%s_transforms" % profile)
+        if isinstance(transforms, list) and transforms:
+            chain = to_chain(transforms)
+            provided_chain = chain  # Populate has no program chain otherwise
+    if not (isinstance(chain, list) and chain):
+        return None, None
+    source = None
+    if not pipeline.get("%s_program_source_text" % profile):
+        text = to_source(chain)
+        if text and text.strip():
+            source = text
+    return provided_chain, source
+
+
 def handle_detail(event):
     """Return file_count and compute-job viewport/metadata for a single job."""
     params = parse_body(event)
@@ -2891,30 +2926,20 @@ def handle_detail(event):
         version = _calc_pipeline_program_version(pipeline)
         result["pipeline_program_version"] = version
         result["pipeline_migratable"] = version == 1
-        # Reconstruct readable, reparseable program source for Populate when the
-        # result predates stored source text. {coeff,param}_source_text_from_chain
-        # is the same equivalent reconstruction migration uses (verified to
-        # compile to an identical program), so populated programs read cleanly and
-        # recompute correctly instead of showing lowered _typed_* tokens — without
-        # rewriting the saved result. Stored source text always wins.
-        if not pipeline.get("coeff_program_source_text"):
-            coeff_chain = pipeline.get("coeff_program_chain")
-            if isinstance(coeff_chain, list) and coeff_chain:
-                try:
-                    text = coeff_source_text_from_chain(coeff_chain)
-                    if text and text.strip():
-                        result["coeff_program_source_text"] = text
-                except Exception:
-                    pass
-        if not pipeline.get("param_program_source_text"):
-            param_chain = pipeline.get("param_program_chain")
-            if isinstance(param_chain, list) and param_chain:
-                try:
-                    text = param_source_text_from_chain(param_chain)
-                    if text and text.strip():
-                        result["param_program_source_text"] = text
-                except Exception:
-                    pass
+        # Give Populate a clean, computable program form for older results:
+        # translate legacy *_transforms when there is no program chain, and
+        # reconstruct readable source from the chain. Read-only; stored source
+        # text wins; failures fall back silently (the program editor then stays
+        # empty as before rather than breaking the response).
+        for _profile in ("param", "coeff"):
+            try:
+                _chain, _source = _detail_populate_program_form(pipeline, _profile)
+                if _chain is not None:
+                    result["%s_program_chain" % _profile] = _chain
+                if _source is not None:
+                    result["%s_program_source_text" % _profile] = _source
+            except Exception:
+                pass
     except Exception:
         pass
 

@@ -222,6 +222,44 @@ class TestComputeMigration(unittest.TestCase):
         )
 
     @patch("handler_storage.s3")
+    def test_detail_translates_legacy_param_transforms_for_populate(self, mock_s3):
+        # A v1 result with only legacy param_transforms (no program chain) — e.g.
+        # function poly_42_serendipity with param_transforms unit_circle, exp.
+        # Populate forces program mode, so detail must translate the transforms
+        # into a program chain + readable source or the editor shows nothing.
+        import handler_storage
+        from param_program_chain import compile_param_program_chain
+        from param_program_source import compile_param_program_source
+        from pipeline_programs import param_transforms_to_program_chain
+
+        fake = _FakeS3()
+        self._patch(mock_s3, fake)
+        calc = {
+            "function": "poly_42_serendipity",
+            "pipeline": {
+                "function": "poly_42_serendipity",
+                "param_transforms": [["unit_circle"], ["exp"]],
+                "coeff_transforms": [],
+            },
+        }
+        self._store(fake, "jlegacyp", calc)
+
+        detail = json.loads(handler_storage.handler(_event("/detail", {"job_id": "jlegacyp"}), None)["body"])
+        self.assertEqual(detail["pipeline_program_version"], 1)
+        chain = detail.get("param_program_chain")
+        src = detail.get("param_program_source_text")
+        self.assertTrue(chain, "detail should translate legacy param transforms to a program chain")
+        self.assertTrue(src and src.strip(), "detail should reconstruct readable param source for Populate")
+        # ...and the translated program is equivalent to the legacy transforms.
+        expected_fp = compile_param_program_chain(
+            param_transforms_to_program_chain([["unit_circle"], ["exp"]])
+        )["fingerprint"]
+        self.assertEqual(compile_param_program_source(src)["fingerprint"], expected_fp)
+        # The poly function has no coeff program; nothing is fabricated there.
+        self.assertNotIn("coeff_program_source_text", detail)
+        self.assertNotIn("coeff_program_chain", detail)
+
+    @patch("handler_storage.s3")
     def test_detail_keeps_stored_coeff_source_when_present(self, mock_s3):
         # Stored source text always wins over reconstruction.
         import handler_storage

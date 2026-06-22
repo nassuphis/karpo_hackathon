@@ -287,7 +287,15 @@ function _artifactSolveScoreSourceText(art) {
 
 function _restoreSolveScoreSourceFromArtifact(prefix, art) {
     const text = _artifactSolveScoreSourceText(art);
-    if (!text.trim()) return false;
+    if (!text.trim()) {
+        // Chip-based artifact: the text program is authoritative whenever it is
+        // nonblank, so a stale program left in the editor would override the
+        // chips we just populated and break the render. Clear it and return to
+        // the chips tab so the populated chain is what actually renders.
+        _setSolveScoreProgramSourceText(prefix, '');
+        _setSolveScoreProgramEditorMode(prefix, 'chips');
+        return false;
+    }
     _setSolveScoreProgramSourceText(prefix, text);
     _setSolveScoreProgramEditorMode(prefix, 'text');
     return true;
@@ -295,7 +303,13 @@ function _restoreSolveScoreSourceFromArtifact(prefix, art) {
 
 function _restoreRootSourceFromArtifact(prefix, art) {
     const text = String((art && art.root_program_source_text) || '');
-    if (!text.trim()) return false;
+    if (!text.trim()) {
+        // Same precedence as solve-score: a stale root text program would
+        // override the populated root chips. Clear it and return to chips.
+        _setRootProgramSourceText(prefix, '');
+        _setRootProgramEditorMode(prefix, 'chips');
+        return false;
+    }
     _setRootProgramSourceText(prefix, text);
     _setRootProgramEditorMode(prefix, 'text');
     return true;

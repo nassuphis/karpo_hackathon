@@ -674,6 +674,13 @@ async function main() {
     extractFunction('_linkedColorIdForPaletteArtifact'),
     extractFunction('_sourceColorArtifactIdForRenderArtifact'),
     extractFunction('_noteSolveScorePopulate'),
+    extractFunction('_editorPrefix'),
+    extractFunction('_solveScoreSourceTextarea'),
+    extractFunction('_setSolveScoreProgramSourceText'),
+    extractFunction('_setPanelTabActive'),
+    extractFunction('_setSolveScoreProgramEditorMode'),
+    extractFunction('_artifactSolveScoreSourceText'),
+    extractFunction('_restoreSolveScoreSourceFromArtifact'),
     extractFunction('setColorMode'),
     extractFunction('_normalizeColorInterpretation'),
     extractFunction('_colorInterpretationLabel'),
@@ -717,6 +724,14 @@ async function main() {
 
   const renderStatus = { textContent: '', className: '' };
   const generateBtn = { disabled: false };
+  const ssSourceTextarea = { value: '' };
+  const _ssFakeEls = {
+    'render-ss-source-text': ssSourceTextarea,
+    'render-ss-chips-panel': { classList: { toggle() {} } },
+    'render-ss-text-panel': { classList: { toggle() {} } },
+    'render-ss-tab-chips': { classList: { toggle() {} } },
+    'render-ss-tab-text': { classList: { toggle() {} } },
+  };
   const ctx = {
     console,
     Math,
@@ -724,6 +739,7 @@ async function main() {
     renderColorMode: 'rainbow',
     _renderArtifacts: { color: [] },
     _renderMtPopupState: { saveAssociatedPalette: false },
+    _solveScoreProgramEditorMode: { render: 'chips', palette: 'chips' },
     _solveScoreProgramRememberedNames: { render: 'pal5', palette: 'keep' },
     _coeffRegistryVocab: coeffRegistryVocab,
     _coeffProgramChain: [],
@@ -758,6 +774,7 @@ async function main() {
         if (id === 'btn-render-generate') return generateBtn;
         if (id === 'btn-render-generate-mt') return generateBtn;
         if (id === 'render-status') return renderStatus;
+        if (_ssFakeEls[id]) return _ssFakeEls[id];
         return null;
       },
     },
@@ -1033,6 +1050,23 @@ async function main() {
   ctx._solveScoreProgramRememberedNames.render = 'pal7';
   ctx._noteSolveScorePopulate('render', { family: 'palette', artifact_id: 'pal_7' });
   assert(ctx._statusCalls[0].message === 'Populated from palette pal_7', 'standalone palette populate should not pretend to come from a color artifact');
+
+  // Populate solve-score reset: a chip-based artifact (no source text) must clear
+  // any stale text program, because the text program is authoritative whenever it
+  // is nonblank and would otherwise override the populated chips and break render.
+  ssSourceTextarea.value = 'STALE m0-0;emit(norm)';
+  ctx._solveScoreProgramEditorMode.render = 'text';
+  const ssCleared = ctx._restoreSolveScoreSourceFromArtifact('render', { solve_score_chain: [['proximity', 'slv', '0.1']] });
+  assert(ssCleared === false, 'populate from a chip-only artifact should report no source restored');
+  assert(ssSourceTextarea.value === '', 'populate must clear a stale solve-score text program so the chips render');
+  assert(ctx._solveScoreProgramEditorMode.render === 'chips', 'populate from a chip-only artifact should switch the solve-score editor to chips');
+
+  // An artifact that DOES carry a text program restores it verbatim and shows text.
+  ssSourceTextarea.value = '';
+  const ssRestored = ctx._restoreSolveScoreSourceFromArtifact('render', { solve_score_program_source_text: 'm0-0\nemit norm\n' });
+  assert(ssRestored === true, 'populate from a source-text artifact should report source restored');
+  assert(ssSourceTextarea.value === 'm0-0\nemit norm\n', 'populate should restore the artifact text program verbatim');
+  assert(ctx._solveScoreProgramEditorMode.render === 'text', 'populate from a source-text artifact should switch the editor to text');
 
   ctx.renderColorMode = 'solve_score';
   ctx._renderMtPopupState.saveAssociatedPalette = true;

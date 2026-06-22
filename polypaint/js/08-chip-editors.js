@@ -436,6 +436,46 @@ function _programSourceCheatSectionHtml(title, buttons) {
     return `<div class="program-source-cheat-section"><div class="program-source-cheat-title">${_escapeHtml(title)}</div><div class="program-source-cheat-buttons">${buttons.join('')}</div></div>`;
 }
 
+function _sourceCheatDefaultArgs(params, options = {}) {
+    const includeAndy = !!options.includeAndy;
+    return (params || [])
+        .filter(p => includeAndy || !(typeof _isAndyParam === 'function' && _isAndyParam(p)))
+        .map(p => String((p && p.def) || '0'));
+}
+
+function _paramProgramLegacySnippet(name) {
+    const argDefs = _paramProgramLegacyArgSpecs[name] || [];
+    const args = _sourceCheatDefaultArgs(argDefs);
+    return `legacy(${name}, both, both${args.length ? ', ' + args.join(', ') : ''})`;
+}
+
+function _paramProgramLegacyButton(name) {
+    const spec = (_ptCatalog && _ptCatalog[name]) || (_ptInfo && _ptInfo[name]) || {};
+    return {
+        label: name,
+        snippet: _paramProgramLegacySnippet(name),
+        title: spec.desc || 'Legacy parameter transform with explicit source/target selectors.',
+    };
+}
+
+function _paramProgramLegacyCheatSections() {
+    const groups = {};
+    (_paramProgramLegacyNames || []).forEach(name => {
+        if (!name || name === 'none') return;
+        const spec = (_ptCatalog && _ptCatalog[name]) || (_ptInfo && _ptInfo[name]) || {};
+        const category = spec.category || 'legacy';
+        if (!groups[category]) groups[category] = [];
+        groups[category].push(_paramProgramLegacyButton(name));
+    });
+    const order = ['maps', 'arithmetic', 'shapes', 'roots', 'dither', 'legacy'];
+    return order
+        .filter(category => (groups[category] || []).length)
+        .map(category => ({
+            title: `Legacy: ${((_ptCategoryMeta[category] || {}).title || category)}`,
+            buttons: groups[category],
+        }));
+}
+
 const _paramProgramCheatSections = [
     {
         title: 'Starters',
@@ -446,21 +486,112 @@ const _paramProgramCheatSections = [
         ],
     },
     {
-        title: 'Stack',
+        title: 'Assignments + Expressions',
         buttons: [
-            { label: 'push/add/emit', snippet: 'push(t1)\npush(t2)\nadd\nemit_p1', title: 'Push t1 and t2, add, then write p1.' },
-            { label: 'const emit', snippet: 'const(exp(t1*pi2i))\nemit_p1', title: 'Push an expression value, then emit it to p1.' },
-            { label: 'square p2', snippet: 'square(p2)', title: 'Targetable unary transform on p2.' },
+            { label: 'p1 = expr', snippet: 'p1 = t1 + t2', title: 'Assign a complex expression to p1.' },
+            { label: 'p2 = expr', snippet: 'p2 = exp(t2*pi2i)', title: 'Assign a complex expression to p2.' },
+            { label: 'const(expr)', snippet: 'const(p1+p2)\nemit_p1', title: 'Push a complex expression, then emit it.' },
+            { label: 'macro(name)', snippet: 'macro(saved-param-program)', title: 'Inline a saved Param Program at compile time.' },
         ],
     },
     {
-        title: 'Legacy',
+        title: 'Input + Output',
         buttons: [
-            { label: 'unit_circle', snippet: 'legacy(unit_circle, both, both)', title: 'Legacy transform with explicit source and target selectors.' },
-            { label: 'rtheta', snippet: 'legacy(rtheta, both, both, real(p1+p2))', title: 'Real-valued legacy argument expression.' },
+            { label: 'push()', snippet: 'push()\nemit_p1', title: 'Push the default input value, then emit it.' },
+            { label: 'push(t1)', snippet: 'push(t1)\nemit_p1', title: 'Push input t1, then emit it.' },
+            { label: 'push(t2)', snippet: 'push(t2)\nemit_p2', title: 'Push input t2, then emit it.' },
+            { label: 'emit_p1', snippet: 'push(t1)\nemit_p1', title: 'Pop the top value into p1.' },
+            { label: 'emit_p2', snippet: 'push(t2)\nemit_p2', title: 'Pop the top value into p2.' },
         ],
     },
-];
+    {
+        title: 'Stack',
+        buttons: [
+            { label: 'dup', snippet: 'push(t1)\ndup\nemit_p1\nemit_p2', title: 'Duplicate the top stack value.' },
+            { label: 'swap', snippet: 'push(t1)\npush(t2)\nswap\nemit_p1\nemit_p2', title: 'Swap the top two stack values.' },
+            { label: 'pop', snippet: 'push(t1)\npop', title: 'Discard the top stack value.' },
+            { label: 'flush', snippet: 'push(t1)\nflush', title: 'Clear the temporary stack.' },
+        ],
+    },
+    {
+        title: 'Arithmetic',
+        buttons: [
+            { label: 'add', snippet: 'push(t1)\npush(t2)\nadd\nemit_p1', title: 'Pop a,b and push a+b.' },
+            { label: 'subtract / sub', snippet: 'push(t1)\npush(t2)\nsubtract\nemit_p1', title: 'Pop a,b and push a-b.' },
+            { label: 'mul', snippet: 'push(t1)\npush(t2)\nmul\nemit_p1', title: 'Pop a,b and push a*b.' },
+            { label: 'ratio / div', snippet: 'push(t1)\npush(t2)\nratio\nemit_p1', title: 'Pop a,b and push a/b with zero policy.' },
+        ],
+    },
+    {
+        title: 'Unary',
+        buttons: [
+            { label: 'negate', snippet: 'push(t1)\nnegate\nemit_p1', title: 'Apply -z to the top stack value.' },
+            { label: 'conj / conjugate', snippet: 'push(t1)\nconj\nemit_p1', title: 'Complex conjugate.' },
+            { label: 'reciprocal', snippet: 'push(t1)\nreciprocal\nemit_p1', title: 'Apply 1/z.' },
+            { label: 'unit_circle', snippet: 'push(t1)\nunit_circle\nemit_p1', title: 'Map through unit-circle transform.' },
+            { label: 'square', snippet: 'push(t1)\nsquare\nemit_p1', title: 'Square the top stack value.' },
+            { label: 'cube', snippet: 'push(t1)\ncube\nemit_p1', title: 'Cube the top stack value.' },
+            { label: 'exp', snippet: 'push(t1)\nexp\nemit_p1', title: 'Complex exponential.' },
+            { label: 'square(p1)', snippet: 'square(p1)', title: 'Targeted unary form: mutate p1 directly.' },
+        ],
+    },
+].concat(_paramProgramLegacyCheatSections());
+
+function _coeffStructuralChip(name) {
+    const chips = (((_coeffRegistryVocab || {}).structuralChips || {}).chips || []);
+    return chips.find(chip => chip && chip.name === name) || null;
+}
+
+function _coeffFamilySubOps(familyName) {
+    const chip = _coeffStructuralChip(familyName);
+    return Array.isArray(chip && chip.sub_ops) ? chip.sub_ops.slice() : [];
+}
+
+function _coeffSubOpLabel(op) {
+    const aliases = Array.isArray(op && op.source_aliases) ? op.source_aliases : [];
+    return aliases.length ? `${op.name} / ${aliases.join(' / ')}` : op.name;
+}
+
+function _coeffRegistrySourceName(name) {
+    const vocab = _coeffRegistryVocab || {};
+    return (vocab.sourceAliasByName && vocab.sourceAliasByName[name])
+        || (vocab.chipNameByRegistryName && vocab.chipNameByRegistryName[name])
+        || name;
+}
+
+function _coeffNativeTransformSnippet(name) {
+    const sourceName = _coeffRegistrySourceName(name);
+    const spec = _ctCatalog[name] || {};
+    const args = _sourceCheatDefaultArgs(spec.params || []);
+    return `poly = ${sourceName}(poly${args.length ? ', ' + args.join(', ') : ''})\nemit`;
+}
+
+function _coeffNativeTransformButton(name) {
+    const spec = _ctCatalog[name] || {};
+    const sourceName = _coeffRegistrySourceName(name);
+    return {
+        label: sourceName === name ? name : `${sourceName} (${name})`,
+        snippet: _coeffNativeTransformSnippet(name),
+        title: spec.desc || 'Native coefficient transform.',
+    };
+}
+
+function _coeffNativeTransformCheatSections() {
+    const groups = {};
+    (_coeffProgramLegacyNames || []).forEach(name => {
+        const spec = _ctCatalog[name] || {};
+        const category = spec.category || 'structural';
+        if (!groups[category]) groups[category] = [];
+        groups[category].push(_coeffNativeTransformButton(name));
+    });
+    const order = ['structural', 'accumulation', 'elementwise', 'roots'];
+    return order
+        .filter(category => (groups[category] || []).length)
+        .map(category => ({
+            title: `Native: ${((_ctCategoryMeta[category] || {}).title || category)}`,
+            buttons: groups[category],
+        }));
+}
 
 const _coeffProgramCheatSections = [
     {
@@ -472,22 +603,90 @@ const _coeffProgramCheatSections = [
         ],
     },
     {
-        title: 'Vectors',
+        title: 'Input + Output',
         buttons: [
-            { label: 'scale+shift', snippet: 'poly = add(multiply(poly, p1), p2)\nemit', title: 'Typed vector/scalar broadcast arithmetic.' },
-            { label: 'sin(poly)', snippet: 'poly = sin(poly)\nemit', title: 'Typed unary vector operation.' },
-            { label: 'littlewood', snippet: 'poly = littlewood(0, 1)\nemit', title: 'Random 0/1 coefficient vector with current poly length.' },
+            { label: 'cf', snippet: 'cf', title: 'Push the input coefficient vector.' },
+            { label: 'poly', snippet: 'poly', title: 'Push the current working poly vector.' },
+            { label: 'emit', snippet: 'emit', title: 'Pop/commit the top vector as output poly.' },
+            { label: 'push(cf)', snippet: 'push(cf)', title: 'Push cf explicitly.' },
+            { label: 'push(poly)', snippet: 'push(poly)', title: 'Push poly explicitly.' },
+            { label: 'poly = cf', snippet: 'poly = cf\nemit', title: 'Copy cf into poly.' },
+            { label: 'macro(name)', snippet: 'macro(saved-coeff-program)', title: 'Inline a saved Coeff Program at compile time.' },
         ],
     },
     {
-        title: 'Stack / Index',
+        title: 'Constants + Ranges',
         buttons: [
-            { label: 'push_vec', snippet: 'push_vec(poly_len, 0)\nemit', title: 'Push a constant vector, then emit it.' },
-            { label: 'poke first', snippet: 'poly[0] = p1\nemit', title: 'Set one coefficient from a scalar expression.' },
-            { label: 'poke last', snippet: 'poly[(poly_len-1)] = p2\nemit', title: 'Dynamic scalar index using poly_len.' },
+            { label: 'push_vec(value)', snippet: 'push_vec(0)\nemit', title: 'Push a constant vector of length poly_len.' },
+            { label: 'push_vec(n,value)', snippet: 'push_vec(poly_len, p1)\nemit', title: 'Push a constant vector with explicit length.' },
+            { label: 'fill', snippet: 'fill(poly_len, 0)\nemit', title: 'Alias for push_vec/fill vector construction.' },
+            { label: 'push_scalar', snippet: 'push_scalar(p1+p2)', title: 'Push one scalar onto the typed stack.' },
+            { label: 'arange', snippet: 'poly = arange(1, poly_len+1)\nemit', title: 'Range vector, stop-exclusive.' },
+            { label: 'linspace', snippet: 'poly = linspace(0, 1, poly_len)\nemit', title: 'Linearly spaced vector.' },
+            { label: 'littlewood', snippet: 'poly = littlewood(0, 1)\nemit', title: 'Randomly choose value1/value2 per coefficient.' },
         ],
     },
-];
+    {
+        title: 'Stack',
+        buttons: [
+            { label: 'dup', snippet: 'dup', title: 'Duplicate the top stack slot.' },
+            { label: 'swap', snippet: 'swap', title: 'Swap the top two stack slots.' },
+            { label: 'drop', snippet: 'drop', title: 'Discard the top stack slot.' },
+            { label: 'flush', snippet: 'flush', title: 'Clear the stack.' },
+            { label: 'poly = pop', snippet: 'poly = pop\nemit', title: 'Pop a vector into poly.' },
+            { label: 'poly = peek', snippet: 'poly = peek\nemit', title: 'Copy top vector into poly without popping.' },
+            { label: 'blend', snippet: 'cf\npoly\npoly = blend(0.5)\nemit', title: 'Blend top two vectors using scalar t.' },
+        ],
+    },
+    {
+        title: 'Index + Scalar',
+        buttons: [
+            { label: 'poly[i] = expr', snippet: 'poly[0] = p1\nemit', title: 'Set one poly coefficient.' },
+            { label: 'poly[poly_len-1]', snippet: 'poly[poly_len-1] = p2\nemit', title: 'Dynamic index using poly_len.' },
+            { label: 'poke_poly', snippet: 'poke_poly(0, p1)\nemit', title: 'Statement form for setting a poly coefficient.' },
+            { label: 'poke_tos', snippet: 'poly\npoke_tos(0, p2)\nemit', title: 'Set one element of the top stack vector.' },
+            { label: 'poly[i] read', snippet: 'push_scalar(poly[0])', title: 'Read one poly coefficient as a scalar.' },
+            { label: 'cf[i] read', snippet: 'push_scalar(cf[0])', title: 'Read one input coefficient as a scalar.' },
+            { label: 'tos[i] read', snippet: 'push_scalar(tos[0])', title: 'Read one top-of-stack vector element as a scalar.' },
+        ],
+    },
+    {
+        title: 'Affine',
+        buttons: [
+            { label: 'scale', snippet: 'poly = scale(poly, p1)\nemit', title: 'Multiply vector/source by a scalar expression.' },
+            { label: 'shift', snippet: 'poly = shift(poly, p2)\nemit', title: 'Add a scalar expression to vector/source.' },
+            { label: 'linear', snippet: 'poly = linear(poly, p1, p2)\nemit', title: 'Apply vector*p1+p2.' },
+            { label: 'affine', snippet: 'affine(poly, poly, p1, p2)\nemit', title: 'Explicit target/source affine form.' },
+        ],
+    },
+    {
+        title: 'Vector Binary',
+        buttons: _coeffFamilySubOps('vector_binary').map(op => ({
+            label: _coeffSubOpLabel(op),
+            snippet: `poly = ${op.name}(poly, p1)\nemit`,
+            title: `${op.name}(left, right) supports vector/scalar broadcasting.`,
+        })),
+    },
+    {
+        title: 'Vector Unary',
+        buttons: _coeffFamilySubOps('vector_unary').map(op => ({
+            label: _coeffSubOpLabel(op),
+            snippet: `poly = ${op.name}(poly)\nemit`,
+            title: `${op.name}(source) elementwise vector/scalar operation.`,
+        })),
+    },
+    {
+        title: 'Ordering',
+        buttons: [
+            ..._coeffFamilySubOps('vector_roll').map(op => ({
+                label: op.name,
+                snippet: `poly = ${op.name}(poly, 1)\nemit`,
+                title: `${op.name}(source, n).`,
+            })),
+            { label: 'argsort', snippet: 'poly = argsort(pop, peek)\nemit', title: 'argsort(src1, src2) with pop/peek/poly vector sources.' },
+        ],
+    },
+].concat(_coeffNativeTransformCheatSections());
 
 function _renderProgramSourceCheatsheet(elementId, insertFn, sections) {
     const el = document.getElementById(elementId);

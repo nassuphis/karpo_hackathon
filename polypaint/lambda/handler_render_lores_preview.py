@@ -42,6 +42,19 @@ from solve_score_chain import (
     solve_score_program_cli_payload,
     solve_score_uses_source,
 )
+# Recompute boundary: old calc.json artifacts carry legacy param/coeff transform
+# chains that the native runtime no longer accepts (sweep_cli rejectLegacyTransformChain).
+# Translate them into compiled programs before dispatch (mirrors handler_coeffgen).
+from coeff_program_chain import compile_coeff_program_chain
+from param_program_chain import compile_param_program_chain
+from pipeline_programs import (
+    coeff_transforms_to_program_chain,
+    param_transforms_to_program_chain,
+)
+from program_compile_helpers import (
+    compiled_coeff_program_payload,
+    compiled_param_program_payload,
+)
 
 
 s3 = boto3.client("s3")
@@ -228,6 +241,26 @@ def _calc_pipeline(calc):
     cfpv = pipeline.get("cfpv")
     if not isinstance(cfpv, list):
         cfpv = []
+    # The native runtime rejects non-empty legacy transform arrays. Old calc.json
+    # artifacts predate Param/Coeff Programs, so compile any legacy transforms to a
+    # program here and clear the transform arrays (mirrors handler_coeffgen). Legacy
+    # transforms never reference macros, so no macro_resolver is needed.
+    if param_program:
+        param_transforms = []
+    elif param_transforms:
+        compiled = compile_param_program_chain(
+            param_transforms_to_program_chain(param_transforms)
+        )
+        param_program = compiled_param_program_payload(compiled)
+        param_transforms = []
+    if coeff_program:
+        coeff_transforms = []
+    elif coeff_transforms:
+        compiled = compile_coeff_program_chain(
+            coeff_transforms_to_program_chain(coeff_transforms)
+        )
+        coeff_program = compiled_coeff_program_payload(compiled)
+        coeff_transforms = []
     return {
         "function": function_name,
         "param_transforms": param_transforms,

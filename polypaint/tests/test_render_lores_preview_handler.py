@@ -483,6 +483,128 @@ class TestRenderLoresPreviewHandler(unittest.TestCase):
         self.assertFalse(mock_s3.generate_presigned_url.called)
         self.assertFalse(mock_s3.put_object.called)
 
+    def test_calc_pipeline_compiles_legacy_transforms_to_programs(self):
+        # Old calc.json artifacts carry legacy param/coeff transform chains. The
+        # native runtime rejects non-empty legacy chains, so _calc_pipeline must
+        # compile them to programs and clear the transform arrays.
+        from handler_render_lores_preview import _calc_pipeline
+
+        pipeline = _calc_pipeline({
+            "pipeline": {
+                "function": "g1",
+                "param_transforms": [["unit_circle"]],
+                "coeff_transforms": [["rev"], ["conj"]],
+                "cfpv": [],
+            }
+        })
+
+        self.assertEqual(pipeline["param_transforms"], [])
+        self.assertEqual(pipeline["coeff_transforms"], [])
+        self.assertTrue(pipeline["param_program"].get("tokens"))
+        self.assertTrue(pipeline["coeff_program"].get("tokens"))
+
+    def test_calc_pipeline_prefers_existing_program_and_drops_transforms(self):
+        # An existing program wins; legacy transforms are dropped, not recompiled.
+        from handler_render_lores_preview import _calc_pipeline
+
+        program = {"version": 2, "tokens": [["set", "poly", "cf"]], "fingerprint": "x"}
+        pipeline = _calc_pipeline({
+            "pipeline": {
+                "function": "g1",
+                "coeff_transforms": [["rev"]],
+                "coeff_program": program,
+            }
+        })
+
+        self.assertEqual(pipeline["coeff_transforms"], [])
+        self.assertEqual(pipeline["coeff_program"], program)
+
+    @patch("handler_render_lores_preview.render_score_raw")
+    @patch("handler_render_lores_preview.subprocess.run")
+    @patch("handler_render_lores_preview.s3")
+    def test_recompute_preview_compiles_legacy_transforms_for_native(self, mock_s3, mock_run, mock_render):
+        from handler_render_lores_preview import TMP_COEFFS, TMP_FRAGMENT, TMP_PALETTE_FRAGMENT, TMP_PARAMS, TMP_ROOTS, handler
+
+        calc = {
+            "N": 5,
+            "times": 1,
+            "degree": 1,
+            "n_coeffs": 2,
+            "solver": "aberth_mt",
+            "lores": {"N": 5, "n_steps": 25},
+            "pipeline": {
+                "function": "g1",
+                "param_transforms": [["unit_circle"]],
+                "coeff_transforms": [["rev"], ["conj"]],
+                "cfpv": [],
+            },
+        }
+
+        def get_object(**kwargs):
+            key = kwargs.get("Key")
+            if key == "renders/j/calc.json":
+                return {"Body": _ChunkBody(json.dumps(calc).encode("utf-8"))}
+            raise AssertionError(f"unexpected key: {key}")
+
+        mock_s3.get_object.side_effect = get_object
+        specs = {}
+
+        def subprocess_fake(cmd, **kwargs):
+            stdin = json.loads(kwargs.get("input") or "{}")
+            if stdin.get("mode") == "param_gen":
+                specs["param_gen"] = stdin
+                with open(TMP_PARAMS, "wb") as fh:
+                    fh.write(b"\x00" * (25 * 16))
+                return MagicMock(returncode=0, stdout=json.dumps({"mode": "param_gen", "data_bytes": 25 * 16, "threads": 4}), stderr="")
+            if stdin.get("mode") == "coeffgen_chunked":
+                specs["coeffgen"] = stdin
+                with open(TMP_COEFFS, "wb") as fh:
+                    fh.write(b"\x00" * (25 * 2 * 2 * 4))
+                return MagicMock(returncode=0, stdout=json.dumps({"mode": "coeffgen_chunked", "degree": 1, "n_coeffs": 2, "data_bytes": 25 * 2 * 2 * 4, "threads": 4}), stderr="")
+            if stdin.get("mode") == "solve_mt":
+                with open(TMP_ROOTS, "wb") as fh:
+                    fh.write(b"\x00" * (25 * 1 * 2 * 4))
+                return MagicMock(returncode=0, stdout=json.dumps({"mode": "solve_mt", "avg_iterations": 3.0, "n_threads": 4}), stderr="")
+            if "--mode=clip" in cmd:
+                return MagicMock(returncode=0, stdout=json.dumps({
+                    "clip_lo": 0.0, "clip_hi": 1.0, "min_score": 0.0, "max_score": 1.0, "n_solves": 25, "threads": 1,
+                }), stderr="")
+            if "--mode=summary" in cmd:
+                return MagicMock(returncode=0, stdout=json.dumps({
+                    "degree": 1, "n_solves": 25, "clip_lo": 0.0, "clip_hi": 1.0,
+                    "min_score": 0.0, "q05": 0.1, "q95": 0.9, "max_score": 1.0, "threads": 1,
+                }), stderr="")
+            with open(TMP_FRAGMENT, "wb") as fh:
+                fh.write((0).to_bytes(4, "little") + bytes([64]))
+            with open(TMP_PALETTE_FRAGMENT, "wb") as fh:
+                for idx in range(25):
+                    fh.write(idx.to_bytes(4, "little") + bytes([idx + 1]))
+            return MagicMock(returncode=0, stdout=json.dumps({"roots_plotted": 1, "roots_clipped": 0}), stderr="")
+
+        def render_fake(**kwargs):
+            with open(kwargs["out_path"], "wb") as fh:
+                fh.write(PNG_1X1)
+            return {"file_size": len(PNG_1X1), "preview_file_size": 0}
+
+        mock_run.side_effect = subprocess_fake
+        mock_render.side_effect = render_fake
+
+        resp = handler(_event(
+            degree=1,
+            n_coeffs=2,
+            preview_source_mode="recompute",
+            preview_source_size=5,
+            lores_bin_key="",
+            solve_score_chain=[["centroid_re", "slv", "0.1"]],
+        ), None)
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+
+        # Legacy transforms compiled to programs; native sees no legacy chain.
+        self.assertEqual(specs["param_gen"].get("param_transforms"), [])
+        self.assertTrue(specs["param_gen"]["param_program"].get("tokens"))
+        self.assertEqual(specs["coeffgen"].get("coeff_transforms"), [])
+        self.assertTrue(specs["coeffgen"]["coeff_program"].get("tokens"))
+
     def test_malformed_body_returns_contextual_json(self):
         from handler_render_lores_preview import handler
 

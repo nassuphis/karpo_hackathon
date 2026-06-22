@@ -1127,6 +1127,9 @@ cp lambda/handler_render_lores_preview.py lambda/shared.py \
    lambda/color_render_contract.py lambda/solve_score_chain.py lambda/raw_score_render.py \
    lambda/root_pipeline_programs.py lambda/solve_score_pipeline_programs.py lambda/root_program_source.py \
    lambda/solve_score_program_source.py lambda/program_source_core.py lambda/program_profiles.py lambda/program_profiles.json \
+   lambda/pipeline_programs.py lambda/program_compile_helpers.py \
+   lambda/param_program_chain.py lambda/param_program_source.py lambda/param_legacy_registry.json \
+   lambda/coeff_program_chain.py lambda/coeff_program_source.py lambda/coeff_legacy_registry.json \
    lambda/root_legacy_registry.json lambda/merged_opcodes.py "$RENDER_LORES_PREVIEW_DIR/"
 cp lambda/roots2pix_mt lambda/solve_proximity_stats lambda/score_raw_render \
    lambda/sweep_coeffgen lambda/sweep_mt lambda/sweep_cm "$RENDER_LORES_PREVIEW_DIR/"

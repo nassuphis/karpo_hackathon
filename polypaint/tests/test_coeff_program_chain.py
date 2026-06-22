@@ -182,6 +182,57 @@ class TestCoeffProgramChain(unittest.TestCase):
         copy = compile_coeff_program_source("poly = cf")
         self.assertEqual(copy["tokens"][0]["op"], COEFF_OP_SET)
 
+    def test_source_accepts_typed_tokens_from_chain_serializer(self):
+        # Populating from a saved result synthesizes coeff source from the saved
+        # chain; for a const polynomial that chain is the lowered "_typed_*"
+        # poke ladder (chain->source serializers emit these). Coeff programs
+        # reach native only as source text, so the parser must accept these
+        # tokens or the populated program cannot compute (the reported bug:
+        # "unknown coeff program source function '_typed_push_scalar'").
+        from coeff_program_chain import (
+            COEFF_OP_TYPED_BINARY,
+            COEFF_OP_TYPED_POKE_POLY,
+            COEFF_OP_TYPED_PUSH_SCALAR,
+            COEFF_OP_TYPED_UNARY,
+        )
+        from coeff_program_source import compile_coeff_program_source
+
+        src = (
+            "_typed_push_scalar(0.0+0.0j)\n"
+            "_typed_push_scalar(1.0+0.0j)\n"
+            "_typed_poke_poly\n"
+            "_typed_push_scalar(19.0+0.0j)\n"
+            "_typed_push_scalar(9.0+0.0j)\n"
+            "_typed_unary(neg)\n"
+            "_typed_push_scalar(p1)\n"
+            "_typed_push_scalar(1000.0+0.0j)\n"
+            "_typed_binary(multiply)\n"
+            "_typed_binary(add)\n"
+            "_typed_poke_poly\n"
+        )
+        compiled = compile_coeff_program_source(src)
+        ops = [tok["op"] for tok in compiled["tokens"]]
+        self.assertEqual(compiled["token_count"], 11)
+        self.assertIn(COEFF_OP_TYPED_PUSH_SCALAR, ops)
+        self.assertIn(COEFF_OP_TYPED_POKE_POLY, ops)
+        self.assertIn(COEFF_OP_TYPED_BINARY, ops)
+        self.assertIn(COEFF_OP_TYPED_UNARY, ops)
+
+    def test_typed_op_passthrough_covers_chain_compiler(self):
+        # Every "_typed_*" op the chain compiler accepts must also be accepted by
+        # the source parser, so chip->source->parse round-trips stay closed.
+        import coeff_program_chain as cc
+        from coeff_program_source import _TYPED_OP_PASSTHROUGH_NAMES
+
+        compiler_typed_ops = {
+            name
+            for name in {**cc._CHIP_COMPILERS, **cc._ZERO_ARG_CHIP_OPS}
+            if name.startswith("_typed_")
+        }
+        self.assertTrue(compiler_typed_ops)
+        missing = compiler_typed_ops - _TYPED_OP_PASSTHROUGH_NAMES
+        self.assertEqual(missing, set(), f"source parser missing typed ops: {sorted(missing)}")
+
     def test_source_dynamic_index_and_mixed_ops_compile_to_typed_tokens(self):
         from coeff_program_chain import (
             COEFF_OP_TYPED_BINARY,

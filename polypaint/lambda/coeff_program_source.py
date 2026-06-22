@@ -547,8 +547,34 @@ def _lower_native_transform_call(name, args, *, target):
     return [["_native_transform", name, src, target] + [_canonical_expr(arg) for arg in fallback_args]]
 
 
+# Synthesizer-internal typed VM chips accepted on parse for round-trip closure.
+# The frontend chip->source synthesizer (_coeffProgramSourceFromRows) and the
+# backend chain->source serializer (coeff_source_text_from_chain) both fall back
+# to emitting these "_typed_*" tokens for chip sequences with no high-level
+# source form (e.g. a const polynomial's poke ladder). Coeff programs reach the
+# native runtime only as source text, so the parser must accept them or such
+# programs cannot compute at all. Mirrors the "_typed_*" entries in
+# coeff_program_chain._CHIP_COMPILERS / _ZERO_ARG_CHIP_OPS; the drift guard
+# test_typed_op_passthrough_covers_chain_compiler keeps these in sync.
+_TYPED_OP_PASSTHROUGH_NAMES = frozenset({
+    "_typed_push_scalar",
+    "_typed_push_vector",
+    "_typed_binary",
+    "_typed_unary",
+    "_typed_get_scalar",
+    "_typed_set_poly",
+    "_typed_poke_poly",
+    "_typed_fill",
+    "_typed_blend",
+})
+
+
 def _lower_call(name, args, *, target="push"):
     name = str(name or "").strip().lower()
+    if name in _TYPED_OP_PASSTHROUGH_NAMES:
+        # Not for hand-authoring, but emitted by chain->source serializers; pass
+        # the row through verbatim and let the chain compiler validate operands.
+        return [[name, *[str(arg) for arg in args]]]
     if name in _STACK_ALIASES:
         # Accept the call forms emit()/dup()/swap()/drop()/flush() alongside
         # the bare statements; every other zero-arg construct allows both.

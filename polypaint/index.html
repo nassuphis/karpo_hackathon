@@ -885,12 +885,14 @@ button {
     line-height: 1.45;
     scrollbar-color: #0f3460 #111827;
 }
+.program-source-grid,
 .solve-score-source-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
     gap: 10px;
     align-items: stretch;
 }
+.program-source-cheatsheet,
 .solve-score-source-cheatsheet {
     min-height: 156px;
     max-height: 220px;
@@ -901,9 +903,11 @@ button {
     border-radius: 5px;
     scrollbar-color: #0f3460 #111827;
 }
+.program-source-cheat-section,
 .solve-score-cheat-section {
     margin-bottom: 9px;
 }
+.program-source-cheat-title,
 .solve-score-cheat-title {
     color: #e94560;
     font-size: 10px;
@@ -912,11 +916,13 @@ button {
     text-transform: uppercase;
     margin-bottom: 5px;
 }
+.program-source-cheat-buttons,
 .solve-score-cheat-buttons {
     display: flex;
     flex-wrap: wrap;
     gap: 5px;
 }
+.program-source-cheat-button,
 .solve-score-cheat-button {
     margin: 0;
     padding: 4px 7px;
@@ -925,6 +931,7 @@ button {
     max-width: 170px;
 }
 @media (max-width: 900px) {
+    .program-source-grid,
     .solve-score-source-grid { grid-template-columns: 1fr; }
 }
 .solve-score-program-note {
@@ -1435,7 +1442,10 @@ button {
                     <button type="button" class="btn-secondary btn-inline" id="param-program-clear" onclick="_clearParamProgramChain()">Clear program</button>
                 </div>
                 <div id="pp-text-panel" class="coeff-program-editor-panel active">
-                    <textarea id="pp-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;p1 = t1 + t2&#10;p2 = exp(t1*pi2i)" oninput="_onParamProgramSourceInput()"></textarea>
+                    <div class="program-source-grid">
+                        <textarea id="pp-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;p1 = t1 + t2&#10;p2 = exp(t1*pi2i)" oninput="_onParamProgramSourceInput()"></textarea>
+                        <div id="pp-cheatsheet" class="program-source-cheatsheet" aria-label="Param Program source cheatsheet"></div>
+                    </div>
                 </div>
                 <div id="param-program-status" class="solve-score-program-status"></div>
             </div>
@@ -1457,7 +1467,10 @@ button {
                     <button type="button" class="btn-secondary btn-inline" id="coeff-program-clear" onclick="_clearCoeffProgramChain()">Clear program</button>
                 </div>
                 <div id="cp-text-panel" class="coeff-program-editor-panel active">
-                    <textarea id="cp-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;cf&#10;rev&#10;emit" oninput="_onCoeffProgramSourceInput()"></textarea>
+                    <div class="program-source-grid">
+                        <textarea id="cp-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;cf&#10;rev&#10;emit" oninput="_onCoeffProgramSourceInput()"></textarea>
+                        <div id="cp-cheatsheet" class="program-source-cheatsheet" aria-label="Coeff Program source cheatsheet"></div>
+                    </div>
                 </div>
                 <div id="coeff-program-status" class="solve-score-program-status"></div>
             </div>

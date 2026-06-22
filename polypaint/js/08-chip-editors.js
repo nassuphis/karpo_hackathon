@@ -399,6 +399,120 @@ function _onParamProgramSourceInput() {
     _paramProgramStatus('Text source changed. It will be compiled by the backend on save/preview/compute.');
 }
 
+function _insertSourceTextSnippet(el, snippet) {
+    if (!el) return false;
+    const text = String(snippet || '');
+    const start = Number.isFinite(el.selectionStart) ? el.selectionStart : el.value.length;
+    const end = Number.isFinite(el.selectionEnd) ? el.selectionEnd : start;
+    const before = el.value.slice(0, start);
+    const after = el.value.slice(end);
+    const lead = before && !before.endsWith('\n') ? '\n' : '';
+    const tail = after && !text.endsWith('\n') ? '\n' : '';
+    const inserted = `${lead}${text}`;
+    el.value = before + inserted + tail + after;
+    const pos = before.length + inserted.length;
+    if (typeof el.setSelectionRange === 'function') el.setSelectionRange(pos, pos);
+    if (typeof el.focus === 'function') el.focus();
+    return true;
+}
+
+function _insertParamProgramSourceSnippet(snippet) {
+    if (_insertSourceTextSnippet(_paramProgramSourceTextarea(), snippet)) _onParamProgramSourceInput();
+}
+
+function _insertCoeffProgramSourceSnippet(snippet) {
+    if (_insertSourceTextSnippet(_coeffProgramSourceTextarea(), snippet)) _onCoeffProgramSourceInput();
+}
+
+function _programSourceCheatButtonHtml(insertFn, label, snippet, title = '') {
+    const safeLabel = _escapeHtml(label);
+    const safeTitle = title ? ` title="${_escapeHtml(title)}"` : '';
+    const safeSnippet = _escapeHtml(JSON.stringify(String(snippet || '')));
+    return `<button type="button" class="btn-secondary program-source-cheat-button" onclick="${insertFn}(${safeSnippet})"${safeTitle}>${safeLabel}</button>`;
+}
+
+function _programSourceCheatSectionHtml(title, buttons) {
+    if (!buttons.length) return '';
+    return `<div class="program-source-cheat-section"><div class="program-source-cheat-title">${_escapeHtml(title)}</div><div class="program-source-cheat-buttons">${buttons.join('')}</div></div>`;
+}
+
+const _paramProgramCheatSections = [
+    {
+        title: 'Starters',
+        buttons: [
+            { label: 'identity', snippet: 'p1 = t1\np2 = t2', title: 'Pass through input parameters.' },
+            { label: 'mix', snippet: 'p1 = t1 + t2\np2 = exp(t2*pi2i)', title: 'Assignment expressions can use t1, t2, p1, p2, pi, pi2, and pi2i.' },
+            { label: 'unit circle', snippet: 'p1 = exp(t1*pi2i)\np2 = exp(t2*pi2i)', title: 'Map both inputs onto the unit circle.' },
+        ],
+    },
+    {
+        title: 'Stack',
+        buttons: [
+            { label: 'push/add/emit', snippet: 'push(t1)\npush(t2)\nadd\nemit_p1', title: 'Push t1 and t2, add, then write p1.' },
+            { label: 'const emit', snippet: 'const(exp(t1*pi2i))\nemit_p1', title: 'Push an expression value, then emit it to p1.' },
+            { label: 'square p2', snippet: 'square(p2)', title: 'Targetable unary transform on p2.' },
+        ],
+    },
+    {
+        title: 'Legacy',
+        buttons: [
+            { label: 'unit_circle', snippet: 'legacy(unit_circle, both, both)', title: 'Legacy transform with explicit source and target selectors.' },
+            { label: 'rtheta', snippet: 'legacy(rtheta, both, both, real(p1+p2))', title: 'Real-valued legacy argument expression.' },
+        ],
+    },
+];
+
+const _coeffProgramCheatSections = [
+    {
+        title: 'Starters',
+        buttons: [
+            { label: 'emit cf', snippet: 'cf\nemit', title: 'Push the input coefficient vector and emit it.' },
+            { label: 'reverse', snippet: 'poly = rev(poly)\nemit', title: 'Reverse the working coefficient vector.' },
+            { label: 'range', snippet: 'poly = arange(1, poly_len+1)\nemit', title: 'Replace poly with 1..poly_len.' },
+        ],
+    },
+    {
+        title: 'Vectors',
+        buttons: [
+            { label: 'scale+shift', snippet: 'poly = add(multiply(poly, p1), p2)\nemit', title: 'Typed vector/scalar broadcast arithmetic.' },
+            { label: 'sin(poly)', snippet: 'poly = sin(poly)\nemit', title: 'Typed unary vector operation.' },
+            { label: 'littlewood', snippet: 'poly = littlewood(0, 1)\nemit', title: 'Random 0/1 coefficient vector with current poly length.' },
+        ],
+    },
+    {
+        title: 'Stack / Index',
+        buttons: [
+            { label: 'push_vec', snippet: 'push_vec(poly_len, 0)\nemit', title: 'Push a constant vector, then emit it.' },
+            { label: 'poke first', snippet: 'poly[0] = p1\nemit', title: 'Set one coefficient from a scalar expression.' },
+            { label: 'poke last', snippet: 'poly[(poly_len-1)] = p2\nemit', title: 'Dynamic scalar index using poly_len.' },
+        ],
+    },
+];
+
+function _renderProgramSourceCheatsheet(elementId, insertFn, sections) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    el.innerHTML = (sections || []).map(section => {
+        const buttons = (section.buttons || []).map(item => (
+            _programSourceCheatButtonHtml(insertFn, item.label, item.snippet, item.title || '')
+        ));
+        return _programSourceCheatSectionHtml(section.title, buttons);
+    }).join('');
+}
+
+function _renderParamProgramCheatsheet() {
+    _renderProgramSourceCheatsheet('pp-cheatsheet', '_insertParamProgramSourceSnippet', _paramProgramCheatSections);
+}
+
+function _renderCoeffProgramCheatsheet() {
+    _renderProgramSourceCheatsheet('cp-cheatsheet', '_insertCoeffProgramSourceSnippet', _coeffProgramCheatSections);
+}
+
+function _renderParamCoeffProgramCheatsheets() {
+    _renderParamProgramCheatsheet();
+    _renderCoeffProgramCheatsheet();
+}
+
 let _solveScoreProgramEditorMode = { render: 'text', palette: 'text' };
 let _rootProgramEditorMode = { render: 'chips', palette: 'chips' };
 

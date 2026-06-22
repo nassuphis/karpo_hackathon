@@ -1062,6 +1062,7 @@ _renderChips('cp');
 
 _ensureSolveScoreChainDefaults();
 _ensureSolveScoreSourceDefaults();
+_renderParamCoeffProgramCheatsheets();
 _renderSolveScoreCheatsheets();
 
 _renderChips('ss');

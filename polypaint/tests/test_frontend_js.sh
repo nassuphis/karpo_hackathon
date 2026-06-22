@@ -107,6 +107,9 @@ assertNotIncludes("id=\"pp-chips\"", 'Param Program read-only chip display remov
 assertNotIncludes("param-program-tab-chips", 'Param Program read-only chips tab removed (text-only editor)');
 assertIncludes("id=\"pp-text-panel\" class=\"coeff-program-editor-panel active\"", 'Param Program text panel should stay active in the text-only editor');
 assertIncludes("id=\"pp-source-text\" class=\"coeff-program-source-text\"", 'Param Program should expose a source textarea');
+assertIncludes("id=\"pp-cheatsheet\" class=\"program-source-cheatsheet\"", 'Param Program should expose a source insert cheatsheet');
+assertIncludes("function _insertParamProgramSourceSnippet(snippet) {", 'Param Program cheatsheet should insert snippets through the source input path');
+assertIncludes("function _renderParamProgramCheatsheet() {", 'Param Program cheatsheet renderer should exist');
 assertIncludes("function _paramProgramTextModeSelected() {", 'Param Program text mode should have a single source of truth');
 assertIncludes("function _paramProgramSourceFromRows(chain) {", 'Param Program should synthesize editable source from chip chains');
 assertIncludes("lambdaPost('storage', { source_text: sourceText }, '/compile-param-program-source')", 'Param Program text editor should validate against the backend parser');
@@ -161,6 +164,10 @@ assertIncludes("id=\"coeff-program-manage\" onclick=\"openCoeffProgramModal()\""
 assertNotIncludes("id=\"cp-chips\"", 'Coeff Program read-only chip display removed (text-only editor)');
 assertNotIncludes("coeff-program-tab-chips", 'Coeff Program read-only chips tab removed (text-only editor)');
 assertIncludes("id=\"cp-text-panel\" class=\"coeff-program-editor-panel active\"", 'Coeff Program text panel should stay active in the text-only editor');
+assertIncludes("id=\"cp-source-text\" class=\"coeff-program-source-text\"", 'Coeff Program should expose a source textarea');
+assertIncludes("id=\"cp-cheatsheet\" class=\"program-source-cheatsheet\"", 'Coeff Program should expose a source insert cheatsheet');
+assertIncludes("function _insertCoeffProgramSourceSnippet(snippet) {", 'Coeff Program cheatsheet should insert snippets through the source input path');
+assertIncludes("function _renderCoeffProgramCheatsheet() {", 'Coeff Program cheatsheet renderer should exist');
 assertIncludes("const _coeffProgramCatalog = (() => {", 'frontend should build the coeff-program chip catalog');
 assertIncludes("const _programProfiles = (typeof window !== 'undefined' && window._programProfiles)", 'frontend should consume the generated program profile mirror');
 assertIncludes("function _profileSelectorChoices(name, fallback) {", 'Coeff Program selector choices should derive from profile metadata');
@@ -435,6 +442,8 @@ assertIncludes("mode:${_colorInterpretationLabel(colorInterpretation)}", 'render
 assertIncludes("id=\"render-ss-source-text\"", 'render solve-score editor should expose source textarea');
 assertIncludes("id=\"render-ss-cheatsheet\"", 'render solve-score editor should expose source insert cheatsheet');
 assertIncludes("id=\"palette-ss-cheatsheet\"", 'palette solve-score editor should expose source insert cheatsheet');
+assertIncludes(".program-source-grid,", 'generic source editor grid should style Param/Coeff source cheatsheets');
+assertIncludes("_renderParamCoeffProgramCheatsheets();", 'boot should render Param/Coeff source cheatsheets');
 assertNotIncludes("id=\"ss-insert-before-btn\"", 'solve-score editor should not expose chip insert-before button');
 assertNotIncludes("id=\"ss-insert-after-btn\"", 'solve-score editor should not expose chip insert-after button');
 assertNotIncludes("id=\"ss-chips\"", 'render solve-score editor should not expose editable chip strip');

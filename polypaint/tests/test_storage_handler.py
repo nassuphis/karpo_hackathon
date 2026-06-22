@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import sys
@@ -80,6 +81,173 @@ class TestStorageHandlerHardening(unittest.TestCase):
 
         self.assertEqual(resp["statusCode"], 500)
         self.assertIn("AccessDenied", json.loads(resp["body"])["error"])
+
+
+class _FakeS3:
+    """Stateful S3 double covering the calls handle_detail / migrate make."""
+
+    def __init__(self):
+        self.objects = {}
+
+    def get_paginator(self, name):
+        outer = self
+
+        class _P:
+            def paginate(self, Bucket=None, Prefix=None, Delimiter=None):
+                keys = [k for k in outer.objects if k.startswith(Prefix or "")]
+                return [{"KeyCount": len(keys), "Contents": [{"Key": k} for k in keys]}]
+
+        return _P()
+
+    def get_object(self, Bucket=None, Key=None, **kwargs):
+        if Key not in self.objects:
+            raise ClientError({"Error": {"Code": "NoSuchKey", "Message": "missing"}}, "GetObject")
+        return {"Body": io.BytesIO(self.objects[Key])}
+
+    def put_object(self, Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None):
+        self.objects[Key] = Body if isinstance(Body, bytes) else str(Body or "").encode("utf-8")
+        return {}
+
+    def head_object(self, Bucket=None, Key=None):
+        if Key not in self.objects:
+            raise ClientError({"Error": {"Code": "404", "Message": "missing"}}, "HeadObject")
+        return {}
+
+
+_CALC_V1 = {
+    "function": "g1",
+    "times": 1,
+    "degree": 1,
+    "pipeline": {
+        "function": "g1",
+        "param_transforms": [["unit_circle"]],
+        "coeff_transforms": [["rev"], ["conj"]],
+        "cfpv": [],
+    },
+}
+
+_CALC_V2 = {
+    "function": "g1",
+    "times": 1,
+    "pipeline": {
+        "function": "g1",
+        "param_transforms": [],
+        "coeff_transforms": [],
+        "param_program": {"version": 2, "tokens": [["set", "x", "p"]], "fingerprint": "a"},
+        "coeff_program": {"version": 2, "tokens": [["set", "poly", "cf"]], "fingerprint": "b"},
+        "cfpv": [],
+    },
+}
+
+
+class TestComputeMigration(unittest.TestCase):
+    def _patch(self, mock_s3, fake):
+        mock_s3.get_paginator.side_effect = fake.get_paginator
+        mock_s3.get_object.side_effect = fake.get_object
+        mock_s3.put_object.side_effect = fake.put_object
+        mock_s3.head_object.side_effect = fake.head_object
+
+    def _store(self, fake, job_id, calc):
+        fake.objects[f"renders/{job_id}/calc.json"] = json.dumps(calc).encode("utf-8")
+
+    @patch("handler_storage.s3")
+    def test_detail_reports_legacy_run_as_v1_migratable(self, mock_s3):
+        import handler_storage
+
+        fake = _FakeS3()
+        self._patch(mock_s3, fake)
+        self._store(fake, "jv1", _CALC_V1)
+
+        body = json.loads(handler_storage.handler(_event("/detail", {"job_id": "jv1"}), None)["body"])
+        self.assertEqual(body["pipeline_program_version"], 1)
+        self.assertTrue(body["pipeline_migratable"])
+
+    @patch("handler_storage.s3")
+    def test_detail_reports_program_run_as_v2_not_migratable(self, mock_s3):
+        import handler_storage
+
+        fake = _FakeS3()
+        self._patch(mock_s3, fake)
+        self._store(fake, "jv2", _CALC_V2)
+
+        body = json.loads(handler_storage.handler(_event("/detail", {"job_id": "jv2"}), None)["body"])
+        self.assertEqual(body["pipeline_program_version"], 2)
+        self.assertFalse(body["pipeline_migratable"])
+
+    @patch("handler_storage.s3")
+    def test_migrate_compute_translates_legacy_calc_in_place(self, mock_s3):
+        import handler_storage
+
+        fake = _FakeS3()
+        self._patch(mock_s3, fake)
+        self._store(fake, "jmig", _CALC_V1)
+
+        resp = handler_storage.handler(
+            _event("/migrate-compute", {"job_id": "jmig", "dry_run": False}), None
+        )
+        self.assertEqual(resp["statusCode"], 200, resp["body"])
+        body = json.loads(resp["body"])
+        self.assertTrue(body["wrote"])
+        self.assertEqual(body["from_version"], 1)
+        self.assertEqual(body["to_version"], 2)
+        self.assertFalse(body["already_current"])
+
+        stored = json.loads(fake.objects["renders/jmig/calc.json"].decode("utf-8"))
+        pl = stored["pipeline"]
+        self.assertEqual(pl["param_transforms"], [])
+        self.assertEqual(pl["coeff_transforms"], [])
+        self.assertTrue(pl["param_program"].get("tokens"))
+        self.assertTrue(pl["coeff_program"].get("tokens"))
+        self.assertTrue(pl["param_program_chain"])
+        self.assertEqual(pl["param_transforms_display"], [["unit_circle"]])  # original chain preserved
+
+        # Idempotent: a second migrate is a no-op.
+        body2 = json.loads(
+            handler_storage.handler(_event("/migrate-compute", {"job_id": "jmig", "dry_run": False}), None)["body"]
+        )
+        self.assertFalse(body2["wrote"])
+        self.assertTrue(body2["already_current"])
+        self.assertEqual(body2["from_version"], 2)
+
+    @patch("handler_storage.s3")
+    def test_migrate_compute_dry_run_does_not_write(self, mock_s3):
+        import handler_storage
+
+        fake = _FakeS3()
+        self._patch(mock_s3, fake)
+        self._store(fake, "jdry", _CALC_V1)
+
+        body = json.loads(
+            handler_storage.handler(_event("/migrate-compute", {"job_id": "jdry", "dry_run": True}), None)["body"]
+        )
+        self.assertFalse(body["wrote"])
+        self.assertEqual(body["from_version"], 1)
+        self.assertFalse(body["already_current"])
+
+        stored = json.loads(fake.objects["renders/jdry/calc.json"].decode("utf-8"))
+        self.assertEqual(stored["pipeline"]["param_transforms"], [["unit_circle"]])  # untouched
+        self.assertNotIn("param_program", stored["pipeline"])
+
+    @patch("handler_storage.s3")
+    def test_migrate_compute_missing_job_returns_404(self, mock_s3):
+        import handler_storage
+
+        fake = _FakeS3()
+        self._patch(mock_s3, fake)
+
+        resp = handler_storage.handler(
+            _event("/migrate-compute", {"job_id": "ghost", "dry_run": False}), None
+        )
+        self.assertEqual(resp["statusCode"], 404)
+        self.assertIn("ghost", json.loads(resp["body"])["error"])
+
+    @patch("handler_storage.s3")
+    def test_migrate_compute_requires_job_id(self, mock_s3):
+        import handler_storage
+
+        resp = handler_storage.handler(_event("/migrate-compute", {}), None)
+        self.assertEqual(resp["statusCode"], 400)
+        self.assertIn("job_id", json.loads(resp["body"])["error"])
 
 
 if __name__ == "__main__":

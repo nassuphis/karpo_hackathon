@@ -38,6 +38,8 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_coeff_program_chain.py \
     tests/test_coeff_program_native.py \
     tests/test_coeff_program_storage.py \
+    tests/test_storage_handler.py \
+    tests/test_render_lores_preview_handler.py \
     tests/test_compute_plan.py \
     tests/test_compute_orchestrator.py \
     tests/test_compute_preview_handler.py \

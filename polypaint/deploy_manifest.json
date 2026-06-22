@@ -115,6 +115,7 @@
         "/compile-coeff-program-source",
         "/delete-coeff-program",
         "/migrate-coeff-program",
+        "/migrate-compute",
         "/list-favorites",
         "/add-favorite",
         "/delete-favorite",

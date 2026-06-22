@@ -734,6 +734,8 @@ function selectResult(jobId) {
     document.getElementById('btn-preview').disabled = false;
     document.getElementById('btn-render-result').disabled = false;
     document.getElementById('btn-delete').disabled = false;
+    // Migrate enables only after /detail reveals a legacy (v1) run.
+    document.getElementById('btn-migrate-result').disabled = true;
 
     // Populate render-results-dir for easy render access
     _setRenderResultsJob(jobId);
@@ -746,6 +748,7 @@ function selectResult(jobId) {
 
     // Show defaults while /detail loads
     _setPreviewPlaceholder(previewEl, 'Loading...');
+    document.getElementById('res-version').textContent = '-';
     document.getElementById('res-cfun').textContent = r ? (r.function || '?') : '?';
     document.getElementById('res-degree').textContent = r ? (r.degree || '-') : '-';
     document.getElementById('res-stripes').textContent = r ? (r.n_chunks || r.n_stripes || '-') : '-';
@@ -775,6 +778,33 @@ function selectResult(jobId) {
                 _setPreviewPlaceholder(previewEl, 'No preview');
             }
         });
+    }
+}
+
+async function migrateResult() {
+    if (!_selectedJobId) return;
+    const jobId = _selectedJobId;
+    const infoEl = document.getElementById('results-info');
+    const btn = document.getElementById('btn-migrate-result');
+    const orig = btn ? btn.textContent : 'Migrate v2';
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
+    try {
+        if (infoEl) infoEl.textContent = 'Migrating...';
+        const resp = await lambdaPost('storage', { job_id: jobId, dry_run: false }, '/migrate-compute');
+        const v = (resp && resp.to_version) || 2;
+        const msg = resp && resp.wrote ? `Migrated ${jobId} to v${v}` : `${jobId} already v${v}`;
+        if (infoEl) infoEl.textContent = msg;
+        log(msg, 'ok', 'results-log');
+        // Invalidate cached detail so re-selection reflects the new version + button state.
+        const r = _resultsCache.find(x => x.job_id === jobId);
+        if (r) r._detail = null;
+        selectResult(jobId);
+    } catch (e) {
+        if (infoEl) infoEl.textContent = `migrate error: ${e.message}`;
+        log(`Migrate failed: ${e.message}`, 'err', 'results-log');
+        if (btn) btn.disabled = false;
+    } finally {
+        if (btn) btn.textContent = orig;
     }
 }
 
@@ -875,6 +905,18 @@ function _applyDetail(r, detail, previewEl, infoEl, jobId) {
     const calc = detail.calc || {};
     const solver = calc.solver || detail.solver || '';
     document.getElementById('res-solver').textContent = _solverShortLabel(solver);
+
+    // Program version + migrate availability (backend-computed; structural fallback)
+    let version = detail.pipeline_program_version;
+    if (version == null && detail.pipeline) {
+        const pl = detail.pipeline;
+        const hasLegacy = (pl.param_transforms && pl.param_transforms.length) || (pl.coeff_transforms && pl.coeff_transforms.length);
+        version = hasLegacy ? 1 : 2;
+    }
+    const migratable = (detail.pipeline_migratable != null) ? !!detail.pipeline_migratable : (version === 1);
+    document.getElementById('res-version').textContent = version ? (migratable ? `v${version} (legacy)` : `v${version}`) : '-';
+    const migrateBtn = document.getElementById('btn-migrate-result');
+    if (migrateBtn) migrateBtn.disabled = !migratable;
 
     // Preview stats from server or session cache
     const ps = detail.preview_stats || {};

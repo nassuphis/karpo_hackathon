@@ -70,6 +70,16 @@ from program_v2_translate import (
     translate_solve_score_from_old,
     v1_summary,
 )
+# Run (compute) migration: translate a calc.json's legacy param/coeff transform
+# chains into compiled programs, mirroring handler_render_lores_preview._calc_pipeline.
+from pipeline_programs import (
+    coeff_transforms_to_program_chain,
+    param_transforms_to_program_chain,
+)
+from program_compile_helpers import (
+    compiled_coeff_program_payload,
+    compiled_param_program_payload,
+)
 
 s3 = boto3.client("s3")
 FAVORITES_KEY = "polypaint/favorites/color_artifacts.json"
@@ -805,6 +815,117 @@ def _missing_v2_macros(kind, migrated):
     return sorted(set(missing))
 
 
+def _calc_pipeline_program_version(pipeline):
+    """Structural program-version of a compute's calc.json pipeline.
+
+    calc.json carries no explicit version. A run is v1 (legacy) while it still
+    has non-empty param/coeff transform chains; it is v2 once those compile to
+    param_program/coeff_program — the shape fresh program computes write.
+    """
+    pipeline = pipeline or {}
+    has_legacy = bool(pipeline.get("param_transforms")) or bool(pipeline.get("coeff_transforms"))
+    return 1 if has_legacy else 2
+
+
+def _migrate_calc_pipeline(pipeline):
+    """Compile a calc.json pipeline's legacy transforms to programs.
+
+    Returns (migrated_pipeline, changed). Mirrors the recompute boundary in
+    handler_render_lores_preview._calc_pipeline: legacy transforms compile to a
+    program, the transform arrays clear, and the *_display fields preserve the
+    original chain. Legacy transforms never reference macros, so no
+    macro_resolver is needed. An existing program drops any stray transforms.
+    """
+    out = dict(pipeline or {})
+    changed = False
+
+    param_program = out.get("param_program") if isinstance(out.get("param_program"), dict) else {}
+    param_transforms = out.get("param_transforms") if isinstance(out.get("param_transforms"), list) else []
+    if not param_program and param_transforms:
+        chain = param_transforms_to_program_chain(param_transforms)
+        compiled = compile_param_program_chain(chain)
+        out["param_program"] = compiled_param_program_payload(compiled)
+        out["param_program_chain"] = chain
+        out["param_program_display"] = compiled.get("display", "")
+        out["param_program_fingerprint"] = compiled.get("fingerprint", "")
+        out["param_program_uses_legacy_fast_path"] = bool(compiled.get("uses_legacy_fast_path"))
+        if not out.get("param_transforms_display"):
+            out["param_transforms_display"] = param_transforms
+        out["param_transforms"] = []
+        changed = True
+    elif param_program and param_transforms:
+        out["param_transforms"] = []
+        changed = True
+
+    coeff_program = out.get("coeff_program") if isinstance(out.get("coeff_program"), dict) else {}
+    coeff_transforms = out.get("coeff_transforms") if isinstance(out.get("coeff_transforms"), list) else []
+    if not coeff_program and coeff_transforms:
+        chain = coeff_transforms_to_program_chain(coeff_transforms)
+        compiled = compile_coeff_program_chain(chain)
+        out["coeff_program"] = compiled_coeff_program_payload(compiled)
+        out["coeff_program_chain"] = chain
+        out["coeff_program_display"] = compiled.get("display", "")
+        out["coeff_program_fingerprint"] = compiled.get("fingerprint", "")
+        out["coeff_program_uses_legacy_chain_equivalent"] = bool(compiled.get("uses_legacy_chain_equivalent"))
+        if not out.get("coeff_transforms_display"):
+            out["coeff_transforms_display"] = coeff_transforms
+        out["coeff_transforms"] = []
+        changed = True
+    elif coeff_program and coeff_transforms:
+        out["coeff_transforms"] = []
+        changed = True
+
+    return out, changed
+
+
+def _handle_migrate_compute(event):
+    """Migrate one compute's stored calc.json pipeline from legacy v1 to v2.
+
+    dry_run (default True) reports the detected version without writing.
+    Idempotent: a run already in v2 reports already_current with wrote=False.
+    Rewrites renders/<job_id>/calc.json in place; the original chain stays
+    recoverable from the preserved *_transforms_display / *_program_chain fields.
+    """
+    params = parse_body(event)
+    job_id = str(params.get("job_id") or "").strip()
+    if not job_id:
+        raise ValueError("compute migration requires job_id")
+    dry_run = parse_boolish(params.get("dry_run", True), True, strict=True, label="dry_run")
+
+    calc_key = f"renders/{job_id}/calc.json"
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=calc_key)
+        calc = json.loads(obj["Body"].read())
+    except Exception as exc:
+        if _is_missing_s3_error(exc):
+            return _error_response(404, f"compute {job_id} not found")
+        raise
+
+    pipeline = calc.get("pipeline") or {}
+    from_version = _calc_pipeline_program_version(pipeline)
+    migrated_pipeline, changed = _migrate_calc_pipeline(pipeline)
+
+    response = {
+        "job_id": job_id,
+        "from_version": from_version,
+        "to_version": 2,
+        "wrote": False,
+        "already_current": not changed,
+    }
+    if not changed or dry_run:
+        return ok_response(response)
+
+    calc["pipeline"] = migrated_pipeline
+    s3.put_object(
+        Bucket=BUCKET,
+        Key=calc_key,
+        Body=(json.dumps(calc) + "\n").encode("utf-8"),
+        ContentType="application/json",
+    )
+    response["wrote"] = True
+    return ok_response(response)
+
+
 def _handle_migrate_program(event, kind):
     params = parse_body(event)
     cfg = _migration_kind_config(kind)
@@ -1167,6 +1288,8 @@ def handler(event, context):
         return _handle_storage_route(handle_delete_coeff_program, event)
     elif path.endswith("/migrate-coeff-program"):
         return _handle_storage_route(lambda ev: _handle_migrate_program(ev, "coeff"), event)
+    elif path.endswith("/migrate-compute"):
+        return _handle_storage_route(_handle_migrate_compute, event)
     elif path.endswith("/list-favorites"):
         return _handle_storage_route(handle_list_favorites, event)
     elif path.endswith("/add-favorite"):
@@ -2760,6 +2883,9 @@ def handle_detail(event):
         result["param_transforms_display"] = pipeline.get("param_transforms_display", [])
         result["coeff_transforms"] = pipeline.get("coeff_transforms", [])
         result["pipeline"] = pipeline
+        version = _calc_pipeline_program_version(pipeline)
+        result["pipeline_program_version"] = version
+        result["pipeline_migratable"] = version == 1
     except Exception:
         pass
 

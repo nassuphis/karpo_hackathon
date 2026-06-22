@@ -64,6 +64,7 @@ from solve_score_chain import (
     serialize_solve_score_chain,
 )
 from solve_score_program_source import (
+    SolveScoreProgramSourceError,
     compile_solve_score_program_source,
     solve_score_source_text_from_chain,
 )
@@ -1267,6 +1268,8 @@ def handler(event, context):
         return _handle_storage_route(lambda ev: _handle_migrate_program(ev, "solve-score"), event)
     elif path.endswith("/compile-solve-score-program-source"):
         return _handle_storage_route(handle_compile_solve_score_program_source, event)
+    elif path.endswith("/solve-score-chain-to-source"):
+        return _handle_storage_route(handle_solve_score_chain_to_source, event)
     elif path.endswith("/compile-root-program-source"):
         return _handle_storage_route(handle_compile_root_program_source, event)
     elif path.endswith("/list-param-programs"):
@@ -1501,6 +1504,52 @@ def handle_compile_solve_score_program_source(event):
         "diagnostics": compiled.get("diagnostics") or [],
         "program": program,
     })
+
+
+def _solve_score_chain_to_source_payload(raw_chain):
+    if not isinstance(raw_chain, list) or not raw_chain:
+        raise ValueError("solve-score chain-to-source requires non-empty chain")
+    source_text = solve_score_source_text_from_chain(raw_chain)
+    compiled = compile_solve_score_chain_or_legacy(
+        raw_chain,
+        "",
+        default_metric="proximity",
+    )
+    canonical_chain = json.loads(serialize_solve_score_chain(compiled["chain"]))
+    return {
+        "ok": True,
+        "source_text": source_text,
+        "chain": canonical_chain,
+        "fingerprint": compiled_solve_score_fingerprint(compiled),
+        "program_spec": compiled["program_spec"],
+        "output_channel_count": compiled.get("output_channel_count", 1),
+        "output_channels": list(compiled.get("output_channels") or []),
+        "has_explicit_outputs": bool(compiled.get("has_explicit_outputs")),
+        "display": compiled.get("display", ""),
+    }
+
+
+def handle_solve_score_chain_to_source(event):
+    params = parse_body(event)
+    raw_chain = params.get("chain")
+    if raw_chain is None:
+        raw_chain = params.get("solve_score_chain")
+    try:
+        return ok_response(_solve_score_chain_to_source_payload(raw_chain))
+    except SolveScoreProgramSourceError as exc:
+        return _json_error_response(400, {
+            "ok": False,
+            "error": str(exc),
+            "code": getattr(exc, "code", "source_error"),
+            "line": getattr(exc, "line", 0),
+            "column": getattr(exc, "column", 0),
+        })
+    except (ValueError, TypeError, RuntimeError, json.JSONDecodeError) as exc:
+        return _json_error_response(400, {
+            "ok": False,
+            "error": str(exc),
+            "code": getattr(exc, "code", "invalid_chain"),
+        })
 
 
 def handle_list_param_programs(event):
@@ -2071,6 +2120,15 @@ def _parse_json(value):
         return None
 
 
+def _solve_score_source_from_nonempty_chain(chain):
+    if not isinstance(chain, list) or not chain:
+        return ""
+    try:
+        return solve_score_source_text_from_chain(chain)
+    except Exception:
+        return ""
+
+
 def _load_color_artifact_overlay(job_id, artifact_id):
     try:
         obj = s3.get_object(Bucket=BUCKET, Key=color_artifact_meta_key(job_id, artifact_id))
@@ -2145,6 +2203,12 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         "max_im": _parse_float(meta.get("max_im")),
         "legacy": legacy,
     }
+    if not str(entry["solve_score_program_source_text"] or "").strip():
+        reconstructed = _solve_score_source_from_nonempty_chain(entry["solve_score_chain"])
+        if reconstructed:
+            entry["solve_score_program_source_text"] = reconstructed
+            if not str(entry["score_source_text"] or "").strip():
+                entry["score_source_text"] = reconstructed
 
     if family == "color":
         repalette_capable = str(meta.get("repalette_capable", "")).strip().lower() == "true"
@@ -2173,6 +2237,11 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         entry["palette_source_palette"] = meta.get("palette_source_palette", "")
         entry["palette_source_metric"] = meta.get("palette_source_metric", "")
         entry["palette_source_score_chain"] = _parse_json(meta.get("palette_source_score_chain"))
+        if not str(entry["palette_source_solve_score_program_source_text"] or entry["palette_source_score_source_text"] or "").strip():
+            reconstructed = _solve_score_source_from_nonempty_chain(entry["palette_source_score_chain"])
+            if reconstructed:
+                entry["palette_source_solve_score_program_source_text"] = reconstructed
+                entry["palette_source_score_source_text"] = reconstructed
         src_q = meta.get("palette_source_quantile", "")
         entry["palette_source_quantile"] = float(src_q) if src_q not in ("", None) else None
         src_omega = meta.get("palette_source_omega", "")
@@ -2189,6 +2258,11 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         )
         entry["associated_palette_metric"] = meta.get("associated_palette_metric", "")
         entry["associated_palette_score_chain"] = _parse_json(meta.get("associated_palette_score_chain"))
+        if not str(entry["associated_palette_solve_score_program_source_text"] or entry["associated_palette_score_source_text"] or "").strip():
+            reconstructed = _solve_score_source_from_nonempty_chain(entry["associated_palette_score_chain"])
+            if reconstructed:
+                entry["associated_palette_solve_score_program_source_text"] = reconstructed
+                entry["associated_palette_score_source_text"] = reconstructed
         assoc_q = meta.get("associated_palette_quantile", "")
         entry["associated_palette_quantile"] = float(assoc_q) if assoc_q not in ("", None) else None
         assoc_omega = meta.get("associated_palette_omega", "")

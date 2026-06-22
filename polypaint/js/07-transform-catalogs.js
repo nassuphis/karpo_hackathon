@@ -282,110 +282,26 @@ const _rtCatalog = {
     pull_towards_center: { params: [{ph:'alpha', def:'1'}, {ph:'sigma', def:'0.75'}] },
 };
 
-const _solveScoreMetricNames = [
-    'proximity',
-    'crowding',
-    'spread',
-    'anisotropy',
-    'area',
-    'clusteriness',
-    'shelliness',
-    'outlierness',
-    'nn_variation',
-    'real_axis_proximity',
-    'centroid_re',
-    'centroid_im',
-    'centroid_dist',
-    'dist_unit_circle',
-    'asymmetry_re',
-    'max_re',
-    'min_re',
-    'max_im',
-    'min_im',
-    'min_mod',
-    'max_mod',
-    'min_angular_separation',
-    'mean_log_mod',
-    'sd_log_mod',
-    'inside_unit_fraction',
-    'unit_annulus_fraction_01',
-    'imag_axis_proximity',
-    'diagonal_proximity',
-    'angular_entropy_16',
-    'sector_max_share_16',
-    'angular_order_2',
-    'angular_order_3',
-    'angular_order_4',
-    't1_re',
-    't1_im',
-    't1_abs',
-    't1_phase',
-    't2_re',
-    't2_im',
-    't2_abs',
-    't2_phase',
-];
-const _solveScoreParamMetricNames = [
-    't1_re',
-    't1_im',
-    't1_abs',
-    't1_phase',
-    't2_re',
-    't2_im',
-    't2_abs',
-    't2_phase',
-];
-const _solveScoreParamCapableMetricNames = [
-    'max_re',
-    'min_re',
-    'max_im',
-    'min_im',
-    'min_mod',
-    'max_mod',
-];
+// Solve-score vocabulary is generated from lambda/solve_score_chain.py by
+// lambda/gen_solve_score_vocab.py. Keep metric names, source rules, stack ops,
+// and chip specs out of this file to avoid a second hand-maintained registry.
+const _solveScoreVocab = (typeof window !== 'undefined' && window._solveScoreVocab) || {};
+const _solveScoreMetricNames = Array.isArray(_solveScoreVocab.metricNames) ? _solveScoreVocab.metricNames.slice() : [];
+const _solveScoreParamMetricNames = Array.isArray(_solveScoreVocab.paramMetricNames) ? _solveScoreVocab.paramMetricNames.slice() : [];
+const _solveScoreParamCapableMetricNames = Array.isArray(_solveScoreVocab.paramCapableMetricNames) ? _solveScoreVocab.paramCapableMetricNames.slice() : [];
 const _solveScoreMetricSet = new Set(_solveScoreMetricNames);
 const _solveScoreParamMetricSet = new Set(_solveScoreParamMetricNames);
 const _solveScoreParamCapableMetricSet = new Set(_solveScoreParamCapableMetricNames);
-const _solveScoreGenericMetricPublicName = 'metric';
-const _solveScoreGenericMetricChipName = '__metric';
-const _solveScoreGenericMetricNames = _solveScoreMetricNames.filter(name => {
-    const sources = _solveScoreMetricAllowedSources(name);
-    return sources.includes('slv') && sources.includes('cf');
-});
-const _solveScoreGenericSourceChoices = ['slv', 'cf', 'slv-1', 'cf-1'];
-const _solveScoreUnarySpecs = {
-    omega_cosine: { arity: 1, params: [{ ph: 'w', def: '1' }, { ph: 'phase', def: '0' }], tooltip: 'unary stack op: g(u)=0.5*(cos(omega*2*pi*u+phase)+1)' },
-    sawtooth: { arity: 1, params: [{ ph: 'mult', def: '10' }], tooltip: 'unary stack op: frac(score*mult)' },
-    flip: { arity: 1, params: [], tooltip: 'unary stack op: 1-score' },
-    const: { arity: 0, params: [{ ph: 'value', def: '0' }], tooltip: 'push a finite constant onto the stack' },
-    dup: { arity: 1, params: [], tooltip: 'duplicate the top stack value' },
-    flush: { arity: 0, params: [], tooltip: 'clear the entire score stack' },
-    clamp: { arity: 1, params: [], tooltip: 'clamp the top stack value to [0,1]' },
-    sin: { arity: 1, params: [], tooltip: 'raw sin(score), radians' },
-    cos: { arity: 1, params: [], tooltip: 'raw cos(score), radians' },
-    log: { arity: 1, params: [], tooltip: 'natural log; invalid inputs become 0' },
-    exp: { arity: 1, params: [], tooltip: 'raw exp(score); overflow becomes 0' },
-    pow: { arity: 1, params: [{ ph: 'pow', def: '2' }], tooltip: 'raw pow(score, exponent)' },
-};
-const _solveScoreOutputSpecs = {
-    emit: { arity: 1, params: [{ ph: 'mode', def: 'norm', choices: ['raw', 'norm', 'none'] }], tooltip: 'pop one score; raw/norm emit a byte, none discards it for debugging branches' },
-    emit_norm: { arity: 1, params: [], tooltip: 'legacy alias for emit(norm)' },
-    emit_none: { arity: 1, params: [], tooltip: 'legacy alias for emit(none)' },
-};
-const _solveScoreCombineSpecs = {
-    avg: { arity: 2, params: [] },
-    min: { arity: 2, params: [] },
-    max: { arity: 2, params: [] },
-    mul: { arity: 2, params: [] },
-    add: { arity: 2, params: [], tooltip: 'raw a+b' },
-    mult: { arity: 2, params: [], tooltip: 'raw a*b' },
-    subtract: { arity: 2, params: [], tooltip: 'raw a-b; top of stack is b' },
-    ratio: { arity: 2, params: [], tooltip: 'raw a/b; zero if denominator is zero' },
-    ema: { arity: 2, params: [{ ph: 'alpha', def: '0.99' }], tooltip: 'a*alpha + b*(1-alpha), b is top/latest' },
-    weighted_sum: { arity: 2, params: [{ ph: 'a', def: '0.5' }, { ph: 'b', def: '0.5' }] },
-    abs_diff: { arity: 2, params: [] },
-    geometric_mean: { arity: 2, params: [] },
-};
+const _solveScoreAllowedSourcesByMetric = _solveScoreVocab.allowedSourcesByMetric || {};
+const _solveScoreGenericMetricPublicName = _solveScoreVocab.genericMetricPublicName || 'metric';
+const _solveScoreGenericMetricChipName = _solveScoreVocab.genericMetricChipName || '__metric';
+const _solveScoreGenericMetricNames = Array.isArray(_solveScoreVocab.genericMetricNames) ? _solveScoreVocab.genericMetricNames.slice() : [];
+const _solveScoreGenericSourceChoices = (Array.isArray(_solveScoreVocab.genericMetricSources) ? _solveScoreVocab.genericMetricSources : ['slv', 'cf'])
+    .flatMap(source => [source, `${source}-1`]);
+const _solveScoreStackSpecs = _solveScoreVocab.stackSpecs || {};
+const _solveScoreUnarySpecs = { ..._solveScoreStackSpecs, ...(_solveScoreVocab.unarySpecs || {}) };
+const _solveScoreOutputSpecs = _solveScoreVocab.outputSpecs || {};
+const _solveScoreCombineSpecs = _solveScoreVocab.combineSpecs || {};
 const _ssCatalog = (() => {
     const catalog = {};
     catalog[_solveScoreGenericMetricChipName] = {

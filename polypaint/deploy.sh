@@ -76,6 +76,7 @@ frontend_asset_keys() {
         "program_profiles_js.js" \
         "merged_opcodes_js.js" \
         "coeff_vocab_js.js" \
+        "solve_score_vocab_js.js" \
         "coeff_func_catalog_js.js" \
         "tri_palette_catalog_js.js" \
         "long_palette_catalog_js.js"
@@ -700,6 +701,7 @@ print(f'  coeff_func_catalog_js.js: {count} entries')
 "${TEST_PYTHON[@]}" lambda/gen_program_profiles.py || { echo "FATAL: program profile generation failed"; exit 1; }
 "${TEST_PYTHON[@]}" lambda/gen_merged_opcodes.py || { echo "FATAL: merged opcode generation failed"; exit 1; }
 "${TEST_PYTHON[@]}" lambda/gen_coeff_vocab.py || { echo "FATAL: coeff vocab generation failed"; exit 1; }
+"${TEST_PYTHON[@]}" lambda/gen_solve_score_vocab.py || { echo "FATAL: solve-score vocab generation failed"; exit 1; }
 
 # --- Frontend JS execution test ---
 echo "Running frontend JS execution test..."

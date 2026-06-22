@@ -399,48 +399,51 @@ function _renderCoeffProgramChipsHtml(program) {
 function _renderChips(which) {
     const chain = _chainForWhich(which);
     const el = document.getElementById(which + '-chips');
-    if (!el) return;
-    if (which === 'pp') {
-        el.innerHTML = chain.map((item, i) => _renderParamProgramChipHtml(item, i, { readonly: true })).join('');
-        _syncParamProgramAddOptions();
-        _syncParamPipelineModeUi();
-        const sourceLen = _paramProgramSourceStatementCount(_getParamProgramSourceText());
-        const chainLen = _serializeParamProgramChain().length;
-        if (_paramProgramTextModeSelected()) {
-            _paramProgramStatus(sourceLen
-                ? `Param Program selected · ${sourceLen} source statement${sourceLen === 1 ? '' : 's'}`
-                : 'Param Program selected · empty identity');
+    if (el) {
+        if (which === 'pp') {
+            el.innerHTML = chain.map((item, i) => _renderParamProgramChipHtml(item, i, { readonly: true })).join('');
+            _syncParamProgramAddOptions();
+            _syncParamPipelineModeUi();
+            const sourceLen = _paramProgramSourceStatementCount(_getParamProgramSourceText());
+            const chainLen = _serializeParamProgramChain().length;
+            if (_paramProgramTextModeSelected()) {
+                _paramProgramStatus(sourceLen
+                    ? `Param Program selected · ${sourceLen} source statement${sourceLen === 1 ? '' : 's'}`
+                    : 'Param Program selected · empty identity');
+            } else {
+                _paramProgramStatus(chainLen
+                    ? `Param Program selected · ${_pluralize(chainLen, 'chip')}`
+                    : 'Param Program selected · empty identity');
+            }
+        } else if (which === 'cp') {
+            el.innerHTML = chain.map((item, i) => _renderCoeffProgramChipHtml(item, i, { readonly: true })).join('');
+            _syncParamPipelineModeUi();
+            const sourceLen = _coeffProgramSourceStatementCount(_getCoeffProgramSourceText());
+            const chainLen = _serializeCoeffProgramChain().length;
+            if (_coeffProgramTextModeSelected()) {
+                _coeffProgramStatus(sourceLen
+                    ? `Coeff Program selected · ${sourceLen} source statement${sourceLen === 1 ? '' : 's'}`
+                    : 'Coeff Program selected · empty text source');
+            } else {
+                _coeffProgramStatus(chainLen
+                    ? `Coeff Program selected · ${_pluralize(chainLen, 'chip')}`
+                    : 'Coeff Program selected · empty identity');
+            }
+        } else if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {
+            const catalog = _catalogForChain(which);
+            el.innerHTML = chain.map((item, i) => _renderRtChipHtml(item, i, which, catalog)).join('');
+            if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt') {
+                Array.from(el.children).filter(chip => chip.classList && chip.classList.contains('chip')).forEach((chip, i) => {
+                    chip.insertAdjacentHTML('afterbegin', _chipMoveControlsHtml(which, i));
+                });
+            }
         } else {
-            _paramProgramStatus(chainLen
-                ? `Param Program selected · ${_pluralize(chainLen, 'chip')}`
-                : 'Param Program selected · empty identity');
+            el.innerHTML = chain.map((name, i) =>
+                `<span class="chip">${_escapeHtml(name)}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`
+            ).join('');
         }
-    } else if (which === 'cp') {
-        el.innerHTML = chain.map((item, i) => _renderCoeffProgramChipHtml(item, i, { readonly: true })).join('');
-        _syncParamPipelineModeUi();
-        const sourceLen = _coeffProgramSourceStatementCount(_getCoeffProgramSourceText());
-        const chainLen = _serializeCoeffProgramChain().length;
-        if (_coeffProgramTextModeSelected()) {
-            _coeffProgramStatus(sourceLen
-                ? `Coeff Program selected · ${sourceLen} source statement${sourceLen === 1 ? '' : 's'}`
-                : 'Coeff Program selected · empty text source');
-        } else {
-            _coeffProgramStatus(chainLen
-                ? `Coeff Program selected · ${_pluralize(chainLen, 'chip')}`
-                : 'Coeff Program selected · empty identity');
-        }
-    } else if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {
-        const catalog = _catalogForChain(which);
-        el.innerHTML = chain.map((item, i) => _renderRtChipHtml(item, i, which, catalog)).join('');
-        if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt') {
-            Array.from(el.children).filter(chip => chip.classList && chip.classList.contains('chip')).forEach((chip, i) => {
-                chip.insertAdjacentHTML('afterbegin', _chipMoveControlsHtml(which, i));
-            });
-        }
-    } else {
-        el.innerHTML = chain.map((name, i) =>
-            `<span class="chip">${_escapeHtml(name)}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`
-        ).join('');
+    } else if (which !== 'ss' && which !== 'palette-ss') {
+        return;
     }
     if (which === 'ss' || which === 'palette-ss') {
         const prefix = _solveScorePrefixForWhich(which);
@@ -987,7 +990,6 @@ async function runPaletteArtifact() {
                 solve_score_quantile: score.quantile,
                 solve_score_omega: score.omega,
                 solve_score_omega_enabled: score.omega_enabled,
-                solve_score_chain: score.chain,
                 solve_score_program_source_text: _effectiveSolveScoreProgramSourceText('palette'),
                 root_transforms: _paletteRootTransforms(),
                 root_program_source_text: _effectiveRootProgramSourceText('palette') || undefined,
@@ -1594,7 +1596,6 @@ async function _launchFusedRenderOrchestrator(paramsPatch = null) {
         color_mode: 'solve_score',
         color_interpretation: p.colorInterpretation,
         background_color: p.backgroundColor,
-        solve_score_chain: p.solveScoreChain,
         solve_score_program_source_text: p.solveScoreProgramSourceText,
         solve_score_normalize: !!p.solveScoreNormalize,
         palette: _activeRenderPalette() || 'inferno',

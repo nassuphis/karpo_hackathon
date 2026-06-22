@@ -58,7 +58,17 @@ function _parseSolveScoreProgram(raw) {
     };
 }
 
-function _applySolveScoreProgram(prefix, rawProgram) {
+async function _solveScoreSourceTextFromChainRoute(chain) {
+    const resp = await lambdaPost('storage', { chain }, '/solve-score-chain-to-source');
+    if (!resp || resp.ok === false) {
+        throw new Error((resp && (resp.error || resp.message)) || 'solve-score chain could not be converted to source');
+    }
+    const text = String(resp.source_text || '');
+    if (!text.trim()) throw new Error('solve-score chain-to-source returned empty source');
+    return text;
+}
+
+async function _applySolveScoreProgram(prefix, rawProgram) {
     const program = _parseSolveScoreProgram(rawProgram);
     const which = _solveScoreWhichForPrefix(prefix);
     const chain = _chainForWhich(which);
@@ -66,16 +76,31 @@ function _applySolveScoreProgram(prefix, rawProgram) {
     _compileSolveScoreChain(program.chain, fallbackMetric);
     chain.splice(0, chain.length, ..._normalizeSolveScoreChain(program.chain, fallbackMetric));
     _renderChips(which);
+    let sourceWarning = '';
     if (program.source_text) {
         _setSolveScoreProgramSourceText(prefix, program.source_text);
         _setSolveScoreProgramEditorMode(prefix, 'text');
+    } else {
+        try {
+            const sourceText = await _solveScoreSourceTextFromChainRoute(program.chain);
+            _setSolveScoreProgramSourceText(prefix, sourceText);
+            _setSolveScoreProgramEditorMode(prefix, 'text');
+        } catch (e) {
+            _setSolveScoreProgramSourceText(prefix, '');
+            _setSolveScoreProgramEditorMode(prefix, 'text');
+            sourceWarning = `Loaded chain, but source reconstruction failed: ${e && e.message ? e.message : String(e)}`;
+        }
     }
     const compiled = _syncSolveScoreLegacyInputs(prefix);
     if (prefix === 'render') {
         setColorMode('solve_score');
         if (program.recommended_interpretation) _setRenderColorInterpretation(program.recommended_interpretation);
     }
-    _setSolveScoreProgramStatus(prefix, program.name ? `Loaded ${program.name}` : 'Loaded solve-score program');
+    _setSolveScoreProgramStatus(
+        prefix,
+        sourceWarning || (program.name ? `Loaded ${program.name}` : 'Loaded solve-score program'),
+        !!sourceWarning
+    );
     return compiled;
 }
 
@@ -381,7 +406,7 @@ async function _loadSelectedSolveScoreProgramFromModal() {
             program = await _fetchSolveScoreProgramById(_solveScoreModalState.selectedId);
             _solveScoreModalState.selectedProgram = program;
         }
-        _applySolveScoreProgram(_solveScoreModalState.prefix, program);
+        await _applySolveScoreProgram(_solveScoreModalState.prefix, program);
         if (program && program.name) {
             _solveScoreModalState.nameInput = program.name;
             _solveScoreModalState.lastSelectedName = program.name;
@@ -538,7 +563,7 @@ async function _importSolveScoreProgramFileFromModal(file) {
     try {
         const text = await _readTextFile(file);
         const raw = JSON.parse(text);
-        _applySolveScoreProgram(_solveScoreModalState.prefix, raw);
+        await _applySolveScoreProgram(_solveScoreModalState.prefix, raw);
         const parsed = _parseSolveScoreProgram(raw);
         if (parsed.name) {
             _solveScoreModalState.nameInput = parsed.name;

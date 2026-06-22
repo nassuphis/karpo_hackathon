@@ -1052,6 +1052,7 @@ _clearPaletteCanvas('No palette selected');
    calls in the monolith): initial chip renders, vocab-load guard,
    visibility-change listener. */
 if (!_coeffRegistryVocab) console.error('coeff_vocab_js.js did not load — registry transform vocabulary unavailable');
+if (!_solveScoreVocab || !_solveScoreMetricNames.length) console.error('solve_score_vocab_js.js did not load — solve-score vocabulary unavailable');
 
 _renderChips('palette-rt');
 
@@ -1060,6 +1061,8 @@ _renderChips('pp');
 _renderChips('cp');
 
 _ensureSolveScoreChainDefaults();
+_ensureSolveScoreSourceDefaults();
+_renderSolveScoreCheatsheets();
 
 _renderChips('ss');
 

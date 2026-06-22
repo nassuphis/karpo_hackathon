@@ -250,6 +250,45 @@ class TestSolveScoreProgramStorage(unittest.TestCase):
         self.assertEqual(program["chain"], [["crowding", "1"], ["omega_cosine", "4"]])
         self.assertEqual(program["source_text"], source_text)
 
+    def test_solve_score_chain_to_source_route_returns_compiled_contract(self):
+        import handler_storage
+
+        resp = handler_storage.handler(
+            self._event(
+                "/solve-score-chain-to-source",
+                {"chain": [["proximity", "slv", "0.1"], ["emit", "norm"]]},
+            ),
+            None,
+        )
+        self.assertEqual(resp["statusCode"], 200)
+        body = json.loads(resp["body"])
+        self.assertTrue(body["ok"])
+        self.assertIn("metric(proximity", body["source_text"])
+        self.assertEqual(body["chain"], [["proximity", "0.1"], ["emit", "norm"]])
+        self.assertEqual(body["program_spec"], "m0-0;emit_norm")
+        self.assertEqual(body["output_channel_count"], 1)
+        self.assertTrue(body["has_explicit_outputs"])
+        self.assertTrue(body["fingerprint"].startswith("sha256:"))
+
+    def test_render_artifact_entry_reconstructs_source_for_chain_only_metadata(self):
+        import handler_storage
+
+        entry = handler_storage._render_artifact_entry(
+            "color",
+            "artifact-1",
+            {
+                "key": "renders/job/artifact-1.png",
+                "url": "https://example.invalid/artifact-1.png",
+                "modified_at": "2026-06-22T00:00:00Z",
+                "user_meta": {
+                    "solve_score_chain": json.dumps([["spread", "cf", "0.5"], ["emit", "norm"]]),
+                },
+            },
+        )
+        self.assertIn("metric(spread", entry["solve_score_program_source_text"])
+        self.assertIn("cf", entry["solve_score_program_source_text"])
+        self.assertEqual(entry["score_source_text"], entry["solve_score_program_source_text"])
+
     @patch("handler_storage.s3")
     def test_generic_metric_chip_round_trips_as_saved_program(self, mock_s3):
         import handler_storage

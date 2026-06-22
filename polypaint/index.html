@@ -885,6 +885,48 @@ button {
     line-height: 1.45;
     scrollbar-color: #0f3460 #111827;
 }
+.solve-score-source-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+    gap: 10px;
+    align-items: stretch;
+}
+.solve-score-source-cheatsheet {
+    min-height: 156px;
+    max-height: 220px;
+    overflow: auto;
+    padding: 8px;
+    background: #0d1324;
+    border: 1px solid #253a5f;
+    border-radius: 5px;
+    scrollbar-color: #0f3460 #111827;
+}
+.solve-score-cheat-section {
+    margin-bottom: 9px;
+}
+.solve-score-cheat-title {
+    color: #e94560;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 5px;
+}
+.solve-score-cheat-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+.solve-score-cheat-button {
+    margin: 0;
+    padding: 4px 7px;
+    font-size: 10px;
+    border-radius: 999px;
+    max-width: 170px;
+}
+@media (max-width: 900px) {
+    .solve-score-source-grid { grid-template-columns: 1fr; }
+}
 .solve-score-program-note {
     color: #777;
     font-size: 11px;
@@ -1751,42 +1793,21 @@ button {
                 <div class="color-box" style="grid-column:1 / -1">
                     <div class="color-title">Solve Score Program</div>
                     <div class="solve-score-program-note">Used when Color mode is Solve score. Manage shared saved programs in the Solve Scores popup.</div>
-                    <div class="render-lores-preview-tabbar" role="tablist" aria-label="Render solve-score editor mode">
-                        <button type="button" id="render-ss-tab-chips" class="compute-preview-tab-btn active" onclick="_setSolveScoreProgramEditorMode('render','chips')">Chips</button>
-                        <button type="button" id="render-ss-tab-text" class="compute-preview-tab-btn" onclick="_setSolveScoreProgramEditorMode('render','text')">Text</button>
-                        <button type="button" class="btn-secondary btn-inline" id="render-solve-score-program-manage" onclick="openSolveScoreProgramModal('render')" style="margin-left:auto">Solve Scores...</button>
+                    <div class="solve-score-program-toolbar">
+                        <button type="button" class="btn-secondary btn-inline" id="render-solve-score-program-manage" onclick="openSolveScoreProgramModal('render')">Solve Scores...</button>
+                        <button type="button" class="btn-secondary btn-inline" onclick="_compileSolveScoreSourceEditor('render')">Compile Text</button>
+                        <input type="hidden" id="render-solve-score-quantile" value="0.1">
+                        <label style="font-size:10px; color:#888; display:inline-flex; align-items:center; gap:3px" title="Normalize the final composed score program output using the lores q05/q95 estimate before packing to raw score bytes">
+                            <input type="checkbox" id="render-score-normalization" style="margin:0"> Score normalization
+                        </label>
+                        <button id="btn-solve-histogram" class="btn-inline-offset" onclick="runSolveScoreHistogramDebug()" style="font-size:10px; padding:1px 8px">Histogram</button>
                     </div>
-                    <div id="render-ss-chips-panel" class="coeff-program-editor-panel active">
-                        <div class="solve-score-program-toolbar">
-                            <div class="score-chip-add-wrap">
-                                <button id="ss-insert-before-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleSolveScorePicker('ss',event,'before')">+ before</button>
-                                <button id="ss-insert-after-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleSolveScorePicker('ss',event,'after')">+ after</button>
-                                <div id="ss-add-popup" class="score-chip-picker" aria-hidden="true"></div>
-                                <select id="ss-add" onchange="addChip('ss',this.value);this.value='';" style="display:none">
-                                    <option value="">+ add...</option>
-                                </select>
-                            </div>
+                    <div id="render-ss-text-panel" class="coeff-program-editor-panel active">
+                        <div class="solve-score-source-grid">
+                            <textarea id="render-ss-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;score = metric(proximity, slv, q=0.1%)&#10;emit(score)" oninput="_onSolveScoreProgramSourceInput('render')"></textarea>
+                            <div id="render-ss-cheatsheet" class="solve-score-source-cheatsheet" aria-label="Solve-score source inserter"></div>
                         </div>
-                        <div class="color-row">
-                            <div id="ss-chips" class="chip-container solve-score-program-display"></div>
-                        </div>
-                        <div class="color-row" style="margin-bottom:0">
-                            <label style="color:#888; font-size:10px; min-width:70px">Stack:</label>
-                            <span id="ss-stack" style="display:inline-flex; gap:3px; align-items:flex-end; min-height:16px"></span>
-                            <span id="ss-stack-label" style="font-size:10px; color:#888; min-width:80px; margin-left:6px"></span>
-                            <input type="hidden" id="render-solve-score-quantile" value="0.1">
-                            <label style="font-size:10px; color:#888; display:inline-flex; align-items:center; gap:3px; margin-left:6px" title="Normalize the final composed score program output using the lores q05/q95 estimate before packing to raw score bytes">
-                                <input type="checkbox" id="render-score-normalization" style="margin:0"> Score normalization
-                            </label>
-                            <button id="btn-solve-histogram" class="btn-inline-offset" onclick="runSolveScoreHistogramDebug()" style="font-size:10px; padding:1px 8px">Histogram</button>
-                        </div>
-                    </div>
-                    <div id="render-ss-text-panel" class="coeff-program-editor-panel">
-                        <textarea id="render-ss-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;score = metric(proximity, slv, q=0.1%)&#10;emit(score)" oninput="_onSolveScoreProgramSourceInput('render')"></textarea>
-                        <div class="solve-score-program-toolbar">
-                            <button type="button" class="btn-secondary btn-inline" onclick="_compileSolveScoreSourceEditor('render')">Compile Text</button>
-                            <span class="solve-score-program-note">Backend source wins over chips on preview/render.</span>
-                        </div>
+                        <div class="solve-score-program-note">Text source is authoritative. Use the inserter for valid metric/operator snippets.</div>
                     </div>
                     <div id="render-solve-score-program-status" class="solve-score-program-status"></div>
                 </div>
@@ -1860,36 +1881,16 @@ button {
             <div class="color-box">
                 <div class="color-title">Solve Score Program</div>
                 <div class="solve-score-program-note">Manage shared saved solve-score programs for the Palette tab.</div>
-                <div class="render-lores-preview-tabbar" role="tablist" aria-label="Palette solve-score editor mode">
-                    <button type="button" id="palette-ss-tab-chips" class="compute-preview-tab-btn active" onclick="_setSolveScoreProgramEditorMode('palette','chips')">Chips</button>
-                    <button type="button" id="palette-ss-tab-text" class="compute-preview-tab-btn" onclick="_setSolveScoreProgramEditorMode('palette','text')">Text</button>
-                    <button type="button" class="btn-secondary btn-inline" id="palette-solve-score-program-manage" onclick="openSolveScoreProgramModal('palette')" style="margin-left:auto">Solve Scores...</button>
+                <div class="solve-score-program-toolbar">
+                    <button type="button" class="btn-secondary btn-inline" id="palette-solve-score-program-manage" onclick="openSolveScoreProgramModal('palette')">Solve Scores...</button>
+                    <button type="button" class="btn-secondary btn-inline" onclick="_compileSolveScoreSourceEditor('palette')">Compile Text</button>
                 </div>
-                <div id="palette-ss-chips-panel" class="coeff-program-editor-panel active">
-                    <div class="solve-score-program-toolbar">
-                        <div class="score-chip-add-wrap">
-                            <button id="palette-ss-add-btn" type="button" class="btn-secondary score-chip-add-btn" onclick="toggleSolveScorePicker('palette-ss',event)">+ score chip</button>
-                            <div id="palette-ss-add-popup" class="score-chip-picker" aria-hidden="true"></div>
-                            <select id="palette-ss-add" onchange="addChip('palette-ss',this.value);this.value='';" style="display:none">
-                                <option value="">+ add...</option>
-                            </select>
-                        </div>
+                <div id="palette-ss-text-panel" class="coeff-program-editor-panel active">
+                    <div class="solve-score-source-grid">
+                        <textarea id="palette-ss-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;score = metric(proximity, slv, q=0.1%)&#10;emit(score)" oninput="_onSolveScoreProgramSourceInput('palette')"></textarea>
+                        <div id="palette-ss-cheatsheet" class="solve-score-source-cheatsheet" aria-label="Palette solve-score source inserter"></div>
                     </div>
-                    <div class="color-row">
-                        <div id="palette-ss-chips" class="chip-container solve-score-program-display"></div>
-                    </div>
-                    <div class="palette-field-row">
-                        <label class="palette-field-label">Stack</label>
-                        <span id="palette-ss-stack" style="display:inline-flex; gap:3px; align-items:flex-end; min-height:16px"></span>
-                        <span id="palette-ss-stack-label" style="font-size:10px; color:#888; min-width:80px; margin-left:6px"></span>
-                    </div>
-                </div>
-                <div id="palette-ss-text-panel" class="coeff-program-editor-panel">
-                    <textarea id="palette-ss-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;score = metric(proximity, slv, q=0.1%)&#10;emit(score)" oninput="_onSolveScoreProgramSourceInput('palette')"></textarea>
-                    <div class="solve-score-program-toolbar">
-                        <button type="button" class="btn-secondary btn-inline" onclick="_compileSolveScoreSourceEditor('palette')">Compile Text</button>
-                        <span class="solve-score-program-note">Backend source wins over chips on palette generation.</span>
-                    </div>
+                    <div class="solve-score-program-note">Text source is authoritative. Use the inserter for valid metric/operator snippets.</div>
                 </div>
                 <div class="palette-field-row">
                     <label class="palette-field-label">Palette</label>
@@ -2925,6 +2926,7 @@ button {
 <script src="program_profiles_js.js"></script>
 <script src="merged_opcodes_js.js"></script>
 <script src="coeff_vocab_js.js"></script>
+<script src="solve_score_vocab_js.js"></script>
 <script src="coeff_func_catalog_js.js"></script>
 <script src="tri_palette_catalog_js.js"></script>
 <script src="long_palette_catalog_js.js"></script>

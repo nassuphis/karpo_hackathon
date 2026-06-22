@@ -399,7 +399,7 @@ function _onParamProgramSourceInput() {
     _paramProgramStatus('Text source changed. It will be compiled by the backend on save/preview/compute.');
 }
 
-let _solveScoreProgramEditorMode = { render: 'chips', palette: 'chips' };
+let _solveScoreProgramEditorMode = { render: 'text', palette: 'text' };
 let _rootProgramEditorMode = { render: 'chips', palette: 'chips' };
 
 function _editorPrefix(prefix) {
@@ -428,6 +428,24 @@ function _setSolveScoreProgramSourceText(prefix, text) {
 function _effectiveSolveScoreProgramSourceText(prefix) {
     const text = _getSolveScoreProgramSourceText(prefix);
     return text.trim() ? text : '';
+}
+
+function _defaultSolveScoreProgramSourceText(prefix) {
+    const p = _editorPrefix(prefix);
+    const metric = p === 'palette'
+        ? String(paletteTabMetric || 'proximity')
+        : String(renderSolveMetric || 'proximity');
+    const choices = _solveScoreMetricAllowedSources(metric);
+    const source = choices.includes('slv') ? 'slv' : (choices[0] || 'slv');
+    return `score = metric(${metric}, ${source}, q=0.1%)\nemit_norm(score)\n`;
+}
+
+function _ensureSolveScoreSourceDefaults() {
+    ['render', 'palette'].forEach((prefix) => {
+        if (!_getSolveScoreProgramSourceText(prefix).trim()) {
+            _setSolveScoreProgramSourceText(prefix, _defaultSolveScoreProgramSourceText(prefix));
+        }
+    });
 }
 
 function _getRootProgramSourceText(prefix) {
@@ -460,14 +478,12 @@ function _setPanelTabActive(panelBase, mode) {
 
 function _setSolveScoreProgramEditorMode(prefix, mode) {
     const p = _editorPrefix(prefix);
-    const normalized = mode === 'text' ? 'text' : 'chips';
+    const normalized = 'text';
     _solveScoreProgramEditorMode[p] = normalized;
     _setPanelTabActive(`${p}-ss`, normalized);
     _setSolveScoreProgramStatus(
         p,
-        normalized === 'text'
-            ? 'Solve-score text source is authoritative when nonblank; compile refreshes the chip preview.'
-            : 'Solve-score chips are active unless the Text tab has nonblank source.'
+        'Solve-score text source is authoritative; compile validates and refreshes derived state.'
     );
 }
 
@@ -479,7 +495,99 @@ function _setRootProgramEditorMode(prefix, mode) {
 }
 
 function _onSolveScoreProgramSourceInput(prefix) {
-    _setSolveScoreProgramStatus(_editorPrefix(prefix), 'Text source changed. Compile to refresh chip preview; backend compiles it on render.', false);
+    _setSolveScoreProgramStatus(_editorPrefix(prefix), 'Text source changed. Compile to validate; backend compiles it on render.', false);
+}
+
+function _insertSolveScoreSourceSnippet(prefix, snippet) {
+    const p = _editorPrefix(prefix);
+    const el = _solveScoreSourceTextarea(p);
+    if (!el) return;
+    const text = String(snippet || '');
+    const start = Number.isFinite(el.selectionStart) ? el.selectionStart : el.value.length;
+    const end = Number.isFinite(el.selectionEnd) ? el.selectionEnd : start;
+    const before = el.value.slice(0, start);
+    const after = el.value.slice(end);
+    const lead = before && !before.endsWith('\n') ? '\n' : '';
+    const tail = after && !text.endsWith('\n') ? '\n' : '';
+    const inserted = `${lead}${text}`;
+    el.value = before + inserted + tail + after;
+    const pos = before.length + inserted.length;
+    if (typeof el.setSelectionRange === 'function') el.setSelectionRange(pos, pos);
+    if (typeof el.focus === 'function') el.focus();
+    _onSolveScoreProgramSourceInput(p);
+}
+
+function _solveScoreMetricSnippet(name) {
+    const metric = String(name || 'proximity');
+    const choices = _solveScoreMetricAllowedSources(metric);
+    const source = choices.includes('slv') ? 'slv' : (choices[0] || 'slv');
+    return `metric(${metric}, ${source}, q=0.1%)`;
+}
+
+function _solveScoreSnippetParamValues(params) {
+    return (params || []).map(p => String((p && p.def) || '0'));
+}
+
+function _solveScoreUnarySnippet(name, spec) {
+    const args = ['score'].concat(_solveScoreSnippetParamValues(spec && spec.params));
+    return `${name}(${args.join(', ')})`;
+}
+
+function _solveScoreCombineSnippet(name, spec) {
+    const arity = Number(spec && spec.arity) || 2;
+    const args = Array.from({ length: arity }, (_, i) => i === 0 ? 'a' : (i === 1 ? 'b' : `v${i + 1}`))
+        .concat(_solveScoreSnippetParamValues(spec && spec.params));
+    return `${name}(${args.join(', ')})`;
+}
+
+function _solveScoreCheatButtonHtml(prefix, label, snippet, title = '') {
+    const safeLabel = _escapeHtml(label);
+    const safeTitle = title ? ` title="${_escapeHtml(title)}"` : '';
+    const safeSnippet = _escapeHtml(JSON.stringify(String(snippet || '')));
+    return `<button type="button" class="btn-secondary solve-score-cheat-button" onclick="_insertSolveScoreSourceSnippet('${prefix}', ${safeSnippet})"${safeTitle}>${safeLabel}</button>`;
+}
+
+function _solveScoreCheatSectionHtml(title, buttons) {
+    if (!buttons.length) return '';
+    return `<div class="solve-score-cheat-section"><div class="solve-score-cheat-title">${_escapeHtml(title)}</div><div class="solve-score-cheat-buttons">${buttons.join('')}</div></div>`;
+}
+
+function _renderSolveScoreCheatsheet(prefix) {
+    const p = _editorPrefix(prefix);
+    const el = document.getElementById(`${p}-ss-cheatsheet`);
+    if (!el) return;
+    const metrics = _solveScoreMetricNames.slice();
+    const starters = [
+        _solveScoreCheatButtonHtml(p, 'score = proximity', 'score = metric(proximity, slv, q=0.1%)'),
+        _solveScoreCheatButtonHtml(p, 'emit_norm proximity', 'emit_norm(metric(proximity, slv, q=0.1%))'),
+        _solveScoreCheatButtonHtml(p, 'two channels', 'emit_norm(metric(proximity, slv, q=0.1%))\nemit_norm(metric(spread, slv, q=0.1%))'),
+    ];
+    const metricButtons = metrics.map(name => {
+        const choices = _solveScoreMetricAllowedSources(name).join('/');
+        return _solveScoreCheatButtonHtml(p, name, _solveScoreMetricSnippet(name), choices ? `${choices}; q=0.1%` : '');
+    });
+    const outputButtons = Object.keys(_solveScoreOutputSpecs).map(name => {
+        const fn = name === 'emit' ? 'emit(score)' : `${name}(score)`;
+        return _solveScoreCheatButtonHtml(p, name, fn, (_solveScoreOutputSpecs[name] || {}).tooltip || '');
+    });
+    const unaryButtons = Object.keys(_solveScoreUnarySpecs).map(name => (
+        _solveScoreCheatButtonHtml(p, name, _solveScoreUnarySnippet(name, _solveScoreUnarySpecs[name]), (_solveScoreUnarySpecs[name] || {}).tooltip || '')
+    ));
+    const combineButtons = Object.keys(_solveScoreCombineSpecs).map(name => (
+        _solveScoreCheatButtonHtml(p, name, _solveScoreCombineSnippet(name, _solveScoreCombineSpecs[name]), (_solveScoreCombineSpecs[name] || {}).tooltip || '')
+    ));
+    el.innerHTML = [
+        _solveScoreCheatSectionHtml('Starters', starters),
+        _solveScoreCheatSectionHtml('Metrics', metricButtons),
+        _solveScoreCheatSectionHtml('Outputs', outputButtons),
+        _solveScoreCheatSectionHtml('Unary / Stack', unaryButtons),
+        _solveScoreCheatSectionHtml('Combine', combineButtons),
+    ].join('');
+}
+
+function _renderSolveScoreCheatsheets() {
+    _renderSolveScoreCheatsheet('render');
+    _renderSolveScoreCheatsheet('palette');
 }
 
 function _onRootProgramSourceInput(prefix) {

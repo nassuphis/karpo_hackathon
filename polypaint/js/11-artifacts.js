@@ -288,12 +288,16 @@ function _artifactSolveScoreSourceText(art) {
 function _restoreSolveScoreSourceFromArtifact(prefix, art) {
     const text = _artifactSolveScoreSourceText(art);
     if (!text.trim()) {
-        // Chip-based artifact: the text program is authoritative whenever it is
-        // nonblank, so a stale program left in the editor would override the
-        // chips we just populated and break the render. Clear it and return to
-        // the chips tab so the populated chain is what actually renders.
+        // Text is the only editable solve-score surface now. Old chain-only
+        // artifacts should have been reconstructed by the backend inventory
+        // path; fail visibly rather than populating compiler-internal chips.
         _setSolveScoreProgramSourceText(prefix, '');
-        _setSolveScoreProgramEditorMode(prefix, 'chips');
+        _setSolveScoreProgramEditorMode(prefix, 'text');
+        _setSolveScoreProgramStatus(
+            prefix,
+            'Selected artifact has no solve-score source text; refresh inventory or regenerate it before editing.',
+            true
+        );
         return false;
     }
     _setSolveScoreProgramSourceText(prefix, text);

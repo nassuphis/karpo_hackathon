@@ -61,7 +61,8 @@
       "/save-coeff-program",
       "/save-metadata",
       "/save-param-program",
-      "/save-solve-score-program"
+      "/save-solve-score-program",
+      "/solve-score-chain-to-source"
     ]
   },
   "deploy": {
@@ -117,6 +118,7 @@
       "/save-param-program",
       "/save-solve-score-program",
       "/solve-proximity",
+      "/solve-score-chain-to-source",
       "/sweep-cm",
       "/sweep-mt",
       "/tiff-compat",
@@ -205,7 +207,8 @@
       "/render-summary",
       "/save-coeff-program",
       "/save-param-program",
-      "/save-solve-score-program"
+      "/save-solve-score-program",
+      "/solve-score-chain-to-source"
     ]
   },
   "version": 1

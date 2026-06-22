@@ -871,6 +871,8 @@ function _solveScoreMetricsUseNonSolveSource(metrics) {
 }
 
 function _solveScoreMetricAllowedSources(name) {
+    const fromVocab = _solveScoreAllowedSourcesByMetric && _solveScoreAllowedSourcesByMetric[name];
+    if (Array.isArray(fromVocab) && fromVocab.length) return fromVocab.slice();
     if (_solveScoreParamMetricSet.has(name)) return ['pm'];
     if (_solveScoreParamCapableMetricSet.has(name)) return ['slv', 'cf', 'pm'];
     return ['slv', 'cf'];

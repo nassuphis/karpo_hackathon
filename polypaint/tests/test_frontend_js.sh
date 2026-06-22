@@ -30,6 +30,7 @@ const htmlSrc = fs.readFileSync(htmlPath, 'utf8');
 // Generated registry vocab: chip param shapes/descs/titles live there now
 // (lambda/coeff_legacy_registry.json ui blocks -> coeff_vocab_js.js).
 const vocabSrc = fs.readFileSync(require('path').join(require('path').dirname(htmlPath), 'coeff_vocab_js.js'), 'utf8');
+const solveVocabSrc = fs.readFileSync(require('path').join(require('path').dirname(htmlPath), 'solve_score_vocab_js.js'), 'utf8');
 
 function fail(message) {
   console.error('FATAL: ' + message);
@@ -230,6 +231,7 @@ assertIncludes("const _coeffProgramRegistryChipNames = _coeffRegistryVocab ? _co
 assertIncludes('<script src="program_profiles_js.js"></script>', 'the generated program profile mirror must load before the main bundle');
 assertIncludes('<script src="merged_opcodes_js.js"></script>', 'the generated merged opcode mirror must load before the main bundle');
 assertIncludes('<script src="coeff_vocab_js.js"></script>', 'the generated registry vocab must load before the main bundle');
+assertIncludes('<script src="solve_score_vocab_js.js"></script>', 'the generated solve-score vocab must load before the main bundle');
 assertIncludes("return { name: _coeffProgramRegistryChipName(normalized.name), params: ['poly', 'poly', ...args] };", 'Copy legacy transforms should map shadowed registry names through the shared chip-name map');
 assertIncludes("return [{ name: _coeffProgramRegistryChipName(legacyName), params: [legacyTgt, legacySrc, ...legacyArgs] }];", 'Normalize should map shadowed registry names through the shared chip-name map');
 assertIncludes("// LAYOUT CONTRACT: legacy rows are source-first", 'The legacy-vs-chip param order flip must stay documented at the normalize seam');
@@ -256,6 +258,8 @@ assertIncludes("chip-input-complex-wide", 'Coeff Program complex expression fiel
 assertIncludes("legacyName === 'exp'", 'Coeff Program legacy exp chip should render as a formula with source/target selectors');
 assertIncludes("if (item.name === 'exp_affine') {", 'Coeff Program exp_affine chip should render the affine formula (only exp_affine reaches the nativeTransform renderer)');
 if (!vocabSrc.includes("exp(z*field1+field2)")) fail('generated vocab should document complex multiplier plus offset semantics for the exp chip');
+if (!solveVocabSrc.includes("mean_log_mod")) fail('generated solve-score vocab should expose solve-score metric names');
+if (!solveVocabSrc.includes("angular_entropy_16")) fail('generated solve-score vocab should expose generic metric names');
 assertIncludes("legacyName === 'round'", 'Coeff Program legacy round chip should render as a formula with source/target selectors');
 if (!vocabSrc.includes("Complex multiplier in round(z*multiplier)")) fail('generated vocab should expose one compact complex multiplier field for round');
 assertIncludes("${fn}<span>(</span>${src}<span class=\"chip-op\">*</span>${field1}<span>)</span>${andy}", 'Coeff Program round formula should not waste UI on field1+i*field2 formatting');
@@ -426,8 +430,13 @@ assertIncludes("function _artifactColorInterpretation(art) {", 'render populate 
 assertIncludes("_setRenderColorInterpretation(_artifactColorInterpretation(art));", 'render populate should restore selected artifact color interpretation');
 assertIncludes("if (entry.background_color) _setRenderBackgroundColor(entry.background_color);", 'render populate should restore saved background color');
 assertIncludes("mode:${_colorInterpretationLabel(colorInterpretation)}", 'render artifact summaries should disclose color interpretation');
-assertIncludes("id=\"ss-insert-before-btn\"", 'solve-score editor should expose insert-before button');
-assertIncludes("id=\"ss-insert-after-btn\"", 'solve-score editor should expose insert-after button');
+assertIncludes("id=\"render-ss-source-text\"", 'render solve-score editor should expose source textarea');
+assertIncludes("id=\"render-ss-cheatsheet\"", 'render solve-score editor should expose source insert cheatsheet');
+assertIncludes("id=\"palette-ss-cheatsheet\"", 'palette solve-score editor should expose source insert cheatsheet');
+assertNotIncludes("id=\"ss-insert-before-btn\"", 'solve-score editor should not expose chip insert-before button');
+assertNotIncludes("id=\"ss-insert-after-btn\"", 'solve-score editor should not expose chip insert-after button');
+assertNotIncludes("id=\"ss-chips\"", 'render solve-score editor should not expose editable chip strip');
+assertNotIncludes("id=\"palette-ss-chips\"", 'palette solve-score editor should not expose editable chip strip');
 assertNotIncludes("id=\"ss-direct-rgb-preset\"", 'solve-score editor should not expose Direct RGB preset; saved programs cover this');
 assertIncludes(".solve-score-modal-popup {\n    width: min(1120px, calc(100vw - 24px));\n    height: min(92dvh, 820px);", 'Solve Scores modal should reserve a stable viewport-safe shell height');
 assertIncludes("grid-template-rows: auto auto minmax(0, 1fr) auto auto;", 'Saved-program modals should keep header/status/actions visible and body scroll-contained');
@@ -449,12 +458,12 @@ assertNotIncludes("Program spec:", 'Solve Scores modal should not show internal 
 assertNotIncludes("JSON.stringify(program.chain || [], null, 2)", 'Solve Scores modal should not show saved program JSON in the main display');
 assertIncludes("score normalization: lo=${fmt(s.score_output_clip_lo)}  hi=${fmt(s.score_output_clip_hi)}", 'histogram output should report score normalization range');
 assertIncludes("if (s.raw_hist_space === 'score_output_normalized') rawLabel = 'score-output normalized program output';", 'histogram raw bins should label score-output normalized space');
-assertIncludes("'mean_log_mod',", 'solve-score catalog should expose mean_log_mod');
-assertIncludes("'angular_entropy_16',", 'solve-score catalog should expose angular_entropy_16');
-assertIncludes("'sector_max_share_16',", 'solve-score catalog should expose sector_max_share_16');
-assertIncludes("'angular_order_4',", 'solve-score catalog should expose angular_order_4');
-assertIncludes("const _solveScoreGenericMetricPublicName = 'metric';", 'solve-score editor should preserve public generic metric chip name');
-assertIncludes("const _solveScoreGenericMetricChipName = '__metric';", 'solve-score editor should keep generic metric as an internal macro chip');
+if (!solveVocabSrc.includes("mean_log_mod")) fail('generated solve-score vocab should expose mean_log_mod');
+if (!solveVocabSrc.includes("angular_entropy_16")) fail('generated solve-score vocab should expose angular_entropy_16');
+if (!solveVocabSrc.includes("sector_max_share_16")) fail('generated solve-score vocab should expose sector_max_share_16');
+if (!solveVocabSrc.includes("angular_order_4")) fail('generated solve-score vocab should expose angular_order_4');
+assertIncludes("const _solveScoreGenericMetricPublicName = _solveScoreVocab.genericMetricPublicName || 'metric';", 'solve-score editor should derive public generic metric chip name from generated vocab');
+assertIncludes("const _solveScoreGenericMetricChipName = _solveScoreVocab.genericMetricChipName || '__metric';", 'solve-score editor should derive generic metric internal name from generated vocab');
 assertIncludes("catalog[_solveScoreGenericMetricChipName] = {", 'solve-score catalog should expose generic metric chip');
 assertIncludes("return [_solveScoreGenericMetricPublicName, ...(item.params || [])];", 'generic metric chip should serialize publicly without desugaring in saved programs');
 assertIncludes("id=\"render-preview-pix\" value=\"256\"", 'render output should expose default 256px lores preview size input');
@@ -491,8 +500,8 @@ assertIncludes("_initRenderLoresPreviewMarquee(_renderLoresPreviewMetaFromResult
 assertIncludes("_clearRenderLoresPreviewSelection();", 'Escape should clear output preview marquee selection');
 assertIncludes("_setRenderLoresPreviewEmissionHistograms(result.emission_histograms || result.solve_score?.emission_histograms || []);", 'render lores preview should load per-emission histograms');
 assertIncludes("await _setRenderLoresPreviewPaletteImage(result);", 'render lores preview should draw returned palette image');
-assertIncludes("choices: ['raw', 'norm', 'none']", 'emit chip mode dropdown should expose none mode');
-assertIncludes("flush: { arity: 0, params: [], tooltip: 'clear the entire score stack' }", 'solve-score editor should expose flush chip');
+if (!solveVocabSrc.includes('"none"')) fail('generated solve-score output vocab should expose none mode');
+if (!solveVocabSrc.includes('"flush"')) fail('generated solve-score stack vocab should expose flush');
 assertIncludes("omega_cosine requires one finite numeric omega", 'omega_cosine frontend validation should not cap frequency at 10');
 assertNotIncludes("omega_cosine requires one numeric omega in [1, 10]", 'omega_cosine frontend validation should not retain old [1,10] range');
 assertIncludes("id=\"palette-solve-score-program-manage\" onclick=\"openSolveScoreProgramModal('palette')\"", 'palette tab should expose Solve Scores modal launcher');
@@ -546,19 +555,24 @@ assertNotIncludes("id=\"render-solve-score-program-save\"", 'render tab should n
 assertNotIncludes("id=\"palette-solve-score-program-save\"", 'palette tab should not keep save-json button');
 assertNotIncludes("id=\"render-solve-score-program-file\"", 'render tab should not keep per-tab solve-score upload input');
 assertNotIncludes("id=\"palette-solve-score-program-file\"", 'palette tab should not keep per-tab solve-score upload input');
-assertIncludes("id=\"render-ss-tab-text\" class=\"compute-preview-tab-btn\" onclick=\"_setSolveScoreProgramEditorMode('render','text')\"", 'render solve-score editor should expose a Text tab');
-assertIncludes("id=\"palette-ss-tab-text\" class=\"compute-preview-tab-btn\" onclick=\"_setSolveScoreProgramEditorMode('palette','text')\"", 'palette solve-score editor should expose a Text tab');
+assertIncludes("id=\"render-ss-text-panel\" class=\"coeff-program-editor-panel active\"", 'render solve-score editor should keep the Text panel active');
+assertIncludes("id=\"palette-ss-text-panel\" class=\"coeff-program-editor-panel active\"", 'palette solve-score editor should keep the Text panel active');
+assertNotIncludes("id=\"render-ss-tab-chips\"", 'render solve-score editor should not expose a Chips tab');
+assertNotIncludes("id=\"palette-ss-tab-chips\"", 'palette solve-score editor should not expose a Chips tab');
 assertIncludes("id=\"render-rt-tab-text\" class=\"compute-preview-tab-btn\" onclick=\"_setRootProgramEditorMode('render','text')\"", 'render root editor should expose a Text tab');
 assertIncludes("id=\"palette-rt-tab-text\" class=\"compute-preview-tab-btn\" onclick=\"_setRootProgramEditorMode('palette','text')\"", 'palette root editor should expose a Text tab');
 assertIncludes("lambdaPost('storage', { source_text: sourceText, strict: true }, '/compile-solve-score-program-source')", 'solve-score source editor should compile through the backend route');
 assertIncludes("lambdaPost('storage', { source_text: sourceText, strict: true }, '/compile-root-program-source')", 'root source editor should compile through the backend route');
 assertIncludes("solve_score_program_source_text: p.solveScoreProgramSourceText,", 'render/preview payloads should forward solve-score source text');
+assertNotIncludes("solve_score_chain: p.solveScoreChain,", 'render/preview browser payloads should not send solve-score chip chains');
 assertIncludes("root_program_source_text: p.rootProgramSourceText || undefined,", 'render/preview payloads should forward root source text');
 assertIncludes("solve_score_program_source_text: _effectiveSolveScoreProgramSourceText('palette'),", 'palette payload should forward solve-score source text');
+assertNotIncludes("solve_score_chain: score.chain,", 'palette browser payload should not send solve-score chip chains');
 assertIncludes("_restoreSolveScoreSourceFromArtifact('render', art);", 'render Populate should restore solve-score source text when metadata has it');
 assertIncludes("_restoreRootSourceFromArtifact('palette', pal);", 'palette Populate should restore root source text when metadata has it');
 assertIncludes("lambdaPost('storage', {}, '/list-solve-score-programs')", 'solve-score modal should list saved programs through storage');
 assertIncludes("lambdaPost('storage', { id }, '/fetch-solve-score-program')", 'solve-score modal should fetch saved programs through storage');
+assertIncludes("lambdaPost('storage', { chain }, '/solve-score-chain-to-source')", 'solve-score modal should reconstruct legacy chain programs through backend source route');
 assertIncludes("recommended_interpretation: payload.recommended_interpretation || undefined,", 'solve-score modal should save recommended color interpretation through storage');
 assertIncludes("lambdaPost('storage', { id }, '/delete-solve-score-program')", 'solve-score modal should delete saved programs through storage');
 assertNotIncludes("fetch('solve-score-programs/index.json'", 'frontend should not depend on repo-backed solve-score preset catalog');
@@ -580,6 +594,8 @@ const htmlSrc = fs.readFileSync(htmlPath, 'utf8');
 // the registry JSON and the deployed JS fails here.
 const vocabSrc = fs.readFileSync(require('path').join(require('path').dirname(htmlPath), 'coeff_vocab_js.js'), 'utf8');
 const coeffRegistryVocab = JSON.parse(vocabSrc.slice(vocabSrc.indexOf('{'), vocabSrc.lastIndexOf('}') + 1));
+const solveVocabSrc = fs.readFileSync(require('path').join(require('path').dirname(htmlPath), 'solve_score_vocab_js.js'), 'utf8');
+const solveScoreVocab = JSON.parse(solveVocabSrc.slice(solveVocabSrc.indexOf('{'), solveVocabSrc.lastIndexOf('}') + 1));
 
 function fail(message) {
   console.error('FATAL: ' + message);
@@ -638,7 +654,7 @@ function assert(cond, message) {
 
 async function main() {
   const solveScoreCatalogBlock = extractBetween(
-    "const _solveScoreMetricNames = [",
+    "const _solveScoreVocab = (typeof window !== 'undefined' && window._solveScoreVocab) || {};",
     "const _ctAndyParam = { kind: 'andy', ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: `Blend amount in [0,1]. ${_coeffProgramScalarExprHelp}` };",
     'solve-score catalog block'
   );
@@ -729,10 +745,7 @@ async function main() {
   const ssSourceTextarea = { value: '' };
   const _ssFakeEls = {
     'render-ss-source-text': ssSourceTextarea,
-    'render-ss-chips-panel': { classList: { toggle() {} } },
     'render-ss-text-panel': { classList: { toggle() {} } },
-    'render-ss-tab-chips': { classList: { toggle() {} } },
-    'render-ss-tab-text': { classList: { toggle() {} } },
   };
   const ctx = {
     console,
@@ -741,7 +754,7 @@ async function main() {
     renderColorMode: 'rainbow',
     _renderArtifacts: { color: [] },
     _renderMtPopupState: { saveAssociatedPalette: false },
-    _solveScoreProgramEditorMode: { render: 'chips', palette: 'chips' },
+    _solveScoreProgramEditorMode: { render: 'text', palette: 'text' },
     _solveScoreProgramRememberedNames: { render: 'pal5', palette: 'keep' },
     _coeffRegistryVocab: coeffRegistryVocab,
     _coeffProgramChain: [],
@@ -755,6 +768,7 @@ async function main() {
     _nonColorCalls: [],
     _updateSolveScoreButtonsCalls: 0,
     window: {
+      _solveScoreVocab: solveScoreVocab,
       _coeffFuncCatalog: [
         { name: 'const', params: [{ name: 'length', default: 35 }, { name: 'value_re', default: 1 }, { name: 'value_im', default: 0 }] },
         { name: 'poly_1', kind: 'legacy', source: 'poly.py', degree: 35 },
@@ -1053,15 +1067,17 @@ async function main() {
   ctx._noteSolveScorePopulate('render', { family: 'palette', artifact_id: 'pal_7' });
   assert(ctx._statusCalls[0].message === 'Populated from palette pal_7', 'standalone palette populate should not pretend to come from a color artifact');
 
-  // Populate solve-score reset: a chip-based artifact (no source text) must clear
-  // any stale text program, because the text program is authoritative whenever it
-  // is nonblank and would otherwise override the populated chips and break render.
+  // Populate solve-score reset: a chain-only artifact must clear stale text and
+  // stay text-only. Backend inventory should reconstruct old chains to source;
+  // if it did not, the editor must fail visibly rather than show internal chips.
   ssSourceTextarea.value = 'STALE m0-0;emit(norm)';
   ctx._solveScoreProgramEditorMode.render = 'text';
+  ctx._statusCalls = [];
   const ssCleared = ctx._restoreSolveScoreSourceFromArtifact('render', { solve_score_chain: [['proximity', 'slv', '0.1']] });
   assert(ssCleared === false, 'populate from a chip-only artifact should report no source restored');
-  assert(ssSourceTextarea.value === '', 'populate must clear a stale solve-score text program so the chips render');
-  assert(ctx._solveScoreProgramEditorMode.render === 'chips', 'populate from a chip-only artifact should switch the solve-score editor to chips');
+  assert(ssSourceTextarea.value === '', 'populate must clear stale solve-score text when no reconstructed source exists');
+  assert(ctx._solveScoreProgramEditorMode.render === 'text', 'populate from a chain-only artifact should remain in text mode');
+  assert(ctx._statusCalls.some(call => call.isError === true), 'populate from a chain-only artifact should show a visible source-missing error');
 
   // An artifact that DOES carry a text program restores it verbatim and shows text.
   ssSourceTextarea.value = '';

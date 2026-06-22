@@ -20,6 +20,7 @@ echo "Running predeploy contract gate..."
 "${TEST_PYTHON[@]}" lambda/gen_program_profiles.py --check
 "${TEST_PYTHON[@]}" lambda/gen_merged_opcodes.py --check
 "${TEST_PYTHON[@]}" lambda/gen_coeff_vocab.py --check
+"${TEST_PYTHON[@]}" lambda/gen_solve_score_vocab.py --check
 "${TEST_PYTHON[@]}" deploy_manifest.py --emit-bash > /tmp/polypaint-deploy-specs-gate.sh
 bash -n /tmp/polypaint-deploy-specs-gate.sh
 "${TEST_PYTHON[@]}" -m pytest \
@@ -38,6 +39,10 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_coeff_program_chain.py \
     tests/test_coeff_program_native.py \
     tests/test_coeff_program_storage.py \
+    tests/test_solve_score_chain.py \
+    tests/test_solve_score_program_source.py \
+    tests/test_solve_score_source_equivalence.py \
+    tests/test_solve_score_program_storage.py \
     tests/test_storage_handler.py \
     tests/test_render_lores_preview_handler.py \
     tests/test_compute_plan.py \

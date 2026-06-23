@@ -88,6 +88,8 @@ class _FakeS3:
 
     def __init__(self):
         self.objects = {}
+        self.metadata = {}
+        self.deleted = []
 
     def get_paginator(self, name):
         outer = self
@@ -112,14 +114,113 @@ class _FakeS3:
             raise ClientError({"Error": {"Code": "NoSuchKey", "Message": "missing"}}, "GetObject")
         return {"Body": io.BytesIO(self.objects[Key])}
 
-    def put_object(self, Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None):
+    def put_object(self, Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None, CacheControl=None):
         self.objects[Key] = Body if isinstance(Body, bytes) else str(Body or "").encode("utf-8")
+        self.metadata[Key] = {
+            "ContentType": ContentType or "",
+            "Metadata": Metadata or {},
+            "CacheControl": CacheControl or "",
+        }
         return {}
 
     def head_object(self, Bucket=None, Key=None):
         if Key not in self.objects:
             raise ClientError({"Error": {"Code": "404", "Message": "missing"}}, "HeadObject")
+        meta = self.metadata.get(Key, {})
+        return {
+            "ContentLength": len(self.objects.get(Key, b"")),
+            "ContentType": meta.get("ContentType", ""),
+            "Metadata": meta.get("Metadata", {}),
+        }
+
+    def delete_objects(self, Bucket=None, Delete=None):
+        deleted = []
+        for obj in (Delete or {}).get("Objects", []):
+            key = obj.get("Key")
+            if key in self.objects:
+                del self.objects[key]
+            self.metadata.pop(key, None)
+            self.deleted.append(key)
+            deleted.append({"Key": key})
+        return {"Deleted": deleted}
+
+    def generate_presigned_url(self, method, Params=None, ExpiresIn=None):
+        return "https://example.test/" + (Params or {}).get("Key", "")
+
+
+class _FakeDDB:
+    def __init__(self):
+        self.items = {}
+        self.put_calls = []
+
+    def _key(self, item_or_key):
+        return (
+            item_or_key["job_id"]["S"],
+            item_or_key["task_id"]["S"],
+        )
+
+    def _plain(self, attr):
+        if "S" in attr:
+            return attr["S"]
+        if "N" in attr:
+            raw = attr["N"]
+            value = float(raw)
+            return int(value) if value.is_integer() else value
+        if "M" in attr:
+            return {k: self._plain(v) for k, v in attr["M"].items()}
+        if "BOOL" in attr:
+            return bool(attr["BOOL"])
+        if "NULL" in attr:
+            return None
+        if "L" in attr:
+            return [self._plain(v) for v in attr["L"]]
+        return None
+
+    def _conditional_failed(self):
+        return ClientError(
+            {"Error": {"Code": "ConditionalCheckFailedException", "Message": "condition failed"}},
+            "PutItem",
+        )
+
+    def get_item(self, TableName=None, Key=None, ConsistentRead=None):
+        item = self.items.get(self._key(Key))
+        return {"Item": item} if item else {}
+
+    def put_item(self, TableName=None, Item=None, ConditionExpression=None, ExpressionAttributeNames=None, ExpressionAttributeValues=None):
+        key = self._key(Item)
+        existing = self.items.get(key)
+        if ConditionExpression and existing is not None:
+            state = self._plain(existing.get("state", {"S": ""}))
+            updated_at_ms = self._plain(existing.get("updated_at_ms", {"N": "0"}))
+            refresh_id = self._plain(existing.get("refresh_id", {"S": ""}))
+            values = ExpressionAttributeValues or {}
+            if "attribute_not_exists(job_id)" in ConditionExpression:
+                computing = self._plain(values[":computing"])
+                stale_before = self._plain(values[":stale_before"])
+                if not (state != computing or updated_at_ms < stale_before):
+                    raise self._conditional_failed()
+            elif "refresh_id = :refresh_id" in ConditionExpression:
+                wanted_refresh = self._plain(values[":refresh_id"])
+                computing = self._plain(values[":computing"])
+                if not (refresh_id == wanted_refresh and state == computing):
+                    raise self._conditional_failed()
+            else:
+                raise AssertionError(f"unsupported fake condition: {ConditionExpression}")
+        self.items[key] = Item
+        self.put_calls.append((key, Item, ConditionExpression))
         return {}
+
+    def update_item(self, *args, **kwargs):
+        raise AssertionError("mosaic status must use conditional put_item, not update_item")
+
+
+class _FakeLambdaClient:
+    def __init__(self):
+        self.invocations = []
+
+    def invoke(self, **kwargs):
+        self.invocations.append(kwargs)
+        return {"StatusCode": 202}
 
 
 _CALC_V1 = {
@@ -211,6 +312,122 @@ class TestComputeMigration(unittest.TestCase):
 
         self.assertEqual(resp["statusCode"], 400)
         self.assertIn("render-count requires job_id", body["error"])
+
+    @patch("handler_storage._get_ddb")
+    @patch("handler_storage.boto3.client")
+    @patch.dict(os.environ, {"AWS_LAMBDA_FUNCTION_NAME": "polypaint-storage", "AWS_REGION": "us-east-1"})
+    def test_color_mosaic_refresh_starts_async_worker_with_conditional_put(self, mock_boto_client, mock_get_ddb):
+        import handler_storage
+
+        fake_ddb = _FakeDDB()
+        fake_lambda = _FakeLambdaClient()
+        mock_get_ddb.return_value = fake_ddb
+        mock_boto_client.return_value = fake_lambda
+
+        resp = handler_storage.handler(_event("/list-color-mosaic", {"refresh": True}), None)
+        body = json.loads(resp["body"])
+
+        self.assertEqual(resp["statusCode"], 200)
+        self.assertEqual(body["state"], "computing")
+        self.assertTrue(body["refresh_id"].startswith("mosaic_"))
+        self.assertEqual(len(fake_lambda.invocations), 1)
+        payload = json.loads(fake_lambda.invocations[0]["Payload"].decode("utf-8"))
+        self.assertEqual(payload["internal_action"], "build_color_mosaic")
+        self.assertEqual(payload["refresh_id"], body["refresh_id"])
+        self.assertEqual(len(fake_ddb.put_calls), 1)
+        self.assertIn("attribute_not_exists(job_id)", fake_ddb.put_calls[0][2])
+
+    @patch("handler_storage._results_list_s3_client")
+    @patch("handler_storage._get_ddb")
+    @patch("handler_storage.s3")
+    def test_color_mosaic_worker_builds_manifest_and_ready_status(self, mock_s3, mock_get_ddb, mock_list_s3_client):
+        import handler_storage
+
+        fake = _FakeS3()
+        fake_ddb = _FakeDDB()
+        self._patch(mock_s3, fake)
+        mock_list_s3_client.return_value = fake
+        mock_get_ddb.return_value = fake_ddb
+        self._store(fake, "job", {"function": "g", "degree": 7, "N": 512, "times": 2})
+        fake.objects["renders/job/color/color_a/image.jpeg"] = b"jpeg"
+        fake.objects["renders/job/color/color_a/preview.png"] = (
+            b"\x89PNG\r\n\x1a\n" + (13).to_bytes(4, "big") + b"IHDR"
+            + (512).to_bytes(4, "big") + (512).to_bytes(4, "big")
+        )
+        fake.metadata["renders/job/color/color_a/preview.png"] = {
+            "Metadata": {"width": "512", "height": "512"},
+            "ContentType": "image/png",
+        }
+
+        with patch("handler_storage.boto3.client", return_value=_FakeLambdaClient()):
+            status = handler_storage._start_color_mosaic_refresh()
+        ready = handler_storage._run_color_mosaic_worker(status["refresh_id"])
+
+        self.assertEqual(ready["state"], "ready")
+        self.assertEqual(ready["count"], 1)
+        self.assertEqual(ready["source_counts"], {"512x512": 1})
+        manifest_key = ready["manifest_key"]
+        self.assertIn(manifest_key, fake.objects)
+        manifest = json.loads(fake.objects[manifest_key])
+        self.assertEqual(manifest["tiles"][0]["job_id"], "job")
+        self.assertEqual(manifest["tiles"][0]["artifact_id"], "color_a")
+        self.assertEqual(manifest["tiles"][0]["function"], "g")
+        self.assertEqual(manifest["tiles"][0]["degree"], 7)
+        self.assertEqual(manifest["tiles"][0]["N"], 512)
+        self.assertEqual(manifest["tiles"][0]["times"], 2)
+
+    @patch("handler_storage._results_list_s3_client")
+    @patch("handler_storage._get_ddb")
+    @patch("handler_storage.s3")
+    def test_color_mosaic_stale_worker_cannot_overwrite_new_refresh(self, mock_s3, mock_get_ddb, mock_list_s3_client):
+        import handler_storage
+
+        fake = _FakeS3()
+        fake_ddb = _FakeDDB()
+        self._patch(mock_s3, fake)
+        mock_list_s3_client.return_value = fake
+        mock_get_ddb.return_value = fake_ddb
+        self._store(fake, "job", {"function": "g"})
+        fake.objects["renders/job/color/color_a/image.jpeg"] = b"jpeg"
+        fake.objects["renders/job/color/color_a/preview.png"] = (
+            b"\x89PNG\r\n\x1a\n" + (13).to_bytes(4, "big") + b"IHDR"
+            + (512).to_bytes(4, "big") + (512).to_bytes(4, "big")
+        )
+        fake.objects["renders/_index/color_mosaic/old/all.json"] = b"old"
+
+        now = handler_storage._utc_now_iso()
+        handler_storage._put_mosaic_status({
+            "state": "computing",
+            "refresh_id": "new",
+            "started_at": now,
+            "updated_at": now,
+            "updated_at_ms": handler_storage._mosaic_now_ms(),
+        })
+
+        result = handler_storage._run_color_mosaic_worker("old")
+        current = handler_storage._read_mosaic_status()
+
+        self.assertEqual(result["state"], "error")
+        self.assertEqual(current["state"], "computing")
+        self.assertEqual(current["refresh_id"], "new")
+        self.assertIn("renders/_index/color_mosaic/old/all.json", fake.objects)
+
+    @patch("handler_storage.s3")
+    def test_render_family_variant_presign_default_and_false_regression(self, mock_s3):
+        import handler_storage
+
+        fake = _FakeS3()
+        self._patch(mock_s3, fake)
+        fake.objects["renders/job/color/color_a/image.jpeg"] = b"jpeg"
+        fake.objects["renders/job/color/color_a/preview.png"] = b"preview"
+
+        default_entry = handler_storage._list_render_family_variants("job", "color")[0]
+        raw_entry = handler_storage._list_render_family_variants("job", "color", presign=False)[0]
+
+        self.assertTrue(default_entry["image_url"].startswith("https://example.test/"))
+        self.assertTrue(default_entry["preview_url"].startswith("https://example.test/"))
+        self.assertIsNone(raw_entry["image_url"])
+        self.assertIsNone(raw_entry["preview_url"])
 
     @patch("handler_storage.s3")
     def test_detail_reports_legacy_run_as_v1_migratable(self, mock_s3):

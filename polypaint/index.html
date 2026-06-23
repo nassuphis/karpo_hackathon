@@ -1443,6 +1443,7 @@ button {
         <div class="tab-btn" onclick="switchTab('palette')">Palette</div>
         <div class="tab-btn" onclick="switchTab('render')">Render</div>
         <div class="tab-btn" onclick="switchTab('favorites')">Favorites</div>
+        <div class="tab-btn" onclick="switchTab('allrenders')">AllRenders</div>
         <div class="tab-btn" onclick="switchTab('deepzoom')">DeepZoom</div>
     </div>
     <div class="panel" style="border-radius:0 8px 8px 8px">
@@ -2017,6 +2018,34 @@ button {
             <div id="deepzoom-status" class="status" style="margin-bottom:6px"></div>
             <div id="deepzoom-inventory" style="font-size:12px; color:#ccc; max-height:200px; overflow-y:auto; border:1px solid #333; border-radius:4px"></div>
             <div id="deepzoom-log" style="margin-top:8px; font-family:monospace; font-size:11px"></div>
+        </div>
+        <!-- AllRenders tab -->
+        <div id="tab-allrenders" class="tab-content">
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px">
+                <button class="btn-secondary btn-inline" id="btn-allrenders-refresh" onclick="refreshAllRendersMosaic()" style="padding:4px 12px; font-size:12px">Refresh</button>
+                <button class="btn-secondary btn-inline" id="btn-allrenders-home" onclick="homeAllRenders()" style="padding:4px 12px; font-size:12px">Home</button>
+                <label style="font-size:11px; color:#aaa">Size</label>
+                <select id="allrenders-size-filter" onchange="_allRendersRebuild()" style="width:90px">
+                    <option value="all">All</option>
+                    <option value="512">512</option>
+                    <option value="1024">1024</option>
+                </select>
+                <label style="font-size:11px; color:#aaa">Sort</label>
+                <select id="allrenders-sort-mode" onchange="_allRendersRebuild()" style="width:120px">
+                    <option value="date">Date</option>
+                    <option value="job">Job</option>
+                    <option value="function">Function</option>
+                    <option value="degree">Degree</option>
+                    <option value="N">N</option>
+                    <option value="random">Random</option>
+                </select>
+                <label style="font-size:11px; color:#aaa">Cols</label>
+                <input id="allrenders-cols" type="number" min="1" step="1" placeholder="auto" onchange="_allRendersRebuild()" style="width:80px">
+                <span id="allrenders-summary" style="font-size:11px; color:#888"></span>
+            </div>
+            <div id="allrenders-status" class="status" style="margin-bottom:6px">Refresh to build the wall.</div>
+            <div id="allrenders-viewer" style="width:100%; height:68vh; background:#050505; border:1px solid #333; border-radius:4px; display:block"></div>
+            <div id="allrenders-log" style="margin-top:8px; font-family:monospace; font-size:11px"></div>
         </div>
     </div>
 </div>
@@ -2983,11 +3012,12 @@ button {
 <script src="js/10-status-results.js"></script>
 <script src="js/11-artifacts.js"></script>
 <script src="js/12-deepzoom-boot.js"></script>
+<script src="js/13-allrenders.js"></script>
 <script>
 // Part-consistency check: every split file must have registered, in order.
 // Catches a partial upload or a cached/mixed set of js/ files immediately.
 (function () {
-    var expected = ['01-core-compute', '02-preview-solvescore', '03-program-modals', '04-palette-color', '05-render-popups', '06-popup-init', '07-transform-catalogs', '08-chip-editors', '09-render-orchestration', '10-status-results', '11-artifacts', '12-deepzoom-boot'];
+    var expected = ['01-core-compute', '02-preview-solvescore', '03-program-modals', '04-palette-color', '05-render-popups', '06-popup-init', '07-transform-catalogs', '08-chip-editors', '09-render-orchestration', '10-status-results', '11-artifacts', '12-deepzoom-boot', '13-allrenders'];
     var got = window.__ppParts || [];
     if (expected.length !== got.length || expected.some(function (n, i) { return got[i] !== n; })) {
         console.error('polypaint js parts mismatch — expected', expected, 'got', got,

@@ -136,6 +136,7 @@
         "/delete-task",
         "/render-summary",
         "/render-count",
+        "/list-color-mosaic",
         "/delete-prefix",
         "/list-deepzoom"
       ]

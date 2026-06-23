@@ -1577,4 +1577,91 @@ if (parts.length !== tags.filter(t => t.startsWith('js/')).length) {
 console.log('Frontend sequential load checks: OK (' + tags.length + ' scripts)');
 NODE
 
+node - "$HTML" <<'NODE'
+const fs = require('fs'), vm = require('vm'), path = require('path');
+const root = path.dirname(process.argv[2]);
+const html = fs.readFileSync(process.argv[2], 'utf8');
+const scripts = ['js/13-allrenders.js'];
+function assert(cond, msg) { if (!cond) throw new Error(msg); }
+function makeEl(id) {
+  return {
+    id,
+    style: {},
+    textContent: '',
+    className: '',
+    value: '',
+    disabled: false,
+  };
+}
+const els = {
+  'allrenders-status': makeEl('allrenders-status'),
+  'allrenders-summary': makeEl('allrenders-summary'),
+  'btn-allrenders-refresh': makeEl('btn-allrenders-refresh'),
+  'allrenders-size-filter': makeEl('allrenders-size-filter'),
+  'allrenders-sort-mode': makeEl('allrenders-sort-mode'),
+  'allrenders-cols': makeEl('allrenders-cols'),
+  'allrenders-viewer': makeEl('allrenders-viewer'),
+};
+els['allrenders-size-filter'].value = 'all';
+els['allrenders-sort-mode'].value = 'date';
+const opened = [];
+const ctx = {
+  console,
+  document: {
+    getElementById(id) { return els[id] || null; },
+  },
+  window: {},
+  setTimeout(fn, ms) { return 1; },
+  clearTimeout() {},
+  Date: { now: () => 12345 },
+  Math, JSON, Number, String, Boolean, Array, Object, Map, Set, Promise, URL,
+  OpenSeadragon(opts) {
+    return {
+      opts,
+      viewport: { goHome() {}, pointFromPixel() { return {}; }, viewportToImageCoordinates() { return {x: 1, y: 1}; } },
+      addHandler() {},
+      open(src) { opened.push(src); },
+    };
+  },
+  lambdaPost: async (service, payload, pathName) => {
+    if (pathName !== '/list-color-mosaic') throw new Error('unexpected path ' + pathName);
+    if (payload && payload.refresh) return { state: 'computing', refresh_id: 'mosaic_x' };
+    return {
+      state: 'ready',
+      refresh_id: 'mosaic_ready',
+      manifest_url: 'https://example.test/m.json',
+      count: 2,
+    };
+  },
+  fetch: async (url) => ({
+    ok: true,
+    json: async () => ({
+      refresh_id: 'mosaic_ready',
+      base: 'https://bucket.test/',
+      count: 2,
+      tiles: [
+        {key:'renders/j/color/a/preview.png', job_id:'j', artifact_id:'a', created_at:'2026', preview_width:512, preview_height:512},
+        {key:'renders/j/color/b/preview.png', job_id:'j', artifact_id:'b', created_at:'2025', preview_width:1024, preview_height:1024},
+      ],
+    }),
+  }),
+};
+ctx.window = ctx; ctx.globalThis = ctx;
+vm.createContext(ctx);
+for (const script of scripts) vm.runInContext(fs.readFileSync(path.join(root, script), 'utf8'), ctx, {filename: script});
+
+(async () => {
+  await ctx.loadAllRenders();
+  assert(opened.length === 1, 'loadAllRenders should open a tile source');
+  assert(opened[0].getTileUrl(0, 0, 0) === 'https://bucket.test/renders/j/color/a/preview.png', 'tile 0 URL mismatch');
+  els['allrenders-size-filter'].value = '1024';
+  ctx._allRendersRebuild();
+  assert(opened.length === 2, 'size filter should reopen tile source');
+  assert(opened[1].getTileUrl(0, 0, 0) === 'https://bucket.test/renders/j/color/b/preview.png', '1024 filter should select 1024 tile');
+  await ctx.refreshAllRendersMosaic();
+  assert(els['btn-allrenders-refresh'].disabled === true, 'refresh should disable button while computing');
+  console.log('Frontend AllRenders runtime checks: OK');
+})().catch(e => { console.error(e.stack || String(e)); process.exit(1); });
+NODE
+
 echo "=== Frontend fused render source test passed ==="

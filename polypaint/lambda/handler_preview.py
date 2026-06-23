@@ -14,10 +14,28 @@ import time
 import struct
 
 import boto3
+from botocore.exceptions import ClientError
 
 from shared import BUCKET, PRESIGN_EXPIRY, parse_body, ok_response, compute_viewport_from_bin, encode_png_gray
 
 s3 = boto3.client("s3")
+
+
+def _error_response(status_code, message):
+    return {
+        "statusCode": int(status_code),
+        "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
+        "body": json.dumps({"error": str(message)[:1000]}),
+    }
+
+
+def _is_missing_s3_error(exc):
+    code = getattr(exc, "response", {}).get("Error", {}).get("Code")
+    if code in {"NoSuchKey", "404", "NotFound"}:
+        return True
+    msg = str(exc)
+    return "NoSuchKey" in msg or "NotFound" in msg
+
 
 def handler(event, context):
     params = parse_body(event)
@@ -28,9 +46,15 @@ def handler(event, context):
 
     t0 = time.time()
 
-    # Read calc.json for lores key and degree
-    calc_obj = s3.get_object(Bucket=BUCKET,
-                             Key=f"renders/{job_id}/calc.json")
+    # Read calc.json for lores key and degree. Missing calc.json means the
+    # compute was deleted or never completed enough to be previewable.
+    calc_key = f"renders/{job_id}/calc.json"
+    try:
+        calc_obj = s3.get_object(Bucket=BUCKET, Key=calc_key)
+    except ClientError as exc:
+        if _is_missing_s3_error(exc):
+            return _error_response(404, f"compute {job_id} not found")
+        raise
     calc = json.loads(calc_obj["Body"].read())
     lores_key = calc["lores"]["bin_key"]
     degree = calc.get("degree", 1)
@@ -67,6 +91,18 @@ def handler(event, context):
 
     # Encode as grayscale PNG (half the size of RGB)
     png_data = encode_png_gray(W, H, gray)
+
+    # Fail closed if the compute was deleted while the preview was being
+    # generated. Otherwise a lazy background preview can recreate
+    # renders/<job>/ after /delete removed calc.json, and /list will see an
+    # orphan prefix. This is still not a distributed lock, but it removes the
+    # practical delete-during-preview race introduced by lazy generation.
+    try:
+        s3.head_object(Bucket=BUCKET, Key=calc_key)
+    except ClientError as exc:
+        if _is_missing_s3_error(exc):
+            return _error_response(404, f"compute {job_id} disappeared before preview write")
+        raise
 
     # Upload preview
     preview_key = f"renders/{job_id}/preview.png"

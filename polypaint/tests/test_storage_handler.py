@@ -95,6 +95,14 @@ class _FakeS3:
         class _P:
             def paginate(self, Bucket=None, Prefix=None, Delimiter=None):
                 keys = [k for k in outer.objects if k.startswith(Prefix or "")]
+                if Delimiter:
+                    prefixes = set()
+                    for key in keys:
+                        rest = key[len(Prefix or ""):]
+                        head = rest.split(Delimiter, 1)[0]
+                        if head:
+                            prefixes.add((Prefix or "") + head + Delimiter)
+                    return [{"KeyCount": len(keys), "CommonPrefixes": [{"Prefix": p} for p in sorted(prefixes)]}]
                 return [{"KeyCount": len(keys), "Contents": [{"Key": k} for k in keys]}]
 
         return _P()
@@ -149,6 +157,29 @@ class TestComputeMigration(unittest.TestCase):
 
     def _store(self, fake, job_id, calc):
         fake.objects[f"renders/{job_id}/calc.json"] = json.dumps(calc).encode("utf-8")
+
+    @patch("handler_storage._results_list_s3_client")
+    @patch("handler_storage.s3")
+    def test_list_skips_preview_orphan_prefix_without_calc_json(self, mock_s3, mock_list_s3_client):
+        # Lazy Results preview writes renders/<job>/preview.png. If a compute is
+        # deleted while that background write is in flight, a preview-only
+        # prefix must not reappear as a broken Results row.
+        import handler_storage
+
+        fake = _FakeS3()
+        self._patch(mock_s3, fake)
+        mock_list_s3_client.return_value = fake
+        self._store(fake, "good", _CALC_V2)
+        fake.objects["renders/orphan/preview.png"] = b"png"
+
+        resp = handler_storage.handler(_event("/list", {"list_workers": 1}), None)
+        body = json.loads(resp["body"])
+
+        self.assertEqual(resp["statusCode"], 200)
+        self.assertEqual([row["job_id"] for row in body["results"]], ["good"])
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["skipped_missing_calc"], 1)
+        self.assertEqual(body["metadata_error_count"], 0)
 
     @patch("handler_storage.s3")
     def test_detail_reports_legacy_run_as_v1_migratable(self, mock_s3):

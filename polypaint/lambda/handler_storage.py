@@ -1865,9 +1865,16 @@ def handle_list(event):
             entry["total_roots"] = calc.get("total_roots",
                 sum(s.get("bin_size", 0) for s in chunks) // 8)
         except Exception as exc:
-            entry["function"] = "?"
-            entry["total_size"] = 0
-            entry["_metadata_error"] = f"{type(exc).__name__}: {exc}"
+            if isinstance(exc, ClientError) and _is_missing_s3_error(exc):
+                # A render prefix without calc.json is not a usable compute
+                # result: it may be an in-progress/failed run, or a lazy
+                # preview artifact that raced with deletion. Do not surface it
+                # as a broken "?" row in Results.
+                entry["_skip_missing_calc"] = True
+            else:
+                entry["function"] = "?"
+                entry["total_size"] = 0
+                entry["_metadata_error"] = f"{type(exc).__name__}: {exc}"
 
         return entry
 
@@ -1878,10 +1885,17 @@ def handle_list(event):
     calc_fetch_us = int((time.time() - t_calc_0) * 1e6)
 
     metadata_errors = []
+    skipped_missing_calc = 0
+    filtered_results = []
     for entry in results:
+        if entry.pop("_skip_missing_calc", False):
+            skipped_missing_calc += 1
+            continue
         err = entry.pop("_metadata_error", None)
         if err:
             metadata_errors.append({"job_id": entry["job_id"], "error": err[:200]})
+        filtered_results.append(entry)
+    results = filtered_results
 
     # Sort by job_id descending (job_ids contain timestamps)
     t_sort_0 = time.time()
@@ -1897,6 +1911,7 @@ def handle_list(event):
         "sort_us": sort_us,
         "list_workers": list_workers,
         "s3_pool_connections": _results_list_pool_size(requested_workers),
+        "skipped_missing_calc": skipped_missing_calc,
         "metadata_error_count": len(metadata_errors),
         "metadata_errors": metadata_errors[:20],
     })

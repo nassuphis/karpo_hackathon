@@ -85,6 +85,8 @@ assertIncludes("extractPalBtn.disabled = !canOpenExtractPalette || !!_activeRend
 assertNotIncludes("if (_activeRenderRun || _activePaletteRun || _loadActivePaletteRun() || !art || !art.artifact_id) return;", 'ExtractPalette popup opener must not silently return on a persisted active palette run');
 assertIncludes("const _resultPreviewInFlight = new Map();", 'Results preview lazy generation should dedupe in-flight preview requests per job');
 assertIncludes("const _resultPreviewInFlightMode = new Map();", 'Results preview lazy generation should track whether an in-flight request is manual or automatic');
+assertIncludes("const RESULTS_LAZY_PREVIEW_DELAY_MS = 350;", 'Results lazy preview should be debounced so arrow-key navigation does not launch preview writes for every visited row');
+assertIncludes("function _cancelPendingLazyResultPreview(jobId = null) {", 'Results lazy preview should have a cancellable pending state');
 assertIncludes("function _syncResultPreviewActionButtons(jobId) {", 'Results preview button/delete state should be synchronized from one helper');
 assertIncludes("previewBtn.textContent = previewInFlight ? (mode === 'manual' ? '...' : 'auto...') : 'Preview';", 'Selecting a result should restore the correct Preview button label for manual vs automatic in-flight work');
 assertIncludes("if (deleteBtn) deleteBtn.disabled = previewInFlight;", 'Results Delete should be disabled while a selected preview Lambda may still write S3');
@@ -93,6 +95,7 @@ assertIncludes("const cachedPreviewUrl = r && r.has_preview && r.preview_url;", 
 assertIncludes("let needsLazyPreview = false;", 'Results detail rendering should defer lazy preview launch until after detail text is populated');
 assertIncludes("needsLazyPreview = true;", 'Results detail rendering should mark missing previews for lazy generation');
 assertIncludes("if (needsLazyPreview) _lazyGenerateResultPreview(jobId);", 'Results selection should lazily generate a missing persisted preview after detail rendering');
+assertIncludes("if (_selectedJobId !== jobId) return;", 'Debounced Results lazy preview should not start after selection has moved to another result');
 assertIncludes("if (r && r._previewAutoFailed) return;", 'Results lazy preview should not retry endlessly after an automatic preview failure');
 assertIncludes("await _generateResultPreview(_selectedJobId, { lazy: false });", 'Manual Results Preview should share the same generator as lazy preview creation');
 assertIncludes("const normalized = _normalizeRenderBackgroundColor(value, '', { allowShort: !options.fromText });", 'background hex typing should not commit 3-digit shorthand before blur/commit');
@@ -660,6 +663,8 @@ function el(id) {
   if (!elements.has(id)) elements.set(id, makeEl(id));
   return elements.get(id);
 }
+const timers = new Map();
+let nextTimerId = 1;
 const ctx = {
   console,
   Date,
@@ -673,6 +678,23 @@ const ctx = {
   Math,
   parseFloat,
   parseInt,
+  setTimeout: (fn, ms) => {
+    const id = nextTimerId++;
+    timers.set(id, { fn, ms });
+    return id;
+  },
+  clearTimeout: (id) => {
+    timers.delete(id);
+  },
+  __runNextTimer: () => {
+    const next = timers.entries().next();
+    if (next.done) return null;
+    const [id, timer] = next.value;
+    timers.delete(id);
+    timer.fn();
+    return timer.ms;
+  },
+  __timerCount: () => timers.size,
   performance: { now: () => 1000 },
   document: {
     getElementById: el,
@@ -725,6 +747,10 @@ const runtimePromise = vm.runInContext(`
   _applyDetail(row, detail, document.getElementById('results-preview'), document.getElementById('results-info'), 'compute_a');
   assertLocal(document.getElementById('results-info').textContent === '7 files', 'detail file count should render before the deferred lazy preview status');
   await Promise.resolve();
+  assertLocal(calls.length === 0, 'missing preview should not call the preview lambda before the debounce fires');
+  assertLocal(__timerCount() === 1, 'missing preview should schedule exactly one lazy debounce timer');
+  assertLocal(__runNextTimer() === RESULTS_LAZY_PREVIEW_DELAY_MS, 'missing preview should use the configured debounce delay');
+  await Promise.resolve();
   assertLocal(calls.length === 1, 'missing preview should start one lazy preview request');
   assertLocal(calls[0].service === 'preview', 'lazy preview should call the preview lambda');
   assertLocal(calls[0].payload.job_id === 'compute_a', 'lazy preview should use the selected job id');
@@ -746,6 +772,17 @@ const runtimePromise = vm.runInContext(`
   _applyDetail(row, detail, document.getElementById('results-preview'), document.getElementById('results-info'), 'compute_a');
   assertLocal(calls.length === 1, 'cached generated preview should prevent a second lazy request after stale detail');
   assertLocal(document.getElementById('results-preview').dataset.previewUrl === 'https://example.invalid/preview.png', 'cached generated preview should remain visible after stale detail');
+
+  row.has_preview = false;
+  row.preview_url = '';
+  detail.has_preview = false;
+  detail.preview_url = '';
+  _selectedJobId = 'compute_a';
+  _applyDetail(row, detail, document.getElementById('results-preview'), document.getElementById('results-info'), 'compute_a');
+  assertLocal(__timerCount() === 1, 'stale missing-preview detail should schedule a debounce timer');
+  _selectedJobId = 'compute_other';
+  _cancelPendingLazyResultPreview();
+  assertLocal(__timerCount() === 0, 'selection changes should cancel the pending lazy preview timer before it starts a Lambda');
 
   let resolveManual = null;
   lambdaPost = (service, payload, route) => new Promise(resolve => { resolveManual = resolve; });

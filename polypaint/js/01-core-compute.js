@@ -77,6 +77,17 @@ let _selectedJobId = null;   // currently selected job_id
 let _resultsLoading = false;
 const _resultPreviewInFlight = new Map();
 const _resultPreviewInFlightMode = new Map();
+const RESULTS_LAZY_PREVIEW_DELAY_MS = 350;
+let _resultPreviewLazyTimer = null;
+let _resultPreviewLazyJobId = null;
+
+function _cancelPendingLazyResultPreview(jobId = null) {
+    if (!_resultPreviewLazyTimer) return;
+    if (jobId != null && _resultPreviewLazyJobId !== jobId) return;
+    clearTimeout(_resultPreviewLazyTimer);
+    _resultPreviewLazyTimer = null;
+    _resultPreviewLazyJobId = null;
+}
 
 function _syncResultPreviewActionButtons(jobId) {
     if (_selectedJobId !== jobId) return;
@@ -729,6 +740,7 @@ function renderResultsTable() {
 }
 
 function selectResult(jobId) {
+    _cancelPendingLazyResultPreview();
     _selectedJobId = jobId;
 
     // Update selection highlight
@@ -1038,6 +1050,7 @@ function _applyResultPreview(jobId, result, elapsedMs, options = {}) {
 
 async function _generateResultPreview(jobId, options = {}) {
     if (!jobId) return null;
+    if (!options.lazy) _cancelPendingLazyResultPreview(jobId);
     if (_resultPreviewInFlight.has(jobId)) {
         return await _resultPreviewInFlight.get(jobId);
     }
@@ -1084,7 +1097,17 @@ function _lazyGenerateResultPreview(jobId) {
     if (!jobId || _resultPreviewInFlight.has(jobId)) return;
     const r = _resultsCache.find(row => row.job_id === jobId);
     if (r && r._previewAutoFailed) return;
-    _generateResultPreview(jobId, { lazy: true }).catch(() => {});
+    _cancelPendingLazyResultPreview();
+    _resultPreviewLazyJobId = jobId;
+    _resultPreviewLazyTimer = setTimeout(() => {
+        _resultPreviewLazyTimer = null;
+        _resultPreviewLazyJobId = null;
+        if (_selectedJobId !== jobId) return;
+        if (_resultPreviewInFlight.has(jobId)) return;
+        const current = _resultsCache.find(row => row.job_id === jobId);
+        if (current && current._previewAutoFailed) return;
+        _generateResultPreview(jobId, { lazy: true }).catch(() => {});
+    }, RESULTS_LAZY_PREVIEW_DELAY_MS);
 }
 
 async function previewResult() {
@@ -1098,6 +1121,7 @@ async function previewResult() {
 async function deleteResult() {
     if (!_selectedJobId) return;
     if (!confirm(`Delete all data for ${_selectedJobId}?`)) return;
+    _cancelPendingLazyResultPreview(_selectedJobId);
 
     const btn = document.getElementById('btn-delete');
     btn.disabled = true;

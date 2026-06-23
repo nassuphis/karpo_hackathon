@@ -703,8 +703,11 @@ function _updateRenderActionButtons() {
     }
     if (extractPalBtn) {
         const canOpenExtractPalette = _renderActiveFamily === 'color' && hasSelection && inventoryMatchesJob;
-        extractPalBtn.disabled = !canOpenExtractPalette || !!_activeRenderRun || !!_activePaletteRun;
-        extractPalBtn.title = canOpenExtractPalette && !_canExtractPaletteArtifact(art)
+        const paletteRunBlocking = typeof _paletteRunBlocksNewRun === 'function' && _paletteRunBlocksNewRun();
+        extractPalBtn.disabled = !canOpenExtractPalette || !!_activeRenderRun || paletteRunBlocking;
+        extractPalBtn.title = paletteRunBlocking
+            ? 'Palette/ExtractPalette run already in progress'
+            : canOpenExtractPalette && !_canExtractPaletteArtifact(art)
             ? _extractPaletteLineageHint(art).label
             : '';
     }

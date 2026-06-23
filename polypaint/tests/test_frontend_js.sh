@@ -78,6 +78,11 @@ assertIncludes("id=\"render-pix\" value=\"4096\" max=\"32768\"", 'render pix inp
 assertIncludes("const RENDER_MAX_PIX = 32768;", 'render orchestration should clamp pix before dispatch');
 assertIncludes("id=\"btn-palette-create\" class=\"btn-secondary btn-inline\" onclick=\"runPaletteArtifact()\">Generate Artifact</button>", 'palette tab action should be a clearly labeled generate artifact button');
 assertNotIncludes("btn-palette-create\" class=\"btn-inline-offset\"", 'palette generate action should not live in the compact stack row');
+assertIncludes("function _paletteRunBlocksNewRun() {", 'frontend should centralize active Palette/ExtractPalette lock checks');
+assertIncludes("function _blockPaletteActionIfActive(actionLabel) {", 'frontend should make active Palette/ExtractPalette locks visible instead of silently ignoring clicks');
+assertIncludes("if (_blockPaletteActionIfActive('ExtractPalette')) return;", 'ExtractPalette popup/run path should use the shared active-palette lock helper');
+assertIncludes("extractPalBtn.disabled = !canOpenExtractPalette || !!_activeRenderRun || paletteRunBlocking;", 'ExtractPalette toolbar button should use the same active-palette lock predicate as the click path');
+assertNotIncludes("if (_activeRenderRun || _activePaletteRun || _loadActivePaletteRun() || !art || !art.artifact_id) return;", 'ExtractPalette popup opener must not silently return on a persisted active palette run');
 assertIncludes("const normalized = _normalizeRenderBackgroundColor(value, '', { allowShort: !options.fromText });", 'background hex typing should not commit 3-digit shorthand before blur/commit');
 assertNotIncludes("<label><input type=\"radio\" name=\"render-color-interpretation\"", 'render color radios must not use bare label/input markup');
 assertNotIncludes("class=\"color-dot active\" data-mode=\"solve_score\"", 'render tab should not expose a fake solve-score mode toggle');
@@ -743,6 +748,17 @@ async function main() {
     extractFunction('_findColorArtifactById'),
     extractFunction('_canExtractPaletteArtifact'),
     extractFunction('_extractPaletteLineageHint'),
+    'let _activePaletteRun = null; let _lastPaletteLoggedPhase = null; let _lastPaletteWarnState = null; let _palettePhaseTracker = null; const PALETTE_HARD_STALE_MS = 900000; function startActivePaletteObserver() { globalThis._paletteObserverStarts = (globalThis._paletteObserverStarts || 0) + 1; } function stopActivePaletteObserver() { globalThis._paletteObserverStops = (globalThis._paletteObserverStops || 0) + 1; }',
+    extractFunction('_saveActivePaletteRun'),
+    extractFunction('_clearActivePaletteRun'),
+    extractFunction('_loadActivePaletteRun'),
+    extractFunction('_currentActivePaletteRun'),
+    extractFunction('_paletteRunAgeMs'),
+    extractFunction('_paletteRunIsHardStale'),
+    extractFunction('_paletteRunBlocksNewRun'),
+    extractFunction('_paletteRunLabel'),
+    extractFunction('_shouldMirrorPaletteRunToRender'),
+    extractFunction('_blockPaletteActionIfActive'),
     extractFunction('_solveScoreColorCompatibility'),
     extractFunction('_solveScorePaletteCompatibility'),
     extractFunction('_launchRenderOrchestrator'),
@@ -772,8 +788,10 @@ async function main() {
   ].join('\n\n');
 
   const renderStatus = { textContent: '', className: '' };
+  const paletteStatus = { textContent: '', className: '' };
   const generateBtn = { disabled: false };
   const ssSourceTextarea = { value: '' };
+  const localStorageData = new Map();
   const _ssFakeEls = {
     'render-ss-source-text': ssSourceTextarea,
     'render-ss-text-panel': { classList: { toggle() {} } },
@@ -799,6 +817,8 @@ async function main() {
     _logs: [],
     _fusedCalls: [],
     _nonColorCalls: [],
+    _paletteObserverStarts: 0,
+    _paletteObserverStops: 0,
     _updateSolveScoreButtonsCalls: 0,
     _syncSolveScoreLegacyInputsCalls: 0,
     _scoreNormalizationSyncCalls: 0,
@@ -812,6 +832,11 @@ async function main() {
         { name: 'poly_10', kind: 'legacy', source: 'poly.py', degree: 35 },
         { name: 'poly_112', kind: 'legacy', source: 'poly.py', degree: 35 },
       ],
+    },
+    localStorage: {
+      getItem(key) { return localStorageData.has(key) ? localStorageData.get(key) : null; },
+      setItem(key, value) { localStorageData.set(key, String(value)); },
+      removeItem(key) { localStorageData.delete(key); },
     },
     _functionPopupState: { filter: '', highlightIdx: 0 },
     _launchFusedRenderOrchestrator: async (paramsPatch) => {
@@ -827,11 +852,14 @@ async function main() {
         if (id === 'btn-render-generate') return generateBtn;
         if (id === 'btn-render-generate-mt') return generateBtn;
         if (id === 'render-status') return renderStatus;
+        if (id === 'palette-status') return paletteStatus;
+        if (id === 'tab-render') return { classList: { contains() { return false; } } };
         if (_ssFakeEls[id]) return _ssFakeEls[id];
         return null;
       },
     },
   };
+  ctx._updateRenderActionButtons = () => {};
   ctx._updateSolveScoreButtons = () => {
     ctx._updateSolveScoreButtonsCalls += 1;
   };
@@ -1055,6 +1083,41 @@ async function main() {
   assert(ctx._extractPaletteLineageHint(scalarFusedColor).kind === 'fused', 'ExtractPalette lineage hint should prefer fused scalar step-score extraction');
   assert(ctx._extractPaletteLineageHint(rgbFusedColor).kind === 'fused', 'ExtractPalette lineage hint should prefer fused three-channel step-score extraction');
   assert(ctx._extractPaletteLineageHint(scalarLegacyColor).kind === 'solve_score', 'ExtractPalette lineage hint should retain legacy scalar dispatch');
+
+  ctx._logs = [];
+  paletteStatus.textContent = '';
+  paletteStatus.className = '';
+  ctx.localStorage.setItem('polypaint_active_palette_run', JSON.stringify({
+    job_id: 'compute_mnrwtbnl',
+    run_id: 'run_active',
+    task_id: 'extract_palette_run_run_active',
+    mode: 'extract_palette',
+    origin: 'render_extract_palette',
+    started_at_ms: Date.now(),
+  }));
+  assert(ctx._paletteRunBlocksNewRun() === true, 'fresh persisted ExtractPalette lock should disable new Palette/ExtractPalette actions');
+  assert(ctx._blockPaletteActionIfActive('ExtractPalette') === true, 'fresh persisted ExtractPalette lock should visibly block the popup/run path');
+  assert(paletteStatus.textContent.includes('already in progress'), 'fresh persisted ExtractPalette lock should write a visible palette status');
+  assert(ctx._logs.some(entry => entry.target === 'palette-log' && entry.message.includes('already in progress')), 'fresh persisted ExtractPalette lock should log why the click was blocked');
+  assert(ctx._paletteObserverStarts > 0, 'fresh persisted ExtractPalette lock should resume the observer instead of silently returning');
+  assert(ctx.localStorage.getItem('polypaint_active_palette_run') !== null, 'fresh persisted ExtractPalette lock should remain stored while active');
+
+  ctx._clearActivePaletteRun();
+  ctx._logs = [];
+  paletteStatus.textContent = '';
+  paletteStatus.className = '';
+  ctx.localStorage.setItem('polypaint_active_palette_run', JSON.stringify({
+    job_id: 'compute_mnrwtbnl',
+    run_id: 'run_stale',
+    task_id: 'extract_palette_run_run_stale',
+    mode: 'extract_palette',
+    origin: 'render_extract_palette',
+    started_at_ms: Date.now() - 16 * 60 * 1000,
+  }));
+  assert(ctx._paletteRunBlocksNewRun() === false, 'hard-stale persisted ExtractPalette lock should not keep the toolbar disabled');
+  assert(ctx._blockPaletteActionIfActive('ExtractPalette') === false, 'hard-stale persisted ExtractPalette lock should clear and allow the popup/run path');
+  assert(ctx.localStorage.getItem('polypaint_active_palette_run') === null, 'hard-stale persisted ExtractPalette lock should be removed from localStorage');
+  assert(ctx._logs.some(entry => entry.target === 'palette-log' && entry.message.includes('lock was stale')), 'hard-stale persisted ExtractPalette lock should log that it was cleared');
 
   const previewLogCode = [
     extractFunction('_formatChainRowsForLog'),

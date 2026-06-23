@@ -965,10 +965,7 @@ async function runPaletteArtifact() {
     const statusEl = document.getElementById('palette-status');
     const jobId = document.getElementById('palette-results-dir').value.trim();
     if (!jobId) { log('Palette: no results dir', 'err', 'palette-log'); return; }
-    if (_activePaletteRun || _loadActivePaletteRun()) {
-        log('Palette: run already in progress, wait for completion', 'err', 'palette-log');
-        return;
-    }
+    if (_blockPaletteActionIfActive('Palette')) return;
 
     try {
         if (btn) { btn.disabled = true; btn.textContent = 'Palette...'; }
@@ -1046,6 +1043,60 @@ function _loadActivePaletteRun() {
         if (s) return JSON.parse(s);
     } catch(e) {}
     return null;
+}
+
+function _currentActivePaletteRun() {
+    const run = _activePaletteRun || _loadActivePaletteRun();
+    if (run && !_activePaletteRun) _activePaletteRun = run;
+    return run || null;
+}
+
+function _paletteRunAgeMs(run) {
+    if (!run || !run.started_at_ms) return null;
+    const started = Number(run.started_at_ms);
+    return Number.isFinite(started) ? Math.max(0, Date.now() - started) : null;
+}
+
+function _paletteRunIsHardStale(run) {
+    const ageMs = _paletteRunAgeMs(run);
+    return ageMs !== null && ageMs > PALETTE_HARD_STALE_MS;
+}
+
+function _paletteRunBlocksNewRun() {
+    const run = _currentActivePaletteRun();
+    return !!(run && !_paletteRunIsHardStale(run));
+}
+
+function _blockPaletteActionIfActive(actionLabel) {
+    const run = _currentActivePaletteRun();
+    if (!run) return false;
+    const runLabel = _paletteRunLabel(run);
+    const mirrorToRender = _shouldMirrorPaletteRunToRender(run);
+    if (_paletteRunIsHardStale(run)) {
+        _clearActivePaletteRun();
+        stopActivePaletteObserver();
+        const msg = `${runLabel} lock was stale for 15+ min; cleared before ${actionLabel}.`;
+        log(msg, '', 'palette-log');
+        if (mirrorToRender) log(msg, '', 'render-log');
+        return false;
+    }
+    startActivePaletteObserver();
+    const msg = `${actionLabel}: ${runLabel} already in progress; resumed status observer.`;
+    const statusEl = document.getElementById('palette-status');
+    if (statusEl) {
+        statusEl.textContent = msg;
+        statusEl.className = 'status';
+    }
+    log(msg, '', 'palette-log');
+    if (mirrorToRender) {
+        const renderStatusEl = document.getElementById('render-status');
+        if (renderStatusEl) {
+            renderStatusEl.textContent = msg;
+            renderStatusEl.className = 'status';
+        }
+        log(msg, '', 'render-log');
+    }
+    return true;
 }
 
 function startActivePaletteObserver() {

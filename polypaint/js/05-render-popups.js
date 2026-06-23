@@ -411,10 +411,11 @@ async function runExtractPaletteArtifact(config = null) {
         return;
     }
     const lineage = _extractPaletteLineageHint(art);
-    if (_activeRenderRun || _activePaletteRun || _loadActivePaletteRun()) {
-        log('ExtractPalette: another render or palette run is already in progress', 'err', 'render-log');
+    if (_activeRenderRun) {
+        log('ExtractPalette: another render run is already in progress', 'err', 'render-log');
         return;
     }
+    if (_blockPaletteActionIfActive('ExtractPalette')) return;
     const orig = btn ? btn.textContent : 'ExtractPalette';
     try {
         if (btn) { btn.disabled = true; btn.textContent = 'Extracting...'; }
@@ -667,14 +668,28 @@ function _renderExtractPalettePopup() {
         ? `Artifact: ${artLabel} • ${lineage.label} • hist threads=${solveScoreThreads} • hist input=${histInputMode} • hist retries=${histRetries} • merge workers=${mergeWorkers} • chunk threads=${chunkThreads} • chunk input=${chunkInputMode} • chunk retries=${chunkRetries} • chunk workers=${chunkWorkers}`
         : `Artifact: ${artLabel} • ${lineage.label} • solve-score and chunk execution controls are ignored for this fused or attach-only lineage.`;
     if (runBtn) {
-        runBtn.disabled = !runnable || !!_activeRenderRun || !!_activePaletteRun || !!_loadActivePaletteRun();
-        runBtn.title = runnable ? '' : lineage.label;
+        const paletteRunBlocking = _paletteRunBlocksNewRun();
+        runBtn.disabled = !runnable || !!_activeRenderRun || paletteRunBlocking;
+        runBtn.title = paletteRunBlocking
+            ? 'Palette/ExtractPalette run already in progress'
+            : runnable ? '' : lineage.label;
     }
 }
 
 function openExtractPalettePopup() {
     const art = _renderSelectedArtifactEntry();
-    if (_activeRenderRun || _activePaletteRun || _loadActivePaletteRun() || !art || !art.artifact_id) return;
+    if (!art || !art.artifact_id) return;
+    if (_activeRenderRun) {
+        const msg = 'ExtractPalette: another render run is already in progress';
+        const statusEl = document.getElementById('render-status');
+        if (statusEl) {
+            statusEl.textContent = msg;
+            statusEl.className = 'status';
+        }
+        log(msg, '', 'render-log');
+        return;
+    }
+    if (_blockPaletteActionIfActive('ExtractPalette')) return;
     _extractPalettePopupState = {
         open: true,
         solveScoreThreads: _clampRenderMtThreads(_extractPalettePopupState.solveScoreThreads || 4),

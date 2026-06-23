@@ -647,6 +647,8 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("root_legacy_registry.json", packaged["handler_pdf_artifact.py"])
         self.assertIn("PDF_PY_LAYER_NAME", DEPLOY_TEXT)
         self.assertIn("build-pdf-python-layer.sh", DEPLOY_TEXT)
+        self.assertIn('"$LIBVIPS_LAYER $PDF_PY_LAYER"', GEN_TEXT)
+        self.assertIn('BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib', GEN_TEXT)
         self.assertIn('deploy_lambda "$PDF_ARTIFACT_NAME" "handler_pdf_artifact.handler" "/tmp/polypaint-pdf-artifact.zip"', GEN_TEXT)
         self.assertIn("lambda/gen_parity_results.py", DEPLOY_TEXT)
 

@@ -486,11 +486,12 @@
       "handler": "handler_pdf_artifact.handler",
       "zip": "/tmp/polypaint-pdf-artifact.zip",
       "layers": [
+        "libvips",
         "pdf_py"
       ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE",
+      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
       "group": "core",
-      "memory_why": "single-shot PDF composition from saved Color image"
+      "memory_why": "single-shot PDF composition from saved Color image; libvips shrink-on-load before ReportLab embed"
     },
     {
       "key": "solve_proximity",

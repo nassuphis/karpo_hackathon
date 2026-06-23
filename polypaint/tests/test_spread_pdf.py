@@ -5,6 +5,8 @@ import sys
 import tempfile
 import unittest
 import zlib
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
@@ -98,6 +100,54 @@ class TestSpreadPdf(unittest.TestCase):
             self.assertEqual(info["prepared_height"], 40)
             self.assertTrue(info["resized"])
             self.assertEqual(info["prepared_format"], "png")
+
+    def test_prepare_pdf_image_raises_pillow_guard_to_explicit_cap(self):
+        from PIL import Image
+        from spread_pdf import prepare_pdf_image
+
+        with tempfile.TemporaryDirectory() as td:
+            src = os.path.join(td, "src.png")
+            out = os.path.join(td, "prepared.png")
+            Image.new("RGB", (64, 64), (20, 40, 80)).save(src)
+            original_limit = Image.MAX_IMAGE_PIXELS
+            try:
+                Image.MAX_IMAGE_PIXELS = 100
+                info = prepare_pdf_image(src, out, max_px=32, max_source_pixels=10000)
+            finally:
+                Image.MAX_IMAGE_PIXELS = original_limit
+
+            self.assertTrue(os.path.exists(out))
+            self.assertEqual(info["source_width"], 64)
+            self.assertEqual(info["source_height"], 64)
+            self.assertEqual(info["prepared_width"], 32)
+            self.assertEqual(info["prepared_height"], 32)
+
+    def test_prepare_pdf_image_uses_vipsthumbnail_when_available(self):
+        from PIL import Image
+        from spread_pdf import prepare_pdf_image
+
+        with tempfile.TemporaryDirectory() as td:
+            src = os.path.join(td, "src.png")
+            out = os.path.join(td, "prepared.png")
+            Image.new("RGB", (320, 160), (20, 40, 80)).save(src)
+
+            def fake_run(cmd, **_kwargs):
+                output_arg = cmd[cmd.index("-o") + 1]
+                output_path = output_arg.split("[", 1)[0]
+                Image.new("RGB", (80, 40), (20, 40, 80)).save(output_path)
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+            with patch("spread_pdf._vipsthumbnail_path", return_value="/opt/bin/vipsthumbnail"), \
+                    patch("spread_pdf.subprocess.run", side_effect=fake_run) as mock_run:
+                info = prepare_pdf_image(src, out, max_px=80)
+
+            self.assertTrue(mock_run.called)
+            self.assertTrue(os.path.exists(out))
+            self.assertEqual(info["source_width"], 320)
+            self.assertEqual(info["source_height"], 160)
+            self.assertEqual(info["prepared_width"], 80)
+            self.assertEqual(info["prepared_height"], 40)
+            self.assertTrue(info["resized"])
 
     def test_build_color_spread_pdf_report_smoke(self):
         from PIL import Image

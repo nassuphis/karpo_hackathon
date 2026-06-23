@@ -16,6 +16,8 @@ The visual treatment intentionally matches make_book.py:
 - same cover-fit image placement
 """
 import os
+import shutil
+import subprocess
 from pathlib import Path
 
 try:
@@ -196,8 +198,9 @@ def _draw_text_page(c, title, body, is_right, filename=None, meta=None, palette_
 PDF_TARGET_DPI = int(os.getenv("PDF_TARGET_DPI", "300") or "300")
 PDF_IMAGE_MAX_PX = int(os.getenv("PDF_IMAGE_MAX_PX", "3600") or "3600")
 PDF_PALETTE_MAX_PX = int(os.getenv("PDF_PALETTE_MAX_PX", "800") or "800")
-PDF_MAX_SOURCE_PIXELS = int(os.getenv("PDF_MAX_SOURCE_PIXELS", "150000000") or "150000000")
+PDF_MAX_SOURCE_PIXELS = int(os.getenv("PDF_MAX_SOURCE_PIXELS", "500000000") or "500000000")
 PDF_IMAGE_FORMAT = str(os.getenv("PDF_IMAGE_FORMAT", "png") or "png").lower()
+PDF_USE_VIPS = str(os.getenv("PDF_USE_VIPS", "1") or "1").strip().lower() not in {"0", "false", "no"}
 
 if PILImage.MAX_IMAGE_PIXELS is None or PILImage.MAX_IMAGE_PIXELS < PDF_MAX_SOURCE_PIXELS:
     PILImage.MAX_IMAGE_PIXELS = PDF_MAX_SOURCE_PIXELS
@@ -241,11 +244,65 @@ def _resample_filter():
     return getattr(resampling, "LANCZOS", getattr(PILImage, "BICUBIC", 3))
 
 
+def _vipsthumbnail_path():
+    for path in ("/opt/bin/vipsthumbnail", shutil.which("vipsthumbnail")):
+        if path and os.path.exists(path):
+            return path
+    return ""
+
+
+def _vips_env():
+    env = dict(os.environ)
+    ld = env.get("LD_LIBRARY_PATH", "")
+    if "/opt/lib" not in ld.split(":"):
+        env["LD_LIBRARY_PATH"] = "/opt/lib" + (":" + ld if ld else "")
+    return env
+
+
+def _prepare_pdf_image_with_vips(input_path, output_path, *, max_px, fmt, quality):
+    if not PDF_USE_VIPS:
+        return False
+    vipsthumbnail = _vipsthumbnail_path()
+    if not vipsthumbnail:
+        return False
+    options = ["strip"]
+    if fmt == "jpeg":
+        options.append(f"Q={int(quality)}")
+    output_spec = str(output_path) + "[" + ",".join(options) + "]"
+    result = subprocess.run(
+        [
+            vipsthumbnail,
+            str(input_path),
+            "-s",
+            f"{int(max_px)}x{int(max_px)}",
+            "-o",
+            output_spec,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        env=_vips_env(),
+    )
+    if result.returncode != 0:
+        stderr = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(f"vipsthumbnail failed while preparing PDF image: {stderr or 'unknown error'}")
+    return True
+
+
 def prepare_pdf_image(input_path, output_path, *, max_px, quality=90, image_format=None, max_source_pixels=PDF_MAX_SOURCE_PIXELS):
     """Prepare a source raster for PDF embedding and return dimension metadata."""
     input_path = Path(input_path)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    max_source_pixels = int(max_source_pixels)
+    if max_source_pixels <= 0:
+        raise ValueError(f"PDF max_source_pixels must be positive, got {max_source_pixels}")
+    # Pillow raises DecompressionBombError at 2 * MAX_IMAGE_PIXELS during
+    # Image.open(), before we can inspect dimensions and downsample. The PDF
+    # path has its own explicit cap because saved render artifacts can be
+    # large but are immediately resized to PDF_IMAGE_MAX_PX before embedding.
+    if PILImage.MAX_IMAGE_PIXELS is not None and PILImage.MAX_IMAGE_PIXELS < max_source_pixels:
+        PILImage.MAX_IMAGE_PIXELS = max_source_pixels
     fmt = str(image_format or PDF_IMAGE_FORMAT or "png").strip().lower()
     if fmt == "jpg":
         fmt = "jpeg"
@@ -259,12 +316,26 @@ def prepare_pdf_image(input_path, output_path, *, max_px, quality=90, image_form
         with PILImage.open(input_path) as img:
             source_w, source_h = img.size
             source_pixels = int(source_w) * int(source_h)
-            if source_pixels > int(max_source_pixels):
+            if source_pixels > max_source_pixels:
                 raise ValueError(
                     f"PDF source image is too large: {source_w}x{source_h} "
-                    f"({source_pixels} pixels), limit is {int(max_source_pixels)}"
+                    f"({source_pixels} pixels), limit is {max_source_pixels}"
                 )
             resized = max(source_w, source_h) > max_px
+        if _prepare_pdf_image_with_vips(input_path, output_path, max_px=max_px, fmt=fmt, quality=quality):
+            with PILImage.open(output_path) as prepared:
+                prepared_w, prepared_h = prepared.size
+            return {
+                "source_width": int(source_w),
+                "source_height": int(source_h),
+                "prepared_width": int(prepared_w),
+                "prepared_height": int(prepared_h),
+                "resized": bool(resized),
+                "image_max_px": int(max_px),
+                "prepared_path": str(output_path),
+                "prepared_format": fmt,
+            }
+        with PILImage.open(input_path) as img:
             if resized:
                 try:
                     img.draft("RGB", (max_px, max_px))

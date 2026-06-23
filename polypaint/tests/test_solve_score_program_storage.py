@@ -337,7 +337,8 @@ class TestSolveScoreProgramStorage(unittest.TestCase):
         )
 
         self.assertEqual(entry["solve_score_chain"], [["proximity", "4.7"]])
-        self.assertIn("score = metric(proximity, slv, q=4.7%)", entry["solve_score_program_source_text"])
+        self.assertIn("metric(proximity, slv, q=4.7%)", entry["solve_score_program_source_text"])
+        self.assertIn("score = pop()", entry["solve_score_program_source_text"])
         self.assertEqual(entry["score_source_text"], entry["solve_score_program_source_text"])
 
     def test_render_artifact_entry_reconstructs_palette_and_associated_sources(self):

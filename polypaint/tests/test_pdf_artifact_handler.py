@@ -22,6 +22,65 @@ def _event(**overrides):
 
 class TestPdfArtifactHandler(unittest.TestCase):
 
+    def test_report_model_prefers_stored_solve_score_source_text(self):
+        from handler_pdf_artifact import build_pdf_report_model
+
+        authored = "a = metric(spread, cf, q=0.1%)\nemit_norm(flip(a))"
+        report = build_pdf_report_model(
+            "job1",
+            {"function": "poly_1", "degree": 35},
+            {
+                "family": "color",
+                "color_mode": "solve_score",
+                "solve_score_program_source_text": authored,
+                "solve_score_chain": json.dumps([["spread", "cf", "0.1"], ["emit", "norm"]]),
+                "score_program": "v2;m0-0;emit_norm",
+            },
+            "color_src",
+        )
+
+        programs = {p["label"]: p for p in report["programs"]}
+        self.assertEqual(programs["Solve Score Program"]["source"], authored)
+        self.assertIn("Coeff Program", programs)
+        self.assertIn("Root Program", programs)
+        self.assertEqual(programs["Root Program"]["source"], "none")
+
+    def test_report_model_reconstructs_editable_program_sources(self):
+        from handler_pdf_artifact import build_pdf_report_model
+
+        report = build_pdf_report_model(
+            "job1",
+            {
+                "pipeline": {
+                    "function": "poly_1",
+                    "param_transforms": [["unit_circle"]],
+                    "coeff_transforms": ["rev"],
+                    # This is the lowered display string old artifacts may
+                    # carry; the PDF must prefer source reconstruction.
+                    "coeff_program_display": "_native_transform(rev, poly, poly)",
+                },
+                "degree": 35,
+            },
+            {
+                "family": "color",
+                "color_mode": "solve_score",
+                "root_transforms": '[["rotate_roots","0.25"]]',
+                "solve_metric": "clusteriness",
+                "solve_score_quantile": "0.047",
+            },
+            "color_src",
+        )
+
+        programs = {p["label"]: p for p in report["programs"]}
+        self.assertIn("unit_circle", programs["Param Program"]["source"])
+        self.assertEqual(programs["Coeff Program"]["source"], "poly = rev(poly)\nemit")
+        self.assertNotIn("_native_transform", programs["Coeff Program"]["source"])
+        self.assertIn("rotate_roots", programs["Root Program"]["fallback"])
+        self.assertEqual(
+            programs["Solve Score Program"]["source"],
+            "score = omega_cosine(metric(clusteriness, slv, q=4.7%), 1)",
+        )
+
     @patch("handler_pdf_artifact.report_status")
     @patch("handler_pdf_artifact.prepare_pdf_image")
     @patch("handler_pdf_artifact.build_color_spread_pdf")
@@ -103,7 +162,20 @@ class TestPdfArtifactHandler(unittest.TestCase):
             self.assertEqual(report["color_artifact_id"], "color_src")
             self.assertEqual(report["palette_label"], "pal_color_src")
             self.assertIn(("Solver", "AE"), report["summary_rows"])
+            self.assertNotIn("Color mode", [label for label, _value in report["summary_rows"]])
             self.assertTrue(any(p["label"] == "Coefficient Function" for p in report["programs"]))
+            self.assertTrue(any(
+                p["label"] == "Coeff Program" and p["source"] == "none"
+                for p in report["programs"]
+            ))
+            self.assertTrue(any(
+                p["label"] == "Root Program" and p["fallback"] == "rotate_roots(0.25)"
+                for p in report["programs"]
+            ))
+            score_programs = [p for p in report["programs"] if p["label"] == "Solve Score Program"]
+            self.assertEqual(len(score_programs), 1)
+            self.assertIn("score = omega_cosine(metric(spread, slv, q=0.1%)", score_programs[0]["source"])
+            self.assertNotIn("m0", score_programs[0]["source"])
             with open(output_path, "wb") as fh:
                 fh.write(b"%PDF-1.4 fake pdf")
             return {"path": output_path, "page_count": 3}

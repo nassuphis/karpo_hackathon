@@ -442,9 +442,62 @@ def _stack_call_line(name, params):
     return f"{name}({', '.join(params)})" if params else f"{name}()"
 
 
+def _emit_fn_from_row(name, params):
+    mode = "raw"
+    if name == "emit_norm" or params == ["norm"]:
+        mode = "norm"
+    elif name == "emit_none" or params == ["none"]:
+        mode = "none"
+    return {"raw": "emit", "norm": "emit_norm", "none": "emit_none"}[mode]
+
+
+def _stack_source_text_from_public_chain(public_chain):
+    lines = []
+    for row in public_chain:
+        name, params = _row_name_params(row)
+        name = name.strip()
+        if name == GENERIC_METRIC_PUBLIC_NAME or name in VALID_SOLVE_SCORE_METRICS:
+            lines.append(f"push({_metric_source(name, params)})")
+            continue
+        if name == "const":
+            if len(params) != 1:
+                raise SolveScoreProgramSourceError("const row requires one parameter")
+            lines.append(f"push(const({_fmt_number(params[0])}))")
+            continue
+        if name in STACK_CHIPS:
+            if params:
+                raise SolveScoreProgramSourceError(f"{name} takes no parameters")
+            lines.append(f"{name}()")
+            continue
+        if name in OUTPUT_CHIPS or (name == "emit" and params):
+            lines.append(f"{_emit_fn_from_row(name, params)}()")
+            continue
+        if name in UNARY_CHIPS:
+            clean_params = [_fmt_number(param) for param in params]
+            if name == TRANSFER_CHIP_NAME and len(clean_params) == 1:
+                clean_params.append("0")
+            lines.append(_stack_call_line(name, clean_params))
+            continue
+        if name in COMBINE_CHIPS:
+            clean_params = [_fmt_number(param) for param in params]
+            lines.append(_stack_call_line(name, clean_params))
+            continue
+        raise SolveScoreProgramSourceError(f"cannot serialize solve-score row {row!r}")
+    return "\n".join(lines)
+
+
 def solve_score_source_text_from_chain(chain):
     compiled = compile_solve_score_chain_or_legacy(chain, "", default_metric="proximity")
     public_chain = _public_chain(compiled)
+    if compiled.get("has_explicit_outputs"):
+        source_text = _stack_source_text_from_public_chain(public_chain)
+        reparsed = compile_solve_score_program_source(source_text, strict=True)
+        if reparsed["program_spec"] != compiled["program_spec"]:
+            raise SolveScoreProgramSourceError("source round-trip changed program_spec", code="source_roundtrip_failed")
+        if reparsed["fingerprint"] != compiled_solve_score_fingerprint(compiled):
+            raise SolveScoreProgramSourceError("source round-trip changed fingerprint", code="source_roundtrip_failed")
+        return source_text
+
     stack = []
     lines = []
     explicit_emits = False
@@ -483,6 +536,11 @@ def solve_score_source_text_from_chain(chain):
             fn = {"raw": "emit", "norm": "emit_norm", "none": "emit_none"}[mode]
             if not stack:
                 raise SolveScoreProgramSourceError(f"{fn} requires stack depth at least 1")
+            if len(stack) > 1:
+                # Direct emit_norm(expr) is equivalent only when expr is the sole
+                # pending value. With A; B; C; emit; emit; emit, emitting C/B/A
+                # as independent expressions would change the program_spec.
+                _materialize_all(stack, lines)
             top = stack.pop()
             if top.materialized:
                 lines.append(f"{fn}()")

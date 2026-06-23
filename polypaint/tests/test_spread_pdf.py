@@ -44,6 +44,44 @@ def _pdf_stream_text(path):
 
 class TestSpreadPdf(unittest.TestCase):
 
+    def test_program_source_display_lines_split_top_level_semicolons(self):
+        from spread_pdf import _program_source_display_lines
+
+        lines = _program_source_display_lines(
+            "legacy(unit_circle, both, both); "
+            "legacy(moebius, both, both, 3+6j, 2+1j, -1+4j, -3-10j); "
+            "coeff2"
+        )
+
+        self.assertEqual(lines, [
+            "legacy(unit_circle, both, both)",
+            "legacy(moebius, both, both, 3+6j, 2+1j, -1+4j, -3-10j)",
+            "coeff2",
+        ])
+
+        lines = _program_source_display_lines("emit(note='a;b'); emit(score)")
+        self.assertEqual(lines, ["emit(note='a;b')", "emit(score)"])
+
+    def test_appendix_program_columns_place_score_on_right(self):
+        from spread_pdf import _appendix_program_columns
+
+        programs = [
+            {"label": "Param Program"},
+            {"label": "Coeff Program"},
+            {"label": "Solve Score Program"},
+            {"label": "Coefficient Function"},
+            {"label": "Root Program"},
+        ]
+
+        left, right = _appendix_program_columns(programs)
+
+        self.assertEqual([p["label"] for p in left], [
+            "Param Program",
+            "Coefficient Function",
+            "Coeff Program",
+        ])
+        self.assertEqual([p["label"] for p in right], ["Root Program", "Solve Score Program"])
+
     def test_prepare_pdf_image_downsamples_large_input(self):
         from PIL import Image
         from spread_pdf import prepare_pdf_image
@@ -134,7 +172,8 @@ class TestSpreadPdf(unittest.TestCase):
             self.assertNotIn("Source details continue in the appendix.", stream_text)
             self.assertNotIn("program excerpts", stream_text.lower())
             self.assertNotIn("full source on appendix", stream_text)
-            self.assertIn("Source Appendix 1", stream_text)
+            self.assertNotIn("Source Appendix 1", stream_text)
+            self.assertIn("PARAM PROGRAM", stream_text)
             self.assertIn("UNIQ_PROG_LINE_42", stream_text)
 
 

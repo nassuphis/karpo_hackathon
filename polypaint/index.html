@@ -908,6 +908,11 @@ button {
     height: 220px;
     max-height: 220px;
 }
+.solve-score-source-grid .coeff-program-source-text {
+    min-height: 220px;
+    height: 220px;
+    max-height: 220px;
+}
 .program-source-cheat-section,
 .solve-score-cheat-section {
     margin-bottom: 9px;
@@ -1825,7 +1830,6 @@ button {
                             <textarea id="render-ss-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;score = metric(proximity, slv, q=0.1%)&#10;emit(score)" oninput="_onSolveScoreProgramSourceInput('render')"></textarea>
                             <div id="render-ss-cheatsheet" class="solve-score-source-cheatsheet" aria-label="Solve-score source inserter"></div>
                         </div>
-                        <div class="solve-score-program-note">Text source is authoritative. Use the inserter for valid metric/operator snippets.</div>
                     </div>
                     <div id="render-solve-score-program-status" class="solve-score-program-status"></div>
                 </div>
@@ -1908,7 +1912,6 @@ button {
                         <textarea id="palette-ss-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;score = metric(proximity, slv, q=0.1%)&#10;emit(score)" oninput="_onSolveScoreProgramSourceInput('palette')"></textarea>
                         <div id="palette-ss-cheatsheet" class="solve-score-source-cheatsheet" aria-label="Palette solve-score source inserter"></div>
                     </div>
-                    <div class="solve-score-program-note">Text source is authoritative. Use the inserter for valid metric/operator snippets.</div>
                 </div>
                 <div class="palette-field-row">
                     <label class="palette-field-label">Palette</label>

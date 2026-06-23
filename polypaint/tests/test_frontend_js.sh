@@ -549,12 +549,13 @@ assertIncludes("id=\"btn-render-pdf-colorspread\" onclick=\"runPdfColorSpreadSel
 assertIncludes("PDF artifacts are generated from the selected Color artifact using the PDF button on the Color tab.", 'PDF tab copy should explain PDFs are generated from Color selection');
 assertIncludes("async function runPdfColorSpreadForArtifact(art, btn) {", 'PDF ColorSpread dispatch should use a reusable selected-artifact runner');
 assertIncludes("async function runPdfColorSpreadSelectedRenderArtifact() {", 'Render PDF action should dispatch from the selected Color artifact without a popup');
-assertIncludes("ColorRender-MT exposes fused clip/raster/finalize controls only", 'render tab copy should describe the ColorRender-MT action');
+assertIncludes("Selected Color</span>", 'Color tab should show the selected artifact id instead of long help copy');
+assertIncludes("placeholder=\"No Color artifact selected\"", 'Color selected-artifact field should have an empty-state placeholder');
 assertIncludes("function _sourceColorArtifactIdForRenderArtifact(art) {", 'render artifact source-color helper missing');
 assertIncludes("function _renderArtifactSolveDisplay(art) {", 'render artifact solve-display helper missing');
 assertIncludes("_solveScoreProgramRememberedNames[prefix] = '';", 'populate should clear stale solve-score remembered names');
 assertIncludes("_setSolveScoreProgramStatus(prefix, `Populated from ${statusTarget}`, false);", 'populate should overwrite stale solve-score status with the resolved source label');
-assertIncludes("Color summaries show the solve display, palette name, and source Color artifact id.", 'render tab copy should match the new color summary contract');
+assertNotIncludes("ColorRender-MT exposes fused clip/raster/finalize controls only", 'Color tab should not show the obsolete long action description');
 assertIncludes("Palette summaries show the solve display, palette name, and source Color artifact id.", 'render tab copy should match the new palette summary contract');
 assertNotIncludes("[P id] in Color summaries means the artifact has a palette link;", 'render tab should not describe removed [P id] summary tokens');
 assertNotIncludes("[C id] means this palette is linked back to a Color artifact.", 'render tab should not describe removed [C id] summary tokens');

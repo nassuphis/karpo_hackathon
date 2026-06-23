@@ -367,6 +367,46 @@ def _wrap_monospace_line(line, max_chars):
     return out
 
 
+def _split_program_statement_line(line):
+    parts = []
+    start = 0
+    depth = 0
+    quote = ""
+    escaped = False
+    text = _safe_pdf_text(line)
+    for i, ch in enumerate(text):
+        if quote:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == quote:
+                quote = ""
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth = max(0, depth - 1)
+        elif ch == ";" and depth == 0:
+            part = text[start:i].strip()
+            if part:
+                parts.append(part)
+            start = i + 1
+    tail = text[start:].strip()
+    if tail or not parts:
+        parts.append(tail)
+    return parts
+
+
+def _program_source_display_lines(source):
+    lines = []
+    for line in str(source or "").splitlines() or [""]:
+        lines.extend(_split_program_statement_line(line))
+    return lines or [""]
+
+
 def _draw_code_block(c, x, y, width, lines, *, max_lines=None, caption=""):
     max_chars = _code_chars_for_width(width)
     wrapped = []
@@ -419,13 +459,36 @@ def _programs_for_report(report):
     return programs
 
 
+def _appendix_program_columns(programs):
+    left_order = {
+        "param program": 0,
+        "coefficient function": 1,
+        "coeff program": 2,
+    }
+    right_order = {
+        "root program": 0,
+        "solve score program": 1,
+    }
+    left = []
+    right = []
+    for idx, program in enumerate(programs or []):
+        label = str(program.get("label") or "").strip().lower()
+        if label in right_order:
+            right.append((right_order[label], idx, program))
+        else:
+            left.append((left_order.get(label, 100), idx, program))
+    left.sort(key=lambda item: (item[0], item[1]))
+    right.sort(key=lambda item: (item[0], item[1]))
+    return [item[2] for item in left], [item[2] for item in right]
+
+
 def _appendix_start_y():
     return BLEED_3 + CONTENT_NET - MARGIN_TOP - 28
 
 
 def _wrapped_program_lines(program, width=CONTENT_W):
     wrapped = []
-    for line in str(program.get("source") or "").splitlines() or [""]:
+    for line in _program_source_display_lines(program.get("source") or ""):
         wrapped.extend(_wrap_monospace_line(line, _code_chars_for_width(width)))
     return wrapped
 
@@ -526,17 +589,10 @@ def _draw_report_summary(c, report, palette_reader=None, palette_size=None):
 def _start_appendix_page(c, page_no):
     c.setFillColor(PAGE_BG)
     c.rect(0, 0, SPREAD_W, SPREAD_H, fill=1, stroke=0)
-    x = ORIGIN_X
     y = BLEED_3 + CONTENT_NET - MARGIN_TOP
-    c.setFillColor(TEXT)
-    _set_pdf_font(c, ("Helvetica-Bold", 22))
-    c.drawString(x, y, f"Source Appendix {page_no}")
-    c.setStrokeColor(RULE)
-    c.setLineWidth(TITLE_RULE_W)
-    c.line(x, y - 8, SPREAD_W - ORIGIN_X, y - 8)
     return [
-        [ORIGIN_X, y - 28, CONTENT_W],
-        [PAGE_W + MARGIN_L, y - 28, CONTENT_W],
+        [ORIGIN_X, y - 14, CONTENT_W],
+        [PAGE_W + MARGIN_L, y - 14, CONTENT_W],
     ]
 
 
@@ -545,45 +601,60 @@ def _draw_appendix_pages(c, programs):
         return 0
     page_count = 1
     columns = _start_appendix_page(c, page_count)
-    col = 0
-    x, y, w = columns[col]
     bottom = BLEED_3 + MARGIN_BOTTOM
     total_lines = 0
+    left_programs, right_programs = _appendix_program_columns(programs)
 
-    def next_column():
-        nonlocal page_count, columns, col, x, y, w
-        if col == 0:
-            col = 1
-            x, y, w = columns[col]
-            return
-        c.showPage()
-        page_count += 1
-        columns = _start_appendix_page(c, page_count)
-        col = 0
+    def draw_programs_in_flow(flow_programs, start_col=0, reserve_first_page_right=False):
+        nonlocal page_count, columns, total_lines
+        col = start_col
         x, y, w = columns[col]
 
-    for program in programs:
-        label = str(program.get("label") or "Program")
-        wrapped = _wrapped_program_lines(program, w)
-        idx = 0
-        first = True
-        while idx < len(wrapped):
-            if total_lines >= CODE_MAX_LINES_TOTAL:
-                c.setFillColor(MUTED)
-                _set_pdf_font(c, F_CAP)
-                c.drawString(x, max(bottom, y), "... appendix stopped at global source line guard")
-                return page_count
-            if y < bottom + 90:
-                next_column()
-            header = label.upper() if first else f"{label.upper()} (CONT.)"
-            y = _draw_section_header(c, x, y, header, width=w)
-            available_lines = max(1, int((y - bottom - 2 * CODE_PAD_Y - 6) / CODE_LEADING))
-            take = min(len(wrapped) - idx, available_lines, CODE_MAX_LINES_TOTAL - total_lines)
-            y = _draw_code_block(c, x, y, w, wrapped[idx:idx + take])
-            y -= SECTION_GAP
-            idx += take
-            total_lines += take
-            first = False
+        def next_column():
+            nonlocal page_count, columns, col, x, y, w
+            if col == 0 and not (reserve_first_page_right and page_count == 1):
+                col = 1
+                x, y, w = columns[col]
+                return
+            c.showPage()
+            page_count += 1
+            columns = _start_appendix_page(c, page_count)
+            col = 0
+            x, y, w = columns[col]
+
+        for program in flow_programs:
+            label = str(program.get("label") or "Program")
+            wrapped = _wrapped_program_lines(program, w)
+            idx = 0
+            first = True
+            while idx < len(wrapped):
+                if total_lines >= CODE_MAX_LINES_TOTAL:
+                    c.setFillColor(MUTED)
+                    _set_pdf_font(c, F_CAP)
+                    c.drawString(x, max(bottom, y), "... appendix stopped at global source line guard")
+                    return False
+                if y < bottom + 90:
+                    next_column()
+                header = label.upper() if first else f"{label.upper()} (CONT.)"
+                y = _draw_section_header(c, x, y, header, width=w)
+                available_lines = max(1, int((y - bottom - 2 * CODE_PAD_Y - 6) / CODE_LEADING))
+                take = min(len(wrapped) - idx, available_lines, CODE_MAX_LINES_TOTAL - total_lines)
+                y = _draw_code_block(c, x, y, w, wrapped[idx:idx + take])
+                y -= SECTION_GAP
+                idx += take
+                total_lines += take
+                first = False
+        return True
+
+    # Put solve-score output on the right side of the first appendix spread.
+    # The remaining provenance is read top-to-bottom on the left, with the
+    # coefficient program after the coefficient function.
+    if right_programs:
+        if not draw_programs_in_flow(right_programs, start_col=1):
+            return page_count
+    if left_programs:
+        if not draw_programs_in_flow(left_programs, start_col=0, reserve_first_page_right=bool(right_programs)):
+            return page_count
     return page_count
 
 

@@ -2129,6 +2129,32 @@ def _solve_score_source_from_nonempty_chain(chain):
         return ""
 
 
+def _legacy_solve_score_program_from_meta(meta):
+    if str((meta or {}).get("color_mode") or "").strip() != "solve_score":
+        return None
+    if not any((meta or {}).get(key) not in ("", None) for key in (
+        "solve_metric",
+        "solve_score_quantile",
+        "solve_score_omega",
+        "solve_score_omega_enabled",
+    )):
+        return None
+    try:
+        compiled = compile_solve_score_chain_or_legacy(
+            (meta or {}).get("solve_score_chain", ""),
+            (meta or {}).get("solve_metric", ""),
+            (meta or {}).get("solve_score_quantile", ""),
+            (meta or {}).get("solve_score_omega", 1.0),
+            (meta or {}).get("solve_score_omega_enabled", True),
+            default_metric="proximity",
+        )
+        public_chain = json.loads(serialize_solve_score_chain(compiled["chain"]))
+        source_text = solve_score_source_text_from_chain(public_chain)
+        return {"chain": public_chain, "source_text": source_text}
+    except Exception:
+        return None
+
+
 def _load_color_artifact_overlay(job_id, artifact_id):
     try:
         obj = s3.get_object(Bucket=BUCKET, Key=color_artifact_meta_key(job_id, artifact_id))
@@ -2209,6 +2235,13 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
             entry["solve_score_program_source_text"] = reconstructed
             if not str(entry["score_source_text"] or "").strip():
                 entry["score_source_text"] = reconstructed
+        else:
+            legacy_program = _legacy_solve_score_program_from_meta(meta)
+            if legacy_program:
+                entry["solve_score_chain"] = legacy_program["chain"]
+                entry["solve_score_program_source_text"] = legacy_program["source_text"]
+                if not str(entry["score_source_text"] or "").strip():
+                    entry["score_source_text"] = legacy_program["source_text"]
 
     if family == "color":
         repalette_capable = str(meta.get("repalette_capable", "")).strip().lower() == "true"

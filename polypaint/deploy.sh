@@ -1211,7 +1211,13 @@ echo "  ExtPalFx: $(du -h /tmp/polypaint-extract-palette-fused.zip | cut -f1)  (
 PDF_ARTIFACT_DIR=/tmp/polypaint-pdf-artifact
 rm -rf "$PDF_ARTIFACT_DIR"
 mkdir -p "$PDF_ARTIFACT_DIR"
-cp lambda/handler_pdf_artifact.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py lambda/spread_pdf.py "$PDF_ARTIFACT_DIR/"
+cp lambda/handler_pdf_artifact.py lambda/shared.py lambda/color_artifact_meta.py lambda/solve_score_chain.py \
+   lambda/solve_score_program_source.py lambda/coeff_program_source.py lambda/param_program_source.py lambda/root_program_source.py \
+   lambda/pipeline_programs.py lambda/root_pipeline_programs.py lambda/solve_score_pipeline_programs.py \
+   lambda/coeff_program_chain.py lambda/param_program_chain.py lambda/merged_opcodes.py \
+   lambda/program_source_core.py lambda/program_profiles.py lambda/program_profiles.json \
+   lambda/coeff_legacy_registry.json lambda/param_legacy_registry.json lambda/root_legacy_registry.json \
+   lambda/spread_pdf.py "$PDF_ARTIFACT_DIR/"
 cd "$PDF_ARTIFACT_DIR" && zip -FS -r9 /tmp/polypaint-pdf-artifact.zip . -q && cd "$SCRIPT_DIR"
 echo "  PDFArt:  $(du -h /tmp/polypaint-pdf-artifact.zip | cut -f1)  (spread builder + python pdf layer)"
 

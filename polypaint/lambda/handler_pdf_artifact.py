@@ -12,8 +12,13 @@ from datetime import datetime, timezone
 import boto3
 
 from color_artifact_meta import load_color_artifact_head
+from coeff_program_source import coeff_source_text_from_chain
+from param_program_source import param_source_text_from_chain
+from pipeline_programs import coeff_transforms_to_program_chain, param_transforms_to_program_chain
+from root_program_source import root_source_text_from_chain
 from shared import BUCKET, parse_body, ok_response, report_status
-from solve_score_chain import read_solve_score_metadata
+from solve_score_chain import compile_solve_score_chain_or_legacy, read_solve_score_metadata, serialize_solve_score_chain
+from solve_score_program_source import solve_score_source_text_from_chain
 from spread_pdf import PDF_IMAGE_MAX_PX, PDF_PALETTE_MAX_PX, build_color_spread_pdf, prepare_pdf_image
 
 s3 = boto3.client("s3")
@@ -194,6 +199,18 @@ def _program_entry(label, source="", fallback="", language="text"):
     }
 
 
+def _program_entry_always(label, source="", fallback="", language="text", empty_text="none"):
+    entry = _program_entry(label, source, fallback, language)
+    if entry:
+        return entry
+    return {
+        "label": label,
+        "language": language,
+        "source": str(empty_text or "none"),
+        "fallback": "",
+    }
+
+
 def _program_fallback_from_chain(label, display, chain):
     display_text = str(display or "").strip()
     if display_text:
@@ -204,6 +221,107 @@ def _program_fallback_from_chain(label, display, chain):
         except Exception:
             return f"{label} chain display not stored"
     return ""
+
+
+def _program_source_from_chain(chain, to_source):
+    if not isinstance(chain, list) or not chain:
+        return ""
+    try:
+        return str(to_source(chain) or "").strip()
+    except Exception:
+        return ""
+
+
+def _program_chain_from_pipeline(pipeline, profile):
+    chain = pipeline.get(f"{profile}_program_chain")
+    return chain if isinstance(chain, list) and chain else []
+
+
+def _param_source_from_pipeline(pipeline):
+    source = _first_text(pipeline.get("param_program_source_text"))
+    if source:
+        return source
+    chain = _program_chain_from_pipeline(pipeline, "param")
+    source = _program_source_from_chain(chain, param_source_text_from_chain)
+    if source:
+        return source
+    transforms = pipeline.get("param_transforms")
+    if isinstance(transforms, list) and transforms:
+        return _program_source_from_chain(param_transforms_to_program_chain(transforms), param_source_text_from_chain)
+    return ""
+
+
+def _coeff_source_from_pipeline(pipeline):
+    source = _first_text(pipeline.get("coeff_program_source_text"))
+    if source:
+        return source
+    chain = _program_chain_from_pipeline(pipeline, "coeff")
+    source = _program_source_from_chain(chain, coeff_source_text_from_chain)
+    if source:
+        return source
+    transforms = pipeline.get("coeff_transforms")
+    if isinstance(transforms, list) and transforms:
+        return _program_source_from_chain(coeff_transforms_to_program_chain(transforms), coeff_source_text_from_chain)
+    return ""
+
+
+def _root_source_from_meta(meta):
+    meta = meta or {}
+    source = _first_text(meta.get("root_program_source_text"))
+    if source:
+        return source
+    raw_chain = meta.get("root_program_chain")
+    if raw_chain not in ("", None, []):
+        try:
+            chain = json.loads(raw_chain) if isinstance(raw_chain, str) else raw_chain
+            source = _program_source_from_chain(chain, root_source_text_from_chain)
+            if source:
+                return source
+        except Exception:
+            pass
+    return ""
+
+
+def _legacy_solve_score_source_from_meta(meta):
+    meta = meta or {}
+    # Older color artifacts predate solve_score_chain/source metadata and only
+    # carry scalar fields. Compile through the same legacy bridge used by
+    # Populate so PDF provenance matches the editable Render text box.
+    metric = _first_text(meta.get("solve_metric"))
+    if not metric:
+        return ""
+    omega_enabled = meta.get("solve_score_omega_enabled")
+    if omega_enabled is None:
+        omega_enabled = True
+    try:
+        compiled = compile_solve_score_chain_or_legacy(
+            raw_chain=[],
+            metric=metric,
+            quantile=meta.get("solve_score_quantile"),
+            omega=meta.get("solve_score_omega"),
+            omega_enabled=omega_enabled,
+            default_metric="proximity",
+        )
+        public_chain = json.loads(serialize_solve_score_chain(compiled["chain"]))
+        return solve_score_source_text_from_chain(public_chain)
+    except Exception:
+        return ""
+
+
+def _solve_score_source_from_meta(meta):
+    source = _first_text(
+        (meta or {}).get("solve_score_program_source_text"),
+        (meta or {}).get("score_source_text"),
+    )
+    if source:
+        return source
+    raw_chain = (meta or {}).get("solve_score_chain")
+    if raw_chain not in ("", None, []):
+        try:
+            return solve_score_source_text_from_chain(raw_chain)
+        except Exception:
+            return ""
+    return _legacy_solve_score_source_from_meta(meta)
 
 
 def build_pdf_report_model(job_id, calc, src_meta, source_artifact_id):
@@ -233,19 +351,20 @@ def build_pdf_report_model(job_id, calc, src_meta, source_artifact_id):
 
     summary_rows = [
         ("Function", function_display),
-        ("Degree", degree + (f" ({n_coeffs} coeffs)" if n_coeffs and n_coeffs != degree else "")),
+        ("Degree", degree),
         ("N", n_value),
         ("Times", times),
         ("Solver", solver),
-        ("Color mode", color_summary or color_mode),
         ("Interpretation", interpretation),
         ("Palette", palette),
         ("Output channels", output_channels),
         ("Viewport", viewport),
     ]
+    if str(src_meta.get("color_mode") or "").strip() != "solve_score":
+        summary_rows.insert(5, ("Color mode", color_summary or color_mode))
 
     programs = []
-    param_source = pipeline.get("param_program_source_text", "")
+    param_source = _param_source_from_pipeline(pipeline)
     param_fallback = _program_fallback_from_chain(
         "Param Program",
         pipeline.get("param_program_display", ""),
@@ -255,25 +374,21 @@ def build_pdf_report_model(job_id, calc, src_meta, source_artifact_id):
     if entry:
         programs.append(entry)
 
-    coeff_source = pipeline.get("coeff_program_source_text", "")
+    coeff_source = _coeff_source_from_pipeline(pipeline)
     coeff_fallback = _program_fallback_from_chain(
         "Coeff Program",
         pipeline.get("coeff_program_display", ""),
         pipeline.get("coeff_program_chain", []),
     )
-    entry = _program_entry("Coeff Program", coeff_source, coeff_fallback, "poly-coeff")
-    if entry:
-        programs.append(entry)
+    programs.append(_program_entry_always("Coeff Program", coeff_source, coeff_fallback, "poly-coeff"))
 
-    root_source = _first_text(src_meta.get("root_program_source_text"))
+    root_source = _root_source_from_meta(src_meta)
     root_fallback = _transforms_summary(src_meta.get("root_transforms"))
     if root_fallback == "none":
         root_fallback = ""
-    entry = _program_entry("Root Program", root_source, root_fallback, "poly-root")
-    if entry:
-        programs.append(entry)
+    programs.append(_program_entry_always("Root Program", root_source, root_fallback, "poly-root"))
 
-    score_source = _first_text(src_meta.get("solve_score_program_source_text"), src_meta.get("score_source_text"))
+    score_source = _solve_score_source_from_meta(src_meta)
     score_fallback = _first_text(src_meta.get("score_program"))
     entry = _program_entry("Solve Score Program", score_source, score_fallback, "poly-score")
     if entry:

@@ -317,6 +317,29 @@ class TestSolveScoreProgramStorage(unittest.TestCase):
         self.assertIn("cf", entry["solve_score_program_source_text"])
         self.assertEqual(entry["score_source_text"], entry["solve_score_program_source_text"])
 
+    def test_render_artifact_entry_reconstructs_legacy_scalar_solve_score_metadata(self):
+        import handler_storage
+
+        entry = handler_storage._render_artifact_entry(
+            "color",
+            "artifact-legacy",
+            {
+                "key": "renders/job/artifact-legacy.png",
+                "url": "https://example.invalid/artifact-legacy.png",
+                "modified_at": "2026-06-22T00:00:00Z",
+                "user_meta": {
+                    "color_mode": "solve_score",
+                    "solve_score_quantile": "0.047",
+                    "solve_score_omega": "1.0",
+                    "solve_score_omega_enabled": "false",
+                },
+            },
+        )
+
+        self.assertEqual(entry["solve_score_chain"], [["proximity", "4.7"]])
+        self.assertIn("score = metric(proximity, slv, q=4.7%)", entry["solve_score_program_source_text"])
+        self.assertEqual(entry["score_source_text"], entry["solve_score_program_source_text"])
+
     def test_render_artifact_entry_reconstructs_palette_and_associated_sources(self):
         import handler_storage
 

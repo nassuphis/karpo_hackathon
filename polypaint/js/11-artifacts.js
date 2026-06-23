@@ -1063,7 +1063,11 @@ function renderArtifactPanel(jobId, summary, options = {}) {
 
     let controlsExtra = '';
     if (_renderActiveFamily === 'color') {
-        controlsExtra = '<span style="font-size:11px; color:#666">ColorRender-MT exposes fused clip/raster/finalize controls only: clip threads, raster threads, raster workers, raster retries, logical sections, finalize workers, and optional associated-palette artifacts. Drag a rectangle on the selected Color preview to populate Exact view bounds for the next ColorRender-MT run; Escape or right-click clears it. ExtractPalette opens a popup with solve-score prepass controls plus real palette chunk controls: chunk threads, chunk input tmp file vs sectioned native, chunk retries, and chunk workers. Color summaries show the solve display, palette name, and source Color artifact id. RePalette on Color requires a fused raw sidecar and remaps scalar, RGB LUT, or HSV LUT bytes to a new palette. Color2Bilevel thresholds the selected fused greyscale raw sidecar into a new bilevel artifact. Populate restores the selected color artifact settings into the form, including saved render execution settings when present. Autolevels derives a new immutable color artifact from the selected image. Resize derives a new immutable Color artifact using libvips resize/thumbnail operations.</span>';
+        const colorArtifactId = activeArt && activeArt.artifact_id ? String(activeArt.artifact_id) : '';
+        controlsExtra = `<div style="display:flex; align-items:center; gap:8px; max-width:100%">
+            <span style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:.05em; white-space:nowrap">Selected Color</span>
+            <input type="text" readonly value="${_escapeHtml(colorArtifactId)}" placeholder="No Color artifact selected" onclick="this.select()" style="flex:1; min-width:220px; max-width:720px; background:#101020; border:1px solid #444; border-radius:4px; color:#eee; padding:5px 8px; font-family:monospace; font-size:12px">
+        </div>`;
     } else if (_renderActiveFamily === 'palette') {
         controlsExtra = '<span style="font-size:11px; color:#666">Generate uses current Solve score metric, palette, q, and root transforms. RePalette reuses the selected palette artifact’s saved bins and only changes the final palette mapping. Populate copies the selected palette into Color settings and switches to Color. Palette summaries show the solve display, palette name, and source Color artifact id.</span>';
     } else if (_renderActiveFamily === 'bilevel') {
@@ -1135,13 +1139,16 @@ function renderArtifactPanel(jobId, summary, options = {}) {
     actionButtons.push('<button class="btn-secondary" id="btn-render-delete" onclick="deleteSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>Delete</button>');
     if (_renderActiveFamily !== 'pdf') actionButtons.push('<button class="btn-secondary" id="btn-render-deepzoom" onclick="deepZoomSelectedRenderArtifact()" style="padding:4px 12px; font-size:11px" disabled>DeepZoom</button>');
     const actionRowsHtml = _renderActionButtonRows(actionButtons, 5);
+    const navigationHintHtml = _renderActiveFamily === 'color'
+        ? ''
+        : `<div style="font-size:11px; color:#666">Click row to view. Arrow keys navigate within ${_renderFamilyLabel(_renderActiveFamily)}.</div>`;
 
     preview.innerHTML = `
         <div style="border:1px solid #333; border-radius:6px; padding:10px; background:#141424">
             <div class="subtab-bar render-artifact-family-tabs" role="tablist" aria-label="Render artifact family tabs">${familyTabs}</div>
             <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:8px">
                 ${actionRowsHtml}
-                <div style="font-size:11px; color:#666">Click row to view. Arrow keys navigate within ${_renderFamilyLabel(_renderActiveFamily)}.</div>
+                ${navigationHintHtml}
             </div>
             <div style="font-size:11px; color:#666; margin-bottom:8px">${controlsExtra}</div>
             <div style="display:grid; grid-template-columns:minmax(340px, 44%) 1fr; gap:12px; align-items:start">

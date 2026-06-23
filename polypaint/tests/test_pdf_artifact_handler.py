@@ -36,6 +36,7 @@ class TestPdfArtifactHandler(unittest.TestCase):
                 "created_at": "2026-04-04T10:00:00Z",
                 "color_mode": "solve_score",
                 "palette": "tri_redgold",
+                "solve_score_chain": json.dumps([["spread", "0.1"], ["omega_cosine", "3", "0.5"]]),
                 "solve_metric": "clusteriness",
                 "solve_score_quantile": "0.05",
                 "solve_score_omega": "3",
@@ -129,8 +130,10 @@ class TestPdfArtifactHandler(unittest.TestCase):
         self.assertEqual(meta["source_family"], "color")
         self.assertEqual(meta["source_artifact_id"], "color_src")
         self.assertEqual(meta["source_image_key"], "renders/job1/color/color_src/image.jpeg")
+        self.assertIn("omega-cos", meta["source_display_name"])
+        self.assertNotIn("ω", meta["source_display_name"])
         self.assertEqual(meta["source_palette"], "tri_redgold")
-        self.assertEqual(meta["source_solve_metric"], "clusteriness")
+        self.assertEqual(meta["source_solve_metric"], "spread")
         self.assertEqual(meta["source_associated_palette_mode"], "generated")
         self.assertEqual(meta["source_associated_palette_id"], "pal_color_src")
         self.assertEqual(meta["source_associated_palette_image_key"], "renders/job1/palettes/pal_color_src/image.jpeg")
@@ -149,6 +152,9 @@ class TestPdfArtifactHandler(unittest.TestCase):
         self.assertEqual(meta["image_max_px"], "3600")
         self.assertEqual(meta["palette_source_width"], "1000")
         self.assertEqual(meta["palette_prepared_width"], "800")
+        for key, value in meta.items():
+            key.encode("ascii")
+            value.encode("ascii")
 
         statuses = [call.args[2] for call in mock_report.call_args_list]
         self.assertEqual(statuses, ["started", "downloading", "processing", "processing", "processing", "uploading", "done"])

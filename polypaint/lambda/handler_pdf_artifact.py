@@ -27,10 +27,25 @@ def _stringify_meta(value):
     if value is None:
         return ""
     if isinstance(value, bool):
-        return "true" if value else "false"
-    if isinstance(value, (list, dict)):
-        return json.dumps(value, separators=(",", ":"))
-    return str(value)
+        text = "true" if value else "false"
+    elif isinstance(value, (list, dict)):
+        text = json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+    else:
+        text = str(value)
+    replacements = {
+        "\u03c9": "omega",
+        "\u03a9": "Omega",
+        "\u2010": "-",
+        "\u2011": "-",
+        "\u2012": "-",
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2212": "-",
+        "\u2026": "...",
+    }
+    for src, dst in replacements.items():
+        text = text.replace(src, dst)
+    return text.encode("ascii", "replace").decode("ascii")
 
 
 def _phase(job_id, task_id, status, phase, phase_label, **extra):
@@ -444,6 +459,7 @@ def handler(event, context):
                 "palette_image_resized": _stringify_meta(palette_image_info["resized"]),
                 "palette_image_max_px": _stringify_meta(palette_image_info["image_max_px"]),
             })
+        meta = {str(key): _stringify_meta(value) for key, value in meta.items()}
 
         _phase(job_id, task_id, "uploading", "upload", "Upload PDF", **progress)
         with open(output_local, "rb") as fh:

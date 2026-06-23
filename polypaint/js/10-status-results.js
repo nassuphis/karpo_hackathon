@@ -1504,6 +1504,33 @@ async function _handleRenderRunCompletion(run, rd) {
     });
 }
 
+function _showPdfHardStaleAbandon(statusEl, run, phase) {
+    if (!statusEl) return;
+    statusEl.innerHTML = '';
+    const text = document.createElement('span');
+    text.textContent = 'PDF compose stalled (no update for 15+ min)';
+    statusEl.appendChild(text);
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn-secondary btn-inline';
+    btn.style.marginLeft = '8px';
+    btn.textContent = 'Abandon stalled PDF job';
+    btn.onclick = () => {
+        const target = (run && (run.task_id || run.run_id)) || 'PDF job';
+        _clearActiveRun();
+        stopActiveRenderObserver();
+        statusEl.textContent = 'PDF job abandoned locally';
+        statusEl.className = 'status';
+        log(`Abandoned stalled PDF job locally: ${target}`, 'err', 'render-log');
+    };
+    statusEl.appendChild(btn);
+    statusEl.className = 'status error';
+    if (_lastWarnState !== 'hard') {
+        _lastWarnState = 'hard';
+        log(`PDF compose stalled - no update for 15+ min${phase ? ' (' + phase + ')' : ''}`, 'err', 'render-log');
+    }
+}
+
 async function _pollActiveRenderRun() {
     if (_renderObserverPollActive) return;
     _renderObserverPollActive = true;
@@ -1642,20 +1669,29 @@ async function _pollActiveRenderRun() {
             statusMsg += ' \u00b7 last update ' + _fmtAge(freshMs) + ' ago';
         }
 
-        // Liveness: warning / hard stall (never auto-clear)
+        // Liveness: warning / hard stall. PDF is a single Lambda job, so a
+        // hard-stale compose phase can leave only a local active-run lock.
         if (freshMs !== null && freshMs > RENDER_HARD_STALE_MS) {
-            statusEl.textContent = 'Render stalled (no worker update for 15+ min)';
-            statusEl.className = 'status error';
-            if (_lastWarnState !== 'hard') {
-                _lastWarnState = 'hard';
-                log('Render stalled — no worker update for 15+ min', 'err', 'render-log');
+            if (run && run.mode === 'pdf') {
+                _showPdfHardStaleAbandon(statusEl, run, phase);
+            } else {
+                statusEl.textContent = 'Render stalled (no worker update for 15+ min)';
+                statusEl.className = 'status error';
+                if (_lastWarnState !== 'hard') {
+                    _lastWarnState = 'hard';
+                    log('Render stalled — no worker update for 15+ min', 'err', 'render-log');
+                }
             }
         } else if (freshMs !== null && freshMs > RENDER_WARN_STALE_MS) {
-            statusEl.textContent = statusMsg + ' \u00b7 no worker update for 5+ min';
+            statusEl.textContent = run && run.mode === 'pdf'
+                ? statusMsg + ' \u00b7 PDF compose has not updated for 5+ min'
+                : statusMsg + ' \u00b7 no worker update for 5+ min';
             statusEl.className = 'status';
             if (_lastWarnState !== 'warn') {
                 _lastWarnState = 'warn';
-                log('Warning: no worker update for 5+ min', '', 'render-log');
+                log(run && run.mode === 'pdf'
+                    ? 'Warning: PDF compose has not updated for 5+ min'
+                    : 'Warning: no worker update for 5+ min', '', 'render-log');
             }
         } else {
             statusEl.textContent = statusMsg;

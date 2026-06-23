@@ -1,6 +1,64 @@
 # PDF Artifact
 
-Status: proposed.
+Status: implemented.
+
+## Current Implementation Contract
+
+The Render PDF artifact path creates an immutable `pdf` artifact from an existing saved Color artifact. The live backend is Lambda + Pillow + ReportLab:
+
+`Render PDF ColorSpread UI -> handler_dispatch.py -> handler_pdf_artifact.py -> spread_pdf.py`
+
+This path does not use R, knitr, LaTeX, `.Rnw`, or `scripts/compile_knitr.sh`. Those tools are only for local report documents under `reports/`.
+
+V1 supports one PDF subtype:
+
+- `pdf_kind = color_spread`
+- source family: `color`
+- output file: `renders/{job_id}/pdf/{artifact_id}/document.pdf`
+- first spread, left page: provenance report
+- first spread, right page: selected Color artifact image
+- optional appendix spreads: full program source listings
+
+Large source rasters are downsampled before ReportLab sees them. `spread_pdf.prepare_pdf_image(...)` inspects dimensions, enforces a deliberate Pillow decompression-bomb limit, optionally uses decoder `draft(...)`, resizes with LANCZOS, writes a prepared temporary image, and returns original/prepared dimensions.
+
+Default preparation caps:
+
+- main image: `PDF_IMAGE_MAX_PX=3600`
+- palette/reference image: `PDF_PALETTE_MAX_PX=800`
+- target DPI: `PDF_TARGET_DPI=300`
+- prepared format: lossless PNG by default
+
+`handler_pdf_artifact.py` reports `prepare_image` before `compose_pdf`, and the final metadata/status rows include:
+
+- `source_width`, `source_height`
+- `prepared_width`, `prepared_height`
+- `image_resized`, `image_max_px`
+- palette equivalents when an associated palette is present
+- `page_count`
+
+If a single-shot PDF job reaches the frontend hard-stale threshold without a terminal row, the UI offers `Abandon stalled PDF job`. That clears only the local active-run lock through `_clearActiveRun()`; it does not cancel server work or delete audit rows.
+
+The report page answers: "what exactly produced this image?" It renders compute id, Color artifact id, function/degree/N/times/solver, color mode, interpretation, palette, output channels, viewport, and source-code excerpts for Param, Coeff, Root, Solve Score, and coefficient-function provenance when available. Full program source flows to appendix spreads in Courier code blocks.
+
+The visual treatment is the CR21 dark navy/signal red report style:
+
+- `PAGE_BG = #1a1a2e`
+- `ACCENT = #e94560`
+- `TEXT = #f2f2f7`
+- `MUTED = #9aa0b4`
+- `PANEL_BG = #121829`
+- `PANEL_BORDER = #2b3a5e`
+- `CODE_TEXT = #e6e9f2`
+
+Tests covering the current path:
+
+- `tests/test_spread_pdf.py`: real image preparation and PDF smoke generation.
+- `tests/test_pdf_artifact_handler.py`: status phases, prepared-image handoff, dimension metadata, and PDF metadata.
+- `tests/test_frontend_js.sh`: stale PDF wording and local abandon action.
+
+## Historical Design Notes
+
+The remainder of this document is the original V1 design note. Where it conflicts with the current implementation contract above, the current contract wins.
 
 This document describes a new fifth Render-family artifact type:
 

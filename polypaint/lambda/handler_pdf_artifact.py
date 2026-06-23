@@ -12,9 +12,9 @@ from datetime import datetime, timezone
 import boto3
 
 from color_artifact_meta import load_color_artifact_head
-from shared import BUCKET, parse_body, ok_response, parse_boolish, report_status
+from shared import BUCKET, parse_body, ok_response, report_status
 from solve_score_chain import read_solve_score_metadata
-from spread_pdf import build_color_spread_pdf
+from spread_pdf import PDF_IMAGE_MAX_PX, PDF_PALETTE_MAX_PX, build_color_spread_pdf, prepare_pdf_image
 
 s3 = boto3.client("s3")
 
@@ -105,115 +105,171 @@ def _transforms_summary(raw):
     return "; ".join(parts) if parts else "none"
 
 
-def _build_spread_meta(job_id, calc, src_meta, source_artifact_id):
-    """Build structured metadata dict for the PDF text page."""
-    # Pipeline line: [transforms] function [coeff_transforms] N=..., times=...
-    pipeline_parts = []
-    pt = _transforms_summary(src_meta.get("root_transforms"))
-    fn = str(calc.get("function", "") or "").strip()
-    pipeline = calc.get("pipeline", {}) if isinstance(calc.get("pipeline"), dict) else {}
-    ct_raw = pipeline.get("coeff_transforms", [])
-    ct = ",".join(
-        f"{x[0]}({','.join(str(v) for v in x[1:])})" if isinstance(x, list) and len(x) > 1
-        else (str(x[0]) if isinstance(x, list) and x else str(x))
-        for x in ct_raw
-    ) if ct_raw else ""
-    cfpv_display = pipeline.get("cfpv_display", "")
-    fn_str = fn
-    if cfpv_display:
-        fn_str += f"({cfpv_display})"
-    pt_display = pipeline.get("param_transforms_display", [])
-    if pt_display:
-        pt_parts = []
-        for a in pt_display:
-            if isinstance(a, list) and len(a) > 1:
-                pt_parts.append(f"{a[0]}({','.join(str(v) for v in a[1:])})")
-            elif isinstance(a, list) and a:
-                pt_parts.append(str(a[0]))
-            else:
-                pt_parts.append(str(a))
-        pt_str = ",".join(pt_parts)
-    else:
-        pt_str = pt
-    pipeline_line = f"[{pt_str}] {fn_str}"
-    if ct:
-        pipeline_line += f" [{ct}]"
-    n_val = calc.get("N", calc.get("n1", ""))
-    times = calc.get("times", 1)
-    if n_val not in ("", None):
-        pipeline_line += f" N={n_val}"
-    if times not in ("", None):
-        pipeline_line += f", times={times}"
-    solver = _solver_label(calc.get("solver"))
-    if solver:
-        pipeline_line += f", solver={solver}"
+def _first_text(*values):
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
 
-    # Viewport line
-    vp_parts = []
-    quantile_val = src_meta.get("quantile", "")
-    shim_val = src_meta.get("shim", "")
-    view_mode = src_meta.get("view_mode", "auto")
-    sq_ext = src_meta.get("square_extent", "")
-    if view_mode == "square" and sq_ext:
-        vp_parts.append(f"Square extent={sq_ext}")
-    else:
-        if quantile_val not in ("", None):
-            try:
-                vp_parts.append(f"q={float(quantile_val)*100:.1f}%")
-            except Exception:
-                pass
-        if shim_val not in ("", None):
-            try:
-                vp_parts.append(f"shim={float(shim_val)*100:.1f}%")
-            except Exception:
-                pass
-    viewport_line = "View: " + ", ".join(vp_parts) if vp_parts else ""
 
-    # Color mode line
-    color_mode = str(src_meta.get("color_mode", "") or "").strip()
-    palette = str(src_meta.get("palette", "") or "")
+def _fmt_pct(value):
+    if value in ("", None):
+        return ""
+    try:
+        return f"{float(value) * 100:.1f}%"
+    except Exception:
+        return str(value)
+
+
+def _viewport_summary(src_meta):
+    view_mode = str(src_meta.get("view_mode") or "auto")
+    if view_mode == "square":
+        extent = str(src_meta.get("square_extent") or "").strip()
+        return f"square extent={extent}" if extent else "square"
+    parts = [view_mode]
+    q = _fmt_pct(src_meta.get("quantile"))
+    shim = _fmt_pct(src_meta.get("shim"))
+    if q:
+        parts.append(f"q={q}")
+    if shim:
+        parts.append(f"shim={shim}")
+    bounds = []
+    for key in ("min_re", "max_re", "min_im", "max_im"):
+        if src_meta.get(key) not in ("", None):
+            bounds.append(f"{key}={src_meta.get(key)}")
+    if bounds:
+        parts.append(" ".join(bounds))
+    return ", ".join(p for p in parts if p)
+
+
+def _color_summary(src_meta):
+    color_mode = str(src_meta.get("color_mode") or "").strip()
+    palette = str(src_meta.get("palette") or "").strip()
     if color_mode == "solve_score":
         try:
             score = read_solve_score_metadata("solve", src_meta, default_metric="proximity")
-            color_line = f"solve score: {score['display']}"
+            return f"solve score: {score.get('display') or score.get('metric') or 'score'}"
         except Exception:
-            color_line = "solve score"
-    elif color_mode == "saved_palette":
+            return "solve score"
+    if color_mode == "saved_palette":
         try:
             score = read_solve_score_metadata("palette_source", src_meta, default_metric="proximity")
-            color_line = f"saved palette: {score['display']}"
+            return f"saved palette: {score.get('display') or score.get('metric') or 'score'}"
         except Exception:
-            color_line = "saved palette"
-    elif color_mode == "proximity":
-        color_line = "root proximity"
-    elif color_mode == "constant":
-        cc = str(src_meta.get("constant_color", "") or "")
-        color_line = f"constant: #{cc}" if cc else "constant"
-    else:
-        color_line = "rainbow"
+            return "saved palette"
+    if color_mode == "proximity":
+        return "root proximity"
+    if color_mode == "constant":
+        color = str(src_meta.get("constant_color") or "").strip()
+        return f"constant #{color}" if color else "constant"
+    return color_mode or ("palette " + palette if palette else "rainbow")
 
-    # Degree line
-    degree = calc.get("degree", "")
-    degree_line = f"degree: {degree}" if degree not in ("", None) else ""
-    palette_line = f"palette: {palette}" if palette else ""
 
-    lines = [pipeline_line]
-    if viewport_line:
-        lines.append(viewport_line)
-    if color_line:
-        lines.append(color_line)
-    if palette_line:
-        lines.append(palette_line)
-    if degree_line:
-        lines.append(degree_line)
+def _program_entry(label, source="", fallback="", language="text"):
+    source = str(source or "").strip()
+    fallback = str(fallback or "").strip()
+    if not source and not fallback:
+        return None
+    return {
+        "label": label,
+        "language": language,
+        "source": source,
+        "fallback": fallback,
+    }
+
+
+def _program_fallback_from_chain(label, display, chain):
+    display_text = str(display or "").strip()
+    if display_text:
+        return display_text
+    if chain not in ("", None, []):
+        try:
+            return f"{label} chain display not stored; {len(chain)} chip(s)"
+        except Exception:
+            return f"{label} chain display not stored"
+    return ""
+
+
+def build_pdf_report_model(job_id, calc, src_meta, source_artifact_id):
+    calc = calc if isinstance(calc, dict) else {}
+    src_meta = src_meta if isinstance(src_meta, dict) else {}
+    pipeline = calc.get("pipeline") if isinstance(calc.get("pipeline"), dict) else {}
+    function_name = _first_text(pipeline.get("function"), calc.get("function"), "?")
+    cfpv_display = _first_text(pipeline.get("cfpv_display"))
+    function_display = f"{function_name}({cfpv_display})" if cfpv_display else function_name
+    degree = _first_text(calc.get("degree"), calc.get("probe_degree"))
+    n_coeffs = _first_text(calc.get("n_coeffs"), calc.get("probe_n_coeffs"))
+    n_value = _first_text(calc.get("N"), calc.get("n1"))
+    times = _first_text(calc.get("times"))
+    solver = _solver_label(calc.get("solver"))
+    color_summary = _color_summary(src_meta)
+    color_mode = _first_text(src_meta.get("color_mode"), color_summary)
+    interpretation = _first_text(src_meta.get("color_interpretation"), src_meta.get("score_output_interpretation"))
+    output_channels = _first_text(src_meta.get("score_output_channel_count"), src_meta.get("raw_channels"))
+    palette = _first_text(src_meta.get("palette"))
+    viewport = _viewport_summary(src_meta)
+
+    summary_rows = [
+        ("Function", function_display),
+        ("Degree", degree + (f" ({n_coeffs} coeffs)" if n_coeffs and n_coeffs != degree else "")),
+        ("N", n_value),
+        ("Times", times),
+        ("Solver", solver),
+        ("Color mode", color_summary or color_mode),
+        ("Interpretation", interpretation),
+        ("Palette", palette),
+        ("Output channels", output_channels),
+        ("Viewport", viewport),
+    ]
+
+    programs = []
+    param_source = pipeline.get("param_program_source_text", "")
+    param_fallback = _program_fallback_from_chain(
+        "Param Program",
+        pipeline.get("param_program_display", ""),
+        pipeline.get("param_program_chain", []),
+    )
+    entry = _program_entry("Param Program", param_source, param_fallback, "poly-param")
+    if entry:
+        programs.append(entry)
+
+    coeff_source = pipeline.get("coeff_program_source_text", "")
+    coeff_fallback = _program_fallback_from_chain(
+        "Coeff Program",
+        pipeline.get("coeff_program_display", ""),
+        pipeline.get("coeff_program_chain", []),
+    )
+    entry = _program_entry("Coeff Program", coeff_source, coeff_fallback, "poly-coeff")
+    if entry:
+        programs.append(entry)
+
+    root_source = _first_text(src_meta.get("root_program_source_text"))
+    root_fallback = _transforms_summary(src_meta.get("root_transforms"))
+    if root_fallback == "none":
+        root_fallback = ""
+    entry = _program_entry("Root Program", root_source, root_fallback, "poly-root")
+    if entry:
+        programs.append(entry)
+
+    score_source = _first_text(src_meta.get("solve_score_program_source_text"), src_meta.get("score_source_text"))
+    score_fallback = _first_text(src_meta.get("score_program"))
+    entry = _program_entry("Solve Score Program", score_source, score_fallback, "poly-score")
+    if entry:
+        programs.append(entry)
+
+    coeff_function_summary = function_display
+    if degree:
+        coeff_function_summary += f"\n# degree: {degree}"
+    coeff_function_summary += "\n# coefficient function source text is not stored in calc.json"
+    programs.append(_program_entry("Coefficient Function", "", coeff_function_summary, "python"))
 
     return {
-        "pipeline": pipeline_line,
-        "viewport": viewport_line,
-        "color_mode": color_line,
-        "degree": degree_line,
-        "lines": lines,
-        "artifact_id": source_artifact_id,
+        "title": f"{job_id} / {source_artifact_id}",
+        "compute_id": job_id,
+        "color_artifact_id": source_artifact_id,
+        "summary_rows": summary_rows,
+        "programs": [p for p in programs if p],
     }
 
 
@@ -230,8 +286,10 @@ def handler(event, context):
     created_at = _utc_now_iso()
     source_ext = source_image_key.rsplit(".", 1)[-1].lower()
     source_local = f"/tmp/pdf_source.{source_ext}"
+    prepared_source_local = "/tmp/pdf_source_prepared.png"
     output_local = "/tmp/pdf_document.pdf"
     palette_local = None
+    prepared_palette_local = None
 
     progress = {
         "family": "pdf",
@@ -284,19 +342,61 @@ def handler(event, context):
         except Exception:
             calc = {}
 
-        title = _title_from(calc, src_meta)
-        filename = os.path.splitext(os.path.basename(source_image_key))[0]
+        _phase(job_id, task_id, "processing", "prepare_image", "Prepare PDF images", **progress)
+        source_image_info = prepare_pdf_image(
+            source_local,
+            prepared_source_local,
+            max_px=int(os.getenv("PDF_IMAGE_MAX_PX", PDF_IMAGE_MAX_PX)),
+        )
+        palette_image_info = {}
+        if palette_local:
+            prepared_palette_local = "/tmp/pdf_palette_prepared.png"
+            palette_image_info = prepare_pdf_image(
+                palette_local,
+                prepared_palette_local,
+                max_px=int(os.getenv("PDF_PALETTE_MAX_PX", PDF_PALETTE_MAX_PX)),
+            )
+        image_progress = {
+            "source_width": source_image_info["source_width"],
+            "source_height": source_image_info["source_height"],
+            "prepared_width": source_image_info["prepared_width"],
+            "prepared_height": source_image_info["prepared_height"],
+            "image_resized": bool(source_image_info["resized"]),
+            "image_max_px": source_image_info["image_max_px"],
+        }
+        if palette_image_info:
+            image_progress.update({
+                "palette_source_width": palette_image_info["source_width"],
+                "palette_source_height": palette_image_info["source_height"],
+                "palette_prepared_width": palette_image_info["prepared_width"],
+                "palette_prepared_height": palette_image_info["prepared_height"],
+                "palette_image_resized": bool(palette_image_info["resized"]),
+                "palette_image_max_px": palette_image_info["image_max_px"],
+            })
+        _phase(job_id, task_id, "processing", "prepare_image", "Prepare PDF images", **progress, **image_progress)
+
+        report = build_pdf_report_model(job_id, calc, src_meta, source_artifact_id)
+        title = report.get("title") or _title_from(calc, src_meta)
         source_display_name = _source_display_name(src_meta, source_artifact_id)
         try:
             source_score = read_solve_score_metadata("solve", src_meta, default_metric="proximity")
         except Exception:
             source_score = None
 
-        # Build structured metadata for the text page
-        spread_meta = _build_spread_meta(job_id, calc, src_meta, source_artifact_id)
-
         _phase(job_id, task_id, "processing", "compose_pdf", "Compose PDF", **progress)
-        build_color_spread_pdf(source_local, output_local, title, meta=spread_meta, palette_image_path=palette_local)
+        build_result = build_color_spread_pdf(
+            prepared_source_local,
+            output_local,
+            title,
+            report=report,
+            palette_image_path=prepared_palette_local,
+        )
+        page_count = 1
+        if isinstance(build_result, dict):
+            try:
+                page_count = int(build_result.get("page_count") or 1)
+            except Exception:
+                page_count = 1
 
         meta = {
             "family": "pdf",
@@ -318,14 +418,32 @@ def handler(event, context):
             "source_associated_palette_mode": associated_palette_mode,
             "source_associated_palette_id": associated_palette_id,
             "source_associated_palette_image_key": associated_palette_image_key,
-            "page_count": "1",
+            "page_count": _stringify_meta(page_count),
             "width_mm": "586",
             "height_mm": "296",
-            "function": _stringify_meta(calc.get("function")),
+            "function": _stringify_meta(_first_text(
+                (calc.get("pipeline") or {}).get("function") if isinstance(calc.get("pipeline"), dict) else "",
+                calc.get("function"),
+            )),
             "degree": _stringify_meta(calc.get("degree")),
             "N": _stringify_meta(calc.get("N", calc.get("n1"))),
             "times": _stringify_meta(calc.get("times")),
+            "source_width": _stringify_meta(source_image_info["source_width"]),
+            "source_height": _stringify_meta(source_image_info["source_height"]),
+            "prepared_width": _stringify_meta(source_image_info["prepared_width"]),
+            "prepared_height": _stringify_meta(source_image_info["prepared_height"]),
+            "image_resized": _stringify_meta(source_image_info["resized"]),
+            "image_max_px": _stringify_meta(source_image_info["image_max_px"]),
         }
+        if palette_image_info:
+            meta.update({
+                "palette_source_width": _stringify_meta(palette_image_info["source_width"]),
+                "palette_source_height": _stringify_meta(palette_image_info["source_height"]),
+                "palette_prepared_width": _stringify_meta(palette_image_info["prepared_width"]),
+                "palette_prepared_height": _stringify_meta(palette_image_info["prepared_height"]),
+                "palette_image_resized": _stringify_meta(palette_image_info["resized"]),
+                "palette_image_max_px": _stringify_meta(palette_image_info["image_max_px"]),
+            })
 
         _phase(job_id, task_id, "uploading", "upload", "Upload PDF", **progress)
         with open(output_local, "rb") as fh:
@@ -339,7 +457,7 @@ def handler(event, context):
                 },
             )
 
-        _phase(job_id, task_id, "done", "done", "Done", **progress, image_key=pdf_key)
+        _phase(job_id, task_id, "done", "done", "Done", **progress, image_key=pdf_key, page_count=page_count, **image_progress)
         return ok_response({
             "job_id": job_id,
             "artifact_id": artifact_id,
@@ -347,12 +465,13 @@ def handler(event, context):
             "image_key": pdf_key,
             "format": "pdf",
             "pdf_kind": "color_spread",
+            "page_count": page_count,
         })
     except Exception as e:
         report_status(job_id, task_id, "error", str(e), result_data=progress)
         raise
     finally:
-        for path in (source_local, output_local, palette_local):
+        for path in (source_local, prepared_source_local, output_local, palette_local, prepared_palette_local):
             try:
                 if path:
                     os.remove(path)

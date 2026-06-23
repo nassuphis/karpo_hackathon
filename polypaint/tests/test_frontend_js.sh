@@ -217,6 +217,11 @@ assertIncludes("pix,\n            job_id:", 'Param debug image should forward ca
 assertNotIncludes("pix: n * 2,", 'Param debug image must not derive pix from full Calculate N');
 assertIncludes("function _formatComputeDebugResult(result) {", 'Compute Debug should format native single-point output');
 assertIncludes("if (body.message) parts.push(_clipErrorText(body.message, 260));", 'frontend Lambda error summaries should include validation message bodies');
+assertIncludes("function _showPdfHardStaleAbandon(statusEl, run, phase) {", 'PDF artifact stale handling should expose a PDF-specific abandon action');
+assertIncludes("btn.textContent = 'Abandon stalled PDF job';", 'PDF artifact stale handling should show a local abandon button');
+assertIncludes("_clearActiveRun();\n        stopActiveRenderObserver();", 'PDF artifact stale abandon should clear the local active render lock and observer');
+assertIncludes("PDF compose stalled - no update for 15+ min", 'PDF artifact hard-stale logging should use PDF-specific single-shot wording');
+assertIncludes("PDF compose has not updated for 5+ min", 'PDF artifact warning stale logging should avoid worker-loop language');
 assertIncludes("function _serializeCoeffProgramChain() {", 'frontend should serialize coeff-program chips');
 assertIncludes("function _validateCoeffProgramUiChain(chain) {", 'Coeff Program saved-program load should validate stale/unknown chips immediately');
 assertIncludes("unknown coeff program chip at", 'Coeff Program stale poly-* saved programs should fail with a clear load-time error');

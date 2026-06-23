@@ -1473,6 +1473,7 @@ function _clearActiveRun() {
     _lastWarnState = null;
     _renderPhaseTracker = null;
     try { localStorage.removeItem('polypaint_active_render_run'); } catch(e) {}
+    try { _updateRenderActionButtons(); } catch(e) {}
 }
 
 function _clearRenderState() {

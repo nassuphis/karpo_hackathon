@@ -766,6 +766,8 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("tests/test_deploy_packaging.py", predeploy_text)
         self.assertIn("tests/test_render_workflow_definition.py", predeploy_text)
         self.assertIn("tests/test_render_plan.py", predeploy_text)
+        self.assertIn("tests/test_pdf_artifact_handler.py", predeploy_text)
+        self.assertIn("tests/test_spread_pdf.py", predeploy_text)
         self.assertIn("tests/test_finalize_mt_handler.py", predeploy_text)
         self.assertIn("tests/test_raster_mt.py", predeploy_text)
         self.assertIn("tests/test_bilevel_handler.py", predeploy_text)

@@ -220,6 +220,7 @@ assertIncludes("if (body.message) parts.push(_clipErrorText(body.message, 260));
 assertIncludes("function _showPdfHardStaleAbandon(statusEl, run, phase) {", 'PDF artifact stale handling should expose a PDF-specific abandon action');
 assertIncludes("btn.textContent = 'Abandon stalled PDF job';", 'PDF artifact stale handling should show a local abandon button');
 assertIncludes("_clearActiveRun();\n        stopActiveRenderObserver();", 'PDF artifact stale abandon should clear the local active render lock and observer');
+assertIncludes("try { _updateRenderActionButtons(); } catch(e) {}", 'clearing an active render run should refresh render action buttons');
 assertIncludes("PDF compose stalled - no update for 15+ min", 'PDF artifact hard-stale logging should use PDF-specific single-shot wording');
 assertIncludes("PDF compose has not updated for 5+ min", 'PDF artifact warning stale logging should avoid worker-loop language');
 assertIncludes("function _serializeCoeffProgramChain() {", 'frontend should serialize coeff-program chips');

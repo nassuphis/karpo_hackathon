@@ -1,7 +1,10 @@
 import os
+import base64
+import re
 import sys
 import tempfile
 import unittest
+import zlib
 
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
@@ -13,6 +16,30 @@ except ModuleNotFoundError:
     # The Lambda layer is Linux-built. Prefer the local venv when present; use
     # the layer only on compatible test hosts that do not have local deps.
     sys.path.insert(0, os.path.join(ROOT, "lambda", "layer-build-pdf", "python"))
+
+
+def _pdf_stream_text(path):
+    """Return decoded PDF stream text without depending on pypdf/pdfplumber."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+    chunks = []
+    for match in re.finditer(rb"stream\r?\n(.*?)endstream", data, re.S):
+        raw = match.group(1).strip()
+        candidates = [raw]
+        try:
+            candidates.append(zlib.decompress(raw))
+        except Exception:
+            pass
+        try:
+            candidates.append(zlib.decompress(base64.a85decode(raw, adobe=True)))
+        except Exception:
+            pass
+        for candidate in candidates:
+            try:
+                chunks.append(candidate.decode("latin-1", "ignore"))
+            except Exception:
+                pass
+    return "\n".join(chunks)
 
 
 class TestSpreadPdf(unittest.TestCase):
@@ -44,6 +71,18 @@ class TestSpreadPdf(unittest.TestCase):
             img = os.path.join(td, "image.png")
             pdf = os.path.join(td, "out.pdf")
             Image.new("RGB", (80, 60), (120, 20, 30)).save(img)
+            coeff_source = "\n".join([
+                "cf",
+                "poly = rev(poly)",
+                "emit",
+                "poly[1] = p1",
+                "poly[2] = p2",
+                "poly[3] = p1+p2",
+                "poly[4] = p1*p2",
+                "poly[5] = p1-p2",
+                "poly[6] = p2-p1",
+                "UNIQ_PROG_LINE_42 = poly_plus_one",
+            ])
             report = {
                 "title": "compute_demo / color_demo",
                 "compute_id": "compute_demo",
@@ -69,7 +108,7 @@ class TestSpreadPdf(unittest.TestCase):
                     {
                         "label": "Coeff Program",
                         "language": "poly-coeff",
-                        "source": "\n".join(["cf", "poly = rev(poly)", "emit"] * 20),
+                        "source": coeff_source,
                     },
                 ],
             }
@@ -84,6 +123,13 @@ class TestSpreadPdf(unittest.TestCase):
             self.assertEqual(data[:5], b"%PDF-")
             self.assertIn(b"compute_demo", data)
             self.assertIn(b"color_demo", data)
+
+            stream_text = _pdf_stream_text(pdf)
+            self.assertIn("compute_demo", stream_text)
+            self.assertIn("color_demo", stream_text)
+            self.assertIn("full source on appendix p.1", stream_text)
+            self.assertIn("Source Appendix 1", stream_text)
+            self.assertIn("UNIQ_PROG_LINE_42", stream_text)
 
 
 if __name__ == "__main__":

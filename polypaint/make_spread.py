@@ -106,6 +106,8 @@ def main():
     image_path = _resolve_image_path(args.image)
     output_path = Path(args.output).resolve() if args.output else _default_output_path(image_path)
     out = generate_spread_pdf(image_path, output_path)
+    if isinstance(out, dict) and out.get("path"):
+        out = out["path"]
     print(out)
 
 

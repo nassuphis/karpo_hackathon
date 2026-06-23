@@ -68,9 +68,9 @@ V1 scope is intentionally narrow:
 
 - only one PDF generation mode exists: `ColorSpread`
 - input is one saved `Color` artifact
-- output is one immutable single-spread PDF artifact
-- left page is centered text derived from artifact/job metadata
-- right page is the selected full-resolution Color image
+- output is one immutable PDF artifact, with appendix spreads when needed
+- left page is a provenance report derived from artifact/job metadata
+- right page is the selected prepared Color image
 
 The PDF family is for downloadable/inspectable summary documents, not for DeepZoom, post-processing, or solve recomputation.
 
@@ -112,10 +112,10 @@ It uses:
 
 The produced PDF is:
 
-- a single PDF page representing an open two-page spread
+- a first PDF page representing an open two-page spread, with optional appendix spreads
 - size: `586 x 296 mm`
-- left page: black page, centered title/body/filename, using the same text-page treatment as [make_book.py](/Users/nicknassuphis/karpo_hackathon/polypaint/make_book.py)
-- right page: the source Color artifact image, cover-fit to one content page using the same image-cover logic as [make_book.py](/Users/nicknassuphis/karpo_hackathon/polypaint/make_book.py)
+- left page: structured provenance report with source excerpts
+- right page: the prepared source Color artifact image, cover-fit to one content page
 
 V1 does not:
 
@@ -288,8 +288,8 @@ V1 text source:
 
 V1 formatting rule:
 
-- title is centered, one line if possible
-- body is centered wrapped text, same helper as [make_book.py](/Users/nicknassuphis/karpo_hackathon/polypaint/make_book.py)
+- title uses compute/artifact ids
+- body is structured metadata plus source-code excerpts
 - filename line is the source image stem
 
 Recommended title:
@@ -329,11 +329,12 @@ Recommended structure:
 - new shared module: [spread_pdf.py](/Users/nicknassuphis/karpo_hackathon/polypaint/spread_pdf.py)
 - keep [make_spread.py](/Users/nicknassuphis/karpo_hackathon/polypaint/make_spread.py) as a CLI wrapper that imports the shared module
 
-The shared module should expose something like:
+The current shared module exposes:
 
-- `build_color_spread_pdf(image_path, output_pdf_path, title, body, filename=None)`
+- `prepare_pdf_image(input_path, output_path, *, max_px, quality=90, image_format=None)`
+- `build_color_spread_pdf(image_path, output_pdf_path, title, body=None, filename=None, meta=None, palette_image_path=None, report=None)`
 
-That shared implementation must continue to reuse:
+The current implementation still reuses:
 
 - content-page size constants from [make_book.py](/Users/nicknassuphis/karpo_hackathon/polypaint/make_book.py)
 - `_draw_text_page(...)`

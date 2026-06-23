@@ -29,6 +29,8 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_merged_opcodes_drift.py \
     tests/test_render_workflow_definition.py \
     tests/test_render_plan.py \
+    tests/test_pdf_artifact_handler.py \
+    tests/test_spread_pdf.py \
     tests/test_finalize_mt_handler.py \
     tests/test_raster_mt.py \
     tests/test_bilevel_handler.py \

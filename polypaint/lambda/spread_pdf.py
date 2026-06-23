@@ -15,7 +15,6 @@ The visual treatment intentionally matches make_book.py:
 - same centered text page
 - same cover-fit image placement
 """
-import math
 import os
 from pathlib import Path
 
@@ -189,62 +188,10 @@ def _draw_text_page(c, title, body, is_right, filename=None, meta=None, palette_
             c.drawCentredString(center_x, y - 16, filename)
 
 
-def _build_color_spread_pdf_legacy(image_path, output_pdf_path, title, body=None, filename=None, meta=None, palette_image_path=None):
-    """Build a two-page spread PDF: text page (left) + image page (right).
-
-    If `meta` is provided (dict with pipeline, viewport, color_mode, degree,
-    artifact_id), the left page shows structured render metadata instead of
-    freeform body text.
-
-    If `palette_image_path` is provided, that palette image is embedded on the
-    left page as a centered 5 cm square under the metadata text. The right page
-    always remains reserved for the main source image.
-    """
-    image_path = Path(image_path)
-    output_pdf_path = Path(output_pdf_path)
-    output_pdf_path.parent.mkdir(parents=True, exist_ok=True)
-
-    reader, img_size = _load_image_rgb(image_path)
-    palette_reader = None
-    palette_size = None
-    if palette_image_path:
-        palette_reader, palette_size = _load_image_rgb(Path(palette_image_path))
-
-    c = canvas.Canvas(str(output_pdf_path), pagesize=(SPREAD_W, SPREAD_H))
-    c.setTitle(title or image_path.stem)
-    c.setAuthor("spread_pdf.py")
-
-    c.saveState()
-    c.setFillColor(black)
-    c.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
-    _draw_text_page(
-        c,
-        title or "",
-        body or "",
-        is_right=False,
-        filename=filename,
-        meta=meta,
-        palette_reader=palette_reader,
-        palette_size=palette_size,
-    )
-    c.restoreState()
-
-    c.saveState()
-    c.translate(PAGE_W, 0)
-    c.setFillColor(black)
-    c.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
-    _draw_image_cover(c, reader, img_size, 0, 0, PAGE_W, PAGE_H)
-    c.restoreState()
-
-    c.showPage()
-    c.save()
-    return output_pdf_path
-
-
 # ==== CR21 refreshed PDF artifact path =====================================
 #
-# Keeping the old renderer in the file gives local callers a fallback while the
-# Lambda path moves to preflighted images plus a richer provenance report.
+# The public renderer still supports the old report=None call shape for local
+# previews, while the Lambda path passes a richer provenance report.
 
 PDF_TARGET_DPI = int(os.getenv("PDF_TARGET_DPI", "300") or "300")
 PDF_IMAGE_MAX_PX = int(os.getenv("PDF_IMAGE_MAX_PX", "3600") or "3600")
@@ -289,11 +236,6 @@ HEADER_RULE_W = 0.5
 PANEL_BORDER_W = 0.75
 
 
-def pdf_image_max_px_for_box(width_pt, height_pt, *, dpi=PDF_TARGET_DPI, cap=PDF_IMAGE_MAX_PX):
-    target = int(math.ceil(max(float(width_pt), float(height_pt)) * float(dpi) / 72.0))
-    return max(1, min(int(cap), target))
-
-
 def _resample_filter():
     resampling = getattr(PILImage, "Resampling", PILImage)
     return getattr(resampling, "LANCZOS", getattr(PILImage, "BICUBIC", 3))
@@ -328,7 +270,7 @@ def prepare_pdf_image(input_path, output_path, *, max_px, quality=90, image_form
                     img.draft("RGB", (max_px, max_px))
                 except Exception:
                     pass
-            work = img.copy()
+            work = img
             if resized:
                 work.thumbnail((max_px, max_px), _resample_filter())
             if work.mode != "RGB":
@@ -406,6 +348,7 @@ def _code_chars_for_width(width):
 
 
 def _wrap_monospace_line(line, max_chars):
+    max_chars = max(2, int(max_chars))
     raw = _safe_pdf_text(line).expandtabs(4)
     if raw == "":
         return [""]
@@ -413,10 +356,10 @@ def _wrap_monospace_line(line, max_chars):
     rest = raw
     prefix = ""
     while len(prefix) + len(rest) > max_chars:
-        take = max(8, max_chars - len(prefix))
+        take = max(1, max_chars - len(prefix))
         out.append(prefix + rest[:take])
         rest = rest[take:]
-        prefix = "  "
+        prefix = "  " if max_chars > 2 else ""
     out.append(prefix + rest)
     return out
 
@@ -473,13 +416,56 @@ def _programs_for_report(report):
     return programs
 
 
+def _appendix_start_y():
+    return BLEED_3 + CONTENT_NET - MARGIN_TOP - 28
+
+
+def _wrapped_program_lines(program, width=CONTENT_W):
+    wrapped = []
+    for line in str(program.get("source") or "").splitlines() or [""]:
+        wrapped.extend(_wrap_monospace_line(line, _code_chars_for_width(width)))
+    return wrapped
+
+
 def _assign_appendix_pages(report):
     programs = _programs_for_report(report)
-    page = 2
+    page = 1
+    col = 0
+    y = _appendix_start_y()
+    bottom = BLEED_3 + MARGIN_BOTTOM
+    total_lines = 0
+
+    def next_column():
+        nonlocal page, col, y
+        if col == 0:
+            col = 1
+            y = _appendix_start_y()
+            return
+        page += 1
+        col = 0
+        y = _appendix_start_y()
+
     for program in programs:
-        program["appendix_page"] = page
-        line_count = max(1, len(str(program.get("source") or "").splitlines()))
-        page += max(1, int(math.ceil(line_count / 88)))
+        wrapped = _wrapped_program_lines(program)
+        idx = 0
+        assigned = False
+        while idx < len(wrapped):
+            if total_lines >= CODE_MAX_LINES_TOTAL:
+                break
+            if y < bottom + 90:
+                next_column()
+            if not assigned:
+                program["appendix_page"] = page
+                assigned = True
+            y_after_header = y - F_H[1] - 4 * mm
+            available_lines = max(1, int((y_after_header - bottom - 2 * CODE_PAD_Y - 6) / CODE_LEADING))
+            take = min(len(wrapped) - idx, available_lines, CODE_MAX_LINES_TOTAL - total_lines)
+            panel_h = take * CODE_LEADING + 2 * CODE_PAD_Y
+            y = y_after_header - panel_h - 4 - SECTION_GAP
+            idx += take
+            total_lines += take
+        if not assigned:
+            program["appendix_page"] = page
     if isinstance(report, dict):
         report["programs"] = programs
     return programs
@@ -583,9 +569,7 @@ def _draw_appendix_pages(c, programs):
 
     for program in programs:
         label = str(program.get("label") or "Program")
-        wrapped = []
-        for line in str(program.get("source") or "").splitlines() or [""]:
-            wrapped.extend(_wrap_monospace_line(line, _code_chars_for_width(w)))
+        wrapped = _wrapped_program_lines(program, w)
         idx = 0
         first = True
         while idx < len(wrapped):

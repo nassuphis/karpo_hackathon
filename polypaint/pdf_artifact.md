@@ -38,7 +38,7 @@ Default preparation caps:
 
 If a single-shot PDF job reaches the frontend hard-stale threshold without a terminal row, the UI offers `Abandon stalled PDF job`. That clears only the local active-run lock through `_clearActiveRun()`; it does not cancel server work or delete audit rows.
 
-The report page answers: "what exactly produced this image?" It renders compute id, Color artifact id, function/degree/N/times/solver, color mode, interpretation, palette, output channels, viewport, and source-code excerpts for Param, Coeff, Root, Solve Score, and coefficient-function provenance when available. Full program source flows to appendix spreads in Courier code blocks.
+The report page answers: "what exactly produced this image?" It renders compute id, Color artifact id, function/degree/N/times/solver, color mode, interpretation, palette, output channels, viewport, and a large labeled palette swatch when an associated palette is available. Program/source details are not excerpted on the summary page; they flow to appendix spreads in Courier code blocks.
 
 The visual treatment is the CR21 dark navy/signal red report style:
 
@@ -114,7 +114,7 @@ The produced PDF is:
 
 - a first PDF page representing an open two-page spread, with optional appendix spreads
 - size: `586 x 296 mm`
-- left page: structured provenance report with source excerpts
+- left page: structured provenance report with large labeled palette swatch
 - right page: the prepared source Color artifact image, cover-fit to one content page
 
 V1 does not:
@@ -289,7 +289,7 @@ V1 text source:
 V1 formatting rule:
 
 - title uses compute/artifact ids
-- body is structured metadata plus source-code excerpts
+- body is structured metadata plus a large labeled palette swatch; source details continue in appendix spreads
 - filename line is the source image stem
 
 Recommended title:

@@ -43,6 +43,9 @@ lambda/*.zip
 # Spreads
 spreads/*.pdf
 
+# Local ColorSpread PDF design/output scratch directory
+test-pdf/
+
 # Cross-compile layers (large, built separately)
 lambda/layer-build/
 lambda/layer-build-lapack/

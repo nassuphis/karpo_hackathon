@@ -223,6 +223,12 @@ def build_pdf_report_model(job_id, calc, src_meta, source_artifact_id):
     interpretation = _first_text(src_meta.get("color_interpretation"), src_meta.get("score_output_interpretation"))
     output_channels = _first_text(src_meta.get("score_output_channel_count"), src_meta.get("raw_channels"))
     palette = _first_text(src_meta.get("palette"))
+    palette_label = _first_text(
+        src_meta.get("associated_palette_id"),
+        src_meta.get("palette_artifact_id"),
+        src_meta.get("palette_id"),
+        palette,
+    )
     viewport = _viewport_summary(src_meta)
 
     summary_rows = [
@@ -283,6 +289,7 @@ def build_pdf_report_model(job_id, calc, src_meta, source_artifact_id):
         "title": f"{job_id} / {source_artifact_id}",
         "compute_id": job_id,
         "color_artifact_id": source_artifact_id,
+        "palette_label": palette_label,
         "summary_rows": summary_rows,
         "programs": [p for p in programs if p],
     }

@@ -101,6 +101,7 @@ class TestPdfArtifactHandler(unittest.TestCase):
             self.assertIsNotNone(report)
             self.assertEqual(report["compute_id"], "job1")
             self.assertEqual(report["color_artifact_id"], "color_src")
+            self.assertEqual(report["palette_label"], "pal_color_src")
             self.assertIn(("Solver", "AE"), report["summary_rows"])
             self.assertTrue(any(p["label"] == "Coefficient Function" for p in report["programs"]))
             with open(output_path, "wb") as fh:
@@ -247,6 +248,7 @@ class TestPdfArtifactHandler(unittest.TestCase):
 
         def fake_build(image_path, output_path, title, body=None, filename=None, meta=None, palette_image_path=None, report=None):
             self.assertTrue(str(palette_image_path).endswith("pdf_palette_prepared.png"))
+            self.assertEqual(report["palette_label"], "pal_sidecar")
             with open(output_path, "wb") as fh:
                 fh.write(b"%PDF-1.4 fake pdf")
             return {"path": output_path, "page_count": 2}

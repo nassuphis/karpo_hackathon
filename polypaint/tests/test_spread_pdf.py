@@ -69,8 +69,10 @@ class TestSpreadPdf(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             img = os.path.join(td, "image.png")
+            palette = os.path.join(td, "palette.png")
             pdf = os.path.join(td, "out.pdf")
             Image.new("RGB", (80, 60), (120, 20, 30)).save(img)
+            Image.new("RGB", (32, 32), (20, 90, 160)).save(palette)
             coeff_source = "\n".join([
                 "cf",
                 "poly = rev(poly)",
@@ -87,6 +89,7 @@ class TestSpreadPdf(unittest.TestCase):
                 "title": "compute_demo / color_demo",
                 "compute_id": "compute_demo",
                 "color_artifact_id": "color_demo",
+                "palette_label": "pal_demo_123",
                 "summary_rows": [
                     ("Function", "poly_1"),
                     ("Degree", "25"),
@@ -113,7 +116,7 @@ class TestSpreadPdf(unittest.TestCase):
                 ],
             }
 
-            result = build_color_spread_pdf(img, pdf, "compute_demo / color_demo", report=report)
+            result = build_color_spread_pdf(img, pdf, "compute_demo / color_demo", report=report, palette_image_path=palette)
 
             self.assertTrue(os.path.exists(pdf))
             self.assertGreater(os.path.getsize(pdf), 1000)
@@ -127,7 +130,10 @@ class TestSpreadPdf(unittest.TestCase):
             stream_text = _pdf_stream_text(pdf)
             self.assertIn("compute_demo", stream_text)
             self.assertIn("color_demo", stream_text)
-            self.assertIn("full source on appendix p.1", stream_text)
+            self.assertIn("pal_demo_123", stream_text)
+            self.assertIn("Source details continue in the appendix.", stream_text)
+            self.assertNotIn("program excerpts", stream_text.lower())
+            self.assertNotIn("full source on appendix", stream_text)
             self.assertIn("Source Appendix 1", stream_text)
             self.assertIn("UNIQ_PROG_LINE_42", stream_text)
 

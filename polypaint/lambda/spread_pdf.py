@@ -226,7 +226,6 @@ F_CAP = ("Helvetica-Oblique", 9)
 
 KV_PITCH = 17
 CODE_LEADING = 13
-EXCERPT_LINES = 6
 CODE_MAX_LINES_TOTAL = 2000
 SECTION_GAP = 9 * mm
 CODE_PAD_X = 6 * mm
@@ -495,36 +494,40 @@ def _draw_report_summary(c, report, palette_reader=None, palette_size=None):
     y -= 8 * mm
 
     programs = _programs_for_report(report)
-    if programs:
-        y = _draw_section_header(c, x, y, "program excerpts")
-        available = max(0, y - (BLEED_3 + MARGIN_BOTTOM))
-        per_program = max(1, int((available / max(1, len(programs)) - 34) / CODE_LEADING))
-        excerpt_lines = max(1, min(EXCERPT_LINES, per_program))
-        for program in programs:
-            if y < BLEED_3 + MARGIN_BOTTOM + 45:
-                break
-            c.setFillColor(ACCENT)
-            _set_pdf_font(c, ("Helvetica-Bold", 11))
-            c.drawString(x, y, _safe_pdf_text(str(program.get("label") or "").upper()))
-            y -= 13
-            src_lines = str(program.get("source") or "").splitlines()
-            caption = ""
-            if len(src_lines) > excerpt_lines:
-                appendix = program.get("appendix_page")
-                caption = f"... full source on appendix p.{appendix}" if appendix else f"... {len(src_lines)} source lines"
-            elif program.get("is_fallback"):
-                caption = "chain/catalog summary (source text not stored)"
-            y = _draw_code_block(c, x, y, CONTENT_W, src_lines[:excerpt_lines], caption=caption)
-            y -= 3 * mm
-
     if palette_reader and palette_size:
-        palette_side = 31 * mm
-        palette_x = x + CONTENT_W - palette_side
-        palette_y = BLEED_3 + MARGIN_BOTTOM
+        y = _draw_section_header(c, x, y, "palette")
+        palette_label = _ellipsize(report.get("palette_label") or "palette", 72)
+        c.setFillColor(TEXT)
+        _set_pdf_font(c, ("Helvetica-Bold", 13))
+        c.drawCentredString(x + CONTENT_W / 2, y, _safe_pdf_text(palette_label))
+        y -= 8 * mm
+
+        bottom = BLEED_3 + MARGIN_BOTTOM + (9 * mm if programs else 0)
+        available_h = max(32 * mm, y - bottom)
+        palette_side = max(36 * mm, min(CONTENT_W * 0.72, available_h))
+        palette_x = x + (CONTENT_W - palette_side) / 2
+        palette_y = bottom + max(0, available_h - palette_side) / 2
+        c.setFillColor(PANEL_BG)
         c.setStrokeColor(PANEL_BORDER)
-        c.setLineWidth(0.5)
-        c.rect(palette_x, palette_y, palette_side, palette_side, fill=0, stroke=1)
+        c.setLineWidth(PANEL_BORDER_W)
+        c.roundRect(
+            palette_x - 4 * mm,
+            palette_y - 4 * mm,
+            palette_side + 8 * mm,
+            palette_side + 8 * mm,
+            2 * mm,
+            fill=1,
+            stroke=1,
+        )
         _draw_image_contain(c, palette_reader, palette_size, palette_x, palette_y, palette_side, palette_side)
+        if programs:
+            c.setFillColor(MUTED)
+            _set_pdf_font(c, F_CAP)
+            c.drawCentredString(x + CONTENT_W / 2, BLEED_3 + MARGIN_BOTTOM, "Source details continue in the appendix.")
+    elif programs:
+        c.setFillColor(MUTED)
+        _set_pdf_font(c, F_CAP)
+        c.drawString(x, BLEED_3 + MARGIN_BOTTOM, "Source details continue in the appendix.")
     c.restoreState()
 
 

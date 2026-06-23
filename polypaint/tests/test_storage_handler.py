@@ -215,11 +215,14 @@ class _FakeDDB:
 
 
 class _FakeLambdaClient:
-    def __init__(self):
+    def __init__(self, exc=None):
         self.invocations = []
+        self.exc = exc
 
     def invoke(self, **kwargs):
         self.invocations.append(kwargs)
+        if self.exc:
+            raise self.exc
         return {"StatusCode": 202}
 
 
@@ -337,6 +340,27 @@ class TestComputeMigration(unittest.TestCase):
         self.assertEqual(len(fake_ddb.put_calls), 1)
         self.assertIn("attribute_not_exists(job_id)", fake_ddb.put_calls[0][2])
 
+    @patch("handler_storage._get_ddb")
+    @patch("handler_storage.boto3.client")
+    @patch.dict(os.environ, {"AWS_LAMBDA_FUNCTION_NAME": "polypaint-storage", "AWS_REGION": "us-east-1"})
+    def test_color_mosaic_refresh_records_error_when_self_invoke_fails(self, mock_boto_client, mock_get_ddb):
+        import handler_storage
+
+        fake_ddb = _FakeDDB()
+        fake_lambda = _FakeLambdaClient(exc=RuntimeError("invoke throttled"))
+        mock_get_ddb.return_value = fake_ddb
+        mock_boto_client.return_value = fake_lambda
+
+        resp = handler_storage.handler(_event("/list-color-mosaic", {"refresh": True}), None)
+        body = json.loads(resp["body"])
+        current = handler_storage._read_mosaic_status()
+
+        self.assertEqual(resp["statusCode"], 200)
+        self.assertEqual(body["state"], "error")
+        self.assertIn("invoke throttled", body["error"])
+        self.assertEqual(current["state"], "error")
+        self.assertEqual(current["refresh_id"], body["refresh_id"])
+
     @patch("handler_storage._results_list_s3_client")
     @patch("handler_storage._get_ddb")
     @patch("handler_storage.s3")
@@ -354,8 +378,9 @@ class TestComputeMigration(unittest.TestCase):
             b"\x89PNG\r\n\x1a\n" + (13).to_bytes(4, "big") + b"IHDR"
             + (512).to_bytes(4, "big") + (512).to_bytes(4, "big")
         )
+        fake.objects["renders/job/image.jpeg"] = b"legacy"
         fake.metadata["renders/job/color/color_a/preview.png"] = {
-            "Metadata": {"width": "512", "height": "512"},
+            "Metadata": {"width": "4000", "height": "4000"},
             "ContentType": "image/png",
         }
 
@@ -366,6 +391,7 @@ class TestComputeMigration(unittest.TestCase):
         self.assertEqual(ready["state"], "ready")
         self.assertEqual(ready["count"], 1)
         self.assertEqual(ready["source_counts"], {"512x512": 1})
+        self.assertEqual(ready["skipped_legacy"], 1)
         manifest_key = ready["manifest_key"]
         self.assertIn(manifest_key, fake.objects)
         manifest = json.loads(fake.objects[manifest_key])
@@ -375,6 +401,9 @@ class TestComputeMigration(unittest.TestCase):
         self.assertEqual(manifest["tiles"][0]["degree"], 7)
         self.assertEqual(manifest["tiles"][0]["N"], 512)
         self.assertEqual(manifest["tiles"][0]["times"], 2)
+        self.assertEqual(manifest["tiles"][0]["preview_width"], 512)
+        self.assertEqual(manifest["tiles"][0]["preview_height"], 512)
+        self.assertEqual(manifest["skipped_legacy"], 1)
 
     @patch("handler_storage._results_list_s3_client")
     @patch("handler_storage._get_ddb")

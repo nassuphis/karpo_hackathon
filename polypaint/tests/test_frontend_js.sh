@@ -1602,10 +1602,14 @@ const els = {
   'allrenders-cols': makeEl('allrenders-cols'),
   'allrenders-viewer': makeEl('allrenders-viewer'),
 };
-els['allrenders-size-filter'].value = 'all';
-els['allrenders-sort-mode'].value = 'date';
-const opened = [];
-const ctx = {
+  els['allrenders-size-filter'].value = 'all';
+  els['allrenders-sort-mode'].value = 'date';
+  const opened = [];
+  let imagePoint = {x: 1, y: 1};
+  let selectedJob = '';
+  let selectedTab = '';
+  let selectedArtifact = '';
+  const ctx = {
   console,
   document: {
     getElementById(id) { return els[id] || null; },
@@ -1615,15 +1619,18 @@ const ctx = {
   clearTimeout() {},
   Date: { now: () => 12345 },
   Math, JSON, Number, String, Boolean, Array, Object, Map, Set, Promise, URL,
-  OpenSeadragon(opts) {
-    return {
-      opts,
-      viewport: { goHome() {}, pointFromPixel() { return {}; }, viewportToImageCoordinates() { return {x: 1, y: 1}; } },
-      addHandler() {},
-      open(src) { opened.push(src); },
-    };
-  },
-  lambdaPost: async (service, payload, pathName) => {
+	  OpenSeadragon(opts) {
+	    return {
+	      opts,
+	      viewport: { goHome() {}, pointFromPixel() { return {}; }, viewportToImageCoordinates() { return imagePoint; } },
+	      addHandler() {},
+	      open(src) { opened.push(src); },
+	    };
+	  },
+	  _ensureResultsSelection: async (jobId) => { selectedJob = jobId; },
+	  switchTab: (name) => { selectedTab = name; },
+	  refreshRenderArtifacts: async (jobId, opts) => { selectedArtifact = opts && opts.selectArtifactId; },
+	  lambdaPost: async (service, payload, pathName) => {
     if (pathName !== '/list-color-mosaic') throw new Error('unexpected path ' + pathName);
     if (payload && payload.refresh) return { state: 'computing', refresh_id: 'mosaic_x' };
     return {
@@ -1651,14 +1658,25 @@ vm.createContext(ctx);
 for (const script of scripts) vm.runInContext(fs.readFileSync(path.join(root, script), 'utf8'), ctx, {filename: script});
 
 (async () => {
-  await ctx.loadAllRenders();
-  assert(opened.length === 1, 'loadAllRenders should open a tile source');
-  assert(opened[0].getTileUrl(0, 0, 0) === 'https://bucket.test/renders/j/color/a/preview.png', 'tile 0 URL mismatch');
-  els['allrenders-size-filter'].value = '1024';
-  ctx._allRendersRebuild();
-  assert(opened.length === 2, 'size filter should reopen tile source');
-  assert(opened[1].getTileUrl(0, 0, 0) === 'https://bucket.test/renders/j/color/b/preview.png', '1024 filter should select 1024 tile');
-  await ctx.refreshAllRendersMosaic();
+	  await ctx.loadAllRenders();
+	  assert(opened.length === 1, 'loadAllRenders should open a tile source');
+	  assert(opened[0].getTileUrl(0, 0, 0) === 'https://bucket.test/renders/j/color/a/preview.png', 'tile 0 URL mismatch');
+	  await ctx.loadAllRenders();
+	  assert(opened.length === 1, 'same manifest and controls should not reopen/reset the viewer');
+	  els['allrenders-size-filter'].value = '1024';
+	  ctx._allRendersRebuild();
+	  assert(opened.length === 2, 'size filter should reopen tile source');
+	  assert(opened[1].getTileUrl(0, 0, 0) === 'https://bucket.test/renders/j/color/b/preview.png', '1024 filter should select 1024 tile');
+	  els['allrenders-size-filter'].value = 'all';
+	  els['allrenders-cols'].value = '1';
+	  ctx._allRendersRebuild();
+	  assert(opened.length === 3, 'column-count change should reopen tile source');
+	  els['allrenders-cols'].value = '2';
+	  imagePoint = {x: 1, y: 513};
+	  await ctx._allRendersCanvasClick({quick: true, position: {x: 0, y: 0}});
+	  assert(selectedJob === 'j' && selectedTab === 'render' && selectedArtifact === 'b',
+	    'click mapping should use rendered tile-source columns, not the current control value');
+	  await ctx.refreshAllRendersMosaic();
   assert(els['btn-allrenders-refresh'].disabled === true, 'refresh should disable button while computing');
   console.log('Frontend AllRenders runtime checks: OK');
 })().catch(e => { console.error(e.stack || String(e)); process.exit(1); });

@@ -97,7 +97,7 @@ MOSAIC_STATUS_SCHEMA_VERSION = 1
 MOSAIC_STATUS_STALE_MS = 30 * 60 * 1000
 MOSAIC_WORKERS = 24
 MOSAIC_KEEP_LAST = 10
-MOSAIC_BASE_URL = f"https://{BUCKET}.s3.us-east-1.amazonaws.com/"
+MOSAIC_BASE_URL = f"https://{BUCKET}.s3.{os.environ.get('AWS_REGION', 'us-east-1')}.amazonaws.com/"
 MOSAIC_PREFIX = "renders/_index/color_mosaic/"
 FAVORITES_KEY = "polypaint/favorites/color_artifacts.json"
 FAVORITES_DDB_JOB_ID = "favorites#color"
@@ -2705,14 +2705,24 @@ def _start_color_mosaic_refresh():
             return _read_mosaic_status(consistent=True)
         raise
 
-    boto3.client("lambda", region_name=os.environ.get("AWS_REGION", "us-east-1")).invoke(
-        FunctionName=os.environ.get("AWS_LAMBDA_FUNCTION_NAME", "polypaint-storage"),
-        InvocationType="Event",
-        Payload=json.dumps({
-            "internal_action": "build_color_mosaic",
-            "refresh_id": refresh_id,
-        }).encode("utf-8"),
-    )
+    try:
+        boto3.client("lambda", region_name=os.environ.get("AWS_REGION", "us-east-1")).invoke(
+            FunctionName=os.environ.get("AWS_LAMBDA_FUNCTION_NAME", "polypaint-storage"),
+            InvocationType="Event",
+            Payload=json.dumps({
+                "internal_action": "build_color_mosaic",
+                "refresh_id": refresh_id,
+            }).encode("utf-8"),
+        )
+    except Exception as exc:
+        error_status = _error_mosaic_status(refresh_id, status, exc)
+        try:
+            _put_owned_mosaic_status(error_status, refresh_id)
+        except ClientError as put_exc:
+            if not _is_conditional_failure(put_exc):
+                raise
+            return _read_mosaic_status(consistent=True)
+        return error_status
     return status
 
 
@@ -2734,16 +2744,8 @@ def _mosaic_preview_dimensions(key, *, s3_client=None):
     if not key:
         return None
     client = s3_client or s3
-    try:
-        resp = client.head_object(Bucket=BUCKET, Key=key)
-        meta = resp.get("Metadata", {}) or {}
-        if "width" in meta and "height" in meta:
-            width = int(meta["width"])
-            height = int(meta["height"])
-            if width > 0 and height > 0:
-                return width, height
-    except Exception:
-        pass
+    # Generic width/height metadata belongs to some full-size images, not the
+    # thumbnail itself. The PNG header is the authoritative preview size.
     try:
         obj = client.get_object(Bucket=BUCKET, Key=key, Range="bytes=0-32")
         data = obj["Body"].read()
@@ -2804,7 +2806,7 @@ def _mosaic_tile_from_entry(client, job_id, entry, calc_meta):
     return tile, "unknown" if dims is None else f"{width}x{height}"
 
 
-def _build_color_mosaic_manifest(refresh_id, *, include_legacy=False):
+def _build_color_mosaic_manifest(refresh_id):
     import concurrent.futures
 
     client = _results_list_s3_client(MOSAIC_WORKERS)
@@ -2815,11 +2817,15 @@ def _build_color_mosaic_manifest(refresh_id, *, include_legacy=False):
     def read_job(job_id):
         calc = _read_mosaic_calc_meta(client, job_id)
         prefixes = _render_family_artifact_prefixes(job_id, "color", s3_client=client)
-        return job_id, calc, prefixes
+        legacy = bool(_legacy_render_variant(job_id, "color", presign=False, s3_client=client))
+        return job_id, calc, prefixes, legacy
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(MOSAIC_WORKERS, max(1, len(job_ids)))) as pool:
-        for job_id, calc, prefixes in pool.map(read_job, job_ids):
+        legacy_count = 0
+        for job_id, calc, prefixes, legacy in pool.map(read_job, job_ids):
             calc_by_job[job_id] = calc
+            if legacy:
+                legacy_count += 1
             for prefix in prefixes:
                 work.append((job_id, prefix))
 
@@ -2860,8 +2866,7 @@ def _build_color_mosaic_manifest(refresh_id, *, include_legacy=False):
             elif status == "non_square":
                 counts["skipped_non_square"] += 1
 
-    if not include_legacy:
-        counts["skipped_legacy"] = 0
+    counts["skipped_legacy"] = legacy_count
 
     tiles.sort(key=lambda t: (str(t.get("job_id") or ""), str(t.get("artifact_id") or "")))
     tiles.sort(key=lambda t: str(t.get("created_at") or ""), reverse=True)

@@ -11,6 +11,8 @@ let _allRendersTiles = [];
 let _allRendersPollTimer = null;
 let _allRendersLoading = false;
 let _allRendersRandomSeed = 1;
+let _allRendersLastRenderSignature = '';
+let _allRendersActiveTileSource = null;
 
 function _allRendersStatusEl() {
     return document.getElementById('allrenders-status');
@@ -175,6 +177,18 @@ function _allRendersTileSource(tiles) {
     };
 }
 
+function _allRendersRenderSignature(tiles, source) {
+    const manifestId = _allRendersManifest && _allRendersManifest.refresh_id;
+    return [
+        manifestId || '',
+        _allRendersSelectedSize(),
+        _allRendersSortMode(),
+        source && source._allRendersCols,
+        Array.isArray(tiles) ? tiles.length : 0,
+        _allRendersRandomSeed,
+    ].join('|');
+}
+
 function _allRendersUpdateSummary(tiles, source) {
     const el = _allRendersSummaryEl();
     if (!el) return;
@@ -190,19 +204,26 @@ function _allRendersRebuild() {
     _allRendersTiles = _allRendersFilteredSortedTiles();
     const viewer = _ensureAllRendersViewer();
     const source = _allRendersTileSource(_allRendersTiles);
+    const signature = _allRendersRenderSignature(_allRendersTiles, source);
     _allRendersUpdateSummary(_allRendersTiles, source);
-    if (viewer && typeof viewer.open === 'function') viewer.open(source);
+    if (viewer && typeof viewer.open === 'function' && signature !== _allRendersLastRenderSignature) {
+        viewer.open(source);
+        _allRendersActiveTileSource = source;
+        _allRendersLastRenderSignature = signature;
+    }
 }
 
 async function _allRendersCanvasClick(event) {
     if (!_allRendersViewer || !_allRendersTiles.length) return;
     if (event && event.quick === false) return;
+    if (!event || !event.position) return;
     const viewport = _allRendersViewer.viewport;
     if (!viewport || typeof viewport.pointFromPixel !== 'function' || typeof viewport.viewportToImageCoordinates !== 'function') return;
     const viewportPoint = viewport.pointFromPixel(event.position);
     const imagePoint = viewport.viewportToImageCoordinates(viewportPoint);
     const tileSize = 512;
-    const cols = _allRendersRequestedCols(_allRendersTiles.length);
+    const cols = Number(_allRendersActiveTileSource && _allRendersActiveTileSource._allRendersCols) ||
+        _allRendersRequestedCols(_allRendersTiles.length);
     const x = Math.floor(imagePoint.x / tileSize);
     const y = Math.floor(imagePoint.y / tileSize);
     const tile = _allRendersTiles[y * cols + x];

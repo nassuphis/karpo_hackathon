@@ -633,15 +633,62 @@ For a clean implementation:
 
 **Treat the manifest as a cached, Refresh-recomputed index — never compute it on every open and never compute it synchronously behind the browser request.** Enumerating all color artifacts across all jobs is the O(jobs × artifacts) S3 crawl that the Results `/list` path deliberately avoids (see the `/render-count` lazy-per-job decision). The Results tab parallelizes one `calc.json` read per job; AllRenders has a deeper fanout: job prefixes, color-artifact prefixes, key HEADs, and preview-dimension checks per artifact. Use the Results parallelism model inside the builder, but run the builder asynchronously so API Gateway never waits for the crawl.
 
-### 21.1 Refresh contract: async status object, not synchronous crawl
+### 21.1 Refresh contract: async DDB status, not synchronous crawl
 
 `POST /list-color-mosaic` is a control endpoint on the storage Lambda, placed near `/render-summary` / `/render-count`.
 
-- `{ "refresh": true }` writes `renders/_index/color_mosaic_status.json` with `state:"computing"`, starts the background crawl, and returns immediately.
-- `{ "refresh": false }` or an empty body returns the latest status object if present; the normal tab-open path should fetch the public status and manifest objects directly.
-- The browser polls `https://polypaint.s3.us-east-1.amazonaws.com/renders/_index/color_mosaic_status.json?ts=...` every ~2s while `state:"computing"`.
-- On `state:"ready"`, the browser fetches `color_mosaic_all.json` with a cache-buster and renders it.
-- On `state:"error"`, the tab shows the error and keeps the last ready manifest usable.
+- `{ "refresh": true }` conditionally acquires a DynamoDB refresh row, starts the background crawl, and returns immediately.
+- `{ "refresh": false }` or an empty body returns the current DynamoDB status. This is a cheap status read, not a crawl.
+- The browser polls `/list-color-mosaic` every ~2s while `state:"computing"`.
+- On `state:"ready"`, the browser fetches the public S3 manifest from `status.manifest_url`.
+- On `state:"error"`, the tab shows the error and keeps the last loaded manifest usable. If there is no loaded manifest but `last_ready_manifest_url` exists, offer/load that instead of the failed refresh.
+
+Use DynamoDB, not S3, as the authoritative status/ownership mechanism. S3 object writes are not a reliable compare-and-swap lock, so a stale worker can otherwise overwrite a newer status or manifest. The existing `JOBS_TABLE` is available to storage handlers through `_get_ddb()`.
+
+DDB key:
+
+```text
+job_id  = "__allrenders_mosaic__"
+task_id = "color_mosaic_status"
+```
+
+Use low-level DynamoDB client calls, matching existing storage code. `state` should be referenced through `ExpressionAttributeNames` because it is easy to collide with reserved-word rules:
+
+```python
+ConditionExpression=(
+    "attribute_not_exists(job_id) OR "
+    "#state <> :computing OR "
+    "updated_at_ms < :stale_before"
+),
+ExpressionAttributeNames={"#state": "state"},
+```
+
+Acquire rule for Refresh:
+
+- Generate `refresh_id = "mosaic_<utc>_<short-random>"`.
+- `PutItem` / `UpdateItem` the DDB row to `state:"computing"` with a condition:
+  - row does not exist, or
+  - `state` is not `computing`, or
+  - `updated_at_ms < now_ms - STALE_MS`.
+- If the conditional write fails, return the existing non-stale `computing` status and do not start another worker.
+- Use a conservative stale threshold, e.g. 30 minutes.
+
+Publish rule for the worker:
+
+- Write the manifest to a refresh-specific key, not a stable alias:
+  `renders/_index/color_mosaic/<refresh_id>/all.json`.
+- Then update the DDB row to `state:"ready"` with condition `refresh_id = :refresh_id AND state = "computing"`.
+- If that conditional update fails, the worker is stale; exit without publishing a public "ready" status. The refresh-specific manifest it wrote is harmless garbage.
+- On exception, update the DDB row to `state:"error"` with the same owner condition.
+- Optionally mirror the current DDB status to `renders/_index/color_mosaic_status.json` for debugging/shareability, but the UI must treat DDB/API status as authoritative.
+- Preserve the last good manifest across failed refreshes. When acquiring a new `computing` row, copy the previous ready manifest fields into `last_ready_manifest_key`, `last_ready_manifest_url`, `last_ready_completed_at`, and `last_ready_count`. On successful ready, set both the current `manifest_*` fields and the `last_ready_*` fields. On error, leave current `manifest_key` / `manifest_url` empty for the failed refresh but keep the `last_ready_*` fields.
+
+Route response shapes:
+
+- Missing state: `{"schema_version":1,"state":"missing","manifest_key":"","manifest_url":"","count":0}`.
+- Computing: return the DDB status row, including `refresh_id`, `started_at`, `updated_at`, and any partial counts if later added.
+- Ready: return the DDB status row with `manifest_key`, `manifest_url`, counts, and skipped counts.
+- Error: return the DDB status row with `error`, empty current `manifest_key` / `manifest_url`, and populated `last_ready_*` fields if a previous ready manifest exists. The frontend may keep showing the loaded manifest or offer "Load last ready"; it must not fetch a manifest from the failed refresh.
 
 Use storage self-invocation for the background job. The deployed Lambda role already has `lambda:InvokeFunction` on `polypaint-*` (`deploy.sh` installs `polypaint-lambda-invoke`), so the storage handler can invoke its own function asynchronously:
 
@@ -658,7 +705,7 @@ lambda_client.invoke(
 
 Do not use `context.function_name` in the route handler. `handler_storage._handle_storage_route` currently calls route functions as `fn(event)`, so `context` is not threaded into storage route handlers. The Lambda runtime always provides `AWS_LAMBDA_FUNCTION_NAME`; use that environment variable. At the top of `handler_storage.handler`, check `event.get("internal_action") == "build_color_mosaic"` before route dispatch and call the worker directly. This avoids a new Lambda, avoids a Step Functions workflow for a UI index rebuild, and avoids routing the crawl through API Gateway.
 
-Status object shape:
+Status object shape returned by `/list-color-mosaic`:
 
 ```json
 {
@@ -668,7 +715,12 @@ Status object shape:
   "started_at": "2026-06-23T00:00:00Z",
   "updated_at": "2026-06-23T00:00:10Z",
   "completed_at": "2026-06-23T00:00:10Z",
-  "manifest_key": "renders/_index/color_mosaic_all.json",
+  "manifest_key": "renders/_index/color_mosaic/mosaic_20260623T000000Z_ab12cd/all.json",
+  "manifest_url": "https://polypaint.s3.us-east-1.amazonaws.com/renders/_index/color_mosaic/mosaic_20260623T000000Z_ab12cd/all.json",
+  "last_ready_manifest_key": "renders/_index/color_mosaic/mosaic_20260623T000000Z_ab12cd/all.json",
+  "last_ready_manifest_url": "https://polypaint.s3.us-east-1.amazonaws.com/renders/_index/color_mosaic/mosaic_20260623T000000Z_ab12cd/all.json",
+  "last_ready_completed_at": "2026-06-23T00:00:10Z",
+  "last_ready_count": 1483,
   "count": 1483,
   "source_counts": {"512x512": 728, "1024x1024": 755, "unknown": 0},
   "skipped_non_square": 0,
@@ -680,12 +732,7 @@ Status object shape:
 }
 ```
 
-Refresh id rules:
-
-- If a refresh is already `computing` and not stale, return the existing status and do not start another worker.
-- Treat `computing` statuses older than a conservative threshold, e.g. 30 minutes, as stale and allow a new refresh.
-- The worker writes final `ready` or `error` only if the current status still has its `refresh_id`; this prevents an older worker from overwriting a newer refresh.
-- Write manifests first, then status `ready` last. The status object is the commit marker.
+This is intentionally DDB-backed even though the manifest is public S3. Polling a tiny DDB status row through the API is cheap and avoids stale public-status cache/race bugs.
 
 ### 21.2 Backend builder
 
@@ -698,10 +745,19 @@ Targeted scan shape:
 5. Thread a required `presign=False` option through `_list_render_family_variants`, `_legacy_render_variant`, and `_head_artifact_keys`. Today `_list_render_family_variants` hardcodes `presign=True`; AllRenders must not mint throwaway presigned URLs because the bucket is public and the manifest stores keys.
 6. Use a pooled S3 client like `_results_list_s3_client(max_workers)`. Avoid nested `ThreadPoolExecutor`s: first build a flattened `(job_id, artifact_prefix)` work-list, then process that list through one bounded pool. Nested job-level plus artifact-level pools multiply thread counts and make S3 throttling harder to reason about.
 
+Concrete helper split:
+
+- `_render_family_artifact_prefixes(job_id, family, *, s3_client=s3) -> list[str]`: lists `renders/<job>/<family-dir>/` prefixes.
+- `_render_family_entry_from_prefix(job_id, family, prefix, *, presign=True, s3_client=s3) -> dict | None`: contains the current image/preview HEAD + `_render_artifact_entry` logic.
+- `_list_render_family_variants(job_id, family, *, presign=True, s3_client=s3)` becomes a thin wrapper around those helpers for existing Render summary behavior.
+- The mosaic builder uses the prefix helper to flatten work, then calls `_render_family_entry_from_prefix(..., presign=False, s3_client=list_s3)` in one bounded pool.
+- Read `calc.json` once per job and cache `{function, degree, N, times}` by job id before enriching tile entries. Do not reread `calc.json` per artifact.
+
 Dimension capture:
 
 - Prefer HEAD metadata first. `_head_artifact_keys` already surfaces user metadata width/height when present, and several color paths write it.
 - If preview dimensions are absent from HEAD metadata, use a small PNG-header range read (`Range: bytes=0-32`) as fallback.
+- PNG fallback is deterministic: validate the PNG signature and read IHDR width/height from bytes 16..23 as big-endian uint32. If the range body is short, not PNG, or IHDR is invalid, treat dimensions as unknown.
 - Do not download image bodies.
 - Include square color previews (`512 × 512`, `1024 × 1024`, or future square sizes).
 - Skip or count non-square previews because a fixed-tile mosaic would distort them.
@@ -716,13 +772,13 @@ Legacy color scope:
 
 ### 21.3 Manifest strategy
 
-Use one canonical manifest for v1:
+Use one canonical manifest shape for v1, stored under a refresh-specific key:
 
 ```text
-https://polypaint.s3.us-east-1.amazonaws.com/renders/_index/color_mosaic_all.json
+https://polypaint.s3.us-east-1.amazonaws.com/renders/_index/color_mosaic/<refresh_id>/all.json
 ```
 
-The `All | 512 | 1024` selector is a client-side filter over this one manifest. This is simpler than writing three manifest objects because every tile already carries `preview_width` / `preview_height`, and switching filters becomes instant. If diagnostic split objects are useful later, they can be added without changing the viewer contract.
+The UI gets the exact `manifest_key` / `manifest_url` from `/list-color-mosaic` status. Do not hardcode a latest manifest URL in the viewer. The `All | 512 | 1024` selector is a client-side filter over this one manifest. This is simpler than writing three manifest objects because every tile already carries `preview_width` / `preview_height`, and switching filters becomes instant. If diagnostic split objects are useful later, they can be added without changing the viewer contract.
 
 **Manifest shape (key-only, Option A):**
 
@@ -731,6 +787,8 @@ The `All | 512 | 1024` selector is a client-side filter over this one manifest. 
   "schema_version": 1,
   "computed_at": "2026-06-23T00:00:00Z",
   "base": "https://polypaint.s3.us-east-1.amazonaws.com/",
+  "refresh_id": "mosaic_20260623T000000Z_ab12cd",
+  "manifest_key": "renders/_index/color_mosaic/mosaic_20260623T000000Z_ab12cd/all.json",
   "manifest_kind": "all",
   "dimension_filter": "all-square",
   "tile_size": 512,
@@ -776,12 +834,12 @@ Add a real tab and module:
 - Update the part-consistency check at the bottom of `index.html` to include `13-allrenders`.
 - Add `;(window.__ppParts = window.__ppParts || []).push('13-allrenders');` at the end of the new JS part.
 - `tests/test_frontend_js.sh` loads JS tags from `index.html`; adding the script tag plus registration is enough for the sequential-load harness. `tests/test_frontend_parts_contract.py` will enforce declaration-only top-level code.
-- `loadAllRenders()` must be idempotent because `switchTab('allrenders')` runs on every tab selection. If the manifest is already loaded and no refresh is in progress, do not recreate the viewer or restart polling; only resize/reopen when the container or controls changed.
+- `loadAllRenders()` must be idempotent because `switchTab('allrenders')` runs on every tab selection. If the loaded manifest `refresh_id` matches the ready status and no refresh is in progress, do not recreate the viewer, refetch the manifest, or restart polling; only resize/reopen when the container or controls changed. If status is `error`, keep the loaded manifest, or fetch `last_ready_manifest_url` only when no manifest is loaded.
 
 Toolbar:
 
 - Refresh button: disabled while `state:"computing"`, shows spinner/status text, starts async refresh via `/list-color-mosaic`.
-- Status readout: `ready`, `computing`, `error`, `last refreshed`, tile count, skipped counts.
+- Status readout: `ready`, `computing`, `error`, `last refreshed`, `refresh_id`, tile count, skipped counts.
 - Size filter: `All | 512 | 1024`. In v1 this is a filter, not a resolution switch. `1024` means older 1024-preview artifacts; they are still rendered into a 512 logical tile.
 - Sort mode: `Date`, `Job`, `Function`, `Degree`, `N`, `Random`.
 - Column-count control: presets or slider. Default `cols = Math.ceil(Math.sqrt(count))`; user can widen into a contact-sheet or narrow into a tall wall.
@@ -859,8 +917,8 @@ Add a hover/selected overlay in AllRenders before navigation if it is cheap; it 
 - Add `os` and a Lambda client in `lambda/handler_storage.py` for storage self-invocation.
 - Regenerate `api_manifest.json` with the project’s manifest writer command from the deployment checklist: `python3 api_manifest.py --write`. If the repo standard is changed globally later, update the checklist and this line together.
 - API Gateway routes are created from `deploy_manifest.json` by `deploy.sh`; do not edit route wiring directly in `deploy.sh`.
-- The public manifest/status objects live under `renders/_index/` and are read directly by the browser from S3. Direct public S3 is v1; CloudFront would be a separate infra task, not a drop-in code change.
-- Write status/manifest objects with `ContentType: application/json`. Prefer `CacheControl: no-cache, max-age=0` for status; manifests may also use no-cache because the client uses explicit cache-busters after Refresh.
+- Refresh-specific manifest objects live under `renders/_index/color_mosaic/<refresh_id>/` and are read directly by the browser from S3 after `/list-color-mosaic` reports `ready`. Direct public S3 is v1; CloudFront would be a separate infra task, not a drop-in code change.
+- Write manifest objects with `ContentType: application/json`. Use `CacheControl: no-cache, max-age=0` unless/until historical manifests get immutable cache policy. If a debug public status mirror is added, also write it with `CacheControl: no-cache, max-age=0`; do not make it the authoritative status source.
 
 ### 21.7 Tests/gates
 
@@ -868,12 +926,15 @@ Add a hover/selected overlay in AllRenders before navigation if it is cheap; it 
 - Storage unit test: HEAD metadata dimensions are used when present; PNG range-read fallback is used only when metadata dimensions are absent.
 - Storage unit test: unknown preview dimensions are included only in `All`, excluded from strict `512` / `1024`, and counted in `unknown_dimensions`.
 - Storage unit test: `/list-color-mosaic {refresh:true}` writes `computing` status, self-invokes asynchronously, and returns immediately without building the manifest inline.
-- Storage unit test: internal worker writes `color_mosaic_all.json` then flips status to `ready`.
-- Storage unit test: stale `computing` can be replaced; non-stale `computing` returns the existing refresh id; older worker cannot overwrite a newer refresh id.
+- Storage unit test: internal worker writes `renders/_index/color_mosaic/<refresh_id>/all.json` then conditionally flips DDB status to `ready`.
+- Storage unit test: stale `computing` can be replaced; non-stale `computing` returns the existing refresh id; older worker cannot update the DDB row for a newer refresh id.
+- Storage unit test: failed refresh preserves `last_ready_manifest_url` and does not expose the failed refresh's `manifest_url`.
+- Storage unit test: stale worker writes a refresh-specific manifest but fails the DDB conditional update; current status remains owned by the newer refresh.
 - Manifest determinism test: same fixtures in different S3 listing order produce identical `tiles` order.
 - Manifest schema test: entries include `job_id`, `artifact_id`, `created_at`, `function`, `degree`, `N`, `times`, dimensions, `key`, and `image_key`.
 - API route contract: `/list-color-mosaic` appears in `deploy_manifest.json` and regenerated `api_manifest.json`.
-- Frontend harness: AllRenders tab exists; `switchTab('allrenders')` loads it; script registration includes `13-allrenders`; Refresh calls `/list-color-mosaic`; status poll fetches the public status URL; selector filters `All | 512 | 1024` in memory; sort/column controls rebuild the tile source with `viewer.open`.
+- Frontend harness: AllRenders tab exists; `switchTab('allrenders')` loads it; script registration includes `13-allrenders`; Refresh calls `/list-color-mosaic`; status polling uses `/list-color-mosaic` and fetches `status.manifest_url` only after `ready`; selector filters `All | 512 | 1024` in memory; sort/column controls rebuild the tile source with `viewer.open`.
+- Frontend harness: `state:"error"` keeps the currently loaded manifest; if none is loaded and `last_ready_manifest_url` exists, it fetches that fallback instead.
 - Frontend harness: OSD tile source maps `x,y` to `tiles[y * cols + x]`; out-of-range returns the transparent data URI; click maps back to the same tile entry and calls `refreshRenderArtifacts(... selectFamily:'color', selectArtifactId)`.
 - Add any new storage test file to `scripts/predeploy_check.sh` if it is not in an already-gated file. `tests/test_storage_handler.py` is already gated; route contracts are covered by `tests/test_api_route_contracts.py`.
 
@@ -884,10 +945,10 @@ Add a hover/selected overlay in AllRenders before navigation if it is cheap; it 
 3. **Manifest builder core.** Add `_build_color_mosaic_manifest(refresh_id, *, include_legacy=False)` that returns the manifest dict and counts. It should use the same validity helpers as Render summary, enrich entries from `calc.json`, sort deterministically, and never generate presigned URLs.
 4. **Status helpers.** Add helpers to read/write `renders/_index/color_mosaic_status.json`, write `computing`, write `ready`, write `error`, and check refresh-id ownership before final writes.
 5. **Async route.** Add `handle_list_color_mosaic(event)`. On `{refresh:true}`, write or reuse `computing`, self-invoke the storage Lambda using `os.environ["AWS_LAMBDA_FUNCTION_NAME"]` with `internal_action:"build_color_mosaic"`, and return the status. On no refresh, return current status or a `missing`/`empty` state.
-6. **Internal worker path.** At the start of `handler_storage.handler`, handle `event["internal_action"] == "build_color_mosaic"` by calling the worker. The worker writes `color_mosaic_all.json` first and flips status to `ready` last; on exception, write `error` only if the refresh id still owns the status.
+6. **Internal worker path.** At the start of `handler_storage.handler`, handle `event["internal_action"] == "build_color_mosaic"` by calling the worker. The worker writes `renders/_index/color_mosaic/<refresh_id>/all.json`, then conditionally flips DDB status to `ready`; on exception, write `error` only if the refresh id still owns the DDB row.
 7. **Route contracts.** Add `/list-color-mosaic` to `deploy_manifest.json`, regenerate `api_manifest.json`, and add/update route tests if needed.
 8. **Frontend skeleton.** Add the AllRenders tab button/panel in `index.html`, add `switchTab('allrenders')`, add `js/13-allrenders.js`, update script tags and the `__ppParts` expected list.
-9. **Frontend status/manifest loading.** Implement idempotent `loadAllRenders()`: fetch public status, show empty/computing/ready/error states, poll during computing, fetch `color_mosaic_all.json` on ready, and keep the last loaded manifest usable on refresh errors. Guard against duplicate polls/viewer recreation on repeated tab opens.
+9. **Frontend status/manifest loading.** Implement idempotent `loadAllRenders()`: call `/list-color-mosaic` for status, show empty/computing/ready/error states, poll the same endpoint during computing, fetch `status.manifest_url` on ready, and keep the last loaded manifest usable on refresh errors. If there is no loaded manifest and status has `last_ready_manifest_url`, fetch that as the fallback wall. Guard against duplicate polls/viewer recreation on repeated tab opens.
 10. **OSD wall.** Implement the single-level tile source with a dedicated `_allRendersViewer`, create OSD only after the tab is visible, set `imageLoaderLimit`, and use `viewer.open(tileSource)` for filter/sort/column changes.
 11. **Controls.** Add Refresh, status readout, `All | 512 | 1024`, sort mode, column-count control, Home/Fit. Make 512/1024 labels clear that they filter by stored preview size.
 12. **Click-to-open.** Map click to tile index, highlight/preview the selected tile if cheap, then call `_ensureResultsSelection`, `switchTab('render')`, and `refreshRenderArtifacts(... selectFamily:'color', selectArtifactId)`.

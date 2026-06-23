@@ -209,6 +209,7 @@ MUTED = HexColor("#9aa0b4")
 PANEL_BG = HexColor("#121829")
 PANEL_BORDER = HexColor("#2b3a5e")
 CODE_TEXT = HexColor("#e6e9f2")
+RULE = HexColor("#5f6678")
 
 MARGIN_L = MARGIN_R = 24 * mm
 MARGIN_TOP = 26 * mm
@@ -322,9 +323,12 @@ def _draw_tracking_text(c, x, y, text, font_spec, color, char_space=1.0):
     c.drawText(t)
 
 
-def _draw_section_header(c, x, y, title, width=CONTENT_W):
-    _draw_tracking_text(c, x, y, str(title or "").upper(), F_H, ACCENT, 1.0)
-    c.setStrokeColor(PANEL_BORDER)
+def _draw_section_header(c, x, y, title, width=CONTENT_W, *, color=ACCENT, tracking=1.0, uppercase=True):
+    text = str(title or "")
+    if uppercase:
+        text = text.upper()
+    _draw_tracking_text(c, x, y, text, F_H, color, tracking)
+    c.setStrokeColor(RULE)
     c.setLineWidth(HEADER_RULE_W)
     c.line(x, y - 5, x + width, y - 5)
     return y - F_H[1] - 4 * mm
@@ -480,12 +484,8 @@ def _draw_report_summary(c, report, palette_reader=None, palette_size=None):
     c.setFillColor(TEXT)
     _set_pdf_font(c, F_TITLE)
     c.drawString(x, y, _ellipsize(report.get("compute_id") or report.get("title") or "", 34))
-    y -= 34
-    c.setFillColor(ACCENT)
-    _set_pdf_font(c, F_TITLE2)
-    c.drawString(x, y, _ellipsize(report.get("color_artifact_id") or "", 46))
-    y -= 10
-    c.setStrokeColor(ACCENT)
+    y -= 12
+    c.setStrokeColor(RULE)
     c.setLineWidth(TITLE_RULE_W)
     c.line(x, y, x + CONTENT_W, y)
     y -= 9 * mm
@@ -495,35 +495,27 @@ def _draw_report_summary(c, report, palette_reader=None, palette_size=None):
 
     programs = _programs_for_report(report)
     if palette_reader and palette_size:
-        y = _draw_section_header(c, x, y, "palette")
         palette_label = _ellipsize(report.get("palette_label") or "palette", 72)
-        c.setFillColor(TEXT)
-        _set_pdf_font(c, ("Helvetica-Bold", 13))
-        c.drawCentredString(x + CONTENT_W / 2, y, _safe_pdf_text(palette_label))
-        y -= 8 * mm
+        y = _draw_section_header(c, x, y, palette_label, color=TEXT, tracking=0.0, uppercase=False)
 
-        bottom = BLEED_3 + MARGIN_BOTTOM + (9 * mm if programs else 0)
+        bottom = BLEED_3 + MARGIN_BOTTOM
         available_h = max(32 * mm, y - bottom)
         palette_side = max(36 * mm, min(CONTENT_W * 0.72, available_h))
         palette_x = x + (CONTENT_W - palette_side) / 2
         palette_y = bottom + max(0, available_h - palette_side) / 2
         c.setFillColor(PANEL_BG)
-        c.setStrokeColor(PANEL_BORDER)
-        c.setLineWidth(PANEL_BORDER_W)
+        c.setStrokeColor(HexColor("#222a42"))
+        c.setLineWidth(0.35)
         c.roundRect(
-            palette_x - 4 * mm,
-            palette_y - 4 * mm,
-            palette_side + 8 * mm,
-            palette_side + 8 * mm,
+            palette_x - 3 * mm,
+            palette_y - 3 * mm,
+            palette_side + 6 * mm,
+            palette_side + 6 * mm,
             2 * mm,
             fill=1,
             stroke=1,
         )
         _draw_image_contain(c, palette_reader, palette_size, palette_x, palette_y, palette_side, palette_side)
-        if programs:
-            c.setFillColor(MUTED)
-            _set_pdf_font(c, F_CAP)
-            c.drawCentredString(x + CONTENT_W / 2, BLEED_3 + MARGIN_BOTTOM, "Source details continue in the appendix.")
     elif programs:
         c.setFillColor(MUTED)
         _set_pdf_font(c, F_CAP)
@@ -539,7 +531,7 @@ def _start_appendix_page(c, page_no):
     c.setFillColor(TEXT)
     _set_pdf_font(c, ("Helvetica-Bold", 22))
     c.drawString(x, y, f"Source Appendix {page_no}")
-    c.setStrokeColor(ACCENT)
+    c.setStrokeColor(RULE)
     c.setLineWidth(TITLE_RULE_W)
     c.line(x, y - 8, SPREAD_W - ORIGIN_X, y - 8)
     return [

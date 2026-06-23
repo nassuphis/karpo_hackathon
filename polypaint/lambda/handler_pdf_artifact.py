@@ -164,9 +164,9 @@ def _color_summary(src_meta):
     if color_mode == "solve_score":
         try:
             score = read_solve_score_metadata("solve", src_meta, default_metric="proximity")
-            return f"solve score: {score.get('display') or score.get('metric') or 'score'}"
+            return str(score.get("display") or score.get("metric") or "score")
         except Exception:
-            return "solve score"
+            return "score"
     if color_mode == "saved_palette":
         try:
             score = read_solve_score_metadata("palette_source", src_meta, default_metric="proximity")

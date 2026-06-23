@@ -129,9 +129,9 @@ class TestSpreadPdf(unittest.TestCase):
 
             stream_text = _pdf_stream_text(pdf)
             self.assertIn("compute_demo", stream_text)
-            self.assertIn("color_demo", stream_text)
+            self.assertNotIn("color_demo", stream_text)
             self.assertIn("pal_demo_123", stream_text)
-            self.assertIn("Source details continue in the appendix.", stream_text)
+            self.assertNotIn("Source details continue in the appendix.", stream_text)
             self.assertNotIn("program excerpts", stream_text.lower())
             self.assertNotIn("full source on appendix", stream_text)
             self.assertIn("Source Appendix 1", stream_text)

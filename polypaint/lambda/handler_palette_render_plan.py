@@ -38,6 +38,7 @@ from solve_score_chain import (
     solve_score_uses_non_solve_sources,
     solve_score_chain_id,
 )
+from solve_score_program_source import solve_score_source_text_from_chain
 
 s3 = boto3.client("s3")
 
@@ -735,6 +736,9 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
 
     source_score_chain_internal = source_score["chain"]
     source_score_chain_public = source_score["chain_public"]
+    source_score_source_text = str(source.get("solve_score_program_source_text") or "").strip()
+    if not source_score_source_text:
+        source_score_source_text = solve_score_source_text_from_chain(source_score_chain_public)
     scratch_ok, clip_key, bins_key = _scratch_matches(job_id, source_score_chain_internal, metric, q, omega, omega_enabled, root_transforms)
     output_channel_count = 1
     output_channels = []
@@ -783,6 +787,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         "metric": metric,
         "palette": palette,
         "solve_score_chain": source_score_chain_public,
+        "solve_score_program_source_text": source_score_source_text,
         "solve_score_quantile": q,
         "solve_score_omega": omega,
         "solve_score_omega_enabled": omega_enabled,
@@ -853,6 +858,7 @@ def _build_extract_plan(job_id, run_id, task_id, artifact_id, raw_params=None):
         "omega": omega,
         "omega_enabled": omega_enabled,
         "chain": source_score_chain_public,
+        "source_text": source_score_source_text,
         "metrics": source_score["metrics"],
         "program": source_score["program_spec"],
         "chain_fingerprint": chain_fingerprint,

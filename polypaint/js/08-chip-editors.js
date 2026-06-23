@@ -803,10 +803,7 @@ function _setSolveScoreProgramEditorMode(prefix, mode) {
     const normalized = 'text';
     _solveScoreProgramEditorMode[p] = normalized;
     _setPanelTabActive(`${p}-ss`, normalized);
-    _setSolveScoreProgramStatus(
-        p,
-        'Solve-score text source is authoritative; compile validates and refreshes derived state.'
-    );
+    _setSolveScoreProgramStatus(p, '');
 }
 
 function _setRootProgramEditorMode(prefix, mode) {

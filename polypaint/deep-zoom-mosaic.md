@@ -16,7 +16,7 @@ This note backs an **AllRenders** tab — one pan/zoom wall of every color rende
 
 **The single-tile-source hack works here because renders are square.** Treating each thumbnail as one tile distorts non-square images. PolyPaint is safe: the render plan rejects `width`/`height` and emits only square output (`lambda/handler_render_plan.py:338` — *"render plan no longer accepts width/height; pass pix for square output"*; `view_mode == "square"`, `square_extent` default 2.0). Previews are aspect-preserving (`vipsthumbnail -s {N}x{N}`), so a square source yields a square thumbnail, and OSD scales each into the fixed `tileSize` slot with no distortion.
 
-**OpenSeadragon is already vendored.** The DeepZoom viewer already builds `OpenSeadragon({ tileSources })` (`js/12-deepzoom-boot.js:270`). Reuse the dependency and the boot pattern — no new library.
+**OpenSeadragon is already loaded by the app.** `index.html` loads OpenSeadragon 4.1.1 from cdnjs before the split app scripts, and the DeepZoom viewer already builds `OpenSeadragon({ tileSources })` (`js/12-deepzoom-boot.js:270`). Reuse the global `OpenSeadragon` dependency and the boot pattern — no new library and no vendored copy.
 
 **The bucket is already fully public-read — use stable URLs, not presigned.** `deploy.sh:131-145` installs a bucket policy allowing anonymous `s3:GetObject` on `arn:aws:s3:::polypaint/*`, with Block-Public-Access fully off (`deploy.sh:125-128`). Consequences:
 
@@ -631,26 +631,112 @@ For a clean implementation:
 
 ## 21. PolyPaint implementation plan
 
-**Treat the manifest as a cached, Refresh-recomputed index — never compute it on every open.** Enumerating all color artifacts across all jobs is the O(jobs × artifacts) S3 crawl that the Results `/list` path deliberately avoids (see the `/render-count` lazy-per-job decision). A naive full `renders/` walk is too broad because it traverses chunks and unrelated artifacts; the targeted scan shape is job-prefix first, then `renders/<job>/color/`. So:
+**Treat the manifest as a cached, Refresh-recomputed index — never compute it on every open and never compute it synchronously behind the browser request.** Enumerating all color artifacts across all jobs is the O(jobs × artifacts) S3 crawl that the Results `/list` path deliberately avoids (see the `/render-count` lazy-per-job decision). The Results tab parallelizes one `calc.json` read per job; AllRenders has a deeper fanout: job prefixes, color-artifact prefixes, key HEADs, and preview-dimension checks per artifact. Use the Results parallelism model inside the builder, but run the builder asynchronously so API Gateway never waits for the crawl.
 
-1. **Compute (on Refresh only).** List job prefixes under `renders/` (`Delimiter="/"` → `CommonPrefixes`). For each job, list only `renders/<job>/color/` artifact prefixes and apply the same validity rule as the Render tab: a displayable color artifact must have an `image.jpeg` or `image.png`, and the preferred tile is `preview.png` if present. Reuse/refactor `_list_render_family_variants(job_id, "color")` and `_legacy_render_variant(job_id, "color")` rather than writing a second artifact-validity rule. If necessary, add a `presign=False` option so the mosaic builder returns keys without generating throwaway presigned URLs.
-2. **Capture preview dimensions during Refresh.** Read only the PNG header (`Range: bytes=0-32`) for each `preview.png` and store `preview_width` / `preview_height`. This proved cheap enough for ~1.5k previews and is refresh-only. Do not download image bodies.
-3. **Filter safely.** Include square color previews (`512 × 512`, `1024 × 1024`, or future square sizes). Skip or mark non-square previews because a fixed-tile mosaic would distort them. If a color artifact lacks `preview.png`, either omit it from v1 or include a `missing_preview` count; do not use full render images as tiles.
-4. **Sort deterministically** (e.g. `created_at` desc, tiebreak `job_id` + `artifact_id`) so tiles do not reshuffle between refreshes — the mosaic index `y*cols + x` must be stable.
-5. **Cache** the manifest to a public object: `renders/_index/color_mosaic.json`.
+### 21.1 Refresh contract: async status object, not synchronous crawl
 
-**The display path needs no Lambda.** Because the manifest is itself a public S3 object, the viewer fetches `https://polypaint.s3.us-east-1.amazonaws.com/renders/_index/color_mosaic.json` directly, optionally with a cache-buster. Only the **Refresh** button calls a Lambda, which recomputes and overwrites it.
+`POST /list-color-mosaic` is a control endpoint on the storage Lambda, placed near `/render-summary` / `/render-count`.
 
-**Endpoint:** `POST /list-color-mosaic` on the storage lambda, placed near `/render-summary` / `/render-count`. `{ "refresh": true }` recomputes + re-caches and returns the manifest. Without `refresh`, it may return the cached manifest if present, but the normal tab-open path should fetch the public manifest object directly. Add `/list-color-mosaic` to `deploy_manifest.json` storage routes and regenerate the contract with `.venv/bin/python api_manifest.py --write`.
+- `{ "refresh": true }` writes `renders/_index/color_mosaic_status.json` with `state:"computing"`, starts the background crawl, and returns immediately.
+- `{ "refresh": false }` or an empty body returns the latest status object if present; the normal tab-open path should fetch the public status and manifest objects directly.
+- The browser polls `https://polypaint.s3.us-east-1.amazonaws.com/renders/_index/color_mosaic_status.json?ts=...` every ~2s while `state:"computing"`.
+- On `state:"ready"`, the browser fetches `color_mosaic_all.json` with a cache-buster and renders it.
+- On `state:"error"`, the tab shows the error and keeps the last ready manifest usable.
+
+Use storage self-invocation for the background job. The deployed Lambda role already has `lambda:InvokeFunction` on `polypaint-*` (`deploy.sh` installs `polypaint-lambda-invoke`), so the storage handler can invoke its own function asynchronously:
+
+```python
+lambda_client.invoke(
+    FunctionName=context.function_name or os.environ["AWS_LAMBDA_FUNCTION_NAME"],
+    InvocationType="Event",
+    Payload=json.dumps({
+        "internal_action": "build_color_mosaic",
+        "refresh_id": refresh_id,
+    }).encode("utf-8"),
+)
+```
+
+At the top of `handler_storage.handler`, check `event.get("internal_action") == "build_color_mosaic"` before route dispatch and call the worker directly. This avoids a new Lambda, avoids a Step Functions workflow for a UI index rebuild, and avoids routing the crawl through API Gateway.
+
+Status object shape:
+
+```json
+{
+  "schema_version": 1,
+  "state": "ready",
+  "refresh_id": "mosaic_20260623T000000Z_ab12cd",
+  "started_at": "2026-06-23T00:00:00Z",
+  "updated_at": "2026-06-23T00:00:10Z",
+  "completed_at": "2026-06-23T00:00:10Z",
+  "manifest_key": "renders/_index/color_mosaic_all.json",
+  "count": 1483,
+  "source_counts": {"512x512": 728, "1024x1024": 755},
+  "skipped_non_square": 0,
+  "skipped_missing_preview": 0,
+  "skipped_missing_image": 0,
+  "skipped_legacy": 0,
+  "error": ""
+}
+```
+
+Refresh id rules:
+
+- If a refresh is already `computing` and not stale, return the existing status and do not start another worker.
+- Treat `computing` statuses older than a conservative threshold, e.g. 30 minutes, as stale and allow a new refresh.
+- The worker writes final `ready` or `error` only if the current status still has its `refresh_id`; this prevents an older worker from overwriting a newer refresh.
+- Write manifests first, then status `ready` last. The status object is the commit marker.
+
+### 21.2 Backend builder
+
+Targeted scan shape:
+
+1. List job prefixes under `renders/` using `Delimiter="/"`.
+2. For each job, list only `renders/<job>/color/` artifact prefixes.
+3. Apply the same validity rule as the Render tab: a displayable immutable color artifact has `image.jpeg` or `image.png`, and the preferred tile is `preview.png` if present.
+4. Reuse/refactor `_list_render_family_variants(job_id, "color")` and `_legacy_render_variant(job_id, "color")` rather than writing a second artifact-validity rule.
+5. Thread a required `presign=False` option through `_list_render_family_variants`, `_legacy_render_variant`, and `_head_artifact_keys`. Today `_list_render_family_variants` hardcodes `presign=True`; AllRenders must not mint throwaway presigned URLs because the bucket is public and the manifest stores keys.
+6. Use a pooled S3 client like `_results_list_s3_client(max_workers)` and parallelize at both job and artifact levels. Cap worker counts; do not create unbounded threads.
+
+Dimension capture:
+
+- Prefer HEAD metadata first. `_head_artifact_keys` already surfaces user metadata width/height when present, and several color paths write it.
+- If preview dimensions are absent from HEAD metadata, use a small PNG-header range read (`Range: bytes=0-32`) as fallback.
+- Do not download image bodies.
+- Include square color previews (`512 × 512`, `1024 × 1024`, or future square sizes).
+- Skip or count non-square previews because a fixed-tile mosaic would distort them.
+- If a color artifact lacks `preview.png`, count `skipped_missing_preview`; v1 does not use full render images as tiles.
+
+Legacy color scope:
+
+- Immutable artifacts live under `renders/<job>/color/<artifact>/preview.png`; these are v1’s primary scope.
+- Legacy root color previews live at `renders/<job>/preview_color.png` through `RENDER_FAMILY_SHAPES["color"].legacy_preview_candidates`.
+- Choose explicitly during implementation: either include legacy as `legacy:true` entries, or skip and count `skipped_legacy`. Prefer skip for v1 unless there is a clear need to include pre-artifact renders.
+
+### 21.3 Manifest strategy
+
+Use one canonical manifest for v1:
+
+```text
+https://polypaint.s3.us-east-1.amazonaws.com/renders/_index/color_mosaic_all.json
+```
+
+The `All | 512 | 1024` selector is a client-side filter over this one manifest. This is simpler than writing three manifest objects because every tile already carries `preview_width` / `preview_height`, and switching filters becomes instant. If diagnostic split objects are useful later, they can be added without changing the viewer contract.
 
 **Manifest shape (key-only, Option A):**
 
 ```json
 {
+  "schema_version": 1,
   "computed_at": "2026-06-23T00:00:00Z",
   "base": "https://polypaint.s3.us-east-1.amazonaws.com/",
+  "manifest_kind": "all",
+  "dimension_filter": "all-square",
   "tile_size": 512,
   "count": 18742,
+  "source_counts": {
+    "512x512": 728,
+    "1024x1024": 755
+  },
   "skipped_non_square": 0,
   "skipped_missing_preview": 0,
   "tiles": [
@@ -659,6 +745,10 @@ For a clean implementation:
       "job_id": "compute_...",
       "artifact_id": "...",
       "created_at": "...",
+      "function": "giga_39",
+      "degree": 39,
+      "N": 10000,
+      "times": 1,
       "preview_width": 512,
       "preview_height": 512,
       "image_key": "renders/<job>/color/<artifact>/image.jpeg"
@@ -667,17 +757,129 @@ For a clean implementation:
 }
 ```
 
-The client computes `cols = Math.ceil(Math.sqrt(count))` and `rows = Math.ceil(count / cols)`; `getTileUrl(level, x, y)` returns `base + encodeURI(tiles[y*cols + x].key)`, or `blank.jpg` / a tiny local data-URI tile for out-of-range indices (§7). Use `tileSize = manifest.tile_size || 512`; the physical PNG may be 512 or 1024, but the virtual tile is 512.
+`function`, `degree`, `N`, and `times` come from `calc.json` and are refresh-only costs. Include them so the UI can arrange/filter without another backend call.
 
-**Viewer module:** new `js/NN-allrenders.js`, single-level custom tile source (§5 / §15: `minLevel: 0`, `maxLevel: 0`, `tileSize: 512`, `tileOverlap: 0`, `minZoomImageRatio`, `maxZoomPixelRatio`). Constrain min zoom so a fully zoomed-out wall does not request thousands of tiles at once; front with CloudFront if a large wall feels sluggish (objects are public, so this is a drop-in — §14).
+### 21.4 Viewer and arrangement
 
-**Click-to-open (§17):** map click → `index` → `tiles[index]` → open that artifact in the Render tab (`job_id` / `artifact_id`), or DeepZoom the full image via the existing viewer.
+Add a real tab and module:
+
+- `index.html`: add `<div class="tab-btn" onclick="switchTab('allrenders')">AllRenders</div>`. The label lowercased must equal the `switchTab` argument because `switchTab` toggles active buttons with `b.textContent.toLowerCase() === name`.
+- `index.html`: add `<div id="tab-allrenders" class="tab-content">...</div>`.
+- `js/01-core-compute.js`: add `if (name === 'allrenders') loadAllRenders();` in `switchTab`.
+- `index.html`: add `<script src="js/13-allrenders.js"></script>` after `js/12-deepzoom-boot.js`.
+- Update the part-consistency check at the bottom of `index.html` to include `13-allrenders`.
+- Add `;(window.__ppParts = window.__ppParts || []).push('13-allrenders');` at the end of the new JS part.
+- `tests/test_frontend_js.sh` loads JS tags from `index.html`; adding the script tag plus registration is enough for the sequential-load harness. `tests/test_frontend_parts_contract.py` will enforce declaration-only top-level code.
+
+Toolbar:
+
+- Refresh button: disabled while `state:"computing"`, shows spinner/status text, starts async refresh via `/list-color-mosaic`.
+- Status readout: `ready`, `computing`, `error`, `last refreshed`, tile count, skipped counts.
+- Size filter: `All | 512 | 1024`. In v1 this is a filter, not a resolution switch. `1024` means older 1024-preview artifacts; they are still rendered into a 512 logical tile.
+- Sort mode: `Date`, `Job`, `Function`, `Degree`, `N`, `Random`.
+- Column-count control: presets or slider. Default `cols = Math.ceil(Math.sqrt(count))`; user can widen into a contact-sheet or narrow into a tall wall.
+- Home/Fit button: `viewer.viewport.goHome()`.
+
+Client arrangement:
+
+- Start from `manifest.tiles`.
+- Apply size filter.
+- Apply optional text filter, e.g. function/job substring, after v1 if desired.
+- Apply sort:
+  - Date: `created_at` descending, tiebreak `job_id`, `artifact_id`.
+  - Job: group by `job_id`, then `created_at`/`artifact_id`.
+  - Function: `function`, then date.
+  - Degree/N: numeric, then date.
+  - Random: deterministic seeded shuffle per loaded manifest, not `Math.random()` every repaint.
+- Recompute `cols` and `rows`.
+- Call `viewer.open(newTileSource)` on filter/sort/column changes; do not destroy/recreate the viewer for ordinary rearrangement.
+
+OSD lifecycle:
+
+- Replicate `js/12-deepzoom-boot.js:viewDeepZoom`: set the viewer container visible before creating OpenSeadragon, otherwise OSD can measure a `0 × 0` viewport.
+- Create the viewer once on first `loadAllRenders()` after the tab is active.
+- On new manifest/filter/sort/column layout, call `viewer.open(tileSource)`.
+- Use a single-level custom tile source: `minLevel:0`, `maxLevel:0`, `tileSize:512`, `tileOverlap:0`.
+- Constrain min zoom so a fully zoomed-out wall does not request thousands of visible tiles at once.
+- Use a 1×1 transparent data URI for out-of-range blank tiles; do not request `blank.jpg`.
+
+Tile-source mapping:
+
+```js
+const cols = selectedCols;
+const rows = Math.ceil(filteredTiles.length / cols);
+const tileSize = 512;
+
+const tileSource = {
+  width: cols * tileSize,
+  height: rows * tileSize,
+  tileSize,
+  tileOverlap: 0,
+  minLevel: 0,
+  maxLevel: 0,
+  getTileUrl(level, x, y) {
+    const index = y * cols + x;
+    const tile = filteredTiles[index];
+    return tile ? manifest.base + encodeURI(tile.key) : TRANSPARENT_TILE_URL;
+  },
+};
+```
+
+### 21.5 Click-to-open
+
+Click should select the exact color artifact, not merely the result set. Use the existing Render/Favorites pattern:
+
+```js
+await _ensureResultsSelection(tile.job_id);  // or selectResult(tile.job_id) if already loaded
+switchTab('render');
+await refreshRenderArtifacts(tile.job_id, {
+  selectFamily: 'color',
+  selectArtifactId: tile.artifact_id,
+});
+```
+
+This mirrors `goRenderSelectedFavorite()` / `goColorFromPalette()` and uses the already-supported `selectFamily` / `selectArtifactId` path in `refreshRenderArtifacts`.
+
+Add a hover/selected overlay in AllRenders before navigation if it is cheap; it is usability polish, not required for v1.
 
 **Shareable:** since the bucket is already a public website (and the DeepZoom share-link pattern exists), the AllRenders wall can also be a standalone public page, not only an in-app tab.
 
-**Tests/gates:**
+### 21.6 Deployment and routing
 
-- Storage unit test: fake S3 with 512, 1024, non-square, missing-preview, and missing-image artifacts; assert only square displayable color previews enter the manifest.
+- Add `/list-color-mosaic` to the storage route list in `deploy_manifest.json`.
+- Add route dispatch in `lambda/handler_storage.py`.
+- Add `os` and a Lambda client in `lambda/handler_storage.py` for storage self-invocation.
+- Regenerate `api_manifest.json` with the project’s manifest writer command from the deployment checklist (`python3 api_manifest.py --write` unless the repo standard is changed globally).
+- API Gateway routes are created from `deploy_manifest.json` by `deploy.sh`; do not edit route wiring directly in `deploy.sh`.
+- The public manifest/status objects live under `renders/_index/` and are read directly by the browser from S3. Direct public S3 is v1; CloudFront would be a separate infra task, not a drop-in code change.
+- Write status/manifest objects with `ContentType: application/json`. Prefer `CacheControl: no-cache, max-age=0` for status; manifests may also use no-cache because the client uses explicit cache-busters after Refresh.
+
+### 21.7 Tests/gates
+
+- Storage unit test: fake S3 with 512, 1024, non-square, missing-preview, missing-image, missing-metadata, and optional legacy artifacts; assert only square displayable immutable color previews enter the manifest unless legacy inclusion is deliberately enabled.
+- Storage unit test: HEAD metadata dimensions are used when present; PNG range-read fallback is used only when metadata dimensions are absent.
+- Storage unit test: `/list-color-mosaic {refresh:true}` writes `computing` status, self-invokes asynchronously, and returns immediately without building the manifest inline.
+- Storage unit test: internal worker writes `color_mosaic_all.json` then flips status to `ready`.
+- Storage unit test: stale `computing` can be replaced; non-stale `computing` returns the existing refresh id; older worker cannot overwrite a newer refresh id.
 - Manifest determinism test: same fixtures in different S3 listing order produce identical `tiles` order.
+- Manifest schema test: entries include `job_id`, `artifact_id`, `created_at`, `function`, `degree`, `N`, `times`, dimensions, `key`, and `image_key`.
 - API route contract: `/list-color-mosaic` appears in `deploy_manifest.json` and regenerated `api_manifest.json`.
-- Frontend harness: AllRenders tab exists; Refresh calls `/list-color-mosaic`; OSD tile source maps `x,y` to `tiles[y * cols + x]`; click maps back to the same tile entry.
+- Frontend harness: AllRenders tab exists; `switchTab('allrenders')` loads it; script registration includes `13-allrenders`; Refresh calls `/list-color-mosaic`; status poll fetches the public status URL; selector filters `All | 512 | 1024` in memory; sort/column controls rebuild the tile source with `viewer.open`.
+- Frontend harness: OSD tile source maps `x,y` to `tiles[y * cols + x]`; out-of-range returns the transparent data URI; click maps back to the same tile entry and calls `refreshRenderArtifacts(... selectFamily:'color', selectArtifactId)`.
+- Add any new storage test file to `scripts/predeploy_check.sh` if it is not in an already-gated file. `tests/test_storage_handler.py` is already gated; route contracts are covered by `tests/test_api_route_contracts.py`.
+
+### 21.8 Ordered implementation steps
+
+1. **Storage helper refactor.** In `lambda/handler_storage.py`, thread `presign=False` through `_list_render_family_variants`, `_legacy_render_variant`, and their `_head_artifact_keys` calls. Existing render-summary behavior must stay unchanged by default (`presign=True`).
+2. **Dimension helper.** Add a small helper that returns preview dimensions from HEAD metadata first, then PNG range fallback. Keep it independent and unit-test it with fake S3 objects.
+3. **Manifest builder core.** Add `_build_color_mosaic_manifest(refresh_id, *, include_legacy=False)` that returns the manifest dict and counts. It should use the same validity helpers as Render summary, enrich entries from `calc.json`, sort deterministically, and never generate presigned URLs.
+4. **Status helpers.** Add helpers to read/write `renders/_index/color_mosaic_status.json`, write `computing`, write `ready`, write `error`, and check refresh-id ownership before final writes.
+5. **Async route.** Add `handle_list_color_mosaic(event, context=None)`. On `{refresh:true}`, write or reuse `computing`, self-invoke the storage Lambda with `internal_action:"build_color_mosaic"`, and return the status. On no refresh, return current status or a `missing`/`empty` state.
+6. **Internal worker path.** At the start of `handler_storage.handler`, handle `event["internal_action"] == "build_color_mosaic"` by calling the worker. The worker writes `color_mosaic_all.json` first and flips status to `ready` last; on exception, write `error` only if the refresh id still owns the status.
+7. **Route contracts.** Add `/list-color-mosaic` to `deploy_manifest.json`, regenerate `api_manifest.json`, and add/update route tests if needed.
+8. **Frontend skeleton.** Add the AllRenders tab button/panel in `index.html`, add `switchTab('allrenders')`, add `js/13-allrenders.js`, update script tags and the `__ppParts` expected list.
+9. **Frontend status/manifest loading.** Implement `loadAllRenders()`: fetch public status, show empty/computing/ready/error states, poll during computing, fetch `color_mosaic_all.json` on ready, and keep the last loaded manifest usable on refresh errors.
+10. **OSD wall.** Implement the single-level tile source, create OSD only after the tab is visible, and use `viewer.open(tileSource)` for filter/sort/column changes.
+11. **Controls.** Add Refresh, status readout, `All | 512 | 1024`, sort mode, column-count control, Home/Fit. Make 512/1024 labels clear that they filter by stored preview size.
+12. **Click-to-open.** Map click to tile index, highlight/preview the selected tile if cheap, then call `_ensureResultsSelection`, `switchTab('render')`, and `refreshRenderArtifacts(... selectFamily:'color', selectArtifactId)`.
+13. **Tests.** Add backend unit tests before frontend tests. Then add frontend harness assertions for tab/module registration, status polling, tile mapping, filters, sort/columns, and click-to-open. Run targeted tests plus `tests/test_frontend_js.sh`.

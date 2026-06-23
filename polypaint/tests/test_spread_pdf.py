@@ -69,7 +69,6 @@ class TestSpreadPdf(unittest.TestCase):
             {"label": "Param Program"},
             {"label": "Coeff Program"},
             {"label": "Solve Score Program"},
-            {"label": "Coefficient Function"},
             {"label": "Root Program"},
         ]
 
@@ -77,7 +76,6 @@ class TestSpreadPdf(unittest.TestCase):
 
         self.assertEqual([p["label"] for p in left], [
             "Param Program",
-            "Coefficient Function",
             "Coeff Program",
         ])
         self.assertEqual([p["label"] for p in right], ["Root Program", "Solve Score Program"])

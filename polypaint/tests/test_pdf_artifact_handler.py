@@ -40,6 +40,8 @@ class TestPdfArtifactHandler(unittest.TestCase):
         )
 
         programs = {p["label"]: p for p in report["programs"]}
+        self.assertIn("Param Program", programs)
+        self.assertEqual(programs["Param Program"]["source"], "none")
         self.assertEqual(programs["Solve Score Program"]["source"], authored)
         self.assertIn("Coeff Program", programs)
         self.assertIn("Root Program", programs)
@@ -163,7 +165,7 @@ class TestPdfArtifactHandler(unittest.TestCase):
             self.assertEqual(report["palette_label"], "pal_color_src")
             self.assertIn(("Solver", "AE"), report["summary_rows"])
             self.assertNotIn("Color mode", [label for label, _value in report["summary_rows"]])
-            self.assertTrue(any(p["label"] == "Coefficient Function" for p in report["programs"]))
+            self.assertFalse(any(p["label"] == "Coefficient Function" for p in report["programs"]))
             self.assertTrue(any(
                 p["label"] == "Coeff Program" and p["source"] == "none"
                 for p in report["programs"]

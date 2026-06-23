@@ -370,9 +370,7 @@ def build_pdf_report_model(job_id, calc, src_meta, source_artifact_id):
         pipeline.get("param_program_display", ""),
         pipeline.get("param_program_chain", []),
     )
-    entry = _program_entry("Param Program", param_source, param_fallback, "poly-param")
-    if entry:
-        programs.append(entry)
+    programs.append(_program_entry_always("Param Program", param_source, param_fallback, "poly-param"))
 
     coeff_source = _coeff_source_from_pipeline(pipeline)
     coeff_fallback = _program_fallback_from_chain(
@@ -393,12 +391,6 @@ def build_pdf_report_model(job_id, calc, src_meta, source_artifact_id):
     entry = _program_entry("Solve Score Program", score_source, score_fallback, "poly-score")
     if entry:
         programs.append(entry)
-
-    coeff_function_summary = function_display
-    if degree:
-        coeff_function_summary += f"\n# degree: {degree}"
-    coeff_function_summary += "\n# coefficient function source text is not stored in calc.json"
-    programs.append(_program_entry("Coefficient Function", "", coeff_function_summary, "python"))
 
     return {
         "title": f"{job_id} / {source_artifact_id}",

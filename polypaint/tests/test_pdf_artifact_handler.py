@@ -80,7 +80,7 @@ class TestPdfArtifactHandler(unittest.TestCase):
         self.assertIn("rotate_roots", programs["Root Program"]["fallback"])
         self.assertEqual(
             programs["Solve Score Program"]["source"],
-            "push(metric(clusteriness, slv, q=4.7%))\nomega_cosine(1, 0)\nscore = pop()",
+            "push(metric(clusteriness, slv, q=4.7%))\nomega_cosine(1)\nscore = pop()",
         )
 
     @patch("handler_pdf_artifact.report_status")

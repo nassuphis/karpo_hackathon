@@ -107,6 +107,16 @@ def test_solve_score_source_accepts_negative_numeric_params_inside_calls():
         assert spec_part in compiled["program_spec"]
 
 
+def test_solve_score_source_accepts_stack_transfer_default_phase():
+    from solve_score_program_source import compile_solve_score_program_source
+
+    source = "push(metric(spread, slv, q=0.1%))\nomega_cosine(3)\nscore = pop()"
+    compiled = compile_solve_score_program_source(source)
+
+    assert compiled["program_spec"] == "m0-0;omega_cosine:3"
+    assert compiled["chain"] == [["spread", "0.1"], ["omega_cosine", "3"]]
+
+
 def test_solve_score_source_text_from_chain_round_trips_program_spec_and_fingerprint():
     from solve_score_chain import compile_solve_score_chain, compiled_solve_score_fingerprint
     from solve_score_program_source import (
@@ -136,6 +146,50 @@ def test_solve_score_source_text_from_chain_round_trips_program_spec_and_fingerp
     )
     assert new["program_spec"] == old["program_spec"]
     assert new["fingerprint"] == compiled_solve_score_fingerprint(old)
+
+
+def test_solve_score_source_text_from_chain_prefers_stack_form_for_implicit_scalar():
+    from solve_score_program_source import (
+        compile_solve_score_program_source,
+        solve_score_source_text_from_chain,
+    )
+
+    chain = [
+        ["metric", "clusteriness", "slv", "0.1"],
+        ["metric", "nn_variation", "cf", "0.1"],
+        "avg",
+        ["metric", "min_angular_separation", "slv", "0.1"],
+        "max",
+    ]
+    source = solve_score_source_text_from_chain(chain)
+    compiled = compile_solve_score_program_source(source)
+
+    assert source.splitlines() == [
+        "push(metric(clusteriness, slv, q=0.1%))",
+        "push(metric(nn_variation, cf, q=0.1%))",
+        "avg()",
+        "push(metric(min_angular_separation, slv, q=0.1%))",
+        "max()",
+        "score = pop()",
+    ]
+    assert "score = max(" not in source
+    assert compiled["program_spec"].endswith("avg;m2-0;max")
+
+
+def test_solve_score_source_text_from_chain_omits_zero_transfer_phase():
+    from solve_score_program_source import (
+        compile_solve_score_program_source,
+        solve_score_source_text_from_chain,
+    )
+
+    source = solve_score_source_text_from_chain([
+        ["spread", "slv", "0.1"],
+        ["omega_cosine", "3.0", "0.0"],
+    ])
+    compiled = compile_solve_score_program_source(source)
+
+    assert source == "push(metric(spread, slv, q=0.1%))\nomega_cosine(3)\nscore = pop()"
+    assert compiled["chain"] == [["spread", "0.1"], ["omega_cosine", "3"]]
 
 
 def test_solve_score_source_text_from_chain_preserves_emit_none_flush():

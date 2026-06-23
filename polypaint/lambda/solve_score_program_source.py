@@ -131,8 +131,47 @@ def _chain_rows(chain):
     return tuple(tuple(row) if isinstance(row, list) else (row,) for row in chain)
 
 
+def _source_rows_from_expr(expr):
+    rows = []
+    for row in expr.chain:
+        if len(row) == 1:
+            rows.append(row[0])
+        else:
+            rows.append(list(row))
+    return rows
+
+
 def _public_chain(compiled):
     return public_solve_score_chain(compiled["chain"])
+
+
+def _is_zero_number(value):
+    try:
+        return abs(float(value)) < 1e-12
+    except Exception:
+        return False
+
+
+def _roundtrip_chain_for_compare(chain):
+    canonical = []
+    for row in chain:
+        name, params = _row_name_params(row)
+        if name == "const":
+            canonical.append(["const", _fmt_number(params[0])] if params else ["const"])
+        elif name in UNARY_CHIPS or name in COMBINE_CHIPS:
+            clean_params = [_fmt_number(param) for param in params]
+            if name == TRANSFER_CHIP_NAME and len(clean_params) == 2 and _is_zero_number(clean_params[1]):
+                clean_params = clean_params[:1]
+            canonical.append([name, *clean_params] if clean_params else name)
+        else:
+            canonical.append(list(row) if isinstance(row, list) else row)
+    return canonical
+
+
+def _semantic_chain_for_compare(chain):
+    compiled = compile_solve_score_chain(chain)
+    semantic_chain = compiled.get("expanded_chain") or compiled["chain"]
+    return _roundtrip_chain_for_compare(public_solve_score_chain(semantic_chain))
 
 
 def _canonical_program(compiled, *, source_text="", statement_count=0, diagnostics=None):
@@ -259,6 +298,31 @@ def _validate_local_name(name):
     return lowered
 
 
+def _stack_statement_param_counts(name, spec):
+    if name == TRANSFER_CHIP_NAME:
+        return (1, 2)
+    return (int(spec["params"]),)
+
+
+def _stack_statement_params(name, args, stack_depth):
+    spec = UNARY_CHIPS.get(name) or COMBINE_CHIPS.get(name)
+    if not spec or stack_depth < int(spec["arity"]):
+        return None
+    if len(args) not in _stack_statement_param_counts(name, spec):
+        return None
+    try:
+        return [_fmt_number(arg) for arg in args]
+    except Exception:
+        return None
+
+
+def _stack_statement_param_error(name, spec):
+    if name == TRANSFER_CHIP_NAME:
+        return f"{name}() requires omega and optional phase parameter(s)"
+    count = int(spec["params"])
+    return f"{name}() requires exactly {count} parameter(s)"
+
+
 def parse_solve_score_program_source(source_text, strict=True):
     diagnostics = []
     try:
@@ -281,7 +345,7 @@ def parse_solve_score_program_source(source_text, strict=True):
 
     def append_expr(expr):
         nonlocal stack_depth
-        chain.extend(json.loads(json.dumps([list(row) if len(row) > 1 else row[0] for row in expr.chain])))
+        chain.extend(_source_rows_from_expr(expr))
         stack_depth += 1
 
     for stmt in statements:
@@ -295,7 +359,7 @@ def parse_solve_score_program_source(source_text, strict=True):
                     if explicit_output:
                         raise SolveScoreProgramSourceError("score assignment cannot be mixed with explicit emit statements")
                     expr = _parse_expr(rhs, locals_map)
-                    chain.extend(json.loads(json.dumps([list(row) if len(row) > 1 else row[0] for row in expr.chain])))
+                    chain.extend(_source_rows_from_expr(expr))
                     implicit_score = True
                     continue
                 local_name = _validate_local_name(lhs)
@@ -337,20 +401,19 @@ def parse_solve_score_program_source(source_text, strict=True):
             if name in UNARY_CHIPS or name in COMBINE_CHIPS:
                 # Compatibility stack-op statement, used by chain-to-source round trips.
                 spec = UNARY_CHIPS.get(name) or COMBINE_CHIPS.get(name) or {}
-                needed = int(spec.get("arity") or 0)
-                needed_params = int(spec.get("params") or 0)
-                if args and not (len(args) == needed_params and stack_depth >= needed):
+                needed = int(spec["arity"])
+                stack_params = _stack_statement_params(name, args, stack_depth)
+                if stack_params is not None:
+                    chain.append([name, *stack_params] if stack_params else name)
+                    stack_depth -= max(0, needed - 1)
+                    continue
+                if args:
                     expr = _parse_expr(text, locals_map)
                     append_expr(expr)
                     continue
                 if stack_depth < needed:
                     raise SolveScoreProgramSourceError(f"{name}() requires stack depth at least {needed}")
-                if len(args) != needed_params:
-                    raise SolveScoreProgramSourceError(f"{name}() requires exactly {needed_params} parameter(s)")
-                params = [_fmt_number(arg) for arg in args]
-                chain.append([name, *params] if params else name)
-                stack_depth -= max(0, needed - 1)
-                continue
+                raise SolveScoreProgramSourceError(_stack_statement_param_error(name, spec))
             raise SolveScoreProgramSourceError(f"unknown solve-score statement {name!r}")
         except SolveScoreProgramSourceError as exc:
             diagnostics.append(diagnostic_from_exception(exc, line=stmt.line, column=stmt.column))
@@ -434,6 +497,13 @@ def _emit_fn_from_row(name, params):
     return {"raw": "emit", "norm": "emit_norm", "none": "emit_none"}[mode]
 
 
+def _stack_source_params(name, params):
+    clean_params = [_fmt_number(param) for param in params]
+    if name == TRANSFER_CHIP_NAME and len(clean_params) == 2 and _is_zero_number(clean_params[1]):
+        return clean_params[:1]
+    return clean_params
+
+
 def _stack_source_text_from_public_chain(public_chain):
     lines = []
     for row in public_chain:
@@ -456,14 +526,10 @@ def _stack_source_text_from_public_chain(public_chain):
             lines.append(f"{_emit_fn_from_row(name, params)}()")
             continue
         if name in UNARY_CHIPS:
-            clean_params = [_fmt_number(param) for param in params]
-            if name == TRANSFER_CHIP_NAME and len(clean_params) == 1:
-                clean_params.append("0")
-            lines.append(_stack_call_line(name, clean_params))
+            lines.append(_stack_call_line(name, _stack_source_params(name, params)))
             continue
         if name in COMBINE_CHIPS:
-            clean_params = [_fmt_number(param) for param in params]
-            lines.append(_stack_call_line(name, clean_params))
+            lines.append(_stack_call_line(name, _stack_source_params(name, params)))
             continue
         raise SolveScoreProgramSourceError(f"cannot serialize solve-score row {row!r}")
     return "\n".join(lines)
@@ -477,6 +543,8 @@ def solve_score_source_text_from_chain(chain):
         source_text = f"{source_text}\nscore = pop()" if source_text.strip() else "score = pop()"
 
     reparsed = compile_solve_score_program_source(source_text, strict=True)
+    if _semantic_chain_for_compare(reparsed["chain"]) != _semantic_chain_for_compare(public_chain):
+        raise SolveScoreProgramSourceError("source round-trip changed chain", code="source_roundtrip_failed")
     if reparsed["program_spec"] != compiled["program_spec"]:
         raise SolveScoreProgramSourceError("source round-trip changed program_spec", code="source_roundtrip_failed")
     if reparsed["fingerprint"] != compiled_solve_score_fingerprint(compiled):

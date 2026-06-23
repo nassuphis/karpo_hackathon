@@ -80,7 +80,7 @@ class TestPdfArtifactHandler(unittest.TestCase):
         self.assertIn("rotate_roots", programs["Root Program"]["fallback"])
         self.assertEqual(
             programs["Solve Score Program"]["source"],
-            "score = omega_cosine(metric(clusteriness, slv, q=4.7%), 1)",
+            "push(metric(clusteriness, slv, q=4.7%))\nomega_cosine(1, 0)\nscore = pop()",
         )
 
     @patch("handler_pdf_artifact.report_status")
@@ -176,7 +176,9 @@ class TestPdfArtifactHandler(unittest.TestCase):
             ))
             score_programs = [p for p in report["programs"] if p["label"] == "Solve Score Program"]
             self.assertEqual(len(score_programs), 1)
-            self.assertIn("score = omega_cosine(metric(spread, slv, q=0.1%)", score_programs[0]["source"])
+            self.assertIn("push(metric(spread, slv, q=0.1%))", score_programs[0]["source"])
+            self.assertIn("omega_cosine(3, 0.5)", score_programs[0]["source"])
+            self.assertIn("score = pop()", score_programs[0]["source"])
             self.assertNotIn("m0", score_programs[0]["source"])
             with open(output_path, "wb") as fh:
                 fh.write(b"%PDF-1.4 fake pdf")

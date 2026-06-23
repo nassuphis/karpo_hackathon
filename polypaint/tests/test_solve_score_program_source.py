@@ -125,6 +125,12 @@ def test_solve_score_source_text_from_chain_round_trips_program_spec_and_fingerp
 
     assert "metric(angular_entropy_16, cf, q=0.5%)" in source
     assert "lag=1" in source
+    assert source.splitlines() == [
+        "push(metric(angular_entropy_16, cf, q=0.5%))",
+        "push(metric(angular_entropy_16, cf, q=0.5%, lag=1))",
+        "abs_diff()",
+        "score = pop()",
+    ]
     assert json.dumps(new["chain"], separators=(",", ":")) == json.dumps(
         json.loads(json.dumps(new["chain"])), separators=(",", ":")
     )

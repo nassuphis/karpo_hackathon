@@ -76,7 +76,6 @@ class SolveScoreProgramSourceCompileError(ValueError):
 class _Expr:
     source: str
     chain: tuple
-    materialized: bool = False
 
 
 def _fmt_number(value):
@@ -209,7 +208,7 @@ def _parse_expr(text, locals_map):
     if lower in locals_map:
         return locals_map[lower]
     if lower in ("pop", "pop()"):
-        return _Expr("pop()", tuple(), materialized=True)
+        return _Expr("pop()", tuple())
     if _is_number(raw):
         value = raw[:-1] if raw.endswith("%") else raw
         return _Expr(_fmt_number(value), _chain_rows([["const", _fmt_number(value)]]))
@@ -422,22 +421,6 @@ def _metric_source(metric, params):
     return f"metric({metric_name}, {source}, q={q}%" + (", lag=1)" if lag else ")")
 
 
-def _materialize(stack, lines):
-    if not stack:
-        raise SolveScoreProgramSourceError("cannot materialize empty stack")
-    top = stack[-1]
-    if not top.materialized:
-        lines.append(f"push({top.source})")
-        stack[-1] = _Expr(top.source, top.chain, materialized=True)
-
-
-def _materialize_all(stack, lines):
-    for idx, expr in enumerate(stack):
-        if not expr.materialized:
-            lines.append(f"push({expr.source})")
-            stack[idx] = _Expr(expr.source, expr.chain, materialized=True)
-
-
 def _stack_call_line(name, params):
     return f"{name}({', '.join(params)})" if params else f"{name}()"
 
@@ -489,119 +472,10 @@ def _stack_source_text_from_public_chain(public_chain):
 def solve_score_source_text_from_chain(chain):
     compiled = compile_solve_score_chain_or_legacy(chain, "", default_metric="proximity")
     public_chain = _public_chain(compiled)
-    if compiled.get("has_explicit_outputs"):
-        source_text = _stack_source_text_from_public_chain(public_chain)
-        reparsed = compile_solve_score_program_source(source_text, strict=True)
-        if reparsed["program_spec"] != compiled["program_spec"]:
-            raise SolveScoreProgramSourceError("source round-trip changed program_spec", code="source_roundtrip_failed")
-        if reparsed["fingerprint"] != compiled_solve_score_fingerprint(compiled):
-            raise SolveScoreProgramSourceError("source round-trip changed fingerprint", code="source_roundtrip_failed")
-        return source_text
+    source_text = _stack_source_text_from_public_chain(public_chain)
+    if not compiled.get("has_explicit_outputs"):
+        source_text = f"{source_text}\nscore = pop()" if source_text.strip() else "score = pop()"
 
-    stack = []
-    lines = []
-    explicit_emits = False
-
-    for row in public_chain:
-        name, params = _row_name_params(row)
-        name = name.strip()
-        if name == GENERIC_METRIC_PUBLIC_NAME or name in VALID_SOLVE_SCORE_METRICS:
-            src = _metric_source(name, params)
-            stack.append(_Expr(src, _chain_rows([[name, *params] if params else name])))
-            continue
-        if name == "const":
-            if len(params) != 1:
-                raise SolveScoreProgramSourceError("const row requires one parameter")
-            src = f"const({_fmt_number(params[0])})"
-            stack.append(_Expr(src, _chain_rows([["const", _fmt_number(params[0])]])))
-            continue
-        if name == "dup":
-            _materialize_all(stack, lines)
-            if not stack:
-                raise SolveScoreProgramSourceError("dup requires stack depth at least 1")
-            lines.append("dup()")
-            stack.append(stack[-1])
-            continue
-        if name == "flush":
-            _materialize_all(stack, lines)
-            lines.append("flush()")
-            stack = []
-            continue
-        if name in OUTPUT_CHIPS or (name == "emit" and params):
-            mode = "raw"
-            if name == "emit_norm" or params == ["norm"]:
-                mode = "norm"
-            elif name == "emit_none" or params == ["none"]:
-                mode = "none"
-            fn = {"raw": "emit", "norm": "emit_norm", "none": "emit_none"}[mode]
-            if not stack:
-                raise SolveScoreProgramSourceError(f"{fn} requires stack depth at least 1")
-            if len(stack) > 1:
-                # Direct emit_norm(expr) is equivalent only when expr is the sole
-                # pending value. With A; B; C; emit; emit; emit, emitting C/B/A
-                # as independent expressions would change the program_spec.
-                _materialize_all(stack, lines)
-            top = stack.pop()
-            if top.materialized:
-                lines.append(f"{fn}()")
-            else:
-                lines.append(f"{fn}({top.source})")
-            explicit_emits = True
-            continue
-        if name in UNARY_CHIPS:
-            if len(stack) < 1:
-                raise SolveScoreProgramSourceError(f"{name} requires one input")
-            spec = UNARY_CHIPS[name]
-            needed_params = int(spec["params"])
-            if name == TRANSFER_CHIP_NAME and len(params) in (1, 2):
-                pass
-            elif len(params) != needed_params:
-                raise SolveScoreProgramSourceError(f"{name} requires {needed_params} parameter(s)")
-            top = stack.pop()
-            if top.materialized:
-                clean_params = [_fmt_number(param) for param in params]
-                lines.append(_stack_call_line(name, clean_params))
-                stack.append(_Expr("pop()", tuple(), materialized=True))
-            else:
-                stack.append(_Expr(f"{name}({', '.join([top.source, *params])})", top.chain + _chain_rows([[name, *params] if params else name])))
-            continue
-        if name in COMBINE_CHIPS:
-            spec = COMBINE_CHIPS[name]
-            arity = int(spec["arity"])
-            needed_params = int(spec["params"])
-            if len(stack) < arity:
-                raise SolveScoreProgramSourceError(f"{name} requires {arity} inputs")
-            if len(params) != needed_params:
-                raise SolveScoreProgramSourceError(f"{name} requires {needed_params} parameter(s)")
-            args = stack[-arity:]
-            del stack[-arity:]
-            if any(arg.materialized for arg in args):
-                stack.extend(args)
-                _materialize_all(stack, lines)
-                del stack[-arity:]
-                clean_params = [_fmt_number(param) for param in params]
-                lines.append(_stack_call_line(name, clean_params))
-                stack.append(_Expr("pop()", tuple(), materialized=True))
-            else:
-                chain_rows = tuple()
-                for arg in args:
-                    chain_rows += arg.chain
-                stack.append(_Expr(f"{name}({', '.join([*(arg.source for arg in args), *params])})", chain_rows + _chain_rows([[name, *params] if params else name])))
-            continue
-        raise SolveScoreProgramSourceError(f"cannot serialize solve-score row {row!r}")
-
-    if not explicit_emits:
-        if len(stack) != 1:
-            raise SolveScoreProgramSourceError(f"solve-score chain ended with stack depth {len(stack)}")
-        top = stack[-1]
-        if top.materialized:
-            lines.append("score = pop()")
-        else:
-            lines.append(f"score = {top.source}")
-    elif stack:
-        raise SolveScoreProgramSourceError(f"explicit-output chain ended with stack depth {len(stack)}")
-
-    source_text = "\n".join(lines)
     reparsed = compile_solve_score_program_source(source_text, strict=True)
     if reparsed["program_spec"] != compiled["program_spec"]:
         raise SolveScoreProgramSourceError("source round-trip changed program_spec", code="source_roundtrip_failed")

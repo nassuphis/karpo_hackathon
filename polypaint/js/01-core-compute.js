@@ -80,6 +80,10 @@ const _resultPreviewInFlightMode = new Map();
 const RESULTS_LAZY_PREVIEW_DELAY_MS = 350;
 let _resultPreviewLazyTimer = null;
 let _resultPreviewLazyJobId = null;
+const _resultColorRenderCountInFlight = new Map();
+const RESULTS_COLOR_RENDER_COUNT_DELAY_MS = 350;
+let _resultColorRenderCountTimer = null;
+let _resultColorRenderCountJobId = null;
 
 function _cancelPendingLazyResultPreview(jobId = null) {
     if (!_resultPreviewLazyTimer) return;
@@ -87,6 +91,14 @@ function _cancelPendingLazyResultPreview(jobId = null) {
     clearTimeout(_resultPreviewLazyTimer);
     _resultPreviewLazyTimer = null;
     _resultPreviewLazyJobId = null;
+}
+
+function _cancelPendingColorRenderCount(jobId = null) {
+    if (!_resultColorRenderCountTimer) return;
+    if (jobId != null && _resultColorRenderCountJobId !== jobId) return;
+    clearTimeout(_resultColorRenderCountTimer);
+    _resultColorRenderCountTimer = null;
+    _resultColorRenderCountJobId = null;
 }
 
 function _syncResultPreviewActionButtons(jobId) {
@@ -103,6 +115,63 @@ function _syncResultPreviewActionButtons(jobId) {
     // reappears in the Results list as a broken metadata row.
     const deleteBtn = document.getElementById('btn-delete');
     if (deleteBtn) deleteBtn.disabled = previewInFlight;
+}
+
+function _setSelectedColorRenderCount(jobId, value) {
+    if (_selectedJobId !== jobId) return;
+    const el = document.getElementById('res-color-renders');
+    if (el) el.textContent = value;
+}
+
+function _cachedColorRenderCountLabel(r) {
+    if (!r) return '-';
+    if (r._colorRenderCountError) return '?';
+    if (r.color_render_count != null) return String(r.color_render_count);
+    return '...';
+}
+
+function _loadSelectedColorRenderCountNow(jobId) {
+    const r = _resultsCache.find(row => row.job_id === jobId);
+    if (!r) return;
+    if (r.color_render_count != null || r._colorRenderCountError) {
+        _setSelectedColorRenderCount(jobId, _cachedColorRenderCountLabel(r));
+        return;
+    }
+    if (_resultColorRenderCountInFlight.has(jobId)) return;
+
+    _setSelectedColorRenderCount(jobId, '...');
+    const promise = lambdaPost('storage', { job_id: jobId }, '/render-count')
+        .then(resp => {
+            r.color_render_count = Number(resp.color_render_count || 0);
+            r.color_artifact_count = Number(resp.color_artifact_count || 0);
+            r.legacy_color_artifact_count = Number(resp.legacy_color_artifact_count || 0);
+            r._colorRenderCountError = false;
+            _setSelectedColorRenderCount(jobId, String(r.color_render_count));
+        })
+        .catch(() => {
+            r._colorRenderCountError = true;
+            _setSelectedColorRenderCount(jobId, '?');
+        })
+        .finally(() => {
+            _resultColorRenderCountInFlight.delete(jobId);
+        });
+    _resultColorRenderCountInFlight.set(jobId, promise);
+}
+
+function _scheduleSelectedColorRenderCount(jobId) {
+    _cancelPendingColorRenderCount();
+    const r = _resultsCache.find(row => row.job_id === jobId);
+    _setSelectedColorRenderCount(jobId, _cachedColorRenderCountLabel(r));
+    if (!r || r.color_render_count != null || r._colorRenderCountError) return;
+    if (_resultColorRenderCountInFlight.has(jobId)) return;
+
+    _resultColorRenderCountJobId = jobId;
+    _resultColorRenderCountTimer = setTimeout(() => {
+        _resultColorRenderCountTimer = null;
+        _resultColorRenderCountJobId = null;
+        if (_selectedJobId !== jobId) return;
+        _loadSelectedColorRenderCountNow(jobId);
+    }, RESULTS_COLOR_RENDER_COUNT_DELAY_MS);
 }
 
 function _clampResultsListWorkers(value) {
@@ -730,7 +799,7 @@ function renderResultsTable() {
 
         tr.innerHTML =
             `<td style="color:#e0e0e0">${shortId}</td>` +
-            `<td style="color:#4ecca3">${r.function || '?'}</td>` +
+            `<td class="results-table-function" style="color:#4ecca3">${r.function || '?'}</td>` +
             `<td style="text-align:right">${r.degree || ''}</td>` +
             `<td style="text-align:right">${r.N || r.n1 || ''}</td>` +
             `<td style="text-align:right">${r.times || 1}</td>` +
@@ -741,6 +810,7 @@ function renderResultsTable() {
 
 function selectResult(jobId) {
     _cancelPendingLazyResultPreview();
+    _cancelPendingColorRenderCount();
     _selectedJobId = jobId;
 
     // Update selection highlight
@@ -788,11 +858,13 @@ function selectResult(jobId) {
     document.getElementById('res-cform').textContent = '-';
     document.getElementById('res-times').textContent = '-';
     document.getElementById('res-solver').textContent = '-';
+    document.getElementById('res-color-renders').textContent = _cachedColorRenderCountLabel(r);
     document.getElementById('res-prev-total').textContent = '-';
     document.getElementById('res-prev-good').textContent = '-';
     document.getElementById('res-ll').textContent = '-';
     document.getElementById('res-ur').textContent = '-';
     infoEl.textContent = 'loading...';
+    _scheduleSelectedColorRenderCount(jobId);
 
     // Use cached detail if available, otherwise fetch
     if (r && r._detail) {
@@ -1122,6 +1194,7 @@ async function deleteResult() {
     if (!_selectedJobId) return;
     if (!confirm(`Delete all data for ${_selectedJobId}?`)) return;
     _cancelPendingLazyResultPreview(_selectedJobId);
+    _cancelPendingColorRenderCount(_selectedJobId);
 
     const btn = document.getElementById('btn-delete');
     btn.disabled = true;

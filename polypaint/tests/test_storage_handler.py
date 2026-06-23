@@ -182,6 +182,37 @@ class TestComputeMigration(unittest.TestCase):
         self.assertEqual(body["metadata_error_count"], 0)
 
     @patch("handler_storage.s3")
+    def test_render_count_counts_displayable_color_artifacts_and_legacy(self, mock_s3):
+        import handler_storage
+
+        fake = _FakeS3()
+        self._patch(mock_s3, fake)
+        fake.objects["renders/job/color/color_a/image.jpeg"] = b"jpeg"
+        fake.objects["renders/job/color/color_b/image.png"] = b"png"
+        fake.objects["renders/job/color/incomplete/preview.png"] = b"preview"
+        fake.objects["renders/job/image.jpeg"] = b"legacy"
+
+        resp = handler_storage.handler(_event("/render-count", {"job_id": "job"}), None)
+        body = json.loads(resp["body"])
+
+        self.assertEqual(resp["statusCode"], 200)
+        self.assertEqual(body["job_id"], "job")
+        self.assertEqual(body["family"], "color")
+        self.assertEqual(body["color_artifact_count"], 2)
+        self.assertEqual(body["legacy_color_artifact_count"], 1)
+        self.assertEqual(body["color_render_count"], 3)
+
+    @patch("handler_storage.s3")
+    def test_render_count_requires_job_id(self, mock_s3):
+        import handler_storage
+
+        resp = handler_storage.handler(_event("/render-count", {}), None)
+        body = json.loads(resp["body"])
+
+        self.assertEqual(resp["statusCode"], 400)
+        self.assertIn("render-count requires job_id", body["error"])
+
+    @patch("handler_storage.s3")
     def test_detail_reports_legacy_run_as_v1_migratable(self, mock_s3):
         import handler_storage
 

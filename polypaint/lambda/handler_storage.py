@@ -1332,6 +1332,8 @@ def handler(event, context):
         return _handle_storage_route(handle_head_keys, event)
     elif path.endswith("/render-summary"):
         return _handle_storage_route(handle_render_summary, event)
+    elif path.endswith("/render-count"):
+        return _handle_storage_route(handle_render_count, event)
     elif path.endswith("/delete-task"):
         return _handle_storage_route(handle_delete_task, event)
     elif path.endswith("/delete-prefix"):
@@ -2474,6 +2476,25 @@ def _legacy_render_variant(job_id, family):
     preview_info = _first_existing(head_results, [prefix + k for k in shape["legacy_preview_candidates"]])
     fallback_meta = _load_color_artifact_overlay(job_id, f"legacy_{family}") if family == "color" else None
     return _render_artifact_entry(family, f"legacy_{family}", image_info, preview_info, fallback_meta=fallback_meta, legacy=True)
+
+
+def handle_render_count(event):
+    params = parse_body(event)
+    job_id = str(params.get("job_id") or "").strip()
+    if not job_id:
+        raise ValueError("render-count requires job_id")
+
+    t0 = time.time()
+    immutable = len(_list_render_family_variants(job_id, "color"))
+    legacy = 1 if _legacy_render_variant(job_id, "color") else 0
+    return ok_response({
+        "job_id": job_id,
+        "family": "color",
+        "color_artifact_count": immutable,
+        "legacy_color_artifact_count": legacy,
+        "color_render_count": immutable + legacy,
+        "count_us": int((time.time() - t0) * 1e6),
+    })
 
 
 def _delete_prefix_objects(prefix):

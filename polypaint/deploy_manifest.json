@@ -135,6 +135,7 @@
         "/head-keys",
         "/delete-task",
         "/render-summary",
+        "/render-count",
         "/delete-prefix",
         "/list-deepzoom"
       ]

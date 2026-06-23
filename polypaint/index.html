@@ -1405,6 +1405,15 @@ button {
 #results-tbody tr:hover { background: rgba(233, 69, 96, 0.1); }
 #results-tbody tr.selected { background: rgba(233, 69, 96, 0.25); }
 #results-tbody td { padding: 3px 6px; border-bottom: 1px solid #0f3460; white-space: nowrap; }
+.results-table { width:100%; border-collapse:collapse; font-size:11px; font-family:monospace; table-layout:fixed; }
+.results-table th { padding:4px 6px; color:#888; border-bottom:1px solid #0f3460; }
+.results-col-job { width:9rem; }
+.results-col-function { width:auto; }
+.results-col-deg { width:3.5rem; }
+.results-col-n { width:5rem; }
+.results-col-times { width:4rem; }
+.results-col-size { width:5rem; }
+.results-table-function { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 </style>
 </head>
 <body>
@@ -1568,15 +1577,23 @@ button {
                         <button class="btn-secondary btn-inline" onclick="renderResultsTable()" style="padding:3px 8px; font-size:10px">Filter</button>
                     </div>
                     <div id="results-scroll" tabindex="0" style="flex:1; overflow-y:auto; border:1px solid #0f3460; border-radius:4px; outline:none">
-                        <table style="width:100%; border-collapse:collapse; font-size:11px; font-family:monospace">
+                        <table class="results-table">
+                            <colgroup>
+                                <col class="results-col-job">
+                                <col class="results-col-function">
+                                <col class="results-col-deg">
+                                <col class="results-col-n">
+                                <col class="results-col-times">
+                                <col class="results-col-size">
+                            </colgroup>
                             <thead>
                                 <tr style="background:#1a1a2e; position:sticky; top:0; z-index:1">
-                                    <th style="text-align:left; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460">Job ID</th>
-                                    <th style="text-align:left; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460; cursor:pointer" onclick="_resultsToggleSort('function')">Function <span id="results-sort-function"></span></th>
-                                    <th style="text-align:right; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460; cursor:pointer" onclick="_resultsToggleSort('degree')">Deg <span id="results-sort-degree"></span></th>
-                                    <th style="text-align:right; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460; cursor:pointer" onclick="_resultsToggleSort('N')">N <span id="results-sort-N"></span></th>
-                                    <th style="text-align:right; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460; cursor:pointer" onclick="_resultsToggleSort('times')">Times <span id="results-sort-times"></span></th>
-                                    <th style="text-align:right; padding:4px 6px; color:#888; border-bottom:1px solid #0f3460; cursor:pointer" onclick="_resultsToggleSort('total_size')">Size <span id="results-sort-total_size"></span></th>
+                                    <th style="text-align:left">Job ID</th>
+                                    <th style="text-align:left; cursor:pointer" onclick="_resultsToggleSort('function')">Function <span id="results-sort-function"></span></th>
+                                    <th style="text-align:right; cursor:pointer" onclick="_resultsToggleSort('degree')">Deg <span id="results-sort-degree"></span></th>
+                                    <th style="text-align:right; cursor:pointer" onclick="_resultsToggleSort('N')">N <span id="results-sort-N"></span></th>
+                                    <th style="text-align:right; cursor:pointer" onclick="_resultsToggleSort('times')">Times <span id="results-sort-times"></span></th>
+                                    <th style="text-align:right; cursor:pointer" onclick="_resultsToggleSort('total_size')">Size <span id="results-sort-total_size"></span></th>
                                 </tr>
                             </thead>
                             <tbody id="results-tbody"></tbody>
@@ -1585,7 +1602,7 @@ button {
                     <div id="results-log" style="margin-top:8px; max-height:120px; overflow-y:auto; font-family:monospace; font-size:11px"></div>
                 </div>
                 <!-- Right: buttons + preview thumbnail -->
-                <div style="width:200px; flex-shrink:0; display:flex; flex-direction:column">
+                <div style="width:280px; flex-shrink:0; display:flex; flex-direction:column">
                     <div style="font-size:10px; color:#888; line-height:1.5; margin-bottom:4px">
                         <div><span style="color:#555">version:</span> <span id="res-version">-</span></div>
                         <div><span style="color:#555">pform:</span> <span id="res-pform">-</span></div>
@@ -1596,6 +1613,7 @@ button {
                         <div><span style="color:#555">chunks:</span> <span id="res-stripes">-</span></div>
                         <div><span style="color:#555">times:</span> <span id="res-times">-</span></div>
                         <div><span style="color:#555">roots:</span> <span id="res-nroots">-</span></div>
+                        <div><span style="color:#555">color renders:</span> <span id="res-color-renders">-</span></div>
                         <div><span style="color:#555">solver:</span> <span id="res-solver">-</span></div>
                     </div>
                     <div style="font-size:10px; margin-bottom:4px; display:flex; gap:6px">

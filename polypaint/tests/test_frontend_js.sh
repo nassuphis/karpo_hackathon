@@ -87,6 +87,11 @@ assertIncludes("const _resultPreviewInFlight = new Map();", 'Results preview laz
 assertIncludes("const _resultPreviewInFlightMode = new Map();", 'Results preview lazy generation should track whether an in-flight request is manual or automatic');
 assertIncludes("const RESULTS_LAZY_PREVIEW_DELAY_MS = 350;", 'Results lazy preview should be debounced so arrow-key navigation does not launch preview writes for every visited row');
 assertIncludes("function _cancelPendingLazyResultPreview(jobId = null) {", 'Results lazy preview should have a cancellable pending state');
+assertIncludes("id=\"res-color-renders\"", 'Results sidebar should expose selected-result color render count');
+assertIncludes("const _resultColorRenderCountInFlight = new Map();", 'Results color render count should dedupe in-flight storage requests');
+assertIncludes("const RESULTS_COLOR_RENDER_COUNT_DELAY_MS = 350;", 'Results color render count should be debounced like lazy preview');
+assertIncludes("function _cancelPendingColorRenderCount(jobId = null) {", 'Results color render count should have a cancellable pending state');
+assertIncludes("lambdaPost('storage', { job_id: jobId }, '/render-count')", 'Results color render count should use the selected-result storage endpoint');
 assertIncludes("function _syncResultPreviewActionButtons(jobId) {", 'Results preview button/delete state should be synchronized from one helper');
 assertIncludes("previewBtn.textContent = previewInFlight ? (mode === 'manual' ? '...' : 'auto...') : 'Preview';", 'Selecting a result should restore the correct Preview button label for manual vs automatic in-flight work');
 assertIncludes("if (deleteBtn) deleteBtn.disabled = previewInFlight;", 'Results Delete should be disabled while a selected preview Lambda may still write S3');
@@ -724,6 +729,63 @@ const runtimePromise = vm.runInContext(`
   };
   _formatCfpvForDisplay = () => '';
   _solverShortLabel = (solver) => solver || '-';
+
+  let countCalls = [];
+  let resolveCount = null;
+  lambdaPost = (service, payload, route) => {
+    countCalls.push({ service, payload, route });
+    return new Promise(resolve => { resolveCount = resolve; });
+  };
+  _selectedJobId = 'compute_count';
+  _resultsCache = [{ job_id: 'compute_count' }];
+  document.getElementById('res-color-renders').textContent = '-';
+  _scheduleSelectedColorRenderCount('compute_count');
+  assertLocal(document.getElementById('res-color-renders').textContent === '...', 'uncached color render count should show a pending label');
+  assertLocal(countCalls.length === 0, 'color render count should not call storage before the debounce fires');
+  assertLocal(__timerCount() === 1, 'color render count should schedule one debounce timer');
+  assertLocal(__runNextTimer() === RESULTS_COLOR_RENDER_COUNT_DELAY_MS, 'color render count should use the configured debounce delay');
+  await Promise.resolve();
+  assertLocal(countCalls.length === 1, 'color render count should call storage after debounce');
+  assertLocal(countCalls[0].service === 'storage', 'color render count should use the storage lambda');
+  assertLocal(countCalls[0].route === '/render-count', 'color render count should use the render-count route');
+  assertLocal(countCalls[0].payload.job_id === 'compute_count', 'color render count should use the selected job id');
+  const countPromise = _resultColorRenderCountInFlight.get('compute_count');
+  assertLocal(countPromise, 'color render count should be tracked in the in-flight map');
+  resolveCount({ color_render_count: 3, color_artifact_count: 2, legacy_color_artifact_count: 1 });
+  await countPromise;
+  assertLocal(!_resultColorRenderCountInFlight.has('compute_count'), 'color render count should clear the in-flight map after success');
+  assertLocal(document.getElementById('res-color-renders').textContent === '3', 'color render count should update the selected sidebar after success');
+  assertLocal(_resultsCache[0].color_render_count === 3, 'color render count should cache the total on the result row');
+  assertLocal(_resultsCache[0].color_artifact_count === 2, 'color render count should cache immutable artifact count on the result row');
+  assertLocal(_resultsCache[0].legacy_color_artifact_count === 1, 'color render count should cache legacy artifact count on the result row');
+
+  _scheduleSelectedColorRenderCount('compute_count');
+  assertLocal(countCalls.length === 1, 'cached color render count should not refetch');
+  assertLocal(__timerCount() === 0, 'cached color render count should not schedule a timer');
+
+  _selectedJobId = 'compute_cancel';
+  _resultsCache = [{ job_id: 'compute_cancel' }];
+  _scheduleSelectedColorRenderCount('compute_cancel');
+  assertLocal(__timerCount() === 1, 'uncached color render count should schedule a cancellable timer');
+  _selectedJobId = 'compute_other';
+  _cancelPendingColorRenderCount();
+  assertLocal(__timerCount() === 0, 'selection changes should cancel the pending color render count timer');
+
+  let resolveStaleCount = null;
+  lambdaPost = (service, payload, route) => new Promise(resolve => { resolveStaleCount = resolve; });
+  _selectedJobId = 'compute_stale';
+  _resultsCache = [{ job_id: 'compute_stale' }];
+  document.getElementById('res-color-renders').textContent = '-';
+  _scheduleSelectedColorRenderCount('compute_stale');
+  assertLocal(__runNextTimer() === RESULTS_COLOR_RENDER_COUNT_DELAY_MS, 'stale color render count should use the debounce delay');
+  await Promise.resolve();
+  const staleCountPromise = _resultColorRenderCountInFlight.get('compute_stale');
+  assertLocal(staleCountPromise, 'stale color render count should be tracked in flight');
+  _selectedJobId = 'compute_other';
+  document.getElementById('res-color-renders').textContent = 'other';
+  resolveStaleCount({ color_render_count: 9, color_artifact_count: 9, legacy_color_artifact_count: 0 });
+  await staleCountPromise;
+  assertLocal(document.getElementById('res-color-renders').textContent === 'other', 'stale color render count response should not update the moved sidebar');
 
   let calls = [];
   let resolvePreview = null;

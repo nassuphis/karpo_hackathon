@@ -75,6 +75,24 @@ function switchTab(name) {
 let _resultsCache = [];      // last fetched results
 let _selectedJobId = null;   // currently selected job_id
 let _resultsLoading = false;
+const _resultPreviewInFlight = new Map();
+const _resultPreviewInFlightMode = new Map();
+
+function _syncResultPreviewActionButtons(jobId) {
+    if (_selectedJobId !== jobId) return;
+    const previewInFlight = _resultPreviewInFlight.has(jobId);
+    const mode = _resultPreviewInFlightMode.get(jobId);
+    const previewBtn = document.getElementById('btn-preview');
+    if (previewBtn) {
+        previewBtn.disabled = previewInFlight;
+        previewBtn.textContent = previewInFlight ? (mode === 'manual' ? '...' : 'auto...') : 'Preview';
+    }
+    // A running preview Lambda writes renders/<job>/preview.*. Deleting the
+    // job while that write is in flight can leave an orphan S3 prefix that
+    // reappears in the Results list as a broken metadata row.
+    const deleteBtn = document.getElementById('btn-delete');
+    if (deleteBtn) deleteBtn.disabled = previewInFlight;
+}
 
 function _clampResultsListWorkers(value) {
     const n = Math.round(Number(value));
@@ -731,9 +749,9 @@ function selectResult(jobId) {
 
     // Enable buttons
     document.getElementById('btn-populate-result').disabled = false;
-    document.getElementById('btn-preview').disabled = false;
     document.getElementById('btn-render-result').disabled = false;
     document.getElementById('btn-delete').disabled = false;
+    _syncResultPreviewActionButtons(jobId);
     // Migrate enables only after /detail reveals a legacy (v1) run.
     document.getElementById('btn-migrate-result').disabled = true;
 
@@ -880,12 +898,23 @@ async function goColorFromPalette() {
 
 function _applyDetail(r, detail, previewEl, infoEl, jobId) {
     if (_selectedJobId !== jobId) return;
+    let needsLazyPreview = false;
 
     // Preview
+    const cachedPreviewUrl = r && r.has_preview && r.preview_url;
     if (detail.has_preview && detail.preview_url) {
         _setPreviewImage(previewEl, detail.preview_url);
+    } else if (cachedPreviewUrl) {
+        detail.has_preview = true;
+        detail.preview_url = cachedPreviewUrl;
+        _setPreviewImage(previewEl, cachedPreviewUrl);
     } else {
-        _setPreviewPlaceholder(previewEl, 'No preview');
+        if (r && r._previewAutoFailed) {
+            _setPreviewPlaceholder(previewEl, 'No preview');
+        } else {
+            _setPreviewPlaceholder(previewEl, 'Generating preview...');
+            needsLazyPreview = true;
+        }
     }
 
     // Pipeline info
@@ -943,6 +972,7 @@ function _applyDetail(r, detail, previewEl, infoEl, jobId) {
         r.file_count = detail.file_count;
         if (detail.compute_q_re) { r.q_re = detail.compute_q_re; r.q_im = detail.compute_q_im; }
     }
+    if (needsLazyPreview) _lazyGenerateResultPreview(jobId);
 }
 
 // (top-level statement moved to the js/12 boot block — parts are
@@ -957,55 +987,112 @@ function _applyDetail(r, detail, previewEl, infoEl, jobId) {
 // (top-level statement moved to the js/12 boot block — parts are
 //  declarations-only; see tests/test_frontend_parts_contract.py)
 
+function _resultPreviewRequestParams() {
+    const qEl = document.getElementById('res-quantile');
+    const shimEl = document.getElementById('res-shim');
+    const quantile = parseFloat(qEl ? qEl.value : '0') / 100;
+    const shim = parseFloat(shimEl ? shimEl.value : '5') / 100;
+    return {
+        quantile: Number.isFinite(quantile) ? quantile : 0,
+        shim: Number.isFinite(shim) ? shim : 0.05,
+        preview_size: 256,
+    };
+}
+
+function _applyResultPreview(jobId, result, elapsedMs, options = {}) {
+    const r = _resultsCache.find(row => row.job_id === jobId);
+    if (r) {
+        if (result.q_re) { r.q_re = result.q_re; r.q_im = result.q_im; }
+        r._prevTotal = result.n_roots_total || 0;
+        r._prevGood = result.n_roots || 0;
+        r._previewAutoFailed = false;
+        r.has_preview = true;
+        r.preview_url = result.image_url || r.preview_url || '';
+        if (r._detail) {
+            r._detail.has_preview = true;
+            r._detail.preview_url = result.image_url || r._detail.preview_url || '';
+            r._detail.preview_stats = {
+                ...(r._detail.preview_stats || {}),
+                n_roots: result.n_roots || 0,
+                n_roots_total: result.n_roots_total || 0,
+                q_re: result.q_re,
+                q_im: result.q_im,
+            };
+        }
+    }
+    if (_selectedJobId !== jobId) return;
+    const previewEl = document.getElementById('results-preview');
+    const infoEl = document.getElementById('results-info');
+    if (result.image_url) _setPreviewImage(previewEl, result.image_url);
+    document.getElementById('res-prev-total').textContent = (result.n_roots_total || 0).toLocaleString();
+    document.getElementById('res-prev-good').textContent = (result.n_roots || 0).toLocaleString();
+    if (result.q_re && result.q_im) {
+        document.getElementById('res-ll').textContent = `${result.q_re[0].toFixed(4)}, ${result.q_im[0].toFixed(4)}`;
+        document.getElementById('res-ur').textContent = `${result.q_re[1].toFixed(4)}, ${result.q_im[1].toFixed(4)}`;
+    }
+    if (infoEl && options.showTiming !== false && elapsedMs != null) {
+        const label = options.lazy ? 'preview auto' : 'preview';
+        infoEl.textContent = `${label} ${(elapsedMs / 1000).toFixed(1)}s`;
+    }
+}
+
+async function _generateResultPreview(jobId, options = {}) {
+    if (!jobId) return null;
+    if (_resultPreviewInFlight.has(jobId)) {
+        return await _resultPreviewInFlight.get(jobId);
+    }
+    const infoEl = document.getElementById('results-info');
+    const previewEl = document.getElementById('results-preview');
+    const t0 = performance.now();
+    _resultPreviewInFlightMode.set(jobId, options.lazy ? 'lazy' : 'manual');
+    const promise = Promise.resolve().then(async () => {
+        try {
+            if (_selectedJobId === jobId) {
+                _syncResultPreviewActionButtons(jobId);
+                if (infoEl) infoEl.textContent = options.lazy ? 'Generating preview automatically...' : 'Generating preview...';
+                if (previewEl) _setPreviewPlaceholder(previewEl, 'Generating preview...');
+            }
+            const params = _resultPreviewRequestParams();
+            const result = await lambdaPost('preview', {
+                job_id: jobId,
+                quantile: params.quantile,
+                shim: params.shim,
+                preview_size: params.preview_size,
+            });
+            const elapsedMs = performance.now() - t0;
+            _applyResultPreview(jobId, result, elapsedMs, options);
+            return result;
+        } catch (e) {
+            const r = _resultsCache.find(row => row.job_id === jobId);
+            if (options.lazy && r) r._previewAutoFailed = true;
+            if (_selectedJobId === jobId && infoEl) {
+                infoEl.textContent = (options.lazy ? 'Auto preview error: ' : 'Preview error: ') + e.message;
+            }
+            if (_selectedJobId === jobId && previewEl) _setPreviewPlaceholder(previewEl, 'No preview');
+            throw e;
+        } finally {
+            _resultPreviewInFlight.delete(jobId);
+            _resultPreviewInFlightMode.delete(jobId);
+            _syncResultPreviewActionButtons(jobId);
+        }
+    });
+    _resultPreviewInFlight.set(jobId, promise);
+    return await promise;
+}
+
+function _lazyGenerateResultPreview(jobId) {
+    if (!jobId || _resultPreviewInFlight.has(jobId)) return;
+    const r = _resultsCache.find(row => row.job_id === jobId);
+    if (r && r._previewAutoFailed) return;
+    _generateResultPreview(jobId, { lazy: true }).catch(() => {});
+}
+
 async function previewResult() {
     if (!_selectedJobId) return;
-    const btn = document.getElementById('btn-preview');
-    btn.disabled = true;
-    btn.textContent = '...';
-    const infoEl = document.getElementById('results-info');
-    const t0 = performance.now();
-
     try {
-        const quantile = parseFloat(document.getElementById('res-quantile').value) / 100;
-        const shim = parseFloat(document.getElementById('res-shim').value) / 100;
-
-        // Single Lambda call: viewport + raster + encode all in one
-        infoEl.textContent = 'Generating preview...';
-        const result = await lambdaPost('preview', {
-            job_id: _selectedJobId, quantile, shim, preview_size: 256,
-        });
-
-        const totalMs = (performance.now() - t0).toFixed(0);
-
-        // Update cache — clear stale _detail so next select refetches
-        const r = _resultsCache.find(r => r.job_id === _selectedJobId);
-        if (r) {
-            delete r._detail;
-            if (result.q_re) { r.q_re = result.q_re; r.q_im = result.q_im; }
-            r._prevTotal = result.n_roots_total || 0;
-            r._prevGood = result.n_roots || 0;
-        }
-
-        // Show preview
-        document.getElementById('results-preview').innerHTML =
-            `<img src="${result.image_url}" style="max-width:100%; max-height:100%; image-rendering:pixelated">`;
-        document.getElementById('res-prev-total').textContent = (result.n_roots_total || 0).toLocaleString();
-        document.getElementById('res-prev-good').textContent = result.n_roots.toLocaleString();
-        infoEl.textContent = `preview ${(totalMs/1000).toFixed(1)}s`;
-
-        // Update viewport bounds
-        if (result.q_re && result.q_im) {
-            document.getElementById('res-ll').textContent = `${result.q_re[0].toFixed(4)}, ${result.q_im[0].toFixed(4)}`;
-            document.getElementById('res-ur').textContent = `${result.q_re[1].toFixed(4)}, ${result.q_im[1].toFixed(4)}`;
-        }
-
+        await _generateResultPreview(_selectedJobId, { lazy: false });
         renderResultsTable();
-    } catch (e) {
-        infoEl.textContent = 'Preview error: ' + e.message;
-    } finally {
-        btn.disabled = false;
-        btn.textContent = 'Preview';
-    }
+    } catch (e) {}
 }
 
 async function deleteResult() {
@@ -1035,8 +1122,12 @@ async function deleteResult() {
     } catch (e) {
         document.getElementById('results-info').textContent = 'Delete error: ' + e.message;
     } finally {
-        btn.disabled = false;
         btn.textContent = 'Delete';
+        if (_selectedJobId) {
+            _syncResultPreviewActionButtons(_selectedJobId);
+        } else {
+            btn.disabled = true;
+        }
     }
 }
 

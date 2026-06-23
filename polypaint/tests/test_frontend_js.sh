@@ -83,6 +83,18 @@ assertIncludes("function _blockPaletteActionIfActive(actionLabel) {", 'frontend 
 assertIncludes("if (_blockPaletteActionIfActive('ExtractPalette')) return;", 'ExtractPalette popup/run path should use the shared active-palette lock helper');
 assertIncludes("extractPalBtn.disabled = !canOpenExtractPalette || !!_activeRenderRun || paletteRunBlocking;", 'ExtractPalette toolbar button should use the same active-palette lock predicate as the click path');
 assertNotIncludes("if (_activeRenderRun || _activePaletteRun || _loadActivePaletteRun() || !art || !art.artifact_id) return;", 'ExtractPalette popup opener must not silently return on a persisted active palette run');
+assertIncludes("const _resultPreviewInFlight = new Map();", 'Results preview lazy generation should dedupe in-flight preview requests per job');
+assertIncludes("const _resultPreviewInFlightMode = new Map();", 'Results preview lazy generation should track whether an in-flight request is manual or automatic');
+assertIncludes("function _syncResultPreviewActionButtons(jobId) {", 'Results preview button/delete state should be synchronized from one helper');
+assertIncludes("previewBtn.textContent = previewInFlight ? (mode === 'manual' ? '...' : 'auto...') : 'Preview';", 'Selecting a result should restore the correct Preview button label for manual vs automatic in-flight work');
+assertIncludes("if (deleteBtn) deleteBtn.disabled = previewInFlight;", 'Results Delete should be disabled while a selected preview Lambda may still write S3');
+assertIncludes("const promise = Promise.resolve().then(async () => {", 'Results preview generation should populate the in-flight map before the async body can clean it up');
+assertIncludes("const cachedPreviewUrl = r && r.has_preview && r.preview_url;", 'Results detail rendering should preserve a preview generated while a stale detail response was in flight');
+assertIncludes("let needsLazyPreview = false;", 'Results detail rendering should defer lazy preview launch until after detail text is populated');
+assertIncludes("needsLazyPreview = true;", 'Results detail rendering should mark missing previews for lazy generation');
+assertIncludes("if (needsLazyPreview) _lazyGenerateResultPreview(jobId);", 'Results selection should lazily generate a missing persisted preview after detail rendering');
+assertIncludes("if (r && r._previewAutoFailed) return;", 'Results lazy preview should not retry endlessly after an automatic preview failure');
+assertIncludes("await _generateResultPreview(_selectedJobId, { lazy: false });", 'Manual Results Preview should share the same generator as lazy preview creation');
 assertIncludes("const normalized = _normalizeRenderBackgroundColor(value, '', { allowShort: !options.fromText });", 'background hex typing should not commit 3-digit shorthand before blur/commit');
 assertNotIncludes("<label><input type=\"radio\" name=\"render-color-interpretation\"", 'render color radios must not use bare label/input markup');
 assertNotIncludes("class=\"color-dot active\" data-mode=\"solve_score\"", 'render tab should not expose a fake solve-score mode toggle');
@@ -611,6 +623,164 @@ assertNotIncludes("function loadSolveScoreProgramPreset(", 'old solve-score pres
 assertNotIncludes("function saveSolveScoreProgram(", 'old solve-score download helper should be removed');
 
 console.log('Frontend fused render source checks: OK');
+NODE
+
+node - "$HTML" <<'NODE'
+const fs = require('fs');
+const vm = require('vm');
+const path = require('path');
+
+const root = path.dirname(process.argv[2]);
+function fail(message) {
+  console.error('FATAL: ' + message);
+  process.exit(1);
+}
+function makeEl(id) {
+  return {
+    id,
+    textContent: '',
+    innerHTML: '',
+    disabled: false,
+    value: '',
+    className: '',
+    dataset: {},
+    style: {},
+    children: [],
+    classList: { toggle() {}, add() {}, remove() {} },
+    focus() {},
+    scrollIntoView() {},
+    setAttribute() {},
+    prepend(child) { this.children.unshift(child); },
+    appendChild(child) { this.children.push(child); },
+    removeChild(child) { this.children = this.children.filter(x => x !== child); },
+  };
+}
+const elements = new Map();
+function el(id) {
+  if (!elements.has(id)) elements.set(id, makeEl(id));
+  return elements.get(id);
+}
+const ctx = {
+  console,
+  Date,
+  Map,
+  Set,
+  Promise,
+  Number,
+  String,
+  Array,
+  Object,
+  Math,
+  parseFloat,
+  parseInt,
+  performance: { now: () => 1000 },
+  document: {
+    getElementById: el,
+    createElement: () => makeEl('created'),
+    querySelectorAll: () => [],
+  },
+  window: null,
+};
+ctx.window = ctx;
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(path.join(root, 'js/01-core-compute.js'), 'utf8'), ctx, {
+  filename: 'js/01-core-compute.js',
+});
+
+const runtimePromise = vm.runInContext(`
+(async () => {
+  function assertLocal(cond, message) {
+    if (!cond) throw new Error(message);
+  }
+  _setPreviewPlaceholder = (el, message) => {
+    el.textContent = message;
+    el.innerHTML = message;
+  };
+  _setPreviewImage = (el, url) => {
+    el.dataset.previewUrl = url;
+    el.innerHTML = 'image:' + url;
+  };
+  _formatCfpvForDisplay = () => '';
+  _solverShortLabel = (solver) => solver || '-';
+
+  let calls = [];
+  let resolvePreview = null;
+  lambdaPost = (service, payload, route) => {
+    calls.push({ service, payload, route });
+    return new Promise(resolve => { resolvePreview = resolve; });
+  };
+
+  _selectedJobId = 'compute_a';
+  _resultsCache = [{ job_id: 'compute_a' }];
+  const row = _resultsCache[0];
+  const detail = {
+    has_preview: false,
+    file_count: 7,
+    param_transforms_display: [],
+    coeff_transforms: [],
+    pipeline: {},
+    calc: {},
+  };
+  row._detail = detail;
+  _applyDetail(row, detail, document.getElementById('results-preview'), document.getElementById('results-info'), 'compute_a');
+  assertLocal(document.getElementById('results-info').textContent === '7 files', 'detail file count should render before the deferred lazy preview status');
+  await Promise.resolve();
+  assertLocal(calls.length === 1, 'missing preview should start one lazy preview request');
+  assertLocal(calls[0].service === 'preview', 'lazy preview should call the preview lambda');
+  assertLocal(calls[0].payload.job_id === 'compute_a', 'lazy preview should use the selected job id');
+  assertLocal(document.getElementById('btn-preview').disabled === true, 'lazy preview should disable the Preview button while in flight');
+  assertLocal(document.getElementById('btn-delete').disabled === true, 'lazy preview should disable Delete while the preview Lambda may still write S3');
+  assertLocal(document.getElementById('btn-preview').textContent === 'auto...', 'lazy preview should show the automatic in-flight label');
+  assertLocal(document.getElementById('results-info').textContent === 'Generating preview automatically...', 'lazy preview status should not be overwritten by file count');
+  const lazyPromise = _resultPreviewInFlight.get('compute_a');
+  assertLocal(lazyPromise, 'lazy preview should be tracked in the in-flight map');
+  resolvePreview({ image_url: 'https://example.invalid/preview.png', n_roots: 2, n_roots_total: 4, q_re: [0, 1], q_im: [2, 3] });
+  await lazyPromise;
+  assertLocal(!_resultPreviewInFlight.has('compute_a'), 'lazy preview should clear the in-flight map after success');
+  assertLocal(!_resultPreviewInFlightMode.has('compute_a'), 'lazy preview should clear the in-flight mode after success');
+  assertLocal(document.getElementById('btn-delete').disabled === false, 'lazy preview should re-enable Delete after the S3 write completes');
+  assertLocal(row.has_preview === true && detail.has_preview === true, 'lazy preview success should update both row and cached detail state');
+
+  detail.has_preview = false;
+  detail.preview_url = '';
+  _applyDetail(row, detail, document.getElementById('results-preview'), document.getElementById('results-info'), 'compute_a');
+  assertLocal(calls.length === 1, 'cached generated preview should prevent a second lazy request after stale detail');
+  assertLocal(document.getElementById('results-preview').dataset.previewUrl === 'https://example.invalid/preview.png', 'cached generated preview should remain visible after stale detail');
+
+  let resolveManual = null;
+  lambdaPost = (service, payload, route) => new Promise(resolve => { resolveManual = resolve; });
+  _selectedJobId = 'compute_b';
+  _resultsCache = [{ job_id: 'compute_b' }];
+  document.getElementById('btn-preview').textContent = 'Preview';
+  const manualPromise = _generateResultPreview('compute_b', { lazy: false });
+  await Promise.resolve();
+  assertLocal(_resultPreviewInFlightMode.get('compute_b') === 'manual', 'manual preview should be tagged as manual while in flight');
+  assertLocal(document.getElementById('btn-preview').textContent === '...', 'manual preview should show the manual in-flight label');
+  assertLocal(document.getElementById('btn-delete').disabled === true, 'manual preview should also disable Delete while the preview Lambda may still write S3');
+  resolveManual({ image_url: 'https://example.invalid/manual.png', n_roots: 1, n_roots_total: 1, q_re: [0, 1], q_im: [0, 1] });
+  await manualPromise;
+  assertLocal(document.getElementById('btn-delete').disabled === false, 'manual preview should re-enable Delete after completion');
+
+  lambdaPost = () => { throw new Error('sync preview failure'); };
+  _selectedJobId = 'compute_sync';
+  _resultsCache = [{ job_id: 'compute_sync' }];
+  let failed = false;
+  try {
+    await _generateResultPreview('compute_sync', { lazy: true });
+  } catch (e) {
+    failed = true;
+  }
+  assertLocal(failed, 'synchronous preview failures should still reject');
+  assertLocal(!_resultPreviewInFlight.has('compute_sync'), 'synchronous preview failures should not leave stale in-flight entries');
+  assertLocal(!_resultPreviewInFlightMode.has('compute_sync'), 'synchronous preview failures should not leave stale in-flight mode entries');
+})()
+`, ctx, { filename: 'results-lazy-preview-runtime-test.js' });
+
+runtimePromise.then(() => {
+  console.log('Frontend results lazy preview runtime checks: OK');
+}).catch(err => {
+  fail(err && err.stack ? err.stack : String(err));
+});
 NODE
 
 node - "$HTML" <<'NODE'

@@ -1676,13 +1676,15 @@ for (const script of scripts) vm.runInContext(fs.readFileSync(path.join(root, sc
 	  els['allrenders-size-filter'].value = '1024';
 	  ctx._allRendersRebuild();
 	  assert(opened.length === 2, 'size filter should reopen tile source');
+	  assert(opened[1].tileSize === 1024, '1024 filter should use 1024 tileSize');
+	  assert(opened[1].width === 1024 && opened[1].height === 1024, '1024 tile source dimensions should match 1024 tile size');
 	  assert(opened[1].getTileUrl(0, 0, 0) === 'https://bucket.test/renders/j/color/b/preview.png', '1024 filter should select 1024 tile');
 	  els['allrenders-size-filter'].value = 'all';
 	  els['allrenders-cols'].value = '1';
 	  ctx._allRendersRebuild();
 	  assert(opened.length === 3, 'column-count change should reopen tile source');
 	  els['allrenders-cols'].value = '2';
-	  imagePoint = {x: 1, y: 513};
+	  imagePoint = {x: 1, y: 1025};
 	  await ctx._allRendersCanvasClick({quick: true, position: {x: 0, y: 0}});
 	  assert(selectedJob === 'j' && selectedTab === 'render' && selectedArtifact === 'b',
 	    'click mapping should use rendered tile-source columns, not the current control value');

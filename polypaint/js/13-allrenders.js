@@ -207,7 +207,7 @@ function _ensureAllRendersViewer() {
 }
 
 function _allRendersTileSource(tiles) {
-    const tileSize = 512;
+    const tileSize = _allRendersTileSize(tiles);
     const cols = _allRendersRequestedCols(tiles.length);
     const rows = Math.max(1, Math.ceil((tiles.length || 1) / cols));
     return {
@@ -224,7 +224,17 @@ function _allRendersTileSource(tiles) {
         },
         _allRendersCols: cols,
         _allRendersRows: rows,
+        _allRendersTileSize: tileSize,
     };
+}
+
+function _allRendersTileSize(tiles) {
+    const size = _allRendersSelectedSize();
+    if (size === '512' || size === '1024') return Number(size);
+    const values = (Array.isArray(tiles) ? tiles : [])
+        .map(t => Number(t && t.preview_width))
+        .filter(n => Number.isFinite(n) && n > 0);
+    return values.length ? Math.max(...values) : 512;
 }
 
 function _allRendersRenderSignature(tiles, source) {
@@ -271,7 +281,7 @@ async function _allRendersCanvasClick(event) {
     if (!viewport || typeof viewport.pointFromPixel !== 'function' || typeof viewport.viewportToImageCoordinates !== 'function') return;
     const viewportPoint = viewport.pointFromPixel(event.position);
     const imagePoint = viewport.viewportToImageCoordinates(viewportPoint);
-    const tileSize = 512;
+    const tileSize = Number(_allRendersActiveTileSource && _allRendersActiveTileSource._allRendersTileSize) || 512;
     const cols = Number(_allRendersActiveTileSource && _allRendersActiveTileSource._allRendersCols) ||
         _allRendersRequestedCols(_allRendersTiles.length);
     const x = Math.floor(imagePoint.x / tileSize);

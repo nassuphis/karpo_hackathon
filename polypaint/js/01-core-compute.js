@@ -213,6 +213,12 @@ function _renderResultsRefreshPopup() {
     if (runBtn) runBtn.disabled = !!_resultsLoading;
 }
 
+function _syncResultsRefreshPopupLoadingState() {
+    const runBtn = document.getElementById('results-refresh-popup-run');
+    if (runBtn) runBtn.disabled = !!_resultsLoading;
+    if (_resultsRefreshPopupState.open) _renderResultsRefreshPopup();
+}
+
 function openResultsRefreshPopup() {
     _resultsRefreshPopupState = {
         open: true,
@@ -226,21 +232,22 @@ function openResultsRefreshPopup() {
 async function loadResults(options = null) {
     if (_resultsLoading) return;
     _resultsLoading = true;
-    const countEl = document.getElementById('results-count');
-    const requestedWorkers = _clampResultsListWorkers(
-        options && typeof options === 'object' && options.listWorkers != null
-            ? options.listWorkers
-            : _resultsRefreshPopupState.workers
-    );
-    _resultsRefreshPopupState.workers = requestedWorkers;
-    countEl.textContent = 'Loading...';
-    log(`Results refresh: loading... workers=${requestedWorkers}`, '', 'results-log');
-
+    _syncResultsRefreshPopupLoadingState();
+    let countEl = null;
     try {
+        countEl = document.getElementById('results-count');
+        const requestedWorkers = _clampResultsListWorkers(
+            options && typeof options === 'object' && options.listWorkers != null
+                ? options.listWorkers
+                : _resultsRefreshPopupState.workers
+        );
+        _resultsRefreshPopupState.workers = requestedWorkers;
+        if (countEl) countEl.textContent = 'Loading...';
+        log(`Results refresh: loading... workers=${requestedWorkers}`, '', 'results-log');
         const data = await lambdaPost('storage', { list_workers: requestedWorkers }, '/list');
         _resultsCache = data.results || [];
         renderResultsTable();
-        countEl.textContent = `${data.count} results (${(data.list_us/1e6).toFixed(1)}s)`;
+        if (countEl) countEl.textContent = `${data.count} results (${(data.list_us/1e6).toFixed(1)}s)`;
         const fmtUs = (us) => _fmtMs((Number(us) || 0) / 1000);
         const parts = [
             `Results refresh: ${data.count || 0} jobs in ${fmtUs(data.list_us)}`
@@ -256,10 +263,11 @@ async function loadResults(options = null) {
         if (tune.length) parts.push(tune.join(' '));
         log(parts.join(' · '), 'ok', 'results-log');
     } catch (e) {
-        countEl.textContent = 'Error: ' + e.message;
+        if (countEl) countEl.textContent = 'Error: ' + e.message;
         log('Results refresh failed: ' + e.message, 'err', 'results-log');
     } finally {
         _resultsLoading = false;
+        _syncResultsRefreshPopupLoadingState();
     }
 }
 

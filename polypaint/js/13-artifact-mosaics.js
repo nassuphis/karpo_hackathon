@@ -392,12 +392,35 @@ async function _artifactMosaicCanvasClick(kind, event) {
     if (!cfg || !tile || !tile.job_id) return;
     const artifactId = cfg.selectArtifactId(tile);
     if (!artifactId) return;
-    await _ensureResultsSelection(tile.job_id);
-    switchTab('render');
-    await refreshRenderArtifacts(tile.job_id, {
-        selectFamily: cfg.family,
-        selectArtifactId: artifactId,
-    });
+    if (event) event.preventDefaultAction = true;
+    try {
+        try {
+            await _ensureResultsSelection(tile.job_id);
+        } catch (selectionError) {
+            if (typeof _setRenderResultsJob === 'function') {
+                _setRenderResultsJob(tile.job_id);
+            } else {
+                const el = document.getElementById('render-results-dir');
+                if (el) el.value = tile.job_id;
+            }
+            _logMosaic(kind, `${cfg.label} click: result row not selected (${selectionError.message}); opening Render directly`, 'err');
+        }
+        switchTab('render');
+        await refreshRenderArtifacts(tile.job_id, {
+            selectFamily: cfg.family,
+            selectArtifactId: artifactId,
+        });
+        const selected = typeof _renderSelectedArtifactEntry === 'function' ? _renderSelectedArtifactEntry() : null;
+        const selectedId = selected && (selected.palette_id || selected.artifact_id);
+        if (selectedId && selectedId === artifactId) {
+            _logMosaic(kind, `${cfg.label} selected ${artifactId}`, 'ok', `select|${kind}|${tile.job_id}|${artifactId}`);
+        } else {
+            _logMosaic(kind, `${cfg.label} opened ${tile.job_id}, but ${artifactId} was not found in Render ${cfg.family}`, 'err', `select-miss|${kind}|${tile.job_id}|${artifactId}`);
+        }
+    } catch (e) {
+        _logMosaic(kind, `${cfg.label} click failed: ${e.message}`, 'err', `click-failed|${kind}|${tile.job_id}|${artifactId}|${e.message}`);
+        _setMosaicStatus(kind, `${cfg.label} click failed: ${e.message}`, 'error');
+    }
 }
 
 async function _loadMosaicManifestForStatus(kind, status) {

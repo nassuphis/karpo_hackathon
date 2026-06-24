@@ -1612,6 +1612,7 @@ const els = {
   'allpal-sort-mode': makeEl('allpal-sort-mode'),
   'allpal-cols': makeEl('allpal-cols'),
   'allpal-viewer': makeEl('allpal-viewer'),
+  'render-results-dir': makeEl('render-results-dir'),
 };
   els['allcol-size-filter'].value = 'all';
   els['allcol-sort-mode'].value = 'date';
@@ -1625,6 +1626,7 @@ const els = {
   let selectedTab = '';
   let selectedArtifact = '';
   let selectedFamily = '';
+  let ensureSelectionThrows = false;
   let statusFetchFails = false;
   const ctx = {
   console,
@@ -1645,12 +1647,18 @@ const els = {
 	      open(src) { opened.push(src); },
 	    };
 	  },
-	  _ensureResultsSelection: async (jobId) => { selectedJob = jobId; },
+	  _ensureResultsSelection: async (jobId) => {
+	    if (ensureSelectionThrows) throw new Error('row missing');
+	    selectedJob = jobId;
+	  },
 	  switchTab: (name) => { selectedTab = name; },
 	  refreshRenderArtifacts: async (jobId, opts) => {
 	    selectedFamily = opts && opts.selectFamily;
 	    selectedArtifact = opts && opts.selectArtifactId;
 	  },
+	  _renderSelectedArtifactEntry: () => selectedFamily === 'palette'
+	    ? {palette_id: selectedArtifact}
+	    : {artifact_id: selectedArtifact},
 	  log: (msg, cls, target) => { logs.push({msg, cls, target}); },
 	  lambdaPost: async (service, payload, pathName) => {
 	    if (pathName !== '/list-color-mosaic' && pathName !== '/list-palette-mosaic') throw new Error('unexpected path ' + pathName);
@@ -1719,9 +1727,21 @@ for (const script of scripts) vm.runInContext(fs.readFileSync(path.join(root, sc
 	  assert(opened.length === 3, 'column-count change should reopen tile source');
 	  els['allcol-cols'].value = '2';
 	  imagePoint = {x: 1, y: 1025};
-	  await ctx._artifactMosaicCanvasClick('color', {quick: true, position: {x: 0, y: 0}});
+	  const colorClickEvent = {quick: true, position: {x: 0, y: 0}};
+	  await ctx._artifactMosaicCanvasClick('color', colorClickEvent);
 	  assert(selectedJob === 'j' && selectedTab === 'render' && selectedFamily === 'color' && selectedArtifact === 'b',
 	    'click mapping should use rendered tile-source columns, not the current control value');
+	  assert(colorClickEvent.preventDefaultAction === true, 'mosaic click should suppress OpenSeadragon default click action');
+	  ensureSelectionThrows = true;
+	  selectedJob = '';
+	  selectedTab = '';
+	  selectedFamily = '';
+	  selectedArtifact = '';
+	  els['render-results-dir'].value = '';
+	  await ctx._artifactMosaicCanvasClick('color', {quick: true, position: {x: 0, y: 0}});
+	  assert(selectedJob === '' && els['render-results-dir'].value === 'j' && selectedTab === 'render' && selectedFamily === 'color' && selectedArtifact === 'b',
+	    'mosaic click should still open Render directly when result-row selection fails');
+	  ensureSelectionThrows = false;
 	  await ctx.refreshAllColMosaic();
 	  assert(els['btn-allcol-refresh'].disabled === true, 'refresh should disable button while computing');
 	  assert(els['allcol-status'].textContent.includes('jobs 10/20'), 'refresh status should show job progress');
@@ -1748,6 +1768,81 @@ for (const script of scripts) vm.runInContext(fs.readFileSync(path.join(root, sc
 	  assert(selectedJob === 'j' && selectedTab === 'render' && selectedFamily === 'palette' && selectedArtifact === 'pal_b',
 	    'AllPal click should select palette artifact in render tab');
 	  console.log('Frontend artifact mosaic runtime checks: OK');
+})().catch(e => { console.error(e.stack || String(e)); process.exit(1); });
+NODE
+
+node - "$HTML" <<'NODE'
+const fs = require('fs'), vm = require('vm'), path = require('path');
+const root = path.dirname(process.argv[2]);
+function assert(cond, msg) { if (!cond) throw new Error(msg); }
+function makeEl(id) {
+  return {
+    id,
+    textContent: '',
+    value: '',
+    disabled: false,
+    style: {},
+    className: '',
+    children: [],
+    dataset: {},
+    innerHTML: '',
+    setAttribute() {},
+    focus() {},
+    prepend(child) { this.children.unshift(child); },
+    appendChild(child) { this.children.push(child); },
+    removeChild(child) { this.children = this.children.filter(c => c !== child); },
+    scrollIntoView() {},
+  };
+}
+const els = {
+  'results-count': makeEl('results-count'),
+  'results-log': makeEl('results-log'),
+  'results-refresh-popup-overlay': makeEl('results-refresh-popup-overlay'),
+  'results-refresh-popup-summary': makeEl('results-refresh-popup-summary'),
+  'results-refresh-workers': makeEl('results-refresh-workers'),
+  'results-refresh-popup-run': makeEl('results-refresh-popup-run'),
+  'results-tbody': makeEl('results-tbody'),
+  'results-filter': makeEl('results-filter'),
+  'results-filter-mode': makeEl('results-filter-mode'),
+};
+els['results-refresh-workers'].value = '32';
+let resolveList;
+let listRequestSeen = false;
+const ctx = {
+  console,
+  window: {},
+  document: {
+    getElementById(id) { return els[id] || null; },
+    querySelectorAll() { return []; },
+    createElement(tag) {
+      const el = makeEl(tag);
+      el.tagName = tag;
+      return el;
+    },
+  },
+  lambdaPost: async (_service, payload, pathName) => {
+    if (pathName !== '/list') throw new Error('unexpected path ' + pathName);
+    listRequestSeen = true;
+    assert(payload.list_workers === 32, 'loadResults should pass popup worker count');
+    return await new Promise(resolve => { resolveList = resolve; });
+  },
+  _fmtMs: (ms) => String(ms) + 'ms',
+};
+ctx.window = ctx; ctx.globalThis = ctx;
+vm.createContext(ctx);
+vm.runInContext("let _resultsRefreshPopupState = { open: false, workers: 32 };", ctx);
+vm.runInContext(fs.readFileSync(path.join(root, 'js/01-core-compute.js'), 'utf8'), ctx, {filename: 'js/01-core-compute.js'});
+
+(async () => {
+  const loadPromise = ctx.loadResults();
+  assert(listRequestSeen, 'loadResults should issue /list request');
+  ctx.openResultsRefreshPopup();
+  assert(els['results-refresh-popup-run'].disabled === true, 'Execute should be disabled during in-flight Results load');
+  resolveList({results: [], count: 0, list_us: 1000000, list_workers: 32, s3_pool_connections: 32});
+  await loadPromise;
+  assert(els['results-refresh-popup-run'].disabled === false, 'Execute should re-enable after in-flight Results load finishes');
+  assert(els['results-count'].textContent.includes('0 results'), 'Results count should update after successful refresh');
+  console.log('Frontend results refresh popup runtime checks: OK');
 })().catch(e => { console.error(e.stack || String(e)); process.exit(1); });
 NODE
 

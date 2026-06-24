@@ -71,7 +71,7 @@ So the problem is not that there is no profile mechanism. The problem is that th
 
    So the split is per editor, not global: **param takes the profile route (step 2); coeff takes the generator route (3b).** The two "fixes" below are not a global either/or.
 
-4. The frontend gets Param grammar through an existing generated asset: it already loads `program_profiles_js.js` as `window._programProfiles`. The Help builder should read `window._programProfiles.profiles.param.source` for Param valid forms/aliases/rejected forms. For Coeff, read `window.__programGrammar.coeff` from the generated grammar mirror in step 3b unless you intentionally choose the larger 3a Coeff parser refactor.
+4. The frontend gets Param grammar through an existing generated asset: it already loads `program_profiles_js.js` as `window._programProfiles`. The Help builder should read `window._programProfiles.profiles.param.source` for Param valid forms/aliases/rejected forms. For Coeff, read `window._programGrammar.coeff` from the generated grammar mirror in step 3b unless you intentionally choose the larger 3a Coeff parser refactor.
 
 ### Generated grammar mirror: Param fallback, Coeff recommendation
 
@@ -93,7 +93,7 @@ GRAMMAR = {
   },
   "coeff": { ... },   # from coeff_program_source plus coeff_program_chain tables
 }
-# render `window.__programGrammar = {...}` -> program_grammar_js.js; add `gen_program_grammar.py --check` to predeploy.
+# render `window._programGrammar = {...}` -> program_grammar_js.js; add `gen_program_grammar.py --check` to predeploy.
 ```
 
 The parsers are untouched; the generator reads their current tables, so the artifact still cannot drift (the `--check` gate fails the build if parser tables change without regeneration). For **param** this is strictly less clean than the profile route (the truth ends up in two shapes), so prefer the profile route there. For **coeff** this *is* the recommended route (3b), not a fallback — coeff's vocab already lives in parser tables, so generating from them is the single-source path, whereas hand-mirroring it into the profile is not.
@@ -136,6 +136,86 @@ Everything renders to **one** article object — do not keep `_programHelpItem(n
 **Two consumers, same articles:** the Help tab renders the ordered list of articles per section; the inspector resolves a token (and its aliases) to the **same** article object. There is no separate sparse lookup list — that separate list was the source of the `sort_mod_keep_angle`-hides-`andy` shadowing (#7).
 
 **The seam test (Rule 6, now trivial):** per editor, assert `article.forms ⊆ grammar.forms(name)` (no article documents a parser-rejected form) and `grammar.commands ⊆ articles` (every parser command has an article). Do this on normalized form objects, not raw display strings, so formatting changes do not break the test. Example form objects: `{kind:"call", name:"push", args:["t1"]}`, `{kind:"bare", name:"emit_p1"}`, `{kind:"assignment", target:"p1", expr:"expr"}`. Both sides derive from the generated grammar artifact, so this is a set comparison, not a subjective content audit.
+
+## Deep Dive: How The Parsers Actually Work (verified findings)
+
+I read `param_program_source.py`, `coeff_program_source.py`, `coeff_program_chain.py`, `program_source_core.py`, `program_profiles.json`, and the three `gen_*` generators in full. The picture is better than the "Core Fix" framing assumed in one way (coeff is mostly data already) and worse in another (the same grammar is hand-copied in up to three languages). The findings below are all cited to `file:line`.
+
+### A. The shared parsing core already exists — and param doesn't use it
+
+`program_source_core.py` ships `ProfileStatementLowerer` (`:305-394`) and `parse_profile_source` (`:397-461`), explicitly built to centralize the assignment/call/bare grammar split and writability checks "that must not drift between Param and Coeff."
+
+- **Coeff uses it:** `_CoeffStatementLowerer(ProfileStatementLowerer)` (`coeff_program_source.py:755`), driven by `parse_profile_source` (`:864`).
+- **Param does not:** it hand-rolls `_lower_assignment`/`_lower_call`/`_lower_bare` plus its own statement loop (`param_program_source.py:113/123/178/195-221`), re-implementing the split/find-assignment/parse-call orchestration the core already provides.
+
+So the shared infrastructure is half-adopted. **Migrating param onto `ProfileStatementLowerer` + `parse_profile_source` deletes the duplicated grammar split and diagnostic plumbing** and puts both editors on one dispatch — a prerequisite for one Help generator covering both.
+
+### B. Where the grammar truth actually lives (data vs control flow)
+
+| Grammar fact | Param | Coeff |
+|---|---|---|
+| Symbols + selectors (cf/poly/p1/p2/t1/t2/tos/poly_len, writability) | **profile** (`program_profiles.json`) | **profile** |
+| Native/legacy transforms (names, aliases, args, andy-support, categories, descriptions) | **`param_program_chain.py` registry** (70 ops, 32 w/ arg schemas) | **`coeff_legacy_registry.json`** via `legacy_registry()`, already consumed |
+| Structural / stack / vector / constructor vocab | hardcoded sets `param_program_source.py:40-60` | **fully described in `structural_chips.json`** — but the parser ignores it (§C) |
+| Scalar-expression ops/constants | n/a | `coeff_program_chain.py` literals (`SCALAR_UNARY_EXPR_OPS`, `_EXPR_CONSTANTS`) |
+| **Statement grammar** (command keywords, arities, arg-kinds, call-vs-bare, assignment, rejected forms) | **control flow only** | **control flow only** |
+
+Bottom line: **coeff vocabulary is ~80% already data** (registry JSON + `structural_chips.json` + profile), and `gen_coeff_vocab.py` already emits it to `window._coeffRegistryVocab`. Param vocabulary is sets-in-a-`.py`. The *statement grammar* of **both** is control flow — that's the part no table currently captures.
+
+### C. The redundancy map (the "less redundant" target)
+
+The same fact is encoded in up to three places that must be hand-synced:
+
+- **Coeff structural vocab → 3 homes:** `structural_chips.json` (documentation/frontend metadata, *not executed at runtime*), the parser's hardcoded `_lower_call` ladder (`coeff_program_source.py:572-687`) + its mirror decompiler `coeff_source_text_from_chain` (`:1044-1181`), and the chain compiler's `_CHIP_COMPILERS`/`_ZERO_ARG_CHIP_OPS`. Only a `_typed_*` subset has a drift test.
+- **Coeff vector-op names → 3 languages:** chain Python (`VECTOR_BINARY_OPS`/`VECTOR_UNARY_OPS`), the parser's derived sets, **and re-hardcoded in JS** — `js/07-transform-catalogs.js:445-446` literally lists `['add','subtract','multiply','divide','power']` and the 14 unary names. Verified.
+- **Param `[t1,t2]`/`[p1,p2]` → 3 forms:** profile `selectors.push`/`emit`, the parser's `_PUSH_SOURCES`/`_EMIT_ALIASES` (`param_program_source.py:59-60`), and `_INPUT_SYMBOLS`/`_OUTPUT_SYMBOLS` (`:30-39`). The parser re-hardcodes what the profile already declares.
+- **andy-arity logic duplicated** between source (`_split_native_transform_andy`, `coeff_program_source.py:205-226`) and chain (`_split_trailing_andy` + four `_*_legacy_args`), both hardcoding `{3,5}/{3}/{2,3}` by `fn_index`. Should be a declarative `andy_arities` per registry function (only a `supports_andy` boolean exists in JSON today).
+- **Forward and reverse grammars are hand-kept copies:** `param_source_text_from_chain` / `coeff_source_text_from_chain` re-enumerate the op categories independently of the lowerers — the round-trip is not table-driven.
+- **Dead duplicates:** coeff `_legacy_lower_statement` (`:690-752`) is superseded by the class; param's `_INPUT_SYMBOLS` (`:35`) is unused; the public `compile_param_program_source` (`:241`) is unused (handler_storage.py:1683 inlines its body).
+
+### D. Auto-extraction surface — readable today vs locked in control flow
+
+- **Coeff vocabulary is generatable today.** `gen_coeff_vocab.py` already reads `coeff_legacy_registry.json` + `structural_chips.json` + `program_profiles.json`. `structural_chips.json` is already a machine-readable grammar for the structural/stack/vector layer (chips with `name`/`aliases`/`source_aliases`/arg types/selector slots/sub-ops). So coeff Help **needs no new extraction for vocabulary** — read the existing tables.
+- **Param: op vocab dumps, statement grammar doesn't.** The sets (`:40-60`) dump cleanly; but `push`/`const`/`legacy`/`macro` (statement keywords — only `if name == "…"` literals), per-command arities, arg-kinds (selector vs expression vs target vs name), the call-vs-bare matrix, assignment syntax, and rejected forms are control flow. A set-dump misses ~70% of the grammar.
+- **Locked in both:** the call-shape grammar (which forms each command accepts), arities, and rejection rules. No table encodes them.
+
+### E. The unifying lever: a command-descriptor table
+
+The single change that makes both editors data-driven, auto-documentable, **and** less redundant: a declarative **command descriptor** per source command — `{name, forms, arity, arg_kinds, bare_ok, targetable, emits, aliases, reject?}`.
+
+- For **param**, put it in `profiles.param.source` (free on the frontend — §F). It then drives, from one source: (1) the lowerer (`_lower_call`/`_lower_bare`), (2) the reverse serializer (`param_source_text_from_chain`), and (3) the generated Help reference. Three hand-kept copies collapse to one.
+- For **coeff**, the table largely **already exists** as `structural_chips.json`. The refactor is "have `_lower_call` consult it" instead of the hardcoded ladder — which also deletes `_STACK_ALIASES`/`_VECTOR_FILL_NAMES` and the roll/argsort/blend hardcodes.
+
+This is also why the earlier param-profile / coeff-generator split is right: param's vocab belongs in the profile (it's small and absent there); coeff's vocab is already in `structural_chips.json`/registry, so the generator/parser should read *those*, not a re-typed profile copy.
+
+### F. The generator path is already paved (no new infrastructure)
+
+- `gen_program_profiles.py` is a **generic JSON→mirror**: `render_py`/`render_js` serialize the *entire* payload (`:30-31`, `:40-41`), so any new key under `profiles.param.source` flows verbatim into `program_profiles.py` **and** `program_profiles_js.js` (`window._programProfiles`). The frontend already reads arbitrary profile fields live (`js/07-transform-catalogs.js:447-451`). **Adding grammar to the profile is free on the frontend.**
+- **Precedent: `root` and `solve_score` profiles already carry a `source` sub-block** (`program_profiles.json`). The `source`-block convention is established — param/coeff are catching up, not inventing.
+- **Missing accessor:** there is no `profile_source(profile)` in `program_source_core.py` (it has `profile_selectors`/`profile_symbol`/`profile_symbols_with_context`). Add one before param/coeff grow `source` blocks.
+- **Gating:** register any generator in `scripts/predeploy_check.sh:20-23` and add a drift test mirroring `tests/test_program_profiles_drift.py`. The pattern is established for all three existing generators.
+
+### G. The correctness gate: execute the parser
+
+Both parsers expose `compile_param_program_source` (`param_program_source.py:241`) and `compile_coeff_program_source` (`coeff_program_source.py:875`). So the audit (Rule 6) should **run the parser** on every article's `forms` (assert accept) and every `rejected_forms[].form` (assert reject, with the expected `code`). That covers exactly the statement-level grammar no table can encode (§D), and makes "Parser Wins" enforced by execution rather than by mirroring. Set-comparison against the profile/`structural_chips.json` is the fast frontend check; parser execution is the authoritative gate.
+
+### H. Schema inconsistencies to fix in passing
+
+The param and coeff profile blocks have drifted, which a uniform Help generator trips over:
+
+- param has `selector_aliases` (`program_profiles.json:28-31`); coeff does not.
+- `value_caps` keys diverge — param has `lowered_expr_tokens`, coeff has `legacy_int_arg` (`:14` vs `:45`); no documented "every profile must carry" contract.
+- coeff symbols use extra keys (`from`) and context tokens (`expr_index_base`/`length_arg`/`rhs`) absent from param, with no schema validation — so a generator cannot assume a uniform symbol shape. Add a profile schema check alongside the `source`-block work.
+
+### Net recommendation from the deep dive
+
+1. **Migrate param onto `ProfileStatementLowerer`/`parse_profile_source`** (§A) — removes the param/coeff dispatch asymmetry and the hand-rolled statement loop.
+2. **Make vocab single-source:** param → `profiles.param.source` (and derive the parser's `_BINARY_OPS`/etc. from it); coeff → have the parser *consume* `structural_chips.json` instead of re-hardcoding it; delete the JS re-hardcoded op lists (`js/07-transform-catalogs.js:445-446`) in favor of `window._coeffRegistryVocab`.
+3. **Introduce the command-descriptor table** (§E) so the lowerer, the reverse serializer, and Help all read one source.
+4. **Add `profile_source()` + a profile schema check** (§F/§H), register the generator in predeploy, add a drift test.
+5. **Make the audit execute the parser** (§G).
+
+Items 1–2 are the high-leverage refactors; they are *also* the prerequisites that turn the Help reference from "hand-transcribe the grammar" into "render the data." The rest of this document (article model, format, sections) is what you render *on top of* that data.
 
 ## Current Source Files
 
@@ -332,6 +412,8 @@ There must be an audit function or test that checks:
 - No Help article appears twice as separate contradictory entries.
 
 The current tests check partial metadata matching, but they do not check quality, correctness against parser grammar, or duplicate/misleading presentation.
+
+**Make the audit execute the parser.** A set-comparison against the grammar artifact catches op-vocabulary drift, but the statement-level grammar (command keywords, arities, arg-kinds, assignment, rejected forms) is control flow that no artifact fully encodes (Deep Dive §D). Both parsers expose `compile_param_program_source` (`param_program_source.py:241`) and `compile_coeff_program_source` (`coeff_program_source.py:875`), so the authoritative audit is a Python test that **runs the parser** on every article's `forms` (assert it compiles) and on every `rejected_forms[].form` (assert it raises, ideally with the expected `code`). That is "Parser Wins" enforced by execution rather than by mirroring, and it covers exactly the forms a set-dump misses.
 
 ## Correct Help Format
 
@@ -1080,29 +1162,50 @@ The current output is visually repetitive and hard to scan.
 
 ## Implementation Direction
 
-### Step 0: Land the generated grammar artifacts first (the prerequisite)
+### Current State Snapshot (verified against the code, 2026-06-24)
 
-Before writing any article, make source grammar machine-readable to the frontend (see "The Core Fix" above).
+Where the code actually is today — full detail + `file:line` in the Deep Dive above:
+
+- **Param parser bypasses the shared engine.** It does **not** use `ProfileStatementLowerer`/`parse_profile_source`; it hand-rolls `_lower_assignment`/`_lower_call`/`_lower_bare` + its own statement loop. Op vocab is hardcoded sets (`param_program_source.py:40-60`); it reads the profile only for symbols, not ops. No generated grammar artifact for Param exists.
+- **Coeff parser already uses the shared engine** (`_CoeffStatementLowerer(ProfileStatementLowerer)` + `parse_profile_source`). Its vocabulary already lives in data — `coeff_legacy_registry.json` + `structural_chips.json` + the profile — and `gen_coeff_vocab.py` already emits it to `window._coeffRegistryVocab`. But `_lower_call` re-hardcodes that vocab instead of reading `structural_chips.json`, and the op-name lists are re-typed a **third** time in JS (`js/07-transform-catalogs.js:445-446`).
+- **Both** parsers' *statement grammar* (command keywords, arities, arg-kinds, call-vs-bare, assignment, rejected forms) is control flow, not data — only the op-vocabulary is dumpable.
+- **Infra is ready.** `gen_program_profiles.py` is a generic JSON→mirror, so any new `profiles.param.source` key is free on the frontend; `root`/`solve_score` profiles already carry `source` blocks (precedent); `compile_param_program_source`/`compile_coeff_program_source` exist (so the audit can run the parser). There is **no** `profile_source()` accessor yet, and the param/coeff profile schemas have drifted (param has `selector_aliases`, coeff doesn't; `value_caps` keys differ).
+- **Frontend Help today** uses the flat `_programHelpItem(name, signature, help)` model (`js/08-chip-editors.js:714`) and folds the starter cheat sections into Help — the exact thing to undo (Mistakes #1, #7).
+
+### Sequencing & Priority (refactor the language definition first)
+
+The Help work exposed a real language-design problem: Param and Coeff source grammar is duplicated across parser control flow, frontend catalogs, starter snippets, reverse serializers, and tests. If Help is built on top of that as-is, it will just document the drift. So this ticket should include the refactor that makes the source languages data-backed and testable.
+
+Scope boundary: make **vocabulary, valid forms, aliases, parameter metadata, and rejected forms** data-backed. Do **not** try to move semantic lowering into JSON. Semantics such as affine sugar, cf/poly staging, assignability checks, and andy routing remain code.
+
+1. **Param refactor first.** Extend `profiles.param.source`, add `profile_source()`, migrate Param onto `ProfileStatementLowerer`/`parse_profile_source`, and derive `_BINARY_OPS`/`_UNARY_OPS`/`_TARGETABLE_UNARY`/`_PUSH_SOURCES`/`_EMIT_ALIASES`/`_STACK_OP_ALIASES` from the profile. This removes the hand-rolled Param statement loop and makes Param grammar frontend-visible through `window._programProfiles`.
+2. **Coeff vocabulary refactor second.** Make Coeff source vocabulary come from existing data (`structural_chips.json`, `coeff_legacy_registry.json`, `program_profiles.json`) instead of duplicated tables/lists. Delete the JS hardcoded vector op lists in favor of `window._coeffRegistryVocab`. Make `_lower_call` consult structural metadata for vocabulary/aliases/arity where possible, while keeping semantic lowering logic in Python.
+3. **Coeff registry cleanup in the same pass.** Add declarative `andy_arities` or equivalent registry metadata where current source/chain logic duplicates fn-index arity rules. Keep `supports_andy` but make the arity shape explicit enough for Help and parser validation.
+4. **Dead-code cleanup as part of the refactor.** Delete `_legacy_lower_statement` once the class lowerer remains the only path, remove unused Param `_INPUT_SYMBOLS`, and route `handler_storage.py` compile handling through the public `compile_param_program_source` wrapper instead of inlining its body.
+5. **Then build Help on the new data.** The Help tab and inspector consume generated article objects. Starter remains separate. No Help article is hand-authoritative for valid syntax.
+
+Regression gates are non-negotiable: parser round-trip tests, chain/fingerprint equivalence where applicable, source serializer tests, parser-execution Help audits, generator drift checks, and frontend runtime tests must all pass before the Help UI is considered shippable.
+
+### Step 0: Land the data-backed grammar refactor
+
+Before writing any article, make source grammar machine-readable to the frontend and consumed by the parsers where that is the single-source path (see "The Core Fix" above).
 
 Param path:
 
-- Extend the existing `profiles.param` entry in `lambda/program_profiles.json` with `source` grammar metadata.
-- Derive Param parser operation sets from `program_profile("param")["source"]`.
-- Include the Param expression namespace (`pi`, `pi2`, `pi2i`, `exp`, `real`, `imag`, `abs`, `mod`) in `profiles.param.source`, either by moving it into the profile or by generating that subsection from `lambda/param_program_chain.py`.
-- Regenerate `lambda/program_profiles.py` and `program_profiles_js.js`.
-- Confirm `lambda/gen_program_profiles.py --check` stays green.
+- Extend the existing `profiles.param` entry in `lambda/program_profiles.json` with a `source` grammar block, and **derive the parser's `_BINARY_OPS`/`_UNARY_OPS`/`_TARGETABLE_UNARY`/`_PUSH_SOURCES`/`_EMIT_ALIASES`/`_STACK_OP_ALIASES` from it** so the parser and profile cannot disagree. This is the Param half of the symmetry refactor; do it together with the `ProfileStatementLowerer` migration.
+- Include the Param expression namespace (`pi`, `pi2`, `pi2i`, `exp`, `real`, `imag`, `abs`, `mod`) in `profiles.param.source`, either by moving it into the profile or generating that subsection from `lambda/param_program_chain.py`.
+- Add a `profile_source(profile)` accessor in `program_source_core.py` (it has `profile_selectors`/`profile_symbol` but not this).
+- Migrate Param to `ProfileStatementLowerer`/`parse_profile_source`; keep lowering semantics equivalent and compare compiled chains/fingerprints on a corpus before deleting the old hand-rolled path.
+- Regenerate `lambda/program_profiles.py` and `program_profiles_js.js`; confirm `lambda/gen_program_profiles.py --check` stays green; add a profile-schema check covering the new block.
 - In the frontend, read `window._programProfiles.profiles.param.source`.
 
 Coeff path:
 
-- Add `lambda/gen_program_grammar.py --write/--check`.
-- Emit `program_grammar_js.js` from `lambda/coeff_program_source.py` and `lambda/coeff_program_chain.py` tables, including `_STACK_ALIASES`, `_VECTOR_BINARY_ALIASES`, `_VECTOR_UNARY_NAMES`, `_NATIVE_TRANSFORM_ALIASES`, `VECTOR_BINARY_OPS`, `VECTOR_UNARY_OPS`, `SCALAR_UNARY_EXPR_OPS`, `TYPED_BINARY_NAME_ALIASES`, and `TEXT_NAME_ALIASES`.
-- Register the `--check` in `scripts/predeploy_check.sh`.
-- In the frontend, read `window.__programGrammar.coeff`.
-
-Optional larger Coeff path:
-
-- Instead of `program_grammar_js.js`, route Coeff parser operation vocab through `profiles.coeff.source` and derive the parser tables from the profile. Do this only if you are willing to refactor the Coeff parser/chain table boundary. Do not hand-copy Coeff vocab into `profiles.coeff.source` while the parser keeps reading separate tables.
+- Treat `window._coeffRegistryVocab` as the existing generated vocabulary artifact. It already comes from `structural_chips.json`, `coeff_legacy_registry.json`, and `program_profiles.json`.
+- Refactor Coeff source lowering so vocabulary/aliases/arity are read from structural/registry metadata where possible. Keep semantic lowering logic in Python.
+- Delete frontend hardcoded vector op lists in favor of `window._coeffRegistryVocab.structuralChips`.
+- If Help still needs a normalized source-form layer not present in `_coeffRegistryVocab`, add `lambda/gen_program_grammar.py --write/--check` emitting `window._programGrammar.coeff` from structural/registry/parser metadata, register the `--check` in `scripts/predeploy_check.sh:20-23`, and add a drift test mirroring `tests/test_program_profiles_drift.py`. Use the single-underscore global convention (`_programGrammar`, **not** `__programGrammar`).
+- Do **not** hand-copy coeff vocab into `profiles.coeff.source` while the parser keeps reading separate tables — that re-creates drift.
 
 Do not start Step 3 until a valid form is something the code can *look up*, not something you assert. Everything below assumes this generated grammar artifact exists.
 
@@ -1175,7 +1278,7 @@ legacy(name, src, tgt, ...)
 
 ### Step 5: Add Coeff Grammar-Derived Articles
 
-Create grammar articles for Coeff source statements and core symbols from `window.__programGrammar.coeff` plus existing Coeff registries.
+Create grammar articles for Coeff source statements and core symbols from `window._coeffRegistryVocab`, plus `window._programGrammar.coeff` if the normalized source-form layer is added.
 
 Do not rely on starter snippets or `_coeffProgramCheatSections` for Help. They are examples only.
 
@@ -1212,7 +1315,8 @@ Tests should check:
 - `push(both)` is not documented.
 - `emit(p1)` is not documented as valid.
 - `square` documents `square`, `square(p1)`, and `square(p2)`.
-- Article validity is checked by normalized form objects, not fragile string matching.
+- **Every documented `form` compiles and every `rejected_forms[].form` raises**, verified by executing `compile_param_program_source`/`compile_coeff_program_source` (the authoritative gate — Rule 6). Set-comparison against the grammar artifact is the fast secondary check.
+- Article validity uses normalized form objects, not fragile string matching.
 - All Param legacy transforms have `src`, `tgt`, and transform args.
 - All Coeff native transforms have `andy`.
 - All coefficient functions with params expose those params.
@@ -1226,10 +1330,12 @@ It answers "what buttons can I insert?" more than "what language can I write?"
 
 The correct fix is not more patching around lookup priority. It is also not "try harder to keep the prose in sync with the parser by hand" — that is the trap you are in. The correct fix is to make the parser grammar a generated artifact the frontend reads, then rebuild Help as a generated reference manual on top of it:
 
-- **Generated grammar artifacts** define valid source forms, aliases, expression namespaces, and rejected forms, and are `--check`-gated so they cannot drift. Param uses `profiles.param.source` in `program_profiles.json`; Coeff uses `program_grammar_js.js` generated from parser/chain tables unless you intentionally refactor Coeff to read `profiles.coeff.source`.
+- **Generated grammar artifacts** define valid source forms, aliases, expression namespaces, and rejected forms, `--check`-gated so they cannot drift. Param adds `profiles.param.source` and consumes it in the parser. Coeff consumes existing structural/registry/profile metadata instead of duplicating vocab, with a thin generated source-form layer if `_coeffRegistryVocab` is not enough.
 - Registries define names, params, defaults, choices, descriptions.
 - Help articles use one model (`{name, aliases, category, summary, forms, params, effect, examples, notes}`): the grammar artifact/registry supplies the skeleton, you hand-author only the prose (summary, stack effect, notes), and a set-comparison test enforces forms ⊆ grammar and grammar ⊆ articles.
 - One article object feeds both the Help tab and the inspector; coeff functions are lookup-only, not a rendered list.
 - Starter remains separate.
 
-Build the grammar artifacts first (Step 0). Until valid-form is something the code looks up instead of something you remember, every article you write is another mole to whack.
+Build the data-backed grammar refactor first (Step 0), and make the audit *run the parser* (Rule 6). Until valid-form is something the code looks up — and the parser executes in tests — instead of something you remember, every article you write is another mole to whack.
+
+Sequencing reminder (from the Deep Dive): this is no longer just a Help UI patch. The Help tab is the forcing function to make Param and Coeff source languages less flaky: Param joins the shared lowerer/profile-driven grammar path; Coeff stops retyping structural vocabulary in parser/frontend code. Help ships after those grammar sources and gates are in place.

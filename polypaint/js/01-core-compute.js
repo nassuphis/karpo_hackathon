@@ -359,6 +359,29 @@ async function _hydrateFavoriteArtifacts() {
     });
 }
 
+async function _addColorFavorite(ref, options = {}) {
+    const jobId = String((ref && (ref.jobId || ref.job_id)) || '').trim();
+    const artifactId = String((ref && (ref.artifactId || ref.artifact_id)) || '').trim();
+    if (!jobId || !artifactId) throw new Error('Favorite requires job_id and artifact_id');
+    if (!options.force && _isFavorite(jobId, artifactId)) {
+        return { already: true };
+    }
+    const resp = await lambdaPost('storage', {
+        job_id: jobId,
+        artifact_id: artifactId,
+        family: 'color',
+        display_name: (ref && (ref.displayName || ref.display_name)) || artifactId,
+        image_key: (ref && (ref.imageKey || ref.image_key)) || '',
+        preview_key: (ref && (ref.previewKey || ref.preview_key)) || '',
+    }, '/add-favorite');
+    _favoriteRefs = Array.isArray(resp.favorites) ? resp.favorites : _favoriteRefs;
+    _favoriteRefsLoaded = true;
+    if (document.getElementById('tab-favorites')?.classList.contains('active')) {
+        await loadFavoritesInventory();
+    }
+    return { already: resp && resp.added === false };
+}
+
 async function favoriteSelectedRenderArtifact() {
     if (_renderActiveFamily !== 'color') return;
     const art = _renderSelectedArtifactEntry();
@@ -373,21 +396,15 @@ async function favoriteSelectedRenderArtifact() {
     const orig = btn ? btn.textContent : 'Favorite';
     try {
         if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
-        const resp = await lambdaPost('storage', {
-            job_id: jobId,
-            artifact_id: art.artifact_id,
-            family: 'color',
-            display_name: art.display_name || art.artifact_id,
-            image_key: art.image_key || '',
-            preview_key: art.preview_key || '',
-        }, '/add-favorite');
-        _favoriteRefs = Array.isArray(resp.favorites) ? resp.favorites : _favoriteRefs;
-        _favoriteRefsLoaded = true;
-        log(`Favorited: ${art.artifact_id}`, 'ok', 'render-log');
+        const result = await _addColorFavorite({
+            jobId,
+            artifactId: art.artifact_id,
+            displayName: art.display_name || art.artifact_id,
+            imageKey: art.image_key || '',
+            previewKey: art.preview_key || '',
+        }, { force: true });
+        log(result.already ? `Already in favorites: ${art.artifact_id}` : `Favorited: ${art.artifact_id}`, 'ok', 'render-log');
         _updateRenderActionButtons();
-        if (document.getElementById('tab-favorites')?.classList.contains('active')) {
-            await loadFavoritesInventory();
-        }
     } catch (e) {
         log(`Favorite failed: ${e.message}`, 'err', 'render-log');
     } finally {

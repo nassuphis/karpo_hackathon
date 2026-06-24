@@ -28,6 +28,19 @@ const _artifactMosaicState = {
     palette: _newArtifactMosaicState(),
 };
 
+const _artifactMosaicContext = {
+    open: false,
+    kind: '',
+    tile: null,
+    tileKey: '',
+    x: 0,
+    y: 0,
+    busy: false,
+    message: '',
+    error: '',
+};
+let _artifactMosaicContextGlobalBound = false;
+
 function _newArtifactMosaicState() {
     return {
         viewer: null,
@@ -40,6 +53,7 @@ function _newArtifactMosaicState() {
         lastRenderSignature: '',
         activeTileSource: null,
         lastLogSignature: '',
+        contextMenuBound: false,
     };
 }
 
@@ -142,6 +156,54 @@ function _mosaicPublicUrl(kind, key) {
     const manifest = _mosaicState(kind).manifest;
     const base = (manifest && manifest.base) || 'https://polypaint.s3.us-east-1.amazonaws.com/';
     return base + encodeURI(String(key || ''));
+}
+
+function _mosaicEscapeHtml(value) {
+    if (typeof _escapeHtml === 'function') return _escapeHtml(value);
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function _mosaicArtifactId(kind, tile) {
+    if (!tile) return '';
+    const cfg = _mosaicConfig(kind);
+    if (cfg && typeof cfg.selectArtifactId === 'function') return String(cfg.selectArtifactId(tile) || '');
+    return String(tile.palette_id || tile.artifact_id || '');
+}
+
+function _mosaicTileIdentity(kind, tile) {
+    const state = _mosaicState(kind);
+    return `${tile && tile.job_id || ''}|${_mosaicArtifactId(kind, tile)}|${state.manifest && state.manifest.refresh_id || ''}`;
+}
+
+function _mosaicExtensionFromKey(key) {
+    const leaf = String(key || '').split('?')[0].split('#')[0].split('/').pop() || '';
+    const idx = leaf.lastIndexOf('.');
+    const ext = idx >= 0 ? leaf.slice(idx + 1).toLowerCase() : '';
+    return ext && /^[a-z0-9]+$/.test(ext) ? ext : '';
+}
+
+async function _copyTextToClipboard(text) {
+    const value = String(text || '');
+    if (!value) throw new Error('Nothing to copy');
+    if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(value);
+        return;
+    }
+    const input = document.createElement('textarea');
+    input.value = value;
+    input.setAttribute('readonly', 'readonly');
+    input.style.position = 'fixed';
+    input.style.left = '-9999px';
+    document.body.appendChild(input);
+    input.select();
+    const ok = document.execCommand && document.execCommand('copy');
+    document.body.removeChild(input);
+    if (!ok) throw new Error(value);
 }
 
 function _stopMosaicPoll(kind) {
@@ -279,6 +341,7 @@ function _ensureMosaicViewer(kind) {
     const state = _mosaicState(kind);
     const el = _mosaicEl(kind, 'viewer');
     if (!el || typeof OpenSeadragon !== 'function') return null;
+    _ensureMosaicContextGlobalHandlers();
     el.style.display = 'block';
     if (state.viewer) return state.viewer;
     state.viewer = OpenSeadragon({
@@ -291,6 +354,11 @@ function _ensureMosaicViewer(kind) {
     });
     if (state.viewer && typeof state.viewer.addHandler === 'function') {
         state.viewer.addHandler('canvas-click', (event) => _artifactMosaicCanvasClick(kind, event));
+        state.viewer.addHandler('canvas-contextmenu', (event) => _artifactMosaicContextMenuEvent(kind, event));
+    }
+    if (!state.contextMenuBound && typeof el.addEventListener === 'function') {
+        el.addEventListener('contextmenu', (event) => _artifactMosaicNativeContextMenuEvent(kind, event));
+        state.contextMenuBound = true;
     }
     return state.viewer;
 }
@@ -355,6 +423,7 @@ function _mosaicUpdateSummary(kind, tiles) {
 
 function _rebuildArtifactMosaic(kind) {
     const state = _mosaicState(kind);
+    _closeMosaicContextMenu();
     if (!state.manifest) return;
     _syncMosaicSizeOptions(kind);
     state.tiles = _mosaicFilteredSortedTiles(kind);
@@ -369,57 +438,333 @@ function _rebuildArtifactMosaic(kind) {
     }
 }
 
-function _tileFromMosaicClick(kind, event) {
+function _tileFromMosaicPixel(kind, pixelPoint) {
     const state = _mosaicState(kind);
     if (!state.viewer || !state.tiles.length) return null;
-    if (event && event.quick === false) return null;
-    if (!event || !event.position) return null;
     const viewport = state.viewer.viewport;
     if (!viewport || typeof viewport.pointFromPixel !== 'function' || typeof viewport.viewportToImageCoordinates !== 'function') return null;
-    const viewportPoint = viewport.pointFromPixel(event.position);
+    const viewportPoint = viewport.pointFromPixel(pixelPoint);
     const imagePoint = viewport.viewportToImageCoordinates(viewportPoint);
     const tileSize = Number(state.activeTileSource && state.activeTileSource._mosaicTileSize);
     const cols = Number(state.activeTileSource && state.activeTileSource._mosaicCols);
+    const rows = Number(state.activeTileSource && state.activeTileSource._mosaicRows);
     if (!Number.isFinite(tileSize) || tileSize <= 0 || !Number.isFinite(cols) || cols <= 0) return null;
+    if (!Number.isFinite(rows) || rows <= 0) return null;
     const x = Math.floor(imagePoint.x / tileSize);
     const y = Math.floor(imagePoint.y / tileSize);
+    if (x < 0 || y < 0 || x >= cols || y >= rows) return null;
     return state.tiles[y * cols + x] || null;
+}
+
+function _tileFromMosaicClick(kind, event) {
+    if (event && event.quick === false) return null;
+    if (!event || !event.position) return null;
+    return _tileFromMosaicPixel(kind, event.position);
+}
+
+function _tileFromMosaicDomEvent(kind, domEvent) {
+    const state = _mosaicState(kind);
+    const el = (state.viewer && state.viewer.element) || _mosaicEl(kind, 'viewer');
+    if (!el || !domEvent || typeof OpenSeadragon !== 'function') return null;
+    const rect = typeof el.getBoundingClientRect === 'function'
+        ? el.getBoundingClientRect()
+        : { left: 0, top: 0 };
+    return _tileFromMosaicPixel(
+        kind,
+        new OpenSeadragon.Point(
+            Number(domEvent.clientX || 0) - Number(rect.left || 0),
+            Number(domEvent.clientY || 0) - Number(rect.top || 0),
+        ),
+    );
+}
+
+function _setRenderJobForMosaic(jobId) {
+    if (typeof _setRenderResultsJob === 'function') {
+        _setRenderResultsJob(jobId);
+        return;
+    }
+    const el = document.getElementById('render-results-dir');
+    if (el) el.value = jobId;
+}
+
+async function _goMosaicTileRender(kind, tile) {
+    const cfg = _mosaicConfig(kind);
+    const artifactId = _mosaicArtifactId(kind, tile);
+    if (!cfg || !tile || !tile.job_id || !artifactId) throw new Error('Missing mosaic tile target');
+    _setRenderJobForMosaic(tile.job_id);
+    switchTab('render');
+    await refreshRenderArtifacts(tile.job_id, {
+        selectFamily: cfg.family,
+        selectArtifactId: artifactId,
+    });
+    const selected = typeof _renderSelectedArtifactEntry === 'function' ? _renderSelectedArtifactEntry() : null;
+    const selectedId = selected && (selected.palette_id || selected.artifact_id);
+    if (selectedId !== artifactId) {
+        throw new Error(`${artifactId} was not found in Render ${cfg.family}`);
+    }
+    _logMosaic(kind, `${cfg.label} selected ${artifactId}`, 'ok', `select|${kind}|${tile.job_id}|${artifactId}`);
+}
+
+async function populateComputeFromJob(jobId) {
+    if (!jobId) throw new Error('Missing compute job id');
+    const detail = await _getResultDetail(jobId);
+    _populateComputeFromDetail(jobId, detail || {});
+    switchTab('compute');
 }
 
 async function _artifactMosaicCanvasClick(kind, event) {
     const cfg = _mosaicConfig(kind);
     const tile = _tileFromMosaicClick(kind, event);
     if (!cfg || !tile || !tile.job_id) return;
-    const artifactId = cfg.selectArtifactId(tile);
+    const artifactId = _mosaicArtifactId(kind, tile);
     if (!artifactId) return;
     if (event) event.preventDefaultAction = true;
     try {
-        try {
-            await _ensureResultsSelection(tile.job_id);
-        } catch (selectionError) {
-            if (typeof _setRenderResultsJob === 'function') {
-                _setRenderResultsJob(tile.job_id);
-            } else {
-                const el = document.getElementById('render-results-dir');
-                if (el) el.value = tile.job_id;
-            }
-            _logMosaic(kind, `${cfg.label} click: result row not selected (${selectionError.message}); opening Render directly`, 'err');
-        }
-        switchTab('render');
-        await refreshRenderArtifacts(tile.job_id, {
-            selectFamily: cfg.family,
-            selectArtifactId: artifactId,
-        });
-        const selected = typeof _renderSelectedArtifactEntry === 'function' ? _renderSelectedArtifactEntry() : null;
-        const selectedId = selected && (selected.palette_id || selected.artifact_id);
-        if (selectedId && selectedId === artifactId) {
-            _logMosaic(kind, `${cfg.label} selected ${artifactId}`, 'ok', `select|${kind}|${tile.job_id}|${artifactId}`);
-        } else {
-            _logMosaic(kind, `${cfg.label} opened ${tile.job_id}, but ${artifactId} was not found in Render ${cfg.family}`, 'err', `select-miss|${kind}|${tile.job_id}|${artifactId}`);
-        }
+        await _goMosaicTileRender(kind, tile);
     } catch (e) {
         _logMosaic(kind, `${cfg.label} click failed: ${e.message}`, 'err', `click-failed|${kind}|${tile.job_id}|${artifactId}|${e.message}`);
         _setMosaicStatus(kind, `${cfg.label} click failed: ${e.message}`, 'error');
+    }
+}
+
+function _mosaicContextPointFromEvent(event) {
+    const raw = (event && event.originalEvent) || event || {};
+    return {
+        x: Number(raw.clientX || 0) || 12,
+        y: Number(raw.clientY || 0) || 12,
+    };
+}
+
+function _mosaicContextButton(label, action, disabled = false) {
+    return `<button type="button" class="artifact-mosaic-menu-action" data-mosaic-action="${_mosaicEscapeHtml(action)}"${disabled ? ' disabled' : ''}>${_mosaicEscapeHtml(label)}</button>`;
+}
+
+function _ensureMosaicContextGlobalHandlers() {
+    if (_artifactMosaicContextGlobalBound || typeof document === 'undefined' || typeof document.addEventListener !== 'function') return;
+    document.addEventListener('keydown', (event) => {
+        if (event && event.key === 'Escape') _closeMosaicContextMenu();
+    });
+    document.addEventListener('click', (event) => {
+        const menu = document.getElementById('artifact-mosaic-context-menu');
+        if (!_artifactMosaicContext.open || !menu || !event || !event.target) return;
+        if (typeof menu.contains === 'function' && menu.contains(event.target)) return;
+        _closeMosaicContextMenu();
+    });
+    _artifactMosaicContextGlobalBound = true;
+}
+
+function _mosaicContextRow(label, value) {
+    const text = String(value == null ? '' : value).trim();
+    if (!text) return '';
+    return `<div class="artifact-mosaic-menu-row"><span>${_mosaicEscapeHtml(label)}</span><code>${_mosaicEscapeHtml(text)}</code></div>`;
+}
+
+function _renderMosaicContextMenu() {
+    const menu = document.getElementById('artifact-mosaic-context-menu');
+    if (!menu) return;
+    const ctx = _artifactMosaicContext;
+    if (!ctx.open || !ctx.tile) {
+        menu.style.display = 'none';
+        if (typeof menu.setAttribute === 'function') menu.setAttribute('aria-hidden', 'true');
+        menu.innerHTML = '';
+        return;
+    }
+    const kind = ctx.kind;
+    const cfg = _mosaicConfig(kind);
+    const tile = ctx.tile;
+    const artifactId = _mosaicArtifactId(kind, tile);
+    const favoriteDisabled = kind !== 'color';
+    const rows = [
+        _mosaicContextRow('artifact', artifactId),
+        _mosaicContextRow('job', tile.job_id),
+        _mosaicContextRow('function', tile.function),
+        _mosaicContextRow('created', tile.created_at),
+        _mosaicContextRow('preview', tile.preview_width && tile.preview_height ? `${tile.preview_width} x ${tile.preview_height}` : ''),
+        _mosaicContextRow('N', tile.N),
+        _mosaicContextRow('degree', tile.degree),
+        _mosaicContextRow('times', tile.times),
+        kind === 'palette' ? _mosaicContextRow('metric', tile.metric || tile.solve_display) : '',
+        kind === 'palette' ? _mosaicContextRow('palette', tile.palette || tile.palette_name) : '',
+        kind === 'palette' ? _mosaicContextRow('channels', tile.score_output_channel_count || tile.raw_channels) : '',
+    ].filter(Boolean).join('');
+    menu.innerHTML = `
+        <div class="artifact-mosaic-menu-head">
+            <div class="artifact-mosaic-menu-title">${_mosaicEscapeHtml(cfg.label)} tile</div>
+            <button type="button" class="artifact-mosaic-menu-close" data-mosaic-action="close" aria-label="Close">x</button>
+        </div>
+        <div class="artifact-mosaic-menu-meta">${rows}</div>
+        <div class="artifact-mosaic-menu-actions">
+            ${_mosaicContextButton('Go Render', 'go-render', ctx.busy)}
+            ${_mosaicContextButton('Go Compute', 'go-compute', ctx.busy)}
+            ${_mosaicContextButton('Go Result', 'go-result', ctx.busy)}
+            ${_mosaicContextButton(favoriteDisabled ? 'Favorite (Color only)' : 'Favorite', 'favorite', ctx.busy || favoriteDisabled)}
+            ${_mosaicContextButton('Download', 'download', ctx.busy)}
+            ${_mosaicContextButton('Copy Link', 'copy-link', ctx.busy)}
+            ${_mosaicContextButton('Copy Job ID', 'copy-job', ctx.busy)}
+            ${_mosaicContextButton('Copy Artifact ID', 'copy-artifact', ctx.busy)}
+        </div>
+        ${ctx.message ? `<div class="artifact-mosaic-menu-note ok">${_mosaicEscapeHtml(ctx.message)}</div>` : ''}
+        ${ctx.error ? `<div class="artifact-mosaic-menu-note err">${_mosaicEscapeHtml(ctx.error)}</div>` : ''}
+    `;
+    menu.style.display = 'block';
+    if (typeof menu.setAttribute === 'function') menu.setAttribute('aria-hidden', 'false');
+    menu.style.left = `${Math.max(8, ctx.x)}px`;
+    menu.style.top = `${Math.max(8, ctx.y)}px`;
+    const rect = typeof menu.getBoundingClientRect === 'function' ? menu.getBoundingClientRect() : { width: 260, height: 220 };
+    const vw = (typeof window !== 'undefined' && window.innerWidth) || 1200;
+    const vh = (typeof window !== 'undefined' && window.innerHeight) || 800;
+    const left = Math.max(8, Math.min(ctx.x, vw - Number(rect.width || 260) - 8));
+    const top = Math.max(8, Math.min(ctx.y, vh - Number(rect.height || 220) - 8));
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+    if (!menu._artifactMosaicBound && typeof menu.addEventListener === 'function') {
+        menu.addEventListener('click', (event) => {
+            const btn = event.target && event.target.closest ? event.target.closest('[data-mosaic-action]') : null;
+            if (!btn) return;
+            event.preventDefault();
+            _runMosaicContextAction(btn.getAttribute('data-mosaic-action'));
+        });
+        menu._artifactMosaicBound = true;
+    }
+}
+
+function _openMosaicContextMenu(kind, tile, event) {
+    const point = _mosaicContextPointFromEvent(event);
+    _artifactMosaicContext.open = true;
+    _artifactMosaicContext.kind = kind;
+    _artifactMosaicContext.tile = tile;
+    _artifactMosaicContext.tileKey = _mosaicTileIdentity(kind, tile);
+    _artifactMosaicContext.x = point.x;
+    _artifactMosaicContext.y = point.y;
+    _artifactMosaicContext.busy = false;
+    _artifactMosaicContext.message = '';
+    _artifactMosaicContext.error = '';
+    _renderMosaicContextMenu();
+}
+
+function _closeMosaicContextMenu() {
+    _artifactMosaicContext.open = false;
+    _artifactMosaicContext.kind = '';
+    _artifactMosaicContext.tile = null;
+    _artifactMosaicContext.tileKey = '';
+    _artifactMosaicContext.busy = false;
+    _artifactMosaicContext.message = '';
+    _artifactMosaicContext.error = '';
+    _renderMosaicContextMenu();
+}
+
+function _artifactMosaicContextMenuEvent(kind, event) {
+    if (event) {
+        event.preventDefaultAction = true;
+        if (event.originalEvent && typeof event.originalEvent.preventDefault === 'function') event.originalEvent.preventDefault();
+        if (event.originalEvent && typeof event.originalEvent.stopPropagation === 'function') event.originalEvent.stopPropagation();
+    }
+    const tile = _tileFromMosaicClick(kind, event);
+    if (!tile) {
+        _closeMosaicContextMenu();
+        return;
+    }
+    _openMosaicContextMenu(kind, tile, event);
+}
+
+function _artifactMosaicNativeContextMenuEvent(kind, event) {
+    if (event && typeof event.preventDefault === 'function') event.preventDefault();
+    if (event && typeof event.stopPropagation === 'function') event.stopPropagation();
+    const tile = _tileFromMosaicDomEvent(kind, event);
+    if (!tile) {
+        _closeMosaicContextMenu();
+        return;
+    }
+    _openMosaicContextMenu(kind, tile, event);
+}
+
+function _mosaicContextStillCurrent(kind, tile, tileKey) {
+    return _artifactMosaicContext.open &&
+        _artifactMosaicContext.kind === kind &&
+        _artifactMosaicContext.tile === tile &&
+        _artifactMosaicContext.tileKey === tileKey &&
+        _mosaicTileIdentity(kind, tile) === tileKey;
+}
+
+function _mosaicDownloadFilename(kind, tile) {
+    const key = tile.image_key || tile.key || '';
+    const ext = _mosaicExtensionFromKey(key) || 'png';
+    return `${_mosaicArtifactId(kind, tile) || 'artifact'}.${ext}`;
+}
+
+async function _runMosaicContextAction(action) {
+    const ctx = _artifactMosaicContext;
+    const kind = ctx.kind;
+    const tile = ctx.tile;
+    const tileKey = ctx.tileKey;
+    const cfg = _mosaicConfig(kind);
+    if (action === 'close') {
+        _closeMosaicContextMenu();
+        return;
+    }
+    if (!_mosaicContextStillCurrent(kind, tile, tileKey)) {
+        _closeMosaicContextMenu();
+        return;
+    }
+    ctx.busy = true;
+    ctx.message = '';
+    ctx.error = '';
+    _renderMosaicContextMenu();
+    try {
+        const artifactId = _mosaicArtifactId(kind, tile);
+        if (action === 'go-render') {
+            await _goMosaicTileRender(kind, tile);
+            _closeMosaicContextMenu();
+            return;
+        }
+        if (action === 'go-compute') {
+            await populateComputeFromJob(tile.job_id);
+            _closeMosaicContextMenu();
+            return;
+        }
+        if (action === 'go-result') {
+            await _ensureResultsSelection(tile.job_id);
+            switchTab('results');
+            _closeMosaicContextMenu();
+            return;
+        }
+        if (action === 'favorite') {
+            if (kind !== 'color') throw new Error('Favorites currently support Color artifacts only');
+            const result = await _addColorFavorite({
+                jobId: tile.job_id,
+                artifactId,
+                displayName: tile.display_name || artifactId,
+                imageKey: tile.image_key || '',
+                previewKey: tile.key || '',
+            });
+            ctx.message = result && result.already ? 'Already in favorites' : 'Favorited';
+            _logMosaic(kind, `${cfg.label}: ${ctx.message} ${artifactId}`, 'ok', `favorite|${tile.job_id}|${artifactId}|${ctx.message}`);
+        } else if (action === 'download') {
+            const key = tile.image_key || tile.key || '';
+            await _downloadStorageObject({ key, filename: _mosaicDownloadFilename(kind, tile), fallbackUrl: key ? '' : _mosaicPublicUrl(kind, tile.key) });
+            ctx.message = 'Download started';
+        } else if (action === 'copy-link') {
+            const key = tile.image_key || tile.key || '';
+            await _copyTextToClipboard(_mosaicPublicUrl(kind, key));
+            ctx.message = 'Link copied';
+        } else if (action === 'copy-job') {
+            await _copyTextToClipboard(tile.job_id);
+            ctx.message = 'Job ID copied';
+        } else if (action === 'copy-artifact') {
+            await _copyTextToClipboard(artifactId);
+            ctx.message = 'Artifact ID copied';
+        } else {
+            throw new Error(`Unknown action: ${action}`);
+        }
+        ctx.error = '';
+    } catch (e) {
+        ctx.error = e.message || String(e);
+        _logMosaic(kind, `${cfg.label} menu action failed: ${ctx.error}`, 'err', `menu-failed|${kind}|${action}|${ctx.error}`);
+    } finally {
+        if (_artifactMosaicContext.open) {
+            _artifactMosaicContext.busy = false;
+            _renderMosaicContextMenu();
+        }
     }
 }
 
@@ -498,6 +843,7 @@ async function _loadArtifactMosaic(kind, opts = {}) {
 async function _refreshArtifactMosaic(kind) {
     const state = _mosaicState(kind);
     const cfg = _mosaicConfig(kind);
+    _closeMosaicContextMenu();
     _stopMosaicPoll(kind);
     _setMosaicRefreshBusy(kind, true);
     try {

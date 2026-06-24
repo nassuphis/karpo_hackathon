@@ -120,6 +120,22 @@ function _setPreviewImage(previewEl, url) {
 
 // Download a file via presigned URL with Content-Disposition: attachment
 // Gets a new presigned URL with download filename baked in, then navigates to it.
+async function _downloadStorageObject({ key, filename, fallbackUrl = '' }) {
+    if (key) {
+        const result = await lambdaPost('storage', { key, filename }, '/presign');
+        window.location.href = result.url;
+        return result;
+    }
+    if (!fallbackUrl) throw new Error('Download requires a storage key or URL');
+    const a = document.createElement('a');
+    a.href = fallbackUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    return { url: fallbackUrl };
+}
+
 async function downloadPresignedFile(originalUrl, filename, explicitKey, clickEvent) {
     const activeEvent = clickEvent || ((typeof window !== 'undefined' && window.event) ? window.event : null);
     const btn = activeEvent && activeEvent.target ? activeEvent.target : null;
@@ -128,18 +144,7 @@ async function downloadPresignedFile(originalUrl, filename, explicitKey, clickEv
     try {
         // Re-presign with Content-Disposition: attachment so browser saves instead of displaying
         const key = explicitKey || _lastDownloadKey;
-        if (key) {
-            const result = await lambdaPost('storage', { key, filename }, '/presign');
-            window.location.href = result.url;
-        } else {
-            // Fallback: use <a download> trick
-            const a = document.createElement('a');
-            a.href = originalUrl;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-        }
+        await _downloadStorageObject({ key, filename, fallbackUrl: originalUrl });
     } catch (e) {
         alert('Download failed: ' + e.message);
     } finally {

@@ -1592,9 +1592,18 @@ function makeEl(id) {
     value: '',
     disabled: false,
     options: [],
+    children: [],
+    dataset: {},
+    _innerHTML: '',
     appendChild(opt) { this.options.push(opt); },
-    set innerHTML(v) { this.options = []; },
-    get innerHTML() { return ''; },
+    removeChild(child) { this.children = this.children.filter(c => c !== child); },
+    addEventListener(type, fn) { this['on' + type] = fn; },
+    setAttribute(name, value) { this[name] = value; },
+    getAttribute(name) { return this[name]; },
+    contains(node) { return node === this || this.children.includes(node); },
+    getBoundingClientRect() { return {left: 10, top: 20, width: 320, height: 260}; },
+    set innerHTML(v) { this._innerHTML = String(v || ''); this.options = []; },
+    get innerHTML() { return this._innerHTML; },
   };
 }
 const els = {
@@ -1612,7 +1621,9 @@ const els = {
   'allpal-sort-mode': makeEl('allpal-sort-mode'),
   'allpal-cols': makeEl('allpal-cols'),
   'allpal-viewer': makeEl('allpal-viewer'),
+  'artifact-mosaic-context-menu': makeEl('artifact-mosaic-context-menu'),
   'render-results-dir': makeEl('render-results-dir'),
+  'tab-favorites': makeEl('tab-favorites'),
 };
   els['allcol-size-filter'].value = 'all';
   els['allcol-sort-mode'].value = 'date';
@@ -1626,30 +1637,56 @@ const els = {
   let selectedTab = '';
   let selectedArtifact = '';
   let selectedFamily = '';
-  let ensureSelectionThrows = false;
+  let ensureSelectionCalls = 0;
   let statusFetchFails = false;
+  let lastPixelPoint = null;
+  let favoriteRef = null;
+  let downloadArgs = null;
+  let detailJob = '';
+  let populatedJob = '';
+  let copiedText = '';
+  function OpenSeadragonMock(opts) {
+    const handlers = {};
+    return {
+      opts,
+      element: opts.element,
+      handlers,
+      viewport: {
+        goHome() {},
+        pointFromPixel(point) { lastPixelPoint = point; return point; },
+        viewportToImageCoordinates() { return imagePoint; },
+      },
+      addHandler(name, fn) { handlers[name] = fn; },
+      open(src) { opened.push(src); },
+    };
+  }
+  OpenSeadragonMock.Point = function Point(x, y) { this.x = x; this.y = y; };
   const ctx = {
   console,
   document: {
     getElementById(id) { return els[id] || null; },
     createElement(tag) { return {tagName: tag, value: '', textContent: ''}; },
+    addEventListener() {},
+    execCommand: () => true,
+    body: {
+      appendChild() {},
+      removeChild() {},
+    },
   },
   window: {},
+  navigator: { clipboard: { writeText: async (text) => { copiedText = text; } } },
   setTimeout(fn, ms) { timers.push({fn, ms}); return timers.length; },
   clearTimeout() {},
   Date: { now: () => 12345 },
   Math, JSON, Number, String, Boolean, Array, Object, Map, Set, Promise, URL,
-	  OpenSeadragon(opts) {
-	    return {
-	      opts,
-	      viewport: { goHome() {}, pointFromPixel() { return {}; }, viewportToImageCoordinates() { return imagePoint; } },
-	      addHandler() {},
-	      open(src) { opened.push(src); },
-	    };
-	  },
+	  OpenSeadragon: OpenSeadragonMock,
 	  _ensureResultsSelection: async (jobId) => {
-	    if (ensureSelectionThrows) throw new Error('row missing');
+	    ensureSelectionCalls += 1;
 	    selectedJob = jobId;
+	  },
+	  _setRenderResultsJob: (jobId) => {
+	    selectedJob = jobId;
+	    els['render-results-dir'].value = jobId;
 	  },
 	  switchTab: (name) => { selectedTab = name; },
 	  refreshRenderArtifacts: async (jobId, opts) => {
@@ -1659,6 +1696,10 @@ const els = {
 	  _renderSelectedArtifactEntry: () => selectedFamily === 'palette'
 	    ? {palette_id: selectedArtifact}
 	    : {artifact_id: selectedArtifact},
+	  _getResultDetail: async (jobId) => { detailJob = jobId; return {calc: {N: 10}}; },
+	  _populateComputeFromDetail: (jobId) => { populatedJob = jobId; },
+	  _addColorFavorite: async (ref) => { favoriteRef = ref; return {already: false}; },
+	  _downloadStorageObject: async (args) => { downloadArgs = args; },
 	  log: (msg, cls, target) => { logs.push({msg, cls, target}); },
 	  lambdaPost: async (service, payload, pathName) => {
 	    if (pathName !== '/list-color-mosaic' && pathName !== '/list-palette-mosaic') throw new Error('unexpected path ' + pathName);
@@ -1689,8 +1730,8 @@ const els = {
         count: 2,
         sizes: [500, 512],
         tiles: [
-          {key:'renders/j/palettes/pal_a/preview.png', job_id:'j', artifact_id:'pal_a', palette_id:'pal_a', created_at:'2026', preview_width:512, preview_height:512, N:512},
-          {key:'renders/j/palettes/pal_b/preview.png', job_id:'j', artifact_id:'pal_b', palette_id:'pal_b', created_at:'2025', preview_width:500, preview_height:500, N:1024},
+          {key:'renders/j/palettes/pal_a/preview.png', image_key:'renders/j/palettes/pal_a/image.jpeg', job_id:'j', artifact_id:'pal_a', palette_id:'pal_a', created_at:'2026', preview_width:512, preview_height:512, N:512},
+          {key:'renders/j/palettes/pal_b/preview.png', image_key:'renders/j/palettes/pal_b/image.jpeg', job_id:'j', artifact_id:'pal_b', palette_id:'pal_b', created_at:'2025', preview_width:500, preview_height:500, N:1024},
         ],
       }) : ({
         refresh_id: 'mosaic_ready',
@@ -1698,8 +1739,8 @@ const els = {
         count: 2,
         sizes: [512, 1024],
         tiles: [
-          {key:'renders/j/color/a/preview.png', job_id:'j', artifact_id:'a', created_at:'2026', preview_width:512, preview_height:512},
-          {key:'renders/j/color/b/preview.png', job_id:'j', artifact_id:'b', created_at:'2025', preview_width:1024, preview_height:1024},
+          {key:'renders/j/color/a/preview.png', image_key:'renders/j/color/a/image.jpeg', job_id:'j', artifact_id:'a', created_at:'2026', preview_width:512, preview_height:512, function:'fn', degree:3, N:512, times:1},
+          {key:'renders/j/color/b/preview.png', image_key:'renders/j/color/b/image.png', job_id:'j', artifact_id:'b', created_at:'2025', preview_width:1024, preview_height:1024, function:'fn', degree:4, N:1024, times:2},
         ],
       }),
     };
@@ -1732,16 +1773,15 @@ for (const script of scripts) vm.runInContext(fs.readFileSync(path.join(root, sc
 	  assert(selectedJob === 'j' && selectedTab === 'render' && selectedFamily === 'color' && selectedArtifact === 'b',
 	    'click mapping should use rendered tile-source columns, not the current control value');
 	  assert(colorClickEvent.preventDefaultAction === true, 'mosaic click should suppress OpenSeadragon default click action');
-	  ensureSelectionThrows = true;
+	  assert(ensureSelectionCalls === 0, 'mosaic Go Render should not require Results row selection');
 	  selectedJob = '';
 	  selectedTab = '';
 	  selectedFamily = '';
 	  selectedArtifact = '';
 	  els['render-results-dir'].value = '';
 	  await ctx._artifactMosaicCanvasClick('color', {quick: true, position: {x: 0, y: 0}});
-	  assert(selectedJob === '' && els['render-results-dir'].value === 'j' && selectedTab === 'render' && selectedFamily === 'color' && selectedArtifact === 'b',
-	    'mosaic click should still open Render directly when result-row selection fails');
-	  ensureSelectionThrows = false;
+	  assert(selectedJob === 'j' && els['render-results-dir'].value === 'j' && selectedTab === 'render' && selectedFamily === 'color' && selectedArtifact === 'b',
+	    'mosaic click should open Render directly without Results selection');
 	  await ctx.refreshAllColMosaic();
 	  assert(els['btn-allcol-refresh'].disabled === true, 'refresh should disable button while computing');
 	  assert(els['allcol-status'].textContent.includes('jobs 10/20'), 'refresh status should show job progress');
@@ -1767,6 +1807,44 @@ for (const script of scripts) vm.runInContext(fs.readFileSync(path.join(root, sc
 	  await ctx._artifactMosaicCanvasClick('palette', {quick: true, position: {x: 0, y: 0}});
 	  assert(selectedJob === 'j' && selectedTab === 'render' && selectedFamily === 'palette' && selectedArtifact === 'pal_b',
 	    'AllPal click should select palette artifact in render tab');
+	  imagePoint = {x: 1, y: 1};
+	  lastPixelPoint = null;
+	  const nativeTile = ctx._tileFromMosaicDomEvent('color', {clientX: 15, clientY: 25});
+	  assert(nativeTile && nativeTile.artifact_id === 'a', 'native contextmenu should map to the same color tile');
+	  assert(lastPixelPoint instanceof ctx.OpenSeadragon.Point && lastPixelPoint.x === 5 && lastPixelPoint.y === 5,
+	    'native contextmenu should pass an OpenSeadragon.Point using the viewer rect');
+	  ctx._artifactMosaicNativeContextMenuEvent('color', {
+	    clientX: 15,
+	    clientY: 25,
+	    preventDefault() { this.prevented = true; },
+	    stopPropagation() { this.stopped = true; },
+	  });
+	  assert(els['artifact-mosaic-context-menu'].style.display === 'block', 'right-click should open context menu');
+	  assert(els['artifact-mosaic-context-menu'].innerHTML.includes('Go Render'), 'context menu should render actions');
+	  selectedTab = '';
+	  await ctx._runMosaicContextAction('favorite');
+	  assert(favoriteRef && favoriteRef.jobId === 'j' && favoriteRef.artifactId === 'a', 'favorite should use tile data directly');
+	  assert(selectedTab !== 'render', 'favorite should not navigate to Render');
+	  await ctx._runMosaicContextAction('download');
+	  assert(downloadArgs && downloadArgs.key === 'renders/j/color/a/image.jpeg' && downloadArgs.filename === 'a.jpeg',
+	    'download should use artifact image_key, not preview key');
+	  await ctx._runMosaicContextAction('copy-link');
+	  assert(copiedText === 'https://bucket.test/renders/j/color/a/image.jpeg', 'copy link should use artifact image URL');
+	  await ctx._runMosaicContextAction('go-compute');
+	  assert(detailJob === 'j' && populatedJob === 'j' && selectedTab === 'compute',
+	    'Go Compute should fetch /detail directly and populate compute');
+	  ctx._openMosaicContextMenu('color', ctx._mosaicState('color').tiles[0], {clientX: 15, clientY: 25});
+	  const ensureBeforeResult = ensureSelectionCalls;
+	  await ctx._runMosaicContextAction('go-result');
+	  assert(ensureSelectionCalls === ensureBeforeResult + 1 && selectedTab === 'results',
+	    'Go Result should intentionally select the Results row');
+	  ctx._openMosaicContextMenu('palette', ctx._mosaicState('palette').tiles[0], {clientX: 15, clientY: 25});
+	  assert(els['artifact-mosaic-context-menu'].innerHTML.includes('Favorite (Color only)') &&
+	    els['artifact-mosaic-context-menu'].innerHTML.includes('disabled'),
+	    'palette context menu should disable Favorite');
+	  imagePoint = {x: 99999, y: 99999};
+	  ctx._artifactMosaicContextMenuEvent('color', {position: {x: 0, y: 0}, originalEvent: {preventDefault() {}, stopPropagation() {}}});
+	  assert(els['artifact-mosaic-context-menu'].style.display === 'none', 'blank right-click should close stale menu');
 	  console.log('Frontend artifact mosaic runtime checks: OK');
 })().catch(e => { console.error(e.stack || String(e)); process.exit(1); });
 NODE

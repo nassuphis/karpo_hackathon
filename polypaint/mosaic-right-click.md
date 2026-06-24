@@ -548,7 +548,7 @@ Required coverage:
 - `Download` calls `_downloadStorageObject(...)` with `image_key`, not preview key, and does not call `_dlMenuAction(...)`.
 - `Copy Link` uses `image_key` and manifest base.
 - Right-click blank space does not open a stale menu.
-- Rebuild/refresh closes the menu and stale `contextTileKey` prevents actions from running against an old tile.
+- Rebuild/refresh closes the menu and stale `_artifactMosaicContext.tileKey` prevents actions from running against an old tile.
 
 13. Run:
 
@@ -573,7 +573,7 @@ No backend tests are required unless the manifest schema is extended.
 
 5. Copy Link should be explicit about public S3 URL vs presigned URL. Use public object URL for v1.
 
-6. The menu must close on mosaic rebuild/refresh. Otherwise it can act on a stale tile after sort/filter/refresh changes. Also verify `contextTileKey` before executing actions.
+6. The menu must close on mosaic rebuild/refresh. Otherwise it can act on a stale tile after sort/filter/refresh changes. Also verify `_artifactMosaicContext.tileKey` before executing actions.
 
 7. `Go Render` should not require the Results list. If the Results list is empty or stale, a mosaic tile still has enough data to open Render directly by `job_id + artifact_id`.
 

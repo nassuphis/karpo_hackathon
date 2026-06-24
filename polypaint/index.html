@@ -69,6 +69,52 @@ button {
 .status.error { color: #e94560; }
 .status.ok { color: #4ecca3; }
 
+.artifact-mosaic-context-menu {
+    position: fixed; z-index: 1800; display: none;
+    min-width: 260px; max-width: min(380px, calc(100vw - 16px));
+    background: #111827; color: #e0e0e0;
+    border: 1px solid #334155; border-radius: 8px;
+    box-shadow: 0 16px 42px rgba(0,0,0,0.48);
+    padding: 10px; font-size: 12px;
+}
+.artifact-mosaic-menu-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; margin-bottom: 8px;
+}
+.artifact-mosaic-menu-title {
+    color: #e94560; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+}
+.artifact-mosaic-menu-close {
+    margin: 0; padding: 0 6px; background: transparent; color: #aaa;
+    border: 0; font-size: 16px; line-height: 20px;
+}
+.artifact-mosaic-menu-meta {
+    display: grid; gap: 3px; margin-bottom: 10px;
+    border-top: 1px solid #263248; border-bottom: 1px solid #263248;
+    padding: 8px 0;
+}
+.artifact-mosaic-menu-row {
+    display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 8px;
+    align-items: baseline;
+}
+.artifact-mosaic-menu-row span { color: #94a3b8; text-transform: uppercase; font-size: 10px; letter-spacing: 0.04em; }
+.artifact-mosaic-menu-row code {
+    color: #f8fafc; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.artifact-mosaic-menu-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.artifact-mosaic-menu-action {
+    margin: 0; padding: 6px 8px; background: #0f3460; color: #e0e0e0;
+    font-size: 12px; text-align: left;
+}
+.artifact-mosaic-menu-action:hover { background: #1d4f8c; }
+.artifact-mosaic-menu-action:disabled { background: #33394a; color: #777; cursor: not-allowed; }
+.artifact-mosaic-menu-note {
+    margin-top: 8px; font-family: monospace; font-size: 11px; line-height: 1.35;
+}
+.artifact-mosaic-menu-note.ok { color: #4ecca3; }
+.artifact-mosaic-menu-note.err { color: #e94560; }
+
 #job-log { font-family: monospace; font-size: 12px; max-height: 200px; overflow-y: auto; }
 .log-entry { padding: 2px 0; color: #666; }
 .log-entry.ok { color: #4ecca3; }
@@ -2076,6 +2122,8 @@ button {
         </div>
     </div>
 </div>
+
+<div id="artifact-mosaic-context-menu" class="artifact-mosaic-context-menu" role="menu" aria-hidden="true"></div>
 
 <div id="results-refresh-popup-overlay" class="tri-popup-overlay" aria-hidden="true">
     <div class="tri-popup" role="dialog" aria-modal="true" aria-labelledby="results-refresh-popup-title">

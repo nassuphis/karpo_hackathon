@@ -46,6 +46,16 @@ The implementation is already async and should be reused:
 
 Do not replace this with a synchronous API crawl.
 
+The color mosaic has already been hardened and that baseline should be preserved during genericization:
+
+- Transient frontend status-poll failures reschedule polling while a refresh is computing instead of stopping forever.
+- Frontend logs are capped so the fallback log DOM does not grow without bound.
+- Click mapping uses the active OpenSeadragon tile source's stored columns/tile size, not recomputed controls.
+- Backend job-id and refresh-id parsing is centralized in helpers; do not add new depth-dependent `split("/")` parsing.
+- Missing S3 objects are treated as expected skips, but non-missing S3 errors such as throttles/5xx propagate to the worker error path instead of silently degrading manifest metadata.
+- Color manifests already include `manifest_type`, `artifact_kind`, `sizes`, and `size_counts`; keep the palette manifest symmetric with that shape.
+- Progress cadence is named (`MOSAIC_PROGRESS_JOB_INTERVAL`, `MOSAIC_PROGRESS_ARTIFACT_INTERVAL`) and progress writes refresh `updated_at_ms` as the worker heartbeat.
+
 ### Existing Palette Inventory
 
 Palettes are not stored through `RENDER_FAMILY_SHAPES` the same way immutable color artifacts are. They already have separate inventory code:
@@ -177,6 +187,18 @@ MOSAIC_INTERNAL_ACTIONS = {
 }
 ```
 
+Keep these existing generic helpers and use them everywhere:
+
+```python
+def _mosaic_job_id_from_prefix(prefix):
+    ...
+
+def _mosaic_refresh_id_from_manifest_key(key_or_prefix):
+    ...
+```
+
+Do not introduce new ad-hoc key-depth parsing such as `split("/")[1]`, `split("/")[-2]`, or frontend `slice(-2, -1)`. The color wall already had bugs in that class; genericization is the chance to keep the parser centralized.
+
 Update these helpers and entry-point bodies to accept `kind`:
 
 - `_mosaic_status_item(kind, status)`
@@ -189,6 +211,8 @@ Update these helpers and entry-point bodies to accept `kind`:
 - `_error_mosaic_status(kind, refresh_id, existing, exc)`
 - `_progress_mosaic_status(kind, refresh_id, existing, ...)`
 - `_prune_mosaic_manifests(kind, keep_refresh_ids=...)`
+- `_mosaic_job_id_from_prefix(prefix)`
+- `_mosaic_refresh_id_from_manifest_key(key_or_prefix)`
 - `_handle_list_mosaic(event, kind)`
 - `_run_mosaic_worker(kind, refresh_id)`
 
@@ -242,7 +266,13 @@ def _run_mosaic_worker(kind, refresh_id):
         )
         status = _ready_mosaic_status(kind, refresh_id, manifest, existing)
         _put_owned_mosaic_status(kind, status, refresh_id)
-        _prune_mosaic_manifests(kind, keep_refresh_ids={refresh_id})
+        previous_refresh_id = _mosaic_refresh_id_from_manifest_key(
+            existing.get("last_ready_manifest_key") or existing.get("manifest_key") or ""
+        )
+        keep = {refresh_id}
+        if previous_refresh_id:
+            keep.add(previous_refresh_id)
+        _prune_mosaic_manifests(kind, keep_refresh_ids=keep)
         return status
     except Exception as exc:
         error_status = _error_mosaic_status(kind, refresh_id, existing, exc)
@@ -256,7 +286,7 @@ def _run_mosaic_worker(kind, refresh_id):
 
 The code above is still illustrative; preserve the current color worker's exact conditional-failure behavior when porting. The point is structural: one handler body and one worker body serve both kinds.
 
-Progress writes must remain throttled. The current color worker reports every batch of jobs/artifacts, not once per artifact. Preserve that cadence for palette; each progress event is a conditional DynamoDB `put_item`, so per-artifact progress would become write-noise during large refreshes. Each throttled progress write must also refresh `updated_at_ms`; that timestamp is the active-lock heartbeat that prevents another refresh from treating the worker as stale during a long crawl.
+Progress writes must remain throttled with the existing named constants, not magic inline `% 10` / `% 25` checks. The current color worker reports every batch of jobs/artifacts, not once per artifact. Preserve that cadence for palette; each progress event is a conditional DynamoDB `put_item`, so per-artifact progress would become write-noise during large refreshes. Each throttled progress write must also refresh `updated_at_ms`; that timestamp is the active-lock heartbeat that prevents another refresh from treating the worker as stale during a long crawl.
 
 ### 2. Keep the Existing Color Builder Working
 
@@ -391,9 +421,11 @@ Manifest should include:
 }
 ```
 
-Add `manifest_type` and `artifact_kind` to the existing color manifest at the same time. They are informational today because the UI already knows the tab kind, but keeping color and palette manifests symmetric prevents future generic readers from seeing fields that exist only for palettes.
+The existing color manifest already has `manifest_type`, `artifact_kind`, `sizes`, and `size_counts`. Palette should emit the same high-level fields so the generic frontend can read one manifest shape for both kinds.
 
 Do not include `0` or unknown dimensions in `sizes`. If preview dimensions cannot be read, keep the tile in `All`, increment `unknown_dimensions`, and exclude it from exact-size filters.
+
+Do not silently swallow transient S3 failures while building this manifest. Missing `meta.json`, missing image, and missing preview are expected artifact states and should increment skip counters. Other `ClientError`s or decode failures should either be retried deliberately or fail the worker into `state:"error"` so the status UI shows the problem.
 
 Sort manifest tiles by:
 
@@ -709,15 +741,17 @@ Extend `tests/test_frontend_js.sh`:
 
 1. `AllCol` loads `/list-color-mosaic`, opens an OSD tile source, and logs `AllCol`.
 2. `AllCol` exact `1024` filter uses `tileSize=1024`.
-3. `AllPal` loads `/list-palette-mosaic`.
-4. `AllPal` populates the size dropdown from `manifest.sizes`.
-5. `AllPal` exact-size filter filters by `preview_width/preview_height`.
-6. `AllPal` with only one observed preview size disables the size dropdown or leaves it as an inert `All`/single-size control.
-7. `AllPal` `N` sort uses copied compute metadata but does not affect size filtering or tile geometry.
-8. `AllPal` tile source uses actual preview dimensions.
-9. `AllPal` click calls `refreshRenderArtifacts(jobId, { selectFamily:"palette", selectArtifactId: paletteId })`.
-10. Switching tabs does not destroy the DeepZoom viewer or the other mosaic viewer.
-11. Status polling/progress text works independently for color and palette.
+3. `AllCol` transient status-poll failure while computing reschedules polling and leaves the refresh button busy.
+4. `AllCol` click mapping uses the active tile source's stored columns/tile size.
+5. `AllPal` loads `/list-palette-mosaic`.
+6. `AllPal` populates the size dropdown from `manifest.sizes`.
+7. `AllPal` exact-size filter filters by `preview_width/preview_height`.
+8. `AllPal` with only one observed preview size disables the size dropdown or leaves it as an inert `All`/single-size control.
+9. `AllPal` `N` sort uses copied compute metadata but does not affect size filtering or tile geometry.
+10. `AllPal` tile source uses actual preview dimensions.
+11. `AllPal` click calls `refreshRenderArtifacts(jobId, { selectFamily:"palette", selectArtifactId: paletteId })`.
+12. Switching tabs does not destroy the DeepZoom viewer or the other mosaic viewer.
+13. Status polling/progress text works independently for color and palette.
 
 Update frontend parts contract:
 
@@ -739,6 +773,7 @@ Predeploy should catch:
 
 ## Implementation Order
 
+0. Confirm the hardened color baseline remains green: transient poll retry, centralized key parsing, previous-manifest prune keep, fail-visible S3 errors, symmetric color manifest fields.
 1. Rename visible `AllRenders` tab and DOM ids to `AllCol`.
 2. Refactor `js/13-allrenders.js` into a generic artifact mosaic controller. Rename the file only if the extra include/parts churn is worth it.
 3. Keep color behavior passing with only name changes. This is a hard checkpoint before palette work.
@@ -775,5 +810,6 @@ The real risks are narrow:
 4. Sharing one OSD viewer between `AllCol`, `AllPal`, and `DeepZoom`.
 5. Forgetting route/script registration, leaving the feature present locally but absent in deploy.
 6. Letting the UI rename break the already-shipped color wall because a stale `allrenders-*` reference was missed.
+7. Reintroducing brittle key-depth parsing or poll-terminal behavior that was already fixed in the color baseline.
 
 If the implementation follows the steps above, this should be a low-to-medium risk feature, not a redesign.

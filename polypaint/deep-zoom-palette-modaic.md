@@ -231,21 +231,30 @@ def _run_mosaic_worker(kind, refresh_id):
             refresh_id,
         )
 
-    manifest = _build_mosaic_manifest(kind, refresh_id, progress_cb=publish_progress)
-    s3.put_object(
-        Bucket=BUCKET,
-        Key=manifest["manifest_key"],
-        Body=json.dumps(manifest, separators=(",", ":"), ensure_ascii=False).encode("utf-8"),
-        ContentType="application/json",
-        CacheControl="no-cache, max-age=0",
-    )
-    status = _ready_mosaic_status(kind, refresh_id, manifest, existing)
-    _put_owned_mosaic_status(kind, status, refresh_id)
-    _prune_mosaic_manifests(kind, keep_refresh_ids={refresh_id})
-    return status
+    try:
+        manifest = _build_mosaic_manifest(kind, refresh_id, progress_cb=publish_progress)
+        s3.put_object(
+            Bucket=BUCKET,
+            Key=manifest["manifest_key"],
+            Body=json.dumps(manifest, separators=(",", ":"), ensure_ascii=False).encode("utf-8"),
+            ContentType="application/json",
+            CacheControl="no-cache, max-age=0",
+        )
+        status = _ready_mosaic_status(kind, refresh_id, manifest, existing)
+        _put_owned_mosaic_status(kind, status, refresh_id)
+        _prune_mosaic_manifests(kind, keep_refresh_ids={refresh_id})
+        return status
+    except Exception as exc:
+        error_status = _error_mosaic_status(kind, refresh_id, existing, exc)
+        try:
+            _put_owned_mosaic_status(kind, error_status, refresh_id)
+        except ClientError as put_exc:
+            if not _is_conditional_failure(put_exc):
+                raise
+        return error_status
 ```
 
-The code above is illustrative, not a copy/paste final implementation; the actual implementation still needs the existing conditional-failure/error handling. The point is structural: one handler body and one worker body serve both kinds.
+The code above is still illustrative; preserve the current color worker's exact conditional-failure behavior when porting. The point is structural: one handler body and one worker body serve both kinds.
 
 Progress writes must remain throttled. The current color worker reports every batch of jobs/artifacts, not once per artifact. Preserve that cadence for palette; each progress event is a conditional DynamoDB `put_item`, so per-artifact progress would become write-noise during large refreshes. Each throttled progress write must also refresh `updated_at_ms`; that timestamp is the active-lock heartbeat that prevents another refresh from treating the worker as stale during a long crawl.
 
@@ -382,6 +391,8 @@ Manifest should include:
 }
 ```
 
+Add `manifest_type` and `artifact_kind` to the existing color manifest at the same time. They are informational today because the UI already knows the tab kind, but keeping color and palette manifests symmetric prevents future generic readers from seeing fields that exist only for palettes.
+
 Do not include `0` or unknown dimensions in `sizes`. If preview dimensions cannot be read, keep the tile in `All`, increment `unknown_dimensions`, and exclude it from exact-size filters.
 
 Sort manifest tiles by:
@@ -423,8 +434,10 @@ Route dispatch:
 
 ```python
 elif path.endswith("/list-palette-mosaic"):
-    return handle_list_palette_mosaic(event)
+    return _handle_storage_route(handle_list_palette_mosaic, event)
 ```
+
+This must use `_handle_storage_route`, matching `/list-color-mosaic` and the other storage routes. Otherwise `ValueError`, `ClientError`, and unexpected exceptions bypass the normal structured 400/404/500 response mapping.
 
 Update `deploy_manifest.json` storage routes:
 
@@ -566,10 +579,13 @@ Every helper should take `kind`:
 - `_ensureMosaicViewer(kind)`
 - `_mosaicTileSource(kind, tiles)`
 - `_mosaicTileSize(kind, tiles)`
+- `_tileFromMosaicClick(kind, event)`
 - `_rebuildArtifactMosaic(kind)`
 - `_loadArtifactMosaic(kind, opts)`
 - `_refreshArtifactMosaic(kind)`
 - `_homeArtifactMosaic(kind)`
+
+`_tileFromMosaicClick(kind, event)` must use the active tile source's stored column count and tile size. Do not recompute columns from the current controls during click handling; a rebuild or filter change can otherwise make click-to-tile mapping disagree with the source OSD is currently displaying.
 
 ### 6. Dynamic Palette Size Dropdown
 

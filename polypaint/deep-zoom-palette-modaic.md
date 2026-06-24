@@ -1,0 +1,699 @@
+# AllCol / AllPal Mosaic Implementation Plan
+
+## Objective
+
+Rename the existing `AllRenders` tab to `AllCol`, then add an `AllPal` tab that gives the same single-level OpenSeadragon wall for saved palette artifacts.
+
+The important constraint is that this remains a manifest-of-existing-thumbnails feature. It must not build a stitched image or a deep-zoom pyramid. Refresh crawls S3, writes a JSON manifest, and the browser uses OpenSeadragon as a large pan/zoom contact sheet over existing preview images.
+
+## Current State
+
+### Existing Color Mosaic
+
+The current color wall is implemented as:
+
+- UI tab: `AllRenders` in `index.html`.
+- DOM ids: `allrenders-*`.
+- JS module: `js/13-allrenders.js`.
+- API route: `/list-color-mosaic`.
+- Storage handler entry points:
+  - `handle_list_color_mosaic`
+  - `_start_color_mosaic_refresh`
+  - `_run_color_mosaic_worker`
+  - `_build_color_mosaic_manifest`
+- Status row:
+  - `job_id = "__allrenders_mosaic__"`
+  - `task_id = "color_mosaic_status"`
+- Manifest prefix:
+  - `renders/_index/color_mosaic/<refresh_id>/all.json`
+
+The implementation is already async and should be reused:
+
+- Refresh writes a DDB status row.
+- Refresh self-invokes the storage Lambda with an internal build action.
+- The tab polls status every two seconds.
+- Worker writes progress fields:
+  - `progress_stage`
+  - `progress_message`
+  - `progress_jobs_done`
+  - `progress_jobs_total`
+  - `progress_artifacts_done`
+  - `progress_artifacts_total`
+  - `progress_tiles`
+  - `progress_last_job`
+- Worker writes a public manifest URL when ready.
+- Old refresh manifests are pruned.
+
+Do not replace this with a synchronous API crawl.
+
+### Existing Palette Inventory
+
+Palettes are not stored through `RENDER_FAMILY_SHAPES` the same way immutable color artifacts are. They already have separate inventory code:
+
+- Palette artifacts live under:
+  - `renders/<job_id>/palettes/<palette_id>/`
+- Existing list route:
+  - `/list-palettes`
+- Existing storage helper:
+  - `_list_saved_palettes(job_id)`
+- Existing ordering helper:
+  - `_order_palette_variants(variants)`
+- Existing Render tab family:
+  - `palette`
+- Existing Render tab artifact selection:
+  - `refreshRenderArtifacts(jobId, { selectFamily: "palette", selectArtifactId: paletteId })`
+
+That means `AllPal` should plug into the palette inventory path, not force palettes into the color `RENDER_FAMILY_SHAPES` model.
+
+## Design Decisions
+
+### Naming
+
+User-facing names:
+
+- `AllRenders` becomes `AllCol`.
+- New palette wall is `AllPal`.
+
+Internal route names:
+
+- Keep `/list-color-mosaic` for color. It already exists and is deployed/tested.
+- Add `/list-palette-mosaic` for palettes.
+
+Internal DDB key:
+
+- Keep `job_id = "__allrenders_mosaic__"` for compatibility with the existing color status row.
+- Split only by `task_id`:
+  - `color_mosaic_status`
+  - `palette_mosaic_status`
+
+This avoids losing the current color manifest/status state while still separating Color and Palette refreshes.
+
+### Module Shape
+
+Refactor the frontend from one hardcoded `AllRenders` controller into a generic artifact mosaic controller.
+
+Recommended file rename:
+
+- `js/13-allrenders.js` -> `js/13-artifact-mosaics.js`
+
+Part registration becomes:
+
+```js
+;(window.__ppParts = window.__ppParts || []).push('13-artifact-mosaics');
+```
+
+Expose small wrappers:
+
+```js
+function loadAllCol(opts) { return _loadArtifactMosaic('color', opts); }
+function refreshAllColMosaic() { return _refreshArtifactMosaic('color'); }
+function homeAllCol() { return _homeArtifactMosaic('color'); }
+function _allColRebuild() { return _rebuildArtifactMosaic('color'); }
+
+function loadAllPal(opts) { return _loadArtifactMosaic('palette', opts); }
+function refreshAllPalMosaic() { return _refreshArtifactMosaic('palette'); }
+function homeAllPal() { return _homeArtifactMosaic('palette'); }
+function _allPalRebuild() { return _rebuildArtifactMosaic('palette'); }
+```
+
+Do not copy/paste the existing `AllRenders` controller into a second file. The state, polling, logging, OSD setup, tile-source generation, and click handling are the same shape.
+
+### Size Semantics
+
+`AllCol` size filter:
+
+- Static choices:
+  - `All`
+  - `512`
+  - `1024`
+- Filter by actual `preview_width/preview_height`.
+- Tile geometry must use the actual selected tile size. This is what fixed the old 1024 upper-left-quarter bug.
+
+`AllPal` size filter:
+
+- Dynamic choices:
+  - `All`
+  - every distinct `N` value observed in the result set
+- `N` is the param-square size from `renders/<job_id>/calc.json`.
+- Store this as `palette_size` in each manifest tile.
+- Filter by `palette_size`.
+
+Tile geometry must still be based on actual preview dimensions:
+
+- Store `preview_width` and `preview_height` from the PNG header when available.
+- Store `palette_size` from calc `N`.
+- For exact-size palette filters, use the actual preview size if it is known.
+- If PNG dimensions are unavailable, fall back to `palette_size` and increment `unknown_dimensions`.
+- If actual preview size differs from `palette_size`, keep the tile but count it in `preview_size_mismatch`. The dropdown still filters by `palette_size`; the OSD tile source uses actual preview dimensions to avoid cropping.
+
+This gives the user the requested `N`-based palette grouping without lying to OpenSeadragon about tile dimensions.
+
+## Backend Implementation Steps
+
+### 1. Generalize Mosaic Status Helpers
+
+Refactor the existing fixed color helpers so they accept `kind` or a config object.
+
+Add config:
+
+```python
+MOSAIC_STATUS_JOB_ID = "__allrenders_mosaic__"
+MOSAIC_TASK_IDS = {
+    "color": "color_mosaic_status",
+    "palette": "palette_mosaic_status",
+}
+MOSAIC_PREFIXES = {
+    "color": "renders/_index/color_mosaic/",
+    "palette": "renders/_index/palette_mosaic/",
+}
+MOSAIC_INTERNAL_ACTIONS = {
+    "color": "build_color_mosaic",
+    "palette": "build_palette_mosaic",
+}
+```
+
+Update these helpers to accept `kind`:
+
+- `_mosaic_status_item(kind, status)`
+- `_mosaic_status_from_item(item)`
+- `_read_mosaic_status(kind, consistent=True)`
+- `_put_mosaic_status(kind, status, ...)`
+- `_put_owned_mosaic_status(kind, status, refresh_id)`
+- `_start_mosaic_refresh(kind)`
+- `_ready_mosaic_status(kind, refresh_id, manifest, existing)`
+- `_error_mosaic_status(kind, refresh_id, existing, exc)`
+- `_progress_mosaic_status(kind, refresh_id, existing, ...)`
+- `_prune_mosaic_manifests(kind, keep_refresh_ids=...)`
+
+Keep wrappers for clarity:
+
+```python
+def _start_color_mosaic_refresh():
+    return _start_mosaic_refresh("color")
+
+def _start_palette_mosaic_refresh():
+    return _start_mosaic_refresh("palette")
+```
+
+The existing color route must continue to return the same response shape.
+
+### 2. Keep the Existing Color Builder Working
+
+Rename the implementation function if useful, but preserve behavior:
+
+```python
+def _build_color_mosaic_manifest(refresh_id, *, progress_cb=None):
+    ...
+```
+
+or:
+
+```python
+def _build_mosaic_manifest(kind, refresh_id, *, progress_cb=None):
+    if kind == "color":
+        return _build_color_mosaic_manifest(refresh_id, progress_cb=progress_cb)
+    if kind == "palette":
+        return _build_palette_mosaic_manifest(refresh_id, progress_cb=progress_cb)
+```
+
+Regression gate: existing color mosaic tests must pass unchanged except for expected UI names changing from `AllRenders` to `AllCol`.
+
+### 3. Add Palette Artifact Scanner
+
+Do not call `_list_saved_palettes(job_id)` directly from the mosaic builder as-is, because it currently generates presigned URLs and uses the module-level `s3` client. The mosaic worker should not mint throwaway presigned URLs.
+
+Add lower-level helpers:
+
+```python
+def _palette_artifact_prefixes(job_id, *, s3_client=None):
+    ...
+
+def _palette_entry_from_prefix(job_id, prefix, *, presign=True, s3_client=None):
+    ...
+```
+
+Then refactor `_list_saved_palettes(job_id)` to use those helpers with `presign=True`.
+
+The mosaic worker uses:
+
+```python
+_palette_entry_from_prefix(job_id, prefix, presign=False, s3_client=client)
+```
+
+Palette entry requirements:
+
+- `palette_id`
+- `artifact_id`
+- `image_key`
+- `preview_key`
+- `created_at`
+- `metric`
+- `palette`
+- `render_reusable`
+- `data_layout`
+- `solve_score_program_source_text`, if present in metadata
+- `solve_score_program_spec`, if present
+- `color_interpretation`, if present
+- `score_output_channel_count`, if present
+- parent/derived fields, if present
+
+Missing `meta.json` means skip the palette artifact. Missing image means skip. Missing preview means skip unless the image itself is safe to use as the tile source; v1 should skip to match color wall behavior.
+
+### 4. Build Palette Manifest
+
+Add:
+
+```python
+def _build_palette_mosaic_manifest(refresh_id, *, progress_cb=None):
+    ...
+```
+
+Use the same two-phase scan shape as color:
+
+1. List job ids from `renders/`.
+2. Read `calc.json` once per job with `_read_mosaic_calc_meta`.
+3. List palette prefixes per job.
+4. Flatten work items into `(job_id, prefix)`.
+5. Read each palette artifact in one worker pool.
+6. Read preview PNG dimensions with `_mosaic_preview_dimensions`.
+7. Produce manifest JSON.
+
+Do not use nested `ThreadPoolExecutor`s.
+
+Each tile should include:
+
+```json
+{
+  "key": "renders/<job>/palettes/<palette>/preview.png",
+  "job_id": "compute_...",
+  "artifact_id": "pal_...",
+  "palette_id": "pal_...",
+  "created_at": "...",
+  "function": "...",
+  "degree": 35,
+  "N": 1024,
+  "times": 1,
+  "palette_size": 1024,
+  "preview_width": 1024,
+  "preview_height": 1024,
+  "image_key": "renders/<job>/palettes/<palette>/image.jpeg",
+  "metric": "...",
+  "palette": "...",
+  "render_reusable": true,
+  "data_layout": "..."
+}
+```
+
+Manifest should include:
+
+```json
+{
+  "schema_version": 1,
+  "manifest_type": "artifact_mosaic",
+  "artifact_kind": "palette",
+  "computed_at": "...",
+  "base": "https://polypaint.s3.us-east-1.amazonaws.com/",
+  "refresh_id": "...",
+  "manifest_key": "renders/_index/palette_mosaic/<refresh_id>/all.json",
+  "manifest_kind": "all",
+  "dimension_filter": "palette-size",
+  "count": 123,
+  "sizes": [512, 1024, 2048],
+  "size_counts": {"512": 80, "1024": 40, "2048": 3},
+  "source_counts": {"512x512": 80, "1024x1024": 40, "unknown": 3},
+  "skipped_missing_preview": 0,
+  "skipped_missing_image": 0,
+  "skipped_missing_meta": 0,
+  "unknown_dimensions": 0,
+  "preview_size_mismatch": 0,
+  "tiles": []
+}
+```
+
+Sort manifest tiles by:
+
+1. `created_at` descending
+2. `job_id`
+3. `palette_id`
+
+### 5. Add Palette Worker Entry Point
+
+Update the storage Lambda internal-action branch:
+
+```python
+if event.get("internal_action") == "build_color_mosaic":
+    return _run_mosaic_worker("color", event.get("refresh_id"))
+if event.get("internal_action") == "build_palette_mosaic":
+    return _run_mosaic_worker("palette", event.get("refresh_id"))
+```
+
+Keep the old color action name for deployed/in-flight compatibility.
+
+### 6. Add Palette API Route
+
+Add:
+
+```python
+def handle_list_palette_mosaic(event):
+    return _handle_list_mosaic(event, "palette")
+```
+
+Route dispatch:
+
+```python
+elif path.endswith("/list-palette-mosaic"):
+    return handle_list_palette_mosaic(event)
+```
+
+Update `deploy_manifest.json` storage routes:
+
+- add `/list-palette-mosaic`
+
+Regenerate `api_manifest.json` with the repo Python environment.
+
+## Frontend Implementation Steps
+
+### 1. Rename the Tab
+
+In `index.html`, replace:
+
+```html
+<div class="tab-btn" onclick="switchTab('allrenders')">AllRenders</div>
+```
+
+with:
+
+```html
+<div class="tab-btn" onclick="switchTab('allcol')">AllCol</div>
+<div class="tab-btn" onclick="switchTab('allpal')">AllPal</div>
+```
+
+This must use `AllCol`/`allcol` and `AllPal`/`allpal` exactly. `switchTab` marks the active tab by comparing `button.textContent.toLowerCase()` with the tab name, so labels with spaces would break active-state styling.
+
+### 2. Rename the Color Panel
+
+Rename the current panel:
+
+- `tab-allrenders` -> `tab-allcol`
+- `allrenders-*` ids -> `allcol-*`
+- `refreshAllRendersMosaic()` -> `refreshAllColMosaic()`
+- `homeAllRenders()` -> `homeAllCol()`
+- `_allRendersRebuild()` -> `_allColRebuild()`
+
+Visible strings:
+
+- `AllRenders ready` -> `AllCol ready`
+- `Computing AllRenders mosaic` -> `Computing AllCol mosaic`
+- `AllRenders load failed` -> `AllCol load failed`
+
+### 3. Add Palette Panel
+
+Add a sibling panel:
+
+```html
+<div id="tab-allpal" class="tab-content">
+  <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px">
+    <button class="btn-secondary btn-inline" id="btn-allpal-refresh" onclick="refreshAllPalMosaic()" style="padding:4px 12px; font-size:12px">Refresh</button>
+    <button class="btn-secondary btn-inline" id="btn-allpal-home" onclick="homeAllPal()" style="padding:4px 12px; font-size:12px">Home</button>
+    <label style="font-size:11px; color:#aaa">Size</label>
+    <select id="allpal-size-filter" onchange="_allPalRebuild()" style="width:90px">
+      <option value="all">All</option>
+    </select>
+    <label style="font-size:11px; color:#aaa">Sort</label>
+    <select id="allpal-sort-mode" onchange="_allPalRebuild()" style="width:120px">
+      <option value="date">Date</option>
+      <option value="job">Job</option>
+      <option value="function">Function</option>
+      <option value="degree">Degree</option>
+      <option value="N">N</option>
+      <option value="random">Random</option>
+    </select>
+    <label style="font-size:11px; color:#aaa">Cols</label>
+    <input id="allpal-cols" type="number" min="1" step="1" placeholder="auto" onchange="_allPalRebuild()" style="width:80px">
+    <span id="allpal-summary" style="font-size:11px; color:#888"></span>
+  </div>
+  <div id="allpal-status" class="status" style="margin-bottom:6px">Refresh to build the palette wall.</div>
+  <div id="allpal-viewer" style="width:100%; height:68vh; background:#050505; border:1px solid #333; border-radius:4px; display:block"></div>
+  <div id="allpal-log" style="margin-top:8px; font-family:monospace; font-size:11px"></div>
+</div>
+```
+
+### 4. Update `switchTab`
+
+In `js/01-core-compute.js`:
+
+```js
+if (name === 'allcol') loadAllCol();
+if (name === 'allpal') loadAllPal();
+```
+
+Remove the old `allrenders` branch once the panel is renamed.
+
+### 5. Generic Mosaic Controller
+
+Replace hardcoded `AllRenders` state with per-kind state.
+
+Config:
+
+```js
+const ARTIFACT_MOSAICS = {
+    color: {
+        tabName: 'allcol',
+        label: 'AllCol',
+        statusPath: '/list-color-mosaic',
+        family: 'color',
+        sizeMode: 'fixed-preview',
+        fixedSizes: ['512', '1024'],
+        selectArtifactId(tile) { return tile.artifact_id; },
+    },
+    palette: {
+        tabName: 'allpal',
+        label: 'AllPal',
+        statusPath: '/list-palette-mosaic',
+        family: 'palette',
+        sizeMode: 'manifest-palette-size',
+        fixedSizes: [],
+        selectArtifactId(tile) { return tile.palette_id || tile.artifact_id; },
+    },
+};
+```
+
+State:
+
+```js
+const _artifactMosaicState = {
+    color: { viewer:null, status:null, manifest:null, tiles:[], pollTimer:null, loading:false, randomSeed:1, lastRenderSignature:'', activeTileSource:null, lastLogSignature:'' },
+    palette: { viewer:null, status:null, manifest:null, tiles:[], pollTimer:null, loading:false, randomSeed:1, lastRenderSignature:'', activeTileSource:null, lastLogSignature:'' },
+};
+```
+
+Every helper should take `kind`:
+
+- `_mosaicEl(kind, suffix)`
+- `_setMosaicStatus(kind, text, cls)`
+- `_setMosaicRefreshBusy(kind, busy)`
+- `_mosaicProgressText(kind, status)`
+- `_logMosaic(kind, message, cls, signature)`
+- `_fetchMosaicStatus(kind)`
+- `_fetchMosaicManifest(url)`
+- `_selectedMosaicSize(kind)`
+- `_mosaicSortMode(kind)`
+- `_mosaicRequestedCols(kind, count)`
+- `_mosaicFilteredSortedTiles(kind)`
+- `_ensureMosaicViewer(kind)`
+- `_mosaicTileSource(kind, tiles)`
+- `_mosaicTileSize(kind, tiles)`
+- `_rebuildArtifactMosaic(kind)`
+- `_loadArtifactMosaic(kind, opts)`
+- `_refreshArtifactMosaic(kind)`
+- `_homeArtifactMosaic(kind)`
+
+### 6. Dynamic Palette Size Dropdown
+
+When loading an `AllPal` manifest, populate `#allpal-size-filter` from `manifest.sizes`.
+
+Rules:
+
+- Preserve the current selected value if still present.
+- Always include `All`.
+- Add numeric sizes sorted ascending.
+- Use labels like `512`, `1024`, `2048`.
+- If no sizes are present, leave only `All`.
+
+Color keeps static `512` and `1024`.
+
+### 7. Filtering and Tile Size Rules
+
+Color:
+
+```js
+if (kind === 'color' && size !== 'all') {
+    const n = Number(size);
+    tiles = tiles.filter(t => Number(t.preview_width) === n && Number(t.preview_height) === n);
+}
+```
+
+Palette:
+
+```js
+if (kind === 'palette' && size !== 'all') {
+    const n = Number(size);
+    tiles = tiles.filter(t => Number(t.palette_size) === n);
+}
+```
+
+Tile size:
+
+```js
+function _mosaicTileSize(kind, tiles) {
+    const size = _selectedMosaicSize(kind);
+    const previewSizes = tiles
+        .map(t => Number(t.preview_width))
+        .filter(n => Number.isFinite(n) && n > 0);
+    if (previewSizes.length) return Math.max(...previewSizes);
+    if (kind === 'palette' && size !== 'all') return Number(size) || 512;
+    if (kind === 'color' && (size === '512' || size === '1024')) return Number(size);
+    return 512;
+}
+```
+
+This avoids both bad cases:
+
+- A 1024 image rendered with `tileSize=512` only shows the upper-left quarter.
+- A palette filtered by `N` still displays correctly if the preview image dimension differs from `N`.
+
+### 8. Click Behavior
+
+Color click:
+
+```js
+await _ensureResultsSelection(tile.job_id);
+switchTab('render');
+await refreshRenderArtifacts(tile.job_id, {
+    selectFamily: 'color',
+    selectArtifactId: tile.artifact_id,
+});
+```
+
+Palette click:
+
+```js
+await _ensureResultsSelection(tile.job_id);
+switchTab('render');
+await refreshRenderArtifacts(tile.job_id, {
+    selectFamily: 'palette',
+    selectArtifactId: tile.palette_id || tile.artifact_id,
+});
+```
+
+This satisfies the requirement: clicking a palette in `AllPal` moves to Render, opens the Palette subtab, and selects the specific palette artifact.
+
+### 9. Script Registration
+
+If the file is renamed:
+
+- Replace script include:
+  - `js/13-allrenders.js`
+  - with `js/13-artifact-mosaics.js`
+- Update the expected parts list in `index.html`:
+  - `13-allrenders`
+  - to `13-artifact-mosaics`
+- Update `tests/test_frontend_parts_contract.py` expectations if needed.
+- Update `tests/test_frontend_js.sh` to load the new file.
+
+## Test Plan
+
+### Backend Tests
+
+Add/extend storage handler tests:
+
+1. Existing color mosaic route still works.
+2. `/list-color-mosaic` still returns the existing ready/computing/error status shape.
+3. `/list-palette-mosaic` with `{refresh:true}` creates `palette_mosaic_status`, not `color_mosaic_status`.
+4. Palette worker writes manifest under:
+   - `renders/_index/palette_mosaic/<refresh_id>/all.json`
+5. Palette manifest includes `sizes` and `size_counts` from calc `N`.
+6. Palette manifest tile includes `palette_size`, `preview_width`, `preview_height`, `palette_id`, `job_id`, `image_key`, `key`.
+7. Missing `meta.json` skips a palette and increments `skipped_missing_meta`.
+8. Missing preview skips a palette and increments `skipped_missing_preview`.
+9. Mismatched preview dimension vs `N` keeps the tile and increments `preview_size_mismatch`.
+10. Manifest pruning is kind-scoped: pruning palette manifests must not delete color manifests.
+11. Existing render-summary and list-palettes tests still pass.
+
+Fake S3 requirements:
+
+- `get_paginator("list_objects_v2")` must support `Delimiter="/"`.
+- `get_object(..., Range="bytes=0-32")` must return a PNG header for preview dimension tests.
+- `head_object` must exist for image/preview validation.
+
+### Frontend Tests
+
+Extend `tests/test_frontend_js.sh`:
+
+1. `AllCol` loads `/list-color-mosaic`, opens an OSD tile source, and logs `AllCol`.
+2. `AllCol` exact `1024` filter uses `tileSize=1024`.
+3. `AllPal` loads `/list-palette-mosaic`.
+4. `AllPal` populates the size dropdown from `manifest.sizes`.
+5. `AllPal` exact-size filter filters by `palette_size`.
+6. `AllPal` tile source uses actual preview dimensions.
+7. `AllPal` click calls `refreshRenderArtifacts(jobId, { selectFamily:"palette", selectArtifactId: paletteId })`.
+8. Switching tabs does not destroy the DeepZoom viewer or the other mosaic viewer.
+9. Status polling/progress text works independently for color and palette.
+
+Update frontend parts contract:
+
+- The new script must be in the sequential load list.
+- The new part name must appear in `window.__ppParts`.
+
+### API/Deploy Tests
+
+Update:
+
+- `deploy_manifest.json`
+- `api_manifest.json`
+
+Predeploy should catch:
+
+- `/list-palette-mosaic` missing from route manifest.
+- New JS file missing from frontend asset list.
+- Storage handler imports missing from deploy bundle.
+
+## Implementation Order
+
+1. Rename visible `AllRenders` tab and DOM ids to `AllCol`.
+2. Rename/refactor `js/13-allrenders.js` into generic artifact mosaic controller.
+3. Keep color behavior passing with only name changes.
+4. Generalize backend mosaic status helpers by `kind`.
+5. Keep `/list-color-mosaic` passing with the generic backend path.
+6. Add low-level palette prefix/entry helpers and refactor `_list_saved_palettes` to use them.
+7. Add `_build_palette_mosaic_manifest`.
+8. Add palette internal worker action.
+9. Add `/list-palette-mosaic` route and manifest entries.
+10. Add `AllPal` panel and JS config.
+11. Add dynamic palette size dropdown.
+12. Add palette click-through selection.
+13. Add backend tests.
+14. Add frontend tests.
+15. Run the targeted storage/frontend tests.
+16. Run predeploy before deployment.
+
+## Expected Risk
+
+This is straightforward because the hard part already exists in the color mosaic:
+
+- async refresh
+- DDB status
+- progress polling
+- manifest writing
+- OSD single-level tile source
+- click-through into Render tab
+
+The real risks are narrow:
+
+1. Accidentally duplicating the color mosaic instead of genericizing it.
+2. Using palette `N` as tile geometry when actual preview dimensions differ.
+3. Calling `_list_saved_palettes` directly and generating thousands of unused presigned URLs.
+4. Sharing one OSD viewer between `AllCol`, `AllPal`, and `DeepZoom`.
+5. Forgetting route/script registration, leaving the feature present locally but absent in deploy.
+
+If the implementation follows the steps above, this should be a low-to-medium risk feature, not a redesign.

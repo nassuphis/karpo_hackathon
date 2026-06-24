@@ -1581,7 +1581,7 @@ node - "$HTML" <<'NODE'
 const fs = require('fs'), vm = require('vm'), path = require('path');
 const root = path.dirname(process.argv[2]);
 const html = fs.readFileSync(process.argv[2], 'utf8');
-const scripts = ['js/13-allrenders.js'];
+const scripts = ['js/13-artifact-mosaics.js'];
 function assert(cond, msg) { if (!cond) throw new Error(msg); }
 function makeEl(id) {
   return {
@@ -1591,19 +1591,32 @@ function makeEl(id) {
     className: '',
     value: '',
     disabled: false,
+    options: [],
+    appendChild(opt) { this.options.push(opt); },
+    set innerHTML(v) { this.options = []; },
+    get innerHTML() { return ''; },
   };
 }
 const els = {
-  'allrenders-status': makeEl('allrenders-status'),
-  'allrenders-summary': makeEl('allrenders-summary'),
-  'btn-allrenders-refresh': makeEl('btn-allrenders-refresh'),
-  'allrenders-size-filter': makeEl('allrenders-size-filter'),
-  'allrenders-sort-mode': makeEl('allrenders-sort-mode'),
-  'allrenders-cols': makeEl('allrenders-cols'),
-  'allrenders-viewer': makeEl('allrenders-viewer'),
+  'allcol-status': makeEl('allcol-status'),
+  'allcol-summary': makeEl('allcol-summary'),
+  'btn-allcol-refresh': makeEl('btn-allcol-refresh'),
+  'allcol-size-filter': makeEl('allcol-size-filter'),
+  'allcol-sort-mode': makeEl('allcol-sort-mode'),
+  'allcol-cols': makeEl('allcol-cols'),
+  'allcol-viewer': makeEl('allcol-viewer'),
+  'allpal-status': makeEl('allpal-status'),
+  'allpal-summary': makeEl('allpal-summary'),
+  'btn-allpal-refresh': makeEl('btn-allpal-refresh'),
+  'allpal-size-filter': makeEl('allpal-size-filter'),
+  'allpal-sort-mode': makeEl('allpal-sort-mode'),
+  'allpal-cols': makeEl('allpal-cols'),
+  'allpal-viewer': makeEl('allpal-viewer'),
 };
-  els['allrenders-size-filter'].value = 'all';
-  els['allrenders-sort-mode'].value = 'date';
+  els['allcol-size-filter'].value = 'all';
+  els['allcol-sort-mode'].value = 'date';
+  els['allpal-size-filter'].value = 'all';
+  els['allpal-sort-mode'].value = 'date';
   const opened = [];
   const logs = [];
   const timers = [];
@@ -1611,11 +1624,13 @@ const els = {
   let selectedJob = '';
   let selectedTab = '';
   let selectedArtifact = '';
+  let selectedFamily = '';
   let statusFetchFails = false;
   const ctx = {
   console,
   document: {
     getElementById(id) { return els[id] || null; },
+    createElement(tag) { return {tagName: tag, value: '', textContent: ''}; },
   },
   window: {},
   setTimeout(fn, ms) { timers.push({fn, ms}); return timers.length; },
@@ -1632,15 +1647,18 @@ const els = {
 	  },
 	  _ensureResultsSelection: async (jobId) => { selectedJob = jobId; },
 	  switchTab: (name) => { selectedTab = name; },
-	  refreshRenderArtifacts: async (jobId, opts) => { selectedArtifact = opts && opts.selectArtifactId; },
+	  refreshRenderArtifacts: async (jobId, opts) => {
+	    selectedFamily = opts && opts.selectFamily;
+	    selectedArtifact = opts && opts.selectArtifactId;
+	  },
 	  log: (msg, cls, target) => { logs.push({msg, cls, target}); },
 	  lambdaPost: async (service, payload, pathName) => {
-	    if (pathName !== '/list-color-mosaic') throw new Error('unexpected path ' + pathName);
+	    if (pathName !== '/list-color-mosaic' && pathName !== '/list-palette-mosaic') throw new Error('unexpected path ' + pathName);
 	    if (!(payload && payload.refresh) && statusFetchFails) throw new Error('network blip');
 	    if (payload && payload.refresh) return {
 	      state: 'computing',
 	      refresh_id: 'mosaic_x',
-	      progress_message: 'Scanning jobs: 10/20',
+	      progress_message: pathName === '/list-palette-mosaic' ? 'Scanning palette jobs: 10/20' : 'Scanning jobs: 10/20',
 	      progress_jobs_done: 10,
 	      progress_jobs_total: 20,
 	      progress_artifacts_total: 40,
@@ -1648,61 +1666,88 @@ const els = {
 	    };
     return {
       state: 'ready',
-      refresh_id: 'mosaic_ready',
-      manifest_url: 'https://example.test/m.json',
-      count: 2,
+      refresh_id: pathName === '/list-palette-mosaic' ? 'palette_ready' : 'mosaic_ready',
+      manifest_url: pathName === '/list-palette-mosaic' ? 'https://example.test/palette.json' : 'https://example.test/color.json',
+      count: pathName === '/list-palette-mosaic' ? 2 : 2,
     };
   },
-  fetch: async (url) => ({
-    ok: true,
-    json: async () => ({
-      refresh_id: 'mosaic_ready',
-      base: 'https://bucket.test/',
-      count: 2,
-      tiles: [
-        {key:'renders/j/color/a/preview.png', job_id:'j', artifact_id:'a', created_at:'2026', preview_width:512, preview_height:512},
-        {key:'renders/j/color/b/preview.png', job_id:'j', artifact_id:'b', created_at:'2025', preview_width:1024, preview_height:1024},
-      ],
-    }),
-  }),
+  fetch: async (url) => {
+    const isPalette = String(url).includes('palette.json');
+    return {
+      ok: true,
+      json: async () => isPalette ? ({
+        refresh_id: 'palette_ready',
+        base: 'https://bucket.test/',
+        count: 2,
+        sizes: [500, 512],
+        tiles: [
+          {key:'renders/j/palettes/pal_a/preview.png', job_id:'j', artifact_id:'pal_a', palette_id:'pal_a', created_at:'2026', preview_width:512, preview_height:512, N:512},
+          {key:'renders/j/palettes/pal_b/preview.png', job_id:'j', artifact_id:'pal_b', palette_id:'pal_b', created_at:'2025', preview_width:500, preview_height:500, N:1024},
+        ],
+      }) : ({
+        refresh_id: 'mosaic_ready',
+        base: 'https://bucket.test/',
+        count: 2,
+        sizes: [512, 1024],
+        tiles: [
+          {key:'renders/j/color/a/preview.png', job_id:'j', artifact_id:'a', created_at:'2026', preview_width:512, preview_height:512},
+          {key:'renders/j/color/b/preview.png', job_id:'j', artifact_id:'b', created_at:'2025', preview_width:1024, preview_height:1024},
+        ],
+      }),
+    };
+  },
 };
 ctx.window = ctx; ctx.globalThis = ctx;
 vm.createContext(ctx);
 for (const script of scripts) vm.runInContext(fs.readFileSync(path.join(root, script), 'utf8'), ctx, {filename: script});
 
 (async () => {
-	  await ctx.loadAllRenders();
-	  assert(opened.length === 1, 'loadAllRenders should open a tile source');
+	  await ctx.loadAllCol();
+	  assert(opened.length === 1, 'loadAllCol should open a tile source');
 	  assert(opened[0].getTileUrl(0, 0, 0) === 'https://bucket.test/renders/j/color/a/preview.png', 'tile 0 URL mismatch');
-	  await ctx.loadAllRenders();
+	  await ctx.loadAllCol();
 	  assert(opened.length === 1, 'same manifest and controls should not reopen/reset the viewer');
-	  els['allrenders-size-filter'].value = '1024';
-	  ctx._allRendersRebuild();
+	  els['allcol-size-filter'].value = '1024';
+	  ctx._allColRebuild();
 	  assert(opened.length === 2, 'size filter should reopen tile source');
 	  assert(opened[1].tileSize === 1024, '1024 filter should use 1024 tileSize');
 	  assert(opened[1].width === 1024 && opened[1].height === 1024, '1024 tile source dimensions should match 1024 tile size');
 	  assert(opened[1].getTileUrl(0, 0, 0) === 'https://bucket.test/renders/j/color/b/preview.png', '1024 filter should select 1024 tile');
-	  els['allrenders-size-filter'].value = 'all';
-	  els['allrenders-cols'].value = '1';
-	  ctx._allRendersRebuild();
+	  els['allcol-size-filter'].value = 'all';
+	  els['allcol-cols'].value = '1';
+	  ctx._allColRebuild();
 	  assert(opened.length === 3, 'column-count change should reopen tile source');
-	  els['allrenders-cols'].value = '2';
+	  els['allcol-cols'].value = '2';
 	  imagePoint = {x: 1, y: 1025};
-	  await ctx._allRendersCanvasClick({quick: true, position: {x: 0, y: 0}});
-	  assert(selectedJob === 'j' && selectedTab === 'render' && selectedArtifact === 'b',
+	  await ctx._artifactMosaicCanvasClick('color', {quick: true, position: {x: 0, y: 0}});
+	  assert(selectedJob === 'j' && selectedTab === 'render' && selectedFamily === 'color' && selectedArtifact === 'b',
 	    'click mapping should use rendered tile-source columns, not the current control value');
-	  await ctx.refreshAllRendersMosaic();
-	  assert(els['btn-allrenders-refresh'].disabled === true, 'refresh should disable button while computing');
-	  assert(els['allrenders-status'].textContent.includes('jobs 10/20'), 'refresh status should show job progress');
-	  assert(els['allrenders-status'].textContent.includes('compute_demo'), 'refresh status should show last scanned job');
-	  assert(logs.some(row => row.target === 'allrenders-log' && row.msg.includes('jobs 10/20')),
-	    'refresh should log AllRenders progress');
+	  await ctx.refreshAllColMosaic();
+	  assert(els['btn-allcol-refresh'].disabled === true, 'refresh should disable button while computing');
+	  assert(els['allcol-status'].textContent.includes('jobs 10/20'), 'refresh status should show job progress');
+	  assert(els['allcol-status'].textContent.includes('compute_demo'), 'refresh status should show last scanned job');
+	  assert(logs.some(row => row.target === 'allcol-log' && row.msg.includes('jobs 10/20')),
+	    'refresh should log AllCol progress');
 	  const timerCountBeforeError = timers.length;
 	  statusFetchFails = true;
-	  await ctx.loadAllRenders({forceStatus: true, fromPoll: true});
+	  await ctx.loadAllCol({forceStatus: true, fromPoll: true});
 	  assert(timers.length > timerCountBeforeError, 'transient poll error should reschedule polling');
-	  assert(els['btn-allrenders-refresh'].disabled === true, 'transient poll error should keep refresh button busy');
-	  console.log('Frontend AllRenders runtime checks: OK');
+	  assert(els['btn-allcol-refresh'].disabled === true, 'transient poll error should keep refresh button busy');
+	  statusFetchFails = false;
+	  await ctx.loadAllPal();
+	  assert(els['allpal-size-filter'].options.map(o => o.value).join('|') === 'all|500|512',
+	    'AllPal should populate dynamic preview-size options');
+	  els['allpal-size-filter'].value = '500';
+	  ctx._allPalRebuild();
+	  const palSource = opened[opened.length - 1];
+	  assert(palSource.tileSize === 500, 'AllPal exact preview-size filter should use selected tile size');
+	  assert(palSource.getTileUrl(0, 0, 0) === 'https://bucket.test/renders/j/palettes/pal_b/preview.png',
+	    'AllPal 500 filter should select 500 preview tile');
+	  imagePoint = {x: 1, y: 1};
+	  await ctx._artifactMosaicCanvasClick('palette', {quick: true, position: {x: 0, y: 0}});
+	  assert(selectedJob === 'j' && selectedTab === 'render' && selectedFamily === 'palette' && selectedArtifact === 'pal_b',
+	    'AllPal click should select palette artifact in render tab');
+	  console.log('Frontend artifact mosaic runtime checks: OK');
 })().catch(e => { console.error(e.stack || String(e)); process.exit(1); });
 NODE
 

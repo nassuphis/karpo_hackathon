@@ -137,6 +137,7 @@
         "/render-summary",
         "/render-count",
         "/list-color-mosaic",
+        "/list-palette-mosaic",
         "/delete-prefix",
         "/list-deepzoom"
       ]

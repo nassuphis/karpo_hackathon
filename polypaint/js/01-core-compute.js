@@ -69,7 +69,8 @@ function switchTab(name) {
     if (name === 'favorites') loadFavoritesInventory();
     if (name === 'palette') loadPaletteInventory();
     if (name === 'deepzoom') loadDeepZoomInventory();
-    if (name === 'allrenders') loadAllRenders();
+    if (name === 'allcol') loadAllCol();
+    if (name === 'allpal') loadAllPal();
 }
 
 /* ---- Results management ---- */

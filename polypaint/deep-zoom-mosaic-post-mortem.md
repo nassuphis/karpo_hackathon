@@ -1,3 +1,4 @@
+<!-- LEGACY: historical AllRenders-only post-mortem; current work is the generic AllCol/AllPal artifact mosaic implementation. -->
 # AllRenders Mosaic Post-Mortem — `502c9fa "Add AllRenders mosaic tab"`
 
 **Date:** 2026-06-24 · **Commit:** `502c9fa` (1,193+/24−, 8 files) · **Plan:** `deep-zoom-mosaic.md` §21.

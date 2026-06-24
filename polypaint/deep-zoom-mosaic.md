@@ -1,3 +1,4 @@
+<!-- LEGACY: superseded by deep-zoom-palette-modaic.md and the generic AllCol/AllPal artifact mosaic implementation. -->
 # Deep Zoom Thumbnail Mosaic with OpenSeadragon and S3
 
 This note describes how to display a large collection of square, same-sized thumbnails as a single pan/zoom mosaic using OpenSeadragon. The thumbnails are treated as if they were tiles in one giant virtual image.

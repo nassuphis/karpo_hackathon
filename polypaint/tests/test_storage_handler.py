@@ -131,6 +131,7 @@ class _FakeS3:
             "ContentLength": len(self.objects.get(Key, b"")),
             "ContentType": meta.get("ContentType", ""),
             "Metadata": meta.get("Metadata", {}),
+            "LastModified": meta.get("LastModified"),
         }
 
     def delete_objects(self, Bucket=None, Delete=None):
@@ -343,6 +344,29 @@ class TestComputeMigration(unittest.TestCase):
     @patch("handler_storage._get_ddb")
     @patch("handler_storage.boto3.client")
     @patch.dict(os.environ, {"AWS_LAMBDA_FUNCTION_NAME": "polypaint-storage", "AWS_REGION": "us-east-1"})
+    def test_palette_mosaic_refresh_starts_async_worker_with_separate_status_row(self, mock_boto_client, mock_get_ddb):
+        import handler_storage
+
+        fake_ddb = _FakeDDB()
+        fake_lambda = _FakeLambdaClient()
+        mock_get_ddb.return_value = fake_ddb
+        mock_boto_client.return_value = fake_lambda
+
+        resp = handler_storage.handler(_event("/list-palette-mosaic", {"refresh": True}), None)
+        body = json.loads(resp["body"])
+
+        self.assertEqual(resp["statusCode"], 200)
+        self.assertEqual(body["state"], "computing")
+        self.assertTrue(body["refresh_id"].startswith("mosaic_"))
+        self.assertEqual(fake_ddb.put_calls[0][0], ("__allrenders_mosaic__", "palette_mosaic_status"))
+        self.assertEqual(len(fake_lambda.invocations), 1)
+        payload = json.loads(fake_lambda.invocations[0]["Payload"].decode("utf-8"))
+        self.assertEqual(payload["internal_action"], "build_palette_mosaic")
+        self.assertEqual(payload["refresh_id"], body["refresh_id"])
+
+    @patch("handler_storage._get_ddb")
+    @patch("handler_storage.boto3.client")
+    @patch.dict(os.environ, {"AWS_LAMBDA_FUNCTION_NAME": "polypaint-storage", "AWS_REGION": "us-east-1"})
     def test_color_mosaic_refresh_records_error_when_self_invoke_fails(self, mock_boto_client, mock_get_ddb):
         import handler_storage
 
@@ -418,6 +442,66 @@ class TestComputeMigration(unittest.TestCase):
         self.assertEqual(manifest["sizes"], [512])
         self.assertEqual(manifest["size_counts"], {"512": 1})
         self.assertEqual(manifest["skipped_legacy"], 1)
+
+    @patch("handler_storage._results_list_s3_client")
+    @patch("handler_storage._get_ddb")
+    @patch("handler_storage.s3")
+    def test_palette_mosaic_worker_builds_manifest_and_ready_status(self, mock_s3, mock_get_ddb, mock_list_s3_client):
+        import handler_storage
+
+        fake = _FakeS3()
+        fake_ddb = _FakeDDB()
+        self._patch(mock_s3, fake)
+        mock_list_s3_client.return_value = fake
+        mock_get_ddb.return_value = fake_ddb
+        self._store(fake, "job", {"function": "g", "degree": 7, "N": 512, "times": 2})
+        fake.objects["renders/job/palettes/pal_a/meta.json"] = json.dumps({
+            "palette_id": "pal_a",
+            "metric": "spread",
+            "palette": "reef",
+            "render_reusable": "true",
+            "data_layout": "raw",
+            "image_key": "renders/job/palettes/pal_a/image.jpeg",
+            "preview_key": "renders/job/palettes/pal_a/preview.png",
+        }).encode("utf-8")
+        fake.objects["renders/job/palettes/pal_a/image.jpeg"] = b"jpeg"
+        fake.objects["renders/job/palettes/pal_a/preview.png"] = (
+            b"\x89PNG\r\n\x1a\n" + (13).to_bytes(4, "big") + b"IHDR"
+            + (512).to_bytes(4, "big") + (512).to_bytes(4, "big")
+        )
+        class _Stamp:
+            def strftime(self, _fmt):
+                return "2026-02-03T04:05:06Z"
+
+        fake.metadata["renders/job/palettes/pal_a/preview.png"] = {"LastModified": _Stamp()}
+        fake.objects["renders/job/palettes/pal_missing/image.jpeg"] = b"orphan"
+        fake.objects["renders/job/palettes/pal_bad/meta.json"] = b"{not json"
+
+        with patch("handler_storage.boto3.client", return_value=_FakeLambdaClient()):
+            status = handler_storage._start_palette_mosaic_refresh()
+        ready = handler_storage._run_palette_mosaic_worker(status["refresh_id"])
+        current = handler_storage._read_mosaic_status("palette")
+
+        self.assertEqual(ready["state"], "ready")
+        self.assertEqual(current["state"], "ready")
+        self.assertEqual(current["count"], 1)
+        self.assertEqual(current["skipped_missing_meta"], 1)
+        self.assertEqual(current["skipped_bad_meta"], 1)
+        self.assertEqual(ready["source_counts"], {"512x512": 1})
+        manifest = json.loads(fake.objects[ready["manifest_key"]])
+        self.assertEqual(manifest["artifact_kind"], "palette")
+        self.assertEqual(manifest["dimension_filter"], "preview-size")
+        self.assertEqual(manifest["sizes"], [512])
+        self.assertEqual(manifest["size_counts"], {"512": 1})
+        self.assertEqual(manifest["skipped_missing_meta"], 1)
+        self.assertEqual(manifest["skipped_bad_meta"], 1)
+        self.assertEqual(manifest["tiles"][0]["job_id"], "job")
+        self.assertEqual(manifest["tiles"][0]["artifact_id"], "pal_a")
+        self.assertEqual(manifest["tiles"][0]["palette_id"], "pal_a")
+        self.assertEqual(manifest["tiles"][0]["created_at"], "2026-02-03T04:05:06Z")
+        self.assertEqual(manifest["tiles"][0]["metric"], "spread")
+        self.assertEqual(manifest["tiles"][0]["palette"], "reef")
+        self.assertEqual(manifest["tiles"][0]["render_reusable"], True)
 
     @patch("handler_storage._results_list_s3_client")
     @patch("handler_storage._get_ddb")

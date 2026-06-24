@@ -93,6 +93,10 @@ s3 = boto3.client("s3")
 
 MOSAIC_STATUS_JOB_ID = "__allrenders_mosaic__"
 MOSAIC_STATUS_TASK_ID = "color_mosaic_status"
+MOSAIC_TASK_IDS = {
+    "color": "color_mosaic_status",
+    "palette": "palette_mosaic_status",
+}
 MOSAIC_STATUS_SCHEMA_VERSION = 1
 MOSAIC_STATUS_STALE_MS = 30 * 60 * 1000
 MOSAIC_WORKERS = 24
@@ -101,6 +105,14 @@ MOSAIC_PROGRESS_JOB_INTERVAL = 10
 MOSAIC_PROGRESS_ARTIFACT_INTERVAL = 25
 MOSAIC_BASE_URL = f"https://{BUCKET}.s3.{os.environ.get('AWS_REGION', 'us-east-1')}.amazonaws.com/"
 MOSAIC_PREFIX = "renders/_index/color_mosaic/"
+MOSAIC_PREFIXES = {
+    "color": "renders/_index/color_mosaic/",
+    "palette": "renders/_index/palette_mosaic/",
+}
+MOSAIC_INTERNAL_ACTIONS = {
+    "color": "build_color_mosaic",
+    "palette": "build_palette_mosaic",
+}
 FAVORITES_KEY = "polypaint/favorites/color_artifacts.json"
 FAVORITES_DDB_JOB_ID = "favorites#color"
 FAVORITES_DDB_META_TASK_ID = "__meta__"
@@ -1270,7 +1282,12 @@ def handler(event, context):
         refresh_id = str(event.get("refresh_id") or "").strip()
         if not refresh_id:
             return ok_response({"error": "missing refresh_id"})
-        return ok_response(_run_color_mosaic_worker(refresh_id))
+        return ok_response(_run_mosaic_worker("color", refresh_id))
+    if event.get("internal_action") == "build_palette_mosaic":
+        refresh_id = str(event.get("refresh_id") or "").strip()
+        if not refresh_id:
+            return ok_response({"error": "missing refresh_id"})
+        return ok_response(_run_mosaic_worker("palette", refresh_id))
 
     path = event.get("rawPath", event.get("path", "/"))
     if path.endswith("/list"):
@@ -1355,6 +1372,8 @@ def handler(event, context):
         return _handle_storage_route(handle_render_count, event)
     elif path.endswith("/list-color-mosaic"):
         return _handle_storage_route(handle_list_color_mosaic, event)
+    elif path.endswith("/list-palette-mosaic"):
+        return _handle_storage_route(handle_list_palette_mosaic, event)
     elif path.endswith("/delete-task"):
         return _handle_storage_route(handle_delete_task, event)
     elif path.endswith("/delete-prefix"):
@@ -2026,77 +2045,97 @@ def _parse_root_transforms(raw):
         return []
 
 
+def _palette_artifact_prefixes(job_id, *, s3_client=None):
+    client = s3_client or s3
+    base_prefix = f"renders/{job_id}/palettes/"
+    palette_prefixes = []
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=BUCKET, Prefix=base_prefix, Delimiter="/"):
+        palette_prefixes.extend(p["Prefix"] for p in page.get("CommonPrefixes", []))
+    return palette_prefixes
+
+
+def _palette_entry_from_prefix(job_id, prefix, *, presign=True, s3_client=None, strict=False):
+    client = s3_client or s3
+    try:
+        obj = client.get_object(Bucket=BUCKET, Key=prefix + "meta.json")
+        meta = json.loads(obj["Body"].read())
+    except Exception as exc:
+        if strict and not _is_missing_s3_error(exc):
+            raise
+        return None
+    if not isinstance(meta, dict):
+        if strict:
+            raise ValueError(f"palette meta is not an object: {prefix}meta.json")
+        return None
+
+    palette_id = meta.get("palette_id") or prefix.rstrip("/").split("/")[-1]
+    image_key = meta.get("image_key", prefix + "image.jpeg")
+    preview_key = meta.get("preview_key", prefix + "preview.png")
+    score_key = meta.get("score_key")
+    palette_bins_key = meta.get("palette_bins_key")
+    section_scores_prefix = meta.get("section_scores_prefix", meta.get("chunk_scores_prefix", prefix + "chunks/score_section_"))
+    section_bins_prefix = meta.get("section_bins_prefix", meta.get("chunk_bins_prefix", prefix + "chunks/palette_bins_section_"))
+    section_meta_prefix = meta.get("section_meta_prefix", meta.get("chunk_meta_prefix", prefix + "chunks/meta_section_"))
+    render_reusable = _parse_bool(meta.get("render_reusable"), False)
+    data_layout = meta.get("data_layout", "")
+    meta["family"] = "palette"
+    meta["palette_id"] = palette_id
+    meta["artifact_id"] = palette_id
+    meta["image_key"] = image_key
+    meta["preview_key"] = preview_key
+    if score_key:
+        meta["score_key"] = score_key
+    if palette_bins_key:
+        meta["palette_bins_key"] = palette_bins_key
+    meta["section_scores_prefix"] = section_scores_prefix
+    meta["section_bins_prefix"] = section_bins_prefix
+    meta["section_meta_prefix"] = section_meta_prefix
+    meta["chunk_scores_prefix"] = section_scores_prefix
+    meta["chunk_bins_prefix"] = section_bins_prefix
+    meta["chunk_meta_prefix"] = section_meta_prefix
+    meta["render_reusable"] = render_reusable
+    meta["data_layout"] = data_layout
+    color_interpretation = _parse_color_interpretation(
+        meta.get("color_interpretation")
+        or meta.get("score_output_interpretation")
+        or meta.get("interpretation")
+    )
+    meta["color_interpretation"] = color_interpretation
+    meta["score_output_interpretation"] = color_interpretation
+    meta["score_output_channel_count"] = _parse_int(meta.get("score_output_channel_count")) or 1
+    meta["raw_channels"] = _parse_int(meta.get("raw_channels")) or meta["score_output_channel_count"]
+    meta["raw_layout"] = meta.get("raw_layout", "")
+    meta["raw_key"] = meta.get("raw_key", "")
+    meta["raw_meta_key"] = meta.get("raw_meta_key", "")
+    meta["palette_variant_fingerprint"] = meta.get("palette_variant_fingerprint", "")
+    meta["content_fingerprint"] = meta.get("content_fingerprint", "")
+    meta["solve_score_omega_enabled"] = _parse_bool(meta.get("solve_score_omega_enabled"), True)
+    meta["solve_score_chain"] = meta.get("solve_score_chain", [])
+    meta["derived_from_palette_id"] = meta.get("derived_from_palette_id", "")
+    if presign:
+        meta["image_url"] = client.generate_presigned_url(
+            "get_object", Params={"Bucket": BUCKET, "Key": image_key},
+            ExpiresIn=PRESIGN_EXPIRY,
+        )
+        meta["preview_url"] = client.generate_presigned_url(
+            "get_object", Params={"Bucket": BUCKET, "Key": preview_key},
+            ExpiresIn=PRESIGN_EXPIRY,
+        )
+        meta["viewer_url"] = meta["preview_url"] or meta["image_url"]
+    meta["file_size"] = meta.get("file_size", 0)
+    meta["size"] = meta.get("file_size", 0)
+    meta["format"] = "jpeg"
+    return meta
+
+
 def _list_saved_palettes(job_id):
     import concurrent.futures
 
-    base_prefix = f"renders/{job_id}/palettes/"
-    palette_prefixes = []
-    paginator = s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=BUCKET, Prefix=base_prefix, Delimiter="/"):
-        palette_prefixes.extend(p["Prefix"] for p in page.get("CommonPrefixes", []))
+    palette_prefixes = _palette_artifact_prefixes(job_id)
 
     def read_meta(prefix):
-        try:
-            obj = s3.get_object(Bucket=BUCKET, Key=prefix + "meta.json")
-            meta = json.loads(obj["Body"].read())
-            metric = meta.get("metric", "proximity")
-            image_key = meta.get("image_key", prefix + "image.jpeg")
-            preview_key = meta.get("preview_key", prefix + "preview.png")
-            score_key = meta.get("score_key")
-            palette_bins_key = meta.get("palette_bins_key")
-            section_scores_prefix = meta.get("section_scores_prefix", meta.get("chunk_scores_prefix", prefix + "chunks/score_section_"))
-            section_bins_prefix = meta.get("section_bins_prefix", meta.get("chunk_bins_prefix", prefix + "chunks/palette_bins_section_"))
-            section_meta_prefix = meta.get("section_meta_prefix", meta.get("chunk_meta_prefix", prefix + "chunks/meta_section_"))
-            render_reusable = _parse_bool(meta.get("render_reusable"), False)
-            data_layout = meta.get("data_layout", "")
-            meta["family"] = "palette"
-            meta["artifact_id"] = meta.get("palette_id")
-            meta["image_key"] = image_key
-            meta["preview_key"] = preview_key
-            if score_key:
-                meta["score_key"] = score_key
-            if palette_bins_key:
-                meta["palette_bins_key"] = palette_bins_key
-            meta["section_scores_prefix"] = section_scores_prefix
-            meta["section_bins_prefix"] = section_bins_prefix
-            meta["section_meta_prefix"] = section_meta_prefix
-            meta["chunk_scores_prefix"] = section_scores_prefix
-            meta["chunk_bins_prefix"] = section_bins_prefix
-            meta["chunk_meta_prefix"] = section_meta_prefix
-            meta["render_reusable"] = render_reusable
-            meta["data_layout"] = data_layout
-            color_interpretation = _parse_color_interpretation(
-                meta.get("color_interpretation")
-                or meta.get("score_output_interpretation")
-                or meta.get("interpretation")
-            )
-            meta["color_interpretation"] = color_interpretation
-            meta["score_output_interpretation"] = color_interpretation
-            meta["score_output_channel_count"] = _parse_int(meta.get("score_output_channel_count")) or 1
-            meta["raw_channels"] = _parse_int(meta.get("raw_channels")) or meta["score_output_channel_count"]
-            meta["raw_layout"] = meta.get("raw_layout", "")
-            meta["raw_key"] = meta.get("raw_key", "")
-            meta["raw_meta_key"] = meta.get("raw_meta_key", "")
-            meta["palette_variant_fingerprint"] = meta.get("palette_variant_fingerprint", "")
-            meta["content_fingerprint"] = meta.get("content_fingerprint", "")
-            meta["solve_score_omega_enabled"] = _parse_bool(meta.get("solve_score_omega_enabled"), True)
-            meta["solve_score_chain"] = meta.get("solve_score_chain", [])
-            meta["derived_from_palette_id"] = meta.get("derived_from_palette_id", "")
-            meta["image_url"] = s3.generate_presigned_url(
-                "get_object", Params={"Bucket": BUCKET, "Key": image_key},
-                ExpiresIn=PRESIGN_EXPIRY,
-            )
-            meta["preview_url"] = s3.generate_presigned_url(
-                "get_object", Params={"Bucket": BUCKET, "Key": preview_key},
-                ExpiresIn=PRESIGN_EXPIRY,
-            )
-            meta["viewer_url"] = meta["preview_url"] or meta["image_url"]
-            meta["file_size"] = meta.get("file_size", 0)
-            meta["size"] = meta.get("file_size", 0)
-            meta["format"] = "jpeg"
-            return meta
-        except Exception:
-            return None
+        return _palette_entry_from_prefix(job_id, prefix, presign=True, strict=False)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(palette_prefixes), 20) or 1) as pool:
         return [m for m in pool.map(read_meta, palette_prefixes) if m]
@@ -2569,10 +2608,22 @@ def _plain_value(attr):
     return None
 
 
-def _mosaic_status_item(status):
+def _mosaic_task_id(kind):
+    return MOSAIC_TASK_IDS.get(kind, MOSAIC_STATUS_TASK_ID)
+
+
+def _mosaic_prefix(kind):
+    return MOSAIC_PREFIXES.get(kind, MOSAIC_PREFIX)
+
+
+def _mosaic_internal_action(kind):
+    return MOSAIC_INTERNAL_ACTIONS.get(kind, MOSAIC_INTERNAL_ACTIONS["color"])
+
+
+def _mosaic_status_item(status, *, kind="color"):
     item = {
         "job_id": {"S": MOSAIC_STATUS_JOB_ID},
-        "task_id": {"S": MOSAIC_STATUS_TASK_ID},
+        "task_id": {"S": _mosaic_task_id(kind)},
     }
     for key, value in status.items():
         if key in {"job_id", "task_id"}:
@@ -2617,6 +2668,8 @@ def _normalize_mosaic_status(status):
     status.setdefault("skipped_non_square", 0)
     status.setdefault("skipped_missing_preview", 0)
     status.setdefault("skipped_missing_image", 0)
+    status.setdefault("skipped_missing_meta", 0)
+    status.setdefault("skipped_bad_meta", 0)
     status.setdefault("skipped_legacy", 0)
     status.setdefault("unknown_dimensions", 0)
     status.setdefault("error", "")
@@ -2628,22 +2681,22 @@ def _missing_mosaic_status():
     return _normalize_mosaic_status({"state": "missing"})
 
 
-def _read_mosaic_status(*, consistent=True):
+def _read_mosaic_status(kind="color", *, consistent=True):
     resp = _get_ddb().get_item(
         TableName=JOBS_TABLE,
         Key={
             "job_id": {"S": MOSAIC_STATUS_JOB_ID},
-            "task_id": {"S": MOSAIC_STATUS_TASK_ID},
+            "task_id": {"S": _mosaic_task_id(kind)},
         },
         ConsistentRead=consistent,
     )
     return _mosaic_status_from_item(resp.get("Item")) or _missing_mosaic_status()
 
 
-def _put_mosaic_status(status, *, condition_expression=None, expression_values=None, expression_names=None):
+def _put_mosaic_status(status, *, kind="color", condition_expression=None, expression_values=None, expression_names=None):
     kwargs = {
         "TableName": JOBS_TABLE,
-        "Item": _mosaic_status_item(_normalize_mosaic_status(status)),
+        "Item": _mosaic_status_item(_normalize_mosaic_status(status), kind=kind),
     }
     if condition_expression:
         kwargs["ConditionExpression"] = condition_expression
@@ -2677,9 +2730,9 @@ def _copy_last_ready_fields(existing):
     }
 
 
-def _start_color_mosaic_refresh():
+def _start_mosaic_refresh(kind="color"):
     now_ms = _mosaic_now_ms()
-    existing = _read_mosaic_status(consistent=True)
+    existing = _read_mosaic_status(kind, consistent=True)
     if (
         existing.get("state") == "computing"
         and int(existing.get("updated_at_ms") or 0) >= now_ms - MOSAIC_STATUS_STALE_MS
@@ -2699,6 +2752,7 @@ def _start_color_mosaic_refresh():
     try:
         _put_mosaic_status(
             status,
+            kind=kind,
             condition_expression=(
                 "attribute_not_exists(job_id) OR "
                 "#state <> :computing OR "
@@ -2712,7 +2766,7 @@ def _start_color_mosaic_refresh():
         )
     except ClientError as exc:
         if _is_conditional_failure(exc):
-            return _read_mosaic_status(consistent=True)
+            return _read_mosaic_status(kind, consistent=True)
         raise
 
     try:
@@ -2720,20 +2774,28 @@ def _start_color_mosaic_refresh():
             FunctionName=os.environ.get("AWS_LAMBDA_FUNCTION_NAME", "polypaint-storage"),
             InvocationType="Event",
             Payload=json.dumps({
-                "internal_action": "build_color_mosaic",
+                "internal_action": _mosaic_internal_action(kind),
                 "refresh_id": refresh_id,
             }).encode("utf-8"),
         )
     except Exception as exc:
         error_status = _error_mosaic_status(refresh_id, status, exc)
         try:
-            _put_owned_mosaic_status(error_status, refresh_id)
+            _put_owned_mosaic_status(error_status, refresh_id, kind=kind)
         except ClientError as put_exc:
             if not _is_conditional_failure(put_exc):
                 raise
-            return _read_mosaic_status(consistent=True)
+            return _read_mosaic_status(kind, consistent=True)
         return error_status
     return status
+
+
+def _start_color_mosaic_refresh():
+    return _start_mosaic_refresh("color")
+
+
+def _start_palette_mosaic_refresh():
+    return _start_mosaic_refresh("palette")
 
 
 def _png_dimensions_from_header(data):
@@ -2958,7 +3020,7 @@ def _build_color_mosaic_manifest(refresh_id, *, progress_cb=None):
 
     tiles.sort(key=lambda t: (str(t.get("job_id") or ""), str(t.get("artifact_id") or "")))
     tiles.sort(key=lambda t: str(t.get("created_at") or ""), reverse=True)
-    manifest_key = f"{MOSAIC_PREFIX}{refresh_id}/all.json"
+    manifest_key = f"{_mosaic_prefix('color')}{refresh_id}/all.json"
     return {
         "schema_version": 1,
         "manifest_type": "artifact_mosaic",
@@ -2979,6 +3041,175 @@ def _build_color_mosaic_manifest(refresh_id, *, progress_cb=None):
     }
 
 
+def _build_palette_mosaic_manifest(refresh_id, *, progress_cb=None):
+    import concurrent.futures
+
+    client = _results_list_s3_client(MOSAIC_WORKERS)
+    job_ids = _list_mosaic_job_ids(client)
+    job_total = len(job_ids)
+    calc_by_job = {}
+    work = []
+    if progress_cb:
+        progress_cb(
+            stage="jobs",
+            message=f"Scanning jobs: 0/{job_total}",
+            jobs_done=0,
+            jobs_total=job_total,
+        )
+
+    def read_job(job_id):
+        calc = _read_mosaic_calc_meta(client, job_id)
+        prefixes = _palette_artifact_prefixes(job_id, s3_client=client)
+        return job_id, calc, prefixes
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(MOSAIC_WORKERS, max(1, len(job_ids)))) as pool:
+        for idx, (job_id, calc, prefixes) in enumerate(pool.map(read_job, job_ids), start=1):
+            calc_by_job[job_id] = calc
+            for prefix in prefixes:
+                work.append((job_id, prefix))
+            if progress_cb and (idx % MOSAIC_PROGRESS_JOB_INTERVAL == 0 or idx == job_total):
+                progress_cb(
+                    stage="jobs",
+                    message=f"Scanning jobs: {idx}/{job_total}; found {len(work)} palette artifacts",
+                    jobs_done=idx,
+                    jobs_total=job_total,
+                    artifacts_total=len(work),
+                    last_job=job_id,
+                )
+
+    counts = {
+        "skipped_non_square": 0,
+        "skipped_missing_preview": 0,
+        "skipped_missing_image": 0,
+        "skipped_missing_meta": 0,
+        "skipped_bad_meta": 0,
+        "unknown_dimensions": 0,
+    }
+    source_counts = {}
+    size_counts = {}
+    tiles = []
+    artifact_total = len(work)
+    if progress_cb:
+        progress_cb(
+            stage="artifacts",
+            message=f"Reading palette previews: 0/{artifact_total}",
+            jobs_done=job_total,
+            jobs_total=job_total,
+            artifacts_done=0,
+            artifacts_total=artifact_total,
+        )
+
+    def read_artifact(item):
+        job_id, prefix = item
+        try:
+            entry = _palette_entry_from_prefix(
+                job_id,
+                prefix,
+                presign=False,
+                s3_client=client,
+                strict=True,
+            )
+        except (json.JSONDecodeError, TypeError, UnicodeDecodeError, ValueError):
+            return None, "bad_meta"
+        if not entry:
+            return None, "missing_meta"
+        image_key = entry.get("image_key")
+        preview_key = entry.get("preview_key")
+        head_results = _head_artifact_keys([image_key, preview_key], presign=False, s3_client=client)
+        image_info = _first_existing(head_results, [image_key])
+        preview_info = _first_existing(head_results, [preview_key])
+        if not image_info:
+            return None, "missing_image"
+        if not preview_info:
+            return None, "missing_preview"
+        if not str(entry.get("created_at") or "").strip():
+            entry["created_at"] = preview_info.get("modified_at") or image_info.get("modified_at") or ""
+        tile, status = _mosaic_tile_from_entry(client, job_id, entry, calc_by_job.get(job_id, {}))
+        if tile:
+            tile.update({
+                "palette_id": entry.get("palette_id", ""),
+                "metric": entry.get("metric", ""),
+                "palette": entry.get("palette", ""),
+                "render_reusable": bool(entry.get("render_reusable")),
+                "data_layout": entry.get("data_layout", ""),
+                "color_interpretation": entry.get("color_interpretation", ""),
+                "score_output_channel_count": entry.get("score_output_channel_count", 1),
+                "derived_from_palette_id": entry.get("derived_from_palette_id", ""),
+            })
+        return tile, status
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(MOSAIC_WORKERS, max(1, len(work)))) as pool:
+        for idx, (tile, status) in enumerate(pool.map(read_artifact, work), start=1):
+            if tile:
+                tiles.append(tile)
+                source_counts[status] = source_counts.get(status, 0) + 1
+                if status == "unknown":
+                    counts["unknown_dimensions"] += 1
+                width = tile.get("preview_width")
+                height = tile.get("preview_height")
+                if isinstance(width, int) and width > 0 and width == height:
+                    size_counts[width] = size_counts.get(width, 0) + 1
+            elif status == "missing_meta":
+                counts["skipped_missing_meta"] += 1
+            elif status == "bad_meta":
+                counts["skipped_bad_meta"] += 1
+            elif status == "missing_image":
+                counts["skipped_missing_image"] += 1
+            elif status == "missing_preview":
+                counts["skipped_missing_preview"] += 1
+            elif status == "non_square":
+                counts["skipped_non_square"] += 1
+            if progress_cb and (idx % MOSAIC_PROGRESS_ARTIFACT_INTERVAL == 0 or idx == artifact_total):
+                progress_cb(
+                    stage="artifacts",
+                    message=f"Reading palette previews: {idx}/{artifact_total}; kept {len(tiles)} tiles",
+                    jobs_done=job_total,
+                    jobs_total=job_total,
+                    artifacts_done=idx,
+                    artifacts_total=artifact_total,
+                    tiles=len(tiles),
+                )
+
+    if progress_cb:
+        progress_cb(
+            stage="manifest",
+            message=f"Writing palette manifest: {len(tiles)} tiles",
+            jobs_done=job_total,
+            jobs_total=job_total,
+            artifacts_done=artifact_total,
+            artifacts_total=artifact_total,
+            tiles=len(tiles),
+        )
+
+    tiles.sort(key=lambda t: (str(t.get("job_id") or ""), str(t.get("palette_id") or t.get("artifact_id") or "")))
+    tiles.sort(key=lambda t: str(t.get("created_at") or ""), reverse=True)
+    manifest_key = f"{_mosaic_prefix('palette')}{refresh_id}/all.json"
+    return {
+        "schema_version": 1,
+        "manifest_type": "artifact_mosaic",
+        "artifact_kind": "palette",
+        "computed_at": _utc_now_iso(),
+        "base": MOSAIC_BASE_URL,
+        "refresh_id": refresh_id,
+        "manifest_key": manifest_key,
+        "manifest_kind": "all",
+        "dimension_filter": "preview-size",
+        "tile_size": 512,
+        "sizes": sorted(size_counts),
+        "size_counts": {str(k): v for k, v in sorted(size_counts.items())},
+        "count": len(tiles),
+        "source_counts": source_counts,
+        **counts,
+        "tiles": tiles,
+    }
+
+
+def _build_mosaic_manifest(kind, refresh_id, *, progress_cb=None):
+    if kind == "palette":
+        return _build_palette_mosaic_manifest(refresh_id, progress_cb=progress_cb)
+    return _build_color_mosaic_manifest(refresh_id, progress_cb=progress_cb)
+
+
 def _delete_s3_prefix(client, prefix):
     objects = []
     paginator = client.get_paginator("list_objects_v2")
@@ -2994,11 +3225,11 @@ def _delete_s3_prefix(client, prefix):
     return deleted
 
 
-def _prune_color_mosaic_manifests(*, keep_refresh_ids):
+def _prune_mosaic_manifests(kind="color", *, keep_refresh_ids):
     client = _results_list_s3_client(8)
     prefixes = []
     paginator = client.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=BUCKET, Prefix=MOSAIC_PREFIX, Delimiter="/"):
+    for page in paginator.paginate(Bucket=BUCKET, Prefix=_mosaic_prefix(kind), Delimiter="/"):
         prefixes.extend(p.get("Prefix", "") for p in page.get("CommonPrefixes", []))
     by_refresh = {}
     for prefix in prefixes:
@@ -3013,6 +3244,10 @@ def _prune_color_mosaic_manifests(*, keep_refresh_ids):
             continue
         deleted += _delete_s3_prefix(client, prefix)
     return deleted
+
+
+def _prune_color_mosaic_manifests(*, keep_refresh_ids):
+    return _prune_mosaic_manifests("color", keep_refresh_ids=keep_refresh_ids)
 
 
 def _ready_mosaic_status(refresh_id, manifest, existing):
@@ -3038,6 +3273,8 @@ def _ready_mosaic_status(refresh_id, manifest, existing):
         "skipped_non_square": manifest.get("skipped_non_square", 0),
         "skipped_missing_preview": manifest.get("skipped_missing_preview", 0),
         "skipped_missing_image": manifest.get("skipped_missing_image", 0),
+        "skipped_missing_meta": manifest.get("skipped_missing_meta", 0),
+        "skipped_bad_meta": manifest.get("skipped_bad_meta", 0),
         "skipped_legacy": manifest.get("skipped_legacy", 0),
         "unknown_dimensions": manifest.get("unknown_dimensions", 0),
     })
@@ -3091,9 +3328,10 @@ def _progress_mosaic_status(
     })
 
 
-def _put_owned_mosaic_status(status, refresh_id):
+def _put_owned_mosaic_status(status, refresh_id, *, kind="color"):
     _put_mosaic_status(
         status,
+        kind=kind,
         condition_expression="refresh_id = :refresh_id AND #state = :computing",
         expression_names={"#state": "state"},
         expression_values={
@@ -3103,14 +3341,14 @@ def _put_owned_mosaic_status(status, refresh_id):
     )
 
 
-def _run_color_mosaic_worker(refresh_id):
-    existing = _read_mosaic_status(consistent=True)
+def _run_mosaic_worker(kind, refresh_id):
+    existing = _read_mosaic_status(kind, consistent=True)
 
     def publish_progress(**kwargs):
-        _put_owned_mosaic_status(_progress_mosaic_status(refresh_id, existing, **kwargs), refresh_id)
+        _put_owned_mosaic_status(_progress_mosaic_status(refresh_id, existing, **kwargs), refresh_id, kind=kind)
 
     try:
-        manifest = _build_color_mosaic_manifest(refresh_id, progress_cb=publish_progress)
+        manifest = _build_mosaic_manifest(kind, refresh_id, progress_cb=publish_progress)
         manifest_key = manifest["manifest_key"]
         s3.put_object(
             Bucket=BUCKET,
@@ -3120,32 +3358,48 @@ def _run_color_mosaic_worker(refresh_id):
             CacheControl="no-cache, max-age=0",
         )
         status = _ready_mosaic_status(refresh_id, manifest, existing)
-        _put_owned_mosaic_status(status, refresh_id)
+        _put_owned_mosaic_status(status, refresh_id, kind=kind)
         try:
             previous_refresh_id = _mosaic_refresh_id_from_manifest_key(existing.get("last_ready_manifest_key") or existing.get("manifest_key") or "")
             keep = {refresh_id}
             if previous_refresh_id:
                 keep.add(previous_refresh_id)
-            _prune_color_mosaic_manifests(keep_refresh_ids=keep)
+            _prune_mosaic_manifests(kind, keep_refresh_ids=keep)
         except Exception:
             pass
         return status
     except Exception as exc:
         error_status = _error_mosaic_status(refresh_id, existing, exc)
         try:
-            _put_owned_mosaic_status(error_status, refresh_id)
+            _put_owned_mosaic_status(error_status, refresh_id, kind=kind)
         except ClientError as put_exc:
             if not _is_conditional_failure(put_exc):
                 raise
         return error_status
 
 
-def handle_list_color_mosaic(event):
+def _run_color_mosaic_worker(refresh_id):
+    return _run_mosaic_worker("color", refresh_id)
+
+
+def _run_palette_mosaic_worker(refresh_id):
+    return _run_mosaic_worker("palette", refresh_id)
+
+
+def _handle_list_mosaic(event, kind):
     params = parse_body(event)
     refresh = parse_boolish(params.get("refresh"), False)
     if refresh:
-        return ok_response(_start_color_mosaic_refresh())
-    return ok_response(_read_mosaic_status(consistent=True))
+        return ok_response(_start_mosaic_refresh(kind))
+    return ok_response(_read_mosaic_status(kind, consistent=True))
+
+
+def handle_list_color_mosaic(event):
+    return _handle_list_mosaic(event, "color")
+
+
+def handle_list_palette_mosaic(event):
+    return _handle_list_mosaic(event, "palette")
 
 
 def handle_render_count(event):

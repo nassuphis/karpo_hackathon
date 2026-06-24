@@ -130,7 +130,7 @@ Everything renders to **one** article object — do not keep `_programHelpItem(n
 **Three producers, same model:**
 
 1. **Grammar core** (`push`/`emit`/`square`/`add`/`dup`/…): `forms`/`aliases`/`params`/validity come from the generated grammar artifact; `summary`/`effect`/`notes` are **hand-authored prose keyed by grammar command names**. This is the *only* hand-written part, it is small (~25 ops per editor), and it is where the real value lives — stack effects (#11), operand order, and "use `emit_p1`, not `emit(p1)`" notes that no registry will ever generate. Generate the skeleton, author the meaning.
-2. **Transforms** (param legacy / coeff native): generated from `_paramProgramLegacyArgSpecs` + `_ptCatalog`/`_ptInfo`, and from normalized coeff registry entries (`effective_args`, aliases, categories, descriptions). After the migration, `andy` comes from `effective_args`, not from a JS-only append.
+2. **Transforms** (param legacy / coeff native): generated from registry-backed vocabularies. Param legacy transforms come from the new generated `window._paramRegistryVocab` (fed by `param_legacy_registry.json` + `program_profiles.json`), not the current stale JS `_paramProgramLegacyNames` / `_paramProgramLegacyArgSpecs` mirror. Coeff native transforms come from normalized coeff registry entries (`effective_args`, aliases, categories, descriptions). After the migration, `andy` comes from `effective_args`, not from a JS-only append.
 3. **Coeff functions**: generated from `window._coeffFuncCatalog`. Render these **lookup-only** (search box + the double-click inspector), never as a 1000-row list — fixes #9 by removing the surface that needs navigation, not by navigating it.
 
 **Two consumers, same articles:** the Help tab renders the ordered list of articles per section; the inspector resolves a token (and its aliases) to the **same** article object. There is no separate sparse lookup list — that separate list was the source of the `sort_mod_keep_angle`-hides-`andy` shadowing (#7).
@@ -287,7 +287,7 @@ Before the list: nearly every entry below traces to **the registry/type model be
 }
 ```
 
-Under wire-compatible cleanup (A): the **source** parser/serializer use the canonical complex form (`linear(2+3j, 0)`); the **compiler still emits whatever `_token` bytes that function already emits** — its existing `args`/`args_im`/`expr_refs` layout — driven by the `compat_signature` as the declared wire layout. (The `complex` arg *type* is a source/schema change, not a wire change: it lets the source write `2+3j` instead of `2, 3`. It does **not** unify the wire — the canonical complex spelling and the old packed spelling are semantically equal but compile to **different** bytes, e.g. `linear(2+3j,0)` → `args=[2,0]/args_im=[3,0]` vs. old four-real `linear(2,3,0,0)` → `args=[2,3,0,0]/args_im=[0,0,0,0]` — so each spelling keeps mapping to its own existing wire.) So this **collapses** the five hardcoded packers + three inverse cases + two JS copies into **one data-driven complex↔wire codec** — it does not remove packing (the wire is permanent). Net is still a large deletion (~150+ lines of per-`fn_index` ladders → one codec), framed as "make packing data-driven and singular," gated by **byte-identical fingerprints over the saved-program corpus**.
+Under wire-compatible cleanup (A): the **source** parser/serializer use the clean complex form (`linear(2+3j, 0)`) only where that spelling recompiles to the same fingerprinted wire; otherwise they preserve the old packed spelling as the canonical wire-preserving source. The **compiler still emits whatever `_token` bytes that function already emits** — its existing `args`/`args_im`/`expr_refs` layout — driven by the `compat_signature` as the declared wire layout. (The `complex` arg *type* is a source/schema change, not a wire change: it lets new source write `2+3j` instead of `2, 3` when safe. It does **not** unify the wire — the clean complex spelling and the old packed spelling are semantically equal but compile to **different** bytes, e.g. `linear(2+3j,0)` → `args=[2,0]/args_im=[3,0]` vs. old four-real `linear(2,3,0,0)` → `args=[2,3,0,0]/args_im=[0,0,0,0]` — so each spelling keeps mapping to its own existing wire.) So this **collapses** the five hardcoded packers + three inverse cases + two JS copies into **one data-driven complex↔wire codec** — it does not remove packing (the wire is permanent). Net is still a large deletion (~150+ lines of per-`fn_index` ladders → one codec), framed as "make packing data-driven and singular," gated by **byte-identical fingerprints over the saved-program corpus**.
 
 The codec must reproduce **each function's exact existing lane usage**, which is genuinely heterogeneous — there is no single "complex → lanes" rule:
 - `affine`, and the **new** complex form of `linear`/`pow`, carry the imaginary parts in `args_im` (`_compile_affine:1064`; `_affine_pair_legacy_args:1243`);
@@ -379,8 +379,8 @@ Param frontend catalogs are currently in:
 Important Param metadata:
 
 - `_ppCatalog`: Param Program chip-ish metadata.
-- `_paramProgramLegacyNames`: legacy Param transform names.
-- `_paramProgramLegacyArgSpecs`: per-legacy-transform argument specs.
+- `_paramProgramLegacyNames`: legacy Param transform names, but stale/incomplete until replaced by `window._paramRegistryVocab`.
+- `_paramProgramLegacyArgSpecs`: per-legacy-transform argument specs, but hand-copied and incomplete until replaced by generated Param registry data.
 - `_ptCatalog`: legacy Param transform labels/categories/descriptions.
 - `_ptInfo`: additional legacy transform descriptions merged into `_ptCatalog`.
 
@@ -879,7 +879,7 @@ Every article must show:
 - `legacy(name, src, tgt, ...)`
 - `src` choices
 - `tgt` choices
-- transform-specific args from `_paramProgramLegacyArgSpecs`
+- transform-specific args from generated `window._paramRegistryVocab`, with `_paramProgramLegacyArgSpecs` treated only as a pre-refactor compatibility source
 - defaults
 - short transform description from `_ptCatalog` / `_ptInfo`
 
@@ -1391,12 +1391,13 @@ The generated Param grammar supplies names, aliases, valid forms, targets, choic
 
 ### Step 4: Add Param Legacy Transform Articles
 
-Generate one article per legacy transform from:
+Generate one article per legacy transform from the new generated Param registry vocabulary:
 
-- `_paramProgramLegacyNames`
-- `_paramProgramLegacyArgSpecs`
-- `_ptCatalog`
-- `_ptInfo`
+- `window._paramRegistryVocab` emitted by `gen_param_vocab.py` from `param_legacy_registry.json` + `program_profiles.json`
+- Param legacy arg metadata, target-arg indexes, aliases, and descriptions carried by that generated artifact
+- `_ptCatalog` / `_ptInfo` only until their useful prose is folded into the generated registry payload or a small authored-prose overlay
+
+Do **not** build new Help on `_paramProgramLegacyNames` or `_paramProgramLegacyArgSpecs`. The code check confirms those JS lists still exist today, but they are stale: `_paramProgramLegacyNames` has 48 entries while the registry has 70, and `lambda/gen_param_vocab.py` does not exist yet. Step 4 starts after AP-2's generator work.
 
 Wrap each transform in the real source call shape:
 

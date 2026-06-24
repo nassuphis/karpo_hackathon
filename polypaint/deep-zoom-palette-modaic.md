@@ -120,6 +120,8 @@ function _allPalRebuild() { return _rebuildArtifactMosaic('palette'); }
 
 Do not copy/paste the existing `AllRenders` controller into a second file. The state, polling, logging, OSD setup, tile-source generation, and click handling are the same shape.
 
+Use separate OpenSeadragon viewer instances for `AllCol`, `AllPal`, and `DeepZoom`. The simplest v1 lifecycle is to keep each mosaic viewer alive after it is first opened; OSD only keeps visible tiles resident, so this is acceptable for current scale. If memory becomes visible in browser testing, add an explicit tab-switch teardown for the inactive mosaic viewer, but do not share `_osdViewer` with DeepZoom.
+
 ### Size Semantics
 
 `AllCol` size filter:
@@ -139,6 +141,7 @@ Do not copy/paste the existing `AllRenders` controller into a second file. The s
   - every distinct preview PNG size observed in the manifest
 - This is a preview wall, not an actual full-palette wall. Compute `N` is irrelevant for the size dropdown.
 - Filter by actual `preview_width/preview_height`.
+- In practice, most palette previews are 512px. The Size control is therefore a preview-size diagnostic/filter, not the primary palette organization axis. If the manifest has only one observed preview size, disable the dropdown or leave it as `All` plus the single size; do not spend UI complexity on it.
 
 Tile geometry is based on actual preview dimensions:
 
@@ -148,7 +151,7 @@ Tile geometry is based on actual preview dimensions:
 
 This keeps `AllPal` honest: the wall displays thumbnails, so the filter groups thumbnails by thumbnail size.
 
-The manifest should carry `metric` and `palette` because they are useful future filter/sort axes. Generic compute fields such as `N` may still be present because the builder already reads `calc.json`, but AllPal must not use `N` for size filtering or tile geometry.
+The manifest should carry `metric` and `palette` because they are the more meaningful future palette grouping axes. Generic compute fields such as degree and `N` may still be present because the builder already reads `calc.json`; they can be used for sorting, but AllPal must not use `N` for size filtering or tile geometry.
 
 ## Backend Implementation Steps
 
@@ -174,7 +177,7 @@ MOSAIC_INTERNAL_ACTIONS = {
 }
 ```
 
-Update these helpers to accept `kind`:
+Update these helpers and entry-point bodies to accept `kind`:
 
 - `_mosaic_status_item(kind, status)`
 - `_mosaic_status_from_item(item)`
@@ -186,6 +189,8 @@ Update these helpers to accept `kind`:
 - `_error_mosaic_status(kind, refresh_id, existing, exc)`
 - `_progress_mosaic_status(kind, refresh_id, existing, ...)`
 - `_prune_mosaic_manifests(kind, keep_refresh_ids=...)`
+- `_handle_list_mosaic(event, kind)`
+- `_run_mosaic_worker(kind, refresh_id)`
 
 Keep wrappers for clarity:
 
@@ -195,11 +200,54 @@ def _start_color_mosaic_refresh():
 
 def _start_palette_mosaic_refresh():
     return _start_mosaic_refresh("palette")
+
+def handle_list_color_mosaic(event):
+    return _handle_list_mosaic(event, "color")
+
+def handle_list_palette_mosaic(event):
+    return _handle_list_mosaic(event, "palette")
 ```
 
-The existing color route must continue to return the same response shape.
+The existing color route must continue to return the same response shape, but it should now run through `_handle_list_mosaic(event, "color")`. Likewise, the existing internal color action should run through `_run_mosaic_worker("color", refresh_id)`. This is the real genericization checkpoint: color and palette must share the route body and worker body, with only thin public wrappers left.
 
-Progress writes must remain throttled. The current color worker reports every batch of jobs/artifacts, not once per artifact. Preserve that cadence for palette; each progress event is a conditional DynamoDB `put_item`, so per-artifact progress would become write-noise during large refreshes.
+Target shape:
+
+```python
+def _handle_list_mosaic(event, kind):
+    params = parse_body(event)
+    refresh = parse_boolish(params.get("refresh"), False)
+    if refresh:
+        return ok_response(_start_mosaic_refresh(kind))
+    return ok_response(_read_mosaic_status(kind, consistent=True))
+
+
+def _run_mosaic_worker(kind, refresh_id):
+    existing = _read_mosaic_status(kind, consistent=True)
+
+    def publish_progress(**kwargs):
+        _put_owned_mosaic_status(
+            kind,
+            _progress_mosaic_status(kind, refresh_id, existing, **kwargs),
+            refresh_id,
+        )
+
+    manifest = _build_mosaic_manifest(kind, refresh_id, progress_cb=publish_progress)
+    s3.put_object(
+        Bucket=BUCKET,
+        Key=manifest["manifest_key"],
+        Body=json.dumps(manifest, separators=(",", ":"), ensure_ascii=False).encode("utf-8"),
+        ContentType="application/json",
+        CacheControl="no-cache, max-age=0",
+    )
+    status = _ready_mosaic_status(kind, refresh_id, manifest, existing)
+    _put_owned_mosaic_status(kind, status, refresh_id)
+    _prune_mosaic_manifests(kind, keep_refresh_ids={refresh_id})
+    return status
+```
+
+The code above is illustrative, not a copy/paste final implementation; the actual implementation still needs the existing conditional-failure/error handling. The point is structural: one handler body and one worker body serve both kinds.
+
+Progress writes must remain throttled. The current color worker reports every batch of jobs/artifacts, not once per artifact. Preserve that cadence for palette; each progress event is a conditional DynamoDB `put_item`, so per-artifact progress would become write-noise during large refreshes. Each throttled progress write must also refresh `updated_at_ms`; that timestamp is the active-lock heartbeat that prevents another refresh from treating the worker as stale during a long crawl.
 
 ### 2. Keep the Existing Color Builder Working
 
@@ -342,9 +390,9 @@ Sort manifest tiles by:
 2. `job_id`
 3. `palette_id`
 
-### 5. Add Palette Worker Entry Point
+### 5. Route Internal Worker Actions Through the Generic Worker
 
-Update the storage Lambda internal-action branch:
+Update the storage Lambda internal-action branch so both color and palette use `_run_mosaic_worker`:
 
 ```python
 if event.get("internal_action") == "build_color_mosaic":
@@ -357,11 +405,18 @@ Keep the old color action name for deployed/in-flight compatibility.
 
 ### 6. Add Palette API Route
 
-Add:
+Add the palette wrapper:
 
 ```python
 def handle_list_palette_mosaic(event):
     return _handle_list_mosaic(event, "palette")
+```
+
+Also convert the existing color wrapper, if not already done:
+
+```python
+def handle_list_color_mosaic(event):
+    return _handle_list_mosaic(event, "color")
 ```
 
 Route dispatch:
@@ -433,6 +488,7 @@ Add a sibling panel:
       <option value="job">Job</option>
       <option value="function">Function</option>
       <option value="degree">Degree</option>
+      <option value="N">N</option>
       <option value="random">Random</option>
     </select>
     <label style="font-size:11px; color:#aaa">Cols</label>
@@ -572,29 +628,26 @@ This avoids both bad cases:
 
 ### 8. Click Behavior
 
-Color click:
+The click handler should be generic and use the per-kind config:
 
 ```js
-await _ensureResultsSelection(tile.job_id);
-switchTab('render');
-await refreshRenderArtifacts(tile.job_id, {
-    selectFamily: 'color',
-    selectArtifactId: tile.artifact_id,
-});
+async function _artifactMosaicCanvasClick(kind, event) {
+    const cfg = ARTIFACT_MOSAICS[kind];
+    const state = _artifactMosaicState[kind];
+    const tile = _tileFromMosaicClick(kind, event);
+    if (!cfg || !state || !tile || !tile.job_id) return;
+    const artifactId = cfg.selectArtifactId(tile);
+    if (!artifactId) return;
+    await _ensureResultsSelection(tile.job_id);
+    switchTab('render');
+    await refreshRenderArtifacts(tile.job_id, {
+        selectFamily: cfg.family,
+        selectArtifactId: artifactId,
+    });
+}
 ```
 
-Palette click:
-
-```js
-await _ensureResultsSelection(tile.job_id);
-switchTab('render');
-await refreshRenderArtifacts(tile.job_id, {
-    selectFamily: 'palette',
-    selectArtifactId: tile.palette_id || tile.artifact_id,
-});
-```
-
-This satisfies the requirement: clicking a palette in `AllPal` moves to Render, opens the Palette subtab, and selects the specific palette artifact.
+For `AllCol`, `cfg.family` is `color`. For `AllPal`, `cfg.family` is `palette`, so clicking a palette moves to Render, opens the Palette subtab, and selects the specific palette artifact. Do not maintain separate copy/pasted click handlers.
 
 ### 9. Script Registration
 
@@ -643,10 +696,12 @@ Extend `tests/test_frontend_js.sh`:
 3. `AllPal` loads `/list-palette-mosaic`.
 4. `AllPal` populates the size dropdown from `manifest.sizes`.
 5. `AllPal` exact-size filter filters by `preview_width/preview_height`.
-6. `AllPal` tile source uses actual preview dimensions.
-7. `AllPal` click calls `refreshRenderArtifacts(jobId, { selectFamily:"palette", selectArtifactId: paletteId })`.
-8. Switching tabs does not destroy the DeepZoom viewer or the other mosaic viewer.
-9. Status polling/progress text works independently for color and palette.
+6. `AllPal` with only one observed preview size disables the size dropdown or leaves it as an inert `All`/single-size control.
+7. `AllPal` `N` sort uses copied compute metadata but does not affect size filtering or tile geometry.
+8. `AllPal` tile source uses actual preview dimensions.
+9. `AllPal` click calls `refreshRenderArtifacts(jobId, { selectFamily:"palette", selectArtifactId: paletteId })`.
+10. Switching tabs does not destroy the DeepZoom viewer or the other mosaic viewer.
+11. Status polling/progress text works independently for color and palette.
 
 Update frontend parts contract:
 
@@ -671,8 +726,8 @@ Predeploy should catch:
 1. Rename visible `AllRenders` tab and DOM ids to `AllCol`.
 2. Refactor `js/13-allrenders.js` into a generic artifact mosaic controller. Rename the file only if the extra include/parts churn is worth it.
 3. Keep color behavior passing with only name changes. This is a hard checkpoint before palette work.
-4. Generalize backend mosaic status helpers by `kind`.
-5. Keep `/list-color-mosaic` passing with the generic backend path.
+4. Generalize backend mosaic status helpers, `_handle_list_mosaic`, and `_run_mosaic_worker` by `kind`.
+5. Move `/list-color-mosaic` and `build_color_mosaic` onto the generic backend path and keep them passing before adding palette behavior.
 6. Add low-level palette prefix/entry helpers and refactor `_list_saved_palettes` to use them.
 7. Add `_build_palette_mosaic_manifest`.
 8. Add palette internal worker action.

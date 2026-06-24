@@ -92,7 +92,7 @@ This avoids losing the current color manifest/status state while still separatin
 
 Refactor the frontend from one hardcoded `AllRenders` controller into a generic artifact mosaic controller.
 
-Recommended file rename:
+Optional file rename:
 
 - `js/13-allrenders.js` -> `js/13-artifact-mosaics.js`
 
@@ -101,6 +101,8 @@ Part registration becomes:
 ```js
 ;(window.__ppParts = window.__ppParts || []).push('13-artifact-mosaics');
 ```
+
+This rename is cleaner, but it is not required for functionality. If reducing churn is more important, keep `js/13-allrenders.js`, genericize it internally, and leave the script include/parts registration alone. The user-visible rename is the tab label and function names, not necessarily the physical file name.
 
 Expose small wrappers:
 
@@ -128,25 +130,25 @@ Do not copy/paste the existing `AllRenders` controller into a second file. The s
   - `1024`
 - Filter by actual `preview_width/preview_height`.
 - Tile geometry must use the actual selected tile size. This is what fixed the old 1024 upper-left-quarter bug.
+- In `All` mode, mixed 512 and 1024 color previews still use one uniform OpenSeadragon cell size. The current implementation uses the largest observed preview size, so 512 previews appear enlarged in 1024 cells. That is acceptable for `All`; exact-size filters are the crisp path.
 
 `AllPal` size filter:
 
 - Dynamic choices:
   - `All`
-  - every distinct `N` value observed in the result set
-- `N` is the param-square size from `renders/<job_id>/calc.json`.
-- Store this as `palette_size` in each manifest tile.
-- Filter by `palette_size`.
+  - every distinct preview PNG size observed in the manifest
+- This is a preview wall, not an actual full-palette wall. Compute `N` is irrelevant for the size dropdown.
+- Filter by actual `preview_width/preview_height`.
 
-Tile geometry must still be based on actual preview dimensions:
+Tile geometry is based on actual preview dimensions:
 
 - Store `preview_width` and `preview_height` from the PNG header when available.
-- Store `palette_size` from calc `N`.
-- For exact-size palette filters, use the actual preview size if it is known.
-- If PNG dimensions are unavailable, fall back to `palette_size` and increment `unknown_dimensions`.
-- If actual preview size differs from `palette_size`, keep the tile but count it in `preview_size_mismatch`. The dropdown still filters by `palette_size`; the OSD tile source uses actual preview dimensions to avoid cropping.
+- For exact-size palette filters, use the selected preview size as tile geometry.
+- If PNG dimensions are unavailable, fall back to `512` and increment `unknown_dimensions`.
 
-This gives the user the requested `N`-based palette grouping without lying to OpenSeadragon about tile dimensions.
+This keeps `AllPal` honest: the wall displays thumbnails, so the filter groups thumbnails by thumbnail size.
+
+The manifest should carry `metric` and `palette` because they are useful future filter/sort axes. Generic compute fields such as `N` may still be present because the builder already reads `calc.json`, but AllPal must not use `N` for size filtering or tile geometry.
 
 ## Backend Implementation Steps
 
@@ -196,6 +198,8 @@ def _start_palette_mosaic_refresh():
 ```
 
 The existing color route must continue to return the same response shape.
+
+Progress writes must remain throttled. The current color worker reports every batch of jobs/artifacts, not once per artifact. Preserve that cadence for palette; each progress event is a conditional DynamoDB `put_item`, so per-artifact progress would become write-noise during large refreshes.
 
 ### 2. Keep the Existing Color Builder Working
 
@@ -259,6 +263,8 @@ Palette entry requirements:
 
 Missing `meta.json` means skip the palette artifact. Missing image means skip. Missing preview means skip unless the image itself is safe to use as the tile source; v1 should skip to match color wall behavior.
 
+Some older palette `meta.json` files may not contain every field in the list above. Treat `metric`, `palette`, `render_reusable`, `data_layout`, and score/source fields as optional metadata, not hard validation requirements.
+
 ### 4. Build Palette Manifest
 
 Add:
@@ -293,9 +299,8 @@ Each tile should include:
   "degree": 35,
   "N": 1024,
   "times": 1,
-  "palette_size": 1024,
-  "preview_width": 1024,
-  "preview_height": 1024,
+  "preview_width": 512,
+  "preview_height": 512,
   "image_key": "renders/<job>/palettes/<palette>/image.jpeg",
   "metric": "...",
   "palette": "...",
@@ -316,19 +321,20 @@ Manifest should include:
   "refresh_id": "...",
   "manifest_key": "renders/_index/palette_mosaic/<refresh_id>/all.json",
   "manifest_kind": "all",
-  "dimension_filter": "palette-size",
+  "dimension_filter": "preview-size",
   "count": 123,
-  "sizes": [512, 1024, 2048],
-  "size_counts": {"512": 80, "1024": 40, "2048": 3},
-  "source_counts": {"512x512": 80, "1024x1024": 40, "unknown": 3},
+  "sizes": [512],
+  "size_counts": {"512": 123},
+  "source_counts": {"512x512": 123},
   "skipped_missing_preview": 0,
   "skipped_missing_image": 0,
   "skipped_missing_meta": 0,
   "unknown_dimensions": 0,
-  "preview_size_mismatch": 0,
   "tiles": []
 }
 ```
+
+Do not include `0` or unknown dimensions in `sizes`. If preview dimensions cannot be read, keep the tile in `All`, increment `unknown_dimensions`, and exclude it from exact-size filters.
 
 Sort manifest tiles by:
 
@@ -406,6 +412,8 @@ Visible strings:
 - `Computing AllRenders mosaic` -> `Computing AllCol mosaic`
 - `AllRenders load failed` -> `AllCol load failed`
 
+Regression gate: after this rename and before any palette backend work, run the existing color mosaic frontend tests and verify `/list-color-mosaic` still loads and opens the wall. The rename touches deployed working code, so catch stale `allrenders-*` references before adding `AllPal`.
+
 ### 3. Add Palette Panel
 
 Add a sibling panel:
@@ -425,7 +433,6 @@ Add a sibling panel:
       <option value="job">Job</option>
       <option value="function">Function</option>
       <option value="degree">Degree</option>
-      <option value="N">N</option>
       <option value="random">Random</option>
     </select>
     <label style="font-size:11px; color:#aaa">Cols</label>
@@ -519,6 +526,7 @@ Rules:
 - Add numeric sizes sorted ascending.
 - Use labels like `512`, `1024`, `2048`.
 - If no sizes are present, leave only `All`.
+- Exclude null/zero/unknown sizes from the dropdown. Unknown-size palettes stay visible in `All` only.
 
 Color keeps static `512` and `1024`.
 
@@ -538,7 +546,7 @@ Palette:
 ```js
 if (kind === 'palette' && size !== 'all') {
     const n = Number(size);
-    tiles = tiles.filter(t => Number(t.palette_size) === n);
+    tiles = tiles.filter(t => Number(t.preview_width) === n && Number(t.preview_height) === n);
 }
 ```
 
@@ -560,7 +568,7 @@ function _mosaicTileSize(kind, tiles) {
 This avoids both bad cases:
 
 - A 1024 image rendered with `tileSize=512` only shows the upper-left quarter.
-- A palette filtered by `N` still displays correctly if the preview image dimension differs from `N`.
+- Palette filters use the preview size itself, so compute `N` cannot leak into tile geometry.
 
 ### 8. Click Behavior
 
@@ -612,11 +620,11 @@ Add/extend storage handler tests:
 3. `/list-palette-mosaic` with `{refresh:true}` creates `palette_mosaic_status`, not `color_mosaic_status`.
 4. Palette worker writes manifest under:
    - `renders/_index/palette_mosaic/<refresh_id>/all.json`
-5. Palette manifest includes `sizes` and `size_counts` from calc `N`.
-6. Palette manifest tile includes `palette_size`, `preview_width`, `preview_height`, `palette_id`, `job_id`, `image_key`, `key`.
+5. Palette manifest includes `sizes` and `size_counts` from actual preview PNG dimensions.
+6. Palette manifest tile includes `preview_width`, `preview_height`, `palette_id`, `job_id`, `image_key`, `key`, and informational compute fields such as `N`.
 7. Missing `meta.json` skips a palette and increments `skipped_missing_meta`.
 8. Missing preview skips a palette and increments `skipped_missing_preview`.
-9. Mismatched preview dimension vs `N` keeps the tile and increments `preview_size_mismatch`.
+9. Missing/unreadable preview dimensions do not create a literal `0` dropdown entry; tile remains in `All`, increments `unknown_dimensions`, and is excluded from exact-size filters.
 10. Manifest pruning is kind-scoped: pruning palette manifests must not delete color manifests.
 11. Existing render-summary and list-palettes tests still pass.
 
@@ -634,7 +642,7 @@ Extend `tests/test_frontend_js.sh`:
 2. `AllCol` exact `1024` filter uses `tileSize=1024`.
 3. `AllPal` loads `/list-palette-mosaic`.
 4. `AllPal` populates the size dropdown from `manifest.sizes`.
-5. `AllPal` exact-size filter filters by `palette_size`.
+5. `AllPal` exact-size filter filters by `preview_width/preview_height`.
 6. `AllPal` tile source uses actual preview dimensions.
 7. `AllPal` click calls `refreshRenderArtifacts(jobId, { selectFamily:"palette", selectArtifactId: paletteId })`.
 8. Switching tabs does not destroy the DeepZoom viewer or the other mosaic viewer.
@@ -661,8 +669,8 @@ Predeploy should catch:
 ## Implementation Order
 
 1. Rename visible `AllRenders` tab and DOM ids to `AllCol`.
-2. Rename/refactor `js/13-allrenders.js` into generic artifact mosaic controller.
-3. Keep color behavior passing with only name changes.
+2. Refactor `js/13-allrenders.js` into a generic artifact mosaic controller. Rename the file only if the extra include/parts churn is worth it.
+3. Keep color behavior passing with only name changes. This is a hard checkpoint before palette work.
 4. Generalize backend mosaic status helpers by `kind`.
 5. Keep `/list-color-mosaic` passing with the generic backend path.
 6. Add low-level palette prefix/entry helpers and refactor `_list_saved_palettes` to use them.
@@ -691,9 +699,10 @@ This is straightforward because the hard part already exists in the color mosaic
 The real risks are narrow:
 
 1. Accidentally duplicating the color mosaic instead of genericizing it.
-2. Using palette `N` as tile geometry when actual preview dimensions differ.
+2. Letting compute `N` leak into AllPal size filtering or tile geometry even though the wall displays preview PNGs.
 3. Calling `_list_saved_palettes` directly and generating thousands of unused presigned URLs.
 4. Sharing one OSD viewer between `AllCol`, `AllPal`, and `DeepZoom`.
 5. Forgetting route/script registration, leaving the feature present locally but absent in deploy.
+6. Letting the UI rename break the already-shipped color wall because a stale `allrenders-*` reference was missed.
 
 If the implementation follows the steps above, this should be a low-to-medium risk feature, not a redesign.

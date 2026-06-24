@@ -85,6 +85,7 @@ Allowed:
 - Render help from `_paramProgramCheatSections`, `_coeffProgramCheatSections`, `_ptCatalog`, `_ctCatalog`, `_coeffRegistryVocab`, and `window._coeffFuncCatalog`.
 - Add `help`, `signature`, `examples`, `returns`, `aliases`, `params`, `bounds`, or `category` fields to registries when missing.
 - Generate a docs artifact from the same registry later if wanted.
+- Render a clear degraded state if a registry root is absent, e.g. `_coeffRegistryVocab === null`. Missing registry roots are not the same as sparse per-item metadata and must not crash the editor.
 
 Not allowed:
 
@@ -165,9 +166,11 @@ Generate sections from registries and parser vocabulary:
 Generate sections from:
 
 - `_coeffProgramCheatSections` for starter snippets.
-- `_coeffRegistryVocab` for grammar vocabulary.
+- `_coeffRegistryVocab` for grammar vocabulary, through the existing accessor helpers where possible.
 - `_ctCatalog` for native transform signatures and params.
 - `window._coeffFuncCatalog` only for coefficient-function metadata, not coeff-program syntax.
+
+If `_coeffRegistryVocab === null`, render a visible `Coeff registry not loaded` row in the Help tab and continue rendering any available static/derived sections that do not require the vocab. Do not render an empty panel and do not throw.
 
 Required sections:
 
@@ -189,12 +192,13 @@ Required sections:
 - Stack ops:
   - `dup`, `swap`, `drop`, `flush`, `pop`, `peek`
 - Vector ops:
-  - generated from `_coeffRegistryVocab.structuralChips`.
-  - include aliases from `source_aliases`.
+  - generated via `_coeffStructuralChip(...)`, `_coeffFamilySubOps(...)`, and `_coeffRegistrySourceName(...)`.
+  - do not parse `_coeffRegistryVocab.structuralChips` fields directly in the help renderer.
+  - include aliases through the existing source-name/alias accessors so help, snippets, and serialization do not drift.
 - Native transforms:
   - generated from `_ctCatalog`.
   - include params and defaults.
-  - explicitly show `andy` when applicable.
+  - render `_ctCatalog[name].params` or `_coeffProgramParamDefs(name)` directly. `andy` is already appended to every registry transform by catalog construction, so the help renderer should not special-case it.
 - Coefficient function params:
   - generated from `window._coeffFuncCatalog`.
   - show only entries with `params.length > 0` in a compact "Function params" section.
@@ -235,6 +239,12 @@ If a registry lacks a field:
 - Add a test that the help renderer tolerates missing fields.
 - Add metadata incrementally where the UI feels too bare.
 
+If a whole registry root is missing:
+
+- `_coeffRegistryVocab === null` must produce a visible degraded help state.
+- `_ctCatalog` / `_ctCategoryMeta` fallback empties are acceptable, but the Help tab should still explain that coeff registry-backed help is unavailable.
+- Add a frontend test that forces `_coeffRegistryVocab = null` and verifies the Coeff Help tab does not crash.
+
 ## Double-Click Inspector
 
 Add double-click handlers to:
@@ -254,7 +264,8 @@ function _closeProgramHelpPopup() { ... }
 Interaction:
 
 - Double-click a word/token in the textarea.
-- Determine token under cursor using `selectionStart`.
+- First read the browser-selected text with `textarea.value.slice(selectionStart, selectionEnd)`. Native textarea double-click already selects the word/token in most browsers.
+- Fall back to word-boundary scanning around `selectionStart` only when the selection is empty, e.g. for a future keyboard-triggered inspector.
 - Normalize token:
   - strip whitespace.
   - for `poly[0]`, lookup `poly` and indexed-write/read help.
@@ -316,7 +327,7 @@ function _programHelpRegistry(which) {
 Invalidate after catalog load if needed:
 
 - `populateDropdown()` currently runs after `window._coeffFuncCatalog` is available.
-- Call `_programHelpRegistryCache.cp = null` before rendering coeff help if function catalog is updated.
+- The concrete hook is `populateDropdown()`: set `_programHelpRegistryCache.cp = null` there, immediately before re-rendering coeff help/side panels. That is the one place the UI knows the generated coefficient-function catalog has changed.
 
 ## Source Organization
 
@@ -351,6 +362,7 @@ Add frontend harness checks in `tests/test_frontend_js.sh`:
 
 - `Starter` tab renders existing snippet buttons.
 - `Help` tab renders generated sections for Param and Coeff.
+- Coeff Help tolerates `_coeffRegistryVocab === null`, shows a `Coeff registry not loaded` state, and does not throw.
 - Coeff Help includes `andy` from registry-derived metadata, not hardcoded UI prose.
 - Coeff Help includes coefficient-function params from `window._coeffFuncCatalog`, e.g. `giga_139` params.
 - Double-click `poly` in `cp-source-text` opens inspector with `poly` help.
@@ -360,7 +372,7 @@ Add frontend harness checks in `tests/test_frontend_js.sh`:
 
 Optional Python/catalog tests:
 
-- `tests/test_coeff_catalog_consistency.py` can assert that every `params` entry in `coeff_func_catalog.json` has a `name` and `default`.
+- `tests/test_coeff_catalog_consistency.py` should assert that every `params` entry in `coeff_func_catalog.json` has a `name` and `default`. This passes today and becomes a cheap guard for generated coefficient-function help.
 - Add registry consistency tests only if new required help fields are introduced.
 
 ## Implementation Order

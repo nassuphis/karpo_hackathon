@@ -688,6 +688,354 @@ const _coeffProgramCheatSections = [
     },
 ].concat(_coeffNativeTransformCheatSections());
 
+let _programSourceSidePanelMode = { pp: 'starter', cp: 'starter' };
+let _programHelpRegistryCache = { pp: null, cp: null };
+let _programHelpInspectorBound = false;
+
+function _programHelpParamName(param, idx = 0) {
+    return String((param && (param.name || param.ph || param.label)) || `p${idx + 1}`);
+}
+
+function _programHelpParamDefault(param) {
+    if (!param) return '';
+    if (param.default !== undefined) return String(param.default);
+    if (param.def !== undefined) return String(param.def);
+    return '';
+}
+
+function _programHelpParamText(param, idx = 0) {
+    const name = _programHelpParamName(param, idx);
+    const def = _programHelpParamDefault(param);
+    return def === '' ? name : `${name}=${def}`;
+}
+
+function _programHelpItem(name, signature, help = '', options = {}) {
+    const aliases = Array.isArray(options.aliases) ? options.aliases.filter(Boolean).map(String) : [];
+    const params = Array.isArray(options.params) ? options.params : [];
+    const examples = Array.isArray(options.examples) ? options.examples.filter(Boolean).map(String) : [];
+    return {
+        name: String(name || ''),
+        signature: String(signature || name || ''),
+        help: String(help || ''),
+        category: String(options.category || ''),
+        aliases,
+        params,
+        examples,
+        insert: options.insert || examples[0] || '',
+        missing: !!options.missing,
+    };
+}
+
+function _newProgramHelpRegistry() {
+    return { sections: [], lookup: new Map() };
+}
+
+function _programHelpAddSection(registry, title, items) {
+    const filtered = (items || []).filter(item => item && item.name);
+    if (!filtered.length) return;
+    registry.sections.push({ title, items: filtered });
+    filtered.forEach(item => {
+        const keys = [item.name].concat(item.aliases || []);
+        (item.params || []).forEach((param, idx) => {
+            const paramName = _programHelpParamName(param, idx);
+            if (paramName) keys.push(paramName);
+            if (param && param.ph) keys.push(param.ph);
+            if (param && param.label) keys.push(param.label);
+        });
+        keys.forEach(key => {
+            const norm = _normalizeProgramHelpToken(key);
+            if (norm && !registry.lookup.has(norm)) registry.lookup.set(norm, item);
+        });
+    });
+}
+
+function _programHelpItemsFromCheatSection(section, category = '') {
+    return (section.buttons || []).map(btn => _programHelpItem(
+        btn.label,
+        btn.label,
+        btn.title || '',
+        {
+            category,
+            examples: btn.snippet ? [btn.snippet] : [],
+        },
+    ));
+}
+
+function _programHelpBuildParamRegistry() {
+    const registry = _newProgramHelpRegistry();
+    _programHelpAddSection(registry, 'Core Symbols', [
+        _programHelpItem('t1', 't1', 'Input parameter 1.'),
+        _programHelpItem('t2', 't2', 'Input parameter 2.'),
+        _programHelpItem('p1', 'p1', 'Output/current parameter register 1.'),
+        _programHelpItem('p2', 'p2', 'Output/current parameter register 2.'),
+        _programHelpItem('pi', 'pi', 'π constant.'),
+        _programHelpItem('pi2', 'pi2', '2π constant.'),
+        _programHelpItem('pi2i', 'pi2i', '2πi complex constant.'),
+    ]);
+    (_paramProgramCheatSections || []).forEach(section => {
+        _programHelpAddSection(registry, section.title, _programHelpItemsFromCheatSection(section, section.title));
+    });
+    const legacyItems = (_paramProgramLegacyNames || [])
+        .filter(name => name && name !== 'none')
+        .map(name => {
+            const spec = (_ptCatalog && _ptCatalog[name]) || (_ptInfo && _ptInfo[name]) || {};
+            const params = _paramProgramLegacyArgSpecs[name] || [];
+            const args = params.map((param, idx) => _programHelpParamText(param, idx)).join(', ');
+            return _programHelpItem(
+                name,
+                `legacy(${name}, src, tgt${args ? ', ' + args : ''})`,
+                spec.desc || 'Legacy parameter transform.',
+                { category: spec.category || 'legacy', params, examples: [_paramProgramLegacySnippet(name)] },
+            );
+        });
+    _programHelpAddSection(registry, 'Legacy Transform Reference', legacyItems);
+    return registry;
+}
+
+function _coeffTransformParams(name) {
+    if (typeof _coeffProgramParamDefs === 'function') return _coeffProgramParamDefs(name);
+    const spec = (_ctCatalog && _ctCatalog[name]) || {};
+    return spec.params || [];
+}
+
+function _programHelpBuildCoeffRegistry() {
+    const registry = _newProgramHelpRegistry();
+    if (!_coeffRegistryVocab) {
+        _programHelpAddSection(registry, 'Registry Status', [
+            _programHelpItem('registry', 'Coeff registry not loaded', 'Coeff registry-backed help is unavailable; starter snippets and coefficient-function params may still render.', { missing: true }),
+        ]);
+    }
+    _programHelpAddSection(registry, 'Core Symbols', [
+        _programHelpItem('cf', 'cf', 'Immutable input coefficient vector.'),
+        _programHelpItem('poly', 'poly', 'Current/output coefficient vector.'),
+        _programHelpItem('poly_len', 'poly_len', 'Length of the current coefficient vector.'),
+        _programHelpItem('tos', 'tos[i]', 'Read one element from the top stack vector.'),
+        _programHelpItem('t1', 't1', 'Input parameter 1 in scalar expressions.'),
+        _programHelpItem('t2', 't2', 'Input parameter 2 in scalar expressions.'),
+        _programHelpItem('p1', 'p1', 'Param Program output/register 1 in scalar expressions.'),
+        _programHelpItem('p2', 'p2', 'Param Program output/register 2 in scalar expressions.'),
+    ]);
+    (_coeffProgramCheatSections || []).forEach(section => {
+        _programHelpAddSection(registry, section.title, _programHelpItemsFromCheatSection(section, section.title));
+    });
+    const nativeItems = (_coeffProgramLegacyNames || []).map(name => {
+        const spec = (_ctCatalog && _ctCatalog[name]) || {};
+        const sourceName = _coeffRegistrySourceName(name);
+        const params = _coeffTransformParams(name);
+        const argText = params.map((param, idx) => _programHelpParamText(param, idx)).join(', ');
+        const signature = `${sourceName}(poly${argText ? ', ' + argText : ''})`;
+        return _programHelpItem(
+            sourceName,
+            signature,
+            spec.desc || 'Native coefficient transform.',
+            {
+                aliases: sourceName === name ? [] : [name],
+                category: spec.category || 'native',
+                params,
+                examples: [_coeffNativeTransformSnippet(name)],
+            },
+        );
+    });
+    _programHelpAddSection(registry, 'Native Transform Reference', nativeItems);
+    if (typeof _ctAndyParam !== 'undefined') {
+        _programHelpAddSection(registry, 'Native Transform Params', [
+            _programHelpItem(
+                _programHelpParamName(_ctAndyParam),
+                `${_programHelpParamName(_ctAndyParam)}=${_programHelpParamDefault(_ctAndyParam) || '0'}`,
+                _ctAndyParam.title || 'Blend transformed output with original poly.',
+                { params: [_ctAndyParam] },
+            ),
+        ]);
+    }
+    const functionCatalog = (typeof window !== 'undefined' && window._coeffFuncCatalog) || [];
+    const functionItems = functionCatalog
+        .filter(entry => Array.isArray(entry.params) && entry.params.length)
+        .map(entry => _programHelpItem(
+            entry.name,
+            `${entry.name}(${entry.params.map((param, idx) => _programHelpParamText(param, idx)).join(', ')})`,
+            `Coefficient-function parameters from coeff_func_catalog.json. kind=${entry.kind || 'unknown'} source=${entry.source || 'unknown'}.`,
+            { category: 'coefficient function', params: entry.params },
+        ));
+    _programHelpAddSection(registry, 'Coefficient Function Params', functionItems);
+    return registry;
+}
+
+function _programHelpRegistry(which) {
+    const key = which === 'cp' ? 'cp' : 'pp';
+    if (!_programHelpRegistryCache[key]) {
+        _programHelpRegistryCache[key] = key === 'cp'
+            ? _programHelpBuildCoeffRegistry()
+            : _programHelpBuildParamRegistry();
+    }
+    return _programHelpRegistryCache[key];
+}
+
+function _programHelpParamsHtml(params) {
+    const rows = (params || []).map((param, idx) => {
+        const text = _programHelpParamText(param, idx);
+        const help = param && (param.help || param.title) ? ` title="${_escapeHtml(param.help || param.title)}"` : '';
+        return `<span class="program-help-param"${help}>${_escapeHtml(text)}</span>`;
+    });
+    return rows.length ? `<div class="program-help-meta">${rows.join('')}</div>` : '';
+}
+
+function _programHelpItemHtml(which, item) {
+    const safeSignature = _escapeHtml(item.signature || item.name || '');
+    const safeCategory = item.category ? `<div class="program-help-meta">${_escapeHtml(item.category)}</div>` : '';
+    const safeHelp = item.help ? `<div class="program-help-meta">${_escapeHtml(item.help)}</div>` : '';
+    const params = _programHelpParamsHtml(item.params || []);
+    const insertFn = which === 'cp' ? '_insertCoeffProgramSourceSnippet' : '_insertParamProgramSourceSnippet';
+    const insert = item.insert
+        ? `<button type="button" class="btn-secondary program-source-cheat-button" onclick="${insertFn}(${_escapeHtml(JSON.stringify(String(item.insert)))})">Insert</button>`
+        : '';
+    const cls = item.missing ? ' program-help-item-missing' : '';
+    return `<div class="program-help-item${cls}"><div class="program-help-signature">${safeSignature}</div>${safeCategory}${safeHelp}${params}${insert}</div>`;
+}
+
+function _programHelpSectionHtml(which, section) {
+    const items = (section.items || []).map(item => _programHelpItemHtml(which, item)).join('');
+    if (!items) return '';
+    return `<div class="program-source-cheat-section"><div class="program-source-cheat-title">${_escapeHtml(section.title)}</div>${items}</div>`;
+}
+
+function _renderProgramSourceHelp(which) {
+    const key = which === 'cp' ? 'cp' : 'pp';
+    const el = document.getElementById(`${key}-help`);
+    if (!el) return;
+    const registry = _programHelpRegistry(key);
+    el.innerHTML = (registry.sections || []).map(section => _programHelpSectionHtml(key, section)).join('');
+}
+
+function _setProgramSourceSidePanelMode(which, mode) {
+    const key = which === 'cp' ? 'cp' : 'pp';
+    _programSourceSidePanelMode[key] = mode === 'help' ? 'help' : 'starter';
+    _renderProgramSourceSidePanel(key);
+}
+
+function _renderProgramSourceSidePanel(which) {
+    const key = which === 'cp' ? 'cp' : 'pp';
+    _renderProgramSourceHelp(key);
+    const mode = _programSourceSidePanelMode[key] || 'starter';
+    const starter = document.getElementById(`${key}-cheatsheet`);
+    const help = document.getElementById(`${key}-help`);
+    const starterTab = document.getElementById(`${key}-help-tab-starter`);
+    const helpTab = document.getElementById(`${key}-help-tab-help`);
+    if (starter) starter.hidden = mode !== 'starter';
+    if (help) help.hidden = mode !== 'help';
+    if (starterTab && starterTab.classList) starterTab.classList.toggle('active', mode === 'starter');
+    if (helpTab && helpTab.classList) helpTab.classList.toggle('active', mode === 'help');
+}
+
+function _renderProgramSourceSidePanels() {
+    _renderProgramSourceSidePanel('pp');
+    _renderProgramSourceSidePanel('cp');
+}
+
+function _programSourceTextarea(which) {
+    return which === 'cp' ? _coeffProgramSourceTextarea() : _paramProgramSourceTextarea();
+}
+
+function _normalizeProgramHelpToken(token) {
+    let raw = String(token || '').trim();
+    if (!raw) return '';
+    const paren = raw.indexOf('(');
+    if (paren > 0) raw = raw.slice(0, paren);
+    const bracket = raw.indexOf('[');
+    if (bracket > 0) raw = raw.slice(0, bracket);
+    raw = raw.replace(/^[^A-Za-z0-9_]+|[^A-Za-z0-9_]+$/g, '');
+    return raw.toLowerCase();
+}
+
+function _programWordAtTextareaCursor(textarea) {
+    if (!textarea) return '';
+    const value = String(textarea.value || '');
+    const start = Number.isFinite(textarea.selectionStart) ? textarea.selectionStart : 0;
+    const end = Number.isFinite(textarea.selectionEnd) ? textarea.selectionEnd : start;
+    const selected = start !== end ? value.slice(start, end) : '';
+    if (selected.trim()) return selected.trim();
+    let lo = Math.max(0, start);
+    let hi = Math.max(0, start);
+    const isToken = ch => /[A-Za-z0-9_\[\].]/.test(ch || '');
+    while (lo > 0 && isToken(value[lo - 1])) lo--;
+    while (hi < value.length && isToken(value[hi])) hi++;
+    return value.slice(lo, hi).trim();
+}
+
+function _lookupProgramHelpToken(which, token) {
+    const norm = _normalizeProgramHelpToken(token);
+    if (!norm) return null;
+    const registry = _programHelpRegistry(which === 'cp' ? 'cp' : 'pp');
+    return registry.lookup.get(norm) || null;
+}
+
+function _ensureProgramHelpInspectorHandlers() {
+    if (_programHelpInspectorBound || typeof document === 'undefined' || typeof document.addEventListener !== 'function') return;
+    document.addEventListener('keydown', event => {
+        if (event && event.key === 'Escape') _closeProgramHelpInspector();
+    });
+    document.addEventListener('click', event => {
+        const el = document.getElementById('program-help-inspector');
+        if (!el || el.style.display === 'none' || !event || !event.target) return;
+        if (typeof el.contains === 'function' && el.contains(event.target)) return;
+        _closeProgramHelpInspector();
+    });
+    _programHelpInspectorBound = true;
+}
+
+function _programHelpInspectorContent(which, token, item) {
+    if (!item) {
+        return `
+            <div class="program-help-inspector-head">
+                <div class="program-help-inspector-title">${_escapeHtml(token || 'Unknown token')}</div>
+                <button type="button" class="program-help-inspector-close" onclick="_closeProgramHelpInspector()" aria-label="Close">x</button>
+            </div>
+            <div class="program-help-meta">No generated help for "${_escapeHtml(token || '')}". Try the Help tab for available symbols.</div>
+        `;
+    }
+    return `
+        <div class="program-help-inspector-head">
+            <div class="program-help-inspector-title">${_escapeHtml(item.name || token || '')}</div>
+            <button type="button" class="program-help-inspector-close" onclick="_closeProgramHelpInspector()" aria-label="Close">x</button>
+        </div>
+        ${_programHelpItemHtml(which, item)}
+    `;
+}
+
+function _openProgramHelpInspector(which, token, item, event) {
+    const el = document.getElementById('program-help-inspector');
+    if (!el) return;
+    _ensureProgramHelpInspectorHandlers();
+    el.innerHTML = _programHelpInspectorContent(which, token, item);
+    el.style.display = 'block';
+    if (typeof el.setAttribute === 'function') el.setAttribute('aria-hidden', 'false');
+    const raw = event || {};
+    const x = Number(raw.clientX || 0) || 12;
+    const y = Number(raw.clientY || 0) || 12;
+    el.style.left = `${Math.max(8, x)}px`;
+    el.style.top = `${Math.max(8, y)}px`;
+    const rect = typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : { width: 320, height: 220 };
+    const vw = (typeof window !== 'undefined' && window.innerWidth) || 1200;
+    const vh = (typeof window !== 'undefined' && window.innerHeight) || 800;
+    el.style.left = `${Math.max(8, Math.min(x, vw - Number(rect.width || 320) - 8))}px`;
+    el.style.top = `${Math.max(8, Math.min(y, vh - Number(rect.height || 220) - 8))}px`;
+}
+
+function _closeProgramHelpInspector() {
+    const el = document.getElementById('program-help-inspector');
+    if (!el) return;
+    el.style.display = 'none';
+    if (typeof el.setAttribute === 'function') el.setAttribute('aria-hidden', 'true');
+    el.innerHTML = '';
+}
+
+function _onProgramSourceDblClick(which, event) {
+    const key = which === 'cp' ? 'cp' : 'pp';
+    const textarea = _programSourceTextarea(key);
+    const token = _programWordAtTextareaCursor(textarea);
+    const item = _lookupProgramHelpToken(key, token);
+    _openProgramHelpInspector(key, _normalizeProgramHelpToken(token) || token, item, event || {});
+}
+
 function _renderProgramSourceCheatsheet(elementId, insertFn, sections) {
     const el = document.getElementById(elementId);
     if (!el) return;
@@ -710,6 +1058,7 @@ function _renderCoeffProgramCheatsheet() {
 function _renderParamCoeffProgramCheatsheets() {
     _renderParamProgramCheatsheet();
     _renderCoeffProgramCheatsheet();
+    _renderProgramSourceSidePanels();
 }
 
 let _solveScoreProgramEditorMode = { render: 'text', palette: 'text' };

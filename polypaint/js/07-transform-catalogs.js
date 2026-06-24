@@ -1108,6 +1108,7 @@ function _visibleFunctionCatalog() {
 }
 
 function populateDropdown() {
+    if (typeof _programHelpRegistryCache !== 'undefined') _programHelpRegistryCache.cp = null;
     const sel = document.getElementById('render-function');
     const pickerBtn = document.getElementById('render-function-picker');
     const current = sel && sel.value ? sel.value : '';
@@ -1138,6 +1139,7 @@ function populateDropdown() {
     else if (!sel.value && cat[0]) sel.value = cat[0].name;
     _syncRenderFunctionPicker();
     updateCfpvRow();
+    if (typeof _renderProgramSourceSidePanel === 'function') _renderProgramSourceSidePanel('cp');
 }
 
 function parseCfpv() {

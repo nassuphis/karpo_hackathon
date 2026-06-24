@@ -186,6 +186,18 @@ class TestCoeffCatalogConsistency(unittest.TestCase):
         metrics = json.loads((LAMBDA_DIR / "coeff_func_metrics.json").read_text())
         self.assertEqual(metrics["poly_795"]["agreement_pct"], 100)
 
+    def test_coeff_func_params_have_name_and_default(self):
+        catalog = json.loads((LAMBDA_DIR / "coeff_func_catalog.json").read_text())
+        problems = []
+        for entry in catalog:
+            for idx, param in enumerate(entry.get("params") or []):
+                if not str(param.get("name", "")).strip():
+                    problems.append(f"{entry.get('name', '<unknown>')}.params[{idx}] missing name")
+                if "default" not in param:
+                    problems.append(f"{entry.get('name', '<unknown>')}.params[{idx}] missing default")
+        if problems:
+            self.fail("\n".join(problems))
+
     def test_new_low_agreement_hand_fix_metrics_report_full_agreement(self):
         metrics = json.loads((LAMBDA_DIR / "coeff_func_metrics.json").read_text())
         for name in self.NEW_LOW_AGREEMENT_HAND_FIXES:

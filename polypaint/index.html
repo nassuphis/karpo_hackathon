@@ -951,6 +951,111 @@ button {
     border-radius: 5px;
     scrollbar-color: #0f3460 #111827;
 }
+.program-source-sidepanel {
+    min-height: 220px;
+    height: 220px;
+    max-height: 220px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+.program-source-help-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 5px;
+}
+.program-source-help-tab {
+    margin: 0;
+    padding: 4px 8px;
+    font-size: 10px;
+    border-radius: 999px;
+    background: #18243a;
+    color: #9ca3af;
+}
+.program-source-help-tab.active {
+    background: #e94560;
+    color: #fff;
+}
+.program-source-sidepanel .program-source-cheatsheet,
+.program-source-help {
+    min-height: 0;
+    height: auto;
+    max-height: none;
+    flex: 1 1 auto;
+}
+.program-source-help {
+    box-sizing: border-box;
+    overflow: auto;
+    padding: 8px;
+    background: #0d1324;
+    border: 1px solid #253a5f;
+    border-radius: 5px;
+    scrollbar-color: #0f3460 #111827;
+}
+.program-source-help[hidden],
+.program-source-cheatsheet[hidden] {
+    display: none;
+}
+.program-help-item {
+    border-bottom: 1px solid #1f2f4d;
+    padding: 6px 0;
+}
+.program-help-item:last-child { border-bottom: 0; }
+.program-help-signature {
+    color: #f8fafc;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 11px;
+    margin-bottom: 3px;
+}
+.program-help-meta {
+    color: #9ca3af;
+    font-size: 10px;
+    line-height: 1.35;
+}
+.program-help-param {
+    display: inline-block;
+    margin: 2px 4px 0 0;
+    color: #cbd5e1;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+.program-help-inspector {
+    position: fixed;
+    z-index: 1900;
+    display: none;
+    width: min(360px, calc(100vw - 16px));
+    max-height: min(360px, calc(100vh - 16px));
+    overflow: auto;
+    background: #111827;
+    color: #e0e0e0;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    box-shadow: 0 16px 42px rgba(0,0,0,0.48);
+    padding: 10px;
+    font-size: 12px;
+}
+.program-help-inspector-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 6px;
+}
+.program-help-inspector-title {
+    color: #e94560;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+.program-help-inspector-close {
+    margin: 0;
+    padding: 0 6px;
+    background: transparent;
+    color: #aaa;
+    border: 0;
+    font-size: 16px;
+    line-height: 20px;
+}
 .program-source-grid .coeff-program-source-text {
     min-height: 220px;
     height: 220px;
@@ -1512,8 +1617,15 @@ button {
                 </div>
                 <div id="pp-text-panel" class="coeff-program-editor-panel active">
                     <div class="program-source-grid">
-                        <textarea id="pp-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;p1 = t1 + t2&#10;p2 = exp(t1*pi2i)" oninput="_onParamProgramSourceInput()"></textarea>
-                        <div id="pp-cheatsheet" class="program-source-cheatsheet" aria-label="Param Program source cheatsheet"></div>
+                        <textarea id="pp-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;p1 = t1 + t2&#10;p2 = exp(t1*pi2i)" oninput="_onParamProgramSourceInput()" ondblclick="_onProgramSourceDblClick('pp', event)"></textarea>
+                        <div class="program-source-sidepanel" data-program-help="pp">
+                            <div class="program-source-help-tabs" role="tablist" aria-label="Param Program help tabs">
+                                <button type="button" id="pp-help-tab-starter" class="btn-secondary program-source-help-tab active" onclick="_setProgramSourceSidePanelMode('pp','starter')">Starter</button>
+                                <button type="button" id="pp-help-tab-help" class="btn-secondary program-source-help-tab" onclick="_setProgramSourceSidePanelMode('pp','help')">Help</button>
+                            </div>
+                            <div id="pp-cheatsheet" class="program-source-cheatsheet" aria-label="Param Program source cheatsheet"></div>
+                            <div id="pp-help" class="program-source-help" aria-label="Param Program generated help" hidden></div>
+                        </div>
                     </div>
                 </div>
                 <div id="param-program-status" class="solve-score-program-status"></div>
@@ -1537,8 +1649,15 @@ button {
                 </div>
                 <div id="cp-text-panel" class="coeff-program-editor-panel active">
                     <div class="program-source-grid">
-                        <textarea id="cp-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;cf&#10;rev&#10;emit" oninput="_onCoeffProgramSourceInput()"></textarea>
-                        <div id="cp-cheatsheet" class="program-source-cheatsheet" aria-label="Coeff Program source cheatsheet"></div>
+                        <textarea id="cp-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;cf&#10;rev&#10;emit" oninput="_onCoeffProgramSourceInput()" ondblclick="_onProgramSourceDblClick('cp', event)"></textarea>
+                        <div class="program-source-sidepanel" data-program-help="cp">
+                            <div class="program-source-help-tabs" role="tablist" aria-label="Coeff Program help tabs">
+                                <button type="button" id="cp-help-tab-starter" class="btn-secondary program-source-help-tab active" onclick="_setProgramSourceSidePanelMode('cp','starter')">Starter</button>
+                                <button type="button" id="cp-help-tab-help" class="btn-secondary program-source-help-tab" onclick="_setProgramSourceSidePanelMode('cp','help')">Help</button>
+                            </div>
+                            <div id="cp-cheatsheet" class="program-source-cheatsheet" aria-label="Coeff Program source cheatsheet"></div>
+                            <div id="cp-help" class="program-source-help" aria-label="Coeff Program generated help" hidden></div>
+                        </div>
                     </div>
                 </div>
                 <div id="coeff-program-status" class="solve-score-program-status"></div>
@@ -2122,6 +2241,8 @@ button {
         </div>
     </div>
 </div>
+
+<div id="program-help-inspector" class="program-help-inspector" role="dialog" aria-hidden="true"></div>
 
 <div id="artifact-mosaic-context-menu" class="artifact-mosaic-context-menu" role="menu" aria-hidden="true"></div>
 

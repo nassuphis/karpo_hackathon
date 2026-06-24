@@ -634,6 +634,103 @@ console.log('Frontend fused render source checks: OK');
 NODE
 
 node - "$HTML" <<'NODE'
+const fs = require('fs'), vm = require('vm'), path = require('path');
+const root = path.dirname(process.argv[2]);
+function assert(cond, msg) { if (!cond) throw new Error(msg); }
+function makeEl(id) {
+  return {
+    id,
+    textContent: '',
+    value: '',
+    selectionStart: 0,
+    selectionEnd: 0,
+    hidden: false,
+    style: {},
+    _innerHTML: '',
+    classList: {
+      values: new Set(),
+      toggle(name, on) { if (on) this.values.add(name); else this.values.delete(name); },
+      contains(name) { return this.values.has(name); },
+    },
+    setAttribute(name, value) { this[name] = value; },
+    getBoundingClientRect() { return {width: 280, height: 220}; },
+    contains(node) { return node === this; },
+    set innerHTML(v) { this._innerHTML = String(v || ''); },
+    get innerHTML() { return this._innerHTML; },
+  };
+}
+function makeContext({withCoeffVocab = true} = {}) {
+  const els = {
+    'pp-cheatsheet': makeEl('pp-cheatsheet'),
+    'cp-cheatsheet': makeEl('cp-cheatsheet'),
+    'pp-help': makeEl('pp-help'),
+    'cp-help': makeEl('cp-help'),
+    'pp-help-tab-starter': makeEl('pp-help-tab-starter'),
+    'pp-help-tab-help': makeEl('pp-help-tab-help'),
+    'cp-help-tab-starter': makeEl('cp-help-tab-starter'),
+    'cp-help-tab-help': makeEl('cp-help-tab-help'),
+    'pp-source-text': makeEl('pp-source-text'),
+    'cp-source-text': makeEl('cp-source-text'),
+    'program-help-inspector': makeEl('program-help-inspector'),
+  };
+  const ctx = {
+    console, window: {}, document: {
+      getElementById(id) { return els[id] || null; },
+      addEventListener() {},
+    },
+    Math, JSON, Number, String, Boolean, Array, Object, Map, Set, RegExp,
+    _escapeHtml(value) {
+      return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    },
+  };
+  ctx.window = ctx; ctx.globalThis = ctx;
+  vm.createContext(ctx);
+  if (withCoeffVocab) vm.runInContext(fs.readFileSync(path.join(root, 'coeff_vocab_js.js'), 'utf8'), ctx, {filename: 'coeff_vocab_js.js'});
+  vm.runInContext(fs.readFileSync(path.join(root, 'coeff_func_catalog_js.js'), 'utf8'), ctx, {filename: 'coeff_func_catalog_js.js'});
+  vm.runInContext(fs.readFileSync(path.join(root, 'js/06-popup-init.js'), 'utf8'), ctx, {filename: 'js/06-popup-init.js'});
+  vm.runInContext(fs.readFileSync(path.join(root, 'js/07-transform-catalogs.js'), 'utf8'), ctx, {filename: 'js/07-transform-catalogs.js'});
+  vm.runInContext(fs.readFileSync(path.join(root, 'js/08-chip-editors.js'), 'utf8'), ctx, {filename: 'js/08-chip-editors.js'});
+  return {ctx, els};
+}
+
+{
+  const {ctx, els} = makeContext({withCoeffVocab: true});
+  ctx._renderParamCoeffProgramCheatsheets();
+  assert(els['pp-cheatsheet'].innerHTML.includes('identity'), 'Param Starter should render existing snippets');
+  assert(els['cp-cheatsheet'].innerHTML.includes('emit cf'), 'Coeff Starter should render existing snippets');
+  ctx._setProgramSourceSidePanelMode('cp', 'help');
+  assert(els['cp-help'].hidden === false && els['cp-cheatsheet'].hidden === true, 'Coeff Help tab should hide Starter panel');
+  assert(els['cp-help'].innerHTML.includes('poly_len'), 'Coeff Help should include generated core symbols');
+  assert(els['cp-help'].innerHTML.includes('andy'), 'Coeff Help should include andy from generated transform params');
+  assert(els['cp-help'].innerHTML.includes('giga_139') && els['cp-help'].innerHTML.includes('int1=251'), 'Coeff Help should include coefficient-function params');
+  els['cp-source-text'].value = 'poly[0] = andy';
+  els['cp-source-text'].selectionStart = 0;
+  els['cp-source-text'].selectionEnd = 4;
+  ctx._onProgramSourceDblClick('cp', {clientX: 30, clientY: 40});
+  assert(els['program-help-inspector'].style.display === 'block' && els['program-help-inspector'].innerHTML.includes('poly'), 'Double-click poly should open generated inspector help');
+  els['cp-source-text'].selectionStart = 10;
+  els['cp-source-text'].selectionEnd = 14;
+  ctx._onProgramSourceDblClick('cp', {clientX: 30, clientY: 40});
+  assert(els['program-help-inspector'].innerHTML.includes('andy'), 'Double-click andy should open transform-param help');
+  els['cp-source-text'].value = 'not_a_real_token';
+  els['cp-source-text'].selectionStart = 0;
+  els['cp-source-text'].selectionEnd = els['cp-source-text'].value.length;
+  ctx._onProgramSourceDblClick('cp', {clientX: 30, clientY: 40});
+  assert(els['program-help-inspector'].innerHTML.includes('No generated help'), 'Unknown double-click token should show explicit missing-help message');
+}
+
+{
+  const {ctx, els} = makeContext({withCoeffVocab: false});
+  ctx._setProgramSourceSidePanelMode('cp', 'help');
+  assert(els['cp-help'].innerHTML.includes('Coeff registry not loaded'), 'Coeff Help should tolerate a null registry vocab');
+}
+
+console.log('Frontend generated editor help runtime checks: OK');
+NODE
+
+node - "$HTML" <<'NODE'
 const fs = require('fs');
 const vm = require('vm');
 const path = require('path');

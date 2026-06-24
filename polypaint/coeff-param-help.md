@@ -296,7 +296,7 @@ The codec must reproduce **each function's exact existing lane usage**, which is
 
 So the layout is per-function **and** per-source-form. Declare each explicitly in its `compat_signature` and pin it with byte-identical fingerprint tests — a per-function implementation check, not a design gap.
 
-Decision: the **source parser accepts both canonical complex forms and old packed real-component forms** through the same `compat_signatures` table. That is the least surprising migration: no saved `coeff_program_source_text` breaks, canonical serialization still emits the clean complex form, and Help presents the packed forms only as legacy-accepted compatibility notes, not as primary syntax. This keeps compatibility in one data-driven source instead of preserving ad hoc parser branches.
+Decision: the **source parser accepts both canonical complex forms and old packed real-component forms** through the same `compat_signatures` table. That is the least surprising migration: no saved `coeff_program_source_text` breaks, canonical serialization emits the clean complex form **only where it recompiles to byte-identical wire** — for packed shapes whose clean spelling would change the wire (four-real `linear`/`pow`, etc.) it preserves the packed spelling as the canonical one — and Help presents the packed forms only as legacy-accepted compatibility notes, not as primary syntax. This keeps compatibility in one data-driven source instead of preserving ad hoc parser branches.
 
 ### AP-4 · Forward lowering and a hand-written inverse decompiler re-enumerate the same vocabulary
 
@@ -1452,7 +1452,7 @@ Tests should check:
 - Canonical Coeff source serialization emits complex args as complex arguments **only when that source text compiles back to the same fingerprinted wire**. For old packed wire shapes such as four-real `linear`/`pow`, the serializer must preserve a source spelling that round-trips to the same old packed `_token` layout unless a byte-equivalence test proves the clean complex spelling is safe.
 - Old packed real-component compatibility signatures still compile for `linear`, `pow`, `exp`, and `round`.
 - Old packed source forms are accepted only through declared `compat_signatures`; there must be no per-function parser branches for those cases.
-- **The compiled wire/chain and its fingerprint are byte-identical before and after the migration for every program in the saved `calc.json` corpus.** This is the load-bearing gate — a fingerprint change orphans cached render artifacts (the wire is the artifact cache key). "Canonical serialization emits complex args" above means canonical **source text**, never canonical wire.
+- **The compiled wire/chain and its fingerprint are byte-identical before and after the migration for every program in the saved `calc.json` corpus.** This is the load-bearing gate — a fingerprint change orphans cached render artifacts (the wire is the artifact cache key). "Canonical serialization emits complex args" above refers to canonical **source text**, and that canonicalization must be **wire-preserving**: the canonical source must recompile to the same `_token` bytes. Where the clean complex spelling would not (four-real `linear`/`pow`, etc.), the packed spelling *is* the canonical one — source text and wire never diverge.
 - No parser/compiler/frontend path branches on `supports_andy` except the load-time migration shim that creates `effective_args`.
 - All coefficient functions with params expose those params.
 - No duplicate primary article names within a section.

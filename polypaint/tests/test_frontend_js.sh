@@ -700,10 +700,48 @@ function makeContext({withCoeffVocab = true} = {}) {
   ctx._renderParamCoeffProgramCheatsheets();
   assert(els['pp-cheatsheet'].innerHTML.includes('identity'), 'Param Starter should render existing snippets');
   assert(els['cp-cheatsheet'].innerHTML.includes('emit cf'), 'Coeff Starter should render existing snippets');
+  ctx._setProgramSourceSidePanelMode('pp', 'help');
+  assert(els['pp-help'].innerHTML.includes('Param Program Chip Reference'), 'Param Help should include generated chip reference');
+  assert(/push\(src=t1\)/.test(els['pp-help'].innerHTML), 'Param Help should show generated push parameters');
+  assert(/legacy\(moebius[\s\S]{0,160}src=both[\s\S]{0,160}tgt=both[\s\S]{0,160}a=1[\s\S]{0,160}d=1/.test(els['pp-help'].innerHTML), 'Param Help should show legacy selector params plus transform args');
+  const paramHelpAudit = vm.runInContext(`(() => {
+    const reg = _programHelpRegistry('pp');
+    const chipMisses = Object.entries(_ppCatalog || {}).filter(([name, spec]) => {
+      const expected = (spec.params || []).map((param, idx) => _programHelpParamText(param, idx)).join('|');
+      if (!expected) return false;
+      const item = reg.lookup.get(_normalizeProgramHelpToken(name));
+      const actual = (item && item.params || []).map((param, idx) => _programHelpParamText(param, idx)).join('|');
+      return expected !== actual;
+    }).map(([name]) => name);
+    const legacyMisses = (_paramProgramLegacyNames || []).filter(name => {
+      if (!name || name === 'none') return false;
+      const expected = _paramProgramLegacyCallParams(name).map((param, idx) => _programHelpParamText(param, idx)).join('|');
+      const item = reg.lookup.get(_normalizeProgramHelpToken(name));
+      const actual = (item && item.params || []).map((param, idx) => _programHelpParamText(param, idx)).join('|');
+      return expected !== actual;
+    });
+    return {chipMisses, legacyMisses};
+  })()`, ctx);
+  assert(paramHelpAudit.chipMisses.length === 0, `Param chip Help lookup should keep catalog params; misses=${paramHelpAudit.chipMisses.slice(0, 5).join(',')}`);
+  assert(paramHelpAudit.legacyMisses.length === 0, `Param legacy Help lookup should keep selector and transform params; misses=${paramHelpAudit.legacyMisses.slice(0, 5).join(',')}`);
   ctx._setProgramSourceSidePanelMode('cp', 'help');
   assert(els['cp-help'].hidden === false && els['cp-cheatsheet'].hidden === true, 'Coeff Help tab should hide Starter panel');
   assert(els['cp-help'].innerHTML.includes('poly_len'), 'Coeff Help should include generated core symbols');
   assert(els['cp-help'].innerHTML.includes('andy'), 'Coeff Help should include andy from generated transform params');
+  assert(/sort_mod_keep_angle[\s\S]{0,300}andy/.test(els['cp-help'].innerHTML), 'sort_mod_keep_angle help should show its generated andy param');
+  const nativeHelpSparseItems = ctx._programHelpRegistry('cp').sections
+    .filter(section => String(section.title || '').startsWith('Native:'))
+    .flatMap(section => section.items || [])
+    .filter(item => !String(item.signature || '').includes('andy=0'));
+  assert(nativeHelpSparseItems.length === 0, 'Generated native Help sections should render catalog params, not sparse cheat labels');
+  const nativeLookupMisses = (ctx._coeffProgramLegacyNames || []).filter(name => {
+    const sourceName = ctx._coeffRegistrySourceName(name);
+    const item = ctx._programHelpRegistry('cp').lookup.get(ctx._normalizeProgramHelpToken(sourceName));
+    const expected = (ctx._coeffTransformParams(name) || []).map((param, idx) => ctx._programHelpParamText(param, idx)).join('|');
+    const actual = (item && item.params || []).map((param, idx) => ctx._programHelpParamText(param, idx)).join('|');
+    return expected && expected !== actual;
+  });
+  assert(nativeLookupMisses.length === 0, `Generated native lookup should keep catalog params; misses=${nativeLookupMisses.slice(0, 5).join(',')}`);
   assert(els['cp-help'].innerHTML.includes('giga_139') && els['cp-help'].innerHTML.includes('int1=251'), 'Coeff Help should include coefficient-function params');
   els['cp-source-text'].value = 'poly[0] = andy';
   els['cp-source-text'].selectionStart = 0;
@@ -714,6 +752,13 @@ function makeContext({withCoeffVocab = true} = {}) {
   els['cp-source-text'].selectionEnd = 14;
   ctx._onProgramSourceDblClick('cp', {clientX: 30, clientY: 40});
   assert(els['program-help-inspector'].innerHTML.includes('andy'), 'Double-click andy should open transform-param help');
+  els['cp-source-text'].value = 'poly = sort_mod_keep_angle(poly)';
+  els['cp-source-text'].selectionStart = 7;
+  els['cp-source-text'].selectionEnd = 26;
+  ctx._onProgramSourceDblClick('cp', {clientX: 30, clientY: 40});
+  assert(els['program-help-inspector'].innerHTML.includes('sort_mod_keep_angle') &&
+    els['program-help-inspector'].innerHTML.includes('andy=0'),
+    'Double-click sort_mod_keep_angle should resolve to native reference help with andy');
   els['cp-source-text'].value = 'not_a_real_token';
   els['cp-source-text'].selectionStart = 0;
   els['cp-source-text'].selectionEnd = els['cp-source-text'].value.length;

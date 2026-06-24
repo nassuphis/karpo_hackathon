@@ -413,7 +413,83 @@ class TestComputeMigration(unittest.TestCase):
         self.assertEqual(manifest["tiles"][0]["times"], 2)
         self.assertEqual(manifest["tiles"][0]["preview_width"], 512)
         self.assertEqual(manifest["tiles"][0]["preview_height"], 512)
+        self.assertEqual(manifest["manifest_type"], "artifact_mosaic")
+        self.assertEqual(manifest["artifact_kind"], "color")
+        self.assertEqual(manifest["sizes"], [512])
+        self.assertEqual(manifest["size_counts"], {"512": 1})
         self.assertEqual(manifest["skipped_legacy"], 1)
+
+    @patch("handler_storage._results_list_s3_client")
+    @patch("handler_storage._get_ddb")
+    @patch("handler_storage.s3")
+    def test_color_mosaic_worker_fails_visible_on_transient_calc_read_error(self, mock_s3, mock_get_ddb, mock_list_s3_client):
+        import handler_storage
+
+        fake = _FakeS3()
+        fake_ddb = _FakeDDB()
+        self._patch(mock_s3, fake)
+        mock_list_s3_client.return_value = fake
+        mock_get_ddb.return_value = fake_ddb
+        self._store(fake, "job", {"function": "g"})
+        fake.objects["renders/job/color/color_a/image.jpeg"] = b"jpeg"
+        fake.objects["renders/job/color/color_a/preview.png"] = (
+            b"\x89PNG\r\n\x1a\n" + (13).to_bytes(4, "big") + b"IHDR"
+            + (512).to_bytes(4, "big") + (512).to_bytes(4, "big")
+        )
+        original_get_object = fake.get_object
+
+        def get_object_with_slowdown(Bucket=None, Key=None, **kwargs):
+            if Key == "renders/job/calc.json":
+                raise ClientError({"Error": {"Code": "SlowDown", "Message": "slow"}}, "GetObject")
+            return original_get_object(Bucket=Bucket, Key=Key, **kwargs)
+
+        fake.get_object = get_object_with_slowdown
+
+        with patch("handler_storage.boto3.client", return_value=_FakeLambdaClient()):
+            status = handler_storage._start_color_mosaic_refresh()
+        result = handler_storage._run_color_mosaic_worker(status["refresh_id"])
+
+        self.assertEqual(result["state"], "error")
+        self.assertIn("SlowDown", result["error"])
+
+    @patch("handler_storage._results_list_s3_client")
+    @patch("handler_storage._get_ddb")
+    @patch("handler_storage.s3")
+    def test_color_mosaic_prune_keeps_previous_ready_manifest(self, mock_s3, mock_get_ddb, mock_list_s3_client):
+        import handler_storage
+
+        fake = _FakeS3()
+        fake_ddb = _FakeDDB()
+        self._patch(mock_s3, fake)
+        mock_list_s3_client.return_value = fake
+        mock_get_ddb.return_value = fake_ddb
+        self._store(fake, "job", {"function": "g"})
+        fake.objects["renders/job/color/color_a/image.jpeg"] = b"jpeg"
+        fake.objects["renders/job/color/color_a/preview.png"] = (
+            b"\x89PNG\r\n\x1a\n" + (13).to_bytes(4, "big") + b"IHDR"
+            + (512).to_bytes(4, "big") + (512).to_bytes(4, "big")
+        )
+        fake.objects["renders/_index/color_mosaic/aaa_previous/all.json"] = b"previous"
+        fake.objects["renders/_index/color_mosaic/current/all.json"] = b"current"
+        for idx in range(12):
+            fake.objects[f"renders/_index/color_mosaic/zzz_{idx:02d}/all.json"] = b"old"
+
+        now = handler_storage._utc_now_iso()
+        handler_storage._put_mosaic_status({
+            "state": "computing",
+            "refresh_id": "current",
+            "started_at": now,
+            "updated_at": now,
+            "updated_at_ms": handler_storage._mosaic_now_ms(),
+            "last_ready_manifest_key": "renders/_index/color_mosaic/aaa_previous/all.json",
+            "last_ready_manifest_url": "https://example.test/aaa_previous/all.json",
+        })
+
+        result = handler_storage._run_color_mosaic_worker("current")
+
+        self.assertEqual(result["state"], "ready")
+        self.assertIn("renders/_index/color_mosaic/aaa_previous/all.json", fake.objects)
+        self.assertIn("renders/_index/color_mosaic/current/all.json", fake.objects)
 
     @patch("handler_storage._results_list_s3_client")
     @patch("handler_storage._get_ddb")

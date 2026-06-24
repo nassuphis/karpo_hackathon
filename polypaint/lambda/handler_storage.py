@@ -97,6 +97,8 @@ MOSAIC_STATUS_SCHEMA_VERSION = 1
 MOSAIC_STATUS_STALE_MS = 30 * 60 * 1000
 MOSAIC_WORKERS = 24
 MOSAIC_KEEP_LAST = 10
+MOSAIC_PROGRESS_JOB_INTERVAL = 10
+MOSAIC_PROGRESS_ARTIFACT_INTERVAL = 25
 MOSAIC_BASE_URL = f"https://{BUCKET}.s3.{os.environ.get('AWS_REGION', 'us-east-1')}.amazonaws.com/"
 MOSAIC_PREFIX = "renders/_index/color_mosaic/"
 FAVORITES_KEY = "polypaint/favorites/color_artifacts.json"
@@ -2758,8 +2760,26 @@ def _mosaic_preview_dimensions(key, *, s3_client=None):
         obj = client.get_object(Bucket=BUCKET, Key=key, Range="bytes=0-32")
         data = obj["Body"].read()
         return _png_dimensions_from_header(data)
-    except Exception:
+    except Exception as exc:
+        if not _is_missing_s3_error(exc):
+            raise
         return None
+
+
+def _mosaic_job_id_from_prefix(prefix):
+    parts = str(prefix or "").split("/")
+    if len(parts) < 2 or parts[0] != "renders":
+        return ""
+    return parts[1]
+
+
+def _mosaic_refresh_id_from_manifest_key(key):
+    parts = [p for p in str(key or "").split("/") if p]
+    if len(parts) < 4 or parts[0] != "renders" or parts[1] != "_index":
+        return ""
+    if parts[-1] == "all.json":
+        return parts[-2]
+    return parts[-1]
 
 
 def _list_mosaic_job_ids(client):
@@ -2767,7 +2787,7 @@ def _list_mosaic_job_ids(client):
     paginator = client.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=BUCKET, Prefix="renders/", Delimiter="/"):
         for prefix in page.get("CommonPrefixes", []):
-            job_id = prefix.get("Prefix", "").split("/")[1]
+            job_id = _mosaic_job_id_from_prefix(prefix.get("Prefix", ""))
             if job_id and not job_id.startswith("_"):
                 job_ids.append(job_id)
     return job_ids
@@ -2777,7 +2797,9 @@ def _read_mosaic_calc_meta(client, job_id):
     try:
         obj = client.get_object(Bucket=BUCKET, Key=f"renders/{job_id}/calc.json")
         calc = json.loads(obj["Body"].read())
-    except Exception:
+    except Exception as exc:
+        if not _is_missing_s3_error(exc):
+            raise
         calc = {}
     return {
         "function": calc.get("function", "?"),
@@ -2844,7 +2866,7 @@ def _build_color_mosaic_manifest(refresh_id, *, progress_cb=None):
                 legacy_count += 1
             for prefix in prefixes:
                 work.append((job_id, prefix))
-            if progress_cb and (idx % 10 == 0 or idx == job_total):
+            if progress_cb and (idx % MOSAIC_PROGRESS_JOB_INTERVAL == 0 or idx == job_total):
                 progress_cb(
                     stage="jobs",
                     message=f"Scanning jobs: {idx}/{job_total}; found {len(work)} color artifacts",
@@ -2900,7 +2922,7 @@ def _build_color_mosaic_manifest(refresh_id, *, progress_cb=None):
                 counts["skipped_missing_preview"] += 1
             elif status == "non_square":
                 counts["skipped_non_square"] += 1
-            if progress_cb and (idx % 25 == 0 or idx == artifact_total):
+            if progress_cb and (idx % MOSAIC_PROGRESS_ARTIFACT_INTERVAL == 0 or idx == artifact_total):
                 progress_cb(
                     stage="artifacts",
                     message=f"Reading previews: {idx}/{artifact_total}; kept {len(tiles)} tiles",
@@ -2928,6 +2950,8 @@ def _build_color_mosaic_manifest(refresh_id, *, progress_cb=None):
     manifest_key = f"{MOSAIC_PREFIX}{refresh_id}/all.json"
     return {
         "schema_version": 1,
+        "manifest_type": "artifact_mosaic",
+        "artifact_kind": "color",
         "computed_at": _utc_now_iso(),
         "base": MOSAIC_BASE_URL,
         "refresh_id": refresh_id,
@@ -2935,6 +2959,12 @@ def _build_color_mosaic_manifest(refresh_id, *, progress_cb=None):
         "manifest_kind": "all",
         "dimension_filter": "all-square",
         "tile_size": 512,
+        "sizes": sorted(int(k.split("x", 1)[0]) for k in source_counts if k.endswith("x" + k.split("x", 1)[0]) and k.split("x", 1)[0].isdigit()),
+        "size_counts": {
+            k.split("x", 1)[0]: v
+            for k, v in source_counts.items()
+            if k.endswith("x" + k.split("x", 1)[0]) and k.split("x", 1)[0].isdigit()
+        },
         "count": len(tiles),
         "source_counts": source_counts,
         **counts,
@@ -2965,7 +2995,7 @@ def _prune_color_mosaic_manifests(*, keep_refresh_ids):
         prefixes.extend(p.get("Prefix", "") for p in page.get("CommonPrefixes", []))
     by_refresh = {}
     for prefix in prefixes:
-        refresh_id = prefix.rstrip("/").split("/")[-1]
+        refresh_id = _mosaic_refresh_id_from_manifest_key(prefix)
         if refresh_id:
             by_refresh[refresh_id] = prefix
     keep = set(keep_refresh_ids or [])
@@ -3085,7 +3115,11 @@ def _run_color_mosaic_worker(refresh_id):
         status = _ready_mosaic_status(refresh_id, manifest, existing)
         _put_owned_mosaic_status(status, refresh_id)
         try:
-            _prune_color_mosaic_manifests(keep_refresh_ids={refresh_id, status.get("last_ready_manifest_key", "").split("/")[-2] if status.get("last_ready_manifest_key") else ""})
+            previous_refresh_id = _mosaic_refresh_id_from_manifest_key(existing.get("last_ready_manifest_key") or existing.get("manifest_key") or "")
+            keep = {refresh_id}
+            if previous_refresh_id:
+                keep.add(previous_refresh_id)
+            _prune_color_mosaic_manifests(keep_refresh_ids=keep)
         except Exception:
             pass
         return status

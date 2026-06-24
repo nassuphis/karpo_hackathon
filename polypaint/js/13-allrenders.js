@@ -2,6 +2,7 @@
 // Classic script: load order matters and is defined by index.html.
 const ALLRENDERS_STATUS_PATH = '/list-color-mosaic';
 const ALLRENDERS_POLL_MS = 2000;
+const ALLRENDERS_MAX_LOG_LINES = 80;
 const ALLRENDERS_TRANSPARENT_TILE = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 
 let _allRendersViewer = null;
@@ -69,7 +70,11 @@ function _logAllRenders(message, cls = '', signature = '') {
         return;
     }
     const el = document.getElementById('allrenders-log');
-    if (el) el.textContent = `[${new Date().toLocaleTimeString()}] ${message}\n` + (el.textContent || '');
+    if (el) {
+        const lines = (el.textContent || '').split('\n').filter(Boolean);
+        lines.unshift(`[${new Date().toLocaleTimeString()}] ${message}`);
+        el.textContent = lines.slice(0, ALLRENDERS_MAX_LOG_LINES).join('\n') + '\n';
+    }
 }
 
 function _logAllRendersProgress(status) {
@@ -105,8 +110,15 @@ function _scheduleAllRendersPoll() {
     _stopAllRendersPoll();
     _allRendersPollTimer = setTimeout(() => {
         _allRendersPollTimer = null;
-        loadAllRenders({ forceStatus: true });
+        loadAllRenders({ forceStatus: true, fromPoll: true });
     }, ALLRENDERS_POLL_MS);
+}
+
+function _allRendersRefreshIdFromManifestKey(key) {
+    const parts = String(key || '').split('/').filter(Boolean);
+    if (parts.length < 2 || parts[0] !== 'renders' || parts[1] !== '_index') return '';
+    if (parts[parts.length - 1] === 'all.json') return parts[parts.length - 2] || '';
+    return parts[parts.length - 1] || '';
 }
 
 async function _fetchAllRendersStatus() {
@@ -281,9 +293,9 @@ async function _allRendersCanvasClick(event) {
     if (!viewport || typeof viewport.pointFromPixel !== 'function' || typeof viewport.viewportToImageCoordinates !== 'function') return;
     const viewportPoint = viewport.pointFromPixel(event.position);
     const imagePoint = viewport.viewportToImageCoordinates(viewportPoint);
-    const tileSize = Number(_allRendersActiveTileSource && _allRendersActiveTileSource._allRendersTileSize) || 512;
-    const cols = Number(_allRendersActiveTileSource && _allRendersActiveTileSource._allRendersCols) ||
-        _allRendersRequestedCols(_allRendersTiles.length);
+    const tileSize = Number(_allRendersActiveTileSource && _allRendersActiveTileSource._allRendersTileSize);
+    const cols = Number(_allRendersActiveTileSource && _allRendersActiveTileSource._allRendersCols);
+    if (!Number.isFinite(tileSize) || tileSize <= 0 || !Number.isFinite(cols) || cols <= 0) return;
     const x = Math.floor(imagePoint.x / tileSize);
     const y = Math.floor(imagePoint.y / tileSize);
     const tile = _allRendersTiles[y * cols + x];
@@ -343,7 +355,7 @@ async function loadAllRenders(opts = {}) {
                     ..._allRendersStatus,
                     state: 'ready',
                     manifest_url: _allRendersStatus.last_ready_manifest_url,
-                    refresh_id: (_allRendersStatus.last_ready_manifest_key || '').split('/').slice(-2, -1)[0] || 'last-ready',
+                    refresh_id: _allRendersRefreshIdFromManifestKey(_allRendersStatus.last_ready_manifest_key) || 'last-ready',
                 });
             }
             _setAllRendersStatus(`Refresh failed: ${_allRendersStatus.error || 'unknown error'}`, 'error');
@@ -352,7 +364,13 @@ async function loadAllRenders(opts = {}) {
         }
         _setAllRendersStatus('Refresh to build the wall.', '');
     } catch (e) {
-        _setAllRendersStatus(`AllRenders load failed: ${e.message}`, 'error');
+        const message = `AllRenders load failed: ${e.message}`;
+        _setAllRendersStatus(message, 'error');
+        if (opts.fromPoll || String((_allRendersStatus || {}).state || '') === 'computing') {
+            _setAllRendersRefreshBusy(true);
+            _logAllRenders(message + ' · retrying', 'err', `poll-error|${Date.now()}`);
+            _scheduleAllRendersPoll();
+        }
     } finally {
         _allRendersLoading = false;
     }

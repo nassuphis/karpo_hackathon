@@ -1606,17 +1606,19 @@ const els = {
   els['allrenders-sort-mode'].value = 'date';
   const opened = [];
   const logs = [];
+  const timers = [];
   let imagePoint = {x: 1, y: 1};
   let selectedJob = '';
   let selectedTab = '';
   let selectedArtifact = '';
+  let statusFetchFails = false;
   const ctx = {
   console,
   document: {
     getElementById(id) { return els[id] || null; },
   },
   window: {},
-  setTimeout(fn, ms) { return 1; },
+  setTimeout(fn, ms) { timers.push({fn, ms}); return timers.length; },
   clearTimeout() {},
   Date: { now: () => 12345 },
   Math, JSON, Number, String, Boolean, Array, Object, Map, Set, Promise, URL,
@@ -1634,6 +1636,7 @@ const els = {
 	  log: (msg, cls, target) => { logs.push({msg, cls, target}); },
 	  lambdaPost: async (service, payload, pathName) => {
 	    if (pathName !== '/list-color-mosaic') throw new Error('unexpected path ' + pathName);
+	    if (!(payload && payload.refresh) && statusFetchFails) throw new Error('network blip');
 	    if (payload && payload.refresh) return {
 	      state: 'computing',
 	      refresh_id: 'mosaic_x',
@@ -1694,6 +1697,11 @@ for (const script of scripts) vm.runInContext(fs.readFileSync(path.join(root, sc
 	  assert(els['allrenders-status'].textContent.includes('compute_demo'), 'refresh status should show last scanned job');
 	  assert(logs.some(row => row.target === 'allrenders-log' && row.msg.includes('jobs 10/20')),
 	    'refresh should log AllRenders progress');
+	  const timerCountBeforeError = timers.length;
+	  statusFetchFails = true;
+	  await ctx.loadAllRenders({forceStatus: true, fromPoll: true});
+	  assert(timers.length > timerCountBeforeError, 'transient poll error should reschedule polling');
+	  assert(els['btn-allrenders-refresh'].disabled === true, 'transient poll error should keep refresh button busy');
 	  console.log('Frontend AllRenders runtime checks: OK');
 })().catch(e => { console.error(e.stack || String(e)); process.exit(1); });
 NODE

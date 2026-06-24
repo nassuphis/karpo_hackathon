@@ -392,6 +392,16 @@ class TestComputeMigration(unittest.TestCase):
         self.assertEqual(ready["count"], 1)
         self.assertEqual(ready["source_counts"], {"512x512": 1})
         self.assertEqual(ready["skipped_legacy"], 1)
+        progress_rows = [
+            handler_storage._mosaic_status_from_item(item)
+            for _, item, _ in fake_ddb.put_calls
+            if handler_storage._mosaic_status_from_item(item).get("progress_stage")
+        ]
+        self.assertIn("jobs", {row["progress_stage"] for row in progress_rows})
+        self.assertIn("artifacts", {row["progress_stage"] for row in progress_rows})
+        self.assertIn("manifest", {row["progress_stage"] for row in progress_rows})
+        self.assertTrue(any(row["progress_artifacts_total"] == 1 for row in progress_rows))
+        self.assertTrue(any(row["progress_tiles"] == 1 for row in progress_rows))
         manifest_key = ready["manifest_key"]
         self.assertIn(manifest_key, fake.objects)
         manifest = json.loads(fake.objects[manifest_key])

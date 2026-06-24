@@ -72,6 +72,18 @@ def _parse_positive_int(value, label):
     return parsed
 
 
+def _png_dimensions_from_path(path):
+    with open(path, "rb") as fh:
+        data = fh.read(33)
+    if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        raise RuntimeError(f"Preview generation produced an invalid PNG: {path}")
+    width = int.from_bytes(data[16:20], "big")
+    height = int.from_bytes(data[20:24], "big")
+    if width <= 0 or height <= 0:
+        raise RuntimeError(f"Preview generation produced invalid dimensions: {width}x{height}")
+    return width, height
+
+
 def _sanitize_params(params):
     provided = dict(params or {})
     defaults = {
@@ -278,6 +290,7 @@ def handler(event, context):
         )
         if prev_result.returncode != 0:
             raise RuntimeError(f"Preview generation failed: {prev_result.stderr.strip()}")
+        preview_width, preview_height = _png_dimensions_from_path(preview_path)
 
         _phase(job_id, task_id, "uploading", "upload", "Upload", artifact_id=artifact_id, family="color")
         img_meta = dict(src_meta)
@@ -311,13 +324,12 @@ def handler(event, context):
                 ExtraArgs={"ContentType": content_type, "Metadata": image_meta},
             )
         write_color_artifact_meta_overlay(s3, BUCKET, job_id, artifact_id, overlay_meta)
-        preview_meta = {}
-        if "pix" in image_meta:
-            preview_meta["pix"] = image_meta["pix"]
-        if "width" in image_meta:
-            preview_meta["width"] = image_meta["width"]
-        if "height" in image_meta:
-            preview_meta["height"] = image_meta["height"]
+        preview_meta = {
+            "width": str(preview_width),
+            "height": str(preview_height),
+        }
+        if preview_width == preview_height:
+            preview_meta["pix"] = str(preview_width)
         with open(preview_path, "rb") as pfh:
             s3.upload_fileobj(
                 pfh, BUCKET, preview_key,

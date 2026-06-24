@@ -37,6 +37,16 @@ def _event(**overrides):
     return payload
 
 
+def _png_header(width=512, height=512):
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + (13).to_bytes(4, "big")
+        + b"IHDR"
+        + int(width).to_bytes(4, "big")
+        + int(height).to_bytes(4, "big")
+    )
+
+
 class TestAutolevelsHandler(unittest.TestCase):
 
     def test_sanitize_params_clamps_background_threshold(self):
@@ -146,7 +156,7 @@ class TestAutolevelsHandler(unittest.TestCase):
             if cmd[0] == "/opt/bin/vipsthumbnail":
                 preview_path = cmd[5].split("[", 1)[0]
                 with open(preview_path, "wb") as fh:
-                    fh.write(b"\x89PNGpreview")
+                    fh.write(_png_header(512, 512))
                 return MagicMock(returncode=0, stdout="", stderr="")
             raise AssertionError(f"unexpected subprocess call: {cmd}")
 
@@ -221,9 +231,12 @@ class TestAutolevelsHandler(unittest.TestCase):
 
         preview_extra = uploads[preview_key]["extra"]
         self.assertEqual(preview_extra["ContentType"], "image/png")
-        self.assertEqual(preview_extra["Metadata"]["pix"], "1200")
-        self.assertEqual(preview_extra["Metadata"]["width"], "1200")
-        self.assertEqual(preview_extra["Metadata"]["height"], "1200")
+        self.assertEqual(image_meta["pix"], "1200")
+        self.assertEqual(image_meta["width"], "1200")
+        self.assertEqual(image_meta["height"], "1200")
+        self.assertEqual(preview_extra["Metadata"]["pix"], "512")
+        self.assertEqual(preview_extra["Metadata"]["width"], "512")
+        self.assertEqual(preview_extra["Metadata"]["height"], "512")
 
         statuses = [call.args[2] for call in mock_report.call_args_list]
         self.assertIn("started", statuses)
@@ -275,7 +288,7 @@ class TestAutolevelsHandler(unittest.TestCase):
             if cmd[0] == "/opt/bin/vipsthumbnail":
                 preview_path = cmd[5].split("[", 1)[0]
                 with open(preview_path, "wb") as fh:
-                    fh.write(b"\x89PNGpreview")
+                    fh.write(_png_header(512, 512))
                 return MagicMock(returncode=0, stdout="", stderr="")
             raise AssertionError(f"unexpected subprocess call: {cmd}")
 
@@ -321,7 +334,7 @@ class TestAutolevelsHandler(unittest.TestCase):
             if cmd[0] == "/opt/bin/vipsthumbnail":
                 preview_path = cmd[5].split("[", 1)[0]
                 with open(preview_path, "wb") as fh:
-                    fh.write(b"\x89PNGpreview")
+                    fh.write(_png_header(512, 512))
                 return MagicMock(returncode=0, stdout="", stderr="")
             raise AssertionError(f"unexpected subprocess call: {cmd}")
 

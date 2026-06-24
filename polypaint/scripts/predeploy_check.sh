@@ -44,10 +44,12 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_solve_score_chain.py \
     tests/test_solve_score_pipeline_programs.py \
     tests/test_solve_score_program_source.py \
-    tests/test_solve_score_source_equivalence.py \
-    tests/test_solve_score_program_storage.py \
-    tests/test_storage_handler.py \
-    tests/test_preview_handler.py \
+	    tests/test_solve_score_source_equivalence.py \
+	    tests/test_solve_score_program_storage.py \
+	    tests/test_storage_handler.py \
+	    tests/test_autolevels_handler.py \
+	    tests/test_repair_preview_metadata.py \
+	    tests/test_preview_handler.py \
     tests/test_render_lores_preview_handler.py \
     tests/test_compute_plan.py \
     tests/test_compute_orchestrator.py \

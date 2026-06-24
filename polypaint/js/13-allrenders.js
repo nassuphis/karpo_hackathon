@@ -13,6 +13,7 @@ let _allRendersLoading = false;
 let _allRendersRandomSeed = 1;
 let _allRendersLastRenderSignature = '';
 let _allRendersActiveTileSource = null;
+let _allRendersLastLogSignature = '';
 
 function _allRendersStatusEl() {
     return document.getElementById('allrenders-status');
@@ -34,6 +35,55 @@ function _setAllRendersRefreshBusy(busy) {
     if (!btn) return;
     btn.disabled = !!busy;
     btn.textContent = busy ? 'Refreshing...' : 'Refresh';
+}
+
+function _allRendersInt(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+}
+
+function _allRendersProgressText(status) {
+    status = status || {};
+    const message = String(status.progress_message || '').trim();
+    const jobsDone = _allRendersInt(status.progress_jobs_done);
+    const jobsTotal = _allRendersInt(status.progress_jobs_total);
+    const artifactsDone = _allRendersInt(status.progress_artifacts_done);
+    const artifactsTotal = _allRendersInt(status.progress_artifacts_total);
+    const tiles = _allRendersInt(status.progress_tiles);
+    const lastJob = String(status.progress_last_job || '').trim();
+    const parts = [];
+    if (jobsTotal) parts.push(`jobs ${jobsDone.toLocaleString()}/${jobsTotal.toLocaleString()}`);
+    if (artifactsTotal) parts.push(`artifacts ${artifactsDone.toLocaleString()}/${artifactsTotal.toLocaleString()}`);
+    if (tiles) parts.push(`${tiles.toLocaleString()} tiles`);
+    if (lastJob) parts.push(lastJob);
+    const detail = parts.length ? ` · ${parts.join(' · ')}` : '';
+    return `${message || 'Computing AllRenders mosaic'}${detail}`;
+}
+
+function _logAllRenders(message, cls = '', signature = '') {
+    const sig = signature || message;
+    if (_allRendersLastLogSignature === sig) return;
+    _allRendersLastLogSignature = sig;
+    if (typeof log === 'function') {
+        log(message, cls, 'allrenders-log');
+        return;
+    }
+    const el = document.getElementById('allrenders-log');
+    if (el) el.textContent = `[${new Date().toLocaleTimeString()}] ${message}\n` + (el.textContent || '');
+}
+
+function _logAllRendersProgress(status) {
+    status = status || {};
+    const signature = [
+        status.refresh_id || '',
+        status.progress_stage || '',
+        status.progress_jobs_done || 0,
+        status.progress_jobs_total || 0,
+        status.progress_artifacts_done || 0,
+        status.progress_artifacts_total || 0,
+        status.progress_tiles || 0,
+    ].join('|');
+    _logAllRenders(_allRendersProgressText(status), '', signature);
 }
 
 function _allRendersManifestUrl(status) {
@@ -259,7 +309,8 @@ async function loadAllRenders(opts = {}) {
         _allRendersStatus = status || {};
         const state = String(_allRendersStatus.state || 'missing');
         if (state === 'computing') {
-            _setAllRendersStatus(`Computing AllRenders mosaic... ${_allRendersStatus.refresh_id || ''}`, '');
+            _setAllRendersStatus(_allRendersProgressText(_allRendersStatus), '');
+            _logAllRendersProgress(_allRendersStatus);
             _setAllRendersRefreshBusy(true);
             _scheduleAllRendersPoll();
             return;
@@ -269,6 +320,11 @@ async function loadAllRenders(opts = {}) {
         if (state === 'ready') {
             await _loadAllRendersManifestForStatus(_allRendersStatus);
             _setAllRendersStatus(`Ready · ${Number(_allRendersStatus.count || 0).toLocaleString()} tiles`, 'ok');
+            _logAllRenders(
+                `AllRenders ready: ${Number(_allRendersStatus.count || 0).toLocaleString()} tiles`,
+                'ok',
+                `ready|${_allRendersStatus.refresh_id || ''}|${_allRendersStatus.count || 0}`,
+            );
             return;
         }
         if (state === 'error') {
@@ -281,6 +337,7 @@ async function loadAllRenders(opts = {}) {
                 });
             }
             _setAllRendersStatus(`Refresh failed: ${_allRendersStatus.error || 'unknown error'}`, 'error');
+            _logAllRenders(`AllRenders refresh failed: ${_allRendersStatus.error || 'unknown error'}`, 'err', `error|${_allRendersStatus.refresh_id || ''}|${_allRendersStatus.error || ''}`);
             return;
         }
         _setAllRendersStatus('Refresh to build the wall.', '');
@@ -298,7 +355,9 @@ async function refreshAllRendersMosaic() {
         const status = await lambdaPost('storage', { refresh: true }, ALLRENDERS_STATUS_PATH);
         _allRendersStatus = status || {};
         if (String(_allRendersStatus.state || '') === 'computing') {
-            _setAllRendersStatus(`Computing AllRenders mosaic... ${_allRendersStatus.refresh_id || ''}`, '');
+            _setAllRendersStatus(_allRendersProgressText(_allRendersStatus), '');
+            _logAllRenders(`AllRenders refresh started: ${_allRendersStatus.refresh_id || ''}`, '', `start|${_allRendersStatus.refresh_id || ''}`);
+            _logAllRendersProgress(_allRendersStatus);
             _scheduleAllRendersPoll();
         } else {
             await loadAllRenders({ forceStatus: true });

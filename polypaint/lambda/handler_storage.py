@@ -2604,6 +2604,14 @@ def _normalize_mosaic_status(status):
     status.setdefault("last_ready_count", 0)
     status.setdefault("count", 0)
     status.setdefault("source_counts", {})
+    status.setdefault("progress_stage", "")
+    status.setdefault("progress_message", "")
+    status.setdefault("progress_jobs_done", 0)
+    status.setdefault("progress_jobs_total", 0)
+    status.setdefault("progress_artifacts_done", 0)
+    status.setdefault("progress_artifacts_total", 0)
+    status.setdefault("progress_tiles", 0)
+    status.setdefault("progress_last_job", "")
     status.setdefault("skipped_non_square", 0)
     status.setdefault("skipped_missing_preview", 0)
     status.setdefault("skipped_missing_image", 0)
@@ -2806,13 +2814,21 @@ def _mosaic_tile_from_entry(client, job_id, entry, calc_meta):
     return tile, "unknown" if dims is None else f"{width}x{height}"
 
 
-def _build_color_mosaic_manifest(refresh_id):
+def _build_color_mosaic_manifest(refresh_id, *, progress_cb=None):
     import concurrent.futures
 
     client = _results_list_s3_client(MOSAIC_WORKERS)
     job_ids = _list_mosaic_job_ids(client)
+    job_total = len(job_ids)
     calc_by_job = {}
     work = []
+    if progress_cb:
+        progress_cb(
+            stage="jobs",
+            message=f"Scanning jobs: 0/{job_total}",
+            jobs_done=0,
+            jobs_total=job_total,
+        )
 
     def read_job(job_id):
         calc = _read_mosaic_calc_meta(client, job_id)
@@ -2822,12 +2838,21 @@ def _build_color_mosaic_manifest(refresh_id):
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(MOSAIC_WORKERS, max(1, len(job_ids)))) as pool:
         legacy_count = 0
-        for job_id, calc, prefixes, legacy in pool.map(read_job, job_ids):
+        for idx, (job_id, calc, prefixes, legacy) in enumerate(pool.map(read_job, job_ids), start=1):
             calc_by_job[job_id] = calc
             if legacy:
                 legacy_count += 1
             for prefix in prefixes:
                 work.append((job_id, prefix))
+            if progress_cb and (idx % 10 == 0 or idx == job_total):
+                progress_cb(
+                    stage="jobs",
+                    message=f"Scanning jobs: {idx}/{job_total}; found {len(work)} color artifacts",
+                    jobs_done=idx,
+                    jobs_total=job_total,
+                    artifacts_total=len(work),
+                    last_job=job_id,
+                )
 
     counts = {
         "skipped_non_square": 0,
@@ -2838,6 +2863,16 @@ def _build_color_mosaic_manifest(refresh_id):
     }
     source_counts = {}
     tiles = []
+    artifact_total = len(work)
+    if progress_cb:
+        progress_cb(
+            stage="artifacts",
+            message=f"Reading previews: 0/{artifact_total}",
+            jobs_done=job_total,
+            jobs_total=job_total,
+            artifacts_done=0,
+            artifacts_total=artifact_total,
+        )
 
     def read_artifact(item):
         job_id, prefix = item
@@ -2853,7 +2888,7 @@ def _build_color_mosaic_manifest(refresh_id):
         return _mosaic_tile_from_entry(client, job_id, entry, calc_by_job.get(job_id, {}))
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=min(MOSAIC_WORKERS, max(1, len(work)))) as pool:
-        for tile, status in pool.map(read_artifact, work):
+        for idx, (tile, status) in enumerate(pool.map(read_artifact, work), start=1):
             if tile:
                 tiles.append(tile)
                 source_counts[status] = source_counts.get(status, 0) + 1
@@ -2865,8 +2900,28 @@ def _build_color_mosaic_manifest(refresh_id):
                 counts["skipped_missing_preview"] += 1
             elif status == "non_square":
                 counts["skipped_non_square"] += 1
+            if progress_cb and (idx % 25 == 0 or idx == artifact_total):
+                progress_cb(
+                    stage="artifacts",
+                    message=f"Reading previews: {idx}/{artifact_total}; kept {len(tiles)} tiles",
+                    jobs_done=job_total,
+                    jobs_total=job_total,
+                    artifacts_done=idx,
+                    artifacts_total=artifact_total,
+                    tiles=len(tiles),
+                )
 
     counts["skipped_legacy"] = legacy_count
+    if progress_cb:
+        progress_cb(
+            stage="manifest",
+            message=f"Writing manifest: {len(tiles)} tiles",
+            jobs_done=job_total,
+            jobs_total=job_total,
+            artifacts_done=artifact_total,
+            artifacts_total=artifact_total,
+            tiles=len(tiles),
+        )
 
     tiles.sort(key=lambda t: (str(t.get("job_id") or ""), str(t.get("artifact_id") or "")))
     tiles.sort(key=lambda t: str(t.get("created_at") or ""), reverse=True)
@@ -2967,6 +3022,38 @@ def _error_mosaic_status(refresh_id, existing, exc):
     return status
 
 
+def _progress_mosaic_status(
+    refresh_id,
+    existing,
+    *,
+    stage,
+    message,
+    jobs_done=0,
+    jobs_total=0,
+    artifacts_done=0,
+    artifacts_total=0,
+    tiles=0,
+    last_job="",
+):
+    now_iso = _utc_now_iso()
+    return _normalize_mosaic_status({
+        "state": "computing",
+        "refresh_id": refresh_id,
+        "started_at": existing.get("started_at", now_iso),
+        "updated_at": now_iso,
+        "updated_at_ms": _mosaic_now_ms(),
+        "progress_stage": str(stage or ""),
+        "progress_message": str(message or "")[:240],
+        "progress_jobs_done": int(jobs_done or 0),
+        "progress_jobs_total": int(jobs_total or 0),
+        "progress_artifacts_done": int(artifacts_done or 0),
+        "progress_artifacts_total": int(artifacts_total or 0),
+        "progress_tiles": int(tiles or 0),
+        "progress_last_job": str(last_job or "")[:120],
+        **_copy_last_ready_fields(existing),
+    })
+
+
 def _put_owned_mosaic_status(status, refresh_id):
     _put_mosaic_status(
         status,
@@ -2981,8 +3068,12 @@ def _put_owned_mosaic_status(status, refresh_id):
 
 def _run_color_mosaic_worker(refresh_id):
     existing = _read_mosaic_status(consistent=True)
+
+    def publish_progress(**kwargs):
+        _put_owned_mosaic_status(_progress_mosaic_status(refresh_id, existing, **kwargs), refresh_id)
+
     try:
-        manifest = _build_color_mosaic_manifest(refresh_id)
+        manifest = _build_color_mosaic_manifest(refresh_id, progress_cb=publish_progress)
         manifest_key = manifest["manifest_key"]
         s3.put_object(
             Bucket=BUCKET,

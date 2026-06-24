@@ -1605,6 +1605,7 @@ const els = {
   els['allrenders-size-filter'].value = 'all';
   els['allrenders-sort-mode'].value = 'date';
   const opened = [];
+  const logs = [];
   let imagePoint = {x: 1, y: 1};
   let selectedJob = '';
   let selectedTab = '';
@@ -1630,9 +1631,18 @@ const els = {
 	  _ensureResultsSelection: async (jobId) => { selectedJob = jobId; },
 	  switchTab: (name) => { selectedTab = name; },
 	  refreshRenderArtifacts: async (jobId, opts) => { selectedArtifact = opts && opts.selectArtifactId; },
+	  log: (msg, cls, target) => { logs.push({msg, cls, target}); },
 	  lambdaPost: async (service, payload, pathName) => {
-    if (pathName !== '/list-color-mosaic') throw new Error('unexpected path ' + pathName);
-    if (payload && payload.refresh) return { state: 'computing', refresh_id: 'mosaic_x' };
+	    if (pathName !== '/list-color-mosaic') throw new Error('unexpected path ' + pathName);
+	    if (payload && payload.refresh) return {
+	      state: 'computing',
+	      refresh_id: 'mosaic_x',
+	      progress_message: 'Scanning jobs: 10/20',
+	      progress_jobs_done: 10,
+	      progress_jobs_total: 20,
+	      progress_artifacts_total: 40,
+	      progress_last_job: 'compute_demo',
+	    };
     return {
       state: 'ready',
       refresh_id: 'mosaic_ready',
@@ -1677,8 +1687,12 @@ for (const script of scripts) vm.runInContext(fs.readFileSync(path.join(root, sc
 	  assert(selectedJob === 'j' && selectedTab === 'render' && selectedArtifact === 'b',
 	    'click mapping should use rendered tile-source columns, not the current control value');
 	  await ctx.refreshAllRendersMosaic();
-  assert(els['btn-allrenders-refresh'].disabled === true, 'refresh should disable button while computing');
-  console.log('Frontend AllRenders runtime checks: OK');
+	  assert(els['btn-allrenders-refresh'].disabled === true, 'refresh should disable button while computing');
+	  assert(els['allrenders-status'].textContent.includes('jobs 10/20'), 'refresh status should show job progress');
+	  assert(els['allrenders-status'].textContent.includes('compute_demo'), 'refresh status should show last scanned job');
+	  assert(logs.some(row => row.target === 'allrenders-log' && row.msg.includes('jobs 10/20')),
+	    'refresh should log AllRenders progress');
+	  console.log('Frontend AllRenders runtime checks: OK');
 })().catch(e => { console.error(e.stack || String(e)); process.exit(1); });
 NODE
 

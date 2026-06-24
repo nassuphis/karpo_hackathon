@@ -52,7 +52,7 @@ The color mosaic has already been hardened and that baseline should be preserved
 - Frontend logs are capped so the fallback log DOM does not grow without bound.
 - Click mapping uses the active OpenSeadragon tile source's stored columns/tile size, not recomputed controls.
 - Backend job-id and refresh-id parsing is centralized in helpers; do not add new depth-dependent `split("/")` parsing.
-- Missing S3 objects are treated as expected skips, but non-missing S3 errors such as throttles/5xx propagate to the worker error path instead of silently degrading manifest metadata.
+- Missing S3 objects are treated as expected skips, but non-missing S3 errors such as throttles/5xx propagate to the worker error path instead of silently degrading manifest metadata. Malformed optional `calc.json` is the exception: it should default compute metadata to `?`/`0` for that job because the wall does not depend on it.
 - Color manifests already include `manifest_type`, `artifact_kind`, `sizes`, and `size_counts`; keep the palette manifest symmetric with that shape.
 - Progress cadence is named (`MOSAIC_PROGRESS_JOB_INTERVAL`, `MOSAIC_PROGRESS_ARTIFACT_INTERVAL`) and progress writes refresh `updated_at_ms` as the worker heartbeat.
 
@@ -423,9 +423,23 @@ Manifest should include:
 
 The existing color manifest already has `manifest_type`, `artifact_kind`, `sizes`, and `size_counts`. Palette should emit the same high-level fields so the generic frontend can read one manifest shape for both kinds.
 
+Do not derive `sizes` / `size_counts` by parsing `source_counts` strings. Aggregate size counts directly from integer `preview_width` / `preview_height` while processing tiles:
+
+```python
+if width and width == height:
+    size_counts[width] = size_counts.get(width, 0) + 1
+```
+
+Then emit:
+
+```python
+"sizes": sorted(size_counts),
+"size_counts": {str(k): v for k, v in sorted(size_counts.items())},
+```
+
 Do not include `0` or unknown dimensions in `sizes`. If preview dimensions cannot be read, keep the tile in `All`, increment `unknown_dimensions`, and exclude it from exact-size filters.
 
-Do not silently swallow transient S3 failures while building this manifest. Missing `meta.json`, missing image, and missing preview are expected artifact states and should increment skip counters. Other `ClientError`s or decode failures should either be retried deliberately or fail the worker into `state:"error"` so the status UI shows the problem.
+Do not silently swallow transient S3 failures while building this manifest. Missing `meta.json`, missing image, and missing preview are expected artifact states and should increment skip counters. Other `ClientError`s or preview/meta decode failures should either be retried deliberately or fail the worker into `state:"error"` so the status UI shows the problem. Malformed `calc.json` should not fail the worker; default that job's compute metadata and continue.
 
 Sort manifest tiles by:
 

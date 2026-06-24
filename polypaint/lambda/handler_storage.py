@@ -2796,11 +2796,17 @@ def _list_mosaic_job_ids(client):
 def _read_mosaic_calc_meta(client, job_id):
     try:
         obj = client.get_object(Bucket=BUCKET, Key=f"renders/{job_id}/calc.json")
-        calc = json.loads(obj["Body"].read())
     except Exception as exc:
         if not _is_missing_s3_error(exc):
             raise
         calc = {}
+    else:
+        try:
+            calc = json.loads(obj["Body"].read())
+        except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
+            calc = {}
+        if not isinstance(calc, dict):
+            calc = {}
     return {
         "function": calc.get("function", "?"),
         "degree": calc.get("degree", 0),
@@ -2884,6 +2890,7 @@ def _build_color_mosaic_manifest(refresh_id, *, progress_cb=None):
         "unknown_dimensions": 0,
     }
     source_counts = {}
+    size_counts = {}
     tiles = []
     artifact_total = len(work)
     if progress_cb:
@@ -2916,6 +2923,10 @@ def _build_color_mosaic_manifest(refresh_id, *, progress_cb=None):
                 source_counts[status] = source_counts.get(status, 0) + 1
                 if status == "unknown":
                     counts["unknown_dimensions"] += 1
+                width = tile.get("preview_width")
+                height = tile.get("preview_height")
+                if isinstance(width, int) and width > 0 and width == height:
+                    size_counts[width] = size_counts.get(width, 0) + 1
             elif status == "missing_image":
                 counts["skipped_missing_image"] += 1
             elif status == "missing_preview":
@@ -2959,12 +2970,8 @@ def _build_color_mosaic_manifest(refresh_id, *, progress_cb=None):
         "manifest_kind": "all",
         "dimension_filter": "all-square",
         "tile_size": 512,
-        "sizes": sorted(int(k.split("x", 1)[0]) for k in source_counts if k.endswith("x" + k.split("x", 1)[0]) and k.split("x", 1)[0].isdigit()),
-        "size_counts": {
-            k.split("x", 1)[0]: v
-            for k, v in source_counts.items()
-            if k.endswith("x" + k.split("x", 1)[0]) and k.split("x", 1)[0].isdigit()
-        },
+        "sizes": sorted(size_counts),
+        "size_counts": {str(k): v for k, v in sorted(size_counts.items())},
         "count": len(tiles),
         "source_counts": source_counts,
         **counts,

@@ -455,6 +455,35 @@ class TestComputeMigration(unittest.TestCase):
     @patch("handler_storage._results_list_s3_client")
     @patch("handler_storage._get_ddb")
     @patch("handler_storage.s3")
+    def test_color_mosaic_worker_defaults_optional_bad_calc_json(self, mock_s3, mock_get_ddb, mock_list_s3_client):
+        import handler_storage
+
+        fake = _FakeS3()
+        fake_ddb = _FakeDDB()
+        self._patch(mock_s3, fake)
+        mock_list_s3_client.return_value = fake
+        mock_get_ddb.return_value = fake_ddb
+        fake.objects["renders/job/calc.json"] = b"{not json"
+        fake.objects["renders/job/color/color_a/image.jpeg"] = b"jpeg"
+        fake.objects["renders/job/color/color_a/preview.png"] = (
+            b"\x89PNG\r\n\x1a\n" + (13).to_bytes(4, "big") + b"IHDR"
+            + (512).to_bytes(4, "big") + (512).to_bytes(4, "big")
+        )
+
+        with patch("handler_storage.boto3.client", return_value=_FakeLambdaClient()):
+            status = handler_storage._start_color_mosaic_refresh()
+        result = handler_storage._run_color_mosaic_worker(status["refresh_id"])
+        manifest = json.loads(fake.objects[result["manifest_key"]])
+
+        self.assertEqual(result["state"], "ready")
+        self.assertEqual(manifest["tiles"][0]["function"], "?")
+        self.assertEqual(manifest["tiles"][0]["degree"], 0)
+        self.assertEqual(manifest["sizes"], [512])
+        self.assertEqual(manifest["size_counts"], {"512": 1})
+
+    @patch("handler_storage._results_list_s3_client")
+    @patch("handler_storage._get_ddb")
+    @patch("handler_storage.s3")
     def test_color_mosaic_prune_keeps_previous_ready_manifest(self, mock_s3, mock_get_ddb, mock_list_s3_client):
         import handler_storage
 

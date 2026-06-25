@@ -884,7 +884,7 @@ Example:
 legacy(moebius, both, both, 1, 0, 0, 1)
 ```
 
-Do not show keyword-looking legacy syntax such as `legacy(moebius, src=both, tgt=both, ...)`: the Param source parser treats `src` and `tgt` as positional selector arguments, not keyword arguments.
+Do not show keyword-looking legacy syntax such as `legacy(moebius, src=both, tgt=both, ...)`: the Param source parser treats `src`, `tgt`, and the transform args as positional, not keyword — `src=both` fails as an invalid selector, and `a=1` is not a keyword either.
 
 ## Correct Coeff Help Structure
 

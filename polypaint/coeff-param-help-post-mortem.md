@@ -1,10 +1,10 @@
 # coeff-param-help Implementation Post-Mortem
 
 **Implementation commit:** `807b39b` "Refactor param and coeff program help vocab" (24 files, +4193/−288).
-**Fixes commits (re-audited):** `3760114` "Harden param coeff help contracts" then `1a0fa61` "Finish param coeff help cleanup" — together resolve all bugs (BUG-1..6) and careless assumptions (CA-1..5); per-item status in **Resolution Update** below.
+**Fixes commits (re-audited):** `3760114` "Harden param coeff help contracts" then `1a0fa61` "Finish param coeff help cleanup" — together resolve the original bugs (BUG-1..6) and careless assumptions (CA-1..5). Remaining: one new low-severity Rejected-Forms lookup fragility, plus deferred M0/M3 oracle work. Per-item status in **Resolution Update** below.
 **Plan:** `coeff-param-help.md` (Milestones 0–6).
 **Date:** 2026-06-25.
-**Original test baseline (measured at `807b39b`):** full predeploy gate **passed** — `581 passed, 23 subtests` + all frontend JS checks OK; the 5 changed/new test files passed (`43 passed`). The original suite missed the bugs below. **Current post-fix status:** `3760114` adds gates for several original failures; see **Resolution Update**.
+**Original test baseline (measured at `807b39b`):** full predeploy gate **passed** — `581 passed, 23 subtests` + all frontend JS checks OK; the 5 changed/new test files passed (`43 passed`). The original suite missed the bugs below. **Current post-fix status:** `3760114` and `1a0fa61` add gates for the resolved failures; see **Resolution Update**.
 
 **Method:** six adversarial reviewers covered the implementation by surface (Param M1, Param M2 generator, Coeff M4, coeff chain/wire, Help/inspector frontend, wiring/gating). Findings were traced to source, and every severity-critical claim was re-run/re-verified independently. Provenance is marked **[verified]** (re-run in this session), **[worktree]** (confirmed against the parent commit `807b39b^`), or **[reviewer-VM]** (established by a reviewer running the frontend JS in a Node VM; mechanism confirmed statically where possible). Nothing here is asserted without a `file:line` trace.
 
@@ -70,6 +70,20 @@ The remaining issues are different in kind. They are not the same high-severity 
 **Still deferred (appropriately):** the M0 `coeff_program_chain_legacy.py` / `param_program_source_legacy.py` equivalence oracles and a `calc.json`-backed corpus do not exist. The wire corpus grew to 5 source + 5 chain golden cases, and CA-5's guard now blocks the dangerous future edit, so this is only required once the **M3 packer rewrite** is actually attempted — which it has not been.
 
 **Net after `1a0fa61`:** every bug (BUG-1..6) is fixed, every careless assumption (CA-1..5) is resolved or appropriately deferred, all flagged dead code is gone, and the prior cycle's legacy-name regression is fixed. The implementation now matches the plan's intent: Help is generated-data-driven, gated, and free of the drift class the project set out to kill. The only residue is the one new low-severity Rejected-Forms token-collision fragility and the pre-M3-only equivalence oracles.
+
+### Codex final re-check after `1a0fa61`
+
+I agree with the new review's main conclusion. I re-checked the load-bearing code paths against current `main`:
+
+- Param Help consumes generated `emit_aliases` and `rejected_forms` rather than hand-maintaining those forms (`js/08:892-957`).
+- Bare legacy lookup is fixed without stealing grammar names: legacy aliases are added only when they do not collide with Param grammar names (`js/08:815-830`).
+- Param indexed assignment now reaches the intended indexed-lhs branch (`param_program_source.py:181-189`).
+- Dead Param vocab payload is gone; `param_vocab_js.js` now carries only consumed fields (`argSpecs`, `targetArgIndexes`, `variableArgCounts`, `independentTargets`, `categoryMeta`, `uiFunctions`, `names`), and `test_param_program_drift.py` asserts the removed fields stay removed.
+- Coeff structural fallback lists are gone; the browser reads generated structural chips, and the backend parser loads `structural_chips.json` once and fails loudly on a missing family. The deployment packaging consequence is covered: every bundle with `coeff_program_source.py` now ships `structural_chips.json`, and `test_deploy_packaging.py` asserts that contract.
+
+My only disagreement is with reading "resolved" as "nothing else to do." It means the original implementation defects are fixed. It does **not** mean M0 is complete: there is still no frozen legacy parser/chain oracle and no saved-`calc.json` equivalence corpus. That is acceptable only because M3 was not attempted. If the next work is the wire-packer rewrite, the oracle/corpus becomes a hard gate, not documentation cleanup.
+
+The Rejected-Forms token-collision item is real but low risk. `push(both)` normalizes to `push`, and `emit(p1)` normalizes to `emit`; today the canonical articles win by score and tests cover the desired direction. Structurally, though, rejected stubs should not compete for canonical lookup keys. I would fix it as a small follow-up by marking rejected-form articles as display-only or by adding a `lookup: false` flag to `_programHelpItem` / `_programHelpAddSection`, then pinning `lookup('push')` and `lookup('emit')` to canonical articles.
 
 ---
 

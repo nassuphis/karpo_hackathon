@@ -332,7 +332,7 @@ assertIncludes("if (name === 'push' && params[0] === 'cf') return 'cf';", 'Coeff
 assertIncludes("if (name === 'pop') return 'drop';", 'Coeff Program chain-to-source renderer should render drop as drop, not ambiguous standalone pop');
 assertIncludes("if (name === 'poke_poly' && params.length >= 2) return `poly[${params[0]}] = ${params[1]}`;", 'Coeff Program chain-to-source renderer should render poke_poly as valid indexed assignment');
 assertIncludes("if (name === 'legacy') {\n                const [legacyName, src, tgt, ...rest] = params;", 'Coeff Program chain-to-source renderer should unwrap old legacy-form saved chips');
-assertIncludes("const callName = _coeffProgramSourceAliasNames[legacyName] || legacyName || 'rev';", 'Coeff Program legacy-form source rendering should map shadowed registry names (exp/pow/power) to parser aliases');
+assertIncludes("return `legacy(${[legacyName || 'rev', src || 'poly', tgt || 'poly', ...rest].join(', ')})`;", 'Coeff Program legacy-form source rendering should preserve opcode-9 legacy rows');
 assertIncludes("const _coeffProgramSourceAliasNames = _coeffRegistryVocab ? _coeffRegistryVocab.sourceAliasByName : {};", 'Coeff Program synthesizer should derive the parser-alias map from the generated vocab');
 assertIncludes("if (catalogName === 'linear') return [catalogName, ...values];", 'Coeff Program serializer must emit all linear args; the backend affine chip rejects trimmed forms');
 assertIncludes("if (name === 'argsort' && params.length >= 3) {", 'Coeff Program chain-to-source renderer should synthesize argsort without the target selector');
@@ -341,7 +341,7 @@ assertIncludes("(!_getCoeffProgramSourceText().trim() || _coeffProgramSourceAuto
 assertIncludes("&& String(raw.source_text || '').trim() !== '';", 'Coeff Program payload parsing should not let an empty source_text discard a non-empty chain');
 assertIncludes("function _scheduleCoeffProgramSourceValidation() {", 'Coeff Program text editor should debounce advisory backend validation');
 assertIncludes("'/compile-coeff-program-source');", 'Coeff Program text editor should validate via the compile-coeff-program-source route');
-assertIncludes("return tgt === 'poly' ? `poly = ${callName}(${args})` : `${callName}(${args})`;", 'Coeff Program legacy-form source rendering should produce direct source syntax, not legacy(...)');
+assertIncludes("if (name === 'legacy') {\n                const [legacyName, src, tgt, ...rest] = params;\n                return `legacy(${[legacyName || 'rev', src || 'poly', tgt || 'poly', ...rest].join(', ')})`;\n            }", 'Coeff Program legacy-form source rendering should use explicit legacy(...) for wire preservation');
 assertIncludes("if (sourceText.trim()) {\n            return _coeffProgramMetaHtml(program, options)", 'Coeff Program modal should prefer source_text display when a text program is active or saved');
 assertIncludes("Text source changed. It will be compiled by the backend on save/preview/compute.", 'Coeff Program text editor should tell users save uses source text');
 assertIncludes("function _chipMoveControlsHtml(which, idx) {", 'transform chip renderer should centralize move controls');

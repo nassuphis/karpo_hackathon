@@ -49,6 +49,8 @@ class TestPdfArtifactHandler(unittest.TestCase):
 
     def test_report_model_reconstructs_editable_program_sources(self):
         from handler_pdf_artifact import build_pdf_report_model
+        from coeff_program_chain import compile_coeff_program_chain
+        from coeff_program_source import compile_coeff_program_source
 
         report = build_pdf_report_model(
             "job1",
@@ -75,8 +77,12 @@ class TestPdfArtifactHandler(unittest.TestCase):
 
         programs = {p["label"]: p for p in report["programs"]}
         self.assertIn("unit_circle", programs["Param Program"]["source"])
-        self.assertEqual(programs["Coeff Program"]["source"], "poly = rev(poly)\nemit")
+        coeff_source = programs["Coeff Program"]["source"]
         self.assertNotIn("_native_transform", programs["Coeff Program"]["source"])
+        self.assertEqual(
+            compile_coeff_program_source(coeff_source)["fingerprint"],
+            compile_coeff_program_chain([["legacy", "rev", "poly", "poly"], ["emit"]])["fingerprint"],
+        )
         self.assertIn("rotate_roots", programs["Root Program"]["fallback"])
         self.assertEqual(
             programs["Solve Score Program"]["source"],

@@ -1622,9 +1622,7 @@ function _coeffProgramSourceFromRows(chain) {
             }
             if (name === 'legacy') {
                 const [legacyName, src, tgt, ...rest] = params;
-                const callName = _coeffProgramSourceAliasNames[legacyName] || legacyName || 'rev';
-                const args = [src || 'poly', ...rest].join(', ');
-                return tgt === 'poly' ? `poly = ${callName}(${args})` : `${callName}(${args})`;
+                return `legacy(${[legacyName || 'rev', src || 'poly', tgt || 'poly', ...rest].join(', ')})`;
             }
             return params.length ? `${name}(${params.join(', ')})` : name;
         }

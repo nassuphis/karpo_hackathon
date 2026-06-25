@@ -128,6 +128,8 @@ I agree with the review's current conclusion, with one boundary made explicit. T
 
 The only important remaining boundary is not a defect in what landed: the inverse/source serializer is still intentionally not generalized. That is acceptable because the plan never claimed the inverse could collapse safely; `_legacy_transforms` is still per-shape where necessary. Do not turn the current "everything resolved" wording into permission to rewrite that inverse casually. If that work starts, it needs the same discipline: frozen oracle first, harvested production cases first, then implementation.
 
+**Follow-up correction from the serializer deep dive:** the original Coeff chain→source contract was under-tested. Two traps were found and fixed: saved opcode-9 `legacy` rows must serialize as explicit `legacy(name, src, tgt, ...)` if they need byte-identical fingerprints, because direct source syntax lowers to opcode 29; and pretty scalar infix regeneration can change bytecode for complex subexpressions, so `coeff_source_text_from_chain` now verifies the candidate source and falls back to raw internal rows when the readable form is not byte-preserving. The corpus oracle now includes Coeff chain→source→compile fingerprint/execution-spec equality, so this class is gated instead of assumed. The tradeoff is deliberate: hard cases may populate/PDF as `_typed_*` rows rather than beautiful source, but they no longer silently change the program.
+
 ---
 
 ## Codex follow-up reconciliation

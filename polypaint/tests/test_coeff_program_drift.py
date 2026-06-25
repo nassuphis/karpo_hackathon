@@ -391,6 +391,9 @@ def test_coeff_legacy_enum_inverse_uses_registry_map_and_trims_default():
     assert chain._legacy_transforms([{**base, "args": [8, chain._ENUM_ARG_VALUES["hi"]]}]) == [["roots"]]
     assert chain._legacy_transforms([{**base, "args": [8, chain._ENUM_ARG_VALUES["lo"]]}]) == [["roots", "8", "lo"]]
     assert chain._legacy_transforms([{**base, "args": [8, 2.0]}]) == []
+    # Preserve the old inverse tolerance for extra trailing zero lanes in
+    # malformed/legacy-ish tokens while still rejecting invalid enum values.
+    assert chain._legacy_transforms([{**base, "args": [8, chain._ENUM_ARG_VALUES["hi"], 0.0]}]) == [["roots"]]
 
 
 def test_coeff_compat_signature_transforms_are_pinned():

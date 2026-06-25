@@ -111,6 +111,25 @@ class TestProgramM3Oracles(unittest.TestCase):
                 checked += 1
         self.assertGreaterEqual(checked, 1)
 
+    def test_coeff_chain_corpus_source_regeneration_preserves_fingerprint(self):
+        import coeff_program_chain as chain_compiler
+        import coeff_program_source as source_compiler
+
+        checked = 0
+        for calc in _load_cases():
+            chain = _program_params(calc).get("coeff_program_chain")
+            if not chain:
+                continue
+            with self.subTest(calc=calc["name"], kind="coeff_chain_source"):
+                source_text = source_compiler.coeff_source_text_from_chain(chain)
+                self.assertTrue(str(source_text or "").strip())
+                from_chain = chain_compiler.compile_coeff_program_chain(chain)
+                from_source = source_compiler.compile_coeff_program_source(source_text)
+                self.assertEqual(from_source["fingerprint"], from_chain["fingerprint"])
+                self.assertEqual(from_source["execution_spec"], from_chain["execution_spec"])
+                checked += 1
+        self.assertGreaterEqual(checked, 1)
+
     def test_param_source_corpus_matches_frozen_legacy_oracle(self):
         import param_program_source as current
         import param_program_source_legacy as legacy

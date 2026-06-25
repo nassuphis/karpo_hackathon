@@ -218,19 +218,40 @@ class TestCoeffProgramChain(unittest.TestCase):
         self.assertIn(COEFF_OP_TYPED_BINARY, ops)
         self.assertIn(COEFF_OP_TYPED_UNARY, ops)
 
+    def test_chain_serializer_falls_back_when_pretty_scalar_source_is_not_byte_preserving(self):
+        from coeff_program_chain import compile_coeff_program_chain
+        from coeff_program_source import coeff_source_text_from_chain, compile_coeff_program_source
+
+        chain = [
+            ["_typed_push_scalar", "29.0+0.0j"],
+            ["_typed_push_scalar", "1.0+0.0j"],
+            ["_typed_push_scalar", "p2"],
+            ["_typed_unary", "abs"],
+            ["_typed_binary", "multiply"],
+            ["_typed_push_scalar", "0.0+1.0j"],
+            ["_typed_binary", "multiply"],
+            ["_typed_poke_poly"],
+        ]
+        source = coeff_source_text_from_chain(chain)
+        self.assertIn("_typed_push_scalar(0.0+1.0j)", source)
+        self.assertEqual(
+            compile_coeff_program_source(source)["fingerprint"],
+            compile_coeff_program_chain(chain)["fingerprint"],
+        )
+
     def test_typed_op_passthrough_covers_chain_compiler(self):
         # Every "_typed_*" op the chain compiler accepts must also be accepted by
         # the source parser, so chip->source->parse round-trips stay closed.
         import coeff_program_chain as cc
-        from coeff_program_source import _TYPED_OP_PASSTHROUGH_NAMES
+        from coeff_program_source import _ROUNDTRIP_PASSTHROUGH_NAMES
 
         compiler_typed_ops = {
             name
             for name in {**cc._CHIP_COMPILERS, **cc._ZERO_ARG_CHIP_OPS}
-            if name.startswith("_typed_")
+            if name.startswith("_typed_") or name.startswith("_native_transform")
         }
         self.assertTrue(compiler_typed_ops)
-        missing = compiler_typed_ops - _TYPED_OP_PASSTHROUGH_NAMES
+        missing = compiler_typed_ops - _ROUNDTRIP_PASSTHROUGH_NAMES
         self.assertEqual(missing, set(), f"source parser missing typed ops: {sorted(missing)}")
 
     def test_source_dynamic_index_and_mixed_ops_compile_to_typed_tokens(self):
@@ -352,11 +373,17 @@ class TestCoeffProgramChain(unittest.TestCase):
         self.assertIn(COEFF_OP_POKE_TOS, [tok["op"] for tok in compiled["tokens"]])
         self.assertIn(COEFF_OP_TYPED_POKE_POLY, [tok["op"] for tok in compiled["tokens"]])
 
-    def test_source_rejects_explicit_legacy_wrapper(self):
+    def test_source_accepts_explicit_legacy_wrapper_for_wire_preserving_roundtrip(self):
+        from coeff_program_chain import COEFF_OP_LEGACY, compile_coeff_program_chain
         from coeff_program_source import compile_coeff_program_source
 
-        with self.assertRaisesRegex(RuntimeError, "legacy\\(\\.\\.\\.\\) is not valid"):
-            compile_coeff_program_source("legacy(rev, poly, poly)")
+        source = compile_coeff_program_source("legacy(rev, poly, poly)")
+        chain = compile_coeff_program_chain([["legacy", "rev", "poly", "poly"]])
+        self.assertEqual(source["tokens"][0]["op"], COEFF_OP_LEGACY)
+        self.assertEqual(source["fingerprint"], chain["fingerprint"])
+
+        with self.assertRaisesRegex(RuntimeError, "legacy names its own target"):
+            compile_coeff_program_source("poly = legacy(rev, poly, poly)")
 
     def test_source_native_transform_args_lower_to_typed_stack_args(self):
         from coeff_program_chain import COEFF_OP_NATIVE_TRANSFORM, COEFF_OP_TYPED_PUSH_SCALAR

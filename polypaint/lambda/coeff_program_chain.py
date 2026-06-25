@@ -196,21 +196,37 @@ _ENUM_ARG_VALUES = {
 }
 
 
-def _enum_arg_label(value):
+def _enum_arg_label(arg_spec, value):
     try:
         numeric = float(value)
     except (TypeError, ValueError):
         return None
-    for label, enum_value in _ENUM_ARG_VALUES.items():
+    choices = [str(choice).strip().lower() for choice in (arg_spec.get("choices") or _ENUM_ARG_VALUES)]
+    for label in choices:
+        if label not in _ENUM_ARG_VALUES:
+            continue
+        enum_value = _ENUM_ARG_VALUES[label]
         if abs(numeric - float(enum_value)) <= 1e-12:
             return label
     return None
 
 
 def _legacy_arg_matches_default(arg_spec, value):
+    if arg_spec is None:
+        try:
+            return abs(float(value)) <= 1e-12
+        except (TypeError, ValueError):
+            return False
     if arg_spec.get("type") == "enum":
-        label = _enum_arg_label(value)
-        return label is not None and label == str(arg_spec.get("default") or "").strip().lower()
+        label = _enum_arg_label(arg_spec, value)
+        default = arg_spec.get("default")
+        default_label = str(default or "").strip().lower()
+        if default_label in _ENUM_ARG_VALUES:
+            return label is not None and label == default_label
+        try:
+            return abs(float(value) - float(default)) <= 1e-12
+        except (TypeError, ValueError):
+            return False
     try:
         return abs(float(value) - float(arg_spec.get("default", 0))) <= 1e-12
     except (TypeError, ValueError):
@@ -2116,12 +2132,13 @@ def _legacy_transforms(tokens):
         args = list(token.get("args") or [])
         while args:
             idx = len(args) - 1
-            if idx >= len(spec["args"]) or not _legacy_arg_matches_default(spec["args"][idx], args[-1]):
+            arg_spec = spec["args"][idx] if idx < len(spec["args"]) else None
+            if not _legacy_arg_matches_default(arg_spec, args[-1]):
                 break
             args.pop()
         for idx, value in enumerate(args):
             if idx < len(spec["args"]) and spec["args"][idx].get("type") == "enum":
-                label = _enum_arg_label(value)
+                label = _enum_arg_label(spec["args"][idx], value)
                 if label is None:
                     return []
                 entry.append(label)

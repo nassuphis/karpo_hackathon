@@ -591,15 +591,16 @@ def _lower_native_transform_call(name, args, *, target):
     return [["_native_transform", name, src, target] + [_canonical_expr(arg) for arg in fallback_args]]
 
 
-# Synthesizer-internal typed VM chips accepted on parse for round-trip closure.
+# Synthesizer-internal VM chips accepted on parse for round-trip closure.
 # The frontend chip->source synthesizer (_coeffProgramSourceFromRows) and the
 # backend chain->source serializer (coeff_source_text_from_chain) both fall back
-# to emitting these "_typed_*" tokens for chip sequences with no high-level
-# source form (e.g. a const polynomial's poke ladder). Coeff programs reach the
-# native runtime only as source text, so the parser must accept them or such
-# programs cannot compute at all. Mirrors the "_typed_*" entries in
-# coeff_program_chain._CHIP_COMPILERS / _ZERO_ARG_CHIP_OPS; the drift guard
-# test_typed_op_passthrough_covers_chain_compiler keeps these in sync.
+# to emitting these internal tokens for chip sequences with no byte-preserving
+# high-level source form (e.g. a const polynomial's poke ladder, or a saved
+# native-transform opcode that must not recompile as a legacy/direct form).
+# Coeff programs reach native only as source text, so the parser must accept
+# them or such programs cannot compute at all. Mirrors the internal entries in
+# coeff_program_chain._CHIP_COMPILERS / _ZERO_ARG_CHIP_OPS; drift guards keep
+# these in sync.
 _TYPED_OP_PASSTHROUGH_NAMES = frozenset({
     "_typed_push_scalar",
     "_typed_push_vector",
@@ -611,11 +612,16 @@ _TYPED_OP_PASSTHROUGH_NAMES = frozenset({
     "_typed_fill",
     "_typed_blend",
 })
+_NATIVE_OP_PASSTHROUGH_NAMES = frozenset({
+    "_native_transform",
+    "_native_transform_stack_args",
+})
+_ROUNDTRIP_PASSTHROUGH_NAMES = _TYPED_OP_PASSTHROUGH_NAMES | _NATIVE_OP_PASSTHROUGH_NAMES
 
 
 def _lower_call(name, args, *, target="push"):
     name = str(name or "").strip().lower()
-    if name in _TYPED_OP_PASSTHROUGH_NAMES:
+    if name in _ROUNDTRIP_PASSTHROUGH_NAMES:
         # Not for hand-authoring, but emitted by chain->source serializers; pass
         # the row through verbatim and let the chain compiler validate operands.
         return [[name, *[str(arg) for arg in args]]]
@@ -723,9 +729,17 @@ def _lower_call(name, args, *, target="push"):
             raise CoeffProgramSourceError("macro name is empty")
         return [["macro", macro_name]]
     if name == "legacy":
-        raise CoeffProgramSourceError(
-            "legacy(...) is not valid in coeff source text; call the transform directly"
-        )
+        # Wire-preserving escape for saved opcode-9 legacy rows. Direct source
+        # syntax lowers to COEFF_OP_NATIVE_TRANSFORM; older chain payloads need
+        # this explicit form to round-trip through source without changing the
+        # fingerprint.
+        if target == _POLY_SYMBOL:
+            raise CoeffProgramSourceError(
+                f"legacy names its own target; write legacy(name, src, tgt, ...) as a statement"
+            )
+        if len(args) < 3:
+            raise CoeffProgramSourceError("legacy requires name, source, target, and optional args")
+        return [["legacy", args[0].strip().lower(), _source_selector(args[1]), _target_selector(args[2])] + [str(arg) for arg in args[3:]]]
     if name in legacy_registry()["by_name"]:
         return _lower_native_transform_call(name, args, target=target)
     raise CoeffProgramSourceError(f"unknown coeff program source function {name!r}")
@@ -985,7 +999,7 @@ _SCALAR_BINARY_INFIX = {
 def _typed_source_binary_expr(name, left, right, result_type):
     chip = _VECTOR_BINARY_ALIASES.get(str(name or "").strip().lower(), str(name or "").strip().lower())
     if result_type == "scalar" and chip in _SCALAR_BINARY_INFIX:
-        return f"({left}{_SCALAR_BINARY_INFIX[chip]}{right})"
+        return f"(({left}){_SCALAR_BINARY_INFIX[chip]}({right}))"
     return _source_call(chip, [left, right])
 
 
@@ -1014,6 +1028,26 @@ def _typed_pending_line(kind, text):
     if raw in {"cf", "poly"}:
         return raw
     return raw
+
+
+def _raw_chain_source_text(chain):
+    lines = []
+    for row in chain or ():
+        name, args = _chain_row_name_args(row)
+        lines.append(_source_call(name, args))
+    return "\n".join(line for line in lines if str(line).strip())
+
+
+def _source_text_preserves_chain(chain, source_text):
+    try:
+        from_chain = compile_coeff_program_chain(chain)
+        from_source = compile_coeff_program_source(source_text)
+    except Exception:
+        return False
+    return (
+        from_source.get("fingerprint") == from_chain.get("fingerprint")
+        and from_source.get("execution_spec") == from_chain.get("execution_spec")
+    )
 
 
 def coeff_source_text_from_chain(chain):
@@ -1181,7 +1215,11 @@ def coeff_source_text_from_chain(chain):
             push_pending("vector", _source_call("arange", args))
         elif lname in {"legacy", "_native_transform"} and len(args) >= 3:
             flush_pending()
-            line = _native_transform_source_line(args[0], args[1], args[2], args[3:])
+            is_legacy = lname == "legacy"
+            if is_legacy:
+                line = _source_call("legacy", [args[0], args[1], args[2], *args[3:]])
+            else:
+                line = _native_transform_source_line(args[0], args[1], args[2], args[3:])
             if args[2].strip().lower() == "push":
                 push_pending("vector", line)
             else:
@@ -1224,4 +1262,10 @@ def coeff_source_text_from_chain(chain):
             flush_pending()
             lines.append(_source_call(lname, args))
     flush_pending()
-    return "\n".join(lines)
+    candidate = "\n".join(lines)
+    if _source_text_preserves_chain(chain, candidate):
+        return candidate
+    raw = _raw_chain_source_text(chain)
+    if raw and raw != candidate and _source_text_preserves_chain(chain, raw):
+        return raw
+    return candidate

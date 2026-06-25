@@ -736,6 +736,7 @@ function _programHelpItem(name, signature, help = '', options = {}) {
         notes,
         insert: options.insert || '',
         missing: !!options.missing,
+        lookup: options.lookup !== false,
     };
 }
 
@@ -748,6 +749,7 @@ function _programHelpAddSection(registry, title, items) {
     if (!filtered.length) return;
     registry.sections.push({ title, items: filtered });
     filtered.forEach(item => {
+        if (item.lookup === false) return;
         const keys = [item.name].concat(item.aliases || []);
         keys.forEach(key => {
             const norm = _normalizeProgramHelpToken(key);
@@ -952,6 +954,7 @@ function _programHelpBuildParamRegistry() {
                 category: 'rejected form',
                 forms: item.form ? [item.form] : [],
                 notes: item.use ? [`Use ${item.use}.`] : [],
+                lookup: false,
             },
         ));
     _programHelpAddSection(registry, 'Rejected Forms', rejectedItems);

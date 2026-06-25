@@ -1,0 +1,14 @@
+{
+  "job_id": "compute_m3_typed_indexed_source",
+  "params": {
+    "pipeline_mode": "program",
+    "solver_mode": "aberth_mt",
+    "N": 16,
+    "times": 1,
+    "n_chunks": 1,
+    "function": "const",
+    "cfpv": [10, 1, 0],
+    "param_program_source_text": "push(t1)\ndup\nemit_p1\nemit_p2",
+    "coeff_program_source_text": "poly = arange(1, poly_len+1)\npoly = add(multiply(poly, 0.25), 1.0)\npoly[(poly_len-1.0)] = (p1+poly[(poly_len-2.0)])\nemit"
+  }
+}

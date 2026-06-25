@@ -1,0 +1,23 @@
+{
+  "job_id": "compute_m3_persisted_legacy_component_chains",
+  "params": {
+    "pipeline_mode": "program",
+    "solver_mode": "aberth_mt",
+    "N": 16,
+    "times": 1,
+    "n_chunks": 1,
+    "function": "poly_1",
+    "cfpv": [],
+    "param_program_chain": [
+      ["legacy", "moebius", "both", "both", "1", "0", "0", "1"],
+      ["legacy", "add", "both", "both", "1", "2"]
+    ],
+    "coeff_program_chain": [
+      ["legacy", "linear", "poly", "poly", "1", "2", "3", "4"],
+      ["legacy", "pow", "poly", "poly", "1+2j", "3+4j", "0.5"],
+      ["legacy", "exp", "poly", "poly", "1j", "0", "0.25"],
+      ["legacy", "round", "poly", "poly", "1+2j", "0.125"],
+      ["emit"]
+    ]
+  }
+}

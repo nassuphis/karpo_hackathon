@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "source_complex_native",
+      "calc": "calc/source_complex_native.calc.json"
+    },
+    {
+      "name": "persisted_legacy_component_chains",
+      "calc": "calc/persisted_legacy_component_chains.calc.json"
+    },
+    {
+      "name": "typed_indexed_source",
+      "calc": "calc/typed_indexed_source.calc.json"
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 # coeff-param-help Implementation Post-Mortem
 
 **Implementation commit:** `807b39b` "Refactor param and coeff program help vocab" (24 files, +4193/−288).
-**Fixes commits (re-audited):** `3760114` "Harden param coeff help contracts" then `1a0fa61` "Finish param coeff help cleanup" — together resolve the original bugs (BUG-1..6) and careless assumptions (CA-1..5). Remaining: one new low-severity Rejected-Forms lookup fragility, plus deferred M0/M3 oracle work. Per-item status in **Resolution Update** below.
+**Fixes commits (re-audited):** `3760114` "Harden param coeff help contracts" then `1a0fa61` "Finish param coeff help cleanup" — together resolve the original bugs (BUG-1..6) and careless assumptions (CA-1..5). **Current worktree follow-up:** the Rejected-Forms lookup fragility is fixed, and the pre-M3 frozen-oracle/calc-corpus gate now exists. Per-item status in **Resolution Update** below.
 **Plan:** `coeff-param-help.md` (Milestones 0–6).
 **Date:** 2026-06-25.
 **Original test baseline (measured at `807b39b`):** full predeploy gate **passed** — `581 passed, 23 subtests` + all frontend JS checks OK; the 5 changed/new test files passed (`43 passed`). The original suite missed the bugs below. **Current post-fix status:** `3760114` and `1a0fa61` add gates for the resolved failures; see **Resolution Update**.
@@ -65,11 +65,11 @@ The remaining issues are different in kind. They are not the same high-severity 
 | **CA-5** (`type:complex` guardrail) | ✅ **RESOLVED** | guard test `test_coeff_registry_has_no_unpinned_generic_complex_args` (`tests/test_coeff_program_drift.py:370`) fails the build if any registry arg becomes `type:"complex"` without updating the packer/wire corpus. |
 | **Phantom `_coeffProgramParamDefs`** + **4 orphaned cheat→help builders** | ✅ **RESOLVED** | all removed (0 repo-wide refs). |
 
-**One new low-severity item surfaced (latent, not a live bug):** the Rejected-Forms entries normalize to the same lookup token as their canonical article (`push(both)`→`push`, `emit(p1)`→`emit`), so the inspector picks the right one only by `_programHelpLookupScore` margin (push 38 vs 9; emit 32 vs 9), not by structure. Correct today; a future form-poor canonical article could be shadowed by its own "rejected" stub. Untested (`js/08:746-779`).
+**One new low-severity item surfaced (latent, not a live bug):** the Rejected-Forms entries normalize to the same lookup token as their canonical article (`push(both)`→`push`, `emit(p1)`→`emit`), so the inspector picks the right one only by `_programHelpLookupScore` margin (push 38 vs 9; emit 32 vs 9), not by structure. Correct today; a future form-poor canonical article could be shadowed by its own "rejected" stub. Untested (`js/08:746-779`). **→ ✅ RESOLVED in current worktree:** rejected-form articles are marked `lookup:false`, `_programHelpAddSection` skips them when building the lookup index, and `tests/test_frontend_js.sh` pins that `push(both)`/`emit(p1)` are display-only entries.
 
-**Still deferred (appropriately):** the M0 `coeff_program_chain_legacy.py` / `param_program_source_legacy.py` equivalence oracles and a `calc.json`-backed corpus do not exist. The wire corpus grew to 5 source + 5 chain golden cases, and CA-5's guard now blocks the dangerous future edit, so this is only required once the **M3 packer rewrite** is actually attempted — which it has not been.
+**Pre-M3 oracle/corpus gate:** no longer deferred in current worktree. `lambda/coeff_program_chain_legacy.py` and `lambda/param_program_source_legacy.py` are frozen, first-line-marked test oracles; `lambda/coeff_program_source_legacy.py` now compiles through the frozen chain oracle. `tests/fixtures/program-m3-oracle/` contains calc-shaped source/chain fixtures, and `tests/test_program_m3_oracles.py` compares current vs frozen parsed chains, execution specs, fingerprints, token/scalar counts, and Param chain→source regeneration. The test is wired into `scripts/predeploy_check.sh` and asserted by `tests/test_deploy_packaging.py`. This is now the hard prerequisite gate before any M3 wire-packer rewrite.
 
-**Net after `1a0fa61`:** every bug (BUG-1..6) is fixed, every careless assumption (CA-1..5) is resolved or appropriately deferred, all flagged dead code is gone, and the prior cycle's legacy-name regression is fixed. The implementation now matches the plan's intent: Help is generated-data-driven, gated, and free of the drift class the project set out to kill. The only residue is the one new low-severity Rejected-Forms token-collision fragility and the pre-M3-only equivalence oracles.
+**Net after `1a0fa61` plus current follow-up:** every bug (BUG-1..6) is fixed, every careless assumption (CA-1..5) is resolved, all flagged dead code is gone, and the prior cycle's legacy-name regression is fixed. The implementation now matches the plan's intent: Help is generated-data-driven, gated, and free of the drift class the project set out to kill. The rejected-form lookup collision is structurally removed, and the pre-M3 equivalence oracle/corpus gate is present and predeploy-gated.
 
 ### Codex final re-check after `1a0fa61`
 
@@ -83,7 +83,20 @@ I agree with the new review's main conclusion. I re-checked the load-bearing cod
 
 My only disagreement is with reading "resolved" as "nothing else to do." It means the original implementation defects are fixed. It does **not** mean M0 is complete: there is still no frozen legacy parser/chain oracle and no saved-`calc.json` equivalence corpus. That is acceptable only because M3 was not attempted. If the next work is the wire-packer rewrite, the oracle/corpus becomes a hard gate, not documentation cleanup.
 
-The Rejected-Forms token-collision item is real but low risk. `push(both)` normalizes to `push`, and `emit(p1)` normalizes to `emit`; today the canonical articles win by score and tests cover the desired direction. Structurally, though, rejected stubs should not compete for canonical lookup keys. I would fix it as a small follow-up by marking rejected-form articles as display-only or by adding a `lookup: false` flag to `_programHelpItem` / `_programHelpAddSection`, then pinning `lookup('push')` and `lookup('emit')` to canonical articles.
+The Rejected-Forms token-collision item was real but low risk. It is fixed in the current worktree by marking rejected stubs as display-only (`lookup:false`) and pinning that behavior in the frontend JS harness.
+
+### Current follow-up after requested items 1 and 2
+
+Implemented:
+
+- Rejected-form Help rows are display-only: they still render in the Help tab, but they no longer register lookup keys that can compete with canonical `push`/`emit` articles.
+- Frozen M3 oracles exist for the risky parser/packer seam: `coeff_program_chain_legacy.py`, `coeff_program_source_legacy.py`, `program_source_core_legacy.py`, `param_program_chain_legacy.py`, and `param_program_source_legacy.py` are marked test-only legacy oracles.
+- The M3 corpus is calc-shaped and checked in under `tests/fixtures/program-m3-oracle/`; it includes source-form and persisted-chain cases covering Param source, Param chain regeneration, Coeff source native transforms, indexed Coeff source, and legacy component chains.
+- `tests/test_program_m3_oracles.py` compares current and frozen outputs over the corpus and is included in predeploy. This is now the required gate before touching any Coeff M3 wire-packer rewrite.
+
+Boundary: this is a representative checked-in calc corpus, not an automated export of every live S3 `calc.json`. If the M3 rewrite starts and we want production-wide assurance, the next step is to add a separate corpus-harvest script that snapshots real saved calc files into this fixture format before rewriting the packer.
+
+Oracle boundary: `program_source_core_legacy.py` still reads the current generated `program_profiles` artifact. That is deliberate: profile drift is covered by the generated-profile `--check` gates and profile-drift tests, while this oracle pins the source/chain lowering and compiled wire/fingerprint seam. If M3 ever mutates profile semantics in the same change, freeze a `program_profiles_legacy.py/json` copy and repoint the oracle before comparing old vs new.
 
 ---
 

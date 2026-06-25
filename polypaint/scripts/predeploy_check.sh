@@ -42,6 +42,7 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_param_program_storage.py \
     tests/test_param_program_native.py \
     tests/test_program_help_forms.py \
+    tests/test_program_m3_oracles.py \
     tests/test_coeff_program_chain.py \
     tests/test_coeff_wire_fingerprints.py \
     tests/test_coeff_program_native.py \

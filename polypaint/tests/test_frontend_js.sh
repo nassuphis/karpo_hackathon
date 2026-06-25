@@ -740,6 +740,8 @@ function makeContext({withCoeffVocab = true} = {}) {
       squareForms: square && square.forms,
       rejectedPushBoth: rejectedPushBoth && rejectedPushBoth.notes,
       rejectedEmitCall: rejectedEmitCall && rejectedEmitCall.notes,
+      rejectedPushLookup: rejectedPushBoth && rejectedPushBoth.lookup,
+      rejectedEmitLookup: rejectedEmitCall && rejectedEmitCall.lookup,
       legacyMoebiusName: legacyMoebius && legacyMoebius.name,
       addLookupName: addLookup && addLookup.name,
       addNormalized: (() => {
@@ -762,6 +764,7 @@ function makeContext({withCoeffVocab = true} = {}) {
   assert(paramHelpAudit.squareForms.includes('square(p1)') && paramHelpAudit.squareForms.includes('square(p2)'), 'Param Help lookup should expose both targeted unary forms');
   assert((paramHelpAudit.rejectedPushBoth || []).join(' ').includes('push(t1)'), 'Param Help should surface profile rejected form guidance for push(both)');
   assert((paramHelpAudit.rejectedEmitCall || []).join(' ').includes('emit_p1'), 'Param Help should surface profile rejected form guidance for emit(p1)');
+  assert(paramHelpAudit.rejectedPushLookup === false && paramHelpAudit.rejectedEmitLookup === false, 'Rejected-form Help stubs should be display-only, not lookup competitors');
   assert(paramHelpAudit.legacyMoebiusName === 'legacy:moebius', 'Double-clicking bare legacy transform names should resolve to the namespaced legacy Help article');
   assert(paramHelpAudit.addLookupName === 'add', 'Legacy aliasing must not steal canonical Param grammar names like add');
   assert(JSON.stringify(paramHelpAudit.addNormalized.rows) === JSON.stringify([['legacy', 'add', 'both', 'both', '1', '2']]), 'Param legacy add bridge must preserve both optional offset args');

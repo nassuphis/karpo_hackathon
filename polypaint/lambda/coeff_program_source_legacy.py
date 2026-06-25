@@ -1,3 +1,4 @@
+# LEGACY ORACLE: frozen Coeff source parser shell for equivalence tests; do not import in production.
 """Frozen Coeff source parser-shell oracle for CR18 equivalence tests.
 
 This module is intentionally test-only. It preserves the pre-shared-core
@@ -16,7 +17,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 
 import coeff_program_source as _current
-from coeff_program_chain import compile_coeff_program_chain, display_coeff_program_chain
+from coeff_program_chain_legacy import compile_coeff_program_chain, display_coeff_program_chain
 
 
 MAX_COEFF_PROGRAM_SOURCE_BYTES = _current.MAX_COEFF_PROGRAM_SOURCE_BYTES

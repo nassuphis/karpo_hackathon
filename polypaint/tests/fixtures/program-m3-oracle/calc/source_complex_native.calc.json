@@ -1,0 +1,14 @@
+{
+  "job_id": "compute_m3_source_complex_native",
+  "params": {
+    "pipeline_mode": "program",
+    "solver_mode": "aberth_mt",
+    "N": 16,
+    "times": 1,
+    "n_chunks": 1,
+    "function": "const",
+    "cfpv": [8, 1, 0],
+    "param_program_source_text": "p1 = t1 + t2\np2 = t2*t2",
+    "coeff_program_source_text": "poly = linear(poly, 1+2j, 3+4j, 0.5)\npoly = exp_affine(poly, p1, p2, 0.25)\npoly = round(poly, 1+2j, 0.125)\npoly[0] = p1+p2\nemit"
+  }
+}

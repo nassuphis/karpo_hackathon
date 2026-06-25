@@ -234,9 +234,9 @@ Two consequences of (A), applied in AP-1/AP-3 below:
 
 **State (verified):** `coeff_legacy_registry.json` has **28 functions, 0 with `andy` in `args[]`, all 28 with `supports_andy: true`.** `andy` is a boolean flag. Because it isn't a declared arg, three readers synthesize it and then strip it:
 
-- JS appends a shared `_ctAndyParam` to every transform's params (`js/07-transform-catalogs.js:357,396,408`), with `kind:'andy'` as a marker other code filters/serializes/validates on.
+- JS appends a shared `_ctAndyParam` to every transform's params (`js/07-transform-catalogs.js:357,396,409,601` — three append sites, not one), with `kind:'andy'` as a marker other code filters/serializes/validates on.
 - The source parser strips a trailing andy via per-`fn_index` arity sets `{3,5}/{3}/{2,3}/{declared+1}` (`coeff_program_source.py:205-226`, `_split_native_transform_andy`).
-- The chain compiler strips it again via `_split_trailing_andy` + four `_*_legacy_args` helpers, each re-hardcoding the same arity sets (`coeff_program_chain.py:942,1264-1358`).
+- The chain compiler strips it again via `_split_trailing_andy` + five `_*_legacy_args` helpers (`linear`/`pow` both delegate to `_affine_pair_legacy_args`), each re-hardcoding the same arity sets (`coeff_program_chain.py:942,1223-1358`).
 
 A blend amount — a parameter no different from `q` or `omega` — is appended in one layer and stripped in three, with its arity table copied three times.
 
@@ -247,7 +247,7 @@ A blend amount — a parameter no different from `q` or `omega` — is appended 
 - Existing `supports_andy:true` is accepted only as a migration shim that materializes the same `effective_args` row, then becomes deprecated.
 - The parser, chain compiler, serializer, frontend catalog, and Help all read `effective_args`; none of them special-case `supports_andy`.
 
-Then delete `_ctAndyParam`-append, `_split_native_transform_andy`, and the four chain andy-splitters — the ordinary argument machinery handles it. For the functions whose with/without-andy arities are genuinely ambiguous (`linear`/`pow` `{3,5}`, `exp` `{3}`, `round` `{2,3}`), put the **accepted source signatures in the registry as data**, deleting the triplicated Python tables. Keep `role:"andy"` only as a UI/help label; it must not be load-bearing for parse/compile arity logic. Subject to the wire constraint: this is a schema/source/frontend cleanup; andy's compiled byte position stays, so fingerprints don't move. **Net: one declaration replaces a flag + an append + three strippers + three arity tables — without re-encoding the wire.**
+Then delete `_ctAndyParam`-append, `_split_native_transform_andy`, and the five chain andy-splitters — the ordinary argument machinery handles it. For the functions whose with/without-andy arities are genuinely ambiguous (`linear`/`pow` `{3,5}`, `exp` `{3}`, `round` `{2,3}`), put the **accepted source signatures in the registry as data**, deleting the triplicated Python tables. Keep `role:"andy"` only as a UI/help label; it must not be load-bearing for parse/compile arity logic. Subject to the wire constraint: this is a schema/source/frontend cleanup; andy's compiled byte position stays, so fingerprints don't move. **Net: one declaration replaces a flag + an append + three strippers + three arity tables — without re-encoding the wire.**
 
 ### Two root causes underneath almost all of these
 
@@ -260,7 +260,7 @@ Before the list: nearly every entry below traces to **the registry/type model be
 
 **Verified:** `param_legacy_registry.json` has **70** functions; `js/07-transform-catalogs.js:96-145` `_paramProgramLegacyNames` lists **48**. The 22 missing — `add, adth, cadd, crdth, ddith, iadd, iscale, ldth, ndith, radd, rscale, scale, scdth, sdith, t1iadd, t1radd, t2iadd, t2radd, zz1, zz2, zz3, zzold` — **are accepted by the parser** (`param_program_source.py:173,189` accept any name in `legacy_registry()["by_name"]`; `scale`/`cadd`/`zz1` confirmed present) but the `legacy(...)` dropdown and Legacy-Transform help can't offer them. The whole param legacy vocab is re-typed in JS (`_paramProgramLegacyNames`, `_paramProgramLegacyArgSpecs` :176-202, `_paramProgramLegacyTargetArgIndexes` :158-174 — a copy of `param_program_chain.py:_LEGACY_TARGET_ARG_INDEXES`), with nothing keeping it in sync.
 
-**Why:** Param is the only one of the three program languages with **no generator**. **Fix:** add `gen_param_vocab.py` (clone `gen_coeff_vocab.py`) emitting `window._paramRegistryVocab` from `param_legacy_registry.json` + `program_profiles.json`; hydrate the JS lists from it; add `test_param_program_drift.py` (mirror the coeff drift test). **Deletes ~110 lines of hand-typed JS and fixes the 22-function bug permanently.**
+**Why:** Param is the only one of the three program languages with **no generator**. **Fix:** add `gen_param_vocab.py` (clone `gen_coeff_vocab.py`) emitting `window._paramRegistryVocab` from `param_legacy_registry.json` + `program_profiles.json`; hydrate the JS lists from it; add `test_param_program_drift.py` (mirror the coeff drift test). **Fixes the 22-function bug permanently.** (The deletion is larger than the three small JS tables: the prose/arg-shape homes `_ptInfo`/`_ptCatalog` and the chain target-placement/variable-arity side-tables must also migrate or derive. And single-source requires first enriching `param_legacy_registry.json` with the `ui`/category/per-arg-display fields it lacks today — otherwise the generator is a 4th copy, not a collapse. See Milestone 2.)
 
 ### AP-3 · Complex args packed into 4 reals because the type system can't say `complex`
 
@@ -282,7 +282,7 @@ Before the list: nearly every entry below traces to **the registry/type model be
 }
 ```
 
-Under wire-compatible cleanup (A): the **source** parser/serializer use the clean complex form (`linear(2+3j, 0)`) only where that spelling recompiles to the same fingerprinted wire; otherwise they preserve the old packed spelling as the canonical wire-preserving source. The **compiler still emits whatever `_token` bytes that function already emits** — its existing `args`/`args_im`/`expr_refs` layout — driven by the `compat_signature` as the declared wire layout. (The `complex` arg *type* is a source/schema change, not a wire change: it lets new source write `2+3j` instead of `2, 3` when safe. It does **not** unify the wire — the clean complex spelling and the old packed spelling are semantically equal but compile to **different** bytes, e.g. `linear(2+3j,0)` → `args=[2,0]/args_im=[3,0]` vs. old four-real `linear(2,3,0,0)` → `args=[2,3,0,0]/args_im=[0,0,0,0]` — so each spelling keeps mapping to its own existing wire.) So this **collapses** the five hardcoded packers + three inverse cases + two JS copies into **one data-driven complex↔wire codec** — it does not remove packing (the wire is permanent). Net is still a large deletion (~150+ lines of per-`fn_index` ladders → one codec), framed as "make packing data-driven and singular," gated by **byte-identical fingerprints over the saved-program corpus**.
+Under wire-compatible cleanup (A): the **source** parser/serializer use the clean complex form (`linear(2+3j, 0)`) only where that spelling recompiles to the same fingerprinted wire; otherwise they preserve the old packed spelling as the canonical wire-preserving source. The **compiler still emits whatever `_token` bytes that function already emits** — its existing `args`/`args_im`/`expr_refs` layout — driven by the `compat_signature` as the declared wire layout. (The `complex` arg *type* is a source/schema change, not a wire change: it lets new source write `2+3j` instead of `2, 3` when safe. It does **not** unify the wire — the clean complex spelling and the old packed spelling are semantically equal but compile to **different** bytes, e.g. `linear(2+3j,0)` → `args=[2,0]/args_im=[3,0]` vs. old four-real `linear(2,3,0,0)` → `args=[2,3,0,0]/args_im=[0,0,0,0]` — so each spelling keeps mapping to its own existing wire.) So this replaces the five hardcoded packers + three inverse cases + two JS copies with a **per-function signature table + one interpreter** — not a single algorithm, and the parsimony has a real ceiling. The forward packers do collapse into "place each declared slot in its declared lane," but the layouts are irregular (`exp`/`round` flatten re/im into `args`; `littlewood` carries `andy` in `args[2]`; `round` forks on arity), and the **inverse does not collapse at all** — it does lossy canonical minimization (default-trimming, `exp`'s 1-vs-2-arg emit, the hardcoded enum inverse; `round` has no inverse special-case and decompiles via the generic path), so it stays largely per-function. Realistic deletion is ~60–100 forward lines into a data table; the inverse barely shrinks. For the table to be data-driven, `compat_signature` must encode more than arg names: a **per-slot lane discriminator** (`args` vs `args_im` vs flatten-pair), the **`andy` carrier location** (token field vs `args[i]`), **arity-keyed path selection** (round), the **inverse/minimization rules**, and the **enum↔float map**. It does not remove packing (the wire is permanent), and it is only safe behind a wire-equivalence harness that **does not exist yet** (see Milestone 0/3): **byte-identical fingerprints over a saved-program corpus that actually exercises these forms.**
 
 The codec must reproduce **each function's exact existing lane usage**, which is genuinely heterogeneous — there is no single "complex → lanes" rule:
 - `affine`, and the **new** complex form of `linear`/`pow`, carry the imaginary parts in `args_im` (`_compile_affine:1064`; `_affine_pair_legacy_args:1243`);
@@ -409,7 +409,7 @@ Important Coeff metadata:
 Important current convention:
 
 - `_ctCatalog` appends `andy` to all registry transforms through `_ctAndyParam`.
-- `_coeffProgramParamDefs(name)` is the correct accessor for transform params when available.
+- `_coeffProgramParamDefs(name)` is referenced (`js/08-chip-editors.js:897`) but **defined nowhere** — the `typeof === 'function'` guard always fails, so transform params actually resolve through `_ctCatalog` (which appends `andy` via `_ctAndyParam`). Treat `_ctCatalog`, not `_coeffProgramParamDefs`, as today's accessor.
 - Coeff function params come from `coeff_func_catalog_js.js`.
 
 ## Mechanics: How Help Data Should Be Collected
@@ -972,7 +972,7 @@ Each structural op needs:
 Entries should be generated from:
 
 - normalized coeff registry entries after the migration: names/aliases/categories/descriptions plus `effective_args`
-- `_coeffProgramLegacyNames`, `_ctCatalog`, and `_coeffProgramParamDefs(name)` only as current pre-migration accessors
+- `_coeffProgramLegacyNames` and `_ctCatalog` (which appends `andy` via `_ctAndyParam`) only as current pre-migration accessors — `_coeffProgramParamDefs` is referenced but undefined, so `_ctCatalog` is the real one
 
 Each entry must include `andy` because every registry-backed native transform supports it.
 
@@ -1311,7 +1311,7 @@ Work:
 - Add/extend parser behavior tests that pin current accepted/rejected Param and Coeff source forms (`push(t1)`, rejected `push(both)`, rejected `emit(p1)`, targeted unary `square(p1/p2)`, old packed Coeff `linear`/`pow`/`exp`/`round` forms).
 - Add a saved-program corpus fixture for Param/Coeff source/chain payloads, including real `calc.json` examples where available.
 - Add equivalence helpers that compile old path vs new path and compare lowered chain, execution spec, source serializer round-trip, and fingerprint where applicable.
-- Make equivalence mechanically possible before deleting old code: either keep a test-only legacy parser/serializer adapter until each migration gate is green, or snapshot golden lowered chains/execution specs/fingerprints from the current implementation into fixtures. Do not rewrite the only parser and then claim "old vs new" equivalence without an old reference.
+- Make equivalence mechanically possible before deleting old code. **What exists today:** `lambda/coeff_program_source_legacy.py` is a frozen *source-layer* oracle driving `tests/test_coeff_source_equivalence.py` over `tests/fixtures/coeff-program-corpus/` — credit and extend it, don't rebuild it. **What is missing and must be built before any packer/parser rewrite:** (1) a chain-layer oracle (`coeff_program_chain_legacy.py`) — Milestone 3 rewrites the chain packers and there is **no** frozen chain reference today; (2) **golden fingerprint snapshots** — every fingerprint assertion in `tests/test_coeff_program_chain.py` is relative (`A==B`), none pin a frozen hash; (3) a corpus that actually exercises the heterogeneous forms — today it holds one `linear` and **none** of old four-real `linear`/`pow`, `exp_affine`, `round`, `affine`-with-imaginary, or `littlewood`; (4) a Param oracle — `param_program_source_legacy.py` does **not** exist, so Param has no old reference at all. Do not rewrite the only parser/packer and then claim "old vs new" equivalence without one of these.
 - Confirm current generated-artifact gates are represented in `scripts/predeploy_check.sh`: `gen_program_profiles.py --check`, `gen_coeff_vocab.py --check`, `gen_solve_score_vocab.py --check`. New generators added below must join this list.
 
 Gate:
@@ -1337,7 +1337,7 @@ Work:
 - Add `profile_source(profile)` to `program_source_core.py`.
 - Derive the Param parser's operation sets from `profile_source(program_profile("param"))`.
 - Migrate `param_program_source.py` from its manual statement loop to a `ParamStatementLowerer(ProfileStatementLowerer)` and `parse_profile_source`, keeping Param-specific semantic lowering in Python.
-- Preserve Param's current diagnostic contract unless a test explicitly approves a change. The current parser distinguishes read-only lhs (`read_only_symbol`), unknown lhs (`unknown_symbol`), rejected `emit(p1)` (`noncanonical_emit`), rejected `push(both)` (`bad_selector`), and blank source (`empty_source`). `ProfileStatementLowerer` currently emits a more generic "only p1, p2 assignments..." message and `parse_profile_source` currently returns an empty chain with no `empty_source` diagnostic, so this migration needs Param-specific hooks or core options for those cases.
+- Preserve Param's current diagnostic contract unless a test explicitly approves a change. The current parser distinguishes read-only lhs (`read_only_symbol`), unknown lhs (`unknown_symbol`), rejected `emit(p1)` (`noncanonical_emit`), rejected `push(both)` (`bad_selector`), and blank source (`empty_source`). `parse_profile_source` preserves whatever `code` a hook raises (`diagnostic_from_exception`, `program_source_core.py:50`), so the **call-level** codes (`noncanonical_emit`, `bad_selector`) survive automatically as long as the Param `lower_call_statement` hook keeps raising them. Only two cases need explicit handling: `read_only_symbol`/`unknown_symbol` route through the **base** `lower_assignment`'s generic "only p1, p2 assignments…" branch (`program_source_core.py:375-381`), and `empty_source` is never emitted by the core. Fix both with **Param-local overrides** — override `lower_assignment` to re-run the read-only/unknown classification, and wrap `parse_profile_source` to re-add `empty_source`. **Do not** add a "core option" to the shared `lower_assignment`: Coeff inherits that exact path (`coeff_program_source.py`), so mutating it risks regressing Coeff; a Param override is the Coeff-safe route.
 - Keep `param_source_text_from_chain` behavior equivalent; it may still be hand-coded in this milestone, but it must consume profile-derived vocab rather than private duplicate sets.
 - Regenerate `lambda/program_profiles.py` and `program_profiles_js.js`.
 
@@ -1357,14 +1357,15 @@ Code facts this is based on:
 - `lambda/param_legacy_registry.json` has 70 functions with `name`, `fn_index`, `kind`, `allowed_src`, `allowed_tgt`, and `args`.
 - `js/07-transform-catalogs.js` currently hardcodes `_paramProgramLegacyNames` with 48 entries and `_paramProgramLegacyArgSpecs`; this is already a live drift bug.
 - `param_program_chain.py` owns compatibility metadata such as `_SOURCE_SELECTORS`, `_TARGET_SELECTORS`, `_LEGACY_TARGET_ARG_INDEXES`, `_VARIABLE_LEGACY_ARG_COUNTS`, `_LEGACY_TARGET_FIRST_CHIPS`, and bridge canonicalization helpers.
-- `lambda/param_legacy_registry.json` is not complete enough by itself for frontend/help source forms: `moebius` is `args: []` in the registry but the compiler accepts 0/4/8 args, where the 4-arg form is four complex coefficients; `inv_t_plus_2` and `add` also have variable source-visible arg shapes. The JS hand mirror currently supplies these source/editor shapes in `_paramProgramLegacyArgSpecs` and conversion helpers.
+- `lambda/param_legacy_registry.json` is not complete enough by itself for frontend/help source forms: `moebius` is `args: []` in the registry but the compiler accepts 0/4/8 args (`_VARIABLE_LEGACY_ARG_COUNTS`, `param_program_chain.py:223-227`), `inv_t_plus_2` accepts 0/1/2/3/4, and `add` accepts 0/1/2. Per-arg editor semantics (`scalarExpr`/`complexWide`/`title`) live in `_paramProgramLegacyArgSpecs` for `moebius`/`inv_t_plus_2`, but **`add`'s shape is in `_ptCatalog`** (`js/06-popup-init.js`), not `_paramProgramLegacyArgSpecs` — the editor shapes are scattered across multiple JS tables, not one.
+- Unlike the coeff registry (which carries a `ui` block per function that `gen_coeff_vocab.py` reads), `param_legacy_registry.json` has **no `ui`/`category`/`desc` fields** (only `name`/`fn_index`/`kind`/`allowed_src`/`allowed_tgt`/`args`). Per-transform prose lives JS-only in `_ptInfo` (`js/07`, 69 of 70 names) and `_ptCatalog` (`js/06`). A literal `gen_coeff_vocab.py` clone therefore has nothing to emit for category/desc/per-arg-display — so the schema must be enriched first (below).
 - `scripts/predeploy_check.sh` already gates generated vocab for Coeff and Solve-Score but has no Param vocab gate.
 
 Work:
 
 - Add `lambda/gen_param_vocab.py`, mirroring the `gen_coeff_vocab.py` / `gen_solve_score_vocab.py` pattern.
 - Emit `param_vocab_js.js` with `window._paramRegistryVocab`, generated from `param_legacy_registry.json`, `program_profiles.json`, and any still-authoritative chain metadata needed for bridge compatibility.
-- Move or generate the full Param legacy source/editor metadata, not just the 70 names: source/tgt selector choices, `_LEGACY_TARGET_ARG_INDEXES`, `_VARIABLE_LEGACY_ARG_COUNTS`, target-first dither handling, `moebius` 0/4/8 args, `inv_t_plus_2` 0/1/2/3/4 source args, `add` 0/1/2 source args, and the current JS arg-spec semantics for complex/wide fields. If any of those remain in JS or chain-only side tables, name the temporary source of truth and add a drift test.
+- **First enrich the registry schema** so the generator has something to read: add `ui`/`category`/`desc` per function (port `_ptInfo`/`_ptCatalog`), per-arg display flags (`expr`/`complexWide`/`title`, port `_paramProgramLegacyArgSpecs`), an explicit `target_arg_index` plus a `target_placement` enum (collapsing `_LEGACY_TARGET_ARG_INDEXES`, `_LEGACY_TARGET_FIRST_CHIPS`, and the dither/last/independent Sets), and explicit variable-arity forms for `moebius` (0/4/8), `inv_t_plus_2` (0/1/2/3/4), and `add` (0/1/2). Then `gen_param_vocab.py` emits the full source/editor metadata — names, selector choices, target placement, arg display semantics, prose — from the registry, and `param_program_chain.py` reads `_VARIABLE_LEGACY_ARG_COUNTS` etc. from the registry too (with a drift assertion). Without this enrichment the generator is a 4th consumer of split data, not a collapse; if any metadata stays JS- or chain-only, name the temporary source of truth and add a drift test.
 - Add `<script>` loading for `param_vocab_js.js` before `js/07-transform-catalogs.js`.
 - Hydrate `_paramProgramLegacyNames`, `_paramProgramLegacyArgSpecs`, and target selector metadata from `window._paramRegistryVocab`; then delete the hand-typed JS lists once consumers are moved.
 - Add `gen_param_vocab.py --check` to `scripts/predeploy_check.sh`.
@@ -1387,7 +1388,8 @@ Code facts this is based on:
 - `js/07-transform-catalogs.js` appends `_ctAndyParam` client-side.
 - `coeff_program_source.py` strips trailing `andy` with `_split_native_transform_andy`.
 - `coeff_program_chain.py` strips/repacks with `_split_trailing_andy`, `_affine_pair_legacy_args`, `_linear_legacy_args`, `_pow_legacy_args`, `_exp_legacy_args`, and `_round_legacy_args`.
-- Current wire layout is heterogeneous and fingerprinted: clean complex and old packed source forms can compile to different `_token` layouts.
+- Current wire layout is heterogeneous and fingerprinted — at least 7 distinct lane patterns (complex-in-lanes; old-four-real-in-`args`; flatten-re/im-into-`args` for `exp`/`round`; `andy`-in-`args[2]` for `littlewood`; index+value for `poke`; selector-in-`args` for vector ops; enum/int→float). Clean complex and old packed source forms compile to different `_token` layouts, and the `andy` carrier itself is non-uniform (a token field for registry transforms, `args[2]` for `littlewood`).
+- The wire-equivalence harness this milestone depends on does **not** exist yet: no `coeff_program_chain_legacy.py`, no golden fingerprint snapshots, and the corpus exercises none of the at-risk forms (see Milestone 0). It must be built before any packer is touched.
 
 Work:
 
@@ -1396,7 +1398,7 @@ Work:
 - Materialize existing `supports_andy:true` into an `effective_args` trailing optional `andy` only as a load-time migration shim.
 - Declare per-function/per-source-form wire layouts in `compat_signatures`, including old packed real-component forms for `linear`, `pow`, `exp`, and `round`.
 - Replace parser/compiler arity decisions that branch on `fn_index` for `andy` with the registry-driven signature table.
-- Replace the per-function complex pack/unpack helpers with one data-driven codec only after byte-equivalence tests prove each function's existing lane usage is reproduced.
+- Replace the per-function complex *pack* helpers with a **signature-driven packer table + interpreter** — not a single algorithm (the layouts are irregular: `exp`/`round` flatten re/im into `args`, `littlewood` carries `andy` in `args[2]`, `round` forks on arity). The **inverse/serializer does not collapse** — it does lossy canonical minimization and stays largely per-function; do not assume it derives from the forward signature. Realistic win is ~60–100 forward lines into data; the inverse barely shrinks. Do this only after the wire-equivalence harness (Milestone 0) proves each function's existing lane usage is reproduced byte-for-byte.
 - Update `gen_coeff_vocab.py` so frontend metadata exposes `effective_args` and compatibility notes.
 - Remove `_ctAndyParam` append from the frontend once generated `effective_args` carries `andy`.
 - Rewrite stale frontend/tests that currently assert the `_ctAndyParam` append/hydration pattern and hardcoded vector lists. After this milestone, tests should assert `effective_args` coverage, wire compatibility, and rendered UI/help behavior, not the old append implementation.
@@ -1418,16 +1420,16 @@ Code facts this is based on:
 - `structural_chips.json` already describes structural chips, aliases, source aliases, selector slots, args, and vector family sub-ops.
 - `gen_coeff_vocab.py` already embeds `structuralChips` and `programProfiles` in `window._coeffRegistryVocab`.
 - `coeff_program_source.py:_lower_call` still hardcodes structural dispatch and aliases.
-- `js/07-transform-catalogs.js` still hardcodes `_coeffProgramVectorBinaryNames` and `_coeffProgramVectorUnaryNames`.
+- `js/07-transform-catalogs.js` still hardcodes `_coeffProgramVectorBinaryNames` and `_coeffProgramVectorUnaryNames` — and the latter is **currently wrong**: it lists 14 ops but `chain.VECTOR_UNARY_OPS` has 16, silently dropping `real` and `imag` (they compile but never appear in the catalog/Help). This is the coeff analogue of AP-2's 48-vs-70 drop, and M4 fixes it by deriving from `structuralChips`.
 - `tests/test_coeff_program_drift.py` already pins structural chip inventory against Python/C constants, so this milestone should reuse and extend that gate.
 
 Work:
 
 - Add helper accessors over `structural_chips.json` / `window._coeffRegistryVocab.structuralChips` for source aliases, family sub-ops, selector slots, and arity metadata.
-- Refactor `_lower_call` so vocabulary/alias/arity checks come from structural metadata where possible.
+- Refactor `_lower_call` so **vocabulary/canonical-name/alias membership** checks come from structural metadata. Be realistic about the ceiling: `_lower_call` fuses membership with arity/target-legality/reroute logic per branch (e.g. arity-4 `linear` with a source first-arg reroutes to native fn 14; unary+`andy` reroutes to native), and that conditional routing does **not** lift into JSON. So this replaces ~6 inline literal sets with metadata accessors; the dispatch ladder stays. It is relocate-to-single-source, not a ladder collapse — and the `peek` source synonym is currently absent from `structural_chips.json`, so add it there (or keep that one inline).
 - Keep semantic lowering in Python (`_lower_vector_binary`, `_lower_vector_unary`, `_lower_range`, `_lower_affine`, `_typed_lower_*`, etc.); do not turn JSON into executable semantics.
 - Replace frontend vector op name arrays with generated structural metadata.
-- Delete `_legacy_lower_statement` only after the class lowerer remains the single tested path.
+- `_legacy_lower_statement` is already production-dead (the class lowerer is the only runtime path); its **sole caller is the CR18 oracle** `coeff_program_source_legacy.py:224`. Deleting it must be paired with retiring or repointing that oracle and `tests/test_coeff_source_equivalence.py` — deleting it alone breaks the equivalence suite.
 - Add/extend tests proving parser accepted forms match structural metadata and existing Coeff programs still compile.
 
 Gate:
@@ -1435,7 +1437,7 @@ Gate:
 - `gen_coeff_vocab.py --check` passes.
 - Existing structural drift tests pass.
 - Coeff source parser accepts the same public forms as before.
-- No frontend hardcoded vector-op arrays remain.
+- No frontend hardcoded vector-op arrays remain, and `real`/`imag` (currently dropped) are exposed in the coeff catalog/Help.
 
 #### Milestone 5: Help Article Model, Help Tab, And Inspector
 
@@ -1569,7 +1571,7 @@ Do not rely on starter snippets or `_coeffProgramCheatSections` for Help. They a
 Generate one article per native transform from:
 
 - normalized coeff registry entries (`effective_args`, aliases, categories, descriptions)
-- `_coeffProgramLegacyNames` / `_ctCatalog` / `_coeffProgramParamDefs(name)` only as the current pre-migration accessors
+- `_coeffProgramLegacyNames` / `_ctCatalog` (appends `andy` via `_ctAndyParam`) only as the current pre-migration accessors — not `_coeffProgramParamDefs`, which is referenced (`js/08:897`) but undefined
 
 Every article must show `andy`.
 

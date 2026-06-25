@@ -218,13 +218,12 @@ def _legacy_arg_matches_default(arg_spec, value):
         except (TypeError, ValueError):
             return False
     if arg_spec.get("type") == "enum":
-        label = _enum_arg_label(arg_spec, value)
-        default = arg_spec.get("default")
-        default_label = str(default or "").strip().lower()
-        if default_label in _ENUM_ARG_VALUES:
-            return label is not None and label == default_label
+        # Preserve the historical persisted legacy_coeff_transforms shape:
+        # string enum defaults such as roots(..., hi) are not trimmed because
+        # the old inverse tried float("hi") and stopped. Numeric enum defaults,
+        # if introduced later, keep the old numeric-default behavior.
         try:
-            return abs(float(value) - float(default)) <= 1e-12
+            return abs(float(value) - float(arg_spec.get("default"))) <= 1e-12
         except (TypeError, ValueError):
             return False
     try:

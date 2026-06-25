@@ -384,6 +384,8 @@ class TestCoeffProgramChain(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "legacy names its own target"):
             compile_coeff_program_source("poly = legacy(rev, poly, poly)")
+        with self.assertRaisesRegex(RuntimeError, "unknown legacy coeff transform 'nope'"):
+            compile_coeff_program_source("legacy(nope, poly, poly)")
 
     def test_source_native_transform_args_lower_to_typed_stack_args(self):
         from coeff_program_chain import COEFF_OP_NATIVE_TRANSFORM, COEFF_OP_TYPED_PUSH_SCALAR

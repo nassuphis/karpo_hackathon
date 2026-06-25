@@ -380,7 +380,7 @@ def test_coeff_registry_has_no_unpinned_generic_complex_args():
     assert offenders == []
 
 
-def test_coeff_legacy_enum_inverse_uses_registry_map_and_trims_default():
+def test_coeff_legacy_enum_inverse_uses_registry_map_and_preserves_default_label():
     spec = legacy_registry()["by_name"]["roots"]
     base = {
         "op": chain.COEFF_OP_LEGACY,
@@ -388,12 +388,15 @@ def test_coeff_legacy_enum_inverse_uses_registry_map_and_trims_default():
         "src": chain.COEFF_SEL_POLY,
         "tgt": chain.COEFF_SEL_POLY,
     }
-    assert chain._legacy_transforms([{**base, "args": [8, chain._ENUM_ARG_VALUES["hi"]]}]) == [["roots"]]
+    # Historical persisted legacy_coeff_transforms did not trim string enum
+    # defaults: the old inverse tried float("hi"), failed, and kept the label.
+    # Keep that shape stable even though the wire fingerprint is identical.
+    assert chain._legacy_transforms([{**base, "args": [8, chain._ENUM_ARG_VALUES["hi"]]}]) == [["roots", "8", "hi"]]
     assert chain._legacy_transforms([{**base, "args": [8, chain._ENUM_ARG_VALUES["lo"]]}]) == [["roots", "8", "lo"]]
     assert chain._legacy_transforms([{**base, "args": [8, 2.0]}]) == []
     # Preserve the old inverse tolerance for extra trailing zero lanes in
     # malformed/legacy-ish tokens while still rejecting invalid enum values.
-    assert chain._legacy_transforms([{**base, "args": [8, chain._ENUM_ARG_VALUES["hi"], 0.0]}]) == [["roots"]]
+    assert chain._legacy_transforms([{**base, "args": [8, chain._ENUM_ARG_VALUES["hi"], 0.0]}]) == [["roots", "8", "hi"]]
 
 
 def test_coeff_compat_signature_transforms_are_pinned():

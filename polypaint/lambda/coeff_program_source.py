@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import warnings
 
 from coeff_program_chain import (
     TEXT_NAME_ALIASES,
@@ -739,7 +740,12 @@ def _lower_call(name, args, *, target="push"):
             )
         if len(args) < 3:
             raise CoeffProgramSourceError("legacy requires name, source, target, and optional args")
-        return [["legacy", args[0].strip().lower(), _source_selector(args[1]), _target_selector(args[2])] + [str(arg) for arg in args[3:]]]
+        registry = legacy_registry()
+        legacy_name = args[0].strip().lower()
+        canonical = registry["alias_to_canonical"].get(legacy_name, legacy_name)
+        if canonical not in registry["by_name"]:
+            raise CoeffProgramSourceError(f"unknown legacy coeff transform {legacy_name!r}")
+        return [["legacy", canonical, _source_selector(args[1]), _target_selector(args[2])] + [str(arg) for arg in args[3:]]]
     if name in legacy_registry()["by_name"]:
         return _lower_native_transform_call(name, args, target=target)
     raise CoeffProgramSourceError(f"unknown coeff program source function {name!r}")
@@ -1038,15 +1044,18 @@ def _raw_chain_source_text(chain):
     return "\n".join(line for line in lines if str(line).strip())
 
 
-def _source_text_preserves_chain(chain, source_text):
+def _source_text_preserves_compiled_chain(compiled_chain, source_text):
     try:
-        from_chain = compile_coeff_program_chain(chain)
         from_source = compile_coeff_program_source(source_text)
     except Exception:
         return False
+    from_chain_fp = compiled_chain.get("fingerprint")
+    from_source_fp = from_source.get("fingerprint")
+    if not from_chain_fp or not from_source_fp:
+        return False
     return (
-        from_source.get("fingerprint") == from_chain.get("fingerprint")
-        and from_source.get("execution_spec") == from_chain.get("execution_spec")
+        from_source_fp == from_chain_fp
+        and from_source.get("execution_spec") == compiled_chain.get("execution_spec")
     )
 
 
@@ -1263,9 +1272,23 @@ def coeff_source_text_from_chain(chain):
             lines.append(_source_call(lname, args))
     flush_pending()
     candidate = "\n".join(lines)
-    if _source_text_preserves_chain(chain, candidate):
+    try:
+        compiled_chain = compile_coeff_program_chain(chain)
+    except Exception:
+        warnings.warn(
+            "coeff_source_text_from_chain could not compile input chain; returning readable candidate",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return candidate
+    if _source_text_preserves_compiled_chain(compiled_chain, candidate):
         return candidate
     raw = _raw_chain_source_text(chain)
-    if raw and raw != candidate and _source_text_preserves_chain(chain, raw):
+    if raw and raw != candidate and _source_text_preserves_compiled_chain(compiled_chain, raw):
         return raw
+    warnings.warn(
+        "coeff_source_text_from_chain could not produce fingerprint-preserving source; returning readable candidate",
+        RuntimeWarning,
+        stacklevel=2,
+    )
     return candidate

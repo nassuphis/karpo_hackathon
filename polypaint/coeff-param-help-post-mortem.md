@@ -130,6 +130,51 @@ The only important remaining boundary is not a defect in what landed: the invers
 
 **Follow-up correction from the serializer deep dive:** the original Coeff chain→source contract was under-tested. Two traps were found and fixed: saved opcode-9 `legacy` rows must serialize as explicit `legacy(name, src, tgt, ...)` if they need byte-identical fingerprints, because direct source syntax lowers to opcode 29; and pretty scalar infix regeneration can change bytecode for complex subexpressions, so `coeff_source_text_from_chain` now verifies the candidate source and falls back to raw internal rows when the readable form is not byte-preserving. The corpus oracle now includes Coeff chain→source→compile fingerprint/execution-spec equality, so this class is gated instead of assumed. The tradeoff is deliberate: hard cases may populate/PDF as `_typed_*` rows rather than beautiful source, but they no longer silently change the program.
 
+### Adversarial deep-dive — additional traps in the inverse/serializer (`5e635e9`, `7077d3e`)
+
+**Codex resolution after re-check:** the important findings were accurate. T1
+was a real gate hole, not just cleanup: enum default trimming changed the
+persisted `legacy_coeff_transforms` shape while the M3 oracle corpus had no
+`roots`/`roots_cm` case to expose it. The fix preserves the historical string
+enum-default shape (`roots(..., hi)` remains `["roots","5","hi"]` in the
+summary), adds enum-bearing `roots` and `roots_cm` rows to the M3 oracle
+fixture, and updates the drift test to pin that behavior. The serializer guard
+was also tightened: `legacy(...)` now validates/canonicalizes the transform
+name against the registry, fingerprint preservation rejects missing
+fingerprints instead of allowing `None == None`, the input chain is compiled
+once for valid chains, and the final non-preserving fallback now emits a
+`RuntimeWarning` instead of failing silently. The serializer still returns
+best-effort source if the input chain itself cannot compile, because
+Populate/PDF/detail reconstruction must fail soft on corrupt historical
+payloads.
+
+I intentionally did **not** change T2/T3. Invalid enum numeric values are not
+source-authorable legitimate payloads, and returning an empty
+`legacy_coeff_transforms` summary for corrupt tokens is fail-closed. The NaN
+case remains a frozen-oracle limitation for adversarial corrupt input, not a
+production regression; adding such a case would break the old oracle rather
+than prove a valid compatibility contract.
+
+**Original as-found note:** the note above covers the two traps the author fixed. A fresh adversarial pass (code-read + running the functions on crafted inputs; **no code changed**) found several more. All are **latent** — none break the current wire or fail the green gate — but each is a real trap, and the first is a gate hole.
+
+**T1 — MED · Enum default-trimming silently changed a persisted field and diverges from the frozen oracle, which can't see it.** `5e635e9` made trailing-default trimming enum-aware (`_legacy_arg_matches_default`). The old inverse never trimmed an enum arg (it ran `float("hi")`, which raised and stopped trimming); the new one trims it. Confirmed by running both over a real legacy chain `[["legacy","roots","poly","poly",5,"hi"]]` (pad = `hi`, the **default**): frozen `_legacy_transforms` → `[['roots','5','hi']]`, live → `[['roots','5']]`. The **wire fingerprint is identical** (`646057bf…` for both the `hi` and pad-omitted forms), so this is **not** a cache-orphan — but `legacy_coeff_transforms` is **persisted** (`handler_storage.py:658`) and a field the oracle **compares** (`test_program_m3_oracles.py:54`). The catch: **no enum-bearing function (`roots`/`roots_cm`) exists anywhere in the M3 oracle corpus** (grep over `tests/fixtures/program-m3-oracle/` → none), so the oracle's `legacy_coeff_transforms` assertion is **vacuous for exactly the case the inverse changed**. The gate is green by omission. Fix: add a legacy `roots`/`roots_cm`-with-default-pad case to the corpus (it will go red, surfacing the change), then either keep the trimming and deliberately re-baseline the frozen oracle, or revert the enum-default trim.
+
+**T2 — LOW · One bad enum value wipes the entire summary.** The `_legacy_transforms` enum branch does `if label is None: return []` — a `return` from the whole function, not a `continue`. So a single enum arg not within 1e-12 of `0.0`/`1.0` discards **all** accumulated entries for the chain. Confirmed: `pad=2.0` or `0.5` → live `[]` vs frozen `[['roots','5','hi']]`. The old code (`"lo" if int(value)==1 else "hi"`) never bailed. Latent (legitimate programs store only `0.0`/`1.0`), but it's a whole-function bailout on one unusual token.
+
+**T3 — LOW · The frozen oracle crashes on a NaN enum.** Old side: `int(float('nan'))` → uncaught `ValueError` at `coeff_program_chain_legacy.py:2090`. Live handles it (`abs(nan-…)` is False → `None` → `[]`). The new code is *more* robust — but a NaN enum in any corpus case would **crash** the frozen comparison rather than diverge, so the gate can't even run on that input.
+
+**T4 — LOW · `coeff_source_text_from_chain` can still silently return non-round-trip-preserving source.** The new guard tries `candidate`, then `raw`, then falls through to `return candidate` with **no flag or log** if neither preserves the fingerprint. Consumed by `handler_storage.py:3933`, `program_v2_translate.py:423`, `handler_pdf_artifact.py`. The guard closes the common cases, but a chain row with no round-trippable source form still yields non-preserving source silently — the exact failure the guard was meant to prevent, just narrower. It should `log()` (or raise in debug) when it gives up.
+
+**T5 — LOW · Vacuous-pass + blanket-catch in the guard.** `_source_text_preserves_chain` returns `from_source.get("fingerprint") == from_chain.get("fingerprint")` — `None == None` is `True`, so two fingerprint-less compiles "preserve"; and `except Exception: return False` swallows everything. The `None==None` pass is unreachable for a real chain (its compile yields a real fingerprint), so this is theoretical — but the guard should assert both fingerprints are non-null before comparing.
+
+**T6 — LOW · The new `legacy(...)` source escape doesn't validate the function name, and is hand-authorable.** `_lower_call`'s `legacy` branch does `args[0].strip().lower()` with no registry check (relies on the chain compiler downstream), and the previously-rejected `legacy(...)` form now compiles in hand-written coeff source — a dual encoding (opcode-9 legacy vs direct → opcode-29 native transform) for the same function with **different wire**. Intended for serializer round-trips, but nothing stops a user authoring it and getting the legacy wire unexpectedly.
+
+**T7 — LOW · `str(default or "")` mangles a falsy enum default.** In `_legacy_arg_matches_default`, a numeric enum default of `0` becomes `""` (`0 or "" == ""`), dropping it; it only works because numeric defaults then fall through to the float branch. Fragile if an enum default is ever numeric `0`.
+
+**T8 — LOW (perf) · The serializer now does up to two full recompiles per call.** `_source_text_preserves_chain` compiles the chain *and* the candidate source (again for `raw` on failure). `coeff_source_text_from_chain` runs on PDF/storage paths; this is real per-call cost the old serializer didn't have.
+
+**Fair note:** the same change set also *fixed* real problems — the round-trip guard is a genuine safety net, the enum-aware match removed the old `float("hi")`-raises fragility, NaN no longer crashes the live path, and `(({left})op({right}))` prevents scalar-precedence corruption. The traps above are the residue, not a reversal — and none of them move a fingerprint.
+
 ---
 
 ## Codex follow-up reconciliation

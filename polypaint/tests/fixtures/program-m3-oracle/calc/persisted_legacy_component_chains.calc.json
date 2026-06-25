@@ -17,6 +17,8 @@
       ["legacy", "pow", "poly", "poly", "1+2j", "3+4j", "0.5"],
       ["legacy", "exp", "poly", "poly", "1j", "0", "0.25"],
       ["legacy", "round", "poly", "poly", "1+2j", "0.125"],
+      ["legacy", "roots", "poly", "poly", "5", "hi"],
+      ["legacy", "roots_cm", "poly", "poly", "hi"],
       ["emit"]
     ]
   }

@@ -17,6 +17,7 @@ from program_source_core import (
     ProfileStatementLowerer,
     ProgramSourceError,
     diagnostic,
+    find_top_level_assignment,
     parse_profile_source,
     program_profile,
     profile_source,
@@ -164,6 +165,18 @@ def _lower_bare(stmt):
 class ParamStatementLowerer(ProfileStatementLowerer):
     def __init__(self):
         super().__init__(_PROFILE, error_cls=ParamProgramSourceError)
+
+    def lower_statement(self, statement):
+        text = statement.text.strip()
+        assignment = find_top_level_assignment(text)
+        if assignment >= 0 and not text[assignment + 1:].strip():
+            raise self.source_error(
+                "expression is empty",
+                line=statement.line,
+                column=assignment + 2,
+                code="empty_expression",
+            )
+        return super().lower_statement(statement)
 
     def lower_assignment(self, statement, lhs, rhs):
         target = _require_writable_symbol(lhs, statement)

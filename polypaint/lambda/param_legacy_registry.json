@@ -1,75 +1,1903 @@
 {
   "version": 1,
   "functions": [
-    {"name": "none", "fn_index": 1, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "unit_circle", "fn_index": 2, "kind": "unary", "allowed_src": ["p1", "p2", "both", "pop1"], "allowed_tgt": ["p1", "p2", "both", "push1"], "args": []},
-    {"name": "square", "fn_index": 3, "kind": "unary", "allowed_src": ["p1", "p2", "both", "pop1"], "allowed_tgt": ["p1", "p2", "both", "push1"], "args": []},
-    {"name": "cube", "fn_index": 4, "kind": "unary", "allowed_src": ["p1", "p2", "both", "pop1"], "allowed_tgt": ["p1", "p2", "both", "push1"], "args": []},
-    {"name": "reciprocal", "fn_index": 5, "kind": "unary", "allowed_src": ["p1", "p2", "both", "pop1"], "allowed_tgt": ["p1", "p2", "both", "push1"], "args": []},
-    {"name": "conjugate", "fn_index": 6, "kind": "unary", "allowed_src": ["p1", "p2", "both", "pop1"], "allowed_tgt": ["p1", "p2", "both", "push1"], "args": []},
-    {"name": "negate", "fn_index": 7, "kind": "unary", "allowed_src": ["p1", "p2", "both", "pop1"], "allowed_tgt": ["p1", "p2", "both", "push1"], "args": []},
-    {"name": "exp", "fn_index": 8, "kind": "unary", "allowed_src": ["p1", "p2", "both", "pop1"], "allowed_tgt": ["p1", "p2", "both", "push1"], "args": []},
-    {"name": "xim", "fn_index": 9, "kind": "unary", "allowed_src": ["p1", "p2", "both", "pop1"], "allowed_tgt": ["p1", "p2", "both", "push1"], "args": []},
-    {"name": "add_sub", "fn_index": 10, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "mul_div", "fn_index": 11, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "swap", "fn_index": 12, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "sum_prod", "fn_index": 13, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "roots2", "fn_index": 14, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "roots3", "fn_index": 15, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "roots5", "fn_index": 16, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "roots6", "fn_index": 17, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "rtheta", "fn_index": 18, "kind": "unary_pair", "allowed_src": ["p1", "p2", "both", "pop1", "pop2"], "allowed_tgt": ["p1", "p2", "both", "push1", "push2"], "args": [{"name": "p", "type": "real", "default": 1.0}]},
-    {"name": "moebius", "fn_index": 19, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "inv_t_plus_2", "fn_index": 20, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "crd", "fn_index": 21, "kind": "unary_pair", "allowed_src": ["p1", "p2", "both", "pop1", "pop2"], "allowed_tgt": ["p1", "p2", "both", "push1", "push2"], "args": [{"name": "size", "type": "real", "default": 1.0}]},
-    {"name": "hrt", "fn_index": 22, "kind": "unary_pair", "allowed_src": ["p1", "p2", "both", "pop1", "pop2"], "allowed_tgt": ["p1", "p2", "both", "push1", "push2"], "args": [{"name": "size", "type": "real", "default": 1.0}, {"name": "turns", "type": "real", "default": 0.0}]},
-    {"name": "spdl", "fn_index": 23, "kind": "unary_pair", "allowed_src": ["p1", "p2", "both", "pop1", "pop2"], "allowed_tgt": ["p1", "p2", "both", "push1", "push2"], "args": [{"name": "va", "type": "real", "default": 0.5}, {"name": "vb", "type": "real", "default": 0.2}, {"name": "vp", "type": "real", "default": 1.5}]},
-    {"name": "lmc", "fn_index": 24, "kind": "unary_pair", "allowed_src": ["p1", "p2", "both", "pop1", "pop2"], "allowed_tgt": ["p1", "p2", "both", "push1", "push2"], "args": [{"name": "a", "type": "real", "default": 0.3}, {"name": "b", "type": "real", "default": 0.5}]},
-    {"name": "rsc", "fn_index": 25, "kind": "unary_pair", "allowed_src": ["p1", "p2", "both", "pop1", "pop2"], "allowed_tgt": ["p1", "p2", "both", "push1", "push2"], "args": [{"name": "amp", "type": "real", "default": 0.5}, {"name": "k", "type": "real", "default": 2.0}]},
-    {"name": "lss", "fn_index": 26, "kind": "unary_pair", "allowed_src": ["p1", "p2", "both", "pop1", "pop2"], "allowed_tgt": ["p1", "p2", "both", "push1", "push2"], "args": [{"name": "A", "type": "real", "default": 0.5}, {"name": "B", "type": "real", "default": 0.5}, {"name": "a", "type": "real", "default": 3.0}, {"name": "b", "type": "real", "default": 2.0}, {"name": "phase", "type": "real", "default": 0.5}]},
-    {"name": "ast", "fn_index": 27, "kind": "unary_pair", "allowed_src": ["p1", "p2", "both", "pop1", "pop2"], "allowed_tgt": ["p1", "p2", "both", "push1", "push2"], "args": [{"name": "scale", "type": "real", "default": 1.0}]},
-    {"name": "asp", "fn_index": 28, "kind": "unary_pair", "allowed_src": ["p1", "p2", "both", "pop1", "pop2"], "allowed_tgt": ["p1", "p2", "both", "push1", "push2"], "args": [{"name": "a", "type": "real", "default": 0.0}, {"name": "b", "type": "real", "default": 0.1}]},
-    {"name": "lsp", "fn_index": 29, "kind": "unary_pair", "allowed_src": ["p1", "p2", "both", "pop1", "pop2"], "allowed_tgt": ["p1", "p2", "both", "push1", "push2"], "args": [{"name": "a", "type": "real", "default": 0.1}, {"name": "b", "type": "real", "default": 0.15}]},
-    {"name": "dlt", "fn_index": 30, "kind": "unary_pair", "allowed_src": ["p1", "p2", "both", "pop1", "pop2"], "allowed_tgt": ["p1", "p2", "both", "push1", "push2"], "args": [{"name": "R", "type": "real", "default": 1.0}]},
-    {"name": "rply", "fn_index": 31, "kind": "unary_pair", "allowed_src": ["p1", "p2", "both", "pop1", "pop2"], "allowed_tgt": ["p1", "p2", "both", "push1", "push2"], "args": [{"name": "sides", "type": "real", "default": 5.0}, {"name": "radius", "type": "real", "default": 1.0}, {"name": "turns", "type": "real", "default": 0.0}]},
-    {"name": "star", "fn_index": 32, "kind": "unary_pair", "allowed_src": ["p1", "p2", "both", "pop1", "pop2"], "allowed_tgt": ["p1", "p2", "both", "push1", "push2"], "args": [{"name": "points", "type": "real", "default": 5.0}, {"name": "outer", "type": "real", "default": 1.0}, {"name": "inner_ratio", "type": "real", "default": 0.5}]},
-    {"name": "rect", "fn_index": 33, "kind": "unary_pair", "allowed_src": ["p1", "p2", "both", "pop1", "pop2"], "allowed_tgt": ["p1", "p2", "both", "push1", "push2"], "args": [{"name": "w", "type": "real", "default": 2.0}, {"name": "h", "type": "real", "default": 1.0}, {"name": "turns", "type": "real", "default": 0.0}]},
-    {"name": "rrect", "fn_index": 34, "kind": "unary_pair", "allowed_src": ["p1", "p2", "both", "pop1", "pop2"], "allowed_tgt": ["p1", "p2", "both", "push1", "push2"], "args": [{"name": "w", "type": "real", "default": 2.0}, {"name": "h", "type": "real", "default": 1.0}, {"name": "m", "type": "real", "default": 4.0}]},
-    {"name": "z01", "fn_index": 35, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "coeff2", "fn_index": 36, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "coeff3", "fn_index": 37, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "coeff3a", "fn_index": 38, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "coeff4", "fn_index": 39, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "coeff5", "fn_index": 40, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "coeff5a", "fn_index": 41, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "coeff6", "fn_index": 42, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "coeff7", "fn_index": 43, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "coeff8", "fn_index": 44, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "coeff9", "fn_index": 45, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "coeff10", "fn_index": 46, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "coeff11", "fn_index": 47, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "coeff12", "fn_index": 48, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "zzold", "fn_index": 49, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "zz1", "fn_index": 50, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "zz2", "fn_index": 51, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "zz3", "fn_index": 52, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "t1radd", "fn_index": 53, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": [{"name": "v", "type": "real", "default": 0.0}]},
-    {"name": "t1iadd", "fn_index": 54, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": [{"name": "v", "type": "real", "default": 0.0}]},
-    {"name": "t2radd", "fn_index": 55, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": [{"name": "v", "type": "real", "default": 0.0}]},
-    {"name": "t2iadd", "fn_index": 56, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": [{"name": "v", "type": "real", "default": 0.0}]},
-    {"name": "radd", "fn_index": 57, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": [{"name": "v", "type": "real", "default": 0.0}]},
-    {"name": "iadd", "fn_index": 58, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": [{"name": "v", "type": "real", "default": 0.0}]},
-    {"name": "add", "fn_index": 59, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": []},
-    {"name": "cadd", "fn_index": 60, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": [{"name": "re", "type": "real", "default": 0.0}, {"name": "im", "type": "real", "default": 0.0}]},
-    {"name": "rscale", "fn_index": 61, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": [{"name": "v", "type": "real", "default": 1.0}]},
-    {"name": "iscale", "fn_index": 62, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": [{"name": "v", "type": "real", "default": 1.0}]},
-    {"name": "scale", "fn_index": 63, "kind": "pair", "allowed_src": ["both", "pop2"], "allowed_tgt": ["both", "push2"], "args": [{"name": "v", "type": "real", "default": 1.0}]},
-    {"name": "sdith", "fn_index": 64, "kind": "pair", "allowed_src": ["both"], "allowed_tgt": ["both"], "args": [{"name": "d", "type": "real", "default": 1.0}]},
-    {"name": "ddith", "fn_index": 65, "kind": "pair", "allowed_src": ["both"], "allowed_tgt": ["both"], "args": [{"name": "target", "type": "real", "default": 2.0}, {"name": "d", "type": "real", "default": 1.0}, {"name": "exp", "type": "real", "default": 0.5}]},
-    {"name": "ndith", "fn_index": 66, "kind": "pair", "allowed_src": ["both"], "allowed_tgt": ["both"], "args": [{"name": "d", "type": "real", "default": 1.0}]},
-    {"name": "adth", "fn_index": 67, "kind": "pair", "allowed_src": ["both"], "allowed_tgt": ["both"], "args": [{"name": "target", "type": "real", "default": 2.0}, {"name": "d", "type": "real", "default": 1.0}, {"name": "inner", "type": "real", "default": 0.4}]},
-    {"name": "ldth", "fn_index": 68, "kind": "pair", "allowed_src": ["both"], "allowed_tgt": ["both"], "args": [{"name": "target", "type": "real", "default": 2.0}, {"name": "d", "type": "real", "default": 1.0}, {"name": "len", "type": "real", "default": 1.0}, {"name": "angle", "type": "real", "default": 0.0}]},
-    {"name": "crdth", "fn_index": 69, "kind": "pair", "allowed_src": ["both"], "allowed_tgt": ["both"], "args": [{"name": "target", "type": "real", "default": 2.0}, {"name": "d", "type": "real", "default": 1.0}]},
-    {"name": "scdth", "fn_index": 70, "kind": "pair", "allowed_src": ["both"], "allowed_tgt": ["both"], "args": [{"name": "target", "type": "real", "default": 2.0}, {"name": "d", "type": "real", "default": 1.0}, {"name": "half_ap", "type": "real", "default": 0.25}, {"name": "center", "type": "real", "default": 0.0}]}
-  ]
+    {
+      "name": "none",
+      "fn_index": 1,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "unit_circle",
+      "fn_index": 2,
+      "kind": "unary",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1"
+      ],
+      "args": []
+    },
+    {
+      "name": "square",
+      "fn_index": 3,
+      "kind": "unary",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1"
+      ],
+      "args": []
+    },
+    {
+      "name": "cube",
+      "fn_index": 4,
+      "kind": "unary",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1"
+      ],
+      "args": []
+    },
+    {
+      "name": "reciprocal",
+      "fn_index": 5,
+      "kind": "unary",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1"
+      ],
+      "args": []
+    },
+    {
+      "name": "conjugate",
+      "fn_index": 6,
+      "kind": "unary",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1"
+      ],
+      "args": []
+    },
+    {
+      "name": "negate",
+      "fn_index": 7,
+      "kind": "unary",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1"
+      ],
+      "args": []
+    },
+    {
+      "name": "exp",
+      "fn_index": 8,
+      "kind": "unary",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1"
+      ],
+      "args": []
+    },
+    {
+      "name": "xim",
+      "fn_index": 9,
+      "kind": "unary",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1"
+      ],
+      "args": []
+    },
+    {
+      "name": "add_sub",
+      "fn_index": 10,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "mul_div",
+      "fn_index": 11,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "swap",
+      "fn_index": 12,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "sum_prod",
+      "fn_index": 13,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "roots2",
+      "fn_index": 14,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "roots3",
+      "fn_index": 15,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "roots5",
+      "fn_index": 16,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "roots6",
+      "fn_index": 17,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "rtheta",
+      "fn_index": 18,
+      "kind": "unary_pair",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "p",
+          "type": "real",
+          "default": 1.0
+        }
+      ]
+    },
+    {
+      "name": "moebius",
+      "fn_index": 19,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "inv_t_plus_2",
+      "fn_index": 20,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "crd",
+      "fn_index": 21,
+      "kind": "unary_pair",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "size",
+          "type": "real",
+          "default": 1.0
+        }
+      ]
+    },
+    {
+      "name": "hrt",
+      "fn_index": 22,
+      "kind": "unary_pair",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "size",
+          "type": "real",
+          "default": 1.0
+        },
+        {
+          "name": "turns",
+          "type": "real",
+          "default": 0.0
+        }
+      ]
+    },
+    {
+      "name": "spdl",
+      "fn_index": 23,
+      "kind": "unary_pair",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "va",
+          "type": "real",
+          "default": 0.5
+        },
+        {
+          "name": "vb",
+          "type": "real",
+          "default": 0.2
+        },
+        {
+          "name": "vp",
+          "type": "real",
+          "default": 1.5
+        }
+      ]
+    },
+    {
+      "name": "lmc",
+      "fn_index": 24,
+      "kind": "unary_pair",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "a",
+          "type": "real",
+          "default": 0.3
+        },
+        {
+          "name": "b",
+          "type": "real",
+          "default": 0.5
+        }
+      ]
+    },
+    {
+      "name": "rsc",
+      "fn_index": 25,
+      "kind": "unary_pair",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "amp",
+          "type": "real",
+          "default": 0.5
+        },
+        {
+          "name": "k",
+          "type": "real",
+          "default": 2.0
+        }
+      ]
+    },
+    {
+      "name": "lss",
+      "fn_index": 26,
+      "kind": "unary_pair",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "A",
+          "type": "real",
+          "default": 0.5
+        },
+        {
+          "name": "B",
+          "type": "real",
+          "default": 0.5
+        },
+        {
+          "name": "a",
+          "type": "real",
+          "default": 3.0
+        },
+        {
+          "name": "b",
+          "type": "real",
+          "default": 2.0
+        },
+        {
+          "name": "phase",
+          "type": "real",
+          "default": 0.5
+        }
+      ]
+    },
+    {
+      "name": "ast",
+      "fn_index": 27,
+      "kind": "unary_pair",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "scale",
+          "type": "real",
+          "default": 1.0
+        }
+      ]
+    },
+    {
+      "name": "asp",
+      "fn_index": 28,
+      "kind": "unary_pair",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "a",
+          "type": "real",
+          "default": 0.0
+        },
+        {
+          "name": "b",
+          "type": "real",
+          "default": 0.1
+        }
+      ]
+    },
+    {
+      "name": "lsp",
+      "fn_index": 29,
+      "kind": "unary_pair",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "a",
+          "type": "real",
+          "default": 0.1
+        },
+        {
+          "name": "b",
+          "type": "real",
+          "default": 0.15
+        }
+      ]
+    },
+    {
+      "name": "dlt",
+      "fn_index": 30,
+      "kind": "unary_pair",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "R",
+          "type": "real",
+          "default": 1.0
+        }
+      ]
+    },
+    {
+      "name": "rply",
+      "fn_index": 31,
+      "kind": "unary_pair",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "sides",
+          "type": "real",
+          "default": 5.0
+        },
+        {
+          "name": "radius",
+          "type": "real",
+          "default": 1.0
+        },
+        {
+          "name": "turns",
+          "type": "real",
+          "default": 0.0
+        }
+      ]
+    },
+    {
+      "name": "star",
+      "fn_index": 32,
+      "kind": "unary_pair",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "points",
+          "type": "real",
+          "default": 5.0
+        },
+        {
+          "name": "outer",
+          "type": "real",
+          "default": 1.0
+        },
+        {
+          "name": "inner_ratio",
+          "type": "real",
+          "default": 0.5
+        }
+      ]
+    },
+    {
+      "name": "rect",
+      "fn_index": 33,
+      "kind": "unary_pair",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "w",
+          "type": "real",
+          "default": 2.0
+        },
+        {
+          "name": "h",
+          "type": "real",
+          "default": 1.0
+        },
+        {
+          "name": "turns",
+          "type": "real",
+          "default": 0.0
+        }
+      ]
+    },
+    {
+      "name": "rrect",
+      "fn_index": 34,
+      "kind": "unary_pair",
+      "allowed_src": [
+        "p1",
+        "p2",
+        "both",
+        "pop1",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "p1",
+        "p2",
+        "both",
+        "push1",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "w",
+          "type": "real",
+          "default": 2.0
+        },
+        {
+          "name": "h",
+          "type": "real",
+          "default": 1.0
+        },
+        {
+          "name": "m",
+          "type": "real",
+          "default": 4.0
+        }
+      ]
+    },
+    {
+      "name": "z01",
+      "fn_index": 35,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "coeff2",
+      "fn_index": 36,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "coeff3",
+      "fn_index": 37,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "coeff3a",
+      "fn_index": 38,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "coeff4",
+      "fn_index": 39,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "coeff5",
+      "fn_index": 40,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "coeff5a",
+      "fn_index": 41,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "coeff6",
+      "fn_index": 42,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "coeff7",
+      "fn_index": 43,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "coeff8",
+      "fn_index": 44,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "coeff9",
+      "fn_index": 45,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "coeff10",
+      "fn_index": 46,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "coeff11",
+      "fn_index": 47,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "coeff12",
+      "fn_index": 48,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "zzold",
+      "fn_index": 49,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "zz1",
+      "fn_index": 50,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "zz2",
+      "fn_index": 51,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "zz3",
+      "fn_index": 52,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "t1radd",
+      "fn_index": 53,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "v",
+          "type": "real",
+          "default": 0.0
+        }
+      ]
+    },
+    {
+      "name": "t1iadd",
+      "fn_index": 54,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "v",
+          "type": "real",
+          "default": 0.0
+        }
+      ]
+    },
+    {
+      "name": "t2radd",
+      "fn_index": 55,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "v",
+          "type": "real",
+          "default": 0.0
+        }
+      ]
+    },
+    {
+      "name": "t2iadd",
+      "fn_index": 56,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "v",
+          "type": "real",
+          "default": 0.0
+        }
+      ]
+    },
+    {
+      "name": "radd",
+      "fn_index": 57,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "v",
+          "type": "real",
+          "default": 0.0
+        }
+      ]
+    },
+    {
+      "name": "iadd",
+      "fn_index": 58,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "v",
+          "type": "real",
+          "default": 0.0
+        }
+      ]
+    },
+    {
+      "name": "add",
+      "fn_index": 59,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": []
+    },
+    {
+      "name": "cadd",
+      "fn_index": 60,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "re",
+          "type": "real",
+          "default": 0.0
+        },
+        {
+          "name": "im",
+          "type": "real",
+          "default": 0.0
+        }
+      ]
+    },
+    {
+      "name": "rscale",
+      "fn_index": 61,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "v",
+          "type": "real",
+          "default": 1.0
+        }
+      ]
+    },
+    {
+      "name": "iscale",
+      "fn_index": 62,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "v",
+          "type": "real",
+          "default": 1.0
+        }
+      ]
+    },
+    {
+      "name": "scale",
+      "fn_index": 63,
+      "kind": "pair",
+      "allowed_src": [
+        "both",
+        "pop2"
+      ],
+      "allowed_tgt": [
+        "both",
+        "push2"
+      ],
+      "args": [
+        {
+          "name": "v",
+          "type": "real",
+          "default": 1.0
+        }
+      ]
+    },
+    {
+      "name": "sdith",
+      "fn_index": 64,
+      "kind": "pair",
+      "allowed_src": [
+        "both"
+      ],
+      "allowed_tgt": [
+        "both"
+      ],
+      "args": [
+        {
+          "name": "d",
+          "type": "real",
+          "default": 1.0
+        }
+      ]
+    },
+    {
+      "name": "ddith",
+      "fn_index": 65,
+      "kind": "pair",
+      "allowed_src": [
+        "both"
+      ],
+      "allowed_tgt": [
+        "both"
+      ],
+      "args": [
+        {
+          "name": "target",
+          "type": "real",
+          "default": 2.0
+        },
+        {
+          "name": "d",
+          "type": "real",
+          "default": 1.0
+        },
+        {
+          "name": "exp",
+          "type": "real",
+          "default": 0.5
+        }
+      ]
+    },
+    {
+      "name": "ndith",
+      "fn_index": 66,
+      "kind": "pair",
+      "allowed_src": [
+        "both"
+      ],
+      "allowed_tgt": [
+        "both"
+      ],
+      "args": [
+        {
+          "name": "d",
+          "type": "real",
+          "default": 1.0
+        }
+      ]
+    },
+    {
+      "name": "adth",
+      "fn_index": 67,
+      "kind": "pair",
+      "allowed_src": [
+        "both"
+      ],
+      "allowed_tgt": [
+        "both"
+      ],
+      "args": [
+        {
+          "name": "target",
+          "type": "real",
+          "default": 2.0
+        },
+        {
+          "name": "d",
+          "type": "real",
+          "default": 1.0
+        },
+        {
+          "name": "inner",
+          "type": "real",
+          "default": 0.4
+        }
+      ]
+    },
+    {
+      "name": "ldth",
+      "fn_index": 68,
+      "kind": "pair",
+      "allowed_src": [
+        "both"
+      ],
+      "allowed_tgt": [
+        "both"
+      ],
+      "args": [
+        {
+          "name": "target",
+          "type": "real",
+          "default": 2.0
+        },
+        {
+          "name": "d",
+          "type": "real",
+          "default": 1.0
+        },
+        {
+          "name": "len",
+          "type": "real",
+          "default": 1.0
+        },
+        {
+          "name": "angle",
+          "type": "real",
+          "default": 0.0
+        }
+      ]
+    },
+    {
+      "name": "crdth",
+      "fn_index": 69,
+      "kind": "pair",
+      "allowed_src": [
+        "both"
+      ],
+      "allowed_tgt": [
+        "both"
+      ],
+      "args": [
+        {
+          "name": "target",
+          "type": "real",
+          "default": 2.0
+        },
+        {
+          "name": "d",
+          "type": "real",
+          "default": 1.0
+        }
+      ]
+    },
+    {
+      "name": "scdth",
+      "fn_index": 70,
+      "kind": "pair",
+      "allowed_src": [
+        "both"
+      ],
+      "allowed_tgt": [
+        "both"
+      ],
+      "args": [
+        {
+          "name": "target",
+          "type": "real",
+          "default": 2.0
+        },
+        {
+          "name": "d",
+          "type": "real",
+          "default": 1.0
+        },
+        {
+          "name": "half_ap",
+          "type": "real",
+          "default": 0.25
+        },
+        {
+          "name": "center",
+          "type": "real",
+          "default": 0.0
+        }
+      ]
+    }
+  ],
+  "ui": {
+    "categories": {
+      "maps": {
+        "title": "Maps",
+        "help": "direct complex maps applied to t1/t2"
+      },
+      "arithmetic": {
+        "title": "Arithmetic",
+        "help": "offset, scale, invert, or remix parameter values"
+      },
+      "shapes": {
+        "title": "Curves + shapes",
+        "help": "replace selected parameters with points on analytic curves"
+      },
+      "roots": {
+        "title": "Root-derived",
+        "help": "derive t1/t2 from roots of small polynomials"
+      },
+      "dither": {
+        "title": "Dither",
+        "help": "jitter parameters before coefficient generation"
+      },
+      "legacy": {
+        "title": "Legacy coefficient maps",
+        "help": "older named parameter recipes kept for compatibility"
+      }
+    },
+    "functions": {
+      "unit_circle": {
+        "category": "maps",
+        "desc": "map real t to exp(2*pi*i*t)"
+      },
+      "rtheta": {
+        "category": "maps",
+        "desc": "polar disk map using t1/t2 as radius and angle"
+      },
+      "square": {
+        "category": "maps",
+        "desc": "square both complex parameters"
+      },
+      "cube": {
+        "category": "maps",
+        "desc": "cube both complex parameters"
+      },
+      "reciprocal": {
+        "category": "maps",
+        "desc": "replace each parameter with 1/t"
+      },
+      "conjugate": {
+        "category": "maps",
+        "desc": "complex conjugate t1 and t2"
+      },
+      "swap": {
+        "category": "maps",
+        "desc": "swap t1 and t2"
+      },
+      "add_sub": {
+        "category": "arithmetic",
+        "desc": "emit t1+t2 and t1-t2"
+      },
+      "mul_div": {
+        "category": "arithmetic",
+        "desc": "emit t1*t2 and t1/t2"
+      },
+      "moebius": {
+        "category": "maps",
+        "desc": "Mobius map on t1 and t2; 0-arg runs keep legacy 1/(t+2)"
+      },
+      "negate": {
+        "category": "maps",
+        "desc": "negate t1 and t2"
+      },
+      "exp": {
+        "category": "maps",
+        "desc": "complex exponential of each parameter"
+      },
+      "xim": {
+        "category": "maps",
+        "desc": "move real part into the imaginary axis"
+      },
+      "zzold": {
+        "category": "arithmetic",
+        "desc": "legacy t1+i*t2 remix into both slots"
+      },
+      "zz1": {
+        "category": "arithmetic",
+        "desc": "t1+i*t2 and t1*t2+i*(t1+t2)"
+      },
+      "zz2": {
+        "category": "arithmetic",
+        "desc": "t1+i*t2 and t1-i*t2"
+      },
+      "zz3": {
+        "category": "arithmetic",
+        "desc": "cross-imaginary remix of t1 and t2"
+      },
+      "inv_t_plus_2": {
+        "category": "arithmetic",
+        "desc": "t1=1/(t1+a), t2=1/(t2+b)"
+      },
+      "t1radd": {
+        "category": "arithmetic",
+        "desc": "add to real part of t1 only"
+      },
+      "t1iadd": {
+        "category": "arithmetic",
+        "desc": "add to imaginary part of t1 only"
+      },
+      "t2radd": {
+        "category": "arithmetic",
+        "desc": "add to real part of t2 only"
+      },
+      "t2iadd": {
+        "category": "arithmetic",
+        "desc": "add to imaginary part of t2 only"
+      },
+      "radd": {
+        "category": "arithmetic",
+        "desc": "add to real parts of both parameters"
+      },
+      "iadd": {
+        "category": "arithmetic",
+        "desc": "add to imaginary parts of both parameters"
+      },
+      "add": {
+        "category": "arithmetic",
+        "desc": "z1=z1+c1 and z2=z2+c2 using complex offsets"
+      },
+      "cadd": {
+        "category": "arithmetic",
+        "desc": "add a complex constant to t1 and t2"
+      },
+      "rscale": {
+        "category": "arithmetic",
+        "desc": "scale real parts only"
+      },
+      "iscale": {
+        "category": "arithmetic",
+        "desc": "scale imaginary parts only"
+      },
+      "scale": {
+        "category": "arithmetic",
+        "desc": "scale all components"
+      },
+      "crd": {
+        "category": "shapes",
+        "desc": "cardioid curve"
+      },
+      "hrt": {
+        "category": "shapes",
+        "desc": "heart curve"
+      },
+      "spdl": {
+        "category": "shapes",
+        "desc": "spindle curve"
+      },
+      "lmc": {
+        "category": "shapes",
+        "desc": "limacon curve"
+      },
+      "rsc": {
+        "category": "shapes",
+        "desc": "rose curve"
+      },
+      "lss": {
+        "category": "shapes",
+        "desc": "Lissajous curve"
+      },
+      "ast": {
+        "category": "shapes",
+        "desc": "astroid curve"
+      },
+      "asp": {
+        "category": "shapes",
+        "desc": "Archimedean spiral"
+      },
+      "lsp": {
+        "category": "shapes",
+        "desc": "log spiral"
+      },
+      "dlt": {
+        "category": "shapes",
+        "desc": "deltoid curve"
+      },
+      "rply": {
+        "category": "shapes",
+        "desc": "regular polygon perimeter"
+      },
+      "star": {
+        "category": "shapes",
+        "desc": "star polygon perimeter"
+      },
+      "rect": {
+        "category": "shapes",
+        "desc": "rectangle perimeter"
+      },
+      "rrect": {
+        "category": "shapes",
+        "desc": "rounded rectangle / superellipse"
+      },
+      "z01": {
+        "category": "arithmetic",
+        "desc": "real-part mirror remix"
+      },
+      "sum_prod": {
+        "category": "arithmetic",
+        "desc": "emit t1+t2 and t1*t2"
+      },
+      "roots2": {
+        "category": "roots",
+        "desc": "quadratic roots of (9/64)z^2+t1*z+t2"
+      },
+      "roots3": {
+        "category": "roots",
+        "desc": "cubic roots from t1+t2, 1, 1, t1*t2"
+      },
+      "roots5": {
+        "category": "roots",
+        "desc": "cubic roots from trig/i*t parameters"
+      },
+      "roots6": {
+        "category": "roots",
+        "desc": "quartic roots from mixed t1/t2 polynomial"
+      },
+      "sdith": {
+        "category": "dither",
+        "desc": "square uniform jitter"
+      },
+      "ddith": {
+        "category": "dither",
+        "desc": "disk jitter"
+      },
+      "adth": {
+        "category": "dither",
+        "desc": "annulus jitter"
+      },
+      "ldth": {
+        "category": "dither",
+        "desc": "line-segment jitter"
+      },
+      "crdth": {
+        "category": "dither",
+        "desc": "cross-shaped jitter"
+      },
+      "scdth": {
+        "category": "dither",
+        "desc": "sector jitter"
+      },
+      "ndith": {
+        "category": "dither",
+        "desc": "normal/Gaussian jitter"
+      },
+      "coeff2": {
+        "category": "legacy",
+        "desc": "legacy t1+t2 and t1*t2 map"
+      },
+      "coeff3": {
+        "category": "legacy",
+        "desc": "legacy 1/(t+2) map"
+      },
+      "coeff3a": {
+        "category": "legacy",
+        "desc": "legacy 1/(t+1) map"
+      },
+      "coeff4": {
+        "category": "legacy",
+        "desc": "legacy cos(t1), sin(t2)"
+      },
+      "coeff5": {
+        "category": "legacy",
+        "desc": "legacy reciprocal cross map"
+      },
+      "coeff5a": {
+        "category": "legacy",
+        "desc": "legacy reciprocal self map"
+      },
+      "coeff6": {
+        "category": "legacy",
+        "desc": "legacy cubic fractional map"
+      },
+      "coeff7": {
+        "category": "legacy",
+        "desc": "legacy trig fractional map"
+      },
+      "coeff8": {
+        "category": "legacy",
+        "desc": "legacy cross trig map"
+      },
+      "coeff9": {
+        "category": "legacy",
+        "desc": "legacy squared fractional map"
+      },
+      "coeff10": {
+        "category": "legacy",
+        "desc": "legacy fourth-power fractional map"
+      },
+      "coeff11": {
+        "category": "legacy",
+        "desc": "legacy log fourth-power map"
+      },
+      "coeff12": {
+        "category": "legacy",
+        "desc": "legacy mixed polynomial map"
+      }
+    },
+    "arg_specs": {
+      "moebius": [
+        {
+          "ph": "a",
+          "def": "1",
+          "type": "complex",
+          "title": "Complex coefficient a."
+        },
+        {
+          "ph": "b",
+          "def": "0",
+          "type": "complex",
+          "title": "Complex coefficient b."
+        },
+        {
+          "ph": "c",
+          "def": "0",
+          "type": "complex",
+          "title": "Complex coefficient c."
+        },
+        {
+          "ph": "d",
+          "def": "1",
+          "type": "complex",
+          "title": "Complex coefficient d."
+        }
+      ],
+      "inv_t_plus_2": [
+        {
+          "ph": "z1",
+          "def": "2",
+          "type": "complex",
+          "title": "Complex expression for the first offset."
+        },
+        {
+          "ph": "z2",
+          "def": "2",
+          "type": "complex",
+          "title": "Complex expression for the second offset."
+        }
+      ]
+    },
+    "variable_arg_forms": {
+      "moebius": {
+        "counts": [
+          0,
+          4,
+          8
+        ],
+        "forms": [
+          "none",
+          "a,b,c,d as complex values",
+          "old a_re,a_im,b_re,b_im,c_re,c_im,d_re,d_im components"
+        ]
+      },
+      "inv_t_plus_2": {
+        "counts": [
+          0,
+          1,
+          2,
+          3,
+          4
+        ],
+        "forms": [
+          "none",
+          "z1",
+          "z1,z2",
+          "old z1_re,z1_im,z2_re,z2_im components"
+        ]
+      },
+      "add": {
+        "counts": [
+          0,
+          1,
+          2
+        ],
+        "forms": [
+          "none",
+          "one real scalar offset for both parameters",
+          "two complex offsets for p1 and p2"
+        ]
+      }
+    }
+  },
+  "compat": {
+    "target_arg_indexes": {
+      "rtheta": 1,
+      "crd": 0,
+      "hrt": 0,
+      "spdl": 0,
+      "lmc": 0,
+      "rsc": 0,
+      "lss": 0,
+      "ast": 0,
+      "asp": 0,
+      "lsp": 0,
+      "dlt": 0,
+      "rply": 0,
+      "star": 0,
+      "rect": 0,
+      "rrect": 0
+    },
+    "target_first": [
+      "crd",
+      "hrt",
+      "spdl",
+      "lmc",
+      "rsc",
+      "lss",
+      "ast",
+      "asp",
+      "lsp",
+      "dlt",
+      "rply",
+      "star",
+      "rect",
+      "rrect"
+    ],
+    "target_last": [
+      "rtheta"
+    ],
+    "dither_target_first": [
+      "ddith",
+      "adth",
+      "ldth",
+      "crdth",
+      "scdth"
+    ],
+    "independent_targets": [
+      "unit_circle",
+      "square",
+      "cube",
+      "reciprocal",
+      "conjugate",
+      "negate",
+      "exp",
+      "xim"
+    ],
+    "variable_arg_counts": {
+      "moebius": [
+        0,
+        4,
+        8
+      ],
+      "inv_t_plus_2": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "add": [
+        0,
+        1,
+        2
+      ]
+    }
+  }
 }

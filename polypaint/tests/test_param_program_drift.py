@@ -16,6 +16,7 @@ import param_program_chain as chain
 LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
 SWEEP_CLI = os.path.join(LAMBDA_DIR, "sweep_cli.c")
 PROGRAM_PROFILES = os.path.join(LAMBDA_DIR, "program_profiles.json")
+PARAM_LEGACY_REGISTRY = os.path.join(LAMBDA_DIR, "param_legacy_registry.json")
 PARAM_VOCAB_JS = os.path.join(os.path.dirname(__file__), "..", "param_vocab_js.js")
 
 
@@ -41,6 +42,11 @@ def _c_defines(source, prefix="PARAM_PROGRAM_"):
 def _program_profiles():
     with open(PROGRAM_PROFILES, "r", encoding="utf-8") as fh:
         return json.load(fh)["profiles"]
+
+
+def _param_legacy_registry_payload():
+    with open(PARAM_LEGACY_REGISTRY, "r", encoding="utf-8") as fh:
+        return json.load(fh)
 
 
 def _param_vocab_js_payload():
@@ -149,15 +155,23 @@ def test_param_profile_source_grammar_matches_python():
 
 def test_generated_param_vocab_exposes_full_registry():
     vocab = _param_vocab_js_payload()
+    registry_payload = _param_legacy_registry_payload()
+    compat = registry_payload["compat"]
+    ui = registry_payload["ui"]
     registry_names = sorted(chain.legacy_registry()["by_name"])
     assert sorted(vocab["names"]) == registry_names
     assert len(vocab["names"]) == 70
     for missing_from_old_js in ["add", "cadd", "scale", "zzold", "scdth"]:
         assert missing_from_old_js in vocab["names"]
-    assert vocab["targetArgIndexes"] == {
-        name: idx for name, idx in sorted(chain._LEGACY_TARGET_ARG_INDEXES.items())
-    }
+    assert vocab["categoryMeta"] == ui["categories"]
+    assert vocab["uiFunctions"] == ui["functions"]
+    assert vocab["targetArgIndexes"] == {name: idx for name, idx in sorted(compat["target_arg_indexes"].items())}
+    assert vocab["targetArgIndexes"] == {name: idx for name, idx in sorted(chain._LEGACY_TARGET_ARG_INDEXES.items())}
+    assert vocab["independentTargets"] == sorted(compat["independent_targets"])
+    assert vocab["independentTargets"] == sorted(chain._REDUNDANT_LEGACY_TARGET_ARG_NAMES)
     assert vocab["variableArgCounts"]["moebius"] == [0, 4, 8]
     assert vocab["variableArgCounts"]["inv_t_plus_2"] == [0, 1, 2, 3, 4]
     assert vocab["variableArgCounts"]["add"] == [0, 1, 2]
+    assert vocab["variableArgCounts"] == {name: sorted(counts) for name, counts in compat["variable_arg_counts"].items()}
     assert len(vocab["argSpecs"]["moebius"]) == 4
+    assert len(vocab["argSpecs"]["inv_t_plus_2"]) == 2

@@ -99,7 +99,10 @@ const _paramProgramLegacyNames = Array.isArray(_paramRegistryVocab.names)
     : ['none'];
 const _paramProgramIndependentLegacyTargets = new Set(_paramRegistryVocab.independentTargets || []);
 const _paramProgramLegacyTargetArgIndexes = _paramRegistryVocab.targetArgIndexes || {};
+const _paramProgramLegacyVariableArgCounts = _paramRegistryVocab.variableArgCounts || {};
 const _paramProgramLegacyArgSpecs = _paramRegistryVocab.argSpecs || {};
+const _paramRegistryCategoryMeta = _paramRegistryVocab.categoryMeta || _ptCategoryMeta;
+const _paramRegistryUiFunctions = _paramRegistryVocab.uiFunctions || {};
 
 const _ppCategoryMeta = {
     io: { title: 'Input + output', help: 'read t1/t2 or write p1/p2 registers' },

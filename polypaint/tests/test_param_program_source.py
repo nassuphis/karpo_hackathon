@@ -58,6 +58,7 @@ class TestParamProgramSource(unittest.TestCase):
             ("emit(p1)", "noncanonical_emit"),
             ("t1 = p1", "read_only_symbol"),
             ("missing = p1", "unknown_symbol"),
+            ("p1 =", "empty_expression"),
             ("", "empty_source"),
         ]
         for source, code in cases:

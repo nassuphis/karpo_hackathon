@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "source_cases": [
+    {
+      "name": "exp_affine_complex_andy",
+      "source": "poly = exp_affine(poly, 1+2j, 3+4j, 0.5)\nemit",
+      "fingerprint": "5446337869df389dd516dc6dcf10a023a111f51d",
+      "execution_sha1": "8a78c38e22fbad788f3f40163b9a20be4ddcb3e4"
+    },
+    {
+      "name": "round_complex_andy",
+      "source": "poly = round(poly, 1+2j, 0.25)\nemit",
+      "fingerprint": "0609cfe76b881b65738132e4a971eea937f164cb",
+      "execution_sha1": "24acb11075ddbbf3f894418049e6a84a5179919d"
+    },
+    {
+      "name": "affine_imaginary",
+      "source": "affine(poly, poly, 1+2j, 3-4j)\nemit",
+      "fingerprint": "9892cccfad4efcd38f4e182188da6d46579f6b94",
+      "execution_sha1": "3ef8f27f6797c398ced44b47e48ca75f990e9423"
+    },
+    {
+      "name": "littlewood_andy",
+      "source": "poly = littlewood(10, -10j, 0.25)\nemit",
+      "fingerprint": "278cba39687593538cff97b384675753fc69642b",
+      "execution_sha1": "37cef03d6374dd96797012ed885ffb3cded5fbf2"
+    },
+    {
+      "name": "linear_complex_andy",
+      "source": "poly = linear(poly, 1+2j, 3+4j, 0.5)\nemit",
+      "fingerprint": "bb10df3baa0f322c33922b8be98bae68405ebde8",
+      "execution_sha1": "6e12b6a544245a91ca6e7697db2a77d71a498d10"
+    }
+  ],
+  "chain_cases": [
+    {
+      "name": "linear_old_four_real",
+      "chain": [["legacy", "linear", "poly", "poly", "1", "2", "3", "4"]],
+      "fingerprint": "1101e3a411a8cede66c44db453236cc23a40a738",
+      "execution_sha1": "98f050101a92e6e17e66c158a7a559a2c6fca696"
+    },
+    {
+      "name": "pow_old_four_real",
+      "chain": [["legacy", "pow", "poly", "poly", "1", "2", "3", "4"]],
+      "fingerprint": "2d2f8ca0c37aa68d3a4e579a9a05043e66c89c5a",
+      "execution_sha1": "7ce6838bb27a4725f20ed409a4aec9a8793c9e68"
+    },
+    {
+      "name": "exp_flat",
+      "chain": [["legacy", "exp", "poly", "poly", "1", "2", "0.5"]],
+      "fingerprint": "a158050ea65185841f20e5d0dfcf816089a82f24",
+      "execution_sha1": "ed697ec25660511b3cf48cdcd0c60f87f4b35fa0"
+    },
+    {
+      "name": "round_flat",
+      "chain": [["legacy", "round", "poly", "poly", "1", "2", "0.25"]],
+      "fingerprint": "da7565cc27b2cfad41f7a8334af53979caee1373",
+      "execution_sha1": "66da7f18e11af8ed2437203bcca1321b492f8af6"
+    }
+  ]
+}

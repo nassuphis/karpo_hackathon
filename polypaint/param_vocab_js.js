@@ -73,6 +73,310 @@ window._paramRegistryVocab = {
     "crdth",
     "scdth"
   ],
+  "categoryMeta": {
+    "maps": {
+      "title": "Maps",
+      "help": "direct complex maps applied to t1/t2"
+    },
+    "arithmetic": {
+      "title": "Arithmetic",
+      "help": "offset, scale, invert, or remix parameter values"
+    },
+    "shapes": {
+      "title": "Curves + shapes",
+      "help": "replace selected parameters with points on analytic curves"
+    },
+    "roots": {
+      "title": "Root-derived",
+      "help": "derive t1/t2 from roots of small polynomials"
+    },
+    "dither": {
+      "title": "Dither",
+      "help": "jitter parameters before coefficient generation"
+    },
+    "legacy": {
+      "title": "Legacy coefficient maps",
+      "help": "older named parameter recipes kept for compatibility"
+    }
+  },
+  "uiFunctions": {
+    "unit_circle": {
+      "category": "maps",
+      "desc": "map real t to exp(2*pi*i*t)"
+    },
+    "rtheta": {
+      "category": "maps",
+      "desc": "polar disk map using t1/t2 as radius and angle"
+    },
+    "square": {
+      "category": "maps",
+      "desc": "square both complex parameters"
+    },
+    "cube": {
+      "category": "maps",
+      "desc": "cube both complex parameters"
+    },
+    "reciprocal": {
+      "category": "maps",
+      "desc": "replace each parameter with 1/t"
+    },
+    "conjugate": {
+      "category": "maps",
+      "desc": "complex conjugate t1 and t2"
+    },
+    "swap": {
+      "category": "maps",
+      "desc": "swap t1 and t2"
+    },
+    "add_sub": {
+      "category": "arithmetic",
+      "desc": "emit t1+t2 and t1-t2"
+    },
+    "mul_div": {
+      "category": "arithmetic",
+      "desc": "emit t1*t2 and t1/t2"
+    },
+    "moebius": {
+      "category": "maps",
+      "desc": "Mobius map on t1 and t2; 0-arg runs keep legacy 1/(t+2)"
+    },
+    "negate": {
+      "category": "maps",
+      "desc": "negate t1 and t2"
+    },
+    "exp": {
+      "category": "maps",
+      "desc": "complex exponential of each parameter"
+    },
+    "xim": {
+      "category": "maps",
+      "desc": "move real part into the imaginary axis"
+    },
+    "zzold": {
+      "category": "arithmetic",
+      "desc": "legacy t1+i*t2 remix into both slots"
+    },
+    "zz1": {
+      "category": "arithmetic",
+      "desc": "t1+i*t2 and t1*t2+i*(t1+t2)"
+    },
+    "zz2": {
+      "category": "arithmetic",
+      "desc": "t1+i*t2 and t1-i*t2"
+    },
+    "zz3": {
+      "category": "arithmetic",
+      "desc": "cross-imaginary remix of t1 and t2"
+    },
+    "inv_t_plus_2": {
+      "category": "arithmetic",
+      "desc": "t1=1/(t1+a), t2=1/(t2+b)"
+    },
+    "t1radd": {
+      "category": "arithmetic",
+      "desc": "add to real part of t1 only"
+    },
+    "t1iadd": {
+      "category": "arithmetic",
+      "desc": "add to imaginary part of t1 only"
+    },
+    "t2radd": {
+      "category": "arithmetic",
+      "desc": "add to real part of t2 only"
+    },
+    "t2iadd": {
+      "category": "arithmetic",
+      "desc": "add to imaginary part of t2 only"
+    },
+    "radd": {
+      "category": "arithmetic",
+      "desc": "add to real parts of both parameters"
+    },
+    "iadd": {
+      "category": "arithmetic",
+      "desc": "add to imaginary parts of both parameters"
+    },
+    "add": {
+      "category": "arithmetic",
+      "desc": "z1=z1+c1 and z2=z2+c2 using complex offsets"
+    },
+    "cadd": {
+      "category": "arithmetic",
+      "desc": "add a complex constant to t1 and t2"
+    },
+    "rscale": {
+      "category": "arithmetic",
+      "desc": "scale real parts only"
+    },
+    "iscale": {
+      "category": "arithmetic",
+      "desc": "scale imaginary parts only"
+    },
+    "scale": {
+      "category": "arithmetic",
+      "desc": "scale all components"
+    },
+    "crd": {
+      "category": "shapes",
+      "desc": "cardioid curve"
+    },
+    "hrt": {
+      "category": "shapes",
+      "desc": "heart curve"
+    },
+    "spdl": {
+      "category": "shapes",
+      "desc": "spindle curve"
+    },
+    "lmc": {
+      "category": "shapes",
+      "desc": "limacon curve"
+    },
+    "rsc": {
+      "category": "shapes",
+      "desc": "rose curve"
+    },
+    "lss": {
+      "category": "shapes",
+      "desc": "Lissajous curve"
+    },
+    "ast": {
+      "category": "shapes",
+      "desc": "astroid curve"
+    },
+    "asp": {
+      "category": "shapes",
+      "desc": "Archimedean spiral"
+    },
+    "lsp": {
+      "category": "shapes",
+      "desc": "log spiral"
+    },
+    "dlt": {
+      "category": "shapes",
+      "desc": "deltoid curve"
+    },
+    "rply": {
+      "category": "shapes",
+      "desc": "regular polygon perimeter"
+    },
+    "star": {
+      "category": "shapes",
+      "desc": "star polygon perimeter"
+    },
+    "rect": {
+      "category": "shapes",
+      "desc": "rectangle perimeter"
+    },
+    "rrect": {
+      "category": "shapes",
+      "desc": "rounded rectangle / superellipse"
+    },
+    "z01": {
+      "category": "arithmetic",
+      "desc": "real-part mirror remix"
+    },
+    "sum_prod": {
+      "category": "arithmetic",
+      "desc": "emit t1+t2 and t1*t2"
+    },
+    "roots2": {
+      "category": "roots",
+      "desc": "quadratic roots of (9/64)z^2+t1*z+t2"
+    },
+    "roots3": {
+      "category": "roots",
+      "desc": "cubic roots from t1+t2, 1, 1, t1*t2"
+    },
+    "roots5": {
+      "category": "roots",
+      "desc": "cubic roots from trig/i*t parameters"
+    },
+    "roots6": {
+      "category": "roots",
+      "desc": "quartic roots from mixed t1/t2 polynomial"
+    },
+    "sdith": {
+      "category": "dither",
+      "desc": "square uniform jitter"
+    },
+    "ddith": {
+      "category": "dither",
+      "desc": "disk jitter"
+    },
+    "adth": {
+      "category": "dither",
+      "desc": "annulus jitter"
+    },
+    "ldth": {
+      "category": "dither",
+      "desc": "line-segment jitter"
+    },
+    "crdth": {
+      "category": "dither",
+      "desc": "cross-shaped jitter"
+    },
+    "scdth": {
+      "category": "dither",
+      "desc": "sector jitter"
+    },
+    "ndith": {
+      "category": "dither",
+      "desc": "normal/Gaussian jitter"
+    },
+    "coeff2": {
+      "category": "legacy",
+      "desc": "legacy t1+t2 and t1*t2 map"
+    },
+    "coeff3": {
+      "category": "legacy",
+      "desc": "legacy 1/(t+2) map"
+    },
+    "coeff3a": {
+      "category": "legacy",
+      "desc": "legacy 1/(t+1) map"
+    },
+    "coeff4": {
+      "category": "legacy",
+      "desc": "legacy cos(t1), sin(t2)"
+    },
+    "coeff5": {
+      "category": "legacy",
+      "desc": "legacy reciprocal cross map"
+    },
+    "coeff5a": {
+      "category": "legacy",
+      "desc": "legacy reciprocal self map"
+    },
+    "coeff6": {
+      "category": "legacy",
+      "desc": "legacy cubic fractional map"
+    },
+    "coeff7": {
+      "category": "legacy",
+      "desc": "legacy trig fractional map"
+    },
+    "coeff8": {
+      "category": "legacy",
+      "desc": "legacy cross trig map"
+    },
+    "coeff9": {
+      "category": "legacy",
+      "desc": "legacy squared fractional map"
+    },
+    "coeff10": {
+      "category": "legacy",
+      "desc": "legacy fourth-power fractional map"
+    },
+    "coeff11": {
+      "category": "legacy",
+      "desc": "legacy log fourth-power map"
+    },
+    "coeff12": {
+      "category": "legacy",
+      "desc": "legacy mixed polynomial map"
+    }
+  },
   "fnIndexByName": {
     "none": 1,
     "unit_circle": 2,
@@ -158,7 +462,8 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {}
     },
     "unit_circle": {
       "name": "unit_circle",
@@ -176,7 +481,11 @@ window._paramRegistryVocab = {
         "both",
         "push1"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "maps",
+        "desc": "map real t to exp(2*pi*i*t)"
+      }
     },
     "square": {
       "name": "square",
@@ -194,7 +503,11 @@ window._paramRegistryVocab = {
         "both",
         "push1"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "maps",
+        "desc": "square both complex parameters"
+      }
     },
     "cube": {
       "name": "cube",
@@ -212,7 +525,11 @@ window._paramRegistryVocab = {
         "both",
         "push1"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "maps",
+        "desc": "cube both complex parameters"
+      }
     },
     "reciprocal": {
       "name": "reciprocal",
@@ -230,7 +547,11 @@ window._paramRegistryVocab = {
         "both",
         "push1"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "maps",
+        "desc": "replace each parameter with 1/t"
+      }
     },
     "conjugate": {
       "name": "conjugate",
@@ -248,7 +569,11 @@ window._paramRegistryVocab = {
         "both",
         "push1"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "maps",
+        "desc": "complex conjugate t1 and t2"
+      }
     },
     "negate": {
       "name": "negate",
@@ -266,7 +591,11 @@ window._paramRegistryVocab = {
         "both",
         "push1"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "maps",
+        "desc": "negate t1 and t2"
+      }
     },
     "exp": {
       "name": "exp",
@@ -284,7 +613,11 @@ window._paramRegistryVocab = {
         "both",
         "push1"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "maps",
+        "desc": "complex exponential of each parameter"
+      }
     },
     "xim": {
       "name": "xim",
@@ -302,7 +635,11 @@ window._paramRegistryVocab = {
         "both",
         "push1"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "maps",
+        "desc": "move real part into the imaginary axis"
+      }
     },
     "add_sub": {
       "name": "add_sub",
@@ -316,7 +653,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "emit t1+t2 and t1-t2"
+      }
     },
     "mul_div": {
       "name": "mul_div",
@@ -330,7 +671,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "emit t1*t2 and t1/t2"
+      }
     },
     "swap": {
       "name": "swap",
@@ -344,7 +689,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "maps",
+        "desc": "swap t1 and t2"
+      }
     },
     "sum_prod": {
       "name": "sum_prod",
@@ -358,7 +707,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "emit t1+t2 and t1*t2"
+      }
     },
     "roots2": {
       "name": "roots2",
@@ -372,7 +725,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "roots",
+        "desc": "quadratic roots of (9/64)z^2+t1*z+t2"
+      }
     },
     "roots3": {
       "name": "roots3",
@@ -386,7 +743,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "roots",
+        "desc": "cubic roots from t1+t2, 1, 1, t1*t2"
+      }
     },
     "roots5": {
       "name": "roots5",
@@ -400,7 +761,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "roots",
+        "desc": "cubic roots from trig/i*t parameters"
+      }
     },
     "roots6": {
       "name": "roots6",
@@ -414,7 +779,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "roots",
+        "desc": "quartic roots from mixed t1/t2 polynomial"
+      }
     },
     "rtheta": {
       "name": "rtheta",
@@ -440,7 +809,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 1.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "maps",
+        "desc": "polar disk map using t1/t2 as radius and angle"
+      }
     },
     "moebius": {
       "name": "moebius",
@@ -454,7 +827,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "maps",
+        "desc": "Mobius map on t1 and t2; 0-arg runs keep legacy 1/(t+2)"
+      }
     },
     "inv_t_plus_2": {
       "name": "inv_t_plus_2",
@@ -468,7 +845,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "t1=1/(t1+a), t2=1/(t2+b)"
+      }
     },
     "crd": {
       "name": "crd",
@@ -494,7 +875,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 1.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "cardioid curve"
+      }
     },
     "hrt": {
       "name": "hrt",
@@ -525,7 +910,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "heart curve"
+      }
     },
     "spdl": {
       "name": "spdl",
@@ -561,7 +950,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 1.5
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "spindle curve"
+      }
     },
     "lmc": {
       "name": "lmc",
@@ -592,7 +985,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 0.5
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "limacon curve"
+      }
     },
     "rsc": {
       "name": "rsc",
@@ -623,7 +1020,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 2.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "rose curve"
+      }
     },
     "lss": {
       "name": "lss",
@@ -669,7 +1070,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 0.5
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "Lissajous curve"
+      }
     },
     "ast": {
       "name": "ast",
@@ -695,7 +1100,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 1.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "astroid curve"
+      }
     },
     "asp": {
       "name": "asp",
@@ -726,7 +1135,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 0.1
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "Archimedean spiral"
+      }
     },
     "lsp": {
       "name": "lsp",
@@ -757,7 +1170,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 0.15
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "log spiral"
+      }
     },
     "dlt": {
       "name": "dlt",
@@ -783,7 +1200,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 1.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "deltoid curve"
+      }
     },
     "rply": {
       "name": "rply",
@@ -819,7 +1240,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "regular polygon perimeter"
+      }
     },
     "star": {
       "name": "star",
@@ -855,7 +1280,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 0.5
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "star polygon perimeter"
+      }
     },
     "rect": {
       "name": "rect",
@@ -891,7 +1320,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "rectangle perimeter"
+      }
     },
     "rrect": {
       "name": "rrect",
@@ -927,7 +1360,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 4.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "rounded rectangle / superellipse"
+      }
     },
     "z01": {
       "name": "z01",
@@ -941,7 +1378,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "real-part mirror remix"
+      }
     },
     "coeff2": {
       "name": "coeff2",
@@ -955,7 +1396,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy t1+t2 and t1*t2 map"
+      }
     },
     "coeff3": {
       "name": "coeff3",
@@ -969,7 +1414,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy 1/(t+2) map"
+      }
     },
     "coeff3a": {
       "name": "coeff3a",
@@ -983,7 +1432,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy 1/(t+1) map"
+      }
     },
     "coeff4": {
       "name": "coeff4",
@@ -997,7 +1450,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy cos(t1), sin(t2)"
+      }
     },
     "coeff5": {
       "name": "coeff5",
@@ -1011,7 +1468,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy reciprocal cross map"
+      }
     },
     "coeff5a": {
       "name": "coeff5a",
@@ -1025,7 +1486,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy reciprocal self map"
+      }
     },
     "coeff6": {
       "name": "coeff6",
@@ -1039,7 +1504,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy cubic fractional map"
+      }
     },
     "coeff7": {
       "name": "coeff7",
@@ -1053,7 +1522,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy trig fractional map"
+      }
     },
     "coeff8": {
       "name": "coeff8",
@@ -1067,7 +1540,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy cross trig map"
+      }
     },
     "coeff9": {
       "name": "coeff9",
@@ -1081,7 +1558,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy squared fractional map"
+      }
     },
     "coeff10": {
       "name": "coeff10",
@@ -1095,7 +1576,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy fourth-power fractional map"
+      }
     },
     "coeff11": {
       "name": "coeff11",
@@ -1109,7 +1594,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy log fourth-power map"
+      }
     },
     "coeff12": {
       "name": "coeff12",
@@ -1123,7 +1612,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy mixed polynomial map"
+      }
     },
     "zzold": {
       "name": "zzold",
@@ -1137,7 +1630,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "legacy t1+i*t2 remix into both slots"
+      }
     },
     "zz1": {
       "name": "zz1",
@@ -1151,7 +1648,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "t1+i*t2 and t1*t2+i*(t1+t2)"
+      }
     },
     "zz2": {
       "name": "zz2",
@@ -1165,7 +1666,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "t1+i*t2 and t1-i*t2"
+      }
     },
     "zz3": {
       "name": "zz3",
@@ -1179,7 +1684,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "cross-imaginary remix of t1 and t2"
+      }
     },
     "t1radd": {
       "name": "t1radd",
@@ -1199,7 +1708,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "add to real part of t1 only"
+      }
     },
     "t1iadd": {
       "name": "t1iadd",
@@ -1219,7 +1732,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "add to imaginary part of t1 only"
+      }
     },
     "t2radd": {
       "name": "t2radd",
@@ -1239,7 +1756,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "add to real part of t2 only"
+      }
     },
     "t2iadd": {
       "name": "t2iadd",
@@ -1259,7 +1780,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "add to imaginary part of t2 only"
+      }
     },
     "radd": {
       "name": "radd",
@@ -1279,7 +1804,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "add to real parts of both parameters"
+      }
     },
     "iadd": {
       "name": "iadd",
@@ -1299,7 +1828,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "add to imaginary parts of both parameters"
+      }
     },
     "add": {
       "name": "add",
@@ -1313,7 +1846,11 @@ window._paramRegistryVocab = {
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "z1=z1+c1 and z2=z2+c2 using complex offsets"
+      }
     },
     "cadd": {
       "name": "cadd",
@@ -1338,7 +1875,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "add a complex constant to t1 and t2"
+      }
     },
     "rscale": {
       "name": "rscale",
@@ -1358,7 +1899,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 1.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "scale real parts only"
+      }
     },
     "iscale": {
       "name": "iscale",
@@ -1378,7 +1923,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 1.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "scale imaginary parts only"
+      }
     },
     "scale": {
       "name": "scale",
@@ -1398,7 +1947,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 1.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "scale all components"
+      }
     },
     "sdith": {
       "name": "sdith",
@@ -1416,7 +1969,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 1.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "dither",
+        "desc": "square uniform jitter"
+      }
     },
     "ddith": {
       "name": "ddith",
@@ -1444,7 +2001,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 0.5
         }
-      ]
+      ],
+      "ui": {
+        "category": "dither",
+        "desc": "disk jitter"
+      }
     },
     "ndith": {
       "name": "ndith",
@@ -1462,7 +2023,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 1.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "dither",
+        "desc": "normal/Gaussian jitter"
+      }
     },
     "adth": {
       "name": "adth",
@@ -1490,7 +2055,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 0.4
         }
-      ]
+      ],
+      "ui": {
+        "category": "dither",
+        "desc": "annulus jitter"
+      }
     },
     "ldth": {
       "name": "ldth",
@@ -1523,7 +2092,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "dither",
+        "desc": "line-segment jitter"
+      }
     },
     "crdth": {
       "name": "crdth",
@@ -1546,7 +2119,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 1.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "dither",
+        "desc": "cross-shaped jitter"
+      }
     },
     "scdth": {
       "name": "scdth",
@@ -1579,7 +2156,11 @@ window._paramRegistryVocab = {
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "dither",
+        "desc": "sector jitter"
+      }
     }
   },
   "argSpecs": {
@@ -1597,29 +2178,29 @@ window._paramRegistryVocab = {
         "ph": "a",
         "def": "1",
         "scalarExpr": true,
-        "complexWide": true,
-        "title": "Complex expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Functions: exp, real, imag, abs, mod."
+        "title": "Complex coefficient a.",
+        "complexWide": true
       },
       {
         "ph": "b",
         "def": "0",
         "scalarExpr": true,
-        "complexWide": true,
-        "title": "Complex expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Functions: exp, real, imag, abs, mod."
+        "title": "Complex coefficient b.",
+        "complexWide": true
       },
       {
         "ph": "c",
         "def": "0",
         "scalarExpr": true,
-        "complexWide": true,
-        "title": "Complex expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Functions: exp, real, imag, abs, mod."
+        "title": "Complex coefficient c.",
+        "complexWide": true
       },
       {
         "ph": "d",
         "def": "1",
         "scalarExpr": true,
-        "complexWide": true,
-        "title": "Complex expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Functions: exp, real, imag, abs, mod."
+        "title": "Complex coefficient d.",
+        "complexWide": true
       }
     ],
     "inv_t_plus_2": [
@@ -1627,15 +2208,15 @@ window._paramRegistryVocab = {
         "ph": "z1",
         "def": "2",
         "scalarExpr": true,
-        "complexWide": true,
-        "title": "Complex expression for the first offset."
+        "title": "Complex expression for the first offset.",
+        "complexWide": true
       },
       {
         "ph": "z2",
         "def": "2",
         "scalarExpr": true,
-        "complexWide": true,
-        "title": "Complex expression for the second offset."
+        "title": "Complex expression for the second offset.",
+        "complexWide": true
       }
     ],
     "crd": [

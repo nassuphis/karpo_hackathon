@@ -449,8 +449,14 @@ function _paramProgramLegacySnippet(name) {
     return `legacy(${name}, both, both${args.length ? ', ' + args.join(', ') : ''})`;
 }
 
+function _paramProgramLegacyUiSpec(name) {
+    const generated = _paramRegistryUiFunctions[String(name || '').trim()];
+    if (generated && typeof generated === 'object') return generated;
+    return (_ptCatalog && _ptCatalog[name]) || (_ptInfo && _ptInfo[name]) || {};
+}
+
 function _paramProgramLegacyButton(name) {
-    const spec = (_ptCatalog && _ptCatalog[name]) || (_ptInfo && _ptInfo[name]) || {};
+    const spec = _paramProgramLegacyUiSpec(name);
     return {
         label: name,
         snippet: _paramProgramLegacySnippet(name),
@@ -463,7 +469,7 @@ function _paramProgramLegacyCheatSections() {
     const groups = {};
     (_paramProgramLegacyNames || []).forEach(name => {
         if (!name || name === 'none') return;
-        const spec = (_ptCatalog && _ptCatalog[name]) || (_ptInfo && _ptInfo[name]) || {};
+        const spec = _paramProgramLegacyUiSpec(name);
         const category = spec.category || 'legacy';
         if (!groups[category]) groups[category] = [];
         groups[category].push(_paramProgramLegacyButton(name));
@@ -472,7 +478,7 @@ function _paramProgramLegacyCheatSections() {
     return order
         .filter(category => (groups[category] || []).length)
         .map(category => ({
-            title: `Legacy: ${((_ptCategoryMeta[category] || {}).title || category)}`,
+            title: `Legacy: ${((_paramRegistryCategoryMeta[category] || {}).title || category)}`,
             buttons: groups[category],
         }));
 }
@@ -743,12 +749,6 @@ function _programHelpAddSection(registry, title, items) {
     registry.sections.push({ title, items: filtered });
     filtered.forEach(item => {
         const keys = [item.name].concat(item.aliases || []);
-        (item.params || []).forEach((param, idx) => {
-            const paramName = _programHelpParamName(param, idx);
-            if (paramName) keys.push(paramName);
-            if (param && param.ph) keys.push(param.ph);
-            if (param && param.label) keys.push(param.label);
-        });
         keys.forEach(key => {
             const norm = _normalizeProgramHelpToken(key);
             if (!norm) return;
@@ -763,15 +763,11 @@ function _programHelpAddSection(registry, title, items) {
 function _programHelpLookupScore(item) {
     if (!item) return 0;
     return (Array.isArray(item.params) ? item.params.length * 10 : 0) +
+        (Array.isArray(item.forms) ? item.forms.length * 6 : 0) +
         (item.signature && item.signature !== item.name ? 4 : 0) +
+        (item.effect ? 3 : 0) +
         (item.help ? 2 : 0) +
         (item.category ? 1 : 0);
-}
-
-function _programHelpLookupPriority(item) {
-    const category = String((item && item.category) || '').toLowerCase();
-    if (category.includes('legacy transform') || category.includes('native transform')) return 0;
-    return 1;
 }
 
 function _programHelpLookupShouldReplace(norm, existing, next) {
@@ -779,9 +775,6 @@ function _programHelpLookupShouldReplace(norm, existing, next) {
     const nextExact = _normalizeProgramHelpToken(next && next.name) === norm;
     if (nextExact && !existingExact) return true;
     if (existingExact && !nextExact) return false;
-    const existingPriority = _programHelpLookupPriority(existing);
-    const nextPriority = _programHelpLookupPriority(next);
-    if (existingPriority !== nextPriority) return nextPriority > existingPriority;
     return _programHelpLookupScore(next) > _programHelpLookupScore(existing);
 }
 
@@ -832,11 +825,11 @@ function _paramProgramLegacyCallParams(name) {
 }
 
 function _paramProgramLegacyHelpItem(name) {
-    const spec = (_ptCatalog && _ptCatalog[name]) || (_ptInfo && _ptInfo[name]) || {};
+    const spec = _paramProgramLegacyUiSpec(name);
     const params = _paramProgramLegacyCallParams(name);
     const sourceArgs = ['both', 'both'].concat((params.slice(2) || []).map((param, idx) => _programHelpParamDefault(param) || _programHelpParamName(param, idx)));
     return _programHelpItem(
-        name,
+        `legacy:${name}`,
         `legacy(${name}, src, tgt, ...)`,
         spec.desc || 'Legacy parameter transform with explicit source/target selectors.',
         {
@@ -844,7 +837,7 @@ function _paramProgramLegacyHelpItem(name) {
             params,
             forms: [`legacy(${name}${sourceArgs.length ? ', ' + sourceArgs.join(', ') : ''})`],
             examples: [_paramProgramLegacySnippet(name)],
-            notes: ['legacy(...) arguments are positional; src=both and tgt=both are not valid source syntax.'],
+            notes: ['legacy(...) arguments are positional; use values like both, p1, p2 directly, not keyword syntax such as src=both.'],
         },
     );
 }
@@ -938,28 +931,41 @@ function _programHelpBuildParamRegistry() {
             notes: ['Use emit_p1, emit_p2, or assignment syntax for targeted output.'],
         }),
     ]);
-    _programHelpAddSection(registry, 'Stack', [
-        _paramHelpFormsArticle('dup', 'dup / duplicate', 'Duplicate the top stack value.', ['dup', 'duplicate'], { aliases: ['duplicate'], category: 'stack', effect: '(z -- z z)' }),
-        _paramHelpFormsArticle('swap', 'swap', 'Swap the top two stack values.', ['swap'], { category: 'stack', effect: '(a b -- b a)' }),
-        _paramHelpFormsArticle('pop', 'pop', 'Discard the top stack value.', ['pop'], { category: 'stack', effect: '(z -- )' }),
-        _paramHelpFormsArticle('flush', 'flush', 'Clear the temporary stack.', ['flush'], { category: 'stack', effect: '(... -- )' }),
-    ]);
-    _programHelpAddSection(registry, 'Arithmetic', [
-        _paramHelpFormsArticle('add', 'add', 'Pop a,b and push a+b; top of stack is b.', ['add'], { category: 'arithmetic', effect: '(a b -- a+b)' }),
-        _paramHelpFormsArticle('subtract', 'subtract / sub', 'Pop a,b and push a-b; top of stack is b.', ['subtract', 'sub'], { aliases: ['sub'], category: 'arithmetic', effect: '(a b -- a-b)' }),
-        _paramHelpFormsArticle('mul', 'mul', 'Pop a,b and push a*b.', ['mul'], { category: 'arithmetic', effect: '(a b -- a*b)' }),
-        _paramHelpFormsArticle('ratio', 'ratio / div', 'Pop a,b and push a/b using the VM zero policy.', ['ratio', 'div'], { aliases: ['div'], category: 'arithmetic', effect: '(a b -- a/b)' }),
-    ]);
-    const unaryItems = ['negate', 'conj', 'reciprocal', 'unit_circle', 'square', 'cube', 'exp']
+    const stackAliases = source.stack_op_aliases || {};
+    const stackItems = Array.from(new Set(Object.values(stackAliases))).map(name => {
+        const forms = Object.entries(stackAliases)
+            .filter(([, canonical]) => canonical === name)
+            .map(([alias]) => alias);
+        return _paramHelpFormsArticle(
+            name,
+            forms.join(' / ') || name,
+            `${name} stack operation.`,
+            forms.length ? forms : [name],
+            { aliases: forms.filter(form => form !== name), category: 'stack', effect: 'stack operation' },
+        );
+    });
+    _programHelpAddSection(registry, 'Stack', stackItems);
+    const binaryItems = (Array.isArray(source.binary_ops) ? source.binary_ops : [])
+        .map(name => _paramHelpFormsArticle(
+            name,
+            name,
+            `${name} binary stack operation.`,
+            [name],
+            { category: 'arithmetic', effect: '(a b -- result)' },
+        ));
+    _programHelpAddSection(registry, 'Arithmetic', binaryItems);
+    const unaryItems = (Array.isArray(source.unary_ops) ? source.unary_ops : [])
         .map(name => {
-            const aliases = name === 'conj' ? ['conjugate'] : [];
+            const targetable = (source.targetable_unary || []).includes(name);
+            const targetForms = targetable
+                ? (source.unary_targets || ['p1', 'p2']).map(target => `${name}(${target})`)
+                : [];
             return _paramHelpFormsArticle(
                 name,
-                `${name}${aliases.length ? ' / ' + aliases.join(' / ') : ''}; ${name}(p1); ${name}(p2)`,
+                `${name}${targetForms.length ? '; ' + targetForms.join('; ') : ''}`,
                 `${name} transforms the top stack value, or directly mutates p1/p2 in targeted form.`,
-                [name, ...aliases, `${name}(p1)`, `${name}(p2)`],
+                [name].concat(targetForms),
                 {
-                    aliases,
                     category: 'unary transform',
                     params: [{ name: 'target', choices: source.unary_targets || ['p1', 'p2'], title: 'Optional targeted-register form.' }],
                     effect: '(z -- f(z)); targeted form writes p1/p2 without using the stack',
@@ -994,14 +1000,16 @@ function _programHelpBuildCoeffRegistry() {
         ]);
     }
     _programHelpAddSection(registry, 'Core Symbols', [
-        _programHelpItem('cf', 'cf', 'Immutable input coefficient vector.'),
-        _programHelpItem('poly', 'poly', 'Current/output coefficient vector.'),
         _programHelpItem('poly_len', 'poly_len', 'Length of the current coefficient vector.'),
         _programHelpItem('tos', 'tos[i]', 'Read one element from the top stack vector.'),
         _programHelpItem('t1', 't1', 'Input parameter 1 in scalar expressions.'),
         _programHelpItem('t2', 't2', 'Input parameter 2 in scalar expressions.'),
         _programHelpItem('p1', 'p1', 'Param Program output/register 1 in scalar expressions.'),
         _programHelpItem('p2', 'p2', 'Param Program output/register 2 in scalar expressions.'),
+        _programHelpItem('andy', 'andy', 'Optional native-transform blend weight: 0 means pure transform, 1 means keep the input vector.', {
+            category: 'native transform parameter',
+            forms: ['poly = transform(poly, ..., andy)'],
+        }),
     ]);
     _programHelpAddSection(registry, 'Statement Forms', [
         _programHelpItem('cf', 'cf', 'Push the immutable input coefficient vector.', { forms: ['cf'], effect: '(-- vector)' }),
@@ -1016,14 +1024,29 @@ function _programHelpBuildCoeffRegistry() {
             `${op.name} combines two vector/scalar sources.`,
             { aliases: op.source_aliases || [], forms: [`poly = ${op.name}(poly, p1)`], effect: '(left right -- result)' },
         )),
-        ..._coeffFamilySubOps('vector_unary').map(op => _programHelpItem(
-            op.name,
-            `${op.name}(source)`,
-            `${op.name} applies elementwise to a vector/scalar source.`,
-            { aliases: op.source_aliases || [], forms: [`poly = ${op.name}(poly)`], effect: '(source -- result)' },
-        )),
+        ..._coeffFamilySubOps('vector_unary').map(op => {
+            const nativeParams = _coeffTransformParams(op.name);
+            const nativeSourceName = nativeParams.length ? _coeffRegistrySourceName(op.name) : op.name;
+            const nativeForm = nativeParams.length
+                ? `poly = ${nativeSourceName}(poly, ${nativeParams.map((param, idx) => _programHelpParamDefault(param) || _programHelpParamName(param, idx)).join(', ')})`
+                : '';
+            return _programHelpItem(
+                op.name,
+                `${op.name}(source${nativeParams.length ? ', andy' : ''})`,
+                `${op.name} applies elementwise to a vector/scalar source${nativeParams.length ? '; native form also accepts andy blending.' : '.'}`,
+                {
+                    aliases: op.source_aliases || [],
+                    forms: [`poly = ${op.name}(poly)`].concat(nativeForm ? [nativeForm] : []),
+                    params: nativeParams,
+                    effect: '(source -- result)',
+                },
+            );
+        }),
     ]);
-    const nativeItems = (_coeffProgramLegacyNames || []).map(name => _coeffNativeTransformHelpItem(name));
+    const vectorUnaryNames = new Set(_coeffFamilySubOps('vector_unary').map(op => op && op.name).filter(Boolean));
+    const nativeItems = (_coeffProgramLegacyNames || [])
+        .filter(name => !vectorUnaryNames.has(_coeffRegistrySourceName(name)))
+        .map(name => _coeffNativeTransformHelpItem(name));
     _programHelpAddSection(registry, 'Native Transform Reference', nativeItems);
     const functionCatalog = (typeof window !== 'undefined' && window._coeffFuncCatalog) || [];
     const functionItems = functionCatalog
@@ -1720,9 +1743,16 @@ function _paramProgramLegacyArgDefs(legacyName) {
     return Array.isArray(defs) ? defs : null;
 }
 
+function _paramProgramLegacyVariableCounts(legacyName) {
+    const counts = _paramProgramLegacyVariableArgCounts[String(legacyName || '').trim()];
+    return Array.isArray(counts) ? counts.map(Number).filter(Number.isFinite) : [];
+}
+
 function _paramProgramLegacyTakesNoArgs(legacyName) {
     const name = String(legacyName || '').trim();
-    return _paramProgramLegacyNames.includes(name) && !_paramProgramLegacyArgDefs(name);
+    return _paramProgramLegacyNames.includes(name)
+        && !_paramProgramLegacyArgDefs(name)
+        && !_paramProgramLegacyVariableCounts(name).some(count => count > 0);
 }
 
 function _paramProgramLegacyTargetArgIndex(legacyName) {

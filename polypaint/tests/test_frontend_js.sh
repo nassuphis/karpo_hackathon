@@ -150,10 +150,13 @@ if (!paramVocabSrc.includes('"zzold"') || !paramVocabSrc.includes('"scdth"')) fa
 assertIncludes("const _paramProgramIndependentLegacyTargets = new Set(_paramRegistryVocab.independentTargets || []);", 'frontend should get redundant legacy targets from generated Param vocab');
 assertIncludes("coeff12: { category: 'bridge', desc: 'legacy mixed polynomial map' }", 'Param Program picker should expose legacy coeff-map chips directly');
 assertIncludes("const _paramProgramLegacyArgSpecs = _paramRegistryVocab.argSpecs || {};", 'frontend should expose generated structured legacy argument specs in Param Program bridge chips');
+assertIncludes("const _paramRegistryCategoryMeta = _paramRegistryVocab.categoryMeta || _ptCategoryMeta;", 'frontend should consume generated Param registry category metadata');
+assertIncludes("const _paramRegistryUiFunctions = _paramRegistryVocab.uiFunctions || {};", 'frontend should consume generated Param registry per-function UI metadata');
 if (!paramVocabSrc.includes('"moebius"') || !paramVocabSrc.includes('"complexWide": true')) fail('generated Param vocab should expose moebius wide complex expression inputs');
 assertIncludes("function _paramProgramMoebiusArgsForUi(args) {", 'Param Program moebius bridge should convert legacy eight-real coefficients back to four complex UI fields');
 assertIncludes("<span>t=(</span>${a}<span class=\"chip-op\">*t+</span>${b}<span>)/(</span>${c}<span class=\"chip-op\">*t+</span>${d}<span>)</span>", 'Param Program moebius bridge should render a formula-style chip');
 assertIncludes("const _paramProgramLegacyTargetArgIndexes = _paramRegistryVocab.targetArgIndexes || {};", 'Param Program should migrate legacy numeric target args through generated Param vocab');
+assertIncludes("const _paramProgramLegacyVariableArgCounts = _paramRegistryVocab.variableArgCounts || {};", 'Param Program should consume generated variable legacy arg counts');
 if (!paramVocabSrc.includes('"crd"') || !paramVocabSrc.includes('"ph": "size"')) fail('generated Param vocab should expose expression-sized shape fields without redundant target fields');
 assertIncludes("function _paramProgramLegacyTakesNoArgs(legacyName) {", 'Param Program legacy bridge should know which selected legacy names take no args');
 assertIncludes("inputDefs = pDefs.slice(0, 3);\n            inputValues = [legacyName, src, tgt];", 'Param Program legacy bridge should hide the args box for no-arg legacy functions');
@@ -719,7 +722,7 @@ function makeContext({withCoeffVocab = true} = {}) {
       const expected = _paramProgramLegacyCallParams(name).map((param, idx) => _programHelpParamText(param, idx)).join('|');
       const item = reg.sections
         .flatMap(section => section.items || [])
-        .find(candidate => candidate && candidate.name === name && String(candidate.category || '').includes('legacy transform'));
+        .find(candidate => candidate && candidate.signature === 'legacy(' + name + ', src, tgt, ...)');
       const actual = (item && item.params || []).map((param, idx) => _programHelpParamText(param, idx)).join('|');
       return expected !== actual;
     });
@@ -731,12 +734,27 @@ function makeContext({withCoeffVocab = true} = {}) {
       pushForms: push && push.forms,
       emitForms: emit && emit.forms,
       squareForms: square && square.forms,
+      addNormalized: (() => {
+        _ppChain.splice(0, _ppChain.length, ..._normalizeParamProgramChain([['legacy', 'add', 'both', 'both', '1', '2']]));
+        return {
+          rows: _serializeParamProgramChain(),
+          source: _paramProgramSourceFromRows(_serializeParamProgramChain()),
+        };
+      })(),
+      ppDupes: (() => {
+        const counts = new Map();
+        reg.sections.flatMap(section => section.items || []).forEach(item => counts.set(item.name, (counts.get(item.name) || 0) + 1));
+        return Array.from(counts.entries()).filter(([, count]) => count > 1).map(([name]) => name).sort();
+      })(),
     };
   })()`, ctx);
   assert(paramHelpAudit.legacyMisses.length === 0, `Param legacy Help lookup should keep selector and transform params; misses=${paramHelpAudit.legacyMisses.slice(0, 5).join(',')}`);
   assert(paramHelpAudit.pushForms.includes('push(t1)') && !paramHelpAudit.pushForms.includes('push(both)'), 'Param Help lookup should prefer parser-valid push forms');
   assert(paramHelpAudit.emitForms.includes('emit_p1') && paramHelpAudit.emitForms.includes('emit_p2'), 'Param Help lookup should expose canonical emit aliases');
   assert(paramHelpAudit.squareForms.includes('square(p1)') && paramHelpAudit.squareForms.includes('square(p2)'), 'Param Help lookup should expose both targeted unary forms');
+  assert(JSON.stringify(paramHelpAudit.addNormalized.rows) === JSON.stringify([['legacy', 'add', 'both', 'both', '1', '2']]), 'Param legacy add bridge must preserve both optional offset args');
+  assert(paramHelpAudit.addNormalized.source === 'legacy(add, both, both, 1, 2)', 'Param legacy add source synthesis must preserve optional offset args');
+  assert(paramHelpAudit.ppDupes.length === 0, `Param Help should not contain duplicate top-level articles: ${paramHelpAudit.ppDupes.join(',')}`);
   ctx._setProgramSourceSidePanelMode('cp', 'help');
   assert(els['cp-help'].hidden === false && els['cp-cheatsheet'].hidden === true, 'Coeff Help tab should hide Starter panel');
   assert(!els['cp-help'].innerHTML.includes('Starters'), 'Coeff Help should not include Starter sections');
@@ -746,6 +764,22 @@ function makeContext({withCoeffVocab = true} = {}) {
   assert(els['cp-help'].innerHTML.includes('real(source)'), 'Coeff Help should include generated real vector unary op');
   assert(els['cp-help'].innerHTML.includes('imag(source)'), 'Coeff Help should include generated imag vector unary op');
   assert(/sort_mod_keep_angle[\s\S]{0,300}andy/.test(els['cp-help'].innerHTML), 'sort_mod_keep_angle help should show its generated andy param');
+  const coeffHelpAudit = vm.runInContext(`(() => {
+    const reg = _programHelpRegistry('cp');
+    const counts = new Map();
+    reg.sections.flatMap(section => section.items || []).forEach(item => counts.set(item.name, (counts.get(item.name) || 0) + 1));
+    const dupes = Array.from(counts.entries()).filter(([, count]) => count > 1).map(([name]) => name).sort();
+    const andy = reg.lookup.get('andy');
+    const cf = reg.lookup.get('cf');
+    return {
+      dupes,
+      andyName: andy && andy.name,
+      cfForms: cf && cf.forms,
+    };
+  })()`, ctx);
+  assert(coeffHelpAudit.dupes.length === 0, `Coeff Help should not contain duplicate top-level articles: ${coeffHelpAudit.dupes.join(',')}`);
+  assert(coeffHelpAudit.andyName === 'andy', 'Coeff Help lookup for andy should resolve to the shared andy article');
+  assert((coeffHelpAudit.cfForms || []).includes('cf'), 'Coeff Help lookup for cf should resolve to the statement-form article');
   const nativeHelpSparseItems = ctx._programHelpRegistry('cp').sections
     .filter(section => String(section.title || '').startsWith('Native:'))
     .flatMap(section => section.items || [])

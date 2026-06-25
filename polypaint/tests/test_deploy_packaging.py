@@ -797,6 +797,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn("tests/test_param_program_chain.py", predeploy_text)
         self.assertIn("tests/test_param_program_storage.py", predeploy_text)
         self.assertIn("tests/test_param_program_native.py", predeploy_text)
+        self.assertIn("tests/test_program_help_forms.py", predeploy_text)
         self.assertIn("tests/test_coeff_program_chain.py", predeploy_text)
         self.assertIn("tests/test_coeff_program_storage.py", predeploy_text)
         self.assertIn("tests/test_solve_score_chain.py", predeploy_text)

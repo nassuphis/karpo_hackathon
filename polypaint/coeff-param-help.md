@@ -1479,6 +1479,10 @@ Gate:
 - No generated artifact is stale.
 - No user-facing Help article is hand-authoritative for valid syntax.
 
+### Help Construction Detail (Steps 1–9 = the expansion of Milestone 5)
+
+Steps 1–9 below are the detailed expansion of **Milestone 5** (Help Article Model, Help Tab, and Inspector). They run **after** Milestones 1–4 land their generated artifacts and **before** Milestone 6's final deletions. The milestone numbering is the plan of record; these Steps are the granular checklist for the Help build itself, not a separate sequence.
+
 ### Step 1: Separate Starter From Help Completely
 
 Remove `_paramProgramCheatSections` and `_coeffProgramCheatSections` from Help generation.

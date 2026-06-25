@@ -102,7 +102,7 @@ The parsers are untouched; the generator reads their current tables, so the arti
 
 ### Why this is the unlock
 
-Either way, the frontend reads valid forms, aliases, params, and rejected forms from a **generated, gated artifact instead of your memory**. A form is valid iff it is in the grammar. Emit forms are `emit_p1`/`emit_p2` because the grammar says so. `square` gets `square(p1)`/`square(p2)` automatically because the grammar lists `square` in `targetable_unary` and `p1`/`p2` in `unary_targets`. **Mistakes #4, #5, #6, and #13 become structurally impossible**, and the Rule 6 audit collapses to two set comparisons (below). You stop playing whack-a-mole because the holes are gone.
+Either way, the frontend reads valid forms, aliases, params, and rejected forms from a **generated, gated artifact instead of your memory**. A form is valid iff it is in the grammar. Emit forms are `emit_p1`/`emit_p2` because the grammar says so. `square` gets `square(p1)`/`square(p2)` automatically because the grammar lists `square` in `targetable_unary` and `p1`/`p2` in `unary_targets`. **Mistakes #4, #5, #6, and #13 become structurally impossible**, and the Rule 6 audit becomes a generated-artifact set comparison **plus parser-execution gates** (below). You stop playing whack-a-mole because the holes are gone.
 
 ### The Help Article model (one shape, three producers, two consumers)
 
@@ -1311,6 +1311,7 @@ Work:
 - Add/extend parser behavior tests that pin current accepted/rejected Param and Coeff source forms (`push(t1)`, rejected `push(both)`, rejected `emit(p1)`, targeted unary `square(p1/p2)`, old packed Coeff `linear`/`pow`/`exp`/`round` forms).
 - Add a saved-program corpus fixture for Param/Coeff source/chain payloads, including real `calc.json` examples where available.
 - Add equivalence helpers that compile old path vs new path and compare lowered chain, execution spec, source serializer round-trip, and fingerprint where applicable.
+- Make equivalence mechanically possible before deleting old code: either keep a test-only legacy parser/serializer adapter until each migration gate is green, or snapshot golden lowered chains/execution specs/fingerprints from the current implementation into fixtures. Do not rewrite the only parser and then claim "old vs new" equivalence without an old reference.
 - Confirm current generated-artifact gates are represented in `scripts/predeploy_check.sh`: `gen_program_profiles.py --check`, `gen_coeff_vocab.py --check`, `gen_solve_score_vocab.py --check`. New generators added below must join this list.
 
 Gate:
@@ -1336,6 +1337,7 @@ Work:
 - Add `profile_source(profile)` to `program_source_core.py`.
 - Derive the Param parser's operation sets from `profile_source(program_profile("param"))`.
 - Migrate `param_program_source.py` from its manual statement loop to a `ParamStatementLowerer(ProfileStatementLowerer)` and `parse_profile_source`, keeping Param-specific semantic lowering in Python.
+- Preserve Param's current diagnostic contract unless a test explicitly approves a change. The current parser distinguishes read-only lhs (`read_only_symbol`), unknown lhs (`unknown_symbol`), rejected `emit(p1)` (`noncanonical_emit`), rejected `push(both)` (`bad_selector`), and blank source (`empty_source`). `ProfileStatementLowerer` currently emits a more generic "only p1, p2 assignments..." message and `parse_profile_source` currently returns an empty chain with no `empty_source` diagnostic, so this migration needs Param-specific hooks or core options for those cases.
 - Keep `param_source_text_from_chain` behavior equivalent; it may still be hand-coded in this milestone, but it must consume profile-derived vocab rather than private duplicate sets.
 - Regenerate `lambda/program_profiles.py` and `program_profiles_js.js`.
 
@@ -1354,17 +1356,20 @@ Code facts this is based on:
 
 - `lambda/param_legacy_registry.json` has 70 functions with `name`, `fn_index`, `kind`, `allowed_src`, `allowed_tgt`, and `args`.
 - `js/07-transform-catalogs.js` currently hardcodes `_paramProgramLegacyNames` with 48 entries and `_paramProgramLegacyArgSpecs`; this is already a live drift bug.
-- `param_program_chain.py` owns compatibility metadata such as `_LEGACY_TARGET_ARG_INDEXES`, `_SOURCE_SELECTORS`, `_TARGET_SELECTORS`, and bridge canonicalization helpers.
+- `param_program_chain.py` owns compatibility metadata such as `_SOURCE_SELECTORS`, `_TARGET_SELECTORS`, `_LEGACY_TARGET_ARG_INDEXES`, `_VARIABLE_LEGACY_ARG_COUNTS`, `_LEGACY_TARGET_FIRST_CHIPS`, and bridge canonicalization helpers.
+- `lambda/param_legacy_registry.json` is not complete enough by itself for frontend/help source forms: `moebius` is `args: []` in the registry but the compiler accepts 0/4/8 args, where the 4-arg form is four complex coefficients; `inv_t_plus_2` and `add` also have variable source-visible arg shapes. The JS hand mirror currently supplies these source/editor shapes in `_paramProgramLegacyArgSpecs` and conversion helpers.
 - `scripts/predeploy_check.sh` already gates generated vocab for Coeff and Solve-Score but has no Param vocab gate.
 
 Work:
 
 - Add `lambda/gen_param_vocab.py`, mirroring the `gen_coeff_vocab.py` / `gen_solve_score_vocab.py` pattern.
-- Emit `param_vocab_js.js` with `window._paramRegistryVocab`, generated from `param_legacy_registry.json`, `program_profiles.json`, and any still-authoritative chain metadata needed for bridge compatibility (for example `_LEGACY_TARGET_ARG_INDEXES` until it is moved into registry data).
+- Emit `param_vocab_js.js` with `window._paramRegistryVocab`, generated from `param_legacy_registry.json`, `program_profiles.json`, and any still-authoritative chain metadata needed for bridge compatibility.
+- Move or generate the full Param legacy source/editor metadata, not just the 70 names: source/tgt selector choices, `_LEGACY_TARGET_ARG_INDEXES`, `_VARIABLE_LEGACY_ARG_COUNTS`, target-first dither handling, `moebius` 0/4/8 args, `inv_t_plus_2` 0/1/2 source args, `add` 0/1/2 source args, and the current JS arg-spec semantics for complex/wide fields. If any of those remain in JS or chain-only side tables, name the temporary source of truth and add a drift test.
 - Add `<script>` loading for `param_vocab_js.js` before `js/07-transform-catalogs.js`.
 - Hydrate `_paramProgramLegacyNames`, `_paramProgramLegacyArgSpecs`, and target selector metadata from `window._paramRegistryVocab`; then delete the hand-typed JS lists once consumers are moved.
 - Add `gen_param_vocab.py --check` to `scripts/predeploy_check.sh`.
 - Add drift tests proving generated JS matches JSON/generator output and that all 70 registry names are exposed to the frontend.
+- Rewrite stale frontend tests that currently assert the old hand mirrors (`const _paramProgramLegacyNames = [`, `const _paramProgramLegacyArgSpecs = {`, hardcoded selector arrays) so they assert generated-vocab coverage and UI behavior instead of implementation details.
 
 Gate:
 
@@ -1387,12 +1392,14 @@ Code facts this is based on:
 Work:
 
 - Extend the coeff registry loader/schema to accept `optional:true`, `type:"complex"`, normalized `effective_args`, and `compat_signatures`.
+- Define `effective_args` as the unified source of **compiler-visible args plus UI/help metadata plus compatibility metadata**. Today compiler args live in top-level registry `args`, while frontend/help params come from `ui.params` / `ui.program_params` in `gen_coeff_vocab.py`; if `effective_args` only wraps one side, the split survives under a new name.
 - Materialize existing `supports_andy:true` into an `effective_args` trailing optional `andy` only as a load-time migration shim.
 - Declare per-function/per-source-form wire layouts in `compat_signatures`, including old packed real-component forms for `linear`, `pow`, `exp`, and `round`.
 - Replace parser/compiler arity decisions that branch on `fn_index` for `andy` with the registry-driven signature table.
 - Replace the per-function complex pack/unpack helpers with one data-driven codec only after byte-equivalence tests prove each function's existing lane usage is reproduced.
 - Update `gen_coeff_vocab.py` so frontend metadata exposes `effective_args` and compatibility notes.
 - Remove `_ctAndyParam` append from the frontend once generated `effective_args` carries `andy`.
+- Rewrite stale frontend/tests that currently assert the `_ctAndyParam` append/hydration pattern and hardcoded vector lists. After this milestone, tests should assert `effective_args` coverage, wire compatibility, and rendered UI/help behavior, not the old append implementation.
 
 Gate:
 

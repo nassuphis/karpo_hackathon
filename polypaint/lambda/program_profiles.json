@@ -29,6 +29,29 @@
         "push": {"0": "t1", "1": "t2"},
         "emit": {"0": "p1", "1": "p2"}
       },
+      "source": {
+        "stack_op_aliases": {
+          "dup": "duplicate",
+          "duplicate": "duplicate",
+          "swap": "swap",
+          "pop": "pop",
+          "flush": "flush"
+        },
+        "binary_ops": ["add", "subtract", "sub", "mul", "ratio", "div"],
+        "unary_ops": ["negate", "conj", "conjugate", "reciprocal", "unit_circle", "square", "cube", "exp"],
+        "targetable_unary": ["negate", "conj", "conjugate", "reciprocal", "unit_circle", "square", "cube", "exp"],
+        "unary_targets": ["p1", "p2"],
+        "push_sources": ["t1", "t2"],
+        "emit_aliases": {"emit_p1": "p1", "emit_p2": "p2"},
+        "expression_namespace": {
+          "constants": ["pi", "pi2", "pi2i"],
+          "functions": ["exp", "real", "imag", "abs", "mod"]
+        },
+        "rejected_forms": [
+          {"form": "push(both)", "code": "bad_selector", "use": "push(t1) or push(t2)"},
+          {"form": "emit(p1)", "code": "noncanonical_emit", "use": "emit_p1, emit_p2, or p1 = expr"}
+        ]
+      },
       "outputs": ["p1", "p2"],
       "output_contract": {"kind": "scalar_registers", "default_initialization": true}
     },

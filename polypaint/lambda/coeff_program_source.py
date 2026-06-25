@@ -8,6 +8,8 @@ coeff_program_chain compile that list to VM tokens.
 """
 from __future__ import annotations
 
+import json
+import os
 import re
 
 from coeff_program_chain import (
@@ -82,14 +84,55 @@ _INDEXED_LHS_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Canonical names plus the typed shorthands, both derived from the chain
-# layer's tables so the vocabularies cannot drift.
+_STRUCTURAL_CHIPS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "structural_chips.json")
+
+
+def _structural_family_subops(name):
+    try:
+        with open(_STRUCTURAL_CHIPS_PATH, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except OSError:
+        return ()
+    for chip in payload.get("chips") or ():
+        if chip.get("name") != name:
+            continue
+        return tuple(
+            str(op.get("name") or "").lower()
+            for op in (chip.get("sub_ops") or ())
+            if op.get("name")
+        )
+    return ()
+
+
+def _structural_family_aliases(name):
+    try:
+        with open(_STRUCTURAL_CHIPS_PATH, "r", encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except OSError:
+        return {}
+    aliases = {}
+    for chip in payload.get("chips") or ():
+        if chip.get("name") != name:
+            continue
+        for op in chip.get("sub_ops") or ():
+            canonical = str(op.get("name") or "").lower()
+            if not canonical:
+                continue
+            aliases[canonical] = canonical
+            for alias in op.get("source_aliases") or ():
+                aliases[str(alias).lower()] = canonical
+        return aliases
+    return aliases
+
+
+# Canonical names plus typed shorthands. Public family sub-ops are read from
+# structural_chips.json; typed internal aliases still come from the chain layer.
 _VECTOR_BINARY_ALIASES = {
-    **{name: name for name in VECTOR_BINARY_OPS},
+    **(_structural_family_aliases("vector_binary") or {name: name for name in VECTOR_BINARY_OPS}),
     **TYPED_BINARY_NAME_ALIASES,
 }
 
-_VECTOR_UNARY_NAMES = frozenset(VECTOR_UNARY_OPS)
+_VECTOR_UNARY_NAMES = frozenset(_structural_family_subops("vector_unary") or VECTOR_UNARY_OPS)
 
 # EXPR opcode -> typed unary chip name, inverted from the chain layer's map
 # ("mod" and "abs" share an opcode; the canonical chip name wins).

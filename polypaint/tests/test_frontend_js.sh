@@ -29,6 +29,7 @@ const htmlPath = process.argv[2];
 const htmlSrc = fs.readFileSync(htmlPath, 'utf8');
 // Generated registry vocab: chip param shapes/descs/titles live there now
 // (lambda/coeff_legacy_registry.json ui blocks -> coeff_vocab_js.js).
+const paramVocabSrc = fs.readFileSync(require('path').join(require('path').dirname(htmlPath), 'param_vocab_js.js'), 'utf8');
 const vocabSrc = fs.readFileSync(require('path').join(require('path').dirname(htmlPath), 'coeff_vocab_js.js'), 'utf8');
 const solveVocabSrc = fs.readFileSync(require('path').join(require('path').dirname(htmlPath), 'solve_score_vocab_js.js'), 'utf8');
 
@@ -144,15 +145,16 @@ assertIncludes("return _formatCoeffProgramChainForLog(_serializeCoeffProgramChai
 assertIncludes("function _computePreviewViewportInfoLines(result) {", 'compute preview plot info should format returned viewport bounds');
 assertIncludes("viewport Re: ${minRe} .. ${maxRe}", 'compute preview plot info should show displayed Re viewport bounds');
 assertIncludes("viewport Im: ${minIm} .. ${maxIm}", 'compute preview plot info should show displayed Im viewport bounds');
-assertIncludes("const _paramProgramIndependentLegacyTargets = new Set([", 'frontend should know which legacy target args are redundant in Param Program bridge chips');
-assertIncludes("'coeff2',\n    'coeff3',\n    'coeff3a',", 'Param Program legacy bridge should include legacy coeff-map names');
+assertIncludes("const _paramRegistryVocab = (typeof window !== 'undefined' && window._paramRegistryVocab) || {};", 'frontend should hydrate Param Program legacy metadata from generated vocab');
+if (!paramVocabSrc.includes('"zzold"') || !paramVocabSrc.includes('"scdth"')) fail('generated Param vocab should expose all registry transforms, including names missing from the old JS mirror');
+assertIncludes("const _paramProgramIndependentLegacyTargets = new Set(_paramRegistryVocab.independentTargets || []);", 'frontend should get redundant legacy targets from generated Param vocab');
 assertIncludes("coeff12: { category: 'bridge', desc: 'legacy mixed polynomial map' }", 'Param Program picker should expose legacy coeff-map chips directly');
-assertIncludes("const _paramProgramLegacyArgSpecs = {", 'frontend should expose structured legacy argument specs in Param Program bridge chips');
-assertIncludes("moebius: [\n        { ph: 'a', def: '1', scalarExpr: true, complexWide: true", 'Param Program moebius bridge should expose four wide complex expression coefficient inputs');
+assertIncludes("const _paramProgramLegacyArgSpecs = _paramRegistryVocab.argSpecs || {};", 'frontend should expose generated structured legacy argument specs in Param Program bridge chips');
+if (!paramVocabSrc.includes('"moebius"') || !paramVocabSrc.includes('"complexWide": true')) fail('generated Param vocab should expose moebius wide complex expression inputs');
 assertIncludes("function _paramProgramMoebiusArgsForUi(args) {", 'Param Program moebius bridge should convert legacy eight-real coefficients back to four complex UI fields');
 assertIncludes("<span>t=(</span>${a}<span class=\"chip-op\">*t+</span>${b}<span>)/(</span>${c}<span class=\"chip-op\">*t+</span>${d}<span>)</span>", 'Param Program moebius bridge should render a formula-style chip');
-assertIncludes("const _paramProgramLegacyTargetArgIndexes = {", 'Param Program should migrate legacy numeric target args into src/tgt selectors');
-assertIncludes("crd: [{ ph: 'size', def: '1', scalarExpr: true, exprWide: true }]", 'Param Program targetable shape bridge should expose expression-sized shape fields without redundant target fields');
+assertIncludes("const _paramProgramLegacyTargetArgIndexes = _paramRegistryVocab.targetArgIndexes || {};", 'Param Program should migrate legacy numeric target args through generated Param vocab');
+if (!paramVocabSrc.includes('"crd"') || !paramVocabSrc.includes('"ph": "size"')) fail('generated Param vocab should expose expression-sized shape fields without redundant target fields');
 assertIncludes("function _paramProgramLegacyTakesNoArgs(legacyName) {", 'Param Program legacy bridge should know which selected legacy names take no args');
 assertIncludes("inputDefs = pDefs.slice(0, 3);\n            inputValues = [legacyName, src, tgt];", 'Param Program legacy bridge should hide the args box for no-arg legacy functions');
 assertIncludes("function _chipLabeledInputHtml(which, chipIdx, paramIdx, value, paramDef, options = {}) {", 'Param Program legacy bridge should render visible labels, not hidden placeholders');
@@ -217,8 +219,7 @@ assertIncludes("write value into the top stack vector without popping it", 'Coef
 assertIncludes("Program mode accepts t1/t2, p1/p2, poly_len, cfN, polyN, tosN, pi, pi2, pi2i, literals, + - * /, and conj/real/imag/abs/angle/sqrt/log/exp/sin/cos/tan/sinh/cosh/tanh.", 'Coeff Program scalar expression tooltip should name the allowed registers, constants, functions, and vector element reads');
 assertIncludes("commit poly; pops stack top into poly when present", 'Coeff Program picker should describe emit commit semantics');
 assertIncludes("blend below*(1-t) + top*t for same-length vectors", 'Coeff Program picker should expose vector blend chip');
-assertIncludes("const _coeffProgramVectorBinaryNames = ['add', 'subtract', 'multiply', 'divide', 'power'];", 'Coeff Program picker should expose first-class vector binary ops');
-assertIncludes("const _coeffProgramVectorUnaryNames = ['angle', 'mod', 'abs', 'neg', 'conj', 'sqrt', 'log', 'exp', 'sin', 'cos', 'tan', 'sinh', 'cosh', 'tanh'];", 'Coeff Program picker should expose first-class vector unary ops');
+assertIncludes("const _coeffProgramVectorBinaryNames = _coeffStructuralSubOpNames('vector_binary'", 'Coeff Program picker should expose registry-backed vector binary ops');
 assertIncludes("argsort: {", 'Coeff Program picker should expose argsort');
 assertIncludes("roll vector left by n positions", 'Coeff Program picker should expose roll-left');
 assertIncludes("roll vector right by n positions", 'Coeff Program picker should expose roll-right');
@@ -268,6 +269,7 @@ assertIncludes("function _copyCoeffTransformsIntoCoeffProgram() {", 'Coeff Progr
 assertIncludes("const _coeffProgramRegistryChipNames = _coeffRegistryVocab ? _coeffRegistryVocab.chipNameByRegistryName : {};", 'normalize/copy should derive the registry-to-chip name map from the generated vocab');
 assertIncludes('<script src="program_profiles_js.js"></script>', 'the generated program profile mirror must load before the main bundle');
 assertIncludes('<script src="merged_opcodes_js.js"></script>', 'the generated merged opcode mirror must load before the main bundle');
+assertIncludes('<script src="param_vocab_js.js"></script>', 'the generated Param registry vocab must load before the main bundle');
 assertIncludes('<script src="coeff_vocab_js.js"></script>', 'the generated registry vocab must load before the main bundle');
 assertIncludes('<script src="solve_score_vocab_js.js"></script>', 'the generated solve-score vocab must load before the main bundle');
 assertIncludes("return { name: _coeffProgramRegistryChipName(normalized.name), params: ['poly', 'poly', ...args] };", 'Copy legacy transforms should map shadowed registry names through the shared chip-name map');
@@ -275,7 +277,8 @@ assertIncludes("return [{ name: _coeffProgramRegistryChipName(legacyName), param
 assertIncludes("// LAYOUT CONTRACT: legacy rows are source-first", 'The legacy-vs-chip param order flip must stay documented at the normalize seam');
 assertIncludes("function _isAndyParam(pDef) {", 'andy identity should be real metadata (kind), not placeholder text');
 assertIncludes("return name === 'const' ? 'push_const' : name;", 'coeff program chip canonicalizer must map const to push_const (a self-call here recursed forever)');
-assertIncludes("kind: 'andy', ph: 'andy'", 'the base andy param def should carry the kind marker');
+if (!vocabSrc.includes('"effectiveArgs"') || !vocabSrc.includes('"kind": "andy"')) fail('generated coeff vocab should carry effective args and andy metadata');
+assertIncludes("const _coeffProgramVectorUnaryNames = _coeffStructuralSubOpNames('vector_unary'", 'Coeff Program vector unary names should derive from generated structural metadata');
 assertIncludes("catalog.power_series = {", 'Coeff Program catalog should expose the registry power transform as a power_series chip');
 assertIncludes("return { name: 'legacy', params: [normalized.name, 'poly', 'poly', ...args] };", 'Copy legacy transforms must keep andy-carrying rows as legacy chips (named chips drop andy)');
 assertIncludes("if (_coeffProgramSourceAutoSynthed && !_coeffProgramChain.length) {", 'Emptying the chip chain must clear stale auto-synthesized text');
@@ -687,6 +690,7 @@ function makeContext({withCoeffVocab = true} = {}) {
   };
   ctx.window = ctx; ctx.globalThis = ctx;
   vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(path.join(root, 'param_vocab_js.js'), 'utf8'), ctx, {filename: 'param_vocab_js.js'});
   if (withCoeffVocab) vm.runInContext(fs.readFileSync(path.join(root, 'coeff_vocab_js.js'), 'utf8'), ctx, {filename: 'coeff_vocab_js.js'});
   vm.runInContext(fs.readFileSync(path.join(root, 'coeff_func_catalog_js.js'), 'utf8'), ctx, {filename: 'coeff_func_catalog_js.js'});
   vm.runInContext(fs.readFileSync(path.join(root, 'js/06-popup-init.js'), 'utf8'), ctx, {filename: 'js/06-popup-init.js'});
@@ -701,33 +705,46 @@ function makeContext({withCoeffVocab = true} = {}) {
   assert(els['pp-cheatsheet'].innerHTML.includes('identity'), 'Param Starter should render existing snippets');
   assert(els['cp-cheatsheet'].innerHTML.includes('emit cf'), 'Coeff Starter should render existing snippets');
   ctx._setProgramSourceSidePanelMode('pp', 'help');
-  assert(els['pp-help'].innerHTML.includes('Param Program Chip Reference'), 'Param Help should include generated chip reference');
-  assert(/push\(src=t1\)/.test(els['pp-help'].innerHTML), 'Param Help should show generated push parameters');
-  assert(/legacy\(moebius[\s\S]{0,160}src=both[\s\S]{0,160}tgt=both[\s\S]{0,160}a=1[\s\S]{0,160}d=1/.test(els['pp-help'].innerHTML), 'Param Help should show legacy selector params plus transform args');
+  assert(!els['pp-help'].innerHTML.includes('Starters'), 'Param Help should not include Starter sections');
+  assert(!els['pp-help'].innerHTML.includes('Insert</button>'), 'Param Help should not render bulk Insert buttons');
+  assert(/push\(\).*push\(t1\).*push\(t2\)/.test(els['pp-help'].innerHTML), 'Param Help should show parser-valid push forms');
+  assert(!els['pp-help'].innerHTML.includes('push(both)'), 'Param Help should not document rejected push(both)');
+  assert(/square[\s\S]{0,500}square\(p1\)[\s\S]{0,500}square\(p2\)/.test(els['pp-help'].innerHTML), 'Param Help should show both targeted unary forms');
+  assert(/legacy\(moebius, both, both, 1, 0, 0, 1\)/.test(els['pp-help'].innerHTML), 'Param Help should show positional legacy source form');
+  assert(!els['pp-help'].innerHTML.includes('legacy(moebius, src=both'), 'Param Help must not show keyword-looking legacy source syntax');
   const paramHelpAudit = vm.runInContext(`(() => {
     const reg = _programHelpRegistry('pp');
-    const chipMisses = Object.entries(_ppCatalog || {}).filter(([name, spec]) => {
-      const expected = (spec.params || []).map((param, idx) => _programHelpParamText(param, idx)).join('|');
-      if (!expected) return false;
-      const item = reg.lookup.get(_normalizeProgramHelpToken(name));
-      const actual = (item && item.params || []).map((param, idx) => _programHelpParamText(param, idx)).join('|');
-      return expected !== actual;
-    }).map(([name]) => name);
     const legacyMisses = (_paramProgramLegacyNames || []).filter(name => {
       if (!name || name === 'none') return false;
       const expected = _paramProgramLegacyCallParams(name).map((param, idx) => _programHelpParamText(param, idx)).join('|');
-      const item = reg.lookup.get(_normalizeProgramHelpToken(name));
+      const item = reg.sections
+        .flatMap(section => section.items || [])
+        .find(candidate => candidate && candidate.name === name && String(candidate.category || '').includes('legacy transform'));
       const actual = (item && item.params || []).map((param, idx) => _programHelpParamText(param, idx)).join('|');
       return expected !== actual;
     });
-    return {chipMisses, legacyMisses};
+    const push = reg.lookup.get('push');
+    const emit = reg.lookup.get('emit');
+    const square = reg.lookup.get('square');
+    return {
+      legacyMisses,
+      pushForms: push && push.forms,
+      emitForms: emit && emit.forms,
+      squareForms: square && square.forms,
+    };
   })()`, ctx);
-  assert(paramHelpAudit.chipMisses.length === 0, `Param chip Help lookup should keep catalog params; misses=${paramHelpAudit.chipMisses.slice(0, 5).join(',')}`);
   assert(paramHelpAudit.legacyMisses.length === 0, `Param legacy Help lookup should keep selector and transform params; misses=${paramHelpAudit.legacyMisses.slice(0, 5).join(',')}`);
+  assert(paramHelpAudit.pushForms.includes('push(t1)') && !paramHelpAudit.pushForms.includes('push(both)'), 'Param Help lookup should prefer parser-valid push forms');
+  assert(paramHelpAudit.emitForms.includes('emit_p1') && paramHelpAudit.emitForms.includes('emit_p2'), 'Param Help lookup should expose canonical emit aliases');
+  assert(paramHelpAudit.squareForms.includes('square(p1)') && paramHelpAudit.squareForms.includes('square(p2)'), 'Param Help lookup should expose both targeted unary forms');
   ctx._setProgramSourceSidePanelMode('cp', 'help');
   assert(els['cp-help'].hidden === false && els['cp-cheatsheet'].hidden === true, 'Coeff Help tab should hide Starter panel');
+  assert(!els['cp-help'].innerHTML.includes('Starters'), 'Coeff Help should not include Starter sections');
+  assert(!els['cp-help'].innerHTML.includes('Insert</button>'), 'Coeff Help should not render bulk Insert buttons');
   assert(els['cp-help'].innerHTML.includes('poly_len'), 'Coeff Help should include generated core symbols');
   assert(els['cp-help'].innerHTML.includes('andy'), 'Coeff Help should include andy from generated transform params');
+  assert(els['cp-help'].innerHTML.includes('real(source)'), 'Coeff Help should include generated real vector unary op');
+  assert(els['cp-help'].innerHTML.includes('imag(source)'), 'Coeff Help should include generated imag vector unary op');
   assert(/sort_mod_keep_angle[\s\S]{0,300}andy/.test(els['cp-help'].innerHTML), 'sort_mod_keep_angle help should show its generated andy param');
   const nativeHelpSparseItems = ctx._programHelpRegistry('cp').sections
     .filter(section => String(section.title || '').startsWith('Native:'))

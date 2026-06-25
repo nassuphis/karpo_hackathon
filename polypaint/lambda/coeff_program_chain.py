@@ -316,10 +316,10 @@ def _load_legacy_registry():
                 raise RuntimeError(f"coeff legacy function {name} arg {idx} must be an object")
             normalized_arg = dict(arg)
             arg_type = str(normalized_arg.get("type") or "real").strip().lower()
-            if arg_type not in {"real", "int", "enum"}:
+            if arg_type not in {"real", "int", "enum", "complex"}:
                 raise RuntimeError(
                     f"coeff legacy function {name} arg {idx} has unsupported type {arg_type!r}; "
-                    "v1 legacy bridge supports real, int, and enum args only"
+                    "legacy bridge supports real, complex, int, and enum args"
                 )
             normalized_arg["type"] = arg_type
             if arg_type == "enum":
@@ -330,6 +330,15 @@ def _load_legacy_registry():
                             f"is not supported; known choices: {sorted(_ENUM_ARG_VALUES)}"
                         )
             args.append(normalized_arg)
+        effective_args = tuple(args)
+        if bool(fn.get("supports_andy")):
+            effective_args = effective_args + ({
+                "name": "andy",
+                "type": "real",
+                "default": 0.0,
+                "optional": True,
+                "role": "andy",
+            },)
         spec = {
             "name": name,
             "fn_index": fn_index,
@@ -337,6 +346,8 @@ def _load_legacy_registry():
             "allowed_src": tuple(str(x).strip() for x in (fn.get("allowed_src") or [])),
             "allowed_tgt": tuple(str(x).strip() for x in (fn.get("allowed_tgt") or [])),
             "args": tuple(args),
+            "effective_args": effective_args,
+            "compat_signatures": tuple(fn.get("compat_signatures") or ()),
             "supports_andy": bool(fn.get("supports_andy")),
             "length_policy": str(fn.get("length_policy") or "unknown"),
             # Aliases are wire format: saved chip rows carry them, so entries
@@ -2154,4 +2165,3 @@ def compile_coeff_program_chain(chain, *, macro_resolver=None, strict=True):
         except Exception:
             safe_chain = []
         return _result_payload(diagnostics, source_chain=safe_chain)
-

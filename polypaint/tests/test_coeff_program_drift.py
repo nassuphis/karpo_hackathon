@@ -15,6 +15,7 @@ import json
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
 import coeff_program_chain as chain
+import coeff_program_source as source
 from coeff_program_chain import legacy_registry
 
 LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
@@ -22,6 +23,7 @@ SWEEP_CLI = os.path.join(LAMBDA_DIR, "sweep_cli.c")
 SWEEP_TEST = os.path.join(LAMBDA_DIR, "sweep_test")
 STRUCTURAL_CHIPS = os.path.join(LAMBDA_DIR, "structural_chips.json")
 PROGRAM_PROFILES = os.path.join(LAMBDA_DIR, "program_profiles.json")
+COEFF_VOCAB_JS = os.path.join(os.path.dirname(__file__), "..", "coeff_vocab_js.js")
 
 
 def _c_source():
@@ -54,6 +56,12 @@ def _structural_payload():
 
 def _program_profiles():
     return _json_payload(PROGRAM_PROFILES)["profiles"]
+
+
+def _coeff_vocab_js_payload():
+    with open(COEFF_VOCAB_JS, "r", encoding="utf-8") as fh:
+        text = fh.read()
+    return json.loads(text[text.index("{"): text.rindex("}") + 1])
 
 
 def _structural_chips_by_name():
@@ -168,6 +176,17 @@ def test_structural_subop_tables_match_python_and_c():
             assert c_vec[entry["symbol"][len("COEFF_VEC_"):]] == entry["value"], name
 
 
+def test_coeff_source_parser_vector_vocab_comes_from_structural_metadata():
+    chips = _structural_chips_by_name()
+    binary_aliases = {}
+    for entry in chips["vector_binary"]["sub_ops"]:
+        binary_aliases[entry["name"]] = entry["name"]
+        for alias in entry.get("source_aliases") or []:
+            binary_aliases[alias] = entry["name"]
+    assert {k: v for k, v in source._VECTOR_BINARY_ALIASES.items() if k in binary_aliases} == binary_aliases
+    assert set(source._VECTOR_UNARY_NAMES) == {entry["name"] for entry in chips["vector_unary"]["sub_ops"]}
+
+
 def test_structural_selector_slots_resolve_through_coeff_profile():
     payload = _structural_payload()
     slot_defs = payload["selector_slots"]
@@ -217,6 +236,27 @@ def test_coeff_profile_caps_and_selectors_match_python_and_c():
     assert selectors["set_tgt"] == ["poly"]
     assert selectors["vector_src"] == list(chain._VECTOR_SOURCE_SELECTORS)
     assert set(selectors["typed_vector_src"]) == set(chain._SOURCE_SELECTORS) | {"tos"}
+
+
+def test_generated_coeff_vocab_carries_effective_args_and_andy():
+    vocab = _coeff_vocab_js_payload()
+    for name, spec in legacy_registry()["by_name"].items():
+        generated = vocab["effectiveArgs"][name]
+        assert generated == list(spec["effective_args"])
+        if spec["supports_andy"]:
+            assert generated[-1]["name"] == "andy"
+            assert generated[-1]["optional"] is True
+            assert generated[-1]["role"] == "andy"
+            ui_params = vocab["ctCatalog"][name].get("params") or []
+            assert any(param.get("kind") == "andy" for param in ui_params), name
+
+
+def test_generated_coeff_vocab_exposes_all_vector_unary_subops():
+    vocab = _coeff_vocab_js_payload()
+    chips = {chip["name"]: chip for chip in vocab["structuralChips"]["chips"]}
+    unary_names = {entry["name"] for entry in chips["vector_unary"]["sub_ops"]}
+    assert set(chain.VECTOR_UNARY_OPS) == unary_names
+    assert {"real", "imag"} <= unary_names
 
 
 def test_coeff_source_parser_uses_profile_selectors_and_symbols():

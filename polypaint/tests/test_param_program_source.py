@@ -50,6 +50,22 @@ class TestParamProgramSource(unittest.TestCase):
         self.assertEqual(parsed["diagnostics"][0]["code"], "noncanonical_emit")
         self.assertIn("emit_p1", parsed["diagnostics"][0]["message"])
 
+    def test_profile_backed_rejected_forms_keep_existing_diagnostics(self):
+        from param_program_source import parse_param_program_source
+
+        cases = [
+            ("push(both)", "bad_selector"),
+            ("emit(p1)", "noncanonical_emit"),
+            ("t1 = p1", "read_only_symbol"),
+            ("missing = p1", "unknown_symbol"),
+            ("", "empty_source"),
+        ]
+        for source, code in cases:
+            with self.subTest(source=source):
+                parsed = parse_param_program_source(source, strict=False)
+                self.assertEqual(parsed["chain"], [])
+                self.assertEqual(parsed["diagnostics"][0]["code"], code)
+
     def test_strict_errors_carry_structured_diagnostics(self):
         from param_program_source import ParamProgramSourceCompileError, parse_param_program_source
 
@@ -85,6 +101,14 @@ class TestParamProgramSource(unittest.TestCase):
         self.assertEqual(param_source_text_from_payload({"source_text": "p1 = t1", "chain": [["push"]]}), "p1 = t1")
         self.assertEqual(param_source_text_from_payload({"source_text": "", "chain": []}), "")
         self.assertIsNone(param_source_text_from_payload({"chain": [["push"]]}))
+
+    def test_compile_source_exposes_lowered_chain_for_storage_contract(self):
+        from param_program_source import compile_param_program_source
+
+        compiled = compile_param_program_source("p1 = t1 + t2", strict=False)
+        self.assertEqual(compiled["chain"], [["const", "t1+t2"], ["emit", "p1"]])
+        self.assertEqual(compiled["source_chain"], compiled["chain"])
+        self.assertTrue(compiled["fingerprint"])
 
 
 if __name__ == "__main__":

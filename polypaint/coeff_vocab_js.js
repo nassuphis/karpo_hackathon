@@ -106,58 +106,526 @@ window._coeffRegistryVocab = {
     "roots_cm": true,
     "roots": true
   },
+  "effectiveArgs": {
+    "rev": [
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "conj": [
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "normalize": [
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "deriv": [
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "safe": [
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "negate_odd": [
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "max2one": [
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "sort_mod_keep_angle": [
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "sort_angle_keep_mod": [
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "sort_abs": [
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "cumsum": [
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "cummax": [
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "sort_cumsum": [
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "linear": [
+      {
+        "name": "multiplier",
+        "type": "real",
+        "default": 100.0
+      },
+      {
+        "name": "offset",
+        "type": "real",
+        "default": 0.0
+      },
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "swirler": [
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "exp": [
+      {
+        "name": "a",
+        "type": "real",
+        "default": 1.0
+      },
+      {
+        "name": "b",
+        "type": "real",
+        "default": 0.0
+      },
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "cos": [
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "sin": [
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "tan": [
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "cosh": [
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "sinh": [
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "tanh": [
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "round": [
+      {
+        "name": "a",
+        "type": "real",
+        "default": 1.0
+      },
+      {
+        "name": "b",
+        "type": "real",
+        "default": 0.0
+      },
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "pow": [
+      {
+        "name": "a",
+        "type": "real",
+        "default": 1.0
+      },
+      {
+        "name": "b",
+        "type": "real",
+        "default": 0.0
+      },
+      {
+        "name": "pr",
+        "type": "real",
+        "default": 1.0
+      },
+      {
+        "name": "pi",
+        "type": "real",
+        "default": 0.0
+      },
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "power": [
+      {
+        "name": "k",
+        "type": "int",
+        "default": 8
+      },
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "invpower": [
+      {
+        "name": "k",
+        "type": "int",
+        "default": 4
+      },
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "roots_cm": [
+      {
+        "name": "pad",
+        "type": "enum",
+        "default": "hi",
+        "choices": [
+          "hi",
+          "lo"
+        ]
+      },
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ],
+    "roots": [
+      {
+        "name": "k",
+        "type": "int",
+        "default": 8
+      },
+      {
+        "name": "pad",
+        "type": "enum",
+        "default": "hi",
+        "choices": [
+          "hi",
+          "lo"
+        ]
+      },
+      {
+        "name": "andy",
+        "type": "real",
+        "default": 0.0,
+        "optional": true,
+        "role": "andy"
+      }
+    ]
+  },
+  "compatSignatures": {},
   "ctCatalog": {
     "rev": {
       "category": "structural",
-      "desc": "reverse coefficient order"
+      "desc": "reverse coefficient order",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     },
     "conj": {
       "category": "structural",
-      "desc": "complex conjugate every coefficient"
+      "desc": "complex conjugate every coefficient",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     },
     "normalize": {
       "category": "structural",
-      "desc": "divide by the leading coefficient"
+      "desc": "divide by the leading coefficient",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     },
     "deriv": {
       "category": "structural",
-      "desc": "differentiate the polynomial coefficients"
+      "desc": "differentiate the polynomial coefficients",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     },
     "safe": {
       "category": "structural",
-      "desc": "replace non-finite components with zero"
+      "desc": "replace non-finite components with zero",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     },
     "negate_odd": {
       "category": "structural",
-      "desc": "negate odd-indexed coefficients"
+      "desc": "negate odd-indexed coefficients",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     },
     "max2one": {
       "category": "structural",
-      "desc": "set the largest-magnitude coefficient to 1"
+      "desc": "set the largest-magnitude coefficient to 1",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     },
     "sort_mod_keep_angle": {
       "category": "accumulation",
-      "desc": "sort magnitudes while keeping original angles"
+      "desc": "sort magnitudes while keeping original angles",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     },
     "sort_angle_keep_mod": {
       "category": "accumulation",
-      "desc": "sort angles while keeping original magnitudes"
+      "desc": "sort angles while keeping original magnitudes",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     },
     "sort_abs": {
       "category": "accumulation",
-      "desc": "sort coefficients by magnitude"
+      "desc": "sort coefficients by magnitude",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     },
     "cumsum": {
       "category": "accumulation",
-      "desc": "running complex cumulative sum"
+      "desc": "running complex cumulative sum",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     },
     "cummax": {
       "category": "accumulation",
-      "desc": "running maximum by coefficient magnitude"
+      "desc": "running maximum by coefficient magnitude",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     },
     "sort_cumsum": {
       "category": "accumulation",
-      "desc": "sort coefficients by cumulative-sum magnitude"
+      "desc": "sort coefficients by cumulative-sum magnitude",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     },
     "linear": {
       "category": "elementwise",
@@ -181,12 +649,30 @@ window._coeffRegistryVocab = {
           "scalarExpr": "complex",
           "complexWide": true,
           "title": "Complex offset in z*[field1]+[field2]. {SCALAR_EXPR_HELP}"
+        },
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
         }
       ]
     },
     "swirler": {
       "category": "elementwise",
-      "desc": "multiply each coefficient by a modulus-driven complex swirl"
+      "desc": "multiply each coefficient by a modulus-driven complex swirl",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     },
     "exp": {
       "category": "elementwise",
@@ -208,38 +694,106 @@ window._coeffRegistryVocab = {
           "scalarExpr": "real",
           "exprWide": true,
           "title": "Imaginary multiplier component. {SCALAR_EXPR_HELP}"
+        },
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
         }
       ]
     },
     "cos": {
       "category": "elementwise",
       "desc": "complex cosine of each coefficient",
-      "label": "cos"
+      "label": "cos",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     },
     "sin": {
       "category": "elementwise",
       "desc": "complex sine of each coefficient",
-      "label": "sin"
+      "label": "sin",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     },
     "tan": {
       "category": "elementwise",
       "desc": "complex tangent of each coefficient",
-      "label": "tan"
+      "label": "tan",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     },
     "cosh": {
       "category": "elementwise",
       "desc": "complex hyperbolic cosine",
-      "label": "cosh"
+      "label": "cosh",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     },
     "sinh": {
       "category": "elementwise",
       "desc": "complex hyperbolic sine",
-      "label": "sinh"
+      "label": "sinh",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     },
     "tanh": {
       "category": "elementwise",
       "desc": "complex hyperbolic tangent",
-      "label": "tanh"
+      "label": "tanh",
+      "params": [
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+        }
+      ]
     },
     "round": {
       "category": "elementwise",
@@ -261,6 +815,14 @@ window._coeffRegistryVocab = {
           "scalarExpr": "real",
           "exprWide": true,
           "title": "Imaginary multiplier component. {SCALAR_EXPR_HELP}"
+        },
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
         }
       ]
     },
@@ -286,6 +848,14 @@ window._coeffRegistryVocab = {
           "scalarExpr": "complex",
           "complexWide": true,
           "title": "Complex exponent in pow(z*field1, field2)."
+        },
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
         }
       ]
     },
@@ -297,6 +867,14 @@ window._coeffRegistryVocab = {
         {
           "ph": "k",
           "def": "8"
+        },
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
         }
       ]
     },
@@ -308,6 +886,14 @@ window._coeffRegistryVocab = {
         {
           "ph": "k",
           "def": "4"
+        },
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
         }
       ]
     },
@@ -322,6 +908,14 @@ window._coeffRegistryVocab = {
             "hi",
             "lo"
           ]
+        },
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
         }
       ]
     },
@@ -341,6 +935,14 @@ window._coeffRegistryVocab = {
             "hi",
             "lo"
           ]
+        },
+        {
+          "kind": "andy",
+          "ph": "andy",
+          "label": "andy",
+          "def": "0",
+          "scalarExpr": "real",
+          "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
         }
       ]
     }
@@ -382,6 +984,14 @@ window._coeffRegistryVocab = {
         "scalarExpr": "complex",
         "complexWide": true,
         "title": "Complex offset in exp(z*field1+field2). {SCALAR_EXPR_HELP}"
+      },
+      {
+        "kind": "andy",
+        "ph": "andy",
+        "label": "andy",
+        "def": "0",
+        "scalarExpr": "real",
+        "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
       }
     ],
     "round": [
@@ -393,6 +1003,14 @@ window._coeffRegistryVocab = {
         "scalarExpr": "complex",
         "complexWide": true,
         "title": "Complex multiplier in round(z*multiplier). {SCALAR_EXPR_HELP}"
+      },
+      {
+        "kind": "andy",
+        "ph": "andy",
+        "label": "andy",
+        "def": "0",
+        "scalarExpr": "real",
+        "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
       }
     ]
   },
@@ -1016,6 +1634,81 @@ window._coeffRegistryVocab = {
             "0": "p1",
             "1": "p2"
           }
+        },
+        "source": {
+          "stack_op_aliases": {
+            "dup": "duplicate",
+            "duplicate": "duplicate",
+            "swap": "swap",
+            "pop": "pop",
+            "flush": "flush"
+          },
+          "binary_ops": [
+            "add",
+            "subtract",
+            "sub",
+            "mul",
+            "ratio",
+            "div"
+          ],
+          "unary_ops": [
+            "negate",
+            "conj",
+            "conjugate",
+            "reciprocal",
+            "unit_circle",
+            "square",
+            "cube",
+            "exp"
+          ],
+          "targetable_unary": [
+            "negate",
+            "conj",
+            "conjugate",
+            "reciprocal",
+            "unit_circle",
+            "square",
+            "cube",
+            "exp"
+          ],
+          "unary_targets": [
+            "p1",
+            "p2"
+          ],
+          "push_sources": [
+            "t1",
+            "t2"
+          ],
+          "emit_aliases": {
+            "emit_p1": "p1",
+            "emit_p2": "p2"
+          },
+          "expression_namespace": {
+            "constants": [
+              "pi",
+              "pi2",
+              "pi2i"
+            ],
+            "functions": [
+              "exp",
+              "real",
+              "imag",
+              "abs",
+              "mod"
+            ]
+          },
+          "rejected_forms": [
+            {
+              "form": "push(both)",
+              "code": "bad_selector",
+              "use": "push(t1) or push(t2)"
+            },
+            {
+              "form": "emit(p1)",
+              "code": "noncanonical_emit",
+              "use": "emit_p1, emit_p2, or p1 = expr"
+            }
+          ]
         },
         "outputs": [
           "p1",

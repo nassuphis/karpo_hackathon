@@ -93,113 +93,13 @@ const _ptCatalogEnriched = Object.entries(_ptInfo).every(([name, info]) => {
     return true;
 });
 
-const _paramProgramLegacyNames = [
-    'none',
-    'unit_circle',
-    'square',
-    'cube',
-    'reciprocal',
-    'conjugate',
-    'negate',
-    'exp',
-    'xim',
-    'add_sub',
-    'mul_div',
-    'swap',
-    'sum_prod',
-    'roots2',
-    'roots3',
-    'roots5',
-    'roots6',
-    'rtheta',
-    'moebius',
-    'inv_t_plus_2',
-    'crd',
-    'hrt',
-    'spdl',
-    'lmc',
-    'rsc',
-    'lss',
-    'ast',
-    'asp',
-    'lsp',
-    'dlt',
-    'rply',
-    'star',
-    'rect',
-    'rrect',
-    'z01',
-    'coeff2',
-    'coeff3',
-    'coeff3a',
-    'coeff4',
-    'coeff5',
-    'coeff5a',
-    'coeff6',
-    'coeff7',
-    'coeff8',
-    'coeff9',
-    'coeff10',
-    'coeff11',
-    'coeff12',
-];
-
-const _paramProgramIndependentLegacyTargets = new Set([
-    'unit_circle',
-    'square',
-    'cube',
-    'reciprocal',
-    'conjugate',
-    'negate',
-    'exp',
-    'xim',
-]);
-
-const _paramProgramLegacyTargetArgIndexes = {
-    rtheta: 1,
-    crd: 0,
-    hrt: 0,
-    spdl: 0,
-    lmc: 0,
-    rsc: 0,
-    lss: 0,
-    ast: 0,
-    asp: 0,
-    lsp: 0,
-    dlt: 0,
-    rply: 0,
-    star: 0,
-    rect: 0,
-    rrect: 0,
-};
-
-const _paramProgramLegacyArgSpecs = {
-    rtheta: [{ ph: 'p', def: '1', scalarExpr: true, exprWide: true, title: 'Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers.' }],
-    moebius: [
-        { ph: 'a', def: '1', scalarExpr: true, complexWide: true, title: 'Complex expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Functions: exp, real, imag, abs, mod.' },
-        { ph: 'b', def: '0', scalarExpr: true, complexWide: true, title: 'Complex expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Functions: exp, real, imag, abs, mod.' },
-        { ph: 'c', def: '0', scalarExpr: true, complexWide: true, title: 'Complex expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Functions: exp, real, imag, abs, mod.' },
-        { ph: 'd', def: '1', scalarExpr: true, complexWide: true, title: 'Complex expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Functions: exp, real, imag, abs, mod.' },
-    ],
-    inv_t_plus_2: [
-        { ph: 'z1', def: '2', scalarExpr: true, complexWide: true, title: 'Complex expression for the first offset.' },
-        { ph: 'z2', def: '2', scalarExpr: true, complexWide: true, title: 'Complex expression for the second offset.' },
-    ],
-    crd: [{ ph: 'size', def: '1', scalarExpr: true, exprWide: true }],
-    hrt: [{ ph: 'size', def: '1', scalarExpr: true, exprWide: true }, { ph: 'turns', def: '0', scalarExpr: true, exprWide: true }],
-    spdl: [{ ph: 'va', def: '0.5', scalarExpr: true, exprWide: true }, { ph: 'vb', def: '0.2', scalarExpr: true, exprWide: true }, { ph: 'vp', def: '1.5', scalarExpr: true, exprWide: true }],
-    lmc: [{ ph: 'a', def: '0.3', scalarExpr: true, exprWide: true }, { ph: 'b', def: '0.5', scalarExpr: true, exprWide: true }],
-    rsc: [{ ph: 'amp', def: '0.5', scalarExpr: true, exprWide: true }, { ph: 'k', def: '2', scalarExpr: true, exprWide: true }],
-    lss: [{ ph: 'A', def: '0.5', scalarExpr: true, exprWide: true }, { ph: 'B', def: '0.5', scalarExpr: true, exprWide: true }, { ph: 'a', def: '3', scalarExpr: true, exprWide: true }, { ph: 'b', def: '2', scalarExpr: true, exprWide: true }, { ph: 'phase', def: '0.5', scalarExpr: true, exprWide: true }],
-    ast: [{ ph: 'scale', def: '1', scalarExpr: true, exprWide: true }],
-    asp: [{ ph: 'a', def: '0', scalarExpr: true, exprWide: true }, { ph: 'b', def: '0.1', scalarExpr: true, exprWide: true }],
-    lsp: [{ ph: 'a', def: '0.1', scalarExpr: true, exprWide: true }, { ph: 'b', def: '0.15', scalarExpr: true, exprWide: true }],
-    dlt: [{ ph: 'R', def: '1', scalarExpr: true, exprWide: true }],
-    rply: [{ ph: 'sides', def: '5', scalarExpr: true, exprWide: true }, { ph: 'radius', def: '1', scalarExpr: true, exprWide: true }, { ph: 'turns', def: '0', scalarExpr: true, exprWide: true }],
-    star: [{ ph: 'points', def: '5', scalarExpr: true, exprWide: true }, { ph: 'outer', def: '1', scalarExpr: true, exprWide: true }, { ph: 'inner', def: '0.5', scalarExpr: true, exprWide: true }],
-    rect: [{ ph: 'width', def: '2', scalarExpr: true, exprWide: true }, { ph: 'height', def: '1', scalarExpr: true, exprWide: true }, { ph: 'turns', def: '0', scalarExpr: true, exprWide: true }],
-    rrect: [{ ph: 'width', def: '2', scalarExpr: true, exprWide: true }, { ph: 'height', def: '1', scalarExpr: true, exprWide: true }, { ph: 'm', def: '4', scalarExpr: true, exprWide: true }],
-};
+const _paramRegistryVocab = (typeof window !== 'undefined' && window._paramRegistryVocab) || {};
+const _paramProgramLegacyNames = Array.isArray(_paramRegistryVocab.names)
+    ? _paramRegistryVocab.names.slice()
+    : ['none'];
+const _paramProgramIndependentLegacyTargets = new Set(_paramRegistryVocab.independentTargets || []);
+const _paramProgramLegacyTargetArgIndexes = _paramRegistryVocab.targetArgIndexes || {};
+const _paramProgramLegacyArgSpecs = _paramRegistryVocab.argSpecs || {};
 
 const _ppCategoryMeta = {
     io: { title: 'Input + output', help: 'read t1/t2 or write p1/p2 registers' },
@@ -353,7 +253,8 @@ const _ssCatalog = (() => {
 
 const _coeffProgramScalarExprHelp = 'Program mode accepts t1/t2, p1/p2, poly_len, cfN, polyN, tosN, pi, pi2, pi2i, literals, + - * /, and conj/real/imag/abs/angle/sqrt/log/exp/sin/cos/tan/sinh/cosh/tanh.';
 // kind: 'andy' is the semantic marker (filtering/serialization/validation
-// key off it); ph is display-only placeholder text.
+// key off it); ph is display-only placeholder text. Generated coeff vocab now
+// carries this param; the constant remains only as a fallback shape.
 const _ctAndyParam = { kind: 'andy', ph: 'andy', label: 'andy', def: '0', scalarExpr: 'real', title: `Blend amount in [0,1]. ${_coeffProgramScalarExprHelp}` };
 function _isAndyParam(pDef) {
     return !!(pDef && pDef.kind === 'andy');
@@ -379,8 +280,8 @@ const _coeffRegistryVocab = (typeof window !== 'undefined' && window._coeffRegis
 //   4. tests/test_coeff_program_native.py — a native value test for the new fn.
 //
 // _ctCatalog hydrates from the generated registry vocab: titles carry a
-// {SCALAR_EXPR_HELP} placeholder resolved here, and every transform gets the
-// shared andy param appended (all registry transforms support andy).
+// {SCALAR_EXPR_HELP} placeholder resolved here. The generated vocab also
+// carries the shared andy param, so the frontend does not append it by hand.
 function _hydrateCtParamDef(pDef) {
     const out = { ...pDef };
     if (out.title) out.title = out.title.replace('{SCALAR_EXPR_HELP}', _coeffProgramScalarExprHelp);
@@ -393,7 +294,7 @@ const _ctCatalog = (() => {
         const entry = {
             category: spec.category,
             desc: spec.desc,
-            params: [...(spec.params || []).map(_hydrateCtParamDef), { ..._ctAndyParam }],
+            params: [...(spec.params || []).map(_hydrateCtParamDef)],
         };
         if (spec.label) entry.label = spec.label;
         catalog[name] = entry;
@@ -406,7 +307,7 @@ function _coeffProgramWideParamDefs(name) {
     // Program-mode wide-editor defs for exp/round legacy chips (different
     // defaults and titles than the chain-row fields), from the registry ui.
     const defs = (_coeffRegistryVocab && _coeffRegistryVocab.programParamDefs[name]) || [];
-    return [...defs.map(_hydrateCtParamDef), { ..._ctAndyParam }];
+    return [...defs.map(_hydrateCtParamDef)];
 }
 const _coeffProgramExpParamDefs = _coeffProgramWideParamDefs('exp');
 const _coeffProgramRoundParamDefs = _coeffProgramWideParamDefs('round');
@@ -442,8 +343,14 @@ function _pluralize(count, word) {
     return `${count} ${word}${count === 1 ? '' : 's'}`;
 }
 
-const _coeffProgramVectorBinaryNames = ['add', 'subtract', 'multiply', 'divide', 'power'];
-const _coeffProgramVectorUnaryNames = ['angle', 'mod', 'abs', 'neg', 'conj', 'sqrt', 'log', 'exp', 'sin', 'cos', 'tan', 'sinh', 'cosh', 'tanh'];
+function _coeffStructuralSubOpNames(familyName, fallback) {
+    const chips = ((_coeffRegistryVocab || {}).structuralChips || {}).chips || [];
+    const chip = chips.find(item => item && item.name === familyName);
+    const subOps = chip && Array.isArray(chip.sub_ops) ? chip.sub_ops : [];
+    return subOps.length ? subOps.map(item => item.name).filter(Boolean) : fallback.slice();
+}
+const _coeffProgramVectorBinaryNames = _coeffStructuralSubOpNames('vector_binary', ['add', 'subtract', 'multiply', 'divide', 'power']);
+const _coeffProgramVectorUnaryNames = _coeffStructuralSubOpNames('vector_unary', ['angle', 'mod', 'abs', 'neg', 'conj', 'sqrt', 'log', 'real', 'imag', 'exp', 'sin', 'cos', 'tan', 'sinh', 'cosh', 'tanh']);
 const _programProfiles = (typeof window !== 'undefined' && window._programProfiles)
     || (_coeffRegistryVocab && _coeffRegistryVocab.programProfiles)
     || null;

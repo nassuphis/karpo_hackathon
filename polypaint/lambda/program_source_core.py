@@ -92,6 +92,11 @@ def profile_selectors(profile, name):
     return tuple(str(value) for value in values)
 
 
+def profile_source(profile):
+    source = profile.get("source") or {}
+    return source if isinstance(source, dict) else {}
+
+
 def profile_symbols_with_context(profile, context, *, access=None, role=None):
     wanted_context = str(context or "")
     out = []

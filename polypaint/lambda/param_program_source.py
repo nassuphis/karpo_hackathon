@@ -14,50 +14,37 @@ from param_program_chain import (
     legacy_registry,
 )
 from program_source_core import (
+    ProfileStatementLowerer,
     ProgramSourceError,
     diagnostic,
-    find_top_level_assignment,
-    parse_call,
+    parse_profile_source,
     program_profile,
+    profile_source,
     profile_symbol,
-    split_program_statements,
 )
 
 
 MAX_PARAM_PROGRAM_SOURCE_BYTES = 64 * 1024
 
 _PROFILE = program_profile("param")
+_SOURCE = profile_source(_PROFILE)
 _OUTPUT_SYMBOLS = {
     name
     for name, spec in (_PROFILE.get("symbols") or {}).items()
     if spec.get("role") == "output" and spec.get("access") == "read_write"
 }
-_INPUT_SYMBOLS = {
-    name
-    for name, spec in (_PROFILE.get("symbols") or {}).items()
-    if spec.get("role") == "input"
-}
 _STACK_OP_ALIASES = {
-    "dup": "duplicate",
-    "duplicate": "duplicate",
-    "swap": "swap",
-    "pop": "pop",
-    "flush": "flush",
+    str(key): str(value)
+    for key, value in (_SOURCE.get("stack_op_aliases") or {}).items()
 }
-_BINARY_OPS = {"add", "subtract", "sub", "mul", "ratio", "div"}
-_UNARY_OPS = {
-    "negate",
-    "conj",
-    "conjugate",
-    "reciprocal",
-    "unit_circle",
-    "square",
-    "cube",
-    "exp",
+_BINARY_OPS = {str(name) for name in (_SOURCE.get("binary_ops") or [])}
+_UNARY_OPS = {str(name) for name in (_SOURCE.get("unary_ops") or [])}
+_TARGETABLE_UNARY = {str(name) for name in (_SOURCE.get("targetable_unary") or [])}
+_PUSH_SOURCES = {str(name) for name in (_SOURCE.get("push_sources") or [])}
+_EMIT_ALIASES = {
+    str(key): str(value)
+    for key, value in (_SOURCE.get("emit_aliases") or {}).items()
 }
-_TARGETABLE_UNARY = set(_UNARY_OPS)
-_PUSH_SOURCES = {"t1", "t2"}
-_EMIT_ALIASES = {"emit_p1": "p1", "emit_p2": "p2"}
 
 
 class ParamProgramSourceError(ProgramSourceError):
@@ -84,13 +71,6 @@ def _canonical_expr(text):
     return re.sub(r"\s+", "", raw)
 
 
-def _source_diag(exc, stmt):
-    line = int(getattr(exc, "line", 0) or stmt.line)
-    column = int(getattr(exc, "column", 0) or stmt.column)
-    code = str(getattr(exc, "code", "") or "source_error")
-    return diagnostic(str(exc), line=line, column=column, code=code)
-
-
 def _require_writable_symbol(name, stmt):
     raw = str(name or "").strip().lower()
     if raw in _OUTPUT_SYMBOLS:
@@ -108,16 +88,6 @@ def _require_writable_symbol(name, stmt):
         column=stmt.column,
         code="unknown_symbol",
     )
-
-
-def _lower_assignment(stmt):
-    idx = find_top_level_assignment(stmt.text)
-    if idx < 0:
-        return None
-    lhs = stmt.text[:idx].strip().lower()
-    rhs = stmt.text[idx + 1:].strip()
-    target = _require_writable_symbol(lhs, stmt)
-    return [["const", _canonical_expr(rhs)], ["emit", target]]
 
 
 def _lower_call(stmt, name, args):
@@ -191,57 +161,60 @@ def _lower_bare(stmt):
     raise ParamProgramSourceError(f"unknown Param Program statement: {raw}", code="unknown_statement")
 
 
-def split_param_program_statements(source_text):
-    return split_program_statements(
-        source_text,
-        error_cls=ParamProgramSourceError,
-        max_bytes=MAX_PARAM_PROGRAM_SOURCE_BYTES,
-    )
+class ParamStatementLowerer(ProfileStatementLowerer):
+    def __init__(self):
+        super().__init__(_PROFILE, error_cls=ParamProgramSourceError)
+
+    def lower_assignment(self, statement, lhs, rhs):
+        target = _require_writable_symbol(lhs, statement)
+        return self.lower_symbol_assignment(statement, target, rhs)
+
+    def lower_indexed_assignment(self, statement, lhs_name, index_expr, rhs):
+        raise self.source_error(
+            f"{lhs_name}[...] is not valid Param Program source; assign to p1 or p2",
+            line=statement.line,
+            column=statement.column,
+            code="unknown_symbol",
+        )
+
+    def lower_symbol_assignment(self, statement, lhs, rhs):
+        return [["const", _canonical_expr(rhs)], ["emit", lhs]]
+
+    def lower_call_statement(self, statement, name, args):
+        return _lower_call(statement, name, args)
+
+    def lower_bare_statement(self, statement, text):
+        return _lower_bare(statement)
 
 
 def parse_param_program_source(source_text, *, strict=True):
-    diagnostics = []
-    chain = []
-    try:
-        statements = split_param_program_statements(source_text)
-    except ParamProgramSourceError as exc:
-        diagnostics.append(diagnostic(str(exc), line=exc.line or 1, column=exc.column or 1, code=exc.code))
+    parsed = parse_profile_source(
+        source_text,
+        lowerer=ParamStatementLowerer(),
+        display_fn=display_param_program_chain,
+        error_cls=ParamProgramSourceError,
+        compile_error_cls=ParamProgramSourceCompileError,
+        max_bytes=MAX_PARAM_PROGRAM_SOURCE_BYTES,
+        strict=strict,
+    )
+    if not parsed["chain"] and not parsed["diagnostics"]:
+        parsed["diagnostics"].append(
+            diagnostic("param program source is empty", line=1, column=1, code="empty_source")
+        )
         if strict:
-            raise ParamProgramSourceCompileError(diagnostics) from exc
-        return {
-            "chain": [],
-            "display": "",
-            "statement_count": 0,
-            "diagnostics": diagnostics,
-        }
-    for stmt in statements:
-        try:
-            lowered = _lower_assignment(stmt)
-            if lowered is None:
-                call = parse_call(stmt.text, error_cls=ParamProgramSourceError)
-                lowered = _lower_call(stmt, call[0], call[1]) if call else _lower_bare(stmt)
-            chain.extend(lowered)
-        except ParamProgramSourceError as exc:
-            diagnostics.append(_source_diag(exc, stmt))
-            if strict:
-                raise ParamProgramSourceCompileError(diagnostics) from exc
-    if not chain and not diagnostics:
-        diagnostics.append(diagnostic("param program source is empty", line=1, column=1, code="empty_source"))
-        if strict:
-            raise ParamProgramSourceCompileError(diagnostics)
-    has_errors = any(d.get("level") == "error" for d in diagnostics)
-    return {
-        "chain": [] if has_errors else chain,
-        "display": display_param_program_chain(chain) if chain else "",
-        "statement_count": len(statements),
-        "diagnostics": diagnostics,
-    }
+            raise ParamProgramSourceCompileError(parsed["diagnostics"])
+    has_errors = any(d.get("level") == "error" for d in parsed["diagnostics"])
+    if has_errors:
+        parsed["chain"] = []
+        parsed["display"] = ""
+    return parsed
 
 
 def compile_param_program_source(source_text, *, macro_resolver=None, strict=True):
     parsed = parse_param_program_source(source_text, strict=strict)
     compiled = compile_param_program_chain(parsed["chain"], macro_resolver=macro_resolver, strict=strict)
     out = dict(compiled)
+    out["chain"] = parsed["chain"]
     out["source_text"] = str(source_text or "")
     out["source_display"] = parsed.get("display") or compiled.get("display") or ""
     out["source_statement_count"] = parsed.get("statement_count") or 0

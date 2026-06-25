@@ -16,6 +16,7 @@ import param_program_chain as chain
 LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
 SWEEP_CLI = os.path.join(LAMBDA_DIR, "sweep_cli.c")
 PROGRAM_PROFILES = os.path.join(LAMBDA_DIR, "program_profiles.json")
+PARAM_VOCAB_JS = os.path.join(os.path.dirname(__file__), "..", "param_vocab_js.js")
 
 
 def _c_source():
@@ -40,6 +41,12 @@ def _c_defines(source, prefix="PARAM_PROGRAM_"):
 def _program_profiles():
     with open(PROGRAM_PROFILES, "r", encoding="utf-8") as fh:
         return json.load(fh)["profiles"]
+
+
+def _param_vocab_js_payload():
+    with open(PARAM_VOCAB_JS, "r", encoding="utf-8") as fh:
+        text = fh.read()
+    return json.loads(text[text.index("{"): text.rindex("}") + 1])
 
 
 def _param_expr_token_cap(source):
@@ -117,3 +124,40 @@ def test_param_profile_selectors_match_python():
         assert name in chain._EMIT_TARGETS
     for alias, target in aliases["emit"].items():
         assert chain._EMIT_TARGETS[alias] == chain._EMIT_TARGETS[target]
+
+
+def test_param_profile_source_grammar_matches_python():
+    profile = _program_profiles()["param"]
+    source = profile["source"]
+    assert source["stack_op_aliases"] == {
+        "dup": "duplicate",
+        "duplicate": "duplicate",
+        "swap": "swap",
+        "pop": "pop",
+        "flush": "flush",
+    }
+    assert set(source["binary_ops"]) == set(chain._BINARY_OPS)
+    assert set(source["unary_ops"]) == set(chain._UNARY_OPS)
+    assert set(source["targetable_unary"]) == set(chain._TARGETABLE_UNARY_SOURCE)
+    assert source["push_sources"] == ["t1", "t2"]
+    assert source["emit_aliases"] == {"emit_p1": "p1", "emit_p2": "p2"}
+    assert {item["form"]: item["code"] for item in source["rejected_forms"]} == {
+        "push(both)": "bad_selector",
+        "emit(p1)": "noncanonical_emit",
+    }
+
+
+def test_generated_param_vocab_exposes_full_registry():
+    vocab = _param_vocab_js_payload()
+    registry_names = sorted(chain.legacy_registry()["by_name"])
+    assert sorted(vocab["names"]) == registry_names
+    assert len(vocab["names"]) == 70
+    for missing_from_old_js in ["add", "cadd", "scale", "zzold", "scdth"]:
+        assert missing_from_old_js in vocab["names"]
+    assert vocab["targetArgIndexes"] == {
+        name: idx for name, idx in sorted(chain._LEGACY_TARGET_ARG_INDEXES.items())
+    }
+    assert vocab["variableArgCounts"]["moebius"] == [0, 4, 8]
+    assert vocab["variableArgCounts"]["inv_t_plus_2"] == [0, 1, 2, 3, 4]
+    assert vocab["variableArgCounts"]["add"] == [0, 1, 2]
+    assert len(vocab["argSpecs"]["moebius"]) == 4

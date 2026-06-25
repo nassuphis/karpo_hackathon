@@ -55,6 +55,7 @@ from param_program_chain import (
     compile_param_program_chain,
 )
 from param_program_source import (
+    compile_param_program_source,
     param_source_text_from_chain,
     param_source_text_from_payload,
     parse_param_program_source,
@@ -1683,26 +1684,26 @@ def handle_delete_param_program(event):
 def handle_compile_param_program_source(event):
     params = parse_body(event)
     source_text = str(params.get("source_text") or "")
-    parsed = parse_param_program_source(source_text, strict=False)
-    compiled = compile_param_program_chain(
-        parsed["chain"],
+    compiled = compile_param_program_source(
+        source_text,
         macro_resolver=_param_program_macro_resolver(None),
         strict=False,
     )
-    diagnostics = list(parsed.get("diagnostics") or []) + list(compiled.get("diagnostics") or [])
+    diagnostics = list(compiled.get("diagnostics") or [])
     has_errors = any(d.get("level") == "error" for d in diagnostics)
-    chain_out = [] if has_errors else parsed["chain"]
+    chain_out = [] if has_errors else (compiled.get("chain") or [])
     fingerprint = "" if has_errors else (compiled.get("fingerprint") or "")
+    display = compiled.get("source_display") or compiled.get("display") or ""
     return ok_response({
         "ok": not has_errors,
         "chain": chain_out,
-        "display": parsed["display"],
-        "statement_count": parsed["statement_count"],
+        "display": display,
+        "statement_count": compiled.get("source_statement_count") or 0,
         "fingerprint": fingerprint,
         "diagnostics": diagnostics,
         "program": {
             "chain": chain_out,
-            "display": parsed["display"],
+            "display": display,
             "fingerprint": fingerprint,
             "execution_spec": "" if has_errors else (compiled.get("execution_spec") or ""),
             "token_count": 0 if has_errors else (compiled.get("token_count") or 0),

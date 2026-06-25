@@ -714,7 +714,9 @@ function _programHelpParamText(param, idx = 0) {
 function _programHelpItem(name, signature, help = '', options = {}) {
     const aliases = Array.isArray(options.aliases) ? options.aliases.filter(Boolean).map(String) : [];
     const params = Array.isArray(options.params) ? options.params : [];
+    const forms = Array.isArray(options.forms) ? options.forms.filter(Boolean).map(String) : [];
     const examples = Array.isArray(options.examples) ? options.examples.filter(Boolean).map(String) : [];
+    const notes = Array.isArray(options.notes) ? options.notes.filter(Boolean).map(String) : [];
     return {
         name: String(name || ''),
         signature: String(signature || name || ''),
@@ -722,8 +724,11 @@ function _programHelpItem(name, signature, help = '', options = {}) {
         category: String(options.category || ''),
         aliases,
         params,
+        forms,
+        effect: String(options.effect || ''),
         examples,
-        insert: options.insert || examples[0] || '',
+        notes,
+        insert: options.insert || '',
         missing: !!options.missing,
     };
 }
@@ -763,11 +768,20 @@ function _programHelpLookupScore(item) {
         (item.category ? 1 : 0);
 }
 
+function _programHelpLookupPriority(item) {
+    const category = String((item && item.category) || '').toLowerCase();
+    if (category.includes('legacy transform') || category.includes('native transform')) return 0;
+    return 1;
+}
+
 function _programHelpLookupShouldReplace(norm, existing, next) {
     const existingExact = _normalizeProgramHelpToken(existing && existing.name) === norm;
     const nextExact = _normalizeProgramHelpToken(next && next.name) === norm;
     if (nextExact && !existingExact) return true;
     if (existingExact && !nextExact) return false;
+    const existingPriority = _programHelpLookupPriority(existing);
+    const nextPriority = _programHelpLookupPriority(next);
+    if (existingPriority !== nextPriority) return nextPriority > existingPriority;
     return _programHelpLookupScore(next) > _programHelpLookupScore(existing);
 }
 
@@ -798,6 +812,18 @@ function _paramProgramChipHelpItem(name) {
     );
 }
 
+function _paramProfileSource() {
+    return (((_programProfiles || {}).profiles || {}).param || {}).source || {};
+}
+
+function _paramHelpFormsArticle(name, signature, help, forms, options = {}) {
+    return _programHelpItem(name, signature, help, {
+        ...options,
+        forms,
+        examples: options.examples || forms.slice(0, 2),
+    });
+}
+
 function _paramProgramLegacyCallParams(name) {
     return [
         { ph: 'src', def: 'both', choices: ['p1', 'p2', 'both', 'pop1', 'pop2'], selectorWide: true, title: 'Source selector for the legacy transform.' },
@@ -808,15 +834,17 @@ function _paramProgramLegacyCallParams(name) {
 function _paramProgramLegacyHelpItem(name) {
     const spec = (_ptCatalog && _ptCatalog[name]) || (_ptInfo && _ptInfo[name]) || {};
     const params = _paramProgramLegacyCallParams(name);
-    const args = params.map((param, idx) => _programHelpParamText(param, idx)).join(', ');
+    const sourceArgs = ['both', 'both'].concat((params.slice(2) || []).map((param, idx) => _programHelpParamDefault(param) || _programHelpParamName(param, idx)));
     return _programHelpItem(
         name,
-        `legacy(${name}${args ? ', ' + args : ''})`,
+        `legacy(${name}, src, tgt, ...)`,
         spec.desc || 'Legacy parameter transform with explicit source/target selectors.',
         {
-            category: spec.category || 'legacy',
+            category: `legacy transform${spec.category ? ': ' + spec.category : ''}`,
             params,
+            forms: [`legacy(${name}${sourceArgs.length ? ', ' + sourceArgs.join(', ') : ''})`],
             examples: [_paramProgramLegacySnippet(name)],
+            notes: ['legacy(...) arguments are positional; src=both and tgt=both are not valid source syntax.'],
         },
     );
 }
@@ -840,8 +868,10 @@ function _coeffNativeTransformHelpItem(name) {
     const spec = (_ctCatalog && _ctCatalog[name]) || {};
     const sourceName = _coeffRegistrySourceName(name);
     const params = _coeffTransformParams(name);
-    const argText = params.map((param, idx) => _programHelpParamText(param, idx)).join(', ');
-    const signature = `${sourceName}(poly${argText ? ', ' + argText : ''})`;
+    const argText = params.map((param, idx) => _programHelpParamName(param, idx)).join(', ');
+    const defaults = params.map((param, idx) => _programHelpParamDefault(param) || _programHelpParamName(param, idx));
+    const form = `poly = ${sourceName}(poly${defaults.length ? ', ' + defaults.join(', ') : ''})`;
+    const signature = `poly = ${sourceName}(poly${argText ? ', ' + argText : ''})`;
     return _programHelpItem(
         sourceName,
         signature,
@@ -850,6 +880,7 @@ function _coeffNativeTransformHelpItem(name) {
             aliases: sourceName === name ? [] : [name],
             category: spec.category || 'native',
             params,
+            forms: [form],
             examples: [_coeffNativeTransformSnippet(name)],
         },
     );
@@ -872,6 +903,7 @@ function _programHelpCoeffItemsFromCheatSection(section, category = '') {
 
 function _programHelpBuildParamRegistry() {
     const registry = _newProgramHelpRegistry();
+    const source = _paramProfileSource();
     _programHelpAddSection(registry, 'Core Symbols', [
         _programHelpItem('t1', 't1', 'Input parameter 1.'),
         _programHelpItem('t2', 't2', 'Input parameter 2.'),
@@ -881,11 +913,66 @@ function _programHelpBuildParamRegistry() {
         _programHelpItem('pi2', 'pi2', '2π constant.'),
         _programHelpItem('pi2i', 'pi2i', '2πi complex constant.'),
     ]);
-    (_paramProgramCheatSections || []).forEach(section => {
-        _programHelpAddSection(registry, section.title, _programHelpParamItemsFromCheatSection(section, section.title));
-    });
-    const chipItems = Object.keys(_ppCatalog || {}).map(name => _paramProgramChipHelpItem(name));
-    _programHelpAddSection(registry, 'Param Program Chip Reference', chipItems);
+    _programHelpAddSection(registry, 'Assignments + I/O', [
+        _paramHelpFormsArticle('assignment', 'p1 = expr / p2 = expr', 'Assign a complex expression to p1 or p2.', ['p1 = expr', 'p2 = expr'], {
+            aliases: ['p1', 'p2'],
+            category: 'assignment',
+            effect: 'push expression value, then emit to the selected output register',
+        }),
+        _paramHelpFormsArticle('push', 'push() / push(t1) / push(t2)', 'Push an input value onto the Param stack.', ['push()', 'push(t1)', 'push(t2)'], {
+            category: 'input/output',
+            params: [{ name: 'src', def: 't1', choices: source.push_sources || ['t1', 't2'], title: 'Optional input source; both is not valid here.' }],
+            effect: '(-- z)',
+            notes: ['Only the default input, t1, and t2 are valid push sources. Push t1 and t2 separately when you need both values.'],
+        }),
+        _paramHelpFormsArticle('const', 'const(expr)', 'Push a complex expression value.', ['const(expr)'], {
+            category: 'input/output',
+            params: [{ name: 'expr', title: 'Complex expression over t1, t2, p1, p2, pi, pi2, pi2i.' }],
+            effect: '(-- z)',
+        }),
+        _paramHelpFormsArticle('emit', 'emit_p1 / emit_p2', 'Pop one stack value into p1 or p2.', ['emit_p1', 'emit_p2'], {
+            aliases: ['emit_p1', 'emit_p2'],
+            category: 'input/output',
+            params: [{ name: 'target', choices: ['p1', 'p2'] }],
+            effect: '(z -- ), writes target register',
+            notes: ['Use emit_p1, emit_p2, or assignment syntax for targeted output.'],
+        }),
+    ]);
+    _programHelpAddSection(registry, 'Stack', [
+        _paramHelpFormsArticle('dup', 'dup / duplicate', 'Duplicate the top stack value.', ['dup', 'duplicate'], { aliases: ['duplicate'], category: 'stack', effect: '(z -- z z)' }),
+        _paramHelpFormsArticle('swap', 'swap', 'Swap the top two stack values.', ['swap'], { category: 'stack', effect: '(a b -- b a)' }),
+        _paramHelpFormsArticle('pop', 'pop', 'Discard the top stack value.', ['pop'], { category: 'stack', effect: '(z -- )' }),
+        _paramHelpFormsArticle('flush', 'flush', 'Clear the temporary stack.', ['flush'], { category: 'stack', effect: '(... -- )' }),
+    ]);
+    _programHelpAddSection(registry, 'Arithmetic', [
+        _paramHelpFormsArticle('add', 'add', 'Pop a,b and push a+b; top of stack is b.', ['add'], { category: 'arithmetic', effect: '(a b -- a+b)' }),
+        _paramHelpFormsArticle('subtract', 'subtract / sub', 'Pop a,b and push a-b; top of stack is b.', ['subtract', 'sub'], { aliases: ['sub'], category: 'arithmetic', effect: '(a b -- a-b)' }),
+        _paramHelpFormsArticle('mul', 'mul', 'Pop a,b and push a*b.', ['mul'], { category: 'arithmetic', effect: '(a b -- a*b)' }),
+        _paramHelpFormsArticle('ratio', 'ratio / div', 'Pop a,b and push a/b using the VM zero policy.', ['ratio', 'div'], { aliases: ['div'], category: 'arithmetic', effect: '(a b -- a/b)' }),
+    ]);
+    const unaryItems = ['negate', 'conj', 'reciprocal', 'unit_circle', 'square', 'cube', 'exp']
+        .map(name => {
+            const aliases = name === 'conj' ? ['conjugate'] : [];
+            return _paramHelpFormsArticle(
+                name,
+                `${name}${aliases.length ? ' / ' + aliases.join(' / ') : ''}; ${name}(p1); ${name}(p2)`,
+                `${name} transforms the top stack value, or directly mutates p1/p2 in targeted form.`,
+                [name, ...aliases, `${name}(p1)`, `${name}(p2)`],
+                {
+                    aliases,
+                    category: 'unary transform',
+                    params: [{ name: 'target', choices: source.unary_targets || ['p1', 'p2'], title: 'Optional targeted-register form.' }],
+                    effect: '(z -- f(z)); targeted form writes p1/p2 without using the stack',
+                },
+            );
+        });
+    _programHelpAddSection(registry, 'Unary', unaryItems);
+    _programHelpAddSection(registry, 'Macro', [
+        _paramHelpFormsArticle('macro', 'macro(name)', 'Inline a saved Param Program at compile time.', ['macro(name)'], {
+            category: 'macro',
+            params: [{ name: 'name', title: 'Saved Param Program id.' }],
+        }),
+    ]);
     const legacyItems = (_paramProgramLegacyNames || [])
         .filter(name => name && name !== 'none')
         .map(name => _paramProgramLegacyHelpItem(name));
@@ -916,21 +1003,28 @@ function _programHelpBuildCoeffRegistry() {
         _programHelpItem('p1', 'p1', 'Param Program output/register 1 in scalar expressions.'),
         _programHelpItem('p2', 'p2', 'Param Program output/register 2 in scalar expressions.'),
     ]);
-    (_coeffProgramCheatSections || []).forEach(section => {
-        _programHelpAddSection(registry, section.title, _programHelpCoeffItemsFromCheatSection(section, section.title));
-    });
+    _programHelpAddSection(registry, 'Statement Forms', [
+        _programHelpItem('cf', 'cf', 'Push the immutable input coefficient vector.', { forms: ['cf'], effect: '(-- vector)' }),
+        _programHelpItem('poly', 'poly', 'Push the current/output coefficient vector.', { forms: ['poly', 'poly = expr', 'poly[i] = expr'], effect: 'read/write the current vector' }),
+        _programHelpItem('emit', 'emit', 'Commit the top vector as output poly.', { forms: ['emit'], effect: '(vector -- ), writes poly' }),
+        _programHelpItem('macro', 'macro(name)', 'Inline a saved Coeff Program at compile time.', { forms: ['macro(name)'], params: [{ name: 'name' }] }),
+    ]);
+    _programHelpAddSection(registry, 'Vector Ops', [
+        ..._coeffFamilySubOps('vector_binary').map(op => _programHelpItem(
+            op.name,
+            `${op.name}(left, right)`,
+            `${op.name} combines two vector/scalar sources.`,
+            { aliases: op.source_aliases || [], forms: [`poly = ${op.name}(poly, p1)`], effect: '(left right -- result)' },
+        )),
+        ..._coeffFamilySubOps('vector_unary').map(op => _programHelpItem(
+            op.name,
+            `${op.name}(source)`,
+            `${op.name} applies elementwise to a vector/scalar source.`,
+            { aliases: op.source_aliases || [], forms: [`poly = ${op.name}(poly)`], effect: '(source -- result)' },
+        )),
+    ]);
     const nativeItems = (_coeffProgramLegacyNames || []).map(name => _coeffNativeTransformHelpItem(name));
     _programHelpAddSection(registry, 'Native Transform Reference', nativeItems);
-    if (typeof _ctAndyParam !== 'undefined') {
-        _programHelpAddSection(registry, 'Native Transform Params', [
-            _programHelpItem(
-                _programHelpParamName(_ctAndyParam),
-                `${_programHelpParamName(_ctAndyParam)}=${_programHelpParamDefault(_ctAndyParam) || '0'}`,
-                _ctAndyParam.title || 'Blend transformed output with original poly.',
-                { params: [_ctAndyParam] },
-            ),
-        ]);
-    }
     const functionCatalog = (typeof window !== 'undefined' && window._coeffFuncCatalog) || [];
     const functionItems = functionCatalog
         .filter(entry => Array.isArray(entry.params) && entry.params.length)
@@ -963,17 +1057,22 @@ function _programHelpParamsHtml(params) {
     return rows.length ? `<div class="program-help-meta">${rows.join('')}</div>` : '';
 }
 
+function _programHelpListHtml(title, values) {
+    const rows = (values || []).filter(Boolean).map(value => `<code>${_escapeHtml(value)}</code>`);
+    return rows.length ? `<div class="program-help-meta"><strong>${_escapeHtml(title)}:</strong> ${rows.join(' ')}</div>` : '';
+}
+
 function _programHelpItemHtml(which, item) {
     const safeSignature = _escapeHtml(item.signature || item.name || '');
     const safeCategory = item.category ? `<div class="program-help-meta">${_escapeHtml(item.category)}</div>` : '';
     const safeHelp = item.help ? `<div class="program-help-meta">${_escapeHtml(item.help)}</div>` : '';
+    const forms = _programHelpListHtml('Forms', item.forms || []);
     const params = _programHelpParamsHtml(item.params || []);
-    const insertFn = which === 'cp' ? '_insertCoeffProgramSourceSnippet' : '_insertParamProgramSourceSnippet';
-    const insert = item.insert
-        ? `<button type="button" class="btn-secondary program-source-cheat-button" onclick="${insertFn}(${_escapeHtml(JSON.stringify(String(item.insert)))})">Insert</button>`
-        : '';
+    const effect = item.effect ? `<div class="program-help-meta"><strong>Effect:</strong> ${_escapeHtml(item.effect)}</div>` : '';
+    const examples = _programHelpListHtml('Examples', item.examples || []);
+    const notes = (item.notes || []).filter(Boolean).map(note => `<div class="program-help-meta">${_escapeHtml(note)}</div>`).join('');
     const cls = item.missing ? ' program-help-item-missing' : '';
-    return `<div class="program-help-item${cls}"><div class="program-help-signature">${safeSignature}</div>${safeCategory}${safeHelp}${params}${insert}</div>`;
+    return `<div class="program-help-item${cls}"><div class="program-help-signature">${safeSignature}</div>${safeCategory}${safeHelp}${forms}${params}${effect}${examples}${notes}</div>`;
 }
 
 function _programHelpSectionHtml(which, section) {

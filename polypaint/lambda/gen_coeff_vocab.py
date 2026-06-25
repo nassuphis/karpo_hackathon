@@ -15,11 +15,23 @@ import json
 import os
 import sys
 
+import coeff_program_chain as chain
+
 LAMBDA_DIR = os.path.dirname(os.path.abspath(__file__))
 REGISTRY_PATH = os.path.join(LAMBDA_DIR, "coeff_legacy_registry.json")
 STRUCTURAL_CHIPS_PATH = os.path.join(LAMBDA_DIR, "structural_chips.json")
 PROGRAM_PROFILES_PATH = os.path.join(LAMBDA_DIR, "program_profiles.json")
 JS_OUT = os.path.join(LAMBDA_DIR, "..", "coeff_vocab_js.js")
+
+SCALAR_EXPR_HELP_PLACEHOLDER = "{SCALAR_EXPR_HELP}"
+ANDY_PARAM = {
+    "kind": "andy",
+    "ph": "andy",
+    "label": "andy",
+    "def": "0",
+    "scalarExpr": "real",
+    "title": f"Blend amount in [0,1]. {SCALAR_EXPR_HELP_PLACEHOLDER}",
+}
 
 
 def _load_json(path):
@@ -38,20 +50,34 @@ def build_program_profiles():
 def build_vocab():
     payload = _load_json(REGISTRY_PATH)
     functions = sorted(payload["functions"], key=lambda fn: int(fn["fn_index"]))
+    registry = chain.legacy_registry()
     ct_catalog = {}
     program_param_defs = {}
+    effective_args = {}
+    compat_signatures = {}
     for fn in functions:
+        name = fn["name"]
+        loaded = registry["by_name"][name]
         ui = dict(fn.get("ui") or {})
         if not ui.get("desc"):
-            raise SystemExit(f"registry function {fn['name']} is missing ui.desc")
+            raise SystemExit(f"registry function {name} is missing ui.desc")
         entry = {"category": fn["category"], "desc": ui["desc"]}
         if ui.get("label"):
             entry["label"] = ui["label"]
-        if ui.get("params"):
-            entry["params"] = ui["params"]
-        ct_catalog[fn["name"]] = entry
+        params = list(ui.get("params") or [])
+        if loaded.get("supports_andy"):
+            params.append(dict(ANDY_PARAM))
+        if params:
+            entry["params"] = params
+        ct_catalog[name] = entry
         if ui.get("program_params"):
-            program_param_defs[fn["name"]] = ui["program_params"]
+            program_params = list(ui["program_params"])
+            if loaded.get("supports_andy"):
+                program_params.append(dict(ANDY_PARAM))
+            program_param_defs[name] = program_params
+        effective_args[name] = list(loaded.get("effective_args") or ())
+        if loaded.get("compat_signatures"):
+            compat_signatures[name] = list(loaded.get("compat_signatures") or ())
     names = [fn["name"] for fn in functions]
     alias_to_canonical = {}
     source_alias_by_name = {}
@@ -75,6 +101,8 @@ def build_vocab():
         "sourceAliasByName": source_alias_by_name,
         "chipNameByRegistryName": chip_name_by_registry_name,
         "supportsAndy": supports_andy,
+        "effectiveArgs": effective_args,
+        "compatSignatures": compat_signatures,
         "ctCatalog": ct_catalog,
         "categoryMeta": payload.get("category_meta") or {},
         "programParamDefs": program_param_defs,

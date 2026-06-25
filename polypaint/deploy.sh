@@ -75,6 +75,7 @@ frontend_asset_keys() {
         "index.html" \
         "program_profiles_js.js" \
         "merged_opcodes_js.js" \
+        "param_vocab_js.js" \
         "coeff_vocab_js.js" \
         "solve_score_vocab_js.js" \
         "coeff_func_catalog_js.js" \
@@ -700,6 +701,7 @@ print(f'  coeff_func_catalog_js.js: {count} entries')
 # browser — same source of truth the Python compilers load.
 "${TEST_PYTHON[@]}" lambda/gen_program_profiles.py || { echo "FATAL: program profile generation failed"; exit 1; }
 "${TEST_PYTHON[@]}" lambda/gen_merged_opcodes.py || { echo "FATAL: merged opcode generation failed"; exit 1; }
+"${TEST_PYTHON[@]}" lambda/gen_param_vocab.py || { echo "FATAL: param vocab generation failed"; exit 1; }
 "${TEST_PYTHON[@]}" lambda/gen_coeff_vocab.py || { echo "FATAL: coeff vocab generation failed"; exit 1; }
 "${TEST_PYTHON[@]}" lambda/gen_solve_score_vocab.py || { echo "FATAL: solve-score vocab generation failed"; exit 1; }
 

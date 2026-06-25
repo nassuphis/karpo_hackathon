@@ -367,6 +367,19 @@ def test_source_transform_aliases_are_mirrored_in_chain():
         assert chain.LEGACY_NAME_ALIASES.get(alias) == target, alias
 
 
+def test_coeff_registry_has_no_unpinned_generic_complex_args():
+    # Complex literal support for linear/pow/exp/round is intentionally
+    # special-cased and fingerprint-golden-tested. A future registry-level
+    # type:"complex" arg must update the packer and wire corpus explicitly.
+    offenders = [
+        (name, arg.get("name") or arg.get("ph") or idx)
+        for name, spec in legacy_registry()["by_name"].items()
+        for idx, arg in enumerate(spec.get("args") or ())
+        if arg.get("type") == "complex"
+    ]
+    assert offenders == []
+
+
 def test_generated_js_vocab_matches_registry():
     # coeff_vocab_js.js is what the browser loads; the frontend harness runs
     # against the file on disk, so a stale or hand-edited artifact must fail

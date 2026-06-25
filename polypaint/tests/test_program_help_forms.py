@@ -94,6 +94,8 @@ class TestProgramHelpForms(unittest.TestCase):
         checked = 0
         for entry in self.forms[which]:
             form = str(entry.get("form") or "")
+            if entry.get("section") == "Rejected Forms":
+                continue
             if PLACEHOLDER_RE.search(form):
                 continue
             checked += 1

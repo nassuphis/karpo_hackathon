@@ -778,33 +778,6 @@ function _programHelpLookupShouldReplace(norm, existing, next) {
     return _programHelpLookupScore(next) > _programHelpLookupScore(existing);
 }
 
-function _programHelpItemsFromCheatSection(section, category = '') {
-    return (section.buttons || []).map(btn => _programHelpItem(
-        btn.label,
-        btn.label,
-        btn.title || '',
-        {
-            category,
-            examples: btn.snippet ? [btn.snippet] : [],
-        },
-    ));
-}
-
-function _paramProgramChipHelpItem(name) {
-    const spec = (_ppCatalog && _ppCatalog[name]) || {};
-    const params = Array.isArray(spec.params) ? spec.params : [];
-    const argText = params.map((param, idx) => _programHelpParamText(param, idx)).join(', ');
-    return _programHelpItem(
-        name,
-        `${name}${argText ? '(' + argText + ')' : ''}`,
-        spec.desc || 'Param Program chip.',
-        {
-            category: spec.category || 'param program',
-            params,
-        },
-    );
-}
-
 function _paramProfileSource() {
     return (((_programProfiles || {}).profiles || {}).param || {}).source || {};
 }
@@ -824,6 +797,27 @@ function _paramProgramLegacyCallParams(name) {
     ].concat(_paramProgramLegacyArgSpecs[name] || []);
 }
 
+function _paramProgramGrammarHelpNameSet() {
+    const source = _paramProfileSource();
+    const names = new Set([
+        'assignment', 'push', 'const', 'emit', 'macro',
+        't1', 't2', 'p1', 'p2', 'pi', 'pi2', 'pi2i',
+    ]);
+    Object.keys(source.emit_aliases || {}).forEach(name => names.add(name));
+    Object.keys(source.stack_op_aliases || {}).forEach(name => names.add(name));
+    Object.values(source.stack_op_aliases || {}).forEach(name => names.add(name));
+    (source.binary_ops || []).forEach(name => names.add(name));
+    (source.unary_ops || []).forEach(name => names.add(name));
+    (source.targetable_unary || []).forEach(name => names.add(name));
+    return names;
+}
+
+function _paramProgramLegacyHelpAliases(name) {
+    return _paramProgramGrammarHelpNameSet().has(String(name || '').toLowerCase())
+        ? []
+        : [name];
+}
+
 function _paramProgramLegacyHelpItem(name) {
     const spec = _paramProgramLegacyUiSpec(name);
     const params = _paramProgramLegacyCallParams(name);
@@ -833,6 +827,7 @@ function _paramProgramLegacyHelpItem(name) {
         `legacy(${name}, src, tgt, ...)`,
         spec.desc || 'Legacy parameter transform with explicit source/target selectors.',
         {
+            aliases: _paramProgramLegacyHelpAliases(name),
             category: `legacy transform${spec.category ? ': ' + spec.category : ''}`,
             params,
             forms: [`legacy(${name}${sourceArgs.length ? ', ' + sourceArgs.join(', ') : ''})`],
@@ -840,21 +835,6 @@ function _paramProgramLegacyHelpItem(name) {
             notes: ['legacy(...) arguments are positional; use values like both, p1, p2 directly, not keyword syntax such as src=both.'],
         },
     );
-}
-
-function _programHelpParamItemsFromCheatSection(section, category = '') {
-    return (section.buttons || []).map(btn => {
-        if (btn && btn.registryName) return _paramProgramLegacyHelpItem(btn.registryName);
-        return _programHelpItem(
-            btn.label,
-            btn.label,
-            btn.title || '',
-            {
-                category,
-                examples: btn.snippet ? [btn.snippet] : [],
-            },
-        );
-    });
 }
 
 function _coeffNativeTransformHelpItem(name) {
@@ -877,21 +857,6 @@ function _coeffNativeTransformHelpItem(name) {
             examples: [_coeffNativeTransformSnippet(name)],
         },
     );
-}
-
-function _programHelpCoeffItemsFromCheatSection(section, category = '') {
-    return (section.buttons || []).map(btn => {
-        if (btn && btn.registryName) return _coeffNativeTransformHelpItem(btn.registryName);
-        return _programHelpItem(
-            btn.label,
-            btn.label,
-            btn.title || '',
-            {
-                category,
-                examples: btn.snippet ? [btn.snippet] : [],
-            },
-        );
-    });
 }
 
 function _programHelpBuildParamRegistry() {
@@ -923,13 +888,18 @@ function _programHelpBuildParamRegistry() {
             params: [{ name: 'expr', title: 'Complex expression over t1, t2, p1, p2, pi, pi2, pi2i.' }],
             effect: '(-- z)',
         }),
-        _paramHelpFormsArticle('emit', 'emit_p1 / emit_p2', 'Pop one stack value into p1 or p2.', ['emit_p1', 'emit_p2'], {
-            aliases: ['emit_p1', 'emit_p2'],
-            category: 'input/output',
-            params: [{ name: 'target', choices: ['p1', 'p2'] }],
-            effect: '(z -- ), writes target register',
-            notes: ['Use emit_p1, emit_p2, or assignment syntax for targeted output.'],
-        }),
+        (() => {
+            const emitAliases = source.emit_aliases || {};
+            const emitForms = Object.keys(emitAliases);
+            const emitTargets = Array.from(new Set(Object.values(emitAliases))).filter(Boolean);
+            return _paramHelpFormsArticle('emit', emitForms.join(' / ') || 'emit', 'Pop one stack value into p1 or p2.', emitForms.length ? emitForms : ['emit_p1', 'emit_p2'], {
+                aliases: emitForms,
+                category: 'input/output',
+                params: [{ name: 'target', choices: emitTargets.length ? emitTargets : ['p1', 'p2'] }],
+                effect: '(z -- ), writes target register',
+                notes: ['Use generated emit aliases or assignment syntax for targeted output.'],
+            });
+        })(),
     ]);
     const stackAliases = source.stack_op_aliases || {};
     const stackItems = Array.from(new Set(Object.values(stackAliases))).map(name => {
@@ -973,6 +943,18 @@ function _programHelpBuildParamRegistry() {
             );
         });
     _programHelpAddSection(registry, 'Unary', unaryItems);
+    const rejectedItems = (Array.isArray(source.rejected_forms) ? source.rejected_forms : [])
+        .map(item => _programHelpItem(
+            item.form || item.code || 'rejected form',
+            item.form || item.code || 'rejected form',
+            `Rejected Param source form${item.code ? ' (' + item.code + ')' : ''}.`,
+            {
+                category: 'rejected form',
+                forms: item.form ? [item.form] : [],
+                notes: item.use ? [`Use ${item.use}.`] : [],
+            },
+        ));
+    _programHelpAddSection(registry, 'Rejected Forms', rejectedItems);
     _programHelpAddSection(registry, 'Macro', [
         _paramHelpFormsArticle('macro', 'macro(name)', 'Inline a saved Param Program at compile time.', ['macro(name)'], {
             category: 'macro',
@@ -987,7 +969,6 @@ function _programHelpBuildParamRegistry() {
 }
 
 function _coeffTransformParams(name) {
-    if (typeof _coeffProgramParamDefs === 'function') return _coeffProgramParamDefs(name);
     const spec = (_ctCatalog && _ctCatalog[name]) || {};
     return spec.params || [];
 }

@@ -17,7 +17,6 @@ import param_program_chain as chain
 LAMBDA_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.normpath(os.path.join(LAMBDA_DIR, ".."))
 REGISTRY_PATH = os.path.join(LAMBDA_DIR, "param_legacy_registry.json")
-PROGRAM_PROFILES_PATH = os.path.join(LAMBDA_DIR, "program_profiles.json")
 JS_OUT = os.path.join(ROOT_DIR, "param_vocab_js.js")
 
 
@@ -86,36 +85,20 @@ def _special_arg_specs(name, declared_args):
 
 def build_vocab():
     registry = _load_json(REGISTRY_PATH)
-    profiles = _load_json(PROGRAM_PROFILES_PATH)
     ui = registry.get("ui") or {}
     compat = registry.get("compat") or {}
     functions = sorted(registry["functions"], key=lambda fn: int(fn["fn_index"]))
     names = [str(fn["name"]) for fn in functions]
-    specs = {}
     arg_specs = {}
     target_arg_indexes = {}
     variable_arg_counts = {}
-    target_first = sorted(compat.get("target_first") or chain._LEGACY_TARGET_FIRST_CHIPS)
-    target_last = sorted(compat.get("target_last") or chain._LEGACY_TARGET_LAST_CHIPS)
-    dither_target_first = sorted(compat.get("dither_target_first") or chain._LEGACY_DITHER_TARGET_FIRST_CHIPS)
     independent_targets = sorted(compat.get("independent_targets") or chain._REDUNDANT_LEGACY_TARGET_ARG_NAMES)
     target_arg_index_source = compat.get("target_arg_indexes") or chain._LEGACY_TARGET_ARG_INDEXES
     variable_arg_count_source = compat.get("variable_arg_counts") or chain._VARIABLE_LEGACY_ARG_COUNTS
     ui_functions = ui.get("functions") or {}
     ui_arg_specs = ui.get("arg_specs") or {}
-    fn_index_by_name = {}
     for fn in functions:
         name = str(fn["name"])
-        fn_index_by_name[name] = int(fn["fn_index"])
-        specs[name] = {
-            "name": name,
-            "fn_index": int(fn["fn_index"]),
-            "kind": fn.get("kind") or "",
-            "allowed_src": list(fn.get("allowed_src") or []),
-            "allowed_tgt": list(fn.get("allowed_tgt") or []),
-            "args": list(fn.get("args") or []),
-            "ui": dict(ui_functions.get(name) or {}),
-        }
         display_args = [_ui_arg_spec(arg) for arg in (ui_arg_specs.get(name) or [])]
         if not display_args:
             display_args = _special_arg_specs(name, fn.get("args") or [])
@@ -129,16 +112,10 @@ def build_vocab():
         "names": names,
         "categoryMeta": ui.get("categories") or {},
         "uiFunctions": ui_functions,
-        "fnIndexByName": fn_index_by_name,
-        "specs": specs,
         "argSpecs": arg_specs,
         "targetArgIndexes": target_arg_indexes,
         "variableArgCounts": variable_arg_counts,
-        "targetFirst": target_first,
-        "targetLast": target_last,
-        "ditherTargetFirst": dither_target_first,
         "independentTargets": independent_targets,
-        "programProfiles": profiles,
     }
 
 

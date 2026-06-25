@@ -346,14 +346,14 @@ function _pluralize(count, word) {
     return `${count} ${word}${count === 1 ? '' : 's'}`;
 }
 
-function _coeffStructuralSubOpNames(familyName, fallback) {
+function _coeffStructuralSubOpNames(familyName) {
     const chips = ((_coeffRegistryVocab || {}).structuralChips || {}).chips || [];
     const chip = chips.find(item => item && item.name === familyName);
     const subOps = chip && Array.isArray(chip.sub_ops) ? chip.sub_ops : [];
-    return subOps.length ? subOps.map(item => item.name).filter(Boolean) : fallback.slice();
+    return subOps.map(item => item.name).filter(Boolean);
 }
-const _coeffProgramVectorBinaryNames = _coeffStructuralSubOpNames('vector_binary', ['add', 'subtract', 'multiply', 'divide', 'power']);
-const _coeffProgramVectorUnaryNames = _coeffStructuralSubOpNames('vector_unary', ['angle', 'mod', 'abs', 'neg', 'conj', 'sqrt', 'log', 'real', 'imag', 'exp', 'sin', 'cos', 'tan', 'sinh', 'cosh', 'tanh']);
+const _coeffProgramVectorBinaryNames = _coeffStructuralSubOpNames('vector_binary');
+const _coeffProgramVectorUnaryNames = _coeffStructuralSubOpNames('vector_unary');
 const _programProfiles = (typeof window !== 'undefined' && window._programProfiles)
     || (_coeffRegistryVocab && _coeffRegistryVocab.programProfiles)
     || null;

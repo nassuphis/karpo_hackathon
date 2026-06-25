@@ -46,6 +46,12 @@
       "execution_sha1": "7ce6838bb27a4725f20ed409a4aec9a8793c9e68"
     },
     {
+      "name": "pow_complex_andy",
+      "chain": [["legacy", "pow", "poly", "poly", "1+2j", "3+4j", "0.5"]],
+      "fingerprint": "29c0620841a61f7cdcb525c6cd9dbf537b0a3393",
+      "execution_sha1": "911846960be03bdc2d09a35284ddfef0667500b4"
+    },
+    {
       "name": "exp_flat",
       "chain": [["legacy", "exp", "poly", "poly", "1", "2", "0.5"]],
       "fingerprint": "a158050ea65185841f20e5d0dfcf816089a82f24",

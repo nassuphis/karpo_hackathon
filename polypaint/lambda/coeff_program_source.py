@@ -40,8 +40,6 @@ from coeff_program_chain import (
     ExpressionParser,
     SCALAR_UNARY_EXPR_OPS,
     TYPED_BINARY_NAME_ALIASES,
-    VECTOR_BINARY_OPS,
-    VECTOR_UNARY_OPS,
     compile_coeff_program_chain,
     display_coeff_program_chain,
     legacy_registry,
@@ -87,52 +85,55 @@ _INDEXED_LHS_RE = re.compile(
 _STRUCTURAL_CHIPS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "structural_chips.json")
 
 
+def _load_structural_chips_payload():
+    with open(_STRUCTURAL_CHIPS_PATH, "r", encoding="utf-8") as fh:
+        payload = json.load(fh)
+    chips = payload.get("chips") or ()
+    if not isinstance(chips, list):
+        raise RuntimeError("structural_chips.json must contain a chips list")
+    return payload
+
+
+_STRUCTURAL_CHIPS = _load_structural_chips_payload()
+
+
+def _structural_family(name):
+    for chip in _STRUCTURAL_CHIPS.get("chips") or ():
+        if chip.get("name") == name:
+            return chip
+    raise RuntimeError(f"structural_chips.json missing required family {name!r}")
+
+
 def _structural_family_subops(name):
-    try:
-        with open(_STRUCTURAL_CHIPS_PATH, "r", encoding="utf-8") as fh:
-            payload = json.load(fh)
-    except OSError:
-        return ()
-    for chip in payload.get("chips") or ():
-        if chip.get("name") != name:
-            continue
-        return tuple(
-            str(op.get("name") or "").lower()
-            for op in (chip.get("sub_ops") or ())
-            if op.get("name")
-        )
-    return ()
+    chip = _structural_family(name)
+    return tuple(
+        str(op.get("name") or "").lower()
+        for op in (chip.get("sub_ops") or ())
+        if op.get("name")
+    )
 
 
 def _structural_family_aliases(name):
-    try:
-        with open(_STRUCTURAL_CHIPS_PATH, "r", encoding="utf-8") as fh:
-            payload = json.load(fh)
-    except OSError:
-        return {}
     aliases = {}
-    for chip in payload.get("chips") or ():
-        if chip.get("name") != name:
+    chip = _structural_family(name)
+    for op in chip.get("sub_ops") or ():
+        canonical = str(op.get("name") or "").lower()
+        if not canonical:
             continue
-        for op in chip.get("sub_ops") or ():
-            canonical = str(op.get("name") or "").lower()
-            if not canonical:
-                continue
-            aliases[canonical] = canonical
-            for alias in op.get("source_aliases") or ():
-                aliases[str(alias).lower()] = canonical
-        return aliases
+        aliases[canonical] = canonical
+        for alias in op.get("source_aliases") or ():
+            aliases[str(alias).lower()] = canonical
     return aliases
 
 
 # Canonical names plus typed shorthands. Public family sub-ops are read from
 # structural_chips.json; typed internal aliases still come from the chain layer.
 _VECTOR_BINARY_ALIASES = {
-    **(_structural_family_aliases("vector_binary") or {name: name for name in VECTOR_BINARY_OPS}),
+    **_structural_family_aliases("vector_binary"),
     **TYPED_BINARY_NAME_ALIASES,
 }
 
-_VECTOR_UNARY_NAMES = frozenset(_structural_family_subops("vector_unary") or VECTOR_UNARY_OPS)
+_VECTOR_UNARY_NAMES = frozenset(_structural_family_subops("vector_unary"))
 
 # EXPR opcode -> typed unary chip name, inverted from the chain layer's map
 # ("mod" and "abs" share an opcode; the canonical chip name wins).

@@ -711,7 +711,7 @@ function makeContext({withCoeffVocab = true} = {}) {
   assert(!els['pp-help'].innerHTML.includes('Starters'), 'Param Help should not include Starter sections');
   assert(!els['pp-help'].innerHTML.includes('Insert</button>'), 'Param Help should not render bulk Insert buttons');
   assert(/push\(\).*push\(t1\).*push\(t2\)/.test(els['pp-help'].innerHTML), 'Param Help should show parser-valid push forms');
-  assert(!els['pp-help'].innerHTML.includes('push(both)'), 'Param Help should not document rejected push(both)');
+  assert(els['pp-help'].innerHTML.includes('push(both)'), 'Param Help should surface rejected push(both) guidance from the profile');
   assert(/square[\s\S]{0,500}square\(p1\)[\s\S]{0,500}square\(p2\)/.test(els['pp-help'].innerHTML), 'Param Help should show both targeted unary forms');
   assert(/legacy\(moebius, both, both, 1, 0, 0, 1\)/.test(els['pp-help'].innerHTML), 'Param Help should show positional legacy source form');
   assert(!els['pp-help'].innerHTML.includes('legacy(moebius, src=both'), 'Param Help must not show keyword-looking legacy source syntax');
@@ -729,11 +729,19 @@ function makeContext({withCoeffVocab = true} = {}) {
     const push = reg.lookup.get('push');
     const emit = reg.lookup.get('emit');
     const square = reg.lookup.get('square');
+    const rejectedPushBoth = reg.sections.flatMap(section => section.items || []).find(item => item.name === 'push(both)');
+    const rejectedEmitCall = reg.sections.flatMap(section => section.items || []).find(item => item.name === 'emit(p1)');
+    const legacyMoebius = reg.lookup.get('moebius');
+    const addLookup = reg.lookup.get('add');
     return {
       legacyMisses,
       pushForms: push && push.forms,
       emitForms: emit && emit.forms,
       squareForms: square && square.forms,
+      rejectedPushBoth: rejectedPushBoth && rejectedPushBoth.notes,
+      rejectedEmitCall: rejectedEmitCall && rejectedEmitCall.notes,
+      legacyMoebiusName: legacyMoebius && legacyMoebius.name,
+      addLookupName: addLookup && addLookup.name,
       addNormalized: (() => {
         _ppChain.splice(0, _ppChain.length, ..._normalizeParamProgramChain([['legacy', 'add', 'both', 'both', '1', '2']]));
         return {
@@ -752,6 +760,10 @@ function makeContext({withCoeffVocab = true} = {}) {
   assert(paramHelpAudit.pushForms.includes('push(t1)') && !paramHelpAudit.pushForms.includes('push(both)'), 'Param Help lookup should prefer parser-valid push forms');
   assert(paramHelpAudit.emitForms.includes('emit_p1') && paramHelpAudit.emitForms.includes('emit_p2'), 'Param Help lookup should expose canonical emit aliases');
   assert(paramHelpAudit.squareForms.includes('square(p1)') && paramHelpAudit.squareForms.includes('square(p2)'), 'Param Help lookup should expose both targeted unary forms');
+  assert((paramHelpAudit.rejectedPushBoth || []).join(' ').includes('push(t1)'), 'Param Help should surface profile rejected form guidance for push(both)');
+  assert((paramHelpAudit.rejectedEmitCall || []).join(' ').includes('emit_p1'), 'Param Help should surface profile rejected form guidance for emit(p1)');
+  assert(paramHelpAudit.legacyMoebiusName === 'legacy:moebius', 'Double-clicking bare legacy transform names should resolve to the namespaced legacy Help article');
+  assert(paramHelpAudit.addLookupName === 'add', 'Legacy aliasing must not steal canonical Param grammar names like add');
   assert(JSON.stringify(paramHelpAudit.addNormalized.rows) === JSON.stringify([['legacy', 'add', 'both', 'both', '1', '2']]), 'Param legacy add bridge must preserve both optional offset args');
   assert(paramHelpAudit.addNormalized.source === 'legacy(add, both, both, 1, 2)', 'Param legacy add source synthesis must preserve optional offset args');
   assert(paramHelpAudit.ppDupes.length === 0, `Param Help should not contain duplicate top-level articles: ${paramHelpAudit.ppDupes.join(',')}`);

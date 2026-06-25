@@ -179,6 +179,8 @@ class ParamStatementLowerer(ProfileStatementLowerer):
         return super().lower_statement(statement)
 
     def lower_assignment(self, statement, lhs, rhs):
+        if self._indexed_lhs_re and self._indexed_lhs_re.match(lhs):
+            return super().lower_assignment(statement, lhs, rhs)
         target = _require_writable_symbol(lhs, statement)
         return self.lower_symbol_assignment(statement, target, rhs)
 

@@ -58,6 +58,7 @@ class TestParamProgramSource(unittest.TestCase):
             ("emit(p1)", "noncanonical_emit"),
             ("t1 = p1", "read_only_symbol"),
             ("missing = p1", "unknown_symbol"),
+            ("p1[0] = p2", "unknown_symbol"),
             ("p1 =", "empty_expression"),
             ("", "empty_source"),
         ]
@@ -66,6 +67,14 @@ class TestParamProgramSource(unittest.TestCase):
                 parsed = parse_param_program_source(source, strict=False)
                 self.assertEqual(parsed["chain"], [])
                 self.assertEqual(parsed["diagnostics"][0]["code"], code)
+
+    def test_indexed_output_assignment_gets_param_specific_diagnostic(self):
+        from param_program_source import parse_param_program_source
+
+        parsed = parse_param_program_source("p1[0] = p2", strict=False)
+        self.assertEqual(parsed["chain"], [])
+        self.assertEqual(parsed["diagnostics"][0]["code"], "unknown_symbol")
+        self.assertIn("not valid Param Program source", parsed["diagnostics"][0]["message"])
 
     def test_strict_errors_carry_structured_diagnostics(self):
         from param_program_source import ParamProgramSourceCompileError, parse_param_program_source

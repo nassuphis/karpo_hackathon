@@ -175,3 +175,12 @@ def test_generated_param_vocab_exposes_full_registry():
     assert vocab["variableArgCounts"] == {name: sorted(counts) for name, counts in compat["variable_arg_counts"].items()}
     assert len(vocab["argSpecs"]["moebius"]) == 4
     assert len(vocab["argSpecs"]["inv_t_plus_2"]) == 2
+    for dead_payload in [
+        "fnIndexByName",
+        "targetFirst",
+        "targetLast",
+        "ditherTargetFirst",
+        "specs",
+        "programProfiles",
+    ]:
+        assert dead_payload not in vocab

@@ -219,6 +219,8 @@ class TestDeployPackaging(unittest.TestCase):
             absent = sorted(req for req in required if req not in bundled_files)
             if absent:
                 missing.append((handler, absent, sorted(bundled_files)))
+            if "coeff_program_source.py" in bundled_files and "structural_chips.json" not in bundled_files:
+                missing.append((handler, ["structural_chips.json"], sorted(bundled_files)))
 
         if missing:
             lines = []

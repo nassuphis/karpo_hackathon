@@ -646,7 +646,7 @@ legacy(moebius, src, tgt, a, b, c, d)
 For Coeff native:
 
 ```text
-sort_mod_keep_angle(poly, andy=0)
+poly = sort_mod_keep_angle(poly, 0)
 ```
 
 #### Parameters
@@ -684,6 +684,8 @@ andy
   default: 0
   meaning: blend transformed output with original poly
 ```
+
+The source spelling is still positional today. Help may label the trailing argument as `andy` in the parameter table, but it must not show keyword-looking source syntax such as `sort_mod_keep_angle(poly, andy=0)` unless the parser actually grows keyword-argument support.
 
 #### Effect
 
@@ -981,7 +983,7 @@ Each entry must include `andy` because every registry-backed native transform su
 Example:
 
 ```text
-sort_mod_keep_angle(poly, andy=0)
+poly = sort_mod_keep_angle(poly, 0)
 ```
 
 ### 8. Coefficient Functions

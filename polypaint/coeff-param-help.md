@@ -881,8 +881,10 @@ Every article must show:
 Example:
 
 ```text
-legacy(moebius, src=both, tgt=both, a=1, b=0, c=0, d=1)
+legacy(moebius, both, both, 1, 0, 0, 1)
 ```
+
+Do not show keyword-looking legacy syntax such as `legacy(moebius, src=both, tgt=both, ...)`: the Param source parser treats `src` and `tgt` as positional selector arguments, not keyword arguments.
 
 ## Correct Coeff Help Structure
 

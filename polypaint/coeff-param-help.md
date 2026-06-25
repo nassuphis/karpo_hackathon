@@ -1364,7 +1364,7 @@ Work:
 
 - Add `lambda/gen_param_vocab.py`, mirroring the `gen_coeff_vocab.py` / `gen_solve_score_vocab.py` pattern.
 - Emit `param_vocab_js.js` with `window._paramRegistryVocab`, generated from `param_legacy_registry.json`, `program_profiles.json`, and any still-authoritative chain metadata needed for bridge compatibility.
-- Move or generate the full Param legacy source/editor metadata, not just the 70 names: source/tgt selector choices, `_LEGACY_TARGET_ARG_INDEXES`, `_VARIABLE_LEGACY_ARG_COUNTS`, target-first dither handling, `moebius` 0/4/8 args, `inv_t_plus_2` 0/1/2 source args, `add` 0/1/2 source args, and the current JS arg-spec semantics for complex/wide fields. If any of those remain in JS or chain-only side tables, name the temporary source of truth and add a drift test.
+- Move or generate the full Param legacy source/editor metadata, not just the 70 names: source/tgt selector choices, `_LEGACY_TARGET_ARG_INDEXES`, `_VARIABLE_LEGACY_ARG_COUNTS`, target-first dither handling, `moebius` 0/4/8 args, `inv_t_plus_2` 0/1/2/3/4 source args, `add` 0/1/2 source args, and the current JS arg-spec semantics for complex/wide fields. If any of those remain in JS or chain-only side tables, name the temporary source of truth and add a drift test.
 - Add `<script>` loading for `param_vocab_js.js` before `js/07-transform-catalogs.js`.
 - Hydrate `_paramProgramLegacyNames`, `_paramProgramLegacyArgSpecs`, and target selector metadata from `window._paramRegistryVocab`; then delete the hand-typed JS lists once consumers are moved.
 - Add `gen_param_vocab.py --check` to `scripts/predeploy_check.sh`.

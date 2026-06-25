@@ -1,15 +1,61 @@
 # coeff-param-help Implementation Post-Mortem
 
 **Implementation commit:** `807b39b` "Refactor param and coeff program help vocab" (24 files, +4193/−288).
+**Fixes commit (re-audited):** `3760114` "Harden param coeff help contracts" (15 files, +3124/−280) — resolves most findings; per-item status in **Resolution Update** below.
 **Plan:** `coeff-param-help.md` (Milestones 0–6).
 **Date:** 2026-06-25.
-**Test baseline (measured):** full predeploy gate **passes** — `581 passed, 23 subtests` + all frontend JS checks OK; the 5 changed/new test files pass (`43 passed`). **Every bug in this document is uncaught by that suite.**
+**Original test baseline (measured at `807b39b`):** full predeploy gate **passed** — `581 passed, 23 subtests` + all frontend JS checks OK; the 5 changed/new test files passed (`43 passed`). The original suite missed the bugs below. **Current post-fix status:** `3760114` adds gates for several original failures; see **Resolution Update**.
 
 **Method:** six adversarial reviewers covered the implementation by surface (Param M1, Param M2 generator, Coeff M4, coeff chain/wire, Help/inspector frontend, wiring/gating). Findings were traced to source, and every severity-critical claim was re-run/re-verified independently. Provenance is marked **[verified]** (re-run in this session), **[worktree]** (confirmed against the parent commit `807b39b^`), or **[reviewer-VM]** (established by a reviewer running the frontend JS in a Node VM; mechanism confirmed statically where possible). Nothing here is asserted without a `file:line` trace.
 
 ---
 
+## Resolution Update — re-audited at commit `3760114` ("Harden param coeff help contracts")
+
+The triage items were implemented. I re-audited the same way (backend traced/run directly; the Help-layer article model re-verified by running the frontend JS in a Node VM). **Test baseline after the fixes: predeploy gate green (`581 passed` + all frontend checks); the new `tests/test_program_help_forms.py` passes; and `tests/test_frontend_js.sh` now pins the Help-layer invariants (`dup==0`, `andy` resolves to a real article, `cf` has forms, `add` preserves both offsets).**
+
+**Correction to this post-mortem's original CA-3 finding:** the registry *was* enriched — I originally checked per-function keys and missed that the enrichment landed as **top-level `ui` and `compat` blocks**. `gen_param_vocab.py:90-103` now reads `registry["ui"]`/`registry["compat"]`, the moebius/inv hardcodes are gone, and a drift gate (`test_param_program_drift.py:168-175`) pins `vocab == registry.compat == chain side-tables` (I confirmed `compat.variable_arg_counts == chain._VARIABLE_LEGACY_ARG_COUNTS`). CA-3 is resolved, not open.
+
+### Codex current conclusion after re-check
+
+I re-checked the same load-bearing paths against the current worktree. The reviewer is right on the important part: `3760114` fixed the acute Help regressions rather than hiding them. Public Param parsing now reports `empty_expression` for `p1 =`, and `legacy(add, both, both, 1, 2)` preserves both offset args in the parsed chain. The Help article model no longer has the original duplicate-name/andy-shadowing failure class, and those invariants are now gated by frontend tests.
+
+The remaining issues are different in kind. They are not the same high-severity data-loss/regression bugs; the only current user-visible regression I see is the low-severity bare-legacy-token inspector miss. The rest is cleanup and future-risk work: finish consuming the last Param profile fields (`emit_aliases`, `rejected_forms`), remove stale/dead Help helpers and dead generated payload, and do not start an M3 wire-packer rewrite until the legacy-oracle/corpus gate exists. `tests/test_program_help_forms.py` is a useful new contract because it proves concrete Help forms compile, but it is **not** a prose-quality or completeness proof; bad or misleading Help copy can still pass it.
+
+### Status by finding (re-verified)
+
+| Finding | Status | Evidence |
+|---|---|---|
+| **BUG-1** `add` data loss | ✅ **RESOLVED** | editor now consumes `variableArgCounts`; `_paramProgramLegacyTakesNoArgs('add')` is false (`js/08:1746-1755`), so `legacy(add, both, both, 1, 2)` round-trips intact; pinned by `test_frontend_js.sh`. [verified mechanism + reviewer-VM round-trip] |
+| **BUG-2** empty-RHS diagnostic | ✅ **RESOLVED** | `lower_statement` override (`param_program_source.py:169-179`) restores `empty_expression`; `parse_param_program_source('p1 =')` → `empty_expression`. [verified] |
+| **BUG-3** #7 andy shadowing | ✅ **RESOLVED** | band-aid `_programHelpLookupPriority` **deleted** (0 refs); param tokens no longer registered as lookup keys; dedicated `andy` article added (`js/08:1009-1012`); legacy keys namespaced `legacy:${name}`. `andy` resolves to the shared andy article; pinned. [verified band-aid removal + reviewer-VM] |
+| **BUG-4** duplicate/contradictory articles | ✅ **RESOLVED** | cp/pp duplicate top-level names now **0**; `conj` merged into one article carrying both forms; Native-Transform Reference filters names already in `vector_unary`; pinned (`dup==0`). [reviewer-VM] |
+| **BUG-5** dead `lower_indexed_assignment` (`p1[0]=x`) | ⚠️ **OPEN (LOW)** | still `unknown_symbol`; the override remains dead. [verified] |
+| **BUG-6** `cf`/`poly` inspector | ✅ **RESOLVED** | both resolve to the form-bearing Statement-Forms article; pinned. [reviewer-VM] |
+| **CA-1** profile grammar unconsumed | 🟡 **MOSTLY RESOLVED** | js/08 now derives Stack/Arithmetic/Unary from `source.stack_op_aliases`/`binary_ops`/`unary_ops`/`targetable_unary`/`unary_targets` (injecting a new op surfaces it). **Remaining:** `emit_aliases` are still hand-typed (`js/08:926-927`) and `rejected_forms` are not consumed by Help at all — 2 profile fields still outside the generated contract. [verified + reviewer-VM] |
+| **CA-2** dead vocab payload | 🟡 **PARTIAL** | `variableArgCounts` now consumed (fixed BUG-1); `uiFunctions`/`categoryMeta` added and consumed. Still emitted-but-unread: `fnIndexByName`, `targetFirst`, `targetLast`, `ditherTargetFirst`, `specs`. [verified] |
+| **CA-3** registry not enriched | ✅ **RESOLVED** | top-level `ui` (categories/functions/arg_specs/variable_arg_forms; 69/70) + `compat` (placement + arity) blocks; generator reads them; moebius/inv hardcodes removed; drift-gated vs chain side-tables. *Caveat:* the compiler (`param_program_chain.py`) still keeps its own side-table copies — dual storage, but drift-guarded. [verified] |
+| **CA-4** M4 hardcoded fallbacks | ⚠️ **OPEN (LOW)** | `coeff_program_source.py` untouched in `3760114`; vector-op literal fallbacks (`js/07:352-353`, `coeff_program_source.py:131,135`) remain with no drift guard on the fallback path. [verified] |
+| **CA-5** `type:"complex"` guardrail | 🟡 **PARTIAL / FUTURE-RISK** | no registry arg currently uses `type:"complex"` (verified), and the current complex source forms for `linear`/`exp_affine`/`round` are already wire-golden-tested in `m3_wire_corpus.json`. Remaining risk is a future registry edit adding a generic complex arg without extending the wire corpus/packer gate. |
+| Sloppiness — `_coeffProgramParamDefs` phantom | ⚠️ **OPEN** | still referenced (`js/08:990`), defined nowhere. [verified] |
+| Sloppiness — 4 orphaned cheat→help builders | ⚠️ **OPEN** | still dead (definition-only). [verified] |
+| Sloppiness — `_programHelpLookupPriority` band-aid | ✅ **RESOLVED** | deleted (0 refs). [verified] |
+| Sloppiness — `structural_chips.json` parsed 2× | ⚠️ **OPEN (LOW)** | `coeff_program_source.py` untouched. |
+| Process — wire corpus / oracles | 🟡 **PARTIAL** | `tests/fixtures/coeff-wire-corpus/m3_wire_corpus.json` added (5 source cases + 4 chain cases) + wire test expanded; still **no** `coeff_program_chain_legacy.py` / `param_program_source_legacy.py` oracle, not `calc.json`-corpus-driven. [verified] |
+
+### New issue introduced by the rework
+
+- **NEW (LOW) — a bare Param legacy op name no longer resolves in the inspector.** Because legacy articles are re-keyed `legacy:${name}` (`js/08:832`), double-clicking a bare legacy op token (e.g. `moebius` inside `legacy(moebius, …)`) now resolves to nothing ("No generated help"). This is the deliberate trade that stopped legacy names shadowing canonical ops (a net win), and the names still appear in the Help tab's Legacy Transform Reference — but the dblclick-on-token path regressed for legacy ops, and no test pins it. [reviewer-VM; `legacy:` keying confirmed statically]
+
+### Net
+
+5 of 6 bugs fixed (BUG-5 low/open), the central CA-1 gap largely closed (binary/unary/stack now profile-derived and dynamically proven), CA-3 fully resolved (registry enriched + drift-gated), and the #7 band-aid removed. Remaining is a low-severity tail: BUG-5, the `emit_aliases`/`rejected_forms` end of CA-1, dead-payload/dead-code cleanup (CA-2 + phantom + orphaned builders), CA-4 fallbacks, CA-5 future-registry guardrails, the new legacy-name inspector regression, and the still-missing M0 chain/Param oracles (required before any M3 packer rewrite).
+
+---
+
 ## Codex follow-up reconciliation
+
+*(All six triage items below were implemented in `3760114`; see the Resolution Update above for per-item verification. This section is preserved as the pre-fix record.)*
 
 I re-checked the load-bearing claims after reading this post-mortem. The core
 verdict is correct: the backend/profile/generator work is materially better
@@ -61,7 +107,9 @@ Implementation triage:
 
 ## Verdict
 
-The **data-generation layer is solid**; the **Help-consumption layer is where the project fell short.** Backend M1/M2/M4 + the generators + gating/packaging are correctly implemented, fingerprint-preserving, and well-gated — that work is shippable. But the frontend Help layer (M5) did the easy 80% (move the *names* and *vector-op* lists to generated vocab) and skipped the part that was the actual point: **wiring Help to read valid forms from the generated grammar.** The plan's central thesis — "a form is valid iff the generated artifact says so; Mistakes #4/#5/#6 become structurally impossible" — is **not achieved for Param** (the profile grammar it generates is 90% ignored), the named #7 andy-shadowing bug is **not fixed** (only made silent), and a **new data-loss regression** (`add`) was introduced. Net: the refactor improved the backend but left the user-facing Help with the same class of drift it set out to kill, plus one fresh bug.
+The **data-generation layer was solid from the start**; the **Help-consumption layer was the weak point — and commit `3760114` repaired most of it.** As originally found (`807b39b`), the Help layer had a new data-loss bug (`add`), an unfixed #7 andy-shadowing, duplicate/contradictory articles, and a profile grammar that was ~90% ignored. **After `3760114` (see Resolution Update above): `add` is fixed, the #7 band-aid is gone and `andy` resolves to a real shared article, duplicates are eliminated, and Param Help now derives stack/binary/unary forms from `profiles.param.source` — the central thesis is now substantially met.** What remains is a low-severity tail: `emit_aliases` still hand-typed, `rejected_forms` still unconsumed by Help, dead payload/dead code not yet removed, the M4 fallback literals still present, future `type:"complex"` registry additions still needing a wire-oracle guard, one new low-severity legacy-name inspector regression, and the M0 equivalence oracles still unbuilt (needed before an M3 packer rewrite). The backend (M1/M2/M4 + generators + gating + wire fingerprints) was and remains correct and well-gated.
+
+> The sections below are the **original as-found analysis against `807b39b`**. Current per-item status is in the **Resolution Update** above.
 
 ---
 
@@ -80,6 +128,8 @@ The **data-generation layer is solid**; the **Help-consumption layer is where th
 ---
 
 ## Bugs (severity-ranked)
+
+> **Status of each item is in the Resolution Update above** — BUG-1/2/3/4/6 are ✅ RESOLVED in `3760114`; BUG-5 remains OPEN (low). The text below is the original as-found analysis.
 
 ### BUG-1 — MED · Data loss: `legacy(add, …)` silently drops its offset arguments  *(NEW regression)* **[verified]**
 The `add` registry transform accepts 0/1/2 args server-side (`param_program_chain.py:908-918`), but the frontend now serializes it to zero args, dropping any offset.
@@ -114,6 +164,8 @@ Double-clicking `cf`/`poly` in `cp` returns the "Core Symbols" entry (`forms: []
 ---
 
 ## Careless assumptions
+
+> **Status in the Resolution Update above** — CA-3 is ✅ RESOLVED (registry enriched via top-level `ui`/`compat` blocks, drift-gated); CA-1 is 🟡 mostly resolved (stack/binary/unary now profile-derived; `emit_aliases`/`rejected_forms` remain); CA-2 🟡 partial; CA-4/CA-5 OPEN (low). Text below is the original as-found analysis.
 
 ### CA-1 — "Generating the data" was treated as equivalent to "Help consuming it." It isn't. **[verified]**
 The plan's core unlock was Help reading valid forms/aliases/rejected-forms from `profiles.param.source`. The profile **carries** `binary_ops`, `unary_ops`, `stack_op_aliases`, `emit_aliases`, and `rejected_forms` (the generator emits them). But js/08 reads **only** `source.push_sources` (`:924`) and `source.unary_targets` (`:964`) — the other grammar is still **hand-typed in js/08:947-968**. So "Mistakes #4/#5/#6 structurally impossible" is **not achieved for Param**: add a unary/binary op in `param_program_source.py` and the Param Help list silently won't show it — the exact drift class the project exists to kill, reintroduced in narrower form. This is the single most important gap: the refactor produced the artifact but didn't wire the consumer to it.
@@ -162,12 +214,13 @@ The vector-op literals were demoted to **fallbacks**, not deleted: `js/07:352-35
 
 ---
 
-## Prioritized fixes
+## Remaining work (after `3760114`)
 
-1. **BUG-1 (`add` data loss):** add `add` to `gen_param_vocab.py:_special_arg_specs` (or wire the editor to consume `variableArgCounts`); pin it in `test_param_program_drift.py`. *Real user-visible data loss.*
-2. **CA-1 (Help ignores the profile grammar):** make js/08 read `source.binary_ops`/`unary_ops`/`stack_op_aliases`/`emit_aliases`/`rejected_forms` instead of the hand-typed lists at `js/08:947-968` — otherwise the project's central goal is unmet for Param.
-3. **BUG-3 (#7 not fixed):** give `andy` one shared resolvable article (plan Rule 4) and **delete** the dead `_programHelpLookupPriority` band-aid; assert in `test_frontend_js.sh` what `andy` resolves to.
-4. **BUG-4 (dup/contradictory articles):** dedupe the two Help producers so each op yields one article; add a Rule-6 audit (no duplicate top-level names; andy-bearing ops documented one way).
-5. **BUG-2 (empty-RHS diagnostic):** restore `empty_expression` for `p1 =` (override the base empty-RHS branch) or explicitly approve the change with a test.
-6. **Cleanup:** remove the `_coeffProgramParamDefs` phantom (js/08:984), the 4 orphaned cheat builders, and the 7 dead vocab fields; cache the `structural_chips.json` parse; add a test asserting no registry arg is `type:"complex"` until the M3 codec exists (CA-5).
-7. **Process:** if M3 (packer rewrite) is next, first build `coeff_program_chain_legacy.py` + the saved-`calc.json` corpus and extend the wire test to the new complex forms — the plan's own prerequisite.
+Resolved in `3760114`: **BUG-1, BUG-2, BUG-3, BUG-4, BUG-6, CA-3**, and the core of **CA-1** (stack/binary/unary now profile-derived). Remaining, by priority:
+
+1. **CA-1 tail:** consume `source.emit_aliases` and `source.rejected_forms` in the Param Help builder (emit forms are still hand-typed at `js/08:926-927`; rejected forms are not surfaced by Help); then no Param grammar field is hand-maintained in Help.
+2. **New legacy-name inspector regression (low):** make the inspector resolve a bare legacy op token (e.g. `moebius`) to its `legacy:${name}` article; add a test.
+3. **BUG-5 (low):** make `p1[0]=x` produce the intended indexed-lhs diagnostic (the override path is dead).
+4. **CA-2 / dead code:** drop the still-unread vocab fields (`fnIndexByName`, `targetFirst`/`targetLast`, `ditherTargetFirst`, `specs`); remove the `_coeffProgramParamDefs` phantom (`js/08:990`) and the 4 orphaned cheat→help builders.
+5. **CA-4 / CA-5 (low):** remove the M4 vector-op fallback literals (or drift-guard them); add a registry/wire-corpus guard so any future `type:"complex"` arg addition must update the packer/fingerprint tests.
+6. **Process (before M3):** build `coeff_program_chain_legacy.py` + a `calc.json`-backed corpus and extend `test_coeff_wire_fingerprints.py` to the remaining clean-complex gaps (notably `pow(poly, 1+2j, 3+4j, andy)`) plus saved-program examples; add the Param equivalence oracle — the plan's own M3 prerequisite.

@@ -1,0 +1,77 @@
+{
+  "N": 5000,
+  "_m3_oracle_source_key": "renders/compute_mo67esd7/calc.json",
+  "degree": 70,
+  "function": "poly_123",
+  "job_id": "compute_mo67esd7",
+  "n_chunks": 26,
+  "params": {
+    "coeff_program_chain": [
+      [
+        "legacy",
+        "rev",
+        "poly",
+        "poly",
+        "0.5"
+      ],
+      [
+        "emit"
+      ]
+    ],
+    "coeff_program_source_text": "poly = rev(poly, 0.5)\nemit",
+    "param_program_chain": [
+      [
+        "legacy",
+        "unit_circle",
+        "both",
+        "both"
+      ],
+      [
+        "legacy",
+        "moebius",
+        "both",
+        "both",
+        "1i",
+        "30i",
+        "-3i",
+        "-0.05i"
+      ]
+    ],
+    "param_program_source_text": "legacy(unit_circle, both, both)\nlegacy(moebius, both, both, 1i, 30i, -3i, -0.05i)"
+  },
+  "pipeline": {
+    "cfpv": [],
+    "coeff_transforms": [
+      [
+        "rev",
+        "0.5"
+      ]
+    ],
+    "function": "poly_123",
+    "param_transforms": [
+      [
+        "unit_circle"
+      ],
+      [
+        "moebius",
+        "1i",
+        "30i",
+        "-3i",
+        "-0.05i"
+      ]
+    ],
+    "param_transforms_display": [
+      [
+        "unit_circle"
+      ],
+      [
+        "moebius",
+        "1i",
+        "30i",
+        "-3i",
+        "-0.05i"
+      ]
+    ]
+  },
+  "times": 1
+}

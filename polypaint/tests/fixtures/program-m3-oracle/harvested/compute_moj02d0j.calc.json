@@ -1,0 +1,84 @@
+{
+  "N": 5000,
+  "_m3_oracle_source_key": "renders/compute_moj02d0j/calc.json",
+  "degree": 35,
+  "function": "poly_1",
+  "job_id": "compute_moj02d0j",
+  "n_chunks": 13,
+  "params": {
+    "coeff_program_chain": [
+      [
+        "legacy",
+        "rev",
+        "poly",
+        "poly"
+      ],
+      [
+        "emit"
+      ]
+    ],
+    "coeff_program_source_text": "poly = rev(poly)\nemit",
+    "param_program_chain": [
+      [
+        "legacy",
+        "unit_circle",
+        "both",
+        "both"
+      ],
+      [
+        "legacy",
+        "moebius",
+        "both",
+        "both",
+        "3+6j",
+        "2+1j",
+        "-1+4j",
+        "-3-10j"
+      ],
+      [
+        "coeff2"
+      ]
+    ],
+    "param_program_source_text": "legacy(unit_circle, both, both)\nlegacy(moebius, both, both, 3+6j, 2+1j, -1+4j, -3-10j)\ncoeff2"
+  },
+  "pipeline": {
+    "cfpv": [],
+    "coeff_transforms": [
+      "rev"
+    ],
+    "function": "poly_1",
+    "param_program_fingerprint": "ca68322c061ad334580042e5215288e9f93cfa42",
+    "param_program_uses_legacy_fast_path": true,
+    "param_transforms": [
+      [
+        "unit_circle"
+      ],
+      [
+        "moebius",
+        "3+6i",
+        "2+1i",
+        "-1+4i",
+        "-3-10i"
+      ],
+      [
+        "coeff2"
+      ]
+    ],
+    "param_transforms_display": [
+      [
+        "unit_circle"
+      ],
+      [
+        "moebius",
+        "3+6i",
+        "2+1i",
+        "-1+4i",
+        "-3-10i"
+      ],
+      [
+        "coeff2"
+      ]
+    ]
+  },
+  "times": 1
+}

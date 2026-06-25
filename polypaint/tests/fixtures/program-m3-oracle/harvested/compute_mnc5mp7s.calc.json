@@ -1,0 +1,61 @@
+{
+  "N": 4000,
+  "_m3_oracle_source_key": "renders/compute_mnc5mp7s/calc.json",
+  "degree": 24,
+  "function": "giga_62",
+  "job_id": "compute_mnc5mp7s",
+  "n_chunks": 400,
+  "params": {
+    "coeff_program_chain": [
+      [
+        "legacy",
+        "rev",
+        "poly",
+        "poly"
+      ],
+      [
+        "emit"
+      ]
+    ],
+    "coeff_program_source_text": "poly = rev(poly)\nemit",
+    "param_program_chain": [
+      [
+        "legacy",
+        "unit_circle",
+        "both",
+        "both"
+      ],
+      [
+        "legacy",
+        "coeff3",
+        "both",
+        "both"
+      ]
+    ],
+    "param_program_source_text": "legacy(unit_circle, both, both)\nlegacy(coeff3, both, both)"
+  },
+  "pipeline": {
+    "cfpv": [],
+    "coeff_transforms": [
+      "rev"
+    ],
+    "function": "giga_62",
+    "param_transforms": [
+      [
+        "unit_circle"
+      ],
+      [
+        "coeff3"
+      ]
+    ],
+    "param_transforms_display": [
+      [
+        "unit_circle"
+      ],
+      [
+        "coeff3"
+      ]
+    ]
+  },
+  "times": 1
+}

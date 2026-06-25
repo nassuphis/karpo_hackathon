@@ -1,0 +1,54 @@
+{
+  "N": 10000,
+  "_m3_oracle_source_key": "renders/compute_mqi0y5o0/calc.json",
+  "degree": 70,
+  "function": "giga_106",
+  "job_id": "compute_mqi0y5o0",
+  "n_chunks": 104,
+  "params": {
+    "coeff_program_chain": [
+      [
+        "_native_transform",
+        "rev",
+        "poly",
+        "poly"
+      ],
+      [
+        "emit"
+      ]
+    ],
+    "coeff_program_source_text": "poly = rev(poly)\nemit",
+    "param_program_chain": [
+      [
+        "const",
+        "exp(t1*pi2i)"
+      ],
+      [
+        "emit",
+        "p1"
+      ],
+      [
+        "const",
+        "exp(t2*pi2i)"
+      ],
+      [
+        "emit",
+        "p2"
+      ]
+    ],
+    "param_program_source_text": "p1 = exp(t1*pi2i)\np2 = exp(t2*pi2i)"
+  },
+  "pipeline": {
+    "cfpv": [],
+    "coeff_program_fingerprint": "606c180ede401678db6a1de3b98f58a733fe6ec6",
+    "coeff_program_uses_legacy_chain_equivalent": false,
+    "coeff_transforms": [],
+    "function": "giga_106",
+    "param_program_fingerprint": "5e902515406f49fc10e3b9caf817706b75009e9d",
+    "param_program_uses_legacy_fast_path": false,
+    "param_transforms": [],
+    "param_transforms_display": [],
+    "pipeline_mode": "program"
+  },
+  "times": 1
+}

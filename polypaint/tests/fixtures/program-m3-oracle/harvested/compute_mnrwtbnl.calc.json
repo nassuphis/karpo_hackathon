@@ -1,0 +1,32 @@
+{
+  "N": 9000,
+  "_m3_oracle_source_key": "renders/compute_mnrwtbnl/calc.json",
+  "degree": 22,
+  "function": "p7f",
+  "job_id": "compute_mnrwtbnl",
+  "n_chunks": 100,
+  "params": {
+    "coeff_program_chain": [
+      [
+        "legacy",
+        "rev",
+        "poly",
+        "poly"
+      ],
+      [
+        "emit"
+      ]
+    ],
+    "coeff_program_source_text": "poly = rev(poly)\nemit"
+  },
+  "pipeline": {
+    "cfpv": [],
+    "coeff_transforms": [
+      "rev"
+    ],
+    "function": "p7f",
+    "param_transforms": [],
+    "param_transforms_display": []
+  },
+  "times": 1
+}

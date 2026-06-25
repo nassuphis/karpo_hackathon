@@ -380,6 +380,19 @@ def test_coeff_registry_has_no_unpinned_generic_complex_args():
     assert offenders == []
 
 
+def test_coeff_legacy_enum_inverse_uses_registry_map_and_trims_default():
+    spec = legacy_registry()["by_name"]["roots"]
+    base = {
+        "op": chain.COEFF_OP_LEGACY,
+        "fn_index": spec["fn_index"],
+        "src": chain.COEFF_SEL_POLY,
+        "tgt": chain.COEFF_SEL_POLY,
+    }
+    assert chain._legacy_transforms([{**base, "args": [8, chain._ENUM_ARG_VALUES["hi"]]}]) == [["roots"]]
+    assert chain._legacy_transforms([{**base, "args": [8, chain._ENUM_ARG_VALUES["lo"]]}]) == [["roots", "8", "lo"]]
+    assert chain._legacy_transforms([{**base, "args": [8, 2.0]}]) == []
+
+
 def test_coeff_compat_signature_transforms_are_pinned():
     registry = legacy_registry()["by_name"]
     signature_names = {

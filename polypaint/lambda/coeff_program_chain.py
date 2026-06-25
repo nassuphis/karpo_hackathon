@@ -195,6 +195,28 @@ _ENUM_ARG_VALUES = {
     "lo": 1.0,
 }
 
+
+def _enum_arg_label(value):
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    for label, enum_value in _ENUM_ARG_VALUES.items():
+        if abs(numeric - float(enum_value)) <= 1e-12:
+            return label
+    return None
+
+
+def _legacy_arg_matches_default(arg_spec, value):
+    if arg_spec.get("type") == "enum":
+        label = _enum_arg_label(value)
+        return label is not None and label == str(arg_spec.get("default") or "").strip().lower()
+    try:
+        return abs(float(value) - float(arg_spec.get("default", 0))) <= 1e-12
+    except (TypeError, ValueError):
+        return False
+
+
 # GLOSSARY — one registry (coeff_legacy_registry.json), three historical
 # terms: a "legacy" chip/token is the old form (COEFF_OP_LEGACY, opcode 9);
 # a "native transform" is the SAME registry function emitted through the
@@ -2094,16 +2116,15 @@ def _legacy_transforms(tokens):
         args = list(token.get("args") or [])
         while args:
             idx = len(args) - 1
-            default = spec["args"][idx].get("default", 0) if idx < len(spec["args"]) else 0
-            try:
-                if abs(float(args[-1]) - float(default)) > 1e-12:
-                    break
-            except (TypeError, ValueError):
+            if idx >= len(spec["args"]) or not _legacy_arg_matches_default(spec["args"][idx], args[-1]):
                 break
             args.pop()
         for idx, value in enumerate(args):
             if idx < len(spec["args"]) and spec["args"][idx].get("type") == "enum":
-                entry.append("lo" if int(value) == 1 else "hi")
+                label = _enum_arg_label(value)
+                if label is None:
+                    return []
+                entry.append(label)
             else:
                 entry.append(_format_number(value))
         if token.get("andy"):

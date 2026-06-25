@@ -1,7 +1,7 @@
 # coeff-param-help Implementation Post-Mortem
 
 **Implementation commit:** `807b39b` "Refactor param and coeff program help vocab" (24 files, +4193/−288).
-**Fixes commit (re-audited):** `3760114` "Harden param coeff help contracts" (15 files, +3124/−280) — resolves most findings; per-item status in **Resolution Update** below.
+**Fixes commits (re-audited):** `3760114` "Harden param coeff help contracts" then `1a0fa61` "Finish param coeff help cleanup" — together resolve all bugs (BUG-1..6) and careless assumptions (CA-1..5); per-item status in **Resolution Update** below.
 **Plan:** `coeff-param-help.md` (Milestones 0–6).
 **Date:** 2026-06-25.
 **Original test baseline (measured at `807b39b`):** full predeploy gate **passed** — `581 passed, 23 subtests` + all frontend JS checks OK; the 5 changed/new test files passed (`43 passed`). The original suite missed the bugs below. **Current post-fix status:** `3760114` adds gates for several original failures; see **Resolution Update**.
@@ -45,11 +45,31 @@ The remaining issues are different in kind. They are not the same high-severity 
 
 ### New issue introduced by the rework
 
-- **NEW (LOW) — a bare Param legacy op name no longer resolves in the inspector.** Because legacy articles are re-keyed `legacy:${name}` (`js/08:832`), double-clicking a bare legacy op token (e.g. `moebius` inside `legacy(moebius, …)`) now resolves to nothing ("No generated help"). This is the deliberate trade that stopped legacy names shadowing canonical ops (a net win), and the names still appear in the Help tab's Legacy Transform Reference — but the dblclick-on-token path regressed for legacy ops, and no test pins it. [reviewer-VM; `legacy:` keying confirmed statically]
+- **NEW (LOW) — a bare Param legacy op name no longer resolves in the inspector.** Because legacy articles are re-keyed `legacy:${name}` (`js/08:832`), double-clicking a bare legacy op token (e.g. `moebius` inside `legacy(moebius, …)`) now resolves to nothing ("No generated help"). This is the deliberate trade that stopped legacy names shadowing canonical ops (a net win), and the names still appear in the Help tab's Legacy Transform Reference — but the dblclick-on-token path regressed for legacy ops, and no test pins it. [reviewer-VM; `legacy:` keying confirmed statically] **→ ✅ RESOLVED in `1a0fa61`** (bare-name → `legacy:${name}` alias added and guarded; see Cleanup Update).
 
 ### Net
 
 5 of 6 bugs fixed (BUG-5 low/open), the central CA-1 gap largely closed (binary/unary/stack now profile-derived and dynamically proven), CA-3 fully resolved (registry enriched + drift-gated), and the #7 band-aid removed. Remaining is a low-severity tail: BUG-5, the `emit_aliases`/`rejected_forms` end of CA-1, dead-payload/dead-code cleanup (CA-2 + phantom + orphaned builders), CA-4 fallbacks, CA-5 future-registry guardrails, the new legacy-name inspector regression, and the still-missing M0 chain/Param oracles (required before any M3 packer rewrite).
+
+### Cleanup Update — commit `1a0fa61` ("Finish param coeff help cleanup")
+
+`1a0fa61` closed essentially the entire remaining list (re-verified: backend run directly; Help model re-run in a Node VM; predeploy gate green). Status changes from the table above:
+
+| Item | Now | Evidence |
+|---|---|---|
+| **CA-1 tail** (`emit_aliases`/`rejected_forms`) | ✅ **RESOLVED** | `emit` article forms now derived from `source.emit_aliases` (`js/08:891-901`); a new "Rejected Forms" Help section is built from `source.rejected_forms` (`js/08:946-957`). Dynamically proven (injecting fake entries surfaces them). No Param grammar field is hand-typed in Help anymore. |
+| **Legacy-name inspector regression** | ✅ **RESOLVED** | bare-name → `legacy:${name}` alias added (`js/08:813-817,830`), guarded so the 9 grammar-colliding names (`add`/`conj`/…) keep resolving to the canonical article. `_lookupProgramHelpToken('pp','moebius')` → `legacy:moebius`; `'add'` still → canonical. |
+| **BUG-5** (`p1[0]=x`) | ✅ **RESOLVED** | `lower_assignment` now delegates indexed-lhs to the base (`param_program_source.py:182-184`); `p1[0] = 3` → "p1[...] is not valid Param Program source" (the intended message). |
+| **CA-2** (dead payload) | ✅ **RESOLVED** | generator stopped emitting the 6 unread fields; `param_vocab_js.js` 2609 → **979** lines. The 7 remaining fields are all consumed. |
+| **CA-4** (M4 fallback literals) | ✅ **RESOLVED** | `_coeffStructuralSubOpNames` dropped its literal fallbacks (`js/07:349-356`); the Python helpers now **raise** on a missing/empty `structural_chips.json` (`coeff_program_source.py:93,104`) instead of silently reverting to a hand-list. Vector op names verified set-equal to the old literals. |
+| **CA-5** (`type:complex` guardrail) | ✅ **RESOLVED** | guard test `test_coeff_registry_has_no_unpinned_generic_complex_args` (`tests/test_coeff_program_drift.py:370`) fails the build if any registry arg becomes `type:"complex"` without updating the packer/wire corpus. |
+| **Phantom `_coeffProgramParamDefs`** + **4 orphaned cheat→help builders** | ✅ **RESOLVED** | all removed (0 repo-wide refs). |
+
+**One new low-severity item surfaced (latent, not a live bug):** the Rejected-Forms entries normalize to the same lookup token as their canonical article (`push(both)`→`push`, `emit(p1)`→`emit`), so the inspector picks the right one only by `_programHelpLookupScore` margin (push 38 vs 9; emit 32 vs 9), not by structure. Correct today; a future form-poor canonical article could be shadowed by its own "rejected" stub. Untested (`js/08:746-779`).
+
+**Still deferred (appropriately):** the M0 `coeff_program_chain_legacy.py` / `param_program_source_legacy.py` equivalence oracles and a `calc.json`-backed corpus do not exist. The wire corpus grew to 5 source + 5 chain golden cases, and CA-5's guard now blocks the dangerous future edit, so this is only required once the **M3 packer rewrite** is actually attempted — which it has not been.
+
+**Net after `1a0fa61`:** every bug (BUG-1..6) is fixed, every careless assumption (CA-1..5) is resolved or appropriately deferred, all flagged dead code is gone, and the prior cycle's legacy-name regression is fixed. The implementation now matches the plan's intent: Help is generated-data-driven, gated, and free of the drift class the project set out to kill. The only residue is the one new low-severity Rejected-Forms token-collision fragility and the pre-M3-only equivalence oracles.
 
 ---
 
@@ -214,13 +234,11 @@ The vector-op literals were demoted to **fallbacks**, not deleted: `js/07:352-35
 
 ---
 
-## Remaining work (after `3760114`)
+## Remaining work (after `1a0fa61`)
 
-Resolved in `3760114`: **BUG-1, BUG-2, BUG-3, BUG-4, BUG-6, CA-3**, and the core of **CA-1** (stack/binary/unary now profile-derived). Remaining, by priority:
+`3760114` resolved BUG-1/2/3/4/6 + CA-3 + the core of CA-1; **`1a0fa61` resolved the rest** (CA-1 tail, BUG-5, CA-2, CA-4, CA-5, the legacy-name regression, all dead code). What actually remains:
 
-1. **CA-1 tail:** consume `source.emit_aliases` and `source.rejected_forms` in the Param Help builder (emit forms are still hand-typed at `js/08:926-927`; rejected forms are not surfaced by Help); then no Param grammar field is hand-maintained in Help.
-2. **New legacy-name inspector regression (low):** make the inspector resolve a bare legacy op token (e.g. `moebius`) to its `legacy:${name}` article; add a test.
-3. **BUG-5 (low):** make `p1[0]=x` produce the intended indexed-lhs diagnostic (the override path is dead).
-4. **CA-2 / dead code:** drop the still-unread vocab fields (`fnIndexByName`, `targetFirst`/`targetLast`, `ditherTargetFirst`, `specs`); remove the `_coeffProgramParamDefs` phantom (`js/08:990`) and the 4 orphaned cheat→help builders.
-5. **CA-4 / CA-5 (low):** remove the M4 vector-op fallback literals (or drift-guard them); add a registry/wire-corpus guard so any future `type:"complex"` arg addition must update the packer/fingerprint tests.
-6. **Process (before M3):** build `coeff_program_chain_legacy.py` + a `calc.json`-backed corpus and extend `test_coeff_wire_fingerprints.py` to the remaining clean-complex gaps (notably `pow(poly, 1+2j, 3+4j, andy)`) plus saved-program examples; add the Param equivalence oracle — the plan's own M3 prerequisite.
+1. **Rejected-Forms token-collision fragility (new, low):** the `push(both)`/`emit(p1)` rejected stubs share the canonical lookup token, so the inspector resolves correctly only by score margin (`js/08:746-779`). Make the rejected stub not compete for the canonical token, and pin the resolution direction with a test.
+2. **Process (only before an M3 packer rewrite):** build the `coeff_program_chain_legacy.py` + `param_program_source_legacy.py` equivalence oracles and a `calc.json`-backed corpus; extend `test_coeff_wire_fingerprints.py` to the remaining clean-complex gaps. Not needed until M3 is attempted — CA-5's guard test currently blocks the only dangerous edit in the meantime.
+
+Everything else flagged across the three audit cycles (BUG-1..6, CA-1..5, dead code, the legacy-name regression) is fixed and gated; the predeploy gate is green.

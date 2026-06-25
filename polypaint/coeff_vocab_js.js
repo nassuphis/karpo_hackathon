@@ -443,7 +443,149 @@ window._coeffRegistryVocab = {
       }
     ]
   },
-  "compatSignatures": {},
+  "compatSignatures": {
+    "linear": [
+      {
+        "name": "complex_pair",
+        "wire": "complex_lanes",
+        "arg_types": [
+          "complex",
+          "complex"
+        ],
+        "defaults": [
+          "100",
+          "0"
+        ],
+        "arg_counts": [
+          0,
+          1,
+          2
+        ],
+        "andy_arg_counts": [
+          3
+        ],
+        "requires_andy": false
+      },
+      {
+        "name": "packed_real_components",
+        "wire": "real_lanes",
+        "arg_types": [
+          "real",
+          "real",
+          "real",
+          "real"
+        ],
+        "arg_counts": [
+          4
+        ],
+        "andy_arg_counts": [
+          5
+        ],
+        "defaults": [],
+        "requires_andy": false
+      }
+    ],
+    "exp": [
+      {
+        "name": "complex_affine",
+        "wire": "flat_complex_components",
+        "arg_types": [
+          "complex",
+          "complex"
+        ],
+        "defaults": [
+          "1",
+          "0"
+        ],
+        "arg_counts": [
+          0,
+          1,
+          2
+        ],
+        "andy_arg_counts": [
+          3
+        ],
+        "requires_andy": false
+      }
+    ],
+    "round": [
+      {
+        "name": "complex_multiplier",
+        "wire": "flat_complex_components",
+        "arg_types": [
+          "complex"
+        ],
+        "defaults": [
+          "1"
+        ],
+        "arg_counts": [
+          0,
+          1
+        ],
+        "andy_arg_counts": [
+          2
+        ],
+        "requires_andy": false
+      },
+      {
+        "name": "packed_real_multiplier_with_andy",
+        "wire": "real_lanes",
+        "arg_types": [
+          "real",
+          "real"
+        ],
+        "arg_counts": [
+          2
+        ],
+        "andy_arg_counts": [
+          3
+        ],
+        "requires_andy": true,
+        "defaults": []
+      }
+    ],
+    "pow": [
+      {
+        "name": "complex_pair",
+        "wire": "complex_lanes",
+        "arg_types": [
+          "complex",
+          "complex"
+        ],
+        "defaults": [
+          "1",
+          "1"
+        ],
+        "arg_counts": [
+          0,
+          1,
+          2
+        ],
+        "andy_arg_counts": [
+          3
+        ],
+        "requires_andy": false
+      },
+      {
+        "name": "packed_real_components",
+        "wire": "real_lanes",
+        "arg_types": [
+          "real",
+          "real",
+          "real",
+          "real"
+        ],
+        "arg_counts": [
+          4
+        ],
+        "andy_arg_counts": [
+          5
+        ],
+        "defaults": [],
+        "requires_andy": false
+      }
+    ]
+  },
   "ctCatalog": {
     "rev": {
       "category": "structural",

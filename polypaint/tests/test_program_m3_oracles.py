@@ -15,15 +15,23 @@ def _load_json(rel_path):
         return json.load(fh)
 
 
-def _load_cases():
-    corpus = _load_json("corpus.json")
+def _load_corpus_cases(rel_path):
+    corpus = _load_json(rel_path)
     if int(corpus.get("version") or 0) != 1:
-        raise AssertionError("unsupported M3 oracle corpus version")
+        raise AssertionError(f"unsupported M3 oracle corpus version in {rel_path}")
     out = []
     for entry in corpus["cases"]:
         calc = _load_json(entry["calc"])
         calc.setdefault("name", entry["name"])
         out.append(calc)
+    return out
+
+
+def _load_cases():
+    out = _load_corpus_cases("corpus.json")
+    harvested = os.path.join(FIXTURE_DIR, "harvested", "corpus.json")
+    if os.path.exists(harvested):
+        out.extend(_load_corpus_cases(os.path.join("harvested", "corpus.json")))
     return out
 
 

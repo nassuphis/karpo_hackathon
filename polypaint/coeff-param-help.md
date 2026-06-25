@@ -1323,11 +1323,21 @@ gated without changing fingerprinted Coeff wire packing:
   surfaces, and uses the same article objects for double-click inspection.
 - New generators/tests are in the predeploy path, and generated artifacts are
   checked for staleness.
+- Milestone 0 now has a frozen chain/source oracle gate and an optional harvested
+  corpus index: `scripts/harvest_program_m3_oracle_corpus.py` snapshots real
+  saved `calc.json` payloads into `tests/fixtures/program-m3-oracle/harvested/`,
+  and `tests/test_program_m3_oracles.py` consumes that index when present.
+- The first Milestone 3 implementation has landed for the forward Coeff packer:
+  `linear`/`exp`/`round`/`pow` declare `compat_signatures` in
+  `coeff_legacy_registry.json`, and `coeff_program_chain.py` uses one
+  signature-driven interpreter instead of per-function `_linear`/`_pow`/`_exp`/
+  `_round` pack helpers. The frozen oracle and golden wire tests prove
+  byte-identical `execution_spec`/`fingerprint` for the checked corpus.
 
-Not yet landed in this pass: the Milestone 3 signature-driven Coeff chain
-packer rewrite and full Param registry-schema enrichment. Those still require
-the chain-layer oracle/corpus called out in Milestone 0 and should be treated as
-a separate fingerprint-risk patch, not a Help/UI cleanup.
+Still not ship-complete: the checked-in M3 corpus is representative, not a
+production-wide harvested corpus. Before treating the M3 rewrite as complete,
+run the harvester against real saved jobs and commit the harvested index or a
+curated subset that exercises the same risk classes.
 
 #### Milestone 0: Baseline Gates And Equivalence Corpus
 
@@ -1336,9 +1346,9 @@ Purpose: make later refactors measurable before behavior changes.
 Work:
 
 - Add/extend parser behavior tests that pin current accepted/rejected Param and Coeff source forms (`push(t1)`, rejected `push(both)`, rejected `emit(p1)`, targeted unary `square(p1/p2)`, old packed Coeff `linear`/`pow`/`exp`/`round` forms).
-- Add a saved-program corpus fixture for Param/Coeff source/chain payloads, including real `calc.json` examples where available.
+- Add a saved-program corpus fixture for Param/Coeff source/chain payloads, including real `calc.json` examples where available. The offline test reads `tests/fixtures/program-m3-oracle/corpus.json` plus optional harvested cases at `tests/fixtures/program-m3-oracle/harvested/corpus.json`; generate those harvested cases with `scripts/harvest_program_m3_oracle_corpus.py`.
 - Add equivalence helpers that compile old path vs new path and compare lowered chain, execution spec, source serializer round-trip, and fingerprint where applicable.
-- Make equivalence mechanically possible before deleting old code. **What exists today:** `lambda/coeff_program_source_legacy.py` is a frozen *source-layer* oracle driving `tests/test_coeff_source_equivalence.py` over `tests/fixtures/coeff-program-corpus/` — credit and extend it, don't rebuild it. **What is missing and must be built before any packer/parser rewrite:** (1) a chain-layer oracle (`coeff_program_chain_legacy.py`) — Milestone 3 rewrites the chain packers and there is **no** frozen chain reference today; (2) **golden fingerprint snapshots** — every fingerprint assertion in `tests/test_coeff_program_chain.py` is relative (`A==B`), none pin a frozen hash; (3) a corpus that actually exercises the heterogeneous forms — today it holds one `linear` and **none** of old four-real `linear`/`pow`, `exp_affine`, `round`, `affine`-with-imaginary, or `littlewood`; (4) a Param oracle — `param_program_source_legacy.py` does **not** exist, so Param has no old reference at all. Do not rewrite the only parser/packer and then claim "old vs new" equivalence without one of these.
+- Make equivalence mechanically possible before deleting old code. **Current state:** `coeff_program_chain_legacy.py`, `param_program_chain_legacy.py`, `program_source_core_legacy.py`, and `param_program_source_legacy.py` exist as test-only oracles; `coeff_program_source_legacy.py` is a frozen source-shell oracle that still delegates semantic lowering to live Coeff source code. `tests/test_program_m3_oracles.py` compares current vs legacy chain/source outputs over calc-shaped fixtures, and `tests/test_coeff_wire_fingerprints.py` pins hardcoded golden fingerprints/execution-spec hashes for the high-risk wire forms. **Boundary:** this is enough for a chain/wire packer rewrite; it is not enough for a future Coeff source-semantic rewrite unless the Coeff source lowerers are frozen too.
 - Confirm current generated-artifact gates are represented in `scripts/predeploy_check.sh`: `gen_program_profiles.py --check`, `gen_coeff_vocab.py --check`, `gen_solve_score_vocab.py --check`. New generators added below must join this list.
 
 Gate:
@@ -1416,7 +1426,7 @@ Code facts this is based on:
 - `coeff_program_source.py` strips trailing `andy` with `_split_native_transform_andy`.
 - `coeff_program_chain.py` strips/repacks with `_split_trailing_andy`, `_affine_pair_legacy_args`, `_linear_legacy_args`, `_pow_legacy_args`, `_exp_legacy_args`, and `_round_legacy_args`.
 - Current wire layout is heterogeneous and fingerprinted — at least 7 distinct lane patterns (complex-in-lanes; old-four-real-in-`args`; flatten-re/im-into-`args` for `exp`/`round`; `andy`-in-`args[2]` for `littlewood`; index+value for `poke`; selector-in-`args` for vector ops; enum/int→float). Clean complex and old packed source forms compile to different `_token` layouts, and the `andy` carrier itself is non-uniform (a token field for registry transforms, `args[2]` for `littlewood`).
-- The wire-equivalence harness this milestone depends on does **not** exist yet: no `coeff_program_chain_legacy.py`, no golden fingerprint snapshots, and the corpus exercises none of the at-risk forms (see Milestone 0). It must be built before any packer is touched.
+- The wire-equivalence harness now exists for the forward packer: frozen chain oracle, golden wire fingerprints, and calc-shaped M3 oracle fixtures. It still needs production-wide harvested cases before ship-complete confidence.
 
 Work:
 
@@ -1425,7 +1435,7 @@ Work:
 - Materialize existing `supports_andy:true` into an `effective_args` trailing optional `andy` only as a load-time migration shim.
 - Declare per-function/per-source-form wire layouts in `compat_signatures`, including old packed real-component forms for `linear`, `pow`, `exp`, and `round`.
 - Replace parser/compiler arity decisions that branch on `fn_index` for `andy` with the registry-driven signature table.
-- Replace the per-function complex *pack* helpers with a **signature-driven packer table + interpreter** — not a single algorithm (the layouts are irregular: `exp`/`round` flatten re/im into `args`, `littlewood` carries `andy` in `args[2]`, `round` forks on arity). The **inverse/serializer does not collapse** — it does lossy canonical minimization and stays largely per-function; do not assume it derives from the forward signature. Realistic win is ~60–100 forward lines into data; the inverse barely shrinks. Do this only after the wire-equivalence harness (Milestone 0) proves each function's existing lane usage is reproduced byte-for-byte.
+- Replace the per-function complex *pack* helpers with a **signature-driven packer table + interpreter** — not a single algorithm (the layouts are irregular: `exp`/`round` flatten re/im into `args`, `littlewood` carries `andy` in `args[2]`, `round` forks on arity). **Status:** landed for the forward packer for `linear`/`exp`/`round`/`pow`; `tests/test_coeff_program_drift.py` pins those as the only compat-signature transforms and asserts the old helper defs stay deleted. The **inverse/serializer does not collapse** — it does lossy canonical minimization and stays largely per-function; do not assume it derives from the forward signature.
 - Update `gen_coeff_vocab.py` so frontend metadata exposes `effective_args` and compatibility notes.
 - Remove `_ctAndyParam` append from the frontend once generated `effective_args` carries `andy`.
 - Rewrite stale frontend/tests that currently assert the `_ctAndyParam` append/hydration pattern and hardcoded vector lists. After this milestone, tests should assert `effective_args` coverage, wire compatibility, and rendered UI/help behavior, not the old append implementation.

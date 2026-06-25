@@ -26,6 +26,8 @@ MAX_ARGS = 8
 MAX_SCALAR_EXPR_TOKENS = 32
 MAX_SCALAR_EXPRS = 64  # mirrors COEFF_PROGRAM_MAX_SCALAR_EXPRS in sweep_cli.c
 MAX_LEGACY_INT_ARG = 4096  # mirrors COEFF_LEGACY_MAX_INT_ARG (coeffLegacyIntArg) in sweep_cli.c
+_COMPAT_SIGNATURE_WIRE_LAYOUTS = {"complex_lanes", "flat_complex_components", "real_lanes"}
+_COMPAT_SIGNATURE_ARG_TYPES = {"real", "complex"}
 # NOTE: every limit above is wire format mirrored by sweep_cli.c's
 # COEFF_PROGRAM_* defines (pinned by tests/test_coeff_program_drift.py);
 # none may change unilaterally.
@@ -289,6 +291,71 @@ def _registry_path():
     return os.path.join(os.path.dirname(__file__), "coeff_legacy_registry.json")
 
 
+def _int_set(values, *, label):
+    out = []
+    for value in values or []:
+        ivalue = int(value)
+        if ivalue < 0:
+            raise RuntimeError(f"{label} must be non-negative")
+        out.append(ivalue)
+    return tuple(out)
+
+
+def _normalize_compat_signatures(function_name, signatures):
+    out = []
+    for idx, raw in enumerate(signatures or ()):
+        if not isinstance(raw, dict):
+            raise RuntimeError(f"coeff legacy function {function_name} compat signature {idx} must be an object")
+        signature = dict(raw)
+        wire = str(signature.get("wire") or "").strip()
+        if wire not in _COMPAT_SIGNATURE_WIRE_LAYOUTS:
+            raise RuntimeError(
+                f"coeff legacy function {function_name} compat signature {idx} has unsupported wire {wire!r}"
+            )
+        arg_types = tuple(str(value or "real").strip().lower() for value in (signature.get("arg_types") or ()))
+        bad_types = [value for value in arg_types if value not in _COMPAT_SIGNATURE_ARG_TYPES]
+        if bad_types:
+            raise RuntimeError(
+                f"coeff legacy function {function_name} compat signature {idx} has unsupported arg types {bad_types!r}"
+            )
+        if wire in {"complex_lanes", "flat_complex_components"} and any(value != "complex" for value in arg_types):
+            raise RuntimeError(
+                f"coeff legacy function {function_name} compat signature {idx} wire {wire} requires complex arg types"
+            )
+        if wire == "real_lanes" and any(value != "real" for value in arg_types):
+            raise RuntimeError(
+                f"coeff legacy function {function_name} compat signature {idx} wire real_lanes requires real arg types"
+            )
+        defaults = tuple(str(value) for value in (signature.get("defaults") or ()))
+        if len(defaults) > len(arg_types):
+            raise RuntimeError(
+                f"coeff legacy function {function_name} compat signature {idx} has more defaults than args"
+            )
+        arg_counts = _int_set(signature.get("arg_counts") or (), label=f"{function_name} compat arg_counts")
+        andy_arg_counts = _int_set(
+            signature.get("andy_arg_counts") or (),
+            label=f"{function_name} compat andy_arg_counts",
+        )
+        if not arg_counts and not andy_arg_counts:
+            raise RuntimeError(
+                f"coeff legacy function {function_name} compat signature {idx} must declare arg_counts or andy_arg_counts"
+            )
+        if any(value > len(arg_types) for value in arg_counts):
+            raise RuntimeError(f"coeff legacy function {function_name} compat signature {idx} arg count exceeds arity")
+        if any(value <= 0 or value - 1 > len(arg_types) for value in andy_arg_counts):
+            raise RuntimeError(
+                f"coeff legacy function {function_name} compat signature {idx} andy arg count exceeds arity"
+            )
+        signature["wire"] = wire
+        signature["arg_types"] = arg_types
+        signature["defaults"] = defaults
+        signature["arg_counts"] = arg_counts
+        signature["andy_arg_counts"] = andy_arg_counts
+        signature["requires_andy"] = bool(signature.get("requires_andy"))
+        out.append(signature)
+    return tuple(out)
+
+
 def _load_legacy_registry():
     with open(_registry_path(), "r", encoding="utf-8") as fh:
         payload = json.load(fh)
@@ -339,6 +406,7 @@ def _load_legacy_registry():
                 "optional": True,
                 "role": "andy",
             },)
+        compat_signatures = _normalize_compat_signatures(name, fn.get("compat_signatures") or ())
         spec = {
             "name": name,
             "fn_index": fn_index,
@@ -347,7 +415,7 @@ def _load_legacy_registry():
             "allowed_tgt": tuple(str(x).strip() for x in (fn.get("allowed_tgt") or [])),
             "args": tuple(args),
             "effective_args": effective_args,
-            "compat_signatures": tuple(fn.get("compat_signatures") or ()),
+            "compat_signatures": compat_signatures,
             "supports_andy": bool(fn.get("supports_andy")),
             "length_policy": str(fn.get("length_policy") or "unknown"),
             # Aliases are wire format: saved chip rows carry them, so entries
@@ -1231,138 +1299,81 @@ def _compile_littlewood(args, scalar_exprs):
     )
 
 
-def _affine_pair_legacy_args(spec, raw_args, scalar_exprs, *, name, labels, defaults):
-    """Shared packing for the linear (fn 14) and pow (fn 24) affine pairs.
-
-    New form: (a, b[, andy]) as complex args. Old form: four real components
-    plus optional andy. Serves both legacy chips and source-text native calls,
-    so diagnostics use the plain transform name.
-    """
-    andy = 0.0
-    andy_expr_ref = -1
-    raw_args, andy_raw = _split_trailing_andy(spec, raw_args, arities={3, 5})
-    args = []
-    args_im = []
-    expr_refs = []
-    if len(raw_args) in {0, 1, 2}:
-        pairs = (
-            (labels[0], raw_args[0] if len(raw_args) >= 1 else defaults[0]),
-            (labels[1], raw_args[1] if len(raw_args) >= 2 else defaults[1]),
-        )
-        for label, raw in pairs:
-            expr = _compile_expr(raw, label=f"{name} {label}", expected="complex")
-            re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="complex")
-            args.append(re)
-            args_im.append(im)
-            expr_refs.append(ref)
-    elif len(raw_args) == 4:
-        for idx, raw in enumerate(raw_args):
-            expr = _compile_expr(raw, label=f"{name} old real arg {idx}", expected="real")
-            re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="real")
-            args.append(re)
-            args_im.append(im)
-            expr_refs.append(ref)
-    else:
-        raise RuntimeError(
-            f"{name} expects {labels[0]} and {labels[1]} (plus optional andy), "
-            "or the old four real components"
-        )
-    if andy_raw is not None:
-        andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, f"{name} andy")
-    return args, args_im, expr_refs, andy, andy_expr_ref
-
-
-def _linear_legacy_args(spec, raw_args, scalar_exprs):
-    return _affine_pair_legacy_args(
-        spec, raw_args, scalar_exprs,
-        name="linear", labels=("multiplier", "offset"), defaults=("100", "0"),
-    )
-
-
-def _pow_legacy_args(spec, raw_args, scalar_exprs):
-    return _affine_pair_legacy_args(
-        spec, raw_args, scalar_exprs,
-        name="pow", labels=("multiplier", "exponent"), defaults=("1", "1"),
-    )
-
-
-def _exp_legacy_args(spec, raw_args, scalar_exprs):
-    andy = 0.0
-    andy_expr_ref = -1
-    raw_args, andy_raw = _split_trailing_andy(spec, raw_args, arities={3})
-    if len(raw_args) > 2:
-        raise RuntimeError("exp requires exp_affine(multiplier), exp_affine(multiplier, offset), or exp_affine(multiplier, offset, andy)")
-    raw_multiplier = raw_args[0] if len(raw_args) >= 1 else "1"
-    raw_offset = raw_args[1] if len(raw_args) >= 2 else "0"
-    mult_re, mult_im, mult_re_ref, mult_im_ref = _compile_complex_components(
-        raw_multiplier, scalar_exprs, "exp multiplier"
-    )
-    off_re, off_im, off_re_ref, off_im_ref = _compile_complex_components(
-        raw_offset, scalar_exprs, "exp offset"
-    )
-    if andy_raw is not None:
-        andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, "exp andy")
-    return (
-        [mult_re, mult_im, off_re, off_im],
-        [0.0, 0.0, 0.0, 0.0],
-        [mult_re_ref, mult_im_ref, off_re_ref, off_im_ref],
-        andy,
-        andy_expr_ref,
-    )
-
-
-def _round_legacy_args(spec, raw_args, scalar_exprs):
+def _compat_signature_match(spec, signature, raw_args):
     raw_args = list(raw_args)
-    andy = 0.0
-    andy_expr_ref = -1
-    andy_raw = None
-    if spec.get("supports_andy") and len(raw_args) == 3:
-        # Back-compat for the old real/imag component form: round(a, b, andy).
-        # NOTE (pinned decision): the 2-arg form below is (multiplier, andy),
-        # which matches the current chip UI. Old persisted component-form
-        # pairs (a, b) with b != 0 and a trimmed default andy are reinterpreted
-        # under that rule; such data must use the explicit 3-arg form.
-        andy_raw = raw_args[-1]
-        raw_args = raw_args[:-1]
-        args = []
-        args_im = []
-        expr_refs = []
-        for idx, raw in enumerate(raw_args):
-            expr = _compile_expr(raw, label=f"round old real arg {idx}", expected="real")
-            re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="real")
-            args.append(re)
-            args_im.append(im)
+    arg_counts = {int(n) for n in (signature.get("arg_counts") or [])}
+    andy_arg_counts = {int(n) for n in (signature.get("andy_arg_counts") or [])}
+    requires_andy = bool(signature.get("requires_andy"))
+    if spec.get("supports_andy") and len(raw_args) in andy_arg_counts:
+        stripped = raw_args[:-1]
+        if len(stripped) in arg_counts:
+            return stripped, raw_args[-1]
+    if not requires_andy and len(raw_args) in arg_counts:
+        return raw_args, None
+    return None
+
+
+def _pack_compat_signature(spec, signature, raw_args, scalar_exprs):
+    wire = str(signature.get("wire") or "").strip()
+    arg_types = [str(value or "real").strip().lower() for value in (signature.get("arg_types") or [])]
+    defaults = list(signature.get("defaults") or [])
+    if len(raw_args) > len(arg_types):
+        raise RuntimeError(f"{spec['name']} signature {signature.get('name') or wire} got too many arguments")
+    values = []
+    values_im = []
+    expr_refs = []
+    for idx, arg_type in enumerate(arg_types):
+        raw = raw_args[idx] if idx < len(raw_args) else (defaults[idx] if idx < len(defaults) else 0.0)
+        label = f"{spec['name']} {signature.get('name') or wire} arg {idx}"
+        if wire == "complex_lanes":
+            expr = _compile_expr(raw, label=label, expected="complex")
+            re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="complex")
+            values.append(re)
+            values_im.append(im)
             expr_refs.append(ref)
-        andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, "round andy")
-        return args, args_im, expr_refs, andy, andy_expr_ref
-    raw_args, andy_raw = _split_trailing_andy(spec, raw_args, arities={2})
-    if len(raw_args) > 1:
-        raise RuntimeError("round requires round(multiplier) or round(multiplier, andy)")
-    raw_multiplier = raw_args[0] if raw_args else "1"
-    mult_re, mult_im, mult_re_ref, mult_im_ref = _compile_complex_components(
-        raw_multiplier, scalar_exprs, "round multiplier"
-    )
-    if andy_raw is not None:
-        andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, "round andy")
-    return (
-        [mult_re, mult_im],
-        [0.0, 0.0],
-        [mult_re_ref, mult_im_ref],
-        andy,
-        andy_expr_ref,
-    )
+        elif wire == "flat_complex_components":
+            re, im, re_ref, im_ref = _compile_complex_components(raw, scalar_exprs, label)
+            values.extend([re, im])
+            values_im.extend([0.0, 0.0])
+            expr_refs.extend([re_ref, im_ref])
+        elif wire == "real_lanes":
+            if arg_type != "real":
+                raise RuntimeError(f"{spec['name']} signature {signature.get('name') or wire} expects real lanes")
+            expr = _compile_expr(raw, label=label, expected="real")
+            re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="real")
+            values.append(re)
+            values_im.append(im)
+            expr_refs.append(ref)
+        else:
+            raise RuntimeError(f"{spec['name']} has unsupported compat signature wire layout {wire!r}")
+    return values, values_im, expr_refs
+
+
+def _compat_signature_args(spec, raw_args, scalar_exprs):
+    for signature in spec.get("compat_signatures") or ():
+        matched = _compat_signature_match(spec, signature, raw_args)
+        if matched is None:
+            continue
+        args, andy_raw = matched
+        values, values_im, expr_refs = _pack_compat_signature(spec, signature, args, scalar_exprs)
+        andy = 0.0
+        andy_expr_ref = -1
+        if andy_raw is not None:
+            andy, andy_expr_ref = _compile_andy(andy_raw, scalar_exprs, f"{spec['name']} andy")
+        return values, values_im, expr_refs, andy, andy_expr_ref
+    accepted = []
+    for signature in spec.get("compat_signatures") or ():
+        accepted.extend(int(n) for n in (signature.get("arg_counts") or []))
+        accepted.extend(int(n) for n in (signature.get("andy_arg_counts") or []))
+    if accepted:
+        detail = ", ".join(str(n) for n in sorted(set(accepted)))
+        raise RuntimeError(f"{spec['name']} got {len(raw_args)} arguments; expected one of: {detail}")
+    raise RuntimeError(f"{spec['name']} has no compat signatures")
 
 
 def _legacy_args(spec, raw_args, scalar_exprs):
-    fn_index = int(spec.get("fn_index") or 0)
-    if fn_index == FN_LINEAR:
-        return _linear_legacy_args(spec, raw_args, scalar_exprs)
-    if fn_index == FN_EXP:
-        return _exp_legacy_args(spec, raw_args, scalar_exprs)
-    if fn_index == FN_ROUND:
-        return _round_legacy_args(spec, raw_args, scalar_exprs)
-    if fn_index == FN_POW:
-        return _pow_legacy_args(spec, raw_args, scalar_exprs)
+    if spec.get("compat_signatures"):
+        return _compat_signature_args(spec, raw_args, scalar_exprs)
     declared = list(spec["args"])
     andy = 0.0
     andy_expr_ref = -1
@@ -1397,6 +1408,12 @@ def _legacy_args(spec, raw_args, scalar_exprs):
         elif arg_type == "real":
             expr = _compile_expr(raw, label=f"{spec['name']} arg {idx}", expected="real")
             re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="real")
+            args.append(re)
+            args_im.append(im)
+            expr_refs.append(ref)
+        elif arg_type == "complex":
+            expr = _compile_expr(raw, label=f"{spec['name']} arg {idx}", expected="complex")
+            re, im, ref = _add_arg_expr(expr, scalar_exprs, expected="complex")
             args.append(re)
             args_im.append(im)
             expr_refs.append(ref)

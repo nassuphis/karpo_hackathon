@@ -380,6 +380,39 @@ def test_coeff_registry_has_no_unpinned_generic_complex_args():
     assert offenders == []
 
 
+def test_coeff_compat_signature_transforms_are_pinned():
+    registry = legacy_registry()["by_name"]
+    signature_names = {
+        name
+        for name, spec in registry.items()
+        if spec.get("compat_signatures")
+    }
+    assert signature_names == {"linear", "exp", "round", "pow"}
+    assert set(signature_names) == {
+        spec["name"]
+        for spec in registry.values()
+        if spec["fn_index"] in {chain.FN_LINEAR, chain.FN_EXP, chain.FN_ROUND, chain.FN_POW}
+    }
+    for name in signature_names:
+        for signature in registry[name]["compat_signatures"]:
+            assert signature["wire"] in {"complex_lanes", "flat_complex_components", "real_lanes"}
+            assert signature.get("arg_counts") or signature.get("andy_arg_counts")
+
+
+def test_coeff_forward_packer_uses_signature_interpreter_not_fn_specific_helpers():
+    with open(os.path.join(LAMBDA_DIR, "coeff_program_chain.py"), "r", encoding="utf-8") as fh:
+        py = fh.read()
+    forbidden_defs = [
+        "def _linear_legacy_args",
+        "def _pow_legacy_args",
+        "def _exp_legacy_args",
+        "def _round_legacy_args",
+        "def _affine_pair_legacy_args",
+    ]
+    assert [name for name in forbidden_defs if name in py] == []
+    assert "def _compat_signature_args" in py
+
+
 def test_generated_js_vocab_matches_registry():
     # coeff_vocab_js.js is what the browser loads; the frontend harness runs
     # against the file on disk, so a stale or hand-edited artifact must fail

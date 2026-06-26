@@ -715,6 +715,8 @@ function makeContext({withCoeffVocab = true} = {}) {
   assert(/square[\s\S]{0,500}square\(p1\)[\s\S]{0,500}square\(p2\)/.test(els['pp-help'].innerHTML), 'Param Help should show both targeted unary forms');
   assert(/legacy\(moebius, both, both, 1, 0, 0, 1\)/.test(els['pp-help'].innerHTML), 'Param Help should show positional legacy source form');
   assert(!els['pp-help'].innerHTML.includes('legacy(moebius, src=both'), 'Param Help must not show keyword-looking legacy source syntax');
+  assert(els['pp-help'].innerHTML.includes('f(z) = exp(2*pi*i*z)') && els['pp-help'].innerHTML.includes('src=pop1 pops one stack value'), 'Param Help should render generated unit_circle formula and selector notes');
+  assert(els['pp-help'].innerHTML.includes('theta = 2*pi*Re(z)') && els['pp-help'].innerHTML.includes('legacy(crd, src, tgt, size)'), 'Param Help should render generated crd formula and source form notes');
   const paramHelpAudit = vm.runInContext(`(() => {
     const reg = _programHelpRegistry('pp');
     const legacyMisses = (_paramProgramLegacyNames || []).filter(name => {
@@ -744,6 +746,21 @@ function makeContext({withCoeffVocab = true} = {}) {
       rejectedEmitLookup: rejectedEmitCall && rejectedEmitCall.lookup,
       legacyMoebiusName: legacyMoebius && legacyMoebius.name,
       addLookupName: addLookup && addLookup.name,
+      shapeEffectMisses: ['hrt', 'spdl', 'lmc', 'rsc', 'lss', 'ast', 'asp', 'lsp', 'dlt', 'rply', 'star', 'rect', 'rrect'].filter(name => {
+        const item = reg.lookup.get(name);
+        return !item || !item.effect || !(item.notes || []).join(' ').includes('old raw n selector');
+      }),
+      requestedFormulaMisses: [
+        ['rtheta', 'out1 = x^p'],
+        ['exp', 'f(z) = exp(z)'],
+        ['xim', 'f(z) = i*Re(z)'],
+        ['z01', 'out1 = x + i*y'],
+      ].filter(([name, needle]) => {
+        const item = reg.sections
+          .flatMap(section => section.items || [])
+          .find(candidate => candidate && candidate.name === 'legacy:' + name);
+        return !item || !item.effect || !item.effect.includes(needle);
+      }).map(([name]) => name),
       addNormalized: (() => {
         _ppChain.splice(0, _ppChain.length, ..._normalizeParamProgramChain([['legacy', 'add', 'both', 'both', '1', '2']]));
         return {
@@ -767,6 +784,8 @@ function makeContext({withCoeffVocab = true} = {}) {
   assert(paramHelpAudit.rejectedPushLookup === false && paramHelpAudit.rejectedEmitLookup === false, 'Rejected-form Help stubs should be display-only, not lookup competitors');
   assert(paramHelpAudit.legacyMoebiusName === 'legacy:moebius', 'Double-clicking bare legacy transform names should resolve to the namespaced legacy Help article');
   assert(paramHelpAudit.addLookupName === 'add', 'Legacy aliasing must not steal canonical Param grammar names like add');
+  assert(paramHelpAudit.shapeEffectMisses.length === 0, `Param shape legacy Help entries should include generated formulas and n-selector notes: ${paramHelpAudit.shapeEffectMisses.join(',')}`);
+  assert(paramHelpAudit.requestedFormulaMisses.length === 0, `Requested Param legacy Help entries should include generated formulas: ${paramHelpAudit.requestedFormulaMisses.join(',')}`);
   assert(JSON.stringify(paramHelpAudit.addNormalized.rows) === JSON.stringify([['legacy', 'add', 'both', 'both', '1', '2']]), 'Param legacy add bridge must preserve both optional offset args');
   assert(paramHelpAudit.addNormalized.source === 'legacy(add, both, both, 1, 2)', 'Param legacy add source synthesis must preserve optional offset args');
   assert(paramHelpAudit.ppDupes.length === 0, `Param Help should not contain duplicate top-level articles: ${paramHelpAudit.ppDupes.join(',')}`);

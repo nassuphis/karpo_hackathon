@@ -102,11 +102,25 @@ window._paramRegistryVocab = {
   "uiFunctions": {
     "unit_circle": {
       "category": "maps",
-      "desc": "map real t to exp(2*pi*i*t)"
+      "desc": "map z to exp(2*pi*i*z)",
+      "effect": "f(z) = exp(2*pi*i*z). For z = a + i*b: f(z) = exp(-2*pi*b) * (cos(2*pi*a) + i*sin(2*pi*a)).",
+      "notes": [
+        "For normal real grid inputs x, this is x -> cos(2*pi*x) + i*sin(2*pi*x), mapping [0,1] around the unit circle.",
+        "If the input has an imaginary part, it changes the radius: positive imaginary shrinks by exp(-2*pi*b), negative imaginary expands.",
+        "src=p1 applies f to p1; src=p2 applies f to p2; src=both applies f to p1 and p2; src=pop1 pops one stack value and applies f.",
+        "tgt=both writes both outputs to p1,p2; tgt=p1 or tgt=p2 writes the first output to that register; tgt=push1 pushes the first output."
+      ]
     },
     "rtheta": {
       "category": "maps",
-      "desc": "polar disk map using t1/t2 as radius and angle"
+      "desc": "polar disk map using paired real parts as radius and angle",
+      "effect": "For inputs z1,z2, let x=Re(z1), y=Re(z2). out1 = x^p * (cos(2*pi*y) + i*sin(2*pi*y)); out2 = y^p * (cos(2*pi*x) + i*sin(2*pi*x)).",
+      "notes": [
+        "The imaginary parts of both inputs are ignored.",
+        "p defaults to 1 and is applied as a power to the radius coordinate.",
+        "In Param Program source, use legacy(rtheta, src, tgt, p). The old raw target selector argument is represented by src/tgt.",
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "square": {
       "category": "maps",
@@ -146,11 +160,23 @@ window._paramRegistryVocab = {
     },
     "exp": {
       "category": "maps",
-      "desc": "complex exponential of each parameter"
+      "desc": "complex exponential of each parameter",
+      "effect": "f(z) = exp(z). For z = a + i*b: f(z) = exp(a) * (cos(b) + i*sin(b)).",
+      "notes": [
+        "This is the ordinary complex exponential, not unit_circle; angles are in radians, not turns.",
+        "src=p1 applies f to p1; src=p2 applies f to p2; src=both applies f to p1 and p2; src=pop1 pops one stack value and applies f.",
+        "tgt=both writes both outputs to p1,p2; tgt=p1 or tgt=p2 writes the first output to that register; tgt=push1 pushes the first output."
+      ]
     },
     "xim": {
       "category": "maps",
-      "desc": "move real part into the imaginary axis"
+      "desc": "move real part into the imaginary axis",
+      "effect": "f(z) = i*Re(z). For z = a + i*b: f(z) = 0 + i*a.",
+      "notes": [
+        "The original imaginary part is discarded.",
+        "src=p1 applies f to p1; src=p2 applies f to p2; src=both applies f to p1 and p2; src=pop1 pops one stack value and applies f.",
+        "tgt=both writes both outputs to p1,p2; tgt=p1 or tgt=p2 writes the first output to that register; tgt=push1 pushes the first output."
+      ]
     },
     "zzold": {
       "category": "arithmetic",
@@ -218,63 +244,155 @@ window._paramRegistryVocab = {
     },
     "crd": {
       "category": "shapes",
-      "desc": "cardioid curve"
+      "desc": "cardioid curve",
+      "effect": "theta = 2*pi*Re(z); r = size * (1 + cos(theta)); f(z) = r * (cos(theta) + i*sin(theta)).",
+      "notes": [
+        "The imaginary part of the input is ignored; Re(z) is used as the cardioid angle.",
+        "size defaults to 1. The maximum radius is 2*size at theta=0, and the cusp is at theta=pi.",
+        "In Param Program source, use legacy(crd, src, tgt, size). The old raw n selector is represented by src/tgt; size is the only explicit transform argument.",
+        "src=p1 applies f to p1; src=p2 applies f to p2; src=both applies f to p1 and p2; src=pop1/pop2 read one/two stack values.",
+        "tgt=both writes both outputs to p1,p2; tgt=p1 or tgt=p2 writes the first output to that register; tgt=push1/push2 push one/two outputs."
+      ]
     },
     "hrt": {
       "category": "shapes",
-      "desc": "heart curve"
+      "desc": "heart curve",
+      "effect": "t = 2*pi*Re(z) + pi/2; base = (16*sin(t)^3)/40 + i*((13*cos(t)-5*cos(2*t)-2*cos(3*t)-cos(4*t))/40 + 0.1); f(z) = size * exp(2*pi*i*turns) * base.",
+      "notes": [
+        "The imaginary part of the input is ignored; Re(z) is used as the curve parameter.",
+        "size defaults to 1 and scales the heart. turns defaults to 0 and rotates the result by full turns.",
+        "In Param Program source, use legacy(hrt, src, tgt, size, turns). The old raw n selector is represented by src/tgt."
+      ]
     },
     "spdl": {
       "category": "shapes",
-      "desc": "spindle curve"
+      "desc": "spindle / superellipse-like curve",
+      "effect": "theta = 2*pi*Re(z); e = 2/max(vp, 0.01); f(z) = va*sign(cos(theta))*abs(cos(theta))^e + i*vb*sign(sin(theta))*abs(sin(theta))^e.",
+      "notes": [
+        "The imaginary part of the input is ignored; Re(z) is used as the curve angle.",
+        "va and vb scale the horizontal and vertical axes. vp controls the superellipse exponent through e=2/max(vp,0.01).",
+        "In Param Program source, use legacy(spdl, src, tgt, va, vb, vp). The old raw n selector is represented by src/tgt."
+      ]
     },
     "lmc": {
       "category": "shapes",
-      "desc": "limacon curve"
+      "desc": "limacon curve",
+      "effect": "theta = 2*pi*Re(z); r = a + b*cos(theta); f(z) = r * (cos(theta) + i*sin(theta)).",
+      "notes": [
+        "The imaginary part of the input is ignored; Re(z) is used as the polar angle.",
+        "a sets the base radius; b sets the cosine modulation.",
+        "In Param Program source, use legacy(lmc, src, tgt, a, b). The old raw n selector is represented by src/tgt."
+      ]
     },
     "rsc": {
       "category": "shapes",
-      "desc": "rose curve"
+      "desc": "rose curve",
+      "effect": "theta = 2*pi*Re(z); r = amp*cos(k*theta); f(z) = r * (cos(theta) + i*sin(theta)).",
+      "notes": [
+        "The imaginary part of the input is ignored; Re(z) is used as the polar angle.",
+        "amp scales the radius; k controls the rose frequency/petal structure.",
+        "In Param Program source, use legacy(rsc, src, tgt, amp, k). The old raw n selector is represented by src/tgt."
+      ]
     },
     "lss": {
       "category": "shapes",
-      "desc": "Lissajous curve"
+      "desc": "Lissajous curve",
+      "effect": "theta = 2*pi*Re(z); delta = pi*phase; f(z) = A*sin(a*theta + delta) + i*B*sin(b*theta).",
+      "notes": [
+        "The imaginary part of the input is ignored; Re(z) is used as the time parameter.",
+        "A/B scale x/y; a/b are the x/y frequencies; phase is measured in half-turns because delta=pi*phase.",
+        "In Param Program source, use legacy(lss, src, tgt, A, B, a, b, phase). The old raw n selector is represented by src/tgt."
+      ]
     },
     "ast": {
       "category": "shapes",
-      "desc": "astroid curve"
+      "desc": "astroid curve",
+      "effect": "theta = 2*pi*Re(z); f(z) = scale*cos(theta)^3 + i*scale*sin(theta)^3.",
+      "notes": [
+        "The imaginary part of the input is ignored; Re(z) is used as the curve angle.",
+        "scale defaults to 1 and scales both axes.",
+        "In Param Program source, use legacy(ast, src, tgt, scale). The old raw n selector is represented by src/tgt."
+      ]
     },
     "asp": {
       "category": "shapes",
-      "desc": "Archimedean spiral"
+      "desc": "Archimedean spiral",
+      "effect": "theta = 2*pi*Re(z); r = a + b*theta; f(z) = r * (cos(theta) + i*sin(theta)).",
+      "notes": [
+        "The imaginary part of the input is ignored; Re(z) is used as the spiral angle.",
+        "a is the starting radius; b is the radial growth per radian.",
+        "In Param Program source, use legacy(asp, src, tgt, a, b). The old raw n selector is represented by src/tgt."
+      ]
     },
     "lsp": {
       "category": "shapes",
-      "desc": "log spiral"
+      "desc": "logarithmic spiral",
+      "effect": "theta = 2*pi*Re(z); r = a*exp(b*theta); f(z) = r * (cos(theta) + i*sin(theta)).",
+      "notes": [
+        "The imaginary part of the input is ignored; Re(z) is used as the spiral angle.",
+        "a sets the initial radius; b sets exponential radial growth.",
+        "In Param Program source, use legacy(lsp, src, tgt, a, b). The old raw n selector is represented by src/tgt."
+      ]
     },
     "dlt": {
       "category": "shapes",
-      "desc": "deltoid curve"
+      "desc": "deltoid curve",
+      "effect": "theta = 2*pi*Re(z); f(z) = R*(2*cos(theta)+cos(2*theta))/3 + i*R*(2*sin(theta)-sin(2*theta))/3.",
+      "notes": [
+        "The imaginary part of the input is ignored; Re(z) is used as the curve angle.",
+        "R defaults to 1 and scales the deltoid.",
+        "In Param Program source, use legacy(dlt, src, tgt, R). The old raw n selector is represented by src/tgt."
+      ]
     },
     "rply": {
       "category": "shapes",
-      "desc": "regular polygon perimeter"
+      "desc": "regular polygon perimeter",
+      "effect": "t = fract(Re(z)); ns = max(int(sides), 3); linearly interpolate along the ns regular-polygon edges at radius, then rotate by exp(2*pi*i*turns).",
+      "notes": [
+        "The imaginary part of the input is ignored; fract(Re(z)) chooses distance along the perimeter.",
+        "sides is truncated to an integer and clamped to at least 3. turns rotates the polygon by full turns.",
+        "In Param Program source, use legacy(rply, src, tgt, sides, radius, turns). The old raw n selector is represented by src/tgt."
+      ]
     },
     "star": {
       "category": "shapes",
-      "desc": "star polygon perimeter"
+      "desc": "star polygon perimeter",
+      "effect": "t = fract(Re(z)); np = max(int(points), 3); walk 2*np alternating vertices with radii outer and outer*inner_ratio, linearly interpolating along each edge.",
+      "notes": [
+        "The imaginary part of the input is ignored; fract(Re(z)) chooses distance along the star perimeter.",
+        "points is truncated to an integer and clamped to at least 3. inner_ratio controls the inner radius as a fraction of outer.",
+        "In Param Program source, use legacy(star, src, tgt, points, outer, inner_ratio). The old raw n selector is represented by src/tgt."
+      ]
     },
     "rect": {
       "category": "shapes",
-      "desc": "rectangle perimeter"
+      "desc": "rectangle perimeter",
+      "effect": "t = fract(Re(z)); walk distance t*2*(w+h) around a centered rectangle of width w and height h, then rotate by exp(2*pi*i*turns).",
+      "notes": [
+        "The imaginary part of the input is ignored; fract(Re(z)) chooses arc-length position around the rectangle perimeter.",
+        "The walk starts on the bottom edge from left to right, then right edge, top edge, and left edge. turns rotates the result by full turns.",
+        "In Param Program source, use legacy(rect, src, tgt, w, h, turns). The old raw n selector is represented by src/tgt."
+      ]
     },
     "rrect": {
       "category": "shapes",
-      "desc": "rounded rectangle / superellipse"
+      "desc": "rounded rectangle / superellipse",
+      "effect": "theta = 2*pi*fract(Re(z)); e = 2/max(m, 0.01); f(z) = (w/2)*sign(cos(theta))*abs(cos(theta))^e + i*(h/2)*sign(sin(theta))*abs(sin(theta))^e.",
+      "notes": [
+        "The imaginary part of the input is ignored; fract(Re(z)) is used as the curve parameter.",
+        "w and h set the bounding box. m controls the superellipse exponent through e=2/max(m,0.01).",
+        "In Param Program source, use legacy(rrect, src, tgt, w, h, m). The old raw n selector is represented by src/tgt."
+      ]
     },
     "z01": {
       "category": "arithmetic",
-      "desc": "real-part mirror remix"
+      "desc": "real-part mirror remix",
+      "effect": "For inputs z1,z2, let x=Re(z1), y=Re(z2). out1 = x + i*y; out2 = y + i*x.",
+      "notes": [
+        "The imaginary parts of both inputs are ignored.",
+        "This is a pair transform: src=both reads p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs.",
+        "It takes no explicit transform arguments."
+      ]
     },
     "sum_prod": {
       "category": "arithmetic",

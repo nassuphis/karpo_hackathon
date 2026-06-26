@@ -824,6 +824,8 @@ function _paramProgramLegacyHelpItem(name) {
     const spec = _paramProgramLegacyUiSpec(name);
     const params = _paramProgramLegacyCallParams(name);
     const sourceArgs = ['both', 'both'].concat((params.slice(2) || []).map((param, idx) => _programHelpParamDefault(param) || _programHelpParamName(param, idx)));
+    const notes = Array.isArray(spec.notes) ? spec.notes.slice() : [];
+    notes.push('legacy(...) arguments are positional; use values like both, p1, p2 directly, not keyword syntax such as src=both.');
     return _programHelpItem(
         `legacy:${name}`,
         `legacy(${name}, src, tgt, ...)`,
@@ -832,9 +834,10 @@ function _paramProgramLegacyHelpItem(name) {
             aliases: _paramProgramLegacyHelpAliases(name),
             category: `legacy transform${spec.category ? ': ' + spec.category : ''}`,
             params,
+            effect: spec.effect || '',
             forms: [`legacy(${name}${sourceArgs.length ? ', ' + sourceArgs.join(', ') : ''})`],
             examples: [_paramProgramLegacySnippet(name)],
-            notes: ['legacy(...) arguments are positional; use values like both, p1, p2 directly, not keyword syntax such as src=both.'],
+            notes,
         },
     );
 }

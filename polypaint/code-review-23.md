@@ -753,6 +753,250 @@ Fix:
 - Add registry-vs-C drift tests for function-name compatibility sets.
 - Add registry-vs-pipeline drift tests for legacy transform-array translators.
 
+### G0. There Is No Shared Fingerprint/Canonicalization Contract
+
+The newer findings are not isolated one-off bugs. The same missing contract appears in every program kind and layer.
+
+Current fingerprint/canonicalization shape:
+
+```text
+kind         identity payload                         float policy          signed zero
+param v1     json.dumps(tokens) + sha1                repr / mixed paths    leaks in args/args_im
+coeff v1     custom spec string + sha1                .17g                 canonicalized
+root v1/v2   json.dumps(execution_spec, chain)+sha256 repr after coercion   mostly canonicalized
+solve v1     json.dumps(spec, metrics)+sha256         %g                   collides
+v2 param     json.dumps(execution_spec, source_text)  mixed + raw source    spelling leaks
+v2 coeff     json.dumps(execution_spec, source_text)  mixed + raw source    spelling leaks
+v2 root      compiled execution fingerprint           root canonical path   excludes source_text
+```
+
+Impact:
+
+- Each kind reinvents numeric canonicalization.
+- v1 and v2 do not share a clear "semantic identity only" rule.
+- Python source, Python chain, v2 migration, and C execution can disagree about what is canonical.
+- The current drift tests guard many enum/id layers, but not enough value/default/packing/fingerprint layers.
+
+Fix:
+
+- Define one canonicalization contract for all program fingerprints: semantic execution data only, canonical floats, signed zero folded, no raw display/source text.
+- Keep hash algorithm changes explicit and versioned where required.
+- Add cross-kind regression tests for "equivalent spelling hashes the same" and "distinct numeric values hash differently".
+
+### G1. Solve-Score Fingerprints Can Collide On Distinct Numeric Programs
+
+This is the highest-severity new finding because it is an under-split, not an over-split.
+
+Current behavior:
+
+```text
+omega_cosine(1.234567890123)
+omega_cosine(1.234569999)
+```
+
+both format through `lambda/solve_score_chain.py::_format_number` as `1.23457` because it uses `%g`.
+
+Verified smaller examples:
+
+```text
+0.30000001 -> 0.3
+0.30000009 -> 0.3
+```
+
+Impact:
+
+- Two different solve-score programs can produce the same `program_spec`.
+- The fingerprint then collides.
+- A cached render can be reused for the wrong scoring program.
+- This affects any non-integer solve-score numeric argument: omega, phase, const, `weighted_sum`, `ema`, `pow`, sawtooth multiplier, etc.
+
+This is worse than the Param signed-zero bug. Param currently over-splits equivalent math into multiple cache keys. Solve-score can under-split distinct math into one cache key.
+
+Fix:
+
+- Change solve-score numeric canonicalization to the Coeff policy: `.17g` with signed zero folded to `0.0`.
+- Add a dedicated helper rather than using ad hoc `%g`.
+- Add collision tests for close-but-distinct floats and signed zero.
+- Call out cache invalidation: this changes solve-score program specs/fingerprints for numeric programs.
+
+### G2. Root Program Cap Diverges Between Profile, Python, And C
+
+Current state:
+
+- `lambda/program_profiles.json` declares root `program_tokens: 64`.
+- `lambda/root_xforms.h` declares `#define MAX_RT_CHAIN 16`.
+- `lambda/root_program_source.py::compile_root_program_chain` enforces no cap.
+
+Verified behavior:
+
+- A 25-transform root chain compiles cleanly in Python with `token_count == 25`.
+- The C executor is capped at 16 transforms.
+
+Impact:
+
+- A request can compile and fingerprint a 17+ transform root program as if it is valid.
+- The native executor can only consume the first 16 rows.
+- That is silent program mangling, not just a diagnostic defect.
+
+Fix options:
+
+- Immediate safe fix: enforce the native cap of 16 in `compile_root_program_chain` with a structured diagnostic.
+- Better long-term fix: generate the C cap and profile cap from one shared source.
+
+Tests:
+
+- A 16-transform root chain compiles.
+- A 17-transform root chain fails before native execution with a stable code.
+- Profile cap and C cap are pinned together by a drift test.
+
+### G3. V2 Param/Coeff Fingerprints Include Raw Source Text
+
+Current behavior:
+
+- `program_v2_translate.py::translate_param_from_old` hashes:
+
+```json
+{"execution_spec": "...", "source_text": "..."}
+```
+
+- `program_v2_translate.py::translate_coeff_from_old` does the same.
+- `translate_root_from_old` does not: it uses the compiled root fingerprint from `root_program_source.py`, which hashes canonical execution data.
+
+Impact:
+
+- Equivalent Param/Coeff programs can split v2 fingerprints on spelling, comments, whitespace, or inverse-source formatting.
+- Coeff v2 can regress signed-zero immunity that Coeff v1 had if the raw source text differs while execution is equivalent.
+- This makes v2 fingerprints less canonical than v1 in exactly the place intended to be the new stable representation.
+
+Fix:
+
+- Do not include raw `source_text` in v2 fingerprints.
+- Hash only canonical execution data: `execution_spec` and any other canonical semantic payload needed by that program kind.
+- Keep `source_text` in the payload for display/editing, but not in the cache identity.
+- Add tests proving two equivalent spellings with identical execution specs produce one v2 fingerprint.
+
+### G4. Solve-Score Diagnostics And `strict=False` Lose Information
+
+Current behavior:
+
+- Many `SolveScoreProgramSourceError` raise sites use the default `source_error` code.
+- Chain-stage errors such as q-range, metric/source compatibility, omega finiteness, and stack depth are deferred to whole-chain compile and can be reported at line 1 / column 1 instead of the statement that caused them.
+- `compile_solve_score_program_source(..., strict=False)` returns diagnostics with a fallback proximity program.
+- `solve_score_pipeline_programs.py::solve_score_program_for_run(..., strict=False)` then recompiles the fallback chain and returns a clean proximity program without diagnostics.
+
+Impact:
+
+- Invalid solve-score source can silently execute as the default proximity score when strict mode is disabled.
+- API callers using the non-strict path lose the signal that the user program failed.
+- Error handling cannot distinguish bad metric, bad source, bad quantile, stack underflow, or arity problems by code.
+
+Fix:
+
+- Do not discard diagnostics when returning fallback programs.
+- If fallback execution is intentionally supported, return diagnostics alongside the fallback and mark the program as degraded.
+- Add statement-local codes for metric/source/quantile/operator/stack errors.
+- Audit all exported non-strict APIs for silent substitution behavior.
+
+### G5. Root Source Boundary Errors Are Bare And Some Rows Prefer `fn_index` Over `name`
+
+Current behavior:
+
+- `root_program_for_run({"root_transforms": "5"})` raises a bare `RootProgramSourceError` with no `.diagnostics`.
+- `root_program_for_run({"root_transforms": "not-json"})` does the same.
+- This path is request-reachable from root-consuming handlers, so it is not just a test-only API defect.
+- A dict row with disagreeing `name` and `fn_index` lets `fn_index` win:
+
+```python
+{"name": "rotate_roots", "fn_index": 5}
+```
+
+compiles to `invert_roots()`.
+
+Impact:
+
+- Request-facing bad root input escapes the structured diagnostic path.
+- Mismatched persisted rows can execute a different transform than the visible `name` says.
+
+Fix:
+
+- Normalize malformed `root_transforms` through `RootProgramSourceCompileError` diagnostics at the run boundary.
+- For dict rows, reject `name`/`fn_index` disagreement unless it is a narrowly documented legacy compatibility case.
+- Add stable root diagnostic codes instead of defaulting nearly every semantic error to `source_error`.
+
+Dead/false-authority cleanup:
+
+- `root_source_text_from_payload` currently has no consumers. It advertises a source precedence order that the live run resolver does not honor.
+- The `root_chain_error` fallback code is effectively unreachable while `RootProgramSourceError` defaults to `source_error`.
+
+### G6. C Executor Defaults And Packing Are Runtime Authority But Not Registry-Gated
+
+The existing drift tests guard many enum/id layers, but they do not pin value/default/packing behavior across Python and C.
+
+Confirmed Param C defaults:
+
+- `lambda/sweep_cli.c::dispatchPt` hardcodes omitted-arg defaults for Param legacy transforms such as `spdl`, `lmc`, `rsc`, `lss`, `rply`, `star`, `rect`, `rrect`, dither transforms, and many scalar helpers.
+- If `param_legacy_registry.json` `args[].default` changes, C behavior does not change unless Python has already expanded the args before native execution.
+
+Confirmed Coeff C packing/defaults:
+
+- `lambda/sweep_cli.c::coeffLegacyApply` hardcodes Coeff legacy defaults.
+- `lambda/sweep_cli.c::execCoeffNativeTransform` uses `fn_index` checks for `linear`, `exp`, `round`, and `pow` packing.
+- Those facts overlap with Coeff `compat_signatures`, but C does not read the registry.
+
+Confirmed Solve-score C partitions:
+
+- `lambda/solve_score.h::solve_metric_is_param_metric` duplicates the Python metric/source partition.
+- `lambda/solve_score.h::solve_metric_min_roots` duplicates per-metric minimum-root requirements.
+- Existing value-parity tests cover important compute paths, but this partition metadata itself is still another hand-maintained Python/C copy.
+
+Impact:
+
+- The registry can claim a default or packing rule that native execution ignores.
+- Tests that only compare Python registry/generator behavior can pass while production native execution differs.
+
+Fix options:
+
+- Preferred runtime contract: Python must always expand defaults and pack args into the exact native rows before C sees them; add tests proving that contract.
+- Add C-vs-registry drift tests for every default and packing rule that C still owns.
+- Add C-vs-Python drift tests for solve-score metric partitions, not just metric enum/value parity.
+- Longer term: generate C tables or headers from the registry instead of hand-maintaining ladders.
+
+### G7. Solve-Score Generated Vocab Has Live Sections With Dead Subfields
+
+Correction to avoid deleting live data:
+
+- `stackSpecs` and `outputSpecs` are used by `js/07-transform-catalogs.js`.
+- The suspicious fields are subfields such as `stackSpecs.*.delta` and `outputSpecs.*.legacy_alias`; targeted JS checks found no frontend readers for those subfields.
+
+Fix:
+
+- Do not remove `stackSpecs` or `outputSpecs`.
+- Either consume `delta` / `legacy_alias` in Help/editor UI or stop emitting those subfields.
+- Add generated-vocab consumer tests only for fields that are intended API.
+
+### G8. Blank Source-Key Semantics Diverge Across Program Kinds
+
+Current behavior:
+
+- Solve-score treats a present-but-blank source key as an error if there is no fallback chain/metric.
+- Param, Coeff, and Root can silently treat blank source text as absent and fall back to chain, legacy arrays, or identity/no-op behavior depending on the boundary.
+
+Impact:
+
+- The same UI/API shape means different things across program kinds.
+- A caller cannot reason about whether "field present but blank" means explicit empty program, invalid user input, or "use older fallback fields".
+- This interacts with the empty-program/falsy fallback bug family in F1.
+
+Fix:
+
+- Define per-kind semantics for:
+  - source key absent,
+  - source key present but blank,
+  - chain key absent,
+  - chain key present as `[]`.
+- Use key-presence checks rather than truthiness.
+- Add run-boundary tests for all four program kinds.
+
 ## Target Architecture
 
 ### Shared Python Registry Module
@@ -1136,10 +1380,198 @@ Implementation:
 - Add stable diagnostic codes for Root/Solve-score source errors over time.
 - Keep this lower priority than Param/Coeff corruption and runtime-authority fixes unless a failing user path is found.
 
+#### -1N. Solve-Score Fingerprint Collision Fix
+
+Files:
+
+```text
+lambda/solve_score_chain.py
+tests/test_solve_score_chain.py
+tests/test_solve_score_program_source.py
+```
+
+Implementation:
+
+- Replace `%g` formatting in solve-score canonical numeric output.
+- Use a shared helper that:
+  - converts to finite float,
+  - folds `-0.0` to `0.0`,
+  - formats with `.17g`.
+- Apply it to every numeric value that contributes to `program_spec` / fingerprint.
+- Treat this as a deliberate fingerprint/cache-version change for solve-score programs.
+
+Tests:
+
+```text
+omega_cosine(1.234567890123) != omega_cosine(1.234569999)
+omega_cosine(0.30000001) != omega_cosine(0.30000009)
+omega_cosine(0.0) == omega_cosine(-0.0)
+const/weighted_sum/ema/pow/sawtooth numeric args use the same canonicalization
+```
+
+#### -1O. Root Native Chain Cap
+
+Files:
+
+```text
+lambda/root_program_source.py
+lambda/root_xforms.h
+lambda/program_profiles.json
+tests/test_root_program_source.py
+tests/test_program_profiles.py or tests/test_program_drift.py
+```
+
+Implementation:
+
+- Enforce the current native cap of 16 root transform rows in Python compile/lower code.
+- Return a structured diagnostic such as `root_chain_too_long`.
+- Add a drift test tying the profile cap and C cap together.
+- If the intended cap is 64, do not merely raise `MAX_RT_CHAIN`; audit C memory/layout first and then update both sides together.
+
+Tests:
+
+```text
+16 root transforms compile
+17 root transforms fail before native execution
+profile cap == native cap
+```
+
+#### -1P. Canonical V2 Fingerprint Payloads
+
+Files:
+
+```text
+lambda/program_v2_translate.py
+tests/test_program_v2_migration.py
+tests/test_program_m3_oracles.py
+tests/test_coeff_wire_fingerprints.py
+```
+
+Implementation:
+
+- Remove raw `source_text` from Param and Coeff `_v2_fingerprint` payloads.
+- Hash canonical execution data only.
+- Keep `source_text` stored for UI/editing, but not for identity.
+- Verify Root already follows this pattern and keep it unchanged.
+- Treat this as part of the cross-kind fingerprint contract: display/source text is editable metadata, not cache identity.
+
+Tests:
+
+```text
+Param equivalent source spellings with the same execution spec produce the same v2 fingerprint.
+Coeff equivalent source spellings with the same execution spec produce the same v2 fingerprint.
+Changing execution spec changes the v2 fingerprint.
+Param/coeff/root/solve fingerprint tests use the same signed-zero and distinct-float expectations where applicable.
+M3 oracle and Coeff wire-fingerprint tests remain green.
+```
+
+#### -1Q. Root Run-Boundary Diagnostics And Name/Index Consistency
+
+Files:
+
+```text
+lambda/root_program_source.py
+lambda/root_pipeline_programs.py
+tests/test_root_program_source.py
+```
+
+Implementation:
+
+- Convert malformed `root_transforms` JSON/non-list errors into structured diagnostics at the run boundary.
+- Reject dict rows where both `name` and `fn_index` are present but disagree.
+- Add stable diagnostic codes for root source and root chain errors that matter to UI/API callers.
+- Decide whether `root_source_text_from_payload` is dead and remove it, or wire its precedence into the live resolver.
+
+Tests:
+
+```text
+root_program_for_run({"root_transforms": "5"}) returns/raises structured diagnostics.
+root_program_for_run({"root_transforms": "not-json"}) returns/raises structured diagnostics.
+{"name": "rotate_roots", "fn_index": 5} is rejected unless a compatibility flag is explicitly used.
+```
+
+#### -1R. C Runtime Default/Packing Drift Gates
+
+Files:
+
+```text
+lambda/sweep_cli.c
+lambda/param_legacy_registry.json
+lambda/coeff_legacy_registry.json
+tests/test_param_program_drift.py
+tests/test_coeff_program_drift.py
+```
+
+Implementation:
+
+- Add tests that compare Param registry defaults to either:
+  - Python-expanded native rows sent to C, or
+  - the C fallback defaults still hardcoded in `dispatchPt`.
+- Add tests that compare Coeff `compat_signatures` packing rules to the C `fn_index` packing ladder for `linear`, `exp`, `round`, and `pow`.
+- Add tests that prove omitted registry defaults are expanded before C if that is the intended contract.
+- Add tests that compare solve-score metric source/min-root partitions between Python and `solve_score.h`.
+
+Do not edit registry defaults or packing without these tests.
+
+#### -1S. Solve-Score Non-Strict Fallback And Vocab API Cleanup
+
+Files:
+
+```text
+lambda/solve_score_program_source.py
+lambda/solve_score_pipeline_programs.py
+lambda/gen_solve_score_vocab.py
+solve_score_vocab_js.js
+js/07-transform-catalogs.js
+tests/test_solve_score_program_source.py
+tests/test_frontend_js.sh
+```
+
+Implementation:
+
+- Preserve diagnostics when `strict=False` returns a fallback proximity program.
+- Mark fallback/degraded compile results explicitly.
+- Add stable solve-score diagnostic codes for common error classes.
+- Attach compile errors to the originating statement where possible instead of falling back to line 1 / column 1 for whole-chain failures.
+- Keep `stackSpecs` and `outputSpecs`; they are live.
+- Either consume or remove dead subfields such as `stackSpecs.*.delta` and `outputSpecs.*.legacy_alias`.
+
+#### -1T. Cross-Kind Blank Source/Empty Program Contract
+
+Files:
+
+```text
+lambda/pipeline_programs.py
+lambda/root_pipeline_programs.py
+lambda/solve_score_pipeline_programs.py
+lambda/program_compile_helpers.py
+tests/test_pipeline_programs.py or focused per-kind source/run tests
+```
+
+Implementation:
+
+- Define source/chain fallback semantics for all program kinds:
+  - source key absent,
+  - source key present but blank,
+  - chain key absent,
+  - chain key present as empty list.
+- Replace truthiness fallback with explicit key-presence checks.
+- Make solve-score, Param, Coeff, and Root behavior intentionally different only where documented.
+
+Tests:
+
+```text
+blank solve-score source keeps its current error behavior or a consciously changed policy
+blank Param/Coeff/Root source behavior is pinned
+empty chain never resurrects legacy arrays unless that is explicitly chosen
+```
+
 Gates:
 
 ```bash
 uv run python -m pytest tests/test_param_program_chain.py tests/test_param_program_source.py tests/test_program_v2_migration.py tests/test_coeff_program_chain.py tests/test_coeff_program_drift.py tests/test_coeff_source_equivalence.py tests/test_coeff_program_native.py -q
+uv run python -m pytest tests/test_solve_score_chain.py tests/test_solve_score_program_source.py tests/test_root_program_source.py -q
+uv run python -m pytest tests/test_program_m3_oracles.py tests/test_coeff_wire_fingerprints.py -q
 bash tests/test_frontend_js.sh
 ```
 
@@ -1738,18 +2170,19 @@ Because `uv` cache access is restricted under the sandbox, run this with escalat
 
 Recommended order:
 
-1. Fix Phase -1 live bugs: Param signed-zero fingerprints, empty-program policy/falsy fallbacks, Coeff partial-vocab crash, Coeff `round` ambiguity, Param parse-time validation/default handling, Param chain-to-source round-trip guard, shared Param macro source precedence, boundary translator drift gates, and compiler diagnostic structure.
-2. Add shared schema tests.
-3. Add `registry_common.py`.
-4. Refactor generators.
-5. Refactor runtime loaders and make Param runtime compat registry-authoritative.
-6. Normalize Param `category_meta`.
-7. Wire or remove Param `variable_arg_forms`.
-8. Add frontend registry adapter.
-9. Refactor Help builders onto adapter.
-10. Remove static Param fallback metadata.
-11. Share source parser registry-name validation.
-12. Only then consider optional/complex arg model changes.
+1. Fix Phase -1 live correctness bugs first: Solve-score numeric fingerprint collisions, root native chain cap mismatch, Param signed-zero fingerprints, Param chain-to-source round-trip safety, Param macro source precedence, and canonical v2 fingerprint payloads.
+2. Fix Phase -1 boundary/diagnostic traps: empty-program and blank-source policy/falsy fallbacks, Coeff partial-vocab crash, Coeff `round` ambiguity, Param/Coeff parse-time validation/default handling, root run-boundary diagnostics, solve-score non-strict fallback diagnostics, boundary translator drift gates, C default/packing/metric-partition drift gates, and compiler diagnostic structure.
+3. Add shared schema tests.
+4. Add `registry_common.py`.
+5. Refactor generators.
+6. Refactor runtime loaders and make Param runtime compat registry-authoritative.
+7. Normalize Param `category_meta`.
+8. Wire or remove Param `variable_arg_forms`.
+9. Add frontend registry adapter.
+10. Refactor Help builders onto adapter.
+11. Remove static Param fallback metadata.
+12. Share source parser registry-name validation.
+13. Only then consider optional/complex arg model changes.
 
 Do not start by changing accepted source syntax. First make current behavior shared, tested, and generated. Then extend the language.
 
@@ -1846,17 +2279,44 @@ Mitigation:
 - Add compiler diagnostic codes in strict=False payloads.
 - Add source compile endpoint tests for compiler-stage failures, not only parse-stage failures.
 
+### Risk 10: Canonicalization Fixes Change Cache Identity
+
+The solve-score numeric formatting fix and v2 fingerprint payload fix deliberately change identity behavior.
+
+Mitigation:
+
+- Treat them as cache-version-affecting fixes.
+- Land tests that prove the old behavior was unsafe.
+- Prefer correctness over preserving broken cache hits.
+- Communicate that existing artifacts with old solve-score fingerprints may not be reused under the fixed canonicalization.
+
+### Risk 11: Native C Runtime Remains The Hidden Authority
+
+The registry refactor can make JSON/generators/tests look clean while C still owns omitted defaults, packing ladders, and caps.
+
+Mitigation:
+
+- Add C-vs-registry drift tests before changing defaults or packing.
+- Make Python expand defaults and packing explicitly before native execution where that is the chosen contract.
+- Keep profile/native caps pinned together.
+- Do not claim the registry is authoritative for a field until native execution is either generated from it or drift-tested against it.
+
 ## Definition Of Done
 
 The refactor is complete when:
 
-- Phase -1 live bugs are fixed and covered: Param signed-zero fingerprints, empty-program policy/falsy fallback behavior, Coeff partial-vocab crash, Coeff `round` ambiguity policy, Param parse-time/default validation, Param chain-to-source round-trip guard, Param migration source safety, shared Param macro source precedence, boundary translator drift gates, and compiler diagnostic codes.
+- Phase -1 live bugs are fixed and covered: Solve-score fingerprint collisions, root native chain cap mismatch, Param signed-zero fingerprints, empty-program and blank-source policy/falsy fallback behavior, Coeff partial-vocab crash, Coeff `round` ambiguity policy, Param/Coeff parse-time/default validation, Param chain-to-source round-trip guard, Param migration source safety, shared Param macro source precedence, root run-boundary diagnostics, solve-score non-strict fallback diagnostics, boundary translator drift gates, C default/packing/metric-partition drift gates, canonical v2 fingerprint payloads, and compiler diagnostic codes.
 - One shared Python module owns generic registry loading/validation/render helpers.
 - Param and Coeff generators both use the shared module.
 - Param and Coeff runtime loaders both use the shared module.
 - Param runtime compatibility behavior is loaded from registry `compat`, not private production constants.
 - Legacy transform-array boundary translation is registry-derived or drift-tested against the registry.
 - C Param compatibility behavior is registry-derived or drift-tested against the registry.
+- C Param/Coeff default and packing behavior is either eliminated by Python expansion or drift-tested against registry-declared defaults/signatures.
+- Root profile cap and native root cap are pinned together.
+- Solve-score numeric canonicalization cannot collide close-but-distinct floats.
+- Cross-kind fingerprint tests prove that semantic identity excludes display/source text and handles signed-zero consistently.
+- Blank source and empty chain semantics are pinned for Param, Coeff, Root, and Solve-score.
 - Param and Coeff registry schema share the same category metadata convention.
 - Inert `variable_arg_forms` is either rendered or removed.
 - Frontend Help consumes a normalized adapter rather than raw profile-specific globals.

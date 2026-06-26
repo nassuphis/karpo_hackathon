@@ -768,6 +768,7 @@ solve v1     json.dumps(spec, metrics)+sha256         %g                   colli
 v2 param     json.dumps(execution_spec, source_text)  mixed + raw source    spelling leaks
 v2 coeff     json.dumps(execution_spec, source_text)  mixed + raw source    spelling leaks
 v2 root      compiled execution fingerprint           root canonical path   excludes source_text
+root source  regenerated text                         %g                   lossy round-trip
 ```
 
 Impact:
@@ -782,6 +783,7 @@ Fix:
 - Define one canonicalization contract for all program fingerprints: semantic execution data only, canonical floats, signed zero folded, no raw display/source text.
 - Keep hash algorithm changes explicit and versioned where required.
 - Add cross-kind regression tests for "equivalent spelling hashes the same" and "distinct numeric values hash differently".
+- Add source regeneration tests: chain -> source -> parse -> compile must preserve semantic identity for every program kind that exposes regenerated source.
 
 ### G1. Solve-Score Fingerprints Can Collide On Distinct Numeric Programs
 
@@ -996,6 +998,74 @@ Fix:
   - chain key present as `[]`.
 - Use key-presence checks rather than truthiness.
 - Add run-boundary tests for all four program kinds.
+
+### G9. Root Source Regeneration Is Lossy For Non-Round Numeric Args
+
+Current behavior:
+
+```python
+root_source_text_from_chain([["rotate_roots", "1.234567890123"]])
+```
+
+emits:
+
+```text
+rotate_roots(1.23457)
+```
+
+Recompiling that source produces a different root program and a different fingerprint.
+
+Verified examples:
+
+```text
+1.234567890123 -> rotate_roots(1.23457) -> 1.23457
+0.30000001     -> rotate_roots(0.3)     -> 0.3
+0.30000009     -> rotate_roots(0.3)     -> 0.3
+```
+
+Cause:
+
+- `lambda/root_program_source.py::_format_number` uses `%g`.
+- Root fingerprints use canonical float JSON after coercion, but generated source uses a lossy display formatter.
+- Root has no source-preservation guard analogous to Coeff's chain-to-source guard.
+
+Impact:
+
+- Any code path that displays regenerated root source and later treats it as authoritative can change the root program.
+- Root v2 migration stores `source_text` from `root_source_text_from_chain`; because root v2 fingerprints do not hash source text, identity is safe there, but editing/re-saving that source can change execution.
+
+Fix:
+
+- Change root source numeric formatting to a non-lossy canonical format, e.g. `.17g` with signed zero folded.
+- Add a root chain -> source -> parse -> compile preservation test.
+- Add a root source-generation guard or at least a test corpus for all registry transforms with numeric args.
+
+### G10. V2 Translation Has Additional Empty-Field Fallback Bugs
+
+Current behavior:
+
+- `translate_root_from_old({"root_transforms": [], "chain": [["rotate_roots", "1"]]})` migrates the stale `chain` instead of preserving the explicit empty `root_transforms`.
+- `translate_solve_score_from_old({"chain": []})` migrates to default `proximity + omega_cosine(1)`.
+- `translate_solve_score_from_old({"chain": [], "metric": "spread"})` still migrates to default `proximity + omega_cosine(1)`, ignoring the supplied legacy metric.
+
+Impact:
+
+- V2 migration can change explicit empty programs into stale fallback programs or defaults.
+- The migration path repeats the same truthiness bug family already present in request/run boundaries.
+- This is especially risky because migrated metadata looks canonical afterward.
+
+Fix:
+
+- In v2 translation, treat explicit keys as authoritative even when their value is `[]`.
+- For Root, `root_transforms: []` must migrate as empty, not fall through to `chain`.
+- For Solve-score, decide whether empty chain is invalid or a deliberate default; do not silently inject default proximity when the payload explicitly provides an empty chain.
+- If legacy metric fallback is supported, it must be explicitly keyed and tested.
+
+Negative findings to avoid re-filing:
+
+- `solve_score_chain_id()` did not collide for close omega strings in the tested original-chain path; the confirmed solve-score data-integrity bug is the `program_spec` / fingerprint collision.
+- Legacy `param_transforms` / `coeff_transforms` C `MAX_CHAIN=16` truncation is mostly blocked for non-empty arrays by `rejectLegacyTransformChain`; do not re-file it as a current silent truncation without a path that bypasses that rejection.
+- C `cfpv` has legacy truncation code for arrays longer than `MAX_CFPV`, but generated coefficient functions currently max at four params, so that truncation path does not look reachable today.
 
 ## Target Architecture
 
@@ -1564,6 +1634,56 @@ Tests:
 blank solve-score source keeps its current error behavior or a consciously changed policy
 blank Param/Coeff/Root source behavior is pinned
 empty chain never resurrects legacy arrays unless that is explicitly chosen
+```
+
+#### -1U. Root Lossless Source Regeneration
+
+Files:
+
+```text
+lambda/root_program_source.py
+tests/test_root_program_source.py
+tests/test_program_v2_migration.py
+```
+
+Implementation:
+
+- Replace root `%g` source formatting with a lossless canonical numeric format.
+- Fold signed zero.
+- Add a preservation check or test corpus proving chain -> source -> parse -> compile keeps the same root fingerprint.
+- Ensure root v2 migrated `source_text` is safe to edit/re-save without changing execution.
+
+Tests:
+
+```text
+rotate_roots(1.234567890123) round-trips through regenerated source without changing fingerprint.
+rotate_roots(0.30000001) and rotate_roots(0.30000009) regenerate to distinct source values.
+all root registry transforms with numeric defaults round-trip through source.
+```
+
+#### -1V. V2 Translation Empty-Field Precedence
+
+Files:
+
+```text
+lambda/program_v2_translate.py
+tests/test_program_v2_migration.py
+```
+
+Implementation:
+
+- Replace truthiness fallback in `_root_transform_items` with explicit key-presence logic.
+- Preserve explicit `root_transforms: []` as empty.
+- Define solve-score migration behavior for explicit `chain: []`.
+- If solve-score legacy metric fallback is supported during migration, read the legacy metric explicitly and test it.
+- Do not silently migrate explicit empty solve-score chain to default proximity unless that is an intentionally versioned compatibility rule.
+
+Tests:
+
+```text
+translate_root_from_old({"root_transforms": [], "chain": [["rotate_roots", "1"]]}) migrates an empty root chain.
+translate_solve_score_from_old({"chain": []}) is rejected or preserves an explicit empty/default policy with diagnostics.
+translate_solve_score_from_old({"chain": [], "metric": "spread"}) does not silently become proximity.
 ```
 
 Gates:
@@ -2170,7 +2290,7 @@ Because `uv` cache access is restricted under the sandbox, run this with escalat
 
 Recommended order:
 
-1. Fix Phase -1 live correctness bugs first: Solve-score numeric fingerprint collisions, root native chain cap mismatch, Param signed-zero fingerprints, Param chain-to-source round-trip safety, Param macro source precedence, and canonical v2 fingerprint payloads.
+1. Fix Phase -1 live correctness bugs first: Solve-score numeric fingerprint collisions, root native chain cap mismatch, root lossless source regeneration, Param signed-zero fingerprints, Param chain-to-source round-trip safety, Param macro source precedence, canonical v2 fingerprint payloads, and v2 empty-field precedence.
 2. Fix Phase -1 boundary/diagnostic traps: empty-program and blank-source policy/falsy fallbacks, Coeff partial-vocab crash, Coeff `round` ambiguity, Param/Coeff parse-time validation/default handling, root run-boundary diagnostics, solve-score non-strict fallback diagnostics, boundary translator drift gates, C default/packing/metric-partition drift gates, and compiler diagnostic structure.
 3. Add shared schema tests.
 4. Add `registry_common.py`.
@@ -2281,7 +2401,7 @@ Mitigation:
 
 ### Risk 10: Canonicalization Fixes Change Cache Identity
 
-The solve-score numeric formatting fix and v2 fingerprint payload fix deliberately change identity behavior.
+The solve-score numeric formatting fix and v2 fingerprint payload fix deliberately change identity behavior. Root source-regeneration fixes can also change visible source text.
 
 Mitigation:
 
@@ -2289,6 +2409,7 @@ Mitigation:
 - Land tests that prove the old behavior was unsafe.
 - Prefer correctness over preserving broken cache hits.
 - Communicate that existing artifacts with old solve-score fingerprints may not be reused under the fixed canonicalization.
+- For root, verify source text changes are execution-preserving before changing stored fingerprints.
 
 ### Risk 11: Native C Runtime Remains The Hidden Authority
 
@@ -2301,11 +2422,23 @@ Mitigation:
 - Keep profile/native caps pinned together.
 - Do not claim the registry is authoritative for a field until native execution is either generated from it or drift-tested against it.
 
+### Risk 12: Migration Looks Canonical While Preserving The Wrong Program
+
+V2 translation is a high-risk boundary because it turns older ambiguous payloads into metadata that later looks clean.
+
+Mitigation:
+
+- Use explicit key-presence rules in translators.
+- Never treat explicit empty lists as absent.
+- Add tests where old and new fields disagree.
+- Add tests where `source_text`, `chain`, and legacy fields disagree.
+- Reject or diagnose unsupported empty solve-score payloads instead of silently injecting defaults.
+
 ## Definition Of Done
 
 The refactor is complete when:
 
-- Phase -1 live bugs are fixed and covered: Solve-score fingerprint collisions, root native chain cap mismatch, Param signed-zero fingerprints, empty-program and blank-source policy/falsy fallback behavior, Coeff partial-vocab crash, Coeff `round` ambiguity policy, Param/Coeff parse-time/default validation, Param chain-to-source round-trip guard, Param migration source safety, shared Param macro source precedence, root run-boundary diagnostics, solve-score non-strict fallback diagnostics, boundary translator drift gates, C default/packing/metric-partition drift gates, canonical v2 fingerprint payloads, and compiler diagnostic codes.
+- Phase -1 live bugs are fixed and covered: Solve-score fingerprint collisions, root native chain cap mismatch, root source-regeneration lossiness, Param signed-zero fingerprints, empty-program and blank-source policy/falsy fallback behavior, Coeff partial-vocab crash, Coeff `round` ambiguity policy, Param/Coeff parse-time/default validation, Param chain-to-source round-trip guard, Param migration source safety, shared Param macro source precedence, root run-boundary diagnostics, solve-score non-strict fallback diagnostics, boundary translator drift gates, C default/packing/metric-partition drift gates, canonical v2 fingerprint payloads, v2 empty-field precedence, and compiler diagnostic codes.
 - One shared Python module owns generic registry loading/validation/render helpers.
 - Param and Coeff generators both use the shared module.
 - Param and Coeff runtime loaders both use the shared module.
@@ -2316,6 +2449,8 @@ The refactor is complete when:
 - Root profile cap and native root cap are pinned together.
 - Solve-score numeric canonicalization cannot collide close-but-distinct floats.
 - Cross-kind fingerprint tests prove that semantic identity excludes display/source text and handles signed-zero consistently.
+- Root regenerated source round-trips without changing root fingerprints.
+- V2 translators use key-presence semantics and do not silently replace explicit empty fields with stale fallback/default programs.
 - Blank source and empty chain semantics are pinned for Param, Coeff, Root, and Solve-score.
 - Param and Coeff registry schema share the same category metadata convention.
 - Inert `variable_arg_forms` is either rendered or removed.

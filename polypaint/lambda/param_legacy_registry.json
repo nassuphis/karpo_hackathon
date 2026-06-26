@@ -13,7 +13,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "no-op; leave selected parameter values unchanged"
+      }
     },
     {
       "name": "unit_circle",
@@ -31,7 +35,18 @@
         "both",
         "push1"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "maps",
+        "desc": "map z to exp(2*pi*i*z)",
+        "effect": "f(z) = exp(2*pi*i*z). For z = a + i*b: f(z) = exp(-2*pi*b) * (cos(2*pi*a) + i*sin(2*pi*a)).",
+        "notes": [
+          "For normal real grid inputs x, this is x -> cos(2*pi*x) + i*sin(2*pi*x), mapping [0,1] around the unit circle.",
+          "If the input has an imaginary part, it changes the radius: positive imaginary shrinks by exp(-2*pi*b), negative imaginary expands.",
+          "src=p1 applies f to p1; src=p2 applies f to p2; src=both applies f to p1 and p2; src=pop1 pops one stack value and applies f.",
+          "tgt=both writes both outputs to p1,p2; tgt=p1 or tgt=p2 writes the first output to that register; tgt=push1 pushes the first output."
+        ]
+      }
     },
     {
       "name": "square",
@@ -49,7 +64,11 @@
         "both",
         "push1"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "maps",
+        "desc": "square both complex parameters"
+      }
     },
     {
       "name": "cube",
@@ -67,7 +86,11 @@
         "both",
         "push1"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "maps",
+        "desc": "cube both complex parameters"
+      }
     },
     {
       "name": "reciprocal",
@@ -85,7 +108,11 @@
         "both",
         "push1"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "maps",
+        "desc": "replace each parameter with 1/t"
+      }
     },
     {
       "name": "conjugate",
@@ -103,7 +130,11 @@
         "both",
         "push1"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "maps",
+        "desc": "complex conjugate t1 and t2"
+      }
     },
     {
       "name": "negate",
@@ -121,7 +152,11 @@
         "both",
         "push1"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "maps",
+        "desc": "negate t1 and t2"
+      }
     },
     {
       "name": "exp",
@@ -139,7 +174,17 @@
         "both",
         "push1"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "maps",
+        "desc": "complex exponential of each parameter",
+        "effect": "f(z) = exp(z). For z = a + i*b: f(z) = exp(a) * (cos(b) + i*sin(b)).",
+        "notes": [
+          "This is the ordinary complex exponential, not unit_circle; angles are in radians, not turns.",
+          "src=p1 applies f to p1; src=p2 applies f to p2; src=both applies f to p1 and p2; src=pop1 pops one stack value and applies f.",
+          "tgt=both writes both outputs to p1,p2; tgt=p1 or tgt=p2 writes the first output to that register; tgt=push1 pushes the first output."
+        ]
+      }
     },
     {
       "name": "xim",
@@ -157,7 +202,17 @@
         "both",
         "push1"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "maps",
+        "desc": "move real part into the imaginary axis",
+        "effect": "f(z) = i*Re(z). For z = a + i*b: f(z) = 0 + i*a.",
+        "notes": [
+          "The original imaginary part is discarded.",
+          "src=p1 applies f to p1; src=p2 applies f to p2; src=both applies f to p1 and p2; src=pop1 pops one stack value and applies f.",
+          "tgt=both writes both outputs to p1,p2; tgt=p1 or tgt=p2 writes the first output to that register; tgt=push1 pushes the first output."
+        ]
+      }
     },
     {
       "name": "add_sub",
@@ -171,7 +226,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "emit t1+t2 and t1-t2"
+      }
     },
     {
       "name": "mul_div",
@@ -185,7 +244,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "emit t1*t2 and t1/t2"
+      }
     },
     {
       "name": "swap",
@@ -199,7 +262,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "maps",
+        "desc": "swap t1 and t2"
+      }
     },
     {
       "name": "sum_prod",
@@ -213,7 +280,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "emit t1+t2 and t1*t2"
+      }
     },
     {
       "name": "roots2",
@@ -227,7 +298,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "roots",
+        "desc": "quadratic roots of (9/64)z^2+t1*z+t2"
+      }
     },
     {
       "name": "roots3",
@@ -241,7 +316,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "roots",
+        "desc": "cubic roots from t1+t2, 1, 1, t1*t2"
+      }
     },
     {
       "name": "roots5",
@@ -255,7 +334,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "roots",
+        "desc": "cubic roots from trig/i*t parameters"
+      }
     },
     {
       "name": "roots6",
@@ -269,7 +352,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "roots",
+        "desc": "quartic roots from mixed t1/t2 polynomial"
+      }
     },
     {
       "name": "rtheta",
@@ -295,7 +382,26 @@
           "type": "real",
           "default": 1.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "maps",
+        "desc": "polar disk map using paired real parts as radius and angle",
+        "effect": "For inputs z1,z2, let x=Re(z1), y=Re(z2). out1 = x^p * (cos(2*pi*y) + i*sin(2*pi*y)); out2 = y^p * (cos(2*pi*x) + i*sin(2*pi*x)).",
+        "notes": [
+          "The imaginary parts of both inputs are ignored.",
+          "p defaults to 1 and is applied as a power to the radius coordinate.",
+          "In Param Program source, use legacy(rtheta, src, tgt, p). The old raw target selector argument is represented by src/tgt.",
+          "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+        ],
+        "params": [
+          {
+            "ph": "p",
+            "def": 1.0,
+            "type": "real",
+            "title": "Power applied to the radius coordinate: out1 radius is Re(z1)^p and out2 radius is Re(z2)^p."
+          }
+        ]
+      }
     },
     {
       "name": "moebius",
@@ -309,7 +415,37 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "maps",
+        "desc": "Mobius map on t1 and t2; 0-arg runs keep legacy 1/(t+2)",
+        "params": [
+          {
+            "ph": "a",
+            "def": "1",
+            "type": "complex",
+            "title": "Complex coefficient a."
+          },
+          {
+            "ph": "b",
+            "def": "0",
+            "type": "complex",
+            "title": "Complex coefficient b."
+          },
+          {
+            "ph": "c",
+            "def": "0",
+            "type": "complex",
+            "title": "Complex coefficient c."
+          },
+          {
+            "ph": "d",
+            "def": "1",
+            "type": "complex",
+            "title": "Complex coefficient d."
+          }
+        ]
+      }
     },
     {
       "name": "inv_t_plus_2",
@@ -323,7 +459,25 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "t1=1/(t1+a), t2=1/(t2+b)",
+        "params": [
+          {
+            "ph": "z1",
+            "def": "2",
+            "type": "complex",
+            "title": "Complex expression for the first offset."
+          },
+          {
+            "ph": "z2",
+            "def": "2",
+            "type": "complex",
+            "title": "Complex expression for the second offset."
+          }
+        ]
+      }
     },
     {
       "name": "crd",
@@ -349,7 +503,27 @@
           "type": "real",
           "default": 1.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "cardioid curve",
+        "effect": "theta = 2*pi*Re(z); r = size * (1 + cos(theta)); f(z) = r * (cos(theta) + i*sin(theta)).",
+        "notes": [
+          "The imaginary part of the input is ignored; Re(z) is used as the cardioid angle.",
+          "size defaults to 1. The maximum radius is 2*size at theta=0, and the cusp is at theta=pi.",
+          "In Param Program source, use legacy(crd, src, tgt, size). The old raw n selector is represented by src/tgt; size is the only explicit transform argument.",
+          "src=p1 applies f to p1; src=p2 applies f to p2; src=both applies f to p1 and p2; src=pop1/pop2 read one/two stack values.",
+          "tgt=both writes both outputs to p1,p2; tgt=p1 or tgt=p2 writes the first output to that register; tgt=push1/push2 push one/two outputs."
+        ],
+        "params": [
+          {
+            "ph": "size",
+            "def": 1.0,
+            "type": "real",
+            "title": "Cardioid scale. Maximum radius is 2*size."
+          }
+        ]
+      }
     },
     {
       "name": "hrt",
@@ -380,7 +554,31 @@
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "heart curve",
+        "effect": "t = 2*pi*Re(z) + pi/2; base = (16*sin(t)^3)/40 + i*((13*cos(t)-5*cos(2*t)-2*cos(3*t)-cos(4*t))/40 + 0.1); f(z) = size * exp(2*pi*i*turns) * base.",
+        "notes": [
+          "The imaginary part of the input is ignored; Re(z) is used as the curve parameter.",
+          "size defaults to 1 and scales the heart. turns defaults to 0 and rotates the result by full turns.",
+          "In Param Program source, use legacy(hrt, src, tgt, size, turns). The old raw n selector is represented by src/tgt."
+        ],
+        "params": [
+          {
+            "ph": "size",
+            "def": 1.0,
+            "type": "real",
+            "title": "Heart scale."
+          },
+          {
+            "ph": "turns",
+            "def": 0.0,
+            "type": "real",
+            "title": "Rotation in full turns after the heart is generated; 0.25 rotates by 90 degrees."
+          }
+        ]
+      }
     },
     {
       "name": "spdl",
@@ -416,7 +614,37 @@
           "type": "real",
           "default": 1.5
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "spindle / superellipse-like curve",
+        "effect": "theta = 2*pi*Re(z); e = 2/max(vp, 0.01); f(z) = va*sign(cos(theta))*abs(cos(theta))^e + i*vb*sign(sin(theta))*abs(sin(theta))^e.",
+        "notes": [
+          "The imaginary part of the input is ignored; Re(z) is used as the curve angle.",
+          "va and vb scale the horizontal and vertical axes. vp controls the superellipse exponent through e=2/max(vp,0.01).",
+          "In Param Program source, use legacy(spdl, src, tgt, va, vb, vp). The old raw n selector is represented by src/tgt."
+        ],
+        "params": [
+          {
+            "ph": "va",
+            "def": 0.5,
+            "type": "real",
+            "title": "Horizontal scale."
+          },
+          {
+            "ph": "vb",
+            "def": 0.2,
+            "type": "real",
+            "title": "Vertical scale."
+          },
+          {
+            "ph": "vp",
+            "def": 1.5,
+            "type": "real",
+            "title": "Shape exponent control; native code uses e=2/max(vp,0.01)."
+          }
+        ]
+      }
     },
     {
       "name": "lmc",
@@ -447,7 +675,31 @@
           "type": "real",
           "default": 0.5
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "limacon curve",
+        "effect": "theta = 2*pi*Re(z); r = a + b*cos(theta); f(z) = r * (cos(theta) + i*sin(theta)).",
+        "notes": [
+          "The imaginary part of the input is ignored; Re(z) is used as the polar angle.",
+          "a sets the base radius; b sets the cosine modulation.",
+          "In Param Program source, use legacy(lmc, src, tgt, a, b). The old raw n selector is represented by src/tgt."
+        ],
+        "params": [
+          {
+            "ph": "a",
+            "def": 0.3,
+            "type": "real",
+            "title": "Base radius in r=a+b*cos(theta)."
+          },
+          {
+            "ph": "b",
+            "def": 0.5,
+            "type": "real",
+            "title": "Cosine radius modulation in r=a+b*cos(theta)."
+          }
+        ]
+      }
     },
     {
       "name": "rsc",
@@ -478,7 +730,31 @@
           "type": "real",
           "default": 2.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "rose curve",
+        "effect": "theta = 2*pi*Re(z); r = amp*cos(k*theta); f(z) = r * (cos(theta) + i*sin(theta)).",
+        "notes": [
+          "The imaginary part of the input is ignored; Re(z) is used as the polar angle.",
+          "amp scales the radius; k controls the rose frequency/petal structure.",
+          "In Param Program source, use legacy(rsc, src, tgt, amp, k). The old raw n selector is represented by src/tgt."
+        ],
+        "params": [
+          {
+            "ph": "amp",
+            "def": 0.5,
+            "type": "real",
+            "title": "Rose radius amplitude."
+          },
+          {
+            "ph": "k",
+            "def": 2.0,
+            "type": "real",
+            "title": "Rose angular frequency in r=amp*cos(k*theta)."
+          }
+        ]
+      }
     },
     {
       "name": "lss",
@@ -524,7 +800,49 @@
           "type": "real",
           "default": 0.5
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "Lissajous curve",
+        "effect": "theta = 2*pi*Re(z); delta = pi*phase; f(z) = A*sin(a*theta + delta) + i*B*sin(b*theta).",
+        "notes": [
+          "The imaginary part of the input is ignored; Re(z) is used as the time parameter.",
+          "A/B scale x/y; a/b are the x/y frequencies; phase is measured in half-turns because delta=pi*phase.",
+          "In Param Program source, use legacy(lss, src, tgt, A, B, a, b, phase). The old raw n selector is represented by src/tgt."
+        ],
+        "params": [
+          {
+            "ph": "A",
+            "def": 0.5,
+            "type": "real",
+            "title": "Horizontal amplitude."
+          },
+          {
+            "ph": "B",
+            "def": 0.5,
+            "type": "real",
+            "title": "Vertical amplitude."
+          },
+          {
+            "ph": "a",
+            "def": 3.0,
+            "type": "real",
+            "title": "Horizontal sine frequency."
+          },
+          {
+            "ph": "b",
+            "def": 2.0,
+            "type": "real",
+            "title": "Vertical sine frequency."
+          },
+          {
+            "ph": "phase",
+            "def": 0.5,
+            "type": "real",
+            "title": "Horizontal phase offset in half-turns; native delta is pi*phase."
+          }
+        ]
+      }
     },
     {
       "name": "ast",
@@ -550,7 +868,25 @@
           "type": "real",
           "default": 1.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "astroid curve",
+        "effect": "theta = 2*pi*Re(z); f(z) = scale*cos(theta)^3 + i*scale*sin(theta)^3.",
+        "notes": [
+          "The imaginary part of the input is ignored; Re(z) is used as the curve angle.",
+          "scale defaults to 1 and scales both axes.",
+          "In Param Program source, use legacy(ast, src, tgt, scale). The old raw n selector is represented by src/tgt."
+        ],
+        "params": [
+          {
+            "ph": "scale",
+            "def": 1.0,
+            "type": "real",
+            "title": "Astroid scale applied to both axes."
+          }
+        ]
+      }
     },
     {
       "name": "asp",
@@ -581,7 +917,31 @@
           "type": "real",
           "default": 0.1
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "Archimedean spiral",
+        "effect": "theta = 2*pi*Re(z); r = a + b*theta; f(z) = r * (cos(theta) + i*sin(theta)).",
+        "notes": [
+          "The imaginary part of the input is ignored; Re(z) is used as the spiral angle.",
+          "a is the starting radius; b is the radial growth per radian.",
+          "In Param Program source, use legacy(asp, src, tgt, a, b). The old raw n selector is represented by src/tgt."
+        ],
+        "params": [
+          {
+            "ph": "a",
+            "def": 0.0,
+            "type": "real",
+            "title": "Starting radius in r=a+b*theta."
+          },
+          {
+            "ph": "b",
+            "def": 0.1,
+            "type": "real",
+            "title": "Linear radial growth per radian in r=a+b*theta."
+          }
+        ]
+      }
     },
     {
       "name": "lsp",
@@ -612,7 +972,31 @@
           "type": "real",
           "default": 0.15
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "logarithmic spiral",
+        "effect": "theta = 2*pi*Re(z); r = a*exp(b*theta); f(z) = r * (cos(theta) + i*sin(theta)).",
+        "notes": [
+          "The imaginary part of the input is ignored; Re(z) is used as the spiral angle.",
+          "a sets the initial radius; b sets exponential radial growth.",
+          "In Param Program source, use legacy(lsp, src, tgt, a, b). The old raw n selector is represented by src/tgt."
+        ],
+        "params": [
+          {
+            "ph": "a",
+            "def": 0.1,
+            "type": "real",
+            "title": "Initial radius multiplier in r=a*exp(b*theta)."
+          },
+          {
+            "ph": "b",
+            "def": 0.15,
+            "type": "real",
+            "title": "Exponential radial growth rate in r=a*exp(b*theta)."
+          }
+        ]
+      }
     },
     {
       "name": "dlt",
@@ -638,7 +1022,25 @@
           "type": "real",
           "default": 1.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "deltoid curve",
+        "effect": "theta = 2*pi*Re(z); f(z) = R*(2*cos(theta)+cos(2*theta))/3 + i*R*(2*sin(theta)-sin(2*theta))/3.",
+        "notes": [
+          "The imaginary part of the input is ignored; Re(z) is used as the curve angle.",
+          "R defaults to 1 and scales the deltoid.",
+          "In Param Program source, use legacy(dlt, src, tgt, R). The old raw n selector is represented by src/tgt."
+        ],
+        "params": [
+          {
+            "ph": "R",
+            "def": 1.0,
+            "type": "real",
+            "title": "Deltoid scale/radius."
+          }
+        ]
+      }
     },
     {
       "name": "rply",
@@ -674,7 +1076,37 @@
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "regular polygon perimeter",
+        "effect": "t = fract(Re(z)); ns = max(int(sides), 3); linearly interpolate along the ns regular-polygon edges at radius, then rotate by exp(2*pi*i*turns).",
+        "notes": [
+          "The imaginary part of the input is ignored; fract(Re(z)) chooses distance along the perimeter.",
+          "sides is truncated to an integer and clamped to at least 3. turns rotates the polygon by full turns.",
+          "In Param Program source, use legacy(rply, src, tgt, sides, radius, turns). The old raw n selector is represented by src/tgt."
+        ],
+        "params": [
+          {
+            "ph": "sides",
+            "def": 5.0,
+            "type": "real",
+            "title": "Number of polygon sides; truncated to an integer and clamped to at least 3."
+          },
+          {
+            "ph": "radius",
+            "def": 1.0,
+            "type": "real",
+            "title": "Radius of the polygon vertices."
+          },
+          {
+            "ph": "turns",
+            "def": 0.0,
+            "type": "real",
+            "title": "Rotation in full turns after the polygon point is generated."
+          }
+        ]
+      }
     },
     {
       "name": "star",
@@ -710,7 +1142,37 @@
           "type": "real",
           "default": 0.5
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "star polygon perimeter",
+        "effect": "t = fract(Re(z)); np = max(int(points), 3); walk 2*np alternating vertices with radii outer and outer*inner_ratio, linearly interpolating along each edge.",
+        "notes": [
+          "The imaginary part of the input is ignored; fract(Re(z)) chooses distance along the star perimeter.",
+          "points is truncated to an integer and clamped to at least 3. inner_ratio controls the inner radius as a fraction of outer.",
+          "In Param Program source, use legacy(star, src, tgt, points, outer, inner_ratio). The old raw n selector is represented by src/tgt."
+        ],
+        "params": [
+          {
+            "ph": "points",
+            "def": 5.0,
+            "type": "real",
+            "title": "Number of star points; truncated to an integer and clamped to at least 3."
+          },
+          {
+            "ph": "outer",
+            "def": 1.0,
+            "type": "real",
+            "title": "Outer vertex radius."
+          },
+          {
+            "ph": "inner_ratio",
+            "def": 0.5,
+            "type": "real",
+            "title": "Inner vertex radius as a fraction of outer."
+          }
+        ]
+      }
     },
     {
       "name": "rect",
@@ -746,7 +1208,37 @@
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "rectangle perimeter",
+        "effect": "t = fract(Re(z)); walk distance t*2*(w+h) around a centered rectangle of width w and height h, then rotate by exp(2*pi*i*turns).",
+        "notes": [
+          "The imaginary part of the input is ignored; fract(Re(z)) chooses arc-length position around the rectangle perimeter.",
+          "The walk starts on the bottom edge from left to right, then right edge, top edge, and left edge. turns rotates the result by full turns.",
+          "In Param Program source, use legacy(rect, src, tgt, w, h, turns). The old raw n selector is represented by src/tgt."
+        ],
+        "params": [
+          {
+            "ph": "w",
+            "def": 2.0,
+            "type": "real",
+            "title": "Rectangle width."
+          },
+          {
+            "ph": "h",
+            "def": 1.0,
+            "type": "real",
+            "title": "Rectangle height."
+          },
+          {
+            "ph": "turns",
+            "def": 0.0,
+            "type": "real",
+            "title": "Rotation in full turns after walking the rectangle perimeter; 0.25 rotates by 90 degrees."
+          }
+        ]
+      }
     },
     {
       "name": "rrect",
@@ -782,7 +1274,37 @@
           "type": "real",
           "default": 4.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "shapes",
+        "desc": "rounded rectangle / superellipse",
+        "effect": "theta = 2*pi*fract(Re(z)); e = 2/max(m, 0.01); f(z) = (w/2)*sign(cos(theta))*abs(cos(theta))^e + i*(h/2)*sign(sin(theta))*abs(sin(theta))^e.",
+        "notes": [
+          "The imaginary part of the input is ignored; fract(Re(z)) is used as the curve parameter.",
+          "w and h set the bounding box. m controls the superellipse exponent through e=2/max(m,0.01).",
+          "In Param Program source, use legacy(rrect, src, tgt, w, h, m). The old raw n selector is represented by src/tgt."
+        ],
+        "params": [
+          {
+            "ph": "w",
+            "def": 2.0,
+            "type": "real",
+            "title": "Bounding-box width."
+          },
+          {
+            "ph": "h",
+            "def": 1.0,
+            "type": "real",
+            "title": "Bounding-box height."
+          },
+          {
+            "ph": "m",
+            "def": 4.0,
+            "type": "real",
+            "title": "Superellipse exponent control; native code uses e=2/max(m,0.01)."
+          }
+        ]
+      }
     },
     {
       "name": "z01",
@@ -796,7 +1318,17 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "real-part mirror remix",
+        "effect": "For inputs z1,z2, let x=Re(z1), y=Re(z2). out1 = x + i*y; out2 = y + i*x.",
+        "notes": [
+          "The imaginary parts of both inputs are ignored.",
+          "This is a pair transform: src=both reads p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs.",
+          "It takes no explicit transform arguments."
+        ]
+      }
     },
     {
       "name": "coeff2",
@@ -810,7 +1342,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy t1+t2 and t1*t2 map"
+      }
     },
     {
       "name": "coeff3",
@@ -824,7 +1360,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy 1/(t+2) map"
+      }
     },
     {
       "name": "coeff3a",
@@ -838,7 +1378,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy 1/(t+1) map"
+      }
     },
     {
       "name": "coeff4",
@@ -852,7 +1396,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy cos(t1), sin(t2)"
+      }
     },
     {
       "name": "coeff5",
@@ -866,7 +1414,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy reciprocal cross map"
+      }
     },
     {
       "name": "coeff5a",
@@ -880,7 +1432,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy reciprocal self map"
+      }
     },
     {
       "name": "coeff6",
@@ -894,7 +1450,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy cubic fractional map"
+      }
     },
     {
       "name": "coeff7",
@@ -908,7 +1468,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy trig fractional map"
+      }
     },
     {
       "name": "coeff8",
@@ -922,7 +1486,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy cross trig map"
+      }
     },
     {
       "name": "coeff9",
@@ -936,7 +1504,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy squared fractional map"
+      }
     },
     {
       "name": "coeff10",
@@ -950,7 +1522,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy fourth-power fractional map"
+      }
     },
     {
       "name": "coeff11",
@@ -964,7 +1540,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy log fourth-power map"
+      }
     },
     {
       "name": "coeff12",
@@ -978,7 +1558,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "legacy",
+        "desc": "legacy mixed polynomial map"
+      }
     },
     {
       "name": "zzold",
@@ -992,7 +1576,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "legacy t1+i*t2 remix into both slots"
+      }
     },
     {
       "name": "zz1",
@@ -1006,7 +1594,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "t1+i*t2 and t1*t2+i*(t1+t2)"
+      }
     },
     {
       "name": "zz2",
@@ -1020,7 +1612,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "t1+i*t2 and t1-i*t2"
+      }
     },
     {
       "name": "zz3",
@@ -1034,7 +1630,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "cross-imaginary remix of t1 and t2"
+      }
     },
     {
       "name": "t1radd",
@@ -1054,7 +1654,19 @@
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "add to real part of t1 only",
+        "params": [
+          {
+            "ph": "v",
+            "def": 0.0,
+            "type": "real",
+            "title": "Offset value added by this transform."
+          }
+        ]
+      }
     },
     {
       "name": "t1iadd",
@@ -1074,7 +1686,19 @@
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "add to imaginary part of t1 only",
+        "params": [
+          {
+            "ph": "v",
+            "def": 0.0,
+            "type": "real",
+            "title": "Offset value added by this transform."
+          }
+        ]
+      }
     },
     {
       "name": "t2radd",
@@ -1094,7 +1718,19 @@
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "add to real part of t2 only",
+        "params": [
+          {
+            "ph": "v",
+            "def": 0.0,
+            "type": "real",
+            "title": "Offset value added by this transform."
+          }
+        ]
+      }
     },
     {
       "name": "t2iadd",
@@ -1114,7 +1750,19 @@
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "add to imaginary part of t2 only",
+        "params": [
+          {
+            "ph": "v",
+            "def": 0.0,
+            "type": "real",
+            "title": "Offset value added by this transform."
+          }
+        ]
+      }
     },
     {
       "name": "radd",
@@ -1134,7 +1782,19 @@
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "add to real parts of both parameters",
+        "params": [
+          {
+            "ph": "v",
+            "def": 0.0,
+            "type": "real",
+            "title": "Offset value added by this transform."
+          }
+        ]
+      }
     },
     {
       "name": "iadd",
@@ -1154,7 +1814,19 @@
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "add to imaginary parts of both parameters",
+        "params": [
+          {
+            "ph": "v",
+            "def": 0.0,
+            "type": "real",
+            "title": "Offset value added by this transform."
+          }
+        ]
+      }
     },
     {
       "name": "add",
@@ -1168,7 +1840,11 @@
         "both",
         "push2"
       ],
-      "args": []
+      "args": [],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "z1=z1+c1 and z2=z2+c2 using complex offsets"
+      }
     },
     {
       "name": "cadd",
@@ -1193,7 +1869,25 @@
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "add a complex constant to t1 and t2",
+        "params": [
+          {
+            "ph": "re",
+            "def": 0.0,
+            "type": "real",
+            "title": "Real part of the complex offset added to both parameters."
+          },
+          {
+            "ph": "im",
+            "def": 0.0,
+            "type": "real",
+            "title": "Imaginary part of the complex offset added to both parameters."
+          }
+        ]
+      }
     },
     {
       "name": "rscale",
@@ -1213,7 +1907,19 @@
           "type": "real",
           "default": 1.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "scale real parts only",
+        "params": [
+          {
+            "ph": "v",
+            "def": 1.0,
+            "type": "real",
+            "title": "Scale factor applied to real parts only."
+          }
+        ]
+      }
     },
     {
       "name": "iscale",
@@ -1233,7 +1939,19 @@
           "type": "real",
           "default": 1.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "scale imaginary parts only",
+        "params": [
+          {
+            "ph": "v",
+            "def": 1.0,
+            "type": "real",
+            "title": "Scale factor applied to imaginary parts only."
+          }
+        ]
+      }
     },
     {
       "name": "scale",
@@ -1253,7 +1971,19 @@
           "type": "real",
           "default": 1.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "arithmetic",
+        "desc": "scale all components",
+        "params": [
+          {
+            "ph": "v",
+            "def": 1.0,
+            "type": "real",
+            "title": "Scale factor applied to all real and imaginary components."
+          }
+        ]
+      }
     },
     {
       "name": "sdith",
@@ -1271,7 +2001,19 @@
           "type": "real",
           "default": 1.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "dither",
+        "desc": "square uniform jitter",
+        "params": [
+          {
+            "ph": "d",
+            "def": 1.0,
+            "type": "real",
+            "title": "Dither width in grid spacings; native width is d/N."
+          }
+        ]
+      }
     },
     {
       "name": "ddith",
@@ -1299,7 +2041,31 @@
           "type": "real",
           "default": 0.5
         }
-      ]
+      ],
+      "ui": {
+        "category": "dither",
+        "desc": "disk jitter",
+        "params": [
+          {
+            "ph": "target",
+            "def": 2.0,
+            "type": "real",
+            "title": "Legacy target selector: 0=p1, 1=p2, 2=both."
+          },
+          {
+            "ph": "d",
+            "def": 1.0,
+            "type": "real",
+            "title": "Disk dither radius in grid spacings; native radius is d/N."
+          },
+          {
+            "ph": "exp",
+            "def": 0.5,
+            "type": "real",
+            "title": "Radial distribution exponent; 0.5 gives uniform disk area."
+          }
+        ]
+      }
     },
     {
       "name": "ndith",
@@ -1317,7 +2083,19 @@
           "type": "real",
           "default": 1.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "dither",
+        "desc": "normal/Gaussian jitter",
+        "params": [
+          {
+            "ph": "d",
+            "def": 1.0,
+            "type": "real",
+            "title": "Gaussian jitter sigma in grid spacings; native sigma is d/N."
+          }
+        ]
+      }
     },
     {
       "name": "adth",
@@ -1345,7 +2123,31 @@
           "type": "real",
           "default": 0.4
         }
-      ]
+      ],
+      "ui": {
+        "category": "dither",
+        "desc": "annulus jitter",
+        "params": [
+          {
+            "ph": "target",
+            "def": 2.0,
+            "type": "real",
+            "title": "Legacy target selector: 0=p1, 1=p2, 2=both."
+          },
+          {
+            "ph": "d",
+            "def": 1.0,
+            "type": "real",
+            "title": "Outer annulus radius in grid spacings; native radius is d/N."
+          },
+          {
+            "ph": "inner",
+            "def": 0.4,
+            "type": "real",
+            "title": "Inner radius fraction of the outer radius, clamped to [0,1]."
+          }
+        ]
+      }
     },
     {
       "name": "ldth",
@@ -1378,7 +2180,37 @@
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "dither",
+        "desc": "line-segment jitter",
+        "params": [
+          {
+            "ph": "target",
+            "def": 2.0,
+            "type": "real",
+            "title": "Legacy target selector: 0=p1, 1=p2, 2=both."
+          },
+          {
+            "ph": "d",
+            "def": 1.0,
+            "type": "real",
+            "title": "Line dither base length in grid spacings; native half-length is (d/N)*len."
+          },
+          {
+            "ph": "len",
+            "def": 1.0,
+            "type": "real",
+            "title": "Multiplier for the line segment half-length."
+          },
+          {
+            "ph": "angle",
+            "def": 0.0,
+            "type": "real",
+            "title": "Line angle in radians."
+          }
+        ]
+      }
     },
     {
       "name": "crdth",
@@ -1401,7 +2233,25 @@
           "type": "real",
           "default": 1.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "dither",
+        "desc": "cross-shaped jitter",
+        "params": [
+          {
+            "ph": "target",
+            "def": 2.0,
+            "type": "real",
+            "title": "Legacy target selector: 0=p1, 1=p2, 2=both."
+          },
+          {
+            "ph": "d",
+            "def": 1.0,
+            "type": "real",
+            "title": "Cross dither half-length in grid spacings; native half-length is d/N."
+          }
+        ]
+      }
     },
     {
       "name": "scdth",
@@ -1434,7 +2284,37 @@
           "type": "real",
           "default": 0.0
         }
-      ]
+      ],
+      "ui": {
+        "category": "dither",
+        "desc": "sector jitter",
+        "params": [
+          {
+            "ph": "target",
+            "def": 2.0,
+            "type": "real",
+            "title": "Legacy target selector: 0=p1, 1=p2, 2=both."
+          },
+          {
+            "ph": "d",
+            "def": 1.0,
+            "type": "real",
+            "title": "Sector dither radius in grid spacings; native radius is d/N."
+          },
+          {
+            "ph": "half_ap",
+            "def": 0.25,
+            "type": "real",
+            "title": "Sector half-aperture as a fraction of pi radians."
+          },
+          {
+            "ph": "center",
+            "def": 0.0,
+            "type": "real",
+            "title": "Sector center angle in radians."
+          }
+        ]
+      }
     }
   ],
   "ui": {
@@ -1463,444 +2343,6 @@
         "title": "Legacy coefficient maps",
         "help": "older named parameter recipes kept for compatibility"
       }
-    },
-    "functions": {
-      "unit_circle": {
-        "category": "maps",
-        "desc": "map z to exp(2*pi*i*z)",
-        "effect": "f(z) = exp(2*pi*i*z). For z = a + i*b: f(z) = exp(-2*pi*b) * (cos(2*pi*a) + i*sin(2*pi*a)).",
-        "notes": [
-          "For normal real grid inputs x, this is x -> cos(2*pi*x) + i*sin(2*pi*x), mapping [0,1] around the unit circle.",
-          "If the input has an imaginary part, it changes the radius: positive imaginary shrinks by exp(-2*pi*b), negative imaginary expands.",
-          "src=p1 applies f to p1; src=p2 applies f to p2; src=both applies f to p1 and p2; src=pop1 pops one stack value and applies f.",
-          "tgt=both writes both outputs to p1,p2; tgt=p1 or tgt=p2 writes the first output to that register; tgt=push1 pushes the first output."
-        ]
-      },
-      "rtheta": {
-        "category": "maps",
-        "desc": "polar disk map using paired real parts as radius and angle",
-        "effect": "For inputs z1,z2, let x=Re(z1), y=Re(z2). out1 = x^p * (cos(2*pi*y) + i*sin(2*pi*y)); out2 = y^p * (cos(2*pi*x) + i*sin(2*pi*x)).",
-        "notes": [
-          "The imaginary parts of both inputs are ignored.",
-          "p defaults to 1 and is applied as a power to the radius coordinate.",
-          "In Param Program source, use legacy(rtheta, src, tgt, p). The old raw target selector argument is represented by src/tgt.",
-          "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
-        ]
-      },
-      "square": {
-        "category": "maps",
-        "desc": "square both complex parameters"
-      },
-      "cube": {
-        "category": "maps",
-        "desc": "cube both complex parameters"
-      },
-      "reciprocal": {
-        "category": "maps",
-        "desc": "replace each parameter with 1/t"
-      },
-      "conjugate": {
-        "category": "maps",
-        "desc": "complex conjugate t1 and t2"
-      },
-      "swap": {
-        "category": "maps",
-        "desc": "swap t1 and t2"
-      },
-      "add_sub": {
-        "category": "arithmetic",
-        "desc": "emit t1+t2 and t1-t2"
-      },
-      "mul_div": {
-        "category": "arithmetic",
-        "desc": "emit t1*t2 and t1/t2"
-      },
-      "moebius": {
-        "category": "maps",
-        "desc": "Mobius map on t1 and t2; 0-arg runs keep legacy 1/(t+2)"
-      },
-      "negate": {
-        "category": "maps",
-        "desc": "negate t1 and t2"
-      },
-      "exp": {
-        "category": "maps",
-        "desc": "complex exponential of each parameter",
-        "effect": "f(z) = exp(z). For z = a + i*b: f(z) = exp(a) * (cos(b) + i*sin(b)).",
-        "notes": [
-          "This is the ordinary complex exponential, not unit_circle; angles are in radians, not turns.",
-          "src=p1 applies f to p1; src=p2 applies f to p2; src=both applies f to p1 and p2; src=pop1 pops one stack value and applies f.",
-          "tgt=both writes both outputs to p1,p2; tgt=p1 or tgt=p2 writes the first output to that register; tgt=push1 pushes the first output."
-        ]
-      },
-      "xim": {
-        "category": "maps",
-        "desc": "move real part into the imaginary axis",
-        "effect": "f(z) = i*Re(z). For z = a + i*b: f(z) = 0 + i*a.",
-        "notes": [
-          "The original imaginary part is discarded.",
-          "src=p1 applies f to p1; src=p2 applies f to p2; src=both applies f to p1 and p2; src=pop1 pops one stack value and applies f.",
-          "tgt=both writes both outputs to p1,p2; tgt=p1 or tgt=p2 writes the first output to that register; tgt=push1 pushes the first output."
-        ]
-      },
-      "zzold": {
-        "category": "arithmetic",
-        "desc": "legacy t1+i*t2 remix into both slots"
-      },
-      "zz1": {
-        "category": "arithmetic",
-        "desc": "t1+i*t2 and t1*t2+i*(t1+t2)"
-      },
-      "zz2": {
-        "category": "arithmetic",
-        "desc": "t1+i*t2 and t1-i*t2"
-      },
-      "zz3": {
-        "category": "arithmetic",
-        "desc": "cross-imaginary remix of t1 and t2"
-      },
-      "inv_t_plus_2": {
-        "category": "arithmetic",
-        "desc": "t1=1/(t1+a), t2=1/(t2+b)"
-      },
-      "t1radd": {
-        "category": "arithmetic",
-        "desc": "add to real part of t1 only"
-      },
-      "t1iadd": {
-        "category": "arithmetic",
-        "desc": "add to imaginary part of t1 only"
-      },
-      "t2radd": {
-        "category": "arithmetic",
-        "desc": "add to real part of t2 only"
-      },
-      "t2iadd": {
-        "category": "arithmetic",
-        "desc": "add to imaginary part of t2 only"
-      },
-      "radd": {
-        "category": "arithmetic",
-        "desc": "add to real parts of both parameters"
-      },
-      "iadd": {
-        "category": "arithmetic",
-        "desc": "add to imaginary parts of both parameters"
-      },
-      "add": {
-        "category": "arithmetic",
-        "desc": "z1=z1+c1 and z2=z2+c2 using complex offsets"
-      },
-      "cadd": {
-        "category": "arithmetic",
-        "desc": "add a complex constant to t1 and t2"
-      },
-      "rscale": {
-        "category": "arithmetic",
-        "desc": "scale real parts only"
-      },
-      "iscale": {
-        "category": "arithmetic",
-        "desc": "scale imaginary parts only"
-      },
-      "scale": {
-        "category": "arithmetic",
-        "desc": "scale all components"
-      },
-      "crd": {
-        "category": "shapes",
-        "desc": "cardioid curve",
-        "effect": "theta = 2*pi*Re(z); r = size * (1 + cos(theta)); f(z) = r * (cos(theta) + i*sin(theta)).",
-        "notes": [
-          "The imaginary part of the input is ignored; Re(z) is used as the cardioid angle.",
-          "size defaults to 1. The maximum radius is 2*size at theta=0, and the cusp is at theta=pi.",
-          "In Param Program source, use legacy(crd, src, tgt, size). The old raw n selector is represented by src/tgt; size is the only explicit transform argument.",
-          "src=p1 applies f to p1; src=p2 applies f to p2; src=both applies f to p1 and p2; src=pop1/pop2 read one/two stack values.",
-          "tgt=both writes both outputs to p1,p2; tgt=p1 or tgt=p2 writes the first output to that register; tgt=push1/push2 push one/two outputs."
-        ]
-      },
-      "hrt": {
-        "category": "shapes",
-        "desc": "heart curve",
-        "effect": "t = 2*pi*Re(z) + pi/2; base = (16*sin(t)^3)/40 + i*((13*cos(t)-5*cos(2*t)-2*cos(3*t)-cos(4*t))/40 + 0.1); f(z) = size * exp(2*pi*i*turns) * base.",
-        "notes": [
-          "The imaginary part of the input is ignored; Re(z) is used as the curve parameter.",
-          "size defaults to 1 and scales the heart. turns defaults to 0 and rotates the result by full turns.",
-          "In Param Program source, use legacy(hrt, src, tgt, size, turns). The old raw n selector is represented by src/tgt."
-        ]
-      },
-      "spdl": {
-        "category": "shapes",
-        "desc": "spindle / superellipse-like curve",
-        "effect": "theta = 2*pi*Re(z); e = 2/max(vp, 0.01); f(z) = va*sign(cos(theta))*abs(cos(theta))^e + i*vb*sign(sin(theta))*abs(sin(theta))^e.",
-        "notes": [
-          "The imaginary part of the input is ignored; Re(z) is used as the curve angle.",
-          "va and vb scale the horizontal and vertical axes. vp controls the superellipse exponent through e=2/max(vp,0.01).",
-          "In Param Program source, use legacy(spdl, src, tgt, va, vb, vp). The old raw n selector is represented by src/tgt."
-        ]
-      },
-      "lmc": {
-        "category": "shapes",
-        "desc": "limacon curve",
-        "effect": "theta = 2*pi*Re(z); r = a + b*cos(theta); f(z) = r * (cos(theta) + i*sin(theta)).",
-        "notes": [
-          "The imaginary part of the input is ignored; Re(z) is used as the polar angle.",
-          "a sets the base radius; b sets the cosine modulation.",
-          "In Param Program source, use legacy(lmc, src, tgt, a, b). The old raw n selector is represented by src/tgt."
-        ]
-      },
-      "rsc": {
-        "category": "shapes",
-        "desc": "rose curve",
-        "effect": "theta = 2*pi*Re(z); r = amp*cos(k*theta); f(z) = r * (cos(theta) + i*sin(theta)).",
-        "notes": [
-          "The imaginary part of the input is ignored; Re(z) is used as the polar angle.",
-          "amp scales the radius; k controls the rose frequency/petal structure.",
-          "In Param Program source, use legacy(rsc, src, tgt, amp, k). The old raw n selector is represented by src/tgt."
-        ]
-      },
-      "lss": {
-        "category": "shapes",
-        "desc": "Lissajous curve",
-        "effect": "theta = 2*pi*Re(z); delta = pi*phase; f(z) = A*sin(a*theta + delta) + i*B*sin(b*theta).",
-        "notes": [
-          "The imaginary part of the input is ignored; Re(z) is used as the time parameter.",
-          "A/B scale x/y; a/b are the x/y frequencies; phase is measured in half-turns because delta=pi*phase.",
-          "In Param Program source, use legacy(lss, src, tgt, A, B, a, b, phase). The old raw n selector is represented by src/tgt."
-        ]
-      },
-      "ast": {
-        "category": "shapes",
-        "desc": "astroid curve",
-        "effect": "theta = 2*pi*Re(z); f(z) = scale*cos(theta)^3 + i*scale*sin(theta)^3.",
-        "notes": [
-          "The imaginary part of the input is ignored; Re(z) is used as the curve angle.",
-          "scale defaults to 1 and scales both axes.",
-          "In Param Program source, use legacy(ast, src, tgt, scale). The old raw n selector is represented by src/tgt."
-        ]
-      },
-      "asp": {
-        "category": "shapes",
-        "desc": "Archimedean spiral",
-        "effect": "theta = 2*pi*Re(z); r = a + b*theta; f(z) = r * (cos(theta) + i*sin(theta)).",
-        "notes": [
-          "The imaginary part of the input is ignored; Re(z) is used as the spiral angle.",
-          "a is the starting radius; b is the radial growth per radian.",
-          "In Param Program source, use legacy(asp, src, tgt, a, b). The old raw n selector is represented by src/tgt."
-        ]
-      },
-      "lsp": {
-        "category": "shapes",
-        "desc": "logarithmic spiral",
-        "effect": "theta = 2*pi*Re(z); r = a*exp(b*theta); f(z) = r * (cos(theta) + i*sin(theta)).",
-        "notes": [
-          "The imaginary part of the input is ignored; Re(z) is used as the spiral angle.",
-          "a sets the initial radius; b sets exponential radial growth.",
-          "In Param Program source, use legacy(lsp, src, tgt, a, b). The old raw n selector is represented by src/tgt."
-        ]
-      },
-      "dlt": {
-        "category": "shapes",
-        "desc": "deltoid curve",
-        "effect": "theta = 2*pi*Re(z); f(z) = R*(2*cos(theta)+cos(2*theta))/3 + i*R*(2*sin(theta)-sin(2*theta))/3.",
-        "notes": [
-          "The imaginary part of the input is ignored; Re(z) is used as the curve angle.",
-          "R defaults to 1 and scales the deltoid.",
-          "In Param Program source, use legacy(dlt, src, tgt, R). The old raw n selector is represented by src/tgt."
-        ]
-      },
-      "rply": {
-        "category": "shapes",
-        "desc": "regular polygon perimeter",
-        "effect": "t = fract(Re(z)); ns = max(int(sides), 3); linearly interpolate along the ns regular-polygon edges at radius, then rotate by exp(2*pi*i*turns).",
-        "notes": [
-          "The imaginary part of the input is ignored; fract(Re(z)) chooses distance along the perimeter.",
-          "sides is truncated to an integer and clamped to at least 3. turns rotates the polygon by full turns.",
-          "In Param Program source, use legacy(rply, src, tgt, sides, radius, turns). The old raw n selector is represented by src/tgt."
-        ]
-      },
-      "star": {
-        "category": "shapes",
-        "desc": "star polygon perimeter",
-        "effect": "t = fract(Re(z)); np = max(int(points), 3); walk 2*np alternating vertices with radii outer and outer*inner_ratio, linearly interpolating along each edge.",
-        "notes": [
-          "The imaginary part of the input is ignored; fract(Re(z)) chooses distance along the star perimeter.",
-          "points is truncated to an integer and clamped to at least 3. inner_ratio controls the inner radius as a fraction of outer.",
-          "In Param Program source, use legacy(star, src, tgt, points, outer, inner_ratio). The old raw n selector is represented by src/tgt."
-        ]
-      },
-      "rect": {
-        "category": "shapes",
-        "desc": "rectangle perimeter",
-        "effect": "t = fract(Re(z)); walk distance t*2*(w+h) around a centered rectangle of width w and height h, then rotate by exp(2*pi*i*turns).",
-        "notes": [
-          "The imaginary part of the input is ignored; fract(Re(z)) chooses arc-length position around the rectangle perimeter.",
-          "The walk starts on the bottom edge from left to right, then right edge, top edge, and left edge. turns rotates the result by full turns.",
-          "In Param Program source, use legacy(rect, src, tgt, w, h, turns). The old raw n selector is represented by src/tgt."
-        ]
-      },
-      "rrect": {
-        "category": "shapes",
-        "desc": "rounded rectangle / superellipse",
-        "effect": "theta = 2*pi*fract(Re(z)); e = 2/max(m, 0.01); f(z) = (w/2)*sign(cos(theta))*abs(cos(theta))^e + i*(h/2)*sign(sin(theta))*abs(sin(theta))^e.",
-        "notes": [
-          "The imaginary part of the input is ignored; fract(Re(z)) is used as the curve parameter.",
-          "w and h set the bounding box. m controls the superellipse exponent through e=2/max(m,0.01).",
-          "In Param Program source, use legacy(rrect, src, tgt, w, h, m). The old raw n selector is represented by src/tgt."
-        ]
-      },
-      "z01": {
-        "category": "arithmetic",
-        "desc": "real-part mirror remix",
-        "effect": "For inputs z1,z2, let x=Re(z1), y=Re(z2). out1 = x + i*y; out2 = y + i*x.",
-        "notes": [
-          "The imaginary parts of both inputs are ignored.",
-          "This is a pair transform: src=both reads p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs.",
-          "It takes no explicit transform arguments."
-        ]
-      },
-      "sum_prod": {
-        "category": "arithmetic",
-        "desc": "emit t1+t2 and t1*t2"
-      },
-      "roots2": {
-        "category": "roots",
-        "desc": "quadratic roots of (9/64)z^2+t1*z+t2"
-      },
-      "roots3": {
-        "category": "roots",
-        "desc": "cubic roots from t1+t2, 1, 1, t1*t2"
-      },
-      "roots5": {
-        "category": "roots",
-        "desc": "cubic roots from trig/i*t parameters"
-      },
-      "roots6": {
-        "category": "roots",
-        "desc": "quartic roots from mixed t1/t2 polynomial"
-      },
-      "sdith": {
-        "category": "dither",
-        "desc": "square uniform jitter"
-      },
-      "ddith": {
-        "category": "dither",
-        "desc": "disk jitter"
-      },
-      "adth": {
-        "category": "dither",
-        "desc": "annulus jitter"
-      },
-      "ldth": {
-        "category": "dither",
-        "desc": "line-segment jitter"
-      },
-      "crdth": {
-        "category": "dither",
-        "desc": "cross-shaped jitter"
-      },
-      "scdth": {
-        "category": "dither",
-        "desc": "sector jitter"
-      },
-      "ndith": {
-        "category": "dither",
-        "desc": "normal/Gaussian jitter"
-      },
-      "coeff2": {
-        "category": "legacy",
-        "desc": "legacy t1+t2 and t1*t2 map"
-      },
-      "coeff3": {
-        "category": "legacy",
-        "desc": "legacy 1/(t+2) map"
-      },
-      "coeff3a": {
-        "category": "legacy",
-        "desc": "legacy 1/(t+1) map"
-      },
-      "coeff4": {
-        "category": "legacy",
-        "desc": "legacy cos(t1), sin(t2)"
-      },
-      "coeff5": {
-        "category": "legacy",
-        "desc": "legacy reciprocal cross map"
-      },
-      "coeff5a": {
-        "category": "legacy",
-        "desc": "legacy reciprocal self map"
-      },
-      "coeff6": {
-        "category": "legacy",
-        "desc": "legacy cubic fractional map"
-      },
-      "coeff7": {
-        "category": "legacy",
-        "desc": "legacy trig fractional map"
-      },
-      "coeff8": {
-        "category": "legacy",
-        "desc": "legacy cross trig map"
-      },
-      "coeff9": {
-        "category": "legacy",
-        "desc": "legacy squared fractional map"
-      },
-      "coeff10": {
-        "category": "legacy",
-        "desc": "legacy fourth-power fractional map"
-      },
-      "coeff11": {
-        "category": "legacy",
-        "desc": "legacy log fourth-power map"
-      },
-      "coeff12": {
-        "category": "legacy",
-        "desc": "legacy mixed polynomial map"
-      }
-    },
-    "arg_specs": {
-      "moebius": [
-        {
-          "ph": "a",
-          "def": "1",
-          "type": "complex",
-          "title": "Complex coefficient a."
-        },
-        {
-          "ph": "b",
-          "def": "0",
-          "type": "complex",
-          "title": "Complex coefficient b."
-        },
-        {
-          "ph": "c",
-          "def": "0",
-          "type": "complex",
-          "title": "Complex coefficient c."
-        },
-        {
-          "ph": "d",
-          "def": "1",
-          "type": "complex",
-          "title": "Complex coefficient d."
-        }
-      ],
-      "inv_t_plus_2": [
-        {
-          "ph": "z1",
-          "def": "2",
-          "type": "complex",
-          "title": "Complex expression for the first offset."
-        },
-        {
-          "ph": "z2",
-          "def": "2",
-          "type": "complex",
-          "title": "Complex expression for the second offset."
-        }
-      ]
     },
     "variable_arg_forms": {
       "moebius": {

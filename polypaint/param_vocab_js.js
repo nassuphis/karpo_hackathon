@@ -100,6 +100,10 @@ window._paramRegistryVocab = {
     }
   },
   "uiFunctions": {
+    "none": {
+      "category": "legacy",
+      "desc": "no-op; leave selected parameter values unchanged"
+    },
     "unit_circle": {
       "category": "maps",
       "desc": "map z to exp(2*pi*i*z)",
@@ -109,17 +113,6 @@ window._paramRegistryVocab = {
         "If the input has an imaginary part, it changes the radius: positive imaginary shrinks by exp(-2*pi*b), negative imaginary expands.",
         "src=p1 applies f to p1; src=p2 applies f to p2; src=both applies f to p1 and p2; src=pop1 pops one stack value and applies f.",
         "tgt=both writes both outputs to p1,p2; tgt=p1 or tgt=p2 writes the first output to that register; tgt=push1 pushes the first output."
-      ]
-    },
-    "rtheta": {
-      "category": "maps",
-      "desc": "polar disk map using paired real parts as radius and angle",
-      "effect": "For inputs z1,z2, let x=Re(z1), y=Re(z2). out1 = x^p * (cos(2*pi*y) + i*sin(2*pi*y)); out2 = y^p * (cos(2*pi*x) + i*sin(2*pi*x)).",
-      "notes": [
-        "The imaginary parts of both inputs are ignored.",
-        "p defaults to 1 and is applied as a power to the radius coordinate.",
-        "In Param Program source, use legacy(rtheta, src, tgt, p). The old raw target selector argument is represented by src/tgt.",
-        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
       ]
     },
     "square": {
@@ -137,22 +130,6 @@ window._paramRegistryVocab = {
     "conjugate": {
       "category": "maps",
       "desc": "complex conjugate t1 and t2"
-    },
-    "swap": {
-      "category": "maps",
-      "desc": "swap t1 and t2"
-    },
-    "add_sub": {
-      "category": "arithmetic",
-      "desc": "emit t1+t2 and t1-t2"
-    },
-    "mul_div": {
-      "category": "arithmetic",
-      "desc": "emit t1*t2 and t1/t2"
-    },
-    "moebius": {
-      "category": "maps",
-      "desc": "Mobius map on t1 and t2; 0-arg runs keep legacy 1/(t+2)"
     },
     "negate": {
       "category": "maps",
@@ -178,69 +155,56 @@ window._paramRegistryVocab = {
         "tgt=both writes both outputs to p1,p2; tgt=p1 or tgt=p2 writes the first output to that register; tgt=push1 pushes the first output."
       ]
     },
-    "zzold": {
+    "add_sub": {
       "category": "arithmetic",
-      "desc": "legacy t1+i*t2 remix into both slots"
+      "desc": "emit t1+t2 and t1-t2"
     },
-    "zz1": {
+    "mul_div": {
       "category": "arithmetic",
-      "desc": "t1+i*t2 and t1*t2+i*(t1+t2)"
+      "desc": "emit t1*t2 and t1/t2"
     },
-    "zz2": {
-      "category": "arithmetic",
-      "desc": "t1+i*t2 and t1-i*t2"
+    "swap": {
+      "category": "maps",
+      "desc": "swap t1 and t2"
     },
-    "zz3": {
+    "sum_prod": {
       "category": "arithmetic",
-      "desc": "cross-imaginary remix of t1 and t2"
+      "desc": "emit t1+t2 and t1*t2"
+    },
+    "roots2": {
+      "category": "roots",
+      "desc": "quadratic roots of (9/64)z^2+t1*z+t2"
+    },
+    "roots3": {
+      "category": "roots",
+      "desc": "cubic roots from t1+t2, 1, 1, t1*t2"
+    },
+    "roots5": {
+      "category": "roots",
+      "desc": "cubic roots from trig/i*t parameters"
+    },
+    "roots6": {
+      "category": "roots",
+      "desc": "quartic roots from mixed t1/t2 polynomial"
+    },
+    "rtheta": {
+      "category": "maps",
+      "desc": "polar disk map using paired real parts as radius and angle",
+      "effect": "For inputs z1,z2, let x=Re(z1), y=Re(z2). out1 = x^p * (cos(2*pi*y) + i*sin(2*pi*y)); out2 = y^p * (cos(2*pi*x) + i*sin(2*pi*x)).",
+      "notes": [
+        "The imaginary parts of both inputs are ignored.",
+        "p defaults to 1 and is applied as a power to the radius coordinate.",
+        "In Param Program source, use legacy(rtheta, src, tgt, p). The old raw target selector argument is represented by src/tgt.",
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
+    },
+    "moebius": {
+      "category": "maps",
+      "desc": "Mobius map on t1 and t2; 0-arg runs keep legacy 1/(t+2)"
     },
     "inv_t_plus_2": {
       "category": "arithmetic",
       "desc": "t1=1/(t1+a), t2=1/(t2+b)"
-    },
-    "t1radd": {
-      "category": "arithmetic",
-      "desc": "add to real part of t1 only"
-    },
-    "t1iadd": {
-      "category": "arithmetic",
-      "desc": "add to imaginary part of t1 only"
-    },
-    "t2radd": {
-      "category": "arithmetic",
-      "desc": "add to real part of t2 only"
-    },
-    "t2iadd": {
-      "category": "arithmetic",
-      "desc": "add to imaginary part of t2 only"
-    },
-    "radd": {
-      "category": "arithmetic",
-      "desc": "add to real parts of both parameters"
-    },
-    "iadd": {
-      "category": "arithmetic",
-      "desc": "add to imaginary parts of both parameters"
-    },
-    "add": {
-      "category": "arithmetic",
-      "desc": "z1=z1+c1 and z2=z2+c2 using complex offsets"
-    },
-    "cadd": {
-      "category": "arithmetic",
-      "desc": "add a complex constant to t1 and t2"
-    },
-    "rscale": {
-      "category": "arithmetic",
-      "desc": "scale real parts only"
-    },
-    "iscale": {
-      "category": "arithmetic",
-      "desc": "scale imaginary parts only"
-    },
-    "scale": {
-      "category": "arithmetic",
-      "desc": "scale all components"
     },
     "crd": {
       "category": "shapes",
@@ -394,54 +358,6 @@ window._paramRegistryVocab = {
         "It takes no explicit transform arguments."
       ]
     },
-    "sum_prod": {
-      "category": "arithmetic",
-      "desc": "emit t1+t2 and t1*t2"
-    },
-    "roots2": {
-      "category": "roots",
-      "desc": "quadratic roots of (9/64)z^2+t1*z+t2"
-    },
-    "roots3": {
-      "category": "roots",
-      "desc": "cubic roots from t1+t2, 1, 1, t1*t2"
-    },
-    "roots5": {
-      "category": "roots",
-      "desc": "cubic roots from trig/i*t parameters"
-    },
-    "roots6": {
-      "category": "roots",
-      "desc": "quartic roots from mixed t1/t2 polynomial"
-    },
-    "sdith": {
-      "category": "dither",
-      "desc": "square uniform jitter"
-    },
-    "ddith": {
-      "category": "dither",
-      "desc": "disk jitter"
-    },
-    "adth": {
-      "category": "dither",
-      "desc": "annulus jitter"
-    },
-    "ldth": {
-      "category": "dither",
-      "desc": "line-segment jitter"
-    },
-    "crdth": {
-      "category": "dither",
-      "desc": "cross-shaped jitter"
-    },
-    "scdth": {
-      "category": "dither",
-      "desc": "sector jitter"
-    },
-    "ndith": {
-      "category": "dither",
-      "desc": "normal/Gaussian jitter"
-    },
     "coeff2": {
       "category": "legacy",
       "desc": "legacy t1+t2 and t1*t2 map"
@@ -493,6 +409,94 @@ window._paramRegistryVocab = {
     "coeff12": {
       "category": "legacy",
       "desc": "legacy mixed polynomial map"
+    },
+    "zzold": {
+      "category": "arithmetic",
+      "desc": "legacy t1+i*t2 remix into both slots"
+    },
+    "zz1": {
+      "category": "arithmetic",
+      "desc": "t1+i*t2 and t1*t2+i*(t1+t2)"
+    },
+    "zz2": {
+      "category": "arithmetic",
+      "desc": "t1+i*t2 and t1-i*t2"
+    },
+    "zz3": {
+      "category": "arithmetic",
+      "desc": "cross-imaginary remix of t1 and t2"
+    },
+    "t1radd": {
+      "category": "arithmetic",
+      "desc": "add to real part of t1 only"
+    },
+    "t1iadd": {
+      "category": "arithmetic",
+      "desc": "add to imaginary part of t1 only"
+    },
+    "t2radd": {
+      "category": "arithmetic",
+      "desc": "add to real part of t2 only"
+    },
+    "t2iadd": {
+      "category": "arithmetic",
+      "desc": "add to imaginary part of t2 only"
+    },
+    "radd": {
+      "category": "arithmetic",
+      "desc": "add to real parts of both parameters"
+    },
+    "iadd": {
+      "category": "arithmetic",
+      "desc": "add to imaginary parts of both parameters"
+    },
+    "add": {
+      "category": "arithmetic",
+      "desc": "z1=z1+c1 and z2=z2+c2 using complex offsets"
+    },
+    "cadd": {
+      "category": "arithmetic",
+      "desc": "add a complex constant to t1 and t2"
+    },
+    "rscale": {
+      "category": "arithmetic",
+      "desc": "scale real parts only"
+    },
+    "iscale": {
+      "category": "arithmetic",
+      "desc": "scale imaginary parts only"
+    },
+    "scale": {
+      "category": "arithmetic",
+      "desc": "scale all components"
+    },
+    "sdith": {
+      "category": "dither",
+      "desc": "square uniform jitter"
+    },
+    "ddith": {
+      "category": "dither",
+      "desc": "disk jitter"
+    },
+    "ndith": {
+      "category": "dither",
+      "desc": "normal/Gaussian jitter"
+    },
+    "adth": {
+      "category": "dither",
+      "desc": "annulus jitter"
+    },
+    "ldth": {
+      "category": "dither",
+      "desc": "line-segment jitter"
+    },
+    "crdth": {
+      "category": "dither",
+      "desc": "cross-shaped jitter"
+    },
+    "scdth": {
+      "category": "dither",
+      "desc": "sector jitter"
     }
   },
   "argSpecs": {
@@ -501,8 +505,8 @@ window._paramRegistryVocab = {
         "ph": "p",
         "def": "1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Power applied to the radius coordinate: out1 radius is Re(z1)^p and out2 radius is Re(z2)^p.",
+        "exprWide": true
       }
     ],
     "moebius": [
@@ -556,8 +560,8 @@ window._paramRegistryVocab = {
         "ph": "size",
         "def": "1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Cardioid scale. Maximum radius is 2*size.",
+        "exprWide": true
       }
     ],
     "hrt": [
@@ -565,15 +569,15 @@ window._paramRegistryVocab = {
         "ph": "size",
         "def": "1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Heart scale.",
+        "exprWide": true
       },
       {
         "ph": "turns",
         "def": "0",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Rotation in full turns after the heart is generated; 0.25 rotates by 90 degrees.",
+        "exprWide": true
       }
     ],
     "spdl": [
@@ -581,22 +585,22 @@ window._paramRegistryVocab = {
         "ph": "va",
         "def": "0.5",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Horizontal scale.",
+        "exprWide": true
       },
       {
         "ph": "vb",
         "def": "0.2",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Vertical scale.",
+        "exprWide": true
       },
       {
         "ph": "vp",
         "def": "1.5",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Shape exponent control; native code uses e=2/max(vp,0.01).",
+        "exprWide": true
       }
     ],
     "lmc": [
@@ -604,15 +608,15 @@ window._paramRegistryVocab = {
         "ph": "a",
         "def": "0.3",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Base radius in r=a+b*cos(theta).",
+        "exprWide": true
       },
       {
         "ph": "b",
         "def": "0.5",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Cosine radius modulation in r=a+b*cos(theta).",
+        "exprWide": true
       }
     ],
     "rsc": [
@@ -620,15 +624,15 @@ window._paramRegistryVocab = {
         "ph": "amp",
         "def": "0.5",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Rose radius amplitude.",
+        "exprWide": true
       },
       {
         "ph": "k",
         "def": "2",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Rose angular frequency in r=amp*cos(k*theta).",
+        "exprWide": true
       }
     ],
     "lss": [
@@ -636,36 +640,36 @@ window._paramRegistryVocab = {
         "ph": "A",
         "def": "0.5",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Horizontal amplitude.",
+        "exprWide": true
       },
       {
         "ph": "B",
         "def": "0.5",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Vertical amplitude.",
+        "exprWide": true
       },
       {
         "ph": "a",
         "def": "3",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Horizontal sine frequency.",
+        "exprWide": true
       },
       {
         "ph": "b",
         "def": "2",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Vertical sine frequency.",
+        "exprWide": true
       },
       {
         "ph": "phase",
         "def": "0.5",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Horizontal phase offset in half-turns; native delta is pi*phase.",
+        "exprWide": true
       }
     ],
     "ast": [
@@ -673,8 +677,8 @@ window._paramRegistryVocab = {
         "ph": "scale",
         "def": "1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Astroid scale applied to both axes.",
+        "exprWide": true
       }
     ],
     "asp": [
@@ -682,15 +686,15 @@ window._paramRegistryVocab = {
         "ph": "a",
         "def": "0",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Starting radius in r=a+b*theta.",
+        "exprWide": true
       },
       {
         "ph": "b",
         "def": "0.1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Linear radial growth per radian in r=a+b*theta.",
+        "exprWide": true
       }
     ],
     "lsp": [
@@ -698,15 +702,15 @@ window._paramRegistryVocab = {
         "ph": "a",
         "def": "0.1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Initial radius multiplier in r=a*exp(b*theta).",
+        "exprWide": true
       },
       {
         "ph": "b",
         "def": "0.15",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Exponential radial growth rate in r=a*exp(b*theta).",
+        "exprWide": true
       }
     ],
     "dlt": [
@@ -714,8 +718,8 @@ window._paramRegistryVocab = {
         "ph": "R",
         "def": "1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Deltoid scale/radius.",
+        "exprWide": true
       }
     ],
     "rply": [
@@ -723,22 +727,22 @@ window._paramRegistryVocab = {
         "ph": "sides",
         "def": "5",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Number of polygon sides; truncated to an integer and clamped to at least 3.",
+        "exprWide": true
       },
       {
         "ph": "radius",
         "def": "1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Radius of the polygon vertices.",
+        "exprWide": true
       },
       {
         "ph": "turns",
         "def": "0",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Rotation in full turns after the polygon point is generated.",
+        "exprWide": true
       }
     ],
     "star": [
@@ -746,22 +750,22 @@ window._paramRegistryVocab = {
         "ph": "points",
         "def": "5",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Number of star points; truncated to an integer and clamped to at least 3.",
+        "exprWide": true
       },
       {
         "ph": "outer",
         "def": "1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Outer vertex radius.",
+        "exprWide": true
       },
       {
         "ph": "inner_ratio",
         "def": "0.5",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Inner vertex radius as a fraction of outer.",
+        "exprWide": true
       }
     ],
     "rect": [
@@ -769,22 +773,22 @@ window._paramRegistryVocab = {
         "ph": "w",
         "def": "2",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Rectangle width.",
+        "exprWide": true
       },
       {
         "ph": "h",
         "def": "1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Rectangle height.",
+        "exprWide": true
       },
       {
         "ph": "turns",
         "def": "0",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Rotation in full turns after walking the rectangle perimeter; 0.25 rotates by 90 degrees.",
+        "exprWide": true
       }
     ],
     "rrect": [
@@ -792,22 +796,22 @@ window._paramRegistryVocab = {
         "ph": "w",
         "def": "2",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Bounding-box width.",
+        "exprWide": true
       },
       {
         "ph": "h",
         "def": "1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Bounding-box height.",
+        "exprWide": true
       },
       {
         "ph": "m",
         "def": "4",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Superellipse exponent control; native code uses e=2/max(m,0.01).",
+        "exprWide": true
       }
     ],
     "t1radd": [
@@ -815,8 +819,8 @@ window._paramRegistryVocab = {
         "ph": "v",
         "def": "0",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Offset value added by this transform.",
+        "exprWide": true
       }
     ],
     "t1iadd": [
@@ -824,8 +828,8 @@ window._paramRegistryVocab = {
         "ph": "v",
         "def": "0",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Offset value added by this transform.",
+        "exprWide": true
       }
     ],
     "t2radd": [
@@ -833,8 +837,8 @@ window._paramRegistryVocab = {
         "ph": "v",
         "def": "0",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Offset value added by this transform.",
+        "exprWide": true
       }
     ],
     "t2iadd": [
@@ -842,8 +846,8 @@ window._paramRegistryVocab = {
         "ph": "v",
         "def": "0",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Offset value added by this transform.",
+        "exprWide": true
       }
     ],
     "radd": [
@@ -851,8 +855,8 @@ window._paramRegistryVocab = {
         "ph": "v",
         "def": "0",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Offset value added by this transform.",
+        "exprWide": true
       }
     ],
     "iadd": [
@@ -860,8 +864,8 @@ window._paramRegistryVocab = {
         "ph": "v",
         "def": "0",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Offset value added by this transform.",
+        "exprWide": true
       }
     ],
     "cadd": [
@@ -869,15 +873,15 @@ window._paramRegistryVocab = {
         "ph": "re",
         "def": "0",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Real part of the complex offset added to both parameters.",
+        "exprWide": true
       },
       {
         "ph": "im",
         "def": "0",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Imaginary part of the complex offset added to both parameters.",
+        "exprWide": true
       }
     ],
     "rscale": [
@@ -885,8 +889,8 @@ window._paramRegistryVocab = {
         "ph": "v",
         "def": "1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Scale factor applied to real parts only.",
+        "exprWide": true
       }
     ],
     "iscale": [
@@ -894,8 +898,8 @@ window._paramRegistryVocab = {
         "ph": "v",
         "def": "1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Scale factor applied to imaginary parts only.",
+        "exprWide": true
       }
     ],
     "scale": [
@@ -903,8 +907,8 @@ window._paramRegistryVocab = {
         "ph": "v",
         "def": "1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Scale factor applied to all real and imaginary components.",
+        "exprWide": true
       }
     ],
     "sdith": [
@@ -912,8 +916,8 @@ window._paramRegistryVocab = {
         "ph": "d",
         "def": "1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Dither width in grid spacings; native width is d/N.",
+        "exprWide": true
       }
     ],
     "ddith": [
@@ -921,22 +925,22 @@ window._paramRegistryVocab = {
         "ph": "target",
         "def": "2",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Legacy target selector: 0=p1, 1=p2, 2=both.",
+        "exprWide": true
       },
       {
         "ph": "d",
         "def": "1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Disk dither radius in grid spacings; native radius is d/N.",
+        "exprWide": true
       },
       {
         "ph": "exp",
         "def": "0.5",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Radial distribution exponent; 0.5 gives uniform disk area.",
+        "exprWide": true
       }
     ],
     "ndith": [
@@ -944,8 +948,8 @@ window._paramRegistryVocab = {
         "ph": "d",
         "def": "1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Gaussian jitter sigma in grid spacings; native sigma is d/N.",
+        "exprWide": true
       }
     ],
     "adth": [
@@ -953,22 +957,22 @@ window._paramRegistryVocab = {
         "ph": "target",
         "def": "2",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Legacy target selector: 0=p1, 1=p2, 2=both.",
+        "exprWide": true
       },
       {
         "ph": "d",
         "def": "1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Outer annulus radius in grid spacings; native radius is d/N.",
+        "exprWide": true
       },
       {
         "ph": "inner",
         "def": "0.4",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Inner radius fraction of the outer radius, clamped to [0,1].",
+        "exprWide": true
       }
     ],
     "ldth": [
@@ -976,29 +980,29 @@ window._paramRegistryVocab = {
         "ph": "target",
         "def": "2",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Legacy target selector: 0=p1, 1=p2, 2=both.",
+        "exprWide": true
       },
       {
         "ph": "d",
         "def": "1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Line dither base length in grid spacings; native half-length is (d/N)*len.",
+        "exprWide": true
       },
       {
         "ph": "len",
         "def": "1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Multiplier for the line segment half-length.",
+        "exprWide": true
       },
       {
         "ph": "angle",
         "def": "0",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Line angle in radians.",
+        "exprWide": true
       }
     ],
     "crdth": [
@@ -1006,15 +1010,15 @@ window._paramRegistryVocab = {
         "ph": "target",
         "def": "2",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Legacy target selector: 0=p1, 1=p2, 2=both.",
+        "exprWide": true
       },
       {
         "ph": "d",
         "def": "1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Cross dither half-length in grid spacings; native half-length is d/N.",
+        "exprWide": true
       }
     ],
     "scdth": [
@@ -1022,29 +1026,29 @@ window._paramRegistryVocab = {
         "ph": "target",
         "def": "2",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Legacy target selector: 0=p1, 1=p2, 2=both.",
+        "exprWide": true
       },
       {
         "ph": "d",
         "def": "1",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Sector dither radius in grid spacings; native radius is d/N.",
+        "exprWide": true
       },
       {
         "ph": "half_ap",
         "def": "0.25",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Sector half-aperture as a fraction of pi radians.",
+        "exprWide": true
       },
       {
         "ph": "center",
         "def": "0",
         "scalarExpr": true,
-        "exprWide": true,
-        "title": "Real expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Use real(...), imag(...), abs(...), or mod(...) for complex registers."
+        "title": "Sector center angle in radians.",
+        "exprWide": true
       }
     ]
   },

@@ -1067,6 +1067,17 @@ function _programHelpParamsHtml(params) {
     return rows.length ? `<div class="program-help-meta">${rows.join('')}</div>` : '';
 }
 
+function _programHelpParamDetailsHtml(params) {
+    const rows = (params || [])
+        .map((param, idx) => {
+            const detail = String((param && (param.help || param.title)) || '').trim();
+            if (!detail) return '';
+            return `<div class="program-help-meta"><strong>${_escapeHtml(_programHelpParamText(param, idx))}:</strong> ${_escapeHtml(detail)}</div>`;
+        })
+        .filter(Boolean);
+    return rows.length ? rows.join('') : '';
+}
+
 function _programHelpListHtml(title, values) {
     const rows = (values || []).filter(Boolean).map(value => `<code>${_escapeHtml(value)}</code>`);
     return rows.length ? `<div class="program-help-meta"><strong>${_escapeHtml(title)}:</strong> ${rows.join(' ')}</div>` : '';
@@ -1078,11 +1089,12 @@ function _programHelpItemHtml(which, item) {
     const safeHelp = item.help ? `<div class="program-help-meta">${_escapeHtml(item.help)}</div>` : '';
     const forms = _programHelpListHtml('Forms', item.forms || []);
     const params = _programHelpParamsHtml(item.params || []);
+    const paramDetails = _programHelpParamDetailsHtml(item.params || []);
     const effect = item.effect ? `<div class="program-help-meta"><strong>Effect:</strong> ${_escapeHtml(item.effect)}</div>` : '';
     const examples = _programHelpListHtml('Examples', item.examples || []);
     const notes = (item.notes || []).filter(Boolean).map(note => `<div class="program-help-meta">${_escapeHtml(note)}</div>`).join('');
     const cls = item.missing ? ' program-help-item-missing' : '';
-    return `<div class="program-help-item${cls}"><div class="program-help-signature">${safeSignature}</div>${safeCategory}${safeHelp}${forms}${params}${effect}${examples}${notes}</div>`;
+    return `<div class="program-help-item${cls}"><div class="program-help-signature">${safeSignature}</div>${safeCategory}${safeHelp}${forms}${params}${paramDetails}${effect}${examples}${notes}</div>`;
 }
 
 function _programHelpSectionHtml(which, section) {

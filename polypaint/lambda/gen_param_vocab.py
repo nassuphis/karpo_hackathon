@@ -44,6 +44,7 @@ def _fmt_default(value):
 def _arg_spec(arg):
     name = str(arg.get("name") or "arg")
     arg_type = str(arg.get("type") or "real")
+    declared_title = str(arg.get("title") or arg.get("help") or "")
     spec = {
         "ph": name,
         "def": _fmt_default(arg.get("default", "")),
@@ -51,12 +52,12 @@ def _arg_spec(arg):
     }
     if arg_type == "real":
         spec["exprWide"] = True
-        spec["title"] = SCALAR_EXPR_TITLE
+        spec["title"] = declared_title or SCALAR_EXPR_TITLE
     elif arg_type == "complex":
         spec["complexWide"] = True
-        spec["title"] = COMPLEX_EXPR_TITLE
+        spec["title"] = declared_title or COMPLEX_EXPR_TITLE
     else:
-        spec["title"] = f"{arg_type} argument."
+        spec["title"] = declared_title or f"{arg_type} argument."
     return spec
 
 
@@ -95,13 +96,25 @@ def build_vocab():
     independent_targets = sorted(compat.get("independent_targets") or chain._REDUNDANT_LEGACY_TARGET_ARG_NAMES)
     target_arg_index_source = compat.get("target_arg_indexes") or chain._LEGACY_TARGET_ARG_INDEXES
     variable_arg_count_source = compat.get("variable_arg_counts") or chain._VARIABLE_LEGACY_ARG_COUNTS
-    ui_functions = ui.get("functions") or {}
-    ui_arg_specs = ui.get("arg_specs") or {}
+    ui_functions = {}
     for fn in functions:
         name = str(fn["name"])
-        display_args = [_ui_arg_spec(arg) for arg in (ui_arg_specs.get(name) or [])]
+        local_ui = dict(fn.get("ui") or {})
+        if not local_ui.get("desc"):
+            raise SystemExit(f"param legacy function {name} is missing ui.desc")
+        ui_functions[name] = {
+            key: value
+            for key, value in local_ui.items()
+            if key != "params"
+        }
+        display_args = [_ui_arg_spec(arg) for arg in (local_ui.get("params") or [])]
+        runtime_args = list(fn.get("args") or [])
+        if runtime_args and len(display_args) != len(runtime_args):
+            raise SystemExit(
+                f"param legacy function {name} must define ui.params for all {len(runtime_args)} runtime args"
+            )
         if not display_args:
-            display_args = _special_arg_specs(name, fn.get("args") or [])
+            display_args = _special_arg_specs(name, runtime_args)
         if display_args:
             arg_specs[name] = display_args
         if name in target_arg_index_source:

@@ -158,13 +158,17 @@ def test_generated_param_vocab_exposes_full_registry():
     registry_payload = _param_legacy_registry_payload()
     compat = registry_payload["compat"]
     ui = registry_payload["ui"]
+    registry_functions = registry_payload["functions"]
     registry_names = sorted(chain.legacy_registry()["by_name"])
     assert sorted(vocab["names"]) == registry_names
     assert len(vocab["names"]) == 70
     for missing_from_old_js in ["add", "cadd", "scale", "zzold", "scdth"]:
         assert missing_from_old_js in vocab["names"]
     assert vocab["categoryMeta"] == ui["categories"]
-    assert vocab["uiFunctions"] == ui["functions"]
+    assert vocab["uiFunctions"] == {
+        fn["name"]: {key: value for key, value in (fn.get("ui") or {}).items() if key != "params"}
+        for fn in registry_functions
+    }
     assert vocab["targetArgIndexes"] == {name: idx for name, idx in sorted(compat["target_arg_indexes"].items())}
     assert vocab["targetArgIndexes"] == {name: idx for name, idx in sorted(chain._LEGACY_TARGET_ARG_INDEXES.items())}
     assert vocab["independentTargets"] == sorted(compat["independent_targets"])
@@ -175,6 +179,22 @@ def test_generated_param_vocab_exposes_full_registry():
     assert vocab["variableArgCounts"] == {name: sorted(counts) for name, counts in compat["variable_arg_counts"].items()}
     assert len(vocab["argSpecs"]["moebius"]) == 4
     assert len(vocab["argSpecs"]["inv_t_plus_2"]) == 2
+    for fn in registry_functions:
+        local_ui = fn.get("ui") or {}
+        assert local_ui.get("desc"), f"{fn['name']} missing function-local ui.desc"
+        runtime_args = fn.get("args") or []
+        if not runtime_args:
+            continue
+        ui_params = local_ui.get("params") or []
+        assert len(ui_params) == len(runtime_args), f"{fn['name']} ui.params must match runtime args"
+        generated = vocab["argSpecs"].get(fn["name"]) or []
+        assert len(generated) == len(runtime_args), f"{fn['name']} generated argSpecs missing args"
+        for runtime_arg, ui_arg, generated_arg in zip(runtime_args, ui_params, generated):
+            name = runtime_arg["name"]
+            assert (ui_arg.get("ph") or ui_arg.get("name")) == name
+            assert str(ui_arg.get("title") or "").strip(), f"{fn['name']}.{name} missing help text"
+            assert generated_arg["ph"] == name
+            assert str(generated_arg.get("title") or "").strip(), f"{fn['name']}.{name} missing generated help text"
     for dead_payload in [
         "fnIndexByName",
         "targetFirst",

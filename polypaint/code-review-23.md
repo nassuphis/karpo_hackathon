@@ -542,11 +542,21 @@ Confirmed duplicate sources:
 - `lambda/coeff_program_source.py::_split_native_transform_andy` hardcodes fn-index arities.
 - `lambda/coeff_program_chain.py::_max_native_transform_stack_arg_count` hardcodes packed stack arg counts for `linear`, `exp`, `pow`, and `round`.
 
+Architectural correction:
+
+- `andy` is not a registry capability flag. It is just an argument accepted by Coeff transforms.
+- The semantic registry is the source of truth for the current language. It should describe actual callable arguments and their types/defaults/help.
+- Historical mistakes, such as storing `andy` in a separate compiled-token field or accepting old trailing-`andy` arity shapes, belong in a compatibility shim.
+- Do not pollute the semantic registry with compatibility artifacts such as universal `supports_andy`, special generated `ANDY_PARAM`, or parser-only `andy_arg_counts` masquerading as function schema.
+
 Fix:
 
 - In the infrastructure refactor, do not add more `andy` special cases.
-- Derive accepted `andy` arities and packed stack arg counts from `compat_signatures` where available.
-- In the later optional-arg model, represent `andy` as declared optional metadata instead of generator code.
+- Split the model into two layers:
+  - Semantic function registry: `andy` appears only as a normal declared optional argument where the current source language accepts it.
+  - Compatibility shim: old source forms, trailing-`andy` splitting, separate token field packing, and old wire arities are translated to/from the semantic arg model.
+- Derive packed stack arg counts from compatibility metadata where available, but keep that metadata explicitly in the compatibility layer, not as sacred function schema.
+- Delete universal `supports_andy` once the semantic argument list and compatibility shim can express the current behavior without it.
 
 ### E. Coeff Alias / Opcode Split Produces Equivalent-Looking Different Programs
 
@@ -1136,7 +1146,8 @@ Coeff still owns:
 - `effective_args`
 - `compat_signatures`
 - native packing function IDs
-- `supports_andy`
+
+Coeff currently also has `supports_andy`, but that is compatibility debt, not valid profile-owned semantic schema. The target is to remove it once normal optional args plus the compatibility shim express the behavior.
 
 The split should be:
 
@@ -1862,8 +1873,8 @@ The registry should be authoritative. In the current registry this fallback is a
 
 Coeff-specific cleanup:
 
-- Keep `ANDY_PARAM` behavior initially to avoid broad behavior change.
-- Prefer moving `ANDY_PARAM` construction into a shared optional-param helper or registry data in a later phase.
+- Keep current generated `andy` behavior initially to avoid broad behavior change, but mark it as temporary compatibility debt.
+- Do not move `ANDY_PARAM` into semantic registry data. The later phase should replace it with a normal declared optional argument plus a compatibility shim for old trailing/split forms.
 - Keep `programParamDefs` behavior unchanged.
 - Keep M3 wire gates green. The generator reads the same registry fields that feed `effective_args` and `compat_signatures`; stale or reshaped generated data must not mask a wire-layout regression.
 
@@ -1924,12 +1935,13 @@ Coeff augmentation keeps:
 - `args`
 - `effective_args`
 - `compat_signatures`
-- `supports_andy`
 - `length_policy`
 - `aliases`
 - `chain_only_aliases`
 - `chip_name`
 - `ui`
+
+`supports_andy` remains only as a temporary legacy field while behavior is preserved. It is not part of the target semantic schema.
 
 Do not simplify or reorder `compat_signatures` or `effective_args` while doing the loader refactor. They are wire/fingerprint inputs, not display-only metadata.
 
@@ -2028,7 +2040,10 @@ Do not finish the optional-arg redesign here unless explicitly scheduled, but re
 
 - Derive native-transform stack arg limits from `compat_signatures` where available instead of hardcoded fn-index sets.
 - Derive native-transform trailing-`andy` arities from `compat_signatures.andy_arg_counts` where available.
-- Keep `supports_andy` only if it becomes meaningful. Since it is currently true for every Coeff function, it should not be treated as real capability data.
+- Treat those derivations as compatibility-shim work, not semantic-registry work.
+- Do not add new semantic-registry fields that exist only to explain old `andy` packing.
+- Delete `supports_andy` rather than trying to make it meaningful unless a real per-function capability difference appears.
+- The registry may declare `andy` as a normal optional argument in a normal arg list; it must not declare "andy support" as a separate magic capability.
 - Keep M3 oracle and Coeff wire fingerprint tests green around each change.
 
 ### Phase 6: Add Shared Frontend Registry Adapter
@@ -2181,10 +2196,11 @@ The larger desired model:
 
 - Runtime args have type, default, optional status, and packing semantics.
 - UI/source args are generated from the same arg model.
-- Coeff `andy` stops being a magic generator append and becomes a declared optional arg or declared shared optional arg.
+- Coeff `andy` stops being a magic generator append and becomes a normal declared optional argument in the semantic arg model.
+- Old trailing-`andy` source forms and the separate compiled-token `andy` field are handled by an explicit compatibility shim outside the semantic registry.
 - Param supports complex runtime args cleanly where needed rather than preserving old real-lane compatibility as ad hoc frontend code.
 
-The remaining Phase-10 work is mainly `andy` as a declared optional arg plus cleaner Param complex-arg modeling. It is likely its own follow-up after Phases 1-9 because it changes accepted source forms and compatibility behavior.
+The remaining Phase-10 work is mainly separating `andy` semantics from `andy` compatibility packing, plus cleaner Param complex-arg modeling. It is likely its own follow-up after Phases 1-9 because it changes accepted source forms and compatibility behavior.
 
 ## Test Plan
 
@@ -2346,8 +2362,10 @@ Moving shared infrastructure without addressing `andy` could preserve an ugly sp
 Mitigation:
 
 - Do not expand `andy` magic.
-- In the follow-up optional-arg model, represent `andy` as declared optional metadata, not generator code.
-- Before the follow-up, derive existing `andy` arities and packed stack limits from registry `compat_signatures` where possible.
+- Keep the semantic registry sacred: it describes normal function arguments, not historical wire mistakes.
+- In the follow-up optional-arg model, represent `andy` as a normal optional argument, not generator code and not a `supports_andy` capability.
+- Move old trailing-`andy` arities and separate-token-field packing into a named compatibility shim.
+- Before the follow-up, derive existing `andy` arities and packed stack limits from compatibility metadata where possible, but do not pretend that metadata is semantic function schema.
 
 ### Risk 5: Schema Migration Breaks Generated Assets
 

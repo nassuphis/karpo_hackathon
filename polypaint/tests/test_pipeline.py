@@ -250,7 +250,7 @@ class TestStorageList(unittest.TestCase):
 
     @patch("handler_storage._results_list_s3_client")
     def test_list_missing_calc_json(self, mock_client_factory):
-        """Jobs without calc.json still appear with function='?'."""
+        """Jobs without calc.json are skipped as orphan prefixes."""
         from handler_storage import handle_list
         mock_s3 = MagicMock()
         mock_client_factory.return_value = mock_s3
@@ -265,11 +265,11 @@ class TestStorageList(unittest.TestCase):
 
         result = handle_list({"body": "{}"})
         body = json.loads(result["body"])
-        self.assertEqual(body["count"], 1)
-        self.assertEqual(body["results"][0]["function"], "?")
-        self.assertEqual(body["results"][0]["total_size"], 0)
-        self.assertEqual(body["metadata_error_count"], 1)
-        self.assertEqual(body["metadata_errors"][0]["job_id"], "orphan")
+        self.assertEqual(body["count"], 0)
+        self.assertEqual(body["results"], [])
+        self.assertEqual(body["metadata_error_count"], 0)
+        self.assertEqual(body["metadata_errors"], [])
+        self.assertEqual(body["skipped_missing_calc"], 1)
 
     @patch("handler_storage._results_list_s3_client")
     def test_list_returns_only_table_fields(self, mock_client_factory):

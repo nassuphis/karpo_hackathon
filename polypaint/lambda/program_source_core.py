@@ -157,9 +157,11 @@ def is_numeric_literal(text, *, allow_percent=False):
 
 def format_numeric_literal(value):
     num = float(value)
+    if num == 0.0:
+        num = 0.0
     if num.is_integer():
         return str(int(num))
-    return f"{num:g}"
+    return repr(num)
 
 
 def format_percent_literal(value):

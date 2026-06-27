@@ -42,9 +42,9 @@ def test_root_source_rejects_unknown_and_noop_assignment_non_strict():
     compiled = compile_root_program_source("roots = roots\nunknown_op(1)", strict=False)
 
     assert compiled["chain"] == []
-    messages = [diag["message"] for diag in compiled["diagnostics"]]
-    assert any("no-op" in message for message in messages)
-    assert any("unknown root transform" in message for message in messages)
+    codes = [diag["code"] for diag in compiled["diagnostics"]]
+    assert "no_op_assignment" in codes
+    assert "unknown_transform" in codes
 
 
 def test_root_source_text_from_object_and_array_rows():
@@ -59,6 +59,40 @@ def test_root_source_text_from_object_and_array_rows():
         "rotate_roots(0.5)",
         "moebius(1, 0, 0, 1)",
     ]
+
+
+def test_root_chain_rejects_name_fn_index_mismatch():
+    from root_program_source import RootProgramSourceCompileError, compile_root_program_chain
+
+    try:
+        compile_root_program_chain([{"name": "rotate_roots", "fn_index": 5}])
+    except RootProgramSourceCompileError as exc:
+        assert exc.diagnostics[0]["code"] == "root_chain_error"
+        assert "name/fn_index mismatch" in exc.diagnostics[0]["message"]
+    else:
+        raise AssertionError("expected mismatched root row to fail")
+
+
+def test_root_chain_cap_is_enforced_with_structured_diagnostic():
+    from root_program_source import RootProgramSourceCompileError, compile_root_program_chain
+
+    try:
+        compile_root_program_chain([["rotate_roots", "0"]] * 17)
+    except RootProgramSourceCompileError as exc:
+        assert exc.diagnostics[0]["code"] == "root_chain_too_long"
+        assert "max is 16" in exc.diagnostics[0]["message"]
+    else:
+        raise AssertionError("expected over-cap root chain to fail")
+
+
+def test_bad_json_root_transforms_returns_diagnostic_in_non_strict_mode():
+    from root_program_source import compile_root_program_chain
+
+    compiled = compile_root_program_chain({"root_transforms": "5"}, strict=False)
+
+    assert compiled["chain"] == []
+    assert compiled["diagnostics"][0]["code"] == "root_chain_error"
+    assert "must be a list" in compiled["diagnostics"][0]["message"]
 
 
 def test_root_execution_spec_is_json():

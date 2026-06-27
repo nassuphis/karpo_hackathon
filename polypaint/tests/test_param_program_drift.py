@@ -171,6 +171,9 @@ def test_generated_param_vocab_exposes_full_registry():
     }
     assert vocab["targetArgIndexes"] == {name: idx for name, idx in sorted(compat["target_arg_indexes"].items())}
     assert vocab["targetArgIndexes"] == {name: idx for name, idx in sorted(chain._LEGACY_TARGET_ARG_INDEXES.items())}
+    assert sorted(compat["target_first"]) == sorted(chain._LEGACY_TARGET_FIRST_CHIPS)
+    assert sorted(compat["target_last"]) == sorted(chain._LEGACY_TARGET_LAST_CHIPS)
+    assert sorted(compat["dither_target_first"]) == sorted(chain._LEGACY_DITHER_TARGET_FIRST_CHIPS)
     assert vocab["independentTargets"] == sorted(compat["independent_targets"])
     assert vocab["independentTargets"] == sorted(chain._REDUNDANT_LEGACY_TARGET_ARG_NAMES)
     assert vocab["variableArgCounts"]["moebius"] == [0, 4, 8]

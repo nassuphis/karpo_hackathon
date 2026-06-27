@@ -214,6 +214,27 @@ class TestParamProgramChain(unittest.TestCase):
         self.assertFalse(compiled["uses_legacy_fast_path"])
         self.assertEqual(compiled["legacy_transforms"], [])
 
+    def test_legacy_real_arg_signed_zero_has_one_fingerprint(self):
+        from param_program_chain import compile_param_program_chain
+
+        zero = compile_param_program_chain([["legacy", "rtheta", "both", "both", "0"]])
+        negative_zero = compile_param_program_chain([["legacy", "rtheta", "both", "both", "0*-1.0"]])
+
+        self.assertEqual(zero["tokens"], negative_zero["tokens"])
+        self.assertEqual(zero["fingerprint"], negative_zero["fingerprint"])
+        self.assertEqual(zero["tokens"][0]["args_im"], [0.0])
+
+    def test_trailing_zero_defaults_are_real_arguments_not_empty_exprs(self):
+        from param_program_chain import compile_param_program_chain
+
+        hrt = compile_param_program_chain([["legacy", "hrt", "both", "both"]])
+        rect = compile_param_program_chain([["legacy", "rect", "both", "both"]])
+
+        self.assertEqual(hrt["tokens"][0]["args"], [1.0, 0.0])
+        self.assertEqual(hrt["tokens"][0]["args_im"], [0.0, 0.0])
+        self.assertEqual(rect["tokens"][0]["args"], [2.0, 1.0, 0.0])
+        self.assertEqual(rect["tokens"][0]["args_im"], [0.0, 0.0, 0.0])
+
     def test_legacy_real_arg_rejects_complex_expression(self):
         from param_program_chain import compile_param_program_chain
 

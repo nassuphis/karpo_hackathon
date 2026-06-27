@@ -24,6 +24,7 @@ from program_source_core import (
 
 V2_SPEC_VERSION = 2
 V2_PROGRAM_VERSION = 2
+MAX_ROOT_TRANSFORMS = 16
 _LAMBDA_DIR = os.path.dirname(os.path.abspath(__file__))
 _REGISTRY_PATH = os.path.join(_LAMBDA_DIR, "root_legacy_registry.json")
 
@@ -82,18 +83,27 @@ def _format_number(value):
         num = 0.0
     if num.is_integer():
         return str(int(num))
-    return f"{num:g}"
+    return repr(num)
 
 
 def _coerce_real_arg(value, label="root transform arg"):
     if isinstance(value, bool):
-        raise RootProgramSourceError(f"{label} must be a finite real number, got {value!r}")
+        raise RootProgramSourceError(
+            f"{label} must be a finite real number, got {value!r}",
+            code="bad_arg_type",
+        )
     try:
         number = float(value)
     except (TypeError, ValueError) as exc:
-        raise RootProgramSourceError(f"{label} must be a finite real number, got {value!r}") from exc
+        raise RootProgramSourceError(
+            f"{label} must be a finite real number, got {value!r}",
+            code="bad_arg_type",
+        ) from exc
     if not math.isfinite(number):
-        raise RootProgramSourceError(f"{label} must be finite, got {value!r}")
+        raise RootProgramSourceError(
+            f"{label} must be finite, got {value!r}",
+            code="bad_arg_type",
+        )
     if number == 0.0:
         number = 0.0
     return number
@@ -109,15 +119,28 @@ def _registry_spec(name_or_index):
 
 
 def _canonical_row(name, args, *, fn_index=0):
-    spec = _registry_spec(int(fn_index or 0)) if fn_index else _registry_spec(name)
+    canonical_name = str(name or "").strip().lower()
+    spec = _registry_spec(int(fn_index or 0)) if fn_index else _registry_spec(canonical_name)
+    if fn_index and canonical_name:
+        name_spec = _registry_spec(canonical_name)
+        if name_spec is not None and spec is not None and int(name_spec["fn_index"]) != int(spec["fn_index"]):
+            raise RootProgramSourceError(
+                f"root transform name/fn_index mismatch: {canonical_name} is fn_index "
+                f"{name_spec['fn_index']}, got fn_index {fn_index}",
+                code="root_chain_error",
+            )
     if spec is None:
-        label = str(name or f"fn_index={fn_index}").strip()
-        raise RootProgramSourceError(f"unknown root transform: {label}")
+        label = str(canonical_name or f"fn_index={fn_index}").strip()
+        raise RootProgramSourceError(
+            f"unknown root transform: {label}",
+            code="unknown_transform",
+        )
     raw_args = list(args or [])
     spec_args = list(spec.get("args") or [])
     if len(raw_args) > len(spec_args):
         raise RootProgramSourceError(
-            f"{spec['name']} takes at most {len(spec_args)} argument(s), got {len(raw_args)}"
+            f"{spec['name']} takes at most {len(spec_args)} argument(s), got {len(raw_args)}",
+            code="bad_arity",
         )
     coerced = []
     for idx, value in enumerate(raw_args):
@@ -206,25 +229,30 @@ def _root_transform_items(payload):
         return []
     raw = payload
     if isinstance(payload, dict):
-        raw = (
-            payload.get("root_program", {}).get("chain")
-            if isinstance(payload.get("root_program"), dict)
-            else None
-        )
-        if raw in ("", None):
-            raw = (
-                payload.get("root_transforms")
-                or payload.get("root_transform_chain")
-                or payload.get("chain")
-                or []
-            )
+        root_program = payload.get("root_program")
+        if isinstance(root_program, dict) and "chain" in root_program:
+            raw = root_program.get("chain")
+        elif "root_transforms" in payload:
+            raw = payload.get("root_transforms")
+        elif "root_transform_chain" in payload:
+            raw = payload.get("root_transform_chain")
+        elif "chain" in payload:
+            raw = payload.get("chain")
+        else:
+            raw = []
     if isinstance(raw, str):
         try:
             raw = json.loads(raw)
         except Exception as exc:
-            raise RootProgramSourceError(f"root transform JSON is invalid: {exc}") from exc
+            raise RootProgramSourceError(
+                f"root transform JSON is invalid: {exc}",
+                code="root_chain_error",
+            ) from exc
     if not isinstance(raw, list):
-        raise RootProgramSourceError(f"root transform chain must be a list, got {type(raw).__name__}")
+        raise RootProgramSourceError(
+            f"root transform chain must be a list, got {type(raw).__name__}",
+            code="root_chain_error",
+        )
     return raw
 
 
@@ -237,12 +265,18 @@ def _row_from_item(item):
         if args is None:
             args = item.get("params") or []
         if not isinstance(args, list):
-            raise RootProgramSourceError(f"root transform args must be a list, got {args!r}")
+            raise RootProgramSourceError(
+                f"root transform args must be a list, got {args!r}",
+                code="root_chain_error",
+            )
         return _canonical_row(name, args, fn_index=int(item.get("fn_index") or 0))
     if isinstance(item, (list, tuple)) and item:
         name = str(item[0] or "").strip().lower()
         return _canonical_row(name, list(item[1:]))
-    raise RootProgramSourceError(f"invalid root transform row: {item!r}")
+    raise RootProgramSourceError(
+        f"invalid root transform row: {item!r}",
+        code="root_chain_error",
+    )
 
 
 def canonicalize_root_transform_item(item):
@@ -253,7 +287,14 @@ def canonicalize_root_transform_item(item):
 def compile_root_program_chain(chain, strict=True):
     diagnostics = []
     rows = []
-    for idx, item in enumerate(_root_transform_items(chain)):
+    try:
+        items = _root_transform_items(chain)
+    except RootProgramSourceError as exc:
+        diagnostics.append(diagnostic_from_exception(exc))
+        if strict:
+            raise RootProgramSourceCompileError(diagnostics) from exc
+        items = []
+    for idx, item in enumerate(items):
         try:
             rows.append(_row_from_item(item))
         except RootProgramSourceError as exc:
@@ -265,8 +306,19 @@ def compile_root_program_chain(chain, strict=True):
                     code=getattr(exc, "code", "root_chain_error"),
                 )
             )
+    if len(rows) > MAX_ROOT_TRANSFORMS:
+        diagnostics.append(
+            diagnostic(
+                f"root program has {len(rows)} transforms; max is {MAX_ROOT_TRANSFORMS}",
+                line=MAX_ROOT_TRANSFORMS + 1,
+                column=1,
+                code="root_chain_too_long",
+            )
+        )
     if diagnostics and strict:
         raise RootProgramSourceCompileError(diagnostics)
+    if len(rows) > MAX_ROOT_TRANSFORMS:
+        rows = rows[:MAX_ROOT_TRANSFORMS]
     tokens = [_token_from_row(row) for row in rows]
     execution_spec = _execution_spec(tokens)
     fingerprint = _fingerprint(execution_spec=execution_spec, chain=rows)
@@ -279,7 +331,7 @@ def compile_root_program_chain(chain, strict=True):
         "display": display_root_program_chain_no_compile(rows),
         "statement_count": len(rows),
         "token_count": len(tokens),
-        "diagnostics": [],
+        "diagnostics": diagnostics,
         "spec_version": V2_SPEC_VERSION,
     }
 
@@ -321,7 +373,12 @@ def root_source_text_from_payload(payload):
 def _parse_root_call(text, *, line=1, column=1, allow_roots_arg=True):
     call = parse_call(text, error_cls=RootProgramSourceError)
     if not call:
-        raise RootProgramSourceError("root statement must be a transform call", line=line, column=column)
+        raise RootProgramSourceError(
+            "root statement must be a transform call",
+            line=line,
+            column=column,
+            code="bad_syntax",
+        )
     name, args = call
     name = str(name or "").strip().lower()
     stripped = [str(arg).strip() for arg in args]
@@ -331,6 +388,7 @@ def _parse_root_call(text, *, line=1, column=1, allow_roots_arg=True):
                 "bare root transform calls omit the roots argument",
                 line=line,
                 column=column,
+                code="bad_arity",
             )
         stripped = stripped[1:]
     return _canonical_row(name, stripped)
@@ -347,9 +405,15 @@ def _lower_statement(stmt):
                 "only roots assignments are supported in root source",
                 line=stmt.line,
                 column=stmt.column,
+                code="bad_assignment",
             )
         if rhs.lower() == "roots":
-            raise RootProgramSourceError("roots = roots is a no-op", line=stmt.line, column=assignment + 2)
+            raise RootProgramSourceError(
+                "roots = roots is a no-op",
+                line=stmt.line,
+                column=assignment + 2,
+                code="no_op_assignment",
+            )
         return _parse_root_call(rhs, line=stmt.line, column=assignment + 2, allow_roots_arg=True)
     return _parse_root_call(text, line=stmt.line, column=stmt.column, allow_roots_arg=True)
 

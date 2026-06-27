@@ -253,7 +253,7 @@ class TestPaletteRenderPlan(unittest.TestCase):
         )
         self.assertEqual(
             plan["solve_score"]["source_text"],
-            "score = omega_cosine(metric(crowding, slv, q=1%), 3)",
+            "push(metric(crowding, slv, q=1%))\nomega_cosine(3)\nscore = pop()",
         )
         self.assertEqual(plan["solve_score"]["omega"], 3.0)
         self.assertTrue(plan["solve_score"]["omega_enabled"])
@@ -266,7 +266,7 @@ class TestPaletteRenderPlan(unittest.TestCase):
         )
         self.assertEqual(
             plan["params"]["solve_score_program_source_text"],
-            "score = omega_cosine(metric(crowding, slv, q=1%), 3)",
+            "push(metric(crowding, slv, q=1%))\nomega_cosine(3)\nscore = pop()",
         )
         self.assertEqual(plan["params"]["solve_score_omega"], 3.0)
         self.assertTrue(plan["params"]["solve_score_omega_enabled"])
@@ -1025,11 +1025,11 @@ class TestPaletteRenderPlan(unittest.TestCase):
         )
         self.assertEqual(
             plan["solve_score"]["source_text"],
-            "score = omega_cosine(metric(clusteriness, slv, q=1%), 3)",
+            "push(metric(clusteriness, slv, q=1%))\nomega_cosine(3)\nscore = pop()",
         )
         self.assertEqual(
             plan["params"]["solve_score_program_source_text"],
-            "score = omega_cosine(metric(clusteriness, slv, q=1%), 3)",
+            "push(metric(clusteriness, slv, q=1%))\nomega_cosine(3)\nscore = pop()",
         )
         self.assertIn("/palettes/", plan["solve_score"]["clip_key"])
         self.assertIn("/palettes/", plan["solve_score"]["bins_key"])

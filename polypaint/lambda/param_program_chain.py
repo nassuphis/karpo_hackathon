@@ -337,6 +337,12 @@ def _finite_number(value, label):
     return number
 
 
+def _canonical_zero(value):
+    if value == 0.0:
+        return 0.0
+    return value
+
+
 _COMPLEX_TERM_RE = re.compile(r"[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?\d+)?")
 
 
@@ -778,15 +784,15 @@ def _token(op, **fields):
         if value not in (None, 0):
             tok[key] = int(value)
     if "a" in fields:
-        tok["a"] = _finite_number(fields["a"], "token a")
+        tok["a"] = _canonical_zero(_finite_number(fields["a"], "token a"))
     if "b" in fields:
-        tok["b"] = _finite_number(fields["b"], "token b")
+        tok["b"] = _canonical_zero(_finite_number(fields["b"], "token b"))
     args = fields.get("args")
     if args:
-        tok["args"] = [_finite_number(x, "token arg") for x in args]
+        tok["args"] = [_canonical_zero(_finite_number(x, "token arg")) for x in args]
     args_im = fields.get("args_im")
     if args_im:
-        tok["args_im"] = [_finite_number(x, "token arg imag") for x in args_im]
+        tok["args_im"] = [_canonical_zero(_finite_number(x, "token arg imag")) for x in args_im]
     return tok
 
 
@@ -937,7 +943,7 @@ def _legacy_arg_exprs(spec, raw_args):
         if idx < len(raw_args):
             raw = raw_args[idx]
         elif idx < len(declared):
-            raw = declared[idx].get("default", 0.0)
+            raw = str(declared[idx].get("default", 0.0))
         else:
             continue
         arg_type = str(declared[idx].get("type") or "real").strip().lower()
@@ -946,6 +952,22 @@ def _legacy_arg_exprs(spec, raw_args):
     if len(exprs) > MAX_ARGS:
         raise RuntimeError(f"legacy({spec['name']}) got too many arguments")
     return exprs
+
+
+def _legacy_expr_arg_type(spec, idx, expr_count):
+    name = spec["name"]
+    if name == "moebius":
+        return "complex" if expr_count == 4 else "real"
+    if name == "inv_t_plus_2":
+        return "complex"
+    if name == "add":
+        return "complex" if expr_count == 2 else "real"
+    if name in _VARIABLE_LEGACY_ARG_COUNTS:
+        return "real"
+    declared = list(spec.get("args") or [])
+    if idx < len(declared):
+        return str(declared[idx].get("type") or "real").strip().lower()
+    return "real"
 
 
 def _legacy_tokens(name, src, tgt, args):
@@ -975,8 +997,12 @@ def _legacy_tokens(name, src, tgt, args):
             stack_arg_count=len(exprs),
         ))
         return tokens
-    values = [expr.value.real for expr in exprs]
-    values_im = [expr.value.imag for expr in exprs]
+    values = []
+    values_im = []
+    for idx, expr in enumerate(exprs):
+        arg_type = _legacy_expr_arg_type(spec, idx, len(exprs))
+        values.append(expr.value.real)
+        values_im.append(expr.value.imag if arg_type == "complex" else 0.0)
     return [_token(
         PARAM_OP_LEGACY,
         fn_index=spec["fn_index"],

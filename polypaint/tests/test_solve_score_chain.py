@@ -88,11 +88,47 @@ class TestSolveScoreChain(unittest.TestCase):
             ]
         )
 
-        self.assertEqual(compiled["program_spec"], "m0-0;omega_cosine:3:1.5708")
+        self.assertEqual(compiled["program_spec"], "m0-0;omega_cosine:3:1.57079632679")
         self.assertEqual(compiled["display"], "proximity(q=1%) ω-cos(3,1.57079632679)")
         self.assertEqual(compiled["omega"], 3.0)
         self.assertAlmostEqual(compiled["omega_phase"], 1.57079632679)
         self.assertFalse(compiled["legacy_compatible"])
+
+    def test_program_spec_keeps_full_float_identity(self):
+        from solve_score_chain import compile_solve_score_chain, compiled_solve_score_fingerprint
+
+        first = compile_solve_score_chain([
+            ["proximity", "0.1"],
+            ["omega_cosine", "1.234567890123"],
+        ])
+        second = compile_solve_score_chain([
+            ["proximity", "0.1"],
+            ["omega_cosine", "1.234569999"],
+        ])
+
+        self.assertNotEqual(first["program_spec"], second["program_spec"])
+        self.assertNotEqual(
+            compiled_solve_score_fingerprint(first),
+            compiled_solve_score_fingerprint(second),
+        )
+
+    def test_program_spec_canonicalizes_signed_zero(self):
+        from solve_score_chain import compile_solve_score_chain, compiled_solve_score_fingerprint
+
+        zero = compile_solve_score_chain([
+            ["proximity", "0.1"],
+            ["omega_cosine", "3", "0"],
+        ])
+        negative_zero = compile_solve_score_chain([
+            ["proximity", "0.1"],
+            ["omega_cosine", "3", "-0.0"],
+        ])
+
+        self.assertEqual(zero["program_spec"], negative_zero["program_spec"])
+        self.assertEqual(
+            compiled_solve_score_fingerprint(zero),
+            compiled_solve_score_fingerprint(negative_zero),
+        )
 
     def test_compile_chain_accepts_uncapped_transfer_frequency(self):
         from solve_score_chain import compile_solve_score_chain

@@ -7,8 +7,11 @@ fingerprints.
 from __future__ import annotations
 
 import re
+import warnings
 
 from param_program_chain import (
+    _VARIABLE_LEGACY_ARG_COUNTS,
+    _canonicalize_legacy_bridge_entry,
     compile_param_program_chain,
     display_param_program_chain,
     legacy_registry,
@@ -46,6 +49,8 @@ _EMIT_ALIASES = {
     str(key): str(value)
     for key, value in (_SOURCE.get("emit_aliases") or {}).items()
 }
+_LEGACY_SRC_SELECTORS = {"p1", "p2", "both", "pop1", "pop2"}
+_LEGACY_TGT_SELECTORS = {"p1", "p2", "both", "push1", "push2"}
 
 
 class ParamProgramSourceError(ProgramSourceError):
@@ -91,6 +96,71 @@ def _require_writable_symbol(name, stmt):
     )
 
 
+def _legacy_allowed_arg_counts(spec):
+    name = spec["name"]
+    if name == "moebius":
+        return {0, 4, 8}
+    if name == "inv_t_plus_2":
+        return {0, 1, 2}
+    if name == "add":
+        return {0, 1, 2}
+    if name in _VARIABLE_LEGACY_ARG_COUNTS:
+        return set(_VARIABLE_LEGACY_ARG_COUNTS[name])
+    return set(range(0, len(spec.get("args") or []) + 1))
+
+
+def _validate_legacy_source_entry(entry):
+    if not entry:
+        raise ParamProgramSourceError("legacy transform is empty", code="bad_arity")
+    registry = legacy_registry()["by_name"]
+    if entry[0] == "legacy":
+        if len(entry) < 4:
+            raise ParamProgramSourceError("legacy(name, src, tgt, ...) requires at least 3 args", code="bad_arity")
+        legacy_name = str(entry[1] or "").strip().lower()
+        src = str(entry[2] or "").strip().lower()
+        tgt = str(entry[3] or "").strip().lower()
+        raw_args = list(entry[4:])
+    else:
+        legacy_name = str(entry[0] or "").strip().lower()
+        src = "both"
+        tgt = "both"
+        raw_args = list(entry[1:])
+    spec = registry.get(legacy_name)
+    if spec is None:
+        raise ParamProgramSourceError(
+            f"unknown legacy param transform: {legacy_name}",
+            code="unknown_legacy_transform",
+        )
+    if src not in _LEGACY_SRC_SELECTORS:
+        raise ParamProgramSourceError(
+            f"legacy({legacy_name}) src must be one of: {', '.join(sorted(_LEGACY_SRC_SELECTORS))}",
+            code="bad_selector",
+        )
+    if tgt not in _LEGACY_TGT_SELECTORS:
+        raise ParamProgramSourceError(
+            f"legacy({legacy_name}) tgt must be one of: {', '.join(sorted(_LEGACY_TGT_SELECTORS))}",
+            code="bad_selector",
+        )
+    if src not in spec["allowed_src"]:
+        raise ParamProgramSourceError(
+            f"legacy({legacy_name}) does not support src={src}; allowed: {', '.join(spec['allowed_src'])}",
+            code="bad_selector",
+        )
+    if tgt not in spec["allowed_tgt"]:
+        raise ParamProgramSourceError(
+            f"legacy({legacy_name}) does not support tgt={tgt}; allowed: {', '.join(spec['allowed_tgt'])}",
+            code="bad_selector",
+        )
+    allowed_counts = _legacy_allowed_arg_counts(spec)
+    if len(raw_args) not in allowed_counts:
+        expected = ", ".join(str(n) for n in sorted(allowed_counts))
+        raise ParamProgramSourceError(
+            f"legacy({legacy_name}) got {len(raw_args)} argument(s); expected one of: {expected}",
+            code="bad_arity",
+        )
+    return entry
+
+
 def _lower_call(stmt, name, args):
     if name == "push":
         if len(args) > 1:
@@ -131,9 +201,11 @@ def _lower_call(stmt, name, args):
         if len(args) < 3:
             raise ParamProgramSourceError("legacy(name, src, tgt, ...) requires at least 3 args", code="bad_arity")
         legacy_name = str(args[0] or "").strip().lower()
-        return [["legacy", legacy_name, args[1].strip().lower(), args[2].strip().lower()] + [
+        entry = ["legacy", legacy_name, args[1].strip().lower(), args[2].strip().lower()] + [
             _canonical_expr(arg) for arg in args[3:]
-        ]]
+        ]
+        entry = _canonicalize_legacy_bridge_entry(entry)
+        return [_validate_legacy_source_entry(entry)]
     if name == "macro":
         if len(args) != 1:
             raise ParamProgramSourceError("macro(name) takes exactly one name", code="bad_arity")
@@ -142,7 +214,8 @@ def _lower_call(stmt, name, args):
             raise ParamProgramSourceError("macro name is empty", code="empty_macro")
         return [["macro", macro_name]]
     if name in legacy_registry()["by_name"]:
-        return [[name] + [_canonical_expr(arg) for arg in args]]
+        entry = _canonicalize_legacy_bridge_entry([name] + [_canonical_expr(arg) for arg in args])
+        return [_validate_legacy_source_entry(entry)]
     raise ParamProgramSourceError(f"unknown Param Program command: {name}", code="unknown_command")
 
 
@@ -158,7 +231,7 @@ def _lower_bare(stmt):
     if name in _BINARY_OPS or name in _UNARY_OPS:
         return [[name]]
     if name in legacy_registry()["by_name"]:
-        return [[name]]
+        return [_validate_legacy_source_entry([name])]
     raise ParamProgramSourceError(f"unknown Param Program statement: {raw}", code="unknown_statement")
 
 
@@ -258,6 +331,25 @@ def _call(name, args):
     return f"{name}({', '.join(args)})" if args else str(name)
 
 
+def _raw_chain_source_text(chain):
+    lines = []
+    for row in chain or ():
+        name, args = _chip_name_and_args(row)
+        lines.append(_call(name, args))
+    return "\n".join(line for line in lines if str(line).strip())
+
+
+def _source_text_preserves_compiled_chain(compiled_chain, source_text):
+    try:
+        from_source = compile_param_program_source(source_text)
+    except Exception:
+        return False
+    return (
+        from_source.get("fingerprint") == compiled_chain.get("fingerprint")
+        and from_source.get("tokens") == compiled_chain.get("tokens")
+    )
+
+
 def param_source_text_from_chain(chain):
     if not isinstance(chain, list):
         return ""
@@ -270,6 +362,12 @@ def param_source_text_from_chain(chain):
             next_name, next_args = _chip_name_and_args(chain[idx + 1])
             if next_name.lower() == "emit" and len(next_args) == 1 and next_args[0].lower() in _OUTPUT_SYMBOLS:
                 lines.append(f"{next_args[0].lower()} = {args[0]}")
+                idx += 2
+                continue
+        if lname == "const" and len(args) == 2 and idx + 1 < len(chain):
+            next_name, next_args = _chip_name_and_args(chain[idx + 1])
+            if next_name.lower() == "emit" and len(next_args) == 1 and next_args[0].lower() in _OUTPUT_SYMBOLS:
+                lines.append(f"{next_args[0].lower()} = ({args[0]})+({args[1]})*1j")
                 idx += 2
                 continue
         if lname == "push":
@@ -287,4 +385,24 @@ def param_source_text_from_chain(chain):
         else:
             lines.append(_call(lname, args))
         idx += 1
-    return "\n".join(lines)
+    candidate = "\n".join(lines)
+    try:
+        compiled_chain = compile_param_program_chain(chain)
+    except Exception:
+        warnings.warn(
+            "param_source_text_from_chain could not compile input chain; returning readable candidate",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return candidate
+    if _source_text_preserves_compiled_chain(compiled_chain, candidate):
+        return candidate
+    raw = _raw_chain_source_text(chain)
+    if raw and raw != candidate and _source_text_preserves_compiled_chain(compiled_chain, raw):
+        return raw
+    warnings.warn(
+        "param_source_text_from_chain could not produce fingerprint-preserving source; returning readable candidate",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    return candidate

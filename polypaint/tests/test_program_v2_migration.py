@@ -83,6 +83,25 @@ class TestProgramV2Migration(unittest.TestCase):
         self.assertEqual(same["statusCode"], 200)
         self.assertFalse(json.loads(same["body"])["wrote"])
 
+    def test_translate_param_program_compiles_authoritative_source_text(self):
+        from program_v2_translate import translate_param_from_old
+
+        migrated = translate_param_from_old({
+            "chain": [["const", "1"], ["emit", "p1"]],
+            "source_text": "p1 = t2",
+        })
+
+        self.assertEqual(migrated["chain"], [["const", "t2"], ["emit", "p1"]])
+
+    def test_translate_param_program_fingerprint_ignores_source_spelling(self):
+        from program_v2_translate import translate_param_from_old
+
+        first = translate_param_from_old({"source_text": "p1 = t1 + t2"})
+        second = translate_param_from_old({"source_text": "p1=t1+t2"})
+
+        self.assertEqual(first["execution_spec"], second["execution_spec"])
+        self.assertEqual(first["fingerprint"], second["fingerprint"])
+
     @patch("handler_storage.s3")
     def test_migrate_param_program_conflict_and_missing_macro(self, mock_s3):
         import handler_storage
@@ -169,6 +188,25 @@ class TestProgramV2Migration(unittest.TestCase):
         reparsed = parse_coeff_program_source(body["migrated"]["source_text"])
         self.assertTrue(reparsed["chain"])
 
+    def test_translate_coeff_program_compiles_authoritative_source_text(self):
+        from program_v2_translate import translate_coeff_from_old
+
+        migrated = translate_coeff_from_old({
+            "chain": [["push", "cf"], ["emit"]],
+            "source_text": "poly = _native_transform(rev, poly, poly)",
+        })
+
+        self.assertEqual(migrated["chain"], [["_native_transform", "rev", "poly", "poly"]])
+
+    def test_translate_coeff_program_fingerprint_ignores_source_spelling(self):
+        from program_v2_translate import translate_coeff_from_old
+
+        first = translate_coeff_from_old({"source_text": "poly = cf"})
+        second = translate_coeff_from_old({"source_text": "poly=cf"})
+
+        self.assertEqual(first["execution_spec"], second["execution_spec"])
+        self.assertEqual(first["fingerprint"], second["fingerprint"])
+
     @patch("handler_storage.s3")
     def test_migrate_solve_score_program_dry_run_has_source_text(self, mock_s3):
         import handler_storage
@@ -186,7 +224,10 @@ class TestProgramV2Migration(unittest.TestCase):
         self.assertEqual(migrated["spec_version"], 2)
         self.assertIn("program_spec", migrated)
         self.assertIn("source_text", migrated)
-        self.assertIn("emit_norm(metric(proximity", migrated["source_text"])
+        self.assertEqual(
+            migrated["source_text"],
+            "push(metric(proximity, slv, q=0.1%))\nemit_norm()",
+        )
         self.assertTrue(migrated["program_spec"].startswith("v2;"))
         self.assertIn(64, [tok["op"] for tok in migrated["tokens"]])  # reduce_metric
         self.assertIn(65, [tok["op"] for tok in migrated["tokens"]])  # push_metric
@@ -212,6 +253,14 @@ class TestProgramV2Migration(unittest.TestCase):
         self.assertTrue(migrated["program_spec"].startswith("v2;"))
         self.assertEqual(migrated["diagnostics"][0]["code"], "source_roundtrip_failed")
         self.assertIn("boom", migrated["diagnostics"][0]["message"])
+
+    def test_translate_solve_score_program_requires_non_empty_chain(self):
+        from program_v2_translate import translate_solve_score_from_old
+
+        for payload in ({}, {"chain": []}, {"chain": ""}, None):
+            with self.subTest(payload=payload):
+                with self.assertRaisesRegex(RuntimeError, "requires a non-empty chain"):
+                    translate_solve_score_from_old(payload)
 
     def test_translate_root_transforms_from_old_uses_registry_indices(self):
         from program_v2_translate import translate_root_from_old
@@ -244,6 +293,17 @@ class TestProgramV2Migration(unittest.TestCase):
         self.assertEqual(omitted["chain"], explicit["chain"])
         self.assertEqual(omitted["fingerprint"], explicit["fingerprint"])
         self.assertEqual(omitted["source_text"], "pull_unit_circle(0.75, 1)")
+
+    def test_translate_root_transforms_preserves_explicit_empty_chain(self):
+        from program_v2_translate import translate_root_from_old
+
+        migrated = translate_root_from_old({
+            "root_transforms": [],
+            "chain": [["rotate_roots", "0.25"]],
+        })
+
+        self.assertEqual(migrated["chain"], [])
+        self.assertEqual(migrated["token_count"], 0)
 
 
 if __name__ == "__main__":

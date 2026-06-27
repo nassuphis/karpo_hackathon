@@ -13,7 +13,11 @@ from pathlib import Path
 
 from coeff_program_chain import COEFF_OP_LEGACY, COEFF_OP_NATIVE_TRANSFORM
 from coeff_program_chain import compile_coeff_program_chain
-from coeff_program_source import coeff_source_text_from_chain, coeff_source_text_from_payload
+from coeff_program_source import (
+    coeff_source_text_from_chain,
+    coeff_source_text_from_payload,
+    parse_coeff_program_source,
+)
 import merged_opcodes as merged
 from merged_opcodes import (
     MERGED_OP_DUPLICATE,
@@ -67,7 +71,11 @@ from param_program_chain import (
     PARAM_OP_UNIT_CIRCLE,
 )
 from param_program_chain import compile_param_program_chain
-from param_program_source import param_source_text_from_chain, param_source_text_from_payload
+from param_program_source import (
+    param_source_text_from_chain,
+    param_source_text_from_payload,
+    parse_param_program_source,
+)
 from root_program_source import (
     RootProgramSourceError,
     canonicalize_root_transform_item,
@@ -218,12 +226,14 @@ def _root_transform_items(payload):
         return payload
     if not isinstance(payload, dict):
         return []
-    raw = (
-        payload.get("root_transforms")
-        or payload.get("root_transform_chain")
-        or payload.get("chain")
-        or []
-    )
+    if "root_transforms" in payload:
+        raw = payload.get("root_transforms")
+    elif "root_transform_chain" in payload:
+        raw = payload.get("root_transform_chain")
+    elif "chain" in payload:
+        raw = payload.get("chain")
+    else:
+        raw = []
     if isinstance(raw, str):
         try:
             raw = json.loads(raw)
@@ -379,9 +389,11 @@ def v1_summary(program):
 
 def translate_param_from_old(program, *, macro_resolver=None):
     source_text = param_source_text_from_payload(program)
-    if source_text is None:
-        source_text = param_source_text_from_chain(program.get("chain") or [])
-    parsed_chain = program.get("chain") or []
+    if source_text is not None:
+        parsed_chain = parse_param_program_source(source_text)["chain"]
+    else:
+        parsed_chain = program.get("chain") or []
+        source_text = param_source_text_from_chain(parsed_chain)
     compiled = compile_param_program_chain(parsed_chain, macro_resolver=macro_resolver)
     v2_tokens = _param_tokens_v2(compiled["tokens"])
     v2_spec = _execution_spec_v2("param", v2_tokens, [])
@@ -389,7 +401,6 @@ def translate_param_from_old(program, *, macro_resolver=None):
         "param",
         {
             "execution_spec": v2_spec,
-            "source_text": source_text,
         },
     )
     return {
@@ -419,9 +430,11 @@ def translate_param_from_old(program, *, macro_resolver=None):
 
 def translate_coeff_from_old(program, *, macro_resolver=None):
     source_text = coeff_source_text_from_payload(program)
-    if source_text is None:
-        source_text = coeff_source_text_from_chain(program.get("chain") or [])
-    parsed_chain = program.get("chain") or []
+    if source_text is not None:
+        parsed_chain = parse_coeff_program_source(source_text)["chain"]
+    else:
+        parsed_chain = program.get("chain") or []
+        source_text = coeff_source_text_from_chain(parsed_chain)
     compiled = compile_coeff_program_chain(parsed_chain, macro_resolver=macro_resolver)
     v2_tokens = _coeff_tokens_v2(compiled["tokens"])
     v2_scalar_exprs = compiled.get("scalar_exprs") or []
@@ -430,7 +443,6 @@ def translate_coeff_from_old(program, *, macro_resolver=None):
         "coeff",
         {
             "execution_spec": v2_spec,
-            "source_text": source_text,
         },
     )
     return {
@@ -459,8 +471,10 @@ def translate_coeff_from_old(program, *, macro_resolver=None):
 
 
 def translate_solve_score_from_old(program):
+    if not isinstance(program, dict) or "chain" not in program or program.get("chain") in (None, "", []):
+        raise RuntimeError("solve-score v2 migration requires a non-empty chain")
     compiled = compile_solve_score_chain_or_legacy(
-        program.get("chain") or [],
+        program.get("chain"),
         "",
         default_metric="proximity",
     )

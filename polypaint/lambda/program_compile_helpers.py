@@ -8,6 +8,7 @@ resolution rules.
 import json
 
 from coeff_program_source import coeff_source_text_from_payload, parse_coeff_program_source
+from param_program_source import param_source_text_from_payload, parse_param_program_source
 from shared import BUCKET
 
 PARAM_PROGRAMS_PREFIX = "polypaint/param-programs/"
@@ -88,6 +89,11 @@ def read_saved_program_source_chain(
         source_text = coeff_source_text_from_payload(payload)
         if source_text is not None:
             parsed = parse_coeff_program_source(source_text)
+            return parsed["chain"]
+    if program_kind == "param program":
+        source_text = param_source_text_from_payload(payload)
+        if source_text is not None:
+            parsed = parse_param_program_source(source_text)
             return parsed["chain"]
     chain = payload.get("chain")
     if not isinstance(chain, list):

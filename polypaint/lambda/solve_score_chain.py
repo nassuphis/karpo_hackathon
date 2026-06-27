@@ -377,9 +377,11 @@ def _validate_quantile_percent(value):
 
 def _format_number(value):
     num = float(value)
+    if num == 0.0:
+        num = 0.0
     if num.is_integer():
         return str(int(num))
-    return f"{num:g}"
+    return repr(num)
 
 
 def _format_quantile_percent(value):

@@ -309,7 +309,7 @@ const _ctCategoryMeta = _coeffRegistryVocab ? _coeffRegistryVocab.categoryMeta :
 function _coeffProgramWideParamDefs(name) {
     // Program-mode wide-editor defs for exp/round legacy chips (different
     // defaults and titles than the chain-row fields), from the registry ui.
-    const defs = (_coeffRegistryVocab && _coeffRegistryVocab.programParamDefs[name]) || [];
+    const defs = (((_coeffRegistryVocab || {}).programParamDefs || {})[name]) || [];
     return [...defs.map(_hydrateCtParamDef)];
 }
 const _coeffProgramExpParamDefs = _coeffProgramWideParamDefs('exp');

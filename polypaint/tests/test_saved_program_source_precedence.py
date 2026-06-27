@@ -16,6 +16,7 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
 from coeff_program_source import coeff_source_text_from_payload
+from param_program_source import param_source_text_from_payload
 
 
 REV_CHAIN = [["legacy", "rev", "poly", "poly"]]
@@ -41,6 +42,15 @@ class TestSourceTextPrecedenceHelper(unittest.TestCase):
         self.assertIsNone(coeff_source_text_from_payload({"chain": REV_CHAIN}))
         self.assertIsNone(coeff_source_text_from_payload(None))
         self.assertIsNone(coeff_source_text_from_payload("source_text"))
+
+    def test_param_non_blank_source_wins(self):
+        self.assertEqual(
+            param_source_text_from_payload({"chain": [["const", "1"]], "source_text": "p1 = t2"}),
+            "p1 = t2",
+        )
+
+    def test_param_blank_source_defers_to_chain(self):
+        self.assertIsNone(param_source_text_from_payload({"chain": [["const", "1"]], "source_text": ""}))
 
 
 def _fake_s3_returning(payload):
@@ -80,6 +90,25 @@ class TestMacroResolversCompileChainOnBlankSource(unittest.TestCase):
         with patch.object(mod, "s3", _fake_s3_returning(payload)):
             chain = mod._coeff_program_macro_resolver()("prog")
         self.assertEqual(chain, [["set", "poly", "cf"]])
+
+    def test_param_macro_resolver_honors_source_text_over_stale_chain(self):
+        from program_compile_helpers import (
+            PARAM_PROGRAMS_PREFIX,
+            read_saved_program_source_chain,
+        )
+
+        payload = {
+            "chain": [["const", "1"], ["emit", "p1"]],
+            "source_text": "p1 = t2",
+        }
+        chain = read_saved_program_source_chain(
+            PARAM_PROGRAMS_PREFIX,
+            "param program",
+            "prog",
+            s3_client=_fake_s3_returning(payload),
+        )
+
+        self.assertEqual(chain, [["const", "t2"], ["emit", "p1"]])
 
 
 if __name__ == "__main__":

@@ -42,6 +42,21 @@ class TestParamProgramSource(unittest.TestCase):
         self.assertEqual(parsed["chain"][4], ["square", "p2"])
         self.assertEqual(parsed["chain"][5], ["legacy", "rtheta", "both", "both", "p1+p2"])
 
+    def test_legacy_forms_validate_name_selector_and_arity_at_parse_time(self):
+        from param_program_source import parse_param_program_source
+
+        cases = [
+            ("legacy(nope, both, both)", "unknown_legacy_transform"),
+            ("legacy(unit_circle, none, both)", "bad_selector"),
+            ("legacy(square, pop2, push2)", "bad_selector"),
+            ("crd(5, 9)", "bad_arity"),
+        ]
+        for source, code in cases:
+            with self.subTest(source=source):
+                parsed = parse_param_program_source(source, strict=False)
+                self.assertEqual(parsed["chain"], [])
+                self.assertEqual(parsed["diagnostics"][0]["code"], code)
+
     def test_noncanonical_emit_is_rejected_with_diagnostics(self):
         from param_program_source import parse_param_program_source
 
@@ -104,6 +119,15 @@ class TestParamProgramSource(unittest.TestCase):
             compile_param_program_chain(reparsed["chain"])["fingerprint"],
             compile_param_program_chain(chain)["fingerprint"],
         )
+
+    def test_source_text_from_chain_does_not_emit_unparseable_two_arg_const(self):
+        from param_program_source import param_source_text_from_chain, parse_param_program_source
+
+        chain = [["const", "1", "2"], ["emit", "p1"]]
+        source = param_source_text_from_chain(chain)
+        parsed = parse_param_program_source(source)
+
+        self.assertTrue(parsed["chain"])
 
     def test_payload_source_precedence(self):
         from param_program_source import param_source_text_from_payload

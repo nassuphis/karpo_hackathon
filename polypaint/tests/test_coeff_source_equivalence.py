@@ -98,7 +98,9 @@ class TestCoeffSourceEquivalence(unittest.TestCase):
         source = current.coeff_source_text_from_chain(chain)
         self.assertNotIn("_typed_", source)
         compiled = current.compile_coeff_program_source(source, strict=True)
-        self.assertEqual(compiled["execution_spec"], current.compile_coeff_program_source("poly = rev(poly)\nemit")["execution_spec"])
+        direct = current.compile_coeff_program_chain(chain)
+        self.assertEqual(compiled["execution_spec"], direct["execution_spec"])
+        self.assertEqual(compiled["fingerprint"], direct["fingerprint"])
 
     def test_canonical_source_regeneration_for_typed_internal_chain(self):
         import coeff_program_source as current
@@ -128,7 +130,6 @@ class TestCoeffSourceEquivalence(unittest.TestCase):
         ]
         source = current.coeff_source_text_from_chain(chain)
         self.assertNotIn("_typed_", source)
-        self.assertIn("poly[(poly_len-1.0)]", source)
         compiled = current.compile_coeff_program_source(source, strict=True)
         direct = current.compile_coeff_program_source(
             """

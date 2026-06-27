@@ -197,6 +197,23 @@ class TestComputePreviewHandler(unittest.TestCase):
         self.assertEqual(specs[0]["param_program"]["token_count"], 8)
         self.assertNotIn("scalar_exprs", specs[0]["param_program"])
 
+    def test_compute_preview_explicit_empty_program_chains_do_not_resurrect_legacy_transforms(self):
+        import handler_compute_preview as mod
+
+        compiled = mod._compile_compute_inputs(_event(
+            param_transforms=[["unit_circle"]],
+            param_program_chain=[],
+            coeff_transforms=[["rev"]],
+            coeff_program_chain=[],
+        ))
+
+        self.assertEqual(compiled["param_transforms"], [])
+        self.assertEqual(compiled["coeff_transforms"], [])
+        self.assertEqual(compiled["param_program_chain"], [])
+        self.assertEqual(compiled["coeff_program_chain"], [])
+        self.assertIsNone(compiled["param_program"])
+        self.assertIsNone(compiled["coeff_program"])
+
     @patch("handler_compute_preview.tmp_space_stats")
     @patch("handler_compute_preview.subprocess.run")
     @patch("handler_compute_preview.compute_viewport_from_bin")

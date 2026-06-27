@@ -229,16 +229,17 @@ def _source_selector(text, *, allow_cf=True):
     if raw not in allowed:
         if raw in _SOURCE_NAMES:
             raise CoeffProgramSourceError(
-                f"{raw} is not allowed as a source here; use one of {', '.join(sorted(allowed))}"
+                f"{raw} is not allowed as a source here; use one of {', '.join(sorted(allowed))}",
+                code="bad_selector",
             )
-        raise CoeffProgramSourceError(f"expected source selector, got {text!r}")
+        raise CoeffProgramSourceError(f"expected source selector, got {text!r}", code="bad_selector")
     return raw
 
 
 def _target_selector(text):
     raw = str(text or "").strip().lower()
     if raw not in _TARGET_NAMES:
-        raise CoeffProgramSourceError(f"expected target selector, got {text!r}")
+        raise CoeffProgramSourceError(f"expected target selector, got {text!r}", code="bad_selector")
     return raw
 
 
@@ -276,6 +277,29 @@ def _split_native_transform_andy(name, args):
     if len(raw_args) in andy_arities:
         return raw_args[:-1], raw_args[-1]
     return raw_args, None
+
+
+def _validate_registry_transform_fragment(chain, *, code="bad_native_transform"):
+    try:
+        compile_coeff_program_chain(chain)
+    except Exception as exc:
+        message = str(exc)
+        if "stack depth" in message:
+            return chain
+        raise CoeffProgramSourceError(message, code=code) from None
+    return chain
+
+
+def _native_stack_args_are_scalar_expressions(name, count):
+    spec = legacy_registry()["by_name"].get(_canonical_native_name(name))
+    if not spec:
+        return False
+    if spec.get("compat_signatures"):
+        return True
+    declared = list(spec.get("args") or ())
+    if count > len(declared):
+        return False
+    return all(str(arg.get("type") or "real").strip().lower() in {"real", "complex"} for arg in declared[:count])
 
 
 def _append_typed_target(chain, value_type, *, target):
@@ -578,7 +602,11 @@ def _lower_native_transform_call(name, args, *, target):
     # The VM caps stack args per transform (e.g. round takes one packed
     # multiplier); over-limit arg lists must take the full-args token, which
     # knows the back-compat packings like round(a, b, andy).
-    if fn_args and len(fn_args) <= native_transform_stack_arg_limit(name):
+    if (
+        fn_args
+        and len(fn_args) <= native_transform_stack_arg_limit(name)
+        and _native_stack_args_are_scalar_expressions(name, len(fn_args))
+    ):
         try:
             chain = []
             for arg in fn_args:
@@ -596,7 +624,9 @@ def _lower_native_transform_call(name, args, *, target):
     fallback_args = list(fn_args)
     if andy_arg is not None:
         fallback_args.append(andy_arg)
-    return [["_native_transform", name, src, target] + [_canonical_expr(arg) for arg in fallback_args]]
+    return _validate_registry_transform_fragment(
+        [["_native_transform", name, src, target] + [_canonical_expr(arg) for arg in fallback_args]]
+    )
 
 
 # Synthesizer-internal VM chips accepted on parse for round-trip closure.
@@ -751,11 +781,17 @@ def _lower_call(name, args, *, target="push"):
         legacy_name = args[0].strip().lower()
         canonical = registry["alias_to_canonical"].get(legacy_name, legacy_name)
         if canonical not in registry["by_name"]:
-            raise CoeffProgramSourceError(f"unknown legacy coeff transform {legacy_name!r}")
-        return [["legacy", canonical, _source_selector(args[1]), _target_selector(args[2])] + [str(arg) for arg in args[3:]]]
+            raise CoeffProgramSourceError(
+                f"unknown legacy coeff transform {legacy_name!r}",
+                code="unknown_legacy_transform",
+            )
+        return _validate_registry_transform_fragment(
+            [["legacy", canonical, _source_selector(args[1]), _target_selector(args[2])] + [str(arg) for arg in args[3:]]],
+            code="bad_legacy_transform",
+        )
     if name in legacy_registry()["by_name"]:
         return _lower_native_transform_call(name, args, target=target)
-    raise CoeffProgramSourceError(f"unknown coeff program source function {name!r}")
+    raise CoeffProgramSourceError(f"unknown coeff program source function {name!r}", code="unknown_function")
 
 
 def _legacy_lower_statement(statement):

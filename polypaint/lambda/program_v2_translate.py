@@ -133,11 +133,16 @@ _V2_PARAM_DIRECT_OPS = {
 
 
 def _v2_fingerprint(kind, payload):
+    identity_payload = {
+        key: value
+        for key, value in (payload or {}).items()
+        if key not in {"source_text", "source_display", "display", "expanded_display"}
+    }
     packed = json.dumps(
         {
             "program_kind": str(kind),
             "spec_version": V2_SPEC_VERSION,
-            "payload": payload,
+            "payload": identity_payload,
         },
         sort_keys=True,
         separators=(",", ":"),

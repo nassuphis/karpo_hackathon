@@ -44,6 +44,23 @@ class _NoCloseBytesIO(io.BytesIO):
 
 
 class TestCoeffgenParamGenHandler(unittest.TestCase):
+    def test_explicit_empty_program_chains_do_not_resurrect_legacy_transforms(self):
+        import handler_coeffgen as mod
+
+        param_transforms, param_program = mod._resolve_param_program(
+            {"param_program_chain": []},
+            [["unit_circle"]],
+        )
+        coeff_transforms, coeff_program = mod._resolve_coeff_program(
+            {"coeff_program_chain": []},
+            [["rev"]],
+        )
+
+        self.assertEqual(param_transforms, [])
+        self.assertIsNone(param_program)
+        self.assertEqual(coeff_transforms, [])
+        self.assertIsNone(coeff_program)
+
     @patch("handler_coeffgen.report_status")
     @patch("handler_coeffgen.s3")
     @patch("handler_coeffgen.subprocess.Popen")

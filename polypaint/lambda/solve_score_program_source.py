@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from program_source_core import (
     ProgramSourceError,
+    diagnostic,
     diagnostic_from_exception,
     find_top_level_assignment,
     format_numeric_literal,
@@ -174,8 +175,9 @@ def _semantic_chain_for_compare(chain):
     return _roundtrip_chain_for_compare(public_solve_score_chain(semantic_chain))
 
 
-def _canonical_program(compiled, *, source_text="", statement_count=0, diagnostics=None):
+def _canonical_program(compiled, *, source_text="", statement_count=0, diagnostics=None, degraded=False):
     public_chain = _public_chain(compiled)
+    diagnostics = list(diagnostics or [])
     return {
         "program_kind": "solve_score_program",
         "spec_version": SOLVE_SCORE_SPEC_VERSION,
@@ -202,7 +204,8 @@ def _canonical_program(compiled, *, source_text="", statement_count=0, diagnosti
         "output_channel_count": int(compiled.get("output_channel_count") or 1),
         "output_channels": list(compiled.get("output_channels") or []),
         "statement_count": int(statement_count or len(public_chain)),
-        "diagnostics": list(diagnostics or []),
+        "diagnostics": diagnostics,
+        "degraded": bool(degraded or diagnostics),
     }
 
 
@@ -428,6 +431,23 @@ def parse_solve_score_program_source(source_text, strict=True):
     }
 
 
+def _solve_score_compile_diagnostic(exc):
+    message = str(exc)
+    lowered = message.lower()
+    code = "source_error"
+    if " q must be " in lowered or "quantile" in lowered:
+        code = "bad_quantile"
+    elif "source" in lowered and ("metric" in lowered or "requires" in lowered or "not valid" in lowered):
+        code = "bad_metric_source"
+    elif "stack" in lowered:
+        code = "stack_error"
+    elif "finite" in lowered or "numeric" in lowered or "must be in" in lowered:
+        code = "bad_numeric_arg"
+    elif "unknown" in lowered:
+        code = "unknown_operator"
+    return diagnostic(message, code=code)
+
+
 def compile_solve_score_program_source(source_text, strict=True):
     parsed = parse_solve_score_program_source(source_text, strict=strict)
     if parsed["diagnostics"]:
@@ -436,11 +456,12 @@ def compile_solve_score_program_source(source_text, strict=True):
             source_text=source_text,
             statement_count=parsed["statement_count"],
             diagnostics=parsed["diagnostics"],
+            degraded=True,
         )
     try:
         compiled = compile_solve_score_chain(parsed["chain"])
     except Exception as exc:
-        diagnostics = [diagnostic_from_exception(exc)]
+        diagnostics = [_solve_score_compile_diagnostic(exc)]
         if strict:
             raise SolveScoreProgramSourceCompileError(diagnostics) from exc
         return _canonical_program(
@@ -448,6 +469,7 @@ def compile_solve_score_program_source(source_text, strict=True):
             source_text=source_text,
             statement_count=parsed["statement_count"],
             diagnostics=diagnostics,
+            degraded=True,
         )
     return _canonical_program(compiled, source_text=source_text, statement_count=parsed["statement_count"])
 

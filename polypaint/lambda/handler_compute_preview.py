@@ -27,6 +27,7 @@ from pipeline_programs import (
     ParamSourceCompileError,
     coeff_source_text_for_run,
     coeff_transforms_to_program_chain,
+    explicit_program_chain_for_run,
     param_source_text_for_run,
     param_transforms_to_program_chain,
     parse_coeff_source_for_run,
@@ -231,14 +232,28 @@ def _compile_compute_inputs(params):
     if param_program_source_text is not None:
         parsed_param_source = parse_param_source_for_run(param_program_source_text)
         param_program_chain = parsed_param_source["chain"]
+        param_program_chain_explicit = True
     else:
-        param_program_chain = params.get("param_program_chain") or param_transforms_to_program_chain(param_transforms)
+        param_program_chain, param_program_chain_explicit = explicit_program_chain_for_run(
+            params,
+            "param_program_chain",
+            "param_program_chain",
+        )
+        if param_program_chain is None:
+            param_program_chain = param_transforms_to_program_chain(param_transforms)
     coeff_program_source_text = coeff_source_text_for_run(params, pipeline_mode)
     if coeff_program_source_text is not None:
         parsed_coeff_source = parse_coeff_source_for_run(coeff_program_source_text)
         coeff_program_chain = parsed_coeff_source["chain"]
+        coeff_program_chain_explicit = True
     else:
-        coeff_program_chain = params.get("coeff_program_chain") or coeff_transforms_to_program_chain(coeff_transforms)
+        coeff_program_chain, coeff_program_chain_explicit = explicit_program_chain_for_run(
+            params,
+            "coeff_program_chain",
+            "coeff_program_chain",
+        )
+        if coeff_program_chain is None:
+            coeff_program_chain = coeff_transforms_to_program_chain(coeff_transforms)
     param_program = None
     coeff_program = None
     compiled_param_program = None

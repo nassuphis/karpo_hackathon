@@ -56,6 +56,14 @@ def solve_score_program_for_run(params, *, scope="solve", strict=True):
         source_compiled = compile_solve_score_program_source(source_text, strict=False)
         if strict:
             _raise_solve_score_if_diagnostics(source_compiled, label="solve-score program source")
+        if source_compiled.get("diagnostics"):
+            return {
+                **source_compiled,
+                "chain_public": public_solve_score_chain(source_compiled.get("chain") or []),
+                "source_text": source_text,
+                "source_display": source_text.strip(),
+                "degraded": True,
+            }
         compiled = compile_solve_score_chain_or_legacy(
             source_compiled.get("chain") or [],
             "",

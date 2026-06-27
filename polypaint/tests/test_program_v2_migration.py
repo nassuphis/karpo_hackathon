@@ -94,13 +94,17 @@ class TestProgramV2Migration(unittest.TestCase):
         self.assertEqual(migrated["chain"], [["const", "t2"], ["emit", "p1"]])
 
     def test_translate_param_program_fingerprint_ignores_source_spelling(self):
-        from program_v2_translate import translate_param_from_old
+        from program_v2_translate import _v2_fingerprint, translate_param_from_old
 
         first = translate_param_from_old({"source_text": "p1 = t1 + t2"})
         second = translate_param_from_old({"source_text": "p1=t1+t2"})
 
         self.assertEqual(first["execution_spec"], second["execution_spec"])
         self.assertEqual(first["fingerprint"], second["fingerprint"])
+        self.assertEqual(
+            _v2_fingerprint("param", {"execution_spec": "x", "source_text": "a"}),
+            _v2_fingerprint("param", {"execution_spec": "x", "source_text": "b"}),
+        )
 
     @patch("handler_storage.s3")
     def test_migrate_param_program_conflict_and_missing_macro(self, mock_s3):
@@ -199,13 +203,17 @@ class TestProgramV2Migration(unittest.TestCase):
         self.assertEqual(migrated["chain"], [["_native_transform", "rev", "poly", "poly"]])
 
     def test_translate_coeff_program_fingerprint_ignores_source_spelling(self):
-        from program_v2_translate import translate_coeff_from_old
+        from program_v2_translate import _v2_fingerprint, translate_coeff_from_old
 
         first = translate_coeff_from_old({"source_text": "poly = cf"})
         second = translate_coeff_from_old({"source_text": "poly=cf"})
 
         self.assertEqual(first["execution_spec"], second["execution_spec"])
         self.assertEqual(first["fingerprint"], second["fingerprint"])
+        self.assertEqual(
+            _v2_fingerprint("coeff", {"execution_spec": "x", "source_display": "a"}),
+            _v2_fingerprint("coeff", {"execution_spec": "x", "source_display": "b"}),
+        )
 
     @patch("handler_storage.s3")
     def test_migrate_solve_score_program_dry_run_has_source_text(self, mock_s3):

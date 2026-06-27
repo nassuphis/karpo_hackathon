@@ -780,6 +780,20 @@ class TestCoeffProgramReviewFixes(unittest.TestCase):
         self.assertIn("line", ctx.exception.diagnostics[0])
         self.assertIn("column", ctx.exception.diagnostics[0])
 
+    def test_source_parser_validates_registry_transform_args(self):
+        parsed = self._parse("poly = roots(poly, 2.7, lo)")
+        self.assertEqual(len(parsed["diagnostics"]), 1)
+        self.assertEqual(parsed["diagnostics"][0]["code"], "bad_native_transform")
+        self.assertIn("integer", parsed["diagnostics"][0]["message"])
+
+        parsed = self._parse("poly = roots(poly, 1, 2, 3)")
+        self.assertEqual(len(parsed["diagnostics"]), 1)
+        self.assertEqual(parsed["diagnostics"][0]["code"], "bad_native_transform")
+
+        parsed = self._parse("legacy(roots, poly, poly, 2.7, lo)")
+        self.assertEqual(len(parsed["diagnostics"]), 1)
+        self.assertEqual(parsed["diagnostics"][0]["code"], "bad_legacy_transform")
+
     def test_source_parser_splits_shared_core_comments_semicolons_and_brackets(self):
         parsed = self._parse("poly[poly_len - 1] = p1; # tail edit\npoly = cos(poly)")
         self.assertEqual(parsed["diagnostics"], [])

@@ -97,6 +97,21 @@ def param_source_text_for_run(params, pipeline_mode):
     return None
 
 
+def explicit_program_chain_for_run(params, key, label):
+    """Return an explicitly supplied program chain without truthiness fallback.
+
+    `[]` is a meaningful explicit no-op chain. Treat only an absent key or a
+    JSON null value as absent so stale legacy transform arrays cannot resurrect
+    when a caller deliberately sends an empty chain.
+    """
+    if key not in params or params.get(key) is None:
+        return None, False
+    chain = params.get(key)
+    if not isinstance(chain, list):
+        raise ValueError(f"{label} must be an array")
+    return chain, True
+
+
 def parse_coeff_source_for_run(source_text):
     """Parse coeff source, raising CoeffSourceCompileError with structure.
 

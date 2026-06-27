@@ -25,6 +25,7 @@ from pipeline_programs import (
     ParamSourceCompileError,
     coeff_source_text_for_run,
     coeff_transforms_to_program_chain,
+    explicit_program_chain_for_run,
     param_source_text_for_run,
     param_transforms_to_program_chain,
     parse_coeff_source_for_run,
@@ -159,14 +160,21 @@ def handle_build_plan(params):
     if param_program_source_text is not None:
         parsed_param_source = parse_param_source_for_run(param_program_source_text)
         param_program_chain = parsed_param_source["chain"]
+        param_program_chain_explicit = True
     else:
         parsed_param_source = None
-        param_program_chain = run_params.get("param_program_chain") or param_transforms_to_program_chain(param_transforms)
+        param_program_chain, param_program_chain_explicit = explicit_program_chain_for_run(
+            run_params,
+            "param_program_chain",
+            "param_program_chain",
+        )
+        if param_program_chain is None:
+            param_program_chain = param_transforms_to_program_chain(param_transforms)
     param_program = None
     param_program_metadata = None
+    if param_program_chain_explicit:
+        param_transforms = []
     if param_program_chain:
-        if not isinstance(param_program_chain, list):
-            raise RuntimeError("param_program_chain must be an array")
         compiled_param_program = compile_param_program_chain(
             param_program_chain,
             macro_resolver=_param_program_macro_resolver(),
@@ -187,14 +195,21 @@ def handle_build_plan(params):
         # which survives the Step Functions Cause and the error status row.
         parsed_coeff_source = parse_coeff_source_for_run(coeff_program_source_text)
         coeff_program_chain = parsed_coeff_source["chain"]
+        coeff_program_chain_explicit = True
     else:
         parsed_coeff_source = None
-        coeff_program_chain = run_params.get("coeff_program_chain") or coeff_transforms_to_program_chain(coeff_transforms)
+        coeff_program_chain, coeff_program_chain_explicit = explicit_program_chain_for_run(
+            run_params,
+            "coeff_program_chain",
+            "coeff_program_chain",
+        )
+        if coeff_program_chain is None:
+            coeff_program_chain = coeff_transforms_to_program_chain(coeff_transforms)
     coeff_program = None
     coeff_program_metadata = None
+    if coeff_program_chain_explicit:
+        coeff_transforms = []
     if coeff_program_chain:
-        if not isinstance(coeff_program_chain, list):
-            raise RuntimeError("coeff_program_chain must be an array")
         compiled_coeff_program = compile_coeff_program_chain(
             coeff_program_chain,
             macro_resolver=_coeff_program_macro_resolver(),

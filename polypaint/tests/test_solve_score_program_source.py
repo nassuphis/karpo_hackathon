@@ -89,6 +89,17 @@ def test_solve_score_source_rejects_infix_and_use_before_definition():
     assert "unknown solve-score expression" in messages
 
 
+def test_solve_score_source_strict_false_marks_degraded_fallback():
+    from solve_score_program_source import compile_solve_score_program_source
+
+    compiled = compile_solve_score_program_source("score = metric(proximity, slv, q=999%)", strict=False)
+
+    assert compiled["degraded"] is True
+    assert compiled["diagnostics"]
+    assert compiled["diagnostics"][0]["code"] == "bad_quantile"
+    assert compiled["program_spec"] == "m0-0"
+
+
 def test_solve_score_source_accepts_negative_numeric_params_inside_calls():
     from solve_score_program_source import compile_solve_score_program_source
 

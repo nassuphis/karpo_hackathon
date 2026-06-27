@@ -33,6 +33,7 @@ from coeff_program_chain import compile_coeff_program_chain
 from pipeline_programs import (
     coeff_source_text_for_run,
     coeff_transforms_to_program_chain,
+    explicit_program_chain_for_run,
     param_source_text_for_run,
     param_transforms_to_program_chain,
     parse_coeff_source_for_run,
@@ -68,13 +69,19 @@ def _resolve_coeff_program(params, coeff_transforms, *, pipeline_mode=None):
     if source_text is not None:
         parsed = parse_coeff_source_for_run(source_text)
         coeff_program_chain = parsed["chain"]
+        coeff_program_chain_explicit = True
     else:
-        coeff_program_chain = params.get("coeff_program_chain")
-    if coeff_program is None and not coeff_program_chain and coeff_transforms:
+        coeff_program_chain, coeff_program_chain_explicit = explicit_program_chain_for_run(
+            params,
+            "coeff_program_chain",
+            "coeff_program_chain",
+        )
+    if coeff_program is None and coeff_program_chain is None and coeff_transforms:
         coeff_program_chain = coeff_transforms_to_program_chain(coeff_transforms)
+        coeff_program_chain_explicit = False
+    if coeff_program is None and coeff_program_chain_explicit:
+        coeff_transforms = []
     if coeff_program is None and coeff_program_chain:
-        if not isinstance(coeff_program_chain, list):
-            raise RuntimeError("coeff_program_chain must be an array")
         compiled = compile_coeff_program_chain(
             coeff_program_chain,
             macro_resolver=_coeff_program_macro_resolver(),
@@ -92,13 +99,19 @@ def _resolve_param_program(params, param_transforms, *, pipeline_mode=None):
     if source_text is not None:
         parsed = parse_param_source_for_run(source_text)
         param_program_chain = parsed["chain"]
+        param_program_chain_explicit = True
     else:
-        param_program_chain = params.get("param_program_chain")
-    if param_program is None and not param_program_chain and param_transforms:
+        param_program_chain, param_program_chain_explicit = explicit_program_chain_for_run(
+            params,
+            "param_program_chain",
+            "param_program_chain",
+        )
+    if param_program is None and param_program_chain is None and param_transforms:
         param_program_chain = param_transforms_to_program_chain(param_transforms)
+        param_program_chain_explicit = False
+    if param_program is None and param_program_chain_explicit:
+        param_transforms = []
     if param_program is None and param_program_chain:
-        if not isinstance(param_program_chain, list):
-            raise RuntimeError("param_program_chain must be an array")
         compiled = compile_param_program_chain(
             param_program_chain,
             macro_resolver=_param_program_macro_resolver(),

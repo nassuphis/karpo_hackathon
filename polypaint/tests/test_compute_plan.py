@@ -193,6 +193,35 @@ class TestComputePlan(unittest.TestCase):
         self.assertTrue(param_plan["pipeline"]["param_program_fingerprint"])
         self.assertEqual(param_plan["pipeline"]["coeff_program"], {})
 
+    def test_build_plan_explicit_empty_program_chains_do_not_resurrect_legacy_transforms(self):
+        import handler_compute_plan as mod
+
+        result = mod.handle_build_plan({
+            "job_id": "compute_j",
+            "run_id": "run_empty_programs",
+            "task_id": "compute_run_aberth_mt_run_empty_programs",
+            "params": {
+                "pipeline_mode": "program",
+                "solver_mode": "aberth_mt",
+                "N": 20,
+                "times": 1,
+                "n_chunks": 2,
+                "function": "g1",
+                "param_transforms": [["unit_circle"]],
+                "param_program_chain": [],
+                "coeff_transforms": [["rev"]],
+                "coeff_program_chain": [],
+                "cfpv": [],
+            },
+        })
+        plan = json.loads(result["body"])
+        self.assertEqual(plan["pipeline"]["param_transforms"], [])
+        self.assertEqual(plan["pipeline"]["coeff_transforms"], [])
+        self.assertEqual(plan["pipeline"]["param_program_chain"], [])
+        self.assertEqual(plan["pipeline"]["coeff_program_chain"], [])
+        self.assertEqual(plan["pipeline"]["param_program"], {})
+        self.assertEqual(plan["pipeline"]["coeff_program"], {})
+
     def test_build_plan_keeps_legacy_equivalent_param_program_as_vm_payload(self):
         import handler_compute_plan as mod
 

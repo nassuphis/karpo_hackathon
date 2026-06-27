@@ -25,3 +25,17 @@ def test_blank_source_preserves_legacy_metric_fallback():
 
     assert compiled["metric"] == "spread"
     assert "spread" in compiled["source_text"]
+
+
+def test_non_strict_source_fallback_preserves_diagnostics():
+    from solve_score_pipeline_programs import solve_score_program_for_run
+
+    compiled = solve_score_program_for_run(
+        {"solve_score_program_source_text": "score = metric(proximity, slv, q=999%)"},
+        strict=False,
+    )
+
+    assert compiled["degraded"] is True
+    assert compiled["diagnostics"]
+    assert compiled["diagnostics"][0]["code"] == "bad_quantile"
+    assert compiled["program_spec"] == "m0-0"

@@ -341,7 +341,7 @@ const defs = (((_coeffRegistryVocab || {}).programParamDefs || {})[name]) || [];
 
 Add a frontend test for a partial Coeff vocab object.
 
-### A3. `round(1, 2)` Is Ambiguous And Currently Means `(multiplier, andy)`
+### A3. `round(1, 2)` Uses Complex Multiplier Plus Optional `andy`
 
 Current behavior:
 
@@ -361,14 +361,18 @@ not as two real multiplier lanes. The inverse display collapses to `["round", "2
 Cause:
 
 - `_compat_signature_args` takes the first matching signature.
-- `round` has overlapping `arg_counts` and `andy_arg_counts` shape: the two-arg form matches the complex multiplier signature with trailing `andy` before the real-lane form.
+- `round` has overlapping historical shapes: one semantic shape is complex multiplier plus trailing `andy`; one old packed shape is two real multiplier lanes plus optional `andy`.
+- Treating the packed real-lane shape as semantic source is the mistake. It is a wire/legacy compatibility shape.
 
-Fix options:
+Decision:
 
-- Preferred: make ambiguous source forms a coded error and require the explicit unambiguous form.
-- If compatibility requires preserving the current interpretation, add a registry validation test that pins the overlap as intentional and add user-facing Help text explaining that `round(a,b,andy)` is the real-lane form with `andy`.
+- The semantic source signature is `round(src, multiplier: complex = 1+0i, andy: real = 0)`.
+- `round(poly, 1+2i)` means multiplier `1+2i`, default `andy=0`.
+- `round(poly, 1+2i, 0.5)` means multiplier `1+2i`, `andy=0.5`.
+- `round(poly, 1, 2)` means multiplier `1+0i`, `andy=2`.
+- Old packed real-lane rows such as `legacy(round, poly, poly, 1, 2, 0.5)` are compatibility-shim inputs and should regenerate as semantic source `round(poly, 1+2i, 0.5)`.
 
-Do not let additional overlapping `arg_counts` / `andy_arg_counts` appear silently.
+Do not let additional overlapping `arg_counts` / `andy_arg_counts` appear silently. If an old wire shape overlaps a semantic optional-arg shape, document it as compatibility-only and add a round-trip/fingerprint test.
 
 ### A4. Param `legacy(name, src, tgt, ...)` Does Not Validate At Parse Time
 
@@ -2202,6 +2206,105 @@ The larger desired model:
 
 The remaining Phase-10 work is mainly separating `andy` semantics from `andy` compatibility packing, plus cleaner Param complex-arg modeling. It is likely its own follow-up after Phases 1-9 because it changes accepted source forms and compatibility behavior.
 
+### Phase 10A: Coeff `andy` As A Normal Optional Argument
+
+This is a dedicated refactor, not a drive-by cleanup. It touches the Coeff semantic registry, source parser, chain compiler, generated vocab/help, saved-program round trips, and legacy wire packing.
+
+Goal:
+
+- In the semantic language, `andy` is a normal optional argument like any other argument.
+- In the legacy/wire compatibility layer, old `andy` storage and old trailing-argument forms are translated to and from that semantic argument.
+- The registry does not use `supports_andy`, generated `ANDY_PARAM`, or parser-only `andy_arg_counts` as semantic schema.
+
+Non-goals:
+
+- Do not change the native C wire format in the same patch.
+- Do not renumber function indices or alter legacy opcodes.
+- Do not change saved-program fingerprints unless an explicit migration/fingerprint decision is made and pinned by tests.
+- Do not resolve Param complex-arg cleanup in the same patch.
+
+Target semantic registry shape:
+
+```json
+{
+  "name": "rev",
+  "args": [],
+  "optional_args": [
+    {
+      "name": "andy",
+      "type": "real",
+      "default": 0.0,
+      "ui": {
+        "label": "andy",
+        "desc": "Blend amount in [0,1]."
+      }
+    }
+  ]
+}
+```
+
+The exact key name can be `optional_args` or a unified `args` list with `optional: true`; choose one schema and use it everywhere. Preferred: one `args` list with `optional: true` once the loader can preserve positional compatibility cleanly. Use `optional_args` only if mixing required and optional positions would make old arity behavior ambiguous.
+
+Compatibility shim responsibilities:
+
+- Accept current source forms that use a trailing `andy`.
+- Accept current saved chain rows and legacy native-transform rows.
+- Translate semantic args into the existing compiled token shape, including the separate `token["andy"]` / `token["andy_expr_ref"]` fields where the wire still needs them.
+- Translate old compiled/saved rows back into semantic source/help forms without exposing compatibility-only fields as registry schema.
+- Own the old `compat_signatures.andy_arg_counts` meaning until those signatures can be represented as ordinary optional args plus explicit legacy aliases.
+
+Implementation milestones:
+
+1. Add loader support for optional args without changing generated vocab or compiler behavior.
+   - Validate arg names/types/defaults/help text.
+   - Reject duplicate names across required and optional args.
+   - Add schema tests proving `andy` can be represented as a normal optional arg.
+2. Add a Coeff compatibility adapter module/function.
+   - Input: registry spec plus raw source/chain args.
+   - Output: semantic required args, semantic optional args, and legacy packing metadata.
+   - Keep existing behavior for every current fixture.
+3. Move hardcoded generated `ANDY_PARAM` into temporary adapter output.
+   - Help/rendering consumes normalized semantic args.
+   - Generated output may still include compatibility fields, but they must be named as compatibility fields and have consumers/tests.
+4. Update source parser and chain compiler to parse `andy` through the normal optional-arg path.
+   - The final packing step may still emit `token["andy"]`.
+   - The parser should no longer need a separate `_split_native_transform_andy` rule except inside the compatibility adapter.
+5. Remove or deprecate `supports_andy`.
+   - First ignore it when semantic optional args are present.
+   - Then remove it from generated public vocab.
+   - Finally remove it from the registry once tests prove no consumer needs it.
+6. Encode the `round` decision explicitly.
+   - Semantic signature: `round(src, multiplier: complex = 1+0i, andy: real = 0)`.
+   - New source `round(poly, 1, 2)` preserves current meaning: multiplier `1+0i`, `andy=2`.
+   - Old packed real-lane rows regenerate as explicit complex multiplier source, e.g. `round(poly, 1+2i, 0.5)`.
+   - Do not leave first-match dispatch as implicit behavior; the compatibility adapter owns the conversion.
+
+Required gates:
+
+```bash
+uv run python -m pytest \
+  tests/test_coeff_program_chain.py \
+  tests/test_coeff_program_drift.py \
+  tests/test_coeff_program_native.py \
+  tests/test_coeff_source_equivalence.py \
+  tests/test_coeff_wire_fingerprints.py \
+  tests/test_program_m3_oracles.py \
+  tests/test_program_help_forms.py \
+  tests/test_program_v2_migration.py
+bash tests/test_frontend_js.sh
+```
+
+Acceptance criteria:
+
+- Help shows `andy` because it is a normal optional argument, not because the generator appended a magic param.
+- No semantic registry field exists whose only purpose is old `andy` packing.
+- Old saved Coeff programs compile with identical execution specs and fingerprints unless a deliberate migration is documented.
+- Source-to-chain-to-source round trips preserve the current corpus.
+- `round(poly, 1, 2)` is pinned as multiplier `1+0i` plus `andy=2`.
+- Old packed real-lane `round` rows serialize to explicit complex multiplier source.
+- `round`, `linear`, `exp`, and `pow` compatibility signatures remain wire-stable and tested.
+- Public generated vocab does not expose dead `supportsAndy`, `effectiveArgs`, or `compatSignatures` fields unless a concrete frontend consumer is named and tested.
+
 ## Test Plan
 
 Run focused gates after each phase, not only at the end.
@@ -2318,7 +2421,8 @@ Recommended order:
 10. Refactor Help builders onto adapter.
 11. Remove static Param fallback metadata.
 12. Share source parser registry-name validation.
-13. Only then consider optional/complex arg model changes.
+13. Implement Phase 10A as its own branch/commit series after registry plumbing, generator/help, and source-parser behavior are stable.
+14. Only then consider broader optional/complex arg model changes.
 
 Do not start by changing accepted source syntax. First make current behavior shared, tested, and generated. Then extend the language.
 

@@ -247,6 +247,13 @@ def _canonical_native_name(name):
     return _NATIVE_TRANSFORM_ALIASES.get(raw, raw)
 
 
+def _spec_supports_optional_andy(spec):
+    return any(
+        str(arg.get("name") or "").strip().lower() == "andy"
+        for arg in (spec.get("optional_args") or ())
+    )
+
+
 def _split_native_transform_andy(name, args):
     """Strip the trailing andy arg when the count matches the fn's packing.
 
@@ -254,7 +261,7 @@ def _split_native_transform_andy(name, args):
     registry ids) and coeff_program_chain's _legacy_args family.
     """
     spec = legacy_registry()["by_name"].get(_canonical_native_name(name))
-    if not spec or not spec.get("supports_andy"):
+    if not spec or not _spec_supports_optional_andy(spec):
         return list(args), None
     raw_args = list(args)
     fn_index = int(spec.get("fn_index") or 0)
@@ -672,7 +679,7 @@ def _lower_call(name, args, *, target="push"):
             if name == "exp":
                 raise CoeffProgramSourceError("exp(x) is unary; use exp_affine(source, multiplier, offset[, andy]) for exp(source*multiplier+offset)")
             registry = legacy_registry()["by_name"]
-            if name in registry and registry[name].get("supports_andy") and not registry[name].get("args"):
+            if name in registry and _spec_supports_optional_andy(registry[name]) and not registry[name].get("args"):
                 # sin/cos/tan/sinh/cosh/tanh with a trailing andy reach the
                 # native transform (registry fn 17-22); the bare unary forms
                 # stay on the typed/vector unary path.

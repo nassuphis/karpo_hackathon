@@ -280,7 +280,8 @@ assertIncludes("return [{ name: _coeffProgramRegistryChipName(legacyName), param
 assertIncludes("// LAYOUT CONTRACT: legacy rows are source-first", 'The legacy-vs-chip param order flip must stay documented at the normalize seam');
 assertIncludes("function _isAndyParam(pDef) {", 'andy identity should be real metadata (kind), not placeholder text');
 assertIncludes("return name === 'const' ? 'push_const' : name;", 'coeff program chip canonicalizer must map const to push_const (a self-call here recursed forever)');
-if (!vocabSrc.includes('"effectiveArgs"') || !vocabSrc.includes('"kind": "andy"')) fail('generated coeff vocab should carry effective args and andy metadata');
+if (!vocabSrc.includes('"effectiveArgs"') || !vocabSrc.includes('"kind": "andy"')) fail('generated coeff vocab should carry effective args and optional andy metadata');
+if (vocabSrc.includes('"supportsAndy"')) fail('generated coeff vocab should not emit a separate supportsAndy capability map');
 assertIncludes("const _coeffProgramVectorUnaryNames = _coeffStructuralSubOpNames('vector_unary'", 'Coeff Program vector unary names should derive from generated structural metadata');
 assertIncludes("catalog.power_series = {", 'Coeff Program catalog should expose the registry power transform as a power_series chip');
 assertIncludes("return { name: 'legacy', params: [normalized.name, 'poly', 'poly', ...args] };", 'Copy legacy transforms must keep andy-carrying rows as legacy chips (named chips drop andy)');

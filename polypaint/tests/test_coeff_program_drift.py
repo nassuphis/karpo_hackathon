@@ -240,15 +240,17 @@ def test_coeff_profile_caps_and_selectors_match_python_and_c():
 
 def test_generated_coeff_vocab_carries_effective_args_and_andy():
     vocab = _coeff_vocab_js_payload()
+    assert "supportsAndy" not in vocab
     for name, spec in legacy_registry()["by_name"].items():
         generated = vocab["effectiveArgs"][name]
         assert generated == list(spec["effective_args"])
-        if spec["supports_andy"]:
-            assert generated[-1]["name"] == "andy"
-            assert generated[-1]["optional"] is True
-            assert generated[-1]["role"] == "andy"
-            ui_params = vocab["ctCatalog"][name].get("params") or []
-            assert any(param.get("kind") == "andy" for param in ui_params), name
+        optional_names = {arg["name"] for arg in spec.get("optional_args") or ()}
+        assert optional_names == {"andy"}, name
+        assert generated[-1]["name"] == "andy"
+        assert generated[-1]["optional"] is True
+        assert generated[-1]["role"] == "andy"
+        ui_params = vocab["ctCatalog"][name].get("params") or []
+        assert any(param.get("kind") == "andy" for param in ui_params), name
 
 
 def test_generated_coeff_vocab_exposes_all_vector_unary_subops():
@@ -368,14 +370,17 @@ def test_source_transform_aliases_are_mirrored_in_chain():
 
 
 def test_coeff_registry_has_no_unpinned_generic_complex_args():
-    # Complex literal support for linear/pow/exp/round is intentionally
-    # special-cased and fingerprint-golden-tested. A future registry-level
-    # type:"complex" arg must update the packer and wire corpus explicitly.
+    # round.multiplier is the one intentional semantic complex arg. The other
+    # complex literal support paths remain compatibility-signature packings; a
+    # future registry-level type:"complex" arg must update the packer and wire
+    # corpus explicitly.
+    allowed = {("round", "multiplier")}
     offenders = [
         (name, arg.get("name") or arg.get("ph") or idx)
         for name, spec in legacy_registry()["by_name"].items()
         for idx, arg in enumerate(spec.get("args") or ())
         if arg.get("type") == "complex"
+        and (name, arg.get("name")) not in allowed
     ]
     assert offenders == []
 
@@ -450,14 +455,16 @@ def test_generated_js_vocab_matches_registry():
     }
     # The chip catalog (param shapes/descs/UI hints) is part of the vocab:
     # every registry function must have a ui block with a desc, categories
-    # must match the registry, and the andy flag stays universal (the JS
-    # hydrator appends the shared andy param to every transform).
+    # must match the registry, and shared optional args are hydrated into each
+    # transform's params without a separate supportsAndy capability map.
     registry = legacy_registry()["by_name"]
     assert set(vocab["ctCatalog"]) == set(registry)
+    assert "supportsAndy" not in vocab
     for name, entry in vocab["ctCatalog"].items():
         assert entry.get("desc"), f"{name}: missing ui desc"
         assert entry["category"] == registry[name]["category"], name
-        assert registry[name]["supports_andy"], name
+        assert any(arg.get("name") == "andy" for arg in registry[name].get("optional_args") or ()), name
+        assert any(param.get("kind") == "andy" for param in entry.get("params") or ()), name
     assert set(vocab["programParamDefs"]) == {"exp", "round"}
     # Ordering is UI contract: ctCatalog keys appear in the transform picker
     # in insertion order (fn_index order), categories in registry order.
@@ -477,7 +484,8 @@ def test_native_transform_packing_parity_between_source_and_chain():
         # (source text, chain row, fn_index)
         ("poly = linear(poly, 2, 3, 0.5)", ["legacy", "linear", "poly", "poly", "2", "3", "0.5"], 14),
         ("poly = exp_affine(poly, 2, 3, 0.5)", ["legacy", "exp", "poly", "poly", "2", "3", "0.5"], 16),
-        ("poly = round(poly, 2, 0.5)", ["legacy", "round", "poly", "poly", "2", "0.5"], 23),
+        ("poly = round(poly, 2, 0.5)", ["_native_transform", "round", "poly", "poly", "2", "0.5"], 23),
+        ("poly = round(poly, 1+2i, 0.5)", ["_native_transform", "round", "poly", "poly", "1+2i", "0.5"], 23),
         ("poly = round(poly, 1, 2, 0.5)", ["legacy", "round", "poly", "poly", "1", "2", "0.5"], 23),
         ("poly = pow_affine(poly, 2, 3, 0.5)", ["legacy", "pow", "poly", "poly", "2", "3", "0.5"], 24),
     ]
@@ -497,3 +505,22 @@ def test_native_transform_packing_parity_between_source_and_chain():
             assert source_tok["stack_arg_count"] <= chain_tok.get("n_args", 8), source_text
         else:
             assert source_tok.get("args") == chain_tok.get("args"), source_text
+
+
+def test_coeff_round_two_arg_source_and_legacy_compat_are_distinct():
+    from coeff_program_source import parse_coeff_program_source
+
+    parsed = parse_coeff_program_source("poly = round(poly, 1, 2)", strict=False)
+    assert parsed["diagnostics"] == []
+    source_tok = next(
+        t for t in chain.compile_coeff_program_chain(parsed["chain"])["tokens"]
+        if t["op"] == chain.COEFF_OP_NATIVE_TRANSFORM
+    )
+    assert source_tok["stack_arg_count"] == 1
+    assert source_tok["andy"] == 2.0
+
+    legacy_tok = chain.compile_coeff_program_chain([["legacy", "round", "poly", "poly", "1", "2"]])["tokens"][0]
+    assert legacy_tok["op"] == chain.COEFF_OP_LEGACY
+    assert legacy_tok["n_args"] == 2
+    assert legacy_tok["args"] == [1.0, 2.0]
+    assert legacy_tok.get("andy", 0.0) == 0.0

@@ -694,9 +694,13 @@ class TestCoeffProgramChain(unittest.TestCase):
     def test_legacy_args_are_real_int_or_enum_only(self):
         from coeff_program_chain import legacy_registry
 
+        allowed_complex_args = {("round", "multiplier")}
         for spec in legacy_registry()["by_name"].values():
             for arg in spec["args"]:
-                self.assertIn(arg["type"], {"real", "int", "enum"})
+                if (spec["name"], arg.get("name")) in allowed_complex_args:
+                    self.assertEqual(arg["type"], "complex")
+                else:
+                    self.assertIn(arg["type"], {"real", "int", "enum"})
 
     def test_scalar_expressions_can_read_coeff_register_values(self):
         from coeff_program_chain import (
@@ -797,6 +801,16 @@ class TestCoeffProgramReviewFixes(unittest.TestCase):
         token = next(t for t in compiled["tokens"] if t["op"] == COEFF_OP_NATIVE_TRANSFORM)
         self.assertEqual(token["fn_index"], 23)
         self.assertEqual(token["andy"], 0.5)
+
+    def test_round_two_arg_source_treats_second_arg_as_andy(self):
+        from coeff_program_chain import COEFF_OP_NATIVE_TRANSFORM, compile_coeff_program_chain
+        parsed = self._parse("poly = round(poly, 1, 2)")
+        self.assertEqual(parsed["diagnostics"], [])
+        compiled = compile_coeff_program_chain(parsed["chain"])
+        token = next(t for t in compiled["tokens"] if t["op"] == COEFF_OP_NATIVE_TRANSFORM)
+        self.assertEqual(token["fn_index"], 23)
+        self.assertEqual(token["stack_arg_count"], 1)
+        self.assertEqual(token["andy"], 2.0)
 
     def test_trig_with_andy_routes_to_native_transform(self):
         from coeff_program_chain import (
@@ -1063,11 +1077,12 @@ class TestCodeReview3Fixes(unittest.TestCase):
         sqrt = compile_coeff_program_chain([["push_const", "2", "sqrt(neg(1))"], ["emit"]])
         self.assertAlmostEqual(sqrt["tokens"][0]["args_im"][1], 1.0)
 
-    def test_round_two_arg_form_is_multiplier_and_andy(self):
-        # Pinned decision: 2-arg legacy round is (multiplier, andy); the old
-        # component pair (a, b) with b != 0 must use the 3-arg form.
+    def test_round_two_arg_native_form_is_multiplier_and_andy(self):
+        # Pinned decision: source/native round(src, multiplier, andy) treats
+        # the second value as andy. Explicit legacy(...) rows stay the old
+        # packed real/imag compatibility form.
         from coeff_program_chain import compile_coeff_program_chain
-        compiled = compile_coeff_program_chain([["legacy", "round", "poly", "poly", "2", "3"]])
+        compiled = compile_coeff_program_chain([["_native_transform", "round", "poly", "poly", "2", "3"]])
         token = compiled["tokens"][0]
         self.assertEqual(token["args"], [2.0, 0.0])
         self.assertEqual(token["andy"], 3.0)

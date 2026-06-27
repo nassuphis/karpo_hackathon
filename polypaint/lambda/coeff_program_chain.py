@@ -393,11 +393,55 @@ def _normalize_compat_signatures(function_name, signatures):
     return tuple(out)
 
 
+def _normalize_registry_arg(function_name, idx, arg, *, label="arg"):
+    if not isinstance(arg, dict):
+        raise RuntimeError(f"coeff legacy function {function_name} {label} {idx} must be an object")
+    normalized_arg = dict(arg)
+    arg_type = str(normalized_arg.get("type") or "real").strip().lower()
+    if arg_type not in {"real", "int", "enum", "complex"}:
+        raise RuntimeError(
+            f"coeff legacy function {function_name} {label} {idx} has unsupported type {arg_type!r}; "
+            "legacy bridge supports real, complex, int, and enum args"
+        )
+    normalized_arg["type"] = arg_type
+    if arg_type == "enum":
+        for choice in normalized_arg.get("choices") or []:
+            if str(choice).strip().lower() not in _ENUM_ARG_VALUES:
+                raise RuntimeError(
+                    f"coeff legacy function {function_name} {label} {idx} enum choice {choice!r} "
+                    f"is not supported; known choices: {sorted(_ENUM_ARG_VALUES)}"
+                )
+    return normalized_arg
+
+
+def _optional_arg_names(spec):
+    return {
+        str(arg.get("name") or "").strip().lower()
+        for arg in (spec.get("optional_args") or ())
+        if str(arg.get("name") or "").strip()
+    }
+
+
+def _supports_optional_andy(spec):
+    return "andy" in _optional_arg_names(spec)
+
+
+def _runtime_arg_decl(arg):
+    return {key: value for key, value in dict(arg).items() if key != "ui"}
+
+
 def _load_legacy_registry():
     with open(_registry_path(), "r", encoding="utf-8") as fh:
         payload = json.load(fh)
     if int(payload.get("version") or 0) != 1:
         raise RuntimeError("coeff legacy registry version must be 1")
+    shared_optional_args = tuple(
+        {
+            **_normalize_registry_arg("shared_optional_args", idx, arg, label="entry"),
+            "optional": True,
+        }
+        for idx, arg in enumerate(payload.get("shared_optional_args") or ())
+    )
     by_name = {}
     by_index = {}
     for fn in payload.get("functions") or []:
@@ -414,35 +458,21 @@ def _load_legacy_registry():
         args_raw = list(fn.get("args") or [])
         if len(args_raw) > MAX_ARGS:
             raise RuntimeError(f"coeff legacy function {name} has too many args")
-        args = []
-        for idx, arg in enumerate(args_raw):
-            if not isinstance(arg, dict):
-                raise RuntimeError(f"coeff legacy function {name} arg {idx} must be an object")
-            normalized_arg = dict(arg)
-            arg_type = str(normalized_arg.get("type") or "real").strip().lower()
-            if arg_type not in {"real", "int", "enum", "complex"}:
-                raise RuntimeError(
-                    f"coeff legacy function {name} arg {idx} has unsupported type {arg_type!r}; "
-                    "legacy bridge supports real, complex, int, and enum args"
-                )
-            normalized_arg["type"] = arg_type
-            if arg_type == "enum":
-                for choice in normalized_arg.get("choices") or []:
-                    if str(choice).strip().lower() not in _ENUM_ARG_VALUES:
-                        raise RuntimeError(
-                            f"coeff legacy function {name} arg {idx} enum choice {choice!r} "
-                            f"is not supported; known choices: {sorted(_ENUM_ARG_VALUES)}"
-                        )
-            args.append(normalized_arg)
-        effective_args = tuple(args)
-        if bool(fn.get("supports_andy")):
-            effective_args = effective_args + ({
-                "name": "andy",
-                "type": "real",
-                "default": 0.0,
+        args = tuple(
+            _normalize_registry_arg(name, idx, arg)
+            for idx, arg in enumerate(args_raw)
+        )
+        optional_args = tuple(
+            {
+                **_normalize_registry_arg(name, idx, arg, label="optional arg"),
                 "optional": True,
-                "role": "andy",
-            },)
+            }
+            for idx, arg in enumerate(fn.get("optional_args") or ())
+        ) + shared_optional_args
+        optional_names = [str(arg.get("name") or "").strip().lower() for arg in optional_args]
+        if len(optional_names) != len(set(optional_names)):
+            raise RuntimeError(f"coeff legacy function {name} has duplicate optional args")
+        effective_args = args + tuple(_runtime_arg_decl(arg) for arg in optional_args)
         compat_signatures = _normalize_compat_signatures(name, fn.get("compat_signatures") or ())
         spec = {
             "name": name,
@@ -451,9 +481,9 @@ def _load_legacy_registry():
             "allowed_src": tuple(str(x).strip() for x in (fn.get("allowed_src") or [])),
             "allowed_tgt": tuple(str(x).strip() for x in (fn.get("allowed_tgt") or [])),
             "args": tuple(args),
+            "optional_args": optional_args,
             "effective_args": effective_args,
             "compat_signatures": compat_signatures,
-            "supports_andy": bool(fn.get("supports_andy")),
             "length_policy": str(fn.get("length_policy") or "unknown"),
             # Aliases are wire format: saved chip rows carry them, so entries
             # may be added but never removed or remapped. chain_only_aliases
@@ -1063,7 +1093,7 @@ def _split_trailing_andy(spec, raw_args, *, arities):
     stanza used to be pasted at four sites.
     """
     raw_args = list(raw_args)
-    if spec.get("supports_andy") and len(raw_args) in arities:
+    if _supports_optional_andy(spec) and len(raw_args) in arities:
         return raw_args[:-1], raw_args[-1]
     return raw_args, None
 
@@ -1341,7 +1371,7 @@ def _compat_signature_match(spec, signature, raw_args):
     arg_counts = {int(n) for n in (signature.get("arg_counts") or [])}
     andy_arg_counts = {int(n) for n in (signature.get("andy_arg_counts") or [])}
     requires_andy = bool(signature.get("requires_andy"))
-    if spec.get("supports_andy") and len(raw_args) in andy_arg_counts:
+    if _supports_optional_andy(spec) and len(raw_args) in andy_arg_counts:
         stripped = raw_args[:-1]
         if len(stripped) in arg_counts:
             return stripped, raw_args[-1]
@@ -1408,7 +1438,33 @@ def _compat_signature_args(spec, raw_args, scalar_exprs):
     raise RuntimeError(f"{spec['name']} has no compat signatures")
 
 
-def _legacy_args(spec, raw_args, scalar_exprs):
+def _legacy_round_real_lanes_args(spec, raw_args, scalar_exprs):
+    for signature in spec.get("compat_signatures") or ():
+        if (
+            str(signature.get("name") or "") == "packed_real_multiplier_with_andy"
+            and str(signature.get("wire") or "") == "real_lanes"
+            and len(raw_args) in {2, 3}
+        ):
+            args = list(raw_args[:2])
+            scratch_exprs = list(scalar_exprs)
+            try:
+                values, values_im, expr_refs = _pack_compat_signature(spec, signature, args, scratch_exprs)
+                andy = 0.0
+                andy_expr_ref = -1
+                if len(raw_args) == 3:
+                    andy, andy_expr_ref = _compile_andy(raw_args[2], scratch_exprs, f"{spec['name']} andy")
+            except Exception:
+                return None
+            scalar_exprs[:] = scratch_exprs
+            return values, values_im, expr_refs, andy, andy_expr_ref
+    return None
+
+
+def _legacy_args(spec, raw_args, scalar_exprs, *, legacy_compat=False):
+    if legacy_compat and int(spec.get("fn_index") or 0) == FN_ROUND and len(raw_args) in {2, 3}:
+        matched = _legacy_round_real_lanes_args(spec, list(raw_args), scalar_exprs)
+        if matched is not None:
+            return matched
     if spec.get("compat_signatures"):
         return _compat_signature_args(spec, raw_args, scalar_exprs)
     declared = list(spec["args"])
@@ -1475,7 +1531,12 @@ def _registry_transform_token(op, kind_label, name, src, tgt, args, scalar_exprs
         raise RuntimeError(f"{canonical_name} does not support src={src_name}")
     if tgt_name not in spec["allowed_tgt"]:
         raise RuntimeError(f"{canonical_name} does not support tgt={tgt_name}")
-    values, values_im, expr_refs, andy, andy_expr_ref = _legacy_args(spec, args, scalar_exprs)
+    values, values_im, expr_refs, andy, andy_expr_ref = _legacy_args(
+        spec,
+        args,
+        scalar_exprs,
+        legacy_compat=(op == COEFF_OP_LEGACY),
+    )
     return _token(
         op,
         fn_index=spec["fn_index"],
@@ -1550,7 +1611,7 @@ def _native_transform_stack_arg_token(name, src, tgt, stack_arg_count, scalar_ex
         stack_arg_count=count,
     )
     if andy_arg is not None:
-        if not spec.get("supports_andy"):
+        if not _supports_optional_andy(spec):
             raise RuntimeError(f"{canonical_name} does not support andy")
         andy, andy_expr_ref = _compile_andy(andy_arg, scalar_exprs, f"native transform {canonical_name} andy")
         fields["andy"] = andy

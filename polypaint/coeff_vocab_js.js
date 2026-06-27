@@ -76,36 +76,6 @@ window._coeffRegistryVocab = {
     "exp": "exp_affine",
     "power": "power_series"
   },
-  "supportsAndy": {
-    "rev": true,
-    "conj": true,
-    "normalize": true,
-    "deriv": true,
-    "safe": true,
-    "negate_odd": true,
-    "max2one": true,
-    "sort_mod_keep_angle": true,
-    "sort_angle_keep_mod": true,
-    "sort_abs": true,
-    "cumsum": true,
-    "cummax": true,
-    "sort_cumsum": true,
-    "linear": true,
-    "swirler": true,
-    "exp": true,
-    "cos": true,
-    "sin": true,
-    "tan": true,
-    "cosh": true,
-    "sinh": true,
-    "tanh": true,
-    "round": true,
-    "pow": true,
-    "power": true,
-    "invpower": true,
-    "roots_cm": true,
-    "roots": true
-  },
   "effectiveArgs": {
     "rev": [
       {
@@ -327,14 +297,9 @@ window._coeffRegistryVocab = {
     ],
     "round": [
       {
-        "name": "a",
-        "type": "real",
-        "default": 1.0
-      },
-      {
-        "name": "b",
-        "type": "real",
-        "default": 0.0
+        "name": "multiplier",
+        "type": "complex",
+        "default": "1"
       },
       {
         "name": "andy",
@@ -943,20 +908,13 @@ window._coeffRegistryVocab = {
       "label": "round",
       "params": [
         {
-          "ph": "field1",
-          "label": "field1",
+          "ph": "multiplier",
+          "label": "mult",
           "def": "1",
-          "scalarExpr": "real",
-          "exprWide": true,
-          "title": "Real multiplier component. {SCALAR_EXPR_HELP}"
-        },
-        {
-          "ph": "field2",
-          "label": "field2",
-          "def": "0",
-          "scalarExpr": "real",
-          "exprWide": true,
-          "title": "Imaginary multiplier component. {SCALAR_EXPR_HELP}"
+          "complex": true,
+          "scalarExpr": "complex",
+          "complexWide": true,
+          "title": "Complex multiplier in round(z*multiplier). {SCALAR_EXPR_HELP}"
         },
         {
           "kind": "andy",

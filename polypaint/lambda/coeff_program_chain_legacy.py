@@ -295,6 +295,11 @@ def _load_legacy_registry():
         payload = json.load(fh)
     if int(payload.get("version") or 0) != 1:
         raise RuntimeError("coeff legacy registry version must be 1")
+    has_shared_andy = any(
+        str(arg.get("name") or "").strip().lower() == "andy"
+        for arg in (payload.get("shared_optional_args") or ())
+        if isinstance(arg, dict)
+    )
     by_name = {}
     by_index = {}
     for fn in payload.get("functions") or []:
@@ -332,7 +337,8 @@ def _load_legacy_registry():
                         )
             args.append(normalized_arg)
         effective_args = tuple(args)
-        if bool(fn.get("supports_andy")):
+        supports_andy = bool(fn.get("supports_andy")) or has_shared_andy
+        if supports_andy:
             effective_args = effective_args + ({
                 "name": "andy",
                 "type": "real",
@@ -349,7 +355,7 @@ def _load_legacy_registry():
             "args": tuple(args),
             "effective_args": effective_args,
             "compat_signatures": tuple(fn.get("compat_signatures") or ()),
-            "supports_andy": bool(fn.get("supports_andy")),
+            "supports_andy": supports_andy,
             "length_policy": str(fn.get("length_policy") or "unknown"),
             # Aliases are wire format: saved chip rows carry them, so entries
             # may be added but never removed or remapped. chain_only_aliases

@@ -1,5 +1,22 @@
 {
   "version": 1,
+  "shared_optional_args": [
+    {
+      "name": "andy",
+      "type": "real",
+      "default": 0.0,
+      "optional": true,
+      "role": "andy",
+      "ui": {
+        "kind": "andy",
+        "ph": "andy",
+        "label": "andy",
+        "def": "0",
+        "scalarExpr": "real",
+        "title": "Blend amount in [0,1]. {SCALAR_EXPR_HELP}"
+      }
+    }
+  ],
   "functions": [
     {
       "name": "rev",
@@ -16,7 +33,6 @@
         "push"
       ],
       "args": [],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "desc": "reverse coefficient order"
@@ -37,7 +53,6 @@
         "push"
       ],
       "args": [],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "desc": "complex conjugate every coefficient"
@@ -58,7 +73,6 @@
         "push"
       ],
       "args": [],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "desc": "divide by the leading coefficient"
@@ -79,7 +93,6 @@
         "push"
       ],
       "args": [],
-      "supports_andy": true,
       "length_policy": "may_change",
       "ui": {
         "desc": "differentiate the polynomial coefficients"
@@ -100,7 +113,6 @@
         "push"
       ],
       "args": [],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "desc": "replace non-finite components with zero"
@@ -121,7 +133,6 @@
         "push"
       ],
       "args": [],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "desc": "negate odd-indexed coefficients"
@@ -142,7 +153,6 @@
         "push"
       ],
       "args": [],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "desc": "set the largest-magnitude coefficient to 1"
@@ -163,7 +173,6 @@
         "push"
       ],
       "args": [],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "desc": "sort magnitudes while keeping original angles"
@@ -184,7 +193,6 @@
         "push"
       ],
       "args": [],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "desc": "sort angles while keeping original magnitudes"
@@ -205,7 +213,6 @@
         "push"
       ],
       "args": [],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "desc": "sort coefficients by magnitude"
@@ -226,7 +233,6 @@
         "push"
       ],
       "args": [],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "desc": "running complex cumulative sum"
@@ -247,7 +253,6 @@
         "push"
       ],
       "args": [],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "desc": "running maximum by coefficient magnitude"
@@ -268,7 +273,6 @@
         "push"
       ],
       "args": [],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "desc": "sort coefficients by cumulative-sum magnitude"
@@ -341,7 +345,6 @@
           ]
         }
       ],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "label": "linear",
@@ -383,7 +386,6 @@
         "push"
       ],
       "args": [],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "desc": "multiply each coefficient by a modulus-driven complex swirl"
@@ -441,7 +443,6 @@
           ]
         }
       ],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "label": "exp",
@@ -501,7 +502,6 @@
         "push"
       ],
       "args": [],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "label": "cos",
@@ -523,7 +523,6 @@
         "push"
       ],
       "args": [],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "label": "sin",
@@ -545,7 +544,6 @@
         "push"
       ],
       "args": [],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "label": "tan",
@@ -567,7 +565,6 @@
         "push"
       ],
       "args": [],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "label": "cosh",
@@ -589,7 +586,6 @@
         "push"
       ],
       "args": [],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "label": "sinh",
@@ -611,7 +607,6 @@
         "push"
       ],
       "args": [],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "label": "tanh",
@@ -634,14 +629,9 @@
       ],
       "args": [
         {
-          "name": "a",
-          "type": "real",
-          "default": 1.0
-        },
-        {
-          "name": "b",
-          "type": "real",
-          "default": 0.0
+          "name": "multiplier",
+          "type": "complex",
+          "default": "1"
         }
       ],
       "compat_signatures": [
@@ -678,27 +668,19 @@
           "requires_andy": true
         }
       ],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "label": "round",
         "desc": "round(z*(field1+i*field2)) componentwise",
         "params": [
           {
-            "ph": "field1",
-            "label": "field1",
+            "ph": "multiplier",
+            "label": "mult",
             "def": "1",
-            "scalarExpr": "real",
-            "exprWide": true,
-            "title": "Real multiplier component. {SCALAR_EXPR_HELP}"
-          },
-          {
-            "ph": "field2",
-            "label": "field2",
-            "def": "0",
-            "scalarExpr": "real",
-            "exprWide": true,
-            "title": "Imaginary multiplier component. {SCALAR_EXPR_HELP}"
+            "complex": true,
+            "scalarExpr": "complex",
+            "complexWide": true,
+            "title": "Complex multiplier in round(z*multiplier). {SCALAR_EXPR_HELP}"
           }
         ],
         "program_params": [
@@ -791,7 +773,6 @@
           ]
         }
       ],
-      "supports_andy": true,
       "length_policy": "preserve",
       "ui": {
         "label": "pow",
@@ -843,7 +824,6 @@
           "default": 8
         }
       ],
-      "supports_andy": true,
       "length_policy": "may_change",
       "ui": {
         "label": "p",
@@ -877,7 +857,6 @@
           "default": 4
         }
       ],
-      "supports_andy": true,
       "length_policy": "may_change",
       "ui": {
         "label": "invp",
@@ -915,7 +894,6 @@
           ]
         }
       ],
-      "supports_andy": true,
       "length_policy": "may_change",
       "ui": {
         "desc": "companion-matrix roots padded into coefficient slots",
@@ -961,7 +939,6 @@
           ]
         }
       ],
-      "supports_andy": true,
       "length_policy": "may_change",
       "ui": {
         "label": "roots",

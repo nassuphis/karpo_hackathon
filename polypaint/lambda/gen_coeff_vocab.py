@@ -24,14 +24,6 @@ PROGRAM_PROFILES_PATH = os.path.join(LAMBDA_DIR, "program_profiles.json")
 JS_OUT = os.path.join(LAMBDA_DIR, "..", "coeff_vocab_js.js")
 
 SCALAR_EXPR_HELP_PLACEHOLDER = "{SCALAR_EXPR_HELP}"
-ANDY_PARAM = {
-    "kind": "andy",
-    "ph": "andy",
-    "label": "andy",
-    "def": "0",
-    "scalarExpr": "real",
-    "title": f"Blend amount in [0,1]. {SCALAR_EXPR_HELP_PLACEHOLDER}",
-}
 
 
 def _load_json(path):
@@ -45,6 +37,30 @@ def build_structural_chips():
 
 def build_program_profiles():
     return _load_json(PROGRAM_PROFILES_PATH)
+
+
+def _arg_default_text(arg):
+    value = arg.get("default", "")
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value)
+
+
+def _ui_param_from_arg(arg):
+    ui = dict(arg.get("ui") or {})
+    if ui:
+        return ui
+    name = str(arg.get("name") or "").strip()
+    arg_type = str(arg.get("type") or "real").strip().lower()
+    return {
+        "ph": name,
+        "label": name,
+        "def": _arg_default_text(arg),
+        "scalarExpr": "complex" if arg_type == "complex" else "real",
+        "title": f"{name} parameter. {SCALAR_EXPR_HELP_PLACEHOLDER}",
+    }
 
 
 def build_vocab():
@@ -65,15 +81,13 @@ def build_vocab():
         if ui.get("label"):
             entry["label"] = ui["label"]
         params = list(ui.get("params") or [])
-        if loaded.get("supports_andy"):
-            params.append(dict(ANDY_PARAM))
+        params.extend(_ui_param_from_arg(arg) for arg in (loaded.get("optional_args") or ()))
         if params:
             entry["params"] = params
         ct_catalog[name] = entry
         if ui.get("program_params"):
             program_params = list(ui["program_params"])
-            if loaded.get("supports_andy"):
-                program_params.append(dict(ANDY_PARAM))
+            program_params.extend(_ui_param_from_arg(arg) for arg in (loaded.get("optional_args") or ()))
             program_param_defs[name] = program_params
         effective_args[name] = list(loaded.get("effective_args") or ())
         if loaded.get("compat_signatures"):
@@ -82,12 +96,10 @@ def build_vocab():
     alias_to_canonical = {}
     source_alias_by_name = {}
     chip_name_by_registry_name = {}
-    supports_andy = {}
     fn_index_by_name = {}
     for fn in functions:
         name = fn["name"]
         fn_index_by_name[name] = int(fn["fn_index"])
-        supports_andy[name] = bool(fn.get("supports_andy"))
         for alias in list(fn.get("aliases") or []) + list(fn.get("chain_only_aliases") or []):
             alias_to_canonical[alias] = name
         for alias in list(fn.get("aliases") or [])[:1]:
@@ -100,7 +112,6 @@ def build_vocab():
         "aliasToCanonical": alias_to_canonical,
         "sourceAliasByName": source_alias_by_name,
         "chipNameByRegistryName": chip_name_by_registry_name,
-        "supportsAndy": supports_andy,
         "effectiveArgs": effective_args,
         "compatSignatures": compat_signatures,
         "ctCatalog": ct_catalog,

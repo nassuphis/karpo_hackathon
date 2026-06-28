@@ -39,6 +39,29 @@ def _c_defines(source, prefix="PARAM_PROGRAM_"):
     }
 
 
+def _dispatch_pt_block(source, name):
+    marker = f'if (strcmp(e->name, "{name}") == 0) {{'
+    start = source.find(marker)
+    assert start >= 0, f"dispatchPt block missing for {name}"
+    next_start = source.find('\n    if (strcmp(e->name, "', start + len(marker))
+    fallback_start = source.find("\n    if (pt_is_targetable_independent", start + len(marker))
+    candidates = [idx for idx in (next_start, fallback_start) if idx >= 0]
+    end = min(candidates) if candidates else source.find("\n}", start + len(marker))
+    assert end > start, f"could not bound dispatchPt block for {name}"
+    return source[start:end]
+
+
+def _c_dispatch_default_lanes(source, name):
+    block = _dispatch_pt_block(source, name)
+    defaults = {}
+    for match in re.finditer(
+        r"e->nArgs\s*>\s*(\d+)\s*\?\s*(?:\([^)]*\))?\s*e->args\[\1\]\s*:\s*([-+]?\d+(?:\.\d+)?)",
+        block,
+    ):
+        defaults[int(match.group(1))] = float(match.group(2))
+    return defaults
+
+
 def _program_profiles():
     with open(PROGRAM_PROFILES, "r", encoding="utf-8") as fh:
         return json.load(fh)["profiles"]
@@ -207,3 +230,40 @@ def test_generated_param_vocab_exposes_full_registry():
         "programProfiles",
     ]:
         assert dead_payload not in vocab
+
+
+def test_param_registry_runtime_defaults_match_c_dispatch_fallbacks():
+    source = _c_source()
+    payload = _param_legacy_registry_payload()
+    compat = payload["compat"]
+    target_indexes = {name: int(idx) for name, idx in compat["target_arg_indexes"].items()}
+    variable_arg_names = set(compat["variable_arg_counts"])
+
+    for fn in payload["functions"]:
+        name = fn["name"]
+        args = list(fn.get("args") or [])
+        if not args or name in variable_arg_names:
+            continue
+        c_defaults = _c_dispatch_default_lanes(source, name)
+        for arg_index, arg in enumerate(args):
+            lane_index = arg_index
+            if name in target_indexes and arg_index >= target_indexes[name]:
+                lane_index += 1
+            assert lane_index in c_defaults, f"{name}.{arg['name']} C fallback missing lane {lane_index}"
+            assert c_defaults[lane_index] == float(arg["default"]), (
+                f"{name}.{arg['name']} registry default {arg['default']} "
+                f"does not match C fallback lane {lane_index}={c_defaults[lane_index]}"
+            )
+
+
+def test_param_independent_target_runtime_set_matches_registry():
+    source = _c_source()
+    match = re.search(
+        r"static int pt_is_targetable_independent\(const char \*name\) \{(?P<body>.*?)\n\}",
+        source,
+        re.S,
+    )
+    assert match, "pt_is_targetable_independent missing from sweep_cli.c"
+    c_names = sorted(re.findall(r'strcmp\(name,\s*"([^"]+)"\)\s*==\s*0', match.group("body")))
+    compat = _param_legacy_registry_payload()["compat"]
+    assert c_names == sorted(compat["independent_targets"])

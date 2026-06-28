@@ -45,6 +45,43 @@ def _c_defines(source, prefix="COEFF_PROGRAM_"):
     }
 
 
+def _coeff_legacy_case_block(source, fn_index):
+    marker = f"case {int(fn_index)}:"
+    switch_start = source.find("static int coeffLegacyApply")
+    assert switch_start >= 0, "coeffLegacyApply missing from sweep_cli.c"
+    start = source.find(marker, switch_start)
+    assert start >= 0, f"coeffLegacyApply case {fn_index} missing"
+    next_case = source.find("\n        case ", start + len(marker))
+    default_case = source.find("\n        default:", start + len(marker))
+    candidates = [idx for idx in (next_case, default_case) if idx >= 0]
+    end = min(candidates)
+    return source[start:end]
+
+
+def _coeff_legacy_case_default_lanes(source, fn_index):
+    block = _coeff_legacy_case_block(source, fn_index)
+    defaults = {}
+    for match in re.finditer(
+        r"nArgs\s*>\s*(\d+)\s*\?\s*args\[\1\]\s*:\s*([-+]?\d+(?:\.\d+)?)",
+        block,
+    ):
+        defaults[int(match.group(1))] = float(match.group(2))
+    for match in re.finditer(
+        r"nArgs\s*>\s*(\d+)\s*\?\s*coeffLegacyIntArg\(args\[\1\],\s*([-+]?\d+)\)\s*:\s*([-+]?\d+)",
+        block,
+    ):
+        lane = int(match.group(1))
+        assert match.group(2) == match.group(3), f"case {fn_index} inconsistent int fallback"
+        defaults[lane] = float(match.group(2))
+    return defaults
+
+
+def _coeff_registry_default_value(arg):
+    if arg.get("type") == "enum":
+        return float(chain._ENUM_ARG_VALUES[arg["default"]])
+    return float(arg["default"])
+
+
 def _json_payload(path):
     with open(path, "r", encoding="utf-8") as fh:
         return json.load(fh)
@@ -524,3 +561,42 @@ def test_coeff_round_two_arg_source_and_legacy_compat_are_distinct():
     assert legacy_tok["n_args"] == 2
     assert legacy_tok["args"] == [1.0, 2.0]
     assert legacy_tok.get("andy", 0.0) == 0.0
+
+
+def test_coeff_registry_defaults_match_c_legacy_apply_fallbacks():
+    source = _c_source()
+    for name, spec in legacy_registry()["by_name"].items():
+        if spec.get("compat_signatures"):
+            continue
+        args = list(spec.get("args") or ())
+        if not args:
+            continue
+        c_defaults = _coeff_legacy_case_default_lanes(source, spec["fn_index"])
+        for lane, arg in enumerate(args):
+            assert lane in c_defaults, f"{name}.{arg['name']} missing C fallback lane {lane}"
+            assert c_defaults[lane] == _coeff_registry_default_value(arg), (
+                f"{name}.{arg['name']} registry default {arg['default']} "
+                f"does not match C coeffLegacyApply lane {lane}={c_defaults[lane]}"
+            )
+
+
+def test_coeff_c_native_transform_packing_special_cases_match_compat_signatures():
+    source = _c_source()
+    start = source.find("if (tok->stack_arg_count > 0)")
+    end = source.find("native_transform_have_args:", start)
+    assert start >= 0 and end > start, "native transform stack-arg packing block missing"
+    packing_block = source[start:end]
+    c_special_indices = {int(value) for value in re.findall(r"tok->fn_index\s*==\s*(\d+)", packing_block)}
+    registry_special_indices = {
+        spec["fn_index"]
+        for spec in legacy_registry()["by_name"].values()
+        if spec.get("compat_signatures")
+    }
+    assert c_special_indices == registry_special_indices
+
+    expected_names = {"linear", "exp", "round", "pow"}
+    assert {
+        spec["name"]
+        for spec in legacy_registry()["by_name"].values()
+        if spec["fn_index"] in c_special_indices
+    } == expected_names

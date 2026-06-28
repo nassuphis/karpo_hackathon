@@ -21,6 +21,13 @@ import math
 import os
 import re
 
+from registry_common import (
+    load_json,
+    registry_functions,
+    require_registry_version,
+    validate_function_identity,
+)
+
 
 PROGRAM_KIND = "param_program"
 PROGRAM_VERSION = 1
@@ -259,26 +266,20 @@ def _registry_path():
 
 
 def _load_legacy_registry():
-    with open(_registry_path(), "r", encoding="utf-8") as fh:
-        payload = json.load(fh)
-    if int(payload.get("version") or 0) != 1:
-        raise RuntimeError("param legacy registry version must be 1")
+    payload = load_json(_registry_path())
+    require_registry_version(payload, "param legacy", error_type=RuntimeError)
     by_name = {}
     by_index = {}
-    for fn in payload.get("functions") or []:
-        name = str(fn.get("name") or "").strip()
-        if not name:
-            raise RuntimeError("param legacy registry function missing name")
-        if name in by_name:
-            raise RuntimeError(f"duplicate param legacy function name: {name}")
-        try:
-            fn_index = int(fn.get("fn_index"))
-        except (TypeError, ValueError):
-            raise RuntimeError(f"param legacy function {name} has invalid fn_index")
-        if fn_index <= 0:
-            raise RuntimeError(f"param legacy function {name} fn_index must be positive")
-        if fn_index in by_index:
-            raise RuntimeError(f"duplicate param legacy fn_index: {fn_index}")
+    seen_names = set()
+    seen_indices = set()
+    for fn in registry_functions(payload, sort_by_index=False):
+        name, fn_index = validate_function_identity(
+            fn,
+            seen_names,
+            seen_indices,
+            "param legacy",
+            error_type=RuntimeError,
+        )
         args_raw = fn.get("args") or []
         if len(args_raw) > MAX_ARGS:
             raise RuntimeError(f"param legacy function {name} has too many args")

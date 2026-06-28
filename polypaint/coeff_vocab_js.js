@@ -966,7 +966,8 @@ window._coeffRegistryVocab = {
       "params": [
         {
           "ph": "k",
-          "def": "8"
+          "def": "8",
+          "title": "Highest power/index used by the geometric-series transform."
         },
         {
           "kind": "andy",
@@ -985,7 +986,8 @@ window._coeffRegistryVocab = {
       "params": [
         {
           "ph": "k",
-          "def": "4"
+          "def": "4",
+          "title": "Power threshold/index used by the reciprocal power variant."
         },
         {
           "kind": "andy",
@@ -1004,6 +1006,7 @@ window._coeffRegistryVocab = {
         {
           "ph": "hi|lo",
           "def": "hi",
+          "title": "Padding side for roots that do not fill every coefficient slot.",
           "choices": [
             "hi",
             "lo"
@@ -1026,11 +1029,13 @@ window._coeffRegistryVocab = {
       "params": [
         {
           "ph": "k",
-          "def": "8"
+          "def": "8",
+          "title": "Aberth iteration count for root solving."
         },
         {
           "ph": "hi|lo",
           "def": "hi",
+          "title": "Padding side for roots that do not fill every coefficient slot.",
           "choices": [
             "hi",
             "lo"

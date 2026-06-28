@@ -1081,6 +1081,47 @@ Negative findings to avoid re-filing:
 - Legacy `param_transforms` / `coeff_transforms` C `MAX_CHAIN=16` truncation is mostly blocked for non-empty arrays by `rejectLegacyTransformChain`; do not re-file it as a current silent truncation without a path that bypasses that rejection.
 - C `cfpv` has legacy truncation code for arrays longer than `MAX_CFPV`, but generated coefficient functions currently max at four params, so that truncation path does not look reachable today.
 
+### G11. Removed Frontend Editors Still Have Live-Looking Dead Code
+
+The visible old Param Transform and Coeff Transform chip editors are gone:
+
+- `index.html` exposes Param Program text via `pp-source-text`, not `pt-add` / `pt-add-popup`.
+- `index.html` exposes Coeff Program text via `cp-source-text`, not `ct-add` / `ct-add-popup`.
+- Frontend tests already assert the old read-only Param/Coeff Program chip panels are removed (`pp-chips`, `cp-chips`, program chip tabs).
+- Root transform chips are not part of this bug: `rt-add` and `palette-rt-add` still exist and are active UI.
+
+But stale JS still references removed DOM:
+
+- `js/08-chip-editors.js` still contains Param Transform picker code for missing `pt-add-popup`, `pt-add-btn`, and `pt-add`.
+- `js/07-transform-catalogs.js` still contains Coeff Transform picker code for missing `ct-add-popup`, `ct-add-btn`, and `ct-add`.
+- `js/12-deepzoom-boot.js` still installs outside-click handlers for missing `pt-add-popup`, `pp-add-popup`, `cp-add-popup`, and `ct-add-popup`.
+- `js/08-chip-editors.js` still contains Param/Coeff Program picker scaffolding for missing `pp-add-popup`, `cp-add-popup`, `pp-add`, and insert buttons.
+- `js/07-transform-catalogs.js` still carries static Param transform metadata (`_ptCategoryMeta`, `_ptInfo`, `_ptCatalogEnriched`) that mostly supports removed Param Transform UI.
+- `js/06-popup-init.js` still defines `_ptCatalog`, which is now suspicious: it may still support legacy-chain-to-source compatibility, but it no longer backs a visible Param Transform picker.
+
+This is the same bug flavor as the registry false-authority issues: code looks live and authoritative, but the UI entry point is gone. It creates review noise and makes future refactors preserve dead paths because tests assert the functions still exist.
+
+Do not delete all `pt` / `ct` code blindly:
+
+- Legacy artifact detail still displays `param_transforms` / `coeff_transforms` in the Results sidebar.
+- Populate-from-old-artifact still needs to synthesize source from old chain-only payloads.
+- `_serializeParamProgramChain()` / `_serializeCoeffProgramChain()` still support chain-only saved programs by generating text source.
+- Compatibility serializers and boundary translators are live until all old saved payloads have source text or v2 data.
+
+Dead-code boundary:
+
+- Keep compatibility code that converts old saved `pt` / `ct` rows into source text.
+- Remove or quarantine UI picker/display code whose only caller is a missing DOM control.
+- Remove boot-time sync/outside-click handlers for missing controls.
+- Replace tests that require dead functions to exist with tests that prove removed UI cannot regress and compatibility conversion still works through direct helpers.
+
+Add a narrow missing-DOM-ID test:
+
+- Parse static `getElementById("...")` calls from `js/*.js`.
+- Compare with `index.html` IDs.
+- Maintain a small allowlist only for IDs created dynamically by live render-artifact HTML, such as render action buttons and download menus created by `refreshRenderArtifacts()`.
+- Do not allow removed picker IDs (`pt-add-*`, `ct-add-*`, `pp-add-*`, `cp-add-*`) onto that allowlist.
+
 ## Target Architecture
 
 ### Shared Python Registry Module
@@ -1699,6 +1740,61 @@ Tests:
 translate_root_from_old({"root_transforms": [], "chain": [["rotate_roots", "1"]]}) migrates an empty root chain.
 translate_solve_score_from_old({"chain": []}) is rejected or preserves an explicit empty/default policy with diagnostics.
 translate_solve_score_from_old({"chain": [], "metric": "spread"}) does not silently become proximity.
+```
+
+#### -1W. Removed Frontend Editor Dead-Code Cleanup
+
+Files:
+
+```text
+index.html
+js/06-popup-init.js
+js/07-transform-catalogs.js
+js/08-chip-editors.js
+js/09-render-orchestration.js
+js/12-deepzoom-boot.js
+tests/test_frontend_js.sh
+```
+
+Implementation:
+
+- Remove old Param Transform picker UI functions whose only DOM targets are missing:
+  - `_renderParamTransformAddPopup`
+  - `_setParamTransformPickerOpen`
+  - `toggleParamTransformPicker`
+  - `selectParamTransformChip`
+  - `_syncParamTransformAddOptions`
+- Remove old Coeff Transform picker UI functions whose only DOM targets are missing:
+  - `_renderCoeffTransformAddPopup`
+  - `_setCoeffTransformPickerOpen`
+  - `toggleCoeffTransformPicker`
+  - `selectCoeffTransformChip`
+  - `_syncCoeffTransformAddOptions`
+- Remove outside-click handlers and boot sync calls for missing `pt-add-*`, `ct-add-*`, `pp-add-*`, and `cp-add-*` controls.
+- Remove or quarantine removed Program chip-picker scaffolding for `pp-add-popup` / `cp-add-popup`; the visible Param/Coeff Program editors are text-only.
+- Keep source-synthesis compatibility helpers that are still used for old chain-only saved programs.
+- Keep Results/detail display of legacy `param_transforms` / `coeff_transforms`.
+- Audit `_ptCatalog`, `_ptInfo`, `_ptCategoryMeta`, and `_ptCatalogEnriched` after the picker code is removed:
+  - If only dead UI code used a field, delete it.
+  - If old-chain compatibility still uses it, move it behind an explicitly named compatibility helper, not a visible-editor catalog name.
+- Remove tests that assert dead picker/converter functions exist merely as UI surface.
+- Replace them with tests for:
+  - `index.html` has no old `pt-add`, `ct-add`, `pp-add`, or `cp-add` controls.
+  - old chain-only saved programs still synthesize source text.
+  - preview/compute payloads still do not send editable legacy transform arrays.
+
+Add a missing-static-DOM-id guard:
+
+- Parse static `document.getElementById("...")` references in `js/*.js`.
+- Compare against `index.html` IDs.
+- Allowlist only IDs that are actually created dynamically by live code, e.g. render-artifact action buttons and menus created by `refreshRenderArtifacts()`.
+- Fail on removed editor IDs such as `pt-add-popup`, `ct-add-popup`, `pp-add-popup`, `cp-add-popup`, `pt-add`, `ct-add`, and `pp-add`.
+
+Tests:
+
+```bash
+bash tests/test_frontend_js.sh
+uv run python -m pytest tests/test_frontend_parts_contract.py -q
 ```
 
 Gates:
@@ -2410,7 +2506,7 @@ Because `uv` cache access is restricted under the sandbox, run this with escalat
 Recommended order:
 
 1. Fix Phase -1 live correctness bugs first: Solve-score numeric fingerprint collisions, root native chain cap mismatch, root lossless source regeneration, Param signed-zero fingerprints, Param chain-to-source round-trip safety, Param macro source precedence, canonical v2 fingerprint payloads, and v2 empty-field precedence.
-2. Fix Phase -1 boundary/diagnostic traps: empty-program and blank-source policy/falsy fallbacks, Coeff partial-vocab crash, Coeff `round` ambiguity, Param/Coeff parse-time validation/default handling, root run-boundary diagnostics, solve-score non-strict fallback diagnostics, boundary translator drift gates, C default/packing/metric-partition drift gates, and compiler diagnostic structure.
+2. Fix Phase -1 boundary/diagnostic/dead-code traps: empty-program and blank-source policy/falsy fallbacks, Coeff partial-vocab crash, Coeff `round` ambiguity, Param/Coeff parse-time validation/default handling, removed frontend editor dead-code cleanup, root run-boundary diagnostics, solve-score non-strict fallback diagnostics, boundary translator drift gates, C default/packing/metric-partition drift gates, and compiler diagnostic structure.
 3. Add shared schema tests.
 4. Add `registry_common.py`.
 5. Refactor generators.

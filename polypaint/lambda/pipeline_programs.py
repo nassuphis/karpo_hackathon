@@ -166,32 +166,22 @@ def _transform_row_name_args(row, *, label):
     return name, args
 
 
-_PARAM_TARGET_FIRST_TRANSFORMS = {
-    "crd",
-    "hrt",
-    "spdl",
-    "lmc",
-    "rsc",
-    "lss",
-    "ast",
-    "asp",
-    "lsp",
-    "dlt",
-    "rply",
-    "star",
-    "rect",
-    "rrect",
-}
+def _param_legacy_compat():
+    from param_program_chain import legacy_registry
 
-_PARAM_DITHER_TARGET_FIRST_TRANSFORMS = {
-    "ddith",
-    "adth",
-    "ldth",
-    "crdth",
-    "scdth",
-}
+    return legacy_registry()["compat"]
 
-_PARAM_TARGET_LAST_TRANSFORMS = {"rtheta"}
+
+def _param_target_first_transforms():
+    return _param_legacy_compat()["target_first"]
+
+
+def _param_dither_target_first_transforms():
+    return _param_legacy_compat()["dither_target_first"]
+
+
+def _param_target_last_transforms():
+    return _param_legacy_compat()["target_last"]
 
 
 def _param_legacy_target_selector(value):
@@ -229,18 +219,18 @@ def param_transforms_to_program_chain(transforms):
     for row in list(transforms or []):
         name, args = _transform_row_name_args(row, label="param")
         legacy_name = name.strip().lower()
-        if legacy_name in _PARAM_TARGET_LAST_TRANSFORMS:
+        if legacy_name in _param_target_last_transforms():
             value_args = list(args)
             target = "both"
             if len(value_args) >= 2:
                 target = _param_legacy_target_selector(value_args.pop())
             chain.append(["legacy", name, target, target, *value_args])
             continue
-        if legacy_name in _PARAM_TARGET_FIRST_TRANSFORMS:
+        if legacy_name in _param_target_first_transforms():
             target = _param_legacy_target_selector(args[0]) if args else "both"
             chain.append(["legacy", name, target, target, *args[1:]])
             continue
-        if legacy_name in _PARAM_DITHER_TARGET_FIRST_TRANSFORMS:
+        if legacy_name in _param_dither_target_first_transforms():
             target = _param_legacy_target_index(args[0]) if args else "2"
             chain.append(["legacy", name, "both", "both", target, *args[1:]])
             continue

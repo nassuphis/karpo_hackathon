@@ -15,6 +15,9 @@ from registry_common import (
     default_text,
     extract_category_meta,
     load_json,
+    normalize_name_int_map,
+    normalize_name_int_set_map,
+    normalize_name_set,
     registry_functions,
     render_js_assignment,
     require_function_ui_desc,
@@ -84,7 +87,12 @@ def _special_arg_specs(name, declared_args):
 def build_vocab():
     registry = load_json(REGISTRY_PATH)
     require_registry_version(registry, "param")
-    compat = registry.get("compat") or {}
+    compat_raw = registry.get("compat") or {}
+    compat = {
+        "target_arg_indexes": normalize_name_int_map(compat_raw.get("target_arg_indexes")),
+        "independent_targets": normalize_name_set(compat_raw.get("independent_targets")),
+        "variable_arg_counts": normalize_name_int_set_map(compat_raw.get("variable_arg_counts")),
+    }
     functions = registry_functions(registry)
     names = [str(fn["name"]) for fn in functions]
     arg_specs = {}
@@ -115,7 +123,7 @@ def build_vocab():
         if name in target_arg_index_source:
             target_arg_indexes[name] = int(target_arg_index_source[name])
         if name in variable_arg_count_source:
-            variable_arg_counts[name] = sorted(int(v) for v in variable_arg_count_source[name])
+            variable_arg_counts[name] = sorted(variable_arg_count_source[name])
     return {
         "names": names,
         "categoryMeta": extract_category_meta(registry, paths=(("ui", "categories"),), label="param"),

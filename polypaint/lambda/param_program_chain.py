@@ -23,6 +23,9 @@ import re
 
 from registry_common import (
     load_json,
+    normalize_name_int_map,
+    normalize_name_int_set_map,
+    normalize_name_set,
     registry_functions,
     require_registry_version,
     validate_function_identity,
@@ -268,6 +271,15 @@ def _registry_path():
 def _load_legacy_registry():
     payload = load_json(_registry_path())
     require_registry_version(payload, "param legacy", error_type=RuntimeError)
+    compat_raw = payload.get("compat") or {}
+    compat = {
+        "target_arg_indexes": normalize_name_int_map(compat_raw.get("target_arg_indexes")),
+        "independent_targets": normalize_name_set(compat_raw.get("independent_targets")),
+        "variable_arg_counts": normalize_name_int_set_map(compat_raw.get("variable_arg_counts")),
+        "target_first": normalize_name_set(compat_raw.get("target_first")),
+        "target_last": normalize_name_set(compat_raw.get("target_last")),
+        "dither_target_first": normalize_name_set(compat_raw.get("dither_target_first")),
+    }
     by_name = {}
     by_index = {}
     seen_names = set()
@@ -305,7 +317,7 @@ def _load_legacy_registry():
         }
         by_name[name] = spec
         by_index[fn_index] = spec
-    return {"by_name": by_name, "by_index": by_index}
+    return {"by_name": by_name, "by_index": by_index, "compat": compat}
 
 
 _LEGACY_REGISTRY = None
@@ -326,6 +338,34 @@ def validate_legacy_registry():
         "names": sorted(registry["by_name"]),
         "fn_indices": sorted(registry["by_index"]),
     }
+
+
+def _legacy_compat():
+    return legacy_registry()["compat"]
+
+
+def _legacy_target_arg_index(name):
+    return _legacy_compat()["target_arg_indexes"].get(name)
+
+
+def _legacy_independent_targets():
+    return _legacy_compat()["independent_targets"]
+
+
+def _legacy_variable_arg_counts(name):
+    return _legacy_compat()["variable_arg_counts"].get(name)
+
+
+def _legacy_target_first_chips():
+    return _legacy_compat()["target_first"]
+
+
+def _legacy_target_last_chips():
+    return _legacy_compat()["target_last"]
+
+
+def _legacy_dither_target_first_chips():
+    return _legacy_compat()["dither_target_first"]
 
 
 def _finite_number(value, label):
@@ -471,7 +511,7 @@ def _target_value_for_selector(selector):
 
 
 def _migrate_legacy_target_arg(name, src, tgt, args, *, force=False):
-    target_idx = _LEGACY_TARGET_ARG_INDEXES.get(name)
+    target_idx = _legacy_target_arg_index(name)
     values = [str(arg).strip() for arg in args]
     if target_idx is None or len(values) <= target_idx:
         return src, tgt, values
@@ -492,13 +532,13 @@ def _canonicalize_legacy_bridge_entry(entry):
     if entry and entry[0] != "legacy" and entry[0] in legacy_registry()["by_name"]:
         name = entry[0]
         src, tgt, args = _migrate_legacy_target_arg(name, "both", "both", entry[1:], force=True)
-        if src != "both" or tgt != "both" or name in _LEGACY_TARGET_ARG_INDEXES:
+        if src != "both" or tgt != "both" or _legacy_target_arg_index(name) is not None:
             return ["legacy", name, src, tgt, *args]
         return entry
     if (
         len(entry) == 5 and
         entry[0] == "legacy" and
-        entry[1] in _REDUNDANT_LEGACY_TARGET_ARG_NAMES
+        entry[1] in _legacy_independent_targets()
     ):
         try:
             selector = _normalize_target(entry[4])
@@ -863,10 +903,10 @@ def _legacy_target_index(value):
 
 def _legacy_direct_chip_tokens(name, args):
     values = list(args)
-    if name in _LEGACY_TARGET_LAST_CHIPS and len(values) >= 2:
+    if name in _legacy_target_last_chips() and len(values) >= 2:
         target = _legacy_target_selector(values.pop())
         return _legacy_tokens(name, target, target, values)
-    if name in _LEGACY_TARGET_FIRST_CHIPS and values:
+    if name in _legacy_target_first_chips() and values:
         target = _legacy_target_selector(values[0])
         return _legacy_tokens(name, target, target, values[1:])
     return _legacy_tokens(name, "both", "both", values)
@@ -874,7 +914,7 @@ def _legacy_direct_chip_tokens(name, args):
 
 def _legacy_arg_exprs(spec, raw_args):
     raw_args = list(raw_args)
-    if spec["name"] in _LEGACY_DITHER_TARGET_FIRST_CHIPS and raw_args:
+    if spec["name"] in _legacy_dither_target_first_chips() and raw_args:
         raw_args[0] = _legacy_target_index(raw_args[0])
     if spec["name"] == "moebius":
         if len(raw_args) == 0:
@@ -923,8 +963,9 @@ def _legacy_arg_exprs(spec, raw_args):
                 _compile_expr(raw_args[1], label="legacy(add) p2 offset", expected="complex"),
             ]
         raise RuntimeError(f"legacy(add) expects 0, 1, or 2 arguments, got {len(raw_args)}")
-    if spec["name"] in _VARIABLE_LEGACY_ARG_COUNTS:
-        allowed = _VARIABLE_LEGACY_ARG_COUNTS[spec["name"]]
+    variable_counts = _legacy_variable_arg_counts(spec["name"])
+    if variable_counts is not None:
+        allowed = variable_counts
         if len(raw_args) not in allowed:
             counts = ", ".join(str(count) for count in sorted(allowed))
             raise RuntimeError(f"legacy({spec['name']}) expects {counts} arguments, got {len(raw_args)}")
@@ -963,7 +1004,7 @@ def _legacy_expr_arg_type(spec, idx, expr_count):
         return "complex"
     if name == "add":
         return "complex" if expr_count == 2 else "real"
-    if name in _VARIABLE_LEGACY_ARG_COUNTS:
+    if _legacy_variable_arg_counts(name) is not None:
         return "real"
     declared = list(spec.get("args") or [])
     if idx < len(declared):
@@ -1270,7 +1311,7 @@ def _legacy_transforms(tokens):
             ]
         else:
             args = [_format_number(arg) for arg in token_args]
-        target_idx = _LEGACY_TARGET_ARG_INDEXES.get(spec["name"])
+        target_idx = _legacy_target_arg_index(spec["name"])
         if target_idx is not None:
             target = _target_value_for_selector(_SELECTOR_NAMES.get(int(token.get("tgt") or 0), "both"))
             if spec["name"] != "rtheta" or target != "2":

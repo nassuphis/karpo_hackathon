@@ -12,6 +12,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
 import param_program_chain as chain
+import pipeline_programs
 
 LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
 SWEEP_CLI = os.path.join(LAMBDA_DIR, "sweep_cli.c")
@@ -267,3 +268,34 @@ def test_param_independent_target_runtime_set_matches_registry():
     c_names = sorted(re.findall(r'strcmp\(name,\s*"([^"]+)"\)\s*==\s*0', match.group("body")))
     compat = _param_legacy_registry_payload()["compat"]
     assert c_names == sorted(compat["independent_targets"])
+
+
+def test_param_boundary_translator_target_compat_matches_registry():
+    compat = _param_legacy_registry_payload()["compat"]
+
+    for name in compat["target_first"]:
+        translated = pipeline_programs.param_transforms_to_program_chain([[name, "p1", "9", "10"]])
+        assert translated == [["legacy", name, "p1", "p1", "9", "10"]], name
+
+    for name in compat["target_last"]:
+        translated = pipeline_programs.param_transforms_to_program_chain([[name, "9", "p2"]])
+        assert translated == [["legacy", name, "p2", "p2", "9"]], name
+
+    for name in compat["dither_target_first"]:
+        translated = pipeline_programs.param_transforms_to_program_chain([[name, "p1", "0.5"]])
+        assert translated == [["legacy", name, "both", "both", "0", "0.5"]], name
+
+
+def test_param_compiler_reads_runtime_compat_from_registry():
+    registry = chain.legacy_registry()
+    compat = registry["compat"]
+    assert compat["target_arg_indexes"] == {
+        name: idx for name, idx in sorted(chain._LEGACY_TARGET_ARG_INDEXES.items())
+    }
+    assert compat["target_first"] == frozenset(chain._LEGACY_TARGET_FIRST_CHIPS)
+    assert compat["target_last"] == frozenset(chain._LEGACY_TARGET_LAST_CHIPS)
+    assert compat["dither_target_first"] == frozenset(chain._LEGACY_DITHER_TARGET_FIRST_CHIPS)
+    assert compat["independent_targets"] == frozenset(chain._REDUNDANT_LEGACY_TARGET_ARG_NAMES)
+    assert compat["variable_arg_counts"] == {
+        name: frozenset(counts) for name, counts in chain._VARIABLE_LEGACY_ARG_COUNTS.items()
+    }

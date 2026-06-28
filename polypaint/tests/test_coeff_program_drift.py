@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
 import coeff_program_chain as chain
 import coeff_program_source as source
+import pipeline_programs
 from coeff_program_chain import legacy_registry
 
 LAMBDA_DIR = os.path.join(os.path.dirname(__file__), "..", "lambda")
@@ -458,6 +459,24 @@ def test_coeff_compat_signature_transforms_are_pinned():
         for signature in registry[name]["compat_signatures"]:
             assert signature["wire"] in {"complex_lanes", "flat_complex_components", "real_lanes"}
             assert signature.get("arg_counts") or signature.get("andy_arg_counts")
+
+
+def test_coeff_boundary_translator_repacking_matches_compat_signature_registry():
+    registry = legacy_registry()["by_name"]
+    signature_names = {
+        name
+        for name, spec in registry.items()
+        if spec.get("compat_signatures")
+    }
+    assert {"exp", "round"} <= signature_names
+    assert pipeline_programs.coeff_transforms_to_program_chain([["exp", "2", "3", "0.5"]]) == [
+        ["legacy", "exp", "poly", "poly", "(2)+(3)*1j", "0", "0.5"],
+        ["emit"],
+    ]
+    assert pipeline_programs.coeff_transforms_to_program_chain([["round", "1", "2", "0.5"]]) == [
+        ["legacy", "round", "poly", "poly", "(1)+(2)*1j", "0.5"],
+        ["emit"],
+    ]
 
 
 def test_coeff_forward_packer_uses_signature_interpreter_not_fn_specific_helpers():

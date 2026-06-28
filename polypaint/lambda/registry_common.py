@@ -62,6 +62,26 @@ def default_text(value):
     return str(value)
 
 
+def normalize_name_set(values):
+    return frozenset(str(value).strip() for value in (values or ()) if str(value).strip())
+
+
+def normalize_name_int_map(values):
+    return {
+        str(name).strip(): int(value)
+        for name, value in (values or {}).items()
+        if str(name).strip()
+    }
+
+
+def normalize_name_int_set_map(values):
+    return {
+        str(name).strip(): frozenset(int(item) for item in (items or ()))
+        for name, items in (values or {}).items()
+        if str(name).strip()
+    }
+
+
 def require_function_ui_desc(fn, label):
     name = str(fn.get("name") or "")
     ui = dict(fn.get("ui") or {})

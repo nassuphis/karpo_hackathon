@@ -101,8 +101,42 @@ const _paramProgramIndependentLegacyTargets = new Set(_paramRegistryVocab.indepe
 const _paramProgramLegacyTargetArgIndexes = _paramRegistryVocab.targetArgIndexes || {};
 const _paramProgramLegacyVariableArgCounts = _paramRegistryVocab.variableArgCounts || {};
 const _paramProgramLegacyArgSpecs = _paramRegistryVocab.argSpecs || {};
-const _paramRegistryCategoryMeta = _paramRegistryVocab.categoryMeta || _ptCategoryMeta;
-const _paramRegistryUiFunctions = _paramRegistryVocab.uiFunctions || {};
+const _paramRegistryAdapter = (() => {
+    const loaded = !!(typeof window !== 'undefined' && window._paramRegistryVocab);
+    const categoryMeta = _paramRegistryVocab.categoryMeta || {};
+    const uiFunctions = _paramRegistryVocab.uiFunctions || {};
+    const argSpecs = _paramRegistryVocab.argSpecs || {};
+    const variableArgForms = _paramRegistryVocab.variableArgForms || {};
+    const names = Array.isArray(_paramRegistryVocab.names) ? _paramRegistryVocab.names.slice() : [];
+    return {
+        loaded,
+        names,
+        categoryMeta,
+        uiFunctions,
+        argSpecs,
+        variableArgForms,
+        category(category) {
+            return categoryMeta[category] || { title: category, help: '' };
+        },
+        spec(name) {
+            return uiFunctions[String(name || '').trim()] || {};
+        },
+        hasParams(name) {
+            return Object.prototype.hasOwnProperty.call(argSpecs, String(name || '').trim());
+        },
+        params(name) {
+            return (argSpecs[String(name || '').trim()] || []).map(param => ({ ...param }));
+        },
+        variableForms(name) {
+            const raw = variableArgForms[String(name || '').trim()] || null;
+            if (!raw) return null;
+            return {
+                counts: (raw.counts || []).map(value => Number(value)).filter(Number.isFinite),
+                forms: (raw.forms || []).map(String),
+            };
+        },
+    };
+})();
 
 const _ppCategoryMeta = {
     io: { title: 'Input + output', help: 'read t1/t2 or write p1/p2 registers' },
@@ -306,6 +340,39 @@ const _ctCatalog = (() => {
 })();
 
 const _ctCategoryMeta = _coeffRegistryVocab ? _coeffRegistryVocab.categoryMeta : {};
+const _coeffRegistryAdapter = (() => {
+    const loaded = !!_coeffRegistryVocab;
+    const vocab = _coeffRegistryVocab || {};
+    const structuralChips = ((vocab.structuralChips || {}).chips || []);
+    return {
+        loaded,
+        catalog: _ctCatalog,
+        categoryMeta: _ctCategoryMeta,
+        names: Object.keys(_ctCatalog),
+        spec(name) {
+            return _ctCatalog[String(name || '').trim()] || {};
+        },
+        params(name) {
+            const spec = this.spec(name);
+            return (spec.params || []).map(param => ({ ...param }));
+        },
+        category(category) {
+            return _ctCategoryMeta[category] || { title: category, help: '' };
+        },
+        sourceName(name) {
+            return (vocab.sourceAliasByName && vocab.sourceAliasByName[name])
+                || (vocab.chipNameByRegistryName && vocab.chipNameByRegistryName[name])
+                || name;
+        },
+        structuralChip(name) {
+            return structuralChips.find(chip => chip && chip.name === name) || null;
+        },
+        familySubOps(name) {
+            const chip = this.structuralChip(name);
+            return Array.isArray(chip && chip.sub_ops) ? chip.sub_ops.slice() : [];
+        },
+    };
+})();
 function _coeffProgramWideParamDefs(name) {
     // Program-mode wide-editor defs for exp/round legacy chips (different
     // defaults and titles than the chain-row fields), from the registry ui.

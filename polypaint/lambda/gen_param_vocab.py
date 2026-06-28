@@ -84,6 +84,16 @@ def _special_arg_specs(name, declared_args):
     return [_arg_spec(arg) for arg in declared_args]
 
 
+def _variable_arg_forms(payload):
+    forms = {}
+    for name, spec in (payload.get("variable_arg_forms") or {}).items():
+        forms[str(name)] = {
+            "counts": [int(value) for value in (spec.get("counts") or [])],
+            "forms": [str(value) for value in (spec.get("forms") or [])],
+        }
+    return forms
+
+
 def build_vocab():
     registry = load_json(REGISTRY_PATH)
     require_registry_version(registry, "param")
@@ -126,11 +136,12 @@ def build_vocab():
             variable_arg_counts[name] = sorted(variable_arg_count_source[name])
     return {
         "names": names,
-        "categoryMeta": extract_category_meta(registry, paths=(("ui", "categories"),), label="param"),
+        "categoryMeta": extract_category_meta(registry, paths=(("category_meta",),), label="param"),
         "uiFunctions": ui_functions,
         "argSpecs": arg_specs,
         "targetArgIndexes": target_arg_indexes,
         "variableArgCounts": variable_arg_counts,
+        "variableArgForms": _variable_arg_forms(registry),
         "independentTargets": independent_targets,
     }
 

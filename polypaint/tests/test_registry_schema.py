@@ -72,7 +72,9 @@ def _assert_common_registry_shape(payload, *, label, allowed_arg_types, category
 def test_param_registry_common_schema():
     payload = _json(PARAM_REGISTRY)
     profile = _json(PROGRAM_PROFILES)["profiles"]["param"]
-    category_meta = payload["ui"]["categories"]
+    category_meta = payload["category_meta"]
+    assert "ui" not in payload or "categories" not in payload.get("ui", {})
+    assert set(payload.get("variable_arg_forms") or {}) == PARAM_VARIABLE_ARITY_EXEMPTIONS
 
     _assert_common_registry_shape(
         payload,

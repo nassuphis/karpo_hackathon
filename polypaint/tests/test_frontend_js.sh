@@ -150,9 +150,11 @@ if (!paramVocabSrc.includes('"zzold"') || !paramVocabSrc.includes('"scdth"')) fa
 assertIncludes("const _paramProgramIndependentLegacyTargets = new Set(_paramRegistryVocab.independentTargets || []);", 'frontend should get redundant legacy targets from generated Param vocab');
 assertIncludes("coeff12: { category: 'bridge', desc: 'legacy mixed polynomial map' }", 'Param Program picker should expose legacy coeff-map chips directly');
 assertIncludes("const _paramProgramLegacyArgSpecs = _paramRegistryVocab.argSpecs || {};", 'frontend should expose generated structured legacy argument specs in Param Program bridge chips');
-assertIncludes("const _paramRegistryCategoryMeta = _paramRegistryVocab.categoryMeta || _ptCategoryMeta;", 'frontend should consume generated Param registry category metadata');
-assertIncludes("const _paramRegistryUiFunctions = _paramRegistryVocab.uiFunctions || {};", 'frontend should consume generated Param registry per-function UI metadata');
+assertIncludes("const _paramRegistryAdapter = (() => {", 'frontend should normalize generated Param registry metadata through an adapter');
+assertIncludes("category(category) {\n            return categoryMeta[category] || { title: category, help: '' };", 'Param adapter should expose generated category metadata without static fallback');
+assertIncludes("variableForms(name) {", 'Param adapter should expose generated variable legacy arg forms');
 if (!paramVocabSrc.includes('"moebius"') || !paramVocabSrc.includes('"complexWide": true')) fail('generated Param vocab should expose moebius wide complex expression inputs');
+if (!paramVocabSrc.includes('"variableArgForms"') || !paramVocabSrc.includes('"old a_re,a_im,b_re,b_im,c_re,c_im,d_re,d_im components"')) fail('generated Param vocab should expose variable legacy arg forms');
 assertIncludes("function _paramProgramMoebiusArgsForUi(args) {", 'Param Program moebius bridge should convert legacy eight-real coefficients back to four complex UI fields');
 assertIncludes("<span>t=(</span>${a}<span class=\"chip-op\">*t+</span>${b}<span>)/(</span>${c}<span class=\"chip-op\">*t+</span>${d}<span>)</span>", 'Param Program moebius bridge should render a formula-style chip');
 assertIncludes("const _paramProgramLegacyTargetArgIndexes = _paramRegistryVocab.targetArgIndexes || {};", 'Param Program should migrate legacy numeric target args through generated Param vocab');
@@ -718,6 +720,7 @@ function makeContext({withCoeffVocab = true} = {}) {
   assert(!els['pp-help'].innerHTML.includes('legacy(moebius, src=both'), 'Param Help must not show keyword-looking legacy source syntax');
   assert(els['pp-help'].innerHTML.includes('f(z) = exp(2*pi*i*z)') && els['pp-help'].innerHTML.includes('src=pop1 pops one stack value'), 'Param Help should render generated unit_circle formula and selector notes');
   assert(els['pp-help'].innerHTML.includes('theta = 2*pi*Re(z)') && els['pp-help'].innerHTML.includes('legacy(crd, src, tgt, size)'), 'Param Help should render generated crd formula and source form notes');
+  assert(els['pp-help'].innerHTML.includes('Accepted legacy arg counts: 0, 4, 8') && els['pp-help'].innerHTML.includes('old a_re,a_im,b_re,b_im,c_re,c_im,d_re,d_im components'), 'Param Help should render generated variable-arity legacy forms');
   const paramHelpAudit = vm.runInContext(`(() => {
     const reg = _programHelpRegistry('pp');
     const legacyMisses = (_paramProgramLegacyNames || []).filter(name => {
@@ -774,6 +777,9 @@ function makeContext({withCoeffVocab = true} = {}) {
         reg.sections.flatMap(section => section.items || []).forEach(item => counts.set(item.name, (counts.get(item.name) || 0) + 1));
         return Array.from(counts.entries()).filter(([, count]) => count > 1).map(([name]) => name).sort();
       })(),
+      adapterLoaded: _paramRegistryAdapter.loaded,
+      adapterCategoryTitle: _paramRegistryAdapter.category('maps').title,
+      moebiusForms: (_paramRegistryAdapter.variableForms('moebius') || {}).forms || [],
     };
   })()`, ctx);
   assert(paramHelpAudit.legacyMisses.length === 0, `Param legacy Help lookup should keep selector and transform params; misses=${paramHelpAudit.legacyMisses.slice(0, 5).join(',')}`);
@@ -790,6 +796,8 @@ function makeContext({withCoeffVocab = true} = {}) {
   assert(JSON.stringify(paramHelpAudit.addNormalized.rows) === JSON.stringify([['legacy', 'add', 'both', 'both', '1', '2']]), 'Param legacy add bridge must preserve both optional offset args');
   assert(paramHelpAudit.addNormalized.source === 'legacy(add, both, both, 1, 2)', 'Param legacy add source synthesis must preserve optional offset args');
   assert(paramHelpAudit.ppDupes.length === 0, `Param Help should not contain duplicate top-level articles: ${paramHelpAudit.ppDupes.join(',')}`);
+  assert(paramHelpAudit.adapterLoaded && paramHelpAudit.adapterCategoryTitle === 'Maps', 'Param Help should consume normalized registry adapter metadata');
+  assert(paramHelpAudit.moebiusForms.includes('a,b,c,d as complex values'), 'Param adapter should expose variable-form metadata');
   ctx._setProgramSourceSidePanelMode('cp', 'help');
   assert(els['cp-help'].hidden === false && els['cp-cheatsheet'].hidden === true, 'Coeff Help tab should hide Starter panel');
   assert(!els['cp-help'].innerHTML.includes('Starters'), 'Coeff Help should not include Starter sections');

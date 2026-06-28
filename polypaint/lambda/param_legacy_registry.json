@@ -2317,34 +2317,33 @@
       }
     }
   ],
-  "ui": {
-    "categories": {
-      "maps": {
-        "title": "Maps",
-        "help": "direct complex maps applied to t1/t2"
-      },
-      "arithmetic": {
-        "title": "Arithmetic",
-        "help": "offset, scale, invert, or remix parameter values"
-      },
-      "shapes": {
-        "title": "Curves + shapes",
-        "help": "replace selected parameters with points on analytic curves"
-      },
-      "roots": {
-        "title": "Root-derived",
-        "help": "derive t1/t2 from roots of small polynomials"
-      },
-      "dither": {
-        "title": "Dither",
-        "help": "jitter parameters before coefficient generation"
-      },
-      "legacy": {
-        "title": "Legacy coefficient maps",
-        "help": "older named parameter recipes kept for compatibility"
-      }
+  "category_meta": {
+    "maps": {
+      "title": "Maps",
+      "help": "direct complex maps applied to t1/t2"
     },
-    "variable_arg_forms": {
+    "arithmetic": {
+      "title": "Arithmetic",
+      "help": "offset, scale, invert, or remix parameter values"
+    },
+    "shapes": {
+      "title": "Curves + shapes",
+      "help": "replace selected parameters with points on analytic curves"
+    },
+    "roots": {
+      "title": "Root-derived",
+      "help": "derive t1/t2 from roots of small polynomials"
+    },
+    "dither": {
+      "title": "Dither",
+      "help": "jitter parameters before coefficient generation"
+    },
+    "legacy": {
+      "title": "Legacy coefficient maps",
+      "help": "older named parameter recipes kept for compatibility"
+    }
+  },
+  "variable_arg_forms": {
       "moebius": {
         "counts": [
           0,
@@ -2384,7 +2383,6 @@
           "two complex offsets for p1 and p2"
         ]
       }
-    }
   },
   "compat": {
     "target_arg_indexes": {

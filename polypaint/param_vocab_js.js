@@ -1088,6 +1088,47 @@ window._paramRegistryVocab = {
       2
     ]
   },
+  "variableArgForms": {
+    "moebius": {
+      "counts": [
+        0,
+        4,
+        8
+      ],
+      "forms": [
+        "none",
+        "a,b,c,d as complex values",
+        "old a_re,a_im,b_re,b_im,c_re,c_im,d_re,d_im components"
+      ]
+    },
+    "inv_t_plus_2": {
+      "counts": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "forms": [
+        "none",
+        "z1",
+        "z1,z2",
+        "old z1_re,z1_im,z2_re,z2_im components"
+      ]
+    },
+    "add": {
+      "counts": [
+        0,
+        1,
+        2
+      ],
+      "forms": [
+        "none",
+        "one real scalar offset for both parameters",
+        "two complex offsets for p1 and p2"
+      ]
+    }
+  },
   "independentTargets": [
     "conjugate",
     "cube",

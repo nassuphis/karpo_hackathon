@@ -444,15 +444,13 @@ function _sourceCheatDefaultArgs(params, options = {}) {
 }
 
 function _paramProgramLegacySnippet(name) {
-    const argDefs = _paramProgramLegacyArgSpecs[name] || [];
+    const argDefs = _paramRegistryAdapter.params(name);
     const args = _sourceCheatDefaultArgs(argDefs);
     return `legacy(${name}, both, both${args.length ? ', ' + args.join(', ') : ''})`;
 }
 
 function _paramProgramLegacyUiSpec(name) {
-    const generated = _paramRegistryUiFunctions[String(name || '').trim()];
-    if (generated && typeof generated === 'object') return generated;
-    return (_ptCatalog && _ptCatalog[name]) || (_ptInfo && _ptInfo[name]) || {};
+    return _paramRegistryAdapter.spec(name);
 }
 
 function _paramProgramLegacyButton(name) {
@@ -478,7 +476,7 @@ function _paramProgramLegacyCheatSections() {
     return order
         .filter(category => (groups[category] || []).length)
         .map(category => ({
-            title: `Legacy: ${((_paramRegistryCategoryMeta[category] || {}).title || category)}`,
+            title: `Legacy: ${(_paramRegistryAdapter.category(category).title || category)}`,
             buttons: groups[category],
         }));
 }
@@ -545,8 +543,7 @@ const _paramProgramCheatSections = [
 ].concat(_paramProgramLegacyCheatSections());
 
 function _coeffStructuralChip(name) {
-    const chips = (((_coeffRegistryVocab || {}).structuralChips || {}).chips || []);
-    return chips.find(chip => chip && chip.name === name) || null;
+    return _coeffRegistryAdapter.structuralChip(name);
 }
 
 function _coeffFamilySubOps(familyName) {
@@ -560,21 +557,18 @@ function _coeffSubOpLabel(op) {
 }
 
 function _coeffRegistrySourceName(name) {
-    const vocab = _coeffRegistryVocab || {};
-    return (vocab.sourceAliasByName && vocab.sourceAliasByName[name])
-        || (vocab.chipNameByRegistryName && vocab.chipNameByRegistryName[name])
-        || name;
+    return _coeffRegistryAdapter.sourceName(name);
 }
 
 function _coeffNativeTransformSnippet(name) {
     const sourceName = _coeffRegistrySourceName(name);
-    const spec = _ctCatalog[name] || {};
+    const spec = _coeffRegistryAdapter.spec(name);
     const args = _sourceCheatDefaultArgs(spec.params || []);
     return `poly = ${sourceName}(poly${args.length ? ', ' + args.join(', ') : ''})\nemit`;
 }
 
 function _coeffNativeTransformButton(name) {
-    const spec = _ctCatalog[name] || {};
+    const spec = _coeffRegistryAdapter.spec(name);
     const sourceName = _coeffRegistrySourceName(name);
     return {
         label: sourceName === name ? name : `${sourceName} (${name})`,
@@ -587,7 +581,7 @@ function _coeffNativeTransformButton(name) {
 function _coeffNativeTransformCheatSections() {
     const groups = {};
     (_coeffProgramLegacyNames || []).forEach(name => {
-        const spec = _ctCatalog[name] || {};
+        const spec = _coeffRegistryAdapter.spec(name);
         const category = spec.category || 'structural';
         if (!groups[category]) groups[category] = [];
         groups[category].push(_coeffNativeTransformButton(name));
@@ -596,7 +590,7 @@ function _coeffNativeTransformCheatSections() {
     return order
         .filter(category => (groups[category] || []).length)
         .map(category => ({
-            title: `Native: ${((_ctCategoryMeta[category] || {}).title || category)}`,
+            title: `Native: ${(_coeffRegistryAdapter.category(category).title || category)}`,
             buttons: groups[category],
         }));
 }
@@ -796,7 +790,18 @@ function _paramProgramLegacyCallParams(name) {
     return [
         { ph: 'src', def: 'both', choices: ['p1', 'p2', 'both', 'pop1', 'pop2'], selectorWide: true, title: 'Source selector for the legacy transform.' },
         { ph: 'tgt', def: 'both', choices: ['p1', 'p2', 'both', 'push1', 'push2'], selectorWide: true, title: 'Target selector for the legacy transform.' },
-    ].concat(_paramProgramLegacyArgSpecs[name] || []);
+    ].concat(_paramRegistryAdapter.params(name));
+}
+
+function _paramProgramLegacyVariableFormNotes(name) {
+    const spec = _paramRegistryAdapter.variableForms(name);
+    if (!spec || !spec.counts.length) return [];
+    const notes = [`Accepted legacy arg counts: ${spec.counts.join(', ')}.`];
+    spec.forms.forEach((form, idx) => {
+        const count = spec.counts[idx];
+        if (Number.isFinite(count) && form) notes.push(`${count} args: ${form}.`);
+    });
+    return notes;
 }
 
 function _paramProgramGrammarHelpNameSet() {
@@ -825,6 +830,7 @@ function _paramProgramLegacyHelpItem(name) {
     const params = _paramProgramLegacyCallParams(name);
     const sourceArgs = ['both', 'both'].concat((params.slice(2) || []).map((param, idx) => _programHelpParamDefault(param) || _programHelpParamName(param, idx)));
     const notes = Array.isArray(spec.notes) ? spec.notes.slice() : [];
+    notes.push(..._paramProgramLegacyVariableFormNotes(name));
     notes.push('legacy(...) arguments are positional; use values like both, p1, p2 directly, not keyword syntax such as src=both.');
     return _programHelpItem(
         `legacy:${name}`,
@@ -843,7 +849,7 @@ function _paramProgramLegacyHelpItem(name) {
 }
 
 function _coeffNativeTransformHelpItem(name) {
-    const spec = (_ctCatalog && _ctCatalog[name]) || {};
+    const spec = _coeffRegistryAdapter.spec(name);
     const sourceName = _coeffRegistrySourceName(name);
     const params = _coeffTransformParams(name);
     const argText = params.map((param, idx) => _programHelpParamName(param, idx)).join(', ');
@@ -867,6 +873,11 @@ function _coeffNativeTransformHelpItem(name) {
 function _programHelpBuildParamRegistry() {
     const registry = _newProgramHelpRegistry();
     const source = _paramProfileSource();
+    if (!_paramRegistryAdapter.loaded) {
+        _programHelpAddSection(registry, 'Registry Status', [
+            _programHelpItem('registry', 'Param registry not loaded', 'Param registry-backed Help is unavailable; only built-in grammar Help may render.', { missing: true }),
+        ]);
+    }
     _programHelpAddSection(registry, 'Core Symbols', [
         _programHelpItem('t1', 't1', 'Input parameter 1.'),
         _programHelpItem('t2', 't2', 'Input parameter 2.'),
@@ -975,13 +986,12 @@ function _programHelpBuildParamRegistry() {
 }
 
 function _coeffTransformParams(name) {
-    const spec = (_ctCatalog && _ctCatalog[name]) || {};
-    return spec.params || [];
+    return _coeffRegistryAdapter.params(name);
 }
 
 function _programHelpBuildCoeffRegistry() {
     const registry = _newProgramHelpRegistry();
-    if (!_coeffRegistryVocab) {
+    if (!_coeffRegistryAdapter.loaded) {
         _programHelpAddSection(registry, 'Registry Status', [
             _programHelpItem('registry', 'Coeff registry not loaded', 'Coeff registry-backed help is unavailable; starter snippets and coefficient-function params may still render.', { missing: true }),
         ]);
@@ -1736,7 +1746,8 @@ function _splitParamProgramLegacyArgs(value) {
 
 function _paramProgramLegacyArgDefs(legacyName) {
     const name = String(legacyName || '').trim();
-    const defs = _paramProgramLegacyArgSpecs[name];
+    if (!_paramRegistryAdapter.hasParams(name)) return null;
+    const defs = _paramRegistryAdapter.params(name);
     return Array.isArray(defs) ? defs : null;
 }
 

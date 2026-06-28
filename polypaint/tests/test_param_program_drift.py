@@ -181,14 +181,13 @@ def test_generated_param_vocab_exposes_full_registry():
     vocab = _param_vocab_js_payload()
     registry_payload = _param_legacy_registry_payload()
     compat = registry_payload["compat"]
-    ui = registry_payload["ui"]
     registry_functions = registry_payload["functions"]
     registry_names = sorted(chain.legacy_registry()["by_name"])
     assert sorted(vocab["names"]) == registry_names
     assert len(vocab["names"]) == 70
     for missing_from_old_js in ["add", "cadd", "scale", "zzold", "scdth"]:
         assert missing_from_old_js in vocab["names"]
-    assert vocab["categoryMeta"] == ui["categories"]
+    assert vocab["categoryMeta"] == registry_payload["category_meta"]
     assert vocab["uiFunctions"] == {
         fn["name"]: {key: value for key, value in (fn.get("ui") or {}).items() if key != "params"}
         for fn in registry_functions
@@ -204,6 +203,7 @@ def test_generated_param_vocab_exposes_full_registry():
     assert vocab["variableArgCounts"]["inv_t_plus_2"] == [0, 1, 2, 3, 4]
     assert vocab["variableArgCounts"]["add"] == [0, 1, 2]
     assert vocab["variableArgCounts"] == {name: sorted(counts) for name, counts in compat["variable_arg_counts"].items()}
+    assert vocab["variableArgForms"] == registry_payload["variable_arg_forms"]
     assert len(vocab["argSpecs"]["moebius"]) == 4
     assert len(vocab["argSpecs"]["inv_t_plus_2"]) == 2
     for fn in registry_functions:

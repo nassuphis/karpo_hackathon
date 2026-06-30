@@ -61,10 +61,6 @@ function _ensureSolveScoreChainDefaults() {
     }
 }
 
-function _displayCoeffTransforms() {
-    return _chainForWhich('ct').map(_displayTransformEntry);
-}
-
 function _chainHasTransformName(chain, name) {
     if (!Array.isArray(chain)) return false;
     return chain.some(item => {

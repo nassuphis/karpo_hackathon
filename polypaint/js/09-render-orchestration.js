@@ -71,56 +71,6 @@ function _renderRtChipHtml(item, i, which, catalog, options = {}) {
         const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
         return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>${_escapeHtml(item.name)}</span></span>`, tooltip, options);
     }
-    if (which === 'ct' && item.name === 'exp') {
-        const a = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
-        const b = _chipInputHtml(which, i, 1, _ctParamValue(item, 1, pDefs), pDefs[1]);
-        return `<span class="chip"><span class="chip-equals">f(z)=</span><span class="chip-formula"><span>exp(z*(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>))</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
-    }
-    if (which === 'ct' && item.name === 'linear') {
-        const param1 = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
-        const param2 = _chipInputHtml(which, i, 1, _ctParamValue(item, 1, pDefs), pDefs[1]);
-        return `<span class="chip"><span class="chip-equals">f(z)=</span><span class="chip-formula"><span>z*</span><span>${param1}</span><span class="chip-op">+</span><span>${param2}</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
-    }
-    if (which === 'ct' && item.name === 'cos') return _ctUnaryFormulaChip(which, i, item, 'cos', pDefs);
-    if (which === 'ct' && item.name === 'sin') return _ctUnaryFormulaChip(which, i, item, 'sin', pDefs);
-    if (which === 'ct' && item.name === 'tan') return _ctUnaryFormulaChip(which, i, item, 'tan', pDefs);
-    if (which === 'ct' && item.name === 'cosh') return _ctUnaryFormulaChip(which, i, item, 'cosh', pDefs);
-    if (which === 'ct' && item.name === 'sinh') return _ctUnaryFormulaChip(which, i, item, 'sinh', pDefs);
-    if (which === 'ct' && item.name === 'tanh') return _ctUnaryFormulaChip(which, i, item, 'tanh', pDefs);
-    if (which === 'ct' && item.name === 'round') {
-        const a = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
-        const b = _chipInputHtml(which, i, 1, _ctParamValue(item, 1, pDefs), pDefs[1]);
-        return `<span class="chip"><span class="chip-equals">f(z)=</span><span class="chip-formula"><span>round(z*(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>))</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
-    }
-    if (which === 'ct' && item.name === 'pow') {
-        const field1 = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
-        const field2 = _chipInputHtml(which, i, 1, _ctParamValue(item, 1, pDefs), pDefs[1]);
-        return `<span class="chip"><span class="chip-equals">poly=</span><span class="chip-formula"><span>pow(poly*</span><span>${field1}</span><span class="chip-op">,</span><span>${field2}</span><span>)</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
-    }
-    if (which === 'ct' && item.name === 'power') {
-        const k = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
-        return `<span class="chip"><span class="chip-formula"><span>p(</span><span>${k}</span><span>)</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
-    }
-    if (which === 'ct' && item.name === 'invpower') {
-        const k = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
-        return `<span class="chip"><span class="chip-formula"><span>invp(</span><span>${k}</span><span>)</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
-    }
-    if (which === 'ct' && item.name === 'roots') {
-        const k = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
-        const pad = _chipInputHtml(which, i, 1, _ctParamValue(item, 1, pDefs), pDefs[1]);
-        return `<span class="chip"><span class="chip-formula"><span>roots(</span><span>${k}</span><span class="chip-op">,</span><span>${pad}</span><span>)</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
-    }
-    if (which === 'ct' && item.name === 'roots_cm') {
-        const pad = _chipInputHtml(which, i, 0, _ctParamValue(item, 0, pDefs), pDefs[0]);
-        return `<span class="chip"><span class="chip-formula"><span>roots_cm(</span><span>${pad}</span><span>)</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
-    }
-    if (which === 'pt' && item.name === 'moebius') {
-        const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
-        const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
-        const c = _chipInputHtml(which, i, 2, item.params[2] || '', pDefs[2]);
-        const d = _chipInputHtml(which, i, 3, item.params[3] || '', pDefs[3]);
-        return `<span class="chip"><span class="chip-formula"><span>t=(</span><span>${a}</span><span class="chip-op">*t+</span><span>${b}</span><span>)/(</span><span>${c}</span><span class="chip-op">*t+</span><span>${d}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
-    }
     if (item.name === 'moebius') {
         const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
         const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
@@ -133,33 +83,12 @@ function _renderRtChipHtml(item, i, which, catalog, options = {}) {
         const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
         return `<span class="chip"><span class="chip-formula"><span>z+(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
     }
-    if (which === 'pt' && item.name === 'inv_t_plus_2') {
-        const re1 = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
-        const im1 = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
-        const re2 = _chipInputHtml(which, i, 2, item.params[2] || '', pDefs[2]);
-        const im2 = _chipInputHtml(which, i, 3, item.params[3] || '', pDefs[3]);
-        return `<span class="chip"><span class="chip-formula"><span>t1=1/(t1+</span><span>${re1}</span><span class="chip-op">+i*</span><span>${im1}</span><span>), t2=1/(t2+</span><span>${re2}</span><span class="chip-op">+i*</span><span>${im2}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
-    }
-    if (which === 'pt' && item.name === 'add') {
-        const c1 = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
-        const c2 = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
-        return `<span class="chip"><span class="chip-formula"><span>z1=z1+</span><span>${c1}</span><span class="chip-op">,</span><span>z2=z2+</span><span>${c2}</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
-    }
-    if (which === 'pt' && item.name === 'roots2') {
-        return `<span class="chip"><span class="chip-formula"><span>(t1,t2)=roots(</span><span>9/64*z^2+t1*z+t2</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
-    }
     if (item.name === 'mul_complex') {
         const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
         const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
         return `<span class="chip"><span class="chip-formula"><span>z*(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
     }
     const label = _escapeHtml(spec.label || item.name);
-    if (which === 'ct') {
-        const baseInputsHtml = pDefs.slice(0, -1).map((pDef, pi) =>
-            _chipInputHtml(which, i, pi, _ctParamValue(item, pi, pDefs), pDef || {})
-        ).join('');
-        return `<span class="chip">${label}${baseInputsHtml}<span class="chip-formula"><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
-    }
     const inputDefs = pDefs.length ? pDefs : (item.params || []).map(() => ({}));
     const inputsHtml = inputDefs.map((pDef, pi) => _chipInputHtml(which, i, pi, _paramValue(item, pDefs, pi), pDef || {})).join('');
     return `<span class="chip">${label}${inputsHtml}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
@@ -402,7 +331,6 @@ function _renderChips(which) {
     if (el) {
         if (which === 'pp') {
             el.innerHTML = chain.map((item, i) => _renderParamProgramChipHtml(item, i, { readonly: true })).join('');
-            _syncParamProgramAddOptions();
             _syncParamPipelineModeUi();
             const sourceLen = _paramProgramSourceStatementCount(_getParamProgramSourceText());
             const chainLen = _serializeParamProgramChain().length;
@@ -429,10 +357,10 @@ function _renderChips(which) {
                     ? `Coeff Program selected · ${_pluralize(chainLen, 'chip')}`
                     : 'Coeff Program selected · empty identity');
             }
-        } else if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {
+        } else if (which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {
             const catalog = _catalogForChain(which);
             el.innerHTML = chain.map((item, i) => _renderRtChipHtml(item, i, which, catalog)).join('');
-            if (which === 'pt' || which === 'ct' || which === 'rt' || which === 'palette-rt') {
+            if (which === 'rt' || which === 'palette-rt') {
                 Array.from(el.children).filter(chip => chip.classList && chip.classList.contains('chip')).forEach((chip, i) => {
                     chip.insertAdjacentHTML('afterbegin', _chipMoveControlsHtml(which, i));
                 });
@@ -458,8 +386,6 @@ function _renderChips(which) {
         if (prefix === 'render') _updateSolveScoreButtons();
         if (prefix === 'palette') _syncPaletteColorInterpretationUi();
     }
-    if (which === 'pt') _syncParamPipelineModeUi();
-    if (which === 'ct') _syncCoeffTransformAddOptions();
 }
 // (top-level statement moved to the js/12 boot block — parts are
 //  declarations-only; see tests/test_frontend_parts_contract.py)

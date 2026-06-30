@@ -974,7 +974,8 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
 }
 
 
-// Populate hidden fallback selects and render transform picker popups.
+// Compute-tab boot calls live here because all classic script parts have
+// loaded by this point.
 // (top-level statement moved to the js/12 boot block — parts are
 //  declarations-only; see tests/test_frontend_parts_contract.py)
 
@@ -1137,14 +1138,6 @@ document.addEventListener('keydown', function(e) {
 
 _syncRenderBackgroundColorUi();
 
-_syncParamTransformAddOptions();
-
-_syncParamProgramAddOptions();
-
-_syncCoeffTransformAddOptions();
-
-_syncCoeffProgramAddOptions();
-
 populateDropdown();
 
 document.addEventListener('keydown', function(e) {
@@ -1244,37 +1237,11 @@ document.addEventListener('click', function(e) {
         if (_elementContains(popup, target) || _elementContains(btn, target)) return;
         _setSolveScorePickerOpen(which, false);
     });
-    const ptPopup = document.getElementById('pt-add-popup');
-    const ptBtn = document.getElementById('pt-add-btn');
-    if (ptPopup && ptPopup._open && !_elementContains(ptPopup, target) && !_elementContains(ptBtn, target)) {
-        _setParamTransformPickerOpen(false);
-    }
-    const ppPopup = document.getElementById('pp-add-popup');
-    const ppBeforeBtn = document.getElementById('pp-insert-before-btn');
-    const ppAfterBtn = document.getElementById('pp-insert-after-btn');
-    if (ppPopup && ppPopup._open && !_elementContains(ppPopup, target) && !_elementContains(ppBeforeBtn, target) && !_elementContains(ppAfterBtn, target)) {
-        _setParamProgramPickerOpen(false);
-    }
-    const cpPopup = document.getElementById('cp-add-popup');
-    const cpBeforeBtn = document.getElementById('cp-insert-before-btn');
-    const cpAfterBtn = document.getElementById('cp-insert-after-btn');
-    if (cpPopup && cpPopup._open && !_elementContains(cpPopup, target) && !_elementContains(cpBeforeBtn, target) && !_elementContains(cpAfterBtn, target)) {
-        _setCoeffProgramPickerOpen(false);
-    }
-    const ctPopup = document.getElementById('ct-add-popup');
-    const ctBtn = document.getElementById('ct-add-btn');
-    if (ctPopup && ctPopup._open && !_elementContains(ctPopup, target) && !_elementContains(ctBtn, target)) {
-        _setCoeffTransformPickerOpen(false);
-    }
 });
 
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
         _closeSolveScorePickers();
-        _setParamTransformPickerOpen(false);
-        _setParamProgramPickerOpen(false);
-        _setCoeffProgramPickerOpen(false);
-        _setCoeffTransformPickerOpen(false);
         _clearRenderPreviewSelection();
         _clearRenderLoresPreviewSelection();
     }

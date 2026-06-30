@@ -12,195 +12,11 @@ function _paramValue(item, pDefs, idx) {
 }
 
 function _chipMoveControlsHtml(which, idx) {
-    if (!['pt', 'ct', 'rt', 'palette-rt'].includes(which)) return '';
+    if (!['rt', 'palette-rt'].includes(which)) return '';
     const count = _chainForWhich(which).length;
     const leftDisabled = idx <= 0 ? ' disabled' : '';
     const rightDisabled = idx >= count - 1 ? ' disabled' : '';
     return `<span class="chip-actions"><button type="button" class="chip-move" onclick="event.stopPropagation();moveChip('${which}',${idx},-1)" title="Move left"${leftDisabled}>&lt;</button><button type="button" class="chip-move" onclick="event.stopPropagation();moveChip('${which}',${idx},1)" title="Move right"${rightDisabled}>&gt;</button></span>`;
-}
-
-function _displayParamTransforms() {
-    return _ptChain.map(item => {
-        if (!item.params || !item.params.length) return [item.name];
-        return [item.name, ...item.params];
-    });
-}
-
-function _ptCategoryGroups() {
-    const grouped = {};
-    Object.keys(_ptCategoryMeta).forEach(key => { grouped[key] = []; });
-    Object.keys(_ptCatalog).forEach(name => {
-        const spec = _ptCatalog[name] || {};
-        const key = grouped[spec.category] ? spec.category : 'maps';
-        grouped[key].push(name);
-    });
-    return Object.keys(_ptCategoryMeta).map(key => ({
-        key,
-        ..._ptCategoryMeta[key],
-        items: grouped[key] || [],
-    }));
-}
-
-function _renderParamTransformAddPopup() {
-    const popup = document.getElementById('pt-add-popup');
-    if (!popup) return;
-    const head = `<div class="score-chip-picker-head"><span class="score-chip-picker-title">Add param transform</span><span class="score-chip-picker-state">Transforms t1/t2 before coefficient generation</span></div>`;
-    const body = _ptCategoryGroups().map(group => {
-        const items = group.items.length
-            ? group.items.map(name => {
-                const spec = _ptCatalog[name] || {};
-                const label = spec.label || name;
-                const paramCount = (spec.params || []).length;
-                const params = paramCount ? ` · ${_pluralize(paramCount, 'param')}` : '';
-                return `<button type="button" class="score-chip-option score-chip-option-${_escapeHtml(group.key)}" onclick="selectParamTransformChip('${_escapeHtml(name)}',event)" title="${_escapeHtml(spec.desc || label)}"><span class="score-chip-option-name">${_escapeHtml(label)}</span><span class="score-chip-option-meta">${_escapeHtml((spec.desc || '') + params)}</span></button>`;
-            }).join('')
-            : '<span class="score-chip-empty">No transforms</span>';
-        return `<div class="score-chip-category"><div class="score-chip-category-title">${_escapeHtml(group.title)}</div><div class="score-chip-category-help">${_escapeHtml(group.help)}</div><div class="score-chip-options">${items}</div></div>`;
-    }).join('');
-    popup.innerHTML = head + body;
-}
-
-function _setParamTransformPickerOpen(open) {
-    const popup = document.getElementById('pt-add-popup');
-    const btn = document.getElementById('pt-add-btn');
-    if (!popup) return;
-    if (open) _renderParamTransformAddPopup();
-    popup._open = !!open;
-    popup.style.display = open ? 'block' : 'none';
-    if (popup.classList && popup.classList.toggle) popup.classList.toggle('active', !!open);
-    if (popup.setAttribute) popup.setAttribute('aria-hidden', open ? 'false' : 'true');
-    if (btn && btn.setAttribute) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-}
-
-function toggleParamTransformPicker(eventObj) {
-    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
-    const popup = document.getElementById('pt-add-popup');
-    _setParamTransformPickerOpen(!(popup && popup._open));
-}
-
-function selectParamTransformChip(name, eventObj) {
-    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
-    addChip('pt', name);
-    _setParamTransformPickerOpen(false);
-}
-
-function _syncParamTransformAddOptions() {
-    const sel = document.getElementById('pt-add');
-    if (sel) {
-        const options = ['<option value="">+ add...</option>'].concat(
-            Object.keys(_ptCatalog).map(name => {
-                const spec = _ptCatalog[name] || {};
-                return `<option value="${_escapeHtml(name)}">${_escapeHtml(spec.label || name)}</option>`;
-            })
-        );
-        sel.innerHTML = options.join('');
-    }
-    _renderParamTransformAddPopup();
-}
-
-function _paramProgramCategoryGroups() {
-    const grouped = {};
-    Object.keys(_ppCategoryMeta).forEach(key => { grouped[key] = []; });
-    Object.keys(_ppCatalog).forEach(name => {
-        const spec = _ppCatalog[name] || {};
-        const key = grouped[spec.category] ? spec.category : 'stack';
-        grouped[key].push(name);
-    });
-    return Object.keys(_ppCategoryMeta).map(key => ({
-        key,
-        ..._ppCategoryMeta[key],
-        items: grouped[key] || [],
-    }));
-}
-
-// One picker implementation drives both program chip pickers; the
-// descriptors carry everything that differs. The public function names
-// below stay as thin wrappers because generated onclick strings and HTML
-// reference them directly.
-const _chipPickers = {
-    pp: {
-        which: 'pp',
-        popupId: 'pp-add-popup',
-        headTitle: 'Add param program chip',
-        headHint: 'RPN over t1/t2, output registers p1/p2',
-        catalog: () => _ppCatalog,
-        groups: () => _paramProgramCategoryGroups(),
-        selectFnName: 'selectParamProgramChip',
-        getInsertMode: () => _paramProgramPickerInsertMode,
-        setInsertMode: (mode) => { _paramProgramPickerInsertMode = mode; },
-    },
-    cp: {
-        which: 'cp',
-        popupId: 'cp-add-popup',
-        headTitle: 'Add coeff program chip',
-        headHint: 'RPN over coefficient vectors cf → poly',
-        catalog: () => _coeffProgramCatalog,
-        groups: () => _coeffProgramCategoryGroups(),
-        selectFnName: 'selectCoeffProgramChip',
-        getInsertMode: () => _coeffProgramPickerInsertMode,
-        setInsertMode: (mode) => { _coeffProgramPickerInsertMode = mode; },
-    },
-};
-
-function _renderChipPickerPopup(picker) {
-    const popup = document.getElementById(picker.popupId);
-    if (!popup) return;
-    const catalog = picker.catalog();
-    const head = `<div class="score-chip-picker-head"><span class="score-chip-picker-title">${_escapeHtml(picker.headTitle)}</span><span class="score-chip-picker-state">${_escapeHtml(picker.headHint)}</span></div>`;
-    const body = picker.groups().map(group => {
-        const items = group.items.length
-            ? group.items.map(name => {
-                const spec = catalog[name] || {};
-                const label = spec.label || name;
-                const paramCount = (spec.params || []).length;
-                const params = paramCount ? ` · ${_pluralize(paramCount, 'param')}` : '';
-                return `<button type="button" class="score-chip-option score-chip-option-${_escapeHtml(group.key)}" onclick="${picker.selectFnName}('${_escapeHtml(name)}',event)" title="${_escapeHtml(spec.desc || label)}"><span class="score-chip-option-name">${_escapeHtml(label)}</span><span class="score-chip-option-meta">${_escapeHtml((spec.desc || '') + params)}</span></button>`;
-            }).join('')
-            : '<span class="score-chip-empty">No chips</span>';
-        return `<div class="score-chip-category"><div class="score-chip-category-title">${_escapeHtml(group.title)}</div><div class="score-chip-category-help">${_escapeHtml(group.help)}</div><div class="score-chip-options">${items}</div></div>`;
-    }).join('');
-    popup.innerHTML = head + body;
-}
-
-function _setChipPickerOpen(picker, open) {
-    const popup = document.getElementById(picker.popupId);
-    if (!popup) return;
-    if (open) _renderChipPickerPopup(picker);
-    popup._open = !!open;
-    popup.style.display = open ? 'block' : 'none';
-    if (popup.classList && popup.classList.toggle) popup.classList.toggle('active', !!open);
-    if (popup.setAttribute) popup.setAttribute('aria-hidden', open ? 'false' : 'true');
-}
-
-function _toggleChipPicker(picker, eventObj, insertMode) {
-    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
-    if (insertMode === 'before' || insertMode === 'after') picker.setInsertMode(insertMode);
-    const popup = document.getElementById(picker.popupId);
-    _setChipPickerOpen(picker, !(popup && popup._open));
-}
-
-function _selectChipFromPicker(picker, name, eventObj) {
-    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
-    addChip(picker.which, name, picker.getInsertMode() || 'after');
-    _setChipPickerOpen(picker, false);
-}
-
-function _renderParamProgramAddPopup() {
-    _renderChipPickerPopup(_chipPickers.pp);
-}
-
-function _setParamProgramPickerOpen(open) {
-    _setChipPickerOpen(_chipPickers.pp, open);
-}
-
-function toggleParamProgramPicker(eventObj, insertMode = null) {
-    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
-    _paramProgramStatus('Param Program chips are read-only; edit the Text tab.');
-}
-
-function selectParamProgramChip(name, eventObj) {
-    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
-    _paramProgramStatus('Param Program chips are read-only; edit the Text tab.');
 }
 
 function selectParamProgramLine(idx, eventObj) {
@@ -209,72 +25,15 @@ function selectParamProgramLine(idx, eventObj) {
     _renderChips('pp');
 }
 
-function _syncParamProgramAddOptions() {
-    const sel = document.getElementById('pp-add');
-    if (sel) {
-        sel.innerHTML = '<option value="">Text mode only</option>';
-    }
-}
-
-function _coeffProgramCategoryGroups() {
-    const grouped = {};
-    Object.keys(_coeffProgramCategoryMeta).forEach(key => { grouped[key] = []; });
-    Object.keys(_coeffProgramCatalog).forEach(name => {
-        const spec = _coeffProgramCatalog[name] || {};
-        if (spec.hidden) return;
-        const key = grouped[spec.category] ? spec.category : 'elementwise';
-        grouped[key].push(name);
-    });
-    return Object.keys(_coeffProgramCategoryMeta).map(key => ({
-        key,
-        ..._coeffProgramCategoryMeta[key],
-        items: grouped[key] || [],
-    }));
-}
-
-function _renderCoeffProgramAddPopup() {
-    _renderChipPickerPopup(_chipPickers.cp);
-}
-
-function _setCoeffProgramPickerOpen(open) {
-    _setChipPickerOpen(_chipPickers.cp, open);
-}
-
-function toggleCoeffProgramPicker(eventObj, insertMode = null) {
-    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
-    _coeffProgramStatus('Coeff Program chips are read-only; edit the Text tab.');
-}
-
-function selectCoeffProgramChip(name, eventObj) {
-    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
-    _coeffProgramStatus('Coeff Program chips are read-only; edit the Text tab.');
-}
-
 function selectCoeffProgramLine(idx, eventObj) {
     if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
     _coeffProgramSelectedIndex = Number(idx);
     _renderChips('cp');
 }
 
-function _syncCoeffProgramAddOptions() {
-    // Coeff Program chips are readonly visualization now; Text is editable.
-}
-
-function _serializeParamTransforms() {
-    return _ptChain.map(item => {
-        if (!item.params || !item.params.length) return [item.name];
-        const spec = _ptCatalog[item.name] || {};
-        const pDefs = spec.params || [];
-        const wireParams = item.params.map((v, i) => (pDefs[i] && pDefs[i].target) ? _targetToWire(v) : v);
-        return [item.name, ...wireParams];
-    });
-}
-
 let _paramProgramSelectedIndex = -1;
-let _paramProgramPickerInsertMode = 'after';
 let _paramProgramEditorMode = 'text';
 let _coeffProgramSelectedIndex = -1;
-let _coeffProgramPickerInsertMode = 'after';
 let _coeffProgramEditorMode = 'text';
 
 function _paramProgramTextModeSelected() {
@@ -2070,7 +1829,6 @@ function _displayActiveCoeffPipeline(separator = ',') {
 }
 
 function _paramPipelineEditAffectsCompute(which) {
-    if (which === 'ct' || which === 'pt') return false;
     if (which === 'cp' || which === 'pp') return true;
     return false;
 }
@@ -2078,12 +1836,8 @@ function _paramPipelineEditAffectsCompute(which) {
 function _syncParamPipelineModeUi() {
     const mode = 'program';
     _paramPipelineMode = mode;
-    const legacyRow = document.getElementById('param-transforms-row');
     const programBox = document.querySelector('.param-program-box');
     const coeffProgramBox = document.querySelector('.coeff-program-box');
-    if (legacyRow && legacyRow.classList) legacyRow.classList.add('param-pipeline-inactive');
-    const coeffRow = document.getElementById('coeff-transforms-row');
-    if (coeffRow && coeffRow.classList) coeffRow.classList.add('param-pipeline-inactive');
     if (programBox && programBox.classList) programBox.classList.remove('param-pipeline-inactive');
     if (coeffProgramBox && coeffProgramBox.classList) coeffProgramBox.classList.remove('param-pipeline-inactive');
 }
@@ -2227,25 +1981,6 @@ function _applyParamProgram(rawProgram) {
     if (_paramProgramModeSelected()) _markComputePreviewStale();
     _paramProgramStatus(program.name ? `Loaded ${program.name}` : 'Loaded param program');
     return program;
-}
-
-function _copyParamTransformsIntoParamProgram() {
-    const transforms = _serializeParamTransforms();
-    if (!transforms.length) {
-        _paramProgramStatus('No legacy Param transforms to copy', true);
-        return;
-    }
-    const chain = transforms.map(item => {
-        const row = Array.isArray(item) ? item : [String(item)];
-        return { name: 'legacy', params: _paramProgramBridgeParamsFromLegacyTransform(row) };
-    }).filter(item => item && item.params);
-    _ppChain.splice(0, _ppChain.length, ...chain);
-    _paramProgramSelectedIndex = _ppChain.length ? 0 : -1;
-    _setParamProgramSourceText(_paramProgramSourceFromRows(_serializeParamProgramChain()), { auto: true });
-    _setParamProgramEditorMode('text');
-    _renderChips('pp');
-    if (_paramProgramModeSelected()) _markComputePreviewStale();
-    _paramProgramStatus(`Copied ${chain.length} legacy transform${chain.length === 1 ? '' : 's'} into param program`);
 }
 
 function _clearParamProgramChain() {
@@ -2456,44 +2191,6 @@ function _applyCoeffProgram(rawProgram) {
     return program;
 }
 
-function _copyCoeffTransformsIntoCoeffProgram() {
-    const transforms = _serializeCoeffTransforms();
-    if (!transforms.length) {
-        _coeffProgramStatus('No legacy Coeff transforms to copy', true);
-        return;
-    }
-    const chain = transforms.map(row => {
-        const values = Array.isArray(row) ? row : [String(row)];
-        const normalized = _normalizeCoeffTransformItem({
-            name: values[0],
-            params: values.slice(1).map(v => String(v)),
-        });
-        const args = (normalized.params || []).map(v => String(v));
-        // Named chips have andy-less params (the catalogs filter it), so a
-        // transform carrying a non-default andy must stay a legacy chip or
-        // the andy is silently dropped on the next serialize — same rule as
-        // _normalizeCoeffProgramChain.
-        const fullDefs = _coeffProgramLegacyInputDefs(normalized.name);
-        const lastDef = fullDefs.length ? fullDefs[fullDefs.length - 1] : null;
-        const carriesAndy = _isAndyParam(lastDef)
-            && args.length === fullDefs.length
-            && !_ctAndyIsDefault(args[args.length - 1]);
-        if (carriesAndy) {
-            // legacy rows are source-first: [name, src, tgt, ...args]
-            return { name: 'legacy', params: [normalized.name, 'poly', 'poly', ...args] };
-        }
-        // named chip params are target-first: [tgt, src, ...args]
-        return { name: _coeffProgramRegistryChipName(normalized.name), params: ['poly', 'poly', ...args] };
-    });
-    _coeffProgramChain.splice(0, _coeffProgramChain.length, ...chain);
-    _coeffProgramSelectedIndex = _coeffProgramChain.length ? 0 : -1;
-    _setCoeffProgramSourceText(_coeffProgramSourceFromRows(_serializeCoeffProgramChain()), { auto: true });
-    _setCoeffProgramEditorMode('text');
-    _renderChips('cp');
-    if (_paramProgramModeSelected()) _markComputePreviewStale();
-    _coeffProgramStatus(`Copied ${chain.length} coefficient transform${chain.length === 1 ? '' : 's'} into coeff program`);
-}
-
 function _clearCoeffProgramChain() {
     _coeffProgramChain.splice(0, _coeffProgramChain.length);
     _coeffProgramSelectedIndex = -1;
@@ -2569,23 +2266,6 @@ function _validateChipParamValue(which, pDef, value) {
                 : { value: norm };
         }
         return { value: rawText || String(pDef.def || '') };
-    }
-    if (which === 'ct' && pDef) {
-        if (pDef.complexPairNext) {
-            const complex = _splitCtComplexInput(value);
-            if (complex) return { value: complex.re, valueNext: complex.im };
-            // not a pair: fall through and treat the edit as this slot only
-        }
-        if (pDef.complex) {
-            const parsed = _parseCtComplexConstant(value);
-            return parsed
-                ? { value: _formatCfpvComplexValue(parsed.re, parsed.im) }
-                : { error: `Invalid ${pDef.ph || 'value'}: "${value}". Use a finite complex number such as 2-3j.` };
-        }
-        const norm = _normalizeCtRealInput(value);
-        return norm == null
-            ? { error: `Invalid ${pDef.ph || 'value'}: "${value}". Use a number, scientific notation, or a simple +/- constant expression.` }
-            : { value: norm };
     }
     return { value };
 }
@@ -2678,10 +2358,6 @@ function _chipLabeledInputHtml(which, chipIdx, paramIdx, value, paramDef, option
     const input = _chipInputHtml(which, chipIdx, paramIdx, value, pd, options);
     if (!label) return input;
     return `<span class="chip-param-pair"><span class="chip-param-name">${_escapeHtml(label)}=</span>${input}</span>`;
-}
-
-function _ctUnaryFormulaChip(which, i, item, fnName, pDefs) {
-    return `<span class="chip"><span class="chip-formula"><span>${_escapeHtml(fnName)}(z)</span><span class="chip-op">·</span>${_ctAndyHtml(which, i, item, pDefs)}</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
 }
 
 function _solveScoreChipShell(which, i, bodyHtml, tooltipAttr = '', options = {}) {

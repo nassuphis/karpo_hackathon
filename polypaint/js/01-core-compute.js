@@ -1282,9 +1282,7 @@ function _setChainFromSaved(which, values) {
         if (item == null || item === '') return null;
         return { name: String(item), params: [] };
     }).filter(Boolean);
-    if (which === 'pt') _ptChain = chain;
-    else if (which === 'ct') _ctChain = chain.map(_normalizeCoeffTransformItem);
-    else if (which === 'rt') _rtChain = chain;
+    if (which === 'rt') _rtChain = chain;
     else if (which === 'palette-rt') _paletteRtChain = chain;
     _renderChips(which);
 }

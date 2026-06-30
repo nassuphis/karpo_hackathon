@@ -64,6 +64,17 @@ function assertSectionNotIncludes(section, snippet, message) {
   if (section.includes(snippet)) fail(message);
 }
 
+for (const removedId of [
+  'pt-add-popup', 'pt-add-btn', 'pt-add',
+  'ct-add-popup', 'ct-add-btn', 'ct-add',
+  'pp-add-popup', 'pp-insert-before-btn', 'pp-insert-after-btn', 'pp-add',
+  'cp-add-popup', 'cp-insert-before-btn', 'cp-insert-after-btn',
+  'param-transforms-row', 'coeff-transforms-row',
+]) {
+  const pattern = new RegExp(`getElementById\\(['"]${removedId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]\\)`);
+  if (pattern.test(src)) fail(`removed editor DOM id still referenced by JS: ${removedId}`);
+}
+
 assertIncludes("function setColorMode(mode) {\n    renderColorMode = 'solve_score';\n    _updateSolveScoreButtons();", 'setColorMode should hard-lock solve_score without a fake mode toggle');
 assertIncludes("<div class=\"color-title\" style=\"margin-top:10px\">Color</div>", 'render tab should merge color controls into the visual View/Rotation region');
 assertIncludes("class=\"color-mode-choice\"><input type=\"radio\" name=\"render-color-interpretation\" value=\"scalar_lut\"", 'Scalar LUT selector should use aligned color-mode-choice markup');
@@ -124,9 +135,13 @@ assertIncludes("id=\"color-repalette-interpretation\"", 'Color RePalette popup s
 assertIncludes("function _selectedColorRepaletteInterpretation(art) {", 'Color RePalette UI should centralize selected interpretation parsing');
 assertIncludes("{ name: 'identity', stops: ['#000000','#ffffff'] }", 'PAL swatch should include the identity greyscale palette');
 assertIncludes("{ name: 'identity_hsv', stops:", 'PAL swatch should include the identity HSV palette');
-assertIncludes("unit_circle: { params: [{ph:'target', def:'both', target: true}] }", 'unit_circle param transform should expose target selection');
-assertIncludes("rtheta: { params: [{ph:'p', def:'1'}, {ph:'target', def:'both', target: true}] }", 'rtheta target selector should preserve legacy p-first ordering');
-assertIncludes("square: { params: [{ph:'target', def:'both', target: true}] }", 'square param transform should expose target selection');
+assertNotIncludes("id=\"pt-add\"", 'legacy Param Transform picker select should stay removed');
+assertNotIncludes("id=\"ct-add\"", 'legacy Coeff Transform picker select should stay removed');
+assertNotIncludes("pt-add-popup", 'legacy Param Transform picker popup should stay removed');
+assertNotIncludes("ct-add-popup", 'legacy Coeff Transform picker popup should stay removed');
+assertNotIncludes("pp-add-popup", 'Param Program chip picker popup should stay removed');
+assertNotIncludes("cp-add-popup", 'Coeff Program chip picker popup should stay removed');
+assertNotIncludes("const _ptCatalog =", 'static Param Transform catalog should stay removed; generated Param vocab is authoritative');
 assertIncludes("id=\"param-program-manage\" onclick=\"openParamProgramModal()\"", 'compute tab should expose Param Programs modal launcher');
 assertNotIncludes("id=\"param-pipeline-mode\"", 'compute tab should not expose retired Chain/Program selector');
 assertNotIncludes("id=\"pp-chips\"", 'Param Program read-only chip display removed (text-only editor)');
@@ -148,7 +163,6 @@ assertIncludes("viewport Im: ${minIm} .. ${maxIm}", 'compute preview plot info s
 assertIncludes("const _paramRegistryVocab = (typeof window !== 'undefined' && window._paramRegistryVocab) || {};", 'frontend should hydrate Param Program legacy metadata from generated vocab');
 if (!paramVocabSrc.includes('"zzold"') || !paramVocabSrc.includes('"scdth"')) fail('generated Param vocab should expose all registry transforms, including names missing from the old JS mirror');
 assertIncludes("const _paramProgramIndependentLegacyTargets = new Set(_paramRegistryVocab.independentTargets || []);", 'frontend should get redundant legacy targets from generated Param vocab');
-assertIncludes("coeff12: { category: 'bridge', desc: 'legacy mixed polynomial map' }", 'Param Program picker should expose legacy coeff-map chips directly');
 assertIncludes("const _paramProgramLegacyArgSpecs = _paramRegistryVocab.argSpecs || {};", 'frontend should expose generated structured legacy argument specs in Param Program bridge chips');
 assertIncludes("const _paramRegistryAdapter = (() => {", 'frontend should normalize generated Param registry metadata through an adapter');
 assertIncludes("category(category) {\n            return categoryMeta[category] || { title: category, help: '' };", 'Param adapter should expose generated category metadata without static fallback');
@@ -270,14 +284,13 @@ assertIncludes("'/migrate-coeff-program'", 'Coeff modal should call the v2 migra
 assertIncludes("} else if (options.auto === false || value.trim()) {\n        _coeffProgramSourceAutoSynthed = false;", 'Restored coeff source text should clear auto-synth state before switching to Text mode');
 assertIncludes("function _effectiveCoeffProgramChainForCompute() {", 'compute payload should centralize coeff-program selection');
 assertIncludes("function _effectiveCoeffProgramChainForCompute() {\n    return [];\n}", 'Coeff Program compute payload should never send editable chip chains');
-assertIncludes("function _copyCoeffTransformsIntoCoeffProgram() {", 'Coeff Program UI should translate legacy transforms into program chips');
+assertNotIncludes("function _copyCoeffTransformsIntoCoeffProgram() {", 'removed Coeff Transform picker should not keep copy-button conversion code alive');
 assertIncludes("const _coeffProgramRegistryChipNames = _coeffRegistryVocab ? _coeffRegistryVocab.chipNameByRegistryName : {};", 'normalize/copy should derive the registry-to-chip name map from the generated vocab');
 assertIncludes('<script src="program_profiles_js.js"></script>', 'the generated program profile mirror must load before the main bundle');
 assertIncludes('<script src="merged_opcodes_js.js"></script>', 'the generated merged opcode mirror must load before the main bundle');
 assertIncludes('<script src="param_vocab_js.js"></script>', 'the generated Param registry vocab must load before the main bundle');
 assertIncludes('<script src="coeff_vocab_js.js"></script>', 'the generated registry vocab must load before the main bundle');
 assertIncludes('<script src="solve_score_vocab_js.js"></script>', 'the generated solve-score vocab must load before the main bundle');
-assertIncludes("return { name: _coeffProgramRegistryChipName(normalized.name), params: ['poly', 'poly', ...args] };", 'Copy legacy transforms should map shadowed registry names through the shared chip-name map');
 assertIncludes("return [{ name: _coeffProgramRegistryChipName(legacyName), params: [legacyTgt, legacySrc, ...legacyArgs] }];", 'Normalize should map shadowed registry names through the shared chip-name map');
 assertIncludes("// LAYOUT CONTRACT: legacy rows are source-first", 'The legacy-vs-chip param order flip must stay documented at the normalize seam');
 assertIncludes("function _isAndyParam(pDef) {", 'andy identity should be real metadata (kind), not placeholder text');
@@ -286,7 +299,6 @@ if (!vocabSrc.includes('"effectiveArgs"') || !vocabSrc.includes('"kind": "andy"'
 if (vocabSrc.includes('"supportsAndy"')) fail('generated coeff vocab should not emit a separate supportsAndy capability map');
 assertIncludes("const _coeffProgramVectorUnaryNames = _coeffStructuralSubOpNames('vector_unary'", 'Coeff Program vector unary names should derive from generated structural metadata');
 assertIncludes("catalog.power_series = {", 'Coeff Program catalog should expose the registry power transform as a power_series chip');
-assertIncludes("return { name: 'legacy', params: [normalized.name, 'poly', 'poly', ...args] };", 'Copy legacy transforms must keep andy-carrying rows as legacy chips (named chips drop andy)');
 assertIncludes("if (_coeffProgramSourceAutoSynthed && !_coeffProgramChain.length) {", 'Emptying the chip chain must clear stale auto-synthesized text');
 assertIncludes("function _coeffProgramSourceStatements(sourceText) {", 'statement counter and display should share one backend-mirroring splitter');
 assertIncludes("nativeTransform: true,", 'Coeff Program picker should expose direct native transform chips instead of a visible legacy wrapper');
@@ -1272,7 +1284,6 @@ async function main() {
     extractFunction('_parseCtRealConstant'),
     extractFunction('_hasCtExpressionOperator'),
     extractFunction('_parseCtComplexConstant'),
-    extractFunction('_splitCtComplexInput'),
     extractFunction('_isAndyParam'),
     extractFunction('_ctAndyIsDefault'),
     extractFunction('_canonicalCoeffTransformName'),
@@ -1424,10 +1435,11 @@ async function main() {
   assert(ctx._formatCfpvForDisplay('const', [8, -3, 10]) === 'degree=7, value=-3+10j', 'const CFPV display should preserve complex values');
   const cfpvComplex = ctx._parseCfpvComplexValue('10j-3');
   assert(cfpvComplex && cfpvComplex.re === -3 && cfpvComplex.im === 10, 'const coefficient value parser should accept imag-first complex constants');
-  assert(ctx._splitCtComplexInput('13-22j').re === '13' && ctx._splitCtComplexInput('13-22j').im === '-22', 'complex chip parser should preserve real-first complex constants');
+  const coeffComplex = ctx._parseCtComplexConstant('13-22j');
+  assert(coeffComplex && coeffComplex.re === 13 && coeffComplex.im === -22, 'complex parser should preserve real-first complex constants');
 
   assert(JSON.stringify(Object.keys(coeffRegistryVocab.ctCatalog)) === JSON.stringify(coeffRegistryVocab.names), 'generated chip entries should cover every registry function in fn_index order');
-  assert(JSON.stringify(Object.keys(ctx._ctCatalog)) === JSON.stringify(coeffRegistryVocab.names), 'hydrated _ctCatalog should preserve registry order (the transform picker order)');
+  assert(JSON.stringify(Object.keys(ctx._ctCatalog)) === JSON.stringify(coeffRegistryVocab.names), 'hydrated _ctCatalog should preserve registry order');
   assert(JSON.stringify(Object.keys(ctx._ctCategoryMeta)) === JSON.stringify(['structural', 'accumulation', 'elementwise', 'roots']), 'category order is UI contract');
   assert(ctx._ctCatalog.linear.params.length === 3 && ctx._ctCatalog.rev.params.length === 1, 'hydration should append the shared andy param to every transform');
   assert(ctx._ctCatalog.linear.params[0].title.includes('Program mode accepts') && !ctx._ctCatalog.linear.params[0].title.includes('{SCALAR_EXPR_HELP}'), 'hydration should resolve the scalar-expr help placeholder');
@@ -1633,9 +1645,7 @@ async function main() {
   ].join('\n\n');
   const previewCtx = {
     _serializeParamProgramChain() { return [['push', 't1'], ['emit', 'p1']]; },
-    _displayParamTransforms() { throw new Error('legacy param transforms should not be displayed'); },
     _serializeCoeffProgramChain() { return [['rev', 'poly', 'poly'], ['emit']]; },
-    _serializeCoeffTransforms() { throw new Error('legacy coeff transforms should not be displayed'); },
   };
   vm.createContext(previewCtx);
   vm.runInContext(previewLogCode, previewCtx);

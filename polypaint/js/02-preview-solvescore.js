@@ -245,7 +245,6 @@ async function runComputePreview() {
     const coeffTransforms = _effectiveCoeffTransformsForCompute();
     const coeffProgramChain = _effectiveCoeffProgramChainForCompute();
     const cfpv = _cfpv.length > 0 ? [..._cfpv] : [];
-    const coeffTransformsDisplay = _displayCoeffTransforms();
     const ptDisplay = _displayActiveParamPipeline(',');
     const ctDisplay = _displayActiveCoeffPipeline(',');
     const rootsCmSyncMaxN = 128;
@@ -265,7 +264,7 @@ async function runComputePreview() {
     _setComputePreviewPlaceholder('Working...');
     try {
         const cfpvDisplay = _formatCfpvForDisplay(funcName, cfpv);
-        log(`Compute preview (${_solverTag(solverMode)}): [${ptDisplay || 'none'}] ${funcName}${cfpvDisplay ? '(' + cfpvDisplay + ')' : ''} [${ctDisplay || coeffTransformsDisplay.join(',') || 'none'}] N-preview=${nPreview} · pix=${previewSize} · q=${(quantile * 100).toFixed(1)}% · shim=${(shim * 100).toFixed(1)}%...`, '', 'compute-log');
+        log(`Compute preview (${_solverTag(solverMode)}): [${ptDisplay || 'none'}] ${funcName}${cfpvDisplay ? '(' + cfpvDisplay + ')' : ''} [${ctDisplay || 'none'}] N-preview=${nPreview} · pix=${previewSize} · q=${(quantile * 100).toFixed(1)}% · shim=${(shim * 100).toFixed(1)}%...`, '', 'compute-log');
         const result = await lambdaPost('compute-preview', _attachProgramSourcePayload({
             solver_mode: solverMode,
             N_preview: nPreview,
@@ -337,7 +336,6 @@ function _populateComputeFromDetail(jobId, detail) {
         _setRenderFunction(functionName);
     }
 
-    const ptDisplay = pipeline.param_transforms_display || detail.param_transforms_display || pipeline.param_transforms || detail.param_transforms || [];
     const savedParamProgramChain = pipeline.param_program_chain || detail.param_program_chain || [];
     let savedParamProgramSourceText = [
         pipeline.param_program_source_text,
@@ -362,7 +360,6 @@ function _populateComputeFromDetail(jobId, detail) {
         typeof _coeffProgramSourceFromRows === 'function') {
         savedCoeffProgramSourceText = _coeffProgramSourceFromRows(savedCoeffProgramChain);
     }
-    _setChainFromSaved('pt', ptDisplay);
     _setChainFromSaved('pp', savedParamProgramChain);
     _setParamProgramSourceText(savedParamProgramSourceText);
     _setParamProgramEditorMode('text');
@@ -370,7 +367,6 @@ function _populateComputeFromDetail(jobId, detail) {
     _setCoeffProgramSourceText(savedCoeffProgramSourceText);
     _setCoeffProgramEditorMode('text');
     _setParamPipelineMode('program');
-    _setChainFromSaved('ct', pipeline.coeff_transforms || detail.coeff_transforms || []);
 
     const savedCfpv = Array.isArray(pipeline.cfpv) ? pipeline.cfpv : [];
     if (savedCfpv.length) {
@@ -671,10 +667,8 @@ function _escapeHtml(value) {
 }
 
 function _catalogForChain(which) {
-    if (which === 'pt') return _ptCatalog;
     if (which === 'pp') return _ppCatalog;
     if (which === 'cp') return _coeffProgramCatalog;
-    if (which === 'ct') return _ctCatalog;
     if (which === 'ss' || which === 'palette-ss') return _ssCatalog;
     return _rtCatalog;
 }
@@ -684,14 +678,13 @@ function _catalogForChain(which) {
 //   transforms (legacy), cp = coeff program, rt = root transforms,
 //   ss = solve score, palette-ss = palette solve score.
 function _chainForWhich(which) {
-    if (which === 'pt') return _ptChain;
     if (which === 'pp') return _ppChain;
     if (which === 'cp') return _coeffProgramChain;
     if (which === 'rt') return _rtChain;
     if (which === 'palette-rt') return _paletteRtChain;
     if (which === 'ss') return _renderScoreChain;
     if (which === 'palette-ss') return _paletteScoreChain;
-    return _ctChain;
+    return [];
 }
 
 function _displayTransformEntry(item) {

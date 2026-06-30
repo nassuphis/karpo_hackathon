@@ -4,95 +4,6 @@
 // let/const bindings are shared across all parts, exactly as before
 // the split). Deploy rewrites the script tags to build-versioned asset
 // keys (assets/<BUILD_ID>/...), so a deploy flips atomically via index.html.
-const _ptCategoryMeta = {
-    maps: { title: 'Maps', help: 'direct complex maps applied to t1/t2' },
-    arithmetic: { title: 'Arithmetic', help: 'offset, scale, invert, or remix parameter values' },
-    shapes: { title: 'Curves + shapes', help: 'replace selected parameters with points on analytic curves' },
-    roots: { title: 'Root-derived', help: 'derive t1/t2 from roots of small polynomials' },
-    dither: { title: 'Dither', help: 'jitter parameters before coefficient generation' },
-    legacy: { title: 'Legacy coefficient maps', help: 'older named parameter recipes kept for compatibility' },
-};
-
-const _ptInfo = {
-    unit_circle: { category: 'maps', desc: 'map real t to exp(2*pi*i*t)' },
-    rtheta: { category: 'maps', desc: 'polar disk map using t1/t2 as radius and angle' },
-    square: { category: 'maps', desc: 'square both complex parameters' },
-    cube: { category: 'maps', desc: 'cube both complex parameters' },
-    reciprocal: { category: 'maps', desc: 'replace each parameter with 1/t' },
-    conjugate: { category: 'maps', desc: 'complex conjugate t1 and t2' },
-    swap: { category: 'maps', desc: 'swap t1 and t2' },
-    add_sub: { category: 'arithmetic', desc: 'emit t1+t2 and t1-t2' },
-    mul_div: { category: 'arithmetic', desc: 'emit t1*t2 and t1/t2' },
-    moebius: { category: 'maps', desc: 'Mobius map on t1 and t2; 0-arg runs keep legacy 1/(t+2)' },
-    negate: { category: 'maps', desc: 'negate t1 and t2' },
-    exp: { category: 'maps', desc: 'complex exponential of each parameter' },
-    xim: { category: 'maps', desc: 'move real part into the imaginary axis' },
-    zzold: { category: 'arithmetic', desc: 'legacy t1+i*t2 remix into both slots' },
-    zz1: { category: 'arithmetic', desc: 't1+i*t2 and t1*t2+i*(t1+t2)' },
-    zz2: { category: 'arithmetic', desc: 't1+i*t2 and t1-i*t2' },
-    zz3: { category: 'arithmetic', desc: 'cross-imaginary remix of t1 and t2' },
-    inv_t_plus_2: { category: 'arithmetic', desc: 't1=1/(t1+a), t2=1/(t2+b)' },
-    t1radd: { category: 'arithmetic', desc: 'add to real part of t1 only' },
-    t1iadd: { category: 'arithmetic', desc: 'add to imaginary part of t1 only' },
-    t2radd: { category: 'arithmetic', desc: 'add to real part of t2 only' },
-    t2iadd: { category: 'arithmetic', desc: 'add to imaginary part of t2 only' },
-    radd: { category: 'arithmetic', desc: 'add to real parts of both parameters' },
-    iadd: { category: 'arithmetic', desc: 'add to imaginary parts of both parameters' },
-    add: { category: 'arithmetic', desc: 'z1=z1+c1 and z2=z2+c2 using complex offsets' },
-    cadd: { category: 'arithmetic', desc: 'add a complex constant to t1 and t2' },
-    rscale: { category: 'arithmetic', desc: 'scale real parts only' },
-    iscale: { category: 'arithmetic', desc: 'scale imaginary parts only' },
-    scale: { category: 'arithmetic', desc: 'scale all components' },
-    crd: { category: 'shapes', desc: 'cardioid curve' },
-    hrt: { category: 'shapes', desc: 'heart curve' },
-    spdl: { category: 'shapes', desc: 'spindle curve' },
-    lmc: { category: 'shapes', desc: 'limacon curve' },
-    rsc: { category: 'shapes', desc: 'rose curve' },
-    lss: { category: 'shapes', desc: 'Lissajous curve' },
-    ast: { category: 'shapes', desc: 'astroid curve' },
-    asp: { category: 'shapes', desc: 'Archimedean spiral' },
-    lsp: { category: 'shapes', desc: 'log spiral' },
-    dlt: { category: 'shapes', desc: 'deltoid curve' },
-    rply: { category: 'shapes', desc: 'regular polygon perimeter' },
-    star: { category: 'shapes', desc: 'star polygon perimeter' },
-    rect: { category: 'shapes', desc: 'rectangle perimeter' },
-    rrect: { category: 'shapes', desc: 'rounded rectangle / superellipse' },
-    z01: { category: 'arithmetic', desc: 'real-part mirror remix' },
-    sum_prod: { category: 'arithmetic', desc: 'emit t1+t2 and t1*t2' },
-    roots2: { category: 'roots', desc: 'quadratic roots of (9/64)z^2+t1*z+t2' },
-    roots3: { category: 'roots', desc: 'cubic roots from t1+t2, 1, 1, t1*t2' },
-    roots5: { category: 'roots', desc: 'cubic roots from trig/i*t parameters' },
-    roots6: { category: 'roots', desc: 'quartic roots from mixed t1/t2 polynomial' },
-    sdith: { category: 'dither', desc: 'square uniform jitter' },
-    ddith: { category: 'dither', desc: 'disk jitter' },
-    adth: { category: 'dither', desc: 'annulus jitter' },
-    ldth: { category: 'dither', desc: 'line-segment jitter' },
-    crdth: { category: 'dither', desc: 'cross-shaped jitter' },
-    scdth: { category: 'dither', desc: 'sector jitter' },
-    ndith: { category: 'dither', desc: 'normal/Gaussian jitter' },
-    coeff2: { category: 'legacy', desc: 'legacy t1+t2 and t1*t2 map' },
-    coeff3: { category: 'legacy', desc: 'legacy 1/(t+2) map' },
-    coeff3a: { category: 'legacy', desc: 'legacy 1/(t+1) map' },
-    coeff4: { category: 'legacy', desc: 'legacy cos(t1), sin(t2)' },
-    coeff5: { category: 'legacy', desc: 'legacy reciprocal cross map' },
-    coeff5a: { category: 'legacy', desc: 'legacy reciprocal self map' },
-    coeff6: { category: 'legacy', desc: 'legacy cubic fractional map' },
-    coeff7: { category: 'legacy', desc: 'legacy trig fractional map' },
-    coeff8: { category: 'legacy', desc: 'legacy cross trig map' },
-    coeff9: { category: 'legacy', desc: 'legacy squared fractional map' },
-    coeff10: { category: 'legacy', desc: 'legacy fourth-power fractional map' },
-    coeff11: { category: 'legacy', desc: 'legacy log fourth-power map' },
-    coeff12: { category: 'legacy', desc: 'legacy mixed polynomial map' },
-};
-
-// Declaration form: top-level executable statements are reserved for the
-// js/12 boot block (parts-contract test); this enrichment must run here at
-// load because later parts read the enriched catalog while parsing.
-const _ptCatalogEnriched = Object.entries(_ptInfo).every(([name, info]) => {
-    if (_ptCatalog[name]) Object.assign(_ptCatalog[name], info);
-    return true;
-});
-
 const _paramRegistryVocab = (typeof window !== 'undefined' && window._paramRegistryVocab) || {};
 const _paramProgramLegacyNames = Array.isArray(_paramRegistryVocab.names)
     ? _paramRegistryVocab.names.slice()
@@ -663,13 +574,6 @@ const _coeffProgramCatalog = (() => {
     return catalog;
 })();
 
-function _ctParamValue(item, idx, pDefs) {
-    const raw = item && Array.isArray(item.params) ? item.params[idx] : undefined;
-    if (raw !== undefined && raw !== null && raw !== '') return String(raw);
-    const def = pDefs && pDefs[idx] ? pDefs[idx].def : '';
-    return def == null ? '' : String(def);
-}
-
 function _formatCoeffTransformComplexParts(reRaw, imRaw) {
     const re = _parseCtRealConstant(reRaw);
     const im = _parseCtRealConstant(imRaw);
@@ -698,17 +602,6 @@ function _normalizeCoeffTransformItem(item) {
         return { name, params: normalized };
     }
     return { name, params };
-}
-
-function _ctAndyIndex(pDefs) {
-    const idx = (pDefs || []).findIndex(_isAndyParam);
-    // Catalog construction appends andy last, so the fallback matches it.
-    return idx >= 0 ? idx : Math.max(0, (pDefs || []).length - 1);
-}
-
-function _ctAndyHtml(which, chipIdx, item, pDefs, options = {}) {
-    const idx = _ctAndyIndex(pDefs);
-    return `<span class="chip-op">andy=</span>${_chipInputHtml(which, chipIdx, idx, _ctParamValue(item, idx, pDefs), pDefs[idx] || _ctAndyParam, options)}`;
 }
 
 function _formatCtConstant(value) {
@@ -793,105 +686,13 @@ function _parseCtComplexConstant(value) {
     return { re, im, sawImag };
 }
 
-function _splitCtComplexInput(value) {
-    const parsed = _parseCtComplexConstant(value);
-    if (!parsed || !parsed.sawImag) return null;
-    return { re: _formatCtConstant(parsed.re), im: _formatCtConstant(parsed.im) };
-}
-
 function _ctAndyIsDefault(value) {
     const v = Number(value);
     return Number.isFinite(v) && Math.abs(v) < 1e-15;
 }
 
-function _serializeCoeffTransforms() {
-    return _ctChain.map(item => _normalizeCoeffTransformItem(item)).map(item => {
-        if (!item || !item.name) return null;
-        const spec = _ctCatalog[item.name] || {};
-        const pDefs = spec.params || [];
-        const values = pDefs.map((pDef, idx) => _ctParamValue(item, idx, pDefs));
-        if (!values.length) return item.name;
-        let last = values.length - 1;
-        if (_ctAndyIsDefault(values[last])) last--;
-        if (last < 0) return item.name;
-        return [item.name, ...values.slice(0, last + 1)];
-    }).filter(Boolean);
-}
-
-function _ctCategoryGroups() {
-    const grouped = {};
-    Object.keys(_ctCategoryMeta).forEach(key => { grouped[key] = []; });
-    Object.keys(_ctCatalog).forEach(name => {
-        const spec = _ctCatalog[name] || {};
-        const key = grouped[spec.category] ? spec.category : 'elementwise';
-        grouped[key].push(name);
-    });
-    return Object.keys(_ctCategoryMeta).map(key => ({
-        key,
-        ..._ctCategoryMeta[key],
-        items: grouped[key] || [],
-    }));
-}
-
-function _renderCoeffTransformAddPopup() {
-    const popup = document.getElementById('ct-add-popup');
-    if (!popup) return;
-    const head = `<div class="score-chip-picker-head"><span class="score-chip-picker-title">Add coeff transform</span><span class="score-chip-picker-state">andy blends f(z) with original z</span></div>`;
-    const body = _ctCategoryGroups().map(group => {
-        const items = group.items.map(name => {
-            const spec = _ctCatalog[name] || {};
-            const label = spec.label || name;
-            const paramCount = Math.max(0, (spec.params || []).length - 1);
-            const params = paramCount ? ` · ${_pluralize(paramCount, 'param')} + andy` : ' · andy';
-            return `<button type="button" class="score-chip-option score-chip-option-${_escapeHtml(group.key)}" onclick="selectCoeffTransformChip('${_escapeHtml(name)}',event)" title="${_escapeHtml(spec.desc || label)}"><span class="score-chip-option-name">${_escapeHtml(label)}</span><span class="score-chip-option-meta">${_escapeHtml((spec.desc || '') + params)}</span></button>`;
-        }).join('');
-        return `<div class="score-chip-category"><div class="score-chip-category-title">${_escapeHtml(group.title)}</div><div class="score-chip-category-help">${_escapeHtml(group.help)}</div><div class="score-chip-options">${items}</div></div>`;
-    }).join('');
-    popup.innerHTML = head + body;
-}
-
-function _setCoeffTransformPickerOpen(open) {
-    const popup = document.getElementById('ct-add-popup');
-    const btn = document.getElementById('ct-add-btn');
-    if (!popup) return;
-    if (open) _renderCoeffTransformAddPopup();
-    popup._open = !!open;
-    popup.style.display = open ? 'block' : 'none';
-    if (popup.classList && popup.classList.toggle) popup.classList.toggle('active', !!open);
-    if (popup.setAttribute) popup.setAttribute('aria-hidden', open ? 'false' : 'true');
-    if (btn && btn.setAttribute) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-}
-
-function toggleCoeffTransformPicker(eventObj) {
-    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
-    const popup = document.getElementById('ct-add-popup');
-    _setCoeffTransformPickerOpen(!(popup && popup._open));
-}
-
-function selectCoeffTransformChip(name, eventObj) {
-    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
-    addChip('ct', name);
-    _setCoeffTransformPickerOpen(false);
-}
-
-function _syncCoeffTransformAddOptions() {
-    const sel = document.getElementById('ct-add');
-    if (sel) {
-        const options = ['<option value="">+ add...</option>'].concat(
-            Object.keys(_ctCatalog).map(name => {
-                const spec = _ctCatalog[name] || {};
-                return `<option value="${_escapeHtml(name)}">${_escapeHtml(spec.label || name)}</option>`;
-            })
-        );
-        sel.innerHTML = options.join('');
-    }
-    _renderCoeffTransformAddPopup();
-}
-
-let _ptChain = [];  // parameter transform chain (array of {name, params: [str,...]})
 let _ppChain = [];  // parameter program chain (array of {name, params: [str,...]})
 let _paramPipelineMode = 'program';
-let _ctChain = [];  // coefficient transform chain (array of {name, params: [str,...]})
 let _coeffProgramChain = [];  // coefficient program chain (array of {name, params: [str,...]})
 let _cfpv = [];     // coefficient function parameter vector (array of doubles)
 let _rtChain = [];  // root transform chain (array of {name, params: [str,...]})
@@ -1248,10 +1049,9 @@ function addChip(which, name, insertMode = 'append') {
         if (typeof _coeffProgramStatus === 'function') _coeffProgramStatus('Coeff Program chips are read-only; edit the Text tab.');
         return;
     }
-    if (which === 'ct') name = _canonicalCoeffTransformName(name);
     const chain = _chainForWhich(which);
     let newItem = null;
-    if (which === 'pt' || which === 'pp' || which === 'cp' || which === 'ct' || which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {
+    if (which === 'pp' || which === 'cp' || which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {
         if ((which === 'ss' || which === 'palette-ss') && !_solveScoreAllowedAdditions(which).includes(name)) {
             return;
         }

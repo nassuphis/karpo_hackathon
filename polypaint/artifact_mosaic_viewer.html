@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PolyPaint Artifact Mosaic</title>
+<link rel="icon" href="data:,">
+<style>
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:#08090c;color:#d7dde8;font-family:-apple-system,BlinkMacSystemFont,sans-serif}
+body{display:flex;flex-direction:column}
+#hdr{min-height:38px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:7px 12px;background:#111827;border-bottom:1px solid #263244;font-size:12px}
+#hdr strong{color:#f8fafc}
+#hdr code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#93c5fd}
+#hdr a{color:#60a5fa;text-decoration:none}
+#hdr a:hover{text-decoration:underline}
+#viewer{flex:1 1 auto;min-height:0;background:#050505}
+#status{color:#9ca3af}
+#status.err{color:#f87171}
+</style>
+</head>
+<body>
+<div id="hdr">
+  <strong id="title">Artifact Mosaic</strong>
+  <span id="status">Loading...</span>
+  <span id="meta"></span>
+  <a id="manifest-link" href="#" target="_blank" rel="noopener noreferrer" style="display:none">manifest</a>
+</div>
+<div id="viewer"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/openseadragon.min.js"></script>
+<script>
+const TRANSPARENT_TILE = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+
+function qs(name, fallback = '') {
+  const params = new URLSearchParams(window.location.search || '');
+  return params.get(name) || fallback;
+}
+
+function setStatus(text, cls = '') {
+  const el = document.getElementById('status');
+  if (!el) return;
+  el.textContent = text;
+  el.className = cls;
+}
+
+function publicUrl(manifest, key) {
+  const base = (manifest && manifest.base) || 'https://polypaint.s3.us-east-1.amazonaws.com/';
+  return base + encodeURI(String(key || ''));
+}
+
+function tileSizeForSelection(tiles, selectedSize) {
+  if (selectedSize && selectedSize !== 'all') {
+    const n = Number(selectedSize);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  const values = (Array.isArray(tiles) ? tiles : [])
+    .map(t => Number(t && t.preview_width))
+    .filter(n => Number.isFinite(n) && n > 0);
+  return values.length ? Math.max(...values) : 512;
+}
+
+function seededValue(tile, seed) {
+  const artifactId = tile.palette_id || tile.artifact_id || '';
+  const s = `${tile.job_id || ''}|${artifactId}|${seed}`;
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function filteredSortedTiles(manifest, options) {
+  let tiles = Array.isArray(manifest && manifest.tiles) ? manifest.tiles.slice() : [];
+  const size = String(options.size || 'all');
+  if (size !== 'all') {
+    const n = Number(size);
+    tiles = tiles.filter(t => Number(t.preview_width) === n && Number(t.preview_height) === n);
+  }
+  const aid = (x) => String(x.palette_id || x.artifact_id || '');
+  const mode = String(options.sort || 'date');
+  tiles.sort((a, b) => {
+    if (mode === 'job') {
+      return String(b.job_id || '').localeCompare(String(a.job_id || '')) ||
+        String(b.created_at || '').localeCompare(String(a.created_at || '')) ||
+        aid(a).localeCompare(aid(b));
+    }
+    if (mode === 'function') {
+      return String(a.function || '').localeCompare(String(b.function || '')) ||
+        String(b.created_at || '').localeCompare(String(a.created_at || ''));
+    }
+    if (mode === 'degree') {
+      return (Number(a.degree || 0) - Number(b.degree || 0)) ||
+        String(b.created_at || '').localeCompare(String(a.created_at || ''));
+    }
+    if (mode === 'N') {
+      return (Number(a.N || 0) - Number(b.N || 0)) ||
+        String(b.created_at || '').localeCompare(String(a.created_at || ''));
+    }
+    if (mode === 'random') return seededValue(a, 1) - seededValue(b, 1);
+    return String(b.created_at || '').localeCompare(String(a.created_at || '')) ||
+      String(a.job_id || '').localeCompare(String(b.job_id || '')) ||
+      aid(a).localeCompare(aid(b));
+  });
+  return tiles;
+}
+
+function requestedCols(count) {
+  const raw = qs('cols', '');
+  const value = Number(raw);
+  if (Number.isFinite(value) && value >= 1) return Math.floor(value);
+  return Math.max(1, Math.ceil(Math.sqrt(Math.max(1, count || 1))));
+}
+
+function tileSource(manifest, tiles, options) {
+  const tileSize = tileSizeForSelection(tiles, options.size);
+  const cols = requestedCols(tiles.length);
+  const rows = Math.max(1, Math.ceil((tiles.length || 1) / cols));
+  return {
+    width: cols * tileSize,
+    height: rows * tileSize,
+    tileSize,
+    tileOverlap: 0,
+    minLevel: 0,
+    maxLevel: 0,
+    getTileUrl(level, x, y) {
+      const tile = tiles[y * cols + x];
+      return tile ? publicUrl(manifest, tile.key) : TRANSPARENT_TILE;
+    },
+  };
+}
+
+async function main() {
+  const manifestUrl = qs('manifest', '');
+  const kind = qs('kind', 'color');
+  const size = qs('size', 'all');
+  const sort = qs('sort', 'date');
+  if (!manifestUrl) throw new Error('Missing manifest query parameter');
+  const manifestLink = document.getElementById('manifest-link');
+  if (manifestLink) {
+    manifestLink.href = manifestUrl;
+    manifestLink.style.display = '';
+  }
+  const resp = await fetch(manifestUrl + (manifestUrl.includes('?') ? '&' : '?') + 'ts=' + Date.now());
+  if (!resp.ok) throw new Error(`Manifest fetch failed: ${resp.status}`);
+  const manifest = await resp.json();
+  if (!manifest || !Array.isArray(manifest.tiles)) throw new Error('Invalid mosaic manifest');
+  const tiles = filteredSortedTiles(manifest, {size, sort});
+  const title = document.getElementById('title');
+  if (title) title.textContent = `${kind === 'palette' ? 'AllPal' : 'AllCol'} Share`;
+  const meta = document.getElementById('meta');
+  if (meta) {
+    const total = Number(manifest.count || manifest.tiles.length || 0);
+    meta.innerHTML = `<code>${tiles.length.toLocaleString()}</code> shown / <code>${total.toLocaleString()}</code> total · size <code>${size}</code> · sort <code>${sort}</code>`;
+  }
+  setStatus('Ready');
+  OpenSeadragon({
+    element: document.getElementById('viewer'),
+    tileSources: tileSource(manifest, tiles, {size, sort}),
+    prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/images/',
+    showNavigator: true,
+    navigatorPosition: 'BOTTOM_RIGHT',
+    maxZoomPixelRatio: 2,
+    imageLoaderLimit: 16,
+  });
+}
+
+main().catch(err => {
+  setStatus(err && err.message ? err.message : String(err), 'err');
+});
+</script>
+</body>
+</html>

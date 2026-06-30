@@ -138,6 +138,7 @@
         "/render-count",
         "/list-color-mosaic",
         "/list-palette-mosaic",
+        "/share-mosaic",
         "/delete-prefix",
         "/list-deepzoom"
       ]

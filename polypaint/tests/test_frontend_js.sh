@@ -1846,6 +1846,7 @@ const els = {
   'allcol-status': makeEl('allcol-status'),
   'allcol-summary': makeEl('allcol-summary'),
   'btn-allcol-refresh': makeEl('btn-allcol-refresh'),
+  'btn-allcol-share': makeEl('btn-allcol-share'),
   'allcol-size-filter': makeEl('allcol-size-filter'),
   'allcol-sort-mode': makeEl('allcol-sort-mode'),
   'allcol-cols': makeEl('allcol-cols'),
@@ -1853,6 +1854,7 @@ const els = {
   'allpal-status': makeEl('allpal-status'),
   'allpal-summary': makeEl('allpal-summary'),
   'btn-allpal-refresh': makeEl('btn-allpal-refresh'),
+  'btn-allpal-share': makeEl('btn-allpal-share'),
   'allpal-size-filter': makeEl('allpal-size-filter'),
   'allpal-sort-mode': makeEl('allpal-sort-mode'),
   'allpal-cols': makeEl('allpal-cols'),
@@ -1881,6 +1883,8 @@ const els = {
   let detailJob = '';
   let populatedJob = '';
   let copiedText = '';
+  let sharePayload = null;
+  const shareOpened = [];
   function OpenSeadragonMock(opts) {
     const handlers = {};
     return {
@@ -1937,7 +1941,18 @@ const els = {
 	  _addColorFavorite: async (ref) => { favoriteRef = ref; return {already: false}; },
 	  _downloadStorageObject: async (args) => { downloadArgs = args; },
 	  log: (msg, cls, target) => { logs.push({msg, cls, target}); },
+	  open: (url, target) => { shareOpened.push({url, target}); return {opener: {}}; },
 	  lambdaPost: async (service, payload, pathName) => {
+	    if (pathName === '/share-mosaic') {
+	      sharePayload = payload;
+	      return {
+	        share_id: 'share_test',
+	        share_url: 'https://bucket.test/artifact_mosaic_viewer.html?kind=' + String(payload.kind)
+	          + '&size=' + String(payload.size)
+	          + '&sort=' + String(payload.sort)
+	          + (payload.cols ? '&cols=' + String(payload.cols) : ''),
+	      };
+	    }
 	    if (pathName !== '/list-color-mosaic' && pathName !== '/list-palette-mosaic') throw new Error('unexpected path ' + pathName);
 	    if (!(payload && payload.refresh) && statusFetchFails) throw new Error('network blip');
 	    if (payload && payload.refresh) return {
@@ -2003,6 +2018,13 @@ for (const script of scripts) vm.runInContext(fs.readFileSync(path.join(root, sc
 	  ctx._allColRebuild();
 	  assert(opened.length === 3, 'column-count change should reopen tile source');
 	  els['allcol-cols'].value = '2';
+	  await ctx.shareAllColMosaic();
+	  assert(sharePayload && sharePayload.kind === 'color' && sharePayload.size === 'all' && sharePayload.sort === 'date' && sharePayload.cols === '2',
+	    'AllCol Share should snapshot current mosaic controls');
+	  assert(shareOpened.length === 1 && shareOpened[0].url.includes('artifact_mosaic_viewer.html?kind=color'),
+	    'AllCol Share should open the standalone mosaic viewer');
+	  assert(els['btn-allcol-share'].disabled === false && els['btn-allcol-share'].textContent === 'Share',
+	    'AllCol Share should restore its button state');
 	  imagePoint = {x: 1, y: 1025};
 	  const colorClickEvent = {quick: true, position: {x: 0, y: 0}};
 	  await ctx._artifactMosaicCanvasClick('color', colorClickEvent);

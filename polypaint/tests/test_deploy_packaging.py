@@ -699,6 +699,7 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertIn('find "js" -name "*.js" -type f | sort', DEPLOY_TEXT)
         self.assertIn('"param_vocab_js.js"', DEPLOY_TEXT)
         self.assertIn('"solve_score_vocab_js.js"', DEPLOY_TEXT)
+        self.assertIn('"artifact_mosaic_viewer.html"', DEPLOY_TEXT)
         self.assertIn('frontend_asset_content_type() {', DEPLOY_TEXT)
         self.assertIn('*.json) echo "application/json" ;;', DEPLOY_TEXT)
         self.assertIn('done < <(frontend_asset_keys)', DEPLOY_TEXT)

@@ -65,6 +65,7 @@
       "/save-metadata",
       "/save-param-program",
       "/save-solve-score-program",
+      "/share-mosaic",
       "/solve-score-chain-to-source"
     ]
   },
@@ -123,6 +124,7 @@
       "/save-metadata",
       "/save-param-program",
       "/save-solve-score-program",
+      "/share-mosaic",
       "/solve-proximity",
       "/solve-score-chain-to-source",
       "/sweep-cm",
@@ -215,6 +217,7 @@
       "/save-coeff-program",
       "/save-param-program",
       "/save-solve-score-program",
+      "/share-mosaic",
       "/solve-score-chain-to-source"
     ]
   },

@@ -73,6 +73,7 @@ source "$DEPLOY_SPECS_SH"
 frontend_asset_keys() {
     printf '%s\n' \
         "index.html" \
+        "artifact_mosaic_viewer.html" \
         "program_profiles_js.js" \
         "merged_opcodes_js.js" \
         "param_vocab_js.js" \

@@ -503,6 +503,60 @@ class TestComputeMigration(unittest.TestCase):
         self.assertEqual(manifest["tiles"][0]["palette"], "reef")
         self.assertEqual(manifest["tiles"][0]["render_reusable"], True)
 
+    @patch("handler_storage._get_ddb")
+    @patch("handler_storage.s3")
+    def test_share_mosaic_snapshots_ready_manifest_and_returns_standalone_url(self, mock_s3, mock_get_ddb):
+        import handler_storage
+
+        fake = _FakeS3()
+        fake_ddb = _FakeDDB()
+        self._patch(mock_s3, fake)
+        mock_get_ddb.return_value = fake_ddb
+        manifest_key = "renders/_index/color_mosaic/mosaic_ready/all.json"
+        manifest = {
+            "schema_version": 1,
+            "manifest_type": "artifact_mosaic",
+            "artifact_kind": "color",
+            "refresh_id": "mosaic_ready",
+            "base": "https://bucket.test/",
+            "count": 1,
+            "tiles": [{"job_id": "job", "artifact_id": "color_a", "key": "renders/job/color/color_a/preview.png"}],
+        }
+        fake.objects[manifest_key] = json.dumps(manifest).encode("utf-8")
+        handler_storage._put_mosaic_status({
+            "state": "ready",
+            "refresh_id": "mosaic_ready",
+            "updated_at_ms": handler_storage._mosaic_now_ms(),
+            "manifest_key": manifest_key,
+            "manifest_url": handler_storage._s3_public_url(manifest_key),
+            "count": 1,
+        }, kind="color")
+
+        resp = handler_storage.handler(_event("/share-mosaic", {
+            "kind": "allcol",
+            "size": "1024",
+            "sort": "job",
+            "cols": "7",
+        }), None)
+        body = json.loads(resp["body"])
+
+        self.assertEqual(resp["statusCode"], 200)
+        self.assertEqual(body["kind"], "color")
+        self.assertEqual(body["size"], "1024")
+        self.assertEqual(body["sort"], "job")
+        self.assertEqual(body["cols"], "7")
+        self.assertTrue(body["share_key"].startswith("renders/_shared_mosaic/color/share_"))
+        self.assertIn("artifact_mosaic_viewer.html", body["share_url"])
+        self.assertIn("kind=color", body["share_url"])
+        self.assertIn("size=1024", body["share_url"])
+        self.assertIn("sort=job", body["share_url"])
+        self.assertIn("cols=7", body["share_url"])
+        snapshot = json.loads(fake.objects[body["share_key"]])
+        self.assertEqual(snapshot["source_manifest_key"], manifest_key)
+        self.assertEqual(snapshot["share_id"], body["share_id"])
+        self.assertEqual(snapshot["tiles"][0]["artifact_id"], "color_a")
+        self.assertEqual(fake.metadata[body["share_key"]]["ContentType"], "application/json")
+
     @patch("handler_storage._results_list_s3_client")
     @patch("handler_storage._get_ddb")
     @patch("handler_storage.s3")

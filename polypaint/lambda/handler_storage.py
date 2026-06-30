@@ -16,12 +16,14 @@ Routes:
   POST /check-keys     — check which S3 keys exist (for polling render completion)
   POST /check-status   — query DynamoDB for task completion counts (replaces check-keys)
   POST /presign        — generate a presigned URL for an S3 key
+  POST /share-mosaic   — snapshot the current AllCol/AllPal manifest and return a standalone share URL
 """
 import json
 import os
 import re
 import time
 import uuid
+from urllib.parse import urlencode
 
 import boto3
 from botocore.config import Config
@@ -110,6 +112,9 @@ MOSAIC_PREFIXES = {
     "color": "renders/_index/color_mosaic/",
     "palette": "renders/_index/palette_mosaic/",
 }
+MOSAIC_SHARE_PREFIX = "renders/_shared_mosaic/"
+MOSAIC_SHARE_VIEWER_KEY = "artifact_mosaic_viewer.html"
+MOSAIC_SORT_MODES = {"date", "job", "function", "degree", "N", "random"}
 MOSAIC_INTERNAL_ACTIONS = {
     "color": "build_color_mosaic",
     "palette": "build_palette_mosaic",
@@ -1375,6 +1380,8 @@ def handler(event, context):
         return _handle_storage_route(handle_list_color_mosaic, event)
     elif path.endswith("/list-palette-mosaic"):
         return _handle_storage_route(handle_list_palette_mosaic, event)
+    elif path.endswith("/share-mosaic"):
+        return _handle_storage_route(handle_share_mosaic, event)
     elif path.endswith("/delete-task"):
         return _handle_storage_route(handle_delete_task, event)
     elif path.endswith("/delete-prefix"):
@@ -3401,6 +3408,128 @@ def handle_list_color_mosaic(event):
 
 def handle_list_palette_mosaic(event):
     return _handle_list_mosaic(event, "palette")
+
+
+def _normalize_mosaic_share_kind(value):
+    kind = str(value or "color").strip().lower()
+    if kind in ("allcol", "col"):
+        kind = "color"
+    if kind in ("allpal", "pal"):
+        kind = "palette"
+    if kind not in MOSAIC_TASK_IDS:
+        raise ValueError("share-mosaic kind must be color or palette")
+    return kind
+
+
+def _normalize_mosaic_share_size(value):
+    raw = str(value or "all").strip().lower()
+    if not raw or raw == "all":
+        return "all"
+    try:
+        size = int(float(raw))
+    except (TypeError, ValueError):
+        raise ValueError("share-mosaic size must be all or a positive integer")
+    if size <= 0:
+        raise ValueError("share-mosaic size must be all or a positive integer")
+    return str(size)
+
+
+def _normalize_mosaic_share_sort(value):
+    sort = str(value or "date").strip()
+    if not sort:
+        sort = "date"
+    if sort not in MOSAIC_SORT_MODES:
+        raise ValueError(f"share-mosaic sort must be one of {', '.join(sorted(MOSAIC_SORT_MODES))}")
+    return sort
+
+
+def _normalize_mosaic_share_cols(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        cols = int(float(raw))
+    except (TypeError, ValueError):
+        raise ValueError("share-mosaic cols must be blank or a positive integer")
+    if cols <= 0:
+        raise ValueError("share-mosaic cols must be blank or a positive integer")
+    return str(cols)
+
+
+def _mosaic_manifest_key_for_share(kind):
+    status = _read_mosaic_status(kind, consistent=True)
+    manifest_key = str(status.get("manifest_key") or "").strip()
+    if status.get("state") != "ready":
+        manifest_key = str(status.get("last_ready_manifest_key") or manifest_key).strip()
+    if not manifest_key:
+        raise ValueError(f"No ready {kind} mosaic manifest to share; refresh the mosaic first")
+    return status, manifest_key
+
+
+def _load_mosaic_manifest_for_share(manifest_key, kind):
+    obj = s3.get_object(Bucket=BUCKET, Key=manifest_key)
+    raw = obj["Body"].read()
+    manifest = json.loads(raw or b"{}")
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("tiles"), list):
+        raise ValueError("Mosaic manifest is malformed")
+    if manifest.get("manifest_type") != "artifact_mosaic":
+        raise ValueError("Mosaic manifest is not an artifact mosaic")
+    artifact_kind = str(manifest.get("artifact_kind") or kind)
+    if artifact_kind != kind:
+        raise ValueError(f"Mosaic manifest kind mismatch: expected {kind}, got {artifact_kind}")
+    return manifest
+
+
+def handle_share_mosaic(event):
+    params = parse_body(event)
+    kind = _normalize_mosaic_share_kind(params.get("kind"))
+    size = _normalize_mosaic_share_size(params.get("size"))
+    sort = _normalize_mosaic_share_sort(params.get("sort"))
+    cols = _normalize_mosaic_share_cols(params.get("cols"))
+    status, manifest_key = _mosaic_manifest_key_for_share(kind)
+    manifest = _load_mosaic_manifest_for_share(manifest_key, kind)
+
+    now_iso = _utc_now_iso()
+    share_id = f"share_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
+    snapshot_key = f"{MOSAIC_SHARE_PREFIX}{kind}/{share_id}/manifest.json"
+    snapshot_manifest = dict(manifest)
+    snapshot_manifest.update({
+        "shared_at": now_iso,
+        "share_id": share_id,
+        "share_kind": kind,
+        "source_manifest_key": manifest_key,
+    })
+    s3.put_object(
+        Bucket=BUCKET,
+        Key=snapshot_key,
+        Body=json.dumps(snapshot_manifest, separators=(",", ":"), ensure_ascii=False).encode("utf-8"),
+        ContentType="application/json",
+        CacheControl="no-cache, max-age=0",
+    )
+
+    manifest_url = _s3_public_url(snapshot_key)
+    query = {
+        "kind": kind,
+        "manifest": manifest_url,
+        "size": size,
+        "sort": sort,
+    }
+    if cols:
+        query["cols"] = cols
+    share_url = _s3_public_url(MOSAIC_SHARE_VIEWER_KEY) + "?" + urlencode(query)
+    return ok_response({
+        "kind": kind,
+        "share_id": share_id,
+        "share_key": snapshot_key,
+        "manifest_key": snapshot_key,
+        "manifest_url": manifest_url,
+        "source_manifest_key": manifest_key,
+        "share_url": share_url,
+        "size": size,
+        "sort": sort,
+        "cols": cols,
+        "count": snapshot_manifest.get("count", status.get("count", 0)),
+    })
 
 
 def handle_render_count(event):

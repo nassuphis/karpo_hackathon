@@ -54,6 +54,7 @@ function _newArtifactMosaicState() {
         activeTileSource: null,
         lastLogSignature: '',
         contextMenuBound: false,
+        sharing: false,
     };
 }
 
@@ -89,6 +90,13 @@ function _setMosaicRefreshBusy(kind, busy) {
     if (!btn) return;
     btn.disabled = !!busy;
     btn.textContent = busy ? 'Refreshing...' : 'Refresh';
+}
+
+function _setMosaicShareBusy(kind, busy) {
+    const btn = document.getElementById(`btn-${_mosaicConfig(kind).tabName}-share`);
+    if (!btn) return;
+    btn.disabled = !!busy;
+    btn.textContent = busy ? 'Sharing...' : 'Share';
 }
 
 function _mosaicInt(value) {
@@ -256,6 +264,56 @@ function _mosaicRequestedCols(kind, count) {
     const value = el ? Number(el.value) : 0;
     if (Number.isFinite(value) && value >= 1) return Math.floor(value);
     return Math.max(1, Math.ceil(Math.sqrt(Math.max(1, count || 1))));
+}
+
+function _mosaicRequestedColsValue(kind) {
+    const el = _mosaicEl(kind, 'cols');
+    const value = el ? Number(el.value) : 0;
+    return Number.isFinite(value) && value >= 1 ? String(Math.floor(value)) : '';
+}
+
+function _openMosaicShareUrl(url) {
+    const shareUrl = String(url || '');
+    if (!shareUrl) throw new Error('Share URL missing');
+    if (typeof window !== 'undefined' && typeof window.open === 'function') {
+        const opened = window.open(shareUrl, '_blank');
+        if (opened) {
+            try { opened.opener = null; } catch (e) {}
+            return true;
+        }
+    }
+    return false;
+}
+
+async function _shareArtifactMosaic(kind) {
+    const state = _mosaicState(kind);
+    const cfg = _mosaicConfig(kind);
+    if (state.sharing) return null;
+    state.sharing = true;
+    _setMosaicShareBusy(kind, true);
+    try {
+        const result = await lambdaPost('storage', {
+            kind,
+            size: _selectedMosaicSize(kind),
+            sort: _mosaicSortMode(kind),
+            cols: _mosaicRequestedColsValue(kind),
+        }, '/share-mosaic');
+        const shareUrl = String(result && result.share_url || '');
+        const opened = _openMosaicShareUrl(shareUrl);
+        if (!opened) await _copyTextToClipboard(shareUrl);
+        const message = opened ? 'Share opened' : 'Share link copied';
+        _setMosaicStatus(kind, `${cfg.label} ${message.toLowerCase()}.`, 'ok');
+        _logMosaic(kind, `${cfg.label} ${message}: ${shareUrl}`, 'ok', `share|${kind}|${result && result.share_id || shareUrl}`);
+        return result;
+    } catch (e) {
+        const msg = e && e.message ? e.message : String(e);
+        _setMosaicStatus(kind, `${cfg.label} share failed: ${msg}`, 'error');
+        _logMosaic(kind, `${cfg.label} share failed: ${msg}`, 'err', `share-failed|${kind}|${msg}`);
+        return null;
+    } finally {
+        state.sharing = false;
+        _setMosaicShareBusy(kind, false);
+    }
 }
 
 function _mosaicSeededValue(kind, tile) {
@@ -873,11 +931,13 @@ function _homeArtifactMosaic(kind) {
 function loadAllCol(opts = {}) { return _loadArtifactMosaic('color', opts); }
 function refreshAllColMosaic() { return _refreshArtifactMosaic('color'); }
 function homeAllCol() { return _homeArtifactMosaic('color'); }
+function shareAllColMosaic() { return _shareArtifactMosaic('color'); }
 function _allColRebuild() { return _rebuildArtifactMosaic('color'); }
 
 function loadAllPal(opts = {}) { return _loadArtifactMosaic('palette', opts); }
 function refreshAllPalMosaic() { return _refreshArtifactMosaic('palette'); }
 function homeAllPal() { return _homeArtifactMosaic('palette'); }
+function shareAllPalMosaic() { return _shareArtifactMosaic('palette'); }
 function _allPalRebuild() { return _rebuildArtifactMosaic('palette'); }
 
 ;(window.__ppParts = window.__ppParts || []).push('13-artifact-mosaics');

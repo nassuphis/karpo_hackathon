@@ -1598,14 +1598,14 @@ def _native_transform_token(name, src, tgt, args, scalar_exprs):
 
 
 def _max_native_transform_stack_arg_count(spec):
-    # linear/exp/pow take their two packed complex args from the stack;
-    # round takes one packed multiplier; everything else takes its declared
-    # registry args. Mirrors coeffProgramNativeTransformOp in sweep_cli.c.
-    fn_index = int(spec.get("fn_index") or 0)
-    if fn_index in {FN_LINEAR, FN_EXP, FN_POW}:
-        return 2
-    if fn_index == FN_ROUND:
-        return 1
+    # Stack args feed the canonical (first) compat signature's semantic form
+    # (linear/exp/pow: two complex args; round: one multiplier); the packed
+    # real forms are static-only. Derived from registry data instead of a
+    # fn_index ladder; mirrors coeffProgramNativeTransformOp in sweep_cli.c
+    # and is drift-pinned against it.
+    signatures = spec.get("compat_signatures") or ()
+    if signatures:
+        return max(int(n) for n in (signatures[0].get("arg_counts") or (0,)))
     return len(spec.get("args") or [])
 
 

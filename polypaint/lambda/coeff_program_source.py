@@ -265,13 +265,14 @@ def _split_native_transform_andy(name, args):
     if not spec or not _spec_supports_optional_andy(spec):
         return list(args), None
     raw_args = list(args)
-    fn_index = int(spec.get("fn_index") or 0)
-    if fn_index in {FN_LINEAR, FN_POW}:
-        andy_arities = {3, 5}
-    elif fn_index == FN_EXP:
-        andy_arities = {3}
-    elif fn_index == FN_ROUND:
-        andy_arities = {2, 3}
+    signatures = spec.get("compat_signatures") or ()
+    if signatures:
+        # The registry compat signatures declare exactly which arities carry
+        # a trailing andy — derive from data instead of re-hardcoding the
+        # fn_index ladder (drift-pinned against the chain packer and C).
+        andy_arities = set()
+        for signature in signatures:
+            andy_arities.update(int(n) for n in (signature.get("andy_arg_counts") or ()))
     else:
         andy_arities = {len(spec.get("args") or []) + 1}
     if len(raw_args) in andy_arities:

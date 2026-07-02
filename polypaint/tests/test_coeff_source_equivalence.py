@@ -1,3 +1,14 @@
+"""Coeff source PARSER-SHELL equivalence vs the frozen CR18 oracle.
+
+Scope: this proves the statement splitter / dispatch shell is unchanged —
+NOT semantic lowering. `coeff_program_source_legacy.py` deliberately imports
+production lowerers (`_current._legacy_lower_statement`), so a lowering bug
+appears on both sides and passes here. The semantic nets are
+`test_coeff_wire_fingerprints.py` (golden hex) and
+`test_whole_sweep_oracle.py` (byte-exact native SHAs). See the oracle-edit
+policy in tests/test_program_m3_oracles.py.
+"""
+
 import json
 import os
 import sys

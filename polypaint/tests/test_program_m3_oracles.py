@@ -1,3 +1,28 @@
+"""Frozen-oracle equivalence gate: current compilers vs lambda/*_legacy.py.
+
+ORACLE-EDIT POLICY (read before touching any *_legacy.py file):
+
+1. The `*_legacy.py` modules are frozen references. Their value is that they
+   do NOT change when production changes; edit production, never the oracle.
+2. Known scope limits — this gate proves less than its name suggests:
+   - `coeff_program_source_legacy.py` freezes only the parser SHELL; it
+     imports production semantic lowerers (`_current._legacy_lower_statement`),
+     so lowering regressions cancel out on both sides. The lowering nets are
+     `test_coeff_wire_fingerprints.py` (golden hex) and
+     `test_whole_sweep_oracle.py` (byte-exact native SHAs).
+   - All oracles read the LIVE registries/profiles, so registry DATA
+     regressions also cancel out. Registry shape is separately gated by
+     `test_registry_schema.py` and the drift suites.
+3. If a registry/schema change forces an oracle shim (it happened once:
+   `cdc9a33` patched `coeff_program_chain_legacy._load_legacy_registry` for
+   `shared_optional_args`), land the shim as its own commit with a
+   before/after oracle-output diff over this corpus recorded in the commit
+   message. Comment-only edits are exempt.
+4. Corpus floors below are deliberately weak (`checked >= N`); do not delete
+   `fixtures/program-m3-oracle/harvested/` — it carries the real production
+   cases.
+"""
+
 import json
 import os
 import sys

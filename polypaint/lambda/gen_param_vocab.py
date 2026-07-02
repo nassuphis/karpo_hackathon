@@ -44,7 +44,11 @@ COMPLEX_EXPR_TITLE = (
 def _arg_spec(arg):
     name = str(arg.get("name") or "arg")
     arg_type = str(arg.get("type") or "real")
-    declared_title = str(arg.get("title") or arg.get("help") or "")
+    # Presence, not truthiness: a declared title (even "") wins over help.
+    declared_title = arg.get("title")
+    if declared_title is None:
+        declared_title = arg.get("help")
+    declared_title = str(declared_title or "")
     spec = {
         "ph": name,
         "def": default_text(arg.get("default", "")),

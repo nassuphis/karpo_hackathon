@@ -282,7 +282,9 @@ assertIncludes("unknown coeff program chip at", 'Coeff Program stale poly-* save
 assertIncludes("const normalizedChain = hasSourceText ? [] : _normalizeCoeffProgramChain(chain);", 'Coeff Program source_text payloads should not validate compiler-internal lowered chains as chip UI');
 assertIncludes("if (!hasSourceText) _validateCoeffProgramUiChain(normalizedChain);", 'Coeff Program chip validation should apply only to chip-authored programs');
 assertIncludes("if (program.has_source_text) {", 'Coeff Program source_text payloads should load into Text mode even when source_text is empty');
-assertIncludes("pipeline.coeff_program_source_text,\n        detail.coeff_program_source_text,\n        calc.coeff_program_source_text,\n        pipeline.coeff_program && pipeline.coeff_program.source_text", 'Compute result Populate should prefer stored coeff source text over lowered chip chains');
+assertIncludes("pipeline.coeff_program_source_text,\n        detail.coeff_program_source_text,\n        calc.coeff_program_source_text,", 'Compute result Populate should prefer stored coeff source text over lowered chip chains');
+assertNotIncludes("pipeline.coeff_program && pipeline.coeff_program.source_text", 'Populate must not probe nested compiled-program payloads for source text (they never carry source_text)');
+assertNotIncludes("pipeline.param_program && pipeline.param_program.source_text", 'Populate must not probe nested compiled-program payloads for source text (they never carry source_text)');
 assertIncludes("id=\"solve-score-modal-migrate\"", 'Solve-score saved-program modal should expose the Legacy v2 migration action');
 assertIncludes("id=\"param-program-modal-migrate\"", 'Param saved-program modal should expose the Legacy v2 migration action');
 assertIncludes("id=\"coeff-program-modal-migrate\"", 'Coeff saved-program modal should expose the Legacy v2 migration action');

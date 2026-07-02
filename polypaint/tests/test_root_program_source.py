@@ -141,3 +141,27 @@ def test_null_or_blank_chain_values_are_absent_not_errors():
         assert compiled["chain"] == [], payload
     explicit_empty = compile_root_program_chain({"root_transforms": []})
     assert explicit_empty["chain"] == []
+
+
+def test_non_round_numeric_args_round_trip_fingerprint_identically():
+    # G9 regression corpus: _format_number was %g (6 sig figs), so
+    # regenerated source silently changed the program. repr+zero-fold must
+    # round-trip chain -> source -> chain fingerprint-identically and keep
+    # nearby values distinct.
+    from root_program_source import (
+        compile_root_program_chain,
+        compile_root_program_source,
+        root_source_text_from_chain,
+    )
+
+    for raw in ("1.234567890123", "0.30000001", "0.30000009", "0.1", "1e-17", "12345678.90123456"):
+        direct = compile_root_program_chain([["rotate_roots", raw]])
+        source = root_source_text_from_chain([["rotate_roots", raw]])
+        reparsed = compile_root_program_source(source)
+        assert reparsed["fingerprint"] == direct["fingerprint"], (raw, source)
+        # Idempotent: regenerating from the reparsed chain emits the same text.
+        assert root_source_text_from_chain(reparsed["chain"]) == source, raw
+
+    near_a = compile_root_program_source(root_source_text_from_chain([["rotate_roots", "0.30000001"]]))
+    near_b = compile_root_program_source(root_source_text_from_chain([["rotate_roots", "0.30000009"]]))
+    assert near_a["fingerprint"] != near_b["fingerprint"]

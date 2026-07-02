@@ -513,8 +513,9 @@ def test_generated_js_vocab_matches_registry():
     from gen_coeff_vocab import build_vocab, render_js, JS_OUT
 
     vocab = build_vocab()
-    assert vocab["structuralChips"] == _structural_payload()
-    assert vocab["programProfiles"] == _json_payload(PROGRAM_PROFILES)
+    # structuralChips/programProfiles are verbatim JSON pass-throughs; the
+    # disk-vs-render_js() comparison at the end is what actually pins them
+    # (comparing build_vocab() output to the same json.load is tautological).
     assert vocab["aliasToCanonical"] == EXPECTED_ALIASES
     assert vocab["sourceAliasByName"] == {v: k for k, v in EXPECTED_TEXT_ALIASES.items()}
     assert vocab["chipNameByRegistryName"] == EXPECTED_CHIP_NAMES

@@ -76,12 +76,6 @@ from param_program_source import (
     param_source_text_from_payload,
     parse_param_program_source,
 )
-from root_program_source import (
-    RootProgramSourceError,
-    canonicalize_root_transform_item,
-    compile_root_program_chain,
-    root_source_text_from_chain,
-)
 from solve_score_chain import (
     compile_solve_score_chain_or_legacy,
     render_solve_score_program_spec,
@@ -224,81 +218,6 @@ def _load_root_registry_by_name():
         for item in payload.get("functions") or []
         if isinstance(item, dict) and item.get("name")
     }
-
-
-def _root_transform_items(payload):
-    if isinstance(payload, list):
-        return payload
-    if not isinstance(payload, dict):
-        return []
-
-    # JSON null (or blank string) means "absent" and falls through to the
-    # next key; an explicit [] is a meaningful empty chain and stops here.
-    def _present(value):
-        return value is not None and value != ""
-
-    if _present(payload.get("root_transforms")):
-        raw = payload.get("root_transforms")
-    elif _present(payload.get("root_transform_chain")):
-        raw = payload.get("root_transform_chain")
-    elif _present(payload.get("chain")):
-        raw = payload.get("chain")
-    else:
-        raw = []
-    if isinstance(raw, str):
-        try:
-            raw = json.loads(raw)
-        except Exception:
-            return []
-    return raw if isinstance(raw, list) else []
-
-
-def _coerce_root_arg(value):
-    if isinstance(value, bool):
-        raise RuntimeError(f"root transform arg must be numeric, got {value!r}")
-    try:
-        return float(value)
-    except (TypeError, ValueError) as exc:
-        raise RuntimeError(f"root transform arg must be numeric, got {value!r}") from exc
-
-
-def _root_token_from_item(item, registry_by_name):
-    if isinstance(item, dict):
-        name = str(item.get("name") or "").strip()
-        args = item.get("args")
-        if args is None:
-            args = item.get("params") or []
-        if not isinstance(args, list):
-            raise RuntimeError(f"root transform args must be a list, got {args!r}")
-        fn_index = int(item.get("fn_index") or 0)
-    elif isinstance(item, (list, tuple)) and item:
-        name = str(item[0] or "").strip()
-        args = list(item[1:])
-        fn_index = 0
-    else:
-        return None, {"level": "warning", "message": f"dropped invalid root transform: {item!r}"}
-
-    spec = registry_by_name.get(name)
-    if spec is None and fn_index:
-        spec = next(
-            (candidate for candidate in registry_by_name.values() if int(candidate.get("fn_index") or 0) == fn_index),
-            None,
-        )
-    if spec is None:
-        label = name or f"fn_index={fn_index}"
-        return None, {"level": "warning", "message": f"dropped unknown root transform: {label}"}
-    if not fn_index:
-        fn_index = int(spec["fn_index"])
-    coerced_args = [_coerce_root_arg(arg) for arg in args]
-    return _clean_token({
-        "op": MERGED_OP_NATIVE_TRANSFORM,
-        "registry": "root",
-        "fn_index": fn_index,
-        "name": str(spec["name"]),
-        "n_args": len(coerced_args),
-        "args": coerced_args,
-        "args_im": [0.0 for _ in coerced_args],
-    }), None
 
 
 _SOLVE_SCORE_KIND_TO_OP = {
@@ -513,6 +432,9 @@ def translate_solve_score_from_old(program):
         },
     )
     migrated = {
+        # Return-dict metadata only — the _v2_fingerprint payload above is
+        # frozen wire and must not gain keys.
+        "program_kind": "solve_score_program",
         "version": V2_PROGRAM_VERSION,
         "program_version": V2_PROGRAM_VERSION,
         "spec_version": V2_SPEC_VERSION,
@@ -539,31 +461,3 @@ def translate_solve_score_from_old(program):
         migrated["recommended_interpretation"] = program["recommended_interpretation"]
     return migrated
 
-
-def translate_root_from_old(program):
-    source_chain = _root_transform_items(program)
-    diagnostics = []
-    canonical_chain = []
-    for item in source_chain:
-        try:
-            canonical_chain.append(canonicalize_root_transform_item(item))
-        except (RootProgramSourceError, RuntimeError, ValueError) as exc:
-            diagnostics.append({"level": "warning", "message": str(exc)})
-            continue
-    compiled = compile_root_program_chain(canonical_chain, strict=True)
-    return {
-        "program_kind": "root_program",
-        "version": V2_PROGRAM_VERSION,
-        "program_version": V2_PROGRAM_VERSION,
-        "spec_version": V2_SPEC_VERSION,
-        "source_text": root_source_text_from_chain(canonical_chain),
-        "source_display": compiled["display"],
-        "chain": compiled["chain"],
-        "root_transforms": compiled["root_transforms"],
-        "tokens": compiled["tokens"],
-        "diagnostics": diagnostics,
-        "fingerprint": compiled["fingerprint"],
-        "execution_spec": compiled["execution_spec"],
-        "statement_count": len(compiled["chain"]),
-        "token_count": len(compiled["tokens"]),
-    }

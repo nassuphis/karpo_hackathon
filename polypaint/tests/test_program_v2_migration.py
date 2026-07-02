@@ -329,48 +329,14 @@ class TestProgramV2Migration(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "requires a non-empty chain"):
                     translate_solve_score_from_old(payload)
 
-    def test_translate_root_transforms_from_old_uses_registry_indices(self):
-        from program_v2_translate import translate_root_from_old
+    def test_root_translator_stays_deleted(self):
+        # translate_root_from_old (and its private helpers) had zero
+        # production callers — root programs never shipped a v1→v2 payload
+        # migration path. Pin the deletion so it doesn't quietly return.
+        import program_v2_translate as translate
 
-        migrated = translate_root_from_old({
-            "root_transforms": [
-                ["rotate_roots", "0.25"],
-                {"name": "mul_complex", "args": [0, 1]},
-                ["unknown_root_op", "1"],
-            ]
-        })
-
-        self.assertEqual(migrated["program_kind"], "root_program")
-        self.assertEqual(migrated["spec_version"], 2)
-        self.assertEqual([tok["registry"] for tok in migrated["tokens"]], ["root", "root"])
-        self.assertEqual([tok["fn_index"] for tok in migrated["tokens"]], [1, 7])
-        self.assertEqual(migrated["tokens"][0]["op"], 29)
-        self.assertEqual(migrated["tokens"][1]["args"], [0.0, 1.0])
-        self.assertIn("rotate_roots(0.25)", migrated["source_text"])
-        self.assertEqual(migrated["root_transforms"][1], ["mul_complex", "0", "1"])
-        self.assertEqual(migrated["diagnostics"][0]["level"], "warning")
-        self.assertIn("unknown_root_op", migrated["diagnostics"][0]["message"])
-
-    def test_translate_root_transforms_default_expands_before_fingerprint(self):
-        from program_v2_translate import translate_root_from_old
-
-        omitted = translate_root_from_old({"root_transforms": [["pull_unit_circle"]]})
-        explicit = translate_root_from_old({"root_transforms": [["pull_unit_circle", "0.75", "1.0"]]})
-
-        self.assertEqual(omitted["chain"], explicit["chain"])
-        self.assertEqual(omitted["fingerprint"], explicit["fingerprint"])
-        self.assertEqual(omitted["source_text"], "pull_unit_circle(0.75, 1)")
-
-    def test_translate_root_transforms_preserves_explicit_empty_chain(self):
-        from program_v2_translate import translate_root_from_old
-
-        migrated = translate_root_from_old({
-            "root_transforms": [],
-            "chain": [["rotate_roots", "0.25"]],
-        })
-
-        self.assertEqual(migrated["chain"], [])
-        self.assertEqual(migrated["token_count"], 0)
+        for name in ("translate_root_from_old", "_root_transform_items", "_root_token_from_item"):
+            self.assertFalse(hasattr(translate, name), name)
 
 
 if __name__ == "__main__":

@@ -35,8 +35,12 @@ def test_program_source_core_uses_generated_profile_module():
     import program_source_core
     from program_profiles import PROGRAM_PROFILES
 
+    saved = program_source_core._PROFILES
     program_source_core._PROFILES = None
-    assert program_source_core.load_program_profiles() is PROGRAM_PROFILES
+    try:
+        assert program_source_core.load_program_profiles() is PROGRAM_PROFILES
+    finally:
+        program_source_core._PROFILES = saved
 
 
 def test_profile_registry_has_required_profiles_and_contracts():

@@ -611,7 +611,9 @@ def _compile_param_program_payload(
         "expanded_display": compiled["expanded_display"],
         "fingerprint": compiled["fingerprint"],
         "execution_spec": compiled["execution_spec"],
-        "statement_count": len(compiled["source_chain"]),
+        # Source statements when saved from text, lowered rows otherwise —
+        # same semantics as _compile_coeff_program_payload.
+        "statement_count": int(parsed_source["statement_count"]) if parsed_source else len(compiled["source_chain"]),
         "token_count": compiled["token_count"],
         "stack_max": compiled["stack_max"],
         "emits": compiled["emits"],
@@ -622,7 +624,6 @@ def _compile_param_program_payload(
     if parsed_source is not None:
         program["source_text"] = source_text
         program["source_display"] = parsed_source.get("display") or compiled["display"]
-        program["source_statement_count"] = parsed_source.get("statement_count") or len(compiled["source_chain"])
     if compiled["legacy_transforms"]:
         program["legacy_transforms"] = compiled["legacy_transforms"]
     return program
@@ -715,7 +716,10 @@ def _read_solve_score_program_object(program_id, prefer_v2=False):
         payload.get("name"),
         payload.get("chain"),
         source_text=(
-            payload.get("source_text") or payload.get("solve_score_program_source_text")
+            # Persisted bodies are compiled-program dicts and always carry
+            # source_text; the long-key alias exists only for request
+            # params (see handle_save/fetch_solve_score_program).
+            payload.get("source_text")
             if (from_v2 or payload.get("source_text_authoritative"))
             else None
         ),
@@ -1045,7 +1049,6 @@ def _solve_score_program_put_metadata(program):
         SOLVE_SCORE_PROGRAM_META_NAME: str(program.get("name") or ""),
         SOLVE_SCORE_PROGRAM_META_STATEMENT_COUNT: str(int(program.get("statement_count") or 0)),
         SOLVE_SCORE_PROGRAM_META_SAVED_AT: str(program.get("saved_at") or ""),
-        "solve_score_has_source_text": "true" if str(program.get("source_text") or "").strip() else "false",
     }
 
 
@@ -1084,7 +1087,6 @@ def _solve_score_program_summary_from_head(program_id):
         "name": name,
         "statement_count": statement_count,
         "saved_at": saved_at,
-        "has_source_text": str(meta.get("solve_score_has_source_text") or "").lower() == "true",
     }
 
 

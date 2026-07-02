@@ -23,7 +23,9 @@ PARAM_ALLOWED_ARG_TYPES = {"real", "complex"}
 COEFF_ALLOWED_ARG_TYPES = {"real", "complex", "int", "enum"}
 PARAM_VARIABLE_ARITY_EXEMPTIONS = {"moebius", "inv_t_plus_2", "add"}
 COEFF_COMPAT_SIGNATURE_NAMES = {"linear", "exp", "round", "pow"}
-COEFF_PACKED_DISPLAY_OUTLIERS = {"pow"}
+# pow was the one packed-runtime/display-arity outlier (4 real lanes vs 2
+# complex ui params) until its args were normalized to the display shape;
+# every function now satisfies the general ui.params == runtime args rule.
 
 
 def _json(path):
@@ -159,11 +161,6 @@ def test_coeff_registry_common_schema_and_compat_signature_exceptions():
         assert set(fn.get("allowed_tgt") or []) <= selectors, name
         runtime_args = list(fn.get("args") or [])
         ui_params = list((fn.get("ui") or {}).get("params") or [])
-        if name in COEFF_PACKED_DISPLAY_OUTLIERS:
-            assert name == "pow"
-            assert len(runtime_args) == 4
-            assert len(ui_params) == 2
-            continue
         if runtime_args:
             assert len(ui_params) == len(runtime_args), f"coeff:{name} ui.params/runtime arg mismatch"
             for arg, ui_arg in zip(runtime_args, ui_params):

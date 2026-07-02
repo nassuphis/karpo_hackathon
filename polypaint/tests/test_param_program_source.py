@@ -144,6 +144,26 @@ class TestParamProgramSource(unittest.TestCase):
         self.assertEqual(compiled["source_chain"], compiled["chain"])
         self.assertTrue(compiled["fingerprint"])
 
+    def test_variable_arity_source_accepts_every_chain_accepted_count(self):
+        # Source-parse arity must come from registry compat, never a local
+        # copy: a shadowing hardcode once rejected legacy(inv_t_plus_2, ...,
+        # 1, 2, 3) at parse while the chain compiler accepted it, so a saved
+        # 3-arg chain serialized to source that would not reparse.
+        from param_program_chain import compile_param_program_chain, legacy_registry
+        from param_program_source import parse_param_program_source
+
+        compat_counts = legacy_registry()["compat"]["variable_arg_counts"]
+        self.assertIn("inv_t_plus_2", compat_counts)
+        for name, counts in compat_counts.items():
+            for count in sorted(counts):
+                args = ", ".join(["1"] * count)
+                source = f"legacy({name}, both, both{', ' + args if args else ''})"
+                parsed = parse_param_program_source(source, strict=False)
+                errors = [d for d in parsed["diagnostics"] if d.get("level") == "error"]
+                self.assertEqual(errors, [], f"{name} count={count}: {errors}")
+                compiled = compile_param_program_chain(parsed["chain"])
+                self.assertTrue(compiled["fingerprint"], f"{name} count={count}")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -477,6 +477,22 @@ def _load_legacy_registry():
         optional_names = [str(arg.get("name") or "").strip().lower() for arg in optional_args]
         if len(optional_names) != len(set(optional_names)):
             raise RuntimeError(f"coeff legacy function {name} has duplicate optional args")
+        # The trailing-optional machinery (_split_trailing_andy) consumes
+        # exactly one optional slot, so a positional arg reusing an optional
+        # name would double-consume ambiguously, and >1 optional arg can
+        # never compile. Reject both shapes at load, not at first use.
+        positional_names = {str(arg.get("name") or "").strip().lower() for arg in args}
+        collisions = sorted(set(optional_names) & positional_names)
+        if collisions:
+            raise RuntimeError(
+                f"coeff legacy function {name} declares optional arg(s) that "
+                f"collide with positional args: {collisions}"
+            )
+        if len(optional_args) > 1:
+            raise RuntimeError(
+                f"coeff legacy function {name} supports at most one trailing "
+                f"optional arg, got {len(optional_args)}"
+            )
         effective_args = args + tuple(_runtime_arg_decl(arg) for arg in optional_args)
         compat_signatures = _normalize_compat_signatures(name, fn.get("compat_signatures") or ())
         spec = {
@@ -942,6 +958,16 @@ def _canonical_branch_operand(value):
     )
 
 
+def _static_cmath(fn, value):
+    # cmath raises OverflowError ("math range error") on e.g. exp(800);
+    # re-wrap so strict=False diagnostics keep chip/arg context instead of
+    # leaking a bare OverflowError out of the public compiler.
+    try:
+        return fn(value)
+    except OverflowError as exc:
+        raise RuntimeError(f"scalar expression overflow: {exc}") from exc
+
+
 def expr_value_if_static(expr):
     if expr.dynamic:
         return None
@@ -958,7 +984,10 @@ def expr_value_if_static(expr):
             b = stack.pop(); a = stack.pop(); stack.append(a * b)
         elif op == EXPR_DIV:
             b = stack.pop(); a = stack.pop()
-            if abs(b) <= 1e-300:
+            # Exact-zero test: the dynamic VM only rejects exact zero, and a
+            # tiny-but-nonzero denominator folds to a value the finite check
+            # judges honestly.
+            if b == 0:
                 raise RuntimeError("scalar expression division by zero")
             stack.append(a / b)
         elif op == EXPR_CONJ:
@@ -980,19 +1009,19 @@ def expr_value_if_static(expr):
         elif op == EXPR_SQRT:
             stack.append(cmath.sqrt(_canonical_branch_operand(stack.pop())))
         elif op == EXPR_EXP:
-            stack.append(cmath.exp(stack.pop()))
+            stack.append(_static_cmath(cmath.exp, stack.pop()))
         elif op == EXPR_SIN:
-            stack.append(cmath.sin(stack.pop()))
+            stack.append(_static_cmath(cmath.sin, stack.pop()))
         elif op == EXPR_COS:
-            stack.append(cmath.cos(stack.pop()))
+            stack.append(_static_cmath(cmath.cos, stack.pop()))
         elif op == EXPR_TAN:
-            stack.append(cmath.tan(stack.pop()))
+            stack.append(_static_cmath(cmath.tan, stack.pop()))
         elif op == EXPR_SINH:
-            stack.append(cmath.sinh(stack.pop()))
+            stack.append(_static_cmath(cmath.sinh, stack.pop()))
         elif op == EXPR_COSH:
-            stack.append(cmath.cosh(stack.pop()))
+            stack.append(_static_cmath(cmath.cosh, stack.pop()))
         elif op == EXPR_TANH:
-            stack.append(cmath.tanh(stack.pop()))
+            stack.append(_static_cmath(cmath.tanh, stack.pop()))
         elif op == EXPR_ANGLE:
             value = _canonical_branch_operand(stack.pop())
             stack.append(complex(math.atan2(value.imag, value.real), 0.0))
@@ -2241,6 +2270,32 @@ def _result_payload(diagnostics, **overrides):
     return payload
 
 
+def _chain_compile_diagnostic(exc):
+    # Classify chain-compile failures with stable codes (mirrors the
+    # solve-score classifier) so strict=False consumers can branch on
+    # diag["code"] instead of grepping message strings.
+    message = str(exc)
+    lowered = message.lower()
+    code = "source_error"
+    if "unknown" in lowered:
+        code = "unknown_operator"
+    elif "selector" in lowered or "does not support src" in lowered or "does not support tgt" in lowered:
+        code = "bad_selector"
+    elif "argument" in lowered or "arity" in lowered or "expects" in lowered or "at most" in lowered:
+        code = "bad_arity"
+    elif "stack" in lowered:
+        code = "stack_error"
+    elif (
+        "finite" in lowered
+        or "division" in lowered
+        or "numeric" in lowered
+        or "overflow" in lowered
+        or "must be in" in lowered
+    ):
+        code = "bad_numeric_arg"
+    return {"level": "error", "message": message, "code": code}
+
+
 def compile_coeff_program_chain(chain, *, macro_resolver=None, strict=True):
     """Compile a chip chain to VM tokens, the central entry point.
 
@@ -2277,7 +2332,7 @@ def compile_coeff_program_chain(chain, *, macro_resolver=None, strict=True):
             legacy_coeff_transforms=_legacy_transforms(tokens),
         )
     except Exception as exc:
-        diagnostics.append({"level": "error", "message": str(exc)})
+        diagnostics.append(_chain_compile_diagnostic(exc))
         if strict:
             raise
         try:

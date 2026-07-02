@@ -4119,6 +4119,10 @@ def handle_detail(event):
         result["param_transforms"] = pipeline.get("param_transforms", [])
         result["param_transforms_display"] = pipeline.get("param_transforms_display", [])
         result["coeff_transforms"] = pipeline.get("coeff_transforms", [])
+        # Parity with param: migrated pipelines empty coeff_transforms and
+        # carry the human-readable list here; without this the sidebar showed
+        # coeff transforms as "none" after /migrate-compute.
+        result["coeff_transforms_display"] = pipeline.get("coeff_transforms_display", [])
         result["pipeline"] = pipeline
         version = _calc_pipeline_program_version(pipeline)
         result["pipeline_program_version"] = version

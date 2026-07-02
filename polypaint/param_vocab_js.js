@@ -1113,6 +1113,7 @@ window._paramRegistryVocab = {
         "none",
         "z1",
         "z1,z2",
+        "old z1_re,z1_im,z2_re components (z2_im defaults to 0)",
         "old z1_re,z1_im,z2_re,z2_im components"
       ]
     },

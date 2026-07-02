@@ -76,6 +76,19 @@ def test_param_registry_common_schema():
     assert "ui" not in payload or "categories" not in payload.get("ui", {})
     assert set(payload.get("variable_arg_forms") or {}) == PARAM_VARIABLE_ARITY_EXEMPTIONS
 
+    # variable_arg_forms is rendered into Help by zipping counts with forms
+    # (js/08 _paramProgramLegacyVariableFormNotes): the arrays must pair 1:1
+    # and the counts must equal the compiler-enforced compat arity set —
+    # a mispaired list once shipped the wrong description per arity.
+    compat_counts = payload["compat"]["variable_arg_counts"]
+    for name, spec in (payload.get("variable_arg_forms") or {}).items():
+        counts = list(spec.get("counts") or [])
+        forms = list(spec.get("forms") or [])
+        assert len(counts) == len(forms), f"variable_arg_forms:{name} counts/forms length mismatch"
+        assert sorted(counts) == sorted(compat_counts[name]), (
+            f"variable_arg_forms:{name} counts disagree with compat.variable_arg_counts"
+        )
+
     _assert_common_registry_shape(
         payload,
         label="param",

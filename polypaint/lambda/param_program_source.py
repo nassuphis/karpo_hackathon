@@ -10,7 +10,6 @@ import re
 import warnings
 
 from param_program_chain import (
-    _VARIABLE_LEGACY_ARG_COUNTS,
     _canonicalize_legacy_bridge_entry,
     compile_param_program_chain,
     display_param_program_chain,
@@ -97,15 +96,13 @@ def _require_writable_symbol(name, stmt):
 
 
 def _legacy_allowed_arg_counts(spec):
-    name = spec["name"]
-    if name == "moebius":
-        return {0, 4, 8}
-    if name == "inv_t_plus_2":
-        return {0, 1, 2}
-    if name == "add":
-        return {0, 1, 2}
-    if name in _VARIABLE_LEGACY_ARG_COUNTS:
-        return set(_VARIABLE_LEGACY_ARG_COUNTS[name])
+    # Variable-arity forms come from the registry compat block — the same
+    # data the chain compiler enforces. Never shadow it with local literals:
+    # a hardcoded copy here once rejected legacy(inv_t_plus_2, ..., 3 args)
+    # that the chain compiler accepted.
+    variable = legacy_registry()["compat"]["variable_arg_counts"].get(spec["name"])
+    if variable:
+        return set(variable)
     return set(range(0, len(spec.get("args") or []) + 1))
 
 

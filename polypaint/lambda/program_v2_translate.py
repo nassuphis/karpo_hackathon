@@ -231,11 +231,17 @@ def _root_transform_items(payload):
         return payload
     if not isinstance(payload, dict):
         return []
-    if "root_transforms" in payload:
+
+    # JSON null (or blank string) means "absent" and falls through to the
+    # next key; an explicit [] is a meaningful empty chain and stops here.
+    def _present(value):
+        return value is not None and value != ""
+
+    if _present(payload.get("root_transforms")):
         raw = payload.get("root_transforms")
-    elif "root_transform_chain" in payload:
+    elif _present(payload.get("root_transform_chain")):
         raw = payload.get("root_transform_chain")
-    elif "chain" in payload:
+    elif _present(payload.get("chain")):
         raw = payload.get("chain")
     else:
         raw = []

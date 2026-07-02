@@ -271,7 +271,23 @@ def _registry_path():
 def _load_legacy_registry():
     payload = load_json(_registry_path())
     require_registry_version(payload, "param legacy", error_type=RuntimeError)
-    compat_raw = payload.get("compat") or {}
+    # The compiler runs off these six families at runtime, so a missing or
+    # misspelled compat block must fail the load loudly — silently-empty
+    # families produce wrong-but-plausible target/arity behavior downstream.
+    compat_raw = payload.get("compat")
+    if not isinstance(compat_raw, dict):
+        raise RuntimeError("param legacy registry must declare a compat block")
+    _COMPAT_KEYS = (
+        "target_arg_indexes",
+        "independent_targets",
+        "variable_arg_counts",
+        "target_first",
+        "target_last",
+        "dither_target_first",
+    )
+    missing = [key for key in _COMPAT_KEYS if key not in compat_raw]
+    if missing:
+        raise RuntimeError(f"param legacy registry compat block is missing keys: {missing}")
     compat = {
         "target_arg_indexes": normalize_name_int_map(compat_raw.get("target_arg_indexes")),
         "independent_targets": normalize_name_set(compat_raw.get("independent_targets")),
@@ -388,7 +404,10 @@ _COMPLEX_TERM_RE = re.compile(r"[+-]?(?:(?:\d+(?:\.\d*)?)|(?:\.\d+))(?:[eE][+-]?
 
 
 def _parse_complex_literal(value):
-    raw = str(value or "").strip().replace("i", "j").replace("I", "j").replace(" ", "")
+    # None-test, not truthiness: numeric 0/0.0 is a legitimate literal and
+    # must not collapse to "" ("empty complex literal"). Coeff already does
+    # this; direct API callers hit it here.
+    raw = str("" if value is None else value).strip().replace("i", "j").replace("I", "j").replace(" ", "")
     if not raw:
         raise ValueError("empty complex literal")
     real = 0.0
@@ -596,16 +615,22 @@ def _expr_dynamic(op, *, kind="complex"):
 
 def _expr_binary(left, right, op):
     if left.value is not None and right.value is not None:
-        if op == EXPR_ADD:
-            return _expr_literal(left.value + right.value)
-        if op == EXPR_SUB:
-            return _expr_literal(left.value - right.value)
-        if op == EXPR_MUL:
-            return _expr_literal(left.value * right.value)
-        if op == EXPR_DIV:
-            if abs(right.value) <= 1e-300:
-                raise RuntimeError("param expression division by zero")
-            return _expr_literal(left.value / right.value)
+        try:
+            if op == EXPR_ADD:
+                return _expr_literal(left.value + right.value)
+            if op == EXPR_SUB:
+                return _expr_literal(left.value - right.value)
+            if op == EXPR_MUL:
+                return _expr_literal(left.value * right.value)
+            if op == EXPR_DIV:
+                # Exact-zero test: the dynamic VM only rejects exact zero, and
+                # a tiny-but-nonzero denominator folds to a value the finite
+                # check below judges honestly.
+                if right.value == 0:
+                    raise RuntimeError("param expression division by zero")
+                return _expr_literal(left.value / right.value)
+        except OverflowError as exc:
+            raise RuntimeError(f"param expression overflow: {exc}") from exc
     return _Expr(
         left.tokens + right.tokens + [{"op": op}],
         kind="complex" if left.kind == "complex" or right.kind == "complex" else "real",
@@ -616,16 +641,19 @@ def _expr_binary(left, right, op):
 
 def _expr_unary(expr, op, *, kind=None):
     if expr.value is not None:
-        if op == EXPR_NEG:
-            return _expr_literal(-expr.value)
-        if op == EXPR_EXP:
-            return _expr_literal(cmath.exp(expr.value))
-        if op == EXPR_REAL:
-            return _expr_literal(complex(expr.value.real, 0.0))
-        if op == EXPR_IMAG:
-            return _expr_literal(complex(expr.value.imag, 0.0))
-        if op == EXPR_ABS:
-            return _expr_literal(complex(abs(expr.value), 0.0))
+        try:
+            if op == EXPR_NEG:
+                return _expr_literal(-expr.value)
+            if op == EXPR_EXP:
+                return _expr_literal(cmath.exp(expr.value))
+            if op == EXPR_REAL:
+                return _expr_literal(complex(expr.value.real, 0.0))
+            if op == EXPR_IMAG:
+                return _expr_literal(complex(expr.value.imag, 0.0))
+            if op == EXPR_ABS:
+                return _expr_literal(complex(abs(expr.value), 0.0))
+        except OverflowError as exc:
+            raise RuntimeError(f"param expression overflow: {exc}") from exc
     return _Expr(
         expr.tokens + [{"op": op}],
         kind=kind or expr.kind,
@@ -1321,6 +1349,32 @@ def _legacy_transforms(tokens):
     return out
 
 
+def _chain_compile_diagnostic(exc):
+    # Classify chain-compile failures with stable codes (mirrors the
+    # solve-score classifier) so strict=False consumers can branch on
+    # diag["code"] instead of grepping message strings.
+    message = str(exc)
+    lowered = message.lower()
+    code = "source_error"
+    if "unknown" in lowered:
+        code = "unknown_operator"
+    elif "selector" in lowered or "does not support src" in lowered or "does not support tgt" in lowered:
+        code = "bad_selector"
+    elif "argument" in lowered or "arity" in lowered or "expects" in lowered or "at most" in lowered:
+        code = "bad_arity"
+    elif "stack" in lowered:
+        code = "stack_error"
+    elif (
+        "finite" in lowered
+        or "division" in lowered
+        or "numeric" in lowered
+        or "overflow" in lowered
+        or "must be in" in lowered
+    ):
+        code = "bad_numeric_arg"
+    return {"level": "error", "message": message, "code": code}
+
+
 def compile_param_program_chain(chain, *, macro_resolver=None, strict=True):
     diagnostics = []
     try:
@@ -1353,7 +1407,7 @@ def compile_param_program_chain(chain, *, macro_resolver=None, strict=True):
             "diagnostics": diagnostics,
         }
     except Exception as exc:
-        diagnostics.append({"level": "error", "message": str(exc)})
+        diagnostics.append(_chain_compile_diagnostic(exc))
         if strict:
             raise
         return {

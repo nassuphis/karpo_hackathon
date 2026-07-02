@@ -229,14 +229,21 @@ def _root_transform_items(payload):
         return []
     raw = payload
     if isinstance(payload, dict):
+        # Key-presence precedence, but a JSON null (or blank string) value
+        # means "absent" (pipeline_programs.explicit_program_chain_for_run
+        # convention) and falls through to the next key; an explicit [] is a
+        # meaningful empty chain and stops the cascade.
+        def _present(value):
+            return value is not None and value != ""
+
         root_program = payload.get("root_program")
-        if isinstance(root_program, dict) and "chain" in root_program:
+        if isinstance(root_program, dict) and _present(root_program.get("chain")):
             raw = root_program.get("chain")
-        elif "root_transforms" in payload:
+        elif _present(payload.get("root_transforms")):
             raw = payload.get("root_transforms")
-        elif "root_transform_chain" in payload:
+        elif _present(payload.get("root_transform_chain")):
             raw = payload.get("root_transform_chain")
-        elif "chain" in payload:
+        elif _present(payload.get("chain")):
             raw = payload.get("chain")
         else:
             raw = []

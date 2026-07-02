@@ -69,6 +69,11 @@ def read_saved_program_source_chain(
     bucket=BUCKET,
 ):
     macro_id = str(program_id or "").strip()
+    # Strip any stray v2/ namespace prefix exactly like the storage-side
+    # _normalize_program_id, so macro(v2/foo) resolves the same saved object
+    # at compute time as it does at save time.
+    while macro_id.startswith("v2/"):
+        macro_id = macro_id[len("v2/"):]
     if not macro_id:
         raise RuntimeError(f"{program_kind} macro name is required")
     key = f"{prefix}{macro_id}.json"

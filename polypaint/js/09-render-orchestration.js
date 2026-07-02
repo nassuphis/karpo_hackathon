@@ -12,7 +12,9 @@ function _clampRenderPix(value) {
     return Math.max(1, Math.min(RENDER_MAX_PIX, Math.round(pix)));
 }
 
-function _renderRtChipHtml(item, i, which, catalog, options = {}) {
+// Renders solve-score chips (render/palette editors + read-only modal strips).
+// Root transforms are text-only and no longer render chips.
+function _renderScoreChipHtml(item, i, which, catalog, options = {}) {
     const spec = catalog[item.name] || {};
     const pDefs = spec.params || [];
     const isSolveScore = which === 'ss' || which === 'palette-ss' || !!options.solveScore;
@@ -70,23 +72,6 @@ function _renderRtChipHtml(item, i, which, catalog, options = {}) {
     if (isSolveScore && _solveScoreCombineSpecs[item.name]) {
         const tooltip = spec.tooltip ? ` title="${_escapeHtml(spec.tooltip)}"` : '';
         return _solveScoreChipShell(which, i, `<span class="chip-formula"><span>${_escapeHtml(item.name)}</span></span>`, tooltip, options);
-    }
-    if (item.name === 'moebius') {
-        const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
-        const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
-        const c = _chipInputHtml(which, i, 2, item.params[2] || '', pDefs[2]);
-        const d = _chipInputHtml(which, i, 3, item.params[3] || '', pDefs[3]);
-        return `<span class="chip"><span class="chip-equals">f(z)=</span><span class="chip-formula">(<span>${a}</span><span class="chip-op">z+</span><span>${b}</span>)/(<span>${c}</span><span class="chip-op">z+</span><span>${d}</span>)</span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
-    }
-    if (item.name === 'add_complex') {
-        const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
-        const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
-        return `<span class="chip"><span class="chip-formula"><span>z+(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
-    }
-    if (item.name === 'mul_complex') {
-        const a = _chipInputHtml(which, i, 0, item.params[0] || '', pDefs[0]);
-        const b = _chipInputHtml(which, i, 1, item.params[1] || '', pDefs[1]);
-        return `<span class="chip"><span class="chip-formula"><span>z*(</span><span>${a}</span><span class="chip-op">+i</span><span>${b}</span><span>)</span></span><span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
     }
     const label = _escapeHtml(spec.label || item.name);
     const inputDefs = pDefs.length ? pDefs : (item.params || []).map(() => ({}));
@@ -358,14 +343,9 @@ function _renderChips(which) {
                     ? `Coeff Program selected · ${_pluralize(chainLen, 'chip')}`
                     : 'Coeff Program selected · empty identity');
             }
-        } else if (which === 'rt' || which === 'palette-rt' || which === 'ss' || which === 'palette-ss') {
+        } else if (which === 'ss' || which === 'palette-ss') {
             const catalog = _catalogForChain(which);
-            el.innerHTML = chain.map((item, i) => _renderRtChipHtml(item, i, which, catalog)).join('');
-            if (which === 'rt' || which === 'palette-rt') {
-                Array.from(el.children).filter(chip => chip.classList && chip.classList.contains('chip')).forEach((chip, i) => {
-                    chip.insertAdjacentHTML('afterbegin', _chipMoveControlsHtml(which, i));
-                });
-            }
+            el.innerHTML = chain.map((item, i) => _renderScoreChipHtml(item, i, which, catalog)).join('');
         } else {
             el.innerHTML = chain.map((name, i) =>
                 `<span class="chip">${_escapeHtml(name)}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`
@@ -527,8 +507,8 @@ function _renderCommonParams(options = {}) {
             const dir = document.getElementById('render-rotation-dir').value;
             return (dir === 'cw' ? -turns : turns) * 2 * Math.PI;
         })(),
-        rootTransforms: _rtChain.map(item =>
-            item.params && item.params.length ? [item.name, ...item.params] : [item.name]),
+        // Root transforms are text-only: root_program_source_text is the one
+        // request channel (backend precedence already prefers it).
         rootProgramSourceText: _effectiveRootProgramSourceText('render'),
     };
 }
@@ -539,11 +519,6 @@ function _renderColorMtEligible() {
 
 function _associatedPaletteAllowedForColorMode(mode) {
     return mode === 'solve_score';
-}
-
-function _paletteRootTransforms() {
-    return _paletteRtChain.map(item =>
-        item.params && item.params.length ? [item.name, ...item.params] : [item.name]);
 }
 
 let _paletteInventory = [];
@@ -783,23 +758,6 @@ function _paletteArtifactSolveScoreChain(pal) {
     );
 }
 
-function _setPaletteRootTransformsFromArtifact(transforms) {
-    if (!Array.isArray(transforms)) return false;
-    const next = transforms.map(item => {
-        if (item && typeof item === 'object' && !Array.isArray(item)) {
-            const name = String(item.name || '').trim();
-            if (!name) return null;
-            const args = Array.isArray(item.args) ? item.args : (Array.isArray(item.params) ? item.params : []);
-            return { name, params: args.map(v => String(v)) };
-        }
-        if (!Array.isArray(item) || !item.length) return null;
-        return { name: item[0], params: item.slice(1).map(v => String(v)) };
-    }).filter(Boolean);
-    _paletteRtChain.splice(0, _paletteRtChain.length, ...next);
-    _renderChips('palette-rt');
-    return true;
-}
-
 function populateSelectedPalette() {
     const jobId = document.getElementById('palette-results-dir')?.value.trim() || '';
     const idx = _paletteSelectedIdx;
@@ -847,9 +805,6 @@ function populateSelectedPalette() {
         warnings.push('mode');
     }
 
-    if (Array.isArray(pal.root_transforms)) {
-        _setPaletteRootTransformsFromArtifact(pal.root_transforms);
-    }
     if (typeof _restoreRootSourceFromArtifact === 'function') {
         _restoreRootSourceFromArtifact('palette', pal);
     }
@@ -919,7 +874,6 @@ async function runPaletteArtifact() {
                 solve_score_omega: score.omega,
                 solve_score_omega_enabled: score.omega_enabled,
                 solve_score_program_source_text: scoreSourceText,
-                root_transforms: _paletteRootTransforms(),
                 root_program_source_text: _effectiveRootProgramSourceText('palette') || undefined,
             },
         };
@@ -1547,7 +1501,6 @@ async function _launchNonColorRenderOrchestrator(mode, paramsPatch = null) {
         shim: p.shim,
         square_extent: p.squareExtent,
         rotation: p.rotation,
-        root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
         root_program_source_text: p.rootProgramSourceText || undefined,
     };
     if (_viewMode === 'explicit') {
@@ -1582,7 +1535,6 @@ async function _launchFusedRenderOrchestrator(paramsPatch = null) {
         solve_score_program_source_text: p.solveScoreProgramSourceText,
         solve_score_normalize: !!p.solveScoreNormalize,
         palette: _activeRenderPalette() || 'inferno',
-        root_transforms: p.rootTransforms.length ? p.rootTransforms : undefined,
         root_program_source_text: p.rootProgramSourceText || undefined,
         raster_engine: 'mt',
         raster_mt_threads: 4,

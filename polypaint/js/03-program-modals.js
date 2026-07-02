@@ -180,7 +180,7 @@ function _renderSolveScoreProgramChipsHtml(program, options = {}) {
     const normalized = _normalizeSolveScoreChain(program && program.chain, fallbackMetric || 'proximity');
     if (!normalized.length) return _solveScoreModalMessageHtml('No solve-score chips.');
     const renderOptions = { readonly: true, solveScore: true, chain: normalized };
-    const chips = normalized.map((item, i) => _renderRtChipHtml(item, i, 'modal-ss', _ssCatalog, renderOptions)).join('');
+    const chips = normalized.map((item, i) => _renderScoreChipHtml(item, i, 'modal-ss', _ssCatalog, renderOptions)).join('');
     return `<div class="chip-container solve-score-modal-chip-strip" aria-label="Solve score program chips">${chips}</div>`;
 }
 

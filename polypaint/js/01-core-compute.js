@@ -1275,16 +1275,7 @@ function _setChainFromSaved(which, values) {
         _renderChips(which);
         return;
     }
-    const chain = normalized.map(item => {
-        if (Array.isArray(item) && item.length) {
-            return { name: String(item[0]), params: item.slice(1).map(v => String(v)) };
-        }
-        if (item == null || item === '') return null;
-        return { name: String(item), params: [] };
-    }).filter(Boolean);
-    if (which === 'rt') _rtChain = chain;
-    else if (which === 'palette-rt') _paletteRtChain = chain;
-    _renderChips(which);
+    // Only pp/cp reach here (root transforms are text-only source editors).
 }
 
 function _solverShortLabel(solver) {

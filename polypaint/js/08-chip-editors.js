@@ -11,14 +11,6 @@ function _paramValue(item, pDefs, idx) {
     return def == null ? '' : String(def);
 }
 
-function _chipMoveControlsHtml(which, idx) {
-    if (!['rt', 'palette-rt'].includes(which)) return '';
-    const count = _chainForWhich(which).length;
-    const leftDisabled = idx <= 0 ? ' disabled' : '';
-    const rightDisabled = idx >= count - 1 ? ' disabled' : '';
-    return `<span class="chip-actions"><button type="button" class="chip-move" onclick="event.stopPropagation();moveChip('${which}',${idx},-1)" title="Move left"${leftDisabled}>&lt;</button><button type="button" class="chip-move" onclick="event.stopPropagation();moveChip('${which}',${idx},1)" title="Move right"${rightDisabled}>&gt;</button></span>`;
-}
-
 function selectParamProgramLine(idx, eventObj) {
     if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
     _paramProgramSelectedIndex = Number(idx);
@@ -186,6 +178,14 @@ function _insertParamProgramSourceSnippet(snippet) {
 
 function _insertCoeffProgramSourceSnippet(snippet) {
     if (_insertSourceTextSnippet(_coeffProgramSourceTextarea(), snippet)) _onCoeffProgramSourceInput();
+}
+
+function _insertRenderRootSourceSnippet(snippet) {
+    if (_insertSourceTextSnippet(_rootProgramSourceTextarea('render'), snippet)) _onRootProgramSourceInput('render');
+}
+
+function _insertPaletteRootSourceSnippet(snippet) {
+    if (_insertSourceTextSnippet(_rootProgramSourceTextarea('palette'), snippet)) _onRootProgramSourceInput('palette');
 }
 
 function _programSourceCheatButtonHtml(insertFn, label, snippet, title = '') {
@@ -454,9 +454,52 @@ const _coeffProgramCheatSections = [
     },
 ].concat(_coeffNativeTransformCheatSections());
 
-let _programSourceSidePanelMode = { pp: 'starter', cp: 'starter' };
-let _programHelpRegistryCache = { pp: null, cp: null };
+function _rootTransformSnippet(name) {
+    // Parens are required even with no args — the source parser rejects
+    // bare transform names.
+    const params = _rootRegistryAdapter.params(name);
+    const args = params.map(p => String((p && p.def) || '0'));
+    return `${name}(${args.join(', ')})`;
+}
+
+function _rootTransformCheatButtons() {
+    return _rootRegistryAdapter.names.map(name => {
+        const spec = _rootRegistryAdapter.spec(name);
+        return {
+            label: spec.label ? `${name} (${spec.label})` : name,
+            snippet: _rootTransformSnippet(name),
+            title: spec.desc || 'Root transform.',
+        };
+    });
+}
+
+const _rootProgramCheatSections = [
+    {
+        title: 'Starters',
+        buttons: [
+            { label: 'quarter turn', snippet: 'rotate_roots(0.25)', title: 'Rotate all roots a quarter turn about the origin.' },
+            { label: 'snap to circle', snippet: 'pull_unit_circle(0.75, 1)', title: 'Pull roots near |z| = 1 onto the unit circle.' },
+            { label: 'circle to line', snippet: 'roots_toline()', title: 'Cayley transform: unit circle to real line.' },
+            { label: 'rotate + pull', snippet: 'rotate_roots(0.125)\npull_unit_circle(0.75, 1)', title: 'Statements apply in order, top to bottom.' },
+        ],
+    },
+    { title: 'Transforms', buttons: _rootTransformCheatButtons() },
+];
+
+// Side-panel keys: pp = param, cp = coeff (Compute tab), rt = render root
+// transforms, prt = palette root transforms. rt and prt share one generated
+// help registry (cached under 'rt').
+let _programSourceSidePanelMode = { pp: 'starter', cp: 'starter', rt: 'starter', prt: 'starter' };
+let _programHelpRegistryCache = { pp: null, cp: null, rt: null };
 let _programHelpInspectorBound = false;
+
+function _programSourceWhichKey(which) {
+    return which === 'cp' || which === 'rt' || which === 'prt' ? which : 'pp';
+}
+
+function _programHelpRegistryKey(key) {
+    return key === 'prt' ? 'rt' : key;
+}
 
 function _programHelpParamName(param, idx = 0) {
     return String((param && (param.name || param.ph || param.label)) || `p${idx + 1}`);
@@ -822,12 +865,64 @@ function _programHelpBuildCoeffRegistry() {
     return registry;
 }
 
+function _rootTransformHelpItem(name) {
+    const spec = _rootRegistryAdapter.spec(name);
+    const params = _rootRegistryAdapter.params(name);
+    const argText = params.map((param, idx) => _programHelpParamName(param, idx)).join(', ');
+    const defaults = params.map((param, idx) => _programHelpParamDefault(param) || _programHelpParamName(param, idx));
+    const form = `${name}(${defaults.join(', ')})`;
+    return _programHelpItem(
+        name,
+        `${name}(${argText})`,
+        spec.desc || 'Root transform.',
+        {
+            category: `root transform${spec.label ? ': ' + spec.label : ''}`,
+            params,
+            forms: [form, `roots = ${name}(roots${defaults.length ? ', ' + defaults.join(', ') : ''})`],
+            examples: [form],
+        },
+    );
+}
+
+function _programHelpBuildRootRegistry() {
+    const registry = _newProgramHelpRegistry();
+    if (!_rootRegistryAdapter.loaded) {
+        _programHelpAddSection(registry, 'Registry Status', [
+            _programHelpItem('registry', 'Root registry not loaded', 'root_vocab_js.js did not load; root transform Help is unavailable.', { missing: true }),
+        ]);
+        return registry;
+    }
+    const cap = _rootRegistryAdapter.maxStatements;
+    _programHelpAddSection(registry, 'Statement Forms', [
+        _programHelpItem('call', 'fn(args)', 'Apply a transform to all roots, in place, one statement per line.', {
+            category: 'statement form',
+            forms: ['rotate_roots(0.25)', 'roots_toline()'],
+            notes: [
+                'Arguments are static finite real numbers; expressions and registers are not available.',
+                'Parentheses are required even with no arguments.',
+            ].concat(cap ? [`At most ${cap} statements per program.`] : []),
+            lookup: false,
+        }),
+        _programHelpItem('roots', 'roots = fn(roots, args)', 'Assignment form; identical to the bare call.', {
+            category: 'statement form',
+            forms: ['roots = rotate_roots(roots, 0.25)'],
+            notes: ['roots is the only assignable symbol; transforms mutate it in place.'],
+        }),
+    ]);
+    _programHelpAddSection(
+        registry,
+        'Root Transform Reference',
+        _rootRegistryAdapter.names.map(name => _rootTransformHelpItem(name)),
+    );
+    return registry;
+}
+
 function _programHelpRegistry(which) {
-    const key = which === 'cp' ? 'cp' : 'pp';
+    const key = _programHelpRegistryKey(_programSourceWhichKey(which));
     if (!_programHelpRegistryCache[key]) {
         _programHelpRegistryCache[key] = key === 'cp'
             ? _programHelpBuildCoeffRegistry()
-            : _programHelpBuildParamRegistry();
+            : (key === 'rt' ? _programHelpBuildRootRegistry() : _programHelpBuildParamRegistry());
     }
     return _programHelpRegistryCache[key];
 }
@@ -878,7 +973,7 @@ function _programHelpSectionHtml(which, section) {
 }
 
 function _renderProgramSourceHelp(which) {
-    const key = which === 'cp' ? 'cp' : 'pp';
+    const key = _programSourceWhichKey(which);
     const el = document.getElementById(`${key}-help`);
     if (!el) return;
     const registry = _programHelpRegistry(key);
@@ -886,13 +981,13 @@ function _renderProgramSourceHelp(which) {
 }
 
 function _setProgramSourceSidePanelMode(which, mode) {
-    const key = which === 'cp' ? 'cp' : 'pp';
+    const key = _programSourceWhichKey(which);
     _programSourceSidePanelMode[key] = mode === 'help' ? 'help' : 'starter';
     _renderProgramSourceSidePanel(key);
 }
 
 function _renderProgramSourceSidePanel(which) {
-    const key = which === 'cp' ? 'cp' : 'pp';
+    const key = _programSourceWhichKey(which);
     _renderProgramSourceHelp(key);
     const mode = _programSourceSidePanelMode[key] || 'starter';
     const starter = document.getElementById(`${key}-cheatsheet`);
@@ -908,9 +1003,13 @@ function _renderProgramSourceSidePanel(which) {
 function _renderProgramSourceSidePanels() {
     _renderProgramSourceSidePanel('pp');
     _renderProgramSourceSidePanel('cp');
+    _renderProgramSourceSidePanel('rt');
+    _renderProgramSourceSidePanel('prt');
 }
 
 function _programSourceTextarea(which) {
+    if (which === 'rt') return _rootProgramSourceTextarea('render');
+    if (which === 'prt') return _rootProgramSourceTextarea('palette');
     return which === 'cp' ? _coeffProgramSourceTextarea() : _paramProgramSourceTextarea();
 }
 
@@ -943,7 +1042,7 @@ function _programWordAtTextareaCursor(textarea) {
 function _lookupProgramHelpToken(which, token) {
     const norm = _normalizeProgramHelpToken(token);
     if (!norm) return null;
-    const registry = _programHelpRegistry(which === 'cp' ? 'cp' : 'pp');
+    const registry = _programHelpRegistry(_programSourceWhichKey(which));
     return registry.lookup.get(norm) || null;
 }
 
@@ -1008,7 +1107,7 @@ function _closeProgramHelpInspector() {
 }
 
 function _onProgramSourceDblClick(which, event) {
-    const key = which === 'cp' ? 'cp' : 'pp';
+    const key = _programSourceWhichKey(which);
     const textarea = _programSourceTextarea(key);
     const token = _programWordAtTextareaCursor(textarea);
     const item = _lookupProgramHelpToken(key, token);
@@ -1034,15 +1133,19 @@ function _renderCoeffProgramCheatsheet() {
     _renderProgramSourceCheatsheet('cp-cheatsheet', '_insertCoeffProgramSourceSnippet', _coeffProgramCheatSections);
 }
 
+function _renderRootProgramCheatsheets() {
+    _renderProgramSourceCheatsheet('rt-cheatsheet', '_insertRenderRootSourceSnippet', _rootProgramCheatSections);
+    _renderProgramSourceCheatsheet('prt-cheatsheet', '_insertPaletteRootSourceSnippet', _rootProgramCheatSections);
+}
+
 function _renderParamCoeffProgramCheatsheets() {
     _renderParamProgramCheatsheet();
     _renderCoeffProgramCheatsheet();
+    _renderRootProgramCheatsheets();
     _renderProgramSourceSidePanels();
 }
 
 let _solveScoreProgramEditorMode = { render: 'text', palette: 'text' };
-let _rootProgramEditorMode = { render: 'chips', palette: 'chips' };
-
 function _editorPrefix(prefix) {
     return prefix === 'palette' ? 'palette' : 'render';
 }
@@ -1103,15 +1206,57 @@ function _getRootProgramSourceText(prefix) {
     return String(el ? el.value : '');
 }
 
-function _setRootProgramSourceText(prefix, text) {
-    const el = _rootProgramSourceTextarea(prefix);
+let _rootProgramSourceAutoSynthed = { render: false, palette: false };
+
+function _setRootProgramSourceText(prefix, text, options = {}) {
+    const p = _editorPrefix(prefix);
+    const el = _rootProgramSourceTextarea(p);
     const value = String(text == null ? '' : text);
     if (el && el.value !== value) el.value = value;
+    if (options.auto === true) {
+        _rootProgramSourceAutoSynthed[p] = true;
+    } else if (options.auto === false || value.trim()) {
+        _rootProgramSourceAutoSynthed[p] = false;
+    }
 }
 
 function _effectiveRootProgramSourceText(prefix) {
     const text = _getRootProgramSourceText(prefix);
     return text.trim() ? text : '';
+}
+
+function _rootProgramStatus(prefix, message, isError = false) {
+    const p = _editorPrefix(prefix);
+    const el = document.getElementById(p === 'palette' ? 'palette-root-program-status' : 'root-program-status');
+    if (!el) return;
+    el.textContent = String(message || '');
+    el.className = 'solve-score-program-status' + (isError ? ' error' : '');
+}
+
+let _rootProgramSourceValidationTimer = { render: null, palette: null };
+let _rootProgramSourceValidationSeq = { render: 0, palette: 0 };
+function _scheduleRootProgramSourceValidation(prefix) {
+    const p = _editorPrefix(prefix);
+    if (_rootProgramSourceValidationTimer[p]) clearTimeout(_rootProgramSourceValidationTimer[p]);
+    _rootProgramSourceValidationTimer[p] = setTimeout(async () => {
+        _rootProgramSourceValidationTimer[p] = null;
+        const sourceText = _getRootProgramSourceText(p);
+        if (!sourceText.trim()) return;
+        const seq = ++_rootProgramSourceValidationSeq[p];
+        try {
+            const resp = await lambdaPost('storage', { source_text: sourceText }, '/compile-root-program-source');
+            if (seq !== _rootProgramSourceValidationSeq[p] || sourceText !== _getRootProgramSourceText(p)) return;
+            if (resp && resp.ok) {
+                const count = Number(resp.statement_count) || 0;
+                _rootProgramStatus(p, `Text source OK: ${count} statement${count === 1 ? '' : 's'}.`);
+            } else if (resp && Array.isArray(resp.diagnostics)) {
+                const first = resp.diagnostics.find(d => d && d.level === 'error') || resp.diagnostics[0];
+                if (first) _rootProgramStatus(p, `Line ${first.line || '?'}: ${first.message}`, true);
+            }
+        } catch (_) {
+            /* advisory only */
+        }
+    }, 900);
 }
 
 function _setPanelTabActive(panelBase, mode) {
@@ -1132,13 +1277,6 @@ function _setSolveScoreProgramEditorMode(prefix, mode) {
     _solveScoreProgramEditorMode[p] = normalized;
     _setPanelTabActive(`${p}-ss`, normalized);
     _setSolveScoreProgramStatus(p, '');
-}
-
-function _setRootProgramEditorMode(prefix, mode) {
-    const p = _editorPrefix(prefix);
-    const normalized = mode === 'text' ? 'text' : 'chips';
-    _rootProgramEditorMode[p] = normalized;
-    _setPanelTabActive(`${p}-rt`, normalized);
 }
 
 function _onSolveScoreProgramSourceInput(prefix) {
@@ -1249,29 +1387,26 @@ function _renderSolveScoreCheatsheets() {
 }
 
 function _onRootProgramSourceInput(prefix) {
-    const statusId = _editorPrefix(prefix) === 'palette' ? 'palette-status' : 'render-status';
-    const el = document.getElementById(statusId);
-    if (el) {
-        el.textContent = 'Root transform text changed. Compile to refresh chip preview; backend compiles it on render.';
-        el.className = 'status';
-    }
-}
-
-function _rootWhichForPrefix(prefix) {
-    return _editorPrefix(prefix) === 'palette' ? 'palette-rt' : 'rt';
+    const p = _editorPrefix(prefix);
+    _rootProgramSourceAutoSynthed[p] = false;
+    _scheduleRootProgramSourceValidation(p);
+    _rootProgramStatus(p, 'Text source changed. It will be compiled by the backend on render.');
 }
 
 function _rootSourceFromRows(chain) {
+    // No-arg rows must serialize as name() — the source parser rejects bare
+    // names (mirrors root_source_text_from_chain in root_program_source.py).
     return (chain || []).map(item => {
         if (Array.isArray(item) && item.length) {
-            return item.length > 1 ? `${item[0]}(${item.slice(1).join(', ')})` : String(item[0]);
+            return `${item[0]}(${item.slice(1).join(', ')})`;
         }
         if (item && typeof item === 'object') {
             const name = String(item.name || '').trim();
+            if (!name) return '';
             const params = Array.isArray(item.params) ? item.params : (Array.isArray(item.args) ? item.args : []);
-            return params.length ? `${name}(${params.join(', ')})` : name;
+            return `${name}(${params.join(', ')})`;
         }
-        return String(item || '');
+        return '';
     }).filter(Boolean).join('\n');
 }
 
@@ -1301,43 +1436,6 @@ async function _compileSolveScoreSourceEditor(prefix) {
         return program;
     } catch (e) {
         _setSolveScoreProgramStatus(p, e && e.message ? e.message : String(e), true);
-        throw e;
-    }
-}
-
-async function _compileRootSourceEditor(prefix) {
-    const p = _editorPrefix(prefix);
-    const sourceText = _getRootProgramSourceText(p);
-    if (!sourceText.trim()) return null;
-    const statusId = p === 'palette' ? 'palette-status' : 'render-status';
-    const statusEl = document.getElementById(statusId);
-    try {
-        const resp = await lambdaPost('storage', { source_text: sourceText, strict: true }, '/compile-root-program-source');
-        if (!resp || !resp.ok) {
-            const first = resp && Array.isArray(resp.diagnostics)
-                ? (resp.diagnostics.find(d => d && d.level === 'error') || resp.diagnostics[0])
-                : null;
-            throw new Error(first ? `Line ${first.line || '?'}: ${first.message}` : 'root source did not compile');
-        }
-        const chain = Array.isArray(resp.root_transforms) ? resp.root_transforms : (Array.isArray(resp.chain) ? resp.chain : []);
-        const which = _rootWhichForPrefix(p);
-        const target = _chainForWhich(which);
-        target.splice(0, target.length, ...chain.map(item => {
-            if (Array.isArray(item) && item.length) return { name: item[0], params: item.slice(1).map(v => String(v)) };
-            return item && typeof item === 'object' ? { name: item.name, params: (item.params || item.args || []).map(v => String(v)) } : null;
-        }).filter(Boolean));
-        _renderChips(which);
-        _setRootProgramEditorMode(p, 'text');
-        if (statusEl) {
-            statusEl.textContent = `Root source OK: ${resp.statement_count || chain.length} statement${(resp.statement_count || chain.length) === 1 ? '' : 's'}.`;
-            statusEl.className = 'status ok';
-        }
-        return resp.program || resp;
-    } catch (e) {
-        if (statusEl) {
-            statusEl.textContent = e && e.message ? e.message : String(e);
-            statusEl.className = 'status error';
-        }
         throw e;
     }
 }

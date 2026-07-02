@@ -666,18 +666,17 @@ function _catalogForChain(which) {
     if (which === 'pp') return _ppCatalog;
     if (which === 'cp') return _coeffProgramCatalog;
     if (which === 'ss' || which === 'palette-ss') return _ssCatalog;
-    return _rtCatalog;
+    return {};
 }
 
 // `which` codes used across the chip-editor helpers:
 //   pt = param transforms (legacy), pp = param program, ct = coeff
-//   transforms (legacy), cp = coeff program, rt = root transforms,
-//   ss = solve score, palette-ss = palette solve score.
+//   transforms (legacy), cp = coeff program, ss = solve score,
+//   palette-ss = palette solve score. Root transforms are text-only
+//   (rt/prt source editors); they have no chip chain.
 function _chainForWhich(which) {
     if (which === 'pp') return _ppChain;
     if (which === 'cp') return _coeffProgramChain;
-    if (which === 'rt') return _rtChain;
-    if (which === 'palette-rt') return _paletteRtChain;
     if (which === 'ss') return _renderScoreChain;
     if (which === 'palette-ss') return _paletteScoreChain;
     return [];

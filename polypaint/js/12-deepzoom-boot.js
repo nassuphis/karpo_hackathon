@@ -1054,8 +1054,7 @@ _clearPaletteCanvas('No palette selected');
    visibility-change listener. */
 if (!_coeffRegistryVocab) console.error('coeff_vocab_js.js did not load — registry transform vocabulary unavailable');
 if (!_solveScoreVocab || !_solveScoreMetricNames.length) console.error('solve_score_vocab_js.js did not load — solve-score vocabulary unavailable');
-
-_renderChips('palette-rt');
+if (!_rootRegistryVocab) console.error('root_vocab_js.js did not load — root transform vocabulary unavailable');
 
 _renderChips('pp');
 

@@ -165,3 +165,28 @@ def test_non_round_numeric_args_round_trip_fingerprint_identically():
     near_a = compile_root_program_source(root_source_text_from_chain([["rotate_roots", "0.30000001"]]))
     near_b = compile_root_program_source(root_source_text_from_chain([["rotate_roots", "0.30000009"]]))
     assert near_a["fingerprint"] != near_b["fingerprint"]
+
+
+def test_generated_root_vocab_matches_registry():
+    # root_vocab_js.js feeds the Root Transforms text editor (starter/help);
+    # a stale or hand-edited artifact must fail here and in the predeploy
+    # gate (gen_root_vocab.py --check).
+    from gen_root_vocab import JS_OUT, build_vocab, render_js
+    from root_program_source import _registry_by_name
+
+    vocab = build_vocab()
+    registry = _registry_by_name()
+    assert vocab["names"] == sorted(registry, key=lambda name: registry[name]["fn_index"])
+    assert vocab["maxStatements"] == 16  # three-way pinned root cap
+    for name, spec in registry.items():
+        entry = vocab["catalog"][name]
+        assert entry["desc"], f"{name}: missing ui desc"
+        params = entry.get("params") or []
+        assert len(params) == len(spec["args"]), name
+        for param, arg in zip(params, spec["args"]):
+            assert param["ph"] == arg["name"], (name, param["ph"])
+            assert param["title"], (name, param["ph"])
+            # Registry default and displayed default agree numerically.
+            assert float(param["def"]) == float(arg.get("default") or 0.0), (name, param["ph"])
+    with open(JS_OUT, "r", encoding="utf-8") as fh:
+        assert fh.read() == render_js(), "root_vocab_js.js is stale; run lambda/gen_root_vocab.py"

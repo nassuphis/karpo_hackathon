@@ -306,17 +306,21 @@ function _restoreSolveScoreSourceFromArtifact(prefix, art) {
 }
 
 function _restoreRootSourceFromArtifact(prefix, art) {
+    // The text editor is the only root-transform authoring surface. Stored
+    // source text wins; chain-only artifacts (pre-text era) are synthesized
+    // into equivalent source; artifacts with no root transforms clear the
+    // editor so stale text never leaks across populates.
     const text = String((art && art.root_program_source_text) || '');
-    if (!text.trim()) {
-        // Same precedence as solve-score: a stale root text program would
-        // override the populated root chips. Clear it and return to chips.
-        _setRootProgramSourceText(prefix, '');
-        _setRootProgramEditorMode(prefix, 'chips');
-        return false;
+    if (text.trim()) {
+        _setRootProgramSourceText(prefix, text, { auto: false });
+        _rootProgramStatus(prefix, 'Root source restored from artifact.');
+        return true;
     }
-    _setRootProgramSourceText(prefix, text);
-    _setRootProgramEditorMode(prefix, 'text');
-    return true;
+    const transforms = art && Array.isArray(art.root_transforms) ? art.root_transforms : [];
+    const synthesized = _rootSourceFromRows(transforms);
+    _setRootProgramSourceText(prefix, synthesized, { auto: true });
+    _rootProgramStatus(prefix, synthesized ? 'Root source synthesized from artifact transforms.' : '');
+    return !!synthesized;
 }
 
 function _renderArtifactSolveDisplay(art) {
@@ -445,21 +449,6 @@ function _setRenderRotationFromRadians(rad) {
     label.textContent = turns.toFixed(2);
 }
 
-function _setRenderRootTransforms(transforms) {
-    if (!Array.isArray(transforms)) return;
-    _rtChain = transforms.map(item => {
-        if (item && typeof item === 'object' && !Array.isArray(item)) {
-            const name = String(item.name || '').trim();
-            if (!name) return null;
-            const args = Array.isArray(item.args) ? item.args : (Array.isArray(item.params) ? item.params : []);
-            return { name, params: args.map(v => String(v)) };
-        }
-        if (!Array.isArray(item) || !item.length) return null;
-        return { name: item[0], params: item.slice(1).map(v => String(v)) };
-    }).filter(Boolean);
-    _renderChips('rt');
-}
-
 function _setSolveScoreChainFromArtifact(prefix, chain) {
     const normalized = _normalizeSolveScoreChain(chain, 'proximity', 0.1);
     if (!normalized.length) return false;
@@ -560,9 +549,7 @@ function populateSelectedRenderArtifact() {
         _restoreRenderExecutionState(entry);
         if (entry.background_color) _setRenderBackgroundColor(entry.background_color);
 
-        if (Array.isArray(entry.root_transforms)) {
-            _setRenderRootTransforms(entry.root_transforms);
-        }
+        _restoreRootSourceFromArtifact('render', entry);
     };
 
     const restoreBilevelSectionState = (entry) => {
@@ -612,9 +599,6 @@ function populateSelectedRenderArtifact() {
         if (art.palette) setPaletteForMode('solve_score', art.palette);
         else warnings.push('palette');
         if (art.background_color) _setRenderBackgroundColor(art.background_color);
-        if (Array.isArray(art.root_transforms)) {
-            _setRenderRootTransforms(art.root_transforms);
-        }
         _restoreRootSourceFromArtifact('render', art);
         restoreRenderOutputFields(art);
         _renderSelectFamily('color');
@@ -650,7 +634,6 @@ function populateSelectedRenderArtifact() {
     restoreSolveScoreNormalize(art);
     if (art.palette) setPaletteForMode('solve_score', art.palette);
     _noteSolveScorePopulate('render', art);
-    _restoreRootSourceFromArtifact('render', art);
     finishPopulate(art.artifact_id || 'selected color artifact');
 }
 

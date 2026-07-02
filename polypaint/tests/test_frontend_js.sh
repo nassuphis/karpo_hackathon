@@ -372,8 +372,9 @@ assertIncludes("'/compile-coeff-program-source');", 'Coeff Program text editor s
 assertIncludes("return `legacy(${[legacyName || '', src || 'poly', tgt || 'poly', ...rest].join(', ')})`;", 'Coeff Program legacy-form source rendering should use explicit legacy(...) for wire preservation');
 assertIncludes("if (sourceText.trim()) {\n            return _coeffProgramMetaHtml(program, options)", 'Coeff Program modal should prefer source_text display when a text program is active or saved');
 assertIncludes("Text source changed. It will be compiled by the backend on save/preview/compute.", 'Coeff Program text editor should tell users save uses source text');
-assertIncludes("function _chipMoveControlsHtml(which, idx) {", 'transform chip renderer should centralize move controls');
-assertIncludes("chip.insertAdjacentHTML('afterbegin', _chipMoveControlsHtml(which, i));", 'param/transform chips should get move arrows');
+assertNotIncludes("function _chipMoveControlsHtml", 'the rt-only move-controls helper stays deleted (root transforms are text-only; pp/cp/ss render their own move buttons)');
+assertIncludes("moveChip('pp',${i},-1)", 'param program chips should get move arrows');
+assertIncludes("moveChip('cp',${i},-1)", 'coeff program chips should get move arrows');
 assertIncludes("chip-input chip-input-target", 'target parameters should render as dropdown inputs');
 assertIncludes("function _solveScorePaletteCompatibility(compiled, interpretation) {", 'palette generation should share the color-mode compatibility helper');
 assertIncludes("const colorInterpretation = _selectedPaletteColorInterpretation();", 'Palette tab Generate should validate against the selected palette interpretation before dispatch');
@@ -644,10 +645,21 @@ assertIncludes("id=\"render-ss-text-panel\" class=\"coeff-program-editor-panel a
 assertIncludes("id=\"palette-ss-text-panel\" class=\"coeff-program-editor-panel active\"", 'palette solve-score editor should keep the Text panel active');
 assertNotIncludes("id=\"render-ss-tab-chips\"", 'render solve-score editor should not expose a Chips tab');
 assertNotIncludes("id=\"palette-ss-tab-chips\"", 'palette solve-score editor should not expose a Chips tab');
-assertIncludes("id=\"render-rt-tab-text\" class=\"compute-preview-tab-btn\" onclick=\"_setRootProgramEditorMode('render','text')\"", 'render root editor should expose a Text tab');
-assertIncludes("id=\"palette-rt-tab-text\" class=\"compute-preview-tab-btn\" onclick=\"_setRootProgramEditorMode('palette','text')\"", 'palette root editor should expose a Text tab');
+assertIncludes("id=\"render-rt-text-panel\" class=\"coeff-program-editor-panel active\"", 'render root editor should be a text-only panel, always active');
+assertIncludes("id=\"palette-rt-text-panel\" class=\"coeff-program-editor-panel active\"", 'palette root editor should be a text-only panel, always active');
+assertNotIncludes("id=\"render-rt-tab-chips\"", 'render root editor should not expose a Chips tab');
+assertNotIncludes("id=\"palette-rt-tab-chips\"", 'palette root editor should not expose a Chips tab');
+assertNotIncludes("id=\"rt-add\"", 'render root editor should not keep the chips add-select');
+assertNotIncludes("id=\"palette-rt-add\"", 'palette root editor should not keep the chips add-select');
+assertIncludes("id=\"rt-cheatsheet\" class=\"program-source-cheatsheet\"", 'render root editor should carry the fixed-height Starter panel');
+assertIncludes("id=\"rt-help\" class=\"program-source-help\"", 'render root editor should carry the generated Help panel');
+assertIncludes("id=\"prt-cheatsheet\" class=\"program-source-cheatsheet\"", 'palette root editor should carry the fixed-height Starter panel');
+assertIncludes("id=\"prt-help\" class=\"program-source-help\"", 'palette root editor should carry the generated Help panel');
+assertIncludes("<script src=\"root_vocab_js.js\"></script>", 'index.html should load the generated root vocabulary');
 assertIncludes("lambdaPost('storage', { source_text: sourceText, strict: true }, '/compile-solve-score-program-source')", 'solve-score source editor should compile through the backend route');
-assertIncludes("lambdaPost('storage', { source_text: sourceText, strict: true }, '/compile-root-program-source')", 'root source editor should compile through the backend route');
+assertIncludes("lambdaPost('storage', { source_text: sourceText }, '/compile-root-program-source')", 'root source editor should validate through the backend route (debounced, advisory)');
+assertNotIncludes("root_transforms: p.rootTransforms", 'render/preview browser payloads should not send root chip chains (text is the one channel)');
+assertNotIncludes("root_transforms: _paletteRootTransforms()", 'palette browser payload should not send root chip chains');
 assertIncludes("solve_score_program_source_text: p.solveScoreProgramSourceText,", 'render/preview payloads should forward solve-score source text');
 assertNotIncludes("solve_score_chain: p.solveScoreChain,", 'render/preview browser payloads should not send solve-score chip chains');
 assertIncludes("root_program_source_text: p.rootProgramSourceText || undefined,", 'render/preview payloads should forward root source text');
@@ -705,6 +717,16 @@ function makeContext({withCoeffVocab = true, coeffVocabOverride} = {}) {
     'cp-help-tab-help': makeEl('cp-help-tab-help'),
     'pp-source-text': makeEl('pp-source-text'),
     'cp-source-text': makeEl('cp-source-text'),
+    'rt-cheatsheet': makeEl('rt-cheatsheet'),
+    'rt-help': makeEl('rt-help'),
+    'rt-help-tab-starter': makeEl('rt-help-tab-starter'),
+    'rt-help-tab-help': makeEl('rt-help-tab-help'),
+    'prt-cheatsheet': makeEl('prt-cheatsheet'),
+    'prt-help': makeEl('prt-help'),
+    'prt-help-tab-starter': makeEl('prt-help-tab-starter'),
+    'prt-help-tab-help': makeEl('prt-help-tab-help'),
+    'render-rt-source-text': makeEl('render-rt-source-text'),
+    'palette-rt-source-text': makeEl('palette-rt-source-text'),
     'program-help-inspector': makeEl('program-help-inspector'),
   };
   const ctx = {
@@ -722,6 +744,7 @@ function makeContext({withCoeffVocab = true, coeffVocabOverride} = {}) {
   ctx.window = ctx; ctx.globalThis = ctx;
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(root, 'param_vocab_js.js'), 'utf8'), ctx, {filename: 'param_vocab_js.js'});
+  vm.runInContext(fs.readFileSync(path.join(root, 'root_vocab_js.js'), 'utf8'), ctx, {filename: 'root_vocab_js.js'});
   if (withCoeffVocab) vm.runInContext(fs.readFileSync(path.join(root, 'coeff_vocab_js.js'), 'utf8'), ctx, {filename: 'coeff_vocab_js.js'});
   if (coeffVocabOverride !== undefined) ctx._coeffRegistryVocab = coeffVocabOverride;
   vm.runInContext(fs.readFileSync(path.join(root, 'coeff_func_catalog_js.js'), 'utf8'), ctx, {filename: 'coeff_func_catalog_js.js'});
@@ -736,6 +759,31 @@ function makeContext({withCoeffVocab = true, coeffVocabOverride} = {}) {
   ctx._renderParamCoeffProgramCheatsheets();
   assert(els['pp-cheatsheet'].innerHTML.includes('identity'), 'Param Starter should render existing snippets');
   assert(els['cp-cheatsheet'].innerHTML.includes('emit cf'), 'Coeff Starter should render existing snippets');
+  assert(els['rt-cheatsheet'].innerHTML.includes('rotate_roots(0.25)'), 'Root Starter should render starter snippets');
+  assert(els['rt-cheatsheet'].innerHTML.includes('pull_towards_center'), 'Root Starter should render one button per registry transform');
+  assert(els['prt-cheatsheet'].innerHTML.includes('_insertPaletteRootSourceSnippet'), 'Palette root Starter buttons should insert into the palette textarea');
+  ctx._setProgramSourceSidePanelMode('rt', 'help');
+  assert(els['rt-help'].innerHTML.includes('Root Transform Reference'), 'Root Help should render the generated transform reference');
+  assert(els['rt-help'].innerHTML.includes('Cayley transform'), 'Root Help should carry registry ui descriptions');
+  assert(els['rt-help'].innerHTML.includes('roots = rotate_roots(roots, 0.25)'), 'Root Help should document the assignment statement form');
+  assert(els['rt-help'].innerHTML.includes('At most 16 statements'), 'Root Help should carry the vocab statement cap');
+  const rootProbe = vm.runInContext(`(() => {
+    const reg = _programHelpRegistry('rt');
+    const names = (_rootRegistryAdapter.names || []);
+    const missing = names.filter(name => !reg.lookup.get(name));
+    return {
+      missing,
+      sharedWithPalette: _programHelpRegistry('prt') === reg,
+      snippet: _rootTransformSnippet('roots_toline'),
+      synth: _rootSourceFromRows([['roots_toline'], { name: 'rotate_roots', args: [0.25] }]),
+      moebius: reg.lookup.get('moebius') && reg.lookup.get('moebius').params.length,
+    };
+  })()`, ctx);
+  assert(rootProbe.missing.length === 0, 'every registry root transform must be dblclick-lookupable: ' + JSON.stringify(rootProbe.missing));
+  assert(rootProbe.sharedWithPalette, 'rt and prt should share one cached root help registry');
+  assert(rootProbe.snippet === 'roots_toline()', 'no-arg root snippets must keep parens (parser rejects bare names)');
+  assert(rootProbe.synth === 'roots_toline()\nrotate_roots(0.25)', 'chain-to-source synthesis must emit parser-valid statements');
+  assert(rootProbe.moebius === 4, 'moebius help item should carry its four registry params');
   ctx._setProgramSourceSidePanelMode('pp', 'help');
   assert(!els['pp-help'].innerHTML.includes('Starters'), 'Param Help should not include Starter sections');
   assert(!els['pp-help'].innerHTML.includes('Insert</button>'), 'Param Help should not render bulk Insert buttons');

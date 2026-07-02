@@ -2022,35 +2022,21 @@ button {
                 </div>
                 <div class="color-box" style="grid-column:1 / -1">
                     <div class="color-title">Root Transforms</div>
-                    <div class="render-lores-preview-tabbar" role="tablist" aria-label="Render root-transform editor mode">
-                        <button type="button" id="render-rt-tab-chips" class="compute-preview-tab-btn active" onclick="_setRootProgramEditorMode('render','chips')">Chips</button>
-                        <button type="button" id="render-rt-tab-text" class="compute-preview-tab-btn" onclick="_setRootProgramEditorMode('render','text')">Text</button>
-                    </div>
-                    <div id="render-rt-chips-panel" class="coeff-program-editor-panel active">
-                        <div class="anim-row" style="flex-wrap:wrap; margin-bottom:0">
-                            <label style="min-width:90px">Chain:</label>
-                            <div id="rt-chips" class="chip-container"></div>
-                            <select id="rt-add" onchange="addChip('rt',this.value);this.value='';" style="width:120px; font-size:12px">
-                                <option value="">+ add...</option>
-                                <option value="rotate_roots">rotate_roots</option>
-                                <option value="pull_unit_circle">pull_unit_circle</option>
-                                <option value="roots_toline">roots_toline (Cayley)</option>
-                                <option value="line_to_unit_circle">line_to_unit_circle (inverse Cayley)</option>
-                                <option value="invert_roots">invert_roots (1/z)</option>
-                                <option value="add_complex">add_complex</option>
-                                <option value="mul_complex">mul_complex</option>
-                                <option value="moebius">moebius</option>
-                                <option value="pull_towards_center">pull_towards_center</option>
-                            </select>
+                    <div class="solve-score-program-note">Text-first root-geometry program applied to solved roots at render time. Static real arguments, up to 16 statements.</div>
+                    <div id="render-rt-text-panel" class="coeff-program-editor-panel active">
+                        <div class="program-source-grid">
+                            <textarea id="render-rt-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;rotate_roots(0.25)&#10;pull_unit_circle(0.75, 1)" oninput="_onRootProgramSourceInput('render')" ondblclick="_onProgramSourceDblClick('rt', event)"></textarea>
+                            <div class="program-source-sidepanel" data-program-help="rt">
+                                <div class="program-source-help-tabs" role="tablist" aria-label="Root Program help tabs">
+                                    <button type="button" id="rt-help-tab-starter" class="btn-secondary program-source-help-tab active" onclick="_setProgramSourceSidePanelMode('rt','starter')">Starter</button>
+                                    <button type="button" id="rt-help-tab-help" class="btn-secondary program-source-help-tab" onclick="_setProgramSourceSidePanelMode('rt','help')">Help</button>
+                                </div>
+                                <div id="rt-cheatsheet" class="program-source-cheatsheet" aria-label="Root Program source cheatsheet"></div>
+                                <div id="rt-help" class="program-source-help" aria-label="Root Program generated help" hidden></div>
+                            </div>
                         </div>
                     </div>
-                    <div id="render-rt-text-panel" class="coeff-program-editor-panel">
-                        <textarea id="render-rt-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;rotate_roots(0.25)&#10;moebius(1, 0, 0, 1)" oninput="_onRootProgramSourceInput('render')"></textarea>
-                        <div class="solve-score-program-toolbar">
-                            <button type="button" class="btn-secondary btn-inline" onclick="_compileRootSourceEditor('render')">Compile Text</button>
-                            <span class="solve-score-program-note">Backend source wins over root chips on render.</span>
-                        </div>
-                    </div>
+                    <div id="root-program-status" class="solve-score-program-status"></div>
                 </div>
             </div>
             <div class="status" id="render-status"></div>
@@ -2123,35 +2109,21 @@ button {
             </div>
             <div class="color-box" style="margin-top:8px">
                 <div class="color-title">Root Transforms</div>
-                <div class="render-lores-preview-tabbar" role="tablist" aria-label="Palette root-transform editor mode">
-                    <button type="button" id="palette-rt-tab-chips" class="compute-preview-tab-btn active" onclick="_setRootProgramEditorMode('palette','chips')">Chips</button>
-                    <button type="button" id="palette-rt-tab-text" class="compute-preview-tab-btn" onclick="_setRootProgramEditorMode('palette','text')">Text</button>
-                </div>
-                <div id="palette-rt-chips-panel" class="coeff-program-editor-panel active">
-                    <div class="anim-row" style="flex-wrap:wrap; margin-top:8px">
-                        <label style="min-width:90px">Root transforms:</label>
-                        <div id="palette-rt-chips" class="chip-container"></div>
-                        <select id="palette-rt-add" onchange="addChip('palette-rt',this.value);this.value='';" style="width:120px; font-size:12px">
-                            <option value="">+ add...</option>
-                            <option value="rotate_roots">rotate_roots</option>
-                            <option value="pull_unit_circle">pull_unit_circle</option>
-                            <option value="roots_toline">roots_toline (Cayley)</option>
-                            <option value="line_to_unit_circle">line_to_unit_circle (inverse Cayley)</option>
-                            <option value="invert_roots">invert_roots (1/z)</option>
-                            <option value="add_complex">add_complex</option>
-                            <option value="mul_complex">mul_complex</option>
-                            <option value="moebius">moebius</option>
-                            <option value="pull_towards_center">pull_towards_center</option>
-                        </select>
+                <div class="solve-score-program-note">Text-first root-geometry program applied during palette generation. Static real arguments, up to 16 statements.</div>
+                <div id="palette-rt-text-panel" class="coeff-program-editor-panel active">
+                    <div class="program-source-grid">
+                        <textarea id="palette-rt-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;rotate_roots(0.25)&#10;pull_unit_circle(0.75, 1)" oninput="_onRootProgramSourceInput('palette')" ondblclick="_onProgramSourceDblClick('prt', event)"></textarea>
+                        <div class="program-source-sidepanel" data-program-help="prt">
+                            <div class="program-source-help-tabs" role="tablist" aria-label="Palette root Program help tabs">
+                                <button type="button" id="prt-help-tab-starter" class="btn-secondary program-source-help-tab active" onclick="_setProgramSourceSidePanelMode('prt','starter')">Starter</button>
+                                <button type="button" id="prt-help-tab-help" class="btn-secondary program-source-help-tab" onclick="_setProgramSourceSidePanelMode('prt','help')">Help</button>
+                            </div>
+                            <div id="prt-cheatsheet" class="program-source-cheatsheet" aria-label="Palette root Program source cheatsheet"></div>
+                            <div id="prt-help" class="program-source-help" aria-label="Palette root Program generated help" hidden></div>
+                        </div>
                     </div>
                 </div>
-                <div id="palette-rt-text-panel" class="coeff-program-editor-panel">
-                    <textarea id="palette-rt-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;rotate_roots(0.25)&#10;pull_unit_circle" oninput="_onRootProgramSourceInput('palette')"></textarea>
-                    <div class="solve-score-program-toolbar">
-                        <button type="button" class="btn-secondary btn-inline" onclick="_compileRootSourceEditor('palette')">Compile Text</button>
-                        <span class="solve-score-program-note">Backend source wins over root chips on palette generation.</span>
-                    </div>
-                </div>
+                <div id="palette-root-program-status" class="solve-score-program-status"></div>
             </div>
             <div class="status" id="palette-status"></div>
             <div id="palette-viewer" style="margin-top:8px">
@@ -3196,6 +3168,7 @@ button {
 <script src="param_vocab_js.js"></script>
 <script src="coeff_vocab_js.js"></script>
 <script src="solve_score_vocab_js.js"></script>
+<script src="root_vocab_js.js"></script>
 <script src="coeff_func_catalog_js.js"></script>
 <script src="tri_palette_catalog_js.js"></script>
 <script src="long_palette_catalog_js.js"></script>

@@ -1,14 +1,107 @@
 {
   "version": 1,
   "functions": [
-    {"name": "rotate_roots", "fn_index": 1, "args": [{"name": "turns", "type": "real", "default": 0.0}]},
-    {"name": "pull_unit_circle", "fn_index": 2, "args": [{"name": "sigma", "type": "real", "default": 0.75}, {"name": "alpha", "type": "real", "default": 1.0}]},
-    {"name": "roots_toline", "fn_index": 3, "args": []},
-    {"name": "line_to_unit_circle", "fn_index": 4, "args": []},
-    {"name": "invert_roots", "fn_index": 5, "args": []},
-    {"name": "add_complex", "fn_index": 6, "args": [{"name": "re", "type": "real", "default": 0.0}, {"name": "im", "type": "real", "default": 0.0}]},
-    {"name": "mul_complex", "fn_index": 7, "args": [{"name": "re", "type": "real", "default": 1.0}, {"name": "im", "type": "real", "default": 0.0}]},
-    {"name": "moebius", "fn_index": 8, "args": [{"name": "a", "type": "real", "default": 1.0}, {"name": "b", "type": "real", "default": 0.0}, {"name": "c", "type": "real", "default": 0.0}, {"name": "d", "type": "real", "default": 1.0}]},
-    {"name": "pull_towards_center", "fn_index": 9, "args": [{"name": "alpha", "type": "real", "default": 1.0}, {"name": "sigma", "type": "real", "default": 0.75}]}
+    {
+      "name": "rotate_roots",
+      "fn_index": 1,
+      "args": [{"name": "turns", "type": "real", "default": 0.0}],
+      "ui": {
+        "desc": "Rotate all roots about the origin by turns full revolutions: z * exp(i*2*pi*turns).",
+        "params": [
+          {"ph": "turns", "def": "0", "title": "Rotation in full turns (1 = 360 degrees). Finite real number."}
+        ]
+      }
+    },
+    {
+      "name": "pull_unit_circle",
+      "fn_index": 2,
+      "args": [{"name": "sigma", "type": "real", "default": 0.75}, {"name": "alpha", "type": "real", "default": 1.0}],
+      "ui": {
+        "desc": "Pull each root radially toward the unit circle: r' = r - alpha*d*exp(-(d/sigma)^2) with d = r-1. Angles unchanged.",
+        "params": [
+          {"ph": "sigma", "def": "0.75", "title": "Gaussian width of the pull around |z| = 1. Finite real number."},
+          {"ph": "alpha", "def": "1", "title": "Pull strength: 1 snaps nearby roots onto the circle, 0 is identity. Finite real number."}
+        ]
+      }
+    },
+    {
+      "name": "roots_toline",
+      "fn_index": 3,
+      "args": [],
+      "ui": {
+        "label": "Cayley",
+        "desc": "Cayley transform w = i*(1+z)/(1-z): unit circle maps to the real line, disk interior to the upper half-plane. The pole at z = 1 is clipped."
+      }
+    },
+    {
+      "name": "line_to_unit_circle",
+      "fn_index": 4,
+      "args": [],
+      "ui": {
+        "label": "inverse Cayley",
+        "desc": "Inverse Cayley transform z = (w-i)/(w+i): real line maps to the unit circle, upper half-plane to the disk. The pole at w = -i is clipped."
+      }
+    },
+    {
+      "name": "invert_roots",
+      "fn_index": 5,
+      "args": [],
+      "ui": {
+        "label": "1/z",
+        "desc": "Complex inversion z' = 1/z: swaps the inside and outside of the unit circle. The pole at z = 0 is clipped."
+      }
+    },
+    {
+      "name": "add_complex",
+      "fn_index": 6,
+      "args": [{"name": "re", "type": "real", "default": 0.0}, {"name": "im", "type": "real", "default": 0.0}],
+      "ui": {
+        "label": "z+(a+ib)",
+        "desc": "Translate every root by the constant re + i*im.",
+        "params": [
+          {"ph": "re", "def": "0", "title": "Real part of the translation. Finite real number."},
+          {"ph": "im", "def": "0", "title": "Imaginary part of the translation. Finite real number."}
+        ]
+      }
+    },
+    {
+      "name": "mul_complex",
+      "fn_index": 7,
+      "args": [{"name": "re", "type": "real", "default": 1.0}, {"name": "im", "type": "real", "default": 0.0}],
+      "ui": {
+        "label": "z*(a+ib)",
+        "desc": "Multiply every root by the constant re + i*im (scale and rotate).",
+        "params": [
+          {"ph": "re", "def": "1", "title": "Real part of the multiplier. Finite real number."},
+          {"ph": "im", "def": "0", "title": "Imaginary part of the multiplier. Finite real number."}
+        ]
+      }
+    },
+    {
+      "name": "moebius",
+      "fn_index": 8,
+      "args": [{"name": "a", "type": "real", "default": 1.0}, {"name": "b", "type": "real", "default": 0.0}, {"name": "c", "type": "real", "default": 0.0}, {"name": "d", "type": "real", "default": 1.0}],
+      "ui": {
+        "desc": "Real-coefficient Moebius transform z' = (a*z + b)/(c*z + d). Roots where c*z + d = 0 are clipped.",
+        "params": [
+          {"ph": "a", "def": "1", "title": "Numerator z coefficient. Finite real number."},
+          {"ph": "b", "def": "0", "title": "Numerator constant. Finite real number."},
+          {"ph": "c", "def": "0", "title": "Denominator z coefficient. Finite real number."},
+          {"ph": "d", "def": "1", "title": "Denominator constant. Finite real number."}
+        ]
+      }
+    },
+    {
+      "name": "pull_towards_center",
+      "fn_index": 9,
+      "args": [{"name": "alpha", "type": "real", "default": 1.0}, {"name": "sigma", "type": "real", "default": 0.75}],
+      "ui": {
+        "desc": "Gaussian radial shrink toward the origin: r' = r * (1 - alpha*exp(-(r/sigma)^2)). Angles unchanged.",
+        "params": [
+          {"ph": "alpha", "def": "1", "title": "Shrink strength at the origin: 1 collapses central roots, 0 is identity. Finite real number."},
+          {"ph": "sigma", "def": "0.75", "title": "Gaussian radius of the shrink region. Finite real number."}
+        ]
+      }
+    }
   ]
 }

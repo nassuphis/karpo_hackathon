@@ -521,7 +521,6 @@ async function runRenderLoresPreview() {
             lores_bin_key: loresKey,
             lores_coeffs_key: p.solveScoreUsesCoeffSource ? loresCoeffsKey : undefined,
             lores_params_key: p.solveScoreUsesParamSource ? loresParamsKey : undefined,
-            root_transforms: p.rootTransforms || [],
             root_program_source_text: p.rootProgramSourceText || undefined,
             raster_mt_threads: 4,
             solve_score_threads: 4,
@@ -642,7 +641,6 @@ async function runSolveScoreHistogramDebug() {
             lores_bin_key: loresKey,
             lores_coeffs_key: p.solveScoreUsesCoeffSource ? loresCoeffsKey : undefined,
             lores_params_key: p.solveScoreUsesParamSource ? loresParamsKey : undefined,
-            root_transforms: p.rootTransforms || [],
             root_program_source_text: p.rootProgramSourceText || undefined,
         };
         const chainSummary = _formatErrorChain(p.solveScoreChain);
@@ -808,7 +806,6 @@ async function runRenderPaletteArtifact() {
                 solve_score_omega: p.solveScoreOmega,
                 solve_score_omega_enabled: p.solveScoreOmegaEnabled,
                 solve_score_program_source_text: p.solveScoreProgramSourceText,
-                root_transforms: p.rootTransforms || [],
                 root_program_source_text: p.rootProgramSourceText || undefined,
             },
         };

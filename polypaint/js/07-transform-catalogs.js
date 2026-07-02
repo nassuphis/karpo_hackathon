@@ -117,17 +117,25 @@ const _ppCatalog = {
     },
 };
 
-const _rtCatalog = {
-    rotate_roots:     { params: [{ph:'turns', def:'0'}] },
-    pull_unit_circle: { params: [{ph:'sigma', def:'0.75'}, {ph:'alpha', def:'1'}] },
-    roots_toline:     {},
-    line_to_unit_circle: {},
-    invert_roots:     { label: '1/z' },
-    add_complex:      { params: [{ph:'a', def:'0'}, {ph:'b', def:'0'}], label: 'z+(a+ib)' },
-    mul_complex:      { params: [{ph:'a', def:'1'}, {ph:'b', def:'0'}], label: 'z*(a+ib)' },
-    moebius:          { params: [{ph:'a', def:'1'}, {ph:'b', def:'0'}, {ph:'c', def:'0'}, {ph:'d', def:'1'}], label: 'moebius' },
-    pull_towards_center: { params: [{ph:'alpha', def:'1'}, {ph:'sigma', def:'0.75'}] },
-};
+// Root transform vocabulary is generated from lambda/root_legacy_registry.json
+// by lambda/gen_root_vocab.py; no hand-maintained root catalog in the frontend.
+const _rootRegistryVocab = (typeof window !== 'undefined' && window._rootRegistryVocab) || null;
+const _rootRegistryAdapter = (() => {
+    const vocab = _rootRegistryVocab || {};
+    const catalog = vocab.catalog || {};
+    return {
+        loaded: !!_rootRegistryVocab,
+        names: Array.isArray(vocab.names) ? vocab.names.slice() : [],
+        maxStatements: Number(vocab.maxStatements) || 0,
+        spec(name) {
+            return catalog[String(name || '').trim()] || {};
+        },
+        params(name) {
+            const entry = catalog[String(name || '').trim()];
+            return ((entry && entry.params) || []).map(param => ({ ...param }));
+        },
+    };
+})();
 
 // Solve-score vocabulary is generated from lambda/solve_score_chain.py by
 // lambda/gen_solve_score_vocab.py. Keep metric names, source rules, stack ops,
@@ -696,8 +704,6 @@ let _ppChain = [];  // parameter program chain (array of {name, params: [str,...
 let _paramPipelineMode = 'program';
 let _coeffProgramChain = [];  // coefficient program chain (array of {name, params: [str,...]})
 let _cfpv = [];     // coefficient function parameter vector (array of doubles)
-let _rtChain = [];  // root transform chain (array of {name, params: [str,...]})
-let _paletteRtChain = [];  // palette-tab root transform chain
 let _renderScoreChain = [];
 let _paletteScoreChain = [];
 

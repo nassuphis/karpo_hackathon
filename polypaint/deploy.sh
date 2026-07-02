@@ -79,6 +79,7 @@ frontend_asset_keys() {
         "param_vocab_js.js" \
         "coeff_vocab_js.js" \
         "solve_score_vocab_js.js" \
+        "root_vocab_js.js" \
         "coeff_func_catalog_js.js" \
         "tri_palette_catalog_js.js" \
         "long_palette_catalog_js.js"

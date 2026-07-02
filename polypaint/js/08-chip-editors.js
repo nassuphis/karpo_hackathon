@@ -1410,8 +1410,10 @@ function _coeffProgramSourceFromRows(chain) {
                 return tgt === 'poly' ? `poly = ${callName}(${args})` : `${callName}(${args})`;
             }
             if (name === 'legacy') {
+                // Keep selector defaults (legitimate), but never fabricate a
+                // transform name — empty must fail backend compile loudly.
                 const [legacyName, src, tgt, ...rest] = params;
-                return `legacy(${[legacyName || 'rev', src || 'poly', tgt || 'poly', ...rest].join(', ')})`;
+                return `legacy(${[legacyName || '', src || 'poly', tgt || 'poly', ...rest].join(', ')})`;
             }
             return params.length ? `${name}(${params.join(', ')})` : name;
         }
@@ -1649,7 +1651,10 @@ function _paramProgramBridgeParamsFromLegacyTransform(row) {
 }
 
 function _normalizeLegacyBridgeParams(legacyName, src, tgt, argsInput) {
-    const name = String(legacyName || 'unit_circle').trim() || 'unit_circle';
+    // No name fabrication: an empty legacy name must flow through and fail
+    // backend validation with a coded unknown_legacy_transform, not silently
+    // become a real transform (unit_circle) the user never wrote.
+    const name = String(legacyName || '').trim();
     let source = String(src || 'both').trim() || 'both';
     let target = String(tgt || 'both').trim() || 'both';
     let rawArgs = Array.isArray(argsInput)
@@ -1949,6 +1954,24 @@ function _normalizeParamProgramChain(rawChain) {
     }).filter(Boolean);
 }
 
+function _validateParamProgramUiChain(chain) {
+    // Import-time analog of _validateCoeffProgramUiChain: unknown chips must
+    // fail at import with context, not load silently and die at backend
+    // compile.
+    (chain || []).forEach((item, idx) => {
+        const name = String(item && item.name || '').trim();
+        if (!name || !_ppCatalog[name]) {
+            throw new Error(`unknown param program chip at ${idx}: ${name || '(empty)'}`);
+        }
+        if (name === 'legacy') {
+            const legacyName = String(Array.isArray(item.params) ? item.params[0] : '').trim();
+            if (!legacyName || !_paramProgramLegacyNames.includes(legacyName)) {
+                throw new Error(`unknown legacy param transform at ${idx}: ${legacyName || '(empty)'}`);
+            }
+        }
+    });
+}
+
 function _parseParamProgramPayload(raw) {
     if (!raw || typeof raw !== 'object') throw new Error('program JSON must be an object');
     const hasSourceText = Object.prototype.hasOwnProperty.call(raw, 'source_text')
@@ -1962,12 +1985,14 @@ function _parseParamProgramPayload(raw) {
     if (version !== 1 && version !== 2) throw new Error(`program JSON version ${version} is not supported`);
     const kind = String(raw.program_kind || 'param_program');
     if (kind !== 'param_program') throw new Error(`program JSON kind ${kind} is not param_program`);
+    const normalizedChain = hasSourceText ? [] : _normalizeParamProgramChain(chain);
+    if (!hasSourceText) _validateParamProgramUiChain(normalizedChain);
     return {
         version,
         program_kind: 'param_program',
         name: String(raw.name || '').trim(),
         description: String(raw.description || '').trim(),
-        chain: hasSourceText ? [] : _normalizeParamProgramChain(chain),
+        chain: normalizedChain,
         has_source_text: hasSourceText,
         source_text: hasSourceText ? String(raw.source_text || '') : '',
     };
@@ -2024,7 +2049,8 @@ function _normalizeCoeffProgramChain(rawChain) {
             const name = String(item[0] || '').trim();
             if (!name) return [];
             if (name === 'legacy') {
-                const legacyName = _canonicalCoeffTransformName(item[1] || 'rev') || 'rev';
+                // No name fabrication (see _normalizeLegacyBridgeParams).
+                const legacyName = _canonicalCoeffTransformName(item[1] || '') || String(item[1] || '').trim();
                 const params = [legacyName, ...item.slice(2).map(v => String(v))];
                 if (legacyName === 'linear' && params.length >= 7) {
                     params.splice(
@@ -2115,7 +2141,8 @@ function _serializeCoeffProgramChain() {
         const name = String(item.name || '').trim();
         const params = Array.isArray(item.params) ? item.params.map(v => _str(v)) : [];
         if (name === 'legacy') {
-            const legacyName = _canonicalCoeffTransformName(params[0] || 'rev') || 'rev';
+            // No name fabrication (see _normalizeLegacyBridgeParams).
+            const legacyName = _canonicalCoeffTransformName(params[0] || '') || String(params[0] || '').trim();
             const pDefs = _coeffProgramLegacyInputDefs(legacyName);
             const values = pDefs.map((pDef, idx) => params[idx + 3] !== undefined && params[idx + 3] !== ''
                 ? params[idx + 3]

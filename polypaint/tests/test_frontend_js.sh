@@ -357,8 +357,8 @@ assertIncludes("function _coeffProgramSourceDisplay(sourceText, separator = ',')
 assertIncludes("if (name === 'push' && params[0] === 'cf') return 'cf';", 'Coeff Program chain-to-source renderer should render push(cf) as valid bare cf syntax');
 assertIncludes("if (name === 'pop') return 'drop';", 'Coeff Program chain-to-source renderer should render drop as drop, not ambiguous standalone pop');
 assertIncludes("if (name === 'poke_poly' && params.length >= 2) return `poly[${params[0]}] = ${params[1]}`;", 'Coeff Program chain-to-source renderer should render poke_poly as valid indexed assignment');
-assertIncludes("if (name === 'legacy') {\n                const [legacyName, src, tgt, ...rest] = params;", 'Coeff Program chain-to-source renderer should unwrap old legacy-form saved chips');
-assertIncludes("return `legacy(${[legacyName || 'rev', src || 'poly', tgt || 'poly', ...rest].join(', ')})`;", 'Coeff Program legacy-form source rendering should preserve opcode-9 legacy rows');
+assertIncludes("const [legacyName, src, tgt, ...rest] = params;", 'Coeff Program chain-to-source renderer should unwrap old legacy-form saved chips');
+assertIncludes("return `legacy(${[legacyName || '', src || 'poly', tgt || 'poly', ...rest].join(', ')})`;", 'Coeff Program legacy-form source rendering should preserve opcode-9 legacy rows without fabricating a name');
 assertIncludes("const _coeffProgramSourceAliasNames = _coeffRegistryVocab ? _coeffRegistryVocab.sourceAliasByName : {};", 'Coeff Program synthesizer should derive the parser-alias map from the generated vocab');
 assertIncludes("if (catalogName === 'linear') return [catalogName, ...values];", 'Coeff Program serializer must emit all linear args; the backend affine chip rejects trimmed forms');
 assertIncludes("if (name === 'argsort' && params.length >= 3) {", 'Coeff Program chain-to-source renderer should synthesize argsort without the target selector');
@@ -367,7 +367,7 @@ assertIncludes("(!_getCoeffProgramSourceText().trim() || _coeffProgramSourceAuto
 assertIncludes("&& String(raw.source_text || '').trim() !== '';", 'Coeff Program payload parsing should not let an empty source_text discard a non-empty chain');
 assertIncludes("function _scheduleCoeffProgramSourceValidation() {", 'Coeff Program text editor should debounce advisory backend validation');
 assertIncludes("'/compile-coeff-program-source');", 'Coeff Program text editor should validate via the compile-coeff-program-source route');
-assertIncludes("if (name === 'legacy') {\n                const [legacyName, src, tgt, ...rest] = params;\n                return `legacy(${[legacyName || 'rev', src || 'poly', tgt || 'poly', ...rest].join(', ')})`;\n            }", 'Coeff Program legacy-form source rendering should use explicit legacy(...) for wire preservation');
+assertIncludes("return `legacy(${[legacyName || '', src || 'poly', tgt || 'poly', ...rest].join(', ')})`;", 'Coeff Program legacy-form source rendering should use explicit legacy(...) for wire preservation');
 assertIncludes("if (sourceText.trim()) {\n            return _coeffProgramMetaHtml(program, options)", 'Coeff Program modal should prefer source_text display when a text program is active or saved');
 assertIncludes("Text source changed. It will be compiled by the backend on save/preview/compute.", 'Coeff Program text editor should tell users save uses source text');
 assertIncludes("function _chipMoveControlsHtml(which, idx) {", 'transform chip renderer should centralize move controls');
@@ -902,6 +902,29 @@ function makeContext({withCoeffVocab = true, coeffVocabOverride} = {}) {
   }
   assert(typeof loaded.ctx._renderParamCoeffProgramCheatsheets === 'function',
     'partial coeff vocab ({}) must still yield a loaded editor bundle');
+}
+
+{
+  const {ctx} = makeContext({});
+  // Garbage rows must reject loudly, never fabricate a real transform
+  // (unit_circle/rev) the user never wrote.
+  let importErr = '';
+  try { ctx._parseParamProgramPayload({name: 'x', chain: [["legacy", "", "both", "both"]]}); }
+  catch (e) { importErr = e.message; }
+  assert(importErr.includes('unknown legacy param transform'),
+    'empty legacy name must reject at import, got: ' + importErr);
+  let chipErr = '';
+  try { ctx._parseParamProgramPayload({name: 'x', chain: [["zzznotachip", "1"]]}); }
+  catch (e) { chipErr = e.message; }
+  assert(chipErr.includes('unknown param program chip'),
+    'unknown chips must reject at import, got: ' + chipErr);
+  // Legit imports still pass: bare shortcut + packed moebius.
+  ctx._parseParamProgramPayload({name: 'ok', chain: [["crd", "5"]]});
+  ctx._parseParamProgramPayload({name: 'ok', chain: [["legacy", "moebius", "both", "both", "1", "2", "3", "4", "5", "6", "7", "8"]]});
+  assert(!ctx._paramProgramSourceFromRows([["legacy", ""]]).includes('unit_circle'),
+    'param synthesizer must not fabricate unit_circle from an empty legacy name');
+  assert(!ctx._coeffProgramSourceFromRows([["legacy", ""]]).includes('rev'),
+    'coeff synthesizer must not fabricate rev from an empty legacy name');
 }
 
 {

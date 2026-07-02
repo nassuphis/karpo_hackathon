@@ -11,7 +11,6 @@ const _paramProgramLegacyNames = Array.isArray(_paramRegistryVocab.names)
 const _paramProgramIndependentLegacyTargets = new Set(_paramRegistryVocab.independentTargets || []);
 const _paramProgramLegacyTargetArgIndexes = _paramRegistryVocab.targetArgIndexes || {};
 const _paramProgramLegacyVariableArgCounts = _paramRegistryVocab.variableArgCounts || {};
-const _paramProgramLegacyArgSpecs = _paramRegistryVocab.argSpecs || {};
 const _paramRegistryAdapter = (() => {
     const loaded = !!(typeof window !== 'undefined' && window._paramRegistryVocab);
     const categoryMeta = _paramRegistryVocab.categoryMeta || {};

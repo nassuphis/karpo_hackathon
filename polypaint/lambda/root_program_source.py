@@ -360,23 +360,6 @@ def root_source_text_from_chain(chain):
     return "\n".join(lines)
 
 
-def root_source_text_from_payload(payload):
-    if not isinstance(payload, dict):
-        return None
-    raw = payload.get("root_program_source_text")
-    if raw is not None and str(raw).strip():
-        return str(raw)
-    root_program = payload.get("root_program")
-    if isinstance(root_program, dict):
-        raw = root_program.get("source_text")
-        if raw is not None and str(raw).strip():
-            return str(raw)
-    raw = payload.get("source_text")
-    if raw is not None and str(raw).strip():
-        return str(raw)
-    return None
-
-
 def _parse_root_call(text, *, line=1, column=1, allow_roots_arg=True):
     call = parse_call(text, error_cls=RootProgramSourceError)
     if not call:

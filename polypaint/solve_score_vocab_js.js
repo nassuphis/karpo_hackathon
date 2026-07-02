@@ -521,21 +521,13 @@ window._solveScoreVocab = {
       "arity": 1,
       "params": [],
       "tooltip": "legacy alias for emit(none)",
-      "snippet": "emit_none(metric(proximity, slv, q=0.1%))\nemit_norm(metric(proximity, slv, q=0.1%))",
-      "legacy_alias": [
-        "emit",
-        "none"
-      ]
+      "snippet": "emit_none(metric(proximity, slv, q=0.1%))\nemit_norm(metric(proximity, slv, q=0.1%))"
     },
     "emit_norm": {
       "arity": 1,
       "params": [],
       "tooltip": "legacy alias for emit(norm)",
-      "snippet": "emit_norm(metric(proximity, slv, q=0.1%))",
-      "legacy_alias": [
-        "emit",
-        "norm"
-      ]
+      "snippet": "emit_norm(metric(proximity, slv, q=0.1%))"
     }
   },
   "stackSpecs": {
@@ -548,22 +540,19 @@ window._solveScoreVocab = {
         }
       ],
       "tooltip": "push a finite constant onto the stack",
-      "snippet": "score = add(metric(proximity, slv, q=0.1%), const(0))",
-      "delta": 1
+      "snippet": "score = add(metric(proximity, slv, q=0.1%), const(0))"
     },
     "dup": {
       "arity": 1,
       "params": [],
       "tooltip": "duplicate the top stack value",
-      "snippet": "push(metric(proximity, slv, q=0.1%))\ndup()\nflush()\nscore = metric(proximity, slv, q=0.1%)",
-      "delta": 1
+      "snippet": "push(metric(proximity, slv, q=0.1%))\ndup()\nflush()\nscore = metric(proximity, slv, q=0.1%)"
     },
     "flush": {
       "arity": 0,
       "params": [],
       "tooltip": "clear the entire score stack",
-      "snippet": "push(metric(proximity, slv, q=0.1%))\nflush()\nscore = metric(proximity, slv, q=0.1%)",
-      "delta": null
+      "snippet": "push(metric(proximity, slv, q=0.1%))\nflush()\nscore = metric(proximity, slv, q=0.1%)"
     }
   }
 };

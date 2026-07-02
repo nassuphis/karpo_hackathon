@@ -276,17 +276,27 @@ def test_coeff_profile_caps_and_selectors_match_python_and_c():
     assert set(selectors["typed_vector_src"]) == set(chain._SOURCE_SELECTORS) | {"tos"}
 
 
-def test_generated_coeff_vocab_carries_effective_args_and_andy():
+def test_loader_effective_args_carry_optional_andy_and_vocab_hydrates_it():
+    # effective_args is a LOADER contract (args + shared optional andy), not
+    # a vocab field: the JS payload once shipped an effectiveArgs copy with
+    # zero consumers, so the vocab now must NOT carry it — only the hydrated
+    # andy param in each transform's ctCatalog entry.
     vocab = _coeff_vocab_js_payload()
-    assert "supportsAndy" not in vocab
+    for dead_key in ("supportsAndy", "effectiveArgs", "compatSignatures", "fnIndexByName", "names"):
+        assert dead_key not in vocab, f"dead vocab key shipped again: {dead_key}"
     for name, spec in legacy_registry()["by_name"].items():
-        generated = vocab["effectiveArgs"][name]
-        assert generated == list(spec["effective_args"])
+        effective = list(spec["effective_args"])
+        # effective_args = positional args + runtime view of each optional
+        # arg (ui block stripped); compare by name + optional flag.
+        assert [arg["name"] for arg in effective] == (
+            [arg["name"] for arg in spec["args"]]
+            + [arg["name"] for arg in spec["optional_args"]]
+        ), name
         optional_names = {arg["name"] for arg in spec.get("optional_args") or ()}
         assert optional_names == {"andy"}, name
-        assert generated[-1]["name"] == "andy"
-        assert generated[-1]["optional"] is True
-        assert generated[-1]["role"] == "andy"
+        assert effective[-1]["name"] == "andy"
+        assert effective[-1]["optional"] is True
+        assert effective[-1]["role"] == "andy"
         ui_params = vocab["ctCatalog"][name].get("params") or []
         assert any(param.get("kind") == "andy" for param in ui_params), name
 
@@ -506,9 +516,6 @@ def test_generated_js_vocab_matches_registry():
     assert vocab["aliasToCanonical"] == EXPECTED_ALIASES
     assert vocab["sourceAliasByName"] == {v: k for k, v in EXPECTED_TEXT_ALIASES.items()}
     assert vocab["chipNameByRegistryName"] == EXPECTED_CHIP_NAMES
-    assert vocab["fnIndexByName"] == {
-        name: spec["fn_index"] for name, spec in legacy_registry()["by_name"].items()
-    }
     # The chip catalog (param shapes/descs/UI hints) is part of the vocab:
     # every registry function must have a ui block with a desc, categories
     # must match the registry, and shared optional args are hydrated into each
@@ -524,7 +531,11 @@ def test_generated_js_vocab_matches_registry():
     assert set(vocab["programParamDefs"]) == {"exp", "round"}
     # Ordering is UI contract: ctCatalog keys appear in the transform picker
     # in insertion order (fn_index order), categories in registry order.
-    assert list(vocab["ctCatalog"]) == vocab["names"]
+    fn_index_order = [
+        spec["name"]
+        for spec in sorted(registry.values(), key=lambda item: item["fn_index"])
+    ]
+    assert list(vocab["ctCatalog"]) == fn_index_order
     assert list(vocab["categoryMeta"]) == ["structural", "accumulation", "elementwise", "roots"]
     with open(JS_OUT, "r", encoding="utf-8") as fh:
         assert fh.read() == render_js(), "coeff_vocab_js.js is stale; run lambda/gen_coeff_vocab.py"

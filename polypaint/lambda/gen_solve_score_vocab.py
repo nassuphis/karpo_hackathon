@@ -156,8 +156,6 @@ def build_vocab() -> dict:
                 "tooltip": _tooltip(kind, name, spec),
                 "snippet": _op_snippet(kind, name, spec),
             }
-            if "delta" in spec:
-                entry["delta"] = spec["delta"]
             out[name] = entry
         return out
 
@@ -172,8 +170,6 @@ def build_vocab() -> dict:
         }
         if name == "emit":
             entry["params"] = [{"ph": "mode", "def": "norm", "choices": ["raw", "norm", "none"]}]
-        if spec.get("legacy_alias"):
-            entry["legacy_alias"] = list(spec["legacy_alias"])
         output_specs[name] = entry
 
     return {

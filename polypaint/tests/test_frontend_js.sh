@@ -171,7 +171,7 @@ assertIncludes("viewport Im: ${minIm} .. ${maxIm}", 'compute preview plot info s
 assertIncludes("const _paramRegistryVocab = (typeof window !== 'undefined' && window._paramRegistryVocab) || {};", 'frontend should hydrate Param Program legacy metadata from generated vocab');
 if (!paramVocabSrc.includes('"zzold"') || !paramVocabSrc.includes('"scdth"')) fail('generated Param vocab should expose all registry transforms, including names missing from the old JS mirror');
 assertIncludes("const _paramProgramIndependentLegacyTargets = new Set(_paramRegistryVocab.independentTargets || []);", 'frontend should get redundant legacy targets from generated Param vocab');
-assertIncludes("const _paramProgramLegacyArgSpecs = _paramRegistryVocab.argSpecs || {};", 'frontend should expose generated structured legacy argument specs in Param Program bridge chips');
+assertNotIncludes("const _paramProgramLegacyArgSpecs", 'dead _paramProgramLegacyArgSpecs must stay deleted (zero consumers; arg specs flow through _paramRegistryAdapter.params)');
 assertIncludes("const _paramRegistryAdapter = (() => {", 'frontend should normalize generated Param registry metadata through an adapter');
 assertIncludes("category(category) {\n            return categoryMeta[category] || { title: category, help: '' };", 'Param adapter should expose generated category metadata without static fallback');
 assertIncludes("variableForms(name) {", 'Param adapter should expose generated variable legacy arg forms');
@@ -303,8 +303,11 @@ assertIncludes("return [{ name: _coeffProgramRegistryChipName(legacyName), param
 assertIncludes("// LAYOUT CONTRACT: legacy rows are source-first", 'The legacy-vs-chip param order flip must stay documented at the normalize seam');
 assertIncludes("function _isAndyParam(pDef) {", 'andy identity should be real metadata (kind), not placeholder text');
 assertIncludes("return name === 'const' ? 'push_const' : name;", 'coeff program chip canonicalizer must map const to push_const (a self-call here recursed forever)');
-if (!vocabSrc.includes('"effectiveArgs"') || !vocabSrc.includes('"kind": "andy"')) fail('generated coeff vocab should carry effective args and optional andy metadata');
+if (!vocabSrc.includes('"kind": "andy"')) fail('generated coeff vocab should hydrate optional andy metadata into transform params');
 if (vocabSrc.includes('"supportsAndy"')) fail('generated coeff vocab should not emit a separate supportsAndy capability map');
+for (const deadKey of ['"effectiveArgs"', '"fnIndexByName"', '"compatSignatures"']) {
+  if (vocabSrc.includes(deadKey)) fail('generated coeff vocab must not ship dead key ' + deadKey + ' (zero JS consumers; loader spec is the source)');
+}
 assertIncludes("const _coeffProgramVectorUnaryNames = _coeffStructuralSubOpNames('vector_unary'", 'Coeff Program vector unary names should derive from generated structural metadata');
 assertIncludes("catalog.power_series = {", 'Coeff Program catalog should expose the registry power transform as a power_series chip');
 assertIncludes("if (_coeffProgramSourceAutoSynthed && !_coeffProgramChain.length) {", 'Emptying the chip chain must clear stale auto-synthesized text');
@@ -1475,8 +1478,11 @@ async function main() {
   const coeffComplex = ctx._parseCtComplexConstant('13-22j');
   assert(coeffComplex && coeffComplex.re === 13 && coeffComplex.im === -22, 'complex parser should preserve real-first complex constants');
 
-  assert(JSON.stringify(Object.keys(coeffRegistryVocab.ctCatalog)) === JSON.stringify(coeffRegistryVocab.names), 'generated chip entries should cover every registry function in fn_index order');
-  assert(JSON.stringify(Object.keys(ctx._ctCatalog)) === JSON.stringify(coeffRegistryVocab.names), 'hydrated _ctCatalog should preserve registry order');
+  // fn_index ordering of ctCatalog keys is pinned Python-side against the
+  // registry (test_coeff_program_drift); here pin coverage + hydration order.
+  const ctNames = Object.keys(coeffRegistryVocab.ctCatalog);
+  assert(ctNames.length >= 28, 'generated chip entries should cover the full registry');
+  assert(JSON.stringify(Object.keys(ctx._ctCatalog)) === JSON.stringify(ctNames), 'hydrated _ctCatalog should preserve generated order');
   assert(JSON.stringify(Object.keys(ctx._ctCategoryMeta)) === JSON.stringify(['structural', 'accumulation', 'elementwise', 'roots']), 'category order is UI contract');
   assert(ctx._ctCatalog.linear.params.length === 3 && ctx._ctCatalog.rev.params.length === 1, 'hydration should append the shared andy param to every transform');
   assert(ctx._ctCatalog.linear.params[0].title.includes('Program mode accepts') && !ctx._ctCatalog.linear.params[0].title.includes('{SCALAR_EXPR_HELP}'), 'hydration should resolve the scalar-expr help placeholder');

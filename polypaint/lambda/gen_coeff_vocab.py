@@ -69,8 +69,6 @@ def build_vocab():
     registry = chain.legacy_registry()
     ct_catalog = {}
     program_param_defs = {}
-    effective_args = {}
-    compat_signatures = {}
     for fn in functions:
         name = fn["name"]
         loaded = registry["by_name"][name]
@@ -87,31 +85,25 @@ def build_vocab():
             program_params = list(ui["program_params"])
             program_params.extend(_ui_param_from_arg(arg) for arg in (loaded.get("optional_args") or ()))
             program_param_defs[name] = program_params
-        effective_args[name] = list(loaded.get("effective_args") or ())
-        if loaded.get("compat_signatures"):
-            compat_signatures[name] = list(loaded.get("compat_signatures") or ())
-    names = [fn["name"] for fn in functions]
     alias_to_canonical = {}
     source_alias_by_name = {}
     chip_name_by_registry_name = {}
-    fn_index_by_name = {}
     for fn in functions:
         name = fn["name"]
-        fn_index_by_name[name] = int(fn["fn_index"])
         for alias in list(fn.get("aliases") or []) + list(fn.get("chain_only_aliases") or []):
             alias_to_canonical[alias] = name
         for alias in list(fn.get("aliases") or [])[:1]:
             source_alias_by_name[name] = alias
         if fn.get("chip_name") and fn["chip_name"] != name:
             chip_name_by_registry_name[name] = fn["chip_name"]
+    # Emit only fields the frontend consumes. names/fnIndexByName/
+    # effectiveArgs/compatSignatures were shipped for a while with zero JS
+    # readers — false-authority payload; the loader spec (Python) and the
+    # registry JSON are the sources for that data.
     return {
-        "names": names,
-        "fnIndexByName": fn_index_by_name,
         "aliasToCanonical": alias_to_canonical,
         "sourceAliasByName": source_alias_by_name,
         "chipNameByRegistryName": chip_name_by_registry_name,
-        "effectiveArgs": effective_args,
-        "compatSignatures": compat_signatures,
         "ctCatalog": ct_catalog,
         "categoryMeta": extract_category_meta(payload, paths=(("category_meta",),), label="coeff"),
         "programParamDefs": program_param_defs,

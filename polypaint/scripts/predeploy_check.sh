@@ -36,6 +36,15 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_raster_mt.py \
     tests/test_bilevel_handler.py \
     tests/test_solve_proximity_handler.py \
+    tests/test_registry_schema.py \
+    tests/test_program_source_core.py \
+    tests/test_program_profiles_drift.py \
+    tests/test_program_v2_migration.py \
+    tests/test_saved_program_source_precedence.py \
+    tests/test_predeploy_gate_completeness.py \
+    tests/test_root_program_source.py \
+    tests/test_root_program_storage.py \
+    tests/test_root_transform_registry.py \
     tests/test_param_program_drift.py \
     tests/test_param_program_source.py \
     tests/test_param_program_chain.py \
@@ -48,6 +57,10 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_coeff_wire_fingerprints.py \
     tests/test_coeff_program_native.py \
     tests/test_coeff_program_storage.py \
+    tests/test_coeff_source_equivalence.py \
+    tests/test_solve_score_native_parity.py \
+    tests/test_frontend_parts_contract.py \
+    tests/test_whole_sweep_oracle.py \
     tests/test_solve_score_chain.py \
     tests/test_solve_score_pipeline_programs.py \
     tests/test_solve_score_program_source.py \

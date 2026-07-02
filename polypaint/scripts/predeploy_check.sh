@@ -79,6 +79,24 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_coeffgen_param_gen.py \
     tests/test_compute_chunk_fused.py \
     tests/test_compute_workflow_definition.py \
+    tests/test_compute_fused.py \
+    tests/test_compute_status_handler.py \
+    tests/test_palette_chunk_handler.py \
+    tests/test_palette_finalize_handler.py \
+    tests/test_palette_orchestrator.py \
+    tests/test_palette_render_plan.py \
+    tests/test_palette_workflow_definition.py \
+    tests/test_palette_debug_handler.py \
+    tests/test_render_orchestrator.py \
+    tests/test_render_status.py \
+    tests/test_dispatch_resilience.py \
+    tests/test_deploy_manifest_validator.py \
+    tests/test_png_export_handler.py \
+    tests/test_resize_artifact_handler.py \
+    tests/test_tiff_compat_handler.py \
+    tests/test_repalette_handler.py \
+    tests/test_color_repalette_handler.py \
+    tests/test_deepzoom_export_handler.py \
     -q
 bash tests/test_frontend_js.sh
 echo "Predeploy contract gate passed."

@@ -208,7 +208,14 @@ def _enum_arg_label(arg_spec, value):
         numeric = float(value)
     except (TypeError, ValueError):
         return None
-    choices = [str(choice).strip().lower() for choice in (arg_spec.get("choices") or _ENUM_ARG_VALUES)]
+    # Presence-test, not truthiness: enum args are load-guaranteed to carry a
+    # non-empty choices list; the full-map fallback exists only for the
+    # spec-less trailing-default path (arg_spec position beyond declared args).
+    raw_choices = arg_spec.get("choices")
+    choices = [
+        str(choice).strip().lower()
+        for choice in (raw_choices if raw_choices is not None else sorted(_ENUM_ARG_VALUES))
+    ]
     for label in choices:
         if label not in _ENUM_ARG_VALUES:
             continue
@@ -412,7 +419,16 @@ def _normalize_registry_arg(function_name, idx, arg, *, label="arg"):
         )
     normalized_arg["type"] = arg_type
     if arg_type == "enum":
-        for choice in normalized_arg.get("choices") or []:
+        choices = normalized_arg.get("choices")
+        if not choices:
+            # An enum arg without choices was writable-nowhere on the forward
+            # path but decodable on the inverse (which fell back to the full
+            # hi/lo map) — an asymmetry; require the declaration instead.
+            raise RuntimeError(
+                f"coeff legacy function {function_name} {label} {idx} enum arg "
+                "must declare a non-empty choices list"
+            )
+        for choice in choices:
             if str(choice).strip().lower() not in _ENUM_ARG_VALUES:
                 raise RuntimeError(
                     f"coeff legacy function {function_name} {label} {idx} enum choice {choice!r} "

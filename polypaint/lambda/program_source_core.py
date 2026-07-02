@@ -87,8 +87,16 @@ def profile_symbol(profile, name):
 
 
 def profile_selectors(profile, name):
+    # Presence semantics: a missing selector key is an empty allow-set, but a
+    # present-and-malformed value must fail loudly instead of silently
+    # rejecting every selector at parse time.
     selectors = profile.get("selectors") or {}
-    values = selectors.get(str(name or "").strip()) or []
+    key = str(name or "").strip()
+    if key not in selectors:
+        return ()
+    values = selectors.get(key)
+    if not isinstance(values, (list, tuple)):
+        raise ValueError(f"profile selectors[{key!r}] must be a list, got {type(values).__name__}")
     return tuple(str(value) for value in values)
 
 

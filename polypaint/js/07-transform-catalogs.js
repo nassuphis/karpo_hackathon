@@ -337,8 +337,10 @@ const _programProfiles = (typeof window !== 'undefined' && window._programProfil
 const _coeffProfile = _programProfiles && _programProfiles.profiles ? _programProfiles.profiles.coeff : null;
 const _coeffProfileSelectors = (_coeffProfile && _coeffProfile.selectors) || {};
 function _profileSelectorChoices(name, fallback) {
+    // Presence-test only: a deliberately-empty configured selector list must
+    // stay empty, not silently revert to the stale hardcoded fallback.
     const values = _coeffProfileSelectors[name];
-    return Array.isArray(values) && values.length ? values.slice() : fallback.slice();
+    return Array.isArray(values) ? values.slice() : fallback.slice();
 }
 const _coeffProgramVectorSourceChoices = _profileSelectorChoices('vector_src', ['poly', 'pop', 'peek']);
 const _coeffProgramLegacySourceChoices = _profileSelectorChoices('src', ['cf', 'poly', 'pop', 'peek']);

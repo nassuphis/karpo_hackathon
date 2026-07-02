@@ -18,9 +18,10 @@ ORACLE-EDIT POLICY (read before touching any *_legacy.py file):
    `shared_optional_args`), land the shim as its own commit with a
    before/after oracle-output diff over this corpus recorded in the commit
    message. Comment-only edits are exempt.
-4. Corpus floors below are deliberately weak (`checked >= N`); do not delete
-   `fixtures/program-m3-oracle/harvested/` — it carries the real production
-   cases.
+4. Corpus counts are pinned exactly (EXPECTED_TOTAL_CASES / EXPECTED_CHECKED)
+   and the harvested production corpus is hard-required — a shrinking corpus
+   fails instead of silently narrowing coverage. Grow the pins deliberately
+   when adding cases.
 """
 
 import json
@@ -52,11 +53,28 @@ def _load_corpus_cases(rel_path):
     return out
 
 
+# Pinned per-kind case counts. A silently shrinking corpus (deleted harvested
+# dir, blank-source rot) previously kept the gate green while dropping 6 of 9
+# cases; grow these numbers deliberately when the corpus grows.
+EXPECTED_TOTAL_CASES = 9
+EXPECTED_CHECKED = {
+    "coeff_source": 8,
+    "coeff_chain": 7,
+    "param_source": 7,
+    "param_chain": 6,
+}
+
+
 def _load_cases():
     out = _load_corpus_cases("corpus.json")
-    harvested = os.path.join(FIXTURE_DIR, "harvested", "corpus.json")
-    if os.path.exists(harvested):
-        out.extend(_load_corpus_cases(os.path.join("harvested", "corpus.json")))
+    # Hard-require the harvested production corpus — it carries the real
+    # saved calc.json cases; a missing directory must fail, not skip.
+    out.extend(_load_corpus_cases(os.path.join("harvested", "corpus.json")))
+    if len(out) != EXPECTED_TOTAL_CASES:
+        raise AssertionError(
+            f"M3 oracle corpus has {len(out)} cases, expected {EXPECTED_TOTAL_CASES}; "
+            "update EXPECTED_TOTAL_CASES deliberately if the corpus grew"
+        )
     return out
 
 
@@ -118,7 +136,7 @@ class TestProgramM3Oracles(unittest.TestCase):
                 new_compiled = current.compile_coeff_program_source(source_text)
                 self.assertEqual(_selected_coeff_fields(new_compiled), _selected_coeff_fields(old_compiled))
                 checked += 1
-        self.assertGreaterEqual(checked, 2)
+        self.assertEqual(checked, EXPECTED_CHECKED["coeff_source"])
 
     def test_coeff_chain_corpus_matches_frozen_legacy_oracle(self):
         import coeff_program_chain as current
@@ -134,7 +152,7 @@ class TestProgramM3Oracles(unittest.TestCase):
                 new_compiled = current.compile_coeff_program_chain(chain)
                 self.assertEqual(_selected_coeff_fields(new_compiled), _selected_coeff_fields(old_compiled))
                 checked += 1
-        self.assertGreaterEqual(checked, 1)
+        self.assertEqual(checked, EXPECTED_CHECKED["coeff_chain"])
 
     def test_coeff_chain_corpus_source_regeneration_preserves_fingerprint(self):
         import coeff_program_chain as chain_compiler
@@ -153,7 +171,7 @@ class TestProgramM3Oracles(unittest.TestCase):
                 self.assertEqual(from_source["fingerprint"], from_chain["fingerprint"])
                 self.assertEqual(from_source["execution_spec"], from_chain["execution_spec"])
                 checked += 1
-        self.assertGreaterEqual(checked, 1)
+        self.assertEqual(checked, EXPECTED_CHECKED["coeff_chain"])
 
     def test_param_source_corpus_matches_frozen_legacy_oracle(self):
         import param_program_source as current
@@ -175,7 +193,7 @@ class TestProgramM3Oracles(unittest.TestCase):
                 new_compiled = current.compile_param_program_source(source_text)
                 self.assertEqual(_selected_param_fields(new_compiled), _selected_param_fields(old_compiled))
                 checked += 1
-        self.assertGreaterEqual(checked, 2)
+        self.assertEqual(checked, EXPECTED_CHECKED["param_source"])
 
     def test_param_chain_corpus_source_regeneration_matches_frozen_legacy_oracle(self):
         import param_program_source as current
@@ -194,7 +212,7 @@ class TestProgramM3Oracles(unittest.TestCase):
                 new_compiled = current.compile_param_program_source(new_source)
                 self.assertEqual(_selected_param_fields(new_compiled), _selected_param_fields(old_compiled))
                 checked += 1
-        self.assertGreaterEqual(checked, 1)
+        self.assertEqual(checked, EXPECTED_CHECKED["param_chain"])
 
 
 if __name__ == "__main__":

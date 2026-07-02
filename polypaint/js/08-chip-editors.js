@@ -60,13 +60,18 @@ function _paramProgramSourceFromRows(chain) {
         const name = String(row[0] || '').trim();
         const params = row.slice(1).map(v => _str(v));
         const next = Array.isArray(rows[idx + 1]) ? rows[idx + 1] : null;
+        // Old two-arg const rows carry (re, im); mirror the Python serializer
+        // (param_source_text_from_chain), which emits `(re)+(im)*1j`.
+        const constExpr = name === 'const' && params.length >= 2
+            ? `(${params[0]})+(${params[1]})*1j`
+            : params[0];
         if (name === 'const' && params.length >= 1 && next && next[0] === 'emit' && next[1]) {
-            lines.push(`${String(next[1]).trim()} = ${params[0]}`);
+            lines.push(`${String(next[1]).trim()} = ${constExpr}`);
             idx++;
             continue;
         }
         if (name === 'const' && params.length >= 1) {
-            lines.push(`const(${params[0]})`);
+            lines.push(`const(${constExpr})`);
         } else if (name === 'push') {
             lines.push(params[0] ? `push(${params[0]})` : 'push');
         } else if (name === 'emit') {
@@ -1598,7 +1603,10 @@ function _paramProgramLegacyArgsFromInput(legacyName, argsInput, options = {}) {
         if (argDefs && values.length > 1) {
             rawArgs = values;
         } else {
-            rawArgs = _splitParamProgramLegacyArgs(values.join(','));
+            // Array elements are already discrete args and may contain
+            // whitespace inside expressions ("1 + 2"); split only on commas,
+            // never on whitespace (whitespace-splitting mangled such args).
+            rawArgs = values.flatMap(v => v.split(',')).map(part => part.trim()).filter(Boolean);
         }
     } else {
         rawArgs = _splitParamProgramLegacyArgs(argsInput);

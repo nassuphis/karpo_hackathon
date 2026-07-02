@@ -220,7 +220,8 @@ function _coeffProgramVectorFormulaHtml(item, i, pDefs, options = {}) {
         return `<span class="chip-formula">${tgt}<span class="chip-op">=</span><span>${_escapeHtml(item.name)}(</span>${input(1)}<span class="chip-op">,</span>${input(2)}<span>)</span></span>`;
     }
     if (item.name === 'littlewood') {
-        const andyIdx = _ctAndyIndex(pDefs);
+        const andyFound = (pDefs || []).findIndex(_isAndyParam);
+        const andyIdx = andyFound >= 0 ? andyFound : Math.max(0, (pDefs || []).length - 1);
         return `<span class="chip-formula">${tgt}<span class="chip-op">=</span><span>littlewood(</span>${input(1)}<span class="chip-op">,</span>${input(2)}<span>)</span><span class="chip-op">andy=</span>${input(andyIdx)}</span>`;
     }
     return '';

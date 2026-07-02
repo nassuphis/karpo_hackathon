@@ -237,7 +237,7 @@ function _hydrateCtParamDef(pDef) {
 }
 const _ctCatalog = (() => {
     const catalog = {};
-    const specs = _coeffRegistryVocab ? _coeffRegistryVocab.ctCatalog : {};
+    const specs = ((_coeffRegistryVocab || {}).ctCatalog) || {};
     Object.entries(specs).forEach(([name, spec]) => {
         const entry = {
             category: spec.category,

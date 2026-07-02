@@ -884,10 +884,9 @@ async function _saveCurrentParamProgramFromModal() {
     _setParamProgramModalStatus('', false);
     _renderParamProgramModal();
     try {
-        const resp = await lambdaPost('storage', {
-            name: payload.name,
-            chain: payload.chain,
-        }, '/save-param-program');
+        const savePayload = { name: payload.name, chain: payload.chain };
+        if (Object.prototype.hasOwnProperty.call(payload, 'source_text')) savePayload.source_text = payload.source_text;
+        const resp = await lambdaPost('storage', savePayload, '/save-param-program');
         const program = resp && resp.program ? resp.program : null;
         if (!program) throw new Error('save-param-program returned no program');
         _paramProgramModalState.selectedId = program.id || '';

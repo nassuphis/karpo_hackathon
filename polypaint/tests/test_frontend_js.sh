@@ -154,6 +154,14 @@ assertIncludes("function _renderParamProgramCheatsheet() {", 'Param Program chea
 assertIncludes("function _paramProgramTextModeSelected() {", 'Param Program text mode should have a single source of truth');
 assertIncludes("function _paramProgramSourceFromRows(chain) {", 'Param Program should synthesize editable source from chip chains');
 assertIncludes("lambdaPost('storage', { source_text: sourceText }, '/compile-param-program-source')", 'Param Program text editor should validate against the backend parser');
+// H3 regression: _ctAndyIndex was deleted; any surviving reference is a ReferenceError at runtime.
+assertNotIncludes('_ctAndyIndex(', 'deleted _ctAndyIndex must not be referenced anywhere (littlewood formula crash)');
+// H1 regression: BOTH coeff and param save modals must forward source_text.
+if ((src.match(/savePayload\.source_text = payload\.source_text/g) || []).length < 2) {
+  fail('param AND coeff program save must forward payload.source_text (text-authored param saves posted an empty chain and 400d)');
+}
+// H7 regression: two-arg const rows carry (re, im) — the JS synthesizer must keep the imaginary part.
+assertIncludes('`(${params[0]})+(${params[1]})*1j`', 'JS source synthesizer must preserve the imaginary lane of two-arg const rows');
 assertIncludes("function _selectedParamPipelineMode() {", 'frontend should centralize selected parameter pipeline mode');
 assertIncludes("function _formatChainRowsForLog(chain, separator = ',') {", 'compute preview logging should use a shared safe chain formatter');
 assertIncludes("return _formatCoeffProgramChainForLog(_serializeCoeffProgramChain(), separator);", 'Program-only coeff preview logging should format the read-only program chip view when text is inactive');
@@ -199,7 +207,7 @@ assertIncludes("if (paramSourceText !== null) payload.param_program_source_text 
 assertIncludes("lambdaPost('storage', {}, '/list-param-programs')", 'param-program modal should list saved programs through storage');
 assertIncludes("lambdaPost('storage', { id }, '/fetch-param-program')", 'param-program modal should fetch saved programs through storage');
 assertIncludes("lambdaPost('storage', { id }, '/delete-param-program')", 'param-program modal should delete saved programs through storage');
-assertIncludes("}, '/save-param-program');", 'param-program modal should save programs through storage');
+assertIncludes("lambdaPost('storage', savePayload, '/save-param-program')", 'param-program modal should save programs through storage');
 assertIncludes("id=\"param-program-modal-overlay\"", 'shared param-program modal markup missing');
 assertIncludes("const hasSourceText = Object.prototype.hasOwnProperty.call(raw, 'source_text')", 'Param Program saved source_text payloads should load as text programs');
 assertIncludes("if (program.has_source_text) {", 'Param Program source_text payloads should switch the editor to Text mode');
@@ -680,7 +688,7 @@ function makeEl(id) {
     get innerHTML() { return this._innerHTML; },
   };
 }
-function makeContext({withCoeffVocab = true} = {}) {
+function makeContext({withCoeffVocab = true, coeffVocabOverride} = {}) {
   const els = {
     'pp-cheatsheet': makeEl('pp-cheatsheet'),
     'cp-cheatsheet': makeEl('cp-cheatsheet'),
@@ -710,6 +718,7 @@ function makeContext({withCoeffVocab = true} = {}) {
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(root, 'param_vocab_js.js'), 'utf8'), ctx, {filename: 'param_vocab_js.js'});
   if (withCoeffVocab) vm.runInContext(fs.readFileSync(path.join(root, 'coeff_vocab_js.js'), 'utf8'), ctx, {filename: 'coeff_vocab_js.js'});
+  if (coeffVocabOverride !== undefined) ctx._coeffRegistryVocab = coeffVocabOverride;
   vm.runInContext(fs.readFileSync(path.join(root, 'coeff_func_catalog_js.js'), 'utf8'), ctx, {filename: 'coeff_func_catalog_js.js'});
   vm.runInContext(fs.readFileSync(path.join(root, 'js/06-popup-init.js'), 'utf8'), ctx, {filename: 'js/06-popup-init.js'});
   vm.runInContext(fs.readFileSync(path.join(root, 'js/07-transform-catalogs.js'), 'utf8'), ctx, {filename: 'js/07-transform-catalogs.js'});
@@ -876,6 +885,34 @@ function makeContext({withCoeffVocab = true} = {}) {
   const {ctx, els} = makeContext({withCoeffVocab: false});
   ctx._setProgramSourceSidePanelMode('cp', 'help');
   assert(els['cp-help'].innerHTML.includes('Coeff registry not loaded'), 'Coeff Help should tolerate a null registry vocab');
+}
+
+{
+  // A2 residual: a PARTIAL vocab object (present but missing keys, e.g. an
+  // old artifact without ctCatalog) must not crash module load. makeContext
+  // throwing IS the failure; reaching the assert proves js/06-08 loaded.
+  let loaded = null;
+  try {
+    loaded = makeContext({withCoeffVocab: false, coeffVocabOverride: {}});
+  } catch (e) {
+    fail('partial coeff vocab ({}) crashed module load: ' + (e && e.message ? e.message : e));
+  }
+  assert(typeof loaded.ctx._renderParamCoeffProgramCheatsheets === 'function',
+    'partial coeff vocab ({}) must still yield a loaded editor bundle');
+}
+
+{
+  const {ctx} = makeContext({});
+  // H7: two-arg const rows keep the imaginary lane, matching the Python
+  // serializer (param_source_text_from_chain).
+  const constText = ctx._paramProgramSourceFromRows([["const", "1", "2"], ["emit", "p1"]]);
+  assert(constText.trim() === 'p1 = (1)+(2)*1j',
+    'two-arg const rows must keep the imaginary part, got: ' + constText);
+  // H7: array-element args may contain whitespace inside one expression;
+  // loading must not whitespace-split them into separate args.
+  const lssArgs = ctx._paramProgramLegacyArgsFromInput('lss', ['1 + 2']);
+  assert(JSON.stringify(lssArgs).includes('1 + 2'),
+    'single-element expression args must not be whitespace-split, got: ' + JSON.stringify(lssArgs));
 }
 
 console.log('Frontend generated editor help runtime checks: OK');

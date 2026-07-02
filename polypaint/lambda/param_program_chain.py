@@ -21,6 +21,7 @@ import math
 import os
 import re
 
+from program_source_core import canonical_number_g17
 from registry_common import (
     load_json,
     normalize_name_int_map,
@@ -445,10 +446,8 @@ def _parse_complex_literal(value):
 
 
 def _format_number(value):
-    number = _finite_number(value, "number")
-    if number == 0:
-        number = 0.0
-    return format(number, ".17g")
+    # Frozen .17g wire policy (see program_source_core canonical policies).
+    return canonical_number_g17(_finite_number(value, "number"))
 
 
 def _format_complex_number(real, imag):

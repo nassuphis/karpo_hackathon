@@ -14,6 +14,7 @@ import os
 from merged_opcodes import MERGED_OP_NATIVE_TRANSFORM
 from program_source_core import (
     ProgramSourceError,
+    canonical_number_repr,
     diagnostic,
     diagnostic_from_exception,
     find_top_level_assignment,
@@ -78,12 +79,8 @@ def _registry_by_index():
 
 
 def _format_number(value):
-    num = float(value)
-    if num == 0.0:
-        num = 0.0
-    if num.is_integer():
-        return str(int(num))
-    return repr(num)
+    # Frozen repr wire policy (see program_source_core canonical policies).
+    return canonical_number_repr(value)
 
 
 def _coerce_real_arg(value, label="root transform arg"):

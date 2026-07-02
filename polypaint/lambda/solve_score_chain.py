@@ -376,6 +376,11 @@ def _validate_quantile_percent(value):
 
 
 def _format_number(value):
+    # Frozen repr wire policy. This is a LOCAL copy of
+    # program_source_core.canonical_number_repr: this module stays
+    # dependency-free so ~10 lean handler bundles ship it without dragging
+    # in the core (+ program_profiles). Parity is drift-pinned in
+    # tests/test_solve_score_chain.py.
     num = float(value)
     if num == 0.0:
         num = 0.0

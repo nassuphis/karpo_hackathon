@@ -617,3 +617,19 @@ class TestSolveScoreChain(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCanonicalNumberPolicyParity(unittest.TestCase):
+    def test_local_format_number_matches_core_repr_policy(self):
+        # solve_score_chain keeps a LOCAL copy of the repr wire policy so lean
+        # handler bundles ship it without program_source_core; this pins the
+        # copy to the canonical implementation.
+        from program_source_core import canonical_number_repr
+        from solve_score_chain import _format_number
+
+        probes = [
+            0.0, -0.0, 1.0, -1.0, 2, 0.1, -0.1, 0.30000001, 1.234567890123,
+            1e-9, 1e16, 123456789.5, -2.5, 3.0000000000000004,
+        ]
+        for value in probes:
+            self.assertEqual(_format_number(value), canonical_number_repr(value), value)

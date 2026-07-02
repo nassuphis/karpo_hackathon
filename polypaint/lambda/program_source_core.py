@@ -163,6 +163,26 @@ def is_numeric_literal(text, *, allow_percent=False):
     return bool(_NUMBER_RE.fullmatch(raw))
 
 
+# ── Canonical number policies (FROZEN wire formats) ─────────────────────
+#
+# Every program kind hashes formatted numbers into its fingerprint, which is
+# a persisted render-artifact cache key. There are exactly TWO policies; each
+# kind is frozen to one and changing either orphans caches for its kinds:
+#
+#   canonical_number_g17   .17g + signed-zero fold        param v1, coeff v1
+#   canonical_number_repr  repr + int-collapse + 0-fold   root, solve-score
+#
+# (format_numeric_literal is the historical name of the repr policy; kept as
+# the primary symbol because solve-score source parsing imports it.)
+
+
+def canonical_number_g17(value):
+    number = float(value)
+    if number == 0:
+        number = 0.0
+    return format(number, ".17g")
+
+
 def format_numeric_literal(value):
     num = float(value)
     if num == 0.0:
@@ -170,6 +190,9 @@ def format_numeric_literal(value):
     if num.is_integer():
         return str(int(num))
     return repr(num)
+
+
+canonical_number_repr = format_numeric_literal
 
 
 def format_percent_literal(value):

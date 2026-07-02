@@ -1710,6 +1710,8 @@ function _normalizeParamProgramShortcutChip(name, args) {
 function _serializeParamProgramChain() {
     return _ppChain.map(item => {
         if (!item || !item.name) return null;
+        const preserved = _serializeSavedRowIfPristine(item, _normalizeParamProgramChainItem);
+        if (preserved) return preserved;
         const name = String(item.name || '').trim();
         const params = Array.isArray(item.params) ? item.params.map(v => String(v)) : [];
         if (name === 'legacy') {
@@ -1924,34 +1926,59 @@ function _paramProgramDefaultName() {
     }
 }
 
+function _normalizeParamProgramChainItem(item) {
+    if (Array.isArray(item) && item.length) {
+        const name = String(item[0] || '').trim();
+        if (!name) return [];
+        if (name === 'const' && item.length >= 3) {
+            const re = String(item[1] == null ? '0' : item[1]).trim() || '0';
+            const im = String(item[2] == null ? '0' : item[2]).trim() || '0';
+            return [{ name: 'const', params: [`(${re})+(${im})*1j`] }];
+        }
+        if (name === 'legacy') {
+            const [legacyName, src, tgt, args] = _normalizeLegacyBridgeParams(
+                item[1],
+                item[2],
+                item[3],
+                item.slice(4).map(v => String(v))
+            );
+            const params = _paramProgramLegacyArgDefs(legacyName)
+                ? [legacyName, src, tgt, ...args]
+                : [legacyName, src, tgt, args.join(',')];
+            return [{ name: 'legacy', params }];
+        }
+        return _normalizeParamProgramShortcutChip(name, item.slice(1));
+    }
+    if (item == null || item === '') return [];
+    return [{ name: String(item), params: [] }];
+}
+
 function _normalizeParamProgramChain(rawChain) {
     if (!Array.isArray(rawChain)) return [];
     return rawChain.flatMap(item => {
-        if (Array.isArray(item) && item.length) {
-            const name = String(item[0] || '').trim();
-            if (!name) return [];
-            if (name === 'const' && item.length >= 3) {
-                const re = String(item[1] == null ? '0' : item[1]).trim() || '0';
-                const im = String(item[2] == null ? '0' : item[2]).trim() || '0';
-                return [{ name: 'const', params: [`(${re})+(${im})*1j`] }];
-            }
-            if (name === 'legacy') {
-                const [legacyName, src, tgt, args] = _normalizeLegacyBridgeParams(
-                    item[1],
-                    item[2],
-                    item[3],
-                    item.slice(4).map(v => String(v))
-                );
-                const params = _paramProgramLegacyArgDefs(legacyName)
-                    ? [legacyName, src, tgt, ...args]
-                    : [legacyName, src, tgt, args.join(',')];
-                return [{ name: 'legacy', params }];
-            }
-            return _normalizeParamProgramShortcutChip(name, item.slice(1));
+        const chips = _normalizeParamProgramChainItem(item);
+        // Spelling preservation: hydration can respell equivalent forms
+        // (moebius 8-packed -> 4-complex), which changes the fingerprint of
+        // an UNEDITED program on load->save. Stash the original row so the
+        // serializer can emit it verbatim while the chip stays pristine.
+        if (Array.isArray(item) && chips.length === 1 && chips[0] && chips[0].name) {
+            chips[0].savedRow = item.slice();
         }
-        if (item == null || item === '') return [];
-        return [{ name: String(item), params: [] }];
+        return chips;
     }).filter(Boolean);
+}
+
+function _serializeSavedRowIfPristine(item, normalizeItem) {
+    // Emit the original saved row verbatim when re-hydrating it reproduces
+    // the chip's current state (i.e. the user never edited it) — spelling,
+    // and therefore the compiled fingerprint, is preserved.
+    if (!item || !Array.isArray(item.savedRow)) return null;
+    const rehydrated = normalizeItem(item.savedRow);
+    if (rehydrated.length !== 1 || !rehydrated[0] || rehydrated[0].name !== item.name) return null;
+    const current = (Array.isArray(item.params) ? item.params : []).map(v => String(v));
+    const original = (rehydrated[0].params || []).map(v => String(v));
+    if (JSON.stringify(original) !== JSON.stringify(current)) return null;
+    return item.savedRow.slice();
 }
 
 function _validateParamProgramUiChain(chain) {
@@ -2045,6 +2072,20 @@ function _portableParamProgramPayload(nameOverride = '') {
 function _normalizeCoeffProgramChain(rawChain) {
     if (!Array.isArray(rawChain)) return [];
     return rawChain.flatMap(item => {
+        const chips = _normalizeCoeffProgramChainItem(item);
+        // Spelling preservation — see _normalizeParamProgramChain: hydration
+        // respells equivalent forms (packed linear/pow, native+andy ->
+        // legacy chip); stash the original row so a pristine chip serializes
+        // back to the identical fingerprint.
+        if (Array.isArray(item) && chips.length === 1 && chips[0] && chips[0].name) {
+            chips[0].savedRow = item.slice();
+        }
+        return chips;
+    }).filter(Boolean);
+}
+
+function _normalizeCoeffProgramChainItem(item) {
+    {
         if (Array.isArray(item) && item.length) {
             const name = String(item[0] || '').trim();
             if (!name) return [];
@@ -2111,7 +2152,7 @@ function _normalizeCoeffProgramChain(rawChain) {
         if (item == null || item === '') return [];
         const name = String(item).trim() === 'const' ? 'push_const' : String(item).trim();
         return [{ name, params: [] }];
-    }).filter(Boolean);
+    }
 }
 
 function _coeffProgramStatus(message, isError = false) {
@@ -2138,6 +2179,8 @@ function _coeffProgramDefaultName() {
 function _serializeCoeffProgramChain() {
     return _coeffProgramChain.map(item => {
         if (!item || !item.name) return null;
+        const preserved = _serializeSavedRowIfPristine(item, _normalizeCoeffProgramChainItem);
+        if (preserved) return preserved;
         const name = String(item.name || '').trim();
         const params = Array.isArray(item.params) ? item.params.map(v => _str(v)) : [];
         if (name === 'legacy') {

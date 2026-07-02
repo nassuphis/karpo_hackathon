@@ -906,6 +906,29 @@ function makeContext({withCoeffVocab = true, coeffVocabOverride} = {}) {
 
 {
   const {ctx} = makeContext({});
+  // Spelling preservation: hydrating a saved row respells equivalent forms
+  // (moebius 8-packed -> 4-complex, native+andy -> legacy chip), which used
+  // to change the fingerprint of an UNEDITED program on load->save. Pristine
+  // chips must serialize back to the original row verbatim; edits respell.
+  const packedMoebius = ["legacy", "moebius", "both", "both", "1", "2", "3", "4", "5", "6", "7", "8"];
+  const paramChips = ctx._normalizeParamProgramChain([packedMoebius]);
+  assert(paramChips.length === 1 && Array.isArray(paramChips[0].savedRow),
+    'param hydration must stash the original saved row');
+  const preservedParam = ctx._serializeSavedRowIfPristine(paramChips[0], ctx._normalizeParamProgramChainItem);
+  assert(JSON.stringify(preservedParam) === JSON.stringify(packedMoebius),
+    'pristine packed moebius must serialize verbatim, got: ' + JSON.stringify(preservedParam));
+  paramChips[0].params[3] = '9+9i';
+  assert(ctx._serializeSavedRowIfPristine(paramChips[0], ctx._normalizeParamProgramChainItem) === null,
+    'edited chips must fall back to respelled serialization');
+  const sinRow = ["sin", "poly", "poly", "0.7"];
+  const coeffChips = ctx._normalizeCoeffProgramChain([sinRow]);
+  const preservedCoeff = ctx._serializeSavedRowIfPristine(coeffChips[0], ctx._normalizeCoeffProgramChainItem);
+  assert(JSON.stringify(preservedCoeff) === JSON.stringify(sinRow),
+    'pristine native+andy row must serialize verbatim, got: ' + JSON.stringify(preservedCoeff));
+}
+
+{
+  const {ctx} = makeContext({});
   // Garbage rows must reject loudly, never fabricate a real transform
   // (unit_circle/rev) the user never wrote.
   let importErr = '';
@@ -1353,6 +1376,8 @@ async function main() {
     extractFunction('_coeffProgramLegacyInputDefs'),
     extractFunction('_canonicalCoeffProgramChipName'),
     extractFunction('_paramValueOrDefault'),
+    extractFunction('_serializeSavedRowIfPristine'),
+    extractFunction('_normalizeCoeffProgramChainItem'),
     extractFunction('_serializeCoeffProgramChain'),
     extractFunction('_getCatalogEntry'),
     extractFunction('_isConstCoeffFunction'),

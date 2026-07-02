@@ -1014,3 +1014,27 @@ def test_coeff_program_elementwise_divide_by_zero_yields_zero():
     _meta, values = _run_chain_values(chain, n_coeffs=2)
     assert abs(values[0].real) <= 1e-12
     assert abs(values[1].real - 2.0) <= 1e-12
+
+
+def test_expr_vm_abs_survives_underflow_and_overflow_via_hypot():
+    # H4 regression: COEFF_EXPR_ABS used sqrt(r*r+i*i), so |z|^2 underflow
+    # silently zeroed tiny magnitudes and overflow error'd huge ones while
+    # the compiler's static folds (and the typed VM) computed correctly.
+    # abs is forced onto the dynamic EXPR path with a p1 term the run
+    # resolves to 0 (t1-grid start), so the value cannot be folded.
+    compiled = compile_coeff_program_chain(
+        [["poke_poly", "0", "abs(p1*0 + 2e-190)*1e195"]]
+    )
+    meta, data = _run_coeffgen({
+        "mode": "coeffgen",
+        "function": "const",
+        "cfpv": [1, 0, 0],
+        "n1": 1,
+        "n2": 1,
+        "coeff_transforms": [],
+        "coeff_program": _compiled_coeff_program_payload(compiled),
+    })
+    values = _complex_f32_values(data)
+    assert len(values) == 1
+    # 2e-190 * 1e195 = 200000; the old sqrt(|z|^2) path returned 0.0.
+    assert abs(values[0].real - 200000.0) <= 1.0, values

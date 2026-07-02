@@ -2513,6 +2513,10 @@ static inline void c_tan(double ar, double ai, double *rr, double *ri) {
     }
     double denom = cos(x2) + cosh(y2);
     if (fabs(denom) < 1e-300) {
+        /* Exact pole hit. For pure-real input match cmath.tan(a+0j) =
+         * tan(a) — the huge finite value at the double nearest pi/2 —
+         * instead of a silent 0 (which diverged from static folds). */
+        if (ai == 0.0) { *rr = tan(ar); *ri = 0.0; return; }
         *rr = 0.0;
         *ri = 0.0;
         return;
@@ -2552,6 +2556,9 @@ static inline void c_tanh(double ar, double ai, double *rr, double *ri) {
     }
     double denom = cosh(x2) + cos(y2);
     if (fabs(denom) < 1e-300) {
+        /* Exact pole hit (pure-imaginary input): tanh(iy) = i*tan(y);
+         * match cmath instead of a silent 0. */
+        if (ar == 0.0) { *rr = 0.0; *ri = tan(ai); return; }
         *rr = 0.0;
         *ri = 0.0;
         return;
@@ -2572,7 +2579,10 @@ static inline void c_log(double ar, double ai, double *rr, double *ri) {
 }
 
 /* Additional complex helpers for coefficient functions */
-static inline double c_abs(double r, double i) { return sqrt(r*r + i*i); }
+/* hypot avoids the |z|^2 underflow/overflow that silently zeroed tiny
+ * magnitudes and blew up huge ones — same fix as c_log/c_powr and the typed
+ * vector VM; the EXPR/param VMs route through here. */
+static inline double c_abs(double r, double i) { return hypot(r, i); }
 static inline double c_arg(double r, double i) { return atan2(i, r); }
 /* Complex e^z (not libm's 2^x exp2). The name is a transpiler intrinsic
  * (transpile_poly.py emits c_exp2 calls in generated code) — keep it stable. */
@@ -2595,6 +2605,13 @@ static inline void c_powc(double ar, double ai, double br, double bi, double *rr
     c_log(ar, ai, &lr, &li);
     c_mul(br, bi, lr, li, &mr, &mi);
     c_exp2(mr, mi, rr, ri);
+}
+/* Principal sqrt with an exact branch for negative reals: the c_powr
+ * exp(0.5*log z) path leaves a ~1e-16 real residue on the negative axis,
+ * diverging from the compiler's static folds (exact 0 + i*sqrt(-r)). */
+static inline void c_sqrt_c(double ar, double ai, double *rr, double *ri) {
+    if (ai == 0.0 && ar < 0.0) { *rr = 0.0; *ri = sqrt(-ar); return; }
+    c_powr(ar, ai, 0.5, rr, ri);
 }
 
 /* Complex inverse trig (needs c_powr defined above) */
@@ -4146,7 +4163,7 @@ static int coeffRunLoweredExprPlan(const CoeffEvalContext *ctx,
             else if (op == COEFF_EXPR_IMAG) { stackR[idx] = stackI[idx]; stackI[idx] = 0.0; }
             else if (op == COEFF_EXPR_ABS) { stackR[idx] = c_abs(stackR[idx], stackI[idx]); stackI[idx] = 0.0; }
             else if (op == COEFF_EXPR_LOG) { c_log(stackR[idx], stackI[idx], &stackR[idx], &stackI[idx]); }
-            else if (op == COEFF_EXPR_SQRT) { c_powr(stackR[idx], stackI[idx], 0.5, &stackR[idx], &stackI[idx]); }
+            else if (op == COEFF_EXPR_SQRT) { c_sqrt_c(stackR[idx], stackI[idx], &stackR[idx], &stackI[idx]); }
             else if (op == COEFF_EXPR_EXP) { c_exp2(stackR[idx], stackI[idx], &stackR[idx], &stackI[idx]); }
             else if (op == COEFF_EXPR_SIN) { c_sin(stackR[idx], stackI[idx], &stackR[idx], &stackI[idx]); }
             else if (op == COEFF_EXPR_COS) { c_cos(stackR[idx], stackI[idx], &stackR[idx], &stackI[idx]); }
@@ -4464,7 +4481,7 @@ static int coeffProgramApplyUnaryFn(int fnIndex,
     } else if (fnIndex == COEFF_VEC_CONJ) {
         *rr = ar; *ri = -ai;
     } else if (fnIndex == COEFF_VEC_SQRT) {
-        c_powr(ar, ai, 0.5, rr, ri);
+        c_sqrt_c(ar, ai, rr, ri);
     } else if (fnIndex == COEFF_VEC_LOG) {
         c_log(ar, ai, rr, ri);
     } else if (fnIndex == COEFF_VEC_REAL) {
@@ -6533,7 +6550,8 @@ static int paramEvalScalarExpr(const ParamProgram *program, int ref,
             else if (op == PARAM_EXPR_EXP) stack[sp - 1] = param_exp(z);
             else if (op == PARAM_EXPR_REAL) stack[sp - 1] = param_cx(z.r, 0.0);
             else if (op == PARAM_EXPR_IMAG) stack[sp - 1] = param_cx(z.i, 0.0);
-            else stack[sp - 1] = param_cx(sqrt(z.r * z.r + z.i * z.i), 0.0);
+            /* hypot: |z|^2 under/overflow diverged from static folds. */
+            else stack[sp - 1] = param_cx(hypot(z.r, z.i), 0.0);
             continue;
         }
         if (sp < 2) return 1;
@@ -6917,7 +6935,8 @@ static int paramEvalProgram(const ParamProgram *program, int gridN, double t1r, 
                 break;
             case PARAM_OP_ABS:
                 if (sp < 1) return 1;
-                stack[sp - 1] = param_cx(sqrt(stack[sp - 1].r * stack[sp - 1].r + stack[sp - 1].i * stack[sp - 1].i), 0.0);
+                /* hypot: |z|^2 under/overflow diverged from static folds. */
+                stack[sp - 1] = param_cx(hypot(stack[sp - 1].r, stack[sp - 1].i), 0.0);
                 break;
             case PARAM_OP_LEGACY: {
                 ParamCx in1 = p1, in2 = p2, out1, out2;

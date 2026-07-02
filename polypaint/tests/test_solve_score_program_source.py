@@ -338,3 +338,32 @@ def test_solve_score_source_text_from_chain_preserves_materialized_param_ops():
     assert "pow(-1)" in source
     assert "sawtooth(-2)" in source
     assert compiled["program_spec"] == old["program_spec"]
+
+
+def test_chain_stage_bad_quantile_reports_its_statement_line():
+    # G4: chain-stage validation errors reported line 1/col 1 regardless of
+    # the offending statement; they now attribute via prefix replay.
+    from solve_score_program_source import compile_solve_score_program_source
+
+    source = (
+        "a = metric(proximity, slv, q=0.1%)\n"
+        "b = metric(spread, slv, q=0.1%)\n"
+        "score = avg(a, metric(crowding, slv, q=99%))"
+    )
+    compiled = compile_solve_score_program_source(source, strict=False)
+    diag = compiled["diagnostics"][0]
+    assert diag["code"] == "bad_quantile"
+    assert diag["line"] == 3
+
+
+def test_chain_stage_non_finite_omega_reports_its_statement_line():
+    from solve_score_program_source import compile_solve_score_program_source
+
+    source = (
+        "a = metric(proximity, slv, q=0.1%)\n"
+        "score = omega_cosine(a, 1e400, 0)"
+    )
+    compiled = compile_solve_score_program_source(source, strict=False)
+    diag = compiled["diagnostics"][0]
+    assert diag["code"] == "bad_numeric_arg"
+    assert diag["line"] == 2

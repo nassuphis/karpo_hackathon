@@ -342,6 +342,7 @@ def parse_solve_score_program_source(source_text, strict=True):
 
     locals_map = {}
     chain = []
+    statement_spans = []
     explicit_output = False
     implicit_score = False
     stack_depth = 0
@@ -420,6 +421,12 @@ def parse_solve_score_program_source(source_text, strict=True):
             raise SolveScoreProgramSourceError(f"unknown solve-score statement {name!r}")
         except SolveScoreProgramSourceError as exc:
             diagnostics.append(diagnostic_from_exception(exc, line=stmt.line, column=stmt.column))
+        finally:
+            # Which chain rows each statement produced — lets the chain-stage
+            # compiler attribute its errors to a source line (G4).
+            statement_spans.append(
+                {"line": stmt.line, "column": stmt.column, "chain_end": len(chain)}
+            )
 
     if diagnostics and strict:
         raise SolveScoreProgramSourceCompileError(diagnostics)
@@ -427,6 +434,7 @@ def parse_solve_score_program_source(source_text, strict=True):
         "source_text": str(source_text or ""),
         "chain": chain,
         "statement_count": len(statements),
+        "statement_spans": statement_spans,
         "diagnostics": diagnostics,
     }
 
@@ -448,6 +456,30 @@ def _solve_score_compile_diagnostic(exc):
     return diagnostic(message, code=code)
 
 
+def _attributed_compile_diagnostic(exc, parsed):
+    """Attribute a whole-chain compile error to its source statement (G4).
+
+    Chain-stage validation (q-range, metric/source compatibility, omega
+    finiteness, stack depth, ...) runs over the full lowered chain, so its
+    errors carried line 1/col 1 regardless of the offending statement.
+    Re-compile cumulative chain prefixes statement by statement: the first
+    prefix that reproduces the SAME error owns it. Prefixes that fail
+    differently (e.g. incomplete-program stack errors) keep scanning.
+    O(statements * compile) with statements <= 32 — editor-path cheap.
+    """
+    message = str(exc)
+    diag = _solve_score_compile_diagnostic(exc)
+    for span in parsed.get("statement_spans") or ():
+        try:
+            compile_solve_score_chain(parsed["chain"][: span["chain_end"]])
+        except Exception as prefix_exc:
+            if str(prefix_exc) == message:
+                diag["line"] = int(span["line"] or 1)
+                diag["column"] = int(span["column"] or 1)
+                break
+    return diag
+
+
 def compile_solve_score_program_source(source_text, strict=True):
     parsed = parse_solve_score_program_source(source_text, strict=strict)
     if parsed["diagnostics"]:
@@ -461,7 +493,7 @@ def compile_solve_score_program_source(source_text, strict=True):
     try:
         compiled = compile_solve_score_chain(parsed["chain"])
     except Exception as exc:
-        diagnostics = [_solve_score_compile_diagnostic(exc)]
+        diagnostics = [_attributed_compile_diagnostic(exc, parsed)]
         if strict:
             raise SolveScoreProgramSourceCompileError(diagnostics) from exc
         return _canonical_program(

@@ -313,6 +313,34 @@ def _coeff_program_v2_key(program_id):
     return f"{COEFF_PROGRAMS_PREFIX}v2/{_normalize_program_id(program_id)}.json"
 
 
+def _drop_stale_program_v2_key(v2_key):
+    """Remove the migrated v2 copy when its v1 source is re-saved.
+
+    Fetch prefers the v2 key, so a stale v2 copy would shadow every later
+    edit forever (and re-migration would 409 on the conflict). A v1 re-save
+    supersedes the derived v2 artifact; migration can recreate it.
+    """
+    if _key_exists(v2_key):
+        s3.delete_object(Bucket=BUCKET, Key=v2_key)
+
+
+def _delete_program_keys(key, v2_key):
+    """Delete a saved program's v1 AND migrated v2 keys.
+
+    Returns the number of keys removed; 0 means neither existed (caller
+    raises its kind-specific not-found). Deleting only v1 left a v2 zombie
+    that fetch kept serving while list hid it.
+    """
+    deleted = 0
+    if _key_exists(key):
+        s3.delete_object(Bucket=BUCKET, Key=key)
+        deleted += 1
+    if _key_exists(v2_key):
+        s3.delete_object(Bucket=BUCKET, Key=v2_key)
+        deleted += 1
+    return deleted
+
+
 def _validate_solve_score_program_name(name):
     text = str(name or "").strip()
     if not text:
@@ -1506,6 +1534,7 @@ def handle_save_solve_score_program(event):
         ContentType="application/json",
         Metadata=_solve_score_program_put_metadata(program),
     )
+    _drop_stale_program_v2_key(_solve_score_program_v2_key(program["id"]))
     return ok_response({"program": program, "overwritten": overwritten})
 
 
@@ -1514,11 +1543,12 @@ def handle_delete_solve_score_program(event):
     program_id = str(params.get("id") or "").strip()
     if not program_id:
         raise ValueError("solve-score program delete requires id")
-    key = _solve_score_program_key(program_id)
-    if not _key_exists(key):
+    deleted = _delete_program_keys(
+        _solve_score_program_key(program_id), _solve_score_program_v2_key(program_id)
+    )
+    if not deleted:
         raise _SolveScoreProgramNotFound(f"solve-score program not found: {program_id}")
-    s3.delete_object(Bucket=BUCKET, Key=key)
-    return ok_response({"id": program_id, "deleted": 1})
+    return ok_response({"id": program_id, "deleted": deleted})
 
 
 def handle_compile_solve_score_program_source(event):
@@ -1673,6 +1703,7 @@ def handle_save_param_program(event):
         ContentType="application/json",
         Metadata=_param_program_put_metadata(program),
     )
+    _drop_stale_program_v2_key(_param_program_v2_key(program["id"]))
     return ok_response({"program": program, "overwritten": overwritten})
 
 
@@ -1681,11 +1712,12 @@ def handle_delete_param_program(event):
     program_id = str(params.get("id") or "").strip()
     if not program_id:
         raise ValueError("param program delete requires id")
-    key = _param_program_key(program_id)
-    if not _key_exists(key):
+    deleted = _delete_program_keys(
+        _param_program_key(program_id), _param_program_v2_key(program_id)
+    )
+    if not deleted:
         raise _ParamProgramNotFound(f"param program not found: {program_id}")
-    s3.delete_object(Bucket=BUCKET, Key=key)
-    return ok_response({"id": program_id, "deleted": 1})
+    return ok_response({"id": program_id, "deleted": deleted})
 
 
 def handle_compile_param_program_source(event):
@@ -1822,6 +1854,7 @@ def handle_save_coeff_program(event):
         ContentType="application/json",
         Metadata=_coeff_program_put_metadata(program),
     )
+    _drop_stale_program_v2_key(_coeff_program_v2_key(program["id"]))
     return ok_response({"program": program, "overwritten": overwritten})
 
 
@@ -1864,11 +1897,12 @@ def handle_delete_coeff_program(event):
     program_id = str(params.get("id") or "").strip()
     if not program_id:
         raise ValueError("coeff program delete requires id")
-    key = _coeff_program_key(program_id)
-    if not _key_exists(key):
+    deleted = _delete_program_keys(
+        _coeff_program_key(program_id), _coeff_program_v2_key(program_id)
+    )
+    if not deleted:
         raise _CoeffProgramNotFound(f"coeff program not found: {program_id}")
-    s3.delete_object(Bucket=BUCKET, Key=key)
-    return ok_response({"id": program_id, "deleted": 1})
+    return ok_response({"id": program_id, "deleted": deleted})
 
 
 def handle_list(event):

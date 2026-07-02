@@ -83,6 +83,65 @@ class TestProgramV2Migration(unittest.TestCase):
         self.assertEqual(same["statusCode"], 200)
         self.assertFalse(json.loads(same["body"])["wrote"])
 
+    @patch("handler_storage.s3")
+    def test_resave_after_migration_drops_stale_v2_copy(self, mock_s3):
+        # H2: fetch prefers the v2 key, so a re-save that leaves the migrated
+        # copy in place shadows every later edit forever and re-migration
+        # 409s on the conflict. A v1 re-save must invalidate the v2 copy.
+        import handler_storage
+
+        fake_s3 = _FakeS3()
+        _patch_s3(mock_s3, fake_s3)
+        handler_storage.handler(_event("/save-param-program", {
+            "name": "Life",
+            "source_text": "p1 = t1 + t2",
+        }), None)
+        handler_storage.handler(_event("/migrate-param-program", {"id": "life", "dry_run": False}), None)
+        self.assertIn("polypaint/param-programs/v2/life.json", fake_s3.objects)
+
+        handler_storage.handler(_event("/save-param-program", {
+            "name": "Life",
+            "source_text": "p1 = t1 * t2",
+        }), None)
+        self.assertNotIn(
+            "polypaint/param-programs/v2/life.json",
+            fake_s3.objects,
+            "re-save must drop the stale migrated v2 copy",
+        )
+        fetched = handler_storage.handler(_event("/fetch-param-program", {"id": "life"}), None)
+        self.assertEqual(fetched["statusCode"], 200)
+        self.assertIn("t1*t2", json.dumps(json.loads(fetched["body"])))
+
+        # And re-migration succeeds again on the fresh save (no 409).
+        remigrate = handler_storage.handler(_event("/migrate-param-program", {"id": "life", "dry_run": False}), None)
+        self.assertEqual(remigrate["statusCode"], 200)
+        self.assertTrue(json.loads(remigrate["body"])["wrote"])
+
+    @patch("handler_storage.s3")
+    def test_delete_removes_migrated_v2_copy_too(self, mock_s3):
+        # H2: deleting only the v1 key left a v2 zombie that fetch kept
+        # serving while list hid it.
+        import handler_storage
+
+        fake_s3 = _FakeS3()
+        _patch_s3(mock_s3, fake_s3)
+        handler_storage.handler(_event("/save-param-program", {
+            "name": "Gone",
+            "source_text": "p1 = t1",
+        }), None)
+        handler_storage.handler(_event("/migrate-param-program", {"id": "gone", "dry_run": False}), None)
+
+        deleted = handler_storage.handler(_event("/delete-param-program", {"id": "gone"}), None)
+        self.assertEqual(deleted["statusCode"], 200)
+        self.assertEqual(json.loads(deleted["body"])["deleted"], 2)
+        self.assertEqual(
+            [k for k in fake_s3.objects if "param-programs" in k],
+            [],
+            "delete must remove both the v1 and the migrated v2 keys",
+        )
+        fetched = handler_storage.handler(_event("/fetch-param-program", {"id": "gone"}), None)
+        self.assertEqual(fetched["statusCode"], 404)
+
     def test_translate_param_program_compiles_authoritative_source_text(self):
         from program_v2_translate import translate_param_from_old
 

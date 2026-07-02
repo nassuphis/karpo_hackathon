@@ -1419,7 +1419,7 @@ window._coeffRegistryVocab = {
       "root": {
         "program_kind": "root_program",
         "value_caps": {
-          "program_tokens": 64,
+          "program_tokens": 16,
           "total_stack": 0,
           "vector_len": 256,
           "vector_capable_stack": 0

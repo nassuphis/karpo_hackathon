@@ -113,3 +113,46 @@ class TestMacroResolversCompileChainOnBlankSource(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStorageAndComputeMacroResolutionAgree(unittest.TestCase):
+    def test_same_payload_same_chain_both_paths(self):
+        # F6 residue: storage keeps a parallel resolver implementation. Pin
+        # that the same saved payload expands to the same chain through the
+        # storage-side reader and the shared compute-side resolver, for the
+        # exact divergence case (fresh source_text + stale chain).
+        from program_compile_helpers import read_saved_program_source_chain
+
+        payload = {
+            "chain": [["push", "t1"]],
+            "source_text": "p1 = t1 * t2",
+        }
+        compute_chain = read_saved_program_source_chain(
+            "polypaint/param-programs/",
+            "param program",
+            "same-payload",
+            s3_client=_fake_s3_returning(payload),
+        )
+
+        import handler_storage
+
+        with patch.object(handler_storage, "s3", _fake_s3_returning(payload)):
+            storage_chain = handler_storage._read_param_program_source_chain("same-payload")
+
+        self.assertEqual(compute_chain, storage_chain)
+
+    def test_v2_prefixed_macro_id_resolves_same_key_as_storage(self):
+        # H7: storage normalizes away v2/ prefixes; the shared resolver used
+        # to build the key verbatim, reading a different object.
+        from program_compile_helpers import read_saved_program_source_chain
+
+        payload = {"chain": [["push", "t1"]], "source_text": "p1 = t1"}
+        fake = _fake_s3_returning(payload)
+        read_saved_program_source_chain(
+            "polypaint/param-programs/",
+            "param program",
+            "v2/foo",
+            s3_client=fake,
+        )
+        requested_key = fake.get_object.call_args.kwargs.get("Key")
+        self.assertEqual(requested_key, "polypaint/param-programs/foo.json")

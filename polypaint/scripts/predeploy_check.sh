@@ -41,6 +41,7 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_program_profiles_drift.py \
     tests/test_program_v2_migration.py \
     tests/test_saved_program_source_precedence.py \
+    tests/test_program_run_boundaries.py \
     tests/test_predeploy_gate_completeness.py \
     tests/test_root_program_source.py \
     tests/test_root_program_storage.py \

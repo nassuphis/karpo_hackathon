@@ -104,3 +104,40 @@ def test_root_execution_spec_is_json():
     assert payload["kind"] == "root"
     assert payload["tokens"][0]["registry"] == "root"
     assert payload["tokens"][0]["fn_index"] == 5
+
+
+def test_root_chain_cap_pinned_three_ways_profile_python_c():
+    # The cap lived in three places that silently diverged (profile said 64,
+    # C truncated at 16, Python enforced nothing). Pin all three together.
+    import re
+
+    from root_program_source import MAX_ROOT_TRANSFORMS
+
+    base = os.path.join(os.path.dirname(__file__), "..", "lambda")
+    with open(os.path.join(base, "program_profiles.json"), "r", encoding="utf-8") as fh:
+        profile_cap = json.load(fh)["profiles"]["root"]["value_caps"]["program_tokens"]
+    with open(os.path.join(base, "root_xforms.h"), "r", encoding="utf-8") as fh:
+        match = re.search(r"#define\s+MAX_RT_CHAIN\s+(\d+)", fh.read())
+    assert match, "MAX_RT_CHAIN not found in root_xforms.h"
+    c_cap = int(match.group(1))
+
+    assert MAX_ROOT_TRANSFORMS == c_cap == profile_cap, (
+        f"root chain cap drift: python={MAX_ROOT_TRANSFORMS} c={c_cap} profile={profile_cap}"
+    )
+
+
+def test_null_or_blank_chain_values_are_absent_not_errors():
+    # H5 regression: {"chain": null} raised after the key-presence rewrite;
+    # a JSON null/blank value means absent (explicit [] is a real empty chain).
+    from root_program_source import compile_root_program_chain
+
+    for payload in (
+        {"chain": None},
+        {"root_transforms": None},
+        {"root_transforms": ""},
+        {"root_program": {"chain": None}},
+    ):
+        compiled = compile_root_program_chain(payload)
+        assert compiled["chain"] == [], payload
+    explicit_empty = compile_root_program_chain({"root_transforms": []})
+    assert explicit_empty["chain"] == []

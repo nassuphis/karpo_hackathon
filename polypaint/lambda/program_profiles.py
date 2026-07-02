@@ -140,7 +140,7 @@ PROGRAM_PROFILES = {'profiles': {'coeff': {'output_contract': {'fixed_output_len
                                              'contexts': ['lhs', 'rhs'],
                                              'role': 'input_output',
                                              'type': 'vector_float'}},
-                       'value_caps': {'program_tokens': 64,
+                       'value_caps': {'program_tokens': 16,
                                       'total_stack': 0,
                                       'vector_capable_stack': 0,
                                       'vector_len': 256}},

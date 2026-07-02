@@ -327,7 +327,7 @@ window._programProfiles = {
         }
       },
       "value_caps": {
-        "program_tokens": 64,
+        "program_tokens": 16,
         "total_stack": 0,
         "vector_capable_stack": 0,
         "vector_len": 256

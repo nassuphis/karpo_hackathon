@@ -192,3 +192,32 @@ class TestSolveScoreNativeParity(unittest.TestCase):
             )
             self._assert_close_list(native_metrics, py.metrics)
             self._assert_close_list(native_outputs, py.outputs)
+
+
+class TestSolveScoreCPartitionDrift(unittest.TestCase):
+    def test_c_param_metric_partition_matches_python(self):
+        """solve_metric_is_param_metric (C) vs PARAM_SOLVE_SCORE_METRICS.
+
+        The C executor re-decides param-vs-root dispatch at runtime from its
+        own hardcoded case list; the value-parity loop derives its source
+        choice from the Python set, so a disagreement on the partition itself
+        was previously undetectable.
+        """
+        import re
+
+        import solve_score_chain as chain
+
+        header = (LAMBDA_DIR / "solve_score.h").read_text()
+        match = re.search(
+            r"static int solve_metric_is_param_metric\([^)]*\)\s*\{(.*?)\n\}",
+            header,
+            re.S,
+        )
+        self.assertIsNotNone(match, "solve_metric_is_param_metric not found in solve_score.h")
+        cases = re.findall(r"case\s+SOLVE_METRIC_([A-Z0-9_]+)\s*:", match.group(1))
+        c_partition = {name.lower() for name in cases}
+        self.assertEqual(
+            c_partition,
+            set(chain.PARAM_SOLVE_SCORE_METRICS),
+            "C param-metric partition drifted from Python PARAM_SOLVE_SCORE_METRICS",
+        )

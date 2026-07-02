@@ -26,6 +26,18 @@ This review separates valid domain differences from duplicated infrastructure, t
 
 ## Implementation Status — verified at `ba0f962` (2026-07-02)
 
+> **FIX BATCH LANDED (2026-07-02, `6e5feb3..60641ee`, 8 commits):** the Superseding Implementation Order was executed. Per wave, each verified by repro + full predeploy gate:
+> - **A `6e5feb3`** — 12 test files gated (registry schema, v2 migration, root family, source precedence, coeff source equivalence, whole-sweep SHA oracle, solve-score parity, source core, profile drift, parts contract, run boundaries) + `test_predeploy_gate_completeness.py` meta-test: new test files must be gated or explicitly excluded (H8 gate rot).
+> - **B `f7e2008`** — H1 param save forwards `source_text` (was 400-on-every-save); H3 littlewood `_ctAndyIndex` ReferenceError; A2 partial-vocab `ctCatalog` crash; H7 const imaginary-lane drop + whitespace arg-split mangling. All harness-pinned.
+> - **C `d1d8c10`** — Open #2 `inv_t_plus_2` arity drift (shadowing hardcodes deleted; arity reads registry compat; parity test compiles every compat count through parse AND chain); H5 null-chain absent-semantics (root + v2 copy), compat-block load-time raise, param_debug explicit-empty routing, optional-arg collision validation, `variable_arg_forms` count-3 form + schema gate; H6 OverflowError guards, exact-zero divide threshold, numeric-0 literal fix; H7 `macro(v2/…)` normalization, `/detail` coeff display; F3 chain diagnostics carry stable codes in both kinds.
+> - **D `bb88b50`** — H2 v2 lifecycle: save drops the stale migrated copy, delete removes both keys; save→migrate→edit→fetch and delete→404 lifecycle tests.
+> - **E `d8b49cf`** — dead payload deleted: coeff vocab `names`/`fnIndexByName`/`effectiveArgs`/`compatSignatures` (−535 generated lines, absence now gated), solve-score `delta`/`legacy_alias`, `root_source_text_from_payload`, `_paramProgramLegacyArgSpecs`; pinning tests repointed to loader invariants (B2/G7/F7).
+> - **F `80de7f1`** — G2 root cap pinned three ways (profile corrected 64→16 == Python == parsed C `#define`); G8 four-case blank/empty matrix per kind (gated contract); G6 `solve_metric_is_param_metric` C-partition drift test; F6 storage-vs-compute macro resolver equivalence pins.
+> - **G `a9732ef`** — H4 `c_abs`→`hypot` (EXPR + both param-VM sites), tan/tanh exact-pole now matches cmath for pure-real/imag input, `c_sqrt_c` exact negative-real branch; sweep_test rebuilt; native parity + M3 oracles + golden wire hex + **byte-exact whole-sweep SHAs all unchanged** (corpus doesn't touch the fixed regimes); new native regression test pins the underflow case.
+> - **H `60641ee`** — 5E residue: andy arities + stack limits now derive from `compat_signatures` (proven equivalent for all 28 fns); oracle-edit policy + true-scope docstrings (H8 oracle-fiction).
+>
+> **Deliberately NOT fixed (design decisions, not safe silent fixes):** H7 chip respelling (moebius 8-packed→4-complex, native+andy→legacy op) — needs a spelling-preservation decision; H7 garbage-row fabrication defaults + param import validation parity — load-path behavior changes; G4 solve-score statement-local line/col — parser surgery; `_format_number` dedupe into named policies — touches fingerprint-producing code paths for zero behavior change; `solve_metric_min_roots` drift test — no Python counterpart table to pin against. **Follow-up for the user:** validate the C numeric changes in the Docker ARM64 runtime (`scripts/test-docker-runtime.sh` needs deploy binaries, which only the user builds/deploys).
+
 Everything below was re-verified against source at HEAD, not inferred from commit messages. Full predeploy gate green.
 
 ### Done
@@ -43,7 +55,9 @@ Everything below was re-verified against source at HEAD, not inferred from commi
 
 ### Open
 
-1. **Gate gap (fix first):** `test_registry_schema.py` is not in `scripts/predeploy_check.sh` — the only finished work currently unprotected. One-line fix.
+> **Updated 2026-07-02:** a fifth deep-dive sweep (see **H-Series** below) found four broken-product-class bugs (H1 param save, H2 v2 lifecycle, H3 littlewood crash, H4 C `abs()` numeric), regressions inside the fix commits (H5), scalar-expression-layer defects (H6), persistence round-trip defects (H7), and systemic gate/oracle-integrity rot (H8: 100 of 140 test files ungated; the coeff source "frozen oracle" imports production). The **Superseding Implementation Order** (after the H-series) is now the plan of record; the item list below remains accurate but is subsumed by it.
+
+1. **Gate gap (fix first):** `test_registry_schema.py` is not in `scripts/predeploy_check.sh` — **worse than one line: six files** (`test_registry_schema`, `test_program_v2_migration`, `test_root_program_source`, `test_saved_program_source_precedence`, `test_coeff_source_equivalence`, `test_whole_sweep_oracle`) are ungated; see H8.
 2. **NEW BUG — `inv_t_plus_2` source-vs-chain arity drift:** `param_program_source.py:103` hardcodes arity `{0,1,2}` while registry `compat.variable_arg_counts` and the chain compiler allow `{0,1,2,3,4}`. Verified: `legacy(inv_t_plus_2, both, both, 1, 2, 3)` → source parse rejects `bad_arity`, chain compile accepts — so a saved 3-arg chain serializes to source that won't reparse. A fresh instance of the B1 flavor introduced *by* the A4 fix. Fix: read the arity set from `legacy_registry()["compat"]`.
 3. **Phases 6–8 (frontend arc), partial:** per-profile adapters now exist (`_paramRegistryAdapter` js/07:15, `_coeffRegistryAdapter` js/07:254) with a converging shape, and the static `_pt*` fallbacks are **deleted** (explicit "registry not loaded" state instead) — but there is no shared `_makeProgramRegistryAdapter` factory, and legacy globals (`_paramProgramLegacyArgSpecs`, `_coeffProgramLegacyInputDefs`, …) still exist as delegates.
 4. **Phase 9:** param validates at parse now, but via its own `_validate_legacy_source_entry`; no *shared* registry-name validator/canonicalizer across both parsers.
@@ -1248,7 +1262,93 @@ Add a narrow missing-DOM-ID test:
 - Maintain a small allowlist only for IDs created dynamically by live render-artifact HTML, such as render action buttons and download menus created by `refreshRenderArtifacts()`.
 - Do not allow removed picker IDs (`pt-add-*`, `ct-add-*`, `pp-add-*`, `cp-add-*`) onto that allowlist.
 
+## H-Series — Deep-Dive Sweep At `35f06fb` (2026-07-02)
+
+A fifth adversarial sweep targeting the least-audited surfaces: the recent fix commits themselves, the scalar-expression layer + C VMs, the persistence/editor round-trip layer, and the test suite's own integrity. Every severity-critical claim below was independently re-verified ([V] = repro run; [T] = traced to file:line). These are NEW findings, distinct from A–G.
+
+### H1. Param Program Save Is Broken For Text-Authored Programs — [V] HIGH
+
+`js/03-program-modals.js:887-890` posts only `{name, chain}` — no `source_text` — while `_portableParamProgramPayload` sets `chain: sourceText.trim() ? [] : chain` (`js/08-chip-editors.js:2003`) and the param editor is pinned to text mode (`js/08:35,113`). Net: every save posts `{name, chain: []}` → server 400 `"param program chain must be a non-empty JSON array"` (`handler_storage.py:553-554`). Coeff forwards source (`js/03:1239-1240`); solve-score got this **exact** fix in `c3680a6`; param was missed. **Fix:** forward `source_text` in the save payload (two lines, copy coeff's).
+
+### H2. The v1/v2 Saved-Program Lifecycle Is One-Way — Edits Vanish, Deletes Resurrect — [V] HIGH
+
+Fetch prefers the `v2/` key (`handler_storage.py:670-672,704-705,734-735`) but save writes only v1 (`:1667-1675`, coeff `:1816-1824`, solve-score `:1500-1508`) and delete deletes only v1 (`:1684-1687`, `:1867-1870`, `:1517-1520`). Verified with stub S3: save → migrate → edit → re-save → **fetch returns the stale pre-edit program**; delete → fetch still 200 (zombie served from `v2/`; list hides it); re-migrate → 409 `_MigrationConflict` (`:992-1001`) — the stale copy is unrepairable through the API. Migration is user-reachable UI (`js/03:493-521`). **Fix:** save must rewrite-or-delete the kind's v2 key; delete must delete both.
+
+### H3. Littlewood Chip Rendering Throws ReferenceError — [V] HIGH
+
+The `ba0f962` dead-code sweep deleted `_ctAndyIndex` (was `js/07:703`) but a live call survives at `js/09-render-orchestration.js:223` (`_coeffProgramVectorFormulaHtml`, littlewood branch), reachable from the read-only chip strips (`js/09:324,347`) and the program modal (`js/03:1065`). `littlewood` is a real catalog chip with a starter snippet. Rendering any coeff program containing one throws `ReferenceError: _ctAndyIndex is not defined`. The commit's removed-ID grep guard doesn't cover function references. **Fix:** inline `(pDefs||[]).findIndex(_isAndyParam)` with last-index fallback (`_isAndyParam` still exists).
+
+### H4. The C EXPR/Param VMs' `abs()` Missed The Hypot Fix — [V] HIGH (numeric)
+
+`c_abs` = `sqrt(r*r + i*i)` (`sweep_cli.c:2575`) is used by `COEFF_EXPR_ABS` (`:4147`), the param VM (`:6920`), and legacy `paramEvalScalarExpr` (`:6536`) — while the typed/vector VM was explicitly fixed to `hypot` for exactly this failure ("same fix as c_log/c_powr", `:4458-4461`). Verified numerically: underflow → silent 0 (and `param_sanitize` at `:6985` **zeroes** the param-side overflow to inf); overflow → spurious "did not produce a single finite result" row failure — while the same expression as source text (typed VM) computes correctly. Three-way divergence: EXPR VM ≠ typed VM ≠ Python folds. **Fix:** `hypot()` at the three sites.
+
+### H5. The Fix Commits Introduced Regressions (Beyond The Known `inv_t_plus_2`)
+
+- **[V] MED · `f8c933e` made explicit JSON-`null` chains a hard error** in `_root_transform_items` (`root_program_source.py:233-253`) and its copy (`program_v2_translate.py:235-238`): `{"chain": null}` etc. now raise where they compiled to an empty program before — contradicting the "null = absent" convention its sibling commit codified in `explicit_program_chain_for_run` (`pipeline_programs.py:100-114`). Latent today (callers sanitize). **Fix:** skip a key whose value is None.
+- **[V] MED · `af496e4` ships wrong Help text for `inv_t_plus_2`**: `_paramProgramLegacyVariableFormNotes` (`js/08:555-564`) zips `counts[idx]` with `forms[idx]`, but the registry has 5 counts and 4 forms — the 3-arg note gets the 4-component description and 4 args get none. No gate asserts `len(counts)==len(forms)`. **Fix:** key forms by count; add a schema gate.
+- **[V] MED-LOW · `38c1165` compat accessors degrade silently** when the registry `compat` block is missing/typo'd (`param_program_chain.py:274-283`: `payload.get("compat") or {}` → six empty families, no error, misleading downstream failures — while moebius/add keep working through in-code special cases, masking the damage). **Fix:** require the key + six sub-keys at load, like `require_registry_version`.
+- **[V] LOW-MED · `2ba3f65` skipped `handler_param_debug`**: `handler_param_debug.py:142` still uses `params.get("param_program_chain") or []`, so the debug endpoint disagrees with preview/plan/coeffgen on explicit-empty chains; `handler_compute_preview.py:235-250` assigns `*_chain_explicit` flags that are never read. **Fix:** route through `explicit_program_chain_for_run`.
+- **[T] LOW · `cdc9a33` optional-args loader validates only optional-vs-optional collisions** (`coeff_program_chain.py:477-479`): a positional arg named `andy` in `args[]` loads cleanly and would double-consume with `_split_trailing_andy`; >1 shared optional arg emits UI params but can never compile. Both blocked today only by pytest pins (`test_registry_schema.py:180,188`). **Fix:** reject positional/optional name collisions and >1 shared optional at load.
+- **[T] LOW · `f8c933e` introduced `MAX_ROOT_TRANSFORMS = 16`** (`root_program_source.py:27`) mirroring `MAX_RT_CHAIN 16` (`root_xforms.h:26`) with no drift test between them — ironic given `67ff066`'s purpose.
+
+### H6. Scalar-Expression Layer (First Audit) — [V]
+
+Beyond H4:
+
+- **MED · Raw `OverflowError` escapes both compilers** on static folds (`cmath.exp(800)` at `param_program_chain.py:621-622`, `coeff_program_chain.py:982-995`) — not RuntimeError, so no chip/arg context; the same expression made dynamic errors the row in coeff but **silently becomes 0** in the param VM (sanitize). **Fix:** catch OverflowError in both folders.
+- **MED · `c_tan`/`c_tanh` pole cutoff returns 0.0** (`sweep_cli.c:2515-2518,2554-2557`) where Python folds give the correct ±1.6e16 — `tan(p1-p1+pi/2)` → 0.0 dynamic vs 1.633e16 static.
+- **MED · Chain→source decompile of dynamic-arg chips silently switches VMs**: `coeff_source_text_from_chain` renders chain scalar-expr args as typed-VM source (`coeff_program_source.py:1105`) — every dynamic-arg chip round-trips with a different fingerprint AND different numerics (typed hypot/forgiving-divide vs EXPR c_abs/erroring-divide), and `poke_poly(0, tos0*conj(p2))` emits source that fails to compile. Consumed by Populate (`handler_storage.py:4062`) and PDF captions; only a RuntimeWarning marks it. **Fix:** emit raw chain-call syntax for chips carrying expr_refs, or flag output display-only.
+- **MED · Coeff compiles guaranteed-runtime-failure exprs param rejects at compile** (`t1+1/0`): param folds static subtrees eagerly (`param_program_chain.py:597-608`), coeff folds whole-expr only (`coeff_program_chain.py:771-781`).
+- **LOW ·** static-vs-dynamic division threshold asymmetry (fold rejects `|b|≤1e-300`, VM only exact zero); `sqrt(-4)` fold = exactly 2j vs dynamic `c_powr(x,0.5)` = 1.2e-16+2j; param accepts `1j*1j` as a real arg (folds first) where coeff rejects; param literal path `str(value or "")` maps numeric 0 → "empty expression" (`param_program_chain.py:391`; coeff has the correct None-test).
+- **CLEAN (verified):** EXPR opcode drift guards, expr_refs/-1 sentinel machinery, +−*/ precedence, branch cuts/log-floor, complex-literal parsers, param round-trip fingerprint stability for source-originated programs.
+
+### H7. Persistence / Editor Round-Trip Extras — [V]
+
+- **MED · JS populate fallback synthesizer drops the imaginary part of two-arg `const` rows**: `_paramProgramSourceFromRows([["const","1","2"],…])` → `p1 = 1` (`js/08:63-69`) vs Python's `p1 = (1)+(2)*1j`; the synthesized text is compute-authoritative on the Populate fallback path (`js/02:355-357`, server-side synth failures swallowed at `handler_storage.py:4138-4139`) → silent numeric change.
+- **MED · Chip hydration silently respells equivalent forms**, changing fingerprints of unedited programs on load→save: moebius 8-packed → 4-complex (`js/08:1569-1576`; 5-7-arg rows silently truncate); coeff native sin+andy (op 29) → legacy chip (op 9) (`js/08:2064-2072`).
+- **MED-LOW · `macro(v2/foo)` resolves different objects in storage vs compute**: storage normalizes away `v2/` (`handler_storage.py:278-289`), the shared compute resolver builds the key verbatim (`program_compile_helpers.py:74`) — a new hole in the F6 family. **Fix:** normalize (or reject `/`) in `read_saved_program_source_chain`.
+- **LOW ·** legacy-chip load splits expression args on whitespace (`js/08:1500-1504`, mangles `"1 + 2"`); serializers fabricate real transforms from garbage rows (empty legacy name → `unit_circle` `js/08:1644`, coeff → `rev`); param JSON import skips the chip validation coeff has (`js/08:1944-1966` vs `:2163-2164`); `translate_solve_score_from_old` omits `program_kind`; `translate_root_from_old` has zero production callers; dead persisted fields (`solve_score_has_source_text` metadata, `coeff_transforms_display` written-never-read by JS, two dead JS populate lookups); `statement_count` semantics differ per kind.
+- **CLEAN (verified):** the andy pipeline end-to-end (registry → vocab → chips → source → chain, fingerprint-identical three ways); duplicate-source precedence at save/populate/migrate; route error taxonomy; favorites; list handlers; solve-score modal save/load.
+
+### H8. Test-Suite Integrity — The Gates Are Partly Fiction — [V]
+
+- **HIGH · Gate rot is systemic**: 100 of 140 test files are ungated, including six guarding finished work — `test_registry_schema.py`, `test_program_v2_migration.py`, `test_root_program_source.py` (+ the root family), `test_saved_program_source_precedence.py`, `test_coeff_source_equivalence.py`, and `test_whole_sweep_oracle.py` (the byte-exact SHA native oracle). The gate list hasn't changed since `79895c0` (Jun 25). **Fix:** gate the six now + add a meta-test that every fast contract test file is in the gate (explicit exclusion list for slow suites).
+- **HIGH · The "frozen" oracle is partly fiction**: `coeff_program_source_legacy.py:19,225` **imports production** (`import coeff_program_source as _current`, lowers via `_current._legacy_lower_statement`) — the flagship equivalence tests compare production against production for semantic lowering; all oracles read **live** registries/profiles (data regressions cancel out); and `coeff_program_chain_legacy.py` **was modified post-freeze** (`cdc9a33`, +8/−2 — a necessary schema shim, but no before/after oracle-output diff was recorded). **Fix:** document the oracle-edit policy, snapshot registry fixtures for oracle paths, rename the source-equivalence test to its true scope (parser shell, not lowering).
+- **MED · Tests pin documented-dead code as required**: `test_coeff_program_drift.py:279-291,509-511` + `test_frontend_js.sh:298` assert the B2 dead vocab keys are present — the documented deletion now breaks three test sites. `test_frontend_js.sh:166` pins the dead `_paramProgramLegacyArgSpecs` line. **Fix:** pin absence (or TODO-tag the pins) when a field is scheduled for deletion.
+- **MED ·** `test_program_m3_oracles.py:32-34` silently drops the 6 harvested corpus cases if the directory disappears (floor is `checked >= 2`); `test_solve_score_source_equivalence.py` (gated) is pure round-trip self-consistency with no frozen oracle; two structurally tautological assertions in `test_coeff_program_drift.py:504-505` (generated == generator-input).
+- **LOW ·** `tests/test_program_profiles_drift.py:38` mutates a module-global cache without restore; the sweep-binary mtime heuristic; module-skips that make `test_companion_matrix.py` decorative on darwin; ~85% of `test_frontend_js.sh` assertions are text-presence greps (the vm-executed blocks are the real coverage).
+- **The 5 highest-value missing tests:** source-vs-registry arity parity (fails today on `inv_t_plus_2`); root cap three-way drift (fails today, 64 vs 16 vs 16); `solve_score.h` partition/min-roots drift; four-case blank/empty matrix per kind; partial-vocab (`{}`) frontend load test (crashes today at `js/07:240`).
+
+## Plan Review Verdict (2026-07-02) — Findings Excellent, Plan Now ~70% Archaeology
+
+A first-principles review of the plan against the code at HEAD concluded:
+
+- **Phases -1, 0, 1–5, 8, 10, 10A describe landed work.** The forward-looking remainder is ~10 small items scattered across four places (Open list, Residuals, PARTIAL table rows, stale phase texts).
+- **The Target Architecture sketches were never built — and the landed design is better.** `registry_common.py` is 13 flat helpers, simpler than the planned `RegistryConfig` dataclass API. Neither landed frontend adapter matches the `_makeProgramRegistryAdapter` sketch.
+- **Phase 6–8 factory: rejected.** The two adapters (36 + 33 lines, `js/07:15,254`) already converge on `loaded/names/categoryMeta/spec()/params()/category()`; their non-shared methods are irreducibly per-vocab. A factory = same LOC + indirection. The real residue is the `js/07:240` crash and the dead `_paramProgramLegacyArgSpecs`.
+- **Phase 9 shared validator: obsolete.** Param's parse-time validation landed per-kind; the only defect is 6 shadowing hardcode lines (`param_program_source.py:101-106`) whose fallback already reads the correct registry-pinned data. Delete the 6 lines; a shared `canonical_registry_function_name` would be a 2-line dict lookup wearing a module.
+- **Program-kind contract (G0): adopt as contract-as-tests, not contract-as-module.** The v1 fingerprints are frozen wire (cache keys) — one canonical formatter/hash would orphan caches for at least two kinds. Right shape: name the two frozen policies (`.17g`+sha1 for param/coeff v1; `repr`+sha256 for root/solve) in one documented place, dedupe the 4 **live** `_format_number` copies into those two named policies (frozen-oracle copies untouched), and enforce diagnostics/precedence/empty-policy per kind via conformance tests — pin the divergence, don't unify it.
+
+## Superseding Implementation Order
+
+Replaces the 14-step order below (12 of 14 steps are landed or superseded — kept for the record).
+
+1. **Gate the six ungated test files** in `scripts/predeploy_check.sh` (H8) — all pass today; protects everything already built. (S)
+2. **Fix H1** (param save: forward `source_text`, two lines) and **H2** (v2 lifecycle: save rewrites/deletes v2 key, delete deletes both). (S + M)
+3. **Fix H3** (littlewood `_ctAndyIndex`) and the `js/07:240` partial-vocab crash (A2 residue), with a `{}`-vocab frontend test. (S)
+4. **Fix `inv_t_plus_2`**: delete the 6 shadowing lines (`param_program_source.py:101-106`) + a source-vs-registry arity assertion. (S)
+5. **Fix H4** (`hypot` at the 3 C sites) + OverflowError guards in both fold paths (H6). (S/M)
+6. **Dead-code sweep**: `root_source_text_from_payload`; dead coeff vocab keys **and their pinning tests**; solve-score `delta`/`legacy_alias`; `_paramProgramLegacyArgSpecs` + its pin. Regenerate vocabs same commit. (M)
+7. **Root cap**: profile 64→16 + three-way drift test (profile ↔ `MAX_ROOT_TRANSFORMS` ↔ `MAX_RT_CHAIN`). (S)
+8. **Oracle integrity** (H8): document the freeze policy, snapshot registry/profile fixtures for oracle paths, rename the coeff source-equivalence test to its true scope. (M)
+9. **Boundary conformance tests**: four-case blank/empty matrix per kind (pin, don't unify); `solve_score.h` partition drift test; storage-vs-compute macro resolver equivalence (+ the H7 `macro(v2/…)` normalization). (M)
+10. **Optional polish**: derive the two remaining coeff fn_index hardcodes from `compat_signatures`; dedupe the 4 live `_format_number` copies into two named frozen policies; chain-compiler diagnostic codes (F3); solve-score statement-local error positions (G4) — cut if it needs parser surgery. (S/S/M/M)
+
+**Deleted from the plan:** Phase 0; the Phase 6 factory; Phase 7's `_programRegistryTransformHelpItem`; Phase 9's shared validator; the Target Architecture `RegistryConfig`/frontend-factory sketches (superseded by the simpler landed design); old Implementation Order steps 1–13.
+
 ## Target Architecture
+
+> **SUPERSEDED (2026-07-02):** the sketches below were never built — the landed design is simpler and better. `lambda/registry_common.py` exists as 13 flat helpers (no `RegistryConfig` dataclass); the frontend has two converging per-profile adapters (`js/07:15,254`) instead of a factory. See the Plan Review Verdict above. Kept as historical record.
 
 ### Shared Python Registry Module
 
@@ -2629,6 +2729,8 @@ Because `uv` cache access is restricted under the sandbox, run this with escalat
 
 ## Implementation Order
 
+> **SUPERSEDED (2026-07-02)** by the "Superseding Implementation Order" above — 12 of the 14 steps below are landed or obsolete. Kept as historical record.
+
 Recommended order:
 
 1. Fix Phase -1 live correctness bugs first: Solve-score numeric fingerprint collisions, root native chain cap mismatch, root lossless source regeneration, Param signed-zero fingerprints, Param chain-to-source round-trip safety, Param macro source precedence, canonical v2 fingerprint payloads, and v2 empty-field precedence.
@@ -2780,30 +2882,32 @@ Mitigation:
 
 ## Definition Of Done
 
-The refactor is complete when:
+> **Rewritten 2026-07-02** against the verified state. Already-met bullets moved to the first block; unmeetable-as-written bullets dropped with reasons.
 
-- Phase -1 live bugs are fixed and covered: Solve-score fingerprint collisions, root native chain cap mismatch, root source-regeneration lossiness, Param signed-zero fingerprints, empty-program and blank-source policy/falsy fallback behavior, Coeff partial-vocab crash, Coeff `round` ambiguity policy, Param/Coeff parse-time/default validation, Param chain-to-source round-trip guard, Param migration source safety, shared Param macro source precedence, root run-boundary diagnostics, solve-score non-strict fallback diagnostics, boundary translator drift gates, C default/packing/metric-partition drift gates, canonical v2 fingerprint payloads, v2 empty-field precedence, and compiler diagnostic codes.
-- One shared Python module owns generic registry loading/validation/render helpers.
-- Param and Coeff generators both use the shared module.
-- Param and Coeff runtime loaders both use the shared module.
-- Param runtime compatibility behavior is loaded from registry `compat`, not private production constants.
-- Legacy transform-array boundary translation is registry-derived or drift-tested against the registry.
-- C Param compatibility behavior is registry-derived or drift-tested against the registry.
-- C Param/Coeff default and packing behavior is either eliminated by Python expansion or drift-tested against registry-declared defaults/signatures.
-- Root profile cap and native root cap are pinned together.
-- Solve-score numeric canonicalization cannot collide close-but-distinct floats.
-- Cross-kind fingerprint tests prove that semantic identity excludes display/source text and handles signed-zero consistently.
-- Root regenerated source round-trips without changing root fingerprints.
-- V2 translators use key-presence semantics and do not silently replace explicit empty fields with stale fallback/default programs.
-- Blank source and empty chain semantics are pinned for Param, Coeff, Root, and Solve-score.
-- Param and Coeff registry schema share the same category metadata convention.
-- Inert `variable_arg_forms` is either rendered or removed.
-- Frontend Help consumes a normalized adapter rather than raw profile-specific globals.
-- Static Param transform descriptions are no longer a silent fallback.
-- Source parsers use shared registry-name validation.
-- Shared schema tests cover both registries.
-- Registry/config code avoids truthiness fallback to compiler constants.
-- Run-boundary program-chain precedence uses key presence rather than truthiness where empty chains are meaningful.
-- Coeff `andy` arity and native packed stack limits are derived from registry data where compatibility signatures exist, or explicitly documented as remaining debt.
-- M3 oracle and Coeff wire fingerprint tests remain green after generator and loader refactors.
-- Full predeploy is green.
+**Already met (verified at `ba0f962`/`35f06fb`):**
+
+- Phase -1 live bugs fixed and covered (solve-score collisions, root cap enforcement, root regeneration, param signed-zero, chain-to-source guard, macro precedence, v2 fingerprints/empty-fields, partial-vocab `programParamDefs` guard, parse-time validation, zero-defaults, round policy).
+- One shared Python module (`registry_common.py`); both generators and both loaders use it.
+- Param runtime compat loaded from registry `compat`; boundary translation registry-derived (param) or drift-pinned (coeff).
+- C param compat + C default/packing drift-tested against the registry (`67ff066`).
+- Cross-kind fingerprint tests exclude display/source text and handle signed-zero.
+- Category metadata convention shared; `variable_arg_forms` rendered; static Param fallback gone (explicit not-loaded state); Help consumes the per-profile adapters; shared schema tests exist.
+- Coeff andy is declared registry data (`shared_optional_args`); M3 oracle + wire fingerprint tests green.
+
+**Dropped (superseded by the Plan Review Verdict):**
+
+- ~~"Source parsers use shared registry-name validation"~~ — the achieved per-kind validation is the better outcome; the remaining defect is the 6-line `inv_t_plus_2` hardcode, not a missing abstraction.
+- ~~The `_makeProgramRegistryAdapter` factory~~ — two converging adapters are the endpoint.
+- ~~One canonical formatter/hash across kinds~~ — impossible without orphaning frozen-wire caches; replaced by "two named frozen policies + conformance tests".
+
+**The refactor is DONE when the Superseding Implementation Order lands:**
+
+1. The six ungated test files are in `scripts/predeploy_check.sh`, plus a meta-test that keeps the gate list complete.
+2. H1–H4 are fixed and regression-tested (param save, v2 lifecycle, littlewood, C `abs()` hypot).
+3. The `inv_t_plus_2` shadowing lines are deleted with a source-vs-registry arity assertion.
+4. The H5 fix-commit regressions are closed (null-chain, help mispairing, compat load-time raise, param_debug, optional-arg collision validation).
+5. The dead-code sweep lands (dead vocab keys + their pins, dead helpers, dead subfields).
+6. Root cap three-way pinned (profile = Python = C = 16).
+7. Oracle integrity policy documented; registry fixtures snapshotted for oracle paths; source-equivalence test renamed to its true scope.
+8. Boundary conformance tests pin the four-case blank/empty matrix per kind, the `solve_score.h` partitions, and storage-vs-compute macro resolution.
+9. Full predeploy green, M3 oracle + wire fingerprints green throughout.

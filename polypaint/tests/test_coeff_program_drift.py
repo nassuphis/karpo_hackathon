@@ -418,11 +418,13 @@ def test_source_transform_aliases_are_mirrored_in_chain():
 
 
 def test_coeff_registry_has_no_unpinned_generic_complex_args():
-    # round.multiplier is the one intentional semantic complex arg. The other
-    # complex literal support paths remain compatibility-signature packings; a
-    # future registry-level type:"complex" arg must update the packer and wire
+    # round.multiplier and pow.multiplier/exponent are the intentional
+    # semantic complex args (pow.args was normalized from four packed real
+    # lanes to its two-complex display shape; packing is driven by its
+    # complex_pair compat signature, never the declared args). A future
+    # registry-level type:"complex" arg must update the packer and wire
     # corpus explicitly.
-    allowed = {("round", "multiplier")}
+    allowed = {("round", "multiplier"), ("pow", "multiplier"), ("pow", "exponent")}
     offenders = [
         (name, arg.get("name") or arg.get("ph") or idx)
         for name, spec in legacy_registry()["by_name"].items()

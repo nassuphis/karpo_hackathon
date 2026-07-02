@@ -694,7 +694,7 @@ class TestCoeffProgramChain(unittest.TestCase):
     def test_legacy_args_are_real_int_or_enum_only(self):
         from coeff_program_chain import legacy_registry
 
-        allowed_complex_args = {("round", "multiplier")}
+        allowed_complex_args = {("round", "multiplier"), ("pow", "multiplier"), ("pow", "exponent")}
         for spec in legacy_registry()["by_name"].values():
             for arg in spec["args"]:
                 if (spec["name"], arg.get("name")) in allowed_complex_args:

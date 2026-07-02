@@ -715,24 +715,14 @@
       ],
       "args": [
         {
-          "name": "a",
-          "type": "real",
-          "default": 1.0
+          "name": "multiplier",
+          "type": "complex",
+          "default": "1"
         },
         {
-          "name": "b",
-          "type": "real",
-          "default": 0.0
-        },
-        {
-          "name": "pr",
-          "type": "real",
-          "default": 1.0
-        },
-        {
-          "name": "pi",
-          "type": "real",
-          "default": 0.0
+          "name": "exponent",
+          "type": "complex",
+          "default": "1"
         }
       ],
       "compat_signatures": [

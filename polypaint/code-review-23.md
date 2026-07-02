@@ -24,6 +24,45 @@ The registry mechanics should not be different:
 
 This review separates valid domain differences from duplicated infrastructure, then gives an implementation plan.
 
+## Implementation Status — verified at `ba0f962` (2026-07-02)
+
+Everything below was re-verified against source at HEAD, not inferred from commit messages. Full predeploy gate green.
+
+### Done
+
+| Plan item | Status / evidence |
+|---|---|
+| **Phase -1** live-bug batch (A1 signed-zero, A2 partial-vocab crash, A4 parse-time legacy validation, A5/F6 macro source precedence, A6 serializer round-trip guard, X1 solve-score `%g` collision, X2 root cap, F4 zero-defaults, root malformed-payload/mismatch diagnostics, v2 fingerprints exclude `source_text`) | ✅ landed in `f8c933e`; every repro re-run and confirmed fixed; equivalent-zero forms collapse while nonzero fingerprints stay distinct; M3 oracle green |
+| **Phase 1** shared schema tests | ✅ `tests/test_registry_schema.py` exists and passes — **not yet predeploy-gated (see Open #1)** |
+| **Phase 2** `lambda/registry_common.py` | ✅ exists; pure shared helpers |
+| **Phase 3** generators on common helpers | ✅ both `gen_param_vocab.py` and `gen_coeff_vocab.py` import `registry_common` |
+| **Phase 4 / B1** param compat registry-authoritative | ✅ all **six** compat families read via `_legacy_compat()` → `legacy_registry()["compat"]` (`param_program_chain.py:343-368`); the registry is no longer decorative at runtime. Python constants remain (`:239`) as drift-test fixtures per the transition rule, pinned by `test_param_program_drift.py:174-176` |
+| **Phase 5A** category schema normalized | ✅ param registry now top-level `category_meta` (was `ui.categories`) |
+| **Phase 5B** `variable_arg_forms` | ✅ no longer inert — top-level, consumed by `gen_param_vocab.py` |
+| **Phase 10 / D — andy de-specialized** | ✅ `supports_andy` deleted from all 28 functions; andy declared **once as data** in top-level `shared_optional_args` (`{"name":"andy","type":"real","default":0,"optional":true,"role":"andy"}`); generator `ANDY_PARAM` hardcode deleted (0 refs); `effective_args` materializes it from the shared declaration (`coeff_program_chain` loader). Andy is now an ordinary declared optional argument |
+
+### Open
+
+1. **Gate gap (fix first):** `test_registry_schema.py` is not in `scripts/predeploy_check.sh` — the only finished work currently unprotected. One-line fix.
+2. **NEW BUG — `inv_t_plus_2` source-vs-chain arity drift:** `param_program_source.py:103` hardcodes arity `{0,1,2}` while registry `compat.variable_arg_counts` and the chain compiler allow `{0,1,2,3,4}`. Verified: `legacy(inv_t_plus_2, both, both, 1, 2, 3)` → source parse rejects `bad_arity`, chain compile accepts — so a saved 3-arg chain serializes to source that won't reparse. A fresh instance of the B1 flavor introduced *by* the A4 fix. Fix: read the arity set from `legacy_registry()["compat"]`.
+3. **Phases 6–8 (frontend arc), partial:** per-profile adapters now exist (`_paramRegistryAdapter` js/07:15, `_coeffRegistryAdapter` js/07:254) with a converging shape, and the static `_pt*` fallbacks are **deleted** (explicit "registry not loaded" state instead) — but there is no shared `_makeProgramRegistryAdapter` factory, and legacy globals (`_paramProgramLegacyArgSpecs`, `_coeffProgramLegacyInputDefs`, …) still exist as delegates.
+4. **Phase 9:** param validates at parse now, but via its own `_validate_legacy_source_entry`; no *shared* registry-name validator/canonicalizer across both parsers.
+5. **C-executor runtime single-sourcing:** the **drift tests landed** (`67ff066`: `dispatchPt` defaults vs registry, `coeffLegacyApply` fallbacks, native packing special-cases vs `compat_signatures` — all pass), so the earlier "decorative registry" risk is now pinned. Still open: C remains the runtime authority for omitted args (no Python-always-expands contract), and `solve_score.h` metric-partition/min-roots tables have no drift test.
+6. **Residuals:** `_split_native_transform_andy` still hardcodes arities by fn_index (`coeff_program_source.py:268`, registry `andy_arg_counts` exists but unread there); `_max_native_transform_stack_arg_count` still fn_index-hardcoded (both now drift-pinned); root profile still declares `program_tokens: 64` while Python/C enforce 16, no cap drift test; solve-score chain-stage diagnostics still report line 1/col 1; empty/blank-source policy still diverges by kind (G8); dead code: `root_source_text_from_payload` (zero callers), coeff vocab keys `fnIndexByName`/`effectiveArgs`/`compatSignatures`/`names` and solve-score `delta`/`legacy_alias` subfields (zero JS consumers).
+
+### Verification sweep — all 37 findings re-verified at `ba0f962`
+
+Every finding section below was re-checked against HEAD by re-running its repro (four parallel deep-dives; severity-critical items re-run independently). Summary — the body text of each finding describes the **as-found** state; this table is current truth:
+
+| Status | Findings |
+|---|---|
+| **FIXED, repro re-run, test-pinned** | A1, A3 (round overlap resolved: split by call form, both signatures named in registry + drift-pinned; heading retitled accordingly), A4 (incl. bare-shortcut arity + coeff `roots` int/enum/extra-arg → coded at parse), A5, A6, B1 (all six compat families runtime-read + drift-pinned + C-drift checks), C1, C3, C4, C8, D1, D2 (andy = `shared_optional_args` data; `ANDY_PARAM` gone; schema test asserts `supports_andy` absent), F1-fallback-half, F2-param-half, F4, F6, G1, G3, G5, G9, G10, G11 (statics `_ptCatalog`/`_ptInfo`/`_ptCategoryMeta` gone repo-wide, regression-guarded) |
+| **Resolved beyond the ask** | Spurious #4 (silent fallback → explicit registry-not-loaded article), #5 (`variable_arg_forms` rendered in Help via `variableForms()`), #8 (shared schema test exists — but un-gated, Open #1) |
+| **PARTIAL** | A2 (documented guard applied, but `{}` vocab still crashes at the unguarded `ctCatalog` read, js/07:240), B2 (`supportsAndy` gone; 4 dead keys remain, now drift-pinned), F1-policy, F5 (under-arity policy explicit in code but not registry-declared; plus the new `inv_t_plus_2` drift), F8/G4 (root + solve-score have distinct codes now; solve-score chain-stage still line-1/col-1), G0 (signed-zero/`%g`/v2 leaks fixed; still 6 `_format_number` copies, `.17g` vs `repr`, sha1 vs sha256 — no shared contract), G2 (cap enforced 16; profile still 64, no drift tie), G6 (3 C-drift tests landed; solve-score partitions + runtime single-sourcing open), Spurious #1/#2 (generator/loader cores shared; residue: duplicated `main()` dispatch, per-arg normalization, memo boilerplate), #3 (top-level `category_meta` unified; per-function path still `ui.category` vs `category`), #6, #7 |
+| **STILL-PRESENT (unchanged)** | C2 (`choices or _ENUM_ARG_VALUES`), C5 (`_profileSelectorChoices` `.length` fallback, now js/07:340), C6 (`selectors.get(name) or []`), C7 (display-only), D3, D4, E (intentional; now structurally encoded `aliases` vs `chain_only_aliases` + pinned), F3 (chain compilers still emit code-less `{level,message}`), F7 (+ `root_source_text_from_payload` now confirmed dead), G7, G8 |
+
+Registry-shape note: both "Current State" JSON samples below are **stale** — param top keys are now `version/functions/category_meta/variable_arg_forms/compat` (no top-level `ui` block; `compat` has 6 keys), coeff top keys are `version/shared_optional_args/functions/category_meta` (`supports_andy` deleted everywhere). The consumer lists remain accurate.
+
 ## Current State
 
 ### Param Registry
@@ -50,17 +89,20 @@ Current shape:
       }
     }
   ],
-  "ui": {
-    "categories": {...},
-    "variable_arg_forms": {...}
-  },
+  "category_meta": {...},
+  "variable_arg_forms": {...},
   "compat": {
     "target_arg_indexes": {...},
     "independent_targets": [...],
-    "variable_arg_counts": {...}
+    "variable_arg_counts": {...},
+    "target_first": [...],
+    "target_last": [...],
+    "dither_target_first": [...]
   }
 }
 ```
+
+(Sample updated to the post-Phase-5A shape at `ba0f962`: `category_meta` and `variable_arg_forms` are top-level — the old top-level `ui` block is gone — and `compat` carries all six families.)
 
 Important consumers:
 
@@ -71,7 +113,7 @@ Important consumers:
 - Frontend catalog and help adapter: `js/07-transform-catalogs.js`, `js/08-chip-editors.js`.
 - Drift tests: `tests/test_param_program_drift.py`.
 
-Recent local state is materially better than the old schema: Param functions now have function-local `ui.desc`, and runtime args have local `ui.params`. That is the right direction. The remaining issue is that Param is still not using the same registry infrastructure as Coeff.
+Recent local state is materially better than the old schema: Param functions now have function-local `ui.desc`, and runtime args have local `ui.params`. **Update at `ba0f962`:** Param now shares registry infrastructure with Coeff — both generator and runtime loader build on `lambda/registry_common.py`, and the compiler reads all six `compat` families from the registry at runtime (`param_program_chain.py:343-368`). The residue is listed in Spurious #1/#2 below.
 
 ### Coeff Registry
 
@@ -82,6 +124,9 @@ Current shape:
 ```json
 {
   "version": 1,
+  "shared_optional_args": [
+    {"name": "andy", "type": "real", "default": 0, "optional": true, "role": "andy"}
+  ],
   "functions": [
     {
       "name": "rev",
@@ -91,7 +136,6 @@ Current shape:
       "allowed_tgt": ["poly", "push"],
       "args": [],
       "length_policy": "same",
-      "supports_andy": true,
       "ui": {
         "desc": "..."
       }
@@ -101,6 +145,8 @@ Current shape:
 }
 ```
 
+(Sample updated to the post-Phase-10A shape at `ba0f962`: `supports_andy` is deleted everywhere — `test_registry_schema.py:178` asserts its absence — and andy is declared once as data in top-level `shared_optional_args`, materialized into each spec's `effective_args`/`optional_args` by the loader.)
+
 Additional Coeff-only fields are legitimate:
 
 - `aliases`
@@ -108,7 +154,7 @@ Additional Coeff-only fields are legitimate:
 - `chip_name`
 - `compat_signatures`
 - `length_policy`
-- `supports_andy`
+- `shared_optional_args` (top-level; replaces the deleted `supports_andy` flag)
 - `ui.program_params`
 
 Important consumers:
@@ -120,7 +166,7 @@ Important consumers:
 - Frontend catalog and help adapter: `js/07-transform-catalogs.js`, `js/08-chip-editors.js`.
 - Drift tests: `tests/test_coeff_program_drift.py`.
 
-Coeff is closer to generated-only frontend metadata than Param, but it still has a separate generator, separate runtime loader, separate frontend adapter, and an `andy` special case split between registry data and generator code.
+Coeff is closer to generated-only frontend metadata than Param. **Update at `ba0f962`:** the generator/loader cores are shared via `registry_common`, and the `andy` special case is gone from generator code — it flows through the generic optional-args path from `shared_optional_args`. The remaining per-profile pieces are the frontend adapters (two parallel implementations, no shared factory) and the profile-specific arg builders.
 
 ## Valid Differences
 
@@ -146,7 +192,7 @@ Coeff registry functions:
 - Need vector length policy.
 - Need source aliases and chain-only aliases.
 - Need native-transform packing compatibility.
-- Currently carry universal `andy` support.
+- Carry universal `andy` support, now declared once as a shared optional arg (`shared_optional_args`), no longer a per-function flag.
 - Some functions need different chip params versus source-program params (`ui.params` vs `ui.program_params`).
 
 Do not merge the compilers or force one registry to pretend it is the other. Merge the registry infrastructure around them.
@@ -154,6 +200,8 @@ Do not merge the compilers or force one registry to pretend it is the other. Mer
 ## Spurious Differences And Drift Surfaces
 
 ### 1. Duplicate Generator Skeletons
+
+> **Status at `ba0f962`: MOSTLY RESOLVED.** Both generators import `load_json`/`default_text`/`require_registry_version`/`registry_functions`/`require_function_ui_desc`/`extract_category_meta`/`render_js_assignment`/`check_generated_file` from `registry_common`. Residue: the ~14-line `main()` `--check`/write dispatch is still duplicated; arg-display builders stay profile-specific by design.
 
 `lambda/gen_param_vocab.py` and `lambda/gen_coeff_vocab.py` both do the same basic work:
 
@@ -169,6 +217,8 @@ The profile-specific fields differ, but the generator core should be shared.
 
 ### 2. Duplicate Runtime Registry Loaders
 
+> **Status at `ba0f962`: PARTIAL.** Both loaders share `load_json` + `require_registry_version` + `registry_functions` + `validate_function_identity` (5 of the 8 bullets below). Still per-profile: MAX_ARGS guard, per-arg normalization loop, `by_name`/`by_index` construction, memoized `legacy_registry()` boilerplate.
+
 `param_program_chain.py::_load_legacy_registry` and `coeff_program_chain.py::_load_legacy_registry` both:
 
 - Load JSON.
@@ -183,6 +233,8 @@ The profile-specific fields differ, but the generator core should be shared.
 Coeff has extra fields and alias validation. Param has compatibility fields. The common loader core should be shared and profile augmentation should be profile-specific.
 
 ### 3. Category Metadata Shape Differs
+
+> **Status at `ba0f962`: PARTIAL.** Top-level divergence resolved — both registries use top-level `category_meta`, both generators use `extract_category_meta`. Residue: per-function path still diverges (param `fn.ui.category` vs coeff `fn.category`); the shared schema test bridges it with `fn.get("category") or fn["ui"].get("category")`.
 
 Param:
 
@@ -202,6 +254,8 @@ This is a pure schema difference. It creates adapter code and tests that should 
 
 ### 4. Param Has Static Frontend Fallback Metadata
 
+> **Status at `ba0f962`: RESOLVED (beyond the ask).** `_ptInfo`/`_ptCategoryMeta`/`_ptCatalog` no longer exist anywhere (removed in `af496e4` + `ba0f962`; `_ptCatalog`'s non-Help consumers were deleted as legacy-editor dead code). Missing vocab now renders an explicit "Param registry not loaded" article (`js/08:635`; coeff analog `:753`), pinned by `test_frontend_js.sh:144`. The text below is the as-found state.
+
 `js/07-transform-catalogs.js` still has `_ptCategoryMeta` and `_ptInfo` as static Param legacy metadata, plus `_ptCatalog` enrichment.
 
 That was useful before the generated registry became complete. It is now a drift surface:
@@ -214,6 +268,8 @@ That was useful before the generated registry became complete. It is now a drift
 The final state should not use static Param legacy descriptions/categories when `_paramRegistryVocab` is present. `_ptCatalog` may remain until its non-Help consumers are explicitly migrated.
 
 ### 5. Param `variable_arg_forms` Is Inert
+
+> **Status at `ba0f962`: RESOLVED.** Top-level `variable_arg_forms` → emitted as `variableArgForms` in `param_vocab_js.js` → consumed by `_paramRegistryAdapter.variableForms()` (`js/07:41`) → rendered into Help notes (`js/08:555-564`). Pinned by `test_frontend_js.sh:171` + `test_registry_schema.py:77`. The text below is the as-found state.
 
 `lambda/param_legacy_registry.json` has `ui.variable_arg_forms`, but current consumers do not reference it.
 
@@ -229,6 +285,8 @@ Preferred: move useful user-facing forms to function-local `ui.forms` or `ui.com
 
 ### 6. Source Parser Registry Handling Differs
 
+> **Status at `ba0f962`: PARTIAL.** The behavioral gap is fixed — param validates name/selectors/arity at parse (`_validate_legacy_source_entry`, `param_program_source.py:112`) with coded diagnostics. Residue: no *shared* validator/canonicalizer (param and coeff each have their own), and the param copy introduced the `inv_t_plus_2` arity drift (Open #2).
+
 Coeff source parsing canonicalizes registry aliases and rejects unknown registry names early.
 
 Param source parsing accepts:
@@ -242,6 +300,8 @@ and only lowercases `name`; compile-time chain validation catches unknown names 
 This is avoidable drift. Both parsers should use a shared registry-name validator/canonicalizer, configured per profile.
 
 ### 7. Frontend Registry Adapters Are Separate
+
+> **Status at `ba0f962`: PARTIAL.** Two per-profile adapters now exist (`_paramRegistryAdapter` js/07:15, `_coeffRegistryAdapter` js/07:254) converging on `loaded/names/categoryMeta/spec()/params()/category()`; `_paramRegistryCategoryMeta`/`_paramRegistryUiFunctions` are gone (folded in). No shared `_makeProgramRegistryAdapter` factory yet; `_paramProgramLegacyArgSpecs`, `_coeffProgramLegacyInputDefs`, `_coeffRegistrySourceName` (now a one-line delegate), `_ctCategoryMeta` (vocab-sourced) still exist.
 
 The Help renderer is shared, but the registry adapters are not.
 
@@ -282,6 +342,8 @@ Profile-specific adapter logic can remain behind this interface.
 
 ### 8. Drift Tests Are Profile-Specific
 
+> **Status at `ba0f962`: RESOLVED, except gating.** `tests/test_registry_schema.py` covers both registries (shared shape + param selectors/ui.params arity + compat pins + coeff compat_signatures pins + andy-absence). 4 tests pass — but the file is NOT in `scripts/predeploy_check.sh` (Open #1).
+
 Param and Coeff each have their own generated-vocab assertions. That lets the schemas diverge while both test suites remain green.
 
 Add a shared registry-schema test that runs against both registries.
@@ -291,6 +353,8 @@ Add a shared registry-schema test that runs against both registries.
 These are not speculative refactor concerns. They were verified against the current code and should be fixed before or at the very start of the registry infrastructure work.
 
 ### A1. Param Fingerprints Split On Equivalent Signed Zero
+
+> **Status at `ba0f962`: FIXED** (`f8c933e`). `param_program_chain.py:828-836` canonicalizes `a`/`b`/`args`/`args_im`; re-ran all four spellings → one fingerprint `840d5372…`; nonzero values stay distinct; `args_im` lane covered; pinned by `test_param_program_chain.py:217`. Surviving wart: `.17g` display formatting only (cosmetic).
 
 Current behavior:
 
@@ -325,6 +389,8 @@ Secondary cosmetic cleanup:
 
 ### A2. Coeff Frontend Can Crash On Partial Registry Vocab
 
+> **Status at `ba0f962`: PARTIAL.** The documented guard is applied verbatim (`js/07-transform-catalogs.js:290`, node-repro'd) — but a vocab missing `ctCatalog` still crashes module load at the unguarded `Object.entries(_coeffRegistryVocab.ctCatalog)` (`js/07:240`), and the only vocab-absence test is null-vocab, not a partial object.
+
 Current code:
 
 ```js
@@ -342,6 +408,8 @@ const defs = (((_coeffRegistryVocab || {}).programParamDefs || {})[name]) || [];
 Add a frontend test for a partial Coeff vocab object.
 
 ### A3. `round(1, 2)` Uses Complex Multiplier Plus Optional `andy`
+
+> **Status at `ba0f962`: FIXED, body below is as-found.** The overlap is resolved by call form: `poly = round(poly, 1, 2)` → multiplier 1+0i, andy=2; `legacy(round, poly, poly, 1, 2)` → packed real lanes (multiplier 1+2i, andy 0) via `_legacy_round_real_lanes_args` (`coeff_program_chain.py:1446,1469`). Both signatures named in the registry (`complex_multiplier`, `packed_real_components_with_andy`); pinned by `test_coeff_program_drift.py:533,568` + chain round tests. The inverse display no longer collapses; `coeff_source_text_from_chain` deliberately preserves the `legacy(...)` spelling (fingerprint-preserving), not the semantic respelling this section proposed.
 
 Current behavior:
 
@@ -376,6 +444,8 @@ Do not let additional overlapping `arg_counts` / `andy_arg_counts` appear silent
 
 ### A4. Param `legacy(name, src, tgt, ...)` Does Not Validate At Parse Time
 
+> **Status at `ba0f962`: FIXED** for everything scoped here — all five repros return coded diagnostics at parse (`unknown_legacy_transform`, `bad_selector`, `bad_arity`, incl. bare shortcuts like `crd(5,9)`), via `_validate_legacy_source_entry` (`param_program_source.py:112-161`), pinned at `test_param_program_source.py:45`. Coeff `roots` int/enum/extra-arg is also coded at parse now (`bad_native_transform`). Residue moved to Open #2 (`inv_t_plus_2` arity drift), F5 (blanket under-arity), and F3/F8 (coeff raise sites still mostly `source_error`).
+
 Current behavior:
 
 ```text
@@ -407,6 +477,8 @@ Additional confirmed validation gaps:
 
 ### A5. Saved Param Macros Do Not Honor Source Text Precedence
 
+> **Status at `ba0f962`: FIXED** (`f8c933e`). Shared resolver has the param branch (`program_compile_helpers.py:93-97`); live stub-S3 repro returns the source-derived chain; pinned by `test_saved_program_source_precedence.py:94`.
+
 `lambda/program_compile_helpers.py::read_saved_program_source_chain` gives Coeff saved programs source precedence, but Param saved-program macros still read the saved `chain`.
 
 Impact:
@@ -420,6 +492,8 @@ Fix:
 - Add a macro resolver test where payload `source_text` and `chain` intentionally differ; Param and Coeff should both use the source.
 
 ### A6. Param Chain-To-Source Serialization Is Unguarded And Can Persist Unparseable Source
+
+> **Status at `ba0f962`: FIXED.** `param_source_text_from_chain` now verifies/falls back/warns (`param_program_source.py:342-408`); the doc's `[['const','1','2'],…]` chain now emits `p1 = (1)+(2)*1j` which reparses fingerprint-identically; v2 fingerprints hash only the execution spec. Pinned at `test_param_program_source.py:103,123`.
 
 `param_source_text_from_chain` has no equivalent of Coeff's source-preservation guard.
 
@@ -453,6 +527,8 @@ Fix:
 - Add tests for chain -> source -> parse -> compile round-trip on representative legacy, const, emit, stack, and macro-safe chains.
 
 ### B1. Param `compat` Is Not Runtime-Authoritative
+
+> **Status at `ba0f962`: FIXED, one residue.** Loader retains normalized `compat`; all six families read via registry accessors at runtime (`param_program_chain.py:343-368`); all six drift-pinned (`test_param_program_drift.py:289-301`) plus C-drift checks. Residue: `_VARIABLE_LEGACY_ARG_COUNTS` is still production-read by `param_program_source.py` with hardcoded overrides — the source of the new `inv_t_plus_2` drift (Open #2); target_first/last are not yet derived from the index map.
 
 `lambda/param_legacy_registry.json` has `compat`, and `lambda/gen_param_vocab.py` emits it, but `lambda/param_program_chain.py::_load_legacy_registry` strips it. The Param compiler still reads private Python constants:
 
@@ -489,6 +565,8 @@ Fix:
 
 ### B2. Coeff Vocab Emits Dead Or Contradictory Runtime Fields
 
+> **Status at `ba0f962`: PARTIAL.** `supportsAndy` removed (pinned absent). `fnIndexByName`/`effectiveArgs`/`compatSignatures`/`names` still emitted with zero JS consumers — now drift-pinned as generated data rather than untested. `pow` still declares 4-real `args` + 2-complex `ui.params`, but the shapes are now formally related via named compat signatures with C packing parity (the "documented exception" option, not args normalization).
+
 `lambda/gen_coeff_vocab.py` emits these fields:
 
 - `fnIndexByName`
@@ -518,6 +596,8 @@ These are not all live bugs, but they are the same "looks authoritative but is n
 
 ### C. Truthiness Fallbacks Hide Registry Data Bugs
 
+> **Status at `ba0f962`: PARTIAL.** Fixed: the three `compat.get(...) or chain._*` generator fallbacks (gone — no chain import allowed in `registry_common`), `ui.get("categories") or {}` (now `extract_category_meta`, hard-fails), `int(version or 0)` in live loaders (`require_registry_version`), `categoryMeta || _ptCategoryMeta` (identifier deleted). Still present: `arg_spec.get("choices") or _ENUM_ARG_VALUES` (`coeff_program_chain.py:211`), `_profileSelectorChoices` `.length` fallback (`js/07:340-342`), `selectors.get(name) or []` (`program_source_core.py:91`), title/help display coalescing. No truthiness lint was added.
+
 Examples:
 
 - `compat.get("independent_targets") or chain._REDUNDANT_LEGACY_TARGET_ARG_NAMES`
@@ -538,6 +618,8 @@ Rule:
 - For selector choices, `[]` must remain a valid intentional value unless the schema says otherwise.
 
 ### D. `andy` And Stack Arg Packing Are Hardcoded In Multiple Places
+
+> **Status at `ba0f962`: PARTIAL.** The two registry/generator bullets are resolved exactly as prescribed: `supports_andy` deleted (schema-test-pinned), `ANDY_PARAM` deleted, andy flows from `shared_optional_args` through the generic optional-args path. Still hardcoded by fn_index: `_split_native_transform_andy` arities (`coeff_program_source.py:268-276`; registry `andy_arg_counts` exists but is unread there) and `_max_native_transform_stack_arg_count` (`coeff_program_chain.py:1571-1580`) — both now drift-pinned though not registry-derived.
 
 Confirmed duplicate sources:
 
@@ -564,6 +646,8 @@ Fix:
 
 ### E. Coeff Alias / Opcode Split Produces Equivalent-Looking Different Programs
 
+> **Status at `ba0f962`: STILL-PRESENT by design; the prescribed fix landed.** Repro unchanged (`legacy(rev,cf,poly)` op 9 vs `poly = rev(cf)` op 29, distinct fingerprints; `scale100` legacy-only). The registry now structurally encodes `aliases` vs `chain_only_aliases:["scale100"]`, pinned by `test_coeff_program_drift.py:372-407` + `test_coeff_program_chain.py:37`.
+
 Examples:
 
 - `scale100` is accepted as a legacy alias but rejected as a direct source function.
@@ -580,6 +664,8 @@ Fix:
 - Do not silently widen chain-only aliases into source aliases without a fingerprint/compatibility decision.
 
 ### F1. Empty Program Policy Is Inconsistent And Falsy Fallbacks Can Resurrect Legacy Transforms
+
+> **Status at `ba0f962`: PARTIAL.** Fallback-resurrection half FIXED: `explicit_program_chain_for_run` (`pipeline_programs.py:100-112`) used by all three handlers, each pinned by a handler test. Policy half remains: param empty rejected at source/save but accepted by compiler/run; coeff accepts empty everywhere.
 
 Current compiler behavior:
 
@@ -608,6 +694,8 @@ Fix:
 - Add tests that explicit `param_program_chain: []` / `coeff_program_chain: []` never falls back to legacy transform arrays.
 
 ### F2. `pipeline_programs.py` Is Another Runtime Compatibility Copy
+
+> **Status at `ba0f962`: PARTIAL — now Coeff-only.** The `_PARAM_*` private copies are deleted; param reads `legacy_registry()["compat"]` (`pipeline_programs.py:169-184`), drift-pinned. Coeff exp/round repack remains hand-coded (`:251-269`) but behavior drift-pinned (`test_coeff_program_drift.py:464`).
 
 `lambda/pipeline_programs.py` translates old legacy transform arrays at compute/storage/PDF boundaries.
 
@@ -638,6 +726,8 @@ Fix:
 
 ### F3. Compiler Diagnostics Are Not Structured
 
+> **Status at `ba0f962`: STILL-PRESENT.** Both chain compilers' strict=False diagnostics carry `{level,message}` only; end-to-end `/compile-coeff-program-source` repro with `poly = pop()` returns no code/line/column.
+
 Even if parse-time errors get better codes, many user-visible failures still originate in chain compilers.
 
 Current behavior:
@@ -664,6 +754,8 @@ Fix:
 
 ### F4. Param Default Handling Bug Is Broad
 
+> **Status at `ba0f962`: FIXED** (`param_program_chain.py:988` stringifies defaults). All 13 zero-default names compile via `legacy(name, both, both)`; pinned at `test_param_program_chain.py:227` (hrt/rect — a registry-wide omitted-args probe test is still a good idea).
+
 A registry-driven probe found 13 Param transforms fail when called with defaulted args because numeric default `0.0` is passed to expression compilation and treated as an empty expression:
 
 ```text
@@ -689,6 +781,8 @@ Fix:
 
 ### F5. Param Reduced-Arity Behavior Is Accidental
 
+> **Status at `ba0f962`: PARTIAL.** `lss(1,2)` still silently compiles with defaults; the 0..N policy is now explicit in code (`param_program_source.py:99-109`) with coded `bad_arity` for over-arity, but it is not registry-declared — and the same block hardcodes the `inv_t_plus_2` set that drifts from the registry (Open #2).
+
 A registry-driven probe found many arg-bearing Param transforms compile with omitted args by filling defaults. This may be desired for compatibility for some transforms, but today it is not declared consistently.
 
 Fix:
@@ -699,6 +793,8 @@ Fix:
 - Add a test that every accepted reduced-arity form is registry-declared.
 
 ### F6. Storage And Compute Macro Resolution Can Disagree
+
+> **Status at `ba0f962`: FIXED.** Same-payload repro through both paths agrees; compute-side pinned (`test_saved_program_source_precedence.py:94`). Residue: storage keeps a parallel implementation (`handler_storage.py:468-501`) rather than calling the shared resolver, and has no storage-side precedence test.
 
 `handler_storage.py` has a Param macro resolver that honors Param `source_text`. The shared compute resolver in `program_compile_helpers.py` honors source text only for Coeff.
 
@@ -720,6 +816,8 @@ Fix:
 
 ### F7. Root Source Precedence Is Field-Name Inconsistent
 
+> **Status at `ba0f962`: STILL-PRESENT, worse than documented:** `root_source_text_from_payload` (3-tier) now has **zero callers** — dead code advertising a precedence nothing honors — while `root_source_text_for_run` stays 2-tier. Reconcile or delete.
+
 `root_source_text_from_payload` accepts top-level `source_text`, but `root_source_text_for_run` accepts only:
 
 - `root_program_source_text`
@@ -735,6 +833,8 @@ Fix:
 
 ### F8. Root And Solve-Score Diagnostic Codes Are Also Sparse
 
+> **Status at `ba0f962`: PARTIAL — root FIXED, solve-score half-fixed.** Root now emits distinct codes (`unknown_transform`, `bad_arity`, `bad_arg_type`, `bad_syntax`, `no_op_assignment`, …). Solve-score chain-compile errors are now classified (`bad_quantile`, `stack_error`, `bad_numeric_arg`, `unknown_operator`; pinned `test_solve_score_program_source.py:99`) but still report line 1/col 1, and some parse-stage raises still default to `source_error`.
+
 Root and solve-score source compilers are safer than Param in serializer behavior, but most source errors still use the default `source_error` code.
 
 Impact:
@@ -747,6 +847,8 @@ Fix:
 - Add stable codes as part of the broader source/diagnostic cleanup.
 
 ### F9. Existing Drift Tests Are Good But Incomplete
+
+> **Status at `ba0f962`: MOSTLY RESOLVED.** Landed since: all six param compat families pinned; `pt_is_targetable_independent` C-drift; pipeline target-first/last/dither; coeff exp/round translator; three C-default/packing drift tests (`67ff066`). Remaining: no direct scrape of `pt_target_value` indices; solve-score partition tables unpinned (G6); `test_registry_schema.py` un-gated (Open #1).
 
 Existing Param drift tests cover:
 
@@ -768,6 +870,8 @@ Fix:
 - Add registry-vs-pipeline drift tests for legacy transform-array translators.
 
 ### G0. There Is No Shared Fingerprint/Canonicalization Contract
+
+> **Status at `ba0f962`: PARTIAL — the leaks are fixed, the contract still doesn't exist.** Fixed rows of the table below: solve-score is now repr+zero-fold (not `%g`); v2 excludes source text; root regeneration is repr/lossless; param no longer leaks signed zero. Remaining: six per-module `_format_number` copies, two float policies (`.17g` param/coeff vs `repr` root/solve), two hash algos (sha1 v1 vs sha256 v2), and `format_numeric_literal` in `program_source_core.py` used by only one kind.
 
 The newer findings are not isolated one-off bugs. The same missing contract appears in every program kind and layer.
 
@@ -800,6 +904,8 @@ Fix:
 - Add source regeneration tests: chain -> source -> parse -> compile must preserve semantic identity for every program kind that exposes regenerated source.
 
 ### G1. Solve-Score Fingerprints Can Collide On Distinct Numeric Programs
+
+> **Status at `ba0f962`: FIXED** (`f8c933e`). `solve_score_chain.py:378` is now repr+zero-fold (not the `.17g` this section prescribed — equally collision-free); distinct omegas → distinct fingerprints; pinned `test_solve_score_chain.py:96-131`. The cache-invalidation callout still applied (numeric solve-score fingerprints changed).
 
 This is the highest-severity new finding because it is an under-split, not an over-split.
 
@@ -837,6 +943,8 @@ Fix:
 
 ### G2. Root Program Cap Diverges Between Profile, Python, And C
 
+> **Status at `ba0f962`: PARTIAL.** Python enforces `MAX_ROOT_TRANSFORMS=16` with coded `root_chain_too_long` (`root_program_source.py:27,309-321`) — the silent-mangling core is gone. Residue: profile still declares `program_tokens: 64`, and no drift test ties profile ↔ Python ↔ C (`MAX_RT_CHAIN`).
+
 Current state:
 
 - `lambda/program_profiles.json` declares root `program_tokens: 64`.
@@ -867,6 +975,8 @@ Tests:
 
 ### G3. V2 Param/Coeff Fingerprints Include Raw Source Text
 
+> **Status at `ba0f962`: FIXED** (`f8c933e`). `_v2_fingerprint` strips `source_text`/`source_display`/`display`/`expanded_display` (`program_v2_translate.py:135-141`); four zero-spellings through coeff v2 → identical fingerprints; pinned `test_program_v2_migration.py:96,205`.
+
 Current behavior:
 
 - `program_v2_translate.py::translate_param_from_old` hashes:
@@ -893,6 +1003,8 @@ Fix:
 
 ### G4. Solve-Score Diagnostics And `strict=False` Lose Information
 
+> **Status at `ba0f962`: PARTIAL.** The silent proximity substitution is fixed — strict=False now returns the fallback **with** `diagnostics` + `degraded: True`. Remaining: chain-stage errors still report line 1/col 1, and some parse-stage raises default to `source_error`.
+
 Current behavior:
 
 - Many `SolveScoreProgramSourceError` raise sites use the default `source_error` code.
@@ -914,6 +1026,8 @@ Fix:
 - Audit all exported non-strict APIs for silent substitution behavior.
 
 ### G5. Root Source Boundary Errors Are Bare And Some Rows Prefer `fn_index` Over `name`
+
+> **Status at `ba0f962`: FIXED (one residue).** Malformed `root_transforms` payloads → structured `RootProgramSourceCompileError` with diagnostics; name/fn_index mismatch rejected (`root_program_source.py:121-133`); distinct codes exist. Note: the "`root_chain_error` is unreachable dead code" claim is now stale — it is the live code for chain-shape errors. Residue: `root_source_text_from_payload` still dead (F7).
 
 Current behavior:
 
@@ -945,6 +1059,8 @@ Dead/false-authority cleanup:
 - The `root_chain_error` fallback code is effectively unreachable while `RootProgramSourceError` defaults to `source_error`.
 
 ### G6. C Executor Defaults And Packing Are Runtime Authority But Not Registry-Gated
+
+> **Status at `ba0f962`: PARTIAL — the drift tests landed** (`67ff066`): `dispatchPt` default lanes vs registry (incl. target-lane shift), `coeffLegacyApply` fallbacks vs registry, native packing special-cases vs `compat_signatures` — all pass. Remaining: C is still the runtime authority for omitted args (no Python-always-expands contract), and `solve_score.h:215,257` metric-partition/min-roots tables have no drift test.
 
 The existing drift tests guard many enum/id layers, but they do not pin value/default/packing behavior across Python and C.
 
@@ -979,6 +1095,8 @@ Fix options:
 
 ### G7. Solve-Score Generated Vocab Has Live Sections With Dead Subfields
 
+> **Status at `ba0f962`: STILL-PRESENT.** `delta` and `legacy_alias` still emitted (`gen_solve_score_vocab.py:159-160,175-176`), zero JS readers.
+
 Correction to avoid deleting live data:
 
 - `stackSpecs` and `outputSpecs` are used by `js/07-transform-catalogs.js`.
@@ -991,6 +1109,8 @@ Fix:
 - Add generated-vocab consumer tests only for fields that are intended API.
 
 ### G8. Blank Source-Key Semantics Diverge Across Program Kinds
+
+> **Status at `ba0f962`: STILL-PRESENT (mitigated).** Divergence intact (param/coeff blank→None, root→empty no-op, solve-score→raise), but param/coeff blank-as-absent is now documented as deliberate (ASL JSONPath defaults) and solve-score gained blank-key tests. Remaining ask: per-kind four-case boundary tests/contract.
 
 Current behavior:
 
@@ -1014,6 +1134,8 @@ Fix:
 - Add run-boundary tests for all four program kinds.
 
 ### G9. Root Source Regeneration Is Lossy For Non-Round Numeric Args
+
+> **Status at `ba0f962`: FIXED** (`f8c933e`). `root_program_source.py:80` `_format_number` is repr+zero-fold; `1.234567890123` round-trips fingerprint-identically; nearby values stay distinct. (No dedicated non-round corpus test was added — formatter fix only.)
 
 Current behavior:
 
@@ -1056,6 +1178,8 @@ Fix:
 
 ### G10. V2 Translation Has Additional Empty-Field Fallback Bugs
 
+> **Status at `ba0f962`: FIXED** (`f8c933e`). Key-presence-ordered handling in `program_v2_translate.py:229-247`; empty-chain solve-score translation now raises explicitly; pinned `test_program_v2_migration.py:265,305`.
+
 Current behavior:
 
 - `translate_root_from_old({"root_transforms": [], "chain": [["rotate_roots", "1"]]})` migrates the stale `chain` instead of preserving the explicit empty `root_transforms`.
@@ -1082,6 +1206,8 @@ Negative findings to avoid re-filing:
 - C `cfpv` has legacy truncation code for arrays longer than `MAX_CFPV`, but generated coefficient functions currently max at four params, so that truncation path does not look reachable today.
 
 ### G11. Removed Frontend Editors Still Have Live-Looking Dead Code
+
+> **Status at `ba0f962`: FIXED** (by HEAD commit `ba0f962` itself, −735 lines). Zero refs to the removed picker IDs / `_ptCatalog` family; regression guard at `test_frontend_js.sh:67-77` (a denylist of removed IDs rather than the proposed full DOM cross-check); kept boundaries (`rt-add`, serializers) intact; frontend suite passes.
 
 The visible old Param Transform and Coeff Transform chip editors are gone:
 

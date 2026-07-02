@@ -32,6 +32,44 @@ class ProgramSourceError(ValueError):
         self.code = str(code or "source_error")
 
 
+def classify_source_error_code(message):
+    """Best-effort stable code for a source error raised without one.
+
+    Most raise sites predate coded diagnostics and default to source_error,
+    which a frontend switch cannot branch on. Sites may still pass an
+    explicit code=; this classifier only fills the default. Mirrors the
+    chain-stage classifiers (_chain_compile_diagnostic and the solve-score
+    equivalent) so parse- and compile-stage codes agree.
+    """
+    lowered = str(message or "").lower()
+    if " q must be " in lowered or "quantile" in lowered:
+        return "bad_quantile"
+    if "unknown" in lowered:
+        return "unknown_operator"
+    if "selector" in lowered or "does not support src" in lowered or "does not support tgt" in lowered:
+        return "bad_selector"
+    if (
+        "argument" in lowered
+        or "arity" in lowered
+        or "expects" in lowered
+        or "at most" in lowered
+        or "requires" in lowered
+    ):
+        return "bad_arity"
+    if "stack" in lowered:
+        return "stack_error"
+    if (
+        "finite" in lowered
+        or "division" in lowered
+        or "numeric" in lowered
+        or "overflow" in lowered
+        or "must be in" in lowered
+        or "empty" in lowered
+    ):
+        return "bad_numeric_arg"
+    return "source_error"
+
+
 def diagnostic(message, *, line=1, column=1, code="source_error", level="error"):
     return {
         "level": str(level or "error"),

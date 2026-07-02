@@ -1067,6 +1067,35 @@ class TestCodeReview3Fixes(unittest.TestCase):
         parsed = self._parse("push_scalar(1/0)\ndrop")
         self.assertTrue(any("division" in d["message"] for d in parsed["diagnostics"]))
 
+    def test_embedded_static_division_by_zero_is_rejected(self):
+        # The guard lives in the expr parser itself, so a zero denominator
+        # buried inside a larger expression is caught at compile time —
+        # previously only a bare 1/0 was rejected (at the source fold layer).
+        from coeff_program_chain import compile_coeff_program_chain
+        for bad in ("t1+1/0", "t1+1/(2-2)", "t1+0**-1", "t1+(1-1)**-2"):
+            with self.assertRaisesRegex(RuntimeError, "division by zero"):
+                compile_coeff_program_chain([["poke_poly", "0", bad]])
+        # Wire preservation: valid divisions are untouched (validate, no fold),
+        # so the dynamic expr still ships its DIV bytecode via an expr ref.
+        for ok in ("t1+1/2", "t1/t2"):
+            compiled = compile_coeff_program_chain([["poke_poly", "0", ok]])
+            self.assertEqual(compiled["scalar_expr_count"], 1, ok)
+
+    def test_static_complex_kind_with_real_value_accepted_for_real_args(self):
+        # kind is textual (1j*1j reads "complex"); statics fold and are judged
+        # by value, matching param. Folded wire is identical to spelling -1.
+        from coeff_program_chain import compile_coeff_program_chain
+        pre = [["push_const", "3", "1"], ["push_const", "3", "2"]]
+        post = [["pop"]]
+        folded = compile_coeff_program_chain(pre + [["blend", "1j*1j"]] + post)
+        direct = compile_coeff_program_chain(pre + [["blend", "-1"]] + post)
+        self.assertEqual(folded["tokens"], direct["tokens"])
+        self.assertEqual(folded["fingerprint"], direct["fingerprint"])
+        with self.assertRaisesRegex(RuntimeError, "must be real-valued"):
+            compile_coeff_program_chain(pre + [["blend", "1j*2"]] + post)
+        with self.assertRaisesRegex(RuntimeError, "must be real-valued"):
+            compile_coeff_program_chain(pre + [["blend", "t2"]] + post)
+
     def test_stack_op_call_forms_and_poly_pop_call(self):
         parsed = self._parse("cf\ndup()\nemit()\nemit")
         self.assertEqual(parsed["diagnostics"], [])

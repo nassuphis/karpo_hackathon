@@ -221,3 +221,74 @@ class TestSolveScoreCPartitionDrift(unittest.TestCase):
             set(chain.PARAM_SOLVE_SCORE_METRICS),
             "C param-metric partition drifted from Python PARAM_SOLVE_SCORE_METRICS",
         )
+
+    def test_c_min_roots_table_matches_pinned_expectations(self):
+        """solve_metric_min_roots (C) vs a test-side pinned table.
+
+        The switch decides how many finite roots a metric needs before the
+        C executor scores it; a metric added to the enum but not the switch
+        silently inherits default:2. This pin forces every change to the
+        switch (or a new metric's intended minimum) to be declared here.
+        """
+        import re
+
+        import solve_score_chain as chain
+
+        header = (LAMBDA_DIR / "solve_score.h").read_text()
+        match = re.search(
+            r"static int solve_metric_min_roots\([^)]*\)\s*\{(.*?)\n\}",
+            header,
+            re.S,
+        )
+        self.assertIsNotNone(match, "solve_metric_min_roots not found in solve_score.h")
+        body = match.group(1)
+
+        parsed = {}
+        pending = []
+        for kind, value in re.findall(
+            r"case\s+SOLVE_METRIC_([A-Z0-9_]+)\s*:|return\s+(\d+)\s*;", body
+        ):
+            if kind:
+                pending.append(kind.lower())
+            else:
+                for name in pending:
+                    parsed[name] = int(value)
+                pending = []
+        default_match = re.search(r"default\s*:\s*return\s+(\d+)\s*;", body)
+        self.assertIsNotNone(default_match, "min_roots default return not found")
+        default_value = int(default_match.group(1))
+
+        expected_explicit = {
+            "centroid_re": 1,
+            "centroid_im": 1,
+            "centroid_dist": 1,
+            "dist_unit_circle": 1,
+            "asymmetry_re": 1,
+            "max_re": 1,
+            "min_re": 1,
+            "max_im": 1,
+            "min_im": 1,
+            "min_mod": 1,
+            "max_mod": 1,
+            "mean_log_mod": 1,
+            "inside_unit_fraction": 1,
+            "unit_annulus_fraction_01": 1,
+            "imag_axis_proximity": 1,
+            "diagonal_proximity": 1,
+            "sector_max_share_16": 1,
+            "area": 3,
+            "min_angular_separation": 2,
+            "sd_log_mod": 2,
+            "angular_entropy_16": 2,
+            "angular_order_2": 2,
+            "angular_order_3": 2,
+            "angular_order_4": 2,
+        }
+        self.assertEqual(parsed, expected_explicit, "C min_roots switch drifted from pinned table")
+        self.assertEqual(default_value, 2, "C min_roots default drifted")
+        # No stale cases for metrics Python no longer knows about.
+        self.assertLessEqual(
+            set(parsed),
+            set(chain.VALID_SOLVE_SCORE_METRICS),
+            "C min_roots switch names metrics missing from VALID_SOLVE_SCORE_METRICS",
+        )

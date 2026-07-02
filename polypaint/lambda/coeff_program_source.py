@@ -49,6 +49,7 @@ from coeff_program_chain import (
 from program_source_core import (
     ProgramSourceError,
     ProfileStatementLowerer,
+    classify_source_error_code,
     find_top_level_assignment,
     parse_profile_source,
     parse_call,
@@ -189,8 +190,13 @@ class CoeffProgramSourceError(ProgramSourceError):
     # line/column default to 0 (unknown) so callers can fall back to the
     # enclosing statement's location with `exc.line or stmt.line`. A truthy
     # default of 1 used to pin every lowering error to line 1, column 1.
+    # The default "source_error" code is upgraded from the message so the
+    # frontend can branch on exc.code without editing every raise site.
     def __init__(self, message: str, *, line: int = 0, column: int = 0, code: str = "source_error"):
-        super().__init__(message, line=line, column=column, code=code)
+        resolved = str(code or "source_error")
+        if resolved == "source_error":
+            resolved = classify_source_error_code(message)
+        super().__init__(message, line=line, column=column, code=resolved)
 
 
 class CoeffProgramSourceCompileError(RuntimeError):

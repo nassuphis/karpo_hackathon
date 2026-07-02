@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from program_source_core import (
     ProgramSourceError,
+    classify_source_error_code,
     diagnostic,
     diagnostic_from_exception,
     find_top_level_assignment,
@@ -61,7 +62,18 @@ _RESERVED = {
 
 
 class SolveScoreProgramSourceError(ProgramSourceError):
-    """Solve-score source syntax/lowering error with line/column metadata."""
+    """Solve-score source syntax/lowering error with line/column metadata.
+
+    Most raise sites predate coded diagnostics and pass no code=. Rather
+    than editing dozens of sites, the default "source_error" is upgraded
+    here from the message so the frontend can branch on exc.code.
+    """
+
+    def __init__(self, message: str, *, line: int = 0, column: int = 0, code: str = "source_error"):
+        resolved = str(code or "source_error")
+        if resolved == "source_error":
+            resolved = classify_source_error_code(message)
+        super().__init__(message, line=line, column=column, code=resolved)
 
 
 class SolveScoreProgramSourceCompileError(ValueError):

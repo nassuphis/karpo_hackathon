@@ -180,10 +180,17 @@ class TestCoeffSourceEquivalence(unittest.TestCase):
             with self.subTest(item=item["id"]):
                 old_parsed = legacy.parse_coeff_program_source(item["source_text"], strict=False)
                 new_parsed = current.parse_coeff_program_source(item["source_text"], strict=False)
-                self.assertEqual(
-                    [_diagnostic_shape(d) for d in new_parsed["diagnostics"]],
-                    [_diagnostic_shape(d) for d in old_parsed["diagnostics"]],
-                )
+                new_shapes = [_diagnostic_shape(d) for d in new_parsed["diagnostics"]]
+                old_shapes = [_diagnostic_shape(d) for d in old_parsed["diagnostics"]]
+                self.assertEqual(len(new_shapes), len(old_shapes))
+                for new_shape, old_shape in zip(new_shapes, old_shapes):
+                    # The legacy shell raised nearly everything as the bare
+                    # source_error default; the current parser auto-classifies
+                    # those into specific codes. Refining the default is the
+                    # intended divergence — a specific legacy code must match.
+                    if old_shape["code"] == "source_error":
+                        old_shape = dict(old_shape, code=new_shape["code"])
+                    self.assertEqual(new_shape, old_shape)
                 with self.assertRaises(RuntimeError) as new_ctx:
                     current.parse_coeff_program_source(item["source_text"], strict=True)
                 self.assertTrue(getattr(new_ctx.exception, "diagnostics", None))

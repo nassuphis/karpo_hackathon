@@ -816,6 +816,14 @@ class ExpressionParser:
         while self._peek()[0] in {"*", "/"}:
             op = self._take()[0]
             right = self._power()
+            if op == "/" and not right.dynamic:
+                # Wire-preserving validation only: a static zero denominator
+                # is a guaranteed runtime failure on every row (param rejects
+                # the analog at compile). Do NOT fold — emitted tokens stay
+                # byte-identical for every valid program.
+                denominator = expr_value_if_static(right)
+                if denominator == 0:
+                    raise RuntimeError("scalar expression division by zero")
             left = _Expr(
                 left.tokens + right.tokens + [{"op": EXPR_MUL if op == "*" else EXPR_DIV}],
                 kind="complex" if left.kind == "complex" or right.kind == "complex" else "real",
@@ -870,6 +878,10 @@ class ExpressionParser:
             raise RuntimeError(
                 f"scalar expression has {projected} tokens; max is {MAX_SCALAR_EXPR_TOKENS}"
             )
+        if exponent < 0 and not left.dynamic and expr_value_if_static(left) == 0:
+            # Static 0**-n is a guaranteed runtime division failure —
+            # wire-preserving validation only (see _term).
+            raise RuntimeError("scalar expression division by zero")
         tokens = list(left.tokens)
         for _ in range(abs(exponent) - 1):
             tokens.extend(left.tokens)
@@ -959,7 +971,11 @@ def _compile_expr(value, *, label, expected="complex"):
     except ValueError:
         expr = ExpressionParser(value).parse()
     if expected == "real" and expr.kind != "real":
-        raise RuntimeError(f"{label} must be real-valued; use real(...) or imag(...) explicitly")
+        # kind is textual (1j*1j reads "complex"), so fold statics and judge
+        # the value — param does the same. Tolerance matches _add_arg_expr.
+        value = expr_value_if_static(expr)
+        if value is None or abs(value.imag) > 1e-12:
+            raise RuntimeError(f"{label} must be real-valued; use real(...) or imag(...) explicitly")
     return expr
 
 

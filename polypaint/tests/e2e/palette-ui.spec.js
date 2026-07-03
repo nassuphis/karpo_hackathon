@@ -104,6 +104,9 @@ test.describe('Palette UI', () => {
         if (name === 'storage' && path === '/fetch-solve-score-program') {
           return { program: window._solveScorePrograms[body.id] };
         }
+        if (name === 'storage' && path === '/solve-score-chain-to-source') {
+          return { ok: true, source_text: 'score = metric(proximity, slv, q=0.1%)' };
+        }
         if (name === 'dispatch') {
           window._paletteDispatches.push(body);
           return { fired: 1, non_202: [] };
@@ -139,7 +142,8 @@ test.describe('Palette UI', () => {
       solve_score_omega: 1,
       solve_score_omega_enabled: false,
     });
-    expect(dispatch.jobs[0].params.solve_score_chain).toEqual([['proximity', '0.1']]);
+    expect(dispatch.jobs[0].params.solve_score_program_source_text).toContain('metric(proximity');
+    expect(Object.prototype.hasOwnProperty.call(dispatch.jobs[0].params, 'solve_score_chain')).toBe(false);
   });
 
   test('download and delete stay wired to the selected palette artifact', async ({ page }) => {

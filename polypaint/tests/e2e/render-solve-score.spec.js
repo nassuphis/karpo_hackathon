@@ -158,6 +158,9 @@ test.describe('Solve Score UI', () => {
         if (name === 'storage' && path === '/fetch-solve-score-program') {
           return { program: window._solveScorePrograms[body.id] };
         }
+        if (name === 'storage' && path === '/solve-score-chain-to-source') {
+          return { ok: true, source_text: 'score = metric(proximity, slv, q=0.1%)' };
+        }
         throw new Error(`unexpected ${name} ${path || ''}`);
       };
     });
@@ -389,116 +392,16 @@ test.describe('Solve Score UI', () => {
     await page.locator('#long-popup-close').click();
   });
 
-  test('Solve score chip adder exposes metrics and stack/output chips in permissive editor mode', async ({ page }) => {
+  test('solve-score Help reference lists every metric in the editor sidepanel', async ({ page }) => {
+    // The chip adder is gone (text-first editors); the vocabulary surface
+    // is the generated Help tab. Every metric must appear there.
     await page.click('.tab-btn:text("Render")');
-    const state = await page.evaluate(() => {
-      _renderScoreChain.splice(0, _renderScoreChain.length);
-      _renderChips('ss');
-      return Array.from(document.querySelectorAll('#ss-add option')).map(o => ({
-        text: o.textContent.trim(),
-        value: o.value,
-      }));
+    const missing = await page.evaluate(() => {
+      _setProgramSourceSidePanelMode('render-ss', 'help');
+      const html = document.getElementById('render-ss-help').innerHTML;
+      return _solveScoreMetricNames.filter(name => !html.includes(`metric(${name},`));
     });
-    expect(state).toEqual(expect.arrayContaining([
-      { text: '+ add...', value: '' },
-      { text: 'metric', value: '__metric' },
-      { text: 'proximity', value: 'proximity' },
-      { text: 'crowding', value: 'crowding' },
-      { text: 'spread', value: 'spread' },
-      { text: 'anisotropy', value: 'anisotropy' },
-      { text: 'area', value: 'area' },
-      { text: 'clusteriness', value: 'clusteriness' },
-      { text: 'shelliness', value: 'shelliness' },
-      { text: 'outlierness', value: 'outlierness' },
-      { text: 'nn_variation', value: 'nn_variation' },
-      { text: 'real_axis_proximity', value: 'real_axis_proximity' },
-      { text: 'centroid_re', value: 'centroid_re' },
-      { text: 'centroid_im', value: 'centroid_im' },
-      { text: 'centroid_dist', value: 'centroid_dist' },
-      { text: 'dist_unit_circle', value: 'dist_unit_circle' },
-      { text: 'asymmetry_re', value: 'asymmetry_re' },
-      { text: 'max_re', value: 'max_re' },
-      { text: 'min_re', value: 'min_re' },
-      { text: 'max_im', value: 'max_im' },
-      { text: 'min_im', value: 'min_im' },
-      { text: 'min_mod', value: 'min_mod' },
-      { text: 'max_mod', value: 'max_mod' },
-      { text: 'min_angular_separation', value: 'min_angular_separation' },
-      { text: 'mean_log_mod', value: 'mean_log_mod' },
-      { text: 'sd_log_mod', value: 'sd_log_mod' },
-      { text: 'inside_unit_fraction', value: 'inside_unit_fraction' },
-      { text: 'unit_annulus_fraction_01', value: 'unit_annulus_fraction_01' },
-      { text: 'imag_axis_proximity', value: 'imag_axis_proximity' },
-      { text: 'diagonal_proximity', value: 'diagonal_proximity' },
-      { text: 'angular_entropy_16', value: 'angular_entropy_16' },
-      { text: 'sector_max_share_16', value: 'sector_max_share_16' },
-      { text: 'angular_order_2', value: 'angular_order_2' },
-      { text: 'angular_order_3', value: 'angular_order_3' },
-      { text: 'angular_order_4', value: 'angular_order_4' },
-      { text: 't1_re', value: 't1_re' },
-      { text: 't1_im', value: 't1_im' },
-      { text: 't1_abs', value: 't1_abs' },
-      { text: 't1_phase', value: 't1_phase' },
-      { text: 't2_re', value: 't2_re' },
-      { text: 't2_im', value: 't2_im' },
-      { text: 't2_abs', value: 't2_abs' },
-      { text: 't2_phase', value: 't2_phase' },
-    ]));
-
-    await chooseSolveMetric(page, 'crowding');
-    const afterMetric = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('#ss-add option')).map(o => ({ text: o.textContent.trim(), value: o.value }))
-    );
-    expect(afterMetric).toEqual(expect.arrayContaining([
-      { text: '+ add...', value: '' },
-      { text: 'metric', value: '__metric' },
-      { text: 'proximity', value: 'proximity' },
-      { text: 'crowding', value: 'crowding' },
-      { text: 'spread', value: 'spread' },
-      { text: 'anisotropy', value: 'anisotropy' },
-      { text: 'area', value: 'area' },
-      { text: 'clusteriness', value: 'clusteriness' },
-      { text: 'shelliness', value: 'shelliness' },
-      { text: 'outlierness', value: 'outlierness' },
-      { text: 'nn_variation', value: 'nn_variation' },
-      { text: 'real_axis_proximity', value: 'real_axis_proximity' },
-      { text: 'centroid_re', value: 'centroid_re' },
-      { text: 'centroid_im', value: 'centroid_im' },
-      { text: 'centroid_dist', value: 'centroid_dist' },
-      { text: 'dist_unit_circle', value: 'dist_unit_circle' },
-      { text: 'asymmetry_re', value: 'asymmetry_re' },
-      { text: 'max_re', value: 'max_re' },
-      { text: 'min_re', value: 'min_re' },
-      { text: 'max_im', value: 'max_im' },
-      { text: 'min_im', value: 'min_im' },
-      { text: 'min_mod', value: 'min_mod' },
-      { text: 'max_mod', value: 'max_mod' },
-      { text: 'min_angular_separation', value: 'min_angular_separation' },
-      { text: 'mean_log_mod', value: 'mean_log_mod' },
-      { text: 'sd_log_mod', value: 'sd_log_mod' },
-      { text: 'inside_unit_fraction', value: 'inside_unit_fraction' },
-      { text: 'unit_annulus_fraction_01', value: 'unit_annulus_fraction_01' },
-      { text: 'imag_axis_proximity', value: 'imag_axis_proximity' },
-      { text: 'diagonal_proximity', value: 'diagonal_proximity' },
-      { text: 'angular_entropy_16', value: 'angular_entropy_16' },
-      { text: 'sector_max_share_16', value: 'sector_max_share_16' },
-      { text: 'angular_order_2', value: 'angular_order_2' },
-      { text: 'angular_order_3', value: 'angular_order_3' },
-      { text: 'angular_order_4', value: 'angular_order_4' },
-      { text: 't1_re', value: 't1_re' },
-      { text: 't1_im', value: 't1_im' },
-      { text: 't1_abs', value: 't1_abs' },
-      { text: 't1_phase', value: 't1_phase' },
-      { text: 't2_re', value: 't2_re' },
-      { text: 't2_im', value: 't2_im' },
-      { text: 't2_abs', value: 't2_abs' },
-      { text: 't2_phase', value: 't2_phase' },
-      { text: 'omega_cosine', value: 'omega_cosine' },
-      { text: 'sawtooth', value: 'sawtooth' },
-      { text: 'flip', value: 'flip' },
-      { text: 'flush', value: 'flush' },
-      { text: 'emit', value: 'emit' },
-    ]));
+    expect(missing).toEqual([]);
   });
 
   test('choosing a solve-score palette keeps solve_score mode active', async ({ page }) => {
@@ -519,12 +422,13 @@ test.describe('Solve Score UI', () => {
     expect(metric2).toBe('area');
   });
 
-  test('render dispatch payload contains chain-only solve-score params', async ({ page }) => {
+  test('render dispatch payload carries the solve-score source text', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
 
     await chooseSolveMetric(page, 'spread');
 
     await page.evaluate(() => {
+      _setSolveScoreProgramSourceText('render', 'score = metric(spread, slv, q=0.1%)\n');
       window._orchPayload = null;
       window.lambdaPost = async function(name, body, path) {
         if (name === 'dispatch' && body.target === 'render_orchestrator') {
@@ -540,7 +444,7 @@ test.describe('Solve Score UI', () => {
       document.getElementById('render-results-dir').value = 'test_ss';
       document.getElementById('render-pix').value = '512';
       window._viewMode = 'square';
-      window._rtChain = [];
+      _setRootProgramSourceText('render', '');
     });
 
     await page.evaluate(async () => {
@@ -551,15 +455,17 @@ test.describe('Solve Score UI', () => {
     expect(payload).not.toBeNull();
     expect(payload.mode).toBe('color');
     expect(payload.params.color_mode).toBe('solve_score');
-    expect(payload.params.solve_score_chain).toEqual([['spread', '0.1']]);
+    expect(payload.params.solve_score_program_source_text).toContain('metric(spread');
+    expect(Object.prototype.hasOwnProperty.call(payload.params, 'solve_score_chain')).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(payload.params, 'solve_metric')).toBe(false);
   });
 
-  test('clusteriness dispatch sends chain-only solve-score params', async ({ page }) => {
+  test('clusteriness dispatch carries the solve-score source text', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await chooseSolveMetric(page, 'clusteriness');
 
     await page.evaluate(() => {
+      _setSolveScoreProgramSourceText('render', 'score = metric(clusteriness, slv, q=0.1%)\n');
       window._orchPayload = null;
       window.lambdaPost = async function(name, body, path) {
         if (name === 'dispatch' && body.target === 'render_orchestrator') {
@@ -575,7 +481,7 @@ test.describe('Solve Score UI', () => {
       document.getElementById('render-results-dir').value = 'test_cl';
       document.getElementById('render-pix').value = '512';
       window._viewMode = 'square';
-      window._rtChain = [];
+      _setRootProgramSourceText('render', '');
     });
 
     await page.evaluate(async () => {
@@ -585,38 +491,36 @@ test.describe('Solve Score UI', () => {
     const payload = await page.evaluate(() => window._orchPayload);
     expect(payload).not.toBeNull();
     expect(payload.params.color_mode).toBe('solve_score');
-    expect(payload.params.solve_score_chain).toEqual([['clusteriness', '0.1']]);
+    expect(payload.params.solve_score_program_source_text).toContain('metric(clusteriness');
+    expect(Object.prototype.hasOwnProperty.call(payload.params, 'solve_score_chain')).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(payload.params, 'solve_metric')).toBe(false);
   });
 
-  test('solve-score metric chip shows source+q controls and syncs the hidden compatibility field', async ({ page }) => {
+  test('boot solve-score chain syncs the hidden compatibility fields', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    const chipSource = page.locator('#ss-chips select').first();
-    const chipQ = page.locator('#ss-chips input').first();
-    await expect(chipSource).toBeVisible();
-    await expect(chipQ).toBeVisible();
-    expect(await chipSource.inputValue()).toBe('slv');
-    expect(await chipQ.inputValue()).toBe('0.1');
+    expect(await page.locator('#render-solve-score').inputValue()).toBe('proximity');
     expect(await page.locator('#render-solve-score-quantile').inputValue()).toBe('0.1');
   });
 
-  test('changing solve-score metric q updates the hidden compatibility field and the visible chip input', async ({ page }) => {
+  test('compiling source with a new q updates the hidden compatibility field', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    await page.evaluate(() => {
-      const input = document.querySelector('#ss-chips input');
-      input.value = '3.0';
-      input.dispatchEvent(new Event('change'));
+    await page.evaluate(async () => {
+      window.lambdaPost = async function(name, body, path) {
+        if (name === 'storage' && path === '/compile-solve-score-program-source') {
+          return { ok: true, statement_count: 1, chain: [['proximity', '3']], program: { chain: [['proximity', '3']], statement_count: 1 } };
+        }
+        return {};
+      };
+      _setSolveScoreProgramSourceText('render', 'score = metric(proximity, slv, q=3%)\n');
+      await _compileSolveScoreSourceEditor('render');
     });
     expect(await page.locator('#render-solve-score-quantile').inputValue()).toBe('3');
-    await expect(page.locator('#ss-chips input').first()).toHaveValue('3.0');
   });
 
-  test('dispatch payload updates the solve-score chain quantile', async ({ page }) => {
+  test('dispatch payload carries the edited solve-score quantile', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await page.evaluate(() => {
-      const input = document.querySelector('#ss-chips input');
-      input.value = '2.0';
-      input.dispatchEvent(new Event('change'));
+      _setSolveScoreProgramSourceText('render', 'score = metric(proximity, slv, q=2%)\n');
     });
 
     await page.evaluate(() => {
@@ -635,7 +539,7 @@ test.describe('Solve Score UI', () => {
       document.getElementById('render-results-dir').value = 'test_q';
       document.getElementById('render-pix').value = '512';
       window._viewMode = 'square';
-      window._rtChain = [];
+      _setRootProgramSourceText('render', '');
     });
 
     await page.evaluate(async () => {
@@ -644,7 +548,7 @@ test.describe('Solve Score UI', () => {
 
     const payload = await page.evaluate(() => window._qPayload);
     expect(payload).not.toBeNull();
-    expect(payload.params.solve_score_chain).toEqual([['proximity', '2']]);
+    expect(payload.params.solve_score_program_source_text).toContain('q=2%');
     expect(Object.prototype.hasOwnProperty.call(payload.params, 'solve_score_quantile')).toBe(false);
   });
 
@@ -671,7 +575,7 @@ test.describe('Solve Score UI', () => {
       document.getElementById('render-min-im').value = '-0.75';
       document.getElementById('render-max-im').value = '2.0';
       _updateRenderExplicitViewportAspect();
-      window._rtChain = [];
+      _setRootProgramSourceText('render', '');
     });
 
     await page.evaluate(async () => {
@@ -710,7 +614,7 @@ test.describe('Solve Score UI', () => {
       document.getElementById('render-max-im').value = '7';
       selectViewMode('square');
       document.getElementById('render-square-extent').value = '2.5';
-      window._rtChain = [];
+      _setRootProgramSourceText('render', '');
     });
 
     await page.evaluate(async () => {
@@ -746,7 +650,7 @@ test.describe('Solve Score UI', () => {
       document.getElementById('render-min-im').value = '-1';
       document.getElementById('render-max-im').value = '1';
       _updateRenderExplicitViewportAspect();
-      window._rtChain = [];
+      _setRootProgramSourceText('render', '');
     });
 
     await page.evaluate(async () => {
@@ -995,7 +899,7 @@ test.describe('Solve Score UI', () => {
       document.getElementById('render-results-dir').value = 'test_rt_clear';
       _renderLoadedJobId = 'test_rt_clear';
       _renderActiveFamily = 'color';
-      _setRenderRootTransforms([['rotate_roots', '0.25']]);
+      _setRootProgramSourceText('render', 'rotate_roots(0.25)');
       renderArtifactPanel('test_rt_clear', {
         calc: { exists: true, N: 4000, degree: 8 },
         families: {
@@ -1028,7 +932,7 @@ test.describe('Solve Score UI', () => {
       populateSelectedRenderArtifact();
     });
 
-    await expect.poll(async () => page.evaluate(() => JSON.stringify(_rtChain))).toBe('[]');
+    await expect.poll(async () => page.evaluate(() => document.getElementById('render-rt-source-text').value)).toBe('');
   });
 
   test('populate restores bilevel camera, root transforms, and section settings', async ({ page }) => {
@@ -1037,7 +941,7 @@ test.describe('Solve Score UI', () => {
       document.getElementById('render-results-dir').value = 'test_bilevel_populate';
       _renderLoadedJobId = 'test_bilevel_populate';
       _renderActiveFamily = 'bilevel';
-      _setRenderRootTransforms([['rotate_roots', '0.25']]);
+      _setRootProgramSourceText('render', 'rotate_roots(0.25)');
       renderArtifactPanel('test_bilevel_populate', {
         calc: { exists: true, N: 4000, degree: 8 },
         families: {
@@ -1083,14 +987,11 @@ test.describe('Solve Score UI', () => {
     expect(await page.locator('#render-pix').inputValue()).toBe('1024');
     const state = await page.evaluate(() => ({
       viewMode: _viewMode,
-      rtChain: _rtChain,
+      rtSource: document.getElementById('render-rt-source-text').value,
       bilevelPopupState: _bilevelPopupState,
     }));
     expect(state.viewMode).toBe('explicit');
-    expect(state.rtChain).toEqual([{
-      name: 'rotate_roots',
-      params: ['0.5'],
-    }]);
+    expect(state.rtSource).toBe('rotate_roots(0.5)');
     expect(state.bilevelPopupState.sectionMode).toBe('logical_sections');
     expect(state.bilevelPopupState.sectionCount).toBe(9);
   });
@@ -1101,7 +1002,7 @@ test.describe('Solve Score UI', () => {
       document.getElementById('render-results-dir').value = 'test_coeff_populate';
       _renderLoadedJobId = 'test_coeff_populate';
       _renderActiveFamily = 'coeffs';
-      _setRenderRootTransforms([['rotate_roots', '0.25']]);
+      _setRootProgramSourceText('render', 'rotate_roots(0.25)');
       renderArtifactPanel('test_coeff_populate', {
         calc: { exists: true, N: 4000, degree: 8 },
         families: {
@@ -1142,20 +1043,25 @@ test.describe('Solve Score UI', () => {
     expect(await page.locator('#render-max-im').inputValue()).toBe('1.75');
     const state = await page.evaluate(() => ({
       viewMode: _viewMode,
-      rtChain: _rtChain,
+      rtSource: document.getElementById('render-rt-source-text').value,
     }));
     expect(state.viewMode).toBe('explicit');
-    expect(state.rtChain).toEqual([]);
+    expect(state.rtSource).toBe('');
   });
 
   test('viewport quantile and solve-score quantile are independent', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
-    // Set viewport quantile to 2.0, solve-score metric q to 4.0
-    await page.evaluate(() => {
+    // Set viewport quantile to 2.0, solve-score q to 4.0 via Compile Text
+    await page.evaluate(async () => {
       document.getElementById('render-quantile').value = '2.0';
-      const input = document.querySelector('#ss-chips input');
-      input.value = '4.0';
-      input.dispatchEvent(new Event('change'));
+      window.lambdaPost = async function(name, body, path) {
+        if (name === 'storage' && path === '/compile-solve-score-program-source') {
+          return { ok: true, statement_count: 1, chain: [['proximity', '4']], program: { chain: [['proximity', '4']], statement_count: 1 } };
+        }
+        return {};
+      };
+      _setSolveScoreProgramSourceText('render', 'score = metric(proximity, slv, q=4%)\n');
+      await _compileSolveScoreSourceEditor('render');
     });
     const vq = await page.locator('#render-quantile').inputValue();
     const sq = await page.locator('#render-solve-score-quantile').inputValue();
@@ -1163,11 +1069,12 @@ test.describe('Solve Score UI', () => {
     expect(sq).toBe('4');
   });
 
-  test('real_axis_proximity dispatch sends chain-only solve-score params', async ({ page }) => {
+  test('real_axis_proximity dispatch carries the solve-score source text', async ({ page }) => {
     await page.click('.tab-btn:text("Render")');
     await chooseSolveMetric(page, 'real_axis_proximity');
 
     await page.evaluate(() => {
+      _setSolveScoreProgramSourceText('render', 'score = metric(real_axis_proximity, slv, q=0.1%)\n');
       window._orchPayload = null;
       window.lambdaPost = async function(name, body, path) {
         if (name === 'dispatch' && body.target === 'render_orchestrator') {
@@ -1183,7 +1090,7 @@ test.describe('Solve Score UI', () => {
       document.getElementById('render-results-dir').value = 'test_rap';
       document.getElementById('render-pix').value = '512';
       window._viewMode = 'square';
-      window._rtChain = [];
+      _setRootProgramSourceText('render', '');
     });
 
     await page.evaluate(async () => {
@@ -1193,7 +1100,8 @@ test.describe('Solve Score UI', () => {
     const payload = await page.evaluate(() => window._orchPayload);
     expect(payload).not.toBeNull();
     expect(payload.params.color_mode).toBe('solve_score');
-    expect(payload.params.solve_score_chain).toEqual([['real_axis_proximity', '0.1']]);
+    expect(payload.params.solve_score_program_source_text).toContain('metric(real_axis_proximity');
+    expect(Object.prototype.hasOwnProperty.call(payload.params, 'solve_score_chain')).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(payload.params, 'solve_metric')).toBe(false);
   });
 
@@ -1368,7 +1276,7 @@ test.describe('Solve Score UI', () => {
         { name: 'emit', params: ['norm'] },
       );
       _setRenderColorInterpretation('rgb');
-      _renderChips('ss');
+      _syncSolveScoreUi('ss');
       _updateSolveScoreButtons();
     });
     await expect(page.locator('#btn-render-generate')).toBeEnabled();
@@ -1402,7 +1310,7 @@ test.describe('Solve Score UI', () => {
         { name: 'emit', params: ['norm'] },
       );
       _setRenderColorInterpretation('scalar_lut');
-      _renderChips('ss');
+      _syncSolveScoreUi('ss');
       _updateSolveScoreButtons();
     });
     await expect(page.locator('#btn-render-generate')).toBeDisabled();
@@ -1468,7 +1376,7 @@ test.describe('Solve Score UI', () => {
       renderColorMode = 'rainbow';
       renderSolveMetric = 'proximity';
       renderSolveScorePalette = 'inferno';
-      _rtChain = [];
+      _setRootProgramSourceText('render', '');
       document.getElementById('render-solve-score').value = 'proximity';
       document.getElementById('render-solve-score-quantile').value = '0.1';
       _renderActiveFamily = 'palette';
@@ -1497,7 +1405,7 @@ test.describe('Solve Score UI', () => {
       metric: renderSolveMetric,
       palette: renderSolveScorePalette,
       q: document.getElementById('render-solve-score-quantile').value,
-      rt: JSON.stringify(_rtChain),
+      rt: document.getElementById('render-rt-source-text').value,
       rememberedName: _solveScoreProgramRememberedNames.render,
     }));
     expect(state.family).toBe('color');
@@ -1505,7 +1413,7 @@ test.describe('Solve Score UI', () => {
     expect(state.metric).toBe('crowding');
     expect(state.palette).toBe('reef');
     expect(state.q).toBe('5');
-    expect(state.rt).toContain('rotate_roots');
+    expect(state.rt).toContain('rotate_roots(0.125)');
     expect(state.rememberedName).toBe('');
   });
 

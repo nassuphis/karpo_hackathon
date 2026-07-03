@@ -333,11 +333,16 @@ bash -n deploy.sh
 ../.venv/bin/python -m pytest tests/test_deploy_packaging.py -q
 bash scripts/predeploy_check.sh
 bash tests/test_frontend_js.sh
+npx playwright test
 ../.venv/bin/python -m pytest -q <targeted tests>
 bash scripts/test-docker-runtime.sh
 ```
 
 Not every feature needs every command, but any skipped item must be called out explicitly.
+
+`npx playwright test` is REQUIRED (all specs green) for any change touching
+index.html or js/ — the suite went stale for weeks while ungated and had to be
+re-converged in July 2026; do not let that recur.
 
 When the touched code produces a deploy binary, insert one step before the
 Docker gate:

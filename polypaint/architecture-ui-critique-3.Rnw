@@ -72,8 +72,10 @@ exists in that form: chips are gone as an authoring surface, every
 frontend vocabulary is generated from a backend registry, and text source
 --- parsed, compiled, fingerprinted, and adversarially oracle-tested ---
 is the single way a program enters the system. The June--July hardening
-arc (code-reviews 12--23; 191 commits since issue II) also removed WASM
-and Web Workers entirely, split the monolith into 13 ordered parts,
+arc (code-reviews 12--23; 191 commits since issue II) also split the
+monolith into 13 ordered parts, established that the frontend has
+\emph{never} contained WASM or Web Workers (correcting stale project
+records inherited from PolyPaint's in-browser predecessor app),
 converted all six program editors to one shared text-first layout, and
 grew the verification stack into something rarer than the last issue knew:
 \emph{frozen legacy oracles} that pin today's parsers against
@@ -116,11 +118,11 @@ prepared by re-verifying \emph{every} factual claim of issue II against
 feature-by-feature; backend/deploy fact-by-fact) plus targeted reads of
 every file cited. Where this document says ``confirmed absent'' it means
 a grep/read returned nothing, not that memory says so. Since issue II the
-tree absorbed, in order: the WASM/worker removal (June 19), the
-text-only Param/Coeff editors (June 22), the coeff--param registry
-convergence and help system (late June), the code-review-23 hardening
-batch --- 37 findings, waves A--H, all closed (July 2) --- and the
-Root/solve-score editor unification (July 3).
+tree absorbed, in order: the no-WASM lineage correction (June 19; see
+D1), the text-only Param/Coeff editors (June 22), the coeff--param
+registry convergence and help system (late June), the code-review-23
+hardening batch --- 37 findings, waves A--H, all closed (July 2) --- and
+the Root/solve-score editor unification (July 3).
 
 \section{System inventory}
 
@@ -173,11 +175,17 @@ Confirmed as described in issue II, with the split now carrying real
 weight: 13 classic-script parts (943--2{,}655 lines) registered in
 \texttt{window.\_\_ppParts} with a load-order consistency check, plus 9
 generated bundles, all under build-versioned asset keys
-(\texttt{assets/<BUILD\_ID>/...}) so a deploy flips atomically. The June
-19 restructure also \textbf{removed WASM and Web Workers entirely} ---
-zero \texttt{new Worker}/\texttt{WebAssembly} references remain. The
-browser is now a thin client: programs compile in Python, execute in C;
-the page edits text, posts JSON, and polls.
+(\texttt{assets/<BUILD\_ID>/...}) so a deploy flips atomically. A
+lineage correction this issue owes the record: \textbf{PolyPaint's
+frontend never contained WASM or Web Workers} --- zero references even
+in the pre-split 19{,}989-line monolith. The in-browser solver
+(\texttt{step\_loop.c} $\to$ WASM, multi-worker fast mode, 40 WASM
+tests) belongs to PolyPaint's \emph{predecessor}, the standalone root
+visualizer that still lives beside it in the repository; stale project
+notes carried its WASM lore forward until code-review-18 (June 19)
+verified none of it applies here. The browser is, and always was, a
+thin client: programs compile in Python, execute in C; the page edits
+text, posts JSON, and polls.
 
 \verdict{Working as intended. The ESM conversion (stage 2) remains
 unstarted and is now \emph{less} urgent: the parts have stabilized, the

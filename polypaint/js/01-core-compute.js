@@ -1265,14 +1265,10 @@ function _setChainFromSaved(which, values) {
     const normalized = Array.isArray(values) ? values : [];
     if (which === 'pp') {
         _ppChain = _normalizeParamProgramChain(normalized);
-        _paramProgramSelectedIndex = _ppChain.length ? 0 : -1;
-        _renderChips(which);
         return;
     }
     if (which === 'cp') {
         _coeffProgramChain = _normalizeCoeffProgramChain(normalized);
-        _coeffProgramSelectedIndex = _coeffProgramChain.length ? 0 : -1;
-        _renderChips(which);
         return;
     }
     // Only pp/cp reach here (root transforms are text-only source editors).

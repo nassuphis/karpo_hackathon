@@ -1056,18 +1056,15 @@ if (!_coeffRegistryVocab) console.error('coeff_vocab_js.js did not load — regi
 if (!_solveScoreVocab || !_solveScoreMetricNames.length) console.error('solve_score_vocab_js.js did not load — solve-score vocabulary unavailable');
 if (!_rootRegistryVocab) console.error('root_vocab_js.js did not load — root transform vocabulary unavailable');
 
-_renderChips('pp');
-
-_renderChips('cp');
 
 _ensureSolveScoreChainDefaults();
 _ensureSolveScoreSourceDefaults();
 _renderParamCoeffProgramCheatsheets();
 _renderSolveScoreCheatsheets();
 
-_renderChips('ss');
+_syncSolveScoreUi('ss');
 
-_renderChips('palette-ss');
+_syncSolveScoreUi('palette-ss');
 
 _syncRenderColorInterpretationUi();
 
@@ -1227,20 +1224,8 @@ document.addEventListener('keydown', function(e) {
 
 /* Statements relocated from later parts (round 2): listeners,
    window exports, sync calls — monolith tail order preserved. */
-document.addEventListener('click', function(e) {
-    const target = e.target;
-    ['ss', 'palette-ss'].forEach(which => {
-        const popup = document.getElementById(which + '-add-popup');
-        const btn = document.getElementById(which + '-add-btn');
-        if (!popup || !popup._open) return;
-        if (_elementContains(popup, target) || _elementContains(btn, target)) return;
-        _setSolveScorePickerOpen(which, false);
-    });
-});
-
 document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape') {
-        _closeSolveScorePickers();
         _clearRenderPreviewSelection();
         _clearRenderLoresPreviewSelection();
     }

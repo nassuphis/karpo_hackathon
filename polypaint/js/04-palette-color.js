@@ -4,54 +4,6 @@
 // let/const bindings are shared across all parts, exactly as before
 // the split). Deploy rewrites the script tags to build-versioned asset
 // keys (assets/<BUILD_ID>/...), so a deploy flips atomically via index.html.
-function _syncSolveScoreAddOptions(which) {
-    const sel = document.getElementById(which + '-add');
-    const allowed = _solveScoreAllowedAdditions(which);
-    if (sel) {
-        const options = ['<option value="">+ add...</option>'].concat(
-            allowed.map(name => {
-                const spec = _ssCatalog[name] || {};
-                const label = spec.label || name;
-                return `<option value="${_escapeHtml(name)}">${_escapeHtml(label)}</option>`;
-            })
-        );
-        sel.innerHTML = options.join('');
-        sel.disabled = allowed.length === 0;
-    }
-    const btn = document.getElementById(which + '-add-btn');
-    if (btn) {
-        btn.disabled = allowed.length === 0;
-        btn.textContent = allowed.length ? '+ score chip' : '+ blocked';
-        btn.title = allowed.length ? 'Add a score function, transform, or combination' : 'Current stack cannot accept another chip';
-    }
-    _renderSolveScoreAddPopup(which);
-}
-
-function _updateSolveScoreStackUi(which) {
-    const prefix = _solveScorePrefixForWhich(which);
-    const stackEl = document.getElementById(which === 'palette-ss' ? 'palette-ss-stack' : 'ss-stack');
-    const labelEl = document.getElementById(which === 'palette-ss' ? 'palette-ss-stack-label' : 'ss-stack-label');
-    if (!stackEl || !labelEl) return;
-    let draft;
-    try {
-        draft = _solveScoreDraftState(
-            _chainForWhich(which),
-            prefix === 'palette' ? paletteTabMetric : renderSolveMetric,
-            _legacySolveScoreQuantilePct(prefix)
-        );
-    } catch (e) {
-        stackEl.innerHTML = '';
-        labelEl.textContent = `invalid · ${e && e.message ? e.message : String(e)}`;
-        return;
-    }
-    const blocks = [];
-    for (let i = 0; i < Math.max(0, draft.stackDepth); i++) {
-        blocks.push(`<span style="display:inline-block; width:8px; height:${10 + i * 2}px; background:#6c8; border:1px solid #385; border-radius:2px"></span>`);
-    }
-    stackEl.innerHTML = blocks.join('');
-    labelEl.textContent = `depth ${draft.stackDepth} · metrics ${draft.metricCount}`;
-}
-
 function _ensureSolveScoreChainDefaults() {
     if (!_normalizeSolveScoreChain(_renderScoreChain).length) {
         _renderScoreChain.splice(0, _renderScoreChain.length, ..._defaultSolveScoreChain(renderSolveMetric || 'proximity'));
@@ -285,8 +237,6 @@ let _repalettePopupState = { open: false, sourcePaletteId: '', sourceDisplayName
 let _colorRepalettePopupState = { open: false, sourceArtifactId: '', sourceDisplayName: '', interpretation: '' };
 let _bilevelPopupState = { open: false, sectionMode: 'logical_sections_auto', sectionCount: '' };
 let _colorToBilevelPopupState = { open: false, sourceArtifactId: '', threshold: 0 };
-let _solveScoreSelectedIndex = { ss: -1, 'palette-ss': -1 };
-let _solveScorePickerInsertMode = { ss: 'after', 'palette-ss': 'after' };
 let _resultsRefreshPopupState = { open: false, workers: 32 };
 let _renderMtPopupState = {
     open: false,

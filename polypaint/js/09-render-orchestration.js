@@ -76,31 +76,16 @@ function _renderScoreChipHtml(item, i, which, catalog, options = {}) {
     const label = _escapeHtml(spec.label || item.name);
     const inputDefs = pDefs.length ? pDefs : (item.params || []).map(() => ({}));
     const inputsHtml = inputDefs.map((pDef, pi) => _chipInputHtml(which, i, pi, _paramValue(item, pDefs, pi), pDef || {})).join('');
-    return `<span class="chip">${label}${inputsHtml}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`;
+    return `<span class="chip score-chip-readonly">${label}${inputsHtml}</span>`;
 }
 
+// Chips render only as read-only strips (saved-program modals).
 function _paramProgramChipShellHtml(i, readonly, bodyHtml) {
-    if (readonly) {
-        return `<span class="chip score-chip score-chip-readonly">${bodyHtml}</span>`;
-    }
-    const count = _chainForWhich('pp').length;
-    const selected = _paramProgramSelectedIndex === i ? ' selected' : '';
-    const leftDisabled = i <= 0 ? ' disabled' : '';
-    const rightDisabled = i >= count - 1 ? ' disabled' : '';
-    const moves = `<span class="chip-actions"><button type="button" class="chip-move" onclick="event.stopPropagation();moveChip('pp',${i},-1)" title="Move left"${leftDisabled}>&lt;</button><button type="button" class="chip-move" onclick="event.stopPropagation();moveChip('pp',${i},1)" title="Move right"${rightDisabled}>&gt;</button></span>`;
-    return `<span class="chip score-chip${selected}" onclick="selectParamProgramLine(${i},event)">${moves}${bodyHtml}<span class="chip-x" onclick="event.stopPropagation();removeChip('pp',${i})">x</span></span>`;
+    return `<span class="chip score-chip score-chip-readonly">${bodyHtml}</span>`;
 }
 
 function _coeffProgramChipShellHtml(i, readonly, bodyHtml) {
-    if (readonly) {
-        return `<span class="chip score-chip score-chip-readonly">${bodyHtml}</span>`;
-    }
-    const count = _chainForWhich('cp').length;
-    const selected = _coeffProgramSelectedIndex === i ? ' selected' : '';
-    const leftDisabled = i <= 0 ? ' disabled' : '';
-    const rightDisabled = i >= count - 1 ? ' disabled' : '';
-    const moves = `<span class="chip-actions"><button type="button" class="chip-move" onclick="event.stopPropagation();moveChip('cp',${i},-1)" title="Move left"${leftDisabled}>&lt;</button><button type="button" class="chip-move" onclick="event.stopPropagation();moveChip('cp',${i},1)" title="Move right"${rightDisabled}>&gt;</button></span>`;
-    return `<span class="chip score-chip${selected}" onclick="selectCoeffProgramLine(${i},event)">${moves}${bodyHtml}<span class="chip-x" onclick="event.stopPropagation();removeChip('cp',${i})">x</span></span>`;
+    return `<span class="chip score-chip score-chip-readonly">${bodyHtml}</span>`;
 }
 
 // _coeffProgramLegacyInputDefs moved to js/07-transform-catalogs.js: the
@@ -311,62 +296,19 @@ function _renderCoeffProgramChipsHtml(program) {
     return `<div class="chip-container solve-score-modal-chip-strip" aria-label="Coeff program chips">${chips}</div>`;
 }
 
-function _renderChips(which) {
-    const chain = _chainForWhich(which);
-    const el = document.getElementById(which + '-chips');
-    if (el) {
-        if (which === 'pp') {
-            el.innerHTML = chain.map((item, i) => _renderParamProgramChipHtml(item, i, { readonly: true })).join('');
-            _syncParamPipelineModeUi();
-            const sourceLen = _paramProgramSourceStatementCount(_getParamProgramSourceText());
-            const chainLen = _serializeParamProgramChain().length;
-            if (_paramProgramTextModeSelected()) {
-                _paramProgramStatus(sourceLen
-                    ? `Param Program selected · ${sourceLen} source statement${sourceLen === 1 ? '' : 's'}`
-                    : 'Param Program selected · empty identity');
-            } else {
-                _paramProgramStatus(chainLen
-                    ? `Param Program selected · ${_pluralize(chainLen, 'chip')}`
-                    : 'Param Program selected · empty identity');
-            }
-        } else if (which === 'cp') {
-            el.innerHTML = chain.map((item, i) => _renderCoeffProgramChipHtml(item, i, { readonly: true })).join('');
-            _syncParamPipelineModeUi();
-            const sourceLen = _coeffProgramSourceStatementCount(_getCoeffProgramSourceText());
-            const chainLen = _serializeCoeffProgramChain().length;
-            if (_coeffProgramTextModeSelected()) {
-                _coeffProgramStatus(sourceLen
-                    ? `Coeff Program selected · ${sourceLen} source statement${sourceLen === 1 ? '' : 's'}`
-                    : 'Coeff Program selected · empty text source');
-            } else {
-                _coeffProgramStatus(chainLen
-                    ? `Coeff Program selected · ${_pluralize(chainLen, 'chip')}`
-                    : 'Coeff Program selected · empty identity');
-            }
-        } else if (which === 'ss' || which === 'palette-ss') {
-            const catalog = _catalogForChain(which);
-            el.innerHTML = chain.map((item, i) => _renderScoreChipHtml(item, i, which, catalog)).join('');
-        } else {
-            el.innerHTML = chain.map((name, i) =>
-                `<span class="chip">${_escapeHtml(name)}<span class="chip-x" onclick="removeChip('${which}',${i})">x</span></span>`
-            ).join('');
-        }
-    } else if (which !== 'ss' && which !== 'palette-ss') {
-        return;
+// Solve-score chains no longer render chips (text editors own authoring);
+// the chain still drives the legacy metric inputs and related controls.
+function _syncSolveScoreUi(which) {
+    if (which !== 'ss' && which !== 'palette-ss') return;
+    const prefix = _solveScorePrefixForWhich(which);
+    try {
+        _syncSolveScoreLegacyInputs(prefix);
+    } catch (e) {
+        // Invalid chains are allowed transiently while replacing the metric chip.
     }
-    if (which === 'ss' || which === 'palette-ss') {
-        const prefix = _solveScorePrefixForWhich(which);
-        _syncSolveScoreAddOptions(which);
-        _updateSolveScoreStackUi(which);
-        try {
-            _syncSolveScoreLegacyInputs(prefix);
-        } catch (e) {
-            // Invalid chains are allowed transiently while replacing the metric chip.
-        }
-        if (prefix === 'render') _syncScoreNormalizationUi();
-        if (prefix === 'render') _updateSolveScoreButtons();
-        if (prefix === 'palette') _syncPaletteColorInterpretationUi();
-    }
+    if (prefix === 'render') _syncScoreNormalizationUi();
+    if (prefix === 'render') _updateSolveScoreButtons();
+    if (prefix === 'palette') _syncPaletteColorInterpretationUi();
 }
 // (top-level statement moved to the js/12 boot block — parts are
 //  declarations-only; see tests/test_frontend_parts_contract.py)
@@ -777,7 +719,7 @@ function populateSelectedPalette() {
     if (chain.length) {
         const target = _chainForWhich('palette-ss');
         target.splice(0, target.length, ...chain);
-        _renderChips('palette-ss');
+        _syncSolveScoreUi('palette-ss');
         try {
             _syncSolveScoreLegacyInputs('palette');
         } catch (_) {

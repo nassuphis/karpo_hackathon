@@ -11,21 +11,7 @@ function _paramValue(item, pDefs, idx) {
     return def == null ? '' : String(def);
 }
 
-function selectParamProgramLine(idx, eventObj) {
-    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
-    _paramProgramSelectedIndex = Number(idx);
-    _renderChips('pp');
-}
-
-function selectCoeffProgramLine(idx, eventObj) {
-    if (eventObj && eventObj.stopPropagation) eventObj.stopPropagation();
-    _coeffProgramSelectedIndex = Number(idx);
-    _renderChips('cp');
-}
-
-let _paramProgramSelectedIndex = -1;
 let _paramProgramEditorMode = 'text';
-let _coeffProgramSelectedIndex = -1;
 let _coeffProgramEditorMode = 'text';
 
 function _paramProgramTextModeSelected() {
@@ -1523,7 +1509,7 @@ async function _compileSolveScoreSourceEditor(prefix) {
         const which = _solveScoreWhichForPrefix(p);
         const target = _chainForWhich(which);
         target.splice(0, target.length, ..._normalizeSolveScoreChain(chain, p === 'palette' ? paletteTabMetric : renderSolveMetric));
-        _renderChips(which);
+        _syncSolveScoreUi(which);
         _setSolveScoreProgramEditorMode(p, 'text');
         _setSolveScoreProgramStatus(p, `Text source OK: ${program.statement_count || resp.statement_count || chain.length} statement${(program.statement_count || resp.statement_count || chain.length) === 1 ? '' : 's'}.`);
         return program;
@@ -2034,11 +2020,6 @@ function _displayActiveCoeffPipeline(separator = ',') {
     return _formatCoeffProgramChainForLog(_serializeCoeffProgramChain(), separator);
 }
 
-function _paramPipelineEditAffectsCompute(which) {
-    if (which === 'cp' || which === 'pp') return true;
-    return false;
-}
-
 function _syncParamPipelineModeUi() {
     const mode = 'program';
     _paramPipelineMode = mode;
@@ -2051,8 +2032,6 @@ function _syncParamPipelineModeUi() {
 function _setParamPipelineMode(mode, options = {}) {
     _paramPipelineMode = 'program';
     _syncParamPipelineModeUi();
-    _renderChips('pp');
-    _renderChips('cp');
     if (options.markStale) _markComputePreviewStale();
 }
 
@@ -2219,8 +2198,6 @@ function _parseParamProgramPayload(raw) {
 function _applyParamProgram(rawProgram) {
     const program = _parseParamProgramPayload(rawProgram);
     _ppChain.splice(0, _ppChain.length, ...program.chain);
-    _paramProgramSelectedIndex = _ppChain.length ? Math.min(_ppChain.length - 1, Math.max(0, _paramProgramSelectedIndex)) : -1;
-    _renderChips('pp');
     if (program.has_source_text) {
         _setParamProgramSourceText(program.source_text);
         _paramProgramSourceAutoSynthed = false;
@@ -2236,10 +2213,8 @@ function _applyParamProgram(rawProgram) {
 
 function _clearParamProgramChain() {
     _ppChain.splice(0, _ppChain.length);
-    _paramProgramSelectedIndex = -1;
     _setParamProgramSourceText('');
     _paramProgramSourceAutoSynthed = false;
-    _renderChips('pp');
     if (_paramProgramModeSelected()) _markComputePreviewStale();
 }
 
@@ -2445,8 +2420,6 @@ function _parseCoeffProgramPayload(raw) {
 function _applyCoeffProgram(rawProgram) {
     const program = _parseCoeffProgramPayload(rawProgram);
     _coeffProgramChain.splice(0, _coeffProgramChain.length, ...program.chain);
-    _coeffProgramSelectedIndex = _coeffProgramChain.length ? Math.min(_coeffProgramChain.length - 1, Math.max(0, _coeffProgramSelectedIndex)) : -1;
-    _renderChips('cp');
     if (program.has_source_text) {
         _setCoeffProgramSourceText(program.source_text);
         _coeffProgramSourceAutoSynthed = false;
@@ -2462,9 +2435,7 @@ function _applyCoeffProgram(rawProgram) {
 
 function _clearCoeffProgramChain() {
     _coeffProgramChain.splice(0, _coeffProgramChain.length);
-    _coeffProgramSelectedIndex = -1;
     _setCoeffProgramSourceText('');
-    _renderChips('cp');
     if (_paramProgramModeSelected()) _markComputePreviewStale();
 }
 
@@ -2490,79 +2461,6 @@ function _portableCoeffProgramPayload(nameOverride = '') {
 // { value } to store — plus { valueNext } when a complex constant spans the
 // following slot — or { error } with the alert text. Kind checks run in
 // catalog order: target, choices, then the cp/ct kind flags.
-function _validateChipParamValue(which, pDef, value) {
-    const rawText = _str(value).trim();
-    if (pDef && pDef.target) {
-        const norm = _normalizeTarget(value);
-        return norm ? { value: norm } : { error: `Invalid target: "${value}". Use t1, t2, or both.` };
-    }
-    if (pDef && Array.isArray(pDef.choices) && pDef.choices.length) {
-        const norm = rawText.toLowerCase();
-        return pDef.choices.includes(norm)
-            ? { value: norm }
-            : { error: `Invalid ${pDef.ph || 'value'}: "${value}". Use ${pDef.choices.join(' or ')}.` };
-    }
-    if (which === 'cp' && pDef) {
-        if (pDef.lengthArg) {
-            if (rawText.toLowerCase() === 'poly_len') return { value: 'poly_len' };
-            const number = Number(rawText);
-            const min = pDef.min == null ? 1 : Number(pDef.min);
-            const max = pDef.max == null ? 256 : Number(pDef.max);
-            if (!Number.isFinite(number) || !Number.isInteger(number) || number < min || number > max) {
-                return { error: `Invalid ${pDef.label || pDef.ph || 'length'}: "${value}". Use poly_len or an integer in [${min}, ${max}].` };
-            }
-            return { value: String(number) };
-        }
-        if (pDef.intLiteral) {
-            const number = Number(rawText);
-            const min = pDef.min == null ? -Infinity : Number(pDef.min);
-            const max = pDef.max == null ? Infinity : Number(pDef.max);
-            if (!Number.isFinite(number) || !Number.isInteger(number) || number < min || number > max) {
-                return { error: `Invalid ${pDef.label || pDef.ph || 'value'}: "${value}". Use an integer${Number.isFinite(min) || Number.isFinite(max) ? ` in [${min}, ${max}]` : ''}.` };
-            }
-            return { value: String(number) };
-        }
-        if (pDef.scalarExpr) {
-            // Coeff Program scalar args are parsed by the compiler. Keep expressions
-            // like p2, real(p1), or p1+conj(p2) intact instead of applying the
-            // legacy numeric-only transform validator in the editor.
-            return { value: rawText || String(pDef.def || '') };
-        }
-        if (_isAndyParam(pDef)) {
-            const norm = _normalizeCtRealInput(value);
-            return norm == null
-                ? { error: `Invalid ${pDef.ph || 'value'}: "${value}". Use a finite numeric andy value.` }
-                : { value: norm };
-        }
-        return { value: rawText || String(pDef.def || '') };
-    }
-    return { value };
-}
-
-function updateChipParam(chipIdx, paramIdx, value, which) {
-    if (which === 'pp') {
-        _paramProgramStatus('Param Program chips are read-only; edit the Text tab.');
-        return;
-    }
-    if (which === 'cp') {
-        _coeffProgramStatus('Coeff Program chips are read-only; edit the Text tab.');
-        return;
-    }
-    const chain = _chainForWhich(which);
-    if (chipIdx < 0 || chipIdx >= chain.length) return;
-    const catalog = _catalogForChain(which);
-    const spec = catalog[chain[chipIdx].name] || {};
-    const pDef = (spec.params || [])[paramIdx];
-    const result = _validateChipParamValue(which, pDef, value);
-    if (result.error) { alert(result.error); return; }
-    chain[chipIdx].params[paramIdx] = result.value;
-    if (result.valueNext !== undefined && paramIdx + 1 < chain[chipIdx].params.length) {
-        chain[chipIdx].params[paramIdx + 1] = result.valueNext;
-    }
-    _renderChips(which);
-    if (_paramPipelineEditAffectsCompute(which)) _markComputePreviewStale();
-}
-
 function _chipReadonlyValueHtml(value, paramDef = {}, title = '') {
     const pd = paramDef || {};
     const fallback = pd.def == null ? '' : pd.def;
@@ -2581,44 +2479,9 @@ function _chipReadonlyValueHtml(value, paramDef = {}, title = '') {
     return `<span class="${clsParts.join(' ')}"${titleAttr}>${_escapeHtml(text)}</span>`;
 }
 
+// Chips are read-only everywhere; params render as static value spans.
 function _chipInputHtml(which, chipIdx, paramIdx, value, paramDef, options = {}) {
-    const pd = paramDef || {};
-    if (options.readonly) return _chipReadonlyValueHtml(value, pd);
-    const defaultExprTitle = pd.scalarExpr
-        ? 'Expression. Registers: t1, t2, p1, p2. Constants: pi, pi2, pi2i. Functions: exp, real, imag, abs, mod.'
-        : '';
-    const titleAttr = (pd.title || defaultExprTitle) ? ` title="${_escapeHtml(pd.title || defaultExprTitle)}"` : '';
-    if (pd.target) {
-        const normalizedValue = _normalizeTarget(_str(value)) || _normalizeTarget(String(pd.def || 'both')) || 'both';
-        const options = ['t1', 't2', 'both'].map(choice => {
-            const selected = normalizedValue === choice ? ' selected' : '';
-            return `<option value="${choice}"${selected}>${choice}</option>`;
-        }).join('');
-        return `<select class="chip-input chip-input-target"${titleAttr} onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">${options}</select>`;
-    }
-    if (Array.isArray(pd.choices) && pd.choices.length) {
-        const normalizedValue = _str(value).trim().toLowerCase();
-        const options = pd.choices.map(choice => {
-            const selected = normalizedValue === choice ? ' selected' : '';
-            return `<option value="${_escapeHtml(choice)}"${selected}>${_escapeHtml(choice)}</option>`;
-        }).join('');
-        const clsParts = ['chip-input'];
-        if (pd.selectorWide) clsParts.push('chip-input-selector-wide');
-        if (pd.functionWide) clsParts.push('chip-input-function-wide');
-        if (pd.paramProgramWide) clsParts.push('chip-input-param-program-wide');
-        if (pd.choiceWide || pd.wide === true) clsParts.push('chip-input-wide');
-        return `<select class="${clsParts.join(' ')}"${titleAttr} onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">${options}</select>`;
-    }
-    const im = (pd.target || pd.choices || pd.complexPairNext || pd.complex || pd.scalarExpr || pd.lengthArg || _isAndyParam(pd)) ? 'text' : 'decimal';
-    const clsParts = ['chip-input'];
-    if (_isAndyParam(pd)) clsParts.push('chip-input-andy');
-    if (pd.complexWide) clsParts.push('chip-input-complex-wide');
-    if (pd.exprWide) clsParts.push('chip-input-expr-wide');
-    if (pd.programWide) clsParts.push('chip-input-program-wide');
-    if (pd.paramProgramWide) clsParts.push('chip-input-param-program-wide');
-    if (pd.wide === true || (pd.scalarExpr && !pd.complexWide && !pd.exprWide)) clsParts.push('chip-input-wide');
-    const cls = clsParts.join(' ');
-    return `<input class="${cls}" type="text" inputmode="${im}" value="${_escapeHtml(value)}" placeholder="${_escapeHtml(pd.ph || '')}"${titleAttr} onchange="updateChipParam(${chipIdx},${paramIdx},this.value,'${which}')" onclick="event.stopPropagation()">`;
+    return _chipReadonlyValueHtml(value, paramDef || {});
 }
 
 function _chipLabeledInputHtml(which, chipIdx, paramIdx, value, paramDef, options = {}) {
@@ -2630,15 +2493,7 @@ function _chipLabeledInputHtml(which, chipIdx, paramIdx, value, paramDef, option
 }
 
 function _solveScoreChipShell(which, i, bodyHtml, tooltipAttr = '', options = {}) {
-    if (options.readonly) {
-        return `<span class="chip score-chip score-chip-readonly"${tooltipAttr}>${bodyHtml}</span>`;
-    }
-    const count = _chainForWhich(which).length;
-    const leftDisabled = i <= 0 ? ' disabled' : '';
-    const rightDisabled = i >= count - 1 ? ' disabled' : '';
-    const moves = `<span class="chip-actions"><button type="button" class="chip-move" onclick="event.stopPropagation();moveChip('${which}',${i},-1)" title="Move left"${leftDisabled}>&lt;</button><button type="button" class="chip-move" onclick="event.stopPropagation();moveChip('${which}',${i},1)" title="Move right"${rightDisabled}>&gt;</button></span>`;
-    const selected = _solveScoreSelectedIndex[which] === i ? ' selected' : '';
-    return `<span class="chip score-chip${selected}" onclick="selectSolveScoreLine('${which}',${i},event)"${tooltipAttr}>${moves}${bodyHtml}<span class="chip-x" onclick="event.stopPropagation();removeChip('${which}',${i})">x</span></span>`;
+    return `<span class="chip score-chip score-chip-readonly"${tooltipAttr}>${bodyHtml}</span>`;
 }
 
 function _solveScoreInheritedLagQuantile(which, chipIdx, item, options = {}) {

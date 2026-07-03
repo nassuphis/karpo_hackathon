@@ -186,8 +186,8 @@ assertIncludes("function _paramProgramLegacyTakesNoArgs(legacyName) {", 'Param P
 assertIncludes("inputDefs = pDefs.slice(0, 3);\n            inputValues = [legacyName, src, tgt];", 'Param Program legacy bridge should hide the args box for no-arg legacy functions');
 assertIncludes("function _chipLabeledInputHtml(which, chipIdx, paramIdx, value, paramDef, options = {}) {", 'Param Program legacy bridge should render visible labels, not hidden placeholders');
 assertIncludes("showParamLabels = item.name === 'legacy';", 'Param Program legacy bridge should label name/src/tgt and structured args');
-assertIncludes(".chip .chip-input-expr-wide {\n    width: 28ch;", 'Chip expression fields should be wide enough for useful formulas');
-assertIncludes(".chip .chip-input-selector-wide {\n    width: 8ch;", 'Chip selector fields should be compact but readable');
+assertNotIncludes(".chip .chip-input-expr-wide", 'editable chip-input width classes stay deleted (chips are read-only value spans)');
+assertNotIncludes(".chip .chip-input-selector-wide", 'editable chip-input width classes stay deleted (chips are read-only value spans)');
 assertIncludes("{ ph: 'target', def: 'p1', choices: ['p1', 'p2'], selectorWide: true }", 'Param Program emit target selector should use compact selector sizing');
 assertIncludes("{ ph: 'value', def: '0', scalarExpr: true, complexWide: true", 'Param Program const should use one wide expression field');
 assertIncludes("Constants: pi, pi2, pi2i. Functions: exp, real, imag, abs, mod.", 'Param Program expression tooltips should advertise pi, pi2, and pi2i constants');
@@ -320,8 +320,8 @@ assertIncludes("desc: 'exp_affine(src, a, b): exp(src*a+b)'", 'Coeff Program exp
 assertIncludes("hidden: true,\n            params:", 'Coeff Program compatibility-only legacy chip should be hidden from authoring menus');
 assertIncludes("coeff_program_chain: coeffProgramChain,", 'compute/preview payloads should forward coeff_program_chain');
 assertIncludes("savedCoeffProgramSourceText = _coeffProgramSourceFromRows(savedCoeffProgramChain);", 'populate-from-result should synthesize Coeff source from legacy chain-only artifacts');
-assertIncludes("Coeff Program scalar args are parsed by the compiler. Keep expressions", 'Coeff Program editor should not reject p1/p2 scalar expressions with legacy numeric validation');
-assertIncludes("return { value: rawText || String(pDef.def || '') };", 'Coeff Program scalar expression fields should preserve raw expression text');
+assertNotIncludes("function _validateChipParamValue", 'chip param edit validation stays deleted (chips are read-only; the text compilers validate)');
+assertNotIncludes("function updateChipParam", 'chip param editing stays deleted (text editors are the only authoring surface)');
 assertIncludes("function _coeffProgramLegacyFormulaHtml(i, legacyName, values, legacyDefs, options = {})", 'generic Coeff Program legacy chips should render as formulas instead of labeled dumps');
 assertIncludes("chip-input-selector-wide", 'Coeff Program legacy source/target selectors should be wide enough to read');
 assertIncludes("chip-input-function-wide", 'Coeff Program legacy function selectors should have a readable but bounded width');
@@ -373,9 +373,9 @@ assertIncludes("return `legacy(${[legacyName || '', src || 'poly', tgt || 'poly'
 assertIncludes("if (sourceText.trim()) {\n            return _coeffProgramMetaHtml(program, options)", 'Coeff Program modal should prefer source_text display when a text program is active or saved');
 assertIncludes("Text source changed. It will be compiled by the backend on save/preview/compute.", 'Coeff Program text editor should tell users save uses source text');
 assertNotIncludes("function _chipMoveControlsHtml", 'the rt-only move-controls helper stays deleted (root transforms are text-only; pp/cp/ss render their own move buttons)');
-assertIncludes("moveChip('pp',${i},-1)", 'param program chips should get move arrows');
-assertIncludes("moveChip('cp',${i},-1)", 'coeff program chips should get move arrows');
-assertIncludes("chip-input chip-input-target", 'target parameters should render as dropdown inputs');
+assertNotIncludes("moveChip(", 'chip move/reorder controls stay deleted (chips render read-only in modals only)');
+assertNotIncludes("function addChip", 'chip add machinery stays deleted (text editors are the only authoring surface)');
+assertIncludes("clsParts = ['chip-input', 'chip-input-readonly']", 'chip params render as read-only value spans');
 assertIncludes("function _solveScorePaletteCompatibility(compiled, interpretation) {", 'palette generation should share the color-mode compatibility helper');
 assertIncludes("const colorInterpretation = _selectedPaletteColorInterpretation();", 'Palette tab Generate should validate against the selected palette interpretation before dispatch');
 assertIncludes("has_explicit_outputs: p.solveScoreHasExplicitOutputs,", 'Render Palette Generate should validate the render solve-score output mode before dispatch');
@@ -1441,7 +1441,7 @@ async function main() {
     extractFunction('_defaultSolveScoreProgramSourceText'),
     extractFunction('_setPanelTabActive'),
     extractFunction('_setSolveScoreProgramEditorMode'),
-    extractFunction('_renderChips'),
+    extractFunction('_syncSolveScoreUi'),
     extractFunction('_artifactSolveScoreSourceText'),
     extractFunction('_restoreSolveScoreSourceFromArtifact'),
     extractFunction('setColorMode'),
@@ -1611,9 +1611,9 @@ async function main() {
   assert(blankGuarded, 'blank solve-score text should be rejected client-side before dispatch');
   ssSourceTextarea.value = 'score = metric(proximity, slv, q=0.1%)\n';
   assert(ctx._requireSolveScoreProgramSourceText('render') === ssSourceTextarea.value, 'nonblank solve-score text should pass the dispatch guard without rewriting source');
-  ctx._renderChips('ss');
-  assert(ctx._syncSolveScoreLegacyInputsCalls === 1, '_renderChips(ss) should sync derived solve-score state even without #ss-chips');
-  assert(ctx._updateSolveScoreButtonsCalls === 1, '_renderChips(ss) should refresh solve-score buttons even without #ss-chips');
+  ctx._syncSolveScoreUi('ss');
+  assert(ctx._syncSolveScoreLegacyInputsCalls === 1, '_syncSolveScoreUi(ss) should sync derived solve-score state (chips are gone)');
+  assert(ctx._updateSolveScoreButtonsCalls === 1, '_syncSolveScoreUi(ss) should refresh solve-score buttons (chips are gone)');
 
   assert(ctx._coeffFuncUiParamCount(ctx.window._coeffFuncCatalog[0]) === 2, 'const coefficient function should present two logical UI parameters');
   ctx._functionPopupState.filter = 'poly_1';

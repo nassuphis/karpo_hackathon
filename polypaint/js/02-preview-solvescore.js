@@ -1086,43 +1086,6 @@ function _buildSolveScoreProgramSpec(program) {
     }).filter(Boolean).join(';');
 }
 
-function _solveScoreDraftState(chain, fallbackMetric = 'proximity', legacyQuantilePct = '0.1') {
-    const normalized = _normalizeSolveScoreChain(chain, fallbackMetric, legacyQuantilePct);
-    let stackDepth = 0;
-    let metricCount = 0;
-    normalized.forEach((item) => {
-        if (_solveScoreMetricSet.has(item.name) || _isSolveScoreGenericMetricChipName(item.name)) {
-            metricCount += 1;
-            stackDepth += 1;
-            return;
-        }
-        if (item.name === 'const') {
-            stackDepth += 1;
-            return;
-        }
-        if (item.name === 'dup') {
-            stackDepth = stackDepth >= 1 ? stackDepth + 1 : 0;
-            return;
-        }
-        if (item.name === 'flush') {
-            stackDepth = 0;
-            return;
-        }
-        if (_solveScoreUnarySpecs[item.name]) {
-            return;
-        }
-        if (_solveScoreOutputSpecs[item.name]) {
-            stackDepth = stackDepth >= 1 ? stackDepth - 1 : 0;
-            return;
-        }
-        const spec = _solveScoreCombineSpecs[item.name];
-        if (!spec) return;
-        if (stackDepth >= spec.arity) stackDepth -= spec.arity - 1;
-        else stackDepth = 0;
-    });
-    return { normalized, stackDepth, metricCount };
-}
-
 function _compileSolveScoreChain(chain, fallbackMetric = 'proximity', legacyQuantilePct = '0.1') {
     const normalized = _normalizeSolveScoreChain(chain, fallbackMetric, legacyQuantilePct);
     if (!normalized.length) {
@@ -1490,7 +1453,7 @@ function _setSolveScoreChainFromLegacy(prefix, metric, quantilePct = 0.1, omega 
     const chain = _chainForWhich(which);
     const next = _defaultSolveScoreChain(metric, quantilePct, omega, omegaEnabled, omegaPhase);
     chain.splice(0, chain.length, ...next);
-    _renderChips(which);
+    _syncSolveScoreUi(which);
     return _syncSolveScoreLegacyInputs(prefix);
 }
 

@@ -454,7 +454,7 @@ function _setSolveScoreChainFromArtifact(prefix, chain) {
     if (!normalized.length) return false;
     const target = _chainForWhich(_solveScoreWhichForPrefix(prefix));
     target.splice(0, target.length, ...normalized);
-    _renderChips(_solveScoreWhichForPrefix(prefix));
+    _syncSolveScoreUi(_solveScoreWhichForPrefix(prefix));
     return true;
 }
 

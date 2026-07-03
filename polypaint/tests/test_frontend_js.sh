@@ -153,7 +153,9 @@ assertIncludes("function _insertParamProgramSourceSnippet(snippet) {", 'Param Pr
 assertIncludes("function _renderParamProgramCheatsheet() {", 'Param Program cheatsheet renderer should exist');
 assertIncludes("function _paramProgramTextModeSelected() {", 'Param Program text mode should have a single source of truth');
 assertIncludes("function _paramProgramSourceFromRows(chain) {", 'Param Program should synthesize editable source from chip chains');
-assertIncludes("lambdaPost('storage', { source_text: sourceText }, '/compile-param-program-source')", 'Param Program text editor should validate against the backend parser');
+assertIncludes("route: '/compile-param-program-source',", 'Param Program text editor should validate against the backend parser');
+assertIncludes("lambdaPost('storage', { source_text: sourceText }, def.route)", 'all program editors should share one debounced validation engine');
+assertIncludes("route: '/compile-solve-score-program-source',", 'solve-score editors should register debounced as-you-type validation');
 // H3 regression: _ctAndyIndex was deleted; any surviving reference is a ReferenceError at runtime.
 assertNotIncludes('_ctAndyIndex(', 'deleted _ctAndyIndex must not be referenced anywhere (littlewood formula crash)');
 // H1 regression: BOTH coeff and param save modals must forward source_text.
@@ -367,8 +369,8 @@ assertIncludes("if (name === 'argsort' && params.length >= 3) {", 'Coeff Program
 assertIncludes("let _coeffProgramSourceAutoSynthed = false;", 'Coeff Program text tab should track auto-synthesized vs user-authored source');
 assertIncludes("(!_getCoeffProgramSourceText().trim() || _coeffProgramSourceAutoSynthed)) {", 'Coeff Program tab switch should re-synthesize auto-generated text from the latest chips');
 assertIncludes("&& String(raw.source_text || '').trim() !== '';", 'Coeff Program payload parsing should not let an empty source_text discard a non-empty chain');
-assertIncludes("function _scheduleCoeffProgramSourceValidation() {", 'Coeff Program text editor should debounce advisory backend validation');
-assertIncludes("'/compile-coeff-program-source');", 'Coeff Program text editor should validate via the compile-coeff-program-source route');
+assertIncludes("function _scheduleProgramSourceValidation(key) {", 'program text editors should debounce advisory backend validation through the shared engine');
+assertIncludes("route: '/compile-coeff-program-source',", 'Coeff Program text editor should validate via the compile-coeff-program-source route');
 assertIncludes("return `legacy(${[legacyName || '', src || 'poly', tgt || 'poly', ...rest].join(', ')})`;", 'Coeff Program legacy-form source rendering should use explicit legacy(...) for wire preservation');
 assertIncludes("if (sourceText.trim()) {\n            return _coeffProgramMetaHtml(program, options)", 'Coeff Program modal should prefer source_text display when a text program is active or saved');
 assertIncludes("Text source changed. It will be compiled by the backend on save/preview/compute.", 'Coeff Program text editor should tell users save uses source text');
@@ -663,7 +665,7 @@ assertIncludes("_setProgramSourceSidePanelMode('render-ss','help')", 'render sol
 assertIncludes("_setProgramSourceSidePanelMode('palette-ss','help')", 'palette solve-score editor should expose a Help tab');
 assertIncludes("<script src=\"root_vocab_js.js\"></script>", 'index.html should load the generated root vocabulary');
 assertIncludes("lambdaPost('storage', { source_text: sourceText, strict: true }, '/compile-solve-score-program-source')", 'solve-score source editor should compile through the backend route');
-assertIncludes("lambdaPost('storage', { source_text: sourceText }, '/compile-root-program-source')", 'root source editor should validate through the backend route (debounced, advisory)');
+assertIncludes("route: '/compile-root-program-source',", 'root source editors should validate through the backend route (debounced, advisory)');
 assertNotIncludes("root_transforms: p.rootTransforms", 'render/preview browser payloads should not send root chip chains (text is the one channel)');
 assertNotIncludes("root_transforms: _paletteRootTransforms()", 'palette browser payload should not send root chip chains');
 assertIncludes("solve_score_program_source_text: p.solveScoreProgramSourceText,", 'render/preview payloads should forward solve-score source text');

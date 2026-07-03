@@ -108,33 +108,90 @@ function _setParamProgramEditorMode(_mode) {
     if (_paramProgramModeSelected()) _markComputePreviewStale();
 }
 
-let _paramProgramSourceValidationTimer = null;
-let _paramProgramSourceValidationSeq = 0;
-function _scheduleParamProgramSourceValidation() {
-    if (_paramProgramSourceValidationTimer) clearTimeout(_paramProgramSourceValidationTimer);
-    _paramProgramSourceValidationTimer = setTimeout(async () => {
-        _paramProgramSourceValidationTimer = null;
-        const sourceText = _getParamProgramSourceText();
-        if (!sourceText.trim() || !_paramProgramTextModeSelected()) return;
-        const seq = ++_paramProgramSourceValidationSeq;
+// One debounced advisory-validation engine for every program source
+// editor. Each entry declares its textarea, backend compile route, status
+// sink, and ok-line formatter (per-kind texts preserved). Responses are
+// advisory — save/preview/render surface real errors.
+function _programStatementCountOk(resp, withTokens = false) {
+    const count = Number(resp.statement_count) || 0;
+    const base = `Text source OK: ${count} statement${count === 1 ? '' : 's'}`;
+    if (!withTokens) return `${base}.`;
+    return `${base}, ${resp.program && resp.program.token_count || 0} tokens.`;
+}
+
+const _programSourceValidators = {
+    pp: {
+        textarea: () => _paramProgramSourceTextarea(),
+        route: '/compile-param-program-source',
+        gate: () => _paramProgramTextModeSelected(),
+        status: (message, isError) => _paramProgramStatus(message, isError),
+        okStatus: resp => _programStatementCountOk(resp, true),
+    },
+    cp: {
+        textarea: () => _coeffProgramSourceTextarea(),
+        route: '/compile-coeff-program-source',
+        gate: () => _coeffProgramTextModeSelected(),
+        status: (message, isError) => _coeffProgramStatus(message, isError),
+        okStatus: resp => _programStatementCountOk(resp, true),
+    },
+    'render-rt': {
+        textarea: () => _rootProgramSourceTextarea('render'),
+        route: '/compile-root-program-source',
+        status: (message, isError) => _rootProgramStatus('render', message, isError),
+        okStatus: resp => _programStatementCountOk(resp),
+    },
+    'palette-rt': {
+        textarea: () => _rootProgramSourceTextarea('palette'),
+        route: '/compile-root-program-source',
+        status: (message, isError) => _rootProgramStatus('palette', message, isError),
+        okStatus: resp => _programStatementCountOk(resp),
+    },
+    'render-ss': {
+        textarea: () => _solveScoreSourceTextarea('render'),
+        route: '/compile-solve-score-program-source',
+        status: (message, isError) => _setSolveScoreProgramStatus('render', message, isError),
+        okStatus: resp => _programStatementCountOk(resp),
+    },
+    'palette-ss': {
+        textarea: () => _solveScoreSourceTextarea('palette'),
+        route: '/compile-solve-score-program-source',
+        status: (message, isError) => _setSolveScoreProgramStatus('palette', message, isError),
+        okStatus: resp => _programStatementCountOk(resp),
+    },
+};
+
+let _programSourceValidationTimers = {};
+let _programSourceValidationSeqs = {};
+function _scheduleProgramSourceValidation(key) {
+    const def = _programSourceValidators[key];
+    if (!def) return;
+    if (_programSourceValidationTimers[key]) clearTimeout(_programSourceValidationTimers[key]);
+    _programSourceValidationTimers[key] = setTimeout(async () => {
+        _programSourceValidationTimers[key] = null;
+        const el = def.textarea();
+        const sourceText = String(el ? el.value : '');
+        if (!sourceText.trim()) return;
+        if (def.gate && !def.gate()) return;
+        const seq = (_programSourceValidationSeqs[key] = (_programSourceValidationSeqs[key] || 0) + 1);
         try {
-            const resp = await lambdaPost('storage', { source_text: sourceText }, '/compile-param-program-source');
-            if (seq !== _paramProgramSourceValidationSeq || sourceText !== _getParamProgramSourceText()) return;
+            const resp = await lambdaPost('storage', { source_text: sourceText }, def.route);
+            const now = def.textarea();
+            if (seq !== _programSourceValidationSeqs[key] || sourceText !== String(now ? now.value : '')) return;
             if (resp && resp.ok) {
-                _paramProgramStatus(`Text source OK: ${resp.statement_count} statement${resp.statement_count === 1 ? '' : 's'}, ${resp.program && resp.program.token_count || 0} tokens.`);
+                def.status(def.okStatus(resp), false);
             } else if (resp && Array.isArray(resp.diagnostics)) {
                 const first = resp.diagnostics.find(d => d && d.level === 'error') || resp.diagnostics[0];
-                if (first) _paramProgramStatus(`Line ${first.line}: ${first.message}`, true);
+                if (first) def.status(`Line ${first.line || '?'}: ${first.message}`, true);
             }
         } catch (_) {
-            /* advisory only */
+            /* advisory only; save/preview/render surface real errors */
         }
     }, 900);
 }
 
 function _onParamProgramSourceInput() {
     _paramProgramSourceAutoSynthed = false;
-    _scheduleParamProgramSourceValidation();
+    _scheduleProgramSourceValidation('pp');
     if (_paramProgramTextModeSelected() && _paramProgramModeSelected()) _markComputePreviewStale();
     _syncParamPipelineModeUi();
     if (typeof _paramProgramModalState !== 'undefined' && _paramProgramModalState.open) _renderParamProgramModal();
@@ -1312,32 +1369,6 @@ function _rootProgramStatus(prefix, message, isError = false) {
     el.className = 'solve-score-program-status' + (isError ? ' error' : '');
 }
 
-let _rootProgramSourceValidationTimer = { render: null, palette: null };
-let _rootProgramSourceValidationSeq = { render: 0, palette: 0 };
-function _scheduleRootProgramSourceValidation(prefix) {
-    const p = _editorPrefix(prefix);
-    if (_rootProgramSourceValidationTimer[p]) clearTimeout(_rootProgramSourceValidationTimer[p]);
-    _rootProgramSourceValidationTimer[p] = setTimeout(async () => {
-        _rootProgramSourceValidationTimer[p] = null;
-        const sourceText = _getRootProgramSourceText(p);
-        if (!sourceText.trim()) return;
-        const seq = ++_rootProgramSourceValidationSeq[p];
-        try {
-            const resp = await lambdaPost('storage', { source_text: sourceText }, '/compile-root-program-source');
-            if (seq !== _rootProgramSourceValidationSeq[p] || sourceText !== _getRootProgramSourceText(p)) return;
-            if (resp && resp.ok) {
-                const count = Number(resp.statement_count) || 0;
-                _rootProgramStatus(p, `Text source OK: ${count} statement${count === 1 ? '' : 's'}.`);
-            } else if (resp && Array.isArray(resp.diagnostics)) {
-                const first = resp.diagnostics.find(d => d && d.level === 'error') || resp.diagnostics[0];
-                if (first) _rootProgramStatus(p, `Line ${first.line || '?'}: ${first.message}`, true);
-            }
-        } catch (_) {
-            /* advisory only */
-        }
-    }, 900);
-}
-
 function _setPanelTabActive(panelBase, mode) {
     const normalized = mode === 'text' ? 'text' : 'chips';
     const chipsPanel = document.getElementById(`${panelBase}-chips-panel`);
@@ -1359,7 +1390,9 @@ function _setSolveScoreProgramEditorMode(prefix, mode) {
 }
 
 function _onSolveScoreProgramSourceInput(prefix) {
-    _setSolveScoreProgramStatus(_editorPrefix(prefix), 'Text source changed. Compile to validate; backend compiles it on render.', false);
+    const p = _editorPrefix(prefix);
+    _scheduleProgramSourceValidation(p === 'palette' ? 'palette-ss' : 'render-ss');
+    _setSolveScoreProgramStatus(p, 'Text source changed. It will be compiled by the backend on render.', false);
 }
 
 function _insertSolveScoreSourceSnippet(prefix, snippet) {
@@ -1468,7 +1501,7 @@ function _renderSolveScoreCheatsheets() {
 function _onRootProgramSourceInput(prefix) {
     const p = _editorPrefix(prefix);
     _rootProgramSourceAutoSynthed[p] = false;
-    _scheduleRootProgramSourceValidation(p);
+    _scheduleProgramSourceValidation(p === 'palette' ? 'palette-rt' : 'render-rt');
     _rootProgramStatus(p, 'Text source changed. It will be compiled by the backend on render.');
 }
 
@@ -1646,33 +1679,9 @@ function _setCoeffProgramEditorMode(_mode) {
 // Debounced advisory validation of text source against the authoritative
 // backend parser; the status line shows the first diagnostic. Save/preview
 // still compile strictly server-side — this is editor feedback only.
-let _coeffProgramSourceValidationTimer = null;
-let _coeffProgramSourceValidationSeq = 0;
-function _scheduleCoeffProgramSourceValidation() {
-    if (_coeffProgramSourceValidationTimer) clearTimeout(_coeffProgramSourceValidationTimer);
-    _coeffProgramSourceValidationTimer = setTimeout(async () => {
-        _coeffProgramSourceValidationTimer = null;
-        const sourceText = _getCoeffProgramSourceText();
-        if (!sourceText.trim() || !_coeffProgramTextModeSelected()) return;
-        const seq = ++_coeffProgramSourceValidationSeq;
-        try {
-            const resp = await lambdaPost('storage', { source_text: sourceText }, '/compile-coeff-program-source');
-            if (seq !== _coeffProgramSourceValidationSeq || sourceText !== _getCoeffProgramSourceText()) return;
-            if (resp && resp.ok) {
-                _coeffProgramStatus(`Text source OK: ${resp.statement_count} statement${resp.statement_count === 1 ? '' : 's'}, ${resp.program && resp.program.token_count || 0} tokens.`);
-            } else if (resp && Array.isArray(resp.diagnostics)) {
-                const first = resp.diagnostics.find(d => d && d.level === 'error') || resp.diagnostics[0];
-                if (first) _coeffProgramStatus(`Line ${first.line}: ${first.message}`, true);
-            }
-        } catch (_) {
-            /* advisory only; save/preview surface real errors */
-        }
-    }, 900);
-}
-
 function _onCoeffProgramSourceInput() {
     _coeffProgramSourceAutoSynthed = false;
-    _scheduleCoeffProgramSourceValidation();
+    _scheduleProgramSourceValidation('cp');
     if (_coeffProgramTextModeSelected() && _paramProgramModeSelected()) _markComputePreviewStale();
     _syncParamPipelineModeUi();
     // typeof guard: _coeffProgramModalState is declared with `let` later in

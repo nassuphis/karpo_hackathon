@@ -1321,10 +1321,28 @@ function _scrubPadOnExternalInput() {
     _closeProgramScrubPad();
 }
 
+function _scrubPadNudge(direction, big) {
+    const st = _scrubPadState;
+    if (!st) return;
+    const step = (st.max - st.min) * (big ? 0.10 : 0.01);
+    const next = Math.min(st.max, Math.max(st.min, st.value + direction * step));
+    _scrubPadWrite(next);
+}
+
 function _ensureProgramScrubPadHandlers() {
     if (_scrubPadHandlersBound || typeof document === 'undefined' || typeof document.addEventListener !== 'function') return;
     document.addEventListener('keydown', event => {
-        if (event && event.key === 'Escape' && _scrubPadState) _revertProgramScrubPad();
+        if (!event || !_scrubPadState) return;
+        if (event.key === 'Escape') { _revertProgramScrubPad(); return; }
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+            // Arrows nudge while the pad is open (typing closes it anyway);
+            // leave them alone inside the pad's own range fields.
+            const target = event.target;
+            const targetId = target && target.id;
+            if (targetId === 'program-scrub-min' || targetId === 'program-scrub-max') return;
+            if (typeof event.preventDefault === 'function') event.preventDefault();
+            _scrubPadNudge(event.key === 'ArrowRight' ? 1 : -1, !!event.shiftKey);
+        }
     });
     document.addEventListener('mousedown', event => {
         const st = _scrubPadState;
@@ -1348,6 +1366,10 @@ function _openProgramScrubPad(which, span, textarea, event) {
         end: span.end,
         original: span.raw,
         current: span.raw,
+        // Staleness guard is the FULL text, not the slice: a programmatic
+        // rewrite (populate, program load) could coincidentally leave the
+        // same characters at the span positions.
+        snapshot: String(textarea.value || ''),
         value: span.value,
         min: span.value - spread,
         max: span.value + spread,
@@ -1366,7 +1388,7 @@ function _openProgramScrubPad(which, span, textarea, event) {
             <span id="program-scrub-value" class="program-scrub-value"></span>
             <button type="button" class="btn-secondary program-scrub-close" onclick="_closeProgramScrubPad()" aria-label="Close">x</button>
         </div>
-        <div id="program-scrub-surface" class="program-scrub-surface" onmousedown="_scrubPadDragStart(event)">
+        <div id="program-scrub-surface" class="program-scrub-surface" onpointerdown="_scrubPadDragStart(event)">
             <div id="program-scrub-handle" class="program-scrub-handle"></div>
         </div>
         <div class="program-scrub-row">
@@ -1374,7 +1396,7 @@ function _openProgramScrubPad(which, span, textarea, event) {
             max <input type="text" id="program-scrub-max" onchange="_scrubPadSetRange()">
         </div>
         ${liveRow}
-        <div class="program-scrub-hint">drag to scrub &middot; Esc reverts &middot; any other edit closes</div>
+        <div class="program-scrub-hint">drag to scrub &middot; &larr;/&rarr; nudge (Shift bigger) &middot; Esc reverts &middot; any other edit closes</div>
     `;
     const minEl = document.getElementById('program-scrub-min');
     const maxEl = document.getElementById('program-scrub-max');
@@ -1416,8 +1438,7 @@ function _scrubPadWrite(nextValue) {
     const st = _scrubPadState;
     if (!st || !st.textarea) return;
     const t = st.textarea;
-    const liveSlice = String(t.value || '').slice(st.start, st.end);
-    if (liveSlice !== st.current) {
+    if (String(t.value || '') !== st.snapshot) {
         // Something else rewrote the textarea without an input event
         // (populate, program load, clear): the span is stale — never
         // write through it.
@@ -1426,9 +1447,10 @@ function _scrubPadWrite(nextValue) {
     }
     const text = _scrubFormatNumber(nextValue);
     if (text !== st.current) {
-        t.value = String(t.value || '').slice(0, st.start) + text + String(t.value || '').slice(st.end);
+        t.value = st.snapshot.slice(0, st.start) + text + st.snapshot.slice(st.end);
         st.end = st.start + text.length;
         st.current = text;
+        st.snapshot = String(t.value || '');
         st.value = Number(text);
         try { if (typeof t.setSelectionRange === 'function') t.setSelectionRange(st.start, st.end); } catch (e) {}
         _scrubPadNotifyInput(st.which);
@@ -1444,15 +1466,24 @@ function _scrubPadDragStart(event) {
     if (!st) return;
     if (event && typeof event.preventDefault === 'function') event.preventDefault();
     st.dragging = true;
+    // Pointer capture: releasing outside the window still delivers
+    // pointerup, so listeners can never be stranded mid-drag (the classic
+    // mouse-event drag bug). pointercancel is the backstop.
+    const surface = document.getElementById('program-scrub-surface');
+    if (surface && typeof surface.setPointerCapture === 'function' && event && event.pointerId != null) {
+        try { surface.setPointerCapture(event.pointerId); } catch (e) {}
+    }
     _scrubPadDragMove(event);
     const move = e => _scrubPadDragMove(e);
     const up = () => {
         if (_scrubPadState) _scrubPadState.dragging = false;
-        document.removeEventListener('mousemove', move);
-        document.removeEventListener('mouseup', up);
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', up);
+        document.removeEventListener('pointercancel', up);
     };
-    document.addEventListener('mousemove', move);
-    document.addEventListener('mouseup', up);
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+    document.addEventListener('pointercancel', up);
 }
 
 function _scrubPadDragMove(event) {
@@ -1515,9 +1546,8 @@ function _revertProgramScrubPad() {
     const st = _scrubPadState;
     if (!st) return;
     const t = st.textarea;
-    const liveSlice = String(t && t.value || '').slice(st.start, st.end);
-    if (t && liveSlice === st.current && st.current !== st.original) {
-        t.value = String(t.value || '').slice(0, st.start) + st.original + String(t.value || '').slice(st.end);
+    if (t && String(t.value || '') === st.snapshot && st.current !== st.original) {
+        t.value = st.snapshot.slice(0, st.start) + st.original + st.snapshot.slice(st.end);
         _scrubPadNotifyInput(st.which);
     }
     _closeProgramScrubPad();

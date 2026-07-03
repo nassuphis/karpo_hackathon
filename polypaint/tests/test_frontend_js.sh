@@ -168,6 +168,8 @@ assertIncludes("pp: { label: 'live compute preview', run: () => runComputePrevie
 assertIncludes("'render-ss': { label: 'live render lores preview', run: () => runRenderLoresPreview() },", 'render-side scrub live preview must route to the render lores preview only');
 assertNotIncludes("prt: { label:", 'palette-tab editors must not offer scrub live preview (no preview surface)');
 assertIncludes("NEVER wire this to the full pipeline", 'the scrub pad must document the lores-only preview constraint');
+assertIncludes("onpointerdown=\"_scrubPadDragStart(event)\"", 'scrub drag must use pointer events (capture prevents stranded drags)');
+assertIncludes("document.addEventListener('pointercancel', up);", 'scrub drag must clean up on pointercancel');
 // H3 regression: _ctAndyIndex was deleted; any surviving reference is a ReferenceError at runtime.
 assertNotIncludes('_ctAndyIndex(', 'deleted _ctAndyIndex must not be referenced anywhere (littlewood formula crash)');
 // H1 regression: BOTH coeff and param save modals must forward source_text.
@@ -2111,6 +2113,7 @@ async function main() {
       extractFunction('_openProgramScrubPad'),
       extractFunction('_renderProgramScrubPad'),
       extractFunction('_scrubPadWrite'),
+      extractFunction('_scrubPadNudge'),
       extractFunction('_scrubPadSetRange'),
       extractFunction('_scrubPadToggleLive'),
       extractFunction('_scrubScheduleLivePreview'),
@@ -2137,6 +2140,25 @@ async function main() {
     vm.runInContext('_write(9)', scrubCtx);
     assert(scrubTextarea.value === 'poly = cf\nemit', 'a stale span must never write (invariant guard closes the pad)');
     assert(vm.runInContext('_state()', scrubCtx) === null, 'invariant guard should close the pad');
+    // Coincidence attack: an external rewrite that leaves the SAME
+    // characters at the span positions must still be caught (the guard is
+    // the full-text snapshot, not the slice).
+    scrubTextarea.value = 'poly = linear(poly, 2, 3)\nemit';
+    scrubTextarea.selectionStart = scrubTextarea.selectionEnd = 21;
+    vm.runInContext("_open('cp', _span())", scrubCtx);
+    // index 20 is '2' here too — the slice matches, only the snapshot differs
+    scrubTextarea.value = 'poly = shifted(cf , 2, 9)\nemit';
+    vm.runInContext('_write(9)', scrubCtx);
+    assert(scrubTextarea.value === 'poly = shifted(cf , 2, 9)\nemit', 'same-slice coincidence after external rewrite must not be written through');
+    assert(vm.runInContext('_state()', scrubCtx) === null, 'snapshot guard should close the pad on any external rewrite');
+    // Keyboard nudge: 1% of range per step, clamped at the ends.
+    scrubTextarea.value = 'poly = linear(poly, 2, 3)\nemit';
+    scrubTextarea.selectionStart = scrubTextarea.selectionEnd = 21;
+    vm.runInContext("_open('cp', _span())", scrubCtx);
+    vm.runInContext('_scrubPadNudge(1, false)', scrubCtx);
+    assert(scrubTextarea.value === 'poly = linear(poly, 2.04, 3)\nemit', 'arrow nudge should step by 1% of the range');
+    vm.runInContext('for (let i = 0; i < 200; i++) _scrubPadNudge(1, true);', scrubCtx);
+    assert(scrubTextarea.value === 'poly = linear(poly, 4, 3)\nemit', 'nudge must clamp at the range maximum');
     scrubTextarea.value = 'poly = linear(poly, 2, 3)\nemit';
     scrubTextarea.selectionStart = scrubTextarea.selectionEnd = 21;
     vm.runInContext("_open('rt', _span())", scrubCtx);

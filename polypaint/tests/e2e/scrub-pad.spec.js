@@ -49,7 +49,7 @@ test.describe('Scrub pad', () => {
       // Range defaults to value ± max(1, |value|) = [0, 4] for value 2;
       // drag to the far right = max.
       _scrubPadDragStart({ clientX: rect.right, preventDefault() {} });
-      document.dispatchEvent(new MouseEvent('mouseup'));
+      document.dispatchEvent(new PointerEvent('pointerup'));
       return {
         text: document.getElementById('cp-source-text').value,
         readout: document.getElementById('program-scrub-value').textContent,
@@ -70,7 +70,7 @@ test.describe('Scrub pad', () => {
       const surface = document.getElementById('program-scrub-surface');
       const rect = surface.getBoundingClientRect();
       _scrubPadDragStart({ clientX: rect.right, preventDefault() {} });
-      document.dispatchEvent(new MouseEvent('mouseup'));
+      document.dispatchEvent(new PointerEvent('pointerup'));
       return document.getElementById('cp-source-text').value;
     });
     expect(after).toBe('poly = linear(poly, 100, 3)\nemit');
@@ -82,7 +82,7 @@ test.describe('Scrub pad', () => {
       const surface = document.getElementById('program-scrub-surface');
       const rect = surface.getBoundingClientRect();
       _scrubPadDragStart({ clientX: rect.right, preventDefault() {} });
-      document.dispatchEvent(new MouseEvent('mouseup'));
+      document.dispatchEvent(new PointerEvent('pointerup'));
     });
     await page.keyboard.press('Escape');
     const after = await page.evaluate(() => ({
@@ -117,10 +117,21 @@ test.describe('Scrub pad', () => {
       const surface = document.getElementById('program-scrub-surface');
       const rect = surface.getBoundingClientRect();
       _scrubPadDragStart({ clientX: rect.right, preventDefault() {} });
-      document.dispatchEvent(new MouseEvent('mouseup'));
+      document.dispatchEvent(new PointerEvent('pointerup'));
     });
     await expect.poll(async () => page.evaluate(() => window._previewCalls), { timeout: 3000 }).toBeGreaterThan(0);
     expect(await page.evaluate(() => window._fullPipelineCalls)).toBe(0);
+  });
+
+  test('arrow keys nudge the value with range-relative steps', async ({ page }) => {
+    await openPadOnCoeffLiteral(page, 'poly = linear(poly, 2, 3)\nemit', '2,');
+    // Default range for 2 is [0, 4]; 1% step = 0.04, Shift = 0.4.
+    await page.keyboard.press('ArrowRight');
+    await expect(page.locator('#program-scrub-value')).toHaveText('2.04');
+    await page.keyboard.press('Shift+ArrowRight');
+    await expect(page.locator('#program-scrub-value')).toHaveText('2.44');
+    await page.keyboard.press('ArrowLeft');
+    expect(await page.evaluate(() => document.getElementById('cp-source-text').value)).toBe('poly = linear(poly, 2.4, 3)\nemit');
   });
 
   test('root editor scrubs static args and offers the render lores preview', async ({ page }) => {

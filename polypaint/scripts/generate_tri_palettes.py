@@ -202,13 +202,44 @@ def generate_py(records: list[dict]) -> str:
     )
 
 
+def _rendered_outputs() -> list[tuple[Path, str]]:
+    records = build_catalog_records()
+    return [
+        (JS_OUT, generate_js(records)),
+        (C_OUT, generate_c_header(records)),
+        (PY_OUT, generate_py(records)),
+    ]
+
+
 def write_outputs() -> None:
     records = build_catalog_records()
-    JS_OUT.write_text(generate_js(records), encoding="utf-8")
-    C_OUT.write_text(generate_c_header(records), encoding="utf-8")
-    PY_OUT.write_text(generate_py(records), encoding="utf-8")
+    outputs = [
+        (JS_OUT, generate_js(records)),
+        (C_OUT, generate_c_header(records)),
+        (PY_OUT, generate_py(records)),
+    ]
+    for path, text in outputs:
+        path.write_text(text, encoding="utf-8")
     print(f"generated {len(records)} canonical tri palettes")
 
 
+def check_outputs() -> int:
+    stale = []
+    for path, text in _rendered_outputs():
+        try:
+            on_disk = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            on_disk = None
+        if on_disk != text:
+            stale.append(str(path.relative_to(ROOT)))
+    if stale:
+        print(f"tri palette outputs stale: {', '.join(stale)}; run scripts/generate_tri_palettes.py")
+        return 1
+    print(f"tri palette outputs: OK")
+    return 0
+
+
 if __name__ == "__main__":
+    if "--check" in sys.argv[1:]:
+        raise SystemExit(check_outputs())
     write_outputs()

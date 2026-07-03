@@ -23,6 +23,12 @@ echo "Running predeploy contract gate..."
 "${TEST_PYTHON[@]}" lambda/gen_coeff_vocab.py --check
 "${TEST_PYTHON[@]}" lambda/gen_solve_score_vocab.py --check
 "${TEST_PYTHON[@]}" lambda/gen_root_vocab.py --check
+"${TEST_PYTHON[@]}" scripts/generate_tri_palettes.py --check
+"${TEST_PYTHON[@]}" scripts/generate_long_palettes.py --check
+# gen_catalog.py (coeff_func_catalog_js.js + coeff_func_lookup.h) is
+# deliberately deploy-gated only: it probes the freshly built sweep_test
+# binary for per-function degrees, so a predeploy --check would depend on
+# local binary staleness. deploy.sh regenerates it FATAL-on-mismatch.
 "${TEST_PYTHON[@]}" deploy_manifest.py --emit-bash > /tmp/polypaint-deploy-specs-gate.sh
 bash -n /tmp/polypaint-deploy-specs-gate.sh
 "${TEST_PYTHON[@]}" -m pytest \

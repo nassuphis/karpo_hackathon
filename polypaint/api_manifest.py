@@ -128,6 +128,20 @@ def _extract_frontend_lambda_calls(index_text: str) -> list[dict]:
     return calls
 
 
+def _extract_program_validator_routes(index_text: str) -> list[str]:
+    """Storage routes reached through the shared program-editor validation
+    engine: it calls lambdaPost('storage', ..., def.route) with the path
+    table-driven from _programSourceValidators, so the literal-call scraper
+    above cannot see them."""
+    table = re.search(r"const _programSourceValidators = \{(.*?)\n\};", index_text, re.DOTALL)
+    if not table:
+        raise RuntimeError("Could not parse _programSourceValidators from frontend source")
+    routes = sorted(set(re.findall(r"route:\s*'(/[^']+)'", table.group(1))))
+    if not routes:
+        raise RuntimeError("_programSourceValidators declares no routes")
+    return routes
+
+
 def _extract_literal_dispatch_targets(calls: list[dict]) -> list[str]:
     targets = set()
     for call in calls:
@@ -203,10 +217,13 @@ def build_manifest() -> dict:
 
     calls = _extract_frontend_lambda_calls(index_text)
     literal_services = sorted({call["service"] for call in calls if call["service"]})
-    storage_paths = sorted({
-        call["path"] for call in calls
-        if call["service"] == "storage" and call["path"]
-    })
+    storage_paths = sorted(
+        {
+            call["path"] for call in calls
+            if call["service"] == "storage" and call["path"]
+        }
+        | set(_extract_program_validator_routes(index_text))
+    )
 
     manifest = {
         "version": 1,

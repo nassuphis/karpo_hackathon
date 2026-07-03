@@ -487,18 +487,23 @@ const _rootProgramCheatSections = [
 ];
 
 // Side-panel keys: pp = param, cp = coeff (Compute tab), rt = render root
-// transforms, prt = palette root transforms. rt and prt share one generated
-// help registry (cached under 'rt').
-let _programSourceSidePanelMode = { pp: 'starter', cp: 'starter', rt: 'starter', prt: 'starter' };
-let _programHelpRegistryCache = { pp: null, cp: null, rt: null };
+// transforms, prt = palette root transforms, render-ss / palette-ss =
+// solve-score editors. Twin editors share one generated help registry
+// (rt+prt cached under 'rt', render-ss+palette-ss under 'ss').
+let _programSourceSidePanelMode = { pp: 'starter', cp: 'starter', rt: 'starter', prt: 'starter', 'render-ss': 'starter', 'palette-ss': 'starter' };
+let _programHelpRegistryCache = { pp: null, cp: null, rt: null, ss: null };
 let _programHelpInspectorBound = false;
 
 function _programSourceWhichKey(which) {
-    return which === 'cp' || which === 'rt' || which === 'prt' ? which : 'pp';
+    return which === 'cp' || which === 'rt' || which === 'prt' || which === 'render-ss' || which === 'palette-ss'
+        ? which
+        : 'pp';
 }
 
 function _programHelpRegistryKey(key) {
-    return key === 'prt' ? 'rt' : key;
+    if (key === 'prt') return 'rt';
+    if (key === 'render-ss' || key === 'palette-ss') return 'ss';
+    return key;
 }
 
 function _programHelpParamName(param, idx = 0) {
@@ -884,6 +889,86 @@ function _rootTransformHelpItem(name) {
     );
 }
 
+function _solveScoreOpHelpItem(name, spec, category) {
+    const params = (spec && spec.params) || [];
+    const argNames = params.map((param, idx) => _programHelpParamName(param, idx));
+    const arity = Number(spec && spec.arity) || 0;
+    const stackArgs = Array.from({ length: arity }, (_, i) => (arity === 1 ? 'expr' : `expr${i + 1}`));
+    const signature = `${name}(${stackArgs.concat(argNames).join(', ')})`;
+    const snippet = String((spec && spec.snippet) || '');
+    return _programHelpItem(name, signature, (spec && spec.tooltip) || '', {
+        category,
+        params,
+        effect: arity ? `stack ${arity} -> ${category === 'combine' ? 1 : arity}` : '',
+        examples: snippet ? [snippet] : [],
+    });
+}
+
+function _programHelpBuildSolveScoreRegistry() {
+    const registry = _newProgramHelpRegistry();
+    if (!_solveScoreMetricNames.length) {
+        _programHelpAddSection(registry, 'Registry Status', [
+            _programHelpItem('registry', 'Solve-score vocabulary not loaded', 'solve_score_vocab_js.js did not load; solve-score Help is unavailable.', { missing: true }),
+        ]);
+        return registry;
+    }
+    const vocab = _solveScoreVocab || {};
+    const qRange = Array.isArray(vocab.quantilePercentRange) ? vocab.quantilePercentRange : [];
+    const lagDepths = Array.isArray(vocab.lagDepths) ? vocab.lagDepths : [];
+    const sources = Array.isArray(vocab.sourceNames) ? vocab.sourceNames : [];
+    _programHelpAddSection(registry, 'Statement Forms', [
+        _programHelpItem('score', 'score = expr', 'Assign the score expression; the last assignment is the program result.', {
+            category: 'statement form',
+            forms: ['score = metric(proximity, slv, q=0.1%)'],
+            aliases: ['assignment'],
+        }),
+        _programHelpItem('metric', `${_solveScoreGenericMetricPublicName}(name, src, q=..%)`, 'Evaluate one score metric from a solve/coeff/param source.', {
+            category: 'statement form',
+            params: [
+                { name: 'name', title: 'Metric name; see the Metrics reference below.' },
+                { name: 'src', choices: sources, title: 'Metric source; each metric allows a subset.' },
+                { name: 'q', def: '0.1%', title: qRange.length === 2 ? `Quantile percent in [${qRange[0]}, ${qRange[1]}].` : 'Quantile percent.' },
+                { name: 'lag', def: '0', title: lagDepths.length ? `Optional keyword; frame lag depth (${lagDepths.join(' or ')}).` : 'Optional keyword; frame lag depth.' },
+            ],
+            forms: ['metric(proximity, slv, q=0.1%)', 'metric(proximity, slv, q=0.1%, lag=1)'],
+        }),
+        _programHelpItem('push', 'push(expr)', 'Push a score expression onto the stack.', {
+            category: 'statement form',
+            forms: ['push(metric(proximity, slv, q=0.1%))'],
+        }),
+    ]);
+    const metricItems = _solveScoreMetricNames.map(name => {
+        const allowed = _solveScoreMetricAllowedSources(name);
+        return _programHelpItem(
+            name,
+            `metric(${name}, ${allowed.join('|') || 'slv'}, q=..%)`,
+            _solveScoreParamMetricSet.has(name) ? 'Param-sourced metric.' : 'Root/coefficient metric.',
+            {
+                category: 'metric',
+                notes: allowed.length ? [`Sources: ${allowed.join(', ')}.`] : [],
+                examples: [_solveScoreMetricSnippet(name)],
+            },
+        );
+    });
+    _programHelpAddSection(registry, 'Metrics', metricItems);
+    _programHelpAddSection(
+        registry,
+        'Unary / Stack',
+        Object.keys(_solveScoreUnarySpecs).map(name => _solveScoreOpHelpItem(name, _solveScoreUnarySpecs[name], 'unary/stack')),
+    );
+    _programHelpAddSection(
+        registry,
+        'Combine',
+        Object.keys(_solveScoreCombineSpecs).map(name => _solveScoreOpHelpItem(name, _solveScoreCombineSpecs[name], 'combine')),
+    );
+    _programHelpAddSection(
+        registry,
+        'Outputs',
+        Object.keys(_solveScoreOutputSpecs).map(name => _solveScoreOpHelpItem(name, _solveScoreOutputSpecs[name], 'output')),
+    );
+    return registry;
+}
+
 function _programHelpBuildRootRegistry() {
     const registry = _newProgramHelpRegistry();
     if (!_rootRegistryAdapter.loaded) {
@@ -920,9 +1005,13 @@ function _programHelpBuildRootRegistry() {
 function _programHelpRegistry(which) {
     const key = _programHelpRegistryKey(_programSourceWhichKey(which));
     if (!_programHelpRegistryCache[key]) {
-        _programHelpRegistryCache[key] = key === 'cp'
-            ? _programHelpBuildCoeffRegistry()
-            : (key === 'rt' ? _programHelpBuildRootRegistry() : _programHelpBuildParamRegistry());
+        const builders = {
+            cp: _programHelpBuildCoeffRegistry,
+            rt: _programHelpBuildRootRegistry,
+            ss: _programHelpBuildSolveScoreRegistry,
+            pp: _programHelpBuildParamRegistry,
+        };
+        _programHelpRegistryCache[key] = (builders[key] || _programHelpBuildParamRegistry)();
     }
     return _programHelpRegistryCache[key];
 }
@@ -1005,11 +1094,15 @@ function _renderProgramSourceSidePanels() {
     _renderProgramSourceSidePanel('cp');
     _renderProgramSourceSidePanel('rt');
     _renderProgramSourceSidePanel('prt');
+    _renderProgramSourceSidePanel('render-ss');
+    _renderProgramSourceSidePanel('palette-ss');
 }
 
 function _programSourceTextarea(which) {
     if (which === 'rt') return _rootProgramSourceTextarea('render');
     if (which === 'prt') return _rootProgramSourceTextarea('palette');
+    if (which === 'render-ss') return _solveScoreSourceTextarea('render');
+    if (which === 'palette-ss') return _solveScoreSourceTextarea('palette');
     return which === 'cp' ? _coeffProgramSourceTextarea() : _paramProgramSourceTextarea();
 }
 

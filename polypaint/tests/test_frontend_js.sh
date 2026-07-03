@@ -508,7 +508,8 @@ assertIncludes("mode:${_colorInterpretationLabel(colorInterpretation)}", 'render
 assertIncludes("id=\"render-ss-source-text\"", 'render solve-score editor should expose source textarea');
 assertIncludes("id=\"render-ss-cheatsheet\"", 'render solve-score editor should expose source insert cheatsheet');
 assertIncludes("id=\"palette-ss-cheatsheet\"", 'palette solve-score editor should expose source insert cheatsheet');
-assertIncludes(".program-source-grid,", 'generic source editor grid should style Param/Coeff source cheatsheets');
+assertIncludes(".program-source-grid {", 'generic source editor grid should style all program source editors');
+assertNotIncludes(".solve-score-source-grid", 'the solve-score-specific grid class stays deleted (all editors share program-source-grid)');
 assertIncludes("_renderParamCoeffProgramCheatsheets();", 'boot should render Param/Coeff source cheatsheets');
 assertNotIncludes("id=\"ss-insert-before-btn\"", 'solve-score editor should not expose chip insert-before button');
 assertNotIncludes("id=\"ss-insert-after-btn\"", 'solve-score editor should not expose chip insert-after button');
@@ -655,6 +656,11 @@ assertIncludes("id=\"rt-cheatsheet\" class=\"program-source-cheatsheet\"", 'rend
 assertIncludes("id=\"rt-help\" class=\"program-source-help\"", 'render root editor should carry the generated Help panel');
 assertIncludes("id=\"prt-cheatsheet\" class=\"program-source-cheatsheet\"", 'palette root editor should carry the fixed-height Starter panel');
 assertIncludes("id=\"prt-help\" class=\"program-source-help\"", 'palette root editor should carry the generated Help panel');
+assertIncludes("id=\"render-ss-help\" class=\"program-source-help\"", 'render solve-score editor should carry the generated Help panel');
+assertIncludes("id=\"palette-ss-help\" class=\"program-source-help\"", 'palette solve-score editor should carry the generated Help panel');
+assertIncludes("id=\"render-ss-cheatsheet\" class=\"program-source-cheatsheet\"", 'render solve-score Starter should live in the fixed-height sidepanel');
+assertIncludes("_setProgramSourceSidePanelMode('render-ss','help')", 'render solve-score editor should expose a Help tab');
+assertIncludes("_setProgramSourceSidePanelMode('palette-ss','help')", 'palette solve-score editor should expose a Help tab');
 assertIncludes("<script src=\"root_vocab_js.js\"></script>", 'index.html should load the generated root vocabulary');
 assertIncludes("lambdaPost('storage', { source_text: sourceText, strict: true }, '/compile-solve-score-program-source')", 'solve-score source editor should compile through the backend route');
 assertIncludes("lambdaPost('storage', { source_text: sourceText }, '/compile-root-program-source')", 'root source editor should validate through the backend route (debounced, advisory)');
@@ -727,6 +733,16 @@ function makeContext({withCoeffVocab = true, coeffVocabOverride} = {}) {
     'prt-help-tab-help': makeEl('prt-help-tab-help'),
     'render-rt-source-text': makeEl('render-rt-source-text'),
     'palette-rt-source-text': makeEl('palette-rt-source-text'),
+    'render-ss-cheatsheet': makeEl('render-ss-cheatsheet'),
+    'render-ss-help': makeEl('render-ss-help'),
+    'render-ss-help-tab-starter': makeEl('render-ss-help-tab-starter'),
+    'render-ss-help-tab-help': makeEl('render-ss-help-tab-help'),
+    'palette-ss-cheatsheet': makeEl('palette-ss-cheatsheet'),
+    'palette-ss-help': makeEl('palette-ss-help'),
+    'palette-ss-help-tab-starter': makeEl('palette-ss-help-tab-starter'),
+    'palette-ss-help-tab-help': makeEl('palette-ss-help-tab-help'),
+    'render-ss-source-text': makeEl('render-ss-source-text'),
+    'palette-ss-source-text': makeEl('palette-ss-source-text'),
     'program-help-inspector': makeEl('program-help-inspector'),
   };
   const ctx = {
@@ -745,6 +761,20 @@ function makeContext({withCoeffVocab = true, coeffVocabOverride} = {}) {
   vm.createContext(ctx);
   vm.runInContext(fs.readFileSync(path.join(root, 'param_vocab_js.js'), 'utf8'), ctx, {filename: 'param_vocab_js.js'});
   vm.runInContext(fs.readFileSync(path.join(root, 'root_vocab_js.js'), 'utf8'), ctx, {filename: 'root_vocab_js.js'});
+  vm.runInContext(fs.readFileSync(path.join(root, 'solve_score_vocab_js.js'), 'utf8'), ctx, {filename: 'solve_score_vocab_js.js'});
+  // js/07's _ssCatalog IIFE calls these two js/02 helpers at load time; the
+  // context skips js/02, so mirror them (same vocab-driven logic).
+  ctx._solveScoreMetricAllowedSources = (name) => {
+    const fromVocab = ctx._solveScoreVocab.allowedSourcesByMetric[name];
+    if (Array.isArray(fromVocab) && fromVocab.length) return fromVocab.slice();
+    if ((ctx._solveScoreVocab.paramMetricNames || []).includes(name)) return ['pm'];
+    if ((ctx._solveScoreVocab.paramCapableMetricNames || []).includes(name)) return ['slv', 'cf', 'pm'];
+    return ['slv', 'cf'];
+  };
+  ctx._solveScoreMetricSourceChoices = (name) => {
+    const base = ctx._solveScoreMetricAllowedSources(name);
+    return base.concat(base.map(source => source + '-1'));
+  };
   if (withCoeffVocab) vm.runInContext(fs.readFileSync(path.join(root, 'coeff_vocab_js.js'), 'utf8'), ctx, {filename: 'coeff_vocab_js.js'});
   if (coeffVocabOverride !== undefined) ctx._coeffRegistryVocab = coeffVocabOverride;
   vm.runInContext(fs.readFileSync(path.join(root, 'coeff_func_catalog_js.js'), 'utf8'), ctx, {filename: 'coeff_func_catalog_js.js'});
@@ -784,6 +814,32 @@ function makeContext({withCoeffVocab = true, coeffVocabOverride} = {}) {
   assert(rootProbe.snippet === 'roots_toline()', 'no-arg root snippets must keep parens (parser rejects bare names)');
   assert(rootProbe.synth === 'roots_toline()\nrotate_roots(0.25)', 'chain-to-source synthesis must emit parser-valid statements');
   assert(rootProbe.moebius === 4, 'moebius help item should carry its four registry params');
+  ctx._renderSolveScoreCheatsheets();
+  assert(els['render-ss-cheatsheet'].innerHTML.includes('score = proximity'), 'Solve-score Starter should render generated starter snippets');
+  ctx._setProgramSourceSidePanelMode('render-ss', 'help');
+  assert(els['render-ss-help'].innerHTML.includes('Metrics'), 'Solve-score Help should render the generated metric reference');
+  assert(els['render-ss-help'].innerHTML.includes('lag=1'), 'Solve-score Help should document the lag keyword form');
+  assert(els['render-ss-help'].innerHTML.includes('Quantile percent in [0.1, 5]'), 'Solve-score Help should carry the vocab quantile range');
+  const ssProbe = vm.runInContext(`(() => {
+    const reg = _programHelpRegistry('render-ss');
+    const missingMetrics = (_solveScoreMetricNames || []).filter(name => !reg.lookup.get(name));
+    const opNames = []
+      .concat(Object.keys(_solveScoreUnarySpecs), Object.keys(_solveScoreCombineSpecs), Object.keys(_solveScoreOutputSpecs));
+    const missingOps = opNames.filter(name => !reg.lookup.get(name));
+    const ema = reg.lookup.get('ema');
+    return {
+      missingMetrics,
+      missingOps,
+      sharedWithPalette: _programHelpRegistry('palette-ss') === reg,
+      emaHelp: ema && ema.help,
+      emaExample: ema && ema.examples && ema.examples[0],
+    };
+  })()`, ctx);
+  assert(ssProbe.missingMetrics.length === 0, 'every solve-score metric must be dblclick-lookupable: ' + JSON.stringify(ssProbe.missingMetrics));
+  assert(ssProbe.missingOps.length === 0, 'every solve-score op must be dblclick-lookupable: ' + JSON.stringify(ssProbe.missingOps));
+  assert(ssProbe.sharedWithPalette, 'render-ss and palette-ss should share one cached help registry');
+  assert(ssProbe.emaHelp && ssProbe.emaHelp.includes('alpha'), 'ss op help items should carry vocab tooltips');
+  assert(ssProbe.emaExample && ssProbe.emaExample.includes('ema('), 'ss op help items should carry vocab snippets as examples');
   ctx._setProgramSourceSidePanelMode('pp', 'help');
   assert(!els['pp-help'].innerHTML.includes('Starters'), 'Param Help should not include Starter sections');
   assert(!els['pp-help'].innerHTML.includes('Insert</button>'), 'Param Help should not render bulk Insert buttons');

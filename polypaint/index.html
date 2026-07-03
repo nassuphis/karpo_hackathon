@@ -931,15 +931,13 @@ button {
     line-height: 1.45;
     scrollbar-color: #0f3460 #111827;
 }
-.program-source-grid,
-.solve-score-source-grid {
+.program-source-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
     gap: 10px;
     align-items: stretch;
 }
-.program-source-cheatsheet,
-.solve-score-source-cheatsheet {
+.program-source-cheatsheet {
     min-height: 220px;
     height: 220px;
     max-height: 220px;
@@ -1061,11 +1059,6 @@ button {
     height: 220px;
     max-height: 220px;
 }
-.solve-score-source-grid .coeff-program-source-text {
-    min-height: 220px;
-    height: 220px;
-    max-height: 220px;
-}
 .program-source-cheat-section,
 .solve-score-cheat-section {
     margin-bottom: 9px;
@@ -1094,8 +1087,7 @@ button {
     max-width: 170px;
 }
 @media (max-width: 900px) {
-    .program-source-grid,
-    .solve-score-source-grid { grid-template-columns: 1fr; }
+    .program-source-grid { grid-template-columns: 1fr; }
 }
 .solve-score-program-note {
     color: #777;
@@ -2013,9 +2005,16 @@ button {
                         <button id="btn-solve-histogram" class="btn-inline-offset" onclick="runSolveScoreHistogramDebug()" style="font-size:10px; padding:1px 8px">Histogram</button>
                     </div>
                     <div id="render-ss-text-panel" class="coeff-program-editor-panel active">
-                        <div class="solve-score-source-grid">
-                            <textarea id="render-ss-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;score = metric(proximity, slv, q=0.1%)&#10;emit(score)" oninput="_onSolveScoreProgramSourceInput('render')"></textarea>
-                            <div id="render-ss-cheatsheet" class="solve-score-source-cheatsheet" aria-label="Solve-score source inserter"></div>
+                        <div class="program-source-grid">
+                            <textarea id="render-ss-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;score = metric(proximity, slv, q=0.1%)&#10;emit(score)" oninput="_onSolveScoreProgramSourceInput('render')" ondblclick="_onProgramSourceDblClick('render-ss', event)"></textarea>
+                            <div class="program-source-sidepanel" data-program-help="render-ss">
+                                <div class="program-source-help-tabs" role="tablist" aria-label="Solve-score help tabs">
+                                    <button type="button" id="render-ss-help-tab-starter" class="btn-secondary program-source-help-tab active" onclick="_setProgramSourceSidePanelMode('render-ss','starter')">Starter</button>
+                                    <button type="button" id="render-ss-help-tab-help" class="btn-secondary program-source-help-tab" onclick="_setProgramSourceSidePanelMode('render-ss','help')">Help</button>
+                                </div>
+                                <div id="render-ss-cheatsheet" class="program-source-cheatsheet" aria-label="Solve-score source cheatsheet"></div>
+                                <div id="render-ss-help" class="program-source-help" aria-label="Solve-score generated help" hidden></div>
+                            </div>
                         </div>
                     </div>
                     <div id="render-solve-score-program-status" class="solve-score-program-status"></div>
@@ -2081,9 +2080,16 @@ button {
                     <button type="button" class="btn-secondary btn-inline" onclick="_compileSolveScoreSourceEditor('palette')">Compile Text</button>
                 </div>
                 <div id="palette-ss-text-panel" class="coeff-program-editor-panel active">
-                    <div class="solve-score-source-grid">
-                        <textarea id="palette-ss-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;score = metric(proximity, slv, q=0.1%)&#10;emit(score)" oninput="_onSolveScoreProgramSourceInput('palette')"></textarea>
-                        <div id="palette-ss-cheatsheet" class="solve-score-source-cheatsheet" aria-label="Palette solve-score source inserter"></div>
+                    <div class="program-source-grid">
+                        <textarea id="palette-ss-source-text" class="coeff-program-source-text" spellcheck="false" placeholder="Example:&#10;score = metric(proximity, slv, q=0.1%)&#10;emit(score)" oninput="_onSolveScoreProgramSourceInput('palette')" ondblclick="_onProgramSourceDblClick('palette-ss', event)"></textarea>
+                        <div class="program-source-sidepanel" data-program-help="palette-ss">
+                            <div class="program-source-help-tabs" role="tablist" aria-label="Palette solve-score help tabs">
+                                <button type="button" id="palette-ss-help-tab-starter" class="btn-secondary program-source-help-tab active" onclick="_setProgramSourceSidePanelMode('palette-ss','starter')">Starter</button>
+                                <button type="button" id="palette-ss-help-tab-help" class="btn-secondary program-source-help-tab" onclick="_setProgramSourceSidePanelMode('palette-ss','help')">Help</button>
+                            </div>
+                            <div id="palette-ss-cheatsheet" class="program-source-cheatsheet" aria-label="Palette solve-score source cheatsheet"></div>
+                            <div id="palette-ss-help" class="program-source-help" aria-label="Palette solve-score generated help" hidden></div>
+                        </div>
                     </div>
                 </div>
                 <div class="palette-field-row">

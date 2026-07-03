@@ -1260,9 +1260,17 @@ let _scrubPreviewDirty = false;
 const _scrubPadPreviewByKey = {
     pp: { label: 'live compute preview', run: () => runComputePreview() },
     cp: { label: 'live compute preview', run: () => runComputePreview() },
-    rt: { label: 'live render lores preview', run: () => runRenderLoresPreview() },
-    'render-ss': { label: 'live render lores preview', run: () => runRenderLoresPreview() },
+    rt: { label: 'live render lores preview', run: () => runRenderLoresPreview(), loresViews: true },
+    'render-ss': { label: 'live render lores preview', run: () => runRenderLoresPreview(), loresViews: true },
 };
+
+const _scrubPadLoresViews = [
+    ['plot', 'Plot'],
+    ['palette', 'Palette'],
+    ['e1', 'E1'],
+    ['e2', 'E2'],
+    ['e3', 'E3'],
+];
 
 function _programNumberSpanAtCursor(textarea) {
     if (!textarea) return null;
@@ -1374,6 +1382,7 @@ function _openProgramScrubPad(which, span, textarea, event) {
         min: span.value - spread,
         max: span.value + spread,
         livePreview: false,
+        view: '',
         dragging: false,
     };
     const el = _scrubPadEl();
@@ -1382,6 +1391,15 @@ function _openProgramScrubPad(which, span, textarea, event) {
     const liveRow = preview
         ? `<label class="program-scrub-row"><input type="checkbox" id="program-scrub-live" onchange="_scrubPadToggleLive(this.checked)"> ${_escapeHtml(preview.label)}</label>`
         : '';
+    let viewRow = '';
+    if (preview && preview.loresViews) {
+        const activeView = (typeof _renderLoresPreviewActiveTab !== 'undefined' && _renderLoresPreviewActiveTab) || 'plot';
+        _scrubPadState.view = String(activeView);
+        const options = _scrubPadLoresViews.map(([value, label]) =>
+            `<option value="${value}"${value === _scrubPadState.view ? ' selected' : ''}>${label}</option>`
+        ).join('');
+        viewRow = `<label class="program-scrub-row">view <select id="program-scrub-view" onchange="_scrubPadSetView(this.value)">${options}</select></label>`;
+    }
     el.innerHTML = `
         <div class="program-scrub-head">
             <span class="program-scrub-title">Scrub</span>
@@ -1395,6 +1413,7 @@ function _openProgramScrubPad(which, span, textarea, event) {
             min <input type="text" id="program-scrub-min" onchange="_scrubPadSetRange()">
             max <input type="text" id="program-scrub-max" onchange="_scrubPadSetRange()">
         </div>
+        ${viewRow}
         ${liveRow}
         <div class="program-scrub-hint">drag to scrub &middot; &larr;/&rarr; nudge (Shift bigger) &middot; Esc reverts &middot; any other edit closes</div>
     `;
@@ -1512,6 +1531,17 @@ function _scrubPadSetRange() {
     _renderProgramScrubPad();
 }
 
+function _scrubPadSetView(view) {
+    const st = _scrubPadState;
+    if (!st) return;
+    st.view = String(view || 'plot');
+    // The tab function owns the fallbacks (palette/e1-3 unavailable ->
+    // plot); the pad only records intent and re-asserts it after each
+    // preview run, so choosing Palette before the first palette image
+    // arrives still wins once it exists.
+    if (typeof _selectRenderLoresPreviewTab === 'function') _selectRenderLoresPreviewTab(st.view);
+}
+
 function _scrubPadToggleLive(checked) {
     const st = _scrubPadState;
     if (!st) return;
@@ -1531,6 +1561,10 @@ function _scrubScheduleLivePreview() {
         _scrubPreviewInFlight = true;
         try {
             await preview.run();
+            const st2 = _scrubPadState;
+            if (st2 && st2.view && preview.loresViews && typeof _selectRenderLoresPreviewTab === 'function') {
+                _selectRenderLoresPreviewTab(st2.view);
+            }
         } catch (e) {
             /* preview errors surface in their own status lines */
         }

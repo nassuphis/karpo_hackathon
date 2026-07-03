@@ -165,7 +165,7 @@ assertIncludes("_initJobsRail();", 'boot should hydrate the jobs rail from histo
 assertIncludes("id=\"program-scrub-pad\" class=\"program-scrub-pad\"", 'the scrub pad popup element should exist');
 assertIncludes("const span = _programNumberSpanAtCursor(textarea);", 'dblclick should branch to the scrub pad for numeric literals');
 assertIncludes("pp: { label: 'live compute preview', run: () => runComputePreview() },", 'param scrub live preview must route to the compute preview only');
-assertIncludes("'render-ss': { label: 'live render lores preview', run: () => runRenderLoresPreview() },", 'render-side scrub live preview must route to the render lores preview only');
+assertIncludes("'render-ss': { label: 'live render lores preview', run: () => runRenderLoresPreview(), loresViews: true },", 'render-side scrub live preview must route to the render lores preview only');
 assertNotIncludes("prt: { label:", 'palette-tab editors must not offer scrub live preview (no preview surface)');
 assertIncludes("NEVER wire this to the full pipeline", 'the scrub pad must document the lores-only preview constraint');
 assertIncludes("onpointerdown=\"_scrubPadDragStart(event)\"", 'scrub drag must use pointer events (capture prevents stranded drags)');
@@ -2090,6 +2090,9 @@ async function main() {
       clearTimeout: () => {},
       _escapeHtml: v => String(v == null ? '' : v),
       _closeProgramHelpInspector: () => {},
+      _renderLoresPreviewActiveTab: 'plot',
+      _viewCalls: [],
+      _selectRenderLoresPreviewTab: function(tab) { scrubCtx._viewCalls.push(tab); },
       _notifyCalls: [],
       _onCoeffProgramSourceInput: function() { scrubCtx._notifyCalls.push('cp'); },
       _onParamProgramSourceInput: function() { scrubCtx._notifyCalls.push('pp'); },
@@ -2103,7 +2106,8 @@ async function main() {
     const scrubSrc = [
       'let _scrubPadState = null; let _scrubPadHandlersBound = false;',
       'let _scrubPreviewTimer = null; let _scrubPreviewInFlight = false; let _scrubPreviewDirty = false;',
-      "const _scrubPadPreviewByKey = { pp: { label: 'live compute preview', run: () => runComputePreview() }, cp: { label: 'live compute preview', run: () => runComputePreview() }, rt: { label: 'live render lores preview', run: () => runRenderLoresPreview() }, 'render-ss': { label: 'live render lores preview', run: () => runRenderLoresPreview() } };",
+      "const _scrubPadPreviewByKey = { pp: { label: 'live compute preview', run: () => runComputePreview() }, cp: { label: 'live compute preview', run: () => runComputePreview() }, rt: { label: 'live render lores preview', run: () => runRenderLoresPreview(), loresViews: true }, 'render-ss': { label: 'live render lores preview', run: () => runRenderLoresPreview(), loresViews: true } };",
+      "const _scrubPadLoresViews = [['plot', 'Plot'], ['palette', 'Palette'], ['e1', 'E1'], ['e2', 'E2'], ['e3', 'E3']];",
       extractFunction('_programNumberSpanAtCursor'),
       extractFunction('_scrubFormatNumber'),
       extractFunction('_scrubPadEl'),
@@ -2116,6 +2120,7 @@ async function main() {
       extractFunction('_scrubPadNudge'),
       extractFunction('_scrubPadSetRange'),
       extractFunction('_scrubPadToggleLive'),
+      extractFunction('_scrubPadSetView'),
       extractFunction('_scrubScheduleLivePreview'),
       extractFunction('_revertProgramScrubPad'),
       extractFunction('_closeProgramScrubPad'),
@@ -2131,6 +2136,7 @@ async function main() {
     assert(span && span.raw === '2' && span.start === 20 && span.end === 21, 'span detection should find the numeric literal with exact bounds');
     vm.runInContext("_open('cp', _span())", scrubCtx);
     assert(padEls['program-scrub-pad'].innerHTML.includes('live compute preview'), 'coeff scrub pad should offer the compute preview toggle');
+    assert(!padEls['program-scrub-pad'].innerHTML.includes('program-scrub-view'), 'compute-side scrub pads have no lores view picker');
     vm.runInContext('_write(7.5)', scrubCtx);
     assert(scrubTextarea.value === 'poly = linear(poly, 7.5, 3)\nemit', 'scrub write should splice the literal in place');
     assert(scrubCtx._notifyCalls.includes('cp'), 'scrub write should run the editor input handler');
@@ -2163,6 +2169,11 @@ async function main() {
     scrubTextarea.selectionStart = scrubTextarea.selectionEnd = 21;
     vm.runInContext("_open('rt', _span())", scrubCtx);
     assert(padEls['program-scrub-pad'].innerHTML.includes('live render lores preview'), 'root scrub pad should offer the render lores preview toggle');
+    assert(padEls['program-scrub-pad'].innerHTML.includes('id="program-scrub-view"'), 'render-side scrub pads should offer the lores view picker');
+    assert(padEls['program-scrub-pad'].innerHTML.includes('>Palette<'), 'the view picker should list the palette pane');
+    vm.runInContext("_scrubPadSetView('palette')", scrubCtx);
+    assert(scrubCtx._viewCalls.includes('palette'), 'choosing a view must drive the existing lores tab machinery');
+    assert(vm.runInContext('_state()', scrubCtx).view === 'palette', 'the pad should remember the chosen view to re-assert after previews');
     vm.runInContext('_write(-1.25)', scrubCtx);
     assert(scrubTextarea.value === 'poly = linear(poly, -1.25, 3)\nemit', 'negative writes should splice correctly');
     vm.runInContext('_revert()', scrubCtx);

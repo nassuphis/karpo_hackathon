@@ -149,4 +149,47 @@ test.describe('Scrub pad', () => {
     expect(opened.padVisible).toBe(true);
     expect(opened.padHtml).toContain('live render lores preview');
   });
+
+  test('render-side pad offers the lores view picker and drives the tab state', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    const opened = await page.evaluate(() => {
+      const ta = document.getElementById('render-rt-source-text');
+      ta.value = 'pull_unit_circle(0.75, 1)';
+      ta.selectionStart = ta.selectionEnd = ta.value.indexOf('0.75') + 1;
+      _onProgramSourceDblClick('rt', { clientX: 300, clientY: 300 });
+      const select = document.getElementById('program-scrub-view');
+      return { hasPicker: !!select, initial: select ? select.value : '' };
+    });
+    expect(opened.hasPicker).toBe(true);
+    expect(opened.initial).toBe('plot');
+
+    // Palette pane not available yet: choosing it records intent but the
+    // tab machinery falls back to plot.
+    const beforePalette = await page.evaluate(() => {
+      _scrubPadSetView('palette');
+      return {
+        active: _renderLoresPreviewActiveTab,
+        remembered: _scrubPadState.view,
+      };
+    });
+    expect(beforePalette.active).toBe('plot');
+    expect(beforePalette.remembered).toBe('palette');
+
+    // Once a preview supplies a palette image, re-asserting the choice wins.
+    const afterPalette = await page.evaluate(() => {
+      _renderLoresPreviewHasPalette = true;
+      _selectRenderLoresPreviewTab(_scrubPadState.view);
+      return {
+        active: _renderLoresPreviewActiveTab,
+        tabActive: document.getElementById('render-lores-preview-tab-palette').classList.contains('active'),
+      };
+    });
+    expect(afterPalette.active).toBe('palette');
+    expect(afterPalette.tabActive).toBe(true);
+  });
+
+  test('compute-side pads have no lores view picker', async ({ page }) => {
+    await openPadOnCoeffLiteral(page, 'poly = linear(poly, 2, 3)\nemit', '2,');
+    expect(await page.evaluate(() => !!document.getElementById('program-scrub-view'))).toBe(false);
+  });
 });

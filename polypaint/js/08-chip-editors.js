@@ -1242,9 +1242,312 @@ function _closeProgramHelpInspector() {
     el.innerHTML = '';
 }
 
+/* ---- Program scrub pad: dblclick a numeric literal to drag-edit it ----
+   Ephemeral by design: the "binding" is just a text span in one textarea.
+   Only the pad writes while open (every write re-checks the exact slice),
+   any external edit closes it, Escape reverts to the original literal.
+   Live preview routes ONLY to the lores preview endpoints — the compute
+   preview for pp/cp and the render lores preview for rt/render-ss; the
+   palette-tab editors have no preview surface so the toggle is hidden.
+   NEVER wire this to the full pipeline (compute submit, render generate,
+   palette create): far too slow to drive from a drag. */
+let _scrubPadState = null;
+let _scrubPadHandlersBound = false;
+let _scrubPreviewTimer = null;
+let _scrubPreviewInFlight = false;
+let _scrubPreviewDirty = false;
+
+const _scrubPadPreviewByKey = {
+    pp: { label: 'live compute preview', run: () => runComputePreview() },
+    cp: { label: 'live compute preview', run: () => runComputePreview() },
+    rt: { label: 'live render lores preview', run: () => runRenderLoresPreview() },
+    'render-ss': { label: 'live render lores preview', run: () => runRenderLoresPreview() },
+};
+
+function _programNumberSpanAtCursor(textarea) {
+    if (!textarea) return null;
+    const value = String(textarea.value || '');
+    const pos = Number.isFinite(textarea.selectionStart) ? textarea.selectionStart : 0;
+    let lo = Math.max(0, Math.min(pos, value.length));
+    let hi = lo;
+    const isToken = ch => /[A-Za-z0-9_\[\].]/.test(ch || '');
+    while (lo > 0 && isToken(value[lo - 1])) lo--;
+    while (hi < value.length && isToken(value[hi])) hi++;
+    let raw = value.slice(lo, hi);
+    // A leading minus belongs to the literal when what precedes it is a
+    // delimiter (start, comma, open paren, operator, =, whitespace) —
+    // t1-5 keeps its binary minus, rotate_roots(-0.25) scrubs -0.25.
+    if (lo > 0 && value[lo - 1] === '-') {
+        const before = lo >= 2 ? value[lo - 2] : '';
+        if (!/[A-Za-z0-9_).\]]/.test(before)) {
+            lo -= 1;
+            raw = value.slice(lo, hi);
+        }
+    }
+    if (!/^-?(\d+\.?\d*|\.\d+)$/.test(raw)) return null;
+    const num = Number(raw);
+    if (!Number.isFinite(num)) return null;
+    return { raw, start: lo, end: hi, value: num };
+}
+
+function _scrubFormatNumber(v) {
+    if (!Number.isFinite(v)) return '0';
+    let s = String(Number(v.toPrecision(6)));
+    if (s.includes('e') || s.includes('E')) {
+        s = v.toFixed(12).replace(/0+$/, '').replace(/\.$/, '') || '0';
+    }
+    return s;
+}
+
+function _scrubPadEl() {
+    return document.getElementById('program-scrub-pad');
+}
+
+function _scrubPadNotifyInput(which) {
+    // Programmatic .value writes do not fire input events; run the same
+    // handler the textarea's oninput would, so validation/debounce flows.
+    if (which === 'pp') return _onParamProgramSourceInput();
+    if (which === 'cp') return _onCoeffProgramSourceInput();
+    if (which === 'rt') return _onRootProgramSourceInput('render');
+    if (which === 'prt') return _onRootProgramSourceInput('palette');
+    if (which === 'render-ss') return _onSolveScoreProgramSourceInput('render');
+    if (which === 'palette-ss') return _onSolveScoreProgramSourceInput('palette');
+}
+
+function _scrubPadOnExternalInput() {
+    // Pad writes never dispatch input events, so any input event means the
+    // user (or another feature) edited the textarea: the span is no longer
+    // trustworthy and the binding evaporates.
+    _closeProgramScrubPad();
+}
+
+function _ensureProgramScrubPadHandlers() {
+    if (_scrubPadHandlersBound || typeof document === 'undefined' || typeof document.addEventListener !== 'function') return;
+    document.addEventListener('keydown', event => {
+        if (event && event.key === 'Escape' && _scrubPadState) _revertProgramScrubPad();
+    });
+    document.addEventListener('mousedown', event => {
+        const st = _scrubPadState;
+        if (!st || st.dragging) return;
+        const el = _scrubPadEl();
+        if (!el || !event || !event.target) return;
+        if (typeof el.contains === 'function' && el.contains(event.target)) return;
+        _closeProgramScrubPad();
+    });
+    _scrubPadHandlersBound = true;
+}
+
+function _openProgramScrubPad(which, span, textarea, event) {
+    _closeProgramHelpInspector();
+    _closeProgramScrubPad();
+    const spread = Math.max(1, Math.abs(span.value));
+    _scrubPadState = {
+        which,
+        textarea,
+        start: span.start,
+        end: span.end,
+        original: span.raw,
+        current: span.raw,
+        value: span.value,
+        min: span.value - spread,
+        max: span.value + spread,
+        livePreview: false,
+        dragging: false,
+    };
+    const el = _scrubPadEl();
+    if (!el) return;
+    const preview = _scrubPadPreviewByKey[which];
+    const liveRow = preview
+        ? `<label class="program-scrub-row"><input type="checkbox" id="program-scrub-live" onchange="_scrubPadToggleLive(this.checked)"> ${_escapeHtml(preview.label)}</label>`
+        : '';
+    el.innerHTML = `
+        <div class="program-scrub-head">
+            <span class="program-scrub-title">Scrub</span>
+            <span id="program-scrub-value" class="program-scrub-value"></span>
+            <button type="button" class="btn-secondary program-scrub-close" onclick="_closeProgramScrubPad()" aria-label="Close">x</button>
+        </div>
+        <div id="program-scrub-surface" class="program-scrub-surface" onmousedown="_scrubPadDragStart(event)">
+            <div id="program-scrub-handle" class="program-scrub-handle"></div>
+        </div>
+        <div class="program-scrub-row">
+            min <input type="text" id="program-scrub-min" onchange="_scrubPadSetRange()">
+            max <input type="text" id="program-scrub-max" onchange="_scrubPadSetRange()">
+        </div>
+        ${liveRow}
+        <div class="program-scrub-hint">drag to scrub &middot; Esc reverts &middot; any other edit closes</div>
+    `;
+    const minEl = document.getElementById('program-scrub-min');
+    const maxEl = document.getElementById('program-scrub-max');
+    if (minEl) minEl.value = _scrubFormatNumber(_scrubPadState.min);
+    if (maxEl) maxEl.value = _scrubFormatNumber(_scrubPadState.max);
+    el.style.display = 'block';
+    if (typeof el.setAttribute === 'function') el.setAttribute('aria-hidden', 'false');
+    const raw = event || {};
+    const x = Number(raw.clientX || 0) || 12;
+    const y = Number(raw.clientY || 0) || 12;
+    el.style.left = `${Math.max(8, x)}px`;
+    el.style.top = `${Math.max(8, y + 14)}px`;
+    const rect = typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : { width: 300, height: 160 };
+    const vw = (typeof window !== 'undefined' && window.innerWidth) || 1200;
+    const vh = (typeof window !== 'undefined' && window.innerHeight) || 800;
+    el.style.left = `${Math.max(8, Math.min(x, vw - Number(rect.width || 300) - 8))}px`;
+    el.style.top = `${Math.max(8, Math.min(y + 14, vh - Number(rect.height || 160) - 8))}px`;
+    _ensureProgramScrubPadHandlers();
+    if (typeof textarea.addEventListener === 'function') {
+        textarea.addEventListener('input', _scrubPadOnExternalInput);
+    }
+    _renderProgramScrubPad();
+}
+
+function _renderProgramScrubPad() {
+    const st = _scrubPadState;
+    if (!st) return;
+    const valueEl = document.getElementById('program-scrub-value');
+    if (valueEl) valueEl.textContent = st.current;
+    const handle = document.getElementById('program-scrub-handle');
+    if (handle) {
+        const span = st.max - st.min;
+        const frac = span > 0 ? Math.min(1, Math.max(0, (st.value - st.min) / span)) : 0.5;
+        handle.style.left = `${(frac * 100).toFixed(2)}%`;
+    }
+}
+
+function _scrubPadWrite(nextValue) {
+    const st = _scrubPadState;
+    if (!st || !st.textarea) return;
+    const t = st.textarea;
+    const liveSlice = String(t.value || '').slice(st.start, st.end);
+    if (liveSlice !== st.current) {
+        // Something else rewrote the textarea without an input event
+        // (populate, program load, clear): the span is stale — never
+        // write through it.
+        _closeProgramScrubPad();
+        return;
+    }
+    const text = _scrubFormatNumber(nextValue);
+    if (text !== st.current) {
+        t.value = String(t.value || '').slice(0, st.start) + text + String(t.value || '').slice(st.end);
+        st.end = st.start + text.length;
+        st.current = text;
+        st.value = Number(text);
+        try { if (typeof t.setSelectionRange === 'function') t.setSelectionRange(st.start, st.end); } catch (e) {}
+        _scrubPadNotifyInput(st.which);
+        _scrubScheduleLivePreview();
+    } else {
+        st.value = Number(text);
+    }
+    _renderProgramScrubPad();
+}
+
+function _scrubPadDragStart(event) {
+    const st = _scrubPadState;
+    if (!st) return;
+    if (event && typeof event.preventDefault === 'function') event.preventDefault();
+    st.dragging = true;
+    _scrubPadDragMove(event);
+    const move = e => _scrubPadDragMove(e);
+    const up = () => {
+        if (_scrubPadState) _scrubPadState.dragging = false;
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+}
+
+function _scrubPadDragMove(event) {
+    const st = _scrubPadState;
+    if (!st) return;
+    const surface = document.getElementById('program-scrub-surface');
+    if (!surface || typeof surface.getBoundingClientRect !== 'function') return;
+    const rect = surface.getBoundingClientRect();
+    if (!rect || !(rect.width > 0)) return;
+    const frac = Math.min(1, Math.max(0, ((Number(event && event.clientX) || 0) - rect.left) / rect.width));
+    _scrubPadWrite(st.min + frac * (st.max - st.min));
+}
+
+function _scrubPadSetRange() {
+    const st = _scrubPadState;
+    if (!st) return;
+    const minEl = document.getElementById('program-scrub-min');
+    const maxEl = document.getElementById('program-scrub-max');
+    const min = Number(minEl && minEl.value);
+    const max = Number(maxEl && maxEl.value);
+    if (Number.isFinite(min)) st.min = min;
+    if (Number.isFinite(max)) st.max = max;
+    if (st.max <= st.min) st.max = st.min + 1;
+    if (minEl) minEl.value = _scrubFormatNumber(st.min);
+    if (maxEl) maxEl.value = _scrubFormatNumber(st.max);
+    _renderProgramScrubPad();
+}
+
+function _scrubPadToggleLive(checked) {
+    const st = _scrubPadState;
+    if (!st) return;
+    st.livePreview = !!checked;
+    if (st.livePreview) _scrubScheduleLivePreview();
+}
+
+function _scrubScheduleLivePreview() {
+    const st = _scrubPadState;
+    if (!st || !st.livePreview) return;
+    const preview = _scrubPadPreviewByKey[st.which];
+    if (!preview) return;
+    if (_scrubPreviewTimer) clearTimeout(_scrubPreviewTimer);
+    _scrubPreviewTimer = setTimeout(async () => {
+        _scrubPreviewTimer = null;
+        if (_scrubPreviewInFlight) { _scrubPreviewDirty = true; return; }
+        _scrubPreviewInFlight = true;
+        try {
+            await preview.run();
+        } catch (e) {
+            /* preview errors surface in their own status lines */
+        }
+        _scrubPreviewInFlight = false;
+        if (_scrubPreviewDirty) {
+            _scrubPreviewDirty = false;
+            _scrubScheduleLivePreview();
+        }
+    }, 600);
+}
+
+function _revertProgramScrubPad() {
+    const st = _scrubPadState;
+    if (!st) return;
+    const t = st.textarea;
+    const liveSlice = String(t && t.value || '').slice(st.start, st.end);
+    if (t && liveSlice === st.current && st.current !== st.original) {
+        t.value = String(t.value || '').slice(0, st.start) + st.original + String(t.value || '').slice(st.end);
+        _scrubPadNotifyInput(st.which);
+    }
+    _closeProgramScrubPad();
+}
+
+function _closeProgramScrubPad() {
+    const st = _scrubPadState;
+    _scrubPadState = null;
+    if (_scrubPreviewTimer) { clearTimeout(_scrubPreviewTimer); _scrubPreviewTimer = null; }
+    _scrubPreviewDirty = false;
+    if (st && st.textarea && typeof st.textarea.removeEventListener === 'function') {
+        st.textarea.removeEventListener('input', _scrubPadOnExternalInput);
+    }
+    const el = _scrubPadEl();
+    if (el) {
+        el.style.display = 'none';
+        el.innerHTML = '';
+        if (typeof el.setAttribute === 'function') el.setAttribute('aria-hidden', 'true');
+    }
+}
+
 function _onProgramSourceDblClick(which, event) {
     const key = _programSourceWhichKey(which);
     const textarea = _programSourceTextarea(key);
+    const span = _programNumberSpanAtCursor(textarea);
+    if (span) {
+        _openProgramScrubPad(key, span, textarea, event || {});
+        return;
+    }
+    _closeProgramScrubPad();
     const token = _programWordAtTextareaCursor(textarea);
     const item = _lookupProgramHelpToken(key, token);
     _openProgramHelpInspector(key, _normalizeProgramHelpToken(token) || token, item, event || {});

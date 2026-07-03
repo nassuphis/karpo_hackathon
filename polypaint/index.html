@@ -893,6 +893,55 @@ button {
     color: #cbd5e1;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
 }
+/* ---- Program scrub pad: dblclick a numeric literal to drag-edit ---- */
+.program-scrub-pad {
+    position: fixed;
+    z-index: 1900;
+    display: none;
+    width: min(300px, calc(100vw - 16px));
+    background: #111827;
+    color: #e0e0e0;
+    border: 1px solid #2b4d78;
+    border-radius: 8px;
+    box-shadow: 0 14px 34px rgba(0,0,0,0.5);
+    padding: 9px 10px;
+    font-size: 11px;
+}
+.program-scrub-head {
+    display: flex; align-items: baseline; gap: 8px; margin-bottom: 7px;
+}
+.program-scrub-title {
+    color: #e94560; font-size: 10px; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase;
+}
+.program-scrub-value {
+    font-family: monospace; font-size: 12px; color: #f0f4ff; flex: 1;
+}
+.program-scrub-close {
+    margin: 0; padding: 0 7px; font-size: 11px; border-radius: 999px;
+}
+.program-scrub-surface {
+    position: relative; height: 34px; margin-bottom: 7px;
+    background: #0d1324; border: 1px solid #253a5f; border-radius: 5px;
+    cursor: ew-resize; user-select: none;
+}
+.program-scrub-handle {
+    position: absolute; top: 2px; bottom: 2px; width: 8px;
+    margin-left: -4px; background: #e94560; border-radius: 3px;
+    pointer-events: none;
+}
+.program-scrub-row {
+    display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
+    color: #9fb0c8; font-size: 10px;
+}
+.program-scrub-row input[type="text"] {
+    width: 76px; padding: 1px 5px;
+    background: #1a1a2e; border: 1px solid #253a5f; border-radius: 3px;
+    color: #e0e0e0; font-size: 11px; font-family: monospace;
+}
+.program-scrub-hint {
+    color: #66768f; font-size: 9px; font-style: italic;
+}
 .program-help-inspector {
     position: fixed;
     z-index: 1900;
@@ -2152,6 +2201,7 @@ button {
 </div>
 
 <div id="program-help-inspector" class="program-help-inspector" role="dialog" aria-hidden="true"></div>
+<div id="program-scrub-pad" class="program-scrub-pad" role="dialog" aria-label="Scrub numeric literal" aria-hidden="true"></div>
 
 <div id="artifact-mosaic-context-menu" class="artifact-mosaic-context-menu" role="menu" aria-hidden="true"></div>
 

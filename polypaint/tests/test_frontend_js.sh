@@ -162,6 +162,12 @@ assertIncludes("_jobsRailUpsert({\n        id: 'render:' + record.run_id,", 'ren
 assertIncludes("id: 'palette:' + record.run_id,", 'palette run dispatch should feed the jobs rail');
 assertIncludes("computeRailId = 'compute:' + runId;", 'compute submission should feed the jobs rail');
 assertIncludes("_initJobsRail();", 'boot should hydrate the jobs rail from history');
+assertIncludes("id=\"program-scrub-pad\" class=\"program-scrub-pad\"", 'the scrub pad popup element should exist');
+assertIncludes("const span = _programNumberSpanAtCursor(textarea);", 'dblclick should branch to the scrub pad for numeric literals');
+assertIncludes("pp: { label: 'live compute preview', run: () => runComputePreview() },", 'param scrub live preview must route to the compute preview only');
+assertIncludes("'render-ss': { label: 'live render lores preview', run: () => runRenderLoresPreview() },", 'render-side scrub live preview must route to the render lores preview only');
+assertNotIncludes("prt: { label:", 'palette-tab editors must not offer scrub live preview (no preview surface)');
+assertIncludes("NEVER wire this to the full pipeline", 'the scrub pad must document the lores-only preview constraint');
 // H3 regression: _ctAndyIndex was deleted; any surviving reference is a ReferenceError at runtime.
 assertNotIncludes('_ctAndyIndex(', 'deleted _ctAndyIndex must not be referenced anywhere (littlewood formula crash)');
 // H1 regression: BOTH coeff and param save modals must forward source_text.
@@ -2054,6 +2060,95 @@ async function main() {
     vm.runInContext('_jobsRailClearHistory();', railCtx);
     assert(!String(railStore.get('polypaint_jobs_rail') || '').includes('boom'), 'clear-done should drop terminal history');
     console.log('Frontend jobs rail runtime checks: OK');
+  }
+
+  // Scrub pad: span detection, splice writes, invariant guard, revert.
+  {
+    const padEls = {};
+    for (const id of ['program-scrub-pad', 'program-scrub-value', 'program-scrub-handle', 'program-scrub-surface', 'program-scrub-min', 'program-scrub-max', 'program-scrub-live']) {
+      padEls[id] = { innerHTML: '', textContent: '', value: '', style: {}, setAttribute() {}, contains() { return false; } };
+    }
+    const scrubTextarea = {
+      value: 'poly = linear(poly, 2, 3)\nemit',
+      selectionStart: 21, selectionEnd: 21,
+      listeners: [],
+      addEventListener(type, fn) { this.listeners.push([type, fn]); },
+      removeEventListener(type, fn) { this.listeners = this.listeners.filter(([t, f]) => !(t === type && f === fn)); },
+      setSelectionRange() {},
+    };
+    const scrubCtx = {
+      console, JSON, Math, Date, Number, String, Boolean, Array, Object,
+      document: {
+        getElementById: id => padEls[id] || null,
+        addEventListener() {},
+        removeEventListener() {},
+      },
+      window: { innerWidth: 1200, innerHeight: 800 },
+      setTimeout: (fn, ms) => 0,
+      clearTimeout: () => {},
+      _escapeHtml: v => String(v == null ? '' : v),
+      _closeProgramHelpInspector: () => {},
+      _notifyCalls: [],
+      _onCoeffProgramSourceInput: function() { scrubCtx._notifyCalls.push('cp'); },
+      _onParamProgramSourceInput: function() { scrubCtx._notifyCalls.push('pp'); },
+      _onRootProgramSourceInput: function(p) { scrubCtx._notifyCalls.push('rt:' + p); },
+      _onSolveScoreProgramSourceInput: function(p) { scrubCtx._notifyCalls.push('ss:' + p); },
+      runComputePreview: async () => {},
+      runRenderLoresPreview: async () => {},
+    };
+    scrubCtx.globalThis = scrubCtx;
+    vm.createContext(scrubCtx);
+    const scrubSrc = [
+      'let _scrubPadState = null; let _scrubPadHandlersBound = false;',
+      'let _scrubPreviewTimer = null; let _scrubPreviewInFlight = false; let _scrubPreviewDirty = false;',
+      "const _scrubPadPreviewByKey = { pp: { label: 'live compute preview', run: () => runComputePreview() }, cp: { label: 'live compute preview', run: () => runComputePreview() }, rt: { label: 'live render lores preview', run: () => runRenderLoresPreview() }, 'render-ss': { label: 'live render lores preview', run: () => runRenderLoresPreview() } };",
+      extractFunction('_programNumberSpanAtCursor'),
+      extractFunction('_scrubFormatNumber'),
+      extractFunction('_scrubPadEl'),
+      extractFunction('_scrubPadNotifyInput'),
+      extractFunction('_scrubPadOnExternalInput'),
+      extractFunction('_ensureProgramScrubPadHandlers'),
+      extractFunction('_openProgramScrubPad'),
+      extractFunction('_renderProgramScrubPad'),
+      extractFunction('_scrubPadWrite'),
+      extractFunction('_scrubPadSetRange'),
+      extractFunction('_scrubPadToggleLive'),
+      extractFunction('_scrubScheduleLivePreview'),
+      extractFunction('_revertProgramScrubPad'),
+      extractFunction('_closeProgramScrubPad'),
+      'globalThis._span = () => _programNumberSpanAtCursor(globalThis._ta);',
+      'globalThis._open = (which, span) => _openProgramScrubPad(which, span, globalThis._ta, { clientX: 100, clientY: 100 });',
+      'globalThis._write = v => _scrubPadWrite(v);',
+      'globalThis._revert = () => _revertProgramScrubPad();',
+      'globalThis._state = () => _scrubPadState;',
+    ].join('\n\n');
+    scrubCtx._ta = scrubTextarea;
+    vm.runInContext(scrubSrc, scrubCtx);
+    const span = vm.runInContext('_span()', scrubCtx);
+    assert(span && span.raw === '2' && span.start === 20 && span.end === 21, 'span detection should find the numeric literal with exact bounds');
+    vm.runInContext("_open('cp', _span())", scrubCtx);
+    assert(padEls['program-scrub-pad'].innerHTML.includes('live compute preview'), 'coeff scrub pad should offer the compute preview toggle');
+    vm.runInContext('_write(7.5)', scrubCtx);
+    assert(scrubTextarea.value === 'poly = linear(poly, 7.5, 3)\nemit', 'scrub write should splice the literal in place');
+    assert(scrubCtx._notifyCalls.includes('cp'), 'scrub write should run the editor input handler');
+    vm.runInContext('_write(8)', scrubCtx);
+    assert(scrubTextarea.value === 'poly = linear(poly, 8, 3)\nemit', 'second write should track the shifted span');
+    scrubTextarea.value = 'poly = cf\nemit';
+    vm.runInContext('_write(9)', scrubCtx);
+    assert(scrubTextarea.value === 'poly = cf\nemit', 'a stale span must never write (invariant guard closes the pad)');
+    assert(vm.runInContext('_state()', scrubCtx) === null, 'invariant guard should close the pad');
+    scrubTextarea.value = 'poly = linear(poly, 2, 3)\nemit';
+    scrubTextarea.selectionStart = scrubTextarea.selectionEnd = 21;
+    vm.runInContext("_open('rt', _span())", scrubCtx);
+    assert(padEls['program-scrub-pad'].innerHTML.includes('live render lores preview'), 'root scrub pad should offer the render lores preview toggle');
+    vm.runInContext('_write(-1.25)', scrubCtx);
+    assert(scrubTextarea.value === 'poly = linear(poly, -1.25, 3)\nemit', 'negative writes should splice correctly');
+    vm.runInContext('_revert()', scrubCtx);
+    assert(scrubTextarea.value === 'poly = linear(poly, 2, 3)\nemit', 'Escape/revert should restore the original literal');
+    assert(vm.runInContext('_state()', scrubCtx) === null, 'revert should close the pad');
+    vm.runInContext("_open('palette-ss', _span())", scrubCtx);
+    assert(!padEls['program-scrub-pad'].innerHTML.includes('live '), 'palette-tab scrub pads must not offer live preview');
+    console.log('Frontend scrub pad runtime checks: OK');
   }
 
   console.log('Frontend fused render runtime checks: OK');

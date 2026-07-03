@@ -865,6 +865,10 @@ function _clearActivePaletteRun(outcome = 'done', detail = '') {
     if (_activePaletteRun && _activePaletteRun.run_id) {
         _jobsRailUpsert({
             id: 'palette:' + _activePaletteRun.run_id,
+            kind: 'palette',
+            label: _paletteRunLabel(_activePaletteRun) + ' · ' + _activePaletteRun.job_id,
+            jobId: _activePaletteRun.job_id,
+            tab: 'palette',
             state: outcome === 'failed' ? 'failed' : 'done',
             detail: String(detail || ''),
         });
@@ -1305,7 +1309,16 @@ async function _pollActivePaletteRun() {
         } else {
             statusEl.textContent = statusMsg;
             statusEl.className = 'status';
-            _jobsRailProgress('palette:' + run.run_id, statusMsg);
+            _jobsRailUpsert({
+                id: 'palette:' + run.run_id,
+                kind: 'palette',
+                label: _paletteRunLabel(run) + ' · ' + run.job_id,
+                jobId: run.job_id,
+                tab: 'palette',
+                state: 'running',
+                startedAt: run.started_at_ms || undefined,
+                detail: statusMsg,
+            });
             if (_lastPaletteWarnState) {
                 log(runLabel + ' workers active again', 'ok', 'palette-log');
                 if (mirrorToRender) log(runLabel + ' workers active again', 'ok', 'render-log');
@@ -1371,8 +1384,15 @@ function _saveActiveRun(record) {
 
 function _clearActiveRun(outcome = 'done', detail = '') {
     if (_activeRenderRun && _activeRenderRun.run_id) {
+        // Full record: a resumed run can terminate before its first poll
+        // tick ever created a card, so the terminal patch must be able to
+        // stand alone.
         _jobsRailUpsert({
             id: 'render:' + _activeRenderRun.run_id,
+            kind: 'render',
+            label: (_activeRenderRun.mode || 'render') + ' · ' + _activeRenderRun.job_id,
+            jobId: _activeRenderRun.job_id,
+            tab: 'render',
             state: outcome === 'failed' ? 'failed' : 'done',
             detail: String(detail || ''),
         });

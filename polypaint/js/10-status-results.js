@@ -1665,7 +1665,16 @@ async function _pollActiveRenderRun() {
         if (freshMs !== null && freshMs > 10000) {
             statusMsg += ' \u00b7 last update ' + _fmtAge(freshMs) + ' ago';
         }
-        _jobsRailProgress('render:' + run.run_id, statusMsg);
+        _jobsRailUpsert({
+            id: 'render:' + run.run_id,
+            kind: 'render',
+            label: (run.mode || 'render') + ' · ' + run.job_id,
+            jobId: run.job_id,
+            tab: 'render',
+            state: 'running',
+            startedAt: run.started_at_ms || undefined,
+            detail: statusMsg,
+        });
 
         // Liveness: warning / hard stall. PDF is a single Lambda job, so a
         // hard-stale compose phase can leave only a local active-run lock.
@@ -1830,20 +1839,28 @@ function _renderSelectedArtifactEntry() {
 
 /* ---- Jobs rail: persistent cross-tab job surface (poll-driven) ----
    Cards are fed by the existing run lifecycles (render/palette
-   orchestrator runs, compute submissions) — no new backend. Terminal
-   cards persist in localStorage so recent history survives reloads;
-   running cards are re-fed by the resumed pollers. */
+   orchestrator runs, compute submissions) — no new backend. The pollers
+   upsert full records every tick, so runs resumed from localStorage
+   (which bypass _saveActive*Run) still materialize. Terminal cards
+   persist in localStorage; a rail failure must never break a dispatch
+   or poll path, so all DOM/storage work is guarded. */
 const JOBS_RAIL_HISTORY_KEY = 'polypaint_jobs_rail';
 const JOBS_RAIL_COLLAPSED_KEY = 'polypaint_jobs_rail_collapsed';
 const JOBS_RAIL_MAX = 12;
 let _jobsRailJobs = [];
+
+function _jobsRailValidRecord(job) {
+    return !!(job && typeof job === 'object' && typeof job.id === 'string' && job.id);
+}
 
 function _jobsRailLoadHistory() {
     try {
         const s = localStorage.getItem(JOBS_RAIL_HISTORY_KEY);
         if (s) {
             const parsed = JSON.parse(s);
-            if (Array.isArray(parsed)) return parsed.slice(0, JOBS_RAIL_MAX);
+            if (Array.isArray(parsed)) {
+                return parsed.filter(_jobsRailValidRecord).slice(0, JOBS_RAIL_MAX);
+            }
         }
     } catch (e) {}
     return [];
@@ -1857,15 +1874,36 @@ function _jobsRailPersistHistory() {
     } catch (e) {}
 }
 
+function _jobsRailCollapsed() {
+    try { return localStorage.getItem(JOBS_RAIL_COLLAPSED_KEY) === '1'; } catch (e) { return false; }
+}
+
 function _jobsRailUpsert(job) {
-    const id = String(job && job.id || '');
-    if (!id) return;
-    const idx = _jobsRailJobs.findIndex(j => j.id === id);
+    if (!_jobsRailValidRecord(job)) return;
+    const idx = _jobsRailJobs.findIndex(j => j.id === job.id);
     const prev = idx >= 0 ? _jobsRailJobs[idx] : null;
-    const next = { startedAt: Date.now(), ...(prev || {}), ...job, updatedAt: Date.now() };
-    if (idx >= 0) _jobsRailJobs.splice(idx, 1);
-    _jobsRailJobs.unshift(next);
-    if (_jobsRailJobs.length > JOBS_RAIL_MAX) _jobsRailJobs.length = JOBS_RAIL_MAX;
+    const next = prev ? { ...prev } : { startedAt: Date.now() };
+    for (const key of Object.keys(job)) {
+        // Skip undefined so a sparse patch never clobbers known fields, and
+        // keep the last progress line when a terminal patch has no message.
+        if (job[key] === undefined) continue;
+        if (key === 'detail' && job[key] === '' && prev && prev.detail) continue;
+        next[key] = job[key];
+    }
+    next.updatedAt = Date.now();
+    if (prev) {
+        // In-place update: no reorder churn from 3-second poll ticks.
+        _jobsRailJobs[idx] = next;
+    } else {
+        _jobsRailJobs.unshift(next);
+        if (_jobsRailJobs.length > JOBS_RAIL_MAX) {
+            // Evict oldest terminal cards first; running cards are never
+            // dropped (a dropped running card would go silent mid-run).
+            for (let i = _jobsRailJobs.length - 1; i >= 0 && _jobsRailJobs.length > JOBS_RAIL_MAX; i--) {
+                if (_jobsRailJobs[i].state !== 'running') _jobsRailJobs.splice(i, 1);
+            }
+        }
+    }
     if (next.state !== 'running') _jobsRailPersistHistory();
     _renderJobsRail();
 }
@@ -1884,6 +1922,10 @@ function _jobsRailOpen(id) {
     if (job.jobId && (job.kind === 'render' || job.kind === 'palette')) {
         _setRenderResultsJob(job.jobId);
     }
+    if (job.jobId && job.kind === 'palette') {
+        const dir = document.getElementById('palette-results-dir');
+        if (dir) dir.value = job.jobId;
+    }
     switchTab(job.tab || 'compute');
 }
 
@@ -1894,7 +1936,7 @@ function _jobsRailClearHistory() {
 }
 
 function _jobsRailToggle() {
-    const collapsed = localStorage.getItem(JOBS_RAIL_COLLAPSED_KEY) === '1';
+    const collapsed = _jobsRailCollapsed();
     try { localStorage.setItem(JOBS_RAIL_COLLAPSED_KEY, collapsed ? '0' : '1'); } catch (e) {}
     _renderJobsRail();
 }
@@ -1908,32 +1950,39 @@ function _jobsRailAge(ms) {
 }
 
 function _renderJobsRail() {
-    const rail = document.getElementById('jobs-rail');
-    const cardsEl = document.getElementById('jobs-rail-cards');
-    const titleEl = document.getElementById('jobs-rail-title');
-    const toggleEl = document.getElementById('jobs-rail-toggle');
-    if (!rail || !cardsEl) return;
-    const collapsed = localStorage.getItem(JOBS_RAIL_COLLAPSED_KEY) === '1';
-    const running = _jobsRailJobs.filter(j => j.state === 'running').length;
-    if (titleEl) titleEl.textContent = running ? `Jobs · ${running} running` : 'Jobs';
-    if (toggleEl) toggleEl.textContent = collapsed ? 'show' : 'hide';
-    rail.classList.toggle('jobs-rail-collapsed', collapsed);
-    if (collapsed) { cardsEl.innerHTML = ''; return; }
-    if (!_jobsRailJobs.length) {
-        cardsEl.innerHTML = '<span class="jobs-rail-empty">No jobs yet. Compute, render, and palette runs appear here.</span>';
-        return;
-    }
-    cardsEl.innerHTML = _jobsRailJobs.map(job => {
-        const state = job.state === 'running' ? 'running' : (job.state === 'failed' ? 'failed' : 'done');
-        const age = _jobsRailAge(job.updatedAt || job.startedAt);
-        const detail = String(job.detail || '');
-        return `<button type="button" class="jobs-rail-card jobs-rail-${state}" onclick="_jobsRailOpen('${_escapeHtml(job.id)}')" title="${_escapeHtml(detail)}">` +
-            `<span class="jobs-rail-card-head"><span class="jobs-rail-kind">${_escapeHtml(job.kind || 'job')}</span>` +
-            `<span class="jobs-rail-state">${_escapeHtml(state === 'running' ? 'running · ' + age : state + ' · ' + age + ' ago')}</span></span>` +
-            `<span class="jobs-rail-label">${_escapeHtml(job.label || job.id)}</span>` +
-            (detail ? `<span class="jobs-rail-detail">${_escapeHtml(detail)}</span>` : '') +
-            `</button>`;
-    }).join('');
+    // Guarded end to end: the rail is fed from dispatch and poll paths,
+    // and a rendering bug must never break those.
+    try {
+        const rail = document.getElementById('jobs-rail');
+        const cardsEl = document.getElementById('jobs-rail-cards');
+        const titleEl = document.getElementById('jobs-rail-title');
+        const toggleEl = document.getElementById('jobs-rail-toggle');
+        if (!rail || !cardsEl) return;
+        const collapsed = _jobsRailCollapsed();
+        const running = _jobsRailJobs.filter(j => j.state === 'running').length;
+        if (titleEl) titleEl.textContent = running ? `Jobs · ${running} running` : 'Jobs';
+        if (toggleEl) toggleEl.textContent = collapsed ? 'show' : 'hide';
+        rail.classList.toggle('jobs-rail-collapsed', collapsed);
+        if (collapsed) { cardsEl.innerHTML = ''; return; }
+        if (!_jobsRailJobs.length) {
+            cardsEl.innerHTML = '<span class="jobs-rail-empty">No jobs yet. Compute, render, and palette runs appear here.</span>';
+            return;
+        }
+        cardsEl.innerHTML = _jobsRailJobs.map(job => {
+            const state = job.state === 'running' ? 'running' : (job.state === 'failed' ? 'failed' : 'done');
+            const age = _jobsRailAge(job.updatedAt || job.startedAt);
+            const detail = String(job.detail || '');
+            // Click routes through a data attribute: onclick-string
+            // interpolation would decode &#39; back to a quote before the
+            // JS parses, so ids must never be embedded in code text.
+            return `<button type="button" class="jobs-rail-card jobs-rail-${state}" data-jobs-rail-id="${_escapeHtml(job.id)}" onclick="_jobsRailOpen(this.dataset.jobsRailId)" title="${_escapeHtml(detail)}">` +
+                `<span class="jobs-rail-card-head"><span class="jobs-rail-kind">${_escapeHtml(job.kind || 'job')}</span>` +
+                `<span class="jobs-rail-state">${_escapeHtml(state === 'running' ? 'running · ' + age : state + ' · ' + age + ' ago')}</span></span>` +
+                `<span class="jobs-rail-label">${_escapeHtml(job.label || job.id)}</span>` +
+                (detail ? `<span class="jobs-rail-detail">${_escapeHtml(detail)}</span>` : '') +
+                `</button>`;
+        }).join('');
+    } catch (e) {}
 }
 
 function _initJobsRail() {

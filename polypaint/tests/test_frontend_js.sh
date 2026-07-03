@@ -1967,15 +1967,20 @@ async function main() {
   assert(ctx._fusedCalls.length === 0, 'runRasterPipeline should reject unsupported color modes before dispatch');
   assert(renderStatus.textContent.includes('Solve score only'), 'runRasterPipeline should surface an actionable fused-only error');
 
-  // Jobs rail: upsert/progress/persist/open behavior against a stub DOM.
+  // Jobs rail: upsert/progress/persist/open behavior against a stub DOM,
+  // including the trap set: resume-created cards, in-place update order,
+  // undefined-stripping, empty-detail preservation, corrupt history,
+  // running-card eviction protection, and quote-safe click routing.
   {
     const railEls = {
       'jobs-rail': { classList: { toggle() {} } },
       'jobs-rail-cards': { innerHTML: '' },
       'jobs-rail-title': { textContent: '' },
       'jobs-rail-toggle': { textContent: '' },
+      'palette-results-dir': { value: '' },
     };
     const railStore = new Map();
+    railStore.set('polypaint_jobs_rail', JSON.stringify([null, { bad: 1 }, { id: 'old:1', state: 'done', kind: 'render', label: 'old', detail: 'kept' }]));
     const railCtx = {
       console, JSON, Math, Date, Array, Object, String, Number, Boolean,
       localStorage: {
@@ -1986,7 +1991,9 @@ async function main() {
       document: { getElementById: id => railEls[id] || null },
       switchTab: name => { railCtx._openedTab = name; },
       _setRenderResultsJob: id => { railCtx._openedJob = id; },
-      _escapeHtml: v => String(v == null ? '' : v),
+      _escapeHtml: v => String(v == null ? '' : v)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;'),
     };
     railCtx.globalThis = railCtx;
     vm.createContext(railCtx);
@@ -1995,8 +2002,10 @@ async function main() {
       "const JOBS_RAIL_COLLAPSED_KEY = 'polypaint_jobs_rail_collapsed';",
       'const JOBS_RAIL_MAX = 12;',
       'let _jobsRailJobs = [];',
+      extractFunction('_jobsRailValidRecord'),
       extractFunction('_jobsRailLoadHistory'),
       extractFunction('_jobsRailPersistHistory'),
+      extractFunction('_jobsRailCollapsed'),
       extractFunction('_jobsRailUpsert'),
       extractFunction('_jobsRailProgress'),
       extractFunction('_jobsRailOpen'),
@@ -2007,22 +2016,41 @@ async function main() {
       extractFunction('_initJobsRail'),
       'globalThis._jobsRailUpsert = _jobsRailUpsert; globalThis._jobsRailProgress = _jobsRailProgress;',
       'globalThis._jobsRailOpen = _jobsRailOpen; globalThis._initJobsRail = _initJobsRail;',
-      'globalThis._jobsRailClearHistory = _jobsRailClearHistory;',
+      'globalThis._jobsRailClearHistory = _jobsRailClearHistory; globalThis._railJobs = () => _jobsRailJobs;',
     ].join('\n\n');
     vm.runInContext(railSrc, railCtx);
+    vm.runInContext('_initJobsRail();', railCtx);
+    assert(railCtx._railJobs().length === 1 && railCtx._railJobs()[0].id === 'old:1', 'corrupt history entries must be dropped on load');
     vm.runInContext(`
-      _initJobsRail();
-      _jobsRailUpsert({ id: 'render:r1', kind: 'render', label: 'color · job1', jobId: 'job1', tab: 'render', state: 'running', detail: 'dispatched' });
-      _jobsRailProgress('render:r1', 'raster 3/8');
+      // Poller-style full upsert with no prior _saveActiveRun: the resume path.
+      _jobsRailUpsert({ id: 'render:r1', kind: 'render', label: 'color · job1', jobId: 'job1', tab: 'render', state: 'running', startedAt: 12345, detail: 'raster 3/8' });
+      _jobsRailUpsert({ id: "palette:p'1", kind: 'palette', label: 'palette · jobP', jobId: 'jobP', tab: 'palette', state: 'running', detail: 'chunks 1/4' });
+      // Re-upsert r1 with a sparse patch: startedAt undefined must not clobber.
+      _jobsRailUpsert({ id: 'render:r1', state: 'running', startedAt: undefined, detail: 'raster 5/8' });
     `, railCtx);
-    assert(railEls['jobs-rail-cards'].innerHTML.includes('raster 3/8'), 'jobs rail should render running progress into the card');
-    assert(railEls['jobs-rail-title'].textContent.includes('1 running'), 'jobs rail title should count running jobs');
-    assert(!railStore.has('polypaint_jobs_rail') || !String(railStore.get('polypaint_jobs_rail')).includes('r1'), 'running jobs must not persist to history');
+    const railJobs = vm.runInContext('_railJobs()', railCtx);
+    assert(railJobs.find(j => j.id === 'render:r1').startedAt === 12345, 'sparse upsert patches must not clobber known fields with undefined');
+    assert(railJobs[0].id === "palette:p'1" && railJobs[1].id === 'render:r1', 'existing cards must update in place (no poll-tick reorder churn)');
+    assert(railEls['jobs-rail-cards'].innerHTML.includes('raster 5/8'), 'jobs rail should render running progress into the card');
+    assert(railEls['jobs-rail-title'].textContent.includes('2 running'), 'jobs rail title should count running jobs');
+    assert(railEls['jobs-rail-cards'].innerHTML.includes('data-jobs-rail-id'), 'card click must route through a data attribute');
+    assert(!railEls['jobs-rail-cards'].innerHTML.includes("_jobsRailOpen('"), 'card ids must never be embedded in onclick code text (quote decode breakout)');
+    assert(!String(railStore.get('polypaint_jobs_rail')).includes('r1'), 'running jobs must not persist to history');
+    vm.runInContext("_jobsRailUpsert({ id: 'render:r1', state: 'failed', detail: '' });", railCtx);
+    assert(railCtx._railJobs().find(j => j.id === 'render:r1').detail === 'raster 5/8', 'a terminal patch without a message must keep the last progress line');
     vm.runInContext("_jobsRailUpsert({ id: 'render:r1', state: 'failed', detail: 'boom' });", railCtx);
-    assert(String(railStore.get('polypaint_jobs_rail') || '').includes('boom'), 'terminal jobs should persist to localStorage history');
+    assert(String(railStore.get('polypaint_jobs_rail')).includes('boom'), 'terminal jobs should persist to localStorage history');
     assert(railEls['jobs-rail-cards'].innerHTML.includes('jobs-rail-failed'), 'failed cards should carry the failed state class');
-    vm.runInContext("_jobsRailOpen('render:r1');", railCtx);
-    assert(railCtx._openedTab === 'render' && railCtx._openedJob === 'job1', 'opening a card should jump to its tab with the job selected');
+    vm.runInContext(`
+      for (let i = 0; i < 14; i++) {
+        _jobsRailUpsert({ id: 'compute:c' + i, kind: 'compute', label: 'c' + i, tab: 'compute', state: 'done', detail: 'x' });
+      }
+    `, railCtx);
+    assert(railCtx._railJobs().some(j => j.id === "palette:p'1" && j.state === 'running'), 'running cards must never be evicted by the history cap');
+    assert(railCtx._railJobs().length <= 13, 'cap should hold terminals to the limit while sparing running cards');
+    vm.runInContext("_jobsRailOpen(\"palette:p'1\");", railCtx);
+    assert(railCtx._openedTab === 'palette' && railCtx._openedJob === 'jobP', 'opening a palette card should jump to its tab with the job selected');
+    assert(railEls['palette-results-dir'].value === 'jobP', 'opening a palette card should select the palette job');
     vm.runInContext('_jobsRailClearHistory();', railCtx);
     assert(!String(railStore.get('polypaint_jobs_rail') || '').includes('boom'), 'clear-done should drop terminal history');
     console.log('Frontend jobs rail runtime checks: OK');

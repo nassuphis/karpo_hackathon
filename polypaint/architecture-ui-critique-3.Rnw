@@ -1,0 +1,714 @@
+\documentclass[11pt]{article}
+\usepackage[a4paper,margin=2.4cm]{geometry}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{5pt}
+\definecolor{accent}{HTML}{E94560}
+\definecolor{ink}{HTML}{16213E}
+\newcommand{\verdict}[1]{\textbf{\textcolor{ink}{Verdict:}} #1}
+
+\title{\textbf{PolyPaint: Architecture \& UI Critique III}\\
+\large What landed, what landed differently, and what is genuinely left}
+\author{Prepared from a full-tree review; every claim re-verified against source}
+\date{July 2026 --- verified against \texttt{main} at \texttt{542b5b4} (July 3)}
+
+\begin{document}
+\maketitle
+
+<<setup, echo=FALSE>>=
+knitr::opts_chunk$set(echo = FALSE, fig.align = "center", dev = "pdf",
+                      fig.pos = "ht")
+ACC <- "#E94560"; INK <- "#16213E"; PAPER <- "#F7F7F9"; LINE <- "#3A3A44"
+SOFT <- "#9aa0b0"
+wf_new <- function() {
+  par(mar = c(0.2, 0.2, 0.2, 0.2))
+  plot.new(); plot.window(xlim = c(0, 100), ylim = c(0, 100))
+}
+wf_box <- function(x, y, w, h, label = "", fill = PAPER, border = LINE,
+                   cex = 0.62, tcol = "#16161D", lwd = 1, lty = 1,
+                   align = "c", font = 1) {
+  rect(x, y, x + w, y + h, col = fill, border = border, lwd = lwd, lty = lty)
+  if (nzchar(label)) {
+    if (align == "c") text(x + w/2, y + h/2, label, cex = cex, col = tcol, font = font)
+    else text(x + 1.6, y + h/2, label, cex = cex, col = tcol, adj = c(0, 0.5), font = font)
+  }
+}
+wf_chip <- function(x, y, label, w = NULL, h = 5, fill = "#EDF0FA",
+                    border = "#7A86A8", cex = 0.5) {
+  if (is.null(w)) w <- 3.4 + 1.55 * nchar(label)
+  rect(x, y, x + w, y + h, col = fill, border = border, lwd = 0.9)
+  text(x + w/2, y + h/2, label, cex = cex, col = "#222633", family = "mono")
+  invisible(x + w + 1.4)
+}
+wf_arrow <- function(x1, y1, x2, y2, col = LINE, lwd = 1.2, code = 2) {
+  arrows(x1, y1, x2, y2, length = 0.055, lwd = lwd, col = col, code = code)
+}
+wf_note <- function(x, y, label, cex = 0.52, col = "#555a6a", adj = c(0, 0.5)) {
+  text(x, y, label, cex = cex, col = col, adj = adj, font = 3)
+}
+wf_tabbar <- function(x, y, w, tabs, active = 1, h = 5.4) {
+  tw <- w / length(tabs)
+  for (i in seq_along(tabs)) {
+    fill <- if (i == active) INK else "#E3E5EC"
+    tcol <- if (i == active) "white" else "#3A3A44"
+    rect(x + (i-1)*tw, y, x + i*tw, y + h, col = fill, border = LINE, lwd = 0.8)
+    text(x + (i-0.5)*tw, y + h/2, tabs[i], cex = 0.56, col = tcol,
+         font = if (i == active) 2 else 1)
+  }
+}
+@
+
+\section*{Executive summary}
+
+This is the third issue of the critique, and the first in which the
+system's \emph{largest standing risk from issues I--II is structurally
+retired}. The four-representation program pipeline (text $\to$ chips
+$\to$ tokens $\to$ C VM, mirrored in a hand-written JS catalog) no longer
+exists in that form: chips are gone as an authoring surface, every
+frontend vocabulary is generated from a backend registry, and text source
+--- parsed, compiled, fingerprinted, and adversarially oracle-tested ---
+is the single way a program enters the system. The June--July hardening
+arc (code-reviews 12--23; 191 commits since issue II) also removed WASM
+and Web Workers entirely, split the monolith into 13 ordered parts,
+converted all six program editors to one shared text-first layout, and
+grew the verification stack into something rarer than the last issue knew:
+\emph{frozen legacy oracles} that pin today's parsers against
+yesterday's, byte-for-byte, and a gate-completeness meta-test that makes
+``forgot to wire the test in'' a CI failure.
+
+Three findings dominate this issue:
+
+\begin{enumerate}[leftmargin=1.4em]
+  \item \textbf{The architecture half of critiques I--II is done ---
+  several items landed \emph{differently} than proposed, and mostly
+  better.} Side-by-side text$\leftrightarrow$chips (old alternative B) was
+  overtaken by text-only editors with generated Starter/Help panels; the
+  chip inspector (old A) shipped as a double-click token inspector over
+  generated help registries; ``make text the only source'' (old D5-4,
+  flagged as far-future) simply happened. The proposals were directionally
+  right and specifically wrong --- a good outcome for a critique.
+  \item \textbf{The workflow half is untouched and is now the whole
+  backlog.} Jobs are still polled text lines; results are still a row
+  table; parameters are still typed, not dragged; there is still no
+  command palette. Every one of these has become \emph{cheaper} to build
+  since issue II, because the pieces they need (generated help registries
+  with lookup maps, a uniform editor component, lean list endpoints,
+  mosaic walls) now exist for other reasons.
+  \item \textbf{The remaining risks are small and specific, not
+  structural.} A three-generator gap in the predeploy gate, dead chip
+  machinery awaiting deletion, one editor missing debounced validation,
+  and the two long-standing verification legs (property-based VM parity;
+  the existing-but-ungated Playwright specs). This review found no new
+  drift class.
+\end{enumerate}
+
+\section{Method and lineage}
+
+Issue I (June 12) reviewed the tree after the first implementation
+sprint; issue II (June 17) corrected two claims (param text mode did not
+yet exist; stack-effect metadata was not yet exported). This issue was
+prepared by re-verifying \emph{every} factual claim of issue II against
+\texttt{main} at \texttt{542b5b4}: two full-tree sweeps (frontend
+feature-by-feature; backend/deploy fact-by-fact) plus targeted reads of
+every file cited. Where this document says ``confirmed absent'' it means
+a grep/read returned nothing, not that memory says so. Since issue II the
+tree absorbed, in order: the WASM/worker removal (June 19), the
+text-only Param/Coeff editors (June 22), the coeff--param registry
+convergence and help system (late June), the code-review-23 hardening
+batch --- 37 findings, waves A--H, all closed (July 2) --- and the
+Root/solve-score editor unification (July 3).
+
+\section{System inventory}
+
+Numbers measured on \texttt{main} at \texttt{542b5b4}.
+
+<<inventory, results='asis'>>=
+inv <- data.frame(
+  Component = c(
+    "Frontend total (index.html 3{,}207 + 13 js/ parts)",
+    "JS function declarations",
+    "Generated JS bundles (vocab/catalog/profiles/opcodes)",
+    "Python modules under lambda/",
+    "Native C sources (33 .c + 37 .h)",
+    "Largest C source (sweep\\_cli.c: solver + 2 program VMs)",
+    "Deployed Lambda functions (one manifest)",
+    "API Gateway routes (POST)",
+    "Step Functions state machines / binary layers",
+    "deploy.sh (idempotent, gates inline)",
+    "Test files / predeploy gate",
+    "Frozen legacy oracle modules",
+    "Program DSLs (param, coeff, root, solve-score)"
+  ),
+  Size = c("22{,}814 lines", "952", "9 (+ OpenSeadragon CDN)",
+           "100 files",
+           "70 files, 175{,}964 lines", "10{,}218 lines",
+           "41", "60", "3 / 3",
+           "1{,}993 lines (data in deploy\\_manifest.json)",
+           "143 files; gate runs 72 + JS harness: 860 passed, 77 subtests",
+           "5 (parser/compiler snapshots, byte-pinned)",
+           "4 --- text source only")
+)
+knitr::kable(inv, format = "latex", booktabs = TRUE, escape = FALSE,
+             align = "lr", linesep = "")
+@
+
+Notable deltas from issue II: routes 48 $\to$ 60 (program-source compile
+routes, mosaic share, deepzoom management); DSLs 2 $\to$ 4 (root and
+solve-score gained full source layers); test files 116 $\to$ 143; the
+frontend grew $\sim$2.5k lines while \emph{deleting} chips, WASM, and
+workers --- the growth is editors, help generation, and mosaics.
+
+\section{Architecture: verified verdicts}
+
+Sections D1--D9 carry over from issues I--II; each verdict below is the
+\emph{re-verified} current state. D10 is new.
+
+\subsection{D1 --- Buildless vanilla JS, 13 ordered parts}
+
+Confirmed as described in issue II, with the split now carrying real
+weight: 13 classic-script parts (943--2{,}655 lines) registered in
+\texttt{window.\_\_ppParts} with a load-order consistency check, plus 9
+generated bundles, all under build-versioned asset keys
+(\texttt{assets/<BUILD\_ID>/...}) so a deploy flips atomically. The June
+19 restructure also \textbf{removed WASM and Web Workers entirely} ---
+zero \texttt{new Worker}/\texttt{WebAssembly} references remain. The
+browser is now a thin client: programs compile in Python, execute in C;
+the page edits text, posts JSON, and polls.
+
+\verdict{Working as intended. The ESM conversion (stage 2) remains
+unstarted and is now \emph{less} urgent: the parts have stabilized, the
+harness executes them in-context, and the state surface shrank when chips
+died. Still missing --- and still cheap --- is static analysis:
+\textbf{no ESLint, no tsc --checkJs, no lint config exists anywhere in
+the tree} (verified). That gate would have caught the serializer
+recursion of issue I and costs days.}
+
+\subsection{D2 --- Manifest-driven bash deployer}
+
+Confirmed and stable. \texttt{deploy\_manifest.json} (711 lines) carries
+41 function specs and 60 routes; \texttt{deploy\_manifest.py} validates
+uniqueness, single-owner route ownership, layer whitelists, retired-name
+collisions, and the layer-only \texttt{LD\_LIBRARY\_PATH} rule (the D9
+incident lesson, now a schema rule). deploy.sh is 1{,}993 lines and emits
+its own sources from the manifest. \texttt{show-build} and the
+post-deploy INIT sweep close the loop after every deploy.
+
+\verdict{Done; unchanged since issue II except growth (60 routes). The
+one refinement worth taking: three generators still run only inside
+deploy.sh (tri/long palette catalogs, coeff function catalog) rather than
+under the predeploy \texttt{--check} pattern the other six follow --- see
+N5.}
+
+\subsection{D3 --- 41 Lambdas, shared code copied per zip}
+
+Confirmed unchanged: exactly three \emph{binary} layers exist (libvips,
+LAPACK, pdf-python); there is still \textbf{no shared-code layer}, and
+\texttt{shared.py}, \texttt{solve\_score\_chain.py}, palette-name
+modules, and sidecar helpers are copied into zips per function (finalize
+alone bundles seven helper modules). The mid-deploy version-skew window
+is real but has never bitten; the packaging tests and the lean-bundle
+discipline (a helper added to a shared module can break ten zips, which
+is why \texttt{solve\_score\_chain} deliberately keeps a local
+number-format copy, parity-pinned) contain it.
+
+\verdict{Keep the topology. The shared-code layer remains the cheapest
+open architecture item, but its payoff shrank as the packaging tests
+matured; it is now hygiene, not risk reduction. Do it opportunistically,
+not urgently.}
+
+\subsection{D4 --- Python around native C via JSON-over-stdin}
+
+Confirmed, and the ``generate the mirrors'' program is complete well
+beyond what issue II recorded. \textbf{Eight generators} now emit every
+cross-language mirror: opcodes (\texttt{merged\_opcodes} $\to$ Python + C
+header + JS), program profiles ($\to$ Python + JS), four registry
+vocabularies (param, coeff, solve-score, root $\to$ JS), the coefficient
+function catalog ($\to$ C header + JS), and parity fixtures. The last
+hand-written frontend catalog (\texttt{\_rtCatalog} for root transforms)
+was deleted on July 3; the root registry gained ui blocks whose
+descriptions were written from the C implementations in
+\texttt{root\_xforms.h}, not from memory.
+
+\verdict{Done. The remaining hand-synchronized C surface (fn\_index
+packing ladders, metric tables, caps) is drift-pinned test-by-test ---
+partition tables, min-roots table, root cap pinned three ways
+(profile$\,=\,$Python$\,=\,$parsed C \texttt{\#define}). The correct next
+step is not more generation but property-based parity (N7): random
+programs through Python fold vs C eval.}
+
+\subsection{D5 --- The program DSLs: two became four, and text won}
+
+The biggest divergence between proposal and outcome. Issue II's
+alternative 4 --- ``make text the only source and render chips as a
+read-only visualization; viable only after the side-by-side editor
+exists'' --- was implemented \emph{directly}, skipping the intermediate:
+Param and Coeff chips were dropped June 22, Root chips July 3;
+solve-score chips survive only as read-only strips inside the saved
+program modal. Every kind gained a real source layer: parser with
+line/column diagnostics and stable machine codes, compiler, fingerprint,
+and an HTTP compile route (\texttt{/compile-\{param, coeff, root,
+solve-score\}-program-source}). Root and solve-score joined param/coeff
+as first-class program kinds under a shared \texttt{program\_profiles}
+registry.
+
+Two properties of the shipped design deserve the record, because they
+were not in any proposal:
+
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \textbf{Spelling preservation.} Loading a saved program and
+  saving it back is byte- and fingerprint-identical (the original row is
+  stashed at hydration and re-emitted verbatim while pristine); any edit
+  respells. This closed a whole family of ``load then save churns the
+  artifact key'' defects.
+  \item \textbf{Wire-preserving validation.} Compile-time additions
+  (e.g.\ the static division-by-zero guard) are validators, never
+  folders: emitted tokens stay byte-identical for every previously valid
+  program. The cache keys make this discipline mandatory; the review
+  cycle made it explicit policy.
+\end{itemize}
+
+\verdict{Settled, and better than proposed. Four kinds, one editor
+pattern, all vocabularies generated, chips retired. The two C program VMs
+remain two (plus the root/solve-score evaluators) --- unification is
+still correctly queued behind a fingerprint version bump that no feature
+yet demands. Residue: the dead chip-editing machinery (add/move/remove,
+editable-chip renderers, orphaned CSS) is still in the tree --- see N2.}
+
+\subsection{D6 --- Fingerprint cache and format generations}
+
+Correction to issues I--II, which claimed ``nothing in the key encodes
+format generation.'' Verified: both param and coeff fingerprints hash
+\texttt{\{"version": 1, "execution\_spec": ...\}} --- a version field
+exists \emph{inside} the hashed payload, so a deliberate global
+invalidation is a one-line bump. What does not exist is per-artifact
+dual-read migration. Separately, program \emph{objects} now carry
+\texttt{spec\_version: 2} and \texttt{"v2;"}-prefixed spec strings
+(v1$\to$v2 migration routes shipped and lifecycle-tested), so the
+program-identity layer already did the migration this section once asked
+for.
+
+\verdict{Keep. The freeze is real but the escape hatches exist at both
+layers. Write down the bump procedure (when to bump, what re-renders)
+rather than building more mechanism.}
+
+\subsection{D7 --- SFN + DynamoDB status + polling}
+
+Confirmed unchanged: the browser's only live signal is still HTTP polling
+(3-second \texttt{setInterval} on \texttt{/check-status}); there is no
+WebSocket, SSE, or push anywhere; no route surfaces Step Functions
+execution history (the only SFN API called anywhere is
+\texttt{start\_execution}). Two localStorage records let an active
+render/palette run survive a reload --- resume, not visibility.
+
+\verdict{Unchanged, and now the clearest architecture--UI gap in the
+system: the backend knows job topology precisely and the frontend shows
+appended text lines. The jobs rail (old C, unbuilt) plus a cheap
+read-only execution-history route remains the recommendation, in that
+order.}
+
+\subsection{D8 --- The verification stack}
+
+Substantially stronger than issue II recorded, and one of its two
+``missing legs'' turns out to exist:
+
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \textbf{Gate completeness is now enforced, not hoped for.}
+  \texttt{test\_predeploy\_gate\_completeness.py} pins: every
+  \texttt{tests/test\_*.py} on disk must be in the predeploy gate or in a
+  frozen allow-list --- a new test file that isn't wired in fails CI.
+  Issue II's H8 observation (``100 of 140 files ungated'') is not just
+  fixed; the failure mode is retired. The gate now runs 72 test files +
+  the JS harness: 860 passed, 77 subtests at HEAD.
+  \item \textbf{Frozen oracles.} Five \texttt{*\_legacy.py} modules
+  (4{,}494 lines) snapshot the param/coeff parsers and compilers; current
+  parsers are tested against them on a harvested corpus with pinned
+  counts (so ``0 cases checked'' can never pass), under an explicit
+  never-edit policy. This is the strongest anti-regression device in the
+  tree.
+  \item \textbf{Playwright exists.} Seven E2E specs
+  (\texttt{tests/e2e/}: compute, results, palette, render,
+  render-solve-score, favorites, deepzoom-inventory) with a config and
+  pinned \texttt{@playwright/test} --- present since April, invoked
+  manually (\texttt{npx playwright test}), \emph{not} wired into any
+  gate. Issue II called this leg missing; it is actually built and
+  unplugged (N6).
+  \item \textbf{Property-based testing} remains genuinely absent (no
+  hypothesis anywhere) --- the one leg still missing.
+\end{itemize}
+
+\verdict{The standout, now with teeth (meta-gated, oracle-pinned).
+Remaining: wire the existing Playwright specs into a gate; add
+property-based VM parity.}
+
+\subsection{D9 --- Native library exposure}
+
+Confirmed settled and untouched since issue II: four link modes, the
+manifest-level \texttt{LD\_LIBRARY\_PATH} rule, Docker-gate loader
+assertions over 14 deploy binaries, layer hygiene pins, and the INIT
+sweep (which passed after both July deploys). No new incident.
+
+\verdict{Settled; nothing new to add, which is the point.}
+
+\subsection{D10 --- The adversarial-review method itself (new)}
+
+Between issues II and III the project ran five review cycles culminating
+in code-review-23: 37 verified findings, fixed in waves, each wave gated,
+committed, and recorded in the review document with commit hashes;
+findings closed \emph{by decision} are recorded as accepted debt so they
+cannot silently reopen. Two structural inventions came out of it worth
+naming as architecture:
+
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \textbf{Auto-classified diagnostics.} Error types upgrade a bare
+  default code from the message at construction, so $\sim$90 legacy raise
+  sites gained stable machine codes without editing any site --- and the
+  oracle comparison permits refining the legacy default while pinning
+  specific codes strictly.
+  \item \textbf{Schema exemptions as tests.} The one intentional
+  runtime/display arity mismatch (\texttt{pow}) lived as an explicit
+  allow-listed test exemption until the registry was normalized ---
+  after which \emph{deleting the exemption} was the proof of completion.
+  Exceptions are pinned artifacts, not lore.
+\end{itemize}
+
+\verdict{Keep running the method. Its cost is real (the July 2 batch was
+$\sim$20 commits of fixes plus documentation) and its yield --- every
+class of drift found before production --- has been consistently worth
+it.}
+
+\subsection{Decision matrix}
+
+<<matrix, results='asis'>>=
+m <- data.frame(
+  Decision = c("D1 buildless, 13 parts", "D2 manifest deployer",
+               "D3 41 small Lambdas", "D4 C core, generated mirrors",
+               "D5 four DSLs, text-first", "D6 fingerprint cache",
+               "D7 SFN + polling", "D8 verification stack",
+               "D9 native lib exposure", "D10 adversarial reviews"),
+  Call = c("Keep; lint gate still open", "DONE + stable",
+           "Keep; layer is hygiene now", "DONE (8 generators)",
+           "DONE beyond proposal", "Keep; bump procedure only",
+           "Unchanged: the open gap", "Meta-gated + oracles",
+           "Settled", "Keep the cadence"),
+  Risk.if.ignored = c("unexecuted-path bugs", "(retired)",
+                      "mid-deploy skew (contained)", "(retired)",
+                      "dead chip code lingers", "undocumented bump",
+                      "polling UX ceiling", "property leg missing",
+                      "(retired)", "drift returns quietly")
+)
+names(m) <- c("Decision", "Call", "Risk if ignored")
+knitr::kable(m, format = "latex", booktabs = TRUE, align = "lll", linesep = "")
+@
+
+\section{The workflow as built}
+
+<<workflow, fig.width=6.9, fig.height=3.7>>=
+wf_new()
+wf_box(2, 76, 24, 18, "", fill = "#FFFFFF")
+text(14, 90.5, "Browser (thin client)", cex = 0.58, font = 2, col = INK)
+wf_note(4, 86.5, "index.html + 13 js parts")
+wf_note(4, 83.2, "9 generated vocab bundles")
+wf_note(4, 80,   "6 text editors, no chips")
+wf_note(4, 77,   "status polling loop")
+wf_box(34, 80, 16, 12, "API Gateway\n60 POST routes", fill = "#FFFFFF", cex = 0.55)
+wf_arrow(26, 86, 34, 86)
+wf_box(58, 84, 18, 9, "orchestrators (3)", fill = "#FFFFFF", cex = 0.55)
+wf_arrow(50, 87, 58, 88)
+wf_box(58, 64, 38, 15, "", fill = "#FFFFFF")
+text(77, 75.5, "Step Functions (Standard) x3", cex = 0.56, font = 2, col = INK)
+wf_note(60, 71.5, "compute: plan > fused chunks > status")
+wf_note(60, 68.3, "render: plan > raster-mt xN > finalize-mt")
+wf_note(60, 65.3, "palette: plan > chunks > finalize")
+wf_arrow(67, 84, 67, 79)
+wf_box(58, 46, 38, 13, "", fill = "#FFFFFF")
+text(77, 55.5, "worker Lambdas (41 total)", cex = 0.56, font = 2, col = INK)
+wf_note(60, 51.8, "native: sweep_mt / sweep_cm / coeffgen")
+wf_note(60, 48.7, "raster / finalize / derive / debug")
+wf_arrow(77, 64, 77, 59)
+wf_box(34, 60, 16, 12, "dispatch\n(18 targets)", fill = "#FFFFFF", cex = 0.55)
+wf_arrow(44, 80, 44, 72)
+wf_arrow(50, 64, 58, 53)
+wf_box(10, 30, 34, 13, "", fill = "#FFFFFF")
+text(27, 39.5, "S3", cex = 0.6, font = 2, col = INK)
+wf_note(12, 35.8, "artifacts + raw sidecars + meta.json")
+wf_note(12, 32.6, "site under assets/<BUILD_ID>/")
+wf_box(52, 30, 30, 13, "", fill = "#FFFFFF")
+text(67, 39.5, "DynamoDB", cex = 0.6, font = 2, col = INK)
+wf_note(54, 35.8, "job/task status rows (TTL)")
+wf_note(54, 32.6, "polled every 3 s")
+wf_arrow(70, 46, 62, 43)
+wf_arrow(60, 46, 36, 43)
+wf_arrow(13, 76, 13, 43); wf_note(2.5, 60, "fetch results /\nupload site", cex = 0.48)
+wf_arrow(52, 36, 26, 78, col = ACC, lwd = 1.4)
+wf_note(28, 56, "status poll (still the UI's only live signal)", col = ACC, cex = 0.5)
+wf_box(2, 8, 94, 12, "", fill = "#FFFFFF")
+text(49, 16.5, "deploy.sh (one converge script)", cex = 0.56, font = 2, col = INK)
+wf_note(4, 12.8, "gates: 72-file pytest + JS harness + 6 gen --check + Docker runtime; post-deploy: show-build + INIT sweep")
+wf_note(4, 9.8,  "builds: musl static + Docker amazonlinux (libcurl/libvips/LAPACK) > 41 zips > SFN > routes > site")
+@
+
+The loop's pain point is unchanged and now singular: everything between
+``dispatched'' and ``done'' is a 3-second poll rendered as text. The
+compute side of the loop, by contrast, tightened considerably --- edit
+text, get a 900\,ms-debounced compile verdict inline, preview without
+leaving the tab.
+
+\section{The UI as built (rewritten)}
+
+The description in issues I--II is obsolete. There are eight tabs
+(Compute, Results, Palette, Render, Favorites, AllCol, AllPal, DeepZoom).
+Programs are edited in \textbf{six identical text editors} --- Param and
+Coeff on Compute; solve-score and Root on Render, each with a Palette-tab
+twin --- sharing one layout system: a fixed 220\,px monospace textarea
+beside a fixed 220\,px side panel with \textsf{Starter}/\textsf{Help}
+tabs. Starter holds generated snippet buttons (cursor-aware insertion);
+Help renders a generated reference (statement forms, every
+metric/transform/op with parameters, allowed sources, ranges, examples)
+from the same vocabularies the compilers use. Double-clicking any token
+opens an inspector popup for that symbol. Four of the six editors
+validate on a 900\,ms debounce against the real backend compiler and
+report \texttt{Line N: message} in a status line; geometry never shifts
+--- the height-flip complaint of issue II is gone because the mode
+toggle is gone.
+
+<<currentui, fig.width=6.9, fig.height=3.4>>=
+wf_new()
+wf_tabbar(2, 92, 78, c("Compute","Results","Palette","Render","Favorites","AllCol","AllPal","DeepZoom"), active = 4)
+wf_box(2, 2, 96, 88, "", fill = "#FBFBFD")
+text(4, 86, "Root Transforms", cex = 0.55, font = 2, col = INK, adj = c(0,0.5))
+wf_note(4, 82.6, "Text-first root-geometry program... Static real arguments, up to 16 statements.", cex = 0.45)
+wf_box(4, 46, 56, 34, "", fill = "#1B1B26")
+wf_note(6, 76, "rotate_roots(0.125)", col = "#D8D8E4", cex = 0.52)
+wf_note(6, 71, "pull_unit_circle(0.75, 1)", col = "#D8D8E4", cex = 0.52)
+wf_note(6, 62, "(dblclick a token -> inspector popup)", col = "#8fa0c8", cex = 0.46)
+wf_box(62, 46, 34, 34, "", fill = "#FFFFFF")
+rect(64, 74.5, 74, 78.5, col = INK, border = LINE); text(69, 76.5, "Starter", cex = 0.45, col = "white", font = 2)
+rect(74, 74.5, 84, 78.5, col = "#E3E5EC", border = LINE); text(79, 76.5, "Help", cex = 0.45)
+wf_note(64, 70.5, "STARTERS", col = ACC, cex = 0.42)
+x <- 64; x <- wf_chip(x, 65.5, "quarter turn", cex = 0.42); x <- wf_chip(x, 65.5, "snap to circle", cex = 0.42)
+wf_note(64, 61.5, "TRANSFORMS", col = ACC, cex = 0.42)
+x <- 64; x <- wf_chip(x, 56.5, "rotate_roots", cex = 0.42); x <- wf_chip(x, 56.5, "moebius", cex = 0.42)
+x <- 64; x <- wf_chip(x, 50.5, "invert_roots (1/z)", cex = 0.42)
+wf_note(62, 43, "fixed 220px both panes: no height flip, ever", cex = 0.46, col = ACC)
+wf_box(4, 36, 92, 5, "", fill = "#FFFFFF")
+wf_note(6, 38.5, "status: Text source OK: 2 statements.   (900 ms debounced backend compile)", cex = 0.46)
+wf_box(4, 6, 92, 26, "", fill = "#FFFFFF")
+wf_note(6, 28.5, "lores preview + Plot/Palette/E1/E2/E3 tabs; marquee drag selects a subview", cex = 0.5)
+wf_box(6, 8, 26, 17, "preview\ncanvas", fill = "#16213E", cex = 0.5, tcol = "white")
+wf_note(35, 20, "[Preview] [Generate MT] ...", cex = 0.48)
+wf_note(35, 15, "poll: 'render running (12/40)...'", cex = 0.45)
+@
+
+\subsection{What was fixed since issue II, in the constraint list's own terms}
+
+Of the eight ``why it feels constraining'' items from issues I--II:
+
+\begin{enumerate}[leftmargin=1.6em,itemsep=1pt]
+  \item[3.] \emph{Editing in 12-character boxes} --- \textbf{gone}. The
+  inline chip inputs no longer exist; editing is a real textarea with a
+  documented language.
+  \item[4.] \emph{Binary Chips/Text toggle} --- \textbf{gone}, resolved
+  in text's favor everywhere, including Param (which issue II noted had
+  no text mode at all: it now has parser, endpoint, editor, help).
+  \item[5.] \emph{Catalog browsing by native \texttt{<select>}} ---
+  \textbf{gone}. The add-selects were deleted with the chips; the catalog
+  surface is now the Starter buttons and the generated Help reference.
+  What did \emph{not} arrive is fuzzy search over the catalog (see A/N9).
+  \item[2.] \emph{Stack machine invisible} --- \textbf{half-fixed}: the
+  compiler reports statement counts, token counts, and errors with
+  line/column attribution (solve-score chain errors now land on their
+  statement, not line 1); but there is still no per-statement depth
+  gutter (N8).
+\end{enumerate}
+
+Items 1 (layout mirrors wire, not workflow), 6 (jobs are log lines),
+7 (no direct manipulation), and 8 (fixed geometry) are \textbf{unchanged}
+--- they are the workflow half, and nothing in the hardening arc touched
+them.
+
+\section{UI alternatives: status and revisions}
+
+\subsection{A --- Command palette + inspector: half landed, differently}
+
+The inspector half shipped as the double-click token inspector plus the
+Help tabs --- and, importantly, over \emph{generated} registries with a
+lookup map per program kind, which is exactly the index a command palette
+needs. The \texttt{Ctrl-K} palette itself is confirmed absent (no global
+key handler exists). The revised proposal is therefore smaller than the
+original: a fuzzy overlay over (a) the four help-registry lookup maps ---
+already built, already tested for coverage --- and (b) a hand-registered
+action list (run compute, switch tab, open saved programs). The hard part
+of A was the metadata; it now exists.
+
+\subsection{B --- Side-by-side text+chips: superseded (text won)}
+
+Do not build. Text-only editors with generated Starter/Help shipped
+instead and resolved the same complaints with less surface. Two residues
+of B remain worth keeping as separate small items: the per-statement
+stack-depth gutter (N8) and inline error highlighting (the status line
+says \texttt{Line 3:} but line 3 is not marked in the textarea).
+
+\subsection{C --- Jobs rail: open, unchanged, still first}
+
+Verified: no persistent cross-tab job surface exists; status is per-tab
+text + two localStorage resume records; polling is per-run
+\texttt{setInterval}. Everything from issues I--II stands, including the
+build order (poll-driven rail first, push later). This remains the
+highest-value unbuilt feature in the system.
+
+\subsection{D --- XY scrub pad: open, unchanged}
+
+Verified absent. The lores-preview Lambda is deployed and fast; the only
+direct manipulation today is the marquee drag-to-subview on preview
+images (which proves the event plumbing works). The pad remains the
+highest delight-per-effort item.
+
+\subsection{E --- Gallery + compare: partially arrived from an unexpected direction}
+
+Results proper is still a sortable row table with a single-thumbnail
+sidebar and lean-list/detail loading. But the \emph{mosaic} surfaces ---
+AllCol/AllPal tabs as OpenSeadragon walls of every color/palette
+artifact, plus a standalone shareable \texttt{artifact\_mosaic\_viewer}
+--- deliver the ``see everything at once'' half of E. What is still
+missing is the judgment half: a compare tray (2--4 artifacts, matched
+zoom, synced pan) and faceted filtering. The revised E is: keep the row
+table as the working list, add compare on top of the mosaic/detail
+surfaces that now exist.
+
+\subsection{F --- Studio shell: open; prerequisites improved}
+
+Unchanged proposal; note only that its panels are more real than in June
+(uniform editor component, help registries, mosaic viewers), and that
+panel geometry is still fully hardcoded (no splitters, no persistence ---
+verified).
+
+\section{New findings and ideas (this review)}
+
+Small, specific, ordered by value; N1--N6 are cleanups/gaps found by the
+verification sweeps, N7--N11 are forward ideas.
+
+\begin{enumerate}[leftmargin=1.8em,itemsep=2pt]
+  \item[\textbf{N1.}] \textbf{Unify the editor plumbing.} Six editors
+  share one DOM pattern but four hand-copied JS stacks: per-kind textarea
+  getters, status setters, debounce timers, auto-synth flags, snippet
+  inserters ($\sim$4$\times$ the same 60 lines). A single
+  \texttt{makeProgramEditor(profile)} factory would collapse them and
+  make the seventh editor (if ever) a registration, not a copy. The
+  July 3 work created the fourth copy knowingly; the pattern is now
+  proven and ready to fold.
+  \item[\textbf{N2.}] \textbf{Delete the dead chip machinery.} With chips
+  gone as an authoring surface, \texttt{addChip}/\texttt{removeChip}/
+  \texttt{moveChip}/\texttt{updateChipParam}, the editable-chip renderer
+  paths, the never-mounting picker popups, and orphaned CSS are dead code
+  in the hottest file. Delete and pin absent (the harness already knows
+  the pattern).
+  \item[\textbf{N3.}] \textbf{Solve-score debounced validation.} The one
+  asymmetry left among the six editors: solve-score still validates only
+  via its Compile Text button while the other four kinds validate as you
+  type. Same 30-line pattern; the endpoint exists.
+  \item[\textbf{N4.}] \textbf{Saved root programs --- or document the
+  asymmetry.} Param, coeff, and solve-score have save/list/fetch/delete
+  routes and modals; root has none (root programs persist only inline in
+  artifact metadata). Either add the fourth CRUD (cheap: the storage
+  handler pattern is uniform) or record ``root programs are per-artifact
+  by design'' so nobody reads it as an accident.
+  \item[\textbf{N5.}] \textbf{Gate the last three generators.} tri/long
+  palette catalogs and the coeff function catalog regenerate inside
+  deploy.sh but have no \texttt{--check} in predeploy, unlike the other
+  six generators --- a hand-edit to those bundles would surface at deploy
+  time, not review time.
+  \item[\textbf{N6.}] \textbf{Plug in Playwright.} Seven specs exist and
+  run manually; they are in no gate. Wire them as a deploy-time gate (they
+  need a served site, so predeploy is the wrong slot) or at minimum a
+  checklist step with the exact command --- issue II thought this leg
+  was missing; it is merely unplugged.
+  \item[\textbf{N7.}] \textbf{Property-based VM parity.} Generate random
+  well-typed programs per kind; assert Python static-fold vs C execution
+  agreement within tolerance, and parser round-trip
+  (source$\to$chain$\to$source) idempotence. The G9/H4/H6 bug family ---
+  found by hand, one instance at a time --- is exactly what this
+  automates. Hypothesis is one dependency; the harness patterns exist.
+  \item[\textbf{N8.}] \textbf{Per-statement depth gutter + inline error
+  marks.} The compile endpoints already return statement-attributed
+  diagnostics; returning per-statement stack depth too would let the
+  editors paint a gutter and highlight the failing line --- the last
+  useful residue of old alternative B, at a fraction of its cost.
+  \item[\textbf{N9.}] \textbf{Ctrl-K over the help registries.} The
+  palette's index problem solved itself: four generated lookup maps with
+  coverage tests. An overlay + score function + action list is days of
+  work and finally makes the whole surface searchable.
+  \item[\textbf{N10.}] \textbf{Jobs rail, then push.} Unchanged from
+  issues I--II and still first among the large items: the data exists,
+  the UI is text. Build it on polling; upgrade transport later.
+  \item[\textbf{N11.}] \textbf{Compare tray on the mosaic/detail
+  surfaces.} The E revision: 2--4 pinned artifacts at matched zoom with
+  synced pan, fed by the existing detail routes and OpenSeadragon
+  instances. The mosaics answer ``what exists''; compare answers ``which
+  is better'' --- the last unbuilt piece of the judgment loop.
+\end{enumerate}
+
+\section{Roadmap}
+
+<<roadmap, results='asis'>>=
+r <- data.frame(
+  Status = c("DONE", "DONE", "DONE", "DONE", "DONE",
+             "open", "open", "open", "open", "open", "open"),
+  Item = c("manifest deploy + validator + INIT sweep + show-build",
+           "generated mirrors: 8 generators, all vocabularies",
+           "text-first editors x6 + Starter/Help + dblclick inspector",
+           "source layer for all 4 kinds + coded diagnostics",
+           "oracle freeze + gate-completeness meta-test",
+           "N2/N1/N3/N5: dead chips, editor factory, ss debounce, gen gate (low)",
+           "N6/N7: Playwright gate + property-based parity (low/med)",
+           "N9: Ctrl-K palette over help registries (low)",
+           "N10: jobs rail --- poll first, push later (med)",
+           "D + N8: XY scrub pad; depth gutter + inline errors (med)",
+           "N11 + F: compare tray; studio shell last (med/high)"),
+  Payoff = c("deploy refuses bad data; outages localized in seconds",
+             "drift classes retired at the source",
+             "one editing idiom; no mode flips; documented language",
+             "programs are text: diffable, saveable, attributable",
+             "regressions cannot pass silently or dodge the gate",
+             "less dead surface; one editor implementation",
+             "the two missing verification legs",
+             "whole surface searchable",
+             "work in flight becomes visible",
+             "exploration becomes tactile; errors land on lines",
+             "judgment loop closes; layout matches the loop")
+)
+cat("\\begingroup\\small\n")
+cat(knitr::kable(r, format = "latex", booktabs = TRUE, align = "lll",
+                 linesep = c("", "", "", "", "\\addlinespace",
+                             "", "", "", "", "", "")))
+cat("\n\\endgroup\n")
+@
+
+\section{Closing}
+
+Issue I asked the architecture to stop hand-copying facts; issue III can
+report that it did --- eight generators, five frozen oracles, a
+meta-gated test suite, and a program pipeline whose four representations
+collapsed to one authored form with generated mirrors. It asked the UI
+for a real editing surface; the tree answered with something simpler and
+stronger than the proposal: six identical text editors with generated
+documentation, validation as you type, and no chips at all. The critique
+process itself became part of the architecture (D10), and its most
+recent full cycle closed all 37 of its own findings.
+
+What remains is precisely what none of the hardening touched: the
+workflow layer. Jobs are still text lines; comparison is still
+squinting; parameters are still typed. The good news is structural ---
+every remaining item is cheaper than when first proposed, because the
+machinery built for correctness (registries, lookup maps, lean routes,
+mosaic viewers) is exactly the machinery the workflow features need. The
+next unit of work that changes how the tool \emph{feels} is the jobs
+rail; the next that changes how it \emph{fails} is a lint gate plus
+property-based parity; and the cheapest way to make the whole surface
+feel modern in a day remains \texttt{Ctrl-K} over the help registries
+that already know every symbol in the system.
+
+\end{document}

@@ -156,6 +156,12 @@ assertIncludes("function _paramProgramSourceFromRows(chain) {", 'Param Program s
 assertIncludes("route: '/compile-param-program-source',", 'Param Program text editor should validate against the backend parser');
 assertIncludes("lambdaPost('storage', { source_text: sourceText }, def.route)", 'all program editors should share one debounced validation engine');
 assertIncludes("route: '/compile-solve-score-program-source',", 'solve-score editors should register debounced as-you-type validation');
+assertIncludes("id=\"jobs-rail\" class=\"jobs-rail\"", 'the jobs rail should be a persistent cross-tab surface');
+assertIncludes("id=\"jobs-rail-cards\"", 'the jobs rail should carry a card strip');
+assertIncludes("_jobsRailUpsert({\n        id: 'render:' + record.run_id,", 'render run dispatch should feed the jobs rail');
+assertIncludes("id: 'palette:' + record.run_id,", 'palette run dispatch should feed the jobs rail');
+assertIncludes("computeRailId = 'compute:' + runId;", 'compute submission should feed the jobs rail');
+assertIncludes("_initJobsRail();", 'boot should hydrate the jobs rail from history');
 // H3 regression: _ctAndyIndex was deleted; any surviving reference is a ReferenceError at runtime.
 assertNotIncludes('_ctAndyIndex(', 'deleted _ctAndyIndex must not be referenced anywhere (littlewood formula crash)');
 // H1 regression: BOTH coeff and param save modals must forward source_text.
@@ -274,7 +280,7 @@ assertIncludes("function _formatComputeDebugResult(result) {", 'Compute Debug sh
 assertIncludes("if (body.message) parts.push(_clipErrorText(body.message, 260));", 'frontend Lambda error summaries should include validation message bodies');
 assertIncludes("function _showPdfHardStaleAbandon(statusEl, run, phase) {", 'PDF artifact stale handling should expose a PDF-specific abandon action');
 assertIncludes("btn.textContent = 'Abandon stalled PDF job';", 'PDF artifact stale handling should show a local abandon button');
-assertIncludes("_clearActiveRun();\n        stopActiveRenderObserver();", 'PDF artifact stale abandon should clear the local active render lock and observer');
+assertIncludes("_clearActiveRun('failed', 'PDF compose stalled; abandoned locally');\n        stopActiveRenderObserver();", 'PDF artifact stale abandon should clear the local active render lock and observer');
 assertIncludes("try { _updateRenderActionButtons(); } catch(e) {}", 'clearing an active render run should refresh render action buttons');
 assertIncludes("PDF compose stalled - no update for 15+ min", 'PDF artifact hard-stale logging should use PDF-specific single-shot wording');
 assertIncludes("PDF compose has not updated for 5+ min", 'PDF artifact warning stale logging should avoid worker-loop language');
@@ -1459,7 +1465,7 @@ async function main() {
     extractFunction('_findColorArtifactById'),
     extractFunction('_canExtractPaletteArtifact'),
     extractFunction('_extractPaletteLineageHint'),
-    'let _activePaletteRun = null; let _lastPaletteLoggedPhase = null; let _lastPaletteWarnState = null; let _palettePhaseTracker = null; const PALETTE_HARD_STALE_MS = 900000; function startActivePaletteObserver() { globalThis._paletteObserverStarts = (globalThis._paletteObserverStarts || 0) + 1; } function stopActivePaletteObserver() { globalThis._paletteObserverStops = (globalThis._paletteObserverStops || 0) + 1; }',
+    'let _activePaletteRun = null; let _lastPaletteLoggedPhase = null; let _lastPaletteWarnState = null; let _palettePhaseTracker = null; const PALETTE_HARD_STALE_MS = 900000; function startActivePaletteObserver() { globalThis._paletteObserverStarts = (globalThis._paletteObserverStarts || 0) + 1; } function stopActivePaletteObserver() { globalThis._paletteObserverStops = (globalThis._paletteObserverStops || 0) + 1; } function _jobsRailUpsert() {} function _jobsRailProgress() {}',
     extractFunction('_saveActivePaletteRun'),
     extractFunction('_clearActivePaletteRun'),
     extractFunction('_loadActivePaletteRun'),
@@ -1960,6 +1966,67 @@ async function main() {
   await ctx.runRasterPipeline();
   assert(ctx._fusedCalls.length === 0, 'runRasterPipeline should reject unsupported color modes before dispatch');
   assert(renderStatus.textContent.includes('Solve score only'), 'runRasterPipeline should surface an actionable fused-only error');
+
+  // Jobs rail: upsert/progress/persist/open behavior against a stub DOM.
+  {
+    const railEls = {
+      'jobs-rail': { classList: { toggle() {} } },
+      'jobs-rail-cards': { innerHTML: '' },
+      'jobs-rail-title': { textContent: '' },
+      'jobs-rail-toggle': { textContent: '' },
+    };
+    const railStore = new Map();
+    const railCtx = {
+      console, JSON, Math, Date, Array, Object, String, Number, Boolean,
+      localStorage: {
+        getItem: k => (railStore.has(k) ? railStore.get(k) : null),
+        setItem: (k, v) => railStore.set(k, String(v)),
+        removeItem: k => railStore.delete(k),
+      },
+      document: { getElementById: id => railEls[id] || null },
+      switchTab: name => { railCtx._openedTab = name; },
+      _setRenderResultsJob: id => { railCtx._openedJob = id; },
+      _escapeHtml: v => String(v == null ? '' : v),
+    };
+    railCtx.globalThis = railCtx;
+    vm.createContext(railCtx);
+    const railSrc = [
+      "const JOBS_RAIL_HISTORY_KEY = 'polypaint_jobs_rail';",
+      "const JOBS_RAIL_COLLAPSED_KEY = 'polypaint_jobs_rail_collapsed';",
+      'const JOBS_RAIL_MAX = 12;',
+      'let _jobsRailJobs = [];',
+      extractFunction('_jobsRailLoadHistory'),
+      extractFunction('_jobsRailPersistHistory'),
+      extractFunction('_jobsRailUpsert'),
+      extractFunction('_jobsRailProgress'),
+      extractFunction('_jobsRailOpen'),
+      extractFunction('_jobsRailClearHistory'),
+      extractFunction('_jobsRailToggle'),
+      extractFunction('_jobsRailAge'),
+      extractFunction('_renderJobsRail'),
+      extractFunction('_initJobsRail'),
+      'globalThis._jobsRailUpsert = _jobsRailUpsert; globalThis._jobsRailProgress = _jobsRailProgress;',
+      'globalThis._jobsRailOpen = _jobsRailOpen; globalThis._initJobsRail = _initJobsRail;',
+      'globalThis._jobsRailClearHistory = _jobsRailClearHistory;',
+    ].join('\n\n');
+    vm.runInContext(railSrc, railCtx);
+    vm.runInContext(`
+      _initJobsRail();
+      _jobsRailUpsert({ id: 'render:r1', kind: 'render', label: 'color · job1', jobId: 'job1', tab: 'render', state: 'running', detail: 'dispatched' });
+      _jobsRailProgress('render:r1', 'raster 3/8');
+    `, railCtx);
+    assert(railEls['jobs-rail-cards'].innerHTML.includes('raster 3/8'), 'jobs rail should render running progress into the card');
+    assert(railEls['jobs-rail-title'].textContent.includes('1 running'), 'jobs rail title should count running jobs');
+    assert(!railStore.has('polypaint_jobs_rail') || !String(railStore.get('polypaint_jobs_rail')).includes('r1'), 'running jobs must not persist to history');
+    vm.runInContext("_jobsRailUpsert({ id: 'render:r1', state: 'failed', detail: 'boom' });", railCtx);
+    assert(String(railStore.get('polypaint_jobs_rail') || '').includes('boom'), 'terminal jobs should persist to localStorage history');
+    assert(railEls['jobs-rail-cards'].innerHTML.includes('jobs-rail-failed'), 'failed cards should carry the failed state class');
+    vm.runInContext("_jobsRailOpen('render:r1');", railCtx);
+    assert(railCtx._openedTab === 'render' && railCtx._openedJob === 'job1', 'opening a card should jump to its tab with the job selected');
+    vm.runInContext('_jobsRailClearHistory();', railCtx);
+    assert(!String(railStore.get('polypaint_jobs_rail') || '').includes('boom'), 'clear-done should drop terminal history');
+    console.log('Frontend jobs rail runtime checks: OK');
+  }
 
   console.log('Frontend fused render runtime checks: OK');
 }

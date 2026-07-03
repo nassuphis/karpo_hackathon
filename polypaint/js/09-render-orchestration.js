@@ -849,9 +849,26 @@ function _saveActivePaletteRun(record) {
     _activePaletteRun = record;
     try { localStorage.setItem('polypaint_active_palette_run', JSON.stringify(record)); } catch(e) {}
     try { _updateRenderActionButtons(); } catch(e) {}
+    _jobsRailUpsert({
+        id: 'palette:' + record.run_id,
+        kind: 'palette',
+        label: _paletteRunLabel(record) + ' · ' + record.job_id,
+        jobId: record.job_id,
+        tab: 'palette',
+        state: 'running',
+        startedAt: record.started_at_ms || Date.now(),
+        detail: 'dispatched',
+    });
 }
 
-function _clearActivePaletteRun() {
+function _clearActivePaletteRun(outcome = 'done', detail = '') {
+    if (_activePaletteRun && _activePaletteRun.run_id) {
+        _jobsRailUpsert({
+            id: 'palette:' + _activePaletteRun.run_id,
+            state: outcome === 'failed' ? 'failed' : 'done',
+            detail: String(detail || ''),
+        });
+    }
     _activePaletteRun = null;
     _lastPaletteLoggedPhase = null;
     _lastPaletteWarnState = null;
@@ -896,7 +913,7 @@ function _blockPaletteActionIfActive(actionLabel) {
     const runLabel = _paletteRunLabel(run);
     const mirrorToRender = _shouldMirrorPaletteRunToRender(run);
     if (_paletteRunIsHardStale(run)) {
-        _clearActivePaletteRun();
+        _clearActivePaletteRun('failed', `${runLabel} lock was stale for 15+ min; cleared`);
         stopActivePaletteObserver();
         const msg = `${runLabel} lock was stale for 15+ min; cleared before ${actionLabel}.`;
         log(msg, '', 'palette-log');
@@ -1138,7 +1155,7 @@ async function _pollActivePaletteRun() {
                 log(runLabel + ' failed: ' + msg, 'err', 'render-log');
                 if (ctx) log('  context: ' + ctx, 'err', 'render-log');
             }
-            _clearActivePaletteRun();
+            _clearActivePaletteRun('failed', runLabel + ' error: ' + msg);
             stopActivePaletteObserver();
             return;
         }
@@ -1153,7 +1170,7 @@ async function _pollActivePaletteRun() {
             if (ageMs > PALETTE_NO_ROW_STALE_MS) {
                 statusEl.textContent = 'Ready';
                 statusEl.className = 'status';
-                _clearActivePaletteRun();
+                _clearActivePaletteRun('done', 'no status row; assumed finished');
                 stopActivePaletteObserver();
                 return;
             }
@@ -1187,7 +1204,7 @@ async function _pollActivePaletteRun() {
                 }
                 log(completeMsg, 'ok', 'render-log');
             }
-            _clearActivePaletteRun();
+            _clearActivePaletteRun('done', completeMsg);
             stopActivePaletteObserver();
             return;
         }
@@ -1288,6 +1305,7 @@ async function _pollActivePaletteRun() {
         } else {
             statusEl.textContent = statusMsg;
             statusEl.className = 'status';
+            _jobsRailProgress('palette:' + run.run_id, statusMsg);
             if (_lastPaletteWarnState) {
                 log(runLabel + ' workers active again', 'ok', 'palette-log');
                 if (mirrorToRender) log(runLabel + ' workers active again', 'ok', 'render-log');
@@ -1339,9 +1357,26 @@ function _saveActiveRun(record) {
     }
     _activeRenderRun = record;
     try { localStorage.setItem('polypaint_active_render_run', JSON.stringify(record)); } catch(e) {}
+    _jobsRailUpsert({
+        id: 'render:' + record.run_id,
+        kind: 'render',
+        label: (record.mode || 'render') + ' · ' + record.job_id,
+        jobId: record.job_id,
+        tab: 'render',
+        state: 'running',
+        startedAt: record.started_at_ms || Date.now(),
+        detail: 'dispatched',
+    });
 }
 
-function _clearActiveRun() {
+function _clearActiveRun(outcome = 'done', detail = '') {
+    if (_activeRenderRun && _activeRenderRun.run_id) {
+        _jobsRailUpsert({
+            id: 'render:' + _activeRenderRun.run_id,
+            state: outcome === 'failed' ? 'failed' : 'done',
+            detail: String(detail || ''),
+        });
+    }
     _activeRenderRun = null;
     _lastLoggedPhase = null;
     _lastWarnState = null;
@@ -1351,7 +1386,7 @@ function _clearActiveRun() {
 }
 
 function _clearRenderState() {
-    _clearActiveRun();
+    _clearActiveRun('done', 'cleared');
     stopActiveRenderObserver();
     _invalidateRenderInventory();
     const statusEl = document.getElementById('render-status');

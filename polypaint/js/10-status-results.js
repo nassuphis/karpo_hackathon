@@ -1484,7 +1484,7 @@ async function _handleRenderRunCompletion(run, rd) {
     const resizeDbg = _fmtResizeDebugLine(rd);
     if (resizeDbg) log('  resize: ' + resizeDbg, '', 'render-log');
 
-    _clearActiveRun();
+    _clearActiveRun('done', _renderRunCompleteLog(run, rd));
 
     const family = rd.family || (run.mode === 'coeff_bilevel' ? 'coeffs' : (run.mode === 'repalette' ? 'palette' : (run.mode === 'color_repalette' ? 'color' : (run.mode === 'color_to_bilevel' ? 'bilevel' : run.mode))));
     const artifactId = rd.artifact_id || rd.palette_id || null;
@@ -1514,7 +1514,7 @@ function _showPdfHardStaleAbandon(statusEl, run, phase) {
     btn.textContent = 'Abandon stalled PDF job';
     btn.onclick = () => {
         const target = (run && (run.task_id || run.run_id)) || 'PDF job';
-        _clearActiveRun();
+        _clearActiveRun('failed', 'PDF compose stalled; abandoned locally');
         stopActiveRenderObserver();
         statusEl.textContent = 'PDF job abandoned locally';
         statusEl.className = 'status';
@@ -1555,7 +1555,7 @@ async function _pollActiveRenderRun() {
             statusEl.className = 'status error';
             log(errorLabel + ' failed: ' + msg, 'err', 'render-log');
             if (ctx) log('  context: ' + ctx, 'err', 'render-log');
-            _clearActiveRun();
+            _clearActiveRun('failed', errorLabel + ' error: ' + msg);
             stopActiveRenderObserver();
             return;
         }
@@ -1570,7 +1570,7 @@ async function _pollActiveRenderRun() {
             if (age_ms > RENDER_NO_ROW_STALE_MS) {
                 statusEl.textContent = 'Ready';
                 statusEl.className = 'status';
-                _clearActiveRun();
+                _clearActiveRun('done', 'no status row; assumed finished');
                 stopActiveRenderObserver();
                 return;
             }
@@ -1665,6 +1665,7 @@ async function _pollActiveRenderRun() {
         if (freshMs !== null && freshMs > 10000) {
             statusMsg += ' \u00b7 last update ' + _fmtAge(freshMs) + ' ago';
         }
+        _jobsRailProgress('render:' + run.run_id, statusMsg);
 
         // Liveness: warning / hard stall. PDF is a single Lambda job, so a
         // hard-stale compose phase can leave only a local active-run lock.
@@ -1824,6 +1825,120 @@ function _renderSelectedArtifactEntry() {
     const idx = _renderSelectedArtifact[_renderActiveFamily];
     if (idx == null || idx < 0 || idx >= inv.length) return null;
     return inv[idx];
+}
+
+
+/* ---- Jobs rail: persistent cross-tab job surface (poll-driven) ----
+   Cards are fed by the existing run lifecycles (render/palette
+   orchestrator runs, compute submissions) — no new backend. Terminal
+   cards persist in localStorage so recent history survives reloads;
+   running cards are re-fed by the resumed pollers. */
+const JOBS_RAIL_HISTORY_KEY = 'polypaint_jobs_rail';
+const JOBS_RAIL_COLLAPSED_KEY = 'polypaint_jobs_rail_collapsed';
+const JOBS_RAIL_MAX = 12;
+let _jobsRailJobs = [];
+
+function _jobsRailLoadHistory() {
+    try {
+        const s = localStorage.getItem(JOBS_RAIL_HISTORY_KEY);
+        if (s) {
+            const parsed = JSON.parse(s);
+            if (Array.isArray(parsed)) return parsed.slice(0, JOBS_RAIL_MAX);
+        }
+    } catch (e) {}
+    return [];
+}
+
+function _jobsRailPersistHistory() {
+    try {
+        localStorage.setItem(JOBS_RAIL_HISTORY_KEY, JSON.stringify(
+            _jobsRailJobs.filter(j => j.state !== 'running').slice(0, JOBS_RAIL_MAX)
+        ));
+    } catch (e) {}
+}
+
+function _jobsRailUpsert(job) {
+    const id = String(job && job.id || '');
+    if (!id) return;
+    const idx = _jobsRailJobs.findIndex(j => j.id === id);
+    const prev = idx >= 0 ? _jobsRailJobs[idx] : null;
+    const next = { startedAt: Date.now(), ...(prev || {}), ...job, updatedAt: Date.now() };
+    if (idx >= 0) _jobsRailJobs.splice(idx, 1);
+    _jobsRailJobs.unshift(next);
+    if (_jobsRailJobs.length > JOBS_RAIL_MAX) _jobsRailJobs.length = JOBS_RAIL_MAX;
+    if (next.state !== 'running') _jobsRailPersistHistory();
+    _renderJobsRail();
+}
+
+function _jobsRailProgress(id, detail) {
+    const job = _jobsRailJobs.find(j => j.id === id);
+    if (!job || job.state !== 'running') return;
+    job.detail = String(detail || '');
+    job.updatedAt = Date.now();
+    _renderJobsRail();
+}
+
+function _jobsRailOpen(id) {
+    const job = _jobsRailJobs.find(j => j.id === id);
+    if (!job) return;
+    if (job.jobId && (job.kind === 'render' || job.kind === 'palette')) {
+        _setRenderResultsJob(job.jobId);
+    }
+    switchTab(job.tab || 'compute');
+}
+
+function _jobsRailClearHistory() {
+    _jobsRailJobs = _jobsRailJobs.filter(j => j.state === 'running');
+    _jobsRailPersistHistory();
+    _renderJobsRail();
+}
+
+function _jobsRailToggle() {
+    const collapsed = localStorage.getItem(JOBS_RAIL_COLLAPSED_KEY) === '1';
+    try { localStorage.setItem(JOBS_RAIL_COLLAPSED_KEY, collapsed ? '0' : '1'); } catch (e) {}
+    _renderJobsRail();
+}
+
+function _jobsRailAge(ms) {
+    const s = Math.max(0, Math.round((Date.now() - (ms || 0)) / 1000));
+    if (s < 90) return s + 's';
+    const m = Math.round(s / 60);
+    if (m < 90) return m + 'm';
+    return Math.round(m / 60) + 'h';
+}
+
+function _renderJobsRail() {
+    const rail = document.getElementById('jobs-rail');
+    const cardsEl = document.getElementById('jobs-rail-cards');
+    const titleEl = document.getElementById('jobs-rail-title');
+    const toggleEl = document.getElementById('jobs-rail-toggle');
+    if (!rail || !cardsEl) return;
+    const collapsed = localStorage.getItem(JOBS_RAIL_COLLAPSED_KEY) === '1';
+    const running = _jobsRailJobs.filter(j => j.state === 'running').length;
+    if (titleEl) titleEl.textContent = running ? `Jobs · ${running} running` : 'Jobs';
+    if (toggleEl) toggleEl.textContent = collapsed ? 'show' : 'hide';
+    rail.classList.toggle('jobs-rail-collapsed', collapsed);
+    if (collapsed) { cardsEl.innerHTML = ''; return; }
+    if (!_jobsRailJobs.length) {
+        cardsEl.innerHTML = '<span class="jobs-rail-empty">No jobs yet. Compute, render, and palette runs appear here.</span>';
+        return;
+    }
+    cardsEl.innerHTML = _jobsRailJobs.map(job => {
+        const state = job.state === 'running' ? 'running' : (job.state === 'failed' ? 'failed' : 'done');
+        const age = _jobsRailAge(job.updatedAt || job.startedAt);
+        const detail = String(job.detail || '');
+        return `<button type="button" class="jobs-rail-card jobs-rail-${state}" onclick="_jobsRailOpen('${_escapeHtml(job.id)}')" title="${_escapeHtml(detail)}">` +
+            `<span class="jobs-rail-card-head"><span class="jobs-rail-kind">${_escapeHtml(job.kind || 'job')}</span>` +
+            `<span class="jobs-rail-state">${_escapeHtml(state === 'running' ? 'running · ' + age : state + ' · ' + age + ' ago')}</span></span>` +
+            `<span class="jobs-rail-label">${_escapeHtml(job.label || job.id)}</span>` +
+            (detail ? `<span class="jobs-rail-detail">${_escapeHtml(detail)}</span>` : '') +
+            `</button>`;
+    }).join('');
+}
+
+function _initJobsRail() {
+    _jobsRailJobs = _jobsRailLoadHistory();
+    _renderJobsRail();
 }
 
 ;(window.__ppParts = window.__ppParts || []).push('10-status-results');

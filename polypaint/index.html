@@ -6,7 +6,7 @@
 <title>PolyPaint Lambda 1.0</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 20px; }
+body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 20px; padding-bottom: 96px; }
 h1 { color: #e94560; margin-bottom: 20px; }
 .container { max-width: 900px; margin: 0 auto; }
 .app-header {
@@ -978,6 +978,59 @@ button {
 }
 .solve-score-program-status.error {
     color: #e94560;
+}
+
+/* ---- Jobs rail: persistent cross-tab job surface ---- */
+.jobs-rail {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 300;
+    background: #10182d; border-top: 1px solid #253a5f;
+    padding: 6px 14px 8px;
+    box-shadow: 0 -6px 18px rgba(0,0,0,0.35);
+}
+.jobs-rail-head {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 5px;
+}
+.jobs-rail-title {
+    color: #e94560; font-size: 10px; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase;
+}
+.jobs-rail-toggle, .jobs-rail-clear {
+    margin: 0; padding: 2px 8px; font-size: 9px; border-radius: 999px;
+}
+.jobs-rail-collapsed { padding-bottom: 6px; }
+.jobs-rail-collapsed .jobs-rail-head { margin-bottom: 0; }
+.jobs-rail-cards {
+    display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px;
+    scrollbar-color: #0f3460 #111827;
+}
+.jobs-rail-empty { color: #66768f; font-size: 10px; font-style: italic; }
+.jobs-rail-card {
+    display: inline-flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    min-width: 190px; max-width: 300px; padding: 5px 9px; margin: 0;
+    background: #0d1324; border: 1px solid #253a5f; border-radius: 7px;
+    color: #e0e0e0; cursor: pointer; text-align: left; font-size: 10px;
+    flex: 0 0 auto;
+}
+.jobs-rail-card:hover { border-color: #e94560; }
+.jobs-rail-card-head {
+    display: flex; justify-content: space-between; gap: 8px; width: 100%;
+}
+.jobs-rail-kind {
+    font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+    font-size: 9px; color: #9fb0d8;
+}
+.jobs-rail-state { font-size: 9px; color: #8192aa; }
+.jobs-rail-running { border-left: 3px solid #e9c46a; }
+.jobs-rail-done { border-left: 3px solid #6c8; }
+.jobs-rail-failed { border-left: 3px solid #e94560; }
+.jobs-rail-failed .jobs-rail-state { color: #ff8aa0; }
+.jobs-rail-label {
+    font-family: monospace; font-size: 10px; color: #e0e7f5;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+}
+.jobs-rail-detail {
+    font-size: 9px; color: #8fa0c8;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 }
 .solve-score-modal-popup {
     width: min(1120px, calc(100vw - 24px));
@@ -3042,6 +3095,15 @@ button {
             </div>
         </div>
     </div>
+</div>
+
+<div id="jobs-rail" class="jobs-rail" aria-label="Jobs">
+    <div class="jobs-rail-head">
+        <span id="jobs-rail-title" class="jobs-rail-title">Jobs</span>
+        <button type="button" id="jobs-rail-toggle" class="btn-secondary jobs-rail-toggle" onclick="_jobsRailToggle()">hide</button>
+        <button type="button" id="jobs-rail-clear" class="btn-secondary jobs-rail-clear" onclick="_jobsRailClearHistory()">clear done</button>
+    </div>
+    <div id="jobs-rail-cards" class="jobs-rail-cards"></div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/openseadragon.min.js"></script>

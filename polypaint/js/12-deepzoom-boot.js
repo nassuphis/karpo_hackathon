@@ -783,6 +783,7 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
     if (loresCoeffgenThreads != null) computeMsg += `, lores coeffgen threads=${loresCoeffgenThreads}`;
     computeMsg += '...';
     log(computeMsg);
+    let computeRailId = '';
     try {
         const runId = _generateRunId();
         const taskId = `compute_run_${solverMode}_${runId}`;
@@ -823,6 +824,16 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
             throw new Error(`Compute orchestrator invoke rejected: status ${dispResult.non_202[0].status}`);
         }
         log(`  compute orchestrator dispatched: ${runId}`, 'ok');
+        computeRailId = 'compute:' + runId;
+        _jobsRailUpsert({
+            id: computeRailId,
+            kind: 'compute',
+            label: `${solverTag} N=${n} · ${jobId}`,
+            jobId,
+            tab: 'compute',
+            state: 'running',
+            detail: 'dispatched',
+        });
 
         let phaseTracker = null;
         const loggedPhaseCompletions = new Set();
@@ -927,6 +938,7 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
                 ? `${phaseLabel} ${done}/${expected}...`
                 : `${phaseLabel}...`;
             document.getElementById('compute-status').className = 'status';
+            _jobsRailProgress(computeRailId, expected > 0 ? `${phaseLabel} ${done}/${expected}` : phaseLabel);
 
             if (check.complete || rd.phase === 'done') {
                 if (phaseTracker) await _logComputePhaseCompletion(jobId, phaseTracker, loggedPhaseCompletions);
@@ -960,6 +972,11 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
                 lines.push(`  solve (${solverTag}): ${(totalComputeUs/1e6).toFixed(1)}s (sum)`);
                 lines.push(`Compute-${solverTag} ${jobId}: ${pipelineStr} deg${calc.degree || '?'} N=${calc.N || n}, avg_iters=${avgIters.toFixed(1)}`);
                 for (const line of lines) log(line, 'ok');
+                _jobsRailUpsert({
+                    id: computeRailId,
+                    state: 'done',
+                    detail: `deg ${calc.degree || '?'} · ${_fmtSecondsMs(totalWallMs || 0)}`,
+                });
                 break;
             }
         }
@@ -968,6 +985,7 @@ async function runCalculateWithSolver(solverMode, computeMtOptions) {
         document.getElementById('compute-status').textContent = 'Error: ' + e.message;
         document.getElementById('compute-status').className = 'status error';
         log(`Compute failed: ${e.message}`, 'err');
+        if (computeRailId) _jobsRailUpsert({ id: computeRailId, state: 'failed', detail: e.message });
     } finally {
         btn.disabled = false;
     }
@@ -1065,6 +1083,8 @@ _renderSolveScoreCheatsheets();
 _syncSolveScoreUi('ss');
 
 _syncSolveScoreUi('palette-ss');
+
+_initJobsRail();
 
 _syncRenderColorInterpretationUi();
 

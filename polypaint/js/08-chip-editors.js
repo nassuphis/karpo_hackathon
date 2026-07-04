@@ -1539,7 +1539,7 @@ function _scrubPadSetView(view) {
     // plot); the pad only records intent and re-asserts it after each
     // preview run, so choosing Palette before the first palette image
     // arrives still wins once it exists.
-    if (typeof _selectRenderLoresPreviewTab === 'function') _selectRenderLoresPreviewTab(st.view);
+    if (typeof _selectRenderLoresPreviewTab === 'function') _selectRenderLoresPreviewTab(st.view, { fromScrubPad: true });
 }
 
 function _scrubPadToggleLive(checked) {
@@ -1563,7 +1563,7 @@ function _scrubScheduleLivePreview() {
             await preview.run();
             const st2 = _scrubPadState;
             if (st2 && st2.view && preview.loresViews && typeof _selectRenderLoresPreviewTab === 'function') {
-                _selectRenderLoresPreviewTab(st2.view);
+                _selectRenderLoresPreviewTab(st2.view, { fromScrubPad: true });
             }
         } catch (e) {
             /* preview errors surface in their own status lines */

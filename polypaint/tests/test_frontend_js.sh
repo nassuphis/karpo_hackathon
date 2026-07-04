@@ -170,6 +170,9 @@ assertNotIncludes("prt: { label:", 'palette-tab editors must not offer scrub liv
 assertIncludes("NEVER wire this to the full pipeline", 'the scrub pad must document the lores-only preview constraint');
 assertIncludes("onpointerdown=\"_scrubPadDragStart(event)\"", 'scrub drag must use pointer events (capture prevents stranded drags)');
 assertIncludes("document.addEventListener('pointercancel', up);", 'scrub drag must clean up on pointercancel');
+assertNotIncludes("_resetRenderLoresPreviewPalette", 'lores preview panes stay sticky across recalculation (no start-of-run reset)');
+assertIncludes("Panes stay sticky across recalculation", 'the sticky-pane contract must be documented at the run site');
+assertIncludes("_selectRenderLoresPreviewTab(_renderLoresPreviewActiveTab, { internal: true });", 'internal re-selects must not clobber scrub-pad view intent');
 // H3 regression: _ctAndyIndex was deleted; any surviving reference is a ReferenceError at runtime.
 assertNotIncludes('_ctAndyIndex(', 'deleted _ctAndyIndex must not be referenced anywhere (littlewood formula crash)');
 // H1 regression: BOTH coeff and param save modals must forward source_text.

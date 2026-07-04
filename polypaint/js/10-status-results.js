@@ -179,12 +179,21 @@ async function _setRenderLoresPreviewPaletteImage(result) {
     });
 }
 
-function _selectRenderLoresPreviewTab(tab) {
+function _selectRenderLoresPreviewTab(tab, options = {}) {
     const requested = String(tab || 'plot');
     const idx = _renderLoresPreviewTabIndex(requested);
     const next = requested === 'palette' && !_renderLoresPreviewHasPalette
         ? 'plot'
         : (idx >= 0 && !_renderLoresPreviewEmissionHistograms[idx] ? 'plot' : requested);
+    // A direct tab click while the scrub pad is open updates the pad's
+    // remembered view; internal re-selects and fallback resolutions must
+    // not (a temporarily unavailable pane cannot clobber intent).
+    if (!options.fromScrubPad && !options.internal && next === requested &&
+        typeof _scrubPadState !== 'undefined' && _scrubPadState && _scrubPadState.view) {
+        _scrubPadState.view = next;
+        const viewSel = document.getElementById('program-scrub-view');
+        if (viewSel && viewSel.value !== next) viewSel.value = next;
+    }
     _renderLoresPreviewActiveTab = next;
     ['plot', 'palette', 'e1', 'e2', 'e3'].forEach((name) => {
         const btn = document.getElementById(`render-lores-preview-tab-${name}`);
@@ -212,16 +221,7 @@ function _setRenderLoresPreviewEmissionHistograms(rows) {
     if (_renderLoresPreviewTabIndex(_renderLoresPreviewActiveTab) >= _renderLoresPreviewEmissionHistograms.length) {
         _renderLoresPreviewActiveTab = 'plot';
     }
-    _selectRenderLoresPreviewTab(_renderLoresPreviewActiveTab);
-}
-
-function _resetRenderLoresPreviewPalette() {
-    _renderLoresPreviewHasPalette = false;
-    const btn = document.getElementById('render-lores-preview-tab-palette');
-    if (btn) btn.style.display = 'none';
-    _clearRenderLoresPreviewPaletteCanvas();
-    if (_renderLoresPreviewActiveTab === 'palette') _renderLoresPreviewActiveTab = 'plot';
-    _selectRenderLoresPreviewTab(_renderLoresPreviewActiveTab);
+    _selectRenderLoresPreviewTab(_renderLoresPreviewActiveTab, { internal: true });
 }
 
 function _teardownRenderLoresPreviewMarquee() {
@@ -447,8 +447,10 @@ async function runRenderLoresPreview() {
             renderStatusEl.className = 'status';
         }
         _initRenderLoresPreviewMarquee(null);
-        _setRenderLoresPreviewEmissionHistograms([]);
-        _resetRenderLoresPreviewPalette();
+        // Panes stay sticky across recalculation: the last plot/palette/
+        // histogram frames remain visible until the new result replaces
+        // them (smooth scrubbing — no plot flash), and the completion
+        // setters below own the fallbacks when a pane disappears.
 
         const detail = await lambdaPost('storage', { job_id: p.jobId }, '/detail');
         const calc = detail.calc || {};
@@ -576,8 +578,9 @@ async function runRenderLoresPreview() {
         log(`Render preview: ${msg}`, 'ok', 'render-log');
     } catch (e) {
         _initRenderLoresPreviewMarquee(null);
-        _setRenderLoresPreviewEmissionHistograms([]);
-        _resetRenderLoresPreviewPalette();
+        // Keep the panes: the plot canvas keeps its last good frame on
+        // error, so palette/histograms do too (scrubbing routinely passes
+        // through momentarily-invalid values).
         const msg = e && e.message ? e.message : String(e);
         if (statusEl) statusEl.textContent = 'Error: ' + msg;
         if (renderStatusEl) {

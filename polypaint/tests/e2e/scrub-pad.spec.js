@@ -188,6 +188,93 @@ test.describe('Scrub pad', () => {
     expect(afterPalette.tabActive).toBe(true);
   });
 
+  test('palette view stays sticky across preview recalculations (no plot flash)', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate(() => {
+      setColorMode('solve_score');
+      document.getElementById('render-results-dir').value = 'job_sticky';
+      const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+      window.lambdaPost = async function(name, body, path) {
+        if (name === 'storage' && path === '/detail') {
+          return { calc: { exists: true, degree: 5, n_coeffs: 6, N: 100, lores: { bin_key: 'k', coeffs_key: 'c', params_key: 'p' } } };
+        }
+        if (name === 'render-lores-preview') {
+          return {
+            image_base64: PNG,
+            content_type: 'image/png',
+            palette_image_base64: PNG,
+            palette_content_type: 'image/png',
+            palette_pix: 1,
+            emission_histograms: [],
+            raster: { roots_plotted: 10 },
+            timings_ms: { total: 5 },
+            source: { mode: 'lores' },
+            nonzero_pixels: 1,
+            logs: [],
+            min_re: -1, max_re: 1, min_im: -1, max_im: 1, pix: 1,
+          };
+        }
+        return {};
+      };
+      const orig = _selectRenderLoresPreviewTab;
+      window._tabResolutions = [];
+      _selectRenderLoresPreviewTab = function(tab, opts) {
+        orig(tab, opts);
+        window._tabResolutions.push(_renderLoresPreviewActiveTab);
+      };
+    });
+
+    await page.evaluate(async () => { await runRenderLoresPreview(); });
+    await page.click('#render-lores-preview-tab-palette');
+    expect(await page.evaluate(() => _renderLoresPreviewActiveTab)).toBe('palette');
+
+    // Open the pad on the root source; it adopts the active view.
+    const padView = await page.evaluate(() => {
+      const ta = document.getElementById('render-rt-source-text');
+      ta.value = 'rotate_roots(0.25)';
+      ta.selectionStart = ta.selectionEnd = ta.value.indexOf('0.25') + 1;
+      _onProgramSourceDblClick('rt', { clientX: 300, clientY: 300 });
+      return document.getElementById('program-scrub-view').value;
+    });
+    expect(padView).toBe('palette');
+
+    // A second preview run (a scrub tick) must never resolve to plot.
+    const after = await page.evaluate(async () => {
+      window._tabResolutions = [];
+      await runRenderLoresPreview();
+      return {
+        resolutions: window._tabResolutions.slice(),
+        active: _renderLoresPreviewActiveTab,
+        paletteVisible: document.getElementById('render-lores-preview-tab-palette').style.display !== 'none',
+        paletteActive: document.getElementById('render-lores-preview-tab-palette').classList.contains('active'),
+      };
+    });
+    expect(after.active).toBe('palette');
+    expect(after.paletteVisible).toBe(true);
+    expect(after.paletteActive).toBe(true);
+    expect(after.resolutions.filter(t => t === 'plot')).toEqual([]);
+  });
+
+  test('clicking a preview tab while the pad is open updates the pad view intent', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    await page.evaluate(() => {
+      _renderLoresPreviewHasPalette = true;
+      document.getElementById('render-lores-preview-tab-palette').style.display = '';
+      const ta = document.getElementById('render-rt-source-text');
+      ta.value = 'rotate_roots(0.25)';
+      ta.selectionStart = ta.selectionEnd = ta.value.indexOf('0.25') + 1;
+      _onProgramSourceDblClick('rt', { clientX: 300, clientY: 300 });
+      _scrubPadSetView('palette');
+    });
+    await page.evaluate(() => { _selectRenderLoresPreviewTab('plot'); });
+    const synced = await page.evaluate(() => ({
+      intent: _scrubPadState.view,
+      select: document.getElementById('program-scrub-view').value,
+    }));
+    expect(synced.intent).toBe('plot');
+    expect(synced.select).toBe('plot');
+  });
+
   test('compute-side pads have no lores view picker', async ({ page }) => {
     await openPadOnCoeffLiteral(page, 'poly = linear(poly, 2, 3)\nemit', '2,');
     expect(await page.evaluate(() => !!document.getElementById('program-scrub-view'))).toBe(false);

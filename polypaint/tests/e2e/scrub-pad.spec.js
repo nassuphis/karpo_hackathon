@@ -252,7 +252,10 @@ test.describe('Scrub pad', () => {
     expect(after.active).toBe('palette');
     expect(after.paletteVisible).toBe(true);
     expect(after.paletteActive).toBe(true);
-    expect(after.resolutions.filter(t => t === 'plot')).toEqual([]);
+    // Non-vacuous: the run path must still route through the selector at
+    // least once, and every resolution during the run must be palette.
+    expect(after.resolutions.length).toBeGreaterThan(0);
+    expect(after.resolutions.every(t => t === 'palette')).toBe(true);
   });
 
   test('clicking a preview tab while the pad is open updates the pad view intent', async ({ page }) => {

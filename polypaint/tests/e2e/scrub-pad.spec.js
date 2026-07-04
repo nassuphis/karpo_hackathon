@@ -256,6 +256,26 @@ test.describe('Scrub pad', () => {
     // least once, and every resolution during the run must be palette.
     expect(after.resolutions.length).toBeGreaterThan(0);
     expect(after.resolutions.every(t => t === 'palette')).toBe(true);
+    // The inline status beside Preview is a single short word; the detail
+    // line lives in the render log (row height must never change).
+    expect(await page.evaluate(() => document.getElementById('render-lores-preview-status').textContent)).toBe('done');
+
+    // Error path: short word inline, full message in the log.
+    const errored = await page.evaluate(async () => {
+      const prev = window.lambdaPost;
+      window.lambdaPost = async (name, body, path) => {
+        if (name === 'render-lores-preview') throw new Error('boom for status test');
+        return prev(name, body, path);
+      };
+      await runRenderLoresPreview();
+      window.lambdaPost = prev;
+      return {
+        status: document.getElementById('render-lores-preview-status').textContent,
+        logHasDetail: document.getElementById('render-log').textContent.includes('Render preview failed: boom for status test'),
+      };
+    });
+    expect(errored.status).toBe('error');
+    expect(errored.logHasDetail).toBe(true);
   });
 
   test('clicking a preview tab while the pad is open updates the pad view intent', async ({ page }) => {

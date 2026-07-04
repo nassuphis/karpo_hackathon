@@ -172,6 +172,9 @@ assertIncludes("onpointerdown=\"_scrubPadDragStart(event)\"", 'scrub drag must u
 assertIncludes("document.addEventListener('pointercancel', up);", 'scrub drag must clean up on pointercancel');
 assertNotIncludes("_resetRenderLoresPreviewPalette", 'lores preview panes stay sticky across recalculation (no start-of-run reset)');
 assertIncludes("Panes stay sticky across recalculation", 'the sticky-pane contract must be documented at the run site');
+assertIncludes("statusEl.textContent = 'calc';", 'lores preview inline status must be one short word (calc)');
+assertIncludes("statusEl.textContent = 'done';", 'lores preview inline status must be one short word (done); details go to the log');
+assertIncludes("statusEl.textContent = 'error';", 'lores preview inline status must be one short word (error); details go to the log');
 assertIncludes("_selectRenderLoresPreviewTab(_renderLoresPreviewActiveTab, { internal: true });", 'internal re-selects must not clobber scrub-pad view intent');
 // H3 regression: _ctAndyIndex was deleted; any surviving reference is a ReferenceError at runtime.
 assertNotIncludes('_ctAndyIndex(', 'deleted _ctAndyIndex must not be referenced anywhere (littlewood formula crash)');

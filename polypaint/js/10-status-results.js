@@ -343,8 +343,9 @@ function _applyRenderLoresPreviewSelectionBounds(meta, rect) {
     selectViewMode('explicit');
     const statusEl = document.getElementById('render-lores-preview-status');
     const renderStatusEl = document.getElementById('render-status');
-    const msg = `Preview subview selected · Δre=${bounds.span_re.toPrecision(4)} Δim=${bounds.span_im.toPrecision(4)}`;
-    if (statusEl) statusEl.textContent = msg;
+    // One short word beside the Preview button (long text rewraps the
+    // controls row and bumps the canvas); the exact bounds go to the log.
+    if (statusEl) statusEl.textContent = 'subview';
     if (renderStatusEl && !_activeRenderRun) {
         renderStatusEl.textContent = 'Ephemeral preview subview selected';
         renderStatusEl.className = 'status ok';
@@ -441,7 +442,7 @@ async function runRenderLoresPreview() {
         if (pixInput) pixInput.value = String(previewPix);
 
         if (btn) { btn.disabled = true; btn.textContent = 'Preview...'; }
-        if (statusEl) statusEl.textContent = 'Rendering lores preview...';
+        if (statusEl) statusEl.textContent = 'calc';
         if (renderStatusEl) {
             renderStatusEl.textContent = 'Rendering lores preview...';
             renderStatusEl.className = 'status';
@@ -570,7 +571,7 @@ async function runRenderLoresPreview() {
         const totalMs = Number(timings.total || 0);
         const sourceLabel = source.mode === 'logical' || source.mode === 'recompute' ? `${source.mode} ${source.view_N || previewSourceSize}` : 'lores';
         const msg = `${previewPix}px · ${sourceLabel} · roots=${roots.toLocaleString()} · nonzero=${Number(result.nonzero_pixels || 0).toLocaleString()} · ${(totalMs / 1000).toFixed(2)}s`;
-        if (statusEl) statusEl.textContent = msg;
+        if (statusEl) statusEl.textContent = 'done';
         if (renderStatusEl) {
             renderStatusEl.textContent = 'Render preview ready';
             renderStatusEl.className = 'status success';
@@ -582,7 +583,7 @@ async function runRenderLoresPreview() {
         // error, so palette/histograms do too (scrubbing routinely passes
         // through momentarily-invalid values).
         const msg = e && e.message ? e.message : String(e);
-        if (statusEl) statusEl.textContent = 'Error: ' + msg;
+        if (statusEl) statusEl.textContent = 'error';
         if (renderStatusEl) {
             renderStatusEl.textContent = 'Render preview error: ' + msg;
             renderStatusEl.className = 'status error';

@@ -62,6 +62,54 @@ VALID_SOLVE_SCORE_METRICS = {
     "t2_abs",
     "t2_phase",
 }
+# One-line description per metric, written from the C implementations in
+# solve_score.h (compute_solve_metric_score / compute_param_metric_score).
+# Display-only: feeds the generated vocab (Help tab, scrub pad); never
+# hashed or persisted. gen_solve_score_vocab hard-fails if a metric in
+# VALID_SOLVE_SCORE_METRICS is missing here.
+SOLVE_SCORE_METRIC_HELP = {
+    "proximity": "Near-collision detector: -0.5*log10 of the smallest squared pairwise root distance. High when any two roots almost touch.",
+    "crowding": "Global clustering: mean of -0.5*log10(d^2) over all root pairs. High when roots sit close together overall.",
+    "spread": "Cloud size: 0.5*log10 of the mean squared distance from the root centroid (log RMS radius).",
+    "anisotropy": "Elongation of the root cloud: log10 ratio of the largest to smallest covariance eigenvalue. 0 = isotropic, high = stretched into a line.",
+    "area": "Cloud footprint: 0.5*log10 of the covariance eigenvalue product (log geometric-mean spread of the ellipse).",
+    "clusteriness": "One tight clump against a calm background: max nearest-neighbor closeness minus its median.",
+    "shelliness": "Thin-shell detector: -log10 of the coefficient of variation of centroid radii. High when all roots sit at the same radius.",
+    "outlierness": "Lone escapee: log10 of max centroid radius over median centroid radius.",
+    "nn_variation": "Texture of local spacing: standard deviation of per-root nearest-neighbor closeness scores.",
+    "real_axis_proximity": "How real the cloud is: -log10 of the median |Im(root)|. High when most roots hug the real axis.",
+    "centroid_re": "Real part of the root centroid.",
+    "centroid_im": "Imaginary part of the root centroid.",
+    "centroid_dist": "log10 distance of the root centroid from the origin.",
+    "dist_unit_circle": "log10 of the mean distance of roots from the unit circle. Low (very negative) when roots ring the circle.",
+    "asymmetry_re": "Left/right imbalance: |mean Re| divided by mean |Re|. 0 = balanced across the imaginary axis, 1 = all on one side.",
+    "max_re": "Largest real component among roots (pm: max of t1_re, t2_re).",
+    "min_re": "Smallest real component among roots (pm: min of t1_re, t2_re).",
+    "max_im": "Largest imaginary component among roots (pm: max of t1_im, t2_im).",
+    "min_im": "Smallest imaginary component among roots (pm: min of t1_im, t2_im).",
+    "min_mod": "Smallest nonzero root modulus; 0 when every root is at the origin (pm: smaller of |t1|, |t2|).",
+    "max_mod": "Largest root modulus (pm: larger of |t1|, |t2|).",
+    "min_angular_separation": "Smallest wrapped angular gap (radians) between nonzero roots as seen from the origin.",
+    "mean_log_mod": "Mean of log|root|: 0 when roots average the unit circle, negative inside, positive outside.",
+    "sd_log_mod": "Radial thickness: standard deviation of log|root|. Low = thin ring, high = radially scattered.",
+    "inside_unit_fraction": "Fraction of roots strictly inside the unit circle (0..1).",
+    "unit_annulus_fraction_01": "Fraction of roots within 0.1 of the unit circle (0..1).",
+    "imag_axis_proximity": "How imaginary the cloud is: -log10 of the median |Re(root)|. High when roots hug the imaginary axis.",
+    "diagonal_proximity": "-log10 of the median | |Re| - |Im| |. High when roots hug the diagonals.",
+    "angular_entropy_16": "Angular uniformity: normalized entropy of a 16-sector angle histogram. 1 = evenly spread around the origin, 0 = one sector.",
+    "sector_max_share_16": "Angular concentration: largest share of roots in any of 16 angular sectors (0..1).",
+    "angular_order_2": "2-fold rotational symmetry strength: |mean of e^(2i*theta)| over root angles (0..1).",
+    "angular_order_3": "3-fold rotational symmetry strength: |mean of e^(3i*theta)| over root angles (0..1).",
+    "angular_order_4": "4-fold rotational symmetry strength: |mean of e^(4i*theta)| over root angles (0..1).",
+    "t1_re": "Real part of input parameter t1 (param rows only).",
+    "t1_im": "Imaginary part of input parameter t1 (param rows only).",
+    "t1_abs": "Modulus |t1| of input parameter t1 (param rows only).",
+    "t1_phase": "Phase of t1 wrapped to [0, 2pi) (param rows only).",
+    "t2_re": "Real part of input parameter t2 (param rows only).",
+    "t2_im": "Imaginary part of input parameter t2 (param rows only).",
+    "t2_abs": "Modulus |t2| of input parameter t2 (param rows only).",
+    "t2_phase": "Phase of t2 wrapped to [0, 2pi) (param rows only).",
+}
 # Public persisted/wire name; changing this requires migrating saved S3 programs.
 GENERIC_METRIC_PUBLIC_NAME = "metric"
 GENERIC_METRIC_CHIP_NAME = "__metric"

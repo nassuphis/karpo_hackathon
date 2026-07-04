@@ -985,7 +985,8 @@ function _programHelpBuildSolveScoreRegistry() {
         return _programHelpItem(
             name,
             `metric(${name}, ${allowed.join('|') || 'slv'}, q=..%)`,
-            _solveScoreParamMetricSet.has(name) ? 'Param-sourced metric.' : 'Root/coefficient metric.',
+            _solveScoreMetricDescriptions[name]
+                || (_solveScoreParamMetricSet.has(name) ? 'Param-sourced metric.' : 'Root/coefficient metric.'),
             {
                 category: 'metric',
                 notes: allowed.length ? [`Sources: ${allowed.join(', ')}.`] : [],
@@ -1242,15 +1243,18 @@ function _closeProgramHelpInspector() {
     el.innerHTML = '';
 }
 
-/* ---- Program scrub pad: dblclick a numeric literal to drag-edit it ----
+/* ---- Program scrub pad: dblclick a literal to drag-edit it ----
+   Two modes over one core: 'number' scrubs a numeric literal across an
+   editable range; 'choice' steps a solve-score metric name across the
+   metric vocabulary (discrete), showing each metric's description.
    Ephemeral by design: the "binding" is just a text span in one textarea.
-   Only the pad writes while open (every write re-checks the exact slice),
-   any external edit closes it, Escape reverts to the original literal.
-   Live preview routes ONLY to the lores preview endpoints — the compute
-   preview for pp/cp and the render lores preview for rt/render-ss; the
-   palette-tab editors have no preview surface so the toggle is hidden.
-   NEVER wire this to the full pipeline (compute submit, render generate,
-   palette create): far too slow to drive from a drag. */
+   Only the pad writes while open (every write re-checks a full-text
+   snapshot), any external edit closes it, Escape reverts. Live preview
+   routes ONLY to the lores preview endpoints — the compute preview for
+   pp/cp and the render lores preview for rt/render-ss; the palette-tab
+   editors have no preview surface so the toggle is hidden.
+   NEVER wire this to the full pipeline (compute submit, render
+   generate, palette create): far too slow to drive from a drag. */
 let _scrubPadState = null;
 let _scrubPadHandlersBound = false;
 let _scrubPreviewTimer = null;
@@ -1272,7 +1276,7 @@ const _scrubPadLoresViews = [
     ['e3', 'E3'],
 ];
 
-function _programNumberSpanAtCursor(textarea) {
+function _programTokenSpanAtCursor(textarea) {
     if (!textarea) return null;
     const value = String(textarea.value || '');
     const pos = Number.isFinite(textarea.selectionStart) ? textarea.selectionStart : 0;
@@ -1281,21 +1285,38 @@ function _programNumberSpanAtCursor(textarea) {
     const isToken = ch => /[A-Za-z0-9_\[\].]/.test(ch || '');
     while (lo > 0 && isToken(value[lo - 1])) lo--;
     while (hi < value.length && isToken(value[hi])) hi++;
-    let raw = value.slice(lo, hi);
+    if (hi <= lo) return null;
+    return { raw: value.slice(lo, hi), start: lo, end: hi };
+}
+
+function _programNumberSpanAtCursor(textarea) {
+    const span = _programTokenSpanAtCursor(textarea);
+    if (!span) return null;
+    const value = String(textarea.value || '');
+    let { raw, start, end } = span;
     // A leading minus belongs to the literal when what precedes it is a
     // delimiter (start, comma, open paren, operator, =, whitespace) —
     // t1-5 keeps its binary minus, rotate_roots(-0.25) scrubs -0.25.
-    if (lo > 0 && value[lo - 1] === '-') {
-        const before = lo >= 2 ? value[lo - 2] : '';
+    if (start > 0 && value[start - 1] === '-') {
+        const before = start >= 2 ? value[start - 2] : '';
         if (!/[A-Za-z0-9_).\]]/.test(before)) {
-            lo -= 1;
-            raw = value.slice(lo, hi);
+            start -= 1;
+            raw = value.slice(start, end);
         }
     }
     if (!/^-?(\d+\.?\d*|\.\d+)$/.test(raw)) return null;
     const num = Number(raw);
     if (!Number.isFinite(num)) return null;
-    return { raw, start: lo, end: hi, value: num };
+    return { raw, start, end, value: num };
+}
+
+function _programMetricSpanAtCursor(which, textarea) {
+    // Discrete scrub targets: solve-score metric names in the ss editors.
+    if (which !== 'render-ss' && which !== 'palette-ss') return null;
+    const span = _programTokenSpanAtCursor(textarea);
+    if (!span) return null;
+    if (typeof _solveScoreMetricNames === 'undefined' || !_solveScoreMetricNames.includes(span.raw)) return null;
+    return span;
 }
 
 function _scrubFormatNumber(v) {
@@ -1332,6 +1353,15 @@ function _scrubPadOnExternalInput() {
 function _scrubPadNudge(direction, big) {
     const st = _scrubPadState;
     if (!st) return;
+    if (st.mode === 'choice') {
+        const step = big ? 5 : 1;
+        const next = Math.min(st.choices.length - 1, Math.max(0, st.index + direction * step));
+        if (next !== st.index) {
+            st.index = next;
+            _scrubPadWriteText(st.choices[next]);
+        }
+        return;
+    }
     const step = (st.max - st.min) * (big ? 0.10 : 0.01);
     const next = Math.min(st.max, Math.max(st.min, st.value + direction * step));
     _scrubPadWrite(next);
@@ -1363,12 +1393,20 @@ function _ensureProgramScrubPadHandlers() {
     _scrubPadHandlersBound = true;
 }
 
-function _openProgramScrubPad(which, span, textarea, event) {
+function _scrubPadMetricDescription(name) {
+    const desc = (typeof _solveScoreMetricDescriptions !== 'undefined' && _solveScoreMetricDescriptions[name]) || '';
+    const sources = typeof _solveScoreMetricAllowedSources === 'function'
+        ? _solveScoreMetricAllowedSources(name)
+        : [];
+    return sources.length ? `${desc} Sources: ${sources.join(', ')}.` : desc;
+}
+
+function _openProgramScrubPad(which, span, textarea, event, mode = 'number') {
     _closeProgramHelpInspector();
     _closeProgramScrubPad();
-    const spread = Math.max(1, Math.abs(span.value));
     _scrubPadState = {
         which,
+        mode,
         textarea,
         start: span.start,
         end: span.end,
@@ -1378,13 +1416,25 @@ function _openProgramScrubPad(which, span, textarea, event) {
         // rewrite (populate, program load) could coincidentally leave the
         // same characters at the span positions.
         snapshot: String(textarea.value || ''),
-        value: span.value,
-        min: span.value - spread,
-        max: span.value + spread,
+        value: 0,
+        min: 0,
+        max: 1,
+        choices: [],
+        index: -1,
         livePreview: false,
         view: '',
         dragging: false,
     };
+    const st = _scrubPadState;
+    if (mode === 'choice') {
+        st.choices = _solveScoreMetricNames.slice();
+        st.index = st.choices.indexOf(span.raw);
+    } else {
+        const spread = Math.max(1, Math.abs(span.value));
+        st.value = span.value;
+        st.min = span.value - spread;
+        st.max = span.value + spread;
+    }
     const el = _scrubPadEl();
     if (!el) return;
     const preview = _scrubPadPreviewByKey[which];
@@ -1394,33 +1444,42 @@ function _openProgramScrubPad(which, span, textarea, event) {
     let viewRow = '';
     if (preview && preview.loresViews) {
         const activeView = (typeof _renderLoresPreviewActiveTab !== 'undefined' && _renderLoresPreviewActiveTab) || 'plot';
-        _scrubPadState.view = String(activeView);
+        st.view = String(activeView);
         const options = _scrubPadLoresViews.map(([value, label]) =>
-            `<option value="${value}"${value === _scrubPadState.view ? ' selected' : ''}>${label}</option>`
+            `<option value="${value}"${value === st.view ? ' selected' : ''}>${label}</option>`
         ).join('');
         viewRow = `<label class="program-scrub-row">view <select id="program-scrub-view" onchange="_scrubPadSetView(this.value)">${options}</select></label>`;
     }
+    const modeRows = mode === 'choice'
+        ? `<div class="program-scrub-row"><span id="program-scrub-pos"></span></div>
+        <div id="program-scrub-desc" class="program-scrub-desc"></div>`
+        : `<div class="program-scrub-row">
+            min <input type="text" id="program-scrub-min" onchange="_scrubPadSetRange()">
+            max <input type="text" id="program-scrub-max" onchange="_scrubPadSetRange()">
+        </div>`;
+    const hint = mode === 'choice'
+        ? 'drag or &larr;/&rarr; to step metrics (Shift &times;5) &middot; Esc reverts &middot; any other edit closes'
+        : 'drag to scrub &middot; &larr;/&rarr; nudge (Shift bigger) &middot; Esc reverts &middot; any other edit closes';
     el.innerHTML = `
         <div class="program-scrub-head">
-            <span class="program-scrub-title">Scrub</span>
+            <span class="program-scrub-title">${mode === 'choice' ? 'Metric' : 'Scrub'}</span>
             <span id="program-scrub-value" class="program-scrub-value"></span>
             <button type="button" class="btn-secondary program-scrub-close" onclick="_closeProgramScrubPad()" aria-label="Close">x</button>
         </div>
         <div id="program-scrub-surface" class="program-scrub-surface" onpointerdown="_scrubPadDragStart(event)">
             <div id="program-scrub-handle" class="program-scrub-handle"></div>
         </div>
-        <div class="program-scrub-row">
-            min <input type="text" id="program-scrub-min" onchange="_scrubPadSetRange()">
-            max <input type="text" id="program-scrub-max" onchange="_scrubPadSetRange()">
-        </div>
+        ${modeRows}
         ${viewRow}
         ${liveRow}
-        <div class="program-scrub-hint">drag to scrub &middot; &larr;/&rarr; nudge (Shift bigger) &middot; Esc reverts &middot; any other edit closes</div>
+        <div class="program-scrub-hint">${hint}</div>
     `;
-    const minEl = document.getElementById('program-scrub-min');
-    const maxEl = document.getElementById('program-scrub-max');
-    if (minEl) minEl.value = _scrubFormatNumber(_scrubPadState.min);
-    if (maxEl) maxEl.value = _scrubFormatNumber(_scrubPadState.max);
+    if (mode !== 'choice') {
+        const minEl = document.getElementById('program-scrub-min');
+        const maxEl = document.getElementById('program-scrub-max');
+        if (minEl) minEl.value = _scrubFormatNumber(st.min);
+        if (maxEl) maxEl.value = _scrubFormatNumber(st.max);
+    }
     el.style.display = 'block';
     if (typeof el.setAttribute === 'function') el.setAttribute('aria-hidden', 'false');
     const raw = event || {};
@@ -1447,13 +1506,24 @@ function _renderProgramScrubPad() {
     if (valueEl) valueEl.textContent = st.current;
     const handle = document.getElementById('program-scrub-handle');
     if (handle) {
-        const span = st.max - st.min;
-        const frac = span > 0 ? Math.min(1, Math.max(0, (st.value - st.min) / span)) : 0.5;
+        let frac = 0.5;
+        if (st.mode === 'choice') {
+            frac = st.choices.length > 1 ? Math.min(1, Math.max(0, st.index / (st.choices.length - 1))) : 0.5;
+        } else {
+            const span = st.max - st.min;
+            frac = span > 0 ? Math.min(1, Math.max(0, (st.value - st.min) / span)) : 0.5;
+        }
         handle.style.left = `${(frac * 100).toFixed(2)}%`;
+    }
+    if (st.mode === 'choice') {
+        const posEl = document.getElementById('program-scrub-pos');
+        if (posEl) posEl.textContent = `${st.index + 1}/${st.choices.length}`;
+        const descEl = document.getElementById('program-scrub-desc');
+        if (descEl) descEl.textContent = _scrubPadMetricDescription(st.current);
     }
 }
 
-function _scrubPadWrite(nextValue) {
+function _scrubPadWriteText(text) {
     const st = _scrubPadState;
     if (!st || !st.textarea) return;
     const t = st.textarea;
@@ -1464,20 +1534,24 @@ function _scrubPadWrite(nextValue) {
         _closeProgramScrubPad();
         return;
     }
-    const text = _scrubFormatNumber(nextValue);
     if (text !== st.current) {
         t.value = st.snapshot.slice(0, st.start) + text + st.snapshot.slice(st.end);
         st.end = st.start + text.length;
         st.current = text;
         st.snapshot = String(t.value || '');
-        st.value = Number(text);
         try { if (typeof t.setSelectionRange === 'function') t.setSelectionRange(st.start, st.end); } catch (e) {}
         _scrubPadNotifyInput(st.which);
         _scrubScheduleLivePreview();
-    } else {
-        st.value = Number(text);
     }
     _renderProgramScrubPad();
+}
+
+function _scrubPadWrite(nextValue) {
+    const st = _scrubPadState;
+    if (!st || st.mode === 'choice') return;
+    const text = _scrubFormatNumber(nextValue);
+    st.value = Number(text);
+    _scrubPadWriteText(text);
 }
 
 function _scrubPadDragStart(event) {
@@ -1513,12 +1587,20 @@ function _scrubPadDragMove(event) {
     const rect = surface.getBoundingClientRect();
     if (!rect || !(rect.width > 0)) return;
     const frac = Math.min(1, Math.max(0, ((Number(event && event.clientX) || 0) - rect.left) / rect.width));
+    if (st.mode === 'choice') {
+        const idx = Math.round(frac * (st.choices.length - 1));
+        if (idx !== st.index) {
+            st.index = idx;
+            _scrubPadWriteText(st.choices[idx]);
+        }
+        return;
+    }
     _scrubPadWrite(st.min + frac * (st.max - st.min));
 }
 
 function _scrubPadSetRange() {
     const st = _scrubPadState;
-    if (!st) return;
+    if (!st || st.mode === 'choice') return;
     const minEl = document.getElementById('program-scrub-min');
     const maxEl = document.getElementById('program-scrub-max');
     const min = Number(minEl && minEl.value);
@@ -1603,12 +1685,18 @@ function _closeProgramScrubPad() {
     }
 }
 
+
 function _onProgramSourceDblClick(which, event) {
     const key = _programSourceWhichKey(which);
     const textarea = _programSourceTextarea(key);
     const span = _programNumberSpanAtCursor(textarea);
     if (span) {
-        _openProgramScrubPad(key, span, textarea, event || {});
+        _openProgramScrubPad(key, span, textarea, event || {}, 'number');
+        return;
+    }
+    const metricSpan = _programMetricSpanAtCursor(key, textarea);
+    if (metricSpan) {
+        _openProgramScrubPad(key, metricSpan, textarea, event || {}, 'choice');
         return;
     }
     _closeProgramScrubPad();

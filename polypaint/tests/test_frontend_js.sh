@@ -2070,7 +2070,7 @@ async function main() {
   // Scrub pad: span detection, splice writes, invariant guard, revert.
   {
     const padEls = {};
-    for (const id of ['program-scrub-pad', 'program-scrub-value', 'program-scrub-handle', 'program-scrub-surface', 'program-scrub-min', 'program-scrub-max', 'program-scrub-live']) {
+    for (const id of ['program-scrub-pad', 'program-scrub-value', 'program-scrub-handle', 'program-scrub-surface', 'program-scrub-min', 'program-scrub-max', 'program-scrub-live', 'program-scrub-pos', 'program-scrub-desc']) {
       padEls[id] = { innerHTML: '', textContent: '', value: '', style: {}, setAttribute() {}, contains() { return false; } };
     }
     const scrubTextarea = {
@@ -2094,6 +2094,9 @@ async function main() {
       _escapeHtml: v => String(v == null ? '' : v),
       _closeProgramHelpInspector: () => {},
       _renderLoresPreviewActiveTab: 'plot',
+      _solveScoreMetricNames: ['proximity', 'crowding', 'spread', 'area'],
+      _solveScoreMetricDescriptions: { proximity: 'Near-collision detector.', crowding: 'Global clustering.', spread: 'Cloud size.', area: 'Cloud footprint.' },
+      _solveScoreMetricAllowedSources: name => ['slv', 'cf'],
       _viewCalls: [],
       _selectRenderLoresPreviewTab: function(tab) { scrubCtx._viewCalls.push(tab); },
       _notifyCalls: [],
@@ -2111,7 +2114,11 @@ async function main() {
       'let _scrubPreviewTimer = null; let _scrubPreviewInFlight = false; let _scrubPreviewDirty = false;',
       "const _scrubPadPreviewByKey = { pp: { label: 'live compute preview', run: () => runComputePreview() }, cp: { label: 'live compute preview', run: () => runComputePreview() }, rt: { label: 'live render lores preview', run: () => runRenderLoresPreview(), loresViews: true }, 'render-ss': { label: 'live render lores preview', run: () => runRenderLoresPreview(), loresViews: true } };",
       "const _scrubPadLoresViews = [['plot', 'Plot'], ['palette', 'Palette'], ['e1', 'E1'], ['e2', 'E2'], ['e3', 'E3']];",
+      extractFunction('_programTokenSpanAtCursor'),
       extractFunction('_programNumberSpanAtCursor'),
+      extractFunction('_programMetricSpanAtCursor'),
+      extractFunction('_scrubPadWriteText'),
+      extractFunction('_scrubPadMetricDescription'),
       extractFunction('_scrubFormatNumber'),
       extractFunction('_scrubPadEl'),
       extractFunction('_scrubPadNotifyInput'),
@@ -2184,6 +2191,25 @@ async function main() {
     assert(vm.runInContext('_state()', scrubCtx) === null, 'revert should close the pad');
     vm.runInContext("_open('palette-ss', _span())", scrubCtx);
     assert(!padEls['program-scrub-pad'].innerHTML.includes('live '), 'palette-tab scrub pads must not offer live preview');
+    // Discrete (choice) mode: a metric name in an ss editor steps the
+    // metric vocabulary and shows each metric's description.
+    scrubTextarea.value = 'score = metric(proximity, slv, q=0.1%)';
+    scrubTextarea.selectionStart = scrubTextarea.selectionEnd = scrubTextarea.value.indexOf('proximity') + 2;
+    vm.runInContext("(function(){ const sp = _programMetricSpanAtCursor('render-ss', globalThis._ta); _openProgramScrubPad('render-ss', sp, globalThis._ta, { clientX: 100, clientY: 100 }, 'choice'); })()", scrubCtx);
+    assert(padEls['program-scrub-pad'].innerHTML.includes('program-scrub-desc'), 'metric pads should carry a description panel');
+    assert(!padEls['program-scrub-pad'].innerHTML.includes('program-scrub-min'), 'metric pads have no numeric range fields');
+    assert(padEls['program-scrub-desc'].textContent.includes('Near-collision detector'), 'the description panel should explain the current metric');
+    assert(padEls['program-scrub-pos'].textContent === '1/4', 'the position readout should show index within the vocabulary');
+    vm.runInContext('_scrubPadNudge(1, false)', scrubCtx);
+    assert(scrubTextarea.value === 'score = metric(crowding, slv, q=0.1%)', 'nudging a metric pad should step to the next metric name');
+    assert(padEls['program-scrub-desc'].textContent.includes('Global clustering'), 'the description should follow the stepped metric');
+    vm.runInContext('_scrubPadNudge(1, true)', scrubCtx);
+    assert(scrubTextarea.value === 'score = metric(area, slv, q=0.1%)', 'Shift-nudge should jump five (clamped to the end)');
+    vm.runInContext('_revert()', scrubCtx);
+    assert(scrubTextarea.value === 'score = metric(proximity, slv, q=0.1%)', 'Escape/revert should restore the original metric');
+    // Metric detection is scoped: same token in a non-ss editor is not a target.
+    vm.runInContext("(function(){ globalThis._metricSpanCp = _programMetricSpanAtCursor('cp', globalThis._ta); })()", scrubCtx);
+    assert(vm.runInContext('_metricSpanCp', scrubCtx) === null, 'metric scrub targets exist only in the solve-score editors');
     console.log('Frontend scrub pad runtime checks: OK');
   }
 

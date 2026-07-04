@@ -633,3 +633,29 @@ class TestCanonicalNumberPolicyParity(unittest.TestCase):
         ]
         for value in probes:
             self.assertEqual(_format_number(value), canonical_number_repr(value), value)
+
+
+def test_every_metric_has_a_help_description():
+    # SOLVE_SCORE_METRIC_HELP feeds the generated vocab (Help tab + the
+    # discrete metric scrubber). Coverage is enforced here AND in
+    # gen_solve_score_vocab (SystemExit), so a new metric cannot ship
+    # without a real description.
+    import solve_score_chain as chain
+
+    assert set(chain.SOLVE_SCORE_METRIC_HELP) == set(chain.VALID_SOLVE_SCORE_METRICS)
+    for name, text in chain.SOLVE_SCORE_METRIC_HELP.items():
+        assert isinstance(text, str) and len(text.strip()) >= 20, name
+
+
+def test_generated_vocab_carries_metric_descriptions():
+    import json
+    import os
+
+    import solve_score_chain as chain
+
+    root = os.path.join(os.path.dirname(__file__), "..")
+    raw = open(os.path.join(root, "solve_score_vocab_js.js"), encoding="utf-8").read()
+    payload = json.loads(raw[raw.index("{"): raw.rindex("}") + 1])
+    descriptions = payload.get("metricDescriptions") or {}
+    assert set(descriptions) == set(chain.VALID_SOLVE_SCORE_METRICS)
+    assert all(str(v).strip() for v in descriptions.values())

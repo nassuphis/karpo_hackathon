@@ -149,6 +149,7 @@ const _solveScoreParamMetricSet = new Set(_solveScoreParamMetricNames);
 const _solveScoreParamCapableMetricSet = new Set(_solveScoreParamCapableMetricNames);
 const _solveScoreAllowedSourcesByMetric = _solveScoreVocab.allowedSourcesByMetric || {};
 const _solveScoreMetricSnippets = _solveScoreVocab.metricSnippets || {};
+const _solveScoreMetricDescriptions = _solveScoreVocab.metricDescriptions || {};
 const _solveScoreStarterSnippets = Array.isArray(_solveScoreVocab.starterSnippets) ? _solveScoreVocab.starterSnippets.slice() : [];
 const _solveScoreGenericMetricPublicName = _solveScoreVocab.genericMetricPublicName || 'metric';
 const _solveScoreGenericMetricChipName = _solveScoreVocab.genericMetricChipName || '__metric';

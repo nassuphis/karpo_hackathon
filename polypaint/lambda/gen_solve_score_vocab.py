@@ -122,6 +122,7 @@ def build_vocab() -> dict:
         OUTPUT_CHIPS,
         PARAM_CAPABLE_SOLVE_SCORE_METRICS,
         PARAM_SOLVE_SCORE_METRICS,
+        SOLVE_SCORE_METRIC_HELP,
         SOLVE_SCORE_QUANTILE_PERCENT_MAX,
         SOLVE_SCORE_QUANTILE_PERCENT_MIN,
         STACK_CHIPS,
@@ -172,6 +173,12 @@ def build_vocab() -> dict:
             entry["params"] = [{"ph": "mode", "def": "norm", "choices": ["raw", "norm", "none"]}]
         output_specs[name] = entry
 
+    missing_help = [name for name in metric_names if not str(SOLVE_SCORE_METRIC_HELP.get(name) or "").strip()]
+    if missing_help:
+        raise SystemExit(f"solve-score metrics missing SOLVE_SCORE_METRIC_HELP entries: {missing_help}")
+    stale_help = sorted(set(SOLVE_SCORE_METRIC_HELP) - set(metric_names))
+    if stale_help:
+        raise SystemExit(f"SOLVE_SCORE_METRIC_HELP names unknown metrics: {stale_help}")
     return {
         "metricNames": metric_names,
         "paramMetricNames": param_metrics,
@@ -193,6 +200,10 @@ def build_vocab() -> dict:
         ],
         "metricSnippets": {
             name: _metric_snippet(name, allowed_sources)
+            for name in metric_names
+        },
+        "metricDescriptions": {
+            name: str(SOLVE_SCORE_METRIC_HELP[name])
             for name in metric_names
         },
         "genericMetricPublicName": GENERIC_METRIC_PUBLIC_NAME,

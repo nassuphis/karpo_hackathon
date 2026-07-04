@@ -278,6 +278,90 @@ test.describe('Scrub pad', () => {
     expect(synced.select).toBe('plot');
   });
 
+  test('dblclick a metric name opens the discrete metric scrubber', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    const opened = await page.evaluate(() => {
+      const ta = document.getElementById('render-ss-source-text');
+      ta.value = 'score = metric(proximity, slv, q=0.1%)\n';
+      ta.selectionStart = ta.selectionEnd = ta.value.indexOf('proximity') + 2;
+      _onProgramSourceDblClick('render-ss', { clientX: 300, clientY: 300 });
+      return {
+        padVisible: document.getElementById('program-scrub-pad').style.display === 'block',
+        title: document.getElementById('program-scrub-pad').innerHTML.includes('Metric'),
+        hasRange: !!document.getElementById('program-scrub-min'),
+        desc: document.getElementById('program-scrub-desc').textContent,
+        pos: document.getElementById('program-scrub-pos').textContent,
+        value: document.getElementById('program-scrub-value').textContent,
+      };
+    });
+    expect(opened.padVisible).toBe(true);
+    expect(opened.title).toBe(true);
+    expect(opened.hasRange).toBe(false);
+    expect(opened.value).toBe('proximity');
+    expect(opened.desc).toContain('Near-collision detector');
+    expect(opened.desc).toContain('Sources:');
+    expect(opened.pos).toMatch(/^\d+\/41$/);
+
+    // Arrow steps to the neighboring metric and the description follows.
+    await page.keyboard.press('ArrowRight');
+    const stepped = await page.evaluate(() => ({
+      text: document.getElementById('render-ss-source-text').value,
+      value: document.getElementById('program-scrub-value').textContent,
+      desc: document.getElementById('program-scrub-desc').textContent,
+    }));
+    expect(stepped.text).not.toContain('metric(proximity');
+    expect(stepped.text).toContain(`metric(${stepped.value},`);
+    expect(stepped.desc.length).toBeGreaterThan(20);
+
+    // Drag to the far right lands on the last metric in the vocabulary.
+    const dragged = await page.evaluate(() => {
+      const surface = document.getElementById('program-scrub-surface');
+      const rect = surface.getBoundingClientRect();
+      _scrubPadDragStart({ clientX: rect.right, preventDefault() {} });
+      document.dispatchEvent(new PointerEvent('pointerup'));
+      return {
+        value: document.getElementById('program-scrub-value').textContent,
+        last: _solveScoreMetricNames[_solveScoreMetricNames.length - 1],
+        text: document.getElementById('render-ss-source-text').value,
+      };
+    });
+    expect(dragged.value).toBe(dragged.last);
+    expect(dragged.text).toContain(`metric(${dragged.last},`);
+
+    // Escape restores the original metric.
+    await page.keyboard.press('Escape');
+    expect(await page.evaluate(() => document.getElementById('render-ss-source-text').value))
+      .toBe('score = metric(proximity, slv, q=0.1%)\n');
+  });
+
+  test('metric names outside the solve-score editors are not scrub targets', async ({ page }) => {
+    const opened = await openPadOnCoeffLiteral(page, 'poly = linear(poly, 2, 3)\nemit', '2,');
+    expect(opened.padVisible).toBe(true);
+    const wordCase = await page.evaluate(() => {
+      const ta = document.getElementById('cp-source-text');
+      ta.value = 'poly = proximity\nemit';
+      ta.selectionStart = ta.selectionEnd = ta.value.indexOf('proximity') + 2;
+      _onProgramSourceDblClick('cp', { clientX: 300, clientY: 300 });
+      return {
+        padVisible: document.getElementById('program-scrub-pad').style.display === 'block',
+        helpVisible: document.getElementById('program-help-inspector').style.display === 'block',
+      };
+    });
+    expect(wordCase.padVisible).toBe(false);
+    expect(wordCase.helpVisible).toBe(true);
+  });
+
+  test('the Help tab explains metrics with real descriptions', async ({ page }) => {
+    await page.click('.tab-btn:text("Render")');
+    const help = await page.evaluate(() => {
+      _setProgramSourceSidePanelMode('render-ss', 'help');
+      return document.getElementById('render-ss-help').innerHTML;
+    });
+    expect(help).toContain('Near-collision detector');
+    expect(help).toContain('Thin-shell detector');
+    expect(help).toContain('rotational symmetry strength');
+  });
+
   test('compute-side pads have no lores view picker', async ({ page }) => {
     await openPadOnCoeffLiteral(page, 'poly = linear(poly, 2, 3)\nemit', '2,');
     expect(await page.evaluate(() => !!document.getElementById('program-scrub-view'))).toBe(false);

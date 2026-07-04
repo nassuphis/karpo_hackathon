@@ -19,7 +19,7 @@ window._coeffRegistryVocab = {
   "ctCatalog": {
     "rev": {
       "category": "structural",
-      "desc": "reverse coefficient order",
+      "desc": "Reverse the coefficient vector end to end (cf[k] <-> cf[n-1-k]): the reversed polynomial's nonzero roots are the reciprocals of the originals.",
       "params": [
         {
           "kind": "andy",
@@ -33,7 +33,7 @@ window._coeffRegistryVocab = {
     },
     "conj": {
       "category": "structural",
-      "desc": "complex conjugate every coefficient",
+      "desc": "Conjugate every coefficient (negate imaginary parts): roots reflect across the real axis.",
       "params": [
         {
           "kind": "andy",
@@ -47,7 +47,7 @@ window._coeffRegistryVocab = {
     },
     "normalize": {
       "category": "structural",
-      "desc": "divide by the leading coefficient",
+      "desc": "Divide every coefficient by the leading one, making the polynomial monic; a near-zero leading coefficient (|cf[0]|^2 < 1e-30) leaves the vector unchanged.",
       "params": [
         {
           "kind": "andy",
@@ -61,7 +61,7 @@ window._coeffRegistryVocab = {
     },
     "deriv": {
       "category": "structural",
-      "desc": "differentiate the polynomial coefficients",
+      "desc": "Formal derivative: multiply each cf[k] by its power (n-1-k), drop the constant term; length shrinks by one.",
       "params": [
         {
           "kind": "andy",
@@ -75,7 +75,7 @@ window._coeffRegistryVocab = {
     },
     "safe": {
       "category": "structural",
-      "desc": "replace non-finite components with zero",
+      "desc": "Replace any non-finite (inf/NaN) component with 0; finite values pass through untouched.",
       "params": [
         {
           "kind": "andy",
@@ -89,7 +89,7 @@ window._coeffRegistryVocab = {
     },
     "negate_odd": {
       "category": "structural",
-      "desc": "negate odd-indexed coefficients",
+      "desc": "Negate odd-indexed coefficients \u2014 the polynomial evaluated at -z (up to overall sign), so roots flip through the origin.",
       "params": [
         {
           "kind": "andy",
@@ -103,7 +103,7 @@ window._coeffRegistryVocab = {
     },
     "max2one": {
       "category": "structural",
-      "desc": "set the largest-magnitude coefficient to 1",
+      "desc": "Find the largest-magnitude coefficient and overwrite it with exactly 1; every other coefficient is untouched.",
       "params": [
         {
           "kind": "andy",
@@ -117,7 +117,7 @@ window._coeffRegistryVocab = {
     },
     "sort_mod_keep_angle": {
       "category": "accumulation",
-      "desc": "sort magnitudes while keeping original angles",
+      "desc": "Sort the moduli ascending and hand them back out by position: cf[k] keeps its own angle but takes the k-th smallest modulus.",
       "params": [
         {
           "kind": "andy",
@@ -131,7 +131,7 @@ window._coeffRegistryVocab = {
     },
     "sort_angle_keep_mod": {
       "category": "accumulation",
-      "desc": "sort angles while keeping original magnitudes",
+      "desc": "Sort the angles ascending and hand them back out by position: cf[k] keeps its own modulus but takes the k-th smallest angle.",
       "params": [
         {
           "kind": "andy",
@@ -145,7 +145,7 @@ window._coeffRegistryVocab = {
     },
     "sort_abs": {
       "category": "accumulation",
-      "desc": "sort coefficients by magnitude",
+      "desc": "Reorder whole coefficients by ascending magnitude (values unchanged, positions sorted).",
       "params": [
         {
           "kind": "andy",
@@ -159,7 +159,7 @@ window._coeffRegistryVocab = {
     },
     "cumsum": {
       "category": "accumulation",
-      "desc": "running complex cumulative sum",
+      "desc": "Running complex sum: cf[k] becomes cf[0] + ... + cf[k].",
       "params": [
         {
           "kind": "andy",
@@ -173,7 +173,7 @@ window._coeffRegistryVocab = {
     },
     "cummax": {
       "category": "accumulation",
-      "desc": "running maximum by coefficient magnitude",
+      "desc": "Running magnitude peak: cf[k] becomes the largest-magnitude coefficient seen so far (the winning complex value is carried forward).",
       "params": [
         {
           "kind": "andy",
@@ -187,7 +187,7 @@ window._coeffRegistryVocab = {
     },
     "sort_cumsum": {
       "category": "accumulation",
-      "desc": "sort coefficients by cumulative-sum magnitude",
+      "desc": "Rank positions by the running-sum magnitude |cf[0]+...+cf[k]| of the original order, then reorder the coefficients by that ranking.",
       "params": [
         {
           "kind": "andy",
@@ -201,7 +201,7 @@ window._coeffRegistryVocab = {
     },
     "linear": {
       "category": "elementwise",
-      "desc": "z*[field1]+[field2]; scale100-compatible affine map",
+      "desc": "Affine map on every coefficient: z -> z*field1 + field2 (complex multiply-add); non-finite results become 0. scale100-compatible.",
       "label": "linear",
       "params": [
         {
@@ -234,7 +234,7 @@ window._coeffRegistryVocab = {
     },
     "swirler": {
       "category": "elementwise",
-      "desc": "multiply each coefficient by a modulus-driven complex swirl",
+      "desc": "Multiply each coefficient z by exp(a^4 + b^4 + i*2*pi*a*b) where a = frac(|100z|) and b = frac(|10z|): a modulus-keyed spiral, so nearby magnitudes land at very different phases.",
       "params": [
         {
           "kind": "andy",
@@ -248,7 +248,7 @@ window._coeffRegistryVocab = {
     },
     "exp": {
       "category": "elementwise",
-      "desc": "exp(z*(field1+i*field2))",
+      "desc": "Map each coefficient z to exp(z*field1 + field2) (complex exponential of an affine map); non-finite results become 0.",
       "label": "exp",
       "params": [
         {
@@ -279,7 +279,7 @@ window._coeffRegistryVocab = {
     },
     "cos": {
       "category": "elementwise",
-      "desc": "complex cosine of each coefficient",
+      "desc": "Complex cosine of each coefficient: z -> cos(z); non-finite results become 0.",
       "label": "cos",
       "params": [
         {
@@ -294,7 +294,7 @@ window._coeffRegistryVocab = {
     },
     "sin": {
       "category": "elementwise",
-      "desc": "complex sine of each coefficient",
+      "desc": "Complex sine of each coefficient: z -> sin(z); non-finite results become 0.",
       "label": "sin",
       "params": [
         {
@@ -309,7 +309,7 @@ window._coeffRegistryVocab = {
     },
     "tan": {
       "category": "elementwise",
-      "desc": "complex tangent of each coefficient",
+      "desc": "Complex tangent of each coefficient: z -> tan(z); values at poles and non-finite results become 0.",
       "label": "tan",
       "params": [
         {
@@ -324,7 +324,7 @@ window._coeffRegistryVocab = {
     },
     "cosh": {
       "category": "elementwise",
-      "desc": "complex hyperbolic cosine",
+      "desc": "Complex hyperbolic cosine of each coefficient: z -> cosh(z); non-finite results become 0.",
       "label": "cosh",
       "params": [
         {
@@ -339,7 +339,7 @@ window._coeffRegistryVocab = {
     },
     "sinh": {
       "category": "elementwise",
-      "desc": "complex hyperbolic sine",
+      "desc": "Complex hyperbolic sine of each coefficient: z -> sinh(z); non-finite results become 0.",
       "label": "sinh",
       "params": [
         {
@@ -354,7 +354,7 @@ window._coeffRegistryVocab = {
     },
     "tanh": {
       "category": "elementwise",
-      "desc": "complex hyperbolic tangent",
+      "desc": "Complex hyperbolic tangent of each coefficient: z -> tanh(z); values at poles and non-finite results become 0.",
       "label": "tanh",
       "params": [
         {
@@ -369,7 +369,7 @@ window._coeffRegistryVocab = {
     },
     "round": {
       "category": "elementwise",
-      "desc": "round(z*(field1+i*field2)) componentwise",
+      "desc": "Scale then snap to the integer grid: z -> round(Re(z*multiplier)) + i*round(Im(z*multiplier)); non-finite results become 0.",
       "label": "round",
       "params": [
         {
@@ -393,7 +393,7 @@ window._coeffRegistryVocab = {
     },
     "pow": {
       "category": "elementwise",
-      "desc": "pow(z*field1, field2)",
+      "desc": "Complex power of an affine map: z -> (z*multiplier)^exponent (principal branch); |z*multiplier|^2 < 1e-60 or non-finite results become 0.",
       "label": "pow",
       "params": [
         {
@@ -426,13 +426,13 @@ window._coeffRegistryVocab = {
     },
     "power": {
       "category": "elementwise",
-      "desc": "(i+1) times a geometric series through z^k",
+      "desc": "Index-weighted geometric series: cf[i] at position i becomes (i+1) * (1 + z + z^2 + ... + z^k) evaluated at z = cf[i]; non-finite becomes 0.",
       "label": "p",
       "params": [
         {
           "ph": "k",
           "def": "8",
-          "title": "Highest power/index used by the geometric-series transform."
+          "title": "Series order: cf[i] becomes (i+1)*(1 + z + ... + z^k)."
         },
         {
           "kind": "andy",
@@ -446,13 +446,13 @@ window._coeffRegistryVocab = {
     },
     "invpower": {
       "category": "elementwise",
-      "desc": "reciprocal-threshold variant of power(k)",
+      "desc": "Bounded reciprocal of the geometric series: with s = 1 + z + ... + z^k per coefficient, cf[i] becomes 1/s when |s| > 1 and exactly 1 otherwise.",
       "label": "invp",
       "params": [
         {
           "ph": "k",
           "def": "4",
-          "title": "Power threshold/index used by the reciprocal power variant."
+          "title": "Series order in s = 1 + z + ... + z^k; result is 1/s when |s| > 1, else 1."
         },
         {
           "kind": "andy",
@@ -466,12 +466,12 @@ window._coeffRegistryVocab = {
     },
     "roots_cm": {
       "category": "roots",
-      "desc": "companion-matrix roots padded into coefficient slots",
+      "desc": "Feed back the roots as coefficients: solve the current vector with the companion-matrix eigensolver and write its roots into the coefficient slots, zero-padding one slot (hi = leading, lo = constant) to keep the length.",
       "params": [
         {
           "ph": "hi|lo",
           "def": "hi",
-          "title": "Padding side for roots that do not fill every coefficient slot.",
+          "title": "Which slot takes the zero pad: hi = leading (highest power), lo = constant term.",
           "choices": [
             "hi",
             "lo"
@@ -489,18 +489,18 @@ window._coeffRegistryVocab = {
     },
     "roots": {
       "category": "roots",
-      "desc": "Aberth roots after k iterations, padded hi or lo",
+      "desc": "Feed back the roots as coefficients: run k Aberth-Ehrlich iterations (leading/trailing zeros trimmed first) and write the \u2014 possibly unconverged for small k \u2014 roots into the coefficient slots, zero-padded hi or lo.",
       "label": "roots",
       "params": [
         {
           "ph": "k",
           "def": "8",
-          "title": "Aberth iteration count for root solving."
+          "title": "Aberth-Ehrlich iteration count; small values leave roots deliberately unconverged."
         },
         {
           "ph": "hi|lo",
           "def": "hi",
-          "title": "Padding side for roots that do not fill every coefficient slot.",
+          "title": "Which slot takes the zero pad: hi = leading (highest power), lo = constant term.",
           "choices": [
             "hi",
             "lo"

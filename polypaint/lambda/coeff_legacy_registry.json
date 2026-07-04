@@ -35,7 +35,7 @@
       "args": [],
       "length_policy": "preserve",
       "ui": {
-        "desc": "reverse coefficient order"
+        "desc": "Reverse the coefficient vector end to end (cf[k] <-> cf[n-1-k]): the reversed polynomial's nonzero roots are the reciprocals of the originals."
       }
     },
     {
@@ -55,7 +55,7 @@
       "args": [],
       "length_policy": "preserve",
       "ui": {
-        "desc": "complex conjugate every coefficient"
+        "desc": "Conjugate every coefficient (negate imaginary parts): roots reflect across the real axis."
       }
     },
     {
@@ -75,7 +75,7 @@
       "args": [],
       "length_policy": "preserve",
       "ui": {
-        "desc": "divide by the leading coefficient"
+        "desc": "Divide every coefficient by the leading one, making the polynomial monic; a near-zero leading coefficient (|cf[0]|^2 < 1e-30) leaves the vector unchanged."
       }
     },
     {
@@ -95,7 +95,7 @@
       "args": [],
       "length_policy": "may_change",
       "ui": {
-        "desc": "differentiate the polynomial coefficients"
+        "desc": "Formal derivative: multiply each cf[k] by its power (n-1-k), drop the constant term; length shrinks by one."
       }
     },
     {
@@ -115,7 +115,7 @@
       "args": [],
       "length_policy": "preserve",
       "ui": {
-        "desc": "replace non-finite components with zero"
+        "desc": "Replace any non-finite (inf/NaN) component with 0; finite values pass through untouched."
       }
     },
     {
@@ -135,7 +135,7 @@
       "args": [],
       "length_policy": "preserve",
       "ui": {
-        "desc": "negate odd-indexed coefficients"
+        "desc": "Negate odd-indexed coefficients — the polynomial evaluated at -z (up to overall sign), so roots flip through the origin."
       }
     },
     {
@@ -155,7 +155,7 @@
       "args": [],
       "length_policy": "preserve",
       "ui": {
-        "desc": "set the largest-magnitude coefficient to 1"
+        "desc": "Find the largest-magnitude coefficient and overwrite it with exactly 1; every other coefficient is untouched."
       }
     },
     {
@@ -175,7 +175,7 @@
       "args": [],
       "length_policy": "preserve",
       "ui": {
-        "desc": "sort magnitudes while keeping original angles"
+        "desc": "Sort the moduli ascending and hand them back out by position: cf[k] keeps its own angle but takes the k-th smallest modulus."
       }
     },
     {
@@ -195,7 +195,7 @@
       "args": [],
       "length_policy": "preserve",
       "ui": {
-        "desc": "sort angles while keeping original magnitudes"
+        "desc": "Sort the angles ascending and hand them back out by position: cf[k] keeps its own modulus but takes the k-th smallest angle."
       }
     },
     {
@@ -215,7 +215,7 @@
       "args": [],
       "length_policy": "preserve",
       "ui": {
-        "desc": "sort coefficients by magnitude"
+        "desc": "Reorder whole coefficients by ascending magnitude (values unchanged, positions sorted)."
       }
     },
     {
@@ -235,7 +235,7 @@
       "args": [],
       "length_policy": "preserve",
       "ui": {
-        "desc": "running complex cumulative sum"
+        "desc": "Running complex sum: cf[k] becomes cf[0] + ... + cf[k]."
       }
     },
     {
@@ -255,7 +255,7 @@
       "args": [],
       "length_policy": "preserve",
       "ui": {
-        "desc": "running maximum by coefficient magnitude"
+        "desc": "Running magnitude peak: cf[k] becomes the largest-magnitude coefficient seen so far (the winning complex value is carried forward)."
       }
     },
     {
@@ -275,7 +275,7 @@
       "args": [],
       "length_policy": "preserve",
       "ui": {
-        "desc": "sort coefficients by cumulative-sum magnitude"
+        "desc": "Rank positions by the running-sum magnitude |cf[0]+...+cf[k]| of the original order, then reorder the coefficients by that ranking."
       }
     },
     {
@@ -348,7 +348,7 @@
       "length_policy": "preserve",
       "ui": {
         "label": "linear",
-        "desc": "z*[field1]+[field2]; scale100-compatible affine map",
+        "desc": "Affine map on every coefficient: z -> z*field1 + field2 (complex multiply-add); non-finite results become 0. scale100-compatible.",
         "params": [
           {
             "ph": "field1",
@@ -388,7 +388,7 @@
       "args": [],
       "length_policy": "preserve",
       "ui": {
-        "desc": "multiply each coefficient by a modulus-driven complex swirl"
+        "desc": "Multiply each coefficient z by exp(a^4 + b^4 + i*2*pi*a*b) where a = frac(|100z|) and b = frac(|10z|): a modulus-keyed spiral, so nearby magnitudes land at very different phases."
       }
     },
     {
@@ -446,7 +446,7 @@
       "length_policy": "preserve",
       "ui": {
         "label": "exp",
-        "desc": "exp(z*(field1+i*field2))",
+        "desc": "Map each coefficient z to exp(z*field1 + field2) (complex exponential of an affine map); non-finite results become 0.",
         "params": [
           {
             "ph": "field1",
@@ -505,7 +505,7 @@
       "length_policy": "preserve",
       "ui": {
         "label": "cos",
-        "desc": "complex cosine of each coefficient"
+        "desc": "Complex cosine of each coefficient: z -> cos(z); non-finite results become 0."
       }
     },
     {
@@ -526,7 +526,7 @@
       "length_policy": "preserve",
       "ui": {
         "label": "sin",
-        "desc": "complex sine of each coefficient"
+        "desc": "Complex sine of each coefficient: z -> sin(z); non-finite results become 0."
       }
     },
     {
@@ -547,7 +547,7 @@
       "length_policy": "preserve",
       "ui": {
         "label": "tan",
-        "desc": "complex tangent of each coefficient"
+        "desc": "Complex tangent of each coefficient: z -> tan(z); values at poles and non-finite results become 0."
       }
     },
     {
@@ -568,7 +568,7 @@
       "length_policy": "preserve",
       "ui": {
         "label": "cosh",
-        "desc": "complex hyperbolic cosine"
+        "desc": "Complex hyperbolic cosine of each coefficient: z -> cosh(z); non-finite results become 0."
       }
     },
     {
@@ -589,7 +589,7 @@
       "length_policy": "preserve",
       "ui": {
         "label": "sinh",
-        "desc": "complex hyperbolic sine"
+        "desc": "Complex hyperbolic sine of each coefficient: z -> sinh(z); non-finite results become 0."
       }
     },
     {
@@ -610,7 +610,7 @@
       "length_policy": "preserve",
       "ui": {
         "label": "tanh",
-        "desc": "complex hyperbolic tangent"
+        "desc": "Complex hyperbolic tangent of each coefficient: z -> tanh(z); values at poles and non-finite results become 0."
       }
     },
     {
@@ -671,7 +671,7 @@
       "length_policy": "preserve",
       "ui": {
         "label": "round",
-        "desc": "round(z*(field1+i*field2)) componentwise",
+        "desc": "Scale then snap to the integer grid: z -> round(Re(z*multiplier)) + i*round(Im(z*multiplier)); non-finite results become 0.",
         "params": [
           {
             "ph": "multiplier",
@@ -766,7 +766,7 @@
       "length_policy": "preserve",
       "ui": {
         "label": "pow",
-        "desc": "pow(z*field1, field2)",
+        "desc": "Complex power of an affine map: z -> (z*multiplier)^exponent (principal branch); |z*multiplier|^2 < 1e-60 or non-finite results become 0.",
         "params": [
           {
             "ph": "field1",
@@ -817,12 +817,12 @@
       "length_policy": "may_change",
       "ui": {
         "label": "p",
-        "desc": "(i+1) times a geometric series through z^k",
+        "desc": "Index-weighted geometric series: cf[i] at position i becomes (i+1) * (1 + z + z^2 + ... + z^k) evaluated at z = cf[i]; non-finite becomes 0.",
         "params": [
           {
             "ph": "k",
             "def": "8",
-            "title": "Highest power/index used by the geometric-series transform."
+            "title": "Series order: cf[i] becomes (i+1)*(1 + z + ... + z^k)."
           }
         ]
       }
@@ -851,12 +851,12 @@
       "length_policy": "may_change",
       "ui": {
         "label": "invp",
-        "desc": "reciprocal-threshold variant of power(k)",
+        "desc": "Bounded reciprocal of the geometric series: with s = 1 + z + ... + z^k per coefficient, cf[i] becomes 1/s when |s| > 1 and exactly 1 otherwise.",
         "params": [
           {
             "ph": "k",
             "def": "4",
-            "title": "Power threshold/index used by the reciprocal power variant."
+            "title": "Series order in s = 1 + z + ... + z^k; result is 1/s when |s| > 1, else 1."
           }
         ]
       }
@@ -888,12 +888,12 @@
       ],
       "length_policy": "may_change",
       "ui": {
-        "desc": "companion-matrix roots padded into coefficient slots",
+        "desc": "Feed back the roots as coefficients: solve the current vector with the companion-matrix eigensolver and write its roots into the coefficient slots, zero-padding one slot (hi = leading, lo = constant) to keep the length.",
         "params": [
           {
             "ph": "hi|lo",
             "def": "hi",
-            "title": "Padding side for roots that do not fill every coefficient slot.",
+            "title": "Which slot takes the zero pad: hi = leading (highest power), lo = constant term.",
             "choices": [
               "hi",
               "lo"
@@ -935,17 +935,17 @@
       "length_policy": "may_change",
       "ui": {
         "label": "roots",
-        "desc": "Aberth roots after k iterations, padded hi or lo",
+        "desc": "Feed back the roots as coefficients: run k Aberth-Ehrlich iterations (leading/trailing zeros trimmed first) and write the — possibly unconverged for small k — roots into the coefficient slots, zero-padded hi or lo.",
         "params": [
           {
             "ph": "k",
             "def": "8",
-            "title": "Aberth iteration count for root solving."
+            "title": "Aberth-Ehrlich iteration count; small values leave roots deliberately unconverged."
           },
           {
             "ph": "hi|lo",
             "def": "hi",
-            "title": "Padding side for roots that do not fill every coefficient slot.",
+            "title": "Which slot takes the zero pad: hi = leading (highest power), lo = constant term.",
             "choices": [
               "hi",
               "lo"

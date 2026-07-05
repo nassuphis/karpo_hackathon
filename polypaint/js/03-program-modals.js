@@ -1524,6 +1524,15 @@ async function _refreshRootProgramRows() {
         const resp = await lambdaPost('storage', {}, '/list-root-programs');
         _rootProgramModalState.rows = Array.isArray(resp.programs) ? resp.programs : [];
         _rootProgramModalState.tableState = 'loaded';
+        if (_rootProgramModalState.selectedId &&
+            !_rootProgramModalState.rows.some(row => row.id === _rootProgramModalState.selectedId)) {
+            _rootProgramModalState.selectedId = '';
+            _rootProgramModalState.selectedProgram = null;
+            _rootProgramModalState.selectedLoading = false;
+        }
+        if (resp.error_count) {
+            _setRootProgramModalStatus(`${resp.error_count} saved program(s) unreadable — see server logs`, true);
+        }
     } catch (e) {
         _rootProgramModalState.rows = [];
         _rootProgramModalState.tableState = 'error';
@@ -1547,14 +1556,28 @@ async function _selectRootProgram(id) {
         if (_rootProgramModalState.selectedId !== id) return;
         _rootProgramModalState.selectedProgram = resp.program || null;
     } catch (e) {
-        if (_rootProgramModalState.selectedId === id) _setRootProgramModalStatus(e && e.message ? e.message : String(e), true);
+        if (_rootProgramModalState.selectedId !== id) return;
+        _setRootProgramModalStatus(e && e.message ? e.message : String(e), true);
     }
     _rootProgramModalState.selectedLoading = false;
     _renderRootProgramModal();
 }
 
 async function _loadSelectedRootProgramFromModal() {
-    const program = _rootProgramModalState.selectedProgram;
+    let program = _rootProgramModalState.selectedProgram;
+    if (!program && _rootProgramModalState.selectedId) {
+        // detail fetch failed earlier: retry on demand instead of a silently
+        // inert Load button
+        try {
+            const resp = await lambdaPost('storage', { id: _rootProgramModalState.selectedId }, '/fetch-root-program');
+            program = resp.program || null;
+            _rootProgramModalState.selectedProgram = program;
+        } catch (e) {
+            _setRootProgramModalStatus(e && e.message ? e.message : String(e), true);
+            _renderRootProgramModal();
+            return;
+        }
+    }
     if (!program || !program.source_text) return;
     const target = _rootProgramModalState.target;
     const el = document.getElementById(`${target}-rt-source-text`);
@@ -1585,6 +1608,9 @@ async function _saveRootProgramFromModal() {
 async function _deleteSelectedRootProgram() {
     const id = _rootProgramModalState.selectedId;
     if (!id) return;
+    const row = (_rootProgramModalState.rows || []).find(entry => entry.id === id);
+    const label = row && row.name ? row.name : id;
+    if (typeof confirm === 'function' && !confirm(`Delete saved root program "${label}"?`)) return;
     _rootProgramModalState.actionBusy = true;
     _renderRootProgramModal();
     try {
@@ -1612,4 +1638,6 @@ function openRootProgramModal(target) {
     _setRootProgramModalStatus('', false);
     _renderRootProgramModal();
     void _refreshRootProgramRows();
+    const nameEl = document.getElementById('root-program-modal-name');
+    if (nameEl && typeof nameEl.focus === 'function') nameEl.focus();
 }

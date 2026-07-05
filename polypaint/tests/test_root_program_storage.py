@@ -127,8 +127,39 @@ class TestRootProgramPersistence(unittest.TestCase):
         self.assertEqual(fetched["program"]["fingerprint"], program["fingerprint"])
 
         deleted = self._call("/delete-root-program", {"id": "spin-v1"})
-        self.assertEqual(deleted["deleted"], [key])
+        self.assertEqual(deleted["deleted"], 1)
         self.assertEqual(self._call("/list-root-programs", {})["programs"], [])
+
+    def test_missing_id_fetch_and_delete_return_404(self):
+        for path in ("/fetch-root-program", "/delete-root-program"):
+            resp = self.hs.handler(_event(path, {"id": "ghost"}), None)
+            self.assertEqual(resp["statusCode"], 404, (path, resp))
+
+    def test_save_rejects_control_char_name_and_empty_source(self):
+        resp = self.hs.handler(
+            _event("/save-root-program", {"name": "foo\nbar", "source_text": "rotate_roots(0.25)"}), None)
+        self.assertEqual(resp["statusCode"], 400)
+        resp = self.hs.handler(
+            _event("/save-root-program", {"name": "empty", "source_text": "  "}), None)
+        self.assertEqual(resp["statusCode"], 400)
+
+    def test_punctuation_only_name_gets_root_slug_fallback(self):
+        saved = self._call("/save-root-program", {"name": "!!!", "source_text": "rotate_roots(0.25)"})
+        self.assertEqual(saved["program"]["id"], "root-program")
+
+    def test_blank_source_with_chain_does_not_load_silently_empty(self):
+        key = "polypaint/root-programs/handmade.json"
+        self.store[key] = json.dumps({
+            "name": "handmade", "source_text": "",
+            "chain": [{"name": "rotate_roots", "fn_index": 1, "args": [0.25]}],
+        }).encode("utf-8")
+        self.meta[key] = {}
+        resp = self.hs.handler(_event("/fetch-root-program", {"id": "handmade"}), None)
+        self.assertGreaterEqual(resp["statusCode"], 400)
+        listed = self._call("/list-root-programs", {})
+        self.assertEqual(listed["programs"], [])
+        self.assertEqual(listed["error_count"], 1)
+        self.assertEqual(listed["errors"][0]["id"], "handmade")
 
     def test_save_rejects_invalid_source(self):
         resp = self.hs.handler(

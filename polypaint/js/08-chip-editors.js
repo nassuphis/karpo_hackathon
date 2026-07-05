@@ -1280,6 +1280,7 @@ function _closeProgramHelpInspector() {
    generate, palette create): far too slow to drive from a drag. */
 let _scrubPadState = null;
 let _scrubPadLastPos = null;
+let _scrubPadHeadDragCleanup = null;
 let _scrubPadHandlersBound = false;
 let _scrubPreviewTimer = null;
 let _scrubPreviewInFlight = false;
@@ -1351,6 +1352,17 @@ function _programComplexSpanAtCursor(textarea) {
         if (s > 0 && value[s - 1] === '-' && !/[A-Za-z0-9_).\]]/.test(s >= 2 ? value[s - 2] : '')) return s - 1;
         return s;
     };
+    const isExponentSign = (signPos) => {
+        // 1.5e+2i is a VALID backend literal (150i) that this pad does not
+        // model; a sign directly after e/E (itself after a digit or dot)
+        // must never be treated as the re/im separator.
+        let q = signPos;
+        while (q > 0 && value[q - 1] === ' ') q--;
+        const prev = q > 0 ? value[q - 1] : '';
+        if (prev !== 'e' && prev !== 'E') return false;
+        const prev2 = q > 1 ? value[q - 2] : '';
+        return /[0-9.]/.test(prev2);
+    };
     if (_SCRUB_IMAG_RE.test(raw)) {
         // cursor on the imaginary part: widen left over [+-] to a real part
         let s = start;
@@ -1359,6 +1371,7 @@ function _programComplexSpanAtCursor(textarea) {
         let probe = s;
         while (probe > 0 && value[probe - 1] === ' ') probe--;
         if (probe > 0 && (value[probe - 1] === '+' || value[probe - 1] === '-')) {
+            if (isExponentSign(probe - 1)) return null;
             sep = value[probe - 1];
             let q = probe - 1;
             while (q > 0 && value[q - 1] === ' ') q--;
@@ -1385,6 +1398,7 @@ function _programComplexSpanAtCursor(textarea) {
     let probe = end;
     while (probe < value.length && value[probe] === ' ') probe++;
     if (probe < value.length && (value[probe] === '+' || value[probe] === '-')) {
+        if (isExponentSign(probe)) return null;
         let q = probe + 1;
         while (q < value.length && value[q] === ' ') q++;
         let p = q;
@@ -1497,6 +1511,7 @@ function _ensureProgramScrubPadHandlers() {
             const target = event.target;
             const targetId = target && target.id;
             if (targetId === 'program-scrub-min' || targetId === 'program-scrub-max' || targetId === 'program-scrub-span') return;
+            if (target && target.tagName === 'SELECT') return;
             const [dx, dy] = arrows[event.key];
             if (_scrubPadState.mode !== 'complex' && dx === 0) return;
             if (typeof event.preventDefault === 'function') event.preventDefault();
@@ -1706,7 +1721,9 @@ function _scrubPadWriteComplex(re, im) {
     if (!st || st.mode !== 'complex') return;
     const text = _scrubFormatComplex(re, im);
     const parsed = _parseComplexLiteral(text);
-    if (parsed) { st.re = parsed.re; st.im = parsed.im; }
+    if (!parsed) return; // formatter/parser asymmetry (>=1e21): skip the tick
+    st.re = parsed.re;
+    st.im = parsed.im;
     _scrubPadWriteText(text);
 }
 
@@ -1736,6 +1753,12 @@ function _scrubPadHeadDragStart(event) {
     const el = _scrubPadEl();
     if (!el || !event) return;
     if (typeof event.preventDefault === 'function') event.preventDefault();
+    // Same pointer-capture discipline as the value drag: releasing outside
+    // the window must still deliver pointerup or the pad glues to the
+    // cursor on re-entry.
+    if (event.target && typeof event.target.setPointerCapture === 'function' && event.pointerId != null) {
+        try { event.target.setPointerCapture(event.pointerId); } catch (e) {}
+    }
     const rect = typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : { left: 0, top: 0 };
     const offX = (Number(event.clientX) || 0) - rect.left;
     const offY = (Number(event.clientY) || 0) - rect.top;
@@ -1750,10 +1773,12 @@ function _scrubPadHeadDragStart(event) {
         document.removeEventListener('pointermove', move);
         document.removeEventListener('pointerup', up);
         document.removeEventListener('pointercancel', up);
+        _scrubPadHeadDragCleanup = null;
     };
     document.addEventListener('pointermove', move);
     document.addEventListener('pointerup', up);
     document.addEventListener('pointercancel', up);
+    _scrubPadHeadDragCleanup = up;
 }
 
 function _scrubPadDragStart(event) {
@@ -1882,6 +1907,7 @@ function _revertProgramScrubPad() {
 }
 
 function _closeProgramScrubPad() {
+    if (_scrubPadHeadDragCleanup) _scrubPadHeadDragCleanup();
     const st = _scrubPadState;
     _scrubPadState = null;
     if (_scrubPreviewTimer) { clearTimeout(_scrubPreviewTimer); _scrubPreviewTimer = null; }

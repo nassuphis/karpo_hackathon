@@ -2113,7 +2113,7 @@ async function main() {
     scrubCtx.globalThis = scrubCtx;
     vm.createContext(scrubCtx);
     const scrubSrc = [
-      'let _scrubPadState = null; let _scrubPadLastPos = null; let _scrubPadHandlersBound = false;',
+      'let _scrubPadState = null; let _scrubPadLastPos = null; let _scrubPadHeadDragCleanup = null; let _scrubPadHandlersBound = false;',
       'let _scrubPreviewTimer = null; let _scrubPreviewInFlight = false; let _scrubPreviewDirty = false;',
       "const _scrubPadPreviewByKey = { pp: { label: 'live compute preview', run: () => runComputePreview() }, cp: { label: 'live compute preview', run: () => runComputePreview() }, rt: { label: 'live render lores preview', run: () => runRenderLoresPreview(), loresViews: true }, 'render-ss': { label: 'live render lores preview', run: () => runRenderLoresPreview(), loresViews: true } };",
       "const _scrubPadLoresViews = [['plot', 'Plot'], ['palette', 'Palette'], ['e1', 'E1'], ['e2', 'E2'], ['e3', 'E3']];",
@@ -2236,6 +2236,13 @@ async function main() {
         const c = vm.runInContext('_programComplexSpanAtCursor(globalThis._ta)', scrubCtx);
         assert(c && c.raw === raw && Math.abs(c.re - re) < 1e-12 && Math.abs(c.im - im) < 1e-12,
           `complex span ${JSON.stringify(text)}@${pos} should parse ${raw} (${re},${im}), got ` + JSON.stringify(c));
+      }
+      // e-notation literals are valid backend complex numbers the pad does
+      // not model: refuse 2D entirely (never misparse-and-corrupt)
+      for (const [text, pos] of [['r = 1.5e+2i', 9], ['r = 1e-3+2e-4i', 12], ['r = .5e-2+.25e-1i', 15]]) {
+        scrubCtx._ta = mk(text, pos);
+        assert(vm.runInContext('_programComplexSpanAtCursor(globalThis._ta)', scrubCtx) === null,
+          `e-notation literal ${JSON.stringify(text)} must not open the 2D pad`);
       }
       // plain reals and binary minus stay OUT of complex mode
       scrubCtx._ta = mk('poly[0] = 1.5 + 2', 12);

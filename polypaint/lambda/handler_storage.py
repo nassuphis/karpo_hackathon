@@ -235,7 +235,7 @@ def _client_error_message(exc):
 def _handle_storage_route(fn, event):
     try:
         return fn(event)
-    except (_SolveScoreProgramNotFound, _ParamProgramNotFound, _CoeffProgramNotFound) as exc:
+    except (_SolveScoreProgramNotFound, _ParamProgramNotFound, _CoeffProgramNotFound, _RootProgramNotFound) as exc:
         return _error_response(404, exc)
     except _MigrationConflict as exc:
         return _json_error_response(409, {
@@ -1874,7 +1874,7 @@ def handle_save_coeff_program(event):
     return ok_response({"program": program, "overwritten": overwritten})
 
 
-class _RootProgramNotFound(Exception):
+class _RootProgramNotFound(RuntimeError):
     pass
 
 
@@ -1888,7 +1888,16 @@ def _validate_root_program_name(name):
         raise ValueError("root program name is required")
     if len(text) > MAX_ROOT_PROGRAM_NAME_LEN:
         raise ValueError(f"root program name must be at most {MAX_ROOT_PROGRAM_NAME_LEN} characters")
+    if any(ch in "\r\n\t" for ch in text) or not all(ch.isprintable() for ch in text):
+        # the name travels in S3 metadata headers; control characters die
+        # as opaque 500s inside botocore instead of a clean 400 here
+        raise ValueError("root program name must contain printable single-line text")
     return text
+
+
+def _slugify_root_program_id(name):
+    slug = _slugify_coeff_program_id(name)
+    return "root-program" if slug == "coeff-program" else slug
 
 
 def _compile_root_program_payload(name, *, source_text, saved_at=None, program_id=None):
@@ -1899,7 +1908,9 @@ def _compile_root_program_payload(name, *, source_text, saved_at=None, program_i
     validated_name = _validate_root_program_name(name)
     source_text = str(source_text or "")
     compiled = compile_root_program_source(source_text, strict=True)
-    program_id_text = str(program_id or _slugify_coeff_program_id(validated_name)).strip()
+    if not int(compiled.get("statement_count") or 0):
+        raise ValueError("root program source is empty")
+    program_id_text = str(program_id or _slugify_root_program_id(validated_name)).strip()
     saved_at_text = _utc_now_iso() if saved_at is None else str(saved_at or "").strip()
     return {
         "version": ROOT_PROGRAM_VERSION,
@@ -1940,6 +1951,13 @@ def _read_root_program_object(program_id):
         raise RuntimeError(f"saved root program is not valid JSON: {program_id}") from exc
     if not isinstance(payload, dict):
         raise RuntimeError(f"saved root program must be a JSON object: {program_id}")
+    if payload.get("program_kind") not in (None, "root_program"):
+        raise RuntimeError(f"saved object is not a root program: {program_id}")
+    if not str(payload.get("source_text") or "").strip() and payload.get("chain"):
+        # Same guard the coeff loader documents: a hand-edited object with a
+        # blank source but a real chain must not silently load as an empty
+        # program.
+        raise RuntimeError(f"saved root program has a blank source_text but a non-empty chain: {program_id}")
     return _compile_root_program_payload(
         payload.get("name"),
         source_text=str(payload.get("source_text") or ""),
@@ -1985,6 +2003,7 @@ def handle_save_root_program(event):
 def handle_list_root_programs(event):
     parse_body(event)
     programs = []
+    errors = []
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=BUCKET, Prefix=ROOT_PROGRAMS_PREFIX):
         for obj in page.get("Contents", []):
@@ -1999,10 +2018,19 @@ def handle_list_root_programs(event):
             except Exception:
                 try:
                     programs.append(_read_root_program_object(program_id))
-                except Exception:
-                    continue
-    programs.sort(key=lambda p: str(p.get("name") or ""))
-    return ok_response({"programs": programs})
+                except Exception as exc:
+                    # never silent: a program whose source stopped compiling
+                    # must stay visible (and deletable) somewhere
+                    print(f"list-root-programs: {program_id} unreadable: {exc}")
+                    errors.append({"id": program_id, "error": str(exc)})
+    programs.sort(key=lambda p: (str(p.get("saved_at") or ""), str(p.get("id") or "")), reverse=True)
+    return ok_response({
+        "programs": programs,
+        "count": len(programs),
+        "order": "saved_at_desc",
+        "errors": errors,
+        "error_count": len(errors),
+    })
 
 
 def handle_fetch_root_program(event):
@@ -2022,7 +2050,7 @@ def handle_delete_root_program(event):
     if not _key_exists(key):
         raise _RootProgramNotFound(f"root program not found: {program_id}")
     s3.delete_object(Bucket=BUCKET, Key=key)
-    return ok_response({"id": program_id, "deleted": [key]})
+    return ok_response({"id": program_id, "deleted": 1})
 
 
 def handle_compile_coeff_program_source(event):

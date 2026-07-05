@@ -1297,6 +1297,27 @@ function _initCoeffProgramModal() {
             _renderCoeffProgramModal();
         });
     }
+    const filterEl = document.getElementById('coeff-program-modal-filter');
+    if (filterEl) {
+        filterEl.addEventListener('input', (ev) => {
+            _coeffProgramModalState.filterText = String(ev.target && ev.target.value || '');
+            _renderCoeffProgramModal();
+        });
+    }
+    const sortName = document.getElementById('coeff-program-modal-sort-name');
+    const sortSaved = document.getElementById('coeff-program-modal-sort-saved');
+    const toggleSort = (key) => {
+        if (_coeffProgramModalState.sortKey === key) {
+            _coeffProgramModalState.sortDir = -_coeffProgramModalState.sortDir;
+        } else {
+            _coeffProgramModalState.sortKey = key;
+            // fresh saved-sort defaults to newest first; name to A..Z
+            _coeffProgramModalState.sortDir = key === 'saved' ? -1 : 1;
+        }
+        _renderCoeffProgramModal();
+    };
+    if (sortName) sortName.addEventListener('click', () => toggleSort('name'));
+    if (sortSaved) sortSaved.addEventListener('click', () => toggleSort('saved'));
     if (loadBtn) loadBtn.addEventListener('click', () => { void _loadSelectedCoeffProgramFromModal(); });
     if (saveBtn) saveBtn.addEventListener('click', () => { void _saveCurrentCoeffProgramFromModal(); });
     if (deleteBtn) deleteBtn.addEventListener('click', () => { void _deleteSelectedCoeffProgramFromModal(); });

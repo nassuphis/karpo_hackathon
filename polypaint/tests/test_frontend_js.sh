@@ -2646,4 +2646,39 @@ vm.runInContext(fs.readFileSync(path.join(root, 'js/01-core-compute.js'), 'utf8'
 })().catch(e => { console.error(e.stack || String(e)); process.exit(1); });
 NODE
 
+# ── Coeff program modal: natural sort + regex filter ──
+node - "$ROOT" <<'NODE'
+const fs = require('fs'), path = require('path'), vm = require('vm');
+const root = process.argv[2];
+const js = fs.readFileSync(path.join(root, 'js', '03-program-modals.js'), 'utf8');
+function extract(name) {
+  const m = js.match(new RegExp('function ' + name + '\\([^)]*\\) \\{[\\s\\S]*?\\n\\}'));
+  if (!m) { console.error('missing ' + name); process.exit(1); }
+  return m[0];
+}
+const ctx = vm.createContext({ console, _coeffProgramModalState: null });
+vm.runInContext(extract('_naturalNameCompare') + '\n' + extract('_coeffProgramVisibleRows'), ctx);
+const cmp = ctx._naturalNameCompare;
+if (!(cmp('poly_1', 'poly_2') < 0 && cmp('poly_2', 'poly_110') < 0 && cmp('poly_110', 'poly_2') > 0))
+  { console.error('natural compare must order poly_1 < poly_2 < poly_110'); process.exit(1); }
+if (!(cmp('poly-1-v1', 'poly-1-v2') < 0 && cmp('a10b2', 'a10b10') < 0))
+  { console.error('natural compare must handle multi-run names'); process.exit(1); }
+const rows = [{name: 'poly_110-v1'}, {name: 'poly_2-v1'}, {name: 'test-giga23-v1'}, {name: 'poly_1-v1'}];
+ctx._coeffProgramModalState = { rows, filterText: 'poly_[0-9]+', sortKey: 'name', sortDir: 1 };
+let out = ctx._coeffProgramVisibleRows().map(r => r.name);
+if (JSON.stringify(out) !== JSON.stringify(['poly_1-v1', 'poly_2-v1', 'poly_110-v1']))
+  { console.error('regex filter + natural sort broke: ' + JSON.stringify(out)); process.exit(1); }
+ctx._coeffProgramModalState.filterText = '[invalid(';
+out = ctx._coeffProgramVisibleRows().map(r => r.name);
+if (out.length !== 0 && !out.every(n => n.includes('[invalid(')))
+  { console.error('invalid regex must fall back to substring filtering'); process.exit(1); }
+ctx._coeffProgramModalState = { rows, filterText: '', sortKey: 'saved', sortDir: -1 };
+rows[0].saved_at = '2026-07-01T00:00:00Z'; rows[1].saved_at = '2026-07-03T00:00:00Z';
+rows[2].saved_at = '2026-07-02T00:00:00Z'; rows[3].saved_at = '2026-07-04T00:00:00Z';
+out = ctx._coeffProgramVisibleRows().map(r => r.saved_at);
+if (out[0] !== '2026-07-04T00:00:00Z' || out[3] !== '2026-07-01T00:00:00Z')
+  { console.error('saved sort desc broke: ' + JSON.stringify(out)); process.exit(1); }
+console.log('Frontend coeff program modal filter/sort checks: OK');
+NODE
+
 echo "=== Frontend fused render source test passed ==="

@@ -1234,6 +1234,19 @@ button {
 .solve-score-modal-chip-strip .chip-input-wide {
     max-width: min(100%, 42ch);
 }
+.coeff-program-modal-filter {
+    width: 100%;
+    box-sizing: border-box;
+    margin: 4px 0 6px;
+    padding: 4px 6px;
+    font: inherit;
+    background: #14161c;
+    color: inherit;
+    border: 1px solid #2c3140;
+    border-radius: 4px;
+}
+.coeff-program-modal-sort { cursor: pointer; user-select: none; }
+.coeff-program-modal-sort:hover { text-decoration: underline; }
 .coeff-program-modal-source {
     margin: 0;
     padding: 8px 10px;
@@ -2418,13 +2431,15 @@ button {
         <div class="solve-score-modal-body">
             <div class="solve-score-modal-pane">
                 <div class="solve-score-modal-pane-title">Saved Programs</div>
+                <input id="coeff-program-modal-filter" type="text" class="coeff-program-modal-filter"
+                       placeholder="Filter by name (regex ok, e.g. poly_[0-9]+)" autocomplete="off">
                 <div class="solve-score-modal-table-wrap">
                     <table class="tri-popup-table">
                         <thead>
                             <tr>
-                                <th>Name</th>
+                                <th id="coeff-program-modal-sort-name" class="coeff-program-modal-sort" title="Sort by name (natural order: poly_2 before poly_110)">Name</th>
                                 <th>Statements</th>
-                                <th>Saved</th>
+                                <th id="coeff-program-modal-sort-saved" class="coeff-program-modal-sort" title="Sort by saved time">Saved</th>
                             </tr>
                         </thead>
                         <tbody id="coeff-program-modal-body"></tbody>

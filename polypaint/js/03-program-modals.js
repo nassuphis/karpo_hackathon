@@ -1006,7 +1006,56 @@ let _coeffProgramModalState = {
     statusError: false,
     nameInput: '',
     lastSelectedName: '',
+    filterText: '',
+    sortKey: 'name',
+    sortDir: 1,
 };
+
+// Natural (arithmetic) name ordering: digit runs compare numerically, so
+// poly_1 < poly_2 < poly_110. Case-insensitive; ties break on raw string.
+function _naturalNameCompare(a, b) {
+    const ax = String(a || '').toLowerCase().match(/\d+|\D+/g) || [];
+    const bx = String(b || '').toLowerCase().match(/\d+|\D+/g) || [];
+    for (let i = 0; i < Math.max(ax.length, bx.length); i++) {
+        const av = ax[i]; const bv = bx[i];
+        if (av === undefined) return -1;
+        if (bv === undefined) return 1;
+        const an = /^\d+$/.test(av); const bn = /^\d+$/.test(bv);
+        if (an && bn) {
+            const d = Number(av) - Number(bv);
+            if (d) return d;
+        } else if (av !== bv) {
+            return av < bv ? -1 : 1;
+        }
+    }
+    return String(a) < String(b) ? -1 : (String(a) > String(b) ? 1 : 0);
+}
+
+// Filter (regex when valid, else case-insensitive substring) + sort view of
+// the loaded rows; never mutates state.rows.
+function _coeffProgramVisibleRows() {
+    const state = _coeffProgramModalState;
+    let rows = Array.isArray(state.rows) ? state.rows.slice() : [];
+    const raw = String(state.filterText || '').trim();
+    if (raw) {
+        let test;
+        try {
+            const rx = new RegExp(raw, 'i');
+            test = name => rx.test(name);
+        } catch (e) {
+            const needle = raw.toLowerCase();
+            test = name => String(name).toLowerCase().includes(needle);
+        }
+        rows = rows.filter(row => test(String(row.name || row.id || '')));
+    }
+    const dir = state.sortDir < 0 ? -1 : 1;
+    if (state.sortKey === 'saved') {
+        rows.sort((a, b) => dir * String(a.saved_at || '').localeCompare(String(b.saved_at || '')));
+    } else {
+        rows.sort((a, b) => dir * _naturalNameCompare(a.name || a.id, b.name || b.id));
+    }
+    return rows;
+}
 
 function _coeffProgramFilename(name) {
     const slug = String(name || '').trim().toLowerCase()
@@ -1110,11 +1159,21 @@ function _renderCoeffProgramModal() {
         bodyEl.innerHTML = `<tr class="tri-popup-empty"><td colspan="3">${_escapeHtml(_coeffProgramModalState.status || 'Failed to load saved programs.')}</td></tr>`;
         return;
     }
+    const visible = _coeffProgramVisibleRows();
+    const nameHdr = document.getElementById('coeff-program-modal-sort-name');
+    const savedHdr = document.getElementById('coeff-program-modal-sort-saved');
+    const arrow = _coeffProgramModalState.sortDir < 0 ? ' \u25bc' : ' \u25b2';
+    if (nameHdr) nameHdr.textContent = 'Name' + (_coeffProgramModalState.sortKey === 'name' ? arrow : '');
+    if (savedHdr) savedHdr.textContent = 'Saved' + (_coeffProgramModalState.sortKey === 'saved' ? arrow : '');
     if (!rows.length) {
         bodyEl.innerHTML = '<tr class="tri-popup-empty"><td colspan="3">No saved coeff programs found.</td></tr>';
         return;
     }
-    bodyEl.innerHTML = rows.map(row => {
+    if (!visible.length) {
+        bodyEl.innerHTML = '<tr class="tri-popup-empty"><td colspan="3">No programs match the filter.</td></tr>';
+        return;
+    }
+    bodyEl.innerHTML = visible.map(row => {
         const active = row.id === _coeffProgramModalState.selectedId ? ' active' : '';
         return `<tr class="tri-popup-row${active}" data-coeff-program-id="${_escapeHtml(row.id)}"><td><div class="tri-popup-name"><div>${_escapeHtml(row.name)}</div></div></td><td>${Number(row.statement_count || 0)}</td><td>${_escapeHtml(row.saved_at || '')}</td></tr>`;
     }).join('');

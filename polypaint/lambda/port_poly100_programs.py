@@ -249,6 +249,57 @@ class _ScanRewrite(ast.NodeTransformer):
         return node
 
 
+def _branch_value(body, kvar, env, incoming):
+    """One-branch value for the loop slot: Assign replaces, AugAssign(+/-/*)
+    combines with `incoming`. Returns (off, target_node, value) or None."""
+    if len(body) != 1:
+        return None
+    stmt = body[0]
+    if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
+        tgt = stmt.targets[0]
+        slot = _slot_of_target(tgt, kvar)
+        if not slot or slot[0] != "loop":
+            return None
+        return slot[1], tgt, _InlineTemps(env).visit(stmt.value)
+    if isinstance(stmt, ast.AugAssign) and isinstance(stmt.op, (ast.Add, ast.Sub, ast.Mult)):
+        slot = _slot_of_target(stmt.target, kvar)
+        if not slot or slot[0] != "loop" or incoming is None:
+            return None
+        value = ast.BinOp(left=incoming, op=stmt.op,
+                          right=_InlineTemps(env).visit(stmt.value))
+        return slot[1], stmt.target, ast.fix_missing_locations(value)
+    if isinstance(stmt, ast.If):
+        folded = _fold_if_to_select(stmt, kvar, env, incoming)
+        if folded is None:
+            return None
+        tgt = folded.targets[0]
+        slot = _slot_of_target(tgt, kvar)
+        return slot[1], tgt, folded.value
+    return None
+
+
+def _fold_if_to_select(node, kvar, env, incoming=None):
+    """if/elif/else branches writing (or augmenting) ONE loop slot fold to
+    cf[slot] = select(cond, A, B). A missing else keeps `incoming`."""
+    then = _branch_value(node.body, kvar, env, incoming)
+    if then is None:
+        return None
+    if node.orelse:
+        other = _branch_value(node.orelse, kvar, env, incoming)
+        if other is None or other[0] != then[0]:
+            return None
+        else_value = other[2]
+    elif incoming is not None:
+        else_value = incoming
+    else:
+        return None
+    cond = _InlineTemps(env).visit(node.test)
+    sel = ast.Call(func=ast.Name(id="__select__", ctx=ast.Load()),
+                   args=[cond, then[2], else_value], keywords=[])
+    out = ast.Assign(targets=[then[1]], value=sel)
+    return ast.copy_location(ast.fix_missing_locations(out), node)
+
+
 def _append_poke(ordered, slot, expr):
     """Record a poke, hoisting a single vector reduction to the stack."""
     extractor = _ExtractReduction()
@@ -388,7 +439,19 @@ def analyze(fn):
             loop_env = dict(env)
             write = None
             const_writes = []   # cf[<int>] = expr inside the loop
-            for inner in stmt.body:
+            body_stmts = list(stmt.body)
+            if body_stmts and isinstance(body_stmts[-1], ast.If):
+                incoming = None
+                prefix = body_stmts[:-1]
+                if prefix and isinstance(prefix[-1], ast.Assign) and len(prefix[-1].targets) == 1:
+                    prior_slot = _slot_of_target(prefix[-1].targets[0], kvar)
+                    if prior_slot and prior_slot[0] == "loop":
+                        incoming = _InlineTemps(loop_env).visit(prefix[-1].value)
+                        prefix = prefix[:-1]
+                folded = _fold_if_to_select(body_stmts[-1], kvar, loop_env, incoming)
+                if folded is not None:
+                    body_stmts = prefix + [folded]
+            for inner in body_stmts:
                 if not (isinstance(inner, ast.Assign) and len(inner.targets) == 1):
                     raise SkipFunction("loop body statement is not an assignment")
                 itgt = inner.targets[0]
@@ -656,6 +719,9 @@ def vec_src(node, kvar, k_range):
     if not _contains_k(node, kvar) and not _contains_vector_shape(node):
         return scalar_src(node, kvar)
     if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name) and node.func.id == "__select__":
+            c, a, b = (vec_src(arg, kvar, k_range) for arg in node.args)
+            return f"select({c}, {a}, {b})"
         name = _call_name(node)
         if name and len(node.args) == 1 and not node.keywords:
             return f"{name}({vec_src(node.args[0], kvar, k_range)})"
@@ -670,11 +736,19 @@ def vec_src(node, kvar, k_range):
         raise SkipFunction("unsupported unary op in vector context")
     if isinstance(node, ast.BinOp):
         ops = {ast.Add: "add", ast.Sub: "subtract", ast.Mult: "multiply",
-               ast.Div: "divide", ast.Pow: "power"}
+               ast.Div: "divide", ast.Pow: "power", ast.Mod: "rem"}
         op = ops.get(type(node.op))
         if op is None:
             raise SkipFunction(f"unsupported operator {type(node.op).__name__}")
         return f"{op}({vec_src(node.left, kvar, k_range)}, {vec_src(node.right, kvar, k_range)})"
+    if isinstance(node, ast.Compare):
+        if len(node.ops) != 1 or len(node.comparators) != 1:
+            raise SkipFunction("chained comparison")
+        cmps = {ast.Eq: "eq", ast.Gt: "gt", ast.GtE: "ge", ast.Lt: "lt", ast.LtE: "le"}
+        op = cmps.get(type(node.ops[0]))
+        if op is None:
+            raise SkipFunction(f"unsupported comparison {type(node.ops[0]).__name__}")
+        return f"{op}({vec_src(node.left, kvar, k_range)}, {vec_src(node.comparators[0], kvar, k_range)})"
     raise SkipFunction(f"unsupported vector node {type(node).__name__}")
 
 

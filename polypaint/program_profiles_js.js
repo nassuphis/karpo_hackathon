@@ -118,7 +118,7 @@ window._programProfiles = {
         }
       },
       "value_caps": {
-        "expr_tokens": 32,
+        "expr_tokens": 64,
         "legacy_int_arg": 4096,
         "max_args": 8,
         "program_tokens": 256,

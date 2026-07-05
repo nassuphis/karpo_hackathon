@@ -424,6 +424,16 @@ const _coeffProgramCheatSections = [
         ],
     },
     {
+        title: 'Language',
+        buttons: [
+            { label: 'x = expr', snippet: 'x1 = log(abs(p1 + p2) + 1)\npoly = multiply(range(1, 37), 1i * x1)', title: 'Local alias: write-once, substituted at compile time. Any unreserved name.' },
+            { label: 'scan', snippet: 'poly = scan(36, 1, p1 + p2, (sin(k*prev) + 1) / abs(sin(k*prev) + 1))', title: 'Bounded recurrence: out[0] = init at k=k0; out[j] = step with prev = previous element, k = k0 + j.' },
+            { label: 'poly[a:b]', snippet: 'poly[2:7] = multiply(poly[2:7], 5)', title: 'Slice read/write: poly[a:b] is a vector; slice assignment takes a vector of length b-a.' },
+            { label: 'sum / prod', snippet: 'sum(poly[0:70])\npoly[70] = tos[0] + 1i*p1\ndrop', title: 'Reductions push a scalar; read it back with tos[0] in the next poke, then drop.' },
+            { label: 'window', snippet: 'poly = multiply(poly, window(3, 6))', title: 'Exact 0/1 mask for slots [a, b) over the current poly length. step(a) is the one-sided form.' },
+        ],
+    },
+    {
         title: 'Constants + Ranges',
         buttons: [
             { label: 'push_vec(value)', snippet: 'push_vec(0)\nemit', title: 'Push a constant vector of length poly_len.' },

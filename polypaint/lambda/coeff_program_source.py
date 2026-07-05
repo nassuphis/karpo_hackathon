@@ -399,6 +399,11 @@ def _typed_lower_index_reference(text):
     index_expr = raw[open_idx + 1:close_idx].strip()
     if not index_expr:
         raise CoeffProgramSourceError(f"{name}[...] index expression is empty")
+    if ":" in index_expr:
+        a, b = _slice_bounds_from_text(name, index_expr)
+        if name not in {"poly", "cf"}:
+            raise CoeffProgramSourceError(f"{name}[a:b] slices are not supported; use poly or cf")
+        return [["slice", name, str(a), str(b)]], "vector"
     chain = _typed_lower_vector_source(name)
     chain.extend(_typed_lower_scalar(index_expr))
     chain.append(["_typed_get_scalar"])
@@ -495,6 +500,44 @@ def _typed_lower_affine(name, args):
     return chain, "vector" if "vector" in {multiplied_type, offset_type} else "scalar"
 
 
+def _slice_bounds_from_text(name, index_expr):
+    parts = [p.strip() for p in index_expr.split(":")]
+    if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
+        raise CoeffProgramSourceError(
+            f"{name}[a:b] requires integer literal bounds, got {index_expr!r}")
+    a, b = int(parts[0]), int(parts[1])
+    if a >= b or b > MAX_VECTOR_LEN:
+        raise CoeffProgramSourceError(
+            f"{name}[a:b] requires 0 <= a < b <= {MAX_VECTOR_LEN}, got [{a}:{b})")
+    return a, b
+
+
+def _step_mask_text(edge_text):
+    """Exact 0/1 mask: 1 for slot >= edge over the current poly length.
+
+    x = slot - edge + 0.5 is a nonzero half-integer for integer edges, so
+    (x + |x|)/(2|x|) is exactly 1.0 or 0.0 elementwise.
+    """
+    r = f"range(0.5 - ({edge_text}), poly_len + 0.5 - ({edge_text}))"
+    return f"divide(add({r}, abs({r})), multiply(abs({r}), 2))"
+
+
+def _typed_lower_scan(args):
+    if len(args) != 4:
+        raise CoeffProgramSourceError("scan requires scan(length, k0, init, step)")
+    return [["scan"] + [_canonical_expr(arg) for arg in args]], "vector"
+
+
+def _typed_lower_reduce(name, args):
+    if len(args) != 1:
+        raise CoeffProgramSourceError(f"{name} requires one vector argument")
+    chain, value_type = _typed_lower_value(args[0])
+    if value_type != "vector":
+        raise CoeffProgramSourceError(f"{name}(...) requires a vector argument")
+    chain.append(["reduce", name])
+    return chain, "scalar"
+
+
 def _typed_lower_value(text):
     raw = str(text or "").strip()
     if not raw:
@@ -522,6 +565,19 @@ def _typed_lower_value(text):
             return _typed_lower_unary(name, args)
         if name in {"scale", "shift", "linear"}:
             return _typed_lower_affine(name, args)
+        if name == "scan":
+            return _typed_lower_scan(args)
+        if name in {"sum", "prod"}:
+            return _typed_lower_reduce(name, args)
+        if name == "step":
+            if len(args) != 1:
+                raise CoeffProgramSourceError("step requires step(edge)")
+            return _typed_lower_value(_step_mask_text(args[0]))
+        if name == "window":
+            if len(args) != 2:
+                raise CoeffProgramSourceError("window requires window(start, stop)")
+            return _typed_lower_value(
+                f"subtract({_step_mask_text(args[0])}, {_step_mask_text(args[1])})")
     return _typed_lower_scalar(raw), "scalar"
 
 
@@ -798,6 +854,23 @@ def _lower_call(name, args, *, target="push"):
         )
     if name in legacy_registry()["by_name"]:
         return _lower_native_transform_call(name, args, target=target)
+    if name == "scan":
+        chain, value_type = _typed_lower_scan(args)
+        return _append_typed_target(chain, value_type, target=target)
+    if name in {"sum", "prod"}:
+        chain, value_type = _typed_lower_reduce(name, args)
+        return _append_typed_target(chain, value_type, target=target)
+    if name == "step":
+        if len(args) != 1:
+            raise CoeffProgramSourceError("step requires step(edge)")
+        chain, value_type = _typed_lower_value(_step_mask_text(args[0]))
+        return _append_typed_target(chain, value_type, target=target)
+    if name == "window":
+        if len(args) != 2:
+            raise CoeffProgramSourceError("window requires window(start, stop)")
+        chain, value_type = _typed_lower_value(
+            f"subtract({_step_mask_text(args[0])}, {_step_mask_text(args[1])})")
+        return _append_typed_target(chain, value_type, target=target)
     raise CoeffProgramSourceError(f"unknown coeff program source function {name!r}", code="unknown_function")
 
 
@@ -875,6 +948,8 @@ _LOCALS_RESERVED_EXTRA = frozenset({
     "push", "push_scalar", "push_range", "push_linspace",
     "range", "arange", "linspace",
     "roll", "rolr", "argsort", "littlewood", "blend", "andy",
+    "scan", "slice", "poke_slice", "reduce", "sum", "prod",
+    "window", "step", "prev", "k",
     "pi", "pi2", "pi2i", "tau", "tau_i",
     "p1", "p2", "t1", "t2", "poly_len",
 })
@@ -916,6 +991,25 @@ class _CoeffStatementLowerer(ProfileStatementLowerer):
                 line=statement.line,
                 column=statement.column,
             )
+        if ":" in index_expr:
+            a, b = _slice_bounds_from_text(lhs_name, index_expr)
+            chain, value_type = _typed_lower_value(rhs)
+            if value_type != "vector":
+                raise CoeffProgramSourceError(
+                    f"{lhs_name}[{a}:{b}] assignment requires a vector value "
+                    f"(use fill({b - a}, value) to broadcast a scalar)",
+                    line=statement.line,
+                    column=statement.column,
+                )
+            chain.append(["poke_slice", str(a), str(b)])
+            return chain
+        if re.search(r"(?<![A-Za-z0-9_])tos(?![A-Za-z0-9_])", f"{index_expr} {rhs}"):
+            # tos reads must see the stack as it was BEFORE this statement
+            # (e.g. a reduction result). The typed lowering pushes the index
+            # first, so a typed tos read would see that index instead; the
+            # legacy poke chip evaluates index/value as expression plans
+            # against the pre-token stack frame.
+            return [["poke_poly", _canonical_expr(index_expr), _canonical_expr(rhs)]]
         if index_expr.isdigit():
             idx = int(index_expr)
             if idx < 0 or idx >= MAX_VECTOR_LEN:

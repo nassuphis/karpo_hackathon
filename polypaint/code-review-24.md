@@ -281,6 +281,8 @@ Macros splice by name only. With textual parameter substitution (`macro(step-mas
 
 Every phase keeps the drift-test discipline: new enum values appended on both sides, `test_coeff_program_drift.py` extended in the same commit, vocab/help regenerated (`gen_coeff_vocab.py --check` already gates staleness).
 
+> **STATUS (2026-07-05, shipped):** Phase 1 + P6 landed. `scan(len, k0, init, step)` (COEFF_OP_SCAN=31, EXPR_PREV/EXPR_K, refs ride as plain args so the eager resolver never pre-evaluates them; scalar-expr cap raised 32→64 both sides to fit normalized recurrences), `poly[a:b]`/`cf[a:b]` slice read + slice write (ops 32/33), `sum`/`prod` reductions (op 34; results read back via `tos[0]`, whose poke path now routes through the legacy poke chip so expression plans see the pre-token stack), and `window(a,b)`/`step(a)` as pure lowering sugar over the exact-mask arithmetic. Structural chips, profiles caps, spec/display/validator, and the C VM extended in lockstep (drift tests auto-pin the enum parity). The typed `get_scalar`/`push_vector(pop|peek)` pair now accepts scalar stack tops (reduction results) — previously a compile rejection, so additive. **Port batch: 25 → 35** (poly_2, 9, 42, 48, 54, 56, 66, 91, 92, 95 gained); poly-2-v1 is in S3 at 62 tokens vs the ~1,240 an unroll needed. One measurement from the wave: poly_2's recurrence tail is *chaotic* — numpy's own values move O(1) under 1-ulp input perturbation from slot ~28 on — so the parity gate now computes the reference twice (1-ulp-perturbed inputs), excludes slots where the reference itself moves (>70% chaotic ⇒ skip), and verifies everything stable; poly_2 passes at 1.2e-07 over the 47% of slots that have defined values.
+
 ---
 
 ## 6. Risks and invariants to protect

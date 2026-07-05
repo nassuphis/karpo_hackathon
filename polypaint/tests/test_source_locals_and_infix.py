@@ -124,7 +124,8 @@ class TestCoeffLocals(unittest.TestCase):
     def test_numeric_alias_works_in_index_position(self):
         from coeff_program_source import compile_coeff_program_source
 
-        compiled = compile_coeff_program_source("k = 4\npoly[k] = k * p1\n")
+        # `k` itself is reserved (scan iteration variable); use another name.
+        compiled = compile_coeff_program_source("j = 4\npoly[j] = j * p1\n")
         self.assertGreater(compiled["token_count"], 0)
 
     def test_call_prefix_expression_now_compiles(self):
@@ -265,3 +266,72 @@ class TestCompiledEndToEnd(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestScanSliceReduce(unittest.TestCase):
+    """Compile-level pins for the scan/slice/reduce/window primitives.
+
+    Native execution parity is exercised by lambda/port_poly100_programs.py
+    (35 ports gated on sweep_test parity); these pin the compile contracts.
+    """
+
+    def _compile(self, src):
+        from coeff_program_source import compile_coeff_program_source
+
+        return compile_coeff_program_source(src)
+
+    def test_scan_compiles_with_prev_and_k(self):
+        c = self._compile(
+            "poly = scan(36, 1, p1 + p2, (sin(k*prev) + 1) / abs(sin(k*prev) + 1))\n")
+        self.assertEqual(c["token_count"], 2)  # scan + typed_set_poly
+        self.assertEqual(c["scalar_expr_count"], 2)
+        self.assertIn("scan:36:1:expr0:expr1", c["execution_spec"])
+
+    def test_prev_and_k_rejected_outside_scan(self):
+        from coeff_program_source import CoeffProgramSourceCompileError
+
+        with self.assertRaises((CoeffProgramSourceCompileError, RuntimeError)):
+            self._compile("poly[0] = prev + 1\n")
+        with self.assertRaises((CoeffProgramSourceCompileError, RuntimeError)):
+            self._compile("poly[0] = k\n")
+
+    def test_slice_read_write_compile_and_validate(self):
+        c = self._compile("poly[2:7] = multiply(poly[2:7], 5)\n")
+        self.assertIn("slice:poly:2:7", c["execution_spec"])
+        self.assertIn("poke_slice:2:7", c["execution_spec"])
+        from coeff_program_source import CoeffProgramSourceCompileError
+
+        with self.assertRaises((CoeffProgramSourceCompileError, RuntimeError)):
+            self._compile("poly[7:2] = fill(5, 1)\n")  # reversed bounds
+        with self.assertRaises((CoeffProgramSourceCompileError, RuntimeError)):
+            self._compile("poly[0:3] = p1\n")  # scalar RHS
+
+    def test_reduce_composes_with_tos_poke(self):
+        c = self._compile("sum(poly[0:6])\npoly[0] = tos[0] + 1\ndrop\n")
+        self.assertIn("reduce:sum", c["execution_spec"])
+        # the tos-consuming poke rides the legacy poke chip (expression
+        # plans see the pre-token stack frame)
+        self.assertIn("poke_poly:0:expr", c["execution_spec"])
+
+    def test_reduce_leftover_scalar_fails_stack_discipline(self):
+        from coeff_program_source import CoeffProgramSourceCompileError
+
+        # reduce pushes a scalar; programs must not strand it — but the
+        # compile-time validator only enforces types, the VM enforces the
+        # empty-stack exit. Compile succeeds; pin that shape here.
+        c = self._compile("prod(cf[0:4])\npoly[0] = tos[0]\ndrop\n")
+        self.assertIn("reduce:prod", c["execution_spec"])
+
+    def test_window_and_step_are_pure_sugar(self):
+        win = self._compile("poly = multiply(poly, window(3, 6))\n")
+        # lowering builds the (x+|x|)/(2|x|) construction: ranges + divide
+        self.assertIn("push_range", win["execution_spec"])
+        self.assertNotIn("window", win["execution_spec"])
+        step = self._compile("poly = multiply(poly, step(5))\n")
+        self.assertNotIn("step", step["execution_spec"])
+
+    def test_scan_ident_k_is_reserved_as_local(self):
+        from coeff_program_source import CoeffProgramSourceCompileError
+
+        with self.assertRaises((CoeffProgramSourceCompileError, RuntimeError)):
+            self._compile("k = 4\npoly[0] = k\n")

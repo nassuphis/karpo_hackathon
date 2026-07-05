@@ -224,6 +224,68 @@ def _normalize_slice_assign(tgt, value):
     return (_ARANGE_KVAR, c, d, a - c, value_k)
 
 
+class _ScanRewrite(ast.NodeTransformer):
+    """Rewrite cf[k+prev_off] -> __prev__ and k -> __scan_k__."""
+
+    def __init__(self, kvar, prev_off):
+        self.kvar = kvar
+        self.prev_off = prev_off
+        self.bad_read = False
+
+    def visit_Subscript(self, node):
+        # Classify against the pristine index BEFORE renaming k inside it.
+        if isinstance(node.value, ast.Name) and node.value.id == "cf":
+            slot = _slot_of_target(node, self.kvar)
+            if slot == ("loop", self.prev_off):
+                return ast.copy_location(ast.Name(id="__prev__", ctx=ast.Load()), node)
+            self.bad_read = True
+            return node
+        self.generic_visit(node)
+        return node
+
+    def visit_Name(self, node):
+        if node.id == self.kvar and isinstance(node.ctx, ast.Load):
+            return ast.copy_location(ast.Name(id="__scan_k__", ctx=node.ctx), node)
+        return node
+
+
+def _append_poke(ordered, slot, expr):
+    """Record a poke, hoisting a single vector reduction to the stack."""
+    extractor = _ExtractReduction()
+    rewritten = ast.fix_missing_locations(extractor.visit(expr))
+    if extractor.found:
+        fname, arg = extractor.found
+        ordered.append(("reduce_push", fname, arg))
+        ordered.append(("poke", slot, rewritten))
+        ordered.append(("drop",))
+    else:
+        ordered.append(("poke", slot, expr))
+
+
+def _try_scan_template(kvar, lo, hi, off, value, ordered):
+    """Recognize cf[k+off] = f(cf[k+off-1], k) and build a scan entry.
+
+    The recurrence's first read slot (lo+off-1) must have been poked before
+    the loop; that poke becomes the scan's init expression and is consumed.
+    Returns ("scan", slot_lo, slot_hi, length, k0, init_text, step_text).
+    """
+    rewriter = _ScanRewrite(kvar, off - 1)
+    step_node = ast.fix_missing_locations(rewriter.visit(value))
+    if rewriter.bad_read or _reads_cf(step_node):
+        return None
+    init_slot = lo + off - 1
+    init_expr = None
+    for pos, op in enumerate(ordered):
+        if op[0] == "poke" and op[1] == init_slot:
+            init_expr = op[2]
+    if init_expr is None or _reads_cf(init_expr):
+        return None
+    ordered[:] = [op for op in ordered if not (op[0] == "poke" and op[1] == init_slot)]
+    init_text = scalar_src(init_expr)
+    step_text = scalar_src(step_node)
+    return ("scan", init_slot, hi + off, hi - lo + 1, lo - 1, init_text, step_text)
+
+
 def analyze(fn):
     """Return the template pieces or raise SkipFunction.
 
@@ -260,9 +322,9 @@ def analyze(fn):
                                      slice=ast.Constant(value=slot[1]), ctx=ast.Load())
                 combined = ast.fix_missing_locations(
                     ast.copy_location(ast.BinOp(left=read, op=stmt.op, right=value), stmt))
-                if not segments:
+                if not segments and not any(o[0] == "scan" for o in ordered):
                     raise SkipFunction("AugAssign before any segment (order-sensitive)")
-                ordered.append(("poke", slot[1], combined))
+                _append_poke(ordered, slot[1], combined)
                 continue
             bounds = _slice_bounds(stmt.target)
             if bounds is not None:
@@ -295,9 +357,16 @@ def analyze(fn):
                 continue
             slot = _slot_of_target(tgt)
             if slot and slot[0] == "const":
-                if not segments and _reads_cf(value):
+                wrote_any = bool(segments) or any(o[0] == "scan" for o in ordered)
+                if not wrote_any and _reads_cf(value) and not _contains_vector_shape(value):
                     raise SkipFunction("pre-segment poke reads cf (order-sensitive)")
-                ordered.append(("poke", slot[1], value))
+                _append_poke(ordered, slot[1], value)
+                continue
+            slice_bounds = _slice_bounds(tgt)
+            if slice_bounds is not None and _reads_cf(value):
+                # In-place slice rewrite (cf[a:b] = f(cf[a:b])): reads the
+                # current poly, so it stays an ordered post-op.
+                ordered.append(("slice_assign", slice_bounds[0], slice_bounds[1], value))
                 continue
             seg = _normalize_slice_assign(tgt, value)
             if seg is not None:
@@ -331,8 +400,6 @@ def analyze(fn):
                 if slot and slot[0] == "loop":
                     if write is not None:
                         raise SkipFunction("loop writes more than one cf slot")
-                    if _reads_cf(ival):
-                        raise SkipFunction("recursive: loop reads cf")
                     write = (slot[1], ival)
                     continue
                 if slot and slot[0] == "const":
@@ -345,6 +412,17 @@ def analyze(fn):
                 raise SkipFunction("loop writes a non-loop-indexed slot")
             if write is None:
                 raise SkipFunction("loop does not write cf")
+            if _reads_cf(write[1]):
+                scan_entry = _try_scan_template(kvar, lo, hi, write[0], write[1], ordered)
+                if scan_entry is None:
+                    raise SkipFunction("recursive: loop reads cf (not prev-slot shaped)")
+                ordered.append(scan_entry)
+                last_k = ast.Constant(value=hi - 1)
+                for slot_idx, ival in const_writes:
+                    final = ast.fix_missing_locations(
+                        _InlineTemps({kvar: last_k}).visit(ival))
+                    ordered.append(("poke", slot_idx, final))
+                continue
             segments.append((kvar, lo, hi, write[0], write[1]))
             ordered.append(("segment", len(segments) - 1))
             last_k = ast.Constant(value=hi - 1)
@@ -372,20 +450,25 @@ def analyze(fn):
     # keeping the poke would wrongly resurrect it.
     postops = []
     seg_seen = 0
-    for op in ordered:
+    for pos, op in enumerate(ordered):
         if op[0] == "segment":
             seg_seen += 1
             continue
         if op[0] == "poke":
             slot = op[1]
             later = segments[seg_seen:]
-            if any(slot in _seg_slots(s) for s in later):
+            later_scans = [o for o in ordered[pos + 1:] if o[0] == "scan"]
+            if any(slot in _seg_slots(s) for s in later) or \
+               any(o[1] <= slot < o[2] for o in later_scans):
                 continue
         postops.append(op)
 
     covered = set()
     for seg in segments:
         covered |= _seg_slots(seg)
+    for op in postops:
+        if op[0] == "scan":
+            covered |= set(range(op[1], op[2]))
     covered |= {op[1] for op in postops if op[0] == "poke"}
     missing = set(range(n_coeffs)) - covered
     # Loop-free programs start from fill(n, 0), so unwritten slots are
@@ -441,6 +524,12 @@ def scalar_src(node, kvar=None):
             return "p2"
         if node.id == "pi":
             return "pi"
+        if node.id == "__prev__":
+            return "prev"
+        if node.id == "__scan_k__":
+            return "k"
+        if node.id == "__tos0__":
+            return "tos[0]"
         if node.id == kvar:
             raise SkipFunction("loop var escaped to scalar context")
         raise SkipFunction(f"unsupported name {node.id!r}")
@@ -452,6 +541,11 @@ def scalar_src(node, kvar=None):
     if isinstance(node, ast.Attribute) and node.attr in ("real", "imag"):
         return f"{node.attr}({scalar_src(node.value, kvar)})"
     if isinstance(node, ast.Call):
+        red = _reduction_call_name(node)
+        if red and len(node.args) == 1:
+            if _contains_vector_shape(node.args[0]):
+                raise SkipFunction("reduction outside a poke statement")
+            return scalar_src(node.args[0], kvar)  # sum/prod of a scalar
         name = _call_name(node)
         if name and len(node.args) == 1 and not node.keywords:
             return f"{name}({scalar_src(node.args[0], kvar)})"
@@ -481,12 +575,85 @@ def _contains_k(node, kvar):
     return any(isinstance(n, ast.Name) and n.id == kvar for n in ast.walk(node))
 
 
+def _reduction_call_name(node):
+    """np.sum/np.prod call -> 'sum'/'prod', else None."""
+    fn = node.func if isinstance(node, ast.Call) else None
+    if (isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name)
+            and fn.value.id == "np" and fn.attr in ("sum", "prod")):
+        return fn.attr
+    return None
+
+
+class _ExtractReduction(ast.NodeTransformer):
+    """Replace the first vector-shaped np.sum/np.prod call with __tos0__."""
+
+    def __init__(self):
+        self.found = None  # (fname, arg_node)
+
+    def visit_Call(self, node):
+        self.generic_visit(node)
+        red = _reduction_call_name(node)
+        if red and len(node.args) == 1 and _contains_vector_shape(node.args[0]):
+            if self.found is not None:
+                raise SkipFunction("multiple reductions in one statement")
+            self.found = (red, node.args[0])
+            return ast.copy_location(ast.Name(id="__tos0__", ctx=ast.Load()), node)
+        return node
+
+
+def _arange_range_text(node):
+    """np.arange(c[, d]) call -> range(c, d) source text, else None."""
+    fn = node.func if isinstance(node, ast.Call) else None
+    if not (isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name)
+            and fn.value.id == "np" and fn.attr == "arange"):
+        return None
+    cargs = [_const_int(a) for a in node.args]
+    if any(a is None for a in cargs) or len(cargs) not in (1, 2):
+        raise SkipFunction("np.arange args are not integer literals")
+    c, d = (0, cargs[0]) if len(cargs) == 1 else cargs
+    return f"range({c}, {d})"
+
+
+def _cf_slice_text(node):
+    """cf[a:b] read -> poly[a:b] source text, else None."""
+    if not (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)
+            and node.value.id == "cf" and isinstance(node.slice, ast.Slice)):
+        return None
+    bounds = _slice_bounds(node)
+    if bounds is None:
+        raise SkipFunction("cf slice bounds are not integer literals")
+    return f"poly[{bounds[0]}:{bounds[1]}]"
+
+
+def _contains_vector_shape(node):
+    """True when the subtree carries an arange or cf-slice vector."""
+    for n in ast.walk(node):
+        if isinstance(n, ast.Call):
+            fn = n.func
+            if (isinstance(fn, ast.Attribute) and isinstance(fn.value, ast.Name)
+                    and fn.value.id == "np" and fn.attr == "arange"):
+                return True
+        if (isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name)
+                and n.value.id == "cf" and isinstance(n.slice, ast.Slice)):
+            return True
+    return False
+
+
 def vec_src(node, kvar, k_range):
-    """Emit call-form vector expression for a k-dependent subtree."""
-    lo, hi = k_range
-    if isinstance(node, ast.Name) and node.id == kvar:
+    """Emit call-form vector expression for a k-dependent subtree.
+
+    kvar may be None for standalone vector expressions (arange / cf-slice
+    based), e.g. reduction arguments."""
+    text = _arange_range_text(node) if isinstance(node, ast.Call) else None
+    if text is not None:
+        return text
+    text = _cf_slice_text(node)
+    if text is not None:
+        return text
+    if kvar is not None and isinstance(node, ast.Name) and node.id == kvar:
+        lo, hi = k_range
         return f"range({lo}, {hi})"
-    if not _contains_k(node, kvar):
+    if not _contains_k(node, kvar) and not _contains_vector_shape(node):
         return scalar_src(node, kvar)
     if isinstance(node, ast.Call):
         name = _call_name(node)
@@ -509,6 +676,12 @@ def vec_src(node, kvar, k_range):
             raise SkipFunction(f"unsupported operator {type(node.op).__name__}")
         return f"{op}({vec_src(node.left, kvar, k_range)}, {vec_src(node.right, kvar, k_range)})"
     raise SkipFunction(f"unsupported vector node {type(node).__name__}")
+
+
+def _contains_k(node, kvar):  # noqa: F811 (kvar may be None for standalone)
+    if kvar is None:
+        return False
+    return any(isinstance(n, ast.Name) and n.id == kvar for n in ast.walk(node))
 
 
 def _split_terms(node):
@@ -626,6 +799,22 @@ def emit_program(name, template, module_src):
             _tag, slot, expr = op
             frag = (ast.get_source_segment(module_src, expr) or "").replace("\n", " ")
             lines.append(f"poly[{slot}] = {scalar_src(expr)}" + (f"   # {frag[:70]}" if frag else ""))
+        elif op[0] == "scan":
+            _tag, a, b, length, k0, init_text, step_text = op
+            lines.append(f"poly[{a}:{b}] = scan({length}, {k0}, {init_text}, {step_text})"
+                         f"   # recurrence over slots {a}..{b - 1}")
+        elif op[0] == "slice_assign":
+            _tag, a, b, value = op
+            frag = (ast.get_source_segment(module_src, value) or "").replace("\n", " ")
+            lines.append(f"poly[{a}:{b}] = {vec_src(value, None, None)}"
+                         + (f"   # {frag[:70]}" if frag else ""))
+        elif op[0] == "reduce_push":
+            _tag, fname, arg = op
+            frag = (ast.get_source_segment(module_src, arg) or "").replace("\n", " ")
+            lines.append(f"{fname}({vec_src(arg, None, None)})"
+                         + (f"   # np.{fname}({frag[:60]})" if frag else ""))
+        elif op[0] == "drop":
+            lines.append("drop")
         else:
             _tag, a, b, opname, expr = op
             mask = _window_mask(a, b, n) or "1"
@@ -694,11 +883,21 @@ def parity_check(compiled, py_fn, n_coeffs):
     worst = 0.0
     worst_row = 0.0
     valid = 0
+    chaotic_slots = 0
+    total_slots = 0
     for r, (p1, p2) in enumerate(PARITY_POINTS):
         p1q = complex(np.float32(p1.real), np.float32(p1.imag))
         p2q = complex(np.float32(p2.real), np.float32(p2.imag))
         with np.errstate(all="ignore"):
             ref = np.asarray(py_fn(p1q, p2q), dtype=np.complex128)
+            # Chaos filter: recompute with the inputs perturbed by one f32
+            # ulp. Slots where the reference itself moves beyond wire
+            # precision have no defined value to match (recurrences like
+            # poly_2 amplify ulp differences to O(1) in their tail); they
+            # are excluded, and the port must match everywhere stable.
+            p1b = complex(float(np.nextafter(np.float32(p1q.real), np.float32(2.0))), p1q.imag)
+            p2b = complex(p2q.real, float(np.nextafter(np.float32(p2q.imag), np.float32(2.0))))
+            ref_b = np.asarray(py_fn(p1b, p2b), dtype=np.complex128)
         if len(ref) != n_coeffs:
             return None, f"python returned {len(ref)} coeffs, expected {n_coeffs}"
         finite = np.isfinite(ref.real) & np.isfinite(ref.imag)
@@ -707,7 +906,14 @@ def parity_check(compiled, py_fn, n_coeffs):
         if not ref.any():
             continue  # except-branch zeros are ambiguous
         got = native[r * n_coeffs:(r + 1) * n_coeffs]
-        rel = max(abs(g - rf) / max(abs(rf), 1.0) for g, rf in zip(got, ref))
+        stable = [abs(rb - rf) / max(abs(rf), 1.0) <= PARITY_REL_TOL
+                  for rb, rf in zip(ref_b, ref)]
+        chaotic_slots += stable.count(False)
+        total_slots += n_coeffs
+        pairs = [(g, rf) for (g, rf), ok in zip(zip(got, ref), stable) if ok]
+        if not pairs:
+            continue
+        rel = max(abs(g - rf) / max(abs(rf), 1.0) for g, rf in pairs)
         # Secondary, row-relative measure: numpy computes integer powers by
         # repeated multiplication while the VM's c_powc goes through exp/log;
         # on ill-conditioned slots (huge power + catastrophic cancellation)
@@ -715,16 +921,23 @@ def parity_check(compiled, py_fn, n_coeffs):
         # deep beneath the row's dynamic range. Score that case against the
         # row maximum instead of the slot.
         row_scale = max(float(np.abs(ref).max()), 1.0)
-        row_rel = max(abs(g - rf) / row_scale for g, rf in zip(got, ref))
+        row_rel = max(abs(g - rf) / row_scale for g, rf in pairs)
         worst = max(worst, rel)
         worst_row = max(worst_row, row_rel)
         valid += 1
     if valid < PARITY_MIN_POINTS:
         return None, f"only {valid} parity points in f32 range"
+    chaotic_frac = (chaotic_slots / total_slots) if total_slots else 0.0
+    # Chaotic slots have no canonical value on either side (numpy's own
+    # answer there changes under 1-ulp input perturbation), so they cannot
+    # gate a port; but a port verified on too few slots is not a port.
+    if chaotic_frac > 0.7:
+        return None, f"{chaotic_frac:.0%} of slots are chaotic (reference moves under 1 ulp)"
+    stats = {"points": valid, "chaotic": chaotic_frac}
     if worst <= PARITY_REL_TOL:
-        return {"worst": worst, "points": valid, "gate": "strict"}, None
+        return {**stats, "worst": worst, "gate": "strict"}, None
     if worst_row <= ROW_REL_TOL:
-        return {"worst": worst_row, "points": valid, "gate": "row-rel"}, None
+        return {**stats, "worst": worst_row, "gate": "row-rel"}, None
     return None, (f"parity failed: rel err {worst:.2e} "
                   f"(row-rel {worst_row:.2e}) over {valid} points")
 

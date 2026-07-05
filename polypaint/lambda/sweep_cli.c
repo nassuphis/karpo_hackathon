@@ -3380,7 +3380,7 @@ done:
 #define COEFF_PROGRAM_MAX_VECTOR_LEN 256
 #define COEFF_PROGRAM_MAX_ARGS 8
 #define COEFF_PROGRAM_MAX_SCALAR_EXPRS 64
-#define COEFF_PROGRAM_MAX_EXPR_NUMS 96
+#define COEFF_PROGRAM_MAX_EXPR_NUMS 192
 #define COEFF_PROGRAM_EXPR_STRIDE 3
 #define COEFF_PROGRAM_MAX_EXPR_TOKENS (COEFF_PROGRAM_MAX_EXPR_NUMS / COEFF_PROGRAM_EXPR_STRIDE)
 /* Treat |Im| below this as real: the compiler emits exact reals, the
@@ -3418,7 +3418,11 @@ enum CoeffProgramOp {
     COEFF_OP_TYPED_POKE_POLY = 27,
     COEFF_OP_TYPED_FILL = 28,
     COEFF_OP_NATIVE_TRANSFORM = 29,
-    COEFF_OP_TYPED_BLEND = 30
+    COEFF_OP_TYPED_BLEND = 30,
+    COEFF_OP_SCAN = 31,
+    COEFF_OP_SLICE_READ = 32,
+    COEFF_OP_SLICE_WRITE = 33,
+    COEFF_OP_REDUCE = 34
 };
 
 enum CoeffStackValueType {
@@ -3505,7 +3509,9 @@ enum CoeffExprOp {
     COEFF_EXPR_SINH = 28,
     COEFF_EXPR_COSH = 29,
     COEFF_EXPR_TANH = 30,
-    COEFF_EXPR_ANGLE = 31
+    COEFF_EXPR_ANGLE = 31,
+    COEFF_EXPR_PREV = 32,
+    COEFF_EXPR_K = 33
 };
 
 typedef struct {
@@ -3590,6 +3596,13 @@ typedef struct {
      * user-visible vector/scalar stack. */
     double expr_temp_re[COEFF_PROGRAM_MAX_EXPR_TOKENS];
     double expr_temp_im[COEFF_PROGRAM_MAX_EXPR_TOKENS];
+
+    /* scan(...) iteration registers, read by COEFF_EXPR_PREV / COEFF_EXPR_K.
+     * Outside a scan evaluation they hold 0 (the compiler rejects prev/k in
+     * any other expression context; a hand-crafted payload just reads 0). */
+    double scan_prev_re;
+    double scan_prev_im;
+    double scan_k;
 } CoeffProgramWorkspace;
 
 typedef struct {
@@ -4074,7 +4087,8 @@ static int coeffRunLoweredExprPlan(const CoeffEvalContext *ctx,
         if (op == COEFF_EXPR_LITERAL || op == COEFF_EXPR_P1 || op == COEFF_EXPR_P2 ||
             op == COEFF_EXPR_T1 || op == COEFF_EXPR_T2 ||
             op == COEFF_EXPR_POLY_LEN || op == COEFF_EXPR_CF_AT ||
-            op == COEFF_EXPR_POLY_AT || op == COEFF_EXPR_TOS_AT) {
+            op == COEFF_EXPR_POLY_AT || op == COEFF_EXPR_TOS_AT ||
+            op == COEFF_EXPR_PREV || op == COEFF_EXPR_K) {
             if (sp >= COEFF_PROGRAM_MAX_EXPR_TOKENS) {
                 fprintf(stderr, "coeff_program lowered expression temp overflow\n");
                 return 1;
@@ -4091,6 +4105,10 @@ static int coeffRunLoweredExprPlan(const CoeffEvalContext *ctx,
                 stackR[sp] = ctx->t2r; stackI[sp] = ctx->t2i;
             } else if (op == COEFF_EXPR_POLY_LEN) {
                 stackR[sp] = (double)ws->poly_len; stackI[sp] = 0.0;
+            } else if (op == COEFF_EXPR_PREV) {
+                stackR[sp] = ws->scan_prev_re; stackI[sp] = ws->scan_prev_im;
+            } else if (op == COEFF_EXPR_K) {
+                stackR[sp] = ws->scan_k; stackI[sp] = 0.0;
             } else {
                 int idx = etok->index;
                 if (op == COEFF_EXPR_CF_AT) {
@@ -4694,6 +4712,12 @@ static int coeffProgramTypedGetScalar(CoeffProgramWorkspace *ws) {
     if (coeff_stack_pop(ws, &indexSlot) != 0) return 1;
     if (coeff_stack_pop(ws, &vectorSlot) != 0) return 1;
     if (coeffProgramTypedIndexFromSlot(ws, indexSlot, "get_scalar", &idx) != 0) return 1;
+    if (ws->stack_type[vectorSlot] == COEFF_STACK_SCALAR) {
+        /* Scalar slot: return the scalar itself, matching the expr-plan
+         * tos reader (reductions leave scalars on the stack). */
+        return coeff_stack_push_scalar(ws, ws->stack_scalar_re[vectorSlot],
+                                       ws->stack_scalar_im[vectorSlot]);
+    }
     if (coeff_stack_require_vector(ws, vectorSlot, "get_scalar") != 0) return 1;
     if (idx < 0 || idx >= ws->stack_len[vectorSlot]) {
         fprintf(stderr, "coeff_program get_scalar index %d out of range for vector length %d\n",
@@ -5284,8 +5308,146 @@ static int coeffProgramTypedPushScalarOp(const CoeffEvalContext *ctx,
 
 static int coeffProgramTypedPushVectorOp(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
     CoeffProgramWorkspace *ws = ctx->ws;
+    /* pop/peek of a SCALAR top re-pushes the scalar: reductions leave
+     * scalars on the stack, and tos[...] reads route through this op. */
+    if (tok->src == COEFF_SEL_POP || tok->src == COEFF_SEL_PEEK) {
+        uint16_t top = 0;
+        if (coeff_stack_peek(ws, &top) == 0 && ws->stack_type[top] == COEFF_STACK_SCALAR) {
+            double vr = ws->stack_scalar_re[top], vi = ws->stack_scalar_im[top];
+            if (tok->src == COEFF_SEL_POP) {
+                uint16_t popped = 0;
+                if (coeff_stack_pop(ws, &popped) != 0) return 1;
+            }
+            return coeff_stack_push_scalar(ws, vr, vi);
+        }
+    }
     if (coeffProgramSourceToScratch(ctx->cfRe, ctx->cfIm, ctx->cfLen, ws, tok) != 0) return 1;
     return coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, ws->scratch_len);
+}
+
+/* scan(len, k0, init, step): bounded recurrence. out[0] = init evaluated at
+ * k = k0; out[j] = step evaluated with prev = out[j-1], k = k0 + j. The init
+ * and step expression refs travel as plain arg values (not expr_refs), so
+ * the eager per-token arg resolver never pre-evaluates them; this op runs
+ * the plans per element with live prev/k. Non-finite elements clamp to 0,
+ * matching the vector op policy. */
+static int coeffProgramScanOp(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
+    CoeffProgramWorkspace *ws = ctx->ws;
+    if (tok->n_args < 4) {
+        fprintf(stderr, "coeff_program scan requires 4 args\n");
+        return 1;
+    }
+    int len = (int)tok->args[0];
+    if (len == -1) len = ws->poly_len; /* poly_len sentinel */
+    if (coeff_program_check_len(len, "scan") != 0) return 1;
+    int k0 = (int)tok->args[1];
+    int init_ref = (int)tok->args[2];
+    int step_ref = (int)tok->args[3];
+    uint16_t frameBase = ws->stack_depth;
+    ws->scan_prev_re = 0.0;
+    ws->scan_prev_im = 0.0;
+    for (int j = 0; j < len; j++) {
+        double vr = 0.0, vi = 0.0;
+        ws->scan_k = (double)(k0 + j);
+        int ref = (j == 0) ? init_ref : step_ref;
+        if (coeffRunLoweredExprPlan(ctx, ref, frameBase, &vr, &vi) != 0) {
+            ws->scan_prev_re = 0.0; ws->scan_prev_im = 0.0; ws->scan_k = 0.0;
+            return 1;
+        }
+        if (!isfinite(vr)) vr = 0.0;
+        if (!isfinite(vi)) vi = 0.0;
+        ws->scratch_re[j] = vr;
+        ws->scratch_im[j] = vi;
+        ws->scan_prev_re = vr;
+        ws->scan_prev_im = vi;
+    }
+    ws->scan_prev_re = 0.0; ws->scan_prev_im = 0.0; ws->scan_k = 0.0;
+    ws->scratch_len = (uint16_t)len;
+    return coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, len);
+}
+
+/* slice(src, a, b): push src[a:b) as a vector. */
+static int coeffProgramSliceReadOp(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
+    CoeffProgramWorkspace *ws = ctx->ws;
+    int a = (int)tok->args[0];
+    int b = (int)tok->args[1];
+    const double *srcRe = NULL, *srcIm = NULL;
+    int srcLen = 0;
+    if (tok->src == COEFF_SEL_CF) {
+        srcRe = ctx->cfRe; srcIm = ctx->cfIm; srcLen = ctx->cfLen;
+    } else if (tok->src == COEFF_SEL_POLY) {
+        srcRe = ws->poly_re; srcIm = ws->poly_im; srcLen = ws->poly_len;
+    } else {
+        fprintf(stderr, "coeff_program slice source must be cf or poly\n");
+        return 1;
+    }
+    if (a < 0 || a >= b || b > srcLen) {
+        fprintf(stderr, "coeff_program slice [%d:%d) out of range for length %d\n", a, b, srcLen);
+        return 1;
+    }
+    int n = b - a;
+    for (int i = 0; i < n; i++) {
+        ws->scratch_re[i] = srcRe[a + i];
+        ws->scratch_im[i] = srcIm[a + i];
+    }
+    ws->scratch_len = (uint16_t)n;
+    return coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, n);
+}
+
+/* poke_slice(a, b): pop a vector of length b-a and write it into poly[a:b). */
+static int coeffProgramSliceWriteOp(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
+    CoeffProgramWorkspace *ws = ctx->ws;
+    int a = (int)tok->args[0];
+    int b = (int)tok->args[1];
+    uint16_t slot = 0;
+    if (coeff_stack_pop(ws, &slot) != 0) return 1;
+    if (coeff_stack_require_vector(ws, slot, "poke_slice") != 0) return 1;
+    if (a < 0 || a >= b || b > ws->poly_len) {
+        fprintf(stderr, "coeff_program poke_slice [%d:%d) out of range for poly length %d\n",
+                a, b, ws->poly_len);
+        return 1;
+    }
+    if (ws->stack_len[slot] != b - a) {
+        fprintf(stderr, "coeff_program poke_slice [%d:%d) needs a vector of length %d, got %d\n",
+                a, b, b - a, ws->stack_len[slot]);
+        return 1;
+    }
+    for (int i = 0; i < b - a; i++) {
+        ws->poly_re[a + i] = ws->stack_re[slot][i];
+        ws->poly_im[a + i] = ws->stack_im[slot][i];
+    }
+    return 0;
+}
+
+/* reduce(sum|prod): pop a vector, push the scalar reduction. Non-finite
+ * results clamp to 0, matching the vector op policy. */
+static int coeffProgramReduceOp(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
+    CoeffProgramWorkspace *ws = ctx->ws;
+    uint16_t slot = 0;
+    if (coeff_stack_pop(ws, &slot) != 0) return 1;
+    if (coeff_stack_require_vector(ws, slot, "reduce") != 0) return 1;
+    int n = ws->stack_len[slot];
+    double rr, ri;
+    if (tok->fn_index == 1) { /* sum */
+        rr = 0.0; ri = 0.0;
+        for (int i = 0; i < n; i++) {
+            rr += ws->stack_re[slot][i];
+            ri += ws->stack_im[slot][i];
+        }
+    } else if (tok->fn_index == 2) { /* prod */
+        rr = 1.0; ri = 0.0;
+        for (int i = 0; i < n; i++) {
+            double tr, ti;
+            c_mul(rr, ri, ws->stack_re[slot][i], ws->stack_im[slot][i], &tr, &ti);
+            rr = tr; ri = ti;
+        }
+    } else {
+        fprintf(stderr, "coeff_program unknown reduce fn %d\n", tok->fn_index);
+        return 1;
+    }
+    if (!isfinite(rr)) rr = 0.0;
+    if (!isfinite(ri)) ri = 0.0;
+    return coeff_stack_push_scalar(ws, rr, ri);
 }
 
 static int evalCoeffProgram(const CoeffProgram *program,
@@ -5359,6 +5521,10 @@ static int evalCoeffProgram(const CoeffProgram *program,
             case COEFF_OP_TYPED_FILL:        rc = coeffProgramTypedFill(ws); break;
             case COEFF_OP_NATIVE_TRANSFORM:  rc = coeffProgramNativeTransformOp(ctx, tok, &resolved, "native transform"); break;
             case COEFF_OP_TYPED_BLEND:       rc = coeffProgramTypedBlend(ws); break;
+            case COEFF_OP_SCAN:              rc = coeffProgramScanOp(ctx, tok); break;
+            case COEFF_OP_SLICE_READ:        rc = coeffProgramSliceReadOp(ctx, tok); break;
+            case COEFF_OP_SLICE_WRITE:       rc = coeffProgramSliceWriteOp(ctx, tok); break;
+            case COEFF_OP_REDUCE:            rc = coeffProgramReduceOp(ctx, tok); break;
             default:
                 fprintf(stderr, "unknown coeff_program opcode: %d\n", tok->op);
                 return 1;

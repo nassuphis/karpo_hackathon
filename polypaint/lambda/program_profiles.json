@@ -64,7 +64,7 @@
         "vector_capable_stack": 64,
         "max_args": 8,
         "scalar_exprs": 64,
-        "expr_tokens": 32,
+        "expr_tokens": 64,
         "legacy_int_arg": 4096
       },
       "symbols": {

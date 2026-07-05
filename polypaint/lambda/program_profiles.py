@@ -47,7 +47,7 @@ PROGRAM_PROFILES = {'profiles': {'coeff': {'output_contract': {'fixed_output_len
                                             'contexts': ['expr_index_base', 'rhs'],
                                             'role': 'stack_top',
                                             'type': 'stack_pseudo'}},
-                        'value_caps': {'expr_tokens': 32,
+                        'value_caps': {'expr_tokens': 64,
                                        'legacy_int_arg': 4096,
                                        'max_args': 8,
                                        'program_tokens': 256,

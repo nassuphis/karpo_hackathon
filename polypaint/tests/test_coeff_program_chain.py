@@ -413,10 +413,13 @@ class TestCoeffProgramChain(unittest.TestCase):
     def test_typed_stack_validator_rejects_type_mismatches(self):
         from coeff_program_chain import compile_coeff_program_chain
 
-        with self.assertRaisesRegex(RuntimeError, "get_scalar.*source is scalar"):
+        # A scalar source is now allowed for get_scalar (reduction results
+        # read back via tos[...]); a scalar INDEX type mismatch still rejects.
+        with self.assertRaisesRegex(RuntimeError, "get_scalar.*index is vector"):
             compile_coeff_program_chain([
                 ["_typed_push_scalar", "1"],
-                ["_typed_push_scalar", "0"],
+                ["push_const", "2", "0"],
+                ["_typed_push_vector", "pop"],
                 ["_typed_get_scalar"],
             ])
 

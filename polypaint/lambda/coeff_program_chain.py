@@ -31,7 +31,7 @@ MAX_VECTOR_LEN = 256
 POLY_LEN_SENTINEL = -1
 MAX_MACRO_DEPTH = 8
 MAX_ARGS = 8
-MAX_SCALAR_EXPR_TOKENS = 32
+MAX_SCALAR_EXPR_TOKENS = 64  # mirrors COEFF_PROGRAM_MAX_EXPR_NUMS/STRIDE in sweep_cli.c
 MAX_SCALAR_EXPRS = 64  # mirrors COEFF_PROGRAM_MAX_SCALAR_EXPRS in sweep_cli.c
 MAX_LEGACY_INT_ARG = 4096  # mirrors COEFF_LEGACY_MAX_INT_ARG (coeffLegacyIntArg) in sweep_cli.c
 _COMPAT_SIGNATURE_WIRE_LAYOUTS = {"complex_lanes", "flat_complex_components", "real_lanes"}
@@ -78,6 +78,10 @@ COEFF_OP_TYPED_POKE_POLY = 27
 COEFF_OP_TYPED_FILL = 28
 COEFF_OP_NATIVE_TRANSFORM = 29
 COEFF_OP_TYPED_BLEND = 30
+COEFF_OP_SCAN = 31
+COEFF_OP_SLICE_READ = 32
+COEFF_OP_SLICE_WRITE = 33
+COEFF_OP_REDUCE = 34
 
 COEFF_SEL_CF = 1
 COEFF_SEL_POLY = 2
@@ -122,6 +126,8 @@ EXPR_SINH = 28
 EXPR_COSH = 29
 EXPR_TANH = 30
 EXPR_ANGLE = 31
+EXPR_PREV = 32
+EXPR_K = 33
 
 _OP_NAMES = {
     COEFF_OP_CONST: "push_const",
@@ -154,6 +160,10 @@ _OP_NAMES = {
     COEFF_OP_TYPED_FILL: "typed_fill",
     COEFF_OP_NATIVE_TRANSFORM: "native_transform",
     COEFF_OP_TYPED_BLEND: "typed_blend",
+    COEFF_OP_SCAN: "scan",
+    COEFF_OP_SLICE_READ: "slice",
+    COEFF_OP_SLICE_WRITE: "poke_slice",
+    COEFF_OP_REDUCE: "reduce",
 }
 
 _SOURCE_SELECTORS = {
@@ -754,10 +764,13 @@ _EXPR_CONSTANTS = {
 
 
 class ExpressionParser:
-    def __init__(self, text):
+    def __init__(self, text, *, allow_scan_idents=False):
         self.text = str(text or "").strip()
         self.tokens = self._tokenize(self.text)
         self.pos = 0
+        # prev/k are meaningful only inside scan(...) expressions; everywhere
+        # else they stay unknown identifiers.
+        self._allow_scan_idents = bool(allow_scan_idents)
 
     @staticmethod
     def _tokenize(text):
@@ -940,6 +953,10 @@ class ExpressionParser:
                 return _Expr([{"op": EXPR_T2}], kind="complex", dynamic=True)
             if token_value == "poly_len":
                 return _Expr([{"op": EXPR_POLY_LEN}], kind="real", dynamic=True)
+            if self._allow_scan_idents and token_value == "prev":
+                return _Expr([{"op": EXPR_PREV}], kind="complex", dynamic=True)
+            if self._allow_scan_idents and token_value == "k":
+                return _Expr([{"op": EXPR_K}], kind="real", dynamic=True)
             if token_value in {"cf", "poly", "tos"} and self._peek()[0] == "[":
                 return self._indexed_reference(token_value)
             match = re.fullmatch(r"(cf|poly|tos)(\d+)", token_value)
@@ -1755,6 +1772,82 @@ def _compile_native_transform_stack_args_chip(args, scalar_exprs):
     return _native_transform_stack_arg_token(str(args[0]).strip().lower(), args[1], args[2], args[3], scalar_exprs, andy_arg)
 
 
+def _register_expr_ref(expr, scalar_exprs):
+    """Register an expression as a side-table ref even when static.
+
+    scan re-evaluates its init/step expressions per element with live
+    prev/k, so they must always travel as plans — never as folded token
+    args (the eager per-token arg resolver would evaluate them once with
+    prev/k defaults).
+    """
+    flat = _flatten_expr(expr)
+    for ref, existing in enumerate(scalar_exprs):
+        if existing == flat:
+            return ref
+    if len(scalar_exprs) >= MAX_SCALAR_EXPRS:
+        raise RuntimeError(
+            f"coeff program has more than {MAX_SCALAR_EXPRS} scalar expressions"
+        )
+    scalar_exprs.append(flat)
+    return len(scalar_exprs) - 1
+
+
+def _compile_scan_chip(args, scalar_exprs):
+    if len(args) != 4:
+        raise RuntimeError("scan chip requires length, k0, init, step")
+    length = _vector_length_arg(args[0], "scan length")
+    k0 = _integer_literal(args[1], "scan k0")
+    init_expr = ExpressionParser(args[2], allow_scan_idents=True).parse()
+    step_expr = ExpressionParser(args[3], allow_scan_idents=True).parse()
+    init_ref = _register_expr_ref(init_expr, scalar_exprs)
+    step_ref = _register_expr_ref(step_expr, scalar_exprs)
+    # Refs ride as plain arg values (expr_refs stay -1): the resolver must
+    # not pre-evaluate them; the scan op runs the plans per element.
+    return _token(COEFF_OP_SCAN, n_args=4,
+                  args=[length, k0, float(init_ref), float(step_ref)])
+
+
+def _slice_bound(value, label):
+    bound = _integer_literal(value, label)
+    if bound < 0 or bound > MAX_VECTOR_LEN:
+        raise RuntimeError(f"{label} must be in [0,{MAX_VECTOR_LEN}], got {value!r}")
+    return bound
+
+
+def _slice_bounds_pair(args, label):
+    a = _slice_bound(args[0], f"{label} start")
+    b = _slice_bound(args[1], f"{label} stop")
+    if a >= b:
+        raise RuntimeError(f"{label} requires start < stop, got [{a}:{b})")
+    return a, b
+
+
+def _compile_slice_read_chip(args, scalar_exprs):
+    if len(args) != 3:
+        raise RuntimeError("slice chip requires source, start, stop")
+    _name, src_val = _selector_value(
+        args[0], {"cf": COEFF_SEL_CF, "poly": COEFF_SEL_POLY}, "slice source")
+    a, b = _slice_bounds_pair(args[1:], "slice")
+    return _token(COEFF_OP_SLICE_READ, src=src_val, n_args=2, args=[a, b])
+
+
+def _compile_slice_write_chip(args, scalar_exprs):
+    if len(args) != 2:
+        raise RuntimeError("poke_slice chip requires start and stop")
+    a, b = _slice_bounds_pair(args, "poke_slice")
+    return _token(COEFF_OP_SLICE_WRITE, n_args=2, args=[a, b])
+
+
+REDUCE_OPS = {"sum": 1, "prod": 2}
+_REDUCE_NAMES = {v: k for k, v in REDUCE_OPS.items()}
+
+
+def _compile_reduce_chip(args, scalar_exprs):
+    if len(args) != 1 or str(args[0]).strip().lower() not in REDUCE_OPS:
+        raise RuntimeError("reduce chip requires one of: " + ", ".join(sorted(REDUCE_OPS)))
+    return _token(COEFF_OP_REDUCE, fn_index=REDUCE_OPS[str(args[0]).strip().lower()])
+
+
 def _compile_legacy_chip(args, scalar_exprs):
     if len(args) < 3:
         raise RuntimeError("legacy chip requires name, src, tgt, and optional args")
@@ -1804,6 +1897,10 @@ _CHIP_COMPILERS = {
     "_typed_binary": lambda args, sx: _compile_typed_binary(args),
     "_typed_unary": lambda args, sx: _compile_typed_unary(args),
     "_native_transform": _compile_native_transform_chip,
+    "scan": _compile_scan_chip,
+    "slice": _compile_slice_read_chip,
+    "poke_slice": _compile_slice_write_chip,
+    "reduce": _compile_reduce_chip,
     "_native_transform_stack_args": _compile_native_transform_stack_args_chip,
     "littlewood": _compile_littlewood,
     "legacy": _compile_legacy_chip,
@@ -1956,11 +2053,28 @@ def _validate_stack(tokens):
             spec = legacy_registry()["by_index"].get(int(token.get("fn_index") or 0))
             if spec and spec.get("length_policy") == "may_change":
                 diagnostics.append({"level": "info", "message": f"{spec['name']} may change vector length"})
+        elif op == COEFF_OP_SCAN:
+            types.append("vector")
+        elif op == COEFF_OP_SLICE_READ:
+            types.append("vector")
+        elif op == COEFF_OP_SLICE_WRITE:
+            need_vector_pop(idx, "poke_slice")
+        elif op == COEFF_OP_REDUCE:
+            need_vector_pop(idx, "reduce")
+            types.append("scalar")
         elif op == COEFF_OP_TYPED_PUSH_SCALAR:
             types.append("scalar")
         elif op == COEFF_OP_TYPED_PUSH_VECTOR:
-            vector_source(int(token.get("src") or 0), idx, "typed vector source")
-            types.append("vector")
+            src_sel = int(token.get("src") or 0)
+            if src_sel in {COEFF_SEL_POP, COEFF_SEL_PEEK} and types and types[-1] == "scalar":
+                # pop/peek of a scalar top re-pushes the scalar (reduction
+                # results); peek leaves the depth unchanged.
+                if src_sel == COEFF_SEL_POP:
+                    types.pop()
+                types.append("scalar")
+            else:
+                vector_source(src_sel, idx, "typed vector source")
+                types.append("vector")
         elif op == COEFF_OP_TYPED_BINARY:
             if depth() < 2:
                 raise RuntimeError(f"typed binary at token {idx}: stack depth is {before} (need >=2)")
@@ -1977,8 +2091,8 @@ def _validate_stack(tokens):
             vector_type = types.pop()
             if index_type != "scalar":
                 raise RuntimeError(f"get_scalar at token {idx}: index is {index_type} (need scalar)")
-            if vector_type != "vector":
-                raise RuntimeError(f"get_scalar at token {idx}: source is {vector_type} (need vector)")
+            # A scalar source is allowed: reductions leave scalars on the
+            # stack and tos[...] reads them back (the VM returns the scalar).
             types.append("scalar")
         elif op == COEFF_OP_TYPED_SET_POLY:
             if depth() < 1:
@@ -2088,6 +2202,20 @@ def _execution_spec(tokens, scalar_exprs):
             fields.append(_VECTOR_UNARY_NAMES.get(int(token.get("fn_index") or 0), str(token.get("fn_index") or 0)))
         elif op in {COEFF_OP_TYPED_GET_SCALAR, COEFF_OP_TYPED_SET_POLY, COEFF_OP_TYPED_POKE_POLY, COEFF_OP_TYPED_FILL, COEFF_OP_TYPED_BLEND}:
             pass
+        elif op == COEFF_OP_SCAN:
+            args = token.get("args") or [0, 0, -1, -1]
+            fields.append(_format_length_arg(args[0]))
+            fields.append(_format_number(args[1]))
+            fields.append(f"expr{int(args[2])}")
+            fields.append(f"expr{int(args[3])}")
+        elif op == COEFF_OP_SLICE_READ:
+            args = token.get("args") or [0, 0]
+            fields.extend([sel("src"), _format_number(args[0]), _format_number(args[1])])
+        elif op == COEFF_OP_SLICE_WRITE:
+            args = token.get("args") or [0, 0]
+            fields.extend([_format_number(args[0]), _format_number(args[1])])
+        elif op == COEFF_OP_REDUCE:
+            fields.append(_REDUCE_NAMES.get(int(token.get("fn_index") or 0), str(token.get("fn_index") or 0)))
         elif op == COEFF_OP_PUSH:
             fields.append(sel("src"))
         elif op == COEFF_OP_BLEND:

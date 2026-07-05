@@ -1101,6 +1101,79 @@ window._coeffRegistryVocab = {
         "internal": true
       },
       {
+        "name": "scan",
+        "op_symbol": "COEFF_OP_SCAN",
+        "op": 31,
+        "args": [
+          {
+            "name": "length",
+            "type": "int_literal"
+          },
+          {
+            "name": "k0",
+            "type": "int_literal"
+          },
+          {
+            "name": "init",
+            "type": "complex_expr"
+          },
+          {
+            "name": "step",
+            "type": "complex_expr"
+          }
+        ]
+      },
+      {
+        "name": "slice",
+        "op_symbol": "COEFF_OP_SLICE_READ",
+        "op": 32,
+        "args": [
+          {
+            "name": "source",
+            "type": "selector",
+            "slot": "push_src"
+          },
+          {
+            "name": "start",
+            "type": "int_literal"
+          },
+          {
+            "name": "stop",
+            "type": "int_literal"
+          }
+        ]
+      },
+      {
+        "name": "poke_slice",
+        "op_symbol": "COEFF_OP_SLICE_WRITE",
+        "op": 33,
+        "args": [
+          {
+            "name": "start",
+            "type": "int_literal"
+          },
+          {
+            "name": "stop",
+            "type": "int_literal"
+          }
+        ]
+      },
+      {
+        "name": "reduce",
+        "op_symbol": "COEFF_OP_REDUCE",
+        "op": 34,
+        "args": [
+          {
+            "name": "fn",
+            "type": "enum",
+            "values": [
+              "sum",
+              "prod"
+            ]
+          }
+        ]
+      },
+      {
         "name": "macro",
         "op_symbol": null,
         "op": null,
@@ -1298,7 +1371,7 @@ window._coeffRegistryVocab = {
           "vector_capable_stack": 64,
           "max_args": 8,
           "scalar_exprs": 64,
-          "expr_tokens": 32,
+          "expr_tokens": 64,
           "legacy_int_arg": 4096
         },
         "symbols": {

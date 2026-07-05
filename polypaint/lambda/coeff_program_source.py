@@ -886,6 +886,13 @@ def _lower_call(name, args, *, target="push"):
         )
     if name in legacy_registry()["by_name"]:
         return _lower_native_transform_call(name, args, target=target)
+    if name == "push":
+        # explicit form of the bare `cf` / `poly` push statements (param has
+        # the same call form; the coeff Starter advertised it unimplemented)
+        if len(args) != 1 or str(args[0] or "").strip().lower() not in _PUSH_SOURCE_NAMES:
+            raise CoeffProgramSourceError(
+                "push(source) source must be one of " + ", ".join(sorted(_PUSH_SOURCE_NAMES)))
+        return [["push", str(args[0]).strip().lower()]]
     if name == "scan":
         chain, value_type = _typed_lower_scan(args)
         return _append_typed_target(chain, value_type, target=target)

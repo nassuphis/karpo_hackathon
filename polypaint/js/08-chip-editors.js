@@ -2183,16 +2183,24 @@ function _solveScoreCheatSectionHtml(title, buttons) {
     return `<div class="solve-score-cheat-section"><div class="solve-score-cheat-title">${_escapeHtml(title)}</div><div class="solve-score-cheat-buttons">${buttons.join('')}</div></div>`;
 }
 
+// Static snippet tables (gated: tests compile every snippet).
+const _solveScoreFallbackStarters = [
+    { label: 'score = proximity', snippet: 'score = metric(proximity, slv, q=0.1%)' },
+    { label: 'emit_norm proximity', snippet: 'emit_norm(metric(proximity, slv, q=0.1%))' },
+    { label: 'two channels', snippet: 'emit_norm(metric(proximity, slv, q=0.1%))\nemit_norm(metric(spread, slv, q=0.1%))' },
+];
+const _solveScoreLanguageSnippets = [
+    { label: 'x1 = expr', snippet: 'x1 = metric(proximity, slv, q=0.1%)\nscore = (x1 + 1) * 0.5', title: 'Local alias: write-once, substituted at compile time.' },
+    { label: 'infix + - * /', snippet: 'x1 = metric(proximity, slv, q=0.1%)\nx2 = metric(area, slv, q=1%)\nscore = x1 + x2 * 2', title: 'Infix arithmetic lowers to add/subtract/mul/ratio with standard precedence.' },
+];
+
 function _renderSolveScoreCheatsheet(prefix) {
     const p = _editorPrefix(prefix);
     const el = document.getElementById(`${p}-ss-cheatsheet`);
     if (!el) return;
     const metrics = _solveScoreMetricNames.slice();
-    const starters = (_solveScoreStarterSnippets.length ? _solveScoreStarterSnippets : [
-        { label: 'score = proximity', snippet: 'score = metric(proximity, slv, q=0.1%)' },
-        { label: 'emit_norm proximity', snippet: 'emit_norm(metric(proximity, slv, q=0.1%))' },
-        { label: 'two channels', snippet: 'emit_norm(metric(proximity, slv, q=0.1%))\nemit_norm(metric(spread, slv, q=0.1%))' },
-    ]).map(item => _solveScoreCheatButtonHtml(p, item.label, item.snippet));
+    const starters = (_solveScoreStarterSnippets.length ? _solveScoreStarterSnippets : _solveScoreFallbackStarters)
+        .map(item => _solveScoreCheatButtonHtml(p, item.label, item.snippet));
     const metricButtons = metrics.map(name => {
         const choices = _solveScoreMetricAllowedSources(name).join('/');
         return _solveScoreCheatButtonHtml(p, name, _solveScoreMetricSnippet(name), choices ? `${choices}; q=0.1%` : '');
@@ -2210,14 +2218,8 @@ function _renderSolveScoreCheatsheet(prefix) {
     const combineButtons = Object.keys(_solveScoreCombineSpecs).map(name => (
         _solveScoreCheatButtonHtml(p, name, _solveScoreCombineSnippet(name, _solveScoreCombineSpecs[name]), (_solveScoreCombineSpecs[name] || {}).tooltip || '')
     ));
-    const languageButtons = [
-        _solveScoreCheatButtonHtml(p, 'x1 = expr',
-            'x1 = metric(proximity, slv, q=0.1%)\nscore = (x1 + 1) * 0.5',
-            'Local alias: write-once, substituted at compile time.'),
-        _solveScoreCheatButtonHtml(p, 'infix + - * /',
-            'x1 = metric(proximity, slv, q=0.1%)\nx2 = metric(area, slv, q=1%)\nscore = x1 + x2 * 2',
-            'Infix arithmetic lowers to add/subtract/mul/ratio with standard precedence.'),
-    ];
+    const languageButtons = _solveScoreLanguageSnippets.map(item =>
+        _solveScoreCheatButtonHtml(p, item.label, item.snippet, item.title || ''));
     el.innerHTML = [
         _solveScoreCheatSectionHtml('Language', languageButtons),
         _solveScoreCheatSectionHtml('Starters', starters),

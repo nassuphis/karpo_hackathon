@@ -14,6 +14,14 @@ else
     TEST_PYTHON=(python3)
 fi
 
+# Native-suite freshness: several gated tests execute lambda/sweep_test,
+# which is untracked and otherwise only rebuilt by deploy.sh — a predeploy
+# run after C changes but before a deploy would test a stale binary.
+if [ ! -x lambda/sweep_test ] || [ lambda/sweep_cli.c -nt lambda/sweep_test ]; then
+    echo "Rebuilding lambda/sweep_test (sweep_cli.c is newer)..."
+    cc -O2 -pthread -o lambda/sweep_test lambda/sweep_cli.c -lm
+fi
+
 echo "Running predeploy contract gate..."
 "${TEST_PYTHON[@]}" api_manifest.py --check
 "${TEST_PYTHON[@]}" deploy_manifest.py --check
@@ -47,6 +55,7 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_program_source_core.py \
     tests/test_source_locals_and_infix.py \
     tests/test_coeff_vm_property_fuzz.py \
+    tests/test_program_starter_snippets.py \
     tests/test_program_profiles_drift.py \
     tests/test_program_v2_migration.py \
     tests/test_saved_program_source_precedence.py \

@@ -3451,7 +3451,13 @@ enum CoeffVectorBinaryOp {
     COEFF_VEC_SUBTRACT = 2,
     COEFF_VEC_MULTIPLY = 3,
     COEFF_VEC_DIVIDE = 4,
-    COEFF_VEC_POWER = 5
+    COEFF_VEC_POWER = 5,
+    COEFF_VEC_GE = 6,
+    COEFF_VEC_GT = 7,
+    COEFF_VEC_LE = 8,
+    COEFF_VEC_LT = 9,
+    COEFF_VEC_EQ = 10,
+    COEFF_VEC_REM = 11
 };
 
 enum CoeffVectorUnaryOp {
@@ -4470,6 +4476,21 @@ static int coeffProgramApplyBinaryFn(int fnIndex,
         c_div_full(ar, ai, br, bi, rr, ri);
     } else if (fnIndex == COEFF_VEC_POWER) {
         c_powc(ar, ai, br, bi, rr, ri);
+    } else if (fnIndex == COEFF_VEC_GE || fnIndex == COEFF_VEC_GT ||
+               fnIndex == COEFF_VEC_LE || fnIndex == COEFF_VEC_LT ||
+               fnIndex == COEFF_VEC_EQ) {
+        /* Comparisons on real parts (complex is unordered); exact 0/1. */
+        int truth = 0;
+        if (fnIndex == COEFF_VEC_GE) truth = ar >= br;
+        else if (fnIndex == COEFF_VEC_GT) truth = ar > br;
+        else if (fnIndex == COEFF_VEC_LE) truth = ar <= br;
+        else if (fnIndex == COEFF_VEC_LT) truth = ar < br;
+        else truth = (ar == br) && (ai == bi);
+        *rr = truth ? 1.0 : 0.0; *ri = 0.0;
+    } else if (fnIndex == COEFF_VEC_REM) {
+        /* fmod on real parts; matches numpy % for the integer-valued
+         * reals the per-k conditionals use. */
+        *rr = (br != 0.0) ? fmod(ar, br) : 0.0; *ri = 0.0;
     } else {
         fprintf(stderr, "coeff_program unknown vector binary op: %d\n", fnIndex);
         return 1;

@@ -770,6 +770,36 @@ window._coeffRegistryVocab = {
             "source_aliases": [
               "pow"
             ]
+          },
+          {
+            "name": "ge",
+            "symbol": "COEFF_VEC_GE",
+            "value": 6
+          },
+          {
+            "name": "gt",
+            "symbol": "COEFF_VEC_GT",
+            "value": 7
+          },
+          {
+            "name": "le",
+            "symbol": "COEFF_VEC_LE",
+            "value": 8
+          },
+          {
+            "name": "lt",
+            "symbol": "COEFF_VEC_LT",
+            "value": 9
+          },
+          {
+            "name": "eq",
+            "symbol": "COEFF_VEC_EQ",
+            "value": 10
+          },
+          {
+            "name": "rem",
+            "symbol": "COEFF_VEC_REM",
+            "value": 11
           }
         ]
       },

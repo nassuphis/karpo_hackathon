@@ -578,6 +578,14 @@ def _typed_lower_value(text):
                 raise CoeffProgramSourceError("window requires window(start, stop)")
             return _typed_lower_value(
                 f"subtract({_step_mask_text(args[0])}, {_step_mask_text(args[1])})")
+        if name == "select":
+            if len(args) != 3:
+                raise CoeffProgramSourceError("select requires select(cond, a, b)")
+            c, a, b = args
+            # cond is an exact 0/1 mask; masked-out garbage is safe because
+            # non-finite products clamp to 0.
+            return _typed_lower_value(
+                f"add(multiply({c}, {a}), multiply(subtract(1, {c}), {b}))")
     return _typed_lower_scalar(raw), "scalar"
 
 
@@ -871,6 +879,13 @@ def _lower_call(name, args, *, target="push"):
         chain, value_type = _typed_lower_value(
             f"subtract({_step_mask_text(args[0])}, {_step_mask_text(args[1])})")
         return _append_typed_target(chain, value_type, target=target)
+    if name == "select":
+        if len(args) != 3:
+            raise CoeffProgramSourceError("select requires select(cond, a, b)")
+        c, a, b = args
+        chain, value_type = _typed_lower_value(
+            f"add(multiply({c}, {a}), multiply(subtract(1, {c}), {b}))")
+        return _append_typed_target(chain, value_type, target=target)
     raise CoeffProgramSourceError(f"unknown coeff program source function {name!r}", code="unknown_function")
 
 
@@ -949,7 +964,7 @@ _LOCALS_RESERVED_EXTRA = frozenset({
     "range", "arange", "linspace",
     "roll", "rolr", "argsort", "littlewood", "blend", "andy",
     "scan", "slice", "poke_slice", "reduce", "sum", "prod",
-    "window", "step", "prev", "k",
+    "window", "step", "prev", "k", "select",
     "pi", "pi2", "pi2i", "tau", "tau_i",
     "p1", "p2", "t1", "t2", "poly_len",
 })

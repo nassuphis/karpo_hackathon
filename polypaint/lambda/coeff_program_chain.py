@@ -285,6 +285,14 @@ VECTOR_BINARY_OPS = {
     "multiply": 3,
     "divide": 4,
     "power": 5,
+    # Comparisons operate on real parts (complex numbers are unordered)
+    # and return exact 1.0/0.0; rem is fmod on real parts. All additive.
+    "ge": 6,
+    "gt": 7,
+    "le": 8,
+    "lt": 9,
+    "eq": 10,
+    "rem": 11,
 }
 
 VECTOR_UNARY_OPS = {

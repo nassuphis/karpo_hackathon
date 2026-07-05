@@ -1061,6 +1061,7 @@ _initExtractPalettePopup();
 _initPdfColorSpreadPopup();
 _initSolveScoreProgramModal();
 _initParamProgramModal();
+_initRootProgramModal();
 _initCoeffProgramModal();
 _updateSolveScoreButtons();  // initial disabled state
 _syncPaletteColorInterpretationUi();

@@ -1246,6 +1246,35 @@ function _bindProgramModalFilterSort(prefix, state, render) {
     if (savedHdr) savedHdr.addEventListener('click', () => toggle('saved'));
 }
 
+function _initRootProgramModal() {
+    _bindPopupShell({
+        overlayId: 'root-program-modal-overlay',
+        closeId: 'root-program-modal-close',
+        isOpen: () => !!_rootProgramModalState.open,
+        onClose: _closeRootProgramModal,
+        onEnter: () => {
+            if (!_rootProgramModalState.open || _rootProgramModalState.actionBusy) return;
+            if (_rootProgramModalState.selectedId && !_rootProgramModalState.selectedLoading) {
+                void _loadSelectedRootProgramFromModal();
+            }
+        },
+    });
+    _bindProgramModalFilterSort('root-program-modal', _rootProgramModalState, _renderRootProgramModal);
+    const nameEl = document.getElementById('root-program-modal-name');
+    if (nameEl) {
+        nameEl.addEventListener('input', (ev) => {
+            _rootProgramModalState.nameInput = String(ev.target && ev.target.value || '');
+            _renderRootProgramModal();
+        });
+    }
+    const loadBtn = document.getElementById('root-program-modal-load');
+    const saveBtn = document.getElementById('root-program-modal-save');
+    const deleteBtn = document.getElementById('root-program-modal-delete');
+    if (loadBtn) loadBtn.addEventListener('click', () => { void _loadSelectedRootProgramFromModal(); });
+    if (saveBtn) saveBtn.addEventListener('click', () => { void _saveRootProgramFromModal(); });
+    if (deleteBtn) deleteBtn.addEventListener('click', () => { void _deleteSelectedRootProgram(); });
+}
+
 function _initParamProgramModal() {
     _bindProgramModalFilterSort('param-program-modal', _paramProgramModalState, _renderParamProgramModal);
     const nameEl = document.getElementById('param-program-modal-name');

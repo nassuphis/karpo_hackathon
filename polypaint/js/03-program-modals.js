@@ -1423,3 +1423,193 @@ async function _importCoeffProgramFileFromModal(file) {
 
 
 ;(window.__ppParts = window.__ppParts || []).push('03-program-modals');
+
+// ── Root Programs modal (shared by the render and palette root editors) ──
+let _rootProgramModalState = {
+    open: false,
+    target: 'render',          // which editor invoked it: 'render' | 'palette'
+    tableState: 'idle',
+    rows: [],
+    selectedId: '',
+    selectedProgram: null,
+    selectedLoading: false,
+    actionBusy: false,
+    status: '',
+    statusError: false,
+    nameInput: '',
+    lastSelectedName: '',
+    filterText: '',
+    sortKey: 'name',
+    sortDir: 1,
+};
+
+function _setRootProgramModalStatus(message, isError) {
+    _rootProgramModalState.status = String(message || '');
+    _rootProgramModalState.statusError = !!isError;
+}
+
+function _rootProgramSourceText(target) {
+    const el = document.getElementById(`${target}-rt-source-text`);
+    return el ? String(el.value || '') : '';
+}
+
+function _renderRootProgramModal() {
+    const overlay = document.getElementById('root-program-modal-overlay');
+    if (!overlay) return;
+    overlay.classList.toggle('visible', !!_rootProgramModalState.open);
+    overlay.setAttribute('aria-hidden', _rootProgramModalState.open ? 'false' : 'true');
+    if (!_rootProgramModalState.open) return;
+    const summaryEl = document.getElementById('root-program-modal-summary');
+    if (summaryEl) summaryEl.textContent = `Target: ${_rootProgramModalState.target} root transforms`;
+    const statusEl = document.getElementById('root-program-modal-status');
+    if (statusEl) {
+        statusEl.textContent = _rootProgramModalState.status;
+        statusEl.className = `solve-score-program-status${_rootProgramModalState.statusError ? ' error' : ''}`;
+    }
+    const selectedEl = document.getElementById('root-program-modal-selected');
+    if (selectedEl) {
+        const program = _rootProgramModalState.selectedProgram;
+        if (_rootProgramModalState.selectedLoading) selectedEl.textContent = 'Loading...';
+        else if (program) selectedEl.textContent = program.source_text || program.display || '';
+        else selectedEl.textContent = 'Select a saved program to inspect before loading.';
+    }
+    const nameEl = document.getElementById('root-program-modal-name');
+    if (nameEl && nameEl.value !== _rootProgramModalState.nameInput) nameEl.value = _rootProgramModalState.nameInput;
+    const canLoad = _rootProgramModalState.tableState === 'loaded' && !!_rootProgramModalState.selectedId
+        && !_rootProgramModalState.selectedLoading && !_rootProgramModalState.actionBusy;
+    const canSave = !_rootProgramModalState.actionBusy
+        && !!String(_rootProgramModalState.nameInput || '').trim()
+        && !!_rootProgramSourceText(_rootProgramModalState.target).trim();
+    [['load', canLoad], ['delete', canLoad], ['save', canSave]].forEach(([id, enabled]) => {
+        const btn = document.getElementById(`root-program-modal-${id}`);
+        if (btn) btn.disabled = !enabled;
+    });
+    const bodyEl = document.getElementById('root-program-modal-body');
+    if (!bodyEl) return;
+    const rows = Array.isArray(_rootProgramModalState.rows) ? _rootProgramModalState.rows : [];
+    if (_rootProgramModalState.tableState === 'loading') {
+        bodyEl.innerHTML = '<tr class="tri-popup-empty"><td colspan="3">Loading saved programs...</td></tr>';
+        return;
+    }
+    if (_rootProgramModalState.tableState === 'error') {
+        bodyEl.innerHTML = `<tr class="tri-popup-empty"><td colspan="3">${_escapeHtml(_rootProgramModalState.status || 'Failed to load saved programs.')}</td></tr>`;
+        return;
+    }
+    const visible = _programModalVisibleRows(_rootProgramModalState);
+    _programModalSortArrows(_rootProgramModalState, 'root-program-modal');
+    if (!rows.length) {
+        bodyEl.innerHTML = '<tr class="tri-popup-empty"><td colspan="3">No saved root programs found.</td></tr>';
+        return;
+    }
+    if (!visible.length) {
+        bodyEl.innerHTML = '<tr class="tri-popup-empty"><td colspan="3">No programs match the filter.</td></tr>';
+        return;
+    }
+    bodyEl.innerHTML = visible.map(row => {
+        const active = row.id === _rootProgramModalState.selectedId ? ' active' : '';
+        return `<tr class="tri-popup-row${active}" data-root-program-id="${_escapeHtml(row.id)}"><td><div class="tri-popup-name"><div>${_escapeHtml(row.name)}</div></div></td><td>${Number(row.statement_count || 0)}</td><td>${_escapeHtml(row.saved_at || '')}</td></tr>`;
+    }).join('');
+    Array.from(bodyEl.querySelectorAll('[data-root-program-id]')).forEach(rowEl => {
+        rowEl.addEventListener('click', () => {
+            const id = rowEl.getAttribute('data-root-program-id') || '';
+            if (id) void _selectRootProgram(id);
+        });
+    });
+}
+
+async function _refreshRootProgramRows() {
+    _rootProgramModalState.tableState = 'loading';
+    _renderRootProgramModal();
+    try {
+        const resp = await lambdaPost('storage', {}, '/list-root-programs');
+        _rootProgramModalState.rows = Array.isArray(resp.programs) ? resp.programs : [];
+        _rootProgramModalState.tableState = 'loaded';
+    } catch (e) {
+        _rootProgramModalState.rows = [];
+        _rootProgramModalState.tableState = 'error';
+        _setRootProgramModalStatus(e && e.message ? e.message : String(e), true);
+    }
+    _renderRootProgramModal();
+}
+
+async function _selectRootProgram(id) {
+    const row = (_rootProgramModalState.rows || []).find(entry => entry.id === id);
+    if (!row) return;
+    const currentName = String(_rootProgramModalState.nameInput || '').trim();
+    if (!currentName || currentName === _rootProgramModalState.lastSelectedName) _rootProgramModalState.nameInput = row.name;
+    _rootProgramModalState.lastSelectedName = row.name;
+    _rootProgramModalState.selectedId = id;
+    _rootProgramModalState.selectedProgram = null;
+    _rootProgramModalState.selectedLoading = true;
+    _renderRootProgramModal();
+    try {
+        const resp = await lambdaPost('storage', { id }, '/fetch-root-program');
+        if (_rootProgramModalState.selectedId !== id) return;
+        _rootProgramModalState.selectedProgram = resp.program || null;
+    } catch (e) {
+        if (_rootProgramModalState.selectedId === id) _setRootProgramModalStatus(e && e.message ? e.message : String(e), true);
+    }
+    _rootProgramModalState.selectedLoading = false;
+    _renderRootProgramModal();
+}
+
+async function _loadSelectedRootProgramFromModal() {
+    const program = _rootProgramModalState.selectedProgram;
+    if (!program || !program.source_text) return;
+    const target = _rootProgramModalState.target;
+    const el = document.getElementById(`${target}-rt-source-text`);
+    if (!el) return;
+    el.value = String(program.source_text || '');
+    _onRootProgramSourceInput(target);
+    _setRootProgramModalStatus(`Loaded ${program.name || program.id} into ${target}`, false);
+    _renderRootProgramModal();
+}
+
+async function _saveRootProgramFromModal() {
+    const name = String(_rootProgramModalState.nameInput || '').trim();
+    const source_text = _rootProgramSourceText(_rootProgramModalState.target);
+    if (!name || !source_text.trim()) return;
+    _rootProgramModalState.actionBusy = true;
+    _renderRootProgramModal();
+    try {
+        const resp = await lambdaPost('storage', { name, source_text }, '/save-root-program');
+        _setRootProgramModalStatus(`Saved ${resp.program && resp.program.name ? resp.program.name : name}${resp.overwritten ? ' (overwrote)' : ''}`, false);
+        await _refreshRootProgramRows();
+    } catch (e) {
+        _setRootProgramModalStatus(e && e.message ? e.message : String(e), true);
+    }
+    _rootProgramModalState.actionBusy = false;
+    _renderRootProgramModal();
+}
+
+async function _deleteSelectedRootProgram() {
+    const id = _rootProgramModalState.selectedId;
+    if (!id) return;
+    _rootProgramModalState.actionBusy = true;
+    _renderRootProgramModal();
+    try {
+        await lambdaPost('storage', { id }, '/delete-root-program');
+        _rootProgramModalState.selectedId = '';
+        _rootProgramModalState.selectedProgram = null;
+        _setRootProgramModalStatus(`Deleted ${id}`, false);
+        await _refreshRootProgramRows();
+    } catch (e) {
+        _setRootProgramModalStatus(e && e.message ? e.message : String(e), true);
+    }
+    _rootProgramModalState.actionBusy = false;
+    _renderRootProgramModal();
+}
+
+function _closeRootProgramModal() {
+    _rootProgramModalState.open = false;
+    _renderRootProgramModal();
+}
+
+function openRootProgramModal(target) {
+    _rootProgramModalState.open = true;
+    _rootProgramModalState.target = target === 'palette' ? 'palette' : 'render';
+    _rootProgramModalState.actionBusy = false;
+    _setRootProgramModalStatus('', false);
+    _renderRootProgramModal();
+    void _refreshRootProgramRows();
+}

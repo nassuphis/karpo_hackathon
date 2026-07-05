@@ -45,3 +45,92 @@ class TestRootProgramStorage(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRootProgramPersistence(unittest.TestCase):
+    """Save/list/fetch/delete lifecycle with a mocked S3."""
+
+    def setUp(self):
+        import handler_storage
+        from unittest import mock
+
+        self.hs = handler_storage
+        self.store = {}
+        self.meta = {}
+
+        def put_object(Bucket, Key, Body, ContentType=None, Metadata=None):
+            self.store[Key] = Body
+            self.meta[Key] = Metadata or {}
+            return {}
+
+        def get_object(Bucket, Key):
+            if Key not in self.store:
+                raise self.hs.s3.exceptions.NoSuchKey({"Error": {"Code": "NoSuchKey"}}, "GetObject") \
+                    if hasattr(self.hs.s3, "exceptions") else KeyError(Key)
+            import io
+            return {"Body": io.BytesIO(self.store[Key])}
+
+        def head_object(Bucket, Key):
+            if Key not in self.store:
+                raise KeyError(Key)
+            return {"Metadata": self.meta.get(Key, {})}
+
+        def delete_object(Bucket, Key):
+            self.store.pop(Key, None)
+            self.meta.pop(Key, None)
+            return {}
+
+        class _Paginator:
+            def __init__(self, store):
+                self._store = store
+
+            def paginate(self, Bucket, Prefix):
+                yield {"Contents": [{"Key": k} for k in sorted(self._store) if k.startswith(Prefix)]}
+
+        self.patches = [
+            mock.patch.object(self.hs.s3, "put_object", side_effect=put_object),
+            mock.patch.object(self.hs.s3, "get_object", side_effect=get_object),
+            mock.patch.object(self.hs.s3, "head_object", side_effect=head_object),
+            mock.patch.object(self.hs.s3, "delete_object", side_effect=delete_object),
+            mock.patch.object(self.hs.s3, "get_paginator", return_value=_Paginator(self.store)),
+        ]
+        for p in self.patches:
+            p.start()
+        self.addCleanup(lambda: [p.stop() for p in self.patches])
+
+    def _call(self, path, body):
+        resp = self.hs.handler(_event(path, body), None)
+        self.assertEqual(resp["statusCode"], 200, resp)
+        return json.loads(resp["body"])
+
+    def test_save_list_fetch_delete_roundtrip(self):
+        src = "rotate_roots(0.25)\npull_unit_circle()"
+        saved = self._call("/save-root-program", {"name": "spin v1", "source_text": src})
+        program = saved["program"]
+        self.assertEqual(program["id"], "spin-v1")
+        self.assertEqual(program["program_kind"], "root_program")
+        self.assertEqual(program["source_text"], src)
+        self.assertTrue(program["fingerprint"].startswith("sha256:"))
+        self.assertFalse(saved["overwritten"])
+        # exact key + metadata contract
+        key = "polypaint/root-programs/spin-v1.json"
+        self.assertIn(key, self.store)
+        self.assertEqual(self.meta[key]["root_program_name"], "spin v1")
+        self.assertEqual(self.meta[key]["root_program_statement_count"], "2")
+
+        listed = self._call("/list-root-programs", {})
+        self.assertEqual([row["id"] for row in listed["programs"]], ["spin-v1"])
+        self.assertEqual(listed["programs"][0]["statement_count"], 2)
+
+        fetched = self._call("/fetch-root-program", {"id": "spin-v1"})
+        self.assertEqual(fetched["program"]["source_text"], src)
+        self.assertEqual(fetched["program"]["fingerprint"], program["fingerprint"])
+
+        deleted = self._call("/delete-root-program", {"id": "spin-v1"})
+        self.assertEqual(deleted["deleted"], [key])
+        self.assertEqual(self._call("/list-root-programs", {})["programs"], [])
+
+    def test_save_rejects_invalid_source(self):
+        resp = self.hs.handler(
+            _event("/save-root-program", {"name": "bad", "source_text": "unknown_fn(1)"}), None)
+        self.assertGreaterEqual(resp["statusCode"], 400)

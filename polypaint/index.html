@@ -2020,7 +2020,9 @@ button {
                     <div id="render-solve-score-program-status" class="solve-score-program-status"></div>
                 </div>
                 <div class="color-box" style="grid-column:1 / -1">
-                    <div class="color-title">Root Transforms</div>
+                    <div class="color-title">Root Transforms
+                        <button type="button" class="btn-secondary btn-inline" id="render-root-program-manage" onclick="openRootProgramModal('render')">Root Programs...</button>
+                    </div>
                     <div class="solve-score-program-note">Text-first root-geometry program applied to solved roots at render time. Static real arguments, up to 16 statements.</div>
                     <div id="render-rt-text-panel" class="coeff-program-editor-panel active">
                         <div class="program-source-grid">
@@ -2114,7 +2116,9 @@ button {
                 <div id="palette-solve-score-program-status" class="solve-score-program-status"></div>
             </div>
             <div class="color-box" style="margin-top:8px">
-                <div class="color-title">Root Transforms</div>
+                <div class="color-title">Root Transforms
+                    <button type="button" class="btn-secondary btn-inline" id="palette-root-program-manage" onclick="openRootProgramModal('palette')">Root Programs...</button>
+                </div>
                 <div class="solve-score-program-note">Text-first root-geometry program applied during palette generation. Static real arguments, up to 16 statements.</div>
                 <div id="palette-rt-text-panel" class="coeff-program-editor-panel active">
                     <div class="program-source-grid">
@@ -2423,6 +2427,50 @@ button {
             </div>
         </div>
         <input id="param-program-modal-upload-file" type="file" accept="application/json,.json" style="display:none">
+    </div>
+</div>
+<div id="root-program-modal-overlay" class="tri-popup-overlay" aria-hidden="true">
+    <div class="tri-popup solve-score-modal-popup" role="dialog" aria-modal="true" aria-labelledby="root-program-modal-title">
+        <div class="tri-popup-header">
+            <div id="root-program-modal-title" class="tri-popup-title">Root Programs</div>
+            <button id="root-program-modal-close" type="button" class="tri-popup-close">Close</button>
+        </div>
+        <div id="root-program-modal-summary" class="autolevel-popup-summary"></div>
+        <div class="solve-score-modal-body">
+            <div class="solve-score-modal-pane">
+                <div class="solve-score-modal-pane-title">Saved Programs</div>
+                <input id="root-program-modal-filter" type="text" class="coeff-program-modal-filter"
+                       placeholder="Filter by name (regex ok)" autocomplete="off">
+                <div class="solve-score-modal-table-wrap">
+                    <table class="tri-popup-table">
+                        <thead>
+                            <tr>
+                                <th id="root-program-modal-sort-name" class="coeff-program-modal-sort" title="Sort by name (natural order)">Name</th>
+                                <th>Statements</th>
+                                <th id="root-program-modal-sort-saved" class="coeff-program-modal-sort" title="Sort by saved time">Saved</th>
+                            </tr>
+                        </thead>
+                        <tbody id="root-program-modal-body"></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="solve-score-modal-right">
+                <div class="solve-score-modal-name-row">
+                    <div class="solve-score-modal-pane-title">Program Name</div>
+                    <input id="root-program-modal-name" type="text" maxlength="120" placeholder="root-program">
+                </div>
+                <div class="solve-score-modal-program-section">
+                    <div class="solve-score-modal-pane-title">Selected Program</div>
+                    <div id="root-program-modal-selected" class="solve-score-modal-display"></div>
+                </div>
+                <div id="root-program-modal-status" class="solve-score-program-status"></div>
+                <div class="solve-score-modal-actions">
+                    <button id="root-program-modal-load" type="button" class="btn-primary" style="padding:6px 12px">Load</button>
+                    <button id="root-program-modal-save" type="button" class="btn-secondary" style="padding:6px 12px">Save Current</button>
+                    <button id="root-program-modal-delete" type="button" class="btn-secondary" style="padding:6px 12px">Delete</button>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 <div id="coeff-program-modal-overlay" class="tri-popup-overlay" aria-hidden="true">

@@ -140,6 +140,12 @@ MAX_PARAM_PROGRAM_NAME_LEN = 120
 MAX_PARAM_PROGRAM_STATEMENTS = 256
 MAX_PARAM_PROGRAM_CHAIN_BYTES = 24 * 1024
 MAX_PARAM_PROGRAM_TOKEN_LEN = 256
+ROOT_PROGRAMS_PREFIX = "polypaint/root-programs/"
+ROOT_PROGRAM_VERSION = 1
+ROOT_PROGRAM_META_NAME = "root_program_name"
+ROOT_PROGRAM_META_STATEMENT_COUNT = "root_program_statement_count"
+ROOT_PROGRAM_META_SAVED_AT = "root_program_saved_at"
+MAX_ROOT_PROGRAM_NAME_LEN = 120
 COEFF_PROGRAMS_PREFIX = "polypaint/coeff-programs/"
 COEFF_PROGRAM_META_NAME = "coeff_program_name"
 COEFF_PROGRAM_META_STATEMENT_COUNT = "coeff_program_statement_count"
@@ -1344,6 +1350,14 @@ def handler(event, context):
         return _handle_storage_route(handle_solve_score_chain_to_source, event)
     elif path.endswith("/compile-root-program-source"):
         return _handle_storage_route(handle_compile_root_program_source, event)
+    elif path.endswith("/save-root-program"):
+        return _handle_storage_route(handle_save_root_program, event)
+    elif path.endswith("/list-root-programs"):
+        return _handle_storage_route(handle_list_root_programs, event)
+    elif path.endswith("/fetch-root-program"):
+        return _handle_storage_route(handle_fetch_root_program, event)
+    elif path.endswith("/delete-root-program"):
+        return _handle_storage_route(handle_delete_root_program, event)
     elif path.endswith("/list-param-programs"):
         return _handle_storage_route(handle_list_param_programs, event)
     elif path.endswith("/fetch-param-program"):
@@ -1858,6 +1872,157 @@ def handle_save_coeff_program(event):
     )
     _drop_stale_program_v2_key(_coeff_program_v2_key(program["id"]))
     return ok_response({"program": program, "overwritten": overwritten})
+
+
+class _RootProgramNotFound(Exception):
+    pass
+
+
+def _root_program_key(program_id):
+    return f"{ROOT_PROGRAMS_PREFIX}{_normalize_program_id(program_id)}.json"
+
+
+def _validate_root_program_name(name):
+    text = str(name or "").strip()
+    if not text:
+        raise ValueError("root program name is required")
+    if len(text) > MAX_ROOT_PROGRAM_NAME_LEN:
+        raise ValueError(f"root program name must be at most {MAX_ROOT_PROGRAM_NAME_LEN} characters")
+    return text
+
+
+def _compile_root_program_payload(name, *, source_text, saved_at=None, program_id=None):
+    """Saved root programs are source-first: the payload persists the source
+    text plus the compiled artifacts (chain rows, fingerprint, execution
+    spec), and the load path recompiles from source_text like the other
+    program kinds."""
+    validated_name = _validate_root_program_name(name)
+    source_text = str(source_text or "")
+    compiled = compile_root_program_source(source_text, strict=True)
+    program_id_text = str(program_id or _slugify_coeff_program_id(validated_name)).strip()
+    saved_at_text = _utc_now_iso() if saved_at is None else str(saved_at or "").strip()
+    return {
+        "version": ROOT_PROGRAM_VERSION,
+        "program_kind": "root_program",
+        "id": program_id_text,
+        "name": validated_name,
+        "source_text": source_text,
+        "chain": compiled.get("chain") or [],
+        "root_transforms": compiled.get("root_transforms") or [],
+        "fingerprint": compiled.get("fingerprint") or "",
+        "execution_spec": compiled.get("execution_spec") or "",
+        "display": compiled.get("display") or "",
+        "statement_count": int(compiled.get("statement_count") or 0),
+        "spec_version": compiled.get("spec_version"),
+        "saved_at": saved_at_text,
+    }
+
+
+def _root_program_put_metadata(program):
+    return {
+        ROOT_PROGRAM_META_NAME: str(program.get("name") or ""),
+        ROOT_PROGRAM_META_STATEMENT_COUNT: str(int(program.get("statement_count") or 0)),
+        ROOT_PROGRAM_META_SAVED_AT: str(program.get("saved_at") or ""),
+    }
+
+
+def _read_root_program_object(program_id):
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=_root_program_key(program_id))
+    except Exception as exc:
+        if _is_missing_s3_error(exc):
+            raise _RootProgramNotFound(f"root program not found: {program_id}")
+        raise
+    raw = obj["Body"].read()
+    try:
+        payload = json.loads(raw) if raw else {}
+    except Exception as exc:
+        raise RuntimeError(f"saved root program is not valid JSON: {program_id}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"saved root program must be a JSON object: {program_id}")
+    return _compile_root_program_payload(
+        payload.get("name"),
+        source_text=str(payload.get("source_text") or ""),
+        saved_at=payload.get("saved_at"),
+        program_id=program_id,
+    )
+
+
+def _root_program_summary_from_head(program_id):
+    resp = s3.head_object(Bucket=BUCKET, Key=_root_program_key(program_id))
+    meta = resp.get("Metadata") or {}
+    name = str(meta.get(ROOT_PROGRAM_META_NAME) or "").strip()
+    saved_at = str(meta.get(ROOT_PROGRAM_META_SAVED_AT) or "").strip()
+    count_raw = str(meta.get(ROOT_PROGRAM_META_STATEMENT_COUNT) or "").strip()
+    if not name or not saved_at or not count_raw:
+        raise RuntimeError(f"root program summary metadata missing for {program_id}")
+    return {
+        "id": str(program_id),
+        "name": name,
+        "statement_count": int(count_raw),
+        "saved_at": saved_at,
+    }
+
+
+def handle_save_root_program(event):
+    params = parse_body(event)
+    program = _compile_root_program_payload(
+        params.get("name"),
+        source_text=str(params.get("source_text") or ""),
+    )
+    key = _root_program_key(program["id"])
+    overwritten = _key_exists(key)
+    s3.put_object(
+        Bucket=BUCKET,
+        Key=key,
+        Body=(json.dumps(program, indent=2) + "\n").encode("utf-8"),
+        ContentType="application/json",
+        Metadata=_root_program_put_metadata(program),
+    )
+    return ok_response({"program": program, "overwritten": overwritten})
+
+
+def handle_list_root_programs(event):
+    parse_body(event)
+    programs = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=BUCKET, Prefix=ROOT_PROGRAMS_PREFIX):
+        for obj in page.get("Contents", []):
+            key = obj.get("Key", "")
+            if not key.endswith(".json") or key.endswith("/"):
+                continue
+            program_id = key[len(ROOT_PROGRAMS_PREFIX):-5]
+            if not program_id or "/" in program_id:
+                continue
+            try:
+                programs.append(_root_program_summary_from_head(program_id))
+            except Exception:
+                try:
+                    programs.append(_read_root_program_object(program_id))
+                except Exception:
+                    continue
+    programs.sort(key=lambda p: str(p.get("name") or ""))
+    return ok_response({"programs": programs})
+
+
+def handle_fetch_root_program(event):
+    params = parse_body(event)
+    program_id = str(params.get("id") or "").strip()
+    if not program_id:
+        raise ValueError("root program fetch requires id")
+    return ok_response({"program": _read_root_program_object(program_id)})
+
+
+def handle_delete_root_program(event):
+    params = parse_body(event)
+    program_id = str(params.get("id") or "").strip()
+    if not program_id:
+        raise ValueError("root program delete requires id")
+    key = _root_program_key(program_id)
+    if not _key_exists(key):
+        raise _RootProgramNotFound(f"root program not found: {program_id}")
+    s3.delete_object(Bucket=BUCKET, Key=key)
+    return ok_response({"id": program_id, "deleted": [key]})
 
 
 def handle_compile_coeff_program_source(event):

@@ -387,3 +387,78 @@ test.describe('Scrub pad', () => {
     expect(await page.evaluate(() => !!document.getElementById('program-scrub-view'))).toBe(false);
   });
 });
+
+test.describe('Scrub pad 2D (complex literals)', () => {
+  test('dblclick a complex literal opens the 2D pad; drag writes both parts', async ({ page }) => {
+    const opened = await openPadOnCoeffLiteral(page, 'poly[0] = 1.5+0.3i\nemit', '1.5');
+    expect(opened.padVisible).toBe(true);
+    await expect(page.locator('#program-scrub-surface')).toHaveClass(/program-scrub-surface-2d/);
+    await expect(page.locator('#program-scrub-value')).toHaveText('1.5+0.3i');
+
+    const after = await page.evaluate(() => {
+      const surface = document.getElementById('program-scrub-surface');
+      const rect = surface.getBoundingClientRect();
+      // window is value ± span (span = max(1, |re|, |im|) = 1.5):
+      // top-right corner = (re + span, im + span) = 3+1.8i
+      _scrubPadDragStart({ clientX: rect.right, clientY: rect.top, preventDefault() {} });
+      document.dispatchEvent(new PointerEvent('pointerup'));
+      return {
+        text: document.getElementById('cp-source-text').value,
+        state: { re: _scrubPadState.re, im: _scrubPadState.im },
+      };
+    });
+    expect(after.text).toContain('3+1.8i');
+    expect(after.state.re).toBeCloseTo(3, 6);
+    expect(after.state.im).toBeCloseTo(1.8, 6);
+
+    // squiggle continues: second point mid-left = (re - span, im center)
+    const second = await page.evaluate(() => {
+      const surface = document.getElementById('program-scrub-surface');
+      const rect = surface.getBoundingClientRect();
+      _scrubPadDragStart({ clientX: rect.left, clientY: rect.top + rect.height / 2, preventDefault() {} });
+      document.dispatchEvent(new PointerEvent('pointerup'));
+      return document.getElementById('cp-source-text').value;
+    });
+    expect(second).toContain('0+0.3i');
+
+    // Escape reverts the whole squiggle to the original literal
+    await page.keyboard.press('Escape');
+    const reverted = await page.evaluate(() => document.getElementById('cp-source-text').value);
+    expect(reverted).toContain('1.5+0.3i');
+  });
+
+  test('pure-imaginary literals get the 2D pad; plain reals keep the 1D pad', async ({ page }) => {
+    await openPadOnCoeffLiteral(page, 'poly[0] = 2i\nemit', '2i');
+    await expect(page.locator('#program-scrub-surface')).toHaveClass(/program-scrub-surface-2d/);
+    await expect(page.locator('#program-scrub-value')).toHaveText('2i');
+
+    await openPadOnCoeffLiteral(page, 'poly = linear(poly, 2, 3)\nemit', '2,');
+    const cls = await page.getAttribute('#program-scrub-surface', 'class');
+    expect(cls).not.toContain('program-scrub-surface-2d');
+  });
+
+  test('the pad header drags the popup and the position sticks', async ({ page }) => {
+    await openPadOnCoeffLiteral(page, 'poly[0] = 1.5+0.3i\nemit', '1.5');
+    const moved = await page.evaluate(() => {
+      const el = document.getElementById('program-scrub-pad');
+      const head = el.querySelector('.program-scrub-head');
+      const rect = el.getBoundingClientRect();
+      _scrubPadHeadDragStart({ clientX: rect.left + 20, clientY: rect.top + 5, preventDefault() {}, target: head });
+      document.dispatchEvent(new PointerEvent('pointermove', { clientX: rect.left + 220, clientY: rect.top + 105 }));
+      document.dispatchEvent(new PointerEvent('pointerup'));
+      return { left: el.style.left, top: el.style.top };
+    });
+    expect(parseInt(moved.left, 10)).toBeGreaterThan(150);
+    expect(parseInt(moved.top, 10)).toBeGreaterThan(90);
+
+    // reopening prefers the dragged position
+    const reopened = await page.evaluate(() => {
+      _closeProgramScrubPad();
+      const ta = document.getElementById('cp-source-text');
+      ta.selectionStart = ta.selectionEnd = ta.value.indexOf('1.5') + 1;
+      _onProgramSourceDblClick('cp', { clientX: 10, clientY: 10 });
+      return document.getElementById('program-scrub-pad').style.left;
+    });
+    expect(parseInt(reopened, 10)).toBeGreaterThan(150);
+  });
+});

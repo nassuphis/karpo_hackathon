@@ -2113,12 +2113,19 @@ async function main() {
     scrubCtx.globalThis = scrubCtx;
     vm.createContext(scrubCtx);
     const scrubSrc = [
-      'let _scrubPadState = null; let _scrubPadHandlersBound = false;',
+      'let _scrubPadState = null; let _scrubPadLastPos = null; let _scrubPadHandlersBound = false;',
       'let _scrubPreviewTimer = null; let _scrubPreviewInFlight = false; let _scrubPreviewDirty = false;',
       "const _scrubPadPreviewByKey = { pp: { label: 'live compute preview', run: () => runComputePreview() }, cp: { label: 'live compute preview', run: () => runComputePreview() }, rt: { label: 'live render lores preview', run: () => runRenderLoresPreview(), loresViews: true }, 'render-ss': { label: 'live render lores preview', run: () => runRenderLoresPreview(), loresViews: true } };",
       "const _scrubPadLoresViews = [['plot', 'Plot'], ['palette', 'Palette'], ['e1', 'E1'], ['e2', 'E2'], ['e3', 'E3']];",
+      "const _SCRUB_NUM = String.raw`(\\d+\\.?\\d*|\\.\\d+)`;",
+      'const _SCRUB_IMAG_RE = new RegExp(`^-?${_SCRUB_NUM}i$`);',
       extractFunction('_programTokenSpanAtCursor'),
       extractFunction('_programNumberSpanAtCursor'),
+      extractFunction('_programComplexSpanAtCursor'),
+      extractFunction('_parseComplexLiteral'),
+      extractFunction('_scrubFormatComplex'),
+      extractFunction('_scrubPadWriteComplex'),
+      extractFunction('_scrubPadSetSpan'),
       extractFunction('_programMetricSpanAtCursor'),
       extractFunction('_scrubPadWriteText'),
       extractFunction('_scrubPadMetricDescription'),
@@ -2213,6 +2220,45 @@ async function main() {
     // Metric detection is scoped: same token in a non-ss editor is not a target.
     vm.runInContext("(function(){ globalThis._metricSpanCp = _programMetricSpanAtCursor('cp', globalThis._ta); })()", scrubCtx);
     assert(vm.runInContext('_metricSpanCp', scrubCtx) === null, 'metric scrub targets exist only in the solve-score editors');
+    // ── 2D complex scrub ──
+    {
+      const mk = (text, pos) => ({ value: text, selectionStart: pos, selectionEnd: pos,
+        setSelectionRange() {}, addEventListener() {}, removeEventListener() {} });
+      const cases = [
+        ['poly[0] = 1.5+0.3i', 12, '1.5+0.3i', 1.5, 0.3],   // cursor on real part
+        ['poly[0] = 1.5+0.3i', 16, '1.5+0.3i', 1.5, 0.3],   // cursor on imag part
+        ['poly[0] = 1.5 - 0.3i', 12, '1.5 - 0.3i', 1.5, -0.3], // spaces + minus
+        ['poly[0] = 2i', 12, '2i', 0, 2],                    // pure imaginary
+        ['multiply(x, -1.5+2i)', 15, '-1.5+2i', -1.5, 2],    // leading minus after delimiter
+      ];
+      for (const [text, pos, raw, re, im] of cases) {
+        scrubCtx._ta = mk(text, pos);
+        const c = vm.runInContext('_programComplexSpanAtCursor(globalThis._ta)', scrubCtx);
+        assert(c && c.raw === raw && Math.abs(c.re - re) < 1e-12 && Math.abs(c.im - im) < 1e-12,
+          `complex span ${JSON.stringify(text)}@${pos} should parse ${raw} (${re},${im}), got ` + JSON.stringify(c));
+      }
+      // plain reals and binary minus stay OUT of complex mode
+      scrubCtx._ta = mk('poly[0] = 1.5 + 2', 12);
+      assert(vm.runInContext('_programComplexSpanAtCursor(globalThis._ta)', scrubCtx) === null,
+        'a real +real pair without i must not become a complex span');
+      scrubCtx._ta = mk('poly[0] = t1-5i', 14);
+      const t1c = vm.runInContext('_programComplexSpanAtCursor(globalThis._ta)', scrubCtx);
+      assert(t1c && t1c.raw === '-5i' === false ? true : (t1c.raw !== 't1-5i'),
+        't1-5i must not swallow the identifier into the literal');
+      // 2D open + write round-trip
+      scrubCtx._ta = mk('poly[0] = 1.5+0.3i', 12);
+      vm.runInContext("_openProgramScrubPad('cp', _programComplexSpanAtCursor(globalThis._ta), globalThis._ta, { clientX: 50, clientY: 50 }, 'complex')", scrubCtx);
+      let st = vm.runInContext('_state()', scrubCtx);
+      assert(st && st.mode === 'complex' && st.re === 1.5 && st.im === 0.3 && st.span >= 1.5,
+        '2D pad state should carry re/im and a square span');
+      vm.runInContext('_scrubPadWriteComplex(2.25, -0.125)', scrubCtx);
+      assert(scrubCtx._ta.value === 'poly[0] = 2.25-0.125i',
+        '2D write should splice the formatted complex literal, got ' + scrubCtx._ta.value);
+      st = vm.runInContext('_state()', scrubCtx);
+      assert(st.re === 2.25 && st.im === -0.125, '2D write should update state re/im');
+      vm.runInContext('_revert()', scrubCtx);
+      assert(scrubCtx._ta.value === 'poly[0] = 1.5+0.3i', 'Escape must revert the complex literal');
+    }
     console.log('Frontend scrub pad runtime checks: OK');
   }
 

@@ -1246,8 +1246,9 @@ function _openProgramHelpInspector(which, token, item, event) {
     el.style.display = 'block';
     if (typeof el.setAttribute === 'function') el.setAttribute('aria-hidden', 'false');
     const raw = event || {};
-    const x = Number(raw.clientX || 0) || 12;
-    const y = Number(raw.clientY || 0) || 12;
+    const pinned = _scrubPadLastPos;
+    const x = pinned ? pinned.x : (Number(raw.clientX || 0) || 12);
+    const y = pinned ? pinned.y - 14 : (Number(raw.clientY || 0) || 12);
     el.style.left = `${Math.max(8, x)}px`;
     el.style.top = `${Math.max(8, y)}px`;
     const rect = typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : { width: 320, height: 220 };
@@ -1278,6 +1279,7 @@ function _closeProgramHelpInspector() {
    NEVER wire this to the full pipeline (compute submit, render
    generate, palette create): far too slow to drive from a drag. */
 let _scrubPadState = null;
+let _scrubPadLastPos = null;
 let _scrubPadHandlersBound = false;
 let _scrubPreviewTimer = null;
 let _scrubPreviewInFlight = false;
@@ -1332,6 +1334,92 @@ function _programNumberSpanAtCursor(textarea) {
     return { raw, start, end, value: num };
 }
 
+const _SCRUB_NUM = String.raw`(\d+\.?\d*|\.\d+)`;
+const _SCRUB_IMAG_RE = new RegExp(`^-?${_SCRUB_NUM}i$`);
+
+function _programComplexSpanAtCursor(textarea) {
+    // Complex literals scrub in 2D. Shapes: A+Bi / A-Bi (cursor on either
+    // part) and pure-imaginary Bi. Plain reals stay on the 1D pad.
+    const span = _programTokenSpanAtCursor(textarea);
+    if (!span) return null;
+    const value = String(textarea.value || '');
+    let { start, end } = span;
+    let raw = span.raw;
+    const numRe = new RegExp(`^-?${_SCRUB_NUM}$`);
+    const leadMinus = (s) => {
+        // same delimiter rule as the 1D matcher: t1-5 keeps its binary minus
+        if (s > 0 && value[s - 1] === '-' && !/[A-Za-z0-9_).\]]/.test(s >= 2 ? value[s - 2] : '')) return s - 1;
+        return s;
+    };
+    if (_SCRUB_IMAG_RE.test(raw)) {
+        // cursor on the imaginary part: widen left over [+-] to a real part
+        let s = start;
+        let realStart = -1;
+        let sep = '';
+        let probe = s;
+        while (probe > 0 && value[probe - 1] === ' ') probe--;
+        if (probe > 0 && (value[probe - 1] === '+' || value[probe - 1] === '-')) {
+            sep = value[probe - 1];
+            let q = probe - 1;
+            while (q > 0 && value[q - 1] === ' ') q--;
+            let p = q;
+            while (p > 0 && /[0-9.]/.test(value[p - 1])) p--;
+            const realRaw = value.slice(p, q);
+            if (numRe.test(realRaw) && !/[A-Za-z0-9_).\]]/.test(p > 0 ? value[p - 1] : '')) {
+                realStart = leadMinus(p);
+            }
+        }
+        if (realStart >= 0) {
+            const wide = value.slice(realStart, end);
+            const parsed = _parseComplexLiteral(wide);
+            if (parsed) return { raw: wide, start: realStart, end, re: parsed.re, im: parsed.im };
+        }
+        const s2 = leadMinus(start);
+        const alone = value.slice(s2, end);
+        const parsed = _parseComplexLiteral(alone);
+        if (parsed) return { raw: alone, start: s2, end, re: parsed.re, im: parsed.im };
+        return null;
+    }
+    if (!numRe.test(raw)) return null;
+    // cursor on a real number: widen right over [+-] to an imaginary part
+    let probe = end;
+    while (probe < value.length && value[probe] === ' ') probe++;
+    if (probe < value.length && (value[probe] === '+' || value[probe] === '-')) {
+        let q = probe + 1;
+        while (q < value.length && value[q] === ' ') q++;
+        let p = q;
+        while (p < value.length && /[0-9.]/.test(value[p])) p++;
+        if (p < value.length && value[p] === 'i' && !/[A-Za-z0-9_]/.test(value[p + 1] || '')) {
+            const s2 = leadMinus(start);
+            const wide = value.slice(s2, p + 1);
+            const parsed = _parseComplexLiteral(wide);
+            if (parsed) return { raw: wide, start: s2, end: p + 1, re: parsed.re, im: parsed.im };
+        }
+    }
+    return null;
+}
+
+function _parseComplexLiteral(text) {
+    const m = String(text || '').replace(/ /g, '').match(
+        new RegExp(`^(-?${_SCRUB_NUM})([+-]${_SCRUB_NUM})?i?$`));
+    if (!m) return null;
+    if (String(text).slice(-1) !== 'i') return null;
+    if (m[3] !== undefined) {
+        const re = Number(m[1]);
+        const im = Number(m[3].replace(/^([+-])/, '$1'));
+        if (!Number.isFinite(re) || !Number.isFinite(im)) return null;
+        return { re, im };
+    }
+    const im = Number(m[1]);
+    return Number.isFinite(im) ? { re: 0, im } : null;
+}
+
+function _scrubFormatComplex(re, im) {
+    const rePart = _scrubFormatNumber(re);
+    const imMag = _scrubFormatNumber(Math.abs(im));
+    return `${rePart}${im < 0 ? '-' : '+'}${imMag}i`;
+}
+
 function _programMetricSpanAtCursor(which, textarea) {
     // Discrete scrub targets: solve-score metric names in the ss editors.
     if (which !== 'render-ss' && which !== 'palette-ss') return null;
@@ -1384,6 +1472,14 @@ function _scrubPadNudge(direction, big) {
         }
         return;
     }
+    if (st.mode === 'complex') {
+        const step = 2 * st.span * (big ? 0.10 : 0.01);
+        // direction carries the axis: {dx, dy} from the keydown handler
+        const dx = (direction && direction.dx) || 0;
+        const dy = (direction && direction.dy) || 0;
+        _scrubPadWriteComplex(st.re + dx * step, st.im + dy * step);
+        return;
+    }
     const step = (st.max - st.min) * (big ? 0.10 : 0.01);
     const next = Math.min(st.max, Math.max(st.min, st.value + direction * step));
     _scrubPadWrite(next);
@@ -1394,14 +1490,18 @@ function _ensureProgramScrubPadHandlers() {
     document.addEventListener('keydown', event => {
         if (!event || !_scrubPadState) return;
         if (event.key === 'Escape') { _revertProgramScrubPad(); return; }
-        if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+        const arrows = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
+        if (arrows[event.key]) {
             // Arrows nudge while the pad is open (typing closes it anyway);
             // leave them alone inside the pad's own range fields.
             const target = event.target;
             const targetId = target && target.id;
-            if (targetId === 'program-scrub-min' || targetId === 'program-scrub-max') return;
+            if (targetId === 'program-scrub-min' || targetId === 'program-scrub-max' || targetId === 'program-scrub-span') return;
+            const [dx, dy] = arrows[event.key];
+            if (_scrubPadState.mode !== 'complex' && dx === 0) return;
             if (typeof event.preventDefault === 'function') event.preventDefault();
-            _scrubPadNudge(event.key === 'ArrowRight' ? 1 : -1, !!event.shiftKey);
+            if (_scrubPadState.mode === 'complex') _scrubPadNudge({ dx, dy }, !!event.shiftKey);
+            else _scrubPadNudge(dx, !!event.shiftKey);
         }
     });
     document.addEventListener('mousedown', event => {
@@ -1451,6 +1551,15 @@ function _openProgramScrubPad(which, span, textarea, event, mode = 'number') {
     if (mode === 'choice') {
         st.choices = _solveScoreMetricNames.slice();
         st.index = st.choices.indexOf(span.raw);
+    } else if (mode === 'complex') {
+        // one square window centered on the original value: squiggles stay
+        // proportionate in both axes
+        const spread = Math.max(1, Math.abs(span.re), Math.abs(span.im));
+        st.re = span.re;
+        st.im = span.im;
+        st.reCenter = span.re;
+        st.imCenter = span.im;
+        st.span = spread;
     } else {
         const spread = Math.max(1, Math.abs(span.value));
         st.value = span.value;
@@ -1472,23 +1581,33 @@ function _openProgramScrubPad(which, span, textarea, event, mode = 'number') {
         ).join('');
         viewRow = `<label class="program-scrub-row">view <select id="program-scrub-view" onchange="_scrubPadSetView(this.value)">${options}</select></label>`;
     }
-    const modeRows = mode === 'choice'
-        ? `<div class="program-scrub-row"><span id="program-scrub-pos"></span></div>
-        <div id="program-scrub-desc" class="program-scrub-desc"></div>`
-        : `<div class="program-scrub-row">
+    let modeRows;
+    let hint;
+    if (mode === 'choice') {
+        modeRows = `<div class="program-scrub-row"><span id="program-scrub-pos"></span></div>
+        <div id="program-scrub-desc" class="program-scrub-desc"></div>`;
+        hint = 'drag or &larr;/&rarr; to step metrics (Shift &times;5) &middot; Esc reverts &middot; any other edit closes';
+    } else if (mode === 'complex') {
+        modeRows = `<div class="program-scrub-row">
+            &plusmn; <input type="text" id="program-scrub-span" onchange="_scrubPadSetSpan()" title="Half-width of the window, both axes, centered on the original value">
+        </div>`;
+        hint = 'drag: x = re, y = im &middot; arrows nudge (Shift bigger) &middot; Esc reverts &middot; any other edit closes';
+    } else {
+        modeRows = `<div class="program-scrub-row">
             min <input type="text" id="program-scrub-min" onchange="_scrubPadSetRange()">
             max <input type="text" id="program-scrub-max" onchange="_scrubPadSetRange()">
         </div>`;
-    const hint = mode === 'choice'
-        ? 'drag or &larr;/&rarr; to step metrics (Shift &times;5) &middot; Esc reverts &middot; any other edit closes'
-        : 'drag to scrub &middot; &larr;/&rarr; nudge (Shift bigger) &middot; Esc reverts &middot; any other edit closes';
+        hint = 'drag to scrub &middot; &larr;/&rarr; nudge (Shift bigger) &middot; Esc reverts &middot; any other edit closes';
+    }
+    const title = mode === 'choice' ? 'Metric' : (mode === 'complex' ? 'Scrub 2D' : 'Scrub');
+    const surfaceClass = mode === 'complex' ? 'program-scrub-surface program-scrub-surface-2d' : 'program-scrub-surface';
     el.innerHTML = `
-        <div class="program-scrub-head">
-            <span class="program-scrub-title">${mode === 'choice' ? 'Metric' : 'Scrub'}</span>
+        <div class="program-scrub-head" onpointerdown="_scrubPadHeadDragStart(event)" title="Drag to move">
+            <span class="program-scrub-title">${title}</span>
             <span id="program-scrub-value" class="program-scrub-value"></span>
             <button type="button" class="btn-secondary program-scrub-close" onclick="_closeProgramScrubPad()" aria-label="Close">x</button>
         </div>
-        <div id="program-scrub-surface" class="program-scrub-surface" onpointerdown="_scrubPadDragStart(event)">
+        <div id="program-scrub-surface" class="${surfaceClass}" onpointerdown="_scrubPadDragStart(event)">
             <div id="program-scrub-handle" class="program-scrub-handle"></div>
         </div>
         ${modeRows}
@@ -1496,7 +1615,10 @@ function _openProgramScrubPad(which, span, textarea, event, mode = 'number') {
         ${liveRow}
         <div class="program-scrub-hint">${hint}</div>
     `;
-    if (mode !== 'choice') {
+    if (mode === 'complex') {
+        const spanEl = document.getElementById('program-scrub-span');
+        if (spanEl) spanEl.value = _scrubFormatNumber(st.span);
+    } else if (mode !== 'choice') {
         const minEl = document.getElementById('program-scrub-min');
         const maxEl = document.getElementById('program-scrub-max');
         if (minEl) minEl.value = _scrubFormatNumber(st.min);
@@ -1505,8 +1627,9 @@ function _openProgramScrubPad(which, span, textarea, event, mode = 'number') {
     el.style.display = 'block';
     if (typeof el.setAttribute === 'function') el.setAttribute('aria-hidden', 'false');
     const raw = event || {};
-    const x = Number(raw.clientX || 0) || 12;
-    const y = Number(raw.clientY || 0) || 12;
+    const pinned = _scrubPadLastPos;
+    const x = pinned ? pinned.x : (Number(raw.clientX || 0) || 12);
+    const y = pinned ? pinned.y - 14 : (Number(raw.clientY || 0) || 12);
     el.style.left = `${Math.max(8, x)}px`;
     el.style.top = `${Math.max(8, y + 14)}px`;
     const rect = typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : { width: 300, height: 160 };
@@ -1528,14 +1651,24 @@ function _renderProgramScrubPad() {
     if (valueEl) valueEl.textContent = st.current;
     const handle = document.getElementById('program-scrub-handle');
     if (handle) {
-        let frac = 0.5;
-        if (st.mode === 'choice') {
-            frac = st.choices.length > 1 ? Math.min(1, Math.max(0, st.index / (st.choices.length - 1))) : 0.5;
+        if (st.mode === 'complex') {
+            const w = st.span > 0 ? st.span : 1;
+            const fx = Math.min(1, Math.max(0, (st.re - (st.reCenter - w)) / (2 * w)));
+            // screen y grows downward; +imag points up (complex plane)
+            const fy = Math.min(1, Math.max(0, ((st.imCenter + w) - st.im) / (2 * w)));
+            handle.style.left = `${(fx * 100).toFixed(2)}%`;
+            handle.style.top = `${(fy * 100).toFixed(2)}%`;
         } else {
-            const span = st.max - st.min;
-            frac = span > 0 ? Math.min(1, Math.max(0, (st.value - st.min) / span)) : 0.5;
+            let frac = 0.5;
+            if (st.mode === 'choice') {
+                frac = st.choices.length > 1 ? Math.min(1, Math.max(0, st.index / (st.choices.length - 1))) : 0.5;
+            } else {
+                const span = st.max - st.min;
+                frac = span > 0 ? Math.min(1, Math.max(0, (st.value - st.min) / span)) : 0.5;
+            }
+            handle.style.left = `${(frac * 100).toFixed(2)}%`;
+            handle.style.top = '';
         }
-        handle.style.left = `${(frac * 100).toFixed(2)}%`;
     }
     if (st.mode === 'choice') {
         const posEl = document.getElementById('program-scrub-pos');
@@ -1568,12 +1701,59 @@ function _scrubPadWriteText(text) {
     _renderProgramScrubPad();
 }
 
+function _scrubPadWriteComplex(re, im) {
+    const st = _scrubPadState;
+    if (!st || st.mode !== 'complex') return;
+    const text = _scrubFormatComplex(re, im);
+    const parsed = _parseComplexLiteral(text);
+    if (parsed) { st.re = parsed.re; st.im = parsed.im; }
+    _scrubPadWriteText(text);
+}
+
+function _scrubPadSetSpan() {
+    const st = _scrubPadState;
+    if (!st || st.mode !== 'complex') return;
+    const el = document.getElementById('program-scrub-span');
+    const value = Number(el && el.value);
+    if (Number.isFinite(value) && value > 0) st.span = value;
+    if (el) el.value = _scrubFormatNumber(st.span);
+    _renderProgramScrubPad();
+}
+
 function _scrubPadWrite(nextValue) {
     const st = _scrubPadState;
     if (!st || st.mode === 'choice') return;
     const text = _scrubFormatNumber(nextValue);
     st.value = Number(text);
     _scrubPadWriteText(text);
+}
+
+function _scrubPadHeadDragStart(event) {
+    // Reposition the pad itself (e.g. next to the preview). The close
+    // button keeps its click; anything else on the header drags.
+    if (event && event.target && event.target.classList &&
+        event.target.classList.contains('program-scrub-close')) return;
+    const el = _scrubPadEl();
+    if (!el || !event) return;
+    if (typeof event.preventDefault === 'function') event.preventDefault();
+    const rect = typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : { left: 0, top: 0 };
+    const offX = (Number(event.clientX) || 0) - rect.left;
+    const offY = (Number(event.clientY) || 0) - rect.top;
+    const move = e => {
+        const x = Math.max(0, (Number(e.clientX) || 0) - offX);
+        const y = Math.max(0, (Number(e.clientY) || 0) - offY);
+        el.style.left = `${x}px`;
+        el.style.top = `${y}px`;
+        _scrubPadLastPos = { x, y: y + 14 };
+    };
+    const up = () => {
+        document.removeEventListener('pointermove', move);
+        document.removeEventListener('pointerup', up);
+        document.removeEventListener('pointercancel', up);
+    };
+    document.addEventListener('pointermove', move);
+    document.addEventListener('pointerup', up);
+    document.addEventListener('pointercancel', up);
 }
 
 function _scrubPadDragStart(event) {
@@ -1609,6 +1789,16 @@ function _scrubPadDragMove(event) {
     const rect = surface.getBoundingClientRect();
     if (!rect || !(rect.width > 0)) return;
     const frac = Math.min(1, Math.max(0, ((Number(event && event.clientX) || 0) - rect.left) / rect.width));
+    if (st.mode === 'complex') {
+        if (!(rect.height > 0)) return;
+        const fy = Math.min(1, Math.max(0, ((Number(event && event.clientY) || 0) - rect.top) / rect.height));
+        const w = st.span > 0 ? st.span : 1;
+        _scrubPadWriteComplex(
+            (st.reCenter - w) + frac * 2 * w,
+            (st.imCenter + w) - fy * 2 * w,
+        );
+        return;
+    }
     if (st.mode === 'choice') {
         const idx = Math.round(frac * (st.choices.length - 1));
         if (idx !== st.index) {
@@ -1711,6 +1901,11 @@ function _closeProgramScrubPad() {
 function _onProgramSourceDblClick(which, event) {
     const key = _programSourceWhichKey(which);
     const textarea = _programSourceTextarea(key);
+    const complexSpan = _programComplexSpanAtCursor(textarea);
+    if (complexSpan) {
+        _openProgramScrubPad(key, complexSpan, textarea, event || {}, 'complex');
+        return;
+    }
     const span = _programNumberSpanAtCursor(textarea);
     if (span) {
         _openProgramScrubPad(key, span, textarea, event || {}, 'number');

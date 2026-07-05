@@ -930,6 +930,21 @@ button {
     margin-left: -4px; background: #e94560; border-radius: 3px;
     pointer-events: none;
 }
+.program-scrub-surface-2d {
+    height: 170px;
+    cursor: crosshair;
+    /* faint complex-plane axes through the window center */
+    background:
+        linear-gradient(to right, transparent calc(50% - 1px), #253a5f calc(50% - 1px), #253a5f calc(50% + 0px), transparent calc(50% + 0px)),
+        linear-gradient(to bottom, transparent calc(50% - 1px), #253a5f calc(50% - 1px), #253a5f calc(50% + 0px), transparent calc(50% + 0px)),
+        #0d1324;
+}
+.program-scrub-surface-2d .program-scrub-handle {
+    top: auto; bottom: auto; width: 10px; height: 10px;
+    margin-left: -5px; margin-top: -5px; border-radius: 50%;
+}
+.program-scrub-head { cursor: move; }
+.program-scrub-head .program-scrub-close { cursor: pointer; }
 .program-scrub-row {
     display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
     color: #9fb0c8; font-size: 10px;

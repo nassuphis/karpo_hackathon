@@ -108,6 +108,7 @@ def _has_top_level_infix(text):
     raw = str(text or "")
     paren = bracket = 0
     prev = ""
+    prev2 = ""
     for idx, ch in enumerate(raw):
         if ch == "(":
             paren += 1
@@ -119,23 +120,19 @@ def _has_top_level_infix(text):
             bracket -= 1
         if paren != 0 or bracket != 0:
             if not ch.isspace():
+                prev2 = prev
                 prev = ch
             continue
         if ch in ("*", "/"):
             return True
-        if ch == "+":
+        if ch in ("+", "-"):
             if idx == 0:
                 continue
-            if prev in ("e", "E"):
-                continue
-            return True
-        if ch == "-":
-            if idx == 0:
-                continue
-            if prev in ("e", "E"):
+            if prev in ("e", "E") and (prev2.isdigit() or prev2 == "."):
                 continue
             return True
         if not ch.isspace():
+            prev2 = prev
             prev = ch
     return False
 
@@ -294,6 +291,7 @@ def _split_infix_level(text, ops):
     parts = []
     depth = 0
     prev = ""
+    prev2 = ""
     start = 0
     pending_op = None
     for idx, ch in enumerate(text):
@@ -303,12 +301,22 @@ def _split_infix_level(text, ops):
             depth -= 1
         if depth != 0:
             if not ch.isspace():
+                prev2 = prev
                 prev = ch
             continue
         if ch in ops:
             operand = text[start:idx].strip()
-            if ch in "+-" and (not operand or prev in ("e", "E")):
+            # exponent signs (1e-3) need a digit/dot before the e; a bare
+            # identifier ending in e (slope - 3) is a real operator. A sign
+            # right after another operator is unary and stays attached.
+            exponent_sign = (
+                ch in "+-" and prev in ("e", "E")
+                and (prev2.isdigit() or prev2 == ".")
+            )
+            unary_sign = ch in "+-" and (not operand or prev in "*/+-(")
+            if exponent_sign or unary_sign:
                 if not ch.isspace():
+                    prev2 = prev
                     prev = ch
                 continue
             if not operand:
@@ -316,9 +324,11 @@ def _split_infix_level(text, ops):
             parts.append((pending_op, operand))
             pending_op = ch
             start = idx + 1
+            prev2 = prev
             prev = ch
             continue
         if not ch.isspace():
+            prev2 = prev
             prev = ch
     tail = text[start:].strip()
     if not tail:

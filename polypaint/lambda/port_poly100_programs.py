@@ -69,7 +69,6 @@ PARITY_POINTS = (
        (1.04 + 0.0j, 0.0 + 1.02j), (-1.0 + 0.0j, -0.5 - 0.5j)]
 )
 PARITY_REL_TOL = 5e-5     # f32 wire precision with headroom
-ROW_REL_TOL = 1e-6        # secondary gate: error vs row max (wire floor ~6e-8)
 PARITY_MIN_POINTS = 5     # points that must survive the f32-range filter
 F32_MAX = 3.0e38
 
@@ -363,7 +362,7 @@ def _try_scan_template(kvar, lo, hi, off, value, ordered):
     slot_lo = lo + off - seeds
     if slot_lo < 0:
         return None
-    rewriter = _ScanRewrite(kvar, off, (slot_lo, hi + off))
+    rewriter = _ScanRewrite(kvar, off, (slot_lo, hi + off), seeds=seeds)
     step_node = ast.fix_missing_locations(rewriter.visit(value))
     if rewriter.bad_read:
         return None
@@ -434,7 +433,7 @@ def analyze(fn):
                        and n2.func.attr == "arange" for n2 in ast.walk(value)):
                     raise SkipFunction("slice AugAssign with arange value")
                 opname = {ast.Add: "add", ast.Sub: "subtract", ast.Mult: "multiply"}[type(stmt.op)]
-                ordered.append(("aug_slice", bounds[0], bounds[1], opname, value))
+                ordered.append(("aug_slice", bounds[0], bounds[1], opname, value, len(segments)))
                 continue
             raise SkipFunction("unsupported AugAssign target")
         if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
@@ -456,7 +455,7 @@ def analyze(fn):
             slot = _slot_of_target(tgt)
             if slot and slot[0] == "const":
                 wrote_any = bool(segments) or any(o[0] == "scan" for o in ordered)
-                if not wrote_any and _reads_cf(value) and not _contains_vector_shape(value):
+                if not wrote_any and _reads_cf(value):
                     raise SkipFunction("pre-segment poke reads cf (order-sensitive)")
                 _append_poke(ordered, slot[1], value)
                 continue
@@ -464,7 +463,7 @@ def analyze(fn):
             if slice_bounds is not None and _reads_cf(value):
                 # In-place slice rewrite (cf[a:b] = f(cf[a:b])): reads the
                 # current poly, so it stays an ordered post-op.
-                ordered.append(("slice_assign", slice_bounds[0], slice_bounds[1], value))
+                ordered.append(("slice_assign", slice_bounds[0], slice_bounds[1], value, len(segments)))
                 continue
             seg = _normalize_slice_assign(tgt, value)
             if seg is not None:
@@ -492,7 +491,12 @@ def analyze(fn):
                 prefix = body_stmts[:-1]
                 if prefix and isinstance(prefix[-1], ast.Assign) and len(prefix[-1].targets) == 1:
                     prior_slot = _slot_of_target(prefix[-1].targets[0], kvar)
-                    if prior_slot and prior_slot[0] == "loop":
+                    if_slot = None
+                    probe = _branch_value(body_stmts[-1].body, kvar, loop_env,
+                                          ast.Constant(value=0))
+                    if probe is not None:
+                        if_slot = probe[0]
+                    if prior_slot and prior_slot[0] == "loop" and prior_slot[1] == if_slot:
                         incoming = _InlineTemps(loop_env).visit(prefix[-1].value)
                         prefix = prefix[:-1]
                 folded = _fold_if_to_select(body_stmts[-1], kvar, loop_env, incoming)
@@ -558,6 +562,22 @@ def analyze(fn):
     # A poke is dead if a later segment covers its slot: python ran the poke
     # first and the segment overwrote it. We emit all segments first, so
     # keeping the poke would wrongly resurrect it.
+    def _overlaps_segment(a, b, seg_indexes):
+        for seg_idx in seg_indexes:
+            _kv, s_lo, s_hi, s_off, _e = segments[seg_idx]
+            if a < s_hi + s_off and s_lo + s_off < b:
+                return True
+        return False
+
+    for op in ordered:
+        if op[0] in ("aug_slice", "slice_assign"):
+            a, b, born_at = op[1], op[2], op[-1]
+            # A later segment overwriting this span would run BEFORE it in
+            # the emitted program (segments are emitted first) but AFTER it
+            # in python — not linearizable under this emission scheme.
+            if _overlaps_segment(a, b, range(born_at, len(segments))):
+                raise SkipFunction("slice update precedes an overlapping loop (order-sensitive)")
+
     postops = []
     seg_seen = 0
     for pos, op in enumerate(ordered):
@@ -570,8 +590,18 @@ def analyze(fn):
             later_scans = [o for o in ordered[pos + 1:] if o[0] == "scan"]
             # A scan's seed slots (first len(init_texts) of its span) read
             # poly BEFORE the scan runs — pokes there are live, not dead.
-            if any(slot in _seg_slots(s) for s in later) or \
-               any(o[1] + len(o[5]) <= slot < o[2] for o in later_scans):
+            covered_later = any(slot in _seg_slots(s) for s in later) or \
+               any(o[1] + len(o[5]) <= slot < o[2] for o in later_scans)
+            if covered_later:
+                # If anything between this poke and its overwrite READS the
+                # slot (RMW slices, reductions), python saw the poke value;
+                # dropping it OR keeping it both mis-order — not linearizable.
+                for later_op in ordered[pos + 1:]:
+                    if later_op[0] in ("aug_slice", "slice_assign") and \
+                       later_op[1] <= slot < later_op[2]:
+                        raise SkipFunction("poke read by a slice update before a loop overwrite")
+                    if later_op[0] == "reduce_push":
+                        raise SkipFunction("poke may be read by a reduction before a loop overwrite")
                 continue
         postops.append(op)
 
@@ -667,7 +697,10 @@ def scalar_src(node, kvar=None):
     if isinstance(node, ast.UnaryOp):
         if isinstance(node.op, ast.USub):
             inner = scalar_src(node.operand, kvar)
-            if _scalar_prec(node.operand, kvar) < 2:
+            # The target grammar binds unary minus TIGHTER than ** (opposite
+            # of Python), so any non-atomic operand gets parens: -(x**2),
+            # never -x**2 (which the compiler now rejects as ambiguous).
+            if _scalar_prec(node.operand, kvar) < 4:
                 inner = f"({inner})"
             return f"-{inner}"
         if isinstance(node.op, ast.UAdd):
@@ -1064,7 +1097,7 @@ def emit_program(name, template, module_src):
             lines.append(f"poly[{a}:{b}] = scan({length}, {k0}, {init_text}, {step_text})"
                          f"   # recurrence over slots {a}..{b - 1}")
         elif op[0] == "slice_assign":
-            _tag, a, b, value = op
+            _tag, a, b, value = op[:4]
             frag = (ast.get_source_segment(module_src, value) or "").replace("\n", " ")
             _append_commented(lines, f"poly[{a}:{b}] = {_hoist_vec(value, None, None, None, lines)}", frag)
         elif op[0] == "reduce_push":
@@ -1075,7 +1108,7 @@ def emit_program(name, template, module_src):
         elif op[0] == "drop":
             lines.append("drop")
         else:
-            _tag, a, b, opname, expr = op
+            _tag, a, b, opname, expr = op[:5]
             lo_needed, hi_needed = a > 0, b < n
             if lo_needed and hi_needed:
                 mask = f"subtract({_emit_step_mask(a, n, lines)}, {_emit_step_mask(b, n, lines)})"
@@ -1150,7 +1183,6 @@ def parity_check(compiled, py_fn, n_coeffs):
     if len(native) != len(PARITY_POINTS) * n_coeffs:
         return None, f"native output length {len(native)} != {len(PARITY_POINTS) * n_coeffs}"
     worst = 0.0
-    worst_row = 0.0
     valid = 0
     chaotic_slots = 0
     total_slots = 0
@@ -1164,8 +1196,15 @@ def parity_check(compiled, py_fn, n_coeffs):
             # precision have no defined value to match (recurrences like
             # poly_2 amplify ulp differences to O(1) in their tail); they
             # are excluded, and the port must match everywhere stable.
-            p1b = complex(float(np.nextafter(np.float32(p1q.real), np.float32(2.0))), p1q.imag)
-            p2b = complex(p2q.real, float(np.nextafter(np.float32(p2q.imag), np.float32(2.0))))
+            # All four components move, with MIXED directions: a same-sign
+            # perturbation cancels in combinations like Re(p1) - Im(p2)
+            # (poly_67's z = t1 + 1j*t2 is invariant under it), hiding
+            # genuine hypersensitivity.
+            up, down = np.float32(2.0), np.float32(-2.0)
+            p1b = complex(float(np.nextafter(np.float32(p1q.real), up)),
+                          float(np.nextafter(np.float32(p1q.imag), down)))
+            p2b = complex(float(np.nextafter(np.float32(p2q.real), down)),
+                          float(np.nextafter(np.float32(p2q.imag), up)))
             ref_b = np.asarray(py_fn(p1b, p2b), dtype=np.complex128)
         if len(ref) != n_coeffs:
             return None, f"python returned {len(ref)} coeffs, expected {n_coeffs}"
@@ -1175,24 +1214,29 @@ def parity_check(compiled, py_fn, n_coeffs):
         if not ref.any():
             continue  # except-branch zeros are ambiguous
         got = native[r * n_coeffs:(r + 1) * n_coeffs]
-        stable = [abs(rb - rf) / max(abs(rf), 1.0) <= PARITY_REL_TOL
+        # Per-slot chaos test: the reference must be self-consistent under a
+        # 1-ulp input change, judged against the slot's own magnitude (no
+        # absolute floor — small slots are compared as tightly as big ones).
+        stable = [abs(rb - rf) <= PARITY_REL_TOL * max(abs(rf), abs(rb), 1e-30)
                   for rb, rf in zip(ref_b, ref)]
         chaotic_slots += stable.count(False)
         total_slots += n_coeffs
         pairs = [(g, rf) for (g, rf), ok in zip(zip(got, ref), stable) if ok]
         if not pairs:
             continue
-        rel = max(abs(g - rf) / max(abs(rf), 1.0) for g, rf in pairs)
+        # Per-slot mixed tolerance: relative to the slot's own magnitude
+        # (covers the f32 wire, which quantizes each value relative to
+        # itself) plus a tiny absolute term for true zeros. No row-relative
+        # fallback: an O(1) error on a small slot must fail even when the
+        # row's dynamic range is huge.
+        rel = max(abs(g - rf) / max(abs(rf), abs(g), 1e-6) for g, rf in pairs)
         # Secondary, row-relative measure: numpy computes integer powers by
         # repeated multiplication while the VM's c_powc goes through exp/log;
         # on ill-conditioned slots (huge power + catastrophic cancellation)
         # the phase jitter lands far above the slot's own value while staying
         # deep beneath the row's dynamic range. Score that case against the
         # row maximum instead of the slot.
-        row_scale = max(float(np.abs(ref).max()), 1.0)
-        row_rel = max(abs(g - rf) / row_scale for g, rf in pairs)
         worst = max(worst, rel)
-        worst_row = max(worst_row, row_rel)
         valid += 1
     if valid < PARITY_MIN_POINTS:
         return None, f"only {valid} parity points in f32 range"
@@ -1205,10 +1249,7 @@ def parity_check(compiled, py_fn, n_coeffs):
     stats = {"points": valid, "chaotic": chaotic_frac}
     if worst <= PARITY_REL_TOL:
         return {**stats, "worst": worst, "gate": "strict"}, None
-    if worst_row <= ROW_REL_TOL:
-        return {**stats, "worst": worst_row, "gate": "row-rel"}, None
-    return None, (f"parity failed: rel err {worst:.2e} "
-                  f"(row-rel {worst_row:.2e}) over {valid} points")
+    return None, f"parity failed: rel err {worst:.2e} over {valid} points"
 
 
 # ---------------------------------------------------------------------------
@@ -1312,9 +1353,9 @@ def main():
             _key, note = upload(program, existing, force=args.force)
         ported.append((name, template["n"], compiled["token_count"],
                        stats["worst"], stats["points"], note))
-        gate = "" if stats.get("gate") == "strict" else f" [{stats.get('gate')}]"
+        chaos = f" chaotic={stats['chaotic']:.0%}" if stats.get("chaotic") else ""
         print(f"OK   {name}: n={template['n']} tokens={compiled['token_count']} "
-              f"parity={stats['worst']:.1e}/{stats['points']}pts{gate} {note}")
+              f"parity={stats['worst']:.1e}/{stats['points']}pts{chaos} {note}")
 
     print(f"\n=== ported {len(ported)} / skipped {len(skipped)} ===")
     for name, reason in skipped:

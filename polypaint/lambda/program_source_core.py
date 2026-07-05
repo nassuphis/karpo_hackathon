@@ -331,8 +331,9 @@ class SourceLocals:
     (same trade-off solve-score locals have always had).
     """
 
-    def __init__(self, *, reserved, error_cls=ProgramSourceError):
+    def __init__(self, *, reserved, error_cls=ProgramSourceError, reserved_patterns=()):
         self._reserved = frozenset(str(n).strip().lower() for n in (reserved or ()))
+        self._reserved_patterns = tuple(re.compile(p) for p in (reserved_patterns or ()))
         self._error_cls = error_cls
         self._map = {}
         self._pattern = None
@@ -362,6 +363,8 @@ class SourceLocals:
         lhs = text[:idx].strip().lower()
         if not _LOCAL_NAME_RE.match(lhs) or lhs in self._reserved:
             return False
+        if any(p.match(lhs) for p in self._reserved_patterns):
+            return False
         rhs = text[idx + 1:].strip()
         if not rhs:
             raise self._error_cls(
@@ -374,7 +377,7 @@ class SourceLocals:
                 line=statement.line, column=statement.column, code="local_reassigned",
             )
         substituted = self.substitute(rhs)
-        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(lhs)}(?![A-Za-z0-9_])", substituted):
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(lhs)}(?![A-Za-z0-9_])", substituted, re.IGNORECASE):
             raise self._error_cls(
                 f"local {lhs!r} cannot reference itself",
                 line=statement.line, column=statement.column, code="local_self_reference",
@@ -614,8 +617,10 @@ def parse_profile_source(
     # Profiles that publish reserved_local_names opt into source locals:
     # single-assignment aliases resolved by substitution before lowering.
     reserved = getattr(lowerer, "reserved_local_names", None)
+    patterns = getattr(lowerer, "reserved_local_patterns", None)
     locals_table = (
-        SourceLocals(reserved=reserved(), error_cls=error_cls)
+        SourceLocals(reserved=reserved(), error_cls=error_cls,
+                     reserved_patterns=patterns() if callable(patterns) else ())
         if callable(reserved) else None
     )
 

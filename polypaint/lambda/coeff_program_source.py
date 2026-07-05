@@ -500,6 +500,23 @@ def _typed_lower_affine(name, args):
     return chain, "vector" if "vector" in {multiplied_type, offset_type} else "scalar"
 
 
+_TOS_MENTION_RE = re.compile(r"(?<![A-Za-z0-9_])tos\d*(?![A-Za-z0-9_])", re.IGNORECASE)
+_STACK_EFFECT_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(pop|peek|tos\d*)(?![A-Za-z0-9_])", re.IGNORECASE)
+
+
+def _reject_stack_effect_args(name, args):
+    """select/window/step splice argument text more than once, so a stack-
+    consuming or stack-position-dependent argument would re-evaluate against
+    a different mid-composition stack. Refuse loudly."""
+    for arg in args:
+        if _STACK_EFFECT_RE.search(str(arg)):
+            raise CoeffProgramSourceError(
+                f"{name}(...) arguments are expanded more than once; "
+                f"pop/peek/tos are not allowed inside them — assign the value "
+                f"to poly or a slot first, then reference it")
+
+
 def _slice_bounds_from_text(name, index_expr):
     parts = [p.strip() for p in index_expr.split(":")]
     if len(parts) != 2 or not parts[0].isdigit() or not parts[1].isdigit():
@@ -573,15 +590,18 @@ def _typed_lower_value(text):
         if name == "step":
             if len(args) != 1:
                 raise CoeffProgramSourceError("step requires step(edge)")
+            _reject_stack_effect_args(name, args)
             return _typed_lower_value(_step_mask_text(args[0]))
         if name == "window":
             if len(args) != 2:
                 raise CoeffProgramSourceError("window requires window(start, stop)")
+            _reject_stack_effect_args(name, args)
             return _typed_lower_value(
                 f"subtract({_step_mask_text(args[0])}, {_step_mask_text(args[1])})")
         if name == "select":
             if len(args) != 3:
                 raise CoeffProgramSourceError("select requires select(cond, a, b)")
+            _reject_stack_effect_args(name, args)
             c, a, b = args
             # cond is an exact 0/1 mask; masked-out garbage is safe because
             # non-finite products clamp to 0.
@@ -818,6 +838,9 @@ def _lower_call(name, args, *, target="push"):
         if len(args) != 2:
             raise CoeffProgramSourceError(f"{name} requires index, value")
         if name == "poke_poly":
+            if _TOS_MENTION_RE.search(str(args[1])):
+                # same pre-token stack framing as poly[i] = <tos value>
+                return [["poke_poly", _canonical_expr(args[0]), _canonical_expr(args[1])]]
             chain = _typed_lower_scalar(args[0])
             chain.extend(_typed_lower_scalar(args[1]))
             chain.append(["_typed_poke_poly"])
@@ -872,17 +895,20 @@ def _lower_call(name, args, *, target="push"):
     if name == "step":
         if len(args) != 1:
             raise CoeffProgramSourceError("step requires step(edge)")
+        _reject_stack_effect_args(name, args)
         chain, value_type = _typed_lower_value(_step_mask_text(args[0]))
         return _append_typed_target(chain, value_type, target=target)
     if name == "window":
         if len(args) != 2:
             raise CoeffProgramSourceError("window requires window(start, stop)")
+        _reject_stack_effect_args(name, args)
         chain, value_type = _typed_lower_value(
             f"subtract({_step_mask_text(args[0])}, {_step_mask_text(args[1])})")
         return _append_typed_target(chain, value_type, target=target)
     if name == "select":
         if len(args) != 3:
             raise CoeffProgramSourceError("select requires select(cond, a, b)")
+        _reject_stack_effect_args(name, args)
         c, a, b = args
         chain, value_type = _typed_lower_value(
             f"add(multiply({c}, {a}), multiply(subtract(1, {c}), {b}))")
@@ -965,7 +991,7 @@ _LOCALS_RESERVED_EXTRA = frozenset({
     "range", "arange", "linspace",
     "roll", "rolr", "argsort", "littlewood", "blend", "andy",
     "scan", "slice", "poke_slice", "reduce", "sum", "prod",
-    "window", "step", "prev", "prev2", "k", "select",
+    "window", "step", "prev", "prev2", "k", "select", "i", "j",
     "pi", "pi2", "pi2i", "tau", "tau_i",
     "p1", "p2", "t1", "t2", "poly_len",
 })
@@ -1000,6 +1026,12 @@ class _CoeffStatementLowerer(ProfileStatementLowerer):
     def reserved_local_names(self):
         return _locals_reserved_names()
 
+    def reserved_local_patterns(self):
+        # cfN/polyN/tosN are indexed-read sugar; polyN etc. as alias names
+        # would shadow them (and `poly2 = 5` is far likelier a poke typo
+        # than an alias). Match the whole family.
+        return (r"^(cf|poly|tos|p|t)\d+$",)
+
     def lower_indexed_assignment(self, statement, lhs_name, index_expr, rhs):
         if lhs_name not in _WRITABLE_LHS_NAMES:
             raise CoeffProgramSourceError(
@@ -1019,12 +1051,14 @@ class _CoeffStatementLowerer(ProfileStatementLowerer):
                 )
             chain.append(["poke_slice", str(a), str(b)])
             return chain
-        if re.search(r"(?<![A-Za-z0-9_])tos(?![A-Za-z0-9_])", f"{index_expr} {rhs}"):
-            # tos reads must see the stack as it was BEFORE this statement
-            # (e.g. a reduction result). The typed lowering pushes the index
-            # first, so a typed tos read would see that index instead; the
-            # legacy poke chip evaluates index/value as expression plans
-            # against the pre-token stack frame.
+        if _TOS_MENTION_RE.search(rhs):
+            # tos VALUE reads must see the stack as it was BEFORE this
+            # statement (e.g. a reduction result). The typed lowering pushes
+            # the index first, so a typed tos read would see that index; the
+            # legacy poke chip evaluates its VALUE as an expression plan
+            # against the pre-token stack frame. Index expressions keep the
+            # typed path (the index chain runs before anything is pushed,
+            # and the legacy chip only takes literal indices).
             return [["poke_poly", _canonical_expr(index_expr), _canonical_expr(rhs)]]
         if index_expr.isdigit():
             idx = int(index_expr)

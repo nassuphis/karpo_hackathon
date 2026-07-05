@@ -887,6 +887,11 @@ class ExpressionParser:
         left = self._unary()
         if self._peek()[0] != "**":
             return left
+        if left.tokens and left.tokens[-1].get("op") == EXPR_NEG:
+            # -x**n is a trap: this grammar binds unary minus tighter than
+            # ** (so -2**2 = +4) while Python binds ** tighter (-2**2 = -4).
+            # Refuse the ambiguous spelling outright.
+            raise RuntimeError("-x**n is ambiguous here; write -(x**n) or (-x)**n")
         self._take()
         right = self._unary()
         value = expr_value_if_static(right)
@@ -1813,6 +1818,8 @@ def _compile_scan_chip(args, scalar_exprs):
             "scan chip requires (length, k0, init, step) or (length, k0, init1, init2, step)")
     length = _vector_length_arg(args[0], "scan length")
     k0 = _integer_literal(args[1], "scan k0")
+    if abs(k0) > 65536:
+        raise RuntimeError(f"scan k0 must be in [-65536, 65536], got {k0}")
     refs = [
         _register_expr_ref(ExpressionParser(arg, allow_scan_idents=True).parse(), scalar_exprs)
         for arg in args[2:]

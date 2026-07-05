@@ -124,8 +124,8 @@ class TestCoeffLocals(unittest.TestCase):
     def test_numeric_alias_works_in_index_position(self):
         from coeff_program_source import compile_coeff_program_source
 
-        # `k` itself is reserved (scan iteration variable); use another name.
-        compiled = compile_coeff_program_source("j = 4\npoly[j] = j * p1\n")
+        # k (scan variable) and i/j (imaginary unit) are reserved alias names.
+        compiled = compile_coeff_program_source("idx = 4\npoly[idx] = idx * p1\n")
         self.assertGreater(compiled["token_count"], 0)
 
     def test_call_prefix_expression_now_compiles(self):

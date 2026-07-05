@@ -237,7 +237,7 @@ def _lower_bare(stmt):
 # expression identifiers, selector args like `both`/`pop1`, legacy transform
 # names — is off-limits. Over-reserving is harmless.
 _LOCALS_RESERVED_EXTRA = frozenset({
-    "legacy", "t1", "t2", "p1", "p2",
+    "legacy", "t1", "t2", "p1", "p2", "i", "j",
     "pi", "pi2", "pi2i",
     "conj", "neg", "real", "imag", "abs", "mod", "log", "sqrt",
     "exp", "sin", "cos", "tan", "sinh", "cosh", "tanh", "angle",
@@ -267,6 +267,9 @@ class ParamStatementLowerer(ProfileStatementLowerer):
 
     def reserved_local_names(self):
         return _locals_reserved_names()
+
+    def reserved_local_patterns(self):
+        return (r"^(p|t)\d+$",)
 
     def lower_statement(self, statement):
         text = statement.text.strip()

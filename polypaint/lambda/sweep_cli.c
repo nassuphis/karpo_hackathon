@@ -4224,10 +4224,15 @@ static int coeffRunLoweredExprPlan(const CoeffEvalContext *ctx,
             c_mul(ar, ai, br, bi, &stackR[sp - 1], &stackI[sp - 1]);
         } else if (op == COEFF_EXPR_DIV) {
             if (br == 0.0 && bi == 0.0) {
-                fprintf(stderr, "coeff_program scalar expression division by zero\n");
-                return 1;
+                if (!tolerateNonFinite) {
+                    fprintf(stderr, "coeff_program scalar expression division by zero\n");
+                    return 1;
+                }
+                /* scan steps follow the forgiving vector-divide policy */
+                stackR[sp - 1] = 0.0; stackI[sp - 1] = 0.0;
+            } else {
+                c_div_full(ar, ai, br, bi, &stackR[sp - 1], &stackI[sp - 1]);
             }
-            c_div_full(ar, ai, br, bi, &stackR[sp - 1], &stackI[sp - 1]);
         } else {
             fprintf(stderr, "coeff_program unknown lowered expression opcode %d\n", op);
             return 1;
@@ -4519,7 +4524,7 @@ static int coeffProgramApplyBinaryFn(int fnIndex,
             n >>= 1UL;
             if (n) { double tr, ti; c_mul(baseR, baseI, baseR, baseI, &tr, &ti); baseR = tr; baseI = ti; }
         }
-        if (inv) { double tr, ti; c_div(1.0, 0.0, accR, accI, &tr, &ti); accR = tr; accI = ti; }
+        if (inv) { double tr, ti; c_div_full(1.0, 0.0, accR, accI, &tr, &ti); accR = tr; accI = ti; }
         *rr = accR; *ri = accI;
     } else if (fnIndex == COEFF_VEC_REM) {
         /* fmod on real parts; matches numpy % for the integer-valued
@@ -4768,8 +4773,12 @@ static int coeffProgramTypedGetScalar(CoeffProgramWorkspace *ws) {
     if (coeff_stack_pop(ws, &vectorSlot) != 0) return 1;
     if (coeffProgramTypedIndexFromSlot(ws, indexSlot, "get_scalar", &idx) != 0) return 1;
     if (ws->stack_type[vectorSlot] == COEFF_STACK_SCALAR) {
-        /* Scalar slot: return the scalar itself, matching the expr-plan
-         * tos reader (reductions leave scalars on the stack). */
+        /* Scalar slot: index must be 0 and the scalar is returned, matching
+         * the expr-plan tos reader (reductions leave scalars on the stack). */
+        if (idx != 0) {
+            fprintf(stderr, "coeff_program get_scalar index %d out of range for scalar (length 1)\n", idx);
+            return 1;
+        }
         return coeff_stack_push_scalar(ws, ws->stack_scalar_re[vectorSlot],
                                        ws->stack_scalar_im[vectorSlot]);
     }
@@ -5365,7 +5374,7 @@ static int coeffProgramTypedPushVectorOp(const CoeffEvalContext *ctx, const Coef
     CoeffProgramWorkspace *ws = ctx->ws;
     /* pop/peek of a SCALAR top re-pushes the scalar: reductions leave
      * scalars on the stack, and tos[...] reads route through this op. */
-    if (tok->src == COEFF_SEL_POP || tok->src == COEFF_SEL_PEEK) {
+    if ((tok->src == COEFF_SEL_POP || tok->src == COEFF_SEL_PEEK) && ws->stack_depth > 0) {
         uint16_t top = 0;
         if (coeff_stack_peek(ws, &top) == 0 && ws->stack_type[top] == COEFF_STACK_SCALAR) {
             double vr = ws->stack_scalar_re[top], vi = ws->stack_scalar_im[top];
@@ -5392,10 +5401,16 @@ static int coeffProgramScanOp(const CoeffEvalContext *ctx, const CoeffProgramTok
         fprintf(stderr, "coeff_program scan requires 4 args\n");
         return 1;
     }
-    int len = (int)tok->args[0];
-    if (len == -1) len = ws->poly_len; /* poly_len sentinel */
+    int len = 0;
+    if (tok->args[0] == -1.0) len = ws->poly_len; /* poly_len sentinel */
+    else if (coeffProgramIntegerFromReal(tok->args[0], "scan length", &len) != 0) return 1;
     if (coeff_program_check_len(len, "scan") != 0) return 1;
-    int k0 = (int)tok->args[1];
+    int k0 = 0;
+    if (coeffProgramIntegerFromReal(tok->args[1], "scan k0", &k0) != 0) return 1;
+    if (k0 < -65536 || k0 > 65536) {
+        fprintf(stderr, "coeff_program scan k0 out of range: %d\n", k0);
+        return 1;
+    }
     /* 4-arg form: [len, k0, init, step]; 5-arg seeds two elements:
      * [len, k0, init1, init2, step] so prev2 is defined from j = 2. */
     int two_seeds = tok->n_args >= 5;
@@ -5436,8 +5451,9 @@ static int coeffProgramScanOp(const CoeffEvalContext *ctx, const CoeffProgramTok
 /* slice(src, a, b): push src[a:b) as a vector. */
 static int coeffProgramSliceReadOp(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
     CoeffProgramWorkspace *ws = ctx->ws;
-    int a = (int)tok->args[0];
-    int b = (int)tok->args[1];
+    int a = 0, b = 0;
+    if (coeffProgramIntegerFromReal(tok->args[0], "slice start", &a) != 0) return 1;
+    if (coeffProgramIntegerFromReal(tok->args[1], "slice stop", &b) != 0) return 1;
     const double *srcRe = NULL, *srcIm = NULL;
     int srcLen = 0;
     if (tok->src == COEFF_SEL_CF) {
@@ -5464,8 +5480,9 @@ static int coeffProgramSliceReadOp(const CoeffEvalContext *ctx, const CoeffProgr
 /* poke_slice(a, b): pop a vector of length b-a and write it into poly[a:b). */
 static int coeffProgramSliceWriteOp(const CoeffEvalContext *ctx, const CoeffProgramToken *tok) {
     CoeffProgramWorkspace *ws = ctx->ws;
-    int a = (int)tok->args[0];
-    int b = (int)tok->args[1];
+    int a = 0, b = 0;
+    if (coeffProgramIntegerFromReal(tok->args[0], "poke_slice start", &a) != 0) return 1;
+    if (coeffProgramIntegerFromReal(tok->args[1], "poke_slice stop", &b) != 0) return 1;
     uint16_t slot = 0;
     if (coeff_stack_pop(ws, &slot) != 0) return 1;
     if (coeff_stack_require_vector(ws, slot, "poke_slice") != 0) return 1;

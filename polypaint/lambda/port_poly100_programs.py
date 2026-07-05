@@ -615,7 +615,10 @@ def scalar_src(node, kvar=None):
         raise SkipFunction(f"unsupported call {ast.dump(node.func)[:50]}")
     if isinstance(node, ast.UnaryOp):
         if isinstance(node.op, ast.USub):
-            return f"(-{scalar_src(node.operand, kvar)})"
+            inner = scalar_src(node.operand, kvar)
+            if _scalar_prec(node.operand, kvar) < 2:
+                inner = f"({inner})"
+            return f"-{inner}"
         if isinstance(node.op, ast.UAdd):
             return scalar_src(node.operand, kvar)
         raise SkipFunction("unsupported unary op")
@@ -624,14 +627,41 @@ def scalar_src(node, kvar=None):
             e = node.right
             ev = e.value if isinstance(e, ast.Constant) else None
             if isinstance(ev, int) and 0 < abs(ev) <= 32:
-                return f"({scalar_src(node.left, kvar)} ** {ev})"
+                base = scalar_src(node.left, kvar)
+                if _scalar_prec(node.left, kvar) < 3:
+                    base = f"({base})"
+                return f"{base}**{ev}"
             return f"power({scalar_src(node.left, kvar)}, {scalar_src(e, kvar)})"
-        ops = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/"}
-        op = ops.get(type(node.op))
-        if op is None:
+        ops = {ast.Add: ("+", 1), ast.Sub: ("-", 1), ast.Mult: ("*", 2), ast.Div: ("/", 2)}
+        got = ops.get(type(node.op))
+        if got is None:
             raise SkipFunction(f"unsupported operator {type(node.op).__name__}")
-        return f"({scalar_src(node.left, kvar)} {op} {scalar_src(node.right, kvar)})"
+        op, prec = got
+        left = scalar_src(node.left, kvar)
+        if _scalar_prec(node.left, kvar) < prec:
+            left = f"({left})"
+        right = scalar_src(node.right, kvar)
+        # right side needs parens at equal precedence for - and /
+        need = prec + (1 if op in "-/" else 0)
+        if _scalar_prec(node.right, kvar) < need:
+            right = f"({right})"
+        return f"{left} {op} {right}"
     raise SkipFunction(f"unsupported scalar node {type(node).__name__}")
+
+
+def _scalar_prec(node, kvar=None):
+    """Precedence of a node's rendered form: 4=atom/call, 3=**, 2=* /, 1=+ -."""
+    if isinstance(node, ast.BinOp):
+        if isinstance(node.op, ast.Pow):
+            e = node.right
+            ev = e.value if isinstance(e, ast.Constant) else None
+            return 3 if (isinstance(ev, int) and 0 < abs(ev) <= 32) else 4
+        return 2 if isinstance(node.op, (ast.Mult, ast.Div)) else 1
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        return 2
+    if isinstance(node, ast.Constant) and isinstance(node.value, complex):
+        return 1 if (node.value.real and node.value.imag) else 4
+    return 4
 
 
 def _contains_k(node, kvar):
@@ -702,7 +732,7 @@ def _contains_vector_shape(node):
     return False
 
 
-def vec_src(node, kvar, k_range):
+def vec_src(node, kvar, k_range, k_text=None):
     """Emit call-form vector expression for a k-dependent subtree.
 
     kvar may be None for standalone vector expressions (arange / cf-slice
@@ -714,25 +744,27 @@ def vec_src(node, kvar, k_range):
     if text is not None:
         return text
     if kvar is not None and isinstance(node, ast.Name) and node.id == kvar:
+        if k_text is not None:
+            return k_text
         lo, hi = k_range
         return f"range({lo}, {hi})"
     if not _contains_k(node, kvar) and not _contains_vector_shape(node):
         return scalar_src(node, kvar)
     if isinstance(node, ast.Call):
         if isinstance(node.func, ast.Name) and node.func.id == "__select__":
-            c, a, b = (vec_src(arg, kvar, k_range) for arg in node.args)
+            c, a, b = (vec_src(arg, kvar, k_range, k_text) for arg in node.args)
             return f"select({c}, {a}, {b})"
         name = _call_name(node)
         if name and len(node.args) == 1 and not node.keywords:
-            return f"{name}({vec_src(node.args[0], kvar, k_range)})"
+            return f"{name}({vec_src(node.args[0], kvar, k_range, k_text)})"
         raise SkipFunction(f"unsupported vector call {ast.dump(node.func)[:50]}")
     if isinstance(node, ast.Attribute) and node.attr in ("real", "imag"):
-        return f"{node.attr}({vec_src(node.value, kvar, k_range)})"
+        return f"{node.attr}({vec_src(node.value, kvar, k_range, k_text)})"
     if isinstance(node, ast.UnaryOp):
         if isinstance(node.op, ast.USub):
-            return f"neg({vec_src(node.operand, kvar, k_range)})"
+            return f"neg({vec_src(node.operand, kvar, k_range, k_text)})"
         if isinstance(node.op, ast.UAdd):
-            return vec_src(node.operand, kvar, k_range)
+            return vec_src(node.operand, kvar, k_range, k_text)
         raise SkipFunction("unsupported unary op in vector context")
     if isinstance(node, ast.BinOp):
         ops = {ast.Add: "add", ast.Sub: "subtract", ast.Mult: "multiply",
@@ -740,7 +772,7 @@ def vec_src(node, kvar, k_range):
         op = ops.get(type(node.op))
         if op is None:
             raise SkipFunction(f"unsupported operator {type(node.op).__name__}")
-        return f"{op}({vec_src(node.left, kvar, k_range)}, {vec_src(node.right, kvar, k_range)})"
+        return f"{op}({vec_src(node.left, kvar, k_range, k_text)}, {vec_src(node.right, kvar, k_range, k_text)})"
     if isinstance(node, ast.Compare):
         if len(node.ops) != 1 or len(node.comparators) != 1:
             raise SkipFunction("chained comparison")
@@ -748,7 +780,7 @@ def vec_src(node, kvar, k_range):
         op = cmps.get(type(node.ops[0]))
         if op is None:
             raise SkipFunction(f"unsupported comparison {type(node.ops[0]).__name__}")
-        return f"{op}({vec_src(node.left, kvar, k_range)}, {vec_src(node.comparators[0], kvar, k_range)})"
+        return f"{op}({vec_src(node.left, kvar, k_range, k_text)}, {vec_src(node.comparators[0], kvar, k_range, k_text)})"
     raise SkipFunction(f"unsupported vector node {type(node).__name__}")
 
 
@@ -792,6 +824,84 @@ def _window_mask(a, b, n):
     return f"subtract(1, {_step_mask(b, n)})"
 
 
+MAX_LINE = 100
+
+_ALIAS_SEQ = {"n": 0}
+_HOIST_MEMO = {}
+
+
+def _append_commented(lines, code, frag):
+    """Inline short comments; long ones go on their own line above the code
+    (the book PDF renders program sources with a hard line-width budget)."""
+    frag = (frag or "").strip()
+    if not frag:
+        lines.append(code)
+    elif len(code) + len(frag) + 5 <= 110:
+        lines.append(f"{code}   # {frag}")
+    else:
+        lines.append(f"# {frag[:104]}")
+        lines.append(code)
+
+
+def _fresh_alias(prefix="x"):
+    _ALIAS_SEQ["n"] += 1
+    return f"{prefix}{_ALIAS_SEQ['n']}"
+
+
+def _hoist_vec(node, kvar, k_range, k_text, lines):
+    """Render a vector subtree, hoisting long children into local aliases
+    so no emitted line exceeds MAX_LINE. Locals substitute at compile time,
+    so the chain (and fingerprint behavior) is unchanged."""
+    text = vec_src(node, kvar, k_range, k_text)
+    if len(text) <= MAX_LINE:
+        return text
+
+    def piece(child):
+        if _contains_k(child, kvar) or _contains_vector_shape(child):
+            return _hoist_vec(child, kvar, k_range, k_text, lines)
+        return scalar_src(child, kvar)
+
+    def hoisted(child):
+        part = piece(child)
+        if len(part) > 40:
+            if part in _HOIST_MEMO:
+                return _HOIST_MEMO[part]
+            name = _fresh_alias()
+            lines.append(f"{name} = {part}")
+            _HOIST_MEMO[part] = name
+            return name
+        return part
+
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name) and node.func.id == "__select__":
+            c, a, b = (hoisted(arg) for arg in node.args)
+            return f"select({c}, {a}, {b})"
+        name = _call_name(node)
+        if name and len(node.args) == 1:
+            return f"{name}({_hoist_vec(node.args[0], kvar, k_range, k_text, lines)})"
+    if isinstance(node, ast.BinOp):
+        ops = {ast.Add: "add", ast.Sub: "subtract", ast.Mult: "multiply",
+               ast.Div: "divide", ast.Pow: "power", ast.Mod: "rem"}
+        op = ops.get(type(node.op))
+        if op:
+            return f"{op}({hoisted(node.left)}, {hoisted(node.right)})"
+    if isinstance(node, ast.Compare) and len(node.ops) == 1:
+        cmps = {ast.Eq: "eq", ast.Gt: "gt", ast.GtE: "ge", ast.Lt: "lt", ast.LtE: "le"}
+        op = cmps.get(type(node.ops[0]))
+        if op:
+            return f"{op}({hoisted(node.left)}, {hoisted(node.comparators[0])})"
+    return text  # give up: one long line
+
+
+def _emit_step_mask(edge, n, lines):
+    """Emit the exact 0/1 step mask via labeled locals; returns its name."""
+    r = _fresh_alias("r")
+    m = _fresh_alias("m")
+    lines.append(f"{r} = range({0.5 - edge}, {n + 0.5 - edge})")
+    lines.append(f"{m} = divide(add({r}, abs({r})), multiply(abs({r}), 2))   # 1 for slot >= {edge}")
+    return m
+
+
 def _scalar_terms_text(sca_terms):
     parts = []
     for sign, tnode in sca_terms:
@@ -814,22 +924,33 @@ def _segment_vector(seg, n, module_src, lines, masked):
         sca_terms = []
         stmts = [(body, "scalar broadcast")]
     else:
+        k_text = _fresh_alias("ks")
+        lines.append(f"{k_text} = range({k_lo}, {k_hi})   # loop variable {kvar}")
         stmts = []
         for sign, tnode in vec_terms:
-            src_text = vec_src(tnode, kvar, (k_lo, k_hi))
+            src_text = _hoist_vec(tnode, kvar, (k_lo, k_hi), k_text, lines)
             if sign < 0:
                 src_text = f"neg({src_text})"
             frag = (ast.get_source_segment(module_src, tnode) or "").replace("\n", " ")
             stmts.append((src_text, frag[:70]))
     for src_text, frag in stmts:
-        lines.append(src_text + (f"   # {frag}" if frag else ""))
+        _append_commented(lines, src_text, frag)
     for _ in range(len(stmts) - 1):
         lines.append("add(pop, pop)")
     if sca_terms:
         lines.append(f"add(pop, ({_scalar_terms_text(sca_terms)}))")
     if masked:
-        mask = _window_mask(slot_lo, slot_hi, n)
-        if mask is not None:
+        lo_needed = slot_lo > 0
+        hi_needed = slot_hi < n
+        if lo_needed or hi_needed:
+            m_lo = _emit_step_mask(slot_lo, n, lines) if lo_needed else None
+            m_hi = _emit_step_mask(slot_hi, n, lines) if hi_needed else None
+            if m_lo and m_hi:
+                mask = f"subtract({m_lo}, {m_hi})"
+            elif m_lo:
+                mask = m_lo
+            else:
+                mask = f"subtract(1, {m_hi})"
             lines.append(f"multiply(pop, {mask})   # keep slots {slot_lo}..{slot_hi - 1}")
     return 1
 
@@ -839,6 +960,8 @@ def emit_program(name, template, module_src):
     n = template["n"]
     segments = template["segments"]
     force_mask = template.get("force_mask", False)
+    _ALIAS_SEQ["n"] = 0
+    _HOIST_MEMO.clear()
     lines = [f"# {name} (poly100.py), ported by port_poly100_programs.py"]
     if not segments:
         lines.append(f"poly = fill({n}, 0)")
@@ -872,34 +995,50 @@ def emit_program(name, template, module_src):
         if op[0] == "poke":
             _tag, slot, expr = op
             frag = (ast.get_source_segment(module_src, expr) or "").replace("\n", " ")
-            lines.append(f"poly[{slot}] = {scalar_src(expr)}" + (f"   # {frag[:70]}" if frag else ""))
+            _append_commented(lines, f"poly[{slot}] = {scalar_src(expr)}", frag)
         elif op[0] == "scan":
             _tag, a, b, length, k0, init_text, step_text = op
+            if " / abs(" in step_text and len(step_text) > MAX_LINE - 40:
+                head = step_text.split(" / abs(", 1)[0]
+                core = head[1:-1] if head.startswith("(") and head.endswith(")") else head
+                if step_text in (f"{head} / abs({head})", f"{head} / abs({core})"):
+                    v = _fresh_alias("v")
+                    lines.append(f"{v} = {core}   # recurrence step value")
+                    step_text = f"{v} / abs({v})"
             lines.append(f"poly[{a}:{b}] = scan({length}, {k0}, {init_text}, {step_text})"
                          f"   # recurrence over slots {a}..{b - 1}")
         elif op[0] == "slice_assign":
             _tag, a, b, value = op
             frag = (ast.get_source_segment(module_src, value) or "").replace("\n", " ")
-            lines.append(f"poly[{a}:{b}] = {vec_src(value, None, None)}"
-                         + (f"   # {frag[:70]}" if frag else ""))
+            _append_commented(lines, f"poly[{a}:{b}] = {_hoist_vec(value, None, None, None, lines)}", frag)
         elif op[0] == "reduce_push":
             _tag, fname, arg = op
             frag = (ast.get_source_segment(module_src, arg) or "").replace("\n", " ")
-            lines.append(f"{fname}({vec_src(arg, None, None)})"
-                         + (f"   # np.{fname}({frag[:60]})" if frag else ""))
+            _append_commented(lines, f"{fname}({_hoist_vec(arg, None, None, None, lines)})",
+                              f"np.{fname}({frag[:60]})" if frag else "")
         elif op[0] == "drop":
             lines.append("drop")
         else:
             _tag, a, b, opname, expr = op
-            mask = _window_mask(a, b, n) or "1"
+            lo_needed, hi_needed = a > 0, b < n
+            if lo_needed and hi_needed:
+                mask = f"subtract({_emit_step_mask(a, n, lines)}, {_emit_step_mask(b, n, lines)})"
+            elif lo_needed:
+                mask = _emit_step_mask(a, n, lines)
+            elif hi_needed:
+                mask = f"subtract(1, {_emit_step_mask(b, n, lines)})"
+            else:
+                mask = "1"
             frag = (ast.get_source_segment(module_src, expr) or "").replace("\n", " ")
             if opname == "multiply":
                 # cf[a:b] *= X: factor is 1 outside the window, X inside
-                lines.append(f"multiply(poly, add(1, multiply({mask}, (({scalar_src(expr)}) - 1))))"
-                             + f"   # cf[{a}:{b}] *= {frag[:50]}")
+                _append_commented(lines,
+                    f"multiply(poly, add(1, multiply({mask}, (({scalar_src(expr)}) - 1))))",
+                    f"cf[{a}:{b}] *= {frag[:50]}")
             else:
-                lines.append(f"{opname}(poly, multiply({mask}, ({scalar_src(expr)})))"
-                             + f"   # cf[{a}:{b}] {'+' if opname == 'add' else '-'}= {frag[:50]}")
+                _append_commented(lines,
+                    f"{opname}(poly, multiply({mask}, ({scalar_src(expr)})))",
+                    f"cf[{a}:{b}] {'+' if opname == 'add' else '-'}= {frag[:50]}")
             lines.append("poly = pop")
     return "\n".join(lines) + "\n"
 

@@ -251,13 +251,114 @@ def _parse_metric_expr(args, locals_map):
     return _Expr(f"metric({metric}, {source}, q={q}%" + (", lag=1)" if lag else ")"), _chain_rows(chain))
 
 
+_INFIX_CHIPS = {"+": "add", "-": "subtract", "*": "mul", "/": "ratio"}
+
+
+def _combine_infix(op, left, right):
+    chip = _INFIX_CHIPS[op]
+    return _Expr(
+        f"{chip}({left.source}, {right.source})",
+        left.chain + right.chain + _chain_rows([chip]),
+    )
+
+
+def _negate_expr(expr):
+    return _Expr(
+        f"subtract(0, {expr.source})",
+        _chain_rows([["const", "0"]]) + expr.chain + _chain_rows(["subtract"]),
+    )
+
+
+def _paren_wrapped(raw):
+    """True when raw is one parenthesized group: '(' whose match is at the end."""
+    if not raw.startswith("("):
+        return False
+    depth = 0
+    for idx, ch in enumerate(raw):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return idx == len(raw) - 1
+    return False
+
+
+def _split_infix_level(text, ops):
+    """Split at depth-0 operators from `ops`; returns [(op_before, operand)].
+
+    The first operand's op_before is None. Leading +/- with no operand yet
+    stays attached to the operand (unary sign); exponent signs (1e-3) skip
+    with the same prev-char rule as _has_top_level_infix.
+    """
+    parts = []
+    depth = 0
+    prev = ""
+    start = 0
+    pending_op = None
+    for idx, ch in enumerate(text):
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        if depth != 0:
+            if not ch.isspace():
+                prev = ch
+            continue
+        if ch in ops:
+            operand = text[start:idx].strip()
+            if ch in "+-" and (not operand or prev in ("e", "E")):
+                if not ch.isspace():
+                    prev = ch
+                continue
+            if not operand:
+                raise SolveScoreProgramSourceError(f"missing operand before {ch!r}")
+            parts.append((pending_op, operand))
+            pending_op = ch
+            start = idx + 1
+            prev = ch
+            continue
+        if not ch.isspace():
+            prev = ch
+    tail = text[start:].strip()
+    if not tail:
+        raise SolveScoreProgramSourceError("missing operand after operator")
+    parts.append((pending_op, tail))
+    return parts
+
+
+def _parse_infix(text, locals_map):
+    """Lower infix arithmetic to the existing call-tree chips.
+
+    Standard precedence (* / bind tighter than + -), left-associative;
+    chains are identical to the equivalent hand-written call tree, so
+    fingerprints are unchanged.
+    """
+    result = None
+    for add_op, term in _split_infix_level(text, "+-"):
+        factor_expr = None
+        for mul_op, factor in _split_infix_level(term, "*/"):
+            atom = _parse_expr(factor, locals_map)
+            factor_expr = atom if mul_op is None else _combine_infix(mul_op, factor_expr, atom)
+        if add_op is None:
+            result = factor_expr
+        else:
+            result = _combine_infix(add_op, result, factor_expr)
+    return result
+
+
 def _parse_expr(text, locals_map):
     raw = str(text or "").strip()
     if not raw:
         raise SolveScoreProgramSourceError("empty expression")
-    if _has_top_level_infix(raw):
-        if not _is_number(raw):
-            raise SolveScoreProgramSourceError("solve-score source uses call-tree expressions; infix arithmetic is not supported")
+    if _paren_wrapped(raw):
+        return _parse_expr(raw[1:-1].strip(), locals_map)
+    if _has_top_level_infix(raw) and not _is_number(raw):
+        return _parse_infix(raw, locals_map)
+    if raw.startswith("-") and not _is_number(raw):
+        return _negate_expr(_parse_expr(raw[1:].strip(), locals_map))
+    if raw.startswith("+") and not _is_number(raw):
+        return _parse_expr(raw[1:].strip(), locals_map)
     lower = raw.lower()
     if lower in locals_map:
         return locals_map[lower]

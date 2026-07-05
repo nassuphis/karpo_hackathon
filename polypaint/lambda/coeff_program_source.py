@@ -866,11 +866,48 @@ def _legacy_lower_statement(statement):
     raise CoeffProgramSourceError(f"cannot parse coeff program statement {text!r}", line=statement.line, column=statement.column)
 
 
+# Every name with meaning somewhere in Coeff source. Local aliases must not
+# shadow any of these: substitution is whole-word textual, so an alias named
+# "sin" would rewrite sin(...) calls. Over-reserving is harmless; under-
+# reserving corrupts programs.
+_LOCALS_RESERVED_EXTRA = frozenset({
+    "legacy", "macro", "set", "affine", "linear", "scale", "shift",
+    "push", "push_scalar", "push_range", "push_linspace",
+    "range", "arange", "linspace",
+    "roll", "rolr", "argsort", "littlewood", "blend", "andy",
+    "pi", "pi2", "pi2i", "tau", "tau_i",
+    "p1", "p2", "t1", "t2", "poly_len",
+})
+
+_LOCALS_RESERVED_CACHE = None
+
+
+def _locals_reserved_names():
+    global _LOCALS_RESERVED_CACHE
+    if _LOCALS_RESERVED_CACHE is None:
+        names = set(_LOCALS_RESERVED_EXTRA)
+        names |= set(_WRITABLE_LHS_NAMES)
+        names |= set(_SOURCE_NAMES) | set(_TARGET_NAMES)
+        names |= set(_PUSH_SOURCE_NAMES) | set(_TYPED_VECTOR_SOURCE_NAMES)
+        names |= set(_STACK_ALIASES) | set(_STACK_ALIASES.values())
+        names |= set(_VECTOR_FILL_NAMES)
+        names |= set(_VECTOR_BINARY_ALIASES)
+        names |= set(_VECTOR_UNARY_NAMES)
+        names |= set(SCALAR_UNARY_EXPR_OPS)
+        names |= set(_NATIVE_TRANSFORM_ALIASES)
+        names |= set(legacy_registry()["by_name"])
+        _LOCALS_RESERVED_CACHE = frozenset(str(n).lower() for n in names)
+    return _LOCALS_RESERVED_CACHE
+
+
 class _CoeffStatementLowerer(ProfileStatementLowerer):
     """Coeff source semantics through the shared statement dispatcher."""
 
     def __init__(self):
         super().__init__(_PROFILE, error_cls=CoeffProgramSourceError)
+
+    def reserved_local_names(self):
+        return _locals_reserved_names()
 
     def lower_indexed_assignment(self, statement, lhs_name, index_expr, rhs):
         if lhs_name not in _WRITABLE_LHS_NAMES:

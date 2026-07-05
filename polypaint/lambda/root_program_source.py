@@ -14,6 +14,7 @@ import os
 from merged_opcodes import MERGED_OP_NATIVE_TRANSFORM
 from program_source_core import (
     ProgramSourceError,
+    SourceLocals,
     canonical_number_repr,
     diagnostic,
     diagnostic_from_exception,
@@ -405,6 +406,18 @@ def _lower_statement(stmt):
     return _parse_root_call(text, line=stmt.line, column=stmt.column, allow_roots_arg=True)
 
 
+_LOCALS_RESERVED_CACHE = None
+
+
+def _locals_reserved_names():
+    global _LOCALS_RESERVED_CACHE
+    if _LOCALS_RESERVED_CACHE is None:
+        names = {"roots"}
+        names |= set(_registry_by_name())
+        _LOCALS_RESERVED_CACHE = frozenset(str(n).lower() for n in names)
+    return _LOCALS_RESERVED_CACHE
+
+
 def parse_root_program_source(source_text, strict=True):
     diagnostics = []
     rows = []
@@ -419,8 +432,16 @@ def parse_root_program_source(source_text, strict=True):
         if strict:
             raise RootProgramSourceCompileError(diagnostics) from exc
         statements = []
+    locals_table = SourceLocals(
+        reserved=_locals_reserved_names(), error_cls=RootProgramSourceError
+    )
     for stmt in statements:
         try:
+            if locals_table.try_define(stmt):
+                continue
+            substituted = locals_table.substitute(stmt.text)
+            if substituted != stmt.text:
+                stmt = type(stmt)(text=substituted, line=stmt.line, column=stmt.column)
             rows.append(_lower_statement(stmt))
         except RootProgramSourceError as exc:
             diagnostics.append(

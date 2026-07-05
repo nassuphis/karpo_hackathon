@@ -45,6 +45,7 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_solve_proximity_handler.py \
     tests/test_registry_schema.py \
     tests/test_program_source_core.py \
+    tests/test_source_locals_and_infix.py \
     tests/test_program_profiles_drift.py \
     tests/test_program_v2_migration.py \
     tests/test_saved_program_source_precedence.py \

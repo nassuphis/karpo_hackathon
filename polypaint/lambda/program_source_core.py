@@ -280,12 +280,112 @@ def parse_call(text, *, error_cls=ProgramSourceError):
     match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*\(", raw)
     if not match:
         return None
-    if not raw.endswith(")"):
+    # Find the close paren matching the call's opening paren. Text that
+    # continues past it (e.g. "log(x) * 1i") is not a bare call — it is an
+    # infix expression whose first factor happens to be a call, and the
+    # expression layer owns it; return None so callers fall through. The
+    # historical behavior raised "missing closing parenthesis" here, which
+    # also mis-fired on "add(a, b) * (c)" (ends with ')' but the call's own
+    # paren closes earlier).
+    depth = 0
+    close_idx = -1
+    for idx in range(match.end() - 1, len(raw)):
+        ch = raw[idx]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                close_idx = idx
+                break
+    if close_idx < 0:
         raise error_cls("function call is missing closing parenthesis", code="unclosed_parenthesis")
+    if close_idx != len(raw) - 1:
+        return None
     name = match.group(1).lower()
     inner = raw[match.end():-1]
     args = [] if not inner.strip() else split_top_level(inner, error_cls=error_cls)
     return name, args
+
+
+_LOCAL_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+class SourceLocals:
+    """Single-assignment source aliases — lightweight compile-time macros.
+
+    `name = expr` where `name` is not a reserved word defines an alias;
+    later statements see whole-word occurrences of the name replaced by its
+    definition text. Definitions inline any earlier aliases at definition
+    time, so substitution is a single pass and define-before-use falls out
+    naturally. Write-once (matching solve-score locals): rebinding is an
+    error, and a definition cannot reference itself.
+
+    Substituted text is parenthesized unless the definition is a bare
+    number/identifier or a complete call — infix fragments need the parens
+    for precedence; calls and atoms must stay bare so value lowerers that
+    dispatch on call shape still recognize them.
+
+    The lowered chain is byte-identical to hand-inlining, so fingerprints
+    and wire formats are untouched. Reuse duplicates the definition's chain
+    (same trade-off solve-score locals have always had).
+    """
+
+    def __init__(self, *, reserved, error_cls=ProgramSourceError):
+        self._reserved = frozenset(str(n).strip().lower() for n in (reserved or ()))
+        self._error_cls = error_cls
+        self._map = {}
+        self._pattern = None
+
+    def _substitution_text(self, rhs):
+        raw = rhs.strip()
+        if _LOCAL_NAME_RE.match(raw) or _NUMBER_RE.fullmatch(raw):
+            return raw
+        try:
+            if parse_call(raw, error_cls=self._error_cls) is not None:
+                return raw
+        except self._error_cls:
+            pass
+        return f"({raw})"
+
+    def substitute(self, text):
+        if not self._map or not text:
+            return text
+        return self._pattern.sub(lambda m: self._map[m.group(0).lower()], text)
+
+    def try_define(self, statement):
+        """Consume `name = expr` alias definitions; True when handled."""
+        text = statement.text
+        idx = find_top_level_assignment(text)
+        if idx < 0:
+            return False
+        lhs = text[:idx].strip().lower()
+        if not _LOCAL_NAME_RE.match(lhs) or lhs in self._reserved:
+            return False
+        rhs = text[idx + 1:].strip()
+        if not rhs:
+            raise self._error_cls(
+                f"local {lhs!r} definition is empty",
+                line=statement.line, column=statement.column, code="empty_expression",
+            )
+        if lhs in self._map:
+            raise self._error_cls(
+                f"local {lhs!r} is already assigned",
+                line=statement.line, column=statement.column, code="local_reassigned",
+            )
+        substituted = self.substitute(rhs)
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(lhs)}(?![A-Za-z0-9_])", substituted):
+            raise self._error_cls(
+                f"local {lhs!r} cannot reference itself",
+                line=statement.line, column=statement.column, code="local_self_reference",
+            )
+        self._map[lhs] = self._substitution_text(substituted)
+        names = sorted(self._map, key=len, reverse=True)
+        self._pattern = re.compile(
+            r"(?<![A-Za-z0-9_])(?:" + "|".join(re.escape(n) for n in names) + r")(?![A-Za-z0-9_])",
+            re.IGNORECASE,
+        )
+        return True
 
 
 def split_program_statements(source_text, *, error_cls=ProgramSourceError, max_bytes=None):
@@ -511,8 +611,22 @@ def parse_profile_source(
             raise RuntimeError(messages or "invalid program source") from exc
         return {"chain": [], "display": "", "statement_count": 0, "diagnostics": diagnostics}
 
+    # Profiles that publish reserved_local_names opt into source locals:
+    # single-assignment aliases resolved by substitution before lowering.
+    reserved = getattr(lowerer, "reserved_local_names", None)
+    locals_table = (
+        SourceLocals(reserved=reserved(), error_cls=error_cls)
+        if callable(reserved) else None
+    )
+
     for stmt in statements:
         try:
+            if locals_table is not None:
+                if locals_table.try_define(stmt):
+                    continue
+                substituted = locals_table.substitute(stmt.text)
+                if substituted != stmt.text:
+                    stmt = SourceStatement(text=substituted, line=stmt.line, column=stmt.column)
             chain.extend(lowerer.lower_statement(stmt))
         except error_cls as exc:
             diagnostics.append(

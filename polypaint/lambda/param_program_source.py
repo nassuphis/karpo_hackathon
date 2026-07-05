@@ -232,9 +232,41 @@ def _lower_bare(stmt):
     raise ParamProgramSourceError(f"unknown Param Program statement: {raw}", code="unknown_statement")
 
 
+# Names local aliases must not shadow. Substitution is whole-word textual,
+# so any word with meaning anywhere in Param source — statement names,
+# expression identifiers, selector args like `both`/`pop1`, legacy transform
+# names — is off-limits. Over-reserving is harmless.
+_LOCALS_RESERVED_EXTRA = frozenset({
+    "legacy", "t1", "t2", "p1", "p2",
+    "pi", "pi2", "pi2i",
+    "conj", "neg", "real", "imag", "abs", "mod", "log", "sqrt",
+    "exp", "sin", "cos", "tan", "sinh", "cosh", "tanh", "angle",
+})
+
+_LOCALS_RESERVED_CACHE = None
+
+
+def _locals_reserved_names():
+    global _LOCALS_RESERVED_CACHE
+    if _LOCALS_RESERVED_CACHE is None:
+        names = set(_LOCALS_RESERVED_EXTRA)
+        names |= set(_OUTPUT_SYMBOLS)
+        names |= set(_STACK_OP_ALIASES) | set(_STACK_OP_ALIASES.values())
+        names |= set(_BINARY_OPS) | set(_UNARY_OPS) | set(_TARGETABLE_UNARY)
+        names |= set(_PUSH_SOURCES)
+        names |= set(_EMIT_ALIASES) | set(_EMIT_ALIASES.values())
+        names |= _LEGACY_SRC_SELECTORS | _LEGACY_TGT_SELECTORS
+        names |= set(legacy_registry()["by_name"])
+        _LOCALS_RESERVED_CACHE = frozenset(str(n).lower() for n in names)
+    return _LOCALS_RESERVED_CACHE
+
+
 class ParamStatementLowerer(ProfileStatementLowerer):
     def __init__(self):
         super().__init__(_PROFILE, error_cls=ParamProgramSourceError)
+
+    def reserved_local_names(self):
+        return _locals_reserved_names()
 
     def lower_statement(self, statement):
         text = statement.text.strip()

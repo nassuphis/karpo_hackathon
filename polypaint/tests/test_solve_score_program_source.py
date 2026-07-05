@@ -75,17 +75,24 @@ def test_solve_score_source_compiles_explicit_outputs_and_sources():
     assert compiled["output_channel_count"] == 2
 
 
-def test_solve_score_source_rejects_infix_and_use_before_definition():
+def test_solve_score_source_accepts_infix_and_rejects_use_before_definition():
     from solve_score_program_source import parse_solve_score_program_source
 
+    # Infix arithmetic lowers to the call-tree chips — same chain rows as
+    # add(metric(...), const(1)) — and is no longer rejected.
     parsed = parse_solve_score_program_source(
-        "score = metric(proximity, slv, q=0.5%) + const(1)\n"
-        "emit_norm(missing)",
+        "score = metric(proximity, slv, q=0.5%) + const(1)",
         strict=False,
     )
+    assert not parsed["diagnostics"]
+    assert parsed["chain"] == [["proximity", "slv", "0.5"], ["const", "1"], "add"]
 
+    # Locals remain define-before-use: an unknown name is still an error.
+    parsed = parse_solve_score_program_source(
+        "score = clamp(missing)",
+        strict=False,
+    )
     messages = " ".join(item["message"] for item in parsed["diagnostics"])
-    assert "infix arithmetic" in messages
     assert "unknown solve-score expression" in messages
 
 

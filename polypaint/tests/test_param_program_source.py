@@ -72,7 +72,9 @@ class TestParamProgramSource(unittest.TestCase):
             ("push(both)", "bad_selector"),
             ("emit(p1)", "noncanonical_emit"),
             ("t1 = p1", "read_only_symbol"),
-            ("missing = p1", "unknown_symbol"),
+            # An unreserved LHS ("missing = p1") is now a local alias
+            # definition; reserved names still route to the old diagnostic.
+            ("sin = p1", "unknown_symbol"),
             ("p1[0] = p2", "unknown_symbol"),
             ("p1 =", "empty_expression"),
             ("", "empty_source"),

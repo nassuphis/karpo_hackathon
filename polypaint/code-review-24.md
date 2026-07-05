@@ -293,6 +293,44 @@ Every phase keeps the drift-test discipline: new enum values appended on both si
 
 ---
 
+## 7. The four dialects: symbols, infix, and the unification wave (SHIPPED)
+
+The Coeff Program path reviewed above is one of four program languages sharing the source core (`program_source_core.py`: splitter, `parse_call`, assignment detection, number policies, `ProfileStatementLowerer`). Before this wave their register/symbol models diverged in a way worth recording precisely (all verified by running each parser):
+
+| | mutable state | named symbols | `x = f(x)` rebinding | infix expressions |
+|---|---|---|---|---|
+| **param** | `p1`, `p2` registers + stack | — | **yes** — `p1 = 2*p1 + 1` compiles | yes |
+| **coeff** | `poly` register + stack | — | yes on the register (`poly[i] = f(poly[i])`) | yes |
+| **solve-score** | value stack + `score` | **write-once aliases** | **no** — "local 'x1' is already assigned" | **was rejected** |
+| **root** | implicit roots vector | — | only `roots = op(...)` | no |
+
+The common misreading (worth stating because it shaped the design): solve-score's `x1 = …` looks like a variable but is a **single-assignment compile-time alias** — the RHS is parsed once and its chain rows are *spliced at every use site*, so `add(x1, x1)` computes the metric twice, rebinding is an error, and the VM never sees a name. That is: solve-score already implemented §5 P5 (`let`), under assignment syntax, for one language only. Meanwhile param/coeff had true rebinding but only on fixed register names, and solve-score was the only dialect refusing `a + b`.
+
+### The wave (implemented 2026-07-05, this commit)
+
+Three changes, chosen because together they make the four languages read as one language with different registers, at **zero wire risk** — every already-valid program compiles to byte-identical chains, execution specs, and fingerprints:
+
+**W1 — source locals everywhere** (`SourceLocals`, `program_source_core.py`). `name = expr` where `name` is not reserved defines a write-once alias; later statements see whole-word substitution of the definition text. Definitions inline earlier aliases at definition time (single-pass, define-before-use falls out naturally); self-reference and rebinding are structured errors (`local_self_reference`, `local_reassigned`). Substituted text is parenthesized *unless* it is a bare number/identifier or a complete call — infix fragments need parens for precedence; calls must stay bare because coeff's value lowerer dispatches on call shape (a parenthesized `range(…)` would fall into the scalar path and fail). Profiles opt in by publishing `reserved_local_names()`:
+
+- **coeff** (`coeff_program_source.py`): reserved = writable symbols ∪ selectors ∪ stack aliases ∪ fill/range names ∪ vector unary/binary ∪ scalar-expr functions ∪ native-transform registry names ∪ aliases ∪ `{andy, pi…}`. Substitution is whole-word textual, so *any* meaningful word must be reserved — an alias named `sin` would rewrite `sin(…)` calls. Over-reserving is harmless; under-reserving corrupts.
+- **param** (`param_program_source.py`): its tables ∪ legacy registry names ∪ selector *argument* words (`both`, `pop1`, `push2`, …) — args are substituted text too.
+- **root** (`root_program_source.py`, bespoke loop): registry names ∪ `roots`. Numeric aliases substitute into transform args (`k = 0.25` → `add_complex(k)` lowers with `args: [0.25]`).
+- **solve-score**: already conformant; untouched.
+
+Pinned equivalence (tests/test_source_locals_and_infix.py): the aliased and hand-inlined spellings of the same coeff program produce **equal fingerprints, source chains, and execution specs**.
+
+**W2 — infix arithmetic in solve-score** (`solve_score_program_source.py`). The "call-tree expressions only" rejection is replaced by a two-level precedence parser (`*`/`/` over `+`/`-`, left-associative, parens, unary minus) lowering onto the *existing* chips: `+`→`add`, `-`→`subtract`, `*`→`mul`, `/`→`ratio`, `-x`→`subtract(const(0), x)` (there is no neg chip). Pinned: `x1 + 2 * x1` produces the identical chain to `add(x1, mul(const(2), x1))`. The exponent-sign rule (`1e-3`) reuses `_has_top_level_infix`'s prev-char logic.
+
+**W3 — the `parse_call` prefix fix** (`program_source_core.py`). A call whose matching close-paren is not at the end of the text (`log(x) * 1i`, and the nastier `add(a, b) * (c)` which *ends* with `)` but not the call's own) now returns None so expression layers own it, instead of raising "missing closing parenthesis". Unbalanced text still raises. This single shared fix retired Appendix B trap #3 for all four languages at once and is what makes W1's bare-call substitution rule safe.
+
+**Contract updates** (intended behavior changes, both previously pinned): param's `missing = p1` is no longer "unknown_symbol" — it defines a local (the rejected-forms test now pins a *reserved* name instead); solve-score's infix-rejection test now asserts acceptance + chain shape. Verified: full predeploy gate 893 passed, Playwright 109/109 (no frontend changes; the editors validate through the backend endpoints, so the new syntax is live in all six text editors without JS changes).
+
+### What deliberately did NOT ship in this wave
+
+True mutable registers (`x1 = f(x1)` for arbitrary names) — the Tier-2 design: N named slots per program, symbols compiled to slot indices, `store`/`load` ops added per VM (additive wire). Deferred because substitution covers the readability need at zero VM cost, and rebinding's real payoff (bounded recurrences) is better served by `scan()` (§5 P1): even with registers, a 35-step recurrence at ~20 tokens/step exceeds the 256-token budget. The strongest standing case for Tier 2 is param's 64-token budget and two-register file; revisit it there first. Also unchanged: number-format policies (frozen wire, per kind) and the execution models themselves — per code-review-23's rule, the machines stay different; the grammar stops being different.
+
+---
+
 ## Appendix A: opcode inventory (verified against both enum tables)
 
 VM ops (30): `const push emit duplicate swap pop flush blend legacy poke_poly poke_tos vector_binary vector_unary vector_roll vector_argsort littlewood linspace range set affine typed_push_scalar typed_push_vector typed_binary typed_unary typed_get_scalar typed_set_poly typed_poke_poly typed_fill native_transform typed_blend` — plus proposal slots for `scan`, `slice_read`, `slice_write`, `reduce`.

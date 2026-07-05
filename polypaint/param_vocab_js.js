@@ -117,23 +117,49 @@ window._paramRegistryVocab = {
     },
     "square": {
       "category": "maps",
-      "desc": "square both complex parameters"
+      "desc": "square each parameter",
+      "effect": "f(z) = z^2. For z = a + i*b: f(z) = (a^2 - b^2) + i*(2*a*b).",
+      "notes": [
+        "src=p1 applies f to p1; src=p2 applies f to p2; src=both applies f to p1 and p2; src=pop1 pops one stack value and applies f.",
+        "tgt=both writes both outputs to p1,p2; tgt=p1 or tgt=p2 writes the first output to that register; tgt=push1 pushes the first output."
+      ]
     },
     "cube": {
       "category": "maps",
-      "desc": "cube both complex parameters"
+      "desc": "cube each parameter",
+      "effect": "f(z) = z^3. For z = a + i*b: f(z) = (a^3 - 3*a*b^2) + i*(3*a^2*b - b^3).",
+      "notes": [
+        "src=p1 applies f to p1; src=p2 applies f to p2; src=both applies f to p1 and p2; src=pop1 pops one stack value and applies f.",
+        "tgt=both writes both outputs to p1,p2; tgt=p1 or tgt=p2 writes the first output to that register; tgt=push1 pushes the first output."
+      ]
     },
     "reciprocal": {
       "category": "maps",
-      "desc": "replace each parameter with 1/t"
+      "desc": "complex reciprocal of each parameter",
+      "effect": "f(z) = 1/z, computed as conj(z)/|z|^2.",
+      "notes": [
+        "If |z|^2 <= 1e-30 the output is set to 0 instead of overflowing.",
+        "src=p1 applies f to p1; src=p2 applies f to p2; src=both applies f to p1 and p2; src=pop1 pops one stack value and applies f.",
+        "tgt=both writes both outputs to p1,p2; tgt=p1 or tgt=p2 writes the first output to that register; tgt=push1 pushes the first output."
+      ]
     },
     "conjugate": {
       "category": "maps",
-      "desc": "complex conjugate t1 and t2"
+      "desc": "complex conjugate of each parameter",
+      "effect": "f(z) = conj(z): a + i*b becomes a - i*b (reflection across the real axis).",
+      "notes": [
+        "src=p1 applies f to p1; src=p2 applies f to p2; src=both applies f to p1 and p2; src=pop1 pops one stack value and applies f.",
+        "tgt=both writes both outputs to p1,p2; tgt=p1 or tgt=p2 writes the first output to that register; tgt=push1 pushes the first output."
+      ]
     },
     "negate": {
       "category": "maps",
-      "desc": "negate t1 and t2"
+      "desc": "negate each parameter",
+      "effect": "f(z) = -z: both real and imaginary parts flip sign (point reflection through the origin).",
+      "notes": [
+        "src=p1 applies f to p1; src=p2 applies f to p2; src=both applies f to p1 and p2; src=pop1 pops one stack value and applies f.",
+        "tgt=both writes both outputs to p1,p2; tgt=p1 or tgt=p2 writes the first output to that register; tgt=push1 pushes the first output."
+      ]
     },
     "exp": {
       "category": "maps",
@@ -157,35 +183,74 @@ window._paramRegistryVocab = {
     },
     "add_sub": {
       "category": "arithmetic",
-      "desc": "emit t1+t2 and t1-t2"
+      "desc": "emit t1+t2 and t1-t2",
+      "effect": "out1 = z1 + z2; out2 = z1 - z2. Both computed from the original inputs.",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "mul_div": {
       "category": "arithmetic",
-      "desc": "emit t1*t2 and t1/t2"
+      "desc": "emit t1*t2 and t1/t2",
+      "effect": "out1 = z1 * z2; out2 = z1 / z2. Both computed from the original inputs.",
+      "notes": [
+        "If |z2|^2 <= 1e-30 the quotient out2 is set to 0 instead of overflowing.",
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "swap": {
       "category": "maps",
-      "desc": "swap t1 and t2"
+      "desc": "swap t1 and t2",
+      "effect": "out1 = z2; out2 = z1.",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "sum_prod": {
       "category": "arithmetic",
-      "desc": "emit t1+t2 and t1*t2"
+      "desc": "emit t1+t2 and t1*t2",
+      "effect": "out1 = z1 + z2; out2 = z1 * z2. Both computed from the original inputs.",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "roots2": {
       "category": "roots",
-      "desc": "quadratic roots of (9/64)z^2+t1*z+t2"
+      "desc": "roots of the quadratic (9/64)z^2 + t1*z + t2",
+      "effect": "Solves (9/64)*z^2 + z1*z + z2 = 0. out1, out2 are the two roots.",
+      "notes": [
+        "With a repeated root both outputs receive it; if no root exists both outputs are 0.",
+        "Any non-finite root (solver overflow/degenerate leading coefficient) is replaced by 0.",
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "roots3": {
       "category": "roots",
-      "desc": "cubic roots from t1+t2, 1, 1, t1*t2"
+      "desc": "extreme roots of a cubic built from t1+t2 and t1*t2",
+      "effect": "Solves a*z^3 + b*z^2 + c*z + d = 0 with a = z1 + z2, b = 1, c = 1, d = z1*z2. out1 = root of smallest magnitude, out2 = root of largest magnitude.",
+      "notes": [
+        "Any non-finite root (solver overflow/degenerate leading coefficient) is replaced by 0.",
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "roots5": {
       "category": "roots",
-      "desc": "cubic roots from trig/i*t parameters"
+      "desc": "extreme roots of a cubic with trig/imaginary coefficients",
+      "effect": "Solves a*z^3 + b*z^2 + c*z + d = 0 with a = cos(100*z1), b = i*z1, c = i*z2, d = sin(100*z2). out1 = root of smallest magnitude, out2 = root of largest magnitude.",
+      "notes": [
+        "The factor 100 inside cos/sin makes the coefficients oscillate rapidly, so nearby grid points can land on very different roots.",
+        "Any non-finite root (solver overflow/degenerate leading coefficient) is replaced by 0.",
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "roots6": {
       "category": "roots",
-      "desc": "quartic roots from mixed t1/t2 polynomial"
+      "desc": "extreme roots of a quartic mixing t1 and t2",
+      "effect": "Solves a*z^4 + b*z^3 + c*z^2 + d*z + e = 0 with a = sin(5*z1), b = i*z1, c = (z1-z2)^3 + (z1+z2)^2 + z1*z2 + 1, d = i*z2, e = sin(z2). out1 = root of smallest magnitude, out2 = root of largest magnitude.",
+      "notes": [
+        "Any non-finite root (solver overflow/degenerate leading coefficient) is replaced by 0.",
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "rtheta": {
       "category": "maps",
@@ -200,11 +265,22 @@ window._paramRegistryVocab = {
     },
     "moebius": {
       "category": "maps",
-      "desc": "Mobius map on t1 and t2; 0-arg runs keep legacy 1/(t+2)"
+      "desc": "Mobius map (a*t+b)/(c*t+d) on t1 and t2",
+      "effect": "f(t) = (a*t + b)/(c*t + d), applied to both parameters with the same coefficients. With no arguments the legacy fixed map f(t) = 1/(t + 2) is used.",
+      "notes": [
+        "Defaults a=1, b=0, c=0, d=1 give the identity map.",
+        "If the denominator magnitude is ~0 the output is set to 0.",
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "inv_t_plus_2": {
       "category": "arithmetic",
-      "desc": "t1=1/(t1+a), t2=1/(t2+b)"
+      "desc": "invert each parameter after a complex shift",
+      "effect": "out1 = 1/(z1 + c1); out2 = 1/(z2 + c2), each computed as conj(w)/|w|^2. Defaults c1 = c2 = 2 reproduce the original fixed 1/(t+2) map.",
+      "notes": [
+        "If |w|^2 <= 1e-30 the output is set to 0 instead of overflowing.",
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "crd": {
       "category": "shapes",
@@ -360,143 +436,311 @@ window._paramRegistryVocab = {
     },
     "coeff2": {
       "category": "legacy",
-      "desc": "legacy t1+t2 and t1*t2 map"
+      "desc": "legacy sum/product map",
+      "effect": "out1 = z1 + z2; out2 = z1 * z2. Identical to sum_prod, kept under its legacy name.",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "coeff3": {
       "category": "legacy",
-      "desc": "legacy 1/(t+2) map"
+      "desc": "legacy shifted inversion 1/(t+2)",
+      "effect": "out1 = 1/(z1 + 2); out2 = 1/(z2 + 2).",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "coeff3a": {
       "category": "legacy",
-      "desc": "legacy 1/(t+1) map"
+      "desc": "legacy shifted inversion 1/(t+1)",
+      "effect": "out1 = 1/(z1 + 1); out2 = 1/(z2 + 1).",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "coeff4": {
       "category": "legacy",
-      "desc": "legacy cos(t1), sin(t2)"
+      "desc": "legacy cos/sin map",
+      "effect": "out1 = cos(z1); out2 = sin(z2), using the full complex cosine and sine.",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "coeff5": {
       "category": "legacy",
-      "desc": "legacy reciprocal cross map"
+      "desc": "legacy cross-reciprocal map",
+      "effect": "out1 = z1 + 1/z2; out2 = z2 + 1/z1. Each parameter is shifted by the reciprocal of the other.",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "coeff5a": {
       "category": "legacy",
-      "desc": "legacy reciprocal self map"
+      "desc": "legacy self-reciprocal (Joukowski-style) map",
+      "effect": "out1 = z1 + 1/z1; out2 = z2 + 1/z2.",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "coeff6": {
       "category": "legacy",
-      "desc": "legacy cubic fractional map"
+      "desc": "legacy cubic Cayley-style map",
+      "effect": "out = (t^3 + i)/(t^3 - i), applied to each parameter independently.",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "coeff7": {
       "category": "legacy",
-      "desc": "legacy trig fractional map"
+      "desc": "legacy trig fractional map",
+      "effect": "out = (t + sin(t))/(t + cos(t)), applied to each parameter independently.",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "coeff8": {
       "category": "legacy",
-      "desc": "legacy cross trig map"
+      "desc": "legacy cross-trig fractional map",
+      "effect": "out1 = (z1 + sin(z2))/(z2 + cos(z1)); out2 = (z2 + sin(z1))/(z1 + cos(z2)).",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "coeff9": {
       "category": "legacy",
-      "desc": "legacy squared fractional map"
+      "desc": "legacy squared cross-fraction map",
+      "effect": "out1 = (z1^2 + i*z2)/(z1^2 - i*z2); out2 = (z2^2 + i*z1)/(z2^2 - i*z1).",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "coeff10": {
       "category": "legacy",
-      "desc": "legacy fourth-power fractional map"
+      "desc": "legacy fourth-power cross-fraction map",
+      "effect": "out1 = (z1^4 - z2)/(z1^4 + z2); out2 = (z2^4 - z1)/(z2^4 + z1).",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "coeff11": {
       "category": "legacy",
-      "desc": "legacy log fourth-power map"
+      "desc": "legacy log of fourth power map",
+      "effect": "out = log(t^4 + 2), applied to each parameter independently (principal complex logarithm).",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "coeff12": {
       "category": "legacy",
-      "desc": "legacy mixed polynomial map"
+      "desc": "legacy mixed quartic polynomial map",
+      "effect": "out1 = 2*z1^4 - 3*z2^3 + 4*z1^2 - 5*z2; out2 = 2*z2^4 - 3*z1^3 + 4*z2^2 - 5*z1.",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "zzold": {
       "category": "arithmetic",
-      "desc": "legacy t1+i*t2 remix into both slots"
+      "desc": "duplicate t1 + i*t2 into both slots",
+      "effect": "out1 = out2 = z1 + i*z2.",
+      "notes": [
+        "For z1 = a + i*b and z2 = c + i*d: z1 + i*z2 = (a - d) + i*(b + c). Both outputs use the original inputs.",
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "zz1": {
       "category": "arithmetic",
-      "desc": "t1+i*t2 and t1*t2+i*(t1+t2)"
+      "desc": "t1 + i*t2 and t1*t2 + i*(t1+t2)",
+      "effect": "out1 = z1 + i*z2; out2 = z1*z2 + i*(z1 + z2).",
+      "notes": [
+        "For z1 = a + i*b and z2 = c + i*d: z1 + i*z2 = (a - d) + i*(b + c). Both outputs use the original inputs.",
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "zz2": {
       "category": "arithmetic",
-      "desc": "t1+i*t2 and t1-i*t2"
+      "desc": "t1 + i*t2 and t1 - i*t2",
+      "effect": "out1 = z1 + i*z2; out2 = z1 - i*z2.",
+      "notes": [
+        "For z1 = a + i*b and z2 = c + i*d: z1 + i*z2 = (a - d) + i*(b + c). Both outputs use the original inputs.",
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "zz3": {
       "category": "arithmetic",
-      "desc": "cross-imaginary remix of t1 and t2"
+      "desc": "t1 + i*t2 and t2 + i*t1",
+      "effect": "out1 = z1 + i*z2; out2 = z2 + i*z1.",
+      "notes": [
+        "For z1 = a + i*b and z2 = c + i*d: z1 + i*z2 = (a - d) + i*(b + c). Both outputs use the original inputs.",
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "t1radd": {
       "category": "arithmetic",
-      "desc": "add to real part of t1 only"
+      "desc": "add to real part of t1 only",
+      "effect": "Re(t1) += v. The other three components are unchanged.",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "t1iadd": {
       "category": "arithmetic",
-      "desc": "add to imaginary part of t1 only"
+      "desc": "add to imaginary part of t1 only",
+      "effect": "Im(t1) += v. The other three components are unchanged.",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "t2radd": {
       "category": "arithmetic",
-      "desc": "add to real part of t2 only"
+      "desc": "add to real part of t2 only",
+      "effect": "Re(t2) += v. The other three components are unchanged.",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "t2iadd": {
       "category": "arithmetic",
-      "desc": "add to imaginary part of t2 only"
+      "desc": "add to imaginary part of t2 only",
+      "effect": "Im(t2) += v. The other three components are unchanged.",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "radd": {
       "category": "arithmetic",
-      "desc": "add to real parts of both parameters"
+      "desc": "add to real parts of both parameters",
+      "effect": "Re(t1) += v; Re(t2) += v. Imaginary parts are unchanged.",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "iadd": {
       "category": "arithmetic",
-      "desc": "add to imaginary parts of both parameters"
+      "desc": "add to imaginary parts of both parameters",
+      "effect": "Im(t1) += v; Im(t2) += v. Real parts are unchanged.",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "add": {
       "category": "arithmetic",
-      "desc": "z1=z1+c1 and z2=z2+c2 using complex offsets"
+      "desc": "add offsets: one scalar to all components, or complex c1,c2 per parameter",
+      "effect": "add(v): adds the real scalar v to all four components, Re and Im of both parameters. add(c1, c2): t1 += c1 and t2 += c2 with complex offsets.",
+      "notes": [
+        "The one-argument form is the legacy behavior: v lands on the imaginary parts too, not just the real parts.",
+        "Complex offsets accept literals like 0.5+0.25i.",
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "cadd": {
       "category": "arithmetic",
-      "desc": "add a complex constant to t1 and t2"
+      "desc": "add a complex constant to t1 and t2",
+      "effect": "t1 += (re + i*im); t2 += (re + i*im).",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "rscale": {
       "category": "arithmetic",
-      "desc": "scale real parts only"
+      "desc": "scale real parts only",
+      "effect": "Re(t1) *= v; Re(t2) *= v. Imaginary parts are unchanged.",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "iscale": {
       "category": "arithmetic",
-      "desc": "scale imaginary parts only"
+      "desc": "scale imaginary parts only",
+      "effect": "Im(t1) *= v; Im(t2) *= v. Real parts are unchanged.",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "scale": {
       "category": "arithmetic",
-      "desc": "scale all components"
+      "desc": "scale all components uniformly",
+      "effect": "t1 *= v; t2 *= v, with real v: all four components are multiplied by v.",
+      "notes": [
+        "src=both applies the paired map to p1,p2; src=pop2 pops two stack values. tgt=both writes p1,p2; tgt=push2 pushes both outputs."
+      ]
     },
     "sdith": {
       "category": "dither",
-      "desc": "square uniform jitter"
+      "desc": "square uniform jitter on all components",
+      "effect": "Adds independent uniform noise in [-w/2, +w/2] to all four components (Re and Im of t1 and t2), where w = d/N.",
+      "notes": [
+        "N is the sweep grid resolution, so jitter is sized relative to one grid cell and stays sub-pixel as resolution grows.",
+        "A fresh random offset is drawn for every grid sample; d <= 0 falls back to d = 1.",
+        "Dithers always operate in place on the parameter registers (src and tgt are both)."
+      ]
     },
     "ddith": {
       "category": "dither",
-      "desc": "disk jitter"
+      "desc": "disk jitter with tunable radial density",
+      "effect": "Adds a random offset inside a disk of radius rmax = d/N: angle uniform in [0, 2*pi), radius r = u^exp * rmax with u uniform in [0,1).",
+      "notes": [
+        "exp = 0.5 gives uniform density by area; larger exp concentrates samples toward the center, smaller exp toward the rim.",
+        "target selects which parameter is jittered: 0 = t1, 1 = t2, 2 = both.",
+        "N is the sweep grid resolution, so jitter is sized relative to one grid cell and stays sub-pixel as resolution grows.",
+        "A fresh random offset is drawn for every grid sample; d <= 0 falls back to d = 1.",
+        "Dithers always operate in place on the parameter registers (src and tgt are both)."
+      ]
     },
     "ndith": {
       "category": "dither",
-      "desc": "normal/Gaussian jitter"
+      "desc": "Gaussian jitter on all components",
+      "effect": "Adds independent Gaussian noise with sigma = d/N to all four components (Re and Im of t1 and t2), sampled via the Box-Muller transform.",
+      "notes": [
+        "N is the sweep grid resolution, so jitter is sized relative to one grid cell and stays sub-pixel as resolution grows.",
+        "A fresh random offset is drawn for every grid sample; d <= 0 falls back to d = 1.",
+        "Dithers always operate in place on the parameter registers (src and tgt are both)."
+      ]
     },
     "adth": {
       "category": "dither",
-      "desc": "annulus jitter"
+      "desc": "annulus jitter",
+      "effect": "Adds a random offset inside the annulus with radii [inner*rmax, rmax], rmax = d/N: radius drawn area-uniform via r = sqrt(r0^2 + u*(r1^2 - r0^2)), angle uniform.",
+      "notes": [
+        "inner is clamped to [0,1]; inner = 0 degenerates to a full disk.",
+        "target selects which parameter is jittered: 0 = t1, 1 = t2, 2 = both.",
+        "N is the sweep grid resolution, so jitter is sized relative to one grid cell and stays sub-pixel as resolution grows.",
+        "A fresh random offset is drawn for every grid sample; d <= 0 falls back to d = 1.",
+        "Dithers always operate in place on the parameter registers (src and tgt are both)."
+      ]
     },
     "ldth": {
       "category": "dither",
-      "desc": "line-segment jitter"
+      "desc": "line-segment jitter",
+      "effect": "Adds t * (cos(angle) + i*sin(angle)) with t uniform in [-h, +h], where h = (d/N) * len.",
+      "notes": [
+        "target selects which parameter is jittered: 0 = t1, 1 = t2, 2 = both.",
+        "N is the sweep grid resolution, so jitter is sized relative to one grid cell and stays sub-pixel as resolution grows.",
+        "A fresh random offset is drawn for every grid sample; d <= 0 falls back to d = 1.",
+        "Dithers always operate in place on the parameter registers (src and tgt are both)."
+      ]
     },
     "crdth": {
       "category": "dither",
-      "desc": "cross-shaped jitter"
+      "desc": "cross-shaped jitter",
+      "effect": "With 50/50 probability adds a horizontal or vertical displacement uniform in [-h, +h], where h = d/N.",
+      "notes": [
+        "target selects which parameter is jittered: 0 = t1, 1 = t2, 2 = both.",
+        "N is the sweep grid resolution, so jitter is sized relative to one grid cell and stays sub-pixel as resolution grows.",
+        "A fresh random offset is drawn for every grid sample; d <= 0 falls back to d = 1.",
+        "Dithers always operate in place on the parameter registers (src and tgt are both)."
+      ]
     },
     "scdth": {
       "category": "dither",
-      "desc": "sector jitter"
+      "desc": "circular-sector jitter",
+      "effect": "Adds a random offset inside a circular sector: radius r = sqrt(u) * rmax (area-uniform) with rmax = d/N, angle uniform in [center - half_ap*pi, center + half_ap*pi].",
+      "notes": [
+        "half_ap is a fraction of pi and is clamped to [0,1]: half_ap = 1 covers the full circle, 0.25 covers a quarter-turn aperture.",
+        "target selects which parameter is jittered: 0 = t1, 1 = t2, 2 = both.",
+        "N is the sweep grid resolution, so jitter is sized relative to one grid cell and stays sub-pixel as resolution grows.",
+        "A fresh random offset is drawn for every grid sample; d <= 0 falls back to d = 1.",
+        "Dithers always operate in place on the parameter registers (src and tgt are both)."
+      ]
     }
   },
   "argSpecs": {
@@ -514,28 +758,28 @@ window._paramRegistryVocab = {
         "ph": "a",
         "def": "1",
         "scalarExpr": true,
-        "title": "Complex coefficient a.",
+        "title": "Coefficient a in f(t) = (a*t + b)/(c*t + d).",
         "complexWide": true
       },
       {
         "ph": "b",
         "def": "0",
         "scalarExpr": true,
-        "title": "Complex coefficient b.",
+        "title": "Coefficient b in f(t) = (a*t + b)/(c*t + d).",
         "complexWide": true
       },
       {
         "ph": "c",
         "def": "0",
         "scalarExpr": true,
-        "title": "Complex coefficient c.",
+        "title": "Coefficient c in f(t) = (a*t + b)/(c*t + d).",
         "complexWide": true
       },
       {
         "ph": "d",
         "def": "1",
         "scalarExpr": true,
-        "title": "Complex coefficient d.",
+        "title": "Coefficient d in f(t) = (a*t + b)/(c*t + d).",
         "complexWide": true
       }
     ],
@@ -544,14 +788,14 @@ window._paramRegistryVocab = {
         "ph": "z1",
         "def": "2",
         "scalarExpr": true,
-        "title": "Complex expression for the first offset.",
+        "title": "Complex offset c1 added to t1 before inversion: out1 = 1/(t1 + c1).",
         "complexWide": true
       },
       {
         "ph": "z2",
         "def": "2",
         "scalarExpr": true,
-        "title": "Complex expression for the second offset.",
+        "title": "Complex offset c2 added to t2 before inversion: out2 = 1/(t2 + c2).",
         "complexWide": true
       }
     ],
@@ -819,7 +1063,7 @@ window._paramRegistryVocab = {
         "ph": "v",
         "def": "0",
         "scalarExpr": true,
-        "title": "Offset value added by this transform.",
+        "title": "Real amount added to Re(t1).",
         "exprWide": true
       }
     ],
@@ -828,7 +1072,7 @@ window._paramRegistryVocab = {
         "ph": "v",
         "def": "0",
         "scalarExpr": true,
-        "title": "Offset value added by this transform.",
+        "title": "Real amount added to Im(t1).",
         "exprWide": true
       }
     ],
@@ -837,7 +1081,7 @@ window._paramRegistryVocab = {
         "ph": "v",
         "def": "0",
         "scalarExpr": true,
-        "title": "Offset value added by this transform.",
+        "title": "Real amount added to Re(t2).",
         "exprWide": true
       }
     ],
@@ -846,7 +1090,7 @@ window._paramRegistryVocab = {
         "ph": "v",
         "def": "0",
         "scalarExpr": true,
-        "title": "Offset value added by this transform.",
+        "title": "Real amount added to Im(t2).",
         "exprWide": true
       }
     ],
@@ -855,7 +1099,7 @@ window._paramRegistryVocab = {
         "ph": "v",
         "def": "0",
         "scalarExpr": true,
-        "title": "Offset value added by this transform.",
+        "title": "Real amount added to Re(t1) and Re(t2).",
         "exprWide": true
       }
     ],
@@ -864,7 +1108,7 @@ window._paramRegistryVocab = {
         "ph": "v",
         "def": "0",
         "scalarExpr": true,
-        "title": "Offset value added by this transform.",
+        "title": "Real amount added to Im(t1) and Im(t2).",
         "exprWide": true
       }
     ],
@@ -889,7 +1133,7 @@ window._paramRegistryVocab = {
         "ph": "v",
         "def": "1",
         "scalarExpr": true,
-        "title": "Scale factor applied to real parts only.",
+        "title": "Factor multiplying Re(t1) and Re(t2).",
         "exprWide": true
       }
     ],
@@ -898,7 +1142,7 @@ window._paramRegistryVocab = {
         "ph": "v",
         "def": "1",
         "scalarExpr": true,
-        "title": "Scale factor applied to imaginary parts only.",
+        "title": "Factor multiplying Im(t1) and Im(t2).",
         "exprWide": true
       }
     ],
@@ -907,7 +1151,7 @@ window._paramRegistryVocab = {
         "ph": "v",
         "def": "1",
         "scalarExpr": true,
-        "title": "Scale factor applied to all real and imaginary components.",
+        "title": "Real factor multiplying all four components.",
         "exprWide": true
       }
     ],

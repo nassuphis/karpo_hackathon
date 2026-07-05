@@ -434,7 +434,7 @@ const _coeffProgramCheatSections = [
         buttons: [
             { label: 'x = expr', snippet: 'x1 = log(abs(p1 + p2) + 1)\npoly = multiply(range(1, 37), 1i * x1)', title: 'Local alias: write-once, substituted at compile time. Any unreserved name.' },
             { label: 'scan', snippet: 'poly = scan(36, 1, p1 + p2, (sin(k*prev) + 1) / abs(sin(k*prev) + 1))', title: 'Bounded recurrence: out[0] = init at k=k0; out[j] = step with prev = previous element, k = k0 + j.' },
-            { label: 'poly[a:b]', snippet: 'poly[2:7] = multiply(poly[2:7], 5)', title: 'Slice read/write: poly[a:b] is a vector; slice assignment takes a vector of length b-a.' },
+            { label: 'poly[a:b]', snippet: 'poly[2:7] = multiply(poly[2:7], 5)', title: 'Slice read/write: poly[a:b] is a VECTOR, so combine it with call forms (multiply/add/divide...) — infix * + / is scalar-only. Slice assignment takes a vector of length b-a.' },
             { label: 'sum / prod', snippet: 'sum(poly[0:70])\npoly[70] = tos[0] + 1i*p1\ndrop', title: 'Reductions push a scalar; read it back with tos[0] in the next poke, then drop.' },
             { label: 'window', snippet: 'poly = multiply(poly, window(3, 6))', title: 'Exact 0/1 mask for slots [a, b) over the current poly length. step(a) is the one-sided form.' },
         ],
@@ -883,6 +883,34 @@ function _programHelpBuildCoeffRegistry() {
         _programHelpItem('andy', 'andy', 'Optional native-transform blend weight: 0 means pure transform, 1 means keep the input vector.', {
             category: 'native transform parameter',
             forms: ['poly = transform(poly, ..., andy)'],
+        }),
+    ]);
+    _programHelpAddSection(registry, 'Language Rules', [
+        _programHelpItem('infix', 'scalar infix: a + b, a * b, a**n', 'Infix arithmetic works on SCALARS only: p1, p2, t1, t2, literals, and element reads like poly[i] / cf[i] / tos[i]. ** needs an integer literal exponent (max 32); -x**n is rejected as ambiguous — write -(x**n).', {
+            forms: ['poly[0] = p1 * p2 + 1', 'poly[10] = poly[10] / abs(poly[10])'],
+        }),
+        _programHelpItem('vector-math', 'vector math: multiply(a, b), add(a, b), ...', 'Vectors (poly, cf, slices like poly[29:40], range/fill results, pop) NEVER use infix — combine them with the call forms add / subtract / multiply / divide / power / ge / gt / le / lt / eq / rem / ipow. Scalar arguments broadcast: multiply(poly[29:40], 2.5) scales a window in place.', {
+            forms: ['poly[29:40] = multiply(poly[29:40], 2.5)', 'poly = add(power(range(1, 37), 2), multiply(range(1, 37), p1 * p2))'],
+        }),
+        _programHelpItem('locals', 'name = expr', 'Write-once local alias, substituted at compile time. Any unreserved name; usable in expressions, call arguments, and indexes.', {
+            forms: ['gain = abs(p1 - p2)**2 + 1', 'poly[29:40] = divide(abs(poly[29:40]), gain)'],
+        }),
+    ]);
+    _programHelpAddSection(registry, 'Vectors + Windows', [
+        _programHelpItem('slice', 'poly[a:b] / cf[a:b]', 'Slice read (a vector of length b-a; b exclusive) and slice write. The written value must be a VECTOR of exactly b-a elements — use fill(b-a, value) to broadcast a scalar.', {
+            forms: ['poly[2:7] = multiply(poly[2:7], 5)', 'sum(poly[0:70])'],
+        }),
+        _programHelpItem('scan', 'scan(len, k0, init, step)', 'Bounded recurrence: out[0] = init at k = k0; out[j] = step with prev = previous element (prev2 with the five-arg form scan(len, k0, init1, init2, step)) and k = k0 + j. init/step are scalar expressions.', {
+            forms: ['poly = scan(36, 1, p1 + p2, (sin(k*prev) + 1) / abs(sin(k*prev) + 1))'],
+        }),
+        _programHelpItem('sum', 'sum(vector) / prod(vector)', 'Reductions: pop a vector, push the scalar total/product. Read the result back with tos[0] in the next poke, then drop.', {
+            forms: ['sum(poly[0:70])', 'poly[70] = tos[0] + 1i*p1', 'drop'],
+        }),
+        _programHelpItem('window', 'window(a, b) / step(a)', 'Exact 0/1 masks over the current poly length: window keeps slots [a, b), step keeps slots >= a. Multiply a vector by a mask to confine an effect. Arguments must be pure (no pop/tos).', {
+            forms: ['poly = multiply(poly, window(3, 6))'],
+        }),
+        _programHelpItem('select', 'select(cond, a, b)', 'Elementwise choice: cond*a + (1-cond)*b. Build cond with the comparison ops (eq/ge/gt/le/lt, exact 0/1 on real parts) and rem for parity. Arguments must be pure (no pop/tos).', {
+            forms: ['parity = rem(range(1, 72), 2)', 'poly = select(eq(parity, 0), evens, odds)'],
         }),
     ]);
     _programHelpAddSection(registry, 'Statement Forms', [

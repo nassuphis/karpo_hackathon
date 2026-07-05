@@ -910,7 +910,7 @@ function _programHelpBuildCoeffRegistry() {
             forms: ['poly = multiply(poly, window(3, 6))'],
         }),
         _programHelpItem('select', 'select(cond, a, b)', 'Elementwise choice: cond*a + (1-cond)*b. Build cond with the comparison ops (eq/ge/gt/le/lt, exact 0/1 on real parts) and rem for parity. Arguments must be pure (no pop/tos).', {
-            forms: ['parity = rem(range(1, 72), 2)', 'poly = select(eq(parity, 0), evens, odds)'],
+            forms: ['parity = rem(range(1, 72), 2)', 'poly = select(eq(rem(range(1, 72), 2), 0), poly, neg(poly))'],
         }),
     ]);
     _programHelpAddSection(registry, 'Statement Forms', [

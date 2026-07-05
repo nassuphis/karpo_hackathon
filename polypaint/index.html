@@ -2321,13 +2321,15 @@ button {
         <div class="solve-score-modal-body">
             <div class="solve-score-modal-pane">
                 <div class="solve-score-modal-pane-title">Saved Programs</div>
+                <input id="solve-score-modal-filter" type="text" class="coeff-program-modal-filter"
+                       placeholder="Filter by name (regex ok)" autocomplete="off">
                 <div class="solve-score-modal-table-wrap">
                     <table class="tri-popup-table">
                         <thead>
                             <tr>
-                                <th>Name</th>
+                                <th id="solve-score-modal-sort-name" class="coeff-program-modal-sort" title="Sort by name (natural order)">Name</th>
                                 <th>Statements</th>
-                                <th>Saved</th>
+                                <th id="solve-score-modal-sort-saved" class="coeff-program-modal-sort" title="Sort by saved time">Saved</th>
                             </tr>
                         </thead>
                         <tbody id="solve-score-modal-body"></tbody>
@@ -2376,13 +2378,15 @@ button {
         <div class="solve-score-modal-body">
             <div class="solve-score-modal-pane">
                 <div class="solve-score-modal-pane-title">Saved Programs</div>
+                <input id="param-program-modal-filter" type="text" class="coeff-program-modal-filter"
+                       placeholder="Filter by name (regex ok)" autocomplete="off">
                 <div class="solve-score-modal-table-wrap">
                     <table class="tri-popup-table">
                         <thead>
                             <tr>
-                                <th>Name</th>
+                                <th id="param-program-modal-sort-name" class="coeff-program-modal-sort" title="Sort by name (natural order)">Name</th>
                                 <th>Statements</th>
-                                <th>Saved</th>
+                                <th id="param-program-modal-sort-saved" class="coeff-program-modal-sort" title="Sort by saved time">Saved</th>
                             </tr>
                         </thead>
                         <tbody id="param-program-modal-body"></tbody>

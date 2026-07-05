@@ -109,7 +109,8 @@
         {"name": "le", "symbol": "COEFF_VEC_LE", "value": 8},
         {"name": "lt", "symbol": "COEFF_VEC_LT", "value": 9},
         {"name": "eq", "symbol": "COEFF_VEC_EQ", "value": 10},
-        {"name": "rem", "symbol": "COEFF_VEC_REM", "value": 11}
+        {"name": "rem", "symbol": "COEFF_VEC_REM", "value": 11},
+        {"name": "ipow", "symbol": "COEFF_VEC_IPOW", "value": 12}
       ]
     },
     {
@@ -287,6 +288,7 @@
         {"name": "length", "type": "int_literal"},
         {"name": "k0", "type": "int_literal"},
         {"name": "init", "type": "complex_expr"},
+        {"name": "init2", "type": "complex_expr", "optional": true},
         {"name": "step", "type": "complex_expr"}
       ]
     },

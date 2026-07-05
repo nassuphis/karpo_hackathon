@@ -800,6 +800,11 @@ window._coeffRegistryVocab = {
             "name": "rem",
             "symbol": "COEFF_VEC_REM",
             "value": 11
+          },
+          {
+            "name": "ipow",
+            "symbol": "COEFF_VEC_IPOW",
+            "value": 12
           }
         ]
       },
@@ -1146,6 +1151,11 @@ window._coeffRegistryVocab = {
           {
             "name": "init",
             "type": "complex_expr"
+          },
+          {
+            "name": "init2",
+            "type": "complex_expr",
+            "optional": true
           },
           {
             "name": "step",

@@ -276,11 +276,17 @@ function _renderSolveScoreProgramModal() {
         bodyEl.innerHTML = `<tr class="tri-popup-empty"><td colspan="3">${_escapeHtml(_solveScoreModalState.status || 'Failed to load saved programs.')}</td></tr>`;
         return;
     }
+    const ssVisible = _programModalVisibleRows(_solveScoreModalState);
+    _programModalSortArrows(_solveScoreModalState, 'solve-score-modal');
     if (!rows.length) {
         bodyEl.innerHTML = '<tr class="tri-popup-empty"><td colspan="3">No saved solve-score programs found.</td></tr>';
         return;
     }
-    bodyEl.innerHTML = rows.map((row) => {
+    if (!ssVisible.length) {
+        bodyEl.innerHTML = '<tr class="tri-popup-empty"><td colspan="3">No programs match the filter.</td></tr>';
+        return;
+    }
+    bodyEl.innerHTML = ssVisible.map((row) => {
         const active = row.id === _solveScoreModalState.selectedId ? ' active' : '';
         return `
             <tr class="tri-popup-row${active}" data-solve-score-program-id="${_escapeHtml(row.id)}">
@@ -583,6 +589,9 @@ async function _importSolveScoreProgramFileFromModal(file) {
 }
 
 let _paramProgramModalState = {
+    filterText: '',
+    sortKey: 'name',
+    sortDir: 1,
     open: false,
     tableState: 'idle',
     rows: [],
@@ -731,11 +740,17 @@ function _renderParamProgramModal() {
         bodyEl.innerHTML = `<tr class="tri-popup-empty"><td colspan="3">${_escapeHtml(_paramProgramModalState.status || 'Failed to load saved programs.')}</td></tr>`;
         return;
     }
+    const paramVisible = _programModalVisibleRows(_paramProgramModalState);
+    _programModalSortArrows(_paramProgramModalState, 'param-program-modal');
     if (!rows.length) {
         bodyEl.innerHTML = '<tr class="tri-popup-empty"><td colspan="3">No saved param programs found.</td></tr>';
         return;
     }
-    bodyEl.innerHTML = rows.map((row) => {
+    if (!paramVisible.length) {
+        bodyEl.innerHTML = '<tr class="tri-popup-empty"><td colspan="3">No programs match the filter.</td></tr>';
+        return;
+    }
+    bodyEl.innerHTML = paramVisible.map((row) => {
         const active = row.id === _paramProgramModalState.selectedId ? ' active' : '';
         return `
             <tr class="tri-popup-row${active}" data-param-program-id="${_escapeHtml(row.id)}">
@@ -1032,9 +1047,9 @@ function _naturalNameCompare(a, b) {
 }
 
 // Filter (regex when valid, else case-insensitive substring) + sort view of
-// the loaded rows; never mutates state.rows.
-function _coeffProgramVisibleRows() {
-    const state = _coeffProgramModalState;
+// the loaded rows; never mutates state.rows. Shared by the coeff, param and
+// solve-score program modals.
+function _programModalVisibleRows(state) {
     let rows = Array.isArray(state.rows) ? state.rows.slice() : [];
     const raw = String(state.filterText || '').trim();
     if (raw) {
@@ -1055,6 +1070,18 @@ function _coeffProgramVisibleRows() {
         rows.sort((a, b) => dir * _naturalNameCompare(a.name || a.id, b.name || b.id));
     }
     return rows;
+}
+
+function _coeffProgramVisibleRows() {
+    return _programModalVisibleRows(_coeffProgramModalState);
+}
+
+function _programModalSortArrows(state, prefix) {
+    const nameHdr = document.getElementById(`${prefix}-sort-name`);
+    const savedHdr = document.getElementById(`${prefix}-sort-saved`);
+    const arrow = state.sortDir < 0 ? ' \u25bc' : ' \u25b2';
+    if (nameHdr) nameHdr.textContent = 'Name' + (state.sortKey === 'name' ? arrow : '');
+    if (savedHdr) savedHdr.textContent = 'Saved' + (state.sortKey === 'saved' ? arrow : '');
 }
 
 function _coeffProgramFilename(name) {

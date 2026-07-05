@@ -225,19 +225,37 @@ def _normalize_slice_assign(tgt, value):
 
 
 class _ScanRewrite(ast.NodeTransformer):
-    """Rewrite cf[k+prev_off] -> __prev__ and k -> __scan_k__."""
+    """Rewrite cf[k+off-1] -> __prev__, cf[k+off-2] -> __prev2__, k ->
+    __scan_k__. Constant-slot cf reads OUTSIDE the scan's write span stay
+    as-is (scalar_src renders them poly[c]; the scan buffers its output in
+    scratch, so poly is constant while it runs — matching python, where the
+    loop never writes those slots)."""
 
-    def __init__(self, kvar, prev_off):
+    def __init__(self, kvar, write_off, span, seeds=2):
         self.kvar = kvar
-        self.prev_off = prev_off
+        self.write_off = write_off
+        self.span = span  # (slot_lo, slot_hi) the scan will cover
+        self.seeds = seeds
+        self.used_prev2 = False
         self.bad_read = False
 
     def visit_Subscript(self, node):
         # Classify against the pristine index BEFORE renaming k inside it.
         if isinstance(node.value, ast.Name) and node.value.id == "cf":
             slot = _slot_of_target(node, self.kvar)
-            if slot == ("loop", self.prev_off):
+            if slot == ("loop", self.write_off - 1):
                 return ast.copy_location(ast.Name(id="__prev__", ctx=ast.Load()), node)
+            if slot == ("loop", self.write_off - 2):
+                self.used_prev2 = True
+                return ast.copy_location(ast.Name(id="__prev2__", ctx=ast.Load()), node)
+            if slot and slot[0] == "const":
+                inside = self.span[0] <= slot[1] < self.span[1]
+                if not inside or slot[1] < self.span[0] + self.seeds:
+                    # outside the span, or a seed slot (poked before the
+                    # scan and re-emitted unchanged): reads poly[c]
+                    return node
+                self.bad_read = True
+                return node
             self.bad_read = True
             return node
         self.generic_visit(node)
@@ -313,28 +331,56 @@ def _append_poke(ordered, slot, expr):
         ordered.append(("poke", slot, expr))
 
 
-def _try_scan_template(kvar, lo, hi, off, value, ordered):
-    """Recognize cf[k+off] = f(cf[k+off-1], k) and build a scan entry.
+def _slot_written_before(ordered, segments, slot):
+    """True when an earlier poke, segment, or scan covers `slot`."""
+    for op in ordered:
+        if op[0] == "poke" and op[1] == slot:
+            return True
+        if op[0] == "scan" and op[1] <= slot < op[2]:
+            return True
+        if op[0] == "segment":
+            seg = segments[op[1]]
+            _kvar, lo, hi, off, _expr = seg
+            if lo + off <= slot < hi + off:
+                return True
+    return False
 
-    The recurrence's first read slot (lo+off-1) must have been poked before
-    the loop; that poke becomes the scan's init expression and is consumed.
-    Returns ("scan", slot_lo, slot_hi, length, k0, init_text, step_text).
+
+def _try_scan_template(kvar, lo, hi, off, value, ordered):
+    """Recognize cf[k+off] = f(cf[k+off-1] [, cf[k+off-2]], k) as a scan.
+
+    Seed slots must have been poked before the loop; those pokes become the
+    scan's init expressions and are consumed. Distance-2 recurrences use the
+    five-arg form with two seeds. Returns a ("scan", slot_lo, slot_hi,
+    length, k0, [init_texts...], step_text) entry.
     """
-    rewriter = _ScanRewrite(kvar, off - 1)
+    import copy
+    # Pass 1 (narrow span) learns whether prev2 is used; pass 2 re-runs with
+    # the true span so constant-slot reads classify against real bounds.
+    probe = _ScanRewrite(kvar, off, (lo + off - 1, hi + off))
+    probe.visit(copy.deepcopy(value))
+    seeds = 2 if probe.used_prev2 else 1
+    slot_lo = lo + off - seeds
+    if slot_lo < 0:
+        return None
+    rewriter = _ScanRewrite(kvar, off, (slot_lo, hi + off))
     step_node = ast.fix_missing_locations(rewriter.visit(value))
-    if rewriter.bad_read or _reads_cf(step_node):
+    if rewriter.bad_read:
         return None
-    init_slot = lo + off - 1
-    init_expr = None
-    for pos, op in enumerate(ordered):
-        if op[0] == "poke" and op[1] == init_slot:
-            init_expr = op[2]
-    if init_expr is None or _reads_cf(init_expr):
-        return None
-    ordered[:] = [op for op in ordered if not (op[0] == "poke" and op[1] == init_slot)]
-    init_text = scalar_src(init_expr)
+    # Seeds read poly[slot]: their pokes (or an earlier segment/scan) must
+    # already have written the slot, and they STAY in the program — the scan
+    # then re-emits the same value at out[0..seeds), which the slice write
+    # harmlessly rewrites.
+    init_texts = []
+    for s in range(slot_lo, lo + off):
+        if not _slot_written_before(ordered, _SCAN_SEGMENTS_REF["segments"], s):
+            return None
+        init_texts.append(f"poly[{s}]")
     step_text = scalar_src(step_node)
-    return ("scan", init_slot, hi + off, hi - lo + 1, lo - 1, init_text, step_text)
+    return ("scan", slot_lo, hi + off, hi - lo + seeds, lo - seeds, init_texts, step_text)
+
+
+_SCAN_SEGMENTS_REF = {"segments": []}
 
 
 def analyze(fn):
@@ -352,6 +398,7 @@ def analyze(fn):
 
     n_coeffs = None
     segments = []         # (kvar, lo, hi, off, expr)
+    _SCAN_SEGMENTS_REF["segments"] = segments
     ordered = []          # ("poke", slot, expr) / ("aug_slice", a, b, op, expr)
     env = {}              # inlined temps outside loops
 
@@ -521,8 +568,10 @@ def analyze(fn):
             slot = op[1]
             later = segments[seg_seen:]
             later_scans = [o for o in ordered[pos + 1:] if o[0] == "scan"]
+            # A scan's seed slots (first len(init_texts) of its span) read
+            # poly BEFORE the scan runs — pokes there are live, not dead.
             if any(slot in _seg_slots(s) for s in later) or \
-               any(o[1] <= slot < o[2] for o in later_scans):
+               any(o[1] + len(o[5]) <= slot < o[2] for o in later_scans):
                 continue
         postops.append(op)
 
@@ -589,6 +638,8 @@ def scalar_src(node, kvar=None):
             return "pi"
         if node.id == "__prev__":
             return "prev"
+        if node.id == "__prev2__":
+            return "prev2"
         if node.id == "__scan_k__":
             return "k"
         if node.id == "__tos0__":
@@ -631,7 +682,11 @@ def scalar_src(node, kvar=None):
                 if _scalar_prec(node.left, kvar) < 3:
                     base = f"({base})"
                 return f"{base}**{ev}"
-            return f"power({scalar_src(node.left, kvar)}, {scalar_src(e, kvar)})"
+            base = scalar_src(node.left, kvar)
+            expo = scalar_src(e, kvar)
+            if _scalar_prec(e, kvar) < 2:
+                expo = f"({expo})"
+            return f"exp(log({base}) * {expo})"
         ops = {ast.Add: ("+", 1), ast.Sub: ("-", 1), ast.Mult: ("*", 2), ast.Div: ("/", 2)}
         got = ops.get(type(node.op))
         if got is None:
@@ -997,7 +1052,8 @@ def emit_program(name, template, module_src):
             frag = (ast.get_source_segment(module_src, expr) or "").replace("\n", " ")
             _append_commented(lines, f"poly[{slot}] = {scalar_src(expr)}", frag)
         elif op[0] == "scan":
-            _tag, a, b, length, k0, init_text, step_text = op
+            _tag, a, b, length, k0, init_texts, step_text = op
+            init_text = ", ".join(init_texts)
             if " / abs(" in step_text and len(step_text) > MAX_LINE - 40:
                 head = step_text.split(" / abs(", 1)[0]
                 core = head[1:-1] if head.startswith("(") and head.endswith(")") else head

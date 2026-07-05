@@ -1458,6 +1458,9 @@ function _setSolveScoreChainFromLegacy(prefix, metric, quantilePct = 0.1, omega 
 }
 
 let _solveScoreModalState = {
+    filterText: '',
+    sortKey: 'name',
+    sortDir: 1,
     open: false,
     prefix: 'render',
     tableState: 'idle',

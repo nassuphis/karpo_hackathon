@@ -523,8 +523,9 @@ def _step_mask_text(edge_text):
 
 
 def _typed_lower_scan(args):
-    if len(args) != 4:
-        raise CoeffProgramSourceError("scan requires scan(length, k0, init, step)")
+    if len(args) not in (4, 5):
+        raise CoeffProgramSourceError(
+            "scan requires scan(length, k0, init, step) or scan(length, k0, init1, init2, step)")
     return [["scan"] + [_canonical_expr(arg) for arg in args]], "vector"
 
 
@@ -964,7 +965,7 @@ _LOCALS_RESERVED_EXTRA = frozenset({
     "range", "arange", "linspace",
     "roll", "rolr", "argsort", "littlewood", "blend", "andy",
     "scan", "slice", "poke_slice", "reduce", "sum", "prod",
-    "window", "step", "prev", "k", "select",
+    "window", "step", "prev", "prev2", "k", "select",
     "pi", "pi2", "pi2i", "tau", "tau_i",
     "p1", "p2", "t1", "t2", "poly_len",
 })

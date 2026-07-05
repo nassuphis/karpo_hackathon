@@ -290,6 +290,12 @@ function _paramProgramLegacyCheatSections() {
 
 const _paramProgramCheatSections = [
     {
+        title: 'Language',
+        buttons: [
+            { label: 'x = expr', snippet: 'w = 2*pi\np1 = sin(w*t1)\np2 = cos(w*t2)', title: 'Local alias: write-once, substituted at compile time. Any unreserved name; also valid in legacy(...) args.' },
+        ],
+    },
+    {
         title: 'Starters',
         buttons: [
             { label: 'identity', snippet: 'p1 = t1\np2 = t2', title: 'Pass through input parameters.' },
@@ -527,6 +533,12 @@ function _rootTransformCheatButtons() {
 }
 
 const _rootProgramCheatSections = [
+    {
+        title: 'Language',
+        buttons: [
+            { label: 'x = value', snippet: 'k = 0.25\nadd_complex(k)', title: 'Local alias: write-once numeric constants, substituted into transform arguments at compile time.' },
+        ],
+    },
     {
         title: 'Starters',
         buttons: [
@@ -1949,7 +1961,16 @@ function _renderSolveScoreCheatsheet(prefix) {
     const combineButtons = Object.keys(_solveScoreCombineSpecs).map(name => (
         _solveScoreCheatButtonHtml(p, name, _solveScoreCombineSnippet(name, _solveScoreCombineSpecs[name]), (_solveScoreCombineSpecs[name] || {}).tooltip || '')
     ));
+    const languageButtons = [
+        _solveScoreCheatButtonHtml(p, 'x1 = expr',
+            'x1 = metric(proximity, slv, q=0.1%)\nscore = (x1 + 1) * 0.5',
+            'Local alias: write-once, substituted at compile time.'),
+        _solveScoreCheatButtonHtml(p, 'infix + - * /',
+            'x1 = metric(proximity, slv, q=0.1%)\nx2 = metric(area, slv, q=1%)\nscore = x1 + x2 * 2',
+            'Infix arithmetic lowers to add/subtract/mul/ratio with standard precedence.'),
+    ];
     el.innerHTML = [
+        _solveScoreCheatSectionHtml('Language', languageButtons),
         _solveScoreCheatSectionHtml('Starters', starters),
         _solveScoreCheatSectionHtml('Metrics', metricButtons),
         _solveScoreCheatSectionHtml('Outputs', outputButtons),

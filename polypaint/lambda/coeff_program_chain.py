@@ -128,6 +128,7 @@ EXPR_TANH = 30
 EXPR_ANGLE = 31
 EXPR_PREV = 32
 EXPR_K = 33
+EXPR_PREV2 = 34
 
 _OP_NAMES = {
     COEFF_OP_CONST: "push_const",
@@ -293,6 +294,10 @@ VECTOR_BINARY_OPS = {
     "lt": 9,
     "eq": 10,
     "rem": 11,
+    # Integer-exponent power by repeated squaring: matches numpy's integer
+    # power semantics (exact signed zeros) where c_powc's exp/log path
+    # leaves phase residue. Exponent must be an integer-valued real.
+    "ipow": 12,
 }
 
 VECTOR_UNARY_OPS = {
@@ -963,6 +968,8 @@ class ExpressionParser:
                 return _Expr([{"op": EXPR_POLY_LEN}], kind="real", dynamic=True)
             if self._allow_scan_idents and token_value == "prev":
                 return _Expr([{"op": EXPR_PREV}], kind="complex", dynamic=True)
+            if self._allow_scan_idents and token_value == "prev2":
+                return _Expr([{"op": EXPR_PREV2}], kind="complex", dynamic=True)
             if self._allow_scan_idents and token_value == "k":
                 return _Expr([{"op": EXPR_K}], kind="real", dynamic=True)
             if token_value in {"cf", "poly", "tos"} and self._peek()[0] == "[":
@@ -1801,18 +1808,20 @@ def _register_expr_ref(expr, scalar_exprs):
 
 
 def _compile_scan_chip(args, scalar_exprs):
-    if len(args) != 4:
-        raise RuntimeError("scan chip requires length, k0, init, step")
+    if len(args) not in (4, 5):
+        raise RuntimeError(
+            "scan chip requires (length, k0, init, step) or (length, k0, init1, init2, step)")
     length = _vector_length_arg(args[0], "scan length")
     k0 = _integer_literal(args[1], "scan k0")
-    init_expr = ExpressionParser(args[2], allow_scan_idents=True).parse()
-    step_expr = ExpressionParser(args[3], allow_scan_idents=True).parse()
-    init_ref = _register_expr_ref(init_expr, scalar_exprs)
-    step_ref = _register_expr_ref(step_expr, scalar_exprs)
+    refs = [
+        _register_expr_ref(ExpressionParser(arg, allow_scan_idents=True).parse(), scalar_exprs)
+        for arg in args[2:]
+    ]
     # Refs ride as plain arg values (expr_refs stay -1): the resolver must
-    # not pre-evaluate them; the scan op runs the plans per element.
-    return _token(COEFF_OP_SCAN, n_args=4,
-                  args=[length, k0, float(init_ref), float(step_ref)])
+    # not pre-evaluate them; the scan op runs the plans per element. The
+    # five-arg form seeds two elements so `prev2` is defined from j=2 on.
+    return _token(COEFF_OP_SCAN, n_args=2 + len(refs),
+                  args=[length, k0] + [float(r) for r in refs])
 
 
 def _slice_bound(value, label):
@@ -2214,8 +2223,8 @@ def _execution_spec(tokens, scalar_exprs):
             args = token.get("args") or [0, 0, -1, -1]
             fields.append(_format_length_arg(args[0]))
             fields.append(_format_number(args[1]))
-            fields.append(f"expr{int(args[2])}")
-            fields.append(f"expr{int(args[3])}")
+            for ref in args[2:]:
+                fields.append(f"expr{int(ref)}")
         elif op == COEFF_OP_SLICE_READ:
             args = token.get("args") or [0, 0]
             fields.extend([sel("src"), _format_number(args[0]), _format_number(args[1])])

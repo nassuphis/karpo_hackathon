@@ -2657,7 +2657,7 @@ function extract(name) {
   return m[0];
 }
 const ctx = vm.createContext({ console, _coeffProgramModalState: null });
-vm.runInContext(extract('_naturalNameCompare') + '\n' + extract('_coeffProgramVisibleRows'), ctx);
+vm.runInContext(extract('_naturalNameCompare') + '\n' + extract('_programModalVisibleRows') + '\n' + extract('_coeffProgramVisibleRows'), ctx);
 const cmp = ctx._naturalNameCompare;
 if (!(cmp('poly_1', 'poly_2') < 0 && cmp('poly_2', 'poly_110') < 0 && cmp('poly_110', 'poly_2') > 0))
   { console.error('natural compare must order poly_1 < poly_2 < poly_110'); process.exit(1); }

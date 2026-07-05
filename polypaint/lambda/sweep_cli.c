@@ -3457,7 +3457,8 @@ enum CoeffVectorBinaryOp {
     COEFF_VEC_LE = 8,
     COEFF_VEC_LT = 9,
     COEFF_VEC_EQ = 10,
-    COEFF_VEC_REM = 11
+    COEFF_VEC_REM = 11,
+    COEFF_VEC_IPOW = 12
 };
 
 enum CoeffVectorUnaryOp {
@@ -3517,7 +3518,8 @@ enum CoeffExprOp {
     COEFF_EXPR_TANH = 30,
     COEFF_EXPR_ANGLE = 31,
     COEFF_EXPR_PREV = 32,
-    COEFF_EXPR_K = 33
+    COEFF_EXPR_K = 33,
+    COEFF_EXPR_PREV2 = 34
 };
 
 typedef struct {
@@ -3608,6 +3610,8 @@ typedef struct {
      * any other expression context; a hand-crafted payload just reads 0). */
     double scan_prev_re;
     double scan_prev_im;
+    double scan_prev2_re;
+    double scan_prev2_im;
     double scan_k;
 } CoeffProgramWorkspace;
 
@@ -4074,7 +4078,8 @@ static int coeffRunLoweredExprPlan(const CoeffEvalContext *ctx,
                                    int ref,
                                    uint16_t frameBase,
                                    double *outR,
-                                   double *outI) {
+                                   double *outI,
+                                   int tolerateNonFinite) {
     const CoeffProgram *program = ctx->program;
     CoeffProgramWorkspace *ws = ctx->ws;
     if (ref < 0 || ref >= program->scalar_expr_count) {
@@ -4094,7 +4099,8 @@ static int coeffRunLoweredExprPlan(const CoeffEvalContext *ctx,
             op == COEFF_EXPR_T1 || op == COEFF_EXPR_T2 ||
             op == COEFF_EXPR_POLY_LEN || op == COEFF_EXPR_CF_AT ||
             op == COEFF_EXPR_POLY_AT || op == COEFF_EXPR_TOS_AT ||
-            op == COEFF_EXPR_PREV || op == COEFF_EXPR_K) {
+            op == COEFF_EXPR_PREV || op == COEFF_EXPR_K ||
+            op == COEFF_EXPR_PREV2) {
             if (sp >= COEFF_PROGRAM_MAX_EXPR_TOKENS) {
                 fprintf(stderr, "coeff_program lowered expression temp overflow\n");
                 return 1;
@@ -4113,6 +4119,8 @@ static int coeffRunLoweredExprPlan(const CoeffEvalContext *ctx,
                 stackR[sp] = (double)ws->poly_len; stackI[sp] = 0.0;
             } else if (op == COEFF_EXPR_PREV) {
                 stackR[sp] = ws->scan_prev_re; stackI[sp] = ws->scan_prev_im;
+            } else if (op == COEFF_EXPR_PREV2) {
+                stackR[sp] = ws->scan_prev2_re; stackI[sp] = ws->scan_prev2_im;
             } else if (op == COEFF_EXPR_K) {
                 stackR[sp] = ws->scan_k; stackI[sp] = 0.0;
             } else {
@@ -4225,9 +4233,18 @@ static int coeffRunLoweredExprPlan(const CoeffEvalContext *ctx,
             return 1;
         }
     }
-    if (sp != 1 || !isfinite(stackR[0]) || !isfinite(stackI[0])) {
-        fprintf(stderr, "coeff_program lowered expression did not produce a single finite result\n");
+    if (sp != 1) {
+        fprintf(stderr, "coeff_program lowered expression did not produce a single result\n");
         return 1;
+    }
+    if (!isfinite(stackR[0]) || !isfinite(stackI[0])) {
+        if (!tolerateNonFinite) {
+            fprintf(stderr, "coeff_program lowered expression did not produce a single finite result\n");
+            return 1;
+        }
+        /* scan steps clamp overflow to 0, matching the vector op policy */
+        stackR[0] = isfinite(stackR[0]) ? stackR[0] : 0.0;
+        stackI[0] = isfinite(stackI[0]) ? stackI[0] : 0.0;
     }
     *outR = stackR[0];
     *outI = stackI[0];
@@ -4248,7 +4265,7 @@ static int coeffResolveTokenArgs(const CoeffEvalContext *ctx,
         int ref = tok->expr_refs[i];
         if (ref >= 0) {
             if (coeffRunLoweredExprPlan(ctx, ref, frameBase,
-                                        &resolved->re[i], &resolved->im[i]) != 0) return 1;
+                                        &resolved->re[i], &resolved->im[i], 0) != 0) return 1;
         } else {
             resolved->re[i] = tok->args[i];
             resolved->im[i] = tok->args_im[i];
@@ -4259,7 +4276,7 @@ static int coeffResolveTokenArgs(const CoeffEvalContext *ctx,
     resolved->has_andy = tok->andy_expr_ref >= 0 || tok->andy != 0.0;
     if (tok->andy_expr_ref >= 0) {
         if (coeffRunLoweredExprPlan(ctx, tok->andy_expr_ref, frameBase,
-                                    &resolved->andy_re, &resolved->andy_im) != 0) return 1;
+                                    &resolved->andy_re, &resolved->andy_im, 0) != 0) return 1;
     }
     return 0;
 }
@@ -4487,6 +4504,23 @@ static int coeffProgramApplyBinaryFn(int fnIndex,
         else if (fnIndex == COEFF_VEC_LT) truth = ar < br;
         else truth = (ar == br) && (ai == bi);
         *rr = truth ? 1.0 : 0.0; *ri = 0.0;
+    } else if (fnIndex == COEFF_VEC_IPOW) {
+        /* integer power by repeated squaring (numpy semantics) */
+        if (fabs(bi) > 1e-12 || floor(br) != br || fabs(br) > 64.0) {
+            fprintf(stderr, "coeff_program ipow exponent must be an integer in [-64,64]\n");
+            return 1;
+        }
+        long e = (long)br;
+        int inv = e < 0;
+        unsigned long n = (unsigned long)(inv ? -e : e);
+        double accR = 1.0, accI = 0.0, baseR = ar, baseI = ai;
+        while (n) {
+            if (n & 1UL) { double tr, ti; c_mul(accR, accI, baseR, baseI, &tr, &ti); accR = tr; accI = ti; }
+            n >>= 1UL;
+            if (n) { double tr, ti; c_mul(baseR, baseI, baseR, baseI, &tr, &ti); baseR = tr; baseI = ti; }
+        }
+        if (inv) { double tr, ti; c_div(1.0, 0.0, accR, accI, &tr, &ti); accR = tr; accI = ti; }
+        *rr = accR; *ri = accI;
     } else if (fnIndex == COEFF_VEC_REM) {
         /* fmod on real parts; matches numpy % for the integer-valued
          * reals the per-k conditionals use. */
@@ -5362,27 +5396,39 @@ static int coeffProgramScanOp(const CoeffEvalContext *ctx, const CoeffProgramTok
     if (len == -1) len = ws->poly_len; /* poly_len sentinel */
     if (coeff_program_check_len(len, "scan") != 0) return 1;
     int k0 = (int)tok->args[1];
+    /* 4-arg form: [len, k0, init, step]; 5-arg seeds two elements:
+     * [len, k0, init1, init2, step] so prev2 is defined from j = 2. */
+    int two_seeds = tok->n_args >= 5;
     int init_ref = (int)tok->args[2];
-    int step_ref = (int)tok->args[3];
+    int init2_ref = two_seeds ? (int)tok->args[3] : -1;
+    int step_ref = (int)tok->args[two_seeds ? 4 : 3];
     uint16_t frameBase = ws->stack_depth;
     ws->scan_prev_re = 0.0;
     ws->scan_prev_im = 0.0;
+    ws->scan_prev2_re = 0.0;
+    ws->scan_prev2_im = 0.0;
     for (int j = 0; j < len; j++) {
         double vr = 0.0, vi = 0.0;
         ws->scan_k = (double)(k0 + j);
-        int ref = (j == 0) ? init_ref : step_ref;
-        if (coeffRunLoweredExprPlan(ctx, ref, frameBase, &vr, &vi) != 0) {
-            ws->scan_prev_re = 0.0; ws->scan_prev_im = 0.0; ws->scan_k = 0.0;
+        int ref = step_ref;
+        if (j == 0) ref = init_ref;
+        else if (j == 1 && two_seeds) ref = init2_ref;
+        if (coeffRunLoweredExprPlan(ctx, ref, frameBase, &vr, &vi, 1) != 0) {
+            ws->scan_prev_re = 0.0; ws->scan_prev_im = 0.0;
+            ws->scan_prev2_re = 0.0; ws->scan_prev2_im = 0.0; ws->scan_k = 0.0;
             return 1;
         }
         if (!isfinite(vr)) vr = 0.0;
         if (!isfinite(vi)) vi = 0.0;
         ws->scratch_re[j] = vr;
         ws->scratch_im[j] = vi;
+        ws->scan_prev2_re = ws->scan_prev_re;
+        ws->scan_prev2_im = ws->scan_prev_im;
         ws->scan_prev_re = vr;
         ws->scan_prev_im = vi;
     }
-    ws->scan_prev_re = 0.0; ws->scan_prev_im = 0.0; ws->scan_k = 0.0;
+    ws->scan_prev_re = 0.0; ws->scan_prev_im = 0.0;
+    ws->scan_prev2_re = 0.0; ws->scan_prev2_im = 0.0; ws->scan_k = 0.0;
     ws->scratch_len = (uint16_t)len;
     return coeff_stack_push(ws, ws->scratch_re, ws->scratch_im, len);
 }

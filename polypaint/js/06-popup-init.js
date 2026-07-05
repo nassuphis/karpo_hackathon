@@ -1204,6 +1204,7 @@ function _initSolveScoreProgramModal() {
             }
         },
     });
+    _bindProgramModalFilterSort('solve-score-modal', _solveScoreModalState, _renderSolveScoreProgramModal);
     if (nameEl) {
         nameEl.addEventListener('input', (ev) => {
             _solveScoreModalState.nameInput = String(ev.target && ev.target.value || '');
@@ -1226,7 +1227,27 @@ function _initSolveScoreProgramModal() {
     }
 }
 
+function _bindProgramModalFilterSort(prefix, state, render) {
+    const filterEl = document.getElementById(`${prefix}-filter`);
+    if (filterEl) {
+        filterEl.addEventListener('input', (ev) => {
+            state.filterText = String(ev.target && ev.target.value || '');
+            render();
+        });
+    }
+    const toggle = (key) => {
+        if (state.sortKey === key) state.sortDir = -state.sortDir;
+        else { state.sortKey = key; state.sortDir = key === 'saved' ? -1 : 1; }
+        render();
+    };
+    const nameHdr = document.getElementById(`${prefix}-sort-name`);
+    const savedHdr = document.getElementById(`${prefix}-sort-saved`);
+    if (nameHdr) nameHdr.addEventListener('click', () => toggle('name'));
+    if (savedHdr) savedHdr.addEventListener('click', () => toggle('saved'));
+}
+
 function _initParamProgramModal() {
+    _bindProgramModalFilterSort('param-program-modal', _paramProgramModalState, _renderParamProgramModal);
     const nameEl = document.getElementById('param-program-modal-name');
     const loadBtn = document.getElementById('param-program-modal-load');
     const saveBtn = document.getElementById('param-program-modal-save');
@@ -1297,27 +1318,7 @@ function _initCoeffProgramModal() {
             _renderCoeffProgramModal();
         });
     }
-    const filterEl = document.getElementById('coeff-program-modal-filter');
-    if (filterEl) {
-        filterEl.addEventListener('input', (ev) => {
-            _coeffProgramModalState.filterText = String(ev.target && ev.target.value || '');
-            _renderCoeffProgramModal();
-        });
-    }
-    const sortName = document.getElementById('coeff-program-modal-sort-name');
-    const sortSaved = document.getElementById('coeff-program-modal-sort-saved');
-    const toggleSort = (key) => {
-        if (_coeffProgramModalState.sortKey === key) {
-            _coeffProgramModalState.sortDir = -_coeffProgramModalState.sortDir;
-        } else {
-            _coeffProgramModalState.sortKey = key;
-            // fresh saved-sort defaults to newest first; name to A..Z
-            _coeffProgramModalState.sortDir = key === 'saved' ? -1 : 1;
-        }
-        _renderCoeffProgramModal();
-    };
-    if (sortName) sortName.addEventListener('click', () => toggleSort('name'));
-    if (sortSaved) sortSaved.addEventListener('click', () => toggleSort('saved'));
+    _bindProgramModalFilterSort('coeff-program-modal', _coeffProgramModalState, _renderCoeffProgramModal);
     if (loadBtn) loadBtn.addEventListener('click', () => { void _loadSelectedCoeffProgramFromModal(); });
     if (saveBtn) saveBtn.addEventListener('click', () => { void _saveCurrentCoeffProgramFromModal(); });
     if (deleteBtn) deleteBtn.addEventListener('click', () => { void _deleteSelectedCoeffProgramFromModal(); });

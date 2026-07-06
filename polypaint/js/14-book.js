@@ -304,6 +304,24 @@ function bookSetCover() {
     _bookStatus(`Cover set to "${entry ? (entry.display_name || entry.artifact_id) : '?'}" (row turns red). Save to keep it.`);
 }
 
+async function bookGoRender() {
+    const entry = (_bookState.doc || {}).entries?.find(e => e.entry_id === _bookState.selectedEntryId);
+    if (!entry) { _bookStatus('Select a row first', true); return; }
+    _bookBtnBusy('btn-book-go-render', true, 'Opening…');
+    try {
+        await _ensureResultsSelection(entry.job_id);
+        switchTab('render');
+        await refreshRenderArtifacts(entry.job_id, {
+            selectFamily: 'color',
+            selectArtifactId: entry.artifact_id || null,
+        });
+    } catch (e) {
+        _bookStatus(`GoRender failed: ${e.message}`, true);
+    } finally {
+        _bookBtnBusy('btn-book-go-render', false);
+    }
+}
+
 function bookMetaChanged() {
     const doc = _bookState.doc;
     if (!doc) return;

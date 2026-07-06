@@ -144,7 +144,11 @@
         "/list-palette-mosaic",
         "/share-mosaic",
         "/delete-prefix",
-        "/list-deepzoom"
+        "/list-deepzoom",
+        "/list-books",
+        "/fetch-book",
+        "/save-book",
+        "/delete-book"
       ]
     },
     {

@@ -141,6 +141,12 @@ MAX_PARAM_PROGRAM_STATEMENTS = 256
 MAX_PARAM_PROGRAM_CHAIN_BYTES = 24 * 1024
 MAX_PARAM_PROGRAM_TOKEN_LEN = 256
 ROOT_PROGRAMS_PREFIX = "polypaint/root-programs/"
+BOOKS_PREFIX = "polypaint/books/"
+BOOK_META_NAME = "book_name"
+BOOK_META_ENTRY_COUNT = "book_entry_count"
+BOOK_META_SAVED_AT = "book_saved_at"
+MAX_BOOK_NAME_LEN = 120
+MAX_BOOK_ENTRIES = 200
 ROOT_PROGRAM_VERSION = 1
 ROOT_PROGRAM_META_NAME = "root_program_name"
 ROOT_PROGRAM_META_STATEMENT_COUNT = "root_program_statement_count"
@@ -235,7 +241,7 @@ def _client_error_message(exc):
 def _handle_storage_route(fn, event):
     try:
         return fn(event)
-    except (_SolveScoreProgramNotFound, _ParamProgramNotFound, _CoeffProgramNotFound, _RootProgramNotFound) as exc:
+    except (_SolveScoreProgramNotFound, _ParamProgramNotFound, _CoeffProgramNotFound, _RootProgramNotFound, _BookNotFound) as exc:
         return _error_response(404, exc)
     except _MigrationConflict as exc:
         return _json_error_response(409, {
@@ -1356,6 +1362,14 @@ def handler(event, context):
         return _handle_storage_route(handle_list_root_programs, event)
     elif path.endswith("/fetch-root-program"):
         return _handle_storage_route(handle_fetch_root_program, event)
+    elif path.endswith("/list-books"):
+        return _handle_storage_route(handle_list_books, event)
+    elif path.endswith("/fetch-book"):
+        return _handle_storage_route(handle_fetch_book, event)
+    elif path.endswith("/save-book"):
+        return _handle_storage_route(handle_save_book, event)
+    elif path.endswith("/delete-book"):
+        return _handle_storage_route(handle_delete_book, event)
     elif path.endswith("/delete-root-program"):
         return _handle_storage_route(handle_delete_root_program, event)
     elif path.endswith("/list-param-programs"):
@@ -1876,6 +1890,218 @@ def handle_save_coeff_program(event):
 
 class _RootProgramNotFound(RuntimeError):
     pass
+
+
+class _BookNotFound(RuntimeError):
+    pass
+
+
+def _book_key(book_id):
+    return f"{BOOKS_PREFIX}{_normalize_program_id(book_id)}.json"
+
+
+def _slugify_book_id(name):
+    slug = _slugify_coeff_program_id(name)
+    return "book" if slug == "coeff-program" else slug
+
+
+def _validate_book_payload(raw):
+    """Validate + normalize a book document (see book-maker-design.md §4)."""
+    if not isinstance(raw, dict):
+        raise ValueError("book payload must be an object")
+    kind = str(raw.get("book_kind") or "book")
+    if kind != "book":
+        raise ValueError(f"unknown book_kind {kind!r}")
+    name = str(raw.get("name") or "").strip()
+    if not name:
+        raise ValueError("book name is required")
+    if len(name) > MAX_BOOK_NAME_LEN:
+        raise ValueError(f"book name must be at most {MAX_BOOK_NAME_LEN} characters")
+    if any(ch in "\r\n\t" for ch in name) or not all(ch.isprintable() for ch in name):
+        raise ValueError("book name must contain printable single-line text")
+    entries_raw = raw.get("entries")
+    if entries_raw is None:
+        entries_raw = []
+    if not isinstance(entries_raw, list):
+        raise ValueError("book entries must be a list")
+    if len(entries_raw) > MAX_BOOK_ENTRIES:
+        raise ValueError(f"book has {len(entries_raw)} entries; max is {MAX_BOOK_ENTRIES}")
+    entries = []
+    seen_entry_ids = set()
+    for idx, item in enumerate(entries_raw):
+        if not isinstance(item, dict):
+            raise ValueError(f"book entry {idx} must be an object")
+        entry = {
+            "entry_id": str(item.get("entry_id") or f"e{idx}_{uuid.uuid4().hex[:6]}"),
+            "job_id": str(item.get("job_id") or "").strip(),
+            "artifact_id": str(item.get("artifact_id") or "").strip(),
+            "image_key": str(item.get("image_key") or "").strip(),
+            "display_name": str(item.get("display_name") or ""),
+            "added_at": str(item.get("added_at") or ""),
+            "title_override": str(item.get("title_override") or ""),
+            "body_override": str(item.get("body_override") or ""),
+        }
+        for field in ("job_id", "artifact_id", "image_key"):
+            if not entry[field]:
+                raise ValueError(f"book entry {idx} is missing {field}")
+        if "/" in entry["entry_id"] or entry["entry_id"] in seen_entry_ids:
+            raise ValueError(f"book entry {idx} has an invalid or duplicate entry_id")
+        seen_entry_ids.add(entry["entry_id"])
+        entries.append(entry)
+    cover = str(raw.get("cover_entry_id") or "")
+    if cover and cover not in seen_entry_ids:
+        raise ValueError("cover_entry_id does not match any entry")
+    book_id = str(raw.get("id") or _slugify_book_id(name)).strip()
+    if not book_id or "/" in book_id:
+        raise ValueError("book id must be a flat slug")
+    return {
+        "version": 1,
+        "book_kind": "book",
+        "id": book_id,
+        "name": name,
+        "title": str(raw.get("title") or ""),
+        "subtitle": str(raw.get("subtitle") or ""),
+        "author": str(raw.get("author") or ""),
+        "cover_entry_id": cover,
+        "entries": entries,
+        "saved_at": _utc_now_iso(),
+    }
+
+
+def _book_put_metadata(book):
+    return {
+        BOOK_META_NAME: str(book.get("name") or ""),
+        BOOK_META_ENTRY_COUNT: str(len(book.get("entries") or [])),
+        BOOK_META_SAVED_AT: str(book.get("saved_at") or ""),
+    }
+
+
+def _read_book_object(book_id):
+    key = _book_key(book_id)
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=key)
+    except Exception as exc:
+        if _is_missing_s3_error(exc):
+            raise _BookNotFound(f"book not found: {book_id}")
+        raise
+    payload = json.loads(obj["Body"].read())
+    if str(payload.get("book_kind") or "") != "book":
+        raise ValueError(f"object at {key} is not a book document")
+    return payload
+
+
+def handle_save_book(event):
+    params = parse_body(event)
+    book = _validate_book_payload(params.get("book"))
+    key = _book_key(book["id"])
+    overwritten = _key_exists(key)
+    s3.put_object(
+        Bucket=BUCKET,
+        Key=key,
+        Body=json.dumps(book).encode("utf-8"),
+        ContentType="application/json",
+        Metadata=_book_put_metadata(book),
+    )
+    return ok_response({"book": book, "overwritten": overwritten})
+
+
+def handle_fetch_book(event):
+    params = parse_body(event)
+    book_id = str(params.get("id") or "").strip()
+    if not book_id:
+        raise ValueError("book fetch requires id")
+    book = _read_book_object(book_id)
+    latest_output = None
+    try:
+        obj = s3.get_object(Bucket=BUCKET, Key=f"{BOOKS_PREFIX}{book_id}/out/latest.json")
+        latest_output = json.loads(obj["Body"].read())
+    except Exception as exc:
+        if not _is_missing_s3_error(exc):
+            raise
+    return ok_response({"book": book, "latest_output": latest_output})
+
+
+def handle_list_books(event):
+    del event
+    books = []
+    errors = []
+    kwargs = {"Bucket": BUCKET, "Prefix": BOOKS_PREFIX}
+    while True:
+        resp = s3.list_objects_v2(**kwargs)
+        for item in resp.get("Contents") or []:
+            key = item.get("Key") or ""
+            if not key.endswith(".json"):
+                continue
+            book_id = key[len(BOOKS_PREFIX):-len(".json")]
+            # per-book assets/outputs share the prefix: skip nested keys
+            if not book_id or "/" in book_id:
+                continue
+            try:
+                head = s3.head_object(Bucket=BUCKET, Key=key)
+                meta = head.get("Metadata") or {}
+                if BOOK_META_NAME not in meta:
+                    raise RuntimeError("book metadata headers missing")
+                books.append({
+                    "id": book_id,
+                    "name": meta.get(BOOK_META_NAME) or book_id,
+                    "entry_count": int(meta.get(BOOK_META_ENTRY_COUNT) or 0),
+                    "saved_at": meta.get(BOOK_META_SAVED_AT) or "",
+                })
+            except Exception:
+                try:
+                    payload = _read_book_object(book_id)
+                    books.append({
+                        "id": book_id,
+                        "name": payload.get("name") or book_id,
+                        "entry_count": len(payload.get("entries") or []),
+                        "saved_at": payload.get("saved_at") or "",
+                    })
+                except Exception as inner:
+                    errors.append({"id": book_id, "error": str(inner)[:240]})
+        if "LastEvaluatedKey" in resp:
+            kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+            continue
+        if resp.get("IsTruncated"):
+            kwargs["ContinuationToken"] = resp.get("NextContinuationToken")
+            continue
+        break
+    books.sort(key=lambda row: (row.get("saved_at") or "", row.get("id") or ""), reverse=True)
+    return ok_response({
+        "books": books,
+        "count": len(books),
+        "order": "saved_at_desc",
+        "errors": errors,
+        "error_count": len(errors),
+    })
+
+
+def handle_delete_book(event):
+    params = parse_body(event)
+    book_id = str(params.get("id") or "").strip()
+    if not book_id or "/" in book_id:
+        raise ValueError("book delete requires a flat id")
+    deleted = 0
+    doc_key = _book_key(book_id)
+    if _key_exists(doc_key):
+        s3.delete_object(Bucket=BUCKET, Key=doc_key)
+        deleted += 1
+    # per-book assets + outputs live under a guarded prefix
+    prefix = f"{BOOKS_PREFIX}{book_id}/"
+    assert prefix.startswith(BOOKS_PREFIX)
+    kwargs = {"Bucket": BUCKET, "Prefix": prefix}
+    while True:
+        resp = s3.list_objects_v2(**kwargs)
+        keys = [item["Key"] for item in resp.get("Contents") or []]
+        for key in keys:
+            s3.delete_object(Bucket=BUCKET, Key=key)
+            deleted += 1
+        if resp.get("IsTruncated"):
+            kwargs["ContinuationToken"] = resp.get("NextContinuationToken")
+            continue
+        break
+    if deleted == 0:
+        raise _BookNotFound(f"book not found: {book_id}")
+    return ok_response({"id": book_id, "deleted": deleted})
 
 
 def _root_program_key(program_id):

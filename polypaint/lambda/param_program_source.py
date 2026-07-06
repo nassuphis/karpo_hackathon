@@ -198,6 +198,13 @@ def _lower_call(stmt, name, args):
         if name not in _TARGETABLE_UNARY or len(args) != 1:
             raise ParamProgramSourceError(f"{name} takes no arguments or one p1/p2 target", code="bad_arity")
         target = _require_writable_symbol(args[0], stmt)
+        if target in _SCRATCH_SYMBOLS:
+            raise ParamProgramSourceError(
+                f"{name} target must be p1 or p2; registers rebind via rN = {name}(rN)",
+                line=stmt.line,
+                column=stmt.column,
+                code="bad_unary_target",
+            )
         return [[name, target]]
     if name == "legacy":
         if len(args) < 3:
@@ -274,7 +281,9 @@ class ParamStatementLowerer(ProfileStatementLowerer):
         return _locals_reserved_names()
 
     def reserved_local_patterns(self):
-        return (r"^(p|t|r)\d+$",)
+        # r1..r8 are the real scratch registers; r9, r10, ... stay legal
+        # write-once locals (they were legal before registers existed).
+        return (r"^(p|t)\d+$", r"^r[1-8]$")
 
     def lower_statement(self, statement):
         text = statement.text.strip()
@@ -397,13 +406,15 @@ def param_source_text_from_chain(chain):
         lname = name.lower()
         if lname == "const" and len(args) == 1 and idx + 1 < len(chain):
             next_name, next_args = _chip_name_and_args(chain[idx + 1])
-            if next_name.lower() == "emit" and len(next_args) == 1 and next_args[0].lower() in _OUTPUT_SYMBOLS:
+            if next_name.lower() == "emit" and len(next_args) == 1 and (
+                    next_args[0].lower() in _OUTPUT_SYMBOLS or next_args[0].lower() in _SCRATCH_SYMBOLS):
                 lines.append(f"{next_args[0].lower()} = {args[0]}")
                 idx += 2
                 continue
         if lname == "const" and len(args) == 2 and idx + 1 < len(chain):
             next_name, next_args = _chip_name_and_args(chain[idx + 1])
-            if next_name.lower() == "emit" and len(next_args) == 1 and next_args[0].lower() in _OUTPUT_SYMBOLS:
+            if next_name.lower() == "emit" and len(next_args) == 1 and (
+                    next_args[0].lower() in _OUTPUT_SYMBOLS or next_args[0].lower() in _SCRATCH_SYMBOLS):
                 lines.append(f"{next_args[0].lower()} = ({args[0]})+({args[1]})*1j")
                 idx += 2
                 continue

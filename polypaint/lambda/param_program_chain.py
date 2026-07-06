@@ -782,12 +782,15 @@ class _ExpressionParser:
                 return _expr_dynamic(EXPR_P1)
             if token_value == "p2":
                 return _expr_dynamic(EXPR_P2)
-            if len(token_value) == 2 and token_value[0] == "r" and token_value[1].isdigit():
+            if len(token_value) == 2 and token_value[0] == "r" and token_value[1] in "0123456789":
                 reg = int(token_value[1])
                 if 1 <= reg <= PARAM_REGISTER_COUNT:
                     # mutable scratch registers r1..r8, zeroed per evaluation
                     return _Expr([{"op": EXPR_REG, "a": float(reg - 1)}],
                                  kind="complex", dynamic=True, value=None)
+            if re.fullmatch(r"r\d+", token_value):
+                raise RuntimeError(
+                    f"unknown param expression identifier {token_value!r} (scratch registers are r1..r8)")
             raise RuntimeError(f"unknown param expression identifier {token_value!r}")
         if token_type == "(":
             expr = self._expr()
@@ -892,7 +895,7 @@ def _normalize_target(value, *, default="both"):
 
 def _register_index(value):
     raw = str(value or "").strip().lower()
-    if len(raw) == 2 and raw[0] == "r" and raw[1].isdigit():
+    if len(raw) == 2 and raw[0] == "r" and raw[1] in "0123456789":
         reg = int(raw[1])
         if 1 <= reg <= PARAM_REGISTER_COUNT:
             return reg - 1
@@ -904,7 +907,7 @@ def _emit_target_op(value):
     if raw in {"t1", "t2"}:
         raise RuntimeError("emit target cannot be t1/t2; t1/t2 are read-only inputs, emit to p1 or p2")
     if raw not in _EMIT_TARGETS:
-        raise RuntimeError(f"emit target must be p1 or p2, got {value!r}")
+        raise RuntimeError(f"emit target must be p1, p2, or r1..r8, got {value!r}")
     return _EMIT_TARGETS[raw]
 
 
@@ -1150,7 +1153,7 @@ def _lower_chip(chip):
         return [_token(op) for op in _push_target_ops(args[0] if args else "both")]
     if name == "emit":
         if len(args) != 1:
-            raise RuntimeError("emit chip requires target p1 or p2")
+            raise RuntimeError("emit chip requires one target: p1, p2, or r1..r8")
         reg = _register_index(args[0])
         if reg is not None:
             return [_token(PARAM_OP_STORE_REG, fn_index=reg)]

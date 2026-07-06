@@ -53,8 +53,9 @@ function _paramProgramSourceFromRows(chain) {
         } else if (name === 'push') {
             lines.push(params[0] ? `push(${params[0]})` : 'push');
         } else if (name === 'emit') {
-            const target = params[0] || 'p1';
-            lines.push(target === 'p2' ? 'emit_p2' : 'emit_p1');
+            const target = String(params[0] || 'p1').toLowerCase();
+            if (target === 'p1' || target === 'p2') lines.push(target === 'p2' ? 'emit_p2' : 'emit_p1');
+            else lines.push(`emit(${target})`);
         } else if (name === 'duplicate') {
             lines.push('dup');
         } else if (name === 'legacy') {

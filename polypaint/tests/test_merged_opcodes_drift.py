@@ -45,7 +45,7 @@ def test_merged_opcode_registry_ranges_and_symbols_are_unique():
     assert payload["ranges"]["param_specific"] == [31, 47]
     assert payload["ranges"]["reserved"] == [48, 63]
     assert payload["ranges"]["solve_score"] == [64, 95]
-    assert set(range(43, 64)).isdisjoint(ids)
+    assert set(range(45, 64)).isdisjoint(ids)  # 43/44 = param registers
     assert set(range(93, 96)).isdisjoint(ids)
 
 
@@ -90,6 +90,8 @@ def test_merged_param_specific_ids_map_to_existing_param_constants():
         "PARAM_OP_UNIT_CIRCLE": 40,
         "PARAM_OP_SQUARE": 41,
         "PARAM_OP_CUBE": 42,
+        "PARAM_OP_PUSH_REG": 43,
+        "PARAM_OP_STORE_REG": 44,
     }
     by_source = {op["source_symbol"]: int(op["id"]) for op in payload["opcodes"] if op.get("profile") == "param"}
     assert by_source == expected

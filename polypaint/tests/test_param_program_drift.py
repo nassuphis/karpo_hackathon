@@ -299,3 +299,18 @@ def test_param_compiler_reads_runtime_compat_from_registry():
     assert compat["variable_arg_counts"] == {
         name: frozenset(counts) for name, counts in chain._VARIABLE_LEGACY_ARG_COUNTS.items()
     }
+
+
+def test_param_register_count_matches_c_and_profile():
+    source = _c_source()
+    defines = _c_defines(source)
+    assert chain.PARAM_REGISTER_COUNT == defines["PARAM_PROGRAM_REGISTERS"] == 8
+    # profile scratch symbols must be exactly r1..rN — a profile edit adding
+    # r9 would compile at the source layer and explode at the chain layer
+    profile = _program_profiles()["param"]
+    scratch = {
+        name for name, spec in (profile.get("symbols") or {}).items()
+        if (spec or {}).get("role") == "scratch"
+    }
+    expected = {f"r{i}" for i in range(1, chain.PARAM_REGISTER_COUNT + 1)}
+    assert scratch == expected

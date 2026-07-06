@@ -349,3 +349,52 @@ class TestParamProgramChain(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestParamProgramRegisterWire(unittest.TestCase):
+    def test_register_token_wire_forms(self):
+        # r1 serializes with fn_index omitted ({"op": 29}) because the shared
+        # token serializer drops zero fields; the C parser memsets tokens so
+        # a missing fn_index reads as slot 0. r3 must carry fn_index=2.
+        from param_program_chain import (
+            PARAM_OP_PUSH_REG,
+            PARAM_OP_STORE_REG,
+            compile_param_program_chain,
+        )
+
+        compiled = compile_param_program_chain([
+            ["const", "t1"], ["emit", "r1"],
+            ["const", "r3"], ["emit", "r3"],
+        ])
+        tokens = compiled["tokens"]
+        stores = [t for t in tokens if t["op"] == PARAM_OP_STORE_REG]
+        pushes = [t for t in tokens if t["op"] == PARAM_OP_PUSH_REG]
+        self.assertEqual(len(stores), 2)
+        self.assertNotIn("fn_index", stores[0])
+        self.assertEqual(stores[1].get("fn_index"), 2)
+        self.assertEqual(len(pushes), 1)
+        self.assertEqual(pushes[0].get("fn_index"), 2)
+
+    def test_register_index_changes_fingerprint(self):
+        from param_program_chain import compile_param_program_chain
+
+        fp1 = compile_param_program_chain([["const", "t1"], ["emit", "r1"], ["const", "r1"], ["emit", "p1"]])["fingerprint"]
+        fp2 = compile_param_program_chain([["const", "t1"], ["emit", "r2"], ["const", "r2"], ["emit", "p1"]])["fingerprint"]
+        self.assertNotEqual(fp1, fp2)
+
+    def test_emit_and_expression_register_errors_name_the_range(self):
+        from param_program_chain import compile_param_program_chain
+
+        with self.assertRaises(RuntimeError) as ctx:
+            compile_param_program_chain([["const", "t1"], ["emit", "r9"]])
+        self.assertIn("r1..r8", str(ctx.exception))
+        with self.assertRaises(RuntimeError) as ctx:
+            compile_param_program_chain([["const", "r9"], ["emit", "p1"]])
+        self.assertIn("r1..r8", str(ctx.exception))
+
+    def test_register_index_rejects_non_ascii_digits(self):
+        from param_program_chain import _register_index
+
+        self.assertIsNone(_register_index("r٣"))  # Arabic-Indic 3
+        self.assertIsNone(_register_index("r²"))  # superscript 2
+        self.assertEqual(_register_index("r3"), 2)

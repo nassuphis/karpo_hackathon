@@ -84,6 +84,31 @@ class TestProgramV2Migration(unittest.TestCase):
         self.assertFalse(json.loads(same["body"])["wrote"])
 
     @patch("handler_storage.s3")
+    def test_migrate_param_register_program_lands_on_merged_wire(self, mock_s3):
+        import handler_storage
+        from merged_opcodes import MERGED_OP_PARAM_PUSH_REG, MERGED_OP_PARAM_STORE_REG
+
+        fake_s3 = _FakeS3()
+        _patch_s3(mock_s3, fake_s3)
+        handler_storage.handler(_event("/save-param-program", {
+            "name": "Param Regs",
+            "source_text": "r1 = t1 + 1\nr1 = r1 * r1\np1 = r1\np2 = r3 + t2",
+        }), None)
+
+        write = handler_storage.handler(
+            _event("/migrate-param-program", {"id": "param-regs", "dry_run": False}), None)
+        self.assertEqual(write["statusCode"], 200)
+        body = json.loads(write["body"])
+        ops = [tok["op"] for tok in body["migrated"]["tokens"]]
+        self.assertIn(MERGED_OP_PARAM_PUSH_REG, ops)
+        self.assertIn(MERGED_OP_PARAM_STORE_REG, ops)
+        pushes = [tok for tok in body["migrated"]["tokens"] if tok["op"] == MERGED_OP_PARAM_PUSH_REG]
+        # the r3 read must keep its slot index on the merged wire; r1 tokens omit it
+        self.assertIn(2, [tok.get("fn_index") for tok in pushes])
+        stored = json.loads(fake_s3.objects["polypaint/param-programs/v2/param-regs.json"].decode("utf-8"))
+        self.assertEqual(stored["program_version"], 2)
+
+    @patch("handler_storage.s3")
     def test_resave_after_migration_drops_stale_v2_copy(self, mock_s3):
         # H2: fetch prefers the v2 key, so a re-save that leaves the migrated
         # copy in place shadows every later edit forever and re-migration

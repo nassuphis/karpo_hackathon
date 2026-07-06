@@ -83,6 +83,8 @@
     {"id": 89, "symbol": "MERGED_OP_SCORE_EXP", "name": "exp", "profile": "solve_score", "source_symbol": "SOLVE_SCORE_OP_EXP"},
     {"id": 90, "symbol": "MERGED_OP_SCORE_POW", "name": "pow", "profile": "solve_score", "source_symbol": "SOLVE_SCORE_OP_POW"},
     {"id": 91, "symbol": "MERGED_OP_SCORE_EMIT_NONE", "name": "emit_none", "profile": "solve_score", "source_symbol": "SOLVE_SCORE_OP_EMIT_NONE"},
-    {"id": 92, "symbol": "MERGED_OP_SCORE_FLUSH", "name": "flush", "profile": "solve_score", "source_symbol": "SOLVE_SCORE_OP_FLUSH"}
+    {"id": 92, "symbol": "MERGED_OP_SCORE_FLUSH", "name": "flush", "profile": "solve_score", "source_symbol": "SOLVE_SCORE_OP_FLUSH"},
+    {"id": 43, "symbol": "MERGED_OP_PARAM_PUSH_REG", "name": "push_reg", "profile": "param", "source_symbol": "PARAM_OP_PUSH_REG"},
+    {"id": 44, "symbol": "MERGED_OP_PARAM_STORE_REG", "name": "store_reg", "profile": "param", "source_symbol": "PARAM_OP_STORE_REG"}
   ]
 }

@@ -23,7 +23,7 @@ metas) and offline-only (works on `snaps/` files, never talks to the backend).
   title + body text overrides, cover picker, Compile button with live progress.
 - "Add to Book" from the Render→color tab and the Favorites tab.
 - Server-side compile: per-entry image prep (cached), then a single LaTeX compose step
-  producing `cover.pdf` (629.4×316 mm gross) + `content.pdf` (293×296 mm gross pages,
+  producing `cover.pdf` (629×316 mm gross) + `content.pdf` (293×296 mm gross pages,
   multiple of 4). **One spread per entry**: verso text page + recto full-bleed image.
   Verso text is program-aware via `build_pdf_report_model` provenance snapshots.
 - "Export book source": download the generated `.tex` + assets as a bundle for local
@@ -46,8 +46,8 @@ item; full program listings belong in the exported source bundle, not the printe
 |---|---|---|
 | Provenance model | `lambda/handler_pdf_artifact.py:327` `build_pdf_report_model` | Summary rows + programs[] with 3-level fallback (stored source text → chain decompiled → legacy transforms bridged via `pipeline_programs`). Works for program-era AND legacy artifacts. Feeds the verso template. |
 | Image prep | `lambda/spread_pdf.py` `prepare_pdf_image` | vipsthumbnail (`/opt/bin`) or PIL fallback, decompression-bomb guard, format/quality control. Reused verbatim by the prepare op. |
-| Print geometry + book layout | `make_polypaint_book.py:246-262` | WhiteWall dims verified: content 290 mm net → 293×296 mm gross (bleed 3 sides), cover 629.4×316 mm gross, `PANEL_W` ≈ 296 mm; title-page layout, black-page padding, metadata-line conventions — all port to the LaTeX template. |
-| Dispatch fan-out | `lambda/handler_dispatch.py:22-41,48-54` | `{target, jobs[]}` → async Event invoke per job via the `FUNCTIONS` env map; response `{fired, total}`. |
+| Print geometry + book layout | `make_polypaint_book.py:246-262` | Content 290 mm net → 293×296 mm gross (bleed 3 sides) verified. Cover: the script's own comments are arithmetically wrong — `COVER_GROSS_W = 609 + 2×10 = 629.0 mm` (comment says 629.4) and `PANEL_W = (609−11)/2 = 299 mm` (comment says ~296). Use the computed values; confirm against the WhiteWall product spec (§9). Cover title layout, black-page padding, metadata-line conventions port to the LaTeX template. |
+| Dispatch fan-out | `lambda/handler_dispatch.py:22-41,48-64` (response `{fired, total}` at :101-104) | `{target, jobs[]}` → async Event invoke per job via the `FUNCTIONS` env map; response `{fired, total}`. |
 | Progress | `lambda/shared.py:31-46` `report_status` → DDB; `/check-status` (`handler_storage.py:3945`); observer `js/10-status-results.js:1535` | Phase labels, `expected` fan-in counting, hard-stale abandon (PDF runs already have it). |
 | Named-object CRUD | `handler_storage.py` coeff/root program routes (:1373-1384, :1351-1360) | S3-JSON docs under a prefix, slugified ids, HEAD-metadata cheap list, `errors[]` non-fatal listing, `_XxxNotFound` → 404, saved_at-desc sort. |
 | Cross-job references + hydration | favorites (`handler_storage.py:1258-1295`, `js/01-core-compute.js:303-360`) | Reference-not-copy precedent; hydration via `/render-summary` grouped by job; `missing: true` rows instead of silent pruning. |
@@ -56,7 +56,7 @@ item; full program listings belong in the exported source bundle, not the printe
 
 **Genuinely new (no precedent in the repo):** a TeX toolchain in Lambda. No function
 today is container-image based (all zip+layers, `deploy.sh:1429-1500`), and no layer
-carries TeX (`build-pdf-python-layer.sh:20` installs exactly `reportlab Pillow` —
+carries TeX (`lambda/build-pdf-python-layer.sh:20` installs exactly `reportlab Pillow` —
 which the book path now bypasses entirely). This is the main engineering cost and is
 priced in §5/§7.
 
@@ -90,8 +90,8 @@ priced in §5/§7.
 ### Book document — S3 JSON (programs pattern, not favorites-DDB)
 
 Why S3-JSON and not the favorites DDB pattern: a book carries per-entry text
-overrides and provenance snapshots — 36 entries × (overrides + a few KB snapshot)
-≈ 100–300 KB, uncomfortably near DDB's 400 KB item cap and pointless to shard;
+overrides (long body texts across ~36 entries reach tens of KB, and DDB's 400 KB
+item cap turns a growing book into a sharding exercise for zero benefit);
 the programs pattern already gives us versioned docs, cheap HEAD listing, and
 modal UX for free. Ordering is the array order — reorder = save the doc.
 
@@ -176,7 +176,11 @@ a compile sweep deletes assets whose `entry_id` is no longer in the doc.
 | `/save-book` | `{book}` (id optional → slug from name) | `{book, overwritten}` |
 | `/delete-book` | `{id}` | `{id, deleted}` (doc + prefix object count) |
 
-Same contracts as coeff/root programs: `_BookNotFound` → 404, printable
+Same contracts as coeff/root programs — with one addition the flat program
+prefixes never needed: `polypaint/books/` mixes doc keys with per-book
+`{id}/assets/…` and `{id}/out/…` objects (all `.json`-suffixed too), so
+`/list-books` MUST skip ids containing `/` (the same guard the program list
+already has at `handler_storage.py:1813`). `_BookNotFound` → 404, printable
 single-line name ≤120 chars, list never fails on one bad object (`errors[]`),
 validation rejects unknown `book_kind`, entries missing `job_id/artifact_id/image_key`,
 and >200 entries (sanity cap, WhiteWall books are ~30–40 spreads).
@@ -209,8 +213,11 @@ the same image (libvips baked in) to keep one deploy artifact.
   read `renders/{source_job_id}/calc.json` + color meta, write both asset objects.
   Phases: `load_source → prepare_image → snapshot → done`.
 - **op `compose`** — payload
-  `{op: "compose", job_id, task_id, book_id, compile_id}`.
-  Reads the book doc + all assets, **generates `book.tex` + `cover.tex` from Python
+  `{op: "compose", job_id, task_id, book_id, compile_id, expected_saved_at}`.
+  Reads the book doc (fails cleanly if its `saved_at` differs from
+  `expected_saved_at` — the user saved mid-compile; recompile picks up the new
+  state) + all assets (fails listing the entry_ids of any missing assets — an
+  entry added after the prepare fan-out has none), **generates `book.tex` + `cover.tex` from Python
   templates** (§6), runs `lualatex` (2 passes) for each, uploads `cover.pdf`,
   `content.pdf`, and `source.zip` to `out/{compile_id}/`, writes `out/latest.json`
   (`{compile_id, cover_key, content_key, source_key, content_pages, spread_count, compiled_at}`).
@@ -232,13 +239,27 @@ locally via the `test-docker-runtime.sh` pattern before the user deploys.
 ### Compile orchestration — frontend-chained V1
 
 The frontend Compile button:
-1. Dispatches `book_pdf` prepare jobs for every entry lacking a cached asset
+1. Dispatches `book_pdf` prepare jobs for ALL entries — prepare is idempotent and
+   cached entries no-op instantly, so `expected` is simply the entry count (the
+   frontend has no other way to know which assets exist; for the §4 "pinned"
+   badge the Book tab batch-HEADs the computed asset keys via the existing
+   `/head-keys` route, `handler_storage.py:4441`). Jobs are
    (batch `jobs[]`, task ids `bookprep_{runId}_{entry_id}`), saves an active run
-   `{mode: 'book', job_id: book-scoped, run_id, task_id_prefix}` and observes
-   `/check-status` with `task_prefix: 'bookprep_' + runId, expected: N` — the
-   existing observer already renders fan-in counts from `done/expected`.
-2. On `complete`, dispatches the single compose job (`task_id: bookcomp_{runId}`)
-   and observes it to `done`.
+   `{mode: 'book', job_id: book-scoped, run_id, task_id_prefix}` and polls
+   `/check-status` with `task_prefix: 'bookprep_' + runId, expected: N`.
+   Verified semantics (`handler_storage.py:4039-4048`): `done` counts rows with
+   status done, `total = done + errored`, and **`complete` means `total >=
+   expected` — all tasks TERMINAL, not all successful**. The compose trigger is
+   therefore **`done >= N && errors === 0`**; any `errors > 0` aborts with the
+   error details (never compose over a failed prepare). This also requires a
+   dedicated `mode === 'book'` observer branch: the existing loop hardcodes
+   `expected: 1` (`js/10-status-results.js:1548`) and treats
+   `check.complete || results[0].phase === 'done'` as run completion (:1587) —
+   with a multi-task prefix that fires on the FIRST finished prepare, so neither
+   condition can be reused for the fan-out phase.
+2. When `done == N` with zero errors, dispatches the single compose job
+   (`task_id: bookcomp_{runId}`) and observes it to `done` (this leg matches the
+   existing single-task PDF pattern, including hard-stale abandon).
 
 Known weakness, stated up front: closing the tab between phases stalls the chain
 (prepares finish; compose never fires). Acceptable for V1 because every stage is
@@ -274,17 +295,22 @@ maintenance — the user can art-direct the template directly.
 content page 290 mm net → **293×296 mm gross** with bleed on 3 sides
 (`\geometry{paperwidth=293mm, paperheight=296mm}`, all margins explicit, full-bleed
 image pages via `eso-pic`/`tikz` overlay at page edges); cover a single
-**629.4×316 mm gross** page (back panel / spine / front panel; `PANEL_W` ≈ 296 mm).
+**629×316 mm gross** page (609 net + 2×10 mm bleed; back panel / spine / front
+panel, `PANEL_W` = (609−11)/2 = **299 mm** — the script's ≈296 comment is wrong).
 JPEG assets embed byte-for-byte (DCTDecode pass-through — no recompression, unlike
 any raster round-trip).
 
-**Page plan (content PDF):**
+**Page plan (content PDF):** front matter must be an ODD page count — page 1 is a
+recto, and entry text must land on versos (left) with images on rectos (right) of
+the same opening. The local script gets this right with exactly one front page
+(`make_polypaint_book.py:905-916`: p1 blank recto, then text p2 (L) | image p3 (R));
+a 2-page front matter would shift every spread across two openings.
 ```
-p1  title page (title / subtitle / author)     p2  blank verso
-per entry, in order:  verso text page | recto full-bleed image page   (2 pages each)
-tail: black pads to reach a multiple of 4
+p1  title page (recto; blank-vs-title is a template choice, §9.1)
+per entry, in order:  verso text page | recto full-bleed image page  (2 pages each)
+tail: black pads to reach a multiple of 4   (pad = 3 for even N, 1 for odd N)
 ```
-36 entries → 2 + 72 + 2 pad = 76 pages. **One spread per entry — no appendix
+36 entries → 1 + 72 + 3 pad = 76 pages. **One spread per entry — no appendix
 spreads.** Verso layout follows the printed book style (black page, display serif
 title, body text, mono pipeline + artifact-id lines, optional palette strip), with
 text resolved as: override if set, else auto title + auto body from the provenance
@@ -294,7 +320,7 @@ not on the page.
 
 **Cover PDF:** back / spine / front on one page; front panel carries the cover
 entry's image at the local book's 2/3-above-title layout, or a typographic cover
-when `cover_entry_id` is empty. Spine text = title. The 629.4×316 template is the
+when `cover_entry_id` is empty. Spine text = title. The 609×316-net template is the
 28-page A3-square WhiteWall product the local book was built for; spine width
 varies with page count on other products — V1 pins this template and records
 `content_pages` in `latest.json` so mismatches are visible (open question §9.3).
@@ -322,11 +348,11 @@ byte-comparable.
 | Quantity | Derivation | Result |
 |---|---|---|
 | Asset size | 3600² JPEG q92, dense content | ~3–7 MB |
-| 300 DPI need | 296 mm / 25.4 × 300 = 3496 px; panel ≈ 296 mm same | 3600 cap ✓ (309 DPI full-bleed) |
+| 300 DPI need | 296 mm / 25.4 × 300 = 3496 px; cover panel 299 mm → 3532 px | 3600 cap ✓ (309 DPI full-bleed) |
 | Prepare wall/entry | source download (up to a few hundred MB) + vips shrink-on-load | ~5–20 s, parallel fan-out |
 | Container image | lambda python arm64 base (~250 MB) + TinyTeX-style pinned TeX (~250–350 MB, matches user's local 334 MB TinyTeX) + libvips (~30 MB) + fonts | ~0.7–1 GB (cap 10 GB) |
 | Cold start | ~1 GB image pull, Lambda-cached after first | +1–3 s vs zip; irrelevant at these run lengths |
-| Compose /tmp peak | 36 assets ×7 MB + tex build dir + content.pdf ~250 MB | ~700 MB → `tmp: 2048` |
+| Compose /tmp peak | 36 assets ×7 MB + tex build dir + content.pdf ~250 MB + source.zip (~250 MB, JPEGs don't compress) | ~1 GB → `tmp: 2048` |
 | Compose memory | lualatex on a 76-page image book + vips absent from this op | 4096 MB, headroom |
 | Compose wall | 250 MB S3 down + 2 lualatex passes (image-heavy but images are includes) | ~1–2 min |
 | Content PDF | 36×~5 MB JPEG pass-through + text | ~200 MB ≪ 1 GB WhiteWall cap |
@@ -357,7 +383,7 @@ prepare fan-out is bounded by the slowest single source, not the sum.
 - **Hydration:** generalize `_hydrateFavoriteArtifacts` (group refs by job →
   `/render-summary`, mark `missing`) so favorites and books share it.
 - **Add buttons:** `btn-render-add-book` in the color action row (same
-  enable/labeled-when-present logic as Favorite at `js/11-artifacts.js:1043`);
+  enable/labeled-when-present logic as the Favorite button, `js/11-artifacts.js:1112` / enable logic :1043);
   `btn-favorites-add-book` in the Favorites toolbar. Payload goes through a
   client-side `_bookAddEntry(ref)` that loads the active book doc, appends, saves.
 - **Compile progress:** `_saveActiveRun({mode: 'book', ...})`; the existing
@@ -405,13 +431,13 @@ exact dispatched shapes; nothing here deploys — the user deploys.
 
 - `tests/test_book_storage.py` — CRUD, slugify, 404s, list `errors[]`, sort,
   entry validation, delete-prefix guard (model: `test_root_program_storage.py`).
-- `tests/test_book_tex.py` — template rendering: page plan math (2 + 2N + pad ≡ 0
-  mod 4), `_tex_escape` fuzz (every provenance string class: `$`, `%`, `_`, `\`,
+- `tests/test_book_tex.py` — template rendering: page plan math (1 + 2N + pad ≡ 0
+  mod 4, front matter odd so text stays on versos), `_tex_escape` fuzz (every provenance string class: `$`, `%`, `_`, `\`,
   unicode), geometry constants in the emitted preamble, override-vs-auto resolution.
   Pure Python, runs in the normal predeploy gate without TeX.
 - **Docker arm64 TeX gate** — extend the `test-docker-runtime.sh` pattern: build the
   book_pdf image locally, compile a 3-entry fixture book inside it, assert PDF
-  properties (page count, MediaBox 293×296 mm / 629.4×316 mm, fonts embedded —
+  properties (page count, MediaBox 293×296 mm / 629×316 mm, computed from the script constants, not its comments, fonts embedded —
   this is the WhiteWall regression that matters, checkable by parsing the font
   resource dicts for FontFile streams). Required whenever the image/template changes,
   mirroring the sweep_cli.c rule.

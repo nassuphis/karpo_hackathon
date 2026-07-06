@@ -496,6 +496,20 @@ window._mergedOpcodeRegistry = {
       "profile": "solve_score",
       "source_symbol": "SOLVE_SCORE_OP_FLUSH",
       "symbol": "MERGED_OP_SCORE_FLUSH"
+    },
+    {
+      "id": 43,
+      "name": "push_reg",
+      "profile": "param",
+      "source_symbol": "PARAM_OP_PUSH_REG",
+      "symbol": "MERGED_OP_PARAM_PUSH_REG"
+    },
+    {
+      "id": 44,
+      "name": "store_reg",
+      "profile": "param",
+      "source_symbol": "PARAM_OP_STORE_REG",
+      "symbol": "MERGED_OP_PARAM_STORE_REG"
     }
   ],
   "ranges": {

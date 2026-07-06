@@ -357,3 +357,42 @@ def test_param_registers_rebind_and_zero_init_natively():
             # previous row did not leak into this row's r3/r1 reads
             assert abs(p2r - x2) < 1e-6, (i1, i2, p2r)
             assert abs(p2i) < 1e-6
+
+
+def test_param_registers_execute_on_v2_merged_wire_natively():
+    """The v2 remap (MERGED_OP_PARAM_PUSH_REG/STORE_REG -> ops 28/29) must
+    execute identically to the v1 wire."""
+    from param_program_source import parse_param_program_source
+    from program_v2_translate import _param_tokens_v2
+
+    parsed = parse_param_program_source(
+        "r1 = t1 + 1\n"
+        "r1 = r1 * r1\n"
+        "p1 = r1\n"
+        "p2 = r3 + t2\n"
+    )
+    compiled = compile_param_program_chain(parsed["chain"])
+    payload = {
+        "version": 2,
+        "tokens": _param_tokens_v2(compiled["tokens"]),
+        "stack_max": compiled["stack_max"],
+        "uses_legacy_fast_path": compiled["uses_legacy_fast_path"],
+    }
+    vm_spec = {
+        "mode": "param_dump",
+        "n1": 4,
+        "n2": 4,
+        "param_program": payload,
+    }
+    meta, vm = _run_sweep(vm_spec, "/tmp/pp_param_registers_v2.bin")
+    import struct
+
+    values = struct.unpack("<" + "f" * (len(vm) // 4), vm)
+    for i1 in range(4):
+        for i2 in range(4):
+            base = (i1 * 4 + i2) * 4
+            x1, x2 = i1 / 4.0, i2 / 4.0
+            p1r, p1i, p2r, p2i = values[base:base + 4]
+            assert abs(p1r - (x1 + 1.0) ** 2) < 1e-5, (i1, i2, p1r)
+            assert abs(p2r - x2) < 1e-6, (i1, i2, p2r)
+            assert abs(p1i) < 1e-6 and abs(p2i) < 1e-6

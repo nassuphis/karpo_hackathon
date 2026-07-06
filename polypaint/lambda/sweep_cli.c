@@ -6651,6 +6651,8 @@ static const char *parseParamProgramTokenObject(const char *objStart, const char
             case MERGED_OP_PARAM_UNIT_CIRCLE: tok->op = PARAM_OP_UNIT_CIRCLE; break;
             case MERGED_OP_PARAM_SQUARE: tok->op = PARAM_OP_SQUARE; break;
             case MERGED_OP_PARAM_CUBE: tok->op = PARAM_OP_CUBE; break;
+            case MERGED_OP_PARAM_PUSH_REG: tok->op = PARAM_OP_PUSH_REG; break;
+            case MERGED_OP_PARAM_STORE_REG: tok->op = PARAM_OP_STORE_REG; break;
             default:
                 fprintf(stderr, "param_program v2 token opcode %u is not executable by the param VM\n",
                         (unsigned)tok->op);
@@ -6794,12 +6796,12 @@ static int paramEvalScalarExpr(const ParamProgram *program, int ref,
             else if (op == PARAM_EXPR_T2) stack[sp] = t2;
             else if (op == PARAM_EXPR_P1) stack[sp] = p1;
             else if (op == PARAM_EXPR_REG) {
-                int reg = (int)a;
-                if (reg < 0 || reg >= PARAM_PROGRAM_REGISTERS || !regs) {
-                    fprintf(stderr, "param_program register r%d out of range\n", reg + 1);
+                /* bounds-check the double first: (int)NaN and (int)1e30 are UB */
+                if (!regs || !(a >= 0.0 && a < (double)PARAM_PROGRAM_REGISTERS)) {
+                    fprintf(stderr, "param_program register expr index %g out of range\n", a);
                     return 1;
                 }
-                stack[sp] = regs[reg];
+                stack[sp] = regs[(int)a];
             }
             else stack[sp] = p2;
             sp++;
@@ -7103,14 +7105,23 @@ static int paramEvalProgram(const ParamProgram *program, int gridN, double t1r, 
                 break;
             case PARAM_OP_PUSH_REG: {
                 int reg = tok->fn_index;
-                if (reg < 0 || reg >= PARAM_PROGRAM_REGISTERS) return 1;
+                if (reg < 0 || reg >= PARAM_PROGRAM_REGISTERS) {
+                    fprintf(stderr, "param_program push_reg slot %d out of range\n", reg);
+                    return 1;
+                }
                 if (paramPush(stack, &sp, regs[reg])) return 1;
                 break;
             }
             case PARAM_OP_STORE_REG: {
                 int reg = tok->fn_index;
-                if (reg < 0 || reg >= PARAM_PROGRAM_REGISTERS) return 1;
-                if (sp < 1) return 1;
+                if (reg < 0 || reg >= PARAM_PROGRAM_REGISTERS) {
+                    fprintf(stderr, "param_program store_reg slot %d out of range\n", reg);
+                    return 1;
+                }
+                if (sp < 1) {
+                    fprintf(stderr, "param_program store_reg with empty stack\n");
+                    return 1;
+                }
                 regs[reg] = stack[--sp];
                 break;
             }

@@ -352,7 +352,17 @@ MERGED_OPCODE_REGISTRY = {'opcodes': [{'id': 1,
               'name': 'flush',
               'profile': 'solve_score',
               'source_symbol': 'SOLVE_SCORE_OP_FLUSH',
-              'symbol': 'MERGED_OP_SCORE_FLUSH'}],
+              'symbol': 'MERGED_OP_SCORE_FLUSH'},
+             {'id': 43,
+              'name': 'push_reg',
+              'profile': 'param',
+              'source_symbol': 'PARAM_OP_PUSH_REG',
+              'symbol': 'MERGED_OP_PARAM_PUSH_REG'},
+             {'id': 44,
+              'name': 'store_reg',
+              'profile': 'param',
+              'source_symbol': 'PARAM_OP_STORE_REG',
+              'symbol': 'MERGED_OP_PARAM_STORE_REG'}],
  'ranges': {'coeff_reference': [1, 30],
             'param_specific': [31, 47],
             'reserved': [48, 63],
@@ -406,6 +416,8 @@ MERGED_OP_PARAM_RECIPROCAL = 39
 MERGED_OP_PARAM_UNIT_CIRCLE = 40
 MERGED_OP_PARAM_SQUARE = 41
 MERGED_OP_PARAM_CUBE = 42
+MERGED_OP_PARAM_PUSH_REG = 43
+MERGED_OP_PARAM_STORE_REG = 44
 MERGED_OP_SCORE_REDUCE_METRIC = 64
 MERGED_OP_SCORE_PUSH_METRIC = 65
 MERGED_OP_SCORE_AVG = 66

@@ -169,3 +169,49 @@ class TestParamProgramSource(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestParamProgramRegistersSource(unittest.TestCase):
+    def test_r9_and_higher_stay_legal_write_once_locals(self):
+        # r1..r8 are registers; r9+ were legal locals before registers
+        # shipped and must remain so (reserved pattern is ^r[1-8]$ only).
+        from param_program_chain import compile_param_program_chain
+        from param_program_source import parse_param_program_source
+
+        parsed = parse_param_program_source("r9 = t1 + 1\np1 = r9 * r9\np2 = t2")
+        errors = [d for d in parsed["diagnostics"] if d.get("level") == "error"]
+        self.assertEqual(errors, [])
+        # local substitution: no register ops in the compiled tokens
+        from param_program_chain import PARAM_OP_PUSH_REG, PARAM_OP_STORE_REG
+        compiled = compile_param_program_chain(parsed["chain"])
+        ops = {t["op"] for t in compiled["tokens"]}
+        self.assertNotIn(PARAM_OP_PUSH_REG, ops)
+        self.assertNotIn(PARAM_OP_STORE_REG, ops)
+
+    def test_unary_target_rejects_scratch_register_cleanly(self):
+        from param_program_source import parse_param_program_source
+
+        parsed = parse_param_program_source("r1 = t1\nsquare(r1)\np1 = r1", strict=False)
+        errors = [d for d in parsed["diagnostics"] if d.get("level") == "error"]
+        self.assertTrue(errors, "square(r1) must fail at the source layer")
+        self.assertEqual(errors[0].get("code"), "bad_unary_target")
+        self.assertIn("p1 or p2", errors[0].get("message", ""))
+
+    def test_register_program_source_round_trips_through_converter(self):
+        from param_program_chain import compile_param_program_chain
+        from param_program_source import (
+            param_source_text_from_chain,
+            parse_param_program_source,
+        )
+
+        source = "r1 = t1 + 1\nr1 = r1 * r1\np1 = r1\np2 = r3 + t2"
+        chain = parse_param_program_source(source, strict=True)["chain"]
+        fingerprint = compile_param_program_chain(chain)["fingerprint"]
+        text = param_source_text_from_chain(chain)
+        for line in ("r1 = t1+1", "r1 = r1*r1"):
+            self.assertIn(line, text)
+        reparsed = parse_param_program_source(text, strict=True)["chain"]
+        self.assertEqual(
+            compile_param_program_chain(reparsed)["fingerprint"], fingerprint,
+            "converter output must recompile to the same fingerprint",
+        )

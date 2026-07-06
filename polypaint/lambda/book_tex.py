@@ -174,16 +174,18 @@ def _verso_report_page(entry, provenance):
             parts.append(r"{\normalsize %s\par}" % tex_escape(line))
 
     if report.get("has_palette"):
-        # The palette image carries the story: full content width, centered
-        # vertically in the remaining space, with its label centered above it
-        # (label centered just like the box — user call).
+        # Palette artifacts are SQUARE images (4000x4000): contain-fit like the
+        # ColorSpread PDF (_draw_image_contain into a height-bounded square) —
+        # as large as possible: full width for strips, height-capped for
+        # squares so it never overflows the page. Label centered like the box.
         palette_label = tex_escape(str(report.get("palette_label") or "palette"))
         parts.extend([
             r"\vfill",
             r"\begin{center}",
             r"{\monofont\footnotesize\color{monotext} %s\par}" % palette_label,
             r"\vspace{2mm}",
-            r"\fcolorbox{panelborder}{panelbg}{\includegraphics[width=\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax]{%s/%s.palette.jpg}}"
+            r"\fcolorbox{panelborder}{panelbg}{\includegraphics[width=\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax,"
+            r"height=110mm,keepaspectratio]{%s/%s.palette.jpg}}"
             % (ASSET_DIR, entry.get("entry_id")),
             r"\end{center}",
             r"\vfill",

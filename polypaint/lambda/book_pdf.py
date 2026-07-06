@@ -239,8 +239,10 @@ def handle_prepare(params):
                     for chunk in pal_obj["Body"].iter_chunks(chunk_size=1024 * 1024):
                         pf.write(chunk)
                 prepared_palette_local = f"/tmp/book_pal_prep_{entry_id}.jpg"
+                # print target: the verso palette square is ~110mm; 1600px
+                # ~= 370 DPI there (sources are 4000px, so this is cheap)
                 prepare_pdf_image(palette_local, prepared_palette_local,
-                                  max_px=int(PDF_PALETTE_MAX_PX), quality=92, image_format="jpeg")
+                                  max_px=1600, quality=92, image_format="jpeg")
                 has_palette = True
             except Exception:
                 has_palette = False

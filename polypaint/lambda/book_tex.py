@@ -174,14 +174,23 @@ def _verso_report_page(entry, provenance):
             parts.append(r"{\normalsize %s\par}" % tex_escape(line))
 
     if report.get("has_palette"):
+        # Match spread_pdf._draw_report_summary: palette label as a section
+        # header with a full-width rule, then the swatch CENTERED horizontally
+        # (x + (CONTENT_W - side)/2) and vertically in the remaining space,
+        # sized ~72% of the content width, in a panel box.
         palette_label = tex_escape(str(report.get("palette_label") or "palette"))
         parts.extend([
-            r"\vfill",
+            r"\vspace{9mm}",
             r"{\monofont\footnotesize\color{monotext} %s\par}" % palette_label,
-            r"\vspace{2mm}",
-            r"\fcolorbox{panelborder}{panelbg}{\includegraphics[width=70mm]{%s/%s.palette.jpg}}"
+            r"\vspace{1mm}",
+            r"{\color{rulecol}\rule{\linewidth}{0.5pt}}\par",
+            r"\vfill",
+            r"\begin{center}",
+            r"\fcolorbox{panelborder}{panelbg}{\includegraphics[width=0.72\linewidth]{%s/%s.palette.jpg}}"
             % (ASSET_DIR, entry.get("entry_id")),
-            r"\vspace*{4mm}",
+            r"\end{center}",
+            r"\vfill",
+            r"\null",
         ])
     else:
         parts.append(r"\vspace*{4mm}")

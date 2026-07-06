@@ -63,6 +63,7 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
     tests/test_predeploy_gate_completeness.py \
     tests/test_root_program_source.py \
     tests/test_root_program_storage.py \
+    tests/test_book_storage.py \
     tests/test_root_transform_registry.py \
     tests/test_param_program_drift.py \
     tests/test_param_program_source.py \

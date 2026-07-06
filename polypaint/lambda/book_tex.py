@@ -174,10 +174,11 @@ def _verso_report_page(entry, provenance):
             parts.append(r"{\normalsize %s\par}" % tex_escape(line))
 
     if report.get("has_palette"):
-        # Palette artifacts are SQUARE images (4000x4000): contain-fit like the
-        # ColorSpread PDF (_draw_image_contain into a height-bounded square) —
-        # as large as possible: full width for strips, height-capped for
-        # squares so it never overflows the page. Label centered like the box.
+        # Palette artifacts are N x N squares (handler_palette_finalize writes
+        # width=full_n=N; N is typically 5000 or 10000). Contain-fit like the
+        # ColorSpread PDF (_draw_image_contain into a height-bounded square):
+        # as large as possible without overflowing the page, at any N.
+        # Label centered like the box.
         palette_label = tex_escape(str(report.get("palette_label") or "palette"))
         parts.extend([
             r"\vfill",

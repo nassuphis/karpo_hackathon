@@ -34,6 +34,7 @@ Usage:
 """
 
 import argparse
+import re
 import ast
 import cmath
 import json
@@ -176,6 +177,10 @@ class _StripAstype(ast.NodeTransformer):
 
 def _unwrap_try(fn):
     body = fn.body
+    while (body and isinstance(body[0], ast.Expr)
+           and isinstance(body[0].value, ast.Constant)
+           and isinstance(body[0].value.value, str)):
+        body = body[1:]   # docstring(s) before the try
     if len(body) == 1 and isinstance(body[0], ast.Try):
         body = body[0].body
     return [ast.fix_missing_locations(_StripAstype().visit(stmt)) for stmt in body]
@@ -623,6 +628,9 @@ def analyze(fn):
         return set(range(lo + off, hi + off))
 
     for stmt in body:
+        if (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Constant)
+                and isinstance(stmt.value.value, str)):
+            continue   # docstring
         if isinstance(stmt, ast.Return):
             if n_coeffs is None:
                 raise SkipFunction("return before cf allocation")
@@ -1750,7 +1758,11 @@ def main():
 
     _MODULE_LABEL["label"] = os.path.basename(args.module)
     module_src, functions = load_functions(args.module)
-    names = args.only or sorted(functions, key=lambda s: int(s.split("_")[1]))
+    def _name_key(fname):
+        m = re.match(r"poly_(\d+)", fname)
+        return (int(m.group(1)) if m else 0, fname)
+
+    names = args.only or sorted(functions, key=_name_key)
     names = [n for n in names if n not in set(args.exclude or [])]
 
     if args.list:

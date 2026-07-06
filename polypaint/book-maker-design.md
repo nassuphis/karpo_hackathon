@@ -299,12 +299,15 @@ when `cover_entry_id` is empty. Spine text = title. The 629.4×316 template is t
 varies with page count on other products — V1 pins this template and records
 `content_pages` in `latest.json` so mismatches are visible (open question §9.3).
 
-**Fonts:** repo `fonts/` TTFs installed in the image's texmf tree, selected via
+**Fonts:** `polypaint/fonts/` TTFs installed in the image's texmf tree, selected via
 fontspec — Canela/Tiempos (display/body, currently trial cuts), CourierPrime or
 JetBrainsMono (mono). fontspec embeds them; there is no un-embedded core-font
-escape hatch to police. Glyph coverage: LuaLaTeX handles fallback per `\setmainfont`
-feature chains; provenance text is ASCII-sanitized upstream anyway
-(`_stringify_meta` conventions).
+escape hatch to police. Note: `fonts/` is **gitignored** (`.gitignore:92`, licensing)
+— the TTFs exist only in the local working tree, so the Docker build COPYs them from
+disk at build time (deploys run on the user's machine, where they live) and MUST
+fail the build if the directory is missing or empty, never producing a font-less
+image. Glyph coverage: LuaLaTeX handles fallback per `\setmainfont` feature chains;
+provenance text is ASCII-sanitized upstream anyway (`_stringify_meta` conventions).
 
 **Determinism guard:** two lualatex passes, `-interaction=nonstopmode -halt-on-error`,
 `SOURCE_DATE_EPOCH` pinned from `compile_id` so recompiles of identical input are

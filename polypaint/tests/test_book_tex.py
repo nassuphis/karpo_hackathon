@@ -1,0 +1,112 @@
+"""book_tex template layer (book-maker-design.md §6/§10): page-plan math,
+escaping, geometry constants, override-vs-auto — all TeX-free."""
+import os
+import sys
+import unittest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
+
+import book_tex
+
+
+def _book(n_entries, **over):
+    book = {
+        "name": "Test Book",
+        "title": "PolyPaint",
+        "entries": [
+            {"entry_id": f"e{i}", "job_id": f"j{i}", "artifact_id": f"a{i}",
+             "image_key": f"renders/j{i}/color/a{i}/image.jpeg"}
+            for i in range(n_entries)
+        ],
+    }
+    book.update(over)
+    return book
+
+
+class TestPagePlan(unittest.TestCase):
+    def test_front_matter_is_odd_and_total_is_multiple_of_four(self):
+        for n in range(0, 60):
+            total, pad = book_tex.page_plan(n)
+            self.assertEqual(total % 4, 0, n)
+            self.assertEqual(total, max(4, 1 + 2 * n + pad), n)
+            # even N -> pad 3, odd N -> pad 1 (design §6)
+            if 1 + 2 * n >= 4:
+                self.assertEqual(pad, 3 if n % 2 == 0 else 1, n)
+
+    def test_36_entries_is_76_pages(self):
+        self.assertEqual(book_tex.page_plan(36), (76, 3))
+
+
+class TestEscaping(unittest.TestCase):
+    def test_specials_all_escape(self):
+        hot = "\\ { } $ & # % ^ _ ~"
+        out = book_tex.tex_escape(hot)
+        for raw in ["$", "&", "#", "%", "_", "~", "{", "}"]:
+            self.assertNotIn(raw, out.replace("\\" + raw, "").replace(
+                r"\textasciitilde{}", "").replace(r"\textasciicircum{}", "").replace(
+                r"\textbackslash{}", "").replace(r"\{", "").replace(r"\}", ""))
+        self.assertIn(r"\$", out)
+        self.assertIn(r"\%", out)
+        self.assertIn(r"\textbackslash{}", out)
+
+    def test_control_chars_drop_and_newlines_break(self):
+        out = book_tex.tex_escape("a\x00b\nc")
+        self.assertNotIn("\x00", out)
+        self.assertIn("\\\\", out)
+
+    def test_user_text_reaches_tex_escaped(self):
+        book = _book(1)
+        book["entries"][0]["title_override"] = "100% pure $ art"
+        tex, _ = book_tex.render_content_tex(book)
+        self.assertIn(r"100\% pure \$ art", tex)
+        self.assertNotIn("100% pure $ art", tex)
+
+
+class TestGeometryAndStructure(unittest.TestCase):
+    def test_content_preamble_pins_whitewall_geometry(self):
+        tex, total = book_tex.render_content_tex(_book(3))
+        self.assertIn("paperwidth=293mm", tex)
+        self.assertIn("paperheight=296mm", tex)
+        self.assertEqual(total, 8)  # 1 + 6 + 1 pad
+        self.assertEqual(tex.count(r"\includegraphics"), 3)
+        self.assertIn("assets/e0.jpg", tex)
+        self.assertIn(r"\usepackage{fontspec}", tex)
+        self.assertIn(r"\usepackage{microtype}", tex)
+
+    def test_cover_pins_computed_dims_not_script_comments(self):
+        tex = book_tex.render_cover_tex(_book(2), "assets/e1.jpg")
+        self.assertIn("paperwidth=629mm", tex)
+        self.assertIn("paperheight=316mm", tex)
+        self.assertNotIn("629.4", tex)
+        self.assertIn("assets/e1.jpg", tex)
+
+    def test_pad_pages_are_black(self):
+        tex, total = book_tex.render_content_tex(_book(2))  # 1+4 -> pad 3, total 8
+        self.assertEqual(total, 8)
+        self.assertEqual(tex.count(r"\pagecolor{black}" + "\n" + r"\null"), 3)
+
+
+class TestOverrides(unittest.TestCase):
+    def test_auto_title_and_body_from_provenance(self):
+        book = _book(1)
+        prov = {"e0": {"summary": {
+            "function": "poly_42", "pipeline": "[ unit_circle ]   poly_42   [ ]",
+            "scale": "degree 50, 4000x4000 grid", "coloring": "root proximity",
+            "solver": "Solved by AE"}}}
+        tex, _ = book_tex.render_content_tex(book, prov)
+        self.assertIn("Study poly\\_42", tex)
+        self.assertIn("root proximity", tex)
+
+    def test_overrides_win(self):
+        book = _book(1)
+        book["entries"][0]["title_override"] = "My Title"
+        book["entries"][0]["body_override"] = "line one\nline two"
+        tex, _ = book_tex.render_content_tex(
+            book, {"e0": {"summary": {"function": "poly_1"}}})
+        self.assertIn("My Title", tex)
+        self.assertIn("line one", tex)
+        self.assertNotIn("Study poly", tex)
+
+
+if __name__ == "__main__":
+    unittest.main()

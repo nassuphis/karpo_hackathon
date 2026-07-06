@@ -88,7 +88,10 @@ def load_functions(module_path=None):
     tree = ast.parse(src)
     out = {}
     for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name.startswith("poly_"):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        args = [a.arg for a in node.args.args]
+        if args[:2] == ["t1", "t2"]:
             out[node.name] = (node, ast.get_source_segment(src, node))
     return src, out
 
@@ -140,6 +143,24 @@ class _StripAstype(ast.NodeTransformer):
         if (isinstance(node.value, ast.Name) and node.value.id == "np"
                 and node.attr == "pi" and isinstance(node.ctx, ast.Load)):
             return ast.copy_location(ast.Name(id="pi", ctx=ast.Load()), node)
+        if (isinstance(node.value, ast.Name) and node.value.id == "cmath"
+                and isinstance(node.ctx, ast.Load)):
+            np_name = {"phase": "angle"}.get(node.attr, node.attr)
+            return ast.copy_location(ast.Attribute(
+                value=ast.Name(id="np", ctx=ast.Load()), attr=np_name,
+                ctx=ast.Load()), node)
+        return node
+
+    def visit_BoolOp(self, node):
+        # runtime parameter fold (user decision): ps...get("x") or DEFAULT
+        # expands to the DEFAULT constant.
+        self.generic_visit(node)
+        if (isinstance(node.op, ast.Or) and len(node.values) == 2
+                and isinstance(node.values[1], ast.Constant)):
+            left = node.values[0]
+            if (isinstance(left, ast.Call) and isinstance(left.func, ast.Attribute)
+                    and left.func.attr == "get"):
+                return node.values[1]
         return node
 
     def visit_IfExp(self, node):
@@ -162,6 +183,9 @@ class _StripAstype(ast.NodeTransformer):
         self.generic_visit(node)
         if isinstance(node.func, ast.Attribute) and node.func.attr == "astype":
             return node.func.value
+        if (isinstance(node.func, ast.Name) and node.func.id == "int"
+                and len(node.args) == 1 and not node.keywords):
+            return node.args[0]
         if (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
                 and node.func.value.id == "np" and node.func.attr in ("prod", "sum")
                 and len(node.args) == 1 and not node.keywords):
@@ -183,7 +207,33 @@ def _unwrap_try(fn):
         body = body[1:]   # docstring(s) before the try
     if len(body) == 1 and isinstance(body[0], ast.Try):
         body = body[0].body
+    # splice NESTED try bodies too: the except path is the give-up fallback in
+    # these files; if the try body's semantics diverge on a probe point the
+    # parity gate skips the function, so this stays honest.
+    flat = []
+    for stmt in body:
+        if isinstance(stmt, ast.Try):
+            flat.extend(stmt.body)
+        else:
+            flat.append(stmt)
+    body = flat
     return [ast.fix_missing_locations(_StripAstype().visit(stmt)) for stmt in body]
+
+
+def _first_linspace_count(node):
+    for sub in ast.walk(node):
+        if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
+                and isinstance(sub.func.value, ast.Name) and sub.func.value.id == "np"
+                and sub.func.attr == "linspace"):
+            args = list(sub.args) + [k.value for k in sub.keywords if k.arg == "num"]
+            if len(args) == 3:
+                cnt = _const_int(args[2])
+                if cnt is None:
+                    lin = _linear_k(args[2], "\x00")
+                    cnt = lin[1] if lin is not None and lin[0] == 0 else None
+                if cnt is not None and cnt >= 1:
+                    return cnt
+    return None
 
 
 def _first_arange_bounds(node):
@@ -407,6 +457,61 @@ def _collapse_same_slot_rewrites(body_stmts):
                 ast.Assign(targets=st.targets, value=inlined), st))
             continue
         out.append(st)
+    return out
+
+
+def _sim_scalar_branch(stmts, env):
+    """Simulate a branch of Name-assigns (and nested scalar Ifs) on a copy of
+    env. Returns the updated env copy, or None when the branch does other
+    work (cf writes, loops, calls...)."""
+    benv = dict(env)
+    for st in stmts:
+        if (isinstance(st, ast.Assign) and len(st.targets) == 1
+                and isinstance(st.targets[0], ast.Name)):
+            benv[st.targets[0].id] = _InlineTemps(benv).visit(st.value)
+            continue
+        if isinstance(st, ast.AugAssign) and isinstance(st.target, ast.Name):
+            name = st.target.id
+            if name not in benv:
+                return None
+            benv[name] = ast.fix_missing_locations(ast.BinOp(
+                left=benv[name], op=st.op,
+                right=_InlineTemps(benv).visit(st.value)))
+            continue
+        if isinstance(st, ast.If):
+            folded = _fold_scalar_if_env(st, benv)
+            if folded is None:
+                return None
+            benv = folded
+            continue
+        return None
+    return benv
+
+
+def _fold_scalar_if_env(stmt, env):
+    """Fold `if cond: <temp assigns> [else: <temp assigns>]` into select()
+    expressions on the affected env temps. Returns the new env or None."""
+    if _reads_cf(stmt.test):
+        return None
+    test = _InlineTemps(env).visit(stmt.test)
+    benv = _sim_scalar_branch(stmt.body, env)
+    oenv = _sim_scalar_branch(stmt.orelse, env) if stmt.orelse else dict(env)
+    if benv is None or oenv is None:
+        return None
+    out = dict(env)
+    names = set(benv) | set(oenv)
+    for name in names:
+        b_val = benv.get(name)
+        o_val = oenv.get(name)
+        if b_val is o_val:
+            if b_val is not None:
+                out[name] = b_val
+            continue
+        if b_val is None or o_val is None:
+            return None   # assigned in one branch only, undefined in the other
+        sel = ast.Call(func=ast.Name(id="__select__", ctx=ast.Load()),
+                       args=[test, b_val, o_val], keywords=[])
+        out[name] = ast.fix_missing_locations(ast.copy_location(sel, stmt))
     return out
 
 
@@ -694,9 +799,12 @@ def analyze(fn):
                     raise SkipFunction("whole-vector cf assign reads cf")
                 if n_coeffs is None:
                     ab = _first_arange_bounds(value)
-                    if ab is None:
+                    if ab is not None:
+                        n_coeffs = ab[1] - ab[0]
+                    else:
+                        n_coeffs = _first_linspace_count(value)
+                    if n_coeffs is None:
                         raise SkipFunction("cf assigned from something besides np.zeros")
-                    n_coeffs = ab[1] - ab[0]
                 synth = ast.fix_missing_locations(ast.copy_location(ast.Subscript(
                     value=ast.Name(id="cf", ctx=ast.Load()),
                     slice=ast.Slice(lower=ast.Constant(value=0),
@@ -827,6 +935,11 @@ def analyze(fn):
                 if folded is not None:
                     body_stmts = prefix + [folded]
             for inner in body_stmts:
+                if isinstance(inner, ast.If):
+                    folded_env = _fold_scalar_if_env(inner, loop_env)
+                    if folded_env is not None:
+                        loop_env = folded_env
+                        continue
                 if isinstance(inner, ast.AugAssign):
                     a_slot = _slot_of_target(
                         _InlineTemps(loop_env).visit(inner.target), kvar)
@@ -943,6 +1056,11 @@ def analyze(fn):
                     _InlineTemps({kvar: last_k}).visit(ival))
                 ordered.append(("poke", slot_idx, final))
             continue
+        if isinstance(stmt, ast.If):
+            folded_env = _fold_scalar_if_env(stmt, env)
+            if folded_env is not None:
+                env = folded_env
+                continue
         raise SkipFunction(f"unsupported statement {type(stmt).__name__}")
 
     if n_coeffs is None:
@@ -1221,6 +1339,10 @@ def _contains_vector_shape(node):
         if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
                 and n.func.id == "__linspace__"):
             return True
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                and isinstance(n.func.value, ast.Name) and n.func.value.id == "np"
+                and n.func.attr == "linspace"):
+            return True
     return False
 
 
@@ -1249,9 +1371,26 @@ def vec_src(node, kvar, k_range, k_text=None):
         if isinstance(node.func, ast.Name) and node.func.id == "__linspace__":
             a, b, cnt = node.args
             return f"linspace({scalar_src(a)}, {scalar_src(b)}, {_const_int(cnt)})"
+        if (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "np" and node.func.attr == "linspace"):
+            args = list(node.args) + [k.value for k in node.keywords if k.arg == "num"]
+            if len(args) == 3:
+                cnt = _const_int(args[2])
+                if cnt is None:
+                    lin = _linear_k(args[2], "\x00")
+                    cnt = lin[1] if lin is not None and lin[0] == 0 else None
+                if cnt is not None:
+                    return f"linspace({scalar_src(args[0])}, {scalar_src(args[1])}, {cnt})"
+            raise SkipFunction("np.linspace with non-constant count")
         name = _call_name(node)
         if name and len(node.args) == 1 and not node.keywords:
             return f"{name}({vec_src(node.args[0], kvar, k_range, k_text)})"
+        if (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "np" and node.func.attr == "power"
+                and len(node.args) == 2 and not node.keywords):
+            a = vec_src(node.args[0], kvar, k_range, k_text)
+            b = vec_src(node.args[1], kvar, k_range, k_text)
+            return f"power({a}, {b})"
         raise SkipFunction(f"unsupported vector call {ast.dump(node.func)[:50]}")
     if isinstance(node, ast.Attribute) and node.attr in ("real", "imag"):
         return f"{node.attr}({vec_src(node.value, kvar, k_range, k_text)})"
@@ -1418,8 +1557,12 @@ def _segment_vector(seg, n, module_src, lines, masked):
     k_lo, k_hi = -off, n - off
     slot_lo, slot_hi = lo + off, hi + off
     terms = _split_terms(expr)
-    vec_terms = [(s, t) for s, t in terms if _contains_k(t, kvar)]
-    sca_terms = [(s, t) for s, t in terms if not _contains_k(t, kvar)]
+
+    def _is_vec_term(t):
+        return _contains_k(t, kvar) or _contains_vector_shape(t)
+
+    vec_terms = [(s, t) for s, t in terms if _is_vec_term(t)]
+    sca_terms = [(s, t) for s, t in terms if not _is_vec_term(t)]
     if not vec_terms:
         body = f"fill({n}, ({_scalar_terms_text(sca_terms)}))"
         sca_terms = []

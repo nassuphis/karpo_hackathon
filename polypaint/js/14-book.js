@@ -70,10 +70,27 @@ async function _bookHydrateEntries() {
             const match = colorRows.find(r => r.artifact_id === entry.artifact_id);
             _bookState.hydrated[entry.entry_id] = match
                 ? { preview_url: match.preview_url || match.image_url || '', missing: false,
-                    has_palette: !!(match.associated_palette_image_key || '').trim() }
-                : { preview_url: '', missing: true, has_palette: false };
+                    palette_preview_key: (match.associated_palette_preview_key
+                                          || match.associated_palette_image_key || '').trim(),
+                    palette_url: '' }
+                : { preview_url: '', missing: true, palette_preview_key: '', palette_url: '' };
         }
     });
+    _renderBookTab();
+    // palette thumbnails: presign each unique preview key (palettes can live
+    // in other jobs, so the per-job summary can't supply these URLs directly)
+    const keys = [...new Set(Object.values(_bookState.hydrated)
+        .map(h => h.palette_preview_key).filter(Boolean))];
+    const urlByKey = {};
+    await asyncPool(4, keys, async (key) => {
+        try {
+            const resp = await lambdaPost('storage', { key }, '/presign');
+            urlByKey[key] = resp.url || '';
+        } catch (e) { urlByKey[key] = ''; }
+    });
+    for (const hyd of Object.values(_bookState.hydrated)) {
+        if (hyd.palette_preview_key) hyd.palette_url = urlByKey[hyd.palette_preview_key] || '';
+    }
     _renderBookTab();
 }
 
@@ -84,6 +101,10 @@ function _bookEntryRow(entry, idx) {
     const thumb = hyd.preview_url
         ? `<img src="${_escapeHtml(hyd.preview_url)}" style="width:48px;height:48px;object-fit:cover">`
         : `<div style="width:48px;height:48px;background:#222;display:flex;align-items:center;justify-content:center;font-size:9px;color:#888">${hyd.missing ? 'missing' : '...'}</div>`;
+    // palette first, color render after; no palette = blank square
+    const palThumb = hyd.palette_url
+        ? `<img src="${_escapeHtml(hyd.palette_url)}" style="width:48px;height:48px;object-fit:cover">`
+        : `<div style="width:48px;height:48px;background:#121829;border:1px solid #2b3a5e;box-sizing:border-box"></div>`;
     const title = _escapeHtml(entry.display_name || entry.artifact_id);
     const eid = _escapeHtml(entry.entry_id);
     // the cover row's number turns red so it's visible at a glance
@@ -92,8 +113,8 @@ function _bookEntryRow(entry, idx) {
     return `<div class="book-entry-row${selected ? ' selected' : ''}" data-entry="${eid}"
         style="display:flex;align-items:center;gap:8px;padding:4px 6px;border-bottom:1px solid #2b3a5e;cursor:pointer${selected ? ';background:#1c2742' : ''}"
         onclick="_bookSelectEntry(this.dataset.entry)">
-        <span style="color:${numColor};width:24px;${numWeight}">${idx + 1}</span>${thumb}
-        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${title}${cover ? ' <span style="color:#e94560">— cover</span>' : ''}${hyd.missing ? ' <span style="color:#e94560">[missing]</span>' : (hyd.has_palette === false ? ' <span style="color:#c98b3a">(no palette)</span>' : '')}</span>
+        <span style="color:${numColor};width:24px;${numWeight}">${idx + 1}</span>${palThumb}${thumb}
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${title}${cover ? ' <span style="color:#e94560">— cover</span>' : ''}${hyd.missing ? ' <span style="color:#e94560">[missing]</span>' : ''}</span>
         <span style="color:#666;font-size:10px">${_escapeHtml(entry.job_id)}</span>
         <button class="btn-secondary" style="padding:1px 7px" onclick="event.stopPropagation();_bookMoveEntry(this.closest('.book-entry-row').dataset.entry,-1)">▲</button>
         <button class="btn-secondary" style="padding:1px 7px" onclick="event.stopPropagation();_bookMoveEntry(this.closest('.book-entry-row').dataset.entry,1)">▼</button>

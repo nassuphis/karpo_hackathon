@@ -189,11 +189,15 @@ One function, two dispatch ops. Container image because the compose op needs a T
 toolchain, which cannot ship as a zip layer at any reasonable size; prepare rides in
 the same image (libvips baked in) to keep one deploy artifact.
 
-- **Image:** AWS Lambda Python 3.12 arm64 base + libvips + **TeX Live (small scheme)
-  with LuaLaTeX** + required packages (`fontspec, microtype, geometry, graphicx,
-  xcolor, eso-pic/tikz` for full-bleed placement) + the repo `fonts/` TTFs baked into
-  the texmf tree. Estimated 1–1.5 GB (§7), far under the 10 GB image cap.
-  Engine choice: LuaLaTeX over XeLaTeX/tectonic because full microtype
+- **Image:** AWS Lambda Python 3.12 arm64 base + libvips + a **TinyTeX-style minimal
+  TeX Live**: `install-tl -scheme=infraonly` + a pinned `tlmgr install` list
+  (`latex, luatex, fontspec, microtype, geometry, graphics, xcolor, eso-pic,
+  luaotfload` + their deps) + the repo `fonts/` TTFs baked into the texmf tree.
+  The template is one fixed stylized layout, so the package set is closed and known
+  at build time. Validated against the user's local TinyTeX (334 MB, 197 packages,
+  TeX Live 2024), which already carries every package on the list — expect
+  ~250–350 MB of TeX in the image, ~700 MB–1 GB total (§7), far under the 10 GB
+  image cap. Engine choice: LuaLaTeX over XeLaTeX/tectonic because full microtype
   (font expansion + protrusion) is LuaTeX-only, and typographic quality is the point
   of this pivot. `\pdfvariable minorversion` pins PDF 1.4+ compat for WhiteWall.
 - **Dispatch target `book_pdf`** (new entry in `handler_dispatch.py FUNCTIONS`,
@@ -315,7 +319,7 @@ byte-comparable.
 | Asset size | 3600² JPEG q92, dense content | ~3–7 MB |
 | 300 DPI need | 296 mm / 25.4 × 300 = 3496 px; panel ≈ 296 mm same | 3600 cap ✓ (309 DPI full-bleed) |
 | Prepare wall/entry | source download (up to a few hundred MB) + vips shrink-on-load | ~5–20 s, parallel fan-out |
-| Container image | lambda python arm64 base (~250 MB) + TeX Live small + LuaLaTeX (~400–800 MB) + libvips (~30 MB) + fonts | ~1–1.5 GB (cap 10 GB) |
+| Container image | lambda python arm64 base (~250 MB) + TinyTeX-style pinned TeX (~250–350 MB, matches user's local 334 MB TinyTeX) + libvips (~30 MB) + fonts | ~0.7–1 GB (cap 10 GB) |
 | Cold start | ~1 GB image pull, Lambda-cached after first | +1–3 s vs zip; irrelevant at these run lengths |
 | Compose /tmp peak | 36 assets ×7 MB + tex build dir + content.pdf ~250 MB | ~700 MB → `tmp: 2048` |
 | Compose memory | lualatex on a 76-page image book + vips absent from this op | 4096 MB, headroom |

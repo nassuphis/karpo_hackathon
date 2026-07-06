@@ -162,7 +162,7 @@ def _verso_report_page(entry, provenance):
     ]
     if rows:
         parts.append(r"{\renewcommand{\arraystretch}{1.5}%")
-        parts.append(r"\begin{tabular}{@{}p{42mm}p{\dimexpr\linewidth-42mm\relax}@{}}")
+        parts.append(r"\begin{tabular}{@{}p{42mm}>{\raggedright\arraybackslash}p{\dimexpr\linewidth-42mm\relax}@{}}")
         for label, value in rows:
             parts.append(
                 r"{\monofont\footnotesize\color{monotext} %s} & {\color{bodytext} %s} \\"
@@ -174,19 +174,16 @@ def _verso_report_page(entry, provenance):
             parts.append(r"{\normalsize %s\par}" % tex_escape(line))
 
     if report.get("has_palette"):
-        # Match spread_pdf._draw_report_summary: palette label as a section
-        # header with a full-width rule, then the swatch CENTERED horizontally
-        # (x + (CONTENT_W - side)/2) and vertically in the remaining space,
-        # sized ~72% of the content width, in a panel box.
+        # The palette image carries the story: full content width, centered
+        # vertically in the remaining space, with its label centered above it
+        # (label centered just like the box — user call).
         palette_label = tex_escape(str(report.get("palette_label") or "palette"))
         parts.extend([
-            r"\vspace{9mm}",
-            r"{\monofont\footnotesize\color{monotext} %s\par}" % palette_label,
-            r"\vspace{1mm}",
-            r"{\color{rulecol}\rule{\linewidth}{0.5pt}}\par",
             r"\vfill",
             r"\begin{center}",
-            r"\fcolorbox{panelborder}{panelbg}{\includegraphics[width=0.72\linewidth]{%s/%s.palette.jpg}}"
+            r"{\monofont\footnotesize\color{monotext} %s\par}" % palette_label,
+            r"\vspace{2mm}",
+            r"\fcolorbox{panelborder}{panelbg}{\includegraphics[width=\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax]{%s/%s.palette.jpg}}"
             % (ASSET_DIR, entry.get("entry_id")),
             r"\end{center}",
             r"\vfill",

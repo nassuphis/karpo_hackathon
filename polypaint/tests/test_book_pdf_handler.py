@@ -211,3 +211,33 @@ class TestBookPdfHandler(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestViewportSummary(unittest.TestCase):
+    def test_explicit_drops_q_shim_and_uses_two_sig_digits(self):
+        import book_pdf
+        meta = {"view_mode": "explicit", "quantile": 0, "shim": 0.05,
+                "min_re": "-0.5905770748695542", "max_re": "-0.029793800946478655",
+                "min_im": "-1.1846176287507992", "max_im": "-0.6238343548277241"}
+        out = book_pdf._viewport_summary(meta)
+        self.assertEqual(out, "explicit, re [-0.59, -0.03], im [-1.2, -0.62]")
+        self.assertNotIn("q=", out)
+        self.assertNotIn("shim", out)
+
+    def test_auto_keeps_q_shim_and_square_formats_extent(self):
+        import book_pdf
+        self.assertEqual(book_pdf._viewport_summary(
+            {"view_mode": "auto", "quantile": 0.001, "shim": 0.005}),
+            "auto, q=0.1%, shim=0.5%")
+        self.assertEqual(book_pdf._viewport_summary(
+            {"view_mode": "square", "square_extent": "0.6238343548277241"}),
+            "square, extent=0.62")
+
+    def test_pdf_handler_viewport_matches(self):
+        # both PDF paths (ColorSpread button + book) must format identically
+        import book_pdf
+        import handler_pdf_artifact
+        meta = {"view_mode": "explicit", "min_re": "-0.5", "max_re": "0.25",
+                "min_im": "-1", "max_im": "1", "quantile": 0.1}
+        self.assertEqual(book_pdf._viewport_summary(meta),
+                         handler_pdf_artifact._viewport_summary(meta))

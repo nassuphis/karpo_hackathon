@@ -93,11 +93,24 @@ def _color_summary(src_meta):
     return color_mode or (f"palette {palette}" if palette else "rainbow")
 
 
+def _fmt_sig2(value):
+    """2 significant digits for coordinates (-0.5905770748 -> -0.59)."""
+    try:
+        return f"{float(value):.2g}"
+    except Exception:
+        return str(value)
+
+
 def _viewport_summary(src_meta):
     view_mode = str(src_meta.get("view_mode") or "auto")
     if view_mode == "square":
         extent = str(src_meta.get("square_extent") or "").strip()
-        return f"square extent={extent}" if extent else "square"
+        return f"square, extent={_fmt_sig2(extent)}" if extent else "square"
+    bounds = {k: src_meta.get(k) for k in ("min_re", "max_re", "min_im", "max_im")}
+    if view_mode == "explicit" or all(v not in ("", None) for v in bounds.values()):
+        # explicit coordinates: q/shim are irrelevant; 2 significant digits
+        return (f"explicit, re [{_fmt_sig2(bounds['min_re'])}, {_fmt_sig2(bounds['max_re'])}], "
+                f"im [{_fmt_sig2(bounds['min_im'])}, {_fmt_sig2(bounds['max_im'])}]")
     parts = [view_mode]
     q = _fmt_pct(src_meta.get("quantile"))
     shim = _fmt_pct(src_meta.get("shim"))
@@ -105,10 +118,6 @@ def _viewport_summary(src_meta):
         parts.append(f"q={q}")
     if shim:
         parts.append(f"shim={shim}")
-    bounds = [f"{k}={src_meta.get(k)}" for k in ("min_re", "max_re", "min_im", "max_im")
-              if src_meta.get(k) not in ("", None)]
-    if bounds:
-        parts.append(" ".join(bounds))
     return ", ".join(p for p in parts if p)
 
 

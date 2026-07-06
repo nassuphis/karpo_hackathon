@@ -391,7 +391,9 @@ function openSolveScoreProgramModal(prefix) {
     _solveScoreModalState.lastSelectedName = '';
     _setSolveScoreModalStatus('', false);
     _renderSolveScoreProgramModal();
-    void _refreshSolveScoreProgramRows({ preserveSelection: true });
+    if (_solveScoreModalState.tableState !== 'loaded') {
+        void _refreshSolveScoreProgramRows({ preserveSelection: true });
+    }
     const nameEl = document.getElementById('solve-score-modal-name');
     if (nameEl && typeof nameEl.focus === 'function') nameEl.focus();
 }
@@ -849,7 +851,9 @@ function openParamProgramModal() {
     _paramProgramModalState.lastSelectedName = '';
     _setParamProgramModalStatus('', false);
     _renderParamProgramModal();
-    void _refreshParamProgramRows({ preserveSelection: true });
+    if (_paramProgramModalState.tableState !== 'loaded') {
+        void _refreshParamProgramRows({ preserveSelection: true });
+    }
     const nameEl = document.getElementById('param-program-modal-name');
     if (nameEl && typeof nameEl.focus === 'function') nameEl.focus();
 }
@@ -1276,7 +1280,9 @@ function openCoeffProgramModal() {
     _coeffProgramModalState.lastSelectedName = '';
     _setCoeffProgramModalStatus('', false);
     _renderCoeffProgramModal();
-    void _refreshCoeffProgramRows({ preserveSelection: true });
+    if (_coeffProgramModalState.tableState !== 'loaded') {
+        void _refreshCoeffProgramRows({ preserveSelection: true });
+    }
     const nameEl = document.getElementById('coeff-program-modal-name');
     if (nameEl && typeof nameEl.focus === 'function') nameEl.focus();
 }
@@ -1637,7 +1643,9 @@ function openRootProgramModal(target) {
     _rootProgramModalState.actionBusy = false;
     _setRootProgramModalStatus('', false);
     _renderRootProgramModal();
-    void _refreshRootProgramRows();
+    if (_rootProgramModalState.tableState !== 'loaded') {
+        void _refreshRootProgramRows();
+    }
     const nameEl = document.getElementById('root-program-modal-name');
     if (nameEl && typeof nameEl.focus === 'function') nameEl.focus();
 }

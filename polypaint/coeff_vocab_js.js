@@ -898,6 +898,11 @@ window._coeffRegistryVocab = {
             "name": "tanh",
             "symbol": "COEFF_VEC_TANH",
             "value": 16
+          },
+          {
+            "name": "floor",
+            "symbol": "COEFF_VEC_FLOOR",
+            "value": 17
           }
         ]
       },

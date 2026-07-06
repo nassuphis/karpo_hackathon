@@ -129,6 +129,7 @@ EXPR_ANGLE = 31
 EXPR_PREV = 32
 EXPR_K = 33
 EXPR_PREV2 = 34
+EXPR_FLOOR = 35
 
 _OP_NAMES = {
     COEFF_OP_CONST: "push_const",
@@ -317,6 +318,7 @@ VECTOR_UNARY_OPS = {
     "sinh": 14,
     "cosh": 15,
     "tanh": 16,
+    "floor": 17,
 }
 
 VECTOR_ROLL_OPS = {
@@ -347,10 +349,11 @@ SCALAR_UNARY_EXPR_OPS = {
     "cosh": EXPR_COSH,
     "tanh": EXPR_TANH,
     "angle": EXPR_ANGLE,
+    "floor": EXPR_FLOOR,
 }
 # Result-kind rules for those unary functions.
 _REAL_VALUED_UNARY_NAMES = {"real", "imag", "abs", "mod", "angle"}
-_REAL_PRESERVING_UNARY_NAMES = {"conj", "neg", "exp", "sin", "cos", "tan", "sinh", "cosh", "tanh"}
+_REAL_PRESERVING_UNARY_NAMES = {"conj", "neg", "exp", "sin", "cos", "tan", "sinh", "cosh", "tanh", "floor"}
 
 
 class _Expr:
@@ -1093,6 +1096,9 @@ def expr_value_if_static(expr):
         elif op == EXPR_ANGLE:
             value = _canonical_branch_operand(stack.pop())
             stack.append(complex(math.atan2(value.imag, value.real), 0.0))
+        elif op == EXPR_FLOOR:
+            value = stack.pop()
+            stack.append(complex(math.floor(value.real), math.floor(value.imag)))
         else:
             raise RuntimeError(f"non-static scalar expression opcode: {op}")
     if len(stack) != 1:

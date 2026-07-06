@@ -3477,7 +3477,8 @@ enum CoeffVectorUnaryOp {
     COEFF_VEC_TAN = 13,
     COEFF_VEC_SINH = 14,
     COEFF_VEC_COSH = 15,
-    COEFF_VEC_TANH = 16
+    COEFF_VEC_TANH = 16,
+    COEFF_VEC_FLOOR = 17
 };
 
 enum CoeffVectorRollOp {
@@ -3519,7 +3520,8 @@ enum CoeffExprOp {
     COEFF_EXPR_ANGLE = 31,
     COEFF_EXPR_PREV = 32,
     COEFF_EXPR_K = 33,
-    COEFF_EXPR_PREV2 = 34
+    COEFF_EXPR_PREV2 = 34,
+    COEFF_EXPR_FLOOR = 35
 };
 
 typedef struct {
@@ -4183,7 +4185,8 @@ static int coeffRunLoweredExprPlan(const CoeffEvalContext *ctx,
             op == COEFF_EXPR_IMAG || op == COEFF_EXPR_ABS || op == COEFF_EXPR_LOG ||
             op == COEFF_EXPR_SQRT || op == COEFF_EXPR_EXP || op == COEFF_EXPR_SIN ||
             op == COEFF_EXPR_COS || op == COEFF_EXPR_TAN || op == COEFF_EXPR_SINH ||
-            op == COEFF_EXPR_COSH || op == COEFF_EXPR_TANH || op == COEFF_EXPR_ANGLE) {
+            op == COEFF_EXPR_COSH || op == COEFF_EXPR_TANH || op == COEFF_EXPR_ANGLE ||
+            op == COEFF_EXPR_FLOOR) {
             if (sp < 1) {
                 fprintf(stderr, "coeff_program lowered expression stack underflow at unary op\n");
                 return 1;
@@ -4203,6 +4206,7 @@ static int coeffRunLoweredExprPlan(const CoeffEvalContext *ctx,
             else if (op == COEFF_EXPR_SINH) { c_sinh(stackR[idx], stackI[idx], &stackR[idx], &stackI[idx]); }
             else if (op == COEFF_EXPR_COSH) { c_cosh(stackR[idx], stackI[idx], &stackR[idx], &stackI[idx]); }
             else if (op == COEFF_EXPR_TANH) { c_tanh(stackR[idx], stackI[idx], &stackR[idx], &stackI[idx]); }
+            else if (op == COEFF_EXPR_FLOOR) { stackR[idx] = floor(stackR[idx]); stackI[idx] = floor(stackI[idx]); }
             else {
                 double angR = stackR[idx] == 0.0 ? 0.0 : stackR[idx];
                 double angI = stackI[idx] == 0.0 ? 0.0 : stackI[idx];
@@ -4580,6 +4584,9 @@ static int coeffProgramApplyUnaryFn(int fnIndex,
         c_cosh(ar, ai, rr, ri);
     } else if (fnIndex == COEFF_VEC_TANH) {
         c_tanh(ar, ai, rr, ri);
+    } else if (fnIndex == COEFF_VEC_FLOOR) {
+        *rr = floor(ar);
+        *ri = floor(ai);
     } else {
         fprintf(stderr, "coeff_program unknown vector unary op: %d\n", fnIndex);
         return 1;

@@ -1038,3 +1038,24 @@ def test_expr_vm_abs_survives_underflow_and_overflow_via_hypot():
     assert len(values) == 1
     # 2e-190 * 1e195 = 200000; the old sqrt(|z|^2) path returned 0.0.
     assert abs(values[0].real - 200000.0) <= 1.0, values
+
+
+def test_coeff_program_floor_scalar_and_vector():
+    # floor: elementwise floor(re) + i*floor(im); the scalar-expr and vector
+    # paths must agree, and the python-% identity a - floor(a/b)*b must hold.
+    _meta, values = _run_source_with_params(
+        """
+        poly = push_vec(4, 0)
+        poly[0] = floor(2.7)
+        poly[1] = floor(-2.7)
+        poly[2] = 7.5 - floor(7.5/2)*2
+        poly[3] = floor(1.5 + 2.5i)
+        poly[0:4] = add(poly[0:4], floor(fill(4, 0.25)))
+        """,
+        [0.0, 0.0, 0.0, 0.0],
+        cfpv=[4, 0, 0],
+    )
+    assert values[0].real == 2.0
+    assert values[1].real == -3.0
+    assert abs(values[2].real - 1.5) < 1e-12   # 7.5 % 2
+    assert values[3].real == 1.0 and values[3].imag == 2.0

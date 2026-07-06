@@ -135,7 +135,8 @@
         {"name": "tan", "symbol": "COEFF_VEC_TAN", "value": 13},
         {"name": "sinh", "symbol": "COEFF_VEC_SINH", "value": 14},
         {"name": "cosh", "symbol": "COEFF_VEC_COSH", "value": 15},
-        {"name": "tanh", "symbol": "COEFF_VEC_TANH", "value": 16}
+        {"name": "tanh", "symbol": "COEFF_VEC_TANH", "value": 16},
+        {"name": "floor", "symbol": "COEFF_VEC_FLOOR", "value": 17}
       ]
     },
     {

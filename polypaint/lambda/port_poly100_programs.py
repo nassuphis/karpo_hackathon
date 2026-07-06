@@ -57,7 +57,7 @@ SWEEP_TEST = os.path.join(LAMBDA_DIR, "sweep_test")
 
 UNARY_FUNCS = {
     "sin", "cos", "tan", "sinh", "cosh", "tanh",
-    "exp", "log", "sqrt", "abs", "real", "imag", "conj", "angle",
+    "exp", "log", "sqrt", "abs", "real", "imag", "conj", "angle", "floor",
 }
 NP_UNARY_ALIASES = {"conjugate": "conj", "absolute": "abs"}
 
@@ -185,7 +185,10 @@ class _StripAstype(ast.NodeTransformer):
             return node.func.value
         if (isinstance(node.func, ast.Name) and node.func.id == "int"
                 and len(node.args) == 1 and not node.keywords):
-            return node.args[0]
+            call = ast.Call(func=ast.Attribute(value=ast.Name(id="np", ctx=ast.Load()),
+                                               attr="floor", ctx=ast.Load()),
+                            args=[node.args[0]], keywords=[])
+            return ast.copy_location(ast.fix_missing_locations(call), node)
         if (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
                 and node.func.value.id == "np" and node.func.attr in ("prod", "sum")
                 and len(node.args) == 1 and not node.keywords):
@@ -458,6 +461,110 @@ def _collapse_same_slot_rewrites(body_stmts):
             continue
         out.append(st)
     return out
+
+
+def _count_name_uses(node, name):
+    return sum(1 for x in ast.walk(node)
+               if isinstance(x, ast.Name) and x.id == name and isinstance(x.ctx, ast.Load))
+
+
+def _try_cum_accumulator(stmt, kvar, lo, hi, env, n_coeffs):
+    """Detect the separable prefix-sum loop:
+        for j: acc = 0 [, acc2 = 0]; for k in range(lo2, j + c): acc += g(k)
+               [temps...]; cf[j + off] = h(acc[, acc2], j)
+    with g free of j and cf. Returns a ("cumacc", ...) postop or None.
+    Emission relies on the native cumsum() transform, so acc_j must align
+    with the write slot: off == c - 1 - lo2, and the loop must cover the
+    whole poly ([lo+off, hi+off) == [0, n))."""
+    body = list(stmt.body)
+    accs = []      # (name, g_expr)
+    inner = None
+    final = None
+    loop_env = dict(env)
+    idx = 0
+    while idx < len(body):
+        st = body[idx]
+        if (inner is None and isinstance(st, ast.Assign) and len(st.targets) == 1
+                and isinstance(st.targets[0], ast.Name)
+                and isinstance(st.value, ast.Constant) and st.value.value in (0, 0.0)):
+            accs.append([st.targets[0].id, None])
+            idx += 1
+            continue
+        if inner is None and isinstance(st, ast.For) and accs:
+            inner = st
+            idx += 1
+            continue
+        if inner is not None and isinstance(st, ast.Assign) and len(st.targets) == 1                 and isinstance(st.targets[0], ast.Name):
+            loop_env[st.targets[0].id] = _InlineTemps(loop_env).visit(st.value)
+            idx += 1
+            continue
+        if inner is not None and isinstance(st, ast.Assign) and len(st.targets) == 1:
+            final = st
+            idx += 1
+            continue
+        return None
+    if inner is None or final is None or not accs or len(accs) > 2:
+        return None
+    # inner loop shape
+    if not (isinstance(inner.iter, ast.Call) and isinstance(inner.iter.func, ast.Name)
+            and inner.iter.func.id == "range" and isinstance(inner.target, ast.Name)):
+        return None
+    iargs = inner.iter.args
+    if len(iargs) == 2:
+        lo2 = _const_int(iargs[0])
+        hi_lin = _linear_k(iargs[1], kvar)
+    elif len(iargs) == 1:
+        lo2 = 0
+        hi_lin = _linear_k(iargs[0], kvar)
+    else:
+        return None
+    if lo2 is None or hi_lin is None or hi_lin[0] != 1:
+        return None
+    c = hi_lin[1]
+    k2 = inner.target.id
+    acc_names = {a[0] for a in accs}
+    for st in inner.body:
+        if not (isinstance(st, ast.AugAssign) and isinstance(st.op, ast.Add)
+                and isinstance(st.target, ast.Name) and st.target.id in acc_names):
+            return None
+        g = _InlineTemps(env).visit(st.value)
+        if _reads_cf(g) or _count_name_uses(g, kvar):
+            return None
+        for a in accs:
+            if a[0] == st.target.id:
+                if a[1] is not None:
+                    return None
+                a[1] = g
+    if any(a[1] is None for a in accs):
+        return None
+    # final write
+    tgt = _InlineTemps(loop_env).visit(final.targets[0])
+    slot = _slot_of_target(tgt, kvar)
+    if not slot or slot[0] != "loop":
+        return None
+    off = slot[1]
+    if off != c - 1 - lo2:
+        return None
+    if n_coeffs is None or lo + off != 0 or hi + off != n_coeffs:
+        return None
+    h = _InlineTemps(loop_env).visit(final.value)
+    if _reads_cf(h):
+        return None
+    uses = [(a[0], _count_name_uses(h, a[0])) for a in accs]
+    if len(accs) == 2:
+        # one accumulator rides the stack (single pop), the other lives in poly
+        pop_candidates = [name for name, cnt in uses if cnt == 1]
+        if not pop_candidates:
+            return None
+        pop_name = pop_candidates[0]
+        poly_name = next(a[0] for a in accs if a[0] != pop_name)
+        order = [next(a for a in accs if a[0] == pop_name),
+                 next(a for a in accs if a[0] == poly_name)]
+    else:
+        pop_name = None
+        poly_name = accs[0][0]
+        order = accs
+    return ("cumacc", n_coeffs, k2, lo2, order, h, kvar, off, pop_name, poly_name)
 
 
 def _sim_scalar_branch(stmts, env):
@@ -917,6 +1024,10 @@ def analyze(fn):
             const_writes = []   # cf[<int>] = expr inside the loop
             extra_writes = []   # additional asc/desc slot writes (split loop)
             aug_writes = 0      # in-loop cf[k] op= expr lowered to slice ops
+            cum = _try_cum_accumulator(stmt, kvar, lo, hi, env, n_coeffs)
+            if cum is not None:
+                ordered.append(cum)
+                continue
             body_stmts = _collapse_same_slot_rewrites(list(stmt.body))
             if body_stmts and isinstance(body_stmts[-1], ast.If):
                 incoming = None
@@ -1033,6 +1144,46 @@ def analyze(fn):
                     ordered.append(("poke", slot_idx, final))
                 continue
             if _reads_cf(write[1]):
+                # same-slot in-place rewrite: cf[k+off] = f(cf[k+off], k)
+                # == poly[a:b] = f(poly[a:b], arange) (ordered slice rewrite)
+                reads = [x for x in ast.walk(write[1])
+                         if isinstance(x, ast.Subscript) and isinstance(x.value, ast.Name)
+                         and x.value.id == "cf" and isinstance(x.ctx, ast.Load)]
+                own_slot = bool(reads) and all(
+                    (_linear_k(r.slice, kvar) or (None,))[0:2] == (1, write[0]) for r in reads)
+                if own_slot:
+                    a, b = lo + write[0], hi + write[0]
+
+                    class _SelfSlice(ast.NodeTransformer):
+                        def visit_Subscript(self, node):
+                            self.generic_visit(node)
+                            if (isinstance(node.value, ast.Name) and node.value.id == "cf"
+                                    and isinstance(node.ctx, ast.Load)):
+                                return ast.copy_location(ast.Subscript(
+                                    value=ast.Name(id="cf", ctx=ast.Load()),
+                                    slice=ast.Slice(lower=ast.Constant(value=a),
+                                                    upper=ast.Constant(value=b)),
+                                    ctx=ast.Load()), node)
+                            return node
+
+                        def visit_Name(self, node):
+                            import copy as _copy
+                            if isinstance(node.ctx, ast.Load) and node.id == kvar:
+                                return ast.copy_location(ast.Call(
+                                    func=ast.Attribute(value=ast.Name(id="np", ctx=ast.Load()),
+                                                       attr="arange", ctx=ast.Load()),
+                                    args=[ast.Constant(value=lo), ast.Constant(value=hi)],
+                                    keywords=[]), node)
+                            return node
+
+                    rewritten = ast.fix_missing_locations(_SelfSlice().visit(write[1]))
+                    ordered.append(("slice_assign", a, b, rewritten, len(segments)))
+                    last_k = ast.Constant(value=hi - 1)
+                    for slot_idx, ival in const_writes:
+                        final = ast.fix_missing_locations(
+                            _InlineTemps({kvar: last_k}).visit(ival))
+                        ordered.append(("poke", slot_idx, final))
+                    continue
                 scan_entry = _try_scan_template(kvar, lo, hi, write[0], write[1], ordered)
                 if scan_entry is None:
                     raise SkipFunction("recursive: loop reads cf (not prev-slot shaped)")
@@ -1070,10 +1221,11 @@ def analyze(fn):
         extra = {s for s in _seg_slots(seg) if s < 0 or s >= n_coeffs}
         if extra:
             raise SkipFunction(f"segment writes out-of-range slots {sorted(extra)[:6]}")
-    for i, a in enumerate(segments):
-        for b in segments[i + 1:]:
-            if _seg_slots(a) & _seg_slots(b):
-                raise SkipFunction("overlapping segments (order-dependent)")
+    overlapping = any(
+        _seg_slots(a) & _seg_slots(b)
+        for i, a in enumerate(segments) for b in segments[i + 1:])
+    # Overlapping segments emit as ordered overwrites (later masked segment
+    # replaces its window) instead of the masked SUM the disjoint path uses.
 
     # A poke is dead if a later segment covers its slot: python ran the poke
     # first and the segment overwrote it. We emit all segments first, so
@@ -1139,7 +1291,7 @@ def analyze(fn):
     force_mask = bool(missing) and bool(segments)
 
     return {"n": n_coeffs, "segments": segments, "postops": postops,
-            "force_mask": force_mask}
+            "force_mask": force_mask, "overlapping": overlapping}
 
 
 # ---------------------------------------------------------------------------
@@ -1239,6 +1391,15 @@ def scalar_src(node, kvar=None):
             if _scalar_prec(e, kvar) < 2:
                 expo = f"({expo})"
             return f"exp(log({base}) * {expo})"
+        if isinstance(node.op, ast.Mod):
+            # python float %: a - floor(a/b)*b (exact identity)
+            a = scalar_src(node.left, kvar)
+            b = scalar_src(node.right, kvar)
+            return f"(({a}) - floor(({a})/({b}))*({b}))"
+        if isinstance(node.op, ast.FloorDiv):
+            a = scalar_src(node.left, kvar)
+            b = scalar_src(node.right, kvar)
+            return f"floor(({a})/({b}))"
         ops = {ast.Add: ("+", 1), ast.Sub: ("-", 1), ast.Mult: ("*", 2), ast.Div: ("/", 2)}
         got = ops.get(type(node.op))
         if got is None:
@@ -1253,6 +1414,18 @@ def scalar_src(node, kvar=None):
         if _scalar_prec(node.right, kvar) < need:
             right = f"({right})"
         return f"{left} {op} {right}"
+    if isinstance(node, ast.Compare):
+        if len(node.ops) != 1 or len(node.comparators) != 1:
+            raise SkipFunction("chained comparison in scalar expression")
+        cmp_ops = {ast.Lt: "lt", ast.LtE: "le", ast.Gt: "gt", ast.GtE: "ge", ast.Eq: "eq"}
+        op_name = cmp_ops.get(type(node.ops[0]))
+        if op_name is None:
+            raise SkipFunction("unsupported scalar comparison")
+        return f"{op_name}({scalar_src(node.left, kvar)}, {scalar_src(node.comparators[0], kvar)})"
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == "__select__" and len(node.args) == 3):
+        c, a, b = (scalar_src(arg, kvar) for arg in node.args)
+        return f"select({c}, {a}, {b})"
     raise SkipFunction(f"unsupported scalar node {type(node).__name__}")
 
 
@@ -1339,6 +1512,8 @@ def _contains_vector_shape(node):
         if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
                 and n.func.id == "__linspace__"):
             return True
+        if isinstance(n, ast.Name) and n.id == "__pop__":
+            return True
         if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
                 and isinstance(n.func.value, ast.Name) and n.func.value.id == "np"
                 and n.func.attr == "linspace"):
@@ -1357,6 +1532,8 @@ def vec_src(node, kvar, k_range, k_text=None):
     text = _cf_slice_text(node)
     if text is not None:
         return text
+    if isinstance(node, ast.Name) and node.id == "__pop__":
+        return "pop"
     if kvar is not None and isinstance(node, ast.Name) and node.id == kvar:
         if k_text is not None:
             return k_text
@@ -1627,14 +1804,38 @@ def emit_program(name, template, module_src):
         else:
             lines.append("poly = pop")
     else:
-        lines.append(f"# {len(segments)} disjoint segments, each masked to its slot window")
-        for i, seg in enumerate(segments):
-            kvar, lo, hi, off, _expr = seg
-            lines.append(f"# segment {i + 1}: slots {lo + off}..{hi + off - 1}")
-            _segment_vector(seg, n, module_src, lines, masked=True)
-        for _ in range(len(segments) - 1):
-            lines.append("add(pop, pop)")
-        lines.append("poly = pop")
+        if template.get("overlapping"):
+            # order-dependent: each masked segment OVERWRITES its window in
+            # python order (poly = poly*(1-mask) + masked_segment)
+            lines.append(f"# {len(segments)} segments, later windows overwrite earlier ones")
+            for i, seg in enumerate(segments):
+                kvar, lo, hi, off, _expr = seg
+                a, b = lo + off, hi + off
+                lines.append(f"# segment {i + 1}: slots {a}..{b - 1}")
+                _segment_vector(seg, n, module_src, lines, masked=True)
+                if i == 0:
+                    lines.append("poly = pop")
+                    continue
+                lo_needed, hi_needed = a > 0, b < n
+                if lo_needed and hi_needed:
+                    inv = (f"add(subtract(1, {_emit_step_mask(a, n, lines)}), "
+                           f"{_emit_step_mask(b, n, lines)})")
+                elif lo_needed:
+                    inv = f"subtract(1, {_emit_step_mask(a, n, lines)})"
+                elif hi_needed:
+                    inv = _emit_step_mask(b, n, lines)
+                else:
+                    inv = "0"
+                lines.append(f"poly = add(multiply(poly, {inv}), pop)")
+        else:
+            lines.append(f"# {len(segments)} disjoint segments, each masked to its slot window")
+            for i, seg in enumerate(segments):
+                kvar, lo, hi, off, _expr = seg
+                lines.append(f"# segment {i + 1}: slots {lo + off}..{hi + off - 1}")
+                _segment_vector(seg, n, module_src, lines, masked=True)
+            for _ in range(len(segments) - 1):
+                lines.append("add(pop, pop)")
+            lines.append("poly = pop")
     for op in template["postops"]:
         if op[0] == "poke":
             _tag, slot, expr = op
@@ -1661,6 +1862,42 @@ def emit_program(name, template, module_src):
             frag = (ast.get_source_segment(module_src, arg) or "").replace("\n", " ")
             _append_commented(lines, f"{fname}({_hoist_vec(arg, None, None, None, lines)})",
                               f"np.{fname}({frag[:60]})" if frag else "")
+        elif op[0] == "cumacc":
+            _tag, cn, k2, lo2, order, h, jvar, off, pop_name, poly_name = op
+            lines.append(f"# prefix-sum accumulator loop: cumsum() over g(k), then h per slot")
+            for acc_name, g in order:
+                seg = (k2, lo2, lo2 + cn, -lo2, g)
+                _segment_vector(seg, cn, module_src, lines, masked=False)
+                lines.append("poly = pop")
+                lines.append("push(poly)")
+                lines.append(f"cumsum()   # {acc_name} prefix sums")
+                if acc_name == poly_name:
+                    lines.append("poly = pop")
+                # else: the cumsum result stays on the stack for a single pop
+            class _AccSub(ast.NodeTransformer):
+                def visit_Name(self, node):
+                    import copy as _copy
+                    if not isinstance(node.ctx, ast.Load):
+                        return node
+                    if node.id == poly_name:
+                        return ast.copy_location(ast.Subscript(
+                            value=ast.Name(id="cf", ctx=ast.Load()),
+                            slice=ast.Slice(lower=ast.Constant(value=0),
+                                            upper=ast.Constant(value=cn)),
+                            ctx=ast.Load()), node)
+                    if pop_name is not None and node.id == pop_name:
+                        return ast.copy_location(ast.Name(id="__pop__", ctx=ast.Load()), node)
+                    if node.id == jvar:
+                        return ast.copy_location(ast.Call(
+                            func=ast.Attribute(value=ast.Name(id="np", ctx=ast.Load()),
+                                               attr="arange", ctx=ast.Load()),
+                            args=[ast.Constant(value=-off), ast.Constant(value=cn - off)],
+                            keywords=[]), node)
+                    return node
+            h2 = ast.fix_missing_locations(_AccSub().visit(h))
+            _append_commented(lines,
+                f"poly[0:{cn}] = {_hoist_vec(h2, None, None, None, lines)}",
+                "cf[j] = h(acc, j)")
         elif op[0] == "stride_aug":
             _tag, a, b, step, opname, expr = op[:6]
             b_eff = n if b is None else min(b, n)

@@ -1212,6 +1212,8 @@ function _initSolveScoreProgramModal() {
             _renderSolveScoreProgramModal();
         });
     }
+    const refreshBtn = document.getElementById('solve-score-modal-refresh');
+    if (refreshBtn) refreshBtn.addEventListener('click', () => { void _refreshSolveScoreProgramRows({ preserveSelection: true }); });
     if (loadBtn) loadBtn.addEventListener('click', () => { void _loadSelectedSolveScoreProgramFromModal(); });
     if (saveBtn) saveBtn.addEventListener('click', () => { void _saveCurrentSolveScoreProgramFromModal(); });
     if (deleteBtn) deleteBtn.addEventListener('click', () => { void _deleteSelectedSolveScoreProgramFromModal(); });
@@ -1270,6 +1272,8 @@ function _initRootProgramModal() {
     const loadBtn = document.getElementById('root-program-modal-load');
     const saveBtn = document.getElementById('root-program-modal-save');
     const deleteBtn = document.getElementById('root-program-modal-delete');
+    const rtRefreshBtn = document.getElementById('root-program-modal-refresh');
+    if (rtRefreshBtn) rtRefreshBtn.addEventListener('click', () => { void _refreshRootProgramRows(); });
     if (loadBtn) loadBtn.addEventListener('click', () => { void _loadSelectedRootProgramFromModal(); });
     if (saveBtn) saveBtn.addEventListener('click', () => { void _saveRootProgramFromModal(); });
     if (deleteBtn) deleteBtn.addEventListener('click', () => { void _deleteSelectedRootProgram(); });
@@ -1304,6 +1308,8 @@ function _initParamProgramModal() {
             _renderParamProgramModal();
         });
     }
+    const ppRefreshBtn = document.getElementById('param-program-modal-refresh');
+    if (ppRefreshBtn) ppRefreshBtn.addEventListener('click', () => { void _refreshParamProgramRows({ preserveSelection: true }); });
     if (loadBtn) loadBtn.addEventListener('click', () => { void _loadSelectedParamProgramFromModal(); });
     if (saveBtn) saveBtn.addEventListener('click', () => { void _saveCurrentParamProgramFromModal(); });
     if (deleteBtn) deleteBtn.addEventListener('click', () => { void _deleteSelectedParamProgramFromModal(); });
@@ -1348,6 +1354,8 @@ function _initCoeffProgramModal() {
         });
     }
     _bindProgramModalFilterSort('coeff-program-modal', _coeffProgramModalState, _renderCoeffProgramModal);
+    const cpRefreshBtn = document.getElementById('coeff-program-modal-refresh');
+    if (cpRefreshBtn) cpRefreshBtn.addEventListener('click', () => { void _refreshCoeffProgramRows({ preserveSelection: true }); });
     if (loadBtn) loadBtn.addEventListener('click', () => { void _loadSelectedCoeffProgramFromModal(); });
     if (saveBtn) saveBtn.addEventListener('click', () => { void _saveCurrentCoeffProgramFromModal(); });
     if (deleteBtn) deleteBtn.addEventListener('click', () => { void _deleteSelectedCoeffProgramFromModal(); });

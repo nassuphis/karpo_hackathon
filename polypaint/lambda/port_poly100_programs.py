@@ -415,7 +415,13 @@ class _ScanRewrite(ast.NodeTransformer):
 
 def _branch_value(body, kvar, env, incoming):
     """One-branch value for the loop slot: Assign replaces, AugAssign(+/-/*)
-    combines with `incoming`. Returns (off, target_node, value) or None."""
+    combines with `incoming`. Leading temp assigns (k = j + 3) fold into a
+    branch-local env. Returns (off, target_node, value) or None."""
+    env = dict(env)
+    while (len(body) > 1 and isinstance(body[0], ast.Assign)
+           and len(body[0].targets) == 1 and isinstance(body[0].targets[0], ast.Name)):
+        env[body[0].targets[0].id] = _InlineTemps(env).visit(body[0].value)
+        body = body[1:]
     if len(body) != 1:
         return None
     stmt = body[0]
@@ -637,6 +643,25 @@ def analyze(fn):
                     raise SkipFunction("pre-segment poke reads cf (order-sensitive)")
                 _append_poke(ordered, slot[1], value)
                 continue
+            if (isinstance(tgt, ast.Subscript) and isinstance(tgt.value, ast.Name)
+                    and tgt.value.id == "cf" and isinstance(tgt.slice, (ast.List, ast.Tuple))):
+                idxs = [_const_int(e) for e in tgt.slice.elts]
+                if any(i is None for i in idxs):
+                    raise SkipFunction("cf[list] with non-constant indices")
+                wrote_any = bool(segments) or any(o[0] == "scan" for o in ordered)
+                if not wrote_any and _reads_cf(value):
+                    raise SkipFunction("pre-segment poke reads cf (order-sensitive)")
+                if isinstance(value, (ast.List, ast.Tuple)):
+                    if len(value.elts) != len(idxs):
+                        raise SkipFunction("cf[list] value length mismatch")
+                    for slot_i, elt in zip(idxs, value.elts):
+                        _append_poke(ordered, slot_i, elt)
+                else:
+                    if _contains_vector_shape(value):
+                        raise SkipFunction("cf[list] with vector value")
+                    for slot_i in idxs:
+                        _append_poke(ordered, slot_i, value)
+                continue
             slice_bounds = _slice_bounds(tgt)
             if slice_bounds is not None and _reads_cf(value):
                 # In-place slice rewrite (cf[a:b] = f(cf[a:b])): reads the
@@ -653,7 +678,51 @@ def analyze(fn):
             if not (isinstance(stmt.iter, ast.Call) and isinstance(stmt.iter.func, ast.Name)
                     and stmt.iter.func.id == "range"):
                 raise SkipFunction("loop is not over range()")
-            rargs = [_const_int(a) for a in stmt.iter.args]
+            def _fold_range_arg(a):
+                a = _InlineTemps(env).visit(a)
+                if (isinstance(a, ast.Call) and isinstance(a.func, ast.Name)
+                        and a.func.id == "len" and len(a.args) == 1
+                        and isinstance(a.args[0], ast.Name) and a.args[0].id == "cf"
+                        and n_coeffs is not None):
+                    return n_coeffs
+                c = _const_int(a)
+                if c is not None:
+                    return c
+                lin = _linear_k(a, "\x00")
+                return lin[1] if lin is not None and lin[0] == 0 else None
+
+            rargs = [_fold_range_arg(a) for a in stmt.iter.args]
+            if (len(rargs) == 3 and all(a is not None for a in rargs)
+                    and rargs[2] >= 2 and isinstance(stmt.target, ast.Name)):
+                # stepped range: unroll into ordered pokes (token cap gates size)
+                u_lo, u_hi, u_step = rargs
+                u_kvar = stmt.target.id
+                if (u_hi - u_lo) // u_step > 24:
+                    raise SkipFunction("stepped loop too long to unroll")
+                wrote_any = bool(segments) or any(o[0] == "scan" for o in ordered)
+                for u_val in range(u_lo, u_hi, u_step):
+                    u_env = dict(env)
+                    u_env[u_kvar] = ast.Constant(value=u_val)
+                    for inner in stmt.body:
+                        if isinstance(inner, ast.AugAssign):
+                            read = ast.Subscript(value=inner.target.value,
+                                                 slice=inner.target.slice, ctx=ast.Load())
+                            inner = ast.Assign(
+                                targets=[inner.target],
+                                value=ast.BinOp(left=read, op=inner.op, right=inner.value))
+                            inner = ast.fix_missing_locations(ast.copy_location(inner, stmt))
+                        if not (isinstance(inner, ast.Assign) and len(inner.targets) == 1):
+                            raise SkipFunction("stepped loop body is not an assignment")
+                        u_tgt = _InlineTemps(u_env).visit(inner.targets[0])
+                        u_val_expr = ast.fix_missing_locations(
+                            _InlineTemps(u_env).visit(inner.value))
+                        u_slot = _slot_of_target(u_tgt)
+                        if not (u_slot and u_slot[0] == "const"):
+                            raise SkipFunction("stepped loop writes a non-constant slot")
+                        if not wrote_any and _reads_cf(u_val_expr):
+                            raise SkipFunction("pre-segment poke reads cf (order-sensitive)")
+                        _append_poke(ordered, u_slot[1], u_val_expr)
+                continue
             if any(a is None for a in rargs) or len(rargs) not in (1, 2):
                 raise SkipFunction("range() args are not integer literals")
             lo, hi = (0, rargs[0]) if len(rargs) == 1 else rargs
@@ -664,6 +733,7 @@ def analyze(fn):
             write = None
             const_writes = []   # cf[<int>] = expr inside the loop
             extra_writes = []   # additional asc/desc slot writes (split loop)
+            aug_writes = 0      # in-loop cf[k] op= expr lowered to slice ops
             body_stmts = _collapse_same_slot_rewrites(list(stmt.body))
             if body_stmts and isinstance(body_stmts[-1], ast.If):
                 incoming = None
@@ -682,6 +752,39 @@ def analyze(fn):
                 if folded is not None:
                     body_stmts = prefix + [folded]
             for inner in body_stmts:
+                if isinstance(inner, ast.AugAssign):
+                    a_slot = _slot_of_target(
+                        _InlineTemps(loop_env).visit(inner.target), kvar)
+                    a_val = _InlineTemps(loop_env).visit(inner.value)
+                    if (a_slot and a_slot[0] == "loop"
+                            and isinstance(inner.op, (ast.Add, ast.Sub, ast.Mult, ast.Div))
+                            and not _reads_cf(a_val)):
+                        a, b = lo + a_slot[1], hi + a_slot[1]
+                        arange_call = ast.Call(
+                            func=ast.Attribute(value=ast.Name(id="np", ctx=ast.Load()),
+                                               attr="arange", ctx=ast.Load()),
+                            args=[ast.Constant(value=lo), ast.Constant(value=hi)],
+                            keywords=[])
+                        vec_val = _ReplaceMatchingLoad(
+                            _load_dump(ast.Name(id=kvar, ctx=ast.Load())), arange_call)
+                        # _ReplaceMatchingLoad targets Subscripts; swap names directly
+                        class _KToArange(ast.NodeTransformer):
+                            def visit_Name(self, node):
+                                if isinstance(node.ctx, ast.Load) and node.id == kvar:
+                                    import copy as _copy
+                                    return ast.copy_location(_copy.deepcopy(arange_call), node)
+                                return node
+                        shifted = ast.fix_missing_locations(_KToArange().visit(a_val))
+                        read = ast.Subscript(
+                            value=ast.Name(id="cf", ctx=ast.Load()),
+                            slice=ast.Slice(lower=ast.Constant(value=a),
+                                            upper=ast.Constant(value=b)),
+                            ctx=ast.Load())
+                        combined = ast.fix_missing_locations(ast.copy_location(
+                            ast.BinOp(left=read, op=inner.op, right=shifted), inner))
+                        ordered.append(("slice_assign", a, b, combined, len(segments)))
+                        aug_writes += 1
+                        continue
                 if not (isinstance(inner, ast.Assign) and len(inner.targets) == 1):
                     raise SkipFunction("loop body statement is not an assignment")
                 itgt = _InlineTemps(loop_env).visit(inner.targets[0])
@@ -708,7 +811,14 @@ def analyze(fn):
                     continue
                 raise SkipFunction("loop writes a non-loop-indexed slot")
             if write is None and not extra_writes:
-                raise SkipFunction("loop does not write cf")
+                if not aug_writes:
+                    raise SkipFunction("loop does not write cf")
+                last_k = ast.Constant(value=hi - 1)
+                for slot_idx, ival in const_writes:
+                    final = ast.fix_missing_locations(
+                        _InlineTemps({kvar: last_k}).visit(ival))
+                    ordered.append(("poke", slot_idx, final))
+                continue
             if extra_writes:
                 # split the loop: each independent non-cf-reading write is its
                 # own segment (descending targets flip k -> c - k)
@@ -1071,6 +1181,11 @@ def vec_src(node, kvar, k_range, k_text=None):
             return vec_src(node.operand, kvar, k_range, k_text)
         raise SkipFunction("unsupported unary op in vector context")
     if isinstance(node, ast.BinOp):
+        if isinstance(node.op, ast.FloorDiv):
+            # exact for non-negative ints: a // b == (a - rem(a, b)) / b
+            a_txt = vec_src(node.left, kvar, k_range, k_text)
+            b_txt = vec_src(node.right, kvar, k_range, k_text)
+            return f"divide(subtract({a_txt}, rem({a_txt}, {b_txt})), {b_txt})"
         ops = {ast.Add: "add", ast.Sub: "subtract", ast.Mult: "multiply",
                ast.Div: "divide", ast.Pow: "power", ast.Mod: "rem"}
         op = ops.get(type(node.op))

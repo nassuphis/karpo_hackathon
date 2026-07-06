@@ -1912,13 +1912,18 @@ def _validate_book_payload(raw):
     kind = str(raw.get("book_kind") or "book")
     if kind != "book":
         raise ValueError(f"unknown book_kind {kind!r}")
+    def _single_line(value, label):
+        text = str(value or "")
+        if any(ch in "\r\n\t" for ch in text) or not all(ch.isprintable() for ch in text):
+            raise ValueError(f"book {label} must be printable single-line text")
+        return text
+
     name = str(raw.get("name") or "").strip()
     if not name:
         raise ValueError("book name is required")
     if len(name) > MAX_BOOK_NAME_LEN:
         raise ValueError(f"book name must be at most {MAX_BOOK_NAME_LEN} characters")
-    if any(ch in "\r\n\t" for ch in name) or not all(ch.isprintable() for ch in name):
-        raise ValueError("book name must contain printable single-line text")
+    _single_line(name, "name")
     entries_raw = raw.get("entries")
     if entries_raw is None:
         entries_raw = []
@@ -1932,7 +1937,7 @@ def _validate_book_payload(raw):
         if not isinstance(item, dict):
             raise ValueError(f"book entry {idx} must be an object")
         entry = {
-            "entry_id": str(item.get("entry_id") or f"e{idx}_{uuid.uuid4().hex[:6]}"),
+            "entry_id": str(item.get("entry_id") or f"e{idx}_{uuid.uuid4().hex[:6]}").strip(),
             "job_id": str(item.get("job_id") or "").strip(),
             "artifact_id": str(item.get("artifact_id") or "").strip(),
             "image_key": str(item.get("image_key") or "").strip(),
@@ -1944,24 +1949,26 @@ def _validate_book_payload(raw):
         for field in ("job_id", "artifact_id", "image_key"):
             if not entry[field]:
                 raise ValueError(f"book entry {idx} is missing {field}")
-        if "/" in entry["entry_id"] or entry["entry_id"] in seen_entry_ids:
-            raise ValueError(f"book entry {idx} has an invalid or duplicate entry_id")
+        if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", entry["entry_id"]):
+            raise ValueError(f"book entry {idx} entry_id must match [A-Za-z0-9._-]{{1,64}}")
+        if entry["entry_id"] in seen_entry_ids:
+            raise ValueError(f"book entry {idx} has a duplicate entry_id")
         seen_entry_ids.add(entry["entry_id"])
         entries.append(entry)
     cover = str(raw.get("cover_entry_id") or "")
     if cover and cover not in seen_entry_ids:
         raise ValueError("cover_entry_id does not match any entry")
     book_id = str(raw.get("id") or _slugify_book_id(name)).strip()
-    if not book_id or "/" in book_id:
-        raise ValueError("book id must be a flat slug")
+    if not re.fullmatch(r"[a-z0-9-]{1,64}", book_id):
+        raise ValueError("book id must be a lowercase slug [a-z0-9-]{1,64}")
     return {
         "version": 1,
         "book_kind": "book",
         "id": book_id,
         "name": name,
-        "title": str(raw.get("title") or ""),
-        "subtitle": str(raw.get("subtitle") or ""),
-        "author": str(raw.get("author") or ""),
+        "title": _single_line(raw.get("title"), "title"),
+        "subtitle": _single_line(raw.get("subtitle"), "subtitle"),
+        "author": _single_line(raw.get("author"), "author"),
         "cover_entry_id": cover,
         "entries": entries,
         "saved_at": _utc_now_iso(),
@@ -2058,9 +2065,6 @@ def handle_list_books(event):
                     })
                 except Exception as inner:
                     errors.append({"id": book_id, "error": str(inner)[:240]})
-        if "LastEvaluatedKey" in resp:
-            kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
-            continue
         if resp.get("IsTruncated"):
             kwargs["ContinuationToken"] = resp.get("NextContinuationToken")
             continue
@@ -2081,10 +2085,17 @@ def handle_delete_book(event):
     if not book_id or "/" in book_id:
         raise ValueError("book delete requires a flat id")
     deleted = 0
+
+    def _delete_keys(keys):
+        nonlocal deleted
+        for start in range(0, len(keys), 1000):
+            chunk = keys[start:start + 1000]
+            s3.delete_objects(Bucket=BUCKET, Delete={"Objects": [{"Key": k} for k in chunk]})
+            deleted += len(chunk)
+
     doc_key = _book_key(book_id)
     if _key_exists(doc_key):
-        s3.delete_object(Bucket=BUCKET, Key=doc_key)
-        deleted += 1
+        _delete_keys([doc_key])
     # per-book assets + outputs live under a guarded prefix
     prefix = f"{BOOKS_PREFIX}{book_id}/"
     assert prefix.startswith(BOOKS_PREFIX)
@@ -2092,9 +2103,8 @@ def handle_delete_book(event):
     while True:
         resp = s3.list_objects_v2(**kwargs)
         keys = [item["Key"] for item in resp.get("Contents") or []]
-        for key in keys:
-            s3.delete_object(Bucket=BUCKET, Key=key)
-            deleted += 1
+        if keys:
+            _delete_keys(keys)
         if resp.get("IsTruncated"):
             kwargs["ContinuationToken"] = resp.get("NextContinuationToken")
             continue
@@ -4429,6 +4439,11 @@ def handle_presign(event):
     """
     params = parse_body(event)
     key = params["key"]
+    # presign is read-only but mints a GET URL for whatever key it's handed;
+    # restrict to the prefixes the app actually serves so it can't be turned
+    # into an arbitrary-object exfiltration oracle.
+    if not (key.startswith("renders/") or key.startswith(BOOKS_PREFIX)):
+        raise ValueError("presign key must be under renders/ or polypaint/books/")
     s3_params = {"Bucket": BUCKET, "Key": key}
     filename = params.get("filename")
     if filename:

@@ -727,6 +727,18 @@ class TestStoragePresign(unittest.TestCase):
         self.assertIn("ResponseContentDisposition", call_params)
         self.assertIn("my_image.jpeg", call_params["ResponseContentDisposition"])
 
+    @patch("handler_storage.s3")
+    def test_presign_restricts_key_prefix(self, mock_s3):
+        from handler_storage import handle_presign
+        mock_s3.generate_presigned_url.return_value = "https://example.com/signed"
+        # allowed prefixes
+        for key in ("renders/j/image.jpeg", "polypaint/books/b/out/c/content.pdf"):
+            self.assertEqual(handle_presign({"body": json.dumps({"key": key})})["statusCode"], 200)
+        # arbitrary object exfiltration must be refused
+        for key in ("polypaint/coeff-programs/secret.json", "../etc", "config.json"):
+            with self.assertRaises(ValueError):
+                handle_presign({"body": json.dumps({"key": key})})
+
 
 # ── Test: shared.py ───────────────────────────────────────────────────────
 

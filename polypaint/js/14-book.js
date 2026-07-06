@@ -80,18 +80,19 @@ function _bookEntryRow(entry, idx) {
     const selected = entry.entry_id === _bookState.selectedEntryId;
     const cover = _bookState.doc.cover_entry_id === entry.entry_id;
     const thumb = hyd.preview_url
-        ? `<img src="${hyd.preview_url}" style="width:48px;height:48px;object-fit:cover">`
+        ? `<img src="${_escapeHtml(hyd.preview_url)}" style="width:48px;height:48px;object-fit:cover">`
         : `<div style="width:48px;height:48px;background:#222;display:flex;align-items:center;justify-content:center;font-size:9px;color:#888">${hyd.missing ? 'missing' : '...'}</div>`;
-    const title = entry.title_override || entry.display_name || entry.artifact_id;
-    return `<div class="book-entry-row${selected ? ' selected' : ''}" data-entry="${entry.entry_id}"
+    const title = _escapeHtml(entry.title_override || entry.display_name || entry.artifact_id);
+    const eid = _escapeHtml(entry.entry_id);
+    return `<div class="book-entry-row${selected ? ' selected' : ''}" data-entry="${eid}"
         style="display:flex;align-items:center;gap:8px;padding:4px 6px;border-bottom:1px solid #2b3a5e;cursor:pointer${selected ? ';background:#1c2742' : ''}"
-        onclick="_bookSelectEntry('${entry.entry_id}')">
+        onclick="_bookSelectEntry(this.dataset.entry)">
         <span style="color:#666;width:24px">${idx + 1}</span>${thumb}
         <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${title}${cover ? ' <span style="color:#e94560">[cover]</span>' : ''}${hyd.missing ? ' <span style="color:#e94560">[missing]</span>' : ''}</span>
-        <span style="color:#666;font-size:10px">${entry.job_id}</span>
-        <button class="btn-secondary" style="padding:1px 7px" onclick="event.stopPropagation();_bookMoveEntry('${entry.entry_id}',-1)">▲</button>
-        <button class="btn-secondary" style="padding:1px 7px" onclick="event.stopPropagation();_bookMoveEntry('${entry.entry_id}',1)">▼</button>
-        <button class="btn-secondary" style="padding:1px 7px" onclick="event.stopPropagation();_bookRemoveEntry('${entry.entry_id}')">✕</button>
+        <span style="color:#666;font-size:10px">${_escapeHtml(entry.job_id)}</span>
+        <button class="btn-secondary" style="padding:1px 7px" onclick="event.stopPropagation();_bookMoveEntry(this.closest('.book-entry-row').dataset.entry,-1)">▲</button>
+        <button class="btn-secondary" style="padding:1px 7px" onclick="event.stopPropagation();_bookMoveEntry(this.closest('.book-entry-row').dataset.entry,1)">▼</button>
+        <button class="btn-secondary" style="padding:1px 7px" onclick="event.stopPropagation();_bookRemoveEntry(this.closest('.book-entry-row').dataset.entry)">✕</button>
     </div>`;
 }
 
@@ -99,7 +100,7 @@ function _renderBookTab() {
     const sel = document.getElementById('book-selector');
     if (sel) {
         sel.innerHTML = '<option value="">(select book)</option>' + _bookState.books.map(b =>
-            `<option value="${b.id}"${b.id === _bookState.activeId ? ' selected' : ''}>${b.name} (${b.entry_count})</option>`).join('');
+            `<option value="${_escapeHtml(b.id)}"${b.id === _bookState.activeId ? ' selected' : ''}>${_escapeHtml(b.name)} (${b.entry_count})</option>`).join('');
     }
     const info = document.getElementById('book-info');
     const doc = _bookState.doc;
@@ -239,12 +240,18 @@ function bookEntryFieldChanged() {
     entry.title_override = document.getElementById('book-entry-title')?.value || '';
     entry.body_override = document.getElementById('book-entry-body')?.value || '';
     _bookState.dirty = true;
-    const info = document.getElementById('book-info');
-    if (info && !info.textContent.includes('(unsaved)')) _renderBookTab();
+    _renderBookTab();
 }
 
 // --- collection surfaces (design §3): all funnel through here ---
+let _bookAddInFlight = Promise.resolve();
 async function _bookAddEntry(ref, surfaceStatus) {
+    const chained = _bookAddInFlight.then(() => _bookAddEntryImpl(ref, surfaceStatus));
+    _bookAddInFlight = chained.catch(() => {});
+    return chained;
+}
+
+async function _bookAddEntryImpl(ref, surfaceStatus) {
     const report = surfaceStatus || _bookStatus;
     if (!_bookState.activeId) {
         report('No active book: open the Book tab and create/select one first', true);
@@ -313,7 +320,8 @@ async function bookCompile() {
         }));
         const disp = await lambdaPost('dispatch', { target: 'book_pdf', jobs, expected_keys: [] });
         if ((disp.fired || 0) !== jobs.length) throw new Error(`dispatch fired ${disp.fired}/${jobs.length}`);
-        _bookState.compile = { runId, jobId, phase: 'prepare', expected: jobs.length };
+        _bookState.compile = { runId, jobId, phase: 'prepare', expected: jobs.length,
+                               bookId: _bookState.activeId, savedAt: _bookState.doc.saved_at };
         _bookStatus(`Preparing 0/${jobs.length}...`);
         _bookLog(`Compile ${runId}: ${jobs.length} prepare jobs dispatched`);
         _bookPollCompile();
@@ -325,7 +333,7 @@ async function bookCompile() {
 
 async function _bookPollCompile() {
     const run = _bookState.compile;
-    if (!run) return;
+    if (!run || run !== _bookState.compile) return;
     try {
         if (run.phase === 'prepare') {
             const check = await lambdaPost('storage', {
@@ -344,8 +352,8 @@ async function _bookPollCompile() {
                     target: 'book_pdf',
                     jobs: [{
                         op: 'compose', job_id: run.jobId, task_id: composeTask,
-                        book_id: _bookState.activeId, compile_id: run.runId,
-                        expected_saved_at: _bookState.doc.saved_at,
+                        book_id: run.bookId, compile_id: run.runId,
+                        expected_saved_at: run.savedAt,
                     }],
                     expected_keys: [],
                 });
@@ -363,11 +371,13 @@ async function _bookPollCompile() {
             const rd = (check.results || [])[0] || {};
             if (rd.phase === 'done') {
                 _bookState.compile = null;
-                _bookLog('Compose done');
-                await _bookLoadActive();
-                _renderBookTab();
-                void _bookHydrateEntries();
-                _bookStatus(`Book compiled: ${(_bookState.latestOutput || {}).content_pages || '?'} pages`);
+                _bookLog(`Compose done for ${run.bookId}`);
+                if (run.bookId === _bookState.activeId) {
+                    await _bookLoadActive();
+                    _renderBookTab();
+                    void _bookHydrateEntries();
+                    _bookStatus(`Book compiled: ${(_bookState.latestOutput || {}).content_pages || '?'} pages`);
+                }
                 return;
             }
             _bookStatus(`Composing: ${rd.phase_label || rd.phase || 'working'}...`);
@@ -387,7 +397,7 @@ async function bookDownload(kind) {
     if (!key) return;
     try {
         const resp = await lambdaPost('storage', { key, filename: `${_bookState.activeId}-${kind}.${kind === 'source' ? 'zip' : 'pdf'}` }, '/presign');
-        window.open(resp.url, '_blank');
+        window.location.href = resp.url;
     } catch (e) {
         _bookStatus(e.message, true);
     }

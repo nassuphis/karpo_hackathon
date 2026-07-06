@@ -1,0 +1,11 @@
+# The book_pdf image build only needs lambda/*.py + fonts/. Keep the giant
+# render/snaps/node_modules trees out of the build context.
+node_modules
+snaps
+tests
+docs
+*.jsonl
+*.wasm
+layer-build
+layer*.zip
+.git

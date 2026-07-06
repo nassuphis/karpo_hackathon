@@ -426,6 +426,15 @@ prepare fan-out is bounded by the slowest single source, not the sum.
 8. Fonts are git-tracked in `polypaint/fonts/` and licensing is a non-issue: the
    project is strictly non-commercial (gifts, zero revenue), within trial /
    free-for-non-commercial terms; open-source equivalents exist as swap-ins. §6.
+9. **Untrusted-input hardening** (adversarial review round, all shipped): every
+   user string reaching HTML is `_escapeHtml`'d (book name, entry title, ids);
+   `entry_id` is a strict `[A-Za-z0-9._-]{1,64}` slug and `id` a lowercase slug,
+   so neither can break out of an `\includegraphics{}`/`onclick`/attribute;
+   `title`/`subtitle`/`author` get the single-line printable guard `name` had;
+   `/presign` is prefix-restricted to `renders/` + `polypaint/books/` (it was an
+   open arbitrary-object oracle); `book_pdf` re-validates every id it splices into
+   a `/tmp` path. The compile poller captures `bookId`/`savedAt` into the run so
+   switching books mid-compile can't compose the wrong book.
 
 **Genuinely open (user calls):**
 1. **Verso template style.** Default = port of the printed book's black/Canela verso.

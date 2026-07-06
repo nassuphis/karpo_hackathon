@@ -50,8 +50,8 @@ RUN cd /tmp \
     && ./install-tl --profile=tl.profile \
     && rm -rf /tmp/install-tl-2* /tmp/install-tl-unx.tar.gz
 ENV PATH="$TEXDIR/bin/aarch64-linux:$TEXDIR/bin/x86_64-linux:$PATH"
-RUN tlmgr install fontspec microtype geometry xcolor eso-pic pgf luaotfload \
-    && tlmgr path add || true
+RUN tlmgr install fontspec microtype geometry xcolor eso-pic pgf luaotfload
+RUN tlmgr path add || true
 
 # --- fonts: tracked TTFs, copied into each compose build dir at runtime so
 # fontspec resolves them by filename (design §6). Build FAILS if missing. ---
@@ -59,7 +59,7 @@ COPY fonts/ /opt/book-fonts/
 RUN test -s /opt/book-fonts/TiemposText-Regular-Trial.ttf
 
 # --- python deps + handler code ---
-RUN pip install --no-cache-dir boto3 Pillow
+RUN pip install --no-cache-dir "boto3>=1.34" "Pillow>=10,<12" "reportlab>=4,<5"
 COPY lambda/book_tex.py lambda/book_pdf.py lambda/spread_pdf.py lambda/shared.py ${LAMBDA_TASK_ROOT}/
 
 CMD ["book_pdf.handler"]

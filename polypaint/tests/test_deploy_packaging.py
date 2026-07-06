@@ -192,6 +192,10 @@ class TestDeployPackaging(unittest.TestCase):
                            if fn.get("package_type") == "image"]
         for fn in image_functions:
             self.assertIn(f'SKIP {fn["name"]}', GEN_TEXT)
+        # image functions deploy via a dedicated deploy.sh call in BOTH branches
+        if image_functions:
+            self.assertEqual(
+                len(re.findall(r"(?m)^    deploy_book_pdf_image$", DEPLOY_TEXT)), 2)
         # raw helpers: the deploy_lambda wrapper plus the two converge fallbacks
         self.assertEqual(len(re.findall(r'(?m)^\s*create_lambda "\$', DEPLOY_TEXT)), 2)
         self.assertEqual(len(re.findall(r'(?m)^\s*update_lambda "\$', DEPLOY_TEXT)), 2)

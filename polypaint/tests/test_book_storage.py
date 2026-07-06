@@ -36,13 +36,19 @@ class _FakeS3:
         self.metadata.pop(Key, None)
         return {}
 
+    def delete_objects(self, Bucket=None, Delete=None):
+        for obj in (Delete or {}).get("Objects") or []:
+            self.objects.pop(obj["Key"], None)
+            self.metadata.pop(obj["Key"], None)
+        return {}
+
     def list_objects_v2(self, Bucket=None, Prefix=None, **_kw):
         keys = sorted(k for k in self.objects if k.startswith(Prefix or ""))
         return {"Contents": [{"Key": k} for k in keys], "IsTruncated": False}
 
 
 def _patch_s3(mock_s3, fake_s3):
-    for name in ("get_object", "put_object", "head_object", "delete_object", "list_objects_v2"):
+    for name in ("get_object", "put_object", "head_object", "delete_object", "delete_objects", "list_objects_v2"):
         getattr(mock_s3, name).side_effect = getattr(fake_s3, name)
 
 
@@ -105,11 +111,21 @@ class TestBookStorage(unittest.TestCase):
             ({"book": {"name": "x", "entries": [{"job_id": "j"}]}}, "missing artifact_id"),
             ({"book": {"name": "x", "entries": [_entry(1)], "cover_entry_id": "nope"}},
              "cover_entry_id"),
-            ({"book": {"name": "x", "id": "a/b"}}, "flat slug"),
+            ({"book": {"name": "x", "id": "a/b"}}, "slug"),
             ({"book": {"name": "x", "entries": [_entry(i) for i in range(201)]}}, "max is 200"),
+            # XSS / TeX-injection vectors: entry_id and free-text fields
+            ({"book": {"name": "x", "entries": [_entry(1, entry_id='a}b')]}}, "entry_id must match"),
+            ({"book": {"name": "x", "entries": [_entry(1, entry_id='x%y')]}}, "entry_id must match"),
+            ({"book": {"name": "x", "entries": [_entry(1, entry_id='q" onx="')]}}, "entry_id must match"),
+            ({"book": {"name": 'a</option><img src=x onerror=alert(1)>'}}, None),  # printable, allowed but escaped in UI
+            ({"book": {"name": "x", "title": "line\nbreak"}}, "title must be printable"),
+            ({"book": {"name": "x", "author": "bad\ttab"}}, "author must be printable"),
         ]
         for payload, needle in cases:
             resp = handler_storage.handler(_event("/save-book", payload), None)
+            if needle is None:
+                self.assertEqual(resp["statusCode"], 200)  # printable name is stored; UI escapes
+                continue
             self.assertEqual(resp["statusCode"], 400, needle)
             self.assertIn(needle, json.loads(resp["body"])["error"])
 

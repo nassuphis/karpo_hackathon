@@ -37,8 +37,18 @@ PROV = {"e1": {"summary": {"function": "poly_42", "pipeline": "[ ]  poly_42  [ ]
 
 import os
 os.makedirs("/build/assets", exist_ok=True)
+
+# exercise the vips prepare path end to end (design uses it to resize
+# sources to <=3600px). A broken vips layer raises here rather than
+# silently degrading, so this asserts vipsthumbnail + its .so's work.
+import spread_pdf
+big = "/build/big_source.png"
+Image.new("RGB", (5000, 5000), (12, 40, 80)).save(big)
 for i in range(3):
-    Image.new("RGB", (640, 640), (30 * i + 20, 10, 60)).save(f"/build/assets/e{i}.jpg", quality=90)
+    info = spread_pdf.prepare_pdf_image(big, f"/build/assets/e{i}.jpg",
+                                        max_px=3600, quality=90, image_format="jpeg")
+    assert max(info["prepared_width"], info["prepared_height"]) == 3600, info
+assert spread_pdf._vipsthumbnail_path(), "vipsthumbnail not on PATH in image"
 import shutil
 for f in os.listdir("/opt/book-fonts"):
     shutil.copy(f"/opt/book-fonts/{f}", "/build/")

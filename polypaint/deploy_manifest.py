@@ -182,7 +182,7 @@ def emit_bash(manifest):
         if fn.get("note"):
             w(f'    # {fn["note"]}')
         if fn.get("package_type") == "image":
-            w(f'    echo "SKIP {fn["name"]}: container-image function; deploy via deploy-book-image (not yet in deploy.sh)"')
+            w(f'    echo "SKIP {fn["name"]}: container-image function; deployed by deploy_book_pdf_image after this list"')
             continue
         w(f'    deploy_lambda "${fn["name_var"]}" "{fn["handler"]}" "{fn["zip"]}" \\')
         w(f"        {_spec_args(fn)}")
@@ -196,7 +196,7 @@ def emit_bash(manifest):
     w("deploy_orchestrator_lambdas() {")
     for fn in orch:
         if fn.get("package_type") == "image":
-            w(f'    echo "SKIP {fn["name"]}: container-image function; deploy via deploy-book-image (not yet in deploy.sh)"')
+            w(f'    echo "SKIP {fn["name"]}: container-image function; deployed by deploy_book_pdf_image after this list"')
             continue
         w(f'    deploy_lambda "${fn["name_var"]}" "{fn["handler"]}" "{fn["zip"]}" \\')
         w(f"        {_spec_args(fn)}")

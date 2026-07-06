@@ -805,9 +805,9 @@ async function _runMosaicContextAction(action) {
                 artifactId,
                 displayName: tile.display_name || artifactId,
                 imageKey: tile.image_key || '',
-            }, (msg) => { ctx.message = msg; });
-            _logMosaic(kind, `${cfg.label}: ${ctx.message || 'Add to Book'} ${artifactId}`, ok ? 'ok' : 'err',
-                       `add-book|${tile.job_id}|${artifactId}`);
+            }, (msg, err) => { if (err) ctx.error = msg; else ctx.message = msg; });
+            _logMosaic(kind, `${cfg.label}: ${(ok ? ctx.message : ctx.error) || 'Add to Book'} ${artifactId}`,
+                       ok ? 'ok' : 'err', `add-book|${tile.job_id}|${artifactId}`);
         } else if (action === 'download') {
             const key = tile.image_key || tile.key || '';
             await _downloadStorageObject({ key, filename: _mosaicDownloadFilename(kind, tile), fallbackUrl: key ? '' : _mosaicPublicUrl(kind, tile.key) });

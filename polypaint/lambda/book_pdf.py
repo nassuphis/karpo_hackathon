@@ -77,11 +77,21 @@ def _summary_from_sources(calc, src_meta):
     }
 
 
+_ID_RE = None
+
+
+def _safe_id(value, label):
+    import re
+    if not re.fullmatch(r"[A-Za-z0-9._#-]{1,80}", str(value or "")):
+        raise ValueError(f"book_pdf {label} has an unsafe value: {value!r}")
+    return str(value)
+
+
 def handle_prepare(params):
     job_id = params["job_id"]
     task_id = params["task_id"]
-    book_id = params["book_id"]
-    entry_id = params["entry_id"]
+    book_id = _safe_id(params["book_id"], "book_id")
+    entry_id = _safe_id(params["entry_id"], "entry_id")
     source_job_id = params["source_job_id"]
     source_image_key = params["source_image_key"]
     asset_key, prov_key = _asset_keys(book_id, entry_id)
@@ -162,8 +172,8 @@ def _run_lualatex(build_dir, name):
 def handle_compose(params, latex_runner=_run_lualatex):
     job_id = params["job_id"]
     task_id = params["task_id"]
-    book_id = params["book_id"]
-    compile_id = params["compile_id"]
+    book_id = _safe_id(params["book_id"], "book_id")
+    compile_id = _safe_id(params["compile_id"], "compile_id")
     expected_saved_at = str(params.get("expected_saved_at") or "")
     progress = {"family": "book", "book_id": book_id, "compile_id": compile_id, "op": "compose"}
     out_prefix = f"{BOOKS_PREFIX}{book_id}/out/{compile_id}/"
@@ -233,10 +243,14 @@ def handle_compose(params, latex_runner=_run_lualatex):
             zf.writestr("cover.tex", cover_tex)
             zf.writestr("README.txt",
                         "PolyPaint book source. Compile: lualatex book.tex (twice); "
-                        "assets/ + fonts must sit beside the tex files.\n")
+                        "assets/ + the bundled .ttf fonts must sit beside the tex files.\n")
             for entry_id in provenance:
                 zf.write(os.path.join(build_dir, book_tex.ASSET_DIR, f"{entry_id}.jpg"),
                          f"{book_tex.ASSET_DIR}/{entry_id}.jpg")
+            if os.path.isdir(FONT_DIR):
+                for fname in sorted(os.listdir(FONT_DIR)):
+                    if fname.lower().endswith(".ttf"):
+                        zf.write(os.path.join(FONT_DIR, fname), fname)
         zip_buf.seek(0)
         s3.upload_fileobj(zip_buf, BUCKET, out_prefix + "source.zip",
                           ExtraArgs={"ContentType": "application/zip"})

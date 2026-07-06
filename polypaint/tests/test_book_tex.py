@@ -107,10 +107,12 @@ class TestReportPage(unittest.TestCase):
         self.assertIn("const(2,0,0)", tex)
         self.assertIn("AE-MT", tex)
         self.assertNotIn("typed", tex)   # the old token-dump body is gone
-        # palette swatch in a panel
+        # palette swatch in a panel: fixed 132mm square, label BELOW the image
         self.assertIn("e0.palette.jpg", tex)
         self.assertIn(r"\fcolorbox{panelborder}{panelbg}", tex)
+        self.assertIn("width=132mm,height=132mm,keepaspectratio", tex)
         self.assertIn("tri\\_ember", tex)
+        self.assertLess(tex.index("e0.palette.jpg"), tex.index("tri\\_ember"))
 
     def test_no_palette_omits_swatch(self):
         book = _book(1)

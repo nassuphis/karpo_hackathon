@@ -179,9 +179,9 @@ def _verso_report_page(entry, provenance):
             r"\vfill",
             r"\begin{center}",
             r"\begin{tabular}{c}",
-            r"{\monofont\footnotesize\color{monotext} %s} \\[2mm]" % palette_label,
-            r"\fcolorbox{panelborder}{panelbg}{\includegraphics[width=120mm,height=120mm,keepaspectratio]{%s/%s.palette.jpg}} \\"
+            r"\fcolorbox{panelborder}{panelbg}{\includegraphics[width=132mm,height=132mm,keepaspectratio]{%s/%s.palette.jpg}} \\[2mm]"
             % (ASSET_DIR, entry.get("entry_id")),
+            r"{\monofont\footnotesize\color{monotext} %s} \\" % palette_label,
             r"\end{tabular}",
             r"\end{center}",
             r"\vfill",

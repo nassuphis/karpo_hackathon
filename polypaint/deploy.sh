@@ -351,6 +351,43 @@ render_palette_workflow_definition() {
 # Async invoke config, shared by the create and update paths. Must-succeed:
 # stdout is silenced but stderr stays visible and set -e aborts on failure
 # (the old >/dev/null 2>&1 form died silently on throttles).
+
+# --- Book PDF container-image lambda (book-maker-design.md §5) ---
+# The first image-based function: TeX cannot ship as a zip layer. Build is
+# skipped with SKIP_BOOK_IMAGE=1 (image builds are slow on cold caches).
+BOOK_PDF_ECR_REPO="polypaint/book-pdf"
+deploy_book_pdf_image() {
+    if [ "${SKIP_BOOK_IMAGE:-0}" = "1" ]; then
+        echo "SKIP book-pdf image (SKIP_BOOK_IMAGE=1)"
+        return 0
+    fi
+    local ACCT
+    ACCT=$(aws sts get-caller-identity --query 'Account' --output text)
+    local REPO_URI="${ACCT}.dkr.ecr.${REGION}.amazonaws.com/${BOOK_PDF_ECR_REPO}"
+
+    echo "--- book-pdf image: ECR repo ---"
+    aws ecr describe-repositories --repository-names "$BOOK_PDF_ECR_REPO"         --region "$REGION" >/dev/null 2>&1 ||     aws ecr create-repository --repository-name "$BOOK_PDF_ECR_REPO"         --region "$REGION" >/dev/null
+
+    echo "--- book-pdf image: build + push (arm64) ---"
+    aws ecr get-login-password --region "$REGION" |         docker login --username AWS --password-stdin "${ACCT}.dkr.ecr.${REGION}.amazonaws.com"
+    local TAG
+    TAG=$(date +%Y%m%d%H%M%S)
+    docker buildx build --platform linux/arm64         -f "$SCRIPT_DIR/lambda/book_pdf.Dockerfile"         -t "${REPO_URI}:${TAG}" -t "${REPO_URI}:latest"         --push "$SCRIPT_DIR"
+
+    echo "--- book-pdf image: lambda ---"
+    local ENV_VARS="BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
+    if aws lambda get-function --function-name "$BOOK_PDF_NAME" --region "$REGION" >/dev/null 2>&1; then
+        aws lambda update-function-code --function-name "$BOOK_PDF_NAME"             --image-uri "${REPO_URI}:${TAG}" --region "$REGION" >/dev/null
+        aws lambda wait function-updated --function-name "$BOOK_PDF_NAME" --region "$REGION"
+        aws lambda update-function-configuration --function-name "$BOOK_PDF_NAME"             --memory-size "$BOOK_PDF_MEM"             --ephemeral-storage '{"Size": 2048}'             --timeout "$TIMEOUT"             --environment "Variables={$(echo "$ENV_VARS" | sed 's/,/,/g')}"             --region "$REGION" >/dev/null
+    else
+        aws lambda create-function --function-name "$BOOK_PDF_NAME"             --package-type Image             --code "ImageUri=${REPO_URI}:${TAG}"             --role "$ROLE_ARN"             --architectures arm64             --memory-size "$BOOK_PDF_MEM"             --ephemeral-storage '{"Size": 2048}'             --timeout "$TIMEOUT"             --environment "Variables={$(echo "$ENV_VARS" | sed 's/,/,/g')}"             --region "$REGION" >/dev/null
+    fi
+    aws lambda wait function-active --function-name "$BOOK_PDF_NAME" --region "$REGION"
+    aws lambda put-function-event-invoke-config         --function-name "$BOOK_PDF_NAME"         --maximum-retry-attempts 0         --maximum-event-age-in-seconds 300         --region "$REGION" >/dev/null || true
+    echo "book-pdf image deployed: ${REPO_URI}:${TAG}"
+}
+
 configure_async_invoke_policies() {
     # No retries for most Lambdas (prevents retry storms), but bilevel gets
     # 2 retries / 1hr age to handle concurrency throttle drops.
@@ -1845,6 +1882,7 @@ if [ "$ACTION" = "create" ]; then
 
     # --- Lambdas (single spec list shared with the update path) ---
     deploy_all_lambdas
+    deploy_book_pdf_image
 
     # Step Functions state machines
     echo "Deploying Step Functions state machines..."
@@ -1898,6 +1936,7 @@ elif [ "$ACTION" = "update" ]; then
 
     # --- Lambdas (single spec list shared with the create path) ---
     deploy_all_lambdas
+    deploy_book_pdf_image
 
     # Step Functions state machines
     echo "Updating Step Functions state machines..."

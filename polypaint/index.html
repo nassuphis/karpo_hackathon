@@ -1601,6 +1601,7 @@ button {
         <div class="tab-btn" onclick="switchTab('palette')">Palette</div>
         <div class="tab-btn" onclick="switchTab('render')">Render</div>
         <div class="tab-btn" onclick="switchTab('favorites')">Favorites</div>
+    <div class="tab-btn" onclick="switchTab('book')">Book</div>
         <div class="tab-btn" onclick="switchTab('allcol')">AllCol</div>
         <div class="tab-btn" onclick="switchTab('allpal')">AllPal</div>
         <div class="tab-btn" onclick="switchTab('deepzoom')">DeepZoom</div>
@@ -2074,6 +2075,7 @@ button {
                             <div id="favorites-dl-menu-dir" onclick="_favoritesDlMenuAction('dir')" style="padding:6px 12px; cursor:pointer; font-size:11px; color:#ccc; white-space:nowrap; border-top:1px solid #444" onmouseover="this.style.background='#3a3a5e'" onmouseout="this.style.background=''">Select Dir…</div>
                         </div>
                     </div>
+                    <button class="btn-secondary btn-inline" id="btn-favorites-add-book" onclick="addSelectedFavoriteToBook()" style="padding:4px 12px; font-size:12px">Add to Book</button>
                     <button class="btn-secondary btn-inline" id="btn-favorites-delete" onclick="deleteSelectedFavorite()" style="padding:4px 12px; font-size:12px" disabled>Delete</button>
                 </div>
                 <div id="favorites-info" style="font-size:11px; color:#666">Favorite Color artifacts across all jobs.</div>
@@ -2083,7 +2085,35 @@ button {
             <div id="favorites-log" style="margin-top:8px; font-family:monospace; font-size:11px"></div>
         </div>
         <!-- Palette tab -->
-        <div id="tab-palette" class="tab-content">
+        <div id="tab-book" class="tab-content">
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px">
+        <select id="book-selector" onchange="bookSelectorChanged()" style="min-width:220px"></select>
+        <button id="btn-book-new" type="button" class="btn-secondary" onclick="bookNew()" style="padding:6px 12px">New</button>
+        <button id="btn-book-save" type="button" class="btn-primary" onclick="bookSave()" style="padding:6px 12px">Save</button>
+        <button id="btn-book-compile" type="button" class="btn-primary" onclick="bookCompile()" style="padding:6px 12px">Compile</button>
+        <button id="btn-book-refresh" type="button" class="btn-secondary" onclick="_bookState.listLoaded=false; void loadBookTab()" style="padding:6px 12px">Refresh</button>
+        <button id="btn-book-delete" type="button" class="btn-secondary" onclick="bookDelete()" style="padding:6px 12px">Delete</button>
+        <span id="book-info" style="color:#9aa0b4; font-size:12px"></span>
+    </div>
+    <div id="book-download-row" style="display:none; gap:8px; align-items:center; margin-bottom:6px">
+        <button type="button" class="btn-secondary" onclick="bookDownload('cover')" style="padding:4px 10px">Cover PDF</button>
+        <button type="button" class="btn-secondary" onclick="bookDownload('content')" style="padding:4px 10px">Content PDF</button>
+        <button type="button" class="btn-secondary" onclick="bookDownload('source')" style="padding:4px 10px">Source Zip</button>
+        <span id="book-output-info" style="color:#9aa0b4; font-size:12px"></span>
+    </div>
+    <div id="book-status" class="status"></div>
+    <div style="display:flex; gap:10px; align-items:flex-start">
+        <div id="book-entry-list" style="flex:1; max-height:520px; overflow-y:auto; border:1px solid #2b3a5e; border-radius:4px"></div>
+        <div id="book-entry-editor" style="display:none; width:340px; border:1px solid #2b3a5e; border-radius:4px; padding:10px">
+            <div style="margin-bottom:6px; color:#9aa0b4; font-size:12px">Entry text (empty = auto from provenance)</div>
+            <input id="book-entry-title" type="text" placeholder="Title override" style="width:100%; margin-bottom:6px" oninput="bookEntryFieldChanged()">
+            <textarea id="book-entry-body" rows="7" placeholder="Body override" style="width:100%; margin-bottom:6px" oninput="bookEntryFieldChanged()"></textarea>
+            <button type="button" class="btn-secondary" onclick="bookSetCover()" style="padding:4px 10px">Set as Cover</button>
+        </div>
+    </div>
+    <div id="book-log" style="margin-top:8px"></div>
+</div>
+<div id="tab-palette" class="tab-content">
             <div class="anim-row" style="gap:8px; align-items:center">
                 <label>Results Dir:</label>
                 <input type="text" id="palette-results-dir" placeholder="compute_xxxxxxxx" style="flex:1; font-family:monospace; font-size:12px">
@@ -3274,11 +3304,12 @@ button {
 <script src="js/11-artifacts.js"></script>
 <script src="js/12-deepzoom-boot.js"></script>
 <script src="js/13-artifact-mosaics.js"></script>
+<script src="js/14-book.js"></script>
 <script>
 // Part-consistency check: every split file must have registered, in order.
 // Catches a partial upload or a cached/mixed set of js/ files immediately.
 (function () {
-    var expected = ['01-core-compute', '02-preview-solvescore', '03-program-modals', '04-palette-color', '05-render-popups', '06-popup-init', '07-transform-catalogs', '08-chip-editors', '09-render-orchestration', '10-status-results', '11-artifacts', '12-deepzoom-boot', '13-artifact-mosaics'];
+    var expected = ['01-core-compute', '02-preview-solvescore', '03-program-modals', '04-palette-color', '05-render-popups', '06-popup-init', '07-transform-catalogs', '08-chip-editors', '09-render-orchestration', '10-status-results', '11-artifacts', '12-deepzoom-boot', '13-artifact-mosaics', '14-book'];
     var got = window.__ppParts || [];
     if (expected.length !== got.length || expected.some(function (n, i) { return got[i] !== n; })) {
         console.error('polypaint js parts mismatch — expected', expected, 'got', got,

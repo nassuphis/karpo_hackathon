@@ -656,6 +656,7 @@ function _renderMosaicContextMenu() {
             ${_mosaicContextButton('Go Compute', 'go-compute', ctx.busy)}
             ${_mosaicContextButton('Go Result', 'go-result', ctx.busy)}
             ${_mosaicContextButton(favoriteDisabled ? 'Favorite (Color only)' : 'Favorite', 'favorite', ctx.busy || favoriteDisabled)}
+            ${_mosaicContextButton(favoriteDisabled ? 'Add to Book (Color only)' : 'Add to Book', 'add-book', ctx.busy || favoriteDisabled)}
             ${_mosaicContextButton('Download', 'download', ctx.busy)}
             ${_mosaicContextButton('Copy Link', 'copy-link', ctx.busy)}
             ${_mosaicContextButton('Copy Job ID', 'copy-job', ctx.busy)}
@@ -797,6 +798,16 @@ async function _runMosaicContextAction(action) {
             });
             ctx.message = result && result.already ? 'Already in favorites' : 'Favorited';
             _logMosaic(kind, `${cfg.label}: ${ctx.message} ${artifactId}`, 'ok', `favorite|${tile.job_id}|${artifactId}|${ctx.message}`);
+        } else if (action === 'add-book') {
+            if (kind !== 'color') throw new Error('Books currently support Color artifacts only');
+            const ok = await _bookAddEntry({
+                jobId: tile.job_id,
+                artifactId,
+                displayName: tile.display_name || artifactId,
+                imageKey: tile.image_key || '',
+            }, (msg) => { ctx.message = msg; });
+            _logMosaic(kind, `${cfg.label}: ${ctx.message || 'Add to Book'} ${artifactId}`, ok ? 'ok' : 'err',
+                       `add-book|${tile.job_id}|${artifactId}`);
         } else if (action === 'download') {
             const key = tile.image_key || tile.key || '';
             await _downloadStorageObject({ key, filename: _mosaicDownloadFilename(kind, tile), fallbackUrl: key ? '' : _mosaicPublicUrl(kind, tile.key) });

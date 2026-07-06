@@ -29,6 +29,24 @@ The wall is a single-level OpenSeadragon grid (`minLevel: 0, maxLevel: 0`,
 js/13-artifact-mosaics.js:424-444): every visible cell fetches that artifact's
 full preview, even when the cell paints at ~20 px on screen.
 
+Two data-quality problems ride along (verified by sampling live objects):
+
+- **Mixed preview sizes, color family**: the 755 older color previews are
+  1024px, the 896 newer ones 512px. The wall's cell size is
+  `max(preview_width)` (js/13-artifact-mosaics.js:446-456), so the old 1024s
+  set the grid size and carry 4× the pixels. Palette previews are already all
+  ≤512 actual pixels (1,128 @ 512 + 3 @ 500 where full_n < 512).
+- **Lying object metadata, legacy color previews**: old color `preview.png`
+  objects carry x-amz-meta `width`/`height` of the FULL render (5000, 10000 —
+  sampled live), not the preview. Newer previews carry no dim metadata;
+  palette previews carry none; autolevels stamps its true 512. Current
+  producers are clean (finalize_mt and recolor upload previews with no
+  Metadata — handler_finalize_mt.py:905-911, color_recolor_raw.py:711-717),
+  so this is a legacy-objects-only repair. It's also why
+  `_mosaic_preview_dimensions` (handler_storage.py:3288) must do a ranged-GET
+  PNG-header parse per artifact instead of trusting metadata — its comment
+  documents exactly this.
+
 ### Three multipliers on top of the payload
 
 1. **HTTP/1.1 only.** S3's REST endpoint doesn't negotiate h2 (verified with
@@ -119,16 +137,49 @@ with a JPEG load fast, the rest still load their PNG.
 | Mutable pointers/meta | `renders/{job}/deepzoom_latest.json`, artifact `meta.json` overlays (recolor/autolevels rewrite them), `calc.json` | untouched (default) |
 | Mosaic manifests | `renders/_index/**` | already `no-cache, max-age=0` (handler_storage.py:3831) — correct, keep |
 
-### 2.4 JPEG encoding spec
+### 2.4 JPEG encoding spec + size normalization
 
-Pillow: `quality=92, subsampling=0 (4:4:4), optimize=True`, dimensions
-unchanged. 4:4:4 protects hard edges in palette grids from chroma smearing.
-Expected shrink 5–8× on this content (→ AllCol ~1.7 GB → **~220–300 MB**,
-AllPal ~431 MB → **~60–90 MB**). Render-first discipline applies: the
-migration's dry-run emits before/after pairs for visual inspection **before**
-the full sweep (§4 runbook).
+Pillow: `quality=92, subsampling=0 (4:4:4), optimize=True`, and the JPEG is
+**normalized to ≤512px** (Lanczos downscale, never upscale) for BOTH families.
+That collapses the 1024/512 split: the 755 old 1024px color previews shrink
+4× in pixels on top of the format win; palettes are already ≤512 so it's a
+pure format conversion there. 4:4:4 protects hard edges in palette grids from
+chroma smearing.
 
-### 2.5 New DeepZoom exports get JPEG tiles
+Consequences by design:
+- The wall becomes a uniform 512 grid (`_mosaicTileSize` = max over tiles);
+  the AllCol size-filter buckets collapse to one — data-driven UI, no JS
+  change.
+- Expected totals: AllCol ~1.7 GB → **~100–150 MB**, AllPal ~431 MB →
+  **~60–80 MB**.
+- `preview.png` originals keep their resolution untouched for every other
+  consumer.
+
+Render-first discipline applies: the migration's dry-run emits before/after
+pairs for visual inspection **before** the full sweep (§4 runbook) — the
+inspection now also judges 1024→512 on wall-typical zoom.
+
+### 2.5 Legacy metadata repair (rides the same passes)
+
+Fix the lying x-amz-meta on legacy color previews where we're already
+touching every object:
+
+- The Phase-1 header backfill copies previews in place with
+  `MetadataDirective=REPLACE`; before each copy it reads the true dims via
+  ranged-GET PNG-header parse (same trick as handler_storage.py:3288) and
+  rewrites `width`/`height` to the measured values. One copy = headers +
+  honest metadata.
+- The Phase-2 migration uploads `preview.jpg` with correct object metadata
+  and writes `preview_jpg_width`/`preview_jpg_height` into the overlay meta,
+  so the manifest builder can skip its per-artifact ranged GET for migrated
+  tiles (mosaic refresh gets faster as a side effect).
+- Checklist before the repair run: grep the hydration/head paths
+  (`_head_artifact_keys` user_meta consumers, Results/Render detail JS) for
+  anything DISPLAYING preview `width` metadata — a display that today shows
+  "5000" by accident would change to the honest 512. Fix the consumer to read
+  render dims from the artifact meta/image head instead if one exists.
+
+### 2.6 New DeepZoom exports get JPEG tiles
 
 `dz_export.c:45` suffix `".png"` → `".jpg[Q=90]"` (vips encodes per-tile;
 DZI `Format` attribute follows the suffix automatically). Old exports keep
@@ -155,8 +206,10 @@ each; **no pyramid migration required**.
 ### Backfill: `scripts/backfill_cache_headers.py`
 
 Copy-in-place (`CopyObject` with `MetadataDirective=REPLACE`, preserving
-ContentType, adding CacheControl). **Targeted patterns only** — `renders/` has
-1.22M objects and only ~4k are browser-fetched previews.
+ContentType, adding CacheControl, and — for previews — repairing legacy
+`width`/`height` metadata to the measured PNG-header dims per §2.5).
+**Targeted patterns only** — `renders/` has 1.22M objects and only ~4k are
+browser-fetched previews.
 
 - Default scope: color previews (1,651) + palette previews (~1,230) +
   `deepzoom/*/image.dzi` + `deepzoom/*/viewer.html`. Seconds to minutes.
@@ -192,11 +245,15 @@ deps. ~2.2 GB down / ~0.3 GB up, 16 threads, ~10–20 min end to end.
 Per artifact prefix (color + palettes families):
 
 1. Skip if `preview.jpg` already exists (idempotent, re-runnable as top-up).
-2. GET `preview.png`, convert per §2.4, PUT `preview.jpg` with
-   `ContentType=image/jpeg` + immutable CacheControl.
-3. Merge `preview_jpg_key` into the overlay `meta.json` (read-merge-write,
-   same pattern as the book palette overlay fix — never clobber other fields).
+2. GET `preview.png`, convert + normalize to ≤512px per §2.4, PUT
+   `preview.jpg` with `ContentType=image/jpeg`, honest `width`/`height`
+   object metadata, + immutable CacheControl.
+3. Merge `preview_jpg_key` + `preview_jpg_width`/`preview_jpg_height` into
+   the overlay `meta.json` (read-merge-write, same pattern as the book
+   palette overlay fix — never clobber other fields).
 4. Record progress to a local journal (`--resume` continues after interrupt).
+   Log any preview whose actual dims are anomalous (>1024 — a full-res image
+   masquerading as a preview) — the ≤512 rule normalizes it anyway.
 
 Flags: `--dry-run` (count + bytes estimate), `--sample N` (convert N random
 previews to a LOCAL directory as `before.png`/`after.jpg` pairs for visual
@@ -211,10 +268,12 @@ builder falls back to PNG. PNGs were never touched.
 The §2.2 seam, both families. Tests (payload-contract style, in the existing
 storage-suite home under `tests/`):
 
-- entry with `preview_jpg_key` → manifest tile `key` is the jpg; without → png.
-- `preview_width/height` unchanged in both cases.
+- entry with `preview_jpg_key` → manifest tile `key` is the jpg and
+  `preview_width/height` come from `preview_jpg_width/height` in the meta
+  (no ranged GET); without → png key + header-parse dims, exactly as today.
 - Mixed manifest (some migrated, some not) round-trips — pins the mid-migration
-  safety claim.
+  safety claim. Migrated tiles report 512 → the wall grid converges to a
+  uniform 512 as migration completes.
 
 ### 4.3 Go-forward story (new renders after the migration)
 
@@ -230,9 +289,10 @@ storage-suite home under `tests/`):
 
 ### Expected result
 
-Cold AllCol open: ~1.7 GB → **~250 MB** (with Phase 1, warm opens ≈ 0 bytes).
-Cold AllPal: ~431 MB → **~75 MB**. Same look at wall scale (verified via
-`--sample` inspection before the sweep).
+Cold AllCol open: ~1.7 GB → **~100–150 MB** (JPEG ~6× + the 755 old 1024px
+previews normalized to 512; with Phase 1, warm opens ≈ 0 bytes). Cold AllPal:
+~431 MB → **~60–80 MB**. Uniform 512 grid, honest metadata. Same look at wall
+scale (verified via `--sample` inspection before the sweep).
 
 ---
 
@@ -293,9 +353,14 @@ only on the user's explicit go (Claude may run them when told).
 
 ## 8. Risks
 
-- **JPEG on hard palette edges**: mitigated by 4:4:4 + q92 + mandatory
-  `--sample` inspection; per-key `--skip` escape hatch keeps stubborn
-  artifacts on PNG (builder falls back per-artifact).
+- **JPEG on hard palette edges + 1024→512 downscale**: mitigated by 4:4:4 +
+  q92 + Lanczos + mandatory `--sample` inspection at wall-typical zoom;
+  per-key `--skip` escape hatch keeps stubborn artifacts on PNG (builder
+  falls back per-artifact). Full-res detail always remains one click away
+  (image.jpeg / DeepZoom).
+- **Metadata repair changing an accidental display**: a consumer that today
+  shows "5000" from preview user_meta would start showing 512 — §2.5 mandates
+  a consumer grep before the repair run.
 - **Overlay meta races**: recolor/autolevels rewrite artifact meta; migration
   does read-merge-write and should run while no render jobs are active. A lost
   `preview_jpg_key` is self-healing via `--top-up`.

@@ -92,21 +92,75 @@ def load_functions(module_path=None):
     return src, out
 
 
+class _LinspaceFold(ast.NodeTransformer):
+    """rec = np.linspace(A, B, n); ... rec[k + c] inside a segment whose slot
+    is k + off: when c == off and the count matches n, the indexed element
+    IS the slot-aligned linspace vector — fold to __linspace__(A, B, n)."""
+
+    def __init__(self, kvar, off, n):
+        self.kvar = kvar
+        self.off = off
+        self.n = n
+
+    def visit_Subscript(self, node):
+        self.generic_visit(node)
+        v = node.value
+        is_linspace = (isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute)
+                       and isinstance(v.func.value, ast.Name) and v.func.value.id == "np"
+                       and v.func.attr == "linspace" and len(v.args) == 3)
+        if not is_linspace:
+            return node
+        cnt = _const_int(v.args[2])
+        lin = _linear_k(node.slice, self.kvar) if self.kvar else None
+        if cnt == self.n and lin is not None and lin[0] == 1 and lin[1] == self.off:
+            call = ast.Call(func=ast.Name(id="__linspace__", ctx=ast.Load()),
+                            args=[v.args[0], v.args[1], ast.Constant(value=cnt)],
+                            keywords=[])
+            return ast.copy_location(ast.fix_missing_locations(call), node)
+        raise SkipFunction("linspace subscript not slot-aligned")
+
+
 class _StripAstype(ast.NodeTransformer):
     """Drop .astype(...) calls — every use in poly100/poly200 is a complex
     cast, a no-op in the VM's all-complex arithmetic."""
-
-    def visit_Call(self, node):
-        self.generic_visit(node)
-        if isinstance(node.func, ast.Attribute) and node.func.attr == "astype":
-            return node.func.value
-        return node
 
     def visit_Attribute(self, node):
         self.generic_visit(node)
         if (isinstance(node.value, ast.Name) and node.value.id == "np"
                 and node.attr == "pi" and isinstance(node.ctx, ast.Load)):
             return ast.copy_location(ast.Name(id="pi", ctx=ast.Load()), node)
+        return node
+
+    def visit_IfExp(self, node):
+        self.generic_visit(node)
+        call = ast.Call(func=ast.Name(id="__select__", ctx=ast.Load()),
+                        args=[node.test, node.body, node.orelse], keywords=[])
+        return ast.copy_location(ast.fix_missing_locations(call), node)
+
+    def _literal_elements(self, arg):
+        if isinstance(arg, (ast.List, ast.Tuple)):
+            return arg.elts
+        if (isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute)
+                and isinstance(arg.func.value, ast.Name) and arg.func.value.id == "np"
+                and arg.func.attr == "array" and len(arg.args) == 1
+                and isinstance(arg.args[0], (ast.List, ast.Tuple))):
+            return arg.args[0].elts
+        return None
+
+    def visit_Call(self, node):
+        self.generic_visit(node)
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "astype":
+            return node.func.value
+        if (isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "np" and node.func.attr in ("prod", "sum")
+                and len(node.args) == 1 and not node.keywords):
+            elts = self._literal_elements(node.args[0])
+            if elts:
+                op = ast.Mult() if node.func.attr == "prod" else ast.Add()
+                out = elts[0]
+                for e in elts[1:]:
+                    out = ast.BinOp(left=out, op=op, right=e)
+                return ast.copy_location(ast.fix_missing_locations(out), node)
         return node
 
 
@@ -1143,6 +1197,9 @@ def _contains_vector_shape(node):
         if (isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name)
                 and n.value.id == "cf" and isinstance(n.slice, ast.Slice)):
             return True
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                and n.func.id == "__linspace__"):
+            return True
     return False
 
 
@@ -1168,6 +1225,9 @@ def vec_src(node, kvar, k_range, k_text=None):
         if isinstance(node.func, ast.Name) and node.func.id == "__select__":
             c, a, b = (vec_src(arg, kvar, k_range, k_text) for arg in node.args)
             return f"select({c}, {a}, {b})"
+        if isinstance(node.func, ast.Name) and node.func.id == "__linspace__":
+            a, b, cnt = node.args
+            return f"linspace({scalar_src(a)}, {scalar_src(b)}, {_const_int(cnt)})"
         name = _call_name(node)
         if name and len(node.args) == 1 and not node.keywords:
             return f"{name}({vec_src(node.args[0], kvar, k_range, k_text)})"
@@ -1333,6 +1393,7 @@ def _segment_vector(seg, n, module_src, lines, masked):
     """Emit statements that leave the segment's (optionally masked) vector on
     the stack; returns the number of stack values pushed (always 1)."""
     kvar, lo, hi, off, expr = seg
+    expr = ast.fix_missing_locations(_LinspaceFold(kvar, off, n).visit(expr))
     k_lo, k_hi = -off, n - off
     slot_lo, slot_hi = lo + off, hi + off
     terms = _split_terms(expr)

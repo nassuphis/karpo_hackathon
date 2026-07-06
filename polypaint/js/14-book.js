@@ -12,6 +12,7 @@ let _bookState = {
     dirty: false,
     hydrated: {},         // entry_id -> {preview_url, missing}
     selectedEntryId: '',
+    subtab: 'content',    // 'content' | 'cover'
     compile: null,        // {runId, phase, expected, done}
 };
 
@@ -82,18 +83,32 @@ function _bookEntryRow(entry, idx) {
     const thumb = hyd.preview_url
         ? `<img src="${_escapeHtml(hyd.preview_url)}" style="width:48px;height:48px;object-fit:cover">`
         : `<div style="width:48px;height:48px;background:#222;display:flex;align-items:center;justify-content:center;font-size:9px;color:#888">${hyd.missing ? 'missing' : '...'}</div>`;
-    const title = _escapeHtml(entry.title_override || entry.display_name || entry.artifact_id);
+    const title = _escapeHtml(entry.display_name || entry.artifact_id);
     const eid = _escapeHtml(entry.entry_id);
+    // the cover row's number turns red so it's visible at a glance
+    const numColor = cover ? '#e94560' : '#666';
+    const numWeight = cover ? 'font-weight:700;' : '';
     return `<div class="book-entry-row${selected ? ' selected' : ''}" data-entry="${eid}"
         style="display:flex;align-items:center;gap:8px;padding:4px 6px;border-bottom:1px solid #2b3a5e;cursor:pointer${selected ? ';background:#1c2742' : ''}"
         onclick="_bookSelectEntry(this.dataset.entry)">
-        <span style="color:#666;width:24px">${idx + 1}</span>${thumb}
-        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${title}${cover ? ' <span style="color:#e94560">[cover]</span>' : ''}${hyd.missing ? ' <span style="color:#e94560">[missing]</span>' : ''}</span>
+        <span style="color:${numColor};width:24px;${numWeight}">${idx + 1}</span>${thumb}
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${title}${cover ? ' <span style="color:#e94560">— cover</span>' : ''}${hyd.missing ? ' <span style="color:#e94560">[missing]</span>' : ''}</span>
         <span style="color:#666;font-size:10px">${_escapeHtml(entry.job_id)}</span>
         <button class="btn-secondary" style="padding:1px 7px" onclick="event.stopPropagation();_bookMoveEntry(this.closest('.book-entry-row').dataset.entry,-1)">▲</button>
         <button class="btn-secondary" style="padding:1px 7px" onclick="event.stopPropagation();_bookMoveEntry(this.closest('.book-entry-row').dataset.entry,1)">▼</button>
         <button class="btn-secondary" style="padding:1px 7px" onclick="event.stopPropagation();_bookRemoveEntry(this.closest('.book-entry-row').dataset.entry)">✕</button>
     </div>`;
+}
+
+function bookSubtab(name) {
+    _bookState.subtab = name === 'cover' ? 'cover' : 'content';
+    document.getElementById('book-subtab-content')?.classList.toggle('active', _bookState.subtab === 'content');
+    document.getElementById('book-subtab-cover')?.classList.toggle('active', _bookState.subtab === 'cover');
+    const c = document.getElementById('book-sub-content');
+    const v = document.getElementById('book-sub-cover');
+    if (c) c.style.display = _bookState.subtab === 'content' ? 'block' : 'none';
+    if (v) v.style.display = _bookState.subtab === 'cover' ? 'block' : 'none';
+    _renderBookTab();
 }
 
 function _renderBookTab() {
@@ -116,14 +131,24 @@ function _renderBookTab() {
             ? doc.entries.map((e, i) => _bookEntryRow(e, i)).join('')
             : '<div style="padding:14px;color:#888">No entries. Right-click a tile in AllCol, or use Add to Book on the Render/Favorites tabs.</div>';
     }
-    const editor = document.getElementById('book-entry-editor');
-    const entry = doc ? (doc.entries || []).find(e => e.entry_id === _bookState.selectedEntryId) : null;
-    if (editor) editor.style.display = entry ? 'block' : 'none';
-    if (entry) {
-        const t = document.getElementById('book-entry-title');
-        const b = document.getElementById('book-entry-body');
-        if (t && t.value !== entry.title_override) t.value = entry.title_override || '';
-        if (b && b.value !== entry.body_override) b.value = entry.body_override || '';
+    // Cover sub-tab: preview of the selected cover artifact + book title fields
+    const coverEntry = doc ? (doc.entries || []).find(e => e.entry_id === doc.cover_entry_id) : null;
+    const coverPrev = document.getElementById('book-cover-preview');
+    if (coverPrev) {
+        const hyd = coverEntry ? (_bookState.hydrated[coverEntry.entry_id] || {}) : {};
+        coverPrev.innerHTML = coverEntry && hyd.preview_url
+            ? `<img src="${_escapeHtml(hyd.preview_url)}" style="width:100%;height:100%;object-fit:contain">`
+            : (coverEntry ? '…' : 'No cover selected.<br>Pick a row in Content and press Cover.');
+    }
+    const hint = document.getElementById('book-cover-hint');
+    if (hint) {
+        hint.textContent = coverEntry
+            ? `Cover: ${coverEntry.display_name || coverEntry.artifact_id}`
+            : (doc ? 'No cover chosen — the cover page will be typographic.' : '');
+    }
+    for (const [id, key] of [['book-title-input', 'title'], ['book-subtitle-input', 'subtitle'], ['book-author-input', 'author']]) {
+        const el = document.getElementById(id);
+        if (el && doc && el.value !== (doc[key] || '')) el.value = doc[key] || '';
     }
     const dl = document.getElementById('book-download-row');
     if (dl) dl.style.display = _bookState.latestOutput ? 'flex' : 'none';
@@ -172,6 +197,9 @@ async function bookNew() {
 
 async function bookSave() {
     if (!_bookState.doc) return;
+    const btn = document.getElementById('btn-book-save');
+    const orig = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
     try {
         const resp = await lambdaPost('storage', { book: _bookState.doc }, '/save-book');
         _bookState.doc = resp.book;
@@ -182,6 +210,8 @@ async function bookSave() {
         _bookStatus('Saved');
     } catch (e) {
         _bookStatus(e.message, true);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = orig || 'Save'; }
     }
 }
 
@@ -228,19 +258,27 @@ function _bookRemoveEntry(entryId) {
 }
 
 function bookSetCover() {
-    if (!_bookState.doc || !_bookState.selectedEntryId) return;
-    _bookState.doc.cover_entry_id = _bookState.selectedEntryId;
+    const doc = _bookState.doc;
+    if (!doc) { _bookStatus('No book loaded', true); return; }
+    if (!_bookState.selectedEntryId) { _bookStatus('Select a row first, then press Cover', true); return; }
+    const entry = (doc.entries || []).find(e => e.entry_id === _bookState.selectedEntryId);
+    doc.cover_entry_id = _bookState.selectedEntryId;
     _bookState.dirty = true;
     _renderBookTab();
+    _bookStatus(`Cover set to "${entry ? (entry.display_name || entry.artifact_id) : '?'}" (row turns red). Save to keep it.`);
 }
 
-function bookEntryFieldChanged() {
-    const entry = (_bookState.doc || {}).entries?.find(e => e.entry_id === _bookState.selectedEntryId);
-    if (!entry) return;
-    entry.title_override = document.getElementById('book-entry-title')?.value || '';
-    entry.body_override = document.getElementById('book-entry-body')?.value || '';
+function bookMetaChanged() {
+    const doc = _bookState.doc;
+    if (!doc) return;
+    doc.title = document.getElementById('book-title-input')?.value || '';
+    doc.subtitle = document.getElementById('book-subtitle-input')?.value || '';
+    doc.author = document.getElementById('book-author-input')?.value || '';
     _bookState.dirty = true;
-    _renderBookTab();
+    const info = document.getElementById('book-info');
+    if (info && !info.textContent.includes('(unsaved)') && doc) {
+        info.textContent = `${(doc.entries || []).length} entries (unsaved)`;
+    }
 }
 
 // --- collection surfaces (design §3): all funnel through here ---

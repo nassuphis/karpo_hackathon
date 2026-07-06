@@ -1430,6 +1430,12 @@ button {
 .tab-btn.active { background: #16213e; color: #e94560; }
 .tab-content { display: none; }
 .tab-content.active { display: block; }
+.book-subtab {
+    padding: 5px 16px; font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.05em; cursor: pointer; border: 1px solid #2b3a5e; border-bottom: none;
+    border-radius: 5px 5px 0 0; background: #121829; color: #9aa0b4;
+}
+.book-subtab.active { background: #16213e; color: #e94560; }
 
 .compute-mt-tab-panels {
     display: grid;
@@ -2103,13 +2109,29 @@ button {
         <span id="book-output-info" style="color:#9aa0b4; font-size:12px"></span>
     </div>
     <div id="book-status" class="status"></div>
-    <div style="display:flex; gap:10px; align-items:flex-start">
-        <div id="book-entry-list" style="flex:1; max-height:520px; overflow-y:auto; border:1px solid #2b3a5e; border-radius:4px"></div>
-        <div id="book-entry-editor" style="display:none; width:340px; border:1px solid #2b3a5e; border-radius:4px; padding:10px">
-            <div style="margin-bottom:6px; color:#9aa0b4; font-size:12px">Entry text (empty = auto from provenance)</div>
-            <input id="book-entry-title" type="text" placeholder="Title override" style="width:100%; margin-bottom:6px" oninput="bookEntryFieldChanged()">
-            <textarea id="book-entry-body" rows="7" placeholder="Body override" style="width:100%; margin-bottom:6px" oninput="bookEntryFieldChanged()"></textarea>
-            <button type="button" class="btn-secondary" onclick="bookSetCover()" style="padding:4px 10px">Set as Cover</button>
+    <div class="book-subtabs" style="display:flex; gap:0; margin:4px 0 0 0">
+        <div id="book-subtab-content" class="book-subtab active" onclick="bookSubtab('content')">Content</div>
+        <div id="book-subtab-cover" class="book-subtab" onclick="bookSubtab('cover')">Cover</div>
+    </div>
+    <div id="book-sub-content" style="border:1px solid #2b3a5e; border-radius:0 4px 4px 4px; padding:8px">
+        <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px">
+            <button id="btn-book-set-cover" type="button" class="btn-secondary" onclick="bookSetCover()" style="padding:4px 12px">Cover</button>
+            <span style="color:#9aa0b4; font-size:12px">Select a row, then Cover to mark it (its number turns red). Right-click a tile in AllCol to add more.</span>
+        </div>
+        <div id="book-entry-list" style="max-height:500px; overflow-y:auto"></div>
+    </div>
+    <div id="book-sub-cover" style="display:none; border:1px solid #2b3a5e; border-radius:0 4px 4px 4px; padding:12px">
+        <div style="display:flex; gap:16px; align-items:flex-start">
+            <div id="book-cover-preview" style="width:260px; height:260px; background:#121829; border:1px solid #2b3a5e; border-radius:4px; display:flex; align-items:center; justify-content:center; color:#666; font-size:12px; text-align:center; flex-shrink:0">No cover selected</div>
+            <div style="flex:1; min-width:0">
+                <label style="color:#9aa0b4">Book title (printed on the cover + title page)</label>
+                <input id="book-title-input" type="text" placeholder="e.g. Polynomiography" style="width:100%; margin-bottom:10px" oninput="bookMetaChanged()">
+                <label style="color:#9aa0b4">Subtitle (optional)</label>
+                <input id="book-subtitle-input" type="text" style="width:100%; margin-bottom:10px" oninput="bookMetaChanged()">
+                <label style="color:#9aa0b4">Author (optional)</label>
+                <input id="book-author-input" type="text" style="width:100%; margin-bottom:10px" oninput="bookMetaChanged()">
+                <div id="book-cover-hint" style="color:#9aa0b4; font-size:12px"></div>
+            </div>
         </div>
     </div>
     <div id="book-log" style="margin-top:8px"></div>

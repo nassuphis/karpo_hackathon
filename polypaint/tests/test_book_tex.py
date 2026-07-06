@@ -80,32 +80,54 @@ class TestGeometryAndStructure(unittest.TestCase):
         self.assertNotIn("629.4", tex)
         self.assertIn("assets/e1.jpg", tex)
 
-    def test_pad_pages_are_black(self):
+    def test_pad_pages_are_deep_blue(self):
         tex, total = book_tex.render_content_tex(_book(2))  # 1+4 -> pad 3, total 8
         self.assertEqual(total, 8)
-        self.assertEqual(tex.count(r"\pagecolor{black}" + "\n" + r"\null"), 3)
+        self.assertEqual(tex.count(r"\pagecolor{pagebg}" + "\n" + r"\null"), 3)
+        self.assertIn(r"\definecolor{pagebg}{HTML}{1A1A2E}", tex)  # app deep blue
 
 
-class TestOverrides(unittest.TestCase):
-    def test_auto_title_and_body_from_provenance(self):
+class TestReportPage(unittest.TestCase):
+    def test_report_kv_grid_and_palette_from_provenance(self):
         book = _book(1)
-        prov = {"e0": {"summary": {
-            "function": "poly_42", "pipeline": "[ unit_circle ]   poly_42   [ ]",
-            "scale": "degree 50, 4000x4000 grid", "coloring": "root proximity",
-            "solver": "Solved by AE"}}}
+        prov = {"e0": {"report": {
+            "compute_id": "compute_mr7kkhg2",
+            "artifact_id": "color_run_123",
+            "summary_rows": [["Function", "const(2,0,0)"], ["Degree", "50"],
+                             ["Solver", "AE-MT"], ["Color mode", "root proximity"]],
+            "palette_label": "tri_ember",
+            "has_palette": True,
+        }}}
         tex, _ = book_tex.render_content_tex(book, prov)
-        self.assertIn("Study poly\\_42", tex)
-        self.assertIn("root proximity", tex)
+        # compute id is the title (no artsy title yet), on the deep-blue page
+        self.assertIn("compute\\_mr7kkhg2", tex)
+        self.assertIn(r"\pagecolor{pagebg}\color{bodytext}", tex)
+        # KV grid, uppercased labels, no program-source dump
+        self.assertIn("FUNCTION", tex)
+        self.assertIn("const(2,0,0)", tex)
+        self.assertIn("AE-MT", tex)
+        self.assertNotIn("typed", tex)   # the old token-dump body is gone
+        # palette swatch in a panel
+        self.assertIn("e0.palette.jpg", tex)
+        self.assertIn(r"\fcolorbox{panelborder}{panelbg}", tex)
+        self.assertIn("tri\\_ember", tex)
+
+    def test_no_palette_omits_swatch(self):
+        book = _book(1)
+        prov = {"e0": {"report": {"compute_id": "c", "summary_rows": [["N", "4000"]],
+                                  "has_palette": False}}}
+        tex, _ = book_tex.render_content_tex(book, prov)
+        self.assertNotIn(".palette.jpg", tex)
+        self.assertIn("4000", tex)
 
     def test_overrides_win(self):
         book = _book(1)
         book["entries"][0]["title_override"] = "My Title"
         book["entries"][0]["body_override"] = "line one\nline two"
         tex, _ = book_tex.render_content_tex(
-            book, {"e0": {"summary": {"function": "poly_1"}}})
+            book, {"e0": {"report": {"compute_id": "c", "summary_rows": []}}})
         self.assertIn("My Title", tex)
         self.assertIn("line one", tex)
-        self.assertNotIn("Study poly", tex)
 
 
 if __name__ == "__main__":

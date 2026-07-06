@@ -18,7 +18,7 @@ import boto3
 
 import book_tex
 from shared import BUCKET, parse_body, ok_response, report_status
-from spread_pdf import PDF_IMAGE_MAX_PX, prepare_pdf_image
+from spread_pdf import PDF_IMAGE_MAX_PX, PDF_PALETTE_MAX_PX, prepare_pdf_image
 
 s3 = boto3.client("s3")
 
@@ -49,31 +49,101 @@ def _key_exists(key):
         return False
 
 
-def _summary_from_sources(calc, src_meta):
-    """The condensed verso fields book_tex reads (design §6): built once at
-    prepare time so the book compiles identically forever."""
-    pipeline = calc.get("pipeline") if isinstance(calc.get("pipeline"), dict) else {}
-    fn = str(pipeline.get("function") or calc.get("function") or "").strip()
-    pt = str(pipeline.get("param_transforms_display") or pipeline.get("param_program_display") or "").strip()
-    ct = str(pipeline.get("coeff_transforms_display") or pipeline.get("coeff_program_display") or "").strip()
-    pipeline_line = f"[ {pt} ]   {fn}   [ {ct} ]" if fn else ""
-    scale_parts = []
-    degree = str(calc.get("degree") or "").strip()
-    if degree:
-        scale_parts.append(f"degree {degree}")
-    n_value = str(calc.get("N") or calc.get("n1") or "").strip()
-    if n_value:
-        scale_parts.append(f"{n_value}x{n_value} grid")
+# --- report model: the KV rows the ColorSpread PDF button renders, ported
+# here so the book verso matches it (handler_pdf_artifact.build_pdf_report_model
+# / spread_pdf._draw_report_summary). Kept dependency-free (no program-source
+# modules) since the book verso shows the technical KV grid, not program text.
+
+def _first_text(*values):
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _solver_label(raw):
+    solver = str(raw or "").strip()
+    return {"aberth": "AE", "companion_matrix": "CM", "aberth_mt": "AE-MT"}.get(solver, solver)
+
+
+def _fmt_pct(value):
+    if value in ("", None):
+        return ""
+    try:
+        return f"{float(value) * 100:.1f}%"
+    except Exception:
+        return str(value)
+
+
+def _color_summary(src_meta):
     color_mode = str(src_meta.get("color_mode") or "").strip()
     palette = str(src_meta.get("palette") or "").strip()
-    coloring = " ".join(p for p in (color_mode, palette) if p)
-    solver = str(calc.get("solver") or "").strip()
+    if color_mode == "solve_score":
+        metric = _first_text(src_meta.get("solve_metric"))
+        return metric or "score"
+    if color_mode == "saved_palette":
+        metric = _first_text(src_meta.get("solve_metric"))
+        return f"saved palette: {metric}" if metric else "saved palette"
+    if color_mode == "proximity":
+        return "root proximity"
+    if color_mode == "constant":
+        color = str(src_meta.get("constant_color") or "").strip()
+        return f"constant #{color}" if color else "constant"
+    return color_mode or (f"palette {palette}" if palette else "rainbow")
+
+
+def _viewport_summary(src_meta):
+    view_mode = str(src_meta.get("view_mode") or "auto")
+    if view_mode == "square":
+        extent = str(src_meta.get("square_extent") or "").strip()
+        return f"square extent={extent}" if extent else "square"
+    parts = [view_mode]
+    q = _fmt_pct(src_meta.get("quantile"))
+    shim = _fmt_pct(src_meta.get("shim"))
+    if q:
+        parts.append(f"q={q}")
+    if shim:
+        parts.append(f"shim={shim}")
+    bounds = [f"{k}={src_meta.get(k)}" for k in ("min_re", "max_re", "min_im", "max_im")
+              if src_meta.get(k) not in ("", None)]
+    if bounds:
+        parts.append(" ".join(bounds))
+    return ", ".join(p for p in parts if p)
+
+
+def _build_report(calc, src_meta, source_job_id, source_artifact_id):
+    """Mirror build_pdf_report_model's summary rows (empty values dropped for
+    a clean book page)."""
+    pipeline = calc.get("pipeline") if isinstance(calc.get("pipeline"), dict) else {}
+    fn = _first_text(pipeline.get("function"), calc.get("function"), "?")
+    cfpv = _first_text(pipeline.get("cfpv_display"))
+    function_display = f"{fn}({cfpv})" if cfpv else fn
+    color_summary = _color_summary(src_meta)
+    color_mode = _first_text(src_meta.get("color_mode"), color_summary)
+    rows = [
+        ("Function", function_display),
+        ("Degree", _first_text(calc.get("degree"), calc.get("probe_degree"))),
+        ("N", _first_text(calc.get("N"), calc.get("n1"))),
+        ("Times", _first_text(calc.get("times"))),
+        ("Solver", _solver_label(calc.get("solver"))),
+        ("Interpretation", _first_text(src_meta.get("color_interpretation"),
+                                       src_meta.get("score_output_interpretation"))),
+        ("Palette", _first_text(src_meta.get("palette"))),
+        ("Output channels", _first_text(src_meta.get("score_output_channel_count"),
+                                        src_meta.get("raw_channels"))),
+        ("Viewport", _viewport_summary(src_meta)),
+    ]
+    if color_mode != "solve_score":
+        rows.insert(5, ("Color mode", color_summary or color_mode))
+    palette_label = _first_text(
+        src_meta.get("associated_palette_id"), src_meta.get("palette_artifact_id"),
+        src_meta.get("palette_id"), src_meta.get("palette"))
     return {
-        "function": fn,
-        "pipeline": pipeline_line,
-        "scale": ", ".join(scale_parts),
-        "coloring": coloring,
-        "solver": f"Solved by {solver}" if solver else "",
+        "compute_id": source_job_id,
+        "artifact_id": source_artifact_id,
+        "summary_rows": [[label, value] for label, value in rows if str(value).strip()],
+        "palette_label": palette_label,
     }
 
 
@@ -95,6 +165,7 @@ def handle_prepare(params):
     source_job_id = params["source_job_id"]
     source_image_key = params["source_image_key"]
     asset_key, prov_key = _asset_keys(book_id, entry_id)
+    palette_key = f"{BOOKS_PREFIX}{book_id}/assets/{entry_id}.palette.jpg"
     progress = {"family": "book", "book_id": book_id, "entry_id": entry_id, "op": "prepare"}
 
     if _key_exists(asset_key) and _key_exists(prov_key):
@@ -105,6 +176,8 @@ def handle_prepare(params):
     source_ext = source_image_key.rsplit(".", 1)[-1].lower()
     source_local = f"/tmp/book_src_{entry_id}.{source_ext}"
     prepared_local = f"/tmp/book_asset_{entry_id}.jpg"
+    palette_local = None
+    prepared_palette_local = None
     try:
         obj = s3.get_object(Bucket=BUCKET, Key=source_image_key)
         with open(source_local, "wb") as fh:
@@ -127,20 +200,46 @@ def handle_prepare(params):
             src_meta = dict(head.get("Metadata") or {})
         except Exception:
             pass
+
+        # associated palette swatch (same source the ColorSpread PDF uses)
+        has_palette = False
+        palette_image_key = str(src_meta.get("associated_palette_image_key") or "").strip()
+        if palette_image_key:
+            try:
+                palette_ext = palette_image_key.rsplit(".", 1)[-1].lower()
+                palette_local = f"/tmp/book_pal_{entry_id}.{palette_ext}"
+                pal_obj = s3.get_object(Bucket=BUCKET, Key=palette_image_key)
+                with open(palette_local, "wb") as pf:
+                    for chunk in pal_obj["Body"].iter_chunks(chunk_size=1024 * 1024):
+                        pf.write(chunk)
+                prepared_palette_local = f"/tmp/book_pal_prep_{entry_id}.jpg"
+                prepare_pdf_image(palette_local, prepared_palette_local,
+                                  max_px=int(PDF_PALETTE_MAX_PX), quality=92, image_format="jpeg")
+                has_palette = True
+            except Exception:
+                has_palette = False
+
+        report = _build_report(calc, src_meta, source_job_id,
+                               params.get("source_artifact_id", ""))
+        report["has_palette"] = has_palette
         snapshot = {
-            "version": 1,
+            "version": 2,
             "entry_id": entry_id,
             "source_job_id": source_job_id,
             "source_artifact_id": params.get("source_artifact_id", ""),
             "prepared": {k: info[k] for k in
                          ("source_width", "source_height", "prepared_width", "prepared_height")},
-            "summary": _summary_from_sources(calc, src_meta),
+            "report": report,
             "created_at": _utc_now_iso(),
         }
 
         with open(prepared_local, "rb") as fh:
             s3.upload_fileobj(fh, BUCKET, asset_key,
                               ExtraArgs={"ContentType": "image/jpeg"})
+        if has_palette and prepared_palette_local:
+            with open(prepared_palette_local, "rb") as pf:
+                s3.upload_fileobj(pf, BUCKET, palette_key,
+                                  ExtraArgs={"ContentType": "image/jpeg"})
         s3.put_object(Bucket=BUCKET, Key=prov_key,
                       Body=json.dumps(snapshot).encode("utf-8"),
                       ContentType="application/json")
@@ -148,9 +247,10 @@ def handle_prepare(params):
                prepared_width=info["prepared_width"], prepared_height=info["prepared_height"])
         return ok_response({"book_id": book_id, "entry_id": entry_id, "cached": False})
     finally:
-        for path in (source_local, prepared_local):
+        for path in (source_local, prepared_local, palette_local, prepared_palette_local):
             try:
-                os.remove(path)
+                if path:
+                    os.remove(path)
             except OSError:
                 pass
 
@@ -205,6 +305,15 @@ def handle_compose(params, latex_runner=_run_lualatex):
                 provenance[entry_id] = json.loads(pobj["Body"].read())
             except Exception:
                 missing.append(entry_id)
+                continue
+            # optional palette swatch (best-effort; absence just omits it)
+            if ((provenance[entry_id].get("report") or {}).get("has_palette")):
+                try:
+                    s3.download_file(
+                        BUCKET, f"{BOOKS_PREFIX}{book_id}/assets/{entry_id}.palette.jpg",
+                        os.path.join(build_dir, book_tex.ASSET_DIR, f"{entry_id}.palette.jpg"))
+                except Exception:
+                    provenance[entry_id]["report"]["has_palette"] = False
         if missing:
             raise RuntimeError(f"book {book_id} is missing prepared assets for entries: "
                                f"{', '.join(missing[:10])} — run prepare first")

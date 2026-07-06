@@ -68,16 +68,23 @@ def page_plan(n_entries):
 def _font_setup():
     # TTFs are installed into the image's texmf tree by the Dockerfile; the
     # names here must match those files (polypaint/fonts/, git-tracked).
+    # IMPORTANT: use only genuinely complete faces. The trial fonts (Canela,
+    # Tiempos, Sohne) are missing ( ) = _ %, and the Lyon *demo* maps them to
+    # a "DEMO" watermark ornament — both render as garbage on technical values.
+    # Baramond (a complete Garamond text serif) and CourierPrime (mono) render
+    # all Latin punctuation cleanly. Verified by rendering ( ) = _ % per font.
     return "\n".join([
         r"\usepackage{fontspec}",
-        r"\setmainfont{TiemposText-Regular-Trial.ttf}",
-        r"\newfontfamily\displayfont{Canela-Regular-Trial.ttf}",
+        r"\setmainfont{Baramond-Regular.ttf}",
+        r"\newfontfamily\displayfont{Baramond-Regular.ttf}",
         r"\newfontfamily\monofont{CourierPrime-Regular.ttf}",
         r"\usepackage{microtype}",
     ])
 
 
 def _content_preamble():
+    # Colours ported from spread_pdf.py so the book verso matches the
+    # ColorSpread PDF report page (deep blue that matches the app).
     return "\n".join([
         r"\documentclass{article}",
         r"\usepackage[paperwidth=%dmm, paperheight=%dmm, margin=24mm]{geometry}"
@@ -85,18 +92,24 @@ def _content_preamble():
         r"\usepackage{graphicx}",
         r"\usepackage{xcolor}",
         r"\usepackage{eso-pic}",
+        r"\usepackage{array}",
         _font_setup(),
         r"\pagestyle{empty}",
-        r"\definecolor{pagebg}{HTML}{000000}",
-        r"\definecolor{bodytext}{HTML}{F2F2F7}",
-        r"\definecolor{monotext}{HTML}{9AA0B4}",
+        r"\setlength{\parindent}{0pt}",
+        r"\definecolor{pagebg}{HTML}{1A1A2E}",   # PAGE_BG
+        r"\definecolor{accent}{HTML}{E94560}",   # ACCENT
+        r"\definecolor{bodytext}{HTML}{F2F2F7}", # TEXT
+        r"\definecolor{monotext}{HTML}{9AA0B4}", # MUTED
+        r"\definecolor{panelbg}{HTML}{121829}",  # PANEL_BG
+        r"\definecolor{panelborder}{HTML}{2B3A5E}",  # PANEL_BORDER
+        r"\definecolor{rulecol}{HTML}{5F6678}",  # RULE
     ])
 
 
 def _black_page():
     return "\n".join([
         r"\newpage",
-        r"\pagecolor{black}",
+        r"\pagecolor{pagebg}",
         r"\null",
     ])
 
@@ -111,44 +124,67 @@ def _full_bleed_image(rel_path):
 
 
 def entry_title(entry, provenance):
+    """Verso heading: an override if set, else the compute id (the
+    compute/color_run id is 'good enough for now' — no artsy title yet)."""
     override = str(entry.get("title_override") or "").strip()
     if override:
         return override
-    fn = str(((provenance or {}).get("summary") or {}).get("function") or "").strip()
-    return f"Study {fn}" if fn else str(entry.get("display_name") or entry.get("artifact_id") or "")
+    report = (provenance or {}).get("report") or {}
+    return str(report.get("compute_id") or entry.get("job_id") or entry.get("artifact_id") or "")
 
 
-def entry_body_lines(entry, provenance):
-    override = str(entry.get("body_override") or "").strip()
-    if override:
-        return override.splitlines()
-    lines = []
-    summary = (provenance or {}).get("summary") or {}
-    for key in ("pipeline", "scale", "coloring", "solver"):
-        value = str(summary.get(key) or "").strip()
-        if value:
-            lines.append(value)
-    return lines
+def _report_rows(entry, provenance):
+    report = (provenance or {}).get("report") or {}
+    rows = report.get("summary_rows") or []
+    return [(str(r[0]), str(r[1])) for r in rows if isinstance(r, (list, tuple)) and len(r) == 2]
 
 
-def _verso_text_page(entry, provenance):
+def _verso_report_page(entry, provenance):
+    """Deep-blue report page matching the ColorSpread PDF (spread_pdf.py
+    _draw_report_summary): compute-id title, accent rule, KV grid, palette
+    swatch. No program-source dump."""
+    report = (provenance or {}).get("report") or {}
     title = tex_escape(entry_title(entry, provenance))
-    body = [tex_escape(line) for line in entry_body_lines(entry, provenance)]
-    meta_line = tex_escape(f"{entry.get('job_id', '')} / {entry.get('artifact_id', '')}")
+    artifact = tex_escape(str(report.get("artifact_id") or entry.get("artifact_id") or ""))
+    rows = _report_rows(entry, provenance)
+    body_override = str(entry.get("body_override") or "").strip()
+
     parts = [
         r"\newpage",
-        r"\pagecolor{black}\color{bodytext}",
-        r"\vspace*{40mm}",
-        r"{\displayfont\Huge %s\par}" % title,
-        r"\vspace{12mm}",
+        r"\pagecolor{pagebg}\color{bodytext}",
+        r"\vspace*{6mm}",
+        r"{\displayfont\fontsize{26}{30}\selectfont %s\par}" % (title or "PolyPaint"),
+        r"\vspace{3mm}",
+        r"{\color{accent}\rule{\linewidth}{0.8pt}}\par",
+        r"\vspace{2mm}",
+        r"{\monofont\footnotesize\color{monotext} %s\par}" % artifact,
+        r"\vspace{9mm}",
     ]
-    for line in body:
-        parts.append(r"{\normalsize %s\par}" % line)
-    parts.extend([
-        r"\vfill",
-        r"{\monofont\small\color{monotext} %s\par}" % meta_line,
-        r"\vspace*{18mm}",
-    ])
+    if rows:
+        parts.append(r"{\renewcommand{\arraystretch}{1.5}%")
+        parts.append(r"\begin{tabular}{@{}p{42mm}p{\dimexpr\linewidth-42mm\relax}@{}}")
+        for label, value in rows:
+            parts.append(
+                r"{\monofont\footnotesize\color{monotext} %s} & {\color{bodytext} %s} \\"
+                % (tex_escape(label.upper()), tex_escape(value)))
+        parts.append(r"\end{tabular}}\par")
+    if body_override:
+        parts.append(r"\vspace{8mm}")
+        for line in body_override.splitlines():
+            parts.append(r"{\normalsize %s\par}" % tex_escape(line))
+
+    if report.get("has_palette"):
+        palette_label = tex_escape(str(report.get("palette_label") or "palette"))
+        parts.extend([
+            r"\vfill",
+            r"{\monofont\footnotesize\color{monotext} %s\par}" % palette_label,
+            r"\vspace{2mm}",
+            r"\fcolorbox{panelborder}{panelbg}{\includegraphics[width=70mm]{%s/%s.palette.jpg}}"
+            % (ASSET_DIR, entry.get("entry_id")),
+            r"\vspace*{4mm}",
+        ])
+    else:
+        parts.append(r"\vspace*{4mm}")
     return "\n".join(parts)
 
 
@@ -161,7 +197,7 @@ def render_content_tex(book, provenance_by_entry=None):
         _content_preamble(),
         r"\begin{document}",
         # p1: title page (recto)
-        r"\pagecolor{black}\color{bodytext}",
+        r"\pagecolor{pagebg}\color{bodytext}",
         r"\vspace*{80mm}",
         r"\begin{center}",
         r"{\displayfont\fontsize{44}{50}\selectfont %s\par}" % tex_escape(book.get("title") or book.get("name") or "PolyPaint"),
@@ -175,7 +211,7 @@ def render_content_tex(book, provenance_by_entry=None):
     parts.append(r"\end{center}")
     for entry in entries:
         prov = provenance_by_entry.get(entry.get("entry_id") or "")
-        parts.append(_verso_text_page(entry, prov))
+        parts.append(_verso_report_page(entry, prov))
         parts.append(_full_bleed_image(f"{ASSET_DIR}/{entry.get('entry_id')}.jpg"))
     for _ in range(pad):
         parts.append(_black_page())

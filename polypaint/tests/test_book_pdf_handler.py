@@ -92,9 +92,8 @@ class TestBookPdfHandler(unittest.TestCase):
     def test_prepare_writes_asset_and_snapshot_then_short_circuits(self):
         self.fake.objects["renders/srcjob/color/art1/image.jpeg"] = _tiny_jpeg()
         self.fake.objects["renders/srcjob/calc.json"] = json.dumps({
-            "degree": "50", "N": 4000, "solver": "aberth",
-            "pipeline": {"function": "poly_42", "param_transforms_display": "unit_circle",
-                         "coeff_transforms_display": ""},
+            "degree": "50", "N": 4000, "solver": "aberth_mt",
+            "pipeline": {"function": "poly_42"},
         }).encode()
 
         resp = self.book_pdf.handle_prepare(_prepare_params())
@@ -102,10 +101,14 @@ class TestBookPdfHandler(unittest.TestCase):
         self.assertFalse(body["cached"])
         self.assertIn("polypaint/books/test-book/assets/e1.jpg", self.fake.objects)
         snap = json.loads(self.fake.objects["polypaint/books/test-book/assets/e1.provenance.json"])
-        self.assertEqual(snap["summary"]["function"], "poly_42")
-        self.assertIn("unit_circle", snap["summary"]["pipeline"])
-        self.assertEqual(snap["summary"]["solver"], "Solved by aberth")
-        self.assertIn("proximity", snap["summary"]["coloring"])
+        # report model mirrors the ColorSpread KV rows
+        rows = {r[0]: r[1] for r in snap["report"]["summary_rows"]}
+        self.assertEqual(rows["Function"], "poly_42")
+        self.assertEqual(rows["Degree"], "50")
+        self.assertEqual(rows["Solver"], "AE-MT")            # aberth_mt label
+        self.assertIn("proximity", rows.get("Color mode", ""))
+        self.assertEqual(snap["report"]["compute_id"], "srcjob")
+        self.assertFalse(snap["report"]["has_palette"])      # no associated palette
         self.assertEqual([s for s, _ in self.statuses][-1], "done")
 
         # second call: cache short-circuit, no source read needed
@@ -126,7 +129,8 @@ class TestBookPdfHandler(unittest.TestCase):
         for i in range(entries):
             self.fake.objects[f"polypaint/books/test-book/assets/e{i}.jpg"] = _tiny_jpeg()
             self.fake.objects[f"polypaint/books/test-book/assets/e{i}.provenance.json"] = \
-                json.dumps({"summary": {"function": f"poly_{i}"}}).encode()
+                json.dumps({"report": {"compute_id": "j", "summary_rows": [["Function", f"poly_{i}"]],
+                                       "has_palette": False}}).encode()
 
     def test_compose_uploads_outputs_and_latest_pointer(self):
         self._seed_book()

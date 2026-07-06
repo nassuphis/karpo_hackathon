@@ -32,11 +32,18 @@ BOOK = {
         for i in range(3)
     ],
 }
-PROV = {"e1": {"summary": {"function": "poly_42", "pipeline": "[ ]  poly_42  [ ]",
-                           "coloring": "root proximity", "solver": "Solved by AE"}}}
+PROV = {"e1": {"report": {
+    "compute_id": "compute_mr7kkhg2", "artifact_id": "color_run_1783245470391_uovu3x",
+    "summary_rows": [["Function", "const(2,0,0)"], ["Degree", "50"], ["N", "4000"],
+                     ["Solver", "AE-MT"], ["Color mode", "root proximity"],
+                     ["Palette", "tri_ember"], ["Viewport", "auto, q=0.1%"]],
+    "palette_label": "tri_ember", "has_palette": True,
+}}}
 
 import os
 os.makedirs("/build/assets", exist_ok=True)
+# palette swatch for the report page (verifies the \includegraphics panel)
+Image.new("RGB", (800, 120), (60, 20, 90)).save("/build/assets/e1.palette.jpg", quality=90)
 
 # exercise the vips prepare path end to end (design uses it to resize
 # sources to <=3600px). A broken vips layer raises here rather than

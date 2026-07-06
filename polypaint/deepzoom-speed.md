@@ -57,7 +57,7 @@ row click (js/12-deepzoom-boot.js:265-267).
 | `renders/` total | 1,222,600 (dominated by fragments/sidecars — **never blanket-copy this prefix**) |
 | `renders/*/color/*/preview.png` | **1,651** |
 | palette previews (`renders/*/palette*/.../preview.png`) | ~1,131 in-manifest (1,230 keys match `palette.*preview`) |
-| `deepzoom/` total | 983,705 (hundreds of exports × ~500–1,800 tiles) |
+| `deepzoom/` total | 983,705 across 245 exports (avg ~4,000 tiles each; the 548-tile sample in §0 is on the small side) |
 
 ---
 

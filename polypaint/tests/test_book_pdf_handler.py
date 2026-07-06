@@ -118,6 +118,28 @@ class TestBookPdfHandler(unittest.TestCase):
         self.assertTrue(json.loads(resp["body"])["cached"])
         self.assertEqual(self.statuses, [("done", "done")])
 
+    def test_prepare_finds_palette_via_overlay_meta(self):
+        # associated_palette_image_key lives in the color-artifact overlay
+        # meta.json (renders/{job}/color/{art}/meta.json) — NOT the S3 object
+        # metadata. This is the source the ColorSpread PDF button uses; reading
+        # only head_object metadata (the earlier bug) missed the palette.
+        self.fake.objects["renders/srcjob/color/art1/image.jpeg"] = _tiny_jpeg()
+        self.fake.objects["renders/srcjob/calc.json"] = json.dumps(
+            {"solver": "aberth", "pipeline": {"function": "poly_9"}}).encode()
+        self.fake.objects["renders/srcjob/color/art1/meta.json"] = json.dumps({
+            "associated_palette_image_key": "renders/srcjob/palette/p1/image.jpeg",
+            "associated_palette_id": "tri_ember",
+        }).encode()
+        self.fake.objects["renders/srcjob/palette/p1/image.jpeg"] = _tiny_jpeg()
+
+        resp = self.book_pdf.handle_prepare(_prepare_params())
+        self.assertFalse(json.loads(resp["body"])["cached"])
+        snap = json.loads(self.fake.objects["polypaint/books/test-book/assets/e1.provenance.json"])
+        self.assertTrue(snap["report"]["has_palette"])
+        self.assertEqual(snap["report"]["palette_label"], "tri_ember")
+        # the prepared palette swatch was uploaded next to the image asset
+        self.assertIn("polypaint/books/test-book/assets/e1.palette.jpg", self.fake.objects)
+
     def _seed_book(self, saved_at="2026-07-06T00:00:00Z", entries=2):
         book = {
             "book_kind": "book", "id": "test-book", "name": "T", "title": "T",

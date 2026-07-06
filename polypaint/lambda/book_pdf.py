@@ -200,6 +200,20 @@ def handle_prepare(params):
             src_meta = dict(head.get("Metadata") or {})
         except Exception:
             pass
+        # The S3 object Metadata is a limited subset — associated_palette_* (and
+        # the full color meta) live in the color-artifact overlay meta.json, the
+        # SAME source the ColorSpread PDF button reads via load_color_artifact_head.
+        # Missing this is why the palette never appeared.
+        source_artifact_id = params.get("source_artifact_id", "")
+        overlay_key = (f"renders/{source_job_id}/meta.json" if source_artifact_id == "legacy_color"
+                       else f"renders/{source_job_id}/color/{source_artifact_id}/meta.json")
+        try:
+            ov = s3.get_object(Bucket=BUCKET, Key=overlay_key)
+            overlay = json.loads(ov["Body"].read())
+            if isinstance(overlay, dict):
+                src_meta.update(overlay)   # overlay wins, matching load_color_artifact_head
+        except Exception:
+            pass
 
         # associated palette swatch (same source the ColorSpread PDF uses)
         has_palette = False

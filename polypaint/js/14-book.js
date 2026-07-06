@@ -69,8 +69,9 @@ async function _bookHydrateEntries() {
         for (const entry of byJob[jobId]) {
             const match = colorRows.find(r => r.artifact_id === entry.artifact_id);
             _bookState.hydrated[entry.entry_id] = match
-                ? { preview_url: match.preview_url || match.image_url || '', missing: false }
-                : { preview_url: '', missing: true };
+                ? { preview_url: match.preview_url || match.image_url || '', missing: false,
+                    has_palette: !!(match.associated_palette_image_key || '').trim() }
+                : { preview_url: '', missing: true, has_palette: false };
         }
     });
     _renderBookTab();
@@ -92,7 +93,7 @@ function _bookEntryRow(entry, idx) {
         style="display:flex;align-items:center;gap:8px;padding:4px 6px;border-bottom:1px solid #2b3a5e;cursor:pointer${selected ? ';background:#1c2742' : ''}"
         onclick="_bookSelectEntry(this.dataset.entry)">
         <span style="color:${numColor};width:24px;${numWeight}">${idx + 1}</span>${thumb}
-        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${title}${cover ? ' <span style="color:#e94560">— cover</span>' : ''}${hyd.missing ? ' <span style="color:#e94560">[missing]</span>' : ''}</span>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${title}${cover ? ' <span style="color:#e94560">— cover</span>' : ''}${hyd.missing ? ' <span style="color:#e94560">[missing]</span>' : (hyd.has_palette === false ? ' <span style="color:#c98b3a">(no palette)</span>' : '')}</span>
         <span style="color:#666;font-size:10px">${_escapeHtml(entry.job_id)}</span>
         <button class="btn-secondary" style="padding:1px 7px" onclick="event.stopPropagation();_bookMoveEntry(this.closest('.book-entry-row').dataset.entry,-1)">▲</button>
         <button class="btn-secondary" style="padding:1px 7px" onclick="event.stopPropagation();_bookMoveEntry(this.closest('.book-entry-row').dataset.entry,1)">▼</button>

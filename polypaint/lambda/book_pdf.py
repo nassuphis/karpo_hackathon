@@ -208,9 +208,8 @@ def handle_compose(params, latex_runner=_run_lualatex):
         if missing:
             raise RuntimeError(f"book {book_id} is missing prepared assets for entries: "
                                f"{', '.join(missing[:10])} — run prepare first")
-        if os.path.isdir(FONT_DIR):
-            for fname in os.listdir(FONT_DIR):
-                shutil.copy(os.path.join(FONT_DIR, fname), build_dir)
+        # fonts are installed in the image's texmf tree (stable path -> stable
+        # luaotfload cache); no per-build-dir copy needed for the compile.
 
         _phase(job_id, task_id, "processing", "compose_tex", "Render tex", **progress)
         content_tex, content_pages = book_tex.render_content_tex(book, provenance)

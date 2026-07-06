@@ -49,10 +49,6 @@ for i in range(3):
                                         max_px=3600, quality=90, image_format="jpeg")
     assert max(info["prepared_width"], info["prepared_height"]) == 3600, info
 assert spread_pdf._vipsthumbnail_path(), "vipsthumbnail not on PATH in image"
-import shutil
-for f in os.listdir("/opt/book-fonts"):
-    shutil.copy(f"/opt/book-fonts/{f}", "/build/")
-
 content, expected_pages = book_tex.render_content_tex(BOOK, PROV)
 cover = book_tex.render_cover_tex(BOOK, "assets/e1.jpg")
 # test-only: keep objects uncompressed so the assertions can grep the PDF
@@ -89,6 +85,7 @@ print(f"GATE OK: {expected_pages} pages, MediaBoxes + FontFile streams verified"
 PYEOF
 
 docker run --rm --platform linux/arm64 --entrypoint python \
+    --read-only --tmpfs /tmp:exec,size=2g \
     -v "$WORK":/fixture -v "$WORK/build":/build "$IMG" /fixture/fixture.py
 
 echo "=== Book Docker Gate PASSED ==="

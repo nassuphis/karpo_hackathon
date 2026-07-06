@@ -53,10 +53,21 @@ ENV PATH="$TEXDIR/bin/aarch64-linux:$TEXDIR/bin/x86_64-linux:$PATH"
 RUN tlmgr install fontspec microtype geometry xcolor eso-pic pgf luaotfload
 RUN tlmgr path add || true
 
-# --- fonts: tracked TTFs, copied into each compose build dir at runtime so
-# fontspec resolves them by filename (design §6). Build FAILS if missing. ---
+# Lambda mounts the image filesystem READ-ONLY except /tmp. luaotfload builds
+# its font cache at runtime and needs a writable path, so point HOME/TEXMFVAR
+# at /tmp (Lambda persists /tmp across warm invocations, so the cache is built
+# once per cold container).
+ENV HOME=/tmp
+ENV TEXMFVAR=/tmp/texmf-var
+
+# --- fonts: tracked TTFs installed into the texmf tree so fontspec resolves
+# them by name from a STABLE path (a stable luaotfload cache key across
+# compiles, unlike per-build-dir copies). Build FAILS if missing. ---
 COPY fonts/ /opt/book-fonts/
-RUN test -s /opt/book-fonts/TiemposText-Regular-Trial.ttf
+RUN test -s /opt/book-fonts/TiemposText-Regular-Trial.ttf \
+    && mkdir -p "$TEXDIR/texmf-local/fonts/truetype/polypaint" \
+    && cp /opt/book-fonts/*.ttf "$TEXDIR/texmf-local/fonts/truetype/polypaint/" \
+    && mktexlsr
 
 # --- python deps + handler code ---
 RUN pip install --no-cache-dir "boto3>=1.34" "Pillow>=10,<12" "reportlab>=4,<5"

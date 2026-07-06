@@ -304,6 +304,21 @@ function addSelectedFavoriteToBook() {
 // --- compile (design §5): prepare fan-out, then compose. Trigger is
 // done >= N && errors === 0 — /check-status "complete" counts errored
 // tasks as terminal, so it must never gate compose on its own. ---
+function _bookRailUpsert(state, detail) {
+    const run = _bookState.compile;
+    if (!run || typeof _jobsRailUpsert !== 'function') return;
+    _jobsRailUpsert({
+        id: 'book:' + run.runId,
+        kind: 'book',
+        label: 'book · ' + run.bookId,
+        jobId: run.jobId,
+        tab: 'book',
+        state,
+        startedAt: run.startedAt || Date.now(),
+        detail: String(detail || ''),
+    });
+}
+
 async function bookCompile() {
     const doc = _bookState.doc;
     if (!doc || !(doc.entries || []).length) { _bookStatus('No entries to compile', true); return; }
@@ -312,6 +327,7 @@ async function bookCompile() {
         if (_bookState.dirty) await bookSave();
         const runId = 'bk_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
         const jobId = 'book#' + _bookState.activeId;
+        const startedAt = Date.now();
         const jobs = _bookState.doc.entries.map(entry => ({
             op: 'prepare', job_id: jobId, task_id: `bookprep_${runId}_${entry.entry_id}`,
             book_id: _bookState.activeId, entry_id: entry.entry_id,
@@ -321,11 +337,14 @@ async function bookCompile() {
         const disp = await lambdaPost('dispatch', { target: 'book_pdf', jobs, expected_keys: [] });
         if ((disp.fired || 0) !== jobs.length) throw new Error(`dispatch fired ${disp.fired}/${jobs.length}`);
         _bookState.compile = { runId, jobId, phase: 'prepare', expected: jobs.length,
-                               bookId: _bookState.activeId, savedAt: _bookState.doc.saved_at };
+                               bookId: _bookState.activeId, savedAt: _bookState.doc.saved_at,
+                               startedAt };
+        _bookRailUpsert('running', `preparing 0/${jobs.length}`);
         _bookStatus(`Preparing 0/${jobs.length}...`);
         _bookLog(`Compile ${runId}: ${jobs.length} prepare jobs dispatched`);
         _bookPollCompile();
     } catch (e) {
+        _bookRailUpsert('failed', e.message);
         _bookState.compile = null;
         _bookStatus(e.message, true);
     }
@@ -343,6 +362,7 @@ async function _bookPollCompile() {
                 const detail = (check.error_details || [])[0] || {};
                 throw new Error(`prepare failed: ${detail.error_msg || 'unknown'}`);
             }
+            _bookRailUpsert('running', `preparing ${check.done || 0}/${run.expected}`);
             _bookStatus(`Preparing ${check.done || 0}/${run.expected}...`);
             if ((check.done || 0) >= run.expected) {
                 run.phase = 'compose';
@@ -357,6 +377,7 @@ async function _bookPollCompile() {
                     }],
                     expected_keys: [],
                 });
+                _bookRailUpsert('running', 'composing');
                 _bookStatus('Composing (lualatex)...');
                 _bookLog('Prepare complete; compose dispatched');
             }
@@ -370,6 +391,7 @@ async function _bookPollCompile() {
             }
             const rd = (check.results || [])[0] || {};
             if (rd.phase === 'done') {
+                _bookRailUpsert('done', `${(rd.content_pages || '?')} pages`);
                 _bookState.compile = null;
                 _bookLog(`Compose done for ${run.bookId}`);
                 if (run.bookId === _bookState.activeId) {
@@ -380,10 +402,12 @@ async function _bookPollCompile() {
                 }
                 return;
             }
+            _bookRailUpsert('running', rd.phase_label || rd.phase || 'composing');
             _bookStatus(`Composing: ${rd.phase_label || rd.phase || 'working'}...`);
         }
         setTimeout(_bookPollCompile, 3000);
     } catch (e) {
+        _bookRailUpsert('failed', e.message);
         _bookState.compile = null;
         _bookStatus(e.message, true);
         _bookLog(`Compile failed: ${e.message}`, 'err');

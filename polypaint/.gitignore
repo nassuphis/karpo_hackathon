@@ -106,3 +106,8 @@ reports/
 architecture-ui-critique.tex
 architecture-ui-critique-2.tex
 figure/
+
+# Downloaded book artifacts (test outputs)
+book*-content.pdf
+book*-cover.pdf
+book*-source.zip

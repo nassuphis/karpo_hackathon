@@ -69,6 +69,10 @@ PARAM_OP_REAL = 24
 PARAM_OP_IMAG = 25
 PARAM_OP_ABS = 26
 PARAM_OP_DIVIDE = 27
+PARAM_OP_PUSH_REG = 28
+PARAM_OP_STORE_REG = 29
+
+PARAM_REGISTER_COUNT = 8
 
 PARAM_SEL_P1 = 1
 PARAM_SEL_P2 = 2
@@ -92,6 +96,7 @@ EXPR_EXP = 11
 EXPR_REAL = 12
 EXPR_IMAG = 13
 EXPR_ABS = 14
+EXPR_REG = 15
 
 _OP_NAMES = {
     PARAM_OP_PUSH_T1: "push_t1",
@@ -121,6 +126,8 @@ _OP_NAMES = {
     PARAM_OP_IMAG: "imag",
     PARAM_OP_ABS: "abs",
     PARAM_OP_DIVIDE: "divide",
+    PARAM_OP_PUSH_REG: "push_reg",
+    PARAM_OP_STORE_REG: "store_reg",
 }
 
 _SELECTOR_NAMES = {
@@ -775,6 +782,12 @@ class _ExpressionParser:
                 return _expr_dynamic(EXPR_P1)
             if token_value == "p2":
                 return _expr_dynamic(EXPR_P2)
+            if len(token_value) == 2 and token_value[0] == "r" and token_value[1].isdigit():
+                reg = int(token_value[1])
+                if 1 <= reg <= PARAM_REGISTER_COUNT:
+                    # mutable scratch registers r1..r8, zeroed per evaluation
+                    return _Expr([{"op": EXPR_REG, "a": float(reg - 1)}],
+                                 kind="complex", dynamic=True, value=None)
             raise RuntimeError(f"unknown param expression identifier {token_value!r}")
         if token_type == "(":
             expr = self._expr()
@@ -814,6 +827,8 @@ def _expr_to_param_tokens(expr):
                 a=float(token.get("a", 0.0) or 0.0),
                 b=float(token.get("b", 0.0) or 0.0),
             ))
+        elif op == EXPR_REG:
+            out.append(_token(PARAM_OP_PUSH_REG, fn_index=int(token.get("a", 0) or 0)))
         elif op == EXPR_T1:
             out.append(_token(PARAM_OP_PUSH_T1))
         elif op == EXPR_T2:
@@ -873,6 +888,15 @@ def _normalize_target(value, *, default="both"):
     if raw in {"both", "2"}:
         return "both"
     raise RuntimeError(f"param target must be t1, t2, or both, got {value!r}")
+
+
+def _register_index(value):
+    raw = str(value or "").strip().lower()
+    if len(raw) == 2 and raw[0] == "r" and raw[1].isdigit():
+        reg = int(raw[1])
+        if 1 <= reg <= PARAM_REGISTER_COUNT:
+            return reg - 1
+    return None
 
 
 def _emit_target_op(value):
@@ -1127,6 +1151,9 @@ def _lower_chip(chip):
     if name == "emit":
         if len(args) != 1:
             raise RuntimeError("emit chip requires target p1 or p2")
+        reg = _register_index(args[0])
+        if reg is not None:
+            return [_token(PARAM_OP_STORE_REG, fn_index=reg)]
         return [_token(_emit_target_op(args[0]))]
     if name == "const":
         if len(args) not in {1, 2}:
@@ -1195,8 +1222,12 @@ def _validate_stack(tokens):
     for idx, token in enumerate(tokens):
         op = int(token.get("op") or 0)
         before = depth
-        if op in {PARAM_OP_PUSH_T1, PARAM_OP_PUSH_T2, PARAM_OP_PUSH_P1, PARAM_OP_PUSH_P2, PARAM_OP_CONST}:
+        if op in {PARAM_OP_PUSH_T1, PARAM_OP_PUSH_T2, PARAM_OP_PUSH_P1, PARAM_OP_PUSH_P2, PARAM_OP_CONST, PARAM_OP_PUSH_REG}:
             depth += 1
+        elif op == PARAM_OP_STORE_REG:
+            if depth < 1:
+                raise RuntimeError(f"store_reg at token {idx}: stack depth is {before} (need >=1)")
+            depth -= 1
         elif op == PARAM_OP_EMIT_P1:
             if depth < 1:
                 raise RuntimeError(f"emit(p1) at token {idx}: stack depth is {before} (need >=1)")

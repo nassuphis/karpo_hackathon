@@ -17,7 +17,15 @@
         "t1": {"type": "scalar_complex", "access": "read", "role": "input", "contexts": ["expr", "selector"]},
         "t2": {"type": "scalar_complex", "access": "read", "role": "input", "contexts": ["expr", "selector"]},
         "p1": {"type": "scalar_complex", "access": "read_write", "role": "output", "initial": "t1", "contexts": ["expr", "lhs", "selector"]},
-        "p2": {"type": "scalar_complex", "access": "read_write", "role": "output", "initial": "t2", "contexts": ["expr", "lhs", "selector"]}
+        "p2": {"type": "scalar_complex", "access": "read_write", "role": "output", "initial": "t2", "contexts": ["expr", "lhs", "selector"]},
+        "r1": {"type": "scalar_complex", "access": "read_write", "role": "scratch", "initial": "zero", "contexts": ["expr", "lhs"]},
+        "r2": {"type": "scalar_complex", "access": "read_write", "role": "scratch", "initial": "zero", "contexts": ["expr", "lhs"]},
+        "r3": {"type": "scalar_complex", "access": "read_write", "role": "scratch", "initial": "zero", "contexts": ["expr", "lhs"]},
+        "r4": {"type": "scalar_complex", "access": "read_write", "role": "scratch", "initial": "zero", "contexts": ["expr", "lhs"]},
+        "r5": {"type": "scalar_complex", "access": "read_write", "role": "scratch", "initial": "zero", "contexts": ["expr", "lhs"]},
+        "r6": {"type": "scalar_complex", "access": "read_write", "role": "scratch", "initial": "zero", "contexts": ["expr", "lhs"]},
+        "r7": {"type": "scalar_complex", "access": "read_write", "role": "scratch", "initial": "zero", "contexts": ["expr", "lhs"]},
+        "r8": {"type": "scalar_complex", "access": "read_write", "role": "scratch", "initial": "zero", "contexts": ["expr", "lhs"]}
       },
       "selectors": {
         "legacy_src": ["p1", "p2", "both", "pop1", "pop2"],

@@ -293,6 +293,7 @@ const _paramProgramCheatSections = [
         title: 'Language',
         buttons: [
             { label: 'x = expr', snippet: 'w = 2*pi\np1 = sin(w*t1)\np2 = cos(w*t2)', title: 'Local alias: write-once, substituted at compile time. Any unreserved name; also valid in legacy(...) args.' },
+            { label: 'r1..r8 registers', snippet: 'r1 = t1 + 1\nr1 = r1 * r1\np1 = r1\np2 = t2', title: 'Mutable scratch registers, zeroed per evaluation: r1 = f(r1) rebinds for real (aliases are write-once). Reads before any write are 0.' },
         ],
     },
     {
@@ -760,6 +761,7 @@ function _programHelpBuildParamRegistry() {
         _programHelpItem('t2', 't2', 'Input parameter 2.'),
         _programHelpItem('p1', 'p1', 'Output/current parameter register 1.'),
         _programHelpItem('p2', 'p2', 'Output/current parameter register 2.'),
+        _programHelpItem('r1', 'r1 .. r8', 'Mutable scratch registers (complex), zeroed at the start of every evaluation. Unlike write-once local aliases, they rebind: r1 = r1 * r1 is valid. Reading before any write gives 0.'),
         _programHelpItem('pi', 'pi', 'π constant.'),
         _programHelpItem('pi2', 'pi2', '2π constant.'),
         _programHelpItem('pi2i', 'pi2i', '2πi complex constant.'),

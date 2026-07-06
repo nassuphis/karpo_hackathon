@@ -270,6 +270,86 @@ window._programProfiles = {
           "role": "output",
           "type": "scalar_complex"
         },
+        "r1": {
+          "access": "read_write",
+          "contexts": [
+            "expr",
+            "lhs"
+          ],
+          "initial": "zero",
+          "role": "scratch",
+          "type": "scalar_complex"
+        },
+        "r2": {
+          "access": "read_write",
+          "contexts": [
+            "expr",
+            "lhs"
+          ],
+          "initial": "zero",
+          "role": "scratch",
+          "type": "scalar_complex"
+        },
+        "r3": {
+          "access": "read_write",
+          "contexts": [
+            "expr",
+            "lhs"
+          ],
+          "initial": "zero",
+          "role": "scratch",
+          "type": "scalar_complex"
+        },
+        "r4": {
+          "access": "read_write",
+          "contexts": [
+            "expr",
+            "lhs"
+          ],
+          "initial": "zero",
+          "role": "scratch",
+          "type": "scalar_complex"
+        },
+        "r5": {
+          "access": "read_write",
+          "contexts": [
+            "expr",
+            "lhs"
+          ],
+          "initial": "zero",
+          "role": "scratch",
+          "type": "scalar_complex"
+        },
+        "r6": {
+          "access": "read_write",
+          "contexts": [
+            "expr",
+            "lhs"
+          ],
+          "initial": "zero",
+          "role": "scratch",
+          "type": "scalar_complex"
+        },
+        "r7": {
+          "access": "read_write",
+          "contexts": [
+            "expr",
+            "lhs"
+          ],
+          "initial": "zero",
+          "role": "scratch",
+          "type": "scalar_complex"
+        },
+        "r8": {
+          "access": "read_write",
+          "contexts": [
+            "expr",
+            "lhs"
+          ],
+          "initial": "zero",
+          "role": "scratch",
+          "type": "scalar_complex"
+        },
         "t1": {
           "access": "read",
           "contexts": [

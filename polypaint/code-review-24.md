@@ -333,6 +333,8 @@ Pinned equivalence (tests/test_source_locals_and_infix.py): the aliased and hand
 
 True mutable registers (`x1 = f(x1)` for arbitrary names) — the Tier-2 design: N named slots per program, symbols compiled to slot indices, `store`/`load` ops added per VM (additive wire). Deferred because substitution covers the readability need at zero VM cost, and rebinding's real payoff (bounded recurrences) is better served by `scan()` (§5 P1): even with registers, a 35-step recurrence at ~20 tokens/step exceeds the 256-token budget. The strongest standing case for Tier 2 is param's 64-token budget and two-register file; revisit it there first. Also unchanged: number-format policies (frozen wire, per kind) and the execution models themselves — per code-review-23's rule, the machines stay different; the grammar stops being different.
 
+> **STATUS UPDATE:** Tier-2 SHIPPED for param only, exactly per the "revisit it there first" recommendation: `r1..r8` mutable complex scratch registers, zeroed per evaluation. Additive wire — `PARAM_OP_PUSH_REG=28` / `PARAM_OP_STORE_REG=29` (fn_index carries the slot), `PARAM_EXPR_REG=15` in scalar exprs; both Python chain and C VM (`paramEvalProgram` keeps a `ParamCx regs[8]`, expr evaluators thread `const ParamCx *regs`). `rN` names are reserved from locals (`^(p|t|r)\d+$`), writable via the profile `scratch` role, and readable-before-write as 0. Verified natively end-to-end (param_dump 4×4: rebinding `r1 = r1 * r1` and cross-row zero-init both asserted). Coeff/root/solve-score stay register-free per the original analysis.
+
 ---
 
 ## Appendix A: opcode inventory (verified against both enum tables)

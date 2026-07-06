@@ -36,6 +36,11 @@ _OUTPUT_SYMBOLS = {
     for name, spec in (_PROFILE.get("symbols") or {}).items()
     if spec.get("role") == "output" and spec.get("access") == "read_write"
 }
+_SCRATCH_SYMBOLS = {
+    name
+    for name, spec in (_PROFILE.get("symbols") or {}).items()
+    if spec.get("role") == "scratch" and spec.get("access") == "read_write"
+}
 _STACK_OP_ALIASES = {
     str(key): str(value)
     for key, value in (_SOURCE.get("stack_op_aliases") or {}).items()
@@ -78,7 +83,7 @@ def _canonical_expr(text):
 
 def _require_writable_symbol(name, stmt):
     raw = str(name or "").strip().lower()
-    if raw in _OUTPUT_SYMBOLS:
+    if raw in _OUTPUT_SYMBOLS or raw in _SCRATCH_SYMBOLS:
         return raw
     if profile_symbol(_PROFILE, raw):
         raise ParamProgramSourceError(
@@ -269,7 +274,7 @@ class ParamStatementLowerer(ProfileStatementLowerer):
         return _locals_reserved_names()
 
     def reserved_local_patterns(self):
-        return (r"^(p|t)\d+$",)
+        return (r"^(p|t|r)\d+$",)
 
     def lower_statement(self, statement):
         text = statement.text.strip()

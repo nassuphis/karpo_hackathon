@@ -1282,6 +1282,86 @@ window._coeffRegistryVocab = {
               "lhs",
               "selector"
             ]
+          },
+          "r1": {
+            "type": "scalar_complex",
+            "access": "read_write",
+            "role": "scratch",
+            "initial": "zero",
+            "contexts": [
+              "expr",
+              "lhs"
+            ]
+          },
+          "r2": {
+            "type": "scalar_complex",
+            "access": "read_write",
+            "role": "scratch",
+            "initial": "zero",
+            "contexts": [
+              "expr",
+              "lhs"
+            ]
+          },
+          "r3": {
+            "type": "scalar_complex",
+            "access": "read_write",
+            "role": "scratch",
+            "initial": "zero",
+            "contexts": [
+              "expr",
+              "lhs"
+            ]
+          },
+          "r4": {
+            "type": "scalar_complex",
+            "access": "read_write",
+            "role": "scratch",
+            "initial": "zero",
+            "contexts": [
+              "expr",
+              "lhs"
+            ]
+          },
+          "r5": {
+            "type": "scalar_complex",
+            "access": "read_write",
+            "role": "scratch",
+            "initial": "zero",
+            "contexts": [
+              "expr",
+              "lhs"
+            ]
+          },
+          "r6": {
+            "type": "scalar_complex",
+            "access": "read_write",
+            "role": "scratch",
+            "initial": "zero",
+            "contexts": [
+              "expr",
+              "lhs"
+            ]
+          },
+          "r7": {
+            "type": "scalar_complex",
+            "access": "read_write",
+            "role": "scratch",
+            "initial": "zero",
+            "contexts": [
+              "expr",
+              "lhs"
+            ]
+          },
+          "r8": {
+            "type": "scalar_complex",
+            "access": "read_write",
+            "role": "scratch",
+            "initial": "zero",
+            "contexts": [
+              "expr",
+              "lhs"
+            ]
           }
         },
         "selectors": {

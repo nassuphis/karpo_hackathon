@@ -6348,6 +6348,7 @@ static int dispatchPt(const PtEntry *e, double *z1r, double *z1i, double *z2r, d
  * Source chip names are resolved by Python before this point. The row loop
  * dispatches only on integer opcodes/function indices. */
 #define PARAM_PROGRAM_MAX_TOKENS 64
+#define PARAM_PROGRAM_REGISTERS 8
 #define PARAM_PROGRAM_MAX_STACK 16
 #define PARAM_PROGRAM_MAX_ARGS 8
 #define PARAM_PROGRAM_MAX_SCALAR_EXPRS 64
@@ -6381,7 +6382,9 @@ enum ParamProgramOp {
     PARAM_OP_REAL = 24,
     PARAM_OP_IMAG = 25,
     PARAM_OP_ABS = 26,
-    PARAM_OP_DIVIDE = 27
+    PARAM_OP_DIVIDE = 27,
+    PARAM_OP_PUSH_REG = 28,
+    PARAM_OP_STORE_REG = 29
 };
 
 enum ParamProgramSelector {
@@ -6408,7 +6411,8 @@ enum ParamProgramExprOp {
     PARAM_EXPR_EXP = 11,
     PARAM_EXPR_REAL = 12,
     PARAM_EXPR_IMAG = 13,
-    PARAM_EXPR_ABS = 14
+    PARAM_EXPR_ABS = 14,
+    PARAM_EXPR_REG = 15
 };
 
 typedef struct {
@@ -6769,6 +6773,7 @@ static int parseParamProgram(const char *buf, ParamProgram *program) {
 
 static int paramEvalScalarExpr(const ParamProgram *program, int ref,
                                ParamCx t1, ParamCx t2, ParamCx p1, ParamCx p2,
+                               const ParamCx *regs,
                                ParamCx *out) {
     if (!program || !out || ref < 0 || ref >= program->scalar_expr_count) {
         fprintf(stderr, "param_program scalar expression ref out of range: %d\n", ref);
@@ -6782,12 +6787,20 @@ static int paramEvalScalarExpr(const ParamProgram *program, int ref,
         double a = expr->nums[pc + 1];
         double b = expr->nums[pc + 2];
         if (op == PARAM_EXPR_LITERAL || op == PARAM_EXPR_T1 || op == PARAM_EXPR_T2 ||
-            op == PARAM_EXPR_P1 || op == PARAM_EXPR_P2) {
+            op == PARAM_EXPR_P1 || op == PARAM_EXPR_P2 || op == PARAM_EXPR_REG) {
             if (sp >= (int)(sizeof(stack) / sizeof(stack[0]))) return 1;
             if (op == PARAM_EXPR_LITERAL) stack[sp] = param_cx(a, b);
             else if (op == PARAM_EXPR_T1) stack[sp] = t1;
             else if (op == PARAM_EXPR_T2) stack[sp] = t2;
             else if (op == PARAM_EXPR_P1) stack[sp] = p1;
+            else if (op == PARAM_EXPR_REG) {
+                int reg = (int)a;
+                if (reg < 0 || reg >= PARAM_PROGRAM_REGISTERS || !regs) {
+                    fprintf(stderr, "param_program register r%d out of range\n", reg + 1);
+                    return 1;
+                }
+                stack[sp] = regs[reg];
+            }
             else stack[sp] = p2;
             sp++;
             continue;
@@ -6835,10 +6848,11 @@ static int paramEvalScalarExpr(const ParamProgram *program, int ref,
 }
 
 static int paramArgValue(const ParamProgram *program, const ParamProgramToken *tok, int idx,
-                         ParamCx t1, ParamCx t2, ParamCx p1, ParamCx p2, ParamCx *out) {
+                         ParamCx t1, ParamCx t2, ParamCx p1, ParamCx p2,
+                         const ParamCx *regs, ParamCx *out) {
     if (!tok || !out || idx < 0 || idx >= PARAM_PROGRAM_MAX_ARGS) return 1;
     int ref = tok->expr_refs[idx];
-    if (ref >= 0) return paramEvalScalarExpr(program, ref, t1, t2, p1, p2, out);
+    if (ref >= 0) return paramEvalScalarExpr(program, ref, t1, t2, p1, p2, regs, out);
     *out = param_cx(tok->args[idx], tok->args_im[idx]);
     return 0;
 }
@@ -7059,6 +7073,9 @@ static int paramEvalProgram(const ParamProgram *program, int gridN, double t1r, 
     ParamCx p1 = t1;
     ParamCx p2 = t2;
     ParamCx stack[PARAM_PROGRAM_MAX_STACK];
+    /* mutable scratch registers r1..r8, zeroed per evaluation */
+    ParamCx regs[PARAM_PROGRAM_REGISTERS];
+    for (int ri = 0; ri < PARAM_PROGRAM_REGISTERS; ri++) regs[ri] = param_cx(0.0, 0.0);
     int sp = 0;
 
     for (int k = 0; k < program->token_count; k++) {
@@ -7084,10 +7101,23 @@ static int paramEvalProgram(const ParamProgram *program, int gridN, double t1r, 
                 if (sp < 1) return 1;
                 p2 = stack[--sp];
                 break;
+            case PARAM_OP_PUSH_REG: {
+                int reg = tok->fn_index;
+                if (reg < 0 || reg >= PARAM_PROGRAM_REGISTERS) return 1;
+                if (paramPush(stack, &sp, regs[reg])) return 1;
+                break;
+            }
+            case PARAM_OP_STORE_REG: {
+                int reg = tok->fn_index;
+                if (reg < 0 || reg >= PARAM_PROGRAM_REGISTERS) return 1;
+                if (sp < 1) return 1;
+                regs[reg] = stack[--sp];
+                break;
+            }
             case PARAM_OP_CONST:
                 if (tok->n_args > 0) {
                     ParamCx value;
-                    if (paramArgValue(program, tok, 0, t1, t2, p1, p2, &value) != 0) return 1;
+                    if (paramArgValue(program, tok, 0, t1, t2, p1, p2, regs, &value) != 0) return 1;
                     if (paramPush(stack, &sp, value)) return 1;
                 } else {
                     if (paramPush(stack, &sp, param_cx(tok->a, tok->b))) return 1;
@@ -7204,7 +7234,7 @@ static int paramEvalProgram(const ParamProgram *program, int gridN, double t1r, 
                     }
                 } else {
                     for (int ai = 0; ai < tok->n_args; ai++) {
-                        if (paramArgValue(program, tok, ai, t1, t2, p1, p2, &resolvedArgs[ai]) != 0) return 1;
+                        if (paramArgValue(program, tok, ai, t1, t2, p1, p2, regs, &resolvedArgs[ai]) != 0) return 1;
                     }
                 }
                 for (int ai = 0; ai < tok->n_args; ai++) {

@@ -319,3 +319,41 @@ def test_param_dump_dynamic_legacy_arg_runs_native_vm():
     meta, data = _run_sweep(spec, "/tmp/pp_param_dump_dyn_legacy.bin")
     assert meta["param_program_tokens"] == 5
     assert len(data) == 8 * 8 * 16
+
+
+def test_param_registers_rebind_and_zero_init_natively():
+    """r1..r8: mutable scratch registers. r1 = f(r1) rebinding is real
+    (not substitution), unwritten registers read as 0, and state resets
+    per evaluation (no leakage across grid rows)."""
+    from param_program_source import parse_param_program_source
+
+    parsed = parse_param_program_source(
+        "r1 = t1 + 1\n"
+        "r1 = r1 * r1\n"
+        "p1 = r1\n"
+        "p2 = r3 + t2\n"   # r3 never written: must read 0
+    )
+    vm_spec = {
+        "mode": "param_dump",
+        "n1": 4,
+        "n2": 4,
+        "param_program": _native_payload(parsed["chain"]),
+    }
+    meta, vm = _run_sweep(vm_spec, "/tmp/pp_param_registers.bin")
+    # param_dump layout: row-major (i1, i2) rows of (p1r, p1i, p2r, p2i);
+    # x1 = i1/n1, x2 = i2/n2
+    import struct
+
+    values = struct.unpack("<" + "f" * (len(vm) // 4), vm)
+    for i1 in range(4):
+        for i2 in range(4):
+            base = (i1 * 4 + i2) * 4
+            x1, x2 = i1 / 4.0, i2 / 4.0
+            p1r, p1i, p2r, p2i = values[base:base + 4]
+            expect_p1 = (x1 + 1.0) ** 2
+            assert abs(p1r - expect_p1) < 1e-5, (i1, i2, p1r, expect_p1)
+            assert abs(p1i) < 1e-6
+            # r3 unwritten -> 0, so p2 == t2; also proves r1's value from a
+            # previous row did not leak into this row's r3/r1 reads
+            assert abs(p2r - x2) < 1e-6, (i1, i2, p2r)
+            assert abs(p2i) < 1e-6

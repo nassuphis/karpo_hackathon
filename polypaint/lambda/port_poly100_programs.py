@@ -50,7 +50,8 @@ import numpy as np
 from coeff_program_source import compile_coeff_program_source
 
 LAMBDA_DIR = os.path.dirname(os.path.abspath(__file__))
-POLY100 = os.path.join(LAMBDA_DIR, "poly100.py")
+POLY100 = os.path.join(LAMBDA_DIR, "poly100.py")  # default --module
+_MODULE_LABEL = {"label": "poly100.py"}
 SWEEP_TEST = os.path.join(LAMBDA_DIR, "sweep_test")
 
 UNARY_FUNCS = {
@@ -81,8 +82,8 @@ class SkipFunction(Exception):
 # AST extraction
 # ---------------------------------------------------------------------------
 
-def load_functions():
-    src = open(POLY100, "r", encoding="utf-8").read()
+def load_functions(module_path=None):
+    src = open(module_path or POLY100, "r", encoding="utf-8").read()
     tree = ast.parse(src)
     out = {}
     for node in tree.body:
@@ -91,11 +92,40 @@ def load_functions():
     return src, out
 
 
+class _StripAstype(ast.NodeTransformer):
+    """Drop .astype(...) calls — every use in poly100/poly200 is a complex
+    cast, a no-op in the VM's all-complex arithmetic."""
+
+    def visit_Call(self, node):
+        self.generic_visit(node)
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "astype":
+            return node.func.value
+        return node
+
+    def visit_Attribute(self, node):
+        self.generic_visit(node)
+        if (isinstance(node.value, ast.Name) and node.value.id == "np"
+                and node.attr == "pi" and isinstance(node.ctx, ast.Load)):
+            return ast.copy_location(ast.Name(id="pi", ctx=ast.Load()), node)
+        return node
+
+
 def _unwrap_try(fn):
     body = fn.body
     if len(body) == 1 and isinstance(body[0], ast.Try):
-        return body[0].body
-    return body
+        body = body[0].body
+    return [ast.fix_missing_locations(_StripAstype().visit(stmt)) for stmt in body]
+
+
+def _first_arange_bounds(node):
+    for sub in ast.walk(node):
+        if (isinstance(sub, ast.Call) and isinstance(sub.func, ast.Attribute)
+                and isinstance(sub.func.value, ast.Name) and sub.func.value.id == "np"
+                and sub.func.attr == "arange"):
+            cargs = [_const_int(a) for a in sub.args]
+            if len(cargs) in (1, 2) and all(a is not None for a in cargs):
+                return (0, cargs[0]) if len(cargs) == 1 else tuple(cargs)
+    return None
 
 
 class _InlineTemps(ast.NodeTransformer):
@@ -114,8 +144,31 @@ def _const_int(node):
     return None
 
 
+def _linear_k(idx, kvar):
+    """Fold an index expression to (a, b) meaning a*kvar + b with a in
+    {-1, 0, 1}; None when it is not that linear form."""
+    if isinstance(idx, ast.Constant) and isinstance(idx.value, int):
+        return (0, idx.value)
+    if isinstance(idx, ast.Name):
+        return (1, 0) if idx.id == kvar else None
+    if isinstance(idx, ast.UnaryOp) and isinstance(idx.op, ast.USub):
+        inner = _linear_k(idx.operand, kvar)
+        return None if inner is None else (-inner[0], -inner[1])
+    if isinstance(idx, ast.BinOp) and isinstance(idx.op, (ast.Add, ast.Sub)):
+        left = _linear_k(idx.left, kvar)
+        right = _linear_k(idx.right, kvar)
+        if left is None or right is None:
+            return None
+        sign = 1 if isinstance(idx.op, ast.Add) else -1
+        a = left[0] + sign * right[0]
+        if a not in (-1, 0, 1):
+            return None
+        return (a, left[1] + sign * right[1])
+    return None
+
+
 def _slot_of_target(node, kvar=None):
-    """cf[<int>] -> ('const', i); cf[k+c]/cf[k-c]/cf[k] -> ('loop', off)."""
+    """cf[<int>] -> ('const', i); cf[±k + c] -> ('loop', c) / ('desc', c)."""
     if not (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)
             and node.value.id == "cf"):
         return None
@@ -123,18 +176,40 @@ def _slot_of_target(node, kvar=None):
     c = _const_int(idx)
     if c is not None:
         return ("const", c)
+    linear = _linear_k(idx, kvar or "\x00")
+    if linear is None:
+        return None
+    a, b = linear
+    if a == 0:
+        return ("const", b)   # constant index spelled as arithmetic (36 - 1)
     if kvar is None:
         return None
-    if isinstance(idx, ast.Name) and idx.id == kvar:
-        return ("loop", 0)
-    if isinstance(idx, ast.BinOp) and isinstance(idx.left, ast.Name) and idx.left.id == kvar:
-        c = _const_int(idx.right)
-        if c is None:
+    return ("loop", b) if a == 1 else ("desc", b)
+
+
+def _strided_target(node):
+    """cf[a::s], cf[a:b:s], cf[np.arange(a, b, s)] with const ints, s >= 2."""
+    if not (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)
+            and node.value.id == "cf"):
+        return None
+    sl = node.slice
+    if isinstance(sl, ast.Slice):
+        if sl.step is None:
             return None
-        if isinstance(idx.op, ast.Add):
-            return ("loop", c)
-        if isinstance(idx.op, ast.Sub):
-            return ("loop", -c)
+        step = _const_int(sl.step)
+        lo = 0 if sl.lower is None else _const_int(sl.lower)
+        hi = None if sl.upper is None else _const_int(sl.upper)
+        if step is None or lo is None or (sl.upper is not None and hi is None):
+            return None
+        return (lo, hi, step) if step >= 2 else None
+    if (isinstance(sl, ast.Call) and isinstance(sl.func, ast.Attribute)
+            and isinstance(sl.func.value, ast.Name) and sl.func.value.id == "np"
+            and sl.func.attr == "arange" and len(sl.args) == 3):
+        cargs = [_const_int(a) for a in sl.args]
+        if any(a is None for a in cargs):
+            return None
+        a, b, step = cargs
+        return (a, b, step) if step >= 2 else None
     return None
 
 
@@ -192,6 +267,78 @@ class _ArangeToK(ast.NodeTransformer):
         delta = bounds[0] - self.bounds[0]
         shifted = ast.BinOp(left=k_name, op=ast.Add(), right=ast.Constant(value=delta))
         return ast.copy_location(ast.fix_missing_locations(shifted), node)
+
+
+class _SubstituteK(ast.NodeTransformer):
+    """Replace loop-var reads with (c - k): rewrites a descending-slot body
+    expression into slot-index terms."""
+
+    def __init__(self, kvar, c):
+        self.kvar = kvar
+        self.c = c
+
+    def visit_Name(self, node):
+        if isinstance(node.ctx, ast.Load) and node.id == self.kvar:
+            flipped = ast.BinOp(left=ast.Constant(value=self.c), op=ast.Sub(),
+                                right=ast.Name(id=self.kvar, ctx=ast.Load()))
+            return ast.copy_location(ast.fix_missing_locations(flipped), node)
+        return node
+
+
+class _ReplaceMatchingLoad(ast.NodeTransformer):
+    """Replace Load-context nodes whose dump matches `pattern_dump` with a
+    deep copy of `replacement` (used to inline cf[i] rewrite chains)."""
+
+    def __init__(self, pattern_dump, replacement):
+        self.pattern_dump = pattern_dump
+        self.replacement = replacement
+
+    def visit_Subscript(self, node):
+        self.generic_visit(node)
+        if isinstance(node.ctx, ast.Load) and _load_dump(node) == self.pattern_dump:
+            import copy as _copy
+            return _copy.deepcopy(self.replacement)
+        return node
+
+
+def _load_dump(node):
+    """ast.dump with the ctx normalized so Store/Load targets compare equal."""
+    import copy as _copy
+    node = _copy.deepcopy(node)
+    for sub in ast.walk(node):
+        if hasattr(sub, "ctx"):
+            sub.ctx = ast.Load()
+    return ast.dump(node)
+
+
+def _collapse_same_slot_rewrites(body_stmts):
+    """cf[i] = e1; cf[i] = e2(cf[i]) ...  ->  cf[i] = e2(e1)  (chain-inline).
+
+    AugAssign on the same slot normalizes to Assign first. Non-consecutive or
+    different-target writes are left alone.
+    """
+    out = []
+    for st in body_stmts:
+        if (isinstance(st, ast.AugAssign) and isinstance(st.target, ast.Subscript)
+                and out and isinstance(out[-1], ast.Assign) and len(out[-1].targets) == 1
+                and _load_dump(st.target) == _load_dump(out[-1].targets[0])):
+            read = ast.copy_location(ast.Subscript(
+                value=st.target.value, slice=st.target.slice, ctx=ast.Load()), st)
+            st = ast.copy_location(ast.Assign(
+                targets=[st.target],
+                value=ast.BinOp(left=read, op=st.op, right=st.value)), st)
+            st = ast.fix_missing_locations(st)
+        if (isinstance(st, ast.Assign) and len(st.targets) == 1
+                and isinstance(st.targets[0], ast.Subscript)
+                and out and isinstance(out[-1], ast.Assign) and len(out[-1].targets) == 1
+                and _load_dump(st.targets[0]) == _load_dump(out[-1].targets[0])):
+            inlined = _ReplaceMatchingLoad(
+                _load_dump(st.targets[0]), out[-1].value).visit(st.value)
+            out[-1] = ast.fix_missing_locations(ast.copy_location(
+                ast.Assign(targets=st.targets, value=inlined), st))
+            continue
+        out.append(st)
+    return out
 
 
 def _reads_cf(node):
@@ -435,9 +582,22 @@ def analyze(fn):
                 opname = {ast.Add: "add", ast.Sub: "subtract", ast.Mult: "multiply"}[type(stmt.op)]
                 ordered.append(("aug_slice", bounds[0], bounds[1], opname, value, len(segments)))
                 continue
+            strided = _strided_target(stmt.target)
+            if strided is not None:
+                a, b, step = strided
+                if not isinstance(stmt.op, (ast.Add, ast.Sub, ast.Mult, ast.Div)):
+                    raise SkipFunction("strided AugAssign op is not +=/-=/*=//=")
+                if _reads_cf(value) or _contains_vector_shape(value):
+                    raise SkipFunction("strided AugAssign value is not scalar")
+                opname = {ast.Add: "add", ast.Sub: "subtract",
+                          ast.Mult: "multiply", ast.Div: "divide"}[type(stmt.op)]
+                ordered.append(("stride_aug", a, b, step, opname, value, len(segments)))
+                continue
             raise SkipFunction("unsupported AugAssign target")
         if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1:
             tgt = stmt.targets[0]
+            if isinstance(tgt, ast.Subscript):
+                tgt = _InlineTemps(env).visit(tgt)
             value = _InlineTemps(env).visit(stmt.value)
             if isinstance(tgt, ast.Name) and tgt.id == "cf":
                 call = value
@@ -448,7 +608,25 @@ def analyze(fn):
                         raise SkipFunction("cf = np.zeros(<non-const>)")
                     n_coeffs = n
                     continue
-                raise SkipFunction("cf assigned from something besides np.zeros")
+                # whole-vector definition: cf = <expr over arange>  ==  cf[0:n] = expr
+                if _reads_cf(value):
+                    raise SkipFunction("whole-vector cf assign reads cf")
+                if n_coeffs is None:
+                    ab = _first_arange_bounds(value)
+                    if ab is None:
+                        raise SkipFunction("cf assigned from something besides np.zeros")
+                    n_coeffs = ab[1] - ab[0]
+                synth = ast.fix_missing_locations(ast.copy_location(ast.Subscript(
+                    value=ast.Name(id="cf", ctx=ast.Load()),
+                    slice=ast.Slice(lower=ast.Constant(value=0),
+                                    upper=ast.Constant(value=n_coeffs)),
+                    ctx=ast.Store()), stmt))
+                seg = _normalize_slice_assign(synth, value)
+                if seg is None:
+                    raise SkipFunction("cf assigned from something besides np.zeros")
+                segments.append(seg)
+                ordered.append(("segment", len(segments) - 1))
+                continue
             if isinstance(tgt, ast.Name):
                 env[tgt.id] = value
                 continue
@@ -485,7 +663,8 @@ def analyze(fn):
             loop_env = dict(env)
             write = None
             const_writes = []   # cf[<int>] = expr inside the loop
-            body_stmts = list(stmt.body)
+            extra_writes = []   # additional asc/desc slot writes (split loop)
+            body_stmts = _collapse_same_slot_rewrites(list(stmt.body))
             if body_stmts and isinstance(body_stmts[-1], ast.If):
                 incoming = None
                 prefix = body_stmts[:-1]
@@ -505,7 +684,7 @@ def analyze(fn):
             for inner in body_stmts:
                 if not (isinstance(inner, ast.Assign) and len(inner.targets) == 1):
                     raise SkipFunction("loop body statement is not an assignment")
-                itgt = inner.targets[0]
+                itgt = _InlineTemps(loop_env).visit(inner.targets[0])
                 ival = _InlineTemps(loop_env).visit(inner.value)
                 if isinstance(itgt, ast.Name):
                     loop_env[itgt.id] = ival
@@ -513,8 +692,12 @@ def analyze(fn):
                 slot = _slot_of_target(itgt, kvar)
                 if slot and slot[0] == "loop":
                     if write is not None:
-                        raise SkipFunction("loop writes more than one cf slot")
+                        extra_writes.append(("asc", slot[1], ival))
+                        continue
                     write = (slot[1], ival)
+                    continue
+                if slot and slot[0] == "desc":
+                    extra_writes.append(("desc", slot[1], ival))
                     continue
                 if slot and slot[0] == "const":
                     # cf[<int>] = expr re-assigned every iteration: only the
@@ -524,8 +707,33 @@ def analyze(fn):
                     const_writes.append((slot[1], ival))
                     continue
                 raise SkipFunction("loop writes a non-loop-indexed slot")
-            if write is None:
+            if write is None and not extra_writes:
                 raise SkipFunction("loop does not write cf")
+            if extra_writes:
+                # split the loop: each independent non-cf-reading write is its
+                # own segment (descending targets flip k -> c - k)
+                all_writes = ([("asc", write[0], write[1])] if write else []) + extra_writes
+                if any(_reads_cf(e) for _kind, _p, e in all_writes):
+                    raise SkipFunction("multi-write loop reads cf")
+                for kind, p, expr in all_writes:
+                    if kind == "asc":
+                        seg = (kvar, lo, hi, p, expr)
+                    else:
+                        flipped = ast.fix_missing_locations(
+                            _SubstituteK(kvar, p).visit(expr))
+                        seg = (kvar, p - hi + 1, p - lo + 1, 0, flipped)
+                    slots = _seg_slots(seg)
+                    if n_coeffs is not None and (min(slots) < 0 or max(slots) >= n_coeffs):
+                        raise SkipFunction(
+                            f"loop write slots {min(slots)}..{max(slots)} out of range")
+                    segments.append(seg)
+                    ordered.append(("segment", len(segments) - 1))
+                last_k = ast.Constant(value=hi - 1)
+                for slot_idx, ival in const_writes:
+                    final = ast.fix_missing_locations(
+                        _InlineTemps({kvar: last_k}).visit(ival))
+                    ordered.append(("poke", slot_idx, final))
+                continue
             if _reads_cf(write[1]):
                 scan_entry = _try_scan_template(kvar, lo, hi, write[0], write[1], ordered)
                 if scan_entry is None:
@@ -537,7 +745,12 @@ def analyze(fn):
                         _InlineTemps({kvar: last_k}).visit(ival))
                     ordered.append(("poke", slot_idx, final))
                 continue
-            segments.append((kvar, lo, hi, write[0], write[1]))
+            seg = (kvar, lo, hi, write[0], write[1])
+            slots = _seg_slots(seg)
+            if n_coeffs is not None and (min(slots) < 0 or max(slots) >= n_coeffs):
+                raise SkipFunction(
+                    f"loop write slots {min(slots)}..{max(slots)} out of range")
+            segments.append(seg)
             ordered.append(("segment", len(segments) - 1))
             last_k = ast.Constant(value=hi - 1)
             for slot_idx, ival in const_writes:
@@ -570,7 +783,7 @@ def analyze(fn):
         return False
 
     for op in ordered:
-        if op[0] in ("aug_slice", "slice_assign"):
+        if op[0] in ("aug_slice", "slice_assign", "stride_aug"):
             a, b, born_at = op[1], op[2], op[-1]
             # A later segment overwriting this span would run BEFORE it in
             # the emitted program (segments are emitted first) but AFTER it
@@ -599,6 +812,9 @@ def analyze(fn):
                 for later_op in ordered[pos + 1:]:
                     if later_op[0] in ("aug_slice", "slice_assign") and \
                        later_op[1] <= slot < later_op[2]:
+                        raise SkipFunction("poke read by a slice update before a loop overwrite")
+                    if later_op[0] == "stride_aug" and \
+                       later_op[1] <= slot < (later_op[2] if later_op[2] is not None else 1 << 30):
                         raise SkipFunction("poke read by a slice update before a loop overwrite")
                     if later_op[0] == "reduce_push":
                         raise SkipFunction("poke may be read by a reduction before a loop overwrite")
@@ -1050,7 +1266,7 @@ def emit_program(name, template, module_src):
     force_mask = template.get("force_mask", False)
     _ALIAS_SEQ["n"] = 0
     _HOIST_MEMO.clear()
-    lines = [f"# {name} (poly100.py), ported by port_poly100_programs.py"]
+    lines = [f"# {name} ({_MODULE_LABEL['label']}), ported by port_poly100_programs.py"]
     if not segments:
         lines.append(f"poly = fill({n}, 0)")
     elif len(segments) == 1:
@@ -1105,6 +1321,32 @@ def emit_program(name, template, module_src):
             frag = (ast.get_source_segment(module_src, arg) or "").replace("\n", " ")
             _append_commented(lines, f"{fname}({_hoist_vec(arg, None, None, None, lines)})",
                               f"np.{fname}({frag[:60]})" if frag else "")
+        elif op[0] == "stride_aug":
+            _tag, a, b, step, opname, expr = op[:6]
+            b_eff = n if b is None else min(b, n)
+            frag = (ast.get_source_segment(module_src, expr) or "").replace("\n", " ")
+            offset = 72 * step - a   # keeps rem's first arg positive for all k < 72
+            periodic = f"eq(rem(add(range(0, {n}), {offset}), {step}), 0)"
+            lo_needed, hi_needed = a > 0, b_eff < n
+            if lo_needed and hi_needed:
+                win = f"subtract({_emit_step_mask(a, n, lines)}, {_emit_step_mask(b_eff, n, lines)})"
+            elif lo_needed:
+                win = _emit_step_mask(a, n, lines)
+            elif hi_needed:
+                win = f"subtract(1, {_emit_step_mask(b_eff, n, lines)})"
+            else:
+                win = ""
+            mask = f"multiply({win}, {periodic})" if win else periodic
+            sym = {"add": "+", "subtract": "-", "multiply": "*", "divide": "/"}[opname]
+            comment = f"cf[{a}:{'' if b is None else b}:{step}] {sym}= {frag[:40]}"
+            if opname in ("multiply", "divide"):
+                factor = f"({scalar_src(expr)})" if opname == "multiply" else f"(1/({scalar_src(expr)}))"
+                _append_commented(lines,
+                    f"multiply(poly, add(1, multiply({mask}, ({factor} - 1))))", comment)
+            else:
+                _append_commented(lines,
+                    f"{opname}(poly, multiply({mask}, ({scalar_src(expr)})))", comment)
+            lines.append("poly = pop")
         elif op[0] == "drop":
             lines.append("drop")
         else:
@@ -1309,13 +1551,16 @@ def main():
     ap.add_argument("--force", action="store_true", help="overwrite existing S3 keys")
     ap.add_argument("--list", action="store_true", help="just list candidate functions")
     ap.add_argument("--show", action="store_true", help="print generated source for ports")
+    ap.add_argument("--module", default=POLY100,
+                    help="source module to port (default: poly100.py)")
     args = ap.parse_args()
 
     if not os.path.exists(SWEEP_TEST):
         sys.exit(f"sweep_test missing; build: cc -O2 -pthread -o {SWEEP_TEST} "
                  f"{os.path.join(LAMBDA_DIR, 'sweep_cli.c')} -lm")
 
-    module_src, functions = load_functions()
+    _MODULE_LABEL["label"] = os.path.basename(args.module)
+    module_src, functions = load_functions(args.module)
     names = args.only or sorted(functions, key=lambda s: int(s.split("_")[1]))
     names = [n for n in names if n not in set(args.exclude or [])]
 
@@ -1328,7 +1573,7 @@ def main():
     ported, skipped = [], []
     for name in names:
         if name not in functions:
-            skipped.append((name, "not found in poly100.py"))
+            skipped.append((name, "not found in module"))
             continue
         fn_node, fn_src = functions[name]
         try:

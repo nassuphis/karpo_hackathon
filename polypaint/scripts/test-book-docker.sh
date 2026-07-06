@@ -32,18 +32,24 @@ BOOK = {
         for i in range(3)
     ],
 }
+# WORST CASE on purpose: the maximum row count a real artifact produces
+# (10 rows incl. Interpretation/Output channels) + a square palette. The
+# page-count assertion below fails if the verso ever overflows again.
 PROV = {"e1": {"report": {
     "compute_id": "compute_mr7kkhg2", "artifact_id": "color_run_1783245470391_uovu3x",
-    "summary_rows": [["Function", "const(2,0,0)"], ["Degree", "50"], ["N", "4000"],
-                     ["Solver", "AE-MT"], ["Color mode", "root proximity"],
-                     ["Palette", "tri_ember"], ["Viewport", "auto, q=0.1%"]],
-    "palette_label": "tri_ember", "has_palette": True,
+    "summary_rows": [["Function", "const(2,0,0)"], ["Degree", "50"], ["N", "10000"],
+                     ["Times", "1"], ["Solver", "AE-MT"], ["Interpretation", "scalar_lut"],
+                     ["Color mode", "root proximity"],
+                     ["Palette", "long_washington_stripe_teal_orange_11"],
+                     ["Output channels", "1"],
+                     ["Viewport", "explicit, re [-3.4, -1.3], im [-0.95, 0.93]"]],
+    "palette_label": "pal_color_run_1783245470391_uovu3x", "has_palette": True,
 }}}
 
 import os
 os.makedirs("/build/assets", exist_ok=True)
 # palette swatch for the report page (verifies the \includegraphics panel)
-Image.new("RGB", (800, 120), (60, 20, 90)).save("/build/assets/e1.palette.jpg", quality=90)
+Image.new("RGB", (1600, 1600), (60, 20, 90)).save("/build/assets/e1.palette.jpg", quality=90)
 
 # exercise the vips prepare path end to end (design uses it to resize
 # sources to <=3600px). A broken vips layer raises here rather than

@@ -140,9 +140,11 @@ def _report_rows(entry, provenance):
 
 
 def _verso_report_page(entry, provenance):
-    """Deep-blue report page matching the ColorSpread PDF (spread_pdf.py
-    _draw_report_summary): compute-id title, accent rule, KV grid, palette
-    swatch. No program-source dump."""
+    """Deep-blue report page matching the ColorSpread PDF: title, accent
+    rule, artifact id, fixed-pitch KV rows, and the palette at a FIXED
+    120x120mm in a centered table. Everything is fixed-size, so the worst
+    case (10 rows) totals ~230mm < the 248mm text block: the page can
+    never overflow. Plain LaTeX, no overlay tricks."""
     report = (provenance or {}).get("report") or {}
     title = tex_escape(entry_title(entry, provenance))
     artifact = tex_escape(str(report.get("artifact_id") or entry.get("artifact_id") or ""))
@@ -152,48 +154,39 @@ def _verso_report_page(entry, provenance):
     parts = [
         r"\newpage",
         r"\pagecolor{pagebg}\color{bodytext}",
-        r"\vspace*{6mm}",
+        r"\vspace*{2mm}",
         r"{\displayfont\fontsize{26}{30}\selectfont %s\par}" % (title or "PolyPaint"),
-        r"\vspace{3mm}",
+        r"\vspace{2.5mm}",
         r"{\color{accent}\rule{\linewidth}{0.8pt}}\par",
-        r"\vspace{2mm}",
+        r"\vspace{1.5mm}",
         r"{\monofont\footnotesize\color{monotext} %s\par}" % artifact,
-        r"\vspace{9mm}",
+        r"\vspace{7mm}",
     ]
-    if rows:
-        parts.append(r"{\renewcommand{\arraystretch}{1.5}%")
-        parts.append(r"\begin{tabular}{@{}p{42mm}>{\raggedright\arraybackslash}p{\dimexpr\linewidth-42mm\relax}@{}}")
-        for label, value in rows:
-            parts.append(
-                r"{\monofont\footnotesize\color{monotext} %s} & {\color{bodytext} %s} \\"
-                % (tex_escape(label.upper()), tex_escape(value)))
-        parts.append(r"\end{tabular}}\par")
+    # fixed 6.5mm-pitch rows (reference PDF: KV_PITCH = 17pt)
+    for label, value in rows:
+        parts.append(
+            r"\noindent\hbox to \linewidth{\hbox to 42mm{\monofont\footnotesize\color{monotext} %s\hss}"
+            r"{\color{bodytext} %s}\hss}\vspace*{\dimexpr6.5mm-\baselineskip\relax}\par"
+            % (tex_escape(label.upper()), tex_escape(value)))
     if body_override:
-        parts.append(r"\vspace{8mm}")
+        parts.append(r"\vspace{4mm}")
         for line in body_override.splitlines():
             parts.append(r"{\normalsize %s\par}" % tex_escape(line))
 
     if report.get("has_palette"):
-        # Palette artifacts are N x N squares (handler_palette_finalize writes
-        # width=full_n=N; N is typically 5000 or 10000). Contain-fit like the
-        # ColorSpread PDF (_draw_image_contain into a height-bounded square):
-        # as large as possible without overflowing the page, at any N.
-        # Label centered like the box.
         palette_label = tex_escape(str(report.get("palette_label") or "palette"))
         parts.extend([
             r"\vfill",
             r"\begin{center}",
-            r"{\monofont\footnotesize\color{monotext} %s\par}" % palette_label,
-            r"\vspace{2mm}",
-            r"\fcolorbox{panelborder}{panelbg}{\includegraphics[width=\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax,"
-            r"height=110mm,keepaspectratio]{%s/%s.palette.jpg}}"
+            r"\begin{tabular}{c}",
+            r"{\monofont\footnotesize\color{monotext} %s} \\[2mm]" % palette_label,
+            r"\fcolorbox{panelborder}{panelbg}{\includegraphics[width=120mm,height=120mm,keepaspectratio]{%s/%s.palette.jpg}} \\"
             % (ASSET_DIR, entry.get("entry_id")),
+            r"\end{tabular}",
             r"\end{center}",
             r"\vfill",
-            r"\null",
         ])
-    else:
-        parts.append(r"\vspace*{4mm}")
+    parts.append(r"\null")
     return "\n".join(parts)
 
 

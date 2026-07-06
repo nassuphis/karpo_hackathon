@@ -76,20 +76,12 @@ async function _bookHydrateEntries() {
                 : { preview_url: '', missing: true, palette_preview_key: '', palette_url: '' };
         }
     });
-    _renderBookTab();
-    // palette thumbnails: presign each unique preview key (palettes can live
-    // in other jobs, so the per-job summary can't supply these URLs directly)
-    const keys = [...new Set(Object.values(_bookState.hydrated)
-        .map(h => h.palette_preview_key).filter(Boolean))];
-    const urlByKey = {};
-    await asyncPool(4, keys, async (key) => {
-        try {
-            const resp = await lambdaPost('storage', { key }, '/presign');
-            urlByKey[key] = resp.url || '';
-        } catch (e) { urlByKey[key] = ''; }
-    });
+    // palette thumbnails: the bucket is public-read by design (deploy.sh
+    // PublicReadSiteAssets on the whole bucket), so direct URLs — zero
+    // presign round-trips. Same base the mosaics use.
+    const s3Base = 'https://polypaint.s3.us-east-1.amazonaws.com/';
     for (const hyd of Object.values(_bookState.hydrated)) {
-        if (hyd.palette_preview_key) hyd.palette_url = urlByKey[hyd.palette_preview_key] || '';
+        if (hyd.palette_preview_key) hyd.palette_url = s3Base + hyd.palette_preview_key;
     }
     _renderBookTab();
 }
@@ -180,11 +172,17 @@ function _renderBookTab() {
 }
 
 async function bookRefresh() {
+    // full refresh: book list, the active book doc, and every thumbnail
     _bookState.listLoaded = false;
     _bookBtnBusy('btn-book-refresh', true, 'Refreshing…');
     try {
-        await loadBookTab();
+        await _bookRefreshList(true);
+        await _bookLoadActive();
+        _renderBookTab();
+        if (_bookState.doc) await _bookHydrateEntries();
         _bookStatus('Refreshed');
+    } catch (e) {
+        _bookStatus(e.message, true);
     } finally {
         _bookBtnBusy('btn-book-refresh', false);
     }
@@ -195,10 +193,9 @@ async function loadBookTab() {
         await _bookRefreshList();
         if (_bookState.activeId && !_bookState.doc) {
             await _bookLoadActive();
-            _renderBookTab();
-            void _bookHydrateEntries();
         }
         _renderBookTab();
+        if (_bookState.doc) void _bookHydrateEntries();
     } catch (e) {
         _bookStatus(e.message, true);
     }
@@ -349,10 +346,8 @@ async function _bookAddEntryImpl(ref, surfaceStatus) {
         _bookState.doc = resp.book;
         _bookState.dirty = false;
         report(`Added entry ${resp.book.entries.length} to "${resp.book.name}"`);
-        if (document.getElementById('tab-book')?.classList.contains('active')) {
-            _renderBookTab();
-            void _bookHydrateEntries();
-        }
+        _renderBookTab();
+        void _bookHydrateEntries();
         return true;
     } catch (e) {
         report(`Add to Book failed: ${e.message}`, true);

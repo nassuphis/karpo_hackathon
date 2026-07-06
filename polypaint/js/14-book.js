@@ -464,16 +464,22 @@ async function _bookPollCompile() {
     }
 }
 
-async function bookDownload(kind) {
+async function bookDownload(kind, btn) {
     const out = _bookState.latestOutput;
     if (!out) return;
     const key = { cover: out.cover_key, content: out.content_key, source: out.source_key }[kind];
     if (!key) return;
+    const orig = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Preparing…'; }
+    _bookStatus(`Preparing ${kind} download…`);
     try {
         const resp = await lambdaPost('storage', { key, filename: `${_bookState.activeId}-${kind}.${kind === 'source' ? 'zip' : 'pdf'}` }, '/presign');
         window.location.href = resp.url;
+        _bookStatus(`Downloading ${kind}…`);
     } catch (e) {
         _bookStatus(e.message, true);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = orig; }
     }
 }
 

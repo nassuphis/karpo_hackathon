@@ -8,7 +8,7 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 20px; padding-bottom: 96px; }
 h1 { color: #e94560; margin-bottom: 20px; }
-.container { max-width: 900px; margin: 0 auto; }
+.container { max-width: min(1120px, calc(100vw - 24px)); margin: 0 auto; }
 .app-header {
     display: flex; align-items: flex-start; justify-content: space-between;
     gap: 16px; margin-bottom: 16px;
@@ -1422,7 +1422,8 @@ button {
 
 .tab-bar { display: flex; gap: 0; margin-bottom: 0; }
 .tab-btn {
-    padding: 8px 20px; font-size: 13px; font-weight: 600; text-transform: uppercase;
+    flex: 1 1 auto; text-align: center; white-space: nowrap;
+    padding: 8px 12px; font-size: 13px; font-weight: 600; text-transform: uppercase;
     letter-spacing: 0.06em; cursor: pointer; border: 1px solid #0f3460;
     border-bottom: none; border-radius: 8px 8px 0 0; background: #1a1a2e; color: #666;
 }

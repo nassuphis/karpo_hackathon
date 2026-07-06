@@ -304,6 +304,13 @@ function addSelectedFavoriteToBook() {
 // --- compile (design §5): prepare fan-out, then compose. Trigger is
 // done >= N && errors === 0 — /check-status "complete" counts errored
 // tasks as terminal, so it must never gate compose on its own. ---
+function _bookCompileBtn(busy) {
+    const b = document.getElementById('btn-book-compile');
+    if (!b) return;
+    b.disabled = busy;
+    b.textContent = busy ? 'Compiling…' : 'Compile';
+}
+
 function _bookRailUpsert(state, detail) {
     const run = _bookState.compile;
     if (!run || typeof _jobsRailUpsert !== 'function') return;
@@ -323,6 +330,7 @@ async function bookCompile() {
     const doc = _bookState.doc;
     if (!doc || !(doc.entries || []).length) { _bookStatus('No entries to compile', true); return; }
     if (_bookState.compile) { _bookStatus('Compile already running', true); return; }
+    _bookCompileBtn(true);
     try {
         if (_bookState.dirty) await bookSave();
         const runId = 'bk_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -346,6 +354,7 @@ async function bookCompile() {
     } catch (e) {
         _bookRailUpsert('failed', e.message);
         _bookState.compile = null;
+        _bookCompileBtn(false);
         _bookStatus(e.message, true);
     }
 }
@@ -393,6 +402,7 @@ async function _bookPollCompile() {
             if (rd.phase === 'done') {
                 _bookRailUpsert('done', `${(rd.content_pages || '?')} pages`);
                 _bookState.compile = null;
+                _bookCompileBtn(false);
                 _bookLog(`Compose done for ${run.bookId}`);
                 if (run.bookId === _bookState.activeId) {
                     await _bookLoadActive();
@@ -409,6 +419,7 @@ async function _bookPollCompile() {
     } catch (e) {
         _bookRailUpsert('failed', e.message);
         _bookState.compile = null;
+        _bookCompileBtn(false);
         _bookStatus(e.message, true);
         _bookLog(`Compile failed: ${e.message}`, 'err');
     }

@@ -111,12 +111,17 @@ class TestBookPdfHandler(unittest.TestCase):
         self.assertFalse(snap["report"]["has_palette"])      # no associated palette
         self.assertEqual([s for s, _ in self.statuses][-1], "done")
 
-        # second call: cache short-circuit, no source read needed
-        del self.fake.objects["renders/srcjob/color/art1/image.jpeg"]
+        # second call without force: cache short-circuit, no source read needed
         self.statuses.clear()
         resp = self.book_pdf.handle_prepare(_prepare_params())
         self.assertTrue(json.loads(resp["body"])["cached"])
         self.assertEqual(self.statuses, [("done", "done")])
+
+        # Compile passes force=true: re-prepares even though the asset is cached
+        self.statuses.clear()
+        resp = self.book_pdf.handle_prepare(_prepare_params(force=True))
+        self.assertFalse(json.loads(resp["body"])["cached"])
+        self.assertIn("load_source", [p for _, p in self.statuses])
 
     def test_prepare_finds_palette_via_overlay_meta(self):
         # associated_palette_image_key lives in the color-artifact overlay

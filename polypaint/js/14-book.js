@@ -158,6 +158,17 @@ function _renderBookTab() {
     if (outInfo && out) outInfo.textContent = `compiled ${out.compiled_at || ''}: ${out.content_pages} pages, ${out.spread_count} spreads`;
 }
 
+async function bookRefresh() {
+    _bookState.listLoaded = false;
+    _bookBtnBusy('btn-book-refresh', true, 'Refreshing…');
+    try {
+        await loadBookTab();
+        _bookStatus('Refreshed');
+    } finally {
+        _bookBtnBusy('btn-book-refresh', false);
+    }
+}
+
 async function loadBookTab() {
     try {
         await _bookRefreshList();
@@ -183,6 +194,7 @@ async function bookSelectorChanged() {
 async function bookNew() {
     const name = prompt('Book name:');
     if (!name || !name.trim()) return;
+    _bookBtnBusy('btn-book-new', true, 'Creating…');
     try {
         const resp = await lambdaPost('storage', { book: { name: name.trim(), entries: [] } }, '/save-book');
         _bookSetActive(resp.book.id);
@@ -193,6 +205,8 @@ async function bookNew() {
         _bookStatus(`Created ${resp.book.name}`);
     } catch (e) {
         _bookStatus(e.message, true);
+    } finally {
+        _bookBtnBusy('btn-book-new', false);
     }
 }
 
@@ -219,6 +233,7 @@ async function bookSave() {
 async function bookDelete() {
     if (!_bookState.activeId) return;
     if (!confirm(`Delete book "${_bookState.activeId}" (doc + cached assets + outputs)?`)) return;
+    _bookBtnBusy('btn-book-delete', true, 'Deleting…');
     try {
         await lambdaPost('storage', { id: _bookState.activeId }, '/delete-book');
         _bookSetActive('');
@@ -229,6 +244,8 @@ async function bookDelete() {
         _bookStatus('Deleted');
     } catch (e) {
         _bookStatus(e.message, true);
+    } finally {
+        _bookBtnBusy('btn-book-delete', false);
     }
 }
 
@@ -343,6 +360,13 @@ function addSelectedFavoriteToBook() {
 // --- compile (design §5): prepare fan-out, then compose. Trigger is
 // done >= N && errors === 0 — /check-status "complete" counts errored
 // tasks as terminal, so it must never gate compose on its own. ---
+function _bookBtnBusy(id, busy, busyLabel) {
+    const b = document.getElementById(id);
+    if (!b) return;
+    if (busy) { b.dataset.orig = b.textContent; b.disabled = true; b.textContent = busyLabel; }
+    else { b.disabled = false; b.textContent = b.dataset.orig || b.textContent; }
+}
+
 function _bookCompileBtn(busy) {
     const b = document.getElementById('btn-book-compile');
     if (!b) return;
@@ -380,6 +404,7 @@ async function bookCompile() {
             book_id: _bookState.activeId, entry_id: entry.entry_id,
             source_job_id: entry.job_id, source_artifact_id: entry.artifact_id,
             source_image_key: entry.image_key,
+            force: true,   // Compile = fresh: re-prepare every entry, never reuse stale assets
         }));
         const disp = await lambdaPost('dispatch', { target: 'book_pdf', jobs, expected_keys: [] });
         if ((disp.fired || 0) !== jobs.length) throw new Error(`dispatch fired ${disp.fired}/${jobs.length}`);

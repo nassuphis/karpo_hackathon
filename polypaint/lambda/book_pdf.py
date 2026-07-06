@@ -168,7 +168,10 @@ def handle_prepare(params):
     palette_key = f"{BOOKS_PREFIX}{book_id}/assets/{entry_id}.palette.jpg"
     progress = {"family": "book", "book_id": book_id, "entry_id": entry_id, "op": "prepare"}
 
-    if _key_exists(asset_key) and _key_exists(prov_key):
+    # Compile always re-prepares (force=true) — hitting Compile should produce
+    # a fresh book, not silently reuse stale assets. The cache short-circuit
+    # only applies to non-forced calls (e.g. a future "pinned" existence probe).
+    if not params.get("force") and _key_exists(asset_key) and _key_exists(prov_key):
         _phase(job_id, task_id, "done", "done", "Cached", **progress, cached=True)
         return ok_response({"book_id": book_id, "entry_id": entry_id, "cached": True})
 

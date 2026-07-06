@@ -193,6 +193,7 @@ def render_cover_tex(book, cover_asset_rel=None):
         r"\usepackage{graphicx}",
         r"\usepackage{xcolor}",
         r"\usepackage{tikz}",
+        r"\usetikzlibrary{calc}",
         _font_setup(),
         r"\pagestyle{empty}",
         r"\begin{document}",

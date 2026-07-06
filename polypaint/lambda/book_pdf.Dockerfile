@@ -60,8 +60,6 @@ RUN test -s /opt/book-fonts/TiemposText-Regular-Trial.ttf
 
 # --- python deps + handler code ---
 RUN pip install --no-cache-dir boto3 Pillow
-COPY lambda/book_tex.py lambda/spread_pdf.py lambda/shared.py ${LAMBDA_TASK_ROOT}/
-# book_pdf handler lands in build-order step 4; the image is gate-tested
-# on the template layer before the handler exists.
+COPY lambda/book_tex.py lambda/book_pdf.py lambda/spread_pdf.py lambda/shared.py ${LAMBDA_TASK_ROOT}/
 
 CMD ["book_pdf.handler"]

@@ -38,6 +38,7 @@ FUNCTIONS = {
     "recolor_from_raw": os.environ.get("RECOLOR_FROM_RAW_FUNCTION", "polypaint-recolor-from-raw"),
     "color_to_bilevel": os.environ.get("COLOR_TO_BILEVEL_FUNCTION", "polypaint-color-to-bilevel"),
     "pdf_artifact": os.environ.get("PDF_ARTIFACT_FUNCTION", "polypaint-pdf-artifact"),
+    "book_pdf": os.environ.get("BOOK_PDF_FUNCTION", "polypaint-book-pdf"),
 }
 REGION = os.environ.get("AWS_REGION", "us-east-1")
 MAX_WORKERS = int(os.environ.get("DISPATCH_THREADS", "50"))

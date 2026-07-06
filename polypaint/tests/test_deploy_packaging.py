@@ -181,10 +181,17 @@ class TestDeployPackaging(unittest.TestCase):
         self.assertEqual(len(re.findall(r"(?m)^    delete_removed_lambdas$", DEPLOY_TEXT)), 2)
         # specs exist only in the generated bash, one per manifest function
         self.assertEqual(len(re.findall(r'(?m)^\s*deploy_lambda "\$\w+_NAME"', DEPLOY_TEXT)), 0)
+        zip_functions = [fn for fn in DEPLOY_MANIFEST["functions"]
+                         if fn.get("package_type") != "image"]
         self.assertEqual(
             len(re.findall(r'(?m)^\s*deploy_lambda "\$\w+_NAME"', GEN_TEXT)),
-            len(DEPLOY_MANIFEST["functions"]),
+            len(zip_functions),
         )
+        # image functions emit an explicit SKIP marker, never a silent drop
+        image_functions = [fn for fn in DEPLOY_MANIFEST["functions"]
+                           if fn.get("package_type") == "image"]
+        for fn in image_functions:
+            self.assertIn(f'SKIP {fn["name"]}', GEN_TEXT)
         # raw helpers: the deploy_lambda wrapper plus the two converge fallbacks
         self.assertEqual(len(re.findall(r'(?m)^\s*create_lambda "\$', DEPLOY_TEXT)), 2)
         self.assertEqual(len(re.findall(r'(?m)^\s*update_lambda "\$', DEPLOY_TEXT)), 2)

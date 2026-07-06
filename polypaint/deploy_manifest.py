@@ -61,7 +61,12 @@ def validate(manifest):
     seen = {"key": set(), "name": set(), "name_var": set(), "memory_var": set()}
     declared_vars = set()
     for fn in functions:
-        for field in ("key", "name", "name_var", "memory_var", "handler", "zip", "group"):
+        required = ("key", "name", "name_var", "memory_var", "handler", "group")
+        if fn.get("package_type") == "image":
+            required = required + ("image_file",)
+        else:
+            required = required + ("zip",)
+        for field in required:
             if not isinstance(fn.get(field), str) or not fn.get(field):
                 err(f"{fn.get('key', fn.get('name', '?'))}: missing or non-string {field}")
         declared_vars.add(fn.get("name_var", ""))
@@ -82,9 +87,14 @@ def validate(manifest):
             err(f"{key}: group must be one of {GROUPS}")
         if not isinstance(fn.get("memory_mb"), int) or fn["memory_mb"] < 128:
             err(f"{key}: memory_mb must be an int >= 128")
-        if not re.fullmatch(r"handler_[a-z0-9_]+\.handler", str(fn.get("handler", ""))):
+        handler_pattern = (r"[a-z0-9_]+\.handler" if fn.get("package_type") == "image"
+                           else r"handler_[a-z0-9_]+\.handler")
+        if not re.fullmatch(handler_pattern, str(fn.get("handler", ""))):
             err(f"{key}: handler must look like handler_<module>.handler")
-        if not str(fn.get("zip", "")).startswith("/tmp/polypaint-"):
+        if fn.get("package_type") == "image":
+            if not str(fn.get("image_file", "")).endswith("Dockerfile"):
+                err(f"{key}: image_file must point at a Dockerfile")
+        elif not str(fn.get("zip", "")).startswith("/tmp/polypaint-"):
             err(f"{key}: zip must live under /tmp/polypaint-")
         for layer in fn.get("layers", []):
             if layer not in LAYER_VARS:
@@ -171,6 +181,9 @@ def emit_bash(manifest):
             w("")
         if fn.get("note"):
             w(f'    # {fn["note"]}')
+        if fn.get("package_type") == "image":
+            w(f'    echo "SKIP {fn["name"]}: container-image function; deploy via deploy-book-image (not yet in deploy.sh)"')
+            continue
         w(f'    deploy_lambda "${fn["name_var"]}" "{fn["handler"]}" "{fn["zip"]}" \\')
         w(f"        {_spec_args(fn)}")
         if fn.get("reserved_concurrency"):
@@ -182,6 +195,9 @@ def emit_bash(manifest):
 
     w("deploy_orchestrator_lambdas() {")
     for fn in orch:
+        if fn.get("package_type") == "image":
+            w(f'    echo "SKIP {fn["name"]}: container-image function; deploy via deploy-book-image (not yet in deploy.sh)"')
+            continue
         w(f'    deploy_lambda "${fn["name_var"]}" "{fn["handler"]}" "{fn["zip"]}" \\')
         w(f"        {_spec_args(fn)}")
     w("}")

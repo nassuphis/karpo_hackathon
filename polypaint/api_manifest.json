@@ -2,6 +2,7 @@
   "backend": {
     "dispatch_targets": [
       "autolevels",
+      "book_pdf",
       "coeffgen",
       "color_repalette",
       "color_to_bilevel",

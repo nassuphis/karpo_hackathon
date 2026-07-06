@@ -21,7 +21,9 @@ metas) and offline-only (works on `snaps/` files, never talks to the backend).
 - Named books: create / list / load / save / delete, mirroring the saved-program modals.
 - Book tab: ordered entry list with thumbnails, add/remove/move up/down, per-entry
   title + body text overrides, cover picker, Compile button with live progress.
-- "Add to Book" from the Render→color tab and the Favorites tab.
+- "Add to Book" from three surfaces: the AllCol/AllPal mosaic right-click menu
+  (the best whole-collection overview — primary collection surface), the
+  Render→color tab action row, and the Favorites tab toolbar.
 - Server-side compile: per-entry image prep (cached), then a single LaTeX compose step
   producing `cover.pdf` (629×316 mm gross) + `content.pdf` (293×296 mm gross pages,
   multiple of 4). **One spread per entry**: verso text page + recto full-bleed image.
@@ -31,9 +33,9 @@ metas) and offline-only (works on `snaps/` files, never talks to the backend).
 - Download of the compiled pair via the existing presign flow.
 
 **V2 (explicitly out of V1):** drag-reorder, per-book style/template options,
-per-spread PDF preview thumbnails, mosaic context-menu add, Step Functions
-orchestration, wraparound cover art, assisted "artsy description" generation,
-multi-user edit safety beyond last-write-wins.
+per-spread PDF preview thumbnails, Step Functions orchestration, wraparound
+cover art, assisted "artsy description" generation, multi-user edit safety
+beyond last-write-wins.
 
 **Dropped (not deferred):** program-source appendix spreads. One spread per color
 item; full program listings belong in the exported source bundle, not the printed book.
@@ -64,11 +66,19 @@ priced in §5/§7.
 
 ## 3. User flow
 
-1. **Collect.** On the Render tab (color family) an **Add to Book** button sits next
-   to Favorite/PDF in the action row (`js/11-artifacts.js:1100` region). The Favorites
-   tab toolbar gets the same button for the selected favorite. Both add to the
-   **active book** (the one last opened in the Book tab; shown in the button tooltip
-   and status line; if none exists, prompt to name one).
+1. **Collect.** Three entry points, all adding to the **active book** (the one
+   last opened in the Book tab; shown in the button tooltip/menu label and status
+   line; if none exists, prompt to name one):
+   - **AllCol/AllPal mosaic right-click menu** — the primary surface (user call:
+     "the best overview we have"). Mirrors the existing mosaic "Favorite" action
+     (`js/13-artifact-mosaics.js:789-799`): an "Add to Book" item, enabled for
+     Color tiles and disabled with an "(Color only)" label otherwise — book
+     entries are Color artifacts by contract (AllPal tiles are palettes, so
+     there the item stays disabled, same as Favorite does today).
+   - **Render→color tab** — `btn-render-add-book` next to Favorite/PDF in the
+     action row (`js/11-artifacts.js:1100` region).
+   - **Favorites tab toolbar** — `btn-favorites-add-book` for the selected
+     favorite.
 2. **Arrange.** The Book tab lists entries in book order: thumbnail, title, source
    job/artifact, ▲/▼ move buttons, Remove. Selecting an entry shows a text editor:
    Title and Body, both defaulting to auto-generated text (placeholder shows the
@@ -382,10 +392,15 @@ prepare fan-out is bounded by the slowest single source, not the sum.
   book dirty (explicit Save button; autosave-on-compile).
 - **Hydration:** generalize `_hydrateFavoriteArtifacts` (group refs by job →
   `/render-summary`, mark `missing`) so favorites and books share it.
-- **Add buttons:** `btn-render-add-book` in the color action row (same
-  enable/labeled-when-present logic as the Favorite button, `js/11-artifacts.js:1112` / enable logic :1043);
-  `btn-favorites-add-book` in the Favorites toolbar. Payload goes through a
-  client-side `_bookAddEntry(ref)` that loads the active book doc, appends, saves.
+- **Add buttons:** the AllCol/AllPal mosaic context menu gains an "Add to Book"
+  item next to "Favorite" (`js/13-artifact-mosaics.js:634,658,789` pattern:
+  enabled for color tiles, "(Color only)" disabled label otherwise, active-book
+  name shown in the item label); `btn-render-add-book` in the color action row
+  (same enable/labeled-when-present logic as the Favorite button,
+  `js/11-artifacts.js:1112` / enable logic :1043); `btn-favorites-add-book` in
+  the Favorites toolbar. All three go through a client-side `_bookAddEntry(ref)`
+  that loads the active book doc, appends, saves, and reports "(added Nth entry
+  to <book>)" in the surface's status line.
 - **Compile progress:** `_saveActiveRun({mode: 'book', ...})`; the existing
   observer needs a `mode === 'book'` completion branch (dispatch compose, then
   final refresh) — modeled on the PDF branch including its hard-stale abandon.

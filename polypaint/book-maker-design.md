@@ -299,14 +299,16 @@ when `cover_entry_id` is empty. Spine text = title. The 629.4×316 template is t
 varies with page count on other products — V1 pins this template and records
 `content_pages` in `latest.json` so mismatches are visible (open question §9.3).
 
-**Fonts:** `polypaint/fonts/` TTFs installed in the image's texmf tree, selected via
-fontspec — Canela/Tiempos (display/body, currently trial cuts), CourierPrime or
-JetBrainsMono (mono). fontspec embeds them; there is no un-embedded core-font
-escape hatch to police. Note: `fonts/` is **gitignored** (`.gitignore:92`, licensing)
-— the TTFs exist only in the local working tree, so the Docker build COPYs them from
-disk at build time (deploys run on the user's machine, where they live) and MUST
-fail the build if the directory is missing or empty, never producing a font-less
-image. Glyph coverage: LuaLaTeX handles fallback per `\setmainfont` feature chains;
+**Fonts:** `polypaint/fonts/` TTFs (git-tracked — 13 files, ~840 KB; only the bulk
+font-family download folders stay gitignored for size/filecount) installed in the
+image's texmf tree, selected via fontspec — Canela/Tiempos (display/body),
+CourierPrime or JetBrainsMono (mono). fontspec embeds them; there is no un-embedded
+core-font escape hatch to police. Licensing is settled: this is a strictly
+non-commercial project (gifts for friends, zero revenue), within the trial /
+free-for-non-commercial terms, and free open-source equivalents exist as swap-ins
+if a face ever needs replacing. The Docker build COPYs `fonts/` from the repo and
+MUST still fail if the directory is missing or empty — never a font-less image.
+Glyph coverage: LuaLaTeX handles fallback per `\setmainfont` feature chains;
 provenance text is ASCII-sanitized upstream anyway (`_stringify_meta` conventions).
 
 **Determinism guard:** two lualatex passes, `-interaction=nonstopmode -halt-on-error`,
@@ -380,18 +382,17 @@ prepare fan-out is bounded by the slowest single source, not the sum.
 6. Frontend-chained two-phase compile in V1, idempotent stages as the recovery
    story. §5.
 7. JPEG q92 / 3600 px assets, embedded pass-through. §6/§7.
+8. Fonts are git-tracked in `polypaint/fonts/` and licensing is a non-issue: the
+   project is strictly non-commercial (gifts, zero revenue), within trial /
+   free-for-non-commercial terms; open-source equivalents exist as swap-ins. §6.
 
 **Genuinely open (user calls):**
 1. **Verso template style.** Default = port of the printed book's black/Canela verso.
    Confirm fonts + layout on the first template proof (a one-spread test book).
-2. **Trial-font licensing for print.** Canela/Tiempos are trial cuts; embedding them
-   in a Lambda-produced commercial print file is the same question as the local book,
-   in a new place. Non-trial files exist in `fonts/` (Lyon, Sibila, Baramond,
-   OPTISarone, CourierPrime, JetBrainsMono).
-3. **Spine/page-count coupling.** V1 pins the 28-page-template cover dims while
+2. **Spine/page-count coupling.** V1 pins the 28-page-template cover dims while
    producing variable page counts. Confirm against WhiteWall's actual product specs
    before the first real order (the local book had the same exposure).
-4. **Auto body text quality.** V1 auto text is mechanical (summary + pipeline). The
+3. **Auto body text quality.** V1 auto text is mechanical (summary + pipeline). The
    "artsy description" layer stays a manual override pass — fine, or do we want an
    assisted-description flow later (V2 candidate)?
 
@@ -439,5 +440,5 @@ exact dispatched shapes; nothing here deploys — the user deploys.
 5. Deploy surface: deploy_manifest `package_type: image` schema extension, ECR +
    buildx push path in deploy.sh, dispatch target, api_manifest regen.
 6. Book tab UI + add buttons + observer branch + Playwright.
-7. User deploys; template proof on a 1-spread book (font/licensing check, §9.1/9.2);
+7. User deploys; template proof on a 1-spread book (font rendering check, §9.1);
    then a full-size book against the WhiteWall preflight.

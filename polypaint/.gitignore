@@ -87,9 +87,8 @@ package-lock.json
 lambda/poly_generated_100.c
 lambda/poly_generated_1000.c
 
-# Font binaries (trial font files — licensing, and we don't track binaries).
-# make_polypaint_book.py falls back to Helvetica with a WARNING if missing.
-fonts/
+# Bulk font-family download folders (size/filecount). The curated TTFs the
+# book uses are TRACKED in fonts/ (13 files, ~840KB) — non-commercial project.
 Canela_Collection/
 tiempos-font-family/
 courier-prime-font/

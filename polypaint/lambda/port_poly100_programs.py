@@ -107,10 +107,20 @@ class _LinspaceFold(ast.NodeTransformer):
         v = node.value
         is_linspace = (isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute)
                        and isinstance(v.func.value, ast.Name) and v.func.value.id == "np"
-                       and v.func.attr == "linspace" and len(v.args) == 3)
+                       and v.func.attr == "linspace" and len(v.args) >= 2)
         if not is_linspace:
             return node
-        cnt = _const_int(v.args[2])
+        if len(v.args) == 3:
+            cnt_node = v.args[2]
+        else:
+            kw = {k.arg: k.value for k in v.keywords}
+            cnt_node = kw.get("num")
+        if cnt_node is None:
+            return node
+        cnt = _const_int(cnt_node)
+        if cnt is None:
+            lin = _linear_k(cnt_node, "\x00")
+            cnt = lin[1] if lin is not None and lin[0] == 0 else None
         lin = _linear_k(node.slice, self.kvar) if self.kvar else None
         if cnt == self.n and lin is not None and lin[0] == 1 and lin[1] == self.off:
             call = ast.Call(func=ast.Name(id="__linspace__", ctx=ast.Load()),
@@ -664,6 +674,9 @@ def analyze(fn):
                 if (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
                         and call.func.attr == "zeros" and call.args):
                     n = _const_int(call.args[0])
+                    if n is None:
+                        lin = _linear_k(call.args[0], "\x00")
+                        n = lin[1] if lin is not None and lin[0] == 0 else None
                     if n is None or n < 1:
                         raise SkipFunction("cf = np.zeros(<non-const>)")
                     n_coeffs = n

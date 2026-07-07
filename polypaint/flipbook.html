@@ -91,22 +91,35 @@ async function main() {
   const flipPrefix = flipKey.slice(0, flipKey.lastIndexOf('/') + 1);
   const urls = pages.map(p => BASE + (flipPrefix + p).split('/').map(encodeURIComponent).join('/'));
 
-  // fit a spread (2 pages side by side) into the stage
+  // fit: two-page spread on wide screens, single page (portrait) on
+  // phones — the spread fit alone rendered ~180px pages on an iPhone
   const stage = document.getElementById('stage');
-  const pageRatio = (Number(flip.width_px) || 1384) / (Number(flip.height_px) || 1398);
+  const pageRatio = (Number(flip.width_px) || 1730) / (Number(flip.height_px) || 1748);
   const availW = stage.clientWidth - 24;
   const availH = stage.clientHeight - 24;
-  let pageH = availH;
-  let pageW = Math.round(pageH * pageRatio);
-  if (pageW * 2 > availW) {
-    pageW = Math.floor(availW / 2);
+  const portrait = availW < 700 || availW < availH;
+  let pageW, pageH;
+  if (portrait) {
+    pageW = availW;
     pageH = Math.round(pageW / pageRatio);
+    if (pageH > availH) {
+      pageH = availH;
+      pageW = Math.round(pageH * pageRatio);
+    }
+  } else {
+    pageH = availH;
+    pageW = Math.round(pageH * pageRatio);
+    if (pageW * 2 > availW) {
+      pageW = Math.floor(availW / 2);
+      pageH = Math.round(pageW / pageRatio);
+    }
   }
 
   const flipbook = new St.PageFlip(document.getElementById('flipbook'), {
     width: pageW,
     height: pageH,
     size: 'fixed',
+    usePortrait: true,         // narrow container -> single-page mode
     showCover: true,           // p1 = title recto stands alone, then spreads
     maxShadowOpacity: 0.4,
     mobileScrollSupport: false,
@@ -133,11 +146,18 @@ async function main() {
   });
 }
 
-// stage is measured once at load; re-fit on real size changes
+// stage is measured once at load; re-fit on real size changes. iOS Safari
+// fires resize when the URL bar collapses during swipes — height-only
+// changes must NOT reload mid-read, so only a width change refits.
 let _resizeTimer = null;
+let _lastWidth = window.innerWidth;
 window.addEventListener('resize', () => {
+  if (Math.abs(window.innerWidth - _lastWidth) < 60) return;
   clearTimeout(_resizeTimer);
-  _resizeTimer = setTimeout(() => location.reload(), 400);
+  _resizeTimer = setTimeout(() => {
+    _lastWidth = window.innerWidth;
+    location.reload();
+  }, 400);
 });
 
 main().catch(err => setStatus(err && err.message ? err.message : String(err), 'err'));

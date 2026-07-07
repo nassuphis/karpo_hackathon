@@ -210,14 +210,15 @@ class TestBookPdfHandler(unittest.TestCase):
         def run(cmd, capture_output=False, text=False, timeout=None, **_kw):
             if os.path.basename(cmd[0]) != "pdftoppm":
                 raise AssertionError(f"unexpected subprocess: {cmd}")
+            assert "-png" in cmd, "flip pages must render PNG intermediates (4:4:4 re-encode)"
             first = int(cmd[cmd.index("-f") + 1])
             last = int(cmd[cmd.index("-l") + 1])
             prefix = cmd[-1]
             digits = len(str(last))  # pdftoppm pads to the -l value's width
             for n in range(first, last + 1):
                 buf = io.BytesIO()
-                Image.new("RGB", (1384, 1398), (18, 24, 41)).save(buf, format="JPEG")
-                with open(f"{prefix}-{str(n).zfill(digits)}.jpg", "wb") as fh:
+                Image.new("RGB", (1730, 1748), (18, 24, 41)).save(buf, format="PNG")
+                with open(f"{prefix}-{str(n).zfill(digits)}.png", "wb") as fh:
                     fh.write(buf.getvalue())
             return MagicMock(returncode=0, stdout="", stderr="")
 
@@ -246,8 +247,8 @@ class TestBookPdfHandler(unittest.TestCase):
         self.assertEqual(flip["page_count"], 8)
         self.assertEqual(flip["book_id"], "test-book")  # the "id" field, not name
         self.assertEqual(flip["pages"], [f"p{n:04d}.jpg" for n in range(1, 9)])
-        self.assertEqual(flip["width_px"], 1384)
-        self.assertEqual(flip["height_px"], 1398)
+        self.assertEqual(flip["width_px"], 1730)
+        self.assertEqual(flip["height_px"], 1748)
         self.assertEqual(self.fake.put_headers[flip_key]["CacheControl"], immutable)
 
         latest = json.loads(self.fake.objects["polypaint/books/test-book/out/latest.json"])

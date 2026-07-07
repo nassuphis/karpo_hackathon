@@ -163,11 +163,14 @@ def _build_report(calc, src_meta, source_job_id, source_artifact_id):
     }
 
 
-# Flipbook page rasterization (flipbook.md §2-3): pdftoppm at 120 dpi
-# renders the 830.55x838.98bp content pages to ~1384x1398px jpgs; four
-# parallel range workers keep 74 pages to ~20-40s of the 900s budget.
-FLIP_DPI = 120
-FLIP_QUALITY = 85
+# Flipbook page rasterization (flipbook.md §2-3): pdftoppm renders PNG
+# intermediates (its jpeg encoder is locked to 4:2:0 chroma subsampling,
+# which washes out saturated art) and Pillow re-encodes at q88 with 4:4:4.
+# 150 dpi -> 1730x1748px pages: the verso mono text stays legible on
+# phones (120 dpi was not). Gate-measured ~0.02s/page leaves the 900s
+# budget untouched.
+FLIP_DPI = 150
+FLIP_QUALITY = 88
 FLIP_WORKERS = 4
 
 
@@ -207,8 +210,7 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages):
     def render_range(rng):
         first, last = rng
         run = subprocess.run(
-            ["pdftoppm", "-jpeg", "-r", str(FLIP_DPI),
-             "-jpegopt", f"quality={FLIP_QUALITY}",
+            ["pdftoppm", "-png", "-r", str(FLIP_DPI),
              "-f", str(first), "-l", str(last),
              pdf_path, os.path.join(flip_dir, "page")],
             capture_output=True, text=True, timeout=600)
@@ -220,11 +222,11 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages):
         list(pool.map(render_range, ranges))
 
     # pdftoppm zero-pads to the digits of each invocation's -l value, so
-    # parallel ranges can mix widths (page-27.jpg vs page-105.jpg): parse
+    # parallel ranges can mix widths (page-27.png vs page-105.png): parse
     # the page number, never trust lexical order.
     numbered = []
     for fname in os.listdir(flip_dir):
-        m = re.fullmatch(r"page-(\d+)\.jpg", fname)
+        m = re.fullmatch(r"page-(\d+)\.png", fname)
         if not m:
             raise RuntimeError(f"unexpected pdftoppm output: {fname}")
         numbered.append((int(m.group(1)), fname))
@@ -234,11 +236,22 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages):
             f"pdftoppm produced pages {[n for n, _ in numbered][:5]}… "
             f"expected 1..{content_pages}")
 
-    pages = []
-    for number, fname in numbered:
+    from PIL import Image
+
+    def convert_page(item):
+        number, fname = item
         canonical = "p%04d.jpg" % number
-        os.rename(os.path.join(flip_dir, fname), os.path.join(flip_dir, canonical))
-        pages.append(canonical)
+        src = os.path.join(flip_dir, fname)
+        img = Image.open(src)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        img.save(os.path.join(flip_dir, canonical), format="JPEG",
+                 quality=FLIP_QUALITY, subsampling=0, optimize=True)
+        os.remove(src)
+        return canonical
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=FLIP_WORKERS) as pool:
+        pages = list(pool.map(convert_page, numbered))
     width_px, height_px = _jpeg_dimensions(os.path.join(flip_dir, pages[0]))
 
     def upload_page(name):

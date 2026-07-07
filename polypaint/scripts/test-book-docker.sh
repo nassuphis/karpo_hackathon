@@ -95,7 +95,9 @@ fr = subprocess.run(["pdftoppm", "-jpeg", "-r", "120", "-jpegopt", "quality=85",
 assert fr.returncode == 0, f"pdftoppm failed: {fr.stderr[:300]}"
 flip_files = [f for f in os.listdir("/build") if f.startswith("flip_page-")]
 assert flip_files, "pdftoppm produced no output"
-fp = open(f"/build/{flip_files[0]}", "rb").read()
+pimg = Image.open(f"/build/{flip_files[0]}").convert("RGB")
+pimg.save("/build/flip_page.jpg", format="JPEG", quality=88, subsampling=0, optimize=True)
+fp = open("/build/flip_page.jpg", "rb").read()
 assert fp[:2] == b"\xff\xd8", "flip page is not a JPEG"
 i = 2
 fw = fh_ = 0
@@ -108,7 +110,7 @@ while i + 9 < len(fp):
         fh_, fw = struct.unpack(">HH", fp[i + 5:i + 9])
         break
     i += 2 + struct.unpack(">H", fp[i + 2:i + 4])[0]
-assert abs(fw - 1384) <= 1 and abs(fh_ - 1398) <= 1, f"flip page {fw}x{fh_}, want ~1384x1398"
+assert abs(fw - 1730) <= 1 and abs(fh_ - 1748) <= 1, f"flip page {fw}x{fh_}, want ~1730x1748"
 print(f"flipbook page: {fw}x{fh_} jpg in {_time.time() - t0:.2f}s")
 
 pdf = open("/build/book.pdf", "rb").read()

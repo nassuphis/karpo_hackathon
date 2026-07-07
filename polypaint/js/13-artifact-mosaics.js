@@ -1048,9 +1048,11 @@ async function _loadArtifactMosaic(kind, opts = {}) {
         _stopMosaicPoll(kind);
         _setMosaicRefreshBusy(kind, false);
         if (statusState === 'ready') {
-            await _loadMosaicManifestForStatus(kind, state.status);
+            // wall first: _loadMosaicManifestForStatus rebuilds internally,
+            // and with state.wall already loaded that first rebuild opens the
+            // pyramid directly — no burst of per-tile grid requests first
             await _maybeLoadMosaicWall(kind);
-            _rebuildArtifactMosaic(kind);
+            await _loadMosaicManifestForStatus(kind, state.status);
             _scheduleMosaicWallPoll(kind);
             _logMosaicWallState(kind);
             const wallBuilding = String((state.status || {}).wall_state || '') === 'computing';

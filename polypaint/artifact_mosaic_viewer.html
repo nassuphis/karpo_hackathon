@@ -153,10 +153,29 @@ async function main() {
     const total = Number(manifest.count || manifest.tiles.length || 0);
     meta.innerHTML = `<code>${tiles.length.toLocaleString()}</code> shown / <code>${total.toLocaleString()}</code> total · size <code>${size}</code> · sort <code>${sort}</code>`;
   }
-  setStatus('Ready');
+  // Composite wall pyramid (deepzoom-speed.md §7.1): every refresh writes
+  // wall.json next to all.json. When this share shows the default view, use
+  // the pyramid — a dozen tiles instead of one request per artifact.
+  let wallSource = null;
+  if (sort === 'date' && size === 'all') {
+    try {
+      const wallUrl = manifestUrl.replace(/all\.json([?#].*)?$/, 'wall.json');
+      if (wallUrl !== manifestUrl) {
+        const wallResp = await fetch(wallUrl + '?ts=' + Date.now());
+        if (wallResp.ok) {
+          const wall = await wallResp.json();
+          if (wall && wall.dzi_key && String(wall.refresh_id || '') === String(manifest.refresh_id || '')) {
+            const base = manifest.base || 'https://polypaint.s3.us-east-1.amazonaws.com/';
+            wallSource = base + encodeURI(String(wall.dzi_key));
+          }
+        }
+      }
+    } catch (e) { /* no wall yet: per-tile grid below */ }
+  }
+  setStatus(wallSource ? 'Ready · wall pyramid' : 'Ready');
   OpenSeadragon({
     element: document.getElementById('viewer'),
-    tileSources: tileSource(manifest, tiles, {size, sort}),
+    tileSources: wallSource || tileSource(manifest, tiles, {size, sort}),
     prefixUrl: 'https://cdnjs.cloudflare.com/ajax/libs/openseadragon/4.1.1/images/',
     showNavigator: true,
     navigatorPosition: 'BOTTOM_RIGHT',

@@ -683,9 +683,11 @@ class TestDeployPackaging(unittest.TestCase):
 
     def test_deploy_verifies_uploaded_frontend_content_matches_local(self):
         self.assertIn('verify_frontend_assets() {', DEPLOY_TEXT)
-        self.assertIn('curl -s -o /dev/null -w "%{http_code}" "${SITE_URL}/${DEPLOYED_KEY}"', DEPLOY_TEXT)
+        # both verify curls retry transient S3 5xx (seen live: uploads all
+        # succeeded, then the verify re-download hit a sporadic 500)
+        self.assertIn('curl -s --retry 4 --retry-delay 2 -o /dev/null -w "%{http_code}" "${SITE_URL}/${DEPLOYED_KEY}"', DEPLOY_TEXT)
         self.assertIn('mkdir -p "$(dirname "${TMP_DIR}/${asset}")"', DEPLOY_TEXT)
-        self.assertIn('curl -fsS "${SITE_URL}/${DEPLOYED_KEY}" -o "${TMP_DIR}/${asset}"', DEPLOY_TEXT)
+        self.assertIn('curl -fsS --retry 4 --retry-delay 2 "${SITE_URL}/${DEPLOYED_KEY}" -o "${TMP_DIR}/${asset}"', DEPLOY_TEXT)
         self.assertIn('LOCAL_HASH=$(shasum -a 256 "$LOCAL_SRC" | cut -d\' \' -f1)', DEPLOY_TEXT)
         self.assertIn('LOCAL_SRC=$(stamped_index_html)', DEPLOY_TEXT)
         self.assertIn('upload_frontend_assets', DEPLOY_TEXT)

@@ -552,11 +552,11 @@ function _logMosaicWallState(kind) {
     }
 }
 
-function _setMosaicSaveBusy(kind, busy) {
+function _setMosaicSaveBusy(kind, busy, label) {
     const btn = document.getElementById(`btn-${_mosaicConfig(kind).tabName}-save`);
     if (!btn) return;
     btn.disabled = !!busy;
-    btn.textContent = busy ? 'Opening…' : 'Save Wall';
+    btn.textContent = busy ? (label || 'Downloading…') : 'Save Wall';
 }
 
 function _mosaicSaveWall(kind) {
@@ -574,11 +574,27 @@ function _mosaicSaveWall(kind) {
         }
         return;
     }
-    _setMosaicSaveBusy(kind, true);
+    const cfg = _mosaicConfig(kind);
     const px = `${Number(wall.width) || 0}x${Number(wall.height) || 0}`;
-    _logMosaic(kind, `${_mosaicConfig(kind).label} wall composite download started (${px} jpg)`, 'ok', `wall-save|${rid}`);
-    window.open(_mosaicPublicUrl(kind, key), '_blank');
-    setTimeout(() => _setMosaicSaveBusy(kind, false), 2000);
+    const filename = `${cfg.tabName}-wall-${rid}.jpg`;
+    _setMosaicSaveBusy(kind, true);
+    _logMosaic(kind, `${cfg.label} wall composite downloading (${px} jpg)…`, '', `wall-save|${rid}`);
+    (async () => {
+        try {
+            // same-origin fetch (app + artifacts share the bucket) -> blob ->
+            // anchor download: the browser save flow, like artifact saves
+            const resp = await fetch(_mosaicPublicUrl(kind, key));
+            if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+            const blob = await resp.blob();
+            _downloadBlob(blob, filename);
+            _logMosaic(kind, `${cfg.label} wall composite saved: ${filename} (${(blob.size / 1e6).toFixed(1)} MB)`, 'ok', `wall-saved|${rid}`);
+        } catch (e) {
+            _logMosaic(kind, `${cfg.label} wall save failed: ${e.message}`, 'err', `wall-save-err|${rid}|${e.message}`);
+            _setMosaicStatus(kind, `Wall save failed: ${e.message}`, 'error');
+        } finally {
+            _setMosaicSaveBusy(kind, false);
+        }
+    })();
 }
 
 function saveAllColWall() { _mosaicSaveWall('color'); }

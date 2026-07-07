@@ -18,6 +18,7 @@ import time
 import zlib
 
 import boto3
+from botocore.config import Config
 
 from shared import BUCKET, CACHE_IMMUTABLE, imgpipe_env, ok_response
 
@@ -27,7 +28,9 @@ MOSAIC_STATUS_PK = "__allrenders_mosaic__"
 STATUS_TASK_BY_KIND = {"color": "color_mosaic_status", "palette": "palette_mosaic_status"}
 CELL_PX = 512
 
-s3 = boto3.client("s3")
+# pool sized to the download/upload thread counts (default 10 floods the log
+# with discarded-connection warnings and throttles throughput)
+s3 = boto3.client("s3", config=Config(max_pool_connections=64))
 
 
 def _placeholder_png(px=CELL_PX, rgb=(0x12, 0x18, 0x29)):

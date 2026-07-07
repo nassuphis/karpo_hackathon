@@ -513,6 +513,21 @@ async function _maybeLoadMosaicWall(kind) {
     }
 }
 
+function _logMosaicWallState(kind) {
+    const state = _mosaicState(kind);
+    const cfg = _mosaicConfig(kind);
+    const status = state.status || {};
+    const ws = String(status.wall_state || '');
+    const rid = String(status.wall_refresh_id || '');
+    if (ws === 'computing') {
+        _logMosaic(kind, `${cfg.label} wall pyramid: building…`, '', `wall-computing|${rid}`);
+    } else if (ws === 'ready') {
+        _logMosaic(kind, `${cfg.label} wall pyramid ready (zoomed-out loads are now a handful of tiles)`, 'ok', `wall-ready|${rid}`);
+    } else if (ws === 'error') {
+        _logMosaic(kind, `${cfg.label} wall pyramid failed: ${status.wall_error || 'unknown'} · using per-tile grid`, 'err', `wall-error|${rid}`);
+    }
+}
+
 function _stopMosaicWallPoll(kind) {
     const state = _mosaicState(kind);
     if (state.wallPollTimer) {
@@ -531,8 +546,14 @@ function _scheduleMosaicWallPoll(kind, attempt = 0) {
         try {
             state.status = (await _fetchMosaicStatus(kind)) || state.status;
             await _maybeLoadMosaicWall(kind);
-            if (String((state.status || {}).wall_state || '') === 'ready') {
+            const ws = String((state.status || {}).wall_state || '');
+            if (ws === 'ready') {
                 _rebuildArtifactMosaic(kind);
+                _logMosaicWallState(kind);
+                return;
+            }
+            if (ws === 'error') {
+                _logMosaicWallState(kind);
                 return;
             }
         } catch (e) { /* transient status fetch failure: keep polling */ }
@@ -956,6 +977,7 @@ async function _loadArtifactMosaic(kind, opts = {}) {
             await _maybeLoadMosaicWall(kind);
             _rebuildArtifactMosaic(kind);
             _scheduleMosaicWallPoll(kind);
+            _logMosaicWallState(kind);
             _setMosaicStatus(kind, `Ready · ${Number(state.status.count || 0).toLocaleString()} tiles`, 'ok');
             _logMosaic(
                 kind,

@@ -1312,8 +1312,8 @@ mkdir -p "$DZ_EXPORT_DIR"
 cp lambda/handler_deepzoom_export.py lambda/handler_wall_pyramid.py lambda/shared.py lambda/raw_sidecar.py \
    lambda/color_render_contract.py lambda/color_artifact_meta.py lambda/solve_score_chain.py \
    lambda/deepzoom_viewer_template.html "$DZ_EXPORT_DIR/"
-cp lambda/dz_export "$DZ_EXPORT_DIR/"
-chmod +x "$DZ_EXPORT_DIR"/dz_export
+cp lambda/dz_export lambda/wall_dz "$DZ_EXPORT_DIR/"
+chmod +x "$DZ_EXPORT_DIR"/dz_export "$DZ_EXPORT_DIR"/wall_dz
 cd "$DZ_EXPORT_DIR" && zip -FS -r9 /tmp/polypaint-deepzoom-export.zip . -q && cd "$SCRIPT_DIR"
 echo "  DzExp:   $(du -h /tmp/polypaint-deepzoom-export.zip | cut -f1)  (dz_export + libvips layer)"
 
@@ -1324,8 +1324,8 @@ mkdir -p "$DZ_FROM_RAW_DIR"
 cp lambda/handler_deepzoom_from_raw.py lambda/handler_deepzoom_export.py lambda/handler_wall_pyramid.py lambda/shared.py lambda/raw_sidecar.py \
    lambda/color_render_contract.py lambda/color_artifact_meta.py lambda/solve_score_chain.py \
    lambda/deepzoom_viewer_template.html "$DZ_FROM_RAW_DIR/"
-cp lambda/dz_export "$DZ_FROM_RAW_DIR/"
-chmod +x "$DZ_FROM_RAW_DIR"/dz_export
+cp lambda/dz_export lambda/wall_dz "$DZ_FROM_RAW_DIR/"
+chmod +x "$DZ_FROM_RAW_DIR"/dz_export "$DZ_FROM_RAW_DIR"/wall_dz
 cd "$DZ_FROM_RAW_DIR" && zip -FS -r9 /tmp/polypaint-deepzoom-from-raw.zip . -q && cd "$SCRIPT_DIR"
 echo "  DzRaw:   $(du -h /tmp/polypaint-deepzoom-from-raw.zip | cut -f1)  (raw-sidecar-only deepzoom)"
 
@@ -1893,7 +1893,7 @@ if [ "$ACTION" = "create" ]; then
         \"Version\": \"2012-10-17\",
         \"Statement\": [{
             \"Effect\": \"Allow\",
-            \"Action\": [\"dynamodb:PutItem\", \"dynamodb:GetItem\", \"dynamodb:DeleteItem\", \"dynamodb:Query\", \"dynamodb:BatchWriteItem\"],
+            \"Action\": [\"dynamodb:PutItem\", \"dynamodb:GetItem\", \"dynamodb:UpdateItem\", \"dynamodb:DeleteItem\", \"dynamodb:Query\", \"dynamodb:BatchWriteItem\"],
             \"Resource\": \"arn:aws:dynamodb:${REGION}:${ACCT}:table/${JOBS_TABLE}\"
         }]
     }"
@@ -2021,7 +2021,7 @@ elif [ "$ACTION" = "update" ]; then
             \"Version\": \"2012-10-17\",
             \"Statement\": [{
                 \"Effect\": \"Allow\",
-                \"Action\": [\"dynamodb:PutItem\", \"dynamodb:GetItem\", \"dynamodb:DeleteItem\", \"dynamodb:Query\", \"dynamodb:BatchWriteItem\"],
+                \"Action\": [\"dynamodb:PutItem\", \"dynamodb:GetItem\", \"dynamodb:UpdateItem\", \"dynamodb:DeleteItem\", \"dynamodb:Query\", \"dynamodb:BatchWriteItem\"],
                 \"Resource\": \"arn:aws:dynamodb:${REGION}:${ACCT}:table/${JOBS_TABLE}\"
             }]
         }" 2>/dev/null || true

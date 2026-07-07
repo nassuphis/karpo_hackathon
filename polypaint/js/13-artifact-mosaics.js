@@ -54,6 +54,8 @@ function _newArtifactMosaicState() {
         activeTileSource: null,
         wall: null,
         wallPollTimer: null,
+        railRefreshId: '',
+        railStartedAt: 0,
         lastLogSignature: '',
         contextMenuBound: false,
         sharing: false,
@@ -513,6 +515,28 @@ async function _maybeLoadMosaicWall(kind) {
     }
 }
 
+function _mosaicRailUpsert(kind, state, detail) {
+    if (typeof _jobsRailUpsert !== 'function') return;
+    const st = _mosaicState(kind);
+    const rid = String(((st.status || {}).refresh_id) || '');
+    if (!rid) return;
+    if (st.railRefreshId !== rid) {
+        st.railRefreshId = rid;
+        st.railStartedAt = Date.now();
+    }
+    const cfg = _mosaicConfig(kind);
+    _jobsRailUpsert({
+        id: `mosaic:${kind}:${rid}`,
+        kind: 'mosaic',
+        label: `${cfg.label} refresh`,
+        jobId: rid,
+        tab: cfg.tabName,
+        state,
+        startedAt: st.railStartedAt || Date.now(),
+        detail: String(detail || ''),
+    });
+}
+
 function _logMosaicWallState(kind) {
     const state = _mosaicState(kind);
     const cfg = _mosaicConfig(kind);
@@ -582,10 +606,12 @@ function _scheduleMosaicWallPoll(kind, attempt = 0) {
             if (ws === 'ready') {
                 _rebuildArtifactMosaic(kind);
                 _logMosaicWallState(kind);
+                _mosaicRailUpsert(kind, 'done', `${Number((state.status || {}).count || 0).toLocaleString()} tiles · wall ready`);
                 return;
             }
             if (ws === 'error') {
                 _logMosaicWallState(kind);
+                _mosaicRailUpsert(kind, 'failed', `wall pyramid failed: ${(state.status || {}).wall_error || 'unknown'} · grid fallback`);
                 return;
             }
         } catch (e) { /* transient status fetch failure: keep polling */ }
@@ -998,6 +1024,7 @@ async function _loadArtifactMosaic(kind, opts = {}) {
         if (statusState === 'computing') {
             _setMosaicStatus(kind, _mosaicProgressText(kind, state.status), '');
             _logMosaicProgress(kind, state.status);
+            _mosaicRailUpsert(kind, 'running', _mosaicProgressText(kind, state.status));
             _setMosaicRefreshBusy(kind, true);
             _scheduleMosaicPoll(kind);
             return;
@@ -1010,6 +1037,13 @@ async function _loadArtifactMosaic(kind, opts = {}) {
             _rebuildArtifactMosaic(kind);
             _scheduleMosaicWallPoll(kind);
             _logMosaicWallState(kind);
+            const wallBuilding = String((state.status || {}).wall_state || '') === 'computing';
+            _mosaicRailUpsert(
+                kind,
+                wallBuilding ? 'running' : 'done',
+                wallBuilding
+                    ? `${Number(state.status.count || 0).toLocaleString()} tiles · wall pyramid building…`
+                    : `${Number(state.status.count || 0).toLocaleString()} tiles`);
             _setMosaicStatus(kind, `Ready · ${Number(state.status.count || 0).toLocaleString()} tiles`, 'ok');
             _logMosaic(
                 kind,
@@ -1028,6 +1062,7 @@ async function _loadArtifactMosaic(kind, opts = {}) {
                     refresh_id: _mosaicRefreshIdFromManifestKey(state.status.last_ready_manifest_key) || 'last-ready',
                 });
             }
+            _mosaicRailUpsert(kind, 'failed', String(state.status.error || 'unknown error'));
             _setMosaicStatus(kind, `Refresh failed: ${state.status.error || 'unknown error'}`, 'error');
             _logMosaic(kind, `${cfg.label} refresh failed: ${state.status.error || 'unknown error'}`, 'err', `error|${state.status.refresh_id || ''}|${state.status.error || ''}`);
             return;

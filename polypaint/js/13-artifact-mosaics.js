@@ -831,7 +831,7 @@ function _renderMosaicContextMenu() {
             ${_mosaicContextButton('Go Compute', 'go-compute', ctx.busy)}
             ${_mosaicContextButton('Go Result', 'go-result', ctx.busy)}
             ${_mosaicContextButton(favoriteDisabled ? 'Favorite (Color only)' : 'Favorite', 'favorite', ctx.busy || favoriteDisabled)}
-            ${_mosaicContextButton(favoriteDisabled ? 'Add to Book (Color only)' : 'Add to Book', 'add-book', ctx.busy || favoriteDisabled)}
+            ${_mosaicContextButton(kind === 'palette' ? 'Add Source to Book' : 'Add to Book', 'add-book', ctx.busy)}
             ${_mosaicContextButton('Download', 'download', ctx.busy)}
             ${_mosaicContextButton('Copy Link', 'copy-link', ctx.busy)}
             ${_mosaicContextButton('Copy Job ID', 'copy-job', ctx.busy)}
@@ -974,15 +974,31 @@ async function _runMosaicContextAction(action) {
             ctx.message = result && result.already ? 'Already in favorites' : 'Favorited';
             _logMosaic(kind, `${cfg.label}: ${ctx.message} ${artifactId}`, 'ok', `favorite|${tile.job_id}|${artifactId}|${ctx.message}`);
         } else if (action === 'add-book') {
-            if (kind !== 'color') throw new Error('Books currently support Color artifacts only');
-            const ok = await _bookAddEntry({
-                jobId: tile.job_id,
-                artifactId,
-                displayName: tile.display_name || artifactId,
-                imageKey: tile.image_key || '',
-            }, (msg, err) => { if (err) ctx.error = msg; else ctx.message = msg; });
-            _logMosaic(kind, `${cfg.label}: ${(ok ? ctx.message : ctx.error) || 'Add to Book'} ${artifactId}`,
-                       ok ? 'ok' : 'err', `add-book|${tile.job_id}|${artifactId}`);
+            let ref;
+            if (kind === 'palette') {
+                // books hold COLOR artifacts: a derived palette maps to its
+                // source via the pal_{color_artifact_id} naming; standalone
+                // palettes have no source and cannot join a book
+                const pid = String(tile.palette_id || artifactId || '');
+                const sourceId = pid.startsWith('pal_') ? pid.slice(4) : '';
+                if (!sourceId) throw new Error('This palette has no source color artifact');
+                const summary = await lambdaPost('storage', { job_id: tile.job_id }, '/render-summary');
+                const match = (((summary || {}).families || {}).color || []).find(r => r.artifact_id === sourceId);
+                if (!match) throw new Error(`Source color artifact ${sourceId} not found in ${tile.job_id}`);
+                if (!match.image_key) throw new Error(`Source color artifact ${sourceId} has no image`);
+                ref = { jobId: tile.job_id, artifactId: sourceId, displayName: sourceId, imageKey: match.image_key };
+            } else {
+                if (kind !== 'color') throw new Error('Books currently support Color artifacts only');
+                ref = {
+                    jobId: tile.job_id,
+                    artifactId,
+                    displayName: tile.display_name || artifactId,
+                    imageKey: tile.image_key || '',
+                };
+            }
+            const ok = await _bookAddEntry(ref, (msg, err) => { if (err) ctx.error = msg; else ctx.message = msg; });
+            _logMosaic(kind, `${cfg.label}: ${(ok ? ctx.message : ctx.error) || 'Add to Book'} ${ref.artifactId}`,
+                       ok ? 'ok' : 'err', `add-book|${tile.job_id}|${ref.artifactId}`);
         } else if (action === 'download') {
             const key = tile.image_key || tile.key || '';
             await _downloadStorageObject({ key, filename: _mosaicDownloadFilename(kind, tile), fallbackUrl: key ? '' : _mosaicPublicUrl(kind, tile.key) });

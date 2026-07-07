@@ -2396,6 +2396,7 @@ const els = {
   let statusFetchFails = false;
   let lastPixelPoint = null;
   let favoriteRef = null;
+  let bookAddRef = null;
   let downloadArgs = null;
   let detailJob = '';
   let populatedJob = '';
@@ -2456,6 +2457,7 @@ const els = {
 	  _getResultDetail: async (jobId) => { detailJob = jobId; return {calc: {N: 10}}; },
 	  _populateComputeFromDetail: (jobId) => { populatedJob = jobId; },
 	  _addColorFavorite: async (ref) => { favoriteRef = ref; return {already: false}; },
+	  _bookAddEntry: async (ref) => { bookAddRef = ref; return true; },
 	  _downloadStorageObject: async (args) => { downloadArgs = args; },
 	  log: (msg, cls, target) => { logs.push({msg, cls, target}); },
 	  open: (url, target) => { shareOpened.push({url, target}); return {opener: {}}; },
@@ -2470,6 +2472,7 @@ const els = {
 	          + (payload.cols ? '&cols=' + String(payload.cols) : ''),
 	      };
 	    }
+	    if (pathName === '/render-summary') return {families: {color: [{artifact_id: 'a', image_key: 'renders/j/color/a/image.jpeg'}]}};
 	    if (pathName !== '/list-color-mosaic' && pathName !== '/list-palette-mosaic') throw new Error('unexpected path ' + pathName);
 	    if (!(payload && payload.refresh) && statusFetchFails) throw new Error('network blip');
 	    if (payload && payload.refresh) return {
@@ -2617,6 +2620,20 @@ for (const script of scripts) vm.runInContext(fs.readFileSync(path.join(root, sc
 	  assert(els['artifact-mosaic-context-menu'].innerHTML.includes('Favorite (Color only)') &&
 	    els['artifact-mosaic-context-menu'].innerHTML.includes('disabled'),
 	    'palette context menu should disable Favorite');
+	  assert(els['artifact-mosaic-context-menu'].innerHTML.includes('data-mosaic-action="add-book">Add Source to Book'),
+	    'palette context menu should offer an ENABLED Add Source to Book');
+	  const palA = ctx._mosaicState('palette').tiles.find(t => t.palette_id === 'pal_a')
+	    || {job_id: 'j', artifact_id: 'pal_a', palette_id: 'pal_a', key: 'renders/j/palettes/pal_a/preview.png'};
+	  ctx._openMosaicContextMenu('palette', palA, {clientX: 15, clientY: 25});
+	  await ctx._runMosaicContextAction('add-book');
+	  assert(bookAddRef && bookAddRef.jobId === 'j' && bookAddRef.artifactId === 'a'
+	    && bookAddRef.imageKey === 'renders/j/color/a/image.jpeg',
+	    'palette Add Source to Book should resolve pal_a to color artifact a');
+	  bookAddRef = null;
+	  ctx._openMosaicContextMenu('palette', {job_id: 'j', artifact_id: 'solo', palette_id: 'solo', key: 'k'}, {clientX: 15, clientY: 25});
+	  await ctx._runMosaicContextAction('add-book');
+	  assert(bookAddRef === null && els['artifact-mosaic-context-menu'].innerHTML.includes('no source color artifact'),
+	    'standalone palettes must refuse Add Source to Book with a clear error');
 	  imagePoint = {x: 99999, y: 99999};
 	  ctx._artifactMosaicContextMenuEvent('color', {position: {x: 0, y: 0}, originalEvent: {preventDefault() {}, stopPropagation() {}}});
 	  assert(els['artifact-mosaic-context-menu'].style.display === 'none', 'blank right-click should close stale menu');

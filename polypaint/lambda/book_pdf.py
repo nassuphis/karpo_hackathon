@@ -207,51 +207,43 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages):
     ranges = [(first, min(first + per - 1, content_pages))
               for first in range(1, content_pages + 1, per)]
 
-    def render_range(rng):
-        first, last = rng
-        run = subprocess.run(
-            ["pdftoppm", "-png", "-r", str(FLIP_DPI),
-             "-f", str(first), "-l", str(last),
-             pdf_path, os.path.join(flip_dir, "page")],
-            capture_output=True, text=True, timeout=600)
-        if run.returncode != 0:
-            raise RuntimeError(
-                f"pdftoppm pages {first}-{last} failed: {run.stderr.strip()[:300]}")
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=FLIP_WORKERS) as pool:
-        list(pool.map(render_range, ranges))
-
-    # pdftoppm zero-pads to the digits of each invocation's -l value, so
-    # parallel ranges can mix widths (page-27.png vs page-105.png): parse
-    # the page number, never trust lexical order.
-    numbered = []
-    for fname in os.listdir(flip_dir):
-        m = re.fullmatch(r"page-(\d+)\.png", fname)
-        if not m:
-            raise RuntimeError(f"unexpected pdftoppm output: {fname}")
-        numbered.append((int(m.group(1)), fname))
-    numbered.sort()
-    if [n for n, _ in numbered] != list(range(1, content_pages + 1)):
-        raise RuntimeError(
-            f"pdftoppm produced pages {[n for n, _ in numbered][:5]}… "
-            f"expected 1..{content_pages}")
-
     from PIL import Image
 
-    def convert_page(item):
-        number, fname = item
-        canonical = "p%04d.jpg" % number
-        src = os.path.join(flip_dir, fname)
-        img = Image.open(src)
-        if img.mode != "RGB":
-            img = img.convert("RGB")
-        img.save(os.path.join(flip_dir, canonical), format="JPEG",
-                 quality=FLIP_QUALITY, subsampling=0, optimize=True)
-        os.remove(src)
-        return canonical
+    def render_and_convert(rng):
+        """Render->convert->delete one page at a time: at 200dpi a noisy-art
+        PNG intermediate runs ~10MB, and letting all of them coexist (as a
+        whole-range render would) can blow the 2048MB /tmp on a large book.
+        Peak residency this way = FLIP_WORKERS pages. Single-page pdftoppm
+        invocations also make the output name deterministic (padding always
+        equals the page number's own width)."""
+        first, last = rng
+        done = []
+        for number in range(first, last + 1):
+            run = subprocess.run(
+                ["pdftoppm", "-png", "-r", str(FLIP_DPI),
+                 "-f", str(number), "-l", str(number),
+                 pdf_path, os.path.join(flip_dir, "page")],
+                capture_output=True, text=True, timeout=120)
+            if run.returncode != 0:
+                raise RuntimeError(
+                    f"pdftoppm page {number} failed: {run.stderr.strip()[:300]}")
+            src = os.path.join(flip_dir, f"page-{number}.png")
+            if not os.path.exists(src):
+                raise RuntimeError(f"pdftoppm page {number}: output missing")
+            canonical = "p%04d.jpg" % number
+            img = Image.open(src)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            img.save(os.path.join(flip_dir, canonical), format="JPEG",
+                     quality=FLIP_QUALITY, subsampling=0, optimize=True)
+            os.remove(src)
+            done.append(canonical)
+        return done
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=FLIP_WORKERS) as pool:
-        pages = list(pool.map(convert_page, numbered))
+        pages = [name for chunk in pool.map(render_and_convert, ranges) for name in chunk]
+    if len(pages) != content_pages:
+        raise RuntimeError(f"rendered {len(pages)} pages, expected {content_pages}")
     width_px, height_px = _jpeg_dimensions(os.path.join(flip_dir, pages[0]))
 
     def upload_page(name):

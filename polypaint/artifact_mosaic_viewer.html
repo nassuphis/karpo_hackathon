@@ -62,6 +62,12 @@ function setStatus(text, cls = '') {
   el.className = cls;
 }
 
+function esc(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 function publicUrl(manifest, key) {
   const base = (manifest && manifest.base) || 'https://polypaint.s3.us-east-1.amazonaws.com/';
   return base + encodeURI(String(key || ''));
@@ -170,7 +176,8 @@ async function main() {
   const meta = document.getElementById('meta');
   if (meta) {
     const total = Number(manifest.count || manifest.tiles.length || 0);
-    meta.innerHTML = `<code>${tiles.length.toLocaleString()}</code> shown / <code>${total.toLocaleString()}</code> total · size <code>${size}</code> · sort <code>${sort}</code>`;
+    // size/sort are attacker-controlled query params: escape (reflected XSS)
+    meta.innerHTML = `<code>${tiles.length.toLocaleString()}</code> shown / <code>${total.toLocaleString()}</code> total · size <code>${esc(size)}</code> · sort <code>${esc(sort)}</code>`;
   }
   // Composite wall pyramid (deepzoom-speed.md §7.1): derived from the
   // manifest's refresh_id at the CANONICAL _index path — share links point
@@ -246,6 +253,7 @@ function wireContextMenu(viewer, view, manifest, kind) {
   const dlBtn = document.getElementById('ctx-download');
   let current = null;
   let headSeq = 0;
+  let downloading = false;
 
   function hide() { ctx.style.display = 'none'; current = null; }
 
@@ -263,7 +271,7 @@ function wireContextMenu(viewer, view, manifest, kind) {
     idEl.textContent = aid;
     rowsEl.innerHTML = rows
       .filter(([, v]) => v !== undefined && v !== null && String(v) !== '')
-      .map(([k, v]) => `<tr><td>${k}</td><td id="ctx-${k === 'image' ? 'imginfo' : 'x' + k}">${String(v)}</td></tr>`)
+      .map(([k, v]) => `<tr><td>${esc(k)}</td><td id="ctx-${k === 'image' ? 'imginfo' : 'x' + k}">${esc(v)}</td></tr>`)
       .join('');
   }
 
@@ -287,8 +295,8 @@ function wireContextMenu(viewer, view, manifest, kind) {
   function show(tile, clientX, clientY) {
     current = tile;
     errEl.style.display = 'none';
-    dlBtn.disabled = !tile.image_key;
-    dlBtn.textContent = 'Download image';
+    dlBtn.disabled = downloading || !tile.image_key;
+    if (!downloading) dlBtn.textContent = 'Download image';
     detailRows(tile);
     ctx.style.display = 'block';
     const rect = ctx.getBoundingClientRect();
@@ -299,7 +307,8 @@ function wireContextMenu(viewer, view, manifest, kind) {
 
   async function download() {
     const tile = current;
-    if (!tile || !tile.image_key) return;
+    if (downloading || !tile || !tile.image_key) return;
+    downloading = true;
     const aid = String(tile.palette_id || tile.artifact_id || 'image');
     const ext = (String(tile.image_key).split('.').pop() || 'jpeg').toLowerCase();
     dlBtn.disabled = true;
@@ -330,12 +339,17 @@ function wireContextMenu(viewer, view, manifest, kind) {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       dlBtn.textContent = `Saved ${fmtMB(got) || 'file'}`;
-      setTimeout(() => { dlBtn.textContent = 'Download image'; dlBtn.disabled = false; }, 1600);
+      setTimeout(() => {
+        downloading = false;
+        dlBtn.textContent = 'Download image';
+        dlBtn.disabled = !(current && current.image_key);
+      }, 1600);
     } catch (e) {
       errEl.textContent = `Download failed: ${e.message}`;
       errEl.style.display = 'block';
+      downloading = false;
       dlBtn.textContent = 'Download image';
-      dlBtn.disabled = false;
+      dlBtn.disabled = !(current && current.image_key);
     }
   }
 

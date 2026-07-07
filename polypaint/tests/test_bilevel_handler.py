@@ -420,8 +420,8 @@ class TestBilevelHandler(unittest.TestCase):
                 )
             raise AssertionError(f"unexpected executable {exe}")
 
-        def upload_side_effect(path, key, *, content_type, metadata=None):
-            uploaded.append((path, key, content_type, dict(metadata or {})))
+        def upload_side_effect(path, key, *, content_type, metadata=None, cache_control=None):
+            uploaded.append((path, key, content_type, dict(metadata or {}), cache_control))
 
         mock_run.side_effect = run_side_effect
         mock_upload.side_effect = upload_side_effect
@@ -462,6 +462,8 @@ class TestBilevelHandler(unittest.TestCase):
         self.assertEqual(uploaded[0][3]["render_execution"], '{"raster_section_mode":"logical_sections_auto"}')
         self.assertEqual(uploaded[1][1], "renders/job/bilevel/art/preview.png")
         self.assertEqual(uploaded[1][2], "image/png")
+        self.assertEqual(uploaded[1][4], "public, max-age=31536000, immutable")
+        self.assertIsNone(uploaded[0][4])
         self.assertEqual(fake_finalize_s3.last[0], "get_object")
         self.assertEqual(fake_finalize_s3.last[1]["Key"], "renders/job/bilevel_section_0001.frag")
         self.assertEqual(fake_finalize_s3.last[2], mod.FRAGMENT_URL_EXPIRES_S)
@@ -544,8 +546,8 @@ class TestBilevelHandler(unittest.TestCase):
                 return MagicMock(returncode=0, stdout=json.dumps({"file_size": 9}), stderr="")
             raise AssertionError(f"unexpected executable {exe}")
 
-        def upload_side_effect(path, key, *, content_type, metadata=None):
-            uploaded.append((path, key, content_type, dict(metadata or {})))
+        def upload_side_effect(path, key, *, content_type, metadata=None, cache_control=None):
+            uploaded.append((path, key, content_type, dict(metadata or {}), cache_control))
 
         mock_run.side_effect = run_side_effect
         mock_upload.side_effect = upload_side_effect
@@ -691,8 +693,8 @@ class TestBilevelHandler(unittest.TestCase):
             time.sleep(0.02)
             return MagicMock(returncode=0, stdout=json.dumps({"file_size": 9}), stderr="")
 
-        def upload_side_effect(path, key, *, content_type, metadata=None):
-            uploads.append((key, content_type, dict(metadata or {})))
+        def upload_side_effect(path, key, *, content_type, metadata=None, cache_control=None):
+            uploads.append((key, content_type, dict(metadata or {}), cache_control))
 
         mock_download.side_effect = download_side_effect
         mock_run.side_effect = run_side_effect

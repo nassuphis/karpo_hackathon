@@ -26,7 +26,7 @@ from color_artifact_meta import load_color_artifact_head
 from logical_sections import build_source_spans, resolve_solve_source_manifest, stitch_spans_to_file
 from raw_sidecar import validate_raw_sidecar
 from root_pipeline_programs import root_program_for_run
-from shared import BILEVEL_SPARSE_PIPELINE, BUCKET, imgpipe_env, ok_response, parse_body, report_status
+from shared import BILEVEL_SPARSE_PIPELINE, BUCKET, CACHE_IMMUTABLE, imgpipe_env, ok_response, parse_body, report_status
 
 s3 = boto3.client("s3")
 BILEVEL_SECTION_RASTER = os.path.join(os.path.dirname(__file__), "bilevel_section_raster")
@@ -212,7 +212,8 @@ def _load_json_key(key):
     return data
 
 
-def _upload_file(path, key, *, content_type, metadata=None):
+def _upload_file(path, key, *, content_type, metadata=None, cache_control=None):
+    extra = {"CacheControl": cache_control} if cache_control else {}
     with open(path, "rb") as fh:
         s3.put_object(
             Bucket=BUCKET,
@@ -220,6 +221,7 @@ def _upload_file(path, key, *, content_type, metadata=None):
             Body=fh,
             ContentType=content_type,
             Metadata={str(k): str(v) for k, v in (metadata or {}).items() if v not in ("", None)},
+            **extra,
         )
 
 
@@ -787,7 +789,7 @@ def handle_finalize(params):
         )
 
         _upload_file(_TMP_FINAL_TIF, out_key, content_type="image/tiff", metadata=upload_meta)
-        _upload_file(_TMP_FINAL_PREVIEW, preview_key, content_type="image/png")
+        _upload_file(_TMP_FINAL_PREVIEW, preview_key, content_type="image/png", cache_control=CACHE_IMMUTABLE)
         upload_ms = int((time.time() - t_upload) * 1000)
 
         _phase(
@@ -998,7 +1000,7 @@ def handle_from_raw_color(params):
         )
         t_upload = time.time()
         _upload_file(_TMP_FINAL_TIF, image_key, content_type="image/tiff", metadata=out_meta)
-        _upload_file(_TMP_FINAL_PREVIEW, preview_key, content_type="image/png")
+        _upload_file(_TMP_FINAL_PREVIEW, preview_key, content_type="image/png", cache_control=CACHE_IMMUTABLE)
         upload_ms = int((time.time() - t_upload) * 1000)
 
         report_status(

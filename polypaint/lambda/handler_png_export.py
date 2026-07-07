@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 import boto3
 
-from shared import BUCKET, parse_body, ok_response, report_status, imgpipe_env
+from shared import BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status, imgpipe_env, png_dimensions_from_path
 
 s3 = boto3.client("s3")
 PNG_EXPORT = os.path.join(os.path.dirname(__file__), "png_export")
@@ -149,6 +149,13 @@ def handler(event, context):
             )
 
         if artifact_id:
+            preview_width, preview_height = png_dimensions_from_path(preview_path)
+            preview_meta = {
+                "width": str(preview_width),
+                "height": str(preview_height),
+            }
+            if preview_width == preview_height:
+                preview_meta["pix"] = str(preview_width)
             with open(preview_path, "rb") as pfh:
                 s3.upload_fileobj(
                     pfh,
@@ -156,11 +163,8 @@ def handler(event, context):
                     preview_key,
                     ExtraArgs={
                         "ContentType": "image/png",
-                        "Metadata": {
-                            "pix": str(width),
-                            "width": str(width),
-                            "height": str(height),
-                        },
+                        "Metadata": preview_meta,
+                        "CacheControl": CACHE_IMMUTABLE,
                     },
                 )
 

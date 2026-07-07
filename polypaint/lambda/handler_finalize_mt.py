@@ -22,7 +22,7 @@ from color_artifact_meta import split_color_artifact_metadata, write_color_artif
 from color_render_contract import normalize_color_interpretation, validate_color_output_contract
 from raw_score_render import render_score_raw, write_equalization_lut
 from raw_sidecar import background_color_hex, build_raw_sidecar
-from shared import BUCKET, imgpipe_env, ok_response, parse_body, parse_boolish, report_status
+from shared import BUCKET, CACHE_IMMUTABLE, imgpipe_env, ok_response, parse_body, parse_boolish, report_status
 from solve_score_chain import (
     SOLVE_SCORE_LEGACY_SPEC_VERSION,
     SOLVE_SCORE_SPEC_VERSION,
@@ -517,6 +517,7 @@ def _finalize_associated_palette(
             Key=preview_key,
             Body=preview_fh,
             ContentType="image/png",
+            CacheControl=CACHE_IMMUTABLE,
         )
 
     meta_body = {
@@ -908,6 +909,7 @@ def handler(event, context):
                 Key=preview_key,
                 Body=preview_fh,
                 ContentType="image/png",
+                CacheControl=CACHE_IMMUTABLE,
             )
     artifact_id = str(final_metadata.get("artifact_id") or "").strip()
     if artifact_id:

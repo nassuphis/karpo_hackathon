@@ -15,7 +15,7 @@ import time
 import boto3
 
 from palette_names import VALID_PALETTE_NAMES
-from shared import BUCKET, parse_body, ok_response, parse_boolish, report_status, imgpipe_env
+from shared import BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, parse_boolish, report_status, imgpipe_env
 
 s3 = boto3.client("s3")
 PALETTE_RENDER = os.path.join(os.path.dirname(__file__), "palette_bins_render")
@@ -344,7 +344,7 @@ def handler(event, context):
         with open(_TMP_JPEG, "rb") as fh:
             s3.upload_fileobj(fh, BUCKET, image_key, ExtraArgs={"ContentType": "image/jpeg", "Metadata": metadata})
         with open(_TMP_PREVIEW, "rb") as pf:
-            s3.upload_fileobj(pf, BUCKET, preview_key, ExtraArgs={"ContentType": "image/png"})
+            s3.upload_fileobj(pf, BUCKET, preview_key, ExtraArgs={"ContentType": "image/png", "CacheControl": CACHE_IMMUTABLE})
 
         meta_body = {
             "job_id": job_id,

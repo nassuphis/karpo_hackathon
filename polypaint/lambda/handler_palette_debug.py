@@ -14,7 +14,7 @@ import boto3
 
 from palette_names import VALID_PALETTE_NAMES
 from root_pipeline_programs import root_program_for_run
-from shared import BUCKET, parse_body, ok_response, imgpipe_env
+from shared import BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, imgpipe_env
 
 s3 = boto3.client("s3")
 BINARY = os.path.join(os.path.dirname(__file__), "solve_palette_debug")
@@ -214,7 +214,7 @@ def handler(event, context):
             raise RuntimeError(f"Preview generation failed: {prev_result.stderr.strip()}")
         with open(tmp_preview, "rb") as pfh:
             s3.upload_fileobj(pfh, BUCKET, preview_key,
-                              ExtraArgs={"ContentType": "image/png"})
+                              ExtraArgs={"ContentType": "image/png", "CacheControl": CACHE_IMMUTABLE})
         try:
             os.remove(tmp_preview)
         except OSError:

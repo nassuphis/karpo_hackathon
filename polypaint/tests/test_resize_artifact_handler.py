@@ -9,6 +9,16 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
 
+def _png_header(width, height):
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + (13).to_bytes(4, "big")
+        + b"IHDR"
+        + int(width).to_bytes(4, "big")
+        + int(height).to_bytes(4, "big")
+    )
+
+
 def _event(**overrides):
     payload = {
         "job_id": "job1",
@@ -141,7 +151,7 @@ class TestResizeArtifactHandler(unittest.TestCase):
             if exe == "vipsthumbnail":
                 out_path = cmd[5].split("[", 1)[0]
                 with open(out_path, "wb") as fh:
-                    fh.write(b"\x89PNGpreview")
+                    fh.write(_png_header(512, 512))
                 return MagicMock(returncode=0, stdout="", stderr="")
             raise AssertionError(f"unexpected subprocess call: {cmd}")
 
@@ -209,11 +219,14 @@ class TestResizeArtifactHandler(unittest.TestCase):
         ):
             self.assertNotIn(raw_key, sidecar)
 
+        # preview metadata must describe the preview itself, not the resized
+        # full image (deepzoom-speed.md §2.5), and previews cache immutably
         preview_extra = uploads[preview_key]["extra"]
         self.assertEqual(preview_extra["ContentType"], "image/png")
-        self.assertEqual(preview_extra["Metadata"]["pix"], "2048")
-        self.assertEqual(preview_extra["Metadata"]["width"], "2048")
-        self.assertEqual(preview_extra["Metadata"]["height"], "2048")
+        self.assertEqual(preview_extra["Metadata"]["pix"], "512")
+        self.assertEqual(preview_extra["Metadata"]["width"], "512")
+        self.assertEqual(preview_extra["Metadata"]["height"], "512")
+        self.assertEqual(preview_extra["CacheControl"], "public, max-age=31536000, immutable")
 
         statuses = [call.args[2] for call in mock_report.call_args_list]
         self.assertIn("started", statuses)
@@ -289,7 +302,7 @@ class TestResizeArtifactHandler(unittest.TestCase):
             if exe == "vipsthumbnail":
                 out_path = cmd[5].split("[", 1)[0]
                 with open(out_path, "wb") as fh:
-                    fh.write(b"\x89PNGpreview")
+                    fh.write(_png_header(512, 512))
                 return MagicMock(returncode=0, stdout="", stderr="")
             raise AssertionError(f"unexpected subprocess call: {cmd}")
 

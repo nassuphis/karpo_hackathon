@@ -145,6 +145,7 @@ class TestFinalizeMTHandler(unittest.TestCase):
                 "data": data,
                 "content_type": kwargs.get("ContentType"),
                 "metadata": kwargs.get("Metadata"),
+                "cache_control": kwargs.get("CacheControl"),
             }
 
         def get_object(Bucket=None, Key=None):
@@ -209,6 +210,11 @@ class TestFinalizeMTHandler(unittest.TestCase):
         self.assertEqual(raw_meta["keys"]["raw_key"], TEST_RAW_KEY)
         self.assertEqual(raw_meta["keys"]["image_key"], TEST_IMAGE_KEY)
         self.assertEqual(raw_meta["keys"]["preview_key"], TEST_PREVIEW_KEY)
+        self.assertEqual(
+            uploads[TEST_PREVIEW_KEY]["cache_control"],
+            "public, max-age=31536000, immutable",
+        )
+        self.assertIsNone(uploads[TEST_IMAGE_KEY]["cache_control"])
         self.assertEqual(raw_meta["keys"]["meta_key"], TEST_META_KEY)
         self.assertEqual(uploads[TEST_IMAGE_KEY]["data"], b"JPEGDATA")
         self.assertEqual(uploads[TEST_IMAGE_KEY]["content_type"], "image/jpeg")
@@ -251,6 +257,7 @@ class TestFinalizeMTHandler(unittest.TestCase):
                 "data": data,
                 "content_type": kwargs.get("ContentType"),
                 "metadata": kwargs.get("Metadata"),
+                "cache_control": kwargs.get("CacheControl"),
             }
 
         def get_object(Bucket=None, Key=None):
@@ -364,6 +371,7 @@ class TestFinalizeMTHandler(unittest.TestCase):
                 "data": data,
                 "content_type": kwargs.get("ContentType"),
                 "metadata": kwargs.get("Metadata"),
+                "cache_control": kwargs.get("CacheControl"),
             }
 
         def get_object(Bucket=None, Key=None):
@@ -525,6 +533,7 @@ class TestFinalizeMTHandler(unittest.TestCase):
                 "data": data,
                 "content_type": kwargs.get("ContentType"),
                 "metadata": kwargs.get("Metadata"),
+                "cache_control": kwargs.get("CacheControl"),
             }
 
         fake_s3.get_object.side_effect = get_object
@@ -613,6 +622,7 @@ class TestFinalizeMTHandler(unittest.TestCase):
                 "data": data,
                 "content_type": kwargs.get("ContentType"),
                 "metadata": kwargs.get("Metadata"),
+                "cache_control": kwargs.get("CacheControl"),
             }
 
         def get_object(Bucket=None, Key=None):

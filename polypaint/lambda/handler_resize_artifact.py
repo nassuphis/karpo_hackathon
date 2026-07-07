@@ -21,7 +21,7 @@ from color_artifact_meta import (
     split_color_artifact_metadata,
     write_color_artifact_meta_overlay,
 )
-from shared import BUCKET, parse_body, ok_response, report_status, imgpipe_env
+from shared import BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status, imgpipe_env, png_dimensions_from_path
 
 s3 = boto3.client("s3")
 
@@ -455,10 +455,14 @@ def handler(event, context):
                 ExtraArgs={"ContentType": content_type, "Metadata": image_meta},
             )
         write_color_artifact_meta_overlay(s3, BUCKET, job_id, artifact_id, overlay_meta)
+        preview_width, preview_height = png_dimensions_from_path(preview_path)
+        preview_meta = {"width": str(preview_width), "height": str(preview_height)}
+        if preview_width == preview_height:
+            preview_meta["pix"] = str(preview_width)
         with open(preview_path, "rb") as pfh:
             s3.upload_fileobj(
                 pfh, BUCKET, preview_key,
-                ExtraArgs={"ContentType": "image/png", "Metadata": {"pix": str(out_width), "width": str(out_width), "height": str(out_height)}},
+                ExtraArgs={"ContentType": "image/png", "Metadata": preview_meta, "CacheControl": CACHE_IMMUTABLE},
             )
 
         _phase(

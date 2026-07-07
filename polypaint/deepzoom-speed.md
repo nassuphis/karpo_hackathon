@@ -39,10 +39,12 @@ Two data-quality problems ride along (verified by sampling live objects):
 - **Lying object metadata, legacy color previews**: old color `preview.png`
   objects carry x-amz-meta `width`/`height` of the FULL render (5000, 10000 —
   sampled live), not the preview. Newer previews carry no dim metadata;
-  palette previews carry none; autolevels stamps its true 512. Current
-  producers are clean (finalize_mt and recolor upload previews with no
-  Metadata — handler_finalize_mt.py:905-911, color_recolor_raw.py:711-717),
-  so this is a legacy-objects-only repair. It's also why
+  palette previews carry none; autolevels stamps its true 512. finalize_mt
+  and recolor upload previews with no Metadata (handler_finalize_mt.py,
+  color_recolor_raw.py) — but Phase 1 implementation found TWO producers
+  still stamping full-image dims on previews (handler_resize_artifact.py and
+  handler_png_export.py); both now stamp measured preview dims at source, so
+  the backfill repair can't be re-polluted. It's also why
   `_mosaic_preview_dimensions` (handler_storage.py:3288) must do a ranged-GET
   PNG-header parse per artifact instead of trusting metadata — its comment
   documents exactly this.
@@ -176,8 +178,10 @@ touching every object:
 - Checklist before the repair run: grep the hydration/head paths
   (`_head_artifact_keys` user_meta consumers, Results/Render detail JS) for
   anything DISPLAYING preview `width` metadata — a display that today shows
-  "5000" by accident would change to the honest 512. Fix the consumer to read
-  render dims from the artifact meta/image head instead if one exists.
+  "5000" by accident would change to the honest 512. **Done (2026-07-07):
+  nothing in js/ reads `user_meta` at all; handler_storage.py:4663-4667
+  copies head user_meta dims into the head info dict but no UI displays it
+  for previews. Repair is safe.**
 
 ### 2.6 New DeepZoom exports get JPEG tiles
 
@@ -204,6 +208,13 @@ each; **no pyramid migration required**.
   upload call rather than assuming.
 
 ### Backfill: `scripts/backfill_cache_headers.py`
+
+Prior art: `scripts/repair_preview_metadata.py` already does the dims repair
+for color previews (copy-in-place, IHDR-authoritative, dry-run default). The
+backfill script follows its conventions but is deliberately self-contained
+(stdlib + boto3, no repo imports) so a single file upload runs it in
+CloudShell; it widens scope to palette previews + deepzoom and adds the
+Cache-Control header in the same copy.
 
 Copy-in-place (`CopyObject` with `MetadataDirective=REPLACE`, preserving
 ContentType, adding CacheControl, and — for previews — repairing legacy

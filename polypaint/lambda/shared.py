@@ -234,6 +234,28 @@ def tmp_space_stats(path="/tmp"):
     return {"path": path, "total_bytes": total, "free_bytes": free}
 
 
+# Browser-fetched artifact objects live at immutable, artifact/export-scoped
+# keys (a new artifact always gets a new key), so clients may cache them
+# forever. Mutable pointers and manifests must NOT use this.
+CACHE_IMMUTABLE = "public, max-age=31536000, immutable"
+
+
+def png_dimensions_from_path(path):
+    """Read PNG dimensions from a local file's IHDR (no imaging deps).
+
+    Preview object metadata must describe the preview itself, never the
+    full-size source (deepzoom-speed.md §2.5)."""
+    with open(path, "rb") as fh:
+        data = fh.read(33)
+    if len(data) < 24 or data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+        raise RuntimeError(f"invalid PNG: {path}")
+    width = int.from_bytes(data[16:20], "big")
+    height = int.from_bytes(data[20:24], "big")
+    if width <= 0 or height <= 0:
+        raise RuntimeError(f"invalid PNG dimensions: {width}x{height}")
+    return width, height
+
+
 def is_enospc(exc):
     return isinstance(exc, OSError) and getattr(exc, "errno", None) == errno.ENOSPC
 

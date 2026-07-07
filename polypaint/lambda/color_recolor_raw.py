@@ -25,7 +25,7 @@ from solve_score_chain import (
     read_solve_score_metadata,
     strip_solve_score_version,
 )
-from shared import BUCKET, ok_response, report_status
+from shared import BUCKET, CACHE_IMMUTABLE, ok_response, report_status
 
 
 s3 = boto3.client("s3")
@@ -354,6 +354,7 @@ def _recolor_associated_palette(
             Key=new_preview_key,
             Body=preview_fh,
             ContentType="image/png",
+            CacheControl=CACHE_IMMUTABLE,
         )
     temp_copy_keys.append(new_preview_key)
 
@@ -714,6 +715,7 @@ def handle_color_recolor_from_raw_request(params, *, source_head=None, already_s
                 Key=preview_key,
                 Body=preview_fh,
                 ContentType="image/png",
+                CacheControl=CACHE_IMMUTABLE,
             )
         temp_copy_keys.append(preview_key)
         write_color_artifact_meta_overlay(s3, BUCKET, job_id, artifact_id, overlay_meta)

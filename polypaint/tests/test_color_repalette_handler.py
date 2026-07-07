@@ -101,11 +101,12 @@ class TestColorRepaletteHandler(unittest.TestCase):
                 return {"Body": MagicMock(iter_chunks=lambda chunk_size=None: [bytes([0, 1, 128, 255])])}
             raise AssertionError(f"unexpected get_object key: {key}")
 
-        def put_object(Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None):
+        def put_object(Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None, CacheControl=None):
             puts[Key] = {
                 "body": Body if isinstance(Body, (bytes, bytearray)) else Body.read(),
                 "content_type": ContentType,
                 "metadata": Metadata,
+                "cache_control": CacheControl,
             }
 
         def copy_object(Bucket=None, CopySource=None, Key=None):
@@ -147,6 +148,10 @@ class TestColorRepaletteHandler(unittest.TestCase):
         self.assertEqual(body["raw_meta_key"], "renders/j/color/color_new/greyscale.meta.json")
         self.assertEqual(puts["renders/j/color/color_new/image.jpeg"]["body"], b"jpeg")
         self.assertEqual(puts["renders/j/color/color_new/preview.png"]["body"], b"png")
+        self.assertEqual(
+            puts["renders/j/color/color_new/preview.png"]["cache_control"],
+            "public, max-age=31536000, immutable",
+        )
         self.assertIn("renders/j/color/color_new/meta.json", puts)
         self.assertIn("renders/j/color/color_new/greyscale.meta.json", puts)
         raw_sidecar = json.loads(puts["renders/j/color/color_new/greyscale.meta.json"]["body"].decode())
@@ -255,11 +260,12 @@ class TestColorRepaletteHandler(unittest.TestCase):
                 return {"Body": MagicMock(iter_chunks=lambda chunk_size=None: [bytes(range(12))])}
             raise AssertionError(f"unexpected get_object key: {key}")
 
-        def put_object(Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None):
+        def put_object(Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None, CacheControl=None):
             puts[Key] = {
                 "body": Body if isinstance(Body, (bytes, bytearray)) else Body.read(),
                 "content_type": ContentType,
                 "metadata": Metadata,
+                "cache_control": CacheControl,
             }
 
         def copy_object(Bucket=None, CopySource=None, Key=None):

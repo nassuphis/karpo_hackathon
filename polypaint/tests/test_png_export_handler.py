@@ -8,6 +8,16 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
 
+def _png_header(width, height):
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + (13).to_bytes(4, "big")
+        + b"IHDR"
+        + int(width).to_bytes(4, "big")
+        + int(height).to_bytes(4, "big")
+    )
+
+
 def _event(**overrides):
     payload = {
         "job_id": "job1",
@@ -72,7 +82,7 @@ class TestPngExportHandler(unittest.TestCase):
             if exe == "vipsthumbnail":
                 out_path = cmd[5].split("[", 1)[0]
                 with open(out_path, "wb") as fh:
-                    fh.write(b"\x89PNGpreview")
+                    fh.write(_png_header(512, 512))
                 return MagicMock(returncode=0, stdout="", stderr="")
             raise AssertionError(f"unexpected subprocess call: {cmd}")
 
@@ -108,11 +118,15 @@ class TestPngExportHandler(unittest.TestCase):
         self.assertEqual(image_meta["max_im"], "2.0")
         self.assertEqual(image_meta["rotation"], "0.125")
 
+        # preview metadata must describe the preview itself, not the full-size
+        # source (deepzoom-speed.md §2.5), and previews are immutable-cacheable
         preview_extra = uploads[preview_key]["extra"]
         self.assertEqual(preview_extra["ContentType"], "image/png")
-        self.assertEqual(preview_extra["Metadata"]["pix"], "4096")
-        self.assertEqual(preview_extra["Metadata"]["width"], "4096")
-        self.assertEqual(preview_extra["Metadata"]["height"], "4096")
+        self.assertEqual(preview_extra["Metadata"]["pix"], "512")
+        self.assertEqual(preview_extra["Metadata"]["width"], "512")
+        self.assertEqual(preview_extra["Metadata"]["height"], "512")
+        self.assertEqual(preview_extra["CacheControl"], "public, max-age=31536000, immutable")
+        self.assertNotIn("CacheControl", uploads[image_key]["extra"])
 
         statuses = [call.args[2] for call in mock_report.call_args_list]
         self.assertIn("started", statuses)

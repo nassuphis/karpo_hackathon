@@ -19,7 +19,7 @@ from color_artifact_meta import (
     split_color_artifact_metadata,
     write_color_artifact_meta_overlay,
 )
-from shared import BUCKET, parse_body, ok_response, report_status, imgpipe_env
+from shared import BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status, imgpipe_env
 
 s3 = boto3.client("s3")
 AUTOLEVELS = os.path.join(os.path.dirname(__file__), "autolevels_render")
@@ -333,7 +333,7 @@ def handler(event, context):
         with open(preview_path, "rb") as pfh:
             s3.upload_fileobj(
                 pfh, BUCKET, preview_key,
-                ExtraArgs={"ContentType": "image/png", "Metadata": preview_meta},
+                ExtraArgs={"ContentType": "image/png", "Metadata": preview_meta, "CacheControl": CACHE_IMMUTABLE},
             )
 
         _phase(

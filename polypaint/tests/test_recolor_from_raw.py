@@ -103,11 +103,12 @@ class TestRecolorFromRaw(unittest.TestCase):
                 return {"Body": MagicMock(iter_chunks=lambda chunk_size=None: [bytes([0, 1, 128, 255])])}
             raise AssertionError(f"unexpected get_object key: {key}")
 
-        def put_object(Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None):
+        def put_object(Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None, CacheControl=None):
             puts[Key] = {
                 "body": Body if isinstance(Body, (bytes, bytearray)) else Body.read(),
                 "content_type": ContentType,
                 "metadata": Metadata,
+                "cache_control": CacheControl,
             }
 
         def copy_object(Bucket=None, CopySource=None, Key=None):
@@ -143,6 +144,10 @@ class TestRecolorFromRaw(unittest.TestCase):
         self.assertEqual(body["raw_meta_key"], "renders/j/color/color_new/greyscale.meta.json")
         self.assertEqual(puts["renders/j/color/color_new/image.jpeg"]["body"], b"jpeg")
         self.assertEqual(puts["renders/j/color/color_new/preview.png"]["body"], b"png")
+        self.assertEqual(
+            puts["renders/j/color/color_new/preview.png"]["cache_control"],
+            "public, max-age=31536000, immutable",
+        )
         raw_sidecar = json.loads(puts["renders/j/color/color_new/greyscale.meta.json"]["body"].decode())
         self.assertEqual(raw_sidecar["version"], 2)
         self.assertEqual(raw_sidecar["artifact_family"], "color")
@@ -247,11 +252,12 @@ class TestRecolorFromRaw(unittest.TestCase):
                 return {"Body": MagicMock(iter_chunks=lambda chunk_size=None: [bytes([0, 1, 128, 255])])}
             raise AssertionError(f"unexpected get_object key: {key}")
 
-        def put_object(Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None):
+        def put_object(Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None, CacheControl=None):
             puts[Key] = {
                 "body": Body if isinstance(Body, (bytes, bytearray)) else Body.read(),
                 "content_type": ContentType,
                 "metadata": Metadata,
+                "cache_control": CacheControl,
             }
 
         def copy_object(Bucket=None, CopySource=None, Key=None):
@@ -430,11 +436,12 @@ class TestRecolorFromRaw(unittest.TestCase):
                 return {"Body": MagicMock(iter_chunks=lambda chunk_size=None: [bytes([0, 12, 80, 255])])}
             raise AssertionError(f"unexpected get_object key: {key}")
 
-        def put_object(Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None):
+        def put_object(Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None, CacheControl=None):
             puts[Key] = {
                 "body": Body if isinstance(Body, (bytes, bytearray)) else Body.read(),
                 "content_type": ContentType,
                 "metadata": Metadata,
+                "cache_control": CacheControl,
             }
 
         def copy_object(Bucket=None, CopySource=None, Key=None):
@@ -568,11 +575,12 @@ class TestRecolorFromRaw(unittest.TestCase):
                 return {"Body": MagicMock(iter_chunks=lambda chunk_size=None: [bytes([0, 1, 128, 255])])}
             raise AssertionError(f"unexpected get_object key: {key}")
 
-        def put_object(Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None):
+        def put_object(Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None, CacheControl=None):
             puts[Key] = {
                 "body": Body if isinstance(Body, (bytes, bytearray)) else Body.read(),
                 "content_type": ContentType,
                 "metadata": Metadata,
+                "cache_control": CacheControl,
             }
 
         def copy_object(Bucket=None, CopySource=None, Key=None):

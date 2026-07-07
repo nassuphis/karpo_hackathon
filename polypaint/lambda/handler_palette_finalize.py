@@ -22,6 +22,7 @@ from solve_score_chain import (
 from solve_score_pipeline_programs import solve_score_program_for_run
 from shared import (
     BUCKET,
+    CACHE_IMMUTABLE,
     attach_contract_warnings,
     contract_param,
     parse_boolish,
@@ -456,7 +457,7 @@ def handler(event, context):
         with open(_TMP_JPEG, "rb") as fh:
             s3.upload_fileobj(fh, BUCKET, image_key, ExtraArgs={"ContentType": "image/jpeg", "Metadata": metadata})
         with open(_TMP_PREVIEW, "rb") as pf:
-            s3.upload_fileobj(pf, BUCKET, preview_key, ExtraArgs={"ContentType": "image/png"})
+            s3.upload_fileobj(pf, BUCKET, preview_key, ExtraArgs={"ContentType": "image/png", "CacheControl": CACHE_IMMUTABLE})
         if raw_output_path:
             with open(_TMP_RAW_SCORE, "rb") as rf:
                 s3.upload_fileobj(rf, BUCKET, raw_key, ExtraArgs={"ContentType": "application/octet-stream"})

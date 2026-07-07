@@ -231,6 +231,7 @@ class TestAutolevelsHandler(unittest.TestCase):
 
         preview_extra = uploads[preview_key]["extra"]
         self.assertEqual(preview_extra["ContentType"], "image/png")
+        self.assertEqual(preview_extra["CacheControl"], "public, max-age=31536000, immutable")
         self.assertEqual(image_meta["pix"], "1200")
         self.assertEqual(image_meta["width"], "1200")
         self.assertEqual(image_meta["height"], "1200")

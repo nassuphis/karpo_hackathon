@@ -87,11 +87,12 @@ class TestExtractPaletteFromStepScores(unittest.TestCase):
                 return {"Body": MagicMock(iter_chunks=lambda chunk_size=None: [bytes([9, 7, 5, 3])])}
             raise AssertionError(f"unexpected get_object key: {key}")
 
-        def put_object(Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None):
+        def put_object(Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None, CacheControl=None):
             puts[Key] = {
                 "body": Body if isinstance(Body, (bytes, bytearray)) else Body.read(),
                 "content_type": ContentType,
                 "metadata": Metadata,
+                "cache_control": CacheControl,
             }
 
         mock_s3.get_object.side_effect = get_object
@@ -162,6 +163,10 @@ class TestExtractPaletteFromStepScores(unittest.TestCase):
         self.assertEqual(assoc["palette_id"], "pal_color_src")
         self.assertEqual(assoc["image_key"], "renders/j/palettes/pal_color_src/image.jpeg")
         self.assertEqual(puts["renders/j/palettes/pal_color_src/greyscale.raw"]["body"], bytes([0, 11, 22, 33]))
+        self.assertEqual(
+            puts["renders/j/palettes/pal_color_src/preview.png"]["cache_control"],
+            "public, max-age=31536000, immutable",
+        )
         palette_sidecar = json.loads(puts["renders/j/palettes/pal_color_src/greyscale.meta.json"]["body"].decode())
         self.assertEqual(palette_sidecar["version"], 2)
         self.assertEqual(palette_sidecar["artifact_family"], "palette")
@@ -249,11 +254,12 @@ class TestExtractPaletteFromStepScores(unittest.TestCase):
                 return {"Body": MagicMock(iter_chunks=lambda chunk_size=None: [bytes(range(12))])}
             raise AssertionError(f"unexpected get_object key: {key}")
 
-        def put_object(Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None):
+        def put_object(Bucket=None, Key=None, Body=None, ContentType=None, Metadata=None, CacheControl=None):
             puts[Key] = {
                 "body": Body if isinstance(Body, (bytes, bytearray)) else Body.read(),
                 "content_type": ContentType,
                 "metadata": Metadata,
+                "cache_control": CacheControl,
             }
 
         def fake_run(cmd, capture_output=False, text=False, timeout=None, env=None):

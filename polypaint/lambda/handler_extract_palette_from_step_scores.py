@@ -15,7 +15,7 @@ from color_artifact_meta import (
 )
 from raw_score_render import histogram_from_raw_path, histogram_from_raw_path_channel0, render_score_raw, write_equalization_lut
 from raw_sidecar import background_color_hex, build_raw_sidecar, validate_raw_sidecar
-from shared import BUCKET, imgpipe_env, ok_response, parse_body, report_status
+from shared import BUCKET, CACHE_IMMUTABLE, imgpipe_env, ok_response, parse_body, report_status
 from solve_score_chain import (
     format_solve_score_chain_display,
     read_solve_score_metadata,
@@ -512,6 +512,7 @@ def _render_palette_from_step_scores(job_id, artifact_id, source_meta, task_id):
                 Key=preview_key,
                 Body=preview_fh,
                 ContentType="image/png",
+                CacheControl=CACHE_IMMUTABLE,
             )
 
         source_score = read_solve_score_metadata("solve", source_meta, default_metric="proximity")

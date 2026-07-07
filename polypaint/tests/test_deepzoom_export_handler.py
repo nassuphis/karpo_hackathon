@@ -108,6 +108,18 @@ class TestDeepZoomExportRaw(unittest.TestCase):
         self.assertNotIn("raw_meta_key", manifest)
         self.assertNotIn("palette", manifest)
 
+        # tiles/dzi/viewer are immutable (export-scoped keys) and cacheable
+        # forever; the meta.json pointer must stay uncached
+        immutable = "public, max-age=31536000, immutable"
+        tile_puts = [c for c in put_calls if "/image_files/" in c.get("Key", "")]
+        self.assertTrue(tile_puts)
+        for call in tile_puts:
+            self.assertEqual(call["CacheControl"], immutable)
+        viewer_puts = [c for c in put_calls if c.get("Key", "").endswith("/viewer.html")]
+        self.assertEqual(len(viewer_puts), 1)
+        self.assertEqual(viewer_puts[0]["CacheControl"], immutable)
+        self.assertNotIn("CacheControl", meta_puts[0])
+
         statuses = [call.args[2] for call in mock_report.call_args_list]
         self.assertEqual(statuses, ["started", "generating", "uploading", "done"])
 

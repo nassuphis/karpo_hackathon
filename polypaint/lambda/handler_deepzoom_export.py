@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 import boto3
 
 from color_artifact_meta import load_color_artifact_head
-from shared import BUCKET, parse_body, ok_response, report_status, imgpipe_env
+from shared import BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status, imgpipe_env
 
 s3 = boto3.client("s3")
 DZ_EXPORT = os.path.join(os.path.dirname(__file__), "dz_export")
@@ -198,7 +198,8 @@ def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id
             with open(local_path, "rb") as fh:
                 s3.put_object(
                     Bucket=BUCKET, Key=s3_key, Body=fh.read(),
-                    ContentType=content_type)
+                    ContentType=content_type,
+                    CacheControl=CACHE_IMMUTABLE)
             return 1
 
         t2 = time.time()
@@ -221,7 +222,8 @@ def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id
             Bucket=BUCKET,
             Key=f"{s3_prefix}/viewer.html",
             Body=viewer_html,
-            ContentType="text/html; charset=utf-8"
+            ContentType="text/html; charset=utf-8",
+            CacheControl=CACHE_IMMUTABLE,
         )
 
         # Write meta.json (references share_url which now exists)

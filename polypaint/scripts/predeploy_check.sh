@@ -91,6 +91,7 @@ bash -n /tmp/polypaint-deploy-specs-gate.sh
 	    tests/test_storage_handler.py \
 	    tests/test_autolevels_handler.py \
 	    tests/test_repair_preview_metadata.py \
+	    tests/test_backfill_cache_headers.py \
 	    tests/test_preview_handler.py \
     tests/test_render_lores_preview_handler.py \
     tests/test_compute_plan.py \

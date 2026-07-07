@@ -89,6 +89,8 @@ class BuildWallPyramidTests(unittest.TestCase):
             os.makedirs(outbase + "_files/0", exist_ok=True)
             with open(outbase + ".dzi", "w") as fh:
                 fh.write("<dzi/>")
+            with open(outbase + ".jpg", "wb") as fh:
+                fh.write(b"flatjpg")
             with open(outbase + "_files/0/0_0.jpg", "wb") as fh:
                 fh.write(b"tile")
             return MagicMock(returncode=0, stdout=json.dumps(
@@ -113,6 +115,11 @@ class BuildWallPyramidTests(unittest.TestCase):
         self.assertEqual(tile["ContentType"], "image/jpeg")
         self.assertEqual(tile["CacheControl"], IMMUTABLE)
 
+        flat = next(p for p in puts if p["Key"].endswith("/wall.jpg"))
+        self.assertEqual(flat["ContentType"], "image/jpeg")
+        self.assertEqual(flat["CacheControl"], IMMUTABLE)
+        self.assertEqual(flat["Body"], b"flatjpg")
+
         wall_put = next(p for p in puts if p["Key"].endswith("wall.json"))
         self.assertEqual(wall_put["CacheControl"], "no-cache, max-age=0")
         wall = json.loads(wall_put["Body"])
@@ -121,6 +128,7 @@ class BuildWallPyramidTests(unittest.TestCase):
         self.assertEqual(wall["cell_px"], 512)
         self.assertEqual(wall["sort"], "created")
         self.assertEqual(wall["width"], 1024)
+        self.assertTrue(wall["image_key"].endswith("/wall.jpg"))
         # baked order: newest first
         self.assertEqual([t["artifact_id"] for t in wall["tiles"]], ["a1", "a2"])
 

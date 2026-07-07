@@ -528,6 +528,23 @@ function _logMosaicWallState(kind) {
     }
 }
 
+function _mosaicSaveWall(kind) {
+    const state = _mosaicState(kind);
+    const wall = state.wall;
+    const key = wall && String(wall.image_key || '');
+    const rid = String(((state.status || {}).wall_refresh_id) || '');
+    if (!key || String(wall.refresh_id || '') !== rid) {
+        _setMosaicStatus(kind, 'Wall composite not ready yet — Refresh and wait for "wall pyramid ready".', 'error');
+        return;
+    }
+    const px = `${Number(wall.width) || 0}x${Number(wall.height) || 0}`;
+    _logMosaic(kind, `${_mosaicConfig(kind).label} wall composite download started (${px} jpg)`, 'ok', `wall-save|${rid}`);
+    window.open(_mosaicPublicUrl(kind, key), '_blank');
+}
+
+function saveAllColWall() { _mosaicSaveWall('color'); }
+function saveAllPalWall() { _mosaicSaveWall('palette'); }
+
 function _stopMosaicWallPoll(kind) {
     const state = _mosaicState(kind);
     if (state.wallPollTimer) {

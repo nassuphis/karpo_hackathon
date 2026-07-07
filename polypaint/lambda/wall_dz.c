@@ -96,6 +96,18 @@ int main(int argc, char **argv) {
         g_object_unref(images[i]);
     g_free(images);
 
+    /* flat full-resolution composite alongside the pyramid — the Save Wall
+     * button downloads it and it's print-grade (well under JPEG's 65,535px
+     * cap). Written first so a dzsave failure can't leave a half wall.jpg. */
+    char jpgPath[4096];
+    snprintf(jpgPath, sizeof(jpgPath), "%s.jpg", outBase);
+    if (vips_jpegsave(wall, jpgPath, "Q", 90, NULL)) {
+        fprintf(stderr, "vips_jpegsave failed: %s\n", vips_error_buffer());
+        g_object_unref(wall);
+        vips_shutdown();
+        return 1;
+    }
+
     if (vips_dzsave(wall, outBase,
                     "layout", VIPS_FOREIGN_DZ_LAYOUT_DZ,
                     "suffix", ".jpg[Q=88]",

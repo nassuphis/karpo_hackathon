@@ -170,11 +170,16 @@ def handle_build_wall_pyramid(params):
         t2 = time.time()
         uploaded = _upload_pyramid(prefix, os.path.join(out_dir, "wall.dzi"),
                                    os.path.join(out_dir, "wall_files"))
+        # flat composite for the Save Wall button (print-grade single jpg)
+        with open(os.path.join(out_dir, "wall.jpg"), "rb") as fh:
+            s3.put_object(Bucket=BUCKET, Key=prefix + "wall.jpg", Body=fh.read(),
+                          ContentType="image/jpeg", CacheControl=CACHE_IMMUTABLE)
         wall = {
             "manifest_type": "artifact_wall_pyramid",
             "kind": kind,
             "refresh_id": refresh_id,
             "dzi_key": prefix + "wall.dzi",
+            "image_key": prefix + "wall.jpg",
             "width": int(dims["width"]),
             "height": int(dims["height"]),
             "cols": cols,

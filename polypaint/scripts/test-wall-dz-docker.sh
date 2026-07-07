@@ -52,6 +52,7 @@ CELLS
         echo "$OUT" | grep -q "\"width\":1024" || { echo "FATAL: wrong width: $OUT"; exit 1; }
         echo "$OUT" | grep -q "\"height\":1536" || { echo "FATAL: wrong height: $OUT"; exit 1; }
         [ -f /tmp/wall.dzi ] || { echo "FATAL: no .dzi"; exit 1; }
+        [ -s /tmp/wall.jpg ] || { echo "FATAL: no flat wall.jpg composite"; exit 1; }
         grep -q "Format=\"jpg\"" /tmp/wall.dzi || { echo "FATAL: dzi is not jpg-tiled"; exit 1; }
         grep -q "TileSize=\"256\"" /tmp/wall.dzi || { echo "FATAL: dzi tile size wrong"; exit 1; }
         TILES=$(find /tmp/wall_files -name "*.jpg" | wc -l)

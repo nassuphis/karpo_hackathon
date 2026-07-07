@@ -152,20 +152,35 @@ def process_artifact(s3, bucket, family, prefix, *, apply, skip_keys=(),
         size_kb = int(png_head.get("ContentLength") or 0) // 1024
         return "would_convert", f"png {size_kb}KB (conversion deferred to --apply)"
 
-    try:
-        png_obj = s3.get_object(Bucket=bucket, Key=png_key)
-    except ClientError as exc:
-        code = exc.response.get("Error", {}).get("Code", "")
-        if code in {"404", "NoSuchKey", "NotFound"}:
-            return "missing", ""
-        raise
-    png_bytes = png_obj["Body"].read()
-
-    try:
-        jpg_bytes, (width, height), (src_w, src_h) = convert_png_to_jpg(
-            png_bytes, max_px=max_px, quality=quality)
-    except Exception as exc:  # noqa: BLE001 — corrupt source, keep sweeping
-        return "invalid_image", str(exc)
+    # S3 streams occasionally truncate under concurrency (seen live on
+    # CloudShell: a healthy png raised "broken data stream"). A short read
+    # or decode failure retries with a fresh GET before being declared
+    # genuinely corrupt.
+    png_bytes = jpg_bytes = None
+    last_error = ""
+    for _ in range(3):
+        try:
+            png_obj = s3.get_object(Bucket=bucket, Key=png_key)
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                return "missing", ""
+            raise
+        data = png_obj["Body"].read()
+        expected = int(png_obj.get("ContentLength") or 0)
+        if expected and len(data) != expected:
+            last_error = f"short read {len(data)}/{expected}"
+            continue
+        try:
+            jpg_bytes, (width, height), (src_w, src_h) = convert_png_to_jpg(
+                data, max_px=max_px, quality=quality)
+        except Exception as exc:  # noqa: BLE001 — retry, then report
+            last_error = str(exc)
+            continue
+        png_bytes = data
+        break
+    if png_bytes is None or jpg_bytes is None:
+        return "invalid_image", last_error
 
     note = f"{src_w}x{src_h} png {len(png_bytes) // 1024}KB -> {width}x{height} jpg {len(jpg_bytes) // 1024}KB"
     if max(src_w, src_h) > 1024:

@@ -200,6 +200,34 @@ class ProcessArtifactTests(unittest.TestCase):
         self.assertEqual(status, "skipped")
         self.assertEqual(self.s3.put_calls, [])
 
+    def test_truncated_stream_retries_then_converts(self):
+        self._seed_color(overlay={})
+        real_get = self.s3.get_object
+        attempts = []
+
+        def flaky_get(Bucket=None, Key=None, **kwargs):
+            resp = real_get(Bucket=Bucket, Key=Key, **kwargs)
+            if Key.endswith("preview.png"):
+                attempts.append(Key)
+                if len(attempts) == 1:
+                    data = resp["Body"].read()
+                    return {"Body": _Body(data[: len(data) // 2]), "ContentLength": len(data)}
+                resp["ContentLength"] = len(self.s3.objects[Key])
+            return resp
+
+        self.s3.get_object = flaky_get
+        status, _ = self.mod.process_artifact(self.s3, "b", "color", COLOR_PREFIX, apply=True)
+        self.assertEqual(status, "converted")
+        self.assertEqual(len(attempts), 2)
+
+    def test_genuinely_corrupt_png_reports_after_retries(self):
+        self.s3.objects[COLOR_PREFIX + "preview.png"] = b"\x89PNG not really"
+        self.s3.objects[COLOR_PREFIX + "meta.json"] = b"{}"
+        status, note = self.mod.process_artifact(self.s3, "b", "color", COLOR_PREFIX, apply=True)
+        self.assertEqual(status, "invalid_image")
+        self.assertTrue(note)
+        self.assertFalse(any(c["Key"].endswith("preview.jpg") for c in self.s3.put_calls))
+
     def test_verify_reports_gaps(self):
         self._seed_color(overlay={})
         status, _ = self.mod.verify_artifact(self.s3, "b", "color", COLOR_PREFIX)

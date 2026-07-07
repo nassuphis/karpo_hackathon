@@ -238,9 +238,31 @@ browser-fetched previews.
 
 ### 4.1 Migration script: `scripts/migrate_preview_jpg.py`
 
-Local script (uv + Pillow + boto3). The storage Lambda is pure Python — no
-PIL (deploy.sh:1064-1080) — and a one-off sweep doesn't justify new Lambda
-deps. ~2.2 GB down / ~0.3 GB up, 16 threads, ~10–20 min end to end.
+Single-file script, no Lambda fleet: the job is network-bound (~2.2 GB down /
+~0.3 GB up; a 512² JPEG encode is milliseconds) and the storage Lambda is pure
+Python — no PIL (deploy.sh:1064-1080) — so a one-off sweep doesn't justify new
+Lambda deps or fan-out plumbing.
+
+**Runs in AWS CloudShell (us-east-1) by preference** — the user's home line is
+slow, and in-region execution keeps every byte inside AWS (fast + zero
+egress). CloudShell constraints shape the script:
+
+- Dependencies: stdlib + boto3 (preinstalled there) + Pillow
+  (`pip install pillow` is the only setup). No uv assumption.
+- Auth comes from the console session — no credentials handling.
+- Stream one preview at a time (download → convert → upload → discard):
+  the 1 GB `$HOME` never fills, and the resume journal lives in `$HOME`
+  (persists across CloudShell sessions per region).
+- ~8 threads (1 vCPU: overlap network with Pillow decode); whole sweep
+  ~5–15 min. Idle timeout (~20–30 min) and 12 h cap are irrelevant at that
+  runtime.
+- `--sample` has no display in CloudShell: it uploads before/after pairs to
+  a scratch prefix (`_scratch/preview_migration_samples/`) and prints their
+  public URLs — the bucket is public, so inspection is browser tabs (~1 MB
+  each, fine on a slow line). Scratch prefix is deleted after sign-off.
+
+The identical invocation works from the laptop too (boto3 + Pillow); only
+the transfer time differs.
 
 Per artifact prefix (color + palettes families):
 
@@ -323,10 +345,12 @@ Sequencing (each its own commit/push, user deploys between):
 
 1. Phase 1 code → user deploys → Claude/user runs
    `backfill_cache_headers.py --dry-run`, then live (default scope).
-2. Phase 2 builder + script → user deploys → `migrate_preview_jpg.py --sample 12`
-   → **visual inspection** → `--dry-run` → full run → `--verify` → hit wall
-   Refresh (manifest rebuild picks up jpg keys) → measure: DevTools network
-   total for a cold AllCol open, before vs after (expect ~7×).
+2. Phase 2 builder + script → user deploys → in CloudShell (us-east-1):
+   `migrate_preview_jpg.py --sample 12` → **visual inspection via the printed
+   sample URLs** → `--dry-run` → `--limit 50` canary → full run → `--verify`
+   → hit wall Refresh (manifest rebuild picks up jpg keys) → measure:
+   DevTools network total for a cold AllCol open, before vs after
+   (expect ~10×).
 3. Phase 3 → user deploys → new export → confirm jpg tiles + headers via
    `curl -sI`.
 

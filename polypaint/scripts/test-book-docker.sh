@@ -89,7 +89,7 @@ assert int(m.group(1)) == expected_pages, (m.group(1), expected_pages)
 import struct
 import time as _time
 t0 = _time.time()
-fr = subprocess.run(["pdftoppm", "-png", "-r", "150",
+fr = subprocess.run(["pdftoppm", "-png", "-r", "200",
                      "-f", "1", "-l", "1", "/build/book.pdf", "/build/flip_page"],
                     capture_output=True, text=True)
 assert fr.returncode == 0, f"pdftoppm failed: {fr.stderr[:300]}"
@@ -110,7 +110,7 @@ while i + 9 < len(fp):
         fh_, fw = struct.unpack(">HH", fp[i + 5:i + 9])
         break
     i += 2 + struct.unpack(">H", fp[i + 2:i + 4])[0]
-assert abs(fw - 1730) <= 1 and abs(fh_ - 1748) <= 1, f"flip page {fw}x{fh_}, want ~1730x1748"
+assert abs(fw - 2308) <= 3 and abs(fh_ - 2332) <= 3, f"flip page {fw}x{fh_}, want ~2308x2332"
 print(f"flipbook page: {fw}x{fh_} jpg in {_time.time() - t0:.2f}s")
 
 pdf = open("/build/book.pdf", "rb").read()

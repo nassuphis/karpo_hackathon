@@ -217,7 +217,7 @@ class TestBookPdfHandler(unittest.TestCase):
             digits = len(str(last))  # pdftoppm pads to the -l value's width
             for n in range(first, last + 1):
                 buf = io.BytesIO()
-                Image.new("RGB", (1730, 1748), (18, 24, 41)).save(buf, format="PNG")
+                Image.new("RGB", (2307, 2331), (18, 24, 41)).save(buf, format="PNG")
                 with open(f"{prefix}-{str(n).zfill(digits)}.png", "wb") as fh:
                     fh.write(buf.getvalue())
             return MagicMock(returncode=0, stdout="", stderr="")
@@ -247,8 +247,8 @@ class TestBookPdfHandler(unittest.TestCase):
         self.assertEqual(flip["page_count"], 8)
         self.assertEqual(flip["book_id"], "test-book")  # the "id" field, not name
         self.assertEqual(flip["pages"], [f"p{n:04d}.jpg" for n in range(1, 9)])
-        self.assertEqual(flip["width_px"], 1730)
-        self.assertEqual(flip["height_px"], 1748)
+        self.assertEqual(flip["width_px"], 2307)
+        self.assertEqual(flip["height_px"], 2331)
         self.assertEqual(self.fake.put_headers[flip_key]["CacheControl"], immutable)
 
         latest = json.loads(self.fake.objects["polypaint/books/test-book/out/latest.json"])

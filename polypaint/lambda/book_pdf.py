@@ -166,10 +166,10 @@ def _build_report(calc, src_meta, source_job_id, source_artifact_id):
 # Flipbook page rasterization (flipbook.md §2-3): pdftoppm renders PNG
 # intermediates (its jpeg encoder is locked to 4:2:0 chroma subsampling,
 # which washes out saturated art) and Pillow re-encodes at q88 with 4:4:4.
-# 150 dpi -> 1730x1748px pages: the verso mono text stays legible on
-# phones (120 dpi was not). Gate-measured ~0.02s/page leaves the 900s
-# budget untouched.
-FLIP_DPI = 150
+# 200 dpi -> ~2307x2331px pages: true 1:1 pixels on 2x retina desktops
+# (150 dpi was soft there and marginal on 3x phones). Gate-measured
+# fractions of a second per page leave the 900s budget untouched.
+FLIP_DPI = 200
 FLIP_QUALITY = 88
 FLIP_WORKERS = 4
 

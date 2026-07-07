@@ -22,7 +22,7 @@
     align-items: center; justify-content: center; }
   #flipbook { touch-action: pan-y; }
   .flip-page { background: #121829; box-shadow: 0 2px 18px rgba(0,0,0,.5); }
-  .flip-page img { width: 100%; height: 100%; display: block; }
+  .flip-page img { width: 100%; height: 100%; display: block; -webkit-user-drag: none; user-select: none; }
   #hint { position: fixed; bottom: 10px; left: 0; right: 0; text-align: center;
     font-size: 11px; color: #5F6678; pointer-events: none; }
 </style>
@@ -115,7 +115,13 @@ async function main() {
     }
   }
 
-  const flipbook = new St.PageFlip(document.getElementById('flipbook'), {
+  // HTML render mode (loadFromHTML): canvas mode ignores devicePixelRatio,
+  // so retina screens got a 1x raster upscaled — blurry on a 2x Mac,
+  // unreadable on a 3x iPhone. Real <img> pages render at native DPR.
+  const container = document.getElementById('flipbook');
+  container.innerHTML = urls.map(u =>
+    `<div class="flip-page" data-density="soft"><img src="${u}" alt=""></div>`).join('');
+  const flipbook = new St.PageFlip(container, {
     width: pageW,
     height: pageH,
     size: 'fixed',
@@ -124,7 +130,7 @@ async function main() {
     maxShadowOpacity: 0.4,
     mobileScrollSupport: false,
   });
-  flipbook.loadFromImages(urls);
+  flipbook.loadFromHTML(container.querySelectorAll('.flip-page'));
 
   const pageinfo = document.getElementById('pageinfo');
   const updateInfo = () => {

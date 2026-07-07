@@ -523,6 +523,29 @@ async function _bookPollCompile() {
     }
 }
 
+function bookOpenFlipbook(btn) {
+    const out = _bookState.latestOutput;
+    const orig = btn ? btn.textContent : '';
+    if (!out || !out.flip_key) {
+        // older compiles predate the flipbook; flip_error carries the cause
+        const why = out && out.flip_error ? `flipbook failed: ${out.flip_error}` : 'recompile to generate the flipbook';
+        _bookStatus(`No flipbook for this compile — ${why}`, true);
+        if (btn) {
+            btn.textContent = 'Recompile first';
+            setTimeout(() => { btn.textContent = orig; }, 1800);
+        }
+        return;
+    }
+    if (btn) {
+        btn.textContent = 'Opening…';
+        setTimeout(() => { btn.textContent = orig; }, 1500);
+    }
+    const url = `flipbook.html?book=${encodeURIComponent(_bookState.activeId)}`;
+    const opened = window.open(url, '_blank');
+    try { if (opened) opened.opener = null; } catch (e) {}
+    _bookStatus('Flipbook opened in a new tab.');
+}
+
 async function bookDownload(kind, btn) {
     const out = _bookState.latestOutput;
     if (!out) return;

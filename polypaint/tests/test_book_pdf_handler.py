@@ -5,7 +5,7 @@ import json
 import os
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 
@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "lambda"))
 class _FakeS3:
     def __init__(self):
         self.objects = {}
+        self.put_headers = {}
 
     def get_object(self, Bucket=None, Key=None):
         if Key not in self.objects:
@@ -35,6 +36,7 @@ class _FakeS3:
 
     def put_object(self, Bucket=None, Key=None, Body=None, ContentType=None, **_kw):
         self.objects[Key] = Body if isinstance(Body, bytes) else str(Body or "").encode()
+        self.put_headers[Key] = {"ContentType": ContentType, **_kw}
         return {}
 
     def upload_file(self, path, Bucket, Key, ExtraArgs=None):
@@ -175,7 +177,7 @@ class TestBookPdfHandler(unittest.TestCase):
         self.assertEqual(latest["spread_count"], 2)
         phases = [p for _, p in self.statuses]
         self.assertEqual(phases, ["load_assets", "compose_tex", "latex_content",
-                                  "latex_cover", "upload", "done"])
+                                  "latex_cover", "upload", "flipbook", "done"])
         import zipfile
         zf = zipfile.ZipFile(io.BytesIO(
             self.fake.objects["polypaint/books/test-book/out/c1/source.zip"]))
@@ -201,6 +203,80 @@ class TestBookPdfHandler(unittest.TestCase):
             }, latex_runner=_fake_latex)
         self.assertIn("missing prepared assets", str(ctx.exception))
         self.assertIn("e1", str(ctx.exception))
+
+    def _fake_pdftoppm(self):
+        from PIL import Image
+
+        def run(cmd, capture_output=False, text=False, timeout=None, **_kw):
+            if os.path.basename(cmd[0]) != "pdftoppm":
+                raise AssertionError(f"unexpected subprocess: {cmd}")
+            first = int(cmd[cmd.index("-f") + 1])
+            last = int(cmd[cmd.index("-l") + 1])
+            prefix = cmd[-1]
+            digits = len(str(last))  # pdftoppm pads to the -l value's width
+            for n in range(first, last + 1):
+                buf = io.BytesIO()
+                Image.new("RGB", (1384, 1398), (18, 24, 41)).save(buf, format="JPEG")
+                with open(f"{prefix}-{str(n).zfill(digits)}.jpg", "wb") as fh:
+                    fh.write(buf.getvalue())
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        return run
+
+    def test_compose_renders_flipbook_pages_and_manifest(self):
+        self._seed_book()
+        with patch.object(self.book_pdf.subprocess, "run", side_effect=self._fake_pdftoppm()):
+            resp = self.book_pdf.handle_compose({
+                "op": "compose", "job_id": "book#test", "task_id": "bookcomp_r9",
+                "book_id": "test-book", "compile_id": "c9",
+                "expected_saved_at": "2026-07-06T00:00:00Z",
+            }, latex_runner=_fake_latex)
+        body = json.loads(resp["body"])
+        self.assertEqual(body["flip_page_count"], 8)
+
+        immutable = "public, max-age=31536000, immutable"
+        for n in range(1, 9):
+            key = f"polypaint/books/test-book/out/c9/flip/p{n:04d}.jpg"
+            self.assertIn(key, self.fake.objects)
+            self.assertEqual(self.fake.put_headers[key]["ContentType"], "image/jpeg")
+            self.assertEqual(self.fake.put_headers[key]["CacheControl"], immutable)
+
+        flip_key = "polypaint/books/test-book/out/c9/flip/flip.json"
+        flip = json.loads(self.fake.objects[flip_key])
+        self.assertEqual(flip["page_count"], 8)
+        self.assertEqual(flip["pages"], [f"p{n:04d}.jpg" for n in range(1, 9)])
+        self.assertEqual(flip["width_px"], 1384)
+        self.assertEqual(flip["height_px"], 1398)
+        self.assertEqual(self.fake.put_headers[flip_key]["CacheControl"], immutable)
+
+        latest = json.loads(self.fake.objects["polypaint/books/test-book/out/latest.json"])
+        self.assertEqual(latest["flip_key"], flip_key)
+        self.assertEqual(latest["flip_page_count"], 8)
+        self.assertNotIn("flip_error", latest)
+        # the mutable pointer the public viewer polls must never cache
+        self.assertEqual(
+            self.fake.put_headers["polypaint/books/test-book/out/latest.json"]["CacheControl"],
+            "no-cache, max-age=0")
+
+    def test_compose_survives_flipbook_failure(self):
+        self._seed_book()
+
+        def boom(cmd, capture_output=False, text=False, timeout=None, **_kw):
+            return MagicMock(returncode=1, stdout="", stderr="pdftoppm exploded")
+
+        with patch.object(self.book_pdf.subprocess, "run", side_effect=boom):
+            resp = self.book_pdf.handle_compose({
+                "op": "compose", "job_id": "book#test", "task_id": "bookcomp_r10",
+                "book_id": "test-book", "compile_id": "c10",
+                "expected_saved_at": "2026-07-06T00:00:00Z",
+            }, latex_runner=_fake_latex)
+        body = json.loads(resp["body"])
+        # the PDF is the primary artifact: compile succeeds without a flipbook
+        self.assertIn("polypaint/books/test-book/out/c10/content.pdf", self.fake.objects)
+        latest = json.loads(self.fake.objects["polypaint/books/test-book/out/latest.json"])
+        self.assertIn("pdftoppm", latest["flip_error"])
+        self.assertNotIn("flip_key", latest)
+        self.assertEqual(body["flip_error"], latest["flip_error"])
 
     def test_handler_unknown_op_reports_error(self):
         with self.assertRaises(RuntimeError):

@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PolyPaint Flipbook</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #1A1A2E; color: #F2F2F7;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px;
+    background: #121829; border-bottom: 1px solid #2B3A5E; }
+  header h1 { font-size: 15px; font-weight: 600; margin: 0; flex: 1 1 auto;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #status { font-size: 12px; color: #9AA0B4; }
+  #status.err { color: #E94560; }
+  #pageinfo { font-size: 12px; color: #9AA0B4; font-variant-numeric: tabular-nums; }
+  button { background: #1f2a44; color: #F2F2F7; border: 1px solid #2B3A5E;
+    border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer; }
+  button:hover { border-color: #E94560; }
+  #stage { position: absolute; inset: 44px 0 0 0; display: flex;
+    align-items: center; justify-content: center; }
+  #flipbook { touch-action: pan-y; }
+  .flip-page { background: #121829; box-shadow: 0 2px 18px rgba(0,0,0,.5); }
+  .flip-page img { width: 100%; height: 100%; display: block; }
+  #hint { position: fixed; bottom: 10px; left: 0; right: 0; text-align: center;
+    font-size: 11px; color: #5F6678; pointer-events: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">PolyPaint Flipbook</h1>
+  <span id="pageinfo"></span>
+  <button id="prev" type="button">◀</button>
+  <button id="next" type="button">▶</button>
+  <button id="fullscreen" type="button">Fullscreen</button>
+  <span id="status">Loading…</span>
+</header>
+<div id="stage"><div id="flipbook"></div></div>
+<div id="hint">← → arrow keys, click page edges, or swipe to turn</div>
+<script src="vendor/page-flip.browser.js"></script>
+<script>
+'use strict';
+const BASE = 'https://polypaint.s3.us-east-1.amazonaws.com/';
+const BOOKS_PREFIX = 'polypaint/books/';
+
+function qs(name, fallback) {
+  const v = new URLSearchParams(location.search).get(name);
+  return v == null || v === '' ? fallback : v;
+}
+function setStatus(text, cls) {
+  const el = document.getElementById('status');
+  el.textContent = text;
+  el.className = cls || '';
+}
+// mirror of the server's book_pdf._safe_id rule
+function safeId(value, label) {
+  if (!/^[A-Za-z0-9._#-]{1,80}$/.test(String(value || ''))) {
+    throw new Error(`invalid ${label}`);
+  }
+  return String(value);
+}
+
+async function main() {
+  const bookId = safeId(qs('book', ''), 'book id');
+  const pinned = qs('compile', '');
+  if (pinned) safeId(pinned, 'compile id');
+
+  const latestResp = await fetch(`${BASE}${encodeURI(BOOKS_PREFIX + bookId)}/out/latest.json?ts=${Date.now()}`);
+  if (!latestResp.ok) throw new Error(`book "${bookId}" has no compiled output (HTTP ${latestResp.status})`);
+  const latest = await latestResp.json();
+
+  let flipKey = String(latest.flip_key || '');
+  if (pinned) {
+    flipKey = `${BOOKS_PREFIX}${bookId}/out/${pinned}/flip/flip.json`;
+  }
+  if (!flipKey) {
+    const why = latest.flip_error ? ` (last compile: ${latest.flip_error})` : '';
+    throw new Error(`No flipbook for this compile yet — recompile the book${why}`);
+  }
+
+  const flipResp = await fetch(BASE + encodeURI(flipKey));
+  if (!flipResp.ok) throw new Error(`flipbook manifest missing (HTTP ${flipResp.status})`);
+  const flip = await flipResp.json();
+  const pages = Array.isArray(flip.pages) ? flip.pages : [];
+  if (!pages.length) throw new Error('flipbook manifest has no pages');
+
+  document.getElementById('title').textContent = `${flip.title || bookId} — flipbook`;
+  document.title = `${flip.title || bookId} — PolyPaint Flipbook`;
+
+  const flipPrefix = flipKey.slice(0, flipKey.lastIndexOf('/') + 1);
+  const urls = pages.map(p => BASE + encodeURI(flipPrefix + p));
+
+  // fit a spread (2 pages side by side) into the stage
+  const stage = document.getElementById('stage');
+  const pageRatio = (Number(flip.width_px) || 1384) / (Number(flip.height_px) || 1398);
+  const availW = stage.clientWidth - 24;
+  const availH = stage.clientHeight - 24;
+  let pageH = availH;
+  let pageW = Math.round(pageH * pageRatio);
+  if (pageW * 2 > availW) {
+    pageW = Math.floor(availW / 2);
+    pageH = Math.round(pageW / pageRatio);
+  }
+
+  const flipbook = new St.PageFlip(document.getElementById('flipbook'), {
+    width: pageW,
+    height: pageH,
+    size: 'fixed',
+    showCover: true,           // p1 = title recto stands alone, then spreads
+    maxShadowOpacity: 0.4,
+    mobileScrollSupport: false,
+  });
+  flipbook.loadFromImages(urls);
+
+  const pageinfo = document.getElementById('pageinfo');
+  const updateInfo = () => {
+    pageinfo.textContent = `page ${flipbook.getCurrentPageIndex() + 1} / ${pages.length}`;
+  };
+  flipbook.on('flip', updateInfo);
+  updateInfo();
+  setStatus('Ready');
+
+  document.getElementById('prev').onclick = () => flipbook.flipPrev();
+  document.getElementById('next').onclick = () => flipbook.flipNext();
+  document.getElementById('fullscreen').onclick = () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else document.documentElement.requestFullscreen();
+  };
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft') flipbook.flipPrev();
+    if (e.key === 'ArrowRight') flipbook.flipNext();
+  });
+}
+
+main().catch(err => setStatus(err && err.message ? err.message : String(err), 'err'));
+</script>
+</body>
+</html>

@@ -29,10 +29,12 @@ RUN cd /tmp \
 
 FROM public.ecr.aws/lambda/python:3.12
 
-# --- system deps: perl for install-tl; vips runtime libs for stage-1 copy ---
+# --- system deps: perl for install-tl; vips runtime libs for stage-1 copy;
+# poppler-utils (pdftoppm) rasterizes flipbook pages — this image's vips is
+# built -Dpoppler=disabled and cannot load PDFs (flipbook.md §1) ---
 RUN dnf install -y perl-core wget tar gzip fontconfig \
       glib2 expat libjpeg-turbo libpng libtiff libwebp jbigkit-libs \
-      libxml2 libarchive \
+      libxml2 libarchive poppler-utils \
     && dnf clean all
 COPY --from=vipsbuild /opt/lib*/libvips*.so* /opt/lib/
 COPY --from=vipsbuild /opt/bin/vipsthumbnail /opt/bin/vipsthumbnail

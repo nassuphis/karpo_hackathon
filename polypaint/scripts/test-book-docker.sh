@@ -84,6 +84,33 @@ m = re.search(r"Output written on book\.pdf \((\d+) page", log)
 assert m, "no page count in log"
 assert int(m.group(1)) == expected_pages, (m.group(1), expected_pages)
 
+# flipbook rasterization (flipbook.md §5.1): poppler-utils must be in the
+# image, and a 120dpi page must come out at the geometry the viewer assumes
+import struct
+import time as _time
+t0 = _time.time()
+fr = subprocess.run(["pdftoppm", "-jpeg", "-r", "120", "-jpegopt", "quality=85",
+                     "-f", "1", "-l", "1", "/build/book.pdf", "/build/flip_page"],
+                    capture_output=True, text=True)
+assert fr.returncode == 0, f"pdftoppm failed: {fr.stderr[:300]}"
+flip_files = [f for f in os.listdir("/build") if f.startswith("flip_page-")]
+assert flip_files, "pdftoppm produced no output"
+fp = open(f"/build/{flip_files[0]}", "rb").read()
+assert fp[:2] == b"\xff\xd8", "flip page is not a JPEG"
+i = 2
+fw = fh_ = 0
+while i + 9 < len(fp):
+    if fp[i] != 0xFF:
+        i += 1
+        continue
+    marker = fp[i + 1]
+    if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+        fh_, fw = struct.unpack(">HH", fp[i + 5:i + 9])
+        break
+    i += 2 + struct.unpack(">H", fp[i + 2:i + 4])[0]
+assert abs(fw - 1384) <= 1 and abs(fh_ - 1398) <= 1, f"flip page {fw}x{fh_}, want ~1384x1398"
+print(f"flipbook page: {fw}x{fh_} jpg in {_time.time() - t0:.2f}s")
+
 pdf = open("/build/book.pdf", "rb").read()
 # 293x296mm at 72.27pt/in: 830.4 x 838.9 bp — lualatex writes bp with 5 dp
 assert re.search(rb"/MediaBox\s*\[[^\]]*830\.\d+\s+83[89]\.\d+", pdf), "content MediaBox wrong"

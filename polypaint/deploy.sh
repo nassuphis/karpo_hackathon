@@ -74,6 +74,8 @@ frontend_asset_keys() {
     printf '%s\n' \
         "index.html" \
         "artifact_mosaic_viewer.html" \
+        "flipbook.html" \
+        "vendor/page-flip.browser.js" \
         "program_profiles_js.js" \
         "merged_opcodes_js.js" \
         "param_vocab_js.js" \

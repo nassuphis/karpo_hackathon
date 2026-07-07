@@ -6,10 +6,14 @@ One container-image function, two dispatch ops:
 - compose: render book.tex/cover.tex from the book doc + snapshots, run
   lualatex, upload cover.pdf/content.pdf/source.zip + out/latest.json.
 """
+import concurrent.futures
 import io
 import json
+import math
 import os
+import re
 import shutil
+import struct
 import subprocess
 import zipfile
 from datetime import datetime, timezone
@@ -17,7 +21,7 @@ from datetime import datetime, timezone
 import boto3
 
 import book_tex
-from shared import BUCKET, parse_body, ok_response, report_status
+from shared import BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status
 from spread_pdf import PDF_IMAGE_MAX_PX, PDF_PALETTE_MAX_PX, prepare_pdf_image
 
 s3 = boto3.client("s3")
@@ -154,6 +158,111 @@ def _build_report(calc, src_meta, source_job_id, source_artifact_id):
         "summary_rows": [[label, value] for label, value in rows if str(value).strip()],
         "palette_label": palette_label,
     }
+
+
+# Flipbook page rasterization (flipbook.md §2-3): pdftoppm at 120 dpi
+# renders the 830.55x838.98bp content pages to ~1384x1398px jpgs; four
+# parallel range workers keep 74 pages to ~20-40s of the 900s budget.
+FLIP_DPI = 120
+FLIP_QUALITY = 85
+FLIP_WORKERS = 4
+
+
+def _jpeg_dimensions(path):
+    """Width/height from JPEG SOF markers (no imaging deps in this image
+    beyond vips, which can't be reached from Python here)."""
+    with open(path, "rb") as fh:
+        data = fh.read(65536)
+    if data[:2] != b"\xff\xd8":
+        raise RuntimeError(f"not a JPEG: {path}")
+    i = 2
+    while i + 9 < len(data):
+        if data[i] != 0xFF:
+            i += 1
+            continue
+        marker = data[i + 1]
+        if 0xC0 <= marker <= 0xCF and marker not in (0xC4, 0xC8, 0xCC):
+            height, width = struct.unpack(">HH", data[i + 5:i + 9])
+            return width, height
+        length = struct.unpack(">H", data[i + 2:i + 4])[0]
+        i += 2 + length
+    raise RuntimeError(f"no SOF marker found: {path}")
+
+
+def _render_flipbook_pages(build_dir, out_prefix, book, content_pages):
+    """Rasterize book.pdf into flip/p%04d.jpg + flip.json under out_prefix.
+    Returns the additive latest.json fields. Raises on failure — the caller
+    isolates errors so the compile still succeeds without a flipbook."""
+    flip_dir = os.path.join(build_dir, "flip")
+    os.makedirs(flip_dir, exist_ok=True)
+    pdf_path = os.path.join(build_dir, "book.pdf")
+
+    per = max(1, math.ceil(content_pages / FLIP_WORKERS))
+    ranges = [(first, min(first + per - 1, content_pages))
+              for first in range(1, content_pages + 1, per)]
+
+    def render_range(rng):
+        first, last = rng
+        run = subprocess.run(
+            ["pdftoppm", "-jpeg", "-r", str(FLIP_DPI),
+             "-jpegopt", f"quality={FLIP_QUALITY}",
+             "-f", str(first), "-l", str(last),
+             pdf_path, os.path.join(flip_dir, "page")],
+            capture_output=True, text=True, timeout=600)
+        if run.returncode != 0:
+            raise RuntimeError(
+                f"pdftoppm pages {first}-{last} failed: {run.stderr.strip()[:300]}")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=FLIP_WORKERS) as pool:
+        list(pool.map(render_range, ranges))
+
+    # pdftoppm zero-pads to the digits of each invocation's -l value, so
+    # parallel ranges can mix widths (page-27.jpg vs page-105.jpg): parse
+    # the page number, never trust lexical order.
+    numbered = []
+    for fname in os.listdir(flip_dir):
+        m = re.fullmatch(r"page-(\d+)\.jpg", fname)
+        if not m:
+            raise RuntimeError(f"unexpected pdftoppm output: {fname}")
+        numbered.append((int(m.group(1)), fname))
+    numbered.sort()
+    if [n for n, _ in numbered] != list(range(1, content_pages + 1)):
+        raise RuntimeError(
+            f"pdftoppm produced pages {[n for n, _ in numbered][:5]}… "
+            f"expected 1..{content_pages}")
+
+    pages = []
+    for number, fname in numbered:
+        canonical = "p%04d.jpg" % number
+        os.rename(os.path.join(flip_dir, fname), os.path.join(flip_dir, canonical))
+        pages.append(canonical)
+    width_px, height_px = _jpeg_dimensions(os.path.join(flip_dir, pages[0]))
+
+    def upload_page(name):
+        with open(os.path.join(flip_dir, name), "rb") as fh:
+            s3.put_object(Bucket=BUCKET, Key=f"{out_prefix}flip/{name}",
+                          Body=fh.read(), ContentType="image/jpeg",
+                          CacheControl=CACHE_IMMUTABLE)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+        list(pool.map(upload_page, pages))
+
+    flip_manifest = {
+        "book_id": book.get("book_id") or book.get("name") or "",
+        "compile_id": out_prefix.rstrip("/").split("/")[-1],
+        "title": book.get("title") or book.get("name") or "PolyPaint",
+        "page_count": content_pages,
+        "width_px": width_px,
+        "height_px": height_px,
+        "pages": pages,
+    }
+    flip_key = f"{out_prefix}flip/flip.json"
+    s3.put_object(Bucket=BUCKET, Key=flip_key,
+                  Body=json.dumps(flip_manifest, separators=(",", ":")).encode("utf-8"),
+                  ContentType="application/json",
+                  CacheControl=CACHE_IMMUTABLE)
+    shutil.rmtree(flip_dir, ignore_errors=True)
+    return {"flip_key": flip_key, "flip_page_count": content_pages}
 
 
 _ID_RE = None
@@ -391,6 +500,16 @@ def handle_compose(params, latex_runner=_run_lualatex):
         s3.upload_fileobj(zip_buf, BUCKET, out_prefix + "source.zip",
                           ExtraArgs={"ContentType": "application/zip"})
 
+        # flipbook pages (flipbook.md §5.2): best-effort — the PDF is the
+        # primary artifact, so a rasterization failure records flip_error
+        # in latest.json instead of failing the compile
+        flip_fields = {}
+        try:
+            _phase(job_id, task_id, "processing", "flipbook", "Flipbook pages", **progress)
+            flip_fields = _render_flipbook_pages(build_dir, out_prefix, book, content_pages)
+        except Exception as exc:  # noqa: BLE001
+            flip_fields = {"flip_error": str(exc)[:300]}
+
         latest = {
             "compile_id": compile_id,
             "cover_key": out_prefix + "cover.pdf",
@@ -399,10 +518,15 @@ def handle_compose(params, latex_runner=_run_lualatex):
             "content_pages": content_pages,
             "spread_count": len(entries),
             "compiled_at": _utc_now_iso(),
+            **flip_fields,
         }
+        # latest.json is the mutable pointer the public flipbook viewer
+        # fetches over HTTP: without no-cache a recompile serves stale
+        # pointers from browser heuristic caching (flipbook.md §2)
         s3.put_object(Bucket=BUCKET, Key=f"{BOOKS_PREFIX}{book_id}/out/latest.json",
                       Body=json.dumps(latest).encode("utf-8"),
-                      ContentType="application/json")
+                      ContentType="application/json",
+                      CacheControl="no-cache, max-age=0")
         _phase(job_id, task_id, "done", "done", "Done", **progress,
                content_pages=content_pages, **{k: latest[k] for k in
                                                ("cover_key", "content_key", "source_key")})

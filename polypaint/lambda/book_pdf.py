@@ -19,12 +19,15 @@ import zipfile
 from datetime import datetime, timezone
 
 import boto3
+from botocore.config import Config as BotoConfig
 
 import book_tex
 from shared import BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status
 from spread_pdf import PDF_IMAGE_MAX_PX, PDF_PALETTE_MAX_PX, prepare_pdf_image
 
-s3 = boto3.client("s3")
+# pool sized to the flip-page upload threads (default 10 floods logs with
+# discarded-connection warnings under the 16-worker upload)
+s3 = boto3.client("s3", config=BotoConfig(max_pool_connections=32))
 
 BOOKS_PREFIX = "polypaint/books/"
 FONT_DIR = os.environ.get("BOOK_FONT_DIR", "/opt/book-fonts")
@@ -248,7 +251,7 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages):
         list(pool.map(upload_page, pages))
 
     flip_manifest = {
-        "book_id": book.get("book_id") or book.get("name") or "",
+        "book_id": book.get("id") or book.get("name") or "",
         "compile_id": out_prefix.rstrip("/").split("/")[-1],
         "title": book.get("title") or book.get("name") or "PolyPaint",
         "page_count": content_pages,

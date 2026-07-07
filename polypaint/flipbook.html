@@ -66,20 +66,20 @@ async function main() {
   const pinned = qs('compile', '');
   if (pinned) safeId(pinned, 'compile id');
 
-  const latestResp = await fetch(`${BASE}${encodeURI(BOOKS_PREFIX + bookId)}/out/latest.json?ts=${Date.now()}`);
+  const latestResp = await fetch(`${BASE}${BOOKS_PREFIX}${encodeURIComponent(bookId)}/out/latest.json?ts=${Date.now()}`);
   if (!latestResp.ok) throw new Error(`book "${bookId}" has no compiled output (HTTP ${latestResp.status})`);
   const latest = await latestResp.json();
 
   let flipKey = String(latest.flip_key || '');
   if (pinned) {
-    flipKey = `${BOOKS_PREFIX}${bookId}/out/${pinned}/flip/flip.json`;
+    flipKey = `${BOOKS_PREFIX}${encodeURIComponent(bookId)}/out/${encodeURIComponent(pinned)}/flip/flip.json`;
   }
   if (!flipKey) {
     const why = latest.flip_error ? ` (last compile: ${latest.flip_error})` : '';
     throw new Error(`No flipbook for this compile yet — recompile the book${why}`);
   }
 
-  const flipResp = await fetch(BASE + encodeURI(flipKey));
+  const flipResp = await fetch(BASE + flipKey.split('/').map(encodeURIComponent).join('/'));
   if (!flipResp.ok) throw new Error(`flipbook manifest missing (HTTP ${flipResp.status})`);
   const flip = await flipResp.json();
   const pages = Array.isArray(flip.pages) ? flip.pages : [];
@@ -89,7 +89,7 @@ async function main() {
   document.title = `${flip.title || bookId} — PolyPaint Flipbook`;
 
   const flipPrefix = flipKey.slice(0, flipKey.lastIndexOf('/') + 1);
-  const urls = pages.map(p => BASE + encodeURI(flipPrefix + p));
+  const urls = pages.map(p => BASE + (flipPrefix + p).split('/').map(encodeURIComponent).join('/'));
 
   // fit a spread (2 pages side by side) into the stage
   const stage = document.getElementById('stage');
@@ -132,6 +132,13 @@ async function main() {
     if (e.key === 'ArrowRight') flipbook.flipNext();
   });
 }
+
+// stage is measured once at load; re-fit on real size changes
+let _resizeTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(_resizeTimer);
+  _resizeTimer = setTimeout(() => location.reload(), 400);
+});
 
 main().catch(err => setStatus(err && err.message ? err.message : String(err), 'err'));
 </script>

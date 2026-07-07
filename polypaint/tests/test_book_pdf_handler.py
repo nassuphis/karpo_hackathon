@@ -244,6 +244,7 @@ class TestBookPdfHandler(unittest.TestCase):
         flip_key = "polypaint/books/test-book/out/c9/flip/flip.json"
         flip = json.loads(self.fake.objects[flip_key])
         self.assertEqual(flip["page_count"], 8)
+        self.assertEqual(flip["book_id"], "test-book")  # the "id" field, not name
         self.assertEqual(flip["pages"], [f"p{n:04d}.jpg" for n in range(1, 9)])
         self.assertEqual(flip["width_px"], 1384)
         self.assertEqual(flip["height_px"], 1398)

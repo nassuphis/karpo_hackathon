@@ -153,24 +153,29 @@ async function main() {
     const total = Number(manifest.count || manifest.tiles.length || 0);
     meta.innerHTML = `<code>${tiles.length.toLocaleString()}</code> shown / <code>${total.toLocaleString()}</code> total · size <code>${size}</code> · sort <code>${sort}</code>`;
   }
-  // Composite wall pyramid (deepzoom-speed.md §7.1): every refresh writes
-  // wall.json next to all.json. When this share shows the default view, use
-  // the pyramid — a dozen tiles instead of one request per artifact.
+  // Composite wall pyramid (deepzoom-speed.md §7.1): derived from the
+  // manifest's refresh_id at the CANONICAL _index path — share links point
+  // at snapshot manifests (mosaic-shares/…/manifest.json), so deriving from
+  // the manifest URL breaks there. Default view only; custom cols would not
+  // match the baked grid. Pruned/unbuilt wall → per-tile grid fallback.
   let wallSource = null;
-  if (sort === 'date' && size === 'all') {
+  const colsParam = qs('cols', '');
+  if (sort === 'date' && size === 'all' && !colsParam) {
     try {
-      const wallUrl = manifestUrl.replace(/all\.json([?#].*)?$/, 'wall.json');
-      if (wallUrl !== manifestUrl) {
+      const wallKind = String(manifest.artifact_kind || kind || 'color');
+      const rid = String(manifest.refresh_id || '');
+      const base = manifest.base || 'https://polypaint.s3.us-east-1.amazonaws.com/';
+      if (rid) {
+        const wallUrl = base + encodeURI(`renders/_index/${wallKind}_mosaic/${rid}/wall.json`);
         const wallResp = await fetch(wallUrl + '?ts=' + Date.now());
         if (wallResp.ok) {
           const wall = await wallResp.json();
-          if (wall && wall.dzi_key && String(wall.refresh_id || '') === String(manifest.refresh_id || '')) {
-            const base = manifest.base || 'https://polypaint.s3.us-east-1.amazonaws.com/';
+          if (wall && wall.dzi_key && String(wall.refresh_id || '') === rid) {
             wallSource = base + encodeURI(String(wall.dzi_key));
           }
         }
       }
-    } catch (e) { /* no wall yet: per-tile grid below */ }
+    } catch (e) { /* no wall for this refresh: per-tile grid below */ }
   }
   setStatus(wallSource ? 'Ready · wall pyramid' : 'Ready');
   OpenSeadragon({

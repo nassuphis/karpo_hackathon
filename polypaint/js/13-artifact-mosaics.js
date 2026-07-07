@@ -528,6 +528,13 @@ function _logMosaicWallState(kind) {
     }
 }
 
+function _setMosaicSaveBusy(kind, busy) {
+    const btn = document.getElementById(`btn-${_mosaicConfig(kind).tabName}-save`);
+    if (!btn) return;
+    btn.disabled = !!busy;
+    btn.textContent = busy ? 'Opening…' : 'Save Wall';
+}
+
 function _mosaicSaveWall(kind) {
     const state = _mosaicState(kind);
     const wall = state.wall;
@@ -535,11 +542,19 @@ function _mosaicSaveWall(kind) {
     const rid = String(((state.status || {}).wall_refresh_id) || '');
     if (!key || String(wall.refresh_id || '') !== rid) {
         _setMosaicStatus(kind, 'Wall composite not ready yet — Refresh and wait for "wall pyramid ready".', 'error');
+        const btn = document.getElementById(`btn-${_mosaicConfig(kind).tabName}-save`);
+        if (btn) {
+            const label = btn.textContent;
+            btn.textContent = 'Not ready';
+            setTimeout(() => { btn.textContent = label; }, 1500);
+        }
         return;
     }
+    _setMosaicSaveBusy(kind, true);
     const px = `${Number(wall.width) || 0}x${Number(wall.height) || 0}`;
     _logMosaic(kind, `${_mosaicConfig(kind).label} wall composite download started (${px} jpg)`, 'ok', `wall-save|${rid}`);
     window.open(_mosaicPublicUrl(kind, key), '_blank');
+    setTimeout(() => _setMosaicSaveBusy(kind, false), 2000);
 }
 
 function saveAllColWall() { _mosaicSaveWall('color'); }

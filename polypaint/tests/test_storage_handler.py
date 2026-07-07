@@ -918,6 +918,49 @@ class TestComputeMigration(unittest.TestCase):
         self.assertIn("job_id", json.loads(resp["body"])["error"])
 
 
+class TestWallPyramidKick(unittest.TestCase):
+    """deepzoom-speed.md §7.1: after a manifest refresh the storage worker
+    chains the composite wall build to the deepzoom-export lambda."""
+
+    def test_kick_invokes_deepzoom_export_with_exact_payload(self):
+        import handler_storage
+
+        with patch.object(handler_storage, "boto3") as fake_boto3:
+            fake_lambda = fake_boto3.client.return_value
+            handler_storage._kick_wall_pyramid_build(
+                "color", "mosaic_x", "renders/_index/color_mosaic/mosaic_x/all.json")
+
+        kwargs = fake_lambda.invoke.call_args.kwargs
+        self.assertEqual(kwargs["FunctionName"], "polypaint-deepzoom-export")
+        self.assertEqual(kwargs["InvocationType"], "Event")
+        self.assertEqual(json.loads(kwargs["Payload"]), {
+            "internal_action": "build_wall_pyramid",
+            "kind": "color",
+            "refresh_id": "mosaic_x",
+            "manifest_key": "renders/_index/color_mosaic/mosaic_x/all.json",
+        })
+
+    def test_kick_failure_marks_wall_error_without_raising(self):
+        import handler_storage
+
+        with patch.object(handler_storage, "boto3") as fake_boto3, \
+             patch.object(handler_storage, "_get_ddb") as fake_get_ddb:
+            fake_boto3.client.return_value.invoke.side_effect = RuntimeError("no perms")
+            handler_storage._kick_wall_pyramid_build("palette", "mosaic_y", "k")
+
+        kwargs = fake_get_ddb.return_value.update_item.call_args.kwargs
+        self.assertEqual(kwargs["ConditionExpression"], "refresh_id = :rid")
+        self.assertEqual(kwargs["ExpressionAttributeValues"][":ws"], {"S": "error"})
+        self.assertEqual(kwargs["Key"]["task_id"], {"S": "palette_mosaic_status"})
+
+    def test_normalize_status_carries_wall_fields(self):
+        import handler_storage
+
+        status = handler_storage._normalize_mosaic_status({"state": "ready"})
+        for field in ("wall_state", "wall_refresh_id", "wall_json_key", "wall_error"):
+            self.assertIn(field, status)
+
+
 class TestMosaicJpgPreference(unittest.TestCase):
     """deepzoom-speed.md §2.2: the wall prefers a migrated preview.jpg (dims
     from meta, no ranged GET) and falls back to preview.png otherwise."""

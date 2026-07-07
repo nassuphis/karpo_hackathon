@@ -292,4 +292,8 @@ def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id
 
 def handler(event, context):
     params = parse_body(event)
+    if params.get("internal_action") == "build_wall_pyramid" or \
+            event.get("internal_action") == "build_wall_pyramid":
+        from handler_wall_pyramid import handle_build_wall_pyramid
+        return handle_build_wall_pyramid(params if params.get("internal_action") else event)
     return handle_deepzoom_export_request(params, require_raw_sidecar=False, task_id="deepzoom_export")

@@ -889,6 +889,8 @@ docker run --rm --platform linux/arm64 \
         echo "  png_export compiled: $(file /src/png_export)"
         gcc -O3 -o /src/dz_export /src/dz_export.c $VIPS_CFLAGS $VIPS_LIBS
         echo "  dz_export compiled: $(file /src/dz_export)"
+        gcc -O3 -o /src/wall_dz /src/wall_dz.c $VIPS_CFLAGS $VIPS_LIBS
+        echo "  wall_dz compiled: $(file /src/wall_dz)"
         gcc -O3 -o /src/autolevels_render /src/autolevels_render.c $VIPS_CFLAGS $VIPS_LIBS
         echo "  autolevels_render compiled: $(file /src/autolevels_render)"
 
@@ -957,6 +959,16 @@ TIFTEST
             exit 1
         fi
         echo "  dz_export: .dzi + $TILE_COUNT tiles OK"
+
+        # 3b. Smoke test wall_dz (composite wall pyramid, deepzoom-speed.md 7.1)
+        printf "/tmp/test_8x8.tif\n/tmp/test_8x8.tif\n/tmp/test_8x8.tif\n" > /tmp/wall_list.txt
+        mkdir -p /tmp/wall_test
+        /src/wall_dz /tmp/wall_list.txt 2 /tmp/wall_test/wall || \
+            { echo "FATAL: wall_dz failed on test list"; exit 1; }
+        [ -f /tmp/wall_test/wall.dzi ] || { echo "FATAL: wall_dz produced no .dzi"; exit 1; }
+        WALL_TILES=$(find /tmp/wall_test/wall_files -name "*.jpg" 2>/dev/null | wc -l)
+        [ "$WALL_TILES" -gt 0 ] || { echo "FATAL: wall_dz produced no jpg tiles"; exit 1; }
+        echo "  wall_dz: .dzi + $WALL_TILES jpg tiles OK"
 
         # 4. Smoke test png_export
         /src/png_export /tmp/test_8x8.tif /tmp/test_out.png || \
@@ -1295,7 +1307,7 @@ echo "  PDFArt:  $(du -h /tmp/polypaint-pdf-artifact.zip | cut -f1)  (spread bui
 DZ_EXPORT_DIR=/tmp/polypaint-deepzoom-export
 rm -rf "$DZ_EXPORT_DIR"
 mkdir -p "$DZ_EXPORT_DIR"
-cp lambda/handler_deepzoom_export.py lambda/shared.py lambda/raw_sidecar.py \
+cp lambda/handler_deepzoom_export.py lambda/handler_wall_pyramid.py lambda/shared.py lambda/raw_sidecar.py \
    lambda/color_render_contract.py lambda/color_artifact_meta.py lambda/solve_score_chain.py \
    lambda/deepzoom_viewer_template.html "$DZ_EXPORT_DIR/"
 cp lambda/dz_export "$DZ_EXPORT_DIR/"
@@ -1307,7 +1319,7 @@ echo "  DzExp:   $(du -h /tmp/polypaint-deepzoom-export.zip | cut -f1)  (dz_expo
 DZ_FROM_RAW_DIR=/tmp/polypaint-deepzoom-from-raw
 rm -rf "$DZ_FROM_RAW_DIR"
 mkdir -p "$DZ_FROM_RAW_DIR"
-cp lambda/handler_deepzoom_from_raw.py lambda/handler_deepzoom_export.py lambda/shared.py lambda/raw_sidecar.py \
+cp lambda/handler_deepzoom_from_raw.py lambda/handler_deepzoom_export.py lambda/handler_wall_pyramid.py lambda/shared.py lambda/raw_sidecar.py \
    lambda/color_render_contract.py lambda/color_artifact_meta.py lambda/solve_score_chain.py \
    lambda/deepzoom_viewer_template.html "$DZ_FROM_RAW_DIR/"
 cp lambda/dz_export "$DZ_FROM_RAW_DIR/"

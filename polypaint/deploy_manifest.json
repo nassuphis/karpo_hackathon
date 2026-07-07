@@ -90,7 +90,7 @@
       "handler": "handler_storage.handler",
       "zip": "/tmp/polypaint-storage.zip",
       "layers": [],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE",
+      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,DEEPZOOM_EXPORT_FUNCTION=polypaint-deepzoom-export",
       "group": "core",
       "memory_why": "pure Python",
       "reserved_concurrency": 5,
@@ -327,7 +327,7 @@
       "name": "polypaint-deepzoom-export",
       "name_var": "DZ_EXPORT_NAME",
       "memory_var": "DZ_EXPORT_MEMORY",
-      "memory_mb": 4096,
+      "memory_mb": 8192,
       "handler": "handler_deepzoom_export.handler",
       "zip": "/tmp/polypaint-deepzoom-export.zip",
       "layers": [
@@ -335,7 +335,7 @@
       ],
       "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
       "group": "core",
-      "memory_why": "libvips dzsave + parallel S3 upload",
+      "memory_why": "libvips dzsave + parallel S3 upload; 8GB for wall pyramid arrayjoin (~1.3GB decoded tiles, deepzoom-speed.md 7.1)",
       "tmp": "binary",
       "routes": [
         "/deepzoom-export"

@@ -374,23 +374,85 @@ only on the user's explicit go (Claude may run them when told).
 
 ---
 
-## 7. Deferred options (in rough value order)
+## 7. Phase 4 — composite wall pyramid (ACTIVE) + CloudFront
 
-1. **Composite wall pyramid** (the meditationsincolor experience): mosaic
-   refresh composites previews via vips `arrayjoin` (1,651 × 512px ≈ 21k×21k)
-   through the existing `dz_export` → the wall becomes a real DZI; zoomed-out
-   open is a few hundred KB and sharpens progressively. Trade-off: bakes ONE
-   order — re-sort/filter needs a server re-composite (~1 min) or falls back
-   to the per-preview grid. Bake `created_at` (the default view) first.
-2. **Thumb layer + zoom-gating**: ~256px `thumb.jpg` (~25 KB) per artifact;
-   wall grid uses thumbs (~40 MB total), full previews load only past a zoom
-   threshold (swap/overlay tiled image). Keeps all client-side sorting.
-3. **CloudFront** in front of the bucket: h2 (kills the 6-connection cap),
-   edge latency, faster share links for friends; also the only fix that helps
-   without shrinking bytes. deploy.sh distribution + base-URL swap
-   (js/13-artifact-mosaics.js:163-167 already centralizes the base).
+### 7.1 Wall pyramid, wired into Refresh
 
-## 8. Risks
+Phase 2 leaves the wall at ~150 MB / 1,651 requests — still tens of seconds
+cold on a slow line (HTTP/1.1 caps browsers at 6 connections). The composite
+pyramid makes the zoomed-out wall a dozen tiles.
+
+Flow (Refresh button unchanged for the user):
+
+1. Storage worker builds the manifest exactly as today. When it flips the
+   status row to ready, it fires ONE async `lambda.invoke` at the
+   deepzoom-export function (`internal_action: "build_wall_pyramid"`,
+   payload: kind + refresh_id + manifest key) and stamps
+   `wall_state: "computing"` on the mosaic status row. The storage lambda
+   stays pure-Python; the imaging work lands where libvips already lives.
+2. `handler_wall_pyramid.py` (bundled into the deepzoom-export zip):
+   - loads the manifest, sorts tiles by the DEFAULT wall order — replicating
+     `_mosaicFilteredSortedTiles`'s `created` branch exactly (created_at
+     desc, job_id asc, artifact/palette id asc) — and records that baked
+     order in `wall.json`;
+   - downloads every tile jpg to /tmp (~150 MB, 50 threads, in-region);
+     a missing/corrupt tile becomes a flat panel-blue placeholder so one bad
+     artifact can't sink the wall (count reported in wall.json);
+   - runs `wall_dz` (new native tool, same layer-build pattern as
+     dz_export): file-list + `across` cols → `vips_arrayjoin` →
+     `vips_dzsave` with `.jpg[Q=88]` 256px tiles;
+   - uploads `wall.dzi` + `wall_files/**` under
+     `renders/_index/{kind}_mosaic/{refresh_id}/` with CACHE_IMMUTABLE
+     (refresh-scoped = immutable), plus `wall.json` (no-cache) carrying
+     {dzi_key, cols, rows, cell_px: 512, count, baked tile list for
+     click-mapping};
+   - flips `wall_state` to ready/error on the status row.
+3. Frontend (js/13): when status carries a ready wall whose refresh_id
+   matches the loaded manifest AND the view is default-sort + size=all, the
+   viewer opens the wall DZI; canvas-click/context-menu map pixel → cell via
+   wall.json's cols/cell_px and baked tile list (same math as the grid).
+   Any other sort/size — and random reseed — falls back to the per-tile
+   grid, so zero features are lost. Wall not ready yet → grid (progressive).
+
+Sizing: 1,651 × 512px → 41 cols → 20,992² px. vips random-access jpeg
+sources decode to ~786 KB each (~1.3 GB total) — deepzoom-export gets a
+memory bump (8 GB) and its existing 600 s subprocess timeout holds (dzsave
+at 21k² is ~4× the proven 10k² exports). Pyramid output ≈ 60–120 MB of jpg
+tiles, uploaded with the existing 50-thread pattern.
+
+Trade-off (accepted): the pyramid bakes ONE order. Re-sorts stay instant via
+the grid fallback; the pyramid re-bakes only on the next Refresh.
+
+### 7.2 CloudFront (user has a distribution already)
+
+One-time console setup (user-side, no deploy.sh change needed to start):
+add the bucket's REST endpoint `polypaint.s3.us-east-1.amazonaws.com` as an
+Origin (public bucket — no OAC needed), then either a new distribution or
+new behaviors on the existing one: default behavior → that origin, cache
+policy **CachingOptimized** (honors our origin Cache-Control: immutable
+objects stick at the edge, no-cache manifests revalidate), HTTP/2+3 on.
+Two consequences to plan for:
+
+- `index.html` + `js/*` carry no Cache-Control today → CloudFront would
+  hold them ~24 h. Either add a deploy-time invalidation
+  (`aws cloudfront create-invalidation --paths '/index.html' '/js/*'`) to
+  deploy.sh, or upload site files with `Cache-Control: no-cache` (better).
+- The app must FETCH through the distribution to benefit: one base-URL
+  knob replacing the hardcoded `https://polypaint.s3.us-east-1.amazonaws.com/`
+  bases (js/13 `_mosaicPublicUrl` fallback + manifest `base` emitted by
+  handler_storage `MOSAIC_BASE_URL`, js/14-book s3Base, deepzoom
+  `dzi_url`/`share_url`). Land the knob as `ASSET_BASE_URL` env (lambdas) +
+  a JS constant, defaulting to the S3 URL so nothing changes until the
+  user sets the CloudFront domain.
+
+## 8. Deferred options
+
+- **Thumb layer + zoom-gating**: ~256px `thumb.jpg` (~25 KB) per artifact;
+  wall grid uses thumbs (~40 MB total), full previews load only past a zoom
+  threshold. Superseded for the default view by the wall pyramid; only
+  interesting if non-default sorts ever need to be lighter.
+
+## 9. Risks
 
 - **JPEG on hard palette edges + 1024→512 downscale**: mitigated by 4:4:4 +
   q92 + Lanczos + mandatory `--sample` inspection at wall-typical zoom;

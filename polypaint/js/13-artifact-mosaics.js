@@ -52,6 +52,8 @@ function _newArtifactMosaicState() {
         randomSeed: 1,
         lastRenderSignature: '',
         activeTileSource: null,
+        wall: null,
+        wallPollTimer: null,
         lastLogSignature: '',
         contextMenuBound: false,
         sharing: false,
@@ -479,11 +481,89 @@ function _mosaicUpdateSummary(kind, tiles) {
     el.textContent = `${count.toLocaleString()} shown${total ? ` / ${total.toLocaleString()}` : ''}${suffix}`;
 }
 
+// ── Composite wall pyramid (deepzoom-speed.md §7.1) ──────────────────────
+// A refresh bakes the DEFAULT view (date sort, all sizes, auto cols) into a
+// real DZI pyramid server-side; opening it costs ~a dozen tiles instead of
+// one request per artifact. Any other sort/size/cols falls back to the
+// per-tile grid below, so no feature is lost.
+
+function _mosaicWallEligible(kind) {
+    const state = _mosaicState(kind);
+    const wall = state.wall;
+    if (!wall || !state.manifest || !Array.isArray(wall.tiles) || !wall.tiles.length) return false;
+    if (String(wall.refresh_id || '') !== String(state.manifest.refresh_id || '')) return false;
+    if (_mosaicSortMode(kind) !== 'date') return false;
+    if (_selectedMosaicSize(kind) !== 'all') return false;
+    if (_mosaicRequestedColsValue(kind) !== '') return false;
+    return true;
+}
+
+async function _maybeLoadMosaicWall(kind) {
+    const state = _mosaicState(kind);
+    const status = state.status || {};
+    const key = String(status.wall_json_key || '');
+    if (String(status.wall_state || '') !== 'ready' || !key) return;
+    if (state.wall && String(state.wall.refresh_id || '') === String(status.wall_refresh_id || '')) return;
+    try {
+        const resp = await fetch(_mosaicPublicUrl(kind, key) + '?ts=' + Date.now());
+        if (!resp.ok) throw new Error(`wall.json HTTP ${resp.status}`);
+        state.wall = await resp.json();
+    } catch (e) {
+        state.wall = null;
+    }
+}
+
+function _stopMosaicWallPoll(kind) {
+    const state = _mosaicState(kind);
+    if (state.wallPollTimer) {
+        clearTimeout(state.wallPollTimer);
+        state.wallPollTimer = null;
+    }
+}
+
+function _scheduleMosaicWallPoll(kind, attempt = 0) {
+    const state = _mosaicState(kind);
+    _stopMosaicWallPoll(kind);
+    const wallState = String((state.status || {}).wall_state || '');
+    if (wallState !== 'computing' || attempt >= 40) return;
+    state.wallPollTimer = setTimeout(async () => {
+        state.wallPollTimer = null;
+        try {
+            state.status = (await _fetchMosaicStatus(kind)) || state.status;
+            await _maybeLoadMosaicWall(kind);
+            if (String((state.status || {}).wall_state || '') === 'ready') {
+                _rebuildArtifactMosaic(kind);
+                return;
+            }
+        } catch (e) { /* transient status fetch failure: keep polling */ }
+        _scheduleMosaicWallPoll(kind, attempt + 1);
+    }, 8000);
+}
+
 function _rebuildArtifactMosaic(kind) {
     const state = _mosaicState(kind);
     _closeMosaicContextMenu();
     if (!state.manifest) return;
     _syncMosaicSizeOptions(kind);
+    if (_mosaicWallEligible(kind)) {
+        const wall = state.wall;
+        state.tiles = wall.tiles;
+        const viewer = _ensureMosaicViewer(kind);
+        const meta = {
+            _mosaicCols: Number(wall.cols) || 1,
+            _mosaicRows: Number(wall.rows) || 1,
+            _mosaicTileSize: Number(wall.cell_px) || 512,
+            _wallRefreshId: String(wall.refresh_id || ''),
+        };
+        const signature = `wall|${meta._wallRefreshId}|${state.tiles.length}`;
+        _mosaicUpdateSummary(kind, state.tiles, meta);
+        if (viewer && typeof viewer.open === 'function' && signature !== state.lastRenderSignature) {
+            viewer.open(_mosaicPublicUrl(kind, wall.dzi_key));
+            state.activeTileSource = meta;
+            state.lastRenderSignature = signature;
+        }
+        return;
+    }
     state.tiles = _mosaicFilteredSortedTiles(kind);
     const viewer = _ensureMosaicViewer(kind);
     const source = _mosaicTileSource(kind, state.tiles);
@@ -873,6 +953,9 @@ async function _loadArtifactMosaic(kind, opts = {}) {
         _setMosaicRefreshBusy(kind, false);
         if (statusState === 'ready') {
             await _loadMosaicManifestForStatus(kind, state.status);
+            await _maybeLoadMosaicWall(kind);
+            _rebuildArtifactMosaic(kind);
+            _scheduleMosaicWallPoll(kind);
             _setMosaicStatus(kind, `Ready · ${Number(state.status.count || 0).toLocaleString()} tiles`, 'ok');
             _logMosaic(
                 kind,

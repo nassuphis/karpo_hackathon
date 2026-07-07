@@ -3148,6 +3148,12 @@ def _normalize_mosaic_status(status):
     status.setdefault("skipped_bad_meta", 0)
     status.setdefault("skipped_legacy", 0)
     status.setdefault("unknown_dimensions", 0)
+    # composite wall pyramid (deepzoom-speed.md §7.1): built async by the
+    # deepzoom-export lambda after each refresh; "" = never attempted
+    status.setdefault("wall_state", "")
+    status.setdefault("wall_refresh_id", "")
+    status.setdefault("wall_json_key", "")
+    status.setdefault("wall_error", "")
     status.setdefault("error", "")
     status.setdefault("updated_at_ms", 0)
     return status
@@ -3831,6 +3837,40 @@ def _put_owned_mosaic_status(status, refresh_id, *, kind="color"):
     )
 
 
+def _kick_wall_pyramid_build(kind, refresh_id, manifest_key):
+    """deepzoom-speed.md §7.1: chain the composite wall build to the
+    deepzoom-export lambda (libvips + wall_dz live there; storage stays pure
+    Python). Best-effort — the manifest is already ready and the wall falls
+    back to the per-tile grid, so a failed kick only marks wall_state=error."""
+    try:
+        boto3.client("lambda", region_name=os.environ.get("AWS_REGION", "us-east-1")).invoke(
+            FunctionName=os.environ.get("DEEPZOOM_EXPORT_FUNCTION", "polypaint-deepzoom-export"),
+            InvocationType="Event",
+            Payload=json.dumps({
+                "internal_action": "build_wall_pyramid",
+                "kind": kind,
+                "refresh_id": refresh_id,
+                "manifest_key": manifest_key,
+            }).encode("utf-8"),
+        )
+    except Exception as exc:  # noqa: BLE001
+        try:
+            _get_ddb().update_item(
+                TableName=JOBS_TABLE,
+                Key={"job_id": {"S": MOSAIC_STATUS_JOB_ID},
+                     "task_id": {"S": _mosaic_task_id(kind)}},
+                UpdateExpression="SET wall_state = :ws, wall_error = :we",
+                ConditionExpression="refresh_id = :rid",
+                ExpressionAttributeValues={
+                    ":ws": {"S": "error"},
+                    ":we": {"S": str(exc)[:512]},
+                    ":rid": {"S": refresh_id},
+                },
+            )
+        except Exception:
+            pass
+
+
 def _run_mosaic_worker(kind, refresh_id):
     existing = _read_mosaic_status(kind, consistent=True)
 
@@ -3848,7 +3888,10 @@ def _run_mosaic_worker(kind, refresh_id):
             CacheControl="no-cache, max-age=0",
         )
         status = _ready_mosaic_status(refresh_id, manifest, existing)
+        status["wall_state"] = "computing"
+        status["wall_refresh_id"] = refresh_id
         _put_owned_mosaic_status(status, refresh_id, kind=kind)
+        _kick_wall_pyramid_build(kind, refresh_id, manifest_key)
         try:
             previous_refresh_id = _mosaic_refresh_id_from_manifest_key(existing.get("last_ready_manifest_key") or existing.get("manifest_key") or "")
             keep = {refresh_id}

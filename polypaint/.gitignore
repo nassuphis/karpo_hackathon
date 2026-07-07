@@ -20,6 +20,7 @@ lambda/param_gen
 lambda/tiff_compat
 lambda/png_export
 lambda/dz_export
+lambda/wall_dz
 lambda/sweep_cm
 lambda/coeffs_bilevel_raster
 lambda/roots2pix_mt

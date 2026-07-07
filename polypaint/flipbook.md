@@ -6,118 +6,147 @@ web-sized page images once, server-side, and a standalone viewer on the
 public bucket serves the page-turn experience. No third-party service, no
 manual compression step, app look and feel.
 
+Rev 2 after adversarial review: every path, budget, and tool below is
+verified against the code or tested live; the verification notes say how.
+
 ## 0. Why FlowPaper hurt (and what it actually does)
 
-The compiled book is print-grade — 293×296 mm pages full of q92 JPEGs;
-content.pdf runs to hundreds of MB, which FlowPaper's converter only accepts
-after `pdf_compress.sh` shrinks it. But FlowPaper's real product is exactly
-two things we already know how to do: rasterize PDF pages server-side, and
-drive a page-flip UI over the images. We have the rasterizer's home (the
-book-pdf Lambda container), a public bucket with immutable-cache discipline,
-and an established standalone-viewer pattern (viewer.html,
-artifact_mosaic_viewer.html).
-
-`pdf_compress.sh` stays for whatever else it's useful for; the flipbook path
-never touches it.
+The compiled book is print-grade — 293×296 mm pages full of q92 JPEGs —
+and FlowPaper's converter only accepts it after `pdf_compress.sh` shrinks
+it. But its real product is two things we already host: rasterize PDF pages
+server-side, drive a page-flip UI over the images. We have the rasterizer's
+home (the book-pdf container Lambda), a public bucket with immutable-cache
+discipline, and the standalone-viewer pattern (viewer.html,
+artifact_mosaic_viewer.html). `pdf_compress.sh` stays for other uses; the
+flipbook path never touches it.
 
 ## 1. Design decisions
 
-- **Pre-rendered page JPGs, not client-side PDF.js.** PDF.js would need the
-  whole (or a linearized) content.pdf downloaded before first paint —
-  exactly the FlowPaper pain again, on a slow line. Pre-rendered pages load
-  lazily, a spread at a time.
-- **Rasterize inside the existing book compose** (handler_book_pdf compose
-  op): the PDF is already on /tmp there, the container is ours, and the
-  docker gate covers it. No new Lambda, no new job type.
-- **pdftoppm (poppler-utils) as the rasterizer.** The image's libvips is
-  built with `-Dpoppler=disabled` (book_pdf.Dockerfile:24) so vips cannot
-  load PDFs; `dnf install -y poppler-utils` in the runtime stage adds
-  pdftoppm, the standard fast path (fallback if AL2023 ever drops it:
-  ghostscript). Gate assertion: pdftoppm renders a page of the fixture book.
-- **StPageFlip (page-flip, MIT) vendored into the repo** (js/vendor/
-  page-flip.browser.js, git-tracked like fonts/) — no CDN surprises on a
-  share link. Single-page mode on cover, two-page spreads after, arrows +
-  swipe + keyboard built in.
-- **Viewer is a static file** — `flipbook.html` at the repo root, uploaded
-  with the site assets, opened as
-  `flipbook.html?book={book_id}` (same query-param pattern as the mosaic
-  share viewer).
+- **Pre-rendered page JPGs, not client-side PDF.js** — PDF.js needs the
+  whole print-grade PDF (or a linearized one) before first paint: the
+  FlowPaper pain again, on a slow line. Pre-rendered pages stream a spread
+  at a time.
+- **Rasterize inside the existing compose op** (book_pdf.handle_compose,
+  book_pdf.py:300 — the PDF is already at
+  `/tmp/book_build_{compile_id}/book.pdf` when the upload phase runs).
+  No new Lambda, no new job type; the compile's jobs-rail card covers it.
+- **pdftoppm as the rasterizer** — VERIFIED LIVE: `dnf install -y
+  poppler-utils` succeeds on `public.ecr.aws/lambda/python:3.12` arm64 and
+  installs pdftoppm 24.08.0 (tested 2026-07-08 in docker). Needed because
+  the image's libvips is built `-Dpoppler=disabled`
+  (book_pdf.Dockerfile:24) and cannot load PDFs. `-jpegopt quality=85` is
+  supported (poppler ≥ 0.63).
+- **StPageFlip (page-flip, MIT) vendored at `vendor/page-flip.browser.js`**
+  — NOT under `js/`: `deployed_asset_key` (deploy.sh:201-208) rewrites
+  `js/*` to build-versioned `assets/${BUILD_ID}/…` keys and ONLY index.html
+  gets URL-stamping, so a `js/vendor/…` reference from flipbook.html would
+  dangle. The `*` case uploads `vendor/…` at its stable key with
+  `--cache-control no-cache`, same as artifact_mosaic_viewer.html.
+- **flipbook.html is a static root asset** (stable URL, no-cache), opened
+  as `flipbook.html?book={book_id}`. Both new files must be added to the
+  explicit `frontend_asset_keys` list (deploy.sh:73-84) or deploy never
+  uploads them.
 
-## 2. Data layout (additive)
+## 2. Data layout (additive; real prefix)
 
-Compose already writes `books/{book_id}/out/{compile_id}/content.pdf` and
-the pointer `books/{book_id}/out/latest.json` (book_pdf.py:307-403). It
-additionally writes, per compile:
+`BOOKS_PREFIX = "polypaint/books/"` (book_pdf.py:25 — NOT `books/`).
+Compose writes `polypaint/books/{book_id}/out/{compile_id}/content.pdf` +
+pointer `polypaint/books/{book_id}/out/latest.json` (book_pdf.py:307-403).
+It additionally writes per compile:
 
 ```
-books/{book_id}/out/{compile_id}/flip/p0001.jpg …   (one per PDF page)
-books/{book_id}/out/{compile_id}/flip/flip.json     (manifest)
+polypaint/books/{book_id}/out/{compile_id}/flip/p0001.jpg …
+polypaint/books/{book_id}/out/{compile_id}/flip/flip.json
 ```
 
-- Pages: `pdftoppm -jpeg -r 120 -jpegopt quality=85` → ~1384×1398 px per
-  page (293 mm at 120 dpi). A 35-spread book = 1 title + 70 entry pages +
-  ≤3 pads ≈ 74 pages ≈ 74 × ~150–350 KB ≈ **15–25 MB total**, fetched
-  lazily ~2 pages per turn. Immutable cache headers (compile-id-scoped
-  keys, CACHE_IMMUTABLE from shared.py).
-- `flip.json` (no-cache is unnecessary — compile-scoped — but the pointer
-  below is the mutable hop): `{book_id, compile_id, title, page_count,
-  width_px, height_px, pages: ["flip/p0001.jpg", …]}`.
-- `latest.json` gains additive fields: `flip_key` (the manifest key) +
-  `flip_page_count`. Old latest.json without them → viewer says "no
-  flipbook yet, recompile".
+- Pages: `pdftoppm -jpeg -r 120 -jpegopt quality=85 book.pdf <prefix>`.
+  Output naming quirk: pdftoppm emits `<prefix>-NN.jpg` zero-padded to the
+  digit count of the LAST page (74 pages → `-01…-74`); the handler globs
+  and renames to deterministic `p%04d.jpg` before upload.
+- Geometry: content MediaBox is 830.55×838.98 bp → at 120 dpi (×120/72)
+  = 1384×1398 px. A 35-spread book = 1 title + 70 entry pages + ≤3 pads
+  ≈ 74 pages ≈ 74 × ~150–350 KB ≈ **15–25 MB**, fetched ~2 pages per turn.
+- Headers: `flip/*.jpg` + `flip.json` are compile-id-scoped = immutable →
+  `CacheControl=CACHE_IMMUTABLE` (shared.py, already COPY'd into the book
+  image). **latest.json is the mutable pointer and today ships with NO
+  cache headers (book_pdf.py:403) — the public viewer would see stale
+  pointers after a recompile. Fix in the same commit: add
+  `CacheControl="no-cache, max-age=0"` to that put.** (The Book tab never
+  noticed because it reads latest via the storage route, not HTTP cache.)
+- `flip.json`: `{book_id, compile_id, title, page_count, width_px,
+  height_px, pages: ["p0001.jpg", …]}` (names relative to the flip/
+  prefix). `latest.json` gains additive `flip_key` + `flip_page_count` —
+  and on rasterization failure, `flip_error` instead (see §5.2).
 
-## 3. Viewer — flipbook.html
+## 3. Budgets (derived from live config)
 
-- Reads `?book={id}` → fetches `books/{id}/out/latest.json` (public) →
-  fetches flip.json → builds StPageFlip with `showCover: true` (title page
-  alone, then verso/recto spreads — matching the print page plan where
-  front matter is odd so text faces image per opening).
-- Deep-blue app chrome (#1A1A2E page background), title from flip.json,
-  page x/y indicator, arrows/keys/swipe, fullscreen button.
-- Preloads the next spread on turn; everything else on demand.
-- Optional `?compile={compile_id}` pins a specific compile (default:
-  latest).
+Function `polypaint-book-pdf` (deploy_manifest.json): 4096 MB memory,
+**/tmp = 2048 MB** (deploy.sh:396), timeout $TIMEOUT = 900 s.
 
-## 4. Book tab UI
+- Disk at peak (inside the existing build_dir lifecycle, cleaned in
+  `finally`): entry assets ~100–250 MB + book.pdf + cover.pdf ~100–350 MB
+  + flip pages ~25 MB ≈ **≤ 650 MB < 2048** ✓.
+- Time: real compiles run ~2–3 min of the 900 s budget. pdftoppm at ~1–2
+  s/page serial ≈ 75–150 s for 74 pages; run **4 parallel workers over
+  `-f/-l` page ranges** (4096 MB comfortably holds 4 × ~200–400 MB
+  renderers) → ~20–40 s added. Gate measures the fixture's actual time.
+- Upload: ~76 small objects through the existing pattern, seconds.
 
-Next to Cover PDF / Content PDF / Source Zip (index.html:2106-2108):
+## 4. Viewer — flipbook.html
 
-- **Flipbook** button — opens `flipbook.html?book={activeId}` in a new tab
-  (viewing is the point of a flipbook; this is the one legitimate new-tab
-  case). Busy/disabled states per the all-buttons-have-feedback rule;
-  "Not compiled yet" flash when latest.json lacks flip_key.
-- **Copy Flip Link** — clipboard-copies the public URL (share pattern,
-  same feedback as mosaic Share).
+- Query params: `?book={id}` (+ optional `?compile={compile_id}` to pin;
+  default latest). Client-side sanitize with the server's own rule,
+  `/^[A-Za-z0-9._#-]{1,80}$/` (mirrors book_pdf._safe_id, book_pdf.py:164)
+  — S3 keys don't path-traverse, but garbage should fail fast and loud.
+- Flow: fetch `polypaint/books/{id}/out/latest.json` (public) → if no
+  `flip_key`: show "No flipbook for this compile yet — recompile the book"
+  (+ surface `flip_error` if present) → else fetch flip.json → StPageFlip
+  with `showCover: true`: p1 (title, a recto in the print plan) stands
+  alone, then pages turn as true verso/recto openings — the same pairing
+  the print page plan guarantees (front matter odd, book_tex.page_plan).
+- Deep-blue chrome (#1A1A2E), title from flip.json, "page x / y", arrows +
+  keys + swipe (library-native), fullscreen button. Preload next spread on
+  turn.
 
 ## 5. Implementation order
 
-1. **Dockerfile + gate**: poppler-utils in book_pdf.Dockerfile;
-   scripts/test-book-docker.sh gains a pdftoppm assertion (render page 1 of
-   the fixture book, assert JPEG magic + expected pixel width at -r 120).
-2. **Compose op** (handler_book_pdf): after content.pdf upload — pdftoppm
-   the pages, parallel-upload flip/*.jpg (CACHE_IMMUTABLE) + flip.json,
-   extend latest.json additively. Tests: payload-contract on the flip
-   uploads + manifest shape + latest.json fields; failure of the flip step
-   must NOT fail the compile (book PDF is the primary artifact — flip_error
-   recorded in latest.json instead).
-3. **flipbook.html + vendored page-flip** + deploy.sh site-asset list entry.
-4. **Book tab buttons** (js/14-book.js + index.html) with busy feedback;
-   Playwright covers the not-compiled hint path.
-5. Gates per repo law: book docker gate (image + templates changed),
-   book/pipeline pytest suites, Playwright (JS), predeploy on every commit.
+1. **Dockerfile + gate**: `dnf install -y poppler-utils` in the runtime
+   stage (book_pdf.Dockerfile:33 block); scripts/test-book-docker.sh
+   renders page 1 of the fixture book at `-r 120` and asserts JPEG magic +
+   width 1384±1 px, and times the full-book rasterization.
+2. **Compose op** (book_pdf.py, upload phase): rasterize → rename →
+   parallel-upload flip/*.jpg + flip.json (immutable) → extend latest
+   dict additively → **latest.json put gains no-cache** (§2). Failure
+   isolation: the flip block is try/except; on error latest.json carries
+   `flip_error` and the compile still succeeds (the PDF is the primary
+   artifact). Tests: payload contracts on flip uploads/manifest/latest
+   fields + the failure-isolation path, in tests/test_book_pdf_handler.py.
+3. **flipbook.html + vendor/page-flip.browser.js** + both added to
+   `frontend_asset_keys` (deploy.sh:73-84).
+4. **Book tab** (index.html:2106-2108 toolbar + js/14-book.js):
+   - **Flipbook** button — enabled off `_bookState.latestOutput.flip_key`;
+     `latest_output` already flows verbatim through the storage fetch
+     (handler_storage.handle_fetch_book, :2015-2029 → js/14-book.js:49),
+     so zero storage changes. Opens the stable viewer URL in a new tab
+     (the one legitimate new-tab case — it IS a viewer); flashes
+     "Recompile first" on the button when absent (feedback rule).
+   - **Copy Flip Link** — `_copyTextToClipboard` (global from js/13) with
+     copied-state feedback.
+5. Gates: book docker gate (image changed — mandatory), book pytest
+   suites, Playwright (JS), predeploy every commit.
 
-## 6. Numbers to verify live (render-first discipline)
+## 6. Render-first checks before shipping
 
-- pdftoppm timing on the 10-row worst-case fixture in the gate (~74-page
-  book expected well under 60 s at -r 120; compose timeout already 600+ s).
-- One real book: page JPG sizes vs the 15–25 MB estimate; visual check of a
-  text verso at 120 dpi (KV mono text must be crisp — if not, bump to 150
-  dpi ≈ +55% bytes before shipping).
+- Gate prints fixture rasterization time; abort the 4-worker design if a
+  page exceeds ~3 s (would threaten the 900 s budget on huge books).
+- One real book end-to-end: page sizes vs the 15–25 MB estimate, and a
+  visual read of a text verso at 120 dpi — the mono KV text must be crisp
+  on a laptop screen; if soft, bump to 150 dpi (≈ +55% bytes) before
+  shipping, not after.
 
 ## 7. Deferred
 
-- 2× resolution tier for pinch-zoom inside the flipbook (page-flip supports
-  swapping sources; only if 120 dpi feels soft on tablets).
-- Cover PDF as book jacket wrap-around view.
-- Flipbook link QR on the printed colophon page (fun: the printed book
-  linking to its digital twin).
+- 2× zoom tier for tablets (page-flip supports source swapping).
+- Cover PDF as a jacket wrap-around view.
+- QR of the flip link on a printed colophon page (the printed book linking
+  to its digital twin).

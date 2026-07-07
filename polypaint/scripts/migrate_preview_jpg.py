@@ -41,7 +41,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageFile
 except ImportError:  # pragma: no cover - guidance for CloudShell
     print("Pillow is required: pip install pillow", file=sys.stderr)
     raise
@@ -55,11 +55,28 @@ SAMPLE_PREFIX = "_scratch/preview_migration_samples"
 FAMILIES = ("color", "palettes")
 
 
-def convert_png_to_jpg(png_bytes, *, max_px=MAX_PX, quality=JPEG_QUALITY):
+# One render batch (compute_mobo9or2) wrote previews whose PNG wrapper is
+# intact but whose pixel stream is damaged in the final bytes: strict decode
+# refuses, tolerant decode recovers the full visible image (verified
+# side-by-side against the palette's image.jpeg). LOAD_TRUNCATED_IMAGES is a
+# Pillow GLOBAL, so tolerant attempts serialize under a lock; transiently
+# short reads can't slip through as partial images because the strict path
+# already rejects any read shorter than ContentLength.
+_TOLERANT_LOCK = threading.Lock()
+
+
+def convert_png_to_jpg(png_bytes, *, max_px=MAX_PX, quality=JPEG_QUALITY, tolerant=False):
     """Returns (jpg_bytes, (width, height), (source_width, source_height)).
 
     <=max_px normalization collapses the legacy 1024/512 preview split
     (deepzoom-speed.md §2.4); 4:4:4 subsampling protects hard palette edges."""
+    if tolerant:
+        with _TOLERANT_LOCK:
+            ImageFile.LOAD_TRUNCATED_IMAGES = True
+            try:
+                return convert_png_to_jpg(png_bytes, max_px=max_px, quality=quality)
+            finally:
+                ImageFile.LOAD_TRUNCATED_IMAGES = False
     img = Image.open(io.BytesIO(png_bytes))
     img.load()
     if img.mode != "RGB":
@@ -158,6 +175,7 @@ def process_artifact(s3, bucket, family, prefix, *, apply, skip_keys=(),
     # genuinely corrupt.
     png_bytes = jpg_bytes = None
     last_error = ""
+    last_full_read = None
     for _ in range(3):
         try:
             png_obj = s3.get_object(Bucket=bucket, Key=png_key)
@@ -171,6 +189,7 @@ def process_artifact(s3, bucket, family, prefix, *, apply, skip_keys=(),
         if expected and len(data) != expected:
             last_error = f"short read {len(data)}/{expected}"
             continue
+        last_full_read = data
         try:
             jpg_bytes, (width, height), (src_w, src_h) = convert_png_to_jpg(
                 data, max_px=max_px, quality=quality)
@@ -179,10 +198,21 @@ def process_artifact(s3, bucket, family, prefix, *, apply, skip_keys=(),
             continue
         png_bytes = data
         break
+    recovered = ""
+    if png_bytes is None and last_full_read is not None:
+        # full-length object that strict decode refuses = damaged at rest;
+        # tolerant decode recovers the visible image (see _TOLERANT_LOCK note)
+        try:
+            jpg_bytes, (width, height), (src_w, src_h) = convert_png_to_jpg(
+                last_full_read, max_px=max_px, quality=quality, tolerant=True)
+            png_bytes = last_full_read
+            recovered = f" RECOVERED via tolerant decode (strict: {last_error})"
+        except Exception as exc:  # noqa: BLE001 — genuinely hopeless
+            last_error = f"{last_error}; tolerant: {exc}"
     if png_bytes is None or jpg_bytes is None:
         return "invalid_image", last_error
 
-    note = f"{src_w}x{src_h} png {len(png_bytes) // 1024}KB -> {width}x{height} jpg {len(jpg_bytes) // 1024}KB"
+    note = f"{src_w}x{src_h} png {len(png_bytes) // 1024}KB -> {width}x{height} jpg {len(jpg_bytes) // 1024}KB{recovered}"
     if max(src_w, src_h) > 1024:
         note += " ANOMALY: source larger than any known preview"
 

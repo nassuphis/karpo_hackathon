@@ -220,6 +220,31 @@ class ProcessArtifactTests(unittest.TestCase):
         self.assertEqual(status, "converted")
         self.assertEqual(len(attempts), 2)
 
+    def test_damaged_at_rest_png_recovers_via_tolerant_decode(self):
+        # intact wrapper, damaged tail: strict decode refuses, tolerant
+        # recovers (the compute_mobo9or2 signature)
+        healthy = _png_bytes(64, 64)
+        damaged = healthy[:-30]
+        self.s3.objects[COLOR_PREFIX + "preview.png"] = damaged
+        self.s3.objects[COLOR_PREFIX + "meta.json"] = b"{}"
+        real_get = self.s3.get_object
+
+        def sized_get(Bucket=None, Key=None, **kwargs):
+            resp = real_get(Bucket=Bucket, Key=Key, **kwargs)
+            if Key.endswith("preview.png"):
+                resp["ContentLength"] = len(damaged)
+            return resp
+
+        self.s3.get_object = sized_get
+        status, note = self.mod.process_artifact(self.s3, "b", "color", COLOR_PREFIX, apply=True)
+        self.assertEqual(status, "converted", note)
+        self.assertIn("RECOVERED via tolerant decode", note)
+        jpg_put = next(c for c in self.s3.put_calls if c["Key"].endswith("preview.jpg"))
+        self.assertEqual(Image.open(io.BytesIO(jpg_put["Body"])).size, (64, 64))
+        # the global tolerant flag must be restored afterwards
+        from PIL import ImageFile
+        self.assertFalse(ImageFile.LOAD_TRUNCATED_IMAGES)
+
     def test_genuinely_corrupt_png_reports_after_retries(self):
         self.s3.objects[COLOR_PREFIX + "preview.png"] = b"\x89PNG not really"
         self.s3.objects[COLOR_PREFIX + "meta.json"] = b"{}"

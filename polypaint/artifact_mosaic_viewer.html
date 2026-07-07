@@ -15,6 +15,10 @@ body{display:flex;flex-direction:column}
 #hdr a{color:#60a5fa;text-decoration:none}
 #hdr a:hover{text-decoration:underline}
 #viewer{flex:1 1 auto;min-height:0;background:#050505}
+/* iOS: a long-press (our context-menu gesture) must not start text
+   selection or the magnifier callout — the whole screen flashed blue */
+#viewer,#hdr{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+#ctx{-webkit-user-select:text;user-select:text}
 #status{color:#9ca3af}
 #status.err{color:#f87171}
 #ctx{position:fixed;z-index:50;display:none;min-width:260px;max-width:340px;background:#111827;border:1px solid #2B3A5E;border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.6);font-size:12px;overflow:hidden}

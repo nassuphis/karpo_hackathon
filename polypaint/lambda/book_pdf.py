@@ -213,9 +213,10 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages):
         """Render->convert->delete one page at a time: at 200dpi a noisy-art
         PNG intermediate runs ~10MB, and letting all of them coexist (as a
         whole-range render would) can blow the 2048MB /tmp on a large book.
-        Peak residency this way = FLIP_WORKERS pages. Single-page pdftoppm
-        invocations also make the output name deterministic (padding always
-        equals the page number's own width)."""
+        Peak residency this way = FLIP_WORKERS pages. Output names pad the
+        page number to the digits of the DOCUMENT's page count (poppler
+        uses numberOfDigits(getNumPages()) regardless of -f/-l — learned in
+        prod when a 16-page book wrote page-01.png, not page-1.png)."""
         first, last = rng
         done = []
         for number in range(first, last + 1):
@@ -227,9 +228,15 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages):
             if run.returncode != 0:
                 raise RuntimeError(
                     f"pdftoppm page {number} failed: {run.stderr.strip()[:300]}")
-            src = os.path.join(flip_dir, f"page-{number}.png")
+            pad = len(str(content_pages))
+            src = os.path.join(flip_dir, "page-%0*d.png" % (pad, number))
             if not os.path.exists(src):
-                raise RuntimeError(f"pdftoppm page {number}: output missing")
+                # poppler-version belt and braces: scan for any padding
+                matches = [f for f in os.listdir(flip_dir)
+                           if re.fullmatch(r"page-0*%d\.png" % number, f)]
+                if not matches:
+                    raise RuntimeError(f"pdftoppm page {number}: output missing")
+                src = os.path.join(flip_dir, matches[0])
             canonical = "p%04d.jpg" % number
             img = Image.open(src)
             if img.mode != "RGB":

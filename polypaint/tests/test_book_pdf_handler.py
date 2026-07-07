@@ -204,7 +204,7 @@ class TestBookPdfHandler(unittest.TestCase):
         self.assertIn("missing prepared assets", str(ctx.exception))
         self.assertIn("e1", str(ctx.exception))
 
-    def _fake_pdftoppm(self):
+    def _fake_pdftoppm(self, total_pages):
         from PIL import Image
 
         def run(cmd, capture_output=False, text=False, timeout=None, **_kw):
@@ -214,7 +214,9 @@ class TestBookPdfHandler(unittest.TestCase):
             first = int(cmd[cmd.index("-f") + 1])
             last = int(cmd[cmd.index("-l") + 1])
             prefix = cmd[-1]
-            digits = len(str(last))  # pdftoppm pads to the -l value's width
+            # poppler pads to the digits of the DOCUMENT page count, NOT the
+            # -l value (a 16-page book writes page-01.png for -f 1 -l 1)
+            digits = len(str(total_pages))
             for n in range(first, last + 1):
                 buf = io.BytesIO()
                 Image.new("RGB", (2307, 2331), (18, 24, 41)).save(buf, format="PNG")
@@ -226,7 +228,7 @@ class TestBookPdfHandler(unittest.TestCase):
 
     def test_compose_renders_flipbook_pages_and_manifest(self):
         self._seed_book()
-        with patch.object(self.book_pdf.subprocess, "run", side_effect=self._fake_pdftoppm()):
+        with patch.object(self.book_pdf.subprocess, "run", side_effect=self._fake_pdftoppm(total_pages=8)):
             resp = self.book_pdf.handle_compose({
                 "op": "compose", "job_id": "book#test", "task_id": "bookcomp_r9",
                 "book_id": "test-book", "compile_id": "c9",
@@ -259,6 +261,21 @@ class TestBookPdfHandler(unittest.TestCase):
         self.assertEqual(
             self.fake.put_headers["polypaint/books/test-book/out/latest.json"]["CacheControl"],
             "no-cache, max-age=0")
+
+    def test_flipbook_handles_document_padded_page_names(self):
+        # 7 entries -> 1 + 14 + 1 pad = 16 pages: poppler writes page-01.png
+        # for page 1, which a digits-of(-l) assumption misses (prod bug)
+        self._seed_book(entries=7)
+        with patch.object(self.book_pdf.subprocess, "run", side_effect=self._fake_pdftoppm(total_pages=16)):
+            resp = self.book_pdf.handle_compose({
+                "op": "compose", "job_id": "book#test", "task_id": "bookcomp_r11",
+                "book_id": "test-book", "compile_id": "c11",
+                "expected_saved_at": "2026-07-06T00:00:00Z",
+            }, latex_runner=_fake_latex)
+        body = json.loads(resp["body"])
+        self.assertEqual(body.get("flip_page_count"), 16, body.get("flip_error"))
+        flip = json.loads(self.fake.objects["polypaint/books/test-book/out/c11/flip/flip.json"])
+        self.assertEqual(flip["pages"], [f"p{n:04d}.jpg" for n in range(1, 17)])
 
     def test_compose_survives_flipbook_failure(self):
         self._seed_book()

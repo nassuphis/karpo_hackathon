@@ -143,6 +143,15 @@ def process_artifact(s3, bucket, family, prefix, *, apply, skip_keys=(),
         _put_meta(s3, bucket, meta_key, merged_meta_fields(meta, jpg_key, width, height))
         return "meta_repaired", ""
 
+    if not apply:
+        # dry-run stays cheap: no png download, no conversion — just prove
+        # the work exists. Real sizes come from --sample / --apply output.
+        png_head = _head(s3, bucket, png_key)
+        if png_head is None:
+            return "missing", ""
+        size_kb = int(png_head.get("ContentLength") or 0) // 1024
+        return "would_convert", f"png {size_kb}KB (conversion deferred to --apply)"
+
     try:
         png_obj = s3.get_object(Bucket=bucket, Key=png_key)
     except ClientError as exc:
@@ -161,8 +170,6 @@ def process_artifact(s3, bucket, family, prefix, *, apply, skip_keys=(),
     note = f"{src_w}x{src_h} png {len(png_bytes) // 1024}KB -> {width}x{height} jpg {len(jpg_bytes) // 1024}KB"
     if max(src_w, src_h) > 1024:
         note += " ANOMALY: source larger than any known preview"
-    if not apply:
-        return "would_convert", note
 
     object_meta = {"width": str(width), "height": str(height)}
     if width == height:

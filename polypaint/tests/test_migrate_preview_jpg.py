@@ -176,11 +176,20 @@ class ProcessArtifactTests(unittest.TestCase):
         self.assertEqual(merged["palette"], "tri")
         self.assertEqual(merged["preview_jpg_key"], COLOR_PREFIX + "preview.jpg")
 
-    def test_dry_run_writes_nothing(self):
+    def test_dry_run_writes_nothing_and_skips_conversion(self):
         self._seed_color(overlay={})
+        self.s3.heads[COLOR_PREFIX + "preview.png"] = {"ContentLength": 700000}
+        real_get = self.s3.get_object
+
+        def guarded_get(Bucket=None, Key=None, **kwargs):
+            if Key.endswith("preview.png"):
+                raise AssertionError("dry-run must not download the png")
+            return real_get(Bucket=Bucket, Key=Key, **kwargs)
+
+        self.s3.get_object = guarded_get
         status, note = self.mod.process_artifact(self.s3, "b", "color", COLOR_PREFIX, apply=False)
         self.assertEqual(status, "would_convert")
-        self.assertIn("-> 512x512", note)
+        self.assertIn("png 683KB (conversion deferred", note)
         self.assertEqual(self.s3.put_calls, [])
 
     def test_skip_escape_hatch(self):

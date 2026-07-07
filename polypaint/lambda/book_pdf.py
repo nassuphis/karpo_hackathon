@@ -207,7 +207,25 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages):
     ranges = [(first, min(first + per - 1, content_pages))
               for first in range(1, content_pages + 1, per)]
 
-    from PIL import Image
+    from PIL import Image, ImageFile
+    import threading
+    tolerant_lock = threading.Lock()
+
+    def convert_png(src, dest, tolerant=False):
+        # tolerant decode is a PIL GLOBAL: serialize those attempts
+        if tolerant:
+            with tolerant_lock:
+                ImageFile.LOAD_TRUNCATED_IMAGES = True
+                try:
+                    return convert_png(src, dest)
+                finally:
+                    ImageFile.LOAD_TRUNCATED_IMAGES = False
+        img = Image.open(src)
+        img.load()
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        img.save(dest, format="JPEG",
+                 quality=FLIP_QUALITY, subsampling=0, optimize=True)
 
     def render_and_convert(rng):
         """Render->convert->delete one page at a time: at 200dpi a noisy-art
@@ -219,7 +237,8 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages):
         prod when a 16-page book wrote page-01.png, not page-1.png)."""
         first, last = rng
         done = []
-        for number in range(first, last + 1):
+
+        def run_page(number):
             run = subprocess.run(
                 ["pdftoppm", "-png", "-r", str(FLIP_DPI),
                  "-f", str(number), "-l", str(number),
@@ -228,6 +247,9 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages):
             if run.returncode != 0:
                 raise RuntimeError(
                     f"pdftoppm page {number} failed: {run.stderr.strip()[:300]}")
+
+        for number in range(first, last + 1):
+            run_page(number)
             pad = len(str(content_pages))
             src = os.path.join(flip_dir, "page-%0*d.png" % (pad, number))
             if not os.path.exists(src):
@@ -238,11 +260,32 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages):
                     raise RuntimeError(f"pdftoppm page {number}: output missing")
                 src = os.path.join(flip_dir, matches[0])
             canonical = "p%04d.jpg" % number
-            img = Image.open(src)
-            if img.mode != "RGB":
-                img = img.convert("RGB")
-            img.save(os.path.join(flip_dir, canonical), format="JPEG",
-                     quality=FLIP_QUALITY, subsampling=0, optimize=True)
+            try:
+                convert_png(src, os.path.join(flip_dir, canonical))
+            except Exception as exc:  # noqa: BLE001
+                # seen live once ("broken data stream when writing image
+                # file") with no page context and no reproduction in-container
+                # (5/5 clean): retry with a fresh render + tolerant decode,
+                # and if it still fails, say exactly what/where/how big.
+                png_size = os.path.getsize(src) if os.path.exists(src) else -1
+                print(f"flipbook: page {number} convert failed ({exc}); "
+                      f"png={png_size}B — re-rendering")
+                try:
+                    os.remove(src)
+                except OSError:
+                    pass
+                run_page(number)
+                if not os.path.exists(src):
+                    raise RuntimeError(f"pdftoppm page {number}: output missing on retry")
+                try:
+                    convert_png(src, os.path.join(flip_dir, canonical), tolerant=True)
+                except Exception as exc2:  # noqa: BLE001
+                    free_mb = shutil.disk_usage("/tmp").free // 1048576
+                    raise RuntimeError(
+                        f"page {number} convert failed after re-render: {exc2} "
+                        f"(png={os.path.getsize(src) if os.path.exists(src) else -1}B, "
+                        f"first: {exc}, /tmp free={free_mb}MB)") from exc2
+                print(f"flipbook: page {number} recovered on retry")
             os.remove(src)
             done.append(canonical)
         return done

@@ -277,6 +277,42 @@ class TestBookPdfHandler(unittest.TestCase):
         flip = json.loads(self.fake.objects["polypaint/books/test-book/out/c11/flip/flip.json"])
         self.assertEqual(flip["pages"], [f"p{n:04d}.jpg" for n in range(1, 17)])
 
+    def test_flip_page_convert_retries_with_fresh_render(self):
+        # a truncated PNG on the first render must heal via re-render, not
+        # fail the flipbook (live incident: "broken data stream" once, no
+        # in-container repro)
+        self._seed_book()
+        from PIL import Image
+        calls = {"n": 0}
+
+        def flaky_pdftoppm(cmd, capture_output=False, text=False, timeout=None, **_kw):
+            if os.path.basename(cmd[0]) != "pdftoppm":
+                raise AssertionError(f"unexpected subprocess: {cmd}")
+            first = int(cmd[cmd.index("-f") + 1])
+            prefix = cmd[-1]
+            calls["n"] += 1
+            buf = io.BytesIO()
+            Image.new("RGB", (2307, 2331), (18, 24, 41)).save(buf, format="PNG")
+            data = buf.getvalue()
+            if first == 3 and calls["n"] < 20:
+                # first render of page 3: truncated png (strict decode fails)
+                data = data[: len(data) // 2]
+                calls["n"] = 99  # only once
+            with open(f"{prefix}-{first}.png", "wb") as fh:
+                fh.write(data)
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch.object(self.book_pdf.subprocess, "run", side_effect=flaky_pdftoppm):
+            resp = self.book_pdf.handle_compose({
+                "op": "compose", "job_id": "book#test", "task_id": "bookcomp_r12",
+                "book_id": "test-book", "compile_id": "c12",
+                "expected_saved_at": "2026-07-06T00:00:00Z",
+            }, latex_runner=_fake_latex)
+        body = json.loads(resp["body"])
+        self.assertEqual(body.get("flip_page_count"), 8, body.get("flip_error"))
+        from PIL import ImageFile
+        self.assertFalse(ImageFile.LOAD_TRUNCATED_IMAGES)
+
     def test_compose_survives_flipbook_failure(self):
         self._seed_book()
 

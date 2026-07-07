@@ -235,14 +235,16 @@ verify_frontend_assets() {
     while IFS= read -r asset; do
         local DEPLOYED_KEY STATUS
         DEPLOYED_KEY=$(deployed_asset_key "$asset")
-        STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${SITE_URL}/${DEPLOYED_KEY}")
+        STATUS=$(curl -s --retry 4 --retry-delay 2 -o /dev/null -w "%{http_code}" "${SITE_URL}/${DEPLOYED_KEY}")
         if [ "$STATUS" != "200" ]; then
             echo "FATAL: ${SITE_URL}/${DEPLOYED_KEY} returned HTTP ${STATUS} (expected 200)"
             exit 1
         fi
         local LOCAL_HASH REMOTE_HASH
         mkdir -p "$(dirname "${TMP_DIR}/${asset}")"
-        curl -fsS "${SITE_URL}/${DEPLOYED_KEY}" -o "${TMP_DIR}/${asset}"
+        # S3 throws sporadic 500s right after heavy PUT bursts; retry instead
+        # of aborting a deploy whose uploads already succeeded.
+        curl -fsS --retry 4 --retry-delay 2 "${SITE_URL}/${DEPLOYED_KEY}" -o "${TMP_DIR}/${asset}"
         local LOCAL_SRC="$SCRIPT_DIR/${asset}"
         if [ "$asset" = "index.html" ]; then
             LOCAL_SRC=$(stamped_index_html)

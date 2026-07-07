@@ -89,7 +89,7 @@ assert int(m.group(1)) == expected_pages, (m.group(1), expected_pages)
 import struct
 import time as _time
 t0 = _time.time()
-fr = subprocess.run(["pdftoppm", "-jpeg", "-r", "120", "-jpegopt", "quality=85",
+fr = subprocess.run(["pdftoppm", "-png", "-r", "150",
                      "-f", "1", "-l", "1", "/build/book.pdf", "/build/flip_page"],
                     capture_output=True, text=True)
 assert fr.returncode == 0, f"pdftoppm failed: {fr.stderr[:300]}"

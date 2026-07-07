@@ -283,10 +283,14 @@ Per artifact prefix (color + palettes families):
    object metadata, + immutable CacheControl.
 3. Merge `preview_jpg_key` + `preview_jpg_width`/`preview_jpg_height` into
    the overlay `meta.json` (read-merge-write, same pattern as the book
-   palette overlay fix — never clobber other fields).
-4. Record progress to a local journal (`--resume` continues after interrupt).
-   Log any preview whose actual dims are anomalous (>1024 — a full-res image
-   masquerading as a preview) — the ≤512 rule normalizes it anyway.
+   palette overlay fix — never clobber other fields). Palettes without a
+   `meta.json` are invisible to the wall and are skipped outright.
+4. Resume is skip-if-exists rather than a journal (implementation
+   simplification): re-running HEADs each jpg (~10 ms) and skips completed
+   artifacts, which also covers the interrupted case (jpg uploaded, meta
+   merge missing → `meta_repaired` finishes the merge). Anomalous previews
+   (>1024 actual — a full-res image masquerading as a preview) are logged;
+   the ≤512 rule normalizes them anyway.
 
 Flags: `--dry-run` (count + bytes estimate), `--sample N` (convert N random
 previews to a LOCAL directory as `before.png`/`after.jpg` pairs for visual

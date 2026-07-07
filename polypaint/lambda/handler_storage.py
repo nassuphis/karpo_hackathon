@@ -2740,6 +2740,9 @@ def _render_artifact_entry(family, artifact_id, image_info, preview_info=None, f
         "preview_key": preview_key,
         "preview_url": preview_url,
         "viewer_url": preview_url or image_url,
+        "preview_jpg_key": str(meta.get("preview_jpg_key") or ""),
+        "preview_jpg_width": _parse_int(meta.get("preview_jpg_width")) or None,
+        "preview_jpg_height": _parse_int(meta.get("preview_jpg_height")) or None,
         "width": image_info.get("width"),
         "height": image_info.get("height"),
         "file_size": image_info.get("size", 0),
@@ -3354,15 +3357,29 @@ def _mosaic_tile_from_entry(client, job_id, entry, calc_meta):
     preview_key = entry.get("preview_key")
     if not preview_key:
         return None, "missing_preview"
-    dims = _mosaic_preview_dimensions(preview_key, s3_client=client)
-    if dims is None:
-        width = height = None
-    else:
-        width, height = dims
-        if width != height:
+    # Migrated artifacts carry a preview.jpg sibling plus its dims in the
+    # meta (deepzoom-speed.md §2.2): the wall serves the jpg and skips the
+    # per-artifact ranged-GET header read. Everything else falls back to the
+    # png + measured dims, so a half-migrated wall stays correct throughout.
+    jpg_key = str(entry.get("preview_jpg_key") or "").strip()
+    jpg_width = _parse_int(entry.get("preview_jpg_width"))
+    jpg_height = _parse_int(entry.get("preview_jpg_height"))
+    if jpg_key and jpg_width and jpg_height:
+        if jpg_width != jpg_height:
             return None, "non_square"
+        tile_key, width, height = jpg_key, jpg_width, jpg_height
+        dims = (width, height)
+    else:
+        tile_key = preview_key
+        dims = _mosaic_preview_dimensions(preview_key, s3_client=client)
+        if dims is None:
+            width = height = None
+        else:
+            width, height = dims
+            if width != height:
+                return None, "non_square"
     tile = {
-        "key": preview_key,
+        "key": tile_key,
         "job_id": job_id,
         "artifact_id": entry.get("artifact_id", ""),
         "created_at": entry.get("created_at", ""),

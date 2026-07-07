@@ -918,5 +918,106 @@ class TestComputeMigration(unittest.TestCase):
         self.assertIn("job_id", json.loads(resp["body"])["error"])
 
 
+class TestMosaicJpgPreference(unittest.TestCase):
+    """deepzoom-speed.md §2.2: the wall prefers a migrated preview.jpg (dims
+    from meta, no ranged GET) and falls back to preview.png otherwise."""
+
+    def _entry(self, **overrides):
+        entry = {
+            "preview_key": "renders/j/color/a/preview.png",
+            "artifact_id": "a",
+            "created_at": "2026-01-01T00:00:00Z",
+            "image_key": "renders/j/color/a/image.jpeg",
+        }
+        entry.update(overrides)
+        return entry
+
+    def test_migrated_entry_serves_jpg_without_touching_s3(self):
+        import handler_storage
+
+        class _NoReadClient:
+            def get_object(self, **kwargs):
+                raise AssertionError("jpg-backed tiles must not read the png header")
+
+        entry = self._entry(
+            preview_jpg_key="renders/j/color/a/preview.jpg",
+            preview_jpg_width=512,
+            preview_jpg_height=512,
+        )
+        tile, status = handler_storage._mosaic_tile_from_entry(
+            _NoReadClient(), "j", entry, {"function": "f", "degree": 5, "N": 100, "times": 1})
+
+        self.assertEqual(status, "512x512")
+        self.assertEqual(tile["key"], "renders/j/color/a/preview.jpg")
+        self.assertEqual(tile["preview_width"], 512)
+        self.assertEqual(tile["preview_height"], 512)
+
+    def test_unmigrated_entry_falls_back_to_png_header_read(self):
+        import handler_storage
+
+        header = (
+            b"\x89PNG\r\n\x1a\n" + (13).to_bytes(4, "big") + b"IHDR"
+            + (1024).to_bytes(4, "big") + (1024).to_bytes(4, "big")
+        )
+
+        class _PngClient:
+            def get_object(self, Bucket=None, Key=None, Range=None):
+                assert Key == "renders/j/color/a/preview.png"
+                return {"Body": io.BytesIO(header)}
+
+        tile, status = handler_storage._mosaic_tile_from_entry(
+            _PngClient(), "j", self._entry(), {"function": "f"})
+
+        self.assertEqual(status, "1024x1024")
+        self.assertEqual(tile["key"], "renders/j/color/a/preview.png")
+        self.assertEqual(tile["preview_width"], 1024)
+
+    def test_non_square_jpg_dims_reject_tile(self):
+        import handler_storage
+
+        entry = self._entry(
+            preview_jpg_key="renders/j/color/a/preview.jpg",
+            preview_jpg_width=512,
+            preview_jpg_height=256,
+        )
+        tile, status = handler_storage._mosaic_tile_from_entry(object(), "j", entry, {})
+        self.assertIsNone(tile)
+        self.assertEqual(status, "non_square")
+
+    def test_render_entry_passes_jpg_fields_from_overlay(self):
+        import handler_storage
+
+        image_info = {
+            "exists": True, "key": "renders/j/color/a/image.jpeg", "url": None,
+            "user_meta": {}, "modified_at": "2026-01-01T00:00:00Z",
+            "width": 5000, "height": 5000, "size": 10, "type": "image/jpeg",
+        }
+        preview_info = {"exists": True, "key": "renders/j/color/a/preview.png", "url": None}
+        overlay = {
+            "preview_jpg_key": "renders/j/color/a/preview.jpg",
+            "preview_jpg_width": "512",
+            "preview_jpg_height": "512",
+        }
+        entry = handler_storage._render_artifact_entry(
+            "color", "a", image_info, preview_info, fallback_meta=overlay)
+
+        self.assertEqual(entry["preview_jpg_key"], "renders/j/color/a/preview.jpg")
+        self.assertEqual(entry["preview_jpg_width"], 512)
+        self.assertEqual(entry["preview_jpg_height"], 512)
+
+    def test_entry_without_migration_reports_empty_jpg_fields(self):
+        import handler_storage
+
+        image_info = {
+            "exists": True, "key": "renders/j/color/a/image.jpeg", "url": None,
+            "user_meta": {}, "modified_at": "2026-01-01T00:00:00Z",
+            "width": 5000, "height": 5000, "size": 10, "type": "image/jpeg",
+        }
+        entry = handler_storage._render_artifact_entry("color", "a", image_info, None)
+        self.assertEqual(entry["preview_jpg_key"], "")
+        self.assertIsNone(entry["preview_jpg_width"])
+        self.assertIsNone(entry["preview_jpg_height"])
+
+
 if __name__ == "__main__":
     unittest.main()

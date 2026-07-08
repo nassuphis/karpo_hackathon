@@ -38,18 +38,50 @@ DEFAULT_MODEL = "gemini-2.5-flash"
 FREE_TIER_PACING_S = 5.0   # ~10 RPM free tier: stay comfortably under
 
 # Edit freely — this is the whole personality of the output.
-PROMPT = """You are titling and describing an abstract generative artwork for a
-fine-art book. The image is rendered from the roots of polynomials; its
-technical provenance:
+BANNED_WORDS = [
+    "vibrant", "intricate", "luminous", "ethereal", "mesmerizing",
+    "captivating", "profound", "otherworldly", "cosmic", "radiant",
+    "enigmatic", "delicate", "stunning", "breathtaking", "swirling",
+    "shimmering", "glowing", "majestic", "dynamic", "dance",
+]
+
+# each entry gets a different lens so the book doesn't read like one
+# bored critic repeating themselves
+ANGLES = [
+    "material and surface — what would this be made of if it were physical",
+    "motion — what just happened or is about to happen in this form",
+    "light — where it comes from, what it hides",
+    "scale ambiguity — microscopic or astronomical, commit to one",
+    "botany or biology — what organism this echoes, without naming it kitschily",
+    "geology or weather — strata, erosion, storms, currents",
+    "architecture or machinery — structure, load, mechanism",
+    "textile and craft — weave, fold, thread, dye",
+]
+
+PROMPT = """You write terse, confident catalogue notes for a fine-art book of
+abstract works. Technical provenance of this piece:
 
 {provenance}
 
+Angle for this piece: {angle}.
+
+Titles already used in this book — do NOT reuse their words or their
+pattern: {used_titles}
+
 Return JSON: {{"title": ..., "description": ...}}.
-- title: 2-4 evocative words, no quotes, not techy, no "untitled".
-- description: 2-3 sentences about what the eye actually finds — form,
-  color, movement, depth. Grounded and vivid; no purple prose, no
-  mathematics jargon, never mention polynomials, rendering or pixels.
+- title: 2-4 words. Concrete nouns beat adjectives. No "untitled".
+- description: 2-3 sentences, 60 words max. Name colors precisely
+  (petrol, rust, bone, verdigris — not "colorful"). Describe ONE dominant
+  structure and ONE small detail worth finding. At most one adjective per
+  noun. Never use these words or their variants: {banned}.
+  Never write "sense of", "draws the eye", "the viewer". No mathematics,
+  no rendering talk.
 """
+
+
+def find_banned(text):
+    low = text.lower()
+    return sorted({w for w in BANNED_WORDS if w in low})
 
 
 def provenance_lines(entry, report):
@@ -58,13 +90,19 @@ def provenance_lines(entry, report):
     return "\n".join(lines) or f"- artifact: {entry.get('artifact_id', '')}"
 
 
-def build_request(image_bytes, entry, report):
+def build_request(image_bytes, entry, report, *, angle="", used_titles=(), extra=""):
+    text = PROMPT.format(
+        provenance=provenance_lines(entry, report),
+        angle=angle or ANGLES[0],
+        used_titles=", ".join(used_titles) or "(none yet)",
+        banned=", ".join(BANNED_WORDS),
+    ) + (f"\n{extra}" if extra else "")
     return {
         "contents": [{
             "parts": [
                 {"inline_data": {"mime_type": "image/jpeg",
                                  "data": base64.b64encode(image_bytes).decode()}},
-                {"text": PROMPT.format(provenance=provenance_lines(entry, report))},
+                {"text": text},
             ],
         }],
         "generationConfig": {
@@ -126,12 +164,26 @@ def _gemini_call(url, body, api_key, *, attempts=6):
     raise RuntimeError("unreachable")
 
 
-def describe_image(image_bytes, entry, report, *, model, api_key):
+def describe_image(image_bytes, entry, report, *, model, api_key,
+                   angle="", used_titles=()):
     payload = _gemini_call(
         GEMINI_URL.format(model=model),
-        json.dumps(build_request(image_bytes, entry, report)).encode(),
+        json.dumps(build_request(image_bytes, entry, report,
+                                 angle=angle, used_titles=used_titles)).encode(),
         api_key)
-    return parse_response(payload)
+    title, description = parse_response(payload)
+    # enforce the ban: one rewrite pass naming the offending words
+    offenders = find_banned(f"{title} {description}")
+    if offenders:
+        payload = _gemini_call(
+            GEMINI_URL.format(model=model),
+            json.dumps(build_request(
+                image_bytes, entry, report, angle=angle, used_titles=used_titles,
+                extra=f"Your previous attempt used banned words: {', '.join(offenders)}. "
+                      f"Rewrite completely without them or any synonym-sludge.")).encode(),
+            api_key)
+        title, description = parse_response(payload)
+    return title, description
 
 
 def _storage(payload):
@@ -171,6 +223,8 @@ def main(argv=None):
         sys.exit(f"book {args.book} has no entries")
 
     changed = 0
+    used_titles = [str(e.get("title_override") or "").strip()
+                   for e in entries if str(e.get("title_override") or "").strip()]
     for idx, entry in enumerate(entries, start=1):
         if args.limit and changed >= args.limit:
             break
@@ -193,8 +247,10 @@ def main(argv=None):
             # pre-migration artifact: fall back to the png
             image = fetch_public(preview_url.replace("preview.jpg", "preview.png"))
 
-        title, description = describe_image(image, entry, report,
-                                            model=args.model, api_key=api_key)
+        title, description = describe_image(
+            image, entry, report, model=args.model, api_key=api_key,
+            angle=ANGLES[(idx - 1) % len(ANGLES)], used_titles=used_titles)
+        used_titles.append(title)
         print(f"[{idx}/{len(entries)}] {entry.get('artifact_id')}")
         print(f"    title: {title}")
         print(f"    body:  {description}")

@@ -27,7 +27,22 @@ class DescribeBookEntriesTests(unittest.TestCase):
         self.assertEqual(part_img["inline_data"]["mime_type"], "image/jpeg")
         self.assertIn("Function: const(2,0,0)", part_text["text"])
         self.assertIn("Degree: 50", part_text["text"])
+        self.assertIn("vibrant", part_text["text"])  # the ban list is IN the prompt
         self.assertEqual(req["generationConfig"]["responseMimeType"], "application/json")
+
+    def test_build_request_carries_angle_and_used_titles(self):
+        req = self.mod.build_request(b"x", {"artifact_id": "a"}, {},
+                                     angle="light — where it comes from",
+                                     used_titles=("Ember Drift", "Petrol Bloom"))
+        text = req["contents"][0]["parts"][1]["text"]
+        self.assertIn("light — where it comes from", text)
+        self.assertIn("Ember Drift, Petrol Bloom", text)
+
+    def test_find_banned(self):
+        hits = self.mod.find_banned("A Vibrant and swirling scene")
+        self.assertIn("vibrant", hits)
+        self.assertIn("swirling", hits)
+        self.assertEqual(self.mod.find_banned("Petrol threads over bone"), [])
 
     def test_provenance_falls_back_to_artifact_id(self):
         text = self.mod.provenance_lines({"artifact_id": "a9"}, {})

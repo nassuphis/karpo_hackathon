@@ -127,13 +127,12 @@ def _full_bleed_image(rel_path):
 
 
 def entry_title(entry, provenance):
-    """Verso heading: an override if set, else the compute id (the
-    compute/color_run id is 'good enough for now' — no artsy title yet)."""
-    override = str(entry.get("title_override") or "").strip()
-    if override:
-        return override
+    """Verso heading: the compute id, with the generated/hand title appended
+    on the SAME line as 'compute_xxx :: Title' when one is set."""
     report = (provenance or {}).get("report") or {}
-    return str(report.get("compute_id") or entry.get("job_id") or entry.get("artifact_id") or "")
+    base = str(report.get("compute_id") or entry.get("job_id") or entry.get("artifact_id") or "")
+    override = str(entry.get("title_override") or "").strip()
+    return f"{base} :: {override}" if override and base else (override or base)
 
 
 def _report_rows(entry, provenance):
@@ -148,15 +147,15 @@ PALETTE_MIN_MM = 120
 
 def _palette_mm(rows, body_override):
     """Palette square sized to what the verso's content leaves over — the
-    one-page spread invariant is sacred. With vmargin=1mm the text block is
-    294mm, so the full 160mm fits every realistic verso (10 rows + a body
-    paragraph); the shrink only guards pathological content. Budget (mm):
-    294 block − ~30 title zone (6mm start + 26/30pt title + rule + artifact
-    + gap) − 6.5/row − 5.5/body line − 16 palette chrome − 8 safety."""
+    one-page spread invariant is sacred. The description sits BESIDE the KV
+    rows, so the middle band costs max(rows, description) not their sum.
+    Budget (mm): 294 block − ~30 title zone − max(6.5/row, ~4.6/desc line at
+    the 108mm column) − 16 palette chrome − 8 safety."""
     body_lines = 0
     for line in str(body_override or "").strip().splitlines():
-        body_lines += max(1, (len(line) + 84) // 85)
-    avail = 294 - 30 - 6.5 * len(rows) - 5.5 * body_lines - (4 if body_lines else 0) - 16 - 8
+        body_lines += max(1, (len(line) + 54) // 55)
+    band = max(6.5 * len(rows), 4.6 * body_lines)
+    avail = 294 - 30 - band - 16 - 8
     return int(max(PALETTE_MIN_MM, min(PALETTE_MAX_MM, avail)))
 
 
@@ -185,16 +184,22 @@ def _verso_report_page(entry, provenance):
         r"{\monofont\footnotesize\color{monotext} %s\par}" % artifact,
         r"\vspace{7mm}",
     ]
-    # fixed 6.5mm-pitch rows (reference PDF: KV_PITCH = 17pt)
+    # KV rows on the left (fixed 6.5mm pitch, reference PDF KV_PITCH=17pt);
+    # the description sits in a column to their right
+    parts.append(r"\noindent\begin{minipage}[t]{128mm}")
     for label, value in rows:
         parts.append(
             r"\noindent\hbox to \linewidth{\hbox to 42mm{\monofont\footnotesize\color{monotext} %s\hss}"
             r"{\color{bodytext} %s}\hss}\vspace*{\dimexpr6.5mm-\baselineskip\relax}\par"
             % (tex_escape(label.upper()), tex_escape(value)))
+    parts.append(r"\end{minipage}%")
     if body_override:
-        parts.append(r"\vspace{4mm}")
+        parts.append(r"\hfill\begin{minipage}[t]{108mm}")
+        parts.append(r"\setlength{\parskip}{2mm}\raggedright")
         for line in body_override.splitlines():
-            parts.append(r"{\normalsize %s\par}" % tex_escape(line))
+            parts.append(r"{\small\color{bodytext} %s\par}" % tex_escape(line))
+        parts.append(r"\end{minipage}")
+    parts.append(r"\par")
 
     if report.get("has_palette"):
         palette_label = tex_escape(str(report.get("palette_label") or "palette"))

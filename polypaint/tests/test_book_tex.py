@@ -118,16 +118,15 @@ class TestReportPage(unittest.TestCase):
     def test_palette_shrinks_on_dense_versos_never_spills(self):
         # empirically calibrated on book2: a 9-row verso overflowed at a
         # fixed 160mm — the square must adapt so the spread invariant holds
-        # vmargin=1mm frees ~46mm: 160 fits every realistic verso now,
-        # including 10 rows with a body paragraph
-        self.assertEqual(book_tex._palette_mm([("k", "v")] * 9, ""), 160)
+        # description sits BESIDE the rows: the band costs max(rows, desc),
+        # so 160 fits every realistic verso including 10 rows + a paragraph
         self.assertEqual(book_tex._palette_mm([("k", "v")] * 10, ""), 160)
-        body = "A petrol lattice over bone. " * 6   # ~2 wrapped lines
+        body = "A petrol lattice over bone. " * 8   # ~4 lines in the column
         self.assertEqual(book_tex._palette_mm([("k", "v")] * 10, body), 160)
-        # the guard still exists for pathological content
-        huge_body = "line\n" * 12
-        self.assertLess(book_tex._palette_mm([("k", "v")] * 12, huge_body), 160)
-        self.assertGreaterEqual(book_tex._palette_mm([("k", "v")] * 12, huge_body),
+        # the guard trips only when the description column itself gets tall
+        tall = "word " * 400   # ~37 wrapped lines at the 108mm column
+        self.assertLess(book_tex._palette_mm([("k", "v")] * 5, tall), 160)
+        self.assertGreaterEqual(book_tex._palette_mm([("k", "v")] * 5, tall),
                                 book_tex.PALETTE_MIN_MM)
 
     def test_no_palette_omits_swatch(self):

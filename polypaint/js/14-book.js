@@ -10,6 +10,7 @@ let _bookState = {
     doc: null,            // the loaded book document (source of truth)
     latestOutput: null,
     describe: null,
+    editingEntryId: '',
     dirty: false,
     hydrated: {},         // entry_id -> {preview_url, missing}
     selectedEntryId: '',
@@ -111,8 +112,54 @@ function _bookEntryRow(entry, idx) {
         <span style="color:#666;font-size:10px">${_escapeHtml(entry.job_id)}</span>
         <button class="btn-secondary" style="padding:1px 7px" onclick="event.stopPropagation();_bookMoveEntry(this.closest('.book-entry-row').dataset.entry,-1)">▲</button>
         <button class="btn-secondary" style="padding:1px 7px" onclick="event.stopPropagation();_bookMoveEntry(this.closest('.book-entry-row').dataset.entry,1)">▼</button>
+        <button class="btn-secondary" style="padding:1px 7px" title="Edit title & text" onclick="event.stopPropagation();bookEditEntry(this.closest('.book-entry-row').dataset.entry)">…</button>
         <button class="btn-secondary" style="padding:1px 7px" onclick="event.stopPropagation();_bookRemoveEntry(this.closest('.book-entry-row').dataset.entry)">✕</button>
+    </div>` + _bookEntryEditor(entry);
+}
+
+function _bookEntryEditor(entry) {
+    if (_bookState.editingEntryId !== entry.entry_id) return '';
+    const eid = _escapeHtml(entry.entry_id);
+    return `<div class="book-entry-editor" style="padding:8px 10px 10px 38px;background:#141c33;border-bottom:1px solid #2b3a5e">
+        <input id="book-edit-title" type="text" placeholder="Title (verso heading; empty = compute id)"
+            value="${_escapeHtml(entry.title_override || '')}"
+            style="width:100%;margin-bottom:6px;background:#0d1320;color:#f2f2f7;border:1px solid #2b3a5e;border-radius:4px;padding:5px 8px;font-size:12px">
+        <textarea id="book-edit-body" rows="3" placeholder="Description (verso body; empty = none)"
+            style="width:100%;background:#0d1320;color:#f2f2f7;border:1px solid #2b3a5e;border-radius:4px;padding:5px 8px;font-size:12px;resize:vertical">${_escapeHtml(entry.body_override || '')}</textarea>
+        <div style="display:flex;gap:8px;margin-top:6px">
+            <button class="btn-secondary" style="padding:2px 12px" onclick="void bookEditEntrySave('${eid}', this)">Save</button>
+            <button class="btn-secondary" style="padding:2px 12px" onclick="bookEditEntryCancel()">Cancel</button>
+        </div>
     </div>`;
+}
+
+function bookEditEntry(entryId) {
+    _bookState.editingEntryId = _bookState.editingEntryId === entryId ? '' : entryId;
+    _renderBookTab();
+}
+
+function bookEditEntryCancel() {
+    _bookState.editingEntryId = '';
+    _renderBookTab();
+}
+
+async function bookEditEntrySave(entryId, btn) {
+    const entry = (_bookState.doc?.entries || []).find(e => e.entry_id === entryId);
+    if (!entry) return;
+    const orig = btn ? btn.textContent : 'Save';
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    entry.title_override = (document.getElementById('book-edit-title')?.value || '').trim();
+    entry.body_override = (document.getElementById('book-edit-body')?.value || '').trim();
+    _bookState.dirty = true;
+    try {
+        await bookSave();
+        _bookState.editingEntryId = '';
+        _renderBookTab();
+        _bookStatus('Entry text saved — Compile to publish');
+    } catch (e) {
+        _bookStatus(e.message, true);
+        if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }
 }
 
 function bookSubtab(name) {
@@ -556,6 +603,19 @@ async function _bookPollCompile() {
 }
 
 async function bookDescribe(btn) {
+    // all entries, skip-existing (hand prose survives)
+    return _bookDescribeRun(btn, {});
+}
+
+async function bookDescribeSelection(btn) {
+    // the selected row only — explicit intent, so regenerate even if it
+    // already has prose
+    const entry = (_bookState.doc?.entries || []).find(e => e.entry_id === _bookState.selectedEntryId);
+    if (!entry) { _bookStatus('Select a row first', true); return; }
+    return _bookDescribeRun(btn, { entry_ids: [entry.entry_id], overwrite: true });
+}
+
+async function _bookDescribeRun(btn, extra) {
     // server-side Gemini titles+descriptions (lambda/book_describe.py):
     // dispatch -> phase polling -> rail card, same shape as Compile
     const doc = _bookState.doc;
@@ -571,6 +631,7 @@ async function bookDescribe(btn) {
         await lambdaPost('dispatch', { target: 'book_pdf', jobs: [{
             op: 'describe', job_id: jobId, task_id: taskId,
             book_id: _bookState.activeId, expected_saved_at: _bookState.doc.saved_at,
+            ...extra,
         }], expected_keys: [] });
         _bookState.describe = { runId, jobId, taskId, startedAt: Date.now(), btnOrig: orig, btn };
         _bookRailDescribe('running', 'dispatched');

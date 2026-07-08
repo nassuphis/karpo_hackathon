@@ -227,6 +227,7 @@ def handle_describe(params):
     book_id = _safe_id(params.get("book_id"), "book_id")
     expected_saved_at = str(params.get("expected_saved_at") or "")
     overwrite = bool(params.get("overwrite"))
+    only_ids = {str(x) for x in (params.get("entry_ids") or []) if str(x)}
     model = str(params.get("model") or DEFAULT_MODEL)
 
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
@@ -247,6 +248,8 @@ def handle_describe(params):
                    for e in entries if str(e.get("title_override") or "").strip()]
     described = skipped = 0
     for idx, entry in enumerate(entries, start=1):
+        if only_ids and str(entry.get("entry_id") or "") not in only_ids:
+            continue
         has_prose = bool(str(entry.get("title_override") or "").strip()
                          or str(entry.get("body_override") or "").strip())
         if has_prose and not overwrite:

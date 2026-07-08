@@ -165,6 +165,36 @@ class HandleDescribeTests(unittest.TestCase):
         self.assertEqual(deduped, [("started", "load_book"), ("processing", "describe"),
                                    ("processing", "save"), ("done", "done")])
 
+    def test_entry_ids_subset_with_overwrite_regenerates_selection(self):
+        doc = {"id": "b1", "name": "b1", "saved_at": "S1",
+               "entries": [
+                   {"entry_id": "e1", "job_id": "j", "artifact_id": "a1",
+                    "title_override": "Old Title", "body_override": "old"},
+                   {"entry_id": "e2", "job_id": "j", "artifact_id": "a2"},
+               ]}
+        gemini = {"candidates": [{"content": {"parts": [{"text":
+            '{"title": "Fresh Title", "description": "New words."}'}]}}]}
+        invokes = []
+        fake_lambda = MagicMock()
+        fake_lambda.invoke.side_effect = lambda FunctionName=None, Payload=None: (
+            invokes.append(json.loads(Payload)) or
+            {"Payload": MagicMock(read=lambda: json.dumps(
+                {"statusCode": 200, "body": json.dumps({"book": {"name": "b1"}})}).encode())})
+        with patch.object(self.mod, "s3", self._fake_s3(doc)), \
+             patch.object(self.mod, "boto3") as fb, \
+             patch.object(self.mod, "_gemini_call", return_value=gemini):
+            fb.client.return_value = fake_lambda
+            resp = self.mod.handle_describe({
+                "job_id": "book#b1", "task_id": "t", "book_id": "b1",
+                "expected_saved_at": "S1",
+                "entry_ids": ["e1"], "overwrite": True})
+        body = json.loads(resp["body"])
+        self.assertEqual(body["described"], 1)
+        saved = json.loads(invokes[-1]["body"])["book"]
+        self.assertEqual(saved["entries"][0]["title_override"], "Fresh Title")
+        # e2 was outside the selection: untouched
+        self.assertNotIn("title_override", saved["entries"][1])
+
     def test_missing_key_and_saved_at_mismatch(self):
         with patch.dict(self.mod.os.environ, {"GEMINI_API_KEY": ""}):
             with self.assertRaises(RuntimeError) as ctx:

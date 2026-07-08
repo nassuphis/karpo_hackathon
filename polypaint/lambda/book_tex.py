@@ -187,7 +187,9 @@ def _verso_report_page(entry, provenance):
         # fell below what the 200dpi flipbook raster can carry — L drops
         # the grid a version, and with 14mm the pitch lands above the
         # title-page QR's proven-decodable density.
-        title += (r"\hfill\raisebox{-2mm}{\setlength{\fboxsep}{1.5mm}"
+        # -3.8mm centers the 17mm chip on the caps' midline (~3.2mm above
+        # baseline at 26pt); the top \vspace* gives back the extra depth
+        title += (r"\hfill\raisebox{0.3mm}{\setlength{\fboxsep}{1.5mm}"
                   r"\colorbox{bodytext}{\color{pagebg}\qrcode[height=14mm,level=L]{%s}}}" % url)
     artifact = tex_escape(str(report.get("artifact_id") or entry.get("artifact_id") or ""))
     rows = _report_rows(entry, provenance)
@@ -196,9 +198,10 @@ def _verso_report_page(entry, provenance):
     parts = [
         r"\newpage",
         r"\pagecolor{pagebg}\color{bodytext}",
-        # explicit vertical placement (vmargin=1mm): cap height lands ~10mm
-        # below the physical page top
-        r"\vspace*{6mm}",
+        # explicit vertical placement (vmargin=1mm): cap height lands ~8mm
+        # below the physical page top; the 2mm shaved off here pays for the
+        # QR chip's deeper raisebox so the rule and everything below stay put
+        r"\vspace*{4mm}",
         r"{\displayfont\fontsize{26}{30}\selectfont %s\par}" % (title or "PolyPaint"),
         r"\vspace{2.5mm}",
         r"{\color{rulecol}\rule{\linewidth}{0.8pt}}\par",

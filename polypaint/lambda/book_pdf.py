@@ -195,7 +195,7 @@ def _jpeg_dimensions(path):
     raise RuntimeError(f"no SOF marker found: {path}")
 
 
-def _render_flipbook_pages(build_dir, out_prefix, book, content_pages):
+def _render_flipbook_pages(build_dir, out_prefix, book, content_pages, progress_cb=None):
     """Rasterize book.pdf into flip/p%04d.jpg + flip.json under out_prefix.
     Returns the additive latest.json fields. Raises on failure — the caller
     isolates errors so the compile still succeeds without a flipbook."""
@@ -210,6 +210,18 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages):
     from PIL import Image, ImageFile
     import threading
     tolerant_lock = threading.Lock()
+    progress_lock = threading.Lock()
+    progress_done = [0]
+
+    def _tick_progress():
+        if not progress_cb:
+            return
+        with progress_lock:
+            progress_done[0] += 1
+            done = progress_done[0]
+        # every page on small books, ~20 updates on large ones
+        if done == content_pages or done % max(1, content_pages // 20) == 0:
+            progress_cb(done, content_pages)
 
     def convert_png(src, dest, tolerant=False):
         # tolerant decode is a PIL GLOBAL: serialize those attempts
@@ -250,6 +262,7 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages):
 
         for number in range(first, last + 1):
             run_page(number)
+            _tick_progress()
             pad = len(str(content_pages))
             src = os.path.join(flip_dir, "page-%0*d.png" % (pad, number))
             if not os.path.exists(src):
@@ -490,7 +503,9 @@ def handle_compose(params, latex_runner=_run_lualatex):
     try:
         provenance = {}
         missing = []
-        for entry in entries:
+        for asset_idx, entry in enumerate(entries, start=1):
+            _phase(job_id, task_id, "processing", "load_assets",
+                   f"Load assets {asset_idx}/{len(entries)}", **progress)
             entry_id = entry.get("entry_id") or ""
             asset_key, prov_key = _asset_keys(book_id, entry_id)
             try:
@@ -563,10 +578,16 @@ def handle_compose(params, latex_runner=_run_lualatex):
         # in latest.json instead of failing the compile
         flip_fields = {}
         try:
-            _phase(job_id, task_id, "processing", "flipbook", "Flipbook pages", **progress)
-            flip_fields = _render_flipbook_pages(build_dir, out_prefix, book, content_pages)
+            _phase(job_id, task_id, "processing", "flipbook",
+                   f"Flipbook pages 0/{content_pages}", **progress)
+            flip_fields = _render_flipbook_pages(
+                build_dir, out_prefix, book, content_pages,
+                progress_cb=lambda done, total: _phase(
+                    job_id, task_id, "processing", "flipbook",
+                    f"Flipbook pages {done}/{total}", **progress))
         except Exception as exc:  # noqa: BLE001
             flip_fields = {"flip_error": str(exc)[:300]}
+            print(f"flipbook failed for {book_id}/{compile_id}: {exc}")
 
         latest = {
             "compile_id": compile_id,
@@ -586,8 +607,10 @@ def handle_compose(params, latex_runner=_run_lualatex):
                       ContentType="application/json",
                       CacheControl="no-cache, max-age=0")
         _phase(job_id, task_id, "done", "done", "Done", **progress,
-               content_pages=content_pages, **{k: latest[k] for k in
-                                               ("cover_key", "content_key", "source_key")})
+               content_pages=content_pages,
+               flip_page_count=latest.get("flip_page_count", 0),
+               flip_error=latest.get("flip_error", ""),
+               **{k: latest[k] for k in ("cover_key", "content_key", "source_key")})
         return ok_response({"book_id": book_id, **latest})
     finally:
         shutil.rmtree(build_dir, ignore_errors=True)

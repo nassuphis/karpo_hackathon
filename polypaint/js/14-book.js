@@ -373,22 +373,35 @@ async function _bookAddEntryImpl(ref, surfaceStatus) {
     }
 }
 
+async function _bookAddWithButton(btnId, statusElId, ref) {
+    const btn = document.getElementById(btnId);
+    const orig = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Adding…'; }
+    const ok = await _bookAddEntry(ref, (msg, err) => {
+        const el = document.getElementById(statusElId);
+        if (el) { el.textContent = msg; el.className = err ? 'status error' : 'status'; }
+    });
+    if (btn) {
+        btn.textContent = ok ? 'Added ✓' : 'Failed';
+        setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 1500);
+    }
+    return ok;
+}
+
 function addSelectedRenderArtifactToBook() {
     if (_renderActiveFamily !== 'color') return;
     const art = _renderSelectedArtifactEntry();
     const jobId = document.getElementById('render-results-dir').value.trim();
     if (!art || !jobId) return;
-    void _bookAddEntry(
-        { jobId, artifactId: art.artifact_id, imageKey: art.image_key || '', displayName: art.display_name || art.artifact_id },
-        (msg, err) => { const el = document.getElementById('render-status'); if (el) { el.textContent = msg; el.className = err ? 'status error' : 'status'; } });
+    void _bookAddWithButton('btn-render-add-book', 'render-status',
+        { jobId, artifactId: art.artifact_id, imageKey: art.image_key || '', displayName: art.display_name || art.artifact_id });
 }
 
 function addSelectedFavoriteToBook() {
     const art = _favoriteArtifacts[_favoriteSelectedIdx];
     if (!art || art.missing) return;
-    void _bookAddEntry(
-        { jobId: art.favorite_job_id, artifactId: art.artifact_id, imageKey: art.image_key || '', displayName: art.display_name || art.artifact_id },
-        (msg, err) => { const el = document.getElementById('favorites-status'); if (el) { el.textContent = msg; el.className = err ? 'status error' : 'status'; } });
+    void _bookAddWithButton('btn-favorites-add-book', 'favorites-status',
+        { jobId: art.favorite_job_id, artifactId: art.artifact_id, imageKey: art.image_key || '', displayName: art.display_name || art.artifact_id });
 }
 
 // --- compile (design §5): prepare fan-out, then compose. Trigger is
@@ -469,8 +482,13 @@ async function _bookPollCompile() {
                 const detail = (check.error_details || [])[0] || {};
                 throw new Error(`prepare failed: ${detail.error_msg || 'unknown'}`);
             }
-            _bookRailUpsert('running', `preparing ${check.done || 0}/${run.expected}`);
-            _bookStatus(`Preparing ${check.done || 0}/${run.expected}...`);
+            const prepElapsed = Math.round((Date.now() - run.startedAt) / 1000);
+            _bookRailUpsert('running', `preparing ${check.done || 0}/${run.expected} · ${prepElapsed}s`);
+            _bookStatus(`Preparing ${check.done || 0}/${run.expected}... (${prepElapsed}s)`);
+            if ((check.done || 0) !== run.lastPrepDone) {
+                run.lastPrepDone = check.done || 0;
+                _bookLog(`Prepared ${run.lastPrepDone}/${run.expected} entries (${prepElapsed}s)`);
+            }
             if ((check.done || 0) >= run.expected) {
                 run.phase = 'compose';
                 const composeTask = `bookcomp_${run.runId}`;
@@ -498,10 +516,17 @@ async function _bookPollCompile() {
             }
             const rd = (check.results || [])[0] || {};
             if (rd.phase === 'done') {
-                _bookRailUpsert('done', `${(rd.content_pages || '?')} pages`);
+                const doneElapsed = Math.round((Date.now() - run.startedAt) / 1000);
+                _bookRailUpsert('done', `${(rd.content_pages || '?')} pages · ${doneElapsed}s`);
                 _bookState.compile = null;
                 _bookCompileBtn(false);
-                _bookLog(`Compose done for ${run.bookId}`);
+                _bookLog(`Compose done for ${run.bookId}: ${rd.content_pages || '?'} pages in ${doneElapsed}s`);
+                if (rd.flip_error) {
+                    _bookLog(`Flipbook FAILED: ${rd.flip_error} — PDF is fine; recompile to retry`, 'err');
+                    _bookStatus(`Compiled, but flipbook failed: ${rd.flip_error}`, true);
+                } else if (rd.flip_page_count) {
+                    _bookLog(`Flipbook ready: ${rd.flip_page_count} pages`);
+                }
                 if (run.bookId === _bookState.activeId) {
                     await _bookLoadActive();
                     _renderBookTab();
@@ -510,8 +535,14 @@ async function _bookPollCompile() {
                 }
                 return;
             }
-            _bookRailUpsert('running', rd.phase_label || rd.phase || 'composing');
-            _bookStatus(`Composing: ${rd.phase_label || rd.phase || 'working'}...`);
+            const label = rd.phase_label || rd.phase || 'composing';
+            const compElapsed = Math.round((Date.now() - run.startedAt) / 1000);
+            _bookRailUpsert('running', `${label} · ${compElapsed}s`);
+            _bookStatus(`Composing: ${label}... (${compElapsed}s)`);
+            if (label !== run.lastComposeLabel) {
+                run.lastComposeLabel = label;
+                _bookLog(`Compose: ${label} (${compElapsed}s)`);
+            }
         }
         setTimeout(_bookPollCompile, 3000);
     } catch (e) {

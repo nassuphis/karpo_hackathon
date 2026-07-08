@@ -175,9 +175,15 @@ class TestBookPdfHandler(unittest.TestCase):
         latest = json.loads(self.fake.objects["polypaint/books/test-book/out/latest.json"])
         self.assertEqual(latest["compile_id"], "c1")
         self.assertEqual(latest["spread_count"], 2)
+        # progress phases repeat (per-asset, per-flip-page): pin the SEQUENCE
+        # of distinct stages, not the tick count
         phases = [p for _, p in self.statuses]
-        self.assertEqual(phases, ["load_assets", "compose_tex", "latex_content",
-                                  "latex_cover", "upload", "flipbook", "done"])
+        deduped = [p for i, p in enumerate(phases) if i == 0 or phases[i - 1] != p]
+        self.assertEqual(deduped, ["load_assets", "compose_tex", "latex_content",
+                                   "latex_cover", "upload", "flipbook", "done"])
+        # flip outcome rides the done status for the compile poller's log
+        done_status = self.statuses[-1]
+        self.assertEqual(done_status[0], "done")
         import zipfile
         zf = zipfile.ZipFile(io.BytesIO(
             self.fake.objects["polypaint/books/test-book/out/c1/source.zip"]))

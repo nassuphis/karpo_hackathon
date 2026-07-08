@@ -24,12 +24,25 @@ import boto3
 from shared import BUCKET, ok_response, report_status
 
 BOOKS_PREFIX = "polypaint/books/"
+JOBS_TABLE = os.environ.get("JOBS_TABLE", "polypaint-jobs")
 STORAGE_FUNCTION = os.environ.get("STORAGE_FUNCTION", "polypaint-storage")
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 DEFAULT_MODEL = "gemini-2.5-flash"
-FREE_TIER_PACING_S = 5.0   # ~10 RPM free tier: stay comfortably under
+# live 429 on a 21-spread book: gemini-2.5-flash free tier = 20 req/min and
+# the banned-word rewrite doubles calls, so pacing must sit at the CALL
+# layer (every request, rewrites included), not per entry
+FREE_TIER_PACING_S = 6.5
+VISION_CONFIG_KEYS = ("__config__", "vision_model")
 
 s3 = boto3.client("s3")
+_pacing = {"last": 0.0}
+
+
+def _pace(min_interval):
+    wait = _pacing["last"] + min_interval - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
+    _pacing["last"] = time.monotonic()
 
 
 BANNED_WORDS = [
@@ -84,13 +97,9 @@ def provenance_lines(entry, report):
     return "\n".join(lines) or f"- artifact: {entry.get('artifact_id', '')}"
 
 
-def build_request(image_bytes, entry, report, *, angle="", used_titles=(), extra=""):
-    text = PROMPT.format(
-        provenance=provenance_lines(entry, report),
-        angle=angle or ANGLES[0],
-        used_titles=", ".join(used_titles) or "(none yet)",
-        banned=", ".join(BANNED_WORDS),
-    ) + (f"\n{extra}" if extra else "")
+def build_request(image_bytes, entry, report, *, angle="", used_titles=(), extra="", prebuilt_text=None):
+    text = prebuilt_text if prebuilt_text is not None else _prompt_text(
+        entry, report, angle=angle, used_titles=used_titles, extra=extra)
     return {
         "contents": [{
             "parts": [
@@ -129,15 +138,17 @@ def parse_response(payload):
 RETRYABLE_HTTP = {429, 500, 502, 503}
 
 
-def _gemini_call(url, body, api_key, *, attempts=6):
-    """POST with backoff: the free tier throws 503 ("model overloaded")
-    routinely, and 429 when pacing slips. Non-retryable errors surface
-    Gemini's own message instead of a bare HTTPError."""
+def _gemini_call(url, body, api_key, *, attempts=8, headers=None, pacing=FREE_TIER_PACING_S):
+    """POST with backoff: free tiers throw 503 ("model overloaded")
+    routinely and 429 when a rate window fills. 429s wait out the window
+    (Retry-After honored, up to ~90s per attempt) instead of dying —
+    a quota message like "retry in 52s" must pause the run, not kill it."""
     delay = 3.0
     for attempt in range(1, attempts + 1):
+        _pace(pacing)
         req = urllib.request.Request(
             url, data=body,
-            headers={"Content-Type": "application/json", "x-goog-api-key": api_key})
+            headers=headers or {"Content-Type": "application/json", "x-goog-api-key": api_key})
         try:
             with urllib.request.urlopen(req, timeout=120) as resp:
                 return json.loads(resp.read())
@@ -148,35 +159,114 @@ def _gemini_call(url, body, api_key, *, attempts=6):
             except Exception:
                 pass
             if exc.code in RETRYABLE_HTTP and attempt < attempts:
-                wait = float(exc.headers.get("Retry-After") or delay)
-                print(f"    Gemini {exc.code} ({detail or 'transient'}) — "
+                wait = min(float(exc.headers.get("Retry-After") or delay), 90.0)
+                if exc.code == 429:
+                    wait = max(wait, 15.0)
+                print(f"    vision API {exc.code} ({detail[:120] or 'transient'}) — "
                       f"retry {attempt}/{attempts - 1} in {wait:.0f}s")
                 time.sleep(wait)
                 delay = min(delay * 2, 60)
                 continue
-            raise RuntimeError(f"Gemini HTTP {exc.code}: {detail or exc.reason}") from exc
+            raise RuntimeError(f"vision API HTTP {exc.code}: {detail or exc.reason}") from exc
     raise RuntimeError("unreachable")
+
+
+def _prompt_text(entry, report, *, angle="", used_titles=(), extra=""):
+    text = PROMPT.format(
+        provenance=provenance_lines(entry, report),
+        angle=angle or ANGLES[0],
+        used_titles=", ".join(used_titles) or "(none yet)",
+        banned=", ".join(BANNED_WORDS),
+    )
+    return text + (f"\n{extra}" if extra else "")
+
+
+def _extract_text(payload, path_desc, *chain):
+    node = payload
+    try:
+        for step in chain:
+            node = node[step]
+        return str(node)
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"{path_desc}: no text in {json.dumps(payload)[:300]}") from exc
+
+
+def _vision_call(model, api_key, image_bytes, text):
+    """One image + one prompt -> raw model text. Provider inferred from the
+    model id: gemini-* / claude-* / gpt-* & o* (VisionModel config)."""
+    b64 = base64.b64encode(image_bytes).decode()
+    if model.startswith("claude"):
+        body = {
+            "model": model, "max_tokens": 1024,
+            "messages": [{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64",
+                                             "media_type": "image/jpeg", "data": b64}},
+                {"type": "text", "text": text},
+            ]}],
+        }
+        payload = _gemini_call(
+            "https://api.anthropic.com/v1/messages",
+            json.dumps(body).encode(), api_key,
+            headers={"Content-Type": "application/json", "x-api-key": api_key,
+                     "anthropic-version": "2023-06-01"},
+            pacing=1.5)
+        if "error" in payload:
+            raise RuntimeError(f"Anthropic: {payload['error'].get('message', payload['error'])}")
+        return _extract_text(payload, "Anthropic", "content", 0, "text")
+    if model.startswith(("gpt", "o")):
+        body = {
+            "model": model,
+            "messages": [{"role": "user", "content": [
+                {"type": "image_url",
+                 "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                {"type": "text", "text": text},
+            ]}],
+            "response_format": {"type": "json_object"},
+            "max_tokens": 1024,
+        }
+        payload = _gemini_call(
+            "https://api.openai.com/v1/chat/completions",
+            json.dumps(body).encode(), api_key,
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {api_key}"},
+            pacing=1.5)
+        if "error" in payload:
+            raise RuntimeError(f"OpenAI: {payload['error'].get('message', payload['error'])}")
+        return _extract_text(payload, "OpenAI", "choices", 0, "message", "content")
+    # default: Gemini
+    req = build_request(image_bytes, None, None, prebuilt_text=text)
+    payload = _gemini_call(GEMINI_URL.format(model=model),
+                           json.dumps(req).encode(), api_key)
+    if "error" in payload:
+        raise RuntimeError(f"Gemini: {payload['error'].get('message', payload['error'])}")
+    return _extract_text(payload, "Gemini", "candidates", 0, "content", "parts", 0, "text")
+
+
+def _parse_prose(text):
+    text = str(text or "").strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        text = text[text.index("{"):text.rindex("}") + 1]
+    data = json.loads(text)
+    title = str(data.get("title") or "").strip()
+    description = str(data.get("description") or "").strip()
+    if not title or not description:
+        raise RuntimeError(f"vision JSON missing fields: {text[:200]}")
+    return title, description
 
 
 def describe_image(image_bytes, entry, report, *, model, api_key,
                    angle="", used_titles=()):
-    payload = _gemini_call(
-        GEMINI_URL.format(model=model),
-        json.dumps(build_request(image_bytes, entry, report,
-                                 angle=angle, used_titles=used_titles)).encode(),
-        api_key)
-    title, description = parse_response(payload)
+    text = _prompt_text(entry, report, angle=angle, used_titles=used_titles)
+    title, description = _parse_prose(_vision_call(model, api_key, image_bytes, text))
     # enforce the ban: one rewrite pass naming the offending words
     offenders = find_banned(f"{title} {description}")
     if offenders:
-        payload = _gemini_call(
-            GEMINI_URL.format(model=model),
-            json.dumps(build_request(
-                image_bytes, entry, report, angle=angle, used_titles=used_titles,
-                extra=f"Your previous attempt used banned words: {', '.join(offenders)}. "
-                      f"Rewrite completely without them or any synonym-sludge.")).encode(),
-            api_key)
-        title, description = parse_response(payload)
+        retry_text = _prompt_text(
+            entry, report, angle=angle, used_titles=used_titles,
+            extra=f"Your previous attempt used banned words: {', '.join(offenders)}. "
+                  f"Rewrite completely without them or any synonym-sludge.")
+        title, description = _parse_prose(_vision_call(model, api_key, image_bytes, retry_text))
     return title, description
 
 
@@ -200,6 +290,20 @@ def _safe_id(value, label):
     if not re.fullmatch(r"[A-Za-z0-9._#-]{1,80}", str(value or "")):
         raise ValueError(f"book describe {label} has an unsafe value: {value!r}")
     return str(value)
+
+
+def _load_vision_config():
+    try:
+        ddb = boto3.client("dynamodb", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+        resp = ddb.get_item(
+            TableName=JOBS_TABLE,
+            Key={"job_id": {"S": VISION_CONFIG_KEYS[0]},
+                 "task_id": {"S": VISION_CONFIG_KEYS[1]}})
+        item = resp.get("Item") or {}
+        return {"model": (item.get("model") or {}).get("S", ""),
+                "api_key": (item.get("api_key") or {}).get("S", "")}
+    except Exception:
+        return {}
 
 
 def _entry_preview_bytes(entry):
@@ -230,10 +334,19 @@ def handle_describe(params):
     only_ids = {str(x) for x in (params.get("entry_ids") or []) if str(x)}
     model = str(params.get("model") or DEFAULT_MODEL)
 
-    api_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    # resolution: explicit request model > VisionModel config (DynamoDB,
+    # set in the app) > env GEMINI_API_KEY default. The config key wins for
+    # its model; env key only covers gemini models.
+    config = _load_vision_config()
+    if not str(params.get("model") or "").strip():
+        model = str(config.get("model") or DEFAULT_MODEL)
+    api_key = str(config.get("api_key") or "").strip()
+    if not api_key and model.startswith("gemini"):
+        api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not configured on the book lambda — "
-                           "export it in your shell and redeploy")
+        raise RuntimeError(
+            f"no API key for {model}: set the VisionModel config in the Book tab "
+            f"(model + key), or export GEMINI_API_KEY and redeploy for gemini models")
 
     _phase(job_id, task_id, "started", "load_book", "Load book")
     obj = s3.get_object(Bucket=BUCKET, Key=f"{BOOKS_PREFIX}{book_id}.json")
@@ -255,8 +368,6 @@ def handle_describe(params):
         if has_prose and not overwrite:
             skipped += 1
             continue
-        if described:
-            time.sleep(FREE_TIER_PACING_S)
         image = _entry_preview_bytes(entry)
         report = _entry_report(book_id, entry)
         title, description = describe_image(
@@ -266,12 +377,17 @@ def handle_describe(params):
         entry["body_override"] = description
         used_titles.append(title)
         described += 1
+        # save after EVERY entry: a mid-run quota death keeps the prose so
+        # far, and skip-existing makes the rerun resume where it stopped.
+        # Our in-memory doc stays the source of truth for the whole run —
+        # adopting the server's returned copy would orphan the loop's entry
+        # references and drop later entries' prose from subsequent saves.
+        _storage({"path": "/save-book", "body": json.dumps({"book": doc})})
         _phase(job_id, task_id, "processing", "describe",
                f"Described {idx}/{len(entries)}: {title}")
 
     if described:
         _phase(job_id, task_id, "processing", "save", "Save book")
-        _storage({"path": "/save-book", "body": json.dumps({"book": doc})})
     _phase(job_id, task_id, "done", "done", "Done",
            described=described, skipped=skipped)
     return ok_response({"book_id": book_id, "described": described, "skipped": skipped})

@@ -602,6 +602,49 @@ async function _bookPollCompile() {
     }
 }
 
+function bookVisionToggle() {
+    const panel = document.getElementById('book-vision-panel');
+    if (!panel) return;
+    const opening = panel.style.display === 'none';
+    panel.style.display = opening ? 'flex' : 'none';
+    if (opening) void bookVisionLoad();
+}
+
+async function bookVisionLoad() {
+    const status = document.getElementById('book-vision-status');
+    try {
+        const cfg = await lambdaPost('storage', {}, '/fetch-vision-config');
+        const modelEl = document.getElementById('book-vision-model');
+        if (modelEl && !modelEl.value) modelEl.value = cfg.model || '';
+        if (status) status.textContent = cfg.key_set
+            ? `key set ${cfg.key_hint || ''} · model ${cfg.model || 'gemini-2.5-flash (default)'}`
+            : 'no key stored — describe falls back to the deployed GEMINI_API_KEY (gemini models only)';
+    } catch (e) {
+        if (status) status.textContent = e.message;
+    }
+}
+
+async function bookVisionSave(btn) {
+    const orig = btn ? btn.textContent : 'Save Vision';
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+        const model = (document.getElementById('book-vision-model')?.value || '').trim();
+        const keyEl = document.getElementById('book-vision-key');
+        const cfg = await lambdaPost('storage', { model, api_key: (keyEl?.value || '').trim() }, '/save-vision-config');
+        if (keyEl) keyEl.value = '';
+        const status = document.getElementById('book-vision-status');
+        if (status) status.textContent = cfg.key_set
+            ? `saved · key ${cfg.key_hint || 'set'} · model ${cfg.model || '(default)'}`
+            : 'saved · no key stored';
+        if (btn) btn.textContent = 'Saved ✓';
+    } catch (e) {
+        _bookStatus(e.message, true);
+        if (btn) btn.textContent = 'Failed';
+    } finally {
+        setTimeout(() => { if (btn) { btn.disabled = false; btn.textContent = orig; } }, 1500);
+    }
+}
+
 async function bookDescribe(btn) {
     // all entries, skip-existing (hand prose survives)
     return _bookDescribeRun(btn, {});

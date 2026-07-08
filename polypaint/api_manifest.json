@@ -48,6 +48,7 @@
       "/fetch-param-program",
       "/fetch-root-program",
       "/fetch-solve-score-program",
+      "/fetch-vision-config",
       "/head-keys",
       "/list",
       "/list-books",
@@ -74,6 +75,7 @@
       "/save-param-program",
       "/save-root-program",
       "/save-solve-score-program",
+      "/save-vision-config",
       "/share-mosaic",
       "/solve-score-chain-to-source"
     ]
@@ -110,6 +112,7 @@
       "/fetch-param-program",
       "/fetch-root-program",
       "/fetch-solve-score-program",
+      "/fetch-vision-config",
       "/head-keys",
       "/list",
       "/list-books",
@@ -141,6 +144,7 @@
       "/save-param-program",
       "/save-root-program",
       "/save-solve-score-program",
+      "/save-vision-config",
       "/share-mosaic",
       "/solve-proximity",
       "/solve-score-chain-to-source",
@@ -225,6 +229,7 @@
       "/fetch-param-program",
       "/fetch-root-program",
       "/fetch-solve-score-program",
+      "/fetch-vision-config",
       "/list",
       "/list-books",
       "/list-coeff-programs",
@@ -243,6 +248,7 @@
       "/save-param-program",
       "/save-root-program",
       "/save-solve-score-program",
+      "/save-vision-config",
       "/share-mosaic",
       "/solve-score-chain-to-source"
     ]

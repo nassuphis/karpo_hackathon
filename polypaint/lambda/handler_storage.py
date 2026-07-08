@@ -1370,6 +1370,10 @@ def handler(event, context):
         return _handle_storage_route(handle_save_book, event)
     elif path.endswith("/delete-book"):
         return _handle_storage_route(handle_delete_book, event)
+    elif path.endswith("/fetch-vision-config"):
+        return _handle_storage_route(handle_fetch_vision_config, event)
+    elif path.endswith("/save-vision-config"):
+        return _handle_storage_route(handle_save_vision_config, event)
     elif path.endswith("/delete-root-program"):
         return _handle_storage_route(handle_delete_root_program, event)
     elif path.endswith("/list-param-programs"):
@@ -1995,6 +1999,69 @@ def _read_book_object(book_id):
     if str(payload.get("book_kind") or "") != "book":
         raise ValueError(f"object at {key} is not a book document")
     return payload
+
+
+VISION_CONFIG_JOB_ID = "__config__"
+VISION_CONFIG_TASK_ID = "vision_model"
+
+
+def handle_fetch_vision_config(event):
+    """Model + whether a key is set. The key itself NEVER leaves the
+    server — only a last-4 hint for 'which key is this'."""
+    del event
+    resp = _get_ddb().get_item(
+        TableName=JOBS_TABLE,
+        Key={"job_id": {"S": VISION_CONFIG_JOB_ID},
+             "task_id": {"S": VISION_CONFIG_TASK_ID}})
+    item = resp.get("Item") or {}
+    model = (item.get("model") or {}).get("S", "")
+    key = (item.get("api_key") or {}).get("S", "")
+    return ok_response({
+        "model": model,
+        "key_set": bool(key),
+        "key_hint": f"…{key[-4:]}" if len(key) >= 8 else "",
+        "updated_at": (item.get("updated_at") or {}).get("S", ""),
+    })
+
+
+def handle_save_vision_config(event):
+    """Set the vision model and/or paste a key from the app. Stored in
+    DynamoDB (IAM-only) — the public bucket must never hold secrets.
+    Empty api_key keeps the existing one; api_key="-" clears it."""
+    params = parse_body(event)
+    model = str(params.get("model") or "").strip()
+    if model and not all(c.isalnum() or c in ".-_:" for c in model):
+        raise ValueError("vision model id has unexpected characters")
+    if len(model) > 80:
+        raise ValueError("vision model id too long")
+    api_key = str(params.get("api_key") or "").strip()
+    if len(api_key) > 300:
+        raise ValueError("api key too long")
+
+    resp = _get_ddb().get_item(
+        TableName=JOBS_TABLE,
+        Key={"job_id": {"S": VISION_CONFIG_JOB_ID},
+             "task_id": {"S": VISION_CONFIG_TASK_ID}})
+    item = resp.get("Item") or {}
+    existing_key = (item.get("api_key") or {}).get("S", "")
+    existing_model = (item.get("model") or {}).get("S", "")
+
+    new_key = "" if api_key == "-" else (api_key or existing_key)
+    new_model = model or existing_model
+    _get_ddb().put_item(
+        TableName=JOBS_TABLE,
+        Item={
+            "job_id": {"S": VISION_CONFIG_JOB_ID},
+            "task_id": {"S": VISION_CONFIG_TASK_ID},
+            "model": {"S": new_model},
+            "api_key": {"S": new_key},
+            "updated_at": {"S": _utc_now_iso()},
+        })
+    return ok_response({
+        "model": new_model,
+        "key_set": bool(new_key),
+        "key_hint": f"…{new_key[-4:]}" if len(new_key) >= 8 else "",
+    })
 
 
 def handle_save_book(event):

@@ -1,735 +1,737 @@
 {
-  "version": 1,
-  "_comment": [
-    "Source of truth for the deployed Lambda fleet: function specs, API",
-    "routes, gateway invoke permissions (derived: every routed function),",
-    "and retired resources cleaned up on each deploy.",
-    "deploy.sh sources the bash emitted by: deploy_manifest.py --emit-bash;",
-    "validate with: deploy_manifest.py --check.",
-    "env/layers/tmp are literal bash fragments expanded at deploy time;",
-    "every $*_NAME / $*_MEMORY reference must be declared in this file."
-  ],
-  "functions": [
-    {
-      "key": "sweep_mt",
-      "name": "polypaint-sweep-mt",
-      "name_var": "SWEEP_MT_NAME",
-      "memory_var": "SWEEP_MT_MEMORY",
-      "memory_mb": 10240,
-      "handler": "handler_sweep_mt.handler",
-      "zip": "/tmp/polypaint-sweep-mt.zip",
-      "layers": [],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE",
-      "group": "core",
-      "memory_why": "6 vCPUs for multithreaded AE solve",
-      "tmp": "binary",
-      "routes": [
-        "/sweep-mt"
-      ]
-    },
-    {
-      "key": "coeffgen",
-      "name": "polypaint-coeffgen",
-      "name_var": "COEFFGEN_NAME",
-      "memory_var": "COEFFGEN_MEMORY",
-      "memory_mb": 10240,
-      "handler": "handler_coeffgen.handler",
-      "zip": "/tmp/polypaint-coeffgen.zip",
-      "layers": [
-        "lapack"
-      ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib,FUSED_WORKER_MEMORY_MB=$COMPUTE_FUSED_CHUNK_MEMORY,FUSED_WORKER_TMP_MB=$BINARY_TMP,FUSED_WORKER_TIMEOUT_SEC=$TIMEOUT",
-      "group": "core",
-      "memory_why": "6 vCPUs for coeffgen + threaded param_gen",
-      "tmp": "binary",
-      "routes": [
-        "/coeffgen"
-      ]
-    },
-    {
-      "key": "sweep_cm",
-      "name": "polypaint-sweep-cm",
-      "name_var": "SWEEP_CM_NAME",
-      "memory_var": "SWEEP_CM_MEMORY",
-      "memory_mb": 4096,
-      "handler": "handler_sweep_cm.handler",
-      "zip": "/tmp/polypaint-sweep-cm.zip",
-      "layers": [
-        "lapack"
-      ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "memory_why": "companion matrix eigensolve needs more memory",
-      "tmp": "binary",
-      "routes": [
-        "/sweep-cm"
-      ]
-    },
-    {
-      "key": "viewport",
-      "name": "polypaint-viewport",
-      "name_var": "VIEWPORT_NAME",
-      "memory_var": "VIEWPORT_MEMORY",
-      "memory_mb": 512,
-      "handler": "handler_viewport.handler",
-      "zip": "/tmp/polypaint-viewport.zip",
-      "layers": [],
-      "env": "BUCKET=$BUCKET",
-      "group": "core",
-      "memory_why": "pure Python",
-      "routes": [
-        "/viewport"
-      ]
-    },
-    {
-      "key": "storage",
-      "name": "polypaint-storage",
-      "name_var": "STORAGE_NAME",
-      "memory_var": "STORAGE_MEMORY",
-      "memory_mb": 512,
-      "handler": "handler_storage.handler",
-      "zip": "/tmp/polypaint-storage.zip",
-      "layers": [],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,DEEPZOOM_EXPORT_FUNCTION=polypaint-deepzoom-export",
-      "group": "core",
-      "memory_why": "pure Python",
-      "reserved_concurrency": 5,
-      "routes": [
-        "/list",
-        "/list-solve-score-programs",
-        "/fetch-solve-score-program",
-        "/save-solve-score-program",
-        "/delete-solve-score-program",
-        "/migrate-solve-score-program",
-        "/compile-root-program-source",
-        "/save-root-program",
-        "/list-root-programs",
-        "/fetch-root-program",
-        "/delete-root-program",
-        "/compile-solve-score-program-source",
-        "/solve-score-chain-to-source",
-        "/list-param-programs",
-        "/fetch-param-program",
-        "/save-param-program",
-        "/compile-param-program-source",
-        "/delete-param-program",
-        "/migrate-param-program",
-        "/list-coeff-programs",
-        "/fetch-coeff-program",
-        "/save-coeff-program",
-        "/compile-coeff-program-source",
-        "/delete-coeff-program",
-        "/migrate-coeff-program",
-        "/migrate-compute",
-        "/list-favorites",
-        "/add-favorite",
-        "/delete-favorite",
-        "/list-palettes",
-        "/delete-palette",
-        "/delete-render-artifact",
-        "/delete",
-        "/save-metadata",
-        "/cleanup",
-        "/clean-render",
-        "/check-keys",
-        "/check-status",
-        "/presign",
-        "/detail",
-        "/list-prefix",
-        "/head-keys",
-        "/delete-task",
-        "/render-summary",
-        "/render-count",
-        "/list-color-mosaic",
-        "/list-palette-mosaic",
-        "/share-mosaic",
-        "/delete-prefix",
-        "/list-deepzoom",
-        "/list-books",
-        "/fetch-book",
-        "/save-book",
-        "/delete-book"
-      ]
-    },
-    {
-      "key": "dispatch",
-      "name": "polypaint-dispatch",
-      "name_var": "DISPATCH_NAME",
-      "memory_var": "DISPATCH_MEMORY",
-      "memory_mb": 1769,
-      "handler": "handler_dispatch.handler",
-      "zip": "/tmp/polypaint-dispatch.zip",
-      "layers": [],
-      "env": "BUCKET=$BUCKET,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,COLOR_TO_BILEVEL_FUNCTION=$COLOR_TO_BILEVEL_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,DZ_FROM_RAW_FUNCTION=$DZ_FROM_RAW_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,RECOLOR_FROM_RAW_FUNCTION=$RECOLOR_FROM_RAW_NAME,EXTRACT_PALETTE_FUSED_FUNCTION=$EXTRACT_PALETTE_FUSED_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,BOOK_PDF_FUNCTION=$BOOK_PDF_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME",
-      "group": "core",
-      "memory_why": "1 vCPU \u2014 50 threads doing SSL need real CPU",
-      "reserved_concurrency": 5,
-      "routes": [
-        "/dispatch-render"
-      ],
-      "note": "dispatch routes async work to per-task Lambdas; this env map is the routing table"
-    },
-    {
-      "key": "raster_mt",
-      "name": "polypaint-raster-mt",
-      "name_var": "RASTER_MT_NAME",
-      "memory_var": "RASTER_MT_MEMORY",
-      "memory_mb": 10240,
-      "handler": "handler_raster_mt.handler",
-      "zip": "/tmp/polypaint-raster-mt.zip",
-      "layers": [],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RASTER_MT_THREADS=$RASTER_MT_THREADS",
-      "group": "core",
-      "memory_why": "max memory/CPU tier for native pthread raster on large fused renders",
-      "tmp": "binary"
-    },
-    {
-      "key": "finalize_mt",
-      "name": "polypaint-finalize-mt",
-      "name_var": "FINALIZE_MT_NAME",
-      "memory_var": "FINALIZE_MT_MEMORY",
-      "memory_mb": 10240,
-      "handler": "handler_finalize_mt.handler",
-      "zip": "/tmp/polypaint-finalize-mt.zip",
-      "layers": [
-        "libvips"
-      ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "memory_why": "fused solve-score raw assemble + encode",
-      "tmp": "binary"
-    },
-    {
-      "key": "preview",
-      "name": "polypaint-preview",
-      "name_var": "PREVIEW_NAME",
-      "memory_var": "PREVIEW_MEMORY",
-      "memory_mb": 1024,
-      "handler": "handler_preview.handler",
-      "zip": "/tmp/polypaint-preview.zip",
-      "layers": [],
-      "env": "BUCKET=$BUCKET",
-      "group": "core",
-      "memory_why": "pure Python, PNG encoding via zlib (512 OOMs on large lores)",
-      "routes": [
-        "/preview"
-      ]
-    },
-    {
-      "key": "compute_preview",
-      "name": "polypaint-compute-preview",
-      "name_var": "COMPUTE_PREVIEW_NAME",
-      "memory_var": "COMPUTE_PREVIEW_MEMORY",
-      "memory_mb": 4096,
-      "handler": "handler_compute_preview.handler",
-      "zip": "/tmp/polypaint-compute-preview.zip",
-      "layers": [
-        "lapack"
-      ],
-      "env": "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "memory_why": "sync coeffgen+solve+PNG preview, needs LAPACK for roots_cm/CM",
-      "tmp": "binary",
-      "routes": [
-        "/compute-preview"
-      ]
-    },
-    {
-      "key": "bilevel",
-      "name": "polypaint-bilevel",
-      "name_var": "BILEVEL_NAME",
-      "memory_var": "BILEVEL_MEMORY",
-      "memory_mb": 1769,
-      "handler": "handler_bilevel.handler",
-      "zip": "/tmp/polypaint-bilevel.zip",
-      "layers": [
-        "libvips"
-      ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "memory_why": "1 vCPU, bilevel raster + merge",
-      "tmp": "binary"
-    },
-    {
-      "key": "color_to_bilevel",
-      "name": "polypaint-color-to-bilevel",
-      "name_var": "COLOR_TO_BILEVEL_NAME",
-      "memory_var": "COLOR_TO_BILEVEL_MEMORY",
-      "memory_mb": 10240,
-      "handler": "handler_bilevel.handler",
-      "zip": "/tmp/polypaint-bilevel.zip",
-      "layers": [
-        "libvips"
-      ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "memory_why": "raw-sidecar thresholding is single-shot and CPU-bound on large images",
-      "tmp": "binary"
-    },
-    {
-      "key": "param_debug",
-      "name": "polypaint-param-debug",
-      "name_var": "PARAM_DEBUG_NAME",
-      "memory_var": "PARAM_DEBUG_MEMORY",
-      "memory_mb": 1769,
-      "handler": "handler_param_debug.handler",
-      "zip": "/tmp/polypaint-param-debug.zip",
-      "layers": [
-        "libvips"
-      ],
-      "env": "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "memory_why": "1 vCPU + libvips for TIFF output",
-      "routes": [
-        "/param-debug"
-      ]
-    },
-    {
-      "key": "tiff_compat",
-      "name": "polypaint-tiff-compat",
-      "name_var": "TIFF_COMPAT_NAME",
-      "memory_var": "TIFF_COMPAT_MEMORY",
-      "memory_mb": 4096,
-      "handler": "handler_tiff_compat.handler",
-      "zip": "/tmp/polypaint-tiff-compat.zip",
-      "layers": [
-        "libvips"
-      ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "memory_why": "needs RAM for scanline buffer on large images",
-      "tmp": "binary",
-      "routes": [
-        "/tiff-compat"
-      ]
-    },
-    {
-      "key": "png_export",
-      "name": "polypaint-png-export",
-      "name_var": "PNG_EXPORT_NAME",
-      "memory_var": "PNG_EXPORT_MEMORY",
-      "memory_mb": 4096,
-      "handler": "handler_png_export.handler",
-      "zip": "/tmp/polypaint-png-export.zip",
-      "layers": [
-        "libvips"
-      ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "memory_why": "libvips PNG encode",
-      "tmp": "binary",
-      "routes": [
-        "/png-export"
-      ]
-    },
-    {
-      "key": "deepzoom_export",
-      "name": "polypaint-deepzoom-export",
-      "name_var": "DZ_EXPORT_NAME",
-      "memory_var": "DZ_EXPORT_MEMORY",
-      "memory_mb": 8192,
-      "handler": "handler_deepzoom_export.handler",
-      "zip": "/tmp/polypaint-deepzoom-export.zip",
-      "layers": [
-        "libvips"
-      ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "memory_why": "libvips dzsave + parallel S3 upload; 8GB for wall pyramid arrayjoin (~1.3GB decoded tiles, deepzoom-speed.md 7.1)",
-      "tmp": "binary",
-      "routes": [
-        "/deepzoom-export"
-      ]
-    },
-    {
-      "key": "deepzoom_from_raw",
-      "name": "polypaint-deepzoom-from-raw",
-      "name_var": "DZ_FROM_RAW_NAME",
-      "memory_var": "DZ_FROM_RAW_MEMORY",
-      "memory_mb": 4096,
-      "handler": "handler_deepzoom_from_raw.handler",
-      "zip": "/tmp/polypaint-deepzoom-from-raw.zip",
-      "layers": [
-        "libvips"
-      ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "memory_why": "raw-sidecar-only DeepZoom export",
-      "tmp": "binary"
-    },
-    {
-      "key": "render_preview",
-      "name": "polypaint-render-preview",
-      "name_var": "RENDER_PREVIEW_NAME",
-      "memory_var": "RENDER_PREVIEW_MEMORY",
-      "memory_mb": 4096,
-      "handler": "handler_render_preview.handler",
-      "zip": "/tmp/polypaint-render-preview.zip",
-      "layers": [
-        "libvips"
-      ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "memory_why": "libvips vipsthumbnail on large images",
-      "tmp": "binary"
-    },
-    {
-      "key": "render_lores_preview",
-      "name": "polypaint-render-lores-preview",
-      "name_var": "RENDER_LORES_PREVIEW_NAME",
-      "memory_var": "RENDER_LORES_PREVIEW_MEMORY",
-      "memory_mb": 4096,
-      "handler": "handler_render_lores_preview.handler",
-      "zip": "/tmp/polypaint-render-lores-preview.zip",
-      "layers": [
-        "libvips",
-        "lapack"
-      ],
-      "env": "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "memory_why": "sync lores fused raster + score_raw_render preview",
-      "tmp": "binary",
-      "routes": [
-        "/render-lores-preview"
-      ]
-    },
-    {
-      "key": "autolevels",
-      "name": "polypaint-autolevels",
-      "name_var": "AUTOLEVELS_NAME",
-      "memory_var": "AUTOLEVELS_MEMORY",
-      "memory_mb": 10240,
-      "handler": "handler_autolevels.handler",
-      "zip": "/tmp/polypaint-autolevels.zip",
-      "layers": [
-        "libvips"
-      ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "memory_why": "libvips autolevel post-process on saved color renders",
-      "tmp": "binary"
-    },
-    {
-      "key": "resize_artifact",
-      "name": "polypaint-resize-artifact",
-      "name_var": "RESIZE_ARTIFACT_NAME",
-      "memory_var": "RESIZE_ARTIFACT_MEMORY",
-      "memory_mb": 6144,
-      "handler": "handler_resize_artifact.handler",
-      "zip": "/tmp/polypaint-resize-artifact.zip",
-      "layers": [
-        "libvips"
-      ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "memory_why": "libvips resize/thumbnail post-process on saved color renders",
-      "tmp": "binary"
-    },
-    {
-      "key": "repalette",
-      "name": "polypaint-repalette",
-      "name_var": "REPALETTE_NAME",
-      "memory_var": "REPALETTE_MEMORY",
-      "memory_mb": 4096,
-      "handler": "handler_repalette.handler",
-      "zip": "/tmp/polypaint-repalette.zip",
-      "layers": [
-        "libvips"
-      ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "memory_why": "libvips palette recolor on saved palette artifacts",
-      "tmp": "binary"
-    },
-    {
-      "key": "color_repalette",
-      "name": "polypaint-color-repalette",
-      "name_var": "COLOR_REPALETTE_NAME",
-      "memory_var": "COLOR_REPALETTE_MEMORY",
-      "memory_mb": 1769,
-      "handler": "handler_color_repalette.handler",
-      "zip": "/tmp/polypaint-color-repalette.zip",
-      "layers": [
-        "libvips"
-      ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "memory_why": "raw-sidecar Color repalette",
-      "tmp": "binary"
-    },
-    {
-      "key": "recolor_from_raw",
-      "name": "polypaint-recolor-from-raw",
-      "name_var": "RECOLOR_FROM_RAW_NAME",
-      "memory_var": "RECOLOR_FROM_RAW_MEMORY",
-      "memory_mb": 1769,
-      "handler": "handler_recolor_from_raw.handler",
-      "zip": "/tmp/polypaint-recolor-from-raw.zip",
-      "layers": [
-        "libvips"
-      ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "memory_why": "raw-sidecar-only recolor",
-      "tmp": "binary"
-    },
-    {
-      "key": "extract_palette_fused",
-      "name": "polypaint-extract-palette-fused",
-      "name_var": "EXTRACT_PALETTE_FUSED_NAME",
-      "memory_var": "EXTRACT_PALETTE_FUSED_MEMORY",
-      "memory_mb": 1769,
-      "handler": "handler_extract_palette_from_step_scores.handler",
-      "zip": "/tmp/polypaint-extract-palette-fused.zip",
-      "layers": [
-        "libvips"
-      ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "memory_why": "fused step_scores.raw -> palette raw -> score_raw_render",
-      "tmp": "binary"
-    },
-    {
-      "key": "pdf_artifact",
-      "name": "polypaint-pdf-artifact",
-      "name_var": "PDF_ARTIFACT_NAME",
-      "memory_var": "PDF_ARTIFACT_MEMORY",
-      "memory_mb": 2048,
-      "handler": "handler_pdf_artifact.handler",
-      "zip": "/tmp/polypaint-pdf-artifact.zip",
-      "layers": [
-        "libvips",
-        "pdf_py"
-      ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "memory_why": "single-shot PDF composition from saved Color image; libvips shrink-on-load before ReportLab embed"
-    },
-    {
-      "key": "book_pdf",
-      "name": "polypaint-book-pdf",
-      "name_var": "BOOK_PDF_NAME",
-      "memory_var": "BOOK_PDF_MEM",
-      "memory_mb": 4096,
-      "handler": "book_pdf.handler",
-      "package_type": "image",
-      "image_file": "lambda/book_pdf.Dockerfile",
-      "layers": [],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE",
-      "group": "core",
-      "tmp": 2048,
-      "routes": [],
-      "memory_why": "book compose: lualatex on a ~76-page image book + vips prep; /tmp 2048 for assets + pdfs + source.zip (design section 7)"
-    },
-    {
-      "key": "solve_proximity",
-      "name": "polypaint-solve-proximity",
-      "name_var": "SOLVE_PROXIMITY_NAME",
-      "memory_var": "SOLVE_PROXIMITY_MEMORY",
-      "memory_mb": 4096,
-      "handler": "handler_solve_proximity.handler",
-      "zip": "/tmp/polypaint-solve-proximity.zip",
-      "layers": [],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE",
-      "group": "core",
-      "memory_why": "higher CPU tier for pthread solve-score phases",
-      "tmp": "binary",
-      "routes": [
-        "/solve-proximity"
-      ]
-    },
-    {
-      "key": "solve_proximity_bench",
-      "name": "polypaint-solve-proximity-bench",
-      "name_var": "SOLVE_PROXIMITY_BENCH_NAME",
-      "memory_var": "SOLVE_PROXIMITY_BENCH_MEMORY",
-      "memory_mb": 10240,
-      "handler": "handler_solve_proximity_bench.handler",
-      "zip": "/tmp/polypaint-solve-proximity-bench.zip",
-      "layers": [],
-      "env": "BUCKET=$BUCKET",
-      "group": "core",
-      "memory_why": "benchmark Lambda for high-CPU/high-network hist concurrency sweeps",
-      "tmp": "binary"
-    },
-    {
-      "key": "palette_debug",
-      "name": "polypaint-palette-debug",
-      "name_var": "PALETTE_DEBUG_NAME",
-      "memory_var": "PALETTE_DEBUG_MEMORY",
-      "memory_mb": 1769,
-      "handler": "handler_palette_debug.handler",
-      "zip": "/tmp/polypaint-palette-debug.zip",
-      "layers": [
-        "libvips"
-      ],
-      "env": "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "tmp": "binary",
-      "routes": [
-        "/palette-debug"
-      ]
-    },
-    {
-      "key": "palette_render_plan",
-      "name": "polypaint-palette-render-plan",
-      "name_var": "PALETTE_PLAN_NAME",
-      "memory_var": "PALETTE_PLAN_MEMORY",
-      "memory_mb": 512,
-      "handler": "handler_palette_render_plan.handler",
-      "zip": "/tmp/polypaint-palette-render-plan.zip",
-      "layers": [],
-      "env": "BUCKET=$BUCKET",
-      "group": "core"
-    },
-    {
-      "key": "palette_chunk",
-      "name": "polypaint-palette-chunk",
-      "name_var": "PALETTE_CHUNK_NAME",
-      "memory_var": "PALETTE_CHUNK_MEMORY",
-      "memory_mb": 1769,
-      "handler": "handler_palette_chunk.handler",
-      "zip": "/tmp/polypaint-palette-chunk.zip",
-      "layers": [],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE",
-      "group": "core",
-      "tmp": "binary"
-    },
-    {
-      "key": "palette_finalize",
-      "name": "polypaint-palette-finalize",
-      "name_var": "PALETTE_FINALIZE_NAME",
-      "memory_var": "PALETTE_FINALIZE_MEMORY",
-      "memory_mb": 4096,
-      "handler": "handler_palette_finalize.handler",
-      "zip": "/tmp/polypaint-palette-finalize.zip",
-      "layers": [
-        "libvips"
-      ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "tmp": "binary"
-    },
-    {
-      "key": "attach_palette_to_color",
-      "name": "polypaint-attach-palette-to-color",
-      "name_var": "ATTACH_PALETTE_NAME",
-      "memory_var": "ATTACH_PALETTE_MEMORY",
-      "memory_mb": 512,
-      "handler": "handler_attach_palette_to_color.handler",
-      "zip": "/tmp/polypaint-attach-palette-to-color.zip",
-      "layers": [],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE",
-      "group": "core"
-    },
-    {
-      "key": "render_plan",
-      "name": "polypaint-render-plan",
-      "name_var": "RENDER_PLAN_NAME",
-      "memory_var": "RENDER_PLAN_MEMORY",
-      "memory_mb": 512,
-      "handler": "handler_render_plan.handler",
-      "zip": "/tmp/polypaint-render-plan.zip",
-      "layers": [],
-      "env": "BUCKET=$BUCKET,VIEWPORT_FUNCTION=$VIEWPORT_NAME,STORAGE_FUNCTION=$STORAGE_NAME,RASTER_MT_FUNCTION=$RASTER_MT_NAME",
-      "group": "core",
-      "note": "Render/compute plan + status Lambdas (workers are referenced by name, not ARN)"
-    },
-    {
-      "key": "render_status",
-      "name": "polypaint-render-status",
-      "name_var": "RENDER_STATUS_NAME",
-      "memory_var": "RENDER_STATUS_MEMORY",
-      "memory_mb": 256,
-      "handler": "handler_render_status.handler",
-      "zip": "/tmp/polypaint-render-status.zip",
-      "layers": [],
-      "env": "JOBS_TABLE=$JOBS_TABLE",
-      "group": "core"
-    },
-    {
-      "key": "compute_plan",
-      "name": "polypaint-compute-plan",
-      "name_var": "COMPUTE_PLAN_NAME",
-      "memory_var": "COMPUTE_PLAN_MEMORY",
-      "memory_mb": 512,
-      "handler": "handler_compute_plan.handler",
-      "zip": "/tmp/polypaint-compute-plan.zip",
-      "layers": [],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,FUSED_WORKER_MEMORY_MB=$COMPUTE_FUSED_CHUNK_MEMORY,FUSED_WORKER_TMP_MB=$BINARY_TMP,FUSED_WORKER_TIMEOUT_SEC=$TIMEOUT",
-      "group": "core"
-    },
-    {
-      "key": "compute_fused_chunk",
-      "name": "polypaint-compute-fused-chunk",
-      "name_var": "COMPUTE_FUSED_CHUNK_NAME",
-      "memory_var": "COMPUTE_FUSED_CHUNK_MEMORY",
-      "memory_mb": 10240,
-      "handler": "handler_compute_chunk_fused.handler",
-      "zip": "/tmp/polypaint-compute-fused-chunk.zip",
-      "layers": [
-        "lapack"
-      ],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
-      "group": "core",
-      "tmp": "binary"
-    },
-    {
-      "key": "compute_status",
-      "name": "polypaint-compute-status",
-      "name_var": "COMPUTE_STATUS_NAME",
-      "memory_var": "COMPUTE_STATUS_MEMORY",
-      "memory_mb": 256,
-      "handler": "handler_compute_status.handler",
-      "zip": "/tmp/polypaint-compute-status.zip",
-      "layers": [],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE",
-      "group": "core"
-    },
-    {
-      "key": "render_orchestrator",
-      "name": "polypaint-render-orchestrator",
-      "name_var": "RENDER_ORCHESTRATOR_NAME",
-      "memory_var": "RENDER_ORCHESTRATOR_MEMORY",
-      "memory_mb": 512,
-      "handler": "handler_render_orchestrator.handler",
-      "zip": "/tmp/polypaint-render-orchestrator.zip",
-      "layers": [],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RENDER_STATE_MACHINE_ARN=$RENDER_SM_ARN",
-      "group": "orchestrator",
-      "memory_why": "starter only \u2014 validates + starts Step Functions"
-    },
-    {
-      "key": "compute_orchestrator",
-      "name": "polypaint-compute-orchestrator",
-      "name_var": "COMPUTE_ORCHESTRATOR_NAME",
-      "memory_var": "COMPUTE_ORCHESTRATOR_MEMORY",
-      "memory_mb": 512,
-      "handler": "handler_compute_orchestrator.handler",
-      "zip": "/tmp/polypaint-compute-orchestrator.zip",
-      "layers": [],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,COMPUTE_STATE_MACHINE_ARN=$COMPUTE_SM_ARN",
-      "group": "orchestrator"
-    },
-    {
-      "key": "palette_orchestrator",
-      "name": "polypaint-palette-orchestrator",
-      "name_var": "PALETTE_ORCHESTRATOR_NAME",
-      "memory_var": "PALETTE_ORCHESTRATOR_MEMORY",
-      "memory_mb": 512,
-      "handler": "handler_palette_orchestrator.handler",
-      "zip": "/tmp/polypaint-palette-orchestrator.zip",
-      "layers": [],
-      "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,PALETTE_STATE_MACHINE_ARN=$PALETTE_SM_ARN",
-      "group": "orchestrator"
-    }
-  ],
-  "removed": {
-    "functions": [
-      "polypaint-sweep"
-    ],
-    "routes": [
-      "/sweep"
-    ]
+ "version": 1,
+ "_comment": [
+  "Source of truth for the deployed Lambda fleet: function specs, API",
+  "routes, gateway invoke permissions (derived: every routed function),",
+  "and retired resources cleaned up on each deploy.",
+  "deploy.sh sources the bash emitted by: deploy_manifest.py --emit-bash;",
+  "validate with: deploy_manifest.py --check.",
+  "env/layers/tmp are literal bash fragments expanded at deploy time;",
+  "every $*_NAME / $*_MEMORY reference must be declared in this file."
+ ],
+ "functions": [
+  {
+   "key": "sweep_mt",
+   "name": "polypaint-sweep-mt",
+   "name_var": "SWEEP_MT_NAME",
+   "memory_var": "SWEEP_MT_MEMORY",
+   "memory_mb": 10240,
+   "handler": "handler_sweep_mt.handler",
+   "zip": "/tmp/polypaint-sweep-mt.zip",
+   "layers": [],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE",
+   "group": "core",
+   "memory_why": "6 vCPUs for multithreaded AE solve",
+   "tmp": "binary",
+   "routes": [
+    "/sweep-mt"
+   ]
+  },
+  {
+   "key": "coeffgen",
+   "name": "polypaint-coeffgen",
+   "name_var": "COEFFGEN_NAME",
+   "memory_var": "COEFFGEN_MEMORY",
+   "memory_mb": 10240,
+   "handler": "handler_coeffgen.handler",
+   "zip": "/tmp/polypaint-coeffgen.zip",
+   "layers": [
+    "lapack"
+   ],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib,FUSED_WORKER_MEMORY_MB=$COMPUTE_FUSED_CHUNK_MEMORY,FUSED_WORKER_TMP_MB=$BINARY_TMP,FUSED_WORKER_TIMEOUT_SEC=$TIMEOUT",
+   "group": "core",
+   "memory_why": "6 vCPUs for coeffgen + threaded param_gen",
+   "tmp": "binary",
+   "routes": [
+    "/coeffgen"
+   ]
+  },
+  {
+   "key": "sweep_cm",
+   "name": "polypaint-sweep-cm",
+   "name_var": "SWEEP_CM_NAME",
+   "memory_var": "SWEEP_CM_MEMORY",
+   "memory_mb": 4096,
+   "handler": "handler_sweep_cm.handler",
+   "zip": "/tmp/polypaint-sweep-cm.zip",
+   "layers": [
+    "lapack"
+   ],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "memory_why": "companion matrix eigensolve needs more memory",
+   "tmp": "binary",
+   "routes": [
+    "/sweep-cm"
+   ]
+  },
+  {
+   "key": "viewport",
+   "name": "polypaint-viewport",
+   "name_var": "VIEWPORT_NAME",
+   "memory_var": "VIEWPORT_MEMORY",
+   "memory_mb": 512,
+   "handler": "handler_viewport.handler",
+   "zip": "/tmp/polypaint-viewport.zip",
+   "layers": [],
+   "env": "BUCKET=$BUCKET",
+   "group": "core",
+   "memory_why": "pure Python",
+   "routes": [
+    "/viewport"
+   ]
+  },
+  {
+   "key": "storage",
+   "name": "polypaint-storage",
+   "name_var": "STORAGE_NAME",
+   "memory_var": "STORAGE_MEMORY",
+   "memory_mb": 512,
+   "handler": "handler_storage.handler",
+   "zip": "/tmp/polypaint-storage.zip",
+   "layers": [],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,DEEPZOOM_EXPORT_FUNCTION=polypaint-deepzoom-export",
+   "group": "core",
+   "memory_why": "pure Python",
+   "reserved_concurrency": 5,
+   "routes": [
+    "/list",
+    "/list-solve-score-programs",
+    "/fetch-solve-score-program",
+    "/save-solve-score-program",
+    "/delete-solve-score-program",
+    "/migrate-solve-score-program",
+    "/compile-root-program-source",
+    "/save-root-program",
+    "/list-root-programs",
+    "/fetch-root-program",
+    "/delete-root-program",
+    "/compile-solve-score-program-source",
+    "/solve-score-chain-to-source",
+    "/list-param-programs",
+    "/fetch-param-program",
+    "/save-param-program",
+    "/compile-param-program-source",
+    "/delete-param-program",
+    "/migrate-param-program",
+    "/list-coeff-programs",
+    "/fetch-coeff-program",
+    "/save-coeff-program",
+    "/compile-coeff-program-source",
+    "/delete-coeff-program",
+    "/migrate-coeff-program",
+    "/migrate-compute",
+    "/list-favorites",
+    "/add-favorite",
+    "/delete-favorite",
+    "/list-palettes",
+    "/delete-palette",
+    "/delete-render-artifact",
+    "/delete",
+    "/save-metadata",
+    "/cleanup",
+    "/clean-render",
+    "/check-keys",
+    "/check-status",
+    "/presign",
+    "/detail",
+    "/list-prefix",
+    "/head-keys",
+    "/delete-task",
+    "/render-summary",
+    "/render-count",
+    "/list-color-mosaic",
+    "/list-palette-mosaic",
+    "/share-mosaic",
+    "/delete-prefix",
+    "/list-deepzoom",
+    "/list-books",
+    "/fetch-book",
+    "/save-book",
+    "/delete-book",
+    "/fetch-vision-config",
+    "/save-vision-config"
+   ]
+  },
+  {
+   "key": "dispatch",
+   "name": "polypaint-dispatch",
+   "name_var": "DISPATCH_NAME",
+   "memory_var": "DISPATCH_MEMORY",
+   "memory_mb": 1769,
+   "handler": "handler_dispatch.handler",
+   "zip": "/tmp/polypaint-dispatch.zip",
+   "layers": [],
+   "env": "BUCKET=$BUCKET,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,COLOR_TO_BILEVEL_FUNCTION=$COLOR_TO_BILEVEL_NAME,DZ_EXPORT_FUNCTION=$DZ_EXPORT_NAME,DZ_FROM_RAW_FUNCTION=$DZ_FROM_RAW_NAME,COEFFGEN_FUNCTION=$COEFFGEN_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,RENDER_PREVIEW_FUNCTION=$RENDER_PREVIEW_NAME,AUTOLEVELS_FUNCTION=$AUTOLEVELS_NAME,RESIZE_ARTIFACT_FUNCTION=$RESIZE_ARTIFACT_NAME,REPALETTE_FUNCTION=$REPALETTE_NAME,COLOR_REPALETTE_FUNCTION=$COLOR_REPALETTE_NAME,RECOLOR_FROM_RAW_FUNCTION=$RECOLOR_FROM_RAW_NAME,EXTRACT_PALETTE_FUSED_FUNCTION=$EXTRACT_PALETTE_FUSED_NAME,PDF_ARTIFACT_FUNCTION=$PDF_ARTIFACT_NAME,BOOK_PDF_FUNCTION=$BOOK_PDF_NAME,SOLVE_PROXIMITY_FUNCTION=$SOLVE_PROXIMITY_NAME,RENDER_ORCHESTRATOR_FUNCTION=$RENDER_ORCHESTRATOR_NAME,COMPUTE_ORCHESTRATOR_FUNCTION=$COMPUTE_ORCHESTRATOR_NAME,PALETTE_ORCHESTRATOR_FUNCTION=$PALETTE_ORCHESTRATOR_NAME",
+   "group": "core",
+   "memory_why": "1 vCPU \u2014 50 threads doing SSL need real CPU",
+   "reserved_concurrency": 5,
+   "routes": [
+    "/dispatch-render"
+   ],
+   "note": "dispatch routes async work to per-task Lambdas; this env map is the routing table"
+  },
+  {
+   "key": "raster_mt",
+   "name": "polypaint-raster-mt",
+   "name_var": "RASTER_MT_NAME",
+   "memory_var": "RASTER_MT_MEMORY",
+   "memory_mb": 10240,
+   "handler": "handler_raster_mt.handler",
+   "zip": "/tmp/polypaint-raster-mt.zip",
+   "layers": [],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RASTER_MT_THREADS=$RASTER_MT_THREADS",
+   "group": "core",
+   "memory_why": "max memory/CPU tier for native pthread raster on large fused renders",
+   "tmp": "binary"
+  },
+  {
+   "key": "finalize_mt",
+   "name": "polypaint-finalize-mt",
+   "name_var": "FINALIZE_MT_NAME",
+   "memory_var": "FINALIZE_MT_MEMORY",
+   "memory_mb": 10240,
+   "handler": "handler_finalize_mt.handler",
+   "zip": "/tmp/polypaint-finalize-mt.zip",
+   "layers": [
+    "libvips"
+   ],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "memory_why": "fused solve-score raw assemble + encode",
+   "tmp": "binary"
+  },
+  {
+   "key": "preview",
+   "name": "polypaint-preview",
+   "name_var": "PREVIEW_NAME",
+   "memory_var": "PREVIEW_MEMORY",
+   "memory_mb": 1024,
+   "handler": "handler_preview.handler",
+   "zip": "/tmp/polypaint-preview.zip",
+   "layers": [],
+   "env": "BUCKET=$BUCKET",
+   "group": "core",
+   "memory_why": "pure Python, PNG encoding via zlib (512 OOMs on large lores)",
+   "routes": [
+    "/preview"
+   ]
+  },
+  {
+   "key": "compute_preview",
+   "name": "polypaint-compute-preview",
+   "name_var": "COMPUTE_PREVIEW_NAME",
+   "memory_var": "COMPUTE_PREVIEW_MEMORY",
+   "memory_mb": 4096,
+   "handler": "handler_compute_preview.handler",
+   "zip": "/tmp/polypaint-compute-preview.zip",
+   "layers": [
+    "lapack"
+   ],
+   "env": "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "memory_why": "sync coeffgen+solve+PNG preview, needs LAPACK for roots_cm/CM",
+   "tmp": "binary",
+   "routes": [
+    "/compute-preview"
+   ]
+  },
+  {
+   "key": "bilevel",
+   "name": "polypaint-bilevel",
+   "name_var": "BILEVEL_NAME",
+   "memory_var": "BILEVEL_MEMORY",
+   "memory_mb": 1769,
+   "handler": "handler_bilevel.handler",
+   "zip": "/tmp/polypaint-bilevel.zip",
+   "layers": [
+    "libvips"
+   ],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "memory_why": "1 vCPU, bilevel raster + merge",
+   "tmp": "binary"
+  },
+  {
+   "key": "color_to_bilevel",
+   "name": "polypaint-color-to-bilevel",
+   "name_var": "COLOR_TO_BILEVEL_NAME",
+   "memory_var": "COLOR_TO_BILEVEL_MEMORY",
+   "memory_mb": 10240,
+   "handler": "handler_bilevel.handler",
+   "zip": "/tmp/polypaint-bilevel.zip",
+   "layers": [
+    "libvips"
+   ],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "memory_why": "raw-sidecar thresholding is single-shot and CPU-bound on large images",
+   "tmp": "binary"
+  },
+  {
+   "key": "param_debug",
+   "name": "polypaint-param-debug",
+   "name_var": "PARAM_DEBUG_NAME",
+   "memory_var": "PARAM_DEBUG_MEMORY",
+   "memory_mb": 1769,
+   "handler": "handler_param_debug.handler",
+   "zip": "/tmp/polypaint-param-debug.zip",
+   "layers": [
+    "libvips"
+   ],
+   "env": "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "memory_why": "1 vCPU + libvips for TIFF output",
+   "routes": [
+    "/param-debug"
+   ]
+  },
+  {
+   "key": "tiff_compat",
+   "name": "polypaint-tiff-compat",
+   "name_var": "TIFF_COMPAT_NAME",
+   "memory_var": "TIFF_COMPAT_MEMORY",
+   "memory_mb": 4096,
+   "handler": "handler_tiff_compat.handler",
+   "zip": "/tmp/polypaint-tiff-compat.zip",
+   "layers": [
+    "libvips"
+   ],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "memory_why": "needs RAM for scanline buffer on large images",
+   "tmp": "binary",
+   "routes": [
+    "/tiff-compat"
+   ]
+  },
+  {
+   "key": "png_export",
+   "name": "polypaint-png-export",
+   "name_var": "PNG_EXPORT_NAME",
+   "memory_var": "PNG_EXPORT_MEMORY",
+   "memory_mb": 4096,
+   "handler": "handler_png_export.handler",
+   "zip": "/tmp/polypaint-png-export.zip",
+   "layers": [
+    "libvips"
+   ],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "memory_why": "libvips PNG encode",
+   "tmp": "binary",
+   "routes": [
+    "/png-export"
+   ]
+  },
+  {
+   "key": "deepzoom_export",
+   "name": "polypaint-deepzoom-export",
+   "name_var": "DZ_EXPORT_NAME",
+   "memory_var": "DZ_EXPORT_MEMORY",
+   "memory_mb": 8192,
+   "handler": "handler_deepzoom_export.handler",
+   "zip": "/tmp/polypaint-deepzoom-export.zip",
+   "layers": [
+    "libvips"
+   ],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "memory_why": "libvips dzsave + parallel S3 upload; 8GB for wall pyramid arrayjoin (~1.3GB decoded tiles, deepzoom-speed.md 7.1)",
+   "tmp": "binary",
+   "routes": [
+    "/deepzoom-export"
+   ]
+  },
+  {
+   "key": "deepzoom_from_raw",
+   "name": "polypaint-deepzoom-from-raw",
+   "name_var": "DZ_FROM_RAW_NAME",
+   "memory_var": "DZ_FROM_RAW_MEMORY",
+   "memory_mb": 4096,
+   "handler": "handler_deepzoom_from_raw.handler",
+   "zip": "/tmp/polypaint-deepzoom-from-raw.zip",
+   "layers": [
+    "libvips"
+   ],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "memory_why": "raw-sidecar-only DeepZoom export",
+   "tmp": "binary"
+  },
+  {
+   "key": "render_preview",
+   "name": "polypaint-render-preview",
+   "name_var": "RENDER_PREVIEW_NAME",
+   "memory_var": "RENDER_PREVIEW_MEMORY",
+   "memory_mb": 4096,
+   "handler": "handler_render_preview.handler",
+   "zip": "/tmp/polypaint-render-preview.zip",
+   "layers": [
+    "libvips"
+   ],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "memory_why": "libvips vipsthumbnail on large images",
+   "tmp": "binary"
+  },
+  {
+   "key": "render_lores_preview",
+   "name": "polypaint-render-lores-preview",
+   "name_var": "RENDER_LORES_PREVIEW_NAME",
+   "memory_var": "RENDER_LORES_PREVIEW_MEMORY",
+   "memory_mb": 4096,
+   "handler": "handler_render_lores_preview.handler",
+   "zip": "/tmp/polypaint-render-lores-preview.zip",
+   "layers": [
+    "libvips",
+    "lapack"
+   ],
+   "env": "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "memory_why": "sync lores fused raster + score_raw_render preview",
+   "tmp": "binary",
+   "routes": [
+    "/render-lores-preview"
+   ]
+  },
+  {
+   "key": "autolevels",
+   "name": "polypaint-autolevels",
+   "name_var": "AUTOLEVELS_NAME",
+   "memory_var": "AUTOLEVELS_MEMORY",
+   "memory_mb": 10240,
+   "handler": "handler_autolevels.handler",
+   "zip": "/tmp/polypaint-autolevels.zip",
+   "layers": [
+    "libvips"
+   ],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "memory_why": "libvips autolevel post-process on saved color renders",
+   "tmp": "binary"
+  },
+  {
+   "key": "resize_artifact",
+   "name": "polypaint-resize-artifact",
+   "name_var": "RESIZE_ARTIFACT_NAME",
+   "memory_var": "RESIZE_ARTIFACT_MEMORY",
+   "memory_mb": 6144,
+   "handler": "handler_resize_artifact.handler",
+   "zip": "/tmp/polypaint-resize-artifact.zip",
+   "layers": [
+    "libvips"
+   ],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "memory_why": "libvips resize/thumbnail post-process on saved color renders",
+   "tmp": "binary"
+  },
+  {
+   "key": "repalette",
+   "name": "polypaint-repalette",
+   "name_var": "REPALETTE_NAME",
+   "memory_var": "REPALETTE_MEMORY",
+   "memory_mb": 4096,
+   "handler": "handler_repalette.handler",
+   "zip": "/tmp/polypaint-repalette.zip",
+   "layers": [
+    "libvips"
+   ],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "memory_why": "libvips palette recolor on saved palette artifacts",
+   "tmp": "binary"
+  },
+  {
+   "key": "color_repalette",
+   "name": "polypaint-color-repalette",
+   "name_var": "COLOR_REPALETTE_NAME",
+   "memory_var": "COLOR_REPALETTE_MEMORY",
+   "memory_mb": 1769,
+   "handler": "handler_color_repalette.handler",
+   "zip": "/tmp/polypaint-color-repalette.zip",
+   "layers": [
+    "libvips"
+   ],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "memory_why": "raw-sidecar Color repalette",
+   "tmp": "binary"
+  },
+  {
+   "key": "recolor_from_raw",
+   "name": "polypaint-recolor-from-raw",
+   "name_var": "RECOLOR_FROM_RAW_NAME",
+   "memory_var": "RECOLOR_FROM_RAW_MEMORY",
+   "memory_mb": 1769,
+   "handler": "handler_recolor_from_raw.handler",
+   "zip": "/tmp/polypaint-recolor-from-raw.zip",
+   "layers": [
+    "libvips"
+   ],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "memory_why": "raw-sidecar-only recolor",
+   "tmp": "binary"
+  },
+  {
+   "key": "extract_palette_fused",
+   "name": "polypaint-extract-palette-fused",
+   "name_var": "EXTRACT_PALETTE_FUSED_NAME",
+   "memory_var": "EXTRACT_PALETTE_FUSED_MEMORY",
+   "memory_mb": 1769,
+   "handler": "handler_extract_palette_from_step_scores.handler",
+   "zip": "/tmp/polypaint-extract-palette-fused.zip",
+   "layers": [
+    "libvips"
+   ],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "memory_why": "fused step_scores.raw -> palette raw -> score_raw_render",
+   "tmp": "binary"
+  },
+  {
+   "key": "pdf_artifact",
+   "name": "polypaint-pdf-artifact",
+   "name_var": "PDF_ARTIFACT_NAME",
+   "memory_var": "PDF_ARTIFACT_MEMORY",
+   "memory_mb": 2048,
+   "handler": "handler_pdf_artifact.handler",
+   "zip": "/tmp/polypaint-pdf-artifact.zip",
+   "layers": [
+    "libvips",
+    "pdf_py"
+   ],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "memory_why": "single-shot PDF composition from saved Color image; libvips shrink-on-load before ReportLab embed"
+  },
+  {
+   "key": "book_pdf",
+   "name": "polypaint-book-pdf",
+   "name_var": "BOOK_PDF_NAME",
+   "memory_var": "BOOK_PDF_MEM",
+   "memory_mb": 4096,
+   "handler": "book_pdf.handler",
+   "package_type": "image",
+   "image_file": "lambda/book_pdf.Dockerfile",
+   "layers": [],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE",
+   "group": "core",
+   "tmp": 2048,
+   "routes": [],
+   "memory_why": "book compose: lualatex on a ~76-page image book + vips prep; /tmp 2048 for assets + pdfs + source.zip (design section 7)"
+  },
+  {
+   "key": "solve_proximity",
+   "name": "polypaint-solve-proximity",
+   "name_var": "SOLVE_PROXIMITY_NAME",
+   "memory_var": "SOLVE_PROXIMITY_MEMORY",
+   "memory_mb": 4096,
+   "handler": "handler_solve_proximity.handler",
+   "zip": "/tmp/polypaint-solve-proximity.zip",
+   "layers": [],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE",
+   "group": "core",
+   "memory_why": "higher CPU tier for pthread solve-score phases",
+   "tmp": "binary",
+   "routes": [
+    "/solve-proximity"
+   ]
+  },
+  {
+   "key": "solve_proximity_bench",
+   "name": "polypaint-solve-proximity-bench",
+   "name_var": "SOLVE_PROXIMITY_BENCH_NAME",
+   "memory_var": "SOLVE_PROXIMITY_BENCH_MEMORY",
+   "memory_mb": 10240,
+   "handler": "handler_solve_proximity_bench.handler",
+   "zip": "/tmp/polypaint-solve-proximity-bench.zip",
+   "layers": [],
+   "env": "BUCKET=$BUCKET",
+   "group": "core",
+   "memory_why": "benchmark Lambda for high-CPU/high-network hist concurrency sweeps",
+   "tmp": "binary"
+  },
+  {
+   "key": "palette_debug",
+   "name": "polypaint-palette-debug",
+   "name_var": "PALETTE_DEBUG_NAME",
+   "memory_var": "PALETTE_DEBUG_MEMORY",
+   "memory_mb": 1769,
+   "handler": "handler_palette_debug.handler",
+   "zip": "/tmp/polypaint-palette-debug.zip",
+   "layers": [
+    "libvips"
+   ],
+   "env": "BUCKET=$BUCKET,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "tmp": "binary",
+   "routes": [
+    "/palette-debug"
+   ]
+  },
+  {
+   "key": "palette_render_plan",
+   "name": "polypaint-palette-render-plan",
+   "name_var": "PALETTE_PLAN_NAME",
+   "memory_var": "PALETTE_PLAN_MEMORY",
+   "memory_mb": 512,
+   "handler": "handler_palette_render_plan.handler",
+   "zip": "/tmp/polypaint-palette-render-plan.zip",
+   "layers": [],
+   "env": "BUCKET=$BUCKET",
+   "group": "core"
+  },
+  {
+   "key": "palette_chunk",
+   "name": "polypaint-palette-chunk",
+   "name_var": "PALETTE_CHUNK_NAME",
+   "memory_var": "PALETTE_CHUNK_MEMORY",
+   "memory_mb": 1769,
+   "handler": "handler_palette_chunk.handler",
+   "zip": "/tmp/polypaint-palette-chunk.zip",
+   "layers": [],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE",
+   "group": "core",
+   "tmp": "binary"
+  },
+  {
+   "key": "palette_finalize",
+   "name": "polypaint-palette-finalize",
+   "name_var": "PALETTE_FINALIZE_NAME",
+   "memory_var": "PALETTE_FINALIZE_MEMORY",
+   "memory_mb": 4096,
+   "handler": "handler_palette_finalize.handler",
+   "zip": "/tmp/polypaint-palette-finalize.zip",
+   "layers": [
+    "libvips"
+   ],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "tmp": "binary"
+  },
+  {
+   "key": "attach_palette_to_color",
+   "name": "polypaint-attach-palette-to-color",
+   "name_var": "ATTACH_PALETTE_NAME",
+   "memory_var": "ATTACH_PALETTE_MEMORY",
+   "memory_mb": 512,
+   "handler": "handler_attach_palette_to_color.handler",
+   "zip": "/tmp/polypaint-attach-palette-to-color.zip",
+   "layers": [],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE",
+   "group": "core"
+  },
+  {
+   "key": "render_plan",
+   "name": "polypaint-render-plan",
+   "name_var": "RENDER_PLAN_NAME",
+   "memory_var": "RENDER_PLAN_MEMORY",
+   "memory_mb": 512,
+   "handler": "handler_render_plan.handler",
+   "zip": "/tmp/polypaint-render-plan.zip",
+   "layers": [],
+   "env": "BUCKET=$BUCKET,VIEWPORT_FUNCTION=$VIEWPORT_NAME,STORAGE_FUNCTION=$STORAGE_NAME,RASTER_MT_FUNCTION=$RASTER_MT_NAME",
+   "group": "core",
+   "note": "Render/compute plan + status Lambdas (workers are referenced by name, not ARN)"
+  },
+  {
+   "key": "render_status",
+   "name": "polypaint-render-status",
+   "name_var": "RENDER_STATUS_NAME",
+   "memory_var": "RENDER_STATUS_MEMORY",
+   "memory_mb": 256,
+   "handler": "handler_render_status.handler",
+   "zip": "/tmp/polypaint-render-status.zip",
+   "layers": [],
+   "env": "JOBS_TABLE=$JOBS_TABLE",
+   "group": "core"
+  },
+  {
+   "key": "compute_plan",
+   "name": "polypaint-compute-plan",
+   "name_var": "COMPUTE_PLAN_NAME",
+   "memory_var": "COMPUTE_PLAN_MEMORY",
+   "memory_mb": 512,
+   "handler": "handler_compute_plan.handler",
+   "zip": "/tmp/polypaint-compute-plan.zip",
+   "layers": [],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,SWEEP_MT_FUNCTION=$SWEEP_MT_NAME,SWEEP_CM_FUNCTION=$SWEEP_CM_NAME,FUSED_WORKER_MEMORY_MB=$COMPUTE_FUSED_CHUNK_MEMORY,FUSED_WORKER_TMP_MB=$BINARY_TMP,FUSED_WORKER_TIMEOUT_SEC=$TIMEOUT",
+   "group": "core"
+  },
+  {
+   "key": "compute_fused_chunk",
+   "name": "polypaint-compute-fused-chunk",
+   "name_var": "COMPUTE_FUSED_CHUNK_NAME",
+   "memory_var": "COMPUTE_FUSED_CHUNK_MEMORY",
+   "memory_mb": 10240,
+   "handler": "handler_compute_chunk_fused.handler",
+   "zip": "/tmp/polypaint-compute-fused-chunk.zip",
+   "layers": [
+    "lapack"
+   ],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,LD_LIBRARY_PATH=/opt/lib",
+   "group": "core",
+   "tmp": "binary"
+  },
+  {
+   "key": "compute_status",
+   "name": "polypaint-compute-status",
+   "name_var": "COMPUTE_STATUS_NAME",
+   "memory_var": "COMPUTE_STATUS_MEMORY",
+   "memory_mb": 256,
+   "handler": "handler_compute_status.handler",
+   "zip": "/tmp/polypaint-compute-status.zip",
+   "layers": [],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE",
+   "group": "core"
+  },
+  {
+   "key": "render_orchestrator",
+   "name": "polypaint-render-orchestrator",
+   "name_var": "RENDER_ORCHESTRATOR_NAME",
+   "memory_var": "RENDER_ORCHESTRATOR_MEMORY",
+   "memory_mb": 512,
+   "handler": "handler_render_orchestrator.handler",
+   "zip": "/tmp/polypaint-render-orchestrator.zip",
+   "layers": [],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,RENDER_STATE_MACHINE_ARN=$RENDER_SM_ARN",
+   "group": "orchestrator",
+   "memory_why": "starter only \u2014 validates + starts Step Functions"
+  },
+  {
+   "key": "compute_orchestrator",
+   "name": "polypaint-compute-orchestrator",
+   "name_var": "COMPUTE_ORCHESTRATOR_NAME",
+   "memory_var": "COMPUTE_ORCHESTRATOR_MEMORY",
+   "memory_mb": 512,
+   "handler": "handler_compute_orchestrator.handler",
+   "zip": "/tmp/polypaint-compute-orchestrator.zip",
+   "layers": [],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,COMPUTE_STATE_MACHINE_ARN=$COMPUTE_SM_ARN",
+   "group": "orchestrator"
+  },
+  {
+   "key": "palette_orchestrator",
+   "name": "polypaint-palette-orchestrator",
+   "name_var": "PALETTE_ORCHESTRATOR_NAME",
+   "memory_var": "PALETTE_ORCHESTRATOR_MEMORY",
+   "memory_mb": 512,
+   "handler": "handler_palette_orchestrator.handler",
+   "zip": "/tmp/polypaint-palette-orchestrator.zip",
+   "layers": [],
+   "env": "BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,PALETTE_STATE_MACHINE_ARN=$PALETTE_SM_ARN",
+   "group": "orchestrator"
   }
+ ],
+ "removed": {
+  "functions": [
+   "polypaint-sweep"
+  ],
+  "routes": [
+   "/sweep"
+  ]
+ }
 }

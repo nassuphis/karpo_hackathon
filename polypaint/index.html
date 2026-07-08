@@ -2098,10 +2098,26 @@ button {
         <button id="btn-book-new" type="button" class="btn-secondary" onclick="bookNew()" style="padding:6px 12px">New</button>
         <button id="btn-book-save" type="button" class="btn-primary" onclick="bookSave()" style="padding:6px 12px">Save</button>
         <button id="btn-book-describe" type="button" class="btn-secondary" onclick="bookDescribe(this)" style="padding:6px 12px">Describe</button>
+        <button id="btn-book-vision" type="button" class="btn-secondary" onclick="bookVisionToggle()" style="padding:6px 10px" title="Vision model settings">⚙</button>
         <button id="btn-book-compile" type="button" class="btn-primary" onclick="bookCompile()" style="padding:6px 12px">Compile</button>
         <button id="btn-book-refresh" type="button" class="btn-secondary" onclick="void bookRefresh()" style="padding:6px 12px">Refresh</button>
         <button id="btn-book-delete" type="button" class="btn-secondary" onclick="bookDelete()" style="padding:6px 12px">Delete</button>
         <span id="book-info" style="color:#9aa0b4; font-size:12px"></span>
+    </div>
+    <div id="book-vision-panel" style="display:none; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:6px; padding:8px; background:#121829; border:1px solid #2b3a5e; border-radius:6px">
+        <span style="color:#9aa0b4; font-size:12px">VisionModel</span>
+        <input id="book-vision-model" list="book-vision-models" placeholder="gemini-2.5-flash" style="min-width:220px; background:#0d1320; color:#f2f2f7; border:1px solid #2b3a5e; border-radius:4px; padding:5px 8px; font-size:12px">
+        <datalist id="book-vision-models">
+            <option value="gemini-2.5-flash"></option>
+            <option value="gemini-2.0-flash"></option>
+            <option value="claude-sonnet-4-6"></option>
+            <option value="claude-haiku-4-5-20251001"></option>
+            <option value="gpt-4.1-mini"></option>
+            <option value="gpt-4o-mini"></option>
+        </datalist>
+        <input id="book-vision-key" type="password" placeholder="API key (stored server-side; blank = keep)" style="min-width:280px; background:#0d1320; color:#f2f2f7; border:1px solid #2b3a5e; border-radius:4px; padding:5px 8px; font-size:12px">
+        <button type="button" class="btn-secondary" onclick="void bookVisionSave(this)" style="padding:4px 12px">Save Vision</button>
+        <span id="book-vision-status" style="color:#9aa0b4; font-size:12px"></span>
     </div>
     <div id="book-download-row" style="display:none; gap:8px; align-items:center; margin-bottom:6px">
         <button type="button" class="btn-secondary" onclick="bookDownload('cover', this)" style="padding:4px 10px">Cover PDF</button>

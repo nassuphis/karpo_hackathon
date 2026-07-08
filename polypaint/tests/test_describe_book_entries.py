@@ -101,6 +101,9 @@ class HandleDescribeTests(unittest.TestCase):
         self.p_sleep = patch.object(self.mod.time, "sleep", lambda *_: None)
         self.p_sleep.start()
         self.addCleanup(self.p_sleep.stop)
+        self.p_cfg = patch.object(self.mod, "_load_vision_config", lambda: {})
+        self.p_cfg.start()
+        self.addCleanup(self.p_cfg.stop)
 
     def _fake_s3(self, doc):
         fake = MagicMock()
@@ -208,6 +211,61 @@ class HandleDescribeTests(unittest.TestCase):
                     "job_id": "j", "task_id": "t",
                     "book_id": "b1", "expected_saved_at": "S1"})
         self.assertIn("saved mid-describe", str(ctx.exception))
+
+
+class VisionRoutingTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_engine()
+        self.calls = []
+
+        def capture(url, body, api_key, headers=None, pacing=None, **_kw):
+            self.calls.append({"url": url, "body": json.loads(body),
+                               "headers": headers or {}})
+            if "anthropic" in url:
+                return {"content": [{"text": '{"title": "T", "description": "D"}'}]}
+            if "openai" in url:
+                return {"choices": [{"message": {"content": '{"title": "T", "description": "D"}'}}]}
+            return {"candidates": [{"content": {"parts": [{"text": '{"title": "T", "description": "D"}'}]}}]}
+
+        self.p = patch.object(self.mod, "_gemini_call", side_effect=capture)
+        self.p.start()
+        self.addCleanup(self.p.stop)
+
+    def test_claude_model_uses_anthropic_wire_shape(self):
+        out = self.mod._vision_call("claude-sonnet-4-6", "sk-ant-x", b"jpg", "prompt")
+        self.assertEqual(json.loads(out) if out.startswith("{") else out,
+                         {"title": "T", "description": "D"})
+        call = self.calls[0]
+        self.assertIn("api.anthropic.com/v1/messages", call["url"])
+        self.assertEqual(call["headers"]["x-api-key"], "sk-ant-x")
+        self.assertEqual(call["headers"]["anthropic-version"], "2023-06-01")
+        content = call["body"]["messages"][0]["content"]
+        self.assertEqual(content[0]["type"], "image")
+        self.assertEqual(content[0]["source"]["media_type"], "image/jpeg")
+        self.assertEqual(content[1]["text"], "prompt")
+
+    def test_openai_model_uses_chat_completions_shape(self):
+        self.mod._vision_call("gpt-4.1-mini", "sk-oai", b"jpg", "prompt")
+        call = self.calls[0]
+        self.assertIn("api.openai.com/v1/chat/completions", call["url"])
+        self.assertEqual(call["headers"]["Authorization"], "Bearer sk-oai")
+        content = call["body"]["messages"][0]["content"]
+        self.assertTrue(content[0]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+        self.assertEqual(call["body"]["response_format"], {"type": "json_object"})
+
+    def test_gemini_model_uses_generatecontent(self):
+        self.mod._vision_call("gemini-2.5-flash", "gk", b"jpg", "prompt")
+        self.assertIn("generativelanguage.googleapis.com", self.calls[0]["url"])
+
+    def test_missing_key_error_names_the_config(self):
+        with patch.object(self.mod, "_load_vision_config",
+                          lambda: {"model": "claude-sonnet-4-6", "api_key": ""}), \
+             patch.dict(self.mod.os.environ, {"GEMINI_API_KEY": "gk"}), \
+             patch.object(self.mod, "report_status", lambda *a, **k: None):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.mod.handle_describe({"job_id": "j", "task_id": "t", "book_id": "b1"})
+        self.assertIn("VisionModel config", str(ctx.exception))
+        self.assertIn("claude-sonnet-4-6", str(ctx.exception))
 
 
 if __name__ == "__main__":

@@ -209,6 +209,12 @@ def _render_flipbook_pages(build_dir, out_prefix, book, content_pages, progress_
 
     from PIL import Image, ImageFile
     import threading
+    # libjpeg cannot suspend during optimize=True's whole-output buffering:
+    # Pillow's default 64KB MAXBLOCK made the encoder die on high-entropy
+    # pages ("Suspension not allowed here" on stderr, "broken data stream
+    # when writing image file" raised — book2 page 17, 5.6MB output, twice,
+    # deterministically). Buffer must hold an entire encoded page.
+    ImageFile.MAXBLOCK = max(ImageFile.MAXBLOCK, 32 * 1024 * 1024)
     tolerant_lock = threading.Lock()
     progress_lock = threading.Lock()
     progress_done = [0]

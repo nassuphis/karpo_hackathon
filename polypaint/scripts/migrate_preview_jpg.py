@@ -46,6 +46,10 @@ except ImportError:  # pragma: no cover - guidance for CloudShell
     print("Pillow is required: pip install pillow", file=sys.stderr)
     raise
 
+# optimize=True buffers the whole encoded output; the 64KB default dies on
+# high-entropy sources (libjpeg "Suspension not allowed here")
+ImageFile.MAXBLOCK = max(ImageFile.MAXBLOCK, 8 * 1024 * 1024)
+
 
 DEFAULT_BUCKET = "polypaint"
 CACHE_IMMUTABLE = "public, max-age=31536000, immutable"

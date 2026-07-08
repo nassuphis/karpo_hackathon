@@ -283,6 +283,48 @@ class TestBookPdfHandler(unittest.TestCase):
         flip = json.loads(self.fake.objects["polypaint/books/test-book/out/c11/flip/flip.json"])
         self.assertEqual(flip["pages"], [f"p{n:04d}.jpg" for n in range(1, 17)])
 
+    def test_flip_convert_survives_high_entropy_pages(self):
+        # book2 page 17: a perfectly valid PNG whose optimized JPEG encode
+        # dies at Pillow's default 64KB MAXBLOCK (libjpeg cannot suspend
+        # during optimize's whole-output buffering). Random pixels reproduce
+        # the class; the flip pipeline must bump MAXBLOCK and convert.
+        import os as _os
+        from PIL import Image, ImageFile
+        noisy = Image.frombytes("RGB", (1024, 1024), _os.urandom(1024 * 1024 * 3))
+        src = "/tmp/noisy_page.png"
+        noisy.save(src, format="PNG")
+        baseline_failed = False
+        old_block = ImageFile.MAXBLOCK
+        ImageFile.MAXBLOCK = 65536
+        try:
+            Image.open(src).save("/tmp/noisy_base.jpg", format="JPEG",
+                                 quality=88, subsampling=0, optimize=True)
+        except OSError:
+            baseline_failed = True
+        finally:
+            ImageFile.MAXBLOCK = old_block
+        self.assertTrue(baseline_failed,
+                        "random pixels no longer trip default MAXBLOCK; refresh this test")
+
+        self._seed_book()
+        from PIL import Image as PILImage
+
+        def noisy_pdftoppm(cmd, capture_output=False, text=False, timeout=None, **_kw):
+            first = int(cmd[cmd.index("-f") + 1])
+            prefix = cmd[-1]
+            page = PILImage.frombytes("RGB", (1024, 1024), _os.urandom(1024 * 1024 * 3))
+            page.save(f"{prefix}-{first}.png", format="PNG")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        with patch.object(self.book_pdf.subprocess, "run", side_effect=noisy_pdftoppm):
+            resp = self.book_pdf.handle_compose({
+                "op": "compose", "job_id": "book#test", "task_id": "bookcomp_r13",
+                "book_id": "test-book", "compile_id": "c13",
+                "expected_saved_at": "2026-07-06T00:00:00Z",
+            }, latex_runner=_fake_latex)
+        body = json.loads(resp["body"])
+        self.assertEqual(body.get("flip_page_count"), 8, body.get("flip_error"))
+
     def test_flip_page_convert_retries_with_fresh_render(self):
         # a truncated PNG on the first render must heal via re-render, not
         # fail the flipbook (live incident: "broken data stream" once, no

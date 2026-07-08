@@ -802,8 +802,15 @@ async function _bookPollDescribe() {
             _bookRailDescribe('done', `${rd.described || 0} described · ${elapsed}s`);
             _bookLog(`Describe done: ${rd.described || 0} described, ${rd.skipped || 0} skipped (${elapsed}s)`);
             finish();
+            // reload drops the thumbnail cache + selection — rehydrate and
+            // keep the row selected (DescribeSelection iterates on one row)
+            const keepSelected = _bookState.selectedEntryId;
             await _bookLoadActive();
+            if (keepSelected && (_bookState.doc?.entries || []).some(e => e.entry_id === keepSelected)) {
+                _bookState.selectedEntryId = keepSelected;
+            }
             _renderBookTab();
+            if (_bookState.doc) void _bookHydrateEntries();
             _bookStatus(`Described ${rd.described || 0} entries — Compile to publish`);
             return;
         }

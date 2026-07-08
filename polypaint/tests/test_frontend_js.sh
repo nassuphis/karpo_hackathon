@@ -2786,6 +2786,10 @@ if (!js.match(/bookClearDescriptions[\s\S]{0,700}confirm\(/))
   { console.error('FATAL: whole-book clear must confirm before wiping prose'); process.exit(1); }
 if (!js.includes(`bookEditEntryClear('\${eid}', this)`))
   { console.error('FATAL: row editor must offer a Clear button'); process.exit(1); }
+// describe-done reloads the doc (wiping the thumbnail cache) — it must
+// rehydrate, or every Describe blanks the row thumbnails until Refresh
+if (!js.match(/phase === 'done'[\s\S]{0,1200}_bookHydrateEntries\(\)/))
+  { console.error('FATAL: describe-done must rehydrate entry thumbnails'); process.exit(1); }
 console.log('Frontend book row label checks: OK');
 NODE
 

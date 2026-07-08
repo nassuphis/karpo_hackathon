@@ -87,7 +87,10 @@ def _content_preamble():
     # ColorSpread PDF report page (deep blue that matches the app).
     return "\n".join([
         r"\documentclass{article}",
-        r"\usepackage[paperwidth=%dmm, paperheight=%dmm, margin=24mm]{geometry}"
+        # vertical margins are 1mm: vertical placement is EXPLICIT (title at
+        # a chosen height, palette sized to fit the freed space). Horizontal
+        # margins stay 24mm — that is text measure + trim safety.
+        r"\usepackage[paperwidth=%dmm, paperheight=%dmm, hmargin=24mm, vmargin=1mm]{geometry}"
         % (CONTENT_W_MM, CONTENT_H_MM),
         r"\usepackage{graphicx}",
         r"\usepackage{xcolor}",
@@ -145,15 +148,15 @@ PALETTE_MIN_MM = 120
 
 def _palette_mm(rows, body_override):
     """Palette square sized to what the verso's content leaves over — the
-    one-page spread invariant is sacred, so dense pages shrink the swatch
-    instead of spilling. Budget (mm, empirically calibrated on book2: a
-    9-row verso overflowed at a fixed 160): 248 text block − ~11 title
-    block (26/30pt pulled -14 into the margin) − 6.5/row − ~5.5/body line
-    − ~16 palette chrome (fcolorbox+gaps+label) − 8 safety."""
+    one-page spread invariant is sacred. With vmargin=1mm the text block is
+    294mm, so the full 160mm fits every realistic verso (10 rows + a body
+    paragraph); the shrink only guards pathological content. Budget (mm):
+    294 block − ~30 title zone (6mm start + 26/30pt title + rule + artifact
+    + gap) − 6.5/row − 5.5/body line − 16 palette chrome − 8 safety."""
     body_lines = 0
     for line in str(body_override or "").strip().splitlines():
         body_lines += max(1, (len(line) + 84) // 85)
-    avail = 248 - 11 - 6.5 * len(rows) - 5.5 * body_lines - (4 if body_lines else 0) - 16 - 8
+    avail = 294 - 30 - 6.5 * len(rows) - 5.5 * body_lines - (4 if body_lines else 0) - 16 - 8
     return int(max(PALETTE_MIN_MM, min(PALETTE_MAX_MM, avail)))
 
 
@@ -172,9 +175,9 @@ def _verso_report_page(entry, provenance):
     parts = [
         r"\newpage",
         r"\pagecolor{pagebg}\color{bodytext}",
-        # title rides up into the top margin: cap height lands ~10mm below
-        # the page top (24mm margin - 14mm), a small confident gap
-        r"\vspace*{-14mm}",
+        # explicit vertical placement (vmargin=1mm): cap height lands ~10mm
+        # below the physical page top
+        r"\vspace*{6mm}",
         r"{\displayfont\fontsize{26}{30}\selectfont %s\par}" % (title or "PolyPaint"),
         r"\vspace{2.5mm}",
         r"{\color{accent}\rule{\linewidth}{0.8pt}}\par",
@@ -221,7 +224,7 @@ def render_content_tex(book, provenance_by_entry=None):
         r"\begin{document}",
         # p1: title page (recto)
         r"\pagecolor{pagebg}\color{bodytext}",
-        r"\vspace*{80mm}",
+        r"\vspace*{103mm}",
         r"\begin{center}",
         r"{\displayfont\fontsize{44}{50}\selectfont %s\par}" % tex_escape(book.get("title") or book.get("name") or "PolyPaint"),
     ]

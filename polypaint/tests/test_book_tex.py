@@ -66,6 +66,7 @@ class TestGeometryAndStructure(unittest.TestCase):
     def test_content_preamble_pins_whitewall_geometry(self):
         tex, total = book_tex.render_content_tex(_book(3))
         self.assertIn("paperwidth=293mm", tex)
+        self.assertIn("hmargin=24mm, vmargin=1mm", tex)
         self.assertIn("paperheight=296mm", tex)
         self.assertEqual(total, 8)  # 1 + 6 + 1 pad
         self.assertEqual(tex.count(r"\includegraphics"), 3)
@@ -117,14 +118,17 @@ class TestReportPage(unittest.TestCase):
     def test_palette_shrinks_on_dense_versos_never_spills(self):
         # empirically calibrated on book2: a 9-row verso overflowed at a
         # fixed 160mm — the square must adapt so the spread invariant holds
-        self.assertEqual(book_tex._palette_mm([("k", "v")] * 4, ""), 160)
-        self.assertEqual(book_tex._palette_mm([("k", "v")] * 9, ""), 154)
-        self.assertEqual(book_tex._palette_mm([("k", "v")] * 10, ""), 148)
-        # body text (Gemini descriptions) eats palette budget too
+        # vmargin=1mm frees ~46mm: 160 fits every realistic verso now,
+        # including 10 rows with a body paragraph
+        self.assertEqual(book_tex._palette_mm([("k", "v")] * 9, ""), 160)
+        self.assertEqual(book_tex._palette_mm([("k", "v")] * 10, ""), 160)
         body = "A petrol lattice over bone. " * 6   # ~2 wrapped lines
-        with_body = book_tex._palette_mm([("k", "v")] * 9, body)
-        self.assertLess(with_body, 154)
-        self.assertGreaterEqual(with_body, book_tex.PALETTE_MIN_MM)
+        self.assertEqual(book_tex._palette_mm([("k", "v")] * 10, body), 160)
+        # the guard still exists for pathological content
+        huge_body = "line\n" * 12
+        self.assertLess(book_tex._palette_mm([("k", "v")] * 12, huge_body), 160)
+        self.assertGreaterEqual(book_tex._palette_mm([("k", "v")] * 12, huge_body),
+                                book_tex.PALETTE_MIN_MM)
 
     def test_no_palette_omits_swatch(self):
         book = _book(1)

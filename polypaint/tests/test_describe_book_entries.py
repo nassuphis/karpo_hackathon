@@ -58,6 +58,33 @@ class DescribeEngineTests(unittest.TestCase):
             self.mod.parse_response({"error": {"message": "quota exceeded"}})
         self.assertIn("quota exceeded", str(ctx.exception))
 
+    def test_parse_prose_is_lenient_about_junk_around_the_object(self):
+        obj = '{"title": "Ember Drift",\n "description": "Warm strands curl."}'
+        want = ("Ember Drift", "Warm strands curl.")
+        # the field failure: valid object + trailing commentary
+        # ("Extra data: line 5 column 1" under strict json.loads)
+        self.assertEqual(self.mod._parse_prose(
+            obj + "\nHope this works for your book!"), want)
+        # duplicate/"improved" second object appended: first one wins
+        self.assertEqual(self.mod._parse_prose(
+            obj + '\n{"title": "Second", "description": "Ignored."}'), want)
+        # leading prose before the object
+        self.assertEqual(self.mod._parse_prose(
+            "Here is the JSON you asked for:\n" + obj), want)
+        # fenced AND followed by commentary
+        self.assertEqual(self.mod._parse_prose(
+            "```json\n" + obj + "\n```\nLet me know!"), want)
+        # stray brace in a preface must not derail the scan
+        self.assertEqual(self.mod._parse_prose(
+            "Format {title, description} as requested:\n" + obj), want)
+        # still hard errors: no object at all / fields missing
+        with self.assertRaises(RuntimeError) as ctx:
+            self.mod._parse_prose("I cannot describe this image.")
+        self.assertIn("no JSON object", str(ctx.exception))
+        with self.assertRaises(RuntimeError) as ctx:
+            self.mod._parse_prose('{"title": "only a title"} trailing')
+        self.assertIn("missing fields", str(ctx.exception))
+
     def test_gemini_call_retries_503_then_succeeds(self):
         import io as _io
         import urllib.error

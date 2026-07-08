@@ -243,15 +243,33 @@ def _vision_call(model, api_key, image_bytes, text):
 
 
 def _parse_prose(text):
-    text = str(text or "").strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        text = text[text.index("{"):text.rindex("}") + 1]
-    data = json.loads(text)
+    """Extract {"title","description"} from a model reply, leniently.
+
+    Models sometimes wrap the object in ``` fences, preface it with
+    prose, or append trailing commentary / a duplicate object — strict
+    json.loads then dies with "Extra data". raw_decode reads the FIRST
+    complete JSON value and ignores whatever follows; scanning forward
+    over '{' candidates also skips leading junk (fences included)."""
+    raw = str(text or "")
+    decoder = json.JSONDecoder()
+    idx = raw.find("{")
+    data = None
+    while idx >= 0:
+        try:
+            candidate, _ = decoder.raw_decode(raw, idx)
+        except json.JSONDecodeError:
+            idx = raw.find("{", idx + 1)
+            continue
+        if isinstance(candidate, dict):
+            data = candidate
+            break
+        idx = raw.find("{", idx + 1)
+    if data is None:
+        raise RuntimeError(f"vision reply has no JSON object: {raw[:200]}")
     title = str(data.get("title") or "").strip()
     description = str(data.get("description") or "").strip()
     if not title or not description:
-        raise RuntimeError(f"vision JSON missing fields: {text[:200]}")
+        raise RuntimeError(f"vision JSON missing fields: {raw[:200]}")
     return title, description
 
 

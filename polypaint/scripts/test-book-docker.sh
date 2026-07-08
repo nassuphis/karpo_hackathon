@@ -65,7 +65,7 @@ assert spread_pdf._vipsthumbnail_path(), "vipsthumbnail not on PATH in image"
 content, expected_pages = book_tex.render_content_tex(
     BOOK, PROV,
     pdf_url=book_tex.S3_PUBLIC_BASE + "books/gate/out/cmp_gate/content.pdf")
-assert "\\qrcode[height=12mm,level=M]{https://" in content.split("\\newpage", 1)[0], \
+assert "\\qrcode[height=14mm,level=M]{https://" in content.split("\\newpage", 1)[0], \
     "title-page QR missing from gate compile"
 cover = book_tex.render_cover_tex(BOOK, "assets/e1.jpg")
 # test-only: keep objects uncompressed so the assertions can grep the PDF

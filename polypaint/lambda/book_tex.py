@@ -182,9 +182,13 @@ def _verso_report_page(entry, provenance):
     if override_title and image_key:
         url = S3_PUBLIC_BASE + image_key
         # dark modules on a light chip (an inverted QR scans unreliably);
-        # 1.5mm fboxsep = the quiet zone the spec wants
+        # 1.5mm fboxsep = the quiet zone the spec wants. 14mm + level L:
+        # image URLs are ~118 chars, and at 12mm/level M the module pitch
+        # fell below what the 200dpi flipbook raster can carry — L drops
+        # the grid a version, and with 14mm the pitch lands above the
+        # title-page QR's proven-decodable density.
         title += (r"\hfill\raisebox{-2mm}{\setlength{\fboxsep}{1.5mm}"
-                  r"\colorbox{bodytext}{\color{pagebg}\qrcode[height=12mm,level=M]{%s}}}" % url)
+                  r"\colorbox{bodytext}{\color{pagebg}\qrcode[height=14mm,level=L]{%s}}}" % url)
     artifact = tex_escape(str(report.get("artifact_id") or entry.get("artifact_id") or ""))
     rows = _report_rows(entry, provenance)
     body_override = str(entry.get("body_override") or "").strip()
@@ -270,7 +274,7 @@ def render_content_tex(book, provenance_by_entry=None, pdf_url=None):
             r"\vfill",
             r"\begin{center}",
             r"{\setlength{\fboxsep}{1.5mm}"
-            r"\colorbox{bodytext}{\color{pagebg}\qrcode[height=12mm,level=M]{%s}}\par}" % pdf_url,
+            r"\colorbox{bodytext}{\color{pagebg}\qrcode[height=14mm,level=M]{%s}}\par}" % pdf_url,
             r"\vspace{2.5mm}",
             r"{\monofont\footnotesize\color{monotext} download pdf\par}",
             r"\end{center}",

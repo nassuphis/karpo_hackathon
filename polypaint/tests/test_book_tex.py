@@ -143,7 +143,7 @@ class TestReportPage(unittest.TestCase):
         tex, _ = book_tex.render_content_tex(
             book, {"e0": {"report": {"compute_id": "c", "summary_rows": []}}})
         self.assertIn(r"\usepackage{qrcode}", tex)
-        self.assertIn(r"\qrcode[height=12mm,level=M]{https://polypaint.s3.us-east-1.amazonaws.com/renders/j0/color/a0/image.jpeg}", tex)
+        self.assertIn(r"\qrcode[height=14mm,level=L]{https://polypaint.s3.us-east-1.amazonaws.com/renders/j0/color/a0/image.jpeg}", tex)
         # dark-on-light chip: inverted QRs scan unreliably
         self.assertIn(r"\colorbox{bodytext}{\color{pagebg}\qrcode", tex)
 
@@ -159,7 +159,7 @@ class TestReportPage(unittest.TestCase):
             _book(1), {"e0": {"report": {"compute_id": "c", "summary_rows": []}}},
             pdf_url=pdf_url)
         title_page = tex.split(r"\newpage", 1)[0]
-        self.assertIn(r"\qrcode[height=12mm,level=M]{%s}" % pdf_url, title_page)
+        self.assertIn(r"\qrcode[height=14mm,level=M]{%s}" % pdf_url, title_page)
         # bottom-centered: fill above, fixed inset below, same chip idiom
         self.assertIn(r"\vfill", title_page)
         self.assertIn(r"\colorbox{bodytext}{\color{pagebg}\qrcode", title_page)

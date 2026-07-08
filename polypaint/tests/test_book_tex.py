@@ -110,7 +110,7 @@ class TestReportPage(unittest.TestCase):
         # palette swatch in a panel: fixed 132mm square, label BELOW the image
         self.assertIn("e0.palette.jpg", tex)
         self.assertIn(r"\fcolorbox{panelborder}{panelbg}", tex)
-        self.assertIn("width=132mm,height=132mm,keepaspectratio", tex)
+        self.assertIn("width=145mm,height=145mm,keepaspectratio", tex)
         self.assertIn("tri\\_ember", tex)
         self.assertLess(tex.index("e0.palette.jpg"), tex.index("tri\\_ember"))
 

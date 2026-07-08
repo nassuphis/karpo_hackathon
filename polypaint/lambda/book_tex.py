@@ -154,7 +154,9 @@ def _verso_report_page(entry, provenance):
     parts = [
         r"\newpage",
         r"\pagecolor{pagebg}\color{bodytext}",
-        r"\vspace*{2mm}",
+        # title rides up into the top margin: cap height lands ~10mm below
+        # the page top (24mm margin - 14mm), a small confident gap
+        r"\vspace*{-14mm}",
         r"{\displayfont\fontsize{26}{30}\selectfont %s\par}" % (title or "PolyPaint"),
         r"\vspace{2.5mm}",
         r"{\color{accent}\rule{\linewidth}{0.8pt}}\par",
@@ -179,7 +181,7 @@ def _verso_report_page(entry, provenance):
             r"\vfill",
             r"\begin{center}",
             r"\begin{tabular}{c}",
-            r"\fcolorbox{panelborder}{panelbg}{\includegraphics[width=132mm,height=132mm,keepaspectratio]{%s/%s.palette.jpg}} \\[2mm]"
+            r"\fcolorbox{panelborder}{panelbg}{\includegraphics[width=145mm,height=145mm,keepaspectratio]{%s/%s.palette.jpg}} \\[2mm]"
             % (ASSET_DIR, entry.get("entry_id")),
             r"{\monofont\footnotesize\color{monotext} %s} \\" % palette_label,
             r"\end{tabular}",

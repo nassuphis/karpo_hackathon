@@ -110,9 +110,21 @@ class TestReportPage(unittest.TestCase):
         # palette swatch in a panel: fixed 132mm square, label BELOW the image
         self.assertIn("e0.palette.jpg", tex)
         self.assertIn(r"\fcolorbox{panelborder}{panelbg}", tex)
-        self.assertIn("width=145mm,height=145mm,keepaspectratio", tex)
+        self.assertIn("width=160mm,height=160mm,keepaspectratio", tex)
         self.assertIn("tri\\_ember", tex)
         self.assertLess(tex.index("e0.palette.jpg"), tex.index("tri\\_ember"))
+
+    def test_palette_shrinks_on_dense_versos_never_spills(self):
+        # empirically calibrated on book2: a 9-row verso overflowed at a
+        # fixed 160mm — the square must adapt so the spread invariant holds
+        self.assertEqual(book_tex._palette_mm([("k", "v")] * 4, ""), 160)
+        self.assertEqual(book_tex._palette_mm([("k", "v")] * 9, ""), 154)
+        self.assertEqual(book_tex._palette_mm([("k", "v")] * 10, ""), 148)
+        # body text (Gemini descriptions) eats palette budget too
+        body = "A petrol lattice over bone. " * 6   # ~2 wrapped lines
+        with_body = book_tex._palette_mm([("k", "v")] * 9, body)
+        self.assertLess(with_body, 154)
+        self.assertGreaterEqual(with_body, book_tex.PALETTE_MIN_MM)
 
     def test_no_palette_omits_swatch(self):
         book = _book(1)

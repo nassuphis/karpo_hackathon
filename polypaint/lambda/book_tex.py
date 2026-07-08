@@ -139,6 +139,24 @@ def _report_rows(entry, provenance):
     return [(str(r[0]), str(r[1])) for r in rows if isinstance(r, (list, tuple)) and len(r) == 2]
 
 
+PALETTE_MAX_MM = 160
+PALETTE_MIN_MM = 120
+
+
+def _palette_mm(rows, body_override):
+    """Palette square sized to what the verso's content leaves over — the
+    one-page spread invariant is sacred, so dense pages shrink the swatch
+    instead of spilling. Budget (mm, empirically calibrated on book2: a
+    9-row verso overflowed at a fixed 160): 248 text block − ~11 title
+    block (26/30pt pulled -14 into the margin) − 6.5/row − ~5.5/body line
+    − ~16 palette chrome (fcolorbox+gaps+label) − 8 safety."""
+    body_lines = 0
+    for line in str(body_override or "").strip().splitlines():
+        body_lines += max(1, (len(line) + 84) // 85)
+    avail = 248 - 11 - 6.5 * len(rows) - 5.5 * body_lines - (4 if body_lines else 0) - 16 - 8
+    return int(max(PALETTE_MIN_MM, min(PALETTE_MAX_MM, avail)))
+
+
 def _verso_report_page(entry, provenance):
     """Deep-blue report page matching the ColorSpread PDF: title, accent
     rule, artifact id, fixed-pitch KV rows, and the palette at a FIXED
@@ -181,8 +199,9 @@ def _verso_report_page(entry, provenance):
             r"\vfill",
             r"\begin{center}",
             r"\begin{tabular}{c}",
-            r"\fcolorbox{panelborder}{panelbg}{\includegraphics[width=145mm,height=145mm,keepaspectratio]{%s/%s.palette.jpg}} \\[2mm]"
-            % (ASSET_DIR, entry.get("entry_id")),
+            r"\fcolorbox{panelborder}{panelbg}{\includegraphics[width=%dmm,height=%dmm,keepaspectratio]{%s/%s.palette.jpg}} \\[2mm]"
+            % (_palette_mm(rows, body_override), _palette_mm(rows, body_override),
+               ASSET_DIR, entry.get("entry_id")),
             r"{\monofont\footnotesize\color{monotext} %s} \\" % palette_label,
             r"\end{tabular}",
             r"\end{center}",

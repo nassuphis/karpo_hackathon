@@ -293,6 +293,9 @@ def _safe_id(value, label):
 
 
 def _load_vision_config():
+    """Model + PER-PROVIDER keys (api_key_gemini/anthropic/openai, with the
+    legacy single api_key as gemini fallback) so model switches reuse the
+    right stored key."""
     try:
         ddb = boto3.client("dynamodb", region_name=os.environ.get("AWS_REGION", "us-east-1"))
         resp = ddb.get_item(
@@ -300,8 +303,12 @@ def _load_vision_config():
             Key={"job_id": {"S": VISION_CONFIG_KEYS[0]},
                  "task_id": {"S": VISION_CONFIG_KEYS[1]}})
         item = resp.get("Item") or {}
-        return {"model": (item.get("model") or {}).get("S", ""),
-                "api_key": (item.get("api_key") or {}).get("S", "")}
+        cfg = {"model": (item.get("model") or {}).get("S", "")}
+        for prov in ("gemini", "anthropic", "openai"):
+            cfg[f"api_key_{prov}"] = (item.get(f"api_key_{prov}") or {}).get("S", "")
+        if not cfg["api_key_gemini"]:
+            cfg["api_key_gemini"] = (item.get("api_key") or {}).get("S", "")
+        return cfg
     except Exception:
         return {}
 
@@ -337,11 +344,13 @@ def handle_describe(params):
     # resolution: explicit request model > VisionModel config (DynamoDB,
     # set in the app) > env GEMINI_API_KEY default. The config key wins for
     # its model; env key only covers gemini models.
+    from shared import vision_provider
     config = _load_vision_config()
     if not str(params.get("model") or "").strip():
         model = str(config.get("model") or DEFAULT_MODEL)
-    api_key = str(config.get("api_key") or "").strip()
-    if not api_key and model.startswith("gemini"):
+    provider = vision_provider(model)
+    api_key = str(config.get(f"api_key_{provider}") or "").strip()
+    if not api_key and provider == "gemini":
         api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
         raise RuntimeError(

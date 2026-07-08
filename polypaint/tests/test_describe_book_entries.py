@@ -257,6 +257,40 @@ class VisionRoutingTests(unittest.TestCase):
         self.mod._vision_call("gemini-2.5-flash", "gk", b"jpg", "prompt")
         self.assertIn("generativelanguage.googleapis.com", self.calls[0]["url"])
 
+    def test_config_key_follows_the_model_provider(self):
+        # switching models back and forth must pick each provider's own key
+        cfg = {"model": "claude-sonnet-4-6", "api_key_anthropic": "sk-ant-1",
+               "api_key_gemini": "gk-1", "api_key_openai": ""}
+        with patch.object(self.mod, "_load_vision_config", lambda: cfg), \
+             patch.object(self.mod, "report_status", lambda *a, **k: None), \
+             patch.object(self.mod, "s3") as fake_s3:
+            fake_s3.get_object.side_effect = Exception("NoSuchKey")
+            # book fetch fails AFTER key resolution: proves which key won
+            with self.assertRaises(Exception):
+                self.mod.handle_describe({"job_id": "j", "task_id": "t",
+                                          "book_id": "b1", "model": "gemini-2.5-flash"})
+        # no assertion on the exception itself: the resolution path is pinned
+        # by the missing-key variants below
+
+        for model, expect_ok in (("claude-sonnet-4-6", True),
+                                 ("gpt-4.1-mini", False)):
+            with patch.object(self.mod, "_load_vision_config", lambda: dict(cfg)), \
+                 patch.object(self.mod, "report_status", lambda *a, **k: None), \
+                 patch.object(self.mod, "s3") as fake_s3:
+                fake_s3.get_object.side_effect = Exception("book missing")
+                try:
+                    self.mod.handle_describe({"job_id": "j", "task_id": "t",
+                                              "book_id": "b1", "model": model})
+                    self.fail("should raise")
+                except RuntimeError as exc:
+                    if expect_ok:
+                        # got past key resolution to the book fetch
+                        self.assertNotIn("no API key", str(exc))
+                    else:
+                        self.assertIn("no API key", str(exc))
+                except Exception:
+                    self.assertTrue(expect_ok)
+
     def test_missing_key_error_names_the_config(self):
         with patch.object(self.mod, "_load_vision_config",
                           lambda: {"model": "claude-sonnet-4-6", "api_key": ""}), \

@@ -918,6 +918,60 @@ class TestComputeMigration(unittest.TestCase):
         self.assertIn("job_id", json.loads(resp["body"])["error"])
 
 
+class TestVisionConfig(unittest.TestCase):
+    def _fake_ddb(self, item=None):
+        from unittest.mock import MagicMock
+        ddb = MagicMock()
+        store = {"item": item or {}}
+        ddb.get_item.side_effect = lambda **kw: {"Item": store["item"]}
+        def put_item(TableName=None, Item=None):
+            store["item"] = Item
+        ddb.put_item.side_effect = put_item
+        return ddb, store
+
+    def test_save_stores_key_per_provider_and_switching_keeps_both(self):
+        import handler_storage
+        ddb, store = self._fake_ddb()
+        with patch.object(handler_storage, "_get_ddb", lambda: ddb):
+            r1 = json.loads(handler_storage.handle_save_vision_config(
+                _event("/save-vision-config",
+                       {"model": "claude-sonnet-4-6", "api_key": "sk-ant-12345678"}))["body"])
+            self.assertTrue(r1["providers"]["anthropic"]["key_set"])
+            self.assertFalse(r1["providers"]["gemini"]["key_set"])
+            # switch model WITHOUT a key: anthropic key must survive,
+            # gemini reported unset
+            r2 = json.loads(handler_storage.handle_save_vision_config(
+                _event("/save-vision-config", {"model": "gemini-2.5-flash"}))["body"])
+            self.assertEqual(r2["model"], "gemini-2.5-flash")
+            self.assertTrue(r2["providers"]["anthropic"]["key_set"])
+            self.assertFalse(r2["key_set"])   # current provider = gemini
+            # paste the gemini key; both now set, key never echoed
+            r3 = json.loads(handler_storage.handle_save_vision_config(
+                _event("/save-vision-config", {"api_key": "AIzaSy-abcdefgh"}))["body"])
+            self.assertTrue(r3["providers"]["gemini"]["key_set"])
+            self.assertTrue(r3["providers"]["anthropic"]["key_set"])
+            self.assertNotIn("AIzaSy-abcdefgh", json.dumps(r3))
+            self.assertEqual(r3["providers"]["gemini"]["key_hint"], "…efgh")
+            # clear the anthropic key with "-" after switching back
+            handler_storage.handle_save_vision_config(
+                _event("/save-vision-config", {"model": "claude-sonnet-4-6"}))
+            r4 = json.loads(handler_storage.handle_save_vision_config(
+                _event("/save-vision-config", {"api_key": "-"}))["body"])
+            self.assertFalse(r4["providers"]["anthropic"]["key_set"])
+            self.assertTrue(r4["providers"]["gemini"]["key_set"])
+
+    def test_fetch_migrates_legacy_single_key_as_gemini(self):
+        import handler_storage
+        legacy = {"model": {"S": "gemini-2.5-flash"},
+                  "api_key": {"S": "AIzaLegacy-1234"}}
+        ddb, _ = self._fake_ddb(legacy)
+        with patch.object(handler_storage, "_get_ddb", lambda: ddb):
+            r = json.loads(handler_storage.handle_fetch_vision_config(
+                _event("/fetch-vision-config", {}))["body"])
+        self.assertTrue(r["providers"]["gemini"]["key_set"])
+        self.assertTrue(r["key_set"])
+
+
 class TestWallPyramidKick(unittest.TestCase):
     """deepzoom-speed.md §7.1: after a manifest refresh the storage worker
     chains the composite wall build to the deepzoom-export lambda."""

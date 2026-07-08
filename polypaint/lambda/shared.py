@@ -240,6 +240,18 @@ def tmp_space_stats(path="/tmp"):
 CACHE_IMMUTABLE = "public, max-age=31536000, immutable"
 
 
+def vision_provider(model):
+    """Provider from a vision model id: gemini-* -> google, claude-* ->
+    anthropic, gpt-*/o* -> openai. Keys are stored per provider so the
+    user can switch models freely (VisionModel config)."""
+    m = str(model or "")
+    if m.startswith("claude"):
+        return "anthropic"
+    if m.startswith(("gpt", "o")):
+        return "openai"
+    return "gemini"
+
+
 def png_dimensions_from_path(path):
     """Read PNG dimensions from a local file's IHDR (no imaging deps).
 

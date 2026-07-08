@@ -602,6 +602,43 @@ async function _bookPollCompile() {
     }
 }
 
+function bookVisionModelChanged() {
+    const sel = document.getElementById('book-vision-model');
+    const custom = document.getElementById('book-vision-model-custom');
+    if (custom) custom.style.display = sel && sel.value === '__custom__' ? 'inline-block' : 'none';
+}
+
+function _bookVisionSelectedModel() {
+    const sel = document.getElementById('book-vision-model');
+    if (!sel) return '';
+    if (sel.value === '__custom__') {
+        return (document.getElementById('book-vision-model-custom')?.value || '').trim();
+    }
+    return sel.value;
+}
+
+function _bookVisionShowModel(model) {
+    const sel = document.getElementById('book-vision-model');
+    const custom = document.getElementById('book-vision-model-custom');
+    if (!sel) return;
+    const known = Array.from(sel.options).some(o => o.value === model);
+    if (model && !known) {
+        sel.value = '__custom__';
+        if (custom) { custom.value = model; custom.style.display = 'inline-block'; }
+    } else if (model) {
+        sel.value = model;
+        if (custom) custom.style.display = 'none';
+    }
+}
+
+function _bookVisionStatusText(cfg) {
+    const provs = cfg.providers || {};
+    const marks = ['gemini', 'anthropic', 'openai']
+        .map(p => `${p} ${provs[p]?.key_set ? '✓' + (provs[p].key_hint || '') : '—'}`)
+        .join(' · ');
+    return `model ${cfg.model || 'gemini-2.5-flash (default)'} · keys: ${marks}`;
+}
+
 function bookVisionToggle() {
     const panel = document.getElementById('book-vision-panel');
     if (!panel) return;
@@ -614,11 +651,8 @@ async function bookVisionLoad() {
     const status = document.getElementById('book-vision-status');
     try {
         const cfg = await lambdaPost('storage', {}, '/fetch-vision-config');
-        const modelEl = document.getElementById('book-vision-model');
-        if (modelEl && !modelEl.value) modelEl.value = cfg.model || '';
-        if (status) status.textContent = cfg.key_set
-            ? `key set ${cfg.key_hint || ''} · model ${cfg.model || 'gemini-2.5-flash (default)'}`
-            : 'no key stored — describe falls back to the deployed GEMINI_API_KEY (gemini models only)';
+        _bookVisionShowModel(cfg.model || '');
+        if (status) status.textContent = _bookVisionStatusText(cfg);
     } catch (e) {
         if (status) status.textContent = e.message;
     }
@@ -628,14 +662,13 @@ async function bookVisionSave(btn) {
     const orig = btn ? btn.textContent : 'Save Vision';
     if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
     try {
-        const model = (document.getElementById('book-vision-model')?.value || '').trim();
+        const model = _bookVisionSelectedModel();
+        if (!model) throw new Error('pick or type a model id');
         const keyEl = document.getElementById('book-vision-key');
         const cfg = await lambdaPost('storage', { model, api_key: (keyEl?.value || '').trim() }, '/save-vision-config');
         if (keyEl) keyEl.value = '';
         const status = document.getElementById('book-vision-status');
-        if (status) status.textContent = cfg.key_set
-            ? `saved · key ${cfg.key_hint || 'set'} · model ${cfg.model || '(default)'}`
-            : 'saved · no key stored';
+        if (status) status.textContent = 'saved · ' + _bookVisionStatusText(cfg);
         if (btn) btn.textContent = 'Saved ✓';
     } catch (e) {
         _bookStatus(e.message, true);

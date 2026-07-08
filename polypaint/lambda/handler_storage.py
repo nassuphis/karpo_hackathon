@@ -2005,29 +2005,51 @@ VISION_CONFIG_JOB_ID = "__config__"
 VISION_CONFIG_TASK_ID = "vision_model"
 
 
-def handle_fetch_vision_config(event):
-    """Model + whether a key is set. The key itself NEVER leaves the
-    server — only a last-4 hint for 'which key is this'."""
-    del event
+VISION_PROVIDERS = ("gemini", "anthropic", "openai")
+
+
+def _vision_item():
     resp = _get_ddb().get_item(
         TableName=JOBS_TABLE,
         Key={"job_id": {"S": VISION_CONFIG_JOB_ID},
              "task_id": {"S": VISION_CONFIG_TASK_ID}})
-    item = resp.get("Item") or {}
+    return resp.get("Item") or {}
+
+
+def _vision_summary(item):
+    from shared import vision_provider
     model = (item.get("model") or {}).get("S", "")
-    key = (item.get("api_key") or {}).get("S", "")
-    return ok_response({
+    providers = {}
+    for prov in VISION_PROVIDERS:
+        key = (item.get(f"api_key_{prov}") or {}).get("S", "")
+        if not key and prov == "gemini":
+            key = (item.get("api_key") or {}).get("S", "")  # legacy single-key
+        providers[prov] = {"key_set": bool(key),
+                           "key_hint": f"…{key[-4:]}" if len(key) >= 8 else ""}
+    current = providers.get(vision_provider(model), {})
+    return {
         "model": model,
-        "key_set": bool(key),
-        "key_hint": f"…{key[-4:]}" if len(key) >= 8 else "",
+        "providers": providers,
+        "key_set": bool(current.get("key_set")),
+        "key_hint": current.get("key_hint", ""),
         "updated_at": (item.get("updated_at") or {}).get("S", ""),
-    })
+    }
+
+
+def handle_fetch_vision_config(event):
+    """Model + per-provider key presence. Keys NEVER leave the server —
+    only last-4 hints."""
+    del event
+    return ok_response(_vision_summary(_vision_item()))
 
 
 def handle_save_vision_config(event):
-    """Set the vision model and/or paste a key from the app. Stored in
-    DynamoDB (IAM-only) — the public bucket must never hold secrets.
-    Empty api_key keeps the existing one; api_key="-" clears it."""
+    """Set the vision model and/or paste a key. Keys are stored PER
+    PROVIDER (derived from the model being saved) so switching models
+    back and forth reuses the right stored key. DynamoDB only — the
+    public bucket must never hold secrets. Empty api_key keeps the
+    provider's existing key; api_key="-" clears it."""
+    from shared import vision_provider
     params = parse_body(event)
     model = str(params.get("model") or "").strip()
     if model and not all(c.isalnum() or c in ".-_:" for c in model):
@@ -2038,30 +2060,29 @@ def handle_save_vision_config(event):
     if len(api_key) > 300:
         raise ValueError("api key too long")
 
-    resp = _get_ddb().get_item(
-        TableName=JOBS_TABLE,
-        Key={"job_id": {"S": VISION_CONFIG_JOB_ID},
-             "task_id": {"S": VISION_CONFIG_TASK_ID}})
-    item = resp.get("Item") or {}
-    existing_key = (item.get("api_key") or {}).get("S", "")
-    existing_model = (item.get("model") or {}).get("S", "")
+    item = _vision_item()
+    new_model = model or (item.get("model") or {}).get("S", "")
+    prov = vision_provider(new_model)
+    keys = {}
+    for p in VISION_PROVIDERS:
+        keys[p] = (item.get(f"api_key_{p}") or {}).get("S", "")
+    if not keys["gemini"]:
+        keys["gemini"] = (item.get("api_key") or {}).get("S", "")  # legacy migrate
+    if api_key == "-":
+        keys[prov] = ""
+    elif api_key:
+        keys[prov] = api_key
 
-    new_key = "" if api_key == "-" else (api_key or existing_key)
-    new_model = model or existing_model
-    _get_ddb().put_item(
-        TableName=JOBS_TABLE,
-        Item={
-            "job_id": {"S": VISION_CONFIG_JOB_ID},
-            "task_id": {"S": VISION_CONFIG_TASK_ID},
-            "model": {"S": new_model},
-            "api_key": {"S": new_key},
-            "updated_at": {"S": _utc_now_iso()},
-        })
-    return ok_response({
-        "model": new_model,
-        "key_set": bool(new_key),
-        "key_hint": f"…{new_key[-4:]}" if len(new_key) >= 8 else "",
-    })
+    new_item = {
+        "job_id": {"S": VISION_CONFIG_JOB_ID},
+        "task_id": {"S": VISION_CONFIG_TASK_ID},
+        "model": {"S": new_model},
+        "updated_at": {"S": _utc_now_iso()},
+    }
+    for p in VISION_PROVIDERS:
+        new_item[f"api_key_{p}"] = {"S": keys[p]}
+    _get_ddb().put_item(TableName=JOBS_TABLE, Item=new_item)
+    return ok_response(_vision_summary(new_item))
 
 
 def handle_save_book(event):

@@ -73,6 +73,6 @@ RUN test -s /opt/book-fonts/TiemposText-Regular-Trial.ttf \
 
 # --- python deps + handler code ---
 RUN pip install --no-cache-dir "boto3>=1.34" "Pillow>=10,<12" "reportlab>=4,<5"
-COPY lambda/book_tex.py lambda/book_pdf.py lambda/spread_pdf.py lambda/shared.py ${LAMBDA_TASK_ROOT}/
+COPY lambda/book_tex.py lambda/book_pdf.py lambda/book_describe.py lambda/spread_pdf.py lambda/shared.py ${LAMBDA_TASK_ROOT}/
 
 CMD ["book_pdf.handler"]

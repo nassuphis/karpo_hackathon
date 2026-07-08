@@ -1,214 +1,31 @@
 #!/usr/bin/env python3
-"""Generate evocative titles + descriptions for a book's entries via Gemini.
+"""CLI wrapper over lambda/book_describe.py — the engine now lives
+server-side (Book tab Describe button); this wrapper keeps the local
+dry-run workflow for prompt tuning: it calls Gemini directly and prints
+the prose without saving unless --apply (which saves through the real
+/save-book route, same as the lambda).
 
-Walks the book document, sends each entry's 512px preview.jpg (public URL,
-plenty of signal for a VLM — see 2026-07-08 discussion) plus its technical
-provenance to the Gemini API, and writes the results into the entries'
-existing title_override / body_override fields. The verso template already
-renders both (book_tex._verso_report_page), so the next Compile carries the
-prose into the PDF and the flipbook with zero backend changes.
-
-Saves go through the REAL /save-book route (storage lambda invoke), so
-validation and saved_at semantics hold — never a raw S3 write of the doc.
-
-Dry-run by default: prints every proposed title/description for sign-off.
---apply saves. --overwrite regenerates entries that already have overrides
-(default skips them, so reruns are cheap and hand-edited prose survives).
-
-Requires GEMINI_API_KEY (free tier: aistudio.google.com/apikey; ~10 RPM,
-hence the pacing sleep). stdlib + boto3 only.
-"""
+Requires GEMINI_API_KEY in the shell. stdlib + boto3."""
 from __future__ import annotations
 
 import argparse
-import base64
 import json
 import os
 import sys
 import time
-import urllib.error
-import urllib.request
+from pathlib import Path
 
-import boto3
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lambda"))
 
-BUCKET_BASE = "https://polypaint.s3.us-east-1.amazonaws.com/"
-STORAGE_FUNCTION = os.environ.get("STORAGE_FUNCTION", "polypaint-storage")
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-DEFAULT_MODEL = "gemini-2.5-flash"
-FREE_TIER_PACING_S = 5.0   # ~10 RPM free tier: stay comfortably under
-
-# Edit freely — this is the whole personality of the output.
-BANNED_WORDS = [
-    "vibrant", "intricate", "luminous", "ethereal", "mesmerizing",
-    "captivating", "profound", "otherworldly", "cosmic", "radiant",
-    "enigmatic", "delicate", "stunning", "breathtaking", "swirling",
-    "shimmering", "glowing", "majestic", "dynamic", "dance",
-]
-
-# each entry gets a different lens so the book doesn't read like one
-# bored critic repeating themselves
-ANGLES = [
-    "material and surface — what would this be made of if it were physical",
-    "motion — what just happened or is about to happen in this form",
-    "light — where it comes from, what it hides",
-    "scale ambiguity — microscopic or astronomical, commit to one",
-    "botany or biology — what organism this echoes, without naming it kitschily",
-    "geology or weather — strata, erosion, storms, currents",
-    "architecture or machinery — structure, load, mechanism",
-    "textile and craft — weave, fold, thread, dye",
-]
-
-PROMPT = """You write terse, confident catalogue notes for a fine-art book of
-abstract works. Technical provenance of this piece:
-
-{provenance}
-
-Angle for this piece: {angle}.
-
-Titles already used in this book — do NOT reuse their words or their
-pattern: {used_titles}
-
-Return JSON: {{"title": ..., "description": ...}}.
-- title: 2-4 words. Concrete nouns beat adjectives. No "untitled".
-- description: 2-3 sentences, 60 words max. Name colors precisely
-  (petrol, rust, bone, verdigris — not "colorful"). Describe ONE dominant
-  structure and ONE small detail worth finding. At most one adjective per
-  noun. Never use these words or their variants: {banned}.
-  Never write "sense of", "draws the eye", "the viewer". No mathematics,
-  no rendering talk.
-"""
-
-
-def find_banned(text):
-    low = text.lower()
-    return sorted({w for w in BANNED_WORDS if w in low})
-
-
-def provenance_lines(entry, report):
-    rows = (report or {}).get("summary_rows") or []
-    lines = [f"- {k}: {v}" for k, v in rows]
-    return "\n".join(lines) or f"- artifact: {entry.get('artifact_id', '')}"
-
-
-def build_request(image_bytes, entry, report, *, angle="", used_titles=(), extra=""):
-    text = PROMPT.format(
-        provenance=provenance_lines(entry, report),
-        angle=angle or ANGLES[0],
-        used_titles=", ".join(used_titles) or "(none yet)",
-        banned=", ".join(BANNED_WORDS),
-    ) + (f"\n{extra}" if extra else "")
-    return {
-        "contents": [{
-            "parts": [
-                {"inline_data": {"mime_type": "image/jpeg",
-                                 "data": base64.b64encode(image_bytes).decode()}},
-                {"text": text},
-            ],
-        }],
-        "generationConfig": {
-            "temperature": 0.9,
-            "responseMimeType": "application/json",
-        },
-    }
-
-
-def parse_response(payload):
-    """Returns (title, description) or raises with the API's own words."""
-    if "error" in payload:
-        raise RuntimeError(f"Gemini: {payload['error'].get('message', payload['error'])}")
-    try:
-        text = payload["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError) as exc:
-        raise RuntimeError(f"Gemini returned no text: {json.dumps(payload)[:300]}") from exc
-    text = text.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        text = text[text.index("{"):text.rindex("}") + 1]
-    data = json.loads(text)
-    title = str(data.get("title") or "").strip()
-    description = str(data.get("description") or "").strip()
-    if not title or not description:
-        raise RuntimeError(f"Gemini JSON missing fields: {text[:200]}")
-    return title, description
-
-
-RETRYABLE_HTTP = {429, 500, 502, 503}
-
-
-def _gemini_call(url, body, api_key, *, attempts=6):
-    """POST with backoff: the free tier throws 503 ("model overloaded")
-    routinely, and 429 when pacing slips. Non-retryable errors surface
-    Gemini's own message instead of a bare HTTPError."""
-    delay = 3.0
-    for attempt in range(1, attempts + 1):
-        req = urllib.request.Request(
-            url, data=body,
-            headers={"Content-Type": "application/json", "x-goog-api-key": api_key})
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                return json.loads(resp.read())
-        except urllib.error.HTTPError as exc:
-            detail = ""
-            try:
-                detail = json.loads(exc.read()).get("error", {}).get("message", "")
-            except Exception:
-                pass
-            if exc.code in RETRYABLE_HTTP and attempt < attempts:
-                wait = float(exc.headers.get("Retry-After") or delay)
-                print(f"    Gemini {exc.code} ({detail or 'transient'}) — "
-                      f"retry {attempt}/{attempts - 1} in {wait:.0f}s")
-                time.sleep(wait)
-                delay = min(delay * 2, 60)
-                continue
-            raise RuntimeError(f"Gemini HTTP {exc.code}: {detail or exc.reason}") from exc
-    raise RuntimeError("unreachable")
-
-
-def describe_image(image_bytes, entry, report, *, model, api_key,
-                   angle="", used_titles=()):
-    payload = _gemini_call(
-        GEMINI_URL.format(model=model),
-        json.dumps(build_request(image_bytes, entry, report,
-                                 angle=angle, used_titles=used_titles)).encode(),
-        api_key)
-    title, description = parse_response(payload)
-    # enforce the ban: one rewrite pass naming the offending words
-    offenders = find_banned(f"{title} {description}")
-    if offenders:
-        payload = _gemini_call(
-            GEMINI_URL.format(model=model),
-            json.dumps(build_request(
-                image_bytes, entry, report, angle=angle, used_titles=used_titles,
-                extra=f"Your previous attempt used banned words: {', '.join(offenders)}. "
-                      f"Rewrite completely without them or any synonym-sludge.")).encode(),
-            api_key)
-        title, description = parse_response(payload)
-    return title, description
-
-
-def _storage(payload):
-    client = boto3.client("lambda", region_name="us-east-1")
-    resp = client.invoke(FunctionName=STORAGE_FUNCTION,
-                         Payload=json.dumps(payload).encode())
-    body = json.loads(resp["Payload"].read())
-    if int(body.get("statusCode", 500)) != 200:
-        raise RuntimeError(f"storage {payload.get('path')}: {body.get('body')}")
-    return json.loads(body["body"])
-
-
-def fetch_public(url):
-    with urllib.request.urlopen(url, timeout=60) as resp:
-        return resp.read()
+import book_describe as eng  # noqa: E402
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description="Gemini titles + descriptions into a book's entry overrides.")
-    parser.add_argument("--book", required=True, help="book id (e.g. book2)")
-    parser.add_argument("--model", default=DEFAULT_MODEL)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--book", required=True)
+    parser.add_argument("--model", default=eng.DEFAULT_MODEL)
     parser.add_argument("--apply", action="store_true", help="save; default prints only")
-    parser.add_argument("--overwrite", action="store_true",
-                        help="regenerate entries that already have overrides")
+    parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--limit", type=int, default=0)
     args = parser.parse_args(argv)
 
@@ -216,15 +33,15 @@ def main(argv=None):
     if not api_key:
         sys.exit("GEMINI_API_KEY is not set (free key: aistudio.google.com/apikey)")
 
-    fetched = _storage({"path": "/fetch-book", "body": json.dumps({"id": args.book})})
+    fetched = eng._storage({"path": "/fetch-book", "body": json.dumps({"id": args.book})})
     doc = fetched["book"]
     entries = doc.get("entries") or []
     if not entries:
         sys.exit(f"book {args.book} has no entries")
 
-    changed = 0
     used_titles = [str(e.get("title_override") or "").strip()
                    for e in entries if str(e.get("title_override") or "").strip()]
+    changed = 0
     for idx, entry in enumerate(entries, start=1):
         if args.limit and changed >= args.limit:
             break
@@ -233,42 +50,30 @@ def main(argv=None):
         if has_prose and not args.overwrite:
             print(f"[{idx}/{len(entries)}] {entry.get('artifact_id')}: has overrides, skipping")
             continue
-
-        prefix = f"polypaint/books/{args.book}/assets/{entry.get('entry_id')}"
-        report = {}
-        try:
-            report = json.loads(fetch_public(f"{BUCKET_BASE}{prefix}.provenance.json")).get("report") or {}
-        except Exception:
-            pass  # provenance is grounding, not a requirement
-        preview_url = f"{BUCKET_BASE}renders/{entry.get('job_id')}/color/{entry.get('artifact_id')}/preview.jpg"
-        try:
-            image = fetch_public(preview_url)
-        except Exception:
-            # pre-migration artifact: fall back to the png
-            image = fetch_public(preview_url.replace("preview.jpg", "preview.png"))
-
-        title, description = describe_image(
+        if changed:
+            time.sleep(eng.FREE_TIER_PACING_S)
+        image = eng._entry_preview_bytes(entry)
+        report = eng._entry_report(args.book, entry)
+        title, description = eng.describe_image(
             image, entry, report, model=args.model, api_key=api_key,
-            angle=ANGLES[(idx - 1) % len(ANGLES)], used_titles=used_titles)
-        used_titles.append(title)
+            angle=eng.ANGLES[(idx - 1) % len(eng.ANGLES)], used_titles=used_titles)
         print(f"[{idx}/{len(entries)}] {entry.get('artifact_id')}")
         print(f"    title: {title}")
         print(f"    body:  {description}")
         entry["title_override"] = title
         entry["body_override"] = description
+        used_titles.append(title)
         changed += 1
-        time.sleep(FREE_TIER_PACING_S)
 
     if not changed:
         print("nothing to do")
         return 0
     if not args.apply:
         print(f"\nDRY-RUN: {changed} entries described, nothing saved. "
-              f"Re-run with --apply to write them, then Compile the book.")
+              f"Re-run with --apply, or use the Book tab's Describe button.")
         return 0
-    saved = _storage({"path": "/save-book", "body": json.dumps({"book": doc})})
-    print(f"\nSaved {changed} descriptions to \"{saved['book'].get('name')}\" "
-          f"(saved_at {saved['book'].get('saved_at')}). Compile to publish.")
+    saved = eng._storage({"path": "/save-book", "body": json.dumps({"book": doc})})
+    print(f"\nSaved {changed} descriptions to \"{saved['book'].get('name')}\". Compile to publish.")
     return 0
 
 

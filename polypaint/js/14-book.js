@@ -9,6 +9,7 @@ let _bookState = {
     activeId: localStorage.getItem('polypaint_active_book') || '',
     doc: null,            // the loaded book document (source of truth)
     latestOutput: null,
+    describe: null,
     dirty: false,
     hydrated: {},         // entry_id -> {preview_url, missing}
     selectedEntryId: '',
@@ -551,6 +552,88 @@ async function _bookPollCompile() {
         _bookCompileBtn(false);
         _bookStatus(e.message, true);
         _bookLog(`Compile failed: ${e.message}`, 'err');
+    }
+}
+
+async function bookDescribe(btn) {
+    // server-side Gemini titles+descriptions (lambda/book_describe.py):
+    // dispatch -> phase polling -> rail card, same shape as Compile
+    const doc = _bookState.doc;
+    if (!doc || !(doc.entries || []).length) { _bookStatus('No entries to describe', true); return; }
+    if (_bookState.describe) { _bookStatus('Describe already running', true); return; }
+    const orig = btn ? btn.textContent : 'Describe';
+    if (btn) { btn.disabled = true; btn.textContent = 'Describing…'; }
+    try {
+        if (_bookState.dirty) await bookSave();
+        const runId = 'bd_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+        const jobId = 'book#' + _bookState.activeId;
+        const taskId = `bookdesc_${runId}`;
+        await lambdaPost('dispatch', { target: 'book_pdf', jobs: [{
+            op: 'describe', job_id: jobId, task_id: taskId,
+            book_id: _bookState.activeId, expected_saved_at: _bookState.doc.saved_at,
+        }], expected_keys: [] });
+        _bookState.describe = { runId, jobId, taskId, startedAt: Date.now(), btnOrig: orig, btn };
+        _bookRailDescribe('running', 'dispatched');
+        _bookLog(`Describe ${runId}: dispatched for ${doc.entries.length} entries`);
+        _bookStatus('Describing…');
+        _bookPollDescribe();
+    } catch (e) {
+        _bookState.describe = null;
+        if (btn) { btn.disabled = false; btn.textContent = orig; }
+        _bookStatus(e.message, true);
+    }
+}
+
+function _bookRailDescribe(state, detail) {
+    const run = _bookState.describe;
+    if (!run || typeof _jobsRailUpsert !== 'function') return;
+    _jobsRailUpsert({
+        id: 'bookdesc:' + run.runId, kind: 'book',
+        label: 'describe · ' + _bookState.activeId,
+        jobId: run.jobId, tab: 'book', state,
+        startedAt: run.startedAt, detail: String(detail || ''),
+    });
+}
+
+async function _bookPollDescribe() {
+    const run = _bookState.describe;
+    if (!run) return;
+    const finish = () => {
+        if (run.btn) { run.btn.disabled = false; run.btn.textContent = run.btnOrig; }
+        _bookState.describe = null;
+    };
+    try {
+        const check = await lambdaPost('storage', {
+            job_id: run.jobId, task_prefix: run.taskId, expected: 1,
+        }, '/check-status');
+        if ((check.errors || 0) > 0) {
+            const detail = (check.error_details || [])[0] || {};
+            throw new Error(detail.error_msg || 'describe failed');
+        }
+        const rd = (check.results || [])[0] || {};
+        const label = rd.phase_label || rd.phase || 'working';
+        const elapsed = Math.round((Date.now() - run.startedAt) / 1000);
+        if (rd.phase === 'done') {
+            _bookRailDescribe('done', `${rd.described || 0} described · ${elapsed}s`);
+            _bookLog(`Describe done: ${rd.described || 0} described, ${rd.skipped || 0} skipped (${elapsed}s)`);
+            finish();
+            await _bookLoadActive();
+            _renderBookTab();
+            _bookStatus(`Described ${rd.described || 0} entries — Compile to publish`);
+            return;
+        }
+        _bookRailDescribe('running', `${label} · ${elapsed}s`);
+        if (label !== run.lastLabel) {
+            run.lastLabel = label;
+            _bookLog(`Describe: ${label} (${elapsed}s)`);
+        }
+        _bookStatus(`Describe: ${label}… (${elapsed}s)`);
+        setTimeout(_bookPollDescribe, 3000);
+    } catch (e) {
+        _bookRailDescribe('failed', e.message);
+        _bookLog(`Describe failed: ${e.message}`, 'err');
+        finish();
+        _bookStatus(e.message, true);
     }
 }
 

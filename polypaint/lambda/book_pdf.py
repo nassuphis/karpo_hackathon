@@ -632,6 +632,9 @@ def handler(event, context):
             return handle_prepare(params)
         if op == "compose":
             return handle_compose(params)
+        if op == "describe":
+            from book_describe import handle_describe
+            return handle_describe(params)
         raise RuntimeError(f"book_pdf unknown op {op!r}")
     except Exception as e:
         report_status(job_id, task_id, "error", str(e),

@@ -388,7 +388,9 @@ deploy_book_pdf_image() {
         --push "$SCRIPT_DIR"
 
     echo "--- book-pdf image: lambda ---"
-    local ENV_VARS="BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE"
+    # GEMINI_API_KEY comes from the deployer's shell (never committed);
+    # empty is fine — the describe op errors informatively until it is set
+    local ENV_VARS="BUCKET=$BUCKET,JOBS_TABLE=$JOBS_TABLE,GEMINI_API_KEY=${GEMINI_API_KEY:-}"
     if aws lambda get-function --function-name "$BOOK_PDF_NAME" --region "$REGION" >/dev/null 2>&1; then
         aws lambda update-function-code --function-name "$BOOK_PDF_NAME" \
             --image-uri "${REPO_URI}:${TAG}" --region "$REGION" >/dev/null

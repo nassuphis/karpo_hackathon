@@ -153,8 +153,8 @@ def _palette_mm(rows, body_override):
     the 108mm column) − 16 palette chrome − 8 safety."""
     body_lines = 0
     for line in str(body_override or "").strip().splitlines():
-        body_lines += max(1, (len(line) + 49) // 50)   # ~50 chars/line at normalsize
-    band = max(6.5 * len(rows), 5.0 * body_lines)
+        body_lines += max(1, (len(line) + 43) // 44)   # ~44 chars/line at 12/16pt
+    band = max(6.5 * len(rows), 5.7 * body_lines)
     avail = 294 - 30 - band - 16 - 8
     return int(max(PALETTE_MIN_MM, min(PALETTE_MAX_MM, avail)))
 
@@ -204,7 +204,7 @@ def _verso_report_page(entry, provenance):
         parts.append(r"\hfill\begin{minipage}[t]{108mm}")
         parts.append(r"\setlength{\parskip}{2mm}\raggedright")
         for line in body_override.splitlines():
-            parts.append(r"{\normalsize\color{bodytext} %s\par}" % tex_escape(line))
+            parts.append(r"{\fontsize{12}{16}\selectfont\color{bodytext} %s\par}" % tex_escape(line))
         parts.append(r"\end{minipage}")
     parts.append(r"\par")
 

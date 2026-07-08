@@ -25,6 +25,7 @@ COVER_SPINE_MM = 11
 
 # The compose build dir lays prepared images out under assets/.
 ASSET_DIR = "assets"
+S3_PUBLIC_BASE = "https://polypaint.s3.us-east-1.amazonaws.com/"
 
 _TEX_SPECIALS = {
     "\\": r"\textbackslash{}",
@@ -179,7 +180,7 @@ def _verso_report_page(entry, provenance):
     # image — the printed page linking to its digital original
     image_key = str(entry.get("image_key") or "").strip()
     if override_title and image_key:
-        url = "https://polypaint.s3.us-east-1.amazonaws.com/" + image_key
+        url = S3_PUBLIC_BASE + image_key
         # dark modules on a light chip (an inverted QR scans unreliably);
         # 1.5mm fboxsep = the quiet zone the spec wants
         title += (r"\hfill\raisebox{-2mm}{\setlength{\fboxsep}{1.5mm}"
@@ -236,8 +237,13 @@ def _verso_report_page(entry, provenance):
     return "\n".join(parts)
 
 
-def render_content_tex(book, provenance_by_entry=None):
-    """Emit the content PDF source: title page + one spread per entry + pads."""
+def render_content_tex(book, provenance_by_entry=None, pdf_url=None):
+    """Emit the content PDF source: title page + one spread per entry + pads.
+
+    pdf_url: public URL of the content PDF being built (known before TeX
+    runs). When set, the title page carries a QR to it at bottom center —
+    self-referential on purpose: scanned from the flipbook or the printed
+    book, it downloads this exact compile."""
     provenance_by_entry = provenance_by_entry or {}
     entries = list(book.get("entries") or [])
     total, pad = page_plan(len(entries))
@@ -257,6 +263,19 @@ def render_content_tex(book, provenance_by_entry=None):
     if author:
         parts.append(r"\vspace{6mm}{\small %s\par}" % tex_escape(author))
     parts.append(r"\end{center}")
+    if pdf_url:
+        # same chip idiom as the verso QRs (dark modules on a light chip,
+        # 1.5mm quiet zone), same 12mm size
+        parts.extend([
+            r"\vfill",
+            r"\begin{center}",
+            r"{\setlength{\fboxsep}{1.5mm}"
+            r"\colorbox{bodytext}{\color{pagebg}\qrcode[height=12mm,level=M]{%s}}\par}" % pdf_url,
+            r"\vspace{2.5mm}",
+            r"{\monofont\footnotesize\color{monotext} download pdf\par}",
+            r"\end{center}",
+            r"\vspace*{14mm}",
+        ])
     for entry in entries:
         prov = provenance_by_entry.get(entry.get("entry_id") or "")
         parts.append(_verso_report_page(entry, prov))

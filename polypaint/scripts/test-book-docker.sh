@@ -62,7 +62,11 @@ for i in range(3):
                                         max_px=3600, quality=90, image_format="jpeg")
     assert max(info["prepared_width"], info["prepared_height"]) == 3600, info
 assert spread_pdf._vipsthumbnail_path(), "vipsthumbnail not on PATH in image"
-content, expected_pages = book_tex.render_content_tex(BOOK, PROV)
+content, expected_pages = book_tex.render_content_tex(
+    BOOK, PROV,
+    pdf_url=book_tex.S3_PUBLIC_BASE + "books/gate/out/cmp_gate/content.pdf")
+assert "\\qrcode[height=12mm,level=M]{https://" in content.split("\\newpage", 1)[0], \
+    "title-page QR missing from gate compile"
 cover = book_tex.render_cover_tex(BOOK, "assets/e1.jpg")
 # test-only: keep objects uncompressed so the assertions can grep the PDF
 prologue = "\\pdfvariable objcompresslevel 0\n\\pdfvariable compresslevel 0\n"

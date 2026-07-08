@@ -152,6 +152,26 @@ class TestReportPage(unittest.TestCase):
             _book(1), {"e0": {"report": {"compute_id": "c", "summary_rows": []}}})
         self.assertNotIn(r"\qrcode[", tex)
 
+    def test_title_page_qr_links_the_whole_pdf(self):
+        pdf_url = ("https://polypaint.s3.us-east-1.amazonaws.com/"
+                   "books/b1/out/cmp_1/content.pdf")
+        tex, _ = book_tex.render_content_tex(
+            _book(1), {"e0": {"report": {"compute_id": "c", "summary_rows": []}}},
+            pdf_url=pdf_url)
+        title_page = tex.split(r"\newpage", 1)[0]
+        self.assertIn(r"\qrcode[height=12mm,level=M]{%s}" % pdf_url, title_page)
+        # bottom-centered: fill above, fixed inset below, same chip idiom
+        self.assertIn(r"\vfill", title_page)
+        self.assertIn(r"\colorbox{bodytext}{\color{pagebg}\qrcode", title_page)
+        self.assertIn(r"\vspace*{14mm}", title_page)
+        self.assertIn("download pdf", title_page)
+
+    def test_no_title_page_qr_without_pdf_url(self):
+        tex, _ = book_tex.render_content_tex(
+            _book(1), {"e0": {"report": {"compute_id": "c", "summary_rows": []}}})
+        title_page = tex.split(r"\newpage", 1)[0]
+        self.assertNotIn(r"\qrcode[", title_page)
+
     def test_overrides_win(self):
         book = _book(1)
         book["entries"][0]["title_override"] = "My Title"

@@ -537,7 +537,9 @@ def handle_compose(params, latex_runner=_run_lualatex):
         # luaotfload cache); no per-build-dir copy needed for the compile.
 
         _phase(job_id, task_id, "processing", "compose_tex", "Render tex", **progress)
-        content_tex, content_pages = book_tex.render_content_tex(book, provenance)
+        content_tex, content_pages = book_tex.render_content_tex(
+            book, provenance,
+            pdf_url=book_tex.S3_PUBLIC_BASE + out_prefix + "content.pdf")
         cover_rel = None
         cover_id = str(book.get("cover_entry_id") or "")
         if cover_id and cover_id in provenance:

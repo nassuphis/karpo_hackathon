@@ -2768,6 +2768,24 @@ if (label({artifact_id: 'color_run_1'}) !== 'color_run_1')
   { console.error('FATAL: undescribed entries must keep the artifact id'); process.exit(1); }
 if (!js.includes('_escapeHtml(_bookEntryLabel(entry))'))
   { console.error('FATAL: book row must render the label escaped'); process.exit(1); }
+// Clear buttons: whole-book reset (after Describe) + per-row in the editor
+const html = fs.readFileSync(path.join(process.argv[2], 'index.html'), 'utf8');
+const iDesc = html.indexOf('id="btn-book-describe"');
+const iClear = html.indexOf('id="btn-book-cleardesc"');
+if (iClear < 0 || iDesc < 0 || iClear < iDesc)
+  { console.error('FATAL: ClearDescriptions button must sit after Describe'); process.exit(1); }
+for (const opt of ['gemini-3.5-flash', 'gemini-3.1-pro-preview', 'gemini-2.5-pro']) {
+  if (!html.includes(`<option value="${opt}">`))
+    { console.error('FATAL: vision model menu missing ' + opt); process.exit(1); }
+}
+if (!js.includes('async function bookClearDescriptions'))
+  { console.error('FATAL: bookClearDescriptions missing'); process.exit(1); }
+if (!js.includes('async function bookEditEntryClear'))
+  { console.error('FATAL: bookEditEntryClear missing'); process.exit(1); }
+if (!js.match(/bookClearDescriptions[\s\S]{0,700}confirm\(/))
+  { console.error('FATAL: whole-book clear must confirm before wiping prose'); process.exit(1); }
+if (!js.includes(`bookEditEntryClear('\${eid}', this)`))
+  { console.error('FATAL: row editor must offer a Clear button'); process.exit(1); }
 console.log('Frontend book row label checks: OK');
 NODE
 

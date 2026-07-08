@@ -135,6 +135,7 @@ function _bookEntryEditor(entry) {
         <div style="display:flex;gap:8px;margin-top:6px">
             <button class="btn-secondary" style="padding:2px 12px" onclick="void bookEditEntrySave('${eid}', this)">Save</button>
             <button class="btn-secondary" style="padding:2px 12px" onclick="bookEditEntryCancel()">Cancel</button>
+            <button class="btn-secondary" style="padding:2px 12px" title="Blank this entry's title + description (saves immediately)" onclick="void bookEditEntryClear('${eid}', this)">Clear</button>
         </div>
     </div>`;
 }
@@ -147,6 +148,47 @@ function bookEditEntry(entryId) {
 function bookEditEntryCancel() {
     _bookState.editingEntryId = '';
     _renderBookTab();
+}
+
+async function bookEditEntryClear(entryId, btn) {
+    const entry = (_bookState.doc?.entries || []).find(e => e.entry_id === entryId);
+    if (!entry) return;
+    const orig = btn ? btn.textContent : 'Clear';
+    if (btn) { btn.disabled = true; btn.textContent = 'Clearing…'; }
+    entry.title_override = '';
+    entry.body_override = '';
+    _bookState.dirty = true;
+    try {
+        await bookSave();
+        _bookState.editingEntryId = '';
+        _renderBookTab();
+        _bookStatus('Entry text cleared — Describe fills blanks, DescribeSelection redoes this row');
+    } catch (e) {
+        _bookStatus(e.message, true);
+        if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }
+}
+
+async function bookClearDescriptions(btn) {
+    const doc = _bookState.doc;
+    const entries = doc?.entries || [];
+    if (!entries.length) { _bookStatus('No book loaded', true); return; }
+    const n = entries.filter(e => (e.title_override || '').trim() || (e.body_override || '').trim()).length;
+    if (!n) { _bookStatus('Nothing to clear — no entry has a title or description'); return; }
+    if (!confirm(`Clear titles + descriptions on ${n} entr${n === 1 ? 'y' : 'ies'}? Saves immediately so Describe re-runs the whole book from scratch.`)) return;
+    const orig = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Clearing…'; }
+    try {
+        for (const e of entries) { e.title_override = ''; e.body_override = ''; }
+        _bookState.dirty = true;
+        await bookSave();
+        _renderBookTab();
+        _bookStatus(`Cleared ${n} entries — pick a model in ⚙ and hit Describe to regenerate`);
+    } catch (e) {
+        _bookStatus(e.message, true);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = orig; }
+    }
 }
 
 async function bookEditEntrySave(entryId, btn) {

@@ -80,10 +80,36 @@ class DescribeEngineTests(unittest.TestCase):
         # still hard errors: no object at all / fields missing
         with self.assertRaises(RuntimeError) as ctx:
             self.mod._parse_prose("I cannot describe this image.")
-        self.assertIn("no JSON object", str(ctx.exception))
+        self.assertIn("no complete JSON object", str(ctx.exception))
         with self.assertRaises(RuntimeError) as ctx:
             self.mod._parse_prose('{"title": "only a title"} trailing')
         self.assertIn("missing fields", str(ctx.exception))
+
+    def test_gemini_multipart_reply_is_joined_and_thoughts_skipped(self):
+        # thinking models split long replies across parts and may prepend
+        # thought summaries — parts[0] alone truncates the JSON mid-string
+        payload = {"candidates": [{"content": {"parts": [
+            {"text": "I will describe the image now.", "thought": True},
+            {"text": '{"title": "Microtubule Ribbon Motor", "description": "Saffron ribbons '},
+            {"text": 'radiate from a central nucleolus."}'},
+        ]}, "finishReason": "STOP"}]}
+        self.assertEqual(
+            self.mod.parse_response(payload),
+            ("Microtubule Ribbon Motor",
+             "Saffron ribbons radiate from a central nucleolus."))
+
+    def test_gemini_max_tokens_truncation_raises_clearly(self):
+        payload = {"candidates": [{"content": {"parts": [
+            {"text": '{"title": "T", "description": "cut mid-sent'},
+        ]}, "finishReason": "MAX_TOKENS"}]}
+        with self.assertRaises(RuntimeError) as ctx:
+            self.mod.parse_response(payload)
+        self.assertIn("MAX_TOKENS", str(ctx.exception))
+
+    def test_parse_prose_tolerates_literal_newlines_in_strings(self):
+        self.assertEqual(
+            self.mod._parse_prose('{"title": "T", "description": "line one\nline two"}'),
+            ("T", "line one\nline two"))
 
     def test_gemini_call_retries_503_then_succeeds(self):
         import io as _io

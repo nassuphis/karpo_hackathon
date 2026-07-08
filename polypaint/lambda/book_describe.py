@@ -119,20 +119,7 @@ def parse_response(payload):
     """Returns (title, description) or raises with the API's own words."""
     if "error" in payload:
         raise RuntimeError(f"Gemini: {payload['error'].get('message', payload['error'])}")
-    try:
-        text = payload["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError) as exc:
-        raise RuntimeError(f"Gemini returned no text: {json.dumps(payload)[:300]}") from exc
-    text = text.strip()
-    if text.startswith("```"):
-        text = text.strip("`")
-        text = text[text.index("{"):text.rindex("}") + 1]
-    data = json.loads(text)
-    title = str(data.get("title") or "").strip()
-    description = str(data.get("description") or "").strip()
-    if not title or not description:
-        raise RuntimeError(f"Gemini JSON missing fields: {text[:200]}")
-    return title, description
+    return _parse_prose(_gemini_text(payload))
 
 
 RETRYABLE_HTTP = {429, 500, 502, 503}
@@ -239,7 +226,25 @@ def _vision_call(model, api_key, image_bytes, text):
                            json.dumps(req).encode(), api_key)
     if "error" in payload:
         raise RuntimeError(f"Gemini: {payload['error'].get('message', payload['error'])}")
-    return _extract_text(payload, "Gemini", "candidates", 0, "content", "parts", 0, "text")
+    return _gemini_text(payload)
+
+
+def _gemini_text(payload):
+    """Join ALL text parts of the first candidate. Gemini splits long
+    replies across multiple parts (thinking models especially) — taking
+    parts[0] alone truncates the JSON mid-string. Thought parts
+    (thought: true) are reasoning summaries, not the answer: skipped."""
+    cand = (payload.get("candidates") or [{}])[0]
+    parts = ((cand.get("content") or {}).get("parts")) or []
+    text = "".join(str(p.get("text") or "") for p in parts
+                   if isinstance(p, dict) and not p.get("thought"))
+    if not text.strip():
+        raise RuntimeError(f"Gemini returned no text: {json.dumps(payload)[:300]}")
+    if (str(cand.get("finishReason") or "") == "MAX_TOKENS"
+            and not text.rstrip().endswith("}")):
+        raise RuntimeError(
+            f"Gemini reply truncated (finishReason MAX_TOKENS) mid-JSON: {text[-160:]}")
+    return text
 
 
 def _parse_prose(text):
@@ -251,7 +256,9 @@ def _parse_prose(text):
     complete JSON value and ignores whatever follows; scanning forward
     over '{' candidates also skips leading junk (fences included)."""
     raw = str(text or "")
-    decoder = json.JSONDecoder()
+    # strict=False: literal newlines/tabs inside string values parse
+    # instead of dying on "Invalid control character"
+    decoder = json.JSONDecoder(strict=False)
     idx = raw.find("{")
     data = None
     while idx >= 0:
@@ -265,7 +272,7 @@ def _parse_prose(text):
             break
         idx = raw.find("{", idx + 1)
     if data is None:
-        raise RuntimeError(f"vision reply has no JSON object: {raw[:200]}")
+        raise RuntimeError(f"no complete JSON object in vision reply (truncated?): {raw[:200]}")
     title = str(data.get("title") or "").strip()
     description = str(data.get("description") or "").strip()
     if not title or not description:

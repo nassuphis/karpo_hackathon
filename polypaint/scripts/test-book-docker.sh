@@ -67,6 +67,8 @@ content, expected_pages = book_tex.render_content_tex(
     pdf_url=book_tex.S3_PUBLIC_BASE + "books/gate/out/cmp_gate/content.pdf")
 assert "\\qrcode[height=14mm,level=M]{https://" in content.split("\\newpage", 1)[0], \
     "title-page QR missing from gate compile"
+assert content.count("\\qrcode[") == 1 + len(BOOK["entries"]), \
+    "every spread must carry an image QR (titled or not) + the title-page PDF QR"
 cover = book_tex.render_cover_tex(BOOK, "assets/e1.jpg")
 # test-only: keep objects uncompressed so the assertions can grep the PDF
 prologue = "\\pdfvariable objcompresslevel 0\n\\pdfvariable compresslevel 0\n"

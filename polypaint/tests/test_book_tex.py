@@ -147,9 +147,19 @@ class TestReportPage(unittest.TestCase):
         # dark-on-light chip: inverted QRs scan unreliably
         self.assertIn(r"\colorbox{bodytext}{\color{pagebg}\qrcode", tex)
 
-    def test_no_qr_without_a_title(self):
+    def test_qr_on_every_spread_even_without_a_title(self):
         tex, _ = book_tex.render_content_tex(
             _book(1), {"e0": {"report": {"compute_id": "c", "summary_rows": []}}})
+        self.assertIn(
+            r"\qrcode[height=14mm,level=L]{https://polypaint.s3.us-east-1"
+            r".amazonaws.com/renders/j0/color/a0/image.jpeg}", tex)
+
+    def test_no_qr_without_an_image_key(self):
+        book = _book(1)
+        book["entries"][0]["image_key"] = ""
+        book["entries"][0]["title_override"] = "Titled But Keyless"
+        tex, _ = book_tex.render_content_tex(
+            book, {"e0": {"report": {"compute_id": "c", "summary_rows": []}}})
         self.assertNotIn(r"\qrcode[", tex)
 
     def test_title_page_qr_links_the_whole_pdf(self):

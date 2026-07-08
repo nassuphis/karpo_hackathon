@@ -176,10 +176,10 @@ def _verso_report_page(entry, provenance):
         title = (tex_escape(base_title)
                  + r"\hspace{4mm}\raisebox{0.18em}{\color{rulecol}\rule{7mm}{0.6pt}}\hspace{4mm}"
                  + tex_escape(override_title))
-    # QR after the title (when one exists): scans to the public full-res
-    # image — the printed page linking to its digital original
+    # QR on EVERY spread with an image (title or not): scans to the public
+    # full-res image — the printed page linking to its digital original
     image_key = str(entry.get("image_key") or "").strip()
-    if override_title and image_key:
+    if image_key:
         url = S3_PUBLIC_BASE + image_key
         # dark modules on a light chip (an inverted QR scans unreliably);
         # 1.5mm fboxsep = the quiet zone the spec wants. 14mm + level L:

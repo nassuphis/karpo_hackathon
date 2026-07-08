@@ -2751,4 +2751,24 @@ if (out[0] !== '2026-07-04T00:00:00Z' || out[3] !== '2026-07-01T00:00:00Z')
 console.log('Frontend coeff program modal filter/sort checks: OK');
 NODE
 
+# ── Book rows: described entries read by their artsy title ──
+node - "$ROOT" <<'NODE'
+const fs = require('fs'), path = require('path'), vm = require('vm');
+const js = fs.readFileSync(path.join(process.argv[2], 'js', '14-book.js'), 'utf8');
+const m = js.match(/function _bookEntryLabel\([^)]*\) \{[\s\S]*?\n\}/);
+if (!m) { console.error('FATAL: _bookEntryLabel missing from js/14-book.js'); process.exit(1); }
+const ctx = vm.createContext({});
+vm.runInContext(m[0], ctx);
+const label = ctx._bookEntryLabel;
+if (label({title_override: 'Petrol Lattice', display_name: 'D', artifact_id: 'color_run_1'}) !== 'Petrol Lattice')
+  { console.error('FATAL: title_override must win the book row label'); process.exit(1); }
+if (label({title_override: '   ', display_name: 'D', artifact_id: 'color_run_1'}) !== 'D')
+  { console.error('FATAL: blank title must fall back to display_name'); process.exit(1); }
+if (label({artifact_id: 'color_run_1'}) !== 'color_run_1')
+  { console.error('FATAL: undescribed entries must keep the artifact id'); process.exit(1); }
+if (!js.includes('_escapeHtml(_bookEntryLabel(entry))'))
+  { console.error('FATAL: book row must render the label escaped'); process.exit(1); }
+console.log('Frontend book row label checks: OK');
+NODE
+
 echo "=== Frontend fused render source test passed ==="

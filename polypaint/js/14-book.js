@@ -88,6 +88,12 @@ async function _bookHydrateEntries() {
     _renderBookTab();
 }
 
+function _bookEntryLabel(entry) {
+    // described entries read by their artsy title; the artifact id stays
+    // reachable via GoRender (and the … editor)
+    return (entry.title_override || '').trim() || entry.display_name || entry.artifact_id;
+}
+
 function _bookEntryRow(entry, idx) {
     const hyd = _bookState.hydrated[entry.entry_id] || {};
     const selected = entry.entry_id === _bookState.selectedEntryId;
@@ -99,7 +105,7 @@ function _bookEntryRow(entry, idx) {
     const palThumb = hyd.palette_url
         ? `<img src="${_escapeHtml(hyd.palette_url)}" style="width:48px;height:48px;object-fit:cover">`
         : `<div style="width:48px;height:48px;background:#121829;border:1px solid #2b3a5e;box-sizing:border-box"></div>`;
-    const title = _escapeHtml(entry.display_name || entry.artifact_id);
+    const title = _escapeHtml(_bookEntryLabel(entry));
     const eid = _escapeHtml(entry.entry_id);
     // the cover row's number turns red so it's visible at a glance
     const numColor = cover ? '#e94560' : '#666';
@@ -205,7 +211,7 @@ function _renderBookTab() {
     const hint = document.getElementById('book-cover-hint');
     if (hint) {
         hint.textContent = coverEntry
-            ? `Cover: ${coverEntry.display_name || coverEntry.artifact_id}`
+            ? `Cover: ${_bookEntryLabel(coverEntry)}`
             : (doc ? 'No cover chosen — the cover page will be typographic.' : '');
     }
     for (const [id, key] of [['book-title-input', 'title'], ['book-subtitle-input', 'subtitle'], ['book-author-input', 'author']]) {
@@ -349,7 +355,7 @@ function bookSetCover() {
     doc.cover_entry_id = _bookState.selectedEntryId;
     _bookState.dirty = true;
     _renderBookTab();
-    _bookStatus(`Cover set to "${entry ? (entry.display_name || entry.artifact_id) : '?'}" (row turns red). Save to keep it.`);
+    _bookStatus(`Cover set to "${entry ? _bookEntryLabel(entry) : '?'}" (row turns red). Save to keep it.`);
 }
 
 async function bookGoRender() {

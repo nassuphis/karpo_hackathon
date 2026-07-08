@@ -127,12 +127,12 @@ def _full_bleed_image(rel_path):
 
 
 def entry_title(entry, provenance):
-    """Verso heading: the compute id, with the generated/hand title appended
-    on the SAME line as 'compute_xxx :: Title' when one is set."""
+    """Verso heading parts: (compute id, optional generated/hand title).
+    The verso joins them on one line with a small grey rule between."""
     report = (provenance or {}).get("report") or {}
     base = str(report.get("compute_id") or entry.get("job_id") or entry.get("artifact_id") or "")
     override = str(entry.get("title_override") or "").strip()
-    return f"{base} :: {override}" if override and base else (override or base)
+    return base, override
 
 
 def _report_rows(entry, provenance):
@@ -166,7 +166,14 @@ def _verso_report_page(entry, provenance):
     case (10 rows) totals ~230mm < the 248mm text block: the page can
     never overflow. Plain LaTeX, no overlay tricks."""
     report = (provenance or {}).get("report") or {}
-    title = tex_escape(entry_title(entry, provenance))
+    base_title, override_title = entry_title(entry, provenance)
+    # separator: a small raised hairline in the muted grey (a "::" read as
+    # punctuation noise; a little rule reads as design)
+    title = tex_escape(base_title or override_title or "")
+    if base_title and override_title:
+        title = (tex_escape(base_title)
+                 + r"\hspace{4mm}\raisebox{0.18em}{\color{rulecol}\rule{7mm}{0.6pt}}\hspace{4mm}"
+                 + tex_escape(override_title))
     artifact = tex_escape(str(report.get("artifact_id") or entry.get("artifact_id") or ""))
     rows = _report_rows(entry, provenance)
     body_override = str(entry.get("body_override") or "").strip()
@@ -179,7 +186,7 @@ def _verso_report_page(entry, provenance):
         r"\vspace*{6mm}",
         r"{\displayfont\fontsize{26}{30}\selectfont %s\par}" % (title or "PolyPaint"),
         r"\vspace{2.5mm}",
-        r"{\color{accent}\rule{\linewidth}{0.8pt}}\par",
+        r"{\color{rulecol}\rule{\linewidth}{0.8pt}}\par",
         r"\vspace{1.5mm}",
         r"{\monofont\footnotesize\color{monotext} %s\par}" % artifact,
         r"\vspace{7mm}",

@@ -53,6 +53,8 @@ RUN cd /tmp \
     && rm -rf /tmp/install-tl-2* /tmp/install-tl-unx.tar.gz
 ENV PATH="$TEXDIR/bin/aarch64-linux:$TEXDIR/bin/x86_64-linux:$PATH"
 RUN tlmgr install fontspec microtype geometry xcolor eso-pic pgf luaotfload
+# vector QR codes on the verso (download link for the image)
+RUN tlmgr install qrcode xkeyval
 RUN tlmgr path add || true
 
 # Lambda mounts the image filesystem READ-ONLY except /tmp. luaotfload builds

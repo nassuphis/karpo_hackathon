@@ -137,6 +137,21 @@ class TestReportPage(unittest.TestCase):
         self.assertNotIn(".palette.jpg", tex)
         self.assertIn("4000", tex)
 
+    def test_qr_after_title_links_the_public_image(self):
+        book = _book(1)
+        book["entries"][0]["title_override"] = "Petrol Lattice"
+        tex, _ = book_tex.render_content_tex(
+            book, {"e0": {"report": {"compute_id": "c", "summary_rows": []}}})
+        self.assertIn(r"\usepackage{qrcode}", tex)
+        self.assertIn(r"\qrcode[height=12mm,level=M]{https://polypaint.s3.us-east-1.amazonaws.com/renders/j0/color/a0/image.jpeg}", tex)
+        # dark-on-light chip: inverted QRs scan unreliably
+        self.assertIn(r"\colorbox{bodytext}{\color{pagebg}\qrcode", tex)
+
+    def test_no_qr_without_a_title(self):
+        tex, _ = book_tex.render_content_tex(
+            _book(1), {"e0": {"report": {"compute_id": "c", "summary_rows": []}}})
+        self.assertNotIn(r"\qrcode[", tex)
+
     def test_overrides_win(self):
         book = _book(1)
         book["entries"][0]["title_override"] = "My Title"

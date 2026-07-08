@@ -96,6 +96,7 @@ def _content_preamble():
         r"\usepackage{xcolor}",
         r"\usepackage{eso-pic}",
         r"\usepackage{array}",
+        r"\usepackage{qrcode}",
         _font_setup(),
         r"\pagestyle{empty}",
         r"\setlength{\parindent}{0pt}",
@@ -174,6 +175,15 @@ def _verso_report_page(entry, provenance):
         title = (tex_escape(base_title)
                  + r"\hspace{4mm}\raisebox{0.18em}{\color{rulecol}\rule{7mm}{0.6pt}}\hspace{4mm}"
                  + tex_escape(override_title))
+    # QR after the title (when one exists): scans to the public full-res
+    # image — the printed page linking to its digital original
+    image_key = str(entry.get("image_key") or "").strip()
+    if override_title and image_key:
+        url = "https://polypaint.s3.us-east-1.amazonaws.com/" + image_key
+        # dark modules on a light chip (an inverted QR scans unreliably);
+        # 1.5mm fboxsep = the quiet zone the spec wants
+        title += (r"\hfill\raisebox{-2mm}{\setlength{\fboxsep}{1.5mm}"
+                  r"\colorbox{bodytext}{\color{pagebg}\qrcode[height=12mm,level=M]{%s}}}" % url)
     artifact = tex_escape(str(report.get("artifact_id") or entry.get("artifact_id") or ""))
     rows = _report_rows(entry, provenance)
     body_override = str(entry.get("body_override") or "").strip()

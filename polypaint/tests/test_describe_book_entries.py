@@ -51,5 +51,48 @@ class DescribeBookEntriesTests(unittest.TestCase):
                 '{"title": "", "description": ""}'}]}}]})
 
 
+class GeminiCallRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.mod = _load_script()
+
+    def _http_error(self, code, message):
+        import io as _io
+        import urllib.error
+        return urllib.error.HTTPError(
+            "https://x", code, "err", {"Retry-After": "0"},
+            _io.BytesIO(json.dumps({"error": {"message": message}}).encode()))
+
+    def test_retries_503_then_succeeds(self):
+        from unittest.mock import patch, MagicMock
+        calls = {"n": 0}
+
+        def fake_urlopen(req, timeout=None):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise self._http_error(503, "The model is overloaded")
+            m = MagicMock()
+            m.__enter__ = lambda s2: s2
+            m.__exit__ = lambda *a: False
+            m.read = lambda: json.dumps({"ok": True}).encode()
+            return m
+
+        with patch.object(self.mod.urllib.request, "urlopen", side_effect=fake_urlopen), \
+             patch.object(self.mod.time, "sleep", lambda *_: None):
+            out = self.mod._gemini_call("https://x", b"{}", "k")
+        self.assertEqual(out, {"ok": True})
+        self.assertEqual(calls["n"], 3)
+
+    def test_non_retryable_surfaces_gemini_message(self):
+        from unittest.mock import patch
+
+        def fake_urlopen(req, timeout=None):
+            raise self._http_error(400, "API key not valid")
+
+        with patch.object(self.mod.urllib.request, "urlopen", side_effect=fake_urlopen):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.mod._gemini_call("https://x", b"{}", "k")
+        self.assertIn("API key not valid", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

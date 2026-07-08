@@ -26,6 +26,7 @@ import json
 import os
 import sys
 import time
+import urllib.error
 import urllib.request
 
 import boto3
@@ -93,14 +94,44 @@ def parse_response(payload):
     return title, description
 
 
+RETRYABLE_HTTP = {429, 500, 502, 503}
+
+
+def _gemini_call(url, body, api_key, *, attempts=6):
+    """POST with backoff: the free tier throws 503 ("model overloaded")
+    routinely, and 429 when pacing slips. Non-retryable errors surface
+    Gemini's own message instead of a bare HTTPError."""
+    delay = 3.0
+    for attempt in range(1, attempts + 1):
+        req = urllib.request.Request(
+            url, data=body,
+            headers={"Content-Type": "application/json", "x-goog-api-key": api_key})
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = json.loads(exc.read()).get("error", {}).get("message", "")
+            except Exception:
+                pass
+            if exc.code in RETRYABLE_HTTP and attempt < attempts:
+                wait = float(exc.headers.get("Retry-After") or delay)
+                print(f"    Gemini {exc.code} ({detail or 'transient'}) — "
+                      f"retry {attempt}/{attempts - 1} in {wait:.0f}s")
+                time.sleep(wait)
+                delay = min(delay * 2, 60)
+                continue
+            raise RuntimeError(f"Gemini HTTP {exc.code}: {detail or exc.reason}") from exc
+    raise RuntimeError("unreachable")
+
+
 def describe_image(image_bytes, entry, report, *, model, api_key):
-    req = urllib.request.Request(
+    payload = _gemini_call(
         GEMINI_URL.format(model=model),
-        data=json.dumps(build_request(image_bytes, entry, report)).encode(),
-        headers={"Content-Type": "application/json", "x-goog-api-key": api_key},
-    )
-    with urllib.request.urlopen(req, timeout=120) as resp:
-        return parse_response(json.loads(resp.read()))
+        json.dumps(build_request(image_bytes, entry, report)).encode(),
+        api_key)
+    return parse_response(payload)
 
 
 def _storage(payload):

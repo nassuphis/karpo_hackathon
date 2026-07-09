@@ -61,14 +61,16 @@ def ref_fable_1(p1, p2, n=N_PARITY):
 # Lacunary: only every 4th slot is live; live slots spiral with angle(p1)
 # and swell/decay with |p2|. Root necklaces that pinch as p2 leaves the disk.
 FABLE_2 = """\
-# fable-2: spiral comb — c_k = [k%4==0] * exp(k*(i*angle(p1) + log(abs(p2))/n))
+# fable-2: spiral comb — c_k = [k%4 == (n-1)%4] * exp(k*(i*angle(p1) + log(abs(p2))/n))
+# comb aligned to the LEADING slot (ascending coeffs): a comb that misses
+# slot n-1 zeroes the leading coefficient and degenerates the solve
 push_range(0, poly_len, 1)
 linear(((1i * angle(p1)) + (log(abs(p2)) / poly_len)), 0)
 poly = exp(pop)
 fill(poly_len, 4)
 push_range(0, poly_len, 1)
 rem(pop, pop)
-fill(poly_len, 0)
+fill(poly_len, ((poly_len - 1) - (4 * floor((poly_len - 1) / 4))))
 eq(pop, pop)
 poly = multiply(poly, pop)
 emit
@@ -77,7 +79,7 @@ emit
 
 def ref_fable_2(p1, p2, n=N_PARITY):
     k = _k(n)
-    live = (np.arange(n) % 4 == 0).astype(np.complex128)
+    live = (np.arange(n) % 4 == (n - 1) % 4).astype(np.complex128)
     return live * np.exp(k * (1j * np.angle(p1) + np.log(abs(p2)) / n))
 
 
@@ -194,6 +196,122 @@ def ref_fable_6(p1, p2, n=N_PARITY):
     return np.cumsum(ph) / np.sqrt(n)
 
 
+# --- fable-7: szegő teardrop -------------------------------------------------
+# Truncated exponential: c_k = lam^k / k!, lam = 0.9*n*p1. Factorial decay
+# beats the unit-circle law — roots trace the Szegő curve |z e^(1-z)| = 1,
+# a teardrop that rotates and breathes with p1. Nothing circular about it.
+FABLE_7 = """\
+# fable-7: szego teardrop — c_k = lam^k/k!, lam = 0.9*poly_len*p1
+scan(poly_len, 0, 1, prev * (((0.9 * poly_len) * p1) / k))
+poly = pop
+emit
+"""
+
+
+def ref_fable_7(p1, p2, n=N_PARITY):
+    lam = 0.9 * n * p1
+    out = np.zeros(n, dtype=np.complex128)
+    out[0] = 1.0
+    for k in range(1, n):
+        out[k] = out[k - 1] * lam / k
+    return out
+
+
+# --- fable-8: theta spiral ----------------------------------------------------
+# Partial theta: c_k = q^(k^2), |q| = 0.9..0.98 from |p2|, arg from p1.
+# Super-geometric decay puts root j at radius ~ |q|^-(2j+1): a genuine
+# logarithmic spiral, arms winding with angle(p1).
+FABLE_8 = """\
+# fable-8: theta spiral — c_k = q^(k^2), log|q| = -B/(n-1)^2 so the decay
+# budget B (not |q|) is what's fixed: outermost root ~ e^(2B/(n-1)) stays
+# ~20x at any degree AND the leading coeff e^(-B) stays f32-transportable
+# (B capped at 60*1.15 = 69 < ln(1e30)). |p2| breathes B by +-15%,
+# angle(p1) winds the arms.
+scan(poly_len, 0, 1, prev * exp(((2 * k) - 1) * (((0 - ((0.85 + ((0.3 * abs(p2)) / (1 + abs(p2)))) * (0.5 * ((60 + (1.5 * (poly_len - 1))) - abs(60 - (1.5 * (poly_len - 1))))))) / ((poly_len - 1) * (poly_len - 1))) + ((1i * angle(p1)) / poly_len))))
+poly = pop
+emit
+"""
+
+
+def ref_fable_8(p1, p2, n=N_PARITY):
+    breathe = 0.85 + 0.3 * abs(p2) / (1 + abs(p2))
+    base = 0.5 * ((60 + 1.5 * (n - 1)) - abs(60 - 1.5 * (n - 1)))  # min(60, 1.5(n-1))
+    logq = -(breathe * base) / ((n - 1) * (n - 1)) + 1j * np.angle(p1) / n
+    out = np.zeros(n, dtype=np.complex128)
+    out[0] = 1.0
+    for k in range(1, n):
+        out[k] = out[k - 1] * np.exp((2 * k - 1) * logq)
+    return out
+
+
+# --- fable-9: tan line ---------------------------------------------------------
+# (1 + itz)^m + (1 - itz)^m with t = 0.9*p1, m = poly_len-1: binomial
+# magnitudes, cos(pi*k/2) sign comb. Roots sit on a straight LINE through
+# the origin (tan-spaced, dense center, sparse ends), rotating with p1.
+FABLE_9 = """\
+# fable-9: tan line — even/odd part of 2*(1+tz)^m, parity matched to the
+# LEADING slot so the top coefficient stays alive at any degree:
+# c_k = 2*C(m,k)*(0.9*p1)^k * [k%2 == (n-1)%2]  (exact 0/1 mask, no fuzz)
+scan(poly_len, 0, 2, prev * ((0.9 * p1) * ((poly_len - k) / k)))
+poly = pop
+fill(poly_len, 2)
+push_range(0, poly_len, 1)
+rem(pop, pop)
+fill(poly_len, ((poly_len - 1) - (2 * floor((poly_len - 1) / 2))))
+eq(pop, pop)
+poly = multiply(poly, pop)
+emit
+"""
+
+
+def ref_fable_9(p1, p2, n=N_PARITY):
+    t = 0.9 * p1
+    out = np.zeros(n, dtype=np.complex128)
+    out[0] = 2.0
+    for k in range(1, n):
+        out[k] = out[k - 1] * t * (n - k) / k
+    live = (np.arange(n) % 2 == (n - 1) % 2).astype(np.complex128)
+    return out * live
+
+
+# --- fable-10: sine butterfly ---------------------------------------------------
+# Truncated sine: c_k = (lam^k/k!) * sin(pi*k/2) — exactly the Taylor
+# coefficients of sin(lam*z). Two conjugate Szegő teardrops joined at the
+# origin: a butterfly, wings tipping with angle(p1).
+FABLE_10 = """\
+# fable-10: sine butterfly — truncated sin(lam*z) when the leading slot is
+# odd, truncated cos(lam*z) when it is even (same two-teardrop butterfly;
+# the comb parity must match slot n-1 or the leading coefficient dies):
+# c_k = (lam^k/k!) * sin(pi*(k + 1 - p)/2) * [k%2 == p], p = (n-1)%2
+scan(poly_len, 0, 1, prev * (((0.85 * poly_len) * p1) / k))
+poly = pop
+push_range(0, poly_len, 1)
+linear((pi / 2), ((pi / 2) * (1 - ((poly_len - 1) - (2 * floor((poly_len - 1) / 2))))))
+sin(pop)
+poly = multiply(poly, pop)
+fill(poly_len, 2)
+push_range(0, poly_len, 1)
+rem(pop, pop)
+fill(poly_len, ((poly_len - 1) - (2 * floor((poly_len - 1) / 2))))
+eq(pop, pop)
+poly = multiply(poly, pop)
+emit
+"""
+
+
+def ref_fable_10(p1, p2, n=N_PARITY):
+    lam = 0.85 * n * p1
+    out = np.zeros(n, dtype=np.complex128)
+    out[0] = 1.0
+    for k in range(1, n):
+        out[k] = out[k - 1] * lam / k
+    k = np.arange(n)
+    par = (n - 1) % 2
+    comb = np.sin(np.pi * (k + 1 - par) / 2)
+    live = (k % 2 == par).astype(np.complex128)
+    return out * comb * live
+
+
 FABLES = [
     ("fable-1", FABLE_1, ref_fable_1),
     ("fable-2", FABLE_2, ref_fable_2),
@@ -201,6 +319,10 @@ FABLES = [
     ("fable-4", FABLE_4, ref_fable_4),
     ("fable-5", FABLE_5, ref_fable_5),
     ("fable-6", FABLE_6, ref_fable_6),
+    ("fable-7", FABLE_7, ref_fable_7),
+    ("fable-8", FABLE_8, ref_fable_8),
+    ("fable-9", FABLE_9, ref_fable_9),
+    ("fable-10", FABLE_10, ref_fable_10),
 ]
 
 

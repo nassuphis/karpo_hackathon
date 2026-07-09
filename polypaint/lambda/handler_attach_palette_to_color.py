@@ -66,10 +66,23 @@ def handler(event, context):
         raise RuntimeError("associated_palette_image_key is required")
     # this key is later downloaded and rasterized by book_pdf as the verso
     # palette swatch — pin it to render output at write time so a malformed
-    # overlay can't make Book PDF fetch an arbitrary bucket key (F13)
+    # overlay can't make Book PDF fetch an arbitrary bucket key (CR26 F13)
     assert_safe_render_image_key(image_key, "associated_palette_image_key")
     if preview_key:
         assert_safe_render_image_key(preview_key, "associated_palette_preview_key")
+    # identity (code-review-27 F8): the keys must NAME the declared palette id,
+    # and a same-job (generated) palette must live under this job's palette
+    # namespace, so the overlay can't claim palette X while pointing at Y's
+    # swatch. dependency palettes may be cross-job but still id-matched.
+    for label, key in (("associated_palette_image_key", image_key),
+                       ("associated_palette_preview_key", preview_key)):
+        if not key:
+            continue
+        if f"/{palette_id}/" not in key:
+            raise RuntimeError(f"{label} {key!r} does not name palette {palette_id!r}")
+        if mode == "generated" and not key.startswith(f"renders/{job_id}/palettes/"):
+            raise RuntimeError(
+                f"{label} {key!r} is not under renders/{job_id}/palettes/ for a generated palette")
 
     progress = attach_contract_warnings(
         {

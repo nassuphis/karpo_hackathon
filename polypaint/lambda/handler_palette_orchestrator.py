@@ -13,7 +13,7 @@ import time
 
 import boto3
 
-from shared import parse_body, ok_response, report_status
+from shared import parse_body, ok_response, report_status, assert_safe_id
 
 sfn_client = boto3.client("stepfunctions", region_name=os.environ.get("AWS_REGION", "us-east-1"))
 
@@ -23,7 +23,8 @@ STATE_MACHINE_ARN = os.environ.get("PALETTE_STATE_MACHINE_ARN", "")
 def handler(event, context):
     params = parse_body(event)
     job_id = params["job_id"]
-    run_id = params["run_id"]
+    # run_id feeds the SFN execution name (name=f"palette_{run_id}") below (F9)
+    run_id = assert_safe_id(params["run_id"], "run_id")
     task_id = params.get("task_id", f"palette_run_{run_id}")
     artifact_id = str(params.get("artifact_id") or "").strip()
     mode = "extract_palette" if artifact_id else "palette"

@@ -16,6 +16,15 @@ class TestPaletteOrchestrator(unittest.TestCase):
 
     @patch("handler_palette_orchestrator.report_status")
     @patch("handler_palette_orchestrator.sfn_client")
+    def test_rejects_unsafe_run_id(self, mock_sfn, mock_report):
+        import handler_palette_orchestrator as mod  # code-review-27 F9
+        # raises before start_execution — don't mutate STATE_MACHINE_ARN
+        with self.assertRaises(ValueError):
+            mod.handler({"job_id": "j", "run_id": "run abc", "params": {}}, None)
+        mock_sfn.start_execution.assert_not_called()
+
+    @patch("handler_palette_orchestrator.report_status")
+    @patch("handler_palette_orchestrator.sfn_client")
     def test_extract_palette_forwards_artifact_id_and_mode(self, mock_sfn, mock_report):
         mock_sfn.start_execution.return_value = {
             "executionArn": "arn:aws:states:us-east-1:123:execution:test:palette_extract_run_abc"

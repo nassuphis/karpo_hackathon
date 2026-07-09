@@ -49,6 +49,14 @@ def _png_header(width=512, height=512):
 
 class TestAutolevelsHandler(unittest.TestCase):
 
+    def test_rejects_cross_job_source_key(self):
+        # code-review-27 F5: a source key from another job must be refused
+        # BEFORE any S3 head/get
+        from handler_autolevels import handler
+        with self.assertRaises(ValueError):
+            handler(_event(source_image_key="renders/OTHERJOB/color/color_src/image.jpeg"), None)
+
+
     def test_sanitize_params_clamps_background_threshold(self):
         from handler_autolevels import _sanitize_params
 

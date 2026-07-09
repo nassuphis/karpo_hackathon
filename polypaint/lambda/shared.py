@@ -247,6 +247,10 @@ CACHE_IMMUTABLE = "public, max-age=31536000, immutable"
 # escapes, arbitrary prefixes) must never reach either. The charset blocks all
 # TeX specials; the renders/ prefix + image extension pins it to render output.
 _SAFE_RENDER_IMAGE_KEY = re.compile(r"renders/[A-Za-z0-9._/-]+\.(?:jpe?g|png)")
+# derived-artifact workers (png/tiff export, deepzoom) legitimately consume
+# .tif render objects too; the strict image-key check above stays jpg/png-only
+# for book image_key + QR payloads.
+_SAFE_RENDER_OBJECT_KEY = re.compile(r"renders/[A-Za-z0-9._/-]+\.(?:jpe?g|png|tiff?)")
 
 
 def is_safe_render_image_key(key):
@@ -254,11 +258,49 @@ def is_safe_render_image_key(key):
     return bool(_SAFE_RENDER_IMAGE_KEY.fullmatch(k)) and ".." not in k
 
 
+def is_safe_render_object_key(key):
+    k = str(key or "")
+    return bool(_SAFE_RENDER_OBJECT_KEY.fullmatch(k)) and ".." not in k
+
+
 def assert_safe_render_image_key(key, label="image_key"):
     if not is_safe_render_image_key(key):
         raise ValueError(
             f"{label} must be a render image key "
             f"renders/.../*.jpg|jpeg|png (no braces, backslashes, or '..'): {key!r}")
+    return str(key)
+
+
+_SAFE_ID = re.compile(r"[A-Za-z0-9_-]{1,64}")
+
+
+def assert_safe_id(value, label="id"):
+    """Validate a caller id that feeds a Step Functions execution name, a DDB
+    partition/sort key, or an S3 prefix. Rejects slash/whitespace/colon/
+    control chars and over-length so a bad run_id can't produce InvalidName,
+    a poisoned key, or a path-like string (code-review-27 F9)."""
+    v = str(value or "")
+    if not _SAFE_ID.fullmatch(v):
+        raise ValueError(f"{label} must match [A-Za-z0-9_-]{{1,64}}: {value!r}")
+    return v
+
+
+def assert_render_source(key, job_id, artifact_id=None, label="source_key"):
+    """Validate a caller-supplied derived-artifact source key BEFORE any S3
+    head_object/get_object (code-review-27 F5). Requires a safe render key,
+    and ties it to the declared identity: with an artifact_id, the key must
+    name that artifact (job + /artifact/ segment); legacy_color or a missing
+    artifact_id pins only the job scope so a worker can't be pointed at
+    another job's bytes while writing provenance for this one."""
+    if not is_safe_render_object_key(key):
+        raise ValueError(
+            f"{label} must be a render object key renders/.../*.jpg|jpeg|png|tif|tiff "
+            f"(no braces, backslashes, or '..'): {key!r}")
+    aid = str(artifact_id or "")
+    if aid and aid != "legacy_color":
+        assert_render_identity(key, job_id, aid, label)
+    elif not str(key).startswith(f"renders/{job_id}/"):
+        raise ValueError(f"{label} {key!r} is not under renders/{job_id}/ (job mismatch)")
     return str(key)
 
 

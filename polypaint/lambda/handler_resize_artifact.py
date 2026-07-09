@@ -21,7 +21,8 @@ from color_artifact_meta import (
     split_color_artifact_metadata,
     write_color_artifact_meta_overlay,
 )
-from shared import BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status, imgpipe_env, png_dimensions_from_path
+from shared import (BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status,
+                    imgpipe_env, png_dimensions_from_path, assert_render_source)
 
 s3 = boto3.client("s3")
 
@@ -332,7 +333,10 @@ def handler(event, context):
     task_id = params["task_id"]
     artifact_id = params["artifact_id"]
     source_artifact_id = params["source_artifact_id"]
-    source_image_key = params["source_image_key"]
+    # code-review-27 F5: validate the source key against the declared identity
+    # before the head/get below
+    source_image_key = assert_render_source(
+        params["source_image_key"], job_id, source_artifact_id, "source_image_key")
 
     in_path = None
     out_path = None

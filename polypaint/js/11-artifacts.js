@@ -1076,7 +1076,7 @@ function renderArtifactPanel(jobId, summary, options = {}) {
             catalogHtml += `<td style="padding:4px; font-size:11px">${created}</td>`;
             catalogHtml += `<td style="padding:4px; text-align:center">${dims}</td>`;
             catalogHtml += `<td style="padding:4px; text-align:center">${_fmtSize(art.file_size || art.size || 0)}</td>`;
-            catalogHtml += `<td style="padding:4px">${_renderArtifactSummary(art)}</td>`;
+            catalogHtml += `<td style="padding:4px">${_escapeHtml(_renderArtifactSummary(art))}</td>`;
             catalogHtml += '</tr>';
         });
         catalogHtml += '</table>';

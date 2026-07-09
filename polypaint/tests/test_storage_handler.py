@@ -1055,6 +1055,29 @@ class TestPresignFilename(unittest.TestCase):
         self.assertEqual(disp, 'attachment; filename="evilx=1.jpeg"')
 
 
+class TestDeletePrefixNarrowing(unittest.TestCase):
+    """code-review-27 F11: /delete-prefix must be exactly one export prefix,
+    not a whole-job or all-exports wipe."""
+
+    @patch("handler_storage.s3")
+    def test_rejects_broad_prefixes(self, mock_s3):
+        import handler_storage
+        for bad in ("deepzoom/", "deepzoom/job1/", "deepzoom/job1/exp/extra/",
+                    "renders/job1/", "deepzoom/job1", "deepzoom/a b/exp/"):
+            resp = handler_storage.handler(_event("/delete-prefix", {"prefix": bad}), None)
+            self.assertEqual(resp["statusCode"], 400, bad)
+        mock_s3.delete_objects.assert_not_called()
+
+    @patch("handler_storage.s3")
+    def test_accepts_exact_export_prefix(self, mock_s3):
+        import handler_storage
+        paginator = mock_s3.get_paginator.return_value
+        paginator.paginate.return_value = [{"Contents": []}]
+        resp = handler_storage.handler(
+            _event("/delete-prefix", {"prefix": "deepzoom/compute_abc/dz_123/"}), None)
+        self.assertEqual(resp["statusCode"], 200)
+
+
 class TestWallPyramidKick(unittest.TestCase):
     """deepzoom-speed.md §7.1: after a manifest refresh the storage worker
     chains the composite wall build to the deepzoom-export lambda."""

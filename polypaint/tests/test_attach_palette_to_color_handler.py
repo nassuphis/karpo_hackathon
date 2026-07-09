@@ -31,6 +31,26 @@ class TestAttachPaletteToColorHandler(unittest.TestCase):
 
     @patch("handler_attach_palette_to_color.report_status")
     @patch("handler_attach_palette_to_color.s3")
+    def test_rejects_palette_key_identity_mismatch(self, mock_s3, mock_report):
+        # code-review-27 F8: the key must NAME the declared palette id, and a
+        # generated palette must live under this job's palette namespace
+        from handler_attach_palette_to_color import handler
+        base = {
+            "job_id": "j", "task_id": "palette_run_attach", "artifact_id": "color_src",
+            "associated_palette_mode": "generated", "associated_palette_id": "pal_123",
+        }
+        # right shape but WRONG palette id in the path
+        with self.assertRaises(Exception):
+            handler({**base, "associated_palette_image_key":
+                     "renders/j/palettes/pal_OTHER/image.jpeg"}, None)
+        # right palette id but ANOTHER job (not allowed for generated)
+        with self.assertRaises(Exception):
+            handler({**base, "associated_palette_image_key":
+                     "renders/otherjob/palettes/pal_123/image.jpeg"}, None)
+        mock_s3.put_object.assert_not_called()
+
+    @patch("handler_attach_palette_to_color.report_status")
+    @patch("handler_attach_palette_to_color.s3")
     def test_attach_writes_sidecar_overlay_metadata(self, mock_s3, mock_report):
         from handler_attach_palette_to_color import handler
 

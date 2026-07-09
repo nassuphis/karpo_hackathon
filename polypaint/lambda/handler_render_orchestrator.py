@@ -16,7 +16,7 @@ import time
 
 import boto3
 
-from shared import JOBS_TABLE, parse_body, ok_response, report_status
+from shared import JOBS_TABLE, parse_body, ok_response, report_status, assert_safe_id
 
 sfn_client = boto3.client("stepfunctions", region_name=os.environ.get("AWS_REGION", "us-east-1"))
 ddb_client = boto3.client("dynamodb", region_name=os.environ.get("AWS_REGION", "us-east-1"))
@@ -81,7 +81,8 @@ def _active_execution_for_job(job_id, task_prefix):
 def handler(event, context):
     params = parse_body(event)
     job_id = params["job_id"]
-    run_id = params["run_id"]
+    # run_id feeds the SFN execution name + DDB task ids below (F9)
+    run_id = assert_safe_id(params["run_id"], "run_id")
     mode = params["mode"]
 
     if mode not in VALID_MODES:

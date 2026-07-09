@@ -53,6 +53,17 @@ class TestInternalActionBoundary(unittest.TestCase):
             mod.handler(event, None)
         builder.assert_called_once()
 
+    @patch("handler_deepzoom_export.report_status")
+    @patch("handler_deepzoom_export.s3")
+    def test_rejects_cross_job_source_key(self, mock_s3, _report):
+        # code-review-27 F5: a source key from another job is refused before GET
+        import handler_deepzoom_export as mod
+        with self.assertRaises(ValueError):
+            mod.handle_deepzoom_export_request(
+                {"job_id": "test_dz",
+                 "source_key": "renders/OTHERJOB/color/color_src/image.jpeg"})
+        mock_s3.get_object.assert_not_called()
+
 
 class TestDeepZoomExportRaw(unittest.TestCase):
     @patch("handler_deepzoom_export.report_status")

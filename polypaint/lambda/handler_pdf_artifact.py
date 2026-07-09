@@ -16,7 +16,7 @@ from coeff_program_source import coeff_source_text_from_chain
 from param_program_source import param_source_text_from_chain
 from pipeline_programs import coeff_transforms_to_program_chain, param_transforms_to_program_chain
 from root_program_source import root_source_text_from_chain
-from shared import BUCKET, parse_body, ok_response, report_status
+from shared import BUCKET, parse_body, ok_response, report_status, assert_render_source
 from solve_score_chain import compile_solve_score_chain_or_legacy, read_solve_score_metadata, serialize_solve_score_chain
 from solve_score_program_source import solve_score_source_text_from_chain
 from spread_pdf import PDF_IMAGE_MAX_PX, PDF_PALETTE_MAX_PX, build_color_spread_pdf, prepare_pdf_image
@@ -414,7 +414,11 @@ def handler(event, context):
     task_id = params["task_id"]
     artifact_id = params["artifact_id"]
     source_artifact_id = params["source_artifact_id"]
-    source_image_key = params["source_image_key"]
+    # validate before any S3 head/get: the source key must name the declared
+    # source artifact, so the PDF can't derive from another artifact's bytes
+    # while writing provenance for this one (code-review-27 F5)
+    source_image_key = assert_render_source(
+        params["source_image_key"], job_id, source_artifact_id, "source_image_key")
 
     prefix = f"renders/{job_id}/pdf/{artifact_id}/"
     pdf_key = prefix + "document.pdf"

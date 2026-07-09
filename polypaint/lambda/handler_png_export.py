@@ -11,7 +11,8 @@ from datetime import datetime, timezone
 
 import boto3
 
-from shared import BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status, imgpipe_env, png_dimensions_from_path
+from shared import (BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status,
+                    imgpipe_env, png_dimensions_from_path, assert_render_source)
 
 s3 = boto3.client("s3")
 PNG_EXPORT = os.path.join(os.path.dirname(__file__), "png_export")
@@ -39,9 +40,11 @@ def _phase(job_id, task_id, status, phase, phase_label, **extra):
 def handler(event, context):
     params = parse_body(event)
     job_id = params["job_id"]
-    source_key = params["source_key"]
     artifact_id = str(params.get("artifact_id") or "").strip()
     source_artifact_id = str(params.get("source_artifact_id") or "").strip()
+    # code-review-27 F5: pin the source key to the job (and artifact when
+    # declared) before the head/get below
+    source_key = assert_render_source(params["source_key"], job_id, source_artifact_id, "source_key")
     task_id = str(params.get("task_id") or (f"png_export_{artifact_id}" if artifact_id else "png_export"))
 
     in_path = "/tmp/source.tif"

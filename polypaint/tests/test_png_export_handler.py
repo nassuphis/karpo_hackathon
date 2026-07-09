@@ -32,6 +32,14 @@ def _event(**overrides):
 
 class TestPngExportHandler(unittest.TestCase):
 
+    def test_rejects_cross_job_source_key(self):
+        # code-review-27 F5: a source key from another job must be refused
+        # BEFORE any S3 head/get
+        from handler_png_export import handler
+        with self.assertRaises(ValueError):
+            handler({"body": json.dumps(_event(source_key="renders/OTHERJOB/color/color_src/image.tif"))}, None)
+
+
     @patch("handler_png_export.report_status")
     @patch("handler_png_export.subprocess.run")
     @patch("handler_png_export.s3")

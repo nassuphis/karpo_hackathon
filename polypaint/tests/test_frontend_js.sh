@@ -2807,6 +2807,27 @@ if (!js.match(/phase === 'done'[\s\S]{0,400}rd\.failed/))
 console.log('Frontend book row label checks: OK');
 NODE
 
+# ── F6: Results/Favorites/Render artifact tables must escape stored fields ──
+node - "$ROOT" <<'NODE'
+const fs = require('fs'), path = require('path');
+const core = fs.readFileSync(path.join(process.argv[2], 'js', '01-core-compute.js'), 'utf8');
+const arts = fs.readFileSync(path.join(process.argv[2], 'js', '11-artifacts.js'), 'utf8');
+function need(src, snippet, msg) { if (!src.includes(snippet)) { console.error('FATAL: ' + msg); process.exit(1); } }
+// Results row: function/job come from stored calc.json
+need(core, '${_escapeHtml(r.function', 'Results function must be escaped');
+need(core, '${_escapeHtml(shortId)}', 'Results job id must be escaped');
+// Favorites: caller-stored DDB fields
+need(core, '${_escapeHtml(art.favorite_job_id', 'Favorites job id must be escaped');
+need(core, '${_escapeHtml(_favoriteArtifactSummary(art))}', 'Favorites summary must be escaped');
+need(core, '${_escapeHtml(activeArt.missing_reason', 'Favorites missing_reason must be escaped');
+// Render artifact summary (palette/artifact ids, source color ids)
+need(arts, '${_escapeHtml(_renderArtifactSummary(art))}', 'Render artifact summary must be escaped');
+// raw (unescaped) interpolations must be gone from these specific lines
+if (/\$\{r\.function \|\| '\?'\}/.test(core)) { console.error('FATAL: raw r.function still present'); process.exit(1); }
+if (arts.includes('${_renderArtifactSummary(art)}')) { console.error('FATAL: raw render summary still present'); process.exit(1); }
+console.log('Frontend stored-metadata escaping checks: OK');
+NODE
+
 # ── Standalone mosaic viewer: manifest/base URL must be validated ──
 node - "$ROOT" <<'NODE'
 const fs = require('fs'), path = require('path'), vm = require('vm');

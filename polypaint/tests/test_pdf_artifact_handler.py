@@ -22,6 +22,14 @@ def _event(**overrides):
 
 class TestPdfArtifactHandler(unittest.TestCase):
 
+    def test_rejects_cross_job_source_key(self):
+        # code-review-27 F5: a source key from another job must be refused
+        # BEFORE any S3 head/get
+        from handler_pdf_artifact import handler
+        with self.assertRaises(ValueError):
+            handler(_event(source_image_key="renders/OTHERJOB/color/color_src/image.jpeg"), None)
+
+
     def test_report_model_prefers_stored_solve_score_source_text(self):
         from handler_pdf_artifact import build_pdf_report_model
 

@@ -5092,18 +5092,23 @@ def handle_delete_task(event):
     return ok_response({"deleted": f"{job_id}/{task_id}"})
 
 
+# exactly deepzoom/<job_id>/<export_id>/ — the single-export delete the UI
+# issues. Broader prefixes (deepzoom/, deepzoom/<job>/) would wipe every
+# export or a whole job's exports through a direct API call (code-review-27 F11).
+_DEEPZOOM_EXPORT_PREFIX = re.compile(r"deepzoom/[A-Za-z0-9_-]{1,64}/[A-Za-z0-9_-]{1,64}/")
+
+
 def handle_delete_prefix(event):
-    """Delete all S3 objects under a prefix.
-    Input: {prefix}
-    Prefix must start with 'deepzoom/' (safety guard).
+    """Delete all S3 objects under one DeepZoom export prefix.
+    Input: {prefix} — must be exactly deepzoom/<job_id>/<export_id>/.
     """
     params = parse_body(event)
-    prefix = params["prefix"]
-    if not prefix.startswith("deepzoom/"):
+    prefix = str(params.get("prefix") or "")
+    if not _DEEPZOOM_EXPORT_PREFIX.fullmatch(prefix):
         return {
             "statusCode": 400,
             "headers": {"Content-Type": "application/json", "Access-Control-Allow-Origin": "*"},
-            "body": json.dumps({"error": "delete-prefix only allowed under deepzoom/"}),
+            "body": json.dumps({"error": "delete-prefix requires exactly deepzoom/<job_id>/<export_id>/"}),
         }
 
     objects = []

@@ -19,7 +19,8 @@ from color_artifact_meta import (
     split_color_artifact_metadata,
     write_color_artifact_meta_overlay,
 )
-from shared import BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status, imgpipe_env
+from shared import (BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status,
+                    imgpipe_env, assert_render_source)
 
 s3 = boto3.client("s3")
 AUTOLEVELS = os.path.join(os.path.dirname(__file__), "autolevels_render")
@@ -199,7 +200,10 @@ def handler(event, context):
     task_id = params["task_id"]
     artifact_id = params["artifact_id"]
     source_artifact_id = params["source_artifact_id"]
-    source_image_key = params["source_image_key"]
+    # code-review-27 F5: pin the source key to the declared artifact identity
+    # before the download below
+    source_image_key = assert_render_source(
+        params["source_image_key"], job_id, source_artifact_id, "source_image_key")
     autolevel_params = _sanitize_params(params.get("autolevels_params") or {})
     effective_params = _effective_params(autolevel_params)
 

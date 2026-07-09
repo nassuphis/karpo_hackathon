@@ -17,7 +17,8 @@ from concurrent.futures import ThreadPoolExecutor
 import boto3
 
 from color_artifact_meta import load_color_artifact_head
-from shared import BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status, imgpipe_env
+from shared import (BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status,
+                    imgpipe_env, assert_render_source)
 
 s3 = boto3.client("s3")
 DZ_EXPORT = os.path.join(os.path.dirname(__file__), "dz_export")
@@ -140,6 +141,12 @@ def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id
             raise RuntimeError("DeepZoom-from-raw requires raw_key and raw_meta_key")
         if not source_key:
             raise RuntimeError("DeepZoom requires source_key")
+        # code-review-27 F5: pin the source (and raw sidecars) to this job
+        # before the download, so the export can't pull another job's bytes
+        assert_render_source(source_key, job_id, None, "source_key")
+        for k in (raw_key, raw_meta_key):
+            if k and not k.startswith(f"renders/{job_id}/"):
+                raise ValueError(f"key {k!r} is not under renders/{job_id}/ (job mismatch)")
         source_kind = "image"
         suffix = os.path.splitext(source_key)[1] or ".img"
         source_path = f"/tmp/deepzoom_source{suffix}"

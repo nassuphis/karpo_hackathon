@@ -22,6 +22,14 @@ def _event(**overrides):
 
 class TestTiffCompatHandler(unittest.TestCase):
 
+    def test_rejects_cross_job_source_key(self):
+        # code-review-27 F5: a source key from another job must be refused
+        # BEFORE any S3 head/get
+        from handler_tiff_compat import handler
+        with self.assertRaises(ValueError):
+            handler({"body": json.dumps(_event(source_key="renders/OTHERJOB/color/color_src/image.tif"))}, None)
+
+
     @patch("handler_tiff_compat.report_status")
     @patch("handler_tiff_compat.subprocess.run")
     @patch("handler_tiff_compat.s3")

@@ -531,19 +531,20 @@ function renderFavoritesPanel(options = {}) {
         const added = (art.favorite_added_at || '').replace('T', ' ').slice(0, 19);
         const key = _encodeStableRowKey(_favoriteArtifactKey(art));
         catalogHtml += `<tr id="${_favoriteRowElementId(i)}" class="favorite-art-row" data-key="${key}" onclick="_favoriteSelectEncodedKey(this.dataset.key || '')" style="border-bottom:1px solid #222; cursor:pointer; background:${isSel ? '#2a2a4e' : ''}">`;
-        catalogHtml += `<td style="padding:4px; font-size:11px">${added}</td>`;
-        catalogHtml += `<td style="padding:4px; font-family:monospace; font-size:11px">${art.favorite_job_id || ''}</td>`;
-        catalogHtml += `<td style="padding:4px; text-align:center">${dims}</td>`;
+        // favorite fields are caller-stored in DDB — escape (stored XSS, F6)
+        catalogHtml += `<td style="padding:4px; font-size:11px">${_escapeHtml(added)}</td>`;
+        catalogHtml += `<td style="padding:4px; font-family:monospace; font-size:11px">${_escapeHtml(art.favorite_job_id || '')}</td>`;
+        catalogHtml += `<td style="padding:4px; text-align:center">${_escapeHtml(dims)}</td>`;
         catalogHtml += `<td style="padding:4px; text-align:center">${_fmtSize(art.file_size || art.size || 0)}</td>`;
-        catalogHtml += `<td style="padding:4px">${_favoriteArtifactSummary(art)}</td>`;
+        catalogHtml += `<td style="padding:4px">${_escapeHtml(_favoriteArtifactSummary(art))}</td>`;
         catalogHtml += '</tr>';
     });
     catalogHtml += '</table>';
 
     let viewerHtml = '<div style="color:#444; font-size:12px; padding:12px 0; text-align:center">No artifact selected</div>';
     if (activeArt) {
-        if (activeArt.missing) viewerHtml = `<div style="color:#888; font-size:12px; padding:12px 0; text-align:center">Missing artifact<br><span style="color:#555">${activeArt.missing_reason || ''}</span></div>`;
-        else if (activeArt.viewer_url) viewerHtml = `<img src="${activeArt.viewer_url}" style="max-width:100%; max-height:100%; background:#000; display:block; margin:0 auto">`;
+        if (activeArt.missing) viewerHtml = `<div style="color:#888; font-size:12px; padding:12px 0; text-align:center">Missing artifact<br><span style="color:#555">${_escapeHtml(activeArt.missing_reason || '')}</span></div>`;
+        else if (activeArt.viewer_url) viewerHtml = `<img src="${_escapeHtml(activeArt.viewer_url)}" style="max-width:100%; max-height:100%; background:#000; display:block; margin:0 auto">`;
     }
 
     preview.innerHTML = `
@@ -825,12 +826,13 @@ function renderResultsTable() {
 
         const shortId = r.job_id.replace(/^compute_/, '');
 
+        // job_id/function come from stored calc.json — escape (stored XSS, F6)
         tr.innerHTML =
-            `<td style="color:#e0e0e0">${shortId}</td>` +
-            `<td class="results-table-function" style="color:#4ecca3">${r.function || '?'}</td>` +
-            `<td style="text-align:right">${r.degree || ''}</td>` +
-            `<td style="text-align:right">${r.N || r.n1 || ''}</td>` +
-            `<td style="text-align:right">${r.times || 1}</td>` +
+            `<td style="color:#e0e0e0">${_escapeHtml(shortId)}</td>` +
+            `<td class="results-table-function" style="color:#4ecca3">${_escapeHtml(r.function || '?')}</td>` +
+            `<td style="text-align:right">${_escapeHtml(r.degree || '')}</td>` +
+            `<td style="text-align:right">${_escapeHtml(r.N || r.n1 || '')}</td>` +
+            `<td style="text-align:right">${_escapeHtml(r.times || 1)}</td>` +
             `<td style="text-align:right;color:#888">${fmtSize(r.total_size || 0)}</td>`;
         tbody.appendChild(tr);
     }

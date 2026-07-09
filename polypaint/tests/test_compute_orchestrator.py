@@ -32,6 +32,21 @@ class TestComputeStarterLambda(unittest.TestCase):
 
     @patch("handler_compute_orchestrator.report_status")
     @patch("handler_compute_orchestrator.sfn_client")
+    def test_rejects_unsafe_run_id_before_start_execution(self, mock_sfn, mock_report):
+        # code-review-27 F9: run_id feeds the SFN execution name + DDB keys.
+        # Validation raises before start_execution, so don't touch the ARN
+        # global (it would leak into sibling tests).
+        import handler_compute_orchestrator as mod
+        for bad in ("run/../evil", "run abc", "run:1", "run\n2", "x" * 65):
+            with self.assertRaises(ValueError):
+                mod.handler(_make_event({
+                    "job_id": "j", "run_id": bad,
+                    "params": {"solver_mode": "aberth_mt", "N": 100, "n_chunks": 10,
+                               "function": "g1"}}), None)
+        mock_sfn.start_execution.assert_not_called()
+
+    @patch("handler_compute_orchestrator.report_status")
+    @patch("handler_compute_orchestrator.sfn_client")
     def test_starter_calls_start_execution_once(self, mock_sfn, mock_report):
         mock_sfn.start_execution.return_value = {
             "executionArn": "arn:aws:states:us-east-1:123:execution:polypaint-compute-workflow:compute_aberth_mt_run_abc"

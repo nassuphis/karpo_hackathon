@@ -34,6 +34,17 @@ class TestStarterLambda(unittest.TestCase):
 
     @patch("handler_render_orchestrator.report_status")
     @patch("handler_render_orchestrator.sfn_client")
+    def test_rejects_unsafe_run_id(self, mock_sfn, mock_report):
+        import handler_render_orchestrator as mod  # code-review-27 F9
+        # run_id validation raises before start_execution, so no ARN needed
+        # (don't mutate STATE_MACHINE_ARN — it leaks into sibling tests)
+        with self.assertRaises(ValueError):
+            mod.handler(_make_event({"job_id": "j", "run_id": "run/../x", "mode": "color",
+                                     "params": {}}), None)
+        mock_sfn.start_execution.assert_not_called()
+
+    @patch("handler_render_orchestrator.report_status")
+    @patch("handler_render_orchestrator.sfn_client")
     def test_starter_calls_start_execution_once(self, mock_sfn, mock_report):
         mock_sfn.start_execution.return_value = {
             "executionArn": "arn:aws:states:us-east-1:123:execution:polypaint-render-workflow:render_color_run_abc"

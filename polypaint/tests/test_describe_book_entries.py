@@ -31,6 +31,7 @@ class DescribeEngineTests(unittest.TestCase):
         self.assertIn("Function: const(2,0,0)", part_text["text"])
         self.assertIn("vibrant", part_text["text"])  # ban list is IN the prompt
         self.assertEqual(req["generationConfig"]["responseMimeType"], "application/json")
+        self.assertEqual(req["generationConfig"]["maxOutputTokens"], 4096)
 
     def test_build_request_carries_angle_and_used_titles(self):
         req = self.mod.build_request(b"x", {"artifact_id": "a"}, {},

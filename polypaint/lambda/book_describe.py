@@ -111,6 +111,9 @@ def build_request(image_bytes, entry, report, *, angle="", used_titles=(), extra
         "generationConfig": {
             "temperature": 0.9,
             "responseMimeType": "application/json",
+            # explicit, generous: replies were arriving cut mid-JSON with no
+            # blamable finishReason — remove default-cap ambiguity entirely
+            "maxOutputTokens": 4096,
         },
     }
 
@@ -274,7 +277,11 @@ def _parse_prose(text):
             break
         idx = raw.find("{", idx + 1)
     if data is None:
-        raise RuntimeError(f"no complete JSON object in vision reply (truncated?): {raw[:200]}")
+        # head AND tail: the head always looks fine on truncation — the
+        # tail is where a cut-off vs a malformed escape shows itself
+        raise RuntimeError(
+            f"no complete JSON object in vision reply "
+            f"(len={len(raw)}, tail=…{raw[-120:]!r}): {raw[:160]}")
     title = str(data.get("title") or "").strip()
     description = str(data.get("description") or "").strip()
     if not title or not description:

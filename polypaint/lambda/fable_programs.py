@@ -312,6 +312,65 @@ def ref_fable_10(p1, p2, n=N_PARITY):
     return out * comb * live
 
 
+# --- fable-11: exp trio --------------------------------------------------------
+# Interference of three truncated exponentials: c_k = (l1^k + l2^k + l3^k)/k!,
+# l1 = 0.9n*p1, l2 = 0.9n*p2, l3 = 0.9n*p1*p2 (sum frequency). Zeros gather
+# on the tram lines where two exponentials balance — a triangle network that
+# SHEARS as the three lambdas move relative to each other. Nothing rigid:
+# no z -> c*z substitution maps one frame to the next.
+FABLE_11 = """\
+# fable-11: exp trio — c_k = (l1^k + l2^k + l3^k)/k!,
+# l1 = 0.9n*p1, l2 = 0.9n*p2, l3 = 0.9n*p1*p2
+scan(poly_len, 0, 1, prev * (((0.9 * poly_len) * p1) / k))
+poly = pop
+scan(poly_len, 0, 1, prev * (((0.9 * poly_len) * p2) / k))
+poly = add(poly, pop)
+scan(poly_len, 0, 1, prev * (((0.9 * poly_len) * (p1 * p2)) / k))
+poly = add(poly, pop)
+emit
+"""
+
+
+def _exp_series(lam, n):
+    out = np.zeros(n, dtype=np.complex128)
+    out[0] = 1.0
+    for k in range(1, n):
+        out[k] = out[k - 1] * lam / k
+    return out
+
+
+def ref_fable_11(p1, p2, n=N_PARITY):
+    return (_exp_series(0.9 * n * p1, n) + _exp_series(0.9 * n * p2, n)
+            + _exp_series(0.9 * n * (p1 * p2), n))
+
+
+# --- fable-12: chirped teardrop --------------------------------------------------
+# fable-7 with a quadratic chirp: c_k = (lam^k/k!) * exp(i*angle(p2)*k^2/n).
+# The k^2 phase lives in coefficient space, so rotating p1 is NO LONGER a
+# rotation of z: the teardrop bends, dents and breathes instead of spinning
+# rigidly; angle(p2) controls the warp.
+FABLE_12 = """\
+# fable-12: chirped teardrop — c_k = (lam^k/k!) * exp(1i*(angle(p1)+angle(p2))*k^2/n),
+# lam = 0.9*poly_len*p1. The chirp tracks angle(p1) too: sweeping p1 warps
+# the teardrop at the same rate it turns it — no rigid frames anywhere.
+scan(poly_len, 0, 1, prev * (((0.9 * poly_len) * p1) / k))
+poly = pop
+push_range(0, poly_len, 1)
+dup
+multiply(pop, pop)
+linear(((1i * (angle(p1) + angle(p2))) / poly_len), 0)
+exp(pop)
+poly = multiply(poly, pop)
+emit
+"""
+
+
+def ref_fable_12(p1, p2, n=N_PARITY):
+    k = np.arange(n, dtype=np.float64)
+    return (_exp_series(0.9 * n * p1, n)
+            * np.exp(1j * (np.angle(p1) + np.angle(p2)) * k * k / n))
+
+
 FABLES = [
     ("fable-1", FABLE_1, ref_fable_1),
     ("fable-2", FABLE_2, ref_fable_2),
@@ -323,6 +382,8 @@ FABLES = [
     ("fable-8", FABLE_8, ref_fable_8),
     ("fable-9", FABLE_9, ref_fable_9),
     ("fable-10", FABLE_10, ref_fable_10),
+    ("fable-11", FABLE_11, ref_fable_11),
+    ("fable-12", FABLE_12, ref_fable_12),
 ]
 
 

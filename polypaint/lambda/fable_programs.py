@@ -371,6 +371,484 @@ def ref_fable_12(p1, p2, n=N_PARITY):
             * np.exp(1j * (np.angle(p1) + np.angle(p2)) * k * k / n))
 
 
+# --- recurrence helpers (mirror the VM's scan seeding exactly) -----------------
+def _ratio_series(n, c0, ratio):
+    """c_0 = c0, c_k = c_(k-1) * ratio(k). Matches scan(len, 0, c0, step)."""
+    out = np.zeros(n, dtype=np.complex128)
+    out[0] = c0
+    for k in range(1, n):
+        out[k] = out[k - 1] * ratio(k)
+    return out
+
+
+def _two_term(n, c0, c1, step):
+    """c_0=c0, c_1=c1, c_k = step(prev, prev2, k). Matches the 5-arg scan."""
+    out = np.zeros(n, dtype=np.complex128)
+    out[0], out[1] = c0, c1
+    for k in range(2, n):
+        out[k] = step(out[k - 1], out[k - 2], k)
+    return out
+
+
+# The hypergeometric families below are all one 3-token scan: a coefficient
+# ratio c_k/c_(k-1) that is rational in k gives a different pFq, and each pFq
+# has its own root geometry (teardrop, cardioid, real line, ...).
+
+# --- fable-13: kummer confluent (1F1) -----------------------------------------
+# c_k = c_(k-1) * (a+k-1)*x / ((b+k-1)*k), a=1+2*p1, b=1.5, x=0.8*n*p2.
+# One numerator Pochhammer over one denominator: a warped teardrop that
+# breathes with p1 (the a-parameter) and rotates with p2 (the argument).
+FABLE_13 = """\
+# fable-13: kummer 1F1 — c_k = c_(k-1)*((2*p1)+k)*x/((k-0.5)*k), x=0.8*poly_len*p2
+scan(poly_len, 0, 1, prev * (((((2 * p1) + k) * ((0.8 * poly_len) * p2))) / (((k - 0.5) * k))))
+poly = pop
+emit
+"""
+
+
+def ref_fable_13(p1, p2, n=N_PARITY):
+    x = 0.8 * n * p2
+    return _ratio_series(n, 1.0, lambda k: ((2 * p1 + k) * x) / ((k - 0.5) * k))
+
+
+# --- fable-14: gauss hypergeometric (2F1) -------------------------------------
+# c_k = c_(k-1) * (a+k-1)(b+k-1)*x / ((c+k-1)*k), a=1+p2, b=0.5, c=1.5, x=0.75*p1.
+# TWO numerator Pochhammers over one denominator: a branch-point family whose
+# roots hug an arc from the |x|<1 radius, splitting as a and c decouple.
+FABLE_14 = """\
+# fable-14: gauss 2F1 — c_k = c_(k-1)*((p2+k)(k-0.5)*0.75*p1)/((k+0.5)*k)
+scan(poly_len, 0, 1, prev * (((((p2 + k) * (k - 0.5)) * (0.75 * p1))) / (((k + 0.5) * k))))
+poly = pop
+emit
+"""
+
+
+def ref_fable_14(p1, p2, n=N_PARITY):
+    x = 0.75 * p1
+    return _ratio_series(n, 1.0, lambda k: ((p2 + k) * (k - 0.5) * x) / ((k + 0.5) * k))
+
+
+# --- fable-15: fm sidebands ----------------------------------------------------
+# c_k = 0.94^k * exp(i*A*sin(w*k)), A=3*angle(p1), w=angle(p2)+0.7. A frequency
+# -modulated phase on a geometric envelope: the sin-of-phase sprays Bessel-
+# function sidebands, so the roots gather into evenly-spaced clusters around a
+# circle that shift as the modulation depth (p1) and rate (p2) change.
+FABLE_15 = """\
+# fable-15: fm sidebands — c_k = 0.94^k exp(i*3*angle(p1)*sin((angle(p2)+0.7)*k))
+push_range(0, poly_len, 1)
+linear((angle(p2) + 0.7), 0)
+sin(pop)
+linear((1i * (3 * angle(p1))), 0)
+poly = exp(pop)
+push_range(0, poly_len, 1)
+linear((log(0.94)), 0)
+exp(pop)
+poly = multiply(poly, pop)
+emit
+"""
+
+
+def ref_fable_15(p1, p2, n=N_PARITY):
+    k = np.arange(n, dtype=np.float64)
+    ph = np.exp(1j * (3 * np.angle(p1)) * np.sin((np.angle(p2) + 0.7) * k))
+    return ph * np.exp(k * np.log(0.94))
+
+
+# --- fable-16: catalan cardioid ------------------------------------------------
+# c_k = c_(k-1) * 2(2k-1)/(k+1) * t, t=0.24*p1. The Catalan generating function
+# has a square-root branch point at t=1/4; truncated, its roots crowd onto the
+# cardioid-like cut, swinging around with p1.
+FABLE_16 = """\
+# fable-16: catalan — c_k = c_(k-1)*2(2k-1)/(k+1)*0.24*p1
+scan(poly_len, 0, 1, prev * (((2 * ((2 * k) - 1)) / (k + 1)) * (0.24 * p1)))
+poly = pop
+emit
+"""
+
+
+def ref_fable_16(p1, p2, n=N_PARITY):
+    return _ratio_series(n, 1.0, lambda k: (2 * (2 * k - 1) / (k + 1)) * (0.24 * p1))
+
+
+# --- fable-17: laguerre line ---------------------------------------------------
+# Coefficients of L_(n-1)(x/·) with an argument scale: c_k = c_(k-1)*(-(n-k))*x/k^2,
+# x=0.7*n*p1. Laguerre roots are POSITIVE REAL — a straight comb of roots on a
+# ray, rotating with arg(p1). As far from a circle as it gets.
+FABLE_17 = """\
+# fable-17: laguerre — c_k = c_(k-1)*(-(poly_len-k))*x/k^2, x=0.7*poly_len*p1
+scan(poly_len, 0, 1, prev * ((((0 - (poly_len - k)) * ((0.7 * poly_len) * p1))) / ((k * k))))
+poly = pop
+emit
+"""
+
+
+def ref_fable_17(p1, p2, n=N_PARITY):
+    x = 0.7 * n * p1
+    return _ratio_series(n, 1.0, lambda k: (-(n - k) * x) / (k * k))
+
+
+# --- fable-18: linear recurrence (fibonacci/lucas) ----------------------------
+# c_0=1, c_1=p1, c_k = p1*c_(k-1) + p2*c_(k-2). The truncated 1/(1-p1 z-p2 z^2):
+# roots cluster near the reciprocals of the characteristic roots and drift as
+# p1,p2 move — a two-body root dance.
+FABLE_18 = """\
+# fable-18: linear recurrence — c_0=1, c_1=p1, c_k = p1*prev + p2*prev2
+scan(poly_len, 0, 1, p1, ((p1 * prev) + (p2 * prev2)))
+poly = pop
+emit
+"""
+
+
+def ref_fable_18(p1, p2, n=N_PARITY):
+    return _two_term(n, 1.0, p1, lambda a, b, k: p1 * a + p2 * b)
+
+
+# --- fable-19: chebyshev-form recurrence --------------------------------------
+# c_0=1, c_1=p1, c_k = 2*p1*c_(k-1) - p2*c_(k-2). The Chebyshev/Dickson three-term
+# shape: roots ride near-circular arcs that pinch into lenses as p2 leaves 1.
+FABLE_19 = """\
+# fable-19: chebyshev recurrence — c_0=1, c_1=p1, c_k = 2*p1*prev - p2*prev2
+scan(poly_len, 0, 1, p1, (((2 * p1) * prev) - (p2 * prev2)))
+poly = pop
+emit
+"""
+
+
+def ref_fable_19(p1, p2, n=N_PARITY):
+    return _two_term(n, 1.0, p1, lambda a, b, k: 2 * p1 * a - p2 * b)
+
+
+# --- fable-20: fresnel packet --------------------------------------------------
+# A Gaussian window times a quadratic chirp: c_k = exp(-((k-mu)/sig)^2) *
+# exp(i*(3*angle(p1))*k^2/n + i*angle(p2)*k). A localized wave packet whose
+# zeros lie on curved Fresnel zones that bend with the chirp rate.
+FABLE_20 = """\
+# fable-20: fresnel packet — gaussian window (mu=(n-1)/2, sig=n/4) x quadratic chirp
+push_range(0, poly_len, 1)
+linear((4.0 / poly_len), ((-4.0 * ((poly_len - 1) / 2)) / poly_len))
+dup
+multiply(pop, pop)
+neg(pop)
+poly = exp(pop)
+push_range(0, poly_len, 1)
+dup
+multiply(pop, pop)
+linear(((1i * (3 * angle(p1))) / poly_len), 0)
+exp(pop)
+poly = multiply(poly, pop)
+push_range(0, poly_len, 1)
+linear((1i * angle(p2)), 0)
+exp(pop)
+poly = multiply(poly, pop)
+emit
+"""
+
+
+def ref_fable_20(p1, p2, n=N_PARITY):
+    k = np.arange(n, dtype=np.float64)
+    mu = (n - 1) / 2.0
+    sig = n / 4.0
+    g = np.exp(-(((k - mu) / sig) ** 2))
+    ph = np.exp(1j * (3 * np.angle(p1)) * k * k / n + 1j * np.angle(p2) * k)
+    return g * ph
+
+
+# --- fable-21: dirichlet strip -------------------------------------------------
+# c_k = (k+1)^(-s), s = sigma + i*(6*angle(p1)), sigma=0.5..0.8 from |p2|. A
+# truncated Dirichlet series: its zeros crowd toward a vertical strip that
+# leans with the imaginary height — a nod to the zeta landscape.
+FABLE_21 = """\
+# fable-21: dirichlet strip — c_k = (k+1)^(-s), s = (0.5 + 0.3|p2|/(1+|p2|)) + i*6*angle(p1)
+push_range(1, (poly_len + 1), 1)
+log(pop)
+linear((0 - ((0.5 + ((0.3 * abs(p2)) / (1 + abs(p2)))) + (1i * (6 * angle(p1))))), 0)
+poly = exp(pop)
+emit
+"""
+
+
+def ref_fable_21(p1, p2, n=N_PARITY):
+    kk = np.arange(1, n + 1, dtype=np.float64)
+    s = (0.5 + 0.3 * abs(p2) / (1 + abs(p2))) + 1j * (6 * np.angle(p1))
+    return np.exp(-s * np.log(kk))
+
+
+# --- fable-22: cubic chirp -----------------------------------------------------
+# c_k = exp(i*(angle(p1)*k^3/n^2 + angle(p2)*k)). A cubic phase (vs. fable-1's
+# quadratic) makes a three-fold twisted lattice that shears without ever being
+# a rotation of z.
+FABLE_22 = """\
+# fable-22: cubic chirp — c_k = exp(i*(angle(p1)*k^3/n^2 + angle(p2)*k))
+push_range(0, poly_len, 1)
+dup
+dup
+multiply(pop, pop)
+multiply(pop, pop)
+linear(((1i * angle(p1)) / (poly_len * poly_len)), 0)
+poly = exp(pop)
+push_range(0, poly_len, 1)
+linear((1i * angle(p2)), 0)
+exp(pop)
+poly = multiply(poly, pop)
+emit
+"""
+
+
+def ref_fable_22(p1, p2, n=N_PARITY):
+    k = np.arange(n, dtype=np.float64)
+    return np.exp(1j * (np.angle(p1) * k * k * k / (n * n) + np.angle(p2) * k))
+
+
+# --- fable-23: am triad --------------------------------------------------------
+# c_k = (1 + 0.8*cos(w*k)) * (0.95 e^{i angle(p2)})^k, w=2*angle(p1). Amplitude
+# modulation splits the spectrum into a carrier plus two sidebands, so the roots
+# organize into three interleaved rings that beat against each other as the
+# modulation frequency (p1) sweeps.
+FABLE_23 = """\
+# fable-23: am triad — c_k = (1 + 0.8 cos(2*angle(p1)*k)) (0.95 e^{i angle(p2)})^k
+push_range(0, poly_len, 1)
+linear((2 * angle(p1)), 0)
+cos(pop)
+linear(0.8, 1)
+poly = pop
+push_range(0, poly_len, 1)
+linear(((1i * angle(p2)) + log(0.95)), 0)
+exp(pop)
+poly = multiply(poly, pop)
+emit
+"""
+
+
+def ref_fable_23(p1, p2, n=N_PARITY):
+    k = np.arange(n, dtype=np.float64)
+    am = 1 + 0.8 * np.cos(2 * np.angle(p1) * k)
+    dec = np.exp(k * (1j * np.angle(p2) + np.log(0.95)))
+    return am * dec
+
+
+# --- fable-24: two-spiral moire ------------------------------------------------
+# c_k = q1^k + q2^k, q1=0.9 e^{i angle(p1)}, q2=0.82 e^{i angle(p2)}. Two geometric
+# spirals of different radius interfere; their zeros fall on a moire lattice
+# where q1^k = -q2^k, breathing as the two angles slide.
+FABLE_24 = """\
+# fable-24: two-spiral moire — c_k = (0.97 e^{i angle(p1)})^k + (0.55 e^{i angle(p2)})^k
+push_range(0, poly_len, 1)
+linear(((log(0.97)) + (1i * angle(p1))), 0)
+poly = exp(pop)
+push_range(0, poly_len, 1)
+linear(((log(0.55)) + (1i * angle(p2))), 0)
+exp(pop)
+poly = add(poly, pop)
+emit
+"""
+
+
+def ref_fable_24(p1, p2, n=N_PARITY):
+    k = np.arange(n, dtype=np.float64)
+    return np.exp(k * (np.log(0.97) + 1j * np.angle(p1))) + np.exp(k * (np.log(0.55) + 1j * np.angle(p2)))
+
+
+# Degree-scaled log|q| for the theta families (q^(k^2) decay): a fixed |q|<1
+# underflows the leading slot at high degree (0.93^(35^2) is below f32). Fix the
+# DECAY BUDGET B instead so the leading ~ e^-B stays transportable and the
+# outermost root radius holds at any degree — the trick fable-8 uses.
+# log|q| = -min(52, 1.5(n-1)) / (n-1)^2   (min via the abs identity).
+_DECAY_SRC = ("((0 - (0.5 * ((52 + (1.5 * (poly_len - 1))) - "
+              "abs(52 - (1.5 * (poly_len - 1)))))) / ((poly_len - 1) * (poly_len - 1)))")
+
+
+def _decay_logmag(n, cap=52.0):
+    base = 0.5 * ((cap + 1.5 * (n - 1)) - abs(cap - 1.5 * (n - 1)))  # min(cap, 1.5(n-1))
+    return -base / ((n - 1) * (n - 1))
+
+
+# --- fable-25: rogers-ramanujan -----------------------------------------------
+# c_k = q^(k^2) / (q;q)_k, |q| degree-scaled, arg=angle(p1)/n. Partition-theoretic:
+# a theta numerator over a q-factorial denominator makes a spiral with widening
+# gaps, the Rogers-Ramanujan signature.
+FABLE_25 = f"""\
+# fable-25: rogers-ramanujan — c_k = q^(k^2)/(q;q)_k, log|q| degree-scaled
+scan(poly_len, 0, 1, prev * exp(((2 * k) - 1) * ({_DECAY_SRC} + ((1i * angle(p1)) / poly_len))))
+poly = pop
+scan(poly_len, 0, 1, prev / (1 - exp(k * ({_DECAY_SRC} + ((1i * angle(p1)) / poly_len)))))
+poly = multiply(poly, pop)
+emit
+"""
+
+
+def ref_fable_25(p1, p2, n=N_PARITY):
+    logq = _decay_logmag(n) + 1j * np.angle(p1) / n
+    theta = _ratio_series(n, 1.0, lambda k: np.exp((2 * k - 1) * logq))
+    denom = _ratio_series(n, 1.0, lambda k: 1.0 / (1.0 - np.exp(k * logq)))
+    return theta * denom
+
+
+# --- fable-26: sheared theta ---------------------------------------------------
+# c_k = q^(k^2) * r^k, q=0.93 e^{i angle(p1)/n}, r=e^{i angle(p2)}. A log-spiral
+# (fable-8) given a linear phase tilt: the spiral shears sideways with p2 while
+# it winds with p1.
+FABLE_26 = f"""\
+# fable-26: sheared theta — c_k = q^(k^2) e^{{i angle(p2) k}}, log|q| degree-scaled
+scan(poly_len, 0, 1, prev * exp(((((2 * k) - 1) * ({_DECAY_SRC} + ((1i * angle(p1)) / poly_len))) + (1i * angle(p2)))))
+poly = pop
+emit
+"""
+
+
+def ref_fable_26(p1, p2, n=N_PARITY):
+    logq = _decay_logmag(n) + 1j * np.angle(p1) / n
+    logr = 1j * np.angle(p2)
+    return _ratio_series(n, 1.0, lambda k: np.exp((2 * k - 1) * logq + logr))
+
+
+# --- fable-27: heat-kernel spiral ---------------------------------------------
+# c_k = exp(-(a - i*angle(p1)) k^2 / n + i*angle(p2) k), a=1.2. Gaussian magnitude
+# DECAY (not a window) with a quadratic phase: an inward-winding spiral of roots
+# that tightens as p1 turns.
+FABLE_27 = """\
+# fable-27: heat-kernel spiral — c_k = exp((-1.2 + i angle(p1)) k^2/n + i angle(p2) k)
+push_range(0, poly_len, 1)
+dup
+multiply(pop, pop)
+linear((((0 - 1.2) + (1i * angle(p1))) / poly_len), 0)
+exp(pop)
+poly = pop
+push_range(0, poly_len, 1)
+linear((1i * angle(p2)), 0)
+exp(pop)
+poly = multiply(poly, pop)
+emit
+"""
+
+
+def ref_fable_27(p1, p2, n=N_PARITY):
+    k = np.arange(n, dtype=np.float64)
+    return np.exp((-1.2 + 1j * np.angle(p1)) * k * k / n) * np.exp(1j * np.angle(p2) * k)
+
+
+# --- fable-28: generalized binomial cut ---------------------------------------
+# c_k = C(alpha, k) = c_(k-1)*(alpha-k+1)/k, alpha = n*p1 (complex). The truncated
+# (1+z)^alpha: for non-integer complex alpha the roots spiral around the unit
+# circle with a branch-cut gap toward z=-1.
+FABLE_28 = """\
+# fable-28: binomial cut — c_k = C(alpha,k), alpha = poly_len*p1
+scan(poly_len, 0, 1, prev * (((((poly_len * p1) - k) + 1)) / (k)))
+poly = pop
+emit
+"""
+
+
+def ref_fable_28(p1, p2, n=N_PARITY):
+    alpha = n * p1
+    return _ratio_series(n, 1.0, lambda k: (alpha - k + 1) / k)
+
+
+# --- fable-29: log-phase (riemann-siegel flavor) ------------------------------
+# c_k = exp(i*angle(p1)*(k+1)*log(k+1)/n) * decay. A k*log(k) phase (the
+# Riemann-Siegel theta shape) gives quasi-periodic, never-repeating root
+# spacing; the 0.98^k decay keeps it bounded.
+FABLE_29 = """\
+# fable-29: log-phase — c_k = exp(i*2*angle(p1)(k+1)log(k+1)/poly_len) (0.9 e^{i angle(p2)})^k
+push_range(1, (poly_len + 1), 1)
+dup
+log(pop)
+multiply(pop, pop)
+linear(((1i * (2 * angle(p1))) / poly_len), 0)
+poly = exp(pop)
+push_range(0, poly_len, 1)
+linear(((1i * angle(p2)) + log(0.9)), 0)
+exp(pop)
+poly = multiply(poly, pop)
+emit
+"""
+
+
+def ref_fable_29(p1, p2, n=N_PARITY):
+    B = np.arange(1, n + 1, dtype=np.float64)
+    phase = np.exp(1j * (2 * np.angle(p1)) * B * np.log(B) / n)
+    k = np.arange(n, dtype=np.float64)
+    dec = np.exp(k * (1j * np.angle(p2) + np.log(0.9)))
+    return phase * dec
+
+
+# --- fable-30: lacunary theta comb --------------------------------------------
+# c_k = [k%3 == (n-1)%3] * q^(k^2), q=0.95 e^{i angle(p1)/n}. Only every third
+# coefficient survives (comb aligned to the leading slot), spiralling: a
+# three-fold gapped log-spiral.
+FABLE_30 = f"""\
+# fable-30: lacunary theta comb — every 3rd slot, q^(k^2), log|q| degree-scaled
+scan(poly_len, 0, 1, prev * exp(((2 * k) - 1) * ({_DECAY_SRC} + ((1i * angle(p1)) / poly_len))))
+poly = pop
+fill(poly_len, 3)
+push_range(0, poly_len, 1)
+rem(pop, pop)
+fill(poly_len, ((poly_len - 1) - (3 * floor((poly_len - 1) / 3))))
+eq(pop, pop)
+poly = multiply(poly, pop)
+emit
+"""
+
+
+def ref_fable_30(p1, p2, n=N_PARITY):
+    logq = _decay_logmag(n) + 1j * np.angle(p1) / n
+    theta = _ratio_series(n, 1.0, lambda k: np.exp((2 * k - 1) * logq))
+    k = np.arange(n)
+    live = (k % 3 == (n - 1) % 3).astype(np.complex128)
+    return theta * live
+
+
+# --- fable-31: fejer window x chirp -------------------------------------------
+# c_k = (1 - |2k-(n-1)|/n) * exp(i angle(p1) k^2/n + i angle(p2) k). A triangular
+# (Fejer) magnitude — dense in the middle, tapering to the ends — modulated by a
+# chirp: roots on nested curved shells.
+FABLE_31 = """\
+# fable-31: fejer x chirp — triangular magnitude x quadratic chirp
+push_range(0, poly_len, 1)
+linear(2, (0 - (poly_len - 1)))
+mod(pop)
+linear((0 - (1.0 / poly_len)), 1)
+poly = pop
+push_range(0, poly_len, 1)
+dup
+multiply(pop, pop)
+linear(((1i * angle(p1)) / poly_len), 0)
+exp(pop)
+poly = multiply(poly, pop)
+push_range(0, poly_len, 1)
+linear((1i * angle(p2)), 0)
+exp(pop)
+poly = multiply(poly, pop)
+emit
+"""
+
+
+def ref_fable_31(p1, p2, n=N_PARITY):
+    k = np.arange(n, dtype=np.float64)
+    tri = 1.0 - np.abs(2 * k - (n - 1)) / n
+    ph = np.exp(1j * np.angle(p1) * k * k / n) * np.exp(1j * np.angle(p2) * k)
+    return tri * ph
+
+
+# --- fable-32: exp/bessel interference ----------------------------------------
+# c_k = (0.9n*p1)^k/k! + 0F1(0.5n*p2). Two decay families — factorial (exp) and
+# double-factorial (Bessel) — summed: their zeros fight along the seam where the
+# two envelopes cross, a new filament network.
+FABLE_32 = """\
+# fable-32: exp/bessel interference — c_k = (0.9 poly_len p1)^k/k! + bessel(0.5 poly_len p2)
+scan(poly_len, 0, 1, prev * (((0.9 * poly_len) * p1) / k))
+poly = pop
+scan(poly_len, 0, 1, prev * (((0.5 * poly_len) * p2) / (k * k)))
+poly = add(poly, pop)
+emit
+"""
+
+
+def ref_fable_32(p1, p2, n=N_PARITY):
+    e = _ratio_series(n, 1.0, lambda k: (0.9 * n * p1) / k)
+    b = _ratio_series(n, 1.0, lambda k: (0.5 * n * p2) / (k * k))
+    return e + b
+
+
 FABLES = [
     ("fable-1", FABLE_1, ref_fable_1),
     ("fable-2", FABLE_2, ref_fable_2),
@@ -384,6 +862,26 @@ FABLES = [
     ("fable-10", FABLE_10, ref_fable_10),
     ("fable-11", FABLE_11, ref_fable_11),
     ("fable-12", FABLE_12, ref_fable_12),
+    ("fable-13", FABLE_13, ref_fable_13),
+    ("fable-14", FABLE_14, ref_fable_14),
+    ("fable-15", FABLE_15, ref_fable_15),
+    ("fable-16", FABLE_16, ref_fable_16),
+    ("fable-17", FABLE_17, ref_fable_17),
+    ("fable-18", FABLE_18, ref_fable_18),
+    ("fable-19", FABLE_19, ref_fable_19),
+    ("fable-20", FABLE_20, ref_fable_20),
+    ("fable-21", FABLE_21, ref_fable_21),
+    ("fable-22", FABLE_22, ref_fable_22),
+    ("fable-23", FABLE_23, ref_fable_23),
+    ("fable-24", FABLE_24, ref_fable_24),
+    ("fable-25", FABLE_25, ref_fable_25),
+    ("fable-26", FABLE_26, ref_fable_26),
+    ("fable-27", FABLE_27, ref_fable_27),
+    ("fable-28", FABLE_28, ref_fable_28),
+    ("fable-29", FABLE_29, ref_fable_29),
+    ("fable-30", FABLE_30, ref_fable_30),
+    ("fable-31", FABLE_31, ref_fable_31),
+    ("fable-32", FABLE_32, ref_fable_32),
 ]
 
 

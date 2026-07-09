@@ -20,10 +20,10 @@ from coeff_program_source import compile_coeff_program_source
 
 
 class FableCompileTests(unittest.TestCase):
-    def test_all_twelve_sources_compile(self):
-        self.assertEqual(len(fp.FABLES), 12)
+    def test_all_sources_compile(self):
+        self.assertEqual(len(fp.FABLES), 32)
         names = [n for n, _, _ in fp.FABLES]
-        self.assertEqual(names, [f"fable-{i}" for i in range(1, 13)])
+        self.assertEqual(names, [f"fable-{i}" for i in range(1, 33)])
         for name, source, _ in fp.FABLES:
             compiled = compile_coeff_program_source(source)
             self.assertGreater(compiled["token_count"], 0, name)

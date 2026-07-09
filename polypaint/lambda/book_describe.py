@@ -322,14 +322,57 @@ def describe_image(image_bytes, entry, report, *, model, api_key,
     return title, description
 
 
+class _SaveConflict(RuntimeError):
+    """/save-book compare-and-swap rejected our write (409): the stored book
+    moved under us (a concurrent human edit)."""
+
+
 def _storage(payload):
     client = boto3.client("lambda", region_name=os.environ.get("AWS_REGION", "us-east-1"))
     resp = client.invoke(FunctionName=STORAGE_FUNCTION,
                          Payload=json.dumps(payload).encode())
     body = json.loads(resp["Payload"].read())
-    if int(body.get("statusCode", 500)) != 200:
-        raise RuntimeError(f"storage {payload.get('path')}: {body.get('body')}")
+    status = int(body.get("statusCode", 500))
+    if status != 200:
+        inner = body.get("body")
+        if status == 409:
+            raise _SaveConflict(f"storage {payload.get('path')}: {inner}")
+        raise RuntimeError(f"storage {payload.get('path')}: {inner}")
     return json.loads(body["body"])
+
+
+def _fetch_book(book_id):
+    resp = _storage({"path": "/fetch-book", "body": json.dumps({"id": book_id})})
+    return resp.get("book") or {}
+
+
+def _find_entry(doc, entry_id):
+    for e in doc.get("entries") or []:
+        if str(e.get("entry_id") or "") == entry_id:
+            return e
+    return None
+
+
+def _save_book_cas(book_id, doc, expected, run_prose, attempts=4):
+    """Save the book with compare-and-swap on expected saved_at. On conflict
+    (a concurrent human edit landed), refetch the current book, re-apply THIS
+    run's generated prose onto it (so our output survives) while keeping the
+    human's edits to entries we haven't touched, and retry. Returns
+    (authoritative_doc, new_saved_at)."""
+    for _ in range(attempts):
+        body = {"book": doc, "expected_saved_at": expected}
+        try:
+            resp = _storage({"path": "/save-book", "body": json.dumps(body)})
+            return doc, str((resp.get("book") or {}).get("saved_at") or "")
+        except _SaveConflict:
+            doc = _fetch_book(book_id)
+            for eid, (title, desc) in run_prose.items():
+                e = _find_entry(doc, eid)
+                if e is not None:
+                    e["title_override"], e["body_override"] = title, desc
+            expected = str(doc.get("saved_at") or "")
+    raise RuntimeError(
+        f"book {book_id} kept changing during describe (CAS gave up after {attempts} tries)")
 
 
 def _phase(job_id, task_id, status, phase, phase_label, **extra):
@@ -367,9 +410,16 @@ def _load_vision_config():
 
 def _entry_preview_bytes(entry):
     prefix = f"renders/{entry.get('job_id')}/color/{entry.get('artifact_id')}/"
-    for name in ("preview.jpg", "preview.png"):
+    candidates = [prefix + "preview.jpg", prefix + "preview.png"]
+    # fall back to the entry's stored image_key (legacy/root-shaped artifacts
+    # lack the immutable color preview path but still carry a usable image),
+    # so Describe is no more brittle than the rest of the Book pipeline
+    image_key = str(entry.get("image_key") or "").strip()
+    if image_key and image_key not in candidates:
+        candidates.append(image_key)
+    for key in candidates:
         try:
-            return s3.get_object(Bucket=BUCKET, Key=prefix + name)["Body"].read()
+            return s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
         except Exception:
             continue
     raise RuntimeError(f"no preview for {entry.get('artifact_id')}")
@@ -418,13 +468,24 @@ def handle_describe(params):
     if not entries:
         raise RuntimeError(f"book {book_id} has no entries")
 
+    # Iterate a STABLE list of entry ids captured at load, but re-locate each
+    # entry in the CURRENT doc every step: a concurrent edit can trigger a CAS
+    # refetch that swaps `doc` for the server's fresh copy mid-run, and the
+    # id lookup keeps us pointed at the right (possibly newly-merged) entry.
+    work_ids = [str(e.get("entry_id") or "") for e in entries]
+    total = len(work_ids)
     used_titles = [str(e.get("title_override") or "").strip()
                    for e in entries if str(e.get("title_override") or "").strip()]
+    expected = str(doc.get("saved_at") or "")
+    run_prose = {}   # entry_id -> (title, body): re-applied on CAS conflict
     described = skipped = 0
     failures = []
-    for idx, entry in enumerate(entries, start=1):
-        if only_ids and str(entry.get("entry_id") or "") not in only_ids:
+    for idx, entry_id in enumerate(work_ids, start=1):
+        if only_ids and entry_id not in only_ids:
             continue
+        entry = _find_entry(doc, entry_id)
+        if entry is None:
+            continue  # removed by a concurrent edit
         has_prose = bool(str(entry.get("title_override") or "").strip()
                          or str(entry.get("body_override") or "").strip())
         if has_prose and not overwrite:
@@ -440,23 +501,30 @@ def handle_describe(params):
                 image, entry, report, model=model, api_key=api_key,
                 angle=ANGLES[(idx - 1) % len(ANGLES)], used_titles=used_titles)
         except Exception as exc:
-            failures.append({"entry_id": str(entry.get("entry_id") or ""),
-                             "error": str(exc)[:300]})
+            failures.append({"entry_id": entry_id, "error": str(exc)[:300]})
             _phase(job_id, task_id, "processing", "describe",
-                   f"Failed {idx}/{len(entries)}: {str(exc)[:120]}")
+                   f"Failed {idx}/{total}: {str(exc)[:120]}")
             continue
         entry["title_override"] = title
         entry["body_override"] = description
         used_titles.append(title)
+        run_prose[entry_id] = (title, description)
         described += 1
         # save after EVERY entry: a mid-run quota death keeps the prose so
         # far, and skip-existing makes the rerun resume where it stopped.
-        # Our in-memory doc stays the source of truth for the whole run —
-        # adopting the server's returned copy would orphan the loop's entry
-        # references and drop later entries' prose from subsequent saves.
-        _storage({"path": "/save-book", "body": json.dumps({"book": doc})})
+        # Compare-and-swap on saved_at: a concurrent human edit no longer
+        # gets clobbered by our stale full-document write — on conflict we
+        # refetch, re-apply this run's prose, and adopt the merged doc.
+        try:
+            doc, expected = _save_book_cas(book_id, doc, expected, run_prose)
+        except Exception as exc:
+            failures.append({"entry_id": entry_id, "error": f"save: {str(exc)[:280]}"})
+            _phase(job_id, task_id, "processing", "describe",
+                   f"Save failed {idx}/{total}: {str(exc)[:110]}")
+            described -= 1
+            continue
         _phase(job_id, task_id, "processing", "describe",
-               f"Described {idx}/{len(entries)}: {title}")
+               f"Described {idx}/{total}: {title}")
 
     if failures and not described and not skipped:
         # nothing worked at all — systemic (bad key, dead model): hard fail

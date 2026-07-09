@@ -22,7 +22,8 @@ import boto3
 from botocore.config import Config as BotoConfig
 
 import book_tex
-from shared import BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status
+from shared import (BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status,
+                    assert_safe_render_image_key)
 from spread_pdf import PDF_IMAGE_MAX_PX, PDF_PALETTE_MAX_PX, prepare_pdf_image
 
 # pool sized to the flip-page upload threads (default 10 floods logs with
@@ -352,13 +353,34 @@ def _safe_id(value, label):
     return str(value)
 
 
+def _redistributable_source_fonts(content_tex, cover_tex, font_names):
+    """Fonts to place in the downloadable source.zip: only .ttf files the
+    template actually references, and never a trial/demo face (those licences
+    forbid redistribution). code-review-25 F7."""
+    referenced = set(re.findall(r"[A-Za-z0-9][A-Za-z0-9._-]*\.ttf",
+                                f"{content_tex}\n{cover_tex}"))
+    out = []
+    for fname in font_names:
+        low = fname.lower()
+        if not low.endswith(".ttf"):
+            continue
+        if "trial" in low or "demo" in low:
+            continue
+        if fname not in referenced:
+            continue
+        out.append(fname)
+    return out
+
+
 def handle_prepare(params):
     job_id = params["job_id"]
     task_id = params["task_id"]
     book_id = _safe_id(params["book_id"], "book_id")
     entry_id = _safe_id(params["entry_id"], "entry_id")
     source_job_id = params["source_job_id"]
-    source_image_key = params["source_image_key"]
+    # source_image_key becomes a direct S3 GET below — pin it to render output
+    # so prepare cannot be pointed at an arbitrary bucket key (code-review-25 F3)
+    source_image_key = assert_safe_render_image_key(params["source_image_key"], "source_image_key")
     asset_key, prov_key = _asset_keys(book_id, entry_id)
     palette_key = f"{BOOKS_PREFIX}{book_id}/assets/{entry_id}.palette.jpg"
     progress = {"family": "book", "book_id": book_id, "entry_id": entry_id, "op": "prepare"}
@@ -573,10 +595,14 @@ def handle_compose(params, latex_runner=_run_lualatex):
             for entry_id in provenance:
                 zf.write(os.path.join(build_dir, book_tex.ASSET_DIR, f"{entry_id}.jpg"),
                          f"{book_tex.ASSET_DIR}/{entry_id}.jpg")
+            # Bundle ONLY the fonts the template actually references, and never
+            # a trial/demo face (code-review-25 F7): the tracked fonts/ dir
+            # carries trial licences that don't permit redistribution, but the
+            # template uses only the complete Baramond + CourierPrime faces.
             if os.path.isdir(FONT_DIR):
-                for fname in sorted(os.listdir(FONT_DIR)):
-                    if fname.lower().endswith(".ttf"):
-                        zf.write(os.path.join(FONT_DIR, fname), fname)
+                for fname in _redistributable_source_fonts(
+                        content_tex, cover_tex, sorted(os.listdir(FONT_DIR))):
+                    zf.write(os.path.join(FONT_DIR, fname), fname)
         zip_buf.seek(0)
         s3.upload_fileobj(zip_buf, BUCKET, out_prefix + "source.zip",
                           ExtraArgs={"ContentType": "application/zip"})

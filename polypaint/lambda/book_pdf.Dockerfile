@@ -43,15 +43,24 @@ ENV LD_LIBRARY_PATH=/opt/lib
 # --- TinyTeX-style TeX Live: scheme-basic + pinned package list ---
 # (mirrors the user's local TinyTeX recipe: minimal scheme, tlmgr adds
 # exactly what the fixed template needs)
+#
+# Reproducibility (code-review-25 F8): install-tl AND every tlmgr install
+# resolve against a FROZEN, dated tlnet snapshot, not the moving `tlnet`
+# mirror. Otherwise a rebuild silently picks up newer package versions and
+# can change TeX behaviour with no code change. TL2025 tlnet-final is a
+# finalized, mirrored repository. Bump TL_SNAPSHOT deliberately to move it.
 ENV TEXDIR=/opt/texlive
+ARG TL_SNAPSHOT=https://ftp.math.utah.edu/pub/tex/historic/systems/texlive/2025/tlnet-final
 RUN cd /tmp \
-    && wget -q https://mirror.ctan.org/systems/texlive/tlnet/install-tl-unx.tar.gz \
+    && wget -q "$TL_SNAPSHOT/install-tl-unx.tar.gz" \
     && tar xzf install-tl-unx.tar.gz \
     && cd install-tl-2* \
     && printf 'selected_scheme scheme-basic\nTEXDIR %s\nTEXMFLOCAL %s/texmf-local\ntlpdbopt_install_docfiles 0\ntlpdbopt_install_srcfiles 0\n' "$TEXDIR" "$TEXDIR" > tl.profile \
-    && ./install-tl --profile=tl.profile \
+    && ./install-tl --profile=tl.profile --repository "$TL_SNAPSHOT" \
     && rm -rf /tmp/install-tl-2* /tmp/install-tl-unx.tar.gz
 ENV PATH="$TEXDIR/bin/aarch64-linux:$TEXDIR/bin/x86_64-linux:$PATH"
+# pin tlmgr's repository to the same snapshot so package installs match
+RUN tlmgr option repository "$TL_SNAPSHOT"
 RUN tlmgr install fontspec microtype geometry xcolor eso-pic pgf luaotfload
 # vector QR codes on the verso (download link for the image)
 RUN tlmgr install qrcode xkeyval

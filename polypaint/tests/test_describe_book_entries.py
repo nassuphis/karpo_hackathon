@@ -167,6 +167,28 @@ class DescribeEngineTests(unittest.TestCase):
         self.assertEqual(out, {"ok": True})
         self.assertEqual(calls["n"], 3)
 
+    def test_preview_falls_back_to_stored_image_key(self):
+        # code-review-25 F5: legacy/root artifacts lack the immutable color
+        # preview path; Describe must still resolve them via entry.image_key
+        seen = []
+
+        def get_object(Bucket=None, Key=None):
+            seen.append(Key)
+            if Key == "renders/j/legacy_root/image.jpeg":
+                return {"Body": MagicMock(read=lambda: b"IMGBYTES")}
+            raise Exception("NoSuchKey")
+
+        fake_s3 = MagicMock()
+        fake_s3.get_object.side_effect = get_object
+        with patch.object(self.mod, "s3", fake_s3):
+            out = self.mod._entry_preview_bytes({
+                "job_id": "j", "artifact_id": "a",
+                "image_key": "renders/j/legacy_root/image.jpeg"})
+        self.assertEqual(out, b"IMGBYTES")
+        # tried the two canonical preview paths first, then the image_key
+        self.assertTrue(seen[0].endswith("preview.jpg"))
+        self.assertEqual(seen[-1], "renders/j/legacy_root/image.jpeg")
+
 
 class HandleDescribeTests(unittest.TestCase):
     def setUp(self):
@@ -250,6 +272,59 @@ class HandleDescribeTests(unittest.TestCase):
         deduped = [p for i, p in enumerate(self.phases) if i == 0 or self.phases[i-1] != p]
         self.assertEqual(deduped, [("started", "load_book"), ("processing", "describe"),
                                    ("processing", "save"), ("done", "done")])
+
+    def test_concurrent_human_edit_is_not_clobbered(self):
+        # code-review-25 F2: the per-entry save is now compare-and-swap. A
+        # human edits e2's title while e1 is being described; e1's save
+        # conflicts, describe refetches + re-applies its own prose, and e2's
+        # human edit survives (skip-existing then leaves it alone).
+        doc = {"id": "b1", "name": "b1", "saved_at": "S1", "entries": [
+            {"entry_id": "e1", "job_id": "j", "artifact_id": "a1"},
+            {"entry_id": "e2", "job_id": "j", "artifact_id": "a2"}]}
+        replies = [
+            {"candidates": [{"content": {"parts": [{"text":
+                '{"title": "E1 Auto", "description": "auto one"}'}]}}]},
+            {"candidates": [{"content": {"parts": [{"text":
+                '{"title": "E2 Auto", "description": "auto two"}'}]}}]}]
+
+        def _resp(status, body):
+            return {"Payload": MagicMock(read=lambda: json.dumps(
+                {"statusCode": status, "body": json.dumps(body)}).encode())}
+
+        state = {"saves": 0, "last_book": None}
+
+        def invoke(FunctionName=None, Payload=None):
+            p = json.loads(Payload)
+            if p["path"] == "/fetch-book":
+                # server copy: a human retitled e2 and saved_at advanced
+                fresh = {"id": "b1", "name": "b1", "saved_at": "S_HUMAN", "entries": [
+                    {"entry_id": "e1", "job_id": "j", "artifact_id": "a1"},
+                    {"entry_id": "e2", "job_id": "j", "artifact_id": "a2",
+                     "title_override": "HUMAN EDIT", "body_override": "by hand"}]}
+                return _resp(200, {"book": fresh})
+            body = json.loads(p["body"])
+            state["saves"] += 1
+            if state["saves"] == 1:                 # e1's first save conflicts
+                return _resp(409, {"error": "changed", "conflict": "book_saved_at"})
+            state["last_book"] = body["book"]
+            return _resp(200, {"book": {**body["book"], "saved_at": "S_NEW"}})
+
+        fake_lambda = MagicMock()
+        fake_lambda.invoke.side_effect = invoke
+        with patch.object(self.mod, "s3", self._fake_s3(doc)), \
+             patch.object(self.mod, "boto3") as fb, \
+             patch.object(self.mod, "_gemini_call", side_effect=replies):
+            fb.client.return_value = fake_lambda
+            resp = self.mod.handle_describe({
+                "job_id": "book#b1", "task_id": "bookdesc_r1", "book_id": "b1"})
+
+        body = json.loads(resp["body"])
+        self.assertEqual(body["described"], 1)   # e1
+        self.assertEqual(body["skipped"], 1)     # e2: human edit kept, skip-existing
+        self.assertEqual(body["failed"], 0)
+        saved = {e["entry_id"]: e for e in state["last_book"]["entries"]}
+        self.assertEqual(saved["e1"]["title_override"], "E1 Auto")
+        self.assertEqual(saved["e2"]["title_override"], "HUMAN EDIT")  # not clobbered
 
     def test_one_failing_entry_does_not_abort_the_run(self):
         # the 7/21 abort: entry e1's model reply is flaky BOTH times (retry

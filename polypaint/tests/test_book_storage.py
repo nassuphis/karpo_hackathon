@@ -130,6 +130,56 @@ class TestBookStorage(unittest.TestCase):
             self.assertIn(needle, json.loads(resp["body"])["error"])
 
     @patch("handler_storage.s3")
+    def test_image_key_must_be_a_render_image_key(self, mock_s3):
+        # code-review-25 F3: image_key becomes a raw LaTeX arg (\qrcode{URL})
+        # and an S3 GET — hostile values must be rejected at /save-book
+        import handler_storage
+        _patch_s3(mock_s3, _FakeS3())
+        hostile = [
+            "renders/j/color/a/image.jpeg} \\input{/etc/passwd",   # TeX injection
+            "renders/j/color/a/image.jpeg\\qrcode",                 # backslash
+            "renders/../../secret.json",                            # path escape (no ext)
+            "s3://polypaint/renders/j/color/a/image.jpeg",          # scheme prefix
+            "config/vision_model.json",                             # arbitrary key
+            "renders/j/color/a/image.svg",                          # non-image ext
+        ]
+        for key in hostile:
+            resp = handler_storage.handler(_event("/save-book", {"book": {
+                "name": "x", "entries": [_entry(1, image_key=key)]}}), None)
+            self.assertEqual(resp["statusCode"], 400, key)
+            self.assertIn("image_key", json.loads(resp["body"])["error"])
+        # real color + palette + preview keys still pass
+        for key in ("renders/job1/color/art1/image.jpeg",
+                    "renders/j/palettes/pal_x/image.jpeg",
+                    "renders/j/color/a/preview.png"):
+            resp = handler_storage.handler(_event("/save-book", {"book": {
+                "name": "ok", "entries": [_entry(1, image_key=key)]}}), None)
+            self.assertEqual(resp["statusCode"], 200, key)
+
+    @patch("handler_storage.s3")
+    def test_save_book_compare_and_swap(self, mock_s3):
+        # code-review-25 F2: expected_saved_at guards a concurrent overwrite;
+        # the interactive save (no expected) stays last-write-wins
+        import handler_storage
+        _patch_s3(mock_s3, _FakeS3())
+        first = json.loads(handler_storage.handler(_event("/save-book", {"book": {
+            "name": "CAS Book", "entries": [_entry(1)]}}), None)["body"])
+        saved_at = first["book"]["saved_at"]
+        book = first["book"]
+        # stale expected -> 409 conflict, S3 untouched
+        stale = handler_storage.handler(_event("/save-book", {
+            "book": book, "expected_saved_at": "1999-01-01T00:00:00Z"}), None)
+        self.assertEqual(stale["statusCode"], 409)
+        self.assertEqual(json.loads(stale["body"])["conflict"], "book_saved_at")
+        # correct expected -> 200, and it advances saved_at
+        ok = handler_storage.handler(_event("/save-book", {
+            "book": book, "expected_saved_at": saved_at}), None)
+        self.assertEqual(ok["statusCode"], 200)
+        # no expected -> unconditional overwrite still works (human Save)
+        plain = handler_storage.handler(_event("/save-book", {"book": book}), None)
+        self.assertEqual(plain["statusCode"], 200)
+
+    @patch("handler_storage.s3")
     def test_list_skips_nested_keys_and_reports_errors(self, mock_s3):
         import handler_storage
 

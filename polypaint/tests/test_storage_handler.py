@@ -972,6 +972,41 @@ class TestVisionConfig(unittest.TestCase):
         self.assertTrue(r["key_set"])
 
 
+class TestReservedPartitionGuard(unittest.TestCase):
+    """code-review-25 F1: generic job-scoped mutation routes must refuse the
+    internal config/index/favorites sentinels so a caller cannot wipe the
+    VisionModel keys, mosaic status, or favorites through an ordinary route."""
+
+    RESERVED = ["__config__", "__allrenders_mosaic__", "favorites#color"]
+
+    @patch("handler_storage.s3")
+    def test_delete_task_rejects_reserved_partitions(self, _mock_s3):
+        import handler_storage
+        for jid in self.RESERVED:
+            resp = handler_storage.handler(
+                _event("/delete-task", {"job_id": jid, "task_id": "vision_model"}), None)
+            self.assertEqual(resp["statusCode"], 400, jid)
+            self.assertIn("reserved", json.loads(resp["body"])["error"])
+
+    @patch("handler_storage.s3")
+    def test_clean_render_rejects_reserved_partitions(self, _mock_s3):
+        import handler_storage
+        for jid in self.RESERVED:
+            resp = handler_storage.handler(
+                _event("/clean-render", {"job_id": jid}), None)
+            self.assertEqual(resp["statusCode"], 400, jid)
+            self.assertIn("reserved", json.loads(resp["body"])["error"])
+
+    def test_normal_job_id_is_not_treated_as_reserved(self):
+        import handler_storage
+        self.assertEqual(
+            handler_storage._assert_mutable_job_partition("compute_mo0ej5r9"),
+            "compute_mo0ej5r9")
+        for jid in self.RESERVED:
+            with self.assertRaises(ValueError):
+                handler_storage._assert_mutable_job_partition(jid)
+
+
 class TestWallPyramidKick(unittest.TestCase):
     """deepzoom-speed.md §7.1: after a manifest refresh the storage worker
     chains the composite wall build to the deepzoom-export lambda."""

@@ -21,6 +21,39 @@ def _event(**overrides):
     return {"body": json.dumps(payload)}
 
 
+class TestInternalActionBoundary(unittest.TestCase):
+    """code-review-25 F4: the wall-pyramid build is storage's internal async
+    fan-out; it must not be reachable through the public deepzoom-export API."""
+
+    def test_api_shaped_event_cannot_trigger_wall_build(self):
+        import handler_deepzoom_export as mod
+        import handler_wall_pyramid as wall
+        # an API Gateway event carries these fields; a direct invoke does not
+        for marker in ("requestContext", "rawPath", "httpMethod",
+                       "headers", "queryStringParameters"):
+            event = {"body": json.dumps({"internal_action": "build_wall_pyramid",
+                                         "kind": "color",
+                                         "refresh_id": "mosaic_x",
+                                         "manifest_key": "renders/evil.json"}),
+                     marker: {} if marker != "httpMethod" else "POST"}
+            with patch.object(wall, "handle_build_wall_pyramid") as builder:
+                resp = mod.handler(event, None)
+            self.assertEqual(resp["statusCode"], 403, marker)
+            builder.assert_not_called()
+
+    def test_direct_invoke_reaches_the_builder(self):
+        import handler_deepzoom_export as mod
+        import handler_wall_pyramid as wall
+        event = {"internal_action": "build_wall_pyramid", "kind": "color",
+                 "refresh_id": "mosaic_20260709T120000Z_abcdef01",
+                 "manifest_key": "renders/_index/color_mosaic/"
+                                 "mosaic_20260709T120000Z_abcdef01/all.json"}
+        with patch.object(wall, "handle_build_wall_pyramid",
+                          return_value={"statusCode": 200, "body": "{}"}) as builder:
+            mod.handler(event, None)
+        builder.assert_called_once()
+
+
 class TestDeepZoomExportRaw(unittest.TestCase):
     @patch("handler_deepzoom_export.report_status")
     @patch("handler_deepzoom_export.s3")

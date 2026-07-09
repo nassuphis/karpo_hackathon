@@ -40,7 +40,8 @@ from logical_sections import (
     DEFAULT_SOLVE_SCORE_MEMORY_MB,
     summarize_chunk_items,
 )
-from shared import BUCKET, JOBS_TABLE, PRESIGN_EXPIRY, parse_body, ok_response, _get_ddb, parse_boolish
+from shared import (BUCKET, JOBS_TABLE, PRESIGN_EXPIRY, parse_body, ok_response,
+                    _get_ddb, parse_boolish, assert_safe_render_image_key)
 from coeff_program_chain import (
     PROGRAM_KIND as COEFF_PROGRAM_KIND,
     PROGRAM_VERSION as COEFF_PROGRAM_VERSION,
@@ -249,6 +250,8 @@ def _handle_storage_route(fn, event):
             "existing_fingerprint": exc.existing_fingerprint,
             "migrated_fingerprint": exc.migrated_fingerprint,
         })
+    except BookConflictError as exc:
+        return _json_error_response(409, {"error": str(exc), "conflict": "book_saved_at"})
     except _MigrationMissingMacros as exc:
         return _json_error_response(422, {"error": "macro not migrated", "missing": exc.missing})
     except ClientError as exc:
@@ -1953,6 +1956,9 @@ def _validate_book_payload(raw):
         for field in ("job_id", "artifact_id", "image_key"):
             if not entry[field]:
                 raise ValueError(f"book entry {idx} is missing {field}")
+        # image_key is trusted downstream as a raw LaTeX macro argument
+        # (\qrcode{URL}) and an S3 GET target — pin it to render output
+        assert_safe_render_image_key(entry["image_key"], f"book entry {idx} image_key")
         if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", entry["entry_id"]):
             raise ValueError(f"book entry {idx} entry_id must match [A-Za-z0-9._-]{{1,64}}")
         if entry["entry_id"] in seen_entry_ids:
@@ -2085,11 +2091,33 @@ def handle_save_vision_config(event):
     return ok_response(_vision_summary(new_item))
 
 
+class BookConflictError(Exception):
+    """Optimistic-concurrency failure: the stored book moved under a caller
+    that passed expected_saved_at (Describe's per-entry saves)."""
+
+
 def handle_save_book(event):
     params = parse_body(event)
     book = _validate_book_payload(params.get("book"))
     key = _book_key(book["id"])
     overwritten = _key_exists(key)
+    # Optional compare-and-swap: when the caller passes expected_saved_at,
+    # refuse the write if the stored book has moved since they read it. This
+    # is what stops a long Describe run from clobbering a concurrent human
+    # edit with its stale in-memory document (the interactive Save omits it
+    # and keeps last-write-wins, which is what a human clicking Save wants).
+    expected_saved_at = str(params.get("expected_saved_at") or "").strip()
+    if expected_saved_at:
+        current = ""
+        if overwritten:
+            try:
+                current = str(_read_book_object(book["id"]).get("saved_at") or "")
+            except Exception:
+                current = ""
+        if current != expected_saved_at:
+            raise BookConflictError(
+                f"book {book['id']} changed since {expected_saved_at!r} "
+                f"(now {current!r}); refetch and retry")
     s3.put_object(
         Bucket=BUCKET,
         Key=key,
@@ -4473,11 +4501,27 @@ ARTIFACT_FAMILIES = {
 }
 
 
+# DDB partitions that back internal config/index/favorites state. Generic
+# job-scoped mutation routes (delete-task, clean-render) must refuse these so
+# a caller cannot wipe the VisionModel keys, mosaic status, or favorites by
+# passing the sentinel as an ordinary job_id.
+RESERVED_DDB_JOB_PREFIXES = ("__", "favorites#")
+
+
+def _assert_mutable_job_partition(job_id):
+    jid = str(job_id or "")
+    if jid.startswith(RESERVED_DDB_JOB_PREFIXES):
+        raise ValueError(
+            f"job_id {jid!r} is a reserved internal partition; "
+            f"it cannot be mutated through a generic job route")
+    return jid
+
+
 def handle_clean_render(event):
     """Family-scoped cleanup: delete only the specified family's intermediates,
     previews, and stale same-family siblings. Never touches other families."""
     params = parse_body(event)
-    job_id = params["job_id"]
+    job_id = _assert_mutable_job_partition(params["job_id"])
     prefix = f"renders/{job_id}/"
     pipeline = params.get("pipeline", "color")
 
@@ -5010,7 +5054,7 @@ def handle_delete_task(event):
     Used to clear stale status before re-dispatching a task with a fixed task_id.
     """
     params = parse_body(event)
-    job_id = params["job_id"]
+    job_id = _assert_mutable_job_partition(params["job_id"])
     task_id = params["task_id"]
     ddb = _get_ddb()
     ddb.delete_item(

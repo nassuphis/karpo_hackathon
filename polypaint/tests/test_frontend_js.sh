@@ -2796,4 +2796,31 @@ if (!js.match(/phase === 'done'[\s\S]{0,400}rd\.failed/))
 console.log('Frontend book row label checks: OK');
 NODE
 
+# ── Standalone mosaic viewer: manifest/base URL must be validated ──
+node - "$ROOT" <<'NODE'
+const fs = require('fs'), path = require('path'), vm = require('vm');
+const html = fs.readFileSync(path.join(process.argv[2], 'artifact_mosaic_viewer.html'), 'utf8');
+function grab(name) {
+  const m = html.match(new RegExp('function ' + name + '\\([^)]*\\) \\{[\\s\\S]*?\\n\\}'));
+  if (!m) { console.error('FATAL: viewer missing ' + name); process.exit(1); }
+  return m[0];
+}
+const constMatch = html.match(/const TRUSTED_HOST = '[^']+';\s*\n\s*const DEFAULT_BASE = [^;]+;/);
+if (!constMatch) { console.error('FATAL: viewer missing TRUSTED_HOST/DEFAULT_BASE'); process.exit(1); }
+const ctx = vm.createContext({ location: { href: 'https://polypaint.s3.us-east-1.amazonaws.com/x' }, URL });
+vm.runInContext(constMatch[0] + '\n' + grab('trustedManifestUrl') + '\n' + grab('trustedBase'), ctx);
+const good = 'https://polypaint.s3.us-east-1.amazonaws.com/renders/_shared_mosaic/color/share_x/manifest.json';
+if (ctx.trustedManifestUrl(good) !== good) { console.error('FATAL: trusted share URL rejected'); process.exit(1); }
+for (const bad of ['javascript:alert(1)', 'https://evil.example/renders/x/manifest.json',
+                   'http://polypaint.s3.us-east-1.amazonaws.com/renders/x.json',  // not https
+                   'https://polypaint.s3.us-east-1.amazonaws.com/etc/passwd',      // not /renders/
+                   'data:text/html,evil']) {
+  if (ctx.trustedManifestUrl(bad) !== null) { console.error('FATAL: viewer trusted hostile manifest ' + bad); process.exit(1); }
+}
+const DEF = 'https://polypaint.s3.us-east-1.amazonaws.com/';
+if (ctx.trustedBase('https://evil.example/') !== DEF) { console.error('FATAL: trustedBase must fall back for a bad host'); process.exit(1); }
+if (ctx.trustedBase('https://polypaint.s3.us-east-1.amazonaws.com/') !== DEF) { console.error('FATAL: trustedBase must keep the real base'); process.exit(1); }
+console.log('Frontend mosaic viewer URL validation checks: OK');
+NODE
+
 echo "=== Frontend fused render source test passed ==="

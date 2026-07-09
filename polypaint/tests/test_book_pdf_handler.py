@@ -392,6 +392,35 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class TestSourceFontBundling(unittest.TestCase):
+    """code-review-25 F7: the downloadable source.zip must carry only the
+    fonts the template references, and never a trial/demo face."""
+
+    def test_only_referenced_non_trial_fonts_are_bundled(self):
+        import book_pdf
+        content_tex = (r"\setmainfont{Baramond-Regular.ttf}"
+                       r"\newfontfamily\monofont{CourierPrime-Regular.ttf}")
+        cover_tex = r"\displayfont{Baramond-Regular.ttf}"
+        on_disk = [
+            "Baramond-Regular.ttf", "CourierPrime-Regular.ttf",   # referenced, complete
+            "TiemposText-Regular-Trial.ttf",                       # trial (never)
+            "Sohne-Buch-Trial.ttf", "Lyon-Regular.ttf",           # trial / unreferenced
+            "JetBrainsMono-Regular.ttf",                           # unreferenced
+            "notes.txt",                                           # not a font
+        ]
+        picked = book_pdf._redistributable_source_fonts(content_tex, cover_tex, on_disk)
+        self.assertEqual(sorted(picked),
+                         ["Baramond-Regular.ttf", "CourierPrime-Regular.ttf"])
+
+    def test_a_referenced_trial_font_is_still_excluded(self):
+        import book_pdf
+        # even if the template ever named a trial face, redistribution is barred
+        picked = book_pdf._redistributable_source_fonts(
+            r"\setmainfont{TiemposText-Regular-Trial.ttf}", "",
+            ["TiemposText-Regular-Trial.ttf"])
+        self.assertEqual(picked, [])
+
+
 class TestViewportSummary(unittest.TestCase):
     def test_explicit_drops_q_shim_and_uses_two_sig_digits(self):
         import book_pdf

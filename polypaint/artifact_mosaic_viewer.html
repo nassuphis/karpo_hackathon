@@ -72,9 +72,31 @@ function esc(value) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// The share bucket is public and the only host share links point at. Both
+// the manifest URL (from the query string) and manifest.base (from the
+// fetched JSON) are validated against it before use, so a crafted ?manifest=
+// cannot become a clickable javascript: link or load an attacker's tiles.
+const TRUSTED_HOST = 'polypaint.s3.us-east-1.amazonaws.com';
+const DEFAULT_BASE = 'https://' + TRUSTED_HOST + '/';
+
+function trustedManifestUrl(raw) {
+  let u;
+  try { u = new URL(String(raw || ''), location.href); } catch (e) { return null; }
+  if (u.protocol !== 'https:' || u.hostname !== TRUSTED_HOST) return null;
+  if (!u.pathname.startsWith('/renders/')) return null;
+  return u.href;
+}
+
+function trustedBase(base) {
+  try {
+    const u = new URL(String(base || ''));
+    if (u.protocol === 'https:' && u.hostname === TRUSTED_HOST) return u.href;
+  } catch (e) { /* fall through */ }
+  return DEFAULT_BASE;
+}
+
 function publicUrl(manifest, key) {
-  const base = (manifest && manifest.base) || 'https://polypaint.s3.us-east-1.amazonaws.com/';
-  return base + encodeURI(String(key || ''));
+  return trustedBase(manifest && manifest.base) + encodeURI(String(key || ''));
 }
 
 function tileSizeForSelection(tiles, selectedSize) {
@@ -160,11 +182,13 @@ function tileSource(manifest, tiles, options) {
 }
 
 async function main() {
-  const manifestUrl = qs('manifest', '');
+  const rawManifest = qs('manifest', '');
   const kind = qs('kind', 'color');
   const size = qs('size', 'all');
   const sort = qs('sort', 'date');
-  if (!manifestUrl) throw new Error('Missing manifest query parameter');
+  if (!rawManifest) throw new Error('Missing manifest query parameter');
+  const manifestUrl = trustedManifestUrl(rawManifest);
+  if (!manifestUrl) throw new Error('Untrusted manifest URL: share links must be https://' + TRUSTED_HOST + '/renders/...');
   const manifestLink = document.getElementById('manifest-link');
   if (manifestLink) {
     manifestLink.href = manifestUrl;
@@ -195,7 +219,7 @@ async function main() {
     try {
       const wallKind = String(manifest.artifact_kind || kind || 'color');
       const rid = String(manifest.refresh_id || '');
-      const base = manifest.base || 'https://polypaint.s3.us-east-1.amazonaws.com/';
+      const base = trustedBase(manifest.base);
       if (rid) {
         const wallUrl = base + encodeURI(`renders/_index/${wallKind}_mosaic/${rid}/wall.json`);
         const wallResp = await fetch(wallUrl + '?ts=' + Date.now());

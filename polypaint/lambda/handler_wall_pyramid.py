@@ -11,6 +11,7 @@ import concurrent.futures
 import json
 import math
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -128,6 +129,14 @@ def handle_build_wall_pyramid(params):
     manifest_key = str(params.get("manifest_key") or "")
     if kind not in STATUS_TASK_BY_KIND or not refresh_id or not manifest_key:
         return ok_response({"error": "kind, refresh_id, manifest_key required"})
+    # Defense in depth (code-review-25 F4): pin the inputs to the canonical
+    # mosaic index layout so a malformed payload cannot point the tile
+    # downloader at an arbitrary manifest.
+    if not re.fullmatch(r"mosaic_[0-9A-Za-z]+_[0-9a-f]{6,12}", refresh_id):
+        return ok_response({"error": f"bad refresh_id shape: {refresh_id!r}"})
+    expected_key = f"renders/_index/{kind}_mosaic/{refresh_id}/all.json"
+    if manifest_key != expected_key:
+        return ok_response({"error": f"manifest_key must be {expected_key!r}, got {manifest_key!r}"})
 
     work_dir = "/tmp/wall_tiles"
     out_dir = "/tmp/wall_out"

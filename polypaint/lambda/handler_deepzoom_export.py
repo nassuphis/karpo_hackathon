@@ -290,10 +290,30 @@ def handle_deepzoom_export_request(params, *, require_raw_sidecar=False, task_id
         raise
 
 
+def _looks_like_api_gateway(event):
+    """True when the event arrived over the public HTTP API rather than a
+    direct Lambda-to-Lambda invoke. The wall-pyramid build is storage's
+    internal async fan-out only; it must never be reachable from a request."""
+    return isinstance(event, dict) and any(
+        k in event for k in ("requestContext", "rawPath", "httpMethod",
+                             "routeKey", "headers", "queryStringParameters"))
+
+
 def handler(event, context):
     params = parse_body(event)
-    if params.get("internal_action") == "build_wall_pyramid" or \
-            event.get("internal_action") == "build_wall_pyramid":
+    wants_wall = (params.get("internal_action") == "build_wall_pyramid"
+                  or event.get("internal_action") == "build_wall_pyramid")
+    if wants_wall:
+        # Reject the internal action when the event carries API Gateway
+        # fields: a public caller must not trigger the expensive libvips
+        # wall build with a chosen manifest (code-review-25 F4).
+        if _looks_like_api_gateway(event):
+            return {
+                "statusCode": 403,
+                "headers": {"Content-Type": "application/json",
+                            "Access-Control-Allow-Origin": "*"},
+                "body": json.dumps({"error": "internal_action is not exposed over the API"}),
+            }
         from handler_wall_pyramid import handle_build_wall_pyramid
         return handle_build_wall_pyramid(params if params.get("internal_action") else event)
     return handle_deepzoom_export_request(params, require_raw_sidecar=False, task_id="deepzoom_export")

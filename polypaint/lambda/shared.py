@@ -4,6 +4,7 @@ Shared utilities for all polypaint Lambda handlers.
 import json
 import math
 import os
+import re
 import struct
 import time
 import errno
@@ -238,6 +239,27 @@ def tmp_space_stats(path="/tmp"):
 # keys (a new artifact always gets a new key), so clients may cache them
 # forever. Mutable pointers and manifests must NOT use this.
 CACHE_IMMUTABLE = "public, max-age=31536000, immutable"
+
+
+# Book entries / prepare sources accept only render-scoped image keys. A book
+# image_key becomes a raw LaTeX macro argument at compose time (\qrcode{URL})
+# and an S3 GET at prepare time, so hostile values (braces, backslashes, path
+# escapes, arbitrary prefixes) must never reach either. The charset blocks all
+# TeX specials; the renders/ prefix + image extension pins it to render output.
+_SAFE_RENDER_IMAGE_KEY = re.compile(r"renders/[A-Za-z0-9._/-]+\.(?:jpe?g|png)")
+
+
+def is_safe_render_image_key(key):
+    k = str(key or "")
+    return bool(_SAFE_RENDER_IMAGE_KEY.fullmatch(k)) and ".." not in k
+
+
+def assert_safe_render_image_key(key, label="image_key"):
+    if not is_safe_render_image_key(key):
+        raise ValueError(
+            f"{label} must be a render image key "
+            f"renders/.../*.jpg|jpeg|png (no braces, backslashes, or '..'): {key!r}")
+    return str(key)
 
 
 def vision_provider(model):

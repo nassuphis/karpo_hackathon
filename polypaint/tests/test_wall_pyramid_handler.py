@@ -53,6 +53,9 @@ class WallOrderTests(unittest.TestCase):
 
 
 class BuildWallPyramidTests(unittest.TestCase):
+    REFRESH_ID = "mosaic_20260709T120000Z_abcdef01"
+    MANIFEST_KEY = "renders/_index/color_mosaic/mosaic_20260709T120000Z_abcdef01/all.json"
+
     def _run(self, *, fail_download=False, fail_subprocess=False):
         import handler_wall_pyramid as mod
 
@@ -101,9 +104,21 @@ class BuildWallPyramidTests(unittest.TestCase):
              patch.object(mod.subprocess, "run", side_effect=fake_run):
             fake_boto3.client.return_value = fake_ddb
             resp = mod.handle_build_wall_pyramid({
-                "kind": "color", "refresh_id": "mosaic_x",
-                "manifest_key": "renders/_index/color_mosaic/mosaic_x/all.json"})
+                "kind": "color", "refresh_id": self.REFRESH_ID,
+                "manifest_key": self.MANIFEST_KEY})
         return json.loads(resp["body"]), puts, ddb_updates
+
+    def test_rejects_bad_refresh_id_and_mismatched_manifest_key(self):
+        # code-review-25 F4: pin inputs to the canonical mosaic index layout
+        import handler_wall_pyramid as mod
+        bad = mod.handle_build_wall_pyramid({
+            "kind": "color", "refresh_id": "../../evil",
+            "manifest_key": "renders/_index/color_mosaic/x/all.json"})
+        self.assertIn("refresh_id", json.loads(bad["body"])["error"])
+        mism = mod.handle_build_wall_pyramid({
+            "kind": "color", "refresh_id": self.REFRESH_ID,
+            "manifest_key": "renders/_shared_mosaic/color/attacker/manifest.json"})
+        self.assertIn("manifest_key must be", json.loads(mism["body"])["error"])
 
     def test_success_uploads_pyramid_and_wall_json(self):
         body, puts, ddb_updates = self._run()
@@ -135,7 +150,7 @@ class BuildWallPyramidTests(unittest.TestCase):
         update = ddb_updates[-1]
         self.assertEqual(update["ConditionExpression"], "refresh_id = :rid")
         self.assertEqual(update["ExpressionAttributeValues"][":ws"], {"S": "ready"})
-        self.assertEqual(update["ExpressionAttributeValues"][":rid"], {"S": "mosaic_x"})
+        self.assertEqual(update["ExpressionAttributeValues"][":rid"], {"S": self.REFRESH_ID})
         self.assertEqual(body["placeholders"], 0)
 
     def test_download_failure_becomes_placeholder(self):

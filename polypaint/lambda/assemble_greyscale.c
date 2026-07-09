@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 typedef struct {
     uint8_t *data;
@@ -107,12 +108,37 @@ static size_t write_download_cb(char *ptr, size_t size, size_t nmemb, void *user
     return n;
 }
 
+/* S3 returns 503 SlowDown when a prefix is hit too hard; the AWS SDKs retry
+ * it automatically, and this fragment downloader must too, or a single
+ * throttled section fails the whole render (2026-07 incident). Mirrors the
+ * range-GET retry policy in multispan_reader.c / solve_proximity_hist_sectioned.c. */
+#define AG_DOWNLOAD_ATTEMPTS 6
+
+static void ag_sleep_ms(long ms) {
+    if (ms <= 0) return;
+    struct timespec ts;
+    ts.tv_sec = ms / 1000L;
+    ts.tv_nsec = (ms % 1000L) * 1000000L;
+    nanosleep(&ts, NULL);
+}
+
+static int ag_retryable_failure(CURLcode rc, long httpStatus) {
+    if (httpStatus == 429L || httpStatus == 500L || httpStatus == 502L ||
+        httpStatus == 503L || httpStatus == 504L) return 1;
+    return rc == CURLE_HTTP_RETURNED_ERROR ||
+           rc == CURLE_OPERATION_TIMEDOUT ||
+           rc == CURLE_COULDNT_CONNECT ||
+           rc == CURLE_COULDNT_RESOLVE_HOST ||
+           rc == CURLE_RECV_ERROR ||
+           rc == CURLE_SEND_ERROR ||
+           rc == CURLE_GOT_NOTHING ||
+           rc == CURLE_PARTIAL_FILE;
+}
+
 static int download_url_bytes(WorkerCtx *ctx, const char *url, uint8_t **outData, size_t *outSize) {
     char curlErr[CURL_ERROR_SIZE] = {0};
     long httpStatus = 0;
-    CURLcode rc;
-    DownloadBuffer dl;
-    memset(&dl, 0, sizeof(dl));
+    CURLcode rc = CURLE_OK;
 
     if (!ctx->curl) {
         ctx->curl = curl_easy_init();
@@ -121,36 +147,50 @@ static int download_url_bytes(WorkerCtx *ctx, const char *url, uint8_t **outData
         }
     }
 
-    curl_easy_reset(ctx->curl);
-    curl_easy_setopt(ctx->curl, CURLOPT_URL, url);
-    curl_easy_setopt(ctx->curl, CURLOPT_WRITEFUNCTION, write_download_cb);
-    curl_easy_setopt(ctx->curl, CURLOPT_WRITEDATA, &dl);
-    curl_easy_setopt(ctx->curl, CURLOPT_ERRORBUFFER, curlErr);
-    curl_easy_setopt(ctx->curl, CURLOPT_NOSIGNAL, 1L);
-    curl_easy_setopt(ctx->curl, CURLOPT_FAILONERROR, 1L);
-    curl_easy_setopt(ctx->curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(ctx->curl, CURLOPT_ACCEPT_ENCODING, "identity");
-    curl_easy_setopt(ctx->curl, CURLOPT_TCP_KEEPALIVE, 1L);
+    for (int attempt = 0; attempt < AG_DOWNLOAD_ATTEMPTS; attempt++) {
+        DownloadBuffer dl;
+        memset(&dl, 0, sizeof(dl));
+        curlErr[0] = 0;
+        httpStatus = 0;
 
-    rc = curl_easy_perform(ctx->curl);
-    curl_easy_getinfo(ctx->curl, CURLINFO_RESPONSE_CODE, &httpStatus);
-    if (rc != CURLE_OK) {
+        curl_easy_reset(ctx->curl);
+        curl_easy_setopt(ctx->curl, CURLOPT_URL, url);
+        curl_easy_setopt(ctx->curl, CURLOPT_WRITEFUNCTION, write_download_cb);
+        curl_easy_setopt(ctx->curl, CURLOPT_WRITEDATA, &dl);
+        curl_easy_setopt(ctx->curl, CURLOPT_ERRORBUFFER, curlErr);
+        curl_easy_setopt(ctx->curl, CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(ctx->curl, CURLOPT_FAILONERROR, 1L);
+        curl_easy_setopt(ctx->curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(ctx->curl, CURLOPT_ACCEPT_ENCODING, "identity");
+        curl_easy_setopt(ctx->curl, CURLOPT_TCP_KEEPALIVE, 1L);
+
+        rc = curl_easy_perform(ctx->curl);
+        curl_easy_getinfo(ctx->curl, CURLINFO_RESPONSE_CODE, &httpStatus);
+        if (rc == CURLE_OK) {
+            *outData = dl.data;
+            *outSize = dl.size;
+            return 1;
+        }
+
         free(dl.data);
-        /* Diagnostics lead: presigned URLs (~1.5 KB) overflow the 512-byte
-         * error buffer, so anything formatted after the URL is truncated
-         * away (this hid the curl rc during the 2026-06 incident). */
-        char detail[512];
-        snprintf(detail, sizeof(detail),
-                 "assemble_greyscale: download failed (curl %d %s; http %ld; %s): %s",
-                 (int)rc, curl_easy_strerror(rc), httpStatus,
-                 curlErr[0] ? curlErr : "no detail", url);
-        set_error(ctx->st, "%s", detail, 0, 0);
-        return 0;
+        if (attempt + 1 >= AG_DOWNLOAD_ATTEMPTS || !ag_retryable_failure(rc, httpStatus)) {
+            break;
+        }
+        /* backoff with a small linear ramp (150/300/450/... ms); S3 SlowDown
+         * clears quickly once the request rate drops */
+        ag_sleep_ms(150L * (attempt + 1));
     }
 
-    *outData = dl.data;
-    *outSize = dl.size;
-    return 1;
+    /* Diagnostics lead: presigned URLs (~1.5 KB) overflow the 512-byte error
+     * buffer, so anything formatted after the URL is truncated away (this hid
+     * the curl rc during the 2026-06 incident). */
+    char detail[512];
+    snprintf(detail, sizeof(detail),
+             "assemble_greyscale: download failed after %d attempts (curl %d %s; http %ld; %s): %s",
+             AG_DOWNLOAD_ATTEMPTS, (int)rc, curl_easy_strerror(rc), httpStatus,
+             curlErr[0] ? curlErr : "no detail", url);
+    set_error(ctx->st, "%s", detail, 0, 0);
+    return 0;
 }
 
 static int load_local_bytes(AssembleState *st, const char *path, uint8_t **outData, size_t *outSize) {

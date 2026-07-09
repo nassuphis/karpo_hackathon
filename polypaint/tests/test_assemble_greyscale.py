@@ -190,3 +190,74 @@ class TestAssembleGreyscale(unittest.TestCase):
         self.assertEqual(output, _reference_assemble(2, frags))
         self.assertEqual(hist["background_pixels"], 0)
         self.assertEqual(hist["nonzero_pixels"], 4)
+
+    def test_retries_transient_503_then_succeeds(self):
+        # S3 SlowDown (503) on a fragment must be retried, not fatal:
+        # each fragment 503s twice, then serves on the 3rd request
+        frags = [_encode_pairs([(0, 9), (3, 7)]), _encode_pairs([(1, 5), (2, 4)])]
+        result, output, hist, attempts = self._run_with_flaky_server(
+            2, frags, fail_times=2, workers=2)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output, _reference_assemble(2, frags))
+        # each fragment was requested 3 times (2×503 + 1×200)
+        for idx in range(len(frags)):
+            self.assertEqual(attempts.get(f"/frag_{idx}.bin", 0), 3, idx)
+
+    def test_gives_up_after_persistent_503(self):
+        # a fragment that 503s forever must fail with a clear message, not hang
+        frags = [_encode_pairs([(0, 9)])]
+        result, _output, _hist, _attempts = self._run_with_flaky_server(
+            1, frags, fail_times=999, workers=1)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("http 503", result.stderr)
+        self.assertIn("after 6 attempts", result.stderr)
+
+    def _run_with_flaky_server(self, pix, fragment_payloads, *, fail_times, workers=1):
+        attempts = {}
+        lock = threading.Lock()
+        with tempfile.TemporaryDirectory() as td:
+            root = pathlib.Path(td)
+            payloads = {f"/frag_{idx}.bin": p for idx, p in enumerate(fragment_payloads)}
+
+            class FlakyHandler(http.server.BaseHTTPRequestHandler):
+                def log_message(self, *a):
+                    pass
+
+                def do_GET(self):
+                    with lock:
+                        n = attempts.get(self.path, 0) + 1
+                        attempts[self.path] = n
+                    body = payloads.get(self.path)
+                    if body is None:
+                        self.send_response(404); self.end_headers(); return
+                    if n <= fail_times:
+                        self.send_response(503)
+                        self.end_headers()
+                        self.wfile.write(b"SlowDown")
+                        return
+                    self.send_response(200)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+
+            with socketserver.TCPServer(("127.0.0.1", 0), FlakyHandler) as server:
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    port = server.server_address[1]
+                    manifest = root / "urls.txt"
+                    manifest.write_text("\n".join(
+                        f"http://127.0.0.1:{port}/frag_{idx}.bin"
+                        for idx in range(len(fragment_payloads))) + "\n", encoding="utf-8")
+                    out_path = root / "out.raw"
+                    hist_path = root / "hist.json"
+                    cmd = [str(self._binary), f"--pix={pix}", f"--output={out_path}",
+                           f"--workers={workers}", f"--hist-output={hist_path}",
+                           f"--url-manifest={manifest}"]
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                    output = out_path.read_bytes() if out_path.exists() else b""
+                    hist = json.loads(hist_path.read_text()) if hist_path.exists() else None
+                    return result, output, hist, attempts
+                finally:
+                    server.shutdown()
+                    thread.join(timeout=5)

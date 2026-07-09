@@ -32,6 +32,10 @@ class DescribeEngineTests(unittest.TestCase):
         self.assertIn("vibrant", part_text["text"])  # ban list is IN the prompt
         self.assertEqual(req["generationConfig"]["responseMimeType"], "application/json")
         self.assertEqual(req["generationConfig"]["maxOutputTokens"], 4096)
+        schema = req["generationConfig"]["responseSchema"]
+        self.assertEqual(schema["required"], ["title", "description"])
+        self.assertEqual(schema["properties"]["title"]["type"], "STRING")
+        self.assertEqual(schema["properties"]["description"]["type"], "STRING")
 
     def test_build_request_carries_angle_and_used_titles(self):
         req = self.mod.build_request(b"x", {"artifact_id": "a"}, {},

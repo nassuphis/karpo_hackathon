@@ -111,6 +111,19 @@ def build_request(image_bytes, entry, report, *, angle="", used_titles=(), extra
         "generationConfig": {
             "temperature": 0.9,
             "responseMimeType": "application/json",
+            # constrained decoding: the mime type alone only NUDGES the
+            # model toward JSON (early stops still produced unclosed
+            # objects) — a responseSchema forces the decoder to emit a
+            # complete {title, description} object
+            "responseSchema": {
+                "type": "OBJECT",
+                "properties": {
+                    "title": {"type": "STRING"},
+                    "description": {"type": "STRING"},
+                },
+                "required": ["title", "description"],
+                "propertyOrdering": ["title", "description"],
+            },
             # explicit, generous: replies were arriving cut mid-JSON with no
             # blamable finishReason — remove default-cap ambiguity entirely
             "maxOutputTokens": 4096,

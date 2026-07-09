@@ -106,6 +106,31 @@ class DescribeEngineTests(unittest.TestCase):
             self.mod.parse_response(payload)
         self.assertIn("MAX_TOKENS", str(ctx.exception))
 
+    def test_gemini_recitation_stop_names_the_reason(self):
+        # RECITATION/SAFETY hard-stop mid-string without MAX_TOKENS — the
+        # exact "Verdigris Felt" failure: valid JSON start, never closes
+        payload = {"candidates": [{"content": {"parts": [
+            {"text": '{"title": "Verdigris Felt", "description": "An eight-pointed knot'},
+        ]}, "finishReason": "RECITATION"}]}
+        with self.assertRaises(RuntimeError) as ctx:
+            self.mod.parse_response(payload)
+        self.assertIn("RECITATION", str(ctx.exception))
+
+    def test_describe_image_retries_once_on_flaky_reply(self):
+        calls = {"n": 0}
+
+        def flaky(model, api_key, image_bytes, text):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("Gemini stopped early (finishReason RECITATION)")
+            return '{"title": "Second Try", "description": "Clean landing."}'
+
+        with patch.object(self.mod, "_vision_call", flaky):
+            title, desc = self.mod.describe_image(
+                b"jpg", {"entry_id": "e1"}, {}, model="gemini-2.5-flash", api_key="k")
+        self.assertEqual((title, desc), ("Second Try", "Clean landing."))
+        self.assertEqual(calls["n"], 2)
+
     def test_parse_prose_tolerates_literal_newlines_in_strings(self):
         self.assertEqual(
             self.mod._parse_prose('{"title": "T", "description": "line one\nline two"}'),
@@ -220,6 +245,50 @@ class HandleDescribeTests(unittest.TestCase):
         deduped = [p for i, p in enumerate(self.phases) if i == 0 or self.phases[i-1] != p]
         self.assertEqual(deduped, [("started", "load_book"), ("processing", "describe"),
                                    ("processing", "save"), ("done", "done")])
+
+    def test_one_failing_entry_does_not_abort_the_run(self):
+        # the 7/21 abort: entry e1's model reply is flaky BOTH times (retry
+        # included) — e2 must still describe, and done reports the failure
+        doc = {"id": "b1", "name": "b1", "saved_at": "S1",
+               "entries": [
+                   {"entry_id": "e1", "job_id": "j", "artifact_id": "a1"},
+                   {"entry_id": "e2", "job_id": "j", "artifact_id": "a2"},
+               ]}
+        bad = {"candidates": [{"content": {"parts": [
+            {"text": '{"title": "Verdigris Felt", "description": "cut'}]},
+            "finishReason": "RECITATION"}]}
+        good = {"candidates": [{"content": {"parts": [{"text":
+            '{"title": "Clean Landing", "description": "Full object."}'}]}}]}
+        replies = [bad, bad, good]   # e1 attempt + retry, then e2
+        fake_lambda = MagicMock()
+        fake_lambda.invoke.side_effect = lambda FunctionName=None, Payload=None: {
+            "Payload": MagicMock(read=lambda: json.dumps(
+                {"statusCode": 200, "body": json.dumps({"book": {"name": "b1"}})}).encode())}
+        with patch.object(self.mod, "s3", self._fake_s3(doc)), \
+             patch.object(self.mod, "boto3") as fb, \
+             patch.object(self.mod, "_gemini_call", side_effect=replies):
+            fb.client.return_value = fake_lambda
+            resp = self.mod.handle_describe({
+                "job_id": "book#b1", "task_id": "bookdesc_r1", "book_id": "b1"})
+        body = json.loads(resp["body"])
+        self.assertEqual(body["described"], 1)
+        self.assertEqual(body["failed"], 1)
+        self.assertIn("RECITATION", body["first_error"])
+        self.assertEqual(self.phases[-1], ("done", "done"))
+
+    def test_all_entries_failing_is_a_hard_error(self):
+        doc = {"id": "b1", "name": "b1", "saved_at": "S1",
+               "entries": [{"entry_id": "e1", "job_id": "j", "artifact_id": "a1"}]}
+        bad = {"candidates": [{"content": {"parts": [
+            {"text": '{"title": "X", "description": "cut'}]},
+            "finishReason": "RECITATION"}]}
+        with patch.object(self.mod, "s3", self._fake_s3(doc)), \
+             patch.object(self.mod, "boto3"), \
+             patch.object(self.mod, "_gemini_call", return_value=bad):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.mod.handle_describe({
+                    "job_id": "book#b1", "task_id": "bookdesc_r1", "book_id": "b1"})
+        self.assertIn("all 1 attempted entries", str(ctx.exception))
 
     def test_entry_ids_subset_with_overwrite_regenerates_selection(self):
         doc = {"id": "b1", "name": "b1", "saved_at": "S1",

@@ -799,8 +799,9 @@ async function _bookPollDescribe() {
         const label = rd.phase_label || rd.phase || 'working';
         const elapsed = Math.round((Date.now() - run.startedAt) / 1000);
         if (rd.phase === 'done') {
-            _bookRailDescribe('done', `${rd.described || 0} described · ${elapsed}s`);
-            _bookLog(`Describe done: ${rd.described || 0} described, ${rd.skipped || 0} skipped (${elapsed}s)`);
+            const failed = rd.failed || 0;
+            _bookRailDescribe('done', `${rd.described || 0} described${failed ? ` · ${failed} failed` : ''} · ${elapsed}s`);
+            _bookLog(`Describe done: ${rd.described || 0} described, ${rd.skipped || 0} skipped${failed ? `, ${failed} FAILED (${rd.first_error || '?'})` : ''} (${elapsed}s)`);
             finish();
             // reload drops the thumbnail cache + selection — rehydrate and
             // keep the row selected (DescribeSelection iterates on one row)
@@ -811,7 +812,11 @@ async function _bookPollDescribe() {
             }
             _renderBookTab();
             if (_bookState.doc) void _bookHydrateEntries();
-            _bookStatus(`Described ${rd.described || 0} entries — Compile to publish`);
+            if (failed) {
+                _bookStatus(`Described ${rd.described || 0}, ${failed} failed — hit Describe again to retry the failures`, true);
+            } else {
+                _bookStatus(`Described ${rd.described || 0} entries — Compile to publish`);
+            }
             return;
         }
         _bookRailDescribe('running', `${label} · ${elapsed}s`);

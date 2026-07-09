@@ -240,10 +240,12 @@ def _gemini_text(payload):
                    if isinstance(p, dict) and not p.get("thought"))
     if not text.strip():
         raise RuntimeError(f"Gemini returned no text: {json.dumps(payload)[:300]}")
-    if (str(cand.get("finishReason") or "") == "MAX_TOKENS"
-            and not text.rstrip().endswith("}")):
+    fr = str(cand.get("finishReason") or "")
+    if fr not in ("", "STOP") and not text.rstrip().endswith("}"):
+        # MAX_TOKENS, RECITATION, SAFETY, ... all hard-stop mid-string —
+        # name the real reason instead of a generic parse error
         raise RuntimeError(
-            f"Gemini reply truncated (finishReason MAX_TOKENS) mid-JSON: {text[-160:]}")
+            f"Gemini stopped early (finishReason {fr}) mid-reply: {text[-160:]}")
     return text
 
 
@@ -283,7 +285,12 @@ def _parse_prose(text):
 def describe_image(image_bytes, entry, report, *, model, api_key,
                    angle="", used_titles=()):
     text = _prompt_text(entry, report, angle=angle, used_titles=used_titles)
-    title, description = _parse_prose(_vision_call(model, api_key, image_bytes, text))
+    try:
+        title, description = _parse_prose(_vision_call(model, api_key, image_bytes, text))
+    except RuntimeError:
+        # flaky stop (RECITATION/SAFETY/truncation) or malformed JSON:
+        # one resample usually lands — temperature 0.9 gives a fresh draw
+        title, description = _parse_prose(_vision_call(model, api_key, image_bytes, text))
     # enforce the ban: one rewrite pass naming the offending words
     offenders = find_banned(f"{title} {description}")
     if offenders:
@@ -394,6 +401,7 @@ def handle_describe(params):
     used_titles = [str(e.get("title_override") or "").strip()
                    for e in entries if str(e.get("title_override") or "").strip()]
     described = skipped = 0
+    failures = []
     for idx, entry in enumerate(entries, start=1):
         if only_ids and str(entry.get("entry_id") or "") not in only_ids:
             continue
@@ -402,11 +410,21 @@ def handle_describe(params):
         if has_prose and not overwrite:
             skipped += 1
             continue
-        image = _entry_preview_bytes(entry)
-        report = _entry_report(book_id, entry)
-        title, description = describe_image(
-            image, entry, report, model=model, api_key=api_key,
-            angle=ANGLES[(idx - 1) % len(ANGLES)], used_titles=used_titles)
+        # one flaky entry must not abort the rest of the run: record the
+        # failure and keep going — the entry stays blank, so the next
+        # Describe (skip-existing) retries exactly the failures.
+        try:
+            image = _entry_preview_bytes(entry)
+            report = _entry_report(book_id, entry)
+            title, description = describe_image(
+                image, entry, report, model=model, api_key=api_key,
+                angle=ANGLES[(idx - 1) % len(ANGLES)], used_titles=used_titles)
+        except Exception as exc:
+            failures.append({"entry_id": str(entry.get("entry_id") or ""),
+                             "error": str(exc)[:300]})
+            _phase(job_id, task_id, "processing", "describe",
+                   f"Failed {idx}/{len(entries)}: {str(exc)[:120]}")
+            continue
         entry["title_override"] = title
         entry["body_override"] = description
         used_titles.append(title)
@@ -420,8 +438,17 @@ def handle_describe(params):
         _phase(job_id, task_id, "processing", "describe",
                f"Described {idx}/{len(entries)}: {title}")
 
+    if failures and not described and not skipped:
+        # nothing worked at all — systemic (bad key, dead model): hard fail
+        raise RuntimeError(
+            f"describe failed on all {len(failures)} attempted entries; "
+            f"first: {failures[0]['error']}")
     if described:
         _phase(job_id, task_id, "processing", "save", "Save book")
+    first_error = failures[0]["error"] if failures else ""
     _phase(job_id, task_id, "done", "done", "Done",
-           described=described, skipped=skipped)
-    return ok_response({"book_id": book_id, "described": described, "skipped": skipped})
+           described=described, skipped=skipped,
+           failed=len(failures), first_error=first_error)
+    return ok_response({"book_id": book_id, "described": described,
+                        "skipped": skipped, "failed": len(failures),
+                        "first_error": first_error})

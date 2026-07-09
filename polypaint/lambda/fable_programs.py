@@ -395,7 +395,15 @@ def main():
     ap.add_argument("--show", action="store_true", help="print sources")
     args = ap.parse_args()
 
+    known = {n for n, _, _ in FABLES}
+    if args.only:
+        unknown = [n for n in args.only if n not in known]
+        if unknown:
+            sys.exit(f"unknown fable name(s): {', '.join(unknown)}; "
+                     f"choose from: {', '.join(sorted(known))}")
     picks = [(n, s, r) for n, s, r in FABLES if not args.only or n in args.only]
+    if not picks:
+        sys.exit("no fables selected")
     if args.show:
         for name, source, _ in picks:
             print(f"===== {name} =====\n{source}")

@@ -91,6 +91,16 @@ class TestBookPdfHandler(unittest.TestCase):
         self.addCleanup(self.p_s3.stop)
         self.addCleanup(self.p_status.stop)
 
+    def test_prepare_rejects_mismatched_source_triple(self):
+        # code-review-26 F3: the page image can't come from a different
+        # artifact than the report/QR provenance (job_id/artifact_id)
+        with self.assertRaises(ValueError):
+            self.book_pdf.handle_prepare(_prepare_params(
+                source_image_key="renders/otherjob/color/art1/image.jpeg"))
+        with self.assertRaises(ValueError):
+            self.book_pdf.handle_prepare(_prepare_params(
+                source_image_key="renders/srcjob/color/otherart/image.jpeg"))
+
     def test_prepare_writes_asset_and_snapshot_then_short_circuits(self):
         self.fake.objects["renders/srcjob/color/art1/image.jpeg"] = _tiny_jpeg()
         self.fake.objects["renders/srcjob/calc.json"] = json.dumps({
@@ -146,6 +156,24 @@ class TestBookPdfHandler(unittest.TestCase):
         self.assertEqual(snap["report"]["palette_label"], "tri_ember")
         # the prepared palette swatch was uploaded next to the image asset
         self.assertIn("polypaint/books/test-book/assets/e1.palette.jpg", self.fake.objects)
+
+    def test_prepare_skips_unsafe_associated_palette_key(self):
+        # code-review-26 F13: a malformed overlay must not make Book PDF fetch
+        # an arbitrary bucket key as the palette swatch
+        self.fake.objects["renders/srcjob/color/art1/image.jpeg"] = _tiny_jpeg()
+        self.fake.objects["renders/srcjob/calc.json"] = json.dumps(
+            {"solver": "aberth", "pipeline": {"function": "poly_9"}}).encode()
+        self.fake.objects["renders/srcjob/color/art1/meta.json"] = json.dumps({
+            "associated_palette_image_key": "config/secret.json",   # not a render key
+            "associated_palette_id": "tri_ember",
+        }).encode()
+        self.fake.objects["config/secret.json"] = b"secret"
+
+        resp = self.book_pdf.handle_prepare(_prepare_params())
+        self.assertFalse(json.loads(resp["body"])["cached"])
+        snap = json.loads(self.fake.objects["polypaint/books/test-book/assets/e1.provenance.json"])
+        self.assertFalse(snap["report"]["has_palette"])   # unsafe key dropped
+        self.assertNotIn("polypaint/books/test-book/assets/e1.palette.jpg", self.fake.objects)
 
     def _seed_book(self, saved_at="2026-07-06T00:00:00Z", entries=2):
         book = {

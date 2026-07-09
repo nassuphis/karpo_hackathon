@@ -2790,6 +2790,17 @@ if (!js.includes(`bookEditEntryClear('\${eid}', this)`))
 // rehydrate, or every Describe blanks the row thumbnails until Refresh
 if (!js.match(/phase === 'done'[\s\S]{0,1600}_bookHydrateEntries\(\)/))
   { console.error('FATAL: describe-done must rehydrate entry thumbnails'); process.exit(1); }
+// F12: a failed save must not let Compile/Describe run on stale S3 state,
+// and bookSave must return a success boolean the callers gate on
+if (!/async function bookSave\(\)[\s\S]*?return true;[\s\S]*?return false;[\s\S]*?\n\}/.test(js))
+  { console.error('FATAL: bookSave must return true/false'); process.exit(1); }
+for (const guard of [
+  /_bookState\.dirty && !\(await bookSave\(\)\)\)[\s\S]{0,120}Not compiling/,
+  /_bookState\.dirty && !\(await bookSave\(\)\)\)[\s\S]{0,120}Not describing/]) {
+  if (!guard.test(js)) { console.error('FATAL: Compile/Describe must abort on failed save'); process.exit(1); }
+}
+if (!js.includes('doc.entries.splice(at, 1)'))
+  { console.error('FATAL: Add-to-Book must roll back the pushed entry on save failure'); process.exit(1); }
 // partial failures must be LOUD: rd.failed drives the status/rail/log
 if (!js.match(/phase === 'done'[\s\S]{0,400}rd\.failed/))
   { console.error('FATAL: describe-done must surface rd.failed'); process.exit(1); }

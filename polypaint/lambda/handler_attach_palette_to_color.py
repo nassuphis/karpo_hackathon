@@ -18,6 +18,7 @@ from color_artifact_meta import (
 )
 from shared import (
     BUCKET,
+    assert_safe_render_image_key,
     attach_contract_warnings,
     contract_param,
     ok_response,
@@ -63,6 +64,12 @@ def handler(event, context):
         raise RuntimeError("associated_palette_id is required")
     if not image_key:
         raise RuntimeError("associated_palette_image_key is required")
+    # this key is later downloaded and rasterized by book_pdf as the verso
+    # palette swatch — pin it to render output at write time so a malformed
+    # overlay can't make Book PDF fetch an arbitrary bucket key (F13)
+    assert_safe_render_image_key(image_key, "associated_palette_image_key")
+    if preview_key:
+        assert_safe_render_image_key(preview_key, "associated_palette_preview_key")
 
     progress = attach_contract_warnings(
         {

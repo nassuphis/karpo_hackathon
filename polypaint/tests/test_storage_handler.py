@@ -553,6 +553,8 @@ class TestComputeMigration(unittest.TestCase):
         self.assertIn("cols=7", body["share_url"])
         snapshot = json.loads(fake.objects[body["share_key"]])
         self.assertEqual(snapshot["source_manifest_key"], manifest_key)
+        # F14: manifest_key points at THIS snapshot, not the moving _index one
+        self.assertEqual(snapshot["manifest_key"], body["share_key"])
         self.assertEqual(snapshot["share_id"], body["share_id"])
         self.assertEqual(snapshot["tiles"][0]["artifact_id"], "color_a")
         self.assertEqual(fake.metadata[body["share_key"]]["ContentType"], "application/json")
@@ -997,14 +999,60 @@ class TestReservedPartitionGuard(unittest.TestCase):
             self.assertEqual(resp["statusCode"], 400, jid)
             self.assertIn("reserved", json.loads(resp["body"])["error"])
 
+    @patch("handler_storage.s3")
+    def test_delete_rejects_internal_render_pseudo_jobs(self, mock_s3):
+        # code-review-26 F11: /delete builds renders/{job_id}/ — a leading-_
+        # job_id would wipe the mosaic index or share snapshots
+        import handler_storage
+        for jid in ("_index", "_shared_mosaic", "__config__", "favorites#color", ""):
+            resp = handler_storage.handler(_event("/delete", {"job_id": jid}), None)
+            self.assertEqual(resp["statusCode"], 400, jid)
+            self.assertIn("reserved", json.loads(resp["body"])["error"])
+        mock_s3.delete_objects.assert_not_called()
+
+    @patch("handler_storage.s3")
+    def test_delete_still_accepts_a_normal_compute_job(self, mock_s3):
+        import handler_storage
+        paginator = mock_s3.get_paginator.return_value
+        paginator.paginate.return_value = [{"Contents": []}]
+        resp = handler_storage.handler(_event("/delete", {"job_id": "compute_abc123"}), None)
+        self.assertEqual(resp["statusCode"], 200)
+
     def test_normal_job_id_is_not_treated_as_reserved(self):
         import handler_storage
         self.assertEqual(
             handler_storage._assert_mutable_job_partition("compute_mo0ej5r9"),
             "compute_mo0ej5r9")
-        for jid in self.RESERVED:
+        for jid in self.RESERVED + ["_index", "_shared_mosaic", ""]:
             with self.assertRaises(ValueError):
                 handler_storage._assert_mutable_job_partition(jid)
+
+
+class TestPresignFilename(unittest.TestCase):
+    """code-review-26 F15: caller-supplied download names go into a
+    Content-Disposition header and must be sanitized."""
+
+    def test_hostile_filenames_are_stripped(self):
+        import handler_storage as hs
+        self.assertEqual(hs._safe_download_filename('a"b;c'), "abc")
+        self.assertEqual(hs._safe_download_filename("line\r\nbreak"), "linebreak")
+        self.assertEqual(hs._safe_download_filename("../../etc/passwd"), "passwd")
+        self.assertEqual(hs._safe_download_filename("a\\b\\evil.png"), "evil.png")
+        self.assertEqual(hs._safe_download_filename(""), "")
+        self.assertEqual(hs._safe_download_filename("PolyPaint art 12.jpeg"),
+                         "PolyPaint art 12.jpeg")
+        self.assertLessEqual(len(hs._safe_download_filename("x" * 500)), 120)
+
+    @patch("handler_storage.s3")
+    def test_presign_header_has_no_raw_quotes(self, mock_s3):
+        import handler_storage
+        mock_s3.generate_presigned_url.return_value = "https://x/y"
+        handler_storage.handler(_event("/presign", {
+            "key": "renders/j/color/a/image.jpeg",
+            "filename": 'evil";x=1.jpeg'}), None)
+        disp = mock_s3.generate_presigned_url.call_args.kwargs["Params"]["ResponseContentDisposition"]
+        self.assertNotIn('";', disp)
+        self.assertEqual(disp, 'attachment; filename="evilx=1.jpeg"')
 
 
 class TestWallPyramidKick(unittest.TestCase):

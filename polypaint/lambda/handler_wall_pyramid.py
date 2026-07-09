@@ -150,6 +150,21 @@ def handle_build_wall_pyramid(params):
         if not tiles:
             _set_wall_state(kind, refresh_id, "error", error="manifest has no tiles")
             return ok_response({"error": "manifest has no tiles"})
+        # The wall grid + viewer click-mapping assume uniform CELL_PX cells
+        # (wall_dz.c). If the migration left any non-512 preview, building the
+        # wall would produce wrong geometry — refuse and let the UI fall back
+        # to the per-tile grid instead of silently mis-mapping (F10).
+        bad = [t for t in tiles
+               if (t.get("preview_width") not in (None, CELL_PX)
+                   or t.get("preview_height") not in (None, CELL_PX))]
+        if bad:
+            ex = bad[0]
+            msg = (f"wall unsupported: {len(bad)} tile(s) are not {CELL_PX}px "
+                   f"(e.g. {ex.get('key')!r} {ex.get('preview_width')}x{ex.get('preview_height')})")
+            # 'error' (not a new state) so the existing viewer falls back to
+            # the per-tile grid via its wall_state != 'ready' guard
+            _set_wall_state(kind, refresh_id, "error", error=msg)
+            return ok_response({"error": msg, "wall_state": "error"})
 
         t0 = time.time()
         with concurrent.futures.ThreadPoolExecutor(max_workers=32) as pool:

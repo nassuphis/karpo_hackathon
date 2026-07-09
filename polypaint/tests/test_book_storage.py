@@ -148,13 +148,44 @@ class TestBookStorage(unittest.TestCase):
                 "name": "x", "entries": [_entry(1, image_key=key)]}}), None)
             self.assertEqual(resp["statusCode"], 400, key)
             self.assertIn("image_key", json.loads(resp["body"])["error"])
-        # real color + palette + preview keys still pass
-        for key in ("renders/job1/color/art1/image.jpeg",
-                    "renders/j/palettes/pal_x/image.jpeg",
-                    "renders/j/color/a/preview.png"):
+        # real color + palette + preview keys still pass (consistent triples)
+        good = [
+            {"job_id": "job1", "artifact_id": "art1",
+             "image_key": "renders/job1/color/art1/image.jpeg"},
+            {"job_id": "j", "artifact_id": "pal_x",
+             "image_key": "renders/j/palettes/pal_x/image.jpeg"},
+            {"job_id": "j", "artifact_id": "a",
+             "image_key": "renders/j/color/a/preview.png"}]
+        for entry in good:
             resp = handler_storage.handler(_event("/save-book", {"book": {
-                "name": "ok", "entries": [_entry(1, image_key=key)]}}), None)
-            self.assertEqual(resp["statusCode"], 200, key)
+                "name": "ok", "entries": [entry]}}), None)
+            self.assertEqual(resp["statusCode"], 200, entry["image_key"])
+
+    @patch("handler_storage.s3")
+    def test_image_key_must_match_job_and_artifact(self, mock_s3):
+        # code-review-26 F3: the image can't come from a different artifact
+        # than job_id/artifact_id name (else the page image and its metadata
+        # describe different artifacts)
+        import handler_storage
+        _patch_s3(mock_s3, _FakeS3())
+        mism = handler_storage.handler(_event("/save-book", {"book": {
+            "name": "x", "entries": [{
+                "job_id": "jobA", "artifact_id": "artA",
+                "image_key": "renders/jobB/color/artB/image.jpeg"}]}}), None)
+        self.assertEqual(mism["statusCode"], 400)
+        self.assertIn("image_key", json.loads(mism["body"])["error"])
+        # right job, wrong artifact
+        mism2 = handler_storage.handler(_event("/save-book", {"book": {
+            "name": "x", "entries": [{
+                "job_id": "jobA", "artifact_id": "artA",
+                "image_key": "renders/jobA/color/artB/image.jpeg"}]}}), None)
+        self.assertEqual(mism2["statusCode"], 400)
+        # consistent triple passes
+        ok = handler_storage.handler(_event("/save-book", {"book": {
+            "name": "ok", "entries": [{
+                "job_id": "jobA", "artifact_id": "artA",
+                "image_key": "renders/jobA/color/artA/image.jpeg"}]}}), None)
+        self.assertEqual(ok["statusCode"], 200)
 
     @patch("handler_storage.s3")
     def test_save_book_compare_and_swap(self, mock_s3):

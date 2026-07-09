@@ -158,14 +158,12 @@ async function bookEditEntryClear(entryId, btn) {
     entry.title_override = '';
     entry.body_override = '';
     _bookState.dirty = true;
-    try {
-        await bookSave();
+    if (await bookSave()) {
         _bookState.editingEntryId = '';
         _renderBookTab();
         _bookStatus('Entry text cleared — Describe fills blanks, DescribeSelection redoes this row');
-    } catch (e) {
-        _bookStatus(e.message, true);
-        if (btn) { btn.disabled = false; btn.textContent = orig; }
+    } else if (btn) {
+        btn.disabled = false; btn.textContent = orig;   // save failed: keep editor open
     }
 }
 
@@ -181,11 +179,10 @@ async function bookClearDescriptions(btn) {
     try {
         for (const e of entries) { e.title_override = ''; e.body_override = ''; }
         _bookState.dirty = true;
-        await bookSave();
-        _renderBookTab();
-        _bookStatus(`Cleared ${n} entries — pick a model in ⚙ and hit Describe to regenerate`);
-    } catch (e) {
-        _bookStatus(e.message, true);
+        if (await bookSave()) {
+            _renderBookTab();
+            _bookStatus(`Cleared ${n} entries — pick a model in ⚙ and hit Describe to regenerate`);
+        }   // bookSave already surfaced the error on failure
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = orig; }
     }
@@ -199,14 +196,12 @@ async function bookEditEntrySave(entryId, btn) {
     entry.title_override = (document.getElementById('book-edit-title')?.value || '').trim();
     entry.body_override = (document.getElementById('book-edit-body')?.value || '').trim();
     _bookState.dirty = true;
-    try {
-        await bookSave();
+    if (await bookSave()) {
         _bookState.editingEntryId = '';
         _renderBookTab();
         _bookStatus('Entry text saved — Compile to publish');
-    } catch (e) {
-        _bookStatus(e.message, true);
-        if (btn) { btn.disabled = false; btn.textContent = orig; }
+    } else if (btn) {
+        btn.disabled = false; btn.textContent = orig;   // save failed: keep editor open, edits intact
     }
 }
 
@@ -337,8 +332,10 @@ async function bookSave() {
         await _bookRefreshList(true);
         _renderBookTab();
         _bookStatus('Saved');
+        return true;   // callers that need persisted state gate on this (F12)
     } catch (e) {
         _bookStatus(e.message, true);
+        return false;
     } finally {
         if (btn) { btn.disabled = false; btn.textContent = orig || 'Save'; }
     }
@@ -450,13 +447,23 @@ async function _bookAddEntryImpl(ref, surfaceStatus) {
         const doc = _bookState.doc;
         if (!doc) throw new Error('active book failed to load');
         doc.entries = doc.entries || [];
-        doc.entries.push({
+        const candidate = {
             job_id: ref.jobId, artifact_id: ref.artifactId, image_key: ref.imageKey,
             display_name: ref.displayName || ref.artifactId,
             added_at: new Date().toISOString().slice(0, 19) + 'Z',
             title_override: '', body_override: '',
-        });
-        const resp = await lambdaPost('storage', { book: doc }, '/save-book');
+        };
+        doc.entries.push(candidate);
+        let resp;
+        try {
+            resp = await lambdaPost('storage', { book: doc }, '/save-book');
+        } catch (saveErr) {
+            // roll the optimistically-pushed entry back out so a failed add
+            // can't leave a phantom that a later save publishes (F12)
+            const at = doc.entries.indexOf(candidate);
+            if (at !== -1) doc.entries.splice(at, 1);
+            throw saveErr;
+        }
         _bookState.doc = resp.book;
         _bookState.dirty = false;
         report(`Added entry ${resp.book.entries.length} to "${resp.book.name}"`);
@@ -538,7 +545,12 @@ async function bookCompile() {
     if (_bookState.compile) { _bookStatus('Compile already running', true); return; }
     _bookCompileBtn(true);
     try {
-        if (_bookState.dirty) await bookSave();
+        // never compile an unsaved book: a failed save would publish the old
+        // S3 state while the UI shows the new one (code-review-26 F12)
+        if (_bookState.dirty && !(await bookSave())) {
+            _bookStatus('Not compiling: save failed — fix the error and retry', true);
+            return;
+        }
         const runId = 'bk_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
         const jobId = 'book#' + _bookState.activeId;
         const startedAt = Date.now();
@@ -748,7 +760,13 @@ async function _bookDescribeRun(btn, extra) {
     const orig = btn ? btn.textContent : 'Describe';
     if (btn) { btn.disabled = true; btn.textContent = 'Describing…'; }
     try {
-        if (_bookState.dirty) await bookSave();
+        // describe operates on the SAVED book (expected_saved_at below); a
+        // failed save must not let describe run on stale S3 state (F12)
+        if (_bookState.dirty && !(await bookSave())) {
+            _bookStatus('Not describing: save failed — fix the error and retry', true);
+            if (btn) { btn.disabled = false; btn.textContent = orig; }
+            return;
+        }
         const runId = 'bd_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
         const jobId = 'book#' + _bookState.activeId;
         const taskId = `bookdesc_${runId}`;

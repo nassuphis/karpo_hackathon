@@ -41,7 +41,8 @@ from logical_sections import (
     summarize_chunk_items,
 )
 from shared import (BUCKET, JOBS_TABLE, PRESIGN_EXPIRY, parse_body, ok_response,
-                    _get_ddb, parse_boolish, assert_safe_render_image_key)
+                    _get_ddb, parse_boolish, assert_safe_render_image_key,
+                    assert_render_identity)
 from coeff_program_chain import (
     PROGRAM_KIND as COEFF_PROGRAM_KIND,
     PROGRAM_VERSION as COEFF_PROGRAM_VERSION,
@@ -1957,8 +1958,12 @@ def _validate_book_payload(raw):
             if not entry[field]:
                 raise ValueError(f"book entry {idx} is missing {field}")
         # image_key is trusted downstream as a raw LaTeX macro argument
-        # (\qrcode{URL}) and an S3 GET target — pin it to render output
+        # (\qrcode{URL}) and an S3 GET target — pin it to render output, and
+        # require it to name the SAME artifact as job_id/artifact_id so a page
+        # image can't be paired with another artifact's metadata (F3)
         assert_safe_render_image_key(entry["image_key"], f"book entry {idx} image_key")
+        assert_render_identity(entry["image_key"], entry["job_id"], entry["artifact_id"],
+                               f"book entry {idx} image_key")
         if not re.fullmatch(r"[A-Za-z0-9._-]{1,64}", entry["entry_id"]):
             raise ValueError(f"book entry {idx} entry_id must match [A-Za-z0-9._-]{{1,64}}")
         if entry["entry_id"] in seen_entry_ids:
@@ -4139,6 +4144,9 @@ def handle_share_mosaic(event):
         "share_id": share_id,
         "share_kind": kind,
         "source_manifest_key": manifest_key,
+        # point manifest_key at THIS immutable snapshot, not the moving _index
+        # manifest it was copied from (code-review-26 F14)
+        "manifest_key": snapshot_key,
     })
     s3.put_object(
         Bucket=BUCKET,
@@ -4261,7 +4269,9 @@ def _key_exists(key):
 def handle_delete(event):
     """Delete all S3 objects for a given job_id."""
     params = parse_body(event)
-    job_id = params["job_id"]
+    # renders/_index/... and renders/_shared_mosaic/... hold shared mosaic
+    # state; a leading-underscore job_id would wipe them (code-review-26 F11)
+    job_id = _assert_mutable_job_partition(params["job_id"])
 
     # List all objects for this job
     prefix = f"renders/{job_id}/"
@@ -4501,19 +4511,24 @@ ARTIFACT_FAMILIES = {
 }
 
 
-# DDB partitions that back internal config/index/favorites state. Generic
-# job-scoped mutation routes (delete-task, clean-render) must refuse these so
-# a caller cannot wipe the VisionModel keys, mosaic status, or favorites by
-# passing the sentinel as an ordinary job_id.
-RESERVED_DDB_JOB_PREFIXES = ("__", "favorites#")
+# Internal state that generic job-scoped mutation routes must never touch:
+# - DDB sentinels __config__ (vision keys) / __allrenders_mosaic__ (mosaic
+#   status), which start with '_'
+# - the favorites partition favorites#color
+# - S3 pseudo-jobs renders/_index/... (mosaic manifests + wall pyramids) and
+#   renders/_shared_mosaic/... (share snapshots), whose job segment starts '_'
+# A single leading-underscore rule covers every internal render/DDB namespace;
+# real render/compute jobs never begin with '_'. (code-review-25 F1 +
+# code-review-26 F11)
+RESERVED_JOB_PREFIXES = ("_", "favorites#")
 
 
 def _assert_mutable_job_partition(job_id):
     jid = str(job_id or "")
-    if jid.startswith(RESERVED_DDB_JOB_PREFIXES):
+    if not jid or jid.startswith(RESERVED_JOB_PREFIXES):
         raise ValueError(
             f"job_id {jid!r} is a reserved internal partition; "
-            f"it cannot be mutated through a generic job route")
+            f"it cannot be mutated or deleted through a generic job route")
     return jid
 
 
@@ -4623,6 +4638,19 @@ def handle_save_metadata(event):
     return ok_response({"job_id": job_id, "saved": "calc.json"})
 
 
+def _safe_download_filename(raw):
+    """Sanitize a caller-supplied download name before it goes into a
+    Content-Disposition header: strip path/quote/control chars so the public
+    /presign route can't emit a malformed header (code-review-26 F15)."""
+    name = str(raw or "").strip()
+    if not name:
+        return ""
+    name = name.replace("\\", "/").rsplit("/", 1)[-1]   # drop any path
+    name = re.sub(r'[\x00-\x1f\x7f"\\;]', "", name)       # control/quote/sep
+    name = name.strip() or "download"
+    return name[:120]
+
+
 def handle_presign(event):
     """Generate a presigned URL for an S3 key.
     Input: {key: "renders/job_id/image.jpeg", filename: "optional_download_name.jpeg"}
@@ -4637,7 +4665,7 @@ def handle_presign(event):
     if not (key.startswith("renders/") or key.startswith(BOOKS_PREFIX)):
         raise ValueError("presign key must be under renders/ or polypaint/books/")
     s3_params = {"Bucket": BUCKET, "Key": key}
-    filename = params.get("filename")
+    filename = _safe_download_filename(params.get("filename"))
     if filename:
         s3_params["ResponseContentDisposition"] = f'attachment; filename="{filename}"'
     url = s3.generate_presigned_url(

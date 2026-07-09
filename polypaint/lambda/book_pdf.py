@@ -23,7 +23,8 @@ from botocore.config import Config as BotoConfig
 
 import book_tex
 from shared import (BUCKET, CACHE_IMMUTABLE, parse_body, ok_response, report_status,
-                    assert_safe_render_image_key)
+                    assert_safe_render_image_key, is_safe_render_image_key,
+                    assert_render_identity)
 from spread_pdf import PDF_IMAGE_MAX_PX, PDF_PALETTE_MAX_PX, prepare_pdf_image
 
 # pool sized to the flip-page upload threads (default 10 floods logs with
@@ -381,6 +382,18 @@ def handle_prepare(params):
     # source_image_key becomes a direct S3 GET below — pin it to render output
     # so prepare cannot be pointed at an arbitrary bucket key (code-review-25 F3)
     source_image_key = assert_safe_render_image_key(params["source_image_key"], "source_image_key")
+    # and require it to name the SAME artifact as the sibling fields, so the
+    # page image can't come from artifact B while the report/QR say artifact A
+    # (code-review-26 F3). legacy_color reads the job-root meta, so only pin
+    # the job segment for it.
+    _source_artifact_id = str(params.get("source_artifact_id") or "")
+    if _source_artifact_id == "legacy_color":
+        if not source_image_key.startswith(f"renders/{source_job_id}/"):
+            raise ValueError(f"source_image_key {source_image_key!r} is not under "
+                             f"renders/{source_job_id}/ (job mismatch)")
+    else:
+        assert_render_identity(source_image_key, source_job_id, _source_artifact_id,
+                               "source_image_key")
     asset_key, prov_key = _asset_keys(book_id, entry_id)
     palette_key = f"{BOOKS_PREFIX}{book_id}/assets/{entry_id}.palette.jpg"
     progress = {"family": "book", "book_id": book_id, "entry_id": entry_id, "op": "prepare"}
@@ -438,6 +451,12 @@ def handle_prepare(params):
         # associated palette swatch (same source the ColorSpread PDF uses)
         has_palette = False
         palette_image_key = str(src_meta.get("associated_palette_image_key") or "").strip()
+        # defense in depth (F13): the overlay is server-written, but re-check
+        # the key here — a malformed overlay must not make us fetch an
+        # arbitrary bucket key. An unsafe key just drops the swatch.
+        if palette_image_key and not is_safe_render_image_key(palette_image_key):
+            print(f"skipping unsafe associated_palette_image_key: {palette_image_key!r}")
+            palette_image_key = ""
         if palette_image_key:
             try:
                 palette_ext = palette_image_key.rsplit(".", 1)[-1].lower()

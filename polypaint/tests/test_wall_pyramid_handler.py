@@ -108,6 +108,37 @@ class BuildWallPyramidTests(unittest.TestCase):
                 "manifest_key": self.MANIFEST_KEY})
         return json.loads(resp["body"]), puts, ddb_updates
 
+    def test_non_512_tile_marks_error_and_builds_no_wall(self):
+        # code-review-26 F10: the wall grid + click-mapping assume 512px cells;
+        # a non-512 tile must fall back to the grid, not silently mis-map
+        import handler_wall_pyramid as mod
+        manifest = {"tiles": [
+            {"created": "2026-02-01T00:00:00Z", "job_id": "j1", "artifact_id": "a1",
+             "key": "renders/j1/color/a1/preview.jpg",
+             "preview_width": 512, "preview_height": 512},
+            {"created": "2026-01-01T00:00:00Z", "job_id": "j2", "artifact_id": "a2",
+             "key": "renders/j2/color/a2/preview.jpg",
+             "preview_width": 1024, "preview_height": 1024}]}
+        fake_s3 = MagicMock()
+        fake_s3.get_object.return_value = {"Body": io.BytesIO(json.dumps(manifest).encode())}
+        states = []
+        fake_ddb = MagicMock()
+        fake_ddb.update_item.side_effect = lambda **kw: states.append(kw)
+        fake_ddb.exceptions.ConditionalCheckFailedException = type("CCF", (Exception,), {})
+        with patch.object(mod, "s3", fake_s3), \
+             patch.object(mod, "boto3") as fb, \
+             patch.object(mod.subprocess, "run") as run:
+            fb.client.return_value = fake_ddb
+            resp = mod.handle_build_wall_pyramid({
+                "kind": "color", "refresh_id": self.REFRESH_ID,
+                "manifest_key": self.MANIFEST_KEY})
+        body = json.loads(resp["body"])
+        self.assertIn("not 512px", body["error"])
+        self.assertEqual(body["wall_state"], "error")
+        run.assert_not_called()   # never spent libvips on a bad manifest
+        # wall_state persisted as error so the viewer falls back to the grid
+        self.assertEqual(states[-1]["ExpressionAttributeValues"][":ws"], {"S": "error"})
+
     def test_rejects_bad_refresh_id_and_mismatched_manifest_key(self):
         # code-review-25 F4: pin inputs to the canonical mosaic index layout
         import handler_wall_pyramid as mod

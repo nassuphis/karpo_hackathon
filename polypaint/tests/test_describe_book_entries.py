@@ -167,6 +167,70 @@ class DescribeEngineTests(unittest.TestCase):
         self.assertEqual(out, {"ok": True})
         self.assertEqual(calls["n"], 3)
 
+    def test_banned_word_surviving_the_rewrite_raises(self):
+        # code-review-26 F9: the ban is enforced, not advisory — if the one
+        # rewrite still offends, fail the entry (next Describe retries it)
+        replies = ['{"title": "Vibrant Bloom", "description": "fine"}',
+                   '{"title": "Still Vibrant", "description": "again"}']
+        calls = {"n": 0}
+
+        def vc(model, api_key, image_bytes, text):
+            r = replies[calls["n"]]
+            calls["n"] += 1
+            return r
+
+        with patch.object(self.mod, "_vision_call", vc):
+            with self.assertRaises(RuntimeError) as ctx:
+                self.mod.describe_image(b"x", {"entry_id": "e"}, {},
+                                        model="gemini-2.5-flash", api_key="k")
+        self.assertIn("banned", str(ctx.exception))
+        self.assertEqual(calls["n"], 2)   # tried exactly one rewrite
+
+    def test_downscale_shrinks_large_and_passes_small(self):
+        # code-review-26 F4: the image_key fallback can be a full render
+        from PIL import Image
+        import io as _io
+        big = _io.BytesIO()
+        Image.new("RGB", (2000, 1500), (10, 20, 30)).save(big, format="JPEG")
+        out = self.mod._downscale_for_vision(big.getvalue(), max_px=768)
+        w, h = Image.open(_io.BytesIO(out)).size
+        self.assertLessEqual(max(w, h), 768)
+        small = _io.BytesIO()
+        Image.new("RGB", (400, 300), (1, 2, 3)).save(small, format="JPEG")
+        raw = small.getvalue()
+        self.assertEqual(self.mod._downscale_for_vision(raw, max_px=768), raw)
+
+    def test_cas_preserves_human_edit_to_already_generated_entry(self):
+        # code-review-26 F2: e1 generated + saved, then a human edits e1;
+        # a later conflict must NOT stamp our e1 prose back over the human's
+        import copy
+        fresh = {"id": "b1", "saved_at": "S2", "entries": [
+            {"entry_id": "e1", "title_override": "HUMAN", "body_override": "by hand"},
+            {"entry_id": "e2", "title_override": "", "body_override": ""}]}
+        saved = {}
+        seq = {"n": 0}
+
+        def storage(payload):
+            path = payload["path"]
+            if path == "/fetch-book":
+                return {"book": copy.deepcopy(fresh)}
+            seq["n"] += 1
+            if seq["n"] == 1:
+                raise self.mod._SaveConflict("conflict")
+            body = json.loads(payload["body"])
+            saved["book"] = body["book"]
+            return {"book": {**body["book"], "saved_at": "S3"}}
+
+        doc = {"id": "b1", "saved_at": "S1", "entries": [
+            {"entry_id": "e1", "title_override": "GEN", "body_override": "gen"},
+            {"entry_id": "e2", "title_override": "E2", "body_override": "e2body"}]}
+        run_prose = {"e1": ("GEN", "gen"), "e2": ("E2", "e2body")}
+        with patch.object(self.mod, "_storage", side_effect=storage):
+            self.mod._save_book_cas("b1", doc, "S1", run_prose)
+        by_id = {e["entry_id"]: e for e in saved["book"]["entries"]}
+        self.assertEqual(by_id["e1"]["title_override"], "HUMAN")  # human wins
+        self.assertEqual(by_id["e2"]["title_override"], "E2")     # our prose fills blank
+
     def test_preview_falls_back_to_stored_image_key(self):
         # code-review-25 F5: legacy/root artifacts lack the immutable color
         # preview path; Describe must still resolve them via entry.image_key

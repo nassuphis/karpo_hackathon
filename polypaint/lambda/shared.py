@@ -262,6 +262,22 @@ def assert_safe_render_image_key(key, label="image_key"):
     return str(key)
 
 
+def assert_render_identity(key, job_id, artifact_id, label="image_key"):
+    """A render image key must belong to the same artifact its sibling fields
+    name, so a book/PDF page can't pair image B with metadata A. Ties the key
+    to renders/<job_id>/ and to a /<artifact_id>/ path segment
+    (code-review-26 F3). Assumes the key already passed
+    assert_safe_render_image_key."""
+    k = str(key or "")
+    jid = str(job_id or "")
+    aid = str(artifact_id or "")
+    if not jid or not k.startswith(f"renders/{jid}/"):
+        raise ValueError(f"{label} {k!r} is not under renders/{jid}/ (job_id mismatch)")
+    if not aid or f"/{aid}/" not in k:
+        raise ValueError(f"{label} {k!r} does not contain /{aid}/ (artifact_id mismatch)")
+    return k
+
+
 def vision_provider(model):
     """Provider from a vision model id: gemini-* -> google, claude-* ->
     anthropic, gpt-*/o* -> openai. Keys are stored per provider so the

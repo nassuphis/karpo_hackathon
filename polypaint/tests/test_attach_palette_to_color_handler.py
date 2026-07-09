@@ -14,6 +14,23 @@ class TestAttachPaletteToColorHandler(unittest.TestCase):
 
     @patch("handler_attach_palette_to_color.report_status")
     @patch("handler_attach_palette_to_color.s3")
+    def test_rejects_unsafe_associated_palette_image_key(self, mock_s3, mock_report):
+        # code-review-26 F13: this key is later downloaded + rasterized by
+        # book_pdf — pin it to render output at write time
+        from handler_attach_palette_to_color import handler
+        base = {
+            "job_id": "j", "task_id": "palette_run_attach", "artifact_id": "color_src",
+            "associated_palette_mode": "generated", "associated_palette_id": "pal_123",
+        }
+        for bad in ("config/secret.json",
+                    "renders/j/palettes/pal_123/image.jpeg} \\input{x",
+                    "renders/j/palettes/pal_123/image.svg"):
+            with self.assertRaises(Exception):
+                handler({**base, "associated_palette_image_key": bad}, None)
+        mock_s3.put_object.assert_not_called()
+
+    @patch("handler_attach_palette_to_color.report_status")
+    @patch("handler_attach_palette_to_color.s3")
     def test_attach_writes_sidecar_overlay_metadata(self, mock_s3, mock_report):
         from handler_attach_palette_to_color import handler
 

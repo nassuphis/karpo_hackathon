@@ -319,6 +319,13 @@ def describe_image(image_bytes, entry, report, *, model, api_key,
             extra=f"Your previous attempt used banned words: {', '.join(offenders)}. "
                   f"Rewrite completely without them or any synonym-sludge.")
         title, description = _parse_prose(_vision_call(model, api_key, image_bytes, retry_text))
+        # re-check after the rewrite (code-review-26 F9): the ban is enforced,
+        # not advisory — if the rewrite still offends, fail this entry so the
+        # next Describe retries it rather than persisting banned prose
+        still = find_banned(f"{title} {description}")
+        if still:
+            raise RuntimeError(
+                f"banned words survived the rewrite: {', '.join(still)}")
     return title, description
 
 
@@ -355,9 +362,11 @@ def _find_entry(doc, entry_id):
 
 def _save_book_cas(book_id, doc, expected, run_prose, attempts=4):
     """Save the book with compare-and-swap on expected saved_at. On conflict
-    (a concurrent human edit landed), refetch the current book, re-apply THIS
-    run's generated prose onto it (so our output survives) while keeping the
-    human's edits to entries we haven't touched, and retry. Returns
+    (a concurrent edit landed), refetch the current book and re-apply THIS
+    run's generated prose onto it — but ONLY where the refetched entry is
+    still blank or already equals what we generated. If a human has since
+    edited an entry we generated earlier, that entry now differs, so we leave
+    it alone: the human's edit wins (code-review-26 F2). Returns
     (authoritative_doc, new_saved_at)."""
     for _ in range(attempts):
         body = {"book": doc, "expected_saved_at": expected}
@@ -368,8 +377,16 @@ def _save_book_cas(book_id, doc, expected, run_prose, attempts=4):
             doc = _fetch_book(book_id)
             for eid, (title, desc) in run_prose.items():
                 e = _find_entry(doc, eid)
-                if e is not None:
+                if e is None:
+                    continue
+                cur_title = str(e.get("title_override") or "")
+                cur_body = str(e.get("body_override") or "")
+                blank = not cur_title and not cur_body
+                ours = cur_title == title and cur_body == desc
+                if blank or ours:
                     e["title_override"], e["body_override"] = title, desc
+                # else: a human edited this entry after we generated it —
+                # preserve their edit, do not stamp our prose back over it
             expected = str(doc.get("saved_at") or "")
     raise RuntimeError(
         f"book {book_id} kept changing during describe (CAS gave up after {attempts} tries)")
@@ -408,20 +425,47 @@ def _load_vision_config():
         return {}
 
 
+VISION_MAX_PX = 768   # Describe only needs a thumbnail-level visual
+
+
+def _downscale_for_vision(data, max_px=VISION_MAX_PX):
+    """Shrink an image so its long edge is <= max_px before it goes to the
+    Vision API. The image_key fallback can be a full-size render; sending it
+    raw inflates latency, cost, and failure rate (code-review-26 F4). Best
+    effort — if Pillow is unavailable or the decode fails, return as-is."""
+    try:
+        from PIL import Image
+        import io as _io
+        with Image.open(_io.BytesIO(data)) as im:
+            if max(im.size) <= max_px:
+                return data
+            im = im.convert("RGB")
+            im.thumbnail((max_px, max_px), Image.LANCZOS)
+            buf = _io.BytesIO()
+            im.save(buf, format="JPEG", quality=85)
+            return buf.getvalue()
+    except Exception:
+        return data
+
+
 def _entry_preview_bytes(entry):
     prefix = f"renders/{entry.get('job_id')}/color/{entry.get('artifact_id')}/"
-    candidates = [prefix + "preview.jpg", prefix + "preview.png"]
-    # fall back to the entry's stored image_key (legacy/root-shaped artifacts
-    # lack the immutable color preview path but still carry a usable image),
-    # so Describe is no more brittle than the rest of the Book pipeline
-    image_key = str(entry.get("image_key") or "").strip()
-    if image_key and image_key not in candidates:
-        candidates.append(image_key)
-    for key in candidates:
+    previews = [prefix + "preview.jpg", prefix + "preview.png"]
+    for key in previews:
         try:
             return s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
         except Exception:
             continue
+    # fall back to the entry's stored image_key (legacy/root-shaped artifacts
+    # lack the immutable color preview path) but DOWNSCALE it — that key is
+    # the full render image, not a 512 thumbnail
+    image_key = str(entry.get("image_key") or "").strip()
+    if image_key:
+        try:
+            return _downscale_for_vision(
+                s3.get_object(Bucket=BUCKET, Key=image_key)["Body"].read())
+        except Exception:
+            pass
     raise RuntimeError(f"no preview for {entry.get('artifact_id')}")
 
 
@@ -518,6 +562,16 @@ def handle_describe(params):
         try:
             doc, expected = _save_book_cas(book_id, doc, expected, run_prose)
         except Exception as exc:
+            # roll the failed entry back out of BOTH the run record and the
+            # in-memory doc, so a later successful save can't silently persist
+            # prose we reported as failed (code-review-26 F2 related edge)
+            run_prose.pop(entry_id, None)
+            reverted = _find_entry(doc, entry_id)
+            if reverted is not None:
+                reverted["title_override"] = ""
+                reverted["body_override"] = ""
+            if used_titles and used_titles[-1] == title:
+                used_titles.pop()
             failures.append({"entry_id": entry_id, "error": f"save: {str(exc)[:280]}"})
             _phase(job_id, task_id, "processing", "describe",
                    f"Save failed {idx}/{total}: {str(exc)[:110]}")
